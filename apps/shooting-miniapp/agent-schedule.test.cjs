@@ -46,7 +46,7 @@ test('workspace observation replaces stale blocker, state and next without inven
  const p=page({request:async()=>response});
  p.data.detail={id:'t',run_id:'r',status:'blocked',next:'旧操作',reason:'旧卡点',blocked_reason:'旧卡点',description:'旧说明',output:{stage:'旧阶段'}};
  await p.loadTaskEvents(p.data.detail);
- assert.equal(p.data.detail.statusLabel,'等待外部结果');
+ assert.equal(p.data.detail.statusLabel,'等待业务结果');
  assert.equal(p.data.detail.execution.blocker,'等待平台回写');
  assert.equal(p.data.detail.next,'核对平台回执');
  response={task:{status:'running'},events:[]};

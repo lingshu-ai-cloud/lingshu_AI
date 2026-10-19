@@ -7,6 +7,7 @@ function createAssistantController(options) {
   const emit = options.onChange || (() => {})
   const schedule = options.schedule || ((fn, delay) => setTimeout(fn, delay))
   const cancel = options.cancel || clearTimeout
+  const contextMode = options.contextMode === 'customer_service' ? 'customer_service' : 'operator'
   let epoch = 0, timer = null, scope = '', disposed = false
   let state = { sessionId: '', messages: [], suggestions: [], preview: null, receipts: [], loading: false, sending: false, confirming: false, error: '', input: '', recording: false, transcribing: false }
   const update = patch => { state = { ...state, ...patch }; emit({ ...state }) }
@@ -35,9 +36,10 @@ function createAssistantController(options) {
     const ticket = epoch
     update({ sessionId: '', messages: [], suggestions: [], receipts: [], preview: null, loading: true, sending: false, confirming: false, error: '', answer: '', evidence: [], actions: [], links: [], input: '' })
     try {
-      const [context, sessions] = await Promise.all([request('mobile-workbench/assistant/context'), request('mobile-workbench/assistant/sessions')])
+      const sessionPath = 'mobile-workbench/assistant/sessions?contextMode=' + encodeURIComponent(contextMode)
+      const [context, sessions] = await Promise.all([request('mobile-workbench/assistant/context'), request(sessionPath)])
       let session = (sessions.sessions || [])[0]
-      if (!session) session = (await request('mobile-workbench/assistant/sessions', 'POST', {})).session
+      if (!session) session = (await request('mobile-workbench/assistant/sessions', 'POST', { contextMode })).session
       const history = await request('mobile-workbench/assistant/sessions/' + encodeURIComponent(session.id) + '/messages')
       const result = { sessionId: session.id, messages: history.messages, suggestions: context.quickQuestions, receipts: history.receipts || [] }
       if (!live(ticket)) return
@@ -58,6 +60,17 @@ function createAssistantController(options) {
     } catch (error) { if (live(ticket)) update({ error: error.message }) }
     finally { if (live(ticket)) update({ loading: false }) }
   }
+  async function listSessions() {
+    const result = await request('mobile-workbench/assistant/sessions?contextMode=' + encodeURIComponent(contextMode) + '&archived=all')
+    return result.sessions || []
+  }
+  async function readSession(sessionId) {
+    return request('mobile-workbench/assistant/sessions/' + encodeURIComponent(sessionId) + '/messages')
+  }
+  async function archive() {
+    if (!state.sessionId || !state.messages.length) return null
+    return request('mobile-workbench/assistant/sessions/' + encodeURIComponent(state.sessionId) + '/archive', 'POST', {})
+  }
   async function send(text) {
     text = String(text || '').trim()
     if (!text || state.sending || state.confirming) return
@@ -66,7 +79,7 @@ function createAssistantController(options) {
     if (!pending.message || pending.message.text !== text) { pending.message = { text, idempotencyKey: makeKey() }; save() }
     update({ sending: true, input: text, error: '', preview: null })
     try {
-      const result = await request('mobile-workbench/assistant/query', 'POST', { sessionId: state.sessionId, input: text, idempotencyKey: pending.message.idempotencyKey })
+      const result = await request('mobile-workbench/assistant/query', 'POST', { sessionId: state.sessionId, input: text, idempotencyKey: pending.message.idempotencyKey, contextMode })
       if (!live(ticket)) return
       const history = await request('mobile-workbench/assistant/sessions/' + encodeURIComponent(state.sessionId) + '/messages')
       if (!live(ticket)) return
@@ -110,7 +123,7 @@ function createAssistantController(options) {
     finally { if (live(ticket)) update({ confirming: false }) }
   }
   return {
-    restore, send, preview, confirm, poll,
+    restore, send, preview, confirm, poll, listSessions, readSession, archive,
     getState: () => ({ ...state }),
     setInput: input => update({ input: String(input || '') }),
     dismissPreview: () => update({ preview: null }),

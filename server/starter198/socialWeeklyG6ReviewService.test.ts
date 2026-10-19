@@ -23,6 +23,17 @@ test('actual locally generated compliant MP4 is measured independently before G6
  const context=await createSocialWeeklyG6ReviewService(f.repository).context(scope,'owner');assert.equal(context.metadata?.width,360);assert.equal(context.metadata?.height,640);assert.equal(context.metadata?.framesPerSecond,30);assert.equal(context.checks.find(c=>c.code==='platform_format')?.status,'passed');assert.ok(context.gaps.includes('actual_independent_g5_pass_required'));
  }finally{await f.cleanup();}
 });
+test('shared original G6 reads the same real media but keeps destination account and permission independent',async()=>{
+ const f=await prepareWeeklyQualityAuditFixture({width:360,height:640,fps:30});try{
+ const root=f.pkg.socialContentPackage.publicationTasks[0]!;root.motherContentId='controlled-original';root.adaptationOfPublicationTaskId=null;f.pkg.socialContentPackage.productionIdentityVersion='shared-original.v1';
+ const target={...root,publicationTaskId:'shared-youtube',platform:'youtube' as const,accountId:'missing-youtube-account',adaptationOfPublicationTaskId:root.publicationTaskId};f.pkg.socialContentPackage.publicationTasks.push(target);
+ const authority=(f.tables.starter_social_content_tasks![0]!.brief as any)._weeklyAuthority;authority.weeklyPackage=f.pkg;authority.publicationTask=structuredClone(root);
+ const scope:SocialWeeklyG6Scope={tenantId:'t',taskId:'content',runId:'run',artifactId:'artifact',programId:f.pkg.programId,packageId:f.pkg.packageId,packageVersion:f.pkg.version,publicationTaskId:target.publicationTaskId};
+ const service=createSocialWeeklyG6ReviewService(f.repository),context=await service.context(scope,'owner');assert.equal(context.platform,'youtube');assert.equal(context.accountId,target.accountId);assert.equal(context.metadata?.width,360);assert.notEqual(context.checks.find(c=>c.code==='account')?.status,'passed');
+ const result=await service.check(scope,'owner',{programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion,publicationTaskId:scope.publicationTaskId,requestId:'shared-g6-destination-0001',expectedContextHash:context.contextHash});assert.equal(result.item?.status,'blocked');assert.equal(result.item?.receiptId,null);
+ assert.equal((await service.get({...scope,publicationTaskId:root.publicationTaskId},'owner','shared-g6-destination-0001')).item,null,'a destination check never grants the original or a sibling platform permission');
+ }finally{await f.cleanup();}
+});
 
 test('actual G4/G5, confirmed reception, provider-account fence and planned weekly authorization produce a real G6 receipt',async()=>{
  const f=await prepareWeeklyQualityAuditFixture({width:360,height:640,fps:30});try{

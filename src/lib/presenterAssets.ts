@@ -8,7 +8,8 @@ export interface PresenterLook {
   orientation: 'unknown' | 'portrait' | 'landscape' | 'square';
   status: string;
 }
-export interface PresenterVoice { id: string; name: string; language: string; previewUrl?: string }
+export interface PresenterVoice { id: string; name: string; language: string; previewUrl?: string; provider?: 'heygen' | 'volcengine_ark' }
+export interface PresenterVoiceCandidate extends PresenterVoice { selected?: boolean }
 export interface PresenterPage<T> { items: T[]; nextToken: string }
 export interface ArkPresenterPreparation {
   photoMaterialId: string;

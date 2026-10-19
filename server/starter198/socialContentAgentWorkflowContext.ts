@@ -71,14 +71,14 @@ export type SocialContentCapabilityRuntime = CapabilityDefinition & {
 /** Resolve runtime-backed capabilities when a workflow is built. Reading the
  * environment at module import made a worker keep an obsolete capability set
  * after its verified runtime configuration was refreshed. */
-export function socialContentEmbeddedRuntimeRegistrations(options: { wholeFilmBudget?: boolean; productVideoProvider?: 'wan' | 'seedance' } = {}): SocialContentCapabilityRuntimeRegistration[] {
+export function socialContentEmbeddedRuntimeRegistrations(options: { tenantId?: string; wholeFilmBudget?: boolean; productVideoProvider?: 'wan' | 'seedance' } = {}): SocialContentCapabilityRuntimeRegistration[] {
   const firstFrameReady = Boolean(String(process.env.SEEDREAM_API_KEY || process.env.SEEDANCE_API_KEY || '').trim());
   const productSceneReady = options.wholeFilmBudget && options.productVideoProvider === 'wan'
     ? firstFrameReady && Boolean(String(process.env.DASHSCOPE_API_KEY || '').trim())
     : process.env.SEEDANCE_VIDEO_ENABLED === 'true'
     && Boolean(String(process.env.SEEDANCE_API_KEY || '').trim())
     && Boolean(String(process.env.SEEDREAM_API_KEY || process.env.SEEDANCE_API_KEY || '').trim());
-  const heygenBudget = studioPaidBudget.status('heygen');
+  const heygenBudget = studioPaidBudget.status('heygen', undefined, options.tenantId);
   const heygenReasons = [
     ...(process.env.SOCIAL_CONTENT_HEYGEN_ENABLED === 'true' ? [] : ['SOCIAL_CONTENT_HEYGEN_ENABLED']),
     ...(process.env.HEYGEN_GENERATION_ENABLED === 'true' ? [] : ['HEYGEN_GENERATION_ENABLED']),

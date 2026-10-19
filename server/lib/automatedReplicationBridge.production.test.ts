@@ -8,6 +8,7 @@ const store: DataStore = {
   async getById<T>(collection: string, id: string) { return structuredClone(rows.get(`${collection}/${id}`) || null) as T | null; },
   async create<T>(collection: string, value: Record<string, unknown>) { const row = { ...structuredClone(value), id: `r${++seq}` }; rows.set(`${collection}/${row.id}`, row); return structuredClone(row) as T; },
   async update(collection, id, patch) { const key = `${collection}/${id}`; if (!rows.has(key)) return false; rows.set(key, { ...rows.get(key), ...structuredClone(patch) }); return true; },
+  async compareAndSwap(collection, id, expected, patch) { const key = `${collection}/${id}`; const row = rows.get(key); if (!row) return false; for (const [field, value] of Object.entries(expected)) { try { assert.deepEqual(row[field], value); } catch { return false; } } rows.set(key, { ...row, ...structuredClone(patch) }); return true; },
   async delete(collection, id) { return rows.delete(`${collection}/${id}`); },
   async list<T>(collection: string, query: ListQuery = {}) { const items = [...rows.entries()].filter(([key, row]) => key.startsWith(`${collection}/`) && Object.entries(query.where || {}).every(([field, value]) => row[field] === value)).map(([, row]) => structuredClone(row) as T); return { items, totalItems: items.length, totalPages: 1, page: 1, perPage: 500 }; },
 };

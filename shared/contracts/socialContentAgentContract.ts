@@ -538,6 +538,9 @@ export interface SocialExecutionPlanSceneReview {
 }
 
 export interface SocialExecutionPlanReview {
+  /** V2 candidate review is not paid authorization; real provider quotes,
+   * prior spend and every required stage remain a separate hard preflight. */
+  budgetPreflight?: {state:'required'; advisoryEstimatedCostCny:number; maximumCny:number|null; advisoryExceeded:boolean};
   reviewId: string;
   version: string;
   executionPlanId: string;

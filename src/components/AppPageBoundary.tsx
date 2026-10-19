@@ -84,6 +84,45 @@ export class WorkspaceErrorBoundary extends Component<{
   }
 }
 
+/** Keep an optional app-shell feature from replacing the primary workspace. */
+export class OptionalFeatureErrorBoundary extends Component<{
+  resetKey: string;
+  label: string;
+  children: ReactNode;
+}, { error: Error | null; resetKey: string }> {
+  state = { error: null as Error | null, resetKey: this.props.resetKey };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  static getDerivedStateFromProps(
+    props: { resetKey: string },
+    state: { error: Error | null; resetKey: string },
+  ) {
+    return props.resetKey === state.resetKey ? null : { error: null, resetKey: props.resetKey };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[OptionalFeatureErrorBoundary]', error, info);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="fixed bottom-4 right-4 z-[74] rounded-full border border-border bg-white p-1 shadow-lg" role="status">
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="min-h-11 rounded-full px-4 text-sm font-semibold text-text-secondary"
+        >
+          重新加载{this.props.label}
+        </button>
+      </div>
+    );
+  }
+}
+
 /** Last-resort guard for errors thrown outside the page slot (for example a sidebar lazy chunk). */
 export class AppCrashBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };

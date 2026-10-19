@@ -8,7 +8,7 @@ import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
 import { HeyGenPresenterClient } from '../lib/heygenPresenters.js';
 
 test('presenter creation, consent, import, tenant isolation, pagination and uncertain requests', async () => {
-  const rows = new Map<string, any>(); let seq = 0, failWrites = false, lost = false, approved = false, consentOmitted = false, budgetBlocked = false, trimCalls = 0, frameCalls = 0;
+  const rows = new Map<string, any>(); let seq = 0, failWrites = false, lost = false, approved = false, consentOmitted = false, consentProcessing = false, budgetBlocked = false, trimCalls = 0, frameCalls = 0, normalizeCalls = 0, inspectCalls = 0;
   const store: DataStore = {
     async getById<T>(c: string, id: string) { return structuredClone(rows.get(`${c}/${id}`) || null) as T | null; },
     async create<T>(c: string, value: Record<string, unknown>) { if (failWrites) return null; const row = { ...value, id: `r${++seq}` }; rows.set(`${c}/${row.id}`, structuredClone(row)); return row as T; },
@@ -29,14 +29,17 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     else if (url.pathname === '/v3/avatars/created-group') data = { id: 'created-group', status: 'completed', ...(consentOmitted ? {} : { consent_status: approved ? 'accepted' : 'pending' }) };
     else if (url.pathname === '/v3/avatars/looks/private1') data = { ...look, id: 'private1', status: 'completed', group_id: 'created-group' };
     else if (url.pathname === '/v3/avatars/looks/public1') data = look;
-    else if (url.pathname === '/v3/avatars/created-group/consent') data = { avatar_group: { id: 'created-group' }, url: 'https://app.heygen.com/consent/test' };
+    else if (url.pathname === '/v3/avatars/created-group/consent') {
+      if (consentProcessing) return new Response(JSON.stringify({ error: { message: 'Consent is processing for this avatar group. Please wait for consent' } }), { status: 409 });
+      data = { avatar_group: { id: 'created-group' }, url: 'https://app.heygen.com/consent/test' };
+    }
     else throw new Error(`Unexpected test request ${rawUrl}`);
     return new Response(JSON.stringify({ data, ...meta }));
   }) as typeof fetch);
   const locks = new Map<string, Promise<unknown>>();
   const exclusive = async <T>(key: string, fn: () => Promise<T>): Promise<T> => { const next = (locks.get(key) || Promise.resolve()).catch(() => {}).then(fn); locks.set(key, next); return next; };
   const app = express(); app.use(express.json()); app.use((req, res, next) => { res.locals.tenantId = req.headers['x-tenant'] || 'A'; next(); });
-  app.use(createPresenterAssetsRouter(store, exclusive, { client, configured: () => true, enabled: () => true, directConsent: () => false, reserve: async () => { if (budgetBlocked) throw new Error('预算不足'); }, trimVideo: async (_bytes, seconds) => { trimCalls++; assert.equal(seconds, 7); return Buffer.from([0,0,0,0,102,116,121,112,1,2,3,4]); }, extractFrame: async (_bytes, seconds) => { frameCalls++; assert.equal(seconds, 1); return Buffer.from([255,216,255,224,0,16,74,70,73,70,0,1,255,217]); }, normalizeTrainingVideo: async bytes => bytes, inspectVideo: async () => ({ duration: 60, width: 1080, height: 1920, fps: 30, hasAudio: true }), materialBelongs: (tenant, id, type) => tenant === 'A' && id === `ark-${type}` }));
+  app.use(createPresenterAssetsRouter(store, exclusive, { client, configured: () => true, enabled: () => true, directConsent: () => false, reserve: async () => { if (budgetBlocked) throw new Error('预算不足'); }, trimVideo: async (_bytes, seconds) => { trimCalls++; assert.equal(seconds, 7); return Buffer.from([0,0,0,0,102,116,121,112,1,2,3,4]); }, extractFrame: async (_bytes, seconds) => { frameCalls++; assert.equal(seconds, 1); return Buffer.from([255,216,255,224,0,16,74,70,73,70,0,1,255,217]); }, normalizeTrainingVideo: async bytes => { normalizeCalls++; return bytes; }, inspectVideo: async () => { inspectCalls++; return inspectCalls === 1 ? { duration: 60, width: 640, height: 480, fps: 20, hasAudio: true } : { duration: 60, width: 1280, height: 720, fps: 30, hasAudio: true }; }, materialBelongs: (tenant, id, type) => tenant === 'A' && id === `ark-${type}` }));
   const server = app.listen(0, '127.0.0.1'); await new Promise<void>(r => server.once('listening', r));
   const root = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const request = (url: string, body?: any, tenant = 'A') => fetch(root + url, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', 'x-tenant': tenant }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -61,8 +64,14 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     assert.equal(rows.get(`studio_presenter_assets/${extracted.id}`).payload.mime, 'image/jpeg');
     const training = await (await fetch(`${root}/uploads?mime=video/quicktime&requestId=training-video&trainingVideo=true`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: videoBytes })).json();
     assert.equal(training.trainingInfo.duration, 60); assert.equal(training.trainingInfo.hasAudio, true);
+    assert.equal(training.trainingInfo.width, 1280); assert.equal(training.trainingInfo.fps, 30);
+    assert.equal(normalizeCalls, 1); assert.equal(inspectCalls, 2);
     failWrites = true; const before = calls.length; assert.equal((await upload('save-failed')).status, 400); assert.equal(calls.length, before); failWrites = false;
     const asset = await (await upload('upload1')).json(); assert.ok(asset.id);
+    const disposable = await store.create<any>('studio_presenter_assets', { tenant_id: 'A', kind: 'creation', request_id: 'discardable', payload: { name: 'Discardable', type: 'digital_twin', status: 'failed', error: 'not accepted', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
+    assert.equal((await request(`/creations/${disposable.id}/discard`, {}, 'B')).status, 400);
+    assert.equal((await request(`/creations/${disposable.id}/discard`, {})).status, 200);
+    assert.equal(await store.getById('studio_presenter_assets', disposable.id), null);
     const assetsBeforeRepeat = calls.filter(c => c.url.endsWith('/assets')).length;
     assert.equal((await (await upload('upload1')).json()).id, asset.id); assert.equal(calls.filter(c => c.url.endsWith('/assets')).length, assetsBeforeRepeat);
     await store.create('studio_presenter_assets', { tenant_id: 'A', kind: 'creation', request_id: 'legacy-mock', payload: { mock: true, sourceDigest: rows.get(`studio_presenter_assets/${asset.id}`).payload.digest, status: 'completed' } });
@@ -100,8 +109,17 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     approved = true;
     const ready = await (await request(`/creations/${first.id}/refresh`, {})).json(); assert.equal(ready.status, 'completed'); assert.equal(ready.consentUrl, undefined); assert.equal(creates(), 1);
     const saved = await (await request('/import', bind)).json(); assert.equal(saved.presenters.length, 1); assert.equal(saved.presenters[0].nativeOrientation, 'portrait'); assert.equal(saved.presenters[0].supportsAlpha, false); assert.equal(saved.presenters[0].creationMode, 'quick');
+    const boundDiscard = await request(`/creations/${first.id}/discard`, {});
+    assert.equal(boundDiscard.status, 400);
+    assert.match((await boundDiscard.json()).error, /人物资产/);
+    assert.deepEqual(saved.presenters[0].referenceMaterialIds, ['ark-image', 'ark-video'], 'import binds the retained photo and video to the presenter for later Ark certification');
     assert.equal(validateHeyGenPresenterRecord(saved.presenters[0]).ok, true, 'verified import satisfies the existing generation gate');
     assert.equal((await (await request('/import', bind)).json()).presenters.length, 1);
+    const defaultsRow = [...rows.values()].find(row => row.payload?.presenters?.some((presenter: any) => presenter.id === saved.presenters[0].id));
+    if (!defaultsRow) throw new Error('missing presenter defaults row');
+    defaultsRow.payload.presenters[0].referenceMaterialIds = [];
+    const repaired = await (await request('/import', bind)).json();
+    assert.deepEqual(repaired.presenters[0].referenceMaterialIds, ['ark-image', 'ark-video'], 'retrying import repairs missing Ark material bindings');
     assert.equal((await request('/import', bind, 'B')).status, 400);
     assert.equal((await request('/import', { lookId: 'private-other', authorized: true, reviewed: true })).status, 400);
     const catalog = await (await request('/catalog')).json(); assert.equal(catalog.items[0].id, 'public1'); assert.equal(catalog.nextToken, 'page2');
@@ -158,6 +176,15 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     const twinConsent = await twinConsentResponse.json();
     assert.equal(twinConsentResponse.status, 200); assert.match(twinConsent.consentUrl, /heygen.com/);
     assert.equal(calls.filter(c => c.url.endsWith('/created-group/consent')).at(-1)?.body.reroute_url, rerouteUrl);
+    const processingTwin = await store.create<any>('studio_presenter_assets', { tenant_id: 'A', kind: 'creation', request_id: 'consent-already-processing', payload: { name: 'Processing consent', type: 'digital_twin', groupId: 'created-group', look: { ...look, id: 'private1', groupId: 'created-group', status: 'completed', orientation: 'portrait' }, status: 'pending_consent', consentStatus: 'pending', authorized: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
+    consentProcessing = true;
+    const processingConsentResponse = await request(`/creations/${processingTwin.id}/consent`, { requestId: 'processing-consent' });
+    const processingConsent = await processingConsentResponse.json();
+    assert.equal(processingConsentResponse.status, 200, 'an upstream consent-processing conflict remains a recoverable pending state');
+    assert.equal(processingConsent.status, 'pending_consent');
+    assert.ok(processingConsent.consentRequestedAt);
+    assert.equal(processingConsent.error, '');
+    consentProcessing = false;
     approved = true;
     assert.equal((await (await request(`/creations/${twin.id}/refresh`, {})).json()).status, 'completed');
     assert.equal((await request('/revoke', { presenterId: saved.presenters[0].id }, 'B')).status, 400, 'another tenant cannot revoke the presenter');

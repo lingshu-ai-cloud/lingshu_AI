@@ -1,4 +1,5 @@
 import {createWeeklyInventoryReuseService} from '../socialPrograms/weeklyInventoryReuse.js';
+import {resolveWeeklyProductionRow} from './weeklyContentProductionIdentity.js';
 import {assertWeeklyPublicationStoredScope} from '../publishing/weeklyFormalPublicationBoundary.js';
 import {readWeeklyPublicationMetricEvidence} from './weeklyPublicationMetricEvidence.js';
 import type { WeeklyExecutionTask, WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
@@ -12,6 +13,7 @@ import { runWeeklyReviewForPackage } from '../socialReview/weeklyReviewWorker.js
 import { validateWeeklyPublicationAcceptance } from './socialWeeklyResultValidation.js';
 import { SOCIAL_METRIC_KEYS } from '../socialMetrics/aggregation.js';
 import { publicationInstant } from '../socialPrograms/publicationDeadlines.js';
+import {resolveWeeklyPublicationSchedule} from '../socialPrograms/weeklyPublicationRecoverySchedule.js';
 import { checkPublicationReceptionAdmission } from '../socialPrograms/publicationReceptionService.js';
 import type { ReceptionCheckPorts } from '../socialPrograms/publicationReceptionReadiness.js';
 import type { SocialWeeklyExecutionAdapter, WeeklyExecutionAdapterResult } from './socialWeeklyExecutionAdapter.js';
@@ -97,9 +99,9 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
       try { await createWeeklyInventoryReuseService(dataStore).prepareAssignment(task); }
       catch (error) { return blocked('weekly_inventory_reuse_unverified', error instanceof Error ? error.message : '库存复用凭据不完整。'); }
     } else {
-    const bindings = await dataStore.list<Row>('starter_social_content_tasks', { where: { tenant_id: task.tenantId, create_idempotency_key: `weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}` }, page: 1, perPage: 2 });
-    if (bindings.totalItems !== 1 || !bindings.items[0]) return pending('weekly_production_binding_pending', '尚未取得本周成片的生产身份。');
-    let productionTaskId = bindings.items[0].task_id;
+    const production=await resolveWeeklyProductionRow(dataStore,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:publication.publicationTaskId});
+    if (!production) return pending('weekly_production_binding_pending', '尚未取得本周成片的生产身份。');
+    let productionTaskId = String(production.task_id);
     try {
       const { resolveWeeklyCreativeRepairApprovalEvidence } = await import('../socialPrograms/weeklyCreativeRepairApprovalEvidence.js');
       const repair = await resolveWeeklyCreativeRepairApprovalEvidence(dataStore, task);
@@ -132,7 +134,8 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
       // Status lookup only: never submit a second publish for an ambiguous receipt.
       attempt = await reconcileWeeklyPublication({ assignment: assignment.payload, publicationPackage, adapter: provider, dataStore, now: now() });
     } else {
-      const window = publicationInstant(publication.publishWindow);
+      const recoverySchedule=await resolveWeeklyPublicationSchedule(dataStore,task.tenantId,pkg,publication);
+      const window = publicationInstant(recoverySchedule.plannedSendAt);
       if (window === null) return blocked('publish_window_invalid', '发布需要包含时区的有效具体时间。');
       if (now().getTime() < window) return pending('publish_window_not_due', '尚未到达本条排期的发布窗口。');
       const assigned = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, { where: { tenant_id: task.tenantId, operating_package_id: task.packageId, operating_package_version: task.packageVersion }, page: 1, perPage: 1000 });

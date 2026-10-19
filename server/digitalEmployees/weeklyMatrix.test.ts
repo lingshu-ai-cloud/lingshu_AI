@@ -110,6 +110,7 @@ const datedProjects = [{ ...projects[0], spec: { ...projects[0].spec, contentOrd
 assert.equal(buildPublishingApprovalPackage({ ...input, projects: datedProjects, matrixPlan: [rows[0]] }).items[0].scheduledAt, '2026-09-18T10:00:00.000Z', 'a confirmed date without a manual time must use the 18:00 Beijing default');
 const manuallyTimedProjects = [{ ...projects[0], spec: { ...projects[0].spec, contentOrder: { ...(projects[0].spec as any).contentOrder, videoPlan: { ...plans[0], plannedPublishDate: '2026-09-18', plannedPublishAt: '2026-09-18T20:30:00+08:00' } } } }];
 assert.equal(buildPublishingApprovalPackage({ ...input, projects: manuallyTimedProjects, matrixPlan: [rows[0]] }).items[0].scheduledAt, '2026-09-18T12:30:00.000Z', 'a manually dragged publish time must reach the publishing approval subject unchanged');
+assert.equal(buildPublishingApprovalPackage({ ...input, projects: manuallyTimedProjects, matrixPlan: [rows[0]], scheduling: { ...input.scheduling, timezone: 'account' } }).items[0].scheduledAt, '2026-09-18T12:30:00.000Z', 'a frozen absolute publish time must not require an otherwise unused account timezone');
 assert.equal(buildPublishingApprovalPackage({ ...input, targets: [] }).items.length, 0);
 assert.equal(buildPublishingApprovalPackage({ ...input, projects: [{ id: 'unassigned', spec: { renderOutputPath: '/final.mp4' } }] }).items.length, 0, 'unassigned works must never be broadcast in matrix mode');
 const reused = { id: 'existing', status: 'completed', spec: { renderOutputPath: '/existing.mp4' } };

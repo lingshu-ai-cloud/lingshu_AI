@@ -60,7 +60,11 @@ Page({
     view.todayAcceptance = view.todayAcceptance.map(item => ({ ...item, videoUrl: item.videoUrl ? api.assetUrl(item.videoUrl) : '', thumbnailUrl: item.thumbnailUrl ? api.assetUrl(item.thumbnailUrl) : '' }))
     this.setData({ selectedDay, blockers: view.blockers, todayShots: view.todayShots, todayAcceptance: view.todayAcceptance }); this.updateDays()
   },
-  openEdition() { wx.navigateTo({ url: '/packages/management/home/index' }) },
+  openEdition() {
+    wx.showActionSheet({ itemList: ['运营版', '客服版'], success: result => {
+      if (result.tapIndex === 1) wx.redirectTo({ url: '/packages/customer/home/index' })
+    } })
+  },
   openMetric(e) {
     const key = e.currentTarget.dataset.key
     if (['production', 'acceptance', 'shooting'].includes(key)) this.setData({ activeMetric: key })

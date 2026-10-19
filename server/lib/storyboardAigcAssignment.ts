@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { applyStoryboardReplicationAutomation, automaticStoryboardFrameAdmission, type StoryboardQaReport } from './storyboardAigcQuality.js';
+import { applyStoryboardReplicationAutomation, automaticManagedFallbackFrameAdmission, automaticManagedFallbackVideoAdmission, automaticStoryboardFrameAdmission, type StoryboardQaReport } from './storyboardAigcQuality.js';
 import { storyboardProjectShotInput } from './storyboardProjectShotInput.js';
 import type { StoryboardShotSpec } from '../../shared/storyboardShotSpec.js';
+import { CONTROLLED_PRODUCT_FRAME_SOURCE, CONTROLLED_PRODUCT_VIDEO_SOURCE } from './controlledProductImageAnimation.js';
 
 interface AssignmentMaterial {
   id: string;
@@ -97,12 +98,23 @@ export function storyboardAigcAssignmentIssues(input: {
       const frameSpec = firstFrame?.provenance?.shotSpec as StoryboardShotSpec | undefined;
       const videoSpec = provenance.shotSpec as StoryboardShotSpec | undefined;
       const automaticReplication = frameSpec?.mode === 'replication' && !frameSpec.constraints.includes('person_identity');
-      const quality = automaticReplication && storedQuality ? applyStoryboardReplicationAutomation(storedQuality) : storedQuality;
+      const currentSourcePlan = (spec as Record<string, any>).storyboardSourcePlans?.[shotId] as Record<string, any> | undefined;
+      const automaticFallback = automaticManagedFallbackFrameAdmission(firstFrame?.provenance as Record<string, any> | undefined, currentSourcePlan)
+        && automaticManagedFallbackVideoAdmission(provenance as Record<string, any>, currentSourcePlan);
+      const automaticAdmission = automaticReplication || automaticFallback;
+      const quality = automaticAdmission && storedQuality ? applyStoryboardReplicationAutomation(storedQuality) : storedQuality;
       const storedFrameQuality = firstFrame?.provenance?.firstFrameQuality as StoryboardQaReport | undefined;
-      const frameQuality = automaticReplication && storedFrameQuality ? applyStoryboardReplicationAutomation(storedFrameQuality) : storedFrameQuality;
+      const frameQuality = automaticAdmission && storedFrameQuality ? applyStoryboardReplicationAutomation(storedFrameQuality) : storedFrameQuality;
+      const controlledProductAnimation = provenance.controlledProductImageAnimation === true;
+      const validVideoSource = controlledProductAnimation
+        ? material.sourceType === CONTROLLED_PRODUCT_VIDEO_SOURCE
+        : material.sourceType === 'ai-seedance';
+      const validFrameSource = controlledProductAnimation
+        ? firstFrame?.sourceType === CONTROLLED_PRODUCT_FRAME_SOURCE
+        : firstFrame?.sourceType === 'ai-storyboard-first-frame';
       const valid = material.tenantId === input.tenantId
         && material.type === 'video'
-        && material.sourceType === 'ai-seedance'
+        && validVideoSource
         && !!input.projectId
         && provenance.projectId === input.projectId
         && provenance.shotId === shotId
@@ -111,18 +123,19 @@ export function storyboardAigcAssignmentIssues(input: {
         && quality?.phase === 'video'
         && quality.passed === true
         && quality.status === 'passed'
-        && (quality.reviewDecision === 'accept' || automaticReplication && quality.acceptanceSource === 'automatic_policy')
+        && (quality.reviewDecision === 'accept' || automaticAdmission && quality.acceptanceSource === 'automatic_policy')
         && !!quality.reportId
         && firstFrame?.tenantId === input.tenantId
-        && firstFrame.sourceType === 'ai-storyboard-first-frame'
+        && validFrameSource
         && firstFrame.provenance?.projectId === input.projectId
         && firstFrame.provenance?.shotId === shotId
         && firstFrame.provenance?.fingerprint === provenance.firstFrameFingerprint
-        && (firstFrame.provenance?.confirmed === true || automaticStoryboardFrameAdmission(firstFrame.provenance))
+        && (firstFrame.provenance?.confirmed === true || automaticStoryboardFrameAdmission(firstFrame.provenance)
+          || automaticManagedFallbackFrameAdmission(firstFrame.provenance as Record<string, any>, currentSourcePlan))
         && frameQuality?.phase === 'first_frame'
         && frameQuality?.passed === true
         && frameQuality?.status === 'passed'
-        && (frameQuality?.reviewDecision === 'accept' || automaticReplication && frameQuality?.acceptanceSource === 'automatic_policy')
+        && (frameQuality?.reviewDecision === 'accept' || automaticAdmission && frameQuality?.acceptanceSource === 'automatic_policy')
         && !!frameSpec && !!videoSpec
         && JSON.stringify(frameSpec) === JSON.stringify(videoSpec)
         && JSON.stringify(productAssets(frameSpec)) === JSON.stringify(productAssets(videoSpec))

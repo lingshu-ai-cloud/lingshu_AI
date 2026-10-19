@@ -17,8 +17,9 @@ function visibleMessage(row: Record_) {
   return { id: row.id, role: row.role, text: row.text, commandId: row.command_id || null, createdAt: row.created_at, clientMessageId: row.client_message_id };
 }
 function visibleSession(row: Record_) {
-  return { id: row.id, title: row.title, createdAt: row.createdAt };
+  return { id: row.id, title: row.title, contextMode: row.context_mode || 'operator', createdAt: row.createdAt, updatedAt: row.updatedAt, archivedAt: row.archived_at || null };
 }
+function contextMode(value: unknown) { return value === undefined || value === null || value === '' || value === 'operator' ? 'operator' : value === 'customer_service' ? 'customer_service' : null; }
 async function ownedSession(store: DataStore, identity: MobileAssistantIdentity, id: string) {
   if (!identifier.test(id)) return null;
   const row = await store.getById<Record_>(MOBILE_ASSISTANT_SESSIONS, id);
@@ -109,21 +110,39 @@ export function createMobileAssistantSessionsRouter(store: DataStore) {
     const { tenantId, userId } = res.locals as AuthLocals;
     const page = pageOf(req.query.page);
     if (!page) { res.status(400).json({ error: 'mobile_assistant_page_invalid' }); return; }
+    const mode = contextMode(req.query.contextMode);
+    if (!mode) { res.status(400).json({ error: 'mobile_assistant_context_mode_invalid' }); return; }
+    const includeArchived = req.query.archived === 'all';
     try {
-      const list = await store.list<Record_>(MOBILE_ASSISTANT_SESSIONS, { where: { tenantId, userId, source: 'mobile_workbench' }, sort: '-createdAt', page, perPage: 30 });
-      res.json({ sessions: list.items.filter(row => row.tenantId === tenantId && row.userId === userId && row.source === 'mobile_workbench').map(visibleSession), page, totalPages: list.totalPages });
+      const list = await store.list<Record_>(MOBILE_ASSISTANT_SESSIONS, { where: { tenantId, userId, source: 'mobile_workbench' }, sort: '-createdAt', page, perPage: 100 });
+      const sessions = list.items.filter(row => row.tenantId === tenantId && row.userId === userId && row.source === 'mobile_workbench'
+        && String(row.context_mode || 'operator') === mode && (includeArchived || !row.archived_at)).map(visibleSession);
+      res.json({ sessions, page, totalPages: list.totalPages });
     } catch { res.status(503).json({ error: 'mobile_assistant_storage_unavailable' }); }
   });
   router.post('/assistant/sessions', json({ limit: '4kb' }), async (req, res) => {
     const { tenantId, userId } = res.locals as AuthLocals;
     const title = req.body?.title ?? '新对话';
-    if (typeof title !== 'string' || !title.trim() || title.length > 100 || Object.keys(req.body ?? {}).some(key => key !== 'title')) {
+    const mode = contextMode(req.body?.contextMode);
+    if (!mode || typeof title !== 'string' || !title.trim() || title.length > 100 || Object.keys(req.body ?? {}).some(key => !['title', 'contextMode'].includes(key))) {
       res.status(400).json({ error: 'mobile_assistant_session_invalid' }); return;
     }
     try {
-      const row = await store.create<Record_>(MOBILE_ASSISTANT_SESSIONS, { id: randomBytes(8).toString('hex').slice(0, 15), tenantId, userId, agentId: 'mobile_workbench', source: 'mobile_workbench', title: title.trim(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), messages: [] });
+      const row = await store.create<Record_>(MOBILE_ASSISTANT_SESSIONS, { id: randomBytes(8).toString('hex').slice(0, 15), tenantId, userId, agentId: 'mobile_workbench', source: 'mobile_workbench', context_mode: mode, title: title.trim(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), archived_at: '', messages: [] });
       if (!row) throw new Error('storage');
       res.status(201).json({ session: visibleSession(row) });
+    } catch { res.status(503).json({ error: 'mobile_assistant_storage_unavailable' }); }
+  });
+  router.post('/assistant/sessions/:id/archive', json({ limit: '1kb' }), async (req, res) => {
+    const identity = res.locals as AuthLocals;
+    if (Object.keys(req.body ?? {}).length) { res.status(400).json({ error: 'mobile_assistant_archive_invalid' }); return; }
+    try {
+      const session = await ownedSession(store, identity, String(req.params.id));
+      if (!session) { res.status(404).json({ error: 'mobile_assistant_session_not_found' }); return; }
+      const archivedAt = String(session.archived_at || new Date().toISOString());
+      const saved = await store.update(MOBILE_ASSISTANT_SESSIONS, session.id, { archived_at: archivedAt, updatedAt: archivedAt });
+      if (!saved) throw new Error('storage');
+      res.json({ session: visibleSession({ ...session, archived_at: archivedAt, updatedAt: archivedAt }) });
     } catch { res.status(503).json({ error: 'mobile_assistant_storage_unavailable' }); }
   });
   router.get('/assistant/sessions/:id/messages', async (req, res) => {

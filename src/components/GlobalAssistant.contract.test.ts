@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+const appBoundarySource = fs.readFileSync(new URL('./AppPageBoundary.tsx', import.meta.url), 'utf8');
 const conversionPageSource = fs.readFileSync(new URL('./ConversionPage.tsx', import.meta.url), 'utf8');
 const trafficPageSource = fs.readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
 const composerSource = fs.readFileSync(new URL('./assistant/AssistantComposer.tsx', import.meta.url), 'utf8');
@@ -10,6 +11,7 @@ const assistantStylesSource = fs.readFileSync(new URL('./assistant/assistantDeci
 const conversationContextSource = fs.readFileSync(new URL('../lib/assistantConversationContext.ts', import.meta.url), 'utf8');
 const assistantGuidesSource = fs.readFileSync(new URL('../lib/assistantGuides.ts', import.meta.url), 'utf8');
 const globalStylesSource = fs.readFileSync(new URL('../index.css', import.meta.url), 'utf8');
+const layoutSource = fs.readFileSync(new URL('./Layout.tsx', import.meta.url), 'utf8');
 
 function sourceSection(startMarker: string, endMarker: string, label: string) {
   const start = source.indexOf(startMarker);
@@ -25,11 +27,19 @@ assert.doesNotMatch(source, /data-assistant-surface=["']quick-actions["']|SKILL_
 assert.equal(source.match(/data-global-assistant=["']root["']/g)?.length, 1, '页面只能渲染一个灵小枢根入口');
 
 const launcherClickSource = sourceSection('const handleLauncherClick', '\n  useEffect(', '灵小枢点击处理');
-const launcherMarkup = sourceSection('<Badge count={decisionTotal ?? pendingCount}', '</Button>', '灵小枢右下角入口');
+const launcherMarkup = sourceSection('ref={launcherButtonRef}', '</Button>', '灵小枢右下角入口');
+const edgeLauncherMarkup = sourceSection('ref={edgeLauncherButtonRef}', 'title="展开灵小枢入口"', '灵小枢贴边入口');
+const retractControlMarkup = sourceSection('data-global-assistant="retract-control"', 'title="收起灵小枢入口到右侧"', '灵小枢收起控件');
+const assistantRootMarkup = sourceSection('data-global-assistant="root"', '<AnimatePresence>', '灵小枢根定位容器');
 assert.match(launcherClickSource, /openCurrentPageAgent\(\)/, '主入口点击灵小枢必须直接进入当前工作对话');
 assert.doesNotMatch(launcherClickSource, /setMode\('expanded'\)|quick-actions|SKILL_AGENTS/, '点击灵小枢不得打开四助手快捷轮盘');
-assert.match(source, /data-global-assistant="root"[\s\S]{0,350}fixed right-4[\s\S]{0,350}bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, '灵小枢入口必须固定在页面右下角并避让设备安全区');
-assert.doesNotMatch(source, /page === 'conversion'[\s\S]{0,180}bottom-\[calc\(env\(safe-area-inset-bottom\)\+8rem\)\]/, '灵小枢入口不得在会话页跳到不同的垂直位置');
+assert.match(assistantRootMarkup, /fixed/, '灵小枢完整入口必须使用固定定位');
+assert.match(assistantRootMarkup, /z-\[75\]/, '灵小枢完整入口必须保持在页面操作层之上');
+assert.match(assistantRootMarkup, /bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, '灵小枢完整入口必须避让设备安全区');
+assert.match(assistantRootMarkup, /launcherRetracted && mode === 'breathing'[\s\S]*right-0 md:right-0[\s\S]*right-4 md:right-5/, '灵小枢收起后必须贴右边，展开时恢复页面内边距');
+assert.match(assistantRootMarkup, /bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\][\s\S]*md:bottom-5/, '灵小枢入口必须使用统一安全区基准，桌面端不得留下大块底部空白');
+assert.doesNotMatch(assistantRootMarkup, /5\.5rem/, '制作页不得通过额外抬高灵小枢入口制造底部空白');
+assert.match(source, /assistantUsesMobileClearance[\s\S]{0,240}viewport\.height - \(assistantUsesMobileClearance \? 160 : 96\)/, '移动端抬高入口时必须同步收紧对话高度，不能把面板顶部裁掉');
 assert.match(source, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, '右下角入口必须以清晰文本直接打开或收起对话');
 assert.match(launcherMarkup, /shape="round"/, '灵小枢入口必须采用紧凑胶囊形态');
 assert.match(launcherMarkup, /!h-11/, '灵小枢入口必须保留 44px 触控高度');
@@ -37,14 +47,26 @@ assert.match(source, /aria-expanded=\{mode === 'chat'\}[\s\S]{0,80}aria-controls
 assert.match(launcherMarkup, /aria-haspopup="dialog"/, '灵小枢入口必须声明它会打开对话浮层');
 assert.match(launcherMarkup, /var\(--ls-action-gradient\)/, '灵小枢入口图标必须复用全局主操作渐变 Token');
 assert.match(launcherMarkup, /!bg-white[\s\S]*active:!bg-white[\s\S]*focus-visible:!bg-white/, '灵小枢入口在点击和聚焦时必须保持不透明白底');
-assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY|data-global-assistant="edge-launcher"|setLauncherRetracted/, '右下角入口不得再保留拖动、旧坐标或自动缩边交互');
+assert.match(retractControlMarkup, /aria-label="收起灵小枢入口到右侧"[\s\S]*onClick=\{retractLauncher\}[\s\S]*!h-11 !w-11/, '必须提供独立、可键盘操作的 44px 收起控件');
+assert.match(edgeLauncherMarkup, /shape="circle"[\s\S]*data-global-assistant="edge-launcher"[\s\S]*aria-label="展开灵小枢入口"[\s\S]*onClick=\{restoreLauncher\}[\s\S]*!h-11 !w-11[\s\S]*!rounded-l-full !rounded-r-none/, '收起后必须保留贴右边的 44px 恢复入口');
+assert.match(source, /launcherRetracted && mode === 'breathing'[\s\S]{0,180}<Badge count=\{decisionTotal \?\? pendingCount\}/, '贴边入口必须继续显示权威待办 Badge');
+assert.match(source, /ASSISTANT_LAUNCHER_RETRACTED_KEY[\s\S]*localStorage\.getItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY\)[\s\S]*localStorage\.setItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY, String\(retracted\)\)/, '用户手动收起偏好必须跨刷新保存');
+assert.match(source, /const retractLauncher[\s\S]{0,260}edgeLauncherButtonRef\.current\?\.focus\(\)/, '收起后焦点必须交给贴边恢复入口');
+assert.match(source, /const restoreLauncher[\s\S]{0,260}launcherButtonRef\.current\?\.focus\(\)/, '恢复后焦点必须交回完整入口');
+assert.match(source, /\{!launcherRetracted && mode === 'breathing' && performance[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*speechBubble[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*weeklyPlanKickoffAvailable[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*featureGuide/, '收起态不得显示任何横向提示气泡');
+assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY/, '右下角入口不得恢复拖动、旧坐标或自动缩边交互');
 assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
 assert.match(source, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
 assert.match(source, /max-h-\[calc\(100dvh-env\(safe-area-inset-bottom\)-96px\)\]/, '灵小枢弹窗高度必须避让移动设备底部安全区');
 assert.match(source, /role="dialog"[\s\S]{0,160}aria-modal="false"[\s\S]{0,160}aria-labelledby="global-assistant-panel-title"[\s\S]{0,160}aria-describedby="global-assistant-panel-description"/, '灵小枢必须以有名称和说明的非模态对话浮层呈现');
-assert.match(source, /mode !== 'chat'\) return;[\s\S]{0,200}getElementById\('global-assistant-panel'\)\?\.focus\(\)/, '打开弹窗后必须把焦点移入对话区域');
-assert.match(source, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => launcherButtonRef\.current\?\.focus\(\)\)/, '关闭弹窗后必须把焦点归还右下角入口');
+assert.match(source, /mode !== 'chat'\) return;[\s\S]{0,300}panel\?\.focus\(\{ preventScroll: true \}\)/, '打开弹窗后必须在不滚动页面的前提下把焦点移入对话区域');
+assert.match(source, /appMain\?\.scrollTop[\s\S]{0,80}appMain\.scrollTop = 0/, '打开助手时必须修正历史滚动偏移，避免页面底部出现空白');
+assert.match(layoutSource, /<main className="app-main[^\n]*overflow-clip"/, '应用主容器不得成为可被焦点程序滚动的隐藏滚动容器');
+assert.match(source, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => \{\s*if \(launcherRetracted\) edgeLauncherButtonRef\.current\?\.focus\(\);\s*else launcherButtonRef\.current\?\.focus\(\)/, '关闭弹窗后必须按用户偏好把焦点归还完整或贴边入口');
 assert.match(appSource, /<GlobalAssistant[\s\S]{0,650}compactMode=\{starterMode \|\| isAgentProductionSession\(\)\}/, '制作会话保留紧凑的灵小枢审批和聊天入口');
+assert.match(appSource, /const loadGlobalAssistant = \(\) => retryDynamicModule\([\s\S]{0,160}import\('\.\/components\/GlobalAssistant'\)[\s\S]{0,160}import\('\.\/components\/GlobalAssistant\?recovery'\)/, '灵小枢异步模块必须用不同模块 URL 自动重试一次，避免复用浏览器缓存的失败结果');
+assert.match(appSource, /<OptionalFeatureErrorBoundary[\s\S]{0,260}<Suspense fallback=\{null\}>[\s\S]{0,120}<GlobalAssistant/, '灵小枢必须有独立错误边界，加载失败不得拖垮主页面');
+assert.match(appBoundarySource, /class OptionalFeatureErrorBoundary[\s\S]*重新加载\{this\.props\.label\}/, '可选外壳能力失败时必须保留主页面并提供恢复入口');
 assert.match(source, /useState<AssistantPanelView>\('chat'\)/, '灵小枢默认页必须是单列对话');
 assert.match(source, /openAgent\(currentPageAgent, 'chat'\)/, '入口必须直接打开单列对话而不是强制进入审批详情');
 assert.doesNotMatch(source, /aria-label="灵小枢工作视图"/, '单列对话不得保留待办与聊天页签');
@@ -150,6 +172,14 @@ assert.match(source, /workflowStage === 'unplanned'/, '灵小枢必须识别尚�
 assert.match(source, /data-lingshu-weekly-plan-prompt="true"[\s\S]{0,900}先制定本周计划[\s\S]{0,500}制定周计划/, '关闭态灵小枢必须主动说明先预览计划再生产');
 assert.match(source, /data-assistant-bubble="weekly-plan-kickoff"[\s\S]{0,900}确认后，数字员工才会开始生产[\s\S]{0,500}制定周计划/, '打开灵小枢后必须提供同一条计划制定入口');
 assert.match(source, /openWeeklyPlanFromAssistant[\s\S]{0,300}lingshu:open-weekly-plan[\s\S]{0,120}source: 'assistant'/, '灵小枢计划按钮必须派发明确来源的页面动作');
+assert.doesNotMatch(source, /productionSuggestions|data-assistant-surface="production-suggestions"|aria-label="生产快捷问题"/, '不得在页面快捷入口上方重复渲染生产快捷问题');
+const pageQuickEntrySource = sourceSection(
+  '<AssistantQuickEntries',
+  '<AssistantComposer',
+  '输入框上方的页面快捷入口',
+);
+assert.match(pageQuickEntrySource, /page=\{page\}/, '移除重复生产问题后仍须保留当前页面快捷入口');
+assert.match(pageQuickEntrySource, /onQuestion=\{entry => void send\(entry\.prompt, currentPageAgent\)\}/, '页面快捷问题仍须进入当前业务上下文');
 
 const decisionActionResultSource = sourceSection(
   'const handleDecisionActionResult',
@@ -235,15 +265,15 @@ assert.match(source, /persistThread\(activeAgent\)/, '关闭前必须保留任�
 const sendSource = sourceSection('const send = useCallback', 'const handleTaskCardAction', '自然语言发送流程');
 assert.match(sendSource, /const threadAgent = PRIMARY_ASSISTANT_THREAD/, '发送消息必须写入 business 主线程');
 assert.match(source, /function assistantProductionIntent[\s\S]*hasProductionVerb[\s\S]*hasProductionArtifact/, '明确的脚本、视频与分镜生产指令必须被识别为生产任务');
-assert.match(sendSource, /assistantProductionIntent\(visibleText\)[\s\S]*socialContentApi\.createTask\(/, '生产指令必须创建真实内容 Agent 任务，不得交给模型生成长文本');
-assert.match(sendSource, /resolveAssistantEnterpriseProduct\(productionIntent\.productQuery\)[\s\S]*studioApi\.script\([\s\S]*selectedProductId: productionProduct\.id[\s\S]*scriptType: 'storyboard'/, '助手必须用企业中心已确认产品调用现有内容制作能力生成真实口播分镜');
-assert.match(sendSource, /if \(!productionDraft\.script\?\.trim\(\)\)[\s\S]*throw new Error/, '口播生成失败时不得跳入空白生产页');
-assert.ok(sendSource.indexOf('studioApi.script') < sendSource.indexOf('socialContentApi.createTask'), '必须先生成有效口播再创建周任务，避免留下空白孤儿任务');
+assert.match(sendSource, /assistantProductionIntent\(visibleText\)[\s\S]*socialContentApi\.createAssistantAction\(/, '生产指令必须创建真实周任务并调用后端生产入口');
+assert.match(sendSource, /resolveAssistantEnterpriseProduct\(productionIntent\.productQuery\)/, '生产指令必须解析真实企业产品');
+assert.match(sendSource, /dueAt: confirmedDueAt/, '生产任务必须带明确的交付截止时间');
+assert.match(sendSource, /upsertTaskCard\(threadAgent,[\s\S]*taskId: `social-content:\$\{productionTask\.taskId\}`/, '自然语言生产回执也必须保留真实任务入口');
+assert.doesNotMatch(sendSource, /agentTaskDemo: true/, '真实执行不得进入演示页面');
 assert.match(sendSource, /productId: productionProduct\.id[\s\S]*productRef: productionProduct\.label/, '周任务必须绑定企业中心的真实产品身份');
-assert.match(sendSource, /initialProductionScript: productionDraft\.script/, '现有三栏生产页必须接收已经生成的口播分镜');
 assert.match(sendSource, /setAssistantTool\(null\)[\s\S]*setMode\('breathing'\)[\s\S]*page: 'smartAssets'/, '进入生产页前必须收起灵小枢对话窗口');
 assert.match(sendSource, /page: 'smartAssets'[\s\S]*socialContentTaskId: productionTask\.taskId/, '任务创建后必须定位到该任务的生产页面');
-assert.ok(sendSource.indexOf('socialContentApi.createTask') < sendSource.indexOf('fetch(API_PATH[agentForOrbit(routeAgent)]'), '生产任务分流必须发生在千问文本生成请求之前');
+assert.ok(sendSource.indexOf('socialContentApi.createAssistantAction') < sendSource.indexOf('fetch(API_PATH[agentForOrbit(routeAgent)]'), '生产任务分流必须发生在千问文本生成请求之前');
 assert.match(sendSource, /fetch\(API_PATH\[agentForOrbit\(routeAgent\)\]/, 'business 主线程聚合不得丢失当前页面的内部能力路由');
 assert.doesNotMatch(sendSource, /setPaused\(targetAgent,\s*false\)/, '发送普通消息不得擅自把任务恢复为运行中');
 assert.match(sendSource, /focusedNaturalLanguageActionInput\(focusedCard, focusedMutationActionId\)/, '自然语言确定性操作必须从当前卡片读取后端签发输入');
@@ -268,9 +298,9 @@ assert.match(sendSource, /userQuestion: visibleText[\s\S]{0,700}retainedUserInst
 assert.match(sendSource, /requestFence\.active[\s\S]{0,100}persistenceFenceRef\.current === requestFence/, '租户或用户范围切换后旧请求的异步响应必须被丢弃');
 assert.match(source, /function isWeeklyPlanKickoffRequest[\s\S]{0,500}开始\|启动\|制定\|生成\|创建[\s\S]{0,220}生产\|制作\|周计划\|计划\|周任务/, '空白周计划必须识别用户对灵小枢发出的明确开工或制定计划请求');
 assert.match(sendSource, /weeklyPlanKickoffAvailable && isWeeklyPlanKickoffRequest\(draft\)[\s\S]{0,650}可预览的周计划[\s\S]{0,400}openWeeklyPlanFromAssistant\(\)/, '灵小枢收到明确开工请求时必须先打开计划预览，不能绕过用户确认直接生产');
+assert.match(sendSource, /sameAssistantRequestIdentity\(requestToken, getToken\(\), stablePersistenceScope\)/, '身份切换后丢弃旧响应，同身份令牌刷新不丢弃文字');
 
-assert.match(source, /<AssistantDecisionMemoryPanel memory=\{decisionMemory\}/, '统一主对话保留已确认的经营决策管理');
-assert.match(source, /<AssistantDecisionSaveButton memory=\{decisionMemory\} text=\{msg.content\}/, '保存用户原话必须显式确认');
+assert.doesNotMatch(source, /AssistantDecisionMemoryPanel|AssistantDecisionSaveButton|useAssistantDecisionMemory/, '对话记忆由后台维护，灵小枢首屏不得暴露记忆管理工具');
 assert.match(conversationContextSource, /较早用户原话/, '历史用户约束必须保留原文且不得升级为已核验事实');
 
 const responseErrorSource = sourceSection('async function responseErrorMessage', '\n}\n\nfunction todoToneClass', '助手请求错误提示');
@@ -323,6 +353,46 @@ assert.match(hydrationSource, /assistantThreadHydrationStartedRef\.current/, '�
 assert.match(hydrationSource, /version:\s*Number\.isSafeInteger/, '恢复线程时必须同时恢复服务端 CAS 版本');
 assert.match(hydrationSource, /withoutPersistedConversation\(journal\)/, '进入新会话时不得从本地恢复旧消息正文');
 assert.match(hydrationSource, /withoutPersistedConversation\(persistedRemote\)/, '进入新会话时不得从服务端恢复旧消息正文');
+
+const pageConversationResetSource = sourceSection(
+  'const previousPage = conversationPageRef.current',
+  'setLiveContext(null)',
+  '跨页面会话重置',
+);
+assert.match(pageConversationResetSource, /if \(restore \|\| kickoff\) return/, '主动恢复的会话或任务跳转不得被页面切换清空');
+assert.match(pageConversationResetSource, /resetTransientConversation\(\)/, '切换到其他页面时必须清空临时会话');
+assert.match(pageConversationResetSource, /focusTaskCard\(PRIMARY_ASSISTANT_THREAD, null\)/, '切换页面时不得把上一页待决定任务卡带到新页面');
+
+const transientConversationResetSource = sourceSection(
+  'const resetTransientConversation = useCallback',
+  'const openAgent = useCallback',
+  '临时会话清空内容',
+);
+assert.match(transientConversationResetSource, /setMessages\(PRIMARY_ASSISTANT_THREAD, \[\]\)/, '清空临时会话必须清空消息');
+assert.match(transientConversationResetSource, /setDraftInput\(PRIMARY_ASSISTANT_THREAD, ''\)/, '清空临时会话必须清空草稿');
+assert.match(transientConversationResetSource, /setPendingAttachments\(\[\]\)/, '清空临时会话必须清空未发送附件');
+
+const samePageConversationExpirySource = sourceSection(
+  'const openCurrentPageAgent = useCallback',
+  'const handleDecisionFeedChange',
+  '同页关闭会话过期规则',
+);
+assert.match(samePageConversationExpirySource, /closed\.page === page/, '只有同一页面关闭的会话才适用五分钟保留期');
+assert.match(samePageConversationExpirySource, /Date\.now\(\) - closed\.at >= ASSISTANT_CLOSED_CONVERSATION_TTL_MS/, '同页关闭满五分钟后重开必须过期');
+assert.match(samePageConversationExpirySource, /resetTransientConversation\(\)/, '过期后必须开启空会话');
+assert.match(source, /ASSISTANT_CLOSED_CONVERSATION_TTL_MS = 5 \* 60 \* 1000/, '同页会话关闭保留期必须是五分钟');
+assert.match(source, /assistantClosedRef\.current = \{ page, at: Date\.now\(\) \}/, '关闭会话时必须记录当前页面和关闭时间');
+
+const quickExecutionSource = sourceSection(
+  'const runQuickExecution = useCallback',
+  'const handleTaskCardAction',
+  '快捷执行入口',
+);
+assert.match(quickExecutionSource, /if \(!confirmations\)/, '生产任务启动前必须确认');
+assert.match(quickExecutionSource, /startAssistantAction\(entry\.taskId, entry\.expectedVersion, executionRequestId\)/, '确认完成后必须向真实任务提交对象版本和幂等键');
+assert.match(quickExecutionSource, /upsertTaskCard\(PRIMARY_ASSISTANT_THREAD/, '真实执行回执必须投影为任务卡片');
+assert.match(source, /destination\.origin === window\.location\.origin[\s\S]*socialContentTaskId: productionTaskId, socialContentPage: 'smartAssets', directStudio: true/, '生产回执链接必须原子恢复指定任务而非刷新成空制作页');
+assert.match(source, /<AssistantQuickEntries[\s\S]*onQuestion=\{entry => void send\(entry\.prompt, currentPageAgent\)\}[\s\S]*onExecute=\{entry => void runQuickExecution\(entry\)\}/, '输入框上方必须同时接通页面问答与快捷执行');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*threadBeforeRequest/, '旧线程快照不得覆盖请求期间产生的本地输入');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*hydratedThread/, '过期重签结果不得覆盖请求期间产生的新卡片或焦点');
 assert.match(hydrationSource, /actionCardToTaskCard\(response\.card, response, CURRENT_STATUS_TASK_ID\)/, '重新签发的动作必须进入专用的权威状态卡');

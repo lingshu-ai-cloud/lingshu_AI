@@ -14,7 +14,7 @@ interface Ports {
  probe:(path:string)=>Promise<{duration:number}>;
  prepare:typeof prepareReferenceNarration;
  readCache:typeof readCachedReferenceNarration;
- admission?:typeof readReferenceNarrationAdmission;
+ admission?:(tenantId?:string)=>ReturnType<typeof readReferenceNarrationAdmission>;
  readExisting?:typeof readExistingReferenceNarration;
  resumeExisting?:typeof resumeExistingReferenceNarration;
 }
@@ -31,7 +31,7 @@ export function createReferencePhraseAsrHandler(ports:Ports):RequestHandler{retu
   const sourceHash=createHash('sha256').update(fs.readFileSync(videoPath)).digest('hex');
   const analysisHash=socialRequestHash(analysis);
   if(typeof analysis.analysisRunId!=='string'||!analysis.analysisRunId||typeof analysis.contentSha256!=='string'||!/^[a-f0-9]{64}$/.test(analysis.contentSha256)||sourceHash!==analysis.contentSha256){res.status(409).json({error:'原片与分析版本已变化，请重新核对后补证'});return;}
-  const admission=(ports.admission??readReferenceNarrationAdmission)();
+  const admission=ports.admission?ports.admission(tenantId):readReferenceNarrationAdmission(undefined,tenantId);
   const scope={tenantId,filePath:videoPath,expectedSourceSha256:sourceHash};
   const freshSource=async()=>{const fresh=await ports.readRecord(String(req.params.id));const freshAnalysis=socialObject(socialJson(fresh?.aiAnalysis));return !!fresh&&fresh.id===record.id&&fresh.tenantId===tenantId&&fresh.videoFileId===record.videoFileId&&!!freshAnalysis&&socialRequestHash(freshAnalysis)===analysisHash&&ports.exists(videoPath)&&createHash('sha256').update(fs.readFileSync(videoPath)).digest('hex')===sourceHash;};
   const rejectDrift=async()=>{if(await freshSource())return false;res.status(409).json({error:'原片或分析版本在读取期间发生变化，请重新加载'});return true;};

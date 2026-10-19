@@ -111,6 +111,22 @@ test('invalid actions and unbounded text cannot enter the decision UI', () => {
   assert.deepEqual(feed.items[0].actions.map(action => action.id), ['approve']);
 });
 
+test('workflow recovery actions survive transport normalization', () => {
+  const feed = normalizeAssistantDecisionFeed({
+    page: 'scheduled',
+    items: [card({
+      id: 'task:failed-collection',
+      kind: 'input_required',
+      subject: { type: 'workflow_task', id: 'failed-collection', version: 'task:2' },
+      actions: [
+        { id: 'retry_task', label: '从当前节点重试', mode: 'command', emphasis: 'primary' },
+        { id: 'replan_task', label: '重新规划本周任务', mode: 'command', emphasis: 'default' },
+      ],
+    })],
+  });
+  assert.deepEqual(feed.items[0]?.actions.map(action => action.id), ['retry_task', 'replan_task']);
+});
+
 test('API sends page context and optimistic version without leaking extra payload', async () => {
   const originalFetch = globalThis.fetch;
   const originalLocalStorage = globalThis.localStorage;

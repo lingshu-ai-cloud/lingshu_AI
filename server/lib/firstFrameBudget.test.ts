@@ -24,3 +24,34 @@ test('first-frame budget rejects cost above the per-video limit', async () => {
     await assert.rejects(() => budget.reserve({ tenantId: 't', videoId: 'v', operationId: 'op-2', compositionId: 'c-2', estimatedCostCny: 0.3 }), /预算上限/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('first-frame exemption is exact and preserves frame-count and estimate validation', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'first-frame-budget-exempt-'));
+  const previous = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+  process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'frame-exempt';
+  try {
+    const budget = new FirstFrameBudget(root, () => 0.5, () => 1);
+    const exempt = await budget.reserve({ tenantId: 'frame-exempt', videoId: 'video', operationId: 'op-1', compositionId: 'c-1', estimatedCostCny: 0.6 });
+    assert.equal(exempt.existing, false);
+    await assert.rejects(
+      budget.reserve({ tenantId: 'frame-exempt-child', videoId: 'video', operationId: 'op-1', compositionId: 'c-1', estimatedCostCny: 0.6 }),
+      /预算上限/,
+    );
+    await assert.rejects(
+      budget.reserve({ tenantId: 'frame-exempt', videoId: 'video', operationId: 'op-2', compositionId: 'c-2', estimatedCostCny: 0.1 }),
+      /最多生成 1 张/,
+    );
+    await assert.rejects(
+      budget.reserve({ tenantId: 'frame-exempt', videoId: 'invalid-cost', operationId: 'op-invalid', compositionId: 'c-1', estimatedCostCny: 0 }),
+      /预计费用无效/,
+    );
+    await assert.rejects(
+      new FirstFrameBudget(root, () => 0, () => 1).reserve({ tenantId: 'frame-exempt', videoId: 'invalid-limit', operationId: 'op-1', compositionId: 'c-1', estimatedCostCny: 0.1 }),
+      /预计费用无效/,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+    else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

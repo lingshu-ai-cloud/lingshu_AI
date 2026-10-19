@@ -15,6 +15,7 @@ import {
 } from './repository.js';
 import { parseUsageLedgerRecord } from './usage.js';
 import { withStarterQuotaScope } from './quota.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 
 export interface StarterUsageResourceUnits {
   contentArtifacts: number;
@@ -270,6 +271,7 @@ async function cycleUsage(input: {
 }
 
 function assertProjectedLimits(input: {
+  tenantId: string;
   usage: ReturnType<typeof lifecycleUsage>;
   role: StarterAgentRole;
   reservedCostCny: number;
@@ -281,6 +283,7 @@ function assertProjectedLimits(input: {
 }
 
 function projectedLimitViolations(input: {
+  tenantId: string;
   usage: ReturnType<typeof lifecycleUsage>;
   role: StarterAgentRole;
   reservedCostCny: number;
@@ -288,9 +291,10 @@ function projectedLimitViolations(input: {
   limits: Awaited<ReturnType<Starter198Repository['access']>>['resourceLimits'];
 }): string[] {
   const violations: string[] = [];
-  if (rounded(input.usage.settled + input.usage.reserved + input.reservedCostCny) > input.limits.budgetCnyPerCycle
+  if (!isInternalBudgetExemptTenant(input.tenantId)
+    && (rounded(input.usage.settled + input.usage.reserved + input.reservedCostCny) > input.limits.budgetCnyPerCycle
     || rounded(input.usage.byRole[input.role].settled + input.usage.byRole[input.role].reserved + input.reservedCostCny)
-      > input.limits.agentBudgetCny[input.role]) {
+      > input.limits.agentBudgetCny[input.role])) {
     violations.push('starter_198_budget_exhausted');
   }
   if (input.usage.units.contentArtifacts + input.units.contentArtifacts > input.limits.contentArtifactCountPerCycle) {
@@ -369,7 +373,8 @@ export async function reserveStarterUsage(input: {
     const currentCycleId = cycleId(access);
     if (input.cost.status === 'known') {
       const usage = await cycleUsage({ repository, tenantId: input.tenantId, cycleId: currentCycleId });
-      assertProjectedLimits({ usage, role: input.agentRole, reservedCostCny: input.cost.reservedCostCny, units, limits: access.resourceLimits });
+      assertProjectedLimits({ tenantId: input.tenantId, usage, role: input.agentRole,
+        reservedCostCny: input.cost.reservedCostCny, units, limits: access.resourceLimits });
     }
     const reservationId = `starter_usage_${stableHash(`${input.tenantId}:${input.idempotencyKey}`).slice(0, 32)}`;
     const usage = {
@@ -491,6 +496,7 @@ async function terminalStarterUsage(input: {
           excludeReservationId: input.reservationId,
         });
         terminalAnomalies.push(...projectedLimitViolations({
+          tenantId: input.tenantId,
           usage: withoutReservation,
           role: reserve.role,
           reservedCostCny: input.cost.settledCostCny,

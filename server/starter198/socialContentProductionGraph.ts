@@ -211,7 +211,7 @@ export async function loadSocialProductionGraphApproval(repository: Starter198Re
   const content = socialJson(artifact.content);
   if (socialObject(content)?.workflowSchema === 'social-content.auto-production.v3') {
     const task = await requireSocialTask({ repository, tenantId: job.tenantId, taskId: job.taskId });
-    assertSocialContentReleaseQuality({ brief: socialTaskSummary(task).brief, content, mode: 'human' });
+    assertSocialContentReleaseQuality({ tenantId: job.tenantId, brief: socialTaskSummary(task).brief, content, mode: 'human' });
   }
   return { approved: true, receiptRef, subjectVersion: evidence.version, contentHash: evidence.contentHash };
 }

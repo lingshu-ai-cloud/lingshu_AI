@@ -1,3 +1,4 @@
+import {weeklyScopeMatches,type WeeklyScanScope} from './weeklyScanScope.js';
 import type { WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import { getWeeklyExecutionTaskRow, withWeeklyExecutionTaskMutation, writeWeeklyExecutionTask, listWeeklyExecutionTasks, WEEKLY_EXECUTION_TASKS, type WeeklyExecutionTaskRow } from '../socialPrograms/executionTasks.js';
@@ -6,6 +7,7 @@ import { SocialProgramError } from '../socialPrograms/service.js';
 import { PACKAGES, type PackageRow } from '../socialPrograms/weeklyOperatingPackageSupport.js';
 import { scheduleHash } from '../socialPrograms/weeklyScheduleSnapshots.js';
 import { acquireDurableOperationLease, releaseDurableOperationLease } from './durableLease.js';
+import {readIndependentAdmission} from '../socialPrograms/weeklyIndependentAdmission.js';
 
 export const WEEKLY_DEADLINE_ASSESSMENTS = 'social_weekly_deadline_assessments';
 export interface DeadlineRecoveryScope { tenantId: string; programId: string; packageId: string; packageVersion: number }
@@ -26,7 +28,7 @@ export function weeklyDeadlineTriggers(tasks: WeeklyExecutionTask[], now: Date) 
 }
 
 /** Creates a durable evaluation of the original task graph; never revises dates or dispatches paid work. */
-export async function runWeeklyDeadlineRecoveryScan(input: { dataStore: DataStore; now?: Date; readEvidence?: DeadlineRecoveryEvidenceReader }) {
+export async function runWeeklyDeadlineRecoveryScan(input: { dataStore: DataStore; now?: Date; scope?:WeeklyScanScope; readEvidence?: DeadlineRecoveryEvidenceReader }) {
   const now = input.now ?? new Date();
   if (!Number.isFinite(now.getTime())) throw new Error('Invalid deadline scan clock');
   const scopes = new Map<string, DeadlineRecoveryScope>();
@@ -35,6 +37,7 @@ export async function runWeeklyDeadlineRecoveryScan(input: { dataStore: DataStor
       const rows = await input.dataStore.list<WeeklyExecutionTaskRow>(WEEKLY_EXECUTION_TASKS, { where: { status }, page, perPage: 500 });
       for (const row of rows.items) {
         const task = row.payload;
+        if(!weeklyScopeMatches(input.scope,task))continue;
         if (!task || row.status !== task.status || !task.tenantId || !task.programId || !task.packageId || !Number.isInteger(task.packageVersion) || task.packageVersion < 1 || row.tenant_id !== task.tenantId || row.program_id !== task.programId || row.package_id !== task.packageId || row.package_version !== task.packageVersion) continue;
         const scope = { tenantId: task.tenantId, programId: task.programId, packageId: task.packageId, packageVersion: task.packageVersion };
         scopes.set(scheduleHash(scope), scope);
@@ -55,6 +58,11 @@ export async function runWeeklyDeadlineRecoveryScan(input: { dataStore: DataStor
     const packages = await input.dataStore.list<PackageRow>(PACKAGES, { where: { tenant_id: scope.tenantId, program_id: scope.programId, package_id: scope.packageId, version: scope.packageVersion }, perPage: 2 });
     const pkg = packages.items[0]?.payload;
     if (packages.totalItems !== 1 || !pkg || pkg.programId !== scope.programId || pkg.packageId !== scope.packageId || pkg.version !== scope.packageVersion || !['active', 'draft'].includes(pkg.status)) continue;
+    // Independent channel checks do not turn an unconfirmed content estimate
+    // into a committed production calendar. Reassessing/projecting all 327
+    // nodes on every preflight both invents an execution reservation and
+    // monopolizes the local JSON store. Full/frozen schedules retain recovery.
+    if(pkg.status==='draft'&&!('scheduleRevisionRef' in pkg)&&await readIndependentAdmission(input.dataStore,scope))continue;
     const lease = await acquireDurableOperationLease({ dataStore: input.dataStore, tenantId: scope.tenantId, scope: 'weekly-deadline-assessment', subjectId: scopeKey, ownerId: 'deadline-scan', now, leaseDurationMs: 120_000 });
     if (!lease) continue;
     try {

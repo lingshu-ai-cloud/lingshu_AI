@@ -16,6 +16,10 @@ import { tenantAssetDir } from './assetAccess.js';
 import { matchReplicationMaterial } from './replicationMaterialMatching.js';
 import { referenceCues } from '../../src/lib/digitalHumanPlan.js';
 import { assertReferencePresenterComposition, type ReferencePresenterComposition } from '../digitalEmployees/referencePresenterComposite.js';
+import { automaticManagedFallbackFrameAdmission, automaticManagedFallbackVideoAdmission } from './storyboardAigcQuality.js';
+import { createControlledProductImageAnimation, type ControlledProductImageAnimationInput,
+  type ControlledProductImageAnimationResult } from './controlledProductImageAnimation.js';
+import { compareAndSwapStudioProject } from './studioProjectRevision.js';
 
 export interface AutomatedReplicationShot {
   shotId: string; slotId: string; kind: 'person' | 'nonperson' | 'blocked'; start: number; end: number;
@@ -26,7 +30,7 @@ export interface AutomatedReplicationShot {
 }
 export interface ReplicationRouteReply { status: number; body: any }
 export type ReplicationRouteCall = (surface: 'production' | 'studio', method: 'get' | 'post', route: string, body?: Record<string, unknown>) => Promise<ReplicationRouteReply>;
-export interface AutomatedReplicationDependencies { call: ReplicationRouteCall; materials?: () => MaterialRecord[] | Promise<MaterialRecord[]>; validateVideo?: (material: MaterialRecord, tenantId: string) => Promise<string | void>; validateAdoption?: (spec: Record<string, any>, materials: MaterialRecord[]) => Promise<string[]> }
+export interface AutomatedReplicationDependencies { call: ReplicationRouteCall; materials?: () => MaterialRecord[] | Promise<MaterialRecord[]>; validateVideo?: (material: MaterialRecord, tenantId: string) => Promise<string | void>; validateAdoption?: (spec: Record<string, any>, materials: MaterialRecord[]) => Promise<string[]>; createControlledProductAnimation?: (input: ControlledProductImageAnimationInput) => Promise<ControlledProductImageAnimationResult> }
 export interface AutomatedReplicationResult { state: 'pending' | 'blocked' | 'ready'; changed: boolean; blocker?: string; blockerCode?: string; shotId?: string; materialIds?: string[] }
 
 /** Invoke a native business handler inside the already authenticated worker scope.
@@ -81,7 +85,9 @@ async function defaultDependencies(input: { tenantId: string; store: DataStore }
   if (!production) { const module = await import('./studioAvatarProduction.js'); production = module.createStudioAvatarProductionRouter(input.store); productionRouters.set(input.store, production); }
   const { studioRouter } = await import('../routes/studio.js');
   const { readMaterialLibrary } = await import('./materialLibrary.js');
-  return { materials: async () => (await readMaterialLibrary(input.tenantId)).items, call: (surface, method, route, body) => invokeReplicationRoute(surface === 'production' ? production! : studioRouter, input.tenantId, method, route, body) };
+  return { materials: async () => (await readMaterialLibrary(input.tenantId, { dataStore: input.store })).items,
+    createControlledProductAnimation: createControlledProductImageAnimation,
+    call: (surface, method, route, body) => invokeReplicationRoute(surface === 'production' ? production! : studioRouter, input.tenantId, method, route, body) };
 }
 const locks = new Set<string>();
 // These native responses are explicit pre-admission rejections. Other errors
@@ -116,7 +122,10 @@ export async function advanceAutomatedReplication(input: { tenantId: string; pro
       if (!latest || latest.tenant_id !== input.tenantId || latest.status !== 'draft') throw new Error('逐镜草稿状态已变化');
       Object.assign(progress, latest.spec?.automatedReplicationProgress || {});
       progress[shotId] = { ...progress[shotId], blocker: '', blockerCode: '', ...value, updatedAt: new Date().toISOString() };
-      if (!await input.store.update('studio_projects', project.id, { spec: { ...latest.spec, ...patch, automatedReplicationProgress: progress } })) throw new Error('逐镜进度持久化失败，未继续调用供应商');
+      const saved = await compareAndSwapStudioProject(input.store, latest, {
+        spec: { ...latest.spec, ...patch, automatedReplicationProgress: progress },
+      });
+      if (!saved.ok) throw new Error('逐镜草稿已并发更新，未覆盖最新内容；请刷新后重试');
     };
     const materialFor = async (id: string) => (await (deps.materials || readLocalMaterials)()).find(item => item.id === id && String(item.tenantId || item.tenant_id || '') === input.tenantId);
     const validate = deps.validateVideo || validateReplicationVideo;
@@ -247,15 +256,107 @@ export async function advanceAutomatedReplication(input: { tenantId: string; pro
         const firstFrame = await materialFor(String(state.firstFrameMaterialId));
         const qualityState = firstFrame?.provenance?.firstFrameQualityState;
         if (qualityState && qualityState !== 'evaluated') {
-          const error = firstFrame?.provenance?.firstFrameQualityError as { code?: unknown; error?: unknown } | undefined;
-          throw Object.assign(new Error(String(error?.error || '首帧质检未完成，已保留原图，请复检后继续；未重新生成图片')), { code: String(error?.code || 'FIRST_FRAME_QA_SERVICE_UNAVAILABLE') });
+          const reply = await call('studio', 'post', `/storyboard-first-frame/${encodeURIComponent(String(state.firstFrameMaterialId))}/recheck-quality`, {
+            fingerprint: state.firstFrameFingerprint,
+            shotId: entry.slotId,
+          });
+          // A completed recheck may legitimately return a hard QA rejection.
+          // That result is persisted on the retained material and must flow
+          // through the protected, budgeted regeneration branch on the next
+          // tick. Treating the 422 as a transport failure blocked the whole
+          // project before its approved retry allowance could be consumed.
+          const completedQualityRejection = reply.body?.code === 'FIRST_FRAME_QA_FAILED';
+          if ((reply.status >= 400 || !reply.body?.ok) && !completedQualityRejection) {
+            throw nativeFailure(reply, '首帧质检未完成，已保留原图并等待自动复检；不会重新生成图片');
+          }
+          await save(entry.shotId, { firstFrameQaRecheckedAt: new Date().toISOString() });
+          return { state: 'pending', changed: true, shotId: entry.shotId };
         }
         const firstFrameQuality = firstFrame?.provenance?.firstFrameQuality as { passed?: unknown; reasonCodes?: unknown } | undefined;
-        if (firstFrameQuality && firstFrameQuality.passed !== true) {
-          const reasons = Array.isArray(firstFrameQuality.reasonCodes) ? firstFrameQuality.reasonCodes.map(String).join('、') : '';
+        const currentSourcePlan = spec.storyboardSourcePlans?.[entry.slotId] as Record<string, any> | undefined;
+        const managedFallbackAccepted = automaticManagedFallbackFrameAdmission(firstFrame?.provenance, currentSourcePlan);
+        if (firstFrameQuality && firstFrameQuality.passed !== true && !managedFallbackAccepted) {
+          const reasonCodes = Array.isArray(firstFrameQuality.reasonCodes) ? firstFrameQuality.reasonCodes.map(String) : [];
+          const reasons = reasonCodes.join('、');
+          const operatingContext = spec.contentOrder?.operatingContext || {};
+          const maxRetries = Math.max(0, Math.min(20, Number(operatingContext.maxAigcRetries || 0)));
+          const productIds = Array.isArray(entry.firstFrameRequest?.productIds)
+            ? entry.firstFrameRequest.productIds.map(String).filter(Boolean) : [];
+          const shotSpec = firstFrame?.provenance?.shotSpec;
+          const projectShotFingerprint = String(firstFrame?.provenance?.projectShotFingerprint || '');
+          const createControlledFallback = async () => {
+            const controlledEligible = currentSourcePlan?.fallbackMode === 'enterprise_product_display'
+              && currentSourcePlan?.mode === 'ai'
+              && entry.firstFrameRequest?.fallbackMode === 'enterprise_product_display'
+              && entry.firstFrameRequest?.mode === 'free_creation'
+              && entry.firstFrameRequest?.sceneType === 'product'
+              && productIds.length === 1
+              && shotSpec?.mode === 'free_creation' && shotSpec?.scene === 'product'
+              && !shotSpec.constraints?.some((value: string) => ['person_identity', 'physical_contact', 'factory_space', 'action_completion'].includes(value))
+              && !shotSpec.action?.beats?.length
+              && projectShotFingerprint;
+            if (!controlledEligible) return false;
+            const inventory = await (deps.materials || readLocalMaterials)();
+            const source = inventory.find(item => item.type === 'image' && item.scope === 'own'
+              && String(item.tenantId || item.tenant_id || '') === input.tenantId
+              && item.sourceType === 'enterprise_product_table' && item.commercialUseApproved === true
+              && item.rightsStatus === 'authorized' && String(item.productId || '') === productIds[0]);
+            const createControlled = deps.createControlledProductAnimation || (suppliedDeps ? undefined : createControlledProductImageAnimation);
+            if (!source || !createControlled) return false;
+            const controlled = await createControlled({ tenantId: input.tenantId, projectId: project.id,
+              shotId: entry.slotId, requestId: `${requestId}:controlled-product-animation`,
+              projectShotFingerprint, durationSeconds: Math.max(4, Math.min(15, Math.ceil(entry.end - entry.start))),
+              productImage: source, shotSpec });
+            await save(entry.shotId, {
+              firstFrameMaterialId: controlled.frame.id,
+              firstFrameFingerprint: controlled.frame.provenance?.fingerprint,
+              firstFrameQaRecheckedAt: new Date().toISOString(),
+              videoMaterialId: controlled.video.id,
+              controlledProductFallback: true,
+            });
+            return true;
+          };
+          // A current, authorized product image is stronger identity evidence
+          // than another generative guess. For static managed product-display
+          // shots, switch immediately after an identity failure and preserve
+          // retry budget for failures that generation can actually repair.
+          if (reasonCodes.includes('PRODUCT_IDENTITY_FAILED') && await createControlledFallback())
+            return { state: 'pending', changed: true, shotId: entry.shotId };
+          // Protected plans freeze a project-wide maximum before production.
+          // If the ordinary retry changes the failure class, one directed
+          // prompt-repair revision may use otherwise-unused headroom inside
+          // that same approved ceiling. The project ledger remains the final
+          // cost gate, so this can never raise the user's approved budget.
+          const directedRepairAllowance = operatingContext.productionBudgetMode === 'protected'
+            && Boolean(operatingContext.budgetApprovedAt) && maxRetries > 0 ? 1 : 0;
+          const retryCount = Math.max(0, Number(state.firstFrameRetryCount || 0));
+          if (retryCount < maxRetries + directedRepairAllowance) {
+            const nextRetryCount = retryCount + 1;
+            const firstFrameHistory = [...(Array.isArray(state.firstFrameHistory) ? state.firstFrameHistory : []), {
+              materialId: state.firstFrameMaterialId,
+              fingerprint: state.firstFrameFingerprint,
+              reasonCodes: Array.isArray(firstFrameQuality.reasonCodes) ? firstFrameQuality.reasonCodes.map(String) : [],
+              rejectedAt: new Date().toISOString(),
+            }];
+            const qualityRepairReasonCodes = [...new Set(firstFrameHistory.flatMap(item => Array.isArray(item.reasonCodes)
+              ? item.reasonCodes.map(String) : []))];
+            const nextShots = shots.map(item => item.shotId !== entry.shotId ? item : ({
+              ...item,
+              firstFrameRequest: { ...item.firstFrameRequest,
+                generationRevision: nextRetryCount > maxRetries ? `quality-directed-repair-${nextRetryCount}` : `quality-retry-${nextRetryCount}`,
+                qualityRepairReasonCodes },
+            }));
+            await save(entry.shotId, {
+              firstFrameMaterialId: '', firstFrameFingerprint: '', firstFrameQaRecheckedAt: '',
+              firstFrameRetryCount: nextRetryCount, firstFrameHistory,
+            }, { automatedReplicationShots: nextShots });
+            return { state: 'pending', changed: true, shotId: entry.shotId };
+          }
+          if (await createControlledFallback()) return { state: 'pending', changed: true, shotId: entry.shotId };
           throw Object.assign(new Error(`非人物首帧未通过产品与画面质检${reasons ? `：${reasons}` : ''}；未提交视频生成`), { code: 'FIRST_FRAME_QA_FAILED' });
         }
-        const reply = await call('studio', 'post', '/seedance-video', { ...entry.firstFrameRequest, script: entry.firstFrameRequest?.shotDescription || shot.narration, firstFrameMaterialId: state.firstFrameMaterialId, firstFrameFingerprint: state.firstFrameFingerprint, shotId: entry.slotId, requestId: `${requestId}:video`, duration: Math.max(4, Math.min(15, Math.ceil(entry.end - entry.start))), resolution: '480p', ratio: spec.ratio || '9:16', language: spec.activeVoiceLang || spec.lang || 'en', generationContext: { projectId: project.id }, maxCostCny: input.maxCostCny });
+        const videoRequestId = state.videoGenerationRevision ? `${requestId}:video:${state.videoGenerationRevision}` : `${requestId}:video`;
+        const reply = await call('studio', 'post', '/seedance-video', { ...entry.firstFrameRequest, script: entry.firstFrameRequest?.shotDescription || shot.narration, firstFrameMaterialId: state.firstFrameMaterialId, firstFrameFingerprint: state.firstFrameFingerprint, shotId: entry.slotId, requestId: videoRequestId, duration: Math.max(4, Math.min(15, Math.ceil(entry.end - entry.start))), resolution: '480p', ratio: spec.ratio || '9:16', language: spec.activeVoiceLang || spec.lang || 'en', generationContext: { projectId: project.id }, maxCostCny: input.maxCostCny });
         if (reply.status === 202 && reply.body?.code === 'STORYBOARD_VIDEO_IN_PROGRESS') {
           if (reply.body.providerTaskId && reply.body.providerAcceptedAt) {
             await save(entry.shotId, { providerTaskId: reply.body.providerTaskId,
@@ -263,15 +364,61 @@ export async function advanceAutomatedReplication(input: { tenantId: string; pro
           }
           return { state: 'pending', changed: Boolean(reply.body.providerTaskId), shotId: entry.shotId };
         }
+        if (reply.status >= 400 && reply.body?.code === 'STORYBOARD_VIDEO_PROVIDER_FAILED') {
+          const maxRetries = Math.max(0, Math.min(20, Number(spec.contentOrder?.operatingContext?.maxAigcRetries || 0)));
+          const retryCount = Math.max(0, Number(state.videoRetryCount || 0));
+          if (retryCount < maxRetries) {
+            const nextRetryCount = retryCount + 1;
+            const videoHistory = [...(Array.isArray(state.videoHistory) ? state.videoHistory : []), {
+              materialId: state.videoMaterialId || '', providerTaskId: reply.body?.providerTaskId || state.providerTaskId || '',
+              providerStatus: reply.body?.providerStatus || '', failureCode: 'STORYBOARD_VIDEO_PROVIDER_FAILED',
+              rejectedAt: new Date().toISOString(),
+            }];
+            await save(entry.shotId, {
+              videoMaterialId: '', qualityChecked: false,
+              providerTaskId: '', providerAcceptedAt: '', providerModel: '',
+              videoRetryCount: nextRetryCount, videoGenerationRevision: `provider-retry-${nextRetryCount}`, videoHistory,
+            });
+            return { state: 'pending', changed: true, shotId: entry.shotId };
+          }
+        }
         if (reply.status >= 400 || !reply.body?.ok || !reply.body?.material?.id) throw nativeFailure(reply, '非人物镜头生成未完成，原生预算账本保留原作业');
         await save(entry.shotId, { videoMaterialId: reply.body.material.id }); return { state: 'pending', changed: true, shotId: entry.shotId };
       }
       if (!state.qualityChecked) {
         const qualityMaterial = await materialFor(state.videoMaterialId); if (!qualityMaterial) throw new Error('待质检视频不存在');
         const qualityInputHash = await validate(qualityMaterial, input.tenantId);
+        const currentSourcePlan = spec.storyboardSourcePlans?.[entry.slotId] as Record<string, any> | undefined;
+        if (automaticManagedFallbackVideoAdmission(qualityMaterial.provenance, currentSourcePlan)) {
+          await save(entry.shotId, { qualityChecked: true, ...(qualityInputHash ? { videoContentSha256: qualityInputHash } : {}) });
+          return { state: 'pending', changed: true, shotId: entry.shotId };
+        }
         const reply = await call('studio', 'post', '/storyboard-quality-check', { materialId: state.videoMaterialId, storyboard: entry.firstFrameRequest?.shotDescription || '' });
         if (reply.status >= 400) throw nativeFailure(reply, '视频质检服务未完成，已保留原视频');
-        if (!reply.body?.quality?.passed) throw Object.assign(new Error(reply.body?.error || '非人物视频质量检查未通过'), { code: 'STORYBOARD_VIDEO_QA_FAILED' });
+        const managedFallbackVideoAccepted = automaticManagedFallbackVideoAdmission({
+          ...qualityMaterial.provenance,
+          storyboardQualityReport: reply.body?.quality,
+        }, currentSourcePlan);
+        if (!reply.body?.quality?.passed && !managedFallbackVideoAccepted) {
+          const maxRetries = Math.max(0, Math.min(20, Number(spec.contentOrder?.operatingContext?.maxAigcRetries || 0)));
+          const retryCount = Math.max(0, Number(state.videoRetryCount || 0));
+          if (retryCount < maxRetries) {
+            const nextRetryCount = retryCount + 1;
+            const videoHistory = [...(Array.isArray(state.videoHistory) ? state.videoHistory : []), {
+              materialId: state.videoMaterialId,
+              quality: reply.body?.quality || null,
+              providerTaskId: state.providerTaskId || '',
+              rejectedAt: new Date().toISOString(),
+            }];
+            await save(entry.shotId, {
+              videoMaterialId: '', qualityChecked: false,
+              providerTaskId: '', providerAcceptedAt: '', providerModel: '',
+              videoRetryCount: nextRetryCount, videoGenerationRevision: `quality-retry-${nextRetryCount}`, videoHistory,
+            });
+            return { state: 'pending', changed: true, shotId: entry.shotId };
+          }
+          throw Object.assign(new Error(reply.body?.error || '非人物视频质量检查未通过'), { code: 'STORYBOARD_VIDEO_QA_FAILED' });
+        }
         const checkedMaterial = await materialFor(state.videoMaterialId); if (!checkedMaterial) throw new Error('质检视频不存在');
         const checkedHash = await validate(checkedMaterial, input.tenantId);
         if (qualityInputHash && checkedHash !== qualityInputHash) throw new Error('非人物视频在质检过程中已被替换');

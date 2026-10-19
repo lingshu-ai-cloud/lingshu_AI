@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { Material } from '../lib/studioApi.js';
 import {
   canProcessVideo,
   displayDuration,
   isDisplayableVideoAnalysis,
+  materialMatchesLibraryFilters,
+  materialMatchesOrientation,
   materialSemanticLabel,
   resolveLinkedFavoriteMaterialId,
   resultEmptyState,
@@ -30,6 +33,24 @@ assert.equal(materialSemanticLabel({
   scriptAnalysis: { status: 'ready' } as never,
 }), '内容：产品特写');
 
+const filterableProductMaterial = {
+  id: 'product-material-1', name: '紫苏洁面展示', folder: 'social', type: 'video', duration: 3,
+  size: '', file: '', url: '/media/product.mp4', createdAt: '', pinned: true,
+  sourceCategory: 'local_upload', primaryTheme: 'product', themeTags: ['product'],
+  industry: 'beauty_skincare', shotFunction: 'product_demo', applicability: 'industry_specific', tags: '横屏',
+} as unknown as Material;
+const defaultMaterialFilters = {
+  query: '', assetTab: 'all', type: 'all', industry: 'all', shotFunction: 'all', applicability: 'all',
+  orientation: 'all', source: 'all', theme: 'all', favorite: 'all',
+} as const;
+assert.equal(materialMatchesLibraryFilters(filterableProductMaterial, { ...defaultMaterialFilters, query: '洁面' }), true, '产品摘要应按关联素材名搜索');
+assert.equal(materialMatchesLibraryFilters(filterableProductMaterial, { ...defaultMaterialFilters, type: 'image' }), false, '产品摘要不得在类型不匹配时假命中');
+assert.equal(materialMatchesLibraryFilters(filterableProductMaterial, { ...defaultMaterialFilters, source: 'local_upload', favorite: 'favorite' }), true, '产品摘要应响应来源与收藏筛选');
+assert.equal(materialMatchesOrientation({ ...filterableProductMaterial, width: 1920, height: 1080, aspectRatio: 9 / 16, tags: '竖屏' } as never, 'horizontal'), true, '画面方向必须优先使用权威宽高');
+assert.equal(materialMatchesOrientation({ ...filterableProductMaterial, width: 1920, height: 1080, tags: '竖屏' } as never, 'vertical'), false, '标签不得覆盖权威宽高');
+assert.equal(materialMatchesOrientation({ ...filterableProductMaterial, width: undefined, height: undefined, aspectRatio: 9 / 16, tags: '横屏' } as never, 'vertical'), true, '缺少宽高时必须使用持久化比例');
+assert.equal(materialMatchesOrientation({ ...filterableProductMaterial, width: undefined, height: undefined, aspectRatio: undefined, tags: '竖屏' } as never, 'vertical'), true, '仅在无权威比例时才允许标签兜底');
+
 assert.equal(resultEmptyState(0, '', false), 'no-data');
 assert.equal(resultEmptyState(12, 'not-found', false), 'no-match');
 assert.equal(resultEmptyState(12, '', true), 'no-match');
@@ -49,10 +70,13 @@ assert.equal(isDisplayableVideoAnalysis({ geminiStatus: 'video_failed' }, 'analy
 
 const componentSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
 const videoCardSource = readFileSync(fileURLToPath(new URL('./InspirationVideoCards.tsx', import.meta.url)), 'utf8');
-assert.match(componentSource, /aria-label={`播放 \${material\.name}`}[^]*?event\.stopPropagation\(\); setPreviewMaterial\(material\);[^]*?z-20/, '播放按钮应稳定置于 hover 操作层之上且只打开预览');
+assert.match(componentSource, /aria-label={`播放 \${material\.name}`}[^]*?event\.stopPropagation\(\); onPlay\(\);[^]*?z-20[^]*?onPlay=\{\(\) => setPreviewMaterial\(material\)\}/, '播放按钮应稳定置于 hover 操作层之上且只打开预览');
 assert.match(componentSource, /contentFormat: isImageMaterial \? 'image' : 'video'/, '图片素材进入工作流时必须保留图片类型，不能伪装成视频');
 assert.match(componentSource, /disabled=\{material\.type === 'audio' \|\| \(material\.type === 'video' && !canProcessVideo\([^]*?<Sparkles[^]*?自由创作/, '图片素材必须可以直接进入生成，只有无有效时长的视频和音频被拦截');
 assert.match(componentSource, /refreshMaterialPreviewUrl[^]*?重新获取播放地址/, '素材预览失败后必须能刷新短期播放地址并重试');
+const previewRefreshSource = componentSource.slice(componentSource.indexOf('const refreshMaterialPreviewUrl'), componentSource.indexOf('const handleMaterialPreviewError'));
+assert.match(previewRefreshSource, /const previewProductId = String\(current\.productId[^]*?if \(previewProductId\)[^]*?fetchCompleteProductMaterialInventory\(product\)/, '产品视频预览失败必须按 productId 精确刷新详情库存');
+assert.doesNotMatch(previewRefreshSource, /excludeProductAssociated/, '产品视频预览刷新不得误走排除产品素材的主墙查询');
 assert.match(componentSource, /aria-label={`编辑 \${material\.name}`}[^]*?aria-label={`删除 \${material\.name}`}/, '每条可管理素材必须固定提供编辑与删除入口');
 assert.match(componentSource, /INSPIRATION_PAGE_SIZE = 100/, '灵感列表必须一次读取当前租户的全部常规库存，避免分页后前端过滤造成假缺失');
 assert.match(componentSource, /inventory-summary[^]*?setTenantVideoTotalItems/, '首屏必须独立优先读取真实库存量');
@@ -62,16 +86,31 @@ assert.match(componentSource, /正在读取真实视频库存/, '首次列表请
 assert.match(componentSource, /<Pagination current=\{videoPage\}[^]*?pageSize=\{INSPIRATION_PAGE_SIZE\}[^]*?showSizeChanger=\{false\}[^]*?onChange=\{page => void refreshVideos\(page\)\}/, '灵感列表必须使用固定页大小的服务端分页');
 assert.doesNotMatch(componentSource, />\s*加载更多\s*</, '灵感列表不再使用追加式“加载更多”');
 assert.doesNotMatch(componentSource, /本页近 3 日新入库|当前显示 <strong/, '灵感中心不应再显示与真实结果集口径冲突的独立统计条');
-assert.match(componentSource, /<LsMasonryGallery layout="grid"/, '带固定操作区的视频卡必须使用齐行网格，避免瀑布流产生空列');
-assert.ok([...componentSource.matchAll(/<LsMasonryGallery layout="grid"/g)].length >= 2, '爆款灵感和我的素材必须共用齐行媒体网格');
-assert.match(videoCardSource, /aspect-\[9\/16\][^]*?flex min-h-52 flex-1 flex-col/, '爆款卡必须使用 9:16 媒体和统一信息区高度');
-assert.match(componentSource, /filteredMaterials\.map[^]*?aspect-\[9\/16\][^]*?flex min-h-52 flex-1 flex-col/, '素材卡必须与爆款卡使用相同媒体比例和信息区高度');
-assert.match(componentSource, /grid-cols-\[160px_[^]*?<Select value=\{platform\}[^]*?<Input allowClear[^]*?aria-label="搜索爆款灵感"/, '发布平台必须位于灵感发现主筛选最左侧');
+assert.ok([...componentSource.matchAll(/<LsMasonryGallery layout="masonry"/g)].length >= 2, '爆款灵感和我的素材必须共用真实比例瀑布流');
+assert.match(videoCardSource, /style=\{\{ background: 'var\(--color-surface-2\)', aspectRatio: mediaAspectRatio \}\}/, '爆款卡媒体区必须跟随真实媒体比例');
+assert.doesNotMatch(videoCardSource, /aspect-\[9\/16\]/, '爆款卡不得把横版素材强制裁成 9:16');
+assert.doesNotMatch(videoCardSource, /min-h-52/, '爆款瀑布流卡不得强制内容区等高留白');
+assert.doesNotMatch(videoCardSource, /<div role="button"/, '爆款卡媒体不得使用包含收藏按钮的伪按钮容器');
+assert.match(videoCardSource, /<button[\s\S]*?aria-label=\{`\$\{isImagePost \? '查看图文' : '播放视频'\} \$\{video\.title\}`\}[\s\S]*?onClick=\{onWatch\}/, '媒体预览应使用独立真实 button');
+assert.match(videoCardSource, /videoAspectRatioLockedRef\.current = true;[^]*?setMediaAspectRatio\(metadata\.width \/ metadata\.height\)/, '爆款视频元数据必须锁定真实视频比例');
+assert.match(videoCardSource, /onNaturalAspectRatio=\{ratio => \{[^]*?!videoAspectRatioLockedRef\.current[^]*?setMediaAspectRatio\(ratio\)/, '缩略图后到时不得覆盖已锁定的视频比例');
+const materialGridSource = componentSource.slice(componentSource.indexOf('<LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map'), componentSource.indexOf('aria-label="普通素材分页"'));
+assert.match(componentSource, /function MaterialLibraryCardMedia[^]*?useState\(\(\) => materialIntrinsicAspectRatio\(material\)\)[^]*?source === 'image' && materialHasAuthoritativeAspectRatio\(material\)[^]*?setAspectRatio\(ratio\)/, '素材卡必须先用视频权威比例，封面只能在缺少视频比例时兜底');
+assert.match(componentSource, /const productMaterials = Object\.values\(productMaterialSummaries\)\.flatMap\(summary => summary\.materials\)[^]*?\[\.\.\.localMaterials, \.\.\.productMaterials\]/, '镜头功能筛选项必须合并产品集合素材');
+assert.match(materialGridSource, /<MaterialLibraryCardMedia[^]*?flex flex-1 flex-col p-3[^]*?mt-auto grid grid-cols-2 gap-2 pt-3/, '素材卡必须使用真实比例媒体组件，并把按钮固定在信息区底部');
+assert.doesNotMatch(materialGridSource, /min-h-52/, '素材卡信息区不得以固定最小高度在按钮下方制造大片空白');
+assert.match(componentSource, /grid-cols-\[minmax\(240px,2fr\)_[^]*?<Input allowClear[^]*?aria-label="搜索爆款灵感"[^]*?<Select value=\{platform\}/, '搜索框必须位于灵感发现主筛选最左侧');
 const inspirationMoreFilters = componentSource.slice(componentSource.indexOf('id="inspiration-more-filters"'), componentSource.indexOf("innerView === 'inspiration' && videosError"));
 assert.doesNotMatch(inspirationMoreFilters, />发布平台<|aria-label="社媒平台"/, '发布平台不得重复出现在更多筛选');
 assert.doesNotMatch(videoCardSource, /video\.tags\.slice\(0, 2\)/, '爆款卡片与列表首页不得展示 hashtag');
+for (const placeholderTag of ['来源待归类', '相关性待确认', '趋势未知', '迁移性待确认']) {
+  assert.match(videoCardSource, new RegExp(`HIDDEN_DISCOVERY_TAGS[^]*?${placeholderTag}`), `卡片必须隐藏无结论状态：${placeholderTag}`);
+}
+assert.match(videoCardSource, /hasVisibleSignals[^]*?Object\.values\(visibleSignals\)\.some\(Boolean\)/, '没有有效分析结论时不得保留空 Tag 容器');
 assert.match(componentSource, /aria-label="内容标签"[^]*?video\.tags\.map/, '爆款 hashtag 必须集中展示在详情顶部');
 assert.match(componentSource, /startInspirationCreation[^]*?requestExactFullAnalysis/, '未完成详细分析的视频点击复刻时必须自动补齐分析');
 assert.match(componentSource, /detailCreationReady =[^;]*exactQuality\.ready && !pending/, '详情复刻入口不能依赖可失败的交接状态读取');
+assert.match(componentSource, /const openTask = \(taskId: string\)[^]*?directStudio: true[^]*?continueTaskId: taskId/, '爆款复刻任务创建后必须直接进入生产工作台');
+assert.doesNotMatch(componentSource, /title: `\$\{video\.title \|\| '灵感视频'\} · 爆款裂变`/, '生产任务标题不得继续使用旧的“爆款裂变”名称');
 
 console.log('InspirationDashboard data-quality tests passed');

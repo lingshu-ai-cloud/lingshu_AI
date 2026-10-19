@@ -29,6 +29,17 @@ export type AgentCalendarTask = {
   summaryGroup?: AgentCalendarSummaryGroup;
   accountBindingTarget?: {platform:string;accountId:string|null;consumerIds:string[]};
   platform?: string;
+  /** Stable video/publication identity used by the task-centric production board. */
+  videoTaskId?: string;
+  videoTitle?: string;
+  previewThumbnailUrl?: string;
+  previewVideoUrl?: string;
+  /** Per-video provider cost evidence. It is converted to points only for display. */
+  estimatedCostCny?: number | null;
+  settledCostCny?: number | null;
+  costStatus?: 'estimated' | 'awaiting_settlement' | 'settled' | 'unavailable';
+  accountId?: string;
+  publishWindow?: string;
   enterpriseFactExceptionId?:string;
   internalNodes?: AgentCalendarTask[];
   date: string;
@@ -70,9 +81,13 @@ export type AgentCalendarTask = {
   crossWeekMaterialTarget?: CrossWeekMaterialTarget;
   customerExceptionTarget?: CustomerExceptionTarget;
   productionTaskId?: string;
+  independentProjectId?: string;
+  independentRunId?: string;
   /** Exact persisted weekly execution task that owns the production binding. */
   productionExecutionTaskId?: string;
   workspaceTarget?: {programId:string;packageId:string;packageVersion:number;executionTaskId:string};
+  executionBlockers?: string[];
+  executionResultRefs?: Array<{type:string;id:string;version:number}>;
   materialRequestId?: string;
   materialAction?: 'upload' | 'verification';
   materialConsumerTaskIds?: string[];
@@ -128,11 +143,14 @@ const calendarPositions = new Map<string,{offset:number;selectedId:null;lastCard
 function calendarVisible(positionKey:string){return typeof document!=='undefined'&&Array.from(document.querySelectorAll<HTMLElement>('[data-agent-calendar-position-key]')).some(node=>node.dataset.agentCalendarPositionKey===positionKey&&node.getClientRects().length>0);}
 function savedCalendarPosition(positionKey:string){const returned=readAgentCalendarReturnContext()?.calendar;return returned?.positionKey===positionKey?{offset:returned.offset,selectedId:null,lastCardId:returned.cardId}:calendarPositions.get(positionKey);}
 
-export default function AgentWeeklyCalendar({ startsAt, tasks, demo = false, onOpenProduction,onOpenPlanning,onOpenReview,onOpenTemplate,onOpenSupplement,onOpenCustomerExecution,scopeKey,canOpenContentTask,onBindAccount,onOpenEnterpriseFacts }: { startsAt?: string; tasks: AgentCalendarTask[]; demo?: boolean; onOpenProduction?: (task: AgentCalendarTask) => void;onOpenPlanning?: (task:AgentCalendarTask)=>void;onOpenReview?:(task:AgentCalendarTask)=>void;onOpenSupplement?:(task:AgentCalendarTask)=>void;onOpenTemplate?:(task:AgentCalendarTask)=>void;onOpenCustomerExecution?:(task:AgentCalendarTask)=>void;scopeKey?:string;canOpenContentTask?:(task:AgentCalendarTask)=>boolean;onBindAccount?:(task:AgentCalendarTask)=>void;onOpenEnterpriseFacts?:(task:AgentCalendarTask)=>void }) {
+export default function AgentWeeklyCalendar({ startsAt, tasks, demo = false, hideCompleted = false, onOpenProduction,onOpenPlanning,onOpenReview,onOpenTemplate,onOpenSupplement,onOpenCustomerExecution,scopeKey,canOpenContentTask,onBindAccount,onOpenEnterpriseFacts }: { startsAt?: string; tasks: AgentCalendarTask[]; demo?: boolean; hideCompleted?: boolean; onOpenProduction?: (task: AgentCalendarTask) => void;onOpenPlanning?: (task:AgentCalendarTask)=>void;onOpenReview?:(task:AgentCalendarTask)=>void;onOpenSupplement?:(task:AgentCalendarTask)=>void;onOpenTemplate?:(task:AgentCalendarTask)=>void;onOpenCustomerExecution?:(task:AgentCalendarTask)=>void;scopeKey?:string;canOpenContentTask?:(task:AgentCalendarTask)=>boolean;onBindAccount?:(task:AgentCalendarTask)=>void;onOpenEnterpriseFacts?:(task:AgentCalendarTask)=>void }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 10000); return () => clearInterval(timer); }, []);
   const deliverables = projectCalendarDeliverables(tasks);
-  const pendingReferences = demo ? [] : calendarPendingReferences(deliverables, now);
+  const visibleDeliverables = hideCompleted
+    ? deliverables.filter(task => !['completed', 'cancelled', 'no_data'].includes(task.status))
+    : deliverables;
+  const pendingReferences = demo ? [] : calendarPendingReferences(visibleDeliverables, now);
   const positionKey = JSON.stringify([agentCalendarAuthIdentity(),scopeKey,startsAt,demo]);
   const [offset, setOffset] = useState(()=>savedCalendarPosition(positionKey)?.offset ?? 0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -143,7 +161,7 @@ export default function AgentWeeklyCalendar({ startsAt, tasks, demo = false, onO
   const changeOffset=(next:number)=>{captureAgentCalendarReturnContext({positionKey,offset:next,cardId:lastCardId??''});setOffset(next);};
   const startUserScroll=()=>{if(calendarVisible(positionKey)&&selectedScope===positionKey)captureAgentCalendarReturnContext({positionKey,offset,cardId:lastCardId??''});};
   const selectCard=(task:AgentCalendarTask)=>{captureAgentCalendarReturnContext({positionKey,offset,cardId:task.id});setSelectedScope(positionKey);setLastCardId(task.id);setSelectedId(task.id);};
-  const selected = selectedScope===positionKey ? deliverables.find(task => task.id === selectedId) ?? null : null;
+  const selected = selectedScope===positionKey ? visibleDeliverables.find(task => task.id === selectedId) ?? null : null;
   const openTaskDestination = (task: AgentCalendarTask, open: (task: AgentCalendarTask) => void) => {
     // Commit dismissal before callbacks navigate or reveal another page's controls.
     captureAgentCalendarReturnContext({positionKey,offset,cardId:task.id});
@@ -157,17 +175,13 @@ export default function AgentWeeklyCalendar({ startsAt, tasks, demo = false, onO
   const anchor = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
   const monday = shift(anchor, -((anchor.getDay() + 6) % 7) + offset * 7);
   const days = Array.from({ length: 7 }, (_, i) => shift(monday, i));
-  const weekTasks = deliverables.filter(task => task.date >= key(days[0]) && task.date <= key(days[6]));
-  const establishedDemo = demo && tasks.some(task=>task.chain?.startsWith('H-'));
-  const demoSourceAllocation = establishedDemo ? tasks.find(task=>task.chain==='H-M1')?.output.match(/自有 \d+% \/ 外部 \d+%/)?.[0] ?? '来源配额待核验' : '';
-  const earlierTasks = deliverables.filter(task => task.date < key(days[0]));
+  const weekTasks = visibleDeliverables.filter(task => task.date >= key(days[0]) && task.date <= key(days[6]));
+  const earlierTasks = visibleDeliverables.filter(task => task.date < key(days[0]));
   return <div id="agent-weekly-calendar" data-agent-calendar-position-key={positionKey} className="scroll-mt-4 p-5 sm:p-6">
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
-      <div><h3 className="text-lg font-black text-slate-950">{demo ? establishedDemo ? "B2B 有基础 · 增长周任务日历" : "B2B 零基础 · 首周任务日历" : "Agent 周任务日历"}</h3><p className="mt-1 text-xs text-slate-500">{demo ? establishedDemo ? `${demoSourceAllocation} · 按播放与赞转评诊断 · H 主链路与副链路` : "外部参考 100% · 6 条独立视频 · 主链路与按需触发的副链路" : "按每日交付展示已生成的任务、主负责 Agent 和上游依赖"}</p></div>
-      <div className="flex items-center gap-2"><button type="button" aria-label="上一周" onClick={() => changeOffset(offset - 1)} className="rounded-lg border border-slate-200 p-2"><ArrowLeft size={14}/></button><span className="text-xs font-bold text-slate-700">{days[0].toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} — {days[6].toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</span><button type="button" aria-label="下一周" onClick={() => changeOffset(offset + 1)} className="rounded-lg border border-slate-200 p-2"><ArrowRight size={14}/></button><button type="button" onClick={() => changeOffset(0)} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold">本周</button></div>
+    <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+      <button type="button" aria-label="上一周" onClick={() => changeOffset(offset - 1)} className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-200"><ArrowLeft size={14}/></button><span className="text-xs font-bold text-slate-700">{days[0].toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} — {days[6].toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</span><button type="button" aria-label="下一周" onClick={() => changeOffset(offset + 1)} className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-200"><ArrowRight size={14}/></button><button type="button" onClick={() => changeOffset(0)} className="min-h-11 rounded-lg bg-slate-100 px-3 text-xs font-bold">本周</button>
     </div>
-    <div className="mb-4 flex flex-wrap items-center gap-3 text-[10px] font-bold">{Object.values(agents).map(agent => <span key={agent.label} className={`rounded-full px-2.5 py-1 ${agent.tone}`}>{agent.label}</span>)}<span className="ml-auto text-slate-400">{weekTasks.length} 项交付{demo ? ' · 示例排期' : ''}</span></div>
-    {!demo && tasks.length === 0 && <p className="mb-4 rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-600">尚无可展示的 Agent 执行排期。发布计划不会自动视为制作任务；生成执行排期后将在此显示。</p>}
+    {!demo && visibleDeliverables.length === 0 && <p className="mb-4 rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-600">{hideCompleted && deliverables.length > 0 ? '已隐藏已完成任务，本周没有其他执行排期。' : '尚无可展示的 Agent 执行排期。发布计划不会自动视为制作任务；生成执行排期后将在此显示。'}</p>}
     {earlierTasks.length > 0 && <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900"><p>当前周之前还有 {earlierTasks.length} 项任务，请核对前置素材与生产交付。周一发布所需成片应在前一天完成。</p><button type="button" onClick={() => changeOffset(offset - 1)} className="rounded border border-amber-300 px-2 py-1 font-bold">查看上一周任务</button></div>}
     {pendingReferences.length > 0 && <div className="mb-4 rounded-xl border border-red-300 bg-red-50 p-3 text-xs text-red-900"><p className="font-bold">当前待处理 · {pendingReferences.length} 项原任务（按各任务冻结时区）</p><div className="mt-2 flex flex-wrap gap-2">{pendingReferences.map(task => <button key={task.id} type="button" className="rounded border border-red-200 bg-white px-2 py-1 text-left" onClick={() => selectCard(task)}>{task.title} · 当前 {calendarDateTime(now,task.calendarClock??calendarClock(task.dueAt)).date} {task.calendarClock?.label || calendarClock(task.dueAt).label} · 原计划 {task.date} · 逾期 {calendarOverdueDuration(task, now)}</button>)}</div><p className="mt-2">引用原任务，原计划卡保留；不计为新增交付。</p></div>}
     {demo && <p className="mb-4 rounded-xl bg-amber-50 px-3 py-2 text-[11px] text-amber-800">效果验收示例：任务、工时与执行状态为演示数据；异常副链路展示触发示例，不代表所有任务都必然发生。点击卡片查看任务详情。</p>}

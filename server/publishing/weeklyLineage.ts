@@ -1,4 +1,5 @@
 import {assertPublicationAtomicStore} from './publicationAtomicStore.js';
+import {assertWeeklyPublicationRecoveryDue} from '../socialPrograms/weeklyPublicationRecoverySchedule.js';
 import { createHash, randomUUID } from 'node:crypto';
 import {acquireDurableOperationLease,assertDurableOperationLease,releaseDurableOperationLease} from '../runtime/durableLease.js';
 import type { SocialWeeklyContentPackage } from '../../shared/contracts/socialProgram.js';
@@ -269,6 +270,7 @@ export async function executeWeeklyPublication(input: {
     if(!sourceLease)throw Error('inventory_publication_busy');
     const raced=await assignmentAttempt(input.assignment.tenantId,input.assignment.assignmentId,dataStore);
     if(raced)return raced;
+    const recoverySchedule=await assertWeeklyPublicationRecoveryDue(dataStore,input.assignment,input.now??new Date());
     const assignments = await dataStore.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, {
       where: { tenant_id: input.assignment.tenantId, assignment_id: input.assignment.assignmentId }, page: 1, perPage: 2,
     });
@@ -325,6 +327,7 @@ export async function executeWeeklyPublication(input: {
       tenant_id: input.assignment.tenantId, attempt_id: attemptId(input.assignment),
       assignment_id: input.assignment.assignmentId, package_id: input.assignment.packageId,
       provider: input.adapter.provider, status: 'in_flight', started_at: startedAt, updated_at: startedAt,
+      ...(recoverySchedule?{publication_recovery_schedule_ref:recoverySchedule.recoveryRef,planned_send_at:recoverySchedule.plannedSendAt}:{}),
     });
     if (!created) {
       const raced = await assignmentAttempt(input.assignment.tenantId, input.assignment.assignmentId, dataStore);

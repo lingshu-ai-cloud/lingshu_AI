@@ -8,7 +8,44 @@ import { promisify } from 'node:util';
 import { SocialContentTaskBudget, sealSocialTaskCorrectionBudgetAuthorization, type SocialTaskBudgetScope, type SocialTaskBudgetOperation, type SocialTaskBudgetPorts } from './socialContentTaskBudget.js';
 const scope: SocialTaskBudgetScope = { tenantId: 'tenant', taskId: 'task', runId: 'run-1', planHash: 'a'.repeat(64) };
 const op = (id: string, stage = 'video'): SocialTaskBudgetOperation => ({ operationId: id, fingerprint: 'b'.repeat(64), provider: 'provider', model: 'model', accountRef: 'account', stage, shotId: 'S01' });
+test('fifteen yuan whole-film cap retains unknown spend and all paid stages across replacement runs', async () => {
+    const f = fixture(3, 15);
+    try {
+        await f.budget.reserveBatch(scope, [op('analysis'), op('presenter'), op('product'), op('voice'), op('render-qa')]);
+        await f.budget.markOutcome(scope, 'presenter', 'unknown', 'unknown-presenter-response');
+        const restarted = new SocialContentTaskBudget(f.root, f.ports);
+        assert.equal(restarted.status(scope)!.retainedCny, 15);
+        assert.equal(restarted.status(scope)!.limitCny, 15);
+        await assert.rejects(restarted.reserveBatch({...scope, runId:'replacement', planHash:'c'.repeat(64)}, [op('retry')]), /exceeded/);
+        assert.equal(restarted.status(scope)!.entries.length, 5);
+    } finally { f.clean(); }
+});
 function fixture(cost = 3, maximum = 10) { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'social-task-budget-')); const ports: SocialTaskBudgetPorts = { authorization: async () => ({ maximumCny: maximum, authorizationRef: 'canonical-auth' }), quote: async () => ({ upperBoundCny: cost, quoteRef: 'server-quote', validUntil: '2099-01-01T00:00:00Z' }), assertCurrent: async () => { }, verifyRejection: async () => true }; return { root, ports, budget: new SocialContentTaskBudget(root, ports), clean: () => fs.rmSync(root, { recursive: true, force: true }) }; }
+test('child revision keeps original whole-content costs and cannot borrow parent receipts',async()=>{
+ const f=fixture(7,15);try{
+  await f.budget.reserveBatch(scope,[op('original-1'),op('original-2')]);
+  await f.budget.markOutcome(scope,'original-1','unknown','original-request-outcome-unknown');
+  const child={...scope,taskId:'revision-child',budgetTaskId:scope.taskId,runId:'revision-run',planHash:'e'.repeat(64)};
+  f.ports.quote=async()=>({upperBoundCny:2,quoteRef:'revision-quote',validUntil:'2099-01-01'});
+  await assert.rejects(f.budget.reserveBatch(child,[op('child-too-large')]),/exceeded/);
+  assert.equal(f.budget.status(child)!.retainedCny,14);assert.equal(fs.readdirSync(f.root).filter(p=>p.endsWith('.json')).length,1);
+  f.ports.quote=async()=>({upperBoundCny:1,quoteRef:'revision-quote',validUntil:'2099-01-01'});
+  await f.budget.reserveBatch(child,[op('child-within-remainder')]);assert.equal(f.budget.status(scope)!.retainedCny,15);
+  const parentEntry=f.budget.status(child)!.entries.find(e=>e.operationId==='original-1')!;assert.equal(parentEntry.status,'unknown');assert.equal(parentEntry.receiptRef,'original-request-outcome-unknown');
+  await assert.rejects(f.budget.markOutcome({...child,runId:scope.runId,planHash:scope.planHash},'original-1','completed','forged-parent-receipt'),/entry_scope_missing/);
+  await assert.rejects(f.budget.reserveBatch({...child,runId:scope.runId,planHash:scope.planHash},[op('original-1')]),/operation_changed/);
+ }finally{f.clean();}
+});
+test('concurrent revision runs share a durable incremental allowance under the same ledger lock',async()=>{
+ const f=fixture(2,15);try{
+  f.ports.authorization=async()=>({maximumCny:15,maximumExecutionCny:3,authorizationRef:'verified-repair-allowance'});
+  const child={...scope,taskId:'child',budgetTaskId:'task'};
+  const results=await Promise.allSettled([f.budget.reserveBatch(child,[op('repair-a')]),f.budget.reserveBatch({...child,runId:'another-run',planHash:'f'.repeat(64)},[op('repair-b')])]);
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(f.budget.status(child)!.retainedCny,2);
+  f.ports.authorization=async()=>({maximumCny:15,maximumExecutionCny:15,authorizationRef:'unapproved-reset-attempt'});
+  await assert.rejects(f.budget.reserveBatch({...child,runId:'third-run',planHash:'d'.repeat(64)},[op('repair-c')]),/execution_allowance_exceeded/);
+ }finally{f.clean();}
+});
 test('all suppliers, scenes and retry runs retain one task ceiling and replay survives restart', async () => { const f = fixture(); try {
     await f.budget.reserveBatch(scope, [op('frame', 'first_frame'), { ...op('qa', 'first_frame_qa'), provider: 'qwen' }, { ...op('speech', 'tts'), shotId: null }]);
     assert.equal(f.budget.status(scope)!.retainedCny, 9);
@@ -45,6 +82,24 @@ test('concurrent workers cannot collectively reserve over ceiling', async () => 
 finally {
     f.clean();
 } });
+test('only the exact internally exempt tenant may retain quotes above the nominal task ceiling', async () => {
+    const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+    process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
+    const exempt = fixture(6), ordinary = fixture(6);
+    const exemptScope = { ...scope, tenantId: 'local_tenant_customer_aurelia_beauty' };
+    const ordinaryScope = { ...scope, tenantId: 'another-tenant' };
+    try {
+        const status = await exempt.budget.reserveBatch(exemptScope, [op('a'), op('b')]);
+        assert.equal(status.limitCny, 10);
+        assert.equal(status.retainedCny, 12);
+        await assert.rejects(ordinary.budget.reserveBatch(ordinaryScope, [op('a'), op('b')]), /exceeded/);
+        assert.equal(ordinary.budget.status(ordinaryScope), null);
+    } finally {
+        exempt.clean(); ordinary.clean();
+        if (configured === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+        else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = configured;
+    }
+});
 test('lower user ceiling persists and larger authorization never raises it', async () => { const f = fixture(2, 4); try {
     await f.budget.reserveBatch(scope, [op('a')]);
     f.ports.authorization = async () => ({ maximumCny: 100, authorizationRef: 'later-auth' });
@@ -55,7 +110,7 @@ test('lower user ceiling persists and larger authorization never raises it', asy
 finally {
     f.clean();
 } });
-test('server correction grant extends only the exact existing run and plan while defaults stay capped at ten', async () => { const f = fixture(3.25, 10); try {
+test('server correction grant extends only the exact existing run and plan while new defaults stay capped at fifteen', async () => { const f = fixture(3.25, 10); try {
     await f.budget.reserveBatch(scope, [op('original-a'), op('original-b'), op('original-c')]);
     const grant = sealSocialTaskCorrectionBudgetAuthorization({schemaVersion:1,tenantId:scope.tenantId,taskId:scope.taskId,
         runId:scope.runId,planHash:scope.planHash,previousMaximumCny:10,maximumCny:16.5,reason:'provider_correction',
@@ -68,7 +123,7 @@ test('server correction grant extends only the exact existing run and plan while
     await f.budget.reserveBatch(scope,[op('corrective-presenter-1'),op('corrective-presenter-2')]);
     assert.equal(f.budget.status(scope)!.retainedCny,16.25);
     await assert.rejects(f.budget.reserveBatch({...scope,runId:'other-run',planHash:'c'.repeat(64)},[op('other-run-op')]),/exceeded/);
-    const fresh=fixture(1,100);try{await fresh.budget.reserveBatch(scope,[op('fresh')]);assert.equal(fresh.budget.status(scope)!.limitCny,10);}finally{fresh.clean();}
+    const fresh=fixture(1,100);try{await fresh.budget.reserveBatch(scope,[op('fresh')]);assert.equal(fresh.budget.status(scope)!.limitCny,15);}finally{fresh.clean();}
 } finally { f.clean(); } });
 test('correction grant rejects forged hash, changed scope, non-ten baseline and excessive ceiling', async () => { const f=fixture(1,10); try {
     await f.budget.reserveBatch(scope,[op('original')]);

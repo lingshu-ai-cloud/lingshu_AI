@@ -21,6 +21,9 @@ assert.match(overview, /aria-label="指标覆盖拼图"/, 'criterion coverage mu
 assert.match(overview, /data-coverage-status=\{status\}/, 'every puzzle tile must expose its real coverage state');
 assert.match(overview, /status === 'scored'[\s\S]{0,120}Number\.isFinite\(criterion\.score\)/, 'only a real finite score may appear as a completed puzzle tile');
 assert.match(overview, /hasScore \? `\$\{criterion\.score\} 分` : meta\.label/, 'missing criterion scores must show their state instead of becoming zero');
-assert.match(overview, /label: '查看完整计算口径'/, 'the full textual basis must remain available on demand');
+assert.match(overview, /data-puzzle-domain=\{dimension\.key\}[\s\S]{0,120}data-domain-color=\{dimensionColor\}/, 'the four business domains must retain distinct palette identities');
+assert.match(overview, /neutralFill: '#E4E4E7'[\s\S]{0,220}neutralFill: '#F4F4F5'/, 'uncovered and inapplicable puzzle pieces must use neutral grey fills');
+assert.match(overview, /className="mt-4 grid gap-\[2px\] overflow-hidden bg-white md:grid-cols-2"/, 'the coverage board must render as one contiguous mosaic without an outer card frame');
+assert.doesNotMatch(overview, /label: '查看完整计算口径'/, 'the removed calculation-basis disclosure must stay absent');
 
 console.log('Business Health range contract tests passed');

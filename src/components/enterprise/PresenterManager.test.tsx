@@ -6,6 +6,7 @@ import PresenterManager from './PresenterManager.js';
 
 const props = { onClose: () => {}, onSaved: () => {} };
 const source = fs.readFileSync('src/components/enterprise/PresenterManager.tsx', 'utf8');
+const styles = fs.readFileSync('src/index.css', 'utf8');
 
 test('presenter onboarding keeps the existing single-source editor and adds unified onboarding reuse', () => {
   const html = renderToStaticMarkup(<PresenterManager {...props} />);
@@ -17,9 +18,14 @@ test('presenter onboarding keeps the existing single-source editor and adds unif
   assert.match(source, /直接录音（推荐）/);
   assert.match(source, /开始录音/);
   assert.doesNotMatch(source, />提交本人声音</);
-  assert.match(source, /人像授权通过后，可在保存人物时一并录入本人声音/);
+  assert.doesNotMatch(source, /声音素材可先准备；人像授权通过后/);
+  assert.match(source, /voiceCandidateFromVideo\(selectedFile\)/);
+  assert.match(source, /人物资料口播验收/);
+  assert.match(source, /aria-label="人物资料口播验收" className="space-y-3"/);
+  assert.match(source, /无需重复录制/);
+  assert.doesNotMatch(source, /候选口播偏短，建议补录/);
   assert.match(source, /也可直接提交较短的有效录音/);
-  assert.match(source, /已完成并选中/);
+  assert.match(source, /已完成，可继续绑定/);
   assert.match(source, /presenterConsentReturn/);
   assert.match(source, /window\.location\.assign\(updated\.consentUrl\)/);
   assert.match(source, /voicePollInFlight/);
@@ -40,8 +46,9 @@ test('presenter onboarding keeps the existing single-source editor and adds unif
   assert.match(source, /邀请您创建属于自己的口播角色/);
   assert.match(source, /或上传本人录音/);
   assert.match(source, /需要高级人物替换时再单独进行方舟认证/);
-  assert.match(source, /productionApi\.uploadArkMaterial\(photoFile, 'image'\)/);
-  assert.match(source, /productionApi\.uploadArkMaterial\(videoFile, 'video'\)/);
+  assert.match(source, /const retainedPhoto = initialConfiguration && photoFile \? photoFile : await extractPresenterPhoto\(heyGenSource\)/);
+  assert.match(source, /productionApi\.uploadArkMaterial\(retainedPhoto, 'image'\)/);
+  assert.match(source, /productionApi\.uploadArkMaterial\(heyGenSource, 'video'\)/);
   assert.match(source, /presenterApi\.create\(\{ name: name\.trim\(\), type: videoSource \? 'digital_twin' : 'photo', uploadId:/);
   assert.match(source, /arkPreparation/);
   assert.match(source, /processingAuthorized: false/);
@@ -56,10 +63,14 @@ test('presenter onboarding keeps the existing single-source editor and adds unif
 
 test('initial onboarding starts with only the two source choices and keeps the self form minimal', () => {
   const html = renderToStaticMarkup(<PresenterManager {...props} initialConfiguration />);
+  const consentReturnFlow = source.slice(
+    source.indexOf("const jobId = new URLSearchParams(window.location.search).get('presenterConsentReturn')"),
+    source.indexOf('const submitOwnVoiceRaw'),
+  );
   assert.match(html, /选择 HeyGen 已有人物/);
-  assert.match(html, /使用本人素材/);
+  assert.match(html, /使用本人形象/);
   assert.match(html, />推荐</);
-  assert.match(html, /上传本人图片和视频，创建专属数字人/);
+  assert.match(html, /录入新人物，或选择灵枢本地已创建的本人形象/);
   assert.match(html, /从已授权人物库中直接选择并使用/);
   assert.match(html, /选择数字人接入方式/);
   assert.doesNotMatch(html, /人物名称/);
@@ -69,10 +80,31 @@ test('initial onboarding starts with only the two source choices and keeps the s
   assert.doesNotMatch(html, />完成</);
   assert.match(source, /统一人物正面照片/);
   assert.match(source, /统一人物本人视频/);
-  assert.match(source, /本人图片/);
-  assert.match(source, /本人视频/);
-  assert.match(source, /前往企业知识库认证/);
-  assert.match(source, /方舟认证为可选功能/);
+  assert.match(source, /本人视频录制预览/);
+  assert.match(source, /打开摄像头并录制/);
+  assert.match(source, /至少录制 30 秒/);
+  assert.match(source, /getUserMedia\(\{/);
+  assert.match(source, /video: \{ width:/);
+  assert.match(source, /width: \{ ideal: 1920 \}/);
+  assert.match(source, /frameRate: \{ ideal: 30 \}/);
+  assert.match(source, /loadPresenterOnboardingDraft\(\)/);
+  assert.match(source, /savePresenterOnboardingDraft\(\{/);
+  assert.match(source, /clearPresenterOnboardingDraft\(\)/);
+  assert.match(source, /一次录制完成人物资料/);
+  assert.match(source, /extractPresenterPhoto\(selectedFile\)/);
+  assert.match(source, /canvas\.toBlob\(resolve, 'image\/jpeg'/);
+  assert.match(source, />更换照片</);
+  assert.match(source, /photoSource === 'frame' \? '从本人视频抽取的图片素材帧'/);
+  assert.ok(source.indexOf('aria-label="统一人物本人视频"') < source.indexOf('aria-label="统一人物正面照片"'), 'video input precedes photo override');
+  assert.match(source, /自动截取的本人照片/);
+  assert.doesNotMatch(source, /视频提取的口播候选/);
+  assert.doesNotMatch(source, /人物资料统一验收通过/);
+  assert.doesNotMatch(html, /声音名称|录音语言/);
+  assert.match(source, /setVoiceLanguage\('zh-CN'\)/);
+  assert.match(source, /if \(inheritedName\) setVoiceName\(inheritedName\)/);
+  assert.ok(source.indexOf('{videoFile && videoVoiceReview}') < source.indexOf("initialConfiguration ? '完成' : '提交资料并继续本人授权'"), 'voice review appears before the completion action');
+  assert.doesNotMatch(source, /aria-label="视频口播声音"/);
+  assert.doesNotMatch(source, /前往企业知识库认证|方舟认证为可选功能/);
   assert.match(source, /initialConfiguration \? 'choose' : 'create'/);
   assert.match(source, /const heyGenVideoSource = initialConfiguration \|\| Boolean/, 'the unified video onboarding must use Digital Twin capability before files are selected');
   assert.doesNotMatch(html, /提交后需要在 HeyGen 官方页面完成本人授权/);
@@ -86,5 +118,54 @@ test('initial onboarding starts with only the two source choices and keeps the s
   assert.match(source, /initialConfiguration \|\| confirmed/);
   assert.match(source, /initialConfiguration \? '完成' : '提交资料并继续本人授权'/);
   assert.match(source, /<CheckCircle2 size=\{15\} \/>已完成/);
-  assert.match(source, /await requestOfficialConsent\(job\)/);
+  assert.match(source, /确认前往 HeyGen/);
+  assert.match(source, /授权已发起 · HeyGen 确认中/);
+  assert.match(source, /job\.status === 'pending_consent' && !job\.consentRequestedAt/);
+  assert.match(source, /刷新授权状态/);
+  assert.match(source, /selected\.creationId \? ownCreationVoice : voicePicker/);
+  assert.match(source, /已默认使用录制本人形象时绑定的声音，无需再次选择/);
+  assert.match(source, /setAuthorized\(Boolean\(job\)\)/);
+  assert.match(source, /setVoiceEntry\(job && !linkedVoiceId \? 'own' : 'existing'\)/);
+  assert.doesNotMatch(source, /title: '确认前往 HeyGen 完成本人授权？'/);
+  assert.match(source, /window\.open\('about:blank', '_blank'\)/);
+  assert.match(source, /presenterApi\.discardCreation\(job\.id\)/);
+  assert.match(source, />确认删除</);
+  assert.doesNotMatch(source, /setSubmitStage\('authorization'\); await requestOfficialConsent\(job\)/);
+  assert.match(consentReturnFlow, /choose\(updated\.look, updated\)/);
+  assert.match(consentReturnFlow, /人物原配声音已预选/);
+  assert.match(consentReturnFlow, /录入本人声音/);
+  assert.doesNotMatch(consentReturnFlow, /presenterApi\.import/);
+});
+
+test('self presenter route only offers completed people created in Lingshu locally', () => {
+  const localPresenterSection = source.slice(
+    source.indexOf('aria-label="本地已创建的本人形象"'),
+    source.indexOf("{tab === 'create' && (!initialConfiguration || wizardStep === 1) && (!initialConfiguration || ownSourceMode === 'new')"),
+  );
+  assert.match(source, /选择已创建的本人形象/);
+  assert.match(source, /const \[ownSourceMode, setOwnSourceMode\] = useState<'new' \| 'local'>\('new'\)/);
+  assert.match(localPresenterSection, /jobs\.filter\(job => job\.status === 'completed' && job\.look\)/);
+  assert.match(localPresenterSection, /choose\(job\.look!, job\)/);
+  assert.match(localPresenterSection, /只展示当前灵枢账号中已完成创建的人物/);
+  assert.doesNotMatch(localPresenterSection, /catalogGroups|presenterApi\.catalog|looks\.map/);
+});
+
+test('existing onboarding presenter can record and bind a new voice without duplicating the person', () => {
+  assert.match(source, /voiceOnlyPresenter\?: PresenterAsset/);
+  assert.match(source, /voiceOnlyPresenter \? ownVoiceRecorder : selected\.creationId \? ownCreationVoice : voicePicker/);
+  assert.match(source, /presenterApi\.bindVoice\(voiceOnlyPresenter\.id, selectedVoiceId\)/);
+  assert.match(source, /voiceOnlyPresenter \? '保存本人声音'/);
+  assert.match(source, /storedVoiceCloneJob\(voiceOnlyLook\?\.id \|\| ''\)/);
+  assert.match(source, /voiceCloneJob\?\.status === 'uncertain'/);
+  assert.match(source, /\['submitting', 'processing', 'completed'\]\.includes\(voiceCloneJob\.status\)/);
+  assert.match(source, /window\.sessionStorage\.removeItem\(`presenter-voice-job:/);
+  assert.match(source, /重新录入声音/);
+});
+
+test('onboarding separates person capture from authorization and guides upper-body framing', () => {
+  assert.match(source, /initialStage\?: 'person' \| 'certification'/);
+  assert.match(source, /initialStage === 'certification'/);
+  assert.match(source, /initialStage === 'person' && onPersonPrepared/);
+  assert.match(styles, /统一人物资料/);
+  assert.match(styles, /建议露出上半身和手部，保持自然微笑与适度手势/);
 });

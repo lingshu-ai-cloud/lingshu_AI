@@ -15,5 +15,7 @@ assert.match(source, /if \(nextPage === 'enterprise'\) setEnterpriseProductsDeep
   'enterprise product navigation must consume its deep-link context');
 assert.match(source, /<EnterprisePage productsDeepLink=\{enterpriseProductsDeepLink\}/,
   'the enterprise page must receive the selected product and material context');
+assert.match(source, /!detail\.contentCreationRequest\.continueProjectId[\s\S]{0,500}localStorage\.removeItem\('ow_studio_open_project'\)[\s\S]{0,300}searchParams\.delete\('project'\)/,
+  'a fresh direct-studio request must clear stale project state before opening production');
 
 console.log('application history task-context reset contract passed');

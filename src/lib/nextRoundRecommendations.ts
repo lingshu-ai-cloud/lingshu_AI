@@ -16,10 +16,22 @@ export interface NextRoundRecommendationCard {
   thumbnailUrl?: string;
   hook?: string;
   framework?: string[];
+  analysis?: Array<{ label: string; value: string }>;
   tagGroups?: Array<{ label: string; tone: 'hot' | 'new' | 'dropped' | 'published'; tags: string[] }>;
   sellingPoints?: string[];
   changeSummary?: string;
   signals?: Array<{ id: string; title: string; platform: string; summary: string; sourceUrl: string; thumbnailUrl?: string }>;
+}
+
+function describeContentStructure(framework: string[]) {
+  if (!framework.length) return '';
+  if (framework.length === 1) return `以「${framework[0]}」作为主结构，下一轮继续验证其对询盘承接的作用。`;
+  const opening = framework[0];
+  const closing = framework.at(-1);
+  const proof = framework.slice(1, -1);
+  return proof.length
+    ? `以「${opening}」建立注意力，经「${proof.join('、')}」完成证明，再由「${closing}」承接采购行动。`
+    : `以「${opening}」建立注意力，再由「${closing}」承接采购行动。`;
 }
 
 const safeHttpUrl = (value: unknown): string => {
@@ -68,8 +80,8 @@ function emptyRecommendations(summary?: WeeklyReviewSummary): NextRoundRecommend
   };
 }
 
-export function buildNextRoundRecommendationCards(summary?: WeeklyReviewSummary, industryTrends?: NextRoundRecommendations['industryTrends']): NextRoundRecommendationCard[] {
-  const baseline = summary?.nextRoundRecommendations || emptyRecommendations(summary);
+export function buildNextRoundRecommendationCards(summary?: WeeklyReviewSummary, industryTrends?: NextRoundRecommendations['industryTrends'], recommendations?: NextRoundRecommendations): NextRoundRecommendationCard[] {
+  const baseline = recommendations || summary?.nextRoundRecommendations || emptyRecommendations(summary);
   const source = industryTrends?.status === 'available' ? { ...baseline, industryTrends } : baseline;
   const inheritance = source.contentInheritance;
   const tags = source.tagAdaptation;
@@ -94,6 +106,11 @@ export function buildNextRoundRecommendationCards(summary?: WeeklyReviewSummary,
       thumbnailUrl: safePreviewUrl(inheritance.thumbnailUrl),
       hook: inheritance.hook,
       framework: inheritance.framework,
+      analysis: inheritance.status === 'ready' ? [
+        { label: '结构判断', value: describeContentStructure(inheritance.framework) },
+        { label: '表现依据', value: inheritance.reason },
+        { label: '放大条件', value: inheritance.paidBoost.reason },
+      ].filter(item => item.value) : [],
     },
     {
       kind: 'tags', index: '02', title: 'Tag 与卖点调整',

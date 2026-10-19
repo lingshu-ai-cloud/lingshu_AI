@@ -22,7 +22,7 @@ assert.match(recommendations, /target="_blank" rel="noreferrer noopener"/, 'indu
 assert.match(recommendations, /const hasPublishedContent = card\.status === 'ready'/, 'content inheritance must distinguish a real published winner from the no-data state');
 assert.match(recommendations, /暂无可继承的优秀内容/, 'content inheritance must render a clear empty state instead of a failed cover when no published content exists');
 assert.doesNotMatch(recommendations, /label=\{!src \? '暂无可用封面'/, 'missing inheritance evidence must not masquerade as a broken media asset');
-for (const visual of ['首镜钩子', '内容框架', '可验证卖点候选', '行业变化']) {
+for (const visual of ['首镜钩子', '内容框架', '内容分析', '可验证卖点候选', '行业变化']) {
   assert.match(recommendations, new RegExp(visual), `recommendations must visualize ${visual}`);
 }
 assert.match(recommendations, /lg:grid-cols-3/, 'the three recommendation cards must share one consistent horizontal layout');

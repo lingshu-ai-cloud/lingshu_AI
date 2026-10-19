@@ -111,7 +111,7 @@ export async function prepareReferenceNarration(filePath: string, duration: numb
     try {
       const audioExtraction = await extractReferenceSourceAudio(filePath, audioPath, options);
       const measured = await transcribeWordAudioWithQwen({ tenant, audio: fs.readFileSync(audioPath),
-        mimeType: 'audio/wav', duration, signal: options.signal, request: options.request, onRecord: record => saveReferenceNarrationBinding({tenantId:tenant,filePath,expectedSourceSha256:sourceVideoSha256},duration,audioExtraction,record), ...(options.manualSubmission ? {automaticSubmission:false,reserve:(id:string)=>studioPaidBudget.reserve('qwen_asr',id)} : {}) });
+        mimeType: 'audio/wav', duration, signal: options.signal, request: options.request, onRecord: record => saveReferenceNarrationBinding({tenantId:tenant,filePath,expectedSourceSha256:sourceVideoSha256},duration,audioExtraction,record), ...(options.manualSubmission ? {automaticSubmission:false,reserve:(id:string)=>studioPaidBudget.reserve('qwen_asr',id,undefined,tenant)} : {}) });
       const result = { ...measured, version: 2, sourceVideoSha256, sourceHash: hash,
         rawText: measured.text, alignmentError: '', durationSeconds: duration,
         audioExtraction, createdAt: new Date().toISOString() };

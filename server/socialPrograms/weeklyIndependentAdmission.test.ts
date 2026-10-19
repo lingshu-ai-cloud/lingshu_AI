@@ -1,0 +1,61 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {writeLocalAccountRecords} from '../lib/localAccountStore.js';
+import {runWithDataAuthority} from '../storage/dataAuthority.js';
+import {prepareWeeklyEnterpriseFactFixture} from '../runtime/weeklyEnterpriseFactSupplement.fixture.js';
+import {createWeeklyExecutionPipelineService} from './weeklyExecutionPipeline.js';
+import {WEEKLY_EXECUTION_TASKS,listWeeklyExecutionTasks} from './executionTasks.js';
+import {WEEKLY_INDEPENDENT_ADMISSIONS,readIndependentAdmission} from './weeklyIndependentAdmission.js';
+import {createDefaultWeeklyExecutionAdapters} from '../runtime/weeklyExecutionAdapters.js';
+import {runSocialWeeklyExecutionScan} from '../runtime/socialWeeklyExecutionRuntime.js';
+import {hasWeeklyInitialExecution} from './weeklyInitialExecution.js';
+import type {Record_} from '../storage/datastore.js';
+
+test('independent local admission runs real channel checks while unconfirmed content stays blocked; no approval or delivery is invented',async t=>{
+ const f=await prepareWeeklyEnterpriseFactFixture(t),dir=await mkdtemp(path.join(os.tmpdir(),'weekly-branch-admission-'));
+ const previous={NODE_ENV:process.env.NODE_ENV,LOCAL_AUTH_ACCOUNTS_FILE:process.env.LOCAL_AUTH_ACCOUNTS_FILE};
+ process.env.NODE_ENV='test';process.env.LOCAL_AUTH_ACCOUNTS_FILE=path.join(dir,'accounts.json');
+ writeLocalAccountRecords(process.env.LOCAL_AUTH_ACCOUNTS_FILE,[{userId:'owner',tenantId:'tenant-a',email:'test@example.test',name:'Test',accountType:'admin',role:'social_operator',salt:'unused-test',passwordHash:'unused-test',createdAt:'2026-10-01T00:00:00Z'}]);
+ t.after(async()=>{for(const [k,v]of Object.entries(previous))if(v===undefined)delete process.env[k];else process.env[k]=v;await rm(dir,{recursive:true,force:true});});
+ const row=(await f.store.list<Record_>('social_weekly_operating_packages')).items[0]!;
+ await f.store.update('social_weekly_operating_packages',row.id,{status:'draft',payload:{...f.pkg,status:'draft',appliedWorkflowEvents:[],workflowTasks:[],workflows:[],socialContentPackage:{...f.pkg.socialContentPackage,authorization:{allowRealPublishing:false}},planningBlockers:['business_goal_unavailable']}});
+ const outline={...structuredClone(f.task),workflowKind:'readiness' as const,schedule:{...f.task.schedule,stepKind:'business_outline' as const},inputSnapshot:{},status:'pending_activation' as const,ownBlockingReasons:['business_goal_unavailable']};
+ const ready={...structuredClone(f.task),taskId:'customer-ready',idempotencyKey:'customer-ready',accountId:'account-a',publicationTaskId:'publication-a',inputSnapshot:{customerChannel:'messenger'},status:'pending_activation' as const,schedule:{...f.task.schedule,stepKind:'customer_channel_readiness' as const,responsibleActor:'customer_agent' as const,estimatedStartAt:'2026-10-01T00:00:00Z'}};
+ const child={...structuredClone(ready),taskId:'customer-handoff',idempotencyKey:'customer-handoff',dependsOnTaskIds:[ready.taskId],schedule:{...ready.schedule,stepKind:'customer_inquiry_handoff' as const}};
+ for(const task of [outline,ready,child])await f.store.create(WEEKLY_EXECUTION_TASKS,{tenant_id:task.tenantId,program_id:task.programId,package_id:task.packageId,package_version:task.packageVersion,task_id:task.taskId,status:task.status,idempotency_key:task.idempotencyKey,payload:task});
+ const scope={tenantId:'tenant-a',programId:'program-a',packageId:'package-a',packageVersion:1,actorUserId:'owner'},service=createWeeklyExecutionPipelineService(f.store,{worker:()=>({started:true,configuredEnabled:true,state:'idle'})});
+ await assert.rejects(runWithDataAuthority('pocketbase',()=>service.startIndependent(scope)),{code:'weekly_independent_local_only'});
+ await runWithDataAuthority('local',async()=>{
+  await assert.rejects(service.startIndependent({...scope,tenantId:'foreign'}));
+  const result=await service.startIndependent(scope);
+  assert.equal(result.pipeline.executionPhase,'independent_branches');assert.equal(result.pipeline.started,false);assert.equal(result.pipeline.packageStatus,'draft');
+  assert.equal(result.audit.total,3);assert(result.audit.items.find(i=>i.taskId===outline.taskId)!.rootCauses.some(r=>r.code==='business_goal_unavailable'));
+  const before=await listWeeklyExecutionTasks(f.store,scope.tenantId,scope.programId,scope.packageId,1);
+  assert.equal(before.find(i=>i.taskId===ready.taskId)?.status,'queued');assert.equal(before.find(i=>i.taskId===child.taskId)?.status,'blocked');
+  const scan=await runSocialWeeklyExecutionScan({dataStore:f.store,scope,adapters:createDefaultWeeklyExecutionAdapters(f.store),now:new Date('2026-10-15T08:00:00Z')});
+  assert.equal(scan.claimed,1);assert.equal(scan.blocked,1);assert.equal(scan.succeeded,0);assert.equal(scan.failed,0);
+  assert.equal(scan.deadlineRecovery.evaluated,0,'independent preflight must not reserve or reproject an unconfirmed content calendar');
+  const after=await listWeeklyExecutionTasks(f.store,scope.tenantId,scope.programId,scope.packageId,1),checked=after.find(i=>i.taskId===ready.taskId)!;
+  assert(checked.lastError);assert.notEqual(checked.lastError.code,'business_dispatch_required');assert.equal(checked.attempt,0,'missing consent must not consume supplier retry budget');assert(checked.schedule.actualStartedAt);assert.equal(checked.resultRefs.length,0);assert.equal(hasWeeklyInitialExecution(checked),false);
+  assert.equal(after.find(i=>i.taskId===child.taskId)?.attempt,0);assert.equal(after.find(i=>i.taskId===outline.taskId)?.attempt,0);
+  let taskWrites=0;const update=f.store.update.bind(f.store);
+  t.mock.method(f.store,'update',async(...args:Parameters<typeof f.store.update>)=>{if(args[0]===WEEKLY_EXECUTION_TASKS)taskWrites++;return update(...args);});
+  await service.startIndependent(scope);assert.equal((await f.store.list(WEEKLY_INDEPENDENT_ADMISSIONS)).totalItems,1);assert.equal(taskWrites,0,'a no-op replay must not rewrite every task timestamp');
+  assert.equal((await runSocialWeeklyExecutionScan({dataStore:f.store,scope,adapters:createDefaultWeeklyExecutionAdapters(f.store)})).claimed,0);
+  assert.equal((await readIndependentAdmission(f.store,scope))?.authorizeMessaging,false);
+  await f.store.create('social_weekly_operating_packages',{tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,version:2,payload:{...f.pkg,version:2,appliedWorkflowEvents:[],workflowTasks:[],workflows:[]}});
+  assert.equal(await readIndependentAdmission(f.store,scope),null);await assert.rejects(service.startIndependent(scope),/更新/);
+ });
+});
+
+test('initial capacity exception only ignores blocked read-only readiness, never results or send attempts',async t=>{
+ const {task}=await prepareWeeklyEnterpriseFactFixture(t);
+ const checked={...task,status:'blocked' as const,attempt:1,lastError:{code:'tenant_real_customer_messages_not_authorized',message:'Not authorized',retryable:false,occurredAt:new Date().toISOString()},ownBlockingReasons:['tenant_real_customer_messages_not_authorized'],schedule:{...task.schedule,stepKind:'customer_channel_readiness' as const,actualStartedAt:new Date().toISOString()}};
+ assert.equal(hasWeeklyInitialExecution(checked),false);
+ assert.equal(hasWeeklyInitialExecution({...checked,resultRefs:[{type:'real-check',id:'receipt',version:1}]}),true);
+ assert.equal(hasWeeklyInitialExecution({...checked,schedule:{...checked.schedule,stepKind:'customer_inquiry_handoff'}}),true);
+ assert.equal(hasWeeklyInitialExecution({...checked,status:'succeeded'}),true);
+});

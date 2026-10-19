@@ -2,6 +2,7 @@ import { Button, Collapse, DatePicker, Empty, Tag } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import { Activity, CheckCircle2, CircleDashed, CircleDollarSign, Clapperboard, MessageSquareText, Minus, Puzzle, RefreshCcw, Users } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { smartBusinessShowcaseChannels } from '../../dev/smartBusinessShowcaseData';
 import type { DigitalEmployeeOverview } from '../../lib/digitalEmployees';
 import { authHeader } from '../../lib/auth';
 import { loadConnectedSocialPerformance } from '../../lib/socialPerformance';
@@ -43,10 +44,10 @@ function Criteria({ items }: { items: HealthCriterion[] }) {
   </dl>;
 }
 
-const coverageStatusMeta: Record<HealthCriterionCoverageStatus, { label: string; className: string; tileClassName: string; icon: typeof CheckCircle2 }> = {
-  scored: { label: '已评分', className: 'text-[var(--ls-success)]', tileClassName: 'border-[var(--ls-success)] bg-[var(--ls-success-bg)]', icon: CheckCircle2 },
-  pending: { label: '待数据', className: 'text-[var(--ls-warning)]', tileClassName: 'border-dashed border-[var(--ls-warning)] bg-[var(--ls-warning-bg)]', icon: CircleDashed },
-  not_applicable: { label: '不适用', className: 'text-text-muted', tileClassName: 'border-dashed border-border-bright bg-surface-2', icon: Minus },
+const coverageStatusMeta: Record<HealthCriterionCoverageStatus, { label: string; className: string; neutralFill?: string; icon: typeof CheckCircle2 }> = {
+  scored: { label: '已评分', className: 'text-[var(--ls-success)]', icon: CheckCircle2 },
+  pending: { label: '待数据', className: 'text-text-secondary', neutralFill: '#E4E4E7', icon: CircleDashed },
+  not_applicable: { label: '不适用', className: 'text-text-muted', neutralFill: '#F4F4F5', icon: Minus },
 };
 
 function HealthCoveragePuzzleBoard({ dimensions }: { dimensions: BusinessHealthDimension[] }) {
@@ -58,19 +59,27 @@ function HealthCoveragePuzzleBoard({ dimensions }: { dimensions: BusinessHealthD
       <span className="text-xs tabular-nums text-text-secondary">已补齐 <strong className="font-semibold text-text-primary">{totals.scored}/{totals.applicable}</strong> 个适用口径</span>
     </div>
     <div className="mt-3 flex flex-wrap gap-3 text-xs" aria-label="拼图状态图例">{(Object.keys(coverageStatusMeta) as HealthCriterionCoverageStatus[]).map(status => { const meta = coverageStatusMeta[status]; const Icon = meta.icon; return <span key={status} className={`inline-flex items-center gap-1 ${meta.className}`}><Icon size={14} aria-hidden="true"/>{meta.label}</span>; })}</div>
-    <div className="mt-3 overflow-hidden rounded-lg border border-border bg-border">
-      <div className="grid gap-px md:grid-cols-2">
-        {dimensionCoverage.map(({ dimension, coverage }, dimensionIndex) => <section key={dimension.key} className="min-w-0 bg-white" aria-labelledby={`coverage-${dimension.key}`}>
-          <header className="flex min-w-0 items-start justify-between gap-3 border-b border-border pb-3" style={{ borderInlineStart: `3px solid ${chartPalette[dimensionIndex]}`, paddingInlineStart: 10 }}><div><h4 id={`coverage-${dimension.key}`} className="text-sm font-semibold text-text-primary">{dimension.label}</h4><p className="mt-1 text-xs text-text-muted">覆盖 {coverage.scored}/{coverage.applicable} 个适用口径</p></div><span className="shrink-0 text-xs tabular-nums text-text-secondary">{scoreLabel(dimension.score)}</span></header>
-          <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2" aria-label={`${dimension.label}口径拼图`}>
-            {dimension.criteria.map(criterion => { const status = healthCriterionCoverageStatus(criterion); const meta = coverageStatusMeta[status]; const Icon = meta.icon; const hasScore = status === 'scored' && criterion.score !== null && Number.isFinite(criterion.score); return <li key={criterion.label} data-coverage-status={status} title={criterion.current} aria-label={`${dimension.label}，${criterion.label}，${meta.label}${hasScore ? `，${criterion.score} 分` : ''}`} className={`relative min-h-24 overflow-hidden rounded-md border p-3 transition-colors motion-reduce:transition-none ${meta.tileClassName}`}>
-              <div className="flex items-start justify-between gap-2"><Icon size={17} className={`mt-0.5 shrink-0 ${meta.className}`} aria-hidden="true"/><span className={`text-xs font-medium ${meta.className}`}>{hasScore ? `${criterion.score} 分` : meta.label}</span></div>
-              <p className="mt-3 text-sm font-semibold leading-5 text-text-primary">{criterion.label}</p>
-              <span aria-hidden="true" className="absolute -bottom-3 -right-3 h-8 w-8 rounded-full border border-current opacity-10"/>
-            </li>; })}
+    <div className="mt-4 grid gap-[2px] overflow-hidden bg-white md:grid-cols-2" role="group" aria-label="四领域指标覆盖拼图">
+      {dimensionCoverage.map(({ dimension, coverage }, dimensionIndex) => {
+        const dimensionColor = chartPalette[dimensionIndex];
+        return <section key={dimension.key} data-puzzle-domain={dimension.key} data-domain-color={dimensionColor} className="min-w-0 bg-white" aria-labelledby={`coverage-${dimension.key}`}>
+          <header className="flex min-w-0 items-start justify-between gap-3 px-4 py-3" style={{ backgroundColor: `${dimensionColor}26` }}><div><h4 id={`coverage-${dimension.key}`} className="text-sm font-semibold text-text-primary">{dimension.label}</h4><p className="mt-1 text-xs text-text-secondary">覆盖 {coverage.scored}/{coverage.applicable} 个适用口径</p></div><span className="shrink-0 text-xs font-medium tabular-nums text-text-primary">{scoreLabel(dimension.score)}</span></header>
+          <ul className="grid grid-cols-1 sm:grid-cols-2" aria-label={`${dimension.label}口径拼图`}>
+            {dimension.criteria.map((criterion, criterionIndex) => {
+              const status = healthCriterionCoverageStatus(criterion);
+              const meta = coverageStatusMeta[status];
+              const Icon = meta.icon;
+              const hasScore = status === 'scored' && criterion.score !== null && Number.isFinite(criterion.score);
+              const isWideLastPiece = dimension.criteria.length % 2 === 1 && criterionIndex === dimension.criteria.length - 1;
+              const fill = meta.neutralFill ?? `${dimensionColor}${criterionIndex % 2 === 0 ? '18' : '26'}`;
+              return <li key={criterion.label} data-coverage-status={status} title={criterion.current} aria-label={`${dimension.label}，${criterion.label}，${meta.label}${hasScore ? `，${criterion.score} 分` : ''}`} className={`relative min-h-24 overflow-hidden px-4 py-3 ${isWideLastPiece ? 'sm:col-span-2' : ''}`} style={{ backgroundColor: fill }}>
+                <div className="flex items-start justify-between gap-2"><Icon size={17} className={`mt-0.5 shrink-0 ${meta.className}`} aria-hidden="true"/><span className={`text-xs font-medium ${meta.className}`}>{hasScore ? `${criterion.score} 分` : meta.label}</span></div>
+                <p className="mt-3 text-sm font-semibold leading-5 text-text-primary">{criterion.label}</p>
+              </li>;
+            })}
           </ul>
-        </section>)}
-      </div>
+        </section>;
+      })}
     </div>
   </section>;
 }
@@ -117,7 +126,6 @@ function HealthCriteriaVisualization({ dimensions, selectedAccountId, generatedA
     <HealthCoveragePuzzleBoard dimensions={dimensions}/>
 
     <div className="border-l-2 border-accent pl-3 text-xs leading-5 text-text-secondary" role="note"><strong className="font-medium text-text-primary">计分规则</strong>：总经营分只对已评估领域等权平均；待数据不填 0、不补 100，不适用项排除分母。当前不包含收入或 ROI 判断。{selectedAccountId ? '当前筛选账号；缺少账号级归因的数据不以全公司数值代替。' : ''}</div>
-    <Collapse ghost items={[{ key: 'basis', label: '查看完整计算口径', children: <div className="space-y-4">{dimensions.map(dimension => <section key={dimension.key}><h4 className="text-sm font-semibold text-text-primary">{dimension.label}</h4><Criteria items={dimension.criteria}/></section>)}</div> }]}/>
     <p className="text-xs text-text-muted">经营快照：{generatedAt ? new Date(generatedAt).toLocaleString('zh-CN') : '待同步'} · 账号同步：{accountLoadedAt ? new Date(accountLoadedAt).toLocaleString('zh-CN') : '待读取'}</p>
   </div>;
 }
@@ -142,6 +150,12 @@ export default function BusinessHealthOverview({ data, selectedAccountId = '', o
   const refresh = useCallback(async () => {
     const id = ++requestId.current;
     setLoading(true);
+    const showcase = smartBusinessShowcaseChannels(data);
+    if (showcase) {
+      setSources(showcase);
+      setLoading(false);
+      return;
+    }
     const readJson = async (url: string) => {
       const response = await fetch(url, { headers: authHeader(), signal: AbortSignal.timeout(15_000) });
       if (!response.ok) throw new Error('承接渠道状态暂时无法读取');
@@ -162,7 +176,7 @@ export default function BusinessHealthOverview({ data, selectedAccountId = '', o
       messengerPages: messenger.status === 'fulfilled' && Array.isArray(messenger.value.items) ? messenger.value.items : previous.messengerPages,
     }));
     setLoading(false);
-  }, []);
+  }, [data]);
   const snapshotStartsAt = data.businessSnapshot?.range.startsAt || data.goal?.startsAt || '';
   const snapshotEndsAt = data.businessSnapshot?.range.endsAt || data.goal?.endsAt || '';
   useEffect(() => { void refresh(); return () => { requestId.current += 1; }; }, [refresh, snapshotStartsAt, snapshotEndsAt]);

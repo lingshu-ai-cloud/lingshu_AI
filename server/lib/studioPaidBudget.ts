@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { withPaidOperationLock } from './paidOperationLock.js';
+import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
 
 export type PaidProvider = 'heygen' | 'qwen_asr';
 type Config = { limit: number; openingUsed: number; reserve: Record<PaidProvider, number> };
@@ -28,6 +29,11 @@ export class StudioPaidBudget {
     if (!Number.isFinite(overrideCny) || overrideCny <= 0 || overrideCny > config.reserve[provider] / 1e6) throw new Error('单任务预占金额无效或超过管理员上限');
     return units(String(overrideCny));
   }
+  private exemptReservation(overrideCny?: number): number | null {
+    if (overrideCny === undefined) return null;
+    if (!Number.isFinite(overrideCny) || overrideCny <= 0) throw new Error('单任务预占金额无效');
+    return overrideCny;
+  }
   private read(config: Config): Ledger {
     const file = path.join(this.root, 'ledger.json');
     const ledger: Ledger = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { version: 1, limit: config.limit, openingUsed: config.openingUsed, entries: {} };
@@ -42,7 +48,16 @@ export class StudioPaidBudget {
     if (!Number.isSafeInteger(value)) throw new Error('预算账本金额异常');
     return value;
   }
-  status(provider: PaidProvider, overrideCny?: number) {
+  status(provider: PaidProvider, overrideCny?: number, tenantId?: string) {
+    if (isInternalBudgetExemptTenant(tenantId)) {
+      try {
+        return { allowed: true, remainingCny: null, reservationCny: this.exemptReservation(overrideCny),
+          reason: '', budgetExempt: true };
+      } catch (error) {
+        return { allowed: false, remainingCny: null, reservationCny: null,
+          reason: error instanceof Error ? error.message : '预算配置不可用', budgetExempt: true };
+      }
+    }
     try {
       const config = this.config(), used = this.used(this.read(config)), amount = this.amount(config, provider, overrideCny);
       return { allowed: used + amount <= config.limit,
@@ -50,7 +65,11 @@ export class StudioPaidBudget {
         reason: used + amount <= config.limit ? '' : '预算余额不足，已禁止新付费任务；已有任务仍可刷新' };
     } catch (error) { return { allowed: false, remainingCny: null, reservationCny: null, reason: error instanceof Error ? error.message : '预算不可用' }; }
   }
-  async reserve(provider: PaidProvider, operationId: string, overrideCny?: number) {
+  async reserve(provider: PaidProvider, operationId: string, overrideCny?: number, tenantId?: string) {
+    if (isInternalBudgetExemptTenant(tenantId)) {
+      this.exemptReservation(overrideCny);
+      return;
+    }
     return withPaidOperationLock(path.join(this.root, '.locks'), 'budget', async () => {
       const config = this.config(), ledger = this.read(config);
       const id = createHash('sha256').update(`${provider}:${operationId}`).digest('hex');
@@ -68,7 +87,8 @@ export class StudioPaidBudget {
   }
 
   /** Release only after the provider explicitly rejected a request before creating a task. */
-  async releaseRejected(provider: PaidProvider, operationId: string) {
+  async releaseRejected(provider: PaidProvider, operationId: string, tenantId?: string) {
+    if (isInternalBudgetExemptTenant(tenantId)) return;
     return withPaidOperationLock(path.join(this.root, '.locks'), 'budget', async () => {
       const config = this.config(), ledger = this.read(config);
       const id = createHash('sha256').update(`${provider}:${operationId}`).digest('hex');

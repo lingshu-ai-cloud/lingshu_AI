@@ -1,6 +1,7 @@
 import type { VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 import { buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
 import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
+import { referenceContentIdentity, sameReferenceContent, uniqueReferenceContent } from './referenceContentIdentity.js';
 
 type TrendVideoEvidence = {
   id: string;
@@ -8,6 +9,14 @@ type TrendVideoEvidence = {
   duration?: unknown;
   updatedAt?: unknown;
   updated_at?: unknown;
+  sourceUrl?: unknown;
+  videoUrl?: unknown;
+  url?: unknown;
+  videoFileId?: unknown;
+  sha256?: unknown;
+  contentHash?: unknown;
+  mediaSha256?: unknown;
+  fileSha256?: unknown;
 };
 
 export type ViralAnalysisCoverage = {
@@ -17,11 +26,6 @@ export type ViralAnalysisCoverage = {
   validRecords: TrendVideoEvidence[];
   invalidReferenceIds: string[];
   blockedReason: string;
-};
-
-type ContentBatchEvidence = {
-  run_id?: unknown;
-  orders?: unknown;
 };
 
 function object(value: unknown): Record<string, unknown> {
@@ -68,7 +72,8 @@ export function evaluateViralAnalysisCoverage(
   const masters = cloneMasters(plans);
   const requiredCount = masters.length;
   const recordsById = new Map(candidateRecords.map(record => [record.id, record]));
-  const validRecords = [...new Map(candidateRecords.filter(hasParseableExactVideoAnalysis).map(record => [record.id, record])).values()];
+  const validRecords = uniqueReferenceContent([...new Map(candidateRecords
+    .filter(hasParseableExactVideoAnalysis).map(record => [record.id, record])).values()]);
   const planReferenceIds = masters.map(plan => String(plan.referenceId || '').trim()).filter(Boolean);
   const explicitIds = [...new Set(options.explicitReferenceIds === undefined ? planReferenceIds : [...options.explicitReferenceIds])];
   const invalidReferenceIds = explicitIds.filter(id => !recordsById.has(id) || !hasParseableExactVideoAnalysis(recordsById.get(id)!));
@@ -110,37 +115,17 @@ export function canSkipCollectionForExplicitReferences(
   if (!clonePlans.length || plans.some(plan => plan.route !== 'clone')) return false;
   const explicitIds = new Set(reusableExplicitReferenceIds(plans));
   const byId = new Map(records.map(record => [record.id, record]));
-  return clonePlans.every(plan => Boolean(plan.referenceId)
+  const selected = clonePlans.flatMap(plan => {
+    const selectedRecord = byId.get(plan.referenceId);
+    return plan.referenceId && explicitIds.has(plan.referenceId) && selectedRecord
+      && hasParseableExactVideoAnalysis(selectedRecord) ? [selectedRecord] : [];
+  });
+  return selected.length === clonePlans.length
+    && uniqueReferenceContent(selected).length === clonePlans.length
+    && clonePlans.every(plan => Boolean(plan.referenceId)
     && explicitIds.has(plan.referenceId)
     && Boolean(byId.get(plan.referenceId))
     && hasParseableExactVideoAnalysis(byId.get(plan.referenceId)!));
-}
-
-/** References become "used" only after they entered a persisted production
- * handoff. Merely previewing or recommending a reference in a draft does not
- * consume it. The active run is excluded so reconciliation stays idempotent. */
-export function usedViralReferenceIdsFromBatches(
-  batches: ContentBatchEvidence[], excludeRunId = '',
-): string[] {
-  const ids = batches.flatMap(batch => {
-    if (excludeRunId && String(batch.run_id || '').trim() === excludeRunId) return [];
-    const orders = Array.isArray(batch.orders) ? batch.orders : (() => {
-      try { return typeof batch.orders === 'string' ? JSON.parse(batch.orders) : []; }
-      catch { return []; }
-    })();
-    return Array.isArray(orders) ? orders.flatMap(value => {
-      const order = object(value);
-      const videoPlan = object(order.videoPlan);
-      const variants = Array.isArray(order.deliveryVariants) ? order.deliveryVariants.map(object) : [];
-      const evidenceRefs = Array.isArray(order.evidenceRefs) ? order.evidenceRefs.map(object) : [];
-      return [
-        String(order.referenceId || '').trim(),
-        ...[videoPlan, ...variants].map(item => String(item.referenceId || '').trim()),
-        ...evidenceRefs.filter(ref => ref.type === 'exact_analysis').map(ref => String(ref.id || '').trim()),
-      ].filter(Boolean);
-    }) : [];
-  });
-  return [...new Set(ids)];
 }
 
 export type PlannedReferenceReuse = {
@@ -155,20 +140,28 @@ export type PlannedReferenceReuse = {
  * clone master has its own usable reference. User-explicit references may be
  * reused intentionally; automatic recommendations must be unused. */
 export function evaluatePlannedReferenceReuse(
-  plans: VideoCreationPlan[], records: TrendVideoEvidence[], usedReferenceIds: Iterable<string>,
+  plans: VideoCreationPlan[], records: TrendVideoEvidence[], currentWeekUsedReferenceIds: Iterable<string>,
 ): PlannedReferenceReuse {
   const masters = cloneMasters(plans);
   const explicit = new Set(reusableExplicitReferenceIds(plans));
-  const used = new Set(usedReferenceIds);
+  const used = new Set(currentWeekUsedReferenceIds);
   const byId = new Map(records.map(record => [record.id, record]));
   const selectedReferenceIds = masters.map(plan => String(plan.referenceId || '').trim()).filter(Boolean);
-  const reusable = selectedReferenceIds.filter((id, index) => selectedReferenceIds.indexOf(id) === index
-    && Boolean(byId.get(id))
-    && hasParseableExactVideoAnalysis(byId.get(id)!)
-    && (explicit.has(id) || !used.has(id)));
+  const usedRecords = [...used].flatMap(id => byId.get(id) ? [byId.get(id)!] : []);
+  const reusable: string[] = [];
+  const reusableRecords: TrendVideoEvidence[] = [];
+  for (const id of selectedReferenceIds) {
+    const candidate = byId.get(id);
+    if (!candidate || !hasParseableExactVideoAnalysis(candidate)) continue;
+    if (!explicit.has(id) && (used.has(id) || usedRecords.some(previous =>
+      sameReferenceContent(referenceContentIdentity(previous), referenceContentIdentity(candidate))))) continue;
+    if (reusableRecords.some(previous =>
+      sameReferenceContent(referenceContentIdentity(previous), referenceContentIdentity(candidate)))) continue;
+    reusable.push(id);
+    reusableRecords.push(candidate);
+  }
   const ready = masters.length > 0
     && selectedReferenceIds.length === masters.length
-    && new Set(selectedReferenceIds).size === masters.length
     && reusable.length === masters.length;
   return {
     ready,

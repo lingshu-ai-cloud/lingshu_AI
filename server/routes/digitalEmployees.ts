@@ -31,13 +31,22 @@ import { reviewTodoService } from '../digitalEmployees/reviewTodos.js';
 import { applyReviewTodoPlan, sameTodoRequirements } from '../digitalEmployees/reviewTodoPlan.js';
 import type { ReviewTodoBoard } from '../../src/lib/reviewTodos.js';
 import { nextTaskFailure, taskRetryDue, type TaskFailure } from '../digitalEmployees/taskRetry.js';
-import { analysisWait, basicTaskWait, collectionWait, followupComplete, followupWait, postFullyPublished, publishingPlatformsCovered, publishingWait, waitState } from '../digitalEmployees/executionDiagnostics.js';
+import { analysisWait, basicTaskWait, collectionWait, followupComplete, followupWait, postFullyPublished, publishingPlatformsCovered, publishingWait, waitState, workflowStatusForWait } from '../digitalEmployees/executionDiagnostics.js';
 import { listTenantEmployees } from './auth.js';
 import { recommendPackage, normalizePackage, repairCollapsedWeeklyVideoProduction, validatePackage, validatePackageForStart, compilePackage, packageConfig, packageTaskForKey, grantCovers, criticalBusinessConfigChanges } from '../digitalEmployees/weeklyPackage.js';
 import { TASK_TEMPLATES, type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { fillMatrixVideos } from '../../src/lib/weeklyMatrix.js';
 import { presenterProductionGate, type ProductionDefaults } from '../../src/lib/shotProduction.js';
 import { applyDirectorDecision, DIRECTOR_DECISION_LABELS, DIRECTOR_REASON_LABELS, type DirectorDecision, type DirectorDecisionReason } from '../../src/lib/directorDecision.js';
+import {
+  directorDecisionInvalidatesWeeklyAuthorization,
+  taskCorrectionInvalidatesWeeklyAuthorization,
+} from '../digitalEmployees/weeklyAuthorizationInvalidation.js';
+import { weeklyAuthorizationRecoveryDecision } from '../digitalEmployees/weeklyAuthorizationRecovery.js';
+import { missingPublishingOAuthConfiguration, publishingAccountConnectionMessage, publishingOAuthConfigurationMessage, type PublishingOAuthPlatform, type PublishingReadinessSnapshot } from '../digitalEmployees/publishingOAuthReadiness.js';
+import { readTenantPublishingReadiness } from '../digitalEmployees/publishingRuntimeReadiness.js';
+import { migrateLegacyPublishingPlanAccountBindings, packageGrantWasInvalidatedAfterApproval } from '../digitalEmployees/publishingPlanAccountMigration.js';
+import { getTenantAwareGoogleOAuthClient, getTenantAwareInstagramOAuthClient, getTenantAwareMetaOAuthClient, getTenantAwareTikTokOAuthClient } from '../lib/oauthConfig.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
 import { normalizeVideoPlan, spokenLanguageMatches, videoPlanErrors, type VideoCreationPlan, type VideoPreproductionPreview } from '../../shared/contracts/videoCreationPlan.js';
@@ -61,22 +70,24 @@ import { listRunEventsAfter } from '../digitalEmployees/runEventReplay.js';
 import { enforceSupportSessionReadOnly, requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { settledSeedanceUsageForTenant } from '../lib/seedanceBudget.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 import type { ExecutionStoreRecord } from './productionContracts.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
 import { readAuthorizedWhatsAppCustomers as defaultGetWhatsAppCustomers } from '../whatsapp/authorizedCustomerRead.js';
 import { currentExecutionAdapters, readExecutionMaterialLibrary } from '../digitalEmployees/executionAdapters.js';
 const getWhatsAppCustomers = async (tenantId: string) => currentExecutionAdapters()?.customers?.(tenantId) ?? defaultGetWhatsAppCustomers(tenantId);
-import { ensureDigitalEmployeeSocialCollectionTask, runScheduledTaskNow } from './scheduler.js';
+import { ensureDigitalEmployeeSocialCollectionTask, runScheduledTaskNow, scheduledExecutionState } from './scheduler.js';
 import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile, type EnterpriseProfile } from './enterprise.js';
 import { buildBusinessSnapshot as defaultBuildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
 const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, range) => currentExecutionAdapters()?.snapshot?.(tenantId, range) ?? defaultBuildBusinessSnapshot(tenantId, range);
-import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, collectProductionAssets, generateDirectorScriptContracts, productIdentity, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
-import { managedReplicationFailureState, managedReplicationPresenterReadiness } from '../digitalEmployees/replicationContentProduction.js';
+import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, collectProductionAssets, generateDirectorScriptContracts, productIdentity, refreshExpandedContentOrderContract, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl, storyboardVoiceLanguageMatches } from '../digitalEmployees/contentProduction.js';
+import { managedReplicationFailureState, managedReplicationPlanHasExecutionGraph, managedReplicationPresenterReadiness } from '../digitalEmployees/replicationContentProduction.js';
 import { assessStoryboardMaterialReadiness, resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
-import { contentProjectLineageFields } from '../digitalEmployees/contentProjectLineage.js';
+import { contentProjectExplicitWorkflowScope, contentProjectLineageFields, managedContentProjectBelongsToWorkflowScope } from '../digitalEmployees/contentProjectLineage.js';
+import { readServerProductionOnboardingReadiness, referenceCoveredByProductionEvidence } from '../digitalEmployees/productionOnboardingPreflight.js';
 import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft, type ContentOrder } from '../digitalEmployees/contentBatchPlan.js';
-import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, publicationCopyForPlan } from '../digitalEmployees/contentPlanRecommendation.js';
+import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, publicationCopyForPlan, verifiedStoryboardProviderCostRange } from '../digitalEmployees/contentPlanRecommendation.js';
 import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS, buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
 import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
 import { benchmarkAnalysisForRecord } from '../lib/benchmarkAnalysis.js';
@@ -93,9 +104,10 @@ import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPre
 import { bindPublishingTargets, listConnectedPublishingAccounts, localPublishingAccountMocksEnabled, publishingTargetPlatforms } from '../digitalEmployees/publishingTargets.js';
 import { digitalEmployeeOperatingGoals, isDigitalEmployeeOperatingGoal } from '../digitalEmployees/overviewGoalScope.js';
 import { directorAnalysisReferenceIds, liveDirectorAnalysisTasks, projectDirectorAnalysisStatus } from '../digitalEmployees/liveDirectorAnalyses.js';
-import { evaluatePlannedReferenceReuse, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, usedViralReferenceIdsFromBatches, viralCoverageBypassAllowed } from '../digitalEmployees/viralAnalysisCoverage.js';
+import { evaluatePlannedReferenceReuse, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, viralCoverageBypassAllowed } from '../digitalEmployees/viralAnalysisCoverage.js';
+import { referenceContentIdentity } from '../digitalEmployees/referenceContentIdentity.js';
 import { mustInvalidateContentDownstream } from '../digitalEmployees/dependencyInvalidation.js';
-import { canonicalScheduledCollectionRecords, evaluateScheduledDiscoveryRuns, mustReobserveSucceededCollection, type DiscoveryRunRecord } from '../digitalEmployees/scheduledCollectionProof.js';
+import { canonicalScheduledCollectionRecords, evaluateScheduledDiscoveryRuns, mustReobserveSucceededCollection, scheduledCollectionFailureCanRetry, shouldRunScheduledCollection, type DiscoveryRunRecord } from '../digitalEmployees/scheduledCollectionProof.js';
 import {
   VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLES,
   visibleDigitalEmployeeAgentRole as visibleAgentRole,
@@ -152,6 +164,7 @@ import {
 
 export const digitalEmployeesRouter = Router();
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, withLocalQueue, type ApprovalRecord, type ConfigRecord, type ContentBatchPlanRecord, type CorrectionRecord, type EventRecord, type GoalRecord, type HandoffRecord, type PlanRecord, type RunRecord, type StoredRecord, type TaskRecord } from './digitalEmployeeRecords.js';
+import { pointsFromCny } from '../../shared/pointsPolicy.js';
 digitalEmployeesRouter.use(requireAuth);
 digitalEmployeesRouter.use(enforceSupportSessionReadOnly);
 
@@ -185,7 +198,7 @@ digitalEmployeesRouter.get('/agent-usage-costs', async (_req, res) => {
     roles: {
       business: null,
       director: null,
-      content: contentCount ? { settledCny: Number(contentSettled.toFixed(4)), entryCount: contentCount, updatedAt: contentUpdatedAt, source: '账号真实供应商结算账本' } : null,
+      content: contentCount ? { settledCny: Number(contentSettled.toFixed(4)), settledPoints: pointsFromCny(contentSettled), entryCount: contentCount, updatedAt: contentUpdatedAt, source: '账号真实供应商结算账本' } : null,
       customer: null,
     },
   });
@@ -236,6 +249,14 @@ function publicConfigurationMetadata(resolved: ResolvedDigitalEmployeeConfigurat
     knowledgeBinding: resolved.knowledgeBinding,
     runtimePolicy: resolved.runtimePolicy,
   };
+}
+
+async function publishingReadinessForOverview(
+  tenantId: string,
+  required: boolean,
+  targetPlatforms: string[],
+): Promise<PublishingReadinessSnapshot> {
+  return (await readTenantPublishingReadiness(tenantId, required, targetPlatforms)).snapshot;
 }
 
 function configSnapshotForPlan(plan: PlanRecord | null, fallback: DigitalEmployeeConfig): DigitalEmployeeConfig {
@@ -500,7 +521,7 @@ function goalInput(record: GoalRecord): WeeklyGoalInput {
 function publicAgentStatuses(tasks: Array<TaskRecord & { agent_role: VisibleAgentRole }>) {
   return VISIBLE_AGENT_ROLES.map(role => {
     const agentTasks = tasks.filter(task => task.agent_role === role);
-    const active = agentTasks.find(task => ['running', 'waiting_external', 'waiting_approval', 'handed_off'].includes(task.status));
+    const active = agentTasks.find(task => ['running', 'waiting_external', 'waiting_approval', 'waiting_human', 'handed_off'].includes(task.status));
     return {
       role,
       status: active?.status || (agentTasks.length > 0 && agentTasks.every(task => ['succeeded', 'skipped'].includes(task.status)) ? 'completed' : 'idle'),
@@ -572,6 +593,10 @@ async function contentRoutingEvidence(tenantId: string, config: DigitalEmployeeC
       };
     }),
     exactAnalysisIds: analyses.items.filter(exactVideoAnalysis).map(item => item.id),
+    referenceIdentities: Object.fromEntries(analyses.items.map(item => [item.id, referenceContentIdentity(item)])),
+    referenceAnalyses: Object.fromEntries(analyses.items.map(item => [item.id,
+      benchmarkAnalysisForRecord(item, jsonObject<Record<string, unknown>>(item.aiAnalysis, {})),
+    ])),
     referenceAdmissions: Object.fromEntries(analyses.items.map(item => [item.id,
       productionReferenceAdmission(benchmarkAnalysisForRecord(item, jsonObject<Record<string, unknown>>(item.aiAnalysis, {}))),
     ])),
@@ -591,12 +616,11 @@ async function recommendPackageWithTenantEvidence(
   frozenProfile?: EnterpriseProfile,
 ): Promise<WeeklyPackage> {
   const pack = recommendPackage(goal, config, ownerId, ownerName);
-  const [videos, benchmarks, enterpriseProfile, routingEvidence, priorBatches] = await Promise.all([
+  const [videos, benchmarks, enterpriseProfile, routingEvidence] = await Promise.all([
     store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 500 }).catch(() => ({ items: [] })),
     store.list<StoredRecord>('competitor_accounts', { where: { tenantId }, sort: '-createdAt', perPage: 200 }).catch(() => ({ items: [] })),
     frozenProfile ? Promise.resolve(structuredClone(frozenProfile)) : readTenantEnterpriseProfile(tenantId),
     contentRoutingEvidence(tenantId, config, frozenProfile),
-    store.list<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, { where: { tenant_id: tenantId }, perPage: 500 }).catch(() => ({ items: [] })),
   ]);
   const enabledRoutes = enterpriseProfile.socialStrategy?.enabledRoutes || [];
   const enterprisePrimaryCta = enabledRoutes
@@ -609,9 +633,27 @@ async function recommendPackageWithTenantEvidence(
     ? fillMatrixVideos({ ...pack, matrixPlan }, config.videoDefaults || {}, goal.endsAt)
     : pack;
   const productBound = bindDefaultProductsToPackage(matrixBound, routingEvidence.products);
-  const usedReferenceIds = new Set(usedViralReferenceIdsFromBatches(priorBatches.items));
-  const unusedAnalyzedVideos = videos.items.filter(video => !usedReferenceIds.has(video.id));
-  return enrichPackageWithContentSignals({ pack: productBound, goal, config, videos: unusedAnalyzedVideos, benchmarks: benchmarks.items });
+  const productionEvidence = await readServerProductionOnboardingReadiness({
+    store,
+    tenantId,
+    profile: enterpriseProfile,
+    preferences: config.productionOnboarding,
+    plans: [],
+    budgetConfirmed: true,
+  });
+  const producibleReferences = videos.items.filter(item => {
+    if (!hasParseableExactVideoAnalysis(item)) return false;
+    return referenceCoveredByProductionEvidence({
+      analysis: benchmarkAnalysisForRecord(item, jsonObject<Record<string, unknown>>(item.aiAnalysis, {})),
+      preferences: config.productionOnboarding,
+      evidence: productionEvidence.evidence,
+    });
+  });
+  // A reference is unique inside one weekly package, not permanently spent.
+  // Keeping the full analyzed library lets a later week reuse a proven content
+  // logic after real performance review, while package enrichment still
+  // prevents the same source from occupying two slots in the current week.
+  return enrichPackageWithContentSignals({ pack: productBound, goal, config, videos: producibleReferences, benchmarks: benchmarks.items });
 }
 
 function clearAutomaticViralReferences(pack: WeeklyPackage): WeeklyPackage {
@@ -629,7 +671,7 @@ function clearAutomaticViralReferences(pack: WeeklyPackage): WeeklyPackage {
   };
 }
 
-async function bindUnusedViralLibraryToWeeklyPackage(input: {
+async function bindWeeklyViralLibraryToPackage(input: {
   tenantId: string;
   run: RunRecord;
   goal: GoalRecord;
@@ -639,15 +681,33 @@ async function bindUnusedViralLibraryToWeeklyPackage(input: {
 }): Promise<{ pack: WeeklyPackage; inventory: ReturnType<typeof evaluatePlannedReferenceReuse>; changed: boolean }> {
   const production = input.pack.tasks.find(task => task.templateId === 'production');
   const plans = production?.videoPlans || [];
-  const [library, batches] = await Promise.all([
-    store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 }),
-    store.list<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, { where: { tenant_id: input.tenantId }, perPage: 500 }),
-  ]);
-  const usedReferenceIds = usedViralReferenceIdsFromBatches(batches.items, input.run.id);
+  const library = await store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 });
+  const profile = (input.plan ? frozenEnterpriseProfileForPlan(input.plan, false) : null)
+    || await readTenantEnterpriseProfile(input.tenantId);
+  const productionEvidence = await readServerProductionOnboardingReadiness({
+    store,
+    tenantId: input.tenantId,
+    profile,
+    preferences: input.config.productionOnboarding,
+    plans: [],
+    budgetConfirmed: true,
+  });
+  const coveredReferenceIds = new Set(library.items.filter(item => hasParseableExactVideoAnalysis(item)
+    && referenceCoveredByProductionEvidence({
+      analysis: benchmarkAnalysisForRecord(item, jsonObject<Record<string, unknown>>(item.aiAnalysis, {})),
+      preferences: input.config.productionOnboarding,
+      evidence: productionEvidence.evidence,
+    })).map(item => item.id));
+  // Cross-week use is allowed. The evaluator receives only the current weekly
+  // selection and therefore enforces one-content-one-slot for this week.
+  const usedReferenceIds: string[] = [];
   const currentInventory = evaluatePlannedReferenceReuse(plans, library.items, usedReferenceIds);
-  if (currentInventory.ready) return { pack: input.pack, inventory: currentInventory, changed: false };
+  const selectedReferencesCovered = plans.every(plan => plan.route !== 'clone'
+    || Boolean(plan.referenceId && coveredReferenceIds.has(plan.referenceId)));
+  if (currentInventory.ready && selectedReferencesCovered) return { pack: input.pack, inventory: currentInventory, changed: false };
   const explicitReferenceIds = new Set(reusableExplicitReferenceIds(plans));
-  const candidates = library.items.filter(item => explicitReferenceIds.has(item.id) || !usedReferenceIds.includes(item.id));
+  const candidates = library.items.filter(item => coveredReferenceIds.has(item.id)
+    && (explicitReferenceIds.has(item.id) || hasParseableExactVideoAnalysis(item)));
   const benchmarks = await store.list<StoredRecord>('competitor_accounts', { where: { tenantId: input.tenantId }, sort: '-createdAt', perPage: 200 }).catch(() => ({ items: [] }));
   const cleared = clearAutomaticViralReferences(input.pack);
   const rebound = enrichPackageWithContentSignals({
@@ -1008,7 +1068,7 @@ async function generateWeeklyTaskPreviews(input: {
   return {
     ...input.pack,
     detailGeneration: {
-      status: readyCount > 0 ? 'ready' : 'blocked', startedAt: generatedAt, generatedAt,
+      status: readyCount > 0 && readyCount === masterPlans.length ? 'ready' : 'blocked', startedAt: generatedAt, generatedAt,
       estimatedMinutes: Math.max(2, Math.ceil(masterPlans.length / 2) * 2), usageCostCny: null,
       readyCount, blockedCount: blocked.length, blockers: allBlockers,
     },
@@ -1069,11 +1129,30 @@ async function ensureContentBatchPlan(input: { tenantId: string; goal: GoalRecor
   const pack = planBody.businessPackage as WeeklyPackage | undefined;
   const director = pack?.directorPlan;
   const plans = pack?.tasks.find(item => item.templateId === 'production')?.videoPlans || [];
-  const estimatedTotal = plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0);
-  if (director && director.productionSpent + estimatedTotal > director.productionBudget) throw new Error('内容计划预计费用与已用金额超过生产预算');
+  const protectedBudget = director?.productionBudgetMode !== 'economy';
+  const selectedContentCap = (plan: VideoCreationPlan) => Number(protectedBudget
+    ? plan.estimatedCostRange?.maxCny || plan.estimatedCost
+    : plan.estimatedCostRange?.minCny || plan.estimatedCost);
+  const reservedTotal = plans.reduce((sum, plan) => sum + selectedContentCap(plan), 0);
+  if (director && director.productionSpent + reservedTotal > director.productionBudget + 0.000001) throw new Error('已选开工方案的授权上限超过生产预算，请在开工前重新核对');
   const constrainedOrders = draft.orders.map(order => ({ ...order,
     constraints: [...new Set([...(order.constraints || []), ...(director?.qualityStandard ? [`编导确认的脚本与审片标准：${director.qualityStandard}`] : [])])],
-    ...(director ? { operatingContext: { productionBudget: director.productionBudget, productionSpent: director.productionSpent, productionReserved: estimatedTotal, estimatedContentCost: Number(order.videoPlan?.estimatedCost || 0), originalTarget: director.originalTarget, platformVersionTarget: director.platformVersionTarget, publishTarget: director.publishTarget, qualityStandard: director.qualityStandard, packageRevision: Number(pack?.revision || 0) } } : {}),
+    ...(director ? { operatingContext: {
+      productionBudget: director.productionBudget,
+      productionBudgetMax: director.productionBudget,
+      productionSpent: director.productionSpent,
+      productionReserved: reservedTotal,
+      estimatedContentCost: Number(order.videoPlan?.estimatedCost || 0),
+      estimatedContentCostMax: order.videoPlan ? selectedContentCap(order.videoPlan) : 0,
+      productionBudgetMode: director.productionBudgetMode,
+      maxAigcRetries: protectedBudget ? 1 : 0,
+      budgetApprovedAt: String(planBody.packageApprovedAt || ''),
+      originalTarget: director.originalTarget,
+      platformVersionTarget: director.platformVersionTarget,
+      publishTarget: director.publishTarget,
+      qualityStandard: director.qualityStandard,
+      packageRevision: Number(pack?.revision || 0),
+    } } : {}),
   }));
   let effectiveDraft = draft;
   if (draft.status === 'planned') {
@@ -1093,8 +1172,8 @@ async function ensureContentBatchPlan(input: { tenantId: string; goal: GoalRecor
       } satisfies ContentOrder : order;
     }) };
   }
-  if (director && input.plan && director.productionReserved !== estimatedTotal) {
-    const nextPack = { ...pack!, directorPlan: { ...director, productionReserved: estimatedTotal } };
+  if (director && input.plan && director.productionReserved !== reservedTotal) {
+    const nextPack = { ...pack!, directorPlan: { ...director, productionReserved: reservedTotal } };
     await store.update(COLLECTION.plans, input.plan.id, { plan: { ...planBody, businessPackage: nextPack } });
   }
   if (existing) {
@@ -1188,6 +1267,84 @@ async function appendAuthorizationRequiredEvent(input: {
       action: 'review_weekly_package',
     },
   });
+}
+
+async function listAllRecords<T extends StoredRecord>(collection: string, where: Record<string, string | number | boolean>, sort?: string): Promise<T[]> {
+  const items: T[] = [];
+  let page = 1;
+  while (true) {
+    const result = await store.list<T>(collection, { where, ...(sort ? { sort } : {}), page, perPage: 500 });
+    items.push(...result.items);
+    if (page >= result.totalPages) return items;
+    page += 1;
+  }
+}
+
+async function restoreExecutionOnlyInvalidatedAuthorization(
+  tenantId: string,
+  goal: GoalRecord,
+  run: RunRecord,
+  plan: PlanRecord | null,
+): Promise<boolean> {
+  if (!plan) return false;
+  const planBody = jsonObject<Record<string, unknown>>(plan.plan, {});
+  if (String(planBody.packageApprovedBy || '').trim()
+    || !String(planBody.packageApprovedAt || '').trim()
+    || !String(planBody.packageGrantInvalidatedAt || '').trim()) return false;
+  const [audits, events] = await Promise.all([
+    listAllRecords<StoredRecord>('audit_logs', { tenantId }, 'createdAt'),
+    listAllRecords<EventRecord>(COLLECTION.events, { tenant_id: tenantId, run_id: run.id, type: 'authorization_required' }, 'occurred_at'),
+  ]);
+  const decision = weeklyAuthorizationRecoveryDecision({
+    goalId: goal.id,
+    planId: plan.id,
+    runId: run.id,
+    approvedAt: planBody.packageApprovedAt,
+    approvedBy: planBody.packageApprovedBy,
+    invalidatedAt: planBody.packageGrantInvalidatedAt,
+    audits: audits.map(audit => ({
+      action: audit.action,
+      actorUserId: audit.actorUserId,
+      targetType: audit.targetType,
+      targetId: audit.targetId,
+      metadata: audit.metadata,
+      createdAt: audit.createdAt,
+    })),
+    events: events.map(event => ({ type: event.type, payload: event.payload, occurred_at: event.occurred_at })),
+  });
+  if (!decision.restore) return false;
+  const restoredAt = new Date().toISOString();
+  const restoredPlan = {
+    ...planBody,
+    packageApprovedBy: decision.actorUserId,
+    packageAuthorizationRecoveredAt: restoredAt,
+    packageAuthorizationRecoveredFrom: decision.invalidatedAt,
+    packageGrantInvalidatedAt: '',
+  };
+  const restored = await store.compareAndSwap?.(COLLECTION.plans, plan.id, {
+    tenant_id: tenantId,
+    goal_id: goal.id,
+    plan: plan.plan,
+  }, { plan: restoredPlan });
+  if (!restored) return false;
+  plan.plan = restoredPlan;
+  await appendAudit({
+    tenantId,
+    userId: decision.actorUserId,
+    action: 'weekly_package.authorization_recovered',
+    targetType: 'weekly_plan',
+    targetId: plan.id,
+    metadata: { runId: run.id, approvedAt: decision.approvedAt, invalidatedAt: decision.invalidatedAt, reason: 'execution_only_retry_invalidation' },
+  });
+  await appendEvent({
+    tenantId,
+    runId: run.id,
+    type: 'authorization_restored',
+    level: 'success',
+    summary: '已核对原审核凭证：此前仅因内部任务重试误撤销，现已恢复原预算与发布范围授权。',
+    payload: { reason: 'execution_only_retry_invalidation', approvedAt: decision.approvedAt, invalidatedAt: decision.invalidatedAt },
+  });
+  return true;
 }
 
 agentBrowserSessions.setTelemetry(async (scope, action) => {
@@ -1304,7 +1461,7 @@ export function runReviewSummary(run: RunRecord, tasks: TaskRecord[], businessSn
         const upstream = byKey.get(key);
         return !upstream || !['succeeded', 'skipped'].includes(upstream.status);
       });
-      if (!['waiting_external', 'waiting_approval', 'handed_off', 'failed'].includes(task.status) && !(task.status === 'pending' && waitingOn.length)) return null;
+      if (!['waiting_external', 'waiting_approval', 'waiting_human', 'handed_off', 'failed'].includes(task.status) && !(task.status === 'pending' && waitingOn.length)) return null;
       return {
         taskId: task.id,
         taskKey: task.task_key,
@@ -1362,7 +1519,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
         .catch(() => traceableIndustryTrends([])),
       liveDirectorAnalysisTasks(store, tenantId, { includeUnscoped: !requestedGoalId }).catch(() => []),
     ]);
-    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, executionRuntime, industryTrends, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: projectDirectorAnalysisStatus(publicAgentStatuses([]), directorAnalyses), businessSnapshot };
+    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, executionRuntime, industryTrends, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: projectDirectorAnalysisStatus(publicAgentStatuses([]), directorAnalyses), businessSnapshot, publishingReadiness: null };
   }
   const [plan, run, businessSnapshot] = await Promise.all([
     first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
@@ -1384,7 +1541,23 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
   const overviewPlanBody = planBody.businessPackage
     ? { ...planBody, businessPackage: repairCollapsedWeeklyVideoProduction(planBody.businessPackage as WeeklyPackage) }
     : planBody;
-  const [deliveryData, contentQueue, executionRuntime, industryTrends, directorAnalyses] = await Promise.all([
+  const planTasks = Array.isArray(overviewPlanBody.tasks) ? overviewPlanBody.tasks.map(item => jsonObject<Record<string, unknown>>(item, {})) : [];
+  // The compiled workflow, not the generic package template list, decides
+  // whether this week actually contains a publishing branch.
+  const publishingRequired = planTasks.some(item => String(item.key || '') === 'content_release_approval');
+  const publishingTargetPlatforms = publishingRequired ? goalInput(goal).contentPlatforms : [];
+  const publishingReadinessFallback: PublishingReadinessSnapshot = {
+    required: publishingRequired,
+    ready: false,
+    status: 'unavailable',
+    targetPlatforms: publishingTargetPlatforms.filter((platform): platform is PublishingOAuthPlatform => ['facebook', 'instagram', 'tiktok', 'youtube'].includes(platform)),
+    connectedPlatforms: [],
+    missingOAuthPlatforms: [],
+    missingAccountPlatforms: [],
+    summary: '发布准备状态暂时无法核验，请刷新后再确认；不会因此重复启动生产',
+    actionPage: 'accountManagement',
+  };
+  const [deliveryData, contentQueue, executionRuntime, industryTrends, directorAnalyses, publishingReadiness] = await Promise.all([
     buildDeliveryResources(tenantId, publicTasks, goal.title)
       .then(deliveries => ({ deliveries, deliveryNotice: '' }))
       .catch(() => ({ deliveries: undefined, deliveryNotice: '业务产物暂时无法读取，当前展示任务记录。请刷新重试。' })),
@@ -1409,6 +1582,8 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
       goalId: goal.id, runId, includeUnscoped: !requestedGoalId,
       referenceVideoIds: directorAnalysisReferenceIds(overviewPlanBody, publicTasks),
     }).catch(() => []),
+    publishingReadinessForOverview(tenantId, publishingRequired, publishingTargetPlatforms)
+      .catch(() => publishingReadinessFallback),
   ]);
   return {
     config: resolvedConfiguration?.config || null,
@@ -1457,6 +1632,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     liveReview: run ? runReviewSummary(run, taskItems, businessSnapshot) : null,
     agents: projectDirectorAnalysisStatus(publicAgentStatuses(normalizedTasks), directorAnalyses),
     businessSnapshot,
+    publishingReadiness,
   };
 }
 
@@ -1468,6 +1644,7 @@ type ApprovalPreflight = {
 };
 
 function dependenciesReady(task: TaskRecord, tasks: TaskRecord[]): boolean {
+  tasks = tasks.filter(item => !jsonObject<Record<string, unknown>>(item.output, {}).assistantIndependent || item.id === task.id);
   const byKey = new Map(tasks.map(item => [item.task_key, item]));
   return jsonObject<string[]>(task.depends_on, []).every(key => {
     const upstream = byKey.get(key);
@@ -1489,7 +1666,7 @@ async function approvalPreflight(
   }];
   const businessRefs: Array<Record<string, unknown>> = [];
   if (task.task_key === 'content_release_approval') {
-    const scope = taskScope(task, tasks);
+    const scope = contentProjectTaskScope(task, tasks);
     const projects = await store.list<StoredRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 });
     const completed = projects.items.filter(item => recordBelongsToTask(item, run, scope) && studioProjectCompleted(item));
     const social = snapshot.readiness.find(item => item.key === 'social_accounts');
@@ -1499,23 +1676,64 @@ async function approvalPreflight(
     );
     const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, run.goal_id, tenantId);
     if (goal) {
-      const publishingPackage = await publishingApprovalPackage(tenantId, goal, run, task, tasks);
       const connectedAccounts = await listConnectedPublishingAccounts(tenantId);
       const connectedIds = new Set(connectedAccounts.map(account => account.accountId));
-      const packageAccountIds = [...new Set(publishingPackage.items.flatMap(item => item.accountIds))];
-      const platformCoverage = publishingPlatformsCovered(goalInput(goal).contentPlatforms, publishingPackage.items);
-      checks.push({ key: 'publishing_platform_coverage', ready: platformCoverage,
-        detail: platformCoverage ? '本周目标平台均有已选择的发布账号' : '部分目标平台尚未选择发布账号，请补齐后再审批发布' });
+      const targetPlatforms = goalInput(goal).contentPlatforms;
+      const connectedPlatforms = connectedAccounts.map(account => account.platform);
+      const [metaClient, instagramClient, tiktokClient, googleClient] = await Promise.all([
+        getTenantAwareMetaOAuthClient(tenantId),
+        getTenantAwareInstagramOAuthClient(tenantId),
+        getTenantAwareTikTokOAuthClient(tenantId),
+        getTenantAwareGoogleOAuthClient(tenantId),
+      ]);
+      const oauthConfigurationGaps = missingPublishingOAuthConfiguration({
+        targetPlatforms,
+        connectedPlatforms,
+        clients: { meta: Boolean(metaClient), instagram: Boolean(instagramClient), tiktok: Boolean(tiktokClient), google: Boolean(googleClient) },
+      });
+      const connectedPlatformSet = new Set(connectedPlatforms);
+      const missingAccountPlatforms = targetPlatforms
+        .filter((platform): platform is PublishingOAuthPlatform => ['facebook', 'instagram', 'tiktok', 'youtube'].includes(platform))
+        .filter(platform => !connectedPlatformSet.has(platform));
       checks.push({
-        key: 'publishable_outputs',
-        ready: publishingPackage.items.length > 0,
-        detail: publishingPackage.items.length ? `待审批发布项 ${publishingPackage.items.length} 条` : '完成作品尚缺可发布成片文件',
+        key: 'publishing_oauth_configuration',
+        ready: oauthConfigurationGaps.length === 0,
+        detail: publishingOAuthConfigurationMessage(oauthConfigurationGaps),
       });
       checks.push({
-        key: 'selected_publishing_accounts',
-        ready: packageAccountIds.length > 0 && packageAccountIds.every(accountId => connectedIds.has(accountId)),
-        detail: packageAccountIds.length && packageAccountIds.every(accountId => connectedIds.has(accountId)) ? `已核验 ${packageAccountIds.length} 个本期发布账号` : '本期选择的发布账号已断开或不再属于当前企业',
+        key: 'publishing_account_connections',
+        ready: missingAccountPlatforms.length === 0,
+        detail: publishingAccountConnectionMessage(missingAccountPlatforms),
       });
+      try {
+        const publishingPackage = await publishingApprovalPackage(tenantId, goal, run, task, tasks);
+        const packageAccountIds = [...new Set(publishingPackage.items.flatMap(item => item.accountIds))];
+        const packageAccountsValid = packageAccountIds.length > 0 && packageAccountIds.every(accountId => connectedIds.has(accountId));
+        const platformCoverage = publishingPlatformsCovered(targetPlatforms, publishingPackage.items)
+          && missingAccountPlatforms.length === 0
+          && packageAccountsValid;
+        checks.push({ key: 'publishing_platform_coverage', ready: platformCoverage,
+          detail: platformCoverage ? '本周目标平台均有已连接的发布账号' : '部分目标平台缺少有效发布账号，请重新连接并更新周计划' });
+        checks.push({
+          key: 'publishable_outputs',
+          ready: publishingPackage.items.length > 0,
+          detail: publishingPackage.items.length ? `待审批发布项 ${publishingPackage.items.length} 条` : '完成作品尚缺可发布成片文件',
+        });
+        checks.push({
+          key: 'selected_publishing_accounts',
+          ready: packageAccountsValid,
+          detail: packageAccountsValid ? `已核验 ${packageAccountIds.length} 个本期发布账号` : '本期选择的发布账号已断开或不再属于当前企业',
+        });
+      } catch (error) {
+        const detail = error instanceof Error && error.message.includes('IANA')
+          ? '发布账号尚未配置有效时区，请在账号设置中补充后再审批发布'
+          : error instanceof Error && error.message === 'bounded_authorization_actor_missing'
+          ? '本周发布授权已因计划或成片变更失效，请重新确认周计划后再审批发布'
+          : error instanceof Error && error.message.includes('无法安排')
+          ? error.message
+          : '发布审批包尚未满足生成条件，请检查账号、排期和成片设置';
+        checks.push({ key: 'publishing_package', ready: false, detail });
+      }
     }
     businessRefs.push(...completed.map(item => ({ type: 'studio_project', id: item.id, status: String(item.status || '') })));
   }
@@ -1530,9 +1748,13 @@ async function approvalPreflight(
     if (batch) businessRefs.push({ type: 'followup_batch', id: batch.id, version: batch.version, contentHash: batch.content_hash, safeDraftCount: safeDrafts.length });
   }
   const failed = checks.filter(check => !check.ready);
+  const reasonChecks = task.task_key === 'content_release_approval'
+    && failed.some(check => check.key === 'publishing_account_connections')
+    ? failed.filter(check => !['social_accounts', 'publishing_platform_coverage', 'selected_publishing_accounts'].includes(check.key))
+    : failed;
   return {
     ready: failed.length === 0,
-    reason: failed.length ? `审批前资源预检未通过：${failed.map(check => check.detail).join('；')}` : '',
+    reason: failed.length ? `审批前资源预检未通过：${reasonChecks.map(check => check.detail).join('；')}` : '',
     checks,
     businessRefs,
   };
@@ -1742,6 +1964,8 @@ function destinationLabel(destination: string): string {
 }
 
 function taskScope(task: TaskRecord, tasks: TaskRecord[]): { taskIds: Set<string>; refIds: Set<string> } {
+  const independent = Boolean(jsonObject<Record<string, unknown>>(task.output, {}).assistantIndependent);
+  tasks = tasks.filter(item => independent ? item.id === task.id : !jsonObject<Record<string, unknown>>(item.output, {}).assistantIndependent);
   const taskIds = new Set([task.id]);
   const keys = new Set([task.task_key]);
   let changed = true;
@@ -1769,6 +1993,15 @@ function taskScope(task: TaskRecord, tasks: TaskRecord[]): { taskIds: Set<string
   return { taskIds, refIds };
 }
 
+function contentProjectTaskScope(task: TaskRecord, tasks: TaskRecord[]): { taskIds: Set<string>; refIds: Set<string> } {
+  tasks = tasks.filter(item => !jsonObject<Record<string, unknown>>(item.output, {}).assistantIndependent || item.id === task.id);
+  const scope = taskScope(task, tasks);
+  const taskIds = task.task_key === 'content_production'
+    ? new Set([task.id])
+    : new Set(tasks.filter(item => item.task_key === 'content_production').map(item => item.id));
+  return { ...scope, taskIds };
+}
+
 function scopedValues(record: StoredRecord, keys: string[]): string[] {
   const containers = [
     record,
@@ -1782,6 +2015,10 @@ function scopedValues(record: StoredRecord, keys: string[]): string[] {
 }
 
 function recordBelongsToTask(record: StoredRecord, run: RunRecord, scope: { taskIds: Set<string>; refIds: Set<string> }): boolean {
+  const explicitContentScope = contentProjectExplicitWorkflowScope(record, run.id, scope.taskIds);
+  if (explicitContentScope !== null) return explicitContentScope;
+  const managedContentScope = managedContentProjectBelongsToWorkflowScope(record, run.id, scope.taskIds);
+  if (managedContentScope !== null) return managedContentScope;
   const recordIds = [record.id, record.task_id, record.taskId, record.entity_id].map(value => String(value || '').trim()).filter(Boolean);
   if (recordIds.some(id => scope.refIds.has(id))) return true;
   const runIds = scopedValues(record, ['workflowRunId', 'workflow_run_id', 'runId', 'run_id', 'digitalEmployeeRunId']);
@@ -1844,12 +2081,20 @@ async function publishingApprovalPackage(
   const config = executionConfigForPlan(plan, currentConfig);
   const planBody = jsonObject<Record<string, unknown>>(plan?.plan, {});
   const weeklyPackage = planBody.businessPackage as WeeklyPackage | undefined;
-  const scope = taskScope(task, tasks);
+  const scope = contentProjectTaskScope(task, tasks);
   const completed = projects.items.filter(item => recordBelongsToTask(item, run, scope) && studioProjectCompleted(item));
+  const assistantPublicationTargets = jsonObject<Array<Record<string, unknown>>>(task.business_refs, []).filter(ref => ref.type === 'assistant_publication_intent');
+  if (assistantPublicationTargets.length > 1) throw new Error('assistant_publication_target_ambiguous');
+  const assistantPublicationTarget = assistantPublicationTargets[0];
+  if (assistantPublicationTarget) {
+    const selected = completed.filter(project => project.id === assistantPublicationTarget.id);
+    if (selected.length !== 1 || contentAcceptanceHash(jsonObject<Record<string, any>>(selected[0]!.spec, {})) !== assistantPublicationTarget.contentHash) throw new Error('assistant_publication_target_changed');
+  }
   return buildPublishingApprovalPackage({
     tenantId,
     matrixPlan: jsonObject<{ businessPackage?: WeeklyPackage }>(plan?.plan, {}).businessPackage?.matrixPlan,
     projects: completed,
+    ...(assistantPublicationTarget ? { selectedProjectId: String(assistantPublicationTarget.id) } : {}),
     targets: config.publishingTargets,
     goalPlatforms: goalInput(goal).contentPlatforms,
     allowRealPublishing: config.allowRealPublishing,
@@ -1905,6 +2150,7 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
     const ready = businessRefs.length > 0 && health.ready;
     return {
       ready,
+      collectionState: health.state,
       proof: {
         metricKey: 'scheduledAutomations', value: businessRefs.length,
         usableContent: health.usable,
@@ -1914,7 +2160,7 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
       },
       businessRefs,
       blockedReason: businessRefs.length ? health.blockedReason : '待编导确认并创建平台采集任务。',
-      waitState: ready ? undefined : waitState(health.latest ? 'service' : 'processing', businessRefs.length ? health.blockedReason : '待编导确认并创建平台采集任务。'),
+      waitState: ready ? undefined : waitState(health.state === 'failed' ? 'service' : 'processing', businessRefs.length ? health.blockedReason : '待编导确认并创建平台采集任务。'),
     };
   }
   if (task.task_key === 'viral_analysis') {
@@ -1947,7 +2193,8 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
   }
   if (task.task_key === 'content_production' || task.task_key === 'content_quality_gate') {
     const projects = await store.list<StoredRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 });
-    const scoped = projects.items.filter(item => recordBelongsToTask(item, run, scope));
+    const projectScope = contentProjectTaskScope(task, tasks);
+    const scoped = projects.items.filter(item => recordBelongsToTask(item, run, projectScope));
     const persistedGaps = jsonObject<Array<Record<string, unknown>>>(task.business_refs, []).filter(ref => ref.type === 'knowledge_gap');
     if (!scoped.length && persistedGaps.length) {
       return {
@@ -1999,7 +2246,7 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
       .find(Boolean) || '';
     return {
       ...result,
-      ...(serviceReason && !blocker ? { waitState: waitState('service', `部分内容等待服务恢复后自动重试：${serviceReason}`) } : {}),
+      ...(serviceReason && !blocker ? { waitState: waitState('processing', `系统正在自动恢复未完成的服务步骤：${serviceReason}`) } : {}),
       blockedReason: blocker || (requiresAcceptance && !result.ready && !activeProjects.length ? '内容成片尚未完成所需质量检查' : ''),
     };
   }
@@ -2208,7 +2455,19 @@ async function prepareObserveBusinessResourceDirect(input: {
       await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: `business.resource.${action}`, level: 'success', summary: `已${ensured.created ? '创建' : '更新'}社媒内容采集计划：${ensured.task.cronLabel}`, payload: { businessRefs: refs, schedule: collectionSchedule, externalPublishPerformed: false } });
       await appendAudit({ tenantId, userId: actorId, action: `digital_employee.scheduler.${action}`, targetType: 'scheduled_task', targetId: ensured.task.id, metadata: { runId: run.id, taskId: task.id, schedule: collectionSchedule } });
     }
-    if (ensured.task.enabled && (ensured.created || ensured.updated || !ensured.task.lastRun)) {
+    const taskOutput = jsonObject<Record<string, unknown>>(task.output, {});
+    const previousFailure = taskOutput.executionFailure as TaskFailure | undefined;
+    const priorExecutionState = scheduledExecutionState(ensured.task.lastResult);
+    const shouldRunNow = shouldRunScheduledCollection({
+      enabled: ensured.task.enabled,
+      created: ensured.created,
+      updated: ensured.updated,
+      lastRun: ensured.task.lastRun,
+      executionState: priorExecutionState,
+      rerunRequestedAt: String(taskOutput.rerunRequestedAt || ''),
+      retryAt: previousFailure?.retryAt,
+    });
+    if (shouldRunNow) {
       try {
         const firstRun = await runScheduledTaskNow({ tenantId, taskId: ensured.task.id });
         const nextRefs = refs.map(ref => ({ ...ref, firstRunState: firstRun.state, lastRun: firstRun.lastRun || '' }));
@@ -2224,8 +2483,12 @@ async function prepareObserveBusinessResourceDirect(input: {
           payload: { businessRefs: nextRefs, state: firstRun.state, lastRun: firstRun.lastRun || '', resultSummary: firstRun.result.slice(0, 500) },
         });
         await appendAudit({ tenantId, userId: actorId, action: 'digital_employee.scheduler.first_run', targetType: 'scheduled_task', targetId: ensured.task.id, metadata: { runId: run.id, taskId: task.id, state: firstRun.state } });
+        if (['failed', 'worker_offline', 'no_data'].includes(firstRun.state)) {
+          throw new Error(`scheduled_source_collection_${firstRun.state}: ${firstRun.result.slice(0, 1000)}`);
+        }
       } catch (error) {
         await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'business.resource.first_run_failed', level: 'warning', summary: '定时采集已创建，首轮执行未成功', payload: { error: error instanceof Error ? error.message : 'scheduled_first_run_failed' } });
+        throw error;
       }
     }
     return true;
@@ -2328,7 +2591,7 @@ async function applyPackageGrant(tenantId: string, goal: GoalRecord, run: RunRec
   const body = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
   const pack = body.businessPackage as WeeklyPackage | undefined;
   const actor = String(body.packageApprovedBy || '');
-  if (!pack || !actor || pack.authorization.mode !== 'bounded' || beijingDate(new Date()) < goal.starts_at) return false;
+  if (!pack || !actor || packageGrantWasInvalidatedAfterApproval(body) || pack.authorization.mode !== 'bounded' || beijingDate(new Date()) < goal.starts_at) return false;
   const recurringGrantId = String(body.managedPublishingGrantId || '');
   if (recurringGrantId) {
     const latest = await resolveCurrentConfiguration(tenantId, await configForTenant(tenantId));
@@ -2375,14 +2638,106 @@ async function advanceRun(tenantId: string, runId: string): Promise<void> {
   await withDigitalEmployeeRunLock(tenantId, runId, () => advanceRunUnlocked(tenantId, runId));
 }
 
+const queuedRunAdvances = new Set<string>();
+
+/**
+ * A control command is complete once its reset/replan state is durably stored.
+ * Advancing the workflow can include real provider collection and must not hold
+ * the user's HTTP request open. The normal runtime cycle remains the durable
+ * fallback if this immediate continuation cannot finish.
+ */
+function queueDigitalEmployeeRunAdvance(tenantId: string, runId: string): void {
+  const key = `${tenantId}:${runId}`;
+  if (queuedRunAdvances.has(key)) return;
+  queuedRunAdvances.add(key);
+  setImmediate(() => {
+    void advanceRun(tenantId, runId)
+      .catch(error => console.error(`[digital-employee-run] queued advance ${runId} failed:`, error instanceof Error ? error.message : error))
+      .finally(() => queuedRunAdvances.delete(key));
+  });
+}
+
 /** Trusted backend entry point. Ownership is re-checked inside advanceRunUnlocked. */
 export async function reconcileDigitalEmployeeRun(tenantId: string, runId: string): Promise<void> {
   await advanceRun(tenantId, runId);
 }
 
+async function migrateLegacyPublishingBindingsForRun(
+  tenantId: string,
+  run: RunRecord,
+  plan: PlanRecord | null,
+  tasks: TaskRecord[],
+): Promise<boolean> {
+  if (!plan) return false;
+  const approvalTask = tasks.find(task => task.task_key === 'content_release_approval'
+    && task.status === 'waiting_human'
+    && jsonObject<Record<string, unknown>>(task.output, {}).dataStatus === 'preflight_blocked');
+  if (!approvalTask) return false;
+  const planBody = jsonObject<Record<string, unknown>>(plan.plan, {});
+  const snapshot = normalizeDigitalEmployeeConfig(jsonObject(planBody.configSnapshot, {}));
+  const targetPlatforms = publishingTargetPlatforms(snapshot.publishingTargets
+    .filter(target => target.weeklyCount === undefined || Number(target.weeklyCount) > 0));
+  if (!targetPlatforms.length) return false;
+  const readiness = await readTenantPublishingReadiness(tenantId, true, targetPlatforms);
+  if (!readiness.snapshot.ready) return false;
+  const now = new Date().toISOString();
+  const migration = migrateLegacyPublishingPlanAccountBindings(planBody, readiness.connectedAccounts, now);
+  if (!migration.changed) return false;
+  const updated = store.compareAndSwap
+    ? await store.compareAndSwap(COLLECTION.plans, plan.id, { tenant_id: tenantId, goal_id: run.goal_id, plan: plan.plan }, { plan: migration.plan })
+    : await store.update(COLLECTION.plans, plan.id, { plan: migration.plan });
+  if (!updated) return false;
+  plan.plan = migration.plan;
+  const approvals = await store.list<ApprovalRecord>(COLLECTION.approvals, {
+    where: { tenant_id: tenantId, task_id: approvalTask.id, status: 'pending' }, perPage: 100,
+  });
+  for (const approval of approvals.items) {
+    await store.update(COLLECTION.approvals, approval.id, {
+      status: 'superseded',
+      decision_note: '发布账号已从历史本地占位记录迁移到真实连接，需要重新确认发布审批。',
+      decided_at: now,
+    });
+  }
+  const output = {
+    ...jsonObject<Record<string, unknown>>(approvalTask.output, {}),
+    dataStatus: 'preflight_retry',
+    waitState: undefined,
+    publishingAccountBindingMigration: { version: 1, migratedAt: now, replacements: migration.replacements },
+  };
+  await store.update(COLLECTION.tasks, approvalTask.id, {
+    status: 'pending',
+    task_version: Number(approvalTask.task_version || 1) + 1,
+    output,
+    blocked_reason: '',
+    updated_at: now,
+  });
+  approvalTask.status = 'pending';
+  approvalTask.task_version = Number(approvalTask.task_version || 1) + 1;
+  approvalTask.output = output;
+  approvalTask.blocked_reason = '';
+  await appendEvent({
+    tenantId,
+    runId: run.id,
+    taskId: approvalTask.id,
+    type: 'publishing.account_bindings_migrated',
+    level: 'warning',
+    summary: '已将历史本地占位账号安全迁移到唯一真实连接，正在重新核验发布审批',
+    payload: { replacements: migration.replacements, packageRevision: migration.plan.businessPackage?.revision },
+  });
+  await appendAudit({
+    tenantId,
+    userId: 'digital_employee_runtime',
+    action: 'publishing.account_bindings_migrated',
+    targetType: 'weekly_plan',
+    targetId: plan.id,
+    metadata: { runId: run.id, taskId: approvalTask.id, replacements: migration.replacements },
+  });
+  return true;
+}
+
 async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void> {
   const run = await tenantRecord<RunRecord>(COLLECTION.runs, runId, tenantId);
-  if (!run || ['paused', 'cancelled', 'failed', 'waiting_human'].includes(run.status)) return;
+  if (!run || ['paused', 'cancelled', 'failed'].includes(run.status)) return;
   const [goal, configRecord, plan, taskResult] = await Promise.all([
     tenantRecord<GoalRecord>(COLLECTION.goals, run.goal_id, tenantId),
     configForTenant(tenantId),
@@ -2390,7 +2745,27 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, sort: 'sequence', perPage: 100 }),
   ]);
   const tenantConfig = publicConfig(configRecord);
+  // Independent insertions own their production project and proof recovery.
+  // Never feed them into batch dependency scopes or run paid batch work for them.
+  const independentTasks = taskResult.items.filter(task => jsonObject<Record<string, unknown>>(task.output, {}).assistantIndependent);
+  if (independentTasks.length) {
+    const { recoverIndependentContentTask } = await import('../assistant/independentWeeklyContent.js');
+    for (const task of independentTasks) {
+      const projectId = String(jsonObject<Record<string, unknown>>(task.output, {}).projectId || '');
+      const project = projectId ? await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', projectId, tenantId) : null;
+      if (project) await recoverIndependentContentTask(store, tenantId, task as any, project as any);
+    }
+    taskResult.items = taskResult.items.filter(task => !independentTasks.includes(task));
+  }
   if (!goal || !tenantConfig) throw new Error('run_context_missing');
+  const recoverableApprovalFailure = taskResult.items.some(task => task.requires_approval
+    && task.status === 'failed'
+    && jsonObject<Record<string, unknown>>(task.output, {}).dataStatus === 'execution_failed');
+  const reobservableUserInputWait = taskResult.items.some(task => ['waiting_external', 'waiting_human'].includes(task.status)
+    && ['input', 'manual'].includes(String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(task.output, {}).waitState, {}).kind || '')));
+  await restoreExecutionOnlyInvalidatedAuthorization(tenantId, goal, run, plan);
+  if (run.status === 'waiting_human' && !recoverableApprovalFailure && !reobservableUserInputWait) return;
+  await migrateLegacyPublishingBindingsForRun(tenantId, run, plan, taskResult.items);
   const config = executionConfigForPlan(plan, tenantConfig);
   const packageBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
   let businessPackage = packageBody.businessPackage as WeeklyPackage | undefined;
@@ -2425,6 +2800,29 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
         await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.failure_superseded', level: 'success', summary: '制作草稿已有新版本，已撤销历史失败并重新核验' });
       }
     }
+    // Approval nodes only prepare an immutable review package; they do not
+    // perform the external effect. A historical preflight/package exception
+    // is safe to re-observe after its inputs or validation logic changes.
+    // Explicit user rejection does not carry execution_failed and remains
+    // terminal.
+    if (task.requires_approval && task.status === 'failed'
+      && jsonObject<Record<string, unknown>>(task.output, {}).dataStatus === 'execution_failed') {
+      const output = {
+        ...jsonObject<Record<string, unknown>>(task.output, {}),
+        dataStatus: 'preflight_retry',
+        executionFailure: undefined,
+        waitState: undefined,
+        retriedAt: new Date().toISOString(),
+      };
+      await store.update(COLLECTION.tasks, task.id, {
+        status: 'pending', output, blocked_reason: '', updated_at: new Date().toISOString(),
+      });
+      task.status = 'pending'; task.output = output; task.blocked_reason = '';
+      await appendEvent({
+        tenantId, runId: run.id, taskId: task.id, type: 'approval.preflight_retry', level: 'info',
+        summary: `${task.title}：重新核验审批前置条件`,
+      });
+    }
     const dependencyStateReady = dependenciesReady(task, taskResult.items);
     if (mustInvalidateContentDownstream(task.task_key, task.status, dependencyStateReady)) {
       const affected = downstreamTasks(taskResult.items, task, true)
@@ -2447,7 +2845,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
       // is later downgraded (for example, a scheduled collection whose real
       // provider run finished failed). Return it to dependency-pending so the
       // actual upstream failure remains the primary card and pause reason.
-      if (task.status === 'waiting_external') {
+      if (['waiting_external', 'waiting_human', 'waiting_approval'].includes(task.status)) {
         const output = { ...jsonObject<Record<string, unknown>>(task.output, {}), dataStatus: 'dependency_pending', waitState: undefined };
         await store.update(COLLECTION.tasks, task.id, { status: 'pending', output, blocked_reason: '', updated_at: new Date().toISOString() });
         task.status = 'pending'; task.output = output; task.blocked_reason = '';
@@ -2456,8 +2854,8 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     }
     if (task.task_key.startsWith('review_todo_')) {
       const reason = '请按本任务的执行要求完成业务操作，并提交验收记录；尚未自动完成。';
-      await store.update(COLLECTION.tasks, task.id, { status: 'waiting_external', blocked_reason: reason, output: { waitState: { kind: 'manual', message: reason, requiresAttention: true } }, updated_at: new Date().toISOString() });
-      task.status = 'waiting_external';
+      await store.update(COLLECTION.tasks, task.id, { status: 'waiting_human', blocked_reason: reason, output: { waitState: { kind: 'manual', message: reason, requiresAttention: true } }, updated_at: new Date().toISOString() });
+      task.status = 'waiting_human';
       continue;
     }
     const metadata = taskExecutionMetadata(task, plan);
@@ -2465,11 +2863,11 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     if (!taskRetryDue(previousFailure)) continue;
     try {
     // Inventory is checked before any crawler is created. A reference is
-    // reusable when it is tenant-owned, production-ready, bound one-to-one to
-    // this week's clone masters and has not entered another run's production
-    // handoff. User-explicit references remain intentionally reusable.
+    // reusable when it is tenant-owned, production-ready and bound one-to-one
+    // to this week's clone videos. A prior week does not permanently consume
+    // the reference; only duplicate use inside this week is rejected.
     if (task.task_key === 'scheduled_source_collection' && videoTask?.videoPlans?.length) {
-      const rebound = await bindUnusedViralLibraryToWeeklyPackage({ tenantId, run, goal, plan, config, pack: businessPackage! });
+      const rebound = await bindWeeklyViralLibraryToPackage({ tenantId, run, goal, plan, config, pack: businessPackage! });
       businessPackage = rebound.pack;
       packageBody.businessPackage = rebound.pack;
       videoTask = rebound.pack.tasks.find(item => item.templateId === 'production');
@@ -2538,13 +2936,14 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
         dataStatus: 'autonomy_blocked',
         autonomyMode: config.autonomyMode,
         policySource: metadata.policySource,
+        waitState: waitState('input', reason),
         availableActions: availableTaskActions(task),
       };
-      await store.update(COLLECTION.tasks, task.id, { status: 'waiting_external', output, blocked_reason: reason, updated_at: new Date().toISOString() });
-      if (task.status !== 'waiting_external' || task.blocked_reason !== reason) {
+      await store.update(COLLECTION.tasks, task.id, { status: 'waiting_human', output, blocked_reason: reason, updated_at: new Date().toISOString() });
+      if (task.status !== 'waiting_human' || task.blocked_reason !== reason) {
         await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'policy.autonomy_blocked', level: 'warning', summary: `${task.title}：${reason}`, payload: { autonomyMode: config.autonomyMode, externalEffect: metadata.externalEffect, policySource: metadata.policySource } });
       }
-      task.status = 'waiting_external';
+      task.status = 'waiting_human';
       task.output = output;
       task.blocked_reason = reason;
       continue;
@@ -2561,15 +2960,16 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
           ...buildTaskOutput(task.task_key, goalInput(goal), config),
           dataStatus: 'preflight_blocked',
           preflight,
+          waitState: waitState('input', preflight.reason),
           availableActions: availableTaskActions(task),
         };
         await store.update(COLLECTION.tasks, task.id, {
-          status: 'waiting_external', output, business_refs: preflight.businessRefs, blocked_reason: preflight.reason, updated_at: new Date().toISOString(),
+          status: 'waiting_human', output, business_refs: preflight.businessRefs, blocked_reason: preflight.reason, updated_at: new Date().toISOString(),
         });
-        if (task.status !== 'waiting_external' || task.blocked_reason !== preflight.reason) {
+        if (task.status !== 'waiting_human' || task.blocked_reason !== preflight.reason) {
           await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'approval.preflight_blocked', level: 'warning', summary: `${task.title}：${preflight.reason}`, payload: { checks: preflight.checks, businessRefs: preflight.businessRefs, destination: metadata.destination } });
         }
-        task.status = 'waiting_external';
+        task.status = 'waiting_human';
         task.output = output;
         task.business_refs = preflight.businessRefs;
         task.blocked_reason = preflight.reason;
@@ -2593,7 +2993,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     if (metadata.executionMode === 'observe' || metadata.executionMode === 'draft_executor') {
       businessSnapshot ||= await buildBusinessSnapshot(tenantId, { startsAt: goal.starts_at, endsAt: goal.ends_at });
       if (task.task_key === 'viral_analysis' && businessPackage && videoTask?.videoPlans?.length) {
-        const rebound = await bindUnusedViralLibraryToWeeklyPackage({ tenantId, run, goal, plan, config, pack: businessPackage });
+        const rebound = await bindWeeklyViralLibraryToPackage({ tenantId, run, goal, plan, config, pack: businessPackage });
         businessPackage = rebound.pack;
         packageBody.businessPackage = rebound.pack;
         videoTask = rebound.pack.tasks.find(item => item.templateId === 'production');
@@ -2604,6 +3004,10 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
         : await prepareObserveBusinessResource({ tenantId, goal, run, task, config, snapshot: businessSnapshot });
       if (createdResource) businessSnapshot = await buildBusinessSnapshot(tenantId, { startsAt: goal.starts_at, endsAt: goal.ends_at });
       const observation = await observeTaskProof(tenantId, run, task, businessSnapshot, taskResult.items);
+      if (task.task_key === 'scheduled_source_collection'
+        && 'collectionState' in observation && observation.collectionState === 'failed') {
+        throw new Error(`scheduled_source_collection_result_failed: ${String('blockedReason' in observation ? observation.blockedReason : '平台采集未返回可用内容')}`);
+      }
       const canonicalBusinessRefs = observation.businessRefs.length
         ? observation.businessRefs
         : jsonObject<Record<string, unknown>[]>(task.business_refs, []);
@@ -2671,15 +3075,15 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
           : task.task_key === 'followup_dispatch'
           ? '真实发送预检：尚未取得可核验的发送条件或渠道回执'
           : `等待真实业务结果，请前往「${destinationLabel(metadata.destination)}」完成或检查该节点`);
-        const needsInput = diagnostic.kind === 'input' && ['content_production', 'content_quality_gate'].includes(task.task_key);
-        if (needsInput) output.dataStatus = 'input_required';
-        const taskUpdate = needsInput ? { status: 'failed' as const, output, business_refs: canonicalBusinessRefs, blocked_reason: blockedReason, updated_at: new Date().toISOString() } : { status: 'waiting_external' as const, output, business_refs: canonicalBusinessRefs, blocked_reason: blockedReason, updated_at: new Date().toISOString() };
+        const waitStatus = workflowStatusForWait(diagnostic);
+        if (waitStatus === 'waiting_human') output.dataStatus = 'input_required';
+        const taskUpdate = { status: waitStatus, output, business_refs: canonicalBusinessRefs, blocked_reason: blockedReason, updated_at: new Date().toISOString() };
         await Promise.all([
           store.update(COLLECTION.tasks, task.id, taskUpdate),
-          store.update(COLLECTION.runs, run.id, { status: needsInput ? 'waiting_human' : 'waiting_external', current_controller: needsInput ? 'human' : 'agent', pause_reason: blockedReason }),
+          store.update(COLLECTION.runs, run.id, { status: waitStatus, current_controller: waitStatus === 'waiting_external' ? 'agent' : 'human', pause_reason: blockedReason }),
         ]);
         if (task.status !== taskUpdate.status) {
-          await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: needsInput ? 'task.input_required' : 'task.waiting_external', level: 'warning', summary: needsInput ? `${task.title}：${blockedReason}` : `${task.title}：等待业务工作台真实回写`, payload: { destination: metadata.destination, statusSource: metadata.statusSource, proof: observation.proof, businessRefs: canonicalBusinessRefs } });
+          await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: waitStatus === 'waiting_human' ? 'task.input_required' : waitStatus === 'waiting_approval' ? 'approval.requested' : 'task.waiting_external', level: 'warning', summary: waitStatus === 'waiting_human' ? `${task.title}：${blockedReason}` : waitStatus === 'waiting_approval' ? `${task.title}：等待负责人审批` : `${task.title}：等待业务工作台真实回写`, payload: { destination: metadata.destination, statusSource: metadata.statusSource, proof: observation.proof, businessRefs: canonicalBusinessRefs } });
         }
         task.status = taskUpdate.status;
         task.output = output;
@@ -2705,11 +3109,11 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
         const reason = prepared.draft.blocker || '内容生产条件尚未满足';
         const previous = jsonObject<Record<string, unknown>>(task.output, {});
         const priorCheck = jsonObject<Record<string, unknown>>(previous.routingCheck, {});
-        const sameWait = task.status === 'waiting_external' && priorCheck.reason === reason;
+        const sameWait = task.status === 'waiting_human' && priorCheck.reason === reason;
         const checks = sameWait ? Number(priorCheck.count || 0) + 1 : 1;
         const output = { ...previous, dataStatus: 'blocked', routingCheck: { reason, count: checks, checkedAt: new Date().toISOString() }, waitState: { kind: 'input', message: reason, requiresAttention: true } };
-        await store.update(COLLECTION.tasks, task.id, { status: 'waiting_external', output, blocked_reason: reason, updated_at: new Date().toISOString() });
-        task.status = 'waiting_external'; task.output = output; task.blocked_reason = reason;
+        await store.update(COLLECTION.tasks, task.id, { status: 'waiting_human', output, blocked_reason: reason, updated_at: new Date().toISOString() });
+        task.status = 'waiting_human'; task.output = output; task.blocked_reason = reason;
         if (!sameWait) await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.routing_waiting', level: 'warning', summary: `等待内容生产条件：${reason}` });
         continue;
       }
@@ -2719,11 +3123,13 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
       const refs = [{ type: 'content_batch_plan', id: batch.record.id, orderCount: batch.draft.orders.length }, ...batch.draft.orders.map(order => ({ type: 'content_order', id: order.id, batchPlanId: batch.record.id, route: order.route, platform: order.platform, productId: order.productId }))];
       const output = { ...buildTaskOutput(task.task_key, goalInput(goal), config), batchPlanId: batch.record.id, orders: batch.draft.orders, coverage: batch.draft.coverage, routing: { eligibleRoutes: batch.draft.eligibleRoutes, disabledRoutes: batch.draft.disabledRoutes }, dataStatus: batch.draft.status };
       if (batch.draft.status === 'blocked') {
+        const blocker = batch.draft.blocker || '内容生产条件尚未满足';
+        const blockedOutput = { ...output, waitState: waitState('input', blocker), dataStatus: 'input_required' };
         await Promise.all([
-          store.update(COLLECTION.tasks, task.id, { status: 'waiting_external', output, business_refs: refs, blocked_reason: batch.draft.blocker, updated_at: new Date().toISOString() }),
-          store.update(COLLECTION.runs, run.id, { status: 'waiting_external', pause_reason: batch.draft.blocker }),
+          store.update(COLLECTION.tasks, task.id, { status: 'waiting_human', output: blockedOutput, business_refs: refs, blocked_reason: blocker, updated_at: new Date().toISOString() }),
+          store.update(COLLECTION.runs, run.id, { status: 'waiting_human', current_controller: 'human', pause_reason: blocker }),
         ]);
-        task.status = 'waiting_external'; task.output = output; task.business_refs = refs; task.blocked_reason = batch.draft.blocker;
+        task.status = 'waiting_human'; task.output = blockedOutput; task.business_refs = refs; task.blocked_reason = blocker;
         continue;
       }
       await store.update(COLLECTION.tasks, task.id, { status: 'succeeded', output, business_refs: refs, blocked_reason: '', updated_at: new Date().toISOString() });
@@ -2752,7 +3158,10 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     } catch (error) {
       // A failed step must not abort independent branches in the same run.
       // Do not automatically repeat uncertain writes or external effects.
-      const failure = nextTaskFailure(previousFailure, metadata.externalEffect === 'none' && metadata.executionMode !== 'draft_executor');
+      const safeToRetry = task.task_key === 'scheduled_source_collection'
+        ? scheduledCollectionFailureCanRetry(error)
+        : metadata.externalEffect === 'none' && metadata.executionMode !== 'draft_executor';
+      const failure = nextTaskFailure(previousFailure, safeToRetry);
       const failed = productionFailureState(error, failure.retryAt);
       const reason = task.task_key === 'scheduled_source_collection' ? sourceCollectionFailureReason(error) : failed.reason;
       const output = { ...jsonObject<Record<string, unknown>>(task.output, {}), dataStatus: 'execution_failed', executionFailure: failure, waitState: waitState(failed.kind, reason), availableActions: availableTaskActions(task) };
@@ -2762,11 +3171,11 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     }
   }
 
-  const remaining = taskResult.items.filter(task => !['succeeded', 'skipped'].includes(task.status));
+  const remaining = [...taskResult.items,...independentTasks].filter(task => !['succeeded', 'skipped'].includes(task.status));
   if (remaining.length) {
     const handedOff = remaining.find(task => task.status === 'handed_off');
     const waitingApproval = remaining.find(task => task.status === 'waiting_approval');
-    const directBlocks = remaining.filter(task => ['waiting_external', 'waiting_approval', 'handed_off', 'failed', 'cancelled'].includes(task.status));
+    const directBlocks = remaining.filter(task => ['waiting_external', 'waiting_approval', 'waiting_human', 'handed_off', 'failed', 'cancelled'].includes(task.status));
     const dependencyBlocks = remaining
       .filter(task => task.status === 'pending')
       .map(task => {
@@ -2781,10 +3190,12 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
       ...dependencyBlocks,
     ])];
     const failedTask = remaining.find(task => task.status === 'failed' && !jsonObject<Record<string, any>>(task.output, {}).executionFailure?.retryAt);
-    const status = handedOff || failedTask ? 'waiting_human' : waitingApproval ? 'waiting_approval' : 'waiting_external';
+    const needsHumanInput = remaining.find(task => ['waiting_external', 'waiting_human'].includes(task.status)
+      && ['input', 'manual'].includes(String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(task.output, {}).waitState, {}).kind || '')));
+    const status = handedOff || failedTask || needsHumanInput ? 'waiting_human' : waitingApproval ? 'waiting_approval' : 'waiting_external';
     await store.update(COLLECTION.runs, run.id, {
       status,
-      current_controller: handedOff || failedTask || waitingApproval ? 'human' : 'agent',
+      current_controller: handedOff || failedTask || needsHumanInput || waitingApproval ? 'human' : 'agent',
       pause_reason: reasons.slice(0, 6).join('；'),
     });
     return;
@@ -3000,6 +3411,11 @@ async function buildDigitalEmployeeAssistantFeed(
     : productionDefaults.items.length === 0
       ? managedReplicationPresenterReadiness({})
       : { state: 'production_setup_required' as const, presenterCount: 0, presenterId: '', presenterName: '' };
+  const {recoverIndependentContentTask}=await import('../assistant/independentWeeklyContent.js');
+  for(const task of taskResult.items.filter(t=>jsonObject<Record<string,unknown>>(t.output,{}).assistantIndependent)){
+    const project=productionProjects.find(p=>p&&jsonObject<Record<string,unknown>>(p.spec,{}).workflowTaskId===task.id);
+    if(project)await recoverIndependentContentTask(store,tenantId,task as any,project as any);
+  }
   const assistantTasks = taskResult.items.map(task => taskWithAssistantProductionInput(
     task,
     productionProjects.filter((project): project is StoredRecord & { tenant_id: string } => Boolean(project)),
@@ -3086,7 +3502,7 @@ async function takeOverWorkflowTask(input: { tenantId: string; userId: string; t
       await pauseContentExecutionJobsForRun({ dataStore: store, tenantId: input.tenantId, runId: run.id, origin: 'workflow_handoff' });
       return;
     }
-    if (!['waiting_external', 'waiting_approval', 'running', 'failed', 'pending'].includes(task.status)) {
+    if (!['waiting_external', 'waiting_approval', 'waiting_human', 'running', 'failed', 'pending'].includes(task.status)) {
       throw new AssistantDecisionCommandError('task_not_handoff_ready', 409);
     }
     const now = new Date().toISOString();
@@ -3228,6 +3644,7 @@ digitalEmployeesRouter.post('/assistant/decision-center/:decisionId/actions', as
     const card = fullFeed.items.find(item => item.id === decisionId);
     if (!card) throw new AssistantDecisionCommandError('assistant_decision_not_pending', 409);
     let execution: AssistantDecisionExecutionReceipt | undefined;
+    let commandPersisted = false;
     const outcome = await executeAssistantDecisionCommand({
       card, actionId, expectedVersion, note,
       handlers: {
@@ -3298,7 +3715,7 @@ digitalEmployeesRouter.post('/assistant/decision-center/:decisionId/actions', as
             instruction: '从当前节点重试；先复用未使用且已完成精确分析的爆款素材，只补采仍缺少的数量。',
             rerunDownstream: true,
           });
-          await advanceRun(identity.tenantId, result.runId);
+          queueDigitalEmployeeRunAdvance(identity.tenantId, result.runId);
         },
         replanTask: async selected => {
           const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, selected.subject.id, identity.tenantId);
@@ -3314,7 +3731,7 @@ digitalEmployeesRouter.post('/assistant/decision-center/:decisionId/actions', as
             instruction: '保留已经完成的结果，按当前账号、产量和爆款库存重新规划本周任务。',
             rerunDownstream: true,
           });
-          await advanceRun(identity.tenantId, result.runId);
+          queueDigitalEmployeeRunAdvance(identity.tenantId, result.runId);
         },
         takeOver: async selected => {
           let taskId = selected.subject.id;
@@ -3327,12 +3744,13 @@ digitalEmployeesRouter.post('/assistant/decision-center/:decisionId/actions', as
         },
       },
     });
+    commandPersisted = outcome === 'completed';
 
     const feed = await assistantDecisionFeedForRequest(req, identity, page, goalId).catch(error => {
-      // A secondary read failure must not erase proof of an already persisted
-      // start. Only retire the exact decision confirmed by that receipt; the
-      // remaining snapshot will be refreshed by the normal feed polling.
-      if (!execution) throw error;
+      // A secondary read failure must not turn an already persisted command
+      // into a visible failure. Only retire the exact confirmed decision; the
+      // remaining snapshot will be refreshed by normal feed polling.
+      if (!commandPersisted) throw error;
       return {
         ...fullFeed,
         items: fullFeed.items.filter(item => item.id !== card.id),
@@ -3388,7 +3806,10 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
   } : onboardingInput);
   const boundPublishing = await bindPublishingTargets(tenantId, submittedConfig.publishingTargets);
   submittedConfig.publishingTargets = boundPublishing.targets;
-  if (boundPublishing.invalidAccountIds.length) {
+  // Initial production setup may be partial. Invalid legacy account bindings
+  // are NOT authorization: omit them, retain evidence in audit, and recheck at
+  // the actual release gate. Full settings saves remain strict.
+  if (boundPublishing.invalidAccountIds.length && !minimalOnboarding) {
     res.status(409).json({
       error: 'publishing_accounts_invalid',
       message: '部分发布账号不属于当前企业或已断开连接，请重新选择。',
@@ -3530,7 +3951,7 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
       payload: { eventType: 'critical_business_change', changedFields, action: 'review_weekly_package' },
     });
   }
-  await appendAudit({ tenantId, userId, action: 'digital_employee.onboarding.completed', targetType: 'digital_employee_config', targetId: existing?.id || tenantId, metadata: { autonomyMode: resolved.config.autonomyMode, minimalOnboarding, configVersion: resolved.configVersion, policyVersion: resolved.policyVersion, factsVersion: resolved.knowledgeBinding.factsVersion } });
+  await appendAudit({ tenantId, userId, action: 'digital_employee.onboarding.completed', targetType: 'digital_employee_config', targetId: existing?.id || tenantId, metadata: { autonomyMode: resolved.config.autonomyMode, minimalOnboarding, configVersion: resolved.configVersion, policyVersion: resolved.policyVersion, factsVersion: resolved.knowledgeBinding.factsVersion, deferredPublishingAccountIds: boundPublishing.invalidAccountIds } });
   res.json(await buildOverview(tenantId));
 });
 
@@ -3760,7 +4181,42 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
     }
     const currentPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
     const currentMasterPlans = currentPlans.filter(item => item.productionRole !== 'platform_adaptation');
-    if (pack.detailGeneration?.status === 'ready' && currentMasterPlans.some(item => item.preproduction?.readiness.canStart)) {
+    const productionProfile = frozenEnterpriseProfileForPlan(plan, false)
+      || (resolvedConfiguration ? enterpriseProfileFromKnowledgeBinding(resolvedConfiguration.knowledgeBinding) as EnterpriseProfile | null : null);
+    if (!productionProfile) {
+      res.status(409).json({ error: 'enterprise_fact_snapshot_missing', message: '企业事实快照缺失，请重新确认企业与产品资料后再生成制作详情。' });
+      return;
+    }
+    let preparationReadiness: Awaited<ReturnType<typeof readServerProductionOnboardingReadiness>>;
+    try {
+      preparationReadiness = await readServerProductionOnboardingReadiness({
+        store,
+        tenantId,
+        profile: productionProfile,
+        preferences: config.productionOnboarding,
+        plans: currentMasterPlans,
+        // Budget is finalized after the storyboard quote. This first gate checks
+        // only zero-cost enterprise, presenter and local-material prerequisites.
+        budgetConfirmed: true,
+      });
+    } catch (error) {
+      res.status(503).json({
+        error: 'production_onboarding_preflight_unavailable',
+        message: `${error instanceof Error ? error.message : '生产资料预检暂时不可用'}；本次未调用制作服务，请稍后重试。`,
+      });
+      return;
+    }
+    if (!preparationReadiness.ready) {
+      res.status(409).json({
+        error: 'production_onboarding_preflight_blocked',
+        message: `制作详情尚未生成：${preparationReadiness.blockers.map(item => item.message).join('；')}`,
+        blockers: preparationReadiness.blockers,
+        requiredArchetypes: preparationReadiness.requiredArchetypes,
+      });
+      return;
+    }
+    if (pack.detailGeneration?.status === 'ready' && currentMasterPlans.length > 0
+      && currentMasterPlans.every(item => item.preproduction?.readiness.canStart)) {
       res.json(await buildOverview(tenantId, goal.id));
       return;
     }
@@ -3907,6 +4363,62 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
       res.status(409).json({ error: 'package_changed', message: '计划已更新或正在重建，请刷新后重新调整。' }); return;
     }
     await appendAudit({ tenantId, userId, action: 'weekly_package.updated', targetType: 'weekly_plan', targetId: plan.id, metadata: { revision: pack.revision, tasks: pack.tasks } });
+    res.json(await buildOverview(tenantId, goal.id));
+  });
+});
+
+digitalEmployeesRouter.patch('/goals/:goalId/production-budget-mode', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const mode = req.body?.mode === 'economy' ? 'economy' as const
+    : req.body?.mode === 'protected' ? 'protected' as const : null;
+  const expectedRevision = Number(req.body?.packageRevision);
+  if (!mode || !Number.isInteger(expectedRevision)) {
+    res.status(400).json({ error: 'production_budget_mode_invalid', message: '请选择有效的开工预算方案。' }); return;
+  }
+  await withLocalQueue(goalApprovalQueues, `${tenantId}:activate`, async () => {
+    const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, req.params.goalId, tenantId);
+    const plan = goal ? await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }) : null;
+    const run = goal ? await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id }) : null;
+    if (!goal || !plan) { res.status(404).json({ error: 'weekly_plan_not_found', message: '没有找到对应的周计划。' }); return; }
+    if (goal.status !== 'draft' || plan.status !== 'draft' || run) {
+      res.status(409).json({ error: 'production_budget_locked', message: '计划已开工，预算授权不能在生产中途静默变更。' }); return;
+    }
+    const body = jsonObject<Record<string, unknown>>(plan.plan, {});
+    const pack = body.businessPackage ? repairCollapsedWeeklyVideoProduction(body.businessPackage as WeeklyPackage) : undefined;
+    if (!pack?.directorPlan || pack.revision !== expectedRevision) {
+      res.status(409).json({ error: 'package_changed', message: '计划已更新，请重新核对预算后再选择。' }); return;
+    }
+    const masters = pack.tasks.find(task => task.templateId === 'production')?.videoPlans?.filter(item => item.productionRole !== 'platform_adaptation') || [];
+    const productionBudgetMin = Math.round(masters.reduce((sum, item) => sum + Number(item.estimatedCostRange?.minCny || 0), 0) * 100) / 100;
+    const productionBudgetMax = Math.round(masters.reduce((sum, item) => sum + Number(item.estimatedCostRange?.maxCny || 0), 0) * 100) / 100;
+    const verified = masters.length > 0 && masters.every(item => item.estimatedCostRange?.basis === 'verified_storyboard_provider_envelope');
+    if (!verified || productionBudgetMin <= 0 || productionBudgetMax < productionBudgetMin) {
+      res.status(409).json({ error: 'production_budget_forecast_required', message: '可靠预算尚未生成，请先完成周计划详情准备后再选择开工方案。' }); return;
+    }
+    const nextPack: WeeklyPackage = {
+      ...pack,
+      revision: pack.revision + 1,
+      directorPlan: {
+        ...pack.directorPlan,
+        productionBudgetMode: mode,
+        productionBudget: mode === 'economy' ? productionBudgetMin : productionBudgetMax,
+        productionBudgetMin,
+        productionBudgetMax,
+        productionReserved: 0,
+      },
+    };
+    const configRecord = await configForTenant(tenantId);
+    const currentConfig = publicConfig(configRecord);
+    if (!currentConfig) { res.status(409).json({ error: 'onboarding_required' }); return; }
+    const config = executionConfigForPlan(plan, currentConfig);
+    const compiled = compilePackage(nextPack, goalInput(goal), config);
+    if (!store.compareAndSwap || !await store.compareAndSwap(COLLECTION.plans, plan.id, {
+      tenant_id: tenantId, goal_id: goal.id, status: 'draft', plan: plan.plan,
+    }, { plan: { ...body, ...compiled } })) {
+      res.status(409).json({ error: 'package_changed', message: '计划刚刚发生变化，请刷新后重新选择。' }); return;
+    }
+    await appendAudit({ tenantId, userId, action: 'weekly_package.production_budget_mode_selected', targetType: 'weekly_plan', targetId: plan.id,
+      metadata: { revision: nextPack.revision, mode, productionBudgetMin, productionBudgetMax, approvedCeilingCny: nextPack.directorPlan!.productionBudget } });
     res.json(await buildOverview(tenantId, goal.id));
   });
 });
@@ -4565,6 +5077,66 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
   if (pack) {
     if (packageRevision !== pack.revision) { return { status: 409, body: { error: 'package_changed', message: '请查看并确认最新版本的经营包。' } }; }
     if (pack.tasks.some(t => t.ownerId && !members.some(m => m.id === t.ownerId))) { return { status: 409, body: { error: 'owner_unavailable', message: '计划中的负责人已不可用，请重新分配任务。' } }; }
+    const masterPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans?.filter(item => item.productionRole !== 'platform_adaptation') || [];
+    if (masterPlans.length && (pack.detailGeneration?.status !== 'ready'
+      || masterPlans.some(item => !item.preproduction?.readiness.canStart))) {
+      const blockers = [...new Set([
+        ...(pack.detailGeneration?.blockers || []),
+        ...masterPlans.flatMap(item => item.preproduction?.readiness.blockers || ['制作详情尚未生成']),
+      ].filter(Boolean))];
+      return { status: 409, body: {
+        error: 'package_details_blocked',
+        message: `制作条件尚未全部满足：${blockers.join('；') || '请先生成并确认每条内容的制作详情'}`,
+        blockers,
+      } };
+    }
+    const cloneWithoutVerifiedBudget = masterPlans.find(item => item.route === 'clone'
+      && item.estimatedCostRange?.basis !== 'verified_storyboard_provider_envelope');
+    if (cloneWithoutVerifiedBudget) {
+      return { status: 409, body: { error: 'production_budget_forecast_required', message: '本周逐镜制作尚未完成可靠预算预计，请先生成并核对周计划详情，未启动生产。' } };
+    }
+    const protectedBudget = pack.directorPlan?.productionBudgetMode !== 'economy';
+    const selectedCaps = masterPlans.map(item => Number(protectedBudget
+      ? item.estimatedCostRange?.maxCny || item.estimatedCost
+      : item.estimatedCostRange?.minCny || item.estimatedCost));
+    const approvedTotal = Math.round(selectedCaps.reduce((sum, value) => sum + value, 0) * 100) / 100;
+    if (pack.directorPlan && (approvedTotal <= 0 || Math.abs(pack.directorPlan.productionBudget - approvedTotal) > 0.009)) {
+      return { status: 409, body: { error: 'production_budget_approval_stale', message: '开工预算与当前分镜预计不一致，请重新核对并选择预算方案，未启动生产。' } };
+    }
+    const installationCeiling = process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY === undefined
+      ? null : Number(process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY);
+    if (!isInternalBudgetExemptTenant(tenantId) && installationCeiling !== null && (!Number.isFinite(installationCeiling) || installationCeiling <= 0
+      || selectedCaps.some(value => value > installationCeiling + 0.000001))) {
+      return { status: 409, body: { error: 'production_budget_installation_ceiling', message: `系统单条制作上限不足以执行已选方案（当前上限 ¥${Number.isFinite(installationCeiling) ? installationCeiling.toFixed(2) : '0.00'}），请在开工前调整系统额度或选择精简预算。` } };
+    }
+    if (masterPlans.length) {
+      const productionProfile = frozenEnterpriseProfileForPlan(existingPlan, false)
+        || enterpriseProfileFromKnowledgeBinding(resolvedConfiguration.knowledgeBinding) as EnterpriseProfile | null;
+      if (!productionProfile) {
+        return { status: 409, body: { error: 'enterprise_fact_snapshot_missing', message: '企业事实快照缺失，请重新确认企业与产品资料后再开工。' } };
+      }
+      try {
+        const readiness = await readServerProductionOnboardingReadiness({
+          store,
+          tenantId,
+          profile: productionProfile,
+          preferences: config.productionOnboarding,
+          plans: masterPlans,
+          budgetConfirmed: Boolean(pack.directorPlan && approvedTotal > 0),
+        });
+        if (!readiness.ready) return { status: 409, body: {
+          error: 'production_onboarding_preflight_blocked',
+          message: `周任务未启动：${readiness.blockers.map(item => item.message).join('；')}`,
+          blockers: readiness.blockers,
+          requiredArchetypes: readiness.requiredArchetypes,
+        } };
+      } catch (error) {
+        return { status: 503, body: {
+          error: 'production_onboarding_preflight_unavailable',
+          message: `${error instanceof Error ? error.message : '生产资料预检暂时不可用'}；本次未创建运行，请稍后重试。`,
+        } };
+      }
+    }
     const issues = validatePackageForStart(pack, goalInput(goal), configSnapshotForPlan(existingPlan, currentConfig));
     if (issues.length) { return { status: 400, body: { error: 'package_invalid', message: issues.join('；') } }; }
   }
@@ -5336,7 +5908,7 @@ async function applyTaskControl(input: {
         businessRefs: jsonObject(item.business_refs, []),
       })),
     };
-    if (savedPackage && plan) {
+    if (savedPackage && plan && taskCorrectionInvalidatesWeeklyAuthorization(input.action)) {
       const priorBody = jsonObject<Record<string, unknown>>(plan.plan, {});
       await store.update(COLLECTION.plans, plan.id, { plan: { ...priorBody, packageApprovedBy: '', packageGrantInvalidatedAt: now } });
       await invalidatePublishingAuthorizationForRun(input.tenantId, run.id);
@@ -5499,7 +6071,7 @@ export async function retryDigitalEmployeeTask(input: {
     instruction: String(input.instruction || '').trim().slice(0, 5000) || '重试当前任务并重置下游',
     rerunDownstream: input.rerunDownstream !== false,
   });
-  await advanceRun(input.tenantId, result.runId);
+  queueDigitalEmployeeRunAdvance(input.tenantId, result.runId);
   return result;
 }
 
@@ -5535,7 +6107,7 @@ async function handleTaskControl(req: Request, res: Response, forcedAction?: Tas
       businessRefs: Array.isArray(req.body?.businessRefs) ? req.body.businessRefs : undefined,
       enabledWorkflows: Array.isArray(rawWorkflows) ? rawWorkflows as DigitalEmployeeConfig['enabledWorkflows'] : undefined,
     });
-    await advanceRun(tenantId, result.runId);
+    queueDigitalEmployeeRunAdvance(tenantId, result.runId);
     res.json(await buildOverview(tenantId, result.goalId));
   } catch (error) {
     if (error instanceof TaskControlError) {
@@ -5566,10 +6138,13 @@ digitalEmployeesRouter.post('/tasks/:taskId/director-decision', async (req, res)
   try {
     const now = new Date().toISOString();
     const applied = applyDirectorDecision({ pack, contentId, decision, ...(decision !== 'continue' ? { reason } : {}), applyToSimilar: req.body?.applyToSimilar === true, now });
-    await store.update(COLLECTION.plans, plan.id, { plan: { ...original, businessPackage: applied.pack, packageApprovedBy: '', packageGrantInvalidatedAt: now } });
+    const invalidatesAuthorization = directorDecisionInvalidatesWeeklyAuthorization(decision);
+    await store.update(COLLECTION.plans, plan.id, { plan: {
+      ...original,
+      businessPackage: applied.pack,
+      ...(invalidatesAuthorization ? { packageApprovedBy: '', packageGrantInvalidatedAt: now } : {}),
+    } });
     if (decision === 'continue') {
-      await invalidatePublishingAuthorizationForRun(tenantId, task.run_id);
-      await appendAuthorizationRequiredEvent({ tenantId, runId: task.run_id, taskId: task.id, reason: 'package_adjusted', changedFields: ['directorDecision'] });
       await appendEvent({ tenantId, runId: task.run_id, taskId: task.id, type: 'director.continue', level: 'info', summary: `${task.title}：人工选择继续当前内容方向`, payload: { contentId, affectedContentIds: applied.affectedContentIds } });
       await appendAudit({ tenantId, userId, action: 'director_direction.continue', targetType: 'workflow_task', targetId: task.id, metadata: { runId: task.run_id, contentId, affectedContentIds: applied.affectedContentIds } });
       await advanceRun(tenantId, task.run_id);
@@ -5582,6 +6157,8 @@ digitalEmployeesRouter.post('/tasks/:taskId/director-decision', async (req, res)
     if (!routingTask) throw new Error('director_routing_task_missing');
     const result = await applyTaskControl({ tenantId, userId, taskId: routingTask.id, action: 'retry', scope: 'one_off', instruction, rerunDownstream: true });
     taskControlApplied = true;
+    await invalidatePublishingAuthorizationForRun(tenantId, task.run_id);
+    await appendAuthorizationRequiredEvent({ tenantId, runId: task.run_id, taskId: task.id, reason: 'package_adjusted', changedFields: ['directorDecision'] });
     await appendAudit({ tenantId, userId, action: `director_direction.${decision}`, targetType: 'weekly_content', targetId: contentId, metadata: { runId: task.run_id, taskId: task.id, routingTaskId: routingTask.id, reason, applyToSimilar: req.body?.applyToSimilar === true, affectedContentIds: applied.affectedContentIds, replacementContentId: applied.replacementContentId } });
     await advanceRun(tenantId, result.runId);
     res.json(await buildOverview(tenantId, result.goalId));
@@ -5591,6 +6168,255 @@ digitalEmployeesRouter.post('/tasks/:taskId/director-decision', async (req, res)
     res.status(message === 'director_content_not_found' ? 404 : 409).json({ error: message });
   }
 });
+
+/**
+ * One-time recovery for plans approved before storyboard-priced authorization
+ * existed. The caller explicitly chooses the same protected/economy policy as
+ * a new plan. Existing projects, paid receipts, selected materials and shot
+ * progress are preserved; only the frozen budget authority is replaced.
+ */
+digitalEmployeesRouter.post('/tasks/:taskId/production-budget-reforecast', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const mode = req.body?.mode === 'economy' ? 'economy' as const
+    : req.body?.mode === 'protected' ? 'protected' as const : null;
+  if (!mode) {
+    res.status(400).json({ error: 'production_budget_mode_invalid', message: '请选择有效的开工预算方案。' });
+    return;
+  }
+  const initialTask = await tenantRecord<TaskRecord>(COLLECTION.tasks, req.params.taskId, tenantId);
+  if (!initialTask) { res.status(404).json({ error: 'task_not_found' }); return; }
+  if (initialTask.task_key !== 'content_production') {
+    res.status(409).json({ error: 'production_budget_task_invalid', message: '只有内容生产任务可以重算制作预算。' });
+    return;
+  }
+  try {
+    await withDigitalEmployeeRunLock(tenantId, initialTask.run_id, async () => {
+      const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, initialTask.id, tenantId);
+      const run = await tenantRecord<RunRecord>(COLLECTION.runs, initialTask.run_id, tenantId);
+      const plan = run ? await tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId) : null;
+      const goal = task ? await tenantRecord<GoalRecord>(COLLECTION.goals, task.goal_id, tenantId) : null;
+      const currentConfig = publicConfig(await configForTenant(tenantId));
+      if (!task || !run || !plan || !goal || !currentConfig || task.run_id !== run.id || task.plan_id !== plan.id) throw new Error('production_budget_context_missing');
+      if (!['waiting_external', 'waiting_human', 'failed', 'running'].includes(run.status)
+        || !['waiting_external', 'waiting_human', 'failed', 'running'].includes(task.status)) {
+        throw new Error('production_budget_reforecast_not_allowed');
+      }
+      const projects = await store.list<StoredRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 });
+      const managedProjects = projects.items.filter(project => {
+        const spec = jsonObject<Record<string, unknown>>(project.spec, {});
+        return String(spec.workflowRunId || '') === run.id && String(spec.workflowTaskId || '') === task.id;
+      });
+      const hasFrozenSpeechEvidence = (spec: Record<string, unknown>) => {
+        const shots = Array.isArray(spec.automatedReplicationShots)
+          ? spec.automatedReplicationShots as Array<Record<string, unknown>> : [];
+        const personShotIds = new Set(shots.filter(shot => shot.kind === 'person').map(shot => String(shot.shotId || '')));
+        if (!personShotIds.size) return false;
+        const progress = jsonObject<Record<string, Record<string, unknown>>>(spec.automatedReplicationProgress, {});
+        const productions = jsonObject<Record<string, Record<string, unknown>>>(spec.shotProductions, {});
+        return [...personShotIds].some(shotId => {
+          const state = progress[shotId] || {};
+          const production = Object.entries(productions).find(([key]) => key.endsWith(`:${shotId}`))?.[1] || {};
+          return Boolean(state.videoMaterialId || state.providerTaskId || state.adopted
+            || jsonObject<Record<string, unknown>>(production.digitalHuman, {}).providerTaskId);
+        });
+      };
+      const legacyRepairProjects = managedProjects.filter(project => {
+        const spec = jsonObject<Record<string, unknown>>(project.spec, {});
+        const automation = jsonObject<Record<string, unknown>>(spec.automation, {});
+        const order = jsonObject<ContentOrder | undefined>(spec.contentOrder, undefined);
+        const language = String(spec.lang || order?.videoPlan?.language || order?.languages?.[0] || 'en');
+        const frozenScript = order?.scripts?.[language]?.body || '';
+        const versionOnlyPlan = Number(jsonObject<Record<string, unknown>>(spec.automatedReplicationPlan, {}).version || 0) >= 2
+          && !managedReplicationPlanHasExecutionGraph(spec);
+        const invalidLanguageContract = Boolean(frozenScript && !storyboardVoiceLanguageMatches(frozenScript, language));
+        const contractMismatch = Boolean(frozenScript
+          && (String(spec.script || '') !== frozenScript || invalidLanguageContract)
+          && !hasFrozenSpeechEvidence(spec));
+        return (String(automation.stage || '') === 'blocked'
+          && /预算计划|budget plan/i.test(String(automation.blocker || '')))
+          || versionOnlyPlan || contractMismatch;
+      });
+      if (!legacyRepairProjects.length) throw new Error('production_budget_reforecast_not_required');
+
+      const planBody = jsonObject<Record<string, unknown>>(plan.plan, {});
+      const pack = planBody.businessPackage
+        ? repairCollapsedWeeklyVideoProduction(planBody.businessPackage as WeeklyPackage)
+        : undefined;
+      if (!pack?.directorPlan) throw new Error('production_budget_plan_missing');
+      const productionTask = pack.tasks.find(item => item.templateId === 'production');
+      const sourcePlans = productionTask?.videoPlans || [];
+      const nextPlans = sourcePlans.map(source => {
+        const item = normalizeVideoPlan(source);
+        if (item.productionRole === 'platform_adaptation' || item.route !== 'clone') return item;
+        const range = verifiedStoryboardProviderCostRange(item.benchmarkAnalysis);
+        if (!range) throw new Error(`production_budget_storyboard_unverified:${item.contentId || 'unknown'}`);
+        return normalizeVideoPlan({ ...item, estimatedCost: range.minCny, estimatedCostRange: range });
+      });
+      const masters = nextPlans.filter(item => item.productionRole !== 'platform_adaptation');
+      if (!masters.length || masters.some(item => item.route === 'clone'
+        && item.estimatedCostRange?.basis !== 'verified_storyboard_provider_envelope')) {
+        throw new Error('production_budget_storyboard_unverified');
+      }
+      const productionBudgetMin = Math.round(masters.reduce((sum, item) => sum + Number(item.estimatedCostRange?.minCny || item.estimatedCost || 0), 0) * 100) / 100;
+      const productionBudgetMax = Math.round(masters.reduce((sum, item) => sum + Number(item.estimatedCostRange?.maxCny || item.estimatedCost || 0), 0) * 100) / 100;
+      const approvedCeilingCny = mode === 'economy' ? productionBudgetMin : productionBudgetMax;
+      const selectedContentCap = (item: VideoCreationPlan) => Number(mode === 'economy'
+        ? item.estimatedCostRange?.minCny || item.estimatedCost || 0
+        : item.estimatedCostRange?.maxCny || item.estimatedCost || 0);
+      const explicitBatchCeiling = process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY === undefined
+        ? null : Number(process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY);
+      if (!isInternalBudgetExemptTenant(tenantId) && explicitBatchCeiling !== null && (!Number.isFinite(explicitBatchCeiling) || explicitBatchCeiling <= 0
+        || masters.some(item => selectedContentCap(item) > explicitBatchCeiling + 0.000001))) {
+        throw new Error('production_budget_environment_ceiling_too_low');
+      }
+      if (productionBudgetMin <= 0 || productionBudgetMax < productionBudgetMin) throw new Error('production_budget_forecast_invalid');
+      const now = new Date().toISOString();
+      const nextByContentId = new Map(nextPlans.map(item => [item.contentId, item]));
+      const frozenOperatingContext = (
+        videoPlan: VideoCreationPlan,
+        existing: ContentOrder['operatingContext'],
+      ): NonNullable<ContentOrder['operatingContext']> => ({
+        ...(existing || {}),
+        productionBudget: approvedCeilingCny,
+        productionBudgetMax: approvedCeilingCny,
+        productionSpent: Number(existing?.productionSpent || pack.directorPlan?.productionSpent || 0),
+        productionReserved: approvedCeilingCny,
+        estimatedContentCost: Number(videoPlan.estimatedCostRange?.minCny || videoPlan.estimatedCost || 0),
+        estimatedContentCostMax: selectedContentCap(videoPlan),
+        productionBudgetMode: mode,
+        maxAigcRetries: mode === 'economy' ? 0 : 1,
+        budgetApprovedAt: now,
+        originalTarget: Number(existing?.originalTarget || pack.directorPlan?.originalTarget || masters.length),
+        platformVersionTarget: Number(existing?.platformVersionTarget || pack.directorPlan?.platformVersionTarget || nextPlans.length),
+        publishTarget: Number(existing?.publishTarget || pack.directorPlan?.publishTarget || nextPlans.length),
+        qualityStandard: String(existing?.qualityStandard || pack.directorPlan?.qualityStandard || ''),
+        packageRevision: Number(existing?.packageRevision || pack.revision || 0),
+      });
+      const nextPack: WeeklyPackage = {
+        ...pack,
+        directorPlan: {
+          ...pack.directorPlan,
+          productionBudgetMode: mode,
+          productionBudget: approvedCeilingCny,
+          productionBudgetMin,
+          productionBudgetMax,
+          productionReserved: approvedCeilingCny,
+        },
+        tasks: pack.tasks.map(item => item.templateId === 'production' ? { ...item, videoPlans: nextPlans } : item),
+      };
+      const executionConfig = executionConfigForPlan(plan, currentConfig);
+      const enterpriseProfile = await ensureFrozenEnterpriseProfileForRun(tenantId, plan, executionConfig, run.started_at);
+      const batches = await store.list<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 20 });
+      const repairedOrdersById = new Map<string, ContentOrder>();
+      const repairedOrdersByContentId = new Map<string, ContentOrder>();
+      const preparedBatches: Array<{ batch: ContentBatchPlanRecord; orders: ContentOrder[] }> = [];
+      for (const batch of batches.items) {
+        const orders = jsonObject<ContentOrder[]>(batch.orders, []);
+        const budgetedOrders = orders.map(order => {
+          const videoPlan = nextByContentId.get(order.videoPlan?.contentId || '');
+          if (!videoPlan) return order;
+          return {
+            ...order,
+            videoPlan,
+            operatingContext: frozenOperatingContext(videoPlan, order.operatingContext),
+          } satisfies ContentOrder;
+        });
+        const scriptableOrders = budgetedOrders.filter(order => !order.readinessBlockers?.length);
+        const directedOrders = scriptableOrders.length ? await generateDirectorScriptContracts({
+          tenantId,
+          config: executionConfig,
+          goal: goalInput(goal),
+          orders: scriptableOrders,
+          now,
+          enterpriseProfile,
+        }) : [];
+        const directedById = new Map(directedOrders.map(order => [order.id, order]));
+        const nextOrders = budgetedOrders.map(order => {
+          const directed = directedById.get(order.id);
+          const nextOrder = directed ? {
+            ...order,
+            contractVersion: directed.contractVersion,
+            scripts: directed.scripts,
+          } satisfies ContentOrder : order;
+          repairedOrdersById.set(nextOrder.id, nextOrder);
+          if (nextOrder.videoPlan?.contentId) repairedOrdersByContentId.set(nextOrder.videoPlan.contentId, nextOrder);
+          return nextOrder;
+        });
+        preparedBatches.push({ batch, orders: nextOrders });
+      }
+      if (!await store.update(COLLECTION.plans, plan.id, { plan: { ...planBody, businessPackage: nextPack }, updated_at: now })) {
+        throw new Error('production_budget_plan_update_failed');
+      }
+      for (const prepared of preparedBatches) {
+        if (!await store.update(COLLECTION.contentBatchPlans, prepared.batch.id, { orders: prepared.orders, updated_at: now })) {
+          throw new Error('production_budget_batch_update_failed');
+        }
+      }
+      const repairedScriptProjectIds: string[] = [];
+      for (const project of managedProjects) {
+        const spec = jsonObject<Record<string, unknown>>(project.spec, {});
+        const order = jsonObject<ContentOrder | undefined>(spec.contentOrder, undefined);
+        const sourceOrderId = String((order as (ContentOrder & { sourceContentOrderId?: string }) | undefined)?.sourceContentOrderId
+          || order?.id.split('::')[0] || '');
+        const repairedBaseOrder = order ? repairedOrdersById.get(sourceOrderId)
+          || repairedOrdersByContentId.get(order.videoPlan?.contentId || '') : undefined;
+        if (!order || !repairedBaseOrder) continue;
+        const language = String(spec.lang || order.videoPlan?.language || repairedBaseOrder.videoPlan?.language || repairedBaseOrder.languages?.[0] || 'en');
+        // Projects are language-expanded copies (`base-order::en`). Preserve
+        // their stable identity and lineage while refreshing the repaired base
+        // order contract that was frozen in the batch plan.
+        const nextOrder = refreshExpandedContentOrderContract(order, repairedBaseOrder, language);
+        const previousScriptHash = order.scripts?.[language]?.hash || '';
+        const nextScriptHash = nextOrder.scripts?.[language]?.hash || '';
+        const nextScriptBody = nextOrder.scripts?.[language]?.body || '';
+        const scriptRepaired = Boolean(!hasFrozenSpeechEvidence(spec) && nextScriptHash
+          && (previousScriptHash !== nextScriptHash || String(spec.script || '') !== nextScriptBody));
+        const automation = jsonObject<Record<string, unknown>>(spec.automation, {});
+        const { retryPolicy: _retryPolicy, retryAfter: _retryAfter, resumeStage: _resumeStage, ...preservedAutomation } = automation;
+        const nextSpec = {
+          ...spec,
+          contentOrder: nextOrder,
+          ...(scriptRepaired ? {
+            script: nextScriptBody,
+            automation: {
+              ...preservedAutomation,
+              stage: 'script',
+              status: 'queued',
+              blocker: '',
+              scriptRepairReason: 'legacy_language_contract_mismatch',
+              scriptRepairedAt: now,
+              updatedAt: now,
+            },
+          } : {}),
+        };
+        if (!await store.update('studio_projects', project.id, { spec: nextSpec, updated_at: now })) {
+          throw new Error('production_budget_project_update_failed');
+        }
+        if (scriptRepaired) repairedScriptProjectIds.push(project.id);
+      }
+      await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'content.production_budget_reforecasted', level: 'info',
+        summary: mode === 'economy' ? '已按精简方案重新核定制作预算' : '已按完整保障方案重新核定制作预算',
+        payload: { mode, productionBudgetMin, productionBudgetMax, approvedCeilingCny, projectIds: managedProjects.map(item => item.id), repairedScriptProjectIds, externalPublishPerformed: false } });
+      await appendAudit({ tenantId, userId, action: 'content_production.budget_reforecasted', targetType: 'workflow_task', targetId: task.id,
+        metadata: { runId: run.id, mode, productionBudgetMin, productionBudgetMax, approvedCeilingCny, projectIds: managedProjects.map(item => item.id), repairedScriptProjectIds } });
+    });
+    res.json(await buildOverview(tenantId, initialTask.goal_id));
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'production_budget_reforecast_failed';
+    const [errorCode, subject] = code.split(':', 2);
+    const messageByCode: Record<string, string> = {
+      production_budget_context_missing: '当前生产任务的预算上下文不完整，请刷新后重试。',
+      production_budget_reforecast_not_allowed: '当前任务状态不允许重算制作预算。',
+      production_budget_reforecast_not_required: '当前任务没有旧预算卡点，无需重算。',
+      production_budget_plan_missing: '周计划缺少制作预算信息。',
+      production_budget_storyboard_unverified: `内容 ${subject || ''} 的分镜尚未完成可靠预算核算。`.trim(),
+      production_budget_environment_ceiling_too_low: '系统配置的单条制作上限低于已核定预算，请先调整服务端上限。',
+      production_budget_forecast_invalid: '制作预算结果无效，未修改当前任务。',
+    };
+    res.status(errorCode === 'production_budget_reforecast_not_required' ? 409 : 422).json({ error: errorCode, message: messageByCode[errorCode] || '制作预算重算失败，未修改当前任务。' });
+  }
+});
+
 digitalEmployeesRouter.post('/tasks/:taskId/retry', async (req, res) => handleTaskControl(req, res, 'retry'));
 digitalEmployeesRouter.post('/tasks/:taskId/skip', async (req, res) => handleTaskControl(req, res, 'skip'));
 digitalEmployeesRouter.post('/tasks/:taskId/complete', async (req, res) => handleTaskControl(req, res, 'manual_complete'));
@@ -5679,8 +6505,8 @@ digitalEmployeesRouter.post('/tasks/:taskId/evidence', async (req, res) => {
   }
   const existing = jsonObject<Array<Record<string, unknown>>>(task.business_refs, []);
   const merged = [...new Map([...existing, ...canonical].map(ref => [`${String(ref.type || '')}:${String(ref.id || '')}`, ref])).values()];
-  const shouldResetTask = ['waiting_external', 'waiting_approval', 'pending'].includes(task.status);
-  const shouldReconcile = !['succeeded', 'failed', 'cancelled', 'paused', 'waiting_human'].includes(run.status);
+  const shouldResetTask = ['waiting_external', 'waiting_approval', 'waiting_human', 'pending'].includes(task.status);
+  const shouldReconcile = !['succeeded', 'failed', 'cancelled', 'paused'].includes(run.status);
   await Promise.all([
     store.update(COLLECTION.tasks, task.id, { business_refs: merged, ...(shouldResetTask ? { status: 'pending', blocked_reason: '' } : {}), task_version: Number(task.task_version || 1) + 1, updated_at: now }),
     shouldReconcile ? store.update(COLLECTION.runs, run.id, { status: 'running', current_controller: 'agent', pause_reason: '', completed_at: '' }) : Promise.resolve(false),
@@ -5713,7 +6539,7 @@ digitalEmployeesRouter.post('/tasks/:taskId/handoff', async (req, res) => {
     res.json(await buildOverview(tenantId));
     return;
   }
-  if (!['waiting_external', 'waiting_approval', 'running', 'failed', 'pending'].includes(task.status)) { res.status(409).json({ error: 'task_not_handoff_ready' }); return; }
+  if (!['waiting_external', 'waiting_approval', 'waiting_human', 'running', 'failed', 'pending'].includes(task.status)) { res.status(409).json({ error: 'task_not_handoff_ready' }); return; }
   const now = new Date().toISOString();
   const existingSession = admission.kind === 'reuse'
     ? activeHandoffs.find(handoff => handoff.id === admission.handoff.id) || null
@@ -5817,7 +6643,10 @@ digitalEmployeesRouter.post('/runs/:runId/pause', async (req, res) => {
   await withDigitalEmployeeRunLock(tenantId, req.params.runId, async () => {
   const run = await tenantRecord<RunRecord>(COLLECTION.runs, req.params.runId, tenantId);
   if (!run) { res.status(404).json({ error: 'run_not_found' }); return; }
-  if (['running', 'waiting_external', 'waiting_approval'].includes(run.status)) {
+  // A run that is waiting for human input is still active work. Operators
+  // must be able to stop it before publication without discarding completed
+  // production or quality results.
+  if (['running', 'waiting_external', 'waiting_approval', 'waiting_human'].includes(run.status)) {
     const now = new Date();
     await store.update(COLLECTION.runs, run.id, { status: 'paused', pause_reason: String(req.body?.reason || '人工暂停').slice(0, 500), current_controller: 'human' });
     await pauseContentExecutionJobsForRun({ dataStore: store, tenantId, runId: run.id, origin: 'workflow_run_pause', now });

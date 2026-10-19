@@ -8,6 +8,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { enterpriseProductIdentity, mergeEnterpriseProductIdentity } from '../lib/enterpriseProductIdentity.js';
+import {
+  ensureProductScenePreparationPlan,
+  type ProductScenePreparationPlan,
+} from '../../shared/contracts/productScenePreparation.js';
 import type { Request } from 'express';
 import { store } from '../storage/index.js';
 import type { AutonomyLevel } from '../autonomy/actionRules.js';
@@ -272,6 +276,7 @@ export interface EnterpriseProfile {
       certificateImages?: Array<{ name: string; type: string; size: number; updatedAt: string; url?: string }>;
       sceneImages?: Array<{ name: string; type: string; size: number; updatedAt: string; url?: string }>;
       brandAssets?: Array<{ name: string; type: string; size: number; updatedAt: string; url?: string }>;
+      productScenePreparation?: ProductScenePreparationPlan;
     }>;
   };
   brand: {
@@ -800,20 +805,24 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
   const products = profile.products ?? { categories: '', priceRange: '', moq: '', certifications: '', highlights: '' };
   const existing = Array.isArray(products.items) ? products.items : [];
   const items = existing.length
-    ? existing.map((item, index) => ({
-      ...item,
-      id: enterpriseProductIdentity(item, index),
-      // 空名称代表尚在编辑的产品草稿，不能在保存时隐式删除。
-      name: typeof item.name === 'string' ? item.name : (item.sku || ''),
-      images: Array.isArray(item.images) ? item.images : [],
-      videos: Array.isArray(item.videos) ? item.videos : [],
-      documents: Array.isArray(item.documents) ? item.documents : [],
-      factoryImages: Array.isArray(item.factoryImages) && item.factoryImages.length ? item.factoryImages : (Array.isArray(item.videos) ? item.videos : []),
-      packagingImages: Array.isArray(item.packagingImages) ? item.packagingImages : [],
-      certificateImages: Array.isArray(item.certificateImages) && item.certificateImages.length ? item.certificateImages : (Array.isArray(item.documents) ? item.documents : []),
-      sceneImages: Array.isArray(item.sceneImages) ? item.sceneImages : [],
-      brandAssets: Array.isArray(item.brandAssets) ? item.brandAssets : [],
-    }))
+    ? existing.map((item, index) => {
+      const id = enterpriseProductIdentity(item, index);
+      return {
+        ...item,
+        id,
+        // 空名称代表尚在编辑的产品草稿，不能在保存时隐式删除。
+        name: typeof item.name === 'string' ? item.name : (item.sku || ''),
+        images: Array.isArray(item.images) ? item.images : [],
+        videos: Array.isArray(item.videos) ? item.videos : [],
+        documents: Array.isArray(item.documents) ? item.documents : [],
+        factoryImages: Array.isArray(item.factoryImages) && item.factoryImages.length ? item.factoryImages : (Array.isArray(item.videos) ? item.videos : []),
+        packagingImages: Array.isArray(item.packagingImages) ? item.packagingImages : [],
+        certificateImages: Array.isArray(item.certificateImages) && item.certificateImages.length ? item.certificateImages : (Array.isArray(item.documents) ? item.documents : []),
+        sceneImages: Array.isArray(item.sceneImages) ? item.sceneImages : [],
+        brandAssets: Array.isArray(item.brandAssets) ? item.brandAssets : [],
+        productScenePreparation: ensureProductScenePreparationPlan(id, item.productScenePreparation),
+      };
+    })
     : [];
   const operations = {
     leadTime: '',
@@ -911,7 +920,8 @@ function stableFactJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableFactJson).join(',')}]`;
   if (value && typeof value === 'object') {
     return `{${Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => key !== 'factVersion' && key !== 'lastSavedAt' && key !== 'lastSavedSource' && key !== 'lastSavedBy')
+      .filter(([key]) => key !== 'factVersion' && key !== 'lastSavedAt' && key !== 'lastSavedSource'
+        && key !== 'lastSavedBy' && key !== 'productScenePreparation')
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, child]) => `${JSON.stringify(key)}:${stableFactJson(child)}`).join(',')}}`;
   }
@@ -920,6 +930,33 @@ function stableFactJson(value: unknown): string {
 
 export function enterpriseFactContentHash(profile: EnterpriseProfile): string {
   return createHash('sha256').update(stableFactJson(normalizeProfile(profile))).digest('hex');
+}
+
+/** Verify an existing confirmation without issuing a new confirmation. The old
+ * minimal-onboarding writer explicitly assigned focusProducts: undefined; the
+ * hash serializer encoded it as null, while JSON storage omitted the property.
+ * Replay only that documented write shape and require the ENTIRE old digest to
+ * match. A changed product, company field, or other missing property still fails.
+ */
+export function verifyEnterpriseFactContent(profile: EnterpriseProfile): {
+  verified: boolean;
+  mode: 'exact' | 'legacy_json_omitted_focus_products' | 'mismatch';
+  persistedHash: string;
+  confirmedHash: string;
+  omittedPaths: string[];
+} {
+  const persistedHash = enterpriseFactContentHash(profile);
+  const confirmedHash = profile.factVersion?.contentHash || '';
+  if (confirmedHash && persistedHash === confirmedHash) {
+    return { verified: true, mode: 'exact', persistedHash, confirmedHash, omittedPaths: [] };
+  }
+  if (confirmedHash && profile.strategy && !Object.hasOwn(profile.strategy, 'focusProducts')) {
+    const replay = { ...profile, strategy: { ...profile.strategy, focusProducts: undefined } };
+    if (enterpriseFactContentHash(replay) === confirmedHash) {
+      return { verified: true, mode: 'legacy_json_omitted_focus_products', persistedHash, confirmedHash, omittedPaths: ['strategy.focusProducts'] };
+    }
+  }
+  return { verified: false, mode: 'mismatch', persistedHash, confirmedHash, omittedPaths: [] };
 }
 
 function confirmedFactVersion(
@@ -1122,6 +1159,10 @@ async function readTenantProfile(tenantId: string): Promise<EnterpriseProfile> {
     where: { tenant_id: tenantId }, page: 1, perPage: 1,
   });
   const profile = storedProfile(result.items[0]?.profile);
+  // GET must not manufacture a new member confirmation from changed bytes.
+  // Consumers verify the preserved version (including the proven legacy JSON
+  // omission above); an actual business save is the only new confirmation path.
+  if (profile?.factVersion) return profile;
   if (profile) return withConfirmedFactVersion(
     profile,
     profile,
@@ -1152,8 +1193,9 @@ export async function readTenantEnterpriseProfileStrict(tenantId: string): Promi
   if (row.tenant_id !== tenantId) throw new Error('enterprise_context_tenant_mismatch');
   const profile = storedProfile(row.profile);
   if (!profile) return null;
-  return withConfirmedFactVersion(profile, profile, profile.factVersion?.confirmedBy || 'legacy_migration',
-    new Date(profile.factVersion?.confirmedAt || profile.dataGovernance?.lastSavedAt || 0));
+  if (profile.factVersion) return profile;
+  return withConfirmedFactVersion(profile, profile, 'legacy_migration',
+    new Date(profile.dataGovernance?.lastSavedAt || 0));
 }
 
 export interface ConfirmedEnterpriseFacts {
@@ -1217,7 +1259,7 @@ async function writeTenantProfileUnlocked(
   const existing = result.items[0];
   const previous = storedProfile(existing?.profile);
   if (expectedFactVersion) {
-    const current = withConfirmedFactVersion(
+    const current = previous?.factVersion ? previous : withConfirmedFactVersion(
       previous || ({} as EnterpriseProfile),
       previous,
       previous?.factVersion?.confirmedBy || 'system',
@@ -1227,8 +1269,13 @@ async function writeTenantProfileUnlocked(
       throw new EnterpriseFactVersionConflictError(current.factVersion!);
     }
   }
-  const clean = withConfirmedFactVersion(profile, previous, userId) as EnterpriseProfile & { integrations?: unknown };
-  delete clean.integrations;
+  // Transient connection details are not persisted enterprise facts. Strip them
+  // before hashing, otherwise every later strict consumer sees a stale hash.
+  // Hash the same JSON shape storage will retain. In particular undefined
+  // optional business fields must not be hashed as null and then disappear.
+  const persisted = JSON.parse(JSON.stringify(normalizeProfile(profile))) as EnterpriseProfile & { integrations?: unknown };
+  delete persisted.integrations;
+  const clean = withConfirmedFactVersion(persisted, previous, userId);
   profile.factVersion = clean.factVersion;
   const ok = existing?.id
     ? await store.update('tenant_profiles', String(existing.id), { profile: clean, updated_by: userId })

@@ -155,7 +155,10 @@ export async function reconcileSocialContentTask(input: {
     materialReadiness: materialReadiness(nextRequirements),
   } : undefined);
   let status = currentStatus;
-  if (input.enforceReadiness && !readiness.complete) {
+  if (currentStatus === 'cancelling' || currentStatus === 'cancelled') {
+    // Re-reading historical artifacts or missing inputs must never resurrect cancelled work.
+    status = currentStatus;
+  } else if (input.enforceReadiness && !readiness.complete) {
     status = 'needs_input';
   } else {
     let candidate = input.preferredStatus;

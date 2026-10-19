@@ -235,6 +235,91 @@ await assert.rejects(
   'admission quota must consume terminal actual cost instead of the released reservation',
 );
 
+{
+  const priorExemptTenants = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+  process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
+  try {
+    const exemptLimits: Starter198ResourceLimits = {
+      ...STARTER_198_DEFAULT_LIMITS,
+      budgetCnyPerCycle: 0.25,
+      agentBudgetCny: { orchestrator: 0.05, content: 0.1, traffic: 0.05, sales: 0.05 },
+      contentArtifactCountPerCycle: 1,
+      contentRevisionCountPerCycle: 1,
+      inquiryAiCountPerCycle: 1,
+    };
+    const exempt = memoryRepository({ tenantId: 'local_tenant_customer_aurelia_beauty', limits: exemptLimits });
+    const exemptReserve = await reserveStarterUsage({
+      tenantId: 'local_tenant_customer_aurelia_beauty', runId: 'run-aurelia', taskId: 'task-aurelia',
+      agentRole: 'content', capability: 'workflow.standard.run', idempotencyKey: 'aurelia-budget-reserve-1',
+      cost: { status: 'known', estimatedCostCny: 4, reservedCostCny: 4 },
+      repository: exempt.repository, now,
+    });
+    assert.equal(exemptReserve.created, true,
+      'the exact exempt tenant may reserve above both cycle and agent monetary budgets');
+    await assert.rejects(
+      () => reserveStarterUsage({
+        tenantId: 'local_tenant_customer_aurelia_beauty', runId: 'run-aurelia', taskId: 'task-aurelia-resource',
+        agentRole: 'content', capability: 'workflow.standard.run', idempotencyKey: 'aurelia-resource-reserve-2',
+        cost: { status: 'known', estimatedCostCny: 4, reservedCostCny: 4 },
+        resourceUnits: { contentArtifacts: 2, contentRevisions: 0, inquiryAi: 0 },
+        repository: exempt.repository, now,
+      }),
+      (error: unknown) => error instanceof Starter198UsageLedgerError
+        && error.code === 'starter_198_content_artifact_quota_exceeded',
+      'monetary exemption must not waive resource-unit quotas',
+    );
+    await settleStarterUsage({
+      tenantId: 'local_tenant_customer_aurelia_beauty', reservationId: exemptReserve.reservationId,
+      idempotencyKey: 'aurelia-budget-terminal-1',
+      tokens: { status: 'known', inputTokens: 10, outputTokens: 4, cacheTokens: 1 },
+      cost: { status: 'known', settledCostCny: 6 }, outputCount: 1,
+      resourceUnits: { contentArtifacts: 2, contentRevisions: 0, inquiryAi: 0 },
+      repository: exempt.repository, now: new Date('2026-09-12T08:03:00.000Z'),
+    });
+    const exemptTerminalUsage = (exempt.rows.get(STARTER_COLLECTIONS.usage) ?? [])
+      .find(row => row.event_type === 'terminal')?.usage as Record<string, unknown>;
+    const exemptTerminalAnomalies = exemptTerminalUsage.anomaly_codes as string[];
+    assert.ok(exemptTerminalAnomalies.includes('starter_198_usage_actual_cost_exceeds_reservation'));
+    assert.ok(exemptTerminalAnomalies.includes('starter_198_content_artifact_quota_exceeded'),
+      'terminal projection still records resource quota anomalies');
+    assert.equal(exemptTerminalAnomalies.includes('starter_198_budget_exhausted'), false,
+      'terminal projection must not add a monetary-budget anomaly for the exact exempt tenant');
+
+    const nonExempt = memoryRepository({ tenantId: 'tenant-not-exempt', limits: exemptLimits });
+    await assert.rejects(
+      () => reserveStarterUsage({
+        tenantId: 'tenant-not-exempt', runId: 'run-non-exempt', taskId: 'task-non-exempt', agentRole: 'content',
+        capability: 'workflow.standard.run', idempotencyKey: 'non-exempt-budget-reserve-1',
+        cost: { status: 'known', estimatedCostCny: 4, reservedCostCny: 4 },
+        repository: nonExempt.repository, now,
+      }),
+      (error: unknown) => error instanceof Starter198UsageLedgerError
+        && error.code === 'starter_198_budget_exhausted',
+      'the exemption is exact and must not affect another tenant',
+    );
+
+    const disabledForExempt = memoryRepository({
+      tenantId: 'local_tenant_customer_aurelia_beauty', limits: exemptLimits,
+      disabledCapability: 'quotation.calculate',
+    });
+    await assert.rejects(
+      () => reserveStarterUsage({
+        tenantId: 'local_tenant_customer_aurelia_beauty', runId: 'run-aurelia-disabled',
+        taskId: 'task-aurelia-disabled', agentRole: 'sales', capability: 'quotation.calculate',
+        idempotencyKey: 'aurelia-disabled-capability-1',
+        cost: { status: 'known', estimatedCostCny: 4, reservedCostCny: 4 },
+        repository: disabledForExempt.repository, now,
+      }),
+      (error: unknown) => error instanceof Starter198UsageLedgerError
+        && error.code === 'starter_198_usage_capability_forbidden',
+      'monetary exemption must not waive capability entitlement',
+    );
+  } finally {
+    if (priorExemptTenants === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+    else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = priorExemptTenants;
+  }
+}
+
 const crossCycle = memoryRepository({ tenantId: 'tenant-cross-cycle' });
 const crossCycleReserve = await reserveStarterUsage({
   tenantId: 'tenant-cross-cycle', runId: 'run-cross-cycle', taskId: 'task-cross-cycle', agentRole: 'content',

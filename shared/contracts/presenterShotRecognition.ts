@@ -27,8 +27,12 @@ export type SalesPresenterEvidence = {
 /** A human/actor candidate is not proof of the recurring sales protagonist. */
 export function salesPresenterRecognition(shot: SalesPresenterEvidence): 'confirmed' | 'candidate' | 'other' {
   if (shot.salesPresenterConfirmed === false) return 'other';
-  if (shot.salesPresenterConfirmed === true) return 'confirmed';
   if (shot.observedPresenterRole === 'background' || shot.observedPresenterRole === 'none') return 'other';
+  if (shot.needsReview === true) return shot.observedPresenterRole === 'sales_presenter' || shot.observedPresenterRole === 'presenter_action' ? 'candidate' : 'other';
+  if (shot.salesPresenterConfirmed === true) {
+    if (!shot.personContinuityId?.trim()) return shot.observedPresenterRole === 'sales_presenter' || shot.observedPresenterRole === 'presenter_action' ? 'candidate' : 'other';
+    return shot.observedPresenterRole === 'sales_presenter' || shot.observedPresenterRole === 'presenter_action' ? 'confirmed' : 'other';
+  }
   if (!shot.needsReview && shot.observedPresenterRole === 'sales_presenter' && shot.personContinuityId?.trim()) return 'confirmed';
   if (shot.observedPresenterRole === 'sales_presenter' || shot.observedPresenterRole === 'presenter_action') return 'candidate';
   return recognizePresenterShot({ ...shot, observedPresenterRole: undefined }) !== 'material' ? 'candidate' : 'other';
@@ -37,6 +41,28 @@ export function confirmedSalesPresenterRoute(shot: SalesPresenterEvidence): 'pre
   if (salesPresenterRecognition(shot) !== 'confirmed') return 'material';
   const route = recognizePresenterShot({ ...shot, observedPresenterRole: shot.observedPresenterRole === 'unknown' ? undefined : shot.observedPresenterRole });
   return route === 'motion' ? 'motion' : 'presenter';
+}
+
+/**
+ * Background classifier refreshes may add evidence, but must not silently
+ * downgrade a sales presenter that is already confirmed in the saved draft.
+ * Removing a confirmed person changes the paid production route and therefore
+ * requires an explicit user review instead of an asynchronous page refresh.
+ */
+export function mergeAutomatedPresenterReviewEvidence(
+  current: SalesPresenterEvidence,
+  incoming: Pick<SalesPresenterEvidence, 'observedPresenterRole' | 'personContinuityId' | 'needsReview'>,
+): SalesPresenterEvidence {
+  const reviewed: SalesPresenterEvidence = {
+    observedPresenterRole: incoming.observedPresenterRole,
+    personContinuityId: incoming.personContinuityId,
+    needsReview: incoming.needsReview === true,
+    salesPresenterConfirmed: incoming.observedPresenterRole === 'sales_presenter' && incoming.needsReview !== true,
+  };
+  if (salesPresenterRecognition(current) === 'confirmed' && salesPresenterRecognition(reviewed) !== 'confirmed') {
+    return current;
+  }
+  return reviewed;
 }
 
 /** Display the observed sales role even while cross-shot identity is pending.

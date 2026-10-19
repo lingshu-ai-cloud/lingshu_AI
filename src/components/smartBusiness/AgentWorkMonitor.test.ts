@@ -59,6 +59,33 @@ test('uses workflow runtime data for agents outside the content queue', () => {
   assert.equal(customer.assignments[0]?.elapsedMinutes, null);
 });
 
+test('processing workflow wait is working while a real input wait needs action', () => {
+  const base = {
+    id: 'content-runtime', run_id: 'run-1', task_key: 'content_production', title: '制作成片', description: '生成分镜和成片',
+    agent_role: 'content', kind: 'production', sequence: 1, priority: 'normal', requires_approval: false, depends_on: [] as string[], owner_id: '', updated_at: '2026-10-10T10:40:00.000Z',
+  } as const;
+  const processing = projectAgentWorkMonitor([], Date.parse('2026-10-10T10:42:00.000Z'), {
+    workflowTasks: [{ ...base, status: 'waiting_external', blocked_reason: '内容任务正在推进，等待结果回写', output: { waitState: { kind: 'processing', message: '正在推进', requiresAttention: false } } }],
+  }).find(row => row.role === 'content')!;
+  assert.equal(processing.status, 'working');
+  assert.equal(processing.assignments[0]?.blockedReason, '');
+
+  const processingWithStaleQueue = projectAgentWorkMonitor([queueItem({
+    taskId: 'content-runtime', status: 'blocked', reason: '历史卡点已恢复',
+    steps: [{ key: 'assets', label: '匹配逐镜素材', state: 'active', responsibleAgent: '内容 Agent', estimatedMinutes: 45 }],
+  })], Date.parse('2026-10-10T10:42:00.000Z'), {
+    workflowTasks: [{ ...base, status: 'waiting_external', blocked_reason: '内容任务正在推进，等待结果回写', output: { waitState: { kind: 'processing', message: '正在推进', requiresAttention: false } } }],
+  }).find(row => row.role === 'content')!;
+  assert.equal(processingWithStaleQueue.status, 'working', 'current workflow processing must override a stale queue blocker');
+  assert.ok(processingWithStaleQueue.assignments.every(item => !item.blockedReason));
+
+  const input = projectAgentWorkMonitor([], Date.parse('2026-10-10T10:42:00.000Z'), {
+    workflowTasks: [{ ...base, status: 'waiting_external', blocked_reason: '请补充人物素材', output: { waitState: { kind: 'input', message: '请补充人物素材', requiresAttention: true } } }],
+  }).find(row => row.role === 'content')!;
+  assert.equal(input.status, 'needs_action');
+  assert.equal(input.assignments[0]?.blockedReason, '请补充人物素材');
+});
+
 test('the old weekly-package empty-state copy and content-card grid stay removed', () => {
   const calendar = fs.readFileSync('src/components/smartBusiness/ConnectedAgentCalendar.tsx', 'utf8');
   const schedule = fs.readFileSync('src/components/smartBusiness/MatrixWorkSchedule.tsx', 'utf8');

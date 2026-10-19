@@ -1,6 +1,6 @@
 import { backgroundQualityCheck } from './digitalHumanQuality.js';
 import { digitalHumanDecisionIssues } from '../../shared/contracts/smartStoryboardAdmission.js';
-import type { DigitalHumanReferenceCue, DigitalHumanRequirements } from '../../shared/contracts/digitalHumanRequirements.js';
+import { effectiveDigitalHumanRequirements, type DigitalHumanReferenceCue, type DigitalHumanRequirements } from '../../shared/contracts/digitalHumanRequirements.js';
 import { planPersonShotClusters } from './personShotClustering.js';
 export type { DigitalHumanReferenceCue, DigitalHumanRequirements } from '../../shared/contracts/digitalHumanRequirements.js';
 
@@ -11,6 +11,7 @@ export type DigitalHumanPipelineId = 'pipeline_1' | 'pipeline_2' | 'pipeline_3';
  * rules cannot accidentally become global rules for every talking-head job.
  */
 export function digitalHumanPipelineFor(requirements?: DigitalHumanRequirements): DigitalHumanPipelineId {
+  requirements = effectiveDigitalHumanRequirements(requirements);
   if (!requirements || requirements.method === 'talking') return 'pipeline_1';
   if (requirements.method === 'reenact' && (requirements.replicationMode || 'sentence_first_frame') === 'sentence_first_frame') return 'pipeline_3';
   return 'pipeline_2';
@@ -23,6 +24,7 @@ export const newDigitalHumanRequirements = (): DigitalHumanRequirements => ({
 
 /** Evidence required before a source video may leave the tenant boundary for generation. */
 export function referenceModelInputAuthorization(requirements: DigitalHumanRequirements | undefined, confirmedAt: string): { evidence: string; confirmedAt: string } | null {
+  requirements = effectiveDigitalHumanRequirements(requirements);
   if (!requirements || requirements.method === 'talking') return null;
   if (requirements.method === 'reenact' && (requirements.replicationMode || 'sentence_first_frame') === 'sentence_first_frame') return null;
   const reference = requirements.reference;
@@ -173,6 +175,7 @@ export function digitalHumanRouteSteps(method: DigitalHumanRequirements['method'
 }
 
 export function usesDirectReferenceVideo(requirements?: DigitalHumanRequirements): boolean {
+  requirements = effectiveDigitalHumanRequirements(requirements);
   if (!requirements || requirements.method === 'talking') return false;
   if (requirements.method === 'replace') return true;
   return requirements.replicationMode === 'direct_reference';
@@ -202,6 +205,7 @@ export function routeStepsForExecution(
 }
 
 export function candidateToolsFor(requirements?: DigitalHumanRequirements): string[] {
+  requirements = effectiveDigitalHumanRequirements(requirements);
   if (!requirements || requirements.method === 'talking') return ['heygen'];
   const preference = requirements.preferredProvider || 'auto';
   if (preference === 'kling') return ['runway_kling_motion'];
@@ -223,6 +227,88 @@ export function referenceCues(requirements?: DigitalHumanRequirements): DigitalH
   return [{ id: 'legacy-reference', start: reference.start, end: reference.end, originalText: reference.originalText, targetText: '', shotIds: [] }];
 }
 
+/**
+ * A manually confirmed sales-presenter slot is stronger evidence than a stale
+ * or missing per-cue classifier result. Keep the override deliberately narrow:
+ * only a whole-slot manual confirmation can create a cue or reclassify the
+ * sole cue. Multi-cut analysis and unconfirmed slots remain untouched.
+ */
+export function referenceCuesForConfirmedPresenter(
+  requirements: DigitalHumanRequirements | undefined,
+  context: {
+    shotId: string;
+    slotId?: string;
+    start?: number;
+    end?: number;
+    duration?: number;
+    narration?: string;
+    salesPresenterConfirmed?: boolean;
+    observedPresenterRole?: string;
+    needsReview?: boolean;
+    personContinuityId?: string;
+  },
+): DigitalHumanReferenceCue[] {
+  const cues = referenceCues(requirements);
+  const manuallyConfirmed = context.salesPresenterConfirmed === true
+    && context.observedPresenterRole === 'sales_presenter'
+    && context.needsReview !== true
+    && Boolean(context.personContinuityId?.trim());
+  if (!manuallyConfirmed) return cues;
+  const narration = String(context.narration || '').trim();
+  const markConfirmed = (cue: DigitalHumanReferenceCue): DigitalHumanReferenceCue => ({
+    ...cue,
+    personShot: true,
+    classificationSource: 'manual',
+    compositionClusterId: cue.compositionClusterId || `${context.shotId}:confirmed-sales-presenter`,
+    targetText: cue.targetText?.trim() || narration,
+    shotIds: Array.isArray(cue.shotIds) && cue.shotIds.length ? cue.shotIds : [context.slotId || context.shotId],
+  });
+  if (cues.length === 1) {
+    const cue = cues[0]!;
+    const confirmedText = cue.targetText?.trim() || narration;
+    if (!confirmedText || confirmedText === '无') return cues;
+    const slotIdentity = context.slotId || context.shotId;
+    const mappedToSlot = !Array.isArray(cue.shotIds) || !cue.shotIds.length
+      || cue.shotIds.includes(slotIdentity) || cue.shotIds.includes(context.shotId);
+    const duration = Number(context.duration);
+    const coversWholeSlot = !Number.isFinite(duration) || duration <= 0
+      || Math.abs((cue.end - cue.start) - duration) < 0.2;
+    const slotStart = Number(context.start);
+    const slotEnd = Number(context.end);
+    const hasSlotWindow = Number.isFinite(slotStart) && Number.isFinite(slotEnd) && slotEnd > slotStart;
+    const cueDuration = cue.end - cue.start;
+    const overlap = hasSlotWindow ? Math.max(0, Math.min(cue.end, slotEnd) - Math.max(cue.start, slotStart)) : 0;
+    const coversSameWindow = !hasSlotWindow || (cueDuration > 0
+      && overlap / Math.max(cueDuration, slotEnd - slotStart) >= 0.9);
+    return mappedToSlot && coversWholeSlot && coversSameWindow ? [markConfirmed(cue)] : cues;
+  }
+  if (cues.length > 1 || !narration || narration === '无') return cues;
+
+  const reference = requirements?.reference;
+  const referenceStart = Number(reference?.start);
+  const slotStart = Number(context.start);
+  const start = Number.isFinite(referenceStart) && referenceStart >= 0
+    ? referenceStart
+    : Number.isFinite(slotStart) && slotStart >= 0 ? slotStart : 0;
+  const referenceEnd = Number(reference?.end);
+  const slotEnd = Number(context.end);
+  const duration = Number(context.duration);
+  const end = Number.isFinite(referenceEnd) && referenceEnd > start
+    ? referenceEnd
+    : Number.isFinite(slotEnd) && slotEnd > start
+      ? slotEnd
+      : Number.isFinite(duration) && duration > 0 ? start + duration : NaN;
+  if (!Number.isFinite(end) || end <= start) return cues;
+  return [markConfirmed({
+    id: `${context.shotId}:confirmed-sales-presenter`,
+    start,
+    end,
+    originalText: String(reference?.originalText || narration).trim(),
+    targetText: narration,
+    shotIds: [context.slotId || context.shotId],
+  })];
+}
+
 /** Legacy talking shots keep their existing confirmation flow. No implicit fallback. */
 export function planDigitalHumanShot(input: {
   requirements?: DigitalHumanRequirements;
@@ -233,7 +319,7 @@ export function planDigitalHumanShot(input: {
   seedanceSentenceAvailable?: boolean;
   presenterCapabilities?: Array<'talking' | 'reference_image' | 'reference_video' | 'person_replacement'>;
 }): DigitalHumanPlan {
-  const r = input.requirements;
+  const r = effectiveDigitalHumanRequirements(input.requirements);
   const reasons: string[] = digitalHumanDecisionIssues(r);
   if (!input.hasAuthorizedPresenter) reasons.push('请选择已授权的企业人物');
   if (input.presenterCapabilities && r?.method === 'talking' && !input.presenterCapabilities.includes('talking')) reasons.push('所选人物缺少口播能力，请补充人物与声音映射');

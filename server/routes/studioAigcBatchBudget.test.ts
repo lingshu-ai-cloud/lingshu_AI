@@ -62,13 +62,33 @@ const freeWithObserverEnabled = studioAigcBatchBudgetPreview([route('free-shot',
 });
 assert.equal(freeWithObserverEnabled.shotPlans[0]?.estimatedFirstFrameCostCny, 0.3);
 assert.equal(studioAigcBudgetConfigForSpec({ automation: { managedBy: 'digital_employee' },
-  contentOrder: { operatingContext: { estimatedContentCost: 12.5 } } }).batchBudgetCny, 12.5,
-'managed production uses the already-frozen per-content estimate instead of the 30 yuan environment default');
+  contentOrder: { operatingContext: { estimatedContentCost: 37.8, estimatedContentCostMax: 75.6, maxAigcRetries: 1 } } }).batchBudgetCny, 75.6,
+'managed production uses the reviewed per-content ceiling instead of the hidden 30 yuan default');
 assert.equal(studioAigcBudgetConfigForSpec({ automation: { managedBy: 'digital_employee' },
-  contentOrder: { operatingContext: { estimatedContentCost: 12.5 } } }, 8).batchBudgetCny, 8,
+  contentOrder: { operatingContext: { estimatedContentCost: 37.8, estimatedContentCostMax: 75.6, maxAigcRetries: 1 } } }, 8).batchBudgetCny, 8,
 'a native request may lower but never raise the frozen limit');
+assert.equal(studioAigcBudgetConfigForSpec({ automation: { managedBy: 'digital_employee' },
+  contentOrder: { operatingContext: { estimatedContentCost: 37.8, estimatedContentCostMax: 37.8, maxAigcRetries: 0 } } }).maxRetries, 0,
+'the user-selected economy plan removes the paid retry allowance before execution');
 assert.equal(studioAigcBudgetConfigForSpec({ automation: { managedBy: 'digital_employee' } }).batchBudgetCny, 0,
 'managed production without a frozen order limit fails closed');
+const oldBudgetExemptTenants = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+try {
+  process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'tenant-exact';
+  const managedSpec = { automation: { managedBy: 'digital_employee' },
+    contentOrder: { operatingContext: { estimatedContentCost: 37.8, estimatedContentCostMax: 75.6, maxAigcRetries: 0 } } };
+  assert.equal(studioAigcBudgetConfigForSpec(managedSpec, undefined, 'tenant-exact').batchBudgetCny, 75.6,
+    'internal installation exemption must retain the user-approved frozen content ceiling');
+  assert.equal(studioAigcBudgetConfigForSpec(managedSpec, 8, 'tenant-exact').batchBudgetCny, 8,
+    'internal installation exemption must retain a lower explicit per-request maximum');
+  assert.equal(studioAigcBudgetConfigForSpec({}, undefined, 'tenant-exact').batchBudgetCny, 1_000_000_000,
+    'the configured tenant bypasses only the installation-wide internal ceiling');
+  assert.equal(studioAigcBudgetConfigForSpec({ automation: { managedBy: 'digital_employee' } }, undefined, 'tenant-exact').batchBudgetCny, 0,
+    'missing frozen user authority still fails closed for an exempt tenant');
+} finally {
+  if (oldBudgetExemptTenants === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+  else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = oldBudgetExemptTenants;
+}
 const ledgerAware = studioAigcBatchBudgetPreview([route('done', 'local_material'), route('next', 'aigc_first_frame')], {
   firstFrameCostCny: 0.3, maxRetries: 1, batchBudgetCny: 12.5, usedCostCny: 3.9, modelId: 'seedance', preferredResolution: '480p',
 });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { closedWorldNarrationLines, socialVideoEffectPlan } from './contentProductionCreative.js';
+import { closedWorldNarrationLines, compactClosedWorldNarrationLine, socialVideoEffectPlan } from './contentProductionCreative.js';
 
 const scenes = [{ sceneId: 'scene-1', targetDuration: 3, purpose: 'proof', targetVisual: '真实产品特写' }];
 
@@ -11,6 +11,12 @@ test('historic projects remain effect-free and new effect plans are stable', () 
   assert.equal(current?.scenes[0]?.color, 'clean');
   assert.deepEqual(socialVideoEffectPlan({ schemaVersion: 4, scenes }), current, 'the same scene/seed must keep its generated intent stable');
   assert.deepEqual(socialVideoEffectPlan({ schemaVersion: 4, stored: current, scenes }), current);
+});
+
+test('legacy closed-world English lines compact without dropping field values', () => {
+  assert.equal(compactClosedWorldNarrationLine('Next, check SKU. The confirmed record says GUIANFA-RS-001.'), 'SKU: GUIANFA-RS-001.');
+  assert.equal(compactClosedWorldNarrationLine('For a purchasing decision, do not miss Net content: 100ml.'), 'Net content: 100ml.');
+  assert.equal(compactClosedWorldNarrationLine('User-authored sentence stays unchanged.'), 'User-authored sentence stays unchanged.');
 });
 
 test('closed-world fallback does not invent visible actions or an ungoverned CTA', () => {

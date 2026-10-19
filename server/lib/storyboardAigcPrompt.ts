@@ -18,6 +18,7 @@ export function buildStoryboardFirstFramePrompt(input: {
   hasCharacterImage: boolean;
   hasEnvironmentImage?: boolean;
   personEnvironmentReferenceMode?: 'individual' | 'contact_sheet';
+  qualityRepairReasonCodes?: string[];
   ratio: string;
   spec?: StoryboardShotSpec;
 }): string {
@@ -49,6 +50,11 @@ export function buildStoryboardFirstFramePrompt(input: {
         : 'Create a realistic general storyboard scene matching the visual action and setting. No enterprise product is assigned to this shot; do not invent a branded product, packaging or logo.';
   const singleViewProductIds = (input.spec?.assets || []).filter(asset => asset.role === 'product'
     && !input.spec?.assets.some(view => view.role === 'product_view' && view.derivedFromAssetId === asset.id)).map(asset => asset.id);
+  const qualityRepairs = [...new Set(input.qualityRepairReasonCodes || [])].flatMap(code => ({
+    PRODUCT_IDENTITY_FAILED: 'Match the enterprise product reference exactly; do not alter package shape, color, logo placement, label layout, volume text or proportions.',
+    VISUAL_INTEGRITY_FAILED: 'Remove malformed edges, duplicated parts, floating objects, warped packaging, illegible artifacts and physically impossible contact.',
+    LAYOUT_FAILED: 'Follow the layout contract exactly; keep the required product, support surface, crop, spacing and camera relationship fully visible.',
+  } as Record<string, string>)[code] || []);
   return [
     `Create exactly one photorealistic ${input.ratio} first-frame still for a short continuous video shot.`,
     `Shot requirement: ${input.shotDescription.slice(0, 1800)}`,
@@ -66,6 +72,7 @@ export function buildStoryboardFirstFramePrompt(input: {
     input.spec?.action.startState ? `The first frame must show this START state, before the action: ${input.spec.action.startState}` : '',
     input.spec?.action.beats.length ? `Later motion beats, in order (do not show them complete in this first frame): ${input.spec.action.beats.join(' → ')}` : '',
     input.spec?.action.endState ? `Intended later END state: ${input.spec.action.endState}` : '',
+    qualityRepairs.length ? `QUALITY REPAIR — prior candidates were rejected. Correct every item below; do not repeat the rejected layout or product rendering:\n- ${qualityRepairs.join('\n- ')}` : '',
     'Keep all visible elements physically plausible. Do not add extra products, fingers, hands, floating objects, captions, watermarks, random text or unsupported business claims.',
   ].filter(Boolean).join('\n\n');
 }

@@ -14,6 +14,9 @@ export interface DirectorProgressItem {
 
 export interface ContentDirectorPlan {
   currency: 'CNY' | 'USD';
+  /** Selected before production. Protected reserves one paid regeneration;
+   * economy authorizes one 480p attempt per generated shot. */
+  productionBudgetMode: 'protected' | 'economy';
   productionBudget: number;
   productionBudgetMin: number;
   productionBudgetMax: number;
@@ -36,6 +39,7 @@ export function normalizeDirectorPlan(value: unknown): ContentDirectorPlan {
   const raw = value && typeof value === 'object' ? value as Partial<ContentDirectorPlan> : {};
   return {
     currency: raw.currency === 'USD' ? 'USD' : 'CNY',
+    productionBudgetMode: raw.productionBudgetMode === 'economy' ? 'economy' : 'protected',
     productionBudget: money(raw.productionBudget),
     productionBudgetMin: money(raw.productionBudgetMin),
     productionBudgetMax: money(raw.productionBudgetMax || raw.productionBudget),

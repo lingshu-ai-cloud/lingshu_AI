@@ -7,6 +7,7 @@ import express from 'express';
 import { auth } from './index.js';
 import { requireScopedAsset, signAssetUrl, verifyAssetToken } from '../lib/assetAccess.js';
 import { materialAssetObjectKey } from './materialAssets.js';
+import { runWithDataAuthority } from './dataAuthority.js';
 import {
   objectStorageDelete,
   objectStorageConfigurationIssues,
@@ -95,6 +96,15 @@ test('supplier can fetch only a signed tenant-local object over the media route'
     if (previousDriver === undefined) delete process.env.OBJECT_STORAGE_DRIVER; else process.env.OBJECT_STORAGE_DRIVER = previousDriver;
     fs.rmSync(temp, { recursive: true, force: true });
   }
+});
+
+test('signed media URLs preserve the authenticated data authority', () => {
+  const signed = runWithDataAuthority('local', () => signAssetUrl('/studio-media/material-1/media.mp4', 'tenant-a'));
+  const parsed = new URL(signed, 'http://local');
+  assert.deepEqual(verifyAssetToken(parsed.searchParams.get('assetToken'), parsed.pathname), {
+    tenantId: 'tenant-a',
+    dataAuthority: 'local',
+  });
 });
 
 test('local storage gives suppliers a signed HTTPS URL only with an explicit public base', async () => {

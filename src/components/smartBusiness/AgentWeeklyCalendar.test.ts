@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { isHumanTaskOverdue, type AgentCalendarTask } from './AgentWeeklyCalendar';
 const due = '2026-10-06T17:00:00+08:00';
@@ -57,4 +58,27 @@ test('rendered calendar shows overdue original card and one current reference wi
   const html = renderToStaticMarkup(createElement(Calendar,{startsAt:date,tasks:[actual,{...actual,id:'completed',status:'completed',deliveryTiming:'late',actualFinishedAt:new Date().toISOString()}]}));
   assert.match(html,/交付已逾期/); assert.match(html,/当前待处理 · 1/); assert.match(html,/publication-1/);
   assert.match(html,/已完成 · 晚交付/); assert.match(html,/引用原任务/);
+});
+
+test('calendar shell omits the duplicate Agent header while preserving week controls and reference alerts', () => {
+  const source=readFileSync(new URL('./AgentWeeklyCalendar.tsx',import.meta.url),'utf8');
+  assert.doesNotMatch(source,/Agent 周任务日历|B2B 有基础 · 增长周任务日历|B2B 零基础 · 首周任务日历|Object\.values\(agents\)|weekTasks\.length\} 项交付/);
+  assert.match(source,/aria-label="上一周"/);
+  assert.match(source,/aria-label="下一周"/);
+  assert.match(source,/>本周<\/button>/);
+  assert.match(source,/当前待处理 · \{pendingReferences\.length\}/);
+  assert.match(source,/效果验收示例/);
+});
+
+test('external hideCompleted removes terminal cards and keeps an honest filtered empty state', async () => {
+  const {createElement}=await import('react');
+  const {renderToStaticMarkup}=await import('react-dom/server');
+  const {default:Calendar}=await import('./AgentWeeklyCalendar');
+  const completed={id:'completed-card',date:'2026-10-06',time:'12:00',agent:'content',status:'completed',title:'终态成片验收',output:'真实交付',context:'真实范围',minutes:10} as AgentCalendarTask;
+  const visible=renderToStaticMarkup(createElement(Calendar,{startsAt:'2026-10-05',tasks:[completed]}));
+  const hidden=renderToStaticMarkup(createElement(Calendar,{startsAt:'2026-10-05',tasks:[completed],hideCompleted:true}));
+  assert.match(visible,/终态成片验收/);
+  assert.doesNotMatch(hidden,/终态成片验收/);
+  assert.match(hidden,/已隐藏已完成任务，本周没有其他执行排期/);
+  assert.equal(completed.status,'completed');
 });

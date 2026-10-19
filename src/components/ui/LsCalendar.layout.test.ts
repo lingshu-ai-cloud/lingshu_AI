@@ -52,13 +52,14 @@ assert.doesNotMatch(source, /import.*scrollgrid|import.*resource-time|import.*re
 assert.equal(evaluate(expression('eventMinHeight'), {}), 24);
 assert.equal(evaluate(expression('eventShortHeight'), {}), 68);
 assert.equal(evaluate(expression('eventOrder'), {}), 'start,id', 'ordinary calendars retain deterministic start-time and stable-id order');
-assert.equal(evaluate(expression('eventOrder'), { taskBoard: true }), 'start,taskOrder', 'task boards retain the dependency order within each day');
+assert.equal(evaluate(expression('eventOrder'), { taskBoard: true }), 'taskOrder', 'task boards retain the dependency order within each day');
 assert.ok(attributes.has('eventOrderStrict'), 'event-card order must not be rearranged to improve visual compaction');
 assert.equal(evaluate(expression('slotEventOverlap'), {}), false, 'time-grid cards must never overlap');
-assert.match(source, /item\.cardLines \? ' ls-calendar-event-three-row'/, 'Agent hour cards opt into one stable three-row treatment');
+assert.match(source, /item\.cardLines \? taskBoard \? ' ls-calendar-event-two-row' : ' ls-calendar-event-three-row'/, 'task boards use two rows while timed Agent cards retain their three-row treatment');
 assert.match(source, /item\.planPlaceholder \? ' ls-calendar-event-placeholder'/, 'planned cadence slots remain visually distinct from persisted tasks');
 assert.match(source, /item\.status === 'done' && !item\.planPlaceholder/, 'only a persisted completed task receives the green completion check');
 assert.match(css, /\.ls-calendar-event-content-three-row\s*\{[^}]*height:\s*100%;[^}]*grid-template-rows:\s*repeat\(3, 14px\)/, 'Agent task cards reserve three complete, stable text rows');
+assert.match(css, /\.ls-calendar-agent-view \.ls-calendar-task-board-card\s*\{[^}]*height:\s*50px;[^}]*grid-template-rows:\s*12px 27px/, 'weekly Agent cards reserve only two compact text rows');
 assert.match(css, /\.fc-timegrid-event-harness\.ls-calendar-time-vertical-flow\s*\{[^}]*left:\s*2px !important;[^}]*right:\s*2px !important;[^}]*width:\s*auto !important/, 'timed Agent cards override FullCalendar physical columns and retain the full day width');
 assert.match(css, /\.ls-calendar-event-placeholder\s*\{[^}]*border-style:\s*dashed !important/, 'planned cadence slots cannot masquerade as executable task cards');
 assert.match(css, /\.ls-calendar-event-row\s*\{[^}]*font-size:\s*12px/, 'calendar business copy must not fall below the design-system body minimum');

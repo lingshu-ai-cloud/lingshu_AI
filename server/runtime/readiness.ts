@@ -270,7 +270,10 @@ export function runtimeCapabilities(role: ProcessRole): Record<RuntimeCapability
   const background = processRoleStartsBackgroundJobs(role);
   const textGeneration = textGenerationCapability();
   const qwenReady = dashscopeCredentialConfigured(process.env);
-  const ttsReady = present('MINIMAX_API_KEY') || present('PIPER_BIN') || present('XTTS_BIN');
+  // Qwen3-TTS uses the same DashScope credential as the verified Qwen
+  // generation route. Do not report speech as unavailable merely because the
+  // optional MiniMax/custom-voice provider is absent or quarantined.
+  const ttsReady = qwenReady || present('MINIMAX_API_KEY') || present('PIPER_BIN') || present('XTTS_BIN');
   const videoReady = (enabled('SEEDANCE_VIDEO_ENABLED') && present('SEEDANCE_API_KEY'))
     || (enabled('GEMINI_VIDEO_ENABLED') && present('GEMINI_API_KEY'));
   const digitalHumanProviders = digitalHumanProviderReadiness();

@@ -10,10 +10,17 @@ import {generateSeedanceConceptVideo} from '../lib/generativeVideoGateway.js';
 import {runVisualFfmpeg} from '../lib/renderVisualQuality.js';
 import {socialRequestHash} from './socialContentValidation.js';
 import {firstFrameInputFingerprint} from '../lib/firstFrameGenerator.js';
-import {adaptSingletonProductFirstFrameQuality, createEnvironmentProductReplacementPorts, diagnoseFrozenProductShot, productReplacementOperationFingerprint, readProductReplacementRequestBounds, type ProductReplacementEnvironmentContext} from './socialContentProductReplacementEnvironment.js';
+import {adaptSingletonProductFirstFrameQuality, createEnvironmentProductReplacementPorts, diagnoseFrozenProductShot, productReplacementExceedsInternalBudget, productReplacementOperationFingerprint, readProductReplacementRequestBounds, type ProductReplacementEnvironmentContext} from './socialContentProductReplacementEnvironment.js';
 import {createEnvironmentSeedanceProductScenePorts} from './socialContentSeedanceProductScene.js';
 import type {MvpBudgetRecord} from '../lib/mvpBudgetAdmission.js';
 const sha = (x: Buffer | string) => createHash('sha256').update(x).digest('hex');
+test('product replacement per-shot amount gate is exempt only for Aurelia', () => {
+ const configured=process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+ try{process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS='local_tenant_customer_aurelia_beauty';
+  assert.equal(productReplacementExceedsInternalBudget('local_tenant_customer_aurelia_beauty',12,10),false);
+  assert.equal(productReplacementExceedsInternalBudget('tenant',12,10),true);
+ }finally{if(configured===undefined)delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS=configured;}
+});
 test('single enterprise SKU replaces impossible reference assortment while retaining strict identity QA',()=>{
  const spec=buildSocialProductSceneReplicationSpec({shot:{shotId:'single',function:'value',requestedDescription:'reference assortment',referenceShotId:'ref'},inventory:{customerVideoIds:[],productImageIds:['KB'],presenterAssetIds:[],referenceVideoIds:['reference'],factoryEvidenceAssetIds:[],customerCaseEvidenceAssetIds:[],productEffectEvidenceAssetIds:[],licensedStockAssetIds:[],productIdentityGroups:[{productRef:'SKU',imageIds:['KB']}]},referenceShots:[{shotId:'ref',startSeconds:0,endSeconds:3,visualDescription:'many unrelated lip products in a fan',shotLanguage:{composition:'fan assortment'},tags:{cameraLanguage:[]}} as any]});
  assert.match(spec.sceneLock.composition,/单一企业产品/);assert.doesNotMatch(spec.sceneLock.environment,/lip products/);

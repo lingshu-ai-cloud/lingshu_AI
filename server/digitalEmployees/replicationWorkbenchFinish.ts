@@ -36,8 +36,20 @@ export function replicationNarrationPreflightIssue(spec: Record<string, any>): s
   const shots = Array.isArray(spec.automatedReplicationShots) ? spec.automatedReplicationShots : [];
   const lines = shots.map((shot: any) => String(spec.shotProductions?.[`${spec.activeAssemblyId}:${shot.shotId}`]?.narration || '').trim());
   const frozen = replicationNarrationSegments(String(spec.script || '')).filter(segment => segment.text);
-  if ([...lines, ...frozen.map(segment => segment.text)].some(line => voiceoverLineNeedsLanguageRepair(line, language))) {
+  if (frozen.some(segment => voiceoverLineNeedsLanguageRepair(segment.text, language))) {
     return `冻结口播与目标语种 ${language} 不一致；请先确认完整目标语种脚本，未提交配音`;
+  }
+  // Non-person visuals may cut many times inside one complete spoken line.
+  // Their narration is synthesized from the frozen timestamp track, not from
+  // visual-shot fragments, so a camera cut can never split a TTS sentence.
+  if (shots.length && shots.every((shot: any) => shot.kind === 'nonperson')) {
+    const duration = Math.max(0, ...shots.map((shot: any) => Number(shot.end) || 0));
+    return frozen.some(segment => !(segment.start >= 0 && segment.end > segment.start && segment.end <= duration + .05))
+      ? '冻结口播时间超出逐镜装配范围；请修复完整脚本时间轴，未提交配音'
+      : null;
+  }
+  if (lines.some(line => voiceoverLineNeedsLanguageRepair(line, language))) {
+    return `逐镜人物口播与目标语种 ${language} 不一致；请先确认完整目标语种脚本，未提交配音`;
   }
   if (!frozen.length) return null;
   if (normalizedSpeech(frozen.map(segment => segment.text).join(' ')) !== normalizedSpeech(lines.join(' '))) {
@@ -75,6 +87,114 @@ export type ReplicationFinishDependencies = {
   workRoot?: string;
 };
 
+type PreparedReplicationVoice = Awaited<ReturnType<typeof synthesizeStudioVoiceForAutomation>> & { audioSha256?: string };
+type VerifiedPreparedReplicationVoice = PreparedReplicationVoice & {
+  localPath: string;
+  duration: number;
+  text: string;
+  cues: Cue[];
+  audioSha256: string;
+  alignmentSource: 'synthesized_sentence_audio';
+};
+
+function continuousNarrationContext(spec: Record<string, any>) {
+  const shots = Array.isArray(spec.automatedReplicationShots) ? spec.automatedReplicationShots : [];
+  const segments = replicationNarrationSegments(String(spec.script || '')).filter(segment => segment.text);
+  return {
+    shots,
+    segments,
+    continuous: shots.length > 0 && shots.every((slot: any) => slot.kind === 'nonperson') && segments.length > 0,
+    language: String(spec.activeVoiceLang || spec.lang || 'en'),
+  };
+}
+
+async function ensureContinuousNarrationVoice(input: {
+  tenantId: string;
+  projectId: string;
+  spec: Record<string, any>;
+  root: string;
+  segmentIndex: number;
+  synthesize?: typeof synthesizeStudioVoiceForAutomation;
+}): Promise<{ voice: VerifiedPreparedReplicationVoice; fingerprint: string }> {
+  const context = continuousNarrationContext(input.spec);
+  const segment = context.segments[input.segmentIndex];
+  if (!context.continuous || !segment) throw new Error('连续配音预检缺少冻结口播段');
+  const targetDuration = segment.end - segment.start;
+  const voiceKey = digest(JSON.stringify({ tenantId: input.tenantId, projectId: input.projectId,
+    segment: input.segmentIndex, text: segment.text, language: context.language,
+    voice: input.spec.voice || 'v1', targetDuration }));
+  const voiceReceipt = path.join(input.root, `${voiceKey}.voice.json`);
+  const failureReceipt = path.join(input.root, `${voiceKey}.failure.json`);
+  let voice: PreparedReplicationVoice;
+  if (fs.existsSync(voiceReceipt)) {
+    voice = JSON.parse(fs.readFileSync(voiceReceipt, 'utf8'));
+  } else {
+    const intent = path.join(input.root, `${voiceKey}.intent`);
+    if (fs.existsSync(intent)) throw new Error(`第 ${input.segmentIndex + 1} 段连续配音请求状态未知，请核对原请求，禁止重复计费`);
+    fs.writeFileSync(intent, new Date().toISOString(), { flag: 'wx', mode: 0o600 });
+    voice = await (input.synthesize || synthesizeStudioVoiceForAutomation)({ tenantId: input.tenantId,
+      text: segment.text, language: context.language, voice: String(input.spec.voice || 'v1'),
+      targetDuration, sentenceLines: [segment.text], measuredSentenceTiming: true });
+    if (!voice.ok) {
+      const diagnostic = { failedAt: new Date().toISOString(), segmentIndex: input.segmentIndex,
+        textHash: digest(segment.text), error: String(voice.error || '未返回有效音频').slice(0, 1_000),
+        qualityReport: voice.qualityReport || null };
+      const temp = `${failureReceipt}.${process.pid}.tmp`;
+      fs.writeFileSync(temp, JSON.stringify(diagnostic), { mode: 0o600 });
+      fs.renameSync(temp, failureReceipt);
+      fs.unlinkSync(intent);
+      throw new Error(`第 ${input.segmentIndex + 1} 段连续配音服务已明确失败：${voice.error || '未返回有效音频'}`);
+    }
+    // A nominal provider success without complete measured evidence may have
+    // consumed quota. Keep the intent fail-closed instead of resubmitting.
+    if (!voice.localPath || !voice.duration || !voice.cues?.length || voice.text !== segment.text
+      || voice.alignmentSource !== 'synthesized_sentence_audio' || voice.qualityReport?.passed !== true) {
+      throw new Error(`第 ${input.segmentIndex + 1} 段连续配音未通过真实声音与实测对齐检查：${voice.error || '缺少证据'}`);
+    }
+    voice.audioSha256 = digest(fs.readFileSync(voice.localPath));
+    fs.writeFileSync(voiceReceipt, JSON.stringify(voice), { mode: 0o600 });
+    if (fs.existsSync(failureReceipt)) fs.unlinkSync(failureReceipt);
+    fs.unlinkSync(intent);
+  }
+  if (!voice.localPath || !fs.existsSync(voice.localPath) || !voice.duration || !voice.cues?.length
+    || voice.text !== segment.text || voice.qualityReport?.passed !== true
+    || voice.alignmentSource !== 'synthesized_sentence_audio') {
+    throw new Error(`第 ${input.segmentIndex + 1} 段连续配音缓存无效`);
+  }
+  if (!voice.audioSha256 || digest(fs.readFileSync(voice.localPath)) !== voice.audioSha256) {
+    throw new Error(`第 ${input.segmentIndex + 1} 段连续配音文件版本已变化`);
+  }
+  if (voice.duration > targetDuration + .01) {
+    throw new Error(`第 ${input.segmentIndex + 1} 段实测口播 ${voice.duration.toFixed(2)} 秒超过冻结区间 ${targetDuration.toFixed(2)} 秒，禁止自动截断`);
+  }
+  return { voice: voice as VerifiedPreparedReplicationVoice, fingerprint: voiceKey };
+}
+
+/** Run the exact first continuous narration segment before visual supplier
+ * work.  The successful audio receipt is the same one finish uses later, so
+ * this is an early, cached production step rather than a disposable paid
+ * health check. Account/auth failures therefore surface before any new visual
+ * spend and never cause duplicate speech generation. */
+export async function preflightReplicationNarrationProvider(input: {
+  tenantId: string;
+  projectId: string;
+  spec: Record<string, any>;
+}, deps: Pick<ReplicationFinishDependencies, 'synthesize' | 'workRoot'> = {}): Promise<{
+  prepared: boolean;
+  fingerprint: string;
+  source: string;
+  segmentCount: number;
+}> {
+  const issue = replicationNarrationPreflightIssue(input.spec);
+  if (issue) throw new Error(issue);
+  const context = continuousNarrationContext(input.spec);
+  if (!context.continuous) return { prepared: false, fingerprint: '', source: '', segmentCount: 0 };
+  const root = path.resolve(deps.workRoot || 'data/replication-workbench-finish', digest(`${input.tenantId}:${input.projectId}`));
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const prepared = await ensureContinuousNarrationVoice({ ...input, root, segmentIndex: 0, synthesize: deps.synthesize });
+  return { prepared: true, fingerprint: prepared.fingerprint, source: String(prepared.voice.source || ''), segmentCount: context.segments.length };
+}
+
 /** Finish only a fully adopted, real-video workbench. Never borrow reference audio. */
 export async function finishReplicationWorkbench(input: { tenantId: string; projectId: string; spec: Record<string, any> }, deps: ReplicationFinishDependencies = {}): Promise<Record<string, any>> {
   const { tenantId, projectId, spec } = input;
@@ -92,6 +212,10 @@ export async function finishReplicationWorkbench(input: { tenantId: string; proj
     const cues: Cue[] = [];
     const receipts: any[] = [];
     const voiceFiles: string[] = [];
+    const narrationContext = continuousNarrationContext(spec);
+    const frozenNarration = narrationContext.segments;
+    const continuousNarration = narrationContext.continuous;
+    const continuousVoiceFiles: Array<{ file: string; start: number; duration: number }> = [];
     let voiceCursor = 0, cursor = 0;
     const language = String(spec.activeVoiceLang || spec.lang || 'en');
     for (const [index, slot] of shots.entries()) {
@@ -115,6 +239,12 @@ export async function finishReplicationWorkbench(input: { tenantId: string; proj
       if (!(targetDuration > 0) || !Number.isFinite(trimStart) || trimStart < 0 || media.duration + .05 < trimStart + targetDuration) throw new Error(`第 ${index + 1} 镜视频短于装配时长，禁止静帧补齐`);
       const base = { index, name: material.name, type: 'video', url: `data:video/mp4;base64,${loaded.bytes.toString('base64')}`, targetStart: cursor, targetDuration, trimStart, trimEnd: trimStart + targetDuration, speed: 1 };
       const narration = String(production?.narration || '').trim();
+      if (continuousNarration) {
+        timeline.push({ ...base, production: { sound: 'voiceover' } });
+        receipts.push({ shotId: slot.shotId, materialId, contentSha256: hash, audioSource: 'continuous_frozen_narration', captionSource: 'timestamped_frozen_script' });
+        cursor += targetDuration;
+        continue;
+      }
       if (!narration && slot.kind === 'nonperson') {
         timeline.push({ ...base, production: { sound: 'silent' } });
         receipts.push({ shotId: slot.shotId, materialId, contentSha256: hash, audioSource: 'intentional_silence', captionSource: 'no_frozen_narration' });
@@ -147,7 +277,7 @@ export async function finishReplicationWorkbench(input: { tenantId: string; proj
         let measured: Awaited<ReturnType<typeof measureAvatarSourceCaptions>>;
         if (fs.existsSync(captionFile)) measured = JSON.parse(fs.readFileSync(captionFile, 'utf8'));
         else {
-          await (deps.reserveAsr || (id => studioPaidBudget.reserve('qwen_asr', id)))(`replication-finish:${tenantId}:${projectId}:${hash}`);
+          await (deps.reserveAsr || (id => studioPaidBudget.reserve('qwen_asr', id, undefined, tenantId)))(`replication-finish:${tenantId}:${projectId}:${hash}`);
           measured = await (deps.captions || measureAvatarSourceCaptions)({ ...material, duration: media.duration }, tenantId, loaded.bytes);
           if (measured.sourceHash !== hash || !measured.cues.length) throw new Error(`第 ${index + 1} 镜原声字幕缺少实测绑定`);
           fs.writeFileSync(captionFile, JSON.stringify(measured), { mode: 0o600 });
@@ -170,6 +300,10 @@ export async function finishReplicationWorkbench(input: { tenantId: string; proj
           if (fs.existsSync(intent)) throw new Error(`第 ${index + 1} 镜配音请求状态未知，请核对原请求，禁止重复计费`);
           fs.writeFileSync(intent, new Date().toISOString(), { flag: 'wx', mode: 0o600 });
           voice = await (deps.synthesize || synthesizeStudioVoiceForAutomation)({ tenantId, text: narration, language, voice: String(spec.voice || 'v1'), targetDuration, sentenceLines: [narration], measuredSentenceTiming: true });
+          if (!voice.ok) {
+            fs.unlinkSync(intent);
+            throw new Error(`第 ${index + 1} 镜配音服务已明确失败：${voice.error || '未返回有效音频'}`);
+          }
           if (!voice.ok || !voice.localPath || !voice.duration || !voice.cues?.length || voice.text !== narration || voice.alignmentSource !== 'synthesized_sentence_audio' || voice.qualityReport?.passed !== true) throw new Error(`第 ${index + 1} 镜配音未通过真实声音与实测对齐检查：${voice.error || '缺少证据'}`);
           voice.audioSha256 = digest(fs.readFileSync(voice.localPath));
           fs.writeFileSync(voiceReceipt, JSON.stringify(voice), { mode: 0o600 });
@@ -185,10 +319,31 @@ export async function finishReplicationWorkbench(input: { tenantId: string; proj
       }
       cursor += targetDuration;
     }
+    if (continuousNarration) {
+      for (const [index, segment] of frozenNarration.entries()) {
+        const targetDuration = segment.end - segment.start;
+        const { voice } = await ensureContinuousNarrationVoice({ tenantId, projectId, spec, root,
+          segmentIndex: index, synthesize: deps.synthesize });
+        cues.push(...voice.cues.map(cue => ({ start: segment.start + cue.start, end: segment.start + cue.end, text: cue.text })));
+        continuousVoiceFiles.push({ file: voice.localPath, start: segment.start, duration: voice.duration });
+        receipts.push({ narrationSegment: index + 1, start: segment.start, end: segment.end, audioSource: voice.source,
+          audioSha256: voice.audioSha256, captionSource: voice.alignmentSource });
+      }
+    }
     const subtitles = paginateAlignedCues(cues, cursor);
     if (!subtitles || !subtitleCuesAreSafe(subtitles, cursor)) throw new Error('最终字幕缺少有效的实测音频时间轴');
     let voiceover: { url: string } | undefined;
-    if (voiceFiles.length) {
+    if (continuousVoiceFiles.length) {
+      const voicePath = path.join(root, `voice-track-${digest(JSON.stringify(continuousVoiceFiles.map(item => ({ hash: digest(fs.readFileSync(item.file)), start: item.start, duration: item.duration }))))}.wav`);
+      if (!fs.existsSync(voicePath)) {
+        const labels = continuousVoiceFiles.map((_, index) => `voice${index}`);
+        const filters = continuousVoiceFiles.map((item, index) => `[${index}:a]adelay=${Math.round(item.start * 1000)}:all=1,apad,atrim=duration=${cursor.toFixed(3)},aformat=sample_rates=24000:channel_layouts=mono[${labels[index]}]`);
+        filters.push(`${labels.map(label => `[${label}]`).join('')}amix=inputs=${labels.length}:duration=longest:normalize=0,atrim=duration=${cursor.toFixed(3)}[out]`);
+        await run(String(ffmpeg || 'ffmpeg'), ['-hide_banner', '-loglevel', 'error', '-nostdin', ...continuousVoiceFiles.flatMap(item => ['-i', item.file]),
+          '-filter_complex', filters.join(';'), '-map', '[out]', '-c:a', 'pcm_s16le', '-y', voicePath], { timeout: 120_000 });
+      }
+      voiceover = { url: `data:audio/wav;base64,${fs.readFileSync(voicePath).toString('base64')}` };
+    } else if (voiceFiles.length) {
       const voicePath = path.join(root, `voice-${digest(voiceFiles.join(':'))}.wav`);
       if (!fs.existsSync(voicePath)) await run(String(ffmpeg || 'ffmpeg'), ['-hide_banner', '-loglevel', 'error', '-nostdin', ...voiceFiles.flatMap(file => ['-i', file]), '-filter_complex', voiceFiles.map((_, i) => `[${i}:a]`).join('') + `concat=n=${voiceFiles.length}:v=0:a=1[out]`, '-map', '[out]', '-c:a', 'pcm_s16le', '-y', voicePath], { timeout: 120_000 });
       voiceover = { url: `data:audio/wav;base64,${fs.readFileSync(voicePath).toString('base64')}` };
@@ -208,5 +363,10 @@ export async function finishReplicationWorkbench(input: { tenantId: string; proj
     return { ...finished, duration: cursor, renderOutputPath: result.outputPath, activeStepId: 'preview', subtitlesOn: true, subMode: 'target', alignedCuesByLang: { ...(spec.alignedCuesByLang || {}), [language]: subtitles }, subtitleAlignmentSource: 'replication_measured_audio',
       automatedReplicationFinish: { fingerprint, receipts, outputContentSha256: digest(fs.readFileSync(result.outputPath)), audioPolicy: 'generated_person_source_and_measured_nonperson_tts', checkedAt: new Date().toISOString() },
       automation: { ...spec.automation, stage: 'completed', status: 'ready_for_approval', approvalState: 'ready_for_approval', blocker: '', renderOutputPath: result.outputPath, completedAt: new Date().toISOString(), quality: { passed: true, ruleVersion: CONTENT_SCRIPT_QUALITY_RULE_VERSION, checks: { perShotReplication: true, actualVideoBound: true, voiceAndSubtitles: true, visualContent: true }, visualMetrics: visuals.metrics, evidenceFrames: visuals.evidenceFrames, sceneDiagnostics: scenes, outputBytes: fs.statSync(result.outputPath).size } } };
+  }, {
+    // A local hot restart is recoverable only when no provider intent remains.
+    // If a request might have reached a paid supplier, the lock stays closed
+    // and requires receipt reconciliation instead of a duplicate submission.
+    recoverDeadOwner: () => !fs.readdirSync(root).some(name => name.endsWith('.intent')),
   });
 }

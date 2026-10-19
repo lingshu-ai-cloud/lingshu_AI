@@ -46,7 +46,7 @@ export function createPresenterArkEnrollmentRouter(store: DataStore, exclusive: 
   router.post('/ark-enrollments/materials', raw({ type: 'application/octet-stream', limit: '100mb' }), async (req, res) => {
     try {
       const tenantId = res.locals.tenantId as string;
-      const type = String(req.query.type || ''), mime = String(req.query.mime || '').toLowerCase();
+      const type = String(req.query.type || ''), mime = String(req.query.mime || '').toLowerCase().split(';')[0].trim();
       const source = req.body as Buffer;
       if (!Buffer.isBuffer(source) || !source.length || source.length > 100 * 1024 * 1024 || !['image', 'video'].includes(type)) throw new Error('人物文件无效或超过 100 MB');
       let bytes: Buffer, contentType: string, extension: string;
@@ -60,7 +60,11 @@ export function createPresenterArkEnrollmentRouter(store: DataStore, exclusive: 
         contentType = 'image/jpeg'; extension = 'jpg';
       } else {
         const mp4 = ['video/mp4', 'video/quicktime'].includes(mime) && source.toString('ascii', 4, 8) === 'ftyp';
-        const webm = mime === 'video/webm' && source.subarray(0, 4).equals(Buffer.from([26, 69, 223, 163]));
+        // MediaRecorder implementations may retain a codecs parameter in the
+        // MIME and browser-generated WebM should be recognized by its EBML
+        // signature. The bytes are authoritative; the query MIME is only a
+        // delivery hint.
+        const webm = source.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
         if (!mp4 && !webm) throw new Error('请上传 MP4、MOV 或 WebM 视频');
         bytes = source; contentType = mime; extension = webm ? 'webm' : mime === 'video/quicktime' ? 'mov' : 'mp4';
       }

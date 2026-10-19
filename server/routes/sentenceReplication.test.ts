@@ -18,7 +18,7 @@ test('sentence first frames resolve the owned project reference without a librar
   } };
   const project = { id: 'project-1', tenant_id: 'tenant-a', status: 'draft', spec: { shotProductionContext: context,
     videoKickoff: { video: { referenceRecordId: referenceId, videoUrl } },
-    shootingSlots: [{ id: 'shot-1', slotId: 'slot-1', duration: 1, observedPresenterRole: 'sales_presenter', salesPresenterConfirmed: true }],
+    shootingSlots: [{ id: 'shot-1', slotId: 'slot-1', duration: 1, observedPresenterRole: 'sales_presenter', personContinuityId: 'main-sales', salesPresenterConfirmed: true }],
     shotProductions: { 'assembly-1:shot-1': shot } } };
   const reference = { id: referenceId, tenantId: 'tenant-a', contentFormat: 'video',
     videoFileId: `tenants/tenant-a/reference-videos/${referenceId}.mp4`,
@@ -38,6 +38,91 @@ test('sentence first frames resolve the owned project reference without a librar
     body: JSON.stringify({ projectId: project.id, assemblyId: 'assembly-1', shotId: 'shot-1', fingerprint: shotFingerprint(shot, context, 'shot-1') }) });
   try { assert.equal((await request('tenant-a')).status, 200); assert.equal(extracted, 1); assert.equal((await request('tenant-b')).status, 400); assert.equal(extracted, 1); }
   finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('an explicit video twin never enters stale sentence-replication analysis', async () => {
+  const context = 'video-twin-context';
+  const shot = { ...newShotProduction('新的销售口播', 'sales'), source: 'avatar' as const, digitalHuman: {
+    presenterMode: 'video_twin' as const,
+    workflow: 'viral_replication' as const,
+    method: 'reenact' as const,
+    preferredProvider: 'sd' as const,
+    presenterSelected: true,
+    contentConfirmed: true,
+    replacementScope: 'person_and_scene' as const,
+    targetEffect: 'flexible_scene' as const,
+    action: '旧分析动作', scene: '旧分析场景', preserve: '旧分析保留项',
+  } };
+  const project = { id: 'project-video-twin', tenant_id: 'tenant-a', status: 'draft', spec: {
+    shotProductionContext: context,
+    shotProductions: { 'assembly-1:shot-1': shot },
+  } };
+  const store: DataStore = {
+    async getById<T>(collection: string, id: string) { return (collection === 'studio_projects' && id === project.id ? structuredClone(project) : null) as T | null; },
+    async list<T>() { return { items: [] as T[], totalItems: 0, totalPages: 0, page: 1, perPage: 500 }; },
+    async create<T>() { throw new Error('video twin must not create a sentence-replication job'); return null as T | null; },
+    async update() { throw new Error('video twin must not update a sentence-replication job'); },
+    async delete() { return false; },
+  };
+  const app = express(); app.use(express.json()); app.use((_req, res, next) => { res.locals.tenantId = 'tenant-a'; next(); });
+  app.use(createProductionRouter(store, async () => 'unused'));
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/sentence-replication-jobs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: project.id, assemblyId: 'assembly-1', shotId: 'shot-1',
+        fingerprint: shotFingerprint(shot, context, 'shot-1'), requestId: 'stale-video-twin', confirmed: true }),
+    });
+    assert.equal(response.status, 400);
+    const error = String((await response.json()).error);
+    assert.match(error, /不是逐句首帧重建路线/);
+    assert.doesNotMatch(error, /没有人物镜头/);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('manual sales-presenter evidence recovers an empty whole-shot cue without inventing people elsewhere', async () => {
+  const context = 'confirmed-presenter-context';
+  const shot = { ...newShotProduction('确认后的销售口播', 'sales'), source: 'avatar' as const, digitalHuman: {
+    presenterMode: 'photo_talking' as const, workflow: 'viral_replication' as const, method: 'reenact' as const,
+    replicationMode: 'sentence_first_frame' as const, preferredProvider: 'sd' as const,
+    presenterSelected: true, contentConfirmed: true, replacementScope: 'person_keep_scene' as const,
+    targetEffect: 'natural_talking' as const, action: '自然口播', scene: '原片构图', preserve: '构图',
+    reference: { materialId: 'reference-video', videoUrl: '/reference.mp4', start: 0, end: 3,
+      originalText: '原口播', derivativeAuthorized: false, cues: [] },
+  } };
+  const project = { id: 'project-confirmed-presenter', tenant_id: 'tenant-a', status: 'draft', spec: {
+    shotProductionContext: context,
+    shootingSlots: [{ id: 'shot-1', slotId: 'slot-1', start: 0, end: 3, duration: 3,
+      salesPresenterConfirmed: true, observedPresenterRole: 'sales_presenter', personContinuityId: 'main-sales' }],
+    shotProductions: { 'assembly-1:shot-1': shot },
+  } };
+  const defaults = { id: 'defaults', tenant_id: 'tenant-a', payload: { presenters: [{ id: 'sales', name: '销售', authorized: true }] } };
+  const store: DataStore = {
+    async getById<T>(collection: string, id: string) { return (collection === 'studio_projects' && id === project.id ? structuredClone(project) : null) as T | null; },
+    async list<T>(collection: string) { const items = collection === 'studio_production_defaults' ? [structuredClone(defaults) as T] : [] as T[]; return { items, totalItems: items.length, totalPages: 1, page: 1, perPage: 500 }; },
+    async create<T>() { throw new Error('missing sentence executor must block before creating a paid job'); return null as T | null; },
+    async update() { throw new Error('missing sentence executor must block before updating a paid job'); },
+    async delete() { return false; },
+  };
+  const app = express(); app.use(express.json()); app.use((_req, res, next) => { res.locals.tenantId = 'tenant-a'; next(); });
+  app.use(createProductionRouter(store, async () => 'unused', { sentenceReplicationReadiness: () => ({ ready: true, missing: [] }) }));
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const request = (requestId: string) => fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/sentence-replication-jobs`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: project.id,
+      assemblyId: 'assembly-1', shotId: 'shot-1', fingerprint: shotFingerprint(shot, context, 'shot-1'), requestId, confirmed: true, maxCostCny: 5 }),
+  });
+  try {
+    const confirmed = await request('confirmed-presenter');
+    assert.equal(confirmed.status, 400);
+    const confirmedError = String((await confirmed.json()).error);
+    assert.match(confirmedError, /逐句目标人物首帧与视频编排器尚未配置/);
+    assert.doesNotMatch(confirmedError, /没有人物镜头/);
+
+    project.spec.shootingSlots[0]!.salesPresenterConfirmed = false;
+    const unconfirmed = await request('unconfirmed-presenter');
+    assert.equal(unconfirmed.status, 400);
+    assert.match(String((await unconfirmed.json()).error), /尚未确认是否为人物镜头/);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
 test('sentence replication persists one paid request and reuses its completed result', async () => {

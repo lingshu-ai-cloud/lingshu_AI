@@ -73,7 +73,8 @@ assert.equal(emptyPackage.items.length, 0, 'no account means no approvable publi
 
 const route = fs.readFileSync(new URL('../routes/digitalEmployees.ts', import.meta.url), 'utf8');
 const page = fs.readFileSync(new URL('../../src/components/DigitalEmployeePage.tsx', import.meta.url), 'utf8');
-assert.match(route, /selected_publishing_accounts[\s\S]*ready:\s*packageAccountIds\.length > 0/, 'content approval preflight must stop when the frozen package has no account');
+assert.match(route, /selected_publishing_accounts[\s\S]*ready:\s*packageAccountsValid/, 'content approval preflight must stop when the frozen package has no valid connected account');
+assert.match(route, /publishingReadinessForOverview[\s\S]*listConnectedPublishingAccounts/, 'the weekly overview must expose real publishing readiness before production starts');
 assert.match(route, /publishing_accounts_invalid/, 'goal activation and approval must expose a stable disconnected-account error');
 assert.match(page, /本周暂不发布，仅生成内容/, 'a new tenant must have an explicit safe path that keeps content creation but removes publishing tasks');
 

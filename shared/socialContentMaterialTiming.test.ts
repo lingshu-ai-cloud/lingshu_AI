@@ -1,7 +1,12 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {planTypeAwareProductScriptTiming} from './socialContentMaterialTiming';
 import {createSocialAssetSupplyPlan} from './socialContentAssetSupply';
-const plan=createSocialAssetSupplyPlan({creationMode:'viral_replication',materialRoutingPolicyVersion:'type-aware.v1',inventory:{productImageIds:['actual-product']},shots:[{shotId:'product',function:'demonstration',materialType:'product'}]}).shots[0];
+// Timing tests exercise an explicitly frozen historical generated route, not a
+// newly authored V1 local-only plan or a V2 unselected budget candidate.
+const plan=createSocialAssetSupplyPlan({creationMode:'viral_replication',materialRoutingPolicyVersion:'type-aware.v2',inventory:{productImageIds:['actual-product']},shots:[{shotId:'product',function:'demonstration',materialType:'product'}]}).shots[0];
+plan.sourceStrategy='aigc_product_scene_replication';
+plan.materialRouting!.policy='local_first_product_i2v';
+delete plan.materialRouting!.productGenerationDecision;
 function script():any{return {version:'new-draft-1',status:'draft',referenceAnalysisId:'reference',primaryHookId:'hook',hookOptions:[],createdAt:'2026-10-11',structureFidelitySummary:'reference structure',originalityDifferenceSummary:'own product',shots:[{shotId:'product',referenceShotId:null,startSeconds:0,endSeconds:8,purpose:'demonstration',visualInstruction:'产品手持晃一圈',spokenText:null,captionText:'Own product',materialPlan:structuredClone(plan),risks:[]},{shotId:'next',referenceShotId:null,startSeconds:8,endSeconds:12,purpose:'transition',visualInstruction:'转场',spokenText:null,materialPlan:{...structuredClone(plan),sourceStrategy:'customer_real_asset'},risks:[]}]};}
 const run=(s:any,extra:any={})=>planTypeAwareProductScriptTiming({policyVersion:'type-aware.v1',script:s,...extra});
 test('new silent product short-shot retimes the whole visual timeline and its material specification',()=>{
@@ -37,6 +42,6 @@ test('single-source fidelity keeps every reference slot and narration while plan
 
 test('short product source can be reconstructed for its longer reference slot without changing the frozen source contract',()=>{
  const timed=run(script(),{referenceMode:'single_source_fidelity'}).script.shots[0];
- const reconstructed=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',materialRoutingPolicyVersion:'type-aware.v1',inventory:{productImageIds:['actual-product']},shots:[{shotId:timed.shotId,function:timed.purpose,materialType:'product',plannedDurationSeconds:timed.endSeconds-timed.startSeconds,productSceneReplication:timed.materialPlan.productSceneReplication,materialRouting:timed.materialPlan.materialRouting}]}).shots[0];
+ const reconstructed=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',materialRoutingPolicyVersion:'type-aware.v1',inventory:{productImageIds:['actual-product']},shots:[{shotId:timed.shotId,function:timed.purpose,materialType:'product',plannedDurationSeconds:timed.materialPlan.materialRouting!.generation!.durationSeconds,productSceneReplication:timed.materialPlan.productSceneReplication,materialRouting:timed.materialPlan.materialRouting}]}).shots[0];
  assert.equal(reconstructed.productSceneReplication!.cameraLock.durationSeconds,3);assert.equal(reconstructed.materialRouting!.generation!.durationOrigin,'default_short_shot');
 });

@@ -236,6 +236,8 @@ function contentFingerprint(items: PublishingApprovalItem[], allowRealPublishing
 export function buildPublishingApprovalPackage(input: {
   tenantId: string;
   projects: StoredProject[];
+  /** Trusted workflow task scope, never a caller-supplied publishing override. */
+  selectedProjectId?: string;
   targets: PublishingTarget[];
   goalPlatforms: PublishingPlatform[];
   allowRealPublishing: boolean;
@@ -251,15 +253,25 @@ export function buildPublishingApprovalPackage(input: {
     targetsByPlatform.set(target.platform, [...(targetsByPlatform.get(target.platform) || []), target]);
   }
   const items: PublishingApprovalItem[] = [];
+  if (input.selectedProjectId && input.projects.filter(p => p.id === input.selectedProjectId).length !== 1) throw Error('selected_publishing_project_unavailable');
   for (const project of input.projects) {
+    if (input.selectedProjectId && project.id !== input.selectedProjectId) continue;
     const spec = record(project.spec);
+    // A production-only add-on must not inherit the week's default accounts,
+    // dates or bounded publishing grant through automatic fan-out.
+    if (record(spec.contentOrder).publishMode === 'draft_only') continue;
+    const projectIntent = record(record(spec.contentOrder).explicitPublishingIntent);
+    if (projectIntent.state === 'pending') continue;
+    const projectTargets = Object.keys(projectIntent).length
+      ? new Map<PublishingPlatform, PublishingTarget[]>([[text(projectIntent.platform) as PublishingPlatform, [{ platform: text(projectIntent.platform) as PublishingPlatform, accountId: text(projectIntent.accountId), accountLabel: text(projectIntent.accountLabel) || text(projectIntent.accountId) }]]])
+      : targetsByPlatform;
     if (!input.matrixPlan) {
       for (const videoPath of currentPublishableVideoPaths(spec)) {
         const publication = record(record(spec.contentOrder).videoPlan && record(record(spec.contentOrder).videoPlan).publication);
         let sourceClaim: FrozenPublishSourceClaim;
         try { sourceClaim = dependencies.sourceClaim(input.tenantId, project, videoPath); }
         catch { continue; }
-        for (const [platform, targets] of targetsByPlatform.entries()) items.push({
+        for (const [platform, targets] of projectTargets.entries()) items.push({
           sourceProjectId: project.id, platform, accountIds: targets.map(target => target.accountId), accountLabels: targets.map(target => target.accountLabel),
           title: text(publication.title) || text(spec.publicationTitle) || text(project.title) || `内容作品 ${project.id}`,
           description: text(publication.caption) || text(spec.caption) || text(spec.script) || '',
@@ -272,10 +284,11 @@ export function buildPublishingApprovalPackage(input: {
     const videoPlan = record(record(spec.contentOrder).videoPlan);
     const publication = record(videoPlan.publication);
     const binding = record(videoPlan.matrix);
-    const matrixRows = input.matrixPlan?.filter(row => row.sourceProjectIds.includes(project.id) || row.accountId === binding.accountId);
-    const boundIds = matrixRows ? new Set(matrixRows.map(row => row.accountId)) : videoPlan.matrix ? new Set(binding.accountId ? [text(binding.accountId)] : []) : null;
+    const explicitIntent = record(record(spec.contentOrder).explicitPublishingIntent);
+    const matrixRows = Object.keys(explicitIntent).length ? undefined : input.matrixPlan?.filter(row => row.sourceProjectIds.includes(project.id) || row.accountId === binding.accountId);
+    const boundIds = Object.keys(explicitIntent).length ? new Set([text(explicitIntent.accountId)]) : matrixRows ? new Set(matrixRows.map(row => row.accountId)) : videoPlan.matrix ? new Set(binding.accountId ? [text(binding.accountId)] : []) : null;
     const publishablePaths = currentPublishableVideoPaths(spec);
-    for (const [platform, targets] of targetsByPlatform.entries()) {
+    for (const [platform, targets] of projectTargets.entries()) {
       const eligible = targets.filter(target => !boundIds || boundIds.has(target.accountId) && (!matrixRows || matrixRows.some(row => row.accountId === target.accountId && row.platform === platform)));
       if (!eligible.length) continue;
       const groups = input.matrixPlan ? eligible.map(target => [target]) : [eligible];
@@ -312,18 +325,42 @@ export function buildPublishingApprovalPackage(input: {
     for (const target of input.targets) {
       const own = expanded.filter(item => item.accountIds[0] === target.accountId);
       if (!own.length) continue;
-      const timezone = input.scheduling.timezone === 'account' ? target.timezone || '' : 'Asia/Shanghai';
-      const slots = boundedPublishingSlots({ ...input.scheduling, timezone, count: own.length, now });
-      own.forEach((item, index) => {
+      const fallbackItems: PublishingApprovalItem[] = [];
+      own.forEach(item => {
         const requested = item.plannedPublishDate;
         const requestedAt = item.plannedPublishAt;
-        item.scheduledAt = requested && requested >= input.scheduling!.startsAt && requested <= input.scheduling!.endsAt
-          ? Number.isFinite(Date.parse(requestedAt || '')) ? new Date(requestedAt!).toISOString() : new Date(`${requested}T18:00:00+08:00`).toISOString()
-          : slots[index];
+        if (requested && requested >= input.scheduling!.startsAt && requested <= input.scheduling!.endsAt) {
+          item.scheduledAt = Number.isFinite(Date.parse(requestedAt || ''))
+            ? new Date(requestedAt!).toISOString()
+            : new Date(`${requested}T18:00:00+08:00`).toISOString();
+        } else {
+          fallbackItems.push(item);
+        }
       });
+      // A frozen weekly plan already carries an absolute publish instant (or
+      // the product's explicit 18:00 Beijing date default). Account timezone
+      // is needed only when this package must calculate an unplanned slot.
+      if (fallbackItems.length) {
+        const timezone = input.scheduling.timezone === 'account' ? target.timezone || '' : 'Asia/Shanghai';
+        const slots = boundedPublishingSlots({ ...input.scheduling, timezone, count: fallbackItems.length, now });
+        fallbackItems.forEach((item, index) => { item.scheduledAt = slots[index]!; });
+      }
     }
     items.splice(0, items.length, ...expanded);
   }
+  // Explicit conversion of a production-only add-on binds one destination and
+  // one instant. It must never fall back to other accounts or an older grant.
+  const explicitlyBound = items.flatMap(item => {
+    const project = input.projects.find(p => p.id === item.sourceProjectId);
+    const intent = record(record(record(project?.spec).contentOrder).explicitPublishingIntent);
+    if (!Object.keys(intent).length) return [item];
+    if (!text(intent.confirmedBy) || !Number.isFinite(Date.parse(text(intent.publishAt)))) throw Error('explicit_publication_intent_invalid');
+    if (input.boundedAuthorization) throw Error('explicit_publication_requires_fresh_approval');
+    const accountId = text(intent.accountId), index = item.accountIds.indexOf(accountId);
+    if (item.platform !== intent.platform || index < 0) return [];
+    return [{ ...item, accountIds: [accountId], accountLabels: [item.accountLabels[index]], scheduledAt: new Date(text(intent.publishAt)).toISOString() }];
+  });
+  items.splice(0, items.length, ...explicitlyBound);
   const authorizationSnapshot = input.boundedAuthorization
     ? buildBoundedPublishingAuthorization(input.boundedAuthorization)
     : undefined;

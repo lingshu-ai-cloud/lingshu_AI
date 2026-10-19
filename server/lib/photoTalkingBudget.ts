@@ -1,10 +1,12 @@
 import type { DigitalHumanReferenceCue } from '../../src/lib/digitalHumanPlan.js';
+import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
 
 /** A conservative admission estimate, not a supplier-enforced spending limit. */
 export function photoTalkingBudget(input: {
   cues: DigitalHumanReferenceCue[];
   frameCount: number;
   fixedHeygenReserveCny: number;
+  tenantId?: string;
   env?: NodeJS.ProcessEnv;
 }): { heygenByCue: Record<string, number>; heygenCny: number; firstFrameCny: number; totalCny: number } {
   const env = input.env || process.env;
@@ -22,7 +24,7 @@ export function photoTalkingBudget(input: {
     if (!cue.id || !Number.isFinite(seconds) || seconds <= 0) throw new Error('照片口播镜头时长无效，未调用供应商');
     // Reserve at least five billable seconds for short scripts; output duration still follows the generated asset.
     const amount = perSecond === null ? input.fixedHeygenReserveCny : Math.ceil(Math.max(5, seconds) * perSecond * 100) / 100;
-    if (amount > input.fixedHeygenReserveCny) throw new Error('照片口播按时长预占超过管理员单任务上限，未调用供应商');
+    if (!isInternalBudgetExemptTenant(input.tenantId) && amount > input.fixedHeygenReserveCny) throw new Error('照片口播按时长预占超过管理员单任务上限，未调用供应商');
     heygenByCue[cue.id] = amount;
   }
   const heygenCny = Object.values(heygenByCue).reduce((sum, amount) => sum + amount, 0);

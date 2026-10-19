@@ -1,7 +1,11 @@
 import { allocateAigcBudget, type AigcModelOffer, type AigcResolution } from '../../shared/aigcShotPlanning.js';
 import { estimateSeedanceCostCny } from '../lib/seedanceBudget.js';
 import { storyboardProjectShotInput } from '../lib/storyboardProjectShotInput.js';
+import { automaticManagedFallbackFrameAdmission } from '../lib/storyboardAigcQuality.js';
 import { planStudioBatchShotRoutes, type StudioBatchShotRoute, type StudioVerifiedAdoptionContext } from './studioBatchShotRoutes.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
+
+export const INTERNAL_BUDGET_EXEMPT_CEILING_CNY = 1_000_000_000;
 
 export interface StudioAigcBudgetContext extends StudioVerifiedAdoptionContext {
   /** Sum of ALL native allocations, including completed/uncertain/reserved.
@@ -75,10 +79,13 @@ export function studioAigcBudgetConfigFromEnv() {
 /** Managed weekly production must use the cost already frozen on its content
  * order. A request may lower that ceiling, but cannot raise either the frozen
  * order limit or the installation-wide storyboard limit. */
-export function studioAigcBudgetConfigForSpec(spec: Record<string, any>, requestedMaxCostCny?: unknown) {
+export function studioAigcBudgetConfigForSpec(spec: Record<string, any>, requestedMaxCostCny?: unknown, tenantId?: string) {
   const config = studioAigcBudgetConfigFromEnv();
+  const internalBudgetExempt = isInternalBudgetExemptTenant(tenantId);
   const managed = spec?.automation?.managedBy === 'digital_employee';
-  const frozen = Number(spec?.contentOrder?.operatingContext?.estimatedContentCost);
+  const context = spec?.contentOrder?.operatingContext || {};
+  const frozen = Number(context.estimatedContentCostMax ?? context.estimatedContentCost);
+  const managedRetries = Number(context.maxAigcRetries);
   const requested = requestedMaxCostCny === undefined ? null : Number(requestedMaxCostCny);
   if (requested !== null && (!Number.isFinite(requested) || requested <= 0)) {
     return { ...config, batchBudgetCny: 0 };
@@ -86,8 +93,13 @@ export function studioAigcBudgetConfigForSpec(spec: Record<string, any>, request
   if (managed && (!Number.isFinite(frozen) || frozen <= 0)) {
     return { ...config, batchBudgetCny: 0 };
   }
-  return { ...config, batchBudgetCny: Math.min(
-    config.batchBudgetCny,
+  const installationCeiling = internalBudgetExempt ? INTERNAL_BUDGET_EXEMPT_CEILING_CNY
+    : process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY === undefined
+    ? Number.POSITIVE_INFINITY : config.batchBudgetCny;
+  return { ...config,
+    ...(managed && Number.isInteger(managedRetries) && managedRetries >= 0 && managedRetries <= 1 ? { maxRetries: managedRetries } : {}),
+    batchBudgetCny: Math.min(
+    installationCeiling,
     ...(managed ? [frozen] : []),
     ...(requested !== null ? [requested] : []),
   ) };
@@ -194,12 +206,14 @@ export function studioAigcBudgetPreviewForSpec(
     const provenance = frame?.provenance;
     const currentShot = storyboardProjectShotInput(spec, route.slotId);
     const qa = provenance?.firstFrameQuality;
+    const managedFallbackAccepted = automaticManagedFallbackFrameAdmission(provenance, plan);
     const reusable = !!context?.tenantId && !!context.projectId && frame?.scope === 'own' && frame.type === 'image'
       && frame.sourceType === 'ai-storyboard-first-frame' && String(frame.tenantId || frame.tenant_id || '') === context.tenantId
       && provenance?.projectId === context.projectId && provenance.shotId === route.slotId
       && !!currentShot && provenance.projectShotFingerprint === currentShot.fingerprint
       && !!actualHash && /^[a-f0-9]{64}$/.test(actualHash) && actualHash === provenance.firstFrameQualityInput?.sourceSha256
-      && provenance.confirmed === true && qa?.phase === 'first_frame' && qa.status === 'passed' && qa.passed === true
+      && (provenance.confirmed === true || managedFallbackAccepted)
+      && qa?.phase === 'first_frame' && (qa.status === 'passed' && qa.passed === true || managedFallbackAccepted)
       && qa.requiresHumanReview !== true && (!state?.firstFrameFingerprint || state.firstFrameFingerprint === provenance.fingerprint);
     // Only the native product-remake path has two paid image calls: clearing
     // the reference product, then compositing the enterprise product into it.

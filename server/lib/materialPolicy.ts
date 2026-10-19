@@ -17,9 +17,16 @@ export type MaterialUsage = 'editable' | 'reference_only';
 
 const WORKFLOW_INTERNAL_SOURCE_TYPES = new Set([
   'ai-storyboard-first-frame',
+  'storyboard-controlled-product-source-frame',
   'digital-human-qwen-first-frame-draft',
   'digital-human-target-first-frame',
   'viral-sentence-first-frame',
+  // Presenter enrollment inputs are durable private evidence for the
+  // authorization pipeline.  They are not reusable creative-library cards;
+  // production and presenter management still resolve them with purpose=all.
+  'presenter-inline-upload',
+  'presenter-ark-enrollment',
+  'presenter-video-frame',
 ]);
 
 /**

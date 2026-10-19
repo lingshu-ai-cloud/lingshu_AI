@@ -6,6 +6,7 @@ import type { WeeklyPackage } from './weeklyPackage';
 import type { DirectorDecision, DirectorDecisionReason } from './directorDecision';
 import type { DigitalEmployeeConfig, DigitalEmployeeOverview, EnterpriseFactsRebuildInput, FollowupDispatchResponse, PublishingTarget, RunEvent, WeeklyGoal } from './digitalEmployees';
 import { hydrateWeeklyPublishingTargets } from '../../shared/contracts/weeklyPublishingTargets';
+import { applySmartBusinessShowcaseData } from '../dev/smartBusinessShowcaseData';
 
 const BASE = "/api/overseas/digital-employees";
 
@@ -85,7 +86,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // Keep new clients correct while a local or rolling server still returns the
   // legacy cadence-only shape. The server also persists this migration, so the
   // compatibility bridge is deterministic rather than a second source of truth.
-  return hydrateWeeklyPublishingConfiguration(body);
+  return applySmartBusinessShowcaseData(hydrateWeeklyPublishingConfiguration(body));
 }
 
 function rebuildGoalFromLatestFacts(
@@ -123,7 +124,7 @@ export const digitalEmployeeApi = {
     request<{ items: Array<PublishingTarget & { status: "connected" }> }>(
       "/publishing-accounts",
     ),
-  agentUsageCosts: () => request<{ roles: Record<'business' | 'director' | 'content' | 'customer', { settledCny: number; entryCount: number; updatedAt: string | null; source: string } | null> }>("/agent-usage-costs"),
+  agentUsageCosts: () => request<{ roles: Record<'business' | 'director' | 'content' | 'customer', { settledCny: number; settledPoints: number; entryCount: number; updatedAt: string | null; source: string } | null> }>("/agent-usage-costs"),
   overview: (goalId = "", range?: { startsAt: string; endsAt: string }) =>
     request<DigitalEmployeeOverview>(
       `/overview?${new URLSearchParams({ ...(goalId ? { goalId } : {}), ...(range || {}) }).toString()}`,
@@ -157,6 +158,10 @@ export const digitalEmployeeApi = {
     references: Array<{ id: string; name: string; platform: string; thumbnailUrl: string; sourceUrl: string; views: string; account: string }>;
   }>("/planning-options"),
   savePackage: (goalId: string, pack: WeeklyPackage) => request<DigitalEmployeeOverview>(`/goals/${encodeURIComponent(goalId)}/package`, { method: "PUT", body: JSON.stringify(pack) }),
+  setProductionBudgetMode: (goalId: string, packageRevision: number, mode: "protected" | "economy") => request<DigitalEmployeeOverview>(
+    `/goals/${encodeURIComponent(goalId)}/production-budget-mode`,
+    { method: "PATCH", body: JSON.stringify({ packageRevision, mode }) },
+  ),
   reschedulePublication: (goalId: string, contentId: string, scheduledAt: string) => request<DigitalEmployeeOverview>(
     `/goals/${encodeURIComponent(goalId)}/publication-schedule/${encodeURIComponent(contentId)}`,
     { method: "PATCH", body: JSON.stringify({ scheduledAt }) },

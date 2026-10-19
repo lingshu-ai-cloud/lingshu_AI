@@ -4,6 +4,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {withPaidOperationLock} from './paidOperationLock.js';
 import type {SocialContentTaskBudget,SocialTaskBudgetScope,SocialTaskBudgetOperation} from './socialContentTaskBudget.js';
 import type {SocialPaidOperationIntent} from './socialContentTaskBudgetAuthority.js';
+import {isInternalBudgetExemptTenant} from './tenantBudgetExemption.js';
 const hash=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const fail=(reason:string):never=>{throw Error(`social_paid_permit_${reason}`);};
 export type PaidOperationSubmission = Omit<SocialPaidOperationIntent,'maximumUnits'> & {actualUnits:Record<string,number>};
@@ -19,22 +20,25 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
  const write=(id:string,row:unknown)=>{fs.mkdirSync(root,{recursive:true,mode:0o700});const temp=file(id)+'.'+randomUUID()+'.tmp';const fd=fs.openSync(temp,'wx',0o600);try{fs.writeFileSync(fd,JSON.stringify(row));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(temp,file(id));const dir=fs.openSync(root,'r');try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}};
  const read=(id:string):Record<string,unknown>|null=>{if(!fs.existsSync(file(id)))return null;try{const row=JSON.parse(fs.readFileSync(file(id),'utf8'));const {op,intent}=bound(id);if(row.schemaVersion!==1||row.scopeHash!==hash(scope)||row.operationId!==id||row.fingerprint!==op.fingerprint||!['unknown','accepted','completed'].includes(row.status)||!row.submission||row.submissionHash!==hash(row.submission)||(['operationId','provider','model','accountRef','stage','shotId','inputContractHash'] as const).some(k=>row.submission[k]!==intent[k])||hash(row.actualUnits)!==hash(row.submission.actualUnits))fail('claim_corrupt');return row;}catch{return fail('claim_corrupt');}};
  const bound=(id:string)=>{const ops=operations.filter(o=>o.operationId===id),plans=intents.filter(o=>o.operationId===id);if(ops.length!==1||plans.length!==1)fail('operation_missing_or_ambiguous');return {op:ops[0]!,intent:plans[0]!};};
- const entry=(id:string)=>{const {op}=bound(id);const entries=input.ledger.status(scope)?.entries.filter(e=>e.operationId===id)||[];if(entries.length!==1)fail('reservation_missing');const e=entries[0]!;if(e.runId!==scope.runId||e.planHash!==scope.planHash||(['operationId','fingerprint','provider','model','accountRef','stage','shotId'] as const).some(k=>e[k]!==op[k]))fail('reservation_changed');return e;};
+ const entry=(id:string)=>{const {op}=bound(id);const entries=input.ledger.status(scope)?.entries.filter(e=>e.operationId===id)||[];if(entries.length!==1)fail('reservation_missing');const e=entries[0]!;if((e.executionTaskId??scope.budgetTaskId??scope.taskId)!==scope.taskId||e.runId!==scope.runId||e.planHash!==scope.planHash||(['operationId','fingerprint','provider','model','accountRef','stage','shotId'] as const).some(k=>e[k]!==op[k]))fail('reservation_changed');return e;};
  const assertWholePlanReserved=()=>{
-  const status=input.ledger.status(scope);
-  const correction=status?.correctionAuthorization;
+	  const current=input.ledger.status(scope);
+	  if(!current)throw Error('social_paid_permit_whole_plan_budget_invalid');
+	  const correction=current.correctionAuthorization;
   const validCorrection=Boolean(correction&&correction.tenantId===scope.tenantId&&correction.taskId===scope.taskId
    &&correction.runId===scope.runId&&correction.planHash===scope.planHash&&correction.reason==='provider_correction'
    &&['approved_first_frame_not_consumed','approved_first_frame_not_consumed_and_bound_voice_mismatch'].includes(correction.correctionCause)&&correction.affectedPresenterGroupIds.length===3
-   &&correction.maximumCny===status?.limitCny&&correction.maximumCny<=(correction.correctionCause==='approved_first_frame_not_consumed'?16.5:20));
-  const maximum=validCorrection?correction!.maximumCny:10;
-  if(!status||!Number.isFinite(status.limitCny)||status.limitCny>maximum||status.retainedCny>status.limitCny||status.retainedCny>maximum)fail('whole_plan_budget_invalid');
-  const current=status!;
+	   &&correction.maximumCny===current.limitCny&&correction.maximumCny<=(correction.correctionCause==='approved_first_frame_not_consumed'?16.5:20));
+  const maximum=validCorrection?correction!.maximumCny:15;
+	  if(!Number.isFinite(current.limitCny)||current.limitCny<=0
+	   ||!Number.isFinite(current.retainedCny)||current.retainedCny<0)fail('whole_plan_budget_invalid');
+  if(!isInternalBudgetExemptTenant(scope.tenantId)
+	   &&(current.limitCny>maximum||current.retainedCny>current.limitCny||current.retainedCny>maximum))fail('whole_plan_budget_invalid');
   for(const op of operations){
    const entries=current.entries.filter(e=>e.operationId===op.operationId);
    if(entries.length!==1)fail('whole_plan_reservation_missing');
    const e=entries[0]!;
-   if(e.status==='rejected'||e.runId!==scope.runId||e.planHash!==scope.planHash
+   if((e.executionTaskId??scope.budgetTaskId??scope.taskId)!==scope.taskId||e.status==='rejected'||e.runId!==scope.runId||e.planHash!==scope.planHash
     ||(['operationId','fingerprint','provider','model','accountRef','stage','shotId'] as const).some(k=>e[k]!==op[k]))fail('whole_plan_reservation_changed');
   }
  };

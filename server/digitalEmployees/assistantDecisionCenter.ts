@@ -22,6 +22,7 @@ import type {
 } from '../routes/digitalEmployeeRecords.js';
 import { customerApprovalRequestHash } from './customerTaskApprovalNavigation.js';
 import type { ManagedReplicationPresenterReadiness } from './replicationContentProduction.js';
+import { taskNeedsAttention } from '../../src/lib/taskExecutionState.js';
 
 type DecisionCenterSource = {
   page: AssistantDecisionPage;
@@ -278,6 +279,12 @@ function workflowDeepLink(task: TaskRecord, runId: string) {
   } as WorkflowTask, undefined, runId);
 }
 
+function publishingAccountDeepLink(task: TaskRecord, runId: string): DigitalEmployeeDeepLink {
+  const existing = workflowDeepLink(task, runId);
+  const { view: _view, studioPanel: _studioPanel, ...base } = existing;
+  return { ...base, page: 'accountManagement', businessRef: { ...existing.businessRef, taskKey: 'publishing_account_setup' } };
+}
+
 function planFacts(goal: GoalRecord, plan: PlanRecord): AssistantDecisionCard['facts'] {
   const pack = packageForPlan(plan);
   const context = pack?.operatingContext;
@@ -368,7 +375,6 @@ function approvalCard(approval: ApprovalRecord, task: TaskRecord, run: RunRecord
     actions: [
       { id: 'approve', label: '批准并继续', mode: 'command', emphasis: PRIMARY },
       { id: 'reject', label: '退回修改', mode: 'command', emphasis: DEFAULT, requiresNote: true },
-      { id: 'take_over', label: '人工接管', mode: 'command', emphasis: DEFAULT },
       { id: 'open_workspace', label: '查看详情', mode: 'navigate', emphasis: DEFAULT },
     ],
     deepLink: workflowDeepLink(task, run.id),
@@ -381,6 +387,10 @@ function attentionCard(task: TaskRecord, run: RunRecord, now: string): Assistant
   const output = parseJson<Record<string, unknown>>(task.output, {});
   const inventory = parseJson<Record<string, unknown>>(output.inventoryPreflight, {});
   const sourceCollection = task.task_key === 'scheduled_source_collection';
+  const viralAnalysis = task.task_key === 'viral_analysis';
+  const proof = parseJson<Record<string, unknown>>(output.proof, {});
+  const completedAnalyses = Math.max(0, Number(proof.value || 0));
+  const requiredAnalyses = Math.max(0, Number(proof.requiredValue || 0));
   const inventorySummary = text(output.inventorySummary, 500);
   const sourceCollectionSummary = sourceCollection
     ? `${inventorySummary || '系统已先检查现有爆款库。'}${failed ? ` 本次缺口采集没有完成：${text(task.blocked_reason) || '采集步骤执行失败'}。` : ''} 你可以从当前节点重试，或重新规划本周任务；已经完成的结果会保留。`
@@ -390,6 +400,8 @@ function attentionCard(task: TaskRecord, run: RunRecord, now: string): Assistant
   const presenterReady = presenterInput.code === 'presenter_ready';
   const presenterSetupRequired = presenterInput.code === 'presenter_setup_required';
   const presenterAuthorizationRequired = presenterInput.code === 'presenter_authorization_required';
+  const publishingAccountRequired = task.task_key === 'content_release_approval'
+    && /发布账号|授权服务尚未配置|平台应用与回调地址/.test(text(task.blocked_reason, 1_000));
   const presenterTitle = presenterReady
     ? '数字人已就绪，请继续生产'
     : presenterSetupRequired
@@ -400,64 +412,67 @@ function attentionCard(task: TaskRecord, run: RunRecord, now: string): Assistant
   const presenterSummary = presenterReady
     ? `${presenterInput.presenterName ? `${presenterInput.presenterName} 已就绪。` : '企业数字人已就绪。'}旧任务仍停在数字人节点；继续生产后会复用已完成镜头和回执。`
     : presenterInput.message || '人物镜头已停在数字人生成前；其他已完成镜头和生产回执会保留。补齐后可从当前节点继续。';
+  const viralAnalysisSummary = `${text(task.blocked_reason) || `视频分析尚未完成：当前 ${completedAnalyses}/${requiredAnalyses || '—'} 条已通过。`} 系统只会在真实视频级分析通过后进入内容生产，不会把“已排队”当作“已完成”。`;
+  const retryableBlockedTask = failed || ['blocked', 'waiting_external'].includes(task.status);
   return {
     id: `task:${task.id}`,
     kind: presenterReady ? 'next_step' : 'input_required',
     priority: presenterReady ? 550 : failed ? 650 : 600,
     status: 'pending',
-    title: presenterRequired || presenterReady ? presenterTitle : text(task.title) || '需要你处理',
+    title: presenterRequired || presenterReady ? presenterTitle : publishingAccountRequired ? '配置并连接发布账号' : text(task.title) || '需要你处理',
     summary: presenterRequired || presenterReady
       ? presenterSummary
-      : sourceCollectionSummary || text(task.blocked_reason) || (failed ? '任务失败，需要你选择处理方式。' : '任务正在等待必要资料或人工决定。'),
+      : viralAnalysis ? viralAnalysisSummary
+        : sourceCollectionSummary || text(task.blocked_reason) || (failed ? '任务失败，需要你选择处理方式。' : '任务正在等待必要资料或人工决定。'),
     facts: [
-      { label: '当前状态', value: presenterReady ? '数字人已就绪' : presenterSetupRequired ? '待补制作条件' : presenterAuthorizationRequired ? '待完成授权' : presenterRequired ? '待补充数字人' : failed ? '失败' : '等待用户', tone: presenterReady ? 'info' : presenterRequired ? 'warning' : failed ? 'danger' : 'warning' },
+      { label: '当前状态', value: presenterReady ? '数字人已就绪' : presenterSetupRequired ? '待补制作条件' : presenterAuthorizationRequired ? '待完成授权' : presenterRequired ? '待补充数字人' : viralAnalysis ? failed ? '分析失败' : '分析未完成' : failed ? '失败' : '等待用户', tone: presenterReady ? 'info' : presenterRequired || viralAnalysis && !failed ? 'warning' : failed ? 'danger' : 'warning' },
+      ...(viralAnalysis && requiredAnalyses > 0 ? [{ label: '分析进度', value: `${completedAnalyses}/${requiredAnalyses} 条通过`, tone: completedAnalyses >= requiredAnalyses ? 'info' as const : 'warning' as const }] : []),
       ...(sourceCollection && Number(inventory.requiredCount || 0) > 0 ? [{ label: '爆款库存', value: `可用 ${Number(inventory.reusableCount || 0)}/${Number(inventory.requiredCount || 0)} 条${Number(inventory.missingCount || 0) ? `，缺 ${Number(inventory.missingCount)} 条` : ''}`, tone: Number(inventory.missingCount || 0) ? 'warning' as const : 'info' as const }] : []),
-      ...(task.destination ? [{ label: '处理位置', value: text(task.destination) }] : []),
+      ...(publishingAccountRequired ? [{ label: '处理位置', value: 'accountManagement' }] : task.destination ? [{ label: '处理位置', value: text(task.destination) }] : []),
     ],
     subject: { type: 'workflow_task', id: task.id, version: presenterInput.code
       ? `${workflowTaskDecisionVersion(task)}|presenter:${presenterInput.code}`
       : workflowTaskDecisionVersion(task) },
     actions: presenterReady ? [
       { id: 'open_workspace', label: '查看并继续生产', mode: 'navigate', emphasis: PRIMARY },
-      ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status)
-        ? [{ id: 'take_over', label: '人工接管当前任务', mode: 'command', emphasis: DEFAULT } as const]
-        : []),
     ] : presenterRequired ? [
       { id: 'open_workspace', label: presenterSetupRequired ? '补齐制作条件' : presenterAuthorizationRequired ? '完成数字人授权' : '添加数字人形象', mode: 'navigate', emphasis: PRIMARY },
-      ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status)
-        ? [{ id: 'take_over', label: '人工接管当前任务', mode: 'command', emphasis: DEFAULT } as const]
-        : []),
+    ] : viralAnalysis ? [
+      ...(failed ? [{ id: 'retry_task', label: '重试失败分析', mode: 'command', emphasis: PRIMARY } as const] : []),
+      { id: 'open_workspace', label: '查看分析进度', mode: 'navigate', emphasis: failed ? DEFAULT : PRIMARY } as const,
     ] : [
       ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status) && sourceCollection
         ? [
           { id: 'retry_task', label: '从当前节点重试', mode: 'command', emphasis: PRIMARY } as const,
           { id: 'replan_task', label: '重新规划本周任务', mode: 'command', emphasis: DEFAULT } as const,
         ]
-        : !['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status)
-          ? [{ id: 'take_over', label: '人工接管', mode: 'command', emphasis: PRIMARY } as const]
+        : retryableBlockedTask
+          ? [{ id: 'retry_task', label: '重试当前节点', mode: 'command', emphasis: PRIMARY } as const]
           : []),
-      { id: 'open_workspace', label: '前往处理', mode: 'navigate', emphasis: DEFAULT },
-      ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status) && sourceCollection
-        ? [{ id: 'take_over', label: '人工接管', mode: 'command', emphasis: DEFAULT } as const]
-        : []),
+      { id: 'open_workspace', label: publishingAccountRequired ? '配置发布账号' : '前往处理', mode: 'navigate', emphasis: sourceCollection || retryableBlockedTask ? DEFAULT : PRIMARY },
     ],
-    deepLink: presenterRequired ? presenterOnboardingDeepLink(task, run.id, presenterInput.presenterId) : workflowDeepLink(task, run.id),
+    deepLink: presenterRequired ? presenterOnboardingDeepLink(task, run.id, presenterInput.presenterId)
+      : publishingAccountRequired ? publishingAccountDeepLink(task, run.id)
+        : workflowDeepLink(task, run.id),
     createdAt: text(task.updated_at || task.created_at) || now,
   };
 }
 
 function nextStepCard(task: TaskRecord, run: RunRecord, now: string): AssistantDecisionCard {
   const deepLink = workflowDeepLink(task, run.id);
+  const running = task.status === 'running';
   return {
     id: `next:${task.id}`,
     kind: 'next_step',
     priority: 500,
     status: 'pending',
     title: text(task.title) || '继续当前工作',
-    summary: '当前页面最相关的下一步已经准备好。',
-    facts: [{ label: '状态', value: task.status === 'running' ? '正在进行' : '可以继续', tone: 'info' }],
+    summary: running
+      ? '任务正在执行；完成真实结果核验前不会进入下一生产节点。'
+      : '任务已排队，系统正在核验上游数据；完成真实结果核验前不会进入下一生产节点。',
+    facts: [{ label: '状态', value: running ? '正在进行' : '已排队', tone: 'info' }],
     subject: { type: 'workflow_task', id: task.id, version: workflowTaskDecisionVersion(task) },
-    actions: [{ id: 'open_workspace', label: '继续处理', mode: 'navigate', emphasis: PRIMARY }],
+    actions: [{ id: 'open_workspace', label: '查看真实进度', mode: 'navigate', emphasis: PRIMARY }],
     deepLink,
     createdAt: text(task.updated_at || task.created_at) || now,
   };
@@ -493,11 +508,21 @@ export function buildAssistantDecisionFeed(source: DecisionCenterSource): Assist
 
     const pendingApprovalTaskIds = new Set(source.approvals.filter(item => item.status === 'pending').map(item => item.task_id));
     source.tasks
-      .filter(task => ['waiting_external', 'failed'].includes(task.status) && !pendingApprovalTaskIds.has(task.id))
+      .filter(task => ['waiting_external', 'waiting_human', 'failed'].includes(task.status)
+        && !pendingApprovalTaskIds.has(task.id)
+        && taskNeedsAttention({
+          status: task.status,
+          blocked_reason: task.blocked_reason,
+          output: parseJson<Record<string, unknown>>(task.output, {}),
+        }))
       .forEach(task => cards.push(attentionCard(task, source.run!, now)));
 
     if (!cards.some(card => card.priority >= 600)) {
-      const next = source.tasks.find(task => ['running', 'pending'].includes(task.status)
+      const completedTaskKeys = new Set(source.tasks
+        .filter(task => ['succeeded', 'skipped'].includes(task.status))
+        .map(task => task.task_key));
+      const next = source.tasks.find(task => (task.status === 'running'
+        || task.status === 'pending' && parseJson<string[]>(task.depends_on, []).every(key => completedTaskKeys.has(key)))
         && pageMatches(workflowDeepLink(task, source.run!.id), source.page));
       if (next) cards.push(nextStepCard(next, source.run, now));
     }

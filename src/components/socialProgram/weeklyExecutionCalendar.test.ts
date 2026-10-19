@@ -9,6 +9,15 @@ const task = (status: WeeklyExecutionTask['status'], finish = '2026-10-06T12:00:
   schedule: { stepKind: 'video_generation', responsibleActor: 'content_agent', estimatedFinishAt: finish, estimatedDurationMinutes: 90 },
   resultRefs: [], dependsOnTaskIds: ['verified-material'], ownBlockingReasons: [], inheritedBlockingTaskIds: [], lastError: null,
 } as unknown as WeeklyExecutionTask);
+test('natural-week assignment preserves Monday without backdating real execution',()=>{
+  const actual={...task('pending_activation'),createdAt:'2026-10-15T04:00:00Z',inputSnapshot:{calendarAssignmentDate:'2026-10-12'},schedule:{...task('pending_activation').schedule,estimatedFinishAt:'2026-10-15T08:00:00Z',actualStartedAt:null,actualFinishedAt:null}} as WeeklyExecutionTask;
+  const row=projectExecutionCalendar([actual],labels)[0];
+  assert.equal(row.date,'2026-10-12');
+  assert.equal(row.status,'planned');
+  assert.equal(row.actualFinishedAt,undefined);
+  assert(row.executionBlockers?.some(reason=>reason.includes('非历史完成记录')));
+  assert.equal(actual.schedule.estimatedFinishAt,'2026-10-15T08:00:00Z');
+});
 test('calendar preserves execution identity and does not fabricate deliverables or dates', () => {
   const rows = projectExecutionCalendar([task('queued'), task('cancelled'), task('dead_letter'), task('succeeded'), task('blocked', '')], labels);
   assert.equal(rows.length, 4);

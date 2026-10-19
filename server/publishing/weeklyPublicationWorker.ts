@@ -120,11 +120,12 @@ export async function runWeeklyPublicationPackageScan(input: {
   limit?: number;
   tenantId?: string;
   taskId?: string;
+  artifactId?: string;
 } = {}): Promise<WeeklyPublicationWorkerResult> {
   const dataStore = input.dataStore ?? store;
   const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
   const rows = await dataStore.list<ArtifactRow>('starter_social_content_artifacts', {
-    where: { status: 'approved', ...(input.tenantId ? { tenant_id: input.tenantId } : {}), ...(input.taskId ? { task_id: input.taskId } : {}) }, sort: 'updated_at', page: 1, perPage: limit,
+    where: { status: 'approved', ...(input.tenantId ? { tenant_id: input.tenantId } : {}), ...(input.taskId ? { task_id: input.taskId } : {}), ...(input.artifactId ? { artifact_id: input.artifactId } : {}) }, sort: 'updated_at', page: 1, perPage: limit,
   });
   const result: WeeklyPublicationWorkerResult = { scanned: rows.items.length, createdAssignments: 0, createdPackages: 0, skipped: 0, errors: [] };
   for (const artifact of rows.items) {
@@ -147,8 +148,14 @@ export async function runWeeklyPublicationPackageScan(input: {
       if (weeklyRows.totalItems !== 1 || !weeklyRows.items[0]) throw new Error('weekly_operating_package_not_found');
       const weekly = weeklyRows.items[0].payload;
       if (weekly.version !== lineage.packageRef.version || weekly.packageId !== lineage.packageRef.id) throw new Error('weekly_operating_package_lineage_mismatch');
-      const publicationTask = weekly.socialContentPackage.publicationTasks.find(item => item.publicationTaskId === lineage.publicationTaskRef.id);
-      if (!publicationTask) throw new Error('weekly_publication_task_not_found');
+      const originalPublication = weekly.socialContentPackage.publicationTasks.find(item => item.publicationTaskId === lineage.publicationTaskRef.id);
+      if (!originalPublication) throw new Error('weekly_publication_task_not_found');
+      const {canonicalWeeklyProductionPublication}=await import('../runtime/weeklyContentProductionIdentity.js');
+      const publications=weekly.socialContentPackage.productionIdentityVersion==='shared-original.v1'
+        ?weekly.socialContentPackage.publicationTasks.filter(item=>!item.inventoryReuseRef&&item.motherContentId===originalPublication.motherContentId)
+        :[originalPublication];
+      for(const publicationTask of publications){try{
+      if(canonicalWeeklyProductionPublication(weekly,publicationTask.publicationTaskId).publicationTaskId!==originalPublication.publicationTaskId)throw Error('weekly_content_original_source_changed');
       // Weekly execution acceptance is independent from automatic artifact QC approval.
       const boundTasks = await dataStore.list<any>('starter_social_content_tasks', {
         where: { tenant_id: tenantId, task_id: artifact.task_id }, page: 1, perPage: 2,
@@ -164,6 +171,10 @@ export async function runWeeklyPublicationPackageScan(input: {
           && row.payload?.resultRefs?.some((ref: any) => ref.type === 'starter_social_content_artifact' && ref.id === artifactId && ref.version === Number(String(artifact.version).replace(/^v/, ''))));
         if (!accepted) { result.skipped += 1; continue; }
       }
+      if(weekly.socialContentPackage.productionIdentityVersion==='shared-original.v1'){
+        const {validateWeeklyPublicationAcceptance}=await import('../runtime/socialWeeklyResultValidation.js');
+        await validateWeeklyPublicationAcceptance(dataStore,{tenantId,programId:weekly.programId,packageId:weekly.packageId,packageVersion:weekly.version,publicationTaskId:publicationTask.publicationTaskId,accountId:publicationTask.accountId,schedule:{stepKind:'publishing'}} as WeeklyExecutionTask,productionResultId);
+      }
       const rawQuality=object(object(artifact.content).productionResult);
       const publishable = object(rawQuality.technicalReview).approved===true&&object(rawQuality.creativeReview).approved===true?productionFromArtifact(artifact,lineage,weekly):await productionFromApprovedWeeklyArtifact(dataStore,artifact,lineage,weekly);
       if(publicationTask.platform==='instagram')publishable.instagramDelivery=await createInstagramDeliveryPublicationProof(dataStore,{tenantId,programId:weekly.programId,packageId:weekly.packageId,packageVersion:weekly.version,publicationTaskId:publicationTask.publicationTaskId,taskId:String(artifact.task_id),artifactId});
@@ -173,6 +184,7 @@ export async function runWeeklyPublicationPackageScan(input: {
       const packaged = await createAssignedPublicationPackage({ assignment, productionResult: publishable }, dataStore);
       if (packaged.created) result.createdPackages += 1;
       await markPublicationAssignmentPackageReady(tenantId, assignment.assignmentId, dataStore);
+      }catch(error){result.errors.push({tenantId,artifactId,code:error instanceof Error?error.message:'weekly_publication_worker_failed'});}}
     } catch (error) {
       result.errors.push({ tenantId, artifactId, code: error instanceof Error ? error.message : 'weekly_publication_worker_failed' });
     }

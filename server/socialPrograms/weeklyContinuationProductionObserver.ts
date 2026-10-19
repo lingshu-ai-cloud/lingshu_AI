@@ -1,4 +1,5 @@
 import type {DataStore,Record_} from '../storage/datastore.js';
+import {resolveWeeklyProductionRow} from '../runtime/weeklyContentProductionIdentity.js';
 import type {WeeklyExecutionTask,VersionedSocialRef} from '../../shared/contracts/socialProgram.js';
 import {publicationInstant} from './publicationDeadlines.js';
 import {socialJson,socialObject} from '../starter198/socialContentValidation.js';
@@ -12,9 +13,9 @@ export async function observeWeeklyContinuationProduction(store:DataStore,task:W
  const out=(status:ContinuationProductionObservation['status'],code:string):ContinuationProductionObservation=>({status,code,resultRefs:[]});
  if(publicationInstant(now)===null)return out('blocked','weekly_continuation_observation_time_invalid');
  if(!(task.workflowKind==='content'||task.workflowKind==='directing'&&['script','storyboard'].includes(task.schedule.stepKind))||!task.publicationTaskId||publicationInstant(task.schedule.actualStartedAt??'')===null)return out('blocked','weekly_continuation_original_production_identity_required');
- const rows=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:task.tenantId,create_idempotency_key:`weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}`},perPage:2});
- if(rows.totalItems!==1||rows.items.length!==1)return out('blocked','weekly_continuation_original_production_missing');
- const row=rows.items[0]!,brief=socialObject(socialJson(row.brief)),authority=socialObject(brief?._weeklyAuthority),pkg=socialObject(authority?.weeklyPackage);
+ const row=await resolveWeeklyProductionRow(store,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId}).catch(()=>null);
+ if(!row)return out('blocked','weekly_continuation_original_production_missing');
+ const brief=socialObject(socialJson(row.brief)),authority=socialObject(brief?._weeklyAuthority),pkg=socialObject(authority?.weeklyPackage);
  if(socialObject(brief?.programRef)?.id!==task.programId||pkg?.packageId!==task.packageId||pkg.version!==task.packageVersion||pkg.programId!==task.programId||row.task_id!==task.productionProgress?.contentTaskId||row.run_id!==task.productionProgress?.runId||!row.run_id)return out('blocked','weekly_continuation_original_production_identity_invalid');
  const run=await store.getById<Record_>('workflow_runs',String(row.run_id));
  if(!run||run.tenant_id!==task.tenantId)return out('blocked','weekly_continuation_original_run_missing');

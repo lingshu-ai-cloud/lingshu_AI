@@ -78,6 +78,7 @@
     "1790294400_create_social_channel_foundation.js": "23d3db4432b32291a64c7f279e7058cc7805a20e40fe86be704eca3491de5f71",
     "1790294401_create_wecom_kf_customer_service.js": "dc6cf2c568f0e441cbf0f0ee07ea6da783d9e5394528c822b9bd1c22bf8af995",
     "1790294402_add_social_publication_evidence_history.js": "84464f1387909c9e7a154d60df5bd22a748e38e4dd5341f6fb22f60590a1e81b",
+    "1790294402_reconcile_legacy_material_scope_fields.js": "4182cb3c10d288afa68c776f1ff393d1f0b4bf098aac94cf99c639b23c066b06",
     "1790294403_add_material_provenance.js": "a9519ff23b4204afc2d5514e16d93ad523c8f4d0ca4b2bfb72d58638db7df681",
     "1790380800_add_social_content_backend_file.js": "27e34cb3f23da2c8d35ce36c906d178f4d0473a6d97a70666efff73de30ee22f",
     "1790380801_ensure_social_content_backend_file.js": "9aca0cf88a1a80c1a927bcfd3cd121e25e56d087606619f6e54d09a08efa3d0b",

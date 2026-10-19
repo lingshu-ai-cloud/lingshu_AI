@@ -4,6 +4,8 @@ import {socialRequestHash} from '../starter198/socialContentValidation.js';
 import {issueWeeklyCreativeRepairAuthority,resolveWeeklyCreativeRepairAuthority} from './weeklyCreativeRepairAuthority.js';
 import {WEEKLY_PRODUCTION_REPAIR_CASES} from '../socialPrograms/weeklyProductionRepairCases.js';
 import {WEEKLY_CREATIVE_REPAIR_CONFIGURATIONS} from '../socialPrograms/weeklyCreativeRepairConfiguration.js';
+import {createStarter198Repository} from '../starter198/repository.js';
+import {bindSocialContentRevisionOrder,resolveSocialContentCostLineage} from '../starter198/socialContentCostLineage.js';
 
 function fixture(deadlineAt='2026-10-12T12:00:00.000Z'){
  const tables=new Map<string,Record_[]>();
@@ -16,6 +18,17 @@ function fixture(deadlineAt='2026-10-12T12:00:00.000Z'){
  return{store,tables,item,configuration,authority};
 }
 async function child(f:ReturnType<typeof fixture>){const issued=await issueWeeklyCreativeRepairAuthority({store:f.store,tenantId:'tenant',caseId:'case',childTaskId:'child',expectedCaseHash:f.item.recordHash,expectedConfigurationHash:f.configuration.recordHash,now:new Date('2026-10-10T02:00:00.000Z')});return{...issued,task:{tenant_id:'tenant',task_id:'child',create_idempotency_key:issued.bindingKey,run_id:'',brief:{_weeklyAuthority:issued.authority,_weeklyCreativeRepairProof:issued.proof}}};}
+test('verified repair inherits original content and origin week, forged alias and tenant fail closed',async()=>{
+ const f=fixture(),issued=await child(f),parent=f.tables.get('starter_social_content_tasks')![0]!;
+ parent.content_order={schemaVersion:'social-content-order.v1',contentId:'parent',budgetTaskId:'parent',entry:'weekly_package',programId:'program',originWeek:'2026-10-05'};
+ await f.store.create('starter_social_content_tasks',{id:'child-row',...issued.task,content_order:{schemaVersion:'social-content-order.v1',contentId:'child',budgetTaskId:'child',entry:'workspace',programId:null,originWeek:null}});
+ f.store.supportsAtomicCompareAndSwap=()=>true;f.store.compareAndSwap=async(c,id,expected,data)=>{const row=f.tables.get(c)?.find(r=>r.id===id);if(!row||!Object.entries(expected).every(([k,v])=>JSON.stringify(row[k])===JSON.stringify(v)))return false;Object.assign(row,structuredClone(data));return true;};
+ const repository=createStarter198Repository(f.store),input={repository,tenantId:'tenant',taskId:'child',now:new Date('2026-10-10T02:01:00Z')};
+ const lineage=await bindSocialContentRevisionOrder(input);assert.equal(lineage.contentId,'parent');assert.equal(lineage.budgetTaskId,'parent');assert.equal(lineage.originWeek,'2026-10-05');
+ assert.deepEqual(await resolveSocialContentCostLineage(input),lineage);
+ const row=f.tables.get('starter_social_content_tasks')!.find(r=>r.id==='child-row')!;(row.content_order as any).budgetTaskId='fresh-allowance';await assert.rejects(resolveSocialContentCostLineage(input),/binding_changed/);
+ await assert.rejects(resolveSocialContentCostLineage({...input,tenantId:'another'}),/task_missing_or_ambiguous/);
+});
 async function started(f:ReturnType<typeof fixture>,issued:Awaited<ReturnType<typeof child>>,state:'running'|'awaiting_audit'|'resolved'){
  const row=f.tables.get(WEEKLY_PRODUCTION_REPAIR_CASES)![0]!,current=row.payload as any,{recordHash:_,...body}=current,nextBody={...body,state,execution:{operationId:'child',runId:'child-run',jobId:'child-job'},updatedAt:`2026-10-10T0${state==='running'?3:state==='awaiting_audit'?4:5}:00:00.000Z`},next={...nextBody,recordHash:socialRequestHash(nextBody)};Object.assign(row,{state,content_hash:socialRequestHash(next),payload:next});const mappingBody:any={schemaVersion:'weekly-creative-repair-child-execution.v1',version:1,tenantId:'tenant',caseId:'case',caseRequestHash:f.item.requestHash,configurationHash:f.configuration.recordHash,parentTaskId:'parent',parentRunId:'parent-run',parentArtifactHash:f.item.parent.artifactHash,authorityHash:issued.proof.originalAuthorityHash,previewHash:'a'.repeat(64),capacityReservationId:'reservation',capacityExpiresAt:'2026-10-12T11:00:00.000Z',localOnly:true,quoteHash:null,authorizedMaximumCostCny:0,startIdempotencyKey:'start',state:'running',childTaskId:'child',childBindingKey:issued.bindingKey,runId:'child-run',jobId:'child-job',confirmedBy:'owner',confirmedAt:'2026-10-10T02:00:00.000Z',lastReconciledAt:'2026-10-10T03:00:00.000Z',createdAt:'2026-10-10T02:00:00.000Z',updatedAt:'2026-10-10T03:00:00.000Z'},mapping={...mappingBody,recordHash:socialRequestHash(mappingBody)};f.tables.set('social_weekly_creative_repair_child_executions',[{id:'mapping',tenant_id:'tenant',case_id:'case',content_hash:socialRequestHash(mapping),payload:mapping}]);return{...issued.task,run_id:'child-run'};
 }

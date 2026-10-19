@@ -8,6 +8,7 @@
 export {
   readTenantEnterpriseProfile,
   enterpriseFactContentHash,
+  verifyEnterpriseFactContent,
   type EnterpriseProfile,
 } from '../routes/enterprise.js';
 

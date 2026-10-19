@@ -15,8 +15,12 @@ import type {SocialPaidOperationIntent} from '../lib/socialContentTaskBudgetAuth
 import type {createSocialContentPaidOperationPermit} from '../lib/socialContentPaidOperationPermit.js';
 import type {DigitalPresenterExecutionRequest} from './socialContentDigitalPresenterAdapter.js';
 import type {WholeTrackPresenterSpeech} from './socialContentWholeTrackPresenterAudio.js';
+import {isInternalBudgetExemptTenant} from '../lib/tenantBudgetExemption.js';
 
 const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
+export function wholeTrackReservationExceedsInternalBudget(tenantId:string,reservationCny:number,maximumCostCny:number){
+ return !isInternalBudgetExemptTenant(tenantId)&&reservationCny>maximumCostCny;
+}
 export interface WholeTrackHeyGenFunding {
  scope:SocialTaskBudgetScope;requirements:PaidStageRequirement[];routeBindings:Record<string,BoundPaidRoute>;
  intents:SocialPaidOperationIntent[];permit:ReturnType<typeof createSocialContentPaidOperationPermit>;
@@ -107,6 +111,7 @@ export function createWholeTrackSocialHeyGenBridge(input:{
   },
  });
  const resolve=async(request:DigitalPresenterExecutionRequest):Promise<WholeTrackPresenterSpeech>=>{
+  if(!request.presenter.providerVoiceId||!request.presenter.providerPresenterId)throw Error('whole_track_heygen_avatar_voice_mapping_required');
   assertBoundPresenterAudio(request.presenter.providerVoiceId, input.prepared.nativeVoice);
   await funding.assertCurrent();const {requirement,route,intent}=canonical(request);
   if(requirement.presenterGroupId){
@@ -170,6 +175,7 @@ export function createWholeTrackSocialHeyGenBridge(input:{
     await funding.assertCurrent();const audioAssetId=await providerClient.uploadAudio(clip.bytes,'whole-track:'+identityHash,'audio/wav');
     previous={identityHash,status:'uploaded',audioAssetId};writes(file,previous);
    }
+   if(!request.presenter.providerPresenterId||!request.presenter.providerVoiceId)throw Error('whole_track_heygen_avatar_voice_mapping_required');
    return {tenantId:request.tenantId,taskId:request.taskId,taskVersion:input.taskVersion,runId:funding.scope.runId,planHash:funding.scope.planHash,shotId:request.shotId,presenterAssetId:request.presenter.presenterAssetId,presenterAssetVersion:request.presenter.assetVersion,providerAvatarId:request.presenter.providerPresenterId,voiceId:clip.nativeVoice.physicalVoiceId,scriptSha256:sha(request.script),clipSha256:clip.clipSha256,durationSeconds:clip.durationSeconds,frozenSceneDurationSeconds:request.visualControl.timing.durationSeconds,wholeTrackSha256:clip.wholeTrackSha256,nativeVoice:clip.nativeVoice,sourceReceiptRef:clip.sourceReceipts[0]!.receiptRef,sourceReceiptSha256:clip.sourceReceipts[0]!.sha256,alignmentReceiptRef:clip.alignmentReceiptRef,alignmentReceiptSha256:clip.alignmentReceiptSha256,receiptRef:file,receiptHash:sha(fs.readFileSync(file)),audioAssetId:previous.audioAssetId,engine:'avatar_iv' as const,operationRole:'production_scene' as const};
   });
   audioRequests.set(audio.audioAssetId,{request,audio});return audio;
@@ -201,7 +207,7 @@ export function createWholeTrackSocialHeyGenBridge(input:{
      if(!bound)throw Error('whole_track_heygen_audio_not_resolved');
      const {intent}=canonical({...request,approvedFirstFrame:bound.request.approvedFirstFrame});
      const reservation=funding.readReservedCny(intent.operationId);
-     if(!(reservation>0)||reservation>request.maximumCostCny)throw Error('whole_track_heygen_reservation_exceeds_plan');
+     if(!(reservation>0)||wholeTrackReservationExceedsInternalBudget(request.tenantId,reservation,request.maximumCostCny))throw Error('whole_track_heygen_reservation_exceeds_plan');
      requestIds.set(request.idempotencyKey,bound);return {allowed:true,reservationRef:intent.operationId};
     }catch(error){return {allowed:false,reason:String(error instanceof Error?error.message:error)};}
    },

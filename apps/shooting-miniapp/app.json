@@ -25,6 +25,11 @@
       "root": "packages/management",
       "name": "management",
       "pages": ["home/index"]
+    },
+    {
+      "root": "packages/customer",
+      "name": "customer",
+      "pages": ["home/index"]
     }
   ],
   "window": {

@@ -1,4 +1,4 @@
-import { PresenterAudioPreparationError, normalizePresenterTrainingVideo } from '../lib/presenterVideo.js';
+import { PresenterAudioPreparationError, extractPresenterVoiceCandidate, normalizePresenterAudio, normalizePresenterTrainingVideo } from '../lib/presenterVideo.js';
 import fs from 'node:fs';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { readLocalMaterials, saveLocalMaterials } from '../lib/materialLibrary.js';
@@ -15,6 +15,8 @@ import { EMPTY_DEFAULTS } from '../../src/lib/shotProduction.js';
 import { StudioPaidBudget } from '../lib/studioPaidBudget.js';
 import path from 'node:path';
 import { inspectPresenterVideo, presenterVideoFrame, trimPresenterVideo, type PresenterVideoInfo } from '../lib/presenterVideo.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
+import { cloneVolcengineVoice } from '../lib/volcengineVoiceClone.js';
 
 const COLLECTION = 'studio_presenter_assets';
 type Row = { id: string; tenant_id: string; request_id: string; kind: string; payload: any };
@@ -24,6 +26,9 @@ const message = (e: unknown) => e instanceof Error ? e.message : '人物服务�
 const hash = (v: string | Buffer) => createHash('sha256').update(v).digest('hex');
 const consentAccepted = (value: unknown) => ['accepted', 'approved'].includes(String(value || '').toLowerCase());
 const consentStatus = (value: unknown) => consentAccepted(value) ? 'accepted' : String(value || '').toLowerCase() || 'pending';
+const consentAlreadyProcessing = (error: unknown) => error instanceof HeyGenRequestError
+  && error.status === 409
+  && /consent.*processing|processing.*consent|already.*consent/i.test(error.message);
 type CuratedPresenterGroup = { name: string; groupId: string; asian?: boolean };
 const presenterCuration = (tenantId: string): { favoriteNames: Set<string>; asianNames: Set<string>; favoriteGroups: CuratedPresenterGroup[] } => {
   try {
@@ -44,9 +49,11 @@ const curatedName = (names: Set<string>, value: string): string | undefined => {
 export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusive, options: {
   client?: HeyGenPresenterClient; configured?: () => boolean; enabled?: () => boolean; directConsent?: () => boolean;
   reserve?: (id: string) => Promise<void>;
+  budgetExempt?: (tenantId: string) => boolean;
   trimVideo?: (bytes: Buffer, seconds: number) => Promise<Buffer>;
   extractFrame?: (bytes: Buffer, seconds: number) => Promise<Buffer>;
   normalizeTrainingVideo?: (bytes: Buffer) => Promise<Buffer>;
+  normalizeVoiceAudio?: (bytes: Buffer) => Promise<Buffer>;
   inspectVideo?: (bytes: Buffer) => Promise<PresenterVideoInfo>;
   materialBelongs?: (tenantId: string, materialId: string, type: 'image' | 'video') => boolean;
 } = {}) {
@@ -55,6 +62,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
   const configured = () => options.configured?.() ?? Boolean(process.env.HEYGEN_API_KEY);
   const enabled = () => options.enabled?.() ?? (configured() && process.env.HEYGEN_GENERATION_ENABLED === 'true');
   const directConsent = () => options.directConsent?.() ?? process.env.HEYGEN_DIRECT_CONSENT_ENABLED === 'true';
+  const budgetExempt = (tenant: string) => options.budgetExempt?.(tenant) ?? isInternalBudgetExemptTenant(tenant);
   const privateCatalog = (tenant: string) => Boolean(tenant && process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID === tenant);
   const canCreateFor = (tenant: string) => !process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID || privateCatalog(tenant);
   const creationReservation = (type: 'photo' | 'digital_twin') => type === 'photo'
@@ -101,6 +109,10 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
     return row;
   };
   const find = async (tenant: string, kind: string, requestId: string) => (await store.list<Row>(COLLECTION, { where: { tenant_id: tenant, kind, request_id: requestId }, perPage: 1 })).items[0];
+  const cloneByHeygenVoice = async (tenant: string, voiceId: string) => {
+    const rows = await store.list<Row>(COLLECTION, { where: { tenant_id: tenant, kind: 'voice_clone' }, perPage: 100 });
+    return rows.items.find(row => row.payload?.voiceId === voiceId || (Array.isArray(row.payload?.candidateVoiceIds) && row.payload.candidateVoiceIds.includes(voiceId)));
+  };
   const write = async (row: Row, patch: Record<string, unknown>) => {
     const payload = { ...row.payload, ...patch, updatedAt: new Date().toISOString() };
     if (!await store.update(COLLECTION, row.id, { payload })) throw new Error('人物状态保存失败，请刷新原任务，不要重复创建');
@@ -140,14 +152,16 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
     return write(row, { status, look, consentStatus: consentStatus(group.consent_status), authorized: status === 'completed', error: failed ? '人物处理失败，请检查素材或授权录制要求' : '', ...(status === 'completed' ? { consentUrl: undefined } : {}) });
   };
   router.get('/capabilities', (_req, res) => {
+    const tenant = res.locals.tenantId as string;
+    const tenantBudgetExempt = budgetExempt(tenant);
     const photoBudget = creationBudget('photo').status('heygen');
     const digitalTwinBudget = creationBudget('digital_twin').status('heygen');
-    const commonReason = !configured() ? '管理员尚未配置 HeyGen 服务密钥' : !canCreateFor(res.locals.tenantId) ? '当前企业尚未连接人物创建账号，可使用公共人物库' : !enabled() ? '人物创建尚未启用，可导入已有可用人物' : '';
-    const photoCreationReason = commonReason || (options.reserve ? '' : photoBudget.reason);
-    const digitalTwinCreationReason = commonReason || (options.reserve ? '' : digitalTwinBudget.reason);
+    const commonReason = !configured() ? '管理员尚未配置 HeyGen 服务密钥' : !canCreateFor(tenant) ? '当前企业尚未连接人物创建账号，可使用公共人物库' : !enabled() ? '人物创建尚未启用，可导入已有可用人物' : '';
+    const photoCreationReason = commonReason || (options.reserve || tenantBudgetExempt ? '' : photoBudget.reason);
+    const digitalTwinCreationReason = commonReason || (options.reserve || tenantBudgetExempt ? '' : digitalTwinBudget.reason);
     const photoCreationEnabled = !photoCreationReason;
     const digitalTwinCreationEnabled = !digitalTwinCreationReason;
-    res.json({ localPhotoUpload: currentDataAuthority() === 'local', configured: configured(), creationEnabled: photoCreationEnabled || digitalTwinCreationEnabled, photoCreationEnabled, digitalTwinCreationEnabled, photoCreationReason, digitalTwinCreationReason, directConsent: directConsent(), privateCatalog: privateCatalog(res.locals.tenantId), reservationCny: photoBudget.reservationCny,
+    res.json({ localPhotoUpload: currentDataAuthority() === 'local', configured: configured(), creationEnabled: photoCreationEnabled || digitalTwinCreationEnabled, photoCreationEnabled, digitalTwinCreationEnabled, photoCreationReason, digitalTwinCreationReason, directConsent: directConsent(), privateCatalog: privateCatalog(tenant), budgetExempt: tenantBudgetExempt, reservationCny: photoBudget.reservationCny,
       photoReservationCny: photoBudget.reservationCny, digitalTwinReservationCny: digitalTwinBudget.reservationCny,
       reason: commonReason || (!photoCreationEnabled && !digitalTwinCreationEnabled ? photoCreationReason || digitalTwinCreationReason : '') });
   });
@@ -245,6 +259,15 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
     }
     catch (e) { res.status(503).json({ error: message(e) }); }
   });
+  router.post('/voices/candidate-from-video', raw({ type: 'application/octet-stream', limit: '200mb' }), async (req, res) => {
+    try {
+      const bytes = req.body as Buffer;
+      if (!Buffer.isBuffer(bytes) || bytes.length < 10_000 || bytes.length > 200 * 1024 * 1024) throw new Error('请选择 200MB 以内的有效本人视频');
+      const result = await extractPresenterVoiceCandidate(bytes);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ audioBase64: result.audio.toString('base64'), durationSeconds: result.durationSeconds, nonSilentSeconds: result.nonSilentSeconds });
+    } catch (error) { res.status(400).json({ error: message(error) }); }
+  });
   router.post('/voices/clones', raw({ type: ['audio/webm', 'audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg'], limit: '10mb' }), async (req, res) => {
     try {
       const tenant = res.locals.tenantId as string;
@@ -268,15 +291,31 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         const previous = await find(tenant, 'voice_clone', requestId);
         if (previous) {
           if (previous.payload.digest !== digest || previous.payload.name !== name) throw new Error('同一提交标识不能更换录音或名称');
-          return { id: previous.id, status: previous.payload.status, voiceId: previous.payload.voiceId || '' };
+          return { id: previous.id, status: previous.payload.status, voiceId: previous.payload.voiceId || '', arkVoice: previous.payload.arkVoice };
         }
         const created = await store.create<Row>(COLLECTION, { tenant_id: tenant, kind: 'voice_clone', request_id: requestId,
           payload: { name, language, digest, status: 'submitting', voiceId: '', authorizationConfirmedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
         if (!created) throw new Error('音色任务记录保存失败，未调用 HeyGen');
         try {
-          const voiceId = await client().cloneVoice(name, bytes, mime, language, `voice-clone:${tenant}:${requestId}`);
-          await write(created, { voiceId, status: 'processing' });
-          return { id: created.id, status: 'processing', voiceId };
+          const normalizedAudio = await (options.normalizeVoiceAudio || normalizePresenterAudio)(bytes);
+          const candidateVoiceIds = await client().cloneVoice(name, normalizedAudio, 'audio/mpeg', language, `voice-clone:${tenant}:${requestId}`);
+          const voiceId = candidateVoiceIds[0]!;
+          const materialId = `presenter-voice-${hash(`${tenant}:${digest}`).slice(0,24)}`;
+          const filename = `${materialId}.mp3`, relative = tenantAssetRelativePath(tenant, filename);
+          const target = path.resolve('data/media', relative); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, normalizedAudio, { mode: 0o600 });
+          const objectKey = materialAssetObjectKey(tenant, filename); await objectStorageUpload({ key: objectKey, body: normalizedAudio, contentType: 'audio/mpeg' });
+          const head = await objectStorageHead(objectKey); if (!head?.etag) throw new Error('本人声音素材存储校验失败');
+          const records = readLocalMaterials();
+          saveLocalMaterials([...records.filter(item => item.id !== materialId), { id: materialId, name: `${name} · 本人声音`, type: 'audio', folder: 'presenter', scope: 'own', tenantId: tenant, file: relative, url: `/media/${relative}`, objectKey, objectEtag: head.etag, contentSha256: hash(normalizedAudio), size: `${Math.ceil(normalizedAudio.length / 1024)} KB`, sourceType: 'presenter-voice-reference', createdAt: new Date().toISOString() }]);
+          let arkVoice: { speakerId?: string; status: string; error?: string } = { status: 'not_configured' };
+          const arkVoiceKey = String(process.env.VOLCENGINE_VOICE_API_KEY || '').trim();
+          if (arkVoiceKey) {
+            const speakerId = `lingshu_${hash(`${tenant}:${requestId}`).slice(0,24)}`;
+            try { arkVoice = await cloneVolcengineVoice({ apiKey: arkVoiceKey, speakerId, audio: normalizedAudio, language, requestId }); }
+            catch (arkError) { arkVoice = { speakerId, status: 'failed', error: message(arkError) }; }
+          }
+          await write(created, { voiceId, candidateVoiceIds, status: 'processing', referenceAudioMaterialId: materialId, arkVoice });
+          return { id: created.id, status: 'processing', voiceId, arkVoice };
         } catch (error) {
           const rejected = error instanceof PresenterAudioPreparationError || error instanceof HeyGenRequestError && error.definitive;
           await write(created, { status: rejected ? 'failed' : 'uncertain', error: message(error) });
@@ -293,7 +332,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       const rows = await store.list<Row>(COLLECTION, { where: { tenant_id: tenant, kind: 'voice_clone' }, perPage: 100 });
       const realRows = rows.items.filter(row => row.payload.mock !== true);
       for (const row of realRows) if (!row.payload.voiceId && row.payload.status === 'uncertain' && /^HeyGen 400[：:]/.test(String(row.payload.error || ''))) await write(row, { status: 'failed' });
-      res.json(realRows.map(row => ({ id: row.id, name: row.payload.name, status: row.payload.status, error: row.payload.error || '', voiceId: row.payload.voiceId || '', createdAt: row.payload.createdAt })));
+      res.json(realRows.map(row => ({ id: row.id, name: row.payload.name, status: row.payload.status, error: row.payload.error || '', voiceId: row.payload.voiceId || '', arkVoice: row.payload.arkVoice, createdAt: row.payload.createdAt })));
     } catch (error) { res.status(400).json({ error: message(error) }); }
   });
   router.get('/voices/clones/:id', async (req, res) => {
@@ -302,12 +341,16 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       await checkPrivateAccount(tenant);
       const row = await own(req.params.id, tenant, 'voice_clone');
       if (!row.payload.voiceId && row.payload.status === 'uncertain' && /^HeyGen 400[：:]/.test(String(row.payload.error || ''))) await write(row, { status: 'failed' });
-      if (!row.payload.voiceId) { res.json({ id: row.id, status: row.payload.status, error: row.payload.error || '' }); return; }
-      const voice = await client().voice(row.payload.voiceId);
-      const listed = !voice.status ? await privateVoice(row.payload.voiceId).then(() => true).catch(() => false) : false;
-      const status = /^(complete|active)$/i.test(voice.status) || listed ? 'completed' : /^(failed|expired)$/i.test(voice.status) ? 'failed' : 'processing';
+      if (!row.payload.voiceId) { res.json({ id: row.id, status: row.payload.status, error: row.payload.error || '', arkVoice: row.payload.arkVoice }); return; }
+      const candidateIds = Array.isArray(row.payload.candidateVoiceIds) && row.payload.candidateVoiceIds.length ? row.payload.candidateVoiceIds : [row.payload.voiceId];
+      const voices = await Promise.all(candidateIds.map((id: string) => client().voice(id)));
+      const usable = await Promise.all(voices.map(async voice => /^(complete|active)$/i.test(voice.status) || (!voice.status && await privateVoice(voice.id).then(() => true).catch(() => false))));
+      const failed = voices.map(voice => /^(failed|expired)$/i.test(voice.status));
+      const candidates = voices.filter((_voice, index) => usable[index]).map(voice => ({ ...voice, provider: 'heygen' as const, selected: voice.id === row.payload.voiceId }));
+      const status = candidates.length && voices.every((_voice, index) => usable[index] || failed[index]) ? 'completed' : failed.every(Boolean) ? 'failed' : 'processing';
       await write(row, { status, error: status === 'failed' ? 'HeyGen 音色克隆失败' : '' });
-      res.json({ id: row.id, status, voice });
+      const voice = candidates.find(candidate => candidate.id === row.payload.voiceId) || candidates[0];
+      res.json({ id: row.id, status, voice, candidates, arkVoice: row.payload.arkVoice });
     } catch (error) { res.status(400).json({ error: message(error) }); }
   });
   router.post('/voices/bind', async (req, res) => {
@@ -325,10 +368,18 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         const defaults = row?.payload as ProductionDefaults | undefined;
         const presenter = defaults?.presenters.find(item => item.id === presenterId && item.authorized);
         if (!defaults || !presenter) throw new Error('当前企业人物不存在或未授权');
+        const clone = await cloneByHeygenVoice(tenant, voiceId);
+        const arkVoice = clone?.payload?.arkVoice;
+        const arkMapping = clone?.payload?.referenceAudioMaterialId ? { referenceAudioMaterialId: String(clone.payload.referenceAudioMaterialId), ...(arkVoice?.speakerId && arkVoice.status !== 'failed' ? { speakerId: String(arkVoice.speakerId) } : {}) } : undefined;
         const presenters = defaults.presenters.map(item => item.id === presenterId ? {
           ...item, voiceId, assetVersion: Math.max(1, item.assetVersion || 1) + (item.voiceId === voiceId ? 0 : 1),
           voiceAuthorization: { voiceId, recordedAt: new Date().toISOString(), source: 'user_confirmation' as const },
-          toolMappings: { ...item.toolMappings, heygen: { avatarId: item.avatarId || item.toolMappings?.heygen?.avatarId || '', voiceId } },
+          toolMappings: { ...item.toolMappings, heygen: { avatarId: item.avatarId || item.toolMappings?.heygen?.avatarId || '', voiceId }, ...(arkMapping ? { volcengineArk: arkMapping } : {}) },
+          rightsEvidence: arkMapping && item.rightsEvidence ? { ...item.rightsEvidence,
+            permittedProviders: [...new Set([...item.rightsEvidence.permittedProviders, 'volcengine_ark' as const])],
+            permittedUses: [...new Set([...item.rightsEvidence.permittedUses, 'voice_synthesis' as const])],
+            providerScopes: [...(item.rightsEvidence.providerScopes || []).filter(scope => scope.provider !== 'volcengine_ark'), { provider: 'volcengine_ark' as const, uses: ['voice_synthesis' as const] }],
+          } : item.rightsEvidence,
         } : item);
         const next = { ...defaults, presenters };
         if (!await store.update('studio_production_defaults', row.id, { payload: next })) throw new Error('音色绑定保存失败');
@@ -387,11 +438,12 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         trainingInfo = await (options.inspectVideo || inspectPresenterVideo)(bytes);
         if (trainingInfo.duration < 30 || trainingInfo.duration > 300) throw new Error('专家模式训练视频须为 30 秒至 5 分钟的连续录制');
         if (!trainingInfo.hasAudio) throw new Error('专家模式训练视频必须包含本人清晰说话音频');
-        if (Math.min(trainingInfo.width, trainingInfo.height) < 720 || trainingInfo.fps < 24) throw new Error('专家模式训练视频至少需要 720p、24fps；推荐 1080p、30fps');
-        if (mime === 'video/quicktime') {
+        if (mime !== 'video/mp4' || Math.min(trainingInfo.width, trainingInfo.height) < 720 || trainingInfo.fps < 24) {
           bytes = await (options.normalizeTrainingVideo || normalizePresenterTrainingVideo)(bytes);
           mime = 'video/mp4';
+          trainingInfo = await (options.inspectVideo || inspectPresenterVideo)(bytes);
         }
+        if (Math.min(trainingInfo.width, trainingInfo.height) < 720 || trainingInfo.fps < 24) throw new Error('专家模式训练视频至少需要 720p、24fps；推荐 1080p、30fps');
       }
       const tenant = res.locals.tenantId as string;
       const result = await exclusive(`presenter:${tenant}`, async () => {
@@ -488,7 +540,14 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         const row = await store.create<Row>(COLLECTION, { tenant_id: tenant, kind: 'creation', request_id: b.requestId,
           payload: { name: b.name.trim(), type: b.type, voiceId: b.voiceId, uploadId: b.uploadId, sourceDigest: upload.payload.digest, fingerprint, authorizationDeclared: true, authorized: false, subjectAdultConfirmed: true, ...(arkPreparation ? { arkPreparation } : {}), ...(reusePresenterId ? { reusePresenterId } : {}), status: 'submitting', consentStatus: 'pending', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
         if (!row) throw new Error('人物任务登记失败，未创建人物');
-        try { await (options.reserve ? options.reserve(`presenter:${row.id}`) : creationBudget(b.type).reserve('heygen', `presenter:${row.id}`)); }
+        const tenantBudgetExempt = budgetExempt(tenant);
+        let internalBudgetReserved = false;
+        try {
+          if (!tenantBudgetExempt) {
+            await (options.reserve ? options.reserve(`presenter:${row.id}`) : creationBudget(b.type).reserve('heygen', `presenter:${row.id}`));
+            internalBudgetReserved = !options.reserve;
+          }
+        }
         catch (e) { await write(row, { status: 'failed', error: message(e) }); throw e; }
         try {
           const remote = await client().create(b.type, b.name.trim(), upload.payload.assetId, `presenter:${row.id}`, reuseGroupId || undefined);
@@ -499,7 +558,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
           await write(row, { groupId, look, status: 'processing' });
         } catch (e) {
           if (e instanceof HeyGenRequestError && e.definitive) {
-            if (!options.reserve) await creationBudget(b.type).releaseRejected('heygen', `presenter:${row.id}`);
+            if (internalBudgetReserved) await creationBudget(b.type).releaseRejected('heygen', `presenter:${row.id}`);
             const capacity = /limit.*(?:avatar|group)|avatar.*slots|slots.*limit/i.test(message(e));
             return write(row, { status: 'failed', failureCategory: capacity ? 'capacity' : 'material', error: capacity ? 'HeyGen 人物名额已满，当前账号不能新增视频人物。请先处理账号人物名额，或使用同一人的已有授权人物；本次未创建人物。' : `${message(e)}。人物任务未创建，请修改素材后重新提交` });
           }
@@ -516,6 +575,25 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
     // creation lock for operator review.
     try { res.json(await refresh(await own(req.params.id, res.locals.tenantId, 'creation'))); }
     catch (e) { res.status(400).json({ error: message(e) }); }
+  });
+  router.post('/creations/:id/discard', async (req, res) => {
+    try {
+      const tenant = res.locals.tenantId as string;
+      const result = await exclusive(`presenter:${tenant}`, async () => {
+        const row = await own(req.params.id, tenant, 'creation');
+        if (['submitting', 'processing', 'pending_consent', 'uncertain'].includes(String(row.payload.status || ''))) {
+          throw new Error('人物任务仍在处理或待授权，不能删除；请先刷新到明确结果');
+        }
+        const defaults = (await store.list<Row>('studio_production_defaults', { where: { tenant_id: tenant }, perPage: 1 })).items[0]?.payload as ProductionDefaults | undefined;
+        const lookId = String(row.payload.look?.id || '');
+        const inUse = defaults?.presenters.some(item => item.avatarId === lookId
+          || item.rightsEvidence?.authorizationRef === `document://studio_presenter_assets/${row.id}/${lookId}`);
+        if (inUse) throw new Error('该人物已加入企业人物资产，请先在人物资产中取消授权后再删除记录');
+        if (!await store.delete(COLLECTION, row.id)) throw new Error('人物创建记录删除失败，请刷新后重试');
+        return { ok: true as const, id: row.id };
+      });
+      res.json(result);
+    } catch (e) { res.status(400).json({ error: message(e) }); }
   });
   router.post('/creations/:id/consent', async (req, res) => {
     try {
@@ -537,6 +615,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
           if (refreshed.status !== 'completed') throw new Error('照片人物仍在处理中，请稍后刷新状态');
           return refreshed;
         }
+        if (row.payload.consentRequestedAt) return refresh(row);
         let rerouteUrl: string | undefined;
         if (!assetId && req.body?.rerouteUrl) {
           const candidate = new URL(String(req.body.rerouteUrl));
@@ -544,7 +623,16 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
           if (!requestOrigin || candidate.origin !== requestOrigin || !['http:', 'https:'].includes(candidate.protocol)) throw new Error('授权返回地址无效');
           rerouteUrl = candidate.href;
         }
-        const result = await client().consent(row.payload.groupId, `consent:${row.id}:${req.body.requestId}`, assetId, rerouteUrl);
+        let result;
+        try {
+          result = await client().consent(row.payload.groupId, `consent:${row.id}:${req.body.requestId}`, assetId, rerouteUrl);
+        } catch (error) {
+          if (!consentAlreadyProcessing(error)) throw error;
+          const refreshed = await refresh(row);
+          if (refreshed.status === 'completed') return refreshed;
+          return write(row, { consentStatus: refreshed.consentStatus || 'pending', authorized: false,
+            consentRequestedAt: row.payload.consentRequestedAt || new Date().toISOString(), status: 'pending_consent', error: '' });
+        }
         const consentUrl = mediaUrl(result.url);
         if (consentUrl && !/(^|\.)heygen\.(com|ai)$/.test(new URL(consentUrl).hostname)) throw new Error('授权链接不属于可信供应商');
         if (!assetId && !consentUrl) throw new Error('未返回有效授权链接，请重新获取');
@@ -561,10 +649,12 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       let look: PresenterLook;
       let defaultVoice: string | undefined;
       let creationMode: PresenterAsset['creationMode'];
+      let arkPreparation: ArkPresenterPreparation | undefined;
       if (b.creationId) {
         const job = await refresh(await own(String(b.creationId), tenant, 'creation'));
         if (job.status !== 'completed' || !job.look) throw new Error('人物训练或本人授权尚未完成');
         look = job.look; defaultVoice = job.voiceId; creationMode = job.type === 'digital_twin' ? 'expert' : 'quick';
+        arkPreparation = job.arkPreparation;
       } else {
         const cached = publicLooks.get(`${tenant}:${String(b.lookId)}`);
         if (!cached || Date.now() - cached.at > 300000) throw new Error('请刷新可用人物列表后重新选择');
@@ -582,22 +672,36 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       if (voiceId !== defaultVoice && voiceId !== look.voiceId) {
         if (!validVoice(voiceId) && !(privateCatalog(tenant) && await privateVoice(voiceId))) throw new Error('请重新加载声音列表后选择可用声音');
       }
+      const clonedVoice = await cloneByHeygenVoice(tenant, voiceId);
+      const arkVoice = clonedVoice?.payload?.arkVoice;
+      const arkVoiceMapping = clonedVoice?.payload?.referenceAudioMaterialId ? {
+        referenceAudioMaterialId: String(clonedVoice.payload.referenceAudioMaterialId),
+        ...(arkVoice?.speakerId && arkVoice.status !== 'failed' ? { speakerId: String(arkVoice.speakerId) } : {}),
+      } : undefined;
       const result = await exclusive(`defaults:${tenant}`, async () => {
         const row = (await store.list<Row>('studio_production_defaults', { where: { tenant_id: tenant }, perPage: 1 })).items[0];
         const defaults: ProductionDefaults = row?.payload || EMPTY_DEFAULTS;
         const previous = defaults.presenters.find(p => p.avatarId === look.id && p.voiceId === voiceId);
         if (previous) {
           if (!previous.authorized) throw new Error('该人物使用授权尚未确认，请重新完成授权');
-          if (b.makeDefault !== true || defaults.defaultPresenterId === previous.id) return defaults;
-          const payload = { ...defaults, defaultPresenterId: previous.id };
+          const preparedIds = arkPreparation ? [arkPreparation.photoMaterialId, arkPreparation.videoMaterialId] : [];
+          const referenceMaterialIds = [...new Set([...(previous.referenceMaterialIds || []), ...preparedIds])];
+          const needsMaterials = referenceMaterialIds.length !== (previous.referenceMaterialIds || []).length;
+          const needsArkVoice = Boolean(arkVoiceMapping && JSON.stringify(previous.toolMappings?.volcengineArk || null) !== JSON.stringify(arkVoiceMapping));
+          if (!needsMaterials && !needsArkVoice && (b.makeDefault !== true || defaults.defaultPresenterId === previous.id)) return defaults;
+          const payload = { ...defaults,
+            presenters: defaults.presenters.map(p => p.id === previous.id ? { ...p, ...(needsMaterials ? { referenceMaterialIds } : {}),
+              ...(arkVoiceMapping ? { toolMappings: { ...p.toolMappings, volcengineArk: arkVoiceMapping } } : {}) } : p),
+            defaultPresenterId: b.makeDefault === true ? previous.id : defaults.defaultPresenterId };
           if (!await store.update('studio_production_defaults', row!.id, { payload })) throw new Error('默认人物保存失败，请重试');
           return payload;
         }
         if (defaults.presenters.length >= 50) throw new Error('企业人物已达到 50 个上限');
         const createdByTenant = Boolean(b.creationId);
         const presenter: PresenterAsset = { id: `presenter-${hash(`${look.id}:${voiceId}`).slice(0, 24)}`, name: String(b.name || look.name).slice(0, 100), avatarId: look.id, voiceId, authorized: true,
-          supportsAlpha: false, nativeOrientation: look.orientation, imageUrl: look.imageUrl, videoUrl: look.videoUrl, creationMode, assetVersion: 1, capabilities: ['talking'], toolMappings: { heygen: { avatarId: look.id, voiceId } }, rightsEvidence: createdByTenant
-            ? { authorizationRef: `document://studio_presenter_assets/${String(b.creationId)}/${look.id}`, consentRef: creationMode === 'quick' ? `consent://user-declaration/${String(b.creationId)}` : `consent://heygen/${look.groupId || look.id}`, grantedAt: new Date().toISOString(), subjectAdultConfirmed: true, permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'] }
+          ...(arkPreparation ? { referenceMaterialIds: [arkPreparation.photoMaterialId, arkPreparation.videoMaterialId] } : {}),
+          supportsAlpha: false, nativeOrientation: look.orientation, imageUrl: look.imageUrl, videoUrl: look.videoUrl, creationMode, assetVersion: 1, capabilities: ['talking'], toolMappings: { heygen: { avatarId: look.id, voiceId }, ...(arkVoiceMapping ? { volcengineArk: arkVoiceMapping } : {}) }, rightsEvidence: createdByTenant
+            ? { authorizationRef: `document://studio_presenter_assets/${String(b.creationId)}/${look.id}`, consentRef: creationMode === 'quick' ? `consent://user-declaration/${String(b.creationId)}` : `consent://heygen/${look.groupId || look.id}`, grantedAt: new Date().toISOString(), subjectAdultConfirmed: true, permittedProviders: arkVoiceMapping ? ['heygen', 'volcengine_ark'] : ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'], ...(arkVoiceMapping ? { providerScopes: [{ provider: 'heygen' as const, uses: ['digital_presenter' as const, 'voice_synthesis' as const] }, { provider: 'volcengine_ark' as const, uses: ['voice_synthesis' as const] }] } : {}) }
             : { authorizationRef: `license://heygen/public-catalog/${look.id}`, consentRef: `license://heygen/public-catalog/${look.groupId || look.id}`, grantedAt: new Date().toISOString(), subjectAdultConfirmed: false, permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'] } };
         const payload = { ...defaults, presenters: [...defaults.presenters, presenter], defaultPresenterId: b.makeDefault === true ? presenter.id : defaults.defaultPresenterId || presenter.id };
         const saved = row ? await store.update('studio_production_defaults', row.id, { payload }) : await store.create('studio_production_defaults', { tenant_id: tenant, payload });

@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { auth } from '../storage/index.js';
 import type { Identity } from '../storage/datastore.js';
 import { materialAssetTenantKey } from '../storage/materialAssets.js';
+import { bindDataAuthority, currentDataAuthority, type DataAuthority } from '../storage/dataAuthority.js';
 
 export const ASSET_SESSION_COOKIE = 'lingshu_asset_session';
 
@@ -67,7 +68,13 @@ function assetSignature(body: string): string {
 
 export function signAssetUrl(url: string, tenantId: string, ttlMs = 15 * 60 * 1000): string {
   const parsed = new URL(url, 'http://local');
-  const payload = Buffer.from(JSON.stringify({ path: parsed.pathname, tenantId: safeAssetTenantId(tenantId), expiresAt: Date.now() + ttlMs }), 'utf8').toString('base64url');
+  const dataAuthority = currentDataAuthority();
+  const payload = Buffer.from(JSON.stringify({
+    path: parsed.pathname,
+    tenantId: safeAssetTenantId(tenantId),
+    expiresAt: Date.now() + ttlMs,
+    ...(dataAuthority ? { dataAuthority } : {}),
+  }), 'utf8').toString('base64url');
   parsed.searchParams.set('assetToken', `${payload}.${assetSignature(payload)}`);
   return `${parsed.pathname}${parsed.search}`;
 }
@@ -81,7 +88,7 @@ export function signPathAssetUrl(url: string, tenantId: string, ttlMs = 15 * 60 
   return `${segments.join('/')}/signed/${token}/${filename}`;
 }
 
-export function verifyAssetToken(token: unknown, pathname: string): { tenantId: string } | null {
+export function verifyAssetToken(token: unknown, pathname: string): { tenantId: string; dataAuthority?: DataAuthority } | null {
   const [body, supplied] = String(token || '').split('.');
   if (!body || !supplied) return null;
   const expected = assetSignature(body);
@@ -89,9 +96,12 @@ export function verifyAssetToken(token: unknown, pathname: string): { tenantId: 
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
   try {
-    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as { path?: string; tenantId?: string; expiresAt?: number };
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as { path?: string; tenantId?: string; expiresAt?: number; dataAuthority?: unknown };
     if (payload.path !== pathname || !payload.tenantId || Number(payload.expiresAt || 0) <= Date.now()) return null;
-    return { tenantId: safeAssetTenantId(payload.tenantId) };
+    const dataAuthority = payload.dataAuthority === 'local' || payload.dataAuthority === 'pocketbase'
+      ? payload.dataAuthority
+      : undefined;
+    return { tenantId: safeAssetTenantId(payload.tenantId), ...(dataAuthority ? { dataAuthority } : {}) };
   } catch {
     return null;
   }
@@ -133,6 +143,7 @@ export async function requireScopedAsset(req: Request, res: Response, next: Next
     res.status(401).end();
     return;
   }
+  if (signed?.dataAuthority) bindDataAuthority(signed.dataAuthority);
   const segments = req.path.split('/').filter(Boolean);
   // Existing pre-isolation assets have no tenant metadata. Keep them available
   // only to authenticated users as legacy shared assets; all new writes use

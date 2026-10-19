@@ -53,7 +53,7 @@ function nextVersion(record: StarterRecord): string {
   return String(current + 1);
 }
 
-function queueItemId(input: SocialQueueInput): string {
+export function socialContentQueueItemId(input: SocialQueueInput): string {
   const digest = createHash('sha256').update(JSON.stringify({
     schemaVersion: 1,
     tenantId: input.tenantId,
@@ -379,7 +379,7 @@ function assertSubjectMatches(input: {
 
 function automaticResult(input: SocialQueueInput, runId: string): Starter198OrchestratorQueueResult {
   return {
-    queueItemId: queueItemId(input),
+    queueItemId: socialContentQueueItemId(input),
     runId,
     disposition: 'queued',
     missingFacts: [],

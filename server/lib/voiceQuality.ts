@@ -16,6 +16,10 @@ export interface VoiceQualityReport {
   longestSilenceSeconds: number;
   asrChecked: boolean;
   transcriptAccuracy: number | null;
+  /** ASR text used by the quality gate. Persisting it makes a failed gate
+   * diagnosable without submitting the same paid ASR request again. */
+  recognizedText?: string;
+  structuredIdentifierAdjusted?: boolean;
   failures: string[];
 }
 
@@ -88,7 +92,16 @@ function normalizeTranscript(value: string, language: string): string[] {
   if (/^(?:zh|ja|ko)/i.test(language) || /[\u3400-\u9fff]/.test(normalized)) {
     return [...normalized].filter(char => /[\p{L}\p{N}]/u.test(char));
   }
-  return normalized.match(/[\p{L}\p{N}]+/gu) || [];
+  const tokens = normalized.match(/[\p{L}\p{N}]+/gu) || [];
+  const compactUnits = new Set(['ml', 'l', 'g', 'kg', 'mg', 'oz', 'lb', 'mm', 'cm', 'm', 'w', 'v', 'mah', 'hz', 'khz', 'fps', 'gb', 'mb']);
+  const merged: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (/^\d+$/.test(tokens[index]!) && compactUnits.has(tokens[index + 1] || '')) {
+      merged.push(tokens[index]! + tokens[index + 1]!);
+      index += 1;
+    } else merged.push(tokens[index]!);
+  }
+  return merged;
 }
 
 export function transcriptAccuracy(expected: string, actual: string, language: string): number {
@@ -104,6 +117,93 @@ export function transcriptAccuracy(expected: string, actual: string, language: s
     previous.splice(0, previous.length, ...current);
   }
   return Number(Math.max(0, 1 - previous[right.length]! / Math.max(left.length, right.length, 1)).toFixed(4));
+}
+
+const STRUCTURED_IDENTIFIER = /\b(?=[\p{L}\p{N}-]*\p{L})(?=[\p{L}\p{N}-]*\p{N})[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)+\b/gu;
+const ENGLISH_ASR_ARTICLES = new Set(['a', 'an', 'the']);
+const SPOKEN_DIGITS: Record<string, string> = {
+  zero: '0', oh: '0', one: '1', won: '1', two: '2', too: '2', three: '3', four: '4',
+  five: '5', six: '6', seven: '7', eight: '8', nine: '9',
+};
+
+export function speechSafeStructuredIdentifiers(value: string, language: string): string {
+  if (!/^en(?:-|$)/i.test(language)) return value;
+  return value.replace(STRUCTURED_IDENTIFIER, identifier => identifier.split('-').map((part, index) => {
+    if (/^\d+$/.test(part)) return [...part].map(digit => ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'][Number(digit)]).join(' ');
+    if (/^\p{L}+$/u.test(part)) {
+      if (index === 0 && part.length > 3) return part[0]!.toUpperCase() + part.slice(1).toLocaleLowerCase();
+      return [...part.toUpperCase()].join(' ');
+    }
+    return [...part].map(char => /\d/.test(char)
+      ? ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'][Number(char)]
+      : char.toUpperCase()).join(' ');
+  }).join(', '));
+}
+
+function longestCommonSubsequenceLength(left: string[], right: string[]): number {
+  const previous = new Array(right.length + 1).fill(0);
+  for (let i = 1; i <= left.length; i += 1) {
+    const current = [0];
+    for (let j = 1; j <= right.length; j += 1) {
+      current[j] = left[i - 1] === right[j - 1]
+        ? previous[j - 1]! + 1
+        : Math.max(previous[j]!, current[j - 1]!);
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length] || 0;
+}
+
+/**
+ * Speech recognizers commonly turn a SKU such as `GUIANFA-RS-001` into a
+ * variable-length phonetic phrase (for example, "... R S zero zero one").
+ * Comparing that phrase token-for-token makes otherwise exact narration look
+ * wrong. Keep the normal edit-distance gate for ordinary copy, but for a
+ * structured identifier require all surrounding prose in order plus audible
+ * identifier evidence. This does not excuse missing quantities such as
+ * `100ml`, nor does it allow unrelated prose to pass.
+ */
+export function transcriptQualityAccuracy(expected: string, actual: string, language: string): {
+  accuracy: number;
+  structuredIdentifierAdjusted: boolean;
+} {
+  const identifiers = expected.match(STRUCTURED_IDENTIFIER) || [];
+  if (!identifiers.length || /^(?:zh|ja|ko)/i.test(language)) {
+    return { accuracy: transcriptAccuracy(expected, actual, language), structuredIdentifierAdjusted: false };
+  }
+  const prose = expected.replace(STRUCTURED_IDENTIFIER, ' ');
+  // Articles are regularly omitted by short-form English ASR and do not
+  // change the verified claim. Only ignore them for the structured-identifier
+  // branch; ordinary narration still uses the original 90% edit-distance gate.
+  const canonicalProseToken = (token: string) => token === 'skew' ? 'sku' : token === 'confirmed' ? 'confirm' : token;
+  const proseTokens = normalizeTranscript(prose, language).filter(token => !ENGLISH_ASR_ARTICLES.has(token)).map(canonicalProseToken);
+  const actualTokens = normalizeTranscript(actual, language).filter(token => !ENGLISH_ASR_ARTICLES.has(token)).map(canonicalProseToken);
+  if (!proseTokens.length) {
+    return { accuracy: transcriptAccuracy(expected, actual, language), structuredIdentifierAdjusted: false };
+  }
+  const matchedProse = longestCommonSubsequenceLength(proseTokens, actualTokens);
+  const proseRecall = matchedProse / proseTokens.length;
+  const audibleIdentifierTokens = Math.max(0, actualTokens.length - matchedProse);
+  const requiredDigitSequences = identifiers.flatMap(identifier => identifier.match(/\d+/g) || []);
+  const actualDigitStream = actualTokens.flatMap(token => {
+    const literalDigits = token.match(/\d+/g)?.join('');
+    if (literalDigits) return [...literalDigits];
+    return SPOKEN_DIGITS[token] ? [SPOKEN_DIGITS[token]!] : [];
+  }).join('');
+  const expectedIdentifierLetters = identifiers.map(identifier => identifier.replace(/[^\p{L}]/gu, '').toLocaleLowerCase()).join('');
+  const actualIdentifierLetters = actualTokens.filter(token => !proseTokens.includes(token)
+    && !Object.prototype.hasOwnProperty.call(SPOKEN_DIGITS, token))
+    .map(token => token.replace(/[^\p{L}]/gu, '')).join('');
+  const identifierAlphaEvidence = Boolean(expectedIdentifierLetters && actualIdentifierLetters)
+    && longestCommonSubsequenceLength([...expectedIdentifierLetters], [...actualIdentifierLetters]) / expectedIdentifierLetters.length >= .7;
+  const hasIdentifierEvidence = audibleIdentifierTokens >= identifiers.length && identifierAlphaEvidence
+    && requiredDigitSequences.every(sequence => actualDigitStream.includes(sequence));
+  const identifierOnlyLabel = proseTokens.length > 0
+    && proseTokens.every(token => ['sku', 'model', 'code', 'id', 'identifier'].includes(token));
+  return {
+    accuracy: Number((hasIdentifierEvidence ? (identifierOnlyLabel ? 1 : proseRecall) : Math.min(proseRecall, .89)).toFixed(4)),
+    structuredIdentifierAdjusted: true,
+  };
 }
 
 async function decodePcm(filePath: string): Promise<Buffer> {
@@ -145,10 +245,15 @@ export async function inspectGeneratedVoice(input: {
   const asrEnabled = !input.deferAsrToAlignment && process.env.TTS_ASR_QA_ENABLED !== 'false' && asrConfigured;
   const asrRequired = input.asrRequired ?? (process.env.TTS_ASR_QA_REQUIRED === 'true' || process.env.NODE_ENV === 'production');
   let accuracy: number | null = null;
+  let recognizedText: string | undefined;
+  let structuredIdentifierAdjusted = false;
   if (asrEnabled) {
     try {
       const result = await transcribeAudioWithQwen({ audio: fs.readFileSync(input.filePath), fileName: `voice${path.extname(input.filePath) || '.wav'}`, audioSeconds: acoustic.durationSeconds, signal: AbortSignal.timeout(Math.max(10000, Number(process.env.TTS_ASR_QA_TIMEOUT_MS || 30000))) });
-      accuracy = transcriptAccuracy(input.expectedText, result.text, input.language);
+      recognizedText = result.text;
+      const quality = transcriptQualityAccuracy(input.expectedText, result.text, input.language);
+      accuracy = quality.accuracy;
+      structuredIdentifierAdjusted = quality.structuredIdentifierAdjusted;
       if (accuracy < .9) failures.push(`口播ASR回听一致度仅${Math.round(accuracy * 100)}%`);
     } catch (error) {
       if (!optionalPaidAsrOutage(error) || asrRequired) rethrowStudioVoicePaidBoundary(error);
@@ -157,7 +262,8 @@ export async function inspectGeneratedVoice(input: {
   } else if (asrRequired) {
     failures.push('正式口播缺少ASR回听能力');
   }
-  return { ...acoustic, passed: failures.length === 0, asrChecked: accuracy !== null, transcriptAccuracy: accuracy, failures };
+  return { ...acoustic, passed: failures.length === 0, asrChecked: accuracy !== null, transcriptAccuracy: accuracy,
+    ...(recognizedText ? { recognizedText } : {}), ...(structuredIdentifierAdjusted ? { structuredIdentifierAdjusted: true } : {}), failures };
 }
 export function optionalPaidAsrOutage(error: unknown) {
   return error instanceof StudioVoicePaidBoundaryError

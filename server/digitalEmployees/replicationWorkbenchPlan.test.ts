@@ -46,6 +46,18 @@ test('missing reference model-input authorization blocks the person shot without
   assert.equal(result.automatedReplicationShots[0].blockerCode,'reference_model_input_authorization_required');
   assert.equal(result.storyboardSourcePlans['slot-1'].mode,'blocked');
   assert.equal(result.automatedReplicationShots[1].productionState,'ready');
+  assert.equal(result.automatedReplicationShots[1].firstFrameRequest.mode,'free_creation');
+  assert.equal(result.automatedReplicationShots[1].firstFrameRequest.sourceFirstFrameUrl,undefined);
+  assert.equal(result.storyboardSourcePlans['slot-2'].fallbackMode,'enterprise_product_display');
+  assert.match(result.automatedReplicationShots[1].firstFrameRequest.shotDescription,/未授权作为模型输入/);
+  assert.equal(result.videoKickoff.referenceAnalysis.details[1].firstFrameRef,'');
+  const legacy = structuredClone(result);
+  legacy.automatedReplicationPlan.version = 1;
+  legacy.storyboardSourcePlans['slot-2'] = { mode: 'ai', sceneType: 'factory', productIds: ['product-1'] };
+  const migrated = buildReplicationWorkbenchSpec({ ...input, reference: unauthorized, spec: legacy }) as any;
+  assert.equal(migrated.storyboardSourcePlans['slot-2'].fallbackMode, 'enterprise_product_display',
+    'migration must not retain a contradictory replication source plan');
+  assert.equal(migrated.storyboardSourcePlans['slot-2'].sceneType, 'product');
 });
 test('exact legacy shots supported and changed evidence cannot overwrite paid state',()=>{
   const legacy={...reference,aiAnalysis:{...reference.aiAnalysis,gemini:{shots:reference.aiAnalysis.gemini.scriptDetails15s}}};

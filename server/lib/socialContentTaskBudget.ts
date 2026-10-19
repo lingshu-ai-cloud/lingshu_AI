@@ -2,9 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { withPaidOperationLock } from './paidOperationLock.js';
+import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
 export interface SocialTaskBudgetScope {
     tenantId: string;
     taskId: string;
+    /** Canonical original-content ledger identity, resolved from server lineage.
+     * taskId remains the actual execution identity used by permits. */
+    budgetTaskId?: string;
     runId: string;
     planHash: string;
 }
@@ -26,6 +30,7 @@ export interface SocialTaskBudgetQuote {
 }
 export interface SocialTaskBudgetAuthorization {
     maximumCny: number;
+    maximumExecutionCny?:number;
     authorizationRef: string;
 }
 export interface SocialTaskCorrectionBudgetAuthorization {
@@ -56,6 +61,7 @@ export interface SocialTaskBudgetPorts {
     verifyRejection(scope: SocialTaskBudgetScope, operation: SocialTaskBudgetOperation, receiptRef: string): Promise<boolean>;
 }
 export interface SocialTaskBudgetEntry extends SocialTaskBudgetOperation {
+    executionTaskId?: string;
     runId: string;
     planHash: string;
     quoteRef: string;
@@ -69,6 +75,7 @@ interface Ledger {
     taskId: string;
     limitMicros: number;
     authorizationRefs: string[];
+    executionLimitMicros?:Record<string,number>;
     correctionAuthorization?: SocialTaskCorrectionBudgetAuthorization;
     correctionAuthorizationHistory?: SocialTaskCorrectionBudgetAuthorization[];
     entries: Record<string, SocialTaskBudgetEntry>;
@@ -82,7 +89,7 @@ export function sealSocialTaskCorrectionBudgetAuthorization(value: Omit<SocialTa
 }
 const micros = (n: number) => { const m = Math.round(n * 1e6); if (!Number.isFinite(n) || n <= 0 || !Number.isSafeInteger(m) || m <= 0)
     fail('amount_invalid'); return m; };
-function scopeCheck(s: SocialTaskBudgetScope) { if (![s.tenantId, s.taskId, s.runId].every(text) || !/^[a-f0-9]{64}$/.test(s.planHash))
+function scopeCheck(s: SocialTaskBudgetScope) { if (![s.tenantId, s.taskId, s.runId].every(text) || s.budgetTaskId!==undefined&&!text(s.budgetTaskId) || !/^[a-f0-9]{64}$/.test(s.planHash))
     fail('scope_invalid'); }
 function operationCheck(o: SocialTaskBudgetOperation) { if (![o.operationId, o.provider, o.model, o.accountRef, o.stage].every(text) || !/^[a-f0-9]{64}$/.test(o.fingerprint) || (o.shotId !== null && !text(o.shotId)))
     fail('operation_invalid'); }
@@ -93,7 +100,7 @@ function used(l: Ledger) { const n = Object.values(l.entries).reduce((v, e) => v
  * bound. This is a shared-volume ledger; crashed locks require reconciliation. */
 export class SocialContentTaskBudget {
     constructor(private readonly root = path.resolve(process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget'), private readonly ports: SocialTaskBudgetPorts) { }
-    private file(s: SocialTaskBudgetScope) { return path.join(this.root, hash(JSON.stringify([s.tenantId, s.taskId])) + '.json'); }
+    private file(s: SocialTaskBudgetScope) { return path.join(this.root, hash(JSON.stringify([s.tenantId, s.budgetTaskId??s.taskId])) + '.json'); }
     private read(s: SocialTaskBudgetScope): Ledger | null {
         const f = this.file(s);
         if (!fs.existsSync(f))
@@ -105,9 +112,9 @@ export class SocialContentTaskBudget {
         catch {
             return fail('ledger_corrupt');
         }
-        if (l.schemaVersion !== 1 || l.tenantId !== s.tenantId || l.taskId !== s.taskId || !Number.isSafeInteger(l.limitMicros) || l.limitMicros <= 0 || l.limitMicros > 20e6 || !Array.isArray(l.authorizationRefs) || !l.authorizationRefs.every(text) || !l.entries || typeof l.entries !== 'object' || Array.isArray(l.entries))
+        if (l.schemaVersion !== 1 || l.tenantId !== s.tenantId || l.taskId !== (s.budgetTaskId??s.taskId) || !Number.isSafeInteger(l.limitMicros) || l.limitMicros <= 0 || l.limitMicros > 20e6 || !Array.isArray(l.authorizationRefs) || !l.authorizationRefs.every(text) || !l.entries || typeof l.entries !== 'object' || Array.isArray(l.entries))
             fail('ledger_corrupt');
-        if (l.limitMicros > 10e6) {
+        if (l.correctionAuthorization || l.limitMicros > 15e6) {
             const grant = l.correctionAuthorization;
             if (!grant) fail('ledger_corrupt');
             const { recordHash, ...body } = grant;
@@ -131,10 +138,12 @@ export class SocialContentTaskBudget {
         }
         for (const [id, e] of Object.entries(l.entries)) {
             operationCheck(e);
+            if(e.executionTaskId!==undefined&&!text(e.executionTaskId))fail('ledger_corrupt');
             if (id !== hash(e.operationId) || !text(e.runId) || !/^[a-f0-9]{64}$/.test(e.planHash) || !text(e.quoteRef) || !Number.isSafeInteger(e.reservedMicros) || e.reservedMicros <= 0 || !['reserved', 'accepted', 'unknown', 'completed', 'rejected'].includes(e.status) || (e.receiptRef !== null && !text(e.receiptRef)))
                 fail('ledger_corrupt');
         }
         used(l);
+        if(l.executionLimitMicros&&Object.entries(l.executionLimitMicros).some(([id,limit])=>!text(id)||!Number.isSafeInteger(limit)||limit<0))fail('ledger_corrupt');
         return l;
     }
     private write(s: SocialTaskBudgetScope, l: Ledger) { fs.mkdirSync(this.root, { recursive: true, mode: 0o700 }); const f = this.file(s), temp = f + '.' + randomUUID() + '.tmp'; try {
@@ -159,13 +168,16 @@ export class SocialContentTaskBudget {
         if (fs.existsSync(temp))
             fs.unlinkSync(temp);
     } }
-    status(scope: SocialTaskBudgetScope) { scopeCheck(scope); const l = this.read(scope); if (!l) return null; const retainedMicros=used(l), correction=l.correctionAuthorization, correctionMatches=correction?.runId===scope.runId&&correction.planHash===scope.planHash; const limitMicros=correctionMatches?l.limitMicros:Math.min(l.limitMicros,10e6); return { limitCny: limitMicros / 1e6, retainedCny: retainedMicros / 1e6, remainingCny: Math.max(0, limitMicros - retainedMicros) / 1e6, correctionAuthorization: correctionMatches ? structuredClone(correction) : null, entries: structuredClone(Object.values(l.entries)) }; }
+    status(scope: SocialTaskBudgetScope) { scopeCheck(scope); const l = this.read(scope); if (!l) return null; const retainedMicros=used(l), correction=l.correctionAuthorization, correctionMatches=correction?.runId===scope.runId&&correction.planHash===scope.planHash; const limitMicros=correctionMatches?l.limitMicros:Math.min(l.limitMicros,correction?10e6:15e6); return { limitCny: limitMicros / 1e6, retainedCny: retainedMicros / 1e6, remainingCny: Math.max(0, limitMicros - retainedMicros) / 1e6, correctionAuthorization: correctionMatches ? structuredClone(correction) : null, entries: structuredClone(Object.values(l.entries)) }; }
     /** Applies a server-authored, scope-bound correction grant. This is not
      * exposed as a client budget setter: it may only extend an existing ¥10
      * ledger for the exact run and plan that incurred the defective spend. */
     async authorizeCorrection(scope: SocialTaskBudgetScope, grant: SocialTaskCorrectionBudgetAuthorization) {
         scopeCheck(scope);
-        return withPaidOperationLock(path.join(this.root, '.locks'), JSON.stringify([scope.tenantId, scope.taskId]), async () => {
+        // Existing correction grants bind the original task, run and plan.
+        // A child revision cannot rewrite that historical financial authority.
+        if(scope.budgetTaskId&&scope.budgetTaskId!==scope.taskId)fail('correction_original_task_required');
+        return withPaidOperationLock(path.join(this.root, '.locks'), JSON.stringify([scope.tenantId, scope.budgetTaskId??scope.taskId]), async () => {
             await this.ports.assertCurrent(scope);
             const ledger = this.read(scope);
             const { recordHash, ...body } = grant;
@@ -211,13 +223,19 @@ export class SocialContentTaskBudget {
         operations.forEach(operationCheck);
         if (new Set(operations.map(o => o.operationId)).size !== operations.length)
             fail('operation_duplicate');
-        return withPaidOperationLock(path.join(this.root, '.locks'), JSON.stringify([scope.tenantId, scope.taskId]), async () => {
+        return withPaidOperationLock(path.join(this.root, '.locks'), JSON.stringify([scope.tenantId, scope.budgetTaskId??scope.taskId]), async () => {
             await this.ports.assertCurrent(scope);
             const a = await this.ports.authorization(scope);
             if (!text(a.authorizationRef))
                 fail('authorization_missing');
-            const baseCap = Math.min(10e6, micros(a.maximumCny));
-            const l = this.read(scope) || { schemaVersion: 1 as const, tenantId: scope.tenantId, taskId: scope.taskId, limitMicros: baseCap, authorizationRefs: [], entries: {} };
+            const baseCap = Math.min(15e6, micros(a.maximumCny));
+            const l = this.read(scope) || { schemaVersion: 1 as const, tenantId: scope.tenantId, taskId: scope.budgetTaskId??scope.taskId, limitMicros: baseCap, authorizationRefs: [], entries: {} };
+            if(a.maximumExecutionCny!==undefined){
+              if(!Number.isFinite(a.maximumExecutionCny)||a.maximumExecutionCny<0)return fail('execution_allowance_invalid');
+              const ceiling=Math.round(a.maximumExecutionCny*1e6);if(!Number.isSafeInteger(ceiling))return fail('execution_allowance_invalid');
+              const limits=(l.executionLimitMicros??={}),key=hash(scope.taskId);
+              limits[key]=Math.min(limits[key]??ceiling,ceiling);
+            }
             const correction = l.correctionAuthorization;
             const correctionMatches = correction?.tenantId === scope.tenantId && correction.taskId === scope.taskId
                 && correction.runId === scope.runId && correction.planHash === scope.planHash;
@@ -228,7 +246,7 @@ export class SocialContentTaskBudget {
             for (const o of operations) {
                 const id = hash(o.operationId), prior = l.entries[id];
                 if (prior) {
-                    if ((['operationId', 'fingerprint', 'provider', 'model', 'accountRef', 'stage', 'shotId'] as const).some(k => o[k] !== prior[k]) || prior.runId !== scope.runId || prior.planHash !== scope.planHash)
+                    if ((prior.executionTaskId??l.taskId)!==scope.taskId || (['operationId', 'fingerprint', 'provider', 'model', 'accountRef', 'stage', 'shotId'] as const).some(k => o[k] !== prior[k]) || prior.runId !== scope.runId || prior.planHash !== scope.planHash)
                         fail('operation_changed');
                     if (prior.status === 'rejected')
                         fail('rejected_requires_new_operation');
@@ -237,10 +255,12 @@ export class SocialContentTaskBudget {
                 const q = await this.ports.quote(scope, o);
                 if (!text(q.quoteRef) || !Number.isFinite(Date.parse(q.validUntil)) || Date.parse(q.validUntil) <= Date.now())
                     fail('quote_missing_or_expired');
-                l.entries[id] = { ...o, runId: scope.runId, planHash: scope.planHash, quoteRef: q.quoteRef, reservedMicros: micros(q.upperBoundCny), status: 'reserved', receiptRef: null };
+                l.entries[id] = { ...o, executionTaskId:scope.taskId, runId: scope.runId, planHash: scope.planHash, quoteRef: q.quoteRef, reservedMicros: micros(q.upperBoundCny), status: 'reserved', receiptRef: null };
             }
-            if (used(l) > l.limitMicros)
+            if (!isInternalBudgetExemptTenant(scope.tenantId) && used(l) > l.limitMicros)
                 fail('exceeded');
+            const executionLimit=l.executionLimitMicros?.[hash(scope.taskId)];
+            if(executionLimit!==undefined&&Object.values(l.entries).filter(e=>(e.executionTaskId??l.taskId)===scope.taskId&&e.status!=='rejected').reduce((sum,e)=>sum+e.reservedMicros,0)>executionLimit)fail('execution_allowance_exceeded');
             await this.ports.assertCurrent(scope);
             this.write(scope, l);
             return this.status(scope)!;
@@ -265,10 +285,10 @@ export class SocialContentTaskBudget {
     private async mutate(scope: SocialTaskBudgetScope, id: string, fn: (e: SocialTaskBudgetEntry) => Promise<void>) {
         scopeCheck(scope);
         if (!text(id)) fail('operation_invalid');
-        return withPaidOperationLock(path.join(this.root, '.locks'), JSON.stringify([scope.tenantId, scope.taskId]), async () => {
+        return withPaidOperationLock(path.join(this.root, '.locks'), JSON.stringify([scope.tenantId, scope.budgetTaskId??scope.taskId]), async () => {
             await this.ports.assertCurrent(scope);
             const ledger = this.read(scope), entry = ledger?.entries[hash(id)];
-            if (!ledger || !entry || entry.runId !== scope.runId || entry.planHash !== scope.planHash) fail('entry_scope_missing');
+            if (!ledger || !entry || (entry.executionTaskId??ledger.taskId)!==scope.taskId || entry.runId !== scope.runId || entry.planHash !== scope.planHash) fail('entry_scope_missing');
             await fn(entry);
             await this.ports.assertCurrent(scope);
             this.write(scope, ledger);

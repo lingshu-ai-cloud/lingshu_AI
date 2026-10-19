@@ -8,6 +8,8 @@ import { objectStorageGetObject } from '../storage/objectStorage.js';
 import { postgresListWithPocketBaseFilter, postgresStore, selectedDataBackend } from '../storage/postgres.js';
 import type { DataStore } from '../storage/datastore.js';
 import { materialAssetV2FromRecord, type MaterialAssetV2Metadata } from '../../shared/contracts/materialAssetV2.js';
+import { pbStore } from '../storage/pbStore.js';
+import { currentDataAuthority } from '../storage/dataAuthority.js';
 
 export interface CloudMaterialRecord extends Record<string, unknown> {
   id: string;
@@ -74,6 +76,38 @@ export interface CreateCloudMaterialInput {
   poster?: CloudMaterialFileInput | CloudMaterialObjectInput;
 }
 
+export interface VerifiedDeduplicatedMaterialUpdate {
+  title?: string;
+  folder?: string;
+  type?: 'video' | 'image' | 'audio';
+  duration?: number;
+  width?: number;
+  height?: number;
+  sourceType?: string;
+  sourceName?: string;
+  productId?: string;
+  productName?: string;
+  tags?: string;
+  shotFunction?: string;
+  licenseEvidence?: string;
+  commercialUseApproved?: boolean;
+  derivativesApproved?: boolean;
+  rawLibraryUseApproved?: boolean;
+}
+
+function verifiedDeduplicatedMaterialFields(
+  value: VerifiedDeduplicatedMaterialUpdate | undefined,
+): Record<string, unknown> {
+  if (!value) return {};
+  return Object.fromEntries(([
+    'title', 'folder', 'type', 'duration', 'width', 'height', 'sourceType', 'sourceName',
+    'productId', 'productName', 'tags', 'shotFunction', 'licenseEvidence',
+    'commercialUseApproved', 'derivativesApproved', 'rawLibraryUseApproved',
+  ] satisfies Array<keyof VerifiedDeduplicatedMaterialUpdate>)
+    .filter(key => value[key] !== undefined)
+    .map(key => [key, value[key]]));
+}
+
 const FALLBACK_POSTER_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
@@ -99,7 +133,32 @@ function isObjectInput(file: CloudMaterialFileInput | CloudMaterialObjectInput):
 }
 
 function usePostgresMaterials(request: typeof adminFetch): boolean {
-  return request === adminFetch && selectedDataBackend() === 'postgres';
+  return request === adminFetch
+    && currentDataAuthority() !== 'local'
+    && selectedDataBackend() === 'postgres';
+}
+
+/**
+ * Material metadata must follow the authority selected by authentication.
+ *
+ * Most of this module predates local-authenticated preview accounts and used
+ * `adminFetch` directly. That is correct for a PocketBase-authenticated
+ * request, but a local-authenticated request is deliberately forbidden from
+ * reaching PocketBase. New uploads already store their bytes in object
+ * storage, so their metadata can safely use the same local DataStore as the
+ * rest of the request instead of crossing that authority boundary.
+ *
+ * A caller-supplied request remains an explicit test/adapter port and must not
+ * be replaced with an implicit store.
+ */
+function materialMetadataStore(
+  request: typeof adminFetch,
+  explicit?: DataStore,
+): DataStore | undefined {
+  if (explicit) return explicit;
+  if (request !== adminFetch) return undefined;
+  if (currentDataAuthority() === 'local') return pbStore;
+  return selectedDataBackend() === 'postgres' ? postgresStore : undefined;
 }
 
 function assertMaterialV2ProductBinding(
@@ -219,11 +278,12 @@ export async function createCloudMaterial(
   };
   if (!isObjectInput(poster)) form.append('posterFile', await cloudMaterialBlob(poster), poster.name);
 
-  if (usePostgresMaterials(request)) {
+  const metadataStore = materialMetadataStore(request);
+  if (metadataStore) {
     if (!isObjectInput(input.media) || !isObjectInput(poster)) {
-      throw new Error('PostgreSQL material metadata requires media and poster bytes to be stored in COS first');
+      throw new Error('Material metadata requires media and poster bytes to be stored in object storage first');
     }
-    const record = await postgresStore.create<CloudMaterialRecord>('materials', fields);
+    const record = await metadataStore.create<CloudMaterialRecord>('materials', fields);
     if (!record?.id || materialTenantId(record) !== input.tenantId) throw new Error('material database returned an invalid tenant record');
     return record;
   }
@@ -258,8 +318,9 @@ async function resolveCloudMaterialPlaybackUrl(
   if (pending) return pending;
 
   const request = (async () => {
-    const record = selectedDataBackend() === 'postgres'
-      ? await postgresStore.getById<CloudMaterialRecord>('materials', id)
+    const metadataStore = materialMetadataStore(adminFetch);
+    const record = metadataStore
+      ? await metadataStore.getById<CloudMaterialRecord>('materials', id)
       : await (async () => {
         const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`);
         return response.ok ? response.json() as Promise<CloudMaterialRecord> : null;
@@ -350,9 +411,10 @@ export type MaterialSourceStatus = { source: 'server' | 'database'; state: 'read
 export async function readCloudMaterialLibrary(tenantId: string, request: typeof adminFetch = adminFetch, dataStore?: DataStore): Promise<{ items: Array<Record<string, unknown>>; source: MaterialSourceStatus }> {
   try {
     const rows: CloudMaterialRecord[] = [];
-    if (dataStore || usePostgresMaterials(request)) {
+    const metadataStore = materialMetadataStore(request, dataStore);
+    if (metadataStore) {
       for (let page = 1; ; page += 1) {
-        const data = await (dataStore ?? postgresStore).list<CloudMaterialRecord>('materials', { page, perPage: 500 });
+        const data = await metadataStore.list<CloudMaterialRecord>('materials', { page, perPage: 500 });
         rows.push(...data.items.filter(item => canAccessCloudMaterial(item, tenantId)));
         if (page >= data.totalPages) break;
         if (page >= 100) throw Error('material_pagination_limit');
@@ -382,8 +444,9 @@ export async function listCloudMaterials(tenantId: string): Promise<Array<Record
 }
 
 export async function getCloudMaterialRecord(id: string, tenantId?: string): Promise<Record<string, unknown> | null> {
-  if (selectedDataBackend() === 'postgres') {
-    const record = await postgresStore.getById<CloudMaterialRecord>('materials', id);
+  const metadataStore = materialMetadataStore(adminFetch);
+  if (metadataStore) {
+    const record = await metadataStore.getById<CloudMaterialRecord>('materials', id);
     return record && (!tenantId || canAccessCloudMaterial(record, tenantId)) ? record : null;
   }
   const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`);
@@ -394,8 +457,9 @@ export async function getCloudMaterialRecord(id: string, tenantId?: string): Pro
 
 /** 写操作只能落在当前租户自己的私有素材上；共享素材对普通租户只读。 */
 export async function getOwnedCloudMaterialRecord(id: string, tenantId: string): Promise<Record<string, unknown> | null> {
-  if (selectedDataBackend() === 'postgres') {
-    const record = await postgresStore.getById<CloudMaterialRecord>('materials', id);
+  const metadataStore = materialMetadataStore(adminFetch);
+  if (metadataStore) {
+    const record = await metadataStore.getById<CloudMaterialRecord>('materials', id);
     return record && String(record.scope || 'own') !== 'shared' && materialTenantId(record) === tenantId ? record : null;
   }
   const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`);
@@ -411,6 +475,15 @@ export async function findOwnedCloudMaterialByHash(
 ): Promise<CloudMaterialRecord | null> {
   if (!tenantId.trim() || !/^[a-f0-9]{64}$/i.test(sha256)) return null;
   const filter = `tenantId="${pocketBaseFilterValue(tenantId)}" && scope="own" && sha256="${sha256.toLowerCase()}"`;
+  const metadataStore = materialMetadataStore(request);
+  if (metadataStore && !usePostgresMaterials(request)) {
+    const result = await metadataStore.list<CloudMaterialRecord>('materials', {
+      where: { tenantId, scope: 'own', sha256: sha256.toLowerCase() },
+      page: 1,
+      perPage: 1,
+    });
+    return result.items[0] || null;
+  }
   if (usePostgresMaterials(request)) {
     const result = await postgresListWithPocketBaseFilter<CloudMaterialRecord>('materials', { filter, page: 1, perPage: 1 });
     return result.items[0] || null;
@@ -432,6 +505,16 @@ async function ownedCloudMaterialByHash(
   request: typeof adminFetch,
 ): Promise<CloudMaterialRecord | null> {
   const filter = `tenantId = "${pocketBaseFilterValue(tenantId)}" && sha256 = "${sha256.toLowerCase()}" && scope != "shared"`;
+  const metadataStore = materialMetadataStore(request);
+  if (metadataStore && !usePostgresMaterials(request)) {
+    const result = await metadataStore.list<CloudMaterialRecord>('materials', {
+      where: { tenantId, scope: 'own', sha256: sha256.toLowerCase() },
+      page: 1,
+      perPage: 2,
+    });
+    if (result.totalItems > 1) throw new Error('duplicate tenant material hash records');
+    return result.items[0] || null;
+  }
   if (usePostgresMaterials(request)) {
     const result = await postgresListWithPocketBaseFilter<CloudMaterialRecord>('materials', { filter, page: 1, perPage: 2 });
     if (result.totalItems > 1) throw new Error('duplicate tenant material hash records');
@@ -451,7 +534,15 @@ async function ownedCloudMaterialByHash(
  * entry point, instead of creating competing copies with different ownership.
  */
 export async function upsertTenantUploadCloudMaterial(
-  input: CreateCloudMaterialInput & { sourceEntry: Exclude<MaterialSourceEntry, 'platform_operations'> },
+  input: CreateCloudMaterialInput & {
+    sourceEntry: Exclude<MaterialSourceEntry, 'platform_operations'>;
+    /**
+     * Metadata revalidated by the application server from the uploaded bytes.
+     * It is applied only when hash deduplication reuses an existing row, so a
+     * repeated upload cannot retain stale product binding, duration or rights.
+     */
+    verifiedDeduplicatedUpdate?: VerifiedDeduplicatedMaterialUpdate;
+  },
   request: typeof adminFetch = adminFetch,
 ): Promise<Record<string, unknown>> {
   if (input.scope === 'shared') throw new Error('tenant upload cannot be platform shared');
@@ -477,13 +568,21 @@ export async function upsertTenantUploadCloudMaterial(
     sourceEntry: input.sourceEntry === 'enterprise_knowledge' ? input.sourceEntry : current.sourceEntry || input.sourceEntry,
     sourceEntries,
   };
+  const updateFields = {
+    ...verifiedDeduplicatedMaterialFields(input.verifiedDeduplicatedUpdate),
+    provenance,
+    ...(input.productId ? { productId: input.productId } : {}),
+    ...(input.productName ? { productName: input.productName } : {}),
+  };
+  const metadataStore = materialMetadataStore(request);
+  if (metadataStore) {
+    const saved = await metadataStore.update('materials', existing.id, updateFields);
+    if (!saved) throw new Error('material entry association update failed');
+    return cloudMaterialView({ ...existing, ...updateFields } as CloudMaterialRecord);
+  }
   const response = await request(`/api/collections/materials/records/${encodeURIComponent(existing.id)}`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      provenance,
-      ...(input.productId ? { productId: input.productId } : {}),
-      ...(input.productName ? { productName: input.productName } : {}),
-    }),
+    body: JSON.stringify(updateFields),
   });
   if (!response.ok) throw new Error(`material entry association update failed (${response.status})`);
   const updated = await response.json() as CloudMaterialRecord;
@@ -537,10 +636,11 @@ export async function upsertSocialTaskCloudMaterial(
       ].map(String).filter(Boolean))),
       ...(productRef ? { productRef } : {}),
     };
-    if (usePostgresMaterials(request)) {
-      const updated = await postgresStore.update('materials', existing.id, { provenance: merged, ...(productId ? { productId } : {}) });
+    const metadataStore = materialMetadataStore(request);
+    if (metadataStore) {
+      const updated = await metadataStore.update('materials', existing.id, { provenance: merged, ...(productId ? { productId } : {}) });
       if (!updated) throw new Error('material association update failed (404)');
-      const record = await postgresStore.getById<CloudMaterialRecord>('materials', existing.id);
+      const record = await metadataStore.getById<CloudMaterialRecord>('materials', existing.id);
       if (!record) throw new Error('material association update returned no record');
       return cloudMaterialView(record);
     }
@@ -579,10 +679,11 @@ export async function deleteOwnedCloudMaterial(
   tenantId: string,
   request: typeof adminFetch = adminFetch,
 ): Promise<'deleted' | 'not_found'> {
-  if (usePostgresMaterials(request)) {
-    const record = await postgresStore.getById<CloudMaterialRecord>('materials', id);
+  const metadataStore = materialMetadataStore(request);
+  if (metadataStore) {
+    const record = await metadataStore.getById<CloudMaterialRecord>('materials', id);
     if (!record || String(record.scope || 'own') === 'shared' || materialTenantId(record) !== tenantId) return 'not_found';
-    const deleted = await postgresStore.delete('materials', id);
+    const deleted = await metadataStore.delete('materials', id);
     if (!deleted) return 'not_found';
     playbackUrlCache.delete(`${tenantId}:${id}:videoFile`);
     playbackUrlCache.delete(`${tenantId}:${id}:posterFile`);
@@ -602,7 +703,8 @@ export async function deleteOwnedCloudMaterial(
 }
 
 export async function updateCloudMaterial(id: string, fields: Record<string, unknown>): Promise<boolean> {
-  if (selectedDataBackend() === 'postgres') return postgresStore.update('materials', id, fields);
+  const metadataStore = materialMetadataStore(adminFetch);
+  if (metadataStore) return metadataStore.update('materials', id, fields);
   const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -645,8 +747,9 @@ export async function fetchCloudMaterial(
   tenantId?: string,
   request: typeof adminFetch = adminFetch,
 ): Promise<Response | null> {
-  const record = usePostgresMaterials(request)
-    ? await postgresStore.getById<CloudMaterialRecord>('materials', id)
+  const metadataStore = materialMetadataStore(request);
+  const record = metadataStore
+    ? await metadataStore.getById<CloudMaterialRecord>('materials', id)
     : await (async () => {
       const recordResponse = await request(`/api/collections/materials/records/${encodeURIComponent(id)}`);
       return recordResponse.ok ? recordResponse.json() as Promise<CloudMaterialRecord> : null;

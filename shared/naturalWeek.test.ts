@@ -1,0 +1,3 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {businessDate,naturalWeek} from './naturalWeek.js';
+test('a Thursday creation belongs to the current Monday–Sunday week',()=>{assert.deepEqual(naturalWeek('2026-10-15'),{start:'2026-10-12',end:'2026-10-18',timeZone:'Asia/Shanghai'});assert.equal(naturalWeek('2026-10-14').start,'2026-10-12');});
+test('timezone boundary, Sunday, month and year rollover are exact',()=>{assert.equal(businessDate('2026-10-11T16:00:00Z'),'2026-10-12');assert.equal(naturalWeek('2026-10-18T15:59:59Z').start,'2026-10-12');assert.equal(naturalWeek('2026-10-18T16:00:00Z').start,'2026-10-19');assert.equal(naturalWeek('2027-01-01').start,'2026-12-28');assert.throws(()=>naturalWeek('2026-02-31'));});

@@ -58,7 +58,14 @@ export interface PresenterAsset {
   commercialRightsStatus?: 'cleared' | 'restricted' | 'expired';
   consistencyKey?: string;
   arkCertification?: ArkPresenterCertification;
-  toolMappings?: { heygen?: { avatarId: string; voiceId: string }; runway?: { referenceMaterialIds: string[] }; sd?: { referenceMaterialIds: string[] }; seedance?: { referenceMaterialIds: string[] } };
+  toolMappings?: {
+    heygen?: { avatarId: string; voiceId: string };
+    /** One user recording is retained as the cross-provider voice identity. */
+    volcengineArk?: { speakerId?: string; referenceAudioMaterialId?: string };
+    runway?: { referenceMaterialIds: string[] };
+    sd?: { referenceMaterialIds: string[] };
+    seedance?: { referenceMaterialIds: string[] };
+  };
 }
 export interface ProductionDefaults {
   preference: AppearancePreference;
@@ -160,7 +167,8 @@ export function presenterAssetFingerprint(asset: PresenterAsset): string {
   const ark = asset.arkCertification ? { projectName: asset.arkCertification.projectName, groupId: asset.arkCertification.groupId || '', assetUri: asset.arkCertification.assetUri,
     assetType: asset.arkCertification.assetType, status: asset.arkCertification.status, materialId: asset.arkCertification.materialId,
     syncedAt: asset.arkCertification.syncedAt || '', verificationSource: asset.arkCertification.verificationSource || '', manualConfirmation: asset.arkCertification.manualConfirmation || null } : null;
-  return JSON.stringify({ avatarId, voiceId, voiceAuthorization: asset.voiceAuthorization || null, runway: [...new Set(runway.map(String))].sort(), sd: [...new Set(sd.map(String))].sort(), rights, ark,
+  const arkVoice = asset.toolMappings?.volcengineArk || null;
+  return JSON.stringify({ avatarId, voiceId, voiceAuthorization: asset.voiceAuthorization || null, arkVoice, runway: [...new Set(runway.map(String))].sort(), sd: [...new Set(sd.map(String))].sort(), rights, ark,
     supportsAlpha: Boolean(asset.supportsAlpha), nativeOrientation: asset.nativeOrientation || 'unknown' });
 }
 export const newShotProduction = (narration = '', presenterId = '', defaults?: Pick<ProductionDefaults, 'defaultSound' | 'defaultLayout'>): ShotProduction => ({

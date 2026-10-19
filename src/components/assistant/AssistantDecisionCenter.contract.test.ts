@@ -4,7 +4,9 @@ import test from 'node:test';
 
 const source = readFileSync(new URL('./AssistantDecisionCenter.tsx', import.meta.url), 'utf8');
 const productionSource = readFileSync(new URL('./AssistantProductionDecisionCards.tsx', import.meta.url), 'utf8');
+assert.doesNotMatch(source, /take_over:\s*UserRoundCheck/, 'Lingxiaoshu must not render a human-takeover action icon');
 const styles = readFileSync(new URL('./assistantDecisionCenter.css', import.meta.url), 'utf8');
+assert.match(styles, /\.assistant-decision-card__action\s*\{[^}]*white-space:\s*nowrap/, 'decision buttons must keep short action labels on one line');
 
 test('assistant is a one-card decision surface with chat only in the detail empty state', () => {
   assert.match(source, /feed\?\.items\[0\]/, 'only the first priority item is selected');
@@ -126,7 +128,15 @@ test('start uncertainty is reconciled without resubmitting the command', () => {
   assert.match(source, /window\.setInterval\(reconcileIfVisible, 15_000\)/, 'uncertain starts are checked at a restrained interval while visible');
   assert.match(source, /busyAction=\{busyAction \|\| \(\(loading \|\| startReconciliation\)/, 'an uncertain start keeps all decision actions disabled during reconciliation');
   const reconcileSource = source.slice(source.indexOf('const reconcileWeeklyStart'), source.indexOf('const act = useCallback'));
-  assert.doesNotMatch(reconcileSource, /client\.execute|approveGoal|approve_and_start/, 'reconciliation never repeats the start mutation');
+  assert.doesNotMatch(reconcileSource, /client\.execute|approveGoal/, 'reconciliation never repeats the start mutation');
+});
+
+test('task recovery timeout is treated as a queued command and reconciled read-only', () => {
+  assert.match(source, /\['approve_and_start', 'retry_task', 'replan_task'\]\.includes\(action\.id\)/, 'recovery commands enter bounded reconciliation after transport uncertainty');
+  assert.match(source, /pending\.action\.id !== 'approve_and_start'[\s\S]{0,240}client\.feed\(\{ page, goalId \}\)/, 'task recovery is reconciled by reading the authoritative feed');
+  assert.match(source, /item\.id === pending\.card\.id[\s\S]{0,100}item\.subject\.version === pending\.card\.subject\.version/, 'the original optimistic version remains pending until the command applies');
+  assert.match(source, /恢复指令已提交[\s\S]{0,120}请勿重复提交/, 'the UI explains that the safe command is queued instead of reporting a false failure');
+  assert.match(source, /type=\{startReconciliation \? 'warning' : 'error'\}/, 'uncertain commands use warning rather than error semantics');
 });
 
 test('only stale conflicts are replaced by a silent feed refresh', () => {

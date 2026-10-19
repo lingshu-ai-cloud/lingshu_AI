@@ -1,7 +1,8 @@
 <view class="page-shell">
   <view class="top-safe" style="height:{{statusBarHeight}}px"></view>
   <view class="identity-bar">
-    <view class="identity-copy"><text class="organization">{{organization}}</text><view class="edition" bindtap="openEdition">{{edition}}⌄</view></view>
+    <view class="identity-copy" bindtap="openEdition"><text class="organization">{{organization}}</text><text class="edition-chevron">⌄</text></view>
+    <view class="edition">{{edition}}</view>
   </view>
 
   <view class="content">

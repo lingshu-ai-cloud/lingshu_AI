@@ -1,6 +1,7 @@
 import { Alert, Button, Collapse, Descriptions, Empty, Select, Skeleton, Table, Tag } from 'antd';
 import { BarChart3, MessageSquareText, RefreshCw, Wallet } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { smartBusinessShowcaseAds, smartBusinessShowcasePerformance } from '../../dev/smartBusinessShowcaseData';
 import type { BusinessMetric, DigitalEmployeeOverview } from '../../lib/digitalEmployees';
 import { overviewData, overviewEntries, type AdReport, type ReportEntry } from '../../lib/adOverview';
 import { platformAdsRequest, type PlatformAdTask } from '../../lib/platformAds';
@@ -104,7 +105,7 @@ function AdReportDetail({ entry }: { entry: ReportEntry }) {
   ]}/> }]}/></div>;
 }
 
-function AdvertisingDetails({ startsAt, endsAt, onNavigate }: { startsAt: string; endsAt: string; onNavigate?: Props['onNavigate'] }) {
+function AdvertisingDetails({ startsAt, endsAt, attributionAvailable, onNavigate }: { startsAt: string; endsAt: string; attributionAvailable: boolean; onNavigate?: Props['onNavigate'] }) {
   const [tasks, setTasks] = useState<PlatformAdTask[]>([]);
   const [entries, setEntries] = useState<ReportEntry[]>([]);
   const [busy, setBusy] = useState(true);
@@ -114,6 +115,13 @@ function AdvertisingDetails({ startsAt, endsAt, onNavigate }: { startsAt: string
   useEffect(() => {
     const controller = new AbortController();
     setBusy(true); setError('');
+    const showcase = smartBusinessShowcaseAds(startsAt, endsAt);
+    if (showcase) {
+      setTasks(showcase.tasks);
+      setEntries(showcase.entries);
+      setBusy(false);
+      return () => controller.abort();
+    }
     void (async () => {
       try {
         const response = await platformAdsRequest<{ items: PlatformAdTask[] }>('/tasks', { signal: controller.signal });
@@ -135,7 +143,7 @@ function AdvertisingDetails({ startsAt, endsAt, onNavigate }: { startsAt: string
       finally { if (!controller.signal.aborted) setBusy(false); }
     })();
     return () => controller.abort();
-  }, [revision]);
+  }, [endsAt, revision, startsAt]);
   const currencies = [...new Set(tasks.map(task => task.currency))];
   const chosen = currencies.includes(currency as PlatformAdTask['currency']) ? currency : currencies[0] || 'CNY';
   const scoped = overviewEntries(tasks, entries);
@@ -148,7 +156,7 @@ function AdvertisingDetails({ startsAt, endsAt, onNavigate }: { startsAt: string
         { label: '周期花费小计', value: money(aggregate.spend, chosen) }, { label: '周期曝光', value: number(aggregate.impressions) },
         { label: '周期点击', value: number(aggregate.clicks) }, { label: '点击率', value: aggregate.impressions && aggregate.clicks !== null ? `${number(aggregate.clicks / aggregate.impressions * 100, 2)}%` : '—' },
       ]}/>
-      <p className="text-xs text-text-secondary">{startsAt} — {endsAt} · 平台报告日期。{aggregate.stale ? '包含历史快照；' : ''}{aggregate.complete ? '当前周期报告完整。' : '仅统计已返回的数据，缺失日期不补零。'} 计划可能映射同一广告资源，小计不作为账号总账；未建立广告归因，不计算询盘成本或 ROAS。</p>
+      <p className="text-xs text-text-secondary">{startsAt} — {endsAt} · 平台报告日期。{aggregate.stale ? '包含历史快照；' : ''}{aggregate.complete ? '当前周期报告完整。' : '仅统计已返回的数据，缺失日期不补零。'} 计划可能映射同一广告资源，小计不作为账号总账；{attributionAvailable ? '归因询盘与 ROAS 使用经营快照中的广告归因回执。' : '未建立广告归因，不计算询盘成本或 ROAS。'}</p>
       <div className="grid gap-4 xl:grid-cols-2"><LsDataChart title="每日投流花费" kind="line" unit={chosen} labels={aggregate.daily.map(item => item.date)} series={[{ label: '平台回传花费', values: aggregate.daily.map(item => item.spend) }]} height={220}/><LsDataChart title="每日曝光与点击" kind="line" unit="次" labels={aggregate.daily.map(item => item.date)} series={[{ label: '曝光', values: aggregate.daily.map(item => item.impressions) }, { label: '点击', values: aggregate.daily.map(item => item.clicks) }]} height={220}/></div>
       <Collapse items={aggregate.selected.map(entry => ({ key: entry.id, label: <span className="break-words font-medium">{entry.name}</span>, extra: <Tag color={entry.error ? 'warning' : 'default'}>{entry.error ? '读取异常' : entry.report?.source === 'provider' ? '平台报告' : entry.report?.source === 'provider_snapshot' ? '历史快照' : '待回传'}</Tag>, children: <AdReportDetail entry={entry}/> }))}/>
     </>}
@@ -166,6 +174,12 @@ export default function BusinessDataReview({ data, selectedAccountId: initialAcc
   useEffect(() => {
     const request = ++generation.current;
     setBusy(true); setError('');
+    const showcase = smartBusinessShowcasePerformance(data);
+    if (showcase) {
+      setPerformance(showcase);
+      setBusy(false);
+      return () => { generation.current += 1; };
+    }
     void readReviewPerformanceWithDeadline().then(result => {
       if (generation.current !== request) return;
       setPerformance(previous => retainReviewPerformance(previous, result));
@@ -174,7 +188,7 @@ export default function BusinessDataReview({ data, selectedAccountId: initialAcc
       if (generation.current === request) setError(cause instanceof Error ? cause.message : '账号数据读取失败');
     }).finally(() => { if (generation.current === request) setBusy(false); });
     return () => { generation.current += 1; };
-  }, [revision]);
+  }, [data, revision]);
   const snapshot = data.businessSnapshot;
   const context = data.plan?.businessPackage?.operatingContext;
   const startsAt = context?.cycle?.startsAt || data.goal?.startsAt || snapshot?.range.startsAt || '';
@@ -206,7 +220,12 @@ export default function BusinessDataReview({ data, selectedAccountId: initialAcc
   const evidence = inquiry?.status === 'available' ? inquiry.breakdown.filter(item => !selectedAccountId || item.accountId === selectedAccountId) : [];
   const evidenceAccountIds = [...new Set(evidence.map(item => item.accountId))];
   const ads = snapshot?.ads;
+  const adPerformance = ads?.performance;
   const adSpend = ads?.status === 'available' ? ads.spendByCurrency : [];
+  const adSpendTotal = adSpend.length === 1 ? adSpend[0].amount : null;
+  const adConversions = reviewMetric(adPerformance?.conversions);
+  const attributedRevenue = reviewMetric(adPerformance?.attributedRevenue);
+  const adRoas = adSpendTotal && attributedRevenue !== null ? attributedRevenue / adSpendTotal : null;
   const daily = selectedAccountId ? [] : snapshot?.social.dailyTrend || [];
   const topContent = [...published].filter(item => item.metrics.views !== null).sort((left, right) => (right.metrics.views || 0) - (left.metrics.views || 0)).slice(0, 10);
 
@@ -266,8 +285,8 @@ export default function BusinessDataReview({ data, selectedAccountId: initialAcc
       <MetricStrip items={[
         { label: '已回传花费', value: adSpend.length === 1 ? money(adSpend[0].amount, adSpend[0].currency) : adSpend.length > 1 ? `${adSpend.length} 种币种` : '—', note: adSpend.length > 1 ? '不同币种不合并' : '按可核验费用回执' },
         { label: '费用回执记录', value: adSpend.length ? number(reviewSum(adSpend.map(item => item.rows))) : '—' },
-        { label: '广告归因询盘', value: '—', note: '未建立广告级归因' },
-        { label: '广告回报 ROAS', value: '—', note: '需广告归因收入' },
+        { label: '广告归因询盘', value: number(adConversions), note: adConversions === null ? '待建立广告级归因' : '按广告归因回执' },
+        { label: '广告回报 ROAS', value: adRoas === null ? '—' : `${number(adRoas, 2)}x`, note: adRoas === null ? '需广告归因收入' : '归因收入 ÷ 同币种花费' },
       ]}/>
       <div className="px-4 py-3"><Collapse ghost items={[{ key: 'ads', label: '查看投流数据详情', children: <div className="space-y-4">
         <Descriptions size="small" column={{ xs: 1, sm: 2 }} items={[
@@ -275,7 +294,7 @@ export default function BusinessDataReview({ data, selectedAccountId: initialAcc
           ...adSpend.map(item => ({ key: item.currency, label: `${item.currency} 费用回执`, children: money(item.amount, item.currency) })),
         ]}/>
         {ads?.note && <p className="text-xs text-text-secondary">{ads.note}</p>}
-        <AdvertisingDetails startsAt={startsAt} endsAt={endsAt} onNavigate={onNavigate}/>
+        <AdvertisingDetails startsAt={startsAt} endsAt={endsAt} attributionAvailable={adConversions !== null && attributedRevenue !== null} onNavigate={onNavigate}/>
       </div> }]}/></div>
     </section>
   </div>;

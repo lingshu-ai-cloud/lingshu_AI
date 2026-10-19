@@ -21,6 +21,23 @@ async function fixture(channel:'whatsapp'|'messenger'|'instagram') {
  return {...f,t,ports,allow:()=>{consent=true;}};
 }
 for(const channel of ['whatsapp','messenger','instagram']as const){
+ test(`${channel} unbound draft records the missing prerequisite without inventing identity; recovery still needs official authority`,async()=>{
+  const f=await fixture(channel);
+  try{
+   const original=structuredClone(f.data.social_weekly_customer_bindings);
+   f.data.social_weekly_customer_bindings=[];
+   const args={store:f.store,task:f.t,gapCode:f.t.lastError!.code,now};
+   const exception=await materializeWeeklyCustomerChannelAuthorizationException(args);
+   assert.equal(exception!.frozenIdentity.runId,null);
+   assert.equal((await listWeeklyCustomerChannelAuthorizationExceptions({...args,tenantId:'tenant',programId:'program',packageId:'week',packageVersion:1})).length,1);
+   assert.equal((await runWeeklyCustomerChannelAuthorizationExceptionScan({...args,ports:f.ports})).resolved,0);
+   f.data.social_weekly_customer_bindings=original;
+   assert.equal((await runWeeklyCustomerChannelAuthorizationExceptionScan({...args,ports:f.ports})).resolved,0);
+   f.allow();assert.equal((await runWeeklyCustomerChannelAuthorizationExceptionScan({...args,ports:f.ports})).resolved,1);
+   assert.equal(f.sends(),0);
+   assert.equal((f.data[CUSTOMER_CHANNEL_AUTHORIZATION_EXCEPTIONS]!.find(r=>r.version===2)!.payload as any).frozenIdentity.runId,null,'original missing-identity evidence remains immutable');
+  }finally{f.restore();}
+ });
  test(`${channel} missing authorization has one durable exception; fresh official authority restores only exact consumer`,async()=>{
  const originalFetch=globalThis.fetch;globalThis.fetch=async()=>{throw Error('external_fetch_forbidden');};const f=await fixture(channel);
  try{const input={store:f.store,task:f.t,gapCode:f.t.lastError!.code,now};await materializeWeeklyCustomerChannelAuthorizationException(input);await materializeWeeklyCustomerChannelAuthorizationException(input);assert.equal(f.data[CUSTOMER_CHANNEL_AUTHORIZATION_EXCEPTIONS]!.length,1);

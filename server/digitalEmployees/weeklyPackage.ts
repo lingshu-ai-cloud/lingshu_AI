@@ -105,7 +105,10 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
   const originalTarget = platformVersionTarget;
   const initialDirectorPlan = defaultDirectorPlan(originalTarget, platformVersionTarget, platformVersionTarget);
   initialDirectorPlan.productionBudgetMin = originalTarget * MASTER_VIDEO_COST_MIN_CNY;
-  initialDirectorPlan.productionBudget = originalTarget * MASTER_VIDEO_COST_POINT_CNY;
+  // New plans start in protected mode.  The amount the user approves must be
+  // the safe ceiling that lets production run through without a second budget
+  // stop; economy mode is applied only when the user explicitly chooses it.
+  initialDirectorPlan.productionBudget = originalTarget * MASTER_VIDEO_COST_MAX_CNY;
   initialDirectorPlan.productionBudgetMax = originalTarget * MASTER_VIDEO_COST_MAX_CNY;
   let recommended: WeeklyPackage = { revision: 1, maturity, operatingAssessment: normalizeAssessment(config.operatingAssessment), participation, tasks,
     ...(matrixPlan.length ? { matrixPlan } : {}),
@@ -219,7 +222,7 @@ export function repairCollapsedWeeklyVideoProduction(pack: WeeklyPackage): Weekl
       estimatedCostRange: {
         minCny: Math.max(Number(plan.estimatedCostRange?.minCny || 0), MASTER_VIDEO_COST_MIN_CNY),
         maxCny: Math.max(Number(plan.estimatedCostRange?.maxCny || 0), MASTER_VIDEO_COST_MAX_CNY),
-        basis: 'blended_master',
+        basis: plan.estimatedCostRange?.basis || 'blended_master',
       },
     }));
     const repairedDirector = {
@@ -227,7 +230,9 @@ export function repairCollapsedWeeklyVideoProduction(pack: WeeklyPackage): Weekl
       originalTarget: repairedPlans.length,
       platformVersionTarget: repairedPlans.length,
       productionBudgetMin: Math.max(pack.directorPlan.productionBudgetMin, repairedPlans.length * MASTER_VIDEO_COST_MIN_CNY),
-      productionBudget: Math.max(pack.directorPlan.productionBudget, repairedPlans.length * MASTER_VIDEO_COST_POINT_CNY),
+      productionBudget: pack.directorPlan.productionBudgetMode === 'economy'
+        ? Math.max(pack.directorPlan.productionBudgetMin, repairedPlans.length * MASTER_VIDEO_COST_MIN_CNY)
+        : Math.max(pack.directorPlan.productionBudgetMax, repairedPlans.length * MASTER_VIDEO_COST_MAX_CNY),
       productionBudgetMax: Math.max(pack.directorPlan.productionBudgetMax, repairedPlans.length * MASTER_VIDEO_COST_MAX_CNY),
     };
     const paidMediaCny = Number(pack.operatingContext?.budget.paidMediaCny || repairedDirector.paidMediaBudget || 0);

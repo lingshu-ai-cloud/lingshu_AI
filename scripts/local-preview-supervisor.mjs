@@ -26,6 +26,11 @@ const healthCheckTimeoutMs = Number(process.env.LINGSHU_PREVIEW_HEALTH_TIMEOUT_M
 // its exit event; this larger probe window prevents killing healthy paid work.
 const maxConsecutiveHealthFailures = Number(process.env.LINGSHU_PREVIEW_HEALTH_FAILURE_LIMIT || 12);
 const forceOptimizeDependencies = process.env.LINGSHU_PREVIEW_FORCE_OPTIMIZE === '1';
+// One layer beyond /src/main.tsx reaches App and its shell providers. Their
+// optimized imports are always probed below, without crawling the entire lazy
+// page graph every 15 seconds.
+const maxFrontendModuleDepth = Number(process.env.LINGSHU_PREVIEW_MODULE_DEPTH || 1);
+const maxFrontendModuleCount = Number(process.env.LINGSHU_PREVIEW_MODULE_LIMIT || 160);
 const localPreviewAuthEmail = String(
   process.env.LINGSHU_PREVIEW_AUTH_EMAIL || 'beauty-showcase@local.test',
 ).trim().toLowerCase();
@@ -115,6 +120,7 @@ const services = [
   },
   {
     name: 'frontend',
+    vite: true,
     args: [
       path.join(runtimeRoot, 'node_modules/vite/bin/vite.js'),
       '--host',
@@ -122,7 +128,6 @@ const services = [
       '--port',
       '5177',
       '--strictPort',
-      ...(forceOptimizeDependencies ? ['--force'] : []),
     ],
     env: {
       DEV_API_TARGET: 'http://127.0.0.1:8790',
@@ -135,6 +140,7 @@ const services = [
   },
   {
     name: 'account-hub-frontend',
+    vite: true,
     args: [
       path.join(runtimeRoot, 'node_modules/vite/bin/vite.js'),
       '--config',
@@ -144,7 +150,6 @@ const services = [
       '--port',
       '5178',
       '--strictPort',
-      ...(forceOptimizeDependencies ? ['--force'] : []),
     ],
     env: {
       DEV_API_TARGET: 'http://127.0.0.1:8790',
@@ -163,14 +168,21 @@ function start(service) {
   service.failures = 0;
   service.startedAt = Date.now();
   const revision = currentRevision() || repositoryRevision;
-  const child = spawn(nodeExecutable, service.args, {
+  const rebuildOptimizedDependencies = Boolean(
+    service.vite && (forceOptimizeDependencies || service.forceOptimizeNextStart),
+  );
+  const args = rebuildOptimizedDependencies
+    ? [...service.args, '--force']
+    : service.args;
+  service.forceOptimizeNextStart = false;
+  const child = spawn(nodeExecutable, args, {
     cwd: runtimeRoot,
     env: localNetworkEnvironment({ ...providerEnvironmentForService(service.name, providerConfiguration), ...service.env, APP_BUILD_SHA: revision, VITE_APP_BUILD_SHA: revision }),
     stdio: 'inherit',
     detached: true,
   });
   service.child = child;
-  log(`${service.name} started (pid ${child.pid})`);
+  log(`${service.name} started (pid ${child.pid}${rebuildOptimizedDependencies ? ', rebuilding optimized dependencies' : ''})`);
   child.once('exit', (code, signal) => {
     try { process.kill(-child.pid, 'SIGKILL'); } catch { /* The process group is already gone. */ }
     service.child = undefined;
@@ -192,7 +204,7 @@ function scheduleBackendRestart(reason) {
   }, 800);
 }
 
-for (const directory of ['server', 'shared']) {
+for (const directory of (process.env.LINGSHU_PREVIEW_BACKEND_SOURCE_WATCH === '0' ? [] : ['server', 'shared'])) {
   try {
     fs.watch(path.join(runtimeRoot, directory), { recursive: true }, (_event, filename) => {
       if (!filename || /(?:^|\/)(?:data|dist|node_modules)(?:\/|$)/.test(filename)) return;
@@ -244,25 +256,73 @@ async function healthy(service) {
     const moduleSources = [...body.matchAll(/<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']([^"']+)["']/gi)]
       .map(match => match[1]);
     if (!moduleSources.length) return false;
-    const modules = await Promise.all(moduleSources.map(source => fetch(new URL(source, service.probe.url), {
-      headers: service.probe.headers,
-      signal: controller.signal,
-    })));
-    if (!modules.every(module => module.ok)) return false;
-    const moduleBodies = await Promise.all(modules.map(module => module.text()));
-    const optimizedDependencies = [...new Set(moduleBodies.flatMap(source =>
-      [...source.matchAll(/["'](\/node_modules\/\.vite\/deps\/[^"']+)["']/g)].map(match => match[1]),
-    ))];
-    const dependencies = await Promise.all(optimizedDependencies.map(source => fetch(new URL(source, service.probe.url), {
-      headers: service.probe.headers,
-      signal: controller.signal,
-    })));
-    return dependencies.every(dependency => dependency.ok);
+    return verifyFrontendModuleGraph(service, moduleSources, controller.signal);
   } catch {
     return false;
   } finally {
     clearTimeout(timer);
   }
+}
+
+function referencedFrontendModules(source) {
+  return [...new Set(
+    [...source.matchAll(/["'](\/(?:src\/|@fs\/|@vite\/|node_modules\/\.vite\/deps\/)[^"']+)["']/g)]
+      .map(match => match[1]),
+  )];
+}
+
+async function fetchFrontendModule(service, source, signal) {
+  const response = await fetch(new URL(source, service.probe.url), {
+    headers: service.probe.headers,
+    signal,
+  });
+  const body = await response.text();
+  const outdatedOptimizedDependency = response.status === 504
+    && (/Outdated Optimize Dep/i.test(response.statusText) || /Outdated Optimize Dep/i.test(body));
+  if (!response.ok && outdatedOptimizedDependency) {
+    // Vite keeps serving the already-transformed source graph after its
+    // optimized dependency directory is removed or invalidated. A normal
+    // restart can reuse the same bad metadata, so make the next launch rebuild
+    // the dependency graph. This is a generated local cache only.
+    service.forceOptimizeNextStart = true;
+  }
+  return { ok: response.ok, body };
+}
+
+async function verifyFrontendModuleGraph(service, entrySources, signal) {
+  const visited = new Set();
+  let checked = 0;
+  let currentSources = entrySources;
+
+  for (let depth = 0; depth <= maxFrontendModuleDepth && currentSources.length; depth += 1) {
+    const sourceBatch = [...new Set(currentSources)]
+      .filter(source => !visited.has(source))
+      .slice(0, Math.max(0, maxFrontendModuleCount - checked));
+    if (!sourceBatch.length) break;
+    sourceBatch.forEach(source => visited.add(source));
+    checked += sourceBatch.length;
+
+    const modules = await Promise.all(sourceBatch.map(source => fetchFrontendModule(service, source, signal)));
+    if (!modules.every(module => module.ok)) return false;
+
+    const references = [...new Set(modules.flatMap(module => referencedFrontendModules(module.body)))];
+    const optimizedDependencies = references
+      .filter(source => source.startsWith('/node_modules/.vite/deps/'))
+      .filter(source => !visited.has(source))
+      .slice(0, Math.max(0, maxFrontendModuleCount - checked));
+    optimizedDependencies.forEach(source => visited.add(source));
+    checked += optimizedDependencies.length;
+    if (optimizedDependencies.length) {
+      const dependencies = await Promise.all(
+        optimizedDependencies.map(source => fetchFrontendModule(service, source, signal)),
+      );
+      if (!dependencies.every(dependency => dependency.ok)) return false;
+    }
+
+    if (checked >= maxFrontendModuleCount) break;
+    currentSources = references.filter(source => !source.startsWith('/node_modules/.vite/deps/'));
+  }
+  return true;
 }
 
 async function monitor() {
@@ -274,6 +334,12 @@ async function monitor() {
       if (Date.now() - (service.startedAt || 0) < startupGraceMs) return;
       if (await healthy(service)) {
         service.failures = 0;
+        return;
+      }
+      if (service.forceOptimizeNextStart) {
+        log(`${service.name} has an outdated Vite optimized dependency; restarting once with --force`);
+        service.failures = 0;
+        terminate(service);
         return;
       }
       service.failures = (service.failures || 0) + 1;

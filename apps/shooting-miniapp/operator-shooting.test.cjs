@@ -98,6 +98,8 @@ test('operator shooting presents pending totals and never exposes task creation'
   assert.doesNotMatch(markup, /我要创建|全部任务|已上传[^素]/)
   assert.match(markup, /shot-media[\s\S]*分镜/)
   assert.match(markup, /收音要求/)
+  assert.match(markup, /factory-benchmark-frame\.jpg/)
+  assert.match(markup, /工厂镜头构图参考/)
 })
 
 test('uploaded material completes the selected task and keeps recovery state on attach failure', async () => {

@@ -32,6 +32,7 @@ data.pre-migrate-*/
 data.repo-template/
 pb_data/
 .local-bin/
+.venv-video-downloader/
 
 # Independent local Sites workspaces are separate repositories.
 /sites/
@@ -61,6 +62,10 @@ pb_data/
 /data/social-content-scene-cache/
 /data/social-content-sources/
 /data/social-content-upload-temp/
+/data/studio-presenter-paid-budget/
+
+# WeChat DevTools machine-local settings
+/apps/shooting-miniapp/project.private.config.json
 
 # Local media and product runtime state
 /data/media/

@@ -6,6 +6,19 @@ import path from 'node:path';
 import { createSocialContentTaskBudgetAuthority, type SocialTaskBudgetAuthorityPorts, type SocialVerifiedAccountTariff, type SocialPaidOperationIntent } from './socialContentTaskBudgetAuthority.js';
 const scope = { tenantId: 't', taskId: 'task', runId: 'r', planHash: 'a'.repeat(64) };
 const intent = (id: string, stage = 'video'): SocialPaidOperationIntent => ({ operationId: id, provider: 'supplier', model: 'model', accountRef: 'actual-account', stage, shotId: 'S01', inputContractHash: 'b'.repeat(64), maximumUnits: { providerSeconds: 3 } });
+test('canonical fifteen-yuan authority admits twelve-yuan full plan and recovery without resetting spend', async () => {
+    const f=fixture();
+    try {
+        f.plan.maximumCny=15;
+        const read=f.ports.readVerifiedTariff;
+        f.ports.readVerifiedTariff=async i=>{const tariff=await read(i); return tariff ? {...tariff,meters:{providerSeconds:{priceCny:.5,unitsPerPrice:1,minimumUnits:4,increment:1}}}:null;};
+        const reserved=await f.service.prepareAndReserve(scope);
+        assert.equal(reserved.status.limitCny,15); assert.equal(reserved.status.retainedCny,12);
+        await reserved.ledger.markOutcome(scope,'video','unknown','actual-unknown-receipt');
+        const recovered=await f.service.recoverAccepted(scope,['video']);
+        assert.equal(recovered.status.retainedCny,12);
+    } finally {f.clean();}
+});
 function fixture() { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-budget-authority-')); let paidCalls = 0; const plan = { scope, authorizationRef: 'owner-authorized-frozen-task', maximumCny: 10, paidOperations: [intent('first-frame', 'first_frame'), intent('qa1', 'first_frame_qa'), intent('video'), intent('qa2', 'video_qa'), intent('voice', 'tts'), intent('retry', 'retry')] }; const ports: SocialTaskBudgetAuthorityPorts = { readApprovedPlan: async () => structuredClone(plan), assertCurrent: async () => { }, verifyRejection: async () => false, readVerifiedTariff: async (i) => ({ ...i, currency: 'CNY', verifiedAccountPrice: true, evidenceRef: 'account-price-original-evidence', checkedAt: '2026-01-01', validUntil: '2099-01-01', meters: { providerSeconds: { priceCny: .2, unitsPerPrice: 1, minimumUnits: 4, increment: 1 } } }) }; return { root, plan, ports, service: createSocialContentTaskBudgetAuthority({ ledgerRoot: root, ports }), get paidCalls() { return paidCalls; }, paid: () => paidCalls++, clean: () => fs.rmSync(root, { recursive: true, force: true }) }; }
 test('whole frozen plan reserves all stages and retries before payment using provider 4s minimum', async () => { const f = fixture(); try {
     const result = await f.service.prepareAndReserve(scope);
@@ -96,6 +109,30 @@ test('accepted receipt recovery retains original funding without a fresh tariff 
         assert.equal(samePlan.status.entries.find(entry=>entry.operationId==='video')?.receiptRef,'provider-task:original');
         assert.equal(f.paidCalls, 0);
     } finally { f.clean(); }
+});
+test('exact exempt tenant can recover accepted receipts above the nominal limit without weakening receipt checks', async () => {
+    const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+    process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
+    const f = fixture();
+    const exemptScope = { ...scope, tenantId: 'local_tenant_customer_aurelia_beauty' };
+    try {
+        f.plan.scope = exemptScope;
+        f.plan.paidOperations = [intent('video-a'), intent('video-b')];
+        f.ports.readVerifiedTariff = async i => ({ ...i, currency: 'CNY', verifiedAccountPrice: true,
+            evidenceRef: 'verified-expensive-tariff', checkedAt: '2026-01-01', validUntil: '2099-01-01',
+            meters: { providerSeconds: { priceCny: 1.5, unitsPerPrice: 1, minimumUnits: 4, increment: 1 } } });
+        const reserved = await f.service.prepareAndReserve(exemptScope);
+        assert.equal(reserved.status.limitCny, 10);
+        assert.equal(reserved.status.retainedCny, 12);
+        await reserved.ledger.markOutcome(exemptScope, 'video-a', 'accepted', 'provider-task:accepted');
+        const recovered = await f.service.recoverAccepted(exemptScope, ['video-a']);
+        assert.equal(recovered.entries[0]!.receiptRef, 'provider-task:accepted');
+        await assert.rejects(f.service.recoverAccepted(exemptScope, ['video-b']), /recovery_receipt_missing_or_changed/);
+    } finally {
+        f.clean();
+        if (configured === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+        else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = configured;
+    }
 });
 test('in-flight same-scope plan extension prices only new retry intents and preserves old receipts',async()=>{const f=fixture();try{
  const first={...f.plan,paidOperations:f.plan.paidOperations.slice(0,4)};f.ports.readApprovedPlan=async()=>structuredClone(first);const reserved=await f.service.prepareAndReserve(scope);await reserved.ledger.markOutcome(scope,'video','completed','wan:existing');

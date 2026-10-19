@@ -19,9 +19,12 @@ assert.match(enterpriseMaterialIssue({ material, duration: 3, sound: 'source', n
 
 const twin = { ...input, presenterMode: 'video_twin' as const, workflow: 'material_processing' as const, method: 'talking' as const, replacementScope: undefined, targetEffect: 'natural_talking' as const };
 assert.deepEqual(digitalHumanDecisionIssues(twin), []);
+assert.deepEqual(digitalHumanDecisionIssues({ ...twin, workflow: 'viral_replication', method: 'reenact', preferredProvider: 'sd' }), [],
+  'explicit video-twin choice must override stale reenactment analysis fields');
 const photo = { ...input, presenterMode: 'photo_talking' as const, workflow: 'viral_replication' as const, method: 'reenact' as const, preferredProvider: 'sd' as const, replicationMode: 'sentence_first_frame' as const };
 assert.deepEqual(digitalHumanDecisionIssues(photo), []);
-assert.ok(digitalHumanDecisionIssues({ ...photo, method: 'talking' }).some(reason => /Seedream/.test(reason)));
+assert.deepEqual(digitalHumanDecisionIssues({ ...photo, method: 'talking' }), [],
+  'explicit photo-replication mode must restore its sentence-first-frame route');
 assert.deepEqual(digitalHumanDecisionIssues({ ...photo, workflow: 'material_processing', method: 'talking' }), []);
 
 // Muted enterprise footage needs no speech recognition, even with different narration.

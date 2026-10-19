@@ -164,10 +164,12 @@ async function listAll<T extends { id: string }>(dataStore: DataStore, collectio
 export function contentExecutionDefaults(env: NodeJS.ProcessEnv = process.env) {
   const bounded = (value: unknown, fallback: number) => Math.min(Math.max(integer(value, fallback), 1), 100);
   return {
-    tenantMaxRunning: bounded(env.CONTENT_MAX_RUNNING_PER_TENANT, 2),
+    // One shared production pool, not one pool per business Agent. Explicit
+    // customer limits and environment overrides remain authoritative.
+    tenantMaxRunning: bounded(env.CONTENT_MAX_RUNNING_PER_TENANT, 3),
     accountMaxRunning: bounded(env.CONTENT_MAX_RUNNING_PER_ACCOUNT, 1),
-    taskTypeMaxRunning: bounded(env.CONTENT_MAX_RUNNING_PER_TASK_TYPE, 2),
-    workerConcurrency: bounded(env.CONTENT_EXECUTION_WORKER_CONCURRENCY, 4),
+    taskTypeMaxRunning: bounded(env.CONTENT_MAX_RUNNING_PER_TASK_TYPE, 3),
+    workerConcurrency: bounded(env.CONTENT_EXECUTION_WORKER_CONCURRENCY, 3),
     pollIntervalMs: Math.min(Math.max(integer(env.CONTENT_EXECUTION_POLL_INTERVAL_MS, 2_000), 250), 60_000),
     leaseDurationMs: Math.min(Math.max(integer(env.CONTENT_EXECUTION_LEASE_MS, 30 * 60_000), 60_000), 2 * 60 * 60_000),
   };
@@ -302,6 +304,36 @@ function hasProviderWork(job: ContentExecutionJob): boolean {
   return job.providerReceipts.some(receipt => ['submitting', 'accepted', 'unknown'].includes(receipt.state));
 }
 
+/** Persistent group fence, independent of the root's historical completion
+ * status. Legacy non-content jobs are deliberately left on their own gates. */
+async function contentOrderCancelled(dataStore: DataStore, job: ContentExecutionJob): Promise<boolean> {
+  const rows = await dataStore.list<Record<string, unknown>>('starter_social_content_tasks', {
+    where: { tenant_id: job.tenantId, task_id: job.taskId }, perPage: 2,
+  });
+  if (rows.totalItems > 1) throw new Error('content_execution_order_identity_ambiguous');
+  const task = rows.items[0];
+  const parse = (raw: unknown): Record<string, unknown> | null => {
+    if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { throw new Error('content_execution_order_identity_invalid'); } }
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+  };
+  const binding = parse(task?.content_order);
+  const stopped = (row: Record<string, unknown> | undefined, order: Record<string, unknown> | null) =>
+    Boolean(order?.cancellation || order?.replacedByContentId || order?.supersededByContentId
+      || ['cancelled', 'cancelling'].includes(String(row?.status)));
+  if (stopped(task, binding)) return true;
+  if (binding?.contentId && binding.contentId !== job.taskId) {
+    const roots = await dataStore.list<Record<string, unknown>>('starter_social_content_tasks', {
+      where: { tenant_id: job.tenantId, task_id: String(binding.contentId) }, perPage: 2,
+    });
+    if (roots.totalItems !== 1 || roots.items.length !== 1) throw new Error('content_execution_order_root_missing');
+    const root = roots.items[0], rootBinding = parse(root.content_order);
+    if (!rootBinding || rootBinding.contentId !== binding.contentId || rootBinding.budgetTaskId !== binding.budgetTaskId)
+      throw new Error('content_execution_order_identity_invalid');
+    return stopped(root, rootBinding);
+  }
+  return false;
+}
+
 function effectiveLimit(
   limits: ContentExecutionLimit[],
   scope: ContentExecutionLimitScope,
@@ -385,6 +417,16 @@ async function claimNextJob(input: {
         || left.id.localeCompare(right.id);
     });
     for (const candidate of candidates) {
+      // The same scheduler lock is used by cancellation. Check the durable
+      // root fence before any claim; unknown provider receipts stay untouched.
+      try { if (await contentOrderCancelled(input.dataStore, candidate)) continue; }
+      catch (error) {
+        // Corrupt/ambiguous lineage is fail-closed for this branch, not a
+        // reason to starve unrelated executable content in the same pool.
+        console.error('[content-execution] order claim blocked', { jobId: candidate.id,
+          error: error instanceof Error ? error.message : String(error) });
+        continue;
+      }
       if (!canRun(candidate, running, limits.filter(item => item.tenantId === candidate.tenantId), input.env)) continue;
       const priorLeases = await input.dataStore.list<Record<string, unknown>>('durable_operation_leases', {
         where: { tenant_id: candidate.tenantId, lease_scope: 'content_execution_job', subject_id: candidate.id }, perPage: 2,
@@ -429,11 +471,22 @@ function sameClaim(current: ContentExecutionJob, claimed: ContentExecutionJob): 
   return current.workerId === claimed.workerId && current.attempt === claimed.attempt;
 }
 
+async function withSettlementControl<T>(dataStore: DataStore, job: ContentExecutionJob, action: () => Promise<T>): Promise<T> {
+  const lease = await acquireDurableOperationLease({ dataStore, tenantId: job.tenantId, subjectId: job.id,
+    scope: 'content_execution_control', ownerId: `content-settle:${randomUUID()}`, leaseDurationMs: 30_000 });
+  if (!lease) throw new Error('content_execution_job_control_busy');
+  try { return await action(); }
+  finally { await releaseDurableOperationLease({ dataStore, lease }).catch(() => undefined); }
+}
+
 async function finishSucceeded(dataStore: DataStore, job: ContentExecutionJob, now: Date): Promise<boolean> {
+  return withSettlementControl(dataStore, job, () => finishSucceededUnderControl(dataStore, job, now));
+}
+async function finishSucceededUnderControl(dataStore: DataStore, job: ContentExecutionJob, now: Date): Promise<boolean> {
   const currentRow = await dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, job.id);
   const current = currentRow ? jobFromRow(currentRow) : job;
   if (!sameClaim(current, job)) return false;
-  if (current.status === 'paused' || current.status === 'cancelled') {
+  if (current.status === 'paused' || current.status === 'cancelled' || await contentOrderCancelled(dataStore, current)) {
     if (!await dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
       worker_id: '', lease_expires_at: '', updated_at: now.toISOString(),
     })) throw new Error('content_execution_job_control_settlement_failed');
@@ -453,6 +506,11 @@ async function finishFailed(input: {
   now: Date;
   env: NodeJS.ProcessEnv;
 }): Promise<{ decision: ContentExecutionRetryDecision; settled: boolean }> {
+  return withSettlementControl(input.dataStore, input.job, () => finishFailedUnderControl(input));
+}
+async function finishFailedUnderControl(input: {
+  dataStore: DataStore; job: ContentExecutionJob; error: unknown; now: Date; env: NodeJS.ProcessEnv;
+}): Promise<{ decision: ContentExecutionRetryDecision; settled: boolean }> {
   const currentRow = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, input.job.id);
   const current = currentRow ? jobFromRow(currentRow) : input.job;
   if (!sameClaim(current, input.job)) {
@@ -465,7 +523,7 @@ async function finishFailed(input: {
       settled: false,
     };
   }
-  if (current.status === 'paused' || current.status === 'cancelled') {
+  if (current.status === 'paused' || current.status === 'cancelled' || await contentOrderCancelled(input.dataStore, current)) {
     await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, {
       worker_id: '', lease_expires_at: '', updated_at: input.now.toISOString(),
     });
@@ -684,6 +742,43 @@ async function applyContentExecutionControl(input: {
   if (!row) throw new Error('content_execution_job_not_found');
   const current = jobFromRow(row);
   if (current.tenantId !== tenantId) throw new Error('content_execution_job_not_found');
+  if (input.action === 'resume' || input.action === 'retry') {
+    const tasks = await input.dataStore.list<Record<string, unknown>>('starter_social_content_tasks', {
+      where: { tenant_id: tenantId, task_id: current.taskId }, perPage: 2,
+    });
+    if (tasks.totalItems > 1) throw new Error('content_execution_order_identity_ambiguous');
+    const task = tasks.items[0];
+    let binding = task?.content_order;
+    if (typeof binding === 'string') { try { binding = JSON.parse(binding); } catch { throw new Error('content_execution_order_identity_invalid'); } }
+    if (binding && typeof binding === 'object' && !Array.isArray(binding)) {
+      const order = binding as Record<string, unknown>;
+      if (order.cancellation || order.replacedByContentId || order.supersededByContentId || ['cancelled','cancelling'].includes(String(task?.status)))
+        throw new Error('content_execution_order_cancelled_or_replaced');
+      if (order.contentId && order.contentId !== current.taskId) {
+        const roots = await input.dataStore.list<Record<string, unknown>>('starter_social_content_tasks', {
+          where: { tenant_id: tenantId, task_id: String(order.contentId) }, perPage: 2,
+        });
+        if (roots.totalItems !== 1 || roots.items.length !== 1) throw new Error('content_execution_order_root_missing');
+        const root = roots.items[0];
+        let rootOrder = root.content_order;
+        if (typeof rootOrder === 'string') { try { rootOrder = JSON.parse(rootOrder); } catch { throw new Error('content_execution_order_identity_invalid'); } }
+        const rootBinding = rootOrder as Record<string, unknown> | null;
+        if (!rootBinding || rootBinding.contentId !== order.contentId || rootBinding.budgetTaskId !== order.budgetTaskId)
+          throw new Error('content_execution_order_identity_invalid');
+        if (rootBinding.cancellation || rootBinding.replacedByContentId || ['cancelled','cancelling'].includes(String(root.status)))
+          throw new Error('content_execution_order_cancelled_or_replaced');
+      }
+      if (order.programId && order.originWeek && order.contentId) {
+        const pools = await input.dataStore.list<Record<string, unknown>>('social_content_creation_quotas', {
+          where: { tenant_id: tenantId, program_id: String(order.programId), week_start: String(order.originWeek) }, perPage: 2,
+        });
+        if (pools.totalItems !== 1 || pools.items.length !== 1) throw new Error('content_execution_order_quota_missing');
+        const payload = pools.items[0].payload as { orders?: Record<string, { state?: string }> } | undefined;
+        const reservation = payload?.orders?.[String(order.contentId)];
+        if (!reservation || ['planned','released'].includes(String(reservation.state))) throw new Error('content_execution_order_not_reserved');
+      }
+    }
+  }
   const now = (input.now ?? new Date()).toISOString();
   let patch: Record<string, unknown>;
   if (input.action === 'pause') {

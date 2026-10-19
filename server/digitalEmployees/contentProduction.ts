@@ -11,7 +11,7 @@ import { finishContent } from './contentFinish.js';
 import { directContent, selectedSegments } from './contentDirection.js';
 import { runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 import { chooseMusic } from './automaticMusic.js';
-import { automationBgmCatalog, automationBgmAudio } from '../routes/studio.js';
+import { automationBgmCatalog, automationBgmAudio, voiceoverLineNeedsLanguageRepair } from '../routes/studio.js';
 import { buildPresentationTimeline } from './presenterMix.js';
 import { normalizeVideoPlan, spokenLanguageMatches, usesDigitalPresenter, presentationScenes, type VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from '../../shared/contracts/videoLanguages.js';
@@ -46,6 +46,7 @@ import { aggregateNarrationStyleProfiles, deriveNarrationStyleProfile, narration
 import { containsInternalContentMarker, paginateAlignedCues, subtitleCuesAreSafe } from '../lib/subtitleCues.js';
 import { buildBenchmarkAnalysis, MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS } from '../../shared/benchmarkAnalysis.js';
 import { resolveMaterialProductAssociation, type ProductMaterialReference } from './materialProductionReadiness.js';
+import {legacyIncrementalCostBlocker,LEGACY_INCREMENTAL_COST_BLOCKER,readLegacyManualCompletion} from './legacyIncrementalCostGuard.js';
 export { containsInternalContentMarker, paginateAlignedCues, subtitleCuesAreSafe } from '../lib/subtitleCues.js';
 import type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, ProductionStage, RouteSourcePlan, SceneSourcePlanItem, StoredRecord } from './contentProductionContracts.js';
 export type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, RouteSourcePlan, SceneSourcePlanItem } from './contentProductionContracts.js';
@@ -78,6 +79,26 @@ export function expandContentOrdersByLanguage(
       videoPlan: normalizeVideoPlan({ ...(order.videoPlan || config.videoDefaults || {}), language }),
     }));
   });
+}
+
+/** Refresh a language-expanded project order from its repaired base contract.
+ * The project identity/lineage must remain stable so retries update the same
+ * work item instead of creating a duplicate render. */
+export function refreshExpandedContentOrderContract<T extends ContentProductionOrderInput>(
+  expanded: T,
+  repairedBase: ContentProductionOrderInput,
+  language: string,
+): T {
+  const targetLanguage = normalizeVideoLanguage(language || expanded.videoPlan?.language || repairedBase.videoPlan?.language || 'en');
+  return {
+    ...expanded,
+    ...repairedBase,
+    id: expanded.id,
+    sourceContentOrderId: expanded.sourceContentOrderId || repairedBase.id,
+    masterContentOrderId: expanded.masterContentOrderId,
+    masterLanguage: expanded.masterLanguage,
+    videoPlan: normalizeVideoPlan({ ...(repairedBase.videoPlan || expanded.videoPlan || {}), language: targetLanguage }),
+  } as T;
 }
 
 const text = (value: unknown, max = 1_000): string => String(value ?? '').trim().slice(0, max);
@@ -145,6 +166,49 @@ function dimensions(record: Record<string, unknown>): { width?: number; height?:
     ...(explicit ? { aspectRatio: explicit } : width > 0 && height > 0 ? { aspectRatio: `${width}:${height}` } : {}),
     ...(Number.isFinite(focusX) && focusX >= 0 && focusX <= 1 ? { focusX } : {}),
     ...(Number.isFinite(focusY) && focusY >= 0 && focusY <= 1 ? { focusY } : {}),
+  };
+}
+
+function authoritativeMaterialRights(record: Record<string, unknown>): Partial<Pick<AssetCandidate,
+  'rightsEvidenceRefs' | 'commercialUseApproved' | 'commercialUseApprovalEvidenceRefs'
+  | 'modelInputAllowed' | 'derivativeUseAllowed' | 'sourceRevision' | 'currentSourceRevision' | 'segmentProfiles'>> {
+  const provenance = record.provenance && typeof record.provenance === 'object' && !Array.isArray(record.provenance)
+    ? record.provenance as Record<string, unknown> : {};
+  const rightsEvidenceRefs = [...new Set([
+    record.rightsEvidenceRef,
+    record.licenseEvidence,
+    record.consentRef,
+    ...(Array.isArray(record.rightsEvidenceRefs) ? record.rightsEvidenceRefs : []),
+    provenance.rightsEvidenceRef,
+    provenance.authorizationRef,
+  ].map(value => text(value, 500)).filter(value => value && !/(?:unverified|unknown|missing|pending|待确认|未确认)/i.test(value)))];
+  const commercialUseApprovalEvidenceRefs = [...new Set([
+    ...(Array.isArray(record.commercialUseApprovalEvidenceRefs) ? record.commercialUseApprovalEvidenceRefs : []),
+    record.commercialUseApprovalEvidenceRef,
+    provenance.commercialUseApprovalEvidenceRef,
+  ].map(value => text(value, 500)).filter(value => value && !/(?:unverified|unknown|missing|pending|待确认|未确认)/i.test(value)))];
+  const sourceRevision = text(record.analysisSourceRevision || record.sourceRevision, 500);
+  const currentSourceRevision = text(record.sourceRevision || record.contentSha256 || record.sha256 || record.analysisSourceRevision, 500);
+  return {
+    ...(rightsEvidenceRefs.length ? { rightsEvidenceRefs } : {}),
+    ...(typeof record.commercialUseApproved === 'boolean'
+      ? { commercialUseApproved: record.commercialUseApproved }
+      : {}),
+    // A rights receipt may double as the commercial-use approval receipt only
+    // when the source row explicitly records commercial approval.
+    ...(record.commercialUseApproved === true ? {
+      commercialUseApprovalEvidenceRefs: commercialUseApprovalEvidenceRefs.length
+        ? commercialUseApprovalEvidenceRefs : rightsEvidenceRefs,
+    } : {}),
+    ...(typeof record.modelInputAllowed === 'boolean' ? { modelInputAllowed: record.modelInputAllowed } : {}),
+    ...(typeof record.derivativeUseAllowed === 'boolean'
+      ? { derivativeUseAllowed: record.derivativeUseAllowed }
+      : typeof record.derivativesApproved === 'boolean'
+        ? { derivativeUseAllowed: record.derivativesApproved }
+        : {}),
+    ...(sourceRevision ? { sourceRevision } : {}),
+    ...(currentSourceRevision ? { currentSourceRevision } : {}),
+    ...(Array.isArray(record.segmentProfiles) ? { segmentProfiles: record.segmentProfiles } : {}),
   };
 }
 
@@ -452,6 +516,7 @@ function localMaterials(tenantId: string, records: Array<Record<string, unknown>
       ...(localPath && fs.existsSync(localPath) ? { localPath } : {}), ...(objectKey ? { objectKey } : {}), duration: Math.max(0, Number(record.duration || 0)),
       observations: visualObservations, visualObservations, segments: Array.isArray(record.segments) ? record.segments as Array<Record<string, unknown>> : [],
       ...(record.scriptAnalysis ? { scriptAnalysis: record.scriptAnalysis as MaterialScriptAnalysis } : {}),
+      ...authoritativeMaterialRights(record),
       ...(association ? { productId: association.productId, productName: association.productName } : {}),
       authorization: assetAuthorization(record, source), synthetic: isSyntheticMaterial(record), ...dimensions(record),
       tags: stringList(record.tags), source,
@@ -534,6 +599,7 @@ export async function collectProductionAssets(tenantId: string, profile: Enterpr
       url: text(record.url, 2_000), cloudRecordId: text(record.id).replace(/^pb-/, ''), duration: Math.max(0, Number(record.duration || 0)),
       observations: observationsForMaterial(record), visualObservations: observationsForMaterial(record), segments: Array.isArray(record.segments) ? record.segments as Array<Record<string, unknown>> : [],
       ...(record.scriptAnalysis ? { scriptAnalysis: record.scriptAnalysis as MaterialScriptAnalysis } : {}),
+      ...authoritativeMaterialRights(record),
       ...(association ? { productId: association.productId, productName: association.productName } : {}),
       authorization: assetAuthorization(record, String(record.scope || 'own') === 'shared' ? 'licensed_shared_material' : 'tenant_material'),
       synthetic: isSyntheticMaterial(record), ...dimensions(record), tags: stringList(record.tags),
@@ -585,7 +651,35 @@ function frozenOrderProductItems(profile: EnterpriseProfile, orders: ContentProd
  * allowed to survive as a frozen runtime blocker. */
 export function immutableContentOrderBlockers(order: Pick<ContentProductionOrderInput, 'readinessBlockers'>): string[] {
   return (order.readinessBlockers || []).filter(reason =>
-    /指定内容路径未在 Agent 配置中开启|制作平台不在本周目标范围中/.test(reason));
+    reason===LEGACY_INCREMENTAL_COST_BLOCKER||/指定内容路径未在 Agent 配置中开启|制作平台不在本周目标范围中|固定路径编译失败|制作前编导交接待复核/.test(reason));
+}
+
+/**
+ * Product/material were historical whole-video routes. In the fixed-yield
+ * design they are shot-level local material classes inside a reference clone,
+ * not independent routes that may open a fresh TTS/HeyGen charge. Existing
+ * projects may still finish from already-created provider artifacts, but a
+ * worker must never create new paid work without the frozen per-operation
+ * budget authority used by the clone executor.
+ */
+export function legacyManagedPaidSubmissionBlocker(input: {
+  route: ContentProductionRoute;
+  productionContractVersion?: unknown;
+  voiceoverUrl?: unknown;
+  stage?: unknown;
+  heygenJobId?: unknown;
+}): string {
+  if (input.route === 'clone') return '';
+  if (String(input.productionContractVersion || 'legacy.v1') !== 'legacy.v1') return '';
+  const stage = String(input.stage || 'script');
+  const hasVoiceArtifact = Boolean(String(input.voiceoverUrl || '').trim());
+  if (!hasVoiceArtifact && ['script', 'material_match', 'voice_subtitles'].includes(stage)) {
+    return '该旧版独立产品/素材路线不能新建付费配音；请重新生成固定参考视频计划，产品与工厂镜头将按时间线匹配企业本地素材';
+  }
+  if (stage === 'heygen' && !String(input.heygenJobId || '').trim()) {
+    return '该旧版路线没有冻结的数字人供应商任务，不能新建付费提交；请重新生成固定参考视频计划';
+  }
+  return '';
 }
 
 function confirmedProductSpecification(value: unknown): string {
@@ -725,6 +819,17 @@ export function storyboardVoiceLines(script: string): string[] {
   });
 }
 
+/** A language contract must be executable by the selected TTS provider, not
+ * merely contain a majority of characters from the target script family.
+ * Mixed-script product names are translated to a spoken target-language name
+ * during Director repair; visual/product metadata stays untouched. */
+export function storyboardVoiceLanguageMatches(script: string, language: string): boolean {
+  const lines = storyboardVoiceLines(script);
+  return lines.length > 0
+    && spokenLanguageMatches(lines.join(' '), language)
+    && lines.every(line => !voiceoverLineNeedsLanguageRepair(line, language));
+}
+
 function parseModelJson(value: string): Record<string, unknown> {
   const raw = value.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   const start = raw.indexOf('{'), end = raw.lastIndexOf('}');
@@ -750,7 +855,9 @@ export async function translateStoryboardFromMaster(
     if (text(item?.sceneId) !== expectedId || !text(item?.text, 1_000)) throw Error(`多语言翻译缺少 ${expectedId}`);
     return text(item.text, 1_000);
   });
-  if (!spokenLanguageMatches(translated.join(' '), targetLanguage)) throw Error('翻译结果与目标语言不符');
+  if (!storyboardVoiceLanguageMatches(freezeStoryboardNarration(masterScript, translated), targetLanguage)) {
+    throw Error('翻译结果与目标语言不符');
+  }
   const review = await invoke(`核对逐镜翻译是否逐条语义等价。不得接受新增、删减、调换事实、产品结论、CTA 或 sceneId。只返回 JSON：{"passed":true,"issues":[]}。\n${JSON.stringify(sourceLines.map((sourceText, index) => ({ sceneId: `scene-${index + 1}`, sourceText, translatedText: translated[index] })))}`, { timeoutMs: 60_000 });
   const reviewed = parseModelJson(review.text);
   if (reviewed.passed !== true || (Array.isArray(reviewed.issues) && reviewed.issues.length)) {
@@ -889,7 +996,15 @@ async function updateProject(record: StoredRecord, spec: Record<string, unknown>
 }
 
 export function contentProjectRetryable(stage: Record<string, unknown>): boolean {
-  if (stage.retryPolicy === 'input_required') return false;
+  if (stage.retryPolicy === 'input_required') {
+    // Balance/credential blockers still need a human account change, but once
+    // that change is made the worker must discover it automatically. Older
+    // persisted blockers predate autoRecheckExternal, so recognize their exact
+    // provider wording and give them one migration retry as well.
+    const recoverableExternalAccount = stage.autoRecheckExternal === true
+      || /账户欠费|充值|鉴权失败|API Key|account is not in good standing|overdue[ -]?payment|arrearage|invalid api key|unauthori[sz]ed|forbidden/i.test(text(stage.blocker, 2_000));
+    if (!recoverableExternalAccount) return false;
+  }
   const next = Date.parse(text(stage.retryAfter, 80));
   return !Number.isFinite(next) || next <= Date.now();
 }
@@ -951,7 +1066,7 @@ export function resumeContentProjectForTaskControl(input: {
 }
 export function isLlmUnavailableError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error || '');
-  return /timed?\s*out|timeout|not set|unavailable|temporar|network|fetch|connection|econn|socket|503|502|504|service/i.test(message);
+  return /timed?\s*out|timeout|not set|unavailable|temporar|network|fetch|connection|econn|socket|access denied|overdue[ -]?payment|insufficient (?:balance|quota)|quota|rate limit|401|403|429|502|503|504|service/i.test(message);
 }
 
 function safeFactClauses(value: string): string[] {
@@ -970,9 +1085,11 @@ function safeFactClauses(value: string): string[] {
 export function deterministicClosedWorldStoryboard(input: {
   productFacts: string;
   assets: AssetCandidate[];
+  language?: string;
 }): string {
   const facts = safeFactClauses(input.productFacts);
-  const spoken = closedWorldNarrationLines(facts);
+  const language = normalizeVideoLanguage(input.language || 'zh');
+  const spoken = closedWorldNarrationLines(facts, language);
   return spoken.map((line, index) => {
     const asset = input.assets[index % input.assets.length];
     const observation = asset?.observations.map(item => text(item, 180)).find(Boolean) || '';
@@ -1062,7 +1179,7 @@ ${lines.map((line, index) => `[${(hookEnd ? index === 0 ? 0 : hookEnd + (index -
   } catch (error) {
     if (!isLlmUnavailableError(error)) throw error;
     return {
-      script: deterministicClosedWorldStoryboard({ productFacts: facts, assets: input.assets }),
+      script: deterministicClosedWorldStoryboard({ productFacts: facts, assets: input.assets, language: brief.language }),
       source: 'deterministic_closed_world_fallback',
       degradedReason: error instanceof Error ? error.message : String(error || '脚本服务不可用'),
     };
@@ -1087,6 +1204,7 @@ export async function generateDirectorScriptContracts(input: { tenantId: string;
       && script?.status === 'confirmed'
       && script.generatedBy === 'director_agent'
       && script.hash === stableHash(script.body)
+      && storyboardVoiceLanguageMatches(script.body, language)
     )));
     const assets = allAssets.filter(asset => order.evidenceRefs.some(ref => ref.type === 'enterprise_material' && ref.id === asset.id));
     const referenceId = order.evidenceRefs.find(ref => ref.type === 'exact_analysis')?.id || '';
@@ -1096,18 +1214,29 @@ export async function generateDirectorScriptContracts(input: { tenantId: string;
       const directedOrder = { ...order, videoPlan: normalizeVideoPlan({ ...(order.videoPlan || input.config.videoDefaults || {}), language }) };
       let generated: GeneratedScript;
       if (process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK === 'true') {
-        generated = { script: deterministicClosedWorldStoryboard({ productFacts: productFacts(profile, input.config, order.productId), assets }), source: 'deterministic_closed_world_fallback', degradedReason: '已启用编导脚本离线降级模式' };
+        generated = { script: deterministicClosedWorldStoryboard({ productFacts: productFacts(profile, input.config, order.productId), assets, language }), source: 'deterministic_closed_world_fallback', degradedReason: '已启用编导脚本离线降级模式' };
       } else try {
         generated = await generateScript({ route: order.route, config: input.config, goal: input.goal, profile, assets, reference, productId: order.productId, platformBrief: platformCreativeBrief(order.platform), contentOrder: directedOrder, learnedNarrationStyle });
       } catch (error) {
         if (!isLlmUnavailableError(error)) throw error;
         generated = {
-          script: deterministicClosedWorldStoryboard({ productFacts: productFacts(profile, input.config, order.productId), assets }),
+          script: deterministicClosedWorldStoryboard({ productFacts: productFacts(profile, input.config, order.productId), assets, language }),
           source: 'deterministic_closed_world_fallback',
           degradedReason: error instanceof Error ? error.message : String(error || '脚本服务不可用'),
         };
       }
       if (!generated.script || storyboardSceneRanges(generated.script).length < 3) throw new Error(`编导脚本不完整：${order.id} / ${language}`);
+      if (!storyboardVoiceLanguageMatches(generated.script, language)) {
+        const repaired = await translateStoryboardFromMaster(
+          generated.script,
+          'mixed-script source',
+          language,
+          callVideoModel,
+          '只修复不属于目标语种的口播文字。产品名使用目标语种可朗读名称；SKU、数字、单位与已验证事实保持不变。',
+        );
+        generated = { ...generated, script: repaired.script };
+      }
+      if (!storyboardVoiceLanguageMatches(generated.script, language)) throw new Error(`编导口播与目标语言不一致：${order.id} / ${language}`);
       scripts[language] = { version: 1, body: generated.script, hash: stableHash(generated.script), language, status: 'confirmed', generatedBy: 'director_agent', generatedAt, source: generated.source, degradedReason: generated.degradedReason };
     }
     results.push({ ...order, contractVersion: 1, scripts });
@@ -1171,6 +1300,8 @@ export async function advanceOneProject(input: {
   tenantId: string; record: StoredRecord; config: DigitalEmployeeConfig; goal: WeeklyGoalInput; profile: EnterpriseProfile; assets: AssetCandidate[]; analyses: StoredRecord[]; allProjects: StoredRecord[];
 }): Promise<{ changed: boolean; blocker: string }> {
   const spec = json<Record<string, unknown>>(input.record.spec, {});
+  const incrementalCostBlocker=legacyIncrementalCostBlocker(json(spec.contentOrder,{}));
+  if(incrementalCostBlocker)return {changed:false,blocker:incrementalCostBlocker};
   const repairedSpec = repairFrozenOrderProductBinding({ spec, profile: input.profile, config: input.config, assets: input.assets });
   if (repairedSpec) {
     await updateProject(input.record, repairedSpec);
@@ -1227,6 +1358,20 @@ export async function advanceOneProject(input: {
     // but it must not produce another identical business progress event.
     return { changed: !semanticRepeat, blocker: reason };
   };
+
+  const legacyPaidSubmissionBlocker = legacyManagedPaidSubmissionBlocker({
+    route,
+    productionContractVersion: spec.productionContractVersion,
+    voiceoverUrl: spec.voiceoverUrl,
+    stage,
+    heygenJobId: automation.heygenJobId,
+  });
+  if (legacyPaidSubmissionBlocker) {
+    return block(stage, legacyPaidSubmissionBlocker, {
+      retryPolicy: 'input_required',
+      blockerCode: 'legacy_paid_route_replan_required',
+    });
+  }
 
   try {
     const replicationBlocker = legacyReplicationBlocker({ route, creationPath: spec.creationPath, stage, heygenJobId: automation.heygenJobId });
@@ -1557,7 +1702,11 @@ export async function advanceOneProject(input: {
     }
     if (stage === 'heygen') {
       const job = await ensureHeygenAutomationJob({ tenantId: input.tenantId, projectId: input.record.id, avatarId: brief.heygenAvatarId,
-        consent: brief.avatarConsent, voiceoverUrl: text(spec.voiceoverUrl, 2000), script: text(automation.spokenText, 30000), language: brief.language });
+        consent: brief.avatarConsent, voiceoverUrl: text(spec.voiceoverUrl, 2000), script: text(automation.spokenText, 30000), language: brief.language,
+        // The historical runner may only reconcile a provider task that was
+        // already submitted. New paid HeyGen work belongs to the frozen clone
+        // executor and its durable whole-plan permit.
+        providerPollOnly: true });
       // Build the complete review copy before requesting final human approval.
       if (!['review', 'completed'].includes(job.status)) {
         await updateProject(input.record, { ...spec, presenterMode: 'digital', automation: stagePatch(automation, 'heygen', { heygenJobId: job.id, blocker: job.status === 'review' ? 'HeyGen 成片已生成，请进入内容工作台预览并确认人物、口型与声音' : job.errorMessage || 'HeyGen 正在生成数字人视频' }) });
@@ -1902,6 +2051,9 @@ export async function advanceAutomatedContentProduction(input: {
   enterpriseProfile?: EnterpriseProfile;
   batchPlanId?: string;
   contentOrders?: ContentProductionOrderInput[];
+  /** Internal admission-only tick: persist missing real projects but never
+   * advance any project into scripts, voice, images or provider rendering. */
+  materializeOnly?:boolean;
 }): Promise<ContentProductionAdvanceResult> {
   const [profile, analysesResult, existingProjects] = await Promise.all([
     input.enterpriseProfile ? Promise.resolve(structuredClone(input.enterpriseProfile)) : readTenantEnterpriseProfile(input.tenantId),
@@ -2007,6 +2159,9 @@ export async function advanceAutomatedContentProduction(input: {
       const spec = {
         mode: route, contentMode: 'video', platform: routePlan.platform, platformBrief: routePlan.platformBrief, ratio: '9:16', exportSpec: { ratio: '9:16', resolution: '1080p', fps: 30 }, duration: normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).duration, lang: normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).language,
         workflowRunId: input.runId, workflowTaskId: input.taskId, workflowTaskKey: 'content_production', productInfo: productFacts(profile, input.config, routePlan.productId),
+        productionContractVersion: frozenOrder?.productionContractVersion || (frozenOrder?.fixedYieldTimeline ? 'fixed-yield.v2-preflight' : 'legacy.v1'),
+        fixedYieldExecutionState: frozenOrder?.fixedYieldTimeline ? 'preflight_only_legacy_stage_runner' : 'not_applicable',
+        ...(frozenOrder?.fixedYieldTimeline ? { fixedYieldTimeline: frozenOrder.fixedYieldTimeline } : {}),
         ...(input.batchPlanId ? { batchPlanId: input.batchPlanId } : {}), ...(frozenOrder?.id ? { contentOrderId: frozenOrder.id, contentOrder: frozenOrder } : {}),
         presenterMode: Boolean(frozenOrder?.videoPlan && usesDigitalPresenter(frozenOrder.videoPlan)) ? 'digital' : 'real',
         audience: input.config.customerProfile, selectedMaterialIds: [], script: '', subtitlesOn: true,
@@ -2036,6 +2191,22 @@ export async function advanceAutomatedContentProduction(input: {
     changed = created.length > 0;
   }
 
+  if(input.materializeOnly)return {changed,ready:false,projectRefs:projects.map(project=>({type:'studio_project' as const,id:project.id,route:text(projectAutomation(project).route) as ContentProductionRoute,status:String(project.status||'draft'),stage:text(projectAutomation(project).stage)||'script'})),knowledgeGaps:[],blocker:LEGACY_INCREMENTAL_COST_BLOCKER,summary:'已登记真实内容制作项目，等待在生产工作台核对费用后继续。'};
+
+  // Manual workbench completion is a separate real authority. Recover its
+  // current signed quality + persisted render-job + actual bytes, without
+  // sending this cost-blocked order back through paid automatic stages.
+  projects=await Promise.all(projects.map(async project=>{
+    const spec=json<Record<string,unknown>>(project.spec,{});
+    if(!legacyIncrementalCostBlocker(json(spec.contentOrder,{})))return project;
+    const proof=await readLegacyManualCompletion(store,input.tenantId,project),automation=projectAutomation(project);
+    if(proof){const existing=json<Record<string,unknown>>(automation.manualStudioCompletion,{});if(automation.stage==='completed'&&existing.sha256===proof.sha256&&existing.inputFingerprint===proof.inputFingerprint)return project;
+      await updateProject(project,{...spec,renderOutputPath:proof.outputPath,automation:{...automation,stage:'completed',status:'ready_for_approval',blocker:'',renderOutputPath:proof.outputPath,manualStudioCompletion:proof,quality:{passed:true,source:'verified_manual_studio',ruleVersion:'studio-project-quality-v1',qualityRecordId:proof.qualityRecordId},completedAt:proof.verifiedAt}},'ready_for_approval');changed=true;return (await store.getById<StoredRecord>('studio_projects',project.id))!;
+    }
+    if(automation.manualStudioCompletion&&automation.stage==='completed'){await updateProject(project,{...spec,automation:{...automation,stage:'blocked',status:'blocked',blocker:LEGACY_INCREMENTAL_COST_BLOCKER,quality:{...json<Record<string,unknown>>(automation.quality,{}),passed:false}}});changed=true;return (await store.getById<StoredRecord>('studio_projects',project.id))!;}
+    return project;
+  }));
+
   // Repair the historical focus-product binding bug for every project in the
   // scoped run/task before allocating scarce production slots. The repair is
   // metadata-only: it neither generates media nor clears a genuine blocker.
@@ -2063,7 +2234,7 @@ export async function advanceAutomatedContentProduction(input: {
   // A historical `passed` result is not proof under newer fact/visual rules.
   // Re-open one stale project per tick so it is re-matched, re-voiced and
   // re-rendered before it can count as completed again.
-  const staleCompleted = projects.find(project => automatedContentQualityNeedsRevalidation(projectAutomation(project)));
+  const staleCompleted = projects.find(project => automatedContentQualityNeedsRevalidation(projectAutomation(project))&&!legacyIncrementalCostBlocker(json<Record<string,unknown>>(json<Record<string,unknown>>(project.spec,{}).contentOrder,{})));
   if (staleCompleted) {
     const staleSpec = json<Record<string, unknown>>(staleCompleted.spec, {});
     const staleAutomation = projectAutomation(staleCompleted);

@@ -80,7 +80,8 @@ export async function transcribeMobileVoice(req: Request, res: Response) {
     if (!await consumeDemoQuota(req, res, 'aiChat'))
         return;
     try {
-        const result = await transcribeAudioWithQwen({ audio: bytes, fileName: 'mobile-voice.mp3', signal: AbortSignal.timeout(60000) });
+        const audioSeconds = Math.max(1, Math.min(20, Number(req.body?.audioSeconds) || 0));
+        const result = await transcribeAudioWithQwen({ audio: bytes, fileName: 'mobile-voice.mp3', audioSeconds, signal: AbortSignal.timeout(30000) });
         if (!result.text?.trim()) {
             res.status(422).json({ error: '没有识别到语音，请重录' });
             return;

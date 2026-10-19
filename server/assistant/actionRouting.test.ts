@@ -553,6 +553,16 @@ test('a missing real delegator returns an explicit not-handled fallback', async 
   assert.match(response.card.summary, /未由确定性操作路由处理/);
 });
 
+test('ordinary feedback and short replies remain conversation, not unsigned operations', async () => {
+  const service = createAssistantActionService({
+    commandBus: { async execute() { throw new Error('conversation must not execute'); } },
+  });
+  for (const text of ['你说的很笼统', '你说得很笼统', '没听懂', '具体一点', '举个例子', '嗯', '好的', '？', '太长了', 'That is too vague', '再详细说说', '继续说', '继续解释', '重新解释一下', '换个说法']) {
+    const response = await service.route({ source: 'natural_language', requestId: 'ordinary-chat-feedback-001', text }, context);
+    assert.equal(response.status, 'not_handled', text);
+  }
+});
+
 test('server-authored executable action metadata is returned without client invention', async () => {
   const service = createAssistantActionService({
     commandBus: {

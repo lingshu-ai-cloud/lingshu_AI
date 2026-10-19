@@ -3,16 +3,21 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('../AiCreateStudio.tsx', import.meta.url), 'utf8');
 const handler = source.slice(source.indexOf('const generateSetupScriptAndContinue ='), source.indexOf('const runBatchShotJobs ='));
-const firstAwait = handler.indexOf('await socialContentApi.getTask');
-assert.ok(firstAwait > 0);
-for (const action of ['applyTimestampScript(plan.script)', 'setStepIdx(materialIndex)', "setCanvasView('creation')", 'setVoiceoverStaleLangs(Object.keys(voiceoverAudios))']) {
-  assert.ok(handler.indexOf(action) >= 0 && handler.indexOf(action) < firstAwait, `${action} must happen before network requests`);
-}
+const taskSync = handler.indexOf('await socialContentApi.getTask');
+const applyScript = handler.indexOf('applyTimestampScript(preparedScript)');
+const atomicSave = handler.indexOf("const saved = await saveProject('draft', {");
+const verifySave = handler.indexOf("if (!saved) throw new Error('口播与分镜尚未保存，请稍后重试。')");
+const revealMaterial = handler.indexOf('setStepIdx(materialIndex)');
+assert.ok(taskSync > 0 && applyScript > taskSync, 'task context is synchronized before the local script is committed');
+assert.ok(atomicSave > applyScript && verifySave > atomicSave && revealMaterial > verifySave,
+  'the material step is revealed only after the complete script/storyboard snapshot is durable');
+assert.match(handler.slice(atomicSave, verifySave), /activeStepId: 'material'/,
+  'the atomic snapshot records the target workbench step');
 assert.equal(handler.split('setStepIdx(materialIndex)').length - 1, 1, 'completion must not interrupt user navigation');
-assert.ok(handler.includes('if (replicationPreparationRef.current) return;'), 'prevent duplicate paid requests');
+assert.ok(handler.includes('if (replicationPreparationRef.current) return false;'), 'prevent duplicate paid requests');
 assert.ok(handler.includes('成片渲染时再生成配音'), 'replication preparation defers voiceover generation until final render');
 assert.ok(!handler.includes('await studioApi.alignTts'), 'navigating to storyboards must not submit an alignment request');
-assert.ok(handler.includes('setReplicationPreparationError(message)'), 'failures remain actionable on the storyboard page');
+assert.ok(handler.includes('setReplicationPreparationError(message)'), 'failures remain actionable on the preparation page');
 assert.ok(handler.includes('replicationPreparationRef.current = false;'), 'release request guard after failure or success');
 assert.ok(source.includes('const primaryActionDisabled = replicationTimingBlocked ||'));
 assert.ok(source.includes('|| batchShotBusy || savingProj || replicationTimingBlocked'), 'material step action uses the same preparation gate');

@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, Film, RefreshCw, X } from 'lucide-react';
+import { Download, Film, Pin, RefreshCw, X } from 'lucide-react';
 import { authHeader } from '../lib/auth';
-import { useModalFocus } from '../hooks/useModalFocus';
-import ProductionRevisionPanel from './ProductionRevisionPanel';
 import ContentVideoPreview from './ContentVideoPreview';
 
 async function request(route: string, body?: unknown) {
@@ -30,12 +28,12 @@ async function download(route: string, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
-const secondaryButton = 'inline-flex min-h-9 items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-xs font-bold text-text-secondary transition hover:border-border-bright hover:bg-surface-2 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40';
-const primaryButton = 'inline-flex min-h-9 items-center justify-center rounded-md bg-accent px-3 py-2 text-xs font-bold text-white transition hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-40';
+const secondaryButton = 'inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-xs font-bold text-text-secondary transition hover:border-border-bright hover:bg-surface-2 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40';
+const primaryButton = 'inline-flex min-h-11 items-center justify-center rounded-md bg-accent px-3 py-2 text-xs font-bold text-white transition hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-40';
 const compactField = 'ui-field !min-h-9 !rounded-md !px-3 !py-2 !text-xs';
 const compactSelect = `${compactField} ui-select`;
 
-export default function ContentLibrary({ exportsOnly = false, onPublish }: { exportsOnly?: boolean; onPublish?: (draft: any) => void }) {
+export default function ContentLibrary({ exportsOnly = false, onPublish, onOpenProject }: { exportsOnly?: boolean; onPublish?: (draft: any) => void; onOpenProject?: (projectId: string) => void | Promise<void> }) {
   const [exportsOpen, setExportsOpen] = useState(false);
   const exportDialog = useRef<HTMLDialogElement>(null);
   const [items, setItems] = useState<any[]>([]);
@@ -45,17 +43,11 @@ export default function ContentLibrary({ exportsOnly = false, onPublish }: { exp
   const [language, setLanguage] = useState('');
   const [status, setStatus] = useState('');
   const [notice, setNotice] = useState('');
-  const [active, setActive] = useState<any>(null);
   const [extras, setExtras] = useState(true);
   const [busy, setBusy] = useState(false);
   const [platform, setPlatform] = useState('');
   const [project, setProject] = useState('');
   const [currentOnly, setCurrentOnly] = useState(false);
-  const productionDialogRef = useModalFocus<HTMLDivElement>({
-    open: Boolean(active),
-    onClose: () => setActive(null),
-  });
-
   useEffect(() => {
     const dialog = exportDialog.current;
     if (!dialog) return;
@@ -158,7 +150,10 @@ export default function ContentLibrary({ exportsOnly = false, onPublish }: { exp
           <div className="flex items-start gap-2 border-b border-border px-4 py-3">
             <input aria-label={'选择' + item.title} className="mt-1 accent-accent" type="checkbox" disabled={!item.available} checked={selected.includes(item.id)} onChange={event => setSelected(event.target.checked ? [...selected, item.id] : selected.filter(id => id !== item.id))} />
             <div className="min-w-0">
-              <h3 className="truncate text-sm font-bold text-text-primary">{item.title}</h3>
+              <h3 className="flex min-w-0 items-center gap-1.5 text-sm font-bold text-text-primary">
+                <span className="truncate">{item.title}</span>
+                {item.pinned && <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-accent"><Pin size={12} aria-hidden="true" />置顶</span>}
+              </h3>
               <p className="mt-1 text-[11px] text-text-muted">{item.language} · {item.platform} · v{item.version} · {item.current ? '当前版本' : '历史版本'} · {item.exportSpec?.resolution}</p>
             </div>
           </div>
@@ -167,7 +162,9 @@ export default function ContentLibrary({ exportsOnly = false, onPublish }: { exp
             <p className={`border-l-2 pl-2 text-xs ${item.reviewStatus === 'approved' ? 'border-accent text-accent' : 'border-amber text-amber'}`}>{item.reviewStatus === 'approved' ? '已批准' : '待审核'} · {item.published ? '已发布' : '未确认发布'}{!item.available ? ' · 文件不可用' : ''}{!item.metadataComplete ? ' · 旧版字幕与文案未留存' : ''}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button type="button" className={secondaryButton} disabled={!item.available} onClick={() => void download('library/download?id=' + encodeURIComponent(item.id), item.title + '.mp4').catch(error => setNotice(error.message))}>下载MP4</button>
-              <button type="button" className={secondaryButton} onClick={() => setActive(item)}>查看与修改</button>
+              {onOpenProject && <button type="button" className={secondaryButton} onClick={() => {
+                void Promise.resolve(onOpenProject(item.projectId)).catch(error => setNotice(error instanceof Error ? error.message : '内容项目读取失败'));
+              }}>进入制作台</button>}
               {onPublish && item.current && <button type="button" className={primaryButton} disabled={!item.available || Boolean(item.runId && item.reviewStatus !== 'approved')} onClick={() => void request('library/publish-draft/' + encodeURIComponent(item.id)).then(onPublish).catch(error => setNotice(error.message))}>去发布</button>}
             </div>
           </div>
@@ -238,20 +235,5 @@ export default function ContentLibrary({ exportsOnly = false, onPublish }: { exp
       </div>
     </dialog>
 
-    {active && <div ref={productionDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="content-library-production-dialog-title" className="fixed inset-0 z-50 overflow-auto bg-text-primary/45 p-4 backdrop-blur-[2px] sm:p-8">
-      <div className="mx-auto max-w-4xl rounded-lg border border-border bg-surface">
-        <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-accent">Production workspace</p>
-            <h2 id="content-library-production-dialog-title" className="mt-1 font-bold text-text-primary">{active.title}</h2>
-          </div>
-          <button type="button" data-modal-initial-focus className={secondaryButton} onClick={() => setActive(null)}>关闭</button>
-        </header>
-        <div className="space-y-5 p-5">
-          {active.previewUrl && <ContentVideoPreview src={items.find(item => item.id === active.id)?.previewUrl || active.previewUrl} className="mx-auto max-h-80 w-full bg-black object-contain" />}
-          <ProductionRevisionPanel projectId={active.projectId} onSaved={() => void load()} />
-        </div>
-      </div>
-    </div>}
   </div>;
 }

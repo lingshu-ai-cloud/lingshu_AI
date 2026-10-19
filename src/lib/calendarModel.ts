@@ -29,6 +29,12 @@ export type LsCalendarEvent = {
   cardLines?: readonly [string, string, string];
   /** Distinguishes a cadence slot from a persisted executable task. */
   planPlaceholder?: boolean;
+  /** Verified workflow completion ratio used by task-board progress markers. */
+  progress?: number;
+  /** A past-day result remains readable but is visually de-emphasized. */
+  muted?: boolean;
+  /** Execution evidence, independent from past/future day presentation. */
+  executionMark?: 'missing' | 'complete';
   data?: unknown;
 };
 

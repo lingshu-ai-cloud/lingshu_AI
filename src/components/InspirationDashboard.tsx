@@ -2,7 +2,7 @@ import InspirationVideoAnalysisTabs from './inspiration/InspirationVideoAnalysis
 import VideoAnalysisProgressPanel, { analysisProgressIsActive } from './inspiration/VideoAnalysisProgressPanel';
 import { Alert, Button, Drawer, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
 import LsPageHeader from './ui/LsPageHeader';
-import { LsLoadingState, LsMasonryGallery, LsProgressiveMedia } from './ui/LsExperiencePrimitives';
+import { LsLoadingState, LsMasonryGallery, LsMediaStateFrame, LsProgressiveMedia } from './ui/LsExperiencePrimitives';
 import { canExplicitlySubmitReferenceAsr, referenceAsrAvailabilityLabel, canRefreshExistingReferenceAsr, existingReferenceAsrRefreshBody } from '../lib/referenceAsrSubmission';
 import { hasExactReferenceReview, parseExactReferenceReview, loadExactReferenceReview, exactReferenceReviewErrorMessage } from '../lib/exactReferenceReview';
 import BenchmarkAnalysisSections from './inspiration/BenchmarkAnalysisSections';
@@ -50,6 +50,23 @@ import type { SocialBusinessModel, SocialDiscoveryScoreDecision, SocialDiscovery
 import { MATERIAL_SOURCE_LABELS, MATERIAL_THEME_LABELS, materialPrimaryThemeOf, materialSourceCategoryOf, materialThemeTagsOf } from '../../shared/materialTaxonomy';
 import { MATERIAL_ASSET_ROLE_LABELS, MATERIAL_CONTENT_ROLE_LABELS, materialDirectorSummary } from '../../shared/imageCreativePlanning';
 import MaterialTaxonomyFilters, { type MaterialSourceFilter, type MaterialThemeFilter } from './material-library/MaterialTaxonomyFilters';
+import {
+  ProductMaterialDetailDrawer,
+  ProductMaterialGroupCard,
+  materialBelongsToKnownProduct,
+  materialHasAuthoritativeAspectRatio,
+  materialIntrinsicAspectRatio,
+  materialMatchesProduct,
+  neutralProductSceneLabel,
+  type ProductMaterialGroupProduct,
+  type ProductScenePreparationSlotView,
+} from './material-library/ProductMaterialGroup';
+import { PRODUCT_SCENE_KINDS, type ProductSceneKind } from '../../shared/contracts/productScenePreparation';
+import {
+  STUDIO_MATERIAL_FILE_ACCEPT,
+  STUDIO_MATERIAL_VIDEO_ACCEPT,
+  studioMaterialFileKind,
+} from '../lib/studioMaterialFile';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ScriptType = 'voiceover' | 'storyboard';
@@ -61,7 +78,8 @@ type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry' | 'ind
 type MaterialOrientationFilter = 'all' | 'vertical' | 'horizontal';
 type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
 type FavoriteFilter = 'all' | 'favorite';
-export type MaterialAssetTab = 'enterprise' | 'ai' | 'cloud';
+type MaterialAssetGroup = 'enterprise' | 'ai' | 'cloud';
+export type MaterialAssetTab = 'all' | MaterialAssetGroup;
 type DiscoveryDecisionFilter = 'all' | SocialDiscoveryScoreDecision;
 type BusinessModelFilter = 'all' | SocialBusinessModel;
 
@@ -70,11 +88,72 @@ type BusinessModelFilter = 'all' | SocialBusinessModel;
 // quality checks removed non-video records from that page.
 const INSPIRATION_PAGE_SIZE = 100;
 const MATERIAL_LIBRARY_PAGE_SIZE = 20;
+const MATERIAL_LIBRARY_FETCH_PAGE_SIZE = 100;
 
 const MATERIAL_PRODUCT_ALL = '__all_products__';
 const MATERIAL_PRODUCT_COMMON = '__enterprise_common__';
 const MATERIAL_PRODUCT_LINKED_REF = '__linked_product_ref__';
 const ENTERPRISE_COMMON_MATERIAL_TAG = 'enterprise_common';
+
+type ProductMaterialInventory = {
+  materials: Material[];
+  slots: ProductScenePreparationSlotView[];
+};
+
+type ProductMaterialSummary = ProductMaterialInventory & {
+  loading: boolean;
+  error: string;
+};
+
+async function fetchCompleteProductMaterialInventory(product: ProductMaterialGroupProduct): Promise<ProductMaterialInventory> {
+  const first = await studioApi.listMaterialLibrary('library', {
+    productId: product.id,
+    page: 1,
+    pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE,
+  });
+  const pageCount = Math.max(1, Math.ceil(Number(first.total ?? first.items.length) / MATERIAL_LIBRARY_FETCH_PAGE_SIZE));
+  const additionalPages = pageCount > 1
+    ? await Promise.all(Array.from({ length: pageCount - 1 }, (_, index) => studioApi.listMaterialLibrary('library', {
+      productId: product.id,
+      page: index + 2,
+      pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE,
+    })))
+    : [];
+  const materials = [...new Map([first, ...additionalPages]
+    .flatMap(page => page.items)
+    .filter(material => materialMatchesProduct(material, product))
+    .map(material => [material.id, material])).values()];
+  return {
+    materials,
+    slots: (first.productSceneSlots || []).filter(slot => slot.productId === product.id),
+  };
+}
+
+async function fetchProductMaterialSummaries(
+  products: ReadonlyArray<ProductMaterialGroupProduct>,
+): Promise<Record<string, ProductMaterialInventory>> {
+  const first = await studioApi.listMaterialLibrary('library', {
+    page: 1,
+    pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE,
+  });
+  const pages = [first];
+  const pageCount = Math.max(1, Math.ceil(Number(first.total ?? first.items.length) / MATERIAL_LIBRARY_FETCH_PAGE_SIZE));
+  // Read subsequent pages sequentially so a large tenant does not create a
+  // browser-side request burst. Product details still use the exact productId
+  // query when the user opens a drawer.
+  for (let page = 2; page <= pageCount; page += 1) {
+    pages.push(await studioApi.listMaterialLibrary('library', {
+      page,
+      pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE,
+    }));
+  }
+  const allMaterials = [...new Map(pages.flatMap(result => result.items).map(material => [material.id, material])).values()];
+  const allSlots = first.productSceneSlots || [];
+  return Object.fromEntries(products.map(product => [product.id, {
+    materials: allMaterials.filter(material => materialMatchesProduct(material, product)),
+    slots: allSlots.filter(slot => slot.productId === product.id),
+  }]));
+}
 
 export type MaterialLibraryEntryContext = {
   openLibrary: boolean;
@@ -286,11 +365,22 @@ const MATERIAL_APPLICABILITY_LABELS: Record<string, string> = {
   all: '全部适用范围', universal: '通用素材', cross_industry: '跨行业素材', industry_specific: '行业专属',
 };
 /** Product-facing ownership groups. Upload entry only affects traceability, never ownership. */
-export function materialAssetTabOf(material: Pick<Material, 'sourceType' | 'folder' | 'scope'>): MaterialAssetTab {
+export function materialAssetTabOf(material: Pick<Material, 'sourceType' | 'folder' | 'scope'>): MaterialAssetGroup {
   const source = String(material.sourceType || '').toLowerCase();
   if (material.scope === 'shared' || material.folder === 'hot' || /official|viral|licensed[-_ ]?stock|cloud/.test(source)) return 'cloud';
-  if (/seedance|seedream|gemini|qwen|ai[-_ ]?generated|aigc/.test(source)) return 'ai';
+  if (/seedance|seedream|gemini|qwen|ai[-_ ]?generated|aigc|^ai[-_]/.test(source)) return 'ai';
   return 'enterprise';
+}
+
+export function generatedMaterialOriginLabel(material: Pick<Material, 'sourceType' | 'provenance'>): string {
+  const source = String(material.sourceType || '').toLowerCase();
+  if (!/seedance|seedream|gemini|qwen|ai[-_]?generated|aigc|^ai[-_]/.test(source)) return '';
+  const provenance = material.provenance || {};
+  const rawShotId = String(provenance.shotId || '').trim();
+  const shotLabel = rawShotId.replace(/^slot[-_]?/i, '').trim();
+  if (provenance.storyboardAigc === true) return `内容制作 · ${shotLabel ? `分镜 ${shotLabel}` : '分镜生成'}`;
+  if (provenance.freeCreationHook === true) return '内容制作 · 自由创作';
+  return source.includes('seedance') ? '内容制作 · Seedance 生成' : '内容制作 · AI 生成';
 }
 
 export function materialAssetBadge(material: Pick<Material, 'sourceType' | 'folder' | 'scope'>): { label: string; className: string } {
@@ -302,6 +392,58 @@ export function materialAssetBadge(material: Pick<Material, 'sourceType' | 'fold
 
 function isFavoriteMaterial(material: Material): boolean {
   return material.pinned === true;
+}
+
+type MaterialGalleryFilterSnapshot = {
+  query: string;
+  assetTab: MaterialAssetTab;
+  type: MaterialTypeFilter;
+  industry: MaterialIndustryFilter;
+  shotFunction: string;
+  applicability: MaterialApplicabilityFilter;
+  orientation: MaterialOrientationFilter;
+  source: MaterialSourceFilter;
+  theme: MaterialThemeFilter;
+  favorite: FavoriteFilter;
+};
+
+export function materialMatchesOrientation(material: Material, orientation: MaterialOrientationFilter): boolean {
+  if (orientation === 'all') return true;
+  if (materialHasAuthoritativeAspectRatio(material)) {
+    const aspectRatio = materialIntrinsicAspectRatio(material);
+    return orientation === 'vertical' ? aspectRatio < 1 : aspectRatio > 1;
+  }
+  const tags = String(material.tags || '');
+  return orientation === 'vertical'
+    ? /竖屏|vertical/i.test(tags)
+    : /横屏|horizontal/i.test(tags);
+}
+
+export function materialMatchesLibraryFilters(material: Material, filters: MaterialGalleryFilterSnapshot): boolean {
+  const query = filters.query.trim().toLowerCase();
+  const functions = String(material.shotFunction || '').split(',').map(item => item.trim());
+  const searchable = [
+    material.name,
+    material.folder,
+    material.industry,
+    material.shotFunction,
+    material.applicability,
+    material.tags,
+    material.productName,
+    material.scriptAnalysis?.searchableText,
+    materialSemanticLabel(material),
+  ].filter(Boolean).join(' ').toLowerCase();
+  const orientationMatches = materialMatchesOrientation(material, filters.orientation);
+  return (!query || searchable.includes(query))
+    && (filters.assetTab === 'all' || materialAssetTabOf(material) === filters.assetTab)
+    && (filters.theme === 'all' || materialThemeTagsOf(material).includes(filters.theme))
+    && (filters.type === 'all' || material.type === filters.type)
+    && (filters.industry === 'all' || material.industry === filters.industry)
+    && (filters.shotFunction === 'all' || functions.includes(filters.shotFunction))
+    && (filters.applicability === 'all' || material.applicability === filters.applicability)
+    && (filters.source === 'all' || filters.source === materialSourceCategoryOf(material))
+    && (filters.favorite === 'all' || isFavoriteMaterial(material))
+    && orientationMatches;
 }
 
 const isDemoTrafficStep = () => {
@@ -1228,11 +1370,13 @@ export function ThumbnailImage({
   platform,
   title,
   className,
+  onNaturalAspectRatio,
 }: {
   src: string;
   platform: Exclude<Platform, 'all'>;
   title: string;
   className: string;
+  onNaturalAspectRatio?: (ratio: number) => void;
 }) {
   const isDirectUrl = /^https?:\/\//i.test(src) || src.startsWith('/media/') || src.startsWith('blob:') || src.startsWith('data:');
   const [blobUrl, setBlobUrl] = useState('');
@@ -1243,7 +1387,7 @@ export function ThumbnailImage({
     if (!src || isDirectUrl) return;
     const controller = new AbortController();
     let createdUrl = '';
-    void fetch(src, { headers: authHeader(), signal: controller.signal })
+    void fetch(src, { headers: authHeader(), cache: 'no-store', signal: controller.signal })
       .then(response => {
         if (!response.ok) throw new Error(String(response.status));
         return response.blob();
@@ -1262,11 +1406,14 @@ export function ThumbnailImage({
     };
   }, [src, isDirectUrl]);
   if (failed || !src) return null;
-  if (isDirectUrl) return <LsProgressiveMedia src={src} alt={`${title} · ${platform} 缩略图`} className={className} draggable={false} loading="lazy" preview={false} onError={() => setFailed(true)} />;
-  return blobUrl ? <img src={blobUrl} alt={`${title} · ${platform} 缩略图`} className={className} draggable={false} loading="lazy" decoding="async" onError={() => setFailed(true)} /> : null;
+  const reportAspectRatio = (image: HTMLImageElement) => {
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) onNaturalAspectRatio?.(image.naturalWidth / image.naturalHeight);
+  };
+  if (isDirectUrl) return <LsProgressiveMedia src={src} alt={`${title} · ${platform} 缩略图`} className={className} draggable={false} loading="lazy" preview={false} onLoad={event => reportAspectRatio(event.target as HTMLImageElement)} onError={() => setFailed(true)} />;
+  return blobUrl ? <img src={blobUrl} alt={`${title} · ${platform} 缩略图`} className={className} draggable={false} loading="lazy" decoding="async" onLoad={event => reportAspectRatio(event.currentTarget)} onError={() => setFailed(true)} /> : null;
 }
 
-function AuthenticatedImage({ src, alt, className }: { src: string; alt: string; className: string }) {
+function AuthenticatedImage({ src, alt, className, onReady, onError, onNaturalAspectRatio }: { src: string; alt: string; className: string; onReady?: () => void; onError?: () => void; onNaturalAspectRatio?: (ratio: number) => void }) {
   const isRemoteSignedUrl = /^https?:\/\//i.test(src);
   const [blobUrl, setBlobUrl] = useState('');
   useEffect(() => {
@@ -1276,7 +1423,7 @@ function AuthenticatedImage({ src, alt, className }: { src: string; alt: string;
     const controller = new AbortController();
     let createdUrl = '';
     setBlobUrl('');
-    void fetch(src, { headers: authHeader(), signal: controller.signal })
+    void fetch(src, { headers: authHeader(), cache: 'no-store', signal: controller.signal })
       .then(response => {
         if (!response.ok) throw new Error(String(response.status));
         return response.blob();
@@ -1286,19 +1433,23 @@ function AuthenticatedImage({ src, alt, className }: { src: string; alt: string;
         createdUrl = URL.createObjectURL(blob);
         setBlobUrl(createdUrl);
       })
-      .catch(() => undefined);
+      .catch(() => { if (!controller.signal.aborted) onError?.(); });
     return () => {
       controller.abort();
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
   }, [src, isRemoteSignedUrl]);
-  if (isRemoteSignedUrl) return <img src={src} alt={alt} className={className} decoding="async" />;
+  const reportReady = (image: HTMLImageElement) => {
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) onNaturalAspectRatio?.(image.naturalWidth / image.naturalHeight);
+    onReady?.();
+  };
+  if (isRemoteSignedUrl) return <LsProgressiveMedia src={src} alt={alt} className={className} decoding="async" preview={false} onLoad={event => reportReady(event.target as HTMLImageElement)} onError={onError} />;
   return blobUrl
-    ? <img src={blobUrl} alt={alt} className={className} />
-    : <div className={`${className} animate-pulse bg-slate-200`} aria-label={alt} />;
+    ? <img src={blobUrl} alt={alt} className={className} decoding="async" onLoad={event => reportReady(event.currentTarget)} onError={onError} />
+    : <div className={`${className} bg-surface-2`} aria-label={alt} />;
 }
 
-export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, loadOnMount = autoPlay, hoverPlay = false, previewFrame = false, preload = previewFrame ? 'auto' : 'metadata', onReady, onError, onLoadingChange }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; loadOnMount?: boolean; hoverPlay?: boolean; previewFrame?: boolean; preload?: 'none' | 'metadata' | 'auto'; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void }) {
+export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, loadOnMount = autoPlay, hoverPlay = false, previewFrame = false, preload = previewFrame ? 'auto' : 'metadata', onReady, onError, onLoadingChange, onMetadata }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; loadOnMount?: boolean; hoverPlay?: boolean; previewFrame?: boolean; preload?: 'none' | 'metadata' | 'auto'; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void; onMetadata?: (metadata: { width: number; height: number; duration: number }) => void }) {
   const [playbackUrl, setPlaybackUrl] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const requestRef = useRef<Promise<string> | null>(null);
@@ -1306,11 +1457,21 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
   const generationRef = useRef(0);
   const mediaRetryRef = useRef(0);
   const mediaReadyTimerRef = useRef<number | null>(null);
+  const readyReportedRef = useRef(false);
 
   const clearMediaReadyTimer = () => {
     if (mediaReadyTimerRef.current === null) return;
     window.clearTimeout(mediaReadyTimerRef.current);
     mediaReadyTimerRef.current = null;
+  };
+
+  const reportMediaReady = () => {
+    clearMediaReadyTimer();
+    mediaRetryRef.current = 0;
+    onLoadingChange?.(false);
+    if (readyReportedRef.current) return;
+    readyReportedRef.current = true;
+    onReady?.();
   };
 
   const load = async (force = false) => {
@@ -1360,6 +1521,7 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
     controllerRef.current = null;
     requestRef.current = null;
     mediaRetryRef.current = 0;
+    readyReportedRef.current = false;
     clearMediaReadyTimer();
     setPlaybackUrl('');
     onLoadingChange?.(false);
@@ -1376,13 +1538,19 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
   return <video ref={videoRef} src={playbackUrl || undefined} poster={poster} controls={controls} autoPlay={autoPlay} muted={!controls} playsInline loop={hoverPlay} preload={preload} className={className}
     onLoadedMetadata={() => {
       const video = videoRef.current;
+      if (video) onMetadata?.({ width: video.videoWidth, height: video.videoHeight, duration: video.duration });
+      // Safari can paint a playable frame while delaying loadeddata/canplay.
+      // A controls-based preview is already useful once metadata is available,
+      // so do not leave the loading state over visible media.
+      if (controls) reportMediaReady();
       if (!previewFrame || !video || !Number.isFinite(video.duration) || video.duration <= 0) return;
       // A tiny seek paints a reliable first frame for uploaded MP4s whose frame
       // at 0s is transparent/black and which do not yet have a poster asset.
       video.currentTime = Math.min(0.12, Math.max(0.01, video.duration / 20));
     }}
-    onLoadedData={() => { clearMediaReadyTimer(); mediaRetryRef.current = 0; if (previewFrame) videoRef.current?.pause(); onReady?.(); }}
-    onCanPlay={() => { clearMediaReadyTimer(); onReady?.(); }}
+    onLoadedData={() => { if (previewFrame) videoRef.current?.pause(); reportMediaReady(); }}
+    onCanPlay={reportMediaReady}
+    onPlaying={reportMediaReady}
     onError={() => {
       if (!playbackUrl) return;
       clearMediaReadyTimer();
@@ -1396,6 +1564,106 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
     }}
     onMouseEnter={async () => { if (!hoverPlay) return; await load(); setTimeout(() => void videoRef.current?.play().catch(() => {}), 0); }}
     onMouseLeave={() => { if (!hoverPlay || !videoRef.current) return; videoRef.current.pause(); videoRef.current.currentTime = 0; }} />;
+}
+
+export function materialPreviewImageSources(material: Pick<Material, 'type' | 'poster' | 'url' | 'segments'>): string[] {
+  const candidates = [material.poster, ...(material.segments || []).map(segment => segment.poster), material.type === 'image' ? material.url : ''];
+  return Array.from(new Set(candidates.map(value => String(value || '').trim()).filter(Boolean)));
+}
+
+type MaterialCardMediaSource = 'image' | 'video';
+
+function MaterialCardMedia({ material, onRefresh, onNaturalAspectRatio }: { material: Material; onRefresh?: () => Promise<unknown>; onNaturalAspectRatio?: (ratio: number, source: MaterialCardMediaSource) => void }) {
+  const imageSources = materialPreviewImageSources(material);
+  const sourceIdentity = imageSources.join('|');
+  const [imageIndex, setImageIndex] = useState(0);
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => {
+    setImageIndex(0);
+    setState(imageSources.length || (material.type === 'video' && material.url) ? 'loading' : 'error');
+  }, [material.id, material.type, material.url, sourceIdentity, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
+  const imageSource = imageSources[imageIndex];
+  const videoFallback = material.type === 'video' && !imageSource && Boolean(material.url);
+  const failImage = () => {
+    if (imageIndex + 1 < imageSources.length) {
+      setImageIndex(index => index + 1);
+      setState('loading');
+    } else if (material.type === 'video' && material.url) {
+      setImageIndex(imageSources.length);
+      setState('loading');
+    } else setState('error');
+  };
+  return <div className="relative h-full w-full">
+    <LsMediaStateFrame state={state} label={state === 'error' ? '封面加载失败' : '正在加载封面'} className="h-full w-full bg-surface-2">
+      {imageSource ? <AuthenticatedImage key={`${imageSource}:${attempt}`} src={imageSource} alt={material.name} className="h-full w-full object-cover" onReady={() => setState('ready')} onError={failImage} onNaturalAspectRatio={ratio => onNaturalAspectRatio?.(ratio, 'image')} />
+        : videoFallback ? <AuthenticatedVideo key={`${material.url}:${attempt}`} apiUrl={material.url} loadOnMount previewFrame preload="auto" className="pointer-events-none h-full w-full bg-slate-950 object-cover" onReady={() => setState('ready')} onError={() => setState('error')} onLoadingChange={loading => loading && setState('loading')} onMetadata={metadata => { if (metadata.width > 0 && metadata.height > 0) onNaturalAspectRatio?.(metadata.width / metadata.height, 'video'); }} />
+          : null}
+    </LsMediaStateFrame>
+    {state === 'error' && <button type="button" disabled={refreshing} className="absolute bottom-3 left-1/2 z-20 inline-flex min-h-8 -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-white px-2.5 py-1.5 text-xs font-semibold text-text-secondary disabled:cursor-wait disabled:opacity-60" onClick={async event => {
+      event.stopPropagation();
+      setRefreshing(true);
+      try { await onRefresh?.(); }
+      finally { setAttempt(value => value + 1); setRefreshing(false); }
+    }}>
+      {refreshing && <Loader2 size={13} className="animate-spin" />}{refreshing ? '正在刷新' : '重新加载'}
+    </button>}
+  </div>;
+}
+
+function MaterialLibraryCardMedia({
+  material,
+  favoriting,
+  onRefresh,
+  onEdit,
+  onDelete,
+  onFavorite,
+  onPlay,
+}: {
+  material: Material;
+  favoriting: boolean;
+  onRefresh?: () => Promise<unknown>;
+  onEdit: () => void;
+  onDelete: () => void;
+  onFavorite: () => void;
+  onPlay: () => void;
+}) {
+  const [aspectRatio, setAspectRatio] = useState(() => materialIntrinsicAspectRatio(material));
+  useEffect(() => setAspectRatio(materialIntrinsicAspectRatio(material)), [material.aspectRatio, material.height, material.id, material.width]);
+  return (
+    <div className="relative bg-surface-2" style={{ aspectRatio }}>
+      <div className="absolute right-2 top-2 z-30 flex gap-1">
+        {material.canManage && <button type="button" aria-label={`编辑 ${material.name}`} title="编辑" onClick={onEdit} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-accent"><Pencil size={14} /></button>}
+        {material.canManage && <button type="button" aria-label={`删除 ${material.name}`} title="删除" onClick={onDelete} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-red-600"><Trash2 size={14} /></button>}
+        <button type="button" aria-label={`${isFavoriteMaterial(material) ? '取消收藏' : '收藏'} ${material.name}`} title={isFavoriteMaterial(material) ? '取消收藏' : '收藏'} onClick={onFavorite} disabled={favoriting}
+          className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow transition disabled:cursor-wait disabled:opacity-60 ${isFavoriteMaterial(material) ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-white/70 bg-white/95 text-text-secondary hover:text-amber-500'}`}>
+          {favoriting ? <Loader2 size={14} className="animate-spin" /> : <Star size={14} fill={isFavoriteMaterial(material) ? 'currentColor' : 'none'} />}
+        </button>
+      </div>
+      {material.type === 'video' || material.type === 'image' ? (
+        <MaterialCardMedia material={material} onRefresh={onRefresh} onNaturalAspectRatio={(ratio, source) => {
+          if (material.type === 'video' && source === 'image' && materialHasAuthoritativeAspectRatio(material)) return;
+          setAspectRatio(ratio);
+        }} />
+      ) : material.type === 'audio' ? (
+        <div className="flex h-full flex-col items-center justify-center gap-2 bg-surface-2 text-text-muted"><Music2 size={28} /><span className="text-xs font-bold">音频素材</span></div>
+      ) : (
+        <div className="flex h-full items-center justify-center text-text-muted"><Film size={22} /></div>
+      )}
+      {material.type === 'video' ? (
+        <button
+          type="button"
+          aria-label={`播放 ${material.name}`}
+          disabled={!material.url}
+          onClick={event => { event.stopPropagation(); onPlay(); }}
+          className="absolute left-1/2 top-1/2 z-20 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/65 text-white shadow-lg transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white disabled:hidden"
+        >
+          <Play size={19} fill="currentColor" />
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 type ImageInsightTab = 'overview' | 'visual' | 'copy' | 'iterate';
@@ -3348,6 +3616,16 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [materialProductId, setMaterialProductId] = useState(materialEntry.productId);
   const [materialProductRef, setMaterialProductRef] = useState(materialEntry.productRef);
   const [uploadProductId, setUploadProductId] = useState(() => materialEntry.productId || '');
+  const [uploadProductSceneKind, setUploadProductSceneKind] = useState<ProductSceneKind | null>(null);
+  const [productDetailProduct, setProductDetailProduct] = useState<ProductMaterialGroupProduct | null>(null);
+  const [productDetailMaterials, setProductDetailMaterials] = useState<Material[]>([]);
+  const [productDetailSlots, setProductDetailSlots] = useState<ProductScenePreparationSlotView[]>([]);
+  const [productDetailLoading, setProductDetailLoading] = useState(false);
+  const [productDetailError, setProductDetailError] = useState('');
+  const productDetailRequestRef = useRef(0);
+  const [productMaterialSummaries, setProductMaterialSummaries] = useState<Record<string, ProductMaterialSummary>>({});
+  const [productSummaryRefreshVersion, setProductSummaryRefreshVersion] = useState(0);
+  const productSummaryRequestRef = useRef(0);
   const [manageBusy, setManageBusy] = useState(false);
   const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
   const [previewMaterialAttempt, setPreviewMaterialAttempt] = useState(0);
@@ -3368,6 +3646,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       if (!result.ok || !result.material) throw new Error(result.error || '主题标签保存失败');
       setDetailMaterial(result.material);
       setLocalMaterials(items => items.map(item => item.id === result.material!.id ? result.material! : item));
+      setProductDetailMaterials(items => items.map(item => item.id === result.material!.id ? result.material! : item));
+      setProductMaterialSummaries(current => Object.fromEntries(Object.entries(current).map(([productId, summary]) => [
+        productId,
+        { ...summary, materials: summary.materials.map(item => item.id === result.material!.id ? result.material! : item) },
+      ])));
     } catch (error) { setMaterialMessage(error instanceof Error ? error.message : '主题标签保存失败'); }
     finally { setUpdatingMaterialTheme(false); }
   };
@@ -3377,7 +3660,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     closeOnEscape: () => !manageBusy,
   });
   const [materialSearch, setMaterialSearch] = useState('');
-  const [materialAssetTab, setMaterialAssetTab] = useState<MaterialAssetTab>('enterprise');
+  const [materialAssetTab, setMaterialAssetTab] = useState<MaterialAssetTab>('all');
   const [materialIndustry, setMaterialIndustry] = useState<MaterialIndustryFilter>('all');
   const [materialFunction, setMaterialFunction] = useState('all');
   const [materialApplicability, setMaterialApplicability] = useState<MaterialApplicabilityFilter>('all');
@@ -3389,7 +3672,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [materialFavoriteFilter, setMaterialFavoriteFilter] = useState<FavoriteFilter>('all');
   const [materialFiltersOpen, setMaterialFiltersOpen] = useState(false);
   const [materialsLoading, setMaterialsLoading] = useState(false);
-  const [materialTotal, setMaterialTotal] = useState(0);
   const [materialPage, setMaterialPage] = useState(1);
   const [materialFacets, setMaterialFacets] = useState<MaterialLibraryFacets | null>(null);
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
@@ -3413,6 +3695,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const shootingCameraInputRef = useRef<HTMLInputElement | null>(null);
   const videoRequestRef = useRef(0);
   const inventoryRequestRef = useRef(0);
+  const materialLibraryRequestRef = useRef(0);
   const platformLabel = PLATFORM_FILTERS.find(f => f.id === platform)?.label ?? '全部平台';
   const sortLabel = sortMode === 'crawlTime' ? '按爬取时间' : '按内容机会';
   const contentFormatLabel = contentFormat === 'video' ? '视频' : '图文';
@@ -3509,26 +3792,78 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   useEffect(() => () => { onScriptPanelClose?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshMaterials = async (page = materialPage): Promise<Material[]> => {
+    const requestId = ++materialLibraryRequestRef.current;
     if (!localMaterials.length) setMaterialsLoading(true);
     try {
-      const inventory = await studioApi.listMaterialLibrary('library', {
+      const filters = {
+        excludeProductAssociated: true,
         ...(materialSource !== 'all' ? { sourceCategory: materialSource } : {}),
         ...(materialTheme !== 'all' ? { theme: materialTheme } : {}),
-        ...(materialSearch.trim() ? { query: materialSearch.trim() } : {}),
-        page, pageSize: MATERIAL_LIBRARY_PAGE_SIZE,
+      } as const;
+      const inventory = await studioApi.listMaterialLibrary('library', {
+        ...filters,
+        page: 1,
+        pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE,
       });
-      setLocalMaterials(inventory.items);
-      setMaterialTotal(inventory.total ?? inventory.items.length);
+      const pageCount = Math.max(1, Math.ceil(Number(inventory.total ?? inventory.items.length) / MATERIAL_LIBRARY_FETCH_PAGE_SIZE));
+      const additionalPages = pageCount > 1
+        ? await Promise.all(Array.from({ length: pageCount - 1 }, (_, index) => studioApi.listMaterialLibrary('library', {
+          ...filters,
+          page: index + 2,
+          pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE,
+        })))
+        : [];
+      const materials = [...new Map([inventory, ...additionalPages]
+        .flatMap(result => result.items)
+        .map(material => [material.id, material])).values()];
+      if (requestId !== materialLibraryRequestRef.current) return localMaterials;
+      setLocalMaterials(materials);
       setMaterialFacets(inventory.facets || null);
       setMaterialPage(page);
-      return inventory.items;
+      return materials;
     } catch {
       // Keep last successful items; callers can still decide whether the stale
       // signed media URL is usable.
       return localMaterials;
     } finally {
-      setMaterialsLoading(false);
+      if (requestId === materialLibraryRequestRef.current) setMaterialsLoading(false);
     }
+  };
+
+  const loadProductMaterialDetail = async (product: ProductMaterialGroupProduct) => {
+    const requestId = ++productDetailRequestRef.current;
+    const cached = productMaterialSummaries[product.id];
+    setProductDetailProduct(product);
+    setProductDetailMaterials(cached?.materials || []);
+    setProductDetailSlots(cached?.slots || []);
+    setProductDetailLoading(true);
+    setProductDetailError('');
+    try {
+      const inventory = await fetchCompleteProductMaterialInventory(product);
+      if (requestId !== productDetailRequestRef.current) return;
+      setProductDetailMaterials(inventory.materials);
+      setProductDetailSlots(inventory.slots);
+      setProductMaterialSummaries(current => ({
+        ...current,
+        [product.id]: { ...inventory, loading: false, error: '' },
+      }));
+    } catch (error) {
+      if (requestId !== productDetailRequestRef.current) return;
+      setProductDetailMaterials([]);
+      setProductDetailSlots([]);
+      setProductDetailError(error instanceof Error ? error.message : '产品素材暂时无法读取，请重试');
+    } finally {
+      if (requestId === productDetailRequestRef.current) setProductDetailLoading(false);
+    }
+  };
+
+  const closeProductMaterialDetail = () => {
+    productDetailRequestRef.current += 1;
+    setProductDetailProduct(null);
+    setProductDetailMaterials([]);
+    setProductDetailSlots([]);
+    setProductDetailError('');
+    setProductDetailLoading(false);
   };
 
   useEffect(() => { void refreshMaterials(1); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -3536,7 +3871,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     if (innerView !== 'library') return;
     const timer = window.setTimeout(() => void refreshMaterials(1), 250);
     return () => window.clearTimeout(timer);
-  }, [innerView, materialSource, materialTheme, materialSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [innerView, materialSource, materialTheme]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     previewMaterialAutoRetryRef.current = 0;
     setPreviewMaterialAttempt(0);
@@ -3549,15 +3884,40 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     if (!current) return;
     setPreviewMaterialLoading(true);
     setPreviewMaterialError('');
-    const items = await refreshMaterials();
-    const fresh = items.find(item => item.id === current.id);
-    if (!fresh?.url) {
+    try {
+      let items: Material[];
+      const previewProductId = String(current.productId || '').trim()
+        || (productDetailMaterials.some(item => item.id === current.id) ? productDetailProduct?.id || '' : '');
+      if (previewProductId) {
+        const product = materialProducts.find(item => item.id === previewProductId) || {
+          id: previewProductId,
+          name: current.productName || current.name,
+        };
+        const inventory = await fetchCompleteProductMaterialInventory(product);
+        items = inventory.materials;
+        setProductMaterialSummaries(summaries => ({
+          ...summaries,
+          [product.id]: { ...inventory, loading: false, error: '' },
+        }));
+        if (productDetailProduct?.id === product.id) {
+          setProductDetailMaterials(inventory.materials);
+          setProductDetailSlots(inventory.slots);
+        }
+      } else {
+        items = await refreshMaterials();
+      }
+      const fresh = items.find(item => item.id === current.id);
+      if (!fresh?.url) {
+        setPreviewMaterialLoading(false);
+        setPreviewMaterialError('素材文件暂时不可用，请稍后重试。');
+        return;
+      }
+      setPreviewMaterial(fresh);
+      setPreviewMaterialAttempt(value => value + 1);
+    } catch (error) {
       setPreviewMaterialLoading(false);
-      setPreviewMaterialError('素材文件暂时不可用，请稍后重试。');
-      return;
+      setPreviewMaterialError(error instanceof Error ? error.message : '素材文件暂时不可用，请稍后重试。');
     }
-    setPreviewMaterial(fresh);
-    setPreviewMaterialAttempt(value => value + 1);
   };
 
   const handleMaterialPreviewError = (message?: string) => {
@@ -3587,6 +3947,41 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     }).catch(() => undefined);
     return () => { active = false; };
   }, [materialEntry.productId, materialEntry.productRef]);
+
+  const materialProductIdsKey = materialProducts.map(product => product.id).join('|');
+  useEffect(() => {
+    if (innerView !== 'library' || !materialProducts.length) return;
+    const requestId = ++productSummaryRequestRef.current;
+    setProductMaterialSummaries(current => Object.fromEntries(materialProducts.map(product => {
+      const previous = current[product.id];
+      return [product.id, {
+        materials: previous?.materials || [],
+        slots: previous?.slots || [],
+        loading: true,
+        error: '',
+      } satisfies ProductMaterialSummary];
+    })));
+    void fetchProductMaterialSummaries(materialProducts).then(inventories => {
+      if (requestId !== productSummaryRequestRef.current) return;
+      setProductMaterialSummaries(Object.fromEntries(materialProducts.map(product => [product.id, {
+        ...(inventories[product.id] || { materials: [], slots: [] }),
+        loading: false,
+        error: '',
+      } satisfies ProductMaterialSummary])));
+    }).catch(error => {
+      if (requestId !== productSummaryRequestRef.current) return;
+      setProductMaterialSummaries(current => Object.fromEntries(materialProducts.map(product => {
+        const previous = current[product.id];
+        return [product.id, {
+          materials: previous?.materials || [],
+          slots: previous?.slots || [],
+          loading: false,
+          error: error instanceof Error ? error.message : '产品素材暂时无法读取',
+        } satisfies ProductMaterialSummary];
+      })));
+    });
+    return () => { productSummaryRequestRef.current += 1; };
+  }, [innerView, materialProductIdsKey, productSummaryRefreshVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshInventory = async () => {
     const requestId = ++inventoryRequestRef.current;
@@ -3963,57 +4358,118 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     || (shootingFilter === 'common' && card.kind === 'common'));
   const materialFunctionOptions = useMemo(() => {
     const values = new Set<string>();
-    localMaterials.forEach(material => String(material.shotFunction || '').split(',').map(item => item.trim()).filter(Boolean).forEach(item => values.add(item)));
+    const productMaterials = Object.values(productMaterialSummaries).flatMap(summary => summary.materials);
+    [...localMaterials, ...productMaterials].forEach(material => String(material.shotFunction || '').split(',').map(item => item.trim()).filter(Boolean).forEach(item => values.add(item)));
     return [...values].sort((a, b) => (MATERIAL_FUNCTION_LABELS[a] || a).localeCompare(MATERIAL_FUNCTION_LABELS[b] || b, 'zh-CN'));
-  }, [localMaterials]);
+  }, [localMaterials, productMaterialSummaries]);
+  const activeMaterialFilters = useMemo<MaterialGalleryFilterSnapshot>(() => ({
+    query: materialSearch,
+    assetTab: materialAssetTab,
+    type: materialType,
+    industry: materialIndustry,
+    shotFunction: materialFunction,
+    applicability: materialApplicability,
+    orientation: materialOrientation,
+    source: materialSource,
+    theme: materialTheme,
+    favorite: materialFavoriteFilter,
+  }), [materialSearch, materialAssetTab, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialFavoriteFilter]);
   const filteredMaterials = useMemo(() => {
-    const q = materialSearch.trim().toLowerCase();
     return localMaterials.filter(material => {
-      const functions = String(material.shotFunction || '').split(',').map(item => item.trim());
-      const searchable = [material.name, material.folder, material.industry, material.shotFunction, material.applicability, material.tags, material.productName, material.scriptAnalysis?.searchableText, materialSemanticLabel(material)].filter(Boolean).join(' ').toLowerCase();
-      const orientationMatches = materialOrientation === 'all'
-        || (materialOrientation === 'vertical' && /竖屏|vertical/i.test(String(material.tags || '')))
-        || (materialOrientation === 'horizontal' && /横屏|horizontal/i.test(String(material.tags || '')));
       const productMatches = materialMatchesProductFilter(material, {
         enabled: materialProductFilterEnabled,
         productId: materialProductId,
         productRef: materialProductRef,
       });
-      return (!q || searchable.includes(q))
-        && materialAssetTabOf(material) === materialAssetTab
-        && (materialTheme === 'all' || materialThemeTagsOf(material).includes(materialTheme))
-        && (materialType === 'all' || material.type === materialType)
-        && (materialIndustry === 'all' || material.industry === materialIndustry)
-        && (materialFunction === 'all' || functions.includes(materialFunction))
-        && (materialApplicability === 'all' || material.applicability === materialApplicability)
-        && (materialSource === 'all' || materialSource === materialSourceCategoryOf(material))
-        && (materialFavoriteFilter === 'all' || isFavoriteMaterial(material))
-        && productMatches
-        && orientationMatches;
+      return materialMatchesLibraryFilters(material, activeMaterialFilters) && productMatches;
     }).sort((a, b) => {
       // User uploads are the primary working set. Seed/demo library records may
       // have a later migration timestamp, which must not push fresh uploads down.
       const sourcePriority = Number(materialSourceCategoryOf(b) === 'local_upload') - Number(materialSourceCategoryOf(a) === 'local_upload');
       return sourcePriority || (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0);
     });
-  }, [localMaterials, materialSearch, materialAssetTab, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialFavoriteFilter, materialProductFilterEnabled, materialProductId, materialProductRef]);
+  }, [localMaterials, activeMaterialFilters, materialProductFilterEnabled, materialProductId, materialProductRef]);
+
+  const ungroupedFilteredMaterials = useMemo(
+    () => filteredMaterials.filter(material => !materialBelongsToKnownProduct(material, materialProducts)),
+    [filteredMaterials, materialProducts],
+  );
+  const visibleProductGroups = useMemo(() => {
+    const query = materialSearch.trim().toLowerCase();
+    return materialProducts.filter(product => {
+      if (materialProductFilterEnabled) {
+        if (materialProductId && product.id !== materialProductId) return false;
+        if (!materialProductId && materialProductRef && product.name !== materialProductRef) return false;
+        if (!materialProductId && !materialProductRef) return false;
+      }
+      const summary = productMaterialSummaries[product.id];
+      const productNameMatches = Boolean(query && product.name.toLowerCase().includes(query));
+      const requiresMaterialMatch = materialAssetTab === 'ai'
+        || materialAssetTab === 'cloud'
+        || materialType !== 'all'
+        || materialIndustry !== 'all'
+        || materialFunction !== 'all'
+        || materialApplicability !== 'all'
+        || materialOrientation !== 'all'
+        || materialSource !== 'all'
+        || materialTheme !== 'all'
+        || materialFavoriteFilter !== 'all'
+        || Boolean(query && !productNameMatches);
+      if (!requiresMaterialMatch) return !query || productNameMatches;
+      if (!summary) return false;
+      const productFilters = productNameMatches
+        ? { ...activeMaterialFilters, query: '' }
+        : activeMaterialFilters;
+      return summary.materials.some(material => materialMatchesLibraryFilters(material, productFilters));
+    });
+  }, [activeMaterialFilters, materialApplicability, materialAssetTab, materialFavoriteFilter, materialFunction, materialIndustry, materialOrientation, materialProductFilterEnabled, materialProductId, materialProductRef, materialProducts, materialSearch, materialSource, materialTheme, materialType, productMaterialSummaries]);
+  const ordinaryFilteredTotal = ungroupedFilteredMaterials.length;
+  const pagedUngroupedFilteredMaterials = useMemo(() => {
+    const offset = (materialPage - 1) * MATERIAL_LIBRARY_PAGE_SIZE;
+    return ungroupedFilteredMaterials.slice(offset, offset + MATERIAL_LIBRARY_PAGE_SIZE);
+  }, [materialPage, ungroupedFilteredMaterials]);
+  const visibleProductGroupsForPage = materialPage === 1 ? visibleProductGroups : [];
+  const visibleMaterialTotal = visibleProductGroups.length + ordinaryFilteredTotal;
+  const visibleMaterialGalleryCount = visibleProductGroupsForPage.length + pagedUngroupedFilteredMaterials.length;
+  useEffect(() => {
+    const lastPage = Math.max(1, Math.ceil(ordinaryFilteredTotal / MATERIAL_LIBRARY_PAGE_SIZE));
+    setMaterialPage(current => Math.min(current, lastPage));
+  }, [ordinaryFilteredTotal]);
+  useEffect(() => {
+    setMaterialPage(1);
+  }, [materialSearch, materialAssetTab, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialFavoriteFilter, materialProductFilterEnabled, materialProductId, materialProductRef]);
 
   const handleUploadMaterials = async (files: FileList | null) => {
     if (!files?.length) return;
     setUploadingMaterial(true);
     setMaterialMessage('');
     try {
+      if (uploadProductSceneKind && files.length !== 1) {
+        throw new Error('每个预制场景一次上传一个视频');
+      }
       const uploadedAnalyzable: Material[] = [];
       const uploadedIds: string[] = [];
       for (const file of Array.from(files)) {
-        const type = file.type.startsWith('video') ? 'video' : file.type.startsWith('audio') ? 'audio' : 'image';
+        const type = studioMaterialFileKind(file);
+        if (!type) {
+          throw new Error(`「${file.name}」的文件格式无法识别，请使用受支持的视频、图片或音频格式`);
+        }
+        if (uploadProductSceneKind && type !== 'video') {
+          throw new Error('预制场景仅支持上传视频');
+        }
         const result = await studioApi.uploadMaterialFile(file, {
-          folder: 'social',
+          folder: uploadProductSceneKind ? 'product-scenes' : 'social',
           type,
-          duration: 0,
-          sourceType: 'local-upload',
+          sourceType: uploadProductSceneKind ? 'product-scene-preparation' : 'local-upload',
+          ...(uploadProductSceneKind ? { productId: uploadProductId, productSceneType: uploadProductSceneKind } : {}),
         });
         if (!result.ok || !result.material?.id) throw new Error(result.error || `「${file.name}」上传失败，请检查素材服务后重试`);
+        uploadedIds.push(result.material.id);
+        if (type === 'video' || type === 'image') uploadedAnalyzable.push(result.material);
+        // Product-scene uploads are verified and bound to the selected product
+        // and slot by the upload endpoint itself. Do not turn that successful
+        // atomic write into a reported failure with a second PATCH request.
+        if (uploadProductSceneKind) continue;
         const linked = await studioApi.updateMaterial(result.material.id, {
           name: result.material.name || file.name,
           tags: materialOwnershipTags(result.material.tags, uploadProductId),
@@ -4021,17 +4477,18 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           enterpriseCommon: !uploadProductId,
         });
         if (!linked.ok) throw new Error(`「${file.name}」已上传，但素材归属保存失败，请在素材卡片中编辑后重试`);
-        uploadedIds.push(result.material.id);
-        if ((type === 'video' || type === 'image') && result.material?.id) uploadedAnalyzable.push(result.material);
       }
       const ownershipLabel = uploadProductId ? '指定产品素材' : '企业通用素材';
       setMaterialMessage(uploadedAnalyzable.length ? `已作为${ownershipLabel}上传，编导 Agent 正在识别 ${uploadedAnalyzable.length} 个图片/视频素材…` : `已上传 ${files.length} 个${ownershipLabel}`);
       await refreshMaterials();
+      setProductSummaryRefreshVersion(version => version + 1);
+      if (productDetailProduct) await loadProductMaterialDetail(productDetailProduct);
       window.dispatchEvent(new Event('lingshu:materials-updated'));
       if (uploadingScriptGapId && uploadedIds.length) await updateScriptGapTask(uploadingScriptGapId, { uploadedMaterialIds: uploadedIds });
       setMaterialMessage(uploadedAnalyzable.length
         ? `已上传 ${files.length} 个${ownershipLabel}，图片/视频已进入编导分析队列，可在素材详情查看用途`
         : `已上传 ${files.length} 个${ownershipLabel}`);
+      setUploadProductSceneKind(null);
       setTimeout(() => setMaterialMessage(''), 2800);
     } catch (e) {
       setMaterialMessage(e instanceof Error ? e.message : '素材上传失败');
@@ -4045,6 +4502,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const requestMaterialUpload = (scriptGapId = '') => {
     setInnerView('library');
     setUploadingScriptGapId(scriptGapId);
+    setUploadProductSceneKind(null);
     setMaterialUploadDialogOpen(true);
   };
 
@@ -4178,7 +4636,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     const openTask = (taskId: string) => {
       window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
         page: 'smartAssets', view: 'create',
-        directStudio: false,
+        directStudio: true,
         socialContentTaskId: taskId,
         socialContentPage: 'smartAssets',
         contentCreationRequest: {
@@ -4190,7 +4648,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           managedMode: 'one_click_managed',
           continueTaskId: taskId,
           prefill: {
-            title: `${video.title || '灵感视频'} · 爆款裂变`,
+            title: `${video.title || '灵感视频'} · 爆款复刻`,
             topic: video.title || '',
             referenceLinks: [video.sourceUrl || video.videoUrl || ''].filter(Boolean),
             platforms: video.platform ? [video.platform] : undefined,
@@ -4201,6 +4659,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             referenceThumbnail: video.thumbnail,
             referenceMediaUrl: video.videoUrl || undefined,
             referenceContentType: 'video',
+            aspectRatio: video.aiAnalysis?.gemini?.globalSettings?.aspectRatio,
             referenceShots: getAnalysis(video)?.scriptDetails15s.map(detail => ({ time: detail.time, dialogue: detail.dialogue, subtitle: detail.subtitle, visual: detail.visual, firstFrameRef: detail.materialEvidence?.firstFrameRef || undefined, firstFrameSeconds: detail.materialEvidence?.firstFrameSeconds })) || [],
           },
         },
@@ -4327,7 +4786,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     try {
       const result = await studioApi.setMaterialPinned(material.id, nextPinned);
       if (!result.ok) throw new Error(result.error || '收藏状态保存失败');
-      setLocalMaterials(items => items.map(item => item.id === material.id ? { ...item, pinned: nextPinned } : item));
+      const applyPinned = (item: Material) => item.id === material.id ? { ...item, pinned: nextPinned } : item;
+      setLocalMaterials(items => items.map(applyPinned));
+      setProductDetailMaterials(items => items.map(applyPinned));
+      setProductMaterialSummaries(current => Object.fromEntries(Object.entries(current).map(([productId, summary]) => [
+        productId,
+        { ...summary, materials: summary.materials.map(applyPinned) },
+      ])));
       setMaterialMessage(nextPinned ? `已收藏素材：${material.name}` : `已取消收藏：${material.name}`);
       showActionSuccess(nextPinned ? '收藏成功' : '已取消收藏', nextPinned ? '可通过“仅看收藏”快速筛选。' : material.name);
       setTimeout(() => setMaterialMessage(''), 3500);
@@ -4579,6 +5044,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         });
         if (!result.ok) throw new Error(result.error || '编辑失败');
         await refreshMaterials();
+        setProductSummaryRefreshVersion(version => version + 1);
+        if (productDetailProduct) await loadProductMaterialDetail(productDetailProduct);
       }
       setMaterialMessage('已保存修改');
       setManageTarget(null);
@@ -4611,8 +5078,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         const result = await studioApi.deleteMaterial(manageTarget.item.id);
         if (!result.ok) throw new Error(result.error || '删除失败');
         setLocalMaterials(items => items.filter(item => item.id !== manageTarget.item.id));
+        setProductDetailMaterials(items => items.filter(item => item.id !== manageTarget.item.id));
+        await refreshMaterials(materialPage);
+        setProductSummaryRefreshVersion(version => version + 1);
+        if (productDetailProduct) await loadProductMaterialDetail(productDetailProduct);
+        setMaterialMessage(result.retainedForProjectReferences ? '已从我的素材移除；制作项目中的既有引用仍保留' : '已删除');
       }
-      setMaterialMessage('已删除');
+      if (manageTarget.kind === 'video') setMaterialMessage('已删除');
       setManageTarget(null);
     } catch (error) {
       setMaterialMessage(error instanceof Error ? error.message : '删除失败');
@@ -4682,6 +5154,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
   const clearMaterialFilters = () => {
     setMaterialSearch('');
+    setMaterialAssetTab('all');
     setMaterialSource('all');
     setMaterialTheme('all');
     setMaterialType('all');
@@ -4710,6 +5183,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     + Number(sortMode !== 'crawlTime')
     + Number(viewMode !== 'grid');
   const materialFilterCount = Number(materialSearch.trim().length > 0)
+    + Number(materialAssetTab !== 'all')
     + Number(materialTheme !== 'all')
     + Number(materialSource !== 'all')
     + Number(materialType !== 'all')
@@ -4749,7 +5223,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             <Tabs className="min-w-0 flex-1" activeKey={innerView} onChange={key => setInnerView(key as InspirationInnerView)} aria-label="灵感中心分类"
               items={[
                 { key: 'inspiration', label: `灵感发现 · ${tenantVideoTotalItems ?? '…'}`, icon: <Flame size={16} /> },
-                { key: 'library', label: `我的素材 · ${localMaterials.length}`, icon: <Film size={16} /> },
+                { key: 'library', label: `我的素材 · ${visibleMaterialTotal}`, icon: <Film size={16} /> },
                 { key: 'accounts', label: `对标账号 · ${competitorAccountCount ?? '…'}`, icon: <Users size={16} /> },
                 { key: 'shooting', label: `生产缺口 · ${shootingNeeds.length + scriptGapTasks.length}`, icon: <Lightbulb size={16} /> },
               ]} />
@@ -4757,7 +5231,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               <Button type="primary" loading={importingReference} icon={<Upload size={15} />}>导入 MP4 并分析</Button>
             </AntUpload>}
             {innerView === 'library' && <div className="flex shrink-0 items-center gap-2">
-              <Button loading={uploadingMaterial} icon={<Upload size={15} />} onClick={() => setMaterialUploadDialogOpen(true)}>上传素材</Button>
+              <Button loading={uploadingMaterial} icon={<Upload size={15} />} onClick={() => { setUploadProductSceneKind(null); setMaterialUploadDialogOpen(true); }}>上传素材</Button>
               <Button type="primary" icon={<Images size={15} />} onClick={startImageCreation}>生成图片</Button>
             </div>}
           </div>
@@ -4782,11 +5256,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             />}
             {innerView === 'inspiration' && <div className="mb-4 space-y-4 rounded-lg border border-border bg-surface p-4">
               <div className="overflow-x-auto pb-1">
-              <div className="grid min-w-[940px] grid-cols-[160px_minmax(240px,2fr)_minmax(130px,1fr)_minmax(170px,1fr)_160px] gap-3">
-                <Select value={platform} onChange={value => handlePlatformFilter(value as Platform)} aria-label="社媒平台" options={PLATFORM_FILTERS.map(item => ({ value: item.id, label: item.label }))} />
+              <div className="grid min-w-[940px] grid-cols-[minmax(240px,2fr)_160px_minmax(130px,1fr)_minmax(170px,1fr)_160px] gap-3">
                 <Input allowClear prefix={<Search size={15} />} value={search}
                   onChange={event => { setLastCrawlVideoIds([]); setSearch(event.target.value); }}
                   aria-label="搜索爆款灵感" placeholder="搜索标题或标签" />
+                <Select value={platform} onChange={value => handlePlatformFilter(value as Platform)} aria-label="社媒平台" options={PLATFORM_FILTERS.map(item => ({ value: item.id, label: item.label }))} />
                 <Select value={contentFormat} onChange={value => handleContentFormatFilter(value as ContentFormat)} aria-label="内容形式"
                   options={[{ value: 'video', label: '视频' }, { value: 'image', label: '图文' }]} />
                 <Select value={inspirationFavoriteFilter} onChange={value => setInspirationFavoriteFilter(value as FavoriteFilter)} aria-label="爆款收藏状态"
@@ -4823,7 +5297,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               ) : filtered.length === 0 ? (
                 <InspirationEmptyState state={resultEmptyState(visibleVideos.length, search, platform !== 'all' || crawlTimeRange !== 'all')} contentFormat={contentFormat} search={search} localMaterialCount={localMaterials.length} onReset={resetInspirationFilters} onOpenLibrary={() => setInnerView('library')} />
               ) : viewMode === 'grid' ? (
-                <LsMasonryGallery layout="grid" items={filtered.map((video, i) => ({ id: video.id, content:
+                <LsMasonryGallery layout="masonry" items={filtered.map((video, i) => ({ id: video.id, content:
                     <div className="relative h-full">
                       <VideoCard video={video} index={i} isSelected={false}
                         onSelect={() => openDirectorAnalysis(video)}
@@ -4877,8 +5351,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               <input
                 ref={uploadInputRef}
                 type="file"
-                multiple
-                accept="video/*,image/*,audio/*"
+                multiple={!uploadProductSceneKind}
+                accept={uploadProductSceneKind ? STUDIO_MATERIAL_VIDEO_ACCEPT : STUDIO_MATERIAL_FILE_ACCEPT}
                 className="hidden"
                 onChange={e => void handleUploadMaterials(e.currentTarget.files)}
               />
@@ -4895,10 +5369,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
               <div className="space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
                 <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1" aria-label="我的素材筛选">
-                  <Select className="w-32 shrink-0" aria-label="素材分类" value={materialAssetTab} onChange={setMaterialAssetTab} options={[{value:"enterprise",label:"产品素材"},{value:"ai",label:"AI 素材"},{value:"cloud",label:"云素材"}]} />
-                  <Input allowClear prefix={<Search size={15} />} value={materialSearch} onChange={event => setMaterialSearch(event.target.value)}
-                    aria-label="搜索我的素材" placeholder="搜索素材名称、产品或主要内容" className="min-w-60 flex-1" />
-                  <MaterialTaxonomyFilters source={materialSource} theme={materialTheme} total={materialSource === 'all' && materialTheme === 'all' ? materialTotal : Object.values(materialFacets?.sources || {}).reduce((sum, count) => sum + count, 0)}
+                  <div className="flex-1" style={{ minWidth: 260 }}>
+                    <Input allowClear prefix={<Search size={15} />} value={materialSearch} onChange={event => setMaterialSearch(event.target.value)}
+                      aria-label="搜索我的素材" placeholder="搜索素材名称、产品或主要内容" className="w-full" />
+                  </div>
+                  <Select className="w-32 shrink-0" aria-label="素材分类" value={materialAssetTab} onChange={setMaterialAssetTab} options={[{value:"all",label:"全部素材"},{value:"enterprise",label:"产品素材"},{value:"ai",label:"AI 素材"},{value:"cloud",label:"云素材"}]} />
+                  <MaterialTaxonomyFilters source={materialSource} theme={materialTheme} total={visibleMaterialTotal}
                     sourceCounts={materialFacets?.sources || { local_upload: 0, official_import: 0, user_generated: 0 }}
                     onSourceChange={setMaterialSource} onThemeChange={setMaterialTheme} />
                   <Select className="w-32 shrink-0" value={materialType} onChange={value => setMaterialType(value as MaterialTypeFilter)} aria-label="内容形式"
@@ -4956,93 +5432,122 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   <div className="flex items-center justify-center gap-2 py-16 text-sm text-text-muted">
                     <Loader2 size={16} className="animate-spin" /> 正在读取素材库...
                   </div>
-                ) : localMaterials.length === 0 ? (
+                ) : localMaterials.length === 0 && materialProducts.length === 0 ? (
                   <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                     <Film size={30} className="mx-auto mb-3 text-text-muted opacity-50" />
                     <p className="text-sm font-bold text-text-primary">还没有本地社媒素材</p>
                     <p className="mt-1 text-xs text-text-muted">可上传企业通用素材或具体产品素材；生产缺口会先由系统匹配复用、合成和已接入生成能力。</p>
                   </div>
-                ) : filteredMaterials.length === 0 ? (
+                ) : visibleMaterialGalleryCount === 0 ? (
                   <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                     <Search size={30} className="mx-auto mb-3 text-text-muted opacity-50" />
                     <p className="text-sm font-bold text-text-primary">没有符合当前标签的素材</p>
                     <button type="button" onClick={clearMaterialFilters} className="mt-2 text-xs font-bold text-accent">清空筛选条件</button>
                   </div>
-                ) : <LsMasonryGallery layout="grid" items={filteredMaterials.map(material => ({ id: material.id, content:
-                  <article className="group flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-none transition hover:border-border-bright">
-                    <div className="relative aspect-[9/16] bg-surface-2">
-                      <div className="absolute right-2 top-2 z-30 flex gap-1">
-                        {material.canManage && <button type="button" aria-label={`编辑 ${material.name}`} title="编辑" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'edit' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-accent"><Pencil size={14} /></button>}
-                        {material.canManage && <button type="button" aria-label={`删除 ${material.name}`} title="删除" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'delete' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-red-600"><Trash2 size={14} /></button>}
-                        <button type="button" aria-label={`${isFavoriteMaterial(material) ? '取消收藏' : '收藏'} ${material.name}`} title={isFavoriteMaterial(material) ? '取消收藏' : '收藏'} onClick={() => void toggleMaterialFavorite(material)} disabled={favoritingMaterialIds.includes(material.id)}
-                          className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow transition disabled:cursor-wait disabled:opacity-60 ${isFavoriteMaterial(material) ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-white/70 bg-white/95 text-text-secondary hover:text-amber-500'}`}>
-                          {favoritingMaterialIds.includes(material.id) ? <Loader2 size={14} className="animate-spin" /> : <Star size={14} fill={isFavoriteMaterial(material) ? 'currentColor' : 'none'} />}
-                        </button>
-                      </div>
-                      {material.type === 'video' ? (
-                        <>
-                          {material.poster
-                            ? <AuthenticatedImage src={material.poster} alt={material.name} className="h-full w-full object-cover" />
-                            : material.url
-                              ? <AuthenticatedVideo apiUrl={material.url} loadOnMount previewFrame preload="auto" className="pointer-events-none h-full w-full bg-slate-950 object-cover" />
-                              : <div className="flex h-full flex-col items-center justify-center gap-2 bg-slate-950 text-white/65"><Film size={26} /><span className="text-[11px] font-semibold">预览待生成</span></div>}
-                          <button
-                            type="button"
-                            aria-label={`播放 ${material.name}`}
-                            onClick={event => { event.stopPropagation(); setPreviewMaterial(material); }}
-                            className="absolute left-1/2 top-1/2 z-20 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/65 text-white shadow-lg transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white"
-                          >
-                            <Play size={19} fill="currentColor" />
-                          </button>
-                        </>
-                      ) : material.type === 'image' && (material.poster || material.url) ? (
-                        <img src={material.poster || material.url} alt={material.name} className="h-full w-full object-cover" />
-                      ) : material.type === 'audio' ? (
-                        <div className="flex h-full flex-col items-center justify-center gap-2 bg-surface-2 text-text-muted"><Music2 size={28} /><span className="text-xs font-bold">音频素材</span></div>
-                      ) : (
-                        <div className="flex h-full items-center justify-center text-text-muted"><Film size={22} /></div>
-                      )}
-                    </div>
-                    <div className="flex min-h-52 flex-1 flex-col p-3">
-                      <p className="line-clamp-2 text-sm font-bold leading-snug text-text-primary">{material.name}</p>
-                      <p className="mt-1 line-clamp-1 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setDetailMaterial(material)}
-                          className="inline-flex h-9 min-w-0 flex-nowrap items-center justify-center gap-0.5 rounded-lg border border-border bg-white px-1.5 text-[11px] font-bold text-text-secondary transition hover:border-accent hover:text-accent"
-                        >
-                          <Eye size={12} className="shrink-0" /><span className="whitespace-nowrap">查看详情</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => enterMaterialSmartGeneration(material)}
-                          disabled={material.type === 'audio' || (material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration })) || !String(material.url || material.poster || '').trim()}
-                          title={material.type === 'audio' ? '音频素材不能单独进入画面创作' : material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration }) ? '视频时长尚未识别完成' : '带入内容制作的自由创作'}
-                          className="inline-flex h-9 min-w-0 flex-nowrap items-center justify-center gap-0.5 rounded-lg bg-accent px-1.5 text-[11px] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
-                        >
-                          <Sparkles size={12} className="shrink-0" /><span className="whitespace-nowrap">{material.type === 'image' ? '用此图创作' : '自由创作'}</span>
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                }))} />}
-              {materialTotal > MATERIAL_LIBRARY_PAGE_SIZE && (
-                <nav className="flex justify-center border-t border-border pt-5" aria-label="我的素材分页">
+                ) : (
+                  <div className="space-y-6">
+                    {visibleProductGroupsForPage.length > 0 ? (
+                      <section aria-labelledby="product-material-groups-title" className="space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <h2 id="product-material-groups-title" className="ls-type-title-small text-text-primary">产品素材集合</h2>
+                          <span className="ls-type-body-small text-text-muted">{visibleProductGroups.length} 个产品</span>
+                        </div>
+                        <LsMasonryGallery layout="masonry" items={visibleProductGroupsForPage.map(product => {
+                          const summary = productMaterialSummaries[product.id];
+                          const hasSummaryData = Boolean(summary?.materials.length || summary?.slots.length);
+                          return {
+                            id: `product-${product.id}`,
+                            content: (
+                              <ProductMaterialGroupCard
+                                product={product}
+                                materials={summary?.materials || []}
+                                slots={summary?.slots || []}
+                                loading={Boolean(summary?.loading && !hasSummaryData)}
+                                error={Boolean(summary?.error && !hasSummaryData)}
+                                onOpen={item => void loadProductMaterialDetail(item)}
+                              />
+                            ),
+                          };
+                        })} />
+                      </section>
+                    ) : null}
+                    {pagedUngroupedFilteredMaterials.length > 0 ? (
+                      <section aria-labelledby="ordinary-materials-title" className="space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <h2 id="ordinary-materials-title" className="ls-type-title-small text-text-primary">普通素材</h2>
+                          <span className="ls-type-body-small text-text-muted">共 {ordinaryFilteredTotal} 条 · 当前第 {materialPage} 页</span>
+                        </div>
+                        <LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map(material => ({ id: material.id, content:
+                          <article className="group flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-none transition hover:border-border-bright">
+                            <MaterialLibraryCardMedia
+                              material={material}
+                              favoriting={favoritingMaterialIds.includes(material.id)}
+                              onRefresh={() => refreshMaterials(materialPage)}
+                              onEdit={() => openManageDialog({ kind: 'material', item: material, action: 'edit' })}
+                              onDelete={() => openManageDialog({ kind: 'material', item: material, action: 'delete' })}
+                              onFavorite={() => void toggleMaterialFavorite(material)}
+                              onPlay={() => setPreviewMaterial(material)}
+                            />
+                            <div className="flex flex-1 flex-col p-3">
+                              <p className="line-clamp-2 text-sm font-bold leading-snug text-text-primary">{material.name}</p>
+                              <p className="mt-1 line-clamp-1 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
+                              {generatedMaterialOriginLabel(material) && <p className="mt-1 line-clamp-1 text-[11px] font-medium leading-5 text-text-muted" title={generatedMaterialOriginLabel(material)}>{generatedMaterialOriginLabel(material)}</p>}
+                              <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
+                                <button type="button" onClick={() => setDetailMaterial(material)} className="inline-flex h-9 min-w-0 flex-nowrap items-center justify-center gap-0.5 rounded-lg border border-border bg-white px-1.5 text-[11px] font-bold text-text-secondary transition hover:border-accent hover:text-accent">
+                                  <Eye size={12} className="shrink-0" /><span className="whitespace-nowrap">查看详情</span>
+                                </button>
+                                <button type="button" onClick={() => enterMaterialSmartGeneration(material)}
+                                  disabled={material.type === 'audio' || (material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration })) || !String(material.url || material.poster || '').trim()}
+                                  title={material.type === 'audio' ? '音频素材不能单独进入画面创作' : material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration }) ? '视频时长尚未识别完成' : '带入内容制作的自由创作'}
+                                  className="inline-flex h-9 min-w-0 flex-nowrap items-center justify-center gap-0.5 rounded-lg bg-accent px-1.5 text-[11px] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45">
+                                  <Sparkles size={12} className="shrink-0" /><span className="whitespace-nowrap">{material.type === 'image' ? '用此图创作' : '自由创作'}</span>
+                                </button>
+                              </div>
+                            </div>
+                          </article>
+                        }))} />
+                      </section>
+                    ) : null}
+                  </div>
+                )}
+              {ordinaryFilteredTotal > MATERIAL_LIBRARY_PAGE_SIZE && (
+                <nav className="flex justify-center border-t border-border pt-5" aria-label="普通素材分页">
                   <Pagination
                     current={materialPage}
-                    total={materialTotal}
+                    total={ordinaryFilteredTotal}
                     pageSize={MATERIAL_LIBRARY_PAGE_SIZE}
                     showSizeChanger={false}
                     responsive
                     disabled={materialsLoading}
-                    onChange={page => void refreshMaterials(page)}
-                    showTotal={(total, range) => `${range[0]}–${range[1]} / ${total} 条素材`}
+                    onChange={setMaterialPage}
+                    showTotal={(total, range) => `普通素材 ${range[0]}–${range[1]} / ${total} 条`}
                   />
                 </nav>
               )}
             </div>
           )}
+
+          <ProductMaterialDetailDrawer
+            product={productDetailProduct}
+            materials={productDetailMaterials}
+            slots={productDetailSlots}
+            loading={productDetailLoading}
+            error={productDetailError}
+            onClose={closeProductMaterialDetail}
+            onRetry={product => void loadProductMaterialDetail(product)}
+            onPreviewMaterial={setPreviewMaterial}
+            onEditMaterial={material => openManageDialog({ kind: 'material', item: material, action: 'edit' })}
+            onDeleteMaterial={material => openManageDialog({ kind: 'material', item: material, action: 'delete' })}
+            onToggleFavoriteMaterial={material => void toggleMaterialFavorite(material)}
+            onOpenMaterialDetail={setDetailMaterial}
+            onCreateFromMaterial={enterMaterialSmartGeneration}
+            isMaterialFavoriting={material => favoritingMaterialIds.includes(material.id)}
+            onUploadSlot={slot => {
+              setUploadProductId(slot.productId);
+              setUploadProductSceneKind(slot.kind);
+              setMaterialUploadDialogOpen(true);
+            }}
+          />
 
           {previewMaterial?.type === 'video' && previewMaterial.url && (
             <Modal open title={previewMaterial.name} width={840} footer={null} onCancel={() => setPreviewMaterial(null)}>
@@ -5098,7 +5603,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       ['素材类型', detailMaterial.type === 'video' ? '视频' : detailMaterial.type === 'image' ? '图片' : '音频'],
                       ['关联产品', detailMaterial.productName || '企业通用素材'],
                       ['主要内容', materialSemanticLabel(detailMaterial)],
-                      ['素材来源', detailMaterial.sourceName || detailMaterial.sourceProvider || (detailMaterial.scope === 'shared' ? '共享素材' : '我的素材')],
+                      ['素材来源', generatedMaterialOriginLabel(detailMaterial) || detailMaterial.sourceName || detailMaterial.sourceProvider || (detailMaterial.scope === 'shared' ? '共享素材' : '我的素材')],
                       ['时长', detailMaterial.type === 'video' || detailMaterial.type === 'audio' ? displayDuration(detailMaterial.duration) : '—'],
                       ['入库时间', detailMaterial.createdAt ? new Date(detailMaterial.createdAt).toLocaleString('zh-CN') : '—'],
                     ].map(([label, value]) => <div key={label} className="rounded-lg border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">{label}</p><p className="mt-1 break-words font-bold leading-5 text-text-primary">{value}</p></div>)}
@@ -5209,11 +5714,14 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       </AnimatePresence>
       <Modal
         open={materialUploadDialogOpen}
-        title="上传素材"
+        title={uploadProductSceneKind
+          ? `补充${neutralProductSceneLabel(Math.max(0, PRODUCT_SCENE_KINDS.indexOf(uploadProductSceneKind)))}`
+          : '上传素材'}
         width={480}
         okText="选择文件"
         cancelText="取消"
-        onCancel={() => setMaterialUploadDialogOpen(false)}
+        okButtonProps={{ disabled: Boolean(uploadProductSceneKind && !uploadProductId) }}
+        onCancel={() => { setMaterialUploadDialogOpen(false); setUploadProductSceneKind(null); }}
         onOk={() => {
           setMaterialUploadDialogOpen(false);
           uploadInputRef.current?.click();
@@ -5224,7 +5732,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           <Select
             aria-label="本次上传素材归属"
             className="mt-2 w-full"
-            value={uploadProductId}
+            value={uploadProductId || undefined}
+            placeholder={uploadProductSceneKind ? '选择关联产品（必选）' : '企业通用素材（不绑定产品）'}
+            disabled={Boolean(uploadProductSceneKind)}
             onChange={setUploadProductId}
             options={[
               { value: '', label: '企业通用素材（不绑定产品）' },
@@ -5236,6 +5746,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           />
         </label>
         <p className="mt-3 text-xs leading-5 text-text-muted">工厂、展会、办公、人物动作和通用转场等素材可直接作为企业通用素材；只有需要锁定具体商品身份时才关联产品。</p>
+        {uploadProductSceneKind && (
+          <div role="status" className="mt-4 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-text-secondary">
+            该素材会归入当前产品的
+            <strong className="mx-1 text-text-primary">{neutralProductSceneLabel(Math.max(0, PRODUCT_SCENE_KINDS.indexOf(uploadProductSceneKind)))}</strong>
+            。请选择视频文件。
+          </div>
+        )}
       </Modal>
       {manageTarget && (
         <Modal open title={`${manageTarget.action === 'delete' ? '删除' : '编辑'}${manageTarget.kind === 'video' ? '爆款视频' : '素材'}`}

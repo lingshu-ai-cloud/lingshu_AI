@@ -4,7 +4,7 @@ import { organizationRoleOrNull } from '../lib/organizationRole.js';
 import { checkPublicationReception, type ReceptionBinding, type ReceptionCheckPorts } from './publicationReceptionReadiness.js';
 import { createPublicationReceptionPorts } from './publicationReceptionPorts.js';
 import { createReceptionPublicUrlProbe } from './publicationReceptionUrlProbe.js';
-import {enterpriseFactContentHash,type EnterpriseProfile} from '../routes/enterprise.js';
+import {verifyEnterpriseFactContent,type EnterpriseProfile} from '../routes/enterprise.js';
 import {readCustomerMessagingAuthorization} from '../digitalEmployees/customerMessagingPolicy.js';
 import {socialObject,socialJson} from '../starter198/socialContentValidation.js';
 import {publicationInstant} from './publicationDeadlines.js';
@@ -38,7 +38,7 @@ export function productionReceptionPorts(dataStore: DataStore,now:()=>Date=()=>n
       if(rows.totalItems!==1||rows.items.length!==1||rows.items[0]?.tenant_id!==tenantId)throw Error('reception_confirmed_facts_unavailable');
       const profile=socialObject(socialJson(rows.items[0].profile)) as unknown as EnterpriseProfile|null;
       const version=profile?.factVersion;
-      if(!profile||!version?.confirmedBy||!Number.isSafeInteger(version.revision)||version.revision<=0||version.contentHash!==enterpriseFactContentHash(profile)||publicationInstant(version.confirmedAt)===null||Date.parse(version.confirmedAt)>now().getTime())throw Error('reception_confirmed_facts_unavailable');
+      if(!profile||!version?.confirmedBy||!Number.isSafeInteger(version.revision)||version.revision<=0||!verifyEnterpriseFactContent(profile).verified||publicationInstant(version.confirmedAt)===null||Date.parse(version.confirmedAt)>now().getTime())throw Error('reception_confirmed_facts_unavailable');
       const authorizer=await dataStore.getById<Record<string,unknown>>('users',version.confirmedBy),role=organizationRoleOrNull(authorizer?.role);
       if(!authorizer||authorizer.tenantId!==tenantId||!['admin','super_admin','social_operator'].includes(role??'')||authorizer.disabled===true||authorizer.active===false||['disabled','suspended'].includes(String(authorizer.status)))throw Error('reception_confirmed_facts_authorizer_unavailable');
       return {contentHash:version.contentHash,revision:version.revision,documentUrls:(profile.products.items??[]).flatMap(product=>(product.documents??[]).flatMap(document=>document.url?[document.url]:[]))};

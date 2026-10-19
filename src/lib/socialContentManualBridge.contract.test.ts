@@ -53,10 +53,10 @@ assert.match(
 );
 assert.match(studio, /renderSelectedLanguageVersion\(undefined, Boolean\(socialContentTaskId\)\)/,
   'task video recovery must request a server-readable preview without changing the legacy render path');
-assert.match(
+assert.doesNotMatch(
   studio,
-  /message\.info\(\{[\s\S]{0,180}任务资料已带入统一制作工作台[\s\S]{0,100}duration: 3/,
-  'a bound social-content task must explain its unified workflow in a temporary Ant message',
+  /任务资料已带入统一制作工作台/,
+  'opening a bound social-content task must not emit a redundant automatic entry message',
 );
 assert.doesNotMatch(studio, /socialContentTaskId && !rawSceneTarget && <div role="status"/, 'task context must not occupy permanent workspace layout');
 assert.match(studio, /socialContentTaskId \? \([\s\S]{0,500}已从任务带入[\s\S]{0,500}\) : \([\s\S]{0,500}视频模式/,

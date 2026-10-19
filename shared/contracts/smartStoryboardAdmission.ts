@@ -1,5 +1,6 @@
-import type { DigitalHumanRequirements } from './digitalHumanRequirements.js';
+import { effectiveDigitalHumanRequirements, type DigitalHumanRequirements } from './digitalHumanRequirements.js';
 export function digitalHumanDecisionIssues(requirements?: DigitalHumanRequirements): string[] {
+  requirements = effectiveDigitalHumanRequirements(requirements);
   if (requirements?.presenterMode) {
     const issues: string[] = [];
     if (!requirements.presenterSelected) issues.push('请选择企业人物');

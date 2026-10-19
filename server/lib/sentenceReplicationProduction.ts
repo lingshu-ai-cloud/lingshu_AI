@@ -72,6 +72,16 @@ export async function runProductionSentenceReplication(input: { tenantId: string
       sha256: createHash('sha256').update(loaded.bytes).digest('hex') }; presenterTrustedAsset = seedanceTrustedAssetForMaterial(material); if (photoTalking || presenterTrustedAsset) break; }
   if (!presenterReference) throw new Error('企业人物没有可读取的参考图片；视频参考不能代替首帧身份图');
   if (!photoTalking && !presenterTrustedAsset) throw new Error('Seedance 真人生成需要当前企业人物绑定状态为 Active 的方舟图片资产');
+  let seedanceVoiceReferenceUrl = '';
+  const arkVoice = input.presenter.toolMappings?.volcengineArk;
+  if (!photoTalking && arkVoice?.referenceAudioMaterialId) {
+    const rights = validatePresenterRightsEvidence(input.presenter.rightsEvidence, { provider: 'volcengine_ark', uses: ['voice_synthesis'] });
+    if (!rights.ok) throw new Error(`方舟音色使用授权未完成：${rights.reasons.join('、')}`);
+    const voiceMaterial = byId.get(arkVoice.referenceAudioMaterialId);
+    if (!voiceMaterial || voiceMaterial.type !== 'audio' || !voiceMaterial.objectKey) throw new Error('本人音色参考素材不存在或尚未安全入库');
+    await readTenantMaterialBytes(voiceMaterial, input.tenantId);
+    seedanceVoiceReferenceUrl = await objectStorageSignedGetUrl(String(voiceMaterial.objectKey), 900);
+  }
   const maxFrames = Math.max(1, Number(process.env.DIGITAL_HUMAN_MAX_FIRST_FRAMES_PER_VIDEO) || 3);
   const clusterPlan = planPersonShotClusters(input.cues,maxFrames); if(clusterPlan.state!=='ready') throw new Error(clusterPlan.blockers.join('；'));
   const needsTargetFrame=(cue:DigitalHumanReferenceCue)=>{
@@ -84,9 +94,9 @@ export async function runProductionSentenceReplication(input: { tenantId: string
       || (!photoTalking && !seedanceTrustedAssetForMaterial(material));
   };
   const pendingFrameClusters=clusterPlan.clusters.filter(cluster=>input.cues.some(cue=>cluster.cueIds.includes(cue.id)&&needsTargetFrame(cue)));
-  const photoQuote = photoTalking ? photoTalkingBudget({cues:input.cues,frameCount:pendingFrameClusters.length,fixedHeygenReserveCny:Number(process.env.STUDIO_HEYGEN_RESERVE_CNY)}) : null;
+  const photoQuote = photoTalking ? photoTalkingBudget({tenantId:input.tenantId,cues:input.cues,frameCount:pendingFrameClusters.length,fixedHeygenReserveCny:Number(process.env.STUDIO_HEYGEN_RESERVE_CNY)}) : null;
   if (photoQuote) for (const cue of input.cues) if (cue.personShot !== false && !input.existingProviderTasks?.[cue.id] && !input.reuseCueMaterialIds?.[cue.id]) {
-    const budget = studioPaidBudget.status('heygen', photoQuote.heygenByCue[cue.id]); if (!budget.allowed) throw new Error(budget.reason);
+    const budget = studioPaidBudget.status('heygen', photoQuote.heygenByCue[cue.id], input.tenantId); if (!budget.allowed) throw new Error(budget.reason);
   }
   if (photoTalking) {
     if (!Number.isFinite(input.maxCostCny) || !(input.maxCostCny! > 0)) throw new Error('请填写本次照片口播费用上限');
@@ -168,14 +178,14 @@ export async function runProductionSentenceReplication(input: { tenantId: string
           motionGuide = await input.prepareMotionGuide({ tenantId:input.tenantId, projectId:input.projectId, shotId:input.shotId, cue, sourceVideoPath:qualitySourcePath });
           if (!motionGuide?.identityRemoved || !motionGuide.motionOnly) throw new Error('Seedance motion-guide 预处理未证明已移除原人物身份；原片不会直接提交供应商');
         }
-        const generated = photoTalking ? await generateHeyGenPhotoVideo({ bytes: fs.readFileSync(frame.filePath), mimeType: /\.png$/i.test(frame.filePath) ? 'image/png' : /\.webp$/i.test(frame.filePath) ? 'image/webp' : 'image/jpeg', voiceId: input.presenter.voiceId, script: cue.targetText || input.shot.narration, ratio: '9:16', requestId: `${input.tenantId}:${input.requestId}:${cue.id}`, existingTaskId, reserveCny: photoQuote!.heygenByCue[cue.id], onSubmitted: async taskId => { providerTaskIds.push(taskId); await input.onProviderTaskSubmitted?.(cue.id, taskId); } }) : await generateSeedanceSentenceVideo({apiKey:process.env.SEEDANCE_API_KEY||'',model:process.env.SEEDANCE_MODEL||'doubao-seedance-2-0-fast-260128',baseUrl:process.env.SEEDANCE_BASE_URL,imageUrl:trustedFrame!.url,trustedAssetKind:trustedFrame!.kind,referenceVideoUrl:motionGuide?.url,motionGuideAttested:Boolean(motionGuide?.identityRemoved&&motionGuide?.motionOnly),duration:Number(cue.generationDurationSeconds ?? (cue.end-cue.start)),ratio:'9:16',resolution,existingTaskId,prompt:seedanceTalkingHeadPrompt(cue.targetText || input.shot.narration, input.targetLanguage, { action: input.shot.digitalHuman?.action, scene: input.shot.digitalHuman?.scene, preserve: input.shot.digitalHuman?.preserve }),onSubmitted:async taskId=>{providerTaskIds.push(taskId);await input.onProviderTaskSubmitted?.(cue.id,taskId);}});
+        const generated = photoTalking ? await generateHeyGenPhotoVideo({ tenantId: input.tenantId, bytes: fs.readFileSync(frame.filePath), mimeType: /\.png$/i.test(frame.filePath) ? 'image/png' : /\.webp$/i.test(frame.filePath) ? 'image/webp' : 'image/jpeg', voiceId: input.presenter.voiceId, script: cue.targetText || input.shot.narration, ratio: '9:16', requestId: `${input.tenantId}:${input.requestId}:${cue.id}`, existingTaskId, reserveCny: photoQuote!.heygenByCue[cue.id], onSubmitted: async taskId => { providerTaskIds.push(taskId); await input.onProviderTaskSubmitted?.(cue.id, taskId); } }) : await generateSeedanceSentenceVideo({apiKey:process.env.SEEDANCE_API_KEY||'',model:process.env.SEEDANCE_MODEL||'doubao-seedance-2-0-fast-260128',baseUrl:process.env.SEEDANCE_BASE_URL,imageUrl:trustedFrame!.url,trustedAssetKind:trustedFrame!.kind,referenceVideoUrl:motionGuide?.url,motionGuideAttested:Boolean(motionGuide?.identityRemoved&&motionGuide?.motionOnly),referenceAudioUrl:seedanceVoiceReferenceUrl||undefined,duration:Number(cue.generationDurationSeconds ?? (cue.end-cue.start)),ratio:'9:16',resolution,existingTaskId,prompt:seedanceTalkingHeadPrompt(cue.targetText || input.shot.narration, input.targetLanguage, { action: input.shot.digitalHuman?.action, scene: input.shot.digitalHuman?.scene, preserve: input.shot.digitalHuman?.preserve }),onSubmitted:async taskId=>{providerTaskIds.push(taskId);await input.onProviderTaskSubmitted?.(cue.id,taskId);}});
         if (existingTaskId) providerTaskIds.push(existingTaskId);
         const response=await fetch(generated.videoUrl,{signal:AbortSignal.timeout(90_000)}); if(!response.ok) throw new Error(`逐句视频下载失败：HTTP ${response.status}`);
         const bytes=Buffer.from(await response.arrayBuffer()); const id=stableId('sentence-video',input.requestId,cue.id); const filePath=path.join(work,`${id}.mp4`); fs.writeFileSync(filePath,bytes);
         const providerDuration = 'duration' in generated ? Number(generated.duration) : photoTalking
           ? cue.end - cue.start
           : Number(cue.generationDurationSeconds ?? (cue.end - cue.start));
-        if (photoTalking && photoTalkingBudget({cues:[{...cue,end:cue.start+providerDuration}],frameCount:0,fixedHeygenReserveCny:Number(process.env.STUDIO_HEYGEN_RESERVE_CNY)}).heygenByCue[cue.id]! > photoQuote!.heygenByCue[cue.id]!) throw new Error('HeyGen 实际视频时长超过已预占费用，请核对供应商账单');
+        if (photoTalking && photoTalkingBudget({tenantId:input.tenantId,cues:[{...cue,end:cue.start+providerDuration}],frameCount:0,fixedHeygenReserveCny:Number(process.env.STUDIO_HEYGEN_RESERVE_CNY)}).heygenByCue[cue.id]! > photoQuote!.heygenByCue[cue.id]!) throw new Error('HeyGen 实际视频时长超过已预占费用，请核对供应商账单');
         const media=await checkAvatarMedia(filePath,{ratio:'9:16',duration:providerDuration,transparent:false,resolution}); const sourcePath=qualitySourcePath || await sourceSegmentFor(cue,photoTalking?media.duration:undefined);
         let technical=null; let technicalError=''; let visual=null; let visualError=''; let semantic=null; let semanticError=''; let lipSync=null; let lipSyncError='';
         try{technical=await inspectPersonReplacementPair(sourcePath,filePath);}catch(error){technicalError=error instanceof Error?error.message:String(error);}

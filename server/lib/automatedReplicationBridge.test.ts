@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
 import { Router } from 'express';
 import { advanceAutomatedReplication, invokeReplicationRoute } from './automatedReplicationBridge.js';
+import { shotFingerprint } from '../../src/lib/shotProduction.js';
 
 const shot = { source: 'material', sound: 'voiceover', layout: 'full', presenterId: '', productId: '', productMaterialId: '', backgroundMaterialId: '', backgroundMode: 'independent', transparent: false, narration: 'Enterprise script', locked: false, factsConfirmed: false, candidates: [], adoptedId: '', revision: 1 };
 function fixture() {
   let project: any = { id: 'project', tenant_id: 'tenant', status: 'draft', spec: { activeAssemblyId: 'video-1', automatedReplicationShots: [{ shotId: 'shot', slotId: 'slot', kind: 'nonperson', start: 0, end: 2, firstFrameRequest: { shotDescription: 'Closeup target product', sourceFirstFrameUrl: '/source.jpg' } }], shotProductions: { 'video-1:shot': shot } } };
-  const store: any = { getById: async (_: string, id: string) => id === 'project' ? structuredClone(project) : null, update: async (_: string, _id: string, patch: any) => { project = { ...project, ...structuredClone(patch) }; return true; } };
+  const store: any = { getById: async (_: string, id: string) => id === 'project' ? structuredClone(project) : null, update: async (_: string, _id: string, patch: any) => { project = { ...project, ...structuredClone(patch) }; return true; },
+    compareAndSwap: async (_: string, id: string, expected: any, patch: any) => {
+      if (id !== project.id) return false;
+      for (const [key, value] of Object.entries(expected)) {
+        try { assert.deepEqual(project[key], value); } catch { return false; }
+      }
+      project = { ...project, ...structuredClone(patch) }; return true;
+    } };
   return { store, project: () => project };
 }
 const router = Router();
@@ -14,6 +22,7 @@ assert.deepEqual(await invokeReplicationRoute(router, 'tenant', 'post', '/native
 const f = fixture(); let calls: string[] = []; const callBodies: any[] = []; let validations = 0;
 const deps: any = { validateAdoption: async () => [], materials: () => [{ id: 'video', tenantId: 'tenant', scope: 'own', type: 'video' }], validateVideo: async () => { validations++; }, call: async (_: string, _method: string, route: string, body: any) => { calls.push(route); callBodies.push(body); assert.equal(body.shotId || 'slot', 'slot'); if (route === '/storyboard-first-frame') return { status: 200, body: { ok: true, fingerprint: 'frame-fp', material: { id: 'frame' } } }; if (route === '/seedance-video') { assert.equal(body.duration, 4); assert.equal(body.firstFrameMaterialId, 'frame'); return { status: 200, body: { ok: true, material: { id: 'video' } } }; } return { status: 200, body: { quality: { passed: true } } }; } };
 for (let index = 0; index < 4; index++) { const result = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', maxCostCny: 12.5, store: f.store }, deps); assert.equal(result.state, 'pending'); }
+assert.match(String(f.project().updated_at || ''), /^\d{4}-\d{2}-\d{2}T/, 'bridge production writes advance the Studio revision');
 assert.deepEqual(calls, ['/storyboard-first-frame', '/seedance-video', '/storyboard-quality-check']);
 assert.equal(callBodies[0].maxCostCny, 12.5); assert.equal(callBodies[1].maxCostCny, 12.5, 'both paid native steps receive the frozen project cap');
 assert.equal(f.project().spec.storyboardAssignments.slot, 'video');
@@ -128,15 +137,117 @@ assert.equal(changedInput.project().spec.automatedReplicationProgress.shot.provi
 for (const qualityState of ['service_unavailable', 'invalid_response']) {
   const retainedFrame = fixture();
   retainedFrame.project().spec.automatedReplicationProgress = { shot: { firstFrameMaterialId: 'frame', firstFrameFingerprint: 'frame-fp' } };
+  const recheckCalls: Array<{ route: string; body: any }> = [];
   const result = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: retainedFrame.store }, {
     ...deps,
     materials: () => [{ id: 'frame', tenantId: 'tenant', provenance: { firstFrameQualityState: qualityState } }],
-    call: async () => { throw new Error('Must not regenerate an existing image or submit a video while image QA is unavailable'); },
+    call: async (_surface, method, route, body) => {
+      recheckCalls.push({ route, body });
+      assert.equal(method, 'post');
+      return { status: 200, body: { ok: true, materialId: 'frame', fingerprint: 'frame-fp', reusedOriginalImage: true } };
+    },
   });
-  assert.equal(result.state, 'blocked');
-  assert.equal(result.blockerCode, 'FIRST_FRAME_QA_SERVICE_UNAVAILABLE');
+  assert.equal(result.state, 'pending');
+  assert.equal(result.changed, true);
+  assert.deepEqual(recheckCalls, [{
+    route: '/storyboard-first-frame/frame/recheck-quality',
+    body: { fingerprint: 'frame-fp', shotId: 'slot' },
+  }]);
   assert.equal(retainedFrame.project().spec.automatedReplicationProgress.shot.firstFrameMaterialId, 'frame');
+  assert.ok(retainedFrame.project().spec.automatedReplicationProgress.shot.firstFrameQaRecheckedAt);
 }
+const unavailableRecheck = fixture();
+unavailableRecheck.project().spec.automatedReplicationProgress = { shot: { firstFrameMaterialId: 'frame', firstFrameFingerprint: 'frame-fp' } };
+const unavailableRecheckResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: unavailableRecheck.store }, {
+  ...deps,
+  materials: () => [{ id: 'frame', tenantId: 'tenant', provenance: { firstFrameQualityState: 'service_unavailable' } }],
+  call: async (_surface, _method, route) => {
+    assert.equal(route, '/storyboard-first-frame/frame/recheck-quality', 'an unavailable QA service must recheck the retained frame instead of regenerating it');
+    return { status: 503, body: { code: 'FIRST_FRAME_QA_SERVICE_UNAVAILABLE', error: '视觉质检服务暂不可用' } };
+  },
+});
+assert.equal(unavailableRecheckResult.state, 'blocked');
+assert.equal(unavailableRecheckResult.blockerCode, 'FIRST_FRAME_QA_SERVICE_UNAVAILABLE');
+assert.equal(unavailableRecheck.project().spec.automatedReplicationProgress.shot.firstFrameMaterialId, 'frame');
+const rejectedRecheck = fixture();
+rejectedRecheck.project().spec.contentOrder = { operatingContext: { productionBudgetMode: 'protected', maxAigcRetries: 1 } };
+rejectedRecheck.project().spec.automatedReplicationProgress = { shot: { firstFrameMaterialId: 'frame', firstFrameFingerprint: 'frame-fp' } };
+const rejectedRecheckResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: rejectedRecheck.store }, {
+  ...deps,
+  materials: () => [{ id: 'frame', tenantId: 'tenant', provenance: { firstFrameQualityState: 'service_unavailable' } }],
+  call: async (_surface, _method, route) => {
+    assert.equal(route, '/storyboard-first-frame/frame/recheck-quality');
+    return { status: 422, body: { code: 'FIRST_FRAME_QA_FAILED', error: '首帧真实视觉质检未通过' } };
+  },
+});
+assert.equal(rejectedRecheckResult.state, 'pending', 'a completed QA rejection must reach the bounded regeneration branch instead of blocking the project');
+assert.equal(rejectedRecheck.project().spec.automatedReplicationProgress.shot.firstFrameMaterialId, 'frame');
+assert.ok(rejectedRecheck.project().spec.automatedReplicationProgress.shot.firstFrameQaRecheckedAt);
+const protectedFrameRetry = fixture();
+protectedFrameRetry.project().spec.contentOrder = { operatingContext: { productionBudgetMode: 'protected', maxAigcRetries: 1 } };
+protectedFrameRetry.project().spec.automatedReplicationProgress = { shot: { firstFrameMaterialId: 'frame', firstFrameFingerprint: 'frame-fp' } };
+const protectedFrameRetryResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: protectedFrameRetry.store }, {
+  ...deps,
+  materials: () => [{ id: 'frame', tenantId: 'tenant', provenance: { firstFrameQualityState: 'evaluated', firstFrameQuality: { passed: false, reasonCodes: ['PRODUCT_MISMATCH'] } } }],
+  call: async () => { throw new Error('a rejected retained frame must be checkpointed before a bounded regeneration'); },
+});
+assert.equal(protectedFrameRetryResult.state, 'pending');
+assert.equal(protectedFrameRetry.project().spec.automatedReplicationProgress.shot.firstFrameMaterialId, '');
+assert.equal(protectedFrameRetry.project().spec.automatedReplicationProgress.shot.firstFrameRetryCount, 1);
+assert.equal(protectedFrameRetry.project().spec.automatedReplicationProgress.shot.firstFrameHistory[0].materialId, 'frame');
+assert.equal(protectedFrameRetry.project().spec.automatedReplicationShots[0].firstFrameRequest.generationRevision, 'quality-retry-1');
+assert.deepEqual(protectedFrameRetry.project().spec.automatedReplicationShots[0].firstFrameRequest.qualityRepairReasonCodes, ['PRODUCT_MISMATCH']);
+const directedFrameRepair = fixture();
+directedFrameRepair.project().spec.contentOrder = { operatingContext: { productionBudgetMode: 'protected', maxAigcRetries: 1, budgetApprovedAt: '2026-10-13T00:00:00.000Z' } };
+directedFrameRepair.project().spec.automatedReplicationProgress = { shot: {
+  firstFrameMaterialId: 'second-frame', firstFrameFingerprint: 'second-fp', firstFrameRetryCount: 1,
+  firstFrameHistory: [{ materialId: 'first-frame', reasonCodes: ['PRODUCT_IDENTITY_FAILED'], rejectedAt: '2026-10-13T00:00:00.000Z' }],
+} };
+const directedFrameRepairResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: directedFrameRepair.store }, {
+  ...deps,
+  materials: () => [{ id: 'second-frame', tenantId: 'tenant', provenance: { firstFrameQualityState: 'evaluated', firstFrameQuality: { passed: false, reasonCodes: ['LAYOUT_FAILED'] } } }],
+  call: async () => { throw new Error('directed repair must checkpoint before another provider call'); },
+});
+assert.equal(directedFrameRepairResult.state, 'pending');
+assert.equal(directedFrameRepair.project().spec.automatedReplicationProgress.shot.firstFrameRetryCount, 2);
+assert.equal(directedFrameRepair.project().spec.automatedReplicationShots[0].firstFrameRequest.generationRevision, 'quality-directed-repair-2');
+assert.deepEqual(directedFrameRepair.project().spec.automatedReplicationShots[0].firstFrameRequest.qualityRepairReasonCodes,
+  ['PRODUCT_IDENTITY_FAILED', 'LAYOUT_FAILED']);
+const protectedVideoRetry = fixture();
+protectedVideoRetry.project().spec.contentOrder = { operatingContext: { productionBudgetMode: 'protected', maxAigcRetries: 1 } };
+protectedVideoRetry.project().spec.automatedReplicationProgress = { shot: {
+  firstFrameMaterialId: 'frame', firstFrameFingerprint: 'frame-fp', videoMaterialId: 'video', providerTaskId: 'original-provider-task',
+} };
+const protectedVideoRetryResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: protectedVideoRetry.store }, {
+  ...deps,
+  materials: () => [{ id: 'video', tenantId: 'tenant', scope: 'own', type: 'video' }],
+  validateVideo: async () => 'a'.repeat(64),
+  call: async (_surface, _method, route) => {
+    assert.equal(route, '/storyboard-quality-check');
+    return { status: 200, body: { quality: { passed: false, reasonCodes: ['ACTION_ORDER'] } } };
+  },
+});
+assert.equal(protectedVideoRetryResult.state, 'pending');
+assert.equal(protectedVideoRetry.project().spec.automatedReplicationProgress.shot.videoMaterialId, '');
+assert.equal(protectedVideoRetry.project().spec.automatedReplicationProgress.shot.videoRetryCount, 1);
+assert.equal(protectedVideoRetry.project().spec.automatedReplicationProgress.shot.videoGenerationRevision, 'quality-retry-1');
+assert.equal(protectedVideoRetry.project().spec.automatedReplicationProgress.shot.videoHistory[0].materialId, 'video');
+const protectedProviderRetry = fixture();
+protectedProviderRetry.project().spec.contentOrder = { operatingContext: { productionBudgetMode: 'protected', maxAigcRetries: 1 } };
+protectedProviderRetry.project().spec.automatedReplicationProgress = { shot: {
+  firstFrameMaterialId: 'frame', firstFrameFingerprint: 'frame-fp', providerTaskId: 'failed-provider-task',
+} };
+const protectedProviderRetryResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: protectedProviderRetry.store }, {
+  ...deps,
+  call: async (_surface, _method, route) => {
+    assert.equal(route, '/seedance-video');
+    return { status: 409, body: { code: 'STORYBOARD_VIDEO_PROVIDER_FAILED', error: '供应商任务已失败', providerTaskId: 'failed-provider-task', providerStatus: 'failed' } };
+  },
+});
+assert.equal(protectedProviderRetryResult.state, 'pending');
+assert.equal(protectedProviderRetry.project().spec.automatedReplicationProgress.shot.videoRetryCount, 1);
+assert.equal(protectedProviderRetry.project().spec.automatedReplicationProgress.shot.videoGenerationRevision, 'provider-retry-1');
+assert.equal(protectedProviderRetry.project().spec.automatedReplicationProgress.shot.videoHistory[0].providerTaskId, 'failed-provider-task');
 const rejectedFrame = fixture();
 rejectedFrame.project().spec.automatedReplicationProgress = { shot: { firstFrameMaterialId: 'frame' } };
 const rejectedFrameResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: rejectedFrame.store }, {
@@ -145,3 +256,90 @@ const rejectedFrameResult = await advanceAutomatedReplication({ tenantId: 'tenan
   call: async () => { throw new Error('Rejected frame must never reach video generation'); },
 });
 assert.equal(rejectedFrameResult.blockerCode, 'FIRST_FRAME_QA_FAILED');
+
+const controlledFallback = fixture();
+controlledFallback.project().spec.contentOrder = { operatingContext: { productionBudgetMode: 'protected', maxAigcRetries: 0, budgetApprovedAt: '2026-10-13T00:00:00.000Z' } };
+controlledFallback.project().spec.storyboardSourcePlans = { slot: { mode: 'ai', fallbackMode: 'enterprise_product_display' } };
+controlledFallback.project().spec.automatedReplicationShots[0].firstFrameRequest = {
+  mode: 'free_creation', sceneType: 'product', fallbackMode: 'enterprise_product_display',
+  productIds: ['product-1'], shotDescription: 'Use the authorized enterprise product image for a static product detail shot',
+};
+const controlledShotSpec: any = { version: 'storyboard-shot-spec-v2', shotId: 'slot', mode: 'free_creation', scene: 'product',
+  description: 'Static product detail', startSeconds: 0, endSeconds: 2, targetDurationSeconds: 2,
+  assets: [{ role: 'product', source: 'knowledge_base', id: 'product-1', version: 'source-version' }],
+  layout: { ratio: '9:16', subject: 'product', productPosition: '', environment: '', contactSurface: '',
+    handOrPersonPosition: '', cameraAngle: '', preserveSourceComposition: false },
+  action: { startState: '', beats: [], endState: '', cameraMotion: 'slow push', forbiddenChanges: [], evidence: 'confirmed_storyboard', multiStep: false },
+  constraints: ['product_identity'],
+};
+controlledFallback.project().spec.automatedReplicationProgress = { shot: { firstFrameMaterialId: 'failed-frame', firstFrameRetryCount: 0 } };
+let controlledCalls = 0;
+const controlledResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: controlledFallback.store }, {
+  ...deps,
+  materials: () => [{ id: 'failed-frame', tenantId: 'tenant', provenance: { firstFrameQualityState: 'evaluated',
+    firstFrameQuality: { passed: false, reasonCodes: ['PRODUCT_IDENTITY_FAILED'] }, shotSpec: controlledShotSpec, projectShotFingerprint: 'project-shot-fp' } },
+  { id: 'enterprise-product', tenantId: 'tenant', scope: 'own', type: 'image', sourceType: 'enterprise_product_table',
+    productId: 'product-1', commercialUseApproved: true, rightsStatus: 'authorized' }],
+  call: async () => { controlledCalls++; throw new Error('terminal identity fallback must not call a supplier'); },
+  createControlledProductAnimation: async input => {
+    assert.equal(input.productImage.id, 'enterprise-product');
+    assert.equal(input.shotId, 'slot');
+    return { reused: false,
+      frame: { id: 'controlled-frame', provenance: { fingerprint: 'controlled-fp' } } as any,
+      video: { id: 'controlled-video' } as any };
+  },
+});
+assert.equal(controlledResult.state, 'pending');
+assert.equal(controlledCalls, 0);
+assert.equal(controlledFallback.project().spec.automatedReplicationProgress.shot.firstFrameMaterialId, 'controlled-frame');
+assert.equal(controlledFallback.project().spec.automatedReplicationProgress.shot.videoMaterialId, 'controlled-video');
+assert.equal(controlledFallback.project().spec.automatedReplicationProgress.shot.controlledProductFallback, true);
+
+const fallbackFrame = fixture();
+fallbackFrame.project().spec.storyboardSourcePlans = { slot: { mode: 'ai', fallbackMode: 'enterprise_product_display' } };
+fallbackFrame.project().spec.automatedReplicationProgress = { shot: { firstFrameMaterialId: 'frame', firstFrameFingerprint: 'frame-fp' } };
+fallbackFrame.project().spec.automatedReplicationShots[0].firstFrameRequest = {
+  mode: 'free_creation', fallbackMode: 'enterprise_product_display', shotDescription: 'Enterprise product display' };
+let fallbackVideoCalled = false;
+const fallbackFrameResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: fallbackFrame.store }, {
+  ...deps,
+  materials: () => [{ id: 'frame', tenantId: 'tenant', provenance: { mode: 'free_creation', firstFrameQualityState: 'evaluated',
+    shotSpec: { mode: 'free_creation', constraints: ['product_identity'] },
+    firstFrameQuality: { passed: false, automatedPassed: true, findings: [], reasonCodes: [], checks: {}, phase: 'first_frame',
+      sceneType: 'product', status: 'needs_review', requiresHumanReview: true, evidenceFrameLabels: ['候选首帧'],
+      reportId: 'report', version: 'storyboard-aigc-qa-v1', checkedAt: '2026-10-13T00:00:00.000Z' } } }],
+  call: async (_surface, _method, route) => {
+    assert.equal(route, '/seedance-video'); fallbackVideoCalled = true;
+    return { status: 202, body: { code: 'STORYBOARD_VIDEO_IN_PROGRESS', providerTaskId: 'supplier',
+      providerAcceptedAt: '2026-10-13T00:00:00.000Z', providerModel: 'seedance' } };
+  },
+});
+assert.equal(fallbackFrameResult.state, 'pending');
+assert.equal(fallbackVideoCalled, true, 'verified managed fallback reuses the already paid all-pass first frame');
+
+const fallbackVideo = fixture();
+fallbackVideo.project().spec.storyboardSourcePlans = { slot: { mode: 'ai', fallbackMode: 'enterprise_product_display' } };
+fallbackVideo.project().spec.automatedReplicationProgress = { shot: {
+  fingerprint: shotFingerprint(fallbackVideo.project().spec.shotProductions['video-1:shot'], '', 'shot'),
+  firstFrameMaterialId: 'fallback-frame',
+  videoMaterialId: 'fallback-video',
+} };
+const fallbackVideoReport = {
+  reportId: 'video-report', version: 'storyboard-aigc-qa-v1', phase: 'video', sceneType: 'product',
+  status: 'needs_review', automatedPassed: true, passed: false, requiresHumanReview: true,
+  reasonCodes: [], findings: [], evidenceFrameLabels: ['0s', '3.5s'], checkedAt: '2026-10-13T00:00:00.000Z',
+  checks: {
+    product_identity: { key: 'product_identity', verdict: 'pass', evidenceFrames: ['0s', '3.5s'], note: 'pass' },
+    layout_continuity: { key: 'layout_continuity', verdict: 'pass', evidenceFrames: ['0s', '3.5s'], note: 'pass' },
+    visual_integrity: { key: 'visual_integrity', verdict: 'pass', evidenceFrames: ['0s', '3.5s'], note: 'pass' },
+  },
+};
+const fallbackVideoResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: fallbackVideo.store }, {
+  ...deps,
+  materials: () => [{ id: 'fallback-video', tenantId: 'tenant', scope: 'own', type: 'video',
+    provenance: { shotSpec: { mode: 'free_creation', constraints: ['product_identity'] }, storyboardQualityReport: fallbackVideoReport } }],
+  call: async () => { throw new Error('a persisted all-pass video report must not be analyzed twice'); },
+});
+assert.equal(fallbackVideoResult.state, 'pending', JSON.stringify(fallbackVideoResult));
+assert.equal(fallbackVideo.project().spec.automatedReplicationProgress.shot.qualityChecked, true,
+  'managed fallback accepts an all-pass video report without requesting a human click');

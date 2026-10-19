@@ -2,8 +2,8 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Menu } from 'antd';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
-  PanelRightOpen, Sparkles,
+  ChevronRight, LogOut, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Settings,
+  PanelRightOpen, Sparkles, Star, X,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
 import { PAGE_REGISTRY, PRIMARY_SOCIAL_NAV_PAGES } from '../pageRegistry';
@@ -19,6 +19,7 @@ import LsPageTransition from './ui/LsPageTransition';
 import { lsMotion } from '../lib/designTokens';
 import { getScrollBehavior, usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import { PLATFORM_ADS_SURFACE_ENABLED } from '../config/productSurfaceFlags';
+import PointsManagementDrawer from './PointsManagementDrawer';
 
 interface NavSection {
   label: string;
@@ -113,15 +114,6 @@ interface LayoutProps {
   starterMode?: boolean;
 }
 
-const relTime = (ts: number) => {
-  const m = Math.floor((Date.now() - ts) / 60000);
-  if (m < 1) return '刚刚';
-  if (m < 60) return `${m} 分钟前`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h} 小时前`;
-  return `${Math.floor(h / 24)} 天前`;
-};
-
 const SUB_LABEL: Record<string, string> = {
   trialing: '试用中', active: '已订阅', past_due: '续费逾期', canceled: '已取消', expired: '已过期', none: '未订阅',
 };
@@ -158,18 +150,6 @@ function NavItem({
   );
 }
 
-const formatTokens = (value?: number | null) => {
-  const n = Math.max(0, Math.floor(Number(value ?? 0)));
-  return n.toLocaleString('en-US');
-};
-
-const pct = (used?: number, limit?: number) => {
-  const cap = Math.max(0, Number(limit ?? 0));
-  if (!cap) return 0;
-  return Math.min(100, Math.max(0, (Number(used ?? 0) / cap) * 100));
-};
-
-const byToken = (tokens: number, reserve: number) => Math.max(0, Math.floor(tokens / reserve));
 const isAdminSession = (session?: AuthSession | null) => (
   Boolean(session && !session.supportAccess && session.platformAdmin === true)
 );
@@ -217,7 +197,7 @@ function AdminPageGuide({ page }: { page: Page }) {
   );
 }
 
-export default function Layout({ page, onNavigate, onPrefetchPage, conversation, children, session, onLogout, suppressRightPanel, onAction, onSessionUpdate, demoGuideActive, onDemoGuideShown, starterMode = false }: LayoutProps) {
+export default function Layout({ page, onNavigate, onPrefetchPage, conversation, children, session, onLogout, suppressRightPanel, onAction, demoGuideActive, onDemoGuideShown, starterMode = false }: LayoutProps) {
   const reducedMotion = usePrefersReducedMotion();
   const spatialTransition = reducedMotion ? { duration: 0 } : {
     ...lsMotion.spring.standard,
@@ -226,10 +206,6 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   const isInConversation = conversation !== null && !suppressRightPanel;
   const [quotaOpen, setQuotaOpen] = useState(false);
   const quotaAreaRef = useRef<HTMLDivElement>(null);
-  const [quotaLoading, setQuotaLoading] = useState(false);
-  const [quotaError, setQuotaError] = useState('');
-  const [quotaUpdatedAt, setQuotaUpdatedAt] = useState<number | null>(null);
-  const [liveSession, setLiveSession] = useState<AuthSession | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [mobileRightPanelOpen, setMobileRightPanelOpen] = useState(false);
@@ -246,11 +222,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(false);
   const sidebarCollapsed = mobileViewport ? !mobileSidebarExpanded : desktopSidebarCollapsed;
   const sidebarWidth = sidebarCollapsed ? (mobileViewport ? 56 : 60) : 176;
-  const sessionScope = session?.demo?.guideScope || session?.demo?.expiresAt || null;
-  const liveSessionScope = liveSession?.demo?.guideScope || liveSession?.demo?.expiresAt || null;
-  const sessionIdentityScope = `${session?.user?.id || ''}:${session?.tenant?.id || ''}:${session?.supportAccess?.requestId || ''}:${sessionScope || ''}`;
-  const liveSessionIdentityScope = `${liveSession?.user?.id || ''}:${liveSession?.tenant?.id || ''}:${liveSession?.supportAccess?.requestId || ''}:${liveSessionScope || ''}`;
-  const activeSession = liveSession && liveSessionIdentityScope === sessionIdentityScope ? liveSession : session;
+  const activeSession = session;
   const guideScope = activeSession?.demo?.guideScope || (activeSession?.demo?.expiresAt ? `${activeSession.user.id}:${activeSession.demo.expiresAt}` : activeSession?.user?.id || 'demo-guide');
   const supportAccess = activeSession?.supportAccess;
   const organizationRole = activeSession?.user.role || 'customer_service';
@@ -271,9 +243,6 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
     window.location.assign('/');
   };
 
-  useEffect(() => {
-    setLiveSession(null);
-  }, [sessionIdentityScope]);
   useEffect(() => {
     if (starterMode) setQuotaOpen(false);
   }, [starterMode]);
@@ -300,8 +269,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   useEffect(() => {
     if (sidebarCollapsed) { setQuotaOpen(false); setAccountMenuOpen(false); }
   }, [sidebarCollapsed]);
-  useDismissibleLayer(quotaOpen || accountMenuOpen, quotaAreaRef, () => {
-    setQuotaOpen(false);
+  useDismissibleLayer(accountMenuOpen, quotaAreaRef, () => {
     setAccountMenuOpen(false);
   });
   const accountEmail = String(activeSession?.user?.email || '').trim().toLowerCase();
@@ -318,11 +286,6 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
     demo?.totalRemaining?.tokens ?? demo?.limits?.tokenTotal ?? Number.POSITIVE_INFINITY,
   ));
   const tokenLabel = remainingTokens >= 1000 ? `${Math.floor(remainingTokens / 1000)}k` : String(remainingTokens);
-  const suggestedChats = Math.min(demo?.remaining.aiChat ?? 0, byToken(remainingTokens, 1600));
-  const suggestedGenerations = Math.min(demo?.remaining.generation ?? 0, byToken(remainingTokens, 1200));
-  const suggestedVideoJobs = Math.min(demo?.totalRemaining?.videoGeneration ?? demo?.remaining.videoGeneration ?? 0, byToken(remainingTokens, 2000));
-  const suggestedVideoSeconds = suggestedVideoJobs * 8;
-  const suggestedAiVideoAnalyses = Math.min(suggestedGenerations, byToken(remainingTokens, 1200));
   const isTrialAccount = Boolean(
     activeSession?.demo?.enabled ||
     activeSession?.tenant?.subscriptionPlan === 'trial' ||
@@ -330,24 +293,9 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
     subStatus === 'trialing'
   );
   const showDemoGuide = Boolean(demoGuideActive && (activeSession?.demo?.enabled || isTrialAccount));
-  const refreshQuota = async () => {
-    setQuotaLoading(true);
-    setQuotaError('');
-    try {
-      const latest = await authApi.me();
-      setLiveSession(latest);
-      onSessionUpdate?.(latest);
-      setQuotaUpdatedAt(Date.now());
-    } catch (error) {
-      setQuotaError(error instanceof Error ? error.message : '额度读取失败，请稍后重试');
-    } finally {
-      setQuotaLoading(false);
-    }
-  };
   const openQuota = () => {
     setAccountMenuOpen(false);
     setQuotaOpen(true);
-    void refreshQuota();
   };
   const navigateFromSidebar = (nextPage: Page) => {
     if (mobileViewport) setMobileSidebarExpanded(false);
@@ -444,129 +392,6 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
         {/* Bottom user */}
         <div ref={quotaAreaRef} className="relative px-3 py-3 border-t border-border flex-shrink-0">
           <AnimatePresence>
-            {quotaOpen && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                role="dialog"
-                aria-label="Token 使用"
-                className="absolute left-3 bottom-[68px] z-50 max-h-[calc(100dvh-96px)] w-[min(324px,calc(100vw-88px))] overflow-y-auto rounded-2xl border border-border bg-white p-3 shadow-xl"
-              >
-                <div className="flex items-start justify-between gap-2 mb-3">
-                  <div>
-                    <p className="text-xs font-bold text-text-primary">Token 使用</p>
-                    <p className="ls-type-body-small text-text-muted mt-0.5">
-                      {quotaUpdatedAt ? `${relTime(quotaUpdatedAt)}刷新` : '打开时自动刷新'}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => void refreshQuota()} disabled={quotaLoading} title="刷新额度"
-                      className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors disabled:opacity-60">
-                      {quotaLoading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCcw size={13} />}
-                    </button>
-                    <button onClick={() => setQuotaOpen(false)} title="关闭"
-                      className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors">
-                      <X size={13} />
-                    </button>
-                  </div>
-                </div>
-
-                {quotaError ? (
-                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-3">
-                    <p className="text-xs font-semibold text-red-700">额度读取失败</p>
-                    <p className="mt-1 ls-type-body-small leading-relaxed text-red-600">{quotaError}</p>
-                    <button type="button" onClick={() => void refreshQuota()} disabled={quotaLoading} className="mt-2 ls-type-body-small font-bold text-red-700 underline disabled:opacity-60">重新读取</button>
-                  </div>
-                ) : demo && isTrialAccount ? (
-                  <div className="space-y-3">
-                    <div className="rounded-xl bg-surface-2 border border-border px-3 py-2.5">
-                      <div className="flex items-baseline justify-between">
-                        <span className="text-[11px] font-semibold text-text-secondary">剩余 Token</span>
-                        <span className="text-lg font-bold text-text-primary">{formatTokens(remainingTokens)}</span>
-                      </div>
-                      <div className="mt-2 h-1.5 rounded-full bg-white overflow-hidden border border-border">
-                        <div
-                          className="h-full rounded-full bg-accent"
-                          style={{ width: `${pct(demo.usage.tokens, demo.limits.tokenDaily)}%` }}
-                        />
-                      </div>
-                      <div className="mt-2 grid grid-cols-2 gap-2 ls-type-body-small">
-                        <div>
-                          <p className="text-text-muted">今日已用</p>
-                          <p className="font-bold text-text-primary">{formatTokens(demo.usage.tokens)} / {formatTokens(demo.limits.tokenDaily)}</p>
-                        </div>
-                        <div>
-                          <p className="text-text-muted">总计已用</p>
-                          <p className="font-bold text-text-primary">{formatTokens(demo.totalUsage?.tokens)} / {formatTokens(demo.limits.tokenTotal)}</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl bg-white border border-border px-3 py-2.5">
-                      <p className="text-[11px] font-bold text-text-primary mb-2">建议可用量</p>
-                      <div className="space-y-1.5 ls-type-body-small text-text-secondary">
-                        <div className="flex items-center justify-between gap-3">
-                          <span>顾问对话</span>
-                          <span className="font-bold text-text-primary">约 {suggestedChats} 轮</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <span>脚本/文案/选材生成</span>
-                          <span className="font-bold text-text-primary">约 {suggestedGenerations} 次</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <span>视频爬取</span>
-                          <span className="font-bold text-text-primary">YouTube 不吃 token</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <span>爆款视频抓取</span>
-                          <span className="font-bold text-text-primary">建议轻量爬取</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <span>视频 AI 分析</span>
-                          <span className="font-bold text-text-primary">约 {suggestedAiVideoAnalyses} 条</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <span>AI 视频生成</span>
-                          <span className="font-bold text-text-primary">约 {suggestedVideoJobs} 条 / {suggestedVideoSeconds} 秒</span>
-                        </div>
-                      </div>
-                      <p className="mt-2 text-[9px] leading-relaxed text-text-muted">
-                        估算按短对话 1.6k、普通生成 1.2k、视频生成 2k token 预留；爆款视频抓取 token 消耗大，建议轻量爬取。
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      {[
-                        ['对话', demo.remaining.aiChat, demo.limits.aiChatDaily],
-                        ['普通生成', demo.remaining.generation, demo.limits.generationDaily],
-                        ['预览渲染', demo.remaining.render, demo.limits.renderDaily],
-                        ['视频生成', demo.totalRemaining?.videoGeneration ?? demo.remaining.videoGeneration ?? 0, demo.limits.videoGenerationDaily],
-                      ].map(([label, left, limit]) => (
-                        <div key={String(label)} className="rounded-xl border border-border bg-white px-2.5 py-2">
-                          <p className="ls-type-body-small text-text-muted">{label}</p>
-                          <p className="mt-0.5 text-sm font-bold text-text-primary">{left}<span className="ls-type-body-small font-medium text-text-muted"> / {limit}</span></p>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-xl bg-accent-glow px-3 py-2">
-                      <span className="ls-type-body-small font-semibold text-text-secondary">试用状态</span>
-                      <span className={`ls-type-body-small font-bold ${demo.expired ? 'text-red-600' : 'text-accent'}`}>
-                        {demo.expired ? '已到期' : `剩余 ${demo.daysRemaining ?? '-'} 天`}
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="rounded-xl bg-surface-2 border border-border px-3 py-3">
-                    <p className="text-xs font-semibold text-text-primary">当前账号无试用 Token 配额</p>
-                    <p className="ls-type-body-small text-text-muted mt-1">正式订阅账号不展示测试版额度；如需核对用量，请联系管理员。</p>
-                  </div>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-          <AnimatePresence>
             {accountMenuOpen && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute bottom-[68px] left-3 z-50 w-[260px] rounded-2xl border border-border bg-white p-3 shadow-xl">
                 <div className="flex items-center gap-3 border-b border-border px-2 pb-3">
@@ -574,7 +399,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
                   <div className="min-w-0"><p className="truncate text-sm font-bold text-text-primary">{accountDisplayName}</p><p className="truncate ls-type-body-small text-text-muted">{activeSession?.user?.email}</p></div>
                 </div>
                 <div className="pt-2">
-                  {!starterMode && <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Coins size={17} /><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>}
+                  {!starterMode && <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Star size={17} className="text-amber-500" fill="currentColor"/><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>}
                   <button onClick={openDigitalEmployeeGuide} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Sparkles size={17} /><span className="flex-1 text-left">新手引导</span><ChevronRight size={14} className="text-text-muted" /></button>
                   <button onClick={() => { setAccountMenuOpen(false); setMobileRightPanelOpen(false); setAccountSettingsOpen(true); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Settings size={17} /><span className="flex-1 text-left">账号设置</span><ChevronRight size={14} className="text-text-muted" /></button>
                   {onLogout && <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-red-50 hover:text-red-600"><LogOut size={17} /><span className="flex-1 text-left">退出登录</span></button>}
@@ -609,6 +434,8 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
         </div>
       </motion.aside>}
 
+      <PointsManagementDrawer open={quotaOpen} onClose={() => setQuotaOpen(false)}/>
+
       <AccountSettingsModal
         open={accountSettingsOpen}
         onClose={() => setAccountSettingsOpen(false)}
@@ -617,7 +444,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
       />
 
       {/* ── Main content ─────────────────────────────── */}
-      <main className="app-main relative flex min-w-0 flex-1 basis-0 flex-col overflow-hidden">
+      <main className="app-main relative flex min-w-0 flex-1 basis-0 flex-col overflow-clip">
         {supportAccess && (
           <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-border bg-white px-4 text-xs">
             <div className="flex min-w-0 items-center gap-2 text-text-primary">

@@ -6,6 +6,11 @@ let project: any = { id: 'p', tenant_id: 't', spec: {
 } };
 const store: any = { getById: async () => structuredClone(project), update: async (_: string, _id: string, patch: any) => {
   project = { ...project, ...structuredClone(patch) }; return true;
+}, compareAndSwap: async (_: string, _id: string, expected: any, patch: any) => {
+  for (const [key, value] of Object.entries(expected)) {
+    try { assert.deepEqual(project[key], value); } catch { return false; }
+  }
+  project = { ...project, ...structuredClone(patch) }; return true;
 } };
 const input = { store, tenantId: 't', projectId: 'p', slotId: 'slot', firstFrameMaterialId: 'f', firstFrameFingerprint: 'fp',
   providerTaskId: 'native-1', providerModel: 'model', providerAcceptedAt: '2026-10-11T00:00:00.000Z' };

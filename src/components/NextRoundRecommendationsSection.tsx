@@ -1,7 +1,7 @@
 import { Empty } from 'antd';
 import { ArrowRight, ArrowUpRight, Hash, Radar, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import type { BusinessDestination, WeeklyReviewSummary } from '../lib/digitalEmployees';
+import type { BusinessDestination, NextRoundRecommendations, WeeklyReviewSummary } from '../lib/digitalEmployees';
 import { buildNextRoundRecommendationCards, type NextRoundRecommendationCard, type NextRoundRecommendationKind } from '../lib/nextRoundRecommendations';
 import { authHeader } from '../lib/auth';
 import { LsMediaStateFrame, LsProgressiveMedia } from './ui/LsExperiencePrimitives';
@@ -61,6 +61,7 @@ function ContentInheritanceVisual({ card }: { card: NextRoundRecommendationCard 
     {card.links[0] ? <a href={card.links[0].url} target="_blank" rel="noreferrer noopener" className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">{media}</a> : media}
     <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-3"><p className="text-xs font-semibold text-blue-700">首镜钩子</p><p className="mt-1 text-sm font-semibold leading-5 text-text-primary">{card.hook || '等待真实内容分析补齐钩子'}</p></div>
     <div><p className="mb-2 text-xs font-semibold text-text-muted">内容框架</p><div className="flex flex-wrap items-center gap-1.5">{(card.framework?.length ? card.framework : ['等待结构分析']).slice(0, 5).map((step, index) => <span key={`${step}-${index}`} className="inline-flex items-center gap-1 rounded-md border border-violet-100 bg-violet-50 px-2 py-1.5 text-xs font-medium text-violet-800"><b className="text-violet-500">{index + 1}</b>{step}</span>)}</div></div>
+    {card.analysis?.length ? <div className="border-t border-border pt-3"><p className="text-xs font-semibold text-text-muted">内容分析</p><dl className="mt-2 space-y-2.5">{card.analysis.map(item => <div key={item.label} className="grid grid-cols-[56px_minmax(0,1fr)] gap-3"><dt className="text-xs font-semibold text-text-secondary">{item.label}</dt><dd className="text-xs leading-5 text-text-primary">{item.value}</dd></div>)}</dl></div> : null}
   </div>;
 }
 
@@ -80,8 +81,8 @@ function TrendVisual({ card }: { card: NextRoundRecommendationCard }) {
   </div>;
 }
 
-export default function NextRoundRecommendationsSection({ summary, industryTrends, onOpen }: { summary?: WeeklyReviewSummary; industryTrends?: import('../lib/digitalEmployees').NextRoundRecommendations['industryTrends']; onOpen: (page: BusinessDestination, view?: 'create' | 'publish') => void }) {
-  const cards = buildNextRoundRecommendationCards(summary, industryTrends);
+export default function NextRoundRecommendationsSection({ summary, industryTrends, recommendations, onOpen }: { summary?: WeeklyReviewSummary; industryTrends?: NextRoundRecommendations['industryTrends']; recommendations?: NextRoundRecommendations; onOpen: (page: BusinessDestination, view?: 'create' | 'publish') => void }) {
+  const cards = buildNextRoundRecommendationCards(summary, industryTrends, recommendations);
   return <section aria-label="下一轮建议" className="rounded-lg border border-border bg-white p-5 sm:p-6">
     <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold text-text-primary">下一轮建议</h2></div>
     <div className="grid gap-4 lg:grid-cols-3">{cards.map(card => {

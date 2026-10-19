@@ -1,4 +1,3 @@
-import BusinessAnnouncementBar from './smartBusiness/BusinessAnnouncementBar';
 import BusinessHealthOverview from './smartBusiness/BusinessHealthOverview';
 import { labels as sharedTaskLabels, day as shanghaiDay } from '../../shared/mobile-domain.mjs';
 import WeeklyPlanCalendar from './smartBusiness/WeeklyPlanCalendar';
@@ -20,7 +19,7 @@ import EnterprisePresenters from "./enterprise/EnterprisePresenters";
 import { productionApi } from "../lib/productionApi";
 import { presenterProductionGate, type PresenterProductionGate } from "../lib/shotProduction";
 import ManagedPublishingGrantEditor from './ManagedPublishingGrantEditor';
-import { Alert, Button, Modal, Tabs } from 'antd';
+import { Alert, Button, Form, Input, Modal, Radio as AntRadio, Select, Tabs, Upload } from 'antd';
 import { managedPublishingGrantErrors } from '../../shared/contracts/managedPublishingGrant';
 import KnowledgeIntakePanel from "./enterprise/KnowledgeIntakePanel";
 import { normalizeContinuationPolicy, recommendedContinuationPolicy } from '../lib/continuationPolicy';
@@ -47,7 +46,7 @@ import { defaultMatrixPlan } from '../lib/weeklyMatrix';
 import DeliveryBoard from "./DeliveryBoard";
 import ProductionTaskScene from "./ProductionTaskScene";
 import AgentDecisionCard, { type AgentDecisionKind } from "./AgentDecisionCard";
-import SmartBusinessDashboard, { WeeklyCommandCenter, BusinessInterpretation } from "./SmartBusinessDashboard";
+import SmartBusinessDashboard, { WeeklyCommandCenter, WeeklyPlanDetailsDrawer, BusinessInterpretation } from "./SmartBusinessDashboard";
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
 import SmartOperationsAccountRail, { type SmartOperationsAccount } from "./SmartOperationsAccountRail";
 import PlanHistoryDialog from "./PlanHistoryDialog";
@@ -76,7 +75,6 @@ import {
   Clock3,
   ExternalLink,
   FileSpreadsheet,
-  FileCheck2,
   Hand,
   History,
   Eye,
@@ -112,6 +110,7 @@ import {
 import { weeklyWorkStatus } from "../lib/weeklyWorkStatus";
 import { socialDiscoveryApi } from "../lib/socialDiscoveryApi";
 import type { SocialCrawlStrategy } from '../../shared/contracts/socialContentWorkflow';
+import type { ProductionContactKind, ProductionPresenterPolicy } from '../../shared/contracts/productionOnboarding';
 import EnterpriseProductMultiSelect, { splitSelectedProducts } from './EnterpriseProductMultiSelect';
 // EnterpriseProductMultiSelect owns the searchable listbox contract: aria-multiselectable="true" · 搜索企业知识库产品或型号.
 import { heuristicProductMapping, mapRowToProduct, parseWorkbook, prepareSheet } from "../lib/productImport";
@@ -472,7 +471,7 @@ const weeklyRunHeaderLabel: Record<string, string> = {
   failed: "执行失败",
   cancelled: "已取消",
   paused: "已暂停",
-  waiting_external: "等待外部服务",
+  waiting_external: "等待业务结果",
   waiting_approval: "待处理",
   waiting_human: "待处理",
   blocked: "待处理",
@@ -727,15 +726,22 @@ function configErrors(form: DigitalEmployeeConfig): Record<string, string> {
 }
 
 const applicationGuideSteps = [
-  { index: 1, label: "企业与品牌" },
-  { index: 2, label: "产品表" },
-  { index: 3, label: "社媒经营阶段" },
-  { index: 4, label: "数字人接入" },
+  { index: 1, label: "企业信息" },
+  { index: 2, label: "推广产品" },
+  { index: 3, label: "经营阶段" },
+  { index: 4, label: "视频制作" },
 ] as const;
+
+type ProductionContactDraft = {
+  kind: ProductionContactKind;
+  value: string;
+  primaryCta: string;
+};
 
 function OnboardingGuideFrame({
   step,
   title,
+  headerAction,
   children,
   busy = false,
   dismissible = false,
@@ -750,6 +756,7 @@ function OnboardingGuideFrame({
 }: {
   step: 1 | 2 | 3 | 4;
   title: string;
+  headerAction?: ReactNode;
   children: ReactNode;
   busy?: boolean;
   dismissible?: boolean;
@@ -766,7 +773,7 @@ function OnboardingGuideFrame({
     <LsFlowDialog
       open
       title="新手引导"
-      width={880}
+      width={840}
       centered
       current={step - 1}
       steps={applicationGuideSteps.map((item) => ({
@@ -786,7 +793,10 @@ function OnboardingGuideFrame({
     >
       <section aria-labelledby={`onboarding-step-${step}-title`}>
         <p className="ls-type-body-small font-semibold text-accent">第 {step} 步，共 4 步</p>
-        <h2 id={`onboarding-step-${step}-title`} className="ls-type-title-large mt-2 text-text-primary">{title}</h2>
+        <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
+          <h2 id={`onboarding-step-${step}-title`} className="ls-type-title-large min-w-0 text-text-primary">{title}</h2>
+          {headerAction ? <div className="ml-auto shrink-0">{headerAction}</div> : null}
+        </div>
         <div className="mt-5">{children}</div>
       </section>
     </LsFlowDialog>
@@ -858,6 +868,11 @@ function OnboardingPanel({
   const [profileConfirmed, setProfileConfirmed] = useState(mode !== "first" || initialStep === "presenter");
   const [productConfirmed, setProductConfirmed] = useState(mode !== "first" || initialStep === "presenter");
   const [brandName, setBrandName] = useState("");
+  const [productionContactKind, setProductionContactKind] = useState<ProductionContactKind>(() => initial.productionOnboarding?.contact.kind || "none");
+  const [productionContactValue, setProductionContactValue] = useState(() => initial.productionOnboarding?.contact.value || "");
+  const [productionCta, setProductionCta] = useState(() => initial.productionOnboarding?.contact.primaryCta || "");
+  const [presenterPolicy, setPresenterPolicy] = useState<ProductionPresenterPolicy>(() => initial.productionOnboarding?.presenterPolicy || "local_video_only");
+  const [presenterConfigured, setPresenterConfigured] = useState(false);
   const [knowledgeProducts, setKnowledgeProducts] = useState<Array<Record<string, any>>>([]);
   const [productsLoading, setProductsLoading] = useState(mode === "first");
   const [activeRuleAgent, setActiveRuleAgent] = useState<"business" | "director" | "content" | "customer">("business");
@@ -908,6 +923,12 @@ function OnboardingPanel({
     return next;
   }, [knowledgeProducts.length, profileConfirmed, readiness]);
   useEffect(() => setForm(completeConfig(initial)), [initial]);
+  useEffect(() => {
+    setProductionContactKind(initial.productionOnboarding?.contact.kind || "none");
+    setProductionContactValue(initial.productionOnboarding?.contact.value || "");
+    setProductionCta(initial.productionOnboarding?.contact.primaryCta || "");
+    setPresenterPolicy(initial.productionOnboarding?.presenterPolicy || "local_video_only");
+  }, [initial.productionOnboarding]);
   useEffect(() => {
     if (mode === "first" && initialStep === "presenter") {
       setProfileConfirmed(true); setProductConfirmed(true); setStageConfirmed(true);
@@ -1163,8 +1184,10 @@ function OnboardingPanel({
     ["品牌名称", brandName],
   ] as const;
   const missingProfileFields = profileMissingFields.filter(([, value]) => !value.trim()).map(([label]) => label);
+  const invalidProductionContact = productionContactKind !== "none"
+    && (!productionContactValue.trim() || !productionCta.trim());
   const saveEnterpriseProfile = async () => {
-    if (missingProfileFields.length || profileSaving) return;
+    if (missingProfileFields.length || invalidProductionContact || profileSaving) return;
     setProfileSaving(true);
     setProfileError("");
     try {
@@ -1189,6 +1212,16 @@ function OnboardingPanel({
   const productName = (product: Record<string, any>) => String(product.name || product.title || product.productName || "").trim();
   const importProductFile = async (file: File | null) => {
     if (!file || productImporting) return;
+    if (!/\.(xlsx?|csv|pdf|docx|txt)$/i.test(file.name)) {
+      setProductImportMessage("");
+      setProductError("请选择 Excel、CSV、PDF、Word 或 TXT 文件");
+      return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      setProductImportMessage("");
+      setProductError("文件不能超过 50MB，请压缩或拆分后重试");
+      return;
+    }
     setProductImporting(true); setProductImportMessage(""); setProductError("");
     const temporaryUrls: string[] = [];
     try {
@@ -1274,7 +1307,11 @@ function OnboardingPanel({
       setStageSaving(false);
     }
   };
-  const completeMinimalOnboarding = async (plan?: InitialOperatingPlan) => {
+  const completeMinimalOnboarding = async (
+    plan?: InitialOperatingPlan,
+    presenterPolicyOverride?: ProductionPresenterPolicy,
+    contactOverride?: ProductionContactDraft,
+  ) => {
     if (stageSaving || !stageConfirmed || !contentStage) return;
     setStageSaving(true);
     setStageError("");
@@ -1286,13 +1323,35 @@ function OnboardingPanel({
         confirmedStage = savedStage.profile.id;
         setContentStage(confirmedStage);
       }
+      const confirmedPresenterPolicy = presenterPolicyOverride || presenterPolicy;
+      const confirmedContact = contactOverride || {
+        kind: productionContactKind,
+        value: productionContactKind === "none" ? "" : productionContactValue.trim(),
+        primaryCta: productionContactKind === "none" ? "" : productionCta.trim(),
+      };
+      const productionOnboarding = {
+        schemaVersion: "fixed-yield.production-onboarding.v1" as const,
+        contact: confirmedContact,
+        presenterPolicy: confirmedPresenterPolicy,
+        output: {
+          primaryLanguage: plan?.language || form.videoDefaults?.language || "en",
+          aspectRatio: "9:16" as const,
+          resolution: "1080p" as const,
+        },
+        includeOneRevision: true,
+        confirmedAt: new Date().toISOString(),
+      };
       const completed = await onSave(plan ? {
         ...form,
         companyName: form.companyName.trim(),
         focusProducts: plan.products.join("、"),
         targetMarkets: plan.market,
         videoLanguages: [plan.language],
-        allowGeneratedVisuals: true,
+        // V2 only executes the three existing presenter pipelines plus exact
+        // tenant-owned local video matches. Missing B-roll must not reopen the
+        // legacy free-generation fallback.
+        allowGeneratedVisuals: false,
+        productionOnboarding,
         operatingMaturity: confirmedStage === "b2b_launch" ? "starting" : "growing",
         minimalOnboarding: true,
         brandName: brandName.trim(),
@@ -1301,6 +1360,8 @@ function OnboardingPanel({
         ...form,
         companyName: form.companyName.trim(),
         focusProducts: "",
+        allowGeneratedVisuals: false,
+        productionOnboarding,
         minimalOnboarding: true,
         brandName: brandName.trim(),
       });
@@ -1381,32 +1442,103 @@ function OnboardingPanel({
   if (mode === "first" && !profileConfirmed) return (
     <OnboardingGuideFrame
       step={1}
-      title="填写企业与品牌"
+      title="先告诉我们你的企业和品牌"
       busy={profileSaving || busy}
       dismissible={dismissible}
       onClose={onClose}
       onSkip={dismissible ? onClose : undefined}
       skipLabel="稍后继续"
       primaryLabel="确认企业信息"
-      primaryDisabled={Boolean(missingProfileFields.length)}
+      primaryDisabled={Boolean(missingProfileFields.length) || invalidProductionContact}
       onPrimary={() => void saveEnterpriseProfile()}
     >
-      <section id="onboarding-enterprise-profile" className="scroll-mt-24 rounded-lg border border-slate-200 bg-white p-5">
-        {profileLoading ? <div role="status" className="flex items-center gap-2 rounded-lg bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库已有档案…</div> : <>
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="企业名称" required><input className={inputClass} value={form.companyName} onChange={e=>set("companyName",e.target.value)} placeholder="例如：灵枢科技" /></Field>
-            <Field label="品牌名称" required><input className={inputClass} value={brandName} onChange={e=>setBrandName(e.target.value)} placeholder="例如：Aurelia" /></Field>
+      <Form className="space-y-6" layout="vertical" aria-label="企业与品牌资料">
+        <section id="onboarding-enterprise-profile" className="scroll-mt-24">
+          {profileLoading ? <div role="status" className="flex items-center gap-2 rounded-lg bg-surface-2 p-5 text-sm text-text-muted"><Loader2 size={16} className="animate-spin" />正在读取企业知识库已有档案…</div> : <>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="企业名称" required><input className={inputClass} value={form.companyName} onChange={e=>set("companyName",e.target.value)} placeholder="例如：灵枢科技" /></Field>
+              <Field label="品牌名称" required><input className={inputClass} value={brandName} onChange={e=>setBrandName(e.target.value)} placeholder="例如：Aurelia" /></Field>
+            </div>
+            {profileError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs text-red-700">{profileError}</p>}
+            {missingProfileFields.length ? <p role="status" className="mt-5 text-xs text-amber-700">还需填写：{missingProfileFields.join("、")}</p> : null}
+          </>}
+        </section>
+        <section className="space-y-3 border-t border-border pt-6" aria-labelledby="onboarding-contact-title">
+          <h3 id="onboarding-contact-title" className="ls-type-title-medium text-text-primary">你想用哪种联系方式让客户找到你？</h3>
+          <div className="grid gap-4 md:grid-cols-3">
+            <Form.Item className="mb-0" label="联系方式" htmlFor="production-contact-kind">
+              <Select
+                id="production-contact-kind"
+                value={productionContactKind}
+                onChange={(value: ProductionContactKind) => setProductionContactKind(value)}
+                options={[
+                  { value: "none", label: "本轮不展示" },
+                  { value: "whatsapp", label: "WhatsApp" },
+                  { value: "email", label: "邮箱" },
+                  { value: "phone", label: "电话" },
+                  { value: "website", label: "网站" },
+                  { value: "wechat", label: "微信" },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item
+              className="mb-0"
+              label="公开联系信息"
+              htmlFor="production-contact-value"
+              required={productionContactKind !== "none"}
+              validateStatus={productionContactKind !== "none" && !productionContactValue.trim() ? "error" : undefined}
+              help={productionContactKind !== "none" && !productionContactValue.trim() ? "请填写允许公开展示的联系信息" : undefined}
+            >
+              <Input
+                id="production-contact-value"
+                disabled={productionContactKind === "none"}
+                value={productionContactValue}
+                onChange={event => setProductionContactValue(event.target.value)}
+                placeholder={productionContactKind === "none" ? "不需要填写" : "例如：sales@example.com"}
+                aria-required={productionContactKind !== "none"}
+                aria-invalid={productionContactKind !== "none" && !productionContactValue.trim()}
+              />
+            </Form.Item>
+            <Form.Item
+              className="mb-0"
+              label="视频行动号召"
+              htmlFor="production-contact-cta"
+              required={productionContactKind !== "none"}
+              validateStatus={productionContactKind !== "none" && !productionCta.trim() ? "error" : undefined}
+              help={productionContactKind !== "none" && !productionCta.trim() ? "请填写视频中使用的行动号召" : undefined}
+            >
+              <Input
+                id="production-contact-cta"
+                disabled={productionContactKind === "none"}
+                value={productionCta}
+                onChange={event => setProductionCta(event.target.value)}
+                placeholder={productionContactKind === "none" ? "不安排联系镜头" : "例如：发送采购需求获取报价"}
+                aria-required={productionContactKind !== "none"}
+                aria-invalid={productionContactKind !== "none" && !productionCta.trim()}
+              />
+            </Form.Item>
           </div>
-          {profileError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs text-red-700">{profileError}</p>}
-          <p role="status" className="mt-5 text-xs text-amber-700">{missingProfileFields.length ? `还需填写：${missingProfileFields.join("、")}` : "企业基础资料已完整，可以保存。"}</p>
-        </>}
-      </section>
+        </section>
+      </Form>
     </OnboardingGuideFrame>
   );
   if (mode === "first" && profileConfirmed && !productConfirmed) return (
     <OnboardingGuideFrame
       step={2}
-      title="导入或确认产品表"
+      title="这次想重点推广哪些产品？"
+      headerAction={
+        <Upload
+          accept=".xlsx,.xls,.csv,.pdf,.docx,.txt"
+          showUploadList={false}
+          disabled={productsLoading || productSaving || productImporting || busy}
+          beforeUpload={(file) => {
+            void importProductFile(file);
+            return Upload.LIST_IGNORE;
+          }}
+        >
+          <Button icon={<FileSpreadsheet size={16} />} loading={productImporting} disabled={productsLoading || productSaving || busy}>上传产品资料</Button>
+        </Upload>
+      }
       busy={productSaving || productImporting || busy}
       dismissible={dismissible}
       onClose={onClose}
@@ -1415,12 +1547,10 @@ function OnboardingPanel({
       primaryDisabled={!knowledgeProducts.length}
       onPrimary={() => void confirmProductTable()}
     >
-    <section id="onboarding-focus-products" className="scroll-mt-24 rounded-lg border border-slate-200 bg-white p-6">
+    <section id="onboarding-focus-products" className="scroll-mt-24">
       {productsLoading ? <div role="status" className="mt-6 flex items-center gap-2 rounded-lg bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库产品…</div> : <>
-        <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-semibold text-slate-900">企业知识库产品表</p><label className={`inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 ${productImporting?"cursor-wait opacity-60":"cursor-pointer hover:bg-slate-50"}`}>{productImporting?<Loader2 size={14} className="animate-spin"/>:<FileSpreadsheet size={14}/>}上传产品资料<input type="file" accept=".xlsx,.xls,.csv,.pdf,.docx,.txt" className="hidden" disabled={productImporting} onChange={e=>{void importProductFile(e.currentTarget.files?.[0]??null);e.currentTarget.value="";}} /></label></div>
-        <p className="mt-2 text-[11px] leading-relaxed text-slate-500">支持 Excel（.xlsx/.xls）、CSV、PDF、Word（.docx）和 TXT。系统自动识别表格或“产品名称：…”等结构化字段，包括 SKU、规格、价格、MOQ、材质、图片链接和卖点，并写入企业知识库。单个文件最大 50MB。</p>
         {productImportMessage&&<p role="status" className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800">{productImportMessage}</p>}
-        {!knowledgeProducts.length ? <div className="mt-4 rounded-lg border border-dashed border-slate-300 p-8 text-center"><p className="font-bold text-slate-800">企业知识库尚未录入产品</p><p className="mt-2 text-xs text-slate-500">请上传产品表后继续。</p></div> : <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">{knowledgeProducts.map((product,index)=>{const name=productName(product);const details=[product.category,product.sku || product.attributes?.model].filter(Boolean).join(" · ");return <div key={String(product.id||`${name}-${index}`)} className="rounded-lg border border-slate-200 p-4 text-left"><div className="flex items-start justify-between gap-2"><p className="font-bold text-slate-900">{name}</p><CheckCircle2 size={17} className="shrink-0 text-emerald-600" /></div><p className="mt-1 text-xs text-slate-500">{details||"暂无型号与类别"}</p><p className="mt-3 line-clamp-2 text-[11px] leading-relaxed text-slate-500">{product.description||product.highlights||"详细资料可稍后在企业中心完善"}</p></div>})}</div>}
+        {!knowledgeProducts.length ? <div className="mt-4 rounded-lg border border-dashed border-slate-300 p-8 text-center"><p className="font-bold text-slate-800">企业知识库尚未录入产品</p><p className="mt-2 text-xs text-slate-500">请上传产品表后继续。</p></div> : <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">{knowledgeProducts.map((product,index)=>{const name=productName(product);const details=[product.category,product.sku || product.attributes?.model].filter(Boolean).join(" · ");return <div key={String(product.id||`${name}-${index}`)} className="rounded-lg border border-slate-200 p-4 text-left"><div className="flex items-start justify-between gap-2"><p className="font-bold text-slate-900">{name}</p><CheckCircle2 size={17} className="shrink-0 text-emerald-600" /></div><p className="mt-1 text-xs text-slate-500">{details||"暂无型号与类别"}</p><p className="mt-3 line-clamp-2 text-xs leading-relaxed text-slate-500">{product.description||product.highlights||"详细资料可稍后在企业中心完善"}</p></div>})}</div>}
         {productError&&<p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs text-red-700">{productError}</p>}
         <p role="status" className="mt-5 text-xs text-text-muted">{knowledgeProducts.length?`产品表已有 ${knowledgeProducts.length} 个产品，可以继续。`:"导入至少一个产品后即可继续。"}</p>
       </>}
@@ -1430,7 +1560,7 @@ function OnboardingPanel({
   if (mode === "first" && profileConfirmed && productConfirmed && !stageConfirmed) return (
     <OnboardingGuideFrame
       step={3}
-      title="选择社媒经营阶段"
+      title="你的社媒经营目前到了哪一步？"
       busy={stageSaving || busy}
       dismissible={dismissible}
       onClose={onClose}
@@ -1455,22 +1585,58 @@ function OnboardingPanel({
   if (mode === "first" && profileConfirmed && productConfirmed && stageConfirmed) return (
     <OnboardingGuideFrame
       step={4}
-      title="选择生产数字人形象"
+      title="你想让谁出镜？"
       busy={stageSaving || busy}
       dismissible={dismissible}
       onClose={onClose}
       onBack={() => setStageConfirmed(false)}
-      onSkip={() => void completeMinimalOnboarding()}
-      skipLabel="稍后选择（开始生产前必选）"
+      onSkip={() => {
+        void completeMinimalOnboarding(undefined, "local_video_only");
+      }}
+      skipLabel="本轮仅用本地素材"
       primaryLabel={allowInitialPlan ? "生成推荐计划" : "完成引导并保存"}
       primaryId={allowInitialPlan ? recommendedPlanTriggerId : undefined}
+      primaryDisabled={invalidProductionContact || (presenterPolicy === "digital_presenter" && !presenterConfigured)}
       onPrimary={() => void openRecommendedPlan()}
     >
-      <section className="rounded-lg border border-slate-200 bg-white p-5" aria-label="数字人接入配置">
-        <Alert className="mb-4" type="warning" showIcon title="数字人形象是生产硬要求" description="你可以暂时跳过引导，但开始周任务前必须选择已有形象或录入自己的形象；系统不会降级为素材匹配或其他制作路线。" />
-        <EnterprisePresenters initialConfiguration />
+      <Form className="space-y-5" layout="vertical" aria-label="生产开工资料">
+        <section className="space-y-3" aria-label="出镜方式">
+          <AntRadio.Group
+            className="!grid w-full !gap-3 sm:!grid-cols-2"
+            value={presenterPolicy}
+            onChange={event => setPresenterPolicy(event.target.value as ProductionPresenterPolicy)}
+            aria-label="出镜方式"
+          >
+            {([
+              { value: "digital_presenter", label: "使用数字人口播", description: "需要完成默认人物、声音与用途授权。" },
+              { value: "local_video_only", label: "本轮仅用本地实拍", description: "自动排除含真人口播的参考，不临时改成其他生成方式。" },
+            ] as const).map(option => {
+              const selected = presenterPolicy === option.value;
+              return (
+                <AntRadio.Button
+                  key={option.value}
+                  value={option.value}
+                  className={`!ms-0 !ml-0 !h-auto !w-full !rounded-lg !border !px-4 !py-3 !leading-normal before:!hidden ${selected
+                    ? "!border-accent !bg-accent-glow !text-text-primary !shadow-[0_0_0_1px_var(--color-accent)]"
+                    : "!border-border !bg-surface !text-text-primary hover:!border-accent/50"}`}
+                >
+                  <span className="flex min-w-0 items-start justify-between gap-3 text-left">
+                    <span className="min-w-0">
+                      <strong className="block text-sm font-semibold text-text-primary">{option.label}</strong>
+                      <span className="mt-1 block text-xs leading-5 text-text-muted">{option.description}</span>
+                    </span>
+                    <span aria-hidden="true" className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${selected ? "border-accent bg-accent text-white" : "border-border-bright bg-white"}`}>
+                      {selected && <Check size={13} strokeWidth={2.5} />}
+                    </span>
+                  </span>
+                </AntRadio.Button>
+              );
+            })}
+          </AntRadio.Group>
+          {presenterPolicy === "digital_presenter" && <EnterprisePresenters initialConfiguration onInitialSelection={() => setPresenterConfigured(true)} />}
+        </section>
         {stageError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">{stageError}</p>}
-      </section>
+      </Form>
     </OnboardingGuideFrame>
   );
   return (
@@ -3806,8 +3972,8 @@ export default function DigitalEmployeePage({
   const [applicationGuideEntry, setApplicationGuideEntry] = useState<"start" | "presenter">(presenterConsentReturnRequested ? "presenter" : "start");
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
   const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
-  const [weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen] = useState(false);
   const [planHistoryOpen, setPlanHistoryOpen] = useState(false);
+  const [weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen] = useState(false);
   const goalPanelRef = useRef<HTMLDivElement>(null);
   const overviewRequestVersionRef = useRef(0);
   const enterpriseFactsRecoveryRef = useRef(new Map<string, Promise<void>>());
@@ -3896,7 +4062,7 @@ export default function DigitalEmployeePage({
     return () => window.removeEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshFromAssistant);
   }, [viewGoalId, data?.goal?.id]);
 
-  useEffect(()=>{let authorization=authHeader().Authorization;const clear=()=>{const next=authHeader().Authorization;if(next===authorization)return;authorization=next;overviewRequestVersionRef.current+=1;initialLoadRef.current=null;setData(null);setWeeklyStartConflict(null);setSelectedTaskId('');setSelectedContentItemId('');setSelectedAccountId('');setWeeklyPlanOpen(false);setPlanHistoryOpen(false);setWorkspaceView('today');setBusinessLine('full_funnel');setContentPlatform('all');setViewGoalId('');productionRangeRef.current=undefined;setLoading(true);initialLoadRef.current=load('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.addEventListener('storage',clear);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.removeEventListener('storage',clear);};},[]);
+  useEffect(()=>{let authorization=authHeader().Authorization;const clear=()=>{const next=authHeader().Authorization;if(next===authorization)return;authorization=next;overviewRequestVersionRef.current+=1;initialLoadRef.current=null;setData(null);setWeeklyStartConflict(null);setSelectedTaskId('');setSelectedContentItemId('');setSelectedAccountId('');setWeeklyPlanOpen(false);setPlanHistoryOpen(false);setWeeklyPlanDetailsOpen(false);setWorkspaceView('today');setBusinessLine('full_funnel');setContentPlatform('all');setViewGoalId('');productionRangeRef.current=undefined;setLoading(true);initialLoadRef.current=load('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.addEventListener('storage',clear);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.removeEventListener('storage',clear);};},[]);
 
   useEffect(() => {
     const businessScope = consumeBusinessPageContext("production");
@@ -4014,7 +4180,7 @@ export default function DigitalEmployeePage({
     const run = data?.run;
     if (
       !data?.config ||
-      workspaceView !== "live" ||
+      !["live", "matrix"].includes(workspaceView) ||
       viewGoalId ||
       !run ||
       ["succeeded", "failed", "cancelled", "paused"].includes(run.status)
@@ -4032,7 +4198,7 @@ export default function DigitalEmployeePage({
           /* SSE remains the primary live channel */
         });
     };
-    const timer = window.setInterval(reconcile, 25_000);
+    const timer = window.setInterval(reconcile, 15_000);
     return () => window.clearInterval(timer);
   }, [data?.run?.id, data?.run?.status, viewGoalId, workspaceView]);
 
@@ -4243,10 +4409,12 @@ export default function DigitalEmployeePage({
       setNewGoal(false);
       setWeeklyPlanOpen(false);
       setWorkspaceView("today");
-      window.requestAnimationFrame(() => document.querySelector('[aria-label="当前周计划"]')?.scrollIntoView({
-        behavior: getScrollBehavior(),
-        block: "start",
-      }));
+      window.requestAnimationFrame(() => {
+        document.querySelector('[aria-label="当前周计划"]')?.scrollIntoView({
+          behavior: getScrollBehavior(),
+          block: "start",
+        });
+      });
     };
     window.addEventListener('lingshu:open-weekly-plan', openWeeklyPlan);
     return () => window.removeEventListener('lingshu:open-weekly-plan', openWeeklyPlan);
@@ -4288,7 +4456,9 @@ export default function DigitalEmployeePage({
             ? ['这个任务为什么停住', '告诉我下一步怎么处理', '核对当前真实状态']
             : weeklyPlanningStage === 'unplanned'
               ? ['帮我制定本周计划', '计划里会包含什么', '开始前还缺什么']
-              : ['查看当前经营重点', '核对本周计划范围', '查看需要我处理的事项'],
+              : weeklyPlanningStage === 'running'
+                ? ['查看当前进度', '查看数字员工排期', '查看需要我处理的任务']
+                : ['查看当前经营重点', '核对本周计划范围', '查看需要我处理的事项'],
         workflowStage: weeklyPlanningStage,
         goalId: visibleGoalId,
         planId: data?.plan?.id || '',
@@ -4487,8 +4657,14 @@ export default function DigitalEmployeePage({
       }
       return true;
     } catch (configError) {
-      if (await recoverEnterpriseFactsChanged(configError, recoveryGoal)) return false;
+      if (await recoverEnterpriseFactsChanged(configError, recoveryGoal)) {
+        if (config.minimalOnboarding) throw configError;
+        return false;
+      }
       setError(configError instanceof Error ? configError.message : createInitialPlan ? "推荐计划制作准备失败" : "设置保存失败");
+      // The flow owns its inline error; don't replace an actionable server
+      // rejection with a boolean and a generic "try later" message.
+      if (config.minimalOnboarding) throw configError;
       return false;
     } finally {
       setBusy("");
@@ -4719,6 +4895,11 @@ export default function DigitalEmployeePage({
     const missingReferenceMasters = currentMasterPlans.filter(plan => !plan.referenceId);
     const missingProductMasters = currentMasterPlans.filter(plan => !plan.productName);
     const detailGeneration = data.plan?.businessPackage?.detailGeneration;
+    const publishingReadiness = data.publishingReadiness;
+    const publishingSetupRequired = !activeRun && !viewGoalId && Boolean(publishingReadiness?.required && !publishingReadiness.ready);
+    const openPublishingAccountSetup = () => window.dispatchEvent(new CustomEvent("lingshu:navigate", {
+      detail: { page: "accountManagement", businessRef: { taskKey: "publishing_account_setup" } },
+    }));
     const currentMatrix = data.plan?.businessPackage?.matrixPlan || [];
     const plannedAccountTaskCounts = currentVideoPlans.reduce<Record<string, number>>((counts, plan) => {
       const accountId = plan.matrix?.accountId;
@@ -4771,10 +4952,13 @@ export default function DigitalEmployeePage({
       setSelectedTaskId(next.tasks.find((task) => ["running", "waiting_external", "waiting_approval", "waiting_human", "failed"].includes(task.status))?.id || next.tasks[0]?.id || "");
       setWorkspaceView("live");
     };
+    const projectedWeeklyStatus = weeklyWorkStatus(data);
     const currentPlanStatusLabel = viewGoalId
       ? "历史计划"
       : data.run
-        ? weeklyRunHeaderLabel[data.run.status] || "状态待确认"
+        ? projectedWeeklyStatus?.title.includes("自动恢复")
+          ? "自动恢复中"
+          : weeklyRunHeaderLabel[data.run.status] || "状态待确认"
         : goal?.status === "draft"
           ? "待确认"
           : goal?.status === "completed"
@@ -4877,19 +5061,9 @@ export default function DigitalEmployeePage({
         {error && <Alert type="error" showIcon title={error} closable onClose={() => setError("")} />}
       </div>
     ) : undefined;
-    const openWeeklyTaskCalendar = () => {
-      setSelectedContentItemId("");
-      setWorkspaceView("matrix");
-      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-        document.querySelector('[aria-label="数字员工工作排期"]')?.scrollIntoView({
-          behavior: getScrollBehavior(),
-          block: "start",
-        });
-      }));
-    };
     const weeklyPlanControls = <>
       {activeRun && !viewGoalId
-        ? <Button onClick={openWeeklyTaskCalendar} icon={<CalendarRange size={15}/>}>查看周任务</Button>
+        ? <Button onClick={() => setWeeklyPlanDetailsOpen(true)} icon={<CalendarRange size={15}/>}>查看周任务</Button>
         : <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>}
       <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={!activeRun && (!goal || canCreateNextGoal) ? <CalendarRange size={15}/> : activeRun && !recoverableProductionTask && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
     </>;
@@ -4899,14 +5073,15 @@ export default function DigitalEmployeePage({
       {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-white">
         <div className="mx-auto w-full px-2 py-3 sm:px-3">
           <h1 className="sr-only">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
-          <BusinessAnnouncementBar/>
           <div className="grid grid-cols-1 overflow-hidden rounded-2xl border border-border bg-white xl:grid-cols-[minmax(0,1.7fr)_minmax(360px,1fr)]"><div aria-label="当前周计划" className="min-w-0">
             {goal ? <WeeklyCommandCenter
               data={data}
               statusLabel={currentPlanStatusLabel}
               actions={weeklyPlanControls}
               feedback={weeklyActionFeedback}
-              notice={!activeRun && !viewGoalId && (missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
+              notice={publishingSetupRequired
+                ? <><p className="mr-auto text-xs leading-5 text-text-secondary"><strong className="text-warning">发布准备待完成：</strong>{publishingReadiness?.summary}。内容生产可以继续，系统不会把未连接账号当成已就绪。</p><Button size="small" onClick={openPublishingAccountSetup}>配置发布账号</Button></>
+                : !activeRun && !viewGoalId && (missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
                 ? <p className="mr-auto text-xs text-text-secondary">可直接开始任务；{detailGeneration?.blockedCount || missingReferenceMasters.length || missingProductMasters.length} 条内容的待补资料将在对应制作步骤提示，不阻止其他内容推进。账号连接与发布授权在正式发布前核验。</p>
                 : undefined}
             /> : <><section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div className="max-w-2xl"><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有计划</p><p className="mt-1 text-xs leading-5 text-slate-500">先制定并预览周计划。计划会说明本周做什么、在哪些平台生产、产量、预计预算和工作排期；确认前不会开始生产。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>{weeklyActionFeedback && <div className="border-b border-border px-4 py-2.5">{weeklyActionFeedback}</div>}</>}
@@ -4993,6 +5168,7 @@ export default function DigitalEmployeePage({
         </section>
       </div>}
       {planHistoryOpen&&<PlanHistoryDialog goals={data.goals} onClose={()=>setPlanHistoryOpen(false)}/>}
+      {weeklyPlanDetailsOpen&&<WeeklyPlanDetailsDrawer data={data} open onClose={()=>setWeeklyPlanDetailsOpen(false)}/>}
       {onboardingWelcomeOpen && <OnboardingWelcome onClose={()=>setOnboardingWelcomeOpen(false)} />}
       </>
     );

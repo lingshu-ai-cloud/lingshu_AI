@@ -1,17 +1,24 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Request, RequestHandler, Response } from 'express';
+import type { Identity } from '../storage/datastore.js';
 
 interface RateLimitBucket {
   count: number;
   resetAt: number;
   touchedAt: number;
+  exemptionChecks: number;
 }
+
+export type RateLimitIdentityVerifier = (authorization: string | undefined) => Promise<Identity | null>;
 
 export interface RateLimiterOptions {
   windowMs: number;
   limit: number;
   maxKeys?: number;
   now?: () => number;
+  verifyIdentity?: RateLimitIdentityVerifier;
+  exemptTenantIds?: ReadonlySet<string>;
+  exemptUserIds?: ReadonlySet<string>;
 }
 
 function positiveInteger(value: unknown, fallback: number, maximum: number): number {
@@ -24,7 +31,20 @@ export function apiRateLimitConfig() {
     windowMs: positiveInteger(process.env.API_RATE_LIMIT_WINDOW_MS, 60_000, 3_600_000),
     limit: positiveInteger(process.env.API_RATE_LIMIT_REQUESTS, 300, 10_000),
     maxKeys: positiveInteger(process.env.API_RATE_LIMIT_MAX_KEYS, 20_000, 200_000),
+    exemptTenantIds: exactPrincipalIds(process.env.API_RATE_LIMIT_EXEMPT_TENANT_IDS),
+    exemptUserIds: exactPrincipalIds(process.env.API_RATE_LIMIT_EXEMPT_USER_IDS),
   };
+}
+
+function exactPrincipalIds(value: unknown): ReadonlySet<string> {
+  return new Set(
+    String(value ?? '')
+      .split(',')
+      .map(item => item.trim())
+      // These are opaque server-side IDs, not patterns or email addresses.
+      // Rejecting wildcard characters keeps the exemption exact by design.
+      .filter(item => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(item)),
+  );
 }
 
 function requestPrincipal(req: Pick<Request, 'ip' | 'socket'>): string {
@@ -42,6 +62,15 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
   const buckets = new Map<string, RateLimitBucket>();
   const now = options.now ?? Date.now;
   const maxKeys = Math.max(1, Math.floor(options.maxKeys ?? 20_000));
+  const exemptTenantIds = options.exemptTenantIds ?? new Set<string>();
+  const exemptUserIds = options.exemptUserIds ?? new Set<string>();
+  const canResolveExemption = !!options.verifyIdentity && (exemptTenantIds.size > 0 || exemptUserIds.size > 0);
+  const verifiedExemptions = new Map<string, number>();
+  const exemptionRequests = new Map<string, Promise<boolean>>();
+  const maxExemptionChecksPerWindow = Math.min(
+    1_000,
+    Math.max(32, Math.ceil(options.windowMs / 5_000) + 4),
+  );
   let requestsSincePrune = 0;
 
   const prune = (timestamp: number) => {
@@ -59,6 +88,70 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
       if (!oldestKey) break;
       buckets.delete(oldestKey);
     }
+    for (const [key, expiresAt] of verifiedExemptions) {
+      if (expiresAt <= timestamp) verifiedExemptions.delete(key);
+    }
+    while (verifiedExemptions.size >= maxKeys) {
+      const oldestKey = verifiedExemptions.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      verifiedExemptions.delete(oldestKey);
+    }
+  };
+
+  const verifiedExemption = async (
+    req: Request,
+    bucket: RateLimitBucket,
+    timestamp: number,
+  ): Promise<boolean> => {
+    if (!canResolveExemption) return false;
+    const authorization = typeof req.headers.authorization === 'string'
+      ? req.headers.authorization.trim()
+      : '';
+    if (!authorization || authorization.length > 8_192 || !/^Bearer\s+\S+/i.test(authorization)) return false;
+    const key = createHash('sha256').update(authorization).digest('base64url');
+    const cachedUntil = verifiedExemptions.get(key);
+    if (cachedUntil && cachedUntil > timestamp) {
+      verifiedExemptions.delete(key);
+      verifiedExemptions.set(key, cachedUntil);
+      return true;
+    }
+    const inFlight = exemptionRequests.get(key);
+    if (inFlight) return inFlight;
+    // Do not let an attacker rotate arbitrary bearer strings into an unbounded
+    // authentication-provider workload after the IP guard has fired.
+    if (bucket.exemptionChecks >= maxExemptionChecksPerWindow) return false;
+    bucket.exemptionChecks += 1;
+    const request = (async () => {
+      try {
+        const identity = await options.verifyIdentity!(authorization);
+        const allowed = !!identity && (
+          exemptTenantIds.has(identity.tenantId)
+          || exemptUserIds.has(identity.userId)
+        );
+        if (allowed) {
+          // Keep this cache no broader than the auth verifier's normal bounded
+          // revocation window. The protected route will still authenticate.
+          verifiedExemptions.set(key, timestamp + Math.min(options.windowMs, 5_000));
+        }
+        return allowed;
+      } catch {
+        // Authentication outages or malformed credentials must fail closed:
+        // they never turn a rate-limited request into an exempt one.
+        return false;
+      }
+    })();
+    exemptionRequests.set(key, request);
+    try {
+      return await request;
+    } finally {
+      if (exemptionRequests.get(key) === request) exemptionRequests.delete(key);
+    }
+  };
+
+  const reject = (res: Response, timestamp: number, resetAt: number) => {
+    const retryAfter = Math.max(1, Math.ceil((resetAt - timestamp) / 1_000));
+    res.setHeader('Retry-After', String(retryAfter));
+    res.status(429).json({ error: 'rate_limit_exceeded', retryAfterSeconds: retryAfter });
   };
 
   return (req, res, next) => {
@@ -71,7 +164,7 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
     const key = requestPrincipal(req);
     const existing = buckets.get(key);
     const bucket = !existing || existing.resetAt <= timestamp
-      ? { count: 0, resetAt: timestamp + options.windowMs, touchedAt: timestamp }
+      ? { count: 0, resetAt: timestamp + options.windowMs, touchedAt: timestamp, exemptionChecks: 0 }
       : existing;
     bucket.count += 1;
     bucket.touchedAt = timestamp;
@@ -88,9 +181,14 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
       next();
       return;
     }
-    const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - timestamp) / 1_000));
-    res.setHeader('Retry-After', String(retryAfter));
-    res.status(429).json({ error: 'rate_limit_exceeded', retryAfterSeconds: retryAfter });
+    if (!canResolveExemption) {
+      reject(res, timestamp, bucket.resetAt);
+      return;
+    }
+    void verifiedExemption(req, bucket, timestamp).then(exempt => {
+      if (exempt) next();
+      else reject(res, timestamp, bucket.resetAt);
+    });
   };
 }
 

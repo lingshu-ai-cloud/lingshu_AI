@@ -89,12 +89,16 @@ export class HeyGenPresenterClient {
     const voice = result.data || {};
     return { id: String(voice.voice_id || ''), name: String(voice.name || ''), language: String(voice.language || ''), status: String(voice.status || ''), previewUrl: mediaUrl(voice.preview_audio_url), type: String(voice.type || '') };
   }
-  async cloneVoice(name: string, bytes: Buffer, mime: string, language: string, requestId: string): Promise<string> {
+  async cloneVoice(name: string, bytes: Buffer, mime: string, language: string, requestId: string): Promise<string[]> {
     const mp3 = await normalizePresenterAudio(bytes);
     const result = await this.call('voices/clone', { voice_name: name, audio: { type: 'base64', media_type: 'audio/mpeg', data: mp3.toString('base64') }, ...(language ? { language } : {}) }, requestId);
-    const id = String(result.data?.voice_clone_id || '');
-    if (!id) throw new Error('HeyGen 已受理录音但未返回音色任务 ID，请核查原任务');
-    return id;
+    const ids = [...new Set([
+      result.data?.voice_clone_id,
+      ...(Array.isArray(result.data?.voice_clone_ids) ? result.data.voice_clone_ids : []),
+      ...(Array.isArray(result.data?.voices) ? result.data.voices.map((voice: any) => voice?.voice_id || voice?.id) : []),
+    ].map(value => String(value || '').trim()).filter(Boolean))];
+    if (!ids.length) throw new Error('HeyGen 已受理录音但未返回音色任务 ID，请核查原任务');
+    return ids;
   }
   async upload(bytes: Buffer, mime: string, requestId: string, onStage?: (stage: string, remoteAssetId?: string) => Promise<void>): Promise<string> {
     const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm' }[mime];

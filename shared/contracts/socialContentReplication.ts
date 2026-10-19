@@ -5,6 +5,7 @@ import type {
   SocialSceneProductionAdmission,
   SocialSceneVisualContract,
 } from '../sceneVisualContract.js';
+import type { FixedYieldArchetypeId } from '../fixedYieldMaterialRegistry.js';
 import type { PresenterShotMeasurements } from './presenterStackPolicy.js';
 
 export const SOCIAL_CONTENT_TASK_STATUSES = [
@@ -20,6 +21,8 @@ export const SOCIAL_CONTENT_TASK_STATUSES = [
   'reviewed',
   'paused',
   'attention',
+  'cancelling',
+  'cancelled',
 ] as const;
 export type SocialContentTaskStatus = typeof SOCIAL_CONTENT_TASK_STATUSES[number];
 
@@ -336,6 +339,8 @@ export interface SocialAssetSupplyShotPlan {
   digitalHumanPlan?: {
     workflow: 'material_processing' | 'viral_replication';
     method: 'talking' | 'replace' | 'reenact';
+    /** Runtime-frozen only from verified lipSyncRequired=false measurements. */
+    silentMotion?: boolean;
     presenterAssetIds: string[];
     referenceMaterialIds: string[];
     referenceRequired: boolean;
@@ -351,9 +356,16 @@ export interface SocialMaterialRouting {
   materialType: import('../benchmarkAnalysis').BenchmarkMaterialType;
   policy: 'local_only' | 'local_first_product_i2v' | 'authorized_presenter';
   localMatch: { state: 'matched' | 'missing'; sourceRefs: string[]; evidenceRef: string | null;
+    /** V2 exact-SKU identity of the verified segment, never a library-wide hint. */
+    productRef?: string | null;
+    /** Frozen fixed-yield archetype used for deterministic local matching. */
+    archetypeId?: FixedYieldArchetypeId;
     /** Frozen budget-degradation tier. Historic plans omit it. */
     sourceTier?: 'product_high_fidelity_local' | 'product_packaging_first_frame_i2v'
-      | 'product_local' | 'factory_local' | 'other_local' };
+      | 'product_local' | 'factory_local' | 'other_local';
+    /** Segment-level failures retained so the material gap remains actionable. */
+    rejections?: import('./localMaterialSegmentProfile.js').LocalMaterialSegmentRejection[];
+  };
   generation?: {
     sourceTier?: 'product_packaging_first_frame_i2v';
     method: 'reference_first_frame_product_replacement_i2v' | 'enterprise_authored_product_first_frame_i2v';
@@ -368,6 +380,16 @@ export interface SocialMaterialRouting {
     referenceShotId: string | null;
     referenceSourceId: string | null;
   };
+  /** V2 candidate is not permission to call a provider. The whole-film planner
+   * must select it against a real quote before any paid operation is admitted. */
+  productGenerationDecision?: {
+    state: 'eligible' | 'selected' | 'local_only';
+    importance: 'critical' | 'standard';
+    reason: string;
+    quoteRef?: string;
+    estimatedCostCny?: number;
+    budgetPlanRef?: string;
+  };
 }
 
 /**
@@ -375,7 +397,7 @@ export interface SocialMaterialRouting {
  * the system; only unconfirmed facts or rights may remain as customer actions.
  */
 export interface SocialAssetSupplyPlan {
-  materialRoutingPolicyVersion?: 'type-aware.v1';
+  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2';
   inventoryAudit?: { scannedAt:string; records:Array<{id:string;sha256:string|null;mediaType:string;productRef:string|null;width:number|null;height:number|null;durationSeconds:number|null;rightsEvidenceRef:string|null;productionEligible:boolean;gaps:string[]}> };
   planVersion: string;
   creationMode: SocialContentCreationMode;

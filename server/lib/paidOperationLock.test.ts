@@ -7,6 +7,7 @@ import { withPaidOperationLock } from './paidOperationLock.js';
 import { fork } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 test('independent callers share an exclusive disk lock; errors release it', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'paid-lock-test-'));
@@ -33,6 +34,18 @@ test('orphaned locks never expire automatically and never call the supplier', as
     release(); await first;
     await assert.rejects(withPaidOperationLock(root, 'key', async () => assert.fail('paid call')), /任务正在处理/);
     assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).owner, 'orphan');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a proven dead same-host owner is recoverable only with caller receipt proof', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'paid-dead-owner-test-'));
+  const file = path.join(root, `${createHash('sha256').update('recoverable').digest('hex')}.lock`);
+  try {
+    fs.writeFileSync(file, JSON.stringify({ owner: 'dead', pid: 99_999_999, hostname: os.hostname(), createdAt: new Date().toISOString() }));
+    await assert.rejects(withPaidOperationLock(root, 'recoverable', async () => assert.fail('unproven retry')),
+      /任务正在处理/);
+    assert.equal(await withPaidOperationLock(root, 'recoverable', async () => 7, { recoverDeadOwner: () => true }), 7);
+    assert.equal(fs.existsSync(file), false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

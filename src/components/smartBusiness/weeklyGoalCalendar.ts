@@ -1,7 +1,35 @@
 import type { DigitalEmployeeOverview } from '../../lib/digitalEmployees';
 import type { AgentCalendarTask } from './AgentWeeklyCalendar';
 import { scheduleWeeklyVideos, weeklyPipelineCards } from '../../lib/weeklyGoalSchedule';
-import {agentCalendarResponsibleAgent} from './agentCalendarGroups';
+import { taskNeedsAttention, type TaskWaitState } from '../../lib/taskExecutionState';
+import { agentCalendarResponsibleAgent } from './agentCalendarGroups';
+
+type ExecutionTask = DigitalEmployeeOverview['tasks'][number];
+
+function executionWaitState(task: ExecutionTask | undefined): TaskWaitState | undefined {
+  const output = task?.output;
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return undefined;
+  return (output as Record<string, unknown>).waitState as TaskWaitState | undefined;
+}
+
+function executionNeedsAttention(task: ExecutionTask | undefined): boolean {
+  if (!task) return false;
+  if (task.status === 'waiting_approval') return true;
+  return taskNeedsAttention({
+    status: task.status,
+    blocked_reason: task.blocked_reason,
+    output: task.output && typeof task.output === 'object' && !Array.isArray(task.output)
+      ? task.output as Record<string, unknown>
+      : undefined,
+  });
+}
+
+function executionIsActive(task: ExecutionTask | undefined): boolean {
+  if (!task) return false;
+  if (task.status === 'running') return true;
+  const wait = executionWaitState(task);
+  return task.status === 'waiting_external' && wait?.kind === 'processing' && wait.requiresAttention === false;
+}
 
 /** Draft preparation is a planned dependency chain, never a fabricated execution receipt. */
 export function projectWeeklyGoalCalendar(data: DigitalEmployeeOverview): AgentCalendarTask[] {
@@ -28,14 +56,14 @@ export function projectWeeklyGoalCalendar(data: DigitalEmployeeOverview): AgentC
     const planned = (data.plan?.tasks || []).filter(task => keys.includes(task.key));
     const tasks = data.tasks.filter(task => keys.includes(task.task_key));
     const failed = tasks.find(task => task.status === 'failed');
-    const blocked = tasks.find(task => task.blocked_reason || ['waiting_approval', 'waiting_external'].includes(task.status));
-    const status: AgentCalendarTask['status'] = failed ? 'failed' : blocked ? 'blocked' : tasks.some(task => task.status === 'running') ? 'active' : tasks.length && tasks.every(task => task.status === 'succeeded') ? 'completed' : 'planned';
+    const blocked = tasks.find(executionNeedsAttention);
+    const status: AgentCalendarTask['status'] = failed ? 'failed' : blocked ? 'blocked' : tasks.some(executionIsActive) ? 'active' : tasks.length && tasks.every(task => task.status === 'succeeded') ? 'completed' : 'planned';
     const isWeeklyFoundation = ['goal', 'configuration', 'accounts', 'knowledge'].includes(card.id);
     const cardDate = isWeeklyFoundation ? monday : card.date;
     const internalNodes: AgentCalendarTask[] = planned.map(task => {
       const execution = tasks.find(item => item.task_key === task.key);
-      const nodeBlocked = Boolean(execution?.blocked_reason || execution && ['waiting_approval', 'waiting_external'].includes(execution.status));
-      const nodeStatus: AgentCalendarTask['status'] = execution?.status === 'failed' ? 'failed' : nodeBlocked ? 'blocked' : execution?.status === 'running' ? 'active' : execution?.status === 'succeeded' ? 'completed' : 'planned';
+      const nodeBlocked = executionNeedsAttention(execution);
+      const nodeStatus: AgentCalendarTask['status'] = execution?.status === 'failed' ? 'failed' : nodeBlocked ? 'blocked' : executionIsActive(execution) ? 'active' : execution?.status === 'succeeded' ? 'completed' : 'planned';
       // The detailed operating schedule is a weekly setup decision. Keep it on
       // Monday even when the goal was created later in the week; daily source,
       // production and review work is represented by the rolling calendar loop.

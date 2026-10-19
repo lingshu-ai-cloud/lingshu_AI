@@ -34,6 +34,13 @@ try {
   await assert.rejects(budget.reserve({ ...base, tenantId: 'frozen-cap', shotId: 'shot-b', operationId: 'frame-b', limitCny: 3 }), /预算剩余/,
     'an order-local frozen ceiling must be stricter than the installation default');
   await assert.rejects(budget.reserve({ ...base, tenantId: 'missing-cap', operationId: 'frame-a', limitCny: 0 }), /冻结制作额度无效/);
+  await budget.reserve({ ...video, tenantId: 'approved-cap', operationId: 'video-a', limitCny: 20, approvedFrozenLimit: true });
+  await budget.reserve({ ...video, tenantId: 'approved-cap', shotId: 'shot-b', operationId: 'video-b', limitCny: 20, approvedFrozenLimit: true });
+  assert.equal((await budget.status('approved-cap', 'project')).usedCny, 12,
+    'a pre-production approved managed ceiling must not be reduced by the historical fallback during execution');
+  await budget.reserve({ ...video, tenantId: 'unapproved-cap', operationId: 'video-a', limitCny: 20 });
+  await assert.rejects(budget.reserve({ ...video, tenantId: 'unapproved-cap', shotId: 'shot-b', operationId: 'video-b', limitCny: 20 }), /预算剩余/,
+    'an ordinary request cannot raise the configured project ceiling');
   const otherTenant = await budget.reserve({ ...base, tenantId: 'other', operationId: 'frame-a' });
   assert.equal(otherTenant.existing, false);
   await budget.reserve({ ...video, tenantId: 'accepted', operationId: 'video-accepted' });
@@ -48,6 +55,25 @@ try {
   assert.equal((await budget.status('accepted', 'project')).entries[0]?.output?.providerTaskId, 'supplier-task-1', 'poll failure preserves the original supplier receipt');
   await budget.mark('accepted', 'project', 'video-accepted', 'completed', { materialId: 'generated-video' });
   assert.equal((await budget.status('accepted', 'project')).entries[0]?.output?.providerTaskId, 'supplier-task-1', 'material completion preserves acceptance identity');
+  await budget.reserve({ ...base, tenantId: 'restart-recovery', operationId: 'empty-reservation' });
+  assert.equal(await budget.releaseExpiredUnacceptedReservation('restart-recovery', 'project', 'empty-reservation', {
+    now: new Date(Date.now() + 11 * 60_000), minimumAgeMs: 10 * 60_000,
+  }), true, 'a stale reservation with no supplier evidence can be replayed with the same idempotency key');
+  assert.equal((await budget.status('restart-recovery', 'project')).usedCny, 0);
+  await budget.reserve({ ...base, tenantId: 'restart-recovery', operationId: 'recent-reservation' });
+  assert.equal(await budget.releaseExpiredUnacceptedReservation('restart-recovery', 'project', 'recent-reservation', {
+    now: new Date(Date.now() + 2 * 60_000), minimumAgeMs: 10 * 60_000,
+  }), false, 'an in-flight reservation is not reclaimed early');
+  await budget.reserve({ ...video, tenantId: 'restart-receipt', operationId: 'accepted-reservation' });
+  await budget.recordProviderAcceptance('restart-receipt', 'project', 'accepted-reservation', 'provider-task', 'model');
+  assert.equal(await budget.releaseExpiredUnacceptedReservation('restart-receipt', 'project', 'accepted-reservation', {
+    now: new Date(Date.now() + 11 * 60_000), minimumAgeMs: 10 * 60_000,
+  }), false, 'a provider receipt is never reclaimed');
+  await budget.reserve({ ...base, tenantId: 'restart-frame-receipt', operationId: 'frame-receipt' });
+  await budget.mark('restart-frame-receipt', 'project', 'frame-receipt', 'reserved', { seedreamReceipts: [{ providerRequestId: 'request' }] });
+  assert.equal(await budget.releaseExpiredUnacceptedReservation('restart-frame-receipt', 'project', 'frame-receipt', {
+    now: new Date(Date.now() + 11 * 60_000), minimumAgeMs: 10 * 60_000,
+  }), false, 'a partial first-frame provider receipt is never reclaimed');
   await budget.reserve({ ...base, tenantId: 'fingerprint', operationId: 'frame-input', inputFingerprint: 'version-1' });
   await assert.rejects(budget.reserve({ ...base, tenantId: 'fingerprint', operationId: 'frame-input', inputFingerprint: 'version-2' }), /参考资产或镜头输入已变化/);
   const revised = await budget.reserve({ ...base, tenantId: 'fingerprint', operationId: 'frame-revised', inputFingerprint: 'version-2' });
@@ -64,5 +90,26 @@ try {
   assert.equal((await budget.status('partial', 'one')).usedCny, 3);
   assert.equal((await budget.reserve({ tenantId: 'partial', projectId: 'one', shotId: 'a', stage: 'video',
     operationId: 'segments', estimatedCostCny: 8 })).existing, true);
+  const previousExemptTenants = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+  process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'storyboard-exempt';
+  try {
+    const exemptionBudget = new StoryboardAigcProjectBudget(root, () => 1, () => 0);
+    const exemptInput = { tenantId: 'storyboard-exempt', projectId: 'exempt-project', shotId: 'shot',
+      stage: 'video' as const, operationId: 'video-1', estimatedCostCny: 2, inputFingerprint: 'same-input' };
+    assert.equal((await exemptionBudget.reserve(exemptInput)).existing, false,
+      'the exact exempt tenant may exceed only the project monetary ceiling');
+    await assert.rejects(exemptionBudget.reserve({ ...exemptInput, projectId: 'explicit-cap', operationId: 'explicit-cap-op', limitCny: 1 }), /预算剩余/,
+      'the internal exemption must not override an explicit per-request or frozen authorization ceiling');
+    await assert.rejects(exemptionBudget.reserve({ ...exemptInput, tenantId: 'storyboard-exempt-child', projectId: 'ordinary-project' }), /预算剩余/,
+      'a tenant prefix must not inherit the exemption');
+    await assert.rejects(exemptionBudget.reserve({ ...exemptInput, operationId: 'video-2' }), /生成上限/,
+      'retry limits remain enforced for exempt tenants');
+    await assert.rejects(exemptionBudget.reserve({ ...exemptInput, projectId: 'invalid-operation', operationId: 'invalid operation' }), /请求标识无效/);
+    await assert.rejects(exemptionBudget.reserve({ ...exemptInput, projectId: 'invalid-limit', operationId: 'valid-op', limitCny: 0 }), /冻结制作额度无效/);
+    await assert.rejects(exemptionBudget.reserve({ ...exemptInput, projectId: 'invalid-estimate', operationId: 'valid-op', estimatedCostCny: 0 }), /预计费用无效/);
+  } finally {
+    if (previousExemptTenants === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+    else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = previousExemptTenants;
+  }
 } finally { fs.rmSync(root, { recursive: true, force: true }); }
 console.log('storyboardAigcProjectBudget tests passed');

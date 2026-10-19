@@ -11,6 +11,7 @@ const originalEnvironment = {
   NODE_ENV: process.env.NODE_ENV,
   ENABLE_LOCAL_DEV_FALLBACK: process.env.ENABLE_LOCAL_DEV_FALLBACK,
   LINGSHU_LOCAL_PREVIEW: process.env.LINGSHU_LOCAL_PREVIEW,
+  LINGSHU_LOCAL_PREVIEW_ORIGINS: process.env.LINGSHU_LOCAL_PREVIEW_ORIGINS,
   LINGSHU_PREVIEW_AUTH_EMAIL: process.env.LINGSHU_PREVIEW_AUTH_EMAIL,
   LOCAL_DEMO_TOKEN_SECRET: process.env.LOCAL_DEMO_TOKEN_SECRET,
   LOCAL_AUTH_ACCOUNTS_FILE: process.env.LOCAL_AUTH_ACCOUNTS_FILE,
@@ -64,6 +65,12 @@ assert.equal(isLocalPreviewLoopbackAddress('192.168.1.20'), false);
 assert.equal(isLocalPreviewLoopbackAddress('::ffff:192.168.1.20'), false);
 assert.equal(isLocalPreviewLoopbackAddress(undefined), false);
 assert.equal(localPreviewRequestRejection('http://127.0.0.1:5177', '127.0.0.1'), null);
+assert.equal(localPreviewRequestRejection('http://127.0.0.1:5183', '127.0.0.1'), null);
+assert.equal(localPreviewRequestRejection('http://127.0.0.1:5183', '192.168.1.20'), 'local_preview_loopback_required');
+process.env.LINGSHU_LOCAL_PREVIEW_ORIGINS = 'http://127.0.0.1:5179';
+assert.equal(localPreviewRequestRejection('http://127.0.0.1:5179', '127.0.0.1'), null);
+assert.equal(localPreviewRequestRejection('http://127.0.0.1:5177', '127.0.0.1'), 'local_preview_origin_required');
+process.env.LINGSHU_LOCAL_PREVIEW_ORIGINS = '';
 assert.equal(
   localPreviewRequestRejection('http://127.0.0.1:5177', '192.168.1.20'),
   'local_preview_loopback_required',

@@ -4,6 +4,7 @@ import { Alert, Button, Checkbox, Drawer, Input, Modal, Segmented, Tabs } from '
 import { LsPageHeader } from './ui/LsPageHeader';
 import SocialAccountStrategies from './socialProgram/SocialAccountStrategies';
 import type { SocialContentCreateRequest } from './socialContent/SocialContentWorkspace';
+import SocialContentOrderOperations from './socialContent/SocialContentOrderOperations';
 import {
   AlertCircle,
   BarChart3,
@@ -76,10 +77,21 @@ import { PageLoading, WorkspaceErrorBoundary } from './AppPageBoundary';
 const InspirationDashboard = lazy(() => import('./InspirationDashboard'));
 const AiCreateStudio = lazy(() => import('./AiCreateStudio'));
 const WeeklyContentProductionView = lazy(() => import('./socialContent/WeeklyContentProductionView'));
+const WeeklyPublishingWorkspace = lazy(() => import('./socialContent/WeeklyPublishingWorkspace'));
 const AccountActivity = lazy(() => import('./AccountActivity'));
 const CalendarPlanner = lazy(() => import('./publishing/CalendarPlanner').then(module => ({ default: module.CalendarPlanner })));
 
 type ViewMode = TrafficViewMode;
+
+function contentCreationAspectRatio(aspectRatio?: number, width?: number, height?: number): '9:16' | '1:1' | '16:9' | undefined {
+  const measured = Number(aspectRatio) > 0
+    ? Number(aspectRatio)
+    : Number(width) > 0 && Number(height) > 0 ? Number(width) / Number(height) : 0;
+  if (!Number.isFinite(measured) || measured <= 0) return undefined;
+  if (measured > 1.12) return '16:9';
+  if (measured < 0.89) return '9:16';
+  return '1:1';
+}
 
 export type DigitalEmployeeWorkflowContext = {
   runId: string;
@@ -374,6 +386,9 @@ export default function TrafficPage({
           poster?: string;
           productId?: string;
           productName?: string;
+          aspectRatio?: number;
+          width?: number;
+          height?: number;
         };
       };
       video?: {
@@ -386,6 +401,9 @@ export default function TrafficPage({
         videoUrl?: string;
         contentFormat?: string;
         crawledAt?: string;
+        aspectRatio?: number;
+        width?: number;
+        height?: number;
       };
     };
     if (kickoff.source === 'material_library'
@@ -429,6 +447,7 @@ export default function TrafficPage({
               referenceThumbnail: previewUrl || undefined,
               referenceMediaUrl: materialUrl || undefined,
               referenceContentType: material.type === 'video' ? 'video' : 'image',
+              aspectRatio: contentCreationAspectRatio(material.aspectRatio, material.width, material.height),
             },
           },
         },
@@ -480,6 +499,7 @@ export default function TrafficPage({
                 referenceThumbnail: kickoff.video?.thumbnail,
                 referenceMediaUrl: playbackUrl || undefined,
                 referenceContentType: 'video',
+                aspectRatio: contentCreationAspectRatio(kickoff.video?.aspectRatio, kickoff.video?.width, kickoff.video?.height),
               },
             },
           },
@@ -554,7 +574,7 @@ export default function TrafficPage({
           <Suspense fallback={<PageLoading />}>
             {(studioMounted || viewMode === 'create') && (
               <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full min-h-0 overflow-hidden' : 'hidden'} aria-hidden={viewMode !== 'create'}>
-                {weeklyTargetState.present ? <div className="h-full overflow-y-auto p-4">{weeklyTarget ? <><WeeklyContentProductionView key={JSON.stringify(weeklyTarget)} target={weeklyTarget}/><button type="button" className="mt-3 rounded-lg border px-3 py-2 text-sm" onClick={()=>attachSocialContentNavigationState(weeklyTarget.contentTaskId,'smartAssets')}>打开该内容任务的当前制作工作区</button></> : <p role="alert">周任务生产目标与当前内容任务不一致，请返回原任务重新打开。</p>}</div> : <AiCreateStudio key={socialContentTaskId || studioCreateRequest?.requestId || 'general-studio'} onNavigate={navigateWithinSocialTask} onOpenCreationHome={onOpenCreationHome} onLaunchContentStudio={onLaunchContentStudio} onReturnToContentPlanning={onReturnToContentPlanning} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} studioCreateRequest={studioCreateRequest} />}
+                {weeklyTargetState.present ? <div className="h-full overflow-y-auto p-4">{weeklyTarget ? <><WeeklyContentProductionView key={JSON.stringify(weeklyTarget)} target={weeklyTarget}/><SocialContentOrderOperations key={weeklyTarget.contentTaskId} taskId={weeklyTarget.contentTaskId}/><button type="button" className="mt-3 rounded-lg border px-3 py-2 text-sm" onClick={()=>attachSocialContentNavigationState(weeklyTarget.contentTaskId,'smartAssets')}>打开该内容任务的当前制作工作区</button></> : <p role="alert">周任务生产目标与当前内容任务不一致，请返回原任务重新打开。</p>}</div> : <AiCreateStudio key={socialContentTaskId || studioCreateRequest?.requestId || 'general-studio'} onNavigate={navigateWithinSocialTask} onOpenCreationHome={onOpenCreationHome} onLaunchContentStudio={onLaunchContentStudio} onReturnToContentPlanning={onReturnToContentPlanning} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} studioCreateRequest={studioCreateRequest} />}
               </div>
             )}
             <AnimatePresence mode="wait">
@@ -569,7 +589,7 @@ export default function TrafficPage({
                 </motion.div>
               ) : viewMode === 'create' ? null : viewMode === 'publish' ? (
                 <motion.div key="publish" id="traffic-panel-publish" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-publish' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
-                  <SocialPublishPanel onNavigate={onNavigate} draft={publishDraft} onReturnToPreview={handleReturnToPreview} workflowContext={workflowContext || undefined} storageScope={storageScope} />
+                  {weeklyTargetState.present ? weeklyTarget ? <WeeklyPublishingWorkspace key={JSON.stringify(weeklyTarget)} target={weeklyTarget}/> : <p role="alert">周任务发布目标与当前内容任务不一致，请返回原任务重新打开。</p> : <SocialPublishPanel onNavigate={onNavigate} draft={publishDraft} onReturnToPreview={handleReturnToPreview} workflowContext={workflowContext || undefined} storageScope={storageScope} />}
                 </motion.div>
               ) : (
                 <motion.div key="accounts" id="traffic-panel-accounts" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-accounts' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
