@@ -210,7 +210,7 @@ export async function withWeeklyCandidateDynamicExactPaidScope<T>(input:{root:st
 // micro-yuan into that same mother ledger before spending the remainder.
 export interface WeeklyCandidateDynamicExactPlanV2{
  schema:'weekly-candidate-dynamic-exact-plan.v2';operationId:string;candidateId:string;mediaSha256:string;
- endpoint:string;credentialSha256:string;model:'qwen3-vl-plus';pricingEvidence:MaaSPublishedPricingEvidence;
+ endpoint:string;credentialSha256:string;ledgerIntegrityKeySha256:string;model:'qwen3-vl-plus';pricingEvidence:MaaSPublishedPricingEvidence;
  pricingEvidenceHash:string;pricingPolicyHash:string;measurementPolicyHash:string;
  protocolMaximumRequests:number;candidateMaximumMicros:number;
 }
@@ -238,7 +238,8 @@ export const weeklyCandidateDynamicExactV2LedgerPath=(root:string,authorizationH
  path.join(path.resolve(root),sha(JSON.stringify(['weekly-candidate-dynamic-exact-paid.v2',plan.operationId,authorizationHash]))+'.json');
 function checkedDynamicPlanV2(plan:WeeklyCandidateDynamicExactPlanV2,authorizationHash:string){
  if(plan.schema!=='weekly-candidate-dynamic-exact-plan.v2'||!hash.test(authorizationHash)||!plan.operationId||!plan.candidateId||
-  !hash.test(plan.mediaSha256)||!hash.test(plan.credentialSha256)||classifyQwenCompatibleEndpoint(plan.endpoint)!=='qianwen-maas'||
+  !hash.test(plan.mediaSha256)||!hash.test(plan.credentialSha256)||!hash.test(plan.ledgerIntegrityKeySha256)||
+  plan.ledgerIntegrityKeySha256===plan.credentialSha256||classifyQwenCompatibleEndpoint(plan.endpoint)!=='qianwen-maas'||
   plan.model!=='qwen3-vl-plus'||!hash.test(plan.pricingEvidenceHash)||plan.pricingEvidenceHash!==sha(JSON.stringify(plan.pricingEvidence))||
   !hash.test(plan.pricingPolicyHash)||plan.measurementPolicyHash!==weeklyCandidateExactMeasurementPolicyHash()||
   !Number.isSafeInteger(plan.protocolMaximumRequests)||plan.protocolMaximumRequests<1||plan.protocolMaximumRequests>128||
@@ -335,7 +336,7 @@ export function createWeeklyCandidateDynamicExactPaidRequestsV2(input:{
  headAnchor:WeeklyCandidateDynamicExactHeadAnchorV2;
 }){
  checkedDynamicPlanV2(input.plan,input.authorizationHash);
- if(!input.integrityKey||sha(input.integrityKey)!==input.plan.credentialSha256)fail('dynamic_v2_integrity_key_invalid');
+ if(!input.integrityKey||sha(input.integrityKey)!==input.plan.ledgerIntegrityKeySha256)fail('dynamic_v2_integrity_key_invalid');
  const planHash=v2PlanHash(input.plan),file=weeklyCandidateDynamicExactV2LedgerPath(input.root,input.authorizationHash,input.plan);
  const exclusive=<T>(body:()=>Promise<T>)=>withPaidOperationLock(path.join(path.resolve(input.root),'.locks'),
   `weekly-exact-dynamic-v2:${input.plan.operationId}:${input.authorizationHash}`,body);
