@@ -5,7 +5,6 @@ import type {
   SocialAssetSupplyShotPlan,
   SocialAccountPresenterLock,
   SocialContentCreationMode,
-  SocialContentManagementMode,
   SocialProductionApproach,
   SocialProductIdentityGroup,
   SocialProductSceneReplicationSpec,
@@ -22,74 +21,9 @@ import {
 } from './sceneVisualContract';
 import type { BenchmarkMaterialType } from './benchmarkAnalysis';
 import type { SocialMaterialRouting } from './contracts/socialContentReplication';
-import type { FixedYieldArchetypeId } from './fixedYieldMaterialRegistry';
-import type { LocalMaterialSegmentRejection } from './contracts/localMaterialSegmentProfile';
 import {selectTypeAwareSocialMaterial,selectVerifiedSocialMaterialSegment,affirmativeSocialMaterialDescription,explicitSocialPresenterRequest} from './socialContentMaterialRouting';
-
-export interface SocialAssetInventory {
-  customerVideoIds?: string[];
-  productImageIds?: string[];
-  /** Multiple views of the same product belong in one group. */
-  productIdentityGroups?: Array<{ productRef: string; imageIds: string[] }>;
-  presenterAssetIds?: string[];
-  referenceVideoIds?: string[];
-  factoryEvidenceAssetIds?: string[];
-  customerCaseEvidenceAssetIds?: string[];
-  productEffectEvidenceAssetIds?: string[];
-  licensedStockAssetIds?: string[];
-}
-
-export interface SocialAssetSupplyShotRequest {
-  materialType?: BenchmarkMaterialType;
-  /** Deterministic V2 shot archetype. New plans freeze it before material selection. */
-  fixedYieldArchetypeId?: FixedYieldArchetypeId;
-  /** Supplied only after the Content Agent checks this exact shot against tenant-visible video. */
-  localVideoMatch?: { sourceRefs: string[]; semanticMatch: 'verified'; evidenceRef: string; productRef?: string | null;
-    archetypeId?: FixedYieldArchetypeId;
-    /** Frozen source priority used when the task budget cannot fund product I2V. */
-    sourceTier?: 'product_high_fidelity_local' | 'product_packaging_first_frame_i2v'
-      | 'product_local' | 'factory_local' | 'other_local' };
-  /** Frozen diagnostics explaining why analyzed local segments were excluded. */
-  localMaterialRejections?: LocalMaterialSegmentRejection[];
-  selectedMaterialSegment?: SocialAssetSupplyShotPlan['selectedMaterialSegment'];
-  plannedDurationSeconds?: number;
-  /** Existing frozen routing is retained; new plans author enterprise-owned frames. */
-  materialRouting?: SocialMaterialRouting;
-  shotId: string;
-  function: SocialShotFunction;
-  requestedDescription?: string | null;
-  truthSensitiveSubject?: SocialTruthSensitiveSubject;
-  referenceShotId?: string | null;
-  /** Optional Director-frozen spec; otherwise the planner builds a safe default. */
-  productSceneReplication?: SocialProductSceneReplicationSpec;
-  /** Optional normalized fields emitted by newer Director versions. Historic
-   * callers are classified from the reference analysis and description. */
-  subjects?: string[];
-  interaction?: string | null;
-  environment?: string | null;
-  productUsage?: string | null;
-  productPolicy?: 'locked' | 'preferred' | 'open';
-  productRef?: string | null;
-  visualContract?: SocialSceneVisualContract;
-}
-
-export interface CreateSocialAssetSupplyPlanInput {
-  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2';
-  creationMode: SocialContentCreationMode;
-  assetAvailability?: SocialAssetAvailability;
-  managementMode?: SocialContentManagementMode;
-  productionApproach?: SocialProductionApproach;
-  /** Task-backed version for new plans. Historic callers may omit it. */
-  planVersion?: string;
-  inventory?: SocialAssetInventory;
-  accountPresenterLock?: SocialAccountPresenterLock | null;
-  /** True only when the customer explicitly selected the single presenter stored on this task. */
-  presenterSelectionConfirmed?: boolean;
-  referenceShots?: SocialReferenceShotAnalysis[];
-  confirmedFactRefs?: string[];
-  rightsConfirmationRequired?: boolean;
-  shots?: SocialAssetSupplyShotRequest[];
-}
+import type { CreateSocialAssetSupplyPlanInput, SocialAssetInventory, SocialAssetSupplyShotRequest } from './socialContentAssetSupplyContracts';
+export type { CreateSocialAssetSupplyPlanInput, SocialAssetInventory, SocialAssetSupplyShotRequest } from './socialContentAssetSupplyContracts';
 
 const EMPTY_INVENTORY: Required<SocialAssetInventory> = {
   customerVideoIds: [],
