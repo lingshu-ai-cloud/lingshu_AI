@@ -283,6 +283,14 @@
 - 修复：保留合成素材、跨租户素材和普通产品素材均不能解锁的断言；最后注入租户内、全片 exact、已解析镜头级证据，验证条件满足后只执行一次且复用已规划批次。
 - 状态：已修复；内容路由轮询定向测试通过，待数字员工与完整总测试复核。
 
+## RESOLVED-034 数字员工总契约未跟随助手主线程常量拆分
+
+- 命令：`pnpm run test:digital-employees`，失败阶段 `DigitalEmployeePage.contract.test.ts`。
+- 实际：`PRIMARY_ASSISTANT_THREAD` 已迁入 `assistant/globalAssistantRuntime.ts` 并由主组件导入使用，总契约仍只扫描 `GlobalAssistant.tsx` 的声明位置。
+- 归因：架构拆分后的源码定位契约过期，统一 business 主线程行为仍存在。
+- 修复：总契约显式读取助手运行时职责模块验证常量，同时继续在主组件验证发送、打开页面和上下文路由均使用该主线程。
+- 状态：已修复，待数字员工与完整总测试复核。
+
 ## RESOLVED-030 模拟客户会话缺少不外发提示
 
 - 命令：`pnpm run test:external-customer-service-demo`。
