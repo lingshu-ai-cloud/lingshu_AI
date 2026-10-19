@@ -259,6 +259,14 @@
 - 修复：在客户身份卡中恢复三项只读事实，并让契约验证稳定的 `customer-profile-facts` 与当前 media/business/privacy 分区；不引入模拟值。
 - 状态：已修复，待外部客服演示与完整总测试复核。
 
+## RESOLVED-031 Studio 总契约与模拟会话安全提示冲突
+
+- 命令：`pnpm test`，失败阶段 Storyboard 组内 `AiCreateStudio.workflowContract.test.ts`。
+- 实际：总契约要求模拟客户完全不显示 fixture 状态，和外部客服演示门禁要求的“不对外发送”安全标签直接冲突。
+- 归因：应隐藏的是客户姓名中的内部 fixture 术语，不是用户必须知道的发送隔离边界。
+- 修复：继续断言客户显示名去除“模拟客户”字样，同时要求模拟会话展示不外发标签、真实客户展示真实通道状态。
+- 状态：已修复，待 Storyboard 与完整总测试复核。
+
 ## RESOLVED-030 模拟客户会话缺少不外发提示
 
 - 命令：`pnpm run test:external-customer-service-demo`。
