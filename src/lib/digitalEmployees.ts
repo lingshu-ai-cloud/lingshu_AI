@@ -9,6 +9,8 @@ import { normalizeVideoPlan, type VideoCreationPlan } from './videoCreationPlan'
 import type { DirectorDecision, DirectorDecisionReason } from './directorDecision';
 import type { SocialOperatingProfileId } from '../../shared/contracts/socialOperatingProfile';
 import type { ProductionOnboardingPreferences } from '../../shared/contracts/productionOnboarding';
+import type { BusinessMetric, BusinessReadinessItem, DataAvailability, DigitalEmployeePublishingReadiness, SnapshotTaskReference } from './digitalEmployeeOverviewContracts';
+export type { BusinessMetric, BusinessReadinessItem, DataAvailability, DigitalEmployeePublishingReadiness, SnapshotTaskReference } from './digitalEmployeeOverviewContracts';
 
 export type AutonomyMode = "suggest" | "collaborate" | "managed" | "automatic";
 export type DigitalEmployeeAgentRole = "orchestrator" | "business" | "director" | "content" | "customer";
@@ -32,8 +34,6 @@ export type DigitalEmployeeWorkflow =
   | "content_publish"
   | "customer_segmentation"
   | "batch_followup";
-
-export type DataAvailability = "available" | "pending" | "unavailable";
 
 export interface DigitalEmployeeConfig {
   productionOnboarding?: ProductionOnboardingPreferences;
@@ -297,39 +297,6 @@ export interface WorkflowTask {
   business_refs?: Array<Record<string, unknown>>;
   task_version?: number;
   correction_version?: number;
-}
-
-export interface BusinessMetric {
-  value: number | null;
-  status: DataAvailability;
-  source: string;
-  note?: string;
-}
-
-export interface BusinessReadinessItem {
-  key:
-    | "enterprise"
-    | "products"
-    | "social_accounts"
-    | "viral_library"
-    | "content_projects"
-    | "customers"
-    | "automation";
-  label: string;
-  status: "ready" | "incomplete" | "empty";
-  count: number | null;
-  page: string;
-  note: string;
-}
-
-export interface SnapshotTaskReference {
-  id: string;
-  title: string;
-  status: string;
-  taskId?: string;
-  runId?: string;
-  businessRef?: Record<string, unknown>;
-  occurredAt?: string;
 }
 
 export interface BusinessSnapshot {
@@ -817,17 +784,7 @@ export interface DigitalEmployeeOverview {
   liveReview?: LiveWeeklyReview | null;
   agents: AgentStatus[];
   businessSnapshot: BusinessSnapshot | null;
-  publishingReadiness?: {
-    required: boolean;
-    ready: boolean;
-    status: "not_required" | "ready" | "action_required" | "unavailable";
-    targetPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
-    connectedPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
-    missingOAuthPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
-    missingAccountPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
-    summary: string;
-    actionPage: "accountManagement";
-  } | null;
+  publishingReadiness?: DigitalEmployeePublishingReadiness | null;
 }
 
 export interface FollowupDispatchResponse {

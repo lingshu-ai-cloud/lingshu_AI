@@ -72,8 +72,6 @@ import { PAGE_REGISTRY } from '../pageRegistry';
 import ContentLibrary from './ContentLibrary';
 import { PageLoading, WorkspaceErrorBoundary } from './AppPageBoundary';
 
-// 每个工作区都很重，按当前视图拆包，避免进入“内容创作”时同时解析灵感中心、
-// 账号动态和发布日历。外层 App 的 Suspense 会提供统一加载态。
 const InspirationDashboard = lazy(() => import('./InspirationDashboard'));
 const AiCreateStudio = lazy(() => import('./AiCreateStudio'));
 const WeeklyContentProductionView = lazy(() => import('./socialContent/WeeklyContentProductionView'));

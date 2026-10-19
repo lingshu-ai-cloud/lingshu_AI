@@ -24,7 +24,6 @@
     "server/routes/videos.ts": 10638,
     "server/routes/youtube.ts": 1046,
     "server/socialPrograms/executionTasks.ts": 986,
-    "server/socialPrograms/weeklyOperatingPackages.ts": 864,
     "server/starter198/socialContentAgentWorkflow.ts": 1341,
     "server/starter198/socialContentDirectorPlan.ts": 824,
     "server/starter198/socialContentFiles.ts": 968,
@@ -52,7 +51,7 @@
     "src/components/TrafficPage.tsx": 1815,
     "src/components/WorkspaceManagementPages.tsx": 1008,
     "src/components/YouTubeIntegration.tsx": 1184,
-    "src/lib/digitalEmployees.ts": 1039,
+    "src/lib/digitalEmployees.ts": 1018,
     "src/lib/studioApi.ts": 1138
   }
 }
