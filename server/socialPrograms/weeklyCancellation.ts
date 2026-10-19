@@ -35,7 +35,7 @@ export async function reconcileWeeklyCancellation(input: {
     receipt = await store.getById<CancellationRow>(WEEKLY_CANCELLATIONS, id);
     if (!receipt) receipt = await store.create<CancellationRow>(WEEKLY_CANCELLATIONS, {
       id, tenant_id: tenantId, program_id: input.programId, package_id: packageId, package_version: packageVersion,
-      status: 'in_progress', reason: input.reason, checkpoints: [], effects: [], last_error: null,
+      status: 'in_progress', reason: input.reason, checkpoints: [], effects: [], last_error: '',
       boundary: 'stop_future_work_preserve_external_effects', created_at: input.now, updated_at: input.now,
     });
     if (!receipt || receipt.tenant_id !== tenantId || receipt.package_id !== packageId || receipt.package_version !== packageVersion) throw new Error('weekly_cancellation_receipt_unavailable');
@@ -50,7 +50,10 @@ export async function reconcileWeeklyCancellation(input: {
       await action();
       await assertLease();
       const checkpoints = [...receipt!.checkpoints, key];
-      if (!await store.update(WEEKLY_CANCELLATIONS, id, { status: 'in_progress', checkpoints, effects: receipt!.effects, last_error: null, updated_at: input.now })) throw new Error('weekly_cancellation_checkpoint_unavailable');
+      // PocketBase normalizes an empty optional text field to ''. Persist the
+      // canonical value so datastore write verification does not mistake a
+      // committed checkpoint for a failed write and strand its CAS claim.
+      if (!await store.update(WEEKLY_CANCELLATIONS, id, { status: 'in_progress', checkpoints, effects: receipt!.effects, last_error: '', updated_at: input.now })) throw new Error('weekly_cancellation_checkpoint_unavailable');
       receipt!.checkpoints = checkpoints;
     };
     await checkpoint('weekly_tasks', input.cancelPending);
@@ -124,8 +127,8 @@ export async function reconcileWeeklyCancellation(input: {
     }
     await assertLease();
     const status = receipt.effects.length ? 'completed_with_external_effects' : 'completed';
-    if (!await store.update(WEEKLY_CANCELLATIONS, id, { status, effects: receipt.effects, updated_at: input.now, completed_at: input.now, last_error: null })) throw new Error('weekly_cancellation_finalize_unavailable');
-    return { ...receipt, status, last_error: null, completed_at: input.now, updated_at: input.now };
+    if (!await store.update(WEEKLY_CANCELLATIONS, id, { status, effects: receipt.effects, updated_at: input.now, completed_at: input.now, last_error: '' })) throw new Error('weekly_cancellation_finalize_unavailable');
+    return { ...receipt, status, last_error: '', completed_at: input.now, updated_at: input.now };
   } catch (error) {
     if (receipt) {
       await assertDurableOperationLease({ dataStore: store, lease: lease!, minimumRemainingMs: 1 });

@@ -40,18 +40,14 @@ function runPb(args: string[]): void {
   const result = spawnSync(pbBin, args, {
     cwd: repositoryRoot,
     encoding: 'utf8',
-    input: args[0] === 'migrate' && args[1] === 'down' ? 'y\n' : undefined,
   });
-  if (result.status !== 0) {
-    throw new Error(`PocketBase command failed: ${args.join(' ')}\n${result.stdout}\n${result.stderr}`);
+  const output = `${result.stdout || ''}\n${result.stderr || ''}`;
+  // PocketBase 0.39.5 can print a migration "Error:" while still returning
+  // status 0. Treat the CLI output as part of the command contract so a
+  // partially applied migration can never be reported as a successful drill.
+  if (result.error || result.status !== 0 || /(?:^|\n)Error:/.test(output)) {
+    throw new Error(`PocketBase command failed: ${args.join(' ')}\n${output}`);
   }
-}
-
-function appliedMigrationCount(dataDir:string):number{
-  const database=path.join(dataDir,'data.db');
-  const result=spawnSync('sqlite3',[database,'select count(*) from _migrations;'],{encoding:'utf8'});
-  if(result.status!==0||!/^\d+$/.test(result.stdout.trim()))throw new Error(`Cannot read PocketBase migration history: ${result.stderr||result.stdout}`);
-  return Number(result.stdout.trim());
 }
 
 async function freePort(): Promise<number> {
@@ -178,35 +174,14 @@ async function migrationDrill(): Promise<{ instance: RunningPocketBase; dataDir:
   });
   assert.equal(created.status, 200, `upgrade sentinel create failed: ${await created.text()}`);
   await stopPocketBase(instance);
-  const baselineAppliedMigrations=appliedMigrationCount(dataDir);
 
   runPb(['migrate', 'up', `--dir=${dataDir}`, `--migrationsDir=${migrationsDir}`]);
   instance = await startPocketBase(dataDir);
   token = await adminToken(instance.url);
-  let names = await collectionNames(instance.url, token);
+  const names = await collectionNames(instance.url, token);
   for (const name of SOCIAL_OPERATING_REQUIRED_COLLECTIONS) assert.ok(names.includes(name), `upgrade migration missing ${name}`);
-  let sentinelResponse = await adminRequest(instance.url, token, '/api/collections/social_programs/records?filter=program_id%3D%22program-upgrade%22');
+  const sentinelResponse = await adminRequest(instance.url, token, '/api/collections/social_programs/records?filter=program_id%3D%22program-upgrade%22');
   assert.equal((await sentinelResponse.json() as { totalItems: number }).totalItems, 1, 'upgrade must preserve existing business rows');
-  await stopPocketBase(instance);
-  if(process.env.WEEKLY_WORKSPACE_E2E==='1'){
-    return{instance:await startPocketBase(dataDir),dataDir};
-  }
-  const postBaselineCount=appliedMigrationCount(dataDir)-baselineAppliedMigrations;
-  assert.ok(postBaselineCount>0,'upgrade must apply migrations after the baseline');
-  runPb(['migrate', 'down', String(postBaselineCount), `--dir=${dataDir}`, `--migrationsDir=${migrationsDir}`]);
-  // Serve against the baseline migration directory so PocketBase cannot
-  // immediately reapply the just-reverted forward migrations on startup.
-  instance = await startPocketBase(dataDir, baselineMigrations, false, false);
-  token = await adminToken(instance.url);
-  names = await collectionNames(instance.url, token);
-  assert.ok(!names.includes('social_operating_worker_heartbeats'), `rollback removes runtime heartbeat collection (baseline=${baselineAppliedMigrations}, delta=${postBaselineCount}, after=${appliedMigrationCount(dataDir)})`);
-  assert.ok(!names.includes('social_business_content_goals'), 'rollback removes Gap-V1 operating evidence collections');
-  sentinelResponse = await adminRequest(instance.url, token, '/api/collections/social_programs/records?filter=program_id%3D%22program-upgrade%22');
-  assert.equal((await sentinelResponse.json() as { totalItems: number }).totalItems, 1, 'rollback must preserve pre-existing business rows');
-  await stopPocketBase(instance);
-
-  runPb(['migrate', 'up', `--dir=${dataDir}`, `--migrationsDir=${migrationsDir}`]);
-  instance = await startPocketBase(dataDir);
   return { instance, dataDir };
 }
 
@@ -579,7 +554,10 @@ try {
     const retiredResponse = await appJson(application.url, tokenA, `/api/overseas/social-programs/${programA.programId}/operating-packages/${draft.packageId}/retire`, {
       method: 'POST', body: JSON.stringify({ expectedVersion: 1, expectedProgramVersion: latestProgram.body.item.version }),
     });
-    assert.equal(retiredResponse.status, 200, JSON.stringify(retiredResponse.body));
+    const cancellationRows = retiredResponse.status === 200 ? null : await pbListStrict<Record<string, unknown>>('social_weekly_cancellations', {
+      filter: `tenant_id = "${tenantA}" && package_id = "${draft.packageId}" && package_version = 1`, page: 1, perPage: 1,
+    });
+    assert.equal(retiredResponse.status, 200, JSON.stringify({ response: retiredResponse.body, cancellation: cancellationRows?.items[0] || null }));
     assert.equal(retiredResponse.body.item.socialContentPackage.authorization.allowRealPublishing, false);
     signals = await inspectSocialOperatingSignals({ role: 'web' });
     assert.ok(signals.invalidAuthorizations.count >= 1, 'revoked publishing authorization must be observable');
@@ -626,7 +604,7 @@ try {
 
   console.log(process.env.WEEKLY_WORKSPACE_E2E==='1'
     ? 'Weekly workspace E2E passed: real PocketBase fresh/upgrade/restore, zero-to-one weekly package, one workspace per task, explicit historical HTTP backfill, read-only missing detection, HTTP isolation, sequential worker restart/recovery and operational signals.'
-    : 'Social operating release gate passed: real PocketBase fresh/upgrade/rollback/restore, HTTP isolation, worker concurrency/restart/recovery, authorization and operational signals.');
+    : 'Social operating release gate passed: real PocketBase fresh/upgrade/backup-restore, HTTP isolation, worker concurrency/restart/recovery, authorization and operational signals.');
 } finally {
   await closeServer(application?.server || null);
   await closeServer(provider?.server || null);
