@@ -39,66 +39,18 @@ import { upsertTenantUploadCloudMaterial } from '../lib/cloudMaterials.js';
 import { normalizeTenantMedia } from '../lib/tenantMediaNormalization.js';
 import os from 'node:os';
 import { downloadAndNormalizeExternalImage, ExternalImageImportError } from '../lib/externalProductImageImport.js';
-import { readLocalMaterials, saveLocalMaterials } from '../lib/materialLibrary.js';
+import { readLocalMaterials } from '../lib/materialLibrary.js';
 import { productFootageCandidateEvidence } from './enterpriseProductFootageCandidate.js';
 import { createEnterpriseProductFootageImportRouter } from './enterpriseProductFootageImport.js';
+import { upsertLocalEnterpriseMaterial } from './enterpriseLocalMaterial.js';
+export { upsertLocalEnterpriseMaterial } from './enterpriseLocalMaterial.js';
+import { mergeEnterpriseProfilePatch, profileWithSavedGovernance, verifyEnterpriseFactContentWithHash } from './enterpriseProfileHelpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, '../../data/enterprise.json');
 const DATA_DIR = path.join(__dirname, '../../data');
 const ASSETS_DIR = path.join(DATA_DIR, 'enterprise-assets');
 const TENANT_ORDERS_DIR = path.join(DATA_DIR, 'tenant-orders');
-
-export function upsertLocalEnterpriseMaterial(input: {
-  tenantId: string; title: string; type: 'image' | 'video' | 'audio'; sizeBytes: number;
-  duration?: number; width?: number; height?: number; sha256: string; sourceUrl: string;
-  sourceName: string; productId?: string; objectKey?: string; provenance: Record<string, unknown>;
-}): Record<string, unknown> {
-  const records = readLocalMaterials();
-  const index = records.findIndex(item => String(item.tenantId || item.tenant_id || '') === input.tenantId
-    && String(item.contentSha256 || item.sha256 || '').toLowerCase() === input.sha256.toLowerCase());
-  const now = new Date().toISOString();
-  const sourceEntries = ['enterprise_knowledge'];
-  if (index >= 0) {
-    const current = records[index]!;
-    if (input.productId) {
-      // A content hash identifies bytes, not a product. Never reassign an
-      // existing material's product ownership during a repeat PDF import.
-      if (String(current.productId || '') !== input.productId) {
-        throw new Error('enterprise_product_image_hash_product_conflict');
-      }
-      return current;
-    }
-    if (String(current.productId || '')) return current;
-    const currentProvenance = current.provenance && typeof current.provenance === 'object' ? current.provenance : {};
-    records[index] = {
-      ...current,
-      ...(input.productId ? { productId: input.productId } : {}),
-      sourceUrl: input.sourceUrl,
-      provenance: { ...currentProvenance, ...input.provenance, sourceEntry: 'enterprise_knowledge', sourceEntries },
-      updatedAt: now,
-    };
-    saveLocalMaterials(records);
-    return records[index]!;
-  }
-  const created = {
-    id: `enterprise-${randomUUID()}`, tenantId: input.tenantId, name: input.title, title: input.title,
-    folder: 'enterprise-upload', type: input.type, duration: input.duration || 0,
-    width: input.width, height: input.height, sizeBytes: input.sizeBytes, size: `${input.sizeBytes} B`,
-    contentSha256: input.sha256, sha256: input.sha256, scope: 'own', usage: 'editable',
-    sourceType: 'enterprise_upload', sourceName: input.sourceName, sourceProvider: 'tenant',
-    sourceUrl: input.sourceUrl, url: input.sourceUrl, ...(input.objectKey ? { objectKey: input.objectKey } : {}),
-    ...(input.productId ? { productId: input.productId } : {}),
-    sourceEntry: 'enterprise_knowledge', ownership: 'enterprise', visibility: 'tenant', knowledgeEligible: true,
-    provenance: { ...input.provenance, sourceEntry: 'enterprise_knowledge', sourceEntries },
-    createdAt: now, updatedAt: now,
-  };
-  records.push(created);
-  saveLocalMaterials(records);
-  return created;
-}
-
-
 
 type QuoteMode = '' | 'range' | 'human_only';
 type BargainPolicy = '' | 'no' | 'limited' | 'open';
@@ -940,25 +892,8 @@ export function enterpriseFactContentHash(profile: EnterpriseProfile): string {
  * Replay only that documented write shape and require the ENTIRE old digest to
  * match. A changed product, company field, or other missing property still fails.
  */
-export function verifyEnterpriseFactContent(profile: EnterpriseProfile): {
-  verified: boolean;
-  mode: 'exact' | 'legacy_json_omitted_focus_products' | 'mismatch';
-  persistedHash: string;
-  confirmedHash: string;
-  omittedPaths: string[];
-} {
-  const persistedHash = enterpriseFactContentHash(profile);
-  const confirmedHash = profile.factVersion?.contentHash || '';
-  if (confirmedHash && persistedHash === confirmedHash) {
-    return { verified: true, mode: 'exact', persistedHash, confirmedHash, omittedPaths: [] };
-  }
-  if (confirmedHash && profile.strategy && !Object.hasOwn(profile.strategy, 'focusProducts')) {
-    const replay = { ...profile, strategy: { ...profile.strategy, focusProducts: undefined } };
-    if (enterpriseFactContentHash(replay) === confirmedHash) {
-      return { verified: true, mode: 'legacy_json_omitted_focus_products', persistedHash, confirmedHash, omittedPaths: ['strategy.focusProducts'] };
-    }
-  }
-  return { verified: false, mode: 'mismatch', persistedHash, confirmedHash, omittedPaths: [] };
+export function verifyEnterpriseFactContent(profile: EnterpriseProfile) {
+  return verifyEnterpriseFactContentWithHash(profile, enterpriseFactContentHash);
 }
 
 function confirmedFactVersion(
@@ -992,34 +927,11 @@ function withConfirmedFactVersion(
 }
 
 function mergeEnterpriseProfile(current: EnterpriseProfile, patch: Partial<EnterpriseProfile>): EnterpriseProfile {
-  const merge = (base: unknown, incoming: unknown): unknown => {
-    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return incoming;
-    const baseRecord = base && typeof base === 'object' && !Array.isArray(base)
-      ? base as Record<string, unknown>
-      : {};
-    return Object.fromEntries(Object.entries(incoming as Record<string, unknown>).map(([key, value]) => [
-      key,
-      value && typeof value === 'object' && !Array.isArray(value)
-        ? merge(baseRecord[key], value)
-        : value,
-    ]).concat(Object.entries(baseRecord).filter(([key]) => !(key in (incoming as Record<string, unknown>)))));
-  };
-  return normalizeProfile(merge(current, patch) as EnterpriseProfile);
+  return normalizeProfile(mergeEnterpriseProfilePatch(current, patch) as EnterpriseProfile);
 }
 
-function markProfileSaved(
-  profile: EnterpriseProfile,
-  source: NonNullable<EnterpriseProfile['dataGovernance']>['lastSavedSource'],
-): EnterpriseProfile {
-  return normalizeProfile({
-    ...profile,
-    dataGovernance: {
-      ...profile.dataGovernance,
-      aiAccessEnabled: true,
-      lastSavedAt: new Date().toISOString(),
-      lastSavedSource: source,
-    },
-  });
+function markProfileSaved(profile: EnterpriseProfile, source: NonNullable<EnterpriseProfile['dataGovernance']>['lastSavedSource']): EnterpriseProfile {
+  return normalizeProfile(profileWithSavedGovernance(profile, source));
 }
 
 function styleField(input: unknown): { value: string; evidence: string; manual?: boolean } | undefined {

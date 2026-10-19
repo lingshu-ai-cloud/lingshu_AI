@@ -15,7 +15,7 @@
     "server/routes/auth.ts": 890,
     "server/routes/digitalEmployees.ts": 6015,
     "server/routes/draftReply.ts": 979,
-    "server/routes/enterprise.ts": 2653,
+    "server/routes/enterprise.ts": 2651,
     "server/routes/production.ts": 1316,
     "server/routes/publishing.ts": 837,
     "server/routes/scheduler.ts": 1653,
