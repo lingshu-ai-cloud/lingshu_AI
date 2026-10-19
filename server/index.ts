@@ -5,6 +5,7 @@ import { startMessengerContextTagRecovery } from './messenger/conversations.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
+import { existsSync } from 'fs';
 import express from 'express';
 import compression from 'compression';
 import { configureNetworkProxy } from './lib/networkEnvironment.js';
@@ -133,9 +134,11 @@ async function ensureLocalPocketBase(): Promise<void> {
   const bin = process.env.PB_BIN || '';
   const dataDir = process.env.PB_DATA_DIR || '';
   if (!bin || !dataDir) { console.warn('[pb] auto-start skipped: PB_BIN/PB_DATA_DIR missing'); return; }
+  const migrationsDir = process.env.PB_MIGRATIONS_DIR || path.resolve(__dirname, '../pb_migrations');
+  if (!existsSync(migrationsDir)) { console.warn('[pb] auto-start skipped: PB_MIGRATIONS_DIR missing'); return; }
   const parsed = new URL(url);
   if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname)) { console.warn('[pb] auto-start requires a loopback database URL'); return; }
-  const child = spawn(bin, ['serve', `--http=${parsed.hostname}:${parsed.port || '8090'}`, `--dir=${dataDir}`], { cwd: path.dirname(bin), stdio: 'ignore', detached: true });
+  const child = spawn(bin, ['serve', `--http=${parsed.hostname}:${parsed.port || '8090'}`, `--dir=${dataDir}`, `--migrationsDir=${migrationsDir}`], { cwd: path.dirname(bin), stdio: 'ignore', detached: true });
   child.unref();
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await new Promise(resolve => setTimeout(resolve, 250));
