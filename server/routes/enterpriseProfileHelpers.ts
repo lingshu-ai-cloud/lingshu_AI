@@ -30,7 +30,7 @@ export function mergeEnterpriseProfilePatch(base: unknown, incoming: unknown): u
 
 export function profileWithSavedGovernance<T extends { dataGovernance?: Record<string, unknown> }>(
   profile: T,
-  source: string,
+  source: string | undefined,
 ): T {
   return { ...profile, dataGovernance: { ...profile.dataGovernance, aiAccessEnabled: true,
     lastSavedAt: new Date().toISOString(), lastSavedSource: source } };
