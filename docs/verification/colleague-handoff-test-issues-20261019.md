@@ -283,6 +283,14 @@
 - 修复：验证职责模块只对 ready 订单冻结编导脚本，同时再断言以 `constrainedOrders.map` 保留有卡点的兄弟订单，不将其静默删除。
 - 状态：已修复，待周任务包、数字员工与完整总测试复核。
 
+## RESOLVED-036 最终修复使两个冻结历史文件超出架构预算
+
+- 命令：`pnpm run quality`，失败阶段 `check:architecture`。
+- 实际：客户事实/模拟提示使 `ConversionPage.tsx` 从 2492 增至 2498 行；回执保护使 `studio.ts` 从 10353 增至 10361 行。
+- 归因：两文件属于冻结历史超大文件，任何新增净行数都会被架构闸门拒绝；不得提高预算。
+- 修复：仅压缩本轮新增的静态 JSX 和回执响应表达式，行为与断言不变；两文件分别恢复为 2492、10353 行，未修改 `architecture.config.json`。
+- 状态：已修复；架构检查通过（2040 个生产 TypeScript 文件、47 个冻结历史文件），相关客户与 Storyboard 回归通过。
+
 ## RESOLVED-033 内容路由轮询 fixture 仍以产品素材替代 clone 精析
 
 - 命令：`pnpm run test:digital-employees`，失败阶段 `contentRoutingPolling.test.ts`。
