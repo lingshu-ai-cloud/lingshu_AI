@@ -50,6 +50,25 @@
 - 初步归因：当前是 OPEN-003 的下游失败，不应单独修改 Outbox 恢复逻辑。
 - 状态：被 OPEN-003 阻塞。
 
+## RESOLVED-006 工作流测试归档替身缺少参数类型
+
+- 命令：`pnpm exec tsc --noEmit`
+- 位置：`server/starter198/socialContentWorkflow.test.ts`，生成媒体归档测试替身。
+- 实际：`TS7006: Parameter 'input' implicitly has an 'any' type`。
+- 归因：既有本地测试改动新增了归档替身，但没有从生产运行时端口继承参数类型；不是生成素材归档模块拆分造成的生产类型回归。
+- 修复：使用 `SocialContentAutoProductionRuntime['archiveGeneratedMedia']` 的首个参数类型，未使用宽泛 `any` 放过输入契约。
+- 状态：已修复，待完整质量门禁复核。
+
+## OPEN-007 CTA 证据门禁被供应适配器错误抢先阻断
+
+- 命令：`pnpm exec tsx --test server/starter198/socialContentAssetSupplyExecution.test.ts`
+- 位置：约第 244 行的拒绝断言。
+- 期望错误：`weekly_production_cta_evidence_required`。
+- 实际错误：`asset_supply_provider_exhausted:scene-person:motion_graphics:adapter_not_registered`。
+- 初步归因：测试场景在到达 CTA 周生产证据门禁前，先进入了未注册的 `motion_graphics` 供应路由；需判断是执行检查顺序回归，还是 fixture 未随供应路由契约更新。
+- 关联性：生成素材归档候选与持久化测试均已通过；当前失败发生在供应适配器选择阶段，与本次归档模块搬移无直接调用关系。
+- 状态：待修复。
+
 ## 已验证通过的相关范围
 
 - 周执行图核心：24 个用例通过。
