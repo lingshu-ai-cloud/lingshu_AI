@@ -36,11 +36,12 @@ import {readWeeklyReferenceSources} from '../runtime/socialWeeklyReferenceSource
 test('product budget bounds are bound to the reviewed supply plan', () => {
   const source=fs.readFileSync(new URL('./socialContentProductionBudgetPreflight.ts',import.meta.url),'utf8');
   assert.match(source,/readProductReplacementRequestBounds[\s\S]*?frozenSupplyPlan:input\.supplyPlan![\s\S]*?planVersion:String\(input\.supplyPlan!\.planVersion\)[\s\S]*?planHash:socialRequestHash\(input\.supplyPlan\)/);
-  const carry=source.indexOf('carryForwardWeeklyExactCost??carryForwardWeeklyCandidateExactProductionCost');
+  const carry=source.indexOf('carryForwardWeeklyExactCostV2');
   const recovery=source.indexOf('if (input.recoveryOnly || prior)');
   const productionReserve=source.indexOf('const reserved = await authority.prepareAndReserve(scope)');
   assert.ok(carry>0&&carry<recovery&&recovery<productionReserve,'settled exact cost is recovered before the original production reservation');
-  assert.match(source,/mode:input\.quoteOnly\?'read':'carry'/,'quote-only uses the pure read adapter mode');
+  assert.match(source,/const carryMode=input\.quoteOnly\?'read':'carry'/,'quote-only uses the pure read adapter mode');
+  assert.doesNotMatch(source,/carryForwardWeeklyCandidateExactProductionCostV2/,'the dormant v2 implementation is not imported or installed by default');
 });
 
 test('whole-film preflight reserves one retry only for retry-enabled generated product shots', () => {
@@ -112,6 +113,54 @@ test('default preflight carries settled exact cost from the production task-budg
   if(oldProduction===undefined)delete process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR;else process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR=oldProduction;
   f.clean();
  }
+});
+test('explicit pre-bound v2 carry seam wins without running v1 and receives only trusted business context',async()=>{
+ const f=await fixture();
+ try{
+  await f.enable();await installSettledWeeklyExactCost(f,path.join(f.root,'exact-v2-seam'));let v1=0,v2=0;let received:any;
+  await prepareSocialContentProductionBudget({...f,assets:[],ports:{
+   ledgerRoot:path.join(f.root,'task-budget'),
+   carryForwardWeeklyExactCost:async()=>{v1++;throw Error('v1_must_not_run');},
+   carryForwardWeeklyExactCostV2:async input=>{v2++;received=input;return null;},
+  }}).catch(error=>{assert.doesNotMatch(String(error),/v1_must_not_run/);});
+  assert.equal(v2,1);assert.equal(v1,0);assert.equal(received.mode,'carry');
+  assert.deepEqual(Object.keys(received).sort(),['budget','mode','scope','store','taskRow']);
+  assert.equal('integrityKey' in received,false);assert.equal('headAnchor' in received,false);assert.equal('auditReader' in received,false);
+ }finally{f.clean();}
+});
+test('missing v2 seam preserves the injected v1 contract and task payload cannot install v2 authority',async()=>{
+ const f=await fixture();
+ try{
+  await f.enable();await installSettledWeeklyExactCost(f,path.join(f.root,'exact-v1-fallback'));const row=await requireSocialTask(f),brief=socialObject(socialJson(row.brief));
+  await f.store.update(STARTER_COLLECTIONS.socialContentTasks,row.id,{brief:{...brief,carryForwardWeeklyExactCostV2:{integrityKey:'task-controlled',headAnchor:{},auditReader:{}}}});
+  let v1=0;
+  await prepareSocialContentProductionBudget({...f,assets:[],ports:{ledgerRoot:path.join(f.root,'task-budget'),carryForwardWeeklyExactCost:async input=>{v1++;assert.equal(input.mode,'carry');return null;}}}).catch(()=>undefined);
+  assert.equal(v1,1);
+ }finally{f.clean();}
+});
+test('quote-only passes read mode to the explicit v2 seam and never runs v1',async()=>{
+ const f=await fixture();
+ try{
+  await f.enable();await installSettledWeeklyExactCost(f,path.join(f.root,'exact-v2-read'));let v1=0;const modes:string[]=[];
+  await prepareSocialContentProductionBudget({...f,assets:[],quoteOnly:true,ports:{
+   ledgerRoot:path.join(f.root,'task-budget'),
+   carryForwardWeeklyExactCost:async()=>{v1++;return null;},
+   carryForwardWeeklyExactCostV2:async input=>{modes.push(input.mode);return null;},
+  }}).catch(()=>undefined);
+  assert.deepEqual(modes,['read']);assert.equal(v1,0);
+ }finally{f.clean();}
+});
+test('v2 carry failures propagate unchanged and never fall back to v1',async()=>{
+ const f=await fixture();
+ try{
+  await f.enable();await installSettledWeeklyExactCost(f,path.join(f.root,'exact-v2-failure'));let v1=0;
+  await assert.rejects(prepareSocialContentProductionBudget({...f,assets:[],ports:{
+   ledgerRoot:path.join(f.root,'task-budget'),
+   carryForwardWeeklyExactCost:async()=>{v1++;return null;},
+   carryForwardWeeklyExactCostV2:async()=>{throw Error('trusted_v2_carry_failed');},
+  }}),/trusted_v2_carry_failed/);
+  assert.equal(v1,0);
+ }finally{f.clean();}
 });
 test('normal marked task stops before paid analysis when actual voice or supplier route data is missing', async () => { const f = await fixture(); try {
     await f.enable();
