@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseScheduledWorkflowHandoff } from './ScheduledPage.js';
+import { parseScheduledWorkflowHandoff } from '../lib/scheduledWorkflowHandoff.js';
 
 const now = Date.parse('2026-09-04T08:00:00.000Z');
 const validHandoff = JSON.stringify({
@@ -55,8 +55,9 @@ assert.deepEqual(
 );
 
 const source = readFileSync(new URL('./ScheduledPage.tsx', import.meta.url), 'utf8');
-assert.match(source, /SCHEDULED_WORKFLOW_HANDOFF_TTL\s*=\s*15\s*\*\s*60\s*\*\s*1000/);
-assert.match(source, /sessionStorage\.removeItem\('digitalEmployee\.businessDeepLink'\)/, 'the persisted handoff must be consumed once');
+const handoffSource = readFileSync(new URL('../lib/scheduledWorkflowHandoff.ts', import.meta.url), 'utf8');
+assert.match(handoffSource, /SCHEDULED_WORKFLOW_HANDOFF_TTL\s*=\s*15\s*\*\s*60\s*\*\s*1000/);
+assert.match(handoffSource, /sessionStorage\.removeItem\('digitalEmployee\.businessDeepLink'\)/, 'the persisted handoff must be consumed once');
 assert.match(source, /setActiveGroup\('social'\)[\s\S]{0,120}setSocialTaskTab\('crawler'\)/, 'the handoff must land on the social crawler workspace');
 assert.match(source, /addEventListener\('lingshu:navigate'/, 'an already-mounted scheduler must also accept a workflow handoff');
 assert.match(source, /const CRAWLER_LIMIT_MAX\s*=\s*50;/, 'the UI crawler limit must match the server limit');
