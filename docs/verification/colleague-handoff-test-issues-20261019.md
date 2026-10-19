@@ -275,6 +275,14 @@
 - 修复：保留显式 product 无账号仍为 `planned` 的断言；自动计划改为要求 fail-closed、零订单并给出 clone 工作流阻断原因。
 - 状态：已修复，待数字员工与完整总测试复核。
 
+## RESOLVED-035 编导决策契约未跟随内容计划职责拆分
+
+- 命令：`pnpm run test:weekly-package`。
+- 实际：契约在主路由中寻找把全部 `constrainedOrders` 直接交给脚本生成器的旧代码；当前实现已迁入 `digitalEmployeeContentPlanning.ts`，并只生成真实输入已就绪的 `scriptableOrders`。
+- 归因：源码位置与调用参数契约均过期；把阻断订单送入脚本生成反而会绕过准入。
+- 修复：验证职责模块只对 ready 订单冻结编导脚本，同时再断言以 `constrainedOrders.map` 保留有卡点的兄弟订单，不将其静默删除。
+- 状态：已修复，待周任务包、数字员工与完整总测试复核。
+
 ## RESOLVED-033 内容路由轮询 fixture 仍以产品素材替代 clone 精析
 
 - 命令：`pnpm run test:digital-employees`，失败阶段 `contentRoutingPolling.test.ts`。
