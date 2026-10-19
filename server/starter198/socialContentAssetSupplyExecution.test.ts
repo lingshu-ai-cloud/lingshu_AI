@@ -233,12 +233,12 @@ assert.equal(presenterSupply.execution.shots[0]?.functionalEquivalentReplacement
 let forbiddenFallbackCalls = 0;
 const ctaBlockedAdapter: SocialAssetSupplyProviderAdapter = {
   adapterId: 'test-weekly-cta-boundary',
-  sourceStrategies: ['authorized_digital_presenter'],
+  sourceStrategies: ['motion_graphics'],
   async execute() { throw new Error('weekly_production_cta_evidence_required'); },
 };
 const forbiddenFallbackAdapter: SocialAssetSupplyProviderAdapter = {
   adapterId: 'test-forbidden-fallback',
-  sourceStrategies: ['authorized_digital_presenter'],
+  sourceStrategies: ['motion_graphics'],
   async execute() { forbiddenFallbackCalls += 1; return null; },
 };
 await assert.rejects(() => executeSocialAssetSupplyPlan({

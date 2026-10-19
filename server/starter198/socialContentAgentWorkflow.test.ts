@@ -106,7 +106,7 @@ const supply = createSocialAssetSupplyPlan({
 
 const workflowSupply = createSocialAssetSupplyPlan({
   creationMode: 'viral_replication', planVersion: '12', confirmedFactRefs: ['knowledge:product-1'],
-  productionApproach: 'ai_enhanced', materialRoutingPolicyVersion: 'type-aware.v1',
+  productionApproach: 'ai_enhanced', materialRoutingPolicyVersion: 'type-aware.v2',
   inventory: { productIdentityGroups: [{ productRef: 'product:verified-1', imageIds: ['product-image-1'] }] },
   shots: [
     { shotId: 'scene-hook', function: 'hook', materialType: 'product', productRef: 'product:verified-1', plannedDurationSeconds: 3, referenceShotId: 'reference-hook', requestedDescription: '三秒内呈现产品主体' },
@@ -171,7 +171,16 @@ assert.equal(workflow.directorBrief.version, '12');
 assert.equal(workflow.directorBrief.referenceAnalysis?.version, '7');
 assert.equal(workflow.directorBrief.scenes.length, 2);
 assert.equal(workflow.executionPlan.scenes.length, 2);
-assert.ok(workflow.executionPlan.scenes.every(scene => scene.candidates.length > 0 && scene.candidates.length <= 20));
+assert.ok(workflow.executionPlan.scenes.every(scene => scene.candidates.length > 0 && scene.candidates.length <= 20),
+  JSON.stringify({ supply: workflowSupply.shots.map(shot => ({
+    shotId: shot.shotId, sourceStrategy: shot.sourceStrategy, refs: shot.sourceRefs,
+    routing: shot.materialRouting,
+  })), scenes: workflow.executionPlan.scenes.map(scene => ({
+    sceneId: scene.sceneId,
+    feasibility: scene.feasibility,
+    selectedSourceStrategy: scene.selectedSourceStrategy,
+    candidateCount: scene.candidates.length,
+  })) }));
 assert.ok(workflow.executionPlan.scenes.every(scene => scene.idempotencyKey.startsWith('social_scene_execution_')));
 assert.equal(workflow.executionPlanReview.approved, true);
 assert.equal(workflow.executionPlan.status, 'approved');

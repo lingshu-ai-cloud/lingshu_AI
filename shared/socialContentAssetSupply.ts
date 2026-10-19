@@ -36,7 +36,6 @@ const EMPTY_INVENTORY: Required<SocialAssetInventory> = {
   productEffectEvidenceAssetIds: [],
   licensedStockAssetIds: [],
 };
-
 const DEFAULT_SHOTS: Record<SocialContentCreationMode, SocialAssetSupplyShotRequest[]> = {
   material_processing: [
     { shotId: 'shot-hook', function: 'hook', requestedDescription: '前三秒呈现清楚主体和核心利益点' },
@@ -51,11 +50,12 @@ const DEFAULT_SHOTS: Record<SocialContentCreationMode, SocialAssetSupplyShotRequ
     { shotId: 'shot-cta', function: 'call_to_action', requestedDescription: '按照客户真实业务重写行动引导' },
   ],
 };
-
 function unique(values: string[] | undefined): string[] {
   return [...new Set((values ?? []).map(value => value.trim()).filter(Boolean))];
 }
-
+function normalizedProductIdentity(value: unknown): string {
+  return String(value ?? '').normalize('NFKC').trim().replace(/^product\s*:\s*/i, '').toLocaleLowerCase();
+}
 function normalizeInventory(input?: SocialAssetInventory): Required<SocialAssetInventory> {
   const productIdentityGroups = (input?.productIdentityGroups ?? []).flatMap(group => {
     const productRef = group.productRef?.trim();
@@ -77,7 +77,6 @@ function normalizeInventory(input?: SocialAssetInventory): Required<SocialAssetI
     licensedStockAssetIds: unique(input?.licensedStockAssetIds),
   };
 }
-
 export function inferSocialAssetAvailability(input?: SocialAssetInventory): SocialAssetAvailability {
   const inventory = normalizeInventory(input);
   const customerMotionCount = inventory.customerVideoIds.length
@@ -228,8 +227,6 @@ export function buildSocialProductSceneReplicationSpec(input: {
     productPolicy: input.shot.productPolicy,
     productRef: input.shot.productRef,
   });
-  const normalizedProductIdentity = (value: unknown) => String(value ?? '').normalize('NFKC').trim()
-    .replace(/^product\s*:\s*/i, '').toLocaleLowerCase();
   // The task-selected product is authoritative. A reference shot can retain
   // the source video's historic/generic product label in its visual contract;
   // that label describes composition and must not prevent the current exact
@@ -714,14 +711,17 @@ function planShot(
     productPolicy: shot.productPolicy,
     productRef: shot.productRef,
   });
-  const requestedProductRef = String(normalizedVisualContract.product.requestedProductRef
-    || normalizedVisualContract.productUsage.productRef || shot.productRef || '').normalize('NFKC').trim().toLocaleLowerCase();
+  const requestedProductRef = normalizedProductIdentity(normalizedVisualContract.product.requestedProductRef
+    || normalizedVisualContract.productUsage.productRef || shot.productRef);
+  const exactVerifiedLocalProduct = selected.strategy === 'customer_real_asset' && shot.localVideoMatch?.semanticMatch === 'verified'
+    && shot.localVideoMatch.sourceRefs.some(ref => selected.refs.includes(ref)) && normalizedProductIdentity(shot.localVideoMatch.productRef) === requestedProductRef;
   const lockedProductUnavailable = Boolean(selected.productSceneReplication
     && selected.productSceneReplication.productIdentity.groups.length === 0) || (
     normalizedVisualContract.product.policy === 'locked'
       && Boolean(requestedProductRef)
+      && !exactVerifiedLocalProduct
       && !inventory.productIdentityGroups.some(group => (
-        group.productRef.normalize('NFKC').trim().toLocaleLowerCase() === requestedProductRef
+        normalizedProductIdentity(group.productRef) === requestedProductRef
         && group.imageIds.length > 0
       ))
   );
