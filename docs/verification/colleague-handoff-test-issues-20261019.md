@@ -69,6 +69,22 @@
 - 关联性：生成素材归档候选与持久化测试均已通过；当前失败发生在供应适配器选择阶段，与本次归档模块搬移无直接调用关系。
 - 状态：待修复。
 
+## RESOLVED-008 仪表盘源码契约测试未跟随模块拆分
+
+- 命令：`pnpm exec tsx --test src/components/SmartBusinessDashboard.preproduction.contract.test.ts src/components/SmartBusinessWeeklyCommandCenter.contract.test.ts`
+- 实际：5 个源码契约断言只读取 `SmartBusinessDashboard.tsx`，预生产预览和精确灵感引用移动到 `smartBusiness/TaskPreviewCards.tsx` 后误报缺失。
+- 归因：测试定位方式过期，业务判断、嵌套引用协议与保守素材阻断仍完整保留在新模块。
+- 修复：测试同时读取职责模块；保留原断言语义，仅兼容项目既有的单双引号格式。
+- 状态：已修复，待复跑确认。
+
+## RESOLVED-009 展示模型 VM 缺少 showcase 运行时依赖
+
+- 命令：`pnpm exec tsx --test src/components/SmartBusinessDisplayModel.test.ts`
+- 实际：`ReferenceError: isSmartBusinessShowcaseEnabled is not defined`。
+- 归因：测试直接截取并在 VM 执行展示模型函数，但没有注入函数当前已依赖的 showcase 开关和周汇总常量。
+- 修复：VM 明确注入“showcase 关闭”的生产等价上下文，不改变展示模型断言。
+- 状态：已修复，待复跑确认。
+
 ## 已验证通过的相关范围
 
 - 周执行图核心：24 个用例通过。
