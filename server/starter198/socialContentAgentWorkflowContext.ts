@@ -1,4 +1,4 @@
-import {publicationPreparationDeadline} from '../socialPrograms/publicationDeadlines.js';
+import {publicationProductionDeadline} from '../socialPrograms/publicationDeadlines.js';
 import type {
   SocialAdHocBusinessContext,
   SocialContentTaskStatus,
@@ -179,7 +179,7 @@ export function buildBusinessContext(input: BuildSocialAgentWorkflowInput): {
           })),
           weeklyBudgetCny: content.weeklyBudgetCny,
           perItemBudgetCny: content.perItemBudgetCny,
-          dueAt: publicationPreparationDeadline(authority.publicationTask.publishWindow),
+          dueAt: publicationProductionDeadline(authority.publicationTask.publishWindow),
           availableAssetRefs: input.sources.filter(source => source.kind === 'material').map(source => source.sourceId),
           customerCanShoot: false,
           availableCapabilities: socialContentCapabilityRegistry(input.capabilityRuntime)

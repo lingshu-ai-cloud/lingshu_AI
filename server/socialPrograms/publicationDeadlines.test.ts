@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { WeeklyExecutionTask, SocialWeeklyPublicationTask } from '../../shared/contracts/socialProgram.js';
-import { applyPublicationDeadlines, publicationInstant, publicationPreparationDeadline } from './publicationDeadlines.js';
+import { applyPublicationDeadlines, publicationInstant, publicationPreparationDeadline, publicationProductionDeadline } from './publicationDeadlines.js';
 function task(id: string, step: string, parents: string[], publicationTaskId: string | null = null): WeeklyExecutionTask {
  return { taskId:id, publicationTaskId, dependsOnTaskIds:parents, schedule:{stepKind:step, estimatedDurationMinutes:60, estimatedStartAt:'2026-10-03T00:00:00Z',estimatedFinishAt:'2026-10-03T01:00:00Z'} } as WeeklyExecutionTask;
 }
@@ -41,9 +41,13 @@ test('late plan flags risk and ambiguous publish window is not silently parsed',
  assert.equal(invalid[0].schedule.latestFinishAt,null);
 });
 
- test('production readiness uses a same-day acceptance buffer and unknown instants never become week-end promises',()=>{
+ test('production readiness separates the same-day acceptance buffer from frozen production authority',()=>{
  assert.equal(publicationPreparationDeadline('2026-10-05T10:00:00+08:00'),'2026-10-05T01:30:00.000Z');
- for(const window of [null,undefined,'2026-10-05/2026-10-11','2026-10-05T10:00:00','2026-02-30T10:00:00Z'])assert.equal(publicationPreparationDeadline(window),null);
+ assert.equal(publicationProductionDeadline('2026-10-05T10:00:00+08:00'),'2026-10-04T02:00:00.000Z');
+ for(const window of [null,undefined,'2026-10-05/2026-10-11','2026-10-05T10:00:00','2026-02-30T10:00:00Z']){
+  assert.equal(publicationPreparationDeadline(window),null);
+  assert.equal(publicationProductionDeadline(window),null);
+ }
  });
 
 test('material preparation finishes before script and Monday delivery keeps a same-day acceptance buffer', () => {

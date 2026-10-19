@@ -36,7 +36,7 @@ import {
   inferSocialReplicationReferenceMode,
 } from '../../shared/socialInspirationStrategy.js';
 import { socialRequestHash } from './socialContentValidation.js';
-import {publicationPreparationDeadline} from '../socialPrograms/publicationDeadlines.js';
+import {publicationProductionDeadline} from '../socialPrograms/publicationDeadlines.js';
 import type { BusinessContentGoal } from '../../shared/contracts/socialOperatingDecision.js';
 import type {
   SocialWeeklyPublicationTask,
@@ -1298,7 +1298,7 @@ export function buildSocialAgentWorkflow(input: BuildSocialAgentWorkflowInput): 
   assertAuthoritativeContext(input);
   if (input.authoritativeContext) {
     input = {...input, brief: {...input.brief,
-      dueAt: publicationPreparationDeadline(input.authoritativeContext.publicationTask.publishWindow),
+      dueAt: publicationProductionDeadline(input.authoritativeContext.publicationTask.publishWindow),
     }};
   }
   const context = buildBusinessContext(input);
