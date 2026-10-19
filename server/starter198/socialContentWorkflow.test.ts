@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import type { DataStore, ListQuery, Record_ } from '../storage/datastore.js';
+import type { SocialContentAutoProductionRuntime } from './socialContentProductionExecution.js';
 
 const previous = {
   NODE_ENV: process.env.NODE_ENV,
@@ -1437,7 +1438,7 @@ try {
         fs.writeFileSync(coverPath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
         return coverPath;
       },
-      archiveGeneratedMedia: async input => ({ id: `archived-${input.lineage.sourceShotId}` }) as any,
+      archiveGeneratedMedia: async (input: Parameters<NonNullable<SocialContentAutoProductionRuntime['archiveGeneratedMedia']>>[0]) => ({ id: `archived-${input.lineage.sourceShotId}` }) as any,
       backendFilePort,
     },
   });
