@@ -84,8 +84,8 @@ const customerRailUi = customerUi.slice(customerUi.indexOf('function CustomerInf
 for (const marker of ['CustomerInsightDisclosure', 'CustomerIntentActionPanel', 'QuoteSkillCard', 'RulesDisclosure']) {
   assert.match(customerRailUi, new RegExp(marker), `the customer rail must include ${marker}`);
 }
-assert.match(customerRailUi, /quickPanel === 'profile'[\s\S]{0,1000}customer\.product[\s\S]{0,1000}STAGE_LABEL\[customer\.stage\][\s\S]{0,1000}customer\.estimatedValue/, 'customer profile facts must remain available through the quick profile disclosure');
-assert.match(customerRailUi, /quickActions\.map[\s\S]{0,700}aria-pressed=\{active\}[\s\S]{0,700}openQuickPanel\(action\.id\)/, 'quick profile controls must expose their current state and open the requested disclosure');
+assert.match(customerRailUi, /data-testid="customer-profile-facts"[\s\S]{0,1200}customer\.product[\s\S]{0,1200}STAGE_LABEL\[customer\.stage\][\s\S]{0,1200}customer\.estimatedValue/, 'customer product, stage and estimated value must remain visible in the profile rail');
+assert.match(customerRailUi, /<Collapse[\s\S]{0,400}defaultActiveKey=\{\['business'\]\}[\s\S]{0,1200}key: 'media'[\s\S]{0,1200}key: 'business'[\s\S]{0,1200}key: 'privacy'/, 'profile rail sections must expose their current Ant Design disclosure structure');
 const railMarkers = ['CustomerInsightDisclosure', 'CustomerIntentActionPanel', 'QuoteSkillCard', 'RulesDisclosure'];
 assert.deepEqual(
   railMarkers.map(marker => customerRailUi.indexOf(marker)),
@@ -95,7 +95,7 @@ assert.deepEqual(
 assert.doesNotMatch(customerRailUi, /OrderHistoryWidget|SortableWidget/, 'the compact customer rail must not contain extra or draggable panels');
 assert.match(customerUi, /AI 草稿 · 人工改过/, 'conversation history must expose human collaboration without adding fake messages');
 assert.match(customerUi, /已用学习记忆/, 'conversation history must expose memory usage without cluttering the transcript');
-assert.match(customerUi, /customer\.isMock \? '模拟客户 · 不对外发送'/, 'each simulated conversation must clearly label its isolation from live sending');
+assert.match(customerUi, /customer\.isMock \? <Tag[^>]*>模拟客户 · 不对外发送<\/Tag>/, 'each simulated conversation must clearly label its isolation from live sending');
 assert.match(customerUi, /只在演示沙盘里推进，不会发送到真实平台/, 'the simulation input must explain that it cannot send to real platforms');
 
 const memoryUi = fs.readFileSync(path.join(root, 'src/components/WorkspaceManagementPages.tsx'), 'utf8');
