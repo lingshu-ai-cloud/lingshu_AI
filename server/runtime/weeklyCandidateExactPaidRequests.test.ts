@@ -118,6 +118,13 @@ test('transport persists only observed response audit anchors through dynamic jo
  assert.equal(JSON.stringify(files).includes('private response text'),false);
 });
 
+test('v2 anchored settlement snapshot is a read-only clone of the authenticated head and ledger',async t=>{
+ const f=await v2Fixture(t),request=v2Body('read-only snapshot'),guard=f.guard;await guard.beforeProviderRequest(request);
+ const before=fs.readFileSync(guard.ledgerPath),headBefore=f.getHead(),snapshot=await guard.readAnchoredSnapshot();
+ assert.deepEqual(snapshot.head,headBefore);assert.equal(snapshot.ledger.entries.length,1);snapshot.ledger.entries.length=0;
+ assert.equal((await guard.readAnchoredSnapshot()).ledger.entries.length,1);assert.deepEqual(fs.readFileSync(guard.ledgerPath),before);assert.deepEqual(f.getHead(),headBefore);
+});
+
 test('dynamic child requests freeze one at a time with conservative cumulative holds',async t=>{
  const f=fixture(t),plan={operationId:'dynamic-operation',candidateId:f.plan.candidateId,mediaSha256:f.plan.mediaSha256,
   endpoint,credentialSha256:f.plan.credentialSha256,model:'qwen3-vl-plus' as const,maximumRequests:2,maximumTotalCny:1.7};
@@ -266,7 +273,7 @@ test('v2 rejects a persisted ceiling whose rate, tier or reserved micros was low
  fs.writeFileSync(f.guard.ledgerPath,JSON.stringify(original));assert.equal((await f.guard.readDiagnostic()).allResponsesRecorded,true);
 });
 
-test('v2 namespace cannot collide with v1 and no production module imports either v2 API',async t=>{
+test('v2 namespace cannot collide with v1 and no production execution module imports either v2 API',async t=>{
  const f=await v2Fixture(t),v1Plan={operationId:f.plan.operationId,candidateId:f.plan.candidateId,mediaSha256:f.plan.mediaSha256,
   endpoint,credentialSha256:f.plan.credentialSha256,model:'qwen3-vl-plus' as const,maximumRequests:1,maximumTotalCny:1};
  const v1=createWeeklyCandidateDynamicExactPaidRequests({root:f.root,authorizationHash:f.authorizationHash,plan:v1Plan,assertCurrent:async()=>{}});
@@ -277,7 +284,8 @@ test('v2 namespace cannot collide with v1 and no production module imports eithe
  const forbidden=['createWeeklyCandidateDynamicExactPaidRequestsV2','weeklyCandidateDynamicExactInitialHeadV2','prepareWeeklyCandidateExactProductionEscrowV2'];
  const walk=(directory:string):string[]=>fs.readdirSync(directory,{withFileTypes:true}).flatMap(entry=>entry.isDirectory()?walk(path.join(directory,entry.name)):[path.join(directory,entry.name)]);
  const imports=walk(path.join(process.cwd(),'server')).filter(file=>file.endsWith('.ts')&&!file.endsWith('.test.ts')&&
-  !file.endsWith('weeklyCandidateExactPaidRequests.ts')&&!file.endsWith('weeklyCandidateExactProductionEscrow.ts')).filter(file=>forbidden.some(symbol=>fs.readFileSync(file,'utf8').includes(symbol)));
+  !file.endsWith('weeklyCandidateExactPaidRequests.ts')&&!file.endsWith('weeklyCandidateExactProductionEscrow.ts')&&
+  !file.endsWith('weeklyCandidateExactConservativeSettlement.ts')).filter(file=>forbidden.some(symbol=>fs.readFileSync(file,'utf8').includes(symbol)));
  assert.deepEqual(imports,[]);
 });
 
@@ -316,7 +324,9 @@ test('v2 independent head rejects deletion, truncation and rollback of an otherw
 test('v2 restart completes one fsynced head-CAS interruption without permitting a second POST claim',async t=>{
  const f=await v2Fixture(t),requestBody=v2Body('commit-unknown');f.failOneCas();
  await assert.rejects(f.guard.beforeProviderRequest(requestBody),/dynamic_v2_anchor_commit_unknown/);
- const restarted=createWeeklyCandidateDynamicExactPaidRequestsV2(f.args),claim=await restarted.readClaim(sha(requestBody));
+ const interruptedHead=f.getHead(),restarted=createWeeklyCandidateDynamicExactPaidRequestsV2(f.args);
+ await assert.rejects(restarted.readAnchoredSnapshot(),/dynamic_v2_anchor_changed/,'settlement read must not repair an interrupted commit');assert.deepEqual(f.getHead(),interruptedHead);
+ const claim=await restarted.readClaim(sha(requestBody));
  assert.equal(claim?.state,'unknown');await assert.rejects(restarted.beforeProviderRequest(requestBody),/original_request_recovery_required/);
  await assert.rejects(restarted.beforeProviderRequest(v2Body('later')),/earlier_request_unsettled/);
 });

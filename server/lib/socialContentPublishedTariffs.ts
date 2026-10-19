@@ -50,6 +50,35 @@ export const qwenMaaSPublishedTiers=():ReadonlyArray<QwenMaaSPublishedTier>=>QWE
 const qwenMaaSPricingPolicyIdentity=(schema:VerifiedQwenMaaSPricingPolicy['schema'],evidence:MaaSPublishedPricingEvidence,validUntilMs:number)=>
  sha(JSON.stringify({schema,evidence,validUntilMs}));
 
+function inspectQwenMaaSPublishedPricingEvidence(evidence:MaaSPublishedPricingEvidence,input:{baseUrl:string;credentialSha256:string}){
+ try{
+  const normalizedBaseUrl=input.baseUrl.replace(/\/+$/,''),checked=Date.parse(evidence.checkedAt),validUntil=Date.parse(evidence.validUntil);
+  if(evidence.schemaVersion!==3||evidence.basis!=='published_undiscounted_ceiling'||evidence.provider!=='qwen'||evidence.model!=='qwen3-vl-plus'||
+   evidence.catalogVersion!==QWEN_MAAS_TARIFF_CATALOG_VERSION||evidence.sourceUrl!==QWEN_MAAS_SOURCE_URL||
+   evidence.sourceCheckedAt!==QWEN_MAAS_CATALOG_CHECKED_AT||evidence.checkedAt!==evidence.sourceCheckedAt||
+   !Number.isFinite(checked)||!Number.isFinite(validUntil)||validUntil-checked!==QWEN_PUBLISHED_TARIFF_VALIDITY_MS||
+   evidence.catalogEntrySha256!==sha(maaSCatalogEntry())||evidence.maximumInputTokens!==qwenVisionInputLimit(evidence.model)||
+   JSON.stringify(evidence.tiers)!==JSON.stringify(QWEN_MAAS_TIERS_INTERNAL)||evidence.inputPriceCnyPerMillion!==3||evidence.outputPriceCnyPerMillion!==30||
+   classifyQwenCompatibleEndpoint(normalizedBaseUrl)!=='qianwen-maas'||input.credentialSha256!==evidence.providerBinding.credentialSha256||
+   !/^[a-f0-9]{64}$/.test(input.credentialSha256)||evidence.providerBinding.baseUrl.replace(/\/+$/,'')!==normalizedBaseUrl||
+   evidence.accountRef!==`qwen:${sha(JSON.stringify({baseUrl:normalizedBaseUrl,credentialSha256:input.credentialSha256}))}`)return null;
+  const frozenEvidence=structuredClone(evidence);Object.freeze(frozenEvidence.providerBinding);
+  for(const tier of frozenEvidence.tiers)Object.freeze(tier);Object.freeze(frozenEvidence.tiers);Object.freeze(frozenEvidence);
+  const schema='verified-qwen-maas-pricing-policy.v1' as const;
+  return {frozenEvidence,checked,validUntil,pricingPolicyHash:qwenMaaSPricingPolicyIdentity(schema,frozenEvidence,validUntil)};
+ }catch{return null;}
+}
+
+/** Structural verification for settlement/recovery of requests already
+ * durably claimed while the catalogue was live. This deliberately returns no
+ * WeakSet-backed pricing capability and cannot authorize a new request. */
+export function verifyQwenMaaSPublishedPricingEvidenceForHistoricalSettlement(evidence:MaaSPublishedPricingEvidence,input:{baseUrl:string;credentialSha256:string}){
+ const inspected=inspectQwenMaaSPublishedPricingEvidence(evidence,input);if(!inspected)return null;
+ return Object.freeze({schema:'verified-qwen-maas-historical-settlement-pricing.v1' as const,
+  evidenceHash:sha(JSON.stringify(inspected.frozenEvidence)),pricingPolicyHash:inspected.pricingPolicyHash,
+  validFromMs:inspected.checked,validUntilMs:inspected.validUntil});
+}
+
 /** Select only from the reviewed, immutable MaaS catalogue embedded in the
  * supplied evidence. Callers must never recreate these brackets locally. */
 export function selectQwenMaaSPublishedTier(
@@ -64,27 +93,14 @@ const maaSCatalogEntry=()=>JSON.stringify({catalogVersion:QWEN_MAAS_TARIFF_CATAL
 export function verifyQwenMaaSPublishedPricingEvidence(evidence:MaaSPublishedPricingEvidence,input:{
  baseUrl:string;credentialSha256:string;
 }):VerifiedQwenMaaSPricingPolicy|null{
- try{
-  const normalizedBaseUrl=input.baseUrl.replace(/\/+$/,''),checked=Date.parse(evidence.checkedAt),validUntil=Date.parse(evidence.validUntil),now=Date.now();
-  if(evidence.schemaVersion!==3||evidence.basis!=='published_undiscounted_ceiling'||evidence.provider!=='qwen'||evidence.model!=='qwen3-vl-plus'||
-   evidence.catalogVersion!==QWEN_MAAS_TARIFF_CATALOG_VERSION||evidence.sourceUrl!==QWEN_MAAS_SOURCE_URL||
-   evidence.sourceCheckedAt!==QWEN_MAAS_CATALOG_CHECKED_AT||evidence.checkedAt!==evidence.sourceCheckedAt||
-   !Number.isFinite(checked)||!Number.isFinite(validUntil)||!Number.isFinite(now)||now<checked||now>=validUntil||
-   validUntil-checked!==QWEN_PUBLISHED_TARIFF_VALIDITY_MS||evidence.catalogEntrySha256!==sha(maaSCatalogEntry())||
-   evidence.maximumInputTokens!==qwenVisionInputLimit(evidence.model)||JSON.stringify(evidence.tiers)!==JSON.stringify(QWEN_MAAS_TIERS_INTERNAL)||
-   evidence.inputPriceCnyPerMillion!==3||evidence.outputPriceCnyPerMillion!==30||
-   classifyQwenCompatibleEndpoint(normalizedBaseUrl)!=='qianwen-maas'||input.credentialSha256!==evidence.providerBinding.credentialSha256||
-   !/^[a-f0-9]{64}$/.test(input.credentialSha256)||evidence.providerBinding.baseUrl.replace(/\/+$/,'')!==normalizedBaseUrl||
-   evidence.accountRef!==`qwen:${sha(JSON.stringify({baseUrl:normalizedBaseUrl,credentialSha256:input.credentialSha256}))}`)return null;
-  const frozenEvidence=structuredClone(evidence);
-  Object.freeze(frozenEvidence.providerBinding);for(const tier of frozenEvidence.tiers)Object.freeze(tier);Object.freeze(frozenEvidence.tiers);Object.freeze(frozenEvidence);
-  const schema='verified-qwen-maas-pricing-policy.v1' as const,verifiedAt=new Date(now).toISOString(),validUntilMs=validUntil;
+ try{const inspected=inspectQwenMaaSPublishedPricingEvidence(evidence,input),now=Date.now();if(!inspected||!Number.isFinite(now)||now<inspected.checked||now>=inspected.validUntil)return null;
+  const frozenEvidence=inspected.frozenEvidence,schema='verified-qwen-maas-pricing-policy.v1' as const,verifiedAt=new Date(now).toISOString(),validUntilMs=inspected.validUntil;
   const policy=Object.freeze({schema,evidence:frozenEvidence,verifiedAt,validUntilMs,
    // This is a durable policy identity, not an observation timestamp. A
    // restart must rebuild the same identity from the same frozen evidence,
    // while the capability itself is still short-lived and checked against
    // the module clock on every tier selection.
-   verificationHash:qwenMaaSPricingPolicyIdentity(schema,frozenEvidence,validUntilMs)});
+   verificationHash:inspected.pricingPolicyHash});
   VERIFIED_QWEN_MAAS_POLICIES.add(policy);return policy;
  }catch{return null;}
 }
