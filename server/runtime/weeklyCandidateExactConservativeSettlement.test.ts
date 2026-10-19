@@ -110,9 +110,9 @@ test('expired pricing blocks a new claim without writes but recorded children ca
  }finally{Date.now=original;}
 });
 
-test('no production module imports dormant v2 settlement',()=>{
+test('only the explicit dormant escrow carry adapter imports v2 settlement',()=>{
  const files=(function walk(directory:string):string[]{return fs.readdirSync(directory,{withFileTypes:true}).flatMap(entry=>entry.isDirectory()?walk(path.join(directory,entry.name)):[path.join(directory,entry.name)]);})('server');
  const callers=files.filter(file=>file.endsWith('.ts')&&!file.endsWith('.test.ts')&&!file.endsWith('weeklyCandidateExactConservativeSettlement.ts'))
   .filter(file=>fs.readFileSync(file,'utf8').includes('readWeeklyCandidateExactConservativeSettlementV2'));
- assert.deepEqual(callers,[]);
+ assert.deepEqual(callers,['server/runtime/weeklyCandidateExactProductionEscrowPorts.ts']);
 });

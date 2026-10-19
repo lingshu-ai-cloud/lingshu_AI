@@ -6,8 +6,7 @@ import type {WeeklyPreproductionRetryAttempt} from './weeklyPreproductionRetryAt
 import {verifiedWeeklyCandidateCanonicalMedia,weeklyCandidateExactAnalysisOperationId,WEEKLY_CANDIDATE_EXACT_ANALYSIS_OPERATIONS,WEEKLY_CANDIDATE_EXACT_ANALYSIS_RECEIPTS,type WeeklyCandidateExactAnalysisPorts} from './weeklyCandidateExactAnalysisOperation.js';
 import {openWeeklyCandidateExactProductionEscrow,openWeeklyCandidateExactProductionEscrowV2,prepareWeeklyCandidateExactProductionEscrow,WEEKLY_CANDIDATE_EXACT_PRODUCTION_ESCROWS,type WeeklyCandidateExactProductionEscrow,type WeeklyCandidateExactProductionEscrowV2} from './weeklyCandidateExactProductionEscrow.js';
 import {withWeeklyCandidateDynamicExactPaidScope} from './weeklyCandidateExactPaidRequests.js';
-import {readWeeklyCandidateExactConservativeSettlement,type WeeklyCandidateExactAuditReader,type WeeklyCandidateExactConservativeSettlementV2} from './weeklyCandidateExactConservativeSettlement.js';
-import * as conservativeSettlement from './weeklyCandidateExactConservativeSettlement.js';
+import {readWeeklyCandidateExactConservativeSettlement,readWeeklyCandidateExactConservativeSettlementV2,type WeeklyCandidateExactAuditReader} from './weeklyCandidateExactConservativeSettlement.js';
 import type {WeeklyCandidateDynamicExactHeadAnchorV2,WeeklyCandidateDynamicExactPlanV2} from './weeklyCandidateExactPaidRequests.js';
 import {readWeeklyAutomationTemplate} from '../socialPrograms/weeklyAutomationTemplate.js';
 import {readIndependentAdmission} from '../socialPrograms/weeklyIndependentAdmission.js';
@@ -170,9 +169,7 @@ export async function carryForwardWeeklyCandidateExactProductionCostV2(input:{
   ledgerIntegrityKeySha256:escrow.ledgerIntegrityKeySha256,model:escrow.model,pricingEvidence:structuredClone(escrow.pricingEvidence),
   pricingEvidenceHash:escrow.pricingEvidenceHash,pricingPolicyHash:escrow.pricingPolicyHash,measurementPolicyHash:escrow.measurementPolicyHash,
   protocolMaximumRequests:escrow.protocolMaximumRequests,candidateMaximumMicros:escrow.candidateMaximumMicros};
- const settlementReader=conservativeSettlement[('readWeeklyCandidateExactConservative'+'SettlementV2') as keyof typeof conservativeSettlement] as
-  (value:any)=>Promise<WeeklyCandidateExactConservativeSettlementV2|null>;
- const readSettlement=async()=>settlementReader({root:input.exactRoot,authorizationHash:escrow.recordHash,
+ const readSettlement=async()=>readWeeklyCandidateExactConservativeSettlementV2({root:input.exactRoot,authorizationHash:escrow.recordHash,
   plan,integrityKey:input.integrityKey,assertReservedPlanForSettlement:handle.assertReservedPlanForSettlement,
   headAnchor:input.headAnchor,reader:input.auditReader});
  await assertSourceCurrent();const sourceEntry=handle.readOnlyStatus().entries[candidate.operationId];
