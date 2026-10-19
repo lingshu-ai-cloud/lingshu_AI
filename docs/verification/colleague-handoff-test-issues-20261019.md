@@ -116,6 +116,14 @@
 
 ## 已验证通过的相关范围
 
+## RESOLVED-025 周 Director 有效候选 fixture 缺少冻结权利证明
+
+- 命令：`pnpm run quality`，失败阶段 `server/socialPrograms/planningAuthority.test.ts`。
+- 实际：用例最后声明有效候选“不应拒绝”，但 handoff 没有 `mayAnalyze`、`mayAdapt` 和禁止复用原媒体的权利边界，完整准入正确 fail-closed。
+- 归因：测试 fixture 落后于当前产品特定生产准入契约；不是规划实现误拒绝。
+- 修复：为该 handoff 补齐明确权利证明；跨产品、旧周包、撤销资源和错误分析 ID 的拒绝断言保持不变。
+- 状态：已修复，待完整质量门禁复核。
+
 ## RESOLVED-024 Studio 任务交付入口绕过任务感知导航回调
 
 - 命令：`pnpm run quality`，失败阶段 `src/lib/socialContentManualBridge.contract.test.ts`。
