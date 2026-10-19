@@ -7,7 +7,7 @@
   "excludeNameFragments": [".test.", ".d.ts"],
   "oversizedFileBudgets": {
     "server/contentExecution/durableQueue.ts": 985,
-    "server/digitalEmployees/contentProduction.ts": 2125,
+    "server/digitalEmployees/contentProduction.ts": 2108,
     "server/digitalEmployees/followupDispatchWorker.ts": 901,
     "server/integrations/social.ts": 802,
     "server/publishing/platformPublisher.ts": 846,
