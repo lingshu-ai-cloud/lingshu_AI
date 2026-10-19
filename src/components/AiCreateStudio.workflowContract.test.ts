@@ -238,7 +238,7 @@ assert.deepEqual(parseDigitalEmployeeWorkflowContext(JSON.stringify({ page: 'sma
 const studioSource = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
 assert.match(
   studioSource,
-  /setProjectTitle\(loadedStudioProjectTitle\(p, incomingCreateRequest\)\)/,
+  /const restoredTitle = loadedStudioProjectTitle\(p, incomingCreateRequest\)[\s\S]{0,500}setProjectTitle\(restoredTitle\)/,
   '载入项目时必须协调当前续接请求的草稿名',
 );
 assert.match(
