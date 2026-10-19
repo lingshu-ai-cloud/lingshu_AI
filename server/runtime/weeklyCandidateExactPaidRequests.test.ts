@@ -25,12 +25,12 @@ const response=(hash:string,id:string,status=200)=>({provider:'qwen' as const,re
 const v2Body=(label:string,max_tokens=100)=>JSON.stringify({model:'qwen3-vl-plus',messages:[{role:'user',content:label}],response_format:{type:'json_object'},temperature:0,max_tokens});
 async function v2Fixture(t:test.TestContext,overrides:Partial<Pick<WeeklyCandidateDynamicExactPlanV2,'protocolMaximumRequests'|'candidateMaximumMicros'>>={}){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'exact-paid-v2-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
- const integrityKey='isolated-v2-integrity-key',credentialSha256=sha(integrityKey),accountRef=`qwen:${sha(JSON.stringify({baseUrl:endpoint,credentialSha256}))}`;
+ const integrityKey='isolated-v2-ledger-integrity-key',providerKey='isolated-v2-provider-key',credentialSha256=sha(providerKey),ledgerIntegrityKeySha256=sha(integrityKey),accountRef=`qwen:${sha(JSON.stringify({baseUrl:endpoint,credentialSha256}))}`;
  const tariff=await createQwenMaaSPublishedTariffReader({now:()=>new Date('2026-10-19T12:00:00.000Z'),readProviderBinding:async()=>({provider:'qwen',model:'qwen3-vl-plus',baseUrl:endpoint,credentialSha256})}).read({
   provider:'qwen',model:'qwen3-vl-plus',accountRef,stage:'candidate_exact_analysis',shotId:null,operationId:'v2-test',inputContractHash:'f'.repeat(64),maximumUnits:{inputTokens:260096,outputTokens:16384},
  });assert.ok(tariff);const policy=verifyQwenMaaSPublishedPricingEvidence(tariff.publicPricingEvidence,{baseUrl:endpoint,credentialSha256});assert.ok(policy);
  const plan:WeeklyCandidateDynamicExactPlanV2={schema:'weekly-candidate-dynamic-exact-plan.v2',operationId:'v2-operation',candidateId:'candidate-v2',mediaSha256:'a'.repeat(64),endpoint,
-  credentialSha256,model:'qwen3-vl-plus',pricingEvidence:tariff.publicPricingEvidence,pricingEvidenceHash:sha(JSON.stringify(tariff.publicPricingEvidence)),
+  credentialSha256,ledgerIntegrityKeySha256,model:'qwen3-vl-plus',pricingEvidence:tariff.publicPricingEvidence,pricingEvidenceHash:sha(JSON.stringify(tariff.publicPricingEvidence)),
   pricingPolicyHash:policy.verificationHash,measurementPolicyHash:weeklyCandidateExactMeasurementPolicyHash(),protocolMaximumRequests:32,candidateMaximumMicros:10_000_000,...overrides};
  const authorizationHash='c'.repeat(64);let head:WeeklyCandidateDynamicExactHeadV2|null=weeklyCandidateDynamicExactInitialHeadV2(authorizationHash,plan,integrityKey),failNextCas=false;
  const headAnchor={read:async()=>head?structuredClone(head):null,compareAndSwap:async(expected:WeeklyCandidateDynamicExactHeadV2,next:WeeklyCandidateDynamicExactHeadV2)=>{
@@ -41,7 +41,7 @@ async function v2Fixture(t:test.TestContext,overrides:Partial<Pick<WeeklyCandida
   if(JSON.stringify(value)!==JSON.stringify(plan)||valueAuthorizationHash!==authorizationHash)throw Error('weekly_candidate_exact_production_escrow_v2_authorized_plan_changed');
  };
  const args={root,authorizationHash,plan,integrityKey,assertAuthorizedPlan,headAnchor};
- return {root,plan,authorizationHash,args,headAnchor,guard:createWeeklyCandidateDynamicExactPaidRequestsV2(args),getHead:()=>head?structuredClone(head):null,
+ return {root,plan,authorizationHash,args,providerKey,headAnchor,guard:createWeeklyCandidateDynamicExactPaidRequestsV2(args),getHead:()=>head?structuredClone(head):null,
   setHead:(value:WeeklyCandidateDynamicExactHeadV2|null)=>{head=value?structuredClone(value):null;},failOneCas:()=>{failNextCas=true;}};
 }
 
@@ -241,10 +241,13 @@ test('v2 pricing tamper, provider drift and expiry reject before a durable claim
  for(const plan of [
   {...f.plan,pricingEvidence:{...f.plan.pricingEvidence,inputPriceCnyPerMillion:.01}},
   {...f.plan,endpoint:'https://dashscope.aliyuncs.com/compatible-mode/v1'},
+  {...f.plan,credentialSha256:sha('rotated-provider-key')},
  ])assert.throws(()=>createWeeklyCandidateDynamicExactPaidRequestsV2({...f.args,plan:plan as WeeklyCandidateDynamicExactPlanV2}),/dynamic_v2_plan_invalid/);
  const original=Date.now;try{Date.now=()=>Date.parse('2027-01-16T16:00:00.000Z');
   const expired=createWeeklyCandidateDynamicExactPaidRequestsV2(f.args);await assert.rejects(expired.beforeProviderRequest(v2Body('expired')),/pricing_policy_unverified/);
  }finally{Date.now=original;}
+ assert.throws(()=>createWeeklyCandidateDynamicExactPaidRequestsV2({...f.args,integrityKey:'rotated-ledger-key'}),/dynamic_v2_integrity_key_invalid/);
+ assert.throws(()=>createWeeklyCandidateDynamicExactPaidRequestsV2({...f.args,plan:{...f.plan,ledgerIntegrityKeySha256:f.plan.credentialSha256}}),/dynamic_v2_plan_invalid/);
  assert.equal(fs.existsSync(f.guard.ledgerPath),false);
 });
 
@@ -288,7 +291,7 @@ test('v2 plan drift opens the same ledger and fails closed instead of forking au
 
 test('v2 independent head rejects deletion, truncation and rollback of an otherwise authentic ledger',async t=>{
  const f=await v2Fixture(t),first=v2Body('anchor-first');await f.guard.beforeProviderRequest(first);
- const unknown=fs.readFileSync(f.guard.ledgerPath,'utf8'),unknownHead=f.getHead();assert.ok(unknownHead);assert.equal(unknown.includes(f.args.integrityKey),false);
+ const unknown=fs.readFileSync(f.guard.ledgerPath,'utf8'),unknownHead=f.getHead();assert.ok(unknownHead);assert.equal(unknown.includes(f.args.integrityKey),false);assert.equal(unknown.includes(f.providerKey),false);
  fs.unlinkSync(f.guard.ledgerPath);await assert.rejects(f.guard.readDiagnostic(),/dynamic_v2_anchor_changed/);
  f.setHead(null);await assert.rejects(f.guard.readDiagnostic(),/dynamic_v2_anchor_missing/);
  f.setHead(unknownHead);

@@ -24,10 +24,10 @@ async function v2Input(t:test.TestContext){
  const job:WeeklyPreproductionJob={jobId:'job-v2',...scope,consumerTaskId:f.task.taskId,consumerInputHash:'input',kind:'discovery',status:'running',originalRunKey:'weekly-preproduction:job-v2',actorUserId:'owner',dueAt:'2026-10-12T00:00:00.000Z',boundAt:'2026-10-11T00:00:00.000Z',updatedAt:'2026-10-11T00:00:00.000Z',sourceHash:'a'.repeat(64),authority:{scopeId:'scope-v2',scopeVersion:1,scopeHash:'b'.repeat(64),requestedModes:['account']},code:null,resultRefs:[],recordHash:'c'.repeat(64)};
  const run:SocialInspirationCollectionRun={runId:'run-v2',planId:'plan',keywordSetId:'keywords',keywordSetVersion:1,discoveryScopeId:'scope-v2',discoveryScopeVersion:1,status:'stopped',triggerType:'manual',scopeSnapshot:{weeklyProducer:{key:job.originalRunKey}} as any,modeStats:{},platformStats:{},keywordTierStats:{},evidenceOutcomes:{},sourceRunRefs:[],queryBasis:{},market:'US',language:'en',stopReason:'no_valid_results',startedAt:'2026-10-11T00:00:00.000Z',finishedAt:'2026-10-11T01:00:00.000Z',error:null,failureDetails:[]};
  const candidates=Array.from({length:5},(_,index)=>({candidateId:`candidate-v2-${index}`,mediaSha256:String(index).repeat(64),operationId:`operation-v2-${index}`}));
- const endpoint='https://maas.qianwenaiapi.com/compatible-mode/v1',integrityKey='isolated-v2-escrow-key',credentialSha256=sha(integrityKey),accountRef=`qwen:${sha(JSON.stringify({baseUrl:endpoint,credentialSha256}))}`;
+ const endpoint='https://maas.qianwenaiapi.com/compatible-mode/v1',integrityKey='isolated-v2-escrow-ledger-key',providerKey='isolated-v2-escrow-provider-key',credentialSha256=sha(providerKey),ledgerIntegrityKeySha256=sha(integrityKey),accountRef=`qwen:${sha(JSON.stringify({baseUrl:endpoint,credentialSha256}))}`;
  const tariff=await createQwenMaaSPublishedTariffReader({now:()=>new Date('2026-10-19T12:00:00.000Z'),readProviderBinding:async()=>({provider:'qwen',model:'qwen3-vl-plus',baseUrl:endpoint,credentialSha256})}).read({provider:'qwen',model:'qwen3-vl-plus',accountRef,stage:'candidate_exact_analysis',shotId:null,operationId:'v2-escrow-tariff',inputContractHash:'f'.repeat(64),maximumUnits:{inputTokens:260096,outputTokens:16384}});assert.ok(tariff);
  const provider={endpoint,credentialSha256,model:'qwen3-vl-plus' as const,pricingEvidence:tariff.publicPricingEvidence};
- return {f,root,job,run,candidates,provider,integrityKey,input:{store:f.store,job,run,root,provider,candidates}};
+ return {f,root,job,run,candidates,provider,integrityKey,providerKey,input:{store:f.store,job,run,root,provider,ledgerIntegrityKeySha256,candidates}};
 }
 
 test('accepted weekly ten-yuan production authority creates one restart-safe exact-analysis escrow without a second user approval',async t=>{
@@ -68,7 +68,7 @@ test('v2 freezes complete pricing evidence and reserves five independent shares 
  }finally{Date.now=original;}
  const candidate=f.candidates[0]!,reservation=firstReservation!;
  const plan:WeeklyCandidateDynamicExactPlanV2={schema:'weekly-candidate-dynamic-exact-plan.v2',operationId:candidate.operationId,candidateId:candidate.candidateId,
-  mediaSha256:candidate.mediaSha256,endpoint:f.provider.endpoint,credentialSha256:f.provider.credentialSha256,model:'qwen3-vl-plus',
+  mediaSha256:candidate.mediaSha256,endpoint:f.provider.endpoint,credentialSha256:f.provider.credentialSha256,ledgerIntegrityKeySha256:reservation.ledgerIntegrityKeySha256,model:'qwen3-vl-plus',
   pricingEvidence:reservation.pricingEvidence,pricingEvidenceHash:reservation.pricingEvidenceHash,pricingPolicyHash:reservation.pricingPolicyHash,
   measurementPolicyHash:reservation.measurementPolicyHash,protocolMaximumRequests:reservation.protocolMaximumRequests,candidateMaximumMicros:reservation.candidateMaximumMicros};
  let head:WeeklyCandidateDynamicExactHeadV2|null=weeklyCandidateDynamicExactInitialHeadV2(reservation.authorizationHash,plan,f.integrityKey);const headAnchor={read:async()=>head?structuredClone(head):null,
@@ -76,6 +76,8 @@ test('v2 freezes complete pricing evidence and reserves five independent shares 
  const journal=createWeeklyCandidateDynamicExactPaidRequestsV2({root:f.root,authorizationHash:reservation.authorizationHash,plan,integrityKey:f.integrityKey,assertAuthorizedPlan:first.assertReservedPlan,headAnchor});
  await journal.beforeProviderRequest(JSON.stringify({model:'qwen3-vl-plus',messages:[{role:'user',content:'escrow-bound'}],response_format:{type:'json_object'},temperature:0,max_tokens:1}));
  assert.equal((await journal.readDiagnostic()).requestCount,1);
+ assert.equal(JSON.stringify(first.escrow).includes(f.integrityKey),false);assert.equal(JSON.stringify(first.escrow).includes(f.providerKey),false);
+ assert.equal(fs.readFileSync(first.ledgerPath,'utf8').includes(f.integrityKey),false);
 });
 
 test('v2 refuses a package/job/run that already has v1 and creates neither a second row nor a v2 ledger',async t=>{
@@ -100,7 +102,7 @@ test('v2 journal authority requires the exact reserved mother and rejects invent
  const f=await v2Input(t),handle=await prepareWeeklyCandidateExactProductionEscrowV2(f.input),reserved=f.candidates[0]!;
  const grant=await handle.reserve(reserved.candidateId,reserved.mediaSha256,reserved.operationId);
  const base:WeeklyCandidateDynamicExactPlanV2={schema:'weekly-candidate-dynamic-exact-plan.v2',operationId:reserved.operationId,candidateId:reserved.candidateId,
-  mediaSha256:reserved.mediaSha256,endpoint:f.provider.endpoint,credentialSha256:f.provider.credentialSha256,model:'qwen3-vl-plus',pricingEvidence:grant.pricingEvidence,
+  mediaSha256:reserved.mediaSha256,endpoint:f.provider.endpoint,credentialSha256:f.provider.credentialSha256,ledgerIntegrityKeySha256:grant.ledgerIntegrityKeySha256,model:'qwen3-vl-plus',pricingEvidence:grant.pricingEvidence,
   pricingEvidenceHash:grant.pricingEvidenceHash,pricingPolicyHash:grant.pricingPolicyHash,measurementPolicyHash:grant.measurementPolicyHash,
   protocolMaximumRequests:grant.protocolMaximumRequests,candidateMaximumMicros:grant.candidateMaximumMicros};
  const request=JSON.stringify({model:'qwen3-vl-plus',messages:[{role:'user',content:'must-not-claim'}],response_format:{type:'json_object'},temperature:0,max_tokens:1});
