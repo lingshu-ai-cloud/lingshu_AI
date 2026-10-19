@@ -14,7 +14,7 @@ async function responseBody(response:Response):Promise<Record<string,unknown>>{
 
 export function parseWeeklyTaskWorkspace(value:unknown,scope:WeeklyTaskWorkspaceScope):WeeklyTaskWorkspace {
   const item=value as WeeklyTaskWorkspace|null;
-  if(!item||item.schemaVersion!==WEEKLY_TASK_WORKSPACE_SCHEMA_VERSION||Object.entries(scope).some(([key,expected])=>item[key as keyof WeeklyTaskWorkspace]!==expected)||!item.tenantId||!item.workspaceId||!item.taskIdempotencyKey||!Array.isArray(item.upstreamTaskIds)||item.upstreamTaskIds.some(id=>typeof id!=='string')||!Array.isArray(item.resultRefs)||!Array.isArray(item.blockingCodes))throw new WeeklyTaskWorkspaceApiError(409,'weekly_task_workspace_identity_changed','任务生产现场与当前周包或执行任务不一致，请刷新后重试。');
+  if(!item||item.schemaVersion!==WEEKLY_TASK_WORKSPACE_SCHEMA_VERSION||Object.entries(scope).some(([key,expected])=>item[key as keyof WeeklyTaskWorkspace]!==expected)||!item.tenantId||!item.workspaceId||!item.taskIdempotencyKey||!Array.isArray(item.upstreamTaskIds)||item.upstreamTaskIds.some(id=>typeof id!=='string')||!Array.isArray(item.resultRefs)||!Array.isArray(item.blockingCodes)||!item.runtime||!Array.isArray(item.runtime.pauseReasons)||!Array.isArray(item.runtime.completedWork)||!Array.isArray(item.runtime.actualCost?.evidenceRefs)||!Array.isArray(item.runtime.checkpoints)||!Array.isArray(item.runtime.nextActions)||!Array.isArray(item.runtime.recovery?.providerReceipts))throw new WeeklyTaskWorkspaceApiError(409,'weekly_task_workspace_identity_changed','任务生产现场与当前周包或执行任务不一致，请刷新后重试。');
   return item;
 }
 
