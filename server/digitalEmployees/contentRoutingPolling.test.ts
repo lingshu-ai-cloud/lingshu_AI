@@ -15,7 +15,7 @@ const plan = { ...buildWeeklyPlan(goalInput,config), ...configurationSnapshot(re
 assert.equal(plan.tasks.length,16);
 const run:any={id:'mock-run',tenant_id:tenant,goal_id:'mock-goal',plan_id:'mock-plan',status:'running',started_at:'2026-09-01T00:00:00.000Z'};
 const tasks:any[]=plan.tasks.map(p=>({id:`mock-${p.key}`,tenant_id:tenant,run_id:run.id,task_key:p.key,title:p.title,status:'pending',depends_on:p.dependsOn,sequence:p.sequence,kind:p.kind,agent_role:p.agentRole,execution_mode:p.executionMode,external_effect:p.externalEffect,automatic_execution_allowed:p.automaticExecutionAllowed,requires_approval:p.requiresApproval,task_version:1,output:{},business_refs:[]}));
-const records:Record<string,any[]>={workflow_runs:[run],workflow_tasks:tasks,weekly_goals:[{id:run.goal_id,tenant_id:tenant,title:goalInput.title,objective:goalInput.objective,metric:goalInput.metric,scope:{},content_platforms:['facebook'],starts_at:goalInput.startsAt,ends_at:goalInput.endsAt}],weekly_plans:[{id:run.plan_id,tenant_id:tenant,plan}],digital_employee_configs:[{id:'mock-config',tenant_id:tenant,config}],tenant_profiles:[{id:'mock-profile',tenant_id:tenant,profile:{company:{name:'MOCK company',industry:'Clothing'},products:{items:[{name:'MOCK cotton shirt',sku:'mock-sku',material:'cotton'}]}}}],social_accounts:[{id:'mock-account',tenantId:tenant,status:'connected',platform:'facebook',title:'MOCK page'}],content_batch_plans:[{id:'mock-orders',tenant_id:tenant,run_id:run.id,task_id:'mock-content_mode_routing',status:'planned',orders:[{id:'mock-order',route:'product',platform:'facebook',productId:'mock-product'}],routing:{eligibleRoutes:['product'],disabledRoutes:[]}}]};
+const records:Record<string,any[]>={workflow_runs:[run],workflow_tasks:tasks,weekly_goals:[{id:run.goal_id,tenant_id:tenant,title:goalInput.title,objective:goalInput.objective,metric:goalInput.metric,scope:{},content_platforms:['facebook'],starts_at:goalInput.startsAt,ends_at:goalInput.endsAt}],weekly_plans:[{id:run.plan_id,tenant_id:tenant,plan}],digital_employee_configs:[{id:'mock-config',tenant_id:tenant,config}],tenant_profiles:[{id:'mock-profile',tenant_id:tenant,profile:{company:{name:'MOCK company',industry:'Clothing'},products:{items:[{name:'MOCK cotton shirt',sku:'mock-sku',material:'cotton'}]}}}],social_accounts:[{id:'mock-account',tenantId:tenant,status:'connected',platform:'facebook',title:'MOCK page'}],content_batch_plans:[{id:'mock-orders',tenant_id:tenant,run_id:run.id,task_id:'mock-content_mode_routing',status:'planned',orders:[{id:'mock-order',route:'product',platform:'facebook',productId:'mock-product'}],routing:{eligibleRoutes:['product'],disabledRoutes:[]}}],trend_videos:[]};
 const original = { ...store }; const originalFetch=globalThis.fetch;
 let networkCalls=0; let serial=0;
 const statusHistory:any[]=[];
@@ -68,7 +68,10 @@ try {
     assert.equal(clicks, 0, 'another tenant material must not satisfy production routing');
     materials.push({ id: 'material-1', tenantId: tenant, productId: 'mock-sku', url: 'https://assets.example.com/shirt.jpg' });
     await reconcileDigitalEmployeeRun(tenant, run.id);
-    assert.equal(clicks, 1, 'newly satisfied conditions execute once');
+    assert.equal(clicks, 0, 'product material cannot replace the exact benchmark required by fixed-yield clone planning');
+    records.trend_videos.push({id:'reference-1',tenantId:tenant,duration:3,updatedAt:'2026-09-06T00:00:00.000Z',aiAnalysis:{analysisMode:'exact',analysisQuality:'video',geminiStatus:'analyzed',gemini:{scriptDetails15s:[{time:'0-3s',visual:'候选视频完整展示衬衫',materialType:'product',narrativeRole:'hook',classificationEvidence:'画面明确展示产品',analysisGranularity:'shot'}]}}});
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 1, `newly satisfied conditions execute once: ${JSON.stringify(routing.output)}`);
     assert.equal(routing.status, 'succeeded');
     assert.equal(records.content_batch_plans.length, 1);
     assert.equal(records.content_batch_plans[0].facts_version, 'enterprise-facts-v1-frozen', 'the content order keeps the canonical version paired with its frozen facts');
