@@ -27,7 +27,7 @@ test('automatic director admission rejects high-score cross-product videos, stal
  const context={tenantId:'tenant-1',candidateId,programId:'program-1',packageId:'package-1',packageVersion:1,recordHash:'context-1',keyword:{scopeId:'scope-1',scopeVersion:2,scopeHash:socialRequestHash(scope)},productFacts:[{ref:{type:'enterprise_fact',id:'cleansing-foam',version:24},statement:'洁面泡沫 8809987654327'}],observations:[{shotIndex:1,observedFacts:'车身清洁泡沫',visual:'汽车清洁'}]};
  const semantic={tenantId:'tenant-1',candidateId,contextHash:'context-1',assessmentId:'semantic-1',dimensions:{relevance:{state:'assessed',value:.95,evidence:[{factRef:'enterprise_fact:cleansing-foam@24',shotIndex:1,quote:'车身清洁泡沫',reason:'误把同词当同产品'}]}}};
  const transfer={tenantId:'tenant-1',candidateId,contextHash:'context-1',semanticAssessmentId:'semantic-1',state:'assessed'};
- const handoff={inspirationId:candidateId,readiness:'production_reference',analysisId:'exact-1',version:'1',source:{sourceUrl}};
+ const handoff={inspirationId:candidateId,readiness:'production_reference',analysisId:'exact-1',version:'1',source:{sourceUrl},rights:{mayAnalyze:true,mayAdapt:true,mayUseOriginalMedia:false}};
  const base={store,tenantId:'tenant-1',programId:'program-1',packageId:'package-1',packageVersion:1,candidateId,handoffs:[{id:'handoff-1',tenant_id:'tenant-1',record_hash:socialRequestHash(handoff),payload:handoff}] as Record_[]};
  let resourceAlive=true;
  const readers={media:async()=>true,context:async()=>context,semantic:async()=>semantic,transferability:async()=>resourceAlive?transfer:null} as any;
