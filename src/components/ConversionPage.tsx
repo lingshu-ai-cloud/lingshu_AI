@@ -1451,15 +1451,9 @@ function CustomerInfoRail({
               <span>{customer.language || '—'}</span>
               <span className="text-border-bright">·</span>
               <span><LiveLocalTime timeZone={customer.timeZone}/></span>
-            </div>
-          </div>
-          <dl data-testid="customer-profile-facts" className="mt-4 grid grid-cols-3 divide-x divide-border rounded-xl border border-border bg-surface-2 py-2 text-center">
-            <div className="min-w-0 px-2"><dt className="text-[10px] text-text-muted">关注产品</dt><dd className="mt-0.5 truncate text-xs font-semibold text-text-primary" title={customer.product}>{customer.product || '—'}</dd></div>
-            <div className="min-w-0 px-2"><dt className="text-[10px] text-text-muted">客户阶段</dt><dd className="mt-0.5 truncate text-xs font-semibold text-text-primary">{STAGE_LABEL[customer.stage]}</dd></div>
-            <div className="min-w-0 px-2"><dt className="text-[10px] text-text-muted">预估价值</dt><dd className="mt-0.5 truncate text-xs font-semibold text-text-primary">{customer.estimatedValue || '—'}</dd></div>
-          </dl>
-        </div>
-        <div className="mt-3"><CustomerInsightDisclosure customer={customer} /></div>
+            </div></div>
+          <dl data-testid="customer-profile-facts" className="mt-4 grid grid-cols-3 divide-x divide-border rounded-xl border border-border bg-surface-2 py-2 text-center"><div className="min-w-0 px-2"><dt className="text-[10px] text-text-muted">关注产品</dt><dd className="mt-0.5 truncate text-xs font-semibold text-text-primary" title={customer.product}>{customer.product || '—'}</dd></div><div className="min-w-0 px-2"><dt className="text-[10px] text-text-muted">客户阶段</dt><dd className="mt-0.5 truncate text-xs font-semibold text-text-primary">{STAGE_LABEL[customer.stage]}</dd></div><div className="min-w-0 px-2"><dt className="text-[10px] text-text-muted">预估价值</dt><dd className="mt-0.5 truncate text-xs font-semibold text-text-primary">{customer.estimatedValue || '—'}</dd></div></dl>
+        </div><div className="mt-3"><CustomerInsightDisclosure customer={customer} /></div>
       </div>
       <Collapse
         ghost

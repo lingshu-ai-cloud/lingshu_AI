@@ -3100,17 +3100,9 @@ studioRouter.post('/seedance-video', async (req, res) => {
       }
     }
   }
-  // An accepted supplier operation is replayed from its durable receipt before
-  // reading the original frame bytes. Those bytes are required only for a new
-  // supplier submission; a retry must not become blocked after local media was
-  // archived or moved.
-  if (firstFrame && existingStoryboardVideoOperation?.status === 'uncertain'
-    && existingStoryboardVideoOperation.output?.providerTaskId
-    && (!isSeedanceVideoEnabled() || !config.apiKey)) {
-    res.status(202).json({ ok: false, code: 'STORYBOARD_VIDEO_IN_PROGRESS',
-      error: '原视频任务已有供应商回执；当前无法查询供应商状态，已保留原任务且未重复提交',
-      providerTaskId: existingStoryboardVideoOperation.output.providerTaskId,
-      providerModel: config.model, providerAcceptedAt: existingStoryboardVideoOperation.output?.providerAcceptedAt }); return;
+  // Preserve an accepted supplier receipt before local-byte/new-call checks; retries must never submit twice.
+  if (firstFrame && existingStoryboardVideoOperation?.status === 'uncertain' && existingStoryboardVideoOperation.output?.providerTaskId && (!isSeedanceVideoEnabled() || !config.apiKey)) {
+    res.status(202).json({ ok: false, code: 'STORYBOARD_VIDEO_IN_PROGRESS', error: '原视频任务已有供应商回执；当前无法查询供应商状态，已保留原任务且未重复提交', providerTaskId: existingStoryboardVideoOperation.output.providerTaskId, providerModel: config.model, providerAcceptedAt: existingStoryboardVideoOperation.output?.providerAcceptedAt }); return;
   }
   frozenFrameObject = firstFrame?.objectKey ? await objectStorageDownload(firstFrame.objectKey) : null;
   frozenFrameBytes = frozenFrameObject?.buf?.length ? frozenFrameObject.buf : firstFrame?.file && fs.existsSync(path.join(MEDIA_DIR, firstFrame.file)) ? fs.readFileSync(path.join(MEDIA_DIR, firstFrame.file)) : null;
