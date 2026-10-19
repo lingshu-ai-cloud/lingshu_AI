@@ -12,7 +12,9 @@ export {
 } from '../routes/enterprise.js';
 
 export {
+  alignStudioVoiceForAutomation,
   automationBgmAudio,
   automationBgmCatalog,
+  resolveStudioVoiceExecutionPlan,
   synthesizeStudioVoiceForAutomation,
 } from '../routes/studio.js';

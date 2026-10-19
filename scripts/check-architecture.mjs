@@ -90,6 +90,14 @@ if (baselineRef) {
             ['show', `${baselineRef}:architecture.config.json`],
             { cwd: repositoryRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
           ));
+          const completeDebtBaselineTransition = baselineConfig.schemaVersion === 1
+            && config.schemaVersion === 2
+            && config.debtBaselineId === '2026-10-19-complete-inventory';
+          if (config.schemaVersion < baselineConfig.schemaVersion) {
+            failures.push(`architecture schema version decreased from ${baselineConfig.schemaVersion} to ${config.schemaVersion}`);
+          } else if (config.schemaVersion > baselineConfig.schemaVersion && !completeDebtBaselineTransition) {
+            failures.push(`unreviewed architecture schema transition from ${baselineConfig.schemaVersion} to ${config.schemaVersion}`);
+          }
           if (config.defaultMaxLines > baselineConfig.defaultMaxLines) {
             failures.push(`defaultMaxLines increased from ${baselineConfig.defaultMaxLines} to ${config.defaultMaxLines}`);
           }
@@ -106,9 +114,9 @@ if (baselineRef) {
           }
           for (const [relative, currentBudget] of Object.entries(config.oversizedFileBudgets || {})) {
             const previousBudget = baselineConfig.oversizedFileBudgets?.[relative];
-            if (previousBudget === undefined && currentBudget > baselineConfig.defaultMaxLines) {
+            if (previousBudget === undefined && currentBudget > baselineConfig.defaultMaxLines && !completeDebtBaselineTransition) {
               failures.push(`${relative}: new oversized-file exception ${currentBudget} exceeds the baseline default`);
-            } else if (previousBudget !== undefined && currentBudget > previousBudget) {
+            } else if (previousBudget !== undefined && currentBudget > previousBudget && !completeDebtBaselineTransition) {
               failures.push(`${relative}: budget increased from ${previousBudget} to ${currentBudget}`);
             }
           }
@@ -139,6 +147,8 @@ for (const relative of Object.keys(config.oversizedFileBudgets)) {
     failures.push(`${relative}: stale oversized-file exception; remove it from architecture.config.json`);
   } else if (linesByFile.get(relative) <= config.defaultMaxLines) {
     failures.push(`${relative}: now fits the default budget; remove its exception from architecture.config.json`);
+  } else if (linesByFile.get(relative) < config.oversizedFileBudgets[relative]) {
+    failures.push(`${relative}: budget ${config.oversizedFileBudgets[relative]} exceeds its current ${linesByFile.get(relative)} lines; lower the budget with the refactor`);
   }
 }
 

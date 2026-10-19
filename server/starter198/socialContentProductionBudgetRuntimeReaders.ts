@@ -8,7 +8,7 @@ import type { ProductionBudgetReadPorts } from './socialContentProductionBudgetP
 import type { InternalSocialContentFormula } from './socialContentThemes.js';
 import { socialDirectorFrozenDirection } from './socialContentDirectorPlan.js';
 import { socialDirectorSpokenNarration } from './socialContentDirectorHandoff.js';
-import {resolveStudioVoiceExecutionPlan} from '../routes/studio.js';
+import {resolveStudioVoiceExecutionPlan} from '../lib/socialContentLegacyPorts.js';
 import {nativeVoiceBillableCharacters} from '../lib/studioVoiceBilling.js';
 import {productionBillingAccountRef} from './socialContentProductionBudgetRoutes.js';
 import {paidProductionHash,type BoundPaidRoute} from './socialContentPaidOperationPlan.js';
@@ -84,7 +84,7 @@ export function createProductionBudgetRuntimeReaders(input: {
             try {
                 const { resolveSourceDurations } = await import('../lib/videoSourcePlan.js');
                 const { runVisualFfmpeg } = await import('../lib/renderVisualQuality.js');
-                const { extractQwenAnalysisFrames } = await import('../routes/videos.js');
+                const { extractQwenAnalysisFrames } = await import('../lib/videoAnalysisLegacyPort.js');
                 const { materialFrameBatches } = await import('../digitalEmployees/productionMaterialAnalysis.js');
                 const [resolved] = await resolveSourceDurations([asset]);
                 if (!resolved?.duration)

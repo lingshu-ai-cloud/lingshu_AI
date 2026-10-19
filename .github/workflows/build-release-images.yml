@@ -46,7 +46,10 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.source_sha || github.sha }}
-          fetch-depth: 1
+          # Governance checks prove immutable migration and architecture
+          # history against the PR base; shallow clones cannot supply that
+          # evidence and must fail closed instead of silently skipping it.
+          fetch-depth: 0
 
       - name: Lock source revision
         id: source
@@ -87,6 +90,16 @@ jobs:
             echo "This historical source does not define a test script."
             echo "Type-check, production build, and container-level smoke checks remain mandatory."
           fi
+
+      - name: Enforce repository governance
+        env:
+          ARCHITECTURE_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
+          MIGRATION_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
+        run: |
+          pnpm run check:architecture
+          pnpm run test:architecture-ratchet
+          pnpm run check:digital-employee-migrations
+          pnpm run test:migration-guard
 
       - name: Build application
         run: pnpm run build
