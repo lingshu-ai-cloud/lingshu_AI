@@ -116,6 +116,8 @@ import { productionReferenceAdmission } from '../../shared/productionReferenceAd
 import { reconcileStudioProductionSpec } from '../../shared/studioProductionContract';
 import { attachStudioSocialShotIdentities, normalizeStudioSocialShotId, resolveStudioSocialShot } from '../lib/studioSocialShotIdentity';
 import { studioAutosaveFingerprint, studioDraftChanged } from '../lib/studioAutosave';
+import { loadedStudioContinuationStep, loadedStudioProjectTitle, probeStudioAudioDuration as probeAudioDuration, probeStudioClipAspect as probeClipAspect, probeStudioMedia as probeMedia, safeStudioStepId, studioMaterialToClip as materialToClip } from '../lib/studioProjectHydration';
+export { loadedStudioContinuationStep, loadedStudioProjectTitle, safeStudioStepId } from '../lib/studioProjectHydration';
 export { StudioRequestTimeoutError, waitForStudioMediaReady, withStudioTimeout } from './studio/studioAuthenticatedMedia';
 // AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
 const STUDIO_ACCENT = 'var(--color-accent)';
@@ -126,106 +128,6 @@ const PUBLISH_RETURN_PREVIEW_KEY = 'ow_publish_return_to_preview';
 const STUDIO_OPEN_PROJECT_KEY = 'ow_studio_open_project';
 const PUBLISH_RETURN_PREVIEW_TTL = 2 * 60 * 60 * 1000;
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-
-export function loadedStudioProjectTitle(
-  project: Pick<StudioProject, 'id' | 'title' | 'status'>,
-  request?: Pick<SocialContentCreateRequest, 'continueProjectId' | 'prefill'> | null,
-): string {
-  if (project.status === 'template') return `${project.title} · 副本`;
-  if (request?.continueProjectId !== project.id) return project.title;
-  return request.prefill?.title?.trim() || project.title;
-}
-
-export function loadedStudioContinuationStep(
-  projectId: string | null,
-  request?: Pick<SocialContentCreateRequest, 'continueProjectId' | 'replicationStep' | 'confirmedSpeech'> | null,
-  compiledStoryboardReady = false,
-): 'mode' | 'material' | 'preview' | null {
-  const requestedProjectId = request?.continueProjectId?.trim() || null;
-  if (!request || requestedProjectId !== projectId) return null;
-  if (request.replicationStep === 1) return 'mode';
-  if (request.replicationStep !== 2 && request.replicationStep !== 3) return null;
-  // Material matching and preview both depend on a compiled storyboard. Keep a
-  // fresh or legacy incomplete handoff on the preparation node; a persisted
-  // project with real script/storyboard evidence can resume without rebuilding.
-  if (request.replicationStep === 3) return compiledStoryboardReady ? 'preview' : 'mode';
-  // Step 2 with confirmed speech is a new user edit, not a navigation-only
-  // resume. It must rebuild the script/storyboard even when an older version
-  // already exists on the same draft.
-  if (request.confirmedSpeech?.length) return 'mode';
-  return compiledStoryboardReady ? 'material' : 'mode';
-}
-
-export function safeStudioStepId(
-  steps: ReadonlyArray<{ id: string }>,
-  requestedIndex: number,
-  fallback = 'mode',
-): string {
-  if (!steps.length) return fallback;
-  const normalizedIndex = Number.isFinite(requestedIndex) ? Math.trunc(requestedIndex) : 0;
-  return steps[Math.max(0, Math.min(normalizedIndex, steps.length - 1))]?.id || steps[0]?.id || fallback;
-}
-// 客户端读取媒体时长和画幅，供自动选材阻止横竖素材混剪。
-const probeMedia = (f: File) => new Promise<{ duration: number; width: number; height: number }>(res => {
-  if (f.type.startsWith('image')) {
-    const image = new Image();
-    image.onload = () => { URL.revokeObjectURL(image.src); res({ duration: 0, width: image.naturalWidth, height: image.naturalHeight }); };
-    image.onerror = () => res({ duration: 0, width: 0, height: 0 });
-    image.src = URL.createObjectURL(f);
-    return;
-  }
-  if (!f.type.startsWith('video')) { res({ duration: 0, width: 0, height: 0 }); return; }
-  const v = document.createElement('video');
-  v.preload = 'metadata';
-  v.onloadedmetadata = () => {
-    URL.revokeObjectURL(v.src);
-    res({ duration: Math.round(v.duration) || 0, width: v.videoWidth || 0, height: v.videoHeight || 0 });
-  };
-  v.onerror = () => res({ duration: 0, width: 0, height: 0 });
-  v.src = URL.createObjectURL(f);
-});
-// Media preview components live in StudioMediaPreviews.
-const probeAudioDuration = (f: File) => new Promise<number>(res => {
-  if (!f.type.startsWith('audio')) { res(0); return; }
-  const a = document.createElement('audio');
-  a.preload = 'metadata';
-  // Keep sub-second precision. Rounding 13.44s down to 13s makes the renderer
-  // stop before the final spoken word has finished.
-  a.onloadedmetadata = () => {
-    const measured = Number.isFinite(a.duration) ? Number(a.duration.toFixed(3)) : 0;
-    URL.revokeObjectURL(a.src);
-    res(measured);
-  };
-  a.onerror = () => res(0);
-  a.src = URL.createObjectURL(f);
-});
-// Thumb extracted to StudioMediaPreviews.
-const probeClipAspect = (clip: Clip) => new Promise<{ width: number; height: number }>(res => {
-  const src = clip.type === 'image' ? clip.url : (clip.poster || clip.url);
-  if (!src || clip.type === 'audio') { res({ width: 0, height: 0 }); return; }
-  if (clip.type === 'image' || clip.poster) {
-    const image = new Image();
-    image.onload = () => res({ width: image.naturalWidth, height: image.naturalHeight });
-    image.onerror = () => res({ width: 0, height: 0 });
-    image.src = src;
-    return;
-  }
-  const video = document.createElement('video');
-  video.preload = 'metadata';
-  video.onloadedmetadata = () => res({ width: video.videoWidth, height: video.videoHeight });
-  video.onerror = () => res({ width: 0, height: 0 });
-  video.src = src;
-});
-
-const materialToClip = (m: Material): Clip => ({
-  id: m.id, name: m.name, folder: m.folder, type: m.type, duration: m.duration, width: m.width, height: m.height, aspectRatio: m.aspectRatio, size: m.size, url: m.url, poster: m.poster, scope: m.scope ?? 'own',
-  usage: m.usage, sourceType: m.sourceType, providerTaskId: m.providerTaskId, contentSha256: m.contentSha256, industry: m.industry, shotFunction: m.shotFunction, applicability: m.applicability, tags: m.tags,
-  generation: m.generation, lineage: m.lineage, quality: m.quality, reuse: m.reuse, rightsScope: m.rightsScope, provenance: m.provenance,
-  productId: m.productId, productName: m.productName,
-  transcript: m.transcript, transcriptCues: m.transcriptCues, transcriptCuesProvenance: m.transcriptCuesProvenance,
-  transcriptSourceHash: m.transcriptSourceHash,
-  segmentAnalysisStatus: m.segmentAnalysisStatus, segmentAnalysisError: m.segmentAnalysisError, segments: m.segments, visualObservations: m.visualObservations,
-});
 
 type StepId = 'mode' | 'material' | 'script' | 'bgm' | 'cover' | 'preview' | 'poster';
 
