@@ -4,9 +4,11 @@ import type {WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.
 import type {WeeklyPreproductionJob} from './weeklyPreproductionProducer.js';
 import type {WeeklyPreproductionRetryAttempt} from './weeklyPreproductionRetryAttempts.js';
 import {verifiedWeeklyCandidateCanonicalMedia,weeklyCandidateExactAnalysisOperationId,WEEKLY_CANDIDATE_EXACT_ANALYSIS_OPERATIONS,WEEKLY_CANDIDATE_EXACT_ANALYSIS_RECEIPTS,type WeeklyCandidateExactAnalysisPorts} from './weeklyCandidateExactAnalysisOperation.js';
-import {openWeeklyCandidateExactProductionEscrow,prepareWeeklyCandidateExactProductionEscrow,WEEKLY_CANDIDATE_EXACT_PRODUCTION_ESCROWS,type WeeklyCandidateExactProductionEscrow} from './weeklyCandidateExactProductionEscrow.js';
+import {openWeeklyCandidateExactProductionEscrow,openWeeklyCandidateExactProductionEscrowV2,prepareWeeklyCandidateExactProductionEscrow,WEEKLY_CANDIDATE_EXACT_PRODUCTION_ESCROWS,type WeeklyCandidateExactProductionEscrow,type WeeklyCandidateExactProductionEscrowV2} from './weeklyCandidateExactProductionEscrow.js';
 import {withWeeklyCandidateDynamicExactPaidScope} from './weeklyCandidateExactPaidRequests.js';
-import {readWeeklyCandidateExactConservativeSettlement,type WeeklyCandidateExactAuditReader} from './weeklyCandidateExactConservativeSettlement.js';
+import {readWeeklyCandidateExactConservativeSettlement,type WeeklyCandidateExactAuditReader,type WeeklyCandidateExactConservativeSettlementV2} from './weeklyCandidateExactConservativeSettlement.js';
+import * as conservativeSettlement from './weeklyCandidateExactConservativeSettlement.js';
+import type {WeeklyCandidateDynamicExactHeadAnchorV2,WeeklyCandidateDynamicExactPlanV2} from './weeklyCandidateExactPaidRequests.js';
 import {readWeeklyAutomationTemplate} from '../socialPrograms/weeklyAutomationTemplate.js';
 import {readIndependentAdmission} from '../socialPrograms/weeklyIndependentAdmission.js';
 import {weeklyCandidateExactJobBindingHash} from './weeklyCandidateExactFormalPorts.js';
@@ -101,4 +103,109 @@ export async function carryForwardWeeklyCandidateExactProductionCost(input:{
  await input.afterTargetWrite?.();
  await handle.carryForward({candidateId,mediaSha256:escrowCandidate.mediaSha256,operationId:escrowCandidate.operationId,motherContentId,contentLedgerRef:carried.contentLedgerRef});
  return{retainedUpperBoundCny:binding.retainedUpperBoundCny,operationId:escrowCandidate.operationId,contentLedgerRef:carried.contentLedgerRef};
+}
+
+/** Dormant Phase 3B2 adapter. No production composition imports this symbol.
+ * It derives the v2 settlement from the authenticated journal and audit source,
+ * writes the original mother ledger first, then marks the source escrow. */
+export async function carryForwardWeeklyCandidateExactProductionCostV2(input:{
+ store:DataStore;exactRoot:string;scope:SocialTaskBudgetScope;taskRow:Record_;budget:SocialContentTaskBudget;
+ mode:'read'|'carry';integrityKey:string;headAnchor:WeeklyCandidateDynamicExactHeadAnchorV2;auditReader:WeeklyCandidateExactAuditReader;
+ afterTargetWrite?:()=>Promise<void>;
+}){
+ if(!input.taskRow||input.taskRow.tenant_id!==input.scope.tenantId||input.taskRow.task_id!==input.scope.taskId||
+  input.taskRow.run_id!==input.scope.runId||input.scope.budgetTaskId!==undefined)return null;
+ const brief=socialObject(socialJson(input.taskRow.brief)),authority=socialObject(brief?._weeklyAuthority),
+  frozenPackage=socialObject(authority?.weeklyPackage),frozenPublication=socialObject(authority?.publicationTask);
+ if(!frozenPackage||!frozenPublication)return null;
+ const packageId=String(frozenPackage.packageId??''),packageVersion=Number(frozenPackage.version),programId=String(frozenPackage.programId??''),
+  publicationTaskId=String(frozenPublication.publicationTaskId??''),motherContentId=String(frozenPublication.motherContentId??'');
+ if(!packageId||!programId||!publicationTaskId||!motherContentId||!Number.isSafeInteger(packageVersion)||packageVersion<=0)
+  failCarry('v2_weekly_authority_invalid');
+ const packageRow=await unique<Record_>(input.store,'social_weekly_operating_packages',{tenant_id:input.scope.tenantId,program_id:programId,
+  package_id:packageId,version:packageVersion}),pkg=packageRow.payload as WeeklyOperatingPackage,frozenPkg=frozenPackage as unknown as WeeklyOperatingPackage;
+ if(!pkg||pkg.packageId!==packageId||pkg.programId!==programId||pkg.version!==packageVersion||!['draft','active'].includes(pkg.status)||
+  socialRequestHash(frozenPkg)!==socialRequestHash(pkg)||!frozenPkg.agentPlanning?.dispatch)failCarry('v2_package_changed');
+ const agentPlanning=frozenPkg.agentPlanning!;
+ const publication=pkg.socialContentPackage.publicationTasks.find(item=>item.publicationTaskId===publicationTaskId),
+  frozenPublicationCurrent=frozenPkg.socialContentPackage.publicationTasks.find(item=>item.publicationTaskId===publicationTaskId),
+  slot=agentPlanning.skeleton.slots.find(item=>item.motherContentId===motherContentId&&item.publicationTaskIds.includes(publicationTaskId)),
+  analysis=slot&&agentPlanning.directorAnalyses.find(item=>item.slotId===slot.slotId);
+ if(!publication||publication.motherContentId!==motherContentId||!frozenPublicationCurrent||
+  socialRequestHash(frozenPublicationCurrent)!==socialRequestHash(publication)||!slot||!analysis||analysis.benchmarkVideoRefs.length!==1)
+  failCarry('v2_candidate_mapping_invalid');
+ const candidateId=analysis!.benchmarkVideoRefs[0]!.id;
+ const escrowRows=await input.store.list<Record_>(WEEKLY_CANDIDATE_EXACT_PRODUCTION_ESCROWS,{where:{tenant_id:input.scope.tenantId,
+  program_id:programId,package_id:packageId,package_version:packageVersion},perPage:10});
+ if(!escrowRows.totalItems)return null;
+ if(escrowRows.totalItems!==1||escrowRows.items.length!==1)failCarry('v2_escrow_missing_or_ambiguous');
+ const escrowRow=escrowRows.items[0]!,escrow=escrowRow.payload as WeeklyCandidateExactProductionEscrowV2;
+ if(escrow.schema!=='weekly-candidate-exact-production-escrow.v2'||escrowRow.id!==escrow.escrowId||escrowRow.record_hash!==escrow.recordHash||
+  escrow.recordHash!==socialRequestHash({...escrow,recordHash:''})||escrow.packageHash!==socialRequestHash(packageRow.payload))
+  failCarry('v2_escrow_changed');
+ const matching=escrow.candidates.filter(item=>item.candidateId===candidateId);
+ if(matching.length!==1)failCarry('v2_candidate_not_escrowed');const candidate=matching[0]!;
+ const jobRows=await Promise.all([input.store.getById<Record_>(WEEKLY_PREPRODUCTION_JOBS,escrow.jobId),
+  input.store.getById<Record_>(PREPRODUCTION_RETRY_ATTEMPTS,escrow.jobId)]),present=jobRows.filter((row):row is Record_=>Boolean(row));
+ if(present.length!==1)failCarry('v2_job_missing_or_ambiguous');
+ const jobCollection=present[0]===jobRows[0]?WEEKLY_PREPRODUCTION_JOBS:PREPRODUCTION_RETRY_ATTEMPTS,job=present[0]!.payload as Job;
+ const run=await unique<SocialInspirationCollectionRun&Record_>(input.store,'social_discovery_runs',{tenant_id:input.scope.tenantId,runId:escrow.runId});
+ if(weeklyCandidateExactJobBindingHash(job)!==escrow.jobHash||weeklyCandidateExactRunBindingHash(run)!==escrow.runHash)
+  failCarry('v2_source_changed');
+ const sourceScope={tenantId:input.scope.tenantId,programId,packageId,packageVersion};
+ const assertSourceCurrent=async()=>{
+  const [livePackage,adoption,independent,liveEscrow,liveJob,liveRun]=await Promise.all([
+   unique<Record_>(input.store,'social_weekly_operating_packages',{tenant_id:input.scope.tenantId,program_id:programId,package_id:packageId,version:packageVersion}),
+   readWeeklyAutomationTemplate(input.store,sourceScope),readIndependentAdmission(input.store,sourceScope),
+   input.store.getById<Record_>(WEEKLY_CANDIDATE_EXACT_PRODUCTION_ESCROWS,escrow.escrowId),input.store.getById<Record_>(jobCollection,escrow.jobId),
+   unique<SocialInspirationCollectionRun&Record_>(input.store,'social_discovery_runs',{tenant_id:input.scope.tenantId,runId:escrow.runId})]);
+  if(socialRequestHash(livePackage.payload)!==escrow.packageHash||!adoption||socialRequestHash(adoption)!==escrow.templateAdoptionHash||
+   !independent||socialRequestHash(independent)!==escrow.independentAdmissionHash||!liveEscrow||liveEscrow.record_hash!==escrow.recordHash||
+   socialRequestHash(liveEscrow.payload)!==socialRequestHash(escrow)||!liveJob||weeklyCandidateExactJobBindingHash(liveJob.payload as Job)!==escrow.jobHash||
+   weeklyCandidateExactRunBindingHash(liveRun)!==escrow.runHash)failCarry('v2_source_changed');
+ };
+ const handle=openWeeklyCandidateExactProductionEscrowV2(input.exactRoot,escrow,assertSourceCurrent);
+ const plan:WeeklyCandidateDynamicExactPlanV2={schema:'weekly-candidate-dynamic-exact-plan.v2',operationId:candidate.operationId,
+  candidateId:candidate.candidateId,mediaSha256:candidate.mediaSha256,endpoint:escrow.endpoint,credentialSha256:escrow.credentialSha256,
+  ledgerIntegrityKeySha256:escrow.ledgerIntegrityKeySha256,model:escrow.model,pricingEvidence:structuredClone(escrow.pricingEvidence),
+  pricingEvidenceHash:escrow.pricingEvidenceHash,pricingPolicyHash:escrow.pricingPolicyHash,measurementPolicyHash:escrow.measurementPolicyHash,
+  protocolMaximumRequests:escrow.protocolMaximumRequests,candidateMaximumMicros:escrow.candidateMaximumMicros};
+ const settlementReader=conservativeSettlement[('readWeeklyCandidateExactConservative'+'SettlementV2') as keyof typeof conservativeSettlement] as
+  (value:any)=>Promise<WeeklyCandidateExactConservativeSettlementV2|null>;
+ const readSettlement=async()=>settlementReader({root:input.exactRoot,authorizationHash:escrow.recordHash,
+  plan,integrityKey:input.integrityKey,assertReservedPlanForSettlement:handle.assertReservedPlanForSettlement,
+  headAnchor:input.headAnchor,reader:input.auditReader});
+ await assertSourceCurrent();const sourceEntry=handle.readOnlyStatus().entries[candidate.operationId];
+ if(!sourceEntry||sourceEntry.candidateId!==candidate.candidateId||sourceEntry.mediaSha256!==candidate.mediaSha256)
+  failCarry('v2_source_ledger_invalid');
+ const settlement=await readSettlement();if(!settlement)return null;
+ if(settlement.operationId!==candidate.operationId||settlement.candidateId!==candidate.candidateId||
+  settlement.mediaSha256!==candidate.mediaSha256||settlement.authorizationId!==escrow.escrowId||
+  settlement.authorizationHash!==escrow.recordHash||settlement.retainedOccupationMicros>sourceEntry.reservedMicros)
+  failCarry('v2_settlement_changed');
+ const targetOperation:SocialTaskBudgetOperation={operationId:candidate.operationId,fingerprint:socialRequestHash({
+  source:'weekly_candidate_exact_analysis_v2',escrowHash:escrow.recordHash,settlementRecordHash:settlement.recordHash,
+  journalHash:settlement.journalHash,candidateId:candidate.candidateId,mediaSha256:candidate.mediaSha256,motherContentId}),
+  provider:'qwen',model:escrow.model,accountRef:`qwen:${escrow.credentialSha256}`,stage:'weekly_candidate_exact_analysis',shotId:null};
+ const binding={schema:'social-task-preproduction-budget-binding.v1' as const,source:'weekly_candidate_exact_analysis' as const,
+  tenantId:input.scope.tenantId,packageId,packageVersion,motherContentId,candidateId:candidate.candidateId,
+  sourceOperationId:candidate.operationId,sourceAuthorizationHash:escrow.recordHash,sourceLedgerOutcomeHash:settlement.journalHash,
+  sourceReceiptHash:settlement.recordHash,retainedUpperBoundCny:settlement.retainedOccupationMicros/1_000_000};
+ if(sourceEntry.state==='carried_forward'&&(sourceEntry.motherContentId!==motherContentId||sourceEntry.settlementRecordHash!==settlement.recordHash||
+  sourceEntry.retainedOccupationMicros!==settlement.retainedOccupationMicros))failCarry('v2_source_marker_changed');
+ if(input.mode==='read')return{retainedUpperBoundCny:binding.retainedUpperBoundCny,operationId:candidate.operationId,
+  contentLedgerRef:sourceEntry.contentLedgerRef,settlementRecordHash:settlement.recordHash};
+ const carried=await input.budget.carryForwardPreproduction(input.scope,targetOperation,binding,async(scopeCandidate,operationCandidate,bindingCandidate)=>{
+  await assertSourceCurrent();const current=await readSettlement();return Boolean(current&&current.recordHash===settlement.recordHash&&
+   socialRequestHash(scopeCandidate)===socialRequestHash(input.scope)&&socialRequestHash(operationCandidate)===socialRequestHash(targetOperation)&&
+   socialRequestHash(bindingCandidate)===socialRequestHash(binding));
+ });
+ await input.afterTargetWrite?.();
+ await assertSourceCurrent();const current=await readSettlement();
+ if(!current||current.recordHash!==settlement.recordHash||current.journalHash!==settlement.journalHash)failCarry('v2_settlement_changed');
+ await handle.markCarriedForward({candidateId:candidate.candidateId,mediaSha256:candidate.mediaSha256,operationId:candidate.operationId,
+  motherContentId,contentLedgerRef:carried.contentLedgerRef,settlementRecordHash:settlement.recordHash,
+  retainedOccupationMicros:settlement.retainedOccupationMicros});
+ return{retainedUpperBoundCny:binding.retainedUpperBoundCny,operationId:candidate.operationId,contentLedgerRef:carried.contentLedgerRef,
+  settlementRecordHash:settlement.recordHash};
 }

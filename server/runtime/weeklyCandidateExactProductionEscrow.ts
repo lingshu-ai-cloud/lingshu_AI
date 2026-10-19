@@ -13,7 +13,7 @@ import {weeklyCandidateExactJobBindingHash} from './weeklyCandidateExactFormalPo
 import {weeklyCandidateExactRunBindingHash} from './weeklyCandidateExactRunBinding.js';
 import {qwenVisionInputLimit} from '../lib/qwenVisionInputLimit.js';
 import {withPaidOperationLock} from '../lib/paidOperationLock.js';
-import {verifyQwenMaaSPublishedPricingEvidence,type MaaSPublishedPricingEvidence} from '../lib/socialContentPublishedTariffs.js';
+import {verifyQwenMaaSPublishedPricingEvidence,verifyQwenMaaSPublishedPricingEvidenceForHistoricalSettlement,type MaaSPublishedPricingEvidence} from '../lib/socialContentPublishedTariffs.js';
 import {weeklyCandidateExactMeasurementPolicyHash} from './weeklyCandidateExactRequestCeiling.js';
 import type {WeeklyCandidateDynamicExactPlanV2} from './weeklyCandidateExactPaidRequests.js';
 
@@ -74,7 +74,7 @@ export const WEEKLY_EXACT_V2_PROTOCOL_MAXIMUM_REQUESTS=32 as const;
 export interface WeeklyCandidateExactProductionEscrowV2{
  schema:'weekly-candidate-exact-production-escrow.v2';escrowId:string;tenantId:string;programId:string;packageId:string;packageVersion:number;
  packageHash:string;templateAdoptionHash:string;independentAdmissionHash:string;jobId:string;jobHash:string;runId:string;runHash:string;
- model:'qwen3-vl-plus';endpoint:string;credentialSha256:string;ledgerIntegrityKeySha256:string;pricingEvidence:MaaSPublishedPricingEvidence;
+ model:'qwen3-vl-plus';endpoint:string;credentialSha256:string;auditApiKeyId:string;ledgerIntegrityKeySha256:string;pricingEvidence:MaaSPublishedPricingEvidence;
  pricingEvidenceHash:string;pricingPolicyHash:string;measurementPolicyHash:string;
  weeklyProductionMaximumMicros:number;perMotherIncludingRevisionsMaximumMicros:10_000_000;
  candidateMaximumMicros:10_000_000;weeklyExactMaximumMicros:50_000_000;protocolMaximumRequests:32;
@@ -86,7 +86,8 @@ export interface WeeklyCandidateExactProductionEscrowV2{
 export type WeeklyCandidateExactProductionEscrowLedgerV2={
  schema:'weekly-candidate-exact-production-escrow-ledger.v2';escrowId:string;escrowHash:string;
  weeklyExactMaximumMicros:50_000_000;perMotherLimitMicros:10_000_000;
- entries:Record<string,{candidateId:string;mediaSha256:string;reservedMicros:10_000_000;state:'reserved'}>;
+ entries:Record<string,{candidateId:string;mediaSha256:string;reservedMicros:10_000_000;state:'reserved'|'carried_forward';
+  motherContentId:string|null;contentLedgerRef:string|null;settlementRecordHash:string|null;retainedOccupationMicros:number|null}>;
 };
 const failV2=(code:string):never=>{throw Error(`weekly_candidate_exact_production_escrow_v2_${code}`);};
 export const weeklyCandidateExactProductionEscrowV2LedgerPath=(root:string,escrow:WeeklyCandidateExactProductionEscrowV2)=>
@@ -104,7 +105,12 @@ function readV2(file:string,escrow:WeeklyCandidateExactProductionEscrowV2):Weekl
   value.weeklyExactMaximumMicros!==escrow.weeklyExactMaximumMicros||value.perMotherLimitMicros!==escrow.candidateMaximumMicros||
   !value.entries||Array.isArray(value.entries))failV2('ledger_changed');
  let total=0;for(const [operationId,entry] of Object.entries(value.entries)){
-  if(entry.state!=='reserved'||entry.reservedMicros!==10_000_000||!escrow.candidates.some(candidate=>candidate.operationId===operationId&&
+  const reservedMarker=entry.state==='reserved'&&entry.motherContentId===null&&entry.contentLedgerRef===null&&entry.settlementRecordHash===null&&entry.retainedOccupationMicros===null;
+  const carriedMarker=entry.state==='carried_forward'&&typeof entry.motherContentId==='string'&&entry.motherContentId.length>0&&
+   typeof entry.contentLedgerRef==='string'&&/^social-task-budget:[a-f0-9]{64}$/.test(entry.contentLedgerRef)&&
+   typeof entry.settlementRecordHash==='string'&&/^[a-f0-9]{64}$/.test(entry.settlementRecordHash)&&
+   Number.isSafeInteger(entry.retainedOccupationMicros)&&entry.retainedOccupationMicros!>0&&entry.retainedOccupationMicros!<=entry.reservedMicros;
+  if((!reservedMarker&&!carriedMarker)||entry.reservedMicros!==10_000_000||!escrow.candidates.some(candidate=>candidate.operationId===operationId&&
    candidate.candidateId===entry.candidateId&&candidate.mediaSha256===entry.mediaSha256))failV2('ledger_corrupt');
   total+=entry.reservedMicros;
  }
@@ -116,6 +122,14 @@ function verifyEscrowV2Pricing(escrow:WeeklyCandidateExactProductionEscrowV2){
  const policy=verifyQwenMaaSPublishedPricingEvidence(escrow.pricingEvidence,{baseUrl:escrow.endpoint,credentialSha256:escrow.credentialSha256});
  if(!policy||policy.verificationHash!==escrow.pricingPolicyHash)failV2('pricing_evidence_unverified');return policy;
 }
+function verifyEscrowV2HistoricalPricing(escrow:WeeklyCandidateExactProductionEscrowV2){
+ if(escrow.pricingEvidenceHash!==sha(JSON.stringify(escrow.pricingEvidence))||escrow.measurementPolicyHash!==weeklyCandidateExactMeasurementPolicyHash())
+  failV2('pricing_evidence_changed');
+ const historical=verifyQwenMaaSPublishedPricingEvidenceForHistoricalSettlement(escrow.pricingEvidence,
+  {baseUrl:escrow.endpoint,credentialSha256:escrow.credentialSha256});
+ if(!historical||historical.evidenceHash!==escrow.pricingEvidenceHash||historical.pricingPolicyHash!==escrow.pricingPolicyHash)
+  failV2('pricing_evidence_unverified');
+}
 function createEscrowV2Handle(root:string,escrow:WeeklyCandidateExactProductionEscrowV2,assertCurrent:()=>Promise<void>){
  const file=weeklyCandidateExactProductionEscrowV2LedgerPath(root,escrow),lock=path.join(path.resolve(root),'.locks');
  return {escrow,ledgerPath:file,assertCurrent,pricingPolicy:()=>verifyEscrowV2Pricing(escrow),
@@ -125,7 +139,8 @@ function createEscrowV2Handle(root:string,escrow:WeeklyCandidateExactProductionE
     if(!candidate)failV2('candidate_changed');const ledger=readV2(file,escrow);if(!ledger.entries[operationId]){
      if(Object.values(ledger.entries).reduce((sum,item)=>sum+item.reservedMicros,0)+escrow.candidateMaximumMicros>escrow.weeklyExactMaximumMicros)
       failV2('weekly_limit_exceeded');
-     ledger.entries[operationId]={candidateId,mediaSha256,reservedMicros:10_000_000,state:'reserved'};writeV2(file,ledger);
+     ledger.entries[operationId]={candidateId,mediaSha256,reservedMicros:10_000_000,state:'reserved',motherContentId:null,
+      contentLedgerRef:null,settlementRecordHash:null,retainedOccupationMicros:null};writeV2(file,ledger);
     }
     return {authorizationId:escrow.escrowId,authorizationHash:escrow.recordHash,candidateMaximumMicros:escrow.candidateMaximumMicros,
      protocolMaximumRequests:escrow.protocolMaximumRequests,pricingEvidence:structuredClone(escrow.pricingEvidence),
@@ -147,19 +162,63 @@ function createEscrowV2Handle(root:string,escrow:WeeklyCandidateExactProductionE
     if(!entry||entry.state!=='reserved'||entry.reservedMicros!==escrow.candidateMaximumMicros||entry.candidateId!==plan.candidateId||entry.mediaSha256!==plan.mediaSha256)
      failV2('authorized_plan_reservation_missing');
    });},
+  async assertReservedPlanForSettlement(plan:WeeklyCandidateDynamicExactPlanV2,authorizationHash:string){return withPaidOperationLock(lock,
+   `weekly-exact-production-escrow-v2:${escrow.escrowId}:${escrow.recordHash}`,async()=>{
+    await assertCurrent();verifyEscrowV2HistoricalPricing(escrow);
+    if(authorizationHash!==escrow.recordHash||plan.schema!=='weekly-candidate-dynamic-exact-plan.v2'||plan.model!==escrow.model||
+     plan.endpoint!==escrow.endpoint||plan.credentialSha256!==escrow.credentialSha256||plan.ledgerIntegrityKeySha256!==escrow.ledgerIntegrityKeySha256||
+     plan.pricingEvidenceHash!==escrow.pricingEvidenceHash||plan.pricingPolicyHash!==escrow.pricingPolicyHash||
+     plan.measurementPolicyHash!==escrow.measurementPolicyHash||plan.protocolMaximumRequests!==escrow.protocolMaximumRequests||
+     plan.candidateMaximumMicros!==escrow.candidateMaximumMicros||JSON.stringify(plan.pricingEvidence)!==JSON.stringify(escrow.pricingEvidence))
+     failV2('authorized_plan_changed');
+    const candidate=escrow.candidates.find(item=>item.operationId===plan.operationId&&item.candidateId===plan.candidateId&&item.mediaSha256===plan.mediaSha256);
+    if(!candidate)failV2('authorized_plan_candidate_changed');
+    const entry=readV2(file,escrow).entries[plan.operationId];
+    if(!entry||entry.reservedMicros!==escrow.candidateMaximumMicros||entry.candidateId!==plan.candidateId||entry.mediaSha256!==plan.mediaSha256)
+     failV2('authorized_plan_reservation_missing');
+    return {authorizationId:escrow.escrowId,authorizationHash:escrow.recordHash,auditApiKeyId:escrow.auditApiKeyId};
+   });},
+  async markCarriedForward(input:{candidateId:string;mediaSha256:string;operationId:string;motherContentId:string;contentLedgerRef:string;
+   settlementRecordHash:string;retainedOccupationMicros:number}){return withPaidOperationLock(lock,
+   `weekly-exact-production-escrow-v2:${escrow.escrowId}:${escrow.recordHash}`,async()=>{
+    await assertCurrent();verifyEscrowV2HistoricalPricing(escrow);
+    if(!input.motherContentId||!/^social-task-budget:[a-f0-9]{64}$/.test(input.contentLedgerRef)||
+     !/^[a-f0-9]{64}$/.test(input.settlementRecordHash)||!Number.isSafeInteger(input.retainedOccupationMicros)||input.retainedOccupationMicros<=0)
+     failV2('carry_forward_binding_invalid');
+    const candidate=escrow.candidates.find(item=>item.operationId===input.operationId&&item.candidateId===input.candidateId&&item.mediaSha256===input.mediaSha256);
+    if(!candidate)failV2('candidate_changed');
+    const ledger=readV2(file,escrow),entry=ledger.entries[input.operationId];if(!entry)failV2('reservation_missing');
+    if(input.retainedOccupationMicros>entry.reservedMicros)failV2('carry_forward_amount_invalid');
+    if(entry.state==='carried_forward'){
+     if(entry.motherContentId!==input.motherContentId||entry.contentLedgerRef!==input.contentLedgerRef||
+      entry.settlementRecordHash!==input.settlementRecordHash||entry.retainedOccupationMicros!==input.retainedOccupationMicros)
+      failV2('carry_forward_changed');
+     return structuredClone(ledger);
+    }
+    entry.state='carried_forward';entry.motherContentId=input.motherContentId;entry.contentLedgerRef=input.contentLedgerRef;
+    entry.settlementRecordHash=input.settlementRecordHash;entry.retainedOccupationMicros=input.retainedOccupationMicros;
+    await assertCurrent();verifyEscrowV2HistoricalPricing(escrow);writeV2(file,ledger);return structuredClone(ledger);
+   });},
   readOnlyStatus(){return structuredClone(readV2(file,escrow));},
  };
 }
 
-/** Phase 2-only v2 authority. It can reserve the already accepted mother
- * ceiling but deliberately grants no provider execution, settlement or carry. */
+export function openWeeklyCandidateExactProductionEscrowV2(root:string,escrow:WeeklyCandidateExactProductionEscrowV2,assertCurrent:()=>Promise<void>){
+ if(!path.isAbsolute(root)||escrow.schema!=='weekly-candidate-exact-production-escrow.v2'||escrow.recordHash!==socialRequestHash({...escrow,recordHash:''}))
+  failV2('record_changed');
+ verifyEscrowV2HistoricalPricing(escrow);return createEscrowV2Handle(root,escrow,assertCurrent);
+}
+
+/** Dormant v2 authority. It can reserve the already accepted mother ceiling;
+ * later settlement/carry remains explicit and is not composed into production. */
 export async function prepareWeeklyCandidateExactProductionEscrowV2(input:{
  store:DataStore;job:Job;run:SocialInspirationCollectionRun;root:string;
- provider:{endpoint:string;credentialSha256:string;model:'qwen3-vl-plus';pricingEvidence:MaaSPublishedPricingEvidence};
+ provider:{endpoint:string;credentialSha256:string;auditApiKeyId:string;model:'qwen3-vl-plus';pricingEvidence:MaaSPublishedPricingEvidence};
  ledgerIntegrityKeySha256:string;candidates:Array<{candidateId:string;mediaSha256:string;operationId:string}>;now?:()=>number;
 }){
  const {job,run}=input,scope={tenantId:job.tenantId,programId:job.programId,packageId:job.packageId,packageVersion:job.packageVersion};
  if(!path.isAbsolute(input.root)||!/^[a-f0-9]{64}$/.test(input.ledgerIntegrityKeySha256)||input.ledgerIntegrityKeySha256===input.provider.credentialSha256||
+  !/^[A-Za-z0-9._:-]{1,128}$/.test(input.provider.auditApiKeyId)||
   !job.authority||run.discoveryScopeId!==job.authority.scopeId||run.discoveryScopeVersion!==job.authority.scopeVersion||
   input.candidates.length!==5||new Set(input.candidates.map(item=>item.candidateId)).size!==5||new Set(input.candidates.map(item=>item.operationId)).size!==5||
   input.candidates.some(item=>!item.candidateId||!item.operationId||!/^([a-f0-9]{64})$/.test(item.mediaSha256)))failV2('scope_invalid');
@@ -179,7 +238,7 @@ export async function prepareWeeklyCandidateExactProductionEscrowV2(input:{
   packageVersion:job.packageVersion,packageHash:socialRequestHash(row.payload),templateAdoptionHash:socialRequestHash(adoption),
   independentAdmissionHash:socialRequestHash(independent),jobId:job.jobId,jobHash:weeklyCandidateExactJobBindingHash(job),runId:run.runId,
   runHash:weeklyCandidateExactRunBindingHash(run),model:input.provider.model,endpoint:input.provider.endpoint,
-  credentialSha256:input.provider.credentialSha256,ledgerIntegrityKeySha256:input.ledgerIntegrityKeySha256,
+  credentialSha256:input.provider.credentialSha256,auditApiKeyId:input.provider.auditApiKeyId,ledgerIntegrityKeySha256:input.ledgerIntegrityKeySha256,
   pricingEvidence,pricingEvidenceHash,pricingPolicyHash:policy!.verificationHash,
   measurementPolicyHash:weeklyCandidateExactMeasurementPolicyHash(),weeklyProductionMaximumMicros:micros(pkg.socialContentPackage.weeklyBudgetCny!),
   perMotherIncludingRevisionsMaximumMicros:10_000_000 as const,candidateMaximumMicros:10_000_000 as const,
@@ -195,7 +254,6 @@ export async function prepareWeeklyCandidateExactProductionEscrowV2(input:{
   if(!saved||saved.record_hash!==escrow.recordHash||socialRequestHash(saved.payload)!==socialRequestHash(escrow)||socialRequestHash(current.row.payload)!==escrow.packageHash||
    !currentAdoption||socialRequestHash(currentAdoption)!==escrow.templateAdoptionHash||!currentIndependent||socialRequestHash(currentIndependent)!==escrow.independentAdmissionHash||
    weeklyCandidateExactJobBindingHash(job)!==escrow.jobHash||weeklyCandidateExactRunBindingHash(run)!==escrow.runHash)failV2('authority_changed');
-  verifyEscrowV2Pricing(escrow);
  };
  const prior=existing.items[0];
  if(prior){const saved=prior.payload as WeeklyCandidateExactProductionEscrowV2;if(saved.schema!=='weekly-candidate-exact-production-escrow.v2'||prior.id!==escrowId||
