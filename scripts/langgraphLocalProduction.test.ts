@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, readFile, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readFile, realpath, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { execFile } from 'node:child_process';
@@ -18,6 +18,7 @@ test('actual local media production through graph stages retains real QA and can
   const keys = ['NODE_ENV', 'SOCIAL_CONTENT_FORCE_BACKEND_FILES', 'OBJECT_STORAGE_DRIVER', 'DISABLE_LOCAL_AUTH_FALLBACK', 'PB_URL', 'DASHSCOPE_API_KEY', 'MINIMAX_API_KEY', 'MINIMAX_API_TOKEN'];
   const prior = new Map(keys.map(key => [key, process.env[key]]));
   t.after(async () => { process.chdir(cwd); for (const [key, value] of prior) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } await rm(root, { recursive: true, force: true }); });
+  await symlink(path.join(cwd, 'node_modules'), path.join(root, 'node_modules'), 'dir');
   process.chdir(root); process.env.NODE_ENV = 'test'; process.env.SOCIAL_CONTENT_FORCE_BACKEND_FILES = 'false'; process.env.OBJECT_STORAGE_DRIVER = 'local'; process.env.DISABLE_LOCAL_AUTH_FALLBACK = 'false'; process.env.PB_URL = 'http://127.0.0.1:1';
   for (const key of ['DASHSCOPE_API_KEY', 'MINIMAX_API_KEY', 'MINIMAX_API_TOKEN']) delete process.env[key];
   const [{ createStarter198Repository, STARTER_COLLECTIONS }, { STARTER_198_CAPABILITIES }, { createSocialContentTask, startSocialContentTask }, { parseCreateSocialTask }, { readSocialTaskDetail }, { CONTENT_GRAPH_VERSION }, context, { decideSocialContentArtifact }] = await Promise.all([
@@ -27,6 +28,7 @@ test('actual local media production through graph stages retains real QA and can
   const store = new LangGraphTestStore(path.join(root, 'business.json')), repository = createStarter198Repository(store,{materialLibrary:async()=>({items:materials,status:'ready'})});
   const tenantId = 'langgraph-local-tenant', userId = 'local-human-reviewer', now = new Date();
   await store.create(STARTER_COLLECTIONS.access, { tenant_id: tenantId, product_profile: 'starter_198', profile_version: 'starter_198.v1', entitlement_snapshot_id: 'local-entitlement', feature_entitlements: STARTER_198_CAPABILITIES.map(capability => ({ capability, enabled: true })), resource_limits: (await import('../server/starter198/provisioning.js')).STARTER_198_DEFAULT_LIMITS, status: 'active', cycle_started_at: new Date(now.getTime() - 86_400_000).toISOString(), cycle_ends_at: new Date(now.getTime() + 86_400_000).toISOString(), updated_at: now.toISOString() });
+  await store.create('social_programs', { tenant_id: tenantId, program_id: 'langgraph-local-program' });
   const created = await createSocialContentTask({ repository, tenantId, userId, idempotencyKey: 'langgraph-local-create', value: parseCreateSocialTask({ title: '实际本地视频链路', objective: '验证真实渲染与审核，不调用云供应商', mode: 'weekly', themeId: 'product_value',productRef:'SKU-1',languages:['zh'],platforms:['tiktok'],perItemBudgetCny:10 }) });
   const ffmpeg = (await import('ffmpeg-static')).default; assert.ok(ffmpeg);
   const stored=(await repository.list(STARTER_COLLECTIONS.socialContentTasks,tenantId,{where:{task_id:created.taskId},perPage:1})).items[0]!;
@@ -35,9 +37,9 @@ test('actual local media production through graph stages retains real QA and can
   const materialDirectory=path.join(MEDIA_ROOT,`local-capture-${path.basename(root)}`);
   await mkdir(materialDirectory,{recursive:true});
   t.after(()=>rm(materialDirectory,{recursive:true,force:true}));
-  for(const scene of baseline.scenes){
+  for(const[index,scene]of baseline.scenes.entries()){
     const file=path.join(materialDirectory,`${scene.sceneId}.mp4`),duration=4;
-    await promisify(execFile)(ffmpeg,['-hide_banner','-loglevel','error','-f','lavfi','-i','testsrc2=s=320x568:r=24','-t',String(duration),'-c:v','libx264','-pix_fmt','yuv420p','-y',file]);
+    await promisify(execFile)(ffmpeg,['-hide_banner','-loglevel','error','-f','lavfi','-i','testsrc2=s=320x568:r=24','-vf',`drawbox=x=${index*55}:y=${index*60}:w=48:h=96:color=white:t=fill`,'-t',String(duration),'-c:v','libx264','-pix_fmt','yuv420p','-y',file]);
     const type=/消费者|使用|试用|生活/.test(scene.action)?'person_usage':'product';
     const interaction=type==='person_usage'?'person_using_product':/手持|手握|拿/.test(scene.action)?'person_holding_product':'product_only_display';
     const visual=normalizeSceneVisualContract({subjects:interaction==='product_only_display'?['product']:['person','product'],interaction:{kind:interaction,description:scene.action},action:{path:scene.action},productRef:'SKU-1',productPolicy:'locked'});
@@ -146,7 +148,7 @@ test('actual local media production through graph stages retains real QA and can
   await assert.rejects(loadSocialProductionGraphApproval(repository, changedSubject), /review_subject_changed/);
   const changedVersion = structuredClone(reviewedJob);
   (changedVersion.checkpoints['social.graph_review']!.payload as Record<string, unknown>).version = '999';
-  await assert.rejects(loadSocialProductionGraphApproval(repository, changedVersion), /review_version_changed/);
+  await assert.rejects(loadSocialProductionGraphApproval(repository, changedVersion), /graph_review_subject_changed/);
   await assert.rejects(loadSocialProductionGraphApproval(repository, { ...reviewedJob, tenantId: 'other-tenant' }), /artifact_not_unique/);
   assert.equal(await resumeApprovedSocialProductionGraph({repository,tenantId,userId,taskId:created.taskId,artifactId:artifact.artifactId}),admitted.id,'canonical approval resume must update both job and business run');
   assert.equal((await run()).status, 'completed');

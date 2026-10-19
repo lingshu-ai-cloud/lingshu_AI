@@ -7,6 +7,7 @@ import type { DataStore, ListQuery, ListResult, Record_, CompareExpected } from 
  * Not a production database or evidence of concurrent database arbitration. */
 export class LangGraphTestStore implements DataStore {
   constructor(readonly filename: string) { mkdirSync(path.dirname(filename), { recursive: true }); }
+  supportsAtomicCompareAndSwap() { return true; }
   supportsAtomicOperationLease() { return true; }
   private read(): Record<string, Record_[]> { return existsSync(this.filename) ? JSON.parse(readFileSync(this.filename, 'utf8')) : {}; }
   private write(rows: Record<string, Record_[]>) {
