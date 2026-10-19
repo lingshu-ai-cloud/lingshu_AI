@@ -111,6 +111,14 @@
 
 ## 已验证通过的相关范围
 
+## RESOLVED-019 数字员工路由契约未跟随生产预算恢复路由拆分
+
+- 命令：`pnpm exec tsx --test server/digitalEmployees/route.contract.test.ts`
+- 实际：生产预算恢复路由迁入独立模块后，契约仍只在主路由源文件中定位完整 handler，误报 endpoint 缺失。
+- 归因：路由仍由主路由显式注册，运行锁、分镜成本证据、冻结重试策略和审计逻辑全部保留；过期的是源码文件定位。
+- 修复：契约读取职责模块并继续执行原有全部安全断言，不放宽路由行为要求。
+- 状态：已修复，待复跑确认。
+
 ## RESOLVED-018 视频 scoped-download 测试缺少项目本地 yt-dlp
 
 - 命令：`pnpm exec tsx --test server/routes/videos*.test.ts`

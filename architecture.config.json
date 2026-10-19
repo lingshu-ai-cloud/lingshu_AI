@@ -13,7 +13,7 @@
     "server/publishing/platformPublisher.ts": 846,
     "server/routes/admin.ts": 1404,
     "server/routes/auth.ts": 890,
-    "server/routes/digitalEmployees.ts": 6015,
+    "server/routes/digitalEmployees.ts": 5933,
     "server/routes/draftReply.ts": 979,
     "server/routes/enterprise.ts": 2651,
     "server/routes/production.ts": 1316,

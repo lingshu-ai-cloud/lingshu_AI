@@ -6,6 +6,7 @@ import {
 } from './overviewGoalScope.js';
 
 const source = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const productionBudgetRouteSource = fs.readFileSync('server/routes/digitalEmployeeProductionBudgetRoute.ts', 'utf8');
 const approvalApplication = fs.readFileSync('server/digitalEmployees/approvalDecision.ts', 'utf8');
 const cancellationApplication = fs.readFileSync('server/digitalEmployees/runCancellation.ts', 'utf8');
 
@@ -215,7 +216,7 @@ assert.match(correctionRoute, /status:\s*['"]skipped['"]/, 'skip must change the
 for (const suffix of ['retry', 'skip', 'complete']) {
   assert.match(source, new RegExp(`digitalEmployeesRouter\\.post\\('/tasks/:taskId/${suffix}'`), `missing ${suffix} task-control endpoint`);
 }
-const productionBudgetRecovery = routeBlock("digitalEmployeesRouter.post('/tasks/:taskId/production-budget-reforecast'");
+const productionBudgetRecovery = productionBudgetRouteSource;
 assert.match(productionBudgetRecovery, /withDigitalEmployeeRunLock/, 'legacy budget recovery must serialize with the active production run');
 assert.match(productionBudgetRecovery, /verifiedStoryboardProviderCostRange/, 'legacy budget recovery must reprice the exact frozen storyboard');
 assert.match(productionBudgetRecovery, /productionBudgetMode:[\s\S]*maxAigcRetries:/, 'the reviewed protected or economy choice must freeze the runtime retry policy');
