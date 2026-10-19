@@ -47,7 +47,7 @@
     "src/components/PluginsPage.tsx": 1088,
     "src/components/ScheduledPage.tsx": 2276,
     "src/components/SmartBusinessDashboard.tsx": 1384,
-    "src/components/socialContent/SocialCreationWorkbench.tsx": 1044,
+    "src/components/socialContent/SocialCreationWorkbench.tsx": 1000,
     "src/components/TrafficPage.tsx": 1815,
     "src/components/WorkspaceManagementPages.tsx": 1008,
     "src/components/YouTubeIntegration.tsx": 1184,

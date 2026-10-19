@@ -23,80 +23,16 @@ import type { SocialContentCreationPath } from '../../lib/socialContentModel';
 import { studioApi, type Material, type StudioScriptResult } from '../../lib/studioApi';
 import { socialContentApi } from '../../lib/socialContentApi';
 import type { SocialContentStageProfile } from '../../lib/socialContentStage';
-import { resolveInspirationPlaybackUrl } from '../../lib/inspirationVideoPlayback';
 import { authHeader } from '../../lib/auth';
 import { referenceBrandTerm, referenceProductMentions, referenceProductTerms, replaceReferenceIdentities, spokenIdentityLabel } from '../../lib/referenceIdentityMapping';
 import { referenceSpeechLines, type ReferenceSpeechLine } from './referenceSpeechLines';
 import { groupSpeechShots, type SpeechGroup, timeRange } from './speechShotGroups';
 import { normalizeFreeCreationState, type FreeCreationState, type FreeCreationShotType } from '../../../shared/contracts/freeCreationProject';
-
-interface EnterpriseProductOption {
-  id: string;
-  name: string;
-}
-
-export function resolveReplicationProductMappings(
-  slots: Array<{ shotId: string; sourceLabel: string }>,
-  products: EnterpriseProductOption[],
-  primaryProductId: string,
-  assignments: Record<string, string>,
-) {
-  return slots.map(slot => {
-    const selectedId = Object.prototype.hasOwnProperty.call(assignments, slot.shotId)
-      ? assignments[slot.shotId] : primaryProductId;
-    const product = products.find(item => item.id === selectedId);
-    return { sourceTerm: slot.sourceLabel, productId: product?.id || '', productName: product?.name || '' };
-  });
-}
-
-export function assignReplicationDefaultProduct(
-  slots: Array<{ shotId: string }>,
-  productId: string,
-): Record<string, string> {
-  return Object.fromEntries(slots.map(slot => [slot.shotId, productId]));
-}
-
-export interface FreeCreationLine {
-  id: string;
-  time: string;
-  speech: string;
-  visual: string;
-  shotType: '真人口播' | '工厂' | '产品' | 'D to C';
-  silent: boolean;
-  hook: boolean;
-}
-
-export function parseFreeCreationScript(script: string): FreeCreationLine[] {
-  const normalized = String(script || '').replace(/\r/g, '').trim();
-  if (!normalized) return [];
-  const timestampLine = /^\s*\[?(?:\d+:)?\d+(?:\.\d+)?\s*[–—-]\s*(?:\d+:)?\d+(?:\.\d+)?s?\]?/;
-  const grouped: string[] = [];
-  for (const line of normalized.split('\n')) {
-    if (timestampLine.test(line) && grouped.length && grouped[grouped.length - 1]!.trim()) grouped.push(line);
-    else if (!grouped.length) grouped.push(line);
-    else grouped[grouped.length - 1] += `\n${line}`;
-  }
-  const blocks = grouped.length > 1 ? grouped.map(item => item.trim()).filter(Boolean) : normalized.split(/\n\s*\n/).map(item => item.trim()).filter(Boolean);
-  return blocks.map((block, index) => {
-    const time = block.match(/\[?((?:\d+:)?\d+(?:\.\d+)?\s*[–—-]\s*(?:\d+:)?\d+(?:\.\d+)?s?)\]?/)?.[1] || `${index * 4}–${(index + 1) * 4}s`;
-    const speechMatch = block.match(/(?:台词|口播|旁白|Dialogue|Voiceover)\s*[：:]\s*([^\n]+)/i);
-    const visualMatch = block.match(/(?:画面|镜头|Visual)\s*[：:]\s*([^\n]+)/i);
-    const speech = (speechMatch?.[1] || (!visualMatch ? block.replace(/^\[?[^\]\n]+\]?\s*/, '').trim() : '')).trim();
-    const visual = (visualMatch?.[1] || '根据口播生成对应画面').trim();
-    // Classify visible content only. Field names such as “口播” and the value
-    // “无口播” must not turn every generated line into a talking-head shot.
-    const explicitShotType = block.match(/镜头类型\s*[：:]\s*([^\n]+)/)?.[1] || '';
-    const hinted = `${explicitShotType} ${visual}`;
-    const shotType: FreeCreationLine['shotType'] = /工厂|车间|生产线|实验室/.test(hinted) ? '工厂'
-      : /真人|口播|主播|人物对镜/.test(hinted) ? '真人口播'
-        : /消费者|顾客|用户|模特|达人|使用场景|使用效果|效果展示|效果演示|使用前后|涂抹|上脸|试用|开箱|种草|D\s*(?:to|2)\s*C/i.test(hinted) ? 'D to C' : '产品';
-    return { id: `free-line-${Date.now()}-${index}`, time, speech, visual, shotType, silent: !speech || /无口播|纯画面/.test(block), hook: index === 0 };
-  });
-}
-
-export function serializeFreeCreationLines(lines: FreeCreationLine[]): string {
-  return lines.map(line => `[${line.time}]\n画面：${line.visual.trim() || '待补充画面'}\n镜头类型：${line.shotType}\n台词：${line.silent ? '（无口播）' : line.speech.trim()}`).join('\n\n');
-}
+import { assignReplicationDefaultProduct, parseFreeCreationScript, resolveReplicationProductMappings, serializeFreeCreationLines, type EnterpriseProductOption, type FreeCreationLine } from './socialCreationDraft';
+export { assignReplicationDefaultProduct, parseFreeCreationScript, resolveReplicationProductMappings, serializeFreeCreationLines } from './socialCreationDraft';
+export type { FreeCreationLine } from './socialCreationDraft';
+import { WorkbenchVideoPreview } from './WorkbenchVideoPreview';
+export { WorkbenchVideoPreview } from './WorkbenchVideoPreview';
 
 export interface SocialCreationWorkbenchSeed {
   continueTaskId?: string;
@@ -148,88 +84,6 @@ function shotStart(time: string): number {
   if (clock) return Number(clock[1]) * 60 + Number(clock[2]);
   const match = start.match(/\d+(?:\.\d+)?/);
   return match ? Number(match[0]) : 0;
-}
-
-export function WorkbenchVideoPreview({ source, poster, title, seekSeconds, seekRequestId, onResolved, onPlaybackTime }: { source: string; poster?: string; title: string; seekSeconds?: number; seekRequestId?: number; onResolved?: (url: string) => void; onPlaybackTime?: (seconds: number) => void }) {
-  const [attempt, setAttempt] = useState(0);
-  const [playbackUrl, setPlaybackUrl] = useState('');
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [message, setMessage] = useState('');
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const playbackCallback = useRef(onPlaybackTime);
-  playbackCallback.current = onPlaybackTime;
-  useEffect(() => {
-    let frame = 0;
-    const tick = () => {
-      const video = videoRef.current;
-      if (video && !video.paused) playbackCallback.current?.(video.currentTime);
-      frame = window.requestAnimationFrame(tick);
-    };
-    frame = window.requestAnimationFrame(tick);
-    return () => window.cancelAnimationFrame(frame);
-  }, [playbackUrl]);
-
-
-  useEffect(() => {
-    if (videoRef.current && Number.isFinite(seekSeconds)) {
-      try { videoRef.current.currentTime = Math.max(0, seekSeconds || 0); } catch { /* metadata pending */ }
-    }
-  }, [seekSeconds, seekRequestId, playbackUrl]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), 15_000);
-    setPlaybackUrl('');
-    setStatus('loading');
-    setMessage('');
-    void resolveInspirationPlaybackUrl(source, { signal: controller.signal, headers: authHeader() })
-      .then(url => {
-        if (controller.signal.aborted) return;
-        setPlaybackUrl(url);
-        onResolved?.(url);
-      })
-      .catch(error => {
-        if (controller.signal.aborted) {
-          setMessage('视频地址获取超时，请重试');
-        } else {
-          setMessage(error instanceof Error ? error.message : '视频地址获取失败');
-        }
-        setStatus('error');
-      })
-      .finally(() => window.clearTimeout(timer));
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [attempt, source]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  return (
-    <div className="relative h-full w-full overflow-hidden bg-zinc-100">
-      {poster && status !== 'ready' && <img src={poster} alt={`${title}封面`} className="absolute inset-0 h-full w-full object-contain" />}
-      {playbackUrl && <video
-        ref={videoRef}
-        src={playbackUrl}
-        poster={poster}
-        controls
-        playsInline
-        preload="metadata"
-        onTimeUpdate={event => onPlaybackTime?.(event.currentTarget.currentTime)}
-        onSeeking={event => onPlaybackTime?.(event.currentTarget.currentTime)}
-        onSeeked={event => onPlaybackTime?.(event.currentTarget.currentTime)}
-        onLoadedMetadata={event => { if (seekSeconds) event.currentTarget.currentTime = seekSeconds; }}
-        aria-label={title}
-        className={`h-full w-full object-contain transition-opacity ${status === 'ready' ? 'opacity-100' : 'opacity-0'}`}
-        onLoadedData={() => setStatus('ready')}
-        onCanPlay={() => setStatus('ready')}
-        onError={() => {
-          setMessage('视频文件加载或解码失败，请重新获取播放地址');
-          setStatus('error');
-        }}
-      />}
-      {status === 'loading' && <div className="absolute inset-0 flex items-center justify-center bg-white/35 -[1px]"><span className="inline-flex items-center gap-2 rounded-full bg-white/90 px-3 py-2 text-xs font-bold text-[#38594d] shadow-none"><Loader2 size={14} className="animate-spin" />正在加载视频</span></div>}
-      {status === 'error' && <div className="absolute inset-0 flex items-center justify-center bg-white/88 p-6 text-center "><div><CircleAlert size={24} className="mx-auto text-amber-700" /><p className="mt-2 text-sm font-semibold text-text-primary">视频暂时无法预览</p><p className="mt-1 max-w-sm text-[11px] leading-5 text-text-muted">{message}</p><button type="button" onClick={() => setAttempt(value => value + 1)} className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white">重新加载</button></div></div>}
-    </div>
-  );
 }
 
 export default function SocialCreationWorkbench({
