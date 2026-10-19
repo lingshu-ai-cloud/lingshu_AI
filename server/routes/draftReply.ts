@@ -493,8 +493,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
       language,
       intentInstruction: [
         intentInstruction(intent),
-        String(body.instruction || '').trim() ? `Seller style request: ${String(body.instruction).trim()}` : '',
-        latestMessageIsQuestion ? '客户本轮提出了明确问题：第一句必须正面承接这个问题。SPIN、BANT 和策略推进只能放在回答之后，不能用另一个资格问题替代答案。' : '',
+        String(body.instruction || '').trim() ? `Seller style request: ${String(body.instruction).trim()}` : '', latestMessageIsQuestion ? '客户本轮提出了明确问题：第一句必须正面承接这个问题。SPIN、BANT 和策略推进只能放在回答之后，不能用另一个资格问题替代答案。' : '',
         conversationToneGuidance(timeline, latestMessage),
         publicInfoOnly ? '只使用已验证的公开企业事实，不透露价格、产能、地址或其他客户信息。' : '',
         suppressPrice ? '不要给出或承诺任何价格。' : '',
