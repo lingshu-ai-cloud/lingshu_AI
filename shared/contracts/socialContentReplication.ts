@@ -5,16 +5,9 @@ import type {
   SocialSceneProductionAdmission,
   SocialSceneVisualContract,
 } from '../sceneVisualContract.js';
-import type { FixedYieldArchetypeId } from '../fixedYieldMaterialRegistry.js';
 import type { PresenterShotMeasurements } from './presenterStackPolicy.js';
-
-export type SocialProductFootageEvidenceBinding = {
-  contentSha256: string;
-  productId: string;
-  sceneFunction: string;
-  approvalId: string;
-  visualFindingId: string;
-};
+import type { SocialMaterialRouting, SocialProductFootageEvidenceBinding, SocialProductIdentityGroup, SocialProductSceneReplicationSpec } from './socialContentMaterialRouting.js';
+export type { SocialMaterialRouting, SocialProductFootageEvidenceBinding, SocialProductIdentityGroup, SocialProductSceneReplicationSpec } from './socialContentMaterialRouting.js';
 
 export const SOCIAL_CONTENT_TASK_STATUSES = [
   'draft',
@@ -257,73 +250,6 @@ export interface SocialAccountPresenterLock {
   consistencyKey: string;
 }
 
-export interface SocialProductIdentityGroup {
-  productRef: string;
-  referenceImageIds: string[];
-  requiredVisibleElements: string[];
-  forbiddenChanges: Array<'shape' | 'material' | 'color' | 'logo' | 'label_text' | 'packaging_structure'>;
-}
-
-/** Machine-verifiable product-scene contract; this is not a free-form prompt. */
-export interface SocialProductSceneReplicationSpec {
-  schemaVersion: 'social-product-scene-replication.v1';
-  templateSource: 'reference_shot' | 'account_scene_template' | 'system_clean_stage';
-  sceneTemplateKey: string;
-  referenceShotId: string | null;
-  /** Source video used to recover the real environment/composition frame. */
-  referenceSourceId?: string | null;
-  referenceStartSeconds?: number | null;
-  referenceEndSeconds?: number | null;
-  productIdentity: {
-    groups: SocialProductIdentityGroup[];
-    identitySimilarityMinimum: number;
-    ocrExactMatchRequired: boolean;
-  };
-  sceneLock: {
-    environment: string;
-    background: string;
-    platform: string;
-    lighting: string;
-    composition: string;
-    productSlots: Array<{
-      slotId: string;
-      productRef: string;
-      placement: string;
-      orientation: string;
-      scale: number;
-    }>;
-  };
-  compositionSafety: {
-    /** Benchmark overlay positions stay stable; the source composition adapts around them. */
-    contentModulePolicy: 'benchmark_locked';
-    reservedSafeZoneSource: 'reference_content_modules' | 'system_template';
-    subjectPlacement: 'outside_content_module_safe_zone';
-    visualCenterBias: 'lower_when_upper_modules';
-    minimumClearanceRatio: number;
-    repairOrder: ['lower_visual_center', 'rescale_subject', 'regenerate_composition', 'adjust_content_module'];
-  };
-  cameraLock: {
-    shotSize: string;
-    cameraAngle: string;
-    lensFeel: string;
-    startFrame: string;
-    movementPath: string;
-    endFrame: string;
-    durationSeconds: number;
-    easing: string;
-  };
-  tolerance: {
-    durationSeconds: number;
-    productPositionRatio: number;
-    productScaleRatio: number;
-    cameraPathDeviationRatio: number;
-  };
-  validation: {
-    requiredChecks: Array<'product_identity' | 'packaging_visibility' | 'subject_visibility' | 'label_ocr' | 'scene_topology' | 'product_slot_layout' | 'camera_trajectory'>;
-    singleShotRetryOnFailure: true;
-  };
-}
-
 export interface SocialAssetSupplyShotPlan {
   /** Frozen on new plans. Missing on historical jobs; never retroactively inferred at execution. */
   materialRouting?: SocialMaterialRouting;
@@ -392,47 +318,6 @@ export interface SocialAssetSupplyShotPlan {
     executionState: 'needs_presenter' | 'needs_confirmation' | 'preview_only' | 'ready_for_capability_check';
     /** Null on historic plans and on tasks that still need an account profile. */
     accountPresenterLock?: SocialAccountPresenterLock | null;
-  };
-}
-
-export interface SocialMaterialRouting {
-  schemaVersion: 'social-material-routing.v1';
-  materialType: import('../benchmarkAnalysis').BenchmarkMaterialType;
-  policy: 'local_only' | 'local_first_product_i2v' | 'authorized_presenter';
-  localMatch: { state: 'matched' | 'missing'; sourceRefs: string[]; evidenceRef: string | null;
-    /** V2 exact-SKU identity of the verified segment, never a library-wide hint. */
-    productRef?: string | null;
-    /** Frozen fixed-yield archetype used for deterministic local matching. */
-    archetypeId?: FixedYieldArchetypeId;
-    /** Frozen budget-degradation tier. Historic plans omit it. */
-    sourceTier?: 'product_high_fidelity_local' | 'product_packaging_first_frame_i2v'
-      | 'product_local' | 'factory_local' | 'other_local';
-    /** Segment-level failures retained so the material gap remains actionable. */
-    rejections?: import('./localMaterialSegmentProfile.js').LocalMaterialSegmentRejection[];
-  };
-  generation?: {
-    sourceTier?: 'product_packaging_first_frame_i2v';
-    method: 'reference_first_frame_product_replacement_i2v' | 'enterprise_authored_product_first_frame_i2v';
-    firstFrameOrigin?: 'original_reference_pixels' | 'enterprise_authored_storyboard';
-    /** Frozen choice; absence preserves the historic Seedance route. */
-    videoProvider?: 'wan' | 'seedance';
-    videoModel?: 'wan2.6-i2v-flash' | 'wan2.2-i2v-flash';
-    qaModel?: 'qwen3-vl-plus';
-    durationSeconds: number;
-    durationOrigin?: 'default_short_shot' | 'planned_timeline' | 'explicit_frozen';
-    productImageRefs: string[];
-    referenceShotId: string | null;
-    referenceSourceId: string | null;
-  };
-  /** V2 candidate is not permission to call a provider. The whole-film planner
-   * must select it against a real quote before any paid operation is admitted. */
-  productGenerationDecision?: {
-    state: 'eligible' | 'selected' | 'local_only';
-    importance: 'critical' | 'standard';
-    reason: string;
-    quoteRef?: string;
-    estimatedCostCny?: number;
-    budgetPlanRef?: string;
   };
 }
 

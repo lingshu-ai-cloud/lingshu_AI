@@ -34,7 +34,7 @@
     "server/starter198/socialContentScriptSources.ts": 1423,
     "server/starter198/socialContentTasks.ts": 940,
     "server/whatsapp/historyImport.ts": 1880,
-    "shared/contracts/socialContentReplication.ts": 857,
+    "shared/contracts/socialContentReplication.ts": 808,
     "shared/socialContentAssetSupply.ts": 901,
     "src/App.tsx": 1087,
     "src/components/AdminDeliveryPage.tsx": 1251,
