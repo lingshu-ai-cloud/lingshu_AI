@@ -111,6 +111,23 @@
 
 ## 已验证通过的相关范围
 
+## RESOLVED-018 视频 scoped-download 测试缺少项目本地 yt-dlp
+
+- 命令：`pnpm exec tsx --test server/routes/videos*.test.ts`
+- 用例：`scoped public download disables paid actors and cookie fallback even when ambient settings enable them`
+- 实际：下载器解析先报 `video_downloader_not_installed`，因此测试替身记录的执行次数为 0，未到达所验证的安全回退行为。
+- 归因：本机尚未运行仓库指定的 `scripts/prepare-video-downloader.mjs`；不是规范化模块拆分导致的生产逻辑回归。
+- 处理：按仓库脚本准备项目本地 Python 下载器后原样复跑，不跳过断言。
+- 状态：本地隔离下载器已按仓库脚本准备，待复跑确认；未发起媒体请求、供应商调用或服务重载。
+
+## RESOLVED-017 视频爬取规范化模块遗漏共享缩略图辅助导入
+
+- 命令：`pnpm exec tsc --noEmit`
+- 实际：规范化工具搬移后，原路由仍在多个采集与回填路径调用 `hasRealThumbnail` 和 `PLATFORM_LABEL`，首轮类型检查报未定义。
+- 归因：本次拆分遗漏显式导入；缩略图真实性判定和平台标签实现未改变。
+- 修复：从 `videoCrawlerNormalization.ts` 显式导入这两个共享符号，未用本地重复实现绕过。
+- 状态：已修复，待复跑确认。
+
 ## RESOLVED-016 队列准入校验搬移后主模块缺少显式导入
 
 - 命令：`pnpm exec tsc --noEmit`
