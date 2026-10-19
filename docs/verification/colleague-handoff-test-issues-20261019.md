@@ -116,6 +116,14 @@
 
 ## 已验证通过的相关范围
 
+## RESOLVED-024 Studio 任务交付入口绕过任务感知导航回调
+
+- 命令：`pnpm run quality`，失败阶段 `src/lib/socialContentManualBridge.contract.test.ts`。
+- 实际：任务绑定的 Studio 在“打开任务验收与交付”按钮中直接派发全局 `lingshu:navigate`，绕过上层提供的任务感知 `onNavigate` 回调。
+- 归因：该入口是在 Studio 内新增的孤立导航实现；同组件其余灵感、企业和任务入口均使用回调。
+- 修复：统一调用 `onNavigate?.('smartAssets')`，由持有当前任务上下文的外壳负责页面切换。
+- 状态：已修复，待完整质量门禁复核。
+
 ## RESOLVED-023 V2 新任务过早暴露逐镜强制素材需求
 
 - 命令：`pnpm exec tsx --test server/starter198/socialContentWorkflow.test.ts`。
