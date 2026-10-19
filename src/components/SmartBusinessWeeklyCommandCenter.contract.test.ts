@@ -3,18 +3,20 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-const source = readFileSync(new URL('./SmartBusinessDashboard.tsx', import.meta.url), 'utf8');
-const start = source.indexOf('export function WeeklyCommandCenter');
-const end = source.indexOf('\n\nexport function WeeklyPlanDetailsDrawer', start);
-const commandCenter = source.slice(start, end);
-const detailsStart = source.indexOf('export function WeeklyPlanDetailsDrawer');
-const detailsEnd = source.indexOf('\n\nexport function BusinessInterpretation', detailsStart);
-const planDetails = source.slice(detailsStart, detailsEnd);
-const publishingStart = source.indexOf('function WeeklyPublishingCalendar');
-const publishingEnd = source.indexOf('const matrixRoleLabel', publishingStart);
-const publishingCalendar = source.slice(publishingStart, publishingEnd);
-const budgetStart = source.indexOf('const DEFAULT_VIDEO_COST_CNY');
-const budgetEnd = source.indexOf('\n\nfunction metricValue', budgetStart);
+const dashboardSource = readFileSync(new URL('./SmartBusinessDashboard.tsx', import.meta.url), 'utf8');
+const taskPreviewSource = readFileSync(new URL('./smartBusiness/TaskPreviewCards.tsx', import.meta.url), 'utf8');
+const source = `${dashboardSource}\n${taskPreviewSource}`;
+const start = dashboardSource.indexOf('export function WeeklyCommandCenter');
+const end = dashboardSource.indexOf('\n\nexport function WeeklyPlanDetailsDrawer', start);
+const commandCenter = dashboardSource.slice(start, end);
+const detailsStart = dashboardSource.indexOf('export function WeeklyPlanDetailsDrawer');
+const detailsEnd = dashboardSource.indexOf('\n\nexport function BusinessInterpretation', detailsStart);
+const planDetails = dashboardSource.slice(detailsStart, detailsEnd);
+const publishingStart = dashboardSource.indexOf('function WeeklyPublishingCalendar');
+const publishingEnd = dashboardSource.indexOf('const matrixRoleLabel', publishingStart);
+const publishingCalendar = dashboardSource.slice(publishingStart, publishingEnd);
+const budgetStart = dashboardSource.indexOf('const DEFAULT_VIDEO_COST_CNY');
+const budgetEnd = dashboardSource.indexOf('\n\nfunction metricValue', budgetStart);
 
 assert.ok(start >= 0 && end > start, '周经营计划区必须存在');
 assert.ok(detailsStart >= 0 && detailsEnd > detailsStart, '详细周计划必须存在');
@@ -26,7 +28,7 @@ const budgetContext: Record<string, unknown> = {
   MASTER_VIDEO_COST_MAX_CNY: 15,
 };
 vm.createContext(budgetContext);
-vm.runInContext(ts.transpileModule(`${source.slice(budgetStart, budgetEnd)}\nglobalThis.weeklyVideoBudget = weeklyVideoBudget;`, {
+vm.runInContext(ts.transpileModule(`${dashboardSource.slice(budgetStart, budgetEnd)}\nglobalThis.weeklyVideoBudget = weeklyVideoBudget;`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText, budgetContext);
 const weeklyVideoBudget = budgetContext.weeklyVideoBudget as (data: unknown) => { estimated: number; min: number; max: number };
@@ -69,7 +71,7 @@ assert.doesNotMatch(publishingCalendar, /onEventClick=/, '发布卡点击必须�
 assert.match(publishingCalendar, /detailsTitle="内容制作进度"[^]*<WeeklyContentProgressPanel[^]*contentId=\{item\.contentId\}/, '每条内容必须在共享侧栏展示其真实制作进度');
 assert.match(publishingCalendar, /onOpenReference=\{item\.inspirationReference[^]*inspirationReferenceNavigationDetail/, '精确爆款详情必须保留为侧栏里的次级入口');
 assert.match(source, /businessRef: \{ referenceId: reference\.referenceId \}[\s\S]*inspirationReference: reference/, '爆款跳转必须使用既有的嵌套引用协议');
-assert.match(source, /target === "benchmark"[\s\S]{0,200}inspirationReferenceNavigationDetail\(benchmarkReference, item\.id\)/, '内容预览的爆款入口也必须发送嵌套引用协议');
+assert.match(source, /target === ['"]benchmark['"][\s\S]{0,500}inspirationReferenceNavigationDetail\(benchmarkReference, item\.id\)/, '内容预览的爆款入口也必须发送嵌套引用协议');
 for (const internalLabel of ['平台轻适配', '适配版', '手动单项']) {
   assert.doesNotMatch(source, new RegExp(internalLabel), `用户界面不得暴露内部生产分类“${internalLabel}”`);
 }
@@ -98,10 +100,10 @@ assert.equal(selectThumbnail({ preproduction: preview('/media/plan-frame.jpg', '
 assert.equal(selectThumbnail({ preproduction: { materials: { storyboard: [], items: [] }, benchmark: { thumbnailUrl: 'https://remote.test/fallback.jpg' } } }, null), 'https://remote.test/fallback.jpg', '没有本地预览时才使用参考缩略图');
 assert.equal(selectThumbnail({ planningEvidence: { referenceThumbnailUrl: '/api/overseas/videos/removed/thumbnail', referenceSourceUrl: 'https://www.tiktok.com/@factory/video/123' } }, null), '/api/overseas/videos/removed/thumbnail?sourceUrl=https%3A%2F%2Fwww.tiktok.com%2F%40factory%2Fvideo%2F123', '已删除库存记录的周计划仍必须通过冻结来源恢复封面');
 
-const referenceStart = source.indexOf('function videoPlanFamilyKey');
-const referenceEnd = source.indexOf('\n\nexport function WeeklyCommandCenter', referenceStart);
+const referenceStart = taskPreviewSource.indexOf('function videoPlanFamilyKey');
+const referenceEnd = taskPreviewSource.indexOf('\n\nfunction openTaskPreviewPage', referenceStart);
 assert.ok(referenceStart >= 0 && referenceEnd > referenceStart, '周日历必须保留精确爆款引用解析');
-const referenceScript = ts.transpileModule(`${source.slice(referenceStart, referenceEnd)}\nglobalThis.masterFor = referencePlanForPublication; globalThis.referenceFor = inspirationReferenceForPlan; globalThis.detailFor = inspirationReferenceNavigationDetail;`, {
+const referenceScript = ts.transpileModule(`${taskPreviewSource.slice(referenceStart, referenceEnd).replace(/\bexport\s+/g, '')}\nglobalThis.masterFor = referencePlanForPublication; globalThis.referenceFor = inspirationReferenceForPlan; globalThis.detailFor = inspirationReferenceNavigationDetail;`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const referenceContext: any = {};

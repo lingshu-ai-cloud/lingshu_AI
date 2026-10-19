@@ -10,6 +10,8 @@ const end = source.indexOf('\nfunction PlanDataSourceBadge', start);
 assert.ok(start >= 0 && end > start);
 const performanceCalls: string[] = [];
 const context: Record<string, any> = {
+  isSmartBusinessShowcaseEnabled: () => false,
+  SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS: null,
   platformOptions: ['tiktok', 'instagram', 'facebook', 'youtube'], platformLabels: { tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook', youtube: 'YouTube' },
   engagingContentTitle: (value: string) => value,
   referencePlanForPublication: (plans: any[], plan: any) => plans.find(item => item.contentId === plan.masterContentId) || plan,
