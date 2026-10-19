@@ -354,11 +354,12 @@ export class SocialContentTaskBudget {
             const ledger=this.read(scope)||{schemaVersion:1 as const,tenantId:scope.tenantId,taskId:scope.taskId,limitMicros:10_000_000,authorizationRefs:[],entries:{}};
             if(ledger.taskId!==scope.taskId||ledger.limitMicros!==10_000_000||ledger.correctionAuthorization)fail('preproduction_original_budget_required');
             const id=hash(operation.operationId),sealed={...binding,recordHash:hash(JSON.stringify(binding))},prior=ledger.entries[id];
+            const contentLedgerRef=`social-task-budget:${hash(JSON.stringify({scope,operation,binding:sealed}))}`;
             if(prior){
                 if(prior.executionTaskId!==scope.taskId||prior.runId!==scope.runId||prior.planHash!==scope.planHash
                     ||(['operationId','fingerprint','provider','model','accountRef','stage','shotId'] as const).some(key=>prior[key]!==operation[key])
                     ||JSON.stringify(prior.preproductionBinding)!==JSON.stringify(sealed))fail('preproduction_operation_changed');
-                return this.status(scope)!;
+                return {status:this.status(scope)!,contentLedgerRef};
             }
             ledger.entries[id]={...operation,executionTaskId:scope.taskId,authorizationRef:authorization.authorizationRef,
                 runId:scope.runId,planHash:scope.planHash,quoteRef:`weekly-exact:${binding.sourceReceiptHash}`,
@@ -366,7 +367,7 @@ export class SocialContentTaskBudget {
                 preproductionBinding:sealed};
             if(!ledger.authorizationRefs.includes(authorization.authorizationRef))ledger.authorizationRefs.push(authorization.authorizationRef);
             if(used(ledger)>ledger.limitMicros)fail('exceeded');
-            await this.ports.assertCurrent(scope);this.write(scope,ledger);return this.status(scope)!;
+            await this.ports.assertCurrent(scope);this.write(scope,ledger);return {status:this.status(scope)!,contentLedgerRef};
         });
     }
     /** Convert an unsubmitted, pre-priced final-review capacity entry into the

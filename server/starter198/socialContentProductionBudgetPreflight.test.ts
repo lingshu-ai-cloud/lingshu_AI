@@ -29,6 +29,11 @@ import { paidProductionHash } from './socialContentPaidOperationPlan.js';
 test('product budget bounds are bound to the reviewed supply plan', () => {
   const source=fs.readFileSync(new URL('./socialContentProductionBudgetPreflight.ts',import.meta.url),'utf8');
   assert.match(source,/readProductReplacementRequestBounds[\s\S]*?frozenSupplyPlan:input\.supplyPlan![\s\S]*?planVersion:String\(input\.supplyPlan!\.planVersion\)[\s\S]*?planHash:socialRequestHash\(input\.supplyPlan\)/);
+  const carry=source.indexOf('carryForwardWeeklyExactCost??carryForwardWeeklyCandidateExactProductionCost');
+  const recovery=source.indexOf('if (input.recoveryOnly || prior)');
+  const productionReserve=source.indexOf('const reserved = await authority.prepareAndReserve(scope)');
+  assert.ok(carry>0&&carry<recovery&&recovery<productionReserve,'settled exact cost is recovered before the original production reservation');
+  assert.match(source,/mode:input\.quoteOnly\?'read':'carry'/,'quote-only uses the pure read adapter mode');
 });
 
 test('whole-film preflight reserves one retry only for retry-enabled generated product shots', () => {
@@ -82,19 +87,20 @@ finally {
 // Presenter selection, native voice planning and pricing use production
 // defaults; only official GET responses and the isolated business store are controlled.
 test('default presenter route prices static review work before preparation and reads official IV pricing', async () => {
- const f=await fixture(); const originalFetch=globalThis.fetch, oldKey=process.env.HEYGEN_API_KEY, oldDash=process.env.DASHSCOPE_API_KEY,oldBase=process.env.DASHSCOPE_BASE_URL,oldSeedream=process.env.SEEDREAM_API_KEY;
+ const f=await fixture(); const originalFetch=globalThis.fetch, oldKey=process.env.HEYGEN_API_KEY, oldDash=process.env.DASHSCOPE_API_KEY,oldBase=process.env.DASHSCOPE_BASE_URL,oldAsrBase=process.env.QWEN_ASR_BASE_URL,oldSeedream=process.env.SEEDREAM_API_KEY;
  const gets:string[]=[];
  try {
   await f.enable();
   f.baseline.language='en';f.baseline.scenes=f.baseline.scenes.map(scene=>({...scene,voiceover:'Welcome to our company.',narration:'Welcome to our company.'}));
   await f.store.update(STARTER_COLLECTIONS.socialContentTasks,(await requireSocialTask(f)).id,{script_baseline:f.baseline});
   await f.store.create('studio_production_defaults',{tenant_id:f.tenantId,payload:{presenters:[{id:'enterprise-person',authorized:true,assetVersion:4,avatarId:'original-look',voiceId:'original-voice',rightsEvidence:{authorizationRef:'rights://original',consentRef:'consent://original',grantedAt:'2026-01-01T00:00:00Z',subjectAdultConfirmed:true,permittedProviders:['heygen'],permittedUses:['digital_presenter','voice_synthesis']}}]}});
-  process.env.HEYGEN_API_KEY='controlled-key';process.env.DASHSCOPE_API_KEY='controlled-native';process.env.DASHSCOPE_BASE_URL='https://dashscope.aliyuncs.com/compatible-mode/v1';process.env.SEEDREAM_API_KEY='controlled-seedream';
+  process.env.HEYGEN_API_KEY='controlled-key';process.env.DASHSCOPE_API_KEY='controlled-native';process.env.DASHSCOPE_BASE_URL='https://maas.qianwenaiapi.com/compatible-mode/v1';process.env.QWEN_ASR_BASE_URL='https://dashscope.aliyuncs.com/compatible-mode/v1';process.env.SEEDREAM_API_KEY='controlled-seedream';
   const row=(...cells:string[])=>({cells:cells.map(text=>({content:[{text}]}))});
   const price='<script id="__NEXT_DATA__">'+JSON.stringify({props:{pageProps:{articleContent:{articleId:'10060327',blocks:[{rows:[row('Video Generation with Avatar IV engine','Price per 1 minute, charged by actual seconds generated','Credits per min'),row('Photo Avatar','$2.31','46'),row('Digital Twin','$4.83','97'),row('Studio Avatar','$4.83','97'),row('Video Generation with Avatar III engine','Price per 1 minute, charged by actual seconds generated','Credits per min'),row('Digital Twin','$0.60','12')]}]}}}})+'</script>';
   globalThis.fetch=async (url,init)=>{ const u=String(url);assert.ok(!init?.method||init.method==='GET');gets.push(u);let body:string;
    if(u.includes('/avatars/looks/'))body=JSON.stringify({data:{id:'original-look',avatar_type:'digital_twin',supported_api_engines:['avatar_iv'],status:'completed'}});
    else if(u.endsWith('/users/me'))body=JSON.stringify({data:{billing_type:'wallet',wallet:{currency:'usd',remaining_balance:20}}});
+   else if(u==='https://maas.qianwenaiapi.com/compatible-mode/v1/models')body=JSON.stringify({object:'list',data:[{id:'qwen3-vl-plus',capabilities:['vision']}]});
    else if(u.includes('ecb.europa.eu'))body=`<Envelope xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref"><Cube><Cube time='${new Date().toISOString().slice(0,10)}'><Cube currency='USD' rate='1.12'/><Cube currency='CNY' rate='7.49'/></Cube></Cube></Envelope>`;
    else if(u.includes('heygen'))body=price;
    else if(u.includes('help.aliyun.com'))body='window.__ICE_PAGE_PROPS__='+JSON.stringify({docDetailData:{storeData:{data:{alias:'/model-studio/model-pricing',website:'cn',language:'zh',content:'<h4 id="千问3-tts-flash">千问3-TTS-Flash</h4>输入单价（每万字符）<table><tr><td>qwen3-tts-flash</td><td>0.8元</td><td>不计费</td></tr></table><h4 id="新加坡">新加坡</h4><h3 id="千问asr">千问ASR</h3>按输入音频的秒数计费<table><tr><td>qwen3-asr-flash-filetrans</td><td rowspan="2">0.00022元/秒</td><td>不计费</td></tr><tr><td>qwen3-asr-flash</td><td>试用36,000秒</td></tr></table><h4 id="新加坡">新加坡</h4>'}}}})+';';
@@ -137,5 +143,5 @@ test('default presenter route prices static review work before preparation and r
   assert.ok(gets.some(u=>u.endsWith('/users/me')));
   assert.ok(gets.some(u=>u.includes('10060327')));
   assert.ok(gets.some(u=>u.includes('ecb.europa.eu')));
- } finally {globalThis.fetch=originalFetch;if(oldKey===undefined)delete process.env.HEYGEN_API_KEY;else process.env.HEYGEN_API_KEY=oldKey;if(oldDash===undefined)delete process.env.DASHSCOPE_API_KEY;else process.env.DASHSCOPE_API_KEY=oldDash;if(oldBase===undefined)delete process.env.DASHSCOPE_BASE_URL;else process.env.DASHSCOPE_BASE_URL=oldBase;if(oldSeedream===undefined)delete process.env.SEEDREAM_API_KEY;else process.env.SEEDREAM_API_KEY=oldSeedream;f.clean();}
+ } finally {globalThis.fetch=originalFetch;if(oldKey===undefined)delete process.env.HEYGEN_API_KEY;else process.env.HEYGEN_API_KEY=oldKey;if(oldDash===undefined)delete process.env.DASHSCOPE_API_KEY;else process.env.DASHSCOPE_API_KEY=oldDash;if(oldBase===undefined)delete process.env.DASHSCOPE_BASE_URL;else process.env.DASHSCOPE_BASE_URL=oldBase;if(oldAsrBase===undefined)delete process.env.QWEN_ASR_BASE_URL;else process.env.QWEN_ASR_BASE_URL=oldAsrBase;if(oldSeedream===undefined)delete process.env.SEEDREAM_API_KEY;else process.env.SEEDREAM_API_KEY=oldSeedream;f.clean();}
 });
