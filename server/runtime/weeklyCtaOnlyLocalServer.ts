@@ -502,4 +502,3 @@ export function createWeeklyCtaOnlyLocalApp(dataStore: DataStore = store, tokenA
   }) as express.ErrorRequestHandler);
   return app;
 }
-

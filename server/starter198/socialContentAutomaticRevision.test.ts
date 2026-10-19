@@ -70,4 +70,3 @@ test('no valid revision is handed to the existing decision-center port with the 
   assert.deepEqual(result, { action: 'needs_decision', reason: 'no_valid_degrade_revision' });
   assert.deepEqual(received, { command: f.command, reason: 'no_valid_degrade_revision' });
 });
-

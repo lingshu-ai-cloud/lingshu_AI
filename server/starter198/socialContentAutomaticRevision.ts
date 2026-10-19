@@ -128,4 +128,3 @@ export function createSocialContentAutomaticRevisionCommand(input: Omit<SocialCo
     revisionPayloadHash: socialRequestHash(input.revisionPayload),
   };
 }
-

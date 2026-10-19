@@ -211,4 +211,3 @@ export async function readApprovedProductFootage(input: {
   if (valid.length !== 1) return null;
   return { approvalId: valid[0]!, material };
 }
-
