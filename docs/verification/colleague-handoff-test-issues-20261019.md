@@ -275,6 +275,14 @@
 - 修复：保留显式 product 无账号仍为 `planned` 的断言；自动计划改为要求 fail-closed、零订单并给出 clone 工作流阻断原因。
 - 状态：已修复，待数字员工与完整总测试复核。
 
+## RESOLVED-033 内容路由轮询 fixture 仍以产品素材替代 clone 精析
+
+- 命令：`pnpm run test:digital-employees`，失败阶段 `contentRoutingPolling.test.ts`。
+- 实际：测试期望加入一条普通产品素材后自动路由执行；当前固定恒产自动计划要求独立 clone 参考及可解析的全片精确分析，因此持续 `blocked`。
+- 归因：轮询测试仍模拟旧 product 路由准入，已不符合当前自动生产架构；放宽实现会让普通素材冒充爆款参考。
+- 修复：保留合成素材、跨租户素材和普通产品素材均不能解锁的断言；最后注入租户内、全片 exact、已解析镜头级证据，验证条件满足后只执行一次且复用已规划批次。
+- 状态：已修复；内容路由轮询定向测试通过，待数字员工与完整总测试复核。
+
 ## RESOLVED-030 模拟客户会话缺少不外发提示
 
 - 命令：`pnpm run test:external-customer-service-demo`。
