@@ -9,17 +9,19 @@ async function seedExternal(dataStore:DataStore,programId:string){
     tenant_id: 't', program_id: programId, status: 'active', keyword_set_id: 'set-1', version: 1,
     payload: { approval: { status: 'approved', scopeVersion: 1 }, keywordSet: { scope: { audienceRole: 'brand_buyer' }, graph: { sceneClusters: [] } } },
   });
-  await dataStore.create('social_candidate_evidence', {
-    tenant_id: 't', evidenceId: 'evidence-video-1', version: 1, tenantId: 't', candidateId: 'video-1', inputFingerprint: 'fp',
-    evidence: {
-      inspirationId: 'video-1', discoveryPath: ['keyword'], sceneIds: [], relevance: { level: 'high', reasons: [] }, momentum: { level: 'high_performance', reasons: [], confidence: 0.8 },
-      transferability: { level: 'high', mechanisms: ['demo'], limitations: [] }, evidenceRefs: ['source'],
-      qualityScore: { ruleVersion: 'discovery-score-v1', overall: 90, dimensions: { relevance: 90, transferability: 90, momentum: 75, evidence: 80, platformPriority: 100, businessModelFit: 100 }, decision: 'accepted', reasons: ['B2B'], blockers: [], scoredAt: '2026-10-01T00:00:00Z' },
-      classification: { businessModel: 'b2b', platform: 'tiktok', keywordTier: 'medium' },
-    },
-    g1: { sourceUrl: 'https://www.tiktok.com/video-1' }, completeness: 'complete', createdAt: '2026-10-01T00:00:00Z', supersedesEvidenceId: null,
-  });
-  await dataStore.create('trend_videos', { id: 'video-1', tenantId: 't', platform: 'tiktok', title: 'OEM factory capability proof', sourceUrl: 'https://www.tiktok.com/video-1' });
+  for (let index = 1; index <= 3; index += 1) {
+    await dataStore.create('social_candidate_evidence', {
+      tenant_id: 't', evidenceId: `evidence-video-${index}`, version: 1, tenantId: 't', candidateId: `video-${index}`, inputFingerprint: `fp-${index}`,
+      evidence: {
+        inspirationId: `video-${index}`, discoveryPath: ['keyword'], sceneIds: [], relevance: { level: 'high', reasons: [] }, momentum: { level: 'high_performance', reasons: [], confidence: 0.8 },
+        transferability: { level: 'high', mechanisms: ['demo'], limitations: [] }, evidenceRefs: [`source-${index}`],
+        qualityScore: { ruleVersion: 'discovery-score-v1', overall: 90, dimensions: { relevance: 90, transferability: 90, momentum: 75, evidence: 80, platformPriority: 100, businessModelFit: 100 }, decision: 'accepted', reasons: ['B2B'], blockers: [], scoredAt: '2026-10-01T00:00:00Z' },
+        classification: { businessModel: 'b2b', platform: 'tiktok', keywordTier: 'medium' },
+      },
+      g1: { sourceUrl: `https://www.tiktok.com/video-${index}` }, completeness: 'complete', createdAt: '2026-10-01T00:00:00Z', supersedesEvidenceId: null,
+    });
+    await dataStore.create('trend_videos', { id: `video-${index}`, tenantId: 't', platform: 'tiktok', title: `OEM factory capability proof ${index}`, sourceUrl: `https://www.tiktok.com/video-${index}` });
+  }
   await dataStore.create('social_tracked_accounts', {
     tenant_id: 't', accountId: 'https://www.tiktok.com/@oem_factory', decision: 'track', status: 'tracked', accountRole: 'brand_factory', reasons: ['OEM factory wholesale supplier'],
     evidenceVideoIds: ['video-1', 'video-2', 'video-3'], relatedSceneIds: [], missingEvidence: [], confidence: 0.95,
