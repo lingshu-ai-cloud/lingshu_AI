@@ -24,6 +24,7 @@ import {
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import { objectStorageEnabled, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
 import { store, dataBackend } from '../storage/index.js';
+import type {DataStore} from '../storage/datastore.js';
 import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAuthority.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { createAgentNotification } from '../notifications/agentNotifications.js';
@@ -32,6 +33,7 @@ import {
   admitContentExecutionJob,
   bindPristineContentExecutionCheckpoints,
   DurableContentExecutionWorker,
+  hasCompleteFootageRevisionProductionAdmission,
   type ContentExecutionJob,
 } from '../contentExecution/durableQueue.js';
 import { admitProductionGraphJob, createProductionGraphBridgeCheckpoint, productionGraphIdentityFromJob, PRODUCTION_GRAPH_BRIDGE_CHECKPOINT } from '../contentExecution/productionGraphBridge.js';
@@ -158,9 +160,9 @@ export async function wakeSocialSceneReworkJob(jobId: string): Promise<void> {
   await productionWorker?.drain();
 }
 
-async function executePersistedProduction(job: ContentExecutionJob): Promise<void> {
-  const repository = createStarter198Repository(store);
-  const runtime = createPresenterFirstFrameProductionRuntime(store,createPresenterFirstFrameStaticExecutor(store));
+async function executePersistedProduction(job: ContentExecutionJob, dataStore:DataStore=store): Promise<void> {
+  const repository = createStarter198Repository(dataStore);
+  const runtime = createPresenterFirstFrameProductionRuntime(dataStore,createPresenterFirstFrameStaticExecutor(dataStore));
   if (job.taskType.startsWith('social_scene_rework:')) {
     if (!isSocialSceneReworkJob(job)) throw new Error('scene_rework_job_type_invalid');
     await assertSocialSceneReworkQueueRegistered();
@@ -168,9 +170,13 @@ async function executePersistedProduction(job: ContentExecutionJob): Promise<voi
     return;
   }
   let record = await requireSocialTask({ repository, tenantId: job.tenantId, taskId: job.taskId });
+  const footageRevision = socialObject(socialObject(socialJson(record.brief))?._productFootageRevision);
+  if (footageRevision && job.runId !== socialText(footageRevision.sourceRunId)
+    && !hasCompleteFootageRevisionProductionAdmission(job, footageRevision))
+    throw new Error('user_input_required:product_footage_revision_worker_admission_required');
   const {reconcileSocialContentOrderProjection}=await import('./socialContentOrderProjection.js');
   await reconcileSocialContentOrderProjection({repository,tenantId:job.tenantId,taskId:job.taskId});
-  const rawJob = await store.getById<StarterRecord>('content_execution_jobs', job.id);
+  const rawJob = await dataStore.getById<StarterRecord>('content_execution_jobs', job.id);
   const explicitRetry = socialObject(socialObject(rawJob?.checkpoints)?.['runtime.retry']);
   if (socialText(record.status) === 'paused'
     && socialText(record.run_id) === job.runId
@@ -190,7 +196,7 @@ async function executePersistedProduction(job: ContentExecutionJob): Promise<voi
   }
   const task = socialTaskSummary(record);
   if (socialProductionExecutor(job, rawJob?.checkpoints) === 'langgraph') {
-    await runOutsideSocialContentMutationScope(() => executeSocialProductionGraph({ repository, dataStore: store, job, runtime }));
+    await runOutsideSocialContentMutationScope(() => executeSocialProductionGraph({ repository, dataStore, job, runtime }));
     return;
   }
   if (['asset_review', 'packaging', 'delivered', 'awaiting_publish', 'awaiting_metrics', 'reviewed'].includes(task.status)) return;
@@ -212,29 +218,29 @@ function ensureProductionWorker(): DurableContentExecutionWorker {
 
 /** Runs the normal product executor and settlement callbacks for an explicitly
  * selected durable job set, without enabling unrelated scheduler/recovery loops. */
-export function createScopedSocialContentProductionWorker(jobIds: readonly string[]): DurableContentExecutionWorker {
+export function createScopedSocialContentProductionWorker(jobIds: readonly string[], dataStore:DataStore=store): DurableContentExecutionWorker {
   if (!jobIds.length || jobIds.some(id => typeof id !== 'string' || !id.trim() || id !== id.trim()))
     throw new Error('scoped_production_job_ids_required');
-  return createProductionWorker([...new Set(jobIds)]);
+  return createProductionWorker([...new Set(jobIds)],dataStore);
 }
 
-function createProductionWorker(allowedJobIds?: string[]): DurableContentExecutionWorker {
+function createProductionWorker(allowedJobIds?: string[], workerStore:DataStore=store): DurableContentExecutionWorker {
   return new DurableContentExecutionWorker({
     ...(allowedJobIds === undefined ? {} : {allowedJobIds}),
     ...(process.env.LINGSHU_LOCAL_PREVIEW === '1' && localFallbacksEnabled() && dataBackend === 'pocketbase'
       ? { dataAuthority: 'local' as const } : {}),
-    dataStore: store,
-    execute: executePersistedProduction,
+    dataStore: workerStore,
+    execute: job=>executePersistedProduction(job,workerStore),
     async onSucceeded(job) {
-      if (isSocialSceneReworkJob(job)) await completeSocialSceneReworkRun(createStarter198Repository(store), job);
+      if (isSocialSceneReworkJob(job)) await completeSocialSceneReworkRun(createStarter198Repository(workerStore), job);
       if (socialProductionExecutor(job) === 'langgraph') {
-        await completeSocialContentGraphRun(createStarter198Repository(store), job);
+        await completeSocialContentGraphRun(createStarter198Repository(workerStore), job);
         await createAgentNotification({ tenantId: job.tenantId, eventKey: `content-execution:${job.id}:delivery-prepared`,
           type: 'content_task_review_ready', severity: 'info', title: '一条内容已完成审核与交付准备',
           summary: '人工审核和交付包已核验，后续可进入发布确认。', sourceAgent: '内容 Agent',
           entityType: 'social_content_task', entityId: job.taskId,
           action: { label: '查看交付内容', page: 'smartAssets', href: `/?page=smartAssets&taskId=${encodeURIComponent(job.taskId)}` },
-        }, store).catch(() => undefined);
+        }, workerStore).catch(() => undefined);
         return;
       }
       await createAgentNotification({
@@ -252,13 +258,13 @@ function createProductionWorker(allowedJobIds?: string[]): DurableContentExecuti
           page: 'smartAssets',
           href: `/?page=smartAssets&taskId=${encodeURIComponent(job.taskId)}`,
         },
-      }, store).catch(notificationError => console.warn('[content-execution] review notification failed', {
+      }, workerStore).catch(notificationError => console.warn('[content-execution] review notification failed', {
         jobId: job.id,
         error: notificationError instanceof Error ? notificationError.message : String(notificationError),
       }));
     },
     async onRetry(job, error, decision) {
-      const repository = createStarter198Repository(store);
+      const repository = createStarter198Repository(workerStore);
       await writeExecutionStage({
         repository, tenantId: job.tenantId, runId: job.runId,
         stage: decision.failureClass === 'provider_reconciliation' ? 'provider_reconciliation' : 'automatic_recovery',
@@ -273,12 +279,12 @@ function createProductionWorker(allowedJobIds?: string[]): DurableContentExecuti
       }).catch(() => undefined);
     },
     async onBlocked(job, error, decision) {
-      const repository = createStarter198Repository(store);
+      const repository = createStarter198Repository(workerStore);
       if (isSocialSceneReworkJob(job)) {
         // Repair failures belong to the independent run. The original reviewed
         // content task and its passed scenes must remain intact.
-        const run = await store.getById<Record<string, unknown>>('workflow_runs', job.runId);
-        if (run?.tenant_id === job.tenantId && run.status === 'running') await store.update('workflow_runs', job.runId, {
+        const run = await workerStore.getById<Record<string, unknown>>('workflow_runs', job.runId);
+        if (run?.tenant_id === job.tenantId && run.status === 'running') await workerStore.update('workflow_runs', job.runId, {
           current_controller: 'human', pause_reason: decision.publicReason,
         });
       } else await failExecution({
@@ -300,7 +306,7 @@ function createProductionWorker(allowedJobIds?: string[]): DurableContentExecuti
           page: 'smartAssets',
           href: `/?page=smartAssets&taskId=${encodeURIComponent(job.taskId)}`,
         },
-      }, store).catch(notificationError => console.warn('[content-execution] blocked notification failed', {
+      }, workerStore).catch(notificationError => console.warn('[content-execution] blocked notification failed', {
         jobId: job.id,
         error: notificationError instanceof Error ? notificationError.message : String(notificationError),
       }));
@@ -318,6 +324,10 @@ export async function enqueueSocialContentAutoProduction(input: {
   materialEvidencePorts?:Omit<WeeklyOwnedProductIdentityPorts,'repository'>;
 }): Promise<void> {
   const dataStore = input.repository.dataStore ?? store;
+  const admissionTask = await requireSocialTask(input);
+  const footageRevision = socialObject(socialObject(socialJson(admissionTask.brief))?._productFootageRevision);
+  if (footageRevision && input.runId !== socialText(footageRevision.sourceRunId))
+    throw new Error('user_input_required:product_footage_revision_worker_admission_required');
   // Admission gaps precede all execution writes; an unqueued owned run has not failed production.
   await assertWeeklyProductionMaterialAdmission(input,input.materialEvidencePorts?.materialPorts,input.materialEvidencePorts?{...input.materialEvidencePorts,repository:input.repository}:undefined);
   await readWeeklyReplicationAuthority(input.repository,await requireSocialTask(input));

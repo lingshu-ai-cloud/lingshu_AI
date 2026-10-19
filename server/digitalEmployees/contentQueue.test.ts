@@ -58,13 +58,13 @@ try {
   assert.equal(queue.items[0]?.confidence?.production.level, 'high');
   assert.equal(queue.items[0]?.confidence?.business.level, 'medium', 'reference match is evidence, not a promised business success rate');
   assert.match(queue.items[0]?.confidence?.note || '', /不是.*成功概率/);
-  assert.equal(queue.items[0]?.steps.length, 10, 'production must expose each user-visible step instead of a coarse stage only');
+  assert.equal(queue.items[0]?.steps.length, 10, 'weekly production keeps one final film acceptance step without adding intermediate approvals');
   assert.equal(queue.items[0]?.steps.find(step => step.key === 'script')?.responsibleAgent, '编导 Agent');
   assert.equal(queue.items[0]?.steps.find(step => step.key === 'storyboard')?.responsibleAgent, '编导 Agent');
   assert.equal(queue.items[0]?.steps.find(step => step.key === 'video_generation')?.responsibleAgent, '内容 Agent');
   assert.equal(queue.items[0]?.steps.find(step => step.key === 'video_generation')?.estimatedMinutes, 90);
   assert.equal(queue.items[0]?.steps.find(step => step.key === 'quality_check')?.responsibleAgent, '内容 Agent · 质检能力');
-  assert.equal(queue.items[0]?.steps.find(step => step.key === 'user_approval')?.responsibleAgent, '用户');
+  assert.equal(queue.items[0]?.steps.find(step => step.key === 'user_approval')?.label, '用户验收成片');
   assert.equal(queue.items[1]?.origin, 'manual');
   assert.equal(queue.items[1]?.socialContentTaskId, 'social-manual-1');
   assert.equal(queue.items[1]?.status, 'waiting_review');
@@ -88,12 +88,14 @@ try {
         : [];
     return { items, page: 1, perPage: 500, totalItems: items.length, totalPages: 1 } as any;
   }) as typeof store.list;
-  const awaitingAcceptance = await buildContentQueueProjection({
+  const automaticallyCompleted = await buildContentQueueProjection({
     tenantId: 'tenant-1', runId: 'run-1', planBody: {}, tasks: [productionTask], planId: 'weekly-plan-1',
     goal: { id: 'goal-1', objective: '本周获得 10 条询盘', startsAt: '2026-09-28', endsAt: '2026-10-04', version: 2 },
   });
-  assert.equal(awaitingAcceptance.items[0]?.status, 'waiting_review');
-  assert.equal(awaitingAcceptance.items[0]?.progress, 90, '100% is reserved for a user-accepted deliverable');
+  assert.equal(automaticallyCompleted.items[0]?.status, 'waiting_review');
+  assert.equal(automaticallyCompleted.items[0]?.stage, '成片待验收');
+  assert.equal(automaticallyCompleted.items[0]?.progress, 90, 'quality-passed weekly production still waits for final user acceptance');
+  assert.equal(automaticallyCompleted.items[0]?.steps.find(step => step.key === 'user_approval')?.state, 'active');
 } finally {
   store.list = originalList;
 }

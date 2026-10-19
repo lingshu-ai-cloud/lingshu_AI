@@ -13,8 +13,8 @@ function fixture(){
 test('automatic capacity reserves film ceiling once across platform projections, starts overdue work now and never approves',()=>{
  const {pkg,tasks}=fixture(),now='2026-10-16T07:00:00Z';
  const capacity=automaticWeeklyCapacity(pkg,tasks,now);
- assert.equal(capacity.remainingBudgetCny,75);
- assert.equal(Object.values(capacity.constraints).reduce((n,c)=>n+c.remainingCostCny,0),15);
+ assert.equal(capacity.remainingBudgetCny,50);
+ assert.equal(Object.values(capacity.constraints).reduce((n,c)=>n+c.remainingCostCny,0),10);
  assert(Object.values(capacity.constraints).every(c=>Date.parse(c.availableAt)===Date.parse(now)));
  assert.equal(capacity.resources['template:content_agent'].concurrency,3);
  assert.equal(capacity.resources['template:content_agent'].workingWindows.length,3);
@@ -45,14 +45,36 @@ test('resident consumer window begins midnight independently of production',()=>
  const capacity=automaticWeeklyCapacity(pkg,tasks,'2026-10-11T15:00:00Z');
  assert.equal(capacity.resources['template:customer_agent'].workingWindows[0].startAt,'2026-10-11T16:00:00.000Z');
 });
+test('accepted next-week template starts independent preproduction now but keeps production on its calendar',()=>{
+ const {pkg,tasks}=fixture(),now='2026-10-11T07:00:00Z';
+ tasks[0].schedule.stepKind='benchmark_collection';
+ tasks[0].inputSnapshot.rollingDate='2026-10-15';
+ tasks[1].inputSnapshot.rollingDate='2026-10-15';
+ const capacity=automaticWeeklyCapacity(pkg,tasks,now);
+ assert.equal(capacity.constraints.a.availableAt,new Date(now).toISOString());
+ assert.equal(capacity.constraints.b.availableAt,'2026-10-14T22:00:00.000Z');
+});
+test('future-week automatic capacity treats an empty rolling date as absent instead of producing an invalid instant',()=>{
+ const {pkg,tasks}=fixture(),now='2026-10-11T07:00:00Z';
+ tasks[0].schedule.stepKind='benchmark_collection';
+ tasks[0].inputSnapshot.rollingDate='';
+ tasks[1].inputSnapshot.rollingDate='not-a-date';
+ const capacity=automaticWeeklyCapacity(pkg,tasks,now);
+ assert.equal(capacity.constraints.a.availableAt,new Date(now).toISOString());
+ assert.equal(capacity.constraints.b.availableAt,'2026-10-11T22:00:00.000Z');
+});
 test('blocked whole-graph proposal admits only matching independent preproduction window, never publication or changed facts',async()=>{
  const {tasks}=fixture(),task={...tasks[0],tenantId:'tenant',programId:'program',packageId:'package',packageVersion:1,upstreamVersionRefs:[],inputSnapshot:{fact:'verified-v1'},schedule:{...tasks[0].schedule,stepKind:'business_outline'}} as WeeklyExecutionTask;
  const scope={tenant_id:'tenant',program_id:'program',package_id:'package',package_version:1};
- const receipt={proposalId:'proposal',source:'automatic_template',templateVersion:'weekly-automation.v2',userApproval:null,status:'blocked'};
- const proposal={tenantId:'tenant',programId:'program',packageId:'package',packageVersion:1,inputAuthority:'target_graph_with_automatic_template_capacity',automaticAdoption:{source:'automatic_template',templateVersion:'weekly-automation.v2',userApproval:null},proposalId:'proposal',targetGraph:{tasks:[task]},capacity:{constraints:{a:{availableAt:'2026-10-16T06:00:00+08:00'}}}};
+ const receipt={proposalId:'proposal',source:'automatic_template',templateVersion:'weekly-automation.v3',userApproval:null,status:'blocked'};
+ const proposal={tenantId:'tenant',programId:'program',packageId:'package',packageVersion:1,inputAuthority:'target_graph_with_automatic_template_capacity',automaticAdoption:{source:'automatic_template',templateVersion:'weekly-automation.v3',userApproval:null},proposalId:'proposal',targetGraph:{tasks:[task]},capacity:{constraints:{a:{availableAt:'2026-10-16T06:00:00+08:00'}}}};
  const rows:Record_[]=[{id:'receipt',collection:AUTOMATIC_WEEKLY_SCHEDULES,...scope,payload:receipt,content_hash:socialRequestHash(receipt)},{id:'proposal',collection:SCHEDULE_PROPOSALS,...scope,proposal_id:'proposal',payload:proposal,content_hash:scheduleHash(proposal)},...['tenant','task_type'].map((dimension,i)=>({id:`limit-${i}`,collection:'content_execution_limits',tenant_id:'tenant',limit_scope:dimension,scope_key:i?'social_content_weekly':'*',max_running:3,updated_by:'automatic_template',updated_at:'2026-10-16T00:00:00Z',created_at:'2026-10-16T00:00:00Z'}))];
  const store={async list(collection:string,query:{where?:Record<string,unknown>}={}){const items=rows.filter(r=>r.collection===collection&&Object.entries(query.where??{}).every(([k,v])=>r[k]===v));return {items,totalItems:items.length,totalPages:1,page:1,perPage:250};}} as unknown as DataStore;
  assert.equal((await readWeeklyAutomaticPreproductionAdmission(store,task,'2026-10-15T21:00:00Z'))?.eligible,false);
+ (proposal.capacity.constraints.a as any).resourceKey='template:content_agent';
+ (proposal.capacity as any).resources={'template:content_agent':{workingWindows:[{startAt:'2026-10-15T20:00:00Z',finishAt:'2026-10-16T00:00:00Z'}]}};
+ rows[1]!.content_hash=scheduleHash(proposal);
+ assert.equal((await readWeeklyAutomaticPreproductionAdmission(store,task,'2026-10-15T21:00:00Z'))?.eligible,true,'an immutable legacy proposal reuses its signed prelaunch resource window');
  const admission=await readWeeklyAutomaticPreproductionAdmission(store,task,'2026-10-16T00:00:00Z');
  assert.equal(admission?.eligible,true);assert.equal(admission?.outboundAuthorization,false);assert.equal(admission?.userApproval,null);
  assert.equal(await readWeeklyAutomaticPreproductionAdmission(store,{...task,inputSnapshot:{fact:'changed'}},'2026-10-16T00:00:00Z'),null);

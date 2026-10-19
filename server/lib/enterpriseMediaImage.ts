@@ -4,6 +4,7 @@ import path from 'node:path';
 /** Resolve knowledge-base catalog images inside the current tenant's media root. */
 export function tenantCatalogImageFile(url: string, tenantId: string, mediaRoot: string): string | null {
   if (!/^[\w-]+$/.test(tenantId)) return null;
+  if (!url.startsWith(`/media/tenants/${tenantId}/`) || url.includes('?') || url.includes('#')) return null;
   try {
     const route=decodeURIComponent(new URL(url,'http://local.invalid').pathname);
     const prefix=`/media/tenants/${tenantId}/`;

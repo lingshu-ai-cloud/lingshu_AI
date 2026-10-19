@@ -19,10 +19,12 @@ import {objectStorageDownload} from '../storage/objectStorage.js';
 import {tenantAssetDir,tenantAssetRelativePath} from '../lib/assetAccess.js';
 import {MEDIA_ROOT} from './socialContentAutoProduction.js';
 import {inspectRenderedVisuals,runVisualFfmpeg} from '../lib/renderVisualQuality.js';
+import {createPresenterFirstFrameAssetProvenance} from './socialContentPresenterFirstFrameAssetProvenance.js';
 
 type StoredPresenter = Record<string, unknown> & { id?: string; authorized?: boolean; assetVersion?: number; avatarId?: string; voiceId?: string; imageUrl?:string; referenceMaterialIds?:string[]; rightsEvidence?: unknown; qualityInspectionAllowed?:boolean; toolMappings?: { heygen?: { avatarId?: string; voiceId?: string };runway?:{referenceMaterialIds?:string[]};sd?:{referenceMaterialIds?:string[]};seedance?:{referenceMaterialIds?:string[]} } };
 export interface PresenterFirstFrameStaticResult {
   referenceCompositionHashes:string[];backgroundPlateSha256:string;
+  presenterReference:{assetIds:string[];sha256s:string[]};productReferences:Array<{assetId:string;sha256:string}>;
   personRemovalEvidence:{receiptRef:string;sourceSha256:string;outputSha256:string};
   compositeFirstFrameSha256:string;compositeFirstFrameUrl:string;
   qa:{passed:boolean;receiptRef:string;reportHash:string};createdAt:string;
@@ -113,30 +115,64 @@ async function loadPresenterMaster(tenantId:string,presenter:StoredPresenter):Pr
   if(/^https:\/\//.test(url)){const parsed=new URL(url);if(!/(^|\.)heygen\.(com|ai)$/.test(parsed.hostname))throw Error('presenter_first_frame_master_host_untrusted');const response=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(30_000)});if(!response.ok||Number(response.headers.get('content-length')||0)>15*1024*1024)throw Error('presenter_first_frame_master_unavailable');const bytes=Buffer.from(await response.arrayBuffer());if(bytes.length>15*1024*1024)throw Error('presenter_first_frame_master_too_large');return validImage(bytes,response.headers.get('content-type')||'');}
   throw Error('presenter_first_frame_master_missing');
 }
+async function loadProductReferences(tenantId:string,ids:string[]):Promise<Array<ImageBytes&{assetId:string}>>{
+ const materials=readLocalMaterials(),loaded:Array<ImageBytes&{assetId:string}>=[];
+ for(const assetId of [...new Set(ids)]){
+  const matches=materials.filter(item=>String(item.id)===assetId&&(item.scope==='shared'||String(item.tenantId||item.tenant_id||'')===tenantId));
+  if(matches.length!==1)throw Error(`presenter_first_frame_product_asset_not_unique:${assetId}`);
+  const value=await readTenantMaterialBytes(matches[0]!,tenantId),image=await validImage(value.bytes,value.mimeType);loaded.push({...image,assetId});
+ }
+ return loaded;
+}
+
+/** Re-resolve the immutable manifest inputs from their current authoritative
+ * stores before an old approval is reused. Same-id byte replacement must not
+ * survive until post-generation QA to be discovered. */
+export async function currentPresenterFirstFrameAssetProvenanceHash(store:DataStore,input:{tenantId:string;approval:PresenterFirstFrameApprovalContract},options:{loadReferenceFrame?:(tenantId:string,url:string)=>Promise<ImageBytes>;loadPresenterMaster?:(tenantId:string,presenter:StoredPresenter)=>Promise<ImageBytes>;loadProductReferences?:(tenantId:string,ids:string[])=>Promise<Array<ImageBytes&{assetId:string}>>}={}){
+ const approved=input.approval.assetProvenance;
+ if(!approved)return null;
+ const defaults=await store.list<{payload?:{presenters?:StoredPresenter[]}}>('studio_production_defaults',{where:{tenant_id:input.tenantId},perPage:2});
+ if(defaults.totalItems!==1||defaults.items.length!==1)throw Error('presenter_first_frame_current_presenter_store_not_unique');
+ const matches=(defaults.items[0]!.payload?.presenters||[]).filter(item=>String(item.id||'')===approved.presenter.assetId);
+ if(matches.length!==1)throw Error('presenter_first_frame_current_presenter_not_unique');
+ const presenter=matches[0]!,version=Number(presenter.assetVersion);
+ if(version!==approved.presenter.assetVersion)throw Error('presenter_first_frame_current_presenter_version_changed');
+ const person=await (options.loadPresenterMaster||loadPresenterMaster)(input.tenantId,presenter);
+ const products=[] as typeof approved.products;
+ for(const product of approved.products){
+  const refs=await (options.loadProductReferences||loadProductReferences)(input.tenantId,product.referenceImageIds);
+  products.push({...product,referenceImageSha256s:refs.map(item=>item.sha256)});
+ }
+ const background=await (options.loadReferenceFrame||((tenantId,url)=>loadReferenceFrame(store,tenantId,url)))(input.tenantId,approved.background.referenceFirstFrameRef);
+ return createPresenterFirstFrameAssetProvenance({
+  presenter:{...approved.presenter,referenceSha256s:[person.sha256]},products,
+  background:{...approved.background,referenceFirstFrameSha256:background.sha256},
+ }).manifestHash;
+}
 
 /** Real static supplier bridge. It creates one combined person-removal +
  * authorised-person composite, then independently pays Qwen to review the
  * source, identity reference and generated candidate. */
-export function createPresenterFirstFrameStaticExecutor(store:DataStore,options:{root?:string;generator?:SeedreamFirstFrameGenerator;inspect?:typeof inspectStoryboardAigcFramesWithQwen;now?:()=>Date;assertProviderBinding?:(route:{stage:string;provider:string;model:string;accountRef:string})=>Promise<void>;loadReferenceFrame?:(tenantId:string,url:string)=>Promise<ImageBytes>;loadPresenterMaster?:(tenantId:string,presenter:StoredPresenter)=>Promise<ImageBytes>}={}):PresenterFirstFrameStaticExecutor{
+export function createPresenterFirstFrameStaticExecutor(store:DataStore,options:{root?:string;generator?:SeedreamFirstFrameGenerator;inspect?:typeof inspectStoryboardAigcFramesWithQwen;now?:()=>Date;assertProviderBinding?:(route:{stage:string;provider:string;model:string;accountRef:string})=>Promise<void>;loadReferenceFrame?:(tenantId:string,url:string)=>Promise<ImageBytes>;loadPresenterMaster?:(tenantId:string,presenter:StoredPresenter)=>Promise<ImageBytes>;loadProductReferences?:(tenantId:string,ids:string[])=>Promise<Array<ImageBytes&{assetId:string}>>}={}):PresenterFirstFrameStaticExecutor{
  return{async prepare(input){
   const frameIntent=intent(input,input.frameOperationId),qaIntent=intent(input,input.qaOperationId);
   if(frameIntent.provider!=='seedream'||qaIntent.provider!=='qwen')throw Error('presenter_first_frame_provider_route_changed');
   const assertBinding=options.assertProviderBinding||createProductionBudgetRouteReaders().assertProviderBinding;await assertBinding({...frameIntent,stage:'first_frame'});await assertBinding({...qaIntent,stage:'first_frame_qa'});
-  const selected=input.group.compositions[0]!,source=await (options.loadReferenceFrame||((tenantId,url)=>loadReferenceFrame(store,tenantId,url)))(input.scope.tenantId,selected.referenceFirstFrameUrl),person=await (options.loadPresenterMaster||loadPresenterMaster)(input.scope.tenantId,input.presenter);
-  const references:FirstFrameReference[]=[{role:'source_composition',...source},{role:'authorized_presenter',...person}];
+  const selected=input.group.compositions[0]!,source=await (options.loadReferenceFrame||((tenantId,url)=>loadReferenceFrame(store,tenantId,url)))(input.scope.tenantId,selected.referenceFirstFrameUrl),person=await (options.loadPresenterMaster||loadPresenterMaster)(input.scope.tenantId,input.presenter),products=await (options.loadProductReferences||loadProductReferences)(input.scope.tenantId,input.group.productAssetBinding?.referenceImageIds??[]);
+  const references:FirstFrameReference[]=[{role:'source_composition',...source},{role:'authorized_presenter',...person},...products.map(product=>({role:'product_identity' as const,bytes:product.bytes,mimeType:product.mimeType,sha256:product.sha256}))];
   const generator=options.generator||new SeedreamFirstFrameGenerator({model:frameIntent.model});
-  const request:FirstFrameRequest={referenceMode:'presenter_replace',tenantId:input.scope.tenantId,videoId:input.scope.taskId,compositionId:input.group.groupId,presenterVersion:`${input.group.presenterAssetId}:${Number(input.presenter.assetVersion)}`,ratio:'9:16',prompt:`严格保持图一的背景、机位、景别、构图、光线和物体位置。移除图一原人物，只把图二已授权人物自然合成到原人物位置；保持图二人物身份、脸型与五官。不得改变背景，不得新增文字、Logo、水印、产品或道具。参考背景：${selected.background}；景别：${selected.framing}；机位：${selected.camera}；构图：${selected.composition}。`,references,idempotencyKey:''};
+  const request:FirstFrameRequest={referenceMode:'presenter_replace',tenantId:input.scope.tenantId,videoId:input.scope.taskId,compositionId:input.group.groupId,presenterVersion:`${input.group.presenterAssetId}:${Number(input.presenter.assetVersion)}`,ratio:'9:16',prompt:`严格保持图一的背景、机位、景别、构图、光线和物体位置。移除图一原人物，只把图二已授权人物自然合成到原人物位置；保持图二人物身份、脸型与五官。${products.length?'人物接触或展示的产品必须严格采用后续企业产品参考图的包装、颜色、标识与比例，不得替换产品。':'不得新增产品或道具。'}不得改变背景，不得新增文字、Logo或水印。参考背景：${selected.background}；景别：${selected.framing}；机位：${selected.camera}；构图：${selected.composition}。`,references,idempotencyKey:''};
   request.idempotencyKey=firstFrameInputFingerprint(request,'seedream',frameIntent.model);
   let frameBoundary=false;const paidGenerator=options.generator||new SeedreamFirstFrameGenerator({model:frameIntent.model,beforeSubmit:async body=>{frameBoundary=true;const {maximumUnits,...binding}=frameIntent;await input.paidStatic.permit.beforeSubmit({...binding,actualUnits:{inputImages:Array.isArray(body.image)?body.image.length:0,outputImages:1}});}});
-  if(options.generator){const {maximumUnits,...binding}=frameIntent;await input.paidStatic.permit.beforeSubmit({...binding,actualUnits:{inputImages:2,outputImages:1}});frameBoundary=true;}
+  if(options.generator){const {maximumUnits,...binding}=frameIntent;await input.paidStatic.permit.beforeSubmit({...binding,actualUnits:{inputImages:references.length,outputImages:1}});frameBoundary=true;}
   const generated=await paidGenerator.generate(request);if(!frameBoundary)throw Error('presenter_first_frame_paid_boundary_missing');
   const frameReceipt=`seedream:${generated.providerRequestId}:${hash(generated.bytes)}`;await input.paidStatic.permit.markOutcome(input.frameOperationId,'completed',frameReceipt);
   const out=await validImage(generated.bytes,generated.mimeType),label='候选首帧';let providerReceipt:unknown=null,qaBoundary=false;
   const inspect=options.inspect||inspectStoryboardAigcFramesWithQwen;
   const evaluation=input.presenter.qualityInspectionAllowed===false
    ? null
-   : await evaluateStoryboardFirstFrameQuality({sceneType:'general',hasProduct:false,hasNamedPerson:true,hasEnvironmentReference:true,hasContact:false,hasAction:false,candidateLabels:[label],referenceLabels:['原分镜背景与构图','已授权人物参考图'],applyReplicationAutomation:false,
-    inspectTechnical:()=>inspectStoryboardTechnicalFrames('first_frame',[{bytes:out.bytes,timeLabel:label}]),inspectVisual:()=>inspect({model:qaIntent.model,boundedPaidQa:true,paidSubmission:async body=>{const {maximumUnits,...binding}=qaIntent;qaBoundary=true;await input.paidStatic.permit.beforeSubmit({...binding,actualUnits:{inputTokens:await measureQwenRequestInputUpperBound(body),outputTokens:Number(body.max_tokens)}});},onReceipt:value=>{providerReceipt=value;},phase:'first_frame',sceneType:'general',frames:[{base64:out.bytes.toString('base64'),mimeType:out.mimeType,timeLabel:label}],personReferences:[{base64:person.bytes.toString('base64'),mimeType:person.mimeType,timeLabel:'已授权人物参考图'}],environmentReferences:[{base64:source.bytes.toString('base64'),mimeType:source.mimeType,timeLabel:'原分镜背景与构图'}],storyboard:request.prompt,productInfo:'无产品身份要求；人物身份以已授权人物参考图为准，背景、机位和构图以原分镜为准。'})});
+   : await evaluateStoryboardFirstFrameQuality({sceneType:'general',hasProduct:products.length>0,hasNamedPerson:true,hasEnvironmentReference:true,hasContact:products.length>0,hasAction:products.length>0,candidateLabels:[label],referenceLabels:['原分镜背景与构图','已授权人物参考图',...products.map(item=>`企业产品图:${item.assetId}`)],applyReplicationAutomation:false,
+    inspectTechnical:()=>inspectStoryboardTechnicalFrames('first_frame',[{bytes:out.bytes,timeLabel:label}]),inspectVisual:()=>inspect({model:qaIntent.model,boundedPaidQa:true,paidSubmission:async body=>{const {maximumUnits,...binding}=qaIntent;qaBoundary=true;await input.paidStatic.permit.beforeSubmit({...binding,actualUnits:{inputTokens:await measureQwenRequestInputUpperBound(body),outputTokens:Number(body.max_tokens)}});},onReceipt:value=>{providerReceipt=value;},phase:'first_frame',sceneType:'general',frames:[{base64:out.bytes.toString('base64'),mimeType:out.mimeType,timeLabel:label}],personReferences:[{base64:person.bytes.toString('base64'),mimeType:person.mimeType,timeLabel:'已授权人物参考图'}],productReferences:products.map(item=>({base64:item.bytes.toString('base64'),mimeType:item.mimeType,timeLabel:`企业产品图:${item.assetId}`})),environmentReferences:[{base64:source.bytes.toString('base64'),mimeType:source.mimeType,timeLabel:'原分镜背景与构图'}],storyboard:request.prompt,productInfo:products.length?`产品身份必须与企业产品图一致；${input.group.productAssetBinding?.productId}`:'无产品身份要求；人物身份以已授权人物参考图为准，背景、机位和构图以原分镜为准。'})});
   let qaPassed=false,qaReceipt='',reportHash='';
   if(evaluation){
     if(!qaBoundary||!providerReceipt)throw Error('presenter_first_frame_qa_receipt_missing');
@@ -146,7 +182,7 @@ export function createPresenterFirstFrameStaticExecutor(store:DataStore,options:
     const technical=await inspectStoryboardTechnicalFrames('first_frame',[{bytes:out.bytes,timeLabel:label}]);qaPassed=!technical.some(item=>item.verdict==='fail');reportHash=hash(JSON.stringify({mode:'local_technical_plus_user_confirmation',technical}));qaReceipt=`local-technical:${reportHash}`;
   }
   const relative=tenantAssetRelativePath(input.scope.tenantId,`presenter-first-frames/${input.scope.runId}-${input.group.groupId}-${out.sha256.slice(0,16)}.${out.mimeType==='image/png'?'png':out.mimeType==='image/webp'?'webp':'jpg'}`),file=path.join(options.root||MEDIA_ROOT,relative);await fs.mkdir(path.dirname(file),{recursive:true,mode:0o700});await fs.writeFile(file,out.bytes,{mode:0o600});await fs.writeFile(`${file}.qa.json`,JSON.stringify({evaluation,providerReceipt},null,2),{mode:0o600});
-  return{referenceCompositionHashes:input.group.compositions.map(value=>compositionHash(value)),backgroundPlateSha256:source.sha256,personRemovalEvidence:{receiptRef:frameReceipt,sourceSha256:source.sha256,outputSha256:out.sha256},compositeFirstFrameSha256:out.sha256,compositeFirstFrameUrl:`/media/${relative}`,qa:{passed:qaPassed,receiptRef:qaReceipt,reportHash},createdAt:(options.now?.()||new Date()).toISOString()};
+  return{referenceCompositionHashes:input.group.compositions.map(value=>compositionHash(value)),backgroundPlateSha256:source.sha256,presenterReference:{assetIds:[String(input.group.presenterAssetId)],sha256s:[person.sha256]},productReferences:products.map(product=>({assetId:product.assetId,sha256:product.sha256})),personRemovalEvidence:{receiptRef:frameReceipt,sourceSha256:source.sha256,outputSha256:out.sha256},compositeFirstFrameSha256:out.sha256,compositeFirstFrameUrl:`/media/${relative}`,qa:{passed:qaPassed,receiptRef:qaReceipt,reportHash},createdAt:(options.now?.()||new Date()).toISOString()};
  }};
 }
 
@@ -170,12 +206,17 @@ export function createPresenterFirstFrameProductionRuntime(store: DataStore, exe
     const structuralSimilarity=Math.min(...earlyFrames.map(frame=>frame.structuralSimilarity));
     const pixelThreshold=.9,structuralThreshold=.8;
     const technical=await inspectRenderedVisuals({outputPath:input.outputPath,expectedDuration:4});
-    const report={schemaVersion:'presenter-dynamic-local-continuity.v4',segmentId:input.segmentId,segmentHash:input.segmentHash,outputSha256:input.outputSha256,approvedFirstFrameSha256:approval.compositeFirstFrameSha256,earlyFrames,pixelSimilarity,pixelThreshold,structuralSimilarity,structuralThreshold,technical};
+    const report={schemaVersion:'presenter-dynamic-local-continuity.v4',segmentId:input.segmentId,segmentHash:input.segmentHash,outputSha256:input.outputSha256,approvedFirstFrameSha256:approval.compositeFirstFrameSha256,earlyFrames,pixelSimilarity,pixelThreshold,structuralSimilarity,structuralThreshold,technical,
+      audioTrackStatus:'unverified',lipSyncStatus:'unverified'};
     const reportHash=hash(JSON.stringify(report));
     const reportRoot=path.resolve('data/social-content-presenter-dynamic-qa');await fs.mkdir(reportRoot,{recursive:true,mode:0o700});
     await fs.writeFile(path.join(reportRoot,`${reportHash}.json`),JSON.stringify({...report,reportHash},null,2),{mode:0o600});
     if(!technical.passed||pixelSimilarity<pixelThreshold||structuralSimilarity<structuralThreshold)throw Error(`presenter_mother_dynamic_qa_failed:${input.segmentId}`);
-    return{identitySimilarity:Math.min(1,pixelSimilarity/pixelThreshold,structuralSimilarity/structuralThreshold),identityThreshold:1,lipSyncStatus:'skipped_unconfigured' as const,receiptRef:`local-presenter-continuity:${reportHash}`,reportHash};
+    // This is only visual continuity evidence. The producer must combine it
+    // with independent frozen-audio matching and official SyncNet evidence;
+    // this skipped status alone is never an acceptance receipt.
+    return{identitySimilarity:Math.min(1,pixelSimilarity/pixelThreshold,structuralSimilarity/structuralThreshold),identityThreshold:1,
+      lipSyncStatus:'skipped_unconfigured' as const,receiptRef:`local-presenter-continuity:${reportHash}`,reportHash};
   },
   async preparePresenterMotherFirstFrames(input) {
     if (!input.groups.length) return [];
@@ -228,7 +269,10 @@ export function createPresenterFirstFrameProductionRuntime(store: DataStore, exe
       if(!result.qa.passed)throw Error(`presenter_first_frame_qa_failed:${group.groupId}`);
       const rights=presenters.get(group.groupId)!.rightsEvidence as {authorizationRef?:string;consentRef?:string};
       const motionOnly=group.executionKind==='seedance_motion';
-      approvals.push(await createPresenterFirstFrameApproval(store,{...input.scope,groupId:group.groupId,presenterGroupContractHash:group.presenterGroupContractHash,referenceCompositionHashes:result.referenceCompositionHashes,backgroundPlateSha256:result.backgroundPlateSha256,personRemovalEvidence:result.personRemovalEvidence,presenter:{assetId:group.presenterAssetId,assetVersion:Number(presenters.get(group.groupId)!.assetVersion),authorizationRef:String(rights.authorizationRef||''),consentRef:String(rights.consentRef||''),providerId:motionOnly?'seedance':'heygen',...(motionOnly?{identityMode:'enterprise_asset_first_frame' as const}:{}),providerPresenterId:motionOnly?null:String(presenters.get(group.groupId)!.toolMappings?.heygen?.avatarId||presenters.get(group.groupId)!.avatarId||''),providerVoiceId:motionOnly?null:String(presenters.get(group.groupId)!.toolMappings?.heygen?.voiceId||presenters.get(group.groupId)!.voiceId||'')},compositeFirstFrameSha256:result.compositeFirstFrameSha256,compositeFirstFrameUrl:result.compositeFirstFrameUrl,qa:result.qa,createdAt:result.createdAt}));
+      const selected=group.compositions[0]!;
+      if(group.productAssetBinding&&(result.productReferences.length!==group.productAssetBinding.referenceImageIds.length||result.productReferences.some((item,index)=>item.assetId!==group.productAssetBinding!.referenceImageIds[index])))throw Error(`presenter_first_frame_product_evidence_changed:${group.groupId}`);
+      const assetProvenance=createPresenterFirstFrameAssetProvenance({presenter:{assetId:group.presenterAssetId,assetVersion:Number(presenters.get(group.groupId)!.assetVersion),referenceAssetIds:result.presenterReference.assetIds,referenceSha256s:result.presenterReference.sha256s},products:group.productAssetBinding?[{...group.productAssetBinding,referenceImageSha256s:result.productReferences.map(item=>item.sha256)}]:[],background:{referenceSourceId:selected.referenceSourceId,referenceShotId:selected.referenceShotId,startSeconds:selected.startSeconds,endSeconds:selected.endSeconds,referenceFirstFrameRef:selected.referenceFirstFrameUrl,referenceFirstFrameSha256:result.backgroundPlateSha256}});
+      approvals.push(await createPresenterFirstFrameApproval(store,{...input.scope,groupId:group.groupId,presenterGroupContractHash:group.presenterGroupContractHash,referenceCompositionHashes:result.referenceCompositionHashes,backgroundPlateSha256:result.backgroundPlateSha256,personRemovalEvidence:result.personRemovalEvidence,...(group.productAssetBinding?{productAssetBinding:{productId:group.productAssetBinding.productId,enterpriseFactRef:group.productAssetBinding.enterpriseFactRef,referenceAssetIds:group.productAssetBinding.referenceImageIds}}:{}),assetProvenance,presenter:{assetId:group.presenterAssetId,assetVersion:Number(presenters.get(group.groupId)!.assetVersion),authorizationRef:String(rights.authorizationRef||''),consentRef:String(rights.consentRef||''),providerId:motionOnly?'seedance':'heygen',...(motionOnly?{identityMode:'enterprise_asset_first_frame' as const}:{}),providerPresenterId:motionOnly?null:String(presenters.get(group.groupId)!.toolMappings?.heygen?.avatarId||presenters.get(group.groupId)!.avatarId||''),providerVoiceId:motionOnly?null:String(presenters.get(group.groupId)!.toolMappings?.heygen?.voiceId||presenters.get(group.groupId)!.voiceId||'')},compositeFirstFrameSha256:result.compositeFirstFrameSha256,compositeFirstFrameUrl:result.compositeFirstFrameUrl,qa:result.qa,createdAt:result.createdAt}));
     }
     return approvals;
   } };

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import type {DataStore} from '../storage/datastore.js';
 import {automaticallyConfirmPresenterFirstFrameApproval,confirmPresenterFirstFrameApproval,createPresenterFirstFrameApproval,readConfirmedPresenterFirstFrameApproval} from './socialContentPresenterFirstFrameApproval.js';
+import {createPresenterFirstFrameAssetProvenance} from './socialContentPresenterFirstFrameAssetProvenance.js';
 const sha=(value:string)=>createHash('sha256').update(value).digest('hex');
 function memory(){const tables:Record<string,any[]>={};const store={getById:async(c:string,id:string)=>tables[c]?.find(row=>row.id===id)||null,create:async<T=Record<string,unknown>>(c:string,row:Record<string,unknown>):Promise<T|null>=>{const saved={id:`${c}-${(tables[c]?.length||0)+1}`,...structuredClone(row)};(tables[c]??=[]).push(saved);return saved as T;},update:async(c:string,id:string,patch:Record<string,unknown>)=>{const row=tables[c]?.find(item=>item.id===id);if(!row)return false;Object.assign(row,structuredClone(patch));return true;},delete:async()=>false,list:async(c:string,q:any={})=>{const items=(tables[c]||[]).filter(row=>Object.entries(q.where||{}).every(([key,value])=>row[key]===value));return{items,totalItems:items.length,totalPages:items.length?1:0,page:1,perPage:q.perPage||500};}} as DataStore;return{store,tables};}
 const scope={tenantId:'tenant-a',taskId:'task',runId:'run',planHash:sha('plan')};
@@ -25,4 +26,13 @@ test('automatic continuation reuses a valid earlier human confirmation without r
  const manual=await confirmPresenterFirstFrameApproval(f.store,{scope,groupId:'group-a',expectedRecordHash:approval.recordHash,actorId:'owner',idempotencyKey:'human-approved'});
  const continued=await automaticallyConfirmPresenterFirstFrameApproval(f.store,{scope,groupId:'group-a',expectedRecordHash:approval.recordHash});
  assert.equal(continued.recordHash,manual.recordHash);assert.equal(continued.actorId,'owner');assert.equal(f.tables.social_presenter_first_frame_decisions.length,1);
+});
+
+test('confirmed first frame is reusable only for the exact three-asset provenance manifest',async()=>{
+ const f=memory(),assetProvenance=createPresenterFirstFrameAssetProvenance({presenter:{assetId:'presenter',assetVersion:4,referenceAssetIds:['person-front'],referenceSha256s:[sha('person-v4')]},products:[{productId:'SKU-1',enterpriseFactRef:'enterprise-product:SKU-1',enterpriseFactVersion:'facts-v3',referenceImageIds:['sku-front'],referenceImageSha256s:[sha('sku-front-v3')]}],background:{referenceSourceId:'benchmark-1',referenceShotId:'shot-2',startSeconds:1.2,endSeconds:3.4,referenceFirstFrameRef:'/api/overseas/videos/benchmark-1/shot/2/first-frame',referenceFirstFrameSha256:sha('benchmark-shot-2')}});
+ const approval=await createPresenterFirstFrameApproval(f.store,{...contract(),assetProvenance});
+ await confirmPresenterFirstFrameApproval(f.store,{scope,groupId:'group-a',expectedRecordHash:approval.recordHash,actorId:'owner',idempotencyKey:'approve-exact-assets'});
+ const query={scope,groupId:'group-a',presenterGroupContractHash:sha('group'),presenterAssetId:'presenter'};
+ assert.ok(await readConfirmedPresenterFirstFrameApproval(f.store,{...query,expectedAssetProvenanceHash:assetProvenance.manifestHash}));
+ assert.equal(await readConfirmedPresenterFirstFrameApproval(f.store,{...query,expectedAssetProvenanceHash:sha('changed-upstream-assets')}),null);
 });

@@ -8,6 +8,14 @@ import type {
 import type { FixedYieldArchetypeId } from '../fixedYieldMaterialRegistry.js';
 import type { PresenterShotMeasurements } from './presenterStackPolicy.js';
 
+export type SocialProductFootageEvidenceBinding = {
+  contentSha256: string;
+  productId: string;
+  sceneFunction: string;
+  approvalId: string;
+  visualFindingId: string;
+};
+
 export const SOCIAL_CONTENT_TASK_STATUSES = [
   'draft',
   'needs_input',
@@ -285,6 +293,15 @@ export interface SocialProductSceneReplicationSpec {
       scale: number;
     }>;
   };
+  compositionSafety: {
+    /** Benchmark overlay positions stay stable; the source composition adapts around them. */
+    contentModulePolicy: 'benchmark_locked';
+    reservedSafeZoneSource: 'reference_content_modules' | 'system_template';
+    subjectPlacement: 'outside_content_module_safe_zone';
+    visualCenterBias: 'lower_when_upper_modules';
+    minimumClearanceRatio: number;
+    repairOrder: ['lower_visual_center', 'rescale_subject', 'regenerate_composition', 'adjust_content_module'];
+  };
   cameraLock: {
     shotSize: string;
     cameraAngle: string;
@@ -302,7 +319,7 @@ export interface SocialProductSceneReplicationSpec {
     cameraPathDeviationRatio: number;
   };
   validation: {
-    requiredChecks: Array<'product_identity' | 'label_ocr' | 'scene_topology' | 'product_slot_layout' | 'camera_trajectory'>;
+    requiredChecks: Array<'product_identity' | 'packaging_visibility' | 'subject_visibility' | 'label_ocr' | 'scene_topology' | 'product_slot_layout' | 'camera_trajectory'>;
     singleShotRetryOnFailure: true;
   };
 }
@@ -332,9 +349,36 @@ export interface SocialAssetSupplyShotPlan {
     segmentId: string;
     startSeconds: number;
     endSeconds: number;
+    /** Required for independently reviewed product-footage candidates. Legacy
+     * local video segments omit this and cannot acquire it by editing metadata. */
+    footageEvidence?: SocialProductFootageEvidenceBinding;
   } | null;
   /** Present when real product reference images drive a full generated scene. */
   productSceneReplication?: SocialProductSceneReplicationSpec;
+  /** Exact enterprise-KB product evidence required by a dynamic presenter
+   * who physically handles or displays the product. */
+  enterpriseProductAssetLock?: {
+    productId: string;
+    enterpriseFactRef: string;
+    referenceImageIds: string[];
+  };
+  /** Task-scoped background evidence copied from the exact benchmark shot.
+   * It is a lock over existing reference media, not a new library asset. */
+  referenceBackgroundAssetLock?: {
+    schemaVersion: 'social-reference-background-lock.v1';
+    referenceRecordId: string;
+    referenceSourceId: string;
+    sourceContentSha256: string;
+    analysisId: string;
+    analysisHash: string;
+    referenceShotId: string;
+    startSeconds: number;
+    endSeconds: number;
+    clipRef: string;
+    firstFrameRef: string;
+    firstFrameSeconds: number;
+    lockHash: string;
+  };
   /** Present only when this storyboard shot uses the shared digital-human stack. */
   digitalHumanPlan?: {
     workflow: 'material_processing' | 'viral_replication';

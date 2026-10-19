@@ -45,8 +45,8 @@ export class SeedreamFirstFrameGenerator implements FirstFrameGenerator {
   async generate(input: FirstFrameRequest): Promise<FirstFrameResult> {
     validateFirstFrameRequest(input);
     const apiKey = String(this.options.apiKey || process.env.SEEDREAM_API_KEY || process.env.SEEDANCE_API_KEY || '').trim();
-    if (!apiKey) throw new FirstFrameProviderError('Seedream 未配置方舟 API Key', 'rejected');
-    if (!Number.isFinite(this.estimatedCostCny) || this.estimatedCostCny <= 0) throw new FirstFrameProviderError('Seedream 首帧预计费用配置无效', 'rejected');
+    if (!apiKey) throw new FirstFrameProviderError('Seedream 未配置方舟 API Key', 'rejected', '', 'before_submit');
+    if (!Number.isFinite(this.estimatedCostCny) || this.estimatedCostCny <= 0) throw new FirstFrameProviderError('Seedream 首帧预计费用配置无效', 'rejected', '', 'before_submit');
     const base = String(this.options.baseUrl || process.env.SEEDREAM_BASE_URL || process.env.SEEDANCE_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '');
     const fetcher = this.options.transport || fetch;
     const timeoutMs = Math.max(30_000, this.options.timeoutMs ?? Number(process.env.SEEDREAM_TIMEOUT_MS || 300_000));

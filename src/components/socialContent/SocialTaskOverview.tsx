@@ -35,6 +35,7 @@ import SocialGenerationConfirmationCard from './SocialGenerationConfirmationCard
 import SocialWeeklySummary from './SocialWeeklySummary';
 import ContentProductionExperiencePanel, { type ContentProductionView } from './ContentProductionExperiencePanel';
 import AgentDecisionCard from '../AgentDecisionCard';
+import AssistantDecisionCenter from '../assistant/AssistantDecisionCenter';
 import { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
 import {
   contentCreationReviewAdmissionAllowed,
@@ -42,6 +43,21 @@ import {
 } from '../../lib/contentCreationTestBypass';
 import { PLATFORM_OPTIONS, artifactKindLabel, contentLanguageLabel, optionLabel, packageVersionLabel } from './socialContentUi';
 import { contentProductionExceptions } from '../../lib/contentProductionExperience';
+import { SOCIAL_CONTENT_NAVIGATION_EVENT } from '../../lib/socialContentContext';
+
+export type SocialTaskDecisionNavigationTarget = { decisionId: string; decisionVersion: string; shotId: string };
+
+export function readSocialTaskDecisionNavigationTarget(historyState: unknown): SocialTaskDecisionNavigationTarget | null {
+  const state = historyState && typeof historyState === 'object' && !Array.isArray(historyState)
+    ? historyState as Record<string, unknown>
+    : {};
+  const detail = state.productionDetail && typeof state.productionDetail === 'object' ? state.productionDetail as Record<string, unknown> : {};
+  const businessRef = detail.businessRef && typeof detail.businessRef === 'object' ? detail.businessRef as Record<string, unknown> : {};
+  const decisionId = String(businessRef.decisionId || '').trim();
+  const decisionVersion = String(businessRef.decisionVersion || '').trim();
+  const shotId = String(businessRef.shotId || '').trim();
+  return decisionId && decisionVersion ? { decisionId, decisionVersion, shotId } : null;
+}
 
 const ARTIFACT_STATUS: Record<SocialContentArtifact['status'], string> = {
   draft: '制作中',
@@ -196,12 +212,26 @@ function DeliveryPanel({ task, busy, onDownload, onOpenPublication, onOpenMetric
 export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
   const { task, onCreate, createMode } = props;
   const [productionView, setProductionView] = useState<ContentProductionView>('overview');
+  const [decisionTarget, setDecisionTarget] = useState<SocialTaskDecisionNavigationTarget | null>(() =>
+    typeof window === 'undefined' ? null : readSocialTaskDecisionNavigationTarget(window.history.state));
+  useEffect(() => {
+    const readCurrentTarget = () => setDecisionTarget(readSocialTaskDecisionNavigationTarget(window.history.state));
+    window.addEventListener('popstate', readCurrentTarget);
+    window.addEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT, readCurrentTarget);
+    return () => {
+      window.removeEventListener('popstate', readCurrentTarget);
+      window.removeEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT, readCurrentTarget);
+    };
+  }, []);
   useEffect(() => {
     if (!task) return;
     setProductionView(contentProductionExceptions(task).length > 0
       ? 'exceptions'
       : ['producing', 'attention', 'paused'].includes(task.status) ? 'shots' : 'overview');
   }, [task?.taskId]);
+  useEffect(() => {
+    if (task && decisionTarget?.shotId) setProductionView('shots');
+  }, [decisionTarget?.shotId, task?.taskId]);
   if (!task) {
     const weekly = createMode === 'weekly';
     return (
@@ -246,6 +276,16 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
         onReview={() => document.getElementById('social-task-artifacts')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' })}
       />
       <div className="min-w-0 space-y-4">
+        {decisionTarget ? <AssistantDecisionCenter
+          key={`${decisionTarget.decisionId}:${decisionTarget.decisionVersion}`}
+          page="smartAssets"
+          decisionId={decisionTarget.decisionId}
+          expectedVersion={decisionTarget.decisionVersion}
+          onOpenChat={() => window.dispatchEvent(new CustomEvent('lingshu:open-assistant'))}
+          variant="detail"
+          showHeading={false}
+          hideWhenEmpty
+        /> : null}
         <SocialGenerationConfirmationCard task={task} busy={props.busy} onConfirm={props.onStart} />
         <ContentProductionExperiencePanel
           task={task}
@@ -254,6 +294,7 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
           onViewChange={setProductionView}
           onOpenWorkbench={props.onEdit}
           onRetry={()=>{if(!task.productionProgress?.waitingForScheduledAssets)props.onStart();}}
+          focusedShotId={decisionTarget?.shotId || null}
         />
         {task.mode === 'weekly' && <SocialWeeklySummary task={task} onEdit={props.onEdit} />}
         <div className={`grid gap-4 ${showDelivery ? 'xl:grid-cols-2' : ''}`}>

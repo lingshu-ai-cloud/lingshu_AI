@@ -34,6 +34,7 @@ import { validateVerifiedSpeechLines } from '../lib/verifiedReferenceSpeech.js';
 import { approximateSpeechLines } from '../lib/referenceApproxSpeech.js';
 import { hasCompletedExactVideoEvidence, parseAnalysisTimeRange } from '../lib/videoAnalysisCodec.js';
 import { referenceFrameActionPrompt } from './referenceFrameActionPrompt.js';
+import { presenterTemporalObservationsFromExactAnalysis, splitPresenterTemporalShots } from './presenterTemporalShotSplit.js';
 import { buildReferenceShotProductionRouting, type ReferenceShotProductionRouting,
   type ReferencePresenterContinuityEvidence } from '../../shared/referenceShotProductionRouting.js';
 
@@ -1303,7 +1304,7 @@ export function buildSocialTaskReferencePackage(input: {
     };
   });
   if(input.planning)scriptShots=consolidateReferenceSemanticShots({shots:scriptShots,planning:input.planning,context:input.verifiedContext});
-  const replicationScript: SocialReplicationScriptVersion = {
+  let replicationScript: SocialReplicationScriptVersion = {
     version: String(Math.max(1, Date.parse(createdAt) || 1)),
     referenceAnalysisId: analysisId,
     status: 'review_required',
@@ -1316,6 +1317,24 @@ export function buildSocialTaskReferencePackage(input: {
     originalityDifferenceSummary: '不做事实改写；画面按当前技术栈重制，音乐、音效、字幕动效和视觉包装使用全新版本。',
     createdAt,
   };
+  const dense = recordObject(exact.analysis.presenterDenseSampling);
+  const denseRanges = Array.isArray(dense.ranges) ? dense.ranges.map(recordObject).flatMap(item => {
+    const startSeconds = Number(item.startSeconds), endSeconds = Number(item.endSeconds);
+    return Number.isFinite(startSeconds) && endSeconds > startSeconds ? [{ startSeconds, endSeconds }] : [];
+  }) : [];
+  const observationsByShotId = presenterTemporalObservationsFromExactAnalysis({
+    script: replicationScript,
+    denseSampling: denseRanges.length ? { intervalSeconds: Number(dense.intervalSeconds), ranges: denseRanges } : null,
+    details: exact.details.map((row, index) => {
+      const evidence = recordObject(row.detail.materialEvidence);
+      return { referenceShotId: shots[index]!.shotId, startSeconds: row.timing.startSeconds,
+        endSeconds: row.timing.endSeconds, detail: row.detail, clipRef: socialText(evidence.clipRef) || null };
+    }),
+  });
+  if (Object.keys(observationsByShotId).length) {
+    replicationScript = splitPresenterTemporalShots({ script: replicationScript, observationsByShotId }).script;
+    scriptShots = replicationScript.shots;
+  }
   return {
     match: {
       recordId,
@@ -1330,7 +1349,7 @@ export function buildSocialTaskReferencePackage(input: {
     },
     referenceVideoAnalysis,
     replicationScript,
-    shotMaterialMap: scriptShots.map(shot => ({
+    shotMaterialMap: replicationScript.shots.map(shot => ({
       shotId: shot.shotId,
       customerAssetIds: [],
       generatedAssetIds: [],

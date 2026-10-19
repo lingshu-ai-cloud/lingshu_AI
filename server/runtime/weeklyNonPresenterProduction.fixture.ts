@@ -1,6 +1,7 @@
 import {createSocialProgramService} from '../socialPrograms/service.js';
 import nodeFs from 'node:fs';
 import os from 'node:os';
+import {isDeepStrictEqual} from 'node:util';
 import {readMaterialLibrary,type MaterialRecord} from '../lib/materialLibrary.js';
 import {buildMaterialScriptAnalysis} from '../../shared/materialScriptAnalysis.js';
 import {createStarter198Repository} from '../starter198/repository.js';
@@ -16,11 +17,12 @@ import type {TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {prepareWeeklyQualityAuditFixture} from './weeklyContentQualityAudit.fixture.js';
 import {createWeeklyPlanningAuthority} from '../socialPrograms/planningAuthority.js';
+import type {WeeklyCapacitySnapshot,WeeklyAutomationPolicySnapshot} from '../socialPrograms/weeklyPlanner.js';
 import {createSocialWeeklyProductionAdapter} from './socialWeeklyProductionAdapter.js';
 import {runSocialWeeklyExecutionScan} from './socialWeeklyExecutionRuntime.js';
 import type {OwnedSocialAccount,WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
 
-export interface WeeklyNonPresenterFixtureOptions {controlledSourceTone?:boolean;sourceUrl?:string;weeklyBudgetCny?:number;sourceSpeech?:string;ownedReferenceBytes?:boolean;productInventory?:boolean;primaryStructure?:boolean;metricTargets?:string[];successCriteria?:string[];targetCta?:string;confirmedTemplate?:boolean}
+export interface WeeklyNonPresenterFixtureOptions {controlledSourceTone?:boolean;sourceUrl?:string;weeklyBudgetCny?:number;sourceSpeech?:string;ownedReferenceBytes?:boolean;productInventory?:boolean;primaryStructure?:boolean;metricTargets?:string[];successCriteria?:string[];targetCta?:string;confirmedTemplate?:boolean;automaticTemplate?:boolean;deferAutomaticPlanning?:boolean;formalActivation?:boolean}
 /** Real initialize/analyze/merge/confirm/dispatch over owned media and a controlled
  * source-analysis contract; no claim that external search or a live model ran. */
 export async function prepareWeeklyNonPresenterPlanningFixture(t:TestContext,options:WeeklyNonPresenterFixtureOptions={ownedReferenceBytes:true}){
@@ -28,6 +30,15 @@ export async function prepareWeeklyNonPresenterPlanningFixture(t:TestContext,opt
  const sourceUrl=options.sourceUrl??'https://www.tiktok.com/@fixture/video/1';
  const sourceSpeech=options.sourceSpeech??'Hello.';if(!sourceSpeech.trim())throw Error('controlled source speech must be explicit');
  const f=await prepareWeeklyQualityAuditFixture();t.after(f.cleanup);
+ // The source fixture predates formal content-order CAS. Preserve the same
+ // single-process table semantics, including a rejected stale expectation.
+ f.store.supportsAtomicCompareAndSwap=()=>true;
+ f.store.compareAndSwap=async(collection,id,expected,update)=>{
+  const row=f.tables[collection]?.find(item=>item.id===id);
+  if(!row||!Object.entries(expected).every(([key,value])=>isDeepStrictEqual(row[key],value)))return false;
+  Object.assign(row,structuredClone(update));
+  return true;
+ };
  f.tables.social_weekly_agent_planning=[];
  const priorHandoff=f.tables.starter_social_inspiration_handoff_versions![0]!;const actualHandoff=structuredClone(priorHandoff.payload) as Record<string,unknown>;actualHandoff.inspirationId=referenceId;actualHandoff.analysisId='non-presenter-analysis';actualHandoff.source={...(actualHandoff.source as Record<string,unknown>),sourceUrl};
  const pkg=f.pkg;if(options.weeklyBudgetCny!==undefined)pkg.socialContentPackage.weeklyBudgetCny=options.weeklyBudgetCny;if(options.targetCta!==undefined)for(const publication of pkg.socialContentPackage.publicationTasks)publication.cta=options.targetCta;pkg.referenceSourcePolicy={profile:'b2b_cold_start',ownedPercent:0,externalPercent:100,allocationUnit:'mother_content'};
@@ -97,7 +108,20 @@ export async function prepareWeeklyNonPresenterPlanningFixture(t:TestContext,opt
   const targetRow=f.tables.social_weekly_operating_packages.find(row=>row.package_id==='week2'&&row.version===1);assert.ok(targetRow);targetRow.payload=structuredClone(pkg);
   const {createWeeklyContentTemplateService}=await import('../socialPrograms/weeklyContentTemplates.js');const templates=createWeeklyContentTemplateService(f.store);
   const publication=pkg.socialContentPackage.publicationTasks[0]!;const binding=await templates.bind({tenantId:'t',programId:'p',packageId:'week2',packageVersion:1,publicationTaskId:publication.publicationTaskId},{actorUserId:'owner',templateRef,candidateHash:candidate.recordHash,expectedTargetVersion:2});
-  pkg.version=2;const {buildWeeklyWorkflow}=await import('../socialPrograms/weeklyPlanner.js');const targetWorkflow=buildWeeklyWorkflow({packageId:pkg.packageId,version:pkg.version,businessGoal:goalResult.goal,capacity:null,automationPolicy:null,publicationTasks:pkg.socialContentPackage.publicationTasks,discoveryBudgetCny:pkg.discoveryBudgetCny});pkg.workflows=targetWorkflow.workflows;pkg.workflowTasks=targetWorkflow.tasks;publication.contentTemplateBindingRef={type:'weekly_content_template_binding',id:binding.bindingId,version:1};
+  let capacity:WeeklyCapacitySnapshot|null=null;
+  let policy:WeeklyAutomationPolicySnapshot|null=null;
+  if(options.formalActivation){
+   const [{planCapacity},{resolveAutomationPolicy}]=await Promise.all([import('../socialOperating/capacityPlanner.js'),import('../socialOperating/automationPolicyResolver.js')]);
+   const decidedAt=new Date().toISOString(),decisionService=createSocialOperatingDecisionService(f.store),decisionOptions={operator:{type:'user' as const,id:'owner'},decidedAt};
+   const planned=planCapacity({goal:goalResult.goal,desiredOriginalContents:1,desiredAdaptations:0,costPerOriginalCny:6,costPerAdaptationCny:1,readyMaterialUnits:1,materialUnitsPerOriginal:1,productionItemsPerDay:1,daysUntilDeadline:7,accounts:[{ref:{type:'owned_social_account',id:'account',version:2},accountId:'account',status:'active',weeklyPublicationCapacity:1}],interactionItemsPerWeek:10,salesLeadsPerWeek:10,expectedInteractionsPerPublication:1,expectedLeadsPerPublication:1,capabilities:{'studio.production':'available','publishing.calendar':'available','customer.attribution':'available'}},decisionOptions);
+   await decisionService.saveOperatingDecision('t','p',planned.decision);
+   const resolved=resolveAutomationPolicy({goal:goalResult.goal,mode:'managed',action:'draft',capability:{key:'studio.production',availability:'available'},factsVerified:true,withinBudget:true,rightsSufficient:true},decisionOptions);
+   await decisionService.saveOperatingDecision('t','p',resolved.decision);
+   pkg.capacityPlanRef={type:'capacity_plan',id:planned.decision.decisionId,version:1};pkg.automationPolicyRef={type:'automation_policy',id:resolved.decision.decisionId,version:1};
+   capacity={ref:pkg.capacityPlanRef,status:planned.decision.outcome==='blocked'||planned.decision.output.status==='blocked'?'blocked':'ready',originalContentTarget:planned.decision.output.originalContentQuota,accountPlans:planned.decision.output.accountQuotas.filter(item=>item.publicationQuota>0).map(item=>({accountId:item.accountId,publicationCount:item.publicationQuota})),productionBudgetCny:planned.decision.output.estimatedCostCny,blockers:planned.decision.blockers.map(item=>item.code)};
+   policy={ref:pkg.automationPolicyRef,status:resolved.decision.outcome==='blocked'||resolved.decision.output.status==='blocked'?'blocked':'ready',blockers:resolved.decision.blockers.map(item=>item.code)};
+  }
+  pkg.version=2;if(options.formalActivation)pkg.socialContentPackage.productionIdentityVersion='shared-original.v1';const {buildWeeklyWorkflow}=await import('../socialPrograms/weeklyPlanner.js');const targetWorkflow=buildWeeklyWorkflow({packageId:pkg.packageId,version:pkg.version,businessGoal:goalResult.goal,capacity,automationPolicy:policy,publicationTasks:pkg.socialContentPackage.publicationTasks,discoveryBudgetCny:pkg.discoveryBudgetCny});pkg.workflows=targetWorkflow.workflows;pkg.workflowTasks=targetWorkflow.tasks;if(options.formalActivation){pkg.planningBlockers=[];pkg.appliedWorkflowEvents=[];pkg.taskVersionMappings=[];}publication.contentTemplateBindingRef={type:'weekly_content_template_binding',id:binding.bindingId,version:1};
   await f.store.create('social_weekly_operating_packages',{tenant_id:'t',program_id:'p',package_id:pkg.packageId,version:pkg.version,payload:structuredClone(pkg)});
  }
  const service=createWeeklyPlanningAuthority(f.store);
@@ -105,9 +129,12 @@ export async function prepareWeeklyNonPresenterPlanningFixture(t:TestContext,opt
  const analysis=await service.runDirectorAnalysis({tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,expectedPlanningVersion:initial.version,actor:'director_agent'});
  assert.equal(analysis.directorAnalyses.length,1);assert.equal(analysis.directorAnalyses[0]!.benchmarkVideoRefs[0]!.id,referenceId);
  const schedule=await service.mergeDetailedSchedule({tenantId:'t',programId:'p',package:pkg,expectedPlanningVersion:analysis.version,actor:'business_agent'});
- const confirmation=await service.confirm({tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,expectedPlanningVersion:schedule.version,userId:'owner'});
- const dispatched=await service.dispatch({tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,expectedPlanningVersion:confirmation.version,actor:'business_agent'});
- assert.equal(dispatched.status,'dispatched');
+ if((options.automaticTemplate||options.deferAutomaticPlanning)&&!options.confirmedTemplate)throw Error('automatic_template_fixture_requires_current_week_package');
+ const confirmation=options.deferAutomaticPlanning?schedule:options.automaticTemplate
+  ?await service.confirmAutomaticTemplate({tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,expectedPlanningVersion:schedule.version,actorUserId:'owner',selectedSlotIds:schedule.detailedSchedule!.coverage!.selectedSlotIds})
+  :await service.confirm({tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,expectedPlanningVersion:schedule.version,userId:'owner'});
+ const dispatched=options.deferAutomaticPlanning?confirmation:await service.dispatch({tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,expectedPlanningVersion:confirmation.version,actor:'business_agent'});
+ assert.equal(dispatched.status,options.deferAutomaticPlanning?'awaiting_confirmation':'dispatched');
  pkg.agentPlanning=structuredClone(dispatched);
  // Remove the unrelated already-produced fixture task; production must use actual creation.
  if(!options.confirmedTemplate){f.tables.starter_social_content_tasks=[];f.tables.social_weekly_execution_tasks=[];}

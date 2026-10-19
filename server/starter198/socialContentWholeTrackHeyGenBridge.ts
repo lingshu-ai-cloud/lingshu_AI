@@ -21,6 +21,8 @@ export interface WholeTrackHeyGenFunding {
  scope:SocialTaskBudgetScope;requirements:PaidStageRequirement[];routeBindings:Record<string,BoundPaidRoute>;
  intents:SocialPaidOperationIntent[];permit:ReturnType<typeof createSocialContentPaidOperationPermit>;
  readReservedCny(operationId:string):number;assertCurrent():Promise<void>;
+ /** Revalidate claims only for a new provider write; known-task GET recovery must not call this. */
+ assertNewSubmit?():Promise<void>;
  assertLivePresenter(route:BoundPaidRoute,input:DigitalPresenterExecutionRequest,credentialSha256:string):Promise<void>;
 }
 /** Normal existing-stack factory. Audio is the already-paid full-track slice;
@@ -79,7 +81,7 @@ export function createWholeTrackSocialHeyGenBridge(input:{
    const bound=audioRequests.get(String(body.audio_asset_id||''));
    if(!bound||!requestIds.has(requestId)||paidProductionHash(requestIds.get(requestId)?.audio)!==paidProductionHash(bound.audio))throw Error('whole_track_heygen_audio_request_unbound');
    const {request,audio}=bound,{intent,route}=canonical(request);
-   await funding.assertCurrent();await funding.assertLivePresenter(route,request,keyHash);
+   await funding.assertCurrent();await funding.assertNewSubmit?.();await funding.assertLivePresenter(route,request,keyHash);
    const frame=frameAssets.get(request.shotId),image=body.image as Record<string,unknown>|undefined;
    if(!frame||frame.sha256!==request.approvedFirstFrame.sha256||frame.approvalRecordHash!==request.approvedFirstFrame.approvalRecordHash
     ||body.type!=='image'||image?.type!=='asset_id'||image.asset_id!==frame.imageAssetId||'avatar_id' in body
@@ -167,8 +169,9 @@ export function createWholeTrackSocialHeyGenBridge(input:{
     });
     if(saved.length>1)throw Error('whole_track_heygen_recovery_ambiguous');
     if(saved[0])throw Error('whole_track_heygen_upload_proof_missing_no_repost');
+    await funding.assertCurrent();await funding.assertNewSubmit?.();
     writes(file,{identityHash,status:'uploading'},true);
-    await funding.assertCurrent();const audioAssetId=await providerClient.uploadAudio(clip.bytes,'whole-track:'+identityHash,'audio/wav');
+    const audioAssetId=await providerClient.uploadAudio(clip.bytes,'whole-track:'+identityHash,'audio/wav');
     previous={identityHash,status:'uploaded',audioAssetId};writes(file,previous);
    }
    if(!request.presenter.providerPresenterId||!request.presenter.providerVoiceId)throw Error('whole_track_heygen_avatar_voice_mapping_required');
@@ -189,7 +192,7 @@ export function createWholeTrackSocialHeyGenBridge(input:{
    try{saved=JSON.parse(fs.readFileSync(file,'utf8'));}catch{}
    if(saved&&saved.identityHash!==identityHash)throw Error('whole_track_approved_first_frame_upload_scope_changed');
    if(saved&&!saved.imageAssetId)throw Error('whole_track_approved_first_frame_upload_unknown_no_repost');
-   if(!saved){writes(file,{identityHash,status:'uploading'},true);await funding.assertCurrent();const imageAssetId=await providerClient.uploadImage(bytes,mimeType,`whole-track-frame:${identityHash}`);saved={identityHash,status:'uploaded',imageAssetId,sha256:approved.sha256,approvalRecordHash:approved.approvalRecordHash};writes(file,saved);}
+   if(!saved){await funding.assertCurrent();await funding.assertNewSubmit?.();writes(file,{identityHash,status:'uploading'},true);const imageAssetId=await providerClient.uploadImage(bytes,mimeType,`whole-track-frame:${identityHash}`);saved={identityHash,status:'uploaded',imageAssetId,sha256:approved.sha256,approvalRecordHash:approved.approvalRecordHash};writes(file,saved);}
    const result={imageAssetId:String(saved.imageAssetId),sha256:approved.sha256,approvalRecordHash:approved.approvalRecordHash};frameAssets.set(request.shotId,result);return result;
   },
   async verify(request:DigitalPresenterExecutionRequest,value:{imageAssetId:string;sha256:string;approvalRecordHash:string}){const actual=await this.resolve(request);return paidProductionHash(actual)===paidProductionHash(value);}

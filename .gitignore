@@ -170,3 +170,4 @@ data/daily-briefing-queue.json
 logs/
 output/
 tmp/
+dist-weekly-task-card/

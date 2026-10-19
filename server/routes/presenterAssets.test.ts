@@ -25,9 +25,12 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     if (url.pathname === '/v3/assets') data = { asset_id: 'uploaded1' };
     else if (url.pathname === '/v3/voices') { data = [{ voice_id: 'voice1', name: 'Sara', language: 'English', type: 'public', preview_audio_url: 'https://files.heygen.ai/s.mp3' }]; meta = { has_more: true, next_token: 'page2' }; }
     else if (url.pathname === '/v3/avatars/looks' && url.searchParams.get('ownership') === 'public') { data = [look]; meta = { has_more: true, next_token: 'page2' }; }
+    else if (url.pathname === '/v3/avatars/looks' && url.searchParams.get('ownership') === 'private') data = [{ ...look, id: 'private-photo', name: 'Owned presenter', avatar_type: 'photo_avatar', group_id: 'private-group', status: 'completed' }];
     else if (url.pathname === '/v3/avatars' && init.method === 'POST') { if (lost) throw new Error('response lost'); data = { avatar_group: { id: 'created-group' }, avatar_item: { ...look, id: 'private1', group_id: 'created-group', status: 'processing' } }; }
     else if (url.pathname === '/v3/avatars/created-group') data = { id: 'created-group', status: 'completed', ...(consentOmitted ? {} : { consent_status: approved ? 'accepted' : 'pending' }) };
+    else if (url.pathname === '/v3/avatars/private-group') data = { id: 'private-group', status: 'completed' };
     else if (url.pathname === '/v3/avatars/looks/private1') data = { ...look, id: 'private1', status: 'completed', group_id: 'created-group' };
+    else if (url.pathname === '/v3/avatars/looks/private-photo') data = { ...look, id: 'private-photo', name: 'Owned presenter', avatar_type: 'photo_avatar', status: 'completed', group_id: 'private-group' };
     else if (url.pathname === '/v3/avatars/looks/public1') data = look;
     else if (url.pathname === '/v3/avatars/created-group/consent') data = { avatar_group: { id: 'created-group' }, url: 'https://app.heygen.com/consent/test' };
     else throw new Error(`Unexpected test request ${rawUrl}`);
@@ -125,6 +128,39 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     const previousPrivateTenant = process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID;
     try {
       process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID = 'A';
+      const privateCatalog = await (await request('/catalog?scope=private')).json();
+      assert.equal(privateCatalog.items[0].id, 'private-photo');
+      const privateSelection = { lookId: 'private-photo', voiceId: 'voice1', reviewed: true, authorized: true, makeDefault: true };
+      assert.equal((await request('/import', privateSelection)).status, 400, 'private person needs explicit adult confirmation');
+      assert.equal((await request('/import', { ...privateSelection, authorized: false, adultConfirmed: true })).status, 400);
+      const privateImported = await (await request('/import', { ...privateSelection, adultConfirmed: true })).json();
+      const ownedPresenter = privateImported.presenters.find((item: any) => item.avatarId === 'private-photo');
+      assert.ok(ownedPresenter);
+      assert.equal(validateHeyGenPresenterRecord(ownedPresenter).ok, true);
+      assert.match(ownedPresenter.rightsEvidence.authorizationRef, /^document:\/\/studio_presenter_assets\//);
+      assert.match(ownedPresenter.rightsEvidence.consentRef, /^consent:\/\/user-declaration\//);
+      assert.equal(privateImported.defaultPresenterId, ownedPresenter.id);
+      assert.equal([...rows.values()].filter(row => row.kind === 'import_authorization').length, 1);
+      assert.equal((await (await request('/import', { ...privateSelection, adultConfirmed: true })).json()).presenters.length, privateImported.presenters.length);
+      const retainedPrivateAuth = [...rows.entries()].find(([key, row]) => key.startsWith('studio_presenter_assets/') && row.kind === 'import_authorization')!;
+      rows.set(retainedPrivateAuth[0], { ...retainedPrivateAuth[1], payload: { ...retainedPrivateAuth[1].payload, revokedAt: '2026-10-19T00:00:00Z' } });
+      assert.equal((await request('/import', { ...privateSelection, adultConfirmed: true })).status, 400, 'revoked original consent cannot be replayed as a successful default selection');
+      rows.set(retainedPrivateAuth[0], retainedPrivateAuth[1]);
+      const defaultsEntry = [...rows.entries()].find(([key]) => key.startsWith('studio_production_defaults/'))!;
+      const legacyDefaults = structuredClone(defaultsEntry[1]);
+      legacyDefaults.payload.presenters = legacyDefaults.payload.presenters.map((item: any) => item.id === ownedPresenter.id
+        ? { ...item, rightsEvidence: { ...item.rightsEvidence, authorizationRef: `license://heygen/public-catalog/${item.avatarId}`, subjectAdultConfirmed: false } }
+        : item);
+      rows.set(defaultsEntry[0], legacyDefaults);
+      const privateAuthEntry = [...rows.entries()].find(([key, row]) => key.startsWith('studio_presenter_assets/') && row.kind === 'import_authorization')!;
+      rows.set(privateAuthEntry[0], { ...privateAuthEntry[1], payload: { ...privateAuthEntry[1].payload, voiceId: 'tampered-voice' } });
+      assert.equal((await request('/import', { ...privateSelection, adultConfirmed: true })).status, 400, 'a tampered retained authorization cannot upgrade a private presenter');
+      rows.set(privateAuthEntry[0], privateAuthEntry[1]);
+      const upgraded = await (await request('/import', { ...privateSelection, adultConfirmed: true })).json();
+      const upgradedPresenter = upgraded.presenters.find((item: any) => item.id === ownedPresenter.id);
+      assert.equal(upgradedPresenter.assetVersion, ownedPresenter.assetVersion + 1, 'legacy private imports require an explicit versioned rights upgrade');
+      assert.equal(validateHeyGenPresenterRecord(upgradedPresenter).ok, true);
+      assert.equal([...rows.values()].filter(row => row.kind === 'import_authorization').length, 1);
       const samePersonAsset = await (await upload('same-person-new-look', Buffer.from([137,80,78,71,13,10,26,10,0,0,0,2]))).json();
       const reuseInput = { ...input, uploadId: samePersonAsset.id, requestId: 'same-person-reuse', reusePresenterId: saved.presenters[0].id, samePersonConfirmed: true };
       assert.equal((await request('/creations', { ...reuseInput, samePersonConfirmed: false })).status, 400);

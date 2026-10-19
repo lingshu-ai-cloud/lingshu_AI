@@ -174,7 +174,8 @@ export function materialRoutingRequests(input: {
       ...(localMaterialRejections.length ? { localMaterialRejections } : {}) };
     recordUse(match);
     const segment = { sourceRef: match.sourceRef, segmentId: match.segmentId,
-      startSeconds: match.timeRange.startSeconds, endSeconds: match.timeRange.endSeconds };
+      startSeconds: match.timeRange.startSeconds, endSeconds: match.timeRange.endSeconds,
+      ...(match.footageEvidence ? { footageEvidence: structuredClone(match.footageEvidence) } : {}) };
     return { ...plannedShot, materialType, fixedYieldArchetypeId, selectedMaterialSegment: segment,
       ...(localMaterialRejections.length ? { localMaterialRejections } : {}),
       localVideoMatch: { sourceRefs: [match.sourceRef], semanticMatch: 'verified' as const,

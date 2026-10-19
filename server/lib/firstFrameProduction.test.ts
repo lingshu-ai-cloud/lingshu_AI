@@ -36,3 +36,26 @@ test('uncertain supplier state remains reserved and cannot be automatically resu
     await assert.rejects(() => produceFirstFrame(input(), generator, { budget }), /禁止自动重提/); assert.equal(calls, 1);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('HTTP rejection after transport remains an unknown paid operation across budget restart', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'first-frame-production-')); let posts = 0;
+  try {
+    const generator: FirstFrameGenerator = { provider: 'seedream', model: 'model', estimatedCostCny: 0.22,
+      async generate() { posts += 1; throw new FirstFrameProviderError('HTTP 404', 'rejected', 'provider-request-1'); } };
+    await assert.rejects(() => produceFirstFrame(input(), generator, { budget: new FirstFrameBudget(root, () => 2, () => 3) }), /HTTP 404/);
+    await assert.rejects(() => produceFirstFrame(input(), generator, { budget: new FirstFrameBudget(root, () => 2, () => 3) }), /禁止自动重提/);
+    assert.equal(posts, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('proven pre-transport configuration failure may release its reservation', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'first-frame-production-')); let attempts = 0;
+  try {
+    const generator: FirstFrameGenerator = { provider: 'seedream', model: 'model', estimatedCostCny: 0.22,
+      async generate() { attempts += 1; throw new FirstFrameProviderError('missing key', 'rejected', '', 'before_submit'); } };
+    const budget = new FirstFrameBudget(root, () => 2, () => 3);
+    await assert.rejects(() => produceFirstFrame(input(), generator, { budget }), /missing key/);
+    await assert.rejects(() => produceFirstFrame(input(), generator, { budget }), /missing key/);
+    assert.equal(attempts, 2);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

@@ -5,6 +5,7 @@ import type {SocialTaskBudgetScope} from '../lib/socialContentTaskBudget.js';
 import {createProductionBudgetRouteReaders} from './socialContentProductionBudgetRoutes.js';
 import type {SocialMaterialPaidRuntimePorts} from './socialContentMaterialPaidContext.js';
 import type {ProductPaidContext} from './socialContentProductPaidContext.js';
+import {qwenVisionInputLimit} from '../lib/qwenVisionInputLimit.js';
 const sha=(value:string)=>createHash('sha256').update(value).digest('hex');
 /** Model accepted-context ceiling for this actual SDK request, not observed
  * billed usage or a copied intent maximum. Validate supported body/modalities
@@ -26,7 +27,7 @@ export async function measureQwenRequestInputUpperBound(body:Record<string,unkno
    throw Error('qwen_request_modality_unsupported');
   })};
  });
- const ceiling=body.model.startsWith('qwen-vl-max')?129024:262144;
+ const ceiling=qwenVisionInputLimit(body.model);
  if(!Number.isSafeInteger(body.max_tokens)||Number(body.max_tokens)<=0||Number(body.max_tokens)>ceiling||count===0||Buffer.byteLength(JSON.stringify({...body,messages:normalized}),'utf8')>ceiling)throw Error('qwen_request_input_exceeds_context');
  return ceiling;
 }

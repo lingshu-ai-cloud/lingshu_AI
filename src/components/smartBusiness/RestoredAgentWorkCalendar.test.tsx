@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import Calendar, {calendarExecutionMark,calendarTaskPresentation,isPastUnfinishedCalendarTask,taskProgressPercent} from './RestoredAgentWorkCalendar';
+import Calendar, {calendarExecutionMark,calendarTaskPresentation,hasCtaContactGap,isPastUnfinishedCalendarTask,taskProgressPercent} from './RestoredAgentWorkCalendar';
 import type { AgentCalendarTask } from './AgentWeeklyCalendar';
 const base: AgentCalendarTask = {id:'business',date:'2026-10-12',time:'10:00',agent:'business',title:'冻结经营任务',output:'经营交付',context:'实际范围',minutes:30,status:'planned',dueAt:'2026-10-12T10:00:00+08:00'};
 test('only unfinished work before today receives an overdue exclamation mark',()=>{
@@ -56,6 +56,25 @@ test('day-aware presentation only judges unfinished work after its calendar day'
   assert.deepEqual(calendarTaskPresentation({...base,date:'2026-10-14',status:'planned'},'2026-10-15'),{status:'needs_action',statusLabel:'结果未完成',muted:true});
   assert.deepEqual(calendarTaskPresentation({...base,date:'2026-10-15',status:'blocked'},'2026-10-15'),{status:'planned',statusLabel:'今日待执行',muted:false});
   assert.deepEqual(calendarTaskPresentation({...base,date:'2026-10-16',status:'failed'},'2026-10-15'),{status:'planned',statusLabel:'待执行',muted:false});
+});
+test('CTA contact gap shows blocked intervention on a pending card without completing the underlying task',()=>{
+  const withGap={...base,executionBlockers:['cta_required']};
+  assert.equal(hasCtaContactGap('missing'),true);
+  assert.equal(hasCtaContactGap('recorded'),true);
+  assert.equal(hasCtaContactGap('unavailable'),true);
+  assert.equal(hasCtaContactGap(),false);
+  assert.deepEqual(calendarTaskPresentation(withGap,'2026-10-12'),{status:'planned',statusLabel:'今日待执行',muted:false});
+  assert.deepEqual(calendarTaskPresentation(withGap,'2026-10-12','missing'),{status:'needs_action',statusLabel:'受阻 · 联系待填',muted:false});
+  assert.deepEqual(calendarTaskPresentation(withGap,'2026-10-12','recorded'),{status:'needs_action',statusLabel:'受阻 · 样品待证',muted:false});
+  assert.deepEqual(calendarTaskPresentation(withGap,'2026-10-12','unavailable'),{status:'needs_action',statusLabel:'受阻 · 联系记录待恢复',muted:false});
+  assert.deepEqual(calendarTaskPresentation({...withGap,status:'completed'},'2026-10-12','recorded'),{status:'done',statusLabel:'已完成',muted:false});
+  const source=readFileSync(new URL('../socialProgram/WeeklyCtaContactIntervention.tsx',import.meta.url),'utf8');
+  assert.match(source,/selectedProduct\?\.name/);
+  assert.match(source,/免费样品承诺与其他生产条件仍待核验/);
+  assert.doesNotMatch(source,/提交即确认该号码[\s\S]*免费样品承诺由企业实际履约/);
+  const calendar=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
+  assert.match(calendar,/action\.code === 'weekly_cta_contact_read_failed'/);
+  assert.doesNotMatch(calendar.slice(calendar.indexOf('export function hasCtaContactGap'),calendar.indexOf('export function calendarExecutionMark')),/executionBlockers|reason/);
 });
 test('calendar renders only independent task events and keeps task details in the shared drawer',()=>{
   const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');

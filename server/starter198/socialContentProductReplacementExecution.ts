@@ -78,7 +78,7 @@ export async function executeProductReplacementScene(input: Input, ports: Produc
     const products = await ports.products(input);
     if (!products.length || products.some(p => p.role !== 'product_identity'))
         throw Error('product_KB_packaging_missing');
-    const directorScene = JSON.stringify({ scene: input.spec.sceneLock, camera: input.spec.cameraLock });
+    const directorScene = JSON.stringify({ scene: input.spec.sceneLock, compositionSafety: input.spec.compositionSafety, camera: input.spec.cameraLock });
     const plan = planStoryboardProductScene({
         tenantId: input.tenantId,
         projectId: input.taskId,
@@ -112,6 +112,8 @@ export async function executeProductReplacementScene(input: Input, ports: Produc
     let attemptedVideos = 0;
     const qualityFailed = (report: ProductSceneQualityReport) => input.spec.productIdentity.groups.some(group =>
       Number(report.productIdentitySimilarity[group.productRef] || 0) < input.spec.productIdentity.identitySimilarityMinimum)
+      || input.spec.validation.requiredChecks.includes('packaging_visibility') && report.packagingVisibilityPassed !== true
+      || input.spec.validation.requiredChecks.includes('subject_visibility') && report.subjectVisibilityPassed !== true
       || input.spec.productIdentity.ocrExactMatchRequired && !report.labelOcrExactMatch
       || report.sceneTopologyScore < .75 || report.productSlotLayoutScore < .75 || report.cameraTrajectoryScore < .75 || !report.evidenceRefs.length;
     for (const attempt of [0, 1] as const) {
@@ -125,7 +127,7 @@ export async function executeProductReplacementScene(input: Input, ports: Produc
         // task recovers the accepted provider request instead of resubmitting it.
         requestId: `${input.idempotencyKey}:${attemptIdentity}`,
         firstFrame: frame.bytes,
-        prompt: `Animate the supplied actual approved enterprise product first frame according to this director shot: ${directorScene}. Preserve product packaging, labels and composition. No added text or fabricated manufacturing facts.${retry ? ' This is the single directed correction: keep the supplied first frame unchanged and correct the prior video quality failure without changing product identity or scene topology.' : ''}`,
+        prompt: `Animate the supplied actual approved enterprise product first frame according to this director shot: ${directorScene}. Preserve product packaging, labels and composition. Minor overlap is allowed, but no cap, pump or nozzle may be fully hidden; keep at least one complete brand, primary-label and package-form identity anchor visible for each product group. Keep all content-packaging modules inside reserved negative-space safe zones; never cover faces, key actions, hero products or the news-event subject. No added text or fabricated manufacturing facts.${retry ? ' This is the single directed correction: keep the supplied first frame unchanged, restore packaging and subject visibility where needed, and correct the prior video quality failure without changing product identity or scene topology.' : ''}`,
         providerDurationSeconds,
         checkpointPath: path.join(input.outputDirectory, `${attemptIdentity}${g.videoProvider==='wan'?'.wan.json':'.seedance.json'}`),
       });

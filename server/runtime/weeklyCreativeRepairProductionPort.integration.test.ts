@@ -41,6 +41,13 @@ test('real creative repair adapter creates its child but fails closed before run
  const ready=await service.confirmCapacity('t','owner',created.caseId,{expectedCaseRecordHash:current.recordHash,expectedConfigurationHash:configuration.recordHash,expectedPreviewHash:preview.previewHash,expectedAuthorityHash:preview.authorityHash,authorizedMaximumCostCny:0});
  assert.equal(ready.state,'ready');assert.equal(f.tables[WEEKLY_CREATIVE_REPAIR_CAPACITY_RESERVATIONS]?.length,1);assert.equal(f.tables.content_execution_jobs?.length??0,0);
  const mapping=await service.read('t',created.caseId);assert(mapping);assert.equal((await port.reconcileStart({case:ready,configuration,mapping})).status,'absent');assert.equal(f.tables.starter_social_content_tasks!.filter(row=>String(row.create_idempotency_key).startsWith('weekly-creative-repair:')).length,0);assert.equal(f.tables.content_execution_jobs?.length??0,0);
+ (parent.brief as any).callToAction='Contact us on WhatsApp to get your free sample.';
+ await assert.rejects(port.start({case:ready,configuration,actorUserId:'owner',mapping}),{code:'weekly_production_cta_evidence_required'});
+ await assert.rejects(service.start('t','owner',created.caseId,{expectedCaseRecordHash:ready.recordHash}),{code:'weekly_production_cta_evidence_required'});
+ assert.equal(f.tables.starter_social_content_tasks!.filter(row=>String(row.create_idempotency_key).startsWith('weekly-creative-repair:')).length,0);
+ assert.equal(f.tables.content_execution_jobs?.length??0,0);
+ assert.equal((await service.read('t',created.caseId))?.state,'start_pending');
+ delete (parent.brief as any).callToAction;
  await assert.rejects(service.start('t','owner',created.caseId,{expectedCaseRecordHash:ready.recordHash}),{code:'weekly_creative_repair_execution_start_outcome_unknown'});
  const children=f.tables.starter_social_content_tasks!.filter(row=>String(row.create_idempotency_key).startsWith('weekly-creative-repair:'));assert.equal(children.length,1);assert.equal(children[0]!.run_id,'');assert.notEqual(children[0]!.status,'producing');
  assert.equal(f.tables.content_execution_jobs?.length??0,0);assert.equal((await service.read('t',created.caseId))?.state,'reconciling');

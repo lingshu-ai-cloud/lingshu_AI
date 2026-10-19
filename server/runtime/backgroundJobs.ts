@@ -2,7 +2,7 @@ import { createDefaultWeeklyExecutionAdapters } from './weeklyExecutionAdapters.
 import {localWeeklyExecutionRuntime} from './localWeeklyExecutionRuntime.js';
 import {contentOrderOutboxRuntime,localContentOrderOutboxRuntime} from './socialContentOrderOutboxRuntime.js';
 import { store } from '../storage/index.js';
-import { initSocialWeeklyExecutionRuntime } from './socialWeeklyExecutionRuntime.js';
+import { initSocialWeeklyExecutionRuntime,type WeeklyTrustedPreproductionPorts } from './socialWeeklyExecutionRuntime.js';
 import { initDigitalEmployeeRuntime } from '../digitalEmployees/runtimeOrchestrator.js';
 import { initFollowupDispatchWorker } from '../digitalEmployees/followupDispatchWorker.js';
 import { initScheduledPublisher } from '../publishing/scheduledPublisher.js';
@@ -24,6 +24,7 @@ import type { ProcessRole } from './processRole.js';
 import { initLocalTempMaintenance } from '../storage/localTempMaintenance.js';
 import { initSocialContentProductionBullWorker } from '../starter198/socialContentProductionQueue.js';
 import { initSocialSceneReworkCompletionRecovery } from './socialSceneReworkCompletionRuntime.js';
+import { weeklyDiscoveryScopeMigrationRecoveryRuntime } from './weeklyDiscoveryScopeMigrationRecoveryRuntime.js';
 import { initInitialPreparationWorker, stopInitialPreparationWorker } from '../routes/digitalEmployees.js';
 import {
   markBackgroundJobsFailed,
@@ -32,13 +33,15 @@ import {
   startWorkerHeartbeat,
   writeWorkerHeartbeat,
 } from './workerHeartbeat.js';
+import {createDefaultWeeklyPreproductionPorts} from './defaultWeeklyPreproductionPorts.js';
 
-export async function startBackgroundJobs(role: ProcessRole = 'all'): Promise<() => void> {
+export async function startBackgroundJobs(role: ProcessRole = 'all',options:{weeklyPreproductionPorts?:WeeklyTrustedPreproductionPorts}={}): Promise<() => void> {
   if (role === 'web') throw new Error('background_jobs_forbidden_for_web_role');
   let initialPreparationWorkerStarted = false;
   markBackgroundJobsStarting();
   console.log('[runtime] starting background jobs');
   try {
+    const weeklyPreproductionPorts=options.weeklyPreproductionPorts??createDefaultWeeklyPreproductionPorts(store);
     await initScheduler();
     initLocalTempMaintenance();
     initSocialContentProductionBullWorker();
@@ -60,8 +63,17 @@ export async function startBackgroundJobs(role: ProcessRole = 'all'): Promise<()
     initAgentNotificationOutboxWorker();
     initSocialWeeklyReviewWorker();
     initialPreparationWorkerStarted = initInitialPreparationWorker();
-    initSocialWeeklyExecutionRuntime(createDefaultWeeklyExecutionAdapters(store));
-    await localWeeklyExecutionRuntime.start();
+    localWeeklyExecutionRuntime.configureTrustedPreproductionPorts(weeklyPreproductionPorts);
+    initSocialWeeklyExecutionRuntime(createDefaultWeeklyExecutionAdapters(store,{exactAnalysisPortsForRun:weeklyPreproductionPorts.candidatePorts?.exactAnalysisPortsForRun}),{preproductionPorts:weeklyPreproductionPorts});
+    // Worker-only and database-leased. Receipt reconciliation starts in the
+    // background so neither HTTP nor worker readiness waits on a full scan.
+    weeklyDiscoveryScopeMigrationRecoveryRuntime.start();
+    // Restoring an explicitly registered weekly consumer may immediately make
+    // real provider calls.  It must not hold the HTTP process startup hostage;
+    // the runtime persists its own observation and keeps retrying on its timer.
+    void localWeeklyExecutionRuntime.start().catch(() => {
+      console.error('[runtime] scoped local recovery unavailable; see health.localWeeklyRecovery');
+    });
     contentOrderOutboxRuntime.start();
     localContentOrderOutboxRuntime.start();
     initDigitalEmployeeRuntime();
@@ -69,12 +81,14 @@ export async function startBackgroundJobs(role: ProcessRole = 'all'): Promise<()
     await startWorkerHeartbeat(role);
     console.log('[runtime] background jobs started');
     return () => {
+      weeklyDiscoveryScopeMigrationRecoveryRuntime.stop();
       localWeeklyExecutionRuntime.stop();
       contentOrderOutboxRuntime.stop();
       localContentOrderOutboxRuntime.stop();
       if (initialPreparationWorkerStarted) stopInitialPreparationWorker();
     };
   } catch (error) {
+    weeklyDiscoveryScopeMigrationRecoveryRuntime.stop();
     localWeeklyExecutionRuntime.stop();
     contentOrderOutboxRuntime.stop();
     localContentOrderOutboxRuntime.stop();

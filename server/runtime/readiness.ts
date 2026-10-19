@@ -219,6 +219,7 @@ export async function digitalHumanQualityRuntimeReadiness(
     const syncnetDir = String(env.DIGITAL_HUMAN_SYNCNET_DIR || '').trim();
     const required = [
       path.join(syncnetDir, 'data', 'syncnet_v2.model'),
+      path.join(syncnetDir, 'detectors', 's3fd', 'weights', 'sfd_face.pth'),
       path.join(syncnetDir, 'run_pipeline.py'),
       path.join(syncnetDir, 'run_syncnet.py'),
       path.resolve(process.cwd(), 'scripts/validate-syncnet.py'),

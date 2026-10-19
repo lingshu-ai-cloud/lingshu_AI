@@ -11,15 +11,17 @@ import {SocialProgramError} from './service.js';
 import {verifiedWeeklyPlanningTemplateAdoption} from './weeklyPlanningTemplateAdoption.js';
 
 export const WEEKLY_PRODUCTION_SCOPE_CAPACITIES='social_weekly_production_scope_capacities';
+const BUDGET_POLICY_VERSION='weekly-per-film-10.v1' as const;
 const allowed=new Set(['business_outline','benchmark_collection','benchmark_scoring','director_analysis','business_schedule','material_preparation','material_readiness','script','storyboard','asset_generation','video_generation','quality_check']);
 const production=new Set(['material_preparation','material_readiness','script','storyboard','asset_generation','video_generation','quality_check']);
 const fail=(code:string):never=>{throw new SocialProgramError(code,409,code);};
 export interface ProductionScopeCapacity {
  proofId:string;tenantId:string;programId:string;packageId:string;packageVersion:number;
  source:'automatic_template';templateVersion:string;adoptedAt:string;userApproval:null;
+ budgetPolicyVersion:typeof BUDGET_POLICY_VERSION;
  selectedSlotIds:string[];selectedPublicationTaskIds:string[];planningRef:VersionedSocialRef;
  detailedScheduleHash:string;planningAdoptionHash:string;queueLimitsHash:string;packageProductionHash:string;
- concurrency:number;reservedBudgetCny:number;perFilmIncludingRevisionsMaxCny:15;
+ concurrency:number;reservedBudgetCny:number;perFilmIncludingRevisionsMaxCny:10;
  authorizesPublishing:false;authorizesAcceptance:false;authorizesCustomerMessages:false;
  assignments:Array<{taskId:string;inputHash:string;dependencies:string[];estimatedDurationMinutes:number;startAt:string;finishAt:string;lane:number;motherContentId:string|null;reservedCny:number;mode:'planned'|'verified_completed';resultHash:string|null}>;
 }
@@ -66,6 +68,10 @@ export function buildWeeklyProductionScopeCapacity(a:ProductionScopeCapacityInpu
  // the canonical node's dependency closure no longer includes it.
  for(const task of tasks){const pub=pkg.socialContentPackage.publicationTasks.find(p=>p.publicationTaskId===task.publicationTaskId);if(pub?.motherContentId&&roots.has(pub.motherContentId)&&production.has(task.schedule.stepKind)&&hasWeeklyInitialExecution(task))fail('weekly_production_scope_existing_work_requires_reconciliation');}
  const queue=queueCapacity(a.limits,scope.tenantId),lanes=Array(queue.concurrency).fill(now) as number[];
+ const configuredPerItem=pkg.socialContentPackage.perItemBudgetCny;
+ if(configuredPerItem!==null&&configuredPerItem!==undefined&&(!Number.isFinite(configuredPerItem)||configuredPerItem<0))fail('weekly_production_scope_item_budget_invalid');
+ const perFilmBudgetCny=Math.min(template.perFinishedVideoMaxCny,configuredPerItem??template.perFinishedVideoMaxCny);
+ if(tasks.some(task=>production.has(task.schedule.stepKind)&&task.budget.category==='production'&&task.budget.limitCny!==null&&task.budget.limitCny>perFilmBudgetCny))fail('weekly_production_scope_task_budget_exceeds_item_limit');
  const end=Date.parse(`${pkg.weekEnd}T23:59:59+08:00`),assignments:ProductionScopeCapacity['assignments']=[],done=new Map<string,number>(),pending=new Set(required),reserved=new Set<string>();
  const window=(instant:number,duration:number)=>{let start=instant;while(start<=end){const day=new Date(start+8*3600000).toISOString().slice(0,10),earliest=Date.parse(`${day}T06:00:00+08:00`),midnight=Date.parse(`${day}T00:00:00+08:00`)+86400000;start=Math.max(start,earliest);if(start+duration<=midnight&&start+duration<=end)return start;start=midnight;}return fail('weekly_production_scope_capacity_infeasible');};
  while(pending.size){let advanced=false;for(const id of [...pending].sort()){
@@ -83,21 +89,21 @@ export function buildWeeklyProductionScopeCapacity(a:ProductionScopeCapacityInpu
   const start=completed?Date.parse(task.schedule.actualFinishedAt!):window(Math.max(dependencyFinish,lanes[lane]!,Date.parse(`${day}T06:00:00+08:00`)),minutes*60000),finish=completed?start:start+minutes*60000;
   if(!Number.isFinite(start))fail('weekly_production_scope_completion_unverified');
   const root=publication?.motherContentId??null;
-  let reservedCny=0;if(task.schedule.stepKind==='video_generation'){if(!root)fail('weekly_production_scope_production_root_missing');if(!reserved.has(root!)){reserved.add(root!);reservedCny=15;}}
+  let reservedCny=0;if(task.schedule.stepKind==='video_generation'){if(!root)fail('weekly_production_scope_production_root_missing');if(!reserved.has(root!)){reserved.add(root!);reservedCny=perFilmBudgetCny;}}
   assignments.push({taskId:id,inputHash:weeklyContinuationInputHash(task),dependencies:[...task.dependsOnTaskIds],estimatedDurationMinutes:minutes,startAt:new Date(start).toISOString(),finishAt:new Date(finish).toISOString(),lane,motherContentId:root,reservedCny,mode:completed?'verified_completed':'planned',resultHash:completed?scheduleHash(task.resultRefs):null});
   if(!completed)lanes[lane]=finish;done.set(id,finish);pending.delete(id);advanced=true;
  }if(!advanced)fail('weekly_production_scope_dependency_cycle');}
  if(reserved.size!==roots.size)fail('weekly_production_scope_generation_node_required');
- const reservedBudgetCny=reserved.size*15;
+ const reservedBudgetCny=reserved.size*perFilmBudgetCny;
  if(!Number.isFinite(pkg.socialContentPackage.weeklyBudgetCny)||pkg.socialContentPackage.weeklyBudgetCny!<reservedBudgetCny)fail('weekly_production_scope_budget_insufficient');
- const body={...scope,source:'automatic_template' as const,templateVersion:template.version,adoptedAt:a.now,userApproval:null,selectedSlotIds:selected,selectedPublicationTaskIds:publications,planningRef:detail.ref,detailedScheduleHash:scheduleHash(detail),planningAdoptionHash:adoption.recordHash,queueLimitsHash:queue.hash,packageProductionHash:productionPackageHash(pkg),concurrency:queue.concurrency,reservedBudgetCny,perFilmIncludingRevisionsMaxCny:15 as const,authorizesPublishing:false as const,authorizesAcceptance:false as const,authorizesCustomerMessages:false as const,assignments};
+ const body={...scope,source:'automatic_template' as const,templateVersion:template.version,budgetPolicyVersion:BUDGET_POLICY_VERSION,adoptedAt:a.now,userApproval:null,selectedSlotIds:selected,selectedPublicationTaskIds:publications,planningRef:detail.ref,detailedScheduleHash:scheduleHash(detail),planningAdoptionHash:adoption.recordHash,queueLimitsHash:queue.hash,packageProductionHash:productionPackageHash(pkg),concurrency:queue.concurrency,reservedBudgetCny,perFilmIncludingRevisionsMaxCny:10 as const,authorizesPublishing:false as const,authorizesAcceptance:false as const,authorizesCustomerMessages:false as const,assignments};
  return {...body,tenantId:scope.tenantId,proofId:scheduleHash(body)};
 }
 
 /** The caller holds the existing authenticated package gate and validates the
  * actual planning analyses before persisting; this module never invents them. */
 export async function persistWeeklyProductionScopeCapacity(store:DataStore,proof:ProductionScopeCapacity){
- const {proofId,...body}=proof;if(scheduleHash(body)!==proofId)fail('weekly_production_scope_proof_invalid');
+ const {proofId,...body}=proof;if(scheduleHash(body)!==proofId||proof.budgetPolicyVersion!==BUDGET_POLICY_VERSION||proof.reservedBudgetCny!==proof.assignments.reduce((sum,item)=>sum+item.reservedCny,0)||proof.assignments.some(item=>item.reservedCny<0||item.reservedCny>template.perFinishedVideoMaxCny))fail('weekly_production_scope_proof_invalid');
  const existing=await store.getById<Record_>(WEEKLY_PRODUCTION_SCOPE_CAPACITIES,proofId);
  if(existing){if(existing.content_hash!==scheduleHash(proof)||scheduleHash(existing.payload)!==scheduleHash(proof))fail('weekly_production_scope_proof_corrupt');return proof;}
  const saved=await store.create(WEEKLY_PRODUCTION_SCOPE_CAPACITIES,{id:proofId,tenant_id:proof.tenantId,program_id:proof.programId,package_id:proof.packageId,package_version:proof.packageVersion,payload:proof,content_hash:scheduleHash(proof)});
@@ -111,11 +117,20 @@ export async function readWeeklyProductionScopeCapacity(store:DataStore,a:{proof
  const row=await store.getById<Record_>(WEEKLY_PRODUCTION_SCOPE_CAPACITIES,a.proofId),proof=row?.payload as ProductionScopeCapacity|undefined;
  if(!row||!proof||row.content_hash!==scheduleHash(proof))return null;
  const {proofId,...body}=proof;
- if(proofId!==a.proofId||scheduleHash(body)!==proofId||proof.source!=='automatic_template'||proof.templateVersion!==template.version||proof.userApproval!==null||proof.authorizesPublishing!==false||proof.authorizesAcceptance!==false||proof.authorizesCustomerMessages!==false)return null;
+ if(proofId!==a.proofId||scheduleHash(body)!==proofId||proof.source!=='automatic_template'||proof.templateVersion!==template.version||proof.budgetPolicyVersion!==BUDGET_POLICY_VERSION||proof.perFilmIncludingRevisionsMaxCny!==template.perFinishedVideoMaxCny||proof.reservedBudgetCny!==proof.assignments.reduce((sum,item)=>sum+item.reservedCny,0)||proof.assignments.some(item=>item.reservedCny<0||item.reservedCny>template.perFinishedVideoMaxCny)||proof.userApproval!==null||proof.authorizesPublishing!==false||proof.authorizesAcceptance!==false||proof.authorizesCustomerMessages!==false)return null;
  const task=a.tasks.find(t=>t.taskId===a.taskId),assignment=proof.assignments.find(t=>t.taskId===a.taskId),week=naturalWeek(a.now);
  if(['superseded','retired'].includes(a.pkg.status))return null;
  const adoption=verifiedWeeklyPlanningTemplateAdoption(a.planning);if(!adoption||adoption.recordHash!==proof.planningAdoptionHash||!['confirmed','dispatched'].includes(a.planning.status))return null;
  if(!task||!assignment||task.tenantId!==proof.tenantId||a.pkg.programId!==proof.programId||a.pkg.packageId!==proof.packageId||a.pkg.version!==proof.packageVersion||a.pkg.weekStart!==week.start||a.pkg.weekEnd!==week.end||productionPackageHash(a.pkg)!==proof.packageProductionHash||scheduleHash(a.planning.detailedSchedule)!==proof.detailedScheduleHash)return null;
+ // The proof covers one canonical production closure, but an older platform
+ // sibling may still execute after it was signed. Its spend is not included in
+ // the reserved ten-yuan mother-film slot, so reconcile before any new work.
+ const assigned=new Set(proof.assignments.map(entry=>entry.taskId));
+ const selectedMothers=new Set(proof.assignments.filter(entry=>entry.reservedCny>0).map(entry=>entry.motherContentId));
+ if(a.tasks.some(current=>{if(assigned.has(current.taskId)||!production.has(current.schedule.stepKind)||!hasWeeklyInitialExecution(current))return false;
+  const publication=a.pkg.socialContentPackage.publicationTasks.find(item=>item.publicationTaskId===current.publicationTaskId);
+  return publication?.motherContentId&&selectedMothers.has(publication.motherContentId);
+ }))return null;
  if(!allowed.has(task.schedule.stepKind)||proof.assignments.some(entry=>{const current=a.tasks.find(t=>t.taskId===entry.taskId);return !current||current.tenantId!==proof.tenantId||current.packageVersion!==proof.packageVersion||weeklyContinuationInputHash(current)!==entry.inputHash||current.schedule.estimatedDurationMinutes!==entry.estimatedDurationMinutes||scheduleHash(current.dependsOnTaskIds)!==scheduleHash(entry.dependencies)||['cancelled','dead_letter'].includes(current.status)||entry.mode==='verified_completed'&&(current.status!=='succeeded'||scheduleHash(current.resultRefs)!==entry.resultHash||Date.parse(current.schedule.actualFinishedAt??'')!==Date.parse(entry.finishAt));}))return null;
  const queue=queueCapacity(await listContentExecutionLimits(store,proof.tenantId),proof.tenantId);if(queue.hash!==proof.queueLimitsHash||queue.concurrency!==proof.concurrency)return null;
  return {proof,assignment,eligible:Date.parse(a.now)>=Date.parse(assignment.startAt)&&Date.parse(a.now)<=Date.parse(`${a.pkg.weekEnd}T23:59:59+08:00`),authority:'production_capacity_only' as const};

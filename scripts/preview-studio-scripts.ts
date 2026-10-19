@@ -32,7 +32,7 @@ fs.writeFileSync(path.join(outputDir, 'input.json'), JSON.stringify(input, null,
 
 const modelCalls: Record<string, unknown>[] = [];
 const realFetch = globalThis.fetch;
-const providerOrigin = new URL(process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1').origin;
+const providerOrigin = new URL(process.env.DASHSCOPE_BASE_URL || 'https://maas.qianwenaiapi.com/compatible-mode/v1').origin;
 globalThis.fetch = async (resource, init) => {
   const url = resource instanceof Request ? resource.url : String(resource);
   // Explicit local experiments only; never change persisted/provider-wide settings.

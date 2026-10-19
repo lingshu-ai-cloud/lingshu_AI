@@ -193,6 +193,8 @@ export interface SocialDiscoveryBrief {
   createdBy: 'director_agent' | 'user';
   /** Per-channel execution policy. No product ratio is implied when omitted. */
   modePolicies?: Partial<Record<SocialDiscoveryMode, SocialDiscoveryModePolicy>>;
+  /** Explicit, approved weekly source revision; ordinary account minimum remains one. */
+  weeklyAccountCollectionTarget?: { accountUrl: string; targetCount: number };
 }
 
 export interface SocialDiscoveryModePolicy {
@@ -211,6 +213,11 @@ export interface SocialDiscoveryModeRunStats {
   requested: number;
   fetched: number;
   deduplicated: number;
+  /** Optional cost-funnel details; old run snapshots remain readable. */
+  exactDuplicates?: number;
+  nearDuplicates?: number;
+  nearDuplicateUnchecked?: number;
+  analyzed?: number;
   accepted: number;
   momentumCandidates: number;
   failed: number;

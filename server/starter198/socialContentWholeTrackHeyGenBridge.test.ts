@@ -48,10 +48,42 @@ test('normal bridge consumes same whole-film permit and original audio-window by
  await assert.rejects(createWholeTrackSocialHeyGenBridge({...f.options,apiKey:'other-account'}).resolveSpeechAudio!(f.request),/live_account_changed/);
  }finally{f.cleanup();}
 });
+test('weekly CTA recheck fences new HeyGen upload while an accepted video remains GET-recoverable',async()=>{
+ const stopped=fixture();try{
+  stopped.options.funding.assertNewSubmit=async()=>{throw Error('weekly_production_cta_evidence_required');};
+  await assert.rejects(createWholeTrackSocialHeyGenBridge(stopped.options).resolveSpeechAudio!(stopped.request),/weekly_production_cta_evidence_required/);
+  assert.deepEqual(stopped.counters(),{uploads:0,posts:0,gets:0});
+  assert.equal(stopped.claims.length,0);
+ }finally{stopped.cleanup();}
+ const accepted=fixture();try{
+  assert.equal((await accepted.execute(createWholeTrackSocialHeyGenBridge(accepted.options))).status,'completed');
+  accepted.options.funding.assertNewSubmit=async()=>{throw Error('weekly_production_cta_evidence_required');};
+  const recovered=await createWholeTrackSocialHeyGenBridge(accepted.options).recoverExisting!(accepted.request);
+  assert.equal(recovered?.status,'completed');
+  assert.deepEqual(accepted.counters(),{uploads:2,posts:1,gets:2});
+ }finally{accepted.cleanup();}
+});
 test('unknown paid POST remains fenced; missing upload proof cannot upload again',async()=>{
  const f=fixture();try{f.setUnknown();assert.equal((await f.execute(createWholeTrackSocialHeyGenBridge(f.options))).status,'uncertain');await assert.rejects(createWholeTrackSocialHeyGenBridge(f.options).recoverExisting!(f.request));assert.deepEqual(f.counters(),{uploads:2,posts:1,gets:0});
  const audio=f.rows[0].visual_control.speechAudio;fs.rmSync(audio.receiptRef);await assert.rejects(createWholeTrackSocialHeyGenBridge(f.options).resolveSpeechAudio!(f.request),/upload_proof_missing_no_repost/);assert.equal(f.counters().uploads,2);
  }finally{f.cleanup();}
+});
+test('lost local mother bytes recover only by the original accepted operation; unknown POST never retries',async()=>{
+ const completed=fixture();try{
+  const output=await completed.execute(createWholeTrackSocialHeyGenBridge(completed.options));
+  assert.equal(output.status,'completed');
+  if(output.status!=='completed')throw Error('fixture_output_missing');
+  fs.rmSync(output.localPath);
+  const recovered=await createWholeTrackSocialHeyGenBridge(completed.options).recoverExisting!(completed.request);
+  assert.equal(recovered?.status,'completed');
+  assert.deepEqual(completed.counters(),{uploads:2,posts:1,gets:2},'missing local cache bytes must use original provider GET, not a second POST');
+ }finally{completed.cleanup();}
+ const unknown=fixture();try{
+  unknown.setUnknown();
+  assert.equal((await unknown.execute(createWholeTrackSocialHeyGenBridge(unknown.options))).status,'uncertain');
+  await assert.rejects(createWholeTrackSocialHeyGenBridge(unknown.options).recoverExisting!(unknown.request));
+  assert.deepEqual(unknown.counters(),{uploads:2,posts:1,gets:0},'unknown submission without an accepted receipt must remain fenced');
+ }finally{unknown.cleanup();}
 });
 test('completed bound receipt survives supplier GET outage but rejects changed identity',async()=>{
  const f=fixture();try{

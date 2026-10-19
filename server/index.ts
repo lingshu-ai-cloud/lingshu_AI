@@ -55,7 +55,9 @@ import { followupTemplatesRouter } from './routes/followupTemplates.js';
 import { digitalEmployeesRouter } from './routes/digitalEmployees.js';
 import { startBackgroundJobs } from './runtime/backgroundJobs.js';
 import { localWeeklyExecutionRuntime } from './runtime/localWeeklyExecutionRuntime.js';
+import { weeklyDiscoveryScopeMigrationRecoveryRuntime } from './runtime/weeklyDiscoveryScopeMigrationRecoveryRuntime.js';
 import { parseProcessRole, processRoleStartsBackgroundJobs, processRoleStartsHttp } from './runtime/processRole.js';
+import { resolveListenHost } from './runtime/listenHost.js';
 import { starter198Router } from './routes/starter198Mobile.js';
 import { requireAuth, enforceSupportSessionReadOnly } from './middleware/auth.js';
 import { quoteSkillRouter } from './routes/quoteSkill.js';
@@ -87,6 +89,7 @@ import { createGracefulShutdown } from './runtime/gracefulShutdown.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const processRole = parseProcessRole(process.env.PROCESS_ROLE);
+const LISTEN_HOST = resolveListenHost(process.env.LINGSHU_LISTEN_HOST);
 console.log(`[runtime] role=${processRole} http=${processRoleStartsHttp(processRole)} backgroundJobs=${processRoleStartsBackgroundJobs(processRole)}`);
 await ensureLocalPocketBase();
 configureNetworkProxy();
@@ -158,6 +161,7 @@ app.get('/api/overseas/health', (_req, res) => {
     demoLimits: demoLimits(),
     capabilities: runtimeCapabilities(processRole),
     localWeeklyRecovery: localWeeklyExecutionRuntime.health(),
+    weeklyDiscoveryScopeMigrationRecovery: weeklyDiscoveryScopeMigrationRecoveryRuntime.read(),
     startupIssues: startupReadinessIssues,
   });
 });
@@ -200,6 +204,10 @@ app.use('/api/overseas/studio/voice-samples', requireAuth, jsonBody(`${limits.vo
 app.use('/api/overseas/studio/voiceover', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
 app.use('/api/overseas/studio/bgm', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
 app.use('/api/overseas/studio/product-document-ocr', requireAuth, jsonBody('9mb'));
+// The candidate-only sample policy intake follows the existing enterprise
+// PDF data-URL convention. Authenticate before the narrowly scoped 28 MiB
+// parser; all other social-program routes keep the ordinary small body limit.
+app.use(/^\/api\/overseas\/social-programs\/[^/]+\/operating-packages\/[^/]+\/sample-policy-candidates\/?$/, requireAuth, jsonBody('28mb'));
 app.use('/api/overseas/mobile-workbench', mobileWorkbenchRouter);
 app.use('/api/overseas/starter-198/mobile/transcribe', requireAuth, jsonBody('3mb'));
 app.use(jsonBody(`${limits.default}mb`));
@@ -334,8 +342,8 @@ app.get('*', (_req, res) => {
 if (processRoleStartsHttp(processRole)) {
   const stopMessengerContextTagRecovery = process.env.MESSENGER_CONTEXT_TAG_RECOVERY_ENABLED === 'false'
     ? () => undefined : startMessengerContextTagRecovery();
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[overseas-agent] http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, LISTEN_HOST, () => {
+    console.log(`[overseas-agent] http://${LISTEN_HOST}:${PORT}`);
   });
   configureHttpServer(server);
   const shutdown = createGracefulShutdown({

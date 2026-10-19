@@ -58,3 +58,14 @@ test('fails closed for unavailable capability and unknown capacity', () => {
   assert.deepEqual(result.decision.blockers.map(item => item.code), ['invalid_or_unknown_input', 'capability_unavailable']);
   assert.equal(result.decision.evidence.find(item => item.key === 'capacity_limits')?.state, 'unknown');
 });
+
+test('outbound-only blockers do not zero draft production capacity', () => {
+  const input=fixture();
+  input.goal={...input.goal,status:'blocked',blockers:[{code:'conversion_route_required',field:'conversionRoutes',message:'missing',recoverable:true}]};
+  input.accounts=input.accounts.map(account=>({...account,status:'planned'}));
+  input.readyMaterialUnits=0;
+  input.capabilities={'studio.production':'available','publishing.calendar':'unavailable','customer.attribution':'unavailable'};
+  const result=planCapacity(input,options);
+  assert.notEqual(result.plan.status,'blocked');
+  assert.equal(result.plan.originalContentQuota,input.desiredOriginalContents);
+});

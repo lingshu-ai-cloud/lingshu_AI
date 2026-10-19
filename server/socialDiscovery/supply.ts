@@ -192,6 +192,13 @@ export async function listSocialDiscoverySupply(input: Parameters<typeof querySo
   return querySocialDiscoverySupply(input);
 }
 
+/** Internal planning read: the supply query already scans and ranks the full
+ * tenant inventory, so do not discard a weekly run's valid candidates at the
+ * first UI page boundary. */
+export async function listCompleteSocialDiscoverySupply(input: Parameters<typeof querySocialDiscoverySupply>[0]) {
+  return querySocialDiscoverySupply(input, false);
+}
+
 async function allTenantRows<T extends { tenant_id?: string }>(dataStore: DataStore, collection: string, tenantId: string): Promise<T[]> {
   const rows: T[] = [];
   for (let page = 1; ; page += 1) {

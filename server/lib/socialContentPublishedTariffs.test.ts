@@ -33,6 +33,7 @@ test('wrong account, model, official redirect, malformed format and mutated evid
  assert.equal(await reader(body().replaceAll('3','0').replaceAll('30','0')).read(intent),null);
  assert.equal(await createSocialContentPublishedTariffReader({readProviderBinding:async()=>({provider:'qwen',model,baseUrl,credentialSha256}),fetchOfficial:async()=>({url:'https://help.aliyun.com/zh/model-studio/models',status:200,body:body()})}).read(intent),null);
  assert.equal(await createSocialContentPublishedTariffReader({readProviderBinding:async()=>({provider:'qwen',model,baseUrl:'https://gateway.example/v1',credentialSha256}),fetchOfficial:async()=>{throw Error('must_not_fetch');}}).read(intent),null);
+ assert.equal(await createSocialContentPublishedTariffReader({readProviderBinding:async()=>({provider:'qwen',model,baseUrl:'https://maas.qianwenaiapi.com/compatible-mode/v1',credentialSha256}),fetchOfficial:async()=>{throw Error('must_not_fetch');}}).read(intent),null);
  const t=await reader().read(intent);assert.ok(t);const corrupt=structuredClone(t);corrupt.publicPricingEvidence.sourceBody+='mutated';assert.equal(isVerifiedPublishedTariff(corrupt),false);
  const price=structuredClone(t);price.meters.inputTokens!.priceCny=.01;assert.equal(isVerifiedPublishedTariff(price),false);
 });

@@ -2,8 +2,9 @@ import type { BusinessContentGoal, DecisionEvidence } from '../../shared/contrac
 import type { BoundedPublishingAuthorizationSnapshot } from '../digitalEmployees/publishingExecution.js';
 import { boundedAuthorizationIssue } from '../digitalEmployees/publishingExecution.js';
 import { buildOperatingDecision, type OperatingDecisionBlocker, type OperatingDecisionRecord, type OperatingResolverOptions } from './capacityPlanner.js';
+import {evaluateProductionOutlineReadiness} from './productionReadiness.js';
 
-export const AUTOMATION_POLICY_RULE_VERSION = 'automation-policy/1.0.0' as const;
+export const AUTOMATION_POLICY_RULE_VERSION = 'automation-policy/1.1.0' as const;
 export const AUTOMATION_MODES = ['suggest', 'collaborate', 'managed'] as const;
 export type AutomationMode = typeof AUTOMATION_MODES[number];
 export type AutomationAction = 'read' | 'analyze' | 'draft' | 'change_scope' | 'spend' | 'publish' | 'customer_send' | 'commercial_commitment';
@@ -39,7 +40,7 @@ export function resolveAutomationPolicy(input: AutomationPolicyInput, options: O
   const blockers: OperatingDecisionBlocker[] = [];
   const mode = AUTOMATION_MODES.includes(input.mode as AutomationMode) ? input.mode as AutomationMode : null;
   if (!mode) blockers.push({ code: 'invalid_or_unknown_input', field: 'mode', message: '未知自动化模式，已失败关闭。', recoverable: true });
-  if (input.goal.status !== 'ready') blockers.push({ code: 'business_goal_not_ready', field: 'goal.status', message: '经营目标未就绪。', recoverable: true });
+  if (input.goal.status !== 'ready' && !(input.action==='draft'&&evaluateProductionOutlineReadiness(input.goal).ready)) blockers.push({ code: 'business_goal_not_ready', field: 'goal.status', message: '经营目标缺少当前动作所需事实。', recoverable: true });
   if (input.capability.availability !== 'available') blockers.push({ code: 'capability_unavailable', field: `capability.${input.capability.key}`, message: '所需能力不可用或状态未知。', recoverable: true });
   for (const [field, value] of [['factsVerified', input.factsVerified], ['withinBudget', input.withinBudget], ['rightsSufficient', input.rightsSufficient]] as const) {
     if (value !== true) blockers.push({ code: value === null ? 'invalid_or_unknown_input' : field === 'rightsSufficient' ? 'rights_insufficient' : field === 'withinBudget' ? 'budget_exceeded' : 'invalid_or_unknown_input', field, message: `${field}未通过，不允许自动执行。`, recoverable: true });

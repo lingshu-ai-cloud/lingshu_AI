@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {prepareWeeklyEnterpriseFactFixture} from '../runtime/weeklyEnterpriseFactSupplement.fixture.js';
+import {bindWeeklyPreproductionAuthority} from '../runtime/weeklyPreproductionProducer.js';
+import {supplementConsumerHash} from '../socialPrograms/weeklySupplementRequests.js';
+import {socialRequestHash} from '../starter198/socialContentValidation.js';
+import {issueWeeklyAccountCollectionBudgetAuthorization} from './weeklyAccountCollectionBudget.js';
+import {persistWeeklyAccountCollectionProviderEvidence,readWeeklyAccountCollectionProviderEvidence} from './weeklyAccountCollectionProviderEvidence.js';
+
+test('authenticated provider snapshot persists exact original-job evidence without granting spend',async t=>{
+ const f=await prepareWeeklyEnterpriseFactFixture(t),accountUrl='https://www.tiktok.com/@fixture_factory',now=Date.now();
+ const packageRows=await f.store.list<any>('social_weekly_operating_packages',{where:{tenant_id:f.task.tenantId,program_id:f.task.programId,package_id:f.task.packageId,version:f.task.packageVersion},perPage:2});
+ assert.equal(packageRows.items.length,1);const packageRow=packageRows.items[0]!;await f.store.update('social_weekly_operating_packages',packageRow.id,{payload:{...packageRow.payload,discoveryBudgetCny:10}});
+ const task={...f.task,workflowKind:'readiness' as const,scope:'package' as const,accountId:null,publicationTaskId:null,inputSnapshot:{},status:'blocked' as const,ownBlockingReasons:['business_dispatch_required'],schedule:{...f.task.schedule,stepKind:'benchmark_collection' as const}};
+ await f.store.create('social_weekly_execution_tasks',{tenant_id:task.tenantId,program_id:task.programId,package_id:task.packageId,package_version:task.packageVersion,task_id:task.taskId,idempotency_key:task.idempotencyKey,status:task.status,payload:task});
+ const payload={approval:{status:'approved',scopeVersion:3,approvedBy:'owner'},weeklyAccountRevision:{accountUrl,targetCount:5},discoveryBrief:{discoveryModes:['account'],weeklyAccountCollectionTarget:{accountUrl,targetCount:5},modePolicies:{account:{enabled:true}}}};
+ await f.store.create('social_discovery_scopes',{id:'scope-provider-evidence',tenant_id:task.tenantId,version:3,status:'active',created_by:'owner',payload});
+ await f.store.create('competitor_accounts',{id:'account-provider-evidence',tenantId:task.tenantId,platform:'tiktok',accountUrl});
+ const job=await bindWeeklyPreproductionAuthority({store:f.store,tenantId:task.tenantId,actorUserId:'owner',programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,kind:'discovery',expectedConsumerInputHash:supplementConsumerHash(task),discovery:{scopeId:'scope-provider-evidence',scopeVersion:3,requestedModes:['account']}});
+ const authorization=await issueWeeklyAccountCollectionBudgetAuthorization({store:f.store,tenantId:task.tenantId,actorUserId:'owner',programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,scopeId:'scope-provider-evidence',scopeVersion:3,scopeHash:socialRequestHash(payload),actorId:'clockworks/tiktok-scraper',totalLimitCny:5,perRunLimitCny:5,expiresAt:new Date(now+86400000).toISOString(),now:()=>now});
+ const operation={tenantId:authorization.tenantId,programId:authorization.programId,packageId:authorization.packageId,packageVersion:authorization.packageVersion,scopeId:authorization.scopeId,scopeVersion:authorization.scopeVersion,scopeHash:authorization.scopeHash,jobId:job.jobId,jobRecordHash:job.recordHash,runOperationId:job.originalRunKey};
+ const observedAt=new Date(now-1000).toISOString(),provider={actorId:authorization.actorId,observedAt,actorResponseHash:'a'.repeat(64),accountResponseHash:'b'.repeat(64),pricingRecordHash:'c'.repeat(64),pricingStartedAt:observedAt,pricingModel:'PAY_PER_EVENT' as const,accountTier:'BRONZE',eventPricesUsd:{result:.003,'video-download':.001,'actor-start':.001},accountServiceRatesUsd:{datasetRead:4e-7,keyValueStoreRead:5e-6,keyValueStoreList:5e-5,datasetTimedStorageGbyteHour:.001,keyValueStoreTimedStorageGbyteHour:.001,externalDataTransferGbyte:.2},minimalMaxTotalChargeUsd:.5,actorPermissionLevel:'LIMITED_PERMISSIONS' as const,agiPrepaidCompatibleByPermission:true},limits={observedAt,responseHash:'d'.repeat(64),cycleStartAt:new Date(now-86400000).toISOString(),cycleEndAt:new Date(now+86400000).toISOString(),maxMonthlyUsageUsd:19,currentMonthlyUsageUsd:3,observedHeadroomUsd:16,dataRetentionDays:14,maxMonthlyExternalDataTransferGbytes:10,currentMonthlyExternalDataTransferGbytes:1,observedExternalDataTransferHeadroomGbytes:9,permitsWeeklyCollection:false as const};
+ const token='private-provider-test-token',saved=await persistWeeklyAccountCollectionProviderEvidence({store:f.store,authorization,operation,token,provider,limits,now});
+ assert.equal(saved.permitsPaidCollection,false);assert.equal(saved.provider.eventPricesUsd.result,.003);assert.ok(!JSON.stringify(saved).includes(token));
+ assert.equal((await readWeeklyAccountCollectionProviderEvidence({store:f.store,authorization,operation,token,evidenceId:saved.evidenceId,now:now+1000})).recordHash,saved.recordHash);
+ await assert.rejects(readWeeklyAccountCollectionProviderEvidence({store:f.store,authorization,operation,token:'changed-token',evidenceId:saved.evidenceId,now:now+1000}),/receipt_changed_or_expired/);
+ await assert.rejects(readWeeklyAccountCollectionProviderEvidence({store:f.store,authorization,operation:{...operation,jobRecordHash:'e'.repeat(64)},token,evidenceId:saved.evidenceId,now:now+1000}),/original_operation_authority_changed/);
+ await assert.rejects(readWeeklyAccountCollectionProviderEvidence({store:f.store,authorization,operation,token,evidenceId:saved.evidenceId,now:now+11*60_000}),/receipt_changed_or_expired/);
+ assert.equal((await f.store.list('social_discovery_runs')).totalItems,0);
+});

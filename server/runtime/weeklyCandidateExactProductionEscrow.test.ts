@@ -1,0 +1,32 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {prepareWeeklyEnterpriseFactFixture} from './weeklyEnterpriseFactSupplement.fixture.js';
+import {adoptWeeklyAutomationTemplate} from '../socialPrograms/weeklyAutomationTemplate.js';
+import {independentAdmissionId,WEEKLY_INDEPENDENT_ADMISSIONS} from '../socialPrograms/weeklyIndependentAdmission.js';
+import {prepareWeeklyCandidateExactProductionEscrow,WEEKLY_CANDIDATE_EXACT_PRODUCTION_ESCROWS} from './weeklyCandidateExactProductionEscrow.js';
+import type {WeeklyPreproductionJob} from './weeklyPreproductionProducer.js';
+import type {SocialInspirationCollectionRun} from '../../shared/contracts/socialContentWorkflow.js';
+
+test('accepted weekly ten-yuan production authority creates one restart-safe exact-analysis escrow without a second user approval',async t=>{
+ const f=await prepareWeeklyEnterpriseFactFixture(t),root=fs.mkdtempSync(path.join(os.tmpdir(),'weekly-exact-production-escrow-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ f.pkg.socialContentPackage.weeklyBudgetCny=50;f.pkg.socialContentPackage.perItemBudgetCny=10;
+ const packageRow=(await f.store.list<any>('social_weekly_operating_packages',{where:{tenant_id:f.task.tenantId,package_id:f.task.packageId},perPage:2})).items[0]!;
+ await f.store.update('social_weekly_operating_packages',packageRow.id,{payload:f.pkg});
+ const scope={tenantId:f.task.tenantId,programId:f.task.programId,packageId:f.task.packageId,packageVersion:f.task.packageVersion};
+ const adoption=await adoptWeeklyAutomationTemplate(f.store,scope,'owner');
+ const independent={...scope,actorUserId:'owner',admittedAt:new Date().toISOString(),mode:'independent_branches' as const,authorizePublishing:false as const,authorizeMessaging:false as const};
+ await f.store.create(WEEKLY_INDEPENDENT_ADMISSIONS,{id:independentAdmissionId(scope),tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,package_version:scope.packageVersion,payload:independent});
+ const job:WeeklyPreproductionJob={jobId:'job',...scope,consumerTaskId:f.task.taskId,consumerInputHash:'input',kind:'discovery',status:'running',originalRunKey:'weekly-preproduction:job',actorUserId:'owner',dueAt:'2026-10-12T00:00:00.000Z',boundAt:'2026-10-11T00:00:00.000Z',updatedAt:'2026-10-11T00:00:00.000Z',sourceHash:'a'.repeat(64),authority:{scopeId:'scope',scopeVersion:1,scopeHash:'b'.repeat(64),requestedModes:['account']},code:null,resultRefs:[],recordHash:'c'.repeat(64)};
+ const run:SocialInspirationCollectionRun={runId:'run',planId:'plan',keywordSetId:'keywords',keywordSetVersion:1,discoveryScopeId:'scope',discoveryScopeVersion:1,status:'stopped',triggerType:'manual',scopeSnapshot:{weeklyProducer:{key:job.originalRunKey}} as any,modeStats:{},platformStats:{},keywordTierStats:{},evidenceOutcomes:{},sourceRunRefs:[],queryBasis:{},market:'US',language:'en',stopReason:'no_valid_results',startedAt:'2026-10-11T00:00:00.000Z',finishedAt:'2026-10-11T01:00:00.000Z',error:null,failureDetails:[]};
+ const candidates=Array.from({length:5},(_,index)=>({candidateId:`candidate-${index}`,mediaSha256:String(index).repeat(64),operationId:`operation-${index}`}));
+ const input={store:f.store,job,run,root,provider:{endpoint:'https://maas.qianwenaiapi.com/compatible-mode/v1',credentialSha256:'d'.repeat(64),model:'qwen3-vl-plus' as const,tariffEvidenceHash:'e'.repeat(64),auditApiKeyId:'official-key-id'},candidates};
+ const first=await prepareWeeklyCandidateExactProductionEscrow(input);assert.equal(first.escrow.maximumCnyPerCandidate<=10,true);assert.equal(first.escrow.maximumCnyTotal<=50,true);assert.equal(first.escrow.authorizesPublishing,false);assert.equal(first.escrow.independentAdmissionHash.length,64);assert.equal(first.escrow.templateAdoptionHash.length,64);assert.equal(adoption.userApproval,null);
+ const hold=await first.reserve(candidates[0]!.candidateId,candidates[0]!.mediaSha256,candidates[0]!.operationId);assert.equal(hold.authorizationHash,first.escrow.recordHash);assert.equal((await first.status()).entries[candidates[0]!.operationId]?.state,'reserved');
+ const reopened=await prepareWeeklyCandidateExactProductionEscrow(input);assert.equal(reopened.escrow.recordHash,first.escrow.recordHash);assert.deepEqual(await reopened.status(),await first.status());assert.equal((await f.store.list(WEEKLY_CANDIDATE_EXACT_PRODUCTION_ESCROWS)).totalItems,1);
+ await assert.rejects(reopened.reserve(candidates[0]!.candidateId,'f'.repeat(64),candidates[0]!.operationId),/candidate_changed/);
+ f.pkg.socialContentPackage.weeklyBudgetCny=49;await f.store.update('social_weekly_operating_packages',packageRow.id,{payload:f.pkg});
+ await assert.rejects(reopened.reserve(candidates[1]!.candidateId,candidates[1]!.mediaSha256,candidates[1]!.operationId),/authority_changed/,'a package budget change invalidates the original hold rather than minting another allowance');
+});

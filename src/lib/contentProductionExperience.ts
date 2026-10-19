@@ -35,6 +35,13 @@ export interface ContentShotProgress {
   timeRange: string;
   state: ContentShotProgressState;
   sourceLabel: string;
+  speech: string;
+  visualType: string;
+  materialLabel: string;
+  pipelineLabel: string;
+  previewLabel: string;
+  previewUrl: string | null;
+  previewMediaType: 'video' | 'image' | null;
   detail: string;
   estimatedSeconds: number;
   estimatedCostCny: number;
@@ -238,6 +245,32 @@ const STRATEGY_LABELS: Record<SocialShotSourceStrategy, string> = {
   verified_fact_card: '制作已核验事实说明卡',
 };
 
+const VISUAL_TOPIC_LABELS: Record<string, string> = {
+  factory_footage: '工厂实拍',
+  competitor_comparison: 'D to C',
+  product_introduction: '产品实拍',
+  presenter_talking: '真人口播',
+  other: '其他素材',
+};
+
+function nonPresenterPipelineLabel(strategy: SocialShotSourceStrategy): string {
+  if (strategy === 'customer_real_asset') return '本地实拍素材匹配';
+  if (strategy === 'customer_product_image_animation') return '产品图片动效管线';
+  if (strategy === 'verified_fact_card') return '事实说明卡管线';
+  return '非真人 AIGC 管线';
+}
+
+function executionPipelineLabel(
+  strategy: SocialShotSourceStrategy,
+  candidate: { providerId: string | null; modelId: string | null } | undefined,
+): string {
+  if (strategy !== 'authorized_digital_presenter') return nonPresenterPipelineLabel(strategy);
+  const provider = `${candidate?.providerId || ''} ${candidate?.modelId || ''}`.toLowerCase();
+  if (provider.includes('heygen')) return 'HeyGen 真人口播管线';
+  if (provider.includes('seedance')) return 'Seedance 动态真人管线';
+  return '数字人口播管线（供应商待执行）';
+}
+
 function evaluationIssues(task: SocialContentTaskDetail, sceneId: string): string[] {
   const scene = task.agentWorkflow?.replicationEvaluation?.sceneResults.find(item => item.sceneId === sceneId);
   return scene?.factorResults.filter(item => item.status !== 'passed').map(item => item.repairAction || `${item.factorId} 未通过`).filter(Boolean) || [];
@@ -264,6 +297,14 @@ export function contentShotProgress(task: SocialContentTaskDetail): ContentShotP
   const directorScenes = new Map(workflow.directorBrief.scenes.map(scene => [scene.sceneId, scene]));
   return workflow.executionPlan.scenes.map((scene, index) => {
     const director = directorScenes.get(scene.sceneId);
+    const produced = workflow.productionResult?.sceneResults.find(item => item.sceneId === scene.sceneId);
+    const selectedIds = produced?.provenanceCandidateIds.length
+      ? produced.provenanceCandidateIds
+      : scene.recommendedCandidateIds || [];
+    const selectedCandidates = (scene.candidates || []).filter(candidate => selectedIds.includes(candidate.candidateId));
+    const candidate = selectedCandidates[0];
+    const sourceStrategy = produced?.sourceStrategy || scene.selectedSourceStrategy;
+    const speech = director?.voiceoverLines?.filter(line => line.isNarrationOwner).map(line => line.text).join(' ') || director?.audioLayers?.voiceover || director?.audioLayers?.dialogue || '无口播';
     const qualityIssues = evaluationIssues(task, scene.sceneId);
     const state = shotState(task, scene.sceneId);
     const start = director?.duration.startSeconds;
@@ -281,6 +322,19 @@ export function contentShotProgress(task: SocialContentTaskDetail): ContentShotP
       timeRange: start != null && end != null ? `${start.toFixed(1)}–${end.toFixed(1)} 秒` : `镜头 ${index + 1}`,
       state,
       sourceLabel: STRATEGY_LABELS[scene.selectedSourceStrategy],
+      speech,
+      visualType: VISUAL_TOPIC_LABELS[director?.visualTopic?.kind || 'other'] || '其他素材',
+      materialLabel: candidate?.label || candidate?.sourceRef || (scene.selectedSourceStrategy === 'authorized_digital_presenter' ? director?.productionRouting?.enterprisePresenterAssetRef : null) || '由系统按当前方案供给',
+      pipelineLabel: executionPipelineLabel(sourceStrategy, candidate),
+      previewLabel: produced?.mediaArtifact?.resourceRef
+        ? '已绑定本次执行的逐镜媒体'
+        : candidate?.previewUrl
+        ? `已有${candidate.mediaType === 'video' ? '视频' : candidate.mediaType === 'image' ? '图片' : '素材'}预览`
+        : state === 'completed'
+          ? '已进入成片；暂无独立逐镜预览'
+          : '暂无逐镜预览',
+      previewUrl: produced?.mediaArtifact?.resourceRef || candidate?.previewUrl || null,
+      previewMediaType: produced?.mediaArtifact?.mediaType || candidate?.mediaType || null,
       detail,
       estimatedSeconds: scene.estimatedSeconds,
       estimatedCostCny: scene.estimatedCostCny,

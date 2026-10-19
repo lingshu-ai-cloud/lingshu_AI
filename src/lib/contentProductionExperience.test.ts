@@ -66,6 +66,34 @@ const shots = contentShotProgress(task);
 assert.equal(shots.length, 2);
 assert.equal(shots[0]?.state, 'producing');
 assert.equal(shots[0]?.sourceLabel, '使用已授权的真实素材');
+assert.equal(shots[0]?.pipelineLabel, '本地实拍素材匹配');
+assert.equal(shots[0]?.previewUrl, null);
+
+const presenterTask = structuredClone(task) as unknown as SocialContentTaskDetail;
+const presenterScene = presenterTask.agentWorkflow!.executionPlan.scenes[0]!;
+presenterScene.selectedSourceStrategy = 'authorized_digital_presenter';
+presenterScene.recommendedCandidateIds = ['presenter-candidate'];
+presenterScene.candidates = [{
+  candidateId: 'presenter-candidate', providerId: 'heygen', modelId: 'avatar-v3',
+  label: '默认人物', sourceRef: 'presenter:default', previewUrl: '/presenter-preview.mp4', mediaType: 'video',
+} as typeof presenterScene.candidates[number]];
+const presenterShot = contentShotProgress(presenterTask)[0]!;
+assert.equal(presenterShot.pipelineLabel, 'HeyGen 真人口播管线');
+assert.equal(presenterShot.previewUrl, '/presenter-preview.mp4');
+assert.equal(presenterShot.previewMediaType, 'video');
+
+presenterScene.candidates[0]!.providerId = null;
+presenterScene.candidates[0]!.modelId = null;
+assert.equal(contentShotProgress(presenterTask)[0]?.pipelineLabel, '数字人口播管线（供应商待执行）');
+presenterScene.candidates[0]!.providerId = 'volcengine';
+presenterScene.candidates[0]!.modelId = 'seedance-1.0-pro';
+assert.equal(contentShotProgress(presenterTask)[0]?.pipelineLabel, 'Seedance 动态真人管线');
+presenterTask.agentWorkflow!.productionResult = {
+  sceneResults: [{ sceneId: 'scene-1', sourceStrategy: 'authorized_digital_presenter', provenanceCandidateIds: ['presenter-candidate'], mediaArtifact: { assetId: 'executed-shot', mediaType: 'video', resourceRef: '/media/executed-shot.mp4', contentHash: 'a'.repeat(64), durationSeconds: 6, providerId: 'seedance', supplyPlanVersion: 'supply-v1', role: 'scene_render_input' } }],
+} as NonNullable<SocialContentTaskDetail['agentWorkflow']>['productionResult'];
+const executedShot = contentShotProgress(presenterTask)[0]!;
+assert.equal(executedShot.previewUrl, '/media/executed-shot.mp4', '真实执行产物优先于规划候选预览');
+assert.equal(executedShot.previewLabel, '已绑定本次执行的逐镜媒体');
 
 const exceptions = contentProductionExceptions(task);
 assert.equal(exceptions.some(item => item.kind === 'missing_material'), true);

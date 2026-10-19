@@ -34,6 +34,17 @@ export interface Starter198OrchestratorQueuePort {
   }): Promise<Starter198OrchestratorQueueResult>;
 }
 
+/** Deliberately separate from the ordinary queue port: a prepared image
+ * revision cannot enter the canonical start/production runner by cast or
+ * structural subtyping. Only its dedicated scheduler accepts this variant. */
+export interface Starter198SocialAssetRevisionQueueInput {
+  tenantId:string;userId:string;commandId:string;input:string;idempotencyKey:string;
+  workflowScope:'social_content';
+  subject:{type:'social_product_asset_revision';id:string;sourceRunId:string;
+    preparedVersion:string;revisedPlanHash:string;lineageHash:string;
+    freezeOperationId:string;freezeIdempotencyKey:string};
+}
+
 export interface Starter198OrchestratorQueueResult {
   queueItemId: string;
   runId?: string;

@@ -9,6 +9,7 @@ import {
   bindCanonicalTypeAwareRouting,
   rebindDivergentLocalRoutesFromApprovedContext,
   assertCompleteTypeAwareExecutionPlan,
+  assetSupplyPlanWithDynamicPresenterBackgroundLocks,
   SOCIAL_SHOOTING_PLAN_SCHEMA,
 } from './socialContentProductionExecution.js';
 import { archiveGeneratedSocialContentFile } from './socialContentFiles.js';
@@ -39,6 +40,17 @@ const detail: any = {
     },
   },
 };
+
+{
+  const referenceReuse={recordId:'trend-1',contentSha256:'a'.repeat(64),analysisId:'analysis-1',analysisHash:'b'.repeat(64)};
+  const referenceAnalysis:any={analysisId:'analysis-1',referenceSourceId:'reference-source',referenceRecordId:'trend-1',status:'ready',shots:[{shotId:'ref-motion',startSeconds:1,endSeconds:4,materialEvidence:{extractionStatus:'ready',sourceVideoRef:'reference-source',clipRef:'/api/videos/trend-1/shot/ref-motion/clip',firstFrameRef:'/api/videos/trend-1/shot/ref-motion/first-frame',firstFrameSeconds:1.2}}]};
+  const plan:any={shots:[{shotId:'dynamic'},{shotId:'stable'}]};
+  const selection=(sceneId:string,providerId:'seedance'|'heygen'):any=>({sceneId,providerId,executionStatus:'ready'});
+  const frozen=assetSupplyPlanWithDynamicPresenterBackgroundLocks({plan,selections:[selection('dynamic','seedance'),selection('stable','heygen')],referenceReuse,referenceAnalysis,scenes:[{sceneId:'dynamic',referenceShotId:'ref-motion'},{sceneId:'stable',referenceShotId:'ref-motion'}] as any});
+  assert.equal(frozen.shots[0]!.referenceBackgroundAssetLock!.referenceShotId,'ref-motion');
+  assert.equal(frozen.shots[1].referenceBackgroundAssetLock,undefined,'stable HeyGen must not require a dynamic background lock');
+  assert.throws(()=>assetSupplyPlanWithDynamicPresenterBackgroundLocks({plan,selections:[selection('dynamic','seedance')],referenceReuse:null,referenceAnalysis,scenes:[{sceneId:'dynamic',referenceShotId:'ref-motion'}] as any}),/reference_background_source_missing/);
+}
 
 {
   const candidate:any={planVersion:'2',materialRoutingPolicyVersion:'type-aware.v2',shots:[{
@@ -163,8 +175,10 @@ assert.match(source,/preparePresenterFirstFrameReviews:async[\s\S]*?await input\
   'preflight callback must automatically confirm QA-passed review nodes with the trusted system actor');
 assert.doesNotMatch(source,/awaiting_explicit_user_confirmation|presenter_first_frames_pending_confirmation/,
   'production must never pause for a user confirmation after static first-frame QA passes');
-assert.match(source,/if\(!input\.runtime\?\.evaluatePresenterMotherDynamicQa\)throw Error\('presenter_mother_dynamic_qa_port_missing'\)[\s\S]*?await input\.runtime!\.evaluatePresenterMotherDynamicQa!/,
-  'dynamic presenter output must pass the bound identity and lip-sync QA port before crop receipts');
+assert.match(source,/if\(!input\.runtime\?\.evaluatePresenterMotherDynamicQa\|\|!preparedWholeVoice\)throw Error\('presenter_mother_frozen_audio_and_lip_sync_qa_unavailable'\)[\s\S]*?assertPresenterMotherSpeechQaReady\(\)[\s\S]*?readPreparedWholeVoiceScene\([\s\S]*?await input\.runtime!\.evaluatePresenterMotherDynamicQa![\s\S]*?inspectPresenterMotherSpeechQa\(/,
+  'paid mother speech requires certified frozen-audio and lip-sync QA before provider submission and crop receipts');
+assert.match(source,/if \(assetSupplyCheckpointReused && supplyCheckpoint\) \{[\s\S]*?if\(presenterGroupRequirements\.length\)[\s\S]*?readPreparedWholeVoiceScene\([\s\S]*?assertRestoredPresenterMotherExecution\([\s\S]*?assets = restoredAssets/,
+  'a cached mother supply must re-open the current frozen audio and measured QA before it becomes a restored asset');
 assert.match(source,/const frozenReviewedSupplyPlan = reviewedSupplyPlan \? structuredClone\(reviewedSupplyPlan\) : null;[\s\S]*?frozenSupplyPlan: frozenReviewedSupplyPlan![\s\S]*?planHash:socialRequestHash\(frozenReviewedSupplyPlan\)/,
   'product execution must bind an immutable reviewed supply snapshot before budget and adapter stages can mutate projections');
 

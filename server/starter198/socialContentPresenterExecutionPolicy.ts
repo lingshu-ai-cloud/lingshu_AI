@@ -11,6 +11,12 @@ export interface PresenterExecutionSelection {
   providerId: 'heygen' | 'seedance' | null;
   executionStatus: 'ready' | 'blocked';
   reasonCodes: string[];
+  /** Exact enterprise product evidence carried into dynamic-presenter execution. */
+  enterpriseProductAssetLock: {
+    productId: string;
+    enterpriseFactRef: string;
+    referenceImageIds: string[];
+  } | null;
 }
 
 export interface ReplicationExecutionGap {
@@ -192,7 +198,7 @@ export async function verifyNamedPresenterLock(input: {
 /** A missing model measurement is an explicit non-executable decision. The
  * social Seedance product-scene adapter is not a presenter reenactment adapter. */
 export function selectPresenterExecutions(input: {
-  detail: Pick<SocialContentTaskDetail, 'agentWorkflow' | 'referenceVideoAnalysis'>;
+  detail: Pick<SocialContentTaskDetail, 'agentWorkflow' | 'referenceVideoAnalysis' | 'assetSupplyPlan' | 'enterpriseProductBinding'>;
   heygenReady: boolean;
   /** Must describe an actual social presenter first-frame executor, not product-scene Seedance. */
   seedancePresenterReady: boolean;
@@ -202,12 +208,28 @@ export function selectPresenterExecutions(input: {
   if (!workflow) return [];
   const references = new Map((input.detail.referenceVideoAnalysis?.shots ?? []).map(shot => [shot.shotId, shot]));
   const executionByScene = new Map(workflow.executionPlan.scenes.map(scene => [scene.sceneId, scene]));
+  const supplyByScene = new Map((input.detail.assetSupplyPlan?.shots ?? []).map(shot => [shot.shotId, shot]));
+  const normalizeProductRef = (value: unknown) => String(value ?? '').normalize('NFKC').trim()
+    .replace(/^product\s*:\s*/i, '').toLocaleLowerCase();
   return workflow.directorBrief.scenes.filter(scene => scene.productionRouting?.needsPreciseLipSync
     || scene.productionRouting?.presenterIdentityReplacementRequired).map(scene => {
     const execution = executionByScene.get(scene.sceneId);
     const selectedCandidate = execution?.candidates?.find(item => execution.recommendedCandidateIds?.includes(item.candidateId));
     const selectedStrategy = selectedCandidate?.sourceStrategy ?? execution?.selectedSourceStrategy;
     const reference = scene.referenceShotId ? references.get(scene.referenceShotId) : undefined;
+    const supply = supplyByScene.get(scene.sceneId);
+    const productBinding = input.detail.enterpriseProductBinding;
+    const productAliases = new Set([productBinding?.productId, productBinding?.productSku]
+      .map(normalizeProductRef).filter(Boolean));
+    const matchingProductGroups = productBinding ? (supply?.productSceneReplication?.productIdentity.groups ?? [])
+      .filter(group => productAliases.has(normalizeProductRef(group.productRef))) : [];
+    const productImageIds = [...new Set(matchingProductGroups.flatMap(group => group.referenceImageIds)
+      .map(value => value.trim()).filter(Boolean))];
+    const enterpriseProductAssetLock = productBinding && productImageIds.length ? {
+      productId: productBinding.productId,
+      enterpriseFactRef: productBinding.enterpriseFactRef,
+      referenceImageIds: productImageIds,
+    } : null;
     const measurement = reference?.presenterMeasurements as PresenterShotMeasurements | undefined;
     const missing: PresenterShotMeasurements = {
       shotId: scene.referenceShotId || scene.sceneId,
@@ -256,6 +278,7 @@ export function selectPresenterExecutions(input: {
     }
     let decision = decidePresenterStack(governed, {
       heygen: input.heygenReady, seedance: input.seedancePresenterReady, budget: input.budgetReady,
+      enterpriseProductAsset: Boolean(enterpriseProductAssetLock),
     });
     const selected = selectedStrategy;
     // Exact source speech plus the Director's frozen lip-sync requirement is
@@ -286,6 +309,7 @@ export function selectPresenterExecutions(input: {
       providerId,
       executionStatus: providerId ? 'ready' : 'blocked',
       reasonCodes,
+      enterpriseProductAssetLock,
     };
   });
 }

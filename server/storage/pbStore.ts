@@ -47,8 +47,27 @@ const LOCAL_STORE_DIR = process.env.LOCAL_STORE_DIR?.trim()
   ? path.resolve(process.env.LOCAL_STORE_DIR)
   : path.join(__dirname, '../../data/local-store');
 
+/** The local store is selected when this module is loaded. A later env change
+ * must not make a caller believe this instance is operating on another store. */
+function assertLocalStoreBinding(): void {
+  const configured = process.env.LOCAL_STORE_DIR?.trim()
+    ? path.resolve(process.env.LOCAL_STORE_DIR)
+    : path.join(__dirname, '../../data/local-store');
+  if (configured !== LOCAL_STORE_DIR) throw new Error('local_store_directory_changed_after_import');
+}
+
 function localCollectionPath(collection: string): string {
   return path.join(LOCAL_STORE_DIR, `${collection.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+}
+
+type LocalCollectionCacheEntry = { signature: string; records: unknown[] };
+const localCollectionCache = new Map<string, LocalCollectionCacheEntry>();
+
+function localFileSignature(file: string): string {
+  const stat = fs.statSync(file);
+  // Atomic writes replace the inode. Including it avoids relying on timestamp
+  // precision when another local worker writes the same-size collection.
+  return `${String(stat.ino)}:${stat.size}:${stat.mtimeMs}`;
 }
 
 /** Cross-process collection mutex. Never steal a lock by elapsed time: a
@@ -59,10 +78,16 @@ function withLocalCollectionLock<T>(collection: string, work: () => T): Promise<
 
 function readLocalCollection<T = Record_>(collection: string): T[] {
   if (!localFallbacksEnabled()) return [];
+  assertLocalStoreBinding();
   if (collection === 'tenants') return listLocalTenants() as T[];
   try {
-    const parsed = JSON.parse(fs.readFileSync(localCollectionPath(collection), 'utf8'));
+    const file = localCollectionPath(collection);
+    const signature = localFileSignature(file);
+    const cached = localCollectionCache.get(collection);
+    if (cached?.signature === signature) return cached.records as T[];
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!Array.isArray(parsed)) throw new Error('local_store_collection_corrupt');
+    localCollectionCache.set(collection, { signature, records: parsed });
     return parsed;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
@@ -85,6 +110,7 @@ function writeLocalCollection(collection: string, records: unknown[]): void {
   } catch {
     // Some platforms ignore POSIX file modes.
   }
+  localCollectionCache.set(collection, { signature: localFileSignature(file), records });
 }
 
 function sortLocalRecords<T extends Record<string, unknown>>(items: T[], sort?: string): T[] {
@@ -109,6 +135,7 @@ function filterLocalRecords<T extends Record<string, unknown>>(items: T[], where
 }
 
 async function localCreate<T = Record_>(collection: string, data: Record<string, unknown>): Promise<T | null> {
+  assertLocalStoreBinding();
   assertLocalStoreWritable(LOCAL_STORE_DIR);
   if (!localFallbacksEnabled()) return null;
   if (collection === 'tenants') return createLocalDataTenant(data) as T;
@@ -141,6 +168,7 @@ function localCreateLocked<T>(collection: string, data: Record<string, unknown>)
 }
 
 async function localUpdate(collection: string, id: string, data: Record<string, unknown>): Promise<boolean> {
+  assertLocalStoreBinding();
   assertLocalStoreWritable(LOCAL_STORE_DIR);
   if (!localFallbacksEnabled()) return false;
   if (collection === 'tenants') return updateLocalDataTenant(id, data);
@@ -161,6 +189,7 @@ async function localCompareAndSwap(
   expected: CompareExpected,
   data: Record<string, unknown>,
 ): Promise<boolean> {
+  assertLocalStoreBinding();
   assertLocalStoreWritable(LOCAL_STORE_DIR);
   if (!localFallbacksEnabled()) return false;
   if (collection === 'tenants') throw new Error('local_tenant_atomic_cas_unsupported');
@@ -404,6 +433,7 @@ async function serializeCompareAndSwap<T>(key: string, work: () => Promise<T>): 
 }
 
 async function localDelete(collection: string, id: string): Promise<boolean> {
+  assertLocalStoreBinding();
   assertLocalStoreWritable(LOCAL_STORE_DIR);
   if (!localFallbacksEnabled()) return false;
   if (collection === 'tenants') return deleteLocalInviteTenant(id);
@@ -423,7 +453,9 @@ function localList<T = Record_>(collection: string, query: ListQuery = {}): List
   const filtered = sortLocalRecords(filterLocalRecords(readLocalCollection<Record<string, unknown>>(collection), query.where), query.sort);
   const start = (page - 1) * perPage;
   return {
-    items: filtered.slice(start, start + perPage) as T[],
+    // Cached collections are process-shared read snapshots. Preserve the old
+    // parse-per-read isolation contract so callers cannot mutate the cache.
+    items: structuredClone(filtered.slice(start, start + perPage)) as T[],
     totalItems: filtered.length,
     totalPages: Math.ceil(filtered.length / perPage),
     page,
@@ -454,7 +486,8 @@ export const pbStore: DataStore = {
   async getById<T = Record_>(collection: string, id: string) {
     const authority = currentDataAuthority();
     if (authority === 'local') {
-      return readLocalCollection<T & { id: string }>(collection).find(record => record.id === id) ?? null;
+      const record = readLocalCollection<T & { id: string }>(collection).find(item => item.id === id);
+      return record ? structuredClone(record) : null;
     }
     try {
       const remote = await pbGetStrict(collection, id) as T | null;
@@ -462,7 +495,8 @@ export const pbStore: DataStore = {
       return null;
     } catch (error) {
       if (!authority && localFallbacksEnabled()) {
-        return readLocalCollection<T & { id: string }>(collection).find(record => record.id === id) ?? null;
+        const record = readLocalCollection<T & { id: string }>(collection).find(item => item.id === id);
+        return record ? structuredClone(record) : null;
       }
       throw error;
     }

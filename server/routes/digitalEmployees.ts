@@ -3570,6 +3570,8 @@ digitalEmployeesRouter.get('/assistant/decision-center', async (req, res) => {
   const identity = res.locals as AuthLocals;
   const page = normalizeAssistantDecisionPage(req.query.page);
   const goalId = String(req.query.goalId || '').trim();
+  const decisionId = String(req.query.decisionId || '').trim();
+  const expectedVersion = String(req.query.expectedVersion || '').trim();
   if (goalId) {
     const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, identity.tenantId);
     if (!goal || !isDigitalEmployeeOperatingGoal(goal) || !await weeklyGoalFactRebuildTargetCommitted(identity.tenantId, goal)) {
@@ -3577,7 +3579,14 @@ digitalEmployeesRouter.get('/assistant/decision-center', async (req, res) => {
       return;
     }
   }
-  res.json(await assistantDecisionFeedForRequest(req, identity, page, goalId));
+  if (decisionId && !/^[a-z0-9:_-]{1,200}$/i.test(decisionId)) {
+    res.status(400).json({ error: 'assistant_decision_id_invalid' });
+    return;
+  }
+  const feed = await assistantDecisionFeedForRequest(req, identity, page, goalId, decisionId ? 100 : undefined);
+  const selected = decisionId ? feed.items.filter(item => item.id === decisionId
+    && (!expectedVersion || item.subject.version === expectedVersion)) : feed.items;
+  res.json(decisionId ? { ...feed, items: selected, total: selected.length } : feed);
 });
 
 digitalEmployeesRouter.post('/assistant/decision-center/:decisionId/actions', async (req, res) => {

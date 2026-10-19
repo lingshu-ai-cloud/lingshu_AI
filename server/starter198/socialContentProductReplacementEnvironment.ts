@@ -500,7 +500,9 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
       const report = applyStoryboardReplicationAutomation(buildStoryboardQaReport({phase: 'video', sceneType: 'product', hasProduct: true, hasNamedPerson: false,
         hasEnvironmentReference: true, hasContact: true, hasAction: true, observations: [...technical, ...visual], evidenceFrameLabels: frames.map(f => f.timeLabel)}));
       const pass = report.automatedPassed ? 1 : 0;
-      const quality = {productIdentitySimilarity: Object.fromEntries(input.spec.productIdentity.groups.map(g => [g.productRef, pass])), labelOcrExactMatch: pass === 1,
+      const packagingVisibilityPassed = report.checks.packaging_visibility?.verdict === 'pass';
+      const subjectVisibilityPassed = report.checks.subject_visibility?.verdict === 'pass';
+      const quality = {productIdentitySimilarity: Object.fromEntries(input.spec.productIdentity.groups.map(g => [g.productRef, pass])), packagingVisibilityPassed, subjectVisibilityPassed, labelOcrExactMatch: pass === 1,
         sceneTopologyScore: pass, productSlotLayoutScore: pass, cameraTrajectoryScore: pass, evidenceRefs: [receipt, `${receipt}.provider.json`]};
       fs.writeFileSync(receipt, JSON.stringify({funding, fingerprint, state: 'completed', model: qaModel, mediaSha256, report, quality, humanApproved: false}), {mode: 0o600});
       return quality;

@@ -4,8 +4,9 @@ import type {
 } from '../../shared/contracts/socialOperatingDecision.js';
 import type { VersionedSocialRef } from '../../shared/contracts/socialProgram.js';
 import { deterministicFingerprint } from './businessGoalBuilder.js';
+import { evaluateProductionOutlineReadiness } from './productionReadiness.js';
 
-export const CAPACITY_PLANNER_RULE_VERSION = 'capacity-planner/1.0.0' as const;
+export const CAPACITY_PLANNER_RULE_VERSION = 'capacity-planner/1.1.1' as const;
 
 export type OperatingDecisionType = 'capacity_plan' | 'automation_policy' | 'reference_mode';
 export type OperatingDecisionBlockerCode =
@@ -130,6 +131,7 @@ export function planCapacity(input: CapacityPlanInput, options: OperatingResolve
   decision: OperatingDecisionRecord<CapacityPlan>;
 } {
   const blockers: OperatingDecisionBlocker[] = [];
+  const productionOutlineOnly=input.goal.status==='blocked'&&evaluateProductionOutlineReadiness(input.goal).ready;
   const invalidFields: string[] = [];
   const numericEntries: Array<[string, number | null]> = [
     ['desiredOriginalContents', input.desiredOriginalContents], ['desiredAdaptations', input.desiredAdaptations],
@@ -141,13 +143,13 @@ export function planCapacity(input: CapacityPlanInput, options: OperatingResolve
   ];
   for (const [field, value] of numericEntries) if (!finiteNonNegative(value)) invalidFields.push(field);
   if (!finiteNonNegative(input.goal.weeklyBudgetCny)) invalidFields.push('goal.weeklyBudgetCny');
-  if (input.goal.status !== 'ready') blockers.push({ code: 'business_goal_not_ready', field: 'goal.status', message: '经营目标未就绪，不分配容量。', recoverable: true });
+  if (input.goal.status !== 'ready' && !evaluateProductionOutlineReadiness(input.goal).ready) blockers.push({ code: 'business_goal_not_ready', field: 'goal.status', message: '经营目标缺少内容生产必需事实，不分配容量。', recoverable: true });
   if (invalidFields.length) blockers.push({ code: 'invalid_or_unknown_input', field: invalidFields.join(','), message: '容量输入存在未知、负数或非有限值，已失败关闭。', recoverable: true });
-  const unavailableCapabilities = Object.entries(input.capabilities).filter(([, state]) => state !== 'available').map(([name]) => name).sort();
+  const unavailableCapabilities = input.capabilities['studio.production'] === 'available' ? [] : ['studio.production'];
   if (unavailableCapabilities.length) blockers.push({ code: 'capability_unavailable', field: 'capabilities', message: `能力不可用或状态未知：${unavailableCapabilities.join('、')}。`, recoverable: true });
-  const usableAccounts = input.accounts.filter(account => account.status === 'active' && finiteNonNegative(account.weeklyPublicationCapacity))
+  const usableAccounts = input.accounts.filter(account => (account.status === 'active'||productionOutlineOnly&&account.status==='planned') && finiteNonNegative(account.weeklyPublicationCapacity))
     .sort((a, b) => a.accountId.localeCompare(b.accountId));
-  if (input.accounts.some(account => account.status === 'unknown' || !finiteNonNegative(account.weeklyPublicationCapacity))) {
+  if (!productionOutlineOnly&&input.accounts.some(account => account.status === 'unknown' || !finiteNonNegative(account.weeklyPublicationCapacity))) {
     blockers.push({ code: 'invalid_or_unknown_input', field: 'accounts', message: '账号状态或周发布容量未知，已失败关闭。', recoverable: true });
   }
 
@@ -161,10 +163,15 @@ export function planCapacity(input: CapacityPlanInput, options: OperatingResolve
     const desiredAdaptations = whole(input.desiredAdaptations);
     const desiredTotal = desiredOriginals + desiredAdaptations;
     const deadlineLimit = whole(input.productionItemsPerDay! * input.daysUntilDeadline!);
-    const materialLimit = input.materialUnitsPerOriginal! === 0 ? desiredOriginals : whole(input.readyMaterialUnits! / input.materialUnitsPerOriginal!);
-    const accountLimit = usableAccounts.reduce((sum, account) => sum + whole(account.weeklyPublicationCapacity!), 0);
-    const interactionLimit = input.expectedInteractionsPerPublication! === 0 ? desiredTotal : whole(input.interactionItemsPerWeek! / input.expectedInteractionsPerPublication!);
-    const salesLimit = input.expectedLeadsPerPublication! === 0 ? desiredTotal : whole(input.salesLeadsPerWeek! / input.expectedLeadsPerPublication!);
+    // When only outbound facts are missing, this decision allocates draft
+    // production capacity. Publishing accounts, local material inventory and
+    // sales handling must not reduce that capacity to zero; the downstream
+    // asset-supply, provider, budget and outbound gates still enforce their
+    // own real inputs. A commercially ready goal keeps the original limits.
+    const materialLimit = productionOutlineOnly?desiredOriginals:input.materialUnitsPerOriginal! === 0 ? desiredOriginals : whole(input.readyMaterialUnits! / input.materialUnitsPerOriginal!);
+    const accountLimit = productionOutlineOnly?desiredTotal:usableAccounts.reduce((sum, account) => sum + whole(account.weeklyPublicationCapacity!), 0);
+    const interactionLimit = productionOutlineOnly?desiredTotal:input.expectedInteractionsPerPublication! === 0 ? desiredTotal : whole(input.interactionItemsPerWeek! / input.expectedInteractionsPerPublication!);
+    const salesLimit = productionOutlineOnly?desiredTotal:input.expectedLeadsPerPublication! === 0 ? desiredTotal : whole(input.salesLeadsPerWeek! / input.expectedLeadsPerPublication!);
     const operationalLimit = Math.min(desiredTotal, deadlineLimit, accountLimit, interactionLimit, salesLimit);
     originals = Math.min(desiredOriginals, materialLimit, operationalLimit);
     const remainingSlots = Math.max(0, operationalLimit - originals);

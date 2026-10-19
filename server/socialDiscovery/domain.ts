@@ -104,6 +104,10 @@ function addStats(target: SocialDiscoveryModeRunStats, value?: SocialDiscoveryMo
   target.requested += value.requested;
   target.fetched += value.fetched;
   target.deduplicated += value.deduplicated;
+  if(value.exactDuplicates!==undefined)target.exactDuplicates=(target.exactDuplicates??0)+value.exactDuplicates;
+  if(value.nearDuplicates!==undefined)target.nearDuplicates=(target.nearDuplicates??0)+value.nearDuplicates;
+  if(value.nearDuplicateUnchecked!==undefined)target.nearDuplicateUnchecked=(target.nearDuplicateUnchecked??0)+value.nearDuplicateUnchecked;
+  if(value.analyzed!==undefined)target.analyzed=(target.analyzed??0)+value.analyzed;
   target.accepted += value.accepted;
   target.momentumCandidates += value.momentumCandidates;
   target.failed += value.failed;

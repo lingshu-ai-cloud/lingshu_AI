@@ -3,6 +3,7 @@ import {
   currentContentProviderReceipt,
   recordCurrentContentProviderReceipt,
 } from '../contentExecution/context.js';
+import {QWEN_COMPATIBLE_BASE_URL} from './qwenCompatibleEndpoint.js';
 
 export interface ReferenceImage {
   mimeType: string;
@@ -40,7 +41,7 @@ export function imageExt(mimeType: string): string {
 
 function qwenImageEndpoint(): string {
   const configured = String(process.env.DASHSCOPE_IMAGE_BASE_URL || process.env.DASHSCOPE_BASE_URL || '').trim();
-  const base = (configured || 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/+$/, '');
+  const base = (configured || QWEN_COMPATIBLE_BASE_URL).replace(/\/+$/, '');
   if (!/\/compatible-mode\/v1$/i.test(base)) throw new Error('DASHSCOPE_IMAGE_BASE_URL 必须是百炼 OpenAI 兼容端点（…/compatible-mode/v1）');
   return `${base}/images/generations`;
 }

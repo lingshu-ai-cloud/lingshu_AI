@@ -265,7 +265,7 @@ async function collectionExists(name: string): Promise<boolean> {
   throw new Error(`检查集合 ${name} 失败 (${res.status})${detail ? `: ${detail}` : ''}`);
 }
 
-async function createCollection(name: string, fields: FieldDef[]): Promise<void> {
+async function createCollection(name: string, fields: FieldDef[], indexes: string[] = []): Promise<void> {
   const base = {
     name,
     type: 'base',
@@ -274,6 +274,7 @@ async function createCollection(name: string, fields: FieldDef[]): Promise<void>
     createRule: null,
     updateRule: null,
     deleteRule: null,
+    indexes,
   };
   const attempts = [
     { ...base, fields: fields.map(newField) },
@@ -293,16 +294,16 @@ async function createCollection(name: string, fields: FieldDef[]): Promise<void>
   throw new Error(`创建集合 ${name} 失败：${lastDetail}`);
 }
 
-async function ensureCollection(name: string, fields: FieldDef[]): Promise<void> {
+async function ensureCollection(name: string, fields: FieldDef[], indexes: string[] = [], adminOnly = false): Promise<void> {
   if (!await collectionExists(name)) {
-    await createCollection(name, fields);
+    await createCollection(name, fields, indexes);
     console.log(`[pb-init] created collection ${name}`);
     return;
   }
 
   const res = await adminFetch(`/api/collections/${encodeURIComponent(name)}`);
   if (!res.ok) throw new Error(`读取集合 ${name} 失败 (${res.status})`);
-  const collection = await res.json() as { fields?: Array<{ name?: string; type?: string; values?: string[]; options?: { values?: string[] } }>; schema?: Array<{ name?: string; type?: string; values?: string[]; options?: { values?: string[] } }> };
+  const collection = await res.json() as { fields?: Array<{ name?: string; type?: string; values?: string[]; options?: { values?: string[] } }>; schema?: Array<{ name?: string; type?: string; values?: string[]; options?: { values?: string[] } }>; indexes?:string[];listRule?:string|null;viewRule?:string|null;createRule?:string|null;updateRule?:string|null;deleteRule?:string|null };
   const existing = collection.fields ?? collection.schema ?? [];
   const removeRecoverableCredential = name === 'tenants'
     && existing.some(field => field.name === 'registeredPasswordCipher');
@@ -314,7 +315,10 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
       const values = current?.values ?? current?.options?.values ?? [];
       return field.values!.some(value => !values.includes(value));
     });
-  if (!missing.length && !selectUpdates.length && !removeRecoverableCredential) return;
+  const missingIndexes=indexes.filter(index=>!collection.indexes?.includes(index));
+  const insecure=adminOnly&&[collection.listRule,collection.viewRule,collection.createRule,collection.updateRule,collection.deleteRule].some(rule=>rule!==null);
+  if (!missing.length && !selectUpdates.length && !removeRecoverableCredential && !missingIndexes.length && !insecure) return;
+  const rules=insecure?{listRule:null,viewRule:null,createRule:null,updateRule:null,deleteRule:null}:{};
 
   const attempts = collection.fields
     ? [{
@@ -325,12 +329,16 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
         }),
         ...missing.map(newField),
       ],
+      ...(missingIndexes.length?{indexes:[...(collection.indexes??[]),...missingIndexes]}:{}),
+      ...rules,
     }]
     : [{
       schema: withoutRecoverableTenantCredentialField(collection.schema ?? []).map(field => {
         const update = selectUpdates.find(item => item.name === field.name);
         return update ? { ...field, options: { ...(field.options ?? {}), values: update.values ?? [] } } : field;
       }).concat(missing.map(oldSchemaField)),
+      ...(missingIndexes.length?{indexes:[...(collection.indexes??[]),...missingIndexes]}:{}),
+      ...rules,
     }];
   let lastDetail = '';
   for (const body of attempts) {
@@ -344,6 +352,8 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
         missing.length ? `added ${missing.map(field => field.name).join(', ')}` : '',
         selectUpdates.length ? `updated ${selectUpdates.map(field => field.name).join(', ')}` : '',
         removeRecoverableCredential ? 'removed legacy registration credential field and stored values' : '',
+        missingIndexes.length ? `added ${missingIndexes.length} index(es)` : '',
+        insecure ? 'restored admin-only rules' : '',
       ].filter(Boolean).join('; ');
       console.log(`[pb-init] ${changes} in ${name}`);
       return;
@@ -365,12 +375,124 @@ export const CUSTOMER_FEEDBACK_TOPIC_FIELDS: FieldDef[] = [
   { name: 'payload', type: 'json', required: true },
 ];
 
+/** Admin-only, tuple-unique progress; a server restart must see the same
+ * candidate stage rather than issuing another semantic request. */
+export async function ensureWeeklyCandidatePostAnalysisCollection(): Promise<void> {
+  await ensureCollection('social_weekly_candidate_postanalysis_progress',[
+    ...['tenant_id','job_id','run_id','candidate_id','record_hash'].map(name=>({name,type:'text' as const,required:true})),
+    {name:'payload',type:'json',required:true},
+  ],['CREATE UNIQUE INDEX idx_weekly_candidate_postanalysis_identity ON social_weekly_candidate_postanalysis_progress (tenant_id, job_id, run_id, candidate_id)'],true);
+}
+
+export async function ensureCandidateSemanticCollections(): Promise<void> {
+  const common=[{name:'tenant_id',type:'text' as const,required:true},{name:'record_hash',type:'text' as const,required:true},{name:'payload',type:'json' as const,required:true}];
+  await ensureCollection('social_candidate_semantic_operations',[
+    ...common,{name:'candidate_id',type:'text',required:true},{name:'operation_id',type:'text',required:true},
+  ],['CREATE UNIQUE INDEX idx_candidate_semantic_operation_key ON social_candidate_semantic_operations (operation_id)'],true);
+  await ensureCollection('social_candidate_semantic_provider_receipts',[
+    ...common,{name:'operation_id',type:'text',required:true},
+  ],['CREATE UNIQUE INDEX idx_candidate_semantic_receipt_key ON social_candidate_semantic_provider_receipts (operation_id)'],true);
+  await ensureCollection('social_candidate_semantic_assessments',[
+    ...common,{name:'candidate_id',type:'text',required:true},{name:'context_id',type:'text',required:true},{name:'assessment_id',type:'text',required:true},
+  ],['CREATE UNIQUE INDEX idx_candidate_semantic_assessment_key ON social_candidate_semantic_assessments (assessment_id)'],true);
+}
+
+export async function ensureWeeklyCandidateSemanticBudgetCollections(): Promise<void> {
+  await ensureCollection('social_weekly_candidate_semantic_budget_authorizations',[
+    ...['tenant_id','program_id','package_id','status','record_hash'].map(name=>({name,type:'text' as const,required:true})),
+    {name:'package_version',type:'number',required:true},{name:'payload',type:'json',required:true},
+  ],['CREATE UNIQUE INDEX idx_weekly_candidate_semantic_budget_scope ON social_weekly_candidate_semantic_budget_authorizations (tenant_id, program_id, package_id, package_version)'],true);
+  await ensureCollection('social_weekly_candidate_semantic_budget_revocations',[
+    ...['tenant_id','authorization_id','record_hash'].map(name=>({name,type:'text' as const,required:true})),
+    {name:'payload',type:'json',required:true},
+  ],['CREATE UNIQUE INDEX idx_weekly_candidate_semantic_budget_revoke ON social_weekly_candidate_semantic_budget_revocations (tenant_id, authorization_id)'],true);
+}
+
 export async function ensureDeliveryCollections(): Promise<void> {
   // Jobs are provisioned by the execution migration; never create a truncated queue schema.
   const executionJobs = await adminFetch('/api/collections/content_execution_jobs');
   if (!executionJobs.ok) throw new Error('content_execution_jobs_schema_missing');
   await ensureCollection('content_execution_jobs', [{name:'checkpoint',type:'json'}]);
+  await ensureCollection('social_weekly_template_adoptions', [
+    ...['tenant_id','program_id','package_id'].map(name=>({name,type:'text' as const,required:true})),
+    {name:'package_version',type:'number',required:true},
+    {name:'payload',type:'json',required:true},
+  ]);
+  await ensureCollection('social_weekly_cta_contacts', [
+    ...['tenant_id','program_id','package_id','record_hash'].map(name=>({name,type:'text' as const,required:true})),
+    {name:'package_version',type:'number',required:true},
+    {name:'revision',type:'number',required:true},
+    {name:'payload',type:'json',required:true},
+  ]);
+  for(const name of ['social_weekly_publication_product_selection_issuances','social_weekly_publication_product_selections'])await ensureCollection(name,[
+    ...['tenant_id','program_id','package_id','publication_task_id','content_hash'].map(field=>({name:field,type:'text' as const,required:true})),
+    {name:'package_version',type:'number',required:true},
+    {name:'payload',type:'json',required:true},
+  ]);
+  await ensureCollection('social_weekly_sample_policy_candidates',[
+    ...['tenant_id','program_id','package_id','publication_task_id','content_hash'].map(field=>({name:field,type:'text' as const,required:true})),
+    {name:'package_version',type:'number',required:true},
+    {name:'payload',type:'json',required:true},
+  ]);
+  for(const name of ['social_weekly_sample_policy_review_operations','social_weekly_sample_policy_review_decisions','social_weekly_sample_policy_review_revocations'])await ensureCollection(name,[
+    ...['tenant_id','program_id','package_id','publication_task_id','content_hash'].map(field=>({name:field,type:'text' as const,required:true})),
+    {name:'package_version',type:'number',required:true},
+    {name:'payload',type:'json',required:true},
+    name==='social_weekly_sample_policy_review_revocations'
+      ?{name:'decision_id',type:'text',required:true}
+      :{name:'candidate_id',type:'text',required:true},
+    ...(name==='social_weekly_sample_policy_review_decisions'?[{name:'operation_id',type:'text' as const,required:true}]:[]),
+  ]);
+  await ensureCollection('social_product_footage_reviews',[
+    ...['tenant_id','material_id','product_id','content_hash'].map(name=>({name,type:'text' as const,required:true})),
+    {name:'payload',type:'json',required:true},
+  ]);
+  await ensureCollection('social_product_footage_revocations',[
+    ...['tenant_id','material_id','approval_id','content_hash'].map(name=>({name,type:'text' as const,required:true})),
+    {name:'payload',type:'json',required:true},
+  ]);
+  await ensureCollection('social_product_footage_visual_reviews',[
+    ...['tenant_id','material_id','product_id','content_hash'].map(name=>({name,type:'text' as const,required:true})),
+    {name:'payload',type:'json',required:true},
+  ],[
+    'CREATE INDEX idx_product_footage_visual_scope ON social_product_footage_visual_reviews (tenant_id,material_id)',
+    'CREATE INDEX idx_product_footage_visual_product ON social_product_footage_visual_reviews (tenant_id,product_id)',
+  ],true);
+  await ensureCollection('social_apify_run_kv_mapping_receipts',[
+    ...['tenant_id','package_id','job_id','content_hash'].map(name=>({name,type:'text' as const,required:true})),
+    {name:'payload',type:'json',required:true},
+  ],[
+    'CREATE INDEX idx_apify_run_kv_mapping_scope ON social_apify_run_kv_mapping_receipts (tenant_id,package_id,job_id)',
+  ],true);
+  await ensureCollection('social_weekly_account_collection_cost_ceilings',[
+    ...['tenant_id','authorization_id','job_id','record_hash'].map(name=>({name,type:'text' as const,required:true})),
+    {name:'payload',type:'json',required:true},
+  ],[
+    'CREATE UNIQUE INDEX idx_weekly_account_cost_ceiling_job ON social_weekly_account_collection_cost_ceilings (tenant_id,authorization_id,job_id)',
+  ],true);
+  await ensureCollection('social_weekly_account_collection_provider_evidence',[
+    ...['tenant_id','authorization_id','job_id','observed_at','valid_until','record_hash'].map(name=>({name,type:'text' as const,required:true})),
+    {name:'payload',type:'json',required:true},
+  ],[
+    'CREATE UNIQUE INDEX idx_weekly_account_provider_evidence_hash ON social_weekly_account_collection_provider_evidence (tenant_id,authorization_id,job_id,record_hash)',
+  ],true);
+  for(const name of [
+    'social_weekly_candidate_canonical_media_operations',
+    'social_weekly_candidate_canonical_media_read_receipts',
+    'social_weekly_candidate_canonical_media_receipts',
+  ])await ensureCollection(name,[
+    {name:'tenant_id',type:'text',required:true},
+    {name:'record_hash',type:'text',required:true},
+    {name:'payload',type:'json',required:true},
+  ],[`CREATE INDEX idx_${name}_tenant ON ${name} (tenant_id)`],true);
   await ensureCollection('reference_exact_shot_evidence', [...['tenant_id','record_id','source_sha256','analysis_run_id','analysis_hash','record_hash','created_at'].map(name=>({name,type:'text' as const,required:true})),{name:'payload',type:'json',required:true}]);
+  await ensureCollection('social_weekly_candidate_reference_analysis_handoffs',[
+    ...['tenant_id','program_id','package_id','job_id','run_id','candidate_id','record_hash'].map(name=>({name,type:'text' as const,required:true})),
+    {name:'package_version',type:'number',required:true},{name:'payload',type:'json',required:true},
+  ]);
+  await ensureWeeklyCandidatePostAnalysisCollection();
+  await ensureCandidateSemanticCollections();
+  await ensureWeeklyCandidateSemanticBudgetCollections();
   await ensureCollection('weekly_customer_knowledge_quote_requests',[...['tenant_id','program_id','package_id','run_id','request_id','content_hash'].map(name=>({name,type:'text' as const,required:true})),{name:'package_version',type:'number',required:true},{name:'version',type:'number',required:true},{name:'payload',type:'json',required:true}]);
   await ensureCollection('customer_manual_takeovers',[...['tenant_id','scope_key','content_hash'].map(name=>({name,type:'text' as const,required:true})),{name:'version',type:'number',required:true},{name:'payload',type:'json',required:true}]);
   await ensureCollection('social_weekly_inventory_bindings',[...['tenant_id','program_id','target_package_id','publication_task_id','content_hash'].map(name=>({name,type:'text' as const,required:true})),{name:'target_version',type:'number',required:true},{name:'payload',type:'json',required:true}]);
@@ -385,6 +507,7 @@ export async function ensureDeliveryCollections(): Promise<void> {
   await ensureCollection('starter_social_instagram_delivery_reviews', [...['tenant_id','delivery_id','kind','request_id','content_hash'].map(name=>({name,type:'text' as const,required:true})),{name:'payload',type:'json',required:true}]);
   await ensureCollection('starter_social_scene_g4_reviews', [...['tenant_id','task_id','run_id','artifact_id','kind','content_hash'].map(name=>({name,type:'text' as const,required:true})),...['request_id','receipt_id'].map(name=>({name,type:'text' as const})),{name:'payload',type:'json',required:true}]);
   await ensureCollection('social_weekly_profile_upgrades', [{name:'tenant_id',type:'text',required:true},{name:'program_id',type:'text',required:true},{name:'package_id',type:'text',required:true},{name:'package_version',type:'number',required:true},{name:'target_week_start',type:'text',required:true},{name:'content_hash',type:'text',required:true},{name:'payload',type:'json',required:true}]);
+  await ensureCollection('social_weekly_enterprise_fact_migrations', [{name:'tenant_id',type:'text',required:true},{name:'program_id',type:'text',required:true},{name:'package_id',type:'text',required:true},{name:'package_version',type:'number',required:true},{name:'state',type:'text',required:true},{name:'record_hash',type:'text',required:true},{name:'payload',type:'json',required:true}]);
   await ensureCollection('social_weekly_publication_recoveries', [{name:'tenant_id',type:'text',required:true},{name:'program_id',type:'text',required:true},{name:'package_id',type:'text',required:true},{name:'package_version',type:'number',required:true},{name:'source_key',type:'text',required:true},{name:'content_hash',type:'text',required:true},{name:'payload',type:'json',required:true}]);
   await ensureCollection('social_weekly_customer_send_recoveries', [{name:'tenant_id',type:'text',required:true},{name:'source_key',type:'text',required:true},{name:'content_hash',type:'text',required:true},{name:'payload',type:'json',required:true}]);
   await ensureCollection('social_weekly_deadline_assessments', [

@@ -24,7 +24,7 @@ export function socialReferenceFidelityFailures(input: {
     failures.push('reference_fidelity:missing_reference_duration');
   }
   if (!reference.shots.length) failures.push('reference_fidelity:missing_reference_shots');
-  if (script.shots.length !== reference.shots.length) failures.push('reference_fidelity:shot_count_mismatch');
+  if (script.shots.length < reference.shots.length) failures.push('reference_fidelity:shot_count_mismatch');
   const referenceIds = new Set<string>();
   reference.shots.forEach((shot, index) => {
     if (!shot.shotId || referenceIds.has(shot.shotId)) failures.push(`reference_fidelity:invalid_reference_identity:${index}`);
@@ -39,6 +39,8 @@ export function socialReferenceFidelityFailures(input: {
   }
   const scriptIds = new Set<string>();
   const boundReferenceIds = new Set<string>();
+  const referenceById = new Map(reference.shots.map(shot => [shot.shotId, shot]));
+  let previousReferenceIndex = -1;
   script.shots.forEach((shot, index) => {
     if (!shot.shotId || scriptIds.has(shot.shotId)) failures.push(`reference_fidelity:invalid_script_identity:${index}`);
     scriptIds.add(shot.shotId);
@@ -47,14 +49,26 @@ export function socialReferenceFidelityFailures(input: {
     if (shot.referenceShotIds && (shot.referenceShotIds.length !== 1 || shot.referenceShotIds[0] !== shot.referenceShotId)) {
       failures.push(`reference_fidelity:many_to_one_or_conflicting_binding:${index}`);
     }
-    if (!shot.referenceShotId || boundReferenceIds.has(shot.referenceShotId)) failures.push(`reference_fidelity:missing_or_repeated_binding:${index}`);
+    if (!shot.referenceShotId) failures.push(`reference_fidelity:missing_or_repeated_binding:${index}`);
     if (shot.referenceShotId) boundReferenceIds.add(shot.referenceShotId);
-    const expected = reference.shots[index];
-    if (!expected || shot.referenceShotId !== expected.shotId) failures.push(`reference_fidelity:slot_identity_or_order_mismatch:${index}`);
-    if (expected && (differs(shot.startSeconds, expected.startSeconds) || differs(shot.endSeconds, expected.endSeconds))) {
+    const expected = shot.referenceShotId ? referenceById.get(shot.referenceShotId) : undefined;
+    const referenceIndex = shot.referenceShotId ? reference.shots.findIndex(item => item.shotId === shot.referenceShotId) : -1;
+    if (!expected || referenceIndex < previousReferenceIndex) failures.push(`reference_fidelity:slot_identity_or_order_mismatch:${index}`);
+    previousReferenceIndex = Math.max(previousReferenceIndex, referenceIndex);
+    if (expected && (shot.startSeconds < expected.startSeconds - tolerance || shot.endSeconds > expected.endSeconds + tolerance)) {
       failures.push(`reference_fidelity:slot_timing_mismatch:${index}`);
     }
   });
+  for (const expected of reference.shots) {
+    const children = script.shots.filter(shot => shot.referenceShotId === expected.shotId)
+      .sort((left, right) => left.startSeconds - right.startSeconds);
+    if (!children.length) continue;
+    if (differs(children[0]!.startSeconds, expected.startSeconds)
+      || differs(children.at(-1)!.endSeconds, expected.endSeconds)
+      || children.some((child, index) => index > 0 && differs(child.startSeconds, children[index - 1]!.endSeconds))) {
+      failures.push(`reference_fidelity:slot_timing_mismatch:${expected.shotId}`);
+    }
+  }
   if (reference.shots.some(shot => !boundReferenceIds.has(shot.shotId))) failures.push('reference_fidelity:reference_slots_omitted');
   if (!script.shots.length || (reference.durationSeconds != null && differs(script.shots.at(-1)!.endSeconds, reference.durationSeconds))) {
     failures.push('reference_fidelity:script_total_duration_mismatch');

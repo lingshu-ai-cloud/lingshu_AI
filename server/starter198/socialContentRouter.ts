@@ -111,7 +111,7 @@ import { refreshSocialTaskReferenceOutputs } from './socialContentTaskSupport.js
 import { createSocialArtifactReevaluationService } from './socialContentArtifactReevaluation.js';
 import { socialContentAssistantAction, socialContentAssistantReceipt } from './socialContentAssistantActions.js';
 import { socialContentReviewAdmissionAllowed } from './socialContentTestBypass.js';
-import { confirmSocialReplicationScript, readSocialReplicationScriptReviewContext } from './socialContentReplicationScriptReview.js';
+import { adaptSocialReplicationProductOnly, confirmSocialReplicationScript, readSocialReplicationScriptReviewContext } from './socialContentReplicationScriptReview.js';
 
 type AccessLevel = 'read' | 'write' | 'start';
 
@@ -733,6 +733,23 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
       repository, ...identity, taskId: requireSocialId(req.params.taskId),
       idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
       value: source as unknown as Parameters<typeof confirmSocialReplicationScript>[0]['value'], now: now(),
+    });
+    res.json({ task });
+  }));
+
+  router.post('/tasks/:taskId/replication-script/adapt-product-only', asyncRoute(async (req, res) => {
+    const identity = await authorize(req, res, 'write');
+    bodyWithinLimit(req);
+    const source = socialObject(req.body);
+    if (!source || Object.keys(source).some(key => ![
+      'expectedVersion', 'scriptHash', 'materialSourceId', 'materialSourceVersion',
+    ].includes(key))) {
+      throw new SocialContentWorkflowError('social_replication_product_adaptation_invalid', 400);
+    }
+    const task = await adaptSocialReplicationProductOnly({
+      repository, ...identity, taskId: requireSocialId(req.params.taskId),
+      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
+      value: source as unknown as Parameters<typeof adaptSocialReplicationProductOnly>[0]['value'], now: now(),
     });
     res.json({ task });
   }));

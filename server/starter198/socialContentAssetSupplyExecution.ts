@@ -94,6 +94,35 @@ export interface SocialAssetSupplyExecutionResult {
   execution: SocialAssetSupplyExecution;
 }
 
+/** Projects the already selected, byte-addressed scene media into the public
+ * production result. It never stores another copy and never treats a planning
+ * candidate as an executed output. */
+export function socialExecutedSceneMediaArtifact(input: {
+  sceneId: string;
+  execution: SocialAssetSupplyExecution | null;
+  assets: SocialProductionAsset[];
+}) {
+  const shots = input.execution?.shots.filter(shot => shot.sceneId === input.sceneId) || [];
+  if (shots.length !== 1) return undefined;
+  const shot = shots[0]!;
+  const assets = input.assets.filter(asset => asset.id === shot.assetId);
+  if (assets.length !== 1) return undefined;
+  const asset = assets[0]!;
+  const resourceRef = String(asset.url || '').trim();
+  const contentHash = String(asset.contentHash || '').trim();
+  if (!resourceRef || !/^[a-f0-9]{64}$/i.test(contentHash) || !Number.isFinite(asset.duration) || asset.duration < 0) return undefined;
+  return {
+    assetId: asset.id,
+    mediaType: asset.type,
+    resourceRef,
+    contentHash: contentHash.toLowerCase(),
+    durationSeconds: asset.duration,
+    providerId: shot.providerId,
+    supplyPlanVersion: input.execution!.planVersion,
+    role: 'scene_render_input' as const,
+  };
+}
+
 function shotFunction(scene: StoredSocialScriptBaseline['scenes'][number], index: number, total: number) {
   const text = `${scene.shotFunction} ${scene.subject} ${scene.action}`.toLocaleLowerCase();
   if (index === 0) return 'hook' as const;
@@ -518,7 +547,7 @@ export async function executeSocialAssetSupplyPlan(input: {
           const reason = String(error instanceof Error ? error.message : error || 'provider_failed');
           // A submitted request with an unresolved outcome is not a failed
           // candidate. Trying another adapter would hide the in-flight charge.
-          if (/provider_submission_(?:unknown|uncertain)|do not resubmit|not_completed:(?:pending|uncertain)/i.test(reason)) {
+          if (/provider_submission_(?:unknown|uncertain)|do not resubmit|not_completed:(?:pending|uncertain)|weekly_production_cta_evidence_required/i.test(reason)) {
             throw error;
           }
           attempts.push({

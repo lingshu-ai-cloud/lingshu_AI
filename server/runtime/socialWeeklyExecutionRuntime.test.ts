@@ -8,6 +8,7 @@ import { DURABLE_OPERATION_LEASE_COLLECTION } from './durableLease.js';
 import { WEEKLY_EXECUTION_TASKS } from '../socialPrograms/executionTasks.js';
 import type { WeeklyAgentPlanningState, WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
 import { createSocialWeeklyPlanningAdapter, runSocialWeeklyExecutionScan, initSocialWeeklyExecutionRuntime } from './socialWeeklyExecutionRuntime.js';
+import { independentAdmissionId, WEEKLY_INDEPENDENT_ADMISSIONS } from '../socialPrograms/weeklyIndependentAdmission.js';
 function memoryStore(): DataStore {
   const rows = new Map<string, Record_[]>();
   let counter = 0;
@@ -153,6 +154,18 @@ test('customer consumer checks actual channel consent without any director plan 
  const plan=(await dataStore.list<any>('social_weekly_agent_planning')).items[0];await dataStore.delete('social_weekly_agent_planning',plan.id);
  const result=await runSocialWeeklyExecutionScan({dataStore,scope:{tenantId:value.tenantId,programId:value.programId,packageId:value.packageId,packageVersion:1},adapters:{customer_channel_readiness:createSocialWeeklyCustomerChannelAdapter(dataStore)}});
  const actual=(await dataStore.list<any>(WEEKLY_EXECUTION_TASKS)).items[0].payload;assert.equal(result.blocked,1,JSON.stringify({result,error:actual.lastError}));assert.equal(actual.status,'blocked');assert.notEqual(actual.lastError.code,'business_dispatch_required');assert.deepEqual(actual.resultRefs,[]);assert.equal((await dataStore.list('social_weekly_customer_channel_executions')).totalItems,0);
+});
+test('draft independent preproduction never consumes customer tasks without messaging authority',async()=>{
+ const dataStore=memoryStore(),value={...task(),workflowKind:'engagement' as const,publicationTaskId:'pub',accountId:'account',inputSnapshot:{customerChannel:'whatsapp'}};
+ value.schedule={...value.schedule,stepKind:'customer_channel_readiness',responsibleActor:'customer_agent'};await saveTask(dataStore,value);
+ await dataStore.create('users',{id:'owner',tenantId:value.tenantId,role:'admin',active:true});
+ const scope={tenantId:value.tenantId,programId:value.programId,packageId:value.packageId,packageVersion:1};
+ const admission={...scope,actorUserId:'owner',admittedAt:new Date().toISOString(),mode:'independent_branches',authorizePublishing:false,authorizeMessaging:false};
+ await dataStore.create(WEEKLY_INDEPENDENT_ADMISSIONS,{id:independentAdmissionId(scope),tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,package_version:scope.packageVersion,payload:admission});
+ let executions=0;
+ const result=await runSocialWeeklyExecutionScan({dataStore,scope,adapters:{customer_channel_readiness:{async execute(){executions++;return{status:'succeeded',resultRefs:[]};}}}});
+ const actual=(await dataStore.list<any>(WEEKLY_EXECUTION_TASKS)).items[0].payload;
+ assert.equal(executions,0);assert.equal(result.claimed,0);assert.equal(result.blocked,0);assert.equal(actual.status,'queued');assert.equal(actual.lastError,null);
 });
 test('a continuation awaiting trusted evidence never falls back to a new paid production adapter', async () => {
   const dataStore = memoryStore();

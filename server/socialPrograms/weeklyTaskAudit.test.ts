@@ -2,6 +2,61 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import {weeklyBlockerAction,classifyWeeklyBlocker} from './weeklyTaskAudit.js';
 import {auditWeeklyTasks} from './weeklyTaskAudit.js';
 import {prepareWeeklyEnterpriseFactFixture} from '../runtime/weeklyEnterpriseFactSupplement.fixture.js';
+import {adoptWeeklyAutomationTemplate} from './weeklyAutomationTemplate.js';
+test('post-analysis media and semantic-budget gaps remain visible system work, not a request for an unknown customer file or a paid bypass',()=>{
+ for(const code of ['weekly_postanalysis_canonical_media_intervention_required','weekly_postanalysis_canonical_evidence_intervention_required','weekly_postanalysis_exact_analysis_authorization_required','weekly_postanalysis_exact_analysis_original_receipt_pending','candidate_context_semantic_budget_authorization_required','weekly_candidate_semantic_budget_binding_unverified']){
+  const action=weeklyBlockerAction(code);
+  assert.equal(classifyWeeklyBlocker(code),'technical',code);
+  assert.equal(action.userRequired,false,code);
+  assert.equal(action.action,'technical_recovery',code);
+  assert.doesNotMatch(action.label,/请上传|立即重新采集|自动通过/);
+ }
+ assert.match(weeklyBlockerAction('candidate_context_semantic_budget_authorization_required').label,/尚未接入/);
+});
+test('same-product footage asks for user intervention only after the concrete task reports that blocker',()=>{
+ const missing=weeklyBlockerAction('weekly_product_footage_required');
+ assert.equal(classifyWeeklyBlocker('weekly_product_footage_required'),'user_input');
+ assert.equal(missing.action,'product_footage');assert.equal(missing.userRequired,true);
+ assert.match(missing.label,/当前样片/);assert.match(missing.label,/上传本身不等于审核通过/);
+ const drift=weeklyBlockerAction('product_footage_bytes_changed');
+ assert.equal(classifyWeeklyBlocker('product_footage_bytes_changed'),'technical');
+ assert.equal(drift.action,'technical_recovery');assert.equal(drift.userRequired,false);
+ assert.match(drift.label,/不要求提前上传/);
+});
+test('the original blocked content job projects its concrete footage intervention into the weekly task after restart',async t=>{
+ const f=await prepareWeeklyEnterpriseFactFixture(t),publicationTaskId='pub';
+ const task={...f.task,taskId:'weekly-video',publicationTaskId,status:'blocked',ownBlockingReasons:[],
+  schedule:{...f.task.schedule,stepKind:'video_generation'}} as any;
+ await f.store.create('starter_social_content_tasks',{id:'content-row',tenant_id:task.tenantId,task_id:'content-task',
+  create_idempotency_key:`weekly-production:${task.packageId}:${task.packageVersion}:${publicationTaskId}`,
+  run_id:'content-run',status:'paused'});
+ await f.store.create('content_execution_jobs',{id:'content-job',tenant_id:task.tenantId,task_id:'content-task',run_id:'content-run',
+  task_type:'social_content_weekly',status:'blocked',last_error:'production_input_required:weekly_product_footage_required'});
+ const audit=await auditWeeklyTasks(f.store,[task]);
+ const action=audit.items[0]!.requiredActions.find(item=>item.action==='product_footage');
+ assert.equal(action?.code,'weekly_product_footage_required');assert.equal(action?.taskId,task.taskId);assert.equal(action?.userRequired,true);
+ await f.store.update('content_execution_jobs','content-job',{status:'queued'});
+ const cleared=await auditWeeklyTasks(f.store,[task]);
+ assert.ok(!cleared.items[0]!.requiredActions.some(item=>item.action==='product_footage'));
+});
+test('the original blocked content job projects actual presenter and voice intervention without a preflight card',async t=>{
+ const f=await prepareWeeklyEnterpriseFactFixture(t),publicationTaskId='pub';
+ const task={...f.task,taskId:'weekly-presenter',publicationTaskId,status:'blocked',ownBlockingReasons:[],
+  schedule:{...f.task.schedule,stepKind:'video_generation'}} as any;
+ await f.store.create('starter_social_content_tasks',{id:'presenter-content-row',tenant_id:task.tenantId,task_id:'presenter-content',
+  create_idempotency_key:`weekly-production:${task.packageId}:${task.packageVersion}:${publicationTaskId}`,
+  run_id:'presenter-run',status:'paused'});
+ await f.store.create('content_execution_jobs',{id:'presenter-content-job',tenant_id:task.tenantId,task_id:'presenter-content',run_id:'presenter-run',
+  task_type:'social_content_weekly',status:'blocked',last_error:'user_input_required:weekly_default_voice_authorization_missing:enterprise-person'});
+ const audit=await auditWeeklyTasks(f.store,[task]);
+ const action=audit.items[0]!.requiredActions.find(item=>item.action==='presenter_voice');
+ assert.equal(action?.code,'weekly_default_voice_authorization_missing:enterprise-person');assert.equal(action?.userRequired,true);
+ assert.match(action?.label??'',/当前样片/);assert.match(action?.label??'',/不静默换人或换声/);
+ await f.store.update('content_execution_jobs','presenter-content-job',{last_error:'user_input_required:weekly_default_voice_binding_mismatch'});
+ const mismatch=await auditWeeklyTasks(f.store,[task]);
+ const technical=mismatch.items[0]!.requiredActions.find(item=>item.code==='weekly_default_voice_binding_mismatch');
+ assert.equal(technical?.action,'technical_recovery');assert.equal(technical?.userRequired,false);
+});
 test('missing product selection differs from technical contextual assessment and neither asks for a forced pass',()=>{
  const missing=weeklyBlockerAction('weekly_candidate_context_required');
  assert.equal(missing.action,'candidate_analysis');assert.equal(missing.userRequired,true);assert.equal(classifyWeeklyBlocker('weekly_candidate_context_required'),'user_input');
@@ -33,6 +88,21 @@ test('paid collection service exhaustion is an exact technical recovery, not mis
  assert.equal(classifyWeeklyBlocker(code),'technical');assert.equal(action.userRequired,false);assert.equal(action.action,'collection_service');
  assert.match(action.label,/采集服务额度不足/);assert.match(action.label,/未知费用占用保留/);assert.match(action.label,/不生成模拟采集结果/);
 });
+test('daily quota and qualified-mother shortage remain distinct technical projections without user reapproval',async t=>{
+ const f=await prepareWeeklyEnterpriseFactFixture(t);
+ for(const code of ['daily_collection_limit_reached','weekly_qualified_quota_exhausted','weekly_qualified_admission_unverified']){
+  const action=weeklyBlockerAction(code);
+  assert.equal(classifyWeeklyBlocker(code),'technical',code);
+  assert.equal(action.userRequired,false,code);
+  assert.notEqual(action.action,'production',code);
+  assert.doesNotMatch(action.label,/请用户重填|重新批准模板/);
+ }
+ const task={...f.task,taskId:'audit-discovery-capacity',status:'blocked',schedule:{...f.task.schedule,stepKind:'benchmark_collection'},dependsOnTaskIds:[],ownBlockingReasons:['daily_collection_limit_reached'],lastError:null} as any;
+ const before=structuredClone(task),audit=await auditWeeklyTasks(f.store,[task]);
+ const action=audit.items[0]!.requiredActions.find(a=>a.code==='daily_collection_limit_reached');
+ assert.equal(action?.action,'collection_service');assert.equal(action?.userRequired,false);
+ assert.deepEqual(task,before);
+});
 test('missing downloader is a technical component gap, not missing enterprise facts or permanently unavailable media',()=>{
  const action=weeklyBlockerAction('downloader_missing');
  assert.equal(classifyWeeklyBlocker('downloader_missing'),'technical');assert.equal(action.userRequired,false);assert.equal(action.action,'candidate_analysis');
@@ -52,4 +122,26 @@ test('current verified facts remove obsolete hash advice from read model without
  assert.deepEqual(audit.items[0]!.ownReasons,[]);
  assert.deepEqual(audit.items[0]!.requiredActions,[]);
  assert.deepEqual(task,before);
+});
+test('accepted automatic publication exposes missing selection as user action without inventing a catalogue default',async t=>{
+ const f=await prepareWeeklyEnterpriseFactFixture(t);
+ const scope={tenantId:f.task.tenantId,programId:f.task.programId,packageId:f.task.packageId,packageVersion:1};
+ const row=(await f.store.list<any>('social_weekly_operating_packages')).items[0]!;
+ const publication={...row.payload.socialContentPackage.publicationTasks[0],motherContentId:'mother-a',status:'planned'};
+ await f.store.update('social_weekly_operating_packages',row.id,{payload:{...row.payload,socialContentPackage:{...row.payload.socialContentPackage,publicationTasks:[publication]}}});
+ await adoptWeeklyAutomationTemplate(f.store,scope,'owner');
+ const task={...f.task,inputSnapshot:{publicationTask:publication},status:'blocked',ownBlockingReasons:[]} as any;
+ const before=structuredClone(task),audit=await auditWeeklyTasks(f.store,[task]);
+ assert.ok(audit.items[0]!.requiredActions.some(action=>action.code==='weekly_production_product_selection_required'&&action.action==='publication_product'&&action.userRequired));
+ assert.deepEqual(task,before);
+});
+test('publication selection read failure is technical recovery, not another user signature',()=>{
+ const action=weeklyBlockerAction('weekly_production_product_selection_read_failed');
+ assert.equal(action.action,'technical_recovery');assert.equal(action.userRequired,false);
+ assert.equal(classifyWeeklyBlocker('weekly_production_product_selection_read_failed'),'technical');
+ const pending=weeklyBlockerAction('weekly_production_product_selection_pending_operation');
+ assert.equal(pending.action,'publication_product');assert.equal(pending.userRequired,false);
+ assert.equal(classifyWeeklyBlocker('weekly_production_product_selection_pending_operation'),'technical');
+ const conflict=weeklyBlockerAction('weekly_production_product_selection_group_conflict');
+ assert.equal(conflict.userRequired,false);assert.equal(classifyWeeklyBlocker('weekly_production_product_selection_group_conflict'),'technical');
 });

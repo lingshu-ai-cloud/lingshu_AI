@@ -101,6 +101,11 @@ test('server correction grant extends only the exact existing run and plan while
         authorizedBy:'trusted-server-operator',authorizationRef:'correction:current-task:approved',issuedAt:new Date().toISOString()});
     const extended=await f.budget.authorizeCorrection(scope,grant);
     assert.equal(extended.limitCny,16.5);assert.equal(extended.remainingCny,6.75);
+    const unrelatedPlan=f.budget.status({...scope,planHash:'0'.repeat(64)})!;
+    assert.equal(unrelatedPlan.limitCny,10);
+    assert.equal(unrelatedPlan.correctionAuthorization,null);
+    assert.equal(unrelatedPlan.authorizedLimitCny,16.5);
+    assert.equal(unrelatedPlan.hasCorrectionAuthorization,true);
     assert.equal((await f.budget.authorizeCorrection(scope,grant)).limitCny,16.5);
     await f.budget.reserveBatch(scope,[op('corrective-presenter-1'),op('corrective-presenter-2')]);
     assert.equal(f.budget.status(scope)!.retainedCny,16.25);

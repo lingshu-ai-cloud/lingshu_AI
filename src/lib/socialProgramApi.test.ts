@@ -28,6 +28,25 @@ const storage = {
   length: 0,
 } satisfies Storage;
 
+test('CTA contact records only a version-scoped channel and contact, then can be read back', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
+  const calls: Array<{url:string; method:string; body:unknown}> = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({url:String(input),method:init?.method || 'GET',body:init?.body ? JSON.parse(String(init.body)) : null});
+    return Response.json({item:{status:'recorded',frozenCta:'Contact us on WhatsApp to get your free sample.',selectedProduct:null,productSelectionStatus:'pending',contextHash:'a'.repeat(64),contactChannel:'whatsapp',contactValue:'+8613800000000'}});
+  };
+  try {
+    await socialProgramApi.readWeeklyCtaContact('program/a','package/b',7);
+    await socialProgramApi.recordWeeklyCtaContact('program/a','package/b',7,{contactChannel:'whatsapp',contactValue:'+8613800000000',expectedContextHash:'a'.repeat(64),expectedReceiptId:null});
+    assert.deepEqual(calls, [
+      {url:'/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fb/cta-contact?version=7',method:'GET',body:null},
+      {url:'/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fb/cta-contact?version=7',method:'POST',body:{expectedPackageVersion:7,contactChannel:'whatsapp',contactValue:'+8613800000000',expectedContextHash:'a'.repeat(64),expectedReceiptId:null}},
+    ]);
+  } finally { globalThis.fetch = previousFetch; Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: previousStorage }); }
+});
+
 test('material recheck clears only its named blocker and preserves exact task identity', async () => {
   const previousFetch = globalThis.fetch;
   const previousStorage = globalThis.localStorage;

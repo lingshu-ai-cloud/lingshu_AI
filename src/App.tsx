@@ -851,7 +851,8 @@ export default function App() {
   const showSocialContentPlanning = page === 'smartAssets'
     && smartAssetsView === 'create'
     && !smartAssetsStudioOpen
-    && (smartAssetsCreateRequest?.creationPath === 'viral_replication'
+    && (Boolean(smartAssetsContentTaskId && !smartAssetsWorkflowContext && !smartAssetsCreateRequest)
+      || smartAssetsCreateRequest?.creationPath === 'viral_replication'
       || (!smartAssetsContentTaskId && !smartAssetsWorkflowContext && !smartAssetsCreateRequest));
 
 
@@ -973,6 +974,7 @@ export default function App() {
             <div className="h-full min-h-0">
               {showSocialContentPlanning ? (
                 <SocialContentPlanningPage
+                  taskOnly={Boolean(smartAssetsContentTaskId && !smartAssetsCreateRequest)}
                   onNavigate={handleNavigate}
                   onNavigateWithTask={handleSocialContentNavigate}
                   initialCreateRequest={smartAssetsCreateRequest}

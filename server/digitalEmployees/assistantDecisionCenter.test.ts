@@ -153,6 +153,7 @@ test('a linked production project can surface the avatar requirement without lea
     presenterName: '',
     presenterCount: 0,
     projectCount: 1,
+    shotId: 'one',
   });
 });
 
@@ -172,11 +173,11 @@ test('an added presenter is no longer described as missing when replication setu
     page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'paused' },
     tasks: [enriched], approvals: [], now,
   }).items[0]!;
-  assert.equal(card.title, '请补齐数字人的制作条件');
-  assert.equal(card.actions[0]?.label, '补齐制作条件');
+  assert.equal(card.title, '方舟人物制作条件未完成，任务已暂停');
+  assert.equal(card.actions[0]?.label, '去企业知识库完成方舟授权');
   assert.match(card.summary, /已添加.*人物参考图.*方舟/);
-  assert.equal(card.deepLink?.page, 'digitalEmployees');
-  assert.equal(card.deepLink?.businessRef?.taskKey, 'presenter_setup_required');
+  assert.equal(card.deepLink?.page, 'enterprise');
+  assert.equal(card.deepLink?.businessRef?.taskKey, 'ark_presenter_setup_required');
   assert.equal(card.deepLink?.businessRef?.entityId, 'presenter-dante');
 });
 
@@ -321,6 +322,69 @@ test('viral analysis remains visibly blocked until exact evidence is complete', 
   assert.equal(card.facts.find(fact => fact.label === '分析进度')?.value, '1/2 条通过');
   assert.equal(card.actions[0]?.label, '查看分析进度');
 });
+
+test('model-unavailable analysis requires a new model revision instead of offering an unsafe retry', () => {
+  const analysis = {
+    ...task('task-analysis-model', 'viral_analysis', 'failed'),
+    blocked_reason: '原精确分析失败：模型不存在',
+    output: {
+      proof: { value: 0, requiredValue: 1, status: 'blocked' },
+      analysisProgress: { retryable: false },
+      failureDetails: [{ errorCode: 'model_unavailable', platform: 'tiktok' }],
+    },
+  } as TaskRecord;
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run, tasks: [analysis], approvals: [], now,
+  }).items[0]!;
+  assert.equal(card.title, '精确分析模型不可用，等待模型修订授权');
+  assert.equal(card.facts.find(fact => fact.label === '当前状态')?.value, '待模型修订授权');
+  assert.match(card.summary, /原付费调用不会自动重提/);
+  assert.match(card.summary, /已下载原片和既有分析证据会保留/);
+  assert.deepEqual(card.actions.map(action => action.id), ['open_workspace']);
+  assert.equal(card.actions[0]?.label, '核对模型修订与授权');
+});
+
+for (const permissionGate of [
+  {
+    code: 'provider_authorization_required',
+    title: '供应商模型未授权，等待权限配置',
+    status: '待供应商模型权限配置',
+    action: '查看权限配置说明',
+    summary: /管理员开通目标模型权限.*不能直接重试分析/,
+  },
+  {
+    code: 'weekly_candidate_model_permission_unavailable',
+    title: '供应商模型权限暂时无法核验',
+    status: '权限核验不可用',
+    action: '查看权限核验状态',
+    summary: /恢复权限核验服务或账号连接.*不能直接重试分析/,
+  },
+] as const) {
+  test(`${permissionGate.code} is a no-consumption permission gate, not retry or model-revision authorization`, () => {
+    const analysis = {
+      ...task(`task-${permissionGate.code}`, 'viral_analysis', 'failed'),
+      blocked_reason: '',
+      output: {
+        proof: { value: 0, requiredValue: 1, status: 'blocked' },
+        code: permissionGate.code,
+        analysisProgress: { retryable: true },
+      },
+    } as TaskRecord;
+    const card = buildAssistantDecisionFeed({
+      page: 'digitalEmployees', goal: null, plan: null, run, tasks: [analysis], approvals: [], now,
+    }).items[0]!;
+    assert.equal(card.title, permissionGate.title);
+    assert.equal(card.facts.find(fact => fact.label === '当前状态')?.value, permissionGate.status);
+    assert.equal(card.facts.find(fact => fact.label === '本次模型消费')?.value, '未创建操作 / 未消费');
+    assert.match(card.summary, permissionGate.summary);
+    assert.doesNotMatch(card.summary, /模型修订授权/);
+    assert.deepEqual(card.actions.map(action => action.id), ['open_workspace']);
+    assert.equal(card.actions[0]?.label, permissionGate.action);
+    assert.equal(card.deepLink?.page, 'socialInspiration');
+    assert.equal(card.deepLink?.businessRef?.decisionId, card.id);
+    assert.equal(card.deepLink?.businessRef?.decisionVersion, card.subject.version);
+  });
+}
 
 test('queued workflow work never claims that evidence is ready to continue', () => {
   const queued = task('task-queued', 'scheduled_source_collection', 'pending');

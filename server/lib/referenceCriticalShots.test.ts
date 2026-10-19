@@ -37,7 +37,7 @@ test('Qwen multimodal decision retains actual frame and word evidence; product d
     calls++;
     assert.equal(url, 'https://test.qwen/v1/chat/completions');
     const body = JSON.parse(String(init?.body));
-    assert.equal(body.model, 'qwen3-vl-flash');
+    assert.equal(body.model, 'qwen3-vl-plus');
     assert.equal(body.temperature, 0);
     const content = body.messages[0].content;
     assert.equal(content.filter((item: any) => item.type === 'image_url').length, 4);

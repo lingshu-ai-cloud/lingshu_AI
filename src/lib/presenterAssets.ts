@@ -1,5 +1,6 @@
 export interface PresenterLook {
   id: string; name: string; groupId?: string; voiceId?: string;
+  avatarType?: 'digital_twin' | 'photo_avatar' | 'studio_avatar';
   imageUrl?: string; videoUrl?: string;
   gender?: string;
   ethnicity?: string;

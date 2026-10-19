@@ -4,10 +4,13 @@ import {
   type SocialMaterialRole,
   type SocialSceneVisualContract,
 } from './sceneVisualContract.js';
+import type { SocialProductFootageEvidenceBinding } from './contracts/socialContentReplication.js';
 
 export type MaterialScriptRole = 'hook' | 'demonstration' | 'proof' | 'explanation' | 'transition' | 'closing' | 'support';
 
 export interface MaterialScriptShot {
+  /** Server-projected only; never trusted from an uploaded material row. */
+  footageEvidence?: SocialProductFootageEvidenceBinding;
   segmentId: string;
   startSeconds: number;
   endSeconds: number;

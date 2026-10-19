@@ -115,7 +115,8 @@ try {
   const fakePython = path.join(qualityRoot, 'python');
   const syncnet = path.join(qualityRoot, 'syncnet');
   fs.mkdirSync(path.join(syncnet, 'data'), { recursive: true });
-  for (const file of ['data/syncnet_v2.model', 'run_pipeline.py', 'run_syncnet.py']) fs.writeFileSync(path.join(syncnet, file), 'fixture');
+  fs.mkdirSync(path.join(syncnet, 'detectors', 's3fd', 'weights'), { recursive: true });
+  for (const file of ['data/syncnet_v2.model', 'detectors/s3fd/weights/sfd_face.pth', 'run_pipeline.py', 'run_syncnet.py']) fs.writeFileSync(path.join(syncnet, file), 'fixture');
   fs.writeFileSync(fakePython, '#!/bin/sh\necho \'{"ready":true}\'\n', { mode: 0o755 });
   const qualityReady = await digitalHumanQualityRuntimeReadiness({
     DIGITAL_HUMAN_VISUAL_QA_PYTHON: fakePython,
@@ -125,6 +126,14 @@ try {
   assert.equal(qualityReady.localVisual.ready, true);
   assert.equal(qualityReady.lipSync.ready, true);
   assert.equal(qualityReady.autoRelease.ready, true);
+
+  fs.rmSync(path.join(syncnet, 'detectors', 's3fd', 'weights', 'sfd_face.pth'));
+  const missingFaceWeights = await digitalHumanQualityRuntimeReadiness({
+    DIGITAL_HUMAN_VISUAL_QA_PYTHON: fakePython,
+    DIGITAL_HUMAN_SEMANTIC_QA_ENABLED: 'true', DASHSCOPE_API_KEY: 'configured-for-test', QWEN_DIGITAL_HUMAN_QA_MODEL: 'qwen-test',
+    DIGITAL_HUMAN_SYNCNET_QA_ENABLED: 'true', DIGITAL_HUMAN_SYNCNET_QA_PYTHON: fakePython, DIGITAL_HUMAN_SYNCNET_DIR: syncnet,
+  });
+  assert.deepEqual(missingFaceWeights.lipSync, { ready: false, reason: 'official_syncnet_model_or_runner_missing' });
 
   const qualityReadyWithoutSyncNet = await digitalHumanQualityRuntimeReadiness({
     DIGITAL_HUMAN_VISUAL_QA_PYTHON: fakePython,

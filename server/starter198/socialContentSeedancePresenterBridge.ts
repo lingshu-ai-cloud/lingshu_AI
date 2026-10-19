@@ -11,6 +11,9 @@ const sha = (value: string | Buffer) => createHash('sha256').update(value).diges
 type Prepared = {
   firstFrameUrl: string; firstFrameSha256: string;
   motionGuideUrl?: string; motionGuideSourceSha256?: string; motionGuideSha256?: string;
+  /** Public, immutable projection of the already-frozen scene audio. Seedance
+   * may consume it, but may not become the source of truth for the voice. */
+  speechAudioUrl?: string; speechAudioSha256?: string;
   identityRemoved?: true; motionOnly?: true;
 };
 export interface SeedancePresenterBridgeDependencies {
@@ -19,6 +22,9 @@ export interface SeedancePresenterBridgeDependencies {
   apiKey: string;
   baseUrl?: string;
   maximumCostCny: number;
+  /** Off by default. Enable only for an explicitly certified model/account
+   * combination whose output passes both audio identity and lip-sync QA. */
+  preciseSpeechCertified?: boolean;
   resolvePresenter: SocialDigitalPresenterBridgePorts['resolvePresenter'];
   authorizeBudget: SocialDigitalPresenterBridgePorts['authorizeBudget'];
   reconcileBudget?: SocialDigitalPresenterBridgePorts['reconcileBudget'];
@@ -26,12 +32,15 @@ export interface SeedancePresenterBridgeDependencies {
   /** Server-owned reader verifies persisted Seedream approval, authorization,
    * byte hashes and anonymized motion-guide lineage before returning URLs. */
   prepareInputs(input: DigitalPresenterExecutionRequest): Promise<Prepared>;
+  /** Re-read the server-owned audio receipt. A client-provided URL or hash is
+   * never sufficient to enable a paid speech generation. */
+  verifySpeechAudio?(input: DigitalPresenterExecutionRequest): Promise<boolean>;
   /** Must assert the exact frozen provider/model/account and whole-film paid
    * intent against this real request body, before any provider submission. */
   beforeSubmit(input: Request, body: Record<string, unknown>): Promise<void>;
   /** Decode/probe and inspect actual generated frames. Returns real durable
    * QA evidence, never a model-authored approval supplied by the client. */
-  verifyOutput(input: DigitalPresenterExecutionRequest, output: { localPath: string; sha256: string; providerTaskId: string }): Promise<{ passed: boolean; durationSeconds: number; evidenceRefs: string[]; actualCostCny?: number; deliveredPath?: string }>;
+  verifyOutput(input: DigitalPresenterExecutionRequest, output: { localPath: string; sha256: string; providerTaskId: string }): Promise<{ passed: boolean; durationSeconds: number; evidenceRefs: string[]; audioTrackMatchesInput?: boolean; lipSyncPassed?: boolean; actualCostCny?: number; deliveredPath?: string }>;
   transport?: typeof fetch;
   pollMs?: number;
   maxPolls?: number;
@@ -47,10 +56,18 @@ export function createSocialSeedancePresenterBridge(deps: SeedancePresenterBridg
     await deps.assertCurrent();
     if (input.presenter.providerId !== 'seedance' || !input.presenter.authorized || !input.presenter.authorizationRef || !input.presenter.consentRef)
       throw Error('seedance_presenter_authorization_missing');
-    if (input.visualControl.product.required) throw Error('seedance_presenter_physical_product_contact_unsupported');
-    if (input.speechAudio || input.visualControl.requiredCapabilities.includes('scripted_speech'))
+    const manifest=input.approvedFirstFrame.assetProvenance;
+    if(!manifest||manifest.presenter.assetId!==input.presenter.presenterAssetId||manifest.presenter.assetVersion!==input.presenter.assetVersion)
+      throw Error('seedance_presenter_composite_source_manifest_missing');
+    const product=manifest.products.find(item=>item.productId===input.visualControl.product.productId);
+    if(input.visualControl.product.required&&(!product
+      ||product.enterpriseFactRef!==input.visualControl.product.enterpriseFactRef
+      ||JSON.stringify([...new Set(product.referenceImageIds)].sort())!==JSON.stringify([...new Set(input.visualControl.product.referenceAssetIds)].sort())))
+      throw Error('seedance_presenter_composite_product_binding_changed');
+    const needsSpeech = Boolean(input.speechAudio || input.visualControl.requiredCapabilities.includes('scripted_speech'));
+    if (needsSpeech && (!deps.preciseSpeechCertified || !input.speechAudio || !deps.verifySpeechAudio || !await deps.verifySpeechAudio(input)))
       throw Error('seedance_presenter_precise_speech_capability_unverified');
-    const duration = input.visualControl.timing.durationSeconds;
+    const duration = input.speechAudio?.durationSeconds ?? input.visualControl.timing.durationSeconds;
     if (!Number.isFinite(duration) || duration <= 0 || duration > 15) throw Error('seedance_presenter_duration_invalid');
     const frame = await fs.readFile(input.approvedFirstFrame.localPath);
     if (sha(frame) !== input.approvedFirstFrame.sha256) throw Error('seedance_presenter_first_frame_bytes_changed');
@@ -59,11 +76,16 @@ export function createSocialSeedancePresenterBridge(deps: SeedancePresenterBridg
       || prepared.motionGuideUrl && (prepared.identityRemoved !== true || prepared.motionOnly !== true
       || !/^[a-f0-9]{64}$/.test(prepared.motionGuideSourceSha256 || '') || !/^[a-f0-9]{64}$/.test(prepared.motionGuideSha256 || '')
       || prepared.motionGuideSourceSha256 === prepared.motionGuideSha256 || !/^https:\/\//.test(prepared.motionGuideUrl))) throw Error('seedance_presenter_verified_inputs_missing');
+    if (needsSpeech && (!/^https:\/\//.test(prepared.speechAudioUrl || '')
+      || prepared.speechAudioSha256 !== input.speechAudio!.clipSha256)) throw Error('seedance_presenter_verified_speech_input_missing');
     const body = { model: deps.model, content: [
-      { type: 'text', text: `Animate only the supplied authorized enterprise presenter. Preserve identity, clothing and scene. The identity-removed reference is motion guidance only. No source face, source voice, captions or fabricated product interaction. Follow this frozen direction: ${JSON.stringify(input.visualControl)}` },
+      { type: 'text', text: needsSpeech
+        ? `Animate only the supplied authorized enterprise presenter. Preserve identity, clothing and scene. Match mouth movement to the supplied frozen speech audio without rewriting words, timing, voice or pauses. The identity-removed reference is motion guidance only. No source face, captions or fabricated product interaction. Follow this frozen direction: ${JSON.stringify(input.visualControl)}`
+        : `Animate only the supplied authorized enterprise presenter. Preserve identity, clothing and scene. The identity-removed reference is motion guidance only. No source face, source voice, captions or fabricated product interaction. Follow this frozen direction: ${JSON.stringify(input.visualControl)}` },
       { type: 'image_url', image_url: { url: prepared.firstFrameUrl }, role: prepared.motionGuideUrl ? 'reference_image' : 'first_frame' },
       ...(prepared.motionGuideUrl ? [{ type: 'video_url', video_url: { url: prepared.motionGuideUrl }, role: 'reference_video' }] : []),
-    ], duration: Math.max(4, Math.ceil(duration)), ratio: '9:16', resolution: '720p', generate_audio: false, watermark: false };
+      ...(needsSpeech ? [{ type: 'audio_url', audio_url: { url: prepared.speechAudioUrl! }, role: 'reference_audio' }] : []),
+    ], duration: Math.max(4, Math.ceil(duration)), ratio: '9:16', resolution: '720p', generate_audio: needsSpeech, watermark: false };
     // Signed URLs expire; immutable byte identities, not URL query parameters,
     // are the durable recovery identity.
     const requestHash = sha(JSON.stringify({ ...input, outputDirectory: undefined, reservationRef: undefined, recoveryOnly: undefined, approvedFirstFrame: { ...input.approvedFirstFrame, url: undefined, localPath: undefined }, prepared: { ...prepared, firstFrameUrl: undefined, motionGuideUrl: undefined }, model: deps.model }));
@@ -121,6 +143,7 @@ export function createSocialSeedancePresenterBridge(deps: SeedancePresenterBridg
           await fs.writeFile(localPath, bytes, { mode: 0o600 });
           const qa = await deps.verifyOutput(input, { localPath, sha256: contentHash, providerTaskId: row.provider_task_id });
           if (!qa.passed || !qa.evidenceRefs.length || !Number.isFinite(qa.durationSeconds) || Math.abs(qa.durationSeconds - duration) > 1 / 24 + .01
+            || needsSpeech && (qa.audioTrackMatchesInput !== true || qa.lipSyncPassed !== true)
             || qa.actualCostCny !== undefined && (!Number.isFinite(qa.actualCostCny) || qa.actualCostCny < 0 || qa.actualCostCny > input.maximumCostCny)) throw Error('seedance_presenter_dynamic_quality_failed');
           const deliveredPath = qa.deliveredPath ?? localPath;
           const deliveredBytes = await fs.readFile(deliveredPath);
@@ -134,7 +157,7 @@ export function createSocialSeedancePresenterBridge(deps: SeedancePresenterBridg
       return { status: 'pending' as const, providerTaskId: row.provider_task_id, error: 'seedance_presenter_provider_pending' };
     } finally { await releaseDurableOperationLease({ dataStore: deps.store, lease }); }
   }
-  return { maximumCostCny: deps.maximumCostCny, capabilities: { methods: ['reenact', 'replace'], controls: ['reference_motion', 'guided_action', 'environment_control', 'camera_control', 'timing_control'] }, resolvePresenter: deps.resolvePresenter,
+  return { maximumCostCny: deps.maximumCostCny, capabilities: { methods: ['reenact', 'replace'], controls: ['reference_motion', 'guided_action', 'environment_control', 'camera_control', 'timing_control', ...(deps.preciseSpeechCertified ? ['scripted_speech' as const] : [])] }, resolvePresenter: deps.resolvePresenter,
     authorizeBudget: deps.authorizeBudget, reconcileBudget: deps.reconcileBudget,
     execute: input => execute(input) as ReturnType<SocialDigitalPresenterBridgePorts['execute']>,
     recoverExisting: input => execute({ ...input, reservationRef: '' }, true),

@@ -26,6 +26,7 @@ test('reviewed Beijing catalogue prices flash and plus without a network depende
 test('catalogue rejects account, endpoint and credential mismatch before returning a tariff',async()=>{
  assert.equal(await reader('qwen3-vl-flash').read({...intent('qwen3-vl-flash'),accountRef:'qwen:foreign'}),null);
  assert.equal(await reader('qwen3-vl-flash',{baseUrl:'https://gateway.example/v1'}).read(intent('qwen3-vl-flash')),null);
+ assert.equal(await reader('qwen3-vl-flash',{baseUrl:'https://maas.qianwenaiapi.com/compatible-mode/v1'}).read(intent('qwen3-vl-flash')),null);
  assert.equal(await reader('qwen3-vl-flash',{credentialSha256:'not-a-sha'}).read(intent('qwen3-vl-flash')),null);
  assert.equal(await reader('qwen3-vl-flash',{model:'qwen3-vl-plus'}).read(intent('qwen3-vl-flash')),null);
 });

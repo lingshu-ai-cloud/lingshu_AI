@@ -1,9 +1,10 @@
-import type {TestContext} from 'node:test';import type {DataStore,ListQuery,ListResult,Record_} from '../storage/datastore.js';import type {WeeklyExecutionTask,WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';import {DURABLE_OPERATION_LEASE_COLLECTION} from './durableLease.js';import {WEEKLY_EXECUTION_TASKS} from '../socialPrograms/executionTasks.js';import {store as routeStore} from '../storage/index.js';import {updateTenantEnterpriseProfile,type EnterpriseProfile} from '../routes/enterprise.js';import {createSocialOperatingOrchestrationService} from '../socialOperating/orchestration.js';
-function memoryStore(): DataStore {
-  const rows = new Map<string, Record_[]>();
-  let counter = 0;
+import type {TestContext} from 'node:test';import fs from 'node:fs';import path from 'node:path';import type {DataStore,ListQuery,ListResult,Record_} from '../storage/datastore.js';import type {WeeklyExecutionTask,WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';import {DURABLE_OPERATION_LEASE_COLLECTION} from './durableLease.js';import {WEEKLY_EXECUTION_TASKS} from '../socialPrograms/executionTasks.js';import {store as routeStore} from '../storage/index.js';import {updateTenantEnterpriseProfile,type EnterpriseProfile} from '../routes/enterprise.js';import {createSocialOperatingOrchestrationService} from '../socialOperating/orchestration.js';
+function memoryStore(snapshot:Record<string,Record_[]>={}): DataStore & {snapshot():Record<string,Record_[]>} {
+  const rows = new Map<string, Record_[]>(Object.entries(structuredClone(snapshot)));
+  let counter = Math.max(0,...Object.values(snapshot).flatMap(items=>items.map(item=>/^row-(\d+)$/.exec(String(item.id))?.[1]).filter((value):value is string=>Boolean(value)).map(Number)));
   const matches = (row: Record_, where: ListQuery['where']) => Object.entries(where ?? {}).every(([key, value]) => row[key] === value);
   return {
+    snapshot(){return structuredClone(Object.fromEntries(rows));},
     async getById<T>(collection: string, id: string) {
       return structuredClone(rows.get(collection)?.find(row => row.id === id) ?? null) as T | null;
     },
@@ -50,6 +51,21 @@ function memoryStore(): DataStore {
   };
 }
 
+/** Test-only disk-backed DataStore: every completed mutation is durable before
+ * the caller receives it, and a new instance reads the same serialized file. */
+function persistentStore(file:string):DataStore & {snapshot():Record<string,Record_[]>}{
+ const seed=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')) as Record<string,Record_[]>:{};
+ const memory=memoryStore(seed);
+ const persist=()=>{fs.mkdirSync(path.dirname(file),{recursive:true});const temporary=`${file}.${process.pid}.tmp`;fs.writeFileSync(temporary,JSON.stringify(memory.snapshot()));fs.renameSync(temporary,file);};
+ return {...memory,
+  async create<T>(collection:string,data:Record<string,unknown>){const created=await memory.create<T>(collection,data);if(created)persist();return created;},
+  async update(collection:string,id:string,data:Record<string,unknown>){const changed=await memory.update(collection,id,data);if(changed)persist();return changed;},
+  async delete(collection:string,id:string){const changed=await memory.delete(collection,id);if(changed)persist();return changed;},
+ };
+}
+
+export function reopenWeeklyEnterpriseFactFixtureStore(file:string):DataStore & {snapshot():Record<string,Record_[]>}{return persistentStore(file);}
+
 function task(tenantId = 'tenant-a'): WeeklyExecutionTask {
   return { taskId: 'task-a', tenantId, programId: 'program-a', packageId: 'package-a', packageVersion: 1,
     workflowKind: 'readiness', scope: 'package', subjectId: 'package-a', accountId: null, publicationTaskId: null,
@@ -75,8 +91,8 @@ const account = {
 };
 
 
-export async function prepareWeeklyEnterpriseFactFixture(context:TestContext){
- const store=memoryStore();for(const key of ['list','getById','create','update','delete'] as const)context.mock.method(routeStore,key,store[key].bind(store));
+export async function prepareWeeklyEnterpriseFactFixture(context:TestContext,options:{persistentFile?:string}={}){
+ const store=options.persistentFile?persistentStore(options.persistentFile):memoryStore();for(const key of ['list','getById','create','update','delete'] as const)context.mock.method(routeStore,key,store[key].bind(store));
  await store.create('users',{id:'owner',tenantId:'tenant-a',role:'social_operator',active:true});
  const patch:Partial<EnterpriseProfile>={company:{name:'Actual factory',industry:'制造',description:'Verified factory',mainMarkets:'US',primaryLanguages:'en',founded:'2018'},products:{categories:'Industrial products',items:[{name:'Serum',priceRange:'',images:[],certificateImages:[],documents:[]}],priceRange:'',moq:'',certifications:'',highlights:'Small batch sampling'},brand:{name:'Factory',tone:'professional',style:'',taboos:'',usp:'Documented QC'}};
  const profile=await updateTenantEnterpriseProfile('tenant-a',patch,'owner');

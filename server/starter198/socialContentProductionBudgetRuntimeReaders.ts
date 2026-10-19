@@ -12,7 +12,7 @@ import {resolveStudioVoiceExecutionPlan} from '../routes/studio.js';
 import {nativeVoiceBillableCharacters} from '../lib/studioVoiceBilling.js';
 import {productionBillingAccountRef} from './socialContentProductionBudgetRoutes.js';
 import {paidProductionHash,type BoundPaidRoute} from './socialContentPaidOperationPlan.js';
-import {getQwenProviderBinding} from '../agents/qwen.js';
+import {getQwenAsrProviderBinding,getQwenProviderBinding} from '../agents/qwen.js';
 /** Trusted server factory. No request body, supplier request or business write.
  * Formula is the resolved version already used by production; an absent or
  * different formula cannot be replaced by a speculative voice selection. */
@@ -48,7 +48,7 @@ export function createProductionBudgetRuntimeReaders(input: {
                 return {provider:'qwen',model:'qwen3-asr-flash-filetrans',accountRef:productionBillingAccountRef('qwen',endpoint,b.credentialSha256),routeEvidenceRef:'sdk-native-alignment:'+paidProductionHash({endpoint,credentialSha256:b.credentialSha256}),usageBoundRef:`frozen-native-track-${frozenTrackSeconds}-seconds`,maximumAttempts:1,maximumUnits:{audioSeconds:frozenTrackSeconds}} satisfies BoundPaidRoute;
             }
             if(requirement.stage==='voice_asr'&&voicePlan?.asrConfigured) {
-                let binding:ReturnType<typeof getQwenProviderBinding>;try{binding=getQwenProviderBinding(env);}catch{return null;}
+                let binding:ReturnType<typeof getQwenAsrProviderBinding>;try{binding=getQwenAsrProviderBinding(env);}catch{return null;}
                 const model=env.QWEN_ASR_MODEL||'qwen3-asr-flash';
                 if(model!=='qwen3-asr-flash'||binding.baseUrl!=='https://dashscope.aliyuncs.com/compatible-mode/v1')return null;
                 return {provider:'qwen',model,accountRef:productionBillingAccountRef('qwen',binding.baseUrl,binding.credentialSha256),routeEvidenceRef:'sdk-native-asr:'+paidProductionHash({binding,frozenTrackSeconds}),usageBoundRef:`frozen-native-track-${frozenTrackSeconds}-seconds`,maximumAttempts:1,maximumUnits:{audioSeconds:frozenTrackSeconds}} satisfies BoundPaidRoute;

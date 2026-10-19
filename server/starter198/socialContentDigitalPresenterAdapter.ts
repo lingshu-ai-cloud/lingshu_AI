@@ -5,6 +5,7 @@ import { stat } from 'node:fs/promises';
 import { normalizeSceneVisualContract } from '../../shared/sceneVisualContract.js';
 import type { SocialAssetSupplyProviderAdapter } from './socialContentAssetSupplyExecution.js';
 import type { SocialProductionAsset } from './socialContentProductionPlan.js';
+import {isPresenterFirstFrameAssetProvenance,type PresenterFirstFrameAssetProvenance} from './socialContentPresenterFirstFrameAssetProvenance.js';
 
 export interface AuthorizedDigitalPresenter {
   presenterAssetId: string;
@@ -40,6 +41,9 @@ export interface ApprovedPresenterFirstFrame {
   url: string;
   localPath: string;
   sha256: string;
+  /** Immutable source ledger for a provider that accepts only one composite
+   * image. These are identities, not extra provider inputs. */
+  assetProvenance?: PresenterFirstFrameAssetProvenance;
 }
 
 export function assertPresenterSpeechAudio(request: Pick<DigitalPresenterExecutionRequest, 'tenantId' | 'taskId' | 'shotId' | 'script' | 'presenter'>, audio: VerifiedPresenterSpeechAudio): void {
@@ -98,11 +102,20 @@ export interface DigitalPresenterVisualControl {
   };
   product: {
     required: boolean;
+    /** Frozen enterprise identity sent to the dynamic provider with the image refs. */
+    productId: string | null;
+    enterpriseFactRef: string | null;
     usage: string | null;
     productRefs: string[];
     referenceAssetIds: string[];
   };
   environment: string;
+  referenceBackground: {
+    referenceSourceId: string;
+    referenceShotId: string;
+    firstFrameRef: string;
+    lockHash: string;
+  } | null;
   camera: {
     shotSize: string;
     angle: string;
@@ -246,6 +259,7 @@ function visualControl(context: Parameters<SocialAssetSupplyProviderAdapter['exe
     && context.shot.digitalHumanPlan.method === 'talking';
   const interaction: DigitalPresenterVisualControl['interaction'] = talkingReplication ? 'talking' : inferredInteraction;
   const productGroups = context.shot.productSceneReplication?.productIdentity.groups ?? [];
+  const productLock = context.shot.enterpriseProductAssetLock;
   // A measured motion-only presenter shot is not a lip-sync operation. The
   // trusted production router supplies this flag; omission remains strict.
   const silentMotion = context.shot.digitalHumanPlan?.method === 'reenact'
@@ -269,6 +283,8 @@ function visualControl(context: Parameters<SocialAssetSupplyProviderAdapter['exe
     },
     product: {
       required: ['person_holds_product', 'person_uses_product', 'product_applied_to_face'].includes(interaction),
+      productId: productLock?.productId ?? null,
+      enterpriseFactRef: productLock?.enterpriseFactRef ?? null,
       usage: contract.productUsage.kind !== 'none' ? contract.productUsage.kind
         : applyFace ? 'apply_to_face' : usesProduct ? 'use_or_demonstrate' : holdsProduct ? 'hold_and_display' : null,
       productRefs: [...new Set([
@@ -276,9 +292,15 @@ function visualControl(context: Parameters<SocialAssetSupplyProviderAdapter['exe
         contract.product.requestedProductRef,
         contract.productUsage.productRef,
       ].filter((value): value is string => Boolean(value)))],
-      referenceAssetIds: productGroups.flatMap(group => group.referenceImageIds),
+      referenceAssetIds: productLock?.referenceImageIds ?? productGroups.flatMap(group => group.referenceImageIds),
     },
     environment: compact(contract.environment.description, contract.environment.kind !== 'unknown' ? contract.environment.kind : environment),
+    referenceBackground: context.shot.referenceBackgroundAssetLock ? {
+      referenceSourceId: context.shot.referenceBackgroundAssetLock.referenceSourceId,
+      referenceShotId: context.shot.referenceBackgroundAssetLock.referenceShotId,
+      firstFrameRef: context.shot.referenceBackgroundAssetLock.firstFrameRef,
+      lockHash: context.shot.referenceBackgroundAssetLock.lockHash,
+    } : null,
     camera: {
       shotSize: compact(contract.camera.shotSize, reference?.shotScale || '人物中近景'),
       angle: compact(contract.camera.angle, '保持人物、手部与产品接触位置可观察'),
@@ -350,6 +372,22 @@ export function createSocialDigitalPresenterAdapter(
       const plan = context.shot.digitalHumanPlan;
       if (!plan || !['preview_only', 'ready_for_capability_check'].includes(plan.executionState)) return null;
       const control = visualControl(context);
+      if (plan.method === 'reenact' && control.product.required) {
+        const normalizeProductRef = (value: unknown) => String(value ?? '').normalize('NFKC').trim()
+          .replace(/^product\s*:\s*/i, '').toLocaleLowerCase();
+        const lock = context.shot.enterpriseProductAssetLock;
+        const lockedImages = [...new Set((lock?.referenceImageIds ?? []).map(value => value.trim()).filter(Boolean))];
+        const matchingGroup = context.shot.productSceneReplication?.productIdentity.groups.find(group =>
+          normalizeProductRef(group.productRef) === normalizeProductRef(lock?.productId));
+        const groupImages = [...new Set((matchingGroup?.referenceImageIds ?? []).map(value => value.trim()).filter(Boolean))];
+        if (!lock?.productId?.trim() || !lock.enterpriseFactRef?.trim() || !lockedImages.length) {
+          throw new Error('dynamic_presenter_enterprise_product_asset_lock_required');
+        }
+        if (!matchingGroup || lockedImages.length !== groupImages.length
+          || lockedImages.some(id => !groupImages.includes(id))) {
+          throw new Error('dynamic_presenter_enterprise_product_asset_lock_mismatch');
+        }
+      }
       const supportedMethods = new Set(ports.capabilities?.methods ?? ['talking']);
       const supportedControls = new Set<DigitalPresenterControlCapability>(ports.capabilities?.controls ?? ['scripted_speech', 'timing_control']);
       if (!supportedMethods.has(plan.method)) {
@@ -371,6 +409,23 @@ export function createSocialDigitalPresenterAdapter(
       if (!presenter || presenter.authorized !== true || !presenter.authorizationRef || !presenter.consentRef
         ||presenter.presenterAssetId!==presenterAssetId||!Number.isSafeInteger(presenter.assetVersion)||presenter.assetVersion<1
         ||(!assetOnlyMotion&&(!presenter.providerPresenterId || !presenter.providerVoiceId))) return null;
+      if (plan.method === 'reenact') {
+        const manifest = approvedFirstFrameSourceManifest(context.shot as typeof context.shot & { approvedFirstFrame?: ApprovedPresenterFirstFrame });
+        if (!manifest) throw new Error('dynamic_presenter_composite_source_manifest_required');
+        if (manifest.presenter.assetId !== presenter.presenterAssetId || manifest.presenter.assetVersion !== presenter.assetVersion)
+          throw new Error('dynamic_presenter_composite_presenter_binding_mismatch');
+        const background=context.shot.referenceBackgroundAssetLock;
+        if(!background||manifest.background.referenceSourceId!==background.referenceSourceId
+          ||manifest.background.referenceShotId!==background.referenceShotId
+          ||manifest.background.referenceFirstFrameRef!==background.firstFrameRef)
+          throw new Error('dynamic_presenter_composite_background_binding_mismatch');
+        const expectedImages = [...new Set(control.product.referenceAssetIds)].sort();
+        const product=manifest.products.find(item=>item.productId===control.product.productId);
+        const actualImages = [...new Set(product?.referenceImageIds ?? [])].sort();
+        if (control.product.required && (!product || product.enterpriseFactRef !== control.product.enterpriseFactRef
+          || expectedImages.length !== actualImages.length || expectedImages.some((id, index) => id !== actualImages[index])))
+          throw new Error('dynamic_presenter_composite_product_binding_mismatch');
+      }
       const lock = plan.accountPresenterLock;
       if (lock && (
         presenter.presenterAssetId !== lock.presenterAssetId
@@ -452,4 +507,10 @@ export function createSocialDigitalPresenterAdapter(
       };
     },
   };
+}
+
+function approvedFirstFrameSourceManifest(shot: { approvedFirstFrame?: ApprovedPresenterFirstFrame }) {
+  const manifest = shot.approvedFirstFrame?.assetProvenance;
+  if (!isPresenterFirstFrameAssetProvenance(manifest)) return null;
+  return manifest;
 }

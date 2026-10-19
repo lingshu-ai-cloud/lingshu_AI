@@ -359,8 +359,12 @@ export async function failExecution(input: {
   const completedArtifact = detail?.artifacts.some(artifact => artifact.origin === 'agent'
     && artifact.kind === 'short_video'
     && !['superseded', 'changes_requested'].includes(artifact.status));
-  if (completedArtifact && !pendingRevision) return;
   const rawMessage = String(input.error instanceof Error ? input.error.message : input.error || '自动成片失败').slice(0, 800);
+  const graphQualityFailed = rawMessage.startsWith('social_graph_quality_failed:');
+  // A failed QA candidate is intentionally saved for repair, but is not a
+  // completed reviewable artifact. Other completed artifacts retain the old
+  // protection against late worker failures rewriting their state.
+  if (completedArtifact && !pendingRevision && !graphQualityFailed) return;
   const needsMaterial = rawMessage.startsWith('production_input_required:');
   const needsUserInput = rawMessage.startsWith('user_input_required:');
   const directorRevisionFailed = rawMessage.startsWith('director_revision_required:');
@@ -383,7 +387,8 @@ export async function failExecution(input: {
     },
   }).catch(() => undefined);
   const record = await requireSocialTask(input).catch(() => null);
-  if (record && socialText(record.status) === 'producing') {
+  if (record && (socialText(record.status) === 'producing'
+    || graphQualityFailed && socialText(record.status) === 'asset_review')) {
     await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, record.id, {
       // Missing personalization data is handled by the library/system fallback.
       // Only an explicit governed user-input requirement may surface attention.

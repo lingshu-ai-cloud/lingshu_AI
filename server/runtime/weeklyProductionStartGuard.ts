@@ -8,6 +8,7 @@ import {withExecutionPackageGate,executionPackageFrozen} from '../socialPrograms
 import type {WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';
 import type {SocialContentTaskDetail} from '../../shared/contracts/socialContentWorkflow.js';
 import {resolveWeeklyCreativeRepairAuthority} from './weeklyCreativeRepairAuthority.js';
+import {assertWeeklyCreativeRepairCtaAdmission} from './weeklyCreativeRepairCtaAdmission.js';
 
 const frozenWorkflow=(t:any)=>({taskId:t.taskId,kind:t.kind,taskRef:t.taskRef,dependsOnTaskIds:t.dependsOnTaskIds,subjectRefs:t.subjectRefs,carriedFromTaskId:t.carriedFromTaskId});
 const frozenPublication=(t:any)=>{const {status,...rest}=t;return rest;};
@@ -39,6 +40,7 @@ export async function withWeeklyProductionStartGuard(input:{repository:Starter19
   if(socialRequestHash(socialJson(fresh.brief))!==socialRequestHash(socialJson(row.brief)))return fail();
   // An existing actual run is observed, never restarted through this entry.
   if(socialText(fresh.run_id)||socialText(fresh.orchestrator_item_id)){const detail=await (ports.read??readSocialTaskDetail)(input);if(!detail)return fail();return detail;}
+  if(creative)await assertWeeklyCreativeRepairCtaAdmission({store,tenantId:input.tenantId,programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version,publicationTaskId:String(publication.publicationTaskId),inheritedCallToAction:brief?.callToAction});
   if(programs.items[0]?.payload?.version!==programRef.version||socialRequestHash(actual.enterpriseProfileRef??null)!==socialRequestHash(pkg.enterpriseProfileRef??null)||socialRequestHash(actual.businessContentGoalRef??null)!==socialRequestHash(pkg.businessContentGoalRef??null)||socialRequestHash(actual.agentPlanning??null)!==socialRequestHash(pkg.agentPlanning??null)
    ||!actual.workflowTasks.some(task=>socialRequestHash(frozenWorkflow(task))===socialRequestHash(frozenWorkflow(workflow)))
    ||!actual.socialContentPackage.publicationTasks.some(task=>socialRequestHash(frozenPublication(task))===socialRequestHash(frozenPublication(publication))))return fail();

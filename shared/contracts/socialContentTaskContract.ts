@@ -432,6 +432,16 @@ export interface SocialMetricSubmission {
 }
 
 export interface SocialContentTaskDetail extends SocialContentTaskSummary {
+  /** Read-only exact-window revision identity; does not admit a worker. */
+  footageRevisionPlanHash?: string;
+  /** Read-only prepared fallback candidate. Never an execution authorization. */
+  preparedProductAssetRevisionCandidate?: {
+    plan: SocialAssetSupplyPlan;
+    preparedVersion: string;
+    revisedPlanHash: string;
+    budgetLedgerRef: string;
+    authorizesStart: false;
+  };
   /** Exact product row bound to a verified Enterprise Center fact revision. */
   enterpriseProductBinding?: {
     productId: string;

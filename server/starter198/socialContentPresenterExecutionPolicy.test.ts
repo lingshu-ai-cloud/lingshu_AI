@@ -58,10 +58,10 @@ backgroundPerson.agentWorkflow.directorBrief.scenes[0].productionRouting.needsPr
 assert.equal(selectPresenterExecutions({ detail: backgroundPerson, heygenReady: false,
   seedancePresenterReady: false, budgetReady: false }).length, 0,
   'a background or incidental person does not require digital-presenter generation');
-const motion = route({ specificGestureCount: 1, visibleSpeechSeconds: 0, lipSyncRequired: false });
+const motion = route({ bodyCenterTravelFrameWidth: 0.09, visibleSpeechSeconds: 0, lipSyncRequired: false });
 assert.equal(motion.decision.route, 'blocked');
 assert.ok(motion.reasonCodes.includes('seedance_capability_unavailable'));
-const motionOnlyDetail = detail({ specificGestureCount: 1, visibleSpeechSeconds: 0, lipSyncRequired: false });
+const motionOnlyDetail = detail({ bodyCenterTravelFrameWidth: 0.09, visibleSpeechSeconds: 0, lipSyncRequired: false });
 motionOnlyDetail.agentWorkflow.directorBrief.scenes[0].productionRouting.needsPreciseLipSync = false;
 const registeredMotion = selectPresenterExecutions({ detail: motionOnlyDetail, heygenReady: false,
   seedancePresenterReady: true, budgetReady: true })[0]!;
@@ -71,7 +71,7 @@ const wrongMotionStrategy = structuredClone(motionOnlyDetail);
 wrongMotionStrategy.agentWorkflow.executionPlan.scenes[0].selectedSourceStrategy = 'aigc_product_scene_replication';
 assert.equal(selectPresenterExecutions({ detail: wrongMotionStrategy, heygenReady: false,
   seedancePresenterReady: true, budgetReady: true })[0]!.executionStatus, 'blocked');
-const split = route({ specificGestureCount: 1 });
+const split = route({ bodyCenterTravelFrameWidth: 0.09 });
 assert.equal(split.decision.route, 'split_motion_and_speech');
 assert.equal(split.executionStatus, 'blocked');
 const phraseMeasured = detail({ visibleSpeechSeconds: null, lipSyncRequired: null,
@@ -97,7 +97,30 @@ assert.equal(selectPresenterExecutions({ detail: narrationOutsideShot, heygenRea
 const contact = route({ physicalProductContact: true, specificGestureCount: 1 });
 assert.equal(contact.decision.route, 'blocked');
 assert.equal(contact.providerId, null);
-assert.ok(contact.reasonCodes.includes('physical_product_contact_requires_separate_verified_capability'));
+assert.ok(contact.reasonCodes.includes('physical_product_contact_requires_enterprise_product_asset'));
+const productContact = detail({ physicalProductContact: true, specificGestureCount: 1,
+  visibleSpeechSeconds: 0, lipSyncRequired: false });
+productContact.agentWorkflow.directorBrief.scenes[0].productionRouting.needsPreciseLipSync = false;
+productContact.enterpriseProductBinding = { productId: 'GUIANFA-RS-001', productName: '桂安发染发霜',
+  productSku: 'RS-001', enterpriseFactRef: 'enterprise_fact:product-fact@7', enterpriseFactId: 'product-fact',
+  enterpriseFactRevision: 7, enterpriseFactContentHash: 'hash', confirmedAt: '2026-10-17T00:00:00.000Z' };
+productContact.assetSupplyPlan = { shots: [{ shotId: 'scene-1', productSceneReplication: { productIdentity: {
+  groups: [{ productRef: 'product:GUIANFA-RS-001', referenceImageIds: ['kb-product-front', 'kb-product-back'] }],
+} } }] };
+const productContactSelection = selectPresenterExecutions({ detail: productContact, heygenReady: true,
+  seedancePresenterReady: true, budgetReady: true })[0]!;
+assert.equal(productContactSelection.decision.route, 'seedance_first_frame');
+assert.equal(productContactSelection.providerId, 'seedance');
+assert.deepEqual(productContactSelection.enterpriseProductAssetLock, {
+  productId: 'GUIANFA-RS-001', enterpriseFactRef: 'enterprise_fact:product-fact@7',
+  referenceImageIds: ['kb-product-front', 'kb-product-back'],
+});
+const wrongProduct = structuredClone(productContact);
+wrongProduct.assetSupplyPlan.shots[0].productSceneReplication.productIdentity.groups[0].productRef = 'another-product';
+const wrongProductSelection = selectPresenterExecutions({ detail: wrongProduct, heygenReady: true,
+  seedancePresenterReady: true, budgetReady: true })[0]!;
+assert.equal(wrongProductSelection.executionStatus, 'blocked');
+assert.ok(wrongProductSelection.reasonCodes.includes('physical_product_contact_requires_enterprise_product_asset'));
 assert.deepEqual(await verifyNamedPresenterLock({ store: null, tenantId: 'tenant', name: '销售', lock: null }),
   { ok: false, reason: 'published_account_presenter_lock_missing' });
 const lock: any = { status: 'published', commercialRightsStatus: 'cleared', presenterAssetId: 'one',

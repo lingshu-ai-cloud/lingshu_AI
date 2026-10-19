@@ -35,6 +35,7 @@ import { validateContentArtifact } from '../runtime/socialWeeklyResultValidation
 import { decideSocialContentArtifact } from '../starter198/socialContentOutputs.js';
 import { weeklyReviewWindowBounds } from '../socialReview/weeklyReviewTiming.js';
 import {ensureWeeklyTaskWorkspaces} from './weeklyTaskWorkspaces.js';
+import {WEEKLY_AUTOMATION_TEMPLATE} from '../../shared/weeklyAutomationTemplate.js';
 import {
   acquireDurableOperationLease,
   releaseDurableOperationLease,
@@ -103,10 +104,18 @@ function emptyCounts(): Record<WeeklyExecutionTaskStatus, number> {
 }
 
 function workflowStatus(tasks: WeeklyExecutionTask[]): WeeklyOperatingWorkflow['status'] {
-  if (tasks.some(task => task.status === 'dead_letter' || task.status === 'blocked' || task.ownBlockingReasons.length)) return 'blocked';
   if (tasks.length && tasks.every(task => task.status === 'cancelled')) return 'cancelled';
   if (tasks.length && tasks.every(task => task.status === 'succeeded' || task.status === 'cancelled')) return 'completed';
-  if (tasks.some(task => task.status === 'leased' || task.status === 'succeeded')) return 'in_progress';
+  // A workflow fans out into independently executable publication items. One
+  // item's terminal/blocking state must remain visible in blockingReasons, but
+  // must not project the whole workflow as stopped while a sibling can still
+  // run. This is the package-level expression of ADR-026; task dependencies
+  // remain the authority for which exact descendants are blocked.
+  const hasRunnableOrProgress = tasks.some(task =>
+    ['queued', 'leased'].includes(task.status)
+    || (task.status === 'pending_activation' && !task.ownBlockingReasons.length));
+  if (hasRunnableOrProgress) return 'in_progress';
+  if (tasks.some(task => task.status === 'dead_letter' || task.status === 'blocked' || task.ownBlockingReasons.length)) return 'blocked';
   return 'planned';
 }
 
@@ -221,6 +230,15 @@ function makeTask(tenantId: string, pkg: WeeklyOperatingPackage, seed: TaskSeed,
   ].join(':'));
   const duration = Math.max(1, Math.floor(seed.estimatedDurationMinutes));
   const estimatedFinishAt = new Date(Date.parse(estimatedStartAt) + duration * 60_000).toISOString();
+  const publication = pkg.socialContentPackage.publicationTasks.find(item => item.publicationTaskId === seed.publicationTaskId);
+  const customerWork = ['customer_channel_readiness','customer_inquiry_handoff'].includes(seed.stepKind);
+  const calendarAssignmentDate = typeof seed.inputSnapshot.rollingDate === 'string'
+    ? seed.inputSnapshot.rollingDate
+    : ['weekly_review','template_extraction','template_performance_validation'].includes(seed.stepKind)
+      ? pkg.weekEnd
+      : publication
+        ? customerWork ? preproductionLocalDate(publication,pkg) : publicationLocalDate(publication)
+        : pkg.weekStart;
   return {
     taskId: taskId(idempotencyKey),
     tenantId,
@@ -235,7 +253,7 @@ function makeTask(tenantId: string, pkg: WeeklyOperatingPackage, seed: TaskSeed,
     ...chainIdentity(pkg,seed),
     dependsOnTaskIds: seed.dependsOnTaskIds,
     upstreamVersionRefs: authorityRefs(pkg),
-    inputSnapshot: structuredClone({ ...seed.inputSnapshot, calendarAssignmentDate: typeof seed.inputSnapshot.rollingDate==='string'?seed.inputSnapshot.rollingDate:['weekly_review','template_extraction','template_performance_validation'].includes(seed.stepKind)?pkg.weekEnd:pkg.socialContentPackage.publicationTasks.find(p=>p.publicationTaskId===seed.publicationTaskId)?publicationLocalDate(pkg.socialContentPackage.publicationTasks.find(p=>p.publicationTaskId===seed.publicationTaskId)!):pkg.weekStart, referenceSourcePolicy: pkg.referenceSourcePolicy ?? null }),
+    inputSnapshot: structuredClone({ ...seed.inputSnapshot, calendarAssignmentDate, referenceSourcePolicy: pkg.referenceSourcePolicy ?? null }),
     idempotencyKey,
     budget: seed.budget,
     schedule: {
@@ -277,13 +295,18 @@ const publicationLocalDate = (item: SocialWeeklyPublicationTask): string => (
   publicationInstant(item.publishWindow) === null || !item.publishWindow ? '' : item.publishWindow.slice(0, 10)
 );
 
+/** Stable preproduction identity only; this never fills publishWindow. */
+const preproductionLocalDate = (item: SocialWeeklyPublicationTask, pkg: WeeklyOperatingPackage): string => (
+  publicationLocalDate(item) || pkg.weekStart
+);
+
 /**
  * A weekly package freezes capacity and delivery targets, but discovery is a
  * daily input. Keep the calendar date carried by the zoned publication window
  * so that a later day's script cannot silently consume a Monday-only crawl.
  */
-const rollingDayForItems = (items: SocialWeeklyPublicationTask[]): string => (
-  items.map(publicationLocalDate).filter(Boolean).sort()[0] ?? ''
+const rollingDayForItems = (items: SocialWeeklyPublicationTask[], pkg: WeeklyOperatingPackage): string => (
+  items.map(item => preproductionLocalDate(item,pkg)).sort()[0] ?? pkg.weekStart
 );
 
 const DAILY_ROLLING_LEAD_MS = 9.5 * 60 * 60_000;
@@ -332,7 +355,8 @@ export function planWeeklyExecutionTasks(
   const tasks: WeeklyExecutionTask[] = [];
   const publications = pkg.socialContentPackage.publicationTasks;
   const publicationIds = new Set(publications.map(item => item.publicationTaskId));
-  const globalBlockers = pkg.planningBlockers.filter(blocker => ![...publicationIds].some(id => blocker.includes(id)));
+  const deferredOutboundGoalBlockers=new Set(['g2:conversion_route_required','g2:sales_owner_required','g2:account_required']);
+  const globalBlockers = pkg.planningBlockers.filter(blocker => ![...publicationIds].some(id => blocker.includes(id))&&!deferredOutboundGoalBlockers.has(blocker));
   const add = (seed: TaskSeed) => {
     const dependencyFinishes = seed.dependsOnTaskIds.map(id => tasks.find(item => item.taskId === id)?.schedule.estimatedFinishAt).filter((value): value is string => Boolean(value));
     // Preparation can belong to the preceding week; publication has its own release time.
@@ -351,13 +375,16 @@ export function planWeeklyExecutionTasks(
   });
 
   const accountIds = [...new Set(publications.map(item => item.accountId))];
-  const discoveryKeys = [...new Set(publications.filter(item => !item.inventoryReuseRef).map(item => `${item.accountId}:${publicationLocalDate(item)}`))]
-    .filter(key => !key.endsWith(':'));
+  const sourceAllocation = allocateWeeklyReferenceSources(publications.filter(p=>!p.inventoryReuseRef), pkg.referenceSourcePolicy);
+  // Owned-history mothers consume verified account metrics directly. A
+  // collection task with no external consumer is an unbounded paid leaf and
+  // cannot acquire a meaningful publication deadline or capacity slot.
+  const discoveryKeys = [...new Set(publications.filter(item => !item.inventoryReuseRef && sourceAllocation.get(item.motherContentId)!=='owned').map(item => `${item.accountId}:${preproductionLocalDate(item,pkg)}`))];
   const discovery = discoveryKeys.map(key => {
     const separator = key.lastIndexOf(':');
     const accountId = key.slice(0, separator);
     const rollingDate = key.slice(separator + 1);
-    const dayPublications = publications.filter(item => item.accountId === accountId && publicationLocalDate(item) === rollingDate && !item.inventoryReuseRef);
+    const dayPublications = publications.filter(item => item.accountId === accountId && preproductionLocalDate(item,pkg) === rollingDate && !item.inventoryReuseRef && sourceAllocation.get(item.motherContentId)!=='owned');
     return add({
     notBeforeAt: dailyRollingStart(dayPublications),
     workflowKind: 'discovery', scope: 'account', subjectId: `${accountId}:${rollingDate}`,
@@ -376,18 +403,22 @@ export function planWeeklyExecutionTasks(
 
   const byMother = new Map<string, SocialWeeklyPublicationTask[]>();
   for (const item of publications.filter(p=>!p.inventoryReuseRef)) {
-    const key = `${item.motherContentId}:${publicationLocalDate(item)}`;
+    const key = `${item.motherContentId}:${preproductionLocalDate(item,pkg)}`;
     byMother.set(key, [...(byMother.get(key) ?? []), item]);
   }
-  const sourceAllocation = allocateWeeklyReferenceSources(publications.filter(p=>!p.inventoryReuseRef), pkg.referenceSourcePolicy);
-  const productionBudget = moneyShare(pkg.socialContentPackage.weeklyBudgetCny, publications.filter(p=>!p.inventoryReuseRef).length);
+  const weeklyShare = moneyShare(pkg.socialContentPackage.weeklyBudgetCny, publications.filter(p=>!p.inventoryReuseRef).length);
+  const configuredPerItem = pkg.socialContentPackage.perItemBudgetCny;
+  if (configuredPerItem !== null && configuredPerItem !== undefined && (!Number.isFinite(configuredPerItem) || configuredPerItem < 0))
+    throw new SocialProgramError('weekly_production_item_budget_invalid', 409, '单条生产预算无效。');
+  // The weekly ceiling is not permission to spend its average on one film.
+  const productionBudget = weeklyShare === null ? null : Math.min(weeklyShare, configuredPerItem ?? WEEKLY_AUTOMATION_TEMPLATE.perFinishedVideoMaxCny, WEEKLY_AUTOMATION_TEMPLATE.perFinishedVideoMaxCny);
   const directingByMother = new Map<string, WeeklyExecutionTask>();
   const scheduleByMother = new Map<string, WeeklyExecutionTask>();
   const storyboardByPublication = new Map<string, WeeklyExecutionTask>();
   for (const [motherDayKey, items] of byMother) {
     const motherContentId = items[0]!.motherContentId;
     const referenceSource=sourceAllocation.get(motherContentId);
-    const rollingDate = rollingDayForItems(items);
+    const rollingDate = rollingDayForItems(items,pkg);
     const scoring = add({
       notBeforeAt: dailyRollingStart(items),
       workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:${rollingDate}:benchmark-scoring`,

@@ -30,22 +30,32 @@ const generated = await buildConfirmedWeeklyDiscoveryScopeWithKeywords({
     { name: 'GUIANFA-RS-002 紫苏控油去黑头泥膜2.0', category: '面膜' },
     { name: 'GUIANFA-RS-003 深海冰川舒缓喷雾', category: '面部喷雾' },
   ],
-}, new Date('2026-10-11T02:00:00.000Z'), async input => ({
+}, new Date('2026-10-11T02:00:00.000Z'), async input => {
+  assert.equal(input.allowSupplyChainQueries, true);
+  assert.match(input.source, /GUIANFA-RS-001 云朵泡沫卸妆蜜/);
+  assert.doesNotMatch(input.source, /RS-002|RS-003/);
+  return ({
   broadTerms: [
-    { term: 'Skincare Supplier', sourceQuote: 'GUIANFA-RS-001 云朵泡沫卸妆蜜', reason: '覆盖护肤品类' },
-    { term: 'Face Mask Supplier', sourceQuote: 'GUIANFA-RS-002 紫苏控油去黑头泥膜2.0', reason: '覆盖面膜品类' },
+    { term: 'Skincare Factory', sourceQuote: 'GUIANFA-RS-001 云朵泡沫卸妆蜜', reason: '覆盖工厂采集方向' },
+    { term: 'Cleansing Supplier', sourceQuote: 'GUIANFA-RS-001 云朵泡沫卸妆蜜', reason: '覆盖卸妆品类' },
   ],
   mediumTerms: [
     { term: 'cleansing balm', sourceQuote: 'GUIANFA-RS-001 云朵泡沫卸妆蜜', reason: '对应卸妆产品' },
-    { term: 'clay mask', sourceQuote: 'GUIANFA-RS-002 紫苏控油去黑头泥膜2.0', reason: '对应泥膜' },
-    { term: 'facial mist', sourceQuote: 'GUIANFA-RS-003 深海冰川舒缓喷雾', reason: '对应喷雾' },
+    { term: 'cleansing oil', sourceQuote: 'GUIANFA-RS-001 云朵泡沫卸妆蜜', reason: '对应卸妆产品' },
+    { term: 'makeup remover', sourceQuote: 'GUIANFA-RS-001 云朵泡沫卸妆蜜', reason: '对应卸妆产品' },
   ],
   perspective: input.perspective,
   sourceName: input.sourceName,
-}));
-assert.deepEqual(generated.keywordSet.graph.discoverySeeds[0].queryVariants, ['Skincare Supplier', 'Face Mask Supplier']);
-assert.deepEqual(generated.keywordSet.graph.sceneClusters.map(item => item.queryVariants[0]), ['cleansing balm', 'clay mask', 'facial mist']);
+  });
+});
+assert.deepEqual(generated.keywordSet.graph.discoverySeeds[0].queryVariants, ['Skincare Factory', 'Cleansing Supplier']);
+assert.deepEqual(generated.keywordSet.graph.sceneClusters.map(item => item.queryVariants[0]), ['cleansing balm', 'cleansing oil', 'makeup remover']);
 assert.equal(generated.keywordRecommendation?.mediumTerms.length, 3);
+assert.deepEqual((generated as any).productFactBinding, {
+  version: 'selected-products.v1',
+  selectedProducts: ['GUIANFA-RS-001 云朵泡沫卸妆蜜'],
+  enterpriseProductNames: ['GUIANFA-RS-001 云朵泡沫卸妆蜜'],
+});
 assert.ok(!generated.keywordSet.graph.discoverySeeds.flatMap(item => item.queryVariants).some(item => item.includes('GUIANFA')));
 
 await assert.rejects(
@@ -54,6 +64,22 @@ await assert.rejects(
     lookbackDays: 7, resultLimit: 30, approvedBy: 'owner', workflowRunId: 'run', workflowTaskId: 'task',
   }, 1, { products: [{ name: '产品 A', category: '护肤产品资料' }] }, new Date(), async () => { throw new Error('模型暂不可用'); }),
   /编导关键词生成受阻：模型暂不可用/,
+);
+
+await assert.rejects(
+  buildConfirmedWeeklyDiscoveryScopeWithKeywords({
+    businessGoal: '目标', products: ['不存在的产品'], market: '美国', language: 'en', audience: '采购', platforms: ['tiktok'],
+    lookbackDays: 7, resultLimit: 30, approvedBy: 'owner', workflowRunId: 'run', workflowTaskId: 'task',
+  }, 1, { products: [{ name: '产品 A', category: '护肤产品资料' }] }),
+  /选中产品“不存在的产品”在企业知识库中未找到产品事实/,
+);
+
+await assert.rejects(
+  buildConfirmedWeeklyDiscoveryScopeWithKeywords({
+    businessGoal: '目标', products: ['云朵泡沫卸妆蜜'], market: '美国', language: 'en', audience: '采购', platforms: ['tiktok'],
+    lookbackDays: 7, resultLimit: 30, approvedBy: 'owner', workflowRunId: 'run', workflowTaskId: 'task',
+  }, 1, { products: [{ name: 'SKU-A 云朵泡沫卸妆蜜' }, { name: 'SKU-B 云朵泡沫卸妆蜜' }] }),
+  /匹配到多个产品事实/,
 );
 
 console.log('weekly discovery scope tests passed');

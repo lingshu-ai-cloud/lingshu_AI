@@ -16,8 +16,10 @@ import { writeExecutionStage } from './socialContentAutoProduction.js';
 import { createSocialDeliveryPackage } from './socialContentOutputs.js';
 import { graphRuntimeInventoryVisible, readCanonicalGraphRuntimeMedia } from './socialContentGraphRuntimeInventory.js';
 import { withStarter198RunMutationLease } from './runMutationLease.js';
+import { socialAssetSupplyPlanIdentityHash } from './socialAssetSupplyPlanIdentity.js';
 import { assertSocialContentReleaseQuality } from './socialContentReleaseQuality.js';
 import { socialTaskSummary } from './socialContentRecords.js';
+import { assertSocialContentGraphQuality } from './socialContentGraphQualityGate.js';
 
 type Detail = NonNullable<Awaited<ReturnType<typeof readSocialTaskDetail>>>;
 
@@ -89,6 +91,12 @@ function firstAuthorityDifference(left: unknown, right: unknown, path = 'root'):
 
 export function socialProductionGraphInput(detail: Detail, approvedContext?: SocialGraphApprovedContext) {
   const approved = approvedContext ?? detail;
+  if (detail.footageRevisionPlanHash && (!approved.assetSupplyPlan
+    || approvedContext && approvedContext.footageRevisionPlanHash !== detail.footageRevisionPlanHash
+    || socialAssetSupplyPlanIdentityHash(approved.assetSupplyPlan) !== detail.footageRevisionPlanHash))
+    throw new Error('user_input_required:graph_footage_revision_plan_changed');
+  if (!detail.footageRevisionPlanHash && approvedContext?.footageRevisionPlanHash)
+    throw new Error('user_input_required:graph_footage_revision_plan_changed');
   if (!approved.agentWorkflow) throw new Error('user_input_required:production_execution_plan_missing');
   if (approvedContext && !detail.agentWorkflow) throw new Error('user_input_required:graph_production_plan_changed:business_authority_missing');
   if (approvedContext && detail.agentWorkflow) {
@@ -102,6 +110,7 @@ export function socialProductionGraphInput(detail: Detail, approvedContext?: Soc
     inputHash: socialRequestHash({ brief: detail.brief, executionPlan: approved.agentWorkflow.executionPlan,
       executionPlanReview: approved.agentWorkflow.executionPlanReview,
       directorBrief: approved.agentWorkflow.directorBrief, sources: detail.sources,
+      ...(detail.footageRevisionPlanHash ? { footageRevisionPlanHash: detail.footageRevisionPlanHash } : {}),
       ...((approved as SocialGraphApprovedContext).revisionPlanHash ? { revisionPlanHash: (approved as SocialGraphApprovedContext).revisionPlanHash } : {}) }),
   };
 }
@@ -141,7 +150,9 @@ export function createSocialProductionExecutorCheckpoint(detail: Detail, env: No
     && ((detail.mode ?? 'weekly') === 'weekly' || env.SOCIAL_CONTENT_EXECUTOR === 'langgraph');
   const identity = graphEnabled ? socialProductionGraphInput(detail, revisionPlanHash ? { ...detail, revisionPlanHash } : undefined) : { planVersion: 'legacy', inputHash: 'legacy' };
   const approvedContext: SocialGraphApprovedContext | null = graphEnabled ? structuredClone({
-    version: detail.version, agentWorkflow: detail.agentWorkflow, assetSupplyPlan: detail.assetSupplyPlan, ...(revisionPlanHash ? { revisionPlanHash } : {}) }) : null;
+    version: detail.version, agentWorkflow: detail.agentWorkflow, assetSupplyPlan: detail.assetSupplyPlan,
+    ...(detail.footageRevisionPlanHash ? { footageRevisionPlanHash: detail.footageRevisionPlanHash } : {}),
+    ...(revisionPlanHash ? { revisionPlanHash } : {}) }) : null;
   if (approvedContext?.agentWorkflow) {
     approvedContext.agentWorkflow.productionResult = null;
     approvedContext.agentWorkflow.replicationEvaluation = null;
@@ -186,14 +197,40 @@ function artifactEvidence(row: StarterRecord) {
     version: socialText(row.version), outputSha256: outputSha256 || null };
 }
 
+/** A restored review checkpoint is only authority for its original film bytes. */
+export function assertCurrentGraphReviewSubject(checkpoint: ContentExecutionJob['checkpoints'][string] | undefined,
+  artifact: StarterRecord, runId: string, approved = false): void {
+  const subject = socialObject(checkpoint?.payload);
+  const current = artifactEvidence(artifact);
+  if (checkpoint?.version !== '1' || !subject || subject.runId !== runId
+    || subject.artifactId !== current.artifactId
+    || (approved ? Number(current.version) !== Number(subject.version) + 1 : subject.version !== current.version)
+    || subject.contentHash !== current.contentHash || subject.outputSha256 !== current.outputSha256
+    || !current.outputSha256) throw new Error('graph_review_subject_changed');
+}
+
+function assertGraphArtifactQuality(artifact: StarterRecord, job: ContentExecutionJob): void {
+  const content = socialObject(socialJson(artifact.content));
+  if (socialObject(content?.productionWorkspaceSource)?.runId !== job.runId)
+    throw new Error('social_graph_quality_failed:artifact_run_changed');
+  assertSocialContentGraphQuality(content);
+}
+
 /** Read the canonical business decision and its completed operation. A graph
  * checkpoint, client approval flag or an unrelated approved asset grants nothing. */
 export async function loadSocialProductionGraphApproval(repository: Starter198Repository, job: ContentExecutionJob) {
   const artifact = await productionArtifact(repository, job);
+  if (socialObject(socialJson(artifact.content))?.workflowSchema === 'social-content.auto-production.v3')
+    assertGraphArtifactQuality(artifact, job);
   if (artifact.status !== 'approved') return null;
   const checkpoint = job.checkpoints['social.graph_review'];
   const expected = socialObject(checkpoint?.payload);
   const evidence = artifactEvidence(artifact);
+  if (socialObject(socialJson(artifact.content))?.workflowSchema === 'social-content.auto-production.v3') {
+    // Approval advances the artifact version once; all other subject fields
+    // must still identify the exact film admitted to human review.
+    assertCurrentGraphReviewSubject(checkpoint, artifact, job.runId, true);
+  }
   if (!expected || expected.artifactId !== evidence.artifactId || expected.contentHash !== evidence.contentHash
     || expected.runId !== job.runId) throw new Error('user_input_required:graph_review_subject_changed');
   if (!Number.isSafeInteger(Number(expected.version)) || Number(evidence.version) !== Number(expected.version) + 1)
@@ -302,6 +339,7 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
       assetSupplyAdapters: input.assetSupplyAdapters, assetSupplyRecoveryOnly: input.assetSupplyRecoveryOnly, materialEvidencePorts: input.materialEvidencePorts, graphApprovedContext: approvedContext,...(graphCorrection?{graphCorrectionHash:correctionRuntimeHash!}:{}) });
     if (graphPhase === 'quality') {
       const artifact = await productionArtifact(repository, job);
+      assertGraphArtifactQuality(artifact, job);
       const evidence = artifactEvidence(artifact);
       await recordCurrentContentExecutionCheckpoint({ stage: 'social.graph_review', version: '1', inputHash: current.inputHash,
         payload: { ...evidence, runId: job.runId } });
@@ -342,7 +380,12 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
     } }, ...(resume ? { resume } : {}) });
   if (result.status === 'waiting_review') {
     await assertCurrentContentExecutionActive();
+    // A restored checkpoint may already sit at review from an older worker.
+    // Recheck the immutable media and QA subject before projecting that state.
+    const artifact = await productionArtifact(repository, job);
+    assertGraphArtifactQuality(artifact, job);
     const actual = await refreshedJob();
+    assertCurrentGraphReviewSubject(actual.checkpoints['social.graph_review'], artifact, job.runId);
     const expected = socialObject(actual.checkpoints['social.graph_review']?.payload);
     if (!expected) throw new Error('graph_review_subject_missing');
     await recordCurrentContentExecutionCheckpoint({ stage: 'social.graph_review', version: '1', inputHash: current.inputHash,

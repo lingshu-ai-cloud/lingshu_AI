@@ -82,14 +82,14 @@ finally {
 // Presenter selection, native voice planning and pricing use production
 // defaults; only official GET responses and the isolated business store are controlled.
 test('default presenter route prices static review work before preparation and reads official IV pricing', async () => {
- const f=await fixture(); const originalFetch=globalThis.fetch, oldKey=process.env.HEYGEN_API_KEY, oldDash=process.env.DASHSCOPE_API_KEY,oldSeedream=process.env.SEEDREAM_API_KEY;
+ const f=await fixture(); const originalFetch=globalThis.fetch, oldKey=process.env.HEYGEN_API_KEY, oldDash=process.env.DASHSCOPE_API_KEY,oldBase=process.env.DASHSCOPE_BASE_URL,oldSeedream=process.env.SEEDREAM_API_KEY;
  const gets:string[]=[];
  try {
   await f.enable();
   f.baseline.language='en';f.baseline.scenes=f.baseline.scenes.map(scene=>({...scene,voiceover:'Welcome to our company.',narration:'Welcome to our company.'}));
   await f.store.update(STARTER_COLLECTIONS.socialContentTasks,(await requireSocialTask(f)).id,{script_baseline:f.baseline});
   await f.store.create('studio_production_defaults',{tenant_id:f.tenantId,payload:{presenters:[{id:'enterprise-person',authorized:true,assetVersion:4,avatarId:'original-look',voiceId:'original-voice',rightsEvidence:{authorizationRef:'rights://original',consentRef:'consent://original',grantedAt:'2026-01-01T00:00:00Z',subjectAdultConfirmed:true,permittedProviders:['heygen'],permittedUses:['digital_presenter','voice_synthesis']}}]}});
-  process.env.HEYGEN_API_KEY='controlled-key';process.env.DASHSCOPE_API_KEY='controlled-native';process.env.SEEDREAM_API_KEY='controlled-seedream';
+  process.env.HEYGEN_API_KEY='controlled-key';process.env.DASHSCOPE_API_KEY='controlled-native';process.env.DASHSCOPE_BASE_URL='https://dashscope.aliyuncs.com/compatible-mode/v1';process.env.SEEDREAM_API_KEY='controlled-seedream';
   const row=(...cells:string[])=>({cells:cells.map(text=>({content:[{text}]}))});
   const price='<script id="__NEXT_DATA__">'+JSON.stringify({props:{pageProps:{articleContent:{articleId:'10060327',blocks:[{rows:[row('Video Generation with Avatar IV engine','Price per 1 minute, charged by actual seconds generated','Credits per min'),row('Photo Avatar','$2.31','46'),row('Digital Twin','$4.83','97'),row('Studio Avatar','$4.83','97'),row('Video Generation with Avatar III engine','Price per 1 minute, charged by actual seconds generated','Credits per min'),row('Digital Twin','$0.60','12')]}]}}}})+'</script>';
   globalThis.fetch=async (url,init)=>{ const u=String(url);assert.ok(!init?.method||init.method==='GET');gets.push(u);let body:string;
@@ -137,5 +137,5 @@ test('default presenter route prices static review work before preparation and r
   assert.ok(gets.some(u=>u.endsWith('/users/me')));
   assert.ok(gets.some(u=>u.includes('10060327')));
   assert.ok(gets.some(u=>u.includes('ecb.europa.eu')));
- } finally {globalThis.fetch=originalFetch;if(oldKey===undefined)delete process.env.HEYGEN_API_KEY;else process.env.HEYGEN_API_KEY=oldKey;if(oldDash===undefined)delete process.env.DASHSCOPE_API_KEY;else process.env.DASHSCOPE_API_KEY=oldDash;if(oldSeedream===undefined)delete process.env.SEEDREAM_API_KEY;else process.env.SEEDREAM_API_KEY=oldSeedream;f.clean();}
+ } finally {globalThis.fetch=originalFetch;if(oldKey===undefined)delete process.env.HEYGEN_API_KEY;else process.env.HEYGEN_API_KEY=oldKey;if(oldDash===undefined)delete process.env.DASHSCOPE_API_KEY;else process.env.DASHSCOPE_API_KEY=oldDash;if(oldBase===undefined)delete process.env.DASHSCOPE_BASE_URL;else process.env.DASHSCOPE_BASE_URL=oldBase;if(oldSeedream===undefined)delete process.env.SEEDREAM_API_KEY;else process.env.SEEDREAM_API_KEY=oldSeedream;f.clean();}
 });

@@ -18,6 +18,7 @@ import {createSocialOperatingOrchestrationService,weeklyAuthorityFromResolution}
 import {readWeeklyExistingFactSource} from './weeklyExistingFactSource.js';
 import {runWeeklyWhatsAppMock} from './weeklyWhatsAppMock.js';
 import {socialRequestHash} from '../starter198/socialContentValidation.js';
+import {evaluateProductionOutlineReadiness} from '../socialOperating/productionReadiness.js';
 
 type Scope={tenantId:string;actorUserId:string;programId:string;packageId:string;packageVersion:number};
 type WorkerState=WeeklyPipelineStatus['worker'];
@@ -127,6 +128,8 @@ export function createWeeklyExecutionPipelineService(store:DataStore,ports:{work
    });
   },
   async connectLocalConsumer(a:Scope){await context(a);return localWeeklyExecutionRuntime.connect(a);},
+  async connectScopedLocalConsumer(a:Scope){await context(a);return localWeeklyExecutionRuntime.connectScoped(a);},
+  async scanScopedLocalConsumer(a:Scope){await context(a);return localWeeklyExecutionRuntime.scanScoped(a);},
   async prepareAuthority(a:Scope){
    return withExecutionPackageGate(store,a,async assert=>{
     const {pkg}=await context(a);
@@ -134,7 +137,8 @@ export function createWeeklyExecutionPipelineService(store:DataStore,ports:{work
     if(pkg.businessContentGoalRef&&pkg.capacityPlanRef&&pkg.automationPolicyRef)return {item:pkg,resolution:null};
     const resolution=await createSocialOperatingOrchestrationService(store).resolve(a.tenantId,a.actorUserId,a.programId,{weekStart:pkg.weekStart,desiredOriginalContents:pkg.socialContentPackage.originalContentTarget,desiredAdaptations:pkg.socialContentPackage.adaptationVersionTarget});
     // Save diagnostics, never attach a blocked resolution or forge approvals.
-    if(resolution.goal.status!=='ready'||resolution.capacityPlan.status!=='ready'||!resolution.automationPolicy.automaticExecutionAllowed)return {item:null,resolution};
+    const productionFactsReady=resolution.goal.status==='ready'||evaluateProductionOutlineReadiness(resolution.goal).ready;
+    if(!productionFactsReady||resolution.capacityPlan.status==='blocked'||!resolution.automationPolicy.automaticExecutionAllowed)return {item:null,resolution};
     await assert();
     const item=await packages.revise(a.tenantId,a.actorUserId,a.programId,a.packageId,{expectedVersion:a.packageVersion,...weeklyAuthorityFromResolution(resolution)});
     return {item,resolution};

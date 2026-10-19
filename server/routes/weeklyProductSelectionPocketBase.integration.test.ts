@@ -1,0 +1,114 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {execFileSync,spawn,type ChildProcess} from 'node:child_process';
+import {existsSync} from 'node:fs';
+import {mkdtemp,mkdir,rm} from 'node:fs/promises';
+import {createServer,type AddressInfo} from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import express from 'express';
+import {pbStore} from '../storage/pbStore.js';
+import {updateTenantEnterpriseProfile,type EnterpriseProfile} from './enterprise.js';
+import {BUSINESS_GOAL_RULE_VERSION,type BusinessContentGoal} from '../../shared/contracts/socialOperatingDecision.js';
+import type {SocialWeeklyPublicationTask} from '../../shared/contracts/socialProgram.js';
+import {createSocialProgramsRouter} from './socialPrograms.js';
+import {WEEKLY_PUBLICATION_PRODUCT_SELECTIONS,WEEKLY_PUBLICATION_PRODUCT_SELECTION_ISSUANCES,readWeeklyPublicationProductSelection} from '../socialPrograms/weeklyPublicationProductSelection.js';
+
+const binary=process.env.WEEKLY_PB_TEST_BINARY||'/Users/julia1/.local/share/lingshu/pocketbase/pocketbase';
+const migrations=fileURLToPath(new URL('../../pb_migrations/',import.meta.url));
+const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
+async function freePort(){const server=createServer();await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const port=(server.address() as AddressInfo).port;await new Promise<void>(resolve=>server.close(()=>resolve()));return port;}
+
+test('real isolated PocketBase authenticates publication product selection, rejects incomplete groups and restores signed receipts after restart',{
+ skip:!existsSync(binary)?'PocketBase binary is unavailable':false,
+},async t=>{
+ const root=await mkdtemp(path.join(os.tmpdir(),'weekly-product-selection-pb-'));
+ const data=path.join(root,'pb_data'),hooks=path.join(root,'pb_hooks');await mkdir(hooks);
+ const port=await freePort(),pbUrl=`http://127.0.0.1:${port}`;
+ const old=Object.fromEntries(['PB_URL','PB_ADMIN_EMAIL','PB_ADMIN_PASSWORD','ENABLE_LOCAL_DEV_FALLBACK','DATA_BACKEND'].map(key=>[key,process.env[key]]));
+ const email='isolated-admin@example.test',password='isolated-admin-password-2026',userPassword='isolated-user-password-2026';
+ const flags=['--dir',data,'--migrationsDir',migrations,'--hooksDir',hooks,'--automigrate=false'];
+ let child:ChildProcess|null=null;
+ const stop=async()=>{const running=child;if(!running)return;child=null;running.kill('SIGTERM');await Promise.race([new Promise(resolve=>running.once('exit',resolve)),pause(5000)]);if(running.exitCode===null)running.kill('SIGKILL');};
+ t.after(async()=>{await stop();for(const [key,value] of Object.entries(old)){if(value===undefined)delete process.env[key];else process.env[key]=value;}await rm(root,{recursive:true,force:true});});
+ execFileSync(binary,['migrate','up',...flags],{stdio:'ignore',timeout:30000});
+ execFileSync(binary,['superuser','create',email,password,...flags],{stdio:'ignore',timeout:10000});
+ process.env.PB_URL=pbUrl;process.env.PB_ADMIN_EMAIL=email;process.env.PB_ADMIN_PASSWORD=password;
+ process.env.ENABLE_LOCAL_DEV_FALLBACK='false';process.env.DATA_BACKEND='pocketbase';
+ const start=async()=>{child=spawn(binary,['serve','--http',`127.0.0.1:${port}`,...flags],{stdio:'ignore'});for(let i=0;i<100;i++){try{if((await fetch(`${pbUrl}/api/health`)).ok)return;}catch{/* starting */}await pause(50);}throw Error('isolated_pocketbase_not_ready');};
+ await start();
+ const scope={tenantId:'isolated-selection-tenant',programId:'isolated-selection-program',packageId:'isolated-selection-package',packageVersion:1};
+ const userId='abcde12345abcde';
+ assert(await pbStore.create('users',{id:userId,email:'selection-operator@example.test',password:userPassword,passwordConfirm:userPassword,verified:true,tenantId:scope.tenantId,role:'social_operator'}));
+ const patch:Partial<EnterpriseProfile>={company:{name:'Isolated factory',industry:'制造',description:'Verified factory',mainMarkets:'US',primaryLanguages:'en',founded:'2018'},products:{categories:'Skin care',items:[{name:'Foam cleanser',priceRange:'',images:[],certificateImages:[],documents:[]}],priceRange:'',moq:'',certifications:'',highlights:'Documented small batch'},brand:{name:'Isolated factory',tone:'professional',style:'',taboos:'',usp:'Documented QC'}};
+ const profile=await updateTenantEnterpriseProfile(scope.tenantId,patch,userId);
+ assert(profile.factVersion);
+ const product=profile.products.items?.[0];assert(product?.id);
+ const now=new Date().toISOString();
+ const program={programId:scope.programId,brandName:'Isolated factory',businessLine:null,market:'US',targetAudience:'brand buyer',candidatePlatforms:['tiktok'],route:'cold_start',stage:'ready_for_week',readiness:{},enterpriseProfileRef:null,productMarketingProfileRefs:[],activeMonthlyPlanRef:null,activeWeeklyPlanRef:null,activeWeeklyOperatingPackageRef:null,version:1,status:'active',createdAt:now,updatedAt:now};
+ const account={accountId:'account-a',programId:scope.programId,platform:'tiktok',displayName:'TikTok',handle:'@isolated',businessRole:'proof',audiencePromise:'facts',contentPromise:'evidence',status:'active',connectionId:'connection-a',connectionCapabilities:['publish'],playbookRef:{type:'account_playbook',id:'playbook-a',version:1},conversionRoute:{routeId:'route-a',entryType:'form',entryRef:'https://example.test/form',callToAction:'Submit',qualificationFields:[],handoffTarget:'sales-a',verifiedAt:now},version:2,createdAt:now,updatedAt:now};
+ const common={tenant_id:scope.tenantId,program_id:scope.programId,version:1,status:'active',created_by:userId,updated_by:userId,created_at:now,updated_at:now};
+ assert(await pbStore.create('social_programs',{...common,brand_name:program.brandName,market:program.market,stage:program.stage,route:program.route,payload:program}));
+ assert(await pbStore.create('social_owned_accounts',{...common,account_id:'account-a',platform:'tiktok',payload:account}));
+ const goal:BusinessContentGoal={goalId:'synthetic-goal',programId:scope.programId,version:1,status:'blocked',objective:'Documented product showcase',products:[product.name],markets:['US'],audiences:['brand buyer'],languages:['en'],accountBoundaries:[],conversionRouteIds:[],publicFactRefs:[{type:'enterprise_fact',id:profile.factVersion.id,version:profile.factVersion.revision}],prohibitedClaims:[],weeklyBudgetCny:20,evidence:[],blockers:[],inputRefs:[],inputFingerprint:'synthetic-selection-input-v1',ruleVersion:BUSINESS_GOAL_RULE_VERSION,decisionRecordRef:{type:'operating_decision',id:'synthetic-decision',version:1},createdBy:userId,createdAt:now};
+ assert(await pbStore.create('social_business_content_goals',{tenant_id:scope.tenantId,program_id:scope.programId,goal_id:goal.goalId,version:1,input_fingerprint:goal.inputFingerprint,status:goal.status,payload:goal,created_at:now}));
+ const publicationBase:Omit<SocialWeeklyPublicationTask,'publicationTaskId'>={accountId:'account-a',platform:'tiktok',motherContentId:'mother-a',adaptationOfPublicationTaskId:null,accountPositioning:null,businessProposition:null,cta:null,factRefs:goal.publicFactRefs,metricTargets:[],publishWindow:null,status:'planned'};
+ const publications:SocialWeeklyPublicationTask[]=[{...publicationBase,publicationTaskId:'publication-a'},{...publicationBase,publicationTaskId:'publication-b'}];
+ const pkg={packageId:scope.packageId,programId:scope.programId,version:1,status:'active',weekStart:'2026-10-12',weekEnd:'2026-10-18',businessContentGoalRef:{type:'business_content_goal',id:goal.goalId,version:1},socialContentPackage:{publicationTasks:publications}};
+ assert(await pbStore.create('social_weekly_operating_packages',{tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,version:1,week_start:pkg.weekStart,status:'active',payload:pkg,created_by:userId,created_at:now,updated_at:now}));
+ const login=await fetch(`${pbUrl}/api/collections/users/auth-with-password`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({identity:'selection-operator@example.test',password:userPassword})});
+ assert.equal(login.status,200,await login.clone().text());const token=(await login.json()).token as string;
+ const outsiderId='bbbbb12345bbbbb',reviewerId='ccccc12345ccccc';
+ assert(await pbStore.create('users',{id:outsiderId,email:'selection-outsider@example.test',password:userPassword,passwordConfirm:userPassword,verified:true,tenantId:'different-tenant',role:'social_operator'}));
+ assert(await pbStore.create('users',{id:reviewerId,email:'selection-viewer@example.test',password:userPassword,passwordConfirm:userPassword,verified:true,tenantId:scope.tenantId,role:'customer_service'}));
+ const authToken=async(identity:string)=>{const result=await fetch(`${pbUrl}/api/collections/users/auth-with-password`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({identity,password:userPassword})});assert.equal(result.status,200,await result.clone().text());return (await result.json()).token as string;};
+ const outsiderToken=await authToken('selection-outsider@example.test'),reviewerToken=await authToken('selection-viewer@example.test');
+ const app=express();app.use(express.json());app.use('/api/overseas/social-programs',createSocialProgramsRouter(pbStore));
+ app.use((error:any,_req:express.Request,res:express.Response,_next:express.NextFunction)=>res.status(error.status??500).json({error:error.code??error.message}));
+ const http=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>http.once('listening',resolve));
+ t.after(()=>{http.closeAllConnections();return new Promise<void>(resolve=>http.close(()=>resolve()));});
+ const url=`http://127.0.0.1:${(http.address() as AddressInfo).port}/api/overseas/social-programs/${scope.programId}/operating-packages/${scope.packageId}/product-selection`;
+ const headers={authorization:`Bearer ${token}`,'content-type':'application/json'};
+ assert.equal((await fetch(`${url}?version=1`)).status,401);
+ assert.equal((await fetch(`${url}?version=1`,{headers:{authorization:`Bearer ${outsiderToken}`}})).status,404);
+ assert.equal((await fetch(`${url}?version=2`,{headers})).status,409);
+ const beforeResponse=await fetch(`${url}?version=1`,{headers});assert.equal(beforeResponse.status,200,await beforeResponse.clone().text());
+ const before=(await beforeResponse.json()).item;
+ assert.deepEqual(before.publications.map((p:any)=>p.selectedProductId),[null,null]);
+ assert.deepEqual(before.products,[{id:product.id,name:product.name,sku:null}]);
+ const input={expectedPackageVersion:1,expectedContextHash:before.contextHash,productId:product.id,publicationTaskIds:['publication-a','publication-b']};
+ const forbidden=await fetch(url,{method:'POST',headers:{authorization:`Bearer ${reviewerToken}`,'content-type':'application/json'},body:JSON.stringify(input)});assert.equal(forbidden.status,403,await forbidden.clone().text());
+ const foreign=await fetch(url,{method:'POST',headers:{authorization:`Bearer ${outsiderToken}`,'content-type':'application/json'},body:JSON.stringify(input)});assert.notEqual(foreign.status,200);
+ const incomplete=await fetch(url,{method:'POST',headers,body:JSON.stringify({...input,publicationTaskIds:['publication-a']})});assert.equal(incomplete.status,409,await incomplete.clone().text());
+ assert.equal((await pbStore.list(WEEKLY_PUBLICATION_PRODUCT_SELECTIONS)).totalItems,0);
+ const create=pbStore.create.bind(pbStore);let interrupted=false;
+ pbStore.create=async <T>(collection:string,data:Record<string,unknown>)=>{
+  if(!interrupted&&collection===WEEKLY_PUBLICATION_PRODUCT_SELECTIONS){interrupted=true;return null;}
+  return create<T>(collection,data);
+ };
+ try{const partial=await fetch(url,{method:'POST',headers,body:JSON.stringify(input)});assert.equal(partial.status,409,await partial.clone().text());}
+ finally{pbStore.create=create;}
+ assert.equal((await pbStore.list(WEEKLY_PUBLICATION_PRODUCT_SELECTION_ISSUANCES)).totalItems,1);
+ assert.equal((await pbStore.list(WEEKLY_PUBLICATION_PRODUCT_SELECTIONS)).totalItems,0);
+ const pendingResponse=await fetch(`${url}?version=1`,{headers});assert.equal(pendingResponse.status,200,await pendingResponse.clone().text());
+ const pending=(await pendingResponse.json()).item;assert.equal(pending.selectionState,'pending_operation');
+ assert.deepEqual(pending.publications.map((p:any)=>p.pendingProductId),[product.id,null]);
+ await stop();await start();
+ const savedResponse=await fetch(url,{method:'POST',headers,body:JSON.stringify(input)});assert.equal(savedResponse.status,200,await savedResponse.clone().text());
+ const saved=(await savedResponse.json()).item;
+ assert.deepEqual(saved.publications.map((p:any)=>p.selectedProductId),[product.id,product.id]);
+ assert.equal((await pbStore.list(WEEKLY_PUBLICATION_PRODUCT_SELECTIONS)).totalItems,2);
+ assert.equal((await pbStore.list(WEEKLY_PUBLICATION_PRODUCT_SELECTION_ISSUANCES)).totalItems,2);
+ for(const collection of [WEEKLY_PUBLICATION_PRODUCT_SELECTIONS,WEEKLY_PUBLICATION_PRODUCT_SELECTION_ISSUANCES])for(const row of (await pbStore.list<any>(collection)).items)assert.match(row.id,/^[a-f0-9]{15}$/);
+ const firstReceipt=(await pbStore.list<any>(WEEKLY_PUBLICATION_PRODUCT_SELECTIONS)).items[0]!;
+ await assert.rejects(pbStore.create(WEEKLY_PUBLICATION_PRODUCT_SELECTIONS,{...firstReceipt,id:'ddddddddddddddd'}),/create failed/);
+ assert.equal((await pbStore.list(WEEKLY_PUBLICATION_PRODUCT_SELECTIONS)).totalItems,2,'database unique index preserves one selection per publication');
+ const again=await fetch(url,{method:'POST',headers,body:JSON.stringify(input)});assert.equal(again.status,200,await again.clone().text());
+ assert.equal((await pbStore.list(WEEKLY_PUBLICATION_PRODUCT_SELECTIONS)).totalItems,2);
+ await stop();await start();
+ const restored=await fetch(`${url}?version=1`,{headers});assert.equal(restored.status,200,await restored.clone().text());
+ assert.deepEqual((await restored.json()).item.publications,saved.publications);
+ assert.equal((await readWeeklyPublicationProductSelection({...scope,store:pbStore,publication:publications[0]!,goal}))?.productId,product.id);
+ const stale=await fetch(url,{method:'POST',headers,body:JSON.stringify({...input,expectedContextHash:'0'.repeat(64)})});assert.equal(stale.status,409,await stale.clone().text());
+});

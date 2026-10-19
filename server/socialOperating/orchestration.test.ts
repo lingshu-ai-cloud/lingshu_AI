@@ -118,3 +118,15 @@ test('enterprise changes create impact analysis and explicit stale snapshot/pack
   assert.ok(second.snapshot.invalidations.some(item => item.ref.type === 'operating_authority_snapshot'));
   assert.ok(second.snapshot.invalidations.some(item => item.ref.type === 'weekly_operating_package' && item.handling === 'review_required'));
 });
+
+test('enabled viral clone remains a production capability without a default presenter record', async () => {
+  const store = memoryStore({
+    social_programs: [{ id: 'program-row', tenant_id: 'tenant-a', program_id: 'program-a', payload: program } as Record_],
+    tenant_profiles: [{ id: 'profile-a', tenant_id: 'tenant-a', version: 4, profile: { company: { description: 'Verified factory', mainMarkets: 'US', primaryLanguages: 'en' }, products: { items: [{ name: 'Serum', images: [{ id: 1 }] }] }, customers: { targetProfiles: 'brand buyer' } } } as Record_],
+    social_owned_accounts: [{ id: 'account-row', tenant_id: 'tenant-a', program_id: 'program-a', account_id: 'account-a', payload: account } as Record_],
+    digital_employee_configs: [{ id: 'config-a', tenant_id: 'tenant-a', status: 'active', activated_at: now, config_version: 3, config: { autonomyMode: 'managed', approvalOwner: 'sales-a', enabledWorkflows: ['viral_clone'], publishingTargets: [] } } as Record_],
+  });
+  const resolution = await createSocialOperatingOrchestrationService(store, () => now).resolve('tenant-a', 'owner-a', 'program-a', { weekStart: '2026-10-19', desiredOriginalContents: 1, desiredAdaptations: 0 });
+  assert.equal(resolution.snapshot.capabilityStates['studio.production'], 'available');
+  assert.equal(resolution.snapshot.capabilityStates['publishing.calendar'], 'unavailable');
+});

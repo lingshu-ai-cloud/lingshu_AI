@@ -113,6 +113,7 @@ import EnterpriseProductMultiSelect, { splitSelectedProducts } from './Enterpris
 // EnterpriseProductMultiSelect owns the searchable listbox contract: aria-multiselectable="true" · 搜索企业知识库产品或型号.
 import { heuristicProductMapping, mapRowToProduct, parseWorkbook, prepareSheet } from "../lib/productImport";
 import { parseProductDocument, productsFromLabeledText, type DocumentProductDraft } from "../lib/productDocumentImport";
+import { uploadProductEvidence } from "../lib/enterpriseProductAssetUpload";
 import { readProductDiscoveryFile } from "../lib/productDiscoveryFile";
 import {
   buildTaskDeepLink,
@@ -1224,12 +1225,16 @@ function OnboardingPanel({
     const temporaryUrls: string[] = [];
     try {
       let importedProducts: DocumentProductDraft[];
+      let unassignedImages: Array<{ name: string; url: string; file: File }> = [];
+      let assignedImages: Array<{ productIndex: number; name: string; url: string; file: File }> = [];
       let sourceLabel = "表格字段识别";
       if (/\.(pdf|docx)$/i.test(file.name)) {
         const documentResult = await parseProductDocument(file);
         importedProducts = documentResult.products;
         sourceLabel = documentResult.sourceLabel;
-        temporaryUrls.push(...documentResult.unassignedImages.map(image => image.url));
+        unassignedImages = documentResult.unassignedImages;
+        assignedImages = documentResult.assignedImages;
+        temporaryUrls.push(...unassignedImages.map(image => image.url), ...assignedImages.map(image => image.url));
       } else if (/\.txt$/i.test(file.name)) {
         importedProducts = productsFromLabeledText(await readProductDiscoveryFile(file));
         sourceLabel = "TXT 字段识别";
@@ -1252,6 +1257,19 @@ function OnboardingPanel({
           videos: [], documents: [], source: "product_file_import",
         }));
       if (!decoded.length) throw new Error("未识别到有效产品，请确认表格包含“产品名称”或“SKU/货号”列");
+      for (const image of assignedImages) {
+        const product = decoded[image.productIndex];
+        if (!product) continue;
+        const asset = await uploadProductEvidence(image.file);
+        if (!asset.url) throw new Error('PDF 产品图片上传后缺少可用地址');
+        product.images.push({ ...asset, url: asset.url });
+        if (!product.imageUrl) product.imageUrl = asset.url;
+      }
+      // Match the enterprise product importer: retain extracted document pages
+      // in the existing asset library, but never invent a product-image match.
+      for (let offset = 0; offset < unassignedImages.length; offset += 4) {
+        await Promise.all(unassignedImages.slice(offset, offset + 4).map(image => uploadProductEvidence(image.file)));
+      }
       const next = [...knowledgeProducts];
       for (const product of decoded) {
         const sku = String((product as Record<string, unknown>).sku || "").trim();
@@ -1272,7 +1290,7 @@ function OnboardingPanel({
       if (!response.ok) throw new Error(result.message || "产品资料写入企业知识库失败");
       setKnowledgeProducts(next);
       setRecommendedProducts(recommendFocusProducts(next));
-      setProductImportMessage(`已通过${sourceLabel}从“${file.name}”识别并写入 ${decoded.length} 个产品，可以直接确认产品表。`);
+      setProductImportMessage(`已通过${sourceLabel}从“${file.name}”识别并写入 ${decoded.length} 个产品，绑定 ${assignedImages.length} 张产品照片。${unassignedImages.length ? `${unassignedImages.length} 张未能确认产品归属的图片已存入企业素材库，需在产品档案核对绑定。` : "可以直接确认产品表。"}`);
     } catch (error) { setProductError(error instanceof Error ? error.message : "产品文件解析失败"); }
     finally {
       temporaryUrls.forEach(url => URL.revokeObjectURL(url));

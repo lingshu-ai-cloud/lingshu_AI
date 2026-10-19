@@ -2,6 +2,7 @@ import type { DataStore } from '../storage/datastore.js';
 import type { WeeklyProductionStepKind } from '../../shared/contracts/socialProgram.js';
 import type { SocialWeeklyExecutionAdapter } from './socialWeeklyExecutionAdapter.js';
 import { createSocialWeeklyPlanningAdapter, WEEKLY_PREPRODUCTION_STEPS } from './socialWeeklyExecutionRuntime.js';
+import type {WeeklyExactSettlementPortsForRun} from './weeklyPreproductionProducer.js';
 import { createSocialWeeklyProductionAdapter, WEEKLY_PRODUCTION_STEPS } from './socialWeeklyProductionAdapter.js';
 import { createSocialWeeklyPublicationAdapter } from './socialWeeklyPublicationAdapter.js';
 import { createWeeklyContentTemplateExecutionAdapter } from './socialWeeklyContentTemplateAdapter.js';
@@ -10,9 +11,9 @@ import { createWeeklyPublicationMetricProducerAdapter, type MetricProducerPorts 
 import { createWeeklyContentTemplateCandidateProducerAdapter } from './weeklyContentTemplateCandidateProducer.js';
 
 /** The background worker and integration tests use the same adapter registration. */
-export function createDefaultWeeklyExecutionAdapters(store: DataStore, options: { metrics?: MetricProducerPorts; templates?: { actorUserId?: string } } = {}) {
+export function createDefaultWeeklyExecutionAdapters(store: DataStore, options: { metrics?: MetricProducerPorts; templates?: { actorUserId?: string }; exactAnalysisPortsForRun?:WeeklyExactSettlementPortsForRun } = {}) {
   const adapters: Partial<Record<WeeklyProductionStepKind, SocialWeeklyExecutionAdapter>> = {};
-  const planning = createSocialWeeklyPlanningAdapter(store), production = createSocialWeeklyProductionAdapter(store);
+  const planning = createSocialWeeklyPlanningAdapter(store,options.exactAnalysisPortsForRun), production = createSocialWeeklyProductionAdapter(store);
   const publication = createSocialWeeklyPublicationAdapter(store), templates = createWeeklyContentTemplateExecutionAdapter(store);
   const customer = createSocialWeeklyCustomerChannelAdapter(store);
   for (const step of WEEKLY_PREPRODUCTION_STEPS) adapters[step] = planning;

@@ -24,6 +24,7 @@ import {agentCalendarTaskType,taskHasDeliverableOrWorkspace} from './agentCalend
 import {readOrRepairWeeklyTaskWorkspace} from '../../lib/weeklyTaskWorkspaceApi';
 import type {WeeklyTaskWorkspace} from '../../../shared/contracts/weeklyTaskWorkspace';
 import {socialProgramApi} from '../../lib/socialProgramApi';
+import { authHeader, getToken } from '../../lib/auth';
 import WeeklyTaskQuickActions from '../socialProgram/WeeklyTaskQuickActions';
 
 const LsCalendar = typeof document === 'undefined'
@@ -99,6 +100,9 @@ function taskIsAllDay(task: AgentCalendarTask): boolean {
 }
 
 const terminalTaskStatuses = new Set<AgentCalendarTask['status']>(['completed', 'cancelled', 'no_data']);
+export function hasCtaContactGap(ctaContactStatus?: 'missing' | 'recorded' | 'unavailable'): boolean {
+  return ctaContactStatus === 'missing' || ctaContactStatus === 'recorded' || ctaContactStatus === 'unavailable';
+}
 export function calendarExecutionMark(task:AgentCalendarTask,today:string):LsCalendarEvent['executionMark']{
  const sources=task.dailyTaskGroup?.tasks??task.customerServiceSummary?.sourceTasks??[task];
  if(sources.length&&sources.every(source=>source.status==='completed'))return 'complete';
@@ -107,8 +111,9 @@ export function calendarExecutionMark(task:AgentCalendarTask,today:string):LsCal
  return undefined;
 }
 
-export function calendarTaskPresentation(task: AgentCalendarTask, today: string): Pick<LsCalendarEvent, 'status' | 'statusLabel' | 'muted'> {
+export function calendarTaskPresentation(task: AgentCalendarTask, today: string, ctaContactStatus?: 'missing' | 'recorded' | 'unavailable'): Pick<LsCalendarEvent, 'status' | 'statusLabel' | 'muted'> {
   const terminal = terminalTaskStatuses.has(task.status);
+  if (!terminal && hasCtaContactGap(ctaContactStatus)) return { status: 'needs_action', statusLabel: ctaContactStatus === 'missing' ? '受阻 · 联系待填' : ctaContactStatus === 'recorded' ? '受阻 · 样品待证' : '受阻 · 联系记录待恢复', muted: false };
   if (task.date < today) return {
     status: terminal ? 'done' : 'needs_action',
     statusLabel: terminal ? statusLabels[task.status] : '结果未完成',
@@ -259,6 +264,32 @@ export default function RestoredAgentWorkCalendar({
   }, []);
 
   const deliverables = useMemo(() => projectDailyMilestones(projectDailyCustomerServiceCards(projectCalendarDeliverables(tasks, true), startsAt)), [tasks, startsAt]);
+  const [ctaAuditStatuses, setCtaAuditStatuses] = useState<Record<string, 'missing' | 'recorded' | 'unavailable'>>({});
+  const ctaAuditScopes = useMemo(() => [...new Map(tasks.flatMap(task => {
+    const sources = task.dailyTaskGroup?.tasks ?? task.customerServiceSummary?.sourceTasks ?? task.internalNodes ?? [task];
+    return sources.flatMap(source => source.workspaceTarget ? [[`${source.workspaceTarget.programId}:${source.workspaceTarget.packageId}:${source.workspaceTarget.packageVersion}`, source.workspaceTarget] as const] : []);
+  })).values()], [tasks]);
+  const ctaAuditScopeKey = JSON.stringify(ctaAuditScopes.map(scope => [scope.programId, scope.packageId, scope.packageVersion]));
+  useEffect(() => {
+    let live = true;
+    const token = getToken();
+    const read = async () => {
+      const next: Record<string, 'missing' | 'recorded' | 'unavailable'> = {};
+      await Promise.all(ctaAuditScopes.map(async scope => {
+        try {
+          const response = await fetch(`/api/overseas/social-programs/${encodeURIComponent(scope.programId)}/operating-packages/${encodeURIComponent(scope.packageId)}/execution-pipeline/task-audit?version=${scope.packageVersion}`, { headers: authHeader() });
+          if (!response.ok) return;
+          const body = await response.json() as { item?: { items?: Array<{ taskId:string; ctaContactStatus?:'missing'|'recorded'|'unavailable'; requiredActions?:Array<{action:string;code?:string}> }> } };
+          for (const item of body.item?.items ?? []) if (item.ctaContactStatus && item.requiredActions?.some(action => action.action === 'cta_contact' || action.action === 'sample_policy' || action.code === 'weekly_cta_contact_read_failed')) next[item.taskId] = item.ctaContactStatus;
+        } catch { /* Keep the conservative CTA intervention label until a read succeeds. */ }
+      }));
+      if (live && getToken() === token) setCtaAuditStatuses(next);
+    };
+    void read();
+    const changed = (event: Event) => { const detail = (event as CustomEvent<{programId:string;packageId:string;packageVersion:number}>).detail; if (ctaAuditScopes.some(scope => scope.programId === detail?.programId && scope.packageId === detail?.packageId && scope.packageVersion === detail?.packageVersion)) void read(); };
+    window.addEventListener('lingshu:weekly-cta-contact-updated', changed);
+    return () => { live = false; window.removeEventListener('lingshu:weekly-cta-contact-updated', changed); };
+  }, [ctaAuditScopeKey]);
   const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
   const todayKey = calendarDayKey(new Date(now), timeZone);
   const attentionIds = useMemo(() => new Set(deliverables.filter(task => task.date < todayKey && !terminalTaskStatuses.has(task.status)).map(task=>task.id)), [deliverables, todayKey]);
@@ -280,7 +311,8 @@ export default function RestoredAgentWorkCalendar({
     const resident = isAlwaysOnCalendarTask(task);
     const start = task.date;
     const card = hourCalendarCard(task, now);
-    const presentation = calendarTaskPresentation(task, todayKey);
+    const related = task.dailyTaskGroup?.tasks ?? task.customerServiceSummary?.sourceTasks ?? task.internalNodes ?? [];
+    const presentation = calendarTaskPresentation(task, todayKey, ctaAuditStatuses[task.id] ?? related.map(source=>ctaAuditStatuses[source.id]).find(Boolean));
     return {
       id: task.id,
       title: task.title,
@@ -304,7 +336,7 @@ export default function RestoredAgentWorkCalendar({
       data: task,
     };
     });
-  }, [independentTasks, demo, now, timeZone, hideCompleted, todayKey]);
+  }, [independentTasks, demo, now, timeZone, hideCompleted, todayKey, ctaAuditStatuses]);
 
   const renderDetails = (event: LsCalendarEvent, closeDetails: () => void) => {
     const task = event.data as AgentCalendarTask;
@@ -364,10 +396,11 @@ export default function RestoredAgentWorkCalendar({
 
     const channelLabel={whatsapp:'WhatsApp',messenger:'Messenger',instagram:'Instagram'} as const;
     const summary=task.customerServiceSummary;
+    const ctaContactStatus=ctaAuditStatuses[task.id] ?? executionSources.map(source=>ctaAuditStatuses[source.id]).find(Boolean);
 
     return <div className="space-y-5">
       {!demo&&<WeeklyTaskQuickActions sources={executionSources} onOpen={source=>enterSource(source)} onPlanning={onOpenPlanning?()=>open(onOpenPlanning):undefined}/>}
-      <div><div className="flex flex-wrap items-center gap-2"><Tag color={event.status === 'failed' ? 'error' : event.status === 'needs_action' ? 'warning' : event.status === 'working' ? 'processing' : event.status === 'done' ? 'success' : 'default'}>{event.statusLabel || statusLabels[task.status]}</Tag>{task.minutes !== null && <span className="text-xs text-text-secondary">预计 {task.minutes} 分钟</span>}</div><h3 className="mt-2 ls-type-title-medium text-text-primary">{task.title}</h3></div>
+      <div><div className="flex flex-wrap items-center gap-2"><Tag color={event.status === 'failed' ? 'error' : event.status === 'needs_action' ? 'warning' : event.status === 'working' ? 'processing' : event.status === 'done' ? 'success' : 'default'}>{event.statusLabel || statusLabels[task.status]}</Tag>{hasCtaContactGap(ctaContactStatus)&&task.status==='planned'&&<span className="text-xs text-text-secondary">{ctaContactStatus==='unavailable'?'原任务尚待激活；联系记录读取失败，待系统恢复后重试':'原任务尚待激活；请查看 CTA 联系与样品证据缺项'}</span>}{task.minutes !== null && <span className="text-xs text-text-secondary">预计 {task.minutes} 分钟</span>}</div><h3 className="mt-2 ls-type-title-medium text-text-primary">{task.title}</h3></div>
       <section aria-label="负责 Agent" className="space-y-2"><div className="flex flex-wrap gap-2"><AgentIdentityCard role={task.agent} relation="主 Agent"/>{assistantRoles.map(role => <AgentIdentityCard key={role} role={role} relation="辅助 Agent"/>)}</div>{assistantRoles.length === 0 && <p className="text-xs text-text-secondary">当前没有记录辅助 Agent；流程只显示已分配的真实责任。</p>}</section>
       <dl className="grid gap-3 rounded-lg border border-border bg-white p-4 sm:grid-cols-3">
         <div className="min-w-0"><dt className="text-xs text-text-secondary">交付时间</dt><dd className="mt-1 break-words text-sm font-medium text-text-primary">{deliveryTime}</dd></div>

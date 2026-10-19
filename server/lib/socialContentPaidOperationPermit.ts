@@ -11,7 +11,9 @@ export type PaidOperationSubmission = Omit<SocialPaidOperationIntent,'maximumUni
  * are shared-volume durable; a crash before POST is deliberately unknown. */
 export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBudgetScope;operations:SocialTaskBudgetOperation[];
  intents:SocialPaidOperationIntent[];ledger:Pick<SocialContentTaskBudget,'status'|'markOutcome'>;
- root?:string;assertCurrent(scope:SocialTaskBudgetScope):Promise<void>}){
+ root?:string;assertCurrent(scope:SocialTaskBudgetScope):Promise<void>;
+ /** Only new provider claims, never existing-operation recovery. */
+ assertNewSubmit?(scope:SocialTaskBudgetScope):Promise<void>}){
  const scope=structuredClone(input.scope),operations=structuredClone(input.operations),intents=structuredClone(input.intents);
  const root=path.resolve(input.root||process.env.SOCIAL_CONTENT_PAID_PERMIT_DIR||'data/social-content-paid-permits');
  const key=(id:string)=>JSON.stringify([scope.tenantId,scope.taskId,scope.runId,scope.planHash,id]);
@@ -51,6 +53,9 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
   });},
   async beforeSubmit(request:PaidOperationSubmission){return withPaidOperationLock(path.join(root,'.locks'),key(request.operationId),async()=>{
    await input.assertCurrent(scope);assertWholePlanReserved();const {op,intent}=bound(request.operationId);
+   // This is only a budget hold. It has no provider request and must never
+   // produce a submission claim, even if a caller retains the film permit.
+   if(op.stage==='director_review_capacity'||intent.stage==='director_review_capacity')fail('capacity_not_submittable');
    if((['provider','model','accountRef','stage','shotId','inputContractHash'] as const).some(k=>request[k]!==intent[k])
     ||(['provider','model','accountRef','stage','shotId'] as const).some(k=>op[k]!==intent[k]))fail('request_binding_changed');
    const actual=Object.keys(request.actualUnits).sort(),maximum=Object.keys(intent.maximumUnits).sort();
@@ -60,6 +65,7 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
    if(prior||['accepted','unknown','completed'].includes(e.status))fail('receipt_recovery_required');
    if(e.status!=='reserved')fail('reservation_not_submittable');
    await input.assertCurrent(scope);
+   await input.assertNewSubmit?.(scope);
    write(request.operationId,{schemaVersion:1,scopeHash:hash(scope),operationId:request.operationId,fingerprint:op.fingerprint,
     submissionHash:hash(request),submission:structuredClone(request),actualUnits:request.actualUnits,status:'unknown',receiptRef:null});
    // This is the real local submission-boundary receipt, not a fabricated

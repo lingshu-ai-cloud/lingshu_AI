@@ -8,7 +8,7 @@ const base = {
   evidenceFrameLabels: ['产品参考', '视频0s', '视频2s', '视频4s'], checkedAt: '2026-10-03T00:00:00.000Z',
 };
 const keys = storyboardQaRequiredChecks(base);
-assert.deepEqual(keys, ['product_identity', 'layout_continuity', 'visual_integrity', 'contact_continuity', 'action_order', 'end_state']);
+assert.deepEqual(keys, ['product_identity', 'packaging_visibility', 'subject_visibility', 'layout_continuity', 'visual_integrity', 'contact_continuity', 'action_order', 'end_state']);
 
 const evidenceFor = (key: string) => key === 'end_state' ? ['视频4s'] : ['视频0s', '视频2s'];
 const allPass = buildStoryboardQaReport({ ...base, observations: keys.map(key => ({ key, verdict: 'pass', evidenceFrames: evidenceFor(key), note: '画面可见' })) });
@@ -21,6 +21,15 @@ const identityFail = buildStoryboardQaReport({ ...base, observations: keys.map(k
 assert.equal(identityFail.status, 'needs_assets');
 assert.deepEqual(identityFail.reasonCodes, ['PRODUCT_IDENTITY_FAILED']);
 assert.throws(() => reviewStoryboardQaReport(identityFail, { decision: 'accept', reviewedBy: 'tenant-user' }), /硬失败/);
+
+const packagingHidden = buildStoryboardQaReport({ ...base, observations: keys.map(key => ({ key, verdict: key === 'packaging_visibility' ? 'fail' : 'pass', action: 'retry_video', evidenceFrames: evidenceFor(key), note: '前景卡片完全遮住瓶盖' })) });
+assert.equal(packagingHidden.status, 'retry_video');
+assert(packagingHidden.reasonCodes.includes('PACKAGING_VISIBILITY_FAILED'));
+assert.throws(() => reviewStoryboardQaReport(packagingHidden, { decision: 'accept', reviewedBy: 'tenant-user' }), /硬失败/);
+
+const subjectHidden = buildStoryboardQaReport({ ...base, observations: keys.map(key => ({ key, verdict: key === 'subject_visibility' ? 'fail' : 'pass', action: 'retry_video', evidenceFrames: evidenceFor(key), note: '搜索卡片遮住人物脸部和关键动作' })) });
+assert.equal(subjectHidden.status, 'retry_video');
+assert(subjectHidden.reasonCodes.includes('SUBJECT_VISIBILITY_FAILED'));
 
 const missingEnd = buildStoryboardQaReport({ ...base, observations: keys.filter(key => key !== 'end_state').map(key => ({ key, verdict: 'pass', evidenceFrames: evidenceFor(key) })) });
 assert.equal(missingEnd.status, 'needs_review');

@@ -4,7 +4,7 @@ import {assertWeeklyDetailedCoverage} from './weeklyPlanningCoverage.js';
 import {SocialProgramError} from './service.js';
 import {WEEKLY_AUTOMATION_TEMPLATE} from '../../shared/weeklyAutomationTemplate.js';
 const fail=():never=>{throw new SocialProgramError('weekly_planning_template_adoption_invalid',409,'真实分析、排期范围或默认模板采用证据已经变化。');};
-export function weeklyPlanningAnalysisHash(plan:WeeklyAgentPlanningState){return scheduleHash({programId:plan.programId,packageId:plan.packageId,packageVersion:plan.packageVersion,skeleton:plan.skeleton,directorAnalyses:plan.directorAnalyses,directorGaps:plan.directorGaps??[],referenceSourcePolicy:plan.referenceSourcePolicy??null});}
+export function weeklyPlanningAnalysisHash(plan:WeeklyAgentPlanningState){return scheduleHash({programId:plan.programId,packageId:plan.packageId,packageVersion:plan.packageVersion,skeleton:plan.skeleton,directorAnalyses:plan.directorAnalyses,directorGaps:plan.directorGaps??[],referenceSourcePolicy:plan.referenceSourcePolicy??null,...(plan.pinnedReference?{pinnedReference:plan.pinnedReference}:{})});}
 export function verifiedWeeklyPlanningTemplateAdoption(plan:WeeklyAgentPlanningState){
  const adoption=plan.automaticTemplateAdoption;if(!adoption)return null;
  const {recordHash,...payload}=adoption;
