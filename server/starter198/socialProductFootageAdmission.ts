@@ -1,7 +1,11 @@
 import type { MaterialRecord } from '../lib/materialLibrary.js';
 import type { DataStore } from '../storage/datastore.js';
-import { readApprovedProductFootage, type FootageAuthority } from '../routes/enterpriseProductFootageReview.js';
-import { readApprovedProductFootageVisualOverlay, type FootageVisualAuthority } from '../routes/enterpriseProductFootageVisualReview.js';
+import {
+  readApprovedProductFootage,
+  readApprovedProductFootageVisualOverlay,
+  type FootageAuthority,
+  type FootageVisualAuthority,
+} from '../lib/productFootageAdmissionReaders.js';
 
 /** A production read must use the current server inventory, not a frozen plan's
  * copy of an editable material row. Approval is scoped to one exact shot use. */

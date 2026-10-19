@@ -1,13 +1,9 @@
 import {submitStudioVoicePaidRequest,studioVoicePaidContext} from '../lib/studioVoicePaidOperation.js';
 import {submitMaterialAnalysisPaidRequest,type MaterialAnalysisPaidCall} from '../digitalEmployees/materialAnalysisPaidOperation.js';
 import {directorG5AccountRuleRequirements} from '../../shared/contracts/socialDirectorG5AccountRules.js';
-import OpenAI from 'openai';
-import {authorizeExactQwenProviderRequest,exactQwenScope,recordExactQwenProviderResponse} from './exactQwenScope.js';
+import {exactQwenScope} from './exactQwenScope.js';
 import {createHash} from 'node:crypto';
 import { GoogleGenAI } from '@google/genai';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import type { VideoAiAnalysis } from '../types/index.js';
 import { normalizeVideoAnalysis } from './gemini.js';
 import { BENCHMARK_ANALYSIS_CONTRACT } from '../prompts/geminiVideoScriptDirector.js';
@@ -15,8 +11,13 @@ import { exactVideoClassificationQualityError } from '../lib/videoAnalysisCodec.
 import { hasOnCameraSpeechEvidence } from '../lib/salesPresenterReview.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
 import type { StoryboardQaPhase, StoryboardQaScene, StoryboardQaObservation } from '../lib/storyboardAigcQuality.js';
-import {qwenCompatibleBaseUrl} from '../lib/qwenCompatibleEndpoint.js';
 import {submitDirectorG5PaidRequest} from '../starter198/socialDirectorG5PaidRequest.js';
+import { mergeShotClassificationRepair, repairVideoShotClassifications } from './qwenClassificationRepair.js';
+export { mergeShotClassificationRepair } from './qwenClassificationRepair.js';
+import { normalizeQwenQualityScore, storyboardQaProviderFallbackEligible, type ImagePostEvidenceAnalysis, type QwenAsrSegment, type QwenTimelinePlan } from './qwenContracts.js';
+import { createQwenClient, dashscopeApiKey, getQwenAsrProviderBinding as readQwenAsrProviderBinding, getQwenProviderBinding as readQwenProviderBinding, qwenAsrBaseUrl } from './qwenClient.js';
+export { dashscopeApiKey } from './qwenClient.js';
+export { normalizeQwenQualityScore, storyboardQaProviderFallbackEligible, type ImagePostEvidenceAnalysis, type QwenAsrSegment, type QwenTimelinePlan } from './qwenContracts.js';
 
 const QWEN_VL_MODEL = (env: NodeJS.ProcessEnv = process.env) => (env.QWEN_VL_MODEL ?? 'qwen-vl-max').trim();
 /** The compatible-mode account used by the production pipeline exposes
@@ -25,10 +26,6 @@ const QWEN_VL_MODEL = (env: NodeJS.ProcessEnv = process.env) => (env.QWEN_VL_MOD
  * be the implicit paid-analysis default. Explicit frozen scopes still win. */
 export const QWEN_EXACT_VL_DEFAULT_MODEL = 'qwen3-vl-plus';
 const QWEN_EXACT_VL_MODEL = (env: NodeJS.ProcessEnv = process.env) => (exactQwenScope()?.model ?? env.QWEN_EXACT_VL_MODEL ?? QWEN_EXACT_VL_DEFAULT_MODEL).trim();
-const BASE_URL = qwenCompatibleBaseUrl;
-// Voice admission/pricing is a separate legacy contract. Endpoint migration
-// for text/vision must not silently move ASR traffic.
-const ASR_BASE_URL = (env: NodeJS.ProcessEnv = process.env) => String(env.QWEN_ASR_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1').trim();
 
 /** Keep these evidence fields explicit in every per-shot Qwen schema. The
  * shared benchmark contract defines their semantics, while the concrete list
@@ -36,168 +33,28 @@ const ASR_BASE_URL = (env: NodeJS.ProcessEnv = process.env) => String(env.QWEN_A
 export const QWEN_SHOT_CLASSIFICATION_FIELDS = ['materialType', 'narrativeRole', 'classificationEvidence'] as const;
 const QWEN_SHOT_CLASSIFICATION_FIELD_TEXT = QWEN_SHOT_CLASSIFICATION_FIELDS.join('、');
 
-export function dashscopeApiKey(env: NodeJS.ProcessEnv = process.env): string {
-  const envKey = env.DASHSCOPE_API_KEY?.trim();
-  if (envKey) return envKey;
-  const keyFile = (env.DASHSCOPE_API_KEY_FILE || path.join(os.homedir(), '.config/lingshu/dashscope.key')).trim();
-  try {
-    const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
-    if (fileKey) return fileKey;
-  } catch { /* optional local secret file */ }
-  throw new Error('DASHSCOPE_API_KEY is not set');
-}
-
 /** Exact live SDK configuration for trusted account readers; never expose keys. */
-export function getQwenProviderBinding(env: NodeJS.ProcessEnv = process.env){return {baseUrl:BASE_URL(env),credentialSha256:createHash('sha256').update(dashscopeApiKey(env)).digest('hex'),
- materialModel:(env.QWEN_MATERIAL_VL_MODEL||QWEN_EXACT_VL_MODEL(env)).trim(),imageModel:QWEN_VL_MODEL(env)};}
-export function getQwenAsrProviderBinding(env: NodeJS.ProcessEnv = process.env){return {baseUrl:ASR_BASE_URL(env),credentialSha256:createHash('sha256').update(dashscopeApiKey(env)).digest('hex')};}
-function client(baseURL=BASE_URL()): OpenAI {
-  const apiKey = dashscopeApiKey();
-  const scoped=exactQwenScope();
-  if(scoped && (scoped.endpoint!==baseURL||scoped.credentialDigest!==createHash('sha256').update(apiKey).digest('hex')))throw Error('weekly_candidate_model_provider_binding_changed');
-  return new OpenAI({
-    apiKey,
-    baseURL,
-    ...(scoped?{fetch:async(input:RequestInfo|URL,init?:RequestInit)=>{
-      // A 307/308 can otherwise replay the paid POST (including credentials
-      // and body) after only one durable claim. Exact requests never follow a
-      // redirect: the original claim remains unknown for read-only recovery.
-      const request=new Request(input,{...init,redirect:'error'}),body=await request.clone().text();
-      await authorizeExactQwenProviderRequest(body);
-      const response=await fetch(request);
-      await recordExactQwenProviderResponse(response,body);
-      return response;
-    }}:{}),
-    // Exact storyboard JSON is substantially larger than classification output.
-    // Keep the transport timeout above the per-chunk deadline so our own abort
-    // controller remains the single, observable timeout authority.
-    timeout: Math.max(30_000, Number(process.env.QWEN_REQUEST_TIMEOUT_MS || 120_000)),
-    maxRetries: exactQwenScope() ? 0 : Math.max(0, Math.min(2, Number(process.env.QWEN_MAX_RETRIES || 0))),
-  });
-}
+export function getQwenProviderBinding(env: NodeJS.ProcessEnv = process.env){return readQwenProviderBinding({env,materialModel:(env.QWEN_MATERIAL_VL_MODEL||QWEN_EXACT_VL_MODEL(env)).trim(),imageModel:QWEN_VL_MODEL(env)});}
+export function getQwenAsrProviderBinding(env: NodeJS.ProcessEnv = process.env){return readQwenAsrProviderBinding(env);}
+const client = createQwenClient;
 
-export interface QwenAsrSegment { start: number; end: number; text: string; confidence?: number }
-export interface QwenTimelineBoundary {
-  id: string;
-  start: number;
-  end: number;
-  reason: string;
-  evidence: string;
-}
-export interface QwenTimelinePlan {
-  theme: string;
-  identityEntities: NonNullable<VideoAiAnalysis['identityEntities']>;
-  hooks: string[];
-  sellingPoints: string[];
-  mood: string;
-  structure: string;
-  baseRequirements: string;
-  firstTenSeconds: NonNullable<VideoAiAnalysis['firstTenSeconds']>;
-  coarseStructure: NonNullable<VideoAiAnalysis['coarseStructure']>;
-  scriptSummary15s: NonNullable<VideoAiAnalysis['scriptSummary15s']>;
-  recommendedScriptType: 'voiceover' | 'storyboard';
-  boundaries: QwenTimelineBoundary[];
-}
-export interface ImagePostEvidenceAnalysis {
-  version: 2;
-  status: 'analyzed';
-  observedFacts: Array<{ imageIndex: number; subjects: string[]; scene: string; composition: string; colors: string[]; visibleText: string[]; confidence: number }>;
-  carouselFlow: Array<{ imageIndex: number; role: 'attention' | 'product' | 'detail' | 'proof' | 'process' | 'cta' | 'unknown'; evidence: string; confidence: number }>;
-  copyEvidence: { hooks: Array<{ text: string; source: 'caption' | 'ocr'; evidence: string }>; sellingPoints: Array<{ text: string; source: 'caption' | 'ocr'; evidence: string }>; cta: string[] };
-  reusableModules: Array<{ module: string; evidence: string; preserve: string; replace: string; confidence: number }>;
-  uncertainties: string[];
-}
-
-export function storyboardQaProviderFallbackEligible(error: unknown, env: NodeJS.ProcessEnv = process.env): boolean {
-  if (!env.GEMINI_API_KEY?.trim()) return false;
-  const record = error && typeof error === 'object' ? error as Record<string, any> : {};
-  const code = String(record.code || record.type || record.error?.code || record.error?.type || '').trim();
-  const message = error instanceof Error ? error.message : String(error || '');
-  return ['Arrearage', 'InvalidApiKey', 'AccessDenied', 'Forbidden'].includes(code)
-    || /overdue-payment|account is in good standing|arrearage|free quota exhausted|use free tier only|invalid api key|access denied/i.test(message);
-}
-
-type ShotClassificationRepair = {
-  index: number;
-  materialType: NonNullable<NonNullable<VideoAiAnalysis['scriptDetails15s']>[number]['materialType']>;
-  narrativeRole: NonNullable<NonNullable<VideoAiAnalysis['scriptDetails15s']>[number]['narrativeRole']>;
-  classificationEvidence: string;
-  needsReview?: boolean;
-};
-
-/** Merge a classification-only repair without allowing the second model call
- * to rewrite timecodes, observations, dialogue or any other source evidence. */
-export function mergeShotClassificationRepair(
-  analysis: VideoAiAnalysis,
-  repairs: ShotClassificationRepair[],
-): VideoAiAnalysis {
-  const byIndex = new Map(repairs.map(repair => [repair.index, repair]));
-  return {
-    ...analysis,
-    scriptDetails15s: (analysis.scriptDetails15s || []).map((detail, offset) => {
-      const repair = byIndex.get(offset + 1);
-      if (!repair) return detail;
-      const materialType = ['talking_head', 'factory', 'product', 'consumer_demo', 'general'].includes(repair.materialType)
-        ? repair.materialType : 'unknown';
-      const narrativeRole = ['hook', 'pain_point', 'capability_proof', 'product_intro', 'effect_proof', 'cta', 'transition'].includes(repair.narrativeRole)
-        ? repair.narrativeRole : 'unknown';
-      return {
-        ...detail,
-        materialType,
-        narrativeRole,
-        classificationEvidence: String(repair.classificationEvidence || '').trim(),
-        ...(typeof repair.needsReview === 'boolean' ? { needsReview: repair.needsReview } : {}),
-      };
-    }),
-  };
-}
-
-/** Repair only production classification fields from evidence already
- * observed in the paid visual pass. This never extracts frames or rewrites the
- * timeline, visual observations, dialogue or other source evidence. */
 export async function repairVideoShotClassificationsWithQwen(
   analysis: VideoAiAnalysis,
   signal?: AbortSignal,
 ): Promise<VideoAiAnalysis> {
-  const evidenceRows = (analysis.scriptDetails15s || []).map((shot, index) => ({
-    index: index + 1,
-    time: shot.time,
-    visual: shot.visual,
-    observedFacts: shot.observedFacts,
-    purpose: shot.purpose,
-    dialogue: shot.dialogue,
-    onScreenText: shot.onScreenText,
-    materialType: shot.materialType,
-    narrativeRole: shot.narrativeRole,
-    classificationEvidence: shot.classificationEvidence,
-    needsReview: shot.needsReview,
-  }));
-  if (!evidenceRows.length) throw new Error('exact_classification_repair_missing_shots');
-  const evidence = untrustedPromptData('observed_shot_evidence', JSON.stringify(evidenceRows), 24_000);
-  const repairCompletion = await client().chat.completions.create({
-    model: QWEN_EXACT_VL_MODEL(),
-    messages: [{ role: 'user', content: `你是视频镜头生产交接校验器。只输出合法 JSON：{"shots":[{"index":1,"materialType":"product","narrativeRole":"hook","classificationEvidence":"画面可见产品瓶身特写","needsReview":false}]}。
-不得改写或补充观察事实，只能依据下方已经完成的逐镜证据分类；这不是再次分析视频。shots 必须按 index 完整返回 ${evidenceRows.length} 项。
-materialType 仅取 talking_head、factory、product、consumer_demo、general，不得返回 unknown；以镜头的主要可见主体为准。
-narrativeRole 仅取 hook、pain_point、capability_proof、product_intro、effect_proof、cta、transition，不得返回 unknown；第 1 镜必须为 hook，其余根据 purpose、字幕、台词和可见内容判断。
-classificationEvidence 必须引用本镜实际可见画面、已确认台词或用途，不得写空值、模板话术或新增事实。
-needsReview 只表示现有画面证据不足以安全用于剪辑或无法确定镜头用途；品牌拼写、ASR措辞等不影响画面剪辑的轻微不确定不得阻塞交接。画面、时间区间、主要主体和用途均清楚时必须为 false。
-${evidence}` }],
-    response_format: { type: 'json_object' },
-    max_tokens: Math.max(1200, Math.min(4200, evidenceRows.length * 360 + 600)),
-  } as any, { signal });
-  const repaired = parseJson<{ shots?: ShotClassificationRepair[] }>(repairCompletion.choices[0]?.message?.content || '', {});
-  const repairRows = Array.isArray(repaired.shots) ? repaired.shots : [];
-  const indexes = repairRows.map(row => Number(row.index));
-  if (repairRows.length !== evidenceRows.length
-    || new Set(indexes).size !== evidenceRows.length
-    || indexes.some(index => !Number.isInteger(index) || index < 1 || index > evidenceRows.length)) {
-    throw new Error(`exact_classification_repair_mismatch_${repairRows.length}_of_${evidenceRows.length}`);
-  }
-  const normalized = mergeShotClassificationRepair(analysis, repairRows);
-  const remainingError = exactVideoClassificationQualityError(normalized);
-  if (remainingError) throw new Error(`exact_classification_incomplete_${remainingError}`);
-  return normalized;
+  return repairVideoShotClassifications({
+    analysis,
+    signal,
+    complete: async (prompt, maxTokens, requestSignal) => {
+      const completion = await client().chat.completions.create({
+        model: QWEN_EXACT_VL_MODEL(),
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
+        max_tokens: maxTokens,
+      } as any, { signal: requestSignal });
+      return completion.choices[0]?.message?.content || '';
+    },
+  });
 }
 
 /**
@@ -205,11 +62,6 @@ ${evidence}` }],
  * their familiar 0-10 scale. Normalize both shapes before downstream gates so
  * a strong 9/10 result is not interpreted as 9/100.
  */
-export function normalizeQwenQualityScore(value: unknown): number {
-  const score = Number(value);
-  if (!Number.isFinite(score) || score <= 0) return 0;
-  return Math.max(0, Math.min(100, score <= 10 ? score * 10 : score));
-}
 export async function transcribeAudioWithQwen(opts: { audio: Buffer; fileName?: string; signal?: AbortSignal; audioSeconds?: number }): Promise<{ text: string; segments: QwenAsrSegment[] }> {
   const audioMime = opts.audio.subarray(0,4).toString() === 'RIFF' ? 'audio/wav' : /\.m4a$/i.test(opts.fileName || '') ? 'audio/mp4' : 'audio/mpeg';
   const request = {
@@ -218,7 +70,7 @@ export async function transcribeAudioWithQwen(opts: { audio: Buffer; fileName?: 
     stream: false,
     asr_options: { enable_itn: true },
   } as any;
-  const asrBaseUrl=ASR_BASE_URL();
+  const asrBaseUrl=qwenAsrBaseUrl();
   const completion=await submitStudioVoicePaidRequest({stage:'voice_asr',provider:'qwen',endpoint:asrBaseUrl+'/chat/completions',accountKeyHash:createHash('sha256').update(dashscopeApiKey()).digest('hex'),model:request.model,voiceId:null,request,audioSha256:createHash('sha256').update(opts.audio).digest('hex'),audioSeconds:opts.audioSeconds},()=>client(asrBaseUrl).chat.completions.create(request,{...(opts.signal?{signal:opts.signal}:{}),...(studioVoicePaidContext()?{maxRetries:0}:{})}));
   const text = String(completion.choices[0]?.message?.content || '').trim();
   return { text, segments: text ? [{ start: 0, end: 0, text }] : [] };
