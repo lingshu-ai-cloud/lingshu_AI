@@ -5,7 +5,7 @@ import { photoTalkingBudget } from '../lib/photoTalkingBudget.js';
 import { selectPresenterPortraitFrame } from '../lib/presenterPortraitFromVideo.js';
 import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
 import { assertSeedanceCueDurations, assertSplitCueAssignments } from '../lib/sentenceCueSceneCuts.js';
-import { readLocalMaterials, saveLocalMaterials } from '../lib/materialLibrary.js';
+import { readLocalMaterials, readMaterialLibrary, saveLocalMaterials } from '../lib/materialLibrary.js';
 import { fetchCloudMaterial, getOwnedCloudMaterialRecord, updateCloudMaterial } from '../lib/cloudMaterials.js';
 import { legacyAvatarSourceObjectKey, measureAvatarSourceCaptions } from '../lib/avatarSourceCaptions.js';
 import { downloadHeygenSubtitles, heygenRequest } from '../integrations/heygen.js';
@@ -21,7 +21,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { studioPaidBudget } from '../lib/studioPaidBudget.js';
 import type { DataStore } from '../storage/datastore.js';
 import { HeyGenClient, type HeyGenInput } from '../lib/heygen.js';
-import { EMPTY_DEFAULTS, presenterAssetFingerprint, presenterCapabilities, shotFingerprint, type AvatarJob, type PresenterAsset, type PresenterCapability, type ProductionDefaults, type ShotProduction } from '../../src/lib/shotProduction.js';
+import { EMPTY_DEFAULTS, presenterAssetFingerprint, presenterCapabilities, presenterProductionGate, shotFingerprint, type AvatarJob, type PresenterAsset, type PresenterCapability, type ProductionDefaults, type ShotProduction } from '../../src/lib/shotProduction.js';
 import { mapNarrationCues, narrationFromDetail } from '../../src/lib/narrationAlignment.js';
 import { candidateToolsFor, digitalHumanPipelineFor, digitalHumanRouteSteps, planDigitalHumanShot, referenceCues, referenceModelInputAuthorization, routeStepsForExecution, usesDirectReferenceVideo, type DigitalHumanExecutionRecord, type DigitalHumanPlanRecord, type DigitalHumanReferenceCue, type SentenceFirstFrameDraftResult, type SentenceReplicationResult } from '../../src/lib/digitalHumanPlan.js';
 import { sentenceExecutionQuality, digitalHumanQualityState, deferUnavailableVisualChecksToManual, initialDigitalHumanQuality, recordDigitalHumanMediaCheck, recordModelQualityChecks, recordReferenceTechnicalChecks, recordReferenceVisualChecks, reviewDigitalHumanQuality, type ModelQualityDecision, type ModelQualityKey, type ReferenceTechnicalMetrics, type ReferenceVisualMetrics } from '../../src/lib/digitalHumanQuality.js';
@@ -31,10 +31,28 @@ import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
 import { planPersonShotClusters } from '../../src/lib/personShotClustering.js';
 import type { ExecutionStoreRecord, FirstFrameDraftJobRecord, ImportedVideoResult, JobRecord, PlanStoreRecord, ProductionRouterOptions, ReferenceImportResult, SentenceJobRecord } from './productionContracts.js';
 import { candidateOutputFromImport, createProductionRuntime, createProductionStoreRuntime } from './productionRuntime.js';
-import { batchShotRequestId, planStudioBatchShotRoutes, uniqueAuthorizedSalesPresenter } from './studioBatchShotRoutes.js';
+import { batchShotRequestId, planStudioBatchShotRoutes } from './studioBatchShotRoutes.js';
 import { studioAigcBatchBudgetPreview, studioAigcBudgetConfigFromEnv } from './studioAigcBatchBudget.js';
 import { productionTrendReference } from '../lib/productionTrendReference.js';
+import { materialAssetV2FromRecord } from '../../shared/contracts/materialAssetV2.js';
 export { candidateOutputFromImport } from './productionRuntime.js';
+
+async function materialIdentityEvidenceForTenant(tenantId: string): Promise<Record<string, {
+  productId: string;
+  productIdentityLevel: 'exact' | 'category' | 'none';
+}>> {
+  const inventory = await readMaterialLibrary(tenantId);
+  return Object.fromEntries(inventory.items.flatMap(item => {
+    if (String(item.scope || 'own') === 'shared') return [];
+    const productId = String(item.productId || item.product_id || '').trim();
+    let metadata: ReturnType<typeof materialAssetV2FromRecord>;
+    try { metadata = materialAssetV2FromRecord(item); }
+    catch { return []; }
+    return productId && metadata
+      ? [[String(item.id), { productId, productIdentityLevel: metadata.productIdentityLevel }] as const]
+      : [];
+  }));
+}
 
 export function createProductionRouter(store: DataStore, importVideo: (url: string, duration: number, job: AvatarJob, input: HeyGenInput, tenantId: string) => Promise<string | ImportedVideoResult>, options: ProductionRouterOptions = {}) {
   const router = Router();
@@ -293,13 +311,17 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
       const project = await store.getById<any>('studio_projects', projectId);
       if (!project || project.tenant_id !== tenantId || project.status !== 'draft') throw new Error('创作草稿不存在或不可编辑');
       const defaults = (await readDefaults(tenantId))?.payload as ProductionDefaults | undefined;
+      const presenterGate = presenterProductionGate(defaults);
+      if (!presenterGate.ready) throw new Error(presenterGate.message);
       const authorizedPresenters = (defaults?.presenters ?? []).filter(item => validateHeyGenPresenterRecord(item).ok);
-      const salesPresenter = uniqueAuthorizedSalesPresenter(authorizedPresenters);
+      const salesPresenter = authorizedPresenters.find(item => item.id === presenterGate.presenter?.id);
+      const materialIdentityEvidence = await materialIdentityEvidenceForTenant(tenantId);
       const routes = planStudioBatchShotRoutes(project.spec ?? {}, {
         talkingExecutorReady: enabled() && studioPaidBudget.status('heygen').allowed,
         actionExecutorReady: executableReferenceAdapters().length > 0,
         authorizedPresenterIds: authorizedPresenters.map(item => item.id),
         defaultSalesPresenterId: salesPresenter?.id ?? null,
+        materialIdentityEvidence,
       });
       const aigcBudgetPreview = studioAigcBatchBudgetPreview(routes, {
         ...studioAigcBudgetConfigFromEnv(),
@@ -974,13 +996,17 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
       const project = await store.getById<any>('studio_projects', projectId);
       if (!project || project.tenant_id !== tenantId || project.status !== 'draft') throw new Error('创作草稿不存在或不可编辑');
       const defaults = (await readDefaults(tenantId))?.payload as ProductionDefaults | undefined;
+      const presenterGate = presenterProductionGate(defaults);
+      if (!presenterGate.ready) throw new Error(presenterGate.message);
       const authorizedPresenters = (defaults?.presenters ?? []).filter(item => validateHeyGenPresenterRecord(item).ok);
-      const salesPresenter = uniqueAuthorizedSalesPresenter(authorizedPresenters);
+      const salesPresenter = authorizedPresenters.find(item => item.id === presenterGate.presenter?.id);
+      const materialIdentityEvidence = await materialIdentityEvidenceForTenant(tenantId);
       let routes = planStudioBatchShotRoutes(project.spec ?? {}, {
         talkingExecutorReady: enabled() && studioPaidBudget.status('heygen').allowed,
         actionExecutorReady: executableReferenceAdapters().length > 0,
         authorizedPresenterIds: authorizedPresenters.map(item => item.id),
         defaultSalesPresenterId: salesPresenter?.id ?? null,
+        materialIdentityEvidence,
       });
       if (req.body.slotIds !== undefined) {
         if (!Array.isArray(req.body.slotIds) || !req.body.slotIds.length || req.body.slotIds.length > 100 || req.body.slotIds.some((id: unknown) => typeof id !== 'string')) throw new Error('请选择有效的分镜');

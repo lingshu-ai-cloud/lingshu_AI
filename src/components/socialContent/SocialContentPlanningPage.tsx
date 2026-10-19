@@ -11,6 +11,12 @@ import SocialCreationWorkbench, {
 } from './SocialCreationWorkbench';
 import SocialContentHistoryHome from './SocialContentHistoryHome';
 import { loadSocialContentStage, readSocialContentStage, type SocialContentStageProfile } from '../../lib/socialContentStage';
+import { socialContentApi } from '../../lib/socialContentApi';
+import {
+  socialPlanningMaterialSource,
+  socialPlanningOperationKey,
+  socialPlanningTaskInput,
+} from '../../lib/socialContentPlanningTask';
 
 type PlanningView = 'workbench' | 'creations';
 
@@ -98,10 +104,39 @@ export default function SocialContentPlanningPage({
     setView('workbench');
   };
 
-  const startGeneration = (request: SocialCreationWorkbenchSubmit) => {
+  const startGeneration = async (request: SocialCreationWorkbenchSubmit) => {
     const primaryMaterial = request.uploadedMaterials[0];
     const distinctProducts = request.productMappings.filter((mapping, index, mappings) =>
       mapping.productId && mappings.findIndex(item => item.productId === mapping.productId) === index);
+    const operationSeed = {
+      requestId: request.requestId,
+      draftProjectId: request.draftProjectId,
+      title: request.title,
+      creationPath: request.creationPath,
+    };
+    const operationKey = socialPlanningOperationKey(operationSeed);
+    let task = sourceRequest?.continueTaskId
+      ? await socialContentApi.getTask(sourceRequest.continueTaskId)
+      : await socialContentApi.createTask(socialPlanningTaskInput({
+        ...operationSeed,
+        initialScript: request.initialScript,
+        specialRequirements: request.specialRequirements,
+        productId: request.productId,
+        productName: request.productName,
+        presenterAssetId: request.presenterAssetId,
+        callToAction: request.callToAction,
+        uploadedMaterialCount: request.uploadedMaterials.length,
+        platforms: sourceRequest?.prefill?.platforms,
+        themeId: sourceRequest?.themeId || 'product_value',
+      }), `${operationKey}:create`);
+
+    const visualMaterials = request.uploadedMaterials.filter(material => material.type === 'image' || material.type === 'video');
+    for (const material of visualMaterials.filter((item, index, rows) => rows.findIndex(row => row.id === item.id) === index)) {
+      const source = socialPlanningMaterialSource(material);
+      if (task.sources.some(item => item.status === 'active' && item.kind === source.kind && item.sourceRef === source.sourceRef)) continue;
+      task = (await socialContentApi.addSource(task.taskId, source, `${operationKey}:material:${material.id}`)).task;
+    }
+
     if (request.creationPath === 'material_processing') {
       try {
         localStorage.setItem('ow_video_kickoff', JSON.stringify({
@@ -127,6 +162,7 @@ export default function SocialContentPlanningPage({
       requestId: request.requestId,
       replicationStep: request.replicationStep,
       confirmedSpeech: request.confirmedSpeech,
+      continueTaskId: task.taskId,
       continueProjectId: request.draftProjectId || sourceRequest?.continueProjectId,
       themeId: sourceRequest?.themeId || 'product_value',
       mode: 'instant',

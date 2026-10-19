@@ -53,4 +53,20 @@ assert.equal(signature.requiresProductIdentity, true);
 assert.equal(signature.requiresPersonProductContact, true);
 assert.ok(signature.requiredCapabilities.includes('face_contact_control'));
 
+const usageOnlySignature = buildSceneCapabilitySignature(normalizeSceneVisualContract({
+  interaction: { kind: 'other', description: '执行动作' },
+  productUsage: { kind: 'hold', description: '手持瓶身' },
+}));
+assert.equal(usageOnlySignature.requiresPerson, true, '接触型产品使用本身就要求人物能力');
+assert.equal(usageOnlySignature.requiresProductIdentity, true, '接触型产品使用本身就要求产品身份');
+assert.equal(usageOnlySignature.requiresPersonProductContact, true);
+assert.ok(usageOnlySignature.requiredCapabilities.includes('person_product_interaction_control'));
+
+const factorySignature = buildSceneCapabilitySignature(normalizeSceneVisualContract({
+  interaction: { kind: 'person_factory_interaction', description: '工人操作灌装线' },
+}));
+assert.equal(factorySignature.requiresPerson, true, '环境交互本身就要求人物能力');
+assert.equal(factorySignature.requiresEnvironmentInteraction, true);
+assert.ok(factorySignature.requiredCapabilities.includes('environment_interaction_control'));
+
 console.log('scene visual contract tests passed');

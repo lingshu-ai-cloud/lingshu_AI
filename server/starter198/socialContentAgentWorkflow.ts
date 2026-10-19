@@ -55,6 +55,7 @@ import {
 } from '../../shared/sceneVisualContract.js';
 import type { SocialReferenceReviewHandoff } from './socialReferenceReviewHandoff.js';
 import { socialReferenceFidelityFailures } from './socialContentReferenceFidelity.js';
+import type { MaterialAssetV2Metadata } from '../../shared/contracts/materialAssetV2.js';
 
 import {
   buildBusinessContext,
@@ -88,6 +89,9 @@ export interface SocialWorkflowMaterialCandidate {
   materialRoles?: SocialMaterialRole[];
   visualContract?: SocialSceneVisualContract;
   timeRange?: { startSeconds: number; endSeconds: number } | null;
+  segmentCandidateId?: string;
+  sourceRevision?: string;
+  materialV2?: MaterialAssetV2Metadata | null;
 }
 export type {
   SocialContentCapabilityRuntime,
@@ -637,9 +641,16 @@ function capabilityCandidates(input: {
     materialRoles: material?.materialRoles ?? [],
     ...(material?.visualContract && material.segmentId && material.timeRange ? {
       materialSegments: [{
+        candidateId: material.segmentCandidateId,
         segmentId: material.segmentId,
+        sourceRevision: material.sourceRevision,
         startSeconds: material.timeRange.startSeconds,
         endSeconds: material.timeRange.endSeconds,
+        assetRole: material.materialV2?.assetRole,
+        contentRole: material.materialV2?.contentRole,
+        productIdentityLevel: material.materialV2?.productIdentityLevel,
+        templateEligible: material.materialV2?.templateEligible,
+        reuseScore: material.materialV2?.reuseScore,
         visualContract: structuredClone(material.visualContract),
         materialRoles: [...(material.materialRoles ?? [])],
         matchedVoiceoverCueIds: [...material.matchedVoiceoverCueIds],

@@ -36,6 +36,7 @@ import { listTenantEmployees } from './auth.js';
 import { recommendPackage, normalizePackage, repairCollapsedWeeklyVideoProduction, validatePackage, validatePackageForStart, compilePackage, packageConfig, packageTaskForKey, grantCovers, criticalBusinessConfigChanges } from '../digitalEmployees/weeklyPackage.js';
 import { TASK_TEMPLATES, type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { fillMatrixVideos } from '../../src/lib/weeklyMatrix.js';
+import { presenterProductionGate, type ProductionDefaults } from '../../src/lib/shotProduction.js';
 import { applyDirectorDecision, DIRECTOR_DECISION_LABELS, DIRECTOR_REASON_LABELS, type DirectorDecision, type DirectorDecisionReason } from '../../src/lib/directorDecision.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
@@ -924,7 +925,14 @@ async function generateWeeklyTaskPreviews(input: {
     const storyboard: VideoPreproductionPreview['materials']['storyboard'] = (benchmarkAnalysis?.structure || []).map((step, structureIndex) => {
       const shot = step.shotIds.map(id => benchmarkAnalysis?.shots.find(item => item.shotId === id)).find(Boolean);
       const asset = assetForStructure(step.materialType, structureIndex);
-      const status = asset ? asset.authorization.status === 'unknown' ? 'needs_authorization' as const : 'ready' as const : 'missing' as const;
+      const readinessDecision = item.materialReadiness.decisions.find(decision => decision.structureIndex === structureIndex);
+      const status = readinessDecision?.resolution === 'needs_input'
+        ? 'missing' as const
+        : asset
+        ? asset.authorization.status === 'unknown' ? 'needs_authorization' as const : 'ready' as const
+        : readinessDecision?.resolution === 'system_fallback' || readinessDecision?.resolution === 'optional'
+          ? 'system_planned' as const
+          : 'missing' as const;
       return {
         materialType: step.materialType,
         materialLabel: MATERIAL_TYPE_LABELS[step.materialType],
@@ -934,6 +942,9 @@ async function generateWeeklyTaskPreviews(input: {
         materialId: asset?.id || '',
         materialPreviewUrl: publicPreviewUrl(asset?.url),
         status,
+        supplyMode: readinessDecision?.resolution,
+        supplyRoute: readinessDecision?.productionRoute,
+        supplyNote: readinessDecision?.productionNote,
       };
     });
     const benchmarkStatus: VideoPreproductionPreview['benchmark']['status'] = item.plan.referenceId
@@ -4515,6 +4526,17 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   const currentConfig = resolvedConfiguration?.config || null;
   if (!currentConfig || !resolvedConfiguration) { return { status: 409, body: { error: 'onboarding_required' } }; }
+  const productionDefaultsRecord = (await store.list<{ id: string; tenant_id: string; payload?: ProductionDefaults }>('studio_production_defaults', {
+    where: { tenant_id: tenantId }, perPage: 1,
+  })).items[0];
+  const presenterGate = presenterProductionGate(productionDefaultsRecord?.payload);
+  if (!presenterGate.ready) {
+    return { status: 409, body: {
+      error: 'presenter_required',
+      reason: presenterGate.reason,
+      message: presenterGate.message,
+    } };
+  }
   const savedBody = existingPlan ? jsonObject<Record<string, unknown>>(existingPlan.plan, {}) : {};
   if (existingPlan && (existingPlan.status !== 'draft' || hasWeeklyGoalFactRebuildPlanFence(savedBody))) {
     return { status: 409, body: { error: 'package_locked', message: '计划已启动或正在重建，请刷新后重试。' } };

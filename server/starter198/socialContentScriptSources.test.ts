@@ -126,10 +126,65 @@ assert.equal(hook.startSeconds, 0);
 assert.equal(hook.endSeconds, 3);
 assert.equal(resolved.replicationScript.shots[1]?.spokenText, null);
 assert.equal(resolved.referenceVideoAnalysis.hookAnalysis?.capabilitySignature?.requiresPersonProductContact, true);
-assert.equal(resolved.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.route, 'digital_human');
-assert.equal(resolved.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.status, 'admitted');
+assert.equal(resolved.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.route, 'material_edit');
+assert.equal(resolved.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.status, 'fallback_only');
+assert.equal(resolved.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.executable, true,
+  '复杂动作只能执行素材化功能替代，不能表示原动作已可生成');
+assert.deepEqual(resolved.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.unsupportedRequirements,
+  ['person_product_interaction_control', 'face_contact_control']);
+assert.deepEqual(resolved.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.fallbackRoutes, [],
+  '用户实拍只能主动选择，不能成为复杂镜头的自动兜底');
+assert.equal(resolved.referenceVideoAnalysis.hookAnalysis?.sourceStrategy, 'motion_graphics',
+  '产品上脸不得继续路由为可完成产品接触的数字人');
+assert.equal(resolved.replicationScript.shots[0]?.materialPlan.sourceStrategy, 'motion_graphics');
 assert.equal(resolved.replicationScript.hookOptions.every(option => option.spokenLine === null), true,
   '无原声 ASR 时三个钩子方案均不得编造口播');
+
+function packageWithFirstShot(firstShot: Record<string, unknown>) {
+  const analysis = JSON.parse(record.aiAnalysis);
+  analysis.gemini.scriptDetails15s[0] = firstShot;
+  return buildSocialTaskReferencePackage({
+    record: { ...record, aiAnalysis: JSON.stringify(analysis) },
+    source,
+    themeId: 'product_value',
+    verifiedContext: {
+      enterpriseName: '新企业', brandName: '新品牌', productName: '新产品',
+      facts: [], source: 'enterprise_product', confidence: 1,
+    },
+  });
+}
+
+const simplePresenter = packageWithFirstShot({
+  time: '0-3', purpose: '前三秒口播钩子', visual: '主播对镜口播', interaction: '人物对镜说话',
+  productUsage: 'none', shot: '人物近景', camera: '固定镜头', dialogue: '先看三个选择要点。', confidence: 0.96,
+});
+assert.equal(simplePresenter?.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.status, 'admitted');
+assert.equal(simplePresenter?.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.route, 'digital_human');
+assert.deepEqual(simplePresenter?.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.fallbackRoutes, ['material_edit']);
+assert.equal(simplePresenter?.referenceVideoAnalysis.hookAnalysis?.sourceStrategy, 'authorized_digital_presenter',
+  '简单数字人口播必须保持原有可执行路线');
+
+const simpleMaterial = packageWithFirstShot({
+  time: '0-3', purpose: '前三秒环境钩子', visual: '办公室墙面和自然光空镜', interaction: 'none',
+  productUsage: 'none', environment: '办公室', shot: '环境中景', camera: '固定镜头', confidence: 0.95,
+});
+assert.equal(simpleMaterial?.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.status, 'admitted');
+assert.equal(simpleMaterial?.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.route, 'material_edit');
+assert.equal(simpleMaterial?.referenceVideoAnalysis.hookAnalysis?.sourceStrategy, 'customer_real_asset',
+  '单纯素材镜头必须保持素材剪辑路线');
+
+const factoryInteraction = packageWithFirstShot({
+  time: '0-3', purpose: '前三秒工厂钩子', visual: '工人在工厂操作灌装设备',
+  interaction: '人物操作生产线设备', productUsage: 'none', environment: '工厂产线',
+  shot: '人物中景', camera: '固定镜头', confidence: 0.95,
+});
+assert.equal(factoryInteraction?.referenceVideoAnalysis.hookAnalysis?.capabilitySignature?.requiresEnvironmentInteraction, true);
+assert.equal(factoryInteraction?.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.status, 'fallback_only');
+assert.equal(factoryInteraction?.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.route, 'material_edit');
+assert.ok(factoryInteraction?.referenceVideoAnalysis.hookAnalysis?.productionAdmission?.unsupportedRequirements
+  .includes('environment_interaction_control'));
+assert.notEqual(factoryInteraction?.referenceVideoAnalysis.hookAnalysis?.sourceStrategy, 'authorized_digital_presenter',
+  '工厂设备交互不得路由为数字人可完成镜头');
 
 const timedAnalysis = JSON.parse(record.aiAnalysis);
 timedAnalysis.gemini.audioTranscript = { segments: [

@@ -88,7 +88,7 @@ export interface VideoPreproductionPreview {
       name: string;
       type: 'image' | 'video';
       previewUrl: string;
-      status: 'ready' | 'missing' | 'pending_shoot' | 'needs_authorization';
+      status: 'ready' | 'missing' | 'pending_shoot' | 'needs_authorization' | 'system_planned';
     }>;
     storyboard?: Array<{
       materialType: BenchmarkMaterialType;
@@ -98,7 +98,10 @@ export interface VideoPreproductionPreview {
       referenceFirstFrameUrl: string;
       materialId: string;
       materialPreviewUrl: string;
-      status: 'ready' | 'missing' | 'pending_shoot' | 'needs_authorization';
+      status: 'ready' | 'missing' | 'pending_shoot' | 'needs_authorization' | 'system_planned';
+      supplyMode?: 'matched_asset' | 'system_fallback' | 'needs_input' | 'optional';
+      supplyRoute?: string;
+      supplyNote?: string;
     }>;
     blockers: string[];
     pendingShootTaskIds: string[];
@@ -229,7 +232,7 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
           name: String(item?.name || '').trim().slice(0, 240),
           type: item?.type === 'video' ? 'video' as const : 'image' as const,
           previewUrl: cleanPreviewUrl(item?.previewUrl),
-          status: ['ready', 'missing', 'pending_shoot', 'needs_authorization'].includes(String(item?.status)) ? item.status : 'missing',
+          status: ['ready', 'missing', 'pending_shoot', 'needs_authorization', 'system_planned'].includes(String(item?.status)) ? item.status : 'missing',
         })) : [],
         storyboard: Array.isArray(preview.materials?.storyboard) ? preview.materials.storyboard.slice(0, 30).map(item => ({
           materialType: ['talking_head', 'factory', 'product', 'consumer_demo', 'general', 'unknown'].includes(String(item?.materialType)) ? item.materialType : 'unknown',
@@ -239,7 +242,16 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
           referenceFirstFrameUrl: cleanPreviewUrl(item?.referenceFirstFrameUrl),
           materialId: String(item?.materialId || '').trim().slice(0, 160),
           materialPreviewUrl: cleanPreviewUrl(item?.materialPreviewUrl),
-          status: ['ready', 'missing', 'pending_shoot', 'needs_authorization'].includes(String(item?.status)) ? item.status : 'missing',
+          status: ['ready', 'missing', 'pending_shoot', 'needs_authorization', 'system_planned'].includes(String(item?.status)) ? item.status : 'missing',
+          ...(['matched_asset', 'system_fallback', 'needs_input', 'optional'].includes(String(item?.supplyMode))
+            ? { supplyMode: item.supplyMode }
+            : {}),
+          ...(String(item?.supplyRoute || '').trim()
+            ? { supplyRoute: String(item?.supplyRoute || '').trim().slice(0, 160) }
+            : {}),
+          ...(String(item?.supplyNote || '').trim()
+            ? { supplyNote: String(item?.supplyNote || '').trim().slice(0, 500) }
+            : {}),
         })) : [],
         blockers: cleanList(preview.materials?.blockers, 20, 500),
         pendingShootTaskIds: cleanList(preview.materials?.pendingShootTaskIds, 20, 160),

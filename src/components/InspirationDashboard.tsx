@@ -703,15 +703,15 @@ function tokenizeForMatch(...values: string[]): string[] {
 function shootingSuggestion(detail: ScriptDetail15s): string {
   const text = `${detail.visual} ${detail.subtitle}`.toLowerCase();
   if (/face|脸|skin|肤|acne|dry|保湿|护肤|洁面|妆|唇|lip/.test(text)) {
-    return '建议补拍真人上脸/手部使用镜头：自然光，9:16，近景或中近景，动作包含涂抹、展示肤感或前后对比。';
+    return '优先匹配已有的人物动作素材或数字人/合成路线；只有镜头必须承担真实使用效果证据且无可替代证据时，才建议用户自愿补拍。';
   }
   if (/package|包装|logo|brand|瓶|罐|产品|product|texture|质地/.test(text)) {
-    return '建议补拍产品特写：干净桌面，正面包装、Logo、质地挤出/涂抹各一条，保留 2 秒稳定画面方便剪辑。';
+    return '优先使用清晰产品图、标签稿与确定性像素合成锁定身份，再由现有动效或 AIGC 能力补充环境和运动；实拍仅作可选兜底。';
   }
   if (/factory|工厂|warehouse|生产|发货|ship|proof|证明/.test(text)) {
-    return '建议补拍工厂/履约证明镜头：包装线、库存、打包、发货单或质检动作，横竖屏各留一版。';
+    return '优先检索已授权或可复用的工厂/履约场景底板；若没有客户真实证据则改写为流程说明，不把通用画面包装成客户工厂。';
   }
-  return '建议补拍与该分镜描述一致的 3-5 秒短素材：主体明确、背景干净、动作从静态展示到轻微移动。';
+  return '优先从企业素材、共享素材、动效、数字人与已接入 AIGC 能力中选择可执行路线；实拍是用户主动选择的补充方式。';
 }
 
 function parseFrameTimeRange(time: string): { start: number; end: number; duration: number } {
@@ -800,15 +800,14 @@ function replicabilityForFrame(detail: ScriptDetail15s, dna: FrameMaterialMatch[
   const aiFeasibility: FrameMaterialMatch['replicability']['aiFeasibility'] = exactProduct ? 'low' : humanAction ? 'medium' : 'high';
   const localCoverage = matched ? Math.max(0, Math.min(100, matched.score)) : 0;
   const blockers = [...(matched?.risks || [])];
-  if (!matched && exactProduct) blockers.push('缺少可验证的真实产品片段');
-  if (!matched && humanAction) blockers.push('缺少符合动作与景别的真人素材');
+  if (!matched && exactProduct) blockers.push('缺少可锁定产品身份的图片或视频');
+  if (!matched && humanAction) blockers.push('缺少可直接复用的人物动作素材，需由系统选择数字人、素材或合成路线');
   if (dna.authenticityRequired && !matched?.segment.manualConfirmed) blockers.push('真实性要求尚未人工确认');
   const uniqueBlockers = Array.from(new Set(blockers));
   const recommendedExecution: FrameMaterialMatch['replicability']['recommendedExecution'] = matched && status === 'high' ? 'local'
-    : matched && aiFeasibility === 'low' ? 'local_plus_reshoot'
     : matched ? 'local_plus_ai'
     : aiFeasibility === 'high' ? 'ai'
-    : aiFeasibility === 'medium' ? 'reshoot' : 'reshoot';
+    : 'system_route';
   let score = Math.round(localCoverage * .65 + (aiFeasibility === 'high' ? 28 : aiFeasibility === 'medium' ? 18 : 6) + (dna.replaceable.length ? 8 : 0));
   if (dna.authenticityRequired && !matched?.segment.manualConfirmed) score = Math.min(score, 59);
   return { score: Math.max(0, Math.min(100, score)), localCoverage, aiFeasibility, recommendedExecution, blockers: uniqueBlockers.slice(0, 4) };
@@ -875,7 +874,7 @@ function matchMaterialsToFrames(details: ScriptDetail15s[], materials: Material[
     const replicability = replicabilityForFrame(detail, dna, matched, status);
     const decision: FrameMaterialMatch['decision'] = viralPotential.score >= 70 && replicability.score >= 70 ? 'copy_now'
       : viralPotential.score >= 70 && replicability.aiFeasibility === 'high' ? 'ai_generate'
-      : viralPotential.score >= 70 ? 'prioritize_reshoot'
+      : viralPotential.score >= 70 ? 'route_required'
       : replicability.score >= 60 ? 'supporting_only' : 'drop';
     return {
       detail,
@@ -885,7 +884,7 @@ function matchMaterialsToFrames(details: ScriptDetail15s[], materials: Material[
       scores: matched?.scores,
       trim: matched?.trim,
       reason: status === 'pending_analysis' ? '现有视频尚未完成片段级分析，不能生成可信截取建议'
-        : matched ? `按镜头功能、动作节拍、主体、构图与运镜匹配真实片段` : '没有片段通过硬条件，请补拍或人工选择',
+        : matched ? `按镜头功能、动作节拍、主体、构图与运镜匹配真实片段` : '没有片段通过硬条件，需由系统在素材复用、合成、AIGC 与可选实拍之间选路',
       risks: matched?.risks ?? [],
       suggestion: shootingSuggestion(detail),
       status,
@@ -1740,7 +1739,7 @@ function AnalysisPanel({ video, onGenerateScript, onPersonReplace, onRetry, onEx
                         </div>
                       </details>
 
-                      {!hasMaterial && match.replicability.recommendedExecution === 'reshoot' && <p className="mt-2 rounded-lg bg-white px-2.5 py-2 text-[10px] font-bold text-amber-700">待拍任务：{match.suggestion}</p>}
+                      {!hasMaterial && match.replicability.recommendedExecution === 'system_route' && <p className="mt-2 rounded-lg bg-white px-2.5 py-2 text-[10px] font-bold text-amber-700">待生产选路：{match.suggestion}。优先复用、合成或生成，实拍仅作为可选补充。</p>}
                     </div>
                   );
                 })}
@@ -3181,7 +3180,7 @@ export function DirectorVideoDetailPanel({
           {video.tags.map(tag => <span key={tag} className="rounded-md border border-border bg-accent-glow px-2 py-1 text-xs font-semibold text-accent">#{tag}</span>)}
         </div>}
       </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
           {isImagePost && notice && <p role="status" className="mb-4 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">{notice}</p>}
           {isImagePost && imageAnalysisReady && imageEvidence ? (
             <div className="mt-4 space-y-4">
@@ -3376,7 +3375,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [materialUploadDialogOpen, setMaterialUploadDialogOpen] = useState(false);
   const [importingReference, setImportingReference] = useState(false);
   const referenceUploadInputRef = useRef<HTMLInputElement | null>(null);
-  const [generatingNeedId, setGeneratingNeedId] = useState('');
   const { scriptGapTasks, shootingTaskError: _shootingTaskError } = useScriptGapTasks();
   const [uploadingScriptGapId, setUploadingScriptGapId] = useState('');
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -3564,7 +3562,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       setMaterialProductFilterEnabled(true);
       setMaterialProductId(matched.id);
       setMaterialProductRef(matched.name);
-      setUploadProductId(current => current ?? matched.id);
+      setUploadProductId(current => current || matched.id);
     }).catch(() => undefined);
     return () => { active = false; };
   }, [materialEntry.productId, materialEntry.productRef]);
@@ -3960,11 +3958,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
   const handleUploadMaterials = async (files: FileList | null) => {
     if (!files?.length) return;
-    if (!uploadProductId) {
-      setMaterialMessage('请先选择素材对应的产品；产品素材必须与产品表中的产品一一绑定。');
-      if (uploadInputRef.current) uploadInputRef.current.value = '';
-      return;
-    }
     setUploadingMaterial(true);
     setMaterialMessage('');
     try {
@@ -3983,18 +3976,20 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           name: result.material.name || file.name,
           tags: materialOwnershipTags(result.material.tags, uploadProductId),
           productId: uploadProductId,
+          enterpriseCommon: !uploadProductId,
         });
-        if (!linked.ok) throw new Error(`「${file.name}」已上传，但产品归属保存失败，请在素材卡片中编辑后重试`);
+        if (!linked.ok) throw new Error(`「${file.name}」已上传，但素材归属保存失败，请在素材卡片中编辑后重试`);
         uploadedIds.push(result.material.id);
         if (type === 'video' && result.material?.id) uploadedVideos.push(result.material);
       }
-      setMaterialMessage(uploadedVideos.length ? `已上传，正在分析 ${uploadedVideos.length} 个视频的可用片段…` : `已上传 ${files.length} 个素材到社媒素材库`);
+      const ownershipLabel = uploadProductId ? '指定产品素材' : '企业通用素材';
+      setMaterialMessage(uploadedVideos.length ? `已作为${ownershipLabel}上传，正在分析 ${uploadedVideos.length} 个视频的可用片段…` : `已上传 ${files.length} 个${ownershipLabel}`);
       await refreshMaterials();
       window.dispatchEvent(new Event('lingshu:materials-updated'));
       if (uploadingScriptGapId && uploadedIds.length) await updateScriptGapTask(uploadingScriptGapId, { uploadedMaterialIds: uploadedIds });
       setMaterialMessage(uploadedVideos.length
-        ? `已上传 ${files.length} 个素材，视频已进入分析队列，可在素材卡片查看进度`
-        : `已上传 ${files.length} 个素材到社媒素材库`);
+        ? `已上传 ${files.length} 个${ownershipLabel}，视频已进入分析队列，可在素材卡片查看进度`
+        : `已上传 ${files.length} 个${ownershipLabel}`);
       setTimeout(() => setMaterialMessage(''), 2800);
     } catch (e) {
       setMaterialMessage(e instanceof Error ? e.message : '素材上传失败');
@@ -4011,32 +4006,24 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setMaterialUploadDialogOpen(true);
   };
 
-  const generateNeedMaterial = async (item: ShootingNeed | ScriptGapTask) => {
+  const routeProductionNeed = (item: ShootingNeed | ScriptGapTask) => {
     const title = item.title;
     const ratio = item.ratio || '9:16';
-    setGeneratingNeedId(item.id);
-    setMaterialMessage(`正在生成“${title}”，通常需要几分钟；可以留在本页等待结果。`);
-    try {
-      const output = await studioApi.seedanceVideo({
-        script: 'origin' in item
-          ? `${item.title}\n拍摄要求：${item.shotBrief}\n产品：${item.productLabel}\n主题：${item.themeTitle}\n输出 ${ratio} 视频素材。`
-          : `${item.title}\n${item.suggestion}\n参考分镜：${item.example?.visual || ''}\n输出 ${ratio} 社媒短视频素材。`,
-        productInfo: 'origin' in item ? item.productLabel : item.suggestion,
-        language: 'zh',
-        ratio,
-        duration: 5,
-        resolution: '720p',
-        title: `Seedance 2.0 待拍素材 · ${title}`,
-      });
-      if (!output.ok) throw new Error(output.error || 'Seedance 2.0 生成失败');
-      await refreshMaterials();
-      setMaterialMessage(`Seedance 2.0 已生成素材：${title}`);
-      setTimeout(() => setMaterialMessage(''), 2800);
-    } catch (e) {
-      setMaterialMessage(e instanceof Error ? e.message : 'Seedance 2.0 生成失败');
-    } finally {
-      setGeneratingNeedId('');
-    }
+    const requirement = 'origin' in item
+      ? `${item.shotBrief}；关联主题：${item.themeTitle}；主体：${item.productLabel || '未指定'}`
+      : `${item.suggestion}；参考画面：${item.example?.visual || '未提供'}`;
+    window.dispatchEvent(new CustomEvent('lingshu-assistant-open', { detail: {
+      context: {
+        agent: 'traffic',
+        label: '生产缺口协同',
+        summary: '灵小枢正在协助处理分镜生产缺口，优先复用素材、通用素材、确定性合成与现有 AIGC 能力，实拍是用户主动选择的补充路线。',
+        suggestions: ['为这个缺口选择最低成本路线', '列出系统可直接复用的素材', '说明还缺哪项最小输入', '估算本镜头成本与成功率'],
+      },
+      assistantText: `已接手“${title}”的生产选路。我会先核对现有素材与已接入能力，不会直接发起付费生成，也不会默认要求你实拍。`,
+      text: `请为以下镜头缺口制定可执行生产路线：${title}。要求：${requirement}。画幅 ${ratio}。请按“已有素材复用 → 已授权/开放素材 → 确定性合成或数字人 → 已接入 AIGC → 可选实拍”排序，明确真实产品/事实边界、预计成本、所需最小输入和失败后的降级路线；当前不要直接调用付费生成。`,
+    } }));
+    setMaterialMessage(`灵小枢已接手“${title}”的生产选路；当前不会直接产生生成费用。`);
+    setTimeout(() => setMaterialMessage(''), 3200);
   };
 
   const handlePlatformFilter = (nextPlatform: Platform) => {
@@ -4546,6 +4533,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           name: manageName.trim(),
           tags: materialOwnershipTags(manageTags.trim(), manageProductId),
           productId: manageProductId,
+          enterpriseCommon: !manageProductId,
         });
         if (!result.ok) throw new Error(result.error || '编辑失败');
         await refreshMaterials();
@@ -4721,7 +4709,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 { key: 'inspiration', label: `灵感发现 · ${tenantVideoTotalItems ?? '…'}`, icon: <Flame size={16} /> },
                 { key: 'library', label: `我的素材 · ${localMaterials.length}`, icon: <Film size={16} /> },
                 { key: 'accounts', label: `对标账号 · ${competitorAccountCount ?? '…'}`, icon: <Users size={16} /> },
-                { key: 'shooting', label: `拍摄任务 · ${shootingNeeds.length + scriptGapTasks.length}`, icon: <Lightbulb size={16} /> },
+                { key: 'shooting', label: `生产缺口 · ${shootingNeeds.length + scriptGapTasks.length}`, icon: <Lightbulb size={16} /> },
               ]} />
             {innerView === 'inspiration' && <AntUpload className="shrink-0 pt-1" accept="video/mp4,.mp4" showUploadList={false} disabled={importingReference} beforeUpload={file => { void importReferenceVideo(file); return false; }}>
               <Button type="primary" loading={importingReference} icon={<Upload size={15} />}>导入 MP4 并分析</Button>
@@ -4927,7 +4915,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                     <Film size={30} className="mx-auto mb-3 text-text-muted opacity-50" />
                     <p className="text-sm font-bold text-text-primary">还没有本地社媒素材</p>
-                    <p className="mt-1 text-xs text-text-muted">拍摄完成后上传，或从待拍摄素材池用 Seedance 2.0 生成。</p>
+                    <p className="mt-1 text-xs text-text-muted">可上传企业通用素材或具体产品素材；生产缺口会先由系统匹配复用、合成和已接入生成能力。</p>
                   </div>
                 ) : filteredMaterials.length === 0 ? (
                   <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
@@ -5067,8 +5055,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-3">
                 {[
-                  { label: '待拍摄缺口', value: shootingNeeds.length + scriptGapTasks.length, color: 'text-accent' },
-                  { label: '高频需求', value: shootingNeeds.length, color: 'text-accent' },
+                  { label: '待选路缺口', value: shootingNeeds.length + scriptGapTasks.length, color: 'text-accent' },
+                  { label: '高频可复用需求', value: shootingNeeds.length, color: 'text-accent' },
                   { label: '已入库素材', value: localMaterials.length, color: 'text-accent' },
                 ].map(item => (
                   <div key={item.label} className="card p-4">
@@ -5080,7 +5068,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               <div className="grid grid-cols-3 gap-2" role="group" aria-label="筛选待拍清单">
                 {([
                   ['all', '全部', shootingNeeds.length + scriptGapTasks.length],
-                  ['storyboard', '分镜补拍', scriptGapTasks.length],
+                  ['storyboard', '分镜缺口', scriptGapTasks.length],
                   ['common', '高频需求', shootingNeeds.length],
                 ] as const).map(([key, label, count]) => (
                   <button key={key} type="button" aria-pressed={shootingFilter === key} onClick={() => setShootingFilter(key)}
@@ -5089,11 +5077,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   </button>
                 ))}
               </div>
-              <input ref={shootingCameraInputRef} aria-label="拍摄待拍任务素材" type="file" accept="video/*" capture="environment" className="hidden" onChange={event => { void handleUploadMaterials(event.currentTarget.files); event.currentTarget.value = ''; }}/>
+              <input ref={shootingCameraInputRef} aria-label="为生产缺口补充实拍素材" type="file" accept="video/*" capture="environment" className="hidden" onChange={event => { void handleUploadMaterials(event.currentTarget.files); event.currentTarget.value = ''; }}/>
               {visibleShootingCards.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                   <Check size={30} className="mx-auto mb-3 text-accent" />
-                  <p className="text-sm font-bold text-text-primary">当前筛选下没有待拍摄缺口</p>
+                  <p className="text-sm font-bold text-text-primary">当前筛选下没有待处理的生产缺口</p>
                   <p className="mt-1 text-xs text-text-muted">可以切换上方筛选查看其他需求。</p>
                 </div>
               ) : (
@@ -5106,7 +5094,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent">{task ? '分镜补拍' : '高频需求'}</span>
+                            <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent">{task ? '分镜缺口' : '高频需求'}</span>
                             <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{need?.ratio || task?.ratio || '9:16'}</span>
                             <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{need ? <><SocialPlatformIcon platform={need.platform} size={12} />{getPlatformMeta(need.platform).label}</> : '内容制作'}</span>
                           </div>
@@ -5118,9 +5106,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         <div className="flex shrink-0 flex-col items-end gap-2">
                           {latestShootingCardIds.has(card.id) && <span role="img" aria-label="最新待拍任务" title="最新待拍任务" className="text-sm leading-none">❗</span>}
                           <div className="flex flex-wrap justify-end gap-2">
-                            <button type="button" disabled={uploadingMaterial} onClick={() => { setUploadingScriptGapId(task?.id || ''); shootingCameraInputRef.current?.click(); }} className="rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50">去拍摄</button>
-                            <button type="button" onClick={() => requestMaterialUpload(task?.id || '')} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary">去上传</button>
-                            <button type="button" onClick={() => void generateNeedMaterial(task || need!)} disabled={generatingNeedId === card.id} className="inline-flex items-center gap-1 rounded-lg border border-accent/30 bg-white px-3 py-2 text-xs font-bold text-accent disabled:opacity-50">{generatingNeedId === card.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}{generatingNeedId === card.id ? '生成中' : 'AI生成素材'}</button>
+                            <Button type="primary" size="small" icon={<Sparkles size={12} />} onClick={() => routeProductionNeed(task || need!)}>让灵小枢选路</Button>
+                            <button type="button" onClick={() => requestMaterialUpload(task?.id || '')} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary">上传现有素材</button>
+                            <button type="button" disabled={uploadingMaterial} onClick={() => { setUploadingScriptGapId(task?.id || ''); shootingCameraInputRef.current?.click(); }} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary disabled:opacity-50">可选实拍</button>
                             {task && task.uploadedMaterialIds.length > 0 && task.sourceProjectId && <a href={`?page=smartAssets&project=${encodeURIComponent(task.sourceProjectId)}`} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary">返回分镜</a>}
                           </div>
                         </div>
@@ -5168,23 +5156,21 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         width={480}
         okText="选择文件"
         cancelText="取消"
-        okButtonProps={{ disabled: !uploadProductId }}
         onCancel={() => setMaterialUploadDialogOpen(false)}
         onOk={() => {
-          if (!uploadProductId) return;
           setMaterialUploadDialogOpen(false);
           uploadInputRef.current?.click();
         }}
       >
         <label className="block text-xs font-semibold text-text-secondary">
-          关联产品<span className="sr-only">本次上传必须关联产品</span>
+          素材归属（可选）<span className="sr-only">可关联产品，也可作为企业通用素材上传</span>
           <Select
             aria-label="本次上传素材归属"
             className="mt-2 w-full"
-            value={uploadProductId || undefined}
-            placeholder="选择关联产品（必选）"
+            value={uploadProductId}
             onChange={setUploadProductId}
             options={[
+              { value: '', label: '企业通用素材（不绑定产品）' },
               ...(materialProductId && materialProductRef && !materialProducts.some(item => item.id === materialProductId)
                 ? [{ value: materialProductId, label: materialProductRef }]
                 : []),
@@ -5192,6 +5178,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             ]}
           />
         </label>
+        <p className="mt-3 text-xs leading-5 text-text-muted">工厂、展会、办公、人物动作和通用转场等素材可直接作为企业通用素材；只有需要锁定具体商品身份时才关联产品。</p>
       </Modal>
       {manageTarget && (
         <Modal open title={`${manageTarget.action === 'delete' ? '删除' : '编辑'}${manageTarget.kind === 'video' ? '爆款视频' : '素材'}`}

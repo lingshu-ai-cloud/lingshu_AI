@@ -146,5 +146,8 @@ const routedDuplicatePlan = buildSocialProductionPlan({
 assert.equal(routedDuplicatePlan.ok, true, routedDuplicatePlan.message);
 assert.equal(routedDuplicatePlan.scenes.length, baseline.scenes.length,
   '逐镜路由必须保留内容哈希相同但场景身份不同的合法视频');
+assert.equal(routedDuplicatePlan.maxDuration, 5.6,
+  '没有参考视频时间码时，逐镜生成结果必须使用实际媒体时长建立非零时间线');
+assert.equal(routedDuplicatePlan.scenes.every(scene => scene.clip.sourceDuration === 2.8), true);
 
 console.log('social content production plan matching tests passed');

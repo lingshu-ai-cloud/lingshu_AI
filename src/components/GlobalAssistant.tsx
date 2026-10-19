@@ -52,6 +52,11 @@ import AssistantDecisionCenter, {
 } from './assistant/AssistantDecisionCenter';
 import type { AssistantDecisionDeepLink, AssistantDecisionFeed } from '../../shared/contracts/assistantDecisionCenter';
 import { assistantDecisionApi } from '../lib/assistantDecisionApi';
+import {
+  ASSISTANT_PRODUCTION_CONTEXT_EVENT,
+  type AssistantProductionContext,
+  type AssistantProductionContextEventDetail,
+} from '../lib/assistantProductionDecision';
 import { WEEKLY_WORK_UPDATED_EVENT } from '../lib/weeklyWorkEvents';
 import KnowledgeIntakePanel, { type AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import { studioApi } from '../lib/studioApi';
@@ -891,6 +896,7 @@ export default function GlobalAssistant({
   const [decisionDialog, setDecisionDialog] = useState<AssistantDecisionDialog>(null);
   const [decisionFeedRevision, setDecisionFeedRevision] = useState(0);
   const [decisionTotal, setDecisionTotal] = useState<number | null>(null);
+  const [productionDecisionContext, setProductionDecisionContext] = useState<AssistantProductionContext | null>(null);
   const activeAgent = PRIMARY_ASSISTANT_THREAD;
   const [assistantTool, setAssistantTool] = useState<AssistantTool | null>(null);
   const [liveContext, setLiveContext] = useState<AssistantContext | null>(null);
@@ -2298,6 +2304,21 @@ export default function GlobalAssistant({
   }, [currentPageAgent, openAgent, pageContext, send]);
 
   useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<AssistantProductionContextEventDetail>).detail;
+      if (detail?.context?.view.source === 'canonical_task' && detail.context.view.project.version) {
+        setProductionDecisionContext(detail.context);
+        return;
+      }
+      if (detail?.clearProjectId) {
+        setProductionDecisionContext(current => current?.view.project.id === detail.clearProjectId ? null : current);
+      }
+    };
+    window.addEventListener(ASSISTANT_PRODUCTION_CONTEXT_EVENT, handler);
+    return () => window.removeEventListener(ASSISTANT_PRODUCTION_CONTEXT_EVENT, handler);
+  }, []);
+
+  useEffect(() => {
     if (!kickoff || handledKickoffs.current.has(kickoff.key)) return;
     handledKickoffs.current.add(kickoff.key);
     void send(kickoff.text, orbitIdForAgent(kickoff.agent, currentPageAgent));
@@ -2740,6 +2761,7 @@ export default function GlobalAssistant({
                       <AssistantDecisionCenter
                         page={page}
                         goalId={pageContext.goalId}
+                        productionContext={productionDecisionContext}
                         key={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:summary:${decisionFeedRevision}`}
                         active={mode === 'chat' && panelView === 'chat'}
                         onOpenChat={returnToConversation}
@@ -2915,6 +2937,7 @@ export default function GlobalAssistant({
             <AssistantDecisionCenter
               page={page}
               goalId={pageContext.goalId}
+              productionContext={productionDecisionContext}
               key={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:dialog`}
               active
               onOpenChat={closeDecisionDialog}
@@ -3043,7 +3066,7 @@ export default function GlobalAssistant({
               <Bot size={15} />
             </span>
           )}
-          className="!flex !h-11 !w-11 !gap-0 !border-border !bg-surface !px-2 !text-text-primary shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2 sm:!w-auto sm:!gap-2 sm:!px-3.5"
+          className="!flex !h-11 !w-11 !gap-0 !border-border !bg-white !px-2 !text-text-primary shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow active:!bg-white focus-visible:!bg-white focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2 sm:!w-auto sm:!gap-2 sm:!px-3.5"
           title={mode === 'chat' ? '收起灵小枢对话' : '询问灵小枢'}
         >
           <span className="ls-type-label-large hidden whitespace-nowrap sm:inline">询问灵小枢</span>

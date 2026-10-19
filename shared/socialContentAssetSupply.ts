@@ -541,22 +541,67 @@ function generalStrategy(
     };
   }
 
-  // Any visible person belongs to the digital-presenter route. When the
-  // person interacts with a product, freeze the same product-scene identity
-  // references into the shot so the presenter executor cannot silently swap
-  // products.
+  // The current presenter stack is a talking-person capability, not a
+  // physical product-contact capability. Preserve the narrative function with
+  // an exact product cutaway (or existing material) instead of submitting an
+  // impossible presenter job and failing after payment.
+  if (signals.personUsesProduct) {
+    const productRefs = buildSocialProductSceneReplicationSpec({ shot, inventory, referenceShots })
+      .productIdentity.groups.flatMap(group => group.referenceImageIds);
+    if (productRefs.length > 0) {
+      return {
+        strategy: 'customer_product_image_animation',
+        refs: productRefs,
+        instruction: '当前数字人不承担持握、涂抹或使用产品等物理接触；改用真实产品图片完成精确产品特写，并与人物口播或动作镜头分切，不得描述为已生成完整人货交互',
+      };
+    }
+    if (inventory.customerVideoIds.length > 0) {
+      return {
+        strategy: 'customer_real_asset',
+        refs: inventory.customerVideoIds,
+        instruction: '从已入库视频中选择可承担动作语义的片段；不得把非对应产品或无接触素材描述为已完成精确人货交互',
+      };
+    }
+    return {
+      strategy: 'motion_graphics',
+      refs: confirmedFactRefs,
+      instruction: '当前缺少精确产品资料且数字人不支持物理产品接触；使用动态图文保留说明功能，并请求最小产品图片资料，不创建伪人货交互镜头',
+    };
+  }
+
+  // A person shown operating a factory or its equipment is also outside the
+  // verified talking-presenter scope. Prefer existing environment footage and
+  // never move this interaction into the presenter adapter.
+  if (signals.hasPerson && signals.factory) {
+    if (inventory.customerVideoIds.length > 0) {
+      return {
+        strategy: 'customer_real_asset',
+        refs: inventory.customerVideoIds,
+        instruction: '使用已入库的工厂或人物工作片段承担环境与动作语义；不得把通用画面表述为客户真实工厂证据',
+      };
+    }
+    if (inventory.licensedStockAssetIds.length > 0) {
+      return {
+        strategy: 'licensed_stock_asset',
+        refs: inventory.licensedStockAssetIds,
+        instruction: '使用已入库且可编辑的共享工厂素材承担环境语义；不得暗示为客户真实工厂或让数字人伪装设备交互',
+      };
+    }
+    return {
+      strategy: 'motion_graphics',
+      refs: confirmedFactRefs,
+      instruction: '当前没有可用工厂人物素材；用示意图文保留说明功能，不调用数字人伪造工厂设备交互',
+    };
+  }
+
+  // Remaining visible-person scenes stay on the mature presenter route.
   if (signals.hasPerson) {
     return {
       strategy: 'authorized_digital_presenter',
       refs: presenterLockReady(accountPresenterLock)
         ? [accountPresenterLock.presenterAssetId]
         : inventory.presenterAssetIds,
-      instruction: signals.personUsesProduct
-        ? '使用数字人完成人物与产品的动作和接触关系；必须传递动作、交互、产品、环境、镜头与时序控制，当前 provider 不支持时必须显式停止'
-        : '使用数字人完成人物出镜，传递表演、环境、镜头与时序控制，不得用图形卡片伪装为已生成人物镜头',
-      ...(signals.personUsesProduct && inventory.productImageIds.length > 0 ? {
-        productSceneReplication: buildSocialProductSceneReplicationSpec({ shot, inventory, referenceShots }),
-      } : {}),
+      instruction: '使用数字人完成人物口播，传递表演、环境、镜头与时序控制，不得用图形卡片伪装为已生成人物镜头',
     };
   }
 
@@ -716,12 +761,28 @@ function planShot(
   }
   const noFreeMaterial = productionApproach === 'material_cut'
     && !selected.refs.length;
+  const normalizedVisualContract = normalizeSceneVisualContract(shot.visualContract ?? referenceShot(shot, referenceShots)?.visualContract ?? {
+    productPolicy: shot.productPolicy,
+    productRef: shot.productRef,
+  });
+  const requestedProductRef = String(normalizedVisualContract.product.requestedProductRef
+    || normalizedVisualContract.productUsage.productRef || shot.productRef || '').normalize('NFKC').trim().toLocaleLowerCase();
   const lockedProductUnavailable = Boolean(selected.productSceneReplication
-    && selected.productSceneReplication.productIdentity.groups.length === 0);
+    && selected.productSceneReplication.productIdentity.groups.length === 0) || (
+    normalizedVisualContract.product.policy === 'locked'
+      && Boolean(requestedProductRef)
+      && !inventory.productIdentityGroups.some(group => (
+        group.productRef.normalize('NFKC').trim().toLocaleLowerCase() === requestedProductRef
+        && group.imageIds.length > 0
+      ))
+  );
+  const usesFunctionalEquivalent = signals.personUsesProduct || (signals.hasPerson && signals.factory);
   const realFactoryBackgroundMissing=selected.materialRouting?.policy==='authorized_presenter'&&subject==='customer_factory'&&selected.materialRouting.localMatch.state!=='matched';
   const selectedSegment=selected.materialRouting?.localMatch.state==='matched'?shot.selectedMaterialSegment:materialRoutingPolicyVersion==='type-aware.v1'&&selected.strategy==='customer_real_asset'?selectVerifiedSocialMaterialSegment(shot,selected.refs):undefined;
   const feasibility = noFreeMaterial || lockedProductUnavailable || selected.blocked || realFactoryBackgroundMissing
     ? 'goal_degraded'
+    : usesFunctionalEquivalent
+      ? 'functional_equivalent'
     : selected.strategy === 'customer_real_asset' || selected.strategy === 'customer_product_image_animation'
       || selected.strategy === 'aigc_product_scene_replication'
       ? 'full_fidelity'
@@ -735,7 +796,10 @@ function planShot(
     ...(frozenReferenceRouting ? { referenceProductionRouting: frozenReferenceRouting } : {}),
     sourceRefs: selected.refs,
     ...(selectedSegment?{selectedMaterialSegment:structuredClone(selectedSegment)}:{}),
-    fallbackSourceStrategy: referenceRouting || selected.materialRouting ? null : fallbackFor(selected.strategy, productionApproach),
+    fallbackSourceStrategy: referenceRouting || selected.materialRouting
+      || (usesFunctionalEquivalent && selected.strategy === 'motion_graphics')
+      ? null
+      : fallbackFor(selected.strategy, productionApproach),
     productionInstruction: selected.instruction,
     truthBoundary: {
       subject,
@@ -747,17 +811,27 @@ function planShot(
       prohibitedRepresentations: prohibitionsFor(subject),
     },
     functionalEquivalentReplacement: {
-      required: false,
+      required: usesFunctionalEquivalent,
       preservesFunction: shot.function,
-      replacesSubject: null,
-      description: null,
-      reason: null,
+      replacesSubject: usesFunctionalEquivalent && subject !== 'none' ? subject : null,
+      description: signals.personUsesProduct
+        ? '将人物动作或口播与独立精确产品特写分切，保留表达功能但不伪装完整人货接触'
+        : signals.hasPerson && signals.factory
+          ? '使用已有工厂环境素材或示意画面保留生产语义，不让数字人伪装设备操作'
+          : null,
+      reason: signals.personUsesProduct
+        ? '当前数字人执行器不支持可靠的物理产品接触'
+        : signals.hasPerson && signals.factory
+          ? '当前数字人执行器不支持可靠的工厂设备交互'
+          : null,
     },
     feasibility,
     feasibilityReason: feasibility === 'full_fidelity'
       ? '已有客户素材，可在不改变真实主体的情况下完整实现'
       : feasibility === 'functional_equivalent'
-        ? '可使用当前已入库素材或已配置生成能力完成该镜头'
+        ? usesFunctionalEquivalent
+          ? '当前完整交互不在已验收范围，系统将使用素材或拆镜保留表达功能'
+          : '可使用当前已入库素材或已配置生成能力完成该镜头'
         : realFactoryBackgroundMissing
           ? '真人口播仍需绑定真实本地工厂背景；不允许数字人 provider 虚构工厂，无法复合时必须停止'
         : selected.blocked

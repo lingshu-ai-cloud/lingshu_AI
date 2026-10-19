@@ -67,10 +67,25 @@ import { inferStoryboardTopic, STORYBOARD_TOPIC_LABELS, type StoryboardTopic } f
 import { matchStoryboardNamedPersonImage, storyboardNamedPersonConsentReady, storyboardNamedPersonRequired } from '../lib/storyboardNamedPersonReference';
 import ShootingTaskDialog from './ShootingTaskDialog';
 import ShotProductionPanel from './ShotProductionPanel';
+import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import DigitalHumanProductionOverview from './studio/DigitalHumanProductionOverview';
 import RenderedVideoPlayer from './RenderedVideoPlayer';
-import { applyDefaultsToUnlockedAvatarShots, avatarCandidateReady, automaticAvatarRefreshes, EMPTY_DEFAULTS, normalizeMaterialAudio, newShotProduction, patchShot, presenterCapabilities, shotFingerprint, shotBlockers, recommendShot, productionSummary, type ShotProduction, type ProductionDefaults, type AvatarJob, type AppearancePreference } from '../lib/shotProduction';
+import { applyDefaultsToUnlockedAvatarShots, avatarCandidateReady, automaticAvatarRefreshes, EMPTY_DEFAULTS, normalizeMaterialAudio, newShotProduction, patchShot, presenterCapabilities, presenterProductionGate, shotFingerprint, shotBlockers, recommendShot, productionSummary, type ShotProduction, type ProductionDefaults, type AvatarJob, type AppearancePreference } from '../lib/shotProduction';
 import { productionApi } from '../lib/productionApi';
+import {
+  adaptStudioBatchRoutesToProductionReadView,
+  canonicalProductionMatchesStudio,
+  canonicalProductionReadView,
+  productionCommandAllowed,
+  productionIdentityLabel,
+  productionRouteLabel,
+  productionShotForSlot,
+  productionStatusLabel,
+  productionStatusTone,
+  type ProductionReadView,
+  type StudioAigcBudgetPreview,
+} from '../lib/productionReadModel';
+import { publishAssistantProductionContext, type AssistantProductionContext } from '../lib/assistantProductionDecision';
 import { matchEvidenceSegment, usableEvidenceSegment } from '../lib/segmentEvidence';
 import { spokenText } from '../lib/narrationAlignment';
 import {
@@ -104,6 +119,7 @@ import { normalizeBenchmarkAnalysisSnapshot, type BenchmarkAnalysis } from '../.
 import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission';
 import { reconcileStudioProductionSpec } from '../../shared/studioProductionContract';
 import { attachStudioSocialShotIdentities, normalizeStudioSocialShotId, resolveStudioSocialShot } from '../lib/studioSocialShotIdentity';
+import { studioAutosaveFingerprint, studioDraftChanged } from '../lib/studioAutosave';
 export { StudioRequestTimeoutError, waitForStudioMediaReady, withStudioTimeout } from './studio/studioAuthenticatedMedia';
 // AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
 const STUDIO_ACCENT = 'var(--color-accent)';
@@ -3184,6 +3200,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [productionPlans, setProductionPlans] = useState<DigitalHumanPlanRecord[]>([]);
   const [productionExecutions, setProductionExecutions] = useState<DigitalHumanExecutionRecord[]>([]);
   const [serverShotRoutes, setServerShotRoutes] = useState<{ projectId: string; routes: Record<string, 'presenter' | 'motion' | 'material'> }>({ projectId: '', routes: {} });
+  const [canonicalProductionView, setCanonicalProductionView] = useState<ProductionReadView | null>(null);
+  const [studioProductionView, setStudioProductionView] = useState<ProductionReadView | null>(null);
   const [productionSentenceResults, setProductionSentenceResults] = useState<Record<string, import('../lib/digitalHumanPlan').SentenceReplicationResult>>({});
   const [socialDigitalHumanPlans, setSocialDigitalHumanPlans] = useState<StudioSocialTaskSeed['digitalHumanShotPlans']>([]);
   const productionRefreshInFlight = useRef(new Set<string>());
@@ -3198,7 +3216,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [renderAfterVoiceoverLanguage, setRenderAfterVoiceoverLanguage] = useState('');
   const [effectSoundsOn, setEffectSoundsOn] = useState(true);
   const [batchShotSummary, setBatchShotSummary] = useState<{ submitted: number; matched: number; needsMaterial: number; blocked: number } | null>(null);
-  const [aigcBudgetPreview, setAigcBudgetPreview] = useState<{ aigcShots: number; totalShots: number; aigcShotRatio: number; estimate480pCny: number; estimate720pCny: number; batchBudgetCny: number; recommendedResolution: '480p' | '720p'; budgetEnoughFor480p: boolean; shotPlans?: Array<{ shotId: string; status: 'ready' | 'unsupported' | 'budget_excluded'; targetDurationSeconds: number; resolutionTier?: '480p' | '720p'; modelId?: string; estimatedCostCny: number }>; readyShots?: number; excludedShots?: number; estimatedCostCny?: number } | null>(null);
+  const [aigcBudgetPreview, setAigcBudgetPreview] = useState<StudioAigcBudgetPreview | null>(null);
   const [batchShotResults, setBatchShotResults] = useState<Array<{ shotId: string; slotId: string; state: 'submitted' | 'matched' | 'needs_material' | 'blocked'; jobId?: string; reason: string }>>([]);
   const batchShotRequestRef = useRef<{ signature: string; batchId: string } | null>(null);
   const productionRequestIds = useRef(new Map<string, string>());
@@ -3679,6 +3697,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     onRefresh: task => {
       setSceneReworkTask(task);
       setAgentTaskProductionPreview(socialTaskProductionPreview(task));
+      setCanonicalProductionView(task.production ? canonicalProductionReadView(task.production) : null);
       rememberSocialShotMaterialBindings(socialTaskShotMaterialBindings(task));
       setSocialSourceShotIds(socialTaskStudioShotIds(task));
       const reference = socialTaskReferenceKickoff(task);
@@ -3751,6 +3770,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const autosaveInFlightRef = useRef(false);
   const autosavePendingRef = useRef(false);
   const autosaveSnapshotRef = useRef<() => Promise<void>>(async () => undefined);
+  const lastSavedAutosaveFingerprintRef = useRef('');
   const [videoKickoff, setVideoKickoff] = useState<VideoKickoff | null>(null);
   const freeThreeStep = mode === 'material' && contentMode === 'video' && videoKickoff?.source === 'material_library' && videoKickoff.initialGeneration?.ok === true && Boolean(videoKickoff.script?.trim());
   useEffect(() => {
@@ -4297,14 +4317,15 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     return () => { live = false; window.removeEventListener('focus', refresh); };
   }, [projectId]);
   useEffect(() => {
-    if (!projectId) { setServerShotRoutes({ projectId: '', routes: {} }); setAigcBudgetPreview(null); return; }
+    if (!projectId) { setServerShotRoutes({ projectId: '', routes: {} }); setStudioProductionView(null); setAigcBudgetPreview(null); return; }
     let live = true;
     void productionApi.batchShotRoutes(projectId).then(result => {
       if (!live) return;
       setAigcBudgetPreview(result.aigcBudgetPreview || null);
+      setStudioProductionView(adaptStudioBatchRoutesToProductionReadView(result));
       setServerShotRoutes({ projectId, routes: Object.fromEntries(result.routes.map(item => [item.slotId,
         item.route === 'digital_human' ? 'presenter' : item.route === 'seedance_action' ? 'motion' : 'material'])) });
-    }).catch(() => { if (live) setServerShotRoutes({ projectId: '', routes: {} }); });
+    }).catch(() => { if (live) { setServerShotRoutes({ projectId: '', routes: {} }); setStudioProductionView(null); } });
     return () => { live = false; };
   }, [projectId, shootingSlots.length, activeAssemblyId]);
   useEffect(() => {
@@ -4768,6 +4789,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         if (!useSegmentedAction) {
           const routes = await productionApi.batchShotRoutes(saved.project.id);
           setAigcBudgetPreview(routes.aigcBudgetPreview || null);
+          setStudioProductionView(adaptStudioBatchRoutesToProductionReadView(routes));
           const route = routes.routes.find(item => item.slotId === slot.id);
           const budgetPlan = routes.aigcBudgetPreview?.shotPlans?.find(item => item.shotId === route?.shotId);
           if (!route || route.route !== 'aigc_first_frame' || !budgetPlan) throw new Error('当前镜头未进入智能生成预算计划，请检查素材选择与镜头状态');
@@ -9486,6 +9508,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
     if (agentProduction.active) return false;
     const nextSpec = { ...collectSpec(), ...options.specOverrides };
+    const targetProjectId = status === 'template' ? null : currentProjectRef.current ?? projectId;
+    const snapshotFingerprint = studioAutosaveFingerprint(targetProjectId, projectTitle, nextSpec);
+    if (silent && !studioDraftChanged(lastSavedAutosaveFingerprintRef.current, snapshotFingerprint)) return true;
     if (!['draft', 'template'].includes(status)) {
       const invalidScript = modeScripts.find(item => {
         const provenance = String(item.generationProvenance || item.generationSource || '').toLowerCase();
@@ -9538,6 +9563,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       if (!saved.ok) throw new Error(saved.error || '草稿保存失败，请重试；当前编辑仍保留在页面中。');
       if (!project?.id) throw new Error('草稿保存失败，请重试；当前编辑仍保留在页面中。');
       if (project?.id && status !== 'template') {
+        lastSavedAutosaveFingerprintRef.current = studioAutosaveFingerprint(project.id, projectTitle, nextSpec);
         currentProjectRef.current = project.id;
         setProjectId(project.id);
         setProjects(current => [project, ...current.filter(item => item.id !== project.id)]);
@@ -9557,9 +9583,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         completeDemoStep('traffic');
         setSavedTick(true);
         setTimeout(() => setSavedTick(false), 1800);
-      } else {
-        setAutosaveStatus('saved');
-        setLastAutosavedAt(new Date());
       }
       return true;
     } catch (error) {
@@ -9989,6 +10012,19 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (productionFor(storyboardSlot).locked) { setShootingError('镜头已锁定，请先解锁。'); return; }
     const existing = shootingTasks.find(task => task.sourceProjectId === projectId && task.sourceAssemblyId === activeAssemblyId && task.sourceShotId === slot.id && task.requirements === slot.requirements);
     if (existing) { window.location.assign(`?page=socialInspiration&view=shooting&task=${encodeURIComponent(existing.id)}`); return; }
+    const canonicalMatches = canonicalProductionMatchesStudio(canonicalProductionView, {
+      studioProjectId: projectId,
+      socialContentTaskId,
+      slotIds: [targetSlotId],
+    });
+    const canonicalProjection = productionShotForSlot(canonicalMatches ? canonicalProductionView : null, targetSlotId);
+    const studioProjection = productionShotForSlot(studioProductionView, targetSlotId);
+    const productionProjection = canonicalProjection || studioProjection;
+    const productionView = canonicalProjection ? canonicalProductionView : studioProjection ? studioProductionView : null;
+    if (!productionCommandAllowed(productionView, productionProjection, 'request_shoot')) {
+      setShootingError('当前服务端生产方案未开放实拍兜底，请先选择稳定线上路线。');
+      return;
+    }
     if (productionFor(storyboardSlot).sound === 'source' && productionFor(storyboardSlot).narration !== storyboardSlotScript(storyboardSlot.detail).voice) { setShootingError('请先将口播台词应用到脚本，再安排拍摄'); return; }
     if (voiceDraftLoading || ttsLoading || savingProj || autosaveInFlightRef.current || sourceDraftCheckPending || existingSourceDraftPrompt) {
       setShootingError('草稿正在恢复或保存，或配音仍在生成，请稍后重试。'); return;
@@ -10020,35 +10056,21 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     finally { autosaveInFlightRef.current = false; setShootingBusy(false); setSavingProj(false); }
   };
 
+  const autosaveSnapshotFingerprint = studioAutosaveFingerprint(
+    currentProjectRef.current ?? projectId,
+    projectTitle,
+    collectSpec(),
+  );
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      void autosaveSnapshotRef.current();
-    }, 10_000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    // Analysis output is expensive and must survive navigation. Persist it
-    // shortly after every meaningful change instead of waiting for the
-    // periodic full-draft checkpoint.
+    if (!studioDraftChanged(lastSavedAutosaveFingerprintRef.current, autosaveSnapshotFingerprint)) return;
+    // Persist only a semantically changed snapshot. The debounce absorbs a
+    // burst of field edits and prevents object-identity-only rerenders from
+    // becoming repeated network saves.
     const timer = window.setTimeout(() => {
       void autosaveSnapshotRef.current();
-    }, 700);
+    }, 1_500);
     return () => window.clearTimeout(timer);
-  }, [
-    videoKickoff,
-    script,
-    voiceoverLines,
-    voiceDrafts,
-    voiceoverAudios,
-    alignedCuesByLang,
-    sourceCaptionTextEdits,
-    storyboardAssignments,
-    storyboardSourcePlans,
-    storyboardAssemblies,
-    shootingSlots,
-    shotProductions,
-  ]);
+  }, [autosaveSnapshotFingerprint]);
 
   const openProjects = async () => {
     setShowProjects(true);
@@ -10154,9 +10176,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     localFlowRecoveryRef.current = localFlowTestRef.current ? { spec: p.spec, projectId: p.id } : null;
     if (p.status !== 'template') studioApi.adoptProjectRevision(p);
     projectHydrationPendingRef.current = true;
-    applySpec(p.status === 'template' ? withoutStudioWorkflowContext(p.spec) : p.spec);
-    setProjectId(p.status === 'template' ? null : p.id);
-    setProjectTitle(p.status === 'template' ? `${p.title} · 副本` : p.title);
+    const restoredSpec = p.status === 'template' ? withoutStudioWorkflowContext(p.spec) : p.spec;
+    const restoredProjectId = p.status === 'template' ? null : p.id;
+    const restoredTitle = p.status === 'template' ? `${p.title} · 副本` : p.title;
+    lastSavedAutosaveFingerprintRef.current = studioAutosaveFingerprint(restoredProjectId, restoredTitle, restoredSpec);
+    applySpec(restoredSpec);
+    setProjectId(restoredProjectId);
+    setProjectTitle(restoredTitle);
     setWorkflowProjectSelectionPending(false);
     autoGen.current = true; // 载入已有脚本，别再自动覆盖
     setShowProjects(false);
@@ -14177,6 +14203,46 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
     if (threeStepWorkflow && step === 'preview') setCanvasView('creation');
   }, [socialViralTask, step]);
+  const canonicalProjectionMatchesStudio = canonicalProductionMatchesStudio(canonicalProductionView, {
+    studioProjectId: projectId,
+    socialContentTaskId,
+    slotIds: storyboardSlots.map(slot => slot.id),
+  });
+  const activeProductionView = canonicalProjectionMatchesStudio ? canonicalProductionView : studioProductionView;
+  const productionViewFor = (slotId: string) => {
+    if (productionShotForSlot(canonicalProjectionMatchesStudio ? canonicalProductionView : null, slotId)) return canonicalProductionView;
+    if (productionShotForSlot(studioProductionView, slotId)) return studioProductionView;
+    return null;
+  };
+  const productionProjectionFor = (slotId: string) => (
+    productionShotForSlot(canonicalProjectionMatchesStudio ? canonicalProductionView : null, slotId)
+    || productionShotForSlot(studioProductionView, slotId)
+  );
+  const canRequestShootingFor = (slotId: string) => productionCommandAllowed(
+    productionViewFor(slotId), productionProjectionFor(slotId), 'request_shoot',
+  );
+  useEffect(() => {
+    if (!canonicalProjectionMatchesStudio || !canonicalProductionView) return;
+    const context = {
+      view: canonicalProductionView,
+      deepLink: {
+        page: 'smartAssets',
+        view: 'create',
+        studioPanel: 'projects',
+        socialContentTaskId: socialContentTaskId || canonicalProductionView.project.id,
+        businessRef: {
+          taskKey: 'content_production',
+          entityId: canonicalProductionView.project.studioProjectId || projectId || undefined,
+          taskVersion: canonicalProductionView.project.version || undefined,
+        },
+      },
+    } satisfies AssistantProductionContext;
+    const timer = window.setTimeout(() => publishAssistantProductionContext({ context }), 0);
+    return () => {
+      window.clearTimeout(timer);
+      publishAssistantProductionContext({ clearProjectId: canonicalProductionView.project.id });
+    };
+  }, [canonicalProductionView, canonicalProjectionMatchesStudio, projectId, socialContentTaskId]);
   const shotRouteFor = (slot: StoryboardSlot) =>
     ['material', 'shoot'].includes(storyboardSourcePlans[slot.id]?.userSource || '') ? 'material'
       : serverShotRoutes.projectId === projectId && serverShotRoutes.routes[slot.id]
@@ -14667,6 +14733,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const assignedMaterial = materialById.get(storyboardAssignments[slot.id] || '');
     const material = assignedMaterial && isProductionEligibleClip(assignedMaterial, videoKickoff) ? assignedMaterial : undefined;
     const materialAssessment = material ? assessMaterialMatch(slot, material, ratio) : null;
+    const productionProjection = productionProjectionFor(slot.id);
 
     const slotScript = storyboardSlotScript(slot.detail);
     const working = Boolean(storyboardGenerating[slot.id] || storyboardQualityChecking[slot.id]);
@@ -14689,11 +14756,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           : scriptStageTab === 'audio'
             ? voiceReady ? { status: 'ready' as const, label: voiceoverMode === 'none' ? '无需口播' : '配音完成' } : { status: 'idle' as const, label: '待生成配音' }
             : alignedCuesByLang[activeVoiceLang]?.length ? { status: 'ready' as const, label: '字幕完成' } : { status: 'idle' as const, label: '待生成字幕' }
-      : materialAssessment?.level === 'direct'
+      : productionProjection
+        ? { status: productionStatusTone(productionProjection.status), label: productionStatusLabel(productionProjection.status) }
+        : materialAssessment?.level === 'direct'
         ? { status: 'ready' as const, label: '素材已匹配' }
         : materialAssessment?.level === 'review'
                       ? { status: 'warning' as const, label: '素材已匹配' }
-          : material ? { status: 'warning' as const, label: '素材需调整' } : { status: 'idle' as const, label: salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed' ? '数字人待生成' : '待拍摄补充' };
+          : material ? { status: 'warning' as const, label: '素材需调整' } : { status: 'idle' as const, label: salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed' ? '数字人待生成' : '待选择稳定方案' };
     return {
       id: slot.id,
       index: index + 1,
@@ -14707,11 +14776,20 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       firstFrameRef: undefined,
       frameLabel: rejectedCandidate ? '供应商已生成，质量不合格；未采用' : adoptedPreview ? '已采纳原始镜头 · 未完成人工审核' : material
         ? `${material.name} · ${editForSlot(material, slot).trimStart.toFixed(1)}–${editForSlot(material, slot).trimEnd.toFixed(1)}s`
-        : salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed' ? '数字人待生成' : '待拍摄补充',
+        : productionProjection ? productionRouteLabel(productionProjection)
+          : salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed' ? '数字人待生成' : '待选择稳定方案',
       duration: `${Math.max(0.1, slot.end - slot.start).toFixed(1)}s`,
       voiceover: slotScript.voice || slotScript.visual || slotScript.fallback,
       status: working ? 'working' as const : warning ? 'warning' as const : stageStatus.status,
       statusLabel: working ? '处理中' : warning ? '需检查' : stageStatus.label,
+      production: productionProjection ? {
+        routeLabel: productionRouteLabel(productionProjection),
+        identityLabel: productionIdentityLabel(productionProjection),
+        expectedCostCny: productionProjection.cost.expectedCny,
+        upperBoundCostCny: productionProjection.cost.upperBoundCny,
+        missingInputs: productionProjection.inputs.missing,
+        blockers: productionProjection.blockers.map(item => item.message),
+      } : undefined,
     };
   });
   const referenceStoryboardItems = (videoKickoff?.referenceAnalysis?.details || []).flatMap((detail, index) => {
@@ -15333,6 +15411,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       setBatchReviewOpen(false); openProduction(slot); return;
     }
     if (optionId === 'shoot') {
+      if (!canRequestShootingFor(slot.id)) {
+        setBatchReviewError('当前服务端生产方案未开放实拍兜底');
+        return;
+      }
       chooseReplicationShotMode(slot, 'shoot');
       void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id)
         .catch(error => setBatchReviewError(error instanceof Error ? error.message : '补拍任务创建失败'));
@@ -15368,6 +15450,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const runBatchShotJobs = async (slotIds?: string[]) => {
     const rejectSubmission = (message: string) => { setBatchReviewError(message); setModeNotice(message); if (slotIds?.length) throw new Error(message); };
     if (!threeStepWorkflow || replicationPreparationRef.current || replicationPreparationError || batchShotBusy || !storyboardSlots.length) { rejectSubmission(replicationPreparationError || '当前正在准备或提交素材，请稍后再试。'); return; }
+    try {
+      const latestDefaults = await productionApi.defaults();
+      setProductionDefaults(latestDefaults);
+      const presenterGate = presenterProductionGate(latestDefaults);
+      if (!presenterGate.ready) { rejectSubmission(presenterGate.message); return; }
+    } catch (cause) {
+      rejectSubmission(cause instanceof Error ? cause.message : '数字人形象状态读取失败，请稍后重试。'); return;
+    }
     const unresolvedPresenterIndex = storyboardSlots.findIndex(slot => (!slotIds || slotIds.includes(slot.id))
       && salesPresenterRecognition(presenterEvidenceFor(slot)) === 'candidate');
     if (unresolvedPresenterIndex >= 0) {
@@ -15417,6 +15507,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       const pendingCapture = storyboardSlots.filter(slot => (!slotIds || slotIds.includes(slot.id))
         && batchSpec.storyboardSourcePlans[slot.id]?.userSource === 'shoot'
         && !batchSpec.storyboardAssignments[slot.id]);
+      const disallowedCapture = pendingCapture.filter(slot => !canRequestShootingFor(slot.id));
+      if (disallowedCapture.length) {
+        rejectSubmission(`分镜 ${disallowedCapture.map(slot => storyboardSlots.indexOf(slot) + 1).join('、')} 的实拍兜底尚未经服务端允许，本次不会创建拍摄任务。`);
+        return;
+      }
       const pendingAigc = storyboardSlots.filter(slot => (!slotIds || slotIds.includes(slot.id))
         && !productionFor(slot).locked
         && ['ai', 'hybrid'].includes(batchSpec.storyboardSourcePlans[slot.id]?.mode || '')
@@ -15459,6 +15554,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       setBatchShotResults(current => slotIds?.length ? [...current.filter(item => !slotIds.includes(item.slotId)), ...result.results] : result.results);
       const plannedRoutes = await productionApi.batchShotRoutes(saved.project.id);
       setAigcBudgetPreview(plannedRoutes.aigcBudgetPreview || null);
+      setStudioProductionView(adaptStudioBatchRoutesToProductionReadView(plannedRoutes));
       setServerShotRoutes({ projectId: saved.project.id, routes: Object.fromEntries(plannedRoutes.routes.map(item => [item.slotId,
         item.route === 'digital_human' ? 'presenter' : item.route === 'seedance_action' ? 'motion' : 'material'])) });
       const readyShotIds = new Set((plannedRoutes.aigcBudgetPreview?.shotPlans || [])
@@ -15995,6 +16091,22 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       if (materialIndex >= 0) setStepIdx(materialIndex);
       return;
     }
+    if (index === 2 && contentMode === 'video') {
+      try {
+        const latestDefaults = await productionApi.defaults();
+        setProductionDefaults(latestDefaults);
+        const presenterGate = presenterProductionGate(latestDefaults);
+        if (!presenterGate.ready) {
+          setModeNotice(presenterGate.message);
+          const materialIndex = activeSteps.findIndex(item => item.id === 'material');
+          if (materialIndex >= 0) setStepIdx(materialIndex);
+          return;
+        }
+      } catch (cause) {
+        setModeNotice(cause instanceof Error ? cause.message : '数字人形象状态读取失败，请稍后重试。');
+        return;
+      }
+    }
     if (index === 2 && !canOpenWorkbenchRenderSettings({ shotCount: storyboardSlots.length, replication: mode === 'clone', freeCreation: freeThreeStep, freeCreationReady: freeCanEnterPreview })) {
       explainFreePreviewBlockers();
       return;
@@ -16034,6 +16146,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
   const chooseReplicationShotMode = (slot: StoryboardSlot, mode: 'video_twin' | 'photo_talking' | 'local' | 'smart' | 'shoot') => {
     if (productionFor(slot).locked) return;
+    if (salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed' && !['video_twin', 'photo_talking'].includes(mode)) {
+      setModeNotice('数字人分镜必须使用已选择的人物形象，不能改用企业素材、实拍或其他路线。');
+      return;
+    }
     if (mode === 'video_twin' || mode === 'photo_talking') {
       if (salesPresenterRecognition(presenterEvidenceFor(slot)) !== 'confirmed') return;
       setStoryboardSourcePlans(current => ({ ...current, [slot.id]: { ...(current[slot.id] || sourcePlanFor(slot)), mode: 'auto', userSource: 'avatar', decided: true, confirmed: false } }));
@@ -16252,6 +16368,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         ) : <button key={index} type="button" className="block w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[10px] text-amber-900" onClick={() => { const slot = storyboardSlots.find(item => item.id === todo.slotId); if (todo.target === 'system') { void navigateReplicationStep(0); return; } if (!slot) return; focusWorkbenchStoryboardSlot(slot.id); if (todo.target === 'digital') openProduction(slot); else void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id); }}>{todo.label}</button>)}</div>)}
         propertyPanel={(
           <>
+          {threeStepWorkflow && step === 'material' && <EnterprisePresenters contentProduction onInitialSelection={() => {
+            void productionApi.defaults().then(setProductionDefaults).catch(error => setModeNotice(error instanceof Error ? error.message : '数字人形象刷新失败'));
+          }} />}
           {frozenStudioSpecRef.current?.resolvedStudioContract && <StudioOperationalEvidencePanel contract={{...(frozenStudioSpecRef.current.resolvedStudioContract as Parameters<typeof StudioOperationalEvidencePanel>[0]['contract']),operationalEvidence:frozenOperationalEvidence}} />}
           {socialContentTaskId && <SocialMvpHandoffPanel value={sceneReworkTask?.taskId === socialContentTaskId ? sceneReworkTask.socialMvpHandoff : null}
             expected={{ taskId: socialContentTaskId, runId: sceneReworkTask?.runId || '', version: sceneReworkTask?.version || '', projectId: projectId || '' }} />}
@@ -16314,6 +16433,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               const isPresenter = storyboardTopicFor(slot) === 'presenter' && salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed';
               const plan = sourcePlanFor(slot);
               const shot = productionFor(slot);
+              const allowShooting = canRequestShootingFor(slot.id);
               const options = isPresenter
                 ? [
                     { id: 'video_twin', title: '视频数字人', detail: '复用已授权企业人物，自然口播' },
@@ -16322,20 +16442,21 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 : [
                     { id: 'local', title: '企业素材匹配', detail: '从已有视频和图片中选择画面' },
                     { id: 'smart', title: '智能生成画面', detail: '有本地素材则参考，否则直接生成' },
-                    { id: 'shoot', title: '列入待拍', detail: '创建拍摄任务，上传后回填' },
+                    ...(allowShooting ? [{ id: 'shoot' as const, title: '列入待拍', detail: '创建拍摄任务，上传后回填' }] : []),
                   ] as const;
               const selectedMode = isPresenter && plan.userSource !== 'material' && plan.userSource !== 'shoot'
                 ? shot.digitalHuman?.presenterMode || 'video_twin'
                 : plan.userSource === 'shoot' ? 'shoot' : plan.mode === 'ai' || plan.mode === 'hybrid' ? 'smart' : 'local';
               return <section aria-label={isPresenter ? '数字人分镜制作' : '非数字人分镜制作'} className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
                 <div><p className="text-xs font-semibold text-text-primary">{isPresenter ? '数字人分镜' : '非数字人分镜'} · 制作模式</p><p className="mt-1 text-[10px] text-text-muted">先确认当前分镜的路线，再选择素材或打开制作设置。</p></div>
-                {storyboardTopicFor(slot) === 'presenter' && !isPresenter && <p role="status" className="text-[10px] text-amber-700">人物口播推荐数字人制作；请先确认画面中的销售主讲人物，确认前可使用企业素材或列入待拍。</p>}
-                <div className={`grid gap-2 ${isPresenter ? 'grid-cols-2' : 'grid-cols-3'}`}>{options.map(option => <button key={option.id} type="button" aria-pressed={selectedMode === option.id} disabled={shot.locked} onClick={() => chooseReplicationShotMode(slot, option.id)} className={`min-w-0 rounded-lg border p-2 text-left disabled:opacity-50 ${selectedMode === option.id ? 'border-emerald-600 bg-white text-emerald-900 shadow-none' : 'border-border bg-white/70 text-text-secondary'}`}><span className="block text-[11px] font-semibold">{option.title}</span><span className="mt-1 block text-[9px] leading-4">{option.detail}</span></button>)}</div>
+                {storyboardTopicFor(slot) === 'presenter' && !isPresenter && <p role="status" className="text-[10px] text-amber-700">人物口播推荐数字人制作；请先确认画面中的销售主讲人物，确认前可使用企业素材，其他兜底路线以服务端能力检查为准。</p>}
+                <div className={`grid gap-2 ${isPresenter || !allowShooting ? 'grid-cols-2' : 'grid-cols-3'}`}>{options.map(option => <button key={option.id} type="button" aria-pressed={selectedMode === option.id} disabled={shot.locked} onClick={() => chooseReplicationShotMode(slot, option.id)} className={`min-w-0 rounded-lg border p-2 text-left disabled:opacity-50 ${selectedMode === option.id ? 'border-emerald-600 bg-white text-emerald-900 shadow-none' : 'border-border bg-white/70 text-text-secondary'}`}><span className="block text-[11px] font-semibold">{option.title}</span><span className="mt-1 block text-[9px] leading-4">{option.detail}</span></button>)}</div>
+                {selectedMode === 'shoot' && !allowShooting ? <p role="status" className="text-[10px] leading-4 text-amber-700">原实拍选择等待服务端重新确认，当前不会创建新的拍摄任务。</p> : null}
                 {!isPresenter && selectedMode === 'smart' && <p className="text-[10px] leading-4 text-text-secondary">{[storyboardAssignments[slot.id], plan.referenceClipId].some(id => { const clip = id ? materialById.get(id) : undefined; return clip && isAutomaticViralMaterialCandidate(clip, videoKickoff); }) ? '已关联本地素材，生成时自动作为参考。' : '暂无关联本地素材，生成时直接使用 AIGC。'}</p>}
                 {activeWorkbenchClip && <div className="rounded-lg border border-border bg-white p-2 text-[10px]"><p className="font-bold text-text-primary">当前素材：{activeWorkbenchClip.name}</p><p className="mt-1 text-text-muted">{editForSlot(activeWorkbenchClip, slot).trimStart.toFixed(1)}–{editForSlot(activeWorkbenchClip, slot).trimEnd.toFixed(1)}s · {plan.matchReason || activeMaterialAssessment?.reason || '手动选择'}</p><div className="mt-2 flex gap-2"><button type="button" onClick={() => { setCanvasView('creation'); setPreviewClip(activeWorkbenchClip); }} className="font-bold text-emerald-700">预览</button><button type="button" onClick={() => { setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="font-bold text-emerald-700">更换</button><button type="button" onClick={() => clearWorkbenchMaterial(slot.id)} className="font-bold text-red-700">移除</button></div></div>}
-                {isPresenter ? <><button type="button" onClick={() => openProduction(slot)} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">配置数字人分镜</button><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => { chooseReplicationShotMode(slot, 'local'); setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold">改用企业素材</button><button type="button" onClick={() => { chooseReplicationShotMode(slot, 'shoot'); void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold">列入待拍</button></div></>
+                {isPresenter ? <><button type="button" onClick={() => openProduction(slot)} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">配置数字人分镜</button><p className="rounded-lg bg-amber-50 px-3 py-2 text-[10px] font-semibold leading-4 text-amber-800">人物口播只能使用已选择的数字人形象；形象缺失时停止，不提供素材或实拍降级。</p></>
                   : selectedMode === 'local' ? <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => { setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">选择企业素材</button><button type="button" disabled={materialSelectLoading} onClick={() => void smartSelectMaterialsFast()} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 disabled:opacity-50">一键分析匹配</button></div>
-                  : selectedMode === 'shoot' ? <button type="button" disabled={shootingBusy} onClick={() => void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id)} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">创建待拍任务</button>
+                  : selectedMode === 'shoot' ? allowShooting ? <button type="button" disabled={shootingBusy} onClick={() => void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id)} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">创建待拍任务</button> : null
                   : <div className="space-y-2">
                       <button type="button" disabled={shot.locked || Boolean(storyboardGenerating[slot.id])} onClick={() => void generateStoryboardShot(slot, { ...plan, mode: plan.mode === 'hybrid' ? 'hybrid' : 'ai', decided: true, confirmed: false })} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{storyboardGenerating[slot.id] ? '正在生成首帧…' : '生成首帧并预览'}</button>
                       {plan.error && <p role="alert" className="text-[10px] leading-4 text-red-700">{plan.error}</p>}
@@ -16559,6 +16680,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             {step === 'material' && activeWorkbenchSlot && !socialViralTask && <ShotSourceDecisionPanel
               disabled={productionFor(activeWorkbenchSlot).locked}
               digitalHumanAvailable={salesPresenterRecognition(presenterEvidenceFor(activeWorkbenchSlot)) === 'confirmed'}
+              allowShooting={canRequestShootingFor(activeWorkbenchSlot.id)}
               shootingBusy={shootingBusy}
               shootingScheduled={shootingTasks.some(task => task.sourceProjectId === projectId && task.sourceAssemblyId === activeAssemblyId && task.sourceShotId === shootingSlots.find(item => item.slotId === activeWorkbenchSlot.id)?.id)}
               error={shootingError}
@@ -16894,7 +17016,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         readyShots={batchReviewReadyShots}
         generatingShots={batchReviewGeneratingShots}
         pendingShots={batchReviewPendingShots}
-        estimatedCostCny={aigcBudgetPreview?.estimatedCostCny}
+        estimatedCostCny={activeProductionView?.aggregate.cost.expectedCny ?? undefined}
+        upperBoundCostCny={activeProductionView?.aggregate.cost.upperBoundCny ?? aigcBudgetPreview?.estimatedCostCny}
         busy={batchReviewBusy || batchShotBusy || Object.values(storyboardGenerating).some(Boolean)}
         error={batchReviewError}
         canSubmit={renderReadiness.ready && !batchReviewIssues.length && !batchReviewGeneratingShots}
@@ -16914,6 +17037,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           return <StudioReviewIssueActions key={issue.id} digital={isDigital && !missingProductImage}
             requirements={shot.digitalHuman || newDigitalHumanRequirements()} presenterId={shot.presenterId || ''}
             presenters={productionDefaults.presenters} products={selectedProductOptions} productIds={plan.productIds || []}
+            allowShooting={canRequestShootingFor(slot.id)}
             busy={batchReviewBusy || batchShotBusy || Boolean(storyboardGenerating[slot.id])}
             submitted={batchShotResults.some(item => item.slotId === slot.id && item.state === 'submitted' && productionJobs.find(job => job.id === item.jobId)?.status !== 'failed')}
             onSaveDigital={async (requirements, presenterId) => {
@@ -16971,6 +17095,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             }} onAction={async action => {
               if (action === 'generate-digital') { await runBatchShotJobs([slot.id]); return; }
               if (action !== 'shoot') { selectBatchReviewIssue(slot.id, action); return; }
+              if (!canRequestShootingFor(slot.id)) throw new Error('当前服务端生产方案未开放实拍兜底');
               if (shot.locked) throw new Error('请先解锁分镜');
               const bound = shootingSlots.find(item => item.slotId === slot.id);
               if (!bound) throw new Error('该分镜尚无补拍需求，请打开分镜配置');
@@ -17050,6 +17175,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             fallbackText: productionFor(productionEditorSlot).narration })}
           context={shotProductionContext}
           title={`分镜 ${storyboardSlots.findIndex(item => item.id === productionEditorSlot.id) + 1}`}
+          allowShooting={canRequestShootingFor(productionEditorSlot.id)}
           defaults={productionDefaults}
           materials={materials}
           products={selectedProductOptions.map(item => ({ id: item.id, label: item.label }))}

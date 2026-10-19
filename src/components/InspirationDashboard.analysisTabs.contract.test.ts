@@ -16,6 +16,9 @@ test('director detail keeps analysis evidence inside the three analysis tabs', (
   assert.match(source, /storyboardStatus=\{<>[^]*?<VideoAnalysisProgressPanel[^]*?编导到内容 Agent 交接状态[^]*?<\/>\}/, '进度与交接状态必须进入“分镜与脚本”页');
   assert.match(source, /speechAlignment=\{<ReferenceSpeechAlignmentPanel/, '口播对齐证据必须进入“分镜与脚本”页');
   assert.match(analysisTabsSource, /tab\.id === 'storyboard'[^]*?\{storyboardStatus\}[^]*?<DirectorShotAnalysisStatus[^]*?<BenchmarkAnalysisSections[^]*?\{speechAlignment\}/, '分镜页应依次承载状态、逐镜证据与口播对齐');
+  assert.match(analysisTabsSource, /return <section aria-label="视频分析详情">/, '分析 Tab 不得在 Drawer 正文内重复增加顶部空白');
+  assert.doesNotMatch(analysisTabsSource, /return <section className="mt-4" aria-label="视频分析详情">/);
+  assert.match(source, /<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">/, 'Drawer 正文顶部应与分析 Tab 紧邻');
 });
 
 test('completed precision analysis hides transient progress and redundant review summaries', () => {

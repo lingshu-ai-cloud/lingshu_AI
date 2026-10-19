@@ -17,6 +17,8 @@ import { readAgentCalendarReturnContext, registerAgentCalendarReturnState } from
 import InitialOperatingPlanDialog from './InitialOperatingPlanDialog';
 import { initialOperatingPlanFingerprint, recommendFocusProducts, initialPlanVideoPlans, initialPlanMatrixRows, type InitialOperatingPlan } from '../lib/initialOperatingPlan';
 import EnterprisePresenters from "./enterprise/EnterprisePresenters";
+import { productionApi } from "../lib/productionApi";
+import { presenterProductionGate, type PresenterProductionGate } from "../lib/shotProduction";
 import ManagedPublishingGrantEditor from './ManagedPublishingGrantEditor';
 import { Alert, Button, Modal, Tabs } from 'antd';
 import { managedPublishingGrantErrors } from '../../shared/contracts/managedPublishingGrant';
@@ -1453,18 +1455,19 @@ function OnboardingPanel({
   if (mode === "first" && profileConfirmed && productConfirmed && stageConfirmed) return (
     <OnboardingGuideFrame
       step={4}
-      title="完成数字人接入（可选）"
+      title="选择生产数字人形象"
       busy={stageSaving || busy}
       dismissible={dismissible}
       onClose={onClose}
       onBack={() => setStageConfirmed(false)}
       onSkip={() => void completeMinimalOnboarding()}
-      skipLabel="稍后设置数字人"
+      skipLabel="稍后选择（开始生产前必选）"
       primaryLabel={allowInitialPlan ? "生成推荐计划" : "完成引导并保存"}
       primaryId={allowInitialPlan ? recommendedPlanTriggerId : undefined}
       onPrimary={() => void openRecommendedPlan()}
     >
       <section className="rounded-lg border border-slate-200 bg-white p-5" aria-label="数字人接入配置">
+        <Alert className="mb-4" type="warning" showIcon title="数字人形象是生产硬要求" description="你可以暂时跳过引导，但开始周任务前必须选择已有形象或录入自己的形象；系统不会降级为素材匹配或其他制作路线。" />
         <EnterprisePresenters initialConfiguration />
         {stageError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">{stageError}</p>}
       </section>
@@ -3767,6 +3770,9 @@ export default function DigitalEmployeePage({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [weeklyStartConflict, setWeeklyStartConflict] = useState<WeeklyStartConflict | null>(null);
+  const [weeklyStartDialogOpen, setWeeklyStartDialogOpen] = useState(false);
+  const [weeklyPresenterLoading, setWeeklyPresenterLoading] = useState(false);
+  const [weeklyPresenterGate, setWeeklyPresenterGate] = useState<PresenterProductionGate>(() => presenterProductionGate(null));
   const [newGoal, setNewGoal] = useState(false);
   const [approvalNote, setApprovalNote] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
@@ -3811,6 +3817,19 @@ export default function DigitalEmployeePage({
   const presentedData = data;
   const initialLoadRef = useRef<Promise<DigitalEmployeeOverview | undefined> | null>(null);
   const handledWeeklyPlanNavigation = useRef<number | null>(null);
+
+  const openWeeklyStartConfirmation = async () => {
+    setWeeklyStartDialogOpen(true);
+    setWeeklyPresenterLoading(true);
+    try {
+      const defaults = await productionApi.defaults();
+      setWeeklyPresenterGate(presenterProductionGate(defaults));
+    } catch (cause) {
+      setWeeklyPresenterGate({ ready: false, reason: 'selection_required', message: cause instanceof Error ? cause.message : '数字人形象状态读取失败，请稍后重试。' });
+    } finally {
+      setWeeklyPresenterLoading(false);
+    }
+  };
 
   useEffect(() => {
     let deferredOpen: number | undefined;
@@ -4794,7 +4813,7 @@ export default function DigitalEmployeePage({
       }
       setNewGoal(false);
       setWeeklyPlanOpen(false);
-      await confirmWeeklyPlan();
+      await openWeeklyStartConfirmation();
     };
     const weeklyControlLabel = busy === "confirm-weekly-plan"
       ? "正在启动生产…"
@@ -4931,6 +4950,34 @@ export default function DigitalEmployeePage({
           }}
         />
       )}
+      <Modal
+        open={weeklyStartDialogOpen}
+        title="确认开始本周生产"
+        okText="确认并开始生产"
+        cancelText="取消"
+        confirmLoading={busy === "confirm-weekly-plan"}
+        okButtonProps={{ disabled: weeklyPresenterLoading || !weeklyPresenterGate.ready }}
+        onCancel={() => setWeeklyStartDialogOpen(false)}
+        onOk={() => {
+          if (!weeklyPresenterGate.ready) return;
+          setWeeklyStartDialogOpen(false);
+          void confirmWeeklyPlan();
+        }}
+      >
+        <div className="space-y-4 py-2">
+          <p className="text-sm leading-6 text-text-secondary">启动后，编导与内容 Agent 将按本周计划进入真实生产。数字人形象是不可跳过的生产输入。</p>
+          {weeklyPresenterLoading ? <p role="status" className="rounded-lg bg-surface-2 px-4 py-3 text-sm text-text-muted">正在核验数字人形象…</p> : weeklyPresenterGate.ready ? (
+            <Alert type="success" showIcon title={`已选择：${weeklyPresenterGate.presenter?.name || '数字人形象'}`} description="生产会锁定该人物形象；不会切换为素材匹配或其他人物路线。" />
+          ) : (
+            <Alert type="warning" showIcon title="没有形象，无法进入生产" description={weeklyPresenterGate.message} />
+          )}
+          {!weeklyPresenterLoading && !weeklyPresenterGate.ready && <Button type="primary" onClick={() => {
+            setWeeklyStartDialogOpen(false);
+            setApplicationGuideEntry("presenter");
+            setApplicationGuideOpen(true);
+          }}>选择或录入数字人形象</Button>}
+        </div>
+      </Modal>
       {weeklyPlanOpen && (!goal || newGoal) && !activeRun && <div className="h-full overflow-y-auto bg-white">
         <section aria-label="周计划生成" className="mx-auto w-full max-w-[1440px] p-4 sm:p-6">
           <header className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
@@ -5256,7 +5303,7 @@ export default function DigitalEmployeePage({
                   <div id="task-production-scene" className="relative scroll-mt-6">
                     {selectedTask ? <div className="space-y-3">
                       <section className="rounded-lg border border-slate-200 bg-white p-4" aria-label="数字员工任务轨迹"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-semibold tracking-[.14em] text-emerald-700">任务轨迹</p><h3 className="mt-1 text-sm font-semibold text-slate-950">{selectedTask.title}</h3></div><Button htmlType="button" onClick={() => dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(selectedTask, selectedPlanTask, data.run!.id))} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-[10px] font-semibold text-white">下钻业务页面 <ArrowRight size={12}/></Button></div><dl className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{[{label:"当前节点",value:humanizeValue(selectedTask.status)},{label:"来源",value:selectedTaskSource},{label:"结果",value:selectedTaskResult},{label:"下一步",value:selectedTaskNext}].map(item=><div key={item.label} className="rounded-lg bg-slate-50 px-3 py-3"><dt className="text-[9px] font-bold text-slate-400">{item.label}</dt><dd className="mt-1 line-clamp-2 text-[11px] font-bold leading-5 text-slate-800">{item.value}</dd></div>)}</dl></section>
-                      <ProductionTaskScene runId={data.run.id} taskId={selectedTask.id} embedded />
+                      <ProductionTaskScene runId={data.run.id} taskId={selectedTask.id} embedded onOpenProduction={() => dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(selectedTask, selectedPlanTask, data.run!.id))} />
                     </div> : <div className="rounded-lg border border-dashed border-slate-200 bg-white p-12 text-center text-sm text-slate-400">请选择上方 Agent 查看生产进度</div>}
                   </div>
                 </div>

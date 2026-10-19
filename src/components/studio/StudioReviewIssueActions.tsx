@@ -2,10 +2,12 @@ import { useState } from 'react';
 import type { DigitalHumanRequirements } from '../../lib/digitalHumanPlan';
 
 export default function StudioReviewIssueActions({ digital, requirements, presenterId, presenters, products, productIds, busy, submitted = false,
-  onSaveDigital, onSaveProducts, onUpload, onChangeType, onAction }: {
+  allowShooting = false, onSaveDigital, onSaveProducts, onUpload, onChangeType, onAction }: {
   digital: boolean; requirements?: DigitalHumanRequirements; presenterId: string;
   presenters: Array<{ id: string; name: string; authorized?: boolean }>;
   products: Array<{ id: string; label: string; imageUrls?: string[] }>; productIds: string[]; busy: boolean; submitted?: boolean;
+  /** Shooting is hidden unless the server-owned production projection explicitly permits it. */
+  allowShooting?: boolean;
   onSaveDigital: (value: DigitalHumanRequirements, presenterId: string) => Promise<void>;
   onSaveProducts: (ids: string[]) => Promise<void>; onUpload: (productId: string, file: File) => Promise<void>;
   onChangeType: (type: 'factory' | 'product' | 'consumer_demo') => Promise<void>;
@@ -53,7 +55,7 @@ export default function StudioReviewIssueActions({ digital, requirements, presen
     </>}
     <details className="rounded-lg border border-border bg-white p-3 text-xs"><summary className="cursor-pointer font-bold text-text-secondary">其他处理方式</summary><div className="mt-3 space-y-2">
     <button type="button" className={button} disabled={disabled} onClick={() => onAction('select-material')}>选择企业素材</button>
-    <button type="button" className={button} disabled={disabled} onClick={() => void run(async () => { await onAction('shoot'); }, '补拍任务已创建；上传并验收素材后才可进入成片。')}>列入待拍</button>
+    {allowShooting ? <button type="button" className={button} disabled={disabled} onClick={() => void run(async () => { await onAction('shoot'); }, '补拍任务已创建；上传并验收素材后才可进入成片。')}>列入待拍</button> : null}
     </div></details>
     {working && <p role="status" className="text-xs text-sky-700">正在处理，请稍候…</p>}
     {message && <p role="status" className="text-xs text-emerald-700">{message}</p>}

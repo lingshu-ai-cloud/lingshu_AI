@@ -69,6 +69,15 @@ import {
 import { buildSocialAgentWorkflow, type SocialWorkflowMaterialCandidate } from './socialContentAgentWorkflow.js';
 import { buildSocialReferenceReviewHandoff } from './socialReferenceReviewHandoff.js';
 import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
+import {
+  buildSocialContentProductionReadModel,
+  projectProductionInputRequests,
+  readCanonicalSocialStudioProject,
+  selectProductionCostQuoteForRun,
+} from './socialContentProductionReadModel.js';
+import { readSocialProductionState } from './socialContentProductionHandoff.js';
+import { listProductionInputRequests } from '../production/productionInputRequests.js';
+import { listProductionCostQuotes } from '../production/productionCostQuotes.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
 import {
   AUTO_TASK_KEY,
@@ -91,6 +100,7 @@ import {
   type SocialProductPolicy,
   type SocialSceneVisualContract,
 } from '../../shared/sceneVisualContract.js';
+import { materialAssetV2FromRecord } from '../../shared/contracts/materialAssetV2.js';
 
 type StoredPresenter = Record<string, unknown> & {
   id?: string; authorized?: boolean; avatarId?: string; voiceId?: string;
@@ -606,6 +616,8 @@ export interface SocialWorkflowMaterialClipCandidate extends SocialWorkflowMater
   materialRoles: SocialMaterialRole[];
   visualContract: SocialSceneVisualContract;
   timeRange: { startSeconds: number; endSeconds: number } | null;
+  segmentCandidateId: string;
+  sourceRevision: string;
 }
 
 export interface SocialWorkflowMaterialCandidateSet {
@@ -636,11 +648,14 @@ function materialProductIdentity(record: MaterialRecord, preferredRef?: string |
 
 function materialIsEnterpriseCommon(record: MaterialRecord): boolean {
   const tags = socialText(record.tags).split(/[,，]/).map(value => value.trim().toLocaleLowerCase());
+  const materialV2 = materialAssetV2FromRecord(record);
   return record.enterpriseCommon === true
     || record.enterprise_common === true
     || record.isEnterpriseCommon === true
     || ['enterprise_common', 'company_common'].includes(socialText(record.materialScope || record.material_scope))
-    || tags.includes('enterprise_common');
+    || tags.includes('enterprise_common')
+    || materialV2?.enterpriseCommon === true
+    || materialV2?.assetRole === 'generic_scene_plate';
 }
 
 function analyzedMaterialShots(record: MaterialRecord): MaterialScriptShot[] {
@@ -701,6 +716,10 @@ export function buildSocialWorkflowMaterialCandidates(input: {
       if (!assetId || !['video', 'image'].includes(mediaType)) return [];
       const identity = materialProductIdentity(record, input.selectedProductRef);
       const enterpriseCommon = materialIsEnterpriseCommon(record);
+      const materialV2 = materialAssetV2FromRecord(record);
+      const sourceRevision = socialText(record.analysisSourceRevision || record.sourceRevision
+        || socialObject(record.scriptAnalysis)?.sourceRevision || record.updatedAt)
+        || `material:${assetId}`;
       return analyzedMaterialShots(record).flatMap(shot => {
         const shotIdentity = {
           productId: identity.productId || socialText(shot.visualContract.productUsage.productId) || null,
@@ -733,6 +752,8 @@ export function buildSocialWorkflowMaterialCandidates(input: {
           identity: shotIdentity,
           enterpriseCommon,
           materialRoles,
+          materialV2,
+          sourceRevision,
           cueScores,
           baseScore: Math.max(0, ...cueScores.map(item => item.score)) * 100
             + automaticMaterialScore({
@@ -818,6 +839,9 @@ export function buildSocialWorkflowMaterialCandidates(input: {
       materialRoles: item.materialRoles,
       visualContract,
       timeRange,
+      segmentCandidateId: `${item.assetId}:${item.sourceRevision}:${item.shot.segmentId}`,
+      sourceRevision: item.sourceRevision,
+      materialV2: item.materialV2,
     }];
   }).sort((left, right) => right.matchScore - left.matchScore
     || left.assetId.localeCompare(right.assetId)
@@ -1166,6 +1190,67 @@ export async function readSocialTaskDetail(input: {
   })[0] ?? null;
   agentWorkflow.productionResult = productionResult;
   agentWorkflow.replicationEvaluation = replicationEvaluation;
+  const projectionStore = input.repository.dataStore;
+  const [studioProject, productionState, durableInputRequests, costQuotes] = await Promise.all([
+    readCanonicalSocialStudioProject({
+      dataStore: projectionStore,
+      tenantId: input.tenantId,
+      taskId: input.taskId,
+    }),
+    readSocialProductionState({
+      repository: input.repository,
+      tenantId: input.tenantId,
+      taskId: input.taskId,
+      version: summary.version,
+    }),
+    projectionStore
+      ? listProductionInputRequests({
+        store: projectionStore,
+        tenantId: input.tenantId,
+        taskId: input.taskId,
+        includeResolved: true,
+      })
+      : Promise.resolve([]),
+    projectionStore && summary.runId
+      ? listProductionCostQuotes({
+        store: projectionStore,
+        tenantId: input.tenantId,
+        taskId: input.taskId,
+      })
+      : Promise.resolve([]),
+  ]);
+  const artifactCost = [...artifactViews].reverse().flatMap(artifact => {
+    const value = socialObject(artifact.content?.costSummary);
+    return value ? [value] : [];
+  })[0] ?? null;
+  const production = buildSocialContentProductionReadModel({
+    task: {
+      taskId: summary.taskId,
+      version: summary.version,
+      status: summary.status,
+      runId: summary.runId,
+      updatedAt: summary.updatedAt,
+      title: summary.brief.title,
+      readinessMissing: summary.readiness.missing,
+      productionApproach: summary.brief.productionApproach,
+    },
+    workflow: agentWorkflow,
+    assetSupplyPlan,
+    studio: studioProject,
+    productionStage: productionStage ? {
+      stage: productionStage,
+      message: productionMessage || null,
+      updatedAt: productionUpdatedAt || null,
+    } : null,
+    receipts: productionState?.receipts ?? [],
+    artifactCost,
+    costQuote: selectProductionCostQuoteForRun({
+      quotes: costQuotes,
+      taskId: summary.taskId,
+      runId: summary.runId,
+    }),
+    inputRequests: projectProductionInputRequests(durableInputRequests, summary.taskId),
+  });
   const privateBrief = socialObject(socialJson(task.brief));
   const referenceRecovery = socialObject(privateBrief?._managedStart);
   const publishingRecovery = socialObject(privateBrief?._managedPublishing);
@@ -1205,6 +1290,7 @@ export async function readSocialTaskDetail(input: {
     metricSubmissions: metrics.map(socialMetricSubmission),
     agentWorkflow,
     productionProgress,
+    production,
     ...(referenceVideoAnalysis ? { referenceVideoAnalysis } : {}),
     ...(replicationScript ? { replicationScript } : {}),
     ...(shotMaterialMap.length ? { shotMaterialMap } : {}),

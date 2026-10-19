@@ -50,6 +50,7 @@ const token = issueLocalIdentityTokenForTest({ userId: 'test-user', tenantId: te
 function setup() {
   customers = [];
   rows = { digital_employee_configs: [{ id: 'cfg', tenant_id: tenant, config }], tenant_profiles: [{ id: 'profile', tenant_id: tenant, profile: { company: { name: 'Test', industry: 'Test' }, products: { items: [] } } }],
+    studio_production_defaults: [{ id: 'presenter-defaults', tenant_id: tenant, payload: { defaultPresenterId: 'presenter-1', presenters: [{ id: 'presenter-1', name: 'Test presenter', avatarId: 'avatar-1', voiceId: 'voice-1', authorized: true }] } }],
     weekly_goals: [{ id: 'goal', tenant_id: tenant, version: 1, title: 'Current', starts_at: today, ends_at: today, status: 'completed', objective: 'Isolated', metric: 'test', scope: {}, content_platforms: [] }],
     weekly_plans: [{ id: 'plan', tenant_id: tenant, goal_id: 'goal', status: 'draft', plan: { configSnapshot: config } }],
     workflow_runs: [{ id: 'run', tenant_id: tenant, goal_id: 'goal', plan_id: 'plan', status: 'succeeded', started_at: '2026-01-01T00:00:00Z' }],

@@ -10,6 +10,7 @@ import {
   upsertTenantUploadCloudMaterial,
 } from './cloudMaterials.js';
 import { objectStorageUpload } from '../storage/objectStorage.js';
+import { normalizeMaterialAssetV2 } from '../../shared/contracts/materialAssetV2.js';
 
 const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'cloud-material-write-test-'));
 try {
@@ -68,6 +69,60 @@ try {
   assert.deepEqual((entryPatch!.provenance as Record<string, unknown>).sourceEntries, ['studio_workspace', 'enterprise_knowledge']);
   assert.equal(unified.sourceEntry, 'enterprise_knowledge');
   assert.equal(unified.knowledgeEligible, true);
+  let v2Patch: Record<string, unknown> | undefined;
+  const commonMetadata = normalizeMaterialAssetV2({
+    assetRole: 'generic_scene_plate', contentRole: 'scene_plate', productIdentityLevel: 'none',
+    enterpriseCommon: true, templateEligible: true, reuseScore: 0.9,
+  });
+  await upsertTenantUploadCloudMaterial({
+    tenantId: 'tenant-a', title: '通用工厂底板', folder: 'enterprise-upload', type: 'video',
+    sizeBytes: bytes.length, sha256, sourceEntry: 'enterprise_knowledge', materialV2: commonMetadata,
+    media: { name: 'clip.mp4', path: mediaPath, contentType: 'video/mp4' },
+  }, async (requestPath, options = {}) => {
+    if (requestPath.includes('?')) return Response.json({ items: [{
+      id: 'materialrecord1', tenantId: 'tenant-a', scope: 'own', sha256,
+      title: '同一原片', type: 'video', videoFile: 'clip.mp4', posterFile: 'poster.png', provenance: {},
+    }] });
+    v2Patch = JSON.parse(String(options.body));
+    return Response.json({
+      id: 'materialrecord1', tenantId: 'tenant-a', scope: 'own', sha256,
+      title: '同一原片', type: 'video', videoFile: 'clip.mp4', posterFile: 'poster.png', ...v2Patch,
+    });
+  });
+  assert.deepEqual((v2Patch?.provenance as Record<string, unknown>).materialAssetV2, commonMetadata);
+  const exactMetadata = normalizeMaterialAssetV2({
+    assetRole: 'exact_product', contentRole: 'product_front', productIdentityLevel: 'exact',
+    enterpriseCommon: false, templateEligible: false, reuseScore: 0.2,
+  });
+  let exactRebindPersisted = false;
+  await assert.rejects(upsertTenantUploadCloudMaterial({
+    tenantId: 'tenant-a', title: '同一精华正面', folder: 'enterprise-upload', type: 'image',
+    sizeBytes: bytes.length, sha256, sourceEntry: 'enterprise_knowledge', productId: 'product-b', materialV2: exactMetadata,
+    media: { name: 'clip.mp4', path: mediaPath, contentType: 'video/mp4' },
+  }, async (requestPath) => {
+    if (requestPath.includes('?')) return Response.json({ items: [{
+      id: 'materialrecord1', tenantId: 'tenant-a', scope: 'own', sha256,
+      title: '产品 A 正面', type: 'image', videoFile: 'clip.mp4', posterFile: 'poster.png',
+      productId: 'product-a', provenance: { materialAssetV2: exactMetadata },
+    }] });
+    exactRebindPersisted = true;
+    return Response.json({});
+  }), /exact_product_binding_immutable/);
+  assert.equal(exactRebindPersisted, false, 'same-hash exact SKU bytes must never be rebound to another product');
+  await assert.rejects(upsertTenantUploadCloudMaterial({
+    tenantId: 'tenant-a', title: '同一精华正面', folder: 'enterprise-upload', type: 'image',
+    sizeBytes: bytes.length, sha256, sourceEntry: 'enterprise_knowledge', productId: 'product-a', materialV2: commonMetadata,
+    media: { name: 'clip.mp4', path: mediaPath, contentType: 'video/mp4' },
+  }, async (requestPath) => requestPath.includes('?') ? Response.json({ items: [{
+    id: 'materialrecord1', tenantId: 'tenant-a', scope: 'own', sha256,
+    title: '产品 A 正面', type: 'image', productId: 'product-a', provenance: { materialAssetV2: exactMetadata },
+  }] }) : Response.json({})), /exact_product_binding_immutable/);
+  await assert.rejects(createCloudMaterial({
+    tenantId: 'tenant-a', title: '错误绑定的通用素材', folder: 'upload', type: 'video',
+    sizeBytes: bytes.length, sha256: 'c'.repeat(64), productId: 'sku-a', materialV2: commonMetadata,
+    media: { name: 'clip.mp4', path: mediaPath, contentType: 'video/mp4' },
+  }, async () => { throw new Error('validation should run before persistence'); }),
+  /enterprise common material cannot bind a product/);
   const objectBacked = await createCloudMaterial({
     tenantId: 'tenant-a',
     title: '对象存储镜头',

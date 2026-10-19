@@ -7,18 +7,18 @@ const styles = readFileSync(new URL('./assistantDecisionCenter.css', import.meta
 
 test('assistant is a one-card decision surface with chat only in the detail empty state', () => {
   assert.match(source, /feed\?\.items\[0\]/, 'only the first priority item is selected');
-  assert.match(source, /!loading && !first && !error[\s\S]*问灵小枢/, 'chat is offered only after the decision queue is empty');
+  assert.match(source, /!loading && !first && !productionDecision && !error[\s\S]*问灵小枢/, 'chat is offered only after both server and production decisions are empty');
   assert.doesNotMatch(source, /AgentExecutionStatus|RunEvent|Timeline|执行记录|事件日志/, 'execution history must stay in the workbench');
 });
 
 test('summary variant is a real-feed bubble that delegates opening to the external detail modal', () => {
   assert.match(source, /AssistantDecisionCenterVariant = 'summary' \| 'detail'/);
   assert.match(source, /variant\?: AssistantDecisionCenterVariant/);
-  assert.equal(source.match(/onOpenDetail\?: \(trigger\?: HTMLButtonElement \| null\) => void/g)?.length, 2, 'the shell callback and summary must both receive the trigger for focus restoration');
-  assert.match(source, /if \(variant === 'summary'\)[\s\S]*if \(!first && !error\) return null/, 'an empty feed must not reserve summary space');
+  assert.equal(source.match(/onOpenDetail\?: \(trigger\?: HTMLButtonElement \| null\) => void/g)?.length, 3, 'the shell callback and both summary variants must receive the trigger for focus restoration');
+  assert.match(source, /if \(variant === 'summary'\)[\s\S]*if \(!first && !productionDecision && !error\) return null/, 'an empty feed must not reserve summary space');
   assert.match(source, /card\.kind === 'plan_start' \|\| card\.kind === 'plan_adjustment'[\s\S]*请确认本周的内容计划/, 'weekly plan summaries use the requested plain-language title');
-  assert.match(source, /<DecisionSummary card=\{first\} total=\{feed\?\.total \|\| 1\} onOpenDetail=\{onOpenDetail\}/, 'the real first feed card drives the summary bubble');
-  const summarySource = source.slice(source.indexOf('function DecisionSummary'), source.indexOf('function DecisionCard'));
+  assert.match(source, /<DecisionSummary card=\{first\} total=\{total \|\| 1\} onOpenDetail=\{onOpenDetail\}/, 'the real first feed card drives the summary bubble');
+  const summarySource = source.slice(source.indexOf('function DecisionSummary'), source.indexOf('const productionKindMeta'));
   assert.match(summarySource, /className="assistant-decision-summary"[\s\S]*onClick=\{event => onOpenDetail\?\.\(event\.currentTarget\)\}/, 'summary click delegates the trigger to the external dialog');
   assert.doesNotMatch(summarySource, /onAction|execute/, 'summary click only opens detail and never executes an action');
   assert.match(styles, /\.assistant-decision-summary[\s\S]*min-height: 44px/);
@@ -66,18 +66,38 @@ test('required rejection notes stay visible and block incomplete decisions', () 
 
 test('the shell can use the real backend feed for badges without inventing a count', () => {
   assert.match(source, /onFeedChange\?: \(feed: AssistantDecisionFeed\) => void/);
-  assert.match(source, /if \(feed\) onFeedChange\?\.\(feed\)/);
-  assert.doesNotMatch(source, /onFeedChange\?\.\(\{[^}]*total:/, 'loading never emits a fabricated queue');
+  assert.match(source, /if \(feed\) onFeedChange\?\.\(productionDecision \? \{ \.\.\.feed, total \} : feed\)/,
+    'the badge adds at most one real canonical production decision to the backend total');
 });
 
 test('refresh keeps the current card and late requests cannot replace newer state', () => {
-  assert.match(source, /\{first \? \([\s\S]*<DecisionCard/);
+  assert.match(source, /\{!productionFirst && first \? \([\s\S]*<DecisionCard/);
   assert.match(source, /sequence !== requestSequence\.current/);
   assert.match(source, /actionController\.current\?\.abort\(\)/);
   assert.match(source, /if \(!first \|\| actionPending\.current \|\| startReconciliation\) return/);
   assert.match(source, /requestSequence\.current \+= 1;[\s\S]{0,120}setLoading\(false\);[\s\S]{0,180}setFeed\(next\)/, 'a confirmed command invalidates an older feed request before applying its response');
   const antSelectorLines = styles.split('\n').filter(line => line.includes('.ant-'));
   assert.ok(antSelectorLines.length > 0 && antSelectorLines.every(line => line.includes('.ls-assistant-decision-dialog')), 'Ant internals may only be scoped below the owned external dialog class');
+});
+
+test('canonical production cards stay one-card, deep-link first, and command-gated', () => {
+  for (const label of ['需补资料', '预算确认', '质量验收', '降级路线', '异常恢复']) assert.match(source, new RegExp(label));
+  assert.match(source, /const executableCommands = onCommand \? decision\.commands : \[\]/,
+    'without an existing command handler the card must expose navigation only');
+  assert.match(source, /const navigationCommands = onCommand \? \[\] : decision\.commands/,
+    'allowlisted input actions become safe deep links when mutation wiring is unavailable');
+  assert.match(source, /dispatchDeepLink\(linkFor\(primaryNavigation\)\)/,
+    'a navigation fallback must not pretend that a production mutation executed');
+  assert.match(source, /!onCommand \? <Alert[\s\S]*请前往对应页面处理[\s\S]*ASSISTANT_PRODUCTION_NAVIGATION_NOTICE/,
+    'navigation-only mode must explain that the card does not execute the production action');
+  assert.match(source, /assistantProductionCommandLabel\(primaryNavigation, false, true\)/,
+    'navigation-only primary actions must use navigation copy instead of the mutation label');
+  assert.match(source, /assistantProductionCommandLabel\(primary, true, true\)/,
+    'a wired command handler may retain the real execution label');
+  assert.match(source, /expectedVersion: productionDecision\.subjectVersion/,
+    'production mutations must carry the canonical optimistic version');
+  assert.match(source, /allowedCommand: action\.command[\s\S]*idempotencyKey:/,
+    'production mutations must carry an allowlisted command and a stable retry key');
 });
 
 test('presenter changes immediately refresh the authoritative decision card', () => {

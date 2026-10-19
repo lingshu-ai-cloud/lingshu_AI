@@ -8,6 +8,9 @@ import { parseMiniMaxSubtitleTiming } from '../lib/minimaxSubtitleTiming.js';
 import { wavDurationFromBytes } from '../lib/wavDuration';
 import { finalizeMaterialScript } from '../lib/materialScriptFinalizer.js';
 import { createShootingTasksRouter } from './shootingTasks.js';
+import { createProductionCostQuotesRouter, createProductionInputRequestsRouter } from './productionGovernance.js';
+import { autoFulfillProductionInputRequestsForMaterial } from '../production/productionInputRequests.js';
+import { materialAssetV2FromRecord, normalizeMaterialAssetV2, type MaterialAssetV2Metadata } from '../../shared/contracts/materialAssetV2.js';
 import { auditShotEvidence } from '../lib/shotEvidenceAudit.js';
 import { validateSpeechCues } from '../../src/lib/narrationAlignment.js';
 import { safeStudioRenderOutputPath, studioRenderMediaRouter } from '../lib/studioRenderMedia.js';
@@ -148,7 +151,7 @@ export {
   unsupportedNumericClaims,
 } from '../lib/studioGenerationTruthfulness.js';
 import { canAppearInSharedLibrary, isReferenceOnlyMaterial, isWorkflowInternalMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
-import { cloudMaterialView, createCloudMaterial, deleteOwnedCloudMaterial, fetchCloudMaterial, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial, upsertTenantUploadCloudMaterial } from '../lib/cloudMaterials.js';
+import { assertExactMaterialProductBindingImmutable, cloudMaterialView, createCloudMaterial, deleteOwnedCloudMaterial, fetchCloudMaterial, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial, upsertTenantUploadCloudMaterial } from '../lib/cloudMaterials.js';
 import { analyzeVideo } from '../agents/gemini.js';
 import {
   analyzeVideoFramesWithQwen,
@@ -1627,6 +1630,12 @@ studioRouter.use(entitlementGate());
 studioRouter.use('/shooting-tasks', createShootingTasksRouter(store, async (id, tenantId) => {
   return loadMaterials().some(item => item.id === id && item.tenantId === tenantId && item.type === 'video' && !isReferenceOnlyMaterial(item));
 }));
+
+studioRouter.use('/production-input-requests', createProductionInputRequestsRouter(store));
+// Compatibility surface for product-only callers. Records remain in the
+// canonical all-production collection and never become shooting tasks.
+studioRouter.use('/product-asset-requests', createProductionInputRequestsRouter(store, { productOnly: true }));
+studioRouter.use('/production-cost-quotes', createProductionCostQuotesRouter(store));
 
 studioRouter.use('/production', createStudioAvatarProductionRouter(store));
 
@@ -6142,6 +6151,8 @@ interface Material {
   derivativesApproved?: boolean;
   rawLibraryUseApproved?: boolean;
   provenance?: Record<string, unknown>;
+  materialV2?: MaterialAssetV2Metadata | null;
+  enterpriseCommon?: boolean;
   pinned?: boolean;
   industry?: string;
   shotFunction?: string;
@@ -6667,7 +6678,8 @@ async function materialResponse(material: Material, tenantId: string): Promise<M
       analyzedAt: material.createdAt,
     })
     : undefined);
-  return { ...material, url: url || material.url, poster, segments, scriptAnalysis, canManage: material.sourceType !== 'enterprise_product_table' && material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
+  const materialV2 = materialAssetV2FromRecord(material as unknown as Record<string, unknown>);
+  return { ...material, url: url || material.url, poster, segments, scriptAnalysis, materialV2, enterpriseCommon: materialV2?.enterpriseCommon ?? material.enterpriseCommon ?? false, canManage: material.sourceType !== 'enterprise_product_table' && material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
 }
 
 function enterpriseProductMaterials(tenantId: string, profile: Awaited<ReturnType<typeof readTenantEnterpriseProfile>>): Material[] {
@@ -7343,6 +7355,7 @@ studioRouter.patch('/materials/:id', async (req, res) => {
     const name = String(req.body?.name ?? '').trim().slice(0,120);
     if (!name) { res.status(400).json({ok:false,error:'请填写素材名称'}); return; }
     const changes: Record<string,unknown> = {name};
+    let finalProductId = String(material.productId || '');
     if ('tags' in (req.body || {})) changes.tags = String(req.body.tags || '').trim().slice(0,500);
     if ('productId' in (req.body || {})) {
       const id = String(req.body.productId || '');
@@ -7350,6 +7363,7 @@ studioRouter.patch('/materials/:id', async (req, res) => {
       const product = (profile.products.items || []).find((item,index) => productIdentity(item,index) === id);
       if (id && !product) { res.status(400).json({ok:false,error:'关联产品不在当前企业资料中'}); return; }
       changes.productId = id; changes.productName = product?.name || '';
+      finalProductId = id;
     }
     if ('primaryTheme' in (req.body || {})) {
       const theme = String(req.body.primaryTheme || '');
@@ -7359,11 +7373,61 @@ studioRouter.patch('/materials/:id', async (req, res) => {
       changes.classificationStatus = 'completed';
       changes.classificationSource = 'user';
     }
+    if ('materialV2' in (req.body || {}) || 'enterpriseCommon' in (req.body || {})) {
+      const current = material.materialV2 || (material.provenance && typeof material.provenance === 'object'
+        ? material.provenance.materialAssetV2 : undefined) || {};
+      const metadata = normalizeMaterialAssetV2({
+        ...(current as Record<string, unknown>),
+        ...(req.body?.materialV2 && typeof req.body.materialV2 === 'object' && !Array.isArray(req.body.materialV2) ? req.body.materialV2 : {}),
+        ...('enterpriseCommon' in (req.body || {}) ? { enterpriseCommon: req.body.enterpriseCommon === true } : {}),
+      });
+      changes.provenance = { ...(material.provenance || {}), materialAssetV2: metadata };
+    }
+    const effectiveMetadata = materialAssetV2FromRecord({
+      ...(material as unknown as Record<string, unknown>),
+      ...(changes.provenance ? { provenance: changes.provenance } : {}),
+    });
+    const effectiveEnterpriseCommon = effectiveMetadata
+      ? effectiveMetadata.enterpriseCommon
+      : material.enterpriseCommon === true;
+    if (effectiveEnterpriseCommon && finalProductId) {
+      res.status(400).json({ ok: false, code: 'enterprise_common_product_binding_conflict', error: '企业通用素材不能同时绑定具体产品' }); return;
+    }
+    if (effectiveMetadata?.productIdentityLevel === 'exact' && !finalProductId) {
+      res.status(400).json({ ok: false, code: 'exact_product_binding_required', error: '精准产品素材必须绑定具体产品' }); return;
+    }
+    try {
+      assertExactMaterialProductBindingImmutable(
+        material as unknown as Record<string, unknown>,
+        finalProductId,
+        effectiveMetadata,
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message === 'exact_product_binding_immutable') {
+        res.status(409).json({ ok: false, code: 'exact_product_binding_immutable', error: '精准产品素材已锁定原产品；同一文件不能改绑到其他产品' }); return;
+      }
+      throw error;
+    }
     const saved = material.id.startsWith('pb-')
       ? Boolean(await getOwnedCloudMaterialRecord(material.id.slice(3), tenantId)) && await updateCloudMaterial(material.id.slice(3), {...changes,title:name})
       : updateLocalMaterial(material.id,tenantId,changes);
     if (!saved) throw Error('素材修改保存失败');
-    res.json({ok:true,material:await materialResponse({...material,...changes} as Material,tenantId)});
+    const nextMaterial = { ...material, ...changes } as Material;
+    let fulfilledProductionInputRequestIds: string[] = [];
+    let productionInputSyncWarning: string | undefined;
+    try {
+      const fulfilledRequests = await autoFulfillProductionInputRequestsForMaterial({
+        store,
+        tenantId,
+        material: nextMaterial as unknown as Record<string, unknown>,
+      });
+      fulfilledProductionInputRequestIds = fulfilledRequests.map(item => item.id);
+    } catch (error) {
+      // The material update already committed. Never report it as failed and
+      // tempt the client to create duplicate uploads; reconciliation can retry.
+      productionInputSyncWarning = error instanceof Error ? error.message : 'production_input_reconcile_failed';
+    }
+    res.json({ok:true,material:await materialResponse(nextMaterial,tenantId),fulfilledProductionInputRequestIds,...(productionInputSyncWarning ? { productionInputSyncWarning } : {})});
   } catch (error) { res.status(503).json({ok:false,error:error instanceof Error ? error.message : '素材修改失败'}); }
 });
 

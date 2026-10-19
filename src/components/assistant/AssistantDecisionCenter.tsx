@@ -10,6 +10,8 @@ import {
   Send,
   ShieldCheck,
   UserRoundCheck,
+  WalletCards,
+  Wrench,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -31,7 +33,16 @@ import {
 import { digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
 import { PRESENTER_ASSETS_UPDATED_EVENT } from '../../lib/presenterAssetsUpdated';
 import { subscribeAssistantStateInvalidations } from '../../lib/assistantStateInvalidation';
+import {
+  ASSISTANT_PRODUCTION_NAVIGATION_NOTICE,
+  assistantProductionCommandLabel,
+  productionDecisionFromReadView,
+  type AssistantProductionCommand,
+  type AssistantProductionContext,
+  type AssistantProductionDecision,
+} from '../../lib/assistantProductionDecision';
 import { normalizeAssistantDecisionExecutionReceipt } from '../../../shared/contracts/assistantDecisionCenter';
+import type { ProductionAllowedCommand } from '../../../shared/contracts/productionReadModel';
 import { LsBrandAction } from '../ui/LsExperiencePrimitives';
 import './assistantDecisionCenter.css';
 import { fieldValue } from '../../../shared/action-form.mjs';
@@ -83,6 +94,14 @@ export type AssistantDecisionCenterProps = {
   showHeading?: boolean;
   className?: string;
   client?: AssistantDecisionClient;
+  productionContext?: AssistantProductionContext | null;
+  onProductionCommand?: (input: {
+    allowedCommand: ProductionAllowedCommand;
+    expectedVersion: string;
+    idempotencyKey: string;
+    projectId: string;
+    shotId: string | null;
+  }) => Promise<void>;
 };
 
 const STALE_DECISION_CODES = new Set([
@@ -212,6 +231,121 @@ function DecisionSummary({
   );
 }
 
+const productionKindMeta: Record<AssistantProductionDecision['kind'], {
+  label: string;
+  icon: typeof FileInput;
+  tone: 'warning' | 'info' | 'danger';
+}> = {
+  input_required: { label: '需补资料', icon: FileInput, tone: 'danger' },
+  budget: { label: '预算确认', icon: WalletCards, tone: 'warning' },
+  quality_review: { label: '质量验收', icon: ShieldCheck, tone: 'info' },
+  fallback: { label: '降级路线', icon: RefreshCw, tone: 'warning' },
+  recovery: { label: '异常恢复', icon: Wrench, tone: 'danger' },
+};
+
+function ProductionDecisionSummary({
+  decision,
+  total,
+  onOpenDetail,
+}: {
+  decision: AssistantProductionDecision;
+  total: number;
+  onOpenDetail?: (trigger?: HTMLButtonElement | null) => void;
+}) {
+  const Icon = productionKindMeta[decision.kind].icon;
+  return (
+    <button
+      type="button"
+      className="assistant-decision-summary"
+      onClick={event => onOpenDetail?.(event.currentTarget)}
+      aria-label={`查看待办详情：${decision.title}`}
+    >
+      <span className="assistant-decision-summary__icon" aria-hidden="true"><Icon size={18} /></span>
+      <span className="assistant-decision-summary__content">
+        <span className="assistant-decision-summary__eyebrow">
+          <span>待你决定</span>
+          {total > 1 ? <span>共 {total} 项</span> : null}
+        </span>
+        <strong>{decision.title}</strong>
+        <span className="assistant-decision-summary__description">{decision.summary}</span>
+      </span>
+      <ArrowRight className="assistant-decision-summary__arrow" size={18} aria-hidden="true" />
+    </button>
+  );
+}
+
+function ProductionDecisionCard({
+  decision,
+  total,
+  deepLink,
+  busyCommand,
+  onCommand,
+}: {
+  decision: AssistantProductionDecision;
+  total: number;
+  deepLink: AssistantProductionContext['deepLink'];
+  busyCommand: ProductionAllowedCommand | null;
+  onCommand?: (command: AssistantProductionCommand) => void;
+}) {
+  const meta = productionKindMeta[decision.kind];
+  const Icon = meta.icon;
+  const executableCommands = onCommand ? decision.commands : [];
+  const navigationCommands = onCommand ? [] : decision.commands;
+  const primary = executableCommands[0];
+  const primaryNavigation = navigationCommands[0];
+  const linkFor = (action?: AssistantProductionCommand): AssistantDecisionDeepLink => ({
+    ...deepLink,
+    ...(action?.deepLink || {}),
+    businessRef: {
+      ...(deepLink.businessRef || {}),
+      ...(action?.deepLink?.businessRef || {}),
+      ...(decision.shotId ? { shotId: decision.shotId } : {}),
+    },
+  });
+  return (
+    <article className="assistant-decision-card" aria-labelledby={`assistant-production-title-${decision.id}`}>
+      <header className="assistant-decision-card__header">
+        <span className={`assistant-decision-card__icon is-${meta.tone}`} aria-hidden="true"><Icon size={19} /></span>
+        <div className="assistant-decision-card__heading">
+          <div className="assistant-decision-card__eyebrow">
+            <Tag color={meta.tone}>{meta.label}</Tag>
+            {total > 1 ? <span className="assistant-decision-card__queue">优先处理 · 共 {total} 项</span> : null}
+          </div>
+          <h3 id={`assistant-production-title-${decision.id}`}>{decision.title}</h3>
+          <p>{decision.summary}</p>
+        </div>
+      </header>
+      {decision.facts.length ? (
+        <dl className="assistant-decision-card__facts">
+          {decision.facts.map((fact, index) => (
+            <div key={`${fact.label}:${index}`} className={factTone(fact.tone)}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>
+          ))}
+        </dl>
+      ) : null}
+      {!onCommand ? <Alert type="info" showIcon message="请前往对应页面处理" description={ASSISTANT_PRODUCTION_NAVIGATION_NOTICE} /> : null}
+      <Divider className="assistant-decision-card__divider" />
+      <footer className="assistant-decision-card__actions">
+        <div className="assistant-decision-card__secondary-actions">
+          {primary ? <Button icon={<ArrowRight size={15} />} disabled={Boolean(busyCommand)} onClick={() => dispatchDeepLink(linkFor(primary))}>打开对应任务</Button> : null}
+          {executableCommands.slice(1).map(action => (
+            <Button key={action.command} disabled={Boolean(busyCommand)} loading={busyCommand === action.command} onClick={() => onCommand?.(action)}>{assistantProductionCommandLabel(action, true, false)}</Button>
+          ))}
+          {navigationCommands.slice(1).map(action => (
+            <Button key={action.command} icon={<ArrowRight size={15} />} onClick={() => dispatchDeepLink(linkFor(action))}>{assistantProductionCommandLabel(action, false, false)}</Button>
+          ))}
+        </div>
+        {primary ? (
+          <LsBrandAction loading={busyCommand === primary.command} disabled={Boolean(busyCommand)} onClick={() => onCommand?.(primary)}>{assistantProductionCommandLabel(primary, true, true)}</LsBrandAction>
+        ) : primaryNavigation ? (
+          <LsBrandAction icon={<ArrowRight size={15} />} onClick={() => dispatchDeepLink(linkFor(primaryNavigation))}>{assistantProductionCommandLabel(primaryNavigation, false, true)}</LsBrandAction>
+        ) : (
+          <LsBrandAction icon={<ArrowRight size={15} />} onClick={() => dispatchDeepLink(linkFor())}>前往处理</LsBrandAction>
+        )}
+      </footer>
+    </article>
+  );
+}
+
 function DecisionCard({
   card,
   total,
@@ -336,6 +470,8 @@ export default function AssistantDecisionCenter({
   showHeading = true,
   className = '',
   client = assistantDecisionApi,
+  productionContext = null,
+  onProductionCommand,
 }: AssistantDecisionCenterProps) {
   const { message } = App.useApp();
   const [feed, setFeed] = useState<AssistantDecisionFeed | null>(null);
@@ -343,6 +479,7 @@ export default function AssistantDecisionCenter({
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [busyAction, setBusyAction] = useState<AssistantDecisionActionId | null>(null);
+  const [busyProductionCommand, setBusyProductionCommand] = useState<ProductionAllowedCommand | null>(null);
   const [startReconciliation, setStartReconciliation] = useState<StartReconciliation | null>(null);
   const cardRegion = useRef<HTMLDivElement>(null);
   const requestSequence = useRef(0);
@@ -352,7 +489,14 @@ export default function AssistantDecisionCenter({
   const reconciliationAttempts = useRef(0);
   const mounted = useRef(true);
   const feedRef = useRef<AssistantDecisionFeed | null>(null);
-  const first = useMemo(() => selectPrimaryDecision(feed), [feed]);
+  const serverFirst = useMemo(() => selectPrimaryDecision(feed), [feed]);
+  const productionDecision = useMemo(
+    () => productionContext ? productionDecisionFromReadView(productionContext.view) : null,
+    [productionContext],
+  );
+  const productionFirst = Boolean(productionDecision && (!serverFirst || productionDecision.priority > serverFirst.priority));
+  const first = productionFirst ? null : serverFirst;
+  const total = (feed?.total || 0) + (productionDecision ? 1 : 0);
 
   const load = useCallback(async (signal?: AbortSignal, preserveError = false) => {
     const sequence = ++requestSequence.current;
@@ -436,11 +580,32 @@ export default function AssistantDecisionCenter({
     };
   }, [active, load, variant]);
 
-  useEffect(() => { setNote(''); }, [first?.id]);
+  useEffect(() => { setNote(''); }, [first?.id, productionDecision?.id]);
   useEffect(() => { feedRef.current = feed; }, [feed]);
   useEffect(() => {
-    if (feed) onFeedChange?.(feed);
-  }, [feed, onFeedChange]);
+    if (feed) onFeedChange?.(productionDecision ? { ...feed, total } : feed);
+  }, [feed, onFeedChange, productionDecision, total]);
+
+  const actOnProduction = useCallback(async (action: AssistantProductionCommand) => {
+    if (!productionContext || !productionDecision || !onProductionCommand || busyProductionCommand) return;
+    if (!productionDecision.commands.some(item => item.command === action.command && item.shotId === action.shotId)) return;
+    setError('');
+    setBusyProductionCommand(action.command);
+    try {
+      await onProductionCommand({
+        allowedCommand: action.command,
+        expectedVersion: productionDecision.subjectVersion,
+        idempotencyKey: `assistant:${productionContext.view.project.id}:${productionDecision.subjectVersion}:${action.command}:${action.shotId || 'project'}`,
+        projectId: productionContext.view.project.id,
+        shotId: action.shotId,
+      });
+      void message.success('已提交，等待最新生产状态');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '操作失败，请打开任务处理');
+    } finally {
+      setBusyProductionCommand(null);
+    }
+  }, [busyProductionCommand, message, onProductionCommand, productionContext, productionDecision]);
 
   const reconcileWeeklyStart = useCallback(async (pending: StartReconciliation) => {
     if (reconciliationInFlight.current || Date.now() >= pending.deadline || reconciliationAttempts.current >= 8) {
@@ -630,7 +795,7 @@ export default function AssistantDecisionCenter({
   }, [client, first, goalId, load, message, note, onActionResult, onNavigate, page, startReconciliation]);
 
   if (variant === 'summary') {
-    if (!first && !error) return null;
+    if (!first && !productionDecision && !error) return null;
     return (
       <section
         className={`assistant-decision-center assistant-decision-center--summary ${className}`.trim()}
@@ -645,8 +810,10 @@ export default function AssistantDecisionCenter({
             message={error}
             action={<Button disabled={loading} onClick={() => void load()} icon={<RefreshCw size={14} />}>重新加载</Button>}
           />
+        ) : productionFirst && productionDecision ? (
+          <ProductionDecisionSummary decision={productionDecision} total={total || 1} onOpenDetail={onOpenDetail} />
         ) : first ? (
-          <DecisionSummary card={first} total={feed?.total || 1} onOpenDetail={onOpenDetail} />
+          <DecisionSummary card={first} total={total || 1} onOpenDetail={onOpenDetail} />
         ) : null}
       </section>
     );
@@ -662,7 +829,7 @@ export default function AssistantDecisionCenter({
       {showHeading ? (
         <div className="assistant-decision-center__title-row">
           <h2 id="assistant-decision-center-title">待你决定</h2>
-          {feed?.total ? <span aria-label={`共有 ${feed.total} 项待办`}>{feed.total}</span> : null}
+          {total ? <span aria-label={`共有 ${total} 项待办`}>{total}</span> : null}
         </div>
       ) : null}
 
@@ -678,17 +845,26 @@ export default function AssistantDecisionCenter({
 
       <div ref={cardRegion} tabIndex={-1} className="assistant-decision-center__card-region" aria-live="polite">
         {loading && !feed ? <Skeleton active paragraph={{ rows: 5 }} /> : null}
-        {first ? (
+        {!loading && productionFirst && productionDecision && productionContext ? (
+          <ProductionDecisionCard
+            decision={productionDecision}
+            total={total || 1}
+            deepLink={productionContext.deepLink}
+            busyCommand={busyProductionCommand}
+            onCommand={onProductionCommand ? action => void actOnProduction(action) : undefined}
+          />
+        ) : null}
+        {!productionFirst && first ? (
           <DecisionCard
             card={first}
-            total={feed?.total || 1}
+            total={total || 1}
             busyAction={busyAction || ((loading || startReconciliation) ? first.actions[0].id : null)}
             note={note}
             onNoteChange={setNote}
             onAction={action => void act(action)}
           />
         ) : null}
-        {!loading && !first && !error ? (
+        {!loading && !first && !productionDecision && !error ? (
           <div className="assistant-decision-center__empty">
             <CheckCircle2 size={24} aria-hidden="true" />
             <h3>当前没有需要审批的事项</h3>

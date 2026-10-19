@@ -78,10 +78,15 @@ export function resolveMaterialProductAssociation(
 
 export type StoryboardMaterialRequirement = 'optional' | 'unresolved' | 'static_product' | 'dynamic_product' | 'factory_evidence';
 
+export type StoryboardMaterialResolution = 'matched_asset' | 'system_fallback' | 'needs_input' | 'optional';
+
 export interface StoryboardMaterialDecision {
   structureIndex: number;
   requirement: StoryboardMaterialRequirement;
   required: boolean;
+  resolution: StoryboardMaterialResolution;
+  productionRoute: string;
+  productionNote: string;
   assetId: string;
   blocker: string;
 }
@@ -116,19 +121,81 @@ function requirementForStep(
 function candidateForRequirement(requirement: StoryboardMaterialRequirement, assets: AssetCandidate[]): AssetCandidate | undefined {
   if (requirement === 'unresolved') return undefined;
   if (requirement === 'factory_evidence') {
-    return assets.find(asset => asset.type === 'video' && FACTORY_EVIDENCE.test(assetText(asset)));
+    return assets.find(asset => asset.type === 'video'
+      && asset.authorization.scope === 'tenant'
+      && asset.authorization.status === 'owned'
+      && asset.source !== 'licensed_shared_material'
+      && FACTORY_EVIDENCE.test(assetText(asset)));
   }
-  if (requirement === 'dynamic_product') return assets.find(asset => asset.type === 'video');
-  if (requirement === 'static_product') return assets.find(asset => asset.type === 'image') || assets.find(asset => asset.type === 'video');
+  // A generic enterprise/common clip can satisfy an environment or action
+  // need, but it cannot prove the identity of the product requested by this
+  // master. Product decisions therefore only consume assets with a durable
+  // product association; legacy owned uploads are associated upstream when
+  // their metadata identifies exactly one enterprise product.
+  const productAssets = assets.filter(asset => Boolean(asset.productId));
+  if (requirement === 'dynamic_product') return productAssets.find(asset => asset.type === 'video');
+  if (requirement === 'static_product') return productAssets.find(asset => asset.type === 'image') || productAssets.find(asset => asset.type === 'video');
   return assets.find(asset => asset.type === 'video') || assets.find(asset => asset.type === 'image');
 }
 
 function missingMessage(requirement: StoryboardMaterialRequirement, index: number): string {
   if (requirement === 'unresolved') return `第 ${index + 1} 段镜头素材类型待判断，需完成证据复核`;
-  if (requirement === 'dynamic_product') return `第 ${index + 1} 段需要真实动态产品视频；已有产品图可继续用于其他静态镜头`;
-  if (requirement === 'factory_evidence') return `第 ${index + 1} 段需要与产品相关的真实工厂/生产过程视频`;
-  if (requirement === 'static_product') return `第 ${index + 1} 段需要该产品的图片或视频`;
+  if (requirement === 'dynamic_product') return `第 ${index + 1} 段缺少可锁定主体身份的图片或视频；提供一张清晰正面图即可启用系统合成路线`;
+  if (requirement === 'static_product') return `第 ${index + 1} 段缺少可锁定主体身份的图片或视频`;
   return '';
+}
+
+function fallbackIdentityAsset(assets: AssetCandidate[]): AssetCandidate | undefined {
+  const productAssets = assets.filter(asset => Boolean(asset.productId));
+  return productAssets.find(asset => asset.type === 'image') || productAssets.find(asset => asset.type === 'video');
+}
+
+function resolutionForRequirement(
+  requirement: StoryboardMaterialRequirement,
+  candidate: AssetCandidate | undefined,
+  assets: AssetCandidate[],
+): Pick<StoryboardMaterialDecision, 'resolution' | 'productionRoute' | 'productionNote' | 'assetId' | 'blocker'> {
+  if (requirement === 'optional') {
+    return {
+      resolution: 'optional', productionRoute: candidate ? 'reuse_optional_asset' : 'system_select_optional_visual',
+      productionNote: candidate ? '复用已选素材' : '由系统从通用素材、动效或数字人能力中选路',
+      assetId: candidate?.id || '', blocker: '',
+    };
+  }
+  if (requirement === 'unresolved') {
+    return {
+      resolution: 'needs_input', productionRoute: 'review_scene_requirement', productionNote: '先确认镜头承担的内容功能，再选择生产能力',
+      assetId: '', blocker: missingMessage(requirement, 0),
+    };
+  }
+  if (candidate) {
+    return {
+      resolution: 'matched_asset', productionRoute: `reuse_${requirement}_asset`, productionNote: '已命中可复用的已授权素材',
+      assetId: candidate.id, blocker: '',
+    };
+  }
+  if (requirement === 'factory_evidence') {
+    return {
+      resolution: 'needs_input', productionRoute: 'confirm_factory_rewrite_or_bind_authorized_asset',
+      productionNote: '当前执行链尚不能自动消费“工厂底板 + 事实改写”计划；请确认改为非证据性流程说明，或绑定已授权工厂素材',
+      assetId: '', blocker: '缺少可由当前执行链直接消费的工厂素材；请确认改为事实卡片/流程说明，或绑定已授权工厂素材（不会默认创建实拍任务）',
+    };
+  }
+  if (requirement === 'dynamic_product') {
+    const identityAsset = fallbackIdentityAsset(assets);
+    if (identityAsset) {
+      return {
+        resolution: 'needs_input', productionRoute: 'confirm_identity_motion_route_or_bind_dynamic_asset',
+        productionNote: '真实主体图已具备，但当前内容执行链尚不能自动消费“身份图 + 系统动作”计划；请确认改为静态展示，或绑定已授权动态素材',
+        assetId: identityAsset.id,
+        blocker: '真实主体图已具备，但系统动作合成尚未接入本执行链；请确认改为静态展示，或绑定已授权动态素材（不会默认创建实拍任务）',
+      };
+    }
+  }
+  return {
+    resolution: 'needs_input', productionRoute: 'request_minimum_identity_asset', productionNote: '只请求系统无法自行推断的最小身份素材，不创建默认实拍任务',
+    assetId: '', blocker: '',
+  };
 }
 
 /**
@@ -148,12 +215,16 @@ export function assessStoryboardMaterialReadiness(input: {
       : input.presenter === 'avatar' ? 'optional' : requirementForStep(input.analysis!, step);
     const candidate = candidateForRequirement(requirement, input.assets);
     const required = requirement !== 'optional';
+    const resolution = resolutionForRequirement(requirement, candidate, input.assets);
+    const blocker = resolution.resolution === 'needs_input'
+      ? resolution.blocker || missingMessage(requirement, structureIndex)
+      : '';
     return {
       structureIndex,
       requirement,
       required,
-      assetId: candidate?.id || '',
-      blocker: required && !candidate ? missingMessage(requirement, structureIndex) : '',
+      ...resolution,
+      blocker,
     };
   });
   if (!structure.length && input.presenter !== 'avatar' && !input.assets.length) {

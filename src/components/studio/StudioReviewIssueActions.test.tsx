@@ -9,6 +9,9 @@ const product = renderToStaticMarkup(<StudioReviewIssueActions {...props} digita
 assert.match(product, /上传产品一图片/);
 assert.match(product, /disabled=""[^>]*>重新生成首帧/);
 assert.doesNotMatch(product, /企业人物|照片人物复刻/);
+assert.doesNotMatch(product, /列入待拍/, 'server projection must explicitly allow shooting');
+const shootingAllowed = renderToStaticMarkup(<StudioReviewIssueActions {...props} digital={false} allowShooting />);
+assert.match(shootingAllowed, /列入待拍/);
 const digital = renderToStaticMarkup(<StudioReviewIssueActions {...props} digital requirements={newDigitalHumanRequirements()} />);
 assert.match(digital, /disabled=""[^>]*>确认并保存制作方案/);
 assert.match(digital, /修正素材类型/);

@@ -7,6 +7,7 @@ import { materialAssetPolicy, type MaterialSourceEntry } from './materialAssetPo
 import { objectStorageGetObject } from '../storage/objectStorage.js';
 import { postgresListWithPocketBaseFilter, postgresStore, selectedDataBackend } from '../storage/postgres.js';
 import type { DataStore } from '../storage/datastore.js';
+import { materialAssetV2FromRecord, type MaterialAssetV2Metadata } from '../../shared/contracts/materialAssetV2.js';
 
 export interface CloudMaterialRecord extends Record<string, unknown> {
   id: string;
@@ -67,6 +68,7 @@ export interface CreateCloudMaterialInput {
   derivativesApproved?: boolean;
   rawLibraryUseApproved?: boolean;
   provenance?: Record<string, unknown>;
+  materialV2?: MaterialAssetV2Metadata;
   sourceEntry?: MaterialSourceEntry;
   media: CloudMaterialFileInput | CloudMaterialObjectInput;
   poster?: CloudMaterialFileInput | CloudMaterialObjectInput;
@@ -100,6 +102,44 @@ function usePostgresMaterials(request: typeof adminFetch): boolean {
   return request === adminFetch && selectedDataBackend() === 'postgres';
 }
 
+function assertMaterialV2ProductBinding(
+  metadata: MaterialAssetV2Metadata | null | undefined,
+  productIdValue: unknown,
+): void {
+  if (!metadata) return;
+  const productId = String(productIdValue || '').trim();
+  if ((metadata.enterpriseCommon || metadata.assetRole === 'generic_scene_plate') && productId) {
+    throw new Error('enterprise common material cannot bind a product');
+  }
+  if (metadata.productIdentityLevel === 'exact' && !productId) {
+    throw new Error('exact product material requires a product binding');
+  }
+}
+
+/**
+ * Exact-SKU identity belongs to the content-addressed material bytes, not to
+ * the screen or task that happens to reference them. Once those bytes have an
+ * exact product binding, neither a metadata edit nor a same-hash upload may
+ * move them to another product (or clear the binding).
+ */
+export function assertExactMaterialProductBindingImmutable(
+  existing: Record<string, unknown>,
+  nextProductIdValue: unknown,
+  nextMetadata?: MaterialAssetV2Metadata | null,
+): void {
+  const currentProductId = String(existing.productId || existing.product_id || '').trim();
+  const nextProductId = String(nextProductIdValue || '').trim();
+  const currentMetadata = materialAssetV2FromRecord(existing);
+  const exactBefore = currentMetadata?.productIdentityLevel === 'exact';
+  const exactAfter = nextMetadata?.productIdentityLevel === 'exact';
+  if (exactBefore && nextMetadata && !exactAfter) {
+    throw new Error('exact_product_binding_immutable');
+  }
+  if (currentProductId && currentProductId !== nextProductId && (exactBefore || exactAfter)) {
+    throw new Error('exact_product_binding_immutable');
+  }
+}
+
 /**
  * Create one material metadata record. New uploads may keep their bytes in
  * object storage while legacy callers can still attach PocketBase file fields.
@@ -115,6 +155,7 @@ export async function createCloudMaterial(
   if (!input.tenantId.trim()) throw new Error('material tenant is required');
   if (!/^[a-f0-9]{64}$/i.test(input.sha256)) throw new Error('material sha256 is invalid');
   if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes < 1) throw new Error('material size is invalid');
+  assertMaterialV2ProductBinding(input.materialV2, input.productId);
 
   if (!('path' in input.media) && !('buf' in input.media) && !isObjectInput(input.media)) {
     throw new Error('material media reference is invalid');
@@ -152,6 +193,7 @@ export async function createCloudMaterial(
     rawLibraryUseApproved: input.rawLibraryUseApproved,
     provenance: {
       ...(input.provenance || {}),
+      ...(input.materialV2 ? { materialAssetV2: input.materialV2 } : {}),
       sourceEntry: input.sourceEntry || input.provenance?.sourceEntry || materialAssetPolicy({
         scope: input.scope,
         tenantId: input.tenantId,
@@ -250,6 +292,7 @@ export function cloudMaterialView(item: CloudMaterialRecord): Record<string, unk
   const width = Number(item.width || 0);
   const height = Number(item.height || 0);
   const policy = materialAssetPolicy({ ...item, provenance });
+  const materialV2 = materialAssetV2FromRecord({ ...item, provenance });
   return {
     id: `pb-${item.id}`, cloudRecordId: String(item.id), name: String(item.title || item.sourceName || item.name || '云端素材'),
     folder: String(item.folder || 'upload'), type: String(item.type || 'video'), duration: Number(item.duration || 0),
@@ -280,6 +323,10 @@ export function cloudMaterialView(item: CloudMaterialRecord): Record<string, unk
     manifestSha256: String(item.manifestSha256 || ''), importedAt: String(item.importedAt || ''), commercialUseApproved: Boolean(item.commercialUseApproved),
     derivativesApproved: Boolean(item.derivativesApproved), rawLibraryUseApproved: Boolean(item.rawLibraryUseApproved),
     provenance,
+    materialV2,
+    enterpriseCommon: materialV2?.enterpriseCommon ?? (
+      item.enterpriseCommon === true || item.enterprise_common === true || item.isEnterpriseCommon === true
+    ),
     ownership: policy.ownership,
     visibility: policy.visibility,
     knowledgeEligible: policy.knowledgeEligible,
@@ -414,6 +461,10 @@ export async function upsertTenantUploadCloudMaterial(
   const current = existing.provenance && typeof existing.provenance === 'object'
     ? existing.provenance as Record<string, unknown>
     : parseObject(existing.provenance) || {};
+  const effectiveMaterialV2 = input.materialV2 || materialAssetV2FromRecord(existing);
+  const effectiveProductId = input.productId || existing.productId || existing.product_id;
+  assertExactMaterialProductBindingImmutable(existing, effectiveProductId, effectiveMaterialV2);
+  assertMaterialV2ProductBinding(effectiveMaterialV2, effectiveProductId);
   const sourceEntries = Array.from(new Set([
     ...(Array.isArray(current.sourceEntries) ? current.sourceEntries : []),
     current.sourceEntry,
@@ -422,6 +473,7 @@ export async function upsertTenantUploadCloudMaterial(
   const provenance = {
     ...current,
     ...(input.provenance || {}),
+    ...(input.materialV2 ? { materialAssetV2: input.materialV2 } : {}),
     sourceEntry: input.sourceEntry === 'enterprise_knowledge' ? input.sourceEntry : current.sourceEntry || input.sourceEntry,
     sourceEntries,
   };
@@ -464,8 +516,13 @@ export async function upsertSocialTaskCloudMaterial(
     const current = existing.provenance && typeof existing.provenance === 'object'
       ? existing.provenance as Record<string, unknown>
       : parseObject(existing.provenance) || {};
+    const effectiveMaterialV2 = input.materialV2 || materialAssetV2FromRecord(existing);
+    const effectiveProductId = productId || existing.productId || existing.product_id;
+    assertExactMaterialProductBindingImmutable(existing, effectiveProductId, effectiveMaterialV2);
+    assertMaterialV2ProductBinding(effectiveMaterialV2, effectiveProductId);
     const merged = {
       ...current,
+      ...(input.materialV2 ? { materialAssetV2: input.materialV2 } : {}),
       sourceTaskIds: Array.from(new Set([
         ...(Array.isArray(current.sourceTaskIds) ? current.sourceTaskIds : []),
         input.taskId,

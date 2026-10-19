@@ -7474,15 +7474,13 @@ async function analyzeExactLongVideoChunks(input: {
   analysisMode?: 'strategy' | 'exact';
   sceneCuts?: number[];
 }): Promise<VideoAiAnalysis> {
-  // Keep each VL request small enough to finish reliably. The previous 45s
-  // default put nearly all 42 exact frames into the first request of a 50s
-  // video, which repeatedly hit the 90s request timeout.
-  const chunkSeconds = Math.max(10, Math.min(30, Number(process.env.VIDEO_EXACT_CHUNK_SECONDS || 12)));
+  // Keep each VL request small enough to finish reliably. Dense montage clips
+  // can contain twenty or more observation boundaries in twelve seconds; that
+  // response repeatedly exceeds the provider timeout even after reducing the
+  // frame count. Six-second chunks bound both image input and schema output.
+  const chunkSeconds = Math.max(4, Math.min(30, Number(process.env.VIDEO_EXACT_CHUNK_SECONDS || 6)));
   const inferredDuration = exactAnalysisDuration(input.duration, input.frames.map(frame => qwenFrameSeconds(frame.timeLabel)));
-  const chunks = Array.from({ length: Math.ceil(inferredDuration / chunkSeconds) }, (_, index) => ({
-    start: index * chunkSeconds,
-    end: Math.min(inferredDuration, (index + 1) * chunkSeconds),
-  }));
+  const chunks = exactAnalysisChunkRanges(inferredDuration, chunkSeconds);
   const timelinePlanError = (plan: QwenTimelinePlan, duration: number): string | null => {
     const rows = plan.boundaries;
     if (!plan.theme.trim()) return 'missing_theme';
@@ -7633,6 +7631,15 @@ async function analyzeExactLongVideoChunks(input: {
     coarseStructure: results.flatMap(result => result.coarseStructure || []),
     scriptDetails15s: results.flatMap(result => result.scriptDetails15s || []),
   };
+}
+
+export function exactAnalysisChunkRanges(duration: number, chunkSeconds = 6): Array<{ start: number; end: number }> {
+  const boundedDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+  const boundedChunkSeconds = Math.max(4, Math.min(30, Number.isFinite(chunkSeconds) ? chunkSeconds : 6));
+  return Array.from({ length: Math.ceil(boundedDuration / boundedChunkSeconds) }, (_, index) => ({
+    start: index * boundedChunkSeconds,
+    end: Math.min(boundedDuration, (index + 1) * boundedChunkSeconds),
+  }));
 }
 
 export function exactAnalysisDuration(duration: number, frameTimes: number[]): number {

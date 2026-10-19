@@ -54,6 +54,30 @@ interface ProductItem {
   brandAssets?: ProductAsset[];
 }
 
+export interface EnterpriseProductsDeepLink {
+  productName: string;
+  materialIds: string[];
+  contentItemId: string;
+}
+
+export type EnterpriseProductsDeepLinkResolution = {
+  productIndex: number | null;
+  reason: 'exact_unique' | 'not_found' | 'ambiguous';
+};
+
+export function resolveEnterpriseProductsDeepLink(
+  products: Array<Pick<ProductItem, 'name'>>,
+  deepLink: EnterpriseProductsDeepLink,
+): EnterpriseProductsDeepLinkResolution {
+  const requestedName = deepLink.productName.trim().toLocaleLowerCase();
+  if (!requestedName) return { productIndex: null, reason: 'not_found' };
+  const matches = products.flatMap((product, index) => (
+    product.name.trim().toLocaleLowerCase() === requestedName ? [index] : []
+  ));
+  if (matches.length === 1) return { productIndex: matches[0]!, reason: 'exact_unique' };
+  return { productIndex: null, reason: matches.length > 1 ? 'ambiguous' : 'not_found' };
+}
+
 interface PendingProductImport {
   fileName: string;
   sheetName: string;
@@ -661,7 +685,7 @@ async function importProductEvidenceUrl(url: string, name: string): Promise<Prod
   return result as ProductAsset;
 }
 
-export default function EnterprisePage() {
+export default function EnterprisePage({ productsDeepLink = null }: { productsDeepLink?: EnterpriseProductsDeepLink | null }) {
   const weeklyFactTarget=readWeeklyEnterpriseFactTarget();
   const [profile, setProfile] = useState<Profile>(DEFAULT);
   const [saving, setSaving] = useState(false);
@@ -693,6 +717,7 @@ export default function EnterprisePage() {
   const [languageSettingsHighlight, setLanguageSettingsHighlight] = useState(false);
   const [productPage, setProductPage] = useState(1);
   const [expandedProductIndexes, setExpandedProductIndexes] = useState<Set<number>>(() => new Set([0]));
+  const [productsDeepLinkResolution, setProductsDeepLinkResolution] = useState<EnterpriseProductsDeepLinkResolution | null>(null);
   const [faqPage, setFaqPage] = useState(1);
   const [notificationsHighlight, setNotificationsHighlight] = useState(false);
   const [bizRulesHighlight, setBizRulesHighlight] = useState(false);
@@ -932,8 +957,39 @@ export default function EnterprisePage() {
   const configuredAutonomy = profile.strategy?.aiAutonomy ?? 'draft';
   const effectiveAutonomy: AutonomyLevel = configuredAutonomy === 'auto' && !canAutoReply ? 'draft' : configuredAutonomy;
 
+  useEffect(() => {
+    if (!productsDeepLink) {
+      setProductsDeepLinkResolution(null);
+      return;
+    }
+    if (!profileLoaded || loading) return;
+    setEnterpriseArea('facts');
+    setKnowledgeView('products');
+    const resolution = resolveEnterpriseProductsDeepLink(products, productsDeepLink);
+    setProductsDeepLinkResolution(resolution);
+    if (resolution.productIndex === null) {
+      setProductPage(1);
+      return;
+    }
+    const productIndex = resolution.productIndex;
+    setProductPage(Math.floor(productIndex / PAGE_SIZE) + 1);
+    setExpandedProductIndexes(previous => new Set(previous).add(productIndex));
+    const timer = window.setTimeout(() => {
+      document.getElementById(`enterprise-product-${productIndex}`)?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [loading, productsDeepLink, profileLoaded]);
+
   useEffect(() => { setProductPage(page => Math.min(page, Math.max(1, Math.ceil(products.length / PAGE_SIZE)))); }, [products.length]);
   useEffect(() => { setFaqPage(page => Math.min(page, Math.max(1, Math.ceil(faqItems.length / PAGE_SIZE)))); }, [faqItems.length]);
+
+  const deepLinkedProduct = productsDeepLinkResolution?.productIndex !== null
+    && productsDeepLinkResolution?.productIndex !== undefined
+    ? products[productsDeepLinkResolution.productIndex] || null
+    : null;
+  const deepLinkMaterialCount = new Set(
+    (productsDeepLink?.materialIds || []).map(id => String(id || '').trim()).filter(Boolean),
+  ).size;
 
   const applyKnowledgeProfile = (updated: AppliedProfile) => {
     setProfile(previous => {
@@ -1572,6 +1628,10 @@ export default function EnterprisePage() {
     window.history.replaceState({ ...window.history.state, productionDetail: detail }, '', url);
   };
 
+  const openMaterialLibrary = () => {
+    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'socialInspiration', view: 'library' } }));
+  };
+
   const openCompletenessTodo = (todo: EnterpriseCompletenessTodo) => {
     setEnterpriseArea('facts');
     if (todo.kind === 'product_image' && todo.productIndex !== undefined && products[todo.productIndex]) {
@@ -1786,9 +1846,6 @@ export default function EnterprisePage() {
         <Field label="成立年份">
           <Input className={inputCls} value={profile.company.founded} onChange={e => set('company')('founded', e.target.value)} placeholder="2018" />
         </Field>
-        <Field label="海外平台经验">
-          <OptionSelector value={profile.company.socialPlatformExperience ?? ''} options={['做过', '没做过', '正在准备']} multiple={false} onChange={value => set('company')('socialPlatformExperience', value)} placeholder="选择海外平台经验" />
-        </Field>
       </div>
       <Field label="公司简介">
         <Input.TextArea className={textareaCls} rows={4} value={profile.company.description} onChange={e => set('company')('description', e.target.value)} placeholder="介绍公司背景、主营品类、供应链优势、交付能力和海外服务经验。" />
@@ -1976,6 +2033,21 @@ export default function EnterprisePage() {
             completed={completions.products}
             stat={`${products.length} 个产品 · ${assetStats.documents} 份资质凭证 · ${assetStats.creative} 项历史素材记录`}
           >
+            {productsDeepLink && productsDeepLinkResolution && <div className="mb-4" data-content-item-id={productsDeepLink.contentItemId || undefined}>
+              <Alert
+                type={deepLinkedProduct ? 'success' : 'warning'}
+                showIcon
+                title={deepLinkedProduct ? `已定位到“${deepLinkedProduct.name}”` : '未能可靠定位任务产品'}
+                description={deepLinkedProduct
+                  ? deepLinkMaterialCount > 0
+                    ? `内容任务 ${productsDeepLink.contentItemId || '当前任务'} 还引用 ${deepLinkMaterialCount} 项素材。企业知识库只展示产品事实，不会把素材 ID 伪装成页内文件定位；请从该产品的“我的素材”入口继续核对。`
+                    : `已按内容任务 ${productsDeepLink.contentItemId || '当前任务'} 的唯一同名产品定位到资料卡。`
+                  : `内容任务 ${productsDeepLink.contentItemId || '当前任务'} 提供的产品名称无法唯一匹配已保存产品，已打开稳定的产品资料列表${deepLinkMaterialCount > 0 ? `；其 ${deepLinkMaterialCount} 项素材引用请在“我的素材”中核对` : ''}。`}
+                action={<Button onClick={() => deepLinkedProduct ? openProductMaterials(deepLinkedProduct) : openMaterialLibrary()}>
+                  {deepLinkedProduct ? '打开该产品素材' : '打开我的素材'}
+                </Button>}
+              />
+            </div>}
             <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-3">
               <p className="text-sm font-semibold text-emerald-950">产品素材统一在“我的素材”管理</p>
               <p className="mt-1 text-xs leading-5 text-emerald-800">企业知识库只维护产品事实和资质凭证。图片、视频和音频只需上传一次；从内容任务上传的素材也会归入同一个素材库。</p>
@@ -1988,7 +2060,6 @@ export default function EnterprisePage() {
                 <OptionSelector value={profile.products.certifications} options={CERTIFICATION_OPTIONS} onChange={value => set('products')('certifications', value)} placeholder="选择认证资质" />
               </Field>
             </div>
-            <p className="mb-4 rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-2 text-[11px] leading-5 text-violet-800">社媒发现范围不在企业中心重复维护。这里保存真实产品资料；产品、市场和沟通对象会在“灵感中心”组合成可追溯的发现范围。</p>
             <Field label="产品核心优势">
               <Input.TextArea className={textareaCls} rows={2} value={profile.products.highlights} onChange={e => set('products')('highlights', e.target.value)} placeholder="工厂直供、支持 OEM/ODM、备货稳定" />
             </Field>

@@ -11,14 +11,15 @@ function detail() {
       productionResult: null, replicationEvaluation: null } } as any;
 }
 
-test('historic jobs stay legacy; selected graph bindings fail closed on corruption', () => {
+test('historic jobs without a binding stay legacy; selected graph bindings fail closed on corruption', () => {
   assert.equal(socialProductionExecutor({ checkpoints: {} } as any), 'legacy');
   assert.throws(() => socialProductionExecutor({ checkpoints: {} } as any, { 'social.executor': { invalid: true } }), /binding_invalid/);
   assert.throws(() => socialProductionExecutor({ checkpoints: { 'langgraph.v1': {} } } as any), /binding_invalid/);
   const binding = createSocialProductionExecutorCheckpoint(detail(), { SOCIAL_CONTENT_EXECUTOR: 'langgraph' });
   assert.equal(socialProductionExecutor({ checkpoints: { 'social.executor': binding } } as any), 'langgraph');
   assert.throws(() => socialProductionExecutor({ checkpoints: { 'social.executor': { ...binding, inputHash: 'tampered' } } } as any), /binding_invalid/);
-  assert.equal(createSocialProductionExecutorCheckpoint(detail(), {}).payload.executor, 'legacy');
+  assert.equal(createSocialProductionExecutorCheckpoint(detail(), {}).payload.executor, 'langgraph');
+  assert.equal(createSocialProductionExecutorCheckpoint({ ...detail(), mode: 'instant' }, {}).payload.executor, 'legacy');
 });
 
 test('task projection versions may advance; approved words, routes and review cannot drift', () => {

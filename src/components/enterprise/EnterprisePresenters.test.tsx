@@ -28,6 +28,11 @@ test('initial configuration presents one unified presenter onboarding instead of
   assert.match(arkPanelSource, /if \(!capability\.ready\)/);
   assert.match(arkPanelSource, /不影响当前 HeyGen 口播人物/);
   assert.match(arkPanelSource, /管理员还需配置/);
+  assert.match(arkPanelSource, /aria-label="人物认证视频"/);
+  assert.match(arkPanelSource, /aria-label="人物认证照片"/);
+  assert.match(arkPanelSource, /aria-label="选择已有本人人物照片"/);
+  assert.match(arkPanelSource, /方舟进行真人验证/);
+  assert.match(arkPanelSource, /提交人物资料并开始认证/);
 });
 
 test('enterprise presenter recovery persists its intent and lets the visible digital employee page open the dialog', () => {
@@ -50,12 +55,12 @@ test('enterprise presenter page supports editing, optional certification and rev
   assert.doesNotMatch(enterprisePageSource, /<EnterprisePresenterRouting/);
 });
 
-test('content production redirects setup to the shared beginner guide', () => {
+test('content production records and selects the required presenter inside the production panel', () => {
   const html = renderToStaticMarkup(<EnterprisePresenters contentProduction />);
-  assert.match(html, /打开数字人接入/);
-  assert.match(html, /制作页面不再重复承载人物供应商配置/);
-  assert.match(source, /lingshu:open-digital-employee-guide/);
-  assert.match(source, /setItem\('lingshu:open-digital-employee-guide', 'presenter'\)/);
+  assert.match(html, /录入数字人形象/);
+  assert.match(html, /必须明确选择一个已授权数字人形象才能进入下一步/);
+  assert.match(source, /选择此形象/);
+  assert.match(source, /selectForProduction/);
 });
 
 test('all presenter mutations invalidate assistant decisions immediately', () => {

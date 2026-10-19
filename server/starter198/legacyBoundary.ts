@@ -14,6 +14,11 @@ const EXEMPT_PATHS = [
   // itself remains authenticated and maps mutations back onto the versioned
   // starter command API; exempting it here does not reopen legacy writes.
   /^\/api\/overseas\/assistant-threads(?:\/|$)/,
+  // Production governance endpoints expose tenant-scoped read projections.
+  // Their browser mutation routes fail closed with 403; verified workers call
+  // the domain functions directly, so exempting the path does not create a
+  // second Starter mutation surface.
+  /^\/api\/overseas\/studio\/(?:production-input-requests|product-asset-requests|production-cost-quotes)(?:\/|$)/,
   /^(?:\/api\/overseas)?\/auth\/(?:me|change-password|employees(?:\/[^/]+(?:\/role)?)?|guide-seen|logout)\/?$/,
   /^\/api\/overseas\/admin(?:\/|$)/,
   /^\/api\/overseas\/support-access(?:\/|$)/,

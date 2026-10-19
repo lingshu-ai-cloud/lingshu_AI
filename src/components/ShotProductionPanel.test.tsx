@@ -15,6 +15,7 @@ test('failed media verification is not presented as a usable completed candidate
   const html = renderToStaticMarkup(<ShotProductionPanel {...props} shot={{ ...newShotProduction(), source: 'avatar' }} jobs={[{ id: 'j1', projectId: 'p1', shotId: 's1', assemblyId: 'a1', fingerprint: 'f1', status: 'pending', error: '供应商已生成，但下载或技术检查未通过：缺少音轨', createdAt: '', updatedAt: '' }]} />);
   assert.match(html, /已生成 · 待入库核验/);
   assert.match(html, /下载或技术检查未通过/);
+  assert.match(html, /已暂停自动重查/);
   assert.doesNotMatch(html, /候选已就绪/);
 });
 test('AI storyboard candidate can be adopted only after its own quality review', () => {
@@ -23,14 +24,17 @@ test('AI storyboard candidate can be adopted only after its own quality review',
     fingerprint: shotFingerprint(base, '', 'shot-1'), createdAt: '2026-10-03T00:00:00Z' }] };
   const pending = renderToStaticMarkup(<ShotProductionPanel {...props} shotId="shot-1" shot={shot} aiCandidateApproved={() => false} />);
   assert.match(pending, /创意画面.*待人工验收/);
+  assert.match(pending, /人工复核通过后再采用/);
   assert.match(pending, /disabled=""[^>]*>采用 \/ 恢复/);
   const approved = renderToStaticMarkup(<ShotProductionPanel {...props} shotId="shot-1" shot={shot} aiCandidateApproved={id => id === 'generated-1'} />);
   assert.doesNotMatch(approved, /创意画面.*待人工验收/);
   assert.match(approved, /<button type="button" class="text-accent disabled:opacity-40">采用 \/ 恢复<\/button>/);
 });
 test('unconfigured enterprise presenter cannot be billed and keeps only presenter-appropriate routes', () => {
-  const html = renderToStaticMarkup(<ShotProductionPanel {...props} capabilityReason="服务端未配置 HEYGEN_API_KEY" shot={{ ...newShotProduction('hello'), source: 'avatar' }} />);
-  for (const label of ['人物表达 · 企业人物口播', '企业人物生成', '使用已有企业人物视频', '安排真人拍摄', '连续旁白', '使用镜头原声', '此镜无声', '人物与产品分屏', '产品主画面', '用一句话编辑当前镜头']) assert.ok(html.includes(label));
+  const html = renderToStaticMarkup(<ShotProductionPanel {...props} allowShooting capabilityReason="服务端未配置 HEYGEN_API_KEY" shot={{ ...newShotProduction('hello'), source: 'avatar' }} />);
+  for (const label of ['人物表达 · 企业人物口播', '已选数字人形象生成', '连续旁白', '使用镜头原声', '此镜无声', '人物与产品分屏', '产品主画面', '用一句话编辑当前镜头']) assert.ok(html.includes(label));
+  assert.doesNotMatch(html, /使用已有企业人物视频|安排真人拍摄/);
+  assert.match(html, /不会降级为素材匹配、实拍或其他路线/);
   assert.match(html, /仅规划 · HeyGen 人物口播/);
   assert.match(html, /未配置或未启用/);
   assert.match(html, /服务端未配置 HEYGEN_API_KEY/);
@@ -47,6 +51,14 @@ test('unconfigured enterprise presenter cannot be billed and keeps only presente
   assert.doesNotMatch(html, /人物参考素材ID|HeyGen人物\/Look ID|保存人物资产|\+新增人物/);
 });
 
+test('shooting stays hidden until the server production projection allows it', () => {
+  const hidden = renderToStaticMarkup(<ShotProductionPanel {...props} shot={{ ...newShotProduction(), contentType: 'product', source: 'material' }} />);
+  assert.doesNotMatch(hidden, /安排真人拍摄|创建待拍任务|优先真人实拍/);
+  const allowed = renderToStaticMarkup(<ShotProductionPanel {...props} allowShooting shot={{ ...newShotProduction(), contentType: 'product', source: 'material' }} />);
+  assert.match(allowed, /安排真人拍摄/);
+  assert.match(allowed, /优先真人实拍/);
+});
+
 test('missing presenter can be completed inside the current shot and returns to the same shot', () => {
   const html = renderToStaticMarkup(<ShotProductionPanel {...props} defaults={{ ...EMPTY_DEFAULTS, presenters: [] }} onCreatePresenter={async () => ({ id:'new-person',name:'New',avatarId:'',voiceId:'',authorized:true,supportsAlpha:false })} shot={{ ...newShotProduction('口播'), source:'avatar', contentType:'enterprise_presenter' }} />);
   assert.match(html, /在当前分镜添加人物/);
@@ -59,8 +71,8 @@ test('existing presenter can reuse its uploaded photo in the Ark enrollment flow
   const presenter = { id:'person-1',name:'销售',avatarId:'',voiceId:'',authorized:true,supportsAlpha:false,referenceMaterialIds:['portrait-1'],authorizationConfirmation:{subjectAdultConfirmed:true,arkProcessingAuthorized:true} };
   const html = renderToStaticMarkup(<ShotProductionPanel {...props} onEnrollArkPresenter={async()=>({id:'e1',presenterId:'person-1',state:'needs_verification',verificationUrl:'',error:'',assetUri:''})} defaults={{...EMPTY_DEFAULTS,presenters:[presenter]}} materials={[{id:'portrait-1',name:'销售正脸',type:'image',url:'/photo.jpg'}]} shot={{...newShotProduction('请联系我'),source:'avatar',presenterId:'person-1',digitalHuman:{workflow:'viral_replication',method:'reenact',contentConfirmed:false,action:'挥手',scene:'工厂',preserve:'人物身份'}}} />);
   assert.match(html,/销售正脸/);
-  assert.match(html,/选择已有本人人物照片/);
-  assert.match(html,/提交人物资料并开始认证/);
+  assert.match(html,/人物替换认证（可选）/);
+  assert.match(html,/正在检查人物替换能力/);
   assert.doesNotMatch(html,/方舟图片 Asset ID/);
   assert.match(html,/人物图片尚未完成方舟 Active 认证/);
   assert.match(html,/<button[^>]*disabled=""[^>]*>生成新候选/);
@@ -68,11 +80,9 @@ test('existing presenter can reuse its uploaded photo in the Ark enrollment flow
 
 test('new reenact presenter starts with one video, one photo and explicit Ark consent', () => {
   const html = renderToStaticMarkup(<ShotProductionPanel {...props} onEnrollArkPresenter={async()=>({id:'e1',presenterId:'person-1',state:'needs_verification',verificationUrl:'',error:'',assetUri:''})} shot={{...newShotProduction('请联系我'),source:'avatar',digitalHuman:{workflow:'viral_replication',method:'reenact',contentConfirmed:false,action:'挥手',scene:'工厂',preserve:'人物身份'}}} />);
-  assert.match(html,/人物认证视频/);
-  assert.match(html,/人物认证照片/);
-  assert.match(html,/方舟进行真人验证/);
+  assert.match(html,/人物替换认证（可选）/);
+  assert.match(html,/正在检查人物替换能力/);
   assert.doesNotMatch(html,/方舟图片 Asset ID/);
-  assert.match(html,/<button[^>]*disabled=""[^>]*>提交人物资料并开始认证/);
 });
 
 test('UGC and product shots expose their own routes without enterprise digital-human controls', () => {
@@ -352,6 +362,7 @@ test('photo talking hides internal shot type and composition inputs', () => {
   assert.doesNotMatch(html,/原片镜头类型/);
   assert.doesNotMatch(html,/人物构图|原片分析 · 女性正面讲话/);
   for (const section of ['人物与声音', '口播内容', '授权与目标首帧', '费用与生成']) assert.match(html, new RegExp(section));
+  assert.match(html,/aria-label="本镜头口播文案"/);
   assert.match(html,/本镜头口播文案/);
   assert.match(html,/待生成，可生成后预览/);
   assert.match(html,/高级设置 · 原片取帧范围/);

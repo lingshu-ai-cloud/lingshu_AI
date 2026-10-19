@@ -3,6 +3,7 @@ import {
   activeAnalysisRequest,
   buildYtDlpArgs,
   describeVideoAnalysisRecovery,
+  exactAnalysisChunkRanges,
   exactAnalysisDuration,
   exactSourceClockDuration,
   filterCrawlerOpsTasksForRecordIds,
@@ -146,6 +147,11 @@ assert.equal(shouldResumeReferenceAnalysis({
 }, 22.1), true, '重复上传必须重跑越过真实片尾的历史精准分析');
 assert.equal(exactAnalysisDuration(22.1, [0, 12, 21.1]), 22.1, '已知真实时长必须覆盖“末帧 + 3 秒”的估算值');
 assert.equal(exactAnalysisDuration(0, [0, 6.5]), 9.5, '只有缺少真实时长时才允许按末帧估算');
+assert.deepEqual(exactAnalysisChunkRanges(15), [
+  { start: 0, end: 6 },
+  { start: 6, end: 12 },
+  { start: 12, end: 15 },
+], '高密度 15 秒视频必须拆成六秒以内的小块，避免逐镜结构输出反复超时');
 const sourceClockAnalysis = { sourceMediaClock: { schemaVersion: 1 as const, duration: 9.41, fps: 30, sourceSha256: 'a'.repeat(64), analysisRunId: 'run-1', measuredAt: '2026-10-11T00:00:00.000Z' } } as any;
 assert.equal(exactSourceClockDuration(sourceClockAnalysis, 'run-1'), 9.41, '当前分析运行的源容器时钟必须保留小数秒');
 assert.equal(exactSourceClockDuration(sourceClockAnalysis, 'stale-run'), undefined, '旧分析运行的源容器时钟不得覆盖当前记录');

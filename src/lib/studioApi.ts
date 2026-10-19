@@ -907,7 +907,7 @@ export const studioApi = {
     } catch { return { ok: false, error: '片段更新失败' }; }
   },
   materialProducts: () => get<{items:Array<{id:string;name:string}>}>('material-products', {items:[]}),
-  updateMaterial: async (id: string, changes: { name: string; tags?: string; productId?: string; primaryTheme?: import('../../shared/materialTaxonomy').MaterialTheme }): Promise<{ ok: boolean; material?: Material; error?: string }> => {
+  updateMaterial: async (id: string, changes: { name: string; tags?: string; productId?: string; enterpriseCommon?: boolean; materialV2?: Partial<import('../../shared/contracts/materialAssetV2').MaterialAssetV2Metadata>; primaryTheme?: import('../../shared/materialTaxonomy').MaterialTheme }): Promise<{ ok: boolean; material?: Material; error?: string }> => {
     try {
       const response = await fetch(`/api/overseas/studio/materials/${id}`, {
         method: 'PATCH',
@@ -1069,6 +1069,8 @@ export interface Material {
   derivativesApproved?: boolean;
   rawLibraryUseApproved?: boolean;
   provenance?: Record<string, unknown>;
+  materialV2?: import('../../shared/contracts/materialAssetV2').MaterialAssetV2Metadata | null;
+  enterpriseCommon?: boolean;
   pinned?: boolean;
   industry?: string;
   shotFunction?: string;

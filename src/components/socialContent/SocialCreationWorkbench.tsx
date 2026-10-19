@@ -243,7 +243,7 @@ export default function SocialCreationWorkbench({
   stageProfile?: SocialContentStageProfile;
   onOpenChooser: () => void;
   onShowCreations: () => void;
-  onGenerate: (request: SocialCreationWorkbenchSubmit) => void;
+  onGenerate: (request: SocialCreationWorkbenchSubmit) => void | Promise<void>;
 }) {
   const [products, setProducts] = useState<EnterpriseProductOption[]>([]);
   const [productId, setProductId] = useState('');
@@ -271,6 +271,10 @@ export default function SocialCreationWorkbench({
   const [aiHookError, setAiHookError] = useState('');
   const [aiHookEstimatedCost, setAiHookEstimatedCost] = useState(0);
   const aiHookRequestRef = useRef<{ frame: string; video: string } | null>(null);
+  // Keep task creation idempotent across retries of the same workbench session.
+  // The operation key also includes the saved draft/title/path, so another
+  // workbench submission still receives its own durable task.
+  const submissionRequestIdRef = useRef(Date.now());
   const [freeLines, setFreeLines] = useState<FreeCreationLine[]>([]);
   const [hookMode, setHookMode] = useState<'none' | 'upload' | 'library' | 'ai'>('none');
   const [hookChooserOpen, setHookChooserOpen] = useState(mode !== 'viral_replication');
@@ -715,13 +719,13 @@ export default function SocialCreationWorkbench({
       }
       // GENERATION_INTEGRATION_GAP: the current task contract accepts shared files plus
       // selected sentence indexes, but not a durable sentence-to-asset mapping yet.
-      onGenerate({
+      await onGenerate({
         replicationStep: isReplication ? replicationStep : undefined,
         confirmedSpeech: isReplication && !navigationOnly ? confirmedSpeech : undefined,
         initialScript: !isReplication ? freeScriptText : undefined,
         initialGeneration: !isReplication ? freeGeneration || undefined : undefined,
         draftProjectId: isReplication ? seed?.continueProjectId : resolvedDraftProjectId,
-        requestId: Date.now(),
+        requestId: submissionRequestIdRef.current,
         creationPath: mode,
         title: isReplication
           ? productName ? `${productName} · 爆款复刻` : '爆款复刻'

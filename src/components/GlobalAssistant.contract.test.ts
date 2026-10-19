@@ -29,12 +29,14 @@ const launcherMarkup = sourceSection('<Badge count={decisionTotal ?? pendingCoun
 assert.match(launcherClickSource, /openCurrentPageAgent\(\)/, '主入口点击灵小枢必须直接进入当前工作对话');
 assert.doesNotMatch(launcherClickSource, /setMode\('expanded'\)|quick-actions|SKILL_AGENTS/, '点击灵小枢不得打开四助手快捷轮盘');
 assert.match(source, /data-global-assistant="root"[\s\S]{0,350}fixed right-4[\s\S]{0,350}bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, '灵小枢入口必须固定在页面右下角并避让设备安全区');
+assert.doesNotMatch(source, /page === 'conversion'[\s\S]{0,180}bottom-\[calc\(env\(safe-area-inset-bottom\)\+8rem\)\]/, '灵小枢入口不得在会话页跳到不同的垂直位置');
 assert.match(source, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, '右下角入口必须以清晰文本直接打开或收起对话');
 assert.match(launcherMarkup, /shape="round"/, '灵小枢入口必须采用紧凑胶囊形态');
 assert.match(launcherMarkup, /!h-11/, '灵小枢入口必须保留 44px 触控高度');
 assert.match(source, /aria-expanded=\{mode === 'chat'\}[\s\S]{0,80}aria-controls="global-assistant-panel"/, '入口必须暴露弹窗展开关系');
 assert.match(launcherMarkup, /aria-haspopup="dialog"/, '灵小枢入口必须声明它会打开对话浮层');
 assert.match(launcherMarkup, /var\(--ls-action-gradient\)/, '灵小枢入口图标必须复用全局主操作渐变 Token');
+assert.match(launcherMarkup, /!bg-white[\s\S]*active:!bg-white[\s\S]*focus-visible:!bg-white/, '灵小枢入口在点击和聚焦时必须保持不透明白底');
 assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY|data-global-assistant="edge-launcher"|setLauncherRetracted/, '右下角入口不得再保留拖动、旧坐标或自动缩边交互');
 assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
 assert.match(source, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');

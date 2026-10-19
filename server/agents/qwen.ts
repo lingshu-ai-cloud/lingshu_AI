@@ -469,8 +469,12 @@ export async function analyzeVideoTimelineDetailsWithQwen(opts: {
   // a few server-owned windows at a time and preserve every physical cut.
   if (boundaries.length > 4) {
     const parts: VideoAiAnalysis[] = [];
-    for (let offset = 0; offset < boundaries.length; offset += 4) {
-      const batch = boundaries.slice(offset, offset + 4);
+    const batches = Array.from({ length: Math.ceil(boundaries.length / 4) }, (_, index) => ({
+      offset: index * 4,
+      boundaries: boundaries.slice(index * 4, index * 4 + 4),
+    }));
+    const detailConcurrency = Math.max(1, Math.min(2, Number(process.env.VIDEO_EXACT_DETAIL_CONCURRENCY || 2)));
+    const analyzeBatch = async ({ offset, boundaries: batch }: (typeof batches)[number]) => {
       const frames = batch.flatMap(boundary => {
         const middle = (boundary.start + boundary.end) / 2;
         const within = opts.frames.filter(frame => {
@@ -481,11 +485,14 @@ export async function analyzeVideoTimelineDetailsWithQwen(opts: {
         // from the preceding or following product leaking into this window.
         return within.slice(0, boundary.end - boundary.start <= 2.5 ? 1 : 3);
       }).sort((left, right) => Number.parseFloat(left.timeLabel) - Number.parseFloat(right.timeLabel));
-      parts.push(await analyzeVideoTimelineDetailsWithQwen({
+      return analyzeVideoTimelineDetailsWithQwen({
         ...opts,
         frames: frames.length ? frames : opts.frames,
         timeline: { ...opts.timeline, boundaries: opts.timeline.boundaries.slice(offset, offset + 4) },
-      }));
+      });
+    };
+    for (let offset = 0; offset < batches.length; offset += detailConcurrency) {
+      parts.push(...await Promise.all(batches.slice(offset, offset + detailConcurrency).map(analyzeBatch)));
     }
     return { ...parts[0]!, scriptDetails15s: parts.flatMap(part => part.scriptDetails15s || []) };
   }

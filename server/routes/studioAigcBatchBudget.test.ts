@@ -6,7 +6,8 @@ import { storyboardProjectShotInput } from '../lib/storyboardProjectShotInput.js
 const route = (shotId: string, kind: StudioBatchShotRoute['route']): StudioBatchShotRoute => ({
   shotId, slotId: shotId, order: 1, visualTopic: 'product', expressionPurpose: '', route: kind,
   status: kind === 'aigc_first_frame' ? 'needs_plan' : 'matched', matchedMaterialId: null,
-  matchedSegmentId: null, trimStart: null, trimEnd: null, reason: '', generated: false,
+  matchedProductId: null, matchedProductIdentityLevel: null, matchedSegmentId: null,
+  trimStart: null, trimEnd: null, reason: '', generated: false,
 });
 const mixed = [route('locked', 'local_material'), route('a', 'aigc_first_frame'), route('b', 'aigc_first_frame')];
 const preview = studioAigcBatchBudgetPreview(mixed, { firstFrameCostCny: 0.3, maxRetries: 1, batchBudgetCny: 30, modelId: 'seedance' });

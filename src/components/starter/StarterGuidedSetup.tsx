@@ -24,7 +24,7 @@ export const GUIDED_SETUP_PLATFORMS = [
 ] as const;
 
 export type GuidedSetupPlatform = typeof GUIDED_SETUP_PLATFORMS[number]['id'];
-export type GuidedPresenter = 'brand_spokesperson' | 'product_expert' | 'none';
+export type GuidedPresenter = 'brand_spokesperson' | 'product_expert';
 
 export interface GuidedPlanLimits {
   contentArtifactCountPerCycle: number;
@@ -206,6 +206,7 @@ export function guidedSetupSubmissionReady(draft: GuidedSetupDraft, limits: Guid
     && plan.products.includes(plan.primaryProduct)
     && plan.platforms.length > 0
     && plan.weeklyMasterCount > 0
+    && ['brand_spokesperson', 'product_expert'].includes(draft.presenter)
     && GUIDED_LANGUAGE_PATTERN.test(draft.primaryLanguage);
 }
 
@@ -274,7 +275,7 @@ export function guidedSetupMissingFacts(
   if (!draft.brandName.trim()) missing.push('品牌名称');
   if (plan.products.length === 0) missing.push('产品信息');
   else if (!plan.products.includes(plan.primaryProduct)) missing.push('主推产品');
-  if (!draft.presenter) missing.push('数字人方案');
+  if (!['brand_spokesperson', 'product_expert'].includes(draft.presenter)) missing.push('数字人方案');
   if (!draft.industry.trim()) missing.push('所属行业');
   if (!draft.primaryBusiness.trim()) missing.push('主要业务');
   if (!draft.targetMarkets.trim()) missing.push('目标市场');
@@ -295,7 +296,6 @@ const STEPS = [
 const PRESENTER_OPTIONS: Array<{ id: GuidedPresenter; title: string; description: string }> = [
   { id: 'brand_spokesperson', title: '品牌主理人数字人', description: '适合建立品牌信任、讲企业故事和稳定出镜。' },
   { id: 'product_expert', title: '产品专家数字人', description: '适合讲产品卖点、采购问题和专业知识。' },
-  { id: 'none', title: '本轮不用数字人口播', description: '优先使用产品、工厂和其他已授权素材。' },
 ];
 
 const LANGUAGE_OPTIONS = [

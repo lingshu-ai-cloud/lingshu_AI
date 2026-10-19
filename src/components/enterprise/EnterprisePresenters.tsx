@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Modal, Tag } from 'antd';
 import { CheckCircle2, ShieldCheck, UserRound } from 'lucide-react';
 import { productionApi } from '../../lib/productionApi';
-import { EMPTY_DEFAULTS, type ProductionDefaults, type PresenterAsset } from '../../lib/shotProduction';
+import { EMPTY_DEFAULTS, presenterHasAppearance, type ProductionDefaults, type PresenterAsset } from '../../lib/shotProduction';
 import { fetchMaterialLibrary, type Material } from '../../lib/studioApi';
 import { presenterApi } from '../../lib/presenterApi';
 import { notifyPresenterAssetsUpdated } from '../../lib/presenterAssetsUpdated';
@@ -72,8 +72,7 @@ export default function EnterprisePresenters({
     return () => { live = false; };
   }, []);
 
-  const selectedPresenter = useMemo(() => value.presenters.find(item => item.id === value.defaultPresenterId)
-    || value.presenters[0], [value.defaultPresenterId, value.presenters]);
+  const selectedPresenter = useMemo(() => value.presenters.find(item => item.id === value.defaultPresenterId), [value.defaultPresenterId, value.presenters]);
   const selectedHeyGenReady = heyGenReady(selectedPresenter);
   const selectedArkReady = arkReady(selectedPresenter);
 
@@ -164,6 +163,16 @@ export default function EnterprisePresenters({
     finally { setBusy(false); }
   };
 
+  const selectForProduction = async (presenter: PresenterAsset) => {
+    setBusy(true); setError(''); setMessage('');
+    try {
+      if (!presenter.authorized || !presenterHasAppearance(presenter)) throw new Error('请先为该人物补齐已授权的照片、视频或数字人形象。');
+      const next = await productionApi.saveDefaults({ ...value, preference: 'avatar', defaultPresenterId: presenter.id });
+      setValue(next); notifyPresenterAssetsUpdated(); setMessage(`已选择“${presenter.name}”作为生产数字人形象。`); onInitialSelection?.();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
+  };
+
   const revoke = (presenter: PresenterAsset) => {
     Modal.confirm({
       title: `取消“${presenter.name}”的使用授权？`,
@@ -214,11 +223,11 @@ export default function EnterprisePresenters({
   return <section className="rounded-lg border border-border bg-white p-5" aria-label={contentProduction ? '内容制作人物管理' : '人物与出镜'}>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h3 className="text-base font-semibold text-text-primary">人物与出镜</h3><p className="mt-1 text-xs text-text-muted">这里可以修改已接入人物、补充可选的人物替换认证，或取消授权。</p></div>
-      {contentProduction && <Button onClick={openDigitalHumanOnboarding}>打开数字人接入</Button>}
+      {contentProduction && <Button onClick={openPresenterManager}>录入数字人形象</Button>}
     </div>
     {error && <Alert className="mt-4" type="error" showIcon title={error} />}
     {message && <Alert className="mt-4" type="success" showIcon title={message} />}
-    {!loaded ? <p role="status" className="mt-5 text-sm text-text-muted">正在读取已授权人物…</p> : !value.presenters.length ? <div className="mt-5 rounded-lg border border-dashed border-border p-8 text-center"><UserRound className="mx-auto text-text-muted" /><p className="mt-3 text-sm font-semibold">暂无已授权人物</p><p className="mt-1 text-xs text-text-muted">请前往数字员工新手引导完成首次接入。</p><Button className="mt-4" onClick={openDigitalHumanOnboarding}>打开数字人接入</Button></div> : <div className="mt-5 divide-y divide-border rounded-lg border border-border">
+    {!loaded ? <p role="status" className="mt-5 text-sm text-text-muted">正在读取已授权人物…</p> : !value.presenters.length ? <div className="mt-5 rounded-lg border border-dashed border-border p-8 text-center"><UserRound className="mx-auto text-text-muted" /><p className="mt-3 text-sm font-semibold">暂无已授权人物</p><p className="mt-1 text-xs text-text-muted">数字人形象是生产必填项，请选择已有形象或录入自己的形象。</p><Button className="mt-4" type="primary" onClick={contentProduction ? openPresenterManager : openDigitalHumanOnboarding}>录入数字人形象</Button></div> : <div className="mt-5 divide-y divide-border rounded-lg border border-border">
       {value.presenters.map(presenter => {
         const referenceIds = presenter.referenceMaterialIds || [];
         const initialPhotoMaterialId = materials.find(item => item.type === 'image' && referenceIds.includes(item.id))?.id;
@@ -230,7 +239,7 @@ export default function EnterprisePresenters({
             <span className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-surface-2 text-sm font-semibold text-text-secondary">{presenter.name.slice(0, 1)}{presenter.imageUrl && <img src={presenter.imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />}</span>
             <div className="min-w-0"><p className="truncate text-sm font-semibold text-text-primary">{presenter.name}</p><div className="mt-1 flex flex-wrap gap-1.5"><Tag color={heyGenReady(presenter) ? 'success' : 'default'}>HeyGen {heyGenReady(presenter) ? '已接入' : '未接入'}</Tag><Tag color={arkReady(presenter) ? 'success' : 'default'}>方舟 {arkReady(presenter) ? '已认证' : '未认证'}</Tag>{value.defaultPresenterId === presenter.id && <Tag color="blue">当前默认</Tag>}</div></div>
           </div>
-          <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => { setEditingId(presenter.id); setEditingName(presenter.name); }}>修改人物</Button>{heyGenReady(presenter) && !arkReady(presenter) && <Button disabled={busy} onClick={() => setCertifyingPresenterId(current => current === presenter.id ? '' : presenter.id)}>{certificationOpen ? '收起认证' : '人物替换认证'}</Button>}<Button danger disabled={busy} onClick={() => revoke(presenter)}>取消授权</Button></div>
+          <div className="flex flex-wrap gap-2">{value.defaultPresenterId !== presenter.id && <Button type="primary" disabled={busy || !presenterHasAppearance(presenter)} onClick={() => void selectForProduction(presenter)}>选择此形象</Button>}<Button disabled={busy} onClick={() => { setEditingId(presenter.id); setEditingName(presenter.name); }}>修改人物</Button>{heyGenReady(presenter) && !arkReady(presenter) && <Button disabled={busy} onClick={() => setCertifyingPresenterId(current => current === presenter.id ? '' : presenter.id)}>{certificationOpen ? '收起认证' : '人物替换认证'}</Button>}<Button danger disabled={busy} onClick={() => revoke(presenter)}>取消授权</Button></div>
         </div>
         {editingId === presenter.id && <div className="mt-4 flex flex-wrap items-end gap-2 rounded-lg bg-surface-2 p-3"><label className="min-w-56 flex-1 text-xs font-semibold text-text-secondary">人物显示名称<input autoFocus value={editingName} maxLength={100} onChange={event => setEditingName(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary" /></label><LsBrandAction loading={busy} disabled={!editingName.trim()} onClick={() => void saveName()}>保存修改</LsBrandAction><Button disabled={busy} onClick={() => { setEditingId(''); setEditingName(''); }}>取消</Button></div>}
         {certificationOpen && <div className="mt-4"><ArkPresenterEnrollmentPanel
@@ -246,6 +255,6 @@ export default function EnterprisePresenters({
       </article>;
       })}
     </div>}
-    {contentProduction && <p className="mt-3 flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2 text-xs text-text-muted"><ShieldCheck size={14} />制作页面不再重复承载人物供应商配置。</p>}
+    {contentProduction && <p className="mt-3 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800"><ShieldCheck size={14} />必须明确选择一个已授权数字人形象才能进入下一步；系统不会改用素材匹配或其他路线。</p>}
   </section>;
 }

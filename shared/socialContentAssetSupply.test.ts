@@ -178,12 +178,16 @@ assert.equal(hybridRouteMatrix.shots[0]?.sourceStrategy, 'customer_real_asset');
 assert.deepEqual(hybridRouteMatrix.shots[0]?.sourceRefs, ['factory-video']);
 assert.equal(hybridRouteMatrix.shots[1]?.sourceStrategy, 'customer_real_asset');
 assert.deepEqual(hybridRouteMatrix.shots[1]?.sourceRefs, ['case-video']);
-assert.equal(hybridRouteMatrix.shots[2]?.sourceStrategy, 'authorized_digital_presenter');
-assert.equal(hybridRouteMatrix.shots[2]?.productSceneReplication?.productIdentity.groups[0]?.productRef, 'serum-a');
+assert.equal(hybridRouteMatrix.shots[2]?.sourceStrategy, 'customer_product_image_animation');
+assert.deepEqual(hybridRouteMatrix.shots[2]?.sourceRefs, ['serum-front']);
+assert.equal(hybridRouteMatrix.shots[2]?.productSceneReplication, undefined);
+assert.equal(hybridRouteMatrix.shots[2]?.digitalHumanPlan, undefined);
+assert.equal(hybridRouteMatrix.shots[2]?.feasibility, 'functional_equivalent');
+assert.equal(hybridRouteMatrix.shots[2]?.functionalEquivalentReplacement.required, true);
 assert.equal(hybridRouteMatrix.shots[3]?.sourceStrategy, 'authorized_digital_presenter');
 assert.equal(hybridRouteMatrix.shots[4]?.sourceStrategy, 'aigc_product_scene_replication');
 assert.equal(hybridRouteMatrix.shots[5]?.sourceStrategy, 'customer_real_asset');
-assert.equal(hybridRouteMatrix.shots[2]?.fallbackSourceStrategy, null, '复杂数字人镜头不得用图形卡片伪装成功');
+assert.equal(hybridRouteMatrix.shots[2]?.fallbackSourceStrategy, 'motion_graphics');
 
 const freeRoute = createSocialAssetSupplyPlan({
   creationMode: 'viral_replication',
@@ -224,11 +228,27 @@ const lockedPersonProductWithoutReference = createSocialAssetSupplyPlan({
   shots: [{ shotId: 'locked-person-product', function: 'demonstration',
     requestedDescription: '人物将指定精华涂抹上脸', productPolicy: 'locked', productRef: 'serum-a' }],
 });
-assert.equal(lockedPersonProductWithoutReference.shots[0]?.sourceStrategy, 'authorized_digital_presenter');
+assert.equal(lockedPersonProductWithoutReference.shots[0]?.sourceStrategy, 'motion_graphics');
 assert.equal(lockedPersonProductWithoutReference.shots[0]?.productSceneReplication, undefined,
   '没有产品参考图时不得创建伪空的产品 IAIGC 规格');
-assert.equal(lockedPersonProductWithoutReference.shots[0]?.feasibility, 'functional_equivalent',
-  '没有产品图不应成为内容制作硬阻断');
+assert.equal(lockedPersonProductWithoutReference.shots[0]?.digitalHumanPlan, undefined,
+  '没有产品参考图时不得把完整人货接触静默交给口播数字人');
+assert.equal(lockedPersonProductWithoutReference.shots[0]?.feasibility, 'goal_degraded',
+  '锁定产品缺少身份资料时应明确请求最小产品资料，而不是伪装完整实现');
+assert.equal(lockedPersonProductWithoutReference.shots[0]?.fallbackSourceStrategy, null,
+  '复杂交互的安全功能替代不能再回退到数字人');
+
+const factoryInteractionWithoutFootage = createSocialAssetSupplyPlan({
+  creationMode: 'material_processing', productionApproach: 'ai_enhanced',
+  inventory: { presenterAssetIds: ['presenter-enterprise-1'] },
+  accountPresenterLock: presenterLock,
+  shots: [{ shotId: 'factory-interaction', function: 'trust',
+    requestedDescription: '工人在工厂产线上操作设备' }],
+});
+assert.equal(factoryInteractionWithoutFootage.shots[0]?.sourceStrategy, 'motion_graphics');
+assert.equal(factoryInteractionWithoutFootage.shots[0]?.digitalHumanPlan, undefined);
+assert.equal(factoryInteractionWithoutFootage.shots[0]?.feasibility, 'functional_equivalent');
+assert.equal(factoryInteractionWithoutFootage.shots[0]?.functionalEquivalentReplacement.required, true);
 
 const productOnlyWithoutReference = createSocialAssetSupplyPlan({
   creationMode: 'material_processing', productionApproach: 'ai_enhanced',
