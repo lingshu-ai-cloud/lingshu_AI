@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
+import {qwenCompatibleBaseUrl} from '../lib/qwenCompatibleEndpoint.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -236,6 +237,7 @@ async function* streamQwenChat(messages: ChatMessage[], opts: LLMCallOptions): A
     }
     return;
   } catch (err) {
+    if (opts.signal?.aborted) throw err;
     const fallbackMessages: OpenAI.Chat.ChatCompletionMessageParam[] = emittedText
       ? [
           ...msgs,
@@ -251,11 +253,6 @@ async function* streamQwenChat(messages: ChatMessage[], opts: LLMCallOptions): A
       if (text) yield { text };
       return;
     } catch {
-      if (emittedText) {
-        const raw = err instanceof Error ? err.message : String(err);
-        yield { text: `\n\n（模型流式连接中断：${raw.slice(0, 120)}。请发送「继续」接着写。）` };
-        return;
-      }
       throw err;
     }
   }
@@ -273,7 +270,7 @@ function createQwenClient(): OpenAI {
 
   return new OpenAI({
     apiKey,
-    baseURL: process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    baseURL: qwenCompatibleBaseUrl(),
     timeout: Math.max(1_000, Number(process.env.QWEN_TEXT_REQUEST_TIMEOUT_MS || process.env.LLM_REQUEST_TIMEOUT_MS || 90_000)),
     // Retrying at this layer hides latency from callers. Routes decide whether
     // and when to fall back to another provider within their own total budget.
@@ -316,6 +313,7 @@ async function* streamQwenMessages(
   }
   // Let the caller's existing continuation path finish answers cut at the token limit.
   if (finishReason === 'length') throw new Error('QWEN_MAX_TOKENS');
+  if (finishReason !== 'stop') throw new Error('模型回答未完整结束，请重试。');
 }
 
 async function completeQwenMessages(
@@ -336,7 +334,10 @@ async function completeQwenMessages(
     ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
   });
-  return completion.choices[0]?.message?.content ?? '';
+  if (completion.choices[0]?.finish_reason !== 'stop') throw new Error('模型续写未完整结束，请重试。');
+  const text = completion.choices[0]?.message?.content;
+  if (!text?.trim()) throw new Error('模型续写为空，请重试。');
+  return text;
 }
 
 export async function* callLLMChatStream(messages: ChatMessage[], opts: LLMCallOptions = {}): AsyncGenerator<StreamEvent> {

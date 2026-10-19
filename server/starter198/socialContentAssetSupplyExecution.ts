@@ -6,6 +6,7 @@ import type {
   SocialShotTruthBoundary,
 } from '../../shared/contracts/socialContentWorkflow.js';
 import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply.js';
+import { hasVerifiedSameClassSocialLocalMatch } from '../../shared/socialContentMaterialRouting.js';
 import type { SocialProductionAsset } from './socialContentProductionPlan.js';
 import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 
@@ -91,6 +92,35 @@ export interface SocialAssetSupplyExecutionResult {
   plan: SocialAssetSupplyPlan;
   assets: SocialProductionAsset[];
   execution: SocialAssetSupplyExecution;
+}
+
+/** Projects the already selected, byte-addressed scene media into the public
+ * production result. It never stores another copy and never treats a planning
+ * candidate as an executed output. */
+export function socialExecutedSceneMediaArtifact(input: {
+  sceneId: string;
+  execution: SocialAssetSupplyExecution | null;
+  assets: SocialProductionAsset[];
+}) {
+  const shots = input.execution?.shots.filter(shot => shot.sceneId === input.sceneId) || [];
+  if (shots.length !== 1) return undefined;
+  const shot = shots[0]!;
+  const assets = input.assets.filter(asset => asset.id === shot.assetId);
+  if (assets.length !== 1) return undefined;
+  const asset = assets[0]!;
+  const resourceRef = String(asset.url || '').trim();
+  const contentHash = String(asset.contentHash || '').trim();
+  if (!resourceRef || !/^[a-f0-9]{64}$/i.test(contentHash) || !Number.isFinite(asset.duration) || asset.duration < 0) return undefined;
+  return {
+    assetId: asset.id,
+    mediaType: asset.type,
+    resourceRef,
+    contentHash: contentHash.toLowerCase(),
+    durationSeconds: asset.duration,
+    providerId: shot.providerId,
+    supplyPlanVersion: input.execution!.planVersion,
+    role: 'scene_render_input' as const,
+  };
 }
 
 function shotFunction(scene: StoredSocialScriptBaseline['scenes'][number], index: number, total: number) {
@@ -216,7 +246,7 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
         // override the versioned generation inputs.
         const routing = preserved.materialRouting!;
         if (routing.materialType === 'product'
-          && routing.localMatch.state === 'missing'
+          && (routing.localMatch.state === 'missing' || input.plan.materialRoutingPolicyVersion==='type-aware.v2'&&routing.productGenerationDecision?.state==='selected')
           && routing.generation) {
           preserved.sourceRefs = [...routing.generation.productImageRefs];
         }
@@ -320,7 +350,7 @@ export function assertSocialAssetSupplyTruthBoundary(input: {
   if (violation) throw new Error(`asset_supply_truth_boundary:${input.shot.shotId}:${violation}`);
 }
 
-function materialStrategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourceStrategy[] | null {
+function materialStrategyOrder(shot: SocialAssetSupplyShotPlan,policyVersion?:SocialAssetSupplyPlan['materialRoutingPolicyVersion']): SocialShotSourceStrategy[] | null {
   const routing = shot.materialRouting;
   if (!routing) return null;
   const fail = (reason: string): never => { throw new Error(`material_routing_invalid:${shot.shotId}:${reason}`); };
@@ -337,15 +367,28 @@ function materialStrategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourc
     return ['customer_real_asset'];
   }
   if (routing.materialType === 'product') {
+    const decision=routing.productGenerationDecision;
+    const selectedUpgrade=policyVersion==='type-aware.v2'&&decision?.state==='selected';
+    if(decision?.state==='selected'&&!selectedUpgrade)fail('product_selected_policy_version');
+    if(selectedUpgrade&&(!decision.quoteRef?.trim()||!decision.budgetPlanRef?.trim()
+      ||!Number.isFinite(decision.estimatedCostCny)||Number(decision.estimatedCostCny)<0||Number(decision.estimatedCostCny)>15))fail('product_selected_budget_proof');
+    if (routing.policy === 'local_only') {
+      if (routing.generation || !matched || shot.sourceStrategy !== 'customer_real_asset'
+        || shot.fallbackSourceStrategy !== null || !shot.sourceRefs.length
+        || shot.sourceRefs.some(ref => !local.sourceRefs.includes(ref))) fail('product_local_video_required');
+      return ['customer_real_asset'];
+    }
     if (routing.policy !== 'local_first_product_i2v' || shot.fallbackSourceStrategy !== null) fail('product_policy');
-    if (matched) {
+    if (matched&&!selectedUpgrade) {
       if (shot.sourceStrategy !== 'customer_real_asset' || !shot.sourceRefs.length
         || shot.sourceRefs.some(ref => !local.sourceRefs.includes(ref))) fail('product_local_route');
       return ['customer_real_asset'];
     }
     const generation = routing.generation;
     const invalidProductGeneration = (detail: string): never => fail(`product_generation_contract:${detail}`);
-    if (local.state !== 'missing' || local.sourceRefs.length) invalidProductGeneration('local_match_state');
+    if(selectedUpgrade&&matched){
+      if(!hasVerifiedSameClassSocialLocalMatch(shot))invalidProductGeneration('selected_local_provenance');
+    }else if (local.state !== 'missing' || local.sourceRefs.length) invalidProductGeneration('local_match_state');
     if (!generation) return invalidProductGeneration('generation_missing');
     if (!(['reference_first_frame_product_replacement_i2v', 'enterprise_authored_product_first_frame_i2v'] as string[]).includes(generation.method)) invalidProductGeneration('method');
     if (generation.method === 'enterprise_authored_product_first_frame_i2v' && generation.firstFrameOrigin !== 'enterprise_authored_storyboard') invalidProductGeneration('first_frame_origin');
@@ -372,8 +415,8 @@ function materialStrategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourc
   return fail('unknown_material_type');
 }
 
-function strategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourceStrategy[] {
-  const materialStrategies = materialStrategyOrder(shot);
+function strategyOrder(shot: SocialAssetSupplyShotPlan,policyVersion?:SocialAssetSupplyPlan['materialRoutingPolicyVersion']): SocialShotSourceStrategy[] {
+  const materialStrategies = materialStrategyOrder(shot,policyVersion);
   if (materialStrategies) return materialStrategies;
   const routing = shot.referenceProductionRouting;
   if (routing) {
@@ -452,7 +495,7 @@ export async function executeSocialAssetSupplyPlan(input: {
     if (!scene) throw new Error(`asset_supply_baseline_scene_missing:${shot.shotId}`);
     const attempts: SocialAssetSupplyExecutionAttempt[] = [];
     let selected: SocialAssetSupplyAdapterResult | null = null;
-    for (const strategy of strategyOrder(shot)) {
+    for (const strategy of strategyOrder(shot,plan.materialRoutingPolicyVersion)) {
       const adapters = input.adapters.filter(adapter => adapter.sourceStrategies.includes(strategy));
       if (!adapters.length) {
         attempts.push({ sourceStrategy: strategy, adapterId: null, status: 'adapter_not_registered', reason: null });
@@ -504,7 +547,7 @@ export async function executeSocialAssetSupplyPlan(input: {
           const reason = String(error instanceof Error ? error.message : error || 'provider_failed');
           // A submitted request with an unresolved outcome is not a failed
           // candidate. Trying another adapter would hide the in-flight charge.
-          if (/provider_submission_(?:unknown|uncertain)|do not resubmit|not_completed:(?:pending|uncertain)/i.test(reason)) {
+          if (/provider_submission_(?:unknown|uncertain)|do not resubmit|not_completed:(?:pending|uncertain)|weekly_production_cta_evidence_required/i.test(reason)) {
             throw error;
           }
           attempts.push({

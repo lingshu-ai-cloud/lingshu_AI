@@ -1,4 +1,5 @@
 import { createSocialWeeklyProducerEvidenceRouter } from './socialWeeklyProducerEvidence.js';
+import {createWeeklyAutomaticScheduleRouter} from './weeklyAutomaticSchedule.js';
 import {createSocialWeeklyInventoryReuseRouter} from './socialWeeklyInventoryReuse.js';
 import {createWeeklyInventoryReuseService} from '../socialPrograms/weeklyInventoryReuse.js';
 import {createSocialWeeklyProfileUpgradeRouter} from './socialWeeklyProfileUpgrade.js';
@@ -23,6 +24,7 @@ import {readWeeklyContentNavigation} from '../socialPrograms/weeklyContentNaviga
 import {readWeeklyReferenceReviewNavigation} from '../socialPrograms/weeklyReferenceReviewNavigation.js';
 import {backfillWeeklyTaskWorkspaces,readWeeklyTaskWorkspace} from '../socialPrograms/weeklyTaskWorkspaces.js';
 import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOperatingPackages.js';
+import {createWeeklyExecutionPipelineService} from '../socialPrograms/weeklyExecutionPipeline.js';
 import { createSocialOperatingOrchestrationService, weeklyAuthorityFromResolution } from '../socialOperating/orchestration.js';
 import { SocialOperatingDecisionError } from '../socialOperating/service.js';
 import type { OperatingPlanningRequest } from '../../shared/contracts/socialOperatingDecision.js';
@@ -56,6 +58,14 @@ import {createWeeklyCreativeRepairCompletionService} from '../socialPrograms/wee
 import {createWeeklyCreativeRepairProductionPort} from '../runtime/weeklyCreativeRepairProductionPort.js';
 import {createSocialWeeklyCreativeRepairExecutionRouter} from './socialWeeklyCreativeRepairExecution.js';
 import {assertSocialSceneReworkQueueRegistered,wakeSocialSceneReworkJob} from '../starter198/socialContentProductionQueue.js';
+import {readWeeklyCtaContactCard,saveWeeklyCtaContact} from '../socialPrograms/weeklyCtaContact.js';
+import {readWeeklyPublicationProductSelectionChoices,issueWeeklyPublicationProductSelections} from '../socialPrograms/weeklyPublicationProductSelection.js';
+import {assertWeeklySamplePolicyCandidateActor,readWeeklySamplePolicyCandidateContext,submitWeeklySamplePolicyCandidate,type SamplePolicyTerms} from '../socialPrograms/weeklySamplePolicyEvidence.js';
+import {readWeeklyReviewActor} from '../socialPrograms/weeklyReviewEvidence.js';
+import {organizationRoleOrNull} from '../lib/organizationRole.js';
+import {readWeeklyPinnableReferenceOptions} from '../socialPrograms/planningAuthority.js';
+import {readWeeklyCollectionBudgetCard,readWeeklyCollectionBudgetContext,readWeeklyCollectionRuntimeCard} from '../socialPrograms/weeklyCollectionBudgetCard.js';
+import {issueWeeklyAccountCollectionBudgetAuthorization} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -64,6 +74,22 @@ function asyncRoute(handler: RequestHandler): RequestHandler {
 type RouteBody = Record<string, unknown>;
 function routeBody(value: unknown): RouteBody | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as RouteBody : null;
+}
+function samplePolicyRouteError(error: unknown): never {
+  if(error instanceof Error&&/^weekly_sample_policy_[a-z_]+$/.test(error.message)){
+    const code=error.message;
+    const status=code==='weekly_sample_policy_package_missing'?404:code==='weekly_sample_policy_actor_invalid'?403:code==='weekly_sample_policy_source_invalid'||code==='weekly_sample_policy_terms_invalid'||code==='weekly_sample_policy_context_hash_invalid'?400:409;
+    throw new SocialProgramError(code,status,code);
+  }
+  throw error;
+}
+function samplePolicyPdf(value:unknown):Buffer{
+  if(typeof value!=='string'||value.length>28*1024*1024)return samplePolicyRouteError(Error('weekly_sample_policy_source_invalid'));
+  const match=/^data:application\/pdf;base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if(!match||match[1]!.length%4!==0)return samplePolicyRouteError(Error('weekly_sample_policy_source_invalid'));
+  const bytes=Buffer.from(match[1]!,'base64');
+  if(bytes.length<5||bytes.length>20*1024*1024||bytes.toString('base64')!==match[1]||bytes.subarray(0,5).toString('ascii')!=='%PDF-')return samplePolicyRouteError(Error('weekly_sample_policy_source_invalid'));
+  return bytes;
 }
 export function parseWeeklyCreativeRepairConfigurationBody(value: unknown) {
   const body=routeBody(value);
@@ -89,6 +115,144 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     next();
   }), createSocialWeeklyProducerEvidenceRouter(dataStore));
   const weeklyPackages = createWeeklyOperatingPackageService(dataStore);
+  router.get('/:programId/operating-packages/:packageId/collection-runtime',asyncRoute(async(req,res)=>{
+    const {tenantId}=res.locals as AuthLocals,packageVersion=Number(req.query.version);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_collection_budget_input_invalid',400,'请指定当前周包版本。');
+    res.setHeader('Cache-Control','private, no-store');
+    try{res.json({item:await readWeeklyCollectionRuntimeCard(dataStore,{tenantId,programId:req.params.programId,packageId:req.params.packageId,packageVersion})});}
+    catch(error){const code=error instanceof Error?error.message:'weekly_collection_budget_context_unverified';throw new SocialProgramError(code,409,'采集任务范围暂无法核验。');}
+  }));
+  router.get('/:programId/operating-packages/:packageId/collection-budget',asyncRoute(async(req,res)=>{
+    const {tenantId}=res.locals as AuthLocals,packageVersion=Number(req.query.version);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_collection_budget_input_invalid',400,'请指定当前周包版本。');
+    res.setHeader('Cache-Control','private, no-store');
+    try{res.json({item:(await readWeeklyCollectionBudgetCard(dataStore,{tenantId,programId:req.params.programId,packageId:req.params.packageId,packageVersion})).card});}
+    catch(error){const code=error instanceof Error?error.message:'weekly_collection_budget_context_unverified';throw new SocialProgramError(code,409,'采集任务范围暂无法核验。');}
+  }));
+  router.post('/:programId/operating-packages/:packageId/collection-budget',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,b=routeBody(req.body);
+    if(!b||Object.keys(b).sort().join(',')!==['expectedContextHash','expectedPackageVersion','perRunLimitCny','totalLimitCny'].sort().join(',')||!Number.isSafeInteger(b.expectedPackageVersion)||Number(b.expectedPackageVersion)<1||typeof b.expectedContextHash!=='string'||typeof b.totalLimitCny!=='number'||typeof b.perRunLimitCny!=='number')throw new SocialProgramError('weekly_collection_budget_input_invalid',400,'人民币预算参数无效。');
+    const scope={tenantId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(b.expectedPackageVersion)};
+    const context=await readWeeklyCollectionBudgetContext(dataStore,scope);
+    if(b.expectedContextHash!==context.contextHash)throw new SocialProgramError('weekly_collection_budget_context_changed',409,'采集范围已变化，请重新读取任务卡。');
+    try{const authorization=await issueWeeklyAccountCollectionBudgetAuthorization({store:dataStore,tenantId,actorUserId:userId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion,scopeId:context.scopeId,scopeVersion:context.scopeVersion,scopeHash:context.scopeHash,actorId:context.actorId,totalLimitCny:b.totalLimitCny,perRunLimitCny:b.perRunLimitCny,expiresAt:new Date(Date.now()+86400000).toISOString()});res.setHeader('Cache-Control','private, no-store');res.status(201).json({item:{authorizationId:authorization.authorizationId,totalLimitCny:authorization.totalLimitCny,perRunLimitCny:authorization.perRunLimitCny,expiresAt:authorization.expiresAt,permitsPaidCollection:false,paidBlocker:'weekly_preproduction_collection_cost_ceiling_unverified'}});}
+    catch(error){const code=error instanceof Error?error.message:'weekly_account_collection_budget_unavailable';throw new SocialProgramError(code,code.endsWith('actor_invalid')?403:code.endsWith('approval_input_invalid')?400:code.endsWith('authorization_write_unknown')?503:409,'预算未签发，请重新读取当前回执和采集范围。');}
+  }));
+  router.get('/:programId/operating-packages/:packageId/product-selection',asyncRoute(async(req,res)=>{
+    const {tenantId}=res.locals as AuthLocals,packageVersion=Number(req.query.version);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_product_selection_input_invalid',400,'请指定当前周包版本。');
+    res.setHeader('Cache-Control','private, no-store');
+    res.json({item:await readWeeklyPublicationProductSelectionChoices(dataStore,{tenantId,programId:req.params.programId,packageId:req.params.packageId,packageVersion})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/product-selection',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,b=routeBody(req.body);
+    if(!b||Object.keys(b).some(k=>!['expectedPackageVersion','expectedContextHash','productId','publicationTaskIds'].includes(k))||!Number.isSafeInteger(b.expectedPackageVersion)||Number(b.expectedPackageVersion)<1||typeof b.expectedContextHash!=='string'||typeof b.productId!=='string'||!Array.isArray(b.publicationTaskIds)||b.publicationTaskIds.some(id=>typeof id!=='string'))throw new SocialProgramError('weekly_product_selection_input_invalid',400,'选品参数无效。');
+    res.setHeader('Cache-Control','private, no-store');
+    res.json({item:await issueWeeklyPublicationProductSelections(dataStore,{tenantId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(b.expectedPackageVersion)},userId,{expectedContextHash:b.expectedContextHash,productId:b.productId,publicationTaskIds:b.publicationTaskIds})});
+  }));
+  router.get('/:programId/operating-packages/:packageId/sample-policy-candidates',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,packageVersion=Number(req.query.version),publicationTaskId=req.query.publicationTaskId;
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1||typeof publicationTaskId!=='string'||!publicationTaskId.trim()||publicationTaskId.length>160||Object.keys(req.query).some(key=>!['version','publicationTaskId'].includes(key)))throw new SocialProgramError('weekly_sample_policy_scope_invalid',400,'请指定当前周包版本与发布任务。');
+    res.setHeader('Cache-Control','private, no-store');
+    try{await assertWeeklySamplePolicyCandidateActor(dataStore,tenantId,userId);res.json({item:await readWeeklySamplePolicyCandidateContext(dataStore,{tenantId,programId:req.params.programId,packageId:req.params.packageId,packageVersion,publicationTaskId})});}
+    catch(error){samplePolicyRouteError(error);}
+  }));
+  router.post('/:programId/operating-packages/:packageId/sample-policy-candidates',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,b=routeBody(req.body);
+    if(!b||Object.keys(b).some(key=>!['expectedPackageVersion','publicationTaskId','expectedContextHash','terms','pdfDataUrl'].includes(key))
+      ||!Number.isSafeInteger(b.expectedPackageVersion)||Number(b.expectedPackageVersion)<1
+      ||typeof b.publicationTaskId!=='string'||!b.publicationTaskId.trim()||b.publicationTaskId.length>160
+      ||typeof b.expectedContextHash!=='string'||!/^[a-f0-9]{64}$/.test(b.expectedContextHash)
+      ||!routeBody(b.terms))throw new SocialProgramError('weekly_sample_policy_input_invalid',400,'样品政策候选参数无效。');
+    const terms=b.terms as unknown as SamplePolicyTerms,pdfBytes=samplePolicyPdf(b.pdfDataUrl);
+    const scope={tenantId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(b.expectedPackageVersion),publicationTaskId:b.publicationTaskId};
+    res.setHeader('Cache-Control','private, no-store');
+    try{
+      const candidate=await submitWeeklySamplePolicyCandidate({store:dataStore,scope,actorUserId:userId,expectedContextHash:b.expectedContextHash,terms,pdfBytes});
+      res.status(201).json({item:{candidateId:candidate.candidateId,publicationTaskId:scope.publicationTaskId,sourceSha256:candidate.sourceSha256,sourceSize:candidate.sourceSize,submittedAt:candidate.submittedAt,terms:candidate.terms,reviewStatus:candidate.reviewStatus,policyStatus:'candidate_only',authorizesProduction:false}});
+    }catch(error){samplePolicyRouteError(error);}
+  }));
+  router.get('/:programId/operating-packages/:packageId/cta-contact',asyncRoute(async(req,res)=>{
+    const {tenantId}=res.locals as AuthLocals,packageVersion=Number(req.query.version);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_cta_version_invalid',400,'请指定当前周包版本。');
+    res.setHeader('Cache-Control','private, no-store');
+    res.json({item:await readWeeklyCtaContactCard(dataStore,{tenantId,programId:req.params.programId,packageId:req.params.packageId,packageVersion})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/cta-contact',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,b=routeBody(req.body);
+    if(!b||Object.keys(b).some(k=>!['expectedPackageVersion','contactChannel','contactValue','expectedContextHash','expectedReceiptId'].includes(k))||!Number.isSafeInteger(b.expectedPackageVersion)||Number(b.expectedPackageVersion)<1||b.contactChannel!=='whatsapp'||typeof b.contactValue!=='string'||typeof b.expectedContextHash!=='string'||!('expectedReceiptId' in b)||(b.expectedReceiptId!==null&&typeof b.expectedReceiptId!=='string'))throw new SocialProgramError('weekly_cta_contact_input_invalid',400,'联系信息参数无效。');
+    res.setHeader('Cache-Control','private, no-store');
+    res.json({item:await saveWeeklyCtaContact(dataStore,{tenantId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(b.expectedPackageVersion)},userId,{contactChannel:'whatsapp',contactValue:b.contactValue,expectedContextHash:b.expectedContextHash,expectedReceiptId:b.expectedReceiptId as string|null})});
+  }));
+  const pipeline=createWeeklyExecutionPipelineService(dataStore);
+  router.use('/:programId/operating-packages/:packageId/automatic-schedule',createWeeklyAutomaticScheduleRouter(dataStore));
+  router.get('/:programId/operating-packages/:packageId/execution-pipeline/customer-settings',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,packageVersion=Number(req.query.version);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
+    res.json({item:await pipeline.readCustomerSettings({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/customer-settings',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,b=routeBody(req.body);
+    if(!b||Object.keys(b).some(k=>!['expectedPackageVersion','expectedConfigVersion','enabled','allowRealCustomerMessages'].includes(k))||![b.expectedPackageVersion,b.expectedConfigVersion].every(v=>Number.isSafeInteger(v)&&Number(v)>0)||typeof b.enabled!=='boolean'||typeof b.allowRealCustomerMessages!=='boolean')throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请明确当前版本、客服启用与真实消息许可。');
+    res.json({item:await pipeline.updateCustomerSettings({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(b.expectedPackageVersion)},{expectedConfigVersion:Number(b.expectedConfigVersion),enabled:b.enabled,allowRealCustomerMessages:b.allowRealCustomerMessages})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/publishing-authorization',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>!['expectedPackageVersion','authorizePublishing'].includes(k))||body.authorizePublishing!==true||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请明确确认当前周包的有界发布许可。');
+    res.json({item:await pipeline.authorizePublishing({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)})});
+  }));
+  router.get('/:programId/operating-packages/:packageId/execution-pipeline/template',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,packageVersion=Number(req.query.version);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
+    res.json({item:await pipeline.readTemplate({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/template',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>k!=='expectedPackageVersion')||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'只允许采用当前服务端模板，不接受审批或模板对象注入。');
+    res.json({item:await pipeline.adoptTemplate({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)})});
+  }));
+  router.get('/:programId/operating-packages/:packageId/execution-pipeline/task-audit',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,packageVersion=Number(req.query.version);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
+    res.setHeader('Cache-Control','private, no-store');
+    res.json({item:await pipeline.audit({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/start-independent',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>k!=='expectedPackageVersion')||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'只接受当前周包版本，不接受授权或交付物注入。');
+    res.json(await pipeline.startIndependent({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)}));
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/connect-local-consumer',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>k!=='expectedPackageVersion')||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
+    res.json({item:await pipeline.connectLocalConsumer({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/whatsapp-mock',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>!['expectedPackageVersion','taskId'].includes(k))||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1||typeof body.taskId!=='string'||!body.taskId.trim())throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本及客服任务。');
+    res.json({item:await pipeline.runWhatsAppMock({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)},{taskId:body.taskId})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/bind-existing-facts',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>k!=='expectedPackageVersion')||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
+    res.json(await pipeline.bindExistingFacts({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)}));
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/prepare-authority',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>k!=='expectedPackageVersion')||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
+    res.json(await pipeline.prepareAuthority({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)}));
+  }));
+  router.get('/:programId/operating-packages/:packageId/execution-pipeline',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals;
+    const packageVersion=Number(req.query.version);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定周包版本。');
+    res.json({item:await pipeline.read({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/start',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>!['expectedPackageVersion','expectedPlanningVersion','expectedProgramVersion','selectedSlotIds','authorizePublishing'].includes(k))||!['expectedPackageVersion','expectedPlanningVersion','expectedProgramVersion'].every(k=>Number.isSafeInteger(body[k])&&Number(body[k])>0)||body.authorizePublishing!==false||!Array.isArray(body.selectedSlotIds)||body.selectedSlotIds.some(id=>typeof id!=='string'||!id.trim()))throw new SocialProgramError('weekly_pipeline_input_invalid',400,'启动参数无效；不包含发布或发送授权。');
+    res.json(await pipeline.start({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)},{expectedPackageVersion:Number(body.expectedPackageVersion),expectedPlanningVersion:Number(body.expectedPlanningVersion),expectedProgramVersion:Number(body.expectedProgramVersion),selectedSlotIds:body.selectedSlotIds as string[],authorizePublishing:false}));
+  }));
   const operating = createSocialOperatingOrchestrationService(dataStore);
   const executionTasks = createWeeklyExecutionTaskService(dataStore);
   const repairCases=createWeeklyProductionRepairCaseService(dataStore);
@@ -338,6 +502,24 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     ) });
   }));
 
+  router.get('/:programId/operating-packages/:packageId/agent-planning/pinned-reference-options', asyncRoute(async (req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals;
+    const actor=await readWeeklyReviewActor(dataStore,tenantId,userId);
+    if(!actor||actor.tenantId!==tenantId||!['super_admin','admin','social_operator'].includes(organizationRoleOrNull(actor.role)??'')||actor.disabled===true||actor.active===false||['disabled','suspended'].includes(String(actor.status)))throw new SocialProgramError('weekly_pinned_reference_actor_invalid',403,'当前用户无权指定周包参考视频。');
+    const programId=String(req.params.programId||''),packageId=String(req.params.packageId||'');
+    const pkg=await weeklyPackages.get(tenantId,programId,packageId);
+    res.json({item:await readWeeklyPinnableReferenceOptions(dataStore,{tenantId,programId,packageId,packageVersion:pkg.version})});
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/agent-planning/pinned-reference', asyncRoute(async (req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals;
+    const actor=await readWeeklyReviewActor(dataStore,tenantId,userId);
+    if(!actor||actor.tenantId!==tenantId||!['super_admin','admin','social_operator'].includes(organizationRoleOrNull(actor.role)??'')||actor.disabled===true||actor.active===false||['disabled','suspended'].includes(String(actor.status)))throw new SocialProgramError('weekly_pinned_reference_actor_invalid',403,'当前用户无权指定周包参考视频。');
+    const body=routeBody(req.body),authority=routeBody(body?.discoveryAuthority);
+    if(!body||Object.keys(body).some(key=>!['expectedPackageVersion','expectedPlanningVersion','candidateId','expectedAccountUrl','discoveryAuthority'].includes(key))||!Number.isSafeInteger(body.expectedPackageVersion)||!Number.isSafeInteger(body.expectedPlanningVersion)||typeof body.candidateId!=='string'||!body.candidateId.trim()||typeof body.expectedAccountUrl!=='string'||!/^https?:\/\//i.test(body.expectedAccountUrl)||!authority||Object.keys(authority).some(key=>!['rootJobId','currentJobId','runId'].includes(key))||['rootJobId','currentJobId','runId'].some(key=>typeof authority[key]!=='string'||!String(authority[key]).trim()))throw new SocialProgramError('weekly_pinned_reference_input_invalid',400,'指定视频命令缺少有效版本、账号或本轮采集身份。');
+    res.json({item:await weeklyPackages.pinAgentReference(tenantId,userId,String(req.params.programId||''),String(req.params.packageId||''),{expectedPackageVersion:Number(body.expectedPackageVersion),expectedPlanningVersion:Number(body.expectedPlanningVersion),candidateId:body.candidateId,expectedAccountUrl:body.expectedAccountUrl,discoveryAuthority:{rootJobId:String(authority.rootJobId),currentJobId:String(authority.currentJobId),runId:String(authority.runId)}})});
+  }));
+
   router.post('/:programId/operating-packages/:packageId/agent-planning/merge', asyncRoute(async (req, res) => {
     const { tenantId } = res.locals as AuthLocals;
     res.json({ item: await weeklyPackages.mergeAgentSchedule(
@@ -571,8 +753,11 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
 
   router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/approve', asyncRoute(async (req, res) => {
     const { tenantId, userId } = res.locals as AuthLocals;
+    const body=routeBody(req.body),ref=body?.expectedArtifactRef as {type?:unknown;id?:unknown;version?:unknown}|undefined;
+    if(!body||Object.keys(body).some(key=>key!=='expectedArtifactRef')||ref!==undefined&&(!ref||typeof ref!=='object'||Array.isArray(ref)||Object.keys(ref).some(key=>!['type','id','version'].includes(key))||ref.type!=='starter_social_content_artifact'||typeof ref.id!=='string'||!ref.id.trim()||!Number.isSafeInteger(ref.version)||Number(ref.version)<1))throw new SocialProgramError('weekly_production_approval_input_invalid',400,'请提交当前预览成片的确切版本。');
     res.json({ items: await executionTasks.approve(
       tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), String(req.params.taskId || ''), userId,
+      ref as import('../../shared/contracts/socialProgram.js').VersionedSocialRef|undefined,
     ) });
   }));
 

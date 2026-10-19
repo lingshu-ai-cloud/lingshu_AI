@@ -12,6 +12,7 @@
  */
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
+const { createHash } = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
 const { fileURLToPath } = require('node:url');
@@ -353,6 +354,22 @@ function filterPath(value) {
     .replace(/,/g, '\\,');
 }
 
+// Motion graphics are an input visual layer. Burn the frozen ASS track only
+// after all overlays so an opaque motion frame cannot silently hide a cue.
+function appendFinalVisualLayers(filters, visualLabel, motionOverlayIdx, width, height, assFile, captureCaptionBaseline = false) {
+  let composedLabel = visualLabel;
+  if (motionOverlayIdx >= 0) {
+    filters.push(`[${motionOverlayIdx}:v]fps=30,scale=${width}:${height},format=yuva420p,setpts=PTS-STARTPTS[vmotion]`);
+    filters.push(`${composedLabel}[vmotion]overlay=0:0:format=auto:shortest=1[vbeforecaption]`);
+    composedLabel = '[vbeforecaption]';
+  }
+  if (assFile && captureCaptionBaseline) {
+    filters.push(`${composedLabel}split=2[vcaptioninput][vbaseline]`);
+    filters.push(`[vcaptioninput]subtitles='${filterPath(assFile)}':fontsdir='${filterPath(fontsDirectory)}'[vout]`);
+  } else if (assFile) filters.push(`${composedLabel}subtitles='${filterPath(assFile)}':fontsdir='${filterPath(fontsDirectory)}'[vout]`);
+  else filters.push(`${composedLabel}null[vout]`);
+}
+
 function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {}, emphasisPlan = null) {
   const assColor = (hex, fallback) => /^#[0-9a-f]{6}$/i.test(String(hex || '')) ? `&H00${hex.slice(5, 7)}${hex.slice(3, 5)}${hex.slice(1, 3).toUpperCase()}&`.toUpperCase() : fallback;
   const fontByChoice = { sans: subtitleTemplate.body.font, impact: subtitleTemplate.emphasis.font, rounded: subtitleTemplate.product.font };
@@ -450,6 +467,14 @@ async function composite(manifest, onProgress = () => {}, outDir) {
 
   const spec = (manifest && manifest.spec) || {};
   const duration = Math.max(1, Number(spec.duration) || 20);
+  const frameContract = manifest && manifest.frameContract;
+  if (frameContract) {
+    const expected = Math.round(duration * 30);
+    if (frameContract.schemaVersion !== 'social-render-frame-contract.v1' || frameContract.fps !== 30 ||
+        frameContract.durationSeconds !== duration || !Number.isInteger(frameContract.expectedFrames) ||
+        frameContract.expectedFrames !== expected || Math.abs(duration * 1000 - Math.round(duration * 1000)) > 1e-6 ||
+        duration > 45 || expected > 1350) return { ok: false, error: 'render_frame_contract_invalid' };
+  }
   const [baseW, baseH] = resolution(spec.ratio);
     const scale = spec.resolution === '720p' ? 2 / 3 : 1;
     const [w, h] = [Math.round(baseW * scale / 2) * 2, Math.round(baseH * scale / 2) * 2];
@@ -712,22 +737,31 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     const subtitleCues = manifest && manifest.subtitles && manifest.subtitles.mode !== 'off'
       ? manifest.subtitles.cues
       : [];
+    const subtitleCueSha256 = createHash('sha256').update(JSON.stringify(subtitleCues ?? null)).digest('hex');
     const assPlan = motionOverlay.path
       ? { ...emphasisPlan, events: emphasisPlan.events.filter(event => !['key_fact', 'reveal', 'cta'].includes(event.type)) }
       : emphasisPlan;
     const ass = cuesToAss(subtitleCues, w, h, manifest.disclaimer || '', duration, manifest.subtitles?.style || {}, assPlan);
-    let captionLabel = vlabel;
+    const subtitleAssSha256 = ass ? createHash('sha256').update(ass, 'utf8').digest('hex') : null;
+    let assFile = null;
     if (ass) {
       verifySubtitleFonts();
-      const assFile = path.join(tmp, 'subtitles.ass');
+      assFile = path.join(tmp, 'subtitles.ass');
       fs.writeFileSync(assFile, ass, 'utf8');
-      filters.push(`${vlabel}subtitles='${filterPath(assFile)}':fontsdir='${filterPath(fontsDirectory)}'[vcaption]`);
-      captionLabel = '[vcaption]';
     }
-    if (motionOverlayIdx >= 0) {
-      filters.push(`[${motionOverlayIdx}:v]fps=30,scale=${w}:${h},format=yuva420p,setpts=PTS-STARTPTS[vmotion]`);
-      filters.push(`${captionLabel}[vmotion]overlay=0:0:format=auto:shortest=1[vout]`);
-    } else filters.push(`${captionLabel}null[vout]`);
+    // A baseline from the same FFmpeg graph makes later pixel-level caption
+    // comparison possible without rebuilding effects or trusting source text.
+    // It is evidence only: it does not by itself prove subtitle visibility.
+    const captureCaptionBaseline = Boolean(manifest && manifest.captureCaptionBaseline === true && assFile && duration <= 45);
+    const baselineDirectory = captureCaptionBaseline ? path.join(dir, '.private-render-evidence') : null;
+    const baselinePath = baselineDirectory ? path.join(baselineDirectory, `${path.basename(outputPath, '.mp4')}.caption-base.mp4`) : null;
+    if (baselineDirectory) {
+      fs.mkdirSync(baselineDirectory, { recursive: true, mode: 0o700 });
+      const status = fs.lstatSync(baselineDirectory);
+      if (!status.isDirectory() || status.isSymbolicLink()) throw new Error('字幕基底私有目录无效');
+      fs.chmodSync(baselineDirectory, 0o700);
+    }
+    appendFinalVisualLayers(filters, vlabel, motionOverlayIdx, w, h, assFile, captureCaptionBaseline);
 
     // 4) 音轨混音：bgmVol 表示最终混音增益，必须与界面显示一致。
     // 默认值本身已经按“口播垫底”设置，不能在有配音时再静默减半，
@@ -788,8 +822,10 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     const effectAudio = audioEventFilters(effectPlan.audioEvents, '[acontent]', 'aout');
     filters.push(...effectAudio.filters);
 
+    const filterGraph = filters.join(';');
+    const filterGraphSha256 = createHash('sha256').update(filterGraph, 'utf8').digest('hex');
     args.push(
-      '-filter_complex', filters.join(';'),
+      '-filter_complex', filterGraph,
       '-map', '[vout]', '-map', '[aout]',
       '-t', String(duration),
       '-c:v', 'libx264', '-threads', '2', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
@@ -799,6 +835,9 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       '-movflags', '+faststart',
       '-y', outputPath,
     );
+    if (baselinePath) args.push('-map', '[vbaseline]', '-an', '-t', String(duration),
+      '-c:v', 'libx264', '-threads', '1', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
+      '-r', '30', '-g', '60', '-keyint_min', '30', '-sc_threshold', '0', '-y', baselinePath);
 
     // 5) 跑 ffmpeg
     if (process.env.RENDER_DEBUG) console.error('[render] ARGV=' + JSON.stringify(args));
@@ -828,15 +867,48 @@ async function composite(manifest, onProgress = () => {}, outDir) {
         }
       });
       proc.on('error', err => resolve({ ok: false, error: String(err) }));
-      proc.on('close', (code, signal) => {
+      proc.on('close', async (code, signal) => {
         clearTimeout(killTimer);
         if (sizeTimer) clearInterval(sizeTimer);
         try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* noop */ }
         const finalBytes = (() => { try { return fs.statSync(outputPath).size; } catch { return 0; } })();
         if (code === 0 && (!downloadOptions.serverStrictAssets || finalBytes <= 1024 * 1024 * 1024)) {
+          let outputSha256;
+          try {
+            const digest = createHash('sha256');
+            for await (const chunk of fs.createReadStream(outputPath)) digest.update(chunk);
+            outputSha256 = digest.digest('hex');
+          } catch (error) {
+            resolve({ ok: false, error: `成片字节摘要失败：${error && error.message || error}` });
+            return;
+          }
+          let captionBaselineEvidence = null;
+          if (baselinePath) {
+            try {
+              const baselineStat = fs.statSync(baselinePath);
+              if (baselineStat.isFile() && baselineStat.size > 0 && baselineStat.size <= 256 * 1024 * 1024) {
+                const digest = createHash('sha256');
+                for await (const chunk of fs.createReadStream(baselinePath)) digest.update(chunk);
+                fs.chmodSync(baselinePath, 0o600);
+                captionBaselineEvidence = { schemaVersion: 'renderer-caption-baseline.v1', path: baselinePath,
+                  sha256: digest.digest('hex'), byteLength: baselineStat.size, outputSha256, filterGraphSha256 };
+              } else fs.rmSync(baselinePath, { force: true });
+            } catch { try { fs.rmSync(baselinePath, { force: true }); } catch { /* no evidence */ } }
+          }
           onProgress(100);
-          resolve({ ok: true, outputPath });
+          resolve({ ok: true, outputPath, ...(frameContract ? { frameRenderEvidence: {
+            schemaVersion: 'renderer-frame-attestation.v1', outputSha256, fps: 30,
+            durationSeconds: duration, expectedFrames: frameContract.expectedFrames,
+          } } : {}), subtitleRenderEvidence: {
+            schemaVersion: 'renderer-subtitle-attestation.v2',
+            outputSha256,
+            assSha256: subtitleAssSha256,
+            filterApplied: Boolean(ass),
+            subtitleCueSha256,
+            filterGraphSha256,
+          }, subtitleAssUtf8: ass || null, captionBaselineEvidence });
         } else {
+          if (baselinePath) try { fs.rmSync(baselinePath, { force: true }); } catch { /* noop */ }
           if (downloadOptions.serverStrictAssets) try { fs.rmSync(outputPath, { force: true }); } catch { /* noop */ }
           resolve({ ok: false, error: exceededOutputLimit || finalBytes > 1024 * 1024 * 1024 ? '成片文件超出 1 GiB 限制' : code === null ? `ffmpeg 被信号 ${signal || 'unknown'} 中止\n${stderr.slice(-1200)}` : `ffmpeg exited ${code}\n${stderr.slice(-1200)}` });
         }
@@ -848,4 +920,4 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   }
 }
 
-module.exports = { composite, downloadTo, resolution, ffmpegPath, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss };
+module.exports = { composite, downloadTo, resolution, ffmpegPath, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss, appendFinalVisualLayers };

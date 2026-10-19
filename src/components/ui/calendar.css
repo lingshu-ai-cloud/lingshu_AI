@@ -67,7 +67,39 @@
 .ls-calendar .ls-calendar-event-reveal:focus-within { opacity: 1; transform: translateY(0); }
 .ls-calendar-event-content { display: flex; align-items: flex-start; gap: 6px; min-width: 0; max-width: 100%; overflow: hidden; box-sizing: border-box; padding: 5px; font-size: var(--ls-type-body-small-size); line-height: var(--ls-type-body-small-line); white-space: normal; }
 .ls-calendar-event-copy { min-width: 0; flex: 1; }
-.ls-calendar-task-board-card { display: grid; grid-template-rows: repeat(3, 14px); align-content: center; gap: 1px; height: 54px; min-height: 54px; padding: 5px 7px; white-space: nowrap; }
+.ls-calendar-task-board-card { display: grid; grid-template-rows: 13px 27px; align-content: center; gap: 1px; height: 52px; min-height: 52px; padding: 5px 8px; white-space: normal; }
+.ls-calendar-task-board .ls-calendar-surface { overflow-x: auto; }
+.ls-calendar-task-board .ls-calendar-surface > div { min-width: 1120px; }
+.ls-calendar-task-board-card strong { white-space: normal; overflow: hidden; line-height: 16px; }
+.ls-calendar .ls-calendar-agent-business { border-inline-start-color: #2563eb; background-color: #eff6ff; }
+.ls-calendar .ls-calendar-agent-director { border-inline-start-color: #7c3aed; background-color: #f5f3ff; }
+.ls-calendar .ls-calendar-agent-content { border-inline-start-color: #db3d77; background-color: #fdf2f8; }
+.ls-calendar .ls-calendar-agent-customer { border-inline-start-color: #0f8b8d; background-color: #f0fdfa; }
+.ls-calendar .ls-calendar-agent-human { border-inline-start-color: #71717a; background-color: #fafafa; }
+
+/* Agent week board: seven date columns, no hour rail, compact pastel work cards. */
+.ls-calendar-agent-view { padding: 12px 16px 16px; }
+.ls-calendar-agent-view .ls-calendar-toolbar { min-height: 44px; }
+.ls-calendar-agent-view .ls-calendar-toolbar h3 { font-size: 18px; font-weight: 650; letter-spacing: -.01em; }
+.ls-calendar-agent-view .ls-calendar-meta { margin: 8px 0 12px; }
+.ls-calendar-agent-view .ls-calendar-surface { border: 1px solid #e7e7ea; border-radius: 10px; background: #fff; }
+.ls-calendar-agent-view .fc-scrollgrid { border: 0; }
+.ls-calendar-agent-view .fc-col-header-cell { background: #fff; }
+.ls-calendar-agent-view .fc-col-header-cell-cushion { padding: 10px 6px; color: #52525b; font-size: 12px; font-weight: 650; }
+.ls-calendar-agent-view .fc-daygrid-day-frame { min-height: clamp(420px, calc(100dvh - 320px), 680px); }
+.ls-calendar-agent-view .fc-daygrid-day-events { gap: 5px; margin: 5px; }
+.ls-calendar-agent-view .ls-calendar-event { position: relative; border-width: 1px; border-inline-start-width: 3px; border-radius: 6px; box-shadow: 0 1px 2px rgb(24 24 27 / 5%); }
+.ls-calendar-agent-view .ls-calendar-event-progress { position: relative; }
+.ls-calendar-agent-view .ls-calendar-event-progress::before { position: absolute; z-index: 3; inset-inline: 0; inset-block-start: clamp(4px, var(--ls-task-progress, 0%), calc(100% - 4px)); height: 2px; background: #ef4444; box-shadow: 0 0 0 1px rgb(255 255 255 / 70%); content: ''; pointer-events: none; }
+.ls-calendar-agent-view .ls-calendar-event-progress::after { position: absolute; z-index: 4; inset-inline-start: -1px; inset-block-start: calc(clamp(4px, var(--ls-task-progress, 0%), calc(100% - 4px)) - 2px); width: 6px; height: 6px; border-radius: 999px; background: #ef4444; content: ''; pointer-events: none; }
+.ls-calendar-agent-view .ls-calendar-event-muted { opacity: .58; filter: saturate(.32); }
+.ls-calendar-agent-view .ls-calendar-task-board-card { height: 50px; min-height: 50px; grid-template-rows: 12px 27px; padding: 4px 7px; }
+.ls-calendar-agent-view .ls-calendar-event:hover { filter: saturate(.94) brightness(.99); box-shadow: 0 2px 5px rgb(24 24 27 / 8%); }
+.ls-calendar-agent-view .ls-calendar-event-row-owner,
+.ls-calendar-agent-view .ls-calendar-event-row-state { font-size: 9px; }
+.ls-calendar-agent-view .ls-calendar-event-row-title { font-size: 11px; line-height: 14px; }
+.ls-calendar-agent-view .fc-day-today { background: #f8fbff !important; }
+.ls-calendar-agent-view button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 .ls-calendar-event-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
 .ls-calendar-event-copy > span { display: block; color: #52525b; font-size: var(--ls-type-body-small-size); }
 .ls-calendar-time-inner { display: flex; min-width: 0; overflow: hidden; container-type: size; container-name: ls-calendar-slot; }
@@ -80,6 +112,7 @@
 .ls-calendar-event-content-timed.is-short .ls-calendar-thumb { width: 24px; height: 24px; }
 .ls-calendar-event-content-timed.is-short .ls-calendar-event-meta { display: flex; }
 .ls-calendar .ls-calendar-event-three-row { height: 100%; min-height: 46px; }
+.ls-calendar .ls-calendar-event-two-row { height: 100%; min-height: 40px; }
 .ls-calendar .fc-timegrid-event-harness.ls-calendar-time-vertical-flow {
   left: 2px !important;
   right: 2px !important;
@@ -101,7 +134,11 @@
 .ls-calendar-event-placeholder .ls-calendar-event-row-state { color: #71717a; font-weight: 400; }
 .ls-calendar-event-placeholder .ls-calendar-event-row-title { color: #52525b; font-weight: 500; }
 .ls-calendar-event-completed-check { position: absolute; inset-block-start: 5px; inset-inline-end: 5px; display: grid; width: 16px; height: 16px; place-items: center; border-radius: 50%; background: #168568; color: #fff; font-size: 11px; font-weight: 800; line-height: 1; }
-#agent-weekly-calendar .ls-calendar-event-done { border-color: #e4e4e7; border-inline-start-color: #86a99d; background: #fafafa; color: #52525b; }
+.ls-calendar-task-status-mark { position:absolute; z-index:5; inset-block-start:5px; inset-inline-end:5px; display:grid; width:18px; height:18px; place-items:center; border-radius:50%; background:var(--ant-color-bg-container); }
+.ls-calendar-task-status-mark.is-missing { color:var(--ant-color-error); }
+.ls-calendar-task-status-mark.is-complete { color:var(--ant-color-success); }
+.ls-calendar-task-board-card { position:static; padding-inline-end:28px; }
+#agent-weekly-calendar .ls-calendar-event-done { border-color: #b7dfcf; border-inline-start-color: #2f9b75; background: #eaf8f2; color: #3f5f53; }
 #agent-weekly-calendar .ls-calendar-event-done .ls-calendar-event-row-title { color: #52525b; font-weight: 600; }
 #agent-weekly-calendar .ls-calendar-event-done .ls-calendar-event-row-owner,
 #agent-weekly-calendar .ls-calendar-event-done .ls-calendar-event-row-state { color: #a1a1aa; }
@@ -159,6 +196,15 @@
 .ls-calendar-details dt { color: #71717a; }
 .ls-calendar-details dd { margin: 0; color: #171717; overflow-wrap: anywhere; }
 @media (max-width: 639px) { .ls-calendar { padding: 12px; } .ls-calendar-toolbar h3 { flex-basis: 100%; margin: 4px 0; } .ls-calendar-workspace.has-date-only-time-rail { grid-template-columns: 42px minmax(0, 1fr); } }
+@media (max-width: 639px) {
+  .ls-calendar-agent-view { padding: 8px 0 12px; }
+  .ls-calendar-agent-view .ls-calendar-toolbar,
+  .ls-calendar-agent-view .ls-calendar-meta { padding-inline: 12px; }
+  .ls-calendar-agent-view .ls-calendar-surface { border-inline: 0; border-radius: 0; }
+  .ls-calendar-agent-view .fc-daygrid-day-frame { min-height: 480px; }
+  .ls-calendar-agent-view.ls-calendar-task-board .ls-calendar-surface > div { min-width: 0; }
+  .ls-calendar-agent-view .ls-calendar-event-row-title { font-size: 12px; }
+}
 @media (pointer: coarse) { .ls-calendar-compact .ls-calendar-toolbar button { min-height: 44px; min-width: 44px; } }
 @media (prefers-reduced-motion: reduce) { .ls-calendar .ls-calendar-event-reveal { opacity: 1 !important; transform: none !important; transition: none !important; } }
 @media print { .ls-calendar-toolbar, .ls-calendar-meta { display: none; } }

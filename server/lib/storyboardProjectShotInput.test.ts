@@ -45,6 +45,12 @@ assert.equal(storyboardProjectShotRequestIssue({ ...request, projectSpec: withEn
   environmentMaterialId: 'factory-image-1' }), null);
 assert.match(storyboardProjectShotRequestIssue({ ...request, sourceFirstFrameUrl: '/frame-2' }) || '', /当前分镜/);
 assert.match(storyboardProjectShotRequestIssue({ ...request, projectSpec: { ...base, videoKickoff: { referenceAnalysis: { details: [] } } } }) || '', /原片真实首帧/);
+const safeFallback = { ...base, storyboardSourcePlans: { ...base.storyboardSourcePlans,
+  'shot-1': { ...base.storyboardSourcePlans['shot-1'], fallbackMode: 'enterprise_product_display' } },
+  videoKickoff: { referenceAnalysis: { details: [{ shotId: 'shot-1', visual: '仅作分析参考' }] } } };
+assert.equal(storyboardProjectShotRequestIssue({ ...request, projectSpec: safeFallback,
+  mode: 'free_creation', sourceFirstFrameUrl: '' }), null,
+  'an unauthorized reference frame must fall back to enterprise-product free creation');
 assert.match(storyboardProjectShotRequestIssue({ ...request, productIds: ['p2'] }) || '', /产品映射/);
 assert.match(storyboardProjectShotRequestIssue({ ...request, shotDescription: '别的镜头' }) || '', /画面要求/);
 assert.match(storyboardProjectShotRequestIssue({ ...request, action: { startState: '凭空添加动作', beats: ['转动'] } }) || '', /动作起点/);

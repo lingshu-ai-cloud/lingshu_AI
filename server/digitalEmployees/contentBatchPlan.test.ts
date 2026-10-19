@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { buildContentBatchPlan, enterpriseAssetStableId } from './contentBatchPlan.js';
 import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
 import { normalizeVideoPlan } from '../../shared/contracts/videoCreationPlan.js';
+import { referenceContentIdentity } from './referenceContentIdentity.js';
 
 const config = normalizeDigitalEmployeeConfig({
   companyName: '企业', industry: '制造', primaryBusiness: '产品', targetMarkets: '美国', customerProfile: '经销商', approvalOwner: '负责人',
@@ -16,8 +17,12 @@ const planned = buildContentBatchPlan({
   versions: { configVersion: 7, policyVersion: 'p7', factsVersion: 'f7' },
 });
 assert.equal(planned.status, 'planned');
-assert.equal(planned.orders.length, 5);
-assert.deepEqual(planned.orders.map(order => order.route), ['clone', 'product', 'material', 'clone', 'product']);
+assert.equal(planned.orders.length, 1, 'automatic planning must not cycle one reference across five independent videos');
+assert.deepEqual(planned.orders.map(order => order.route), ['clone'], 'new automatic fixed-yield plans must stay reference-led');
+assert.equal(planned.coverage?.missing, 4, 'the existing coverage contract must expose reference-capacity under-coverage');
+assert.ok(planned.orders.every(order => order.productionContractVersion === 'fixed-yield.v2-preflight'));
+assert.ok(planned.orders.every(order => order.fixedYieldTimeline?.ready === false
+  && order.readinessBlockers?.some(reason => reason.includes('完整精确分析事实尚未载入'))), 'an analysis id alone must not create an executable legacy order');
 assert.ok(planned.orders.every(order => order.goalId === 'goal-1' && order.productId && order.theme.key && order.platform && order.cta));
 assert.ok(planned.orders.every(order => order.evidenceRefs.filter(ref => ref.type === 'enterprise_material').every(ref => ref.id === (order.productId === 'sku-1' ? 'asset-a' : 'asset-b'))), 'A/B 产品不得串用素材');
 assert.ok(planned.orders.every(order => order.accountId === '' && order.accountLabel.includes('不分发')));
@@ -29,9 +34,9 @@ const publishing = buildContentBatchPlan({
   evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }], exactAnalysisIds: [], materialIds: ['asset-a'] },
   versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
 });
-assert.equal(publishing.status, 'planned', 'explicit product preparation must remain available without a publishing account');
-assert.equal(publishing.orders.length, 5);
-assert.ok(publishing.orders.every(order => order.route === 'product' && order.accountId === ''));
+assert.equal(publishing.status, 'blocked', 'automatic fixed-yield plans must not fall back to a standalone product route');
+assert.equal(publishing.orders.length, 0);
+assert.ok(publishing.blocker.includes('固定恒产计划'));
 
 const noEvidence = buildContentBatchPlan({
   goalId: 'goal-1', goal, config,
@@ -87,6 +92,8 @@ const explicitUnanalyzedClone = buildContentBatchPlan({
 assert.equal(explicitUnanalyzedClone.status, 'planned', 'a missing clone analysis must block only that frozen master, not erase the weekly batch');
 assert.equal(explicitUnanalyzedClone.orders.length, 1);
 assert.ok(explicitUnanalyzedClone.orders[0]?.readinessBlockers?.some(issue => issue.includes('精确分析')));
+assert.equal(explicitUnanalyzedClone.orders[0]?.productionContractVersion, 'fixed-yield.v2-preflight');
+assert.equal(explicitUnanalyzedClone.orders[0]?.fixedYieldTimeline?.ready, false);
 
 const referenceAdmissions = { 'analysis-1': { ready: false, blockers: ['第 8 镜：镜头类型未确认'],
   blockingShotIds: ['shot_8'], executableShotIds: ['shot_1', 'shot_2'], reviewShotIds: ['shot_8'] } };
@@ -103,7 +110,8 @@ const automaticReviewClone = buildContentBatchPlan({
   evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }], exactAnalysisIds: ['analysis-1'], materialIds: ['asset-a'], referenceAdmissions },
   versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
 });
-assert.ok(automaticReviewClone.orders.every(order => order.route !== 'clone'), 'automatic new allocations must not admit completed but unresolved analysis');
+assert.equal(automaticReviewClone.status, 'blocked', 'automatic new allocations must not fall back when the only reference still needs review');
+assert.equal(automaticReviewClone.orders.length, 0);
 
 const mixedReadinessGoal = normalizeWeeklyGoal({
   ...goal,
@@ -120,6 +128,132 @@ const mixedReadiness = buildContentBatchPlan({
 });
 assert.equal(mixedReadiness.status, 'planned');
 assert.equal(mixedReadiness.orders.length, 2, 'one invalid product must not remove its valid sibling order');
-assert.equal(mixedReadiness.orders[0]?.readinessBlockers?.length, 0);
+assert.ok(mixedReadiness.orders[0]?.readinessBlockers?.some(issue => issue.includes('不能作为新的独立生产路线')),
+  'product/material routes are shot types inside a clone timeline, not new independent V2 plans');
 assert.ok(mixedReadiness.orders[1]?.readinessBlockers?.some(issue => issue.includes('冻结产品')));
+const exactAnalysis = {
+  schemaVersion: 1 as const,
+  source: { videoId: 'analysis-1', analysisRunId: 'run-1', evidenceRevision: 'revision-1', correctionVersion: 0, analyzedAt: '2026-10-15T00:00:00Z', analysisMode: 'exact' },
+  status: 'ready' as const, gaps: [], hookShotId: 'shot_1', totalShots: 2, timelineComplete: true,
+  shots: [
+    { shotId: 'shot_1', index: 1, time: '0-2', start: 0, end: 2, materialType: 'talking_head' as const, narrativeRole: 'hook' as const,
+      classificationSource: 'model' as const, classificationEvidence: '人物面对镜头讲解', visual: '人物在产品货架前稳定口播', dialogue: '介绍产品', onScreenText: '', purpose: '钩子', firstFrameRef: null, clipRef: null,
+      needsReview: false, granularity: 'shot' as const, environment: '产品货架', framing: '中景', camera: '固定', audio: '人声', authenticity: '真实', effectivenessHypothesis: '', detailedAnalysis: {} },
+    { shotId: 'shot_2', index: 2, time: '2-5', start: 2, end: 5, materialType: 'product' as const, narrativeRole: 'product_intro' as const,
+      classificationSource: 'model' as const, classificationEvidence: '包装细节可见', visual: '产品包装标签微距特写', dialogue: '', onScreenText: '', purpose: '产品介绍', firstFrameRef: null, clipRef: null,
+      needsReview: false, granularity: 'shot' as const, environment: '产品货架', framing: '特写', camera: '固定', audio: '', authenticity: '真实', effectivenessHypothesis: '', detailedAnalysis: {} },
+  ],
+  materialCounts: { talking_head: 1, factory: 0, product: 1, consumer_demo: 0, general: 0, unknown: 0 },
+  structure: [
+    { materialType: 'talking_head' as const, narrativeRole: 'hook' as const, shotIds: ['shot_1'] },
+    { materialType: 'product' as const, narrativeRole: 'product_intro' as const, shotIds: ['shot_2'] },
+  ], speechGroups: [],
+};
+const fixedYieldBatch = buildContentBatchPlan({
+  goalId: 'fixed-yield', goal: explicitMissingMaterialGoal, config,
+  evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }], exactAnalysisIds: ['analysis-1'], materialIds: ['asset-a'], referenceAnalyses: { 'analysis-1': exactAnalysis } },
+  versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
+});
+assert.equal(fixedYieldBatch.orders[0]?.fixedYieldTimeline?.ready, true);
+assert.equal(fixedYieldBatch.orders[0]?.productionContractVersion, 'fixed-yield.v2-preflight');
+assert.deepEqual(fixedYieldBatch.orders[0]?.fixedYieldTimeline?.shots.map(item => [item.pathId, item.targetOutputDurationMs]), [
+  ['P1_PRESENTER', 2000], ['P2_PRODUCT_REAL', 3000],
+]);
+const automaticFixedYieldBatch = buildContentBatchPlan({
+  goalId: 'fixed-yield-auto', goal, config,
+  evidence: {
+    products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }],
+    exactAnalysisIds: ['analysis-1'], materialIds: ['asset-a'], referenceAnalyses: { 'analysis-1': exactAnalysis },
+  },
+  versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
+});
+assert.equal(automaticFixedYieldBatch.orders.length, 1, 'one admitted reference can back at most one independent weekly video');
+assert.ok(automaticFixedYieldBatch.orders.every(order => order.route === 'clone'
+  && order.productionContractVersion === 'fixed-yield.v2-preflight'
+  && order.fixedYieldTimeline?.ready === true
+  && order.readinessBlockers?.length === 0), 'analysis completion must deterministically recompile every automatic order into an executable preflight');
+assert.deepEqual(automaticFixedYieldBatch.eligibleRoutes, ['clone']);
+
+const duplicateExplicitPlan = normalizeVideoPlan({
+  ...explicitMissingMaterialGoal.videoPlans![0], contentId: 'duplicate-content', contentFamilyId: 'duplicate-family',
+});
+const explicitDuplicateBatch = buildContentBatchPlan({
+  goalId: 'fixed-yield-explicit-duplicate',
+  goal: { ...explicitMissingMaterialGoal, videoPlans: [explicitMissingMaterialGoal.videoPlans![0]!, duplicateExplicitPlan] },
+  config,
+  evidence: {
+    products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }],
+    exactAnalysisIds: ['analysis-1'], materialIds: ['asset-a'], referenceAnalyses: { 'analysis-1': exactAnalysis },
+  },
+  versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
+});
+assert.equal(explicitDuplicateBatch.orders.length, 2, 'the invalid authored choice remains visible for correction');
+assert.equal(explicitDuplicateBatch.orders[0]?.readinessBlockers?.length, 0);
+assert.ok(explicitDuplicateBatch.orders[1]?.readinessBlockers?.some(reason => reason.includes('每条物理爆款视频最多只能用于 1 条')),
+  'the second independent use of one reference must be rejected before production');
+
+const duplicatePhysicalHash = 'a'.repeat(64);
+const duplicatePhysicalIdentities = {
+  'analysis-1': referenceContentIdentity({ id: 'analysis-1', sha256: duplicatePhysicalHash, duration: 5 }),
+  'analysis-copy': referenceContentIdentity({ id: 'analysis-copy', sha256: duplicatePhysicalHash, duration: 5 }),
+};
+const duplicatePhysicalAnalysis = {
+  ...exactAnalysis,
+  source: { ...exactAnalysis.source, videoId: 'analysis-copy', analysisRunId: 'run-copy' },
+};
+const duplicatePhysicalPlan = normalizeVideoPlan({
+  ...explicitMissingMaterialGoal.videoPlans![0],
+  contentId: 'duplicate-physical-content', contentFamilyId: 'duplicate-physical-family', referenceId: 'analysis-copy',
+});
+const explicitPhysicalDuplicateBatch = buildContentBatchPlan({
+  goalId: 'fixed-yield-explicit-physical-duplicate',
+  goal: { ...explicitMissingMaterialGoal, videoPlans: [explicitMissingMaterialGoal.videoPlans![0]!, duplicatePhysicalPlan] },
+  config,
+  evidence: {
+    products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }],
+    exactAnalysisIds: ['analysis-1', 'analysis-copy'], materialIds: ['asset-a'],
+    referenceAnalyses: { 'analysis-1': exactAnalysis, 'analysis-copy': duplicatePhysicalAnalysis },
+    referenceIdentities: duplicatePhysicalIdentities,
+  },
+  versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
+});
+assert.equal(explicitPhysicalDuplicateBatch.orders.length, 2, 'authored duplicate records remain visible for correction');
+assert.equal(explicitPhysicalDuplicateBatch.orders[0]?.readinessBlockers?.length, 0);
+assert.ok(explicitPhysicalDuplicateBatch.orders[1]?.readinessBlockers?.some(reason => reason.includes('是同一视频')),
+  'different database ids for the same physical video must be rejected in one explicit weekly plan');
+
+const automaticPhysicalDuplicateBatch = buildContentBatchPlan({
+  goalId: 'fixed-yield-auto-physical-duplicate', goal, config,
+  evidence: {
+    products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }],
+    exactAnalysisIds: ['analysis-1', 'analysis-copy'], materialIds: ['asset-a'],
+    referenceAnalyses: { 'analysis-1': exactAnalysis, 'analysis-copy': duplicatePhysicalAnalysis },
+    referenceIdentities: duplicatePhysicalIdentities,
+  },
+  versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
+});
+assert.equal(automaticPhysicalDuplicateBatch.orders.length, 1,
+  'automatic fallback without videoPlans must count physical videos, not record ids');
+assert.equal(automaticPhysicalDuplicateBatch.coverage?.missing, 4);
+
+for (const [week, referenceId, analysis] of [
+  ['2026-W42', 'analysis-1', exactAnalysis],
+  ['2026-W43', 'analysis-copy', duplicatePhysicalAnalysis],
+] as const) {
+  const weeklyGoal = {
+    ...explicitMissingMaterialGoal,
+    videoPlans: [normalizeVideoPlan({ ...explicitMissingMaterialGoal.videoPlans![0]!, referenceId })],
+  };
+  const weekly = buildContentBatchPlan({
+    goalId: `cross-week-${week}`, goal: weeklyGoal, config,
+    evidence: {
+      products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }],
+      exactAnalysisIds: [referenceId], materialIds: ['asset-a'],
+      referenceAnalyses: { [referenceId]: analysis }, referenceIdentities: { [referenceId]: duplicatePhysicalIdentities[referenceId] },
+    },
+    versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
+  });
+  assert.equal(weekly.orders[0]?.readinessBlockers?.length, 0,
+    'physical reference reuse is scoped to one compilation/week and remains allowed in a later week');
+}
 console.log('content batch plan tests passed');

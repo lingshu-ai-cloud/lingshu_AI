@@ -18,11 +18,36 @@ test('conversation workspace gives its internal scrollers a bounded desktop row'
     page,
     /data-testid="conversation-chat-thread" className="[^"]*h-full[^"]*min-h-0[^"]*overflow-hidden[^"]*"/,
   );
+  assert.match(
+    styles,
+    /\.ls-conversation-workspace\s*\{[^}]*grid-template-columns:\s*minmax\(196px,\s*232px\)\s*minmax\(360px,\s*1fr\)\s*minmax\(224px,\s*248px\)/s,
+    'desktop customer rail should stay compact so the conversation remains primary',
+  );
+  assert.match(
+    styles,
+    /\.ls-conversation-workspace\s*\{[^}]*border:\s*0;[^}]*border-radius:\s*0;/s,
+    'conversation workspace should not render an outer framed card',
+  );
+  assert.doesNotMatch(page, /本地模拟 · 外贸客户全流程/, 'local mock copy should not occupy a permanent page banner');
+  assert.doesNotMatch(page, /aria-label="客户快捷操作"/, 'customer rail should not show share, profile, notification, or search shortcut buttons');
+  assert.doesNotMatch(page, /\{customer\.isMock \? '模拟客户|模拟发送|真实客户 ·/, 'customer-facing conversation UI should not expose environment labels');
+  assert.match(page, /function customerDisplayName[\s\S]{0,220}replace\(\/模拟客户\/g, '客户'\)/, 'stored customer names should also hide legacy simulation wording');
+  assert.match(page, /const lastMessagePreview = \(lastMessage\?\.translatedBody \|\| lastMessage\?\.body/, 'customer rows should derive the latest message preview');
+  assert.match(page, /line-clamp-2[^>]*title=\{lastMessagePreview\}>\{lastMessagePreview\}<\/p>/, 'customer rows should show the latest message preview below the customer name');
+  assert.doesNotMatch(page, /data-lingshu-guide="customer-workbench"[^>]*bg-ink|data-lingshu-guide="customer-workbench"[^>]*lg:p-3/,
+    'conversation workspace should use the page edge directly without an outer padded frame');
 });
 
 test('mobile conversation workspace keeps a constrained flex height chain', () => {
   assert.match(
     styles,
-    /@media \(max-width:\s*767px\)[\s\S]*?\.ls-conversation-workspace\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/,
+    /@container \(max-width:\s*699px\)[\s\S]*?\.ls-conversation-workspace\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/,
   );
+});
+
+test('conversation columns respond to the space left after the application sidebar', () => {
+  assert.match(styles, /\.ls-conversation-container\s*\{[^}]*container-type:\s*inline-size;/s);
+  assert.match(styles, /@container \(max-width:\s*999px\)[\s\S]*?grid-template-columns:\s*minmax\(196px,\s*224px\)\s*minmax\(340px,\s*1fr\)/);
+  assert.match(styles, /@container \(max-width:\s*699px\)[\s\S]*?\.ls-conversation-workspace-nav\s*\{[^}]*display:\s*grid;/);
+  assert.match(page, /ls-conversation-workspace__slot[^`]*\$\{mobilePanel === 'chat' \? ' is-active' : ''\}/);
 });

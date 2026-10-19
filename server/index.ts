@@ -1,6 +1,6 @@
+import './loadEnvironment.js';
 import { mountWhatsAppOAuthRoutes } from './routes/whatsappParentMount.js';
 import { mobileWorkbenchRouter } from './routes/mobileWorkbench.js';
-import './loadEnvironment.js';
 import { startMessengerContextTagRecovery } from './messenger/conversations.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -19,6 +19,7 @@ import { trendsRouter } from './routes/trends.js';
 import { assetsRouter } from './routes/assets.js';
 import { enterpriseRouter, productApiRouter } from './routes/enterprise.js';
 import { agentChatRouter } from './routes/agentChat.js';
+import { assistantFilesRouter } from './routes/assistantFiles.js';
 import { draftReplyRouter } from './routes/draftReply.js';
 import { customerSuggestionsRouter } from './routes/customerSuggestions.js';
 import { channelsRouter } from './routes/channels.js';
@@ -53,7 +54,10 @@ import { socialMetricsRouter } from './routes/socialMetrics.js';
 import { followupTemplatesRouter } from './routes/followupTemplates.js';
 import { digitalEmployeesRouter } from './routes/digitalEmployees.js';
 import { startBackgroundJobs } from './runtime/backgroundJobs.js';
+import { localWeeklyExecutionRuntime } from './runtime/localWeeklyExecutionRuntime.js';
+import { weeklyDiscoveryScopeMigrationRecoveryRuntime } from './runtime/weeklyDiscoveryScopeMigrationRecoveryRuntime.js';
 import { parseProcessRole, processRoleStartsBackgroundJobs, processRoleStartsHttp } from './runtime/processRole.js';
+import { resolveListenHost } from './runtime/listenHost.js';
 import { starter198Router } from './routes/starter198Mobile.js';
 import { requireAuth, enforceSupportSessionReadOnly } from './middleware/auth.js';
 import { quoteSkillRouter } from './routes/quoteSkill.js';
@@ -85,6 +89,7 @@ import { createGracefulShutdown } from './runtime/gracefulShutdown.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const processRole = parseProcessRole(process.env.PROCESS_ROLE);
+const LISTEN_HOST = resolveListenHost(process.env.LINGSHU_LISTEN_HOST);
 console.log(`[runtime] role=${processRole} http=${processRoleStartsHttp(processRole)} backgroundJobs=${processRoleStartsBackgroundJobs(processRole)}`);
 await ensureLocalPocketBase();
 configureNetworkProxy();
@@ -155,6 +160,8 @@ app.get('/api/overseas/health', (_req, res) => {
     demoMode: isDemoMode(),
     demoLimits: demoLimits(),
     capabilities: runtimeCapabilities(processRole),
+    localWeeklyRecovery: localWeeklyExecutionRuntime.health(),
+    weeklyDiscoveryScopeMigrationRecovery: weeklyDiscoveryScopeMigrationRecoveryRuntime.read(),
     startupIssues: startupReadinessIssues,
   });
 });
@@ -197,6 +204,10 @@ app.use('/api/overseas/studio/voice-samples', requireAuth, jsonBody(`${limits.vo
 app.use('/api/overseas/studio/voiceover', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
 app.use('/api/overseas/studio/bgm', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
 app.use('/api/overseas/studio/product-document-ocr', requireAuth, jsonBody('9mb'));
+// The candidate-only sample policy intake follows the existing enterprise
+// PDF data-URL convention. Authenticate before the narrowly scoped 28 MiB
+// parser; all other social-program routes keep the ordinary small body limit.
+app.use(/^\/api\/overseas\/social-programs\/[^/]+\/operating-packages\/[^/]+\/sample-policy-candidates\/?$/, requireAuth, jsonBody('28mb'));
 app.use('/api/overseas/mobile-workbench', mobileWorkbenchRouter);
 app.use('/api/overseas/starter-198/mobile/transcribe', requireAuth, jsonBody('3mb'));
 app.use(jsonBody(`${limits.default}mb`));
@@ -217,6 +228,7 @@ app.use('/api/overseas/trends', trendsRouter);
 app.use('/api/overseas/assets', assetsRouter);
 app.use('/api/overseas/enterprise', enterpriseRouter);
 app.use('/api/overseas/agents', agentChatRouter);
+app.use('/api/overseas/assistant-files', assistantFilesRouter);
 app.use('/api/overseas/agents', draftReplyRouter);
 app.use('/api/overseas/customers', customerSuggestionsRouter);
 app.use('/api/overseas/channels', channelsRouter);
@@ -266,6 +278,18 @@ mountWhatsAppOAuthRoutes(app);
 const stopBackgroundJobs = processRoleStartsBackgroundJobs(processRole)
   ? await startBackgroundJobs(processRole)
   : () => undefined;
+
+// HTTP-only local preview restores previously registered exact-version opt-ins.
+// This is not startBackgroundJobs: no global production, publishing or message
+// workers are enabled, and no new package/member authorization is invented.
+const stopLocalWeeklyWebRecovery = processRole === 'web' ? (() => {
+  void localWeeklyExecutionRuntime.start().catch(() => {
+    // Health and the scoped observation expose the current failure, including
+    // later recovery; do not leave a permanent startup issue after a retry.
+    console.error('[runtime] scoped local recovery unavailable; see health.localWeeklyRecovery');
+  });
+  return () => localWeeklyExecutionRuntime.stop();
+})() : () => undefined;
 
 // 绱犳潗搴撴湰鍦版枃浠舵墭绠★紙POST /studio/materials 涓婁紶鍒?data/media/锛?
 const mediaDir = path.join(__dirname, '..', 'data', 'media');
@@ -318,13 +342,13 @@ app.get('*', (_req, res) => {
 if (processRoleStartsHttp(processRole)) {
   const stopMessengerContextTagRecovery = process.env.MESSENGER_CONTEXT_TAG_RECOVERY_ENABLED === 'false'
     ? () => undefined : startMessengerContextTagRecovery();
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[overseas-agent] http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, LISTEN_HOST, () => {
+    console.log(`[overseas-agent] http://${LISTEN_HOST}:${PORT}`);
   });
   configureHttpServer(server);
   const shutdown = createGracefulShutdown({
     server,
-    stop: [stopBackgroundJobs, stopMessengerContextTagRecovery],
+    stop: [stopBackgroundJobs, stopLocalWeeklyWebRecovery, stopMessengerContextTagRecovery],
   });
   process.once('SIGTERM', () => shutdown('SIGTERM'));
   process.once('SIGINT', () => shutdown('SIGINT'));

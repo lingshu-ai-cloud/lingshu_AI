@@ -4,8 +4,9 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
-const { composite, ffmpegPath, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss } = require('./render.cjs');
+const { composite, ffmpegPath, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss, appendFinalVisualLayers } = require('./render.cjs');
 
 async function main() {
   assert.ok(ffmpegPath, 'ffmpeg-static is required');
@@ -72,6 +73,33 @@ async function main() {
   const origin = `http://127.0.0.1:${address.port}`;
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-render-test-'));
   try {
+    // A fully opaque motion layer used to erase captions in the old graph.
+    // Verify the actual encoded/decoded MP4 pixels, not only graph ordering.
+    const overlayAss = path.join(outDir, 'overlay-caption.ass');
+    fs.writeFileSync(overlayAss, cuesToAss([{ start: 0, end: 1, text: 'HELLO' }], 640, 360));
+    const oldGraph = `[0:v]subtitles='${overlayAss}'[caption];[1:v]format=yuva420p[cover];[caption][cover]overlay=0:0:format=auto:shortest=1[vout]`;
+    const newFilters = [];
+    appendFinalVisualLayers(newFilters, '[0:v]', 1, 640, 360, overlayAss);
+    const graphs = [['old', oldGraph], ['new', newFilters.join(';')]];
+    const whitePixelCounts = [];
+    for (const [name, graph] of graphs) {
+      const video = path.join(outDir, `caption-layer-${name}.mp4`);
+      const encoded = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'color=c=black:s=640x360:r=30:d=1',
+        '-f', 'lavfi', '-i', 'color=c=black:s=640x360:r=30:d=1',
+        '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1',
+        '-filter_complex', graph, '-map', '[vout]', '-map', '2:a', '-t', '1',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-y', video], { encoding: 'utf8' });
+      assert.equal(encoded.status, 0, encoded.stderr);
+      const frame = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-ss', '0.5', '-i', video,
+        '-frames:v', '1', '-vf', 'format=gray', '-f', 'rawvideo', '-pix_fmt', 'gray', 'pipe:1']);
+      assert.equal(frame.status, 0, String(frame.stderr));
+      assert.equal(frame.stdout.length, 640 * 360);
+      whitePixelCounts.push([...frame.stdout].filter(value => value > 200).length);
+    }
+    assert.equal(whitePixelCounts[0], 0, 'old post-caption overlay hid every glyph');
+    assert.ok(whitePixelCounts[1] > 100, `caption-last MP4 must retain visible glyphs: ${whitePixelCounts[1]}`);
+
     const bgmTone = path.join(outDir, 'bgm-tone.wav');
     const voiceWithPauses = path.join(outDir, 'voice-with-pauses.wav');
     const bgmBuild = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=220:duration=1.2', '-y', bgmTone], { encoding: 'utf8' });
@@ -122,6 +150,40 @@ async function main() {
     const visualMean = [...pixels].reduce((sum, value) => sum + value, 0) / pixels.length;
     const visualDeviation = Math.sqrt([...pixels].reduce((sum, value) => sum + (value - visualMean) ** 2, 0) / pixels.length);
     assert.ok(visualDeviation > 10, `owned image must appear in output instead of a solid fallback (deviation=${visualDeviation})`);
+
+    const captionCues = [{ start: 0, end: 1, text: 'HELLO PRODUCT' }];
+    const captioned = await composite({
+      jobId: 'subtitle-attestation-regression', requireVisualAssets: true, captureCaptionBaseline: true,
+      spec: { ratio: '1:1', resolution: '720p', duration: 1, bgmVol: 0, voiceVol: 0 },
+      timeline: [{ type: 'image', url: productDataUrl, targetDuration: 1 }],
+      subtitles: { cues: captionCues },
+    }, () => {}, outDir);
+    assert.equal(captioned.ok, true, captioned.error);
+    const attestation = captioned.subtitleRenderEvidence;
+    assert.equal(attestation.schemaVersion, 'renderer-subtitle-attestation.v2');
+    assert.equal(attestation.outputSha256, createHash('sha256').update(fs.readFileSync(captioned.outputPath)).digest('hex'));
+    assert.equal(attestation.subtitleCueSha256, createHash('sha256').update(JSON.stringify(captionCues)).digest('hex'));
+    assert.match(attestation.assSha256, /^[a-f0-9]{64}$/);
+    assert.equal(createHash('sha256').update(captioned.subtitleAssUtf8, 'utf8').digest('hex'), attestation.assSha256);
+    assert.match(attestation.filterGraphSha256, /^[a-f0-9]{64}$/);
+    assert.equal(attestation.filterApplied, true);
+    const baseline = captioned.captionBaselineEvidence;
+    assert.equal(baseline.schemaVersion, 'renderer-caption-baseline.v1');
+    assert.equal(baseline.outputSha256, attestation.outputSha256);
+    assert.equal(baseline.filterGraphSha256, attestation.filterGraphSha256);
+    assert.equal(baseline.sha256, createHash('sha256').update(fs.readFileSync(baseline.path)).digest('hex'));
+    assert.equal(fs.statSync(path.dirname(baseline.path)).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(baseline.path).mode & 0o777, 0o600);
+    const decodedGray = file => spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-ss', '0.5', '-i', file,
+      '-frames:v', '1', '-vf', 'scale=256:256,format=gray', '-f', 'rawvideo', '-pix_fmt', 'gray', 'pipe:1']);
+    const withCaption=decodedGray(captioned.outputPath),withoutCaption=decodedGray(baseline.path);
+    assert.equal(withCaption.status,0,String(withCaption.stderr));assert.equal(withoutCaption.status,0,String(withoutCaption.stderr));
+    assert.equal(withCaption.stdout.length,withoutCaption.stdout.length);
+    const captionDelta=[...withCaption.stdout].filter((value,index)=>Math.abs(value-withoutCaption.stdout[index])>40).length;
+    assert.ok(captionDelta>30,`same-graph baseline must differ at rendered subtitle glyphs: ${captionDelta}`);
+    const upperHalfDelta=[...withCaption.stdout.subarray(0,256*128)]
+      .filter((value,index)=>Math.abs(value-withoutCaption.stdout[index])>40).length;
+    assert.ok(upperHalfDelta<30,`caption-free branch must preserve unrelated upper visual pixels: ${upperHalfDelta}`);
 
     const manyScenes = await composite({
       jobId: 'bounded-many-scene-render', requireVisualAssets: true,

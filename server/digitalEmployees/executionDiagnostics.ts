@@ -5,6 +5,11 @@ export function object(value: unknown): RecordData {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as RecordData : {};
 }
 export const waitState = (kind: TaskWaitKind, message: string): TaskWaitState => ({ kind, message, requiresAttention: ['input', 'service', 'approval', 'manual'].includes(kind) });
+export function workflowStatusForWait(state: TaskWaitState): 'waiting_external' | 'waiting_approval' | 'waiting_human' {
+  if (state.kind === 'approval') return 'waiting_approval';
+  if (state.kind === 'input' || state.kind === 'manual') return 'waiting_human';
+  return 'waiting_external';
+}
 export function collectionWait(jobs: RecordData[], now = Date.now()): TaskWaitState {
   if (!jobs.length) return waitState('input', '尚未找到本任务的采集记录，请检查采集范围与定时任务。');
   const failed = jobs.filter(j => j.status === 'failed');

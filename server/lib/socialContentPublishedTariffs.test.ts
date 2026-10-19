@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {createSocialContentPublishedTariffReader,parseOfficialQwenPublishedPrices,isVerifiedPublishedTariff,QWEN_PUBLISHED_TARIFF_VALIDITY_MS} from './socialContentPublishedTariffs.js';
+import {createQwenMaaSPublishedTariffReader,createSocialContentPublishedTariffReader,parseOfficialQwenPublishedPrices,isVerifiedPublishedTariff,QWEN_PUBLISHED_TARIFF_VALIDITY_MS,selectQwenMaaSPublishedTier,verifyQwenMaaSPublishedPricingEvidence,verifyQwenMaaSPublishedPricingEvidenceForHistoricalSettlement} from './socialContentPublishedTariffs.js';
 import {createSocialContentTaskBudgetAuthority,type SocialPaidOperationIntent} from './socialContentTaskBudgetAuthority.js';
 const hash=(v:string)=>createHash('sha256').update(v).digest('hex');
 const model='qwen3-vl-plus',baseUrl='https://dashscope.aliyuncs.com/compatible-mode/v1',credentialSha256='1'.repeat(64),accountRef=`qwen:${hash(JSON.stringify({baseUrl,credentialSha256}))}`;
@@ -33,6 +33,24 @@ test('wrong account, model, official redirect, malformed format and mutated evid
  assert.equal(await reader(body().replaceAll('3','0').replaceAll('30','0')).read(intent),null);
  assert.equal(await createSocialContentPublishedTariffReader({readProviderBinding:async()=>({provider:'qwen',model,baseUrl,credentialSha256}),fetchOfficial:async()=>({url:'https://help.aliyun.com/zh/model-studio/models',status:200,body:body()})}).read(intent),null);
  assert.equal(await createSocialContentPublishedTariffReader({readProviderBinding:async()=>({provider:'qwen',model,baseUrl:'https://gateway.example/v1',credentialSha256}),fetchOfficial:async()=>{throw Error('must_not_fetch');}}).read(intent),null);
+ assert.equal(await createSocialContentPublishedTariffReader({readProviderBinding:async()=>({provider:'qwen',model,baseUrl:'https://maas.qianwenaiapi.com/compatible-mode/v1',credentialSha256}),fetchOfficial:async()=>{throw Error('must_not_fetch');}}).read(intent),null);
  const t=await reader().read(intent);assert.ok(t);const corrupt=structuredClone(t);corrupt.publicPricingEvidence.sourceBody+='mutated';assert.equal(isVerifiedPublishedTariff(corrupt),false);
  const price=structuredClone(t);price.meters.inputTokens!.priceCny=.01;assert.equal(isVerifiedPublishedTariff(price),false);
+});
+test('historical MaaS verifier shares strict structure checks but grants no live pricing capability',async()=>{
+ const maaSBase='https://maas.qianwenaiapi.com/compatible-mode/v1',key='a'.repeat(64),maaSAccount=`qwen:${hash(JSON.stringify({baseUrl:maaSBase,credentialSha256:key}))}`;
+ const maaSIntent:SocialPaidOperationIntent={provider:'qwen',model:'qwen3-vl-plus',accountRef:maaSAccount,stage:'candidate_exact_analysis',shotId:null,
+  operationId:'historical-settlement',inputContractHash:'b'.repeat(64),maximumUnits:{inputTokens:260096,outputTokens:16384}};
+ const tariff=await createQwenMaaSPublishedTariffReader({now:()=>new Date('2026-10-19T12:00:00.000Z'),readProviderBinding:async()=>
+  ({provider:'qwen',model:'qwen3-vl-plus',baseUrl:maaSBase,credentialSha256:key})}).read(maaSIntent);assert.ok(tariff);
+ const original=Date.now;try{
+  Date.now=()=>Date.parse('2026-10-19T12:00:00.000Z');const live=verifyQwenMaaSPublishedPricingEvidence(tariff.publicPricingEvidence,{baseUrl:maaSBase,credentialSha256:key});assert.ok(live);
+  const historical=verifyQwenMaaSPublishedPricingEvidenceForHistoricalSettlement(tariff.publicPricingEvidence,{baseUrl:maaSBase,credentialSha256:key});assert.ok(historical);assert.equal(historical.pricingPolicyHash,live.verificationHash);
+  assert.equal(selectQwenMaaSPublishedTier(100,historical as any),null,'historical proof is not a WeakSet-backed claim capability');
+  Date.now=()=>Date.parse(tariff.validUntil)+1;assert.equal(verifyQwenMaaSPublishedPricingEvidence(tariff.publicPricingEvidence,{baseUrl:maaSBase,credentialSha256:key}),null);
+  assert.equal(verifyQwenMaaSPublishedPricingEvidenceForHistoricalSettlement(tariff.publicPricingEvidence,{baseUrl:maaSBase,credentialSha256:key})?.pricingPolicyHash,live.verificationHash);
+  for(const mutate of [(e:any)=>e.tiers[0].inputPriceCnyPerMillion=9,(e:any)=>e.providerBinding.credentialSha256='c'.repeat(64),(e:any)=>e.catalogEntrySha256='d'.repeat(64)]){
+   const changed:any=structuredClone(tariff.publicPricingEvidence);mutate(changed);assert.equal(verifyQwenMaaSPublishedPricingEvidenceForHistoricalSettlement(changed,{baseUrl:maaSBase,credentialSha256:key}),null);
+  }
+ }finally{Date.now=original;}
 });

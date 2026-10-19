@@ -44,8 +44,8 @@ export interface StoryboardQaReport {
 }
 
 const checksByPhase = {
-  first_frame: ['product_identity', 'person_identity', 'environment_fidelity', 'layout', 'contact', 'start_state', 'visual_integrity'],
-  video: ['product_identity', 'person_identity', 'environment_fidelity', 'layout_continuity', 'contact_continuity', 'seam_continuity', 'action_order', 'end_state', 'visual_integrity'],
+  first_frame: ['product_identity', 'packaging_visibility', 'subject_visibility', 'person_identity', 'environment_fidelity', 'layout', 'contact', 'start_state', 'visual_integrity'],
+  video: ['product_identity', 'packaging_visibility', 'subject_visibility', 'person_identity', 'environment_fidelity', 'layout_continuity', 'contact_continuity', 'seam_continuity', 'action_order', 'end_state', 'visual_integrity'],
 } as const;
 
 export function storyboardQaRequiredChecks(input: {
@@ -54,7 +54,11 @@ export function storyboardQaRequiredChecks(input: {
   hasSeam?: boolean;
 }): string[] {
   const out = new Set<string>();
-  if (input.hasProduct || input.sceneType === 'usage') out.add('product_identity');
+  if (input.hasProduct || input.sceneType === 'usage') {
+    out.add('product_identity');
+    out.add('packaging_visibility');
+    out.add('subject_visibility');
+  }
   if (input.hasNamedPerson) out.add('person_identity');
   if (input.hasEnvironmentReference) out.add('environment_fidelity');
   out.add(input.phase === 'first_frame' ? 'layout' : 'layout_continuity');
@@ -128,7 +132,7 @@ function hasSufficientTemporalEvidence(phase: StoryboardQaPhase, key: string, la
   const unique = [...new Set(cited)];
   if (key === 'seam_continuity') return unique.includes('上一段合格末帧') && unique.some(label => label !== '上一段合格末帧');
   // A single still cannot establish a changing state or identity continuity.
-  if (['product_identity', 'person_identity', 'environment_fidelity', 'layout_continuity', 'contact_continuity', 'action_order'].includes(key))
+  if (['product_identity', 'packaging_visibility', 'subject_visibility', 'person_identity', 'environment_fidelity', 'layout_continuity', 'contact_continuity', 'action_order'].includes(key))
     return unique.length >= 2;
   // The final state must be visible near the end, not inferred from a middle frame.
   if (key === 'end_state') return unique.some(label => labels.indexOf(label) >= Math.floor(labels.length * .75));
@@ -212,6 +216,46 @@ export function automaticStoryboardFrameAdmission(provenance: Record<string, any
   const spec = provenance?.shotSpec;
   if (spec?.mode !== 'replication' || spec?.constraints?.includes('person_identity') || !provenance?.firstFrameQuality) return false;
   return applyStoryboardReplicationAutomation(provenance.firstFrameQuality).passed;
+}
+
+/** A managed clone may deliberately fall back to an enterprise-product-only
+ * scene when the reference frame is not authorized as model input.  The frame
+ * is still eligible for automatic admission, but only after the caller has
+ * verified the current server-owned source plan.  Keeping the plan argument
+ * outside provenance prevents an arbitrary free-creation request from
+ * promoting itself into the automated production path. */
+export function automaticManagedFallbackFrameAdmission(
+  provenance: Record<string, any> | undefined,
+  currentSourcePlan: Record<string, any> | undefined,
+): boolean {
+  const spec = provenance?.shotSpec;
+  if (currentSourcePlan?.fallbackMode !== 'enterprise_product_display'
+    || currentSourcePlan?.mode !== 'ai'
+    || provenance?.mode !== 'free_creation'
+    || spec?.mode !== 'free_creation'
+    || spec?.constraints?.includes('person_identity')
+    || !spec?.constraints?.includes('product_identity')
+    || provenance?.firstFrameQualityState !== 'evaluated'
+    || !provenance?.firstFrameQuality) return false;
+  return applyStoryboardReplicationAutomation(provenance.firstFrameQuality).passed;
+}
+
+/** The same server-owned fallback contract also applies to the generated
+ * video.  It is intentionally separate from the frame check so a passing
+ * first frame can never stand in for real video QA evidence. */
+export function automaticManagedFallbackVideoAdmission(
+  provenance: Record<string, any> | undefined,
+  currentSourcePlan: Record<string, any> | undefined,
+): boolean {
+  const spec = provenance?.shotSpec;
+  const report = provenance?.storyboardQualityReport as StoryboardQaReport | undefined;
+  if (currentSourcePlan?.fallbackMode !== 'enterprise_product_display'
+    || currentSourcePlan?.mode !== 'ai'
+    || spec?.mode !== 'free_creation'
+    || spec?.constraints?.includes('person_identity')
+    || !spec?.constraints?.includes('product_identity')
+    || report?.phase !== 'video') return false;
+  return applyStoryboardReplicationAutomation(report).passed;
 }
 
 export function reviewStoryboardQaReport(report: StoryboardQaReport, input: { decision: 'accept' | 'reject'; reviewedBy: string; reviewedAt?: string }): StoryboardQaReport {

@@ -1,4 +1,6 @@
 import { prepareWeeklyEnterpriseFactFixture } from './weeklyEnterpriseFactSupplement.fixture.js';
+import {currentDataAuthority,runWithDataAuthority} from '../storage/dataAuthority.js';
+import {createSocialWeeklyCustomerChannelAdapter} from './socialWeeklyCustomerChannelAdapter.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datastore.js';
@@ -6,6 +8,7 @@ import { DURABLE_OPERATION_LEASE_COLLECTION } from './durableLease.js';
 import { WEEKLY_EXECUTION_TASKS } from '../socialPrograms/executionTasks.js';
 import type { WeeklyAgentPlanningState, WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
 import { createSocialWeeklyPlanningAdapter, runSocialWeeklyExecutionScan, initSocialWeeklyExecutionRuntime } from './socialWeeklyExecutionRuntime.js';
+import { independentAdmissionId, WEEKLY_INDEPENDENT_ADMISSIONS } from '../socialPrograms/weeklyIndependentAdmission.js';
 function memoryStore(): DataStore {
   const rows = new Map<string, Record_[]>();
   let counter = 0;
@@ -102,7 +105,7 @@ test('missing real media blocks completion without consuming supplier retries', 
   await dataStore.create('starter_social_content_tasks', { tenant_id: value.tenantId, task_id: 'content', run_id: 'real-run', status: 'asset_review', create_idempotency_key: 'weekly-production:package-a:1:pub', brief: { programRef: { id: value.programId } } });
   await dataStore.create('starter_social_content_files', { tenant_id: value.tenantId, task_id: 'content', file_id: 'missing-file', usage: 'artifact_media', name: 'video.mp4', mime_type: 'video/mp4', byte_size: 12, content_sha256: 'a'.repeat(64), storage_kind: 'local', storage_key: 'missing-weekly-runtime-fixture/video.mp4' });
   await dataStore.create('starter_social_content_artifacts', { tenant_id: value.tenantId, task_id: 'content', artifact_id: 'artifact', version: '1', artifact_kind: 'short_video', origin: 'agent', status: 'review_required', resource_ref: 'socialfile:missing-file', content: { render: { completed: true }, mediaStorage: { video: { fileId: 'missing-file', sha256: 'a'.repeat(64), url: '/video' } } } });
-  await runSocialWeeklyExecutionScan({ dataStore, now: new Date('2026-10-12T00:00:00Z'), adapters: { video_generation: { async execute() { return { status: 'succeeded', resultRefs: [{ type: 'starter_social_content_artifact', id: 'artifact', version: 1 }] }; } } } });
+  await runSocialWeeklyExecutionScan({ dataStore, now: new Date(Date.parse(fixture.profile.factVersion!.confirmedAt)+1000), adapters: { video_generation: { async execute() { return { status: 'succeeded', resultRefs: [{ type: 'starter_social_content_artifact', id: 'artifact', version: 1 }] }; } } } });
   const row = (await dataStore.list<any>(WEEKLY_EXECUTION_TASKS)).items[0].payload;
   assert.equal(row.status, 'blocked', JSON.stringify(row.lastError)); assert.equal(row.attempt, 0); assert.deepEqual(row.resultRefs, []);
   assert.equal(row.lastError.code, 'social_content_file_integrity_violation');
@@ -116,6 +119,53 @@ test('scan blocks unsupported work while preserving user approval and tenant iso
   const rows = await dataStore.list<any>(WEEKLY_EXECUTION_TASKS);
   assert.equal(rows.items.find(row => row.tenant_id === 'tenant-a').payload.status, 'blocked');
   assert.equal(rows.items.find(row => row.tenant_id === 'tenant-b').payload.status, 'queued');
+});
+test('scoped consumer skips blocked dependency descendants while executing independent work, never another package',async()=>{
+ const dataStore=memoryStore();
+ const blocked=pendingQualityTask();blocked.taskId='a-blocked';blocked.idempotencyKey='a-blocked';await saveTask(dataStore,blocked);
+ const child={...pendingQualityTask(),taskId:'b-child',idempotencyKey:'b-child',dependsOnTaskIds:[blocked.taskId]};await dataStore.create(WEEKLY_EXECUTION_TASKS,{tenant_id:child.tenantId,program_id:child.programId,package_id:child.packageId,package_version:1,task_id:child.taskId,idempotency_key:child.idempotencyKey,status:'queued',payload:child});
+ const independent={...pendingQualityTask(),taskId:'c-independent',idempotencyKey:'c-independent'};await dataStore.create(WEEKLY_EXECUTION_TASKS,{tenant_id:independent.tenantId,program_id:independent.programId,package_id:independent.packageId,package_version:1,task_id:independent.taskId,idempotency_key:independent.idempotencyKey,status:'queued',payload:independent});
+ const other={...pendingQualityTask(),taskId:'d-other-package',idempotencyKey:'d-other-package',packageId:'other-package'};await saveTask(dataStore,other);
+ const seen:string[]=[];
+ const report=await runSocialWeeklyExecutionScan({dataStore,scope:{tenantId:blocked.tenantId,programId:blocked.programId,packageId:blocked.packageId,packageVersion:1},adapters:{quality_check:{async execute(t){seen.push(t.taskId);return t.taskId===blocked.taskId?{status:'blocked',code:'weekly_required_materials_missing',message:'真实资料缺失'}:{status:'pending',code:'real_production_pending',message:'等待真实结果',retryDelayMs:30000};}}}});
+ assert.deepEqual(seen,[blocked.taskId,independent.taskId]);assert.equal(report.blocked,1);assert.equal(report.pending,1);
+ const rows=await dataStore.list<any>(WEEKLY_EXECUTION_TASKS);assert.equal(rows.items.find(r=>r.task_id===child.taskId).payload.attempt,0);assert.equal(rows.items.find(r=>r.task_id===other.taskId).payload.attempt,0);assert(rows.items.every(r=>r.payload.status!=='succeeded'));
+});
+test('scoped scan completes stored planning checkpoints in dependency order through the real adapter and result validator',async()=>{
+ const dataStore=memoryStore(),parent={...task(),taskId:'1-parent',idempotencyKey:'checkpoint-parent',workflowKind:'directing' as const};parent.schedule={...parent.schedule,stepKind:'business_schedule',responsibleActor:'business_agent'};
+ await saveTask(dataStore,parent);
+ const row=(await dataStore.list<any>('social_weekly_agent_planning')).items[0],plan=planning();
+ plan.userConfirmation={confirmedBy:'controlled-operator',confirmedAt:new Date().toISOString()};
+ const item={publicationTaskId:'pub'} as any;plan.detailedSchedule!.items=[item];plan.dispatch!.scheduleItems=[item];
+ plan.directorAnalyses=[{analysisId:'controlled-frozen-analysis',slotId:'slot',packageVersion:1,benchmarkAccountRefs:[{type:'controlled_account',id:'controlled-account',version:1}],benchmarkVideoRefs:[{type:'controlled_video',id:'controlled-video',version:1}],benchmarkEvidenceRefs:[{type:'controlled_evidence',id:'controlled-evidence',version:1}],contentDirection:'受控规划检查点，非媒体生成或正式账号交付'} as any];
+ await dataStore.update('social_weekly_agent_planning',row.id,{payload:plan});
+ const child={...structuredClone(parent),taskId:'0-dependent',idempotencyKey:'checkpoint-dependent',dependsOnTaskIds:[parent.taskId]};
+ await dataStore.create(WEEKLY_EXECUTION_TASKS,{tenant_id:child.tenantId,program_id:child.programId,package_id:child.packageId,package_version:1,task_id:child.taskId,idempotency_key:child.idempotencyKey,status:'queued',payload:child});
+ const adapter=createSocialWeeklyPlanningAdapter(dataStore),seen:string[]=[];
+ const report=await runWithDataAuthority('local',()=>runSocialWeeklyExecutionScan({dataStore,scope:{tenantId:parent.tenantId,programId:parent.programId,packageId:parent.packageId,packageVersion:1},adapters:{business_schedule:{async execute(t){assert.equal(currentDataAuthority(),'local');seen.push(t.taskId);if(t.taskId===child.taskId){const rows=await dataStore.list<any>(WEEKLY_EXECUTION_TASKS);assert.equal(rows.items.find(r=>r.task_id===parent.taskId).payload.status,'succeeded');}return adapter.execute(t);}}}}));
+ assert.deepEqual(seen,[parent.taskId,child.taskId]);assert.equal(report.succeeded,2);assert.equal(report.failed,0);
+ const tasks=(await dataStore.list<any>(WEEKLY_EXECUTION_TASKS)).items.map(r=>r.payload);assert(tasks.every(t=>t.status==='succeeded'&&t.resultRefs[0]?.id===plan.planningId&&t.resultRefs[0]?.version===plan.version));
+ assert.equal((await dataStore.list('starter_social_content_artifacts')).totalItems,0,'planning reconciliation never fabricates media');
+});
+test('customer consumer checks actual channel consent without any director plan or fake completion',async()=>{
+ const dataStore=memoryStore(),value={...task(),workflowKind:'engagement' as const,publicationTaskId:'pub',accountId:'account',inputSnapshot:{customerChannel:'whatsapp'}};
+ value.schedule={...value.schedule,stepKind:'customer_channel_readiness',responsibleActor:'customer_agent'};await saveTask(dataStore,value);
+ const pkg=(await dataStore.list<any>('social_weekly_operating_packages')).items[0];await dataStore.update('social_weekly_operating_packages',pkg.id,{payload:{...pkg.payload,status:'active'}});
+ const plan=(await dataStore.list<any>('social_weekly_agent_planning')).items[0];await dataStore.delete('social_weekly_agent_planning',plan.id);
+ const result=await runSocialWeeklyExecutionScan({dataStore,scope:{tenantId:value.tenantId,programId:value.programId,packageId:value.packageId,packageVersion:1},adapters:{customer_channel_readiness:createSocialWeeklyCustomerChannelAdapter(dataStore)}});
+ const actual=(await dataStore.list<any>(WEEKLY_EXECUTION_TASKS)).items[0].payload;assert.equal(result.blocked,1,JSON.stringify({result,error:actual.lastError}));assert.equal(actual.status,'blocked');assert.notEqual(actual.lastError.code,'business_dispatch_required');assert.deepEqual(actual.resultRefs,[]);assert.equal((await dataStore.list('social_weekly_customer_channel_executions')).totalItems,0);
+});
+test('draft independent preproduction never consumes customer tasks without messaging authority',async()=>{
+ const dataStore=memoryStore(),value={...task(),workflowKind:'engagement' as const,publicationTaskId:'pub',accountId:'account',inputSnapshot:{customerChannel:'whatsapp'}};
+ value.schedule={...value.schedule,stepKind:'customer_channel_readiness',responsibleActor:'customer_agent'};await saveTask(dataStore,value);
+ await dataStore.create('users',{id:'owner',tenantId:value.tenantId,role:'admin',active:true});
+ const scope={tenantId:value.tenantId,programId:value.programId,packageId:value.packageId,packageVersion:1};
+ const admission={...scope,actorUserId:'owner',admittedAt:new Date().toISOString(),mode:'independent_branches',authorizePublishing:false,authorizeMessaging:false};
+ await dataStore.create(WEEKLY_INDEPENDENT_ADMISSIONS,{id:independentAdmissionId(scope),tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,package_version:scope.packageVersion,payload:admission});
+ let executions=0;
+ const result=await runSocialWeeklyExecutionScan({dataStore,scope,adapters:{customer_channel_readiness:{async execute(){executions++;return{status:'succeeded',resultRefs:[]};}}}});
+ const actual=(await dataStore.list<any>(WEEKLY_EXECUTION_TASKS)).items[0].payload;
+ assert.equal(executions,0);assert.equal(result.claimed,0);assert.equal(result.blocked,0);assert.equal(actual.status,'queued');assert.equal(actual.lastError,null);
 });
 test('a continuation awaiting trusted evidence never falls back to a new paid production adapter', async () => {
   const dataStore = memoryStore();

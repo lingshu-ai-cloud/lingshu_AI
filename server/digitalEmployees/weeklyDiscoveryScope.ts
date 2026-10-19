@@ -4,6 +4,8 @@ import { normalizeModePolicies } from '../socialDiscovery/domain.js';
 import { discoveryPerspective, generateProductKeywords } from '../lib/productDiscovery.js';
 import type { ProductKeywordRecommendation } from '../../shared/productDiscovery.js';
 
+export const WEEKLY_DISCOVERY_PRODUCT_BINDING_VERSION = 'selected-products.v1';
+
 export interface ConfirmedWeeklyDiscoveryBoundary {
   businessGoal: string;
   products: string[];
@@ -27,6 +29,41 @@ export interface WeeklyDiscoveryEnterpriseFacts {
     highlights?: string;
     material?: string;
   }>;
+}
+
+function compactProductIdentity(value: string): string {
+  return value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/**
+ * Bind every selected weekly-plan product to exactly one enterprise product.
+ * A selection may include the product name plus a SKU/barcode, so containment
+ * is allowed only when it resolves uniquely. Never broaden back to all facts:
+ * that would let an unrelated SKU influence the approved discovery scope.
+ */
+export function selectWeeklyDiscoveryProductFacts(
+  selectedProducts: string[],
+  facts: WeeklyDiscoveryEnterpriseFacts['products'],
+): WeeklyDiscoveryEnterpriseFacts['products'] {
+  const selected = [...new Set(selectedProducts.map(value => value.trim()).filter(Boolean))];
+  const available = facts
+    .map(item => ({ item, identity: compactProductIdentity(item.name) }))
+    .filter(row => row.identity.length > 0);
+  const bound = new Set<WeeklyDiscoveryEnterpriseFacts['products'][number]>();
+  for (const product of selected) {
+    const identity = compactProductIdentity(product);
+    const exact = available.filter(row => row.identity === identity);
+    const candidates = exact.length ? exact : available.filter(row =>
+      identity.includes(row.identity) || row.identity.includes(identity),
+    );
+    if (candidates.length !== 1) {
+      const reason = candidates.length === 0 ? '未找到' : '匹配到多个';
+      throw new Error(`编导关键词生成受阻：选中产品“${product}”在企业知识库中${reason}产品事实。`);
+    }
+    bound.add(candidates[0]!.item);
+  }
+  if (!bound.size) throw new Error('编导关键词生成受阻：周计划没有可绑定的选中产品。');
+  return [...bound];
 }
 
 export function buildConfirmedWeeklyDiscoveryScope(
@@ -95,7 +132,8 @@ export async function buildConfirmedWeeklyDiscoveryScopeWithKeywords(
 ): Promise<SocialCrawlStrategy> {
   const strategy = buildConfirmedWeeklyDiscoveryScope(input, version, now);
   if (!strategy) throw new Error('编导关键词生成受阻：周计划缺少产品、平台、市场或语言配置。');
-  const source = facts.products
+  const selectedProductFacts = selectWeeklyDiscoveryProductFacts(input.products, facts.products);
+  const source = selectedProductFacts
     .map(item => [item.name, item.category, item.highlights, item.material].map(value => String(value || '').trim()).filter(Boolean).join(' · '))
     .filter(Boolean)
     .join('\n');
@@ -109,12 +147,18 @@ export async function buildConfirmedWeeklyDiscoveryScopeWithKeywords(
       market: input.market,
       language: input.language,
       focus: input.products.join('、'),
+      allowSupplyChainQueries: true,
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : '未知错误';
     throw new Error(`编导关键词生成受阻：${detail}`);
   }
   strategy.keywordRecommendation = recommendation;
+  (strategy as SocialCrawlStrategy & { productFactBinding?: Record<string, unknown> }).productFactBinding = {
+    version: WEEKLY_DISCOVERY_PRODUCT_BINDING_VERSION,
+    selectedProducts: [...new Set(input.products.map(value => value.trim()).filter(Boolean))],
+    enterpriseProductNames: selectedProductFacts.map(item => item.name),
+  };
   const broadTerms = recommendation.broadTerms.map(item => item.term);
   strategy.keywordSet.graph.discoverySeeds = strategy.keywordSet.graph.discoverySeeds.slice(0, 1);
   strategy.keywordSet.graph.discoverySeeds[0].queryVariants = broadTerms;

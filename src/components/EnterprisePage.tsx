@@ -1,7 +1,6 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { cloneElement, isValidElement, useState, useEffect, useId, useRef } from 'react';
 import { Alert, Button, Checkbox, Form, Input, Modal, Pagination, Select, Tabs, Upload as AntUpload } from 'antd';
-import LsPageHeader from './ui/LsPageHeader';
 import { LsGradientProgress } from './ui/LsExperiencePrimitives';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, ArrowRight, Users, type LucideIcon } from 'lucide-react';
@@ -14,6 +13,7 @@ import {
   prepareSheet,
 } from '../lib/productImport';
 import { parseProductDocument } from '../lib/productDocumentImport';
+import {importProductEvidenceUrl,uploadProductEvidence} from '../lib/enterpriseProductAssetUpload';
 import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
 import type { AppliedProfile } from './enterprise/KnowledgeIntakePanel';
@@ -86,6 +86,7 @@ interface PendingProductImport {
   skippedRows: number;
   sourceLabel: string;
   unassignedImages: Array<{ name: string; url: string; file: File; status?: 'pending' | 'uploading' | 'uploaded' | 'failed'; error?: string }>;
+  assignedImages: Array<{ productIndex: number; name: string; url: string; file: File; uploadedUrl?: string }>;
   remoteImageTransfers: Record<number, { status: 'pending' | 'uploading' | 'uploaded' | 'failed'; error?: string; originalUrl: string }>;
 }
 
@@ -254,6 +255,7 @@ type EnterpriseArea = 'facts' | 'social' | 'appearance' | 'service';
 
 function advisorInitialEnterpriseView(): KnowledgeView {
   try {
+    if (new URLSearchParams(window.location.search).get('arkVerification') === 'complete') return 'presenters';
     const value = localStorage.getItem('lingshu:enterprise:initial-view') as KnowledgeView | null;
     if (value === 'materials') return 'products';
     if (value === 'presenterRouting') return 'presenters';
@@ -652,37 +654,6 @@ function formatSize(size: number): string {
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)}MB`;
   if (size >= 1024) return `${Math.round(size / 1024)}KB`;
   return `${size}B`;
-}
-
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
-async function uploadProductEvidence(file: File): Promise<ProductAsset> {
-  const dataUrl = await fileToDataUrl(file);
-  const response = await fetch('/api/overseas/enterprise/assets', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify({ name: file.name, type: file.type, dataUrl }),
-  });
-  if (!response.ok) throw new Error('asset upload failed');
-  return response.json();
-}
-
-async function importProductEvidenceUrl(url: string, name: string): Promise<ProductAsset> {
-  const response = await fetch('/api/overseas/enterprise/assets/import-url', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify({ url, name }),
-  });
-  const result = await response.json().catch(() => ({})) as Partial<ProductAsset> & { error?: string; message?: string };
-  if (!response.ok || !result.url) throw new Error(result.message || result.error || '外链图片转存失败');
-  return result as ProductAsset;
 }
 
 export default function EnterprisePage({ productsDeepLink = null }: { productsDeepLink?: EnterpriseProductsDeepLink | null }) {
@@ -1439,7 +1410,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
           videos: [],
           documents: [],
         }));
-        setPendingProductImport({ fileName: file.name, sheetName: '文档正文', products: incoming, totalRows: incoming.length, skippedRows: 0, sourceLabel: parsed.sourceLabel, unassignedImages: parsed.unassignedImages, remoteImageTransfers: Object.fromEntries(incoming.map((item, index) => item.imageUrl && !item.imageUrl.startsWith('/api/overseas/enterprise/assets/') ? [index, { status: 'pending', originalUrl: item.imageUrl }] : null).filter(Boolean) as Array<[number, { status: 'pending'; originalUrl: string }]>) });
+        setPendingProductImport({ fileName: file.name, sheetName: '文档正文', products: incoming, totalRows: incoming.length, skippedRows: 0, sourceLabel: parsed.sourceLabel, unassignedImages: parsed.unassignedImages, assignedImages: parsed.assignedImages, remoteImageTransfers: Object.fromEntries(incoming.map((item, index) => item.imageUrl && !item.imageUrl.startsWith('/api/overseas/enterprise/assets/') ? [index, { status: 'pending', originalUrl: item.imageUrl }] : null).filter(Boolean) as Array<[number, { status: 'pending'; originalUrl: string }]>) });
         setProductImportMessage(`已从文档识别 ${incoming.length} 个产品，请确认字段与图片归属后导入`);
         return;
       }
@@ -1478,7 +1449,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
         totalRows: prepared.dataRows.length,
         skippedRows: skipped,
         sourceLabel: '表格字段映射',
-        unassignedImages: [],
+        unassignedImages: [], assignedImages: [],
         remoteImageTransfers: Object.fromEntries(incoming.map((item, index) => item.imageUrl && !item.imageUrl.startsWith('/api/overseas/enterprise/assets/') ? [index, { status: 'pending', originalUrl: item.imageUrl }] : null).filter(Boolean) as Array<[number, { status: 'pending'; originalUrl: string }]>),
       });
       setProductImportMessage(`已解析 ${incoming.length} 个产品，请确认产品与图片对应关系后导入`);
@@ -1493,6 +1464,24 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     if (!pendingProductImport || productImportConfirming) return;
     setProductImportConfirming(true);
     const transferredProducts = pendingProductImport.products.map(product => ({ ...product, images: [...(product.images || [])] }));
+    const assignedImages = [...pendingProductImport.assignedImages];
+    try {
+      for (const [imageIndex, image] of assignedImages.entries()) {
+        const product = transferredProducts[image.productIndex];
+        if (!product) continue;
+        const asset = image.uploadedUrl ? { name: image.name, type: image.file.type, size: image.file.size, updatedAt: new Date().toISOString(), url: image.uploadedUrl } : await uploadProductEvidence(image.file);
+        if (!asset.url) throw new Error('PDF 产品图片上传后缺少可用地址');
+        assignedImages[imageIndex] = { ...image, uploadedUrl: asset.url };
+        setPendingProductImport(current => current ? { ...current, assignedImages: [...assignedImages] } : null);
+        product.images = [...product.images, asset];
+        if (!product.imageUrl) product.imageUrl = asset.url;
+      }
+    } catch (error) {
+      setPendingProductImport(current => current ? { ...current, assignedImages } : null);
+      setProductImportMessage(error instanceof Error ? error.message : 'PDF 产品图片上传失败');
+      setProductImportConfirming(false);
+      return;
+    }
     const transferStates = { ...pendingProductImport.remoteImageTransfers };
     setPendingProductImport(current => current ? { ...current, remoteImageTransfers: Object.fromEntries(Object.entries(current.remoteImageTransfers).map(([index, transfer]) => [index, transfer.status === 'uploaded' ? transfer : { ...transfer, status: 'uploading', error: undefined }])) } : null);
     await Promise.all(Object.entries(transferStates).map(async ([indexText, transfer]) => {
@@ -1552,6 +1541,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
       });
     setProductImportMessage(`已导入 ${incoming.length} 个产品${pendingProductImport.skippedRows > 0 ? `，跳过 ${pendingProductImport.skippedRows} 行` : ''}，点击右上角保存后生效`);
     pendingProductImport.unassignedImages.forEach(image => URL.revokeObjectURL(image.url));
+    pendingProductImport.assignedImages.forEach(image => URL.revokeObjectURL(image.url));
     setPendingProductImport(null);
     setProductImportConfirming(false);
   };
@@ -1559,6 +1549,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   const closeProductImport = () => {
     if (productImportConfirming) return;
     pendingProductImport?.unassignedImages.forEach(image => URL.revokeObjectURL(image.url));
+    pendingProductImport?.assignedImages.forEach(image => URL.revokeObjectURL(image.url));
     setPendingProductImport(null);
   };
 
@@ -1961,23 +1952,22 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     <div className="flex h-full flex-col bg-white" data-lingshu-guide="enterprise-center">
       {weeklyFactTarget&&<section id="weekly-enterprise-fact-target" tabIndex={-1} data-exception={weeklyFactTarget.exceptionId} data-consumer={weeklyFactTarget.consumerTaskId} data-package={weeklyFactTarget.packageId} data-version={weeklyFactTarget.packageVersion} className="mx-4 mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-950 sm:mx-6"><p className="font-black">本周任务需要补齐企业事实</p><p className="mt-1">补齐请求 {weeklyFactTarget.exceptionId} · 原任务 {weeklyFactTarget.consumerTaskId} · 发布项 {weeklyFactTarget.publicationTaskId} · 周包 {weeklyFactTarget.packageId} v{weeklyFactTarget.packageVersion}</p><p className="mt-1">冻结企业版本 {weeklyFactTarget.enterpriseProfileRef?`${weeklyFactTarget.enterpriseProfileRef.id} v${weeklyFactTarget.enterpriseProfileRef.version}`:'原周包未冻结企业资料版本'} · 事实版本 {weeklyFactTarget.factRefs.map(ref=>`${ref.id} v${ref.version}`).join('、')||'缺少冻结事实引用'}</p><p className="mt-1">需核对字段：公司名称、产品类目、具体产品名称。保存后仍由原周任务复核事实版本，不会在本页直接解锁生产。</p><button type="button" className="mt-2 rounded border border-emerald-400 bg-white px-3 py-1.5 font-bold" onClick={()=>{setEnterpriseArea('facts');setKnowledgeView('products');}}>查看并补齐产品字段</button></section>}
       <div className="shrink-0 border-b border-border bg-surface px-4 pt-5 sm:px-6">
-        <LsPageHeader title="企业知识库" description={enterpriseArea === 'appearance' ? '查看已授权人物；新增人物、声音和认证统一在数字员工新手引导完成。' : hasUnsavedChanges ? '资料有未保存修改，保存后供内容制作、客服和报价统一使用。' : '统一管理已确认的企业事实、产品资料和沟通规则。'}
-          extra={enterpriseArea === 'appearance' ? undefined : <Button type="primary" onClick={handleSave} loading={saving} disabled={!hasUnsavedChanges}
-            icon={saveError ? <X size={14} /> : !hasUnsavedChanges ? <CheckCircle2 size={14} /> : <Save size={14} />}>
-            {saveError ? '重试保存' : !hasUnsavedChanges ? '已保存' : '保存资料'}
-          </Button>} />
-        {saveError && <Alert className="mb-3" type="error" showIcon title={saveError} />}
+        <h1 className="sr-only">企业知识库</h1>
         <Tabs activeKey={enterpriseArea} onChange={key => {
           const area = key as EnterpriseArea;
           setEnterpriseArea(area);
           setKnowledgeView(area === 'facts' ? 'company' : area === 'social' ? 'socialStrategy' : area === 'appearance' ? 'presenters' : 'bizRules');
           if (area === 'service') openKnowledgeIntakeOnce();
-        }} items={[
+        }} tabBarExtraContent={enterpriseArea === 'appearance' ? undefined : { right: <Button type="primary" onClick={handleSave} loading={saving} disabled={!hasUnsavedChanges}
+          icon={saveError ? <X size={14} /> : !hasUnsavedChanges ? <CheckCircle2 size={14} /> : <Save size={14} />}>
+          {saveError ? '重试保存' : !hasUnsavedChanges ? '已保存' : '保存资料'}
+        </Button> }} items={[
           { key: 'facts', label: '企业真实资料', icon: <Building2 size={16} /> },
           { key: 'social', label: '社媒策略', icon: <Megaphone size={16} /> },
           { key: 'appearance', label: '人物与出镜', icon: <Users size={16} /> },
           { key: 'service', label: '智能客服规范', icon: <MessageSquare size={16} /> },
         ]} />
+        {saveError && <Alert className="mb-3" type="error" showIcon title={saveError} />}
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -1987,7 +1977,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
               <div className="flex items-center gap-3">
                 <span className="text-2xl font-semibold tabular-nums text-accent">{profileCompleteness.percentage}%</span>
                 <div>
-                  <div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-semibold text-text-primary">企业资料完整度</h2>{profile.factVersion && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-emerald-700">事实版本 v{profile.factVersion.revision}</span>}</div>
+                  <h2 className="text-sm font-semibold text-text-primary">企业资料完整度</h2>
                   <p className="mt-1 text-xs text-text-muted">产品图、价格、证书和市场信息统一供内容、客服、报价、投放与数字员工使用。</p>
                 </div>
               </div>
@@ -2478,16 +2468,17 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
                       <thead className="bg-surface-2 text-text-muted"><tr><th className="px-3 py-2">图片</th><th className="px-3 py-2">产品名称</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2">品牌 / 规格</th><th className="px-3 py-2">识别卖点</th><th className="w-16 px-3 py-2">操作</th></tr></thead>
                       <tbody className="divide-y divide-border">
                         {pendingProductImport.products.map((product, index) => { const transfer = pendingProductImport.remoteImageTransfers[index]; return <tr key={`${product.sku || product.name}-${index}`}>
-                          <td className="px-3 py-2"><div className="relative w-fit">{product.imageUrl ? <img src={product.imageUrl} alt="" className="h-12 w-12 rounded-lg border border-border object-cover" onError={event => { event.currentTarget.style.display = 'none'; }} /> : <span className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-surface-2 text-[10px] text-text-muted">无图片</span>}{transfer && <span title={transfer.error || transfer.originalUrl} className={`absolute -bottom-1 -right-2 rounded px-1 py-0.5 text-[8px] font-semibold text-white ${transfer.status === 'uploaded' ? 'bg-emerald-600' : transfer.status === 'failed' ? 'bg-red-600' : transfer.status === 'uploading' ? 'bg-slate-800' : 'bg-amber-600'}`}>{transfer.status === 'uploaded' ? '已转存' : transfer.status === 'failed' ? '转存失败' : transfer.status === 'uploading' ? '转存中' : '待转存'}</span>}</div>{transfer?.error && <p className="mt-2 max-w-32 text-[9px] leading-4 text-red-600">{transfer.error}</p>}</td>
+                          <td className="px-3 py-2"><div className="relative w-fit">{(pendingProductImport.assignedImages.find(image => image.productIndex === index)?.url || product.imageUrl) ? <img src={pendingProductImport.assignedImages.find(image => image.productIndex === index)?.url || product.imageUrl} alt="" className="h-12 w-12 rounded-lg border border-border object-cover" onError={event => { event.currentTarget.style.display = 'none'; }} /> : <span className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-surface-2 text-[10px] text-text-muted">无图片</span>}{transfer && <span title={transfer.error || transfer.originalUrl} className={`absolute -bottom-1 -right-2 rounded px-1 py-0.5 text-[8px] font-semibold text-white ${transfer.status === 'uploaded' ? 'bg-emerald-600' : transfer.status === 'failed' ? 'bg-red-600' : transfer.status === 'uploading' ? 'bg-slate-800' : 'bg-amber-600'}`}>{transfer.status === 'uploaded' ? '已转存' : transfer.status === 'failed' ? '转存失败' : transfer.status === 'uploading' ? '转存中' : '待转存'}</span>}</div>{transfer?.error && <p className="mt-2 max-w-32 text-[9px] leading-4 text-red-600">{transfer.error}</p>}</td>
                           <td className="px-3 py-2 font-bold text-text-primary">{product.name}</td>
                           <td className="px-3 py-2 text-text-secondary">{product.sku || '—'}</td>
                           <td className="px-3 py-2 text-text-secondary">{[product.brand, product.color, product.size].filter(Boolean).join(' · ') || '—'}</td>
                           <td className="max-w-56 px-3 py-2 text-text-secondary"><span className="line-clamp-2">{product.highlights || '—'}</span></td>
-                          <td className="px-3 py-2"><button type="button" onClick={() => setPendingProductImport(current => { if (!current) return null; const remoteImageTransfers = Object.fromEntries(Object.entries(current.remoteImageTransfers).flatMap(([key, value]) => { const itemIndex = Number(key); return itemIndex === index ? [] : [[itemIndex > index ? itemIndex - 1 : itemIndex, value]]; })); return { ...current, products: current.products.filter((_, itemIndex) => itemIndex !== index), remoteImageTransfers }; })} className="text-[11px] font-bold text-red-600 hover:text-red-800">移除</button></td>
+                          <td className="px-3 py-2"><button type="button" onClick={() => setPendingProductImport(current => { if (!current) return null; const remoteImageTransfers = Object.fromEntries(Object.entries(current.remoteImageTransfers).flatMap(([key, value]) => { const itemIndex = Number(key); return itemIndex === index ? [] : [[itemIndex > index ? itemIndex - 1 : itemIndex, value]]; })); const assignedImages = current.assignedImages.flatMap(image => image.productIndex === index ? [] : [{ ...image, productIndex: image.productIndex > index ? image.productIndex - 1 : image.productIndex }]); return { ...current, products: current.products.filter((_, itemIndex) => itemIndex !== index), remoteImageTransfers, assignedImages }; })} className="text-[11px] font-bold text-red-600 hover:text-red-800">移除</button></td>
                         </tr>;})}
                       </tbody>
                     </table>
                   </div>
+                  {pendingProductImport.assignedImages.length > 0 && <p className="mt-3 text-xs text-emerald-700">已识别并待绑定 {pendingProductImport.assignedImages.length} 张 PDF 产品照片，请核对商品名称后确认导入。</p>}
                   {pendingProductImport.unassignedImages.length > 0 && <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3"><p className="text-xs font-semibold text-sky-900">未归属图片（{pendingProductImport.unassignedImages.length}）</p><p className="mt-1 text-[11px] leading-5 text-sky-800">文档没有提供可验证的图片与产品对应关系，因此不会静默绑定。确认导入时会把这些图片持久化到“企业上传素材”，随后可手动关联产品。</p><div className="mt-3 flex flex-wrap gap-2">{pendingProductImport.unassignedImages.map(image => <figure key={image.name} className="w-24"><div className="relative"><img src={image.url} alt={image.name} className="h-20 w-24 rounded-lg border border-sky-200 bg-white object-cover"/>{image.status && image.status !== 'pending' && <span className={`absolute bottom-1 right-1 rounded px-1.5 py-0.5 text-[9px] font-semibold ${image.status === 'uploaded' ? 'bg-emerald-600 text-white' : image.status === 'failed' ? 'bg-red-600 text-white' : 'bg-slate-900 text-white'}`}>{image.status === 'uploaded' ? '已保存' : image.status === 'failed' ? '失败' : '上传中'}</span>}</div><figcaption className="mt-1 truncate text-[9px] text-sky-800" title={image.error || image.name}>{image.error || image.name}</figcaption></figure>)}</div></div>}
                 </div>
             </Modal>

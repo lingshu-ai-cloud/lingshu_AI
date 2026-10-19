@@ -113,7 +113,7 @@ GEMINI_API_KEY=${gemini_key}
 
 OVERSEAS_LLM_BACKEND=${overseas_llm_backend}
 DASHSCOPE_API_KEY=${dashscope_key}
-DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+DASHSCOPE_BASE_URL=https://maas.qianwenaiapi.com/compatible-mode/v1
 
 SEEDANCE_API_KEY=${seedance_key}
 SEEDREAM_API_KEY=${seedance_key}

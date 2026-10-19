@@ -1,4 +1,5 @@
 import { getToken } from './auth';
+import type {WeeklyPipelineStartInput,WeeklyPipelineStatus} from '../../shared/contracts/weeklyExecutionPipeline';
 import type { WeeklyScheduleTargetGraph, WeeklyScheduleCapacityInput, WeeklyScheduleProposal, WeeklyScheduleConfirmation } from '../../shared/contracts/socialWeeklyScheduleRevision';
 import type {WeeklyProductionRepairCase} from '../../shared/contracts/weeklyProductionRepairCase';
 import type {UnplannedSocialDeliveryCard,WeeklyDeliveryCard} from '../../shared/contracts/weeklyDeliveryCard';
@@ -6,6 +7,41 @@ import type {SceneReworkAdmissionPreview} from '../../server/starter198/socialCo
 import type {WeeklyCreativeRepairCapacityPreview} from '../../shared/contracts/weeklyCreativeRepairExecution';
 import type {CreativeRepairConfiguration} from '../../server/socialPrograms/weeklyCreativeRepairConfiguration';
 export interface WeeklyTechnicalRepairCapacityPreview{caseRecordHash:string;preview:SceneReworkAdmissionPreview;maximumCaseCostCny:number|null;deadlineAt:string|null;estimatedDurationMinutes:number|null;admission:WeeklyProductionRepairCase['admission']}
+export interface WeeklyCtaContact {
+  status: 'missing' | 'recorded';
+  frozenCta: string;
+  selectedProduct: { productId: string; name: string } | null;
+  productSelectionStatus?: 'pending' | 'selected' | 'multiple' | 'unavailable';
+  contextHash: string;
+  contactChannel?: 'whatsapp';
+  contactValue?: string;
+  samplePromiseConfirmed?: boolean;
+  receiptId: string | null;
+}
+export interface WeeklyPublicationProductChoices {
+  packageVersion: number;
+  contextHash: string;
+  selectionState: 'consistent' | 'incomplete_group' | 'pending_operation';
+  products: Array<{ id: string; name: string; sku: string | null }>;
+  publications: Array<{ publicationTaskId: string; motherContentId: string; selectedProductId: string | null; receiptId: string | null; pendingOperation?: boolean; pendingProductId?: string | null }>;
+}
+export interface WeeklySamplePolicyTerms {
+  sampleFeeCny: 0;
+  shippingFeePayer: 'seller' | 'buyer';
+  customsDutyPayer: 'seller' | 'buyer';
+  maximumFreeQuantity: number;
+  eligibleMarkets: string[];
+  eligibleCustomerTypes: string[];
+  validFrom: string;
+  validUntil: string;
+}
+export interface WeeklySamplePolicyCandidates {
+  contextHash: string;
+  selection: { productId: string; productName: string; productSku: string | null };
+  frozenCta: string;
+  candidates: Array<{ candidateId: string; sourceSha256: string; terms: WeeklySamplePolicyTerms; submittedAt: string; reviewStatus: 'pending_independent_verification' }>;
+  policyStatus: 'candidate_only';
+}
 import type { WeeklyRecoveryInput, WeeklyRecoveryAssessment } from '../../server/socialPrograms/weeklyRecoveryAssessment';
 import type { WeeklyBackwardSchedule, WeeklyBackwardScheduleInput } from '../../server/socialPrograms/weeklyBackwardSchedule';
 import type { WeeklyCustomerStep, WeeklyCustomerStepEvidence, readWeeklyCustomerCalendar } from '../../server/runtime/socialWeeklyCustomerBridge';
@@ -195,6 +231,20 @@ export const socialProgramApi = {
   async dispatchAgentSchedule(programId: string, packageId: string, versions: WeeklyAgentPlanningMutation): Promise<WeeklyAgentPlanningState> {
     return (await request<{ item: WeeklyAgentPlanningState }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/agent-planning/dispatch`, { method: 'POST', ...json(versions) })).item;
   },
+  async readExecutionPipeline(programId:string,packageId:string,version:number):Promise<WeeklyPipelineStatus>{return (await request<{item:WeeklyPipelineStatus}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline?version=${version}`)).item;},
+  async readWeeklyTemplate(programId:string,packageId:string,version:number):Promise<{adoptedAt:string}|null>{return (await request<{item:{adoptedAt:string}|null}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/template?version=${version}`)).item;},
+  async readWeeklyCtaContact(programId:string,packageId:string,version:number):Promise<WeeklyCtaContact>{return (await request<{item:WeeklyCtaContact}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/cta-contact?version=${version}`)).item;},
+  async recordWeeklyCtaContact(programId:string,packageId:string,version:number,input:{contactChannel:'whatsapp';contactValue:string;expectedContextHash:string;expectedReceiptId:string|null}):Promise<WeeklyCtaContact>{return (await request<{item:WeeklyCtaContact}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/cta-contact?version=${version}`,{method:'POST',...json({expectedPackageVersion:version,...input})})).item;},
+  async readWeeklyPublicationProductChoices(programId:string,packageId:string,version:number):Promise<WeeklyPublicationProductChoices>{return (await request<{item:WeeklyPublicationProductChoices}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/product-selection?version=${version}`)).item;},
+  async selectWeeklyPublicationProduct(programId:string,packageId:string,version:number,input:{expectedContextHash:string;productId:string;publicationTaskIds:string[]}):Promise<WeeklyPublicationProductChoices>{return (await request<{item:WeeklyPublicationProductChoices}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/product-selection?version=${version}`,{method:'POST',...json({expectedPackageVersion:version,...input})})).item;},
+  async readWeeklySamplePolicyCandidates(programId:string,packageId:string,version:number,publicationTaskId:string):Promise<WeeklySamplePolicyCandidates>{return (await request<{item:WeeklySamplePolicyCandidates}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/sample-policy-candidates?version=${version}&publicationTaskId=${encodeURIComponent(publicationTaskId)}`)).item;},
+  async submitWeeklySamplePolicyCandidate(programId:string,packageId:string,version:number,input:{publicationTaskId:string;expectedContextHash:string;terms:WeeklySamplePolicyTerms;pdfDataUrl:string}):Promise<unknown>{return (await request<{item:unknown}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/sample-policy-candidates`,{method:'POST',...json({expectedPackageVersion:version,...input})})).item;},
+  async authorizeWeeklyPublishing(programId:string,packageId:string,version:number):Promise<void>{await request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/publishing-authorization`,{method:'POST',...json({expectedPackageVersion:version,authorizePublishing:true})});},
+  async adoptWeeklyTemplate(programId:string,packageId:string,version:number):Promise<{adoptedAt:string}>{return (await request<{item:{adoptedAt:string}}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/template`,{method:'POST',...json({expectedPackageVersion:version})})).item;},
+  async connectLocalWeeklyConsumer(programId:string,packageId:string,version:number):Promise<void>{await request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/connect-local-consumer`,{method:'POST',...json({expectedPackageVersion:version})});},
+  async startIndependentWeeklyBranches(programId:string,packageId:string,version:number):Promise<{pipeline:WeeklyPipelineStatus}>{return request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/start-independent`,{method:'POST',...json({expectedPackageVersion:version})});},
+  async prepareExecutionAuthority(programId:string,packageId:string,version:number):Promise<{item:WeeklyOperatingPackage|null;resolution:OperatingPlanningResolution|null}>{return request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/prepare-authority`,{method:'POST',...json({expectedPackageVersion:version})});},
+  async startExecutionPipeline(programId:string,packageId:string,input:WeeklyPipelineStartInput):Promise<{item:WeeklyOperatingPackage;pipeline:WeeklyPipelineStatus}>{return request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/start`,{method:'POST',...json(input)});},
   async readCancellation(programId: string, packageId: string, version: number): Promise<WeeklyCancellationSummary | null> {
     const result = await request<{ item: WeeklyCancellationSummary | null }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/cancellation?version=${version}`);
     return parseWeeklyCancellationSummary(result.item);
@@ -240,8 +290,8 @@ export const socialProgramApi = {
   async readCustomerStep(programId: string, packageId: string, packageVersion: number, runId: string, step: WeeklyCustomerStep): Promise<WeeklyCustomerStepEvidence> {
     return (await request<{ item: WeeklyCustomerStepEvidence }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/customer-run-binding/${encodeURIComponent(runId)}/steps/${encodeURIComponent(step)}?version=${packageVersion}`)).item;
   },
-  async approveExecutionTask(programId: string, packageId: string, taskId: string): Promise<WeeklyExecutionTask[]> {
-    return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks/${encodeURIComponent(taskId)}/approve`, { method: 'POST', ...json({}) })).items;
+  async approveExecutionTask(programId: string, packageId: string, taskId: string,expectedArtifactRef?:import('../../shared/contracts/socialProgram').VersionedSocialRef): Promise<WeeklyExecutionTask[]> {
+    return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks/${encodeURIComponent(taskId)}/approve`, { method: 'POST', ...json(expectedArtifactRef?{expectedArtifactRef}:{}) })).items;
   },
   async recheckRequiredMaterials(programId: string, packageId: string, taskId: string, packageVersion: number): Promise<WeeklyExecutionTask[]> {
     return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks/${encodeURIComponent(taskId)}/recheck-required-materials`, { method: 'POST', ...json({ expectedPackageVersion: packageVersion }) })).items;

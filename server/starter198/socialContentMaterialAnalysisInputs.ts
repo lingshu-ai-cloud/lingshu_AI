@@ -34,7 +34,7 @@ export function socialContentMaterialAnalysisInputs(input: {
   const executionReadyLocal = selected.filter(asset =>
     (locallySelectedRefs.has(asset.id) || locallySelectedRefs.has(asset.sourceId))
     && ((asset.visualObservations?.length || 0) > 0 || (asset.segments?.length || 0) > 0));
-  const independentProduct = (shot: typeof shots[number]) => input.policyVersion === 'type-aware.v1'
+  const independentProduct = (shot: typeof shots[number]) => ['type-aware.v1','type-aware.v2'].includes(String(input.policyVersion))
     && ['aigc_product_scene_replication', 'customer_product_image_animation'].includes(shot.sourceStrategy)
     && !shot.fallbackSourceStrategy
     && (shot.sourceStrategy === 'customer_product_image_animation'

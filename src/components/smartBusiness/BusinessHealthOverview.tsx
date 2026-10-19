@@ -2,6 +2,7 @@ import { Button, Collapse, DatePicker, Empty, Tag } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import { Activity, CheckCircle2, CircleDashed, CircleDollarSign, Clapperboard, MessageSquareText, Minus, Puzzle, RefreshCcw, Users } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { smartBusinessShowcaseChannels } from '../../dev/smartBusinessShowcaseData';
 import type { DigitalEmployeeOverview } from '../../lib/digitalEmployees';
 import { authHeader } from '../../lib/auth';
 import { loadConnectedSocialPerformance } from '../../lib/socialPerformance';
@@ -142,6 +143,12 @@ export default function BusinessHealthOverview({ data, selectedAccountId = '', o
   const refresh = useCallback(async () => {
     const id = ++requestId.current;
     setLoading(true);
+    const showcase = smartBusinessShowcaseChannels(data);
+    if (showcase) {
+      setSources(showcase);
+      setLoading(false);
+      return;
+    }
     const readJson = async (url: string) => {
       const response = await fetch(url, { headers: authHeader(), signal: AbortSignal.timeout(15_000) });
       if (!response.ok) throw new Error('承接渠道状态暂时无法读取');
@@ -162,7 +169,7 @@ export default function BusinessHealthOverview({ data, selectedAccountId = '', o
       messengerPages: messenger.status === 'fulfilled' && Array.isArray(messenger.value.items) ? messenger.value.items : previous.messengerPages,
     }));
     setLoading(false);
-  }, []);
+  }, [data]);
   const snapshotStartsAt = data.businessSnapshot?.range.startsAt || data.goal?.startsAt || '';
   const snapshotEndsAt = data.businessSnapshot?.range.endsAt || data.goal?.endsAt || '';
   useEffect(() => { void refresh(); return () => { requestId.current += 1; }; }, [refresh, snapshotStartsAt, snapshotEndsAt]);

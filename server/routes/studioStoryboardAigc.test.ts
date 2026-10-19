@@ -68,11 +68,13 @@ try {
   fs.mkdirSync(frameDir, { recursive: true });
   fs.writeFileSync(path.join(frameDir, 'shot-1.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
   await objectStorageUpload({ key: frameKey, body: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), contentType: 'image/jpeg' });
+  await objectStorageDelete(frameKey);
   const owned = await post('/storyboard-first-frame', {
     shotId: 'shot-1', shotDescription: '工厂镜头', mode: 'replication', sceneType: 'factory',
     sourceFirstFrameUrl: '/api/overseas/videos/owned-video/shot/1/first-frame',
   });
-  assert.notEqual(owned.body.code, 'SOURCE_FRAME_REQUIRED', 'tenant-owned extracted first frame must resolve');
+  assert.notEqual(owned.body.code, 'SOURCE_FRAME_REQUIRED',
+    'tenant-owned local evidence must remain readable when its optional object-storage copy is unavailable');
 
   const wrongConfirm = await post('/storyboard-first-frame/missing/confirm', { shotId: 'shot-1', fingerprint: 'wrong' });
   assert.equal(wrongConfirm.status, 404);

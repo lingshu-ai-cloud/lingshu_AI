@@ -2,7 +2,7 @@ import {verifyHeyGenPublishedTariff,type HeyGenPublishedPricingEvidence} from '.
 import {verifySeedreamPublishedTariff,type SeedreamPublishedPricingEvidence} from './seedreamPublishedPricing.js';
 import {verifyNativeVoicePublishedTariff} from './studioVoicePublishedPricing.js';
 import {verifyWanPublishedTariff,type WanPublishedPricingEvidence} from './wanPublishedPricing.js';
-import {isVerifiedPublishedTariff,type LocalPublishedPricingEvidence,type PublishedPricingEvidence} from './socialContentPublishedTariffs.js';
+import {isVerifiedPublishedTariff,type LocalPublishedPricingEvidence,type MaaSPublishedPricingEvidence,type PublishedPricingEvidence} from './socialContentPublishedTariffs.js';
 import { createHash } from 'node:crypto';
 import { SocialContentTaskBudget, type SocialTaskBudgetScope, type SocialTaskBudgetOperation, type SocialTaskBudgetQuote } from './socialContentTaskBudget.js';
 /** Server-frozen maximum input usage. Token stages must bound both prompt and
@@ -22,6 +22,7 @@ export interface SocialApprovedBudgetPlan {
     scope: SocialTaskBudgetScope;
     authorizationRef: string;
     maximumCny: number;
+    maximumExecutionCny?:number;
     /** Includes every paid stage (images, QA, presenter, voice, analysis, retries).
      * This is produced by the trusted planner, never passed from an HTTP body. */
     paidOperations: SocialPaidOperationIntent[];
@@ -42,7 +43,7 @@ export interface SocialVerifiedAccountTariff {
     currency: 'CNY';
     verifiedAccountPrice: boolean;
     pricingBasis?:'negotiated_verified_account'|'published_undiscounted_ceiling'|'published_fx_estimate';
-    publicPricingEvidence?:PublishedPricingEvidence|LocalPublishedPricingEvidence|SeedreamPublishedPricingEvidence|WanPublishedPricingEvidence|HeyGenPublishedPricingEvidence;
+    publicPricingEvidence?:PublishedPricingEvidence|LocalPublishedPricingEvidence|MaaSPublishedPricingEvidence|SeedreamPublishedPricingEvidence|WanPublishedPricingEvidence|HeyGenPublishedPricingEvidence;
     evidenceRef: string;
     checkedAt: string;
     validUntil: string;
@@ -65,7 +66,7 @@ const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(va
 function fail(code: string): never { throw Error(`social_task_budget_authority_${code}`); }
 const finite = (n: number) => Number.isFinite(n) && n >= 0;
 const nonempty = (s: string) => typeof s === 'string' && s.trim() === s && s.length > 0 && s.length <= 512;
-function sameScope(a: SocialTaskBudgetScope, b: SocialTaskBudgetScope) { return ['tenantId', 'taskId', 'runId', 'planHash'].every(k => a[k as keyof typeof a] === b[k as keyof typeof b]); }
+function sameScope(a: SocialTaskBudgetScope, b: SocialTaskBudgetScope) { return ['tenantId', 'taskId', 'runId', 'planHash'].every(k => a[k as keyof typeof a] === b[k as keyof typeof b])&&(a.budgetTaskId??a.taskId)===(b.budgetTaskId??b.taskId); }
 function canonicalUnits(units: Record<string, number>) { return Object.fromEntries(Object.entries(units).sort(([a], [b]) => a.localeCompare(b))); }
 export function socialPaidIntentOperation(scope: SocialTaskBudgetScope, intent: SocialPaidOperationIntent): SocialTaskBudgetOperation {
     if (![intent.operationId, intent.provider, intent.model, intent.accountRef, intent.stage].every(nonempty) || (intent.shotId !== null && !nonempty(intent.shotId)) || !/^[a-f0-9]{64}$/.test(intent.inputContractHash) || !intent.maximumUnits || !Object.keys(intent.maximumUnits).length || Object.entries(intent.maximumUnits).some(([k, v]) => !nonempty(k) || !finite(v)))
@@ -78,6 +79,12 @@ function price(intent: SocialPaidOperationIntent, tariff: SocialVerifiedAccountT
     const now = Date.now();
     if (!tariff || !((tariff.verifiedAccountPrice===true&&(!tariff.pricingBasis||tariff.pricingBasis==='negotiated_verified_account'))||isVerifiedPublishedTariff(tariff)||verifyNativeVoicePublishedTariff(tariff)||verifyWanPublishedTariff(tariff)||verifySeedreamPublishedTariff(tariff)||verifyHeyGenPublishedTariff(tariff)) || tariff.currency !== 'CNY' || !nonempty(tariff.evidenceRef) || ['provider', 'model', 'accountRef', 'stage'].some(k => tariff[k as 'provider'] !== intent[k as 'provider']) || !Number.isFinite(Date.parse(tariff.checkedAt)) || Date.parse(tariff.checkedAt) > now || !Number.isFinite(Date.parse(tariff.validUntil)) || Date.parse(tariff.validUntil) <= now)
         fail('account_tariff_missing_or_expired');
+    // A durable MaaS tariff must not be reused outside its published pricing
+    // bands even if it was originally imported for a smaller operation.
+    if (tariff.publicPricingEvidence?.schemaVersion === 3 &&
+        (!Number.isSafeInteger(intent.maximumUnits.inputTokens) || intent.maximumUnits.inputTokens < 0 || intent.maximumUnits.inputTokens > tariff.publicPricingEvidence.maximumInputTokens ||
+         !Number.isSafeInteger(intent.maximumUnits.outputTokens) || intent.maximumUnits.outputTokens < 0 || intent.maximumUnits.outputTokens > 32768))
+        fail('account_tariff_input_range_unverified');
     const keys = Object.keys(intent.maximumUnits).sort(), meters = Object.keys(tariff.meters || {}).sort();
     if (JSON.stringify(keys) !== JSON.stringify(meters))
         fail('usage_envelope_incomplete');
@@ -128,7 +135,7 @@ export function createSocialContentTaskBudgetAuthority(input: {
             const operation = operations[index]!;
             const prior = existing?.entries.find(entry => entry.operationId === operation.operationId);
             if (prior) {
-                if (prior.status === 'rejected' || prior.runId !== scope.runId || prior.planHash !== scope.planHash
+                if ((prior.executionTaskId??scope.budgetTaskId??scope.taskId)!==scope.taskId || prior.status === 'rejected' || prior.runId !== scope.runId || prior.planHash !== scope.planHash
                     || (['operationId', 'fingerprint', 'provider', 'model', 'accountRef', 'stage', 'shotId'] as const)
                         .some(key => prior[key] !== operation[key])) fail('existing_operation_changed');
                 quotes.set(intent.operationId, {upperBoundCny: prior.reservedMicros / 1e6,
@@ -152,7 +159,7 @@ export function createSocialContentTaskBudgetAuthority(input: {
         const ledger = new SocialContentTaskBudget(input.ledgerRoot, {
             assertCurrent: async candidate => { if (!sameScope(candidate, scope)) fail('scope_changed'); await ports.assertCurrent(candidate); },
             authorization: async () => { const current = await ports.readApprovedPlan(scope); if (digest(current) !== digest(prepared.plan))
-                fail('plan_changed'); return { maximumCny: Math.min(10, current.maximumCny), authorizationRef: current.authorizationRef }; },
+                fail('plan_changed'); return { maximumCny: Math.min(15, current.maximumCny), maximumExecutionCny:current.maximumExecutionCny,authorizationRef: current.authorizationRef }; },
             quote: async (_s, operation) => { const intent = prepared.operations.find(o => o.operationId === operation.operationId); if (!intent || digest(intent) !== digest(operation))
                 fail('operation_changed'); return prepared.quotes.get(operation.operationId)!; },
             verifyRejection: ports.verifyRejection,
@@ -180,14 +187,14 @@ export function createSocialContentTaskBudgetAuthority(input: {
         });
         const status = ledger.status(scope);
         if (!status || status.retainedCny > status.limitCny
-            || (status.limitCny > Math.min(10, plan.maximumCny)
+            || (status.limitCny > Math.min(15, plan.maximumCny)
                 && (!status.correctionAuthorization
                     || status.correctionAuthorization.runId !== scope.runId
                     || status.correctionAuthorization.planHash !== scope.planHash))) fail('recovery_budget_missing');
         const entries = operationIds.map(id => {
             const operation = operations.find(candidate => candidate.operationId === id);
             const entry = status.entries.find(candidate => candidate.operationId === id);
-            if (!operation || !entry || entry.runId !== scope.runId || entry.planHash !== scope.planHash
+            if (!operation || !entry || (entry.executionTaskId??scope.budgetTaskId??scope.taskId)!==scope.taskId || entry.runId !== scope.runId || entry.planHash !== scope.planHash
                 || (['operationId', 'fingerprint', 'provider', 'model', 'accountRef', 'stage', 'shotId'] as const)
                     .some(key => operation[key] !== entry[key])
                 || !['accepted', 'unknown', 'completed'].includes(entry.status) || !entry.receiptRef)

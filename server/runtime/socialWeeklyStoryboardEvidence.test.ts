@@ -3,7 +3,7 @@ import test from 'node:test';
 import { SOCIAL_SCRIPT_BASELINE_SCHEMA, SOCIAL_SCRIPT_GROUNDING_VERSION, type StoredSocialScriptBaseline } from '../starter198/socialContentScriptBaseline.js';
 import { buildSocialDirectorPlan } from '../starter198/socialContentDirectorPlan.js';
 import { buildSocialProductionPlan } from '../starter198/socialContentProductionPlan.js';
-import { weeklyStoryboardEvidence } from './socialWeeklyStoryboardEvidence.js';
+import { weeklyStoryboardEvidence,weeklyStoryboardStageEvidence } from './socialWeeklyStoryboardEvidence.js';
 import { validateWeeklyExecutionResults } from './socialWeeklyResultValidation.js';
 import type { DataStore } from '../storage/datastore.js';
 import type { WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
@@ -20,6 +20,12 @@ test('real locked storyboard verifies before rendering and rejects stale script,
   const row: any = { id: 'row', tenant_id: 'tenant', task_id: 'content', run_id: 'run', status: 'producing', create_idempotency_key: 'weekly-production:package:1:publication', brief: { programRef: { id: 'program' }, _weeklyAuthority: { referenceSelection: { selected: [{ candidateId: 'candidate' }] } } }, script_baseline: baseline, director_plan: plan };
   const ref = weeklyStoryboardEvidence(row, ['candidate'])!;
   assert.deepEqual(ref, { type: 'starter_social_content_director_plan', id: 'content', version: Number(plan.version) });
+  assert.deepEqual(weeklyStoryboardStageEvidence(row,['candidate'],1,null),ref,'old graph keeps its original result type');
+  assert.equal(weeklyStoryboardStageEvidence(row,['candidate'],2,null),null,'new graph cannot reuse the old plan');
+  const sameRun={runId:'run',taskId:'content'} as import('../starter198/socialWeeklyPreSupplyHandoff.js').WeeklyPreSupplyHandoff;
+  assert.equal(weeklyStoryboardStageEvidence(row,['candidate'],2,{...sameRun,runId:'different-run'}),null);
+  assert.equal(weeklyStoryboardStageEvidence(row,['candidate'],2,{...sameRun,taskId:'different-task'}),null);
+  assert.deepEqual(weeklyStoryboardStageEvidence(row,['candidate'],2,sameRun),{type:'starter_weekly_pre_supply_handoff',id:'run',version:1});
   assert.equal(weeklyStoryboardEvidence(row, ['wrong']), null);
   assert.equal(weeklyStoryboardEvidence({ ...row, script_baseline: { ...baseline, match: { ...baseline.match, inspirationReference: { recordId: 'other-frozen-reference', confidence: 0.9 } } } }, ['candidate', 'other-frozen-reference']), null);
   assert.equal(weeklyStoryboardEvidence({ ...row, script_baseline: { ...baseline, version: '3' } }, ['candidate']), null);
@@ -29,6 +35,10 @@ test('real locked storyboard verifies before rendering and rejects stale script,
   const task = { tenantId: 'tenant', programId: 'program', packageId: 'package', packageVersion: 1, publicationTaskId: 'publication', workflowKind: 'content', schedule: { stepKind: 'storyboard' } } as WeeklyExecutionTask;
   await validateWeeklyExecutionResults(store, task, [ref]);
   await validateWeeklyExecutionResults(store, {...task,workflowKind:'directing'}, [ref]);
+  Object.assign(pkg.payload,{executionGraphVersion:2});
+  await assert.rejects(validateWeeklyExecutionResults(store, task, [ref]), (error:unknown)=>(error as {code?:string}).code==='weekly_pre_supply_handoff_required',
+    'the current weekly graph cannot settle storyboard from an old post-supply Director plan');
+  Object.assign(pkg.payload,{executionGraphVersion:1});
   await assert.rejects(validateWeeklyExecutionResults(store,{...task,workflowKind:'directing',schedule:{...task.schedule,stepKind:'director_analysis'}},[ref]));
   await assert.rejects(validateWeeklyExecutionResults(store,{...task,workflowKind:'directing',schedule:{...task.schedule,stepKind:'script'}},[ref]));
   await assert.rejects(validateWeeklyExecutionResults(store, task, [{ ...ref, version: ref.version + 1 }]));

@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dashscopeApiKey } from '../agents/qwen.js';
 import { benchmarkTimeRange, recordOf } from '../../shared/benchmarkAnalysis.js';
 import type { VideoAiAnalysis } from '../types/index.js';
+import {QWEN_COMPATIBLE_BASE_URL} from './qwenCompatibleEndpoint.js';
 import { CRITICAL_SHOT_FRAME_POLICY, extractReferenceEvidenceFrames, referenceCriticalFrameSchedule } from './referenceCriticalShotProduction.js';
 import { withPaidOperationLock } from './paidOperationLock.js';
 import type { ReferenceCriticalFrame } from './referenceCriticalShots.js';
@@ -68,13 +69,16 @@ function presenterContinuityPrompt(input: Input): string {
 }
 
 export async function recognizePresenterContinuity(input: Input, options: { fetcher?: typeof fetch; apiKey?: string; model?: string } = {}) {
-  const model = options.model || process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-flash';
+  const model = exactQwenScope()?.model || options.model || process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-plus';
   const prompt = presenterContinuityPrompt(input);
   const content: Array<Record<string,unknown>> = [{type:'text',text:prompt}];
   for(const frame of input.frames) { content.push({type:'text',text:`${frame.shotId} 实际源帧 ${frame.seconds.toFixed(3)}s`}); content.push({type:'image_url',image_url:{url:`data:${frame.mimeType};base64,${frame.base64}`}}); }
-  const response = await (options.fetcher || fetch)('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+  const requestBody=JSON.stringify({model,temperature:0,response_format:{type:'json_object'},max_tokens:10000,messages:[{role:'user',content}]});
+  if(exactQwenScope())await authorizeExactQwenProviderRequest(requestBody);
+  const response = await (options.fetcher || fetch)((exactQwenScope()?.endpoint || process.env.DASHSCOPE_BASE_URL || QWEN_COMPATIBLE_BASE_URL).replace(/\/+$/,'')+'/chat/completions', {
     method:'POST',headers:{Authorization:`Bearer ${options.apiKey || dashscopeApiKey()}`,'Content-Type':'application/json'},
-    body:JSON.stringify({model,temperature:0,response_format:{type:'json_object'},max_tokens:10000,messages:[{role:'user',content}]}),signal:AbortSignal.timeout(120000) });
+    body:requestBody,signal:AbortSignal.timeout(120000),redirect:'error' });
+  if(exactQwenScope())await recordExactQwenProviderResponse(response,requestBody);
   if(!response.ok) throw new Error(`presenter_continuity_http_${response.status}`);
   const payload=recordOf(await response.json()), choice=recordOf(Array.isArray(payload.choices)?payload.choices[0]:undefined);
   const raw=text(recordOf(choice.message).content), providerResponse={raw,model,usage:recordOf(payload.usage)};
@@ -104,10 +108,10 @@ export async function producePresenterContinuity(input: { filePath:string;analys
       throw new Error('presenter_continuity_source_changed');
   };
   assertOriginalBytes();
-  const provider=(process.env.PRESENTER_CONTINUITY_PROVIDER || 'qwen').trim().toLowerCase();
+  const provider=exactQwenScope() ? 'qwen' : (process.env.PRESENTER_CONTINUITY_PROVIDER || 'qwen').trim().toLowerCase();
   const model=provider === 'gemini'
     ? (process.env.GEMINI_PRESENTER_CONTINUITY_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash')
-    : (process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-flash');
+    : (exactQwenScope()?.model || process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-plus');
   const key=createHash('sha256').update(JSON.stringify({version:PRESENTER_CONTINUITY_VERSION,framePolicy:CRITICAL_SHOT_FRAME_POLICY,model,tenantId:input.tenantId,
     videoId:input.videoId,source:input.sourceSha256,duration:input.duration,
     shots:input.analysis.scriptDetails15s?.map(s=>[s.time||s.timestamp]),words:input.analysis.audioTranscript?.words})).digest('hex');
@@ -151,3 +155,4 @@ export async function producePresenterContinuity(input: { filePath:string;analys
     }
   });
 }
+import {authorizeExactQwenProviderRequest,exactQwenScope,recordExactQwenProviderResponse} from '../agents/exactQwenScope.js';

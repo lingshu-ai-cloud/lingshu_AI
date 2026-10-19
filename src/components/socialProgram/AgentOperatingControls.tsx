@@ -14,6 +14,7 @@ import MaterialEvidenceConfigurationPanel from './MaterialEvidenceConfigurationP
 import WeeklyAgentPlanningPanel from './WeeklyAgentPlanningPanel';
 import CustomerFeedbackTopicPanel from './CustomerFeedbackTopicPanel';
 import {weeklyInitialScheduleApi} from '../../lib/weeklyInitialScheduleApi';
+import WeeklyGoalAuditPanel from './WeeklyGoalAuditPanel';
 
 export function offersInitialSchedule(pkg:WeeklyOperatingPackage,tasks:WeeklyExecutionTask[]){return pkg.status==='draft'&&!('scheduleRevisionRef' in pkg)&&!pkg.socialContentPackage.authorization.allowRealPublishing&&tasks.length>0&&tasks.every(t=>t.programId===pkg.programId&&t.packageId===pkg.packageId&&t.packageVersion===pkg.version&&!t.lease&&t.attempt===0&&!t.resultRefs.length&&!t.schedule.actualStartedAt&&!t.schedule.actualFinishedAt&&!t.productionProgress&&['pending_activation','blocked','queued'].includes(t.status));}
 
@@ -42,8 +43,9 @@ export default function AgentOperatingControls({ pkg, tasks, programRoute, onRev
   const initialScope=()=>({tenantId:requireScopedTenant(),programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version});
   const previewGraph=async()=>initial?(await weeklyInitialScheduleApi.preview(initialScope())).graph:await socialProgramApi.previewScheduleTargetGraph(pkg.programId,pkg.packageId,pkg.version,requireScopedTenant());
   return <section aria-label="本周真实经营配置" className="space-y-3">
+    <WeeklyGoalAuditPanel pkg={pkg} tasks={scoped} mode="planning"/>
     <div className="rounded-xl border border-stone-200 bg-white p-4"><h3 className="text-sm font-semibold">本周经营配置 · v{pkg.version}</h3><p className="mt-1 text-xs text-stone-500">承接条件修订保存为新周版本。客服选择仅绑定已有真实运行；补救评估不直接改排期。</p></div>
-    {onPlanningChanged && <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">分析参考、核对排期与正式派单</summary><WeeklyAgentPlanningPanel key={`planning:${identity}:${pkg.agentPlanning?.version}`} pkg={pkg} tasks={scoped} onChanged={onPlanningChanged} /></details>}
+    {onPlanningChanged && <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">分析参考、核对排期与正式派单</summary><WeeklyAgentPlanningPanel key={`planning:${identity}:${pkg.agentPlanning?.version}`} pkg={pkg} tasks={scoped} onChanged={onPlanningChanged} onRevision={onRevision}/></details>}
     {onFeedbackRevision && <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">把真实买家问题转为下周选题</summary><CustomerFeedbackTopicPanel key={`feedback:${identity}`} pkg={pkg} onRevision={onFeedbackRevision} /></details>}
     <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">确认爆款复刻来源配额</summary><ReferenceSourcePolicySetup key={`sources:${identity}`} pkg={pkg} route={effectiveRoute} onRevision={onRevision} /></details>
     <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">补充待确认的真实素材需求</summary><MaterialEvidenceConfigurationPanel pkg={pkg} onPlanningChanged={async plan => {const ensure=guard.current.capture(identity,authToken);ensure();

@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { executeSocialAssetSupplyPlan, type SocialAssetSupplyProviderAdapter } from './socialContentAssetSupplyExecution.js';
 import { createSocialDigitalPresenterAdapter, type ApprovedPresenterFirstFrame, type SocialDigitalPresenterBridgePorts } from './socialContentDigitalPresenterAdapter.js';
+import {createPresenterFirstFrameAssetProvenance} from './socialContentPresenterFirstFrameAssetProvenance.js';
 import type { SocialAssetSupplyPlan, SocialAssetSupplyShotPlan } from '../../shared/contracts/socialContentWorkflow.js';
 import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 
@@ -31,7 +32,8 @@ const plan: SocialAssetSupplyPlan = {
   customerActions: [], systemActions: [], optionalEnhancements: [], accountPresenterLock: presenterLock,
   shots: [{
     shotId: 'shot-1', function: 'hook', requestedDescription: '口播', sourceStrategy: 'authorized_digital_presenter',
-    approvedFirstFrame: { approvalRecordId:'approval:1',approvalRecordHash:'a'.repeat(64),presenterGroupContractHash:'b'.repeat(64),url:'/media/approved.jpg',localPath:path.join(root,'approved.jpg'),sha256:'c'.repeat(64) },
+    approvedFirstFrame: { approvalRecordId:'approval:1',approvalRecordHash:'a'.repeat(64),presenterGroupContractHash:'b'.repeat(64),url:'/media/approved.jpg',localPath:path.join(root,'approved.jpg'),sha256:'c'.repeat(64),assetProvenance:createPresenterFirstFrameAssetProvenance({presenter:{assetId:'presenter-1',assetVersion:3,referenceAssetIds:['person-front'],referenceSha256s:['1'.repeat(64)]},products:[],background:{referenceSourceId:'benchmark-1',referenceShotId:'shot-1',startSeconds:0,endSeconds:3,referenceFirstFrameRef:'/api/overseas/videos/benchmark-1/shot/1/first-frame',referenceFirstFrameSha256:'2'.repeat(64)}}) },
+    referenceBackgroundAssetLock:{schemaVersion:'social-reference-background-lock.v1',referenceRecordId:'benchmark-1',referenceSourceId:'benchmark-1',sourceContentSha256:'5'.repeat(64),analysisId:'analysis-1',analysisHash:'6'.repeat(64),referenceShotId:'shot-1',startSeconds:0,endSeconds:3,clipRef:'/api/overseas/videos/benchmark-1/shot/1/clip',firstFrameRef:'/api/overseas/videos/benchmark-1/shot/1/first-frame',firstFrameSeconds:0,lockHash:'7'.repeat(64)},
     sourceRefs: ['presenter-1'], fallbackSourceStrategy: 'motion_graphics', productionInstruction: '授权人物口播',
     truthBoundary: { subject: 'none', syntheticVisualAllowed: true, customerEvidenceRequired: false,
       customerEvidenceRefs: [], confirmedFactRefs: [], mustNotImplyCustomerReality: true,
@@ -79,6 +81,17 @@ assert.equal(capturedVisualControl.interaction, 'talking');
 assert.match(capturedVisualControl.action.path, /口播说明/);
 assert.deepEqual(capturedVisualControl.requiredCapabilities, ['scripted_speech', 'timing_control']);
 const originalKey = capturedKey;
+const motionShot=structuredClone(plan.shots[0]!);
+motionShot.digitalHumanPlan={...motionShot.digitalHumanPlan!,method:'reenact',silentMotion:true};
+motionShot.fallbackSourceStrategy=null;
+const assetIdentity={...(await ports.resolvePresenter({tenantId:'tenant-a',presenterAssetId:'presenter-1'}))!,providerId:'seedance',identityMode:'enterprise_asset_first_frame' as const,providerPresenterId:null,providerVoiceId:null};
+const motionPorts:SocialDigitalPresenterBridgePorts={...ports,capabilities:{methods:['reenact'],controls:['reference_motion','guided_action','environment_control','camera_control','timing_control']},resolvePresenter:async()=>assetIdentity,
+  execute:async request=>{assert.equal(request.presenter.providerVoiceId,null);assert.equal(request.presenter.providerPresenterId,null);assert.ok(!request.visualControl.requiredCapabilities.includes('scripted_speech'));return{status:'completed',providerTaskId:'seedance-motion-real-controlled',localPath:output,contentHash:'controlled-motion-hash',duration:3};}};
+const motionAdapter=createSocialDigitalPresenterAdapter(motionPorts);
+const motionResult=await motionAdapter.execute({tenantId:'tenant-a',taskId:'task-a',outputDirectory:root,shot:motionShot,baselineScene:{...baseline.scenes[0]!,narration:'',voiceover:''},availableAssets:[]});
+assert.equal(motionResult?.providerId,'seedance');
+assert.equal(motionResult?.asset.providerTaskId,'seedance-motion-real-controlled');
+assert.equal(await createSocialDigitalPresenterAdapter({...motionPorts,resolvePresenter:async()=>({...assetIdentity,presenterAssetId:'wrong-person'})}).execute({tenantId:'tenant-a',taskId:'task-a',outputDirectory:root,shot:motionShot,baselineScene:baseline.scenes[0]!,availableAssets:[]}),null);
 const repairInput = { tenantId: 'tenant-a', taskId: 'task-a', outputDirectory: root,
   operationId: `scene_rework_${'b'.repeat(24)}`, plan, baseline, availableAssets: [],
   adapters: [createSocialDigitalPresenterAdapter(ports)] };
@@ -110,6 +123,44 @@ const complexContext = {
   tenantId: 'tenant-a', taskId: 'task-a', outputDirectory: root,
   shot: complexShot, baselineScene: baseline.scenes[0]!, availableAssets: [],
 };
+
+const dynamicProductShot = {
+  ...complexShot,
+  digitalHumanPlan: { ...complexShot.digitalHumanPlan, method: 'reenact', silentMotion: true },
+  productSceneReplication: { productIdentity: { groups: [{
+    productRef: 'product:product-a', referenceImageIds: ['enterprise-product-front', 'enterprise-product-back'],
+  }] } },
+} as any;
+let capturedDynamicProductControl: any = null;
+const productMotionAdapter = createSocialDigitalPresenterAdapter({
+  ...motionPorts,
+  capabilities: { methods: ['reenact'], controls: ['reference_motion', 'guided_action', 'product_interaction',
+    'environment_control', 'camera_control', 'timing_control'] },
+  async execute(input) {
+    capturedDynamicProductControl = input.visualControl;
+    return { status: 'completed', providerTaskId: 'seedance-product-contact', localPath: output,
+      contentHash: 'controlled-product-contact-hash', duration: 3 };
+  },
+});
+const dynamicProductContext = { ...complexContext, shot: dynamicProductShot,
+  baselineScene: { ...baseline.scenes[0]!, narration: '', voiceover: '' } };
+await assert.rejects(() => productMotionAdapter.execute(dynamicProductContext),
+  /dynamic_presenter_enterprise_product_asset_lock_required/);
+await assert.rejects(() => productMotionAdapter.execute({ ...dynamicProductContext, shot: {
+  ...dynamicProductShot, enterpriseProductAssetLock: { productId: 'another-product',
+    enterpriseFactRef: 'enterprise-fact:another:1', referenceImageIds: ['enterprise-product-front'] },
+} }), /dynamic_presenter_enterprise_product_asset_lock_mismatch/);
+const lockedDynamicProduct = await productMotionAdapter.execute({ ...dynamicProductContext, shot: {
+  ...dynamicProductShot, enterpriseProductAssetLock: { productId: 'product-a',
+    enterpriseFactRef: 'enterprise-fact:product-a:7',
+    referenceImageIds: ['enterprise-product-front', 'enterprise-product-back'] },
+  approvedFirstFrame:{...dynamicProductShot.approvedFirstFrame,assetProvenance:createPresenterFirstFrameAssetProvenance({presenter:{assetId:'presenter-1',assetVersion:3,referenceAssetIds:['person-front'],referenceSha256s:['1'.repeat(64)]},products:[{productId:'product-a',enterpriseFactRef:'enterprise-fact:product-a:7',enterpriseFactVersion:'7',referenceImageIds:['enterprise-product-front','enterprise-product-back'],referenceImageSha256s:['3'.repeat(64),'4'.repeat(64)]}],background:{referenceSourceId:'benchmark-1',referenceShotId:'shot-1',startSeconds:0,endSeconds:3,referenceFirstFrameRef:'/api/overseas/videos/benchmark-1/shot/1/first-frame',referenceFirstFrameSha256:'2'.repeat(64)}})},
+} });
+assert.equal(lockedDynamicProduct?.providerId, 'seedance');
+assert.equal(capturedDynamicProductControl.product.productId, 'product-a');
+assert.equal(capturedDynamicProductControl.product.enterpriseFactRef, 'enterprise-fact:product-a:7');
+assert.deepEqual(capturedDynamicProductControl.product.referenceAssetIds,
+  ['enterprise-product-front', 'enterprise-product-back']);
 
 let unsupportedExecuted = false;
 const talkingOnly = createSocialDigitalPresenterAdapter({

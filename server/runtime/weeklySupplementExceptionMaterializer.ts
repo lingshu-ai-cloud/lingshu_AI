@@ -1,3 +1,4 @@
+import {weeklyScopeMatches,type WeeklyScanScope} from './weeklyScanScope.js';
 import {ENTERPRISE_FACT_GAP,checkWeeklyEnterpriseFactSupplement} from './weeklyEnterpriseFactSupplement.js';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import type { WeeklyExecutionTask, WeeklyOperatingPackage, VersionedSocialRef } from '../../shared/contracts/socialProgram.js';
@@ -96,12 +97,14 @@ export async function materializeWeeklySupplementException(input: {
 export async function runWeeklySupplementExceptionScan(input: {
     store: DataStore;
     tenantIds?: string[];
+    scope?:WeeklyScanScope;
     now?: Date;
 }) {
     const report = { materialized: 0, resolved: 0, failed: 0 };
     const tasks = await rows(input.store, 'social_weekly_execution_tasks', {});
     for (const row of tasks) {
         const task = parsed<WeeklyExecutionTask>(row.payload);
+        if(!weeklyScopeMatches(input.scope,task))continue;
         if (!task || input.tenantIds && !input.tenantIds.includes(task.tenantId) || task.status !== 'blocked' || !supportedGap(task.lastError?.code ?? ''))
             continue;
         let exception: WeeklySupplementException | null;

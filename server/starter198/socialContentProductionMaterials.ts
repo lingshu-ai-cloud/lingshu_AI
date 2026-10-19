@@ -165,6 +165,11 @@ export function materialTenantId(record: MaterialRecord): string {
 export function automaticSocialMaterialEligible(record: MaterialRecord, tenantId: string): boolean {
   if (!['video', 'image'].includes(socialText(record.type))) return false;
   if (isReferenceOnlyMaterial(record)) return false;
+  // An uploaded product video is only an intake candidate. Legacy editable
+  // defaults and user-editable product tags must not promote it to production.
+  // A separately issued, current review will be checked at the material
+  // admission boundary before this class of source is enabled.
+  if (record.type === 'video' && record.provenance?.footageCandidate) return false;
   return socialText(record.scope) === 'shared' || materialTenantId(record) === tenantId;
 }
 

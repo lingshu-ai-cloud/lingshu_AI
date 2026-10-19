@@ -8,10 +8,12 @@ import {
   readCurrentContentExecutionCheckpoint,
   recordCurrentContentExecutionCheckpoint,
   recordCurrentContentProviderReceipt,
+  assertCurrentContentExecutionActive,
   runWithContentExecutionContext,
 } from './context.js';
 import {
   admitContentExecutionJob,
+  contentExecutionDefaults,
   bindPristineContentExecutionCheckpoint,
   bindPristineContentExecutionCheckpoints,
   refreshUnspentContentExecutionCheckpoint,
@@ -25,6 +27,7 @@ import {
 import { classifyContentExecutionFailure } from './retryPolicy.js';
 import { generateSeedanceConceptVideo } from '../lib/generativeVideoGateway.js';
 import { buildContentExecutionRuntime } from '../digitalEmployees/contentExecutionRuntime.js';
+import { socialRequestHash } from '../starter198/socialContentValidation.js';
 
 class MemoryStore implements DataStore {
   rows = new Map<string, Map<string, Record<string, unknown> & { id: string }>>();
@@ -102,6 +105,64 @@ const env = {
   CONTENT_RECONCILIATION_MAX_ATTEMPTS: '12',
 } as NodeJS.ProcessEnv;
 
+test('production defaults share three slots while preserving account throttling and explicit overrides', () => {
+  const defaults = contentExecutionDefaults({});
+  assert.equal(defaults.tenantMaxRunning, 3);
+  assert.equal(defaults.taskTypeMaxRunning, 3);
+  assert.equal(defaults.workerConcurrency, 3);
+  assert.equal(defaults.accountMaxRunning, 1);
+  const overridden = contentExecutionDefaults({
+    CONTENT_MAX_RUNNING_PER_TENANT: '2', CONTENT_MAX_RUNNING_PER_ACCOUNT: '1',
+    CONTENT_MAX_RUNNING_PER_TASK_TYPE: '1', CONTENT_EXECUTION_WORKER_CONCURRENCY: '2',
+  });
+  assert.equal(overridden.tenantMaxRunning, 2);
+  assert.equal(overridden.taskTypeMaxRunning, 1);
+  assert.equal(overridden.workerConcurrency, 2);
+  assert.equal(overridden.accountMaxRunning, 1);
+});
+
+test('shared default pool claims three contents, not three per Agent or worker', async () => {
+  const store = new MemoryStore();
+  for (let index = 0; index < 5; index++) await admitContentExecutionJob({
+    dataStore: store, tenantId: 'shared-production', userId: 'owner', taskId: `content-${index}`,
+    runId: `run-${index}`, accountId: `account-${index}`, taskType: index % 2 ? 'social_content_weekly' : 'social_content_workbench',
+  });
+  const started: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const execute = async (job: { taskId: string }) => { started.push(job.taskId); await gate; };
+  const first = new DurableContentExecutionWorker({ dataStore: store, execute, env: {} });
+  const second = new DurableContentExecutionWorker({ dataStore: store, execute, env: {} });
+  try {
+    await first.drain();
+    await second.drain();
+    assert.equal(started.length, 3);
+    const rows = await store.list<Record<string, unknown>>(CONTENT_EXECUTION_JOB_COLLECTION);
+    assert.equal(rows.items.filter(row => row.status === 'running').length, 3);
+    assert.equal(rows.items.filter(row => row.status === 'queued').length, 2);
+  } finally { first.stop(); second.stop(); release(); }
+});
+
+test('three production slots do not raise a shared account limit or persisted customer limit', async () => {
+  for (const persistedLimit of [false, true]) {
+    const store = new MemoryStore();
+    if (persistedLimit) await setContentExecutionLimit({ dataStore: store, tenantId: 'limited',
+      scope: 'tenant', scopeKey: '*', maxRunning: 1, updatedBy: 'existing-admin' });
+    for (let index = 0; index < 3; index++) await admitContentExecutionJob({
+      dataStore: store, tenantId: 'limited', userId: 'owner', taskId: `limited-${index}`,
+      runId: `run-${index}`, accountId: persistedLimit ? `account-${index}` : 'shared-account',
+      taskType: 'social_content_weekly',
+    });
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const worker = new DurableContentExecutionWorker({ dataStore: store, env: {},
+      execute: async job => { started.push(job.taskId); await gate; } });
+    try { await worker.drain(); assert.equal(started.length, 1); }
+    finally { worker.stop(); release(); }
+  }
+});
+
 test('frozen 37-shot executor checkpoints fit the durable map envelope', () => {
   const accepted = parseContentExecutionCheckpoints({
     'social.executor': {
@@ -127,9 +188,71 @@ test('retry policy separates balance, rejection, network, system and provider re
   assert.equal(network.failureClass, 'network_timeout');
   assert.equal(network.disposition, 'retry');
   assert.equal(classifyContentExecutionFailure(new Error('unexpected local crash'), { attempt: 1, env }).failureClass, 'system_fault');
+  for (const reason of ['product_footage_shot_review_required', 'product_footage_bytes_changed',
+    'product_footage_material_unreadable']) {
+    const decision = classifyContentExecutionFailure(new Error(reason), { attempt: 1, env });
+    assert.equal(decision.failureClass, 'input_required');
+    assert.equal(decision.disposition, 'block');
+    assert.equal(decision.maxAttempts, 1);
+  }
   assert.equal(classifyContentExecutionFailure(new Error('socket closed'), {
     attempt: 1, hasUnsettledProviderReceipt: true, env,
   }).failureClass, 'provider_reconciliation');
+});
+
+test('missing signed product-footage window blocks the original durable run without blind retries or plan edits', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-footage',
+    userId: 'owner', taskId: 'original-content', runId: 'original-run', accountId: 'account',
+    taskType: 'social_content_weekly' });
+  const frozenPlan = { selectedMaterialSegment: { sourceRef: 'actual-product-video',
+    segmentId: 'frozen-shot', startSeconds: 1, endSeconds: 3,
+    footageEvidence: null } };
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, { checkpoints: {
+    'social.executor': { version: '1', inputHash: 'a'.repeat(64),
+      payload: { frozenPlan }, updatedAt: new Date().toISOString() },
+  } });
+  let attempts = 0;
+  const worker = new DurableContentExecutionWorker({ dataStore: store, env,
+    async execute() { attempts++; throw Error('product_footage_shot_review_required'); } });
+  await worker.drain();
+  for (let wait = 0; wait < 30 && worker.isLocallyActive('tenant-footage', 'original-content'); wait++)
+    await new Promise<void>(resolve => setImmediate(resolve));
+  await worker.drain();
+  worker.stop();
+  const stored = await readContentExecutionJob(store, 'tenant-footage', 'original-content', 'original-run');
+  assert.equal(stored?.id, job.id);
+  assert.equal(stored?.status, 'blocked');
+  assert.equal(stored?.retryClass, 'input_required');
+  assert.equal(stored?.attempt, 1);
+  assert.equal(attempts, 1);
+  assert.deepEqual(stored?.checkpoints['social.executor']?.payload, { frozenPlan });
+  assert.equal((await store.list(CONTENT_EXECUTION_JOB_COLLECTION)).totalItems, 1);
+  await assert.rejects(controlContentExecutionJob({ dataStore: store, tenantId: job.tenantId,
+    jobId: job.id, action: 'retry' }), /content_execution_frozen_footage_revision_required/);
+  const after = await readContentExecutionJob(store, job.tenantId, job.taskId, job.runId);
+  assert.equal(after?.status, 'blocked');
+  assert.equal(after?.attempt, 1);
+  assert.deepEqual(after?.checkpoints['social.executor']?.payload, { frozenPlan });
+});
+
+test('frozen footage review failure with an already bound finding retains explicit retry', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-footage-bound',
+    userId: 'owner', taskId: 'content', runId: 'run', taskType: 'social_content_weekly',
+    initialCheckpoints: { 'social.executor': { version: '1', inputHash: 'a'.repeat(64),
+      updatedAt: new Date().toISOString(), payload: { approvedContext: { assetSupplyPlan: { shots: [{
+        selectedMaterialSegment: { sourceRef: 'material', footageEvidence: {
+          approvalId: 'approved', visualFindingId: 'finding', contentSha256: 'b'.repeat(64),
+        } },
+      }] } } } } },
+  });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, { status: 'blocked',
+    last_error: 'product_footage_shot_review_required', retry_class: 'input_required' });
+  const retried = await controlContentExecutionJob({ dataStore: store,
+    tenantId: job.tenantId, jobId: job.id, action: 'retry' });
+  assert.equal(retried.status, 'queued');
+  assert.equal(retried.runId, job.runId);
 });
 
 test('durable admission is idempotent and provider receipts survive execution context loss', async () => {
@@ -445,6 +568,61 @@ test('customer runtime projection explains capacity, queue position and retry wi
   assert.equal(JSON.stringify(runtime).includes('private-worker'), false);
 });
 
+test('active child boundary rejects a completed root group fence but preserves accepted unknown provider receipts', async () => {
+ const store=new MemoryStore();
+ await store.create('starter_social_content_tasks',{id:'root',tenant_id:'tenant-a',task_id:'original',status:'completed',content_order:{contentId:'original',budgetTaskId:'original',cancellation:{operationId:'cancel'}}});
+ await store.create('starter_social_content_tasks',{id:'child',tenant_id:'tenant-a',task_id:'child',status:'running',content_order:{contentId:'original',budgetTaskId:'original'}});
+ await store.create('workflow_runs',{id:'run',tenant_id:'tenant-a',status:'running'});
+ const job=await admitContentExecutionJob({dataStore:store,tenantId:'tenant-a',userId:'owner',taskId:'child',runId:'run',taskType:'social_content_weekly'});
+ await runWithContentExecutionContext({dataStore:store,jobId:job.id,action:async()=>{
+   await assert.rejects(assertCurrentContentExecutionActive(),/content_execution_stopped/);
+   await assert.rejects(recordCurrentContentProviderReceipt({provider:'seedance',requestId:'new',state:'submitting'}),/content_execution_stopped/);
+   await recordCurrentContentProviderReceipt({provider:'seedance',requestId:'old',state:'unknown'});
+ }});
+ const saved=await store.getById<any>(CONTENT_EXECUTION_JOB_COLLECTION,job.id);
+ assert.equal(saved.provider_receipts[0].requestId,'old');assert.equal(saved.provider_receipts[0].state,'unknown');
+});
+test('completed original group cancellation fences queued and unknown revision jobs without deleting evidence', async () => {
+  const store = new MemoryStore();
+  await store.create('starter_social_content_tasks', { id: 'root', tenant_id: 'tenant-a', task_id: 'original', status: 'completed',
+    content_order: { contentId: 'original', budgetTaskId: 'original', cancellation: { operationId: 'cancel-group' } } });
+  await store.create('starter_social_content_tasks', { id: 'child', tenant_id: 'tenant-a', task_id: 'revision', status: 'queued',
+    content_order: { contentId: 'original', budgetTaskId: 'original' } });
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', userId: 'owner', taskId: 'revision', runId: 'run', taskType: 'social_content_weekly' });
+  const receipts = [{ operationId: 'original-paid-request', state: 'unknown', requestId: 'provider-request' }];
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, { status: 'reconciling', provider_receipts: receipts });
+  let executions = 0;
+  const worker = new DurableContentExecutionWorker({ dataStore: store, env: {}, execute: async () => { executions += 1; } });
+  try {
+    await worker.drain();
+    assert.equal(executions, 0);
+    const saved = await store.getById<any>(CONTENT_EXECUTION_JOB_COLLECTION, job.id);
+    assert.deepEqual(saved.provider_receipts, receipts);
+    assert.equal(saved.attempt, 0);
+    await assert.rejects(controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'retry' }), /order_cancelled_or_replaced/);
+    assert.equal((await store.getById<any>('starter_social_content_tasks', 'root')).status, 'completed');
+  } finally { worker.stop(); }
+});
+
+test('group fence suppresses a late worker success callback and preserves provider history', async () => {
+  const store = new MemoryStore();
+  const root = { id: 'root', tenant_id: 'tenant-a', task_id: 'original', status: 'completed', content_order: { contentId: 'original', budgetTaskId: 'original' } };
+  await store.create('starter_social_content_tasks', root);
+  await store.create('starter_social_content_tasks', { id: 'child', tenant_id: 'tenant-a', task_id: 'revision', status: 'queued', content_order: { contentId: 'original', budgetTaskId: 'original' } });
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', userId: 'owner', taskId: 'revision', runId: 'run', taskType: 'social_content_weekly' });
+  let callbacks = 0, executed = false;
+  const worker = new DurableContentExecutionWorker({ dataStore: store, env: {}, execute: async () => {
+    executed = true;
+    await store.update('starter_social_content_tasks', 'root', { content_order: { ...root.content_order, cancellation: { operationId: 'cancel-group' } } });
+  }, onSucceeded: async () => { callbacks += 1; } });
+  try {
+    await worker.drain();
+    for (let i = 0; i < 30; i += 1) { await new Promise(resolve => setImmediate(resolve)); if (!(await readContentExecutionJob(store, 'tenant-a', 'revision', 'run'))?.workerId) break; }
+    assert.equal(executed, true); assert.equal(callbacks, 0);
+    assert.notEqual((await readContentExecutionJob(store, 'tenant-a', 'revision', 'run'))?.status, 'succeeded');
+  } finally { worker.stop(); }
+});
+
 test('pause, cancel, resume and manual retry preserve the same durable job identity', async () => {
   const store = new MemoryStore();
   const job = await admitContentExecutionJob({
@@ -723,4 +901,36 @@ test('trusted job scope excludes unrelated queued jobs and abandoned recovery, a
   await empty.drain(); empty.stop();
   assert.equal((await store.getById<Record<string,unknown>>(CONTENT_EXECUTION_JOB_COLLECTION,abandoned.id))?.status,'running');
   assert.throws(()=>new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[' '],async execute(){}}),/invalid_content_execution_allowed_job_ids/);
+});
+
+test('the existing worker claims a revision only through the complete production admission checkpoint', async () => {
+  const store = new MemoryStore();
+  const marker = { sourceRunId: 'source-run', revisedPlanHash: '1'.repeat(64) };
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-r', userId: 'user-r',
+    taskId: 'revision-task', runId: 'revision-run', accountId: 'account-r', taskType: 'social_content_weekly' });
+  await store.create('starter_social_content_tasks', { id: 'revision-task-row', tenant_id: 'tenant-r',
+    task_id: 'revision-task', brief: { _productFootageRevision: marker } });
+  let executions = 0;
+  const worker = new DurableContentExecutionWorker({ dataStore: store, env, allowedJobIds: [job.id],
+    async execute() { executions++; } });
+  await worker.drain();
+  assert.equal(executions, 0);
+  const body = { schemaVersion: 'social-product-footage-revision-worker-admission.v1',
+    tenantId: job.tenantId, taskId: job.taskId, runId: job.runId,
+    guardHash: '2'.repeat(64), paidPlanFreezeHash: '3'.repeat(64), canonicalPlanHash: '4'.repeat(64),
+    planHash: marker.revisedPlanHash, approvalBindings: [{ groupId: 'presenter-1',
+      approvalRecordHash: '5'.repeat(64), decisionRecordHash: '6'.repeat(64),
+      assetProvenanceHash: '7'.repeat(64) }], workerLane: 'social_content_production',
+    admittedAt: '2026-10-19T00:00:00.000Z' };
+  const recordHash = socialRequestHash(body);
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, { checkpoints: {
+    'social.footage_revision_worker_admission': { version: '1', inputHash: recordHash,
+      payload: { ...body, recordHash }, updatedAt: body.admittedAt },
+  } });
+  await worker.drain();
+  for (let attempt = 0; attempt < 30 && worker.isLocallyActive(job.tenantId, job.taskId); attempt++)
+    await new Promise<void>(resolve => setImmediate(resolve));
+  worker.stop();
+  assert.equal(executions, 1);
+  assert.equal((await readContentExecutionJob(store, job.tenantId, job.taskId, job.runId))?.status, 'succeeded');
 });

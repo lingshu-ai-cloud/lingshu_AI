@@ -1,3 +1,4 @@
+import type { SocialProductFootageEvidenceBinding } from './socialContentReplication.js';
 import {
   SOCIAL_CONTENT_TASK_STATUSES,
   SOCIAL_WORK_PACKAGE_KINDS,
@@ -398,6 +399,7 @@ export interface SocialExecutionCandidate {
     /** First-class, revision-bound identity for caching and deterministic reuse. */
     candidateId?: string;
     segmentId: string;
+    footageEvidence?: SocialProductFootageEvidenceBinding;
     sourceRevision?: string;
     startSeconds: number;
     endSeconds: number;
@@ -538,6 +540,9 @@ export interface SocialExecutionPlanSceneReview {
 }
 
 export interface SocialExecutionPlanReview {
+  /** V2 candidate review is not paid authorization; real provider quotes,
+   * prior spend and every required stage remain a separate hard preflight. */
+  budgetPreflight?: {state:'required'; advisoryEstimatedCostCny:number; maximumCny:number|null; advisoryExceeded:boolean};
   reviewId: string;
   version: string;
   executionPlanId: string;
@@ -569,6 +574,19 @@ export interface SocialProductionResult {
     sourceStrategy: SocialShotSourceStrategy;
     feasibility: SocialProductionFeasibility;
     provenanceCandidateIds: string[];
+    /** Exact media selected by the existing supply execution for this scene.
+     * This is the render input for the shot, not a synthetic preview and not
+     * the final whole-film artifact. Historic results may omit it. */
+    mediaArtifact?: {
+      assetId: string;
+      mediaType: 'video' | 'image';
+      resourceRef: string;
+      contentHash: string;
+      durationSeconds: number;
+      providerId: string;
+      supplyPlanVersion: string;
+      role: 'scene_render_input';
+    };
   }>;
   technicalReview: { approved: boolean; checkedScenes: number; failures: string[] };
   creativeReview: { approved: boolean; failedCriteria: string[]; reviewedBy: 'director_agent' };

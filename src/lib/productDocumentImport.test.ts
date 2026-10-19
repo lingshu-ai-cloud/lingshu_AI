@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { docxTablesFromXml, normalizeLocalOcrProductText, parseProductDocument, productsFromLabeledText } from './productDocumentImport.js';
+import { docxTablesFromXml, matchPdfPageImages, normalizeLocalOcrProductText, parseProductDocument, productsFromLabeledText, productsFromNumberedCatalogText } from './productDocumentImport.js';
 
 const enc = new TextEncoder();
 const concat = (...parts: Uint8Array[]) => {
@@ -34,6 +34,23 @@ test('从 PDF 风格标签文本提取结构化产品字段', () => {
   assert.deepEqual(productsFromLabeledText('第1页 产品名称：精华液 SKU：S-2 品牌：Ling 价格：128 卖点：提亮')[0], {
     name: '精华液', sku: 'S-2', brand: 'Ling', color: undefined, size: undefined, retailPrice: '128', moq: undefined, material: undefined, imageUrl: undefined, highlights: '提亮',
   });
+});
+
+test('编号报价目录只提取可读的中文商品名，不把翻译或整页图片冒充产品', () => {
+  const source = '第2页\n#1 GUIANFA\nGUIANFA云朵泡沫卸妆蜜\nGUIANFA cloud foam cleansing honey\n净含量 100ml\n建议零售价\n¥148.00\n特色亮点\n第3页\n#2 GUIANFA\n紫苏控油去黑头泥膜2.0\n建议零售价 ¥149.00\n第4页\n#3 GUIANFA\nGUIANFA 실크 단백질\nGUIANFA silk protein dry film\n净含量 23g\n建议零售价 ¥779.00\n特色亮点\n• 丝蛋白黑科技干膜，紧致多肽';
+  assert.deepEqual(productsFromNumberedCatalogText(source), [
+    { name: '云朵泡沫卸妆蜜', brand: 'GUIANFA', retailPrice: '148.00', needsFieldReview: true },
+    { name: '紫苏控油去黑头泥膜2.0', brand: 'GUIANFA', retailPrice: '149.00', needsFieldReview: true },
+  ]);
+  assert.deepEqual(productsFromNumberedCatalogText('#1 GUIANFA\n面霜\n建议零售价 ¥99'), [], 'single incidental numbered heading is not a catalog');
+});
+
+test('PDF 双商品页只在标题与照片一一对应时绑定；无法识别的标题不挤占后续商品', () => {
+  const products = [{ name: '水油敷双仓面膜' }, { name: '御龄紧致青春面霜' }];
+  assert.deepEqual(matchPdfPageImages([{ number: 15, name: '水油敷双仓面膜' }, { number: 16, name: '御龄紧致青春面霜' }], 2, products), [0, 1]);
+  assert.deepEqual(matchPdfPageImages([{ number: 14 }, { number: 15, name: '水油敷双仓面膜' }], 2, products), [null, 0]);
+  assert.deepEqual(matchPdfPageImages([{ number: 15, name: '水油敷双仓面膜' }], 2, products), [null, null]);
+  assert.deepEqual(matchPdfPageImages([{ number: 15, name: '水油敷双仓面膜' }, { number: 16, name: '水油敷双仓面膜' }], 2, products), [0, null]);
 });
 
 test('本地 OCR 英文字段可以进入同一产品确认结构', () => {

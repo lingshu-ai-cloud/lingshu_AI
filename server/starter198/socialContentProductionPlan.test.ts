@@ -141,13 +141,13 @@ const routedDuplicateVisuals: SocialProductionAsset[] = baseline.scenes.map((sce
 }));
 const routedDuplicatePlan = buildSocialProductionPlan({
   baseline, assets: routedDuplicateVisuals,
-  routedSceneAssets: baseline.scenes.map((scene, index) => ({ sceneId: scene.sceneId, assetId: `scene-owned-${index}` })),
+  routedSceneAssets: baseline.scenes.map((scene, index) => ({ sceneId: scene.sceneId, assetId: `scene-owned-${index}`,durationSeconds:2.8 })),
 });
 assert.equal(routedDuplicatePlan.ok, true, routedDuplicatePlan.message);
 assert.equal(routedDuplicatePlan.scenes.length, baseline.scenes.length,
   '逐镜路由必须保留内容哈希相同但场景身份不同的合法视频');
-assert.equal(routedDuplicatePlan.maxDuration, 5.6,
-  '没有参考视频时间码时，逐镜生成结果必须使用实际媒体时长建立非零时间线');
+assert.equal(routedDuplicatePlan.maxDuration,5.6,'普通脚本使用已审核镜头时长，不能生成零秒成片');
+assert.equal(buildSocialProductionPlan({baseline,assets:routedDuplicateVisuals,routedSceneAssets:baseline.scenes.map((scene,index)=>({sceneId:scene.sceneId,assetId:`scene-owned-${index}`}))}).ok,false,'缺少参考时间线和审核镜头时长必须阻断');
 assert.equal(routedDuplicatePlan.scenes.every(scene => scene.clip.sourceDuration === 2.8), true);
 
 console.log('social content production plan matching tests passed');

@@ -10,6 +10,17 @@ export function weeklyProductionAdmissionMessage(code: string, detail: SocialCon
     const review = detail?.agentWorkflow?.executionPlanReview;
     const issues = review?.requiredRevision.length ? review.requiredRevision : review?.failedCriteria ?? [];
     const observed = [...new Set(issues.filter(issue => typeof issue === 'string' && issue.trim()).map(issue => issue.trim()))];
+    if (review?.reasonCodes.includes('capability_mismatch')) {
+      const missingProductVideoShots = detail?.assetSupplyPlan?.shots.filter(shot =>
+        shot.materialRouting?.materialType === 'product'
+        && shot.materialRouting.policy === 'local_only'
+        && shot.materialRouting.localMatch.state !== 'matched').map(shot => shot.shotId) ?? [];
+      const sceneGaps = review.sceneResults.filter(scene => scene.reasonCodes.includes('capability_mismatch'))
+        .map(scene => `${scene.sceneId}：${scene.failedCriteria.join('、')}`).filter(Boolean);
+      return `机器执行能力不足，未通过执行方案核验${missingProductVideoShots.length
+        ? `；产品镜头 ${missingProductVideoShots.join('、')} 缺少已核验的同品本地视频，产品图片不能代替视频`
+        : ''}${sceneGaps.length ? `；${sceneGaps.join('；')}` : observed.length ? `；${observed.join('；')}` : ''}。已保留原任务，未启动生成。`;
+    }
     return `编导执行方案尚未通过核验，请进入原内容任务处理${observed.length ? `：${observed.join('；')}` : '参考分镜、镜头证据与可执行方案'}。`;
   }
   const messages: Record<string, string> = {

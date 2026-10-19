@@ -23,7 +23,7 @@ export async function produceFirstFrame(input: FirstFrameRequest, generator: Fir
     const output: ProducedFirstFrame = { status: 'completed', operationId, objectKey, contentSha256, provider: generated.provider, model: generated.model, providerRequestId: generated.providerRequestId, estimatedCostCny: generated.estimatedCostCny };
     await budget.mark(input.tenantId, input.videoId, operationId, 'completed', output); return output;
   } catch (error) {
-    if (error instanceof FirstFrameProviderError && error.status === 'rejected') await budget.releaseRejected(input.tenantId, input.videoId, operationId);
+    if (error instanceof FirstFrameProviderError && error.status === 'rejected' && error.submissionBoundary === 'before_submit') await budget.releaseRejected(input.tenantId, input.videoId, operationId);
     else await budget.mark(input.tenantId, input.videoId, operationId, 'uncertain', {
       error: error instanceof Error ? error.message : 'unknown',
       ...(error instanceof FirstFrameProviderError && error.providerRequestId ? { providerRequestId: error.providerRequestId } : {}),

@@ -1,7 +1,7 @@
 import type {DataStore,Record_} from '../storage/datastore.js';
 import type {WeeklyProductionRepairCase} from '../../shared/contracts/weeklyProductionRepairCase.js';
 import type {WeeklyCreativeRepairCapacityPreview,WeeklyCreativeRepairChildExecution} from '../../shared/contracts/weeklyCreativeRepairExecution.js';
-import {socialJson,socialObject,socialRequestHash} from '../starter198/socialContentValidation.js';
+import {socialJson,socialObject,socialRequestHash,SocialContentWorkflowError} from '../starter198/socialContentValidation.js';
 import {createWeeklyProductionRepairCaseService,WEEKLY_PRODUCTION_REPAIR_CASES} from './weeklyProductionRepairCases.js';
 import {createWeeklyCreativeRepairConfigurationService,type CreativeRepairConfiguration} from './weeklyCreativeRepairConfiguration.js';
 import {withWeeklyProductionAdmissionGuard} from './weeklyCancellation.js';
@@ -59,6 +59,7 @@ export function createWeeklyCreativeRepairExecutionService(store:DataStore,port:
     fail('start_outcome_unknown',503);
    } catch(error) {
     if(error instanceof SocialProgramError)throw error;
+    if(error instanceof SocialContentWorkflowError&&error.code==='weekly_production_cta_evidence_required')throw error;
     const now=clock().toISOString();
     await writeMapping(mapping,seal({...mapping,state:'reconciling',lastReconciledAt:now,updatedAt:now}));
     fail('start_outcome_unknown',503);

@@ -88,6 +88,10 @@ assert.equal(paginateAlignedCues([{ start: 0, end: 1, text: 'mock-product' }], 1
 const longWord = 'a'.repeat(190);
 assert.equal(paginateAlignedCues([{ start: 0, end: 6, text: longWord }], 6)!.map(cue => cue.text).join(''), longWord);
 assert.equal(contentProjectRetryable({ retryPolicy: 'input_required', retryAfter: '2020-01-01' }), false, 'waiting does not repair a deterministic failed render');
+assert.equal(contentProjectRetryable({ retryPolicy: 'input_required', blocker: 'DashScope 语音服务账户欠费，请充值后继续' }), true,
+  'legacy provider-account blockers must automatically discover a completed recharge');
+assert.equal(contentProjectRetryable({ retryPolicy: 'input_required', blocker: 'MiniMax API Key 鉴权失败',
+  autoRecheckExternal: true, retryAfter: '2999-01-01' }), false, 'provider-account rechecks retain a bounded backoff');
 assert.equal(contentProjectRetryable({ retryAfter: '2020-01-01' }), true, 'transient failures keep their retry path');
 const resumed = resumeContentProjectForTaskControl({ project: { spec: { workflowRunId: 'run', workflowTaskId: 'task', automation: { managedBy: 'digital_employee', stage: 'blocked', resumeStage: 'material_match', retryPolicy: 'input_required' } } }, runId: 'run', affectedTaskIds: new Set(['task']), now: '2026-09-06T00:00:00Z' })!;
 assert.equal((resumed.automation as any).stage, 'material_match');

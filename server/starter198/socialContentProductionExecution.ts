@@ -1,10 +1,11 @@
 import {assertMeasuredCaptionTiming} from './socialContentCaptionTiming.js';
-import { assertBoundPresenterAudio, readBoundPresenterVoice } from './socialContentBoundPresenterVoice.js';
+import {applyPresenterFirstBudgetRouting} from './socialContentBudgetRouting.js';
+import { assertBoundPresenterAudio, readBoundPresenterVoice, readWeeklyProductionVoice, weeklyProductionPresenterIds } from './socialContentBoundPresenterVoice.js';
 import { prepareSocialContentProductionBudget, type ProductionBudgetReadPorts } from './socialContentProductionBudgetPreflight.js';
 import type {PaidStageRequirement} from './socialContentPaidOperationPlan.js';
 import type {SocialPaidOperationIntent} from '../lib/socialContentTaskBudgetAuthority.js';
 import {createSocialContentPaidOperationPermit} from '../lib/socialContentPaidOperationPermit.js';
-import { socialProductionSupplyAdapters } from './socialContentRecoveryAdapters.js';
+import { admitExternalSupplyAdapters, socialProductionSupplyAdapters } from './socialContentRecoveryAdapters.js';
 import {
   assertCurrentContentExecutionActive,
   currentContentProviderReceipt,
@@ -23,14 +24,15 @@ import {buildSocialProductionHandoff} from './socialContentProductionHandoff.js'
 import { createProductionBudgetRuntimeReaders } from './socialContentProductionBudgetRuntimeReaders.js';
 import { createSocialContentMaterialPaidContext, type SocialMaterialPaidRuntimePorts } from './socialContentMaterialPaidContext.js';
 import { socialContentMaterialAnalysisInputs } from './socialContentMaterialAnalysisInputs.js';
-import {ensureStrictPresenterFirstFrames} from './socialContentPresenterFirstFrameRuntime.js';
+import {currentPresenterFirstFrameAssetProvenanceHash,ensureStrictPresenterFirstFrames} from './socialContentPresenterFirstFrameRuntime.js';
 import { createProductionBudgetRouteReaders } from './socialContentProductionBudgetRoutes.js';
 import { createSocialContentPaidRuntimePorts } from './socialContentPaidRuntimePorts.js';
-import { prepareSocialContentWholeVoice, type PreparedWholeVoice } from './socialContentPreparedWholeVoice.js';
+import { prepareSocialContentWholeVoice,readPreparedWholeVoiceScene, type PreparedWholeVoice } from './socialContentPreparedWholeVoice.js';
 import { socialDirectorSpokenNarration } from './socialContentDirectorHandoff.js';
 import { createNativeStudioVoicePaidContext } from '../lib/studioNativeVoicePaidContext.js';
 import type { ProductPaidContext } from './socialContentProductPaidContext.js';
 import {assertStoredWeeklyProductionCoverage} from '../runtime/weeklyProductionCoverageAdmission.js';
+import {assertWeeklyCreativeRepairCtaAdmission} from '../runtime/weeklyCreativeRepairCtaAdmission.js';
 import {readWeeklyTemplateStructure} from '../socialPrograms/weeklyTemplateStructure.js';
 import {contentTemplateOutputMatches} from '../../shared/socialContentTemplateStructure.js';
 import { createHash } from 'node:crypto';
@@ -77,8 +79,10 @@ import {
 } from './socialContentProductionPlan.js';
 import { summarizeSelectedProviderCosts } from './socialContentProductionCost.js';
 import { evaluateSocialReplicationResult } from './replicationEvaluationAdapter.js';
+import { socialReplicationHardQualityFailures } from './socialContentGraphQualityGate.js';
 import {
   executeSocialAssetSupplyPlan,
+  socialExecutedSceneMediaArtifact,
   type SocialAssetSupplyExecution,
   type SocialAssetSupplyProviderAdapter,
 } from './socialContentAssetSupplyExecution.js';
@@ -86,11 +90,15 @@ import { createConfiguredSocialAiVisualAdapter } from './socialContentAiVisualAd
 import { createSocialProductSceneAdapter } from './socialContentProductSceneAdapter.js';
 import { createEnvironmentSeedanceProductScenePorts } from './socialContentSeedanceProductScene.js';
 import { createSocialDigitalPresenterAdapter } from './socialContentDigitalPresenterAdapter.js';
+import { createEnvironmentSocialSeedancePresenterBridge } from './socialContentSeedancePresenterEnvironment.js';
+import { createSeedancePresenterFunding } from './socialContentSeedancePresenterFunding.js';
 import { createEnvironmentSocialHeyGenBridge } from './socialContentHeyGenBridge.js';
 import {createWholeTrackSocialHeyGenBridge} from './socialContentWholeTrackHeyGenBridge.js';
+import {assertSocialReferenceBackgroundAssetCurrent,freezeSocialReferenceBackgroundAsset} from './socialContentReferenceBackgroundLock.js';
 import {freezePresenterMotherSegments} from '../../shared/contracts/presenterMotherSegments.js';
 import {preparePresenterMotherSupply} from './presenterMotherSupplyBridge.js';
-import type {PresenterMotherExecutionResult} from './presenterMotherSegmentExecution.js';
+import {assertPresenterMotherSpeechQaReady,inspectPresenterMotherSpeechQa} from './presenterMotherSpeechQa.js';
+import {assertRestoredPresenterMotherExecution,type PresenterMotherExecutionResult} from './presenterMotherSegmentExecution.js';
 import {automaticallyConfirmPresenterFirstFrameApproval,readConfirmedPresenterFirstFrameApproval,type PresenterFirstFrameApprovalContract} from './socialContentPresenterFirstFrameApproval.js';
 import type {FrozenPresenterMotherSegments} from '../../shared/contracts/presenterMotherSegments.js';
 import {heyGenRuntimeRouteEvidence,readTrustedHeyGenRuntimeBinding} from './socialContentHeyGenRuntimeBinding.js';
@@ -137,16 +145,27 @@ export interface SocialContentAutoProductionRuntime {
   preparePresenterMotherFirstFrames?: (input:{
     scope:{tenantId:string;taskId:string;runId:string;planHash:string};
     grouping:FrozenPresenterMotherSegments;
-    groups:Array<{groupId:string;presenterGroupContractHash:string;presenterAssetId:string;compositions:Array<{referenceShotId:string;referenceFirstFrameUrl:string;background:string;framing:string;camera:string;composition:string}>}>;
+    groups:Array<{groupId:string;presenterGroupContractHash:string;presenterAssetId:string;executionKind?:'seedance_motion';productAssetBinding?:{productId:string;enterpriseFactRef:string;enterpriseFactVersion:string;referenceImageIds:string[]};compositions:Array<{referenceSourceId:string;referenceShotId:string;startSeconds:number;endSeconds:number;referenceFirstFrameUrl:string;background:string;framing:string;camera:string;composition:string}>}>;
     paidStatic:{requirements:PaidStageRequirement[];intents:SocialPaidOperationIntent[];permit:ReturnType<typeof createSocialContentPaidOperationPermit>};
   })=>Promise<PresenterFirstFrameApprovalContract[]>;
-  evaluatePresenterMotherDynamicQa?: (input:{tenantId:string;taskId:string;runId:string;segmentId:string;segmentHash:string;presenterAssetId:string;outputPath:string;outputSha256:string;spokenText:string})=>Promise<{identitySimilarity:number;identityThreshold:number;lipSyncScore?:number|null;lipSyncThreshold?:number|null;lipSyncStatus?:'passed'|'skipped_unconfigured';receiptRef:string;reportHash:string}>;
+  evaluatePresenterMotherDynamicQa?: (input:{tenantId:string;taskId:string;runId:string;segmentId:string;segmentHash:string;presenterAssetId:string;outputPath:string;outputSha256:string;spokenText:string})=>Promise<{identitySimilarity:number;identityThreshold:number;segmentHash?:string;outputVideoSha256?:string;frozenAudioSha256?:string;outputAudioSha256?:string;audioTrackMatchesFrozen?:boolean;audioTrackReceiptRef?:string;audioTrackReportHash?:string;lipSyncScore?:number|null;lipSyncThreshold?:number|null;lipSyncStatus?:'passed'|'skipped_unconfigured';lipSyncModelSha256?:string;lipSyncReceiptRef?:string;receiptRef:string;reportHash:string}>;
 }
 type ProductionTaskDetail = NonNullable<Awaited<ReturnType<typeof readSocialTaskDetail>>>;
-export type SocialGraphApprovedContext = Pick<ProductionTaskDetail, 'version' | 'agentWorkflow' | 'assetSupplyPlan'> & { revisionPlanHash?: string };
+export type SocialGraphApprovedContext = Pick<ProductionTaskDetail, 'version' | 'agentWorkflow' | 'assetSupplyPlan'> & { revisionPlanHash?: string; footageRevisionPlanHash?: string };
 import { executeSocialRenderStage, executeSocialQualityStage, rebindSocialGraphRenderSources, type SocialProductionGraphPhase } from './socialContentProductionStages.js';
+import {freezeSocialRenderFrameContract} from './socialRenderFrameContract.js';
 
 export const SOCIAL_SHOOTING_PLAN_SCHEMA = 'social-content.shooting-plan.v1';
+
+async function readCurrentConfirmedPresenterFirstFrame(store:NonNullable<Starter198Repository['dataStore']>,input:{scope:{tenantId:string;taskId:string;runId:string;planHash:string};groupId:string;presenterGroupContractHash:string;presenterAssetId:string}){
+  const rows=await store.list<any>('social_presenter_first_frame_approvals',{where:{tenant_id:input.scope.tenantId,task_id:input.scope.taskId,run_id:input.scope.runId,plan_hash:input.scope.planHash,group_id:input.groupId},perPage:2});
+  if(rows.totalItems!==1||rows.items.length!==1)return null;
+  const approval=rows.items[0]?.payload as PresenterFirstFrameApprovalContract|undefined;
+  if(!approval||approval.recordHash!==rows.items[0]?.record_hash)return null;
+  const expectedAssetProvenanceHash=await currentPresenterFirstFrameAssetProvenanceHash(store,{tenantId:input.scope.tenantId,approval});
+  if(!expectedAssetProvenanceHash)return null;
+  return readConfirmedPresenterFirstFrameApproval(store,{...input,expectedAssetProvenanceHash});
+}
 
 /** Type-aware routing is authored by the task planner, not by Content-Agent
  * candidates. Graph checkpoints created by older workers can omit these
@@ -155,14 +174,17 @@ export const SOCIAL_SHOOTING_PLAN_SCHEMA = 'social-content.shooting-plan.v1';
 export function bindCanonicalTypeAwareRouting<T extends NonNullable<ProductionTaskDetail['assetSupplyPlan']>>(approved: T, canonical: T): T {
   const canonicalById=new Map(canonical.shots.map(shot=>[shot.shotId,shot]));
   const approvedIds=approved.shots.map(shot=>shot.shotId),canonicalIds=canonical.shots.map(shot=>shot.shotId);
-  if(approvedIds.length!==37||canonicalIds.length!==37||new Set(approvedIds).size!==37
+  if(!canonicalIds.length||approvedIds.length!==canonicalIds.length||new Set(approvedIds).size!==approvedIds.length
+    ||new Set(canonicalIds).size!==canonicalIds.length||canonicalIds.some(id=>!id)
     || socialRequestHash([...approvedIds].sort())!==socialRequestHash([...canonicalIds].sort()))throw Error('type_aware_frozen_scene_set_changed');
   const shots=approved.shots.map(shot=>{
     const authority=canonicalById.get(shot.shotId);
     if(!authority?.materialRouting)throw Error(`type_aware_canonical_routing_missing:${shot.shotId}`);
-    if(authority.materialRouting.materialType==='product'&&!authority.productSceneReplication)throw Error(`type_aware_canonical_product_spec_missing:${shot.shotId}`);
+    const generatesProduct=authority.sourceStrategy==='aigc_product_scene_replication';
+    const eligibleProduct=canonical.materialRoutingPolicyVersion==='type-aware.v2'&&authority.materialRouting.productGenerationDecision?.state==='eligible';
+    if(generatesProduct&&!authority.productSceneReplication)throw Error(`type_aware_canonical_product_spec_missing:${shot.shotId}`);
     const {productSceneReplication:_staleProductSpec,...approvedShot}=structuredClone(shot);
-    const realLocalRoute=authority.materialRouting.policy==='local_only'&&authority.materialRouting.materialType!=='product';
+    const realLocalRoute=authority.materialRouting.policy==='local_only'&&(authority.materialRouting.materialType!=='product'||canonical.materialRoutingPolicyVersion==='type-aware.v2');
     const matchedRefs=realLocalRoute?authority.materialRouting.localMatch.sourceRefs:[];
     const matchedSegment=realLocalRoute&&authority.selectedMaterialSegment&&matchedRefs.includes(authority.selectedMaterialSegment.sourceRef)
       ?structuredClone(authority.selectedMaterialSegment):undefined;
@@ -170,16 +192,19 @@ export function bindCanonicalTypeAwareRouting<T extends NonNullable<ProductionTa
       ...(realLocalRoute?{sourceStrategy:'customer_real_asset' as const,sourceRefs:[...matchedRefs],
         fallbackSourceStrategy:null,selectedMaterialSegment:matchedSegment}:{}),
       materialRouting:structuredClone(authority.materialRouting),
-      ...(authority.materialRouting.materialType==='product'?{productSceneReplication:structuredClone(authority.productSceneReplication!)}:{})};
+      ...(generatesProduct||eligibleProduct?{productSceneReplication:structuredClone(authority.productSceneReplication!)}:{})};
   });
   if(shots.some(shot=>!shot.materialRouting))throw Error('type_aware_frozen_routing_incomplete');
-  if(shots.some(shot=>shot.materialRouting?.materialType==='product'&&!shot.productSceneReplication)
-    ||shots.some(shot=>shot.materialRouting?.materialType!=='product'&&shot.productSceneReplication))throw Error('type_aware_frozen_product_contract_incomplete');
-  return {...structuredClone(approved),materialRoutingPolicyVersion:'type-aware.v1',shots} as T;
+  if(shots.some(shot=>shot.sourceStrategy==='aigc_product_scene_replication'&&!shot.productSceneReplication)
+    ||shots.some(shot=>shot.sourceStrategy!=='aigc_product_scene_replication'&&shot.productSceneReplication&&!(canonical.materialRoutingPolicyVersion==='type-aware.v2'&&shot.materialRouting?.productGenerationDecision?.state==='eligible')))throw Error('type_aware_frozen_product_contract_incomplete');
+  return {...structuredClone(approved),materialRoutingPolicyVersion:canonical.materialRoutingPolicyVersion,shots} as T;
 }
 
-export function assertCompleteTypeAwareExecutionPlan(plan: NonNullable<ProductionTaskDetail['assetSupplyPlan']>) {
-  if(plan.shots.length!==37||new Set(plan.shots.map(shot=>shot.shotId)).size!==37)throw Error('type_aware_execution_scene_set_invalid');
+export function assertCompleteTypeAwareExecutionPlan(plan: NonNullable<ProductionTaskDetail['assetSupplyPlan']>, expectedShotIds?: readonly string[]) {
+  const actualIds=plan.shots.map(shot=>shot.shotId);
+  if(!actualIds.length||actualIds.some(id=>!id)||new Set(actualIds).size!==actualIds.length
+    ||(expectedShotIds&&(expectedShotIds.length!==actualIds.length||new Set(expectedShotIds).size!==expectedShotIds.length
+      ||socialRequestHash([...expectedShotIds].sort())!==socialRequestHash([...actualIds].sort()))))throw Error('type_aware_execution_scene_set_invalid');
   const missingRoute=plan.shots.find(shot=>!shot.materialRouting);
   if(missingRoute)throw Error(`type_aware_execution_routing_missing:${missingRoute.shotId}`);
   const generatedProducts=plan.shots.filter(shot=>shot.sourceStrategy==='aigc_product_scene_replication');
@@ -339,6 +364,7 @@ export function assetSupplyPlanWithExecutionSelections(
             segmentId: segment.segmentId,
             startSeconds: segment.startSeconds,
             endSeconds: segment.endSeconds,
+            ...(segment.footageEvidence ? { footageEvidence: structuredClone(segment.footageEvidence) } : {}),
           } : null,
         } : {}),
       };
@@ -346,129 +372,27 @@ export function assetSupplyPlanWithExecutionSelections(
   };
 }
 
-type BudgetRouteCandidate = NonNullable<SocialContentTaskDetail['agentWorkflow']>['executionPlan']['scenes'][number]['candidates'][number];
-
-function localProductFallbackRank(candidate: BudgetRouteCandidate, requestedProductRef: string, minimumDurationSeconds: number) {
-  const segment=candidate.materialSegments?.[0];
-  if (candidate.kind !== 'asset' || candidate.dataTransfer !== 'local_only' || !candidate.sourceRef || !segment
-    || !segment.segmentId?.trim() || !Number.isFinite(segment.startSeconds) || !Number.isFinite(segment.endSeconds)
-    || segment.startSeconds < 0 || segment.endSeconds <= segment.startSeconds
-    || segment.endSeconds-segment.startSeconds+1e-6<minimumDurationSeconds) return null;
-  const roles = new Set(candidate.materialRoles ?? []);
-  const normalizedProduct = String(candidate.productRef || candidate.productId || '').normalize('NFKC').trim().toLocaleLowerCase();
-  const exactProduct = Boolean(requestedProductRef && normalizedProduct === requestedProductRef);
-  const tier = exactProduct ? 0
-    : roles.has('product') || Boolean(normalizedProduct) ? 2
-      : roles.has('factory') ? 3 : 4;
-  const sourceTier = tier===0 ? 'product_high_fidelity_local' as const : tier===2 ? 'product_local' as const
-    : tier===3 ? 'factory_local' as const : 'other_local' as const;
-  return {candidate,tier,sourceTier,score:candidate.enterpriseOwnershipScore * 4 + candidate.semanticScore * 3
-    + candidate.actionAndShotScore * 2 + candidate.qualityScore + candidate.durationFitScore - candidate.repetitionPenalty};
+/** Bind the exact task-scoped benchmark background only for dynamic presenter
+ * shots. Stable HeyGen and non-presenter shots deliberately retain no lock. */
+export function assetSupplyPlanWithDynamicPresenterBackgroundLocks(input:{
+  plan:SocialAssetSupplyPlan;
+  selections:PresenterExecutionSelection[];
+  referenceReuse:NonNullable<SocialContentTaskBrief['referenceReuse']>|null|undefined;
+  referenceAnalysis:SocialContentTaskDetail['referenceVideoAnalysis'];
+  scenes:NonNullable<SocialContentTaskDetail['agentWorkflow']>['directorBrief']['scenes'];
+}):SocialAssetSupplyPlan{
+  const dynamicIds=new Set(input.selections.filter(item=>item.providerId==='seedance'&&item.executionStatus==='ready').map(item=>item.sceneId));
+  if(!dynamicIds.size)return input.plan;
+  if(!input.referenceReuse||!input.referenceAnalysis)throw Error('reference_background_source_missing');
+  const scenes=new Map(input.scenes.map(scene=>[scene.sceneId,scene]));
+  return{...input.plan,shots:input.plan.shots.map(shot=>{
+    if(!dynamicIds.has(shot.shotId))return shot;
+    const referenceShotId=scenes.get(shot.shotId)?.referenceShotId;
+    if(!referenceShotId)throw Error(`reference_background_shot_missing:${shot.shotId}`);
+    return{...shot,referenceBackgroundAssetLock:freezeSocialReferenceBackgroundAsset({referenceReuse:input.referenceReuse!,referenceAnalysis:input.referenceAnalysis!,referenceShotId})};
+  })};
 }
 
-/** Applies the task-level spending policy before the immutable whole-film
- * reservation is built. Presenter routes keep first claim on the cap. Product
- * scenes then use exact owned product footage, paid product replacement while
- * the remaining allowance permits it, owned product footage, factory footage,
- * and finally any owned local video. No scene or timing entry is removed. */
-export function applyPresenterFirstBudgetDegradation(input: {
-  plan: SocialAssetSupplyPlan;
-  workflow: NonNullable<SocialContentTaskDetail['agentWorkflow']>;
-  maximumCny: number;
-}): SocialAssetSupplyPlan {
-  const maximumCny = Math.max(0, Math.min(10, Number(input.maximumCny) || 0));
-  const scenes = new Map(input.workflow.executionPlan.scenes.map(scene => [scene.sceneId, scene]));
-  const durationByScene=new Map(input.workflow.directorBrief.scenes.map(scene=>[scene.sceneId,
-    Math.max(0.001,scene.duration.endSeconds-scene.duration.startSeconds)]));
-  const calculatedFixedNonProductCost = input.workflow.executionPlan.scenes
-    .filter(scene => input.plan.shots.find(shot=>shot.shotId===scene.sceneId)?.materialRouting?.materialType !== 'product')
-    .reduce((sum, scene) => sum + Math.max(0, Number(scene.estimatedCostCny) || 0), 0);
-  const hasPresenter=input.plan.shots.some(shot=>shot.sourceStrategy==='authorized_digital_presenter');
-  // When a film contains an AI presenter, the user's policy gives the entire
-  // cap first claim to that route (mother video, first frame, voice, QA and
-  // analysis). Product visuals may spend only in presenter-free films; with a
-  // presenter they deterministically use the ranked owned-video fallbacks.
-  const fixedNonProductCost=Math.max(calculatedFixedNonProductCost,hasPresenter?maximumCny:0);
-  let remaining = Math.max(0, maximumCny - fixedNonProductCost);
-  const allLocalCandidates = input.workflow.executionPlan.scenes.flatMap(scene=>scene.candidates);
-  const assetUseCount=new Map<string,number>(),segmentUseCount=new Map<string,number>();
-  const usage=(value:ReturnType<typeof localProductFallbackRank>)=>value?{
-    asset:assetUseCount.get(value.candidate.sourceRef!)??0,
-    segment:segmentUseCount.get(`${value.candidate.sourceRef}:${value.candidate.materialSegments![0]!.segmentId}`)??0}: {asset:0,segment:0};
-  const recordUse=(value:NonNullable<ReturnType<typeof localProductFallbackRank>>)=>{
-    const asset=value.candidate.sourceRef!,segment=value.candidate.materialSegments![0]!.segmentId;
-    assetUseCount.set(asset,(assetUseCount.get(asset)??0)+1);
-    segmentUseCount.set(`${asset}:${segment}`,(segmentUseCount.get(`${asset}:${segment}`)??0)+1);
-  };
-  return {
-    ...structuredClone(input.plan),
-    shots: input.plan.shots.map(original => {
-      const shot = structuredClone(original);
-      const scene = scenes.get(shot.shotId);
-      if (!scene) return shot;
-      if(shot.sourceStrategy==='authorized_digital_presenter')return shot;
-      const requiredDuration=durationByScene.get(shot.shotId)??Math.max(0.001,Number(shot.materialRouting?.generation?.durationSeconds)||3);
-      if(shot.materialRouting&&shot.materialRouting.materialType!=='product'&&shot.materialRouting.localMatch.state==='missing'){
-        const wantedRole=shot.materialRouting.materialType==='factory'?'factory':shot.materialRouting.materialType==='consumer_demo'?'person_usage':null;
-        const candidates=allLocalCandidates.map(candidate=>{
-          const ranked=localProductFallbackRank(candidate,'',requiredDuration);if(!ranked)return null;
-          const roles=new Set(candidate.materialRoles??[]),rolePenalty=wantedRole&&!roles.has(wantedRole)?1:0;
-          return{...ranked,rolePenalty};
-        }).filter((value):value is NonNullable<typeof value>=>Boolean(value))
-          .sort((a,b)=>a.rolePenalty-b.rolePenalty||usage(a).asset-usage(b).asset||usage(a).segment-usage(b).segment
-            ||b.score-a.score||a.candidate.candidateId.localeCompare(b.candidate.candidateId));
-        const selected=candidates[0];
-        if(selected){recordUse(selected);const segment=selected.candidate.materialSegments![0]!;return{...shot,sourceStrategy:'customer_real_asset',fallbackSourceStrategy:null,
-          sourceRefs:[selected.candidate.sourceRef!],selectedMaterialSegment:{sourceRef:selected.candidate.sourceRef!,segmentId:segment.segmentId,startSeconds:segment.startSeconds,endSeconds:segment.endSeconds},
-          materialRouting:{...shot.materialRouting,policy:'local_only',localMatch:{state:'matched',sourceRefs:[selected.candidate.sourceRef!],sourceTier:selected.sourceTier,evidenceRef:`execution-plan:${input.workflow.executionPlan.executionPlanId}:candidate:${selected.candidate.candidateId}`},generation:undefined},
-          productionInstruction:`预算与可执行性降级：采用本地真实视频 ${selected.candidate.label}，保持本镜头原顺序、时长和表达功能。`,feasibility:'functional_equivalent',feasibilityReason:'原路线缺少可执行候选；已从全片本地候选池选择可覆盖时长的真实视频。'};}
-      }
-      if (shot.materialRouting?.materialType !== 'product') return shot;
-      const requestedProductRef = String(shot.productSceneReplication?.productIdentity.groups[0]?.productRef
-        || shot.materialRouting.generation?.productImageRefs[0] || '').normalize('NFKC').trim().toLocaleLowerCase();
-      const sceneLocal = scene.candidates.map(candidate => localProductFallbackRank(candidate, requestedProductRef,requiredDuration))
-        .filter((value): value is NonNullable<typeof value> => Boolean(value))
-        .sort((a,b)=>a.tier-b.tier||usage(a).asset-usage(b).asset||usage(a).segment-usage(b).segment
-          ||b.score-a.score||a.candidate.candidateId.localeCompare(b.candidate.candidateId));
-      const local = sceneLocal.length ? sceneLocal : allLocalCandidates.map(candidate=>localProductFallbackRank(candidate,'',requiredDuration))
-        .filter((value):value is NonNullable<typeof value>=>Boolean(value))
-        .sort((a,b)=>a.tier-b.tier||usage(a).asset-usage(b).asset||usage(a).segment-usage(b).segment
-          ||b.score-a.score||a.candidate.candidateId.localeCompare(b.candidate.candidateId));
-      const exact = sceneLocal.find(value => value.tier === 0);
-      const paid = scene.candidates.find(candidate => candidate.kind === 'capability'
-        && candidate.sourceStrategy === 'aigc_product_scene_replication');
-      const duration=Math.max(0.1,Number(shot.materialRouting.generation?.durationSeconds
-        || shot.productSceneReplication?.cameraLock?.durationSeconds || 3));
-      const formalProductFloor=0.22+0.15*duration+0.05;
-      const paidCost = Math.max(0.67,formalProductFloor,Number(paid?.estimatedCostCny) || Number(scene.estimatedCostCny) || 0);
-      const selected = exact?.candidate ?? (paid && paidCost <= remaining ? paid : local[0]?.candidate);
-      if (!selected) return shot;
-      if (selected.kind === 'capability' && selected.sourceStrategy === 'aigc_product_scene_replication') {
-        remaining = Math.max(0, remaining - paidCost);
-        return shot;
-      }
-      const ranked=local.find(value=>value.candidate.candidateId===selected.candidateId)!;
-      recordUse(ranked);
-      const segment = selected.materialSegments![0]!;
-      const replacement:SocialAssetSupplyPlan['shots'][number]={
-        ...shot,
-        sourceStrategy: 'customer_real_asset',
-        fallbackSourceStrategy: null,
-        sourceRefs: [selected.sourceRef!],
-        selectedMaterialSegment: {sourceRef:selected.sourceRef!,segmentId:segment.segmentId,
-          startSeconds:segment.startSeconds,endSeconds:segment.endSeconds},
-        productSceneReplication: undefined,
-        materialRouting: {...shot.materialRouting,policy:'local_first_product_i2v',
-          localMatch:{state:'matched',sourceRefs:[selected.sourceRef!],sourceTier:ranked.sourceTier,evidenceRef:`execution-plan:${input.workflow.executionPlan.executionPlanId}:candidate:${selected.candidateId}`},
-          generation: undefined},
-        productionInstruction: `预算自动降级：采用本地素材候选 ${selected.label}，保持本镜头原顺序、起止时间和表达功能。`,
-        feasibility: 'functional_equivalent',
-        feasibilityReason: '数字人口播预算已优先保留；本镜头按产品素材降级顺序选用可执行本地素材。',
-      };
-      return replacement;
-    }),
-  };
-}
 
 export function typeAwareRequiredMaterialIds(plan:SocialAssetSupplyPlan|null):string[]{
   return [...new Set((plan?.shots??[]).flatMap(shot=>[
@@ -611,7 +535,12 @@ export async function runSocialContentAutoProduction(input: {
   if(admissionAuthority||String(admissionRow.create_idempotency_key??'').startsWith('weekly-production:')){if(!admissionAuthority)throw new SocialContentWorkflowError('weekly_production_start_authority_invalid',409);if(!input.repository.dataStore)throw new SocialContentWorkflowError('weekly_production_planning_missing',409);const pkg=socialObject(admissionAuthority.weeklyPackage) as unknown as import('../../shared/contracts/socialProgram.js').WeeklyOperatingPackage,publication=socialObject(admissionAuthority.publicationTask);if(!pkg||!publication?.publicationTaskId)throw new SocialContentWorkflowError('weekly_production_start_authority_invalid',409);await assertStoredWeeklyProductionCoverage({store:input.repository.dataStore,tenantId:input.tenantId,package:pkg,publicationTaskId:String(publication.publicationTaskId),frozenPlanning:pkg.agentPlanning});}
   let detail = await readSocialTaskDetail(input);
   if (!detail) throw new Error('社媒内容任务不存在');
-  const canonicalTypeAwareSupplyPlan=detail.brief.materialRoutingPolicyVersion==='type-aware.v1'?detail.assetSupplyPlan:null;
+  // The planner authors per-material routing only for ai_enhanced. Other
+  // approaches carry the policy version for lineage but use their own
+  // existing material/shooting-plan strategies and have no such contracts.
+  const usesTypeAwareRouting=['type-aware.v1','type-aware.v2'].includes(detail.brief.materialRoutingPolicyVersion??'')
+    &&(detail.brief.productionApproach??'ai_enhanced')==='ai_enhanced';
+  const canonicalTypeAwareSupplyPlan=usesTypeAwareRouting?detail.assetSupplyPlan:null;
   if (input.graphPhase && input.graphApprovedContext) {
     detail = { ...detail, ...structuredClone(input.graphApprovedContext) };
   }
@@ -624,7 +553,7 @@ export async function runSocialContentAutoProduction(input: {
   // Graph and weekly scheduler snapshots are applied above. Bind authoritative
   // type-aware routing last so neither older snapshot can erase the planner's
   // per-shot route/product contract before reviewedSupplyPlan is created.
-  if(detail.brief.materialRoutingPolicyVersion==='type-aware.v1'){
+  if(usesTypeAwareRouting){
     if(!detail.assetSupplyPlan||!canonicalTypeAwareSupplyPlan)throw Error('type_aware_frozen_plan_missing');
     detail.assetSupplyPlan=bindCanonicalTypeAwareRouting(detail.assetSupplyPlan,canonicalTypeAwareSupplyPlan);
   }
@@ -679,6 +608,7 @@ export async function runSocialContentAutoProduction(input: {
         name: detail.brief.requestedPresenterName,
         requestedPresenterAssetId: detail.brief.requestedPresenterAssetId,
         selectedEnterprisePresenterAssetId: detail.brief.presenterAssetId,
+        provider:agentWorkflow.directorBrief.scenes.some(scene=>scene.productionRouting?.needsPreciseLipSync)?'heygen':'volcengine_ark',
         lock: agentWorkflow.directorBrief.accountPresenterLock,
       });
       if (!namedPresenter.ok) {
@@ -692,18 +622,20 @@ export async function runSocialContentAutoProduction(input: {
     const heygenBridge = input.repository.dataStore
       ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
       : null;
-    const wholeFilmPresenterConfigured=detail.brief.materialRoutingPolicyVersion==='type-aware.v1'
+    const wholeFilmPresenterConfigured=['type-aware.v1','type-aware.v2'].includes(detail.brief.materialRoutingPolicyVersion||'')
       && process.env.SOCIAL_CONTENT_HEYGEN_ENABLED==='true' && process.env.HEYGEN_GENERATION_ENABLED==='true'
       && Boolean(process.env.HEYGEN_API_KEY?.trim()) && objectStorageEnabled();
     presenterExecutions = selectPresenterExecutions({
       detail,
       heygenReady: productionApproach === 'ai_enhanced' && (wholeFilmPresenterConfigured || Boolean(heygenBridge?.readiness.ready && heygenBridge.ports)),
-      // The currently registered social Seedance executor handles product
-      // scenes, not enterprise-presenter first-frame reenactment.
-      seedancePresenterReady: false,
+      // Dynamic presenter I2V is registered separately from product generation.
+      // Exact speech+motion remains blocked by the measured capability policy.
+      seedancePresenterReady: productionApproach==='ai_enhanced'&&process.env.SEEDANCE_VIDEO_ENABLED==='true'
+        &&Boolean(process.env.SEEDANCE_API_KEY?.trim())&&objectStorageEnabled(),
       // New whole-film plans authorize actual fees in preflight; the old
       // independent Studio reservation must not block this admission preview.
-      budgetReady: productionApproach === 'ai_enhanced' && (wholeFilmPresenterConfigured || Boolean(heygenBridge?.readiness.ready)),
+      budgetReady: productionApproach === 'ai_enhanced' && (wholeFilmPresenterConfigured || Boolean(heygenBridge?.readiness.ready)
+        ||process.env.SEEDANCE_VIDEO_ENABLED==='true'&&Boolean(process.env.SEEDANCE_API_KEY?.trim())&&objectStorageEnabled()),
     });
     if (presenterExecutions.length) {
       await writeExecutionStage({
@@ -785,6 +717,17 @@ export async function runSocialContentAutoProduction(input: {
   const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
   const verifiedContext = verifiedSocialScriptContext(profile, detail.brief.productRef);
   const weeklyAuthority=socialObject(socialObject(socialJson(taskRecord.brief))?._weeklyAuthority),weeklyPackage=socialObject(weeklyAuthority?.weeklyPackage),weeklyPublication=socialObject(weeklyAuthority?.publicationTask);
+  const assertWeeklyCtaNewSubmit = async () => {
+    if (!weeklyPackage) return;
+    if (!input.repository.dataStore) throw new SocialContentWorkflowError('weekly_production_cta_evidence_required',409);
+    await assertWeeklyCreativeRepairCtaAdmission({store:input.repository.dataStore,tenantId:input.tenantId,
+      programId:String(weeklyPackage.programId),packageId:String(weeklyPackage.packageId),
+      packageVersion:Number(weeklyPackage.version),publicationTaskId:String(weeklyPublication?.publicationTaskId??''),inheritedCallToAction:detail.brief.callToAction});
+  };
+  // The injected asset-supply adapter API offers no enforced per-provider-POST
+  // hook. Its recoveryOnly flag cannot certify GET-only behavior. The default
+  // weekly worker and built-in known-operation recovery do not use this port.
+  admitExternalSupplyAdapters({adapters:input.assetSupplyAdapters??[],weekly:Boolean(weeklyPackage)});
   const templateBindingRef=socialObject(weeklyPublication?.contentTemplateBindingRef);
   const contentTemplateStructure=templateBindingRef?await (async()=>{if(!input.repository.dataStore)throw new SocialContentWorkflowError('content_template_storage_unavailable',409);return readWeeklyTemplateStructure(input.repository.dataStore,{tenantId:input.tenantId,programId:String(weeklyPackage?.programId),packageId:String(weeklyPackage?.packageId),packageVersion:Number(weeklyPackage?.version),publicationTaskId:String(weeklyPublication?.publicationTaskId)},templateBindingRef as unknown as import('../../shared/contracts/socialProgram.js').VersionedSocialRef);})():undefined;
   // A resumed weekly run must execute the baseline already sealed into its
@@ -940,10 +883,22 @@ export async function runSocialContentAutoProduction(input: {
 	  const selectedSupplyPlan = detail.assetSupplyPlan
 	    ? assetSupplyPlanWithExecutionSelections(detail.assetSupplyPlan, agentWorkflow)
 	    : null;
-	  let reviewedSupplyPlan = selectedSupplyPlan && detail.brief.materialRoutingPolicyVersion==='type-aware.v1'
-	    ? applyPresenterFirstBudgetDegradation({plan:selectedSupplyPlan,workflow:agentWorkflow,
-	      maximumCny:Math.min(10,Number(detail.brief.perItemBudgetCny)||10)})
-	    : selectedSupplyPlan;
+	  let reviewedSupplyPlan = selectedSupplyPlan;
+    if(reviewedSupplyPlan){
+      reviewedSupplyPlan={...reviewedSupplyPlan,shots:reviewedSupplyPlan.shots.map(shot=>{
+        const selected=presenterExecutions.find(item=>item.sceneId===shot.shotId&&item.providerId==='seedance'&&item.executionStatus==='ready');
+        if(!selected)return shot;
+        if(!shot.digitalHumanPlan||selected.decision.measurements.lipSyncRequired!==false
+          ||typeof selected.decision.measurements.visibleSpeechSeconds!=='number'
+          ||selected.decision.measurements.visibleSpeechSeconds>=.5)throw Error(`seedance_presenter_speech_contract_not_supported:${shot.shotId}`);
+        return {...shot,
+          ...(selected.enterpriseProductAssetLock?{enterpriseProductAssetLock:structuredClone(selected.enterpriseProductAssetLock)}:{}),
+          digitalHumanPlan:{...shot.digitalHumanPlan,method:'reenact' as const,silentMotion:true}};
+      })};
+      reviewedSupplyPlan=assetSupplyPlanWithDynamicPresenterBackgroundLocks({plan:reviewedSupplyPlan,selections:presenterExecutions,
+        referenceReuse:detail.brief.referenceReuse,referenceAnalysis:detail.referenceVideoAnalysis,
+        scenes:agentWorkflow.directorBrief.scenes});
+    }
 	  const rawAssets = await (input.runtime?.loadProductionAssets ?? taskProductionAssets)({
 	    tenantId: input.tenantId,
 	    sources: detail.sources,
@@ -953,14 +908,16 @@ export async function runSocialContentAutoProduction(input: {
 	    outputDirectory: outputDir,
 	    allowAuthorizedSharedLibrary: paidVisualProvidersAllowed,
 	    materialLibrary: input.repository.materialLibrary,
-	    requiredMaterialIds: detail.brief.materialRoutingPolicyVersion==='type-aware.v1'
+	    requiredMaterialIds: usesTypeAwareRouting
 	      ? [...new Set([...typeAwareRequiredMaterialIds(reviewedSupplyPlan),
 	          ...(input.graphApprovedContext?.version===detail.version?typeAwareRequiredMaterialIds(input.graphApprovedContext.assetSupplyPlan??null):[])])] : undefined,
+	    selectedMaterialSegments: reviewedSupplyPlan?.shots.flatMap(shot=>shot.selectedMaterialSegment?[shot.selectedMaterialSegment]:[]) ?? [],
+	    productFootageStore: input.repository.dataStore,
 	  }).catch(error => {
-	    if (zeroAssetRoute) return [];
+	    if (zeroAssetRoute && !(error instanceof Error && error.message.startsWith('product_footage_'))) return [];
 	    throw error;
 	  });
-    if(reviewedSupplyPlan&&input.graphApprovedContext?.version===detail.version&&input.graphApprovedContext.assetSupplyPlan){
+    if(detail.brief.materialRoutingPolicyVersion!=='type-aware.v2'&&reviewedSupplyPlan&&input.graphApprovedContext?.version===detail.version&&input.graphApprovedContext.assetSupplyPlan){
       const rebound=rebindDivergentLocalRoutesFromApprovedContext({plan:reviewedSupplyPlan,approved:input.graphApprovedContext.assetSupplyPlan,assets:rawAssets});
       reviewedSupplyPlan=rebound.plan;
       if(rebound.rebindings.length){
@@ -972,24 +929,28 @@ export async function runSocialContentAutoProduction(input: {
           JSON.stringify({...evidence,evidenceHash:socialRequestHash(evidence)},null,2),{mode:0o600});
       }
     }
-    if(detail.brief.materialRoutingPolicyVersion==='type-aware.v1'){
+    if(usesTypeAwareRouting&&detail.brief.materialRoutingPolicyVersion!=='type-aware.v2'){
       if(!reviewedSupplyPlan)throw Error('type_aware_execution_plan_missing');
-      assertCompleteTypeAwareExecutionPlan(reviewedSupplyPlan);
+      assertCompleteTypeAwareExecutionPlan(reviewedSupplyPlan,canonicalTypeAwareSupplyPlan?.shots.map(shot=>shot.shotId));
     }
 	  // Budget preparation and later alignment may project or normalize the plan.
 	  // Product generation must retain the exact reviewed routing/spec snapshot
 	  // that admitted this run, rather than closing over an object that another
 	  // stage can mutate while the adapters execute.
-	  const frozenReviewedSupplyPlan = reviewedSupplyPlan ? structuredClone(reviewedSupplyPlan) : null;
 	  // Analyze only assets that the reviewed execution can consume. Scanning an
 	  // unrelated tenant video can add minutes, provider cost, and make a bad
 	  // legacy timeline block a production that never selected that material.
-	  const materialInputs = socialContentMaterialAnalysisInputs({assets: rawAssets, plan: reviewedSupplyPlan,
+	  let materialInputs = socialContentMaterialAnalysisInputs({assets: rawAssets, plan: reviewedSupplyPlan,
       policyVersion: detail.brief.materialRoutingPolicyVersion});
-	  const productionAssetsToAnalyze = materialInputs.analyze;
+	  let productionAssetsToAnalyze = materialInputs.analyze;
 	  const budgetRoutes = createProductionBudgetRouteReaders();
-  const selectedPresenterIds = [...new Set(reviewedSupplyPlan?.shots.filter(shot => shot.sourceStrategy === 'authorized_digital_presenter').flatMap(shot => shot.digitalHumanPlan?.presenterAssetIds?.length ? shot.digitalHumanPlan.presenterAssetIds : shot.sourceRefs || []) || [])];
+  const selectedPresenterIds = weeklyProductionPresenterIds(reviewedSupplyPlan);
   const readSelectedVoice = async () => {
+    if (weeklyAuthority?.weeklyPackage) {
+      if (!input.repository.dataStore) throw Error('user_input_required:weekly_default_voice_registry_missing');
+      try { return await readWeeklyProductionVoice(input.repository.dataStore, input.tenantId, selectedPresenterIds); }
+      catch (error) { throw Error(`user_input_required:${error instanceof Error ? error.message : 'weekly_default_voice_identity_missing'}`); }
+    }
     if (!selectedPresenterIds.length) return null;
     if (!input.repository.dataStore) throw Error('selected_presenter_voice_registry_missing');
     return readBoundPresenterVoice(input.repository.dataStore, input.tenantId, selectedPresenterIds);
@@ -1002,7 +963,39 @@ export async function runSocialContentAutoProduction(input: {
   const budgetRuntimeReaders = createProductionBudgetRuntimeReaders({tenantId:input.tenantId,formula:directorFormula,readPresenterVoice:readSelectedVoice,
     frozenTrackSeconds:agentWorkflow.directorBrief.scenes.reduce((total,scene)=>total+scene.duration.endSeconds-scene.duration.startSeconds,0),
     requiresMeasuredAlignment:reviewedSupplyPlan?.shots.some(shot=>shot.sourceStrategy==='authorized_digital_presenter')});
+  if(usesTypeAwareRouting&&detail.brief.materialRoutingPolicyVersion==='type-aware.v2'&&reviewedSupplyPlan){
+    const allocationHash=socialRequestHash({runId:input.runId,baseline:activeBaseline,plan:reviewedSupplyPlan,
+      executionPlan:agentWorkflow.executionPlan,maximumCny:detail.brief.perItemBudgetCny??15});
+    const saved=readCurrentContentExecutionCheckpoint<{plan:SocialAssetSupplyPlan;planHash:string}>({
+      stage:'social.budget_material_routing',version:'1',inputHash:allocationHash});
+    if(saved){
+      if(socialRequestHash(saved.plan)!==saved.planHash)throw Error('budget_material_routing_checkpoint_invalid');
+      reviewedSupplyPlan=structuredClone(saved.plan);
+    }else{
+      if(input.assetSupplyRecoveryOnly)throw Error('budget_material_routing_recovery_snapshot_missing');
+      reviewedSupplyPlan=await applyPresenterFirstBudgetRouting({plan:reviewedSupplyPlan,workflow:agentWorkflow,
+        maximumCny:Math.min(15,detail.brief.perItemBudgetCny??15),quote:async candidate=>{
+          const candidateInputs=socialContentMaterialAnalysisInputs({assets:rawAssets,plan:candidate,policyVersion:'type-aware.v2'});
+          const quote=await prepareSocialContentProductionBudget({repository:input.repository,tenantId:input.tenantId,
+            taskId:input.taskId,runId:input.runId,baseline:activeBaseline,assets:candidateInputs.analyze,
+            localSupplyAssets:candidateInputs.productReferences,supplyPlan:candidate,graphApprovedContext:input.graphApprovedContext,
+            quoteOnly:true,ports:{...budgetRuntimeReaders,...budgetRoutes,
+              resolveBoundRoute:requirement=>['tts','tts_fallback','voice_clone','voice_asr','voice_alignment'].includes(requirement.stage)
+                ?budgetRuntimeReaders.resolveBoundRoute!(requirement):budgetRoutes.resolveBoundRoute(requirement),
+              ...input.runtime?.productionBudgetReadPorts}});
+          if(quote.status!=='quoted')throw Error('whole_film_readonly_quote_required');
+          return quote;
+        }});
+      await recordCurrentContentExecutionCheckpoint({stage:'social.budget_material_routing',version:'1',inputHash:allocationHash,
+        payload:{plan:reviewedSupplyPlan,planHash:socialRequestHash(reviewedSupplyPlan)}});
+    }
+    assertCompleteTypeAwareExecutionPlan(reviewedSupplyPlan,canonicalTypeAwareSupplyPlan?.shots.map(shot=>shot.shotId));
+    materialInputs=socialContentMaterialAnalysisInputs({assets:rawAssets,plan:reviewedSupplyPlan,policyVersion:'type-aware.v2'});
+    productionAssetsToAnalyze=materialInputs.analyze;
+  }
+	  const frozenReviewedSupplyPlan = reviewedSupplyPlan ? structuredClone(reviewedSupplyPlan) : null;
 	  const productionBudget = await prepareSocialContentProductionBudget({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,baseline:activeBaseline,assets:productionAssetsToAnalyze,localSupplyAssets:materialInputs.productReferences,supplyPlan:reviewedSupplyPlan,graphApprovedContext:input.graphApprovedContext,recoveryOnly:input.assetSupplyRecoveryOnly,ports:{...budgetRuntimeReaders,...budgetRoutes,resolveBoundRoute: requirement => ['tts','tts_fallback','voice_clone','voice_asr','voice_alignment'].includes(requirement.stage) ? budgetRuntimeReaders.resolveBoundRoute!(requirement) : budgetRoutes.resolveBoundRoute(requirement),...input.runtime?.productionBudgetReadPorts,
+      assertNewSubmit:assertWeeklyCtaNewSubmit,
       preparePresenterFirstFrameReviews:async({scope,groups,requirements,intents,paidPermit})=>{
         if(!groups.length)return;
         const referenceAnalysis=detail.referenceVideoAnalysis;
@@ -1010,9 +1003,17 @@ export async function runSocialContentAutoProduction(input: {
         if(!input.runtime?.preparePresenterMotherFirstFrames)throw Error('presenter_first_frame_preparation_port_missing');
         const directorById=new Map(agentWorkflow.directorBrief.scenes.map(scene=>[scene.sceneId,scene]));
         const baselineById=new Map(activeBaseline.scenes.map(scene=>[scene.sceneId,scene]));
-        const grouping=freezePresenterMotherSegments({taskId:input.taskId,referenceAnalysisHash:socialRequestHash(referenceAnalysis),slots:agentWorkflow.directorBrief.scenes.map(scene=>{const frozen=groups.find(group=>group.shotIds.includes(scene.sceneId));return{slotId:scene.sceneId,referenceShotId:scene.referenceShotId||scene.sceneId,startSeconds:scene.duration.startSeconds,endSeconds:scene.duration.endSeconds,spokenText:baselineById.get(scene.sceneId)?.voiceover||baselineById.get(scene.sceneId)?.narration||'',materialType:frozen?'talking_head':'unknown',frontFacing:Boolean(frozen),lipSyncRequired:Boolean(frozen)};})});
+        const speechGroups=groups.filter(group=>group.executionKind!=='seedance_motion');
+        const emptyGrouping={schemaVersion:'presenter-mother-segments.v1' as const,taskId:input.taskId,referenceAnalysisHash:socialRequestHash(referenceAnalysis),sourceSlotCount:agentWorkflow.directorBrief.scenes.length,groups:[]};
+        const grouping=speechGroups.length?freezePresenterMotherSegments({taskId:input.taskId,referenceAnalysisHash:socialRequestHash(referenceAnalysis),slots:agentWorkflow.directorBrief.scenes.map(scene=>{const frozen=speechGroups.find(group=>group.shotIds.includes(scene.sceneId));return{slotId:scene.sceneId,referenceShotId:scene.referenceShotId||scene.sceneId,startSeconds:scene.duration.startSeconds,endSeconds:scene.duration.endSeconds,spokenText:baselineById.get(scene.sceneId)?.voiceover||baselineById.get(scene.sceneId)?.narration||'',materialType:frozen?'talking_head':'unknown',frontFacing:Boolean(frozen),lipSyncRequired:Boolean(frozen)};})}):{...emptyGrouping,recordHash:socialRequestHash(emptyGrouping)};
         const referenceById=new Map(referenceAnalysis.shots.map(shot=>[shot.shotId,shot]));
-        const approvalGroups=grouping.groups.map(group=>{const frozen=groups.find(item=>item.groupId===group.segmentId);if(!frozen||socialRequestHash(frozen.shotIds)!==socialRequestHash(group.members.map(member=>member.slotId)))throw Error(`presenter_first_frame_group_contract_changed:${group.segmentId}`);return{groupId:group.segmentId,presenterGroupContractHash:frozen.contractHash,presenterAssetId:frozen.presenterAssetId,compositions:group.members.map(member=>{const director=directorById.get(member.slotId),reference=referenceById.get(member.referenceShotId);if(!director||!reference?.materialEvidence?.firstFrameRef)throw Error(`presenter_first_frame_reference_composition_missing:${member.slotId}`);return{referenceShotId:member.referenceShotId,referenceFirstFrameUrl:reference.materialEvidence.firstFrameRef,background:reference.visualDescription,framing:reference.shotLanguage?.shotSize||'未确认景别',camera:reference.shotLanguage?.movement||'未确认机位',composition:reference.shotLanguage?.composition||'未确认构图'};})};});
+        const supplyById=new Map((reviewedSupplyPlan?.shots??[]).map(shot=>[shot.shotId,shot]));
+        const factVersion=activeBaseline.enterpriseFactVersion;
+        const approvalGroups=groups.map(frozen=>{const locks=frozen.shotIds.map(id=>supplyById.get(id)?.enterpriseProductAssetLock).filter(Boolean) as NonNullable<NonNullable<typeof reviewedSupplyPlan>['shots'][number]['enterpriseProductAssetLock']>[];const uniqueLocks=[...new Map(locks.map(lock=>[socialRequestHash(lock),lock])).values()];if(uniqueLocks.length>1)throw Error(`presenter_first_frame_product_lock_ambiguous:${frozen.groupId}`);const lock=uniqueLocks[0];return{groupId:frozen.groupId,presenterGroupContractHash:frozen.contractHash,presenterAssetId:frozen.presenterAssetId,executionKind:frozen.executionKind,...(lock?{productAssetBinding:{...lock,enterpriseFactVersion:factVersion?`${factVersion.id}:${factVersion.revision}:${factVersion.contentHash}`:lock.enterpriseFactRef}}:{}),compositions:frozen.shotIds.map(shotId=>{const director=directorById.get(shotId),reference=director?.referenceShotId?referenceById.get(director.referenceShotId):null;if(!director||!reference?.materialEvidence?.firstFrameRef)throw Error(`presenter_first_frame_reference_composition_missing:${shotId}`);const background=frozen.executionKind==='seedance_motion'?assertSocialReferenceBackgroundAssetCurrent({lock:supplyById.get(shotId)?.referenceBackgroundAssetLock,referenceReuse:detail.brief.referenceReuse,referenceAnalysis:detail.referenceVideoAnalysis,expectedReferenceShotId:director.referenceShotId}):null;const match=/\/videos\/([^/]+)\//.exec(reference.materialEvidence.firstFrameRef);return{referenceSourceId:background?.referenceSourceId??(match?decodeURIComponent(match[1]!):'reference-video'),referenceShotId:reference.shotId,startSeconds:background?.startSeconds??reference.startSeconds,endSeconds:background?.endSeconds??reference.endSeconds,referenceFirstFrameUrl:background?.firstFrameRef??reference.materialEvidence.firstFrameRef,background:reference.visualDescription,framing:reference.shotLanguage?.shotSize||'未确认景别',camera:reference.shotLanguage?.movement||'未确认机位',composition:reference.shotLanguage?.composition||'未确认构图'};})};});
+        // This runtime hook is server-injected and may submit a static supplier
+        // before using the paid permit. Recheck the frozen weekly claim at its
+        // invocation boundary; the permit independently checks each bound POST.
+        await assertWeeklyCtaNewSubmit();
         const reviewNodes=await input.runtime.preparePresenterMotherFirstFrames({scope,grouping,groups:approvalGroups,paidStatic:{requirements,intents,permit:paidPermit}});
         if(!input.repository.dataStore)throw Error('presenter_first_frame_automatic_confirmation_store_missing');
         const decisions=await Promise.all(reviewNodes.map(node=>automaticallyConfirmPresenterFirstFrameApproval(input.repository.dataStore!,{scope,groupId:node.groupId,expectedRecordHash:node.recordHash})));
@@ -1082,11 +1083,16 @@ export async function runSocialContentAutoProduction(input: {
       const originalAssetSupplyInputHash = socialAssetSupplyCheckpointInputHash({
         materialAnalysisInputHash: analyzed.inputHash,
         baselineVersion: activeBaseline.version,
-        assetSupplyPlan: detail.assetSupplyPlan,
+        assetSupplyPlan: detail.brief.materialRoutingPolicyVersion==='type-aware.v2' ? frozenReviewedSupplyPlan! : detail.assetSupplyPlan,
         executionPlanId: agentWorkflow.executionPlan.executionPlanId,
         executionPlanVersion: agentWorkflow.executionPlan.version,
       });
       const assetSupplyInputHash=selectedVoice?socialRequestHash({originalAssetSupplyInputHash,presenterVoiceBinding:selectedVoice,wholeTrackSha256:preparedWholeVoice?.wholeTrackSha256 || null,presenterOperations:productionBudget.status==='reserved'?productionBudget.reserved.intents.filter(intent=>intent.stage==='presenter_video').map(intent=>intent.operationId).sort():[],approvedIntroPolicy:'strict-first-frame-v1'}):originalAssetSupplyInputHash;
+      const presenterGroupRequirements=productionBudget.status==='reserved'?productionBudget.requirements.filter(requirement=>requirement.stage==='presenter_video'&&requirement.presenterGroupId&&!requirement.presenterGroupId.startsWith('presenter-motion:')):[];
+      if(selectedVoice&&presenterExecutions.some(selection=>selection.providerId==='heygen')&&!presenterGroupRequirements.length)throw Error('presenter_mother_budget_group_missing');
+      const frozenMotherGrouping=presenterGroupRequirements.length&&reviewedSupplyPlan&&detail.referenceVideoAnalysis
+        ? freezePresenterMotherSegments({taskId:input.taskId,referenceAnalysisHash:socialRequestHash(detail.referenceVideoAnalysis),slots:agentWorkflow.directorBrief.scenes.map(scene=>{const selected=presenterGroupRequirements.some(requirement=>requirement.presenterGroupShotIds?.includes(scene.sceneId));const baseline=activeBaseline.scenes.find(item=>item.sceneId===scene.sceneId);return{slotId:scene.sceneId,referenceShotId:scene.referenceShotId||scene.sceneId,startSeconds:scene.duration.startSeconds,endSeconds:scene.duration.endSeconds,spokenText:baseline?.voiceover||baseline?.narration||'',materialType:selected?'talking_head':'unknown',frontFacing:selected,lipSyncRequired:selected};})})
+        : null;
       const supplyCheckpoint = readCurrentContentExecutionCheckpoint<{
         assetSupplyExecution: SocialAssetSupplyExecution;
         executedSupplyPlan?: SocialAssetSupplyPlan;
@@ -1103,6 +1109,18 @@ export async function runSocialContentAutoProduction(input: {
       }) : null;
       const assetSupplyCheckpointReused = Boolean(supplyCheckpoint && restoredAssets);
       if (assetSupplyCheckpointReused && supplyCheckpoint) {
+        if(presenterGroupRequirements.length){
+          const mother=(supplyCheckpoint as typeof supplyCheckpoint&{presenterMotherExecution?:PresenterMotherExecutionResult}).presenterMotherExecution;
+          if(!frozenMotherGrouping||!preparedWholeVoice||productionBudget.status!=='reserved')throw Error('presenter_mother_cached_qa_unverified');
+          const audioShaBySegment=new Map<string,string>();
+          for(const group of frozenMotherGrouping.groups){
+            const clip=await readPreparedWholeVoiceScene({prepared:preparedWholeVoice,scope:productionBudget.scope,shotId:group.segmentId,
+              memberShotIds:group.memberSlotIds,spokenText:group.mergedSpokenText,assertCurrent:assertCurrentContentExecutionActive});
+            if(clip.clipSha256!==createHash('sha256').update(await fsp.readFile(clip.filePath)).digest('hex'))throw Error('presenter_mother_cached_frozen_audio_bytes_changed');
+            audioShaBySegment.set(group.segmentId,clip.clipSha256);
+          }
+          await assertRestoredPresenterMotherExecution({grouping:frozenMotherGrouping,execution:mother,frozenAudioSha256BySegment:audioShaBySegment,assets:restoredAssets!});
+        }
         assets = restoredAssets as ProductionAsset[];
         assetSupplyExecution = structuredClone(supplyCheckpoint.assetSupplyExecution);
         executedSupplyPlan = supplyCheckpoint.executedSupplyPlan
@@ -1119,42 +1137,93 @@ export async function runSocialContentAutoProduction(input: {
                 taskVersion:String(taskRecord.version),apiKey:process.env.HEYGEN_API_KEY||'',
                 funding:{scope:productionBudget.scope,requirements:productionBudget.requirements,routeBindings:productionBudget.routeBindings,
                   intents:productionBudget.reserved.intents,permit:productionBudget.paidPermit,assertCurrent:assertCurrentContentExecutionActive,
+                  assertNewSubmit:assertWeeklyCtaNewSubmit,
                   readReservedCny(operationId){
                     const entry=productionBudget.reserved.ledger.status(productionBudget.scope)?.entries.find(row=>row.operationId===operationId&&row.runId===productionBudget.scope.runId&&row.planHash===productionBudget.scope.planHash&&row.status!=='rejected');
                     if(!entry)throw Error('whole_track_heygen_reservation_missing');return entry.reservedMicros/1e6;
                   },
                   async assertLivePresenter(route,request,credentialSha256){
+                    // The provider look/wallet GETs cannot prove that the
+                    // enterprise's retained private import and voice source
+                    // are still valid. Re-read those original records before
+                    // every new weekly upload or provider submission.
+                    if (weeklyAuthority?.weeklyPackage) await assertSelectedVoiceCurrent();
                     const binding=await readTrustedHeyGenRuntimeBinding({tenantId:input.tenantId,presenterAssetId:request.presenter.presenterAssetId,expectedVersion:request.presenter.assetVersion},{store:input.repository.dataStore!,assertCurrent:assertCurrentContentExecutionActive});
                     if(!binding||binding.credentialSha256!==credentialSha256||binding.avatarId!==request.presenter.providerPresenterId||binding.voiceId!==request.presenter.providerVoiceId||binding.authorizationRef!==request.presenter.authorizationRef||binding.consentRef!==request.presenter.consentRef||binding.model!==route.model||binding.accountRef!==route.accountRef||route.routeEvidenceRef!==heyGenRuntimeRouteEvidence(binding))throw Error('whole_track_heygen_approved_person_changed');
                   },
                 }})}
-            : createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
+            : weeklyPackage ? null : createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
           : null;
         const existingAdapters = existingAssetSupplyAdapters().filter(adapter => (
           paidVisualProvidersAllowed
             || adapter.adapterId === 'existing_customer_asset.v1'
             || (productionApproach === 'material_polish' && adapter.adapterId === 'system_safe_motion_graphics.v1')
         ));
-        const presenterGroupRequirements=productionBudget.status==='reserved'?productionBudget.requirements.filter(requirement=>requirement.stage==='presenter_video'&&requirement.presenterGroupId):[];
+        const motionSelections=presenterExecutions.filter(selection=>selection.providerId==='seedance');
+        const motionAdapters=[] as ReturnType<typeof createSocialDigitalPresenterAdapter>[];
+        if(motionSelections.length){
+          if(productionBudget.status!=='reserved'||!input.repository.dataStore||!defaultPaidRuntime)throw Error('seedance_presenter_whole_film_funding_missing');
+          const funding=createSeedancePresenterFunding({scope:productionBudget.scope,requirements:productionBudget.requirements,
+            routes:productionBudget.routeBindings,intents:productionBudget.reserved.intents,permit:productionBudget.paidPermit,
+            ports:input.runtime?.productPaidRuntimePorts??defaultPaidRuntime.product,
+            readReservedCny(operationId){const row=productionBudget.reserved.ledger.status(productionBudget.scope)?.entries.find(entry=>entry.operationId===operationId&&entry.runId===productionBudget.scope.runId&&entry.planHash===productionBudget.scope.planHash&&entry.status!=='rejected');if(!row)throw Error('seedance_presenter_reserved_charge_missing');return row.reservedMicros/1e6;},
+            persistReceipt:defaultPaidRuntime.material.persistProviderReceipt,
+          });
+          for(const selection of motionSelections){
+            if(selection.decision.measurements.lipSyncRequired!==false)throw Error('seedance_presenter_precise_speech_unverified');
+            const groupId=`presenter-motion:${selection.sceneId}`;
+            const requirement=productionBudget.requirements.find(r=>r.presenterGroupId===groupId&&r.stage==='presenter_video');
+            const qa=funding.bound(selection.sceneId,'video_qa');
+            if(!requirement?.presenterAssetId||!requirement.presenterGroupContractHash)throw Error('seedance_presenter_frozen_group_missing');
+            const confirmation=await readCurrentConfirmedPresenterFirstFrame(input.repository.dataStore,{scope:productionBudget.scope,groupId,presenterGroupContractHash:requirement.presenterGroupContractHash,presenterAssetId:requirement.presenterAssetId});
+            if(!confirmation)throw Error('seedance_presenter_first_frame_confirmation_missing');
+            const localPath=path.resolve(MEDIA_ROOT,decodeURIComponent(confirmation.approval.compositeFirstFrameUrl.replace(/^\/media\//,'')));
+            if(!localPath.startsWith(path.resolve(MEDIA_ROOT,'tenants',input.tenantId)+path.sep))throw Error('seedance_presenter_first_frame_not_owned');
+            const approvedFirstFrame={approvalRecordId:`social-presenter-first-frame-approval:${confirmation.approval.recordHash}`,approvalRecordHash:confirmation.approval.recordHash,presenterGroupContractHash:requirement.presenterGroupContractHash,url:confirmation.approval.compositeFirstFrameUrl,localPath,sha256:confirmation.approval.compositeFirstFrameSha256,
+              ...(confirmation.approval.assetProvenance?{assetProvenance:structuredClone(confirmation.approval.assetProvenance)}:{})};
+            const bridge=createEnvironmentSocialSeedancePresenterBridge({store:input.repository.dataStore,scope:productionBudget.scope,
+              maximumCostCny:Math.min(15,detail.brief.perItemBudgetCny??15),qaModel:qa.route.model,
+              authorizeBudget:request=>funding.authorize(request.shotId,request.maximumCostCny),assertCurrent:assertCurrentContentExecutionActive,
+              beforePaidSubmit:(stage,request,body)=>funding.beforeSubmit(request.shotId,stage,body),
+              recordPaidReceipt:(stage,request,receipt)=>funding.receipt(request.shotId,stage,receipt),
+            });
+            if(!bridge.ports)throw Error('seedance_presenter_runtime_unavailable');
+            const adapter=createSocialDigitalPresenterAdapter(bridge.ports);
+            motionAdapters.push({...adapter,adapterId:`seedance-presenter:${selection.sceneId}`,async execute(context){
+              if(context.shot.shotId!==selection.sceneId)return null;
+              if(context.shot.digitalHumanPlan?.method!=='reenact'||(context.shot.digitalHumanPlan as typeof context.shot.digitalHumanPlan&{silentMotion?:boolean}).silentMotion!==true)throw Error('seedance_presenter_frozen_motion_plan_changed');
+              const director=agentWorkflow.directorBrief.scenes.find(scene=>scene.sceneId===selection.sceneId);
+              assertSocialReferenceBackgroundAssetCurrent({lock:context.shot.referenceBackgroundAssetLock,
+                referenceReuse:detail.brief.referenceReuse,referenceAnalysis:detail.referenceVideoAnalysis,
+                expectedReferenceShotId:director?.referenceShotId});
+              return adapter.execute({...context,shot:{...context.shot,approvedFirstFrame} as typeof context.shot});
+            }});
+          }
+        }
         let motherSupply:Awaited<ReturnType<typeof preparePresenterMotherSupply>>|null=null;
         if(environmentPresenter?.ports&&presenterGroupRequirements.length&&reviewedSupplyPlan){
           const referenceAnalysis=detail.referenceVideoAnalysis,budgetScope=productionBudget.scope;
           if(!referenceAnalysis||!budgetScope)throw Error('presenter_first_frame_scope_missing');
           const directorById=new Map(agentWorkflow.directorBrief.scenes.map(scene=>[scene.sceneId,scene]));
           const baselineById=new Map(activeBaseline.scenes.map(scene=>[scene.sceneId,scene]));
-          const grouping=freezePresenterMotherSegments({taskId:input.taskId,referenceAnalysisHash:socialRequestHash(referenceAnalysis),slots:agentWorkflow.directorBrief.scenes.map(scene=>{const shot=reviewedSupplyPlan.shots.find(item=>item.shotId===scene.sceneId),selected=presenterGroupRequirements.some(requirement=>requirement.presenterGroupShotIds?.includes(scene.sceneId));return{slotId:scene.sceneId,referenceShotId:scene.referenceShotId||scene.sceneId,startSeconds:scene.duration.startSeconds,endSeconds:scene.duration.endSeconds,spokenText:baselineById.get(scene.sceneId)?.voiceover||baselineById.get(scene.sceneId)?.narration||'',materialType:selected?'talking_head':'unknown',frontFacing:selected,lipSyncRequired:selected};})});
+          const grouping=frozenMotherGrouping;
+          if(!grouping)throw Error('presenter_mother_grouping_missing');
           const referenceById=new Map(referenceAnalysis.shots.map(shot=>[shot.shotId,shot]));
-          const approvalGroups=grouping.groups.map(group=>{const requirement=presenterGroupRequirements.find(item=>item.presenterGroupId===group.segmentId);if(!requirement?.presenterGroupContractHash||!requirement.presenterAssetId)throw Error(`presenter_first_frame_group_requirement_missing:${group.segmentId}`);return{groupId:group.segmentId,presenterGroupContractHash:requirement.presenterGroupContractHash,presenterAssetId:requirement.presenterAssetId,compositions:group.members.map(member=>{const director=directorById.get(member.slotId),reference=referenceById.get(member.referenceShotId);if(!director||!reference?.materialEvidence?.firstFrameRef)throw Error(`presenter_first_frame_reference_composition_missing:${member.slotId}`);return{referenceShotId:member.referenceShotId,referenceFirstFrameUrl:reference.materialEvidence.firstFrameRef,background:reference.visualDescription,framing:reference.shotLanguage?.shotSize||'未确认景别',camera:reference.shotLanguage?.movement||'未确认机位',composition:reference.shotLanguage?.composition||'未确认构图'};})};});
-          const confirmed=await Promise.all(approvalGroups.map(group=>input.repository.dataStore?readConfirmedPresenterFirstFrameApproval(input.repository.dataStore,{scope:budgetScope,groupId:group.groupId,presenterGroupContractHash:group.presenterGroupContractHash,presenterAssetId:group.presenterAssetId}):Promise.resolve(null)));
+          const approvalGroups=grouping.groups.map(group=>{const requirement=presenterGroupRequirements.find(item=>item.presenterGroupId===group.segmentId);if(!requirement?.presenterGroupContractHash||!requirement.presenterAssetId)throw Error(`presenter_first_frame_group_requirement_missing:${group.segmentId}`);return{groupId:group.segmentId,presenterGroupContractHash:requirement.presenterGroupContractHash,presenterAssetId:requirement.presenterAssetId,compositions:group.members.map(member=>{const director=directorById.get(member.slotId),reference=referenceById.get(member.referenceShotId);if(!director||!reference?.materialEvidence?.firstFrameRef)throw Error(`presenter_first_frame_reference_composition_missing:${member.slotId}`);const match=/\/videos\/([^/]+)\//.exec(reference.materialEvidence.firstFrameRef);return{referenceSourceId:match?decodeURIComponent(match[1]!):'reference-video',referenceShotId:member.referenceShotId,startSeconds:reference.startSeconds,endSeconds:reference.endSeconds,referenceFirstFrameUrl:reference.materialEvidence.firstFrameRef,background:reference.visualDescription,framing:reference.shotLanguage?.shotSize||'未确认景别',camera:reference.shotLanguage?.movement||'未确认机位',composition:reference.shotLanguage?.composition||'未确认构图'};})};});
+          const confirmed=await Promise.all(approvalGroups.map(group=>input.repository.dataStore?readCurrentConfirmedPresenterFirstFrame(input.repository.dataStore,{scope:budgetScope,groupId:group.groupId,presenterGroupContractHash:group.presenterGroupContractHash,presenterAssetId:group.presenterAssetId}):Promise.resolve(null)));
           if(confirmed.some(item=>!item)){
             throw Error(`presenter_first_frame_confirmation_lost_after_budget_reservation:${approvalGroups.filter((_,index)=>!confirmed[index]).map(group=>group.groupId).join(',')}`);
           }
           const confirmedByGroup=new Map(confirmed.map(item=>[item!.approval.groupId,item!]));
           const underlying=createSocialDigitalPresenterAdapter(environmentPresenter.ports);
-          if(!input.runtime?.evaluatePresenterMotherDynamicQa)throw Error('presenter_mother_dynamic_qa_port_missing');
+          if(!input.runtime?.evaluatePresenterMotherDynamicQa||!preparedWholeVoice)throw Error('presenter_mother_frozen_audio_and_lip_sync_qa_unavailable');
+          assertPresenterMotherSpeechQaReady();
           motherSupply=await preparePresenterMotherSupply({grouping,outputDirectory:path.join(outputDir,'presenter-mother'),provider:async request=>{
             const frozenRequirement=presenterGroupRequirements.find(requirement=>requirement.presenterGroupId===request.segmentId);
             if(!frozenRequirement||socialRequestHash(frozenRequirement.presenterGroupShotIds)!==socialRequestHash(request.memberSlotIds))throw Error('presenter_mother_budget_group_changed');
+            const frozenAudio=await readPreparedWholeVoiceScene({prepared:preparedWholeVoice!,scope:budgetScope,shotId:request.segmentId,
+              memberShotIds:request.memberSlotIds,spokenText:request.spokenText,assertCurrent:assertCurrentContentExecutionActive});
+            if(frozenAudio.clipSha256!==createHash('sha256').update(await fsp.readFile(frozenAudio.filePath)).digest('hex'))throw Error('presenter_mother_frozen_audio_bytes_changed');
             const firstId=request.memberSlotIds[0]!,originalShot=reviewedSupplyPlan.shots.find(shot=>shot.shotId===firstId),originalScene=baselineById.get(firstId),director=directorById.get(firstId);
             if(!originalShot||!originalScene||!director)throw Error('presenter_mother_scene_missing');
             const visualContract=originalShot.visualContract?structuredClone(originalShot.visualContract):undefined;
@@ -1163,7 +1232,8 @@ export async function runSocialContentAutoProduction(input: {
             const approvedRelative=decodeURIComponent(confirmation.approval.compositeFirstFrameUrl.replace(/^\/media\//,''));
             const approvedLocalPath=path.resolve(MEDIA_ROOT,approvedRelative),approvedTenantRoot=path.resolve(MEDIA_ROOT,'tenants',input.tenantId);
             if(!approvedLocalPath.startsWith(approvedTenantRoot+path.sep))throw Error('presenter_mother_confirmed_first_frame_not_owned');
-            const approvedFirstFrame={approvalRecordId:`social-presenter-first-frame-approval:${confirmation.approval.recordHash}`,approvalRecordHash:confirmation.approval.recordHash,presenterGroupContractHash:confirmation.approval.presenterGroupContractHash,url:confirmation.approval.compositeFirstFrameUrl,localPath:approvedLocalPath,sha256:confirmation.approval.compositeFirstFrameSha256};
+            const approvedFirstFrame={approvalRecordId:`social-presenter-first-frame-approval:${confirmation.approval.recordHash}`,approvalRecordHash:confirmation.approval.recordHash,presenterGroupContractHash:confirmation.approval.presenterGroupContractHash,url:confirmation.approval.compositeFirstFrameUrl,localPath:approvedLocalPath,sha256:confirmation.approval.compositeFirstFrameSha256,
+              ...(confirmation.approval.assetProvenance?{assetProvenance:structuredClone(confirmation.approval.assetProvenance)}:{})};
             if(visualContract){visualContract.action.startSeconds=0;visualContract.action.endSeconds=request.durationSeconds;visualContract.action.peakSeconds=request.durationSeconds*.58;}
             const executionShot={...originalShot,shotId:request.segmentId,approvedFirstFrame,...(visualContract?{visualContract}: {})} as typeof originalShot&{approvedFirstFrame:typeof approvedFirstFrame};
             const retryIntent=productionBudget.status==='reserved'?productionBudget.reserved.intents.find(intent=>intent.stage==='presenter_video'&&intent.correction?.presenterGroupId===request.segmentId&&intent.correction.attempt===2):null;
@@ -1171,7 +1241,12 @@ export async function runSocialContentAutoProduction(input: {
             if(!result?.asset.localPath||!result.asset.contentHash||!result.asset.providerTaskId)throw Error('presenter_mother_provider_output_missing');
             const approvedIntro=await ensureStrictPresenterFirstFrames({tenantId:input.tenantId,runId:budgetScope.runId,groupId:request.segmentId,
               sourcePath:result.asset.localPath,sourceSha256:result.asset.contentHash,approvedPath:approvedFirstFrame.localPath,approvedSha256:approvedFirstFrame.sha256});
-            const dynamicQa=await input.runtime!.evaluatePresenterMotherDynamicQa!({tenantId:input.tenantId,taskId:input.taskId,runId:budgetScope.runId,segmentId:request.segmentId,segmentHash:request.segmentHash,presenterAssetId:frozenRequirement.presenterAssetId!,outputPath:approvedIntro.outputPath,outputSha256:approvedIntro.outputSha256,spokenText:request.spokenText});
+            const visualQa=await input.runtime!.evaluatePresenterMotherDynamicQa!({tenantId:input.tenantId,taskId:input.taskId,runId:budgetScope.runId,segmentId:request.segmentId,segmentHash:request.segmentHash,presenterAssetId:frozenRequirement.presenterAssetId!,outputPath:approvedIntro.outputPath,outputSha256:approvedIntro.outputSha256,spokenText:request.spokenText});
+            const speechQa=await inspectPresenterMotherSpeechQa({segmentHash:request.segmentHash,outputPath:approvedIntro.outputPath,
+              outputSha256:approvedIntro.outputSha256,frozenAudioPath:frozenAudio.filePath,frozenAudioSha256:frozenAudio.clipSha256,
+              workDir:path.join(outputDir,'presenter-mother-qa',request.segmentId)});
+            const dynamicQa={...visualQa,...speechQa,reportHash:socialRequestHash({visual:visualQa,speech:speechQa}),
+              receiptRef:`presenter-mother-qa:${visualQa.reportHash}:${speechQa.audioTrackReportHash}`};
             return{providerId:result.providerId,providerReceiptRef:result.asset.providerTaskId,outputRef:approvedIntro.outputPath,outputSha256:approvedIntro.outputSha256,durationSeconds:result.asset.duration,dynamicQa};
           }});
           presenterMotherExecution=motherSupply.presenterMotherExecution;
@@ -1192,8 +1267,8 @@ export async function runSocialContentAutoProduction(input: {
           availableAssets: assets,
           adapters: paidVisualProvidersAllowed ? socialProductionSupplyAdapters({
             recoveryOnly: input.assetSupplyRecoveryOnly, hasPresenterExecution: Boolean(presenterExecutions.length),
-            custom: [...(motherSupply?[motherSupply.adapter]:[]),...(input.assetSupplyAdapters ?? [])], free: existingAdapters,
-            paid: () => [createSocialProductSceneAdapter(createEnvironmentSeedanceProductScenePorts({
+            custom: [...(input.assetSupplyRecoveryOnly?motionAdapters:[]),...(motherSupply?[motherSupply.adapter]:[]),...(input.assetSupplyAdapters??[])], free: existingAdapters,
+            paid: () => [...motionAdapters,createSocialProductSceneAdapter(createEnvironmentSeedanceProductScenePorts({
               maximumCostCny: detail.brief.materialRoutingPolicyVersion === 'type-aware.v1' ? Math.min(10, detail.brief.perItemBudgetCny ?? 10) : undefined,
               replacementEnvironment: {
                 paidContext: productPaidContext,
@@ -1212,7 +1287,10 @@ export async function runSocialContentAutoProduction(input: {
               },
             })),
               ...(!motherSupply&&environmentPresenter?.ports ? [createSocialDigitalPresenterAdapter(environmentPresenter.ports)] : []),
-              createConfiguredSocialAiVisualAdapter()],
+              // The generic visual adapter has its own budget path, not this
+              // weekly run's immutable paid permit or claim recheck. Never
+              // offer it as a fallback for a frozen weekly production.
+              ...(!weeklyPackage?[createConfiguredSocialAiVisualAdapter()]:[])],
           }) : existingAdapters,
         });
         // Only assets selected by the Director's per-shot router enter the edit.
@@ -1232,10 +1310,13 @@ export async function runSocialContentAutoProduction(input: {
         const receipt = assetSupplyExecution.shots.find(shot => shot.sceneId === selection.sceneId);
         const motherCrop=presenterMotherExecution?.slotCropReceipts.find(crop=>crop.slotId===selection.sceneId);
         if(motherCrop){
-          if(!receipt||receipt.providerId!=='presenter_mother_segment.v1'||receipt.sourceStrategy!=='authorized_digital_presenter'||receipt.fallbackApplied||receipt.sourceRef!==`presenter-mother-crop:${motherCrop.receiptHash}`)throw new Error(`presenter_mother_receipt_mismatch:${selection.sceneId}`);
+          const cropAsset=assets.find(asset=>asset.id===receipt?.assetId);
+          if(!receipt||receipt.providerId!=='presenter_mother_segment.v1'||receipt.sourceStrategy!=='authorized_digital_presenter'||receipt.fallbackApplied||receipt.sourceRef!==`presenter-mother-crop:${motherCrop.receiptHash}`
+            ||cropAsset?.id!==`presenter-mother-crop-${motherCrop.receiptHash.slice(0,24)}`||cropAsset.sourceId!==selection.sceneId
+            ||!cropAsset.segments?.some(segment=>segment.slotCropReceiptHash===motherCrop.receiptHash))throw new Error(`presenter_mother_receipt_mismatch:${selection.sceneId}`);
           continue;
         }
-        if (selection.providerId === 'heygen' && (!receipt || receipt.providerId !== 'heygen'
+        if ((selection.providerId === 'heygen'||selection.providerId==='seedance') && (!receipt || receipt.providerId !== selection.providerId
           || receipt.sourceStrategy !== 'authorized_digital_presenter' || receipt.fallbackApplied)) {
           throw new Error(`presenter_provider_receipt_mismatch:${selection.sceneId}`);
         }
@@ -1312,7 +1393,10 @@ export async function runSocialContentAutoProduction(input: {
     }
   }
   let plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null,
-    ...(assetSupplyExecution?{routedSceneAssets:assetSupplyExecution.shots.map(shot=>({sceneId:shot.sceneId,assetId:shot.assetId}))}:{}), });
+    ...(assetSupplyExecution?{routedSceneAssets:assetSupplyExecution.shots.map(shot=>{
+      const scene=agentWorkflow.directorBrief.scenes.find(scene=>scene.sceneId===shot.sceneId);
+      return {sceneId:shot.sceneId,assetId:shot.assetId,durationSeconds:scene?scene.duration.endSeconds-scene.duration.startSeconds:undefined};
+    })}:{}), });
   if(!plan.ok&&assetSupplyExecution)throw new Error(`asset_supply_scene_binding_invalid:${plan.reasonCode}:${plan.message}`);
   if (!plan.ok && productionApproach !== 'material_cut') {
     if (productionMode === 'social_ready' && rawAssets.length === 0 && !assetSupplyExecution) {
@@ -1348,7 +1432,7 @@ export async function runSocialContentAutoProduction(input: {
     && explanationOnlyRoute) {
     throw new Error('production_input_required:当前方案只能生成说明卡片，无法达到爆款裂变的画面预期。请补充客户产品视频/图片，或明确改为“概念样片”后再生成。');
   }
-  if (assetSupplyExecution) plan = applyZeroAssetTruthSafeNarration(plan);
+  if (explanationOnlyRoute) plan = applyZeroAssetTruthSafeNarration(plan);
   if (reviewDirective) plan = applySocialReviewRevision(plan, reviewDirective);
   const adaptation = productionAdaptation(plan, assets.length);
   const directorCheckpointInputHash = socialRequestHash({
@@ -1536,6 +1620,9 @@ export async function runSocialContentAutoProduction(input: {
             // response and the audio checkpoint.
             throw new Error('provider_submission_unknown:studio_tts');
           }
+          // A custom voice runtime may not use the formal paid permit. Keep the
+          // frozen weekly claim check at the actual new-call boundary as well.
+          await assertWeeklyCtaNewSubmit();
           await recordCurrentContentProviderReceipt({
             provider: 'studio_tts', requestId: ttsRequestId, state: 'submitting',
             metadata: { narrationCheckpointInputHash },
@@ -1724,9 +1811,11 @@ export async function runSocialContentAutoProduction(input: {
     if (createHash('sha256').update(await fsp.readFile(voice.localPath)).digest('hex') !== preparedWholeVoice.wholeTrackSha256) throw Error('selected_presenter_voice_render_audio_changed');
     await recordCurrentContentExecutionCheckpoint({stage:'social.selected_presenter_voice_acceptance',version:'1',inputHash:socialRequestHash({binding:selectedVoice,wholeVoiceInputHash:preparedWholeVoice.inputHash,audioSha256:preparedWholeVoice.wholeTrackSha256}),payload:{binding:selectedVoice,audioSha256:preparedWholeVoice.wholeTrackSha256,sourceReceiptRefs:preparedWholeVoice.sourceReceiptRefs,alignmentReceiptRef:preparedWholeVoice.alignmentReceiptRef}});
   }
+  const frameContract=Number.isFinite(duration)&&duration>=1&&duration<=45&&Math.abs(duration*1000-Math.round(duration*1000))<=1e-6?freezeSocialRenderFrameContract(duration):null;
   const compositeManifest = {
     jobId: `social-${input.taskId}-${createHash('sha256').update(input.runId).digest('hex').slice(0, 12)}`,
     requireVisualAssets: true,
+    captureCaptionBaseline: true,
     spec: {
       ratio: contentHandoff.outputSpec.aspectRatio,
       resolution: contentHandoff.outputSpec.resolution,
@@ -1736,6 +1825,7 @@ export async function runSocialContentAutoProduction(input: {
       bgmVol: contentHandoff.bgmSelection.volume,
       voiceVol: contentHandoff.outputSpec.voiceVolume,
     },
+    ...(frameContract?{frameContract}:{}),
     timeline,
     ...(contentHandoff.effectPlan ? { effectPlan: contentHandoff.effectPlan } : {}),
     voiceover: { url: voice.localPath },
@@ -1773,7 +1863,10 @@ export async function runSocialContentAutoProduction(input: {
   });
   const technicalFailures=[...quality.failures,...sceneQuality.issues.map(issue=>issue.reason),...(!audio.ok?['成片音轨无法解码']:[]), ...finalFidelityFailures];
   const technicalApproved=quality.passed&&sceneQuality.passed&&audio.ok&&(!audio.bgm||audio.bgm.passed)&&!finalFidelityFailures.length;
-  const technicalQualityReport:InitialSceneQualityReport={schemaVersion:'initial-scene-quality.v1',visual:quality,scenes:sceneQuality,audio:{ok:audio.ok&&(!audio.bgm||audio.bgm.passed),error:!audio.ok?'成片音轨无法解码':audio.bgm?.failure??null,...(audio.bgm?{bgm:audio.bgm}:{})}};
+  const {probeSocialSceneMedia}=await import('./socialSceneMediaHardProbe.js');
+  const mediaHardProbe=await probeSocialSceneMedia({filePath:result.outputPath,manifest:compositeManifest as unknown as Record<string,unknown>,frozenVoiceCues:voice.cues,subtitleRenderEvidence:result.receipt.subtitleRenderEvidence,frameRenderEvidence:result.receipt.frameRenderEvidence,
+    ...(result.receipt.captionBaselineSidecar&&result.receipt.subtitleAssSidecar?{captionMaskSources:{baselinePath:result.receipt.captionBaselineSidecar.path,baselineSha256:result.receipt.captionBaselineSidecar.sha256,assPath:result.receipt.subtitleAssSidecar.path,assSha256:result.receipt.subtitleAssSidecar.sha256}}:{})});
+  const technicalQualityReport:InitialSceneQualityReport={schemaVersion:'initial-scene-quality.v1',visual:quality,scenes:sceneQuality,audio:{ok:audio.ok&&(!audio.bgm||audio.bgm.passed),error:!audio.ok?'成片音轨无法解码':audio.bgm?.failure??null,...(audio.bgm?{bgm:audio.bgm}:{})},mediaHardProbe};
   const coverPath = await (input.runtime?.createCover ?? createVideoCover)({
     videoPath: result.outputPath,
     outputDirectory: outputDir,
@@ -1882,20 +1975,27 @@ export async function runSocialContentAutoProduction(input: {
     referenceAnalysis: detail.referenceVideoAnalysis, renderedDurationSeconds: measuredDurationSeconds ?? duration,
     renderedTimeline: timeline.map(clip => ({ sceneId: clip.sceneId, startSeconds: clip.targetStart, endSeconds: clip.targetEnd })),
   });
+  const replicationHardFailures = detail.brief.creationMode === 'viral_replication' && !replicationEvaluation
+    ? ['reference_evaluation_missing']
+    : socialReplicationHardQualityFailures(replicationEvaluation);
+  const replicationHumanReviewPending = replicationEvaluation?.status === 'review_required' && !replicationHardFailures.length;
   await writeExecutionStage({
     ...input,
     stage: 'creative_review',
     message: creativeReviewFailures.length
       ? '编导 Agent 的结构与表达验收未通过，正在停止提交并保留当前结果。'
-      : !technicalApproved||creativeReviewFailures.length||replicationEvaluation && replicationEvaluation.status !== 'passed'
+      : !technicalApproved||creativeReviewFailures.length||replicationHardFailures.length
         ? '成片已保留为候选；独立媒体检测尚未自动放行，等待编导逐镜复核或局部返工。'
-        : '技术质检和独立媒体检测通过，编导 Agent 已按 DirectorBrief 完成结构与表达验收。',
+        : replicationHumanReviewPending
+          ? '事实、权利、时间线和技术硬门禁通过；主观复刻效果留待用户最终验收。'
+          : '技术质检和独立媒体检测通过，编导 Agent 已按 DirectorBrief 完成结构与表达验收。',
     extra: {
       directorBriefId: agentWorkflow.directorBrief.directorBriefId,
       checkedSceneCount: contentHandoff.scenes.length,
       failedCriteria: creativeReviewFailures,
       replicationEvaluationId: replicationEvaluation?.evaluationId ?? null,
       replicationEvaluationStatus: replicationEvaluation?.status ?? null,
+      replicationHumanReviewPending,
     },
   });
 
@@ -1910,10 +2010,10 @@ export async function runSocialContentAutoProduction(input: {
   const providerCostSummary = summarizeSelectedProviderCosts({ assets, selectedAssetIds });
   const deliverableStatus = productionMode === 'concept_preview'
     ? 'concept_preview'
-    : !technicalApproved || creativeReviewFailures.length > 0 || (replicationEvaluation && replicationEvaluation.status !== 'passed')
+    : !technicalApproved || creativeReviewFailures.length > 0 || replicationHardFailures.length > 0
       ? 'requires_revision'
       : 'publish_candidate';
-  const finalQualityAccepted = technicalApproved&&!creativeReviewFailures.length&&(!replicationEvaluation || replicationEvaluation.status === 'passed');
+  const finalQualityAccepted = technicalApproved&&!creativeReviewFailures.length&&!replicationHardFailures.length;
   const finalGeneratedMaterial = await archiveGeneratedSocialContentFile({
     file,
     stored,
@@ -1957,7 +2057,7 @@ export async function runSocialContentAutoProduction(input: {
         { key: 'director_review', status: creativeReviewFailures.length?'failed':'passed', evidence: agentWorkflow.directorBrief.directorBriefId },
         ...(replicationEvaluation ? [{
           key: 'replication_evaluation',
-          status: replicationEvaluation.status === 'passed' ? 'passed' as const : 'failed' as const,
+          status: replicationHardFailures.length ? 'failed' as const : 'passed' as const,
           evidence: replicationEvaluation.evaluationId,
         }] : []),
       ],
@@ -1978,17 +2078,19 @@ export async function runSocialContentAutoProduction(input: {
     status: 'asset_review',
     sceneResults: contentHandoff.scenes.map(finalScene => {
       const scene = socialProductionExecutionSceneForFinal(agentWorkflow, finalScene.sceneId)!;
+      const mediaArtifact = socialExecutedSceneMediaArtifact({ sceneId: finalScene.sceneId, execution: assetSupplyExecution, assets });
       return {
         sceneId: scene.sceneId,
         idempotencyKey: scene.idempotencyKey,
         sourceStrategy: scene.selectedSourceStrategy,
         feasibility: scene.feasibility,
         provenanceCandidateIds: scene.recommendedCandidateIds,
+        ...(mediaArtifact ? { mediaArtifact } : {}),
       };
     }),
     technicalReview: { approved: technicalApproved, checkedScenes: sceneQuality.checkedScenes, failures: technicalFailures },
     creativeReview: {
-      approved: !creativeReviewFailures.length&&(!replicationEvaluation || replicationEvaluation.status === 'passed'),
+      approved: !creativeReviewFailures.length&&!replicationHardFailures.length,
       failedCriteria: evaluationFailures,
       reviewedBy: 'director_agent',
     },
@@ -2075,7 +2177,7 @@ export async function runSocialContentAutoProduction(input: {
         delivery: {
           status: deliverableStatus,
           label: deliverableStatus === 'publish_candidate'
-            ? '可进入人工发布确认'
+            ? replicationHumanReviewPending ? '硬门禁通过，复刻效果待用户验收' : '待用户验收；验收后可主动发布'
             : deliverableStatus === 'concept_preview'
               ? '概念样片，不可直接发布'
               : '需要修改后再发布',
@@ -2128,8 +2230,9 @@ export async function runSocialContentAutoProduction(input: {
         review: {
           state: deliverableStatus === 'publish_candidate' ? 'requires_user_approval' : 'requires_revision',
           deliverableStatus,
+          replicationHumanReviewPending,
           technicalChecksPassed: technicalApproved,
-          creativeChecksPassed: !creativeReviewFailures.length&&(!replicationEvaluation || replicationEvaluation.status === 'passed'),
+          creativeChecksPassed: !creativeReviewFailures.length&&!replicationHardFailures.length,
           automatedChecksPassed: finalQualityAccepted,
         },
         ...(revisionParent && reviewDirective ? {

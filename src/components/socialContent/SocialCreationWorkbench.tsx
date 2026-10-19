@@ -3,7 +3,7 @@ import { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 export { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 import ReplicationWorkbenchHeader from './ReplicationWorkbenchHeader';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Modal } from 'antd';
+import { App as AntApp, Button, Modal } from 'antd';
 import {
   ChevronDown,
   ChevronRight,
@@ -102,6 +102,8 @@ export interface SocialCreationWorkbenchSeed {
   continueTaskId?: string;
   continueProjectId?: string;
   presenterAssetId?: string;
+  /** Editable project identity. Keep this separate from the reference video's title. */
+  draftTitle?: string;
   referenceTitle?: string;
   referenceThumbnail?: string;
   referenceMediaUrl?: string;
@@ -245,6 +247,10 @@ export default function SocialCreationWorkbench({
   onShowCreations: () => void;
   onGenerate: (request: SocialCreationWorkbenchSubmit) => void | Promise<void>;
 }) {
+  const { message } = AntApp.useApp();
+  const isReplication = mode === 'viral_replication';
+  const initialDraftTitle = seed?.draftTitle?.trim()
+    || (isReplication ? '爆款复刻 · 未命名草稿' : '自由创作 · 未命名草稿');
   const [products, setProducts] = useState<EnterpriseProductOption[]>([]);
   const [productId, setProductId] = useState('');
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
@@ -281,6 +287,10 @@ export default function SocialCreationWorkbench({
   const [libraryHooks, setLibraryHooks] = useState<Material[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [draftProjectId, setDraftProjectId] = useState('');
+  const [draftTitle, setDraftTitle] = useState(initialDraftTitle);
+  const [draftTitleStatus, setDraftTitleStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const draftTitleEditedRef = useRef(false);
+  const lastSavedDraftTitleRef = useRef(initialDraftTitle);
   const draftSaveTimer = useRef<number>(0);
   const draftCreationRef = useRef<Promise<string> | null>(null);
   const draggedFreeLineIndex = useRef<number | null>(null);
@@ -317,6 +327,22 @@ export default function SocialCreationWorkbench({
   const [taskSpeechLines, setTaskSpeechLines] = useState<SpeechGroup[]>([]);
   const [taskPresenterAssetId, setTaskPresenterAssetId] = useState('');
   const [generationNotice, setGenerationNotice] = useState('');
+  useEffect(() => {
+    const key = 'social-creation-generation';
+    if (!generationNotice) {
+      message.destroy(key);
+      return;
+    }
+    void message.open({
+      key,
+      type: /失败|无法|错误|必须|请先/.test(generationNotice)
+        ? 'warning'
+        : /正在/.test(generationNotice) ? 'loading' : 'success',
+      content: generationNotice,
+      duration: /正在/.test(generationNotice) ? 0 : 3,
+    });
+  }, [generationNotice, message]);
+  useEffect(() => () => message.destroy('social-creation-generation'), [message]);
   const [speechEdits, setSpeechEdits] = useState<Record<number, string>>({});
   const [generatedSpeech, setGeneratedSpeech] = useState<string[] | null>(null);
   const [generatedMappingKey, setGeneratedMappingKey] = useState<string | null>(null);
@@ -327,10 +353,31 @@ export default function SocialCreationWorkbench({
     setSpeechEdits(Object.fromEntries(seed.confirmedSpeech.map((line, index) => [index, line.draft])));
   }, [seed?.confirmedSpeech]);
   const uploadRef = useRef<HTMLInputElement>(null);
-  const isReplication = mode === 'viral_replication';
   useEffect(() => {
     if (!isReplication) setHookChooserOpen(true);
   }, [isReplication]);
+  useEffect(() => {
+    const nextTitle = seed?.draftTitle?.trim();
+    if (!nextTitle || draftTitleEditedRef.current) return;
+    setDraftTitle(nextTitle);
+    lastSavedDraftTitleRef.current = nextTitle;
+    setDraftTitleStatus('idle');
+  }, [seed?.draftTitle]);
+  useEffect(() => {
+    const projectId = String(seed?.continueProjectId || '').trim();
+    if (!isReplication || !projectId) return undefined;
+    let active = true;
+    void studioApi.getProject(projectId).then(project => {
+      if (!active || draftTitleEditedRef.current || !project.title.trim()) return;
+      setDraftTitle(project.title.trim());
+      lastSavedDraftTitleRef.current = project.title.trim();
+      setDraftTitleStatus('saved');
+    }).catch(() => {
+      // The prefilled title remains editable even when a continued project
+      // cannot be read yet; the generation transition will retry persistence.
+    });
+    return () => { active = false; };
+  }, [isReplication, seed?.continueProjectId]);
   const selectedFreeProducts = useMemo(() => products.filter(item => selectedProductIds.includes(item.id)), [products, selectedProductIds]);
   const freeDraftCreatedAt = useRef(new Date().toISOString());
   const freeCreationState = useMemo<FreeCreationState>(() => ({
@@ -382,12 +429,16 @@ export default function SocialCreationWorkbench({
           const kickoff = existing.spec.videoKickoff as { initialGeneration?: StudioScriptResult; generatedVideo?: { material?: Material } } | undefined;
           setFreeGeneration(kickoff?.initialGeneration || null);
           setFreeHookMaterial(kickoff?.generatedVideo?.material || null);
+          if (!draftTitleEditedRef.current && existing.title.trim()) {
+            setDraftTitle(existing.title.trim());
+            lastSavedDraftTitleRef.current = existing.title.trim();
+          }
           setDraftProjectId(existing.id);
           return existing.id;
         }
       }
       const result = await studioApi.saveProject({
-        title: '自由创作 · 未命名草稿', status: 'draft',
+        title: draftTitle.trim() || '自由创作 · 未命名草稿', status: 'draft',
         spec: { creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true, freeCreation: freeCreationState },
       });
       const id = result.ok ? result.project?.id || '' : '';
@@ -399,13 +450,14 @@ export default function SocialCreationWorkbench({
   useEffect(() => {
     if (isReplication) return;
     window.clearTimeout(draftSaveTimer.current);
+    setDraftTitleStatus('saving');
     draftSaveTimer.current = window.setTimeout(() => {
       void (async () => {
         const id = draftProjectId || await draftCreationRef.current || '';
-        if (!id) return;
-        const title = selectedFreeProducts.length ? `${selectedFreeProducts.map(item => item.name).join('、')} · 自由创作` : '自由创作 · 未命名草稿';
+        if (!id) { setDraftTitleStatus('error'); return; }
+        const title = draftTitle.trim() || '自由创作 · 未命名草稿';
         const productName = selectedFreeProducts.map(item => item.name).join('、');
-        await studioApi.saveProject({ id, title, status: 'draft', spec: {
+        const saved = await studioApi.saveProject({ id, title, status: 'draft', spec: {
           creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true,
           freeCreation: freeCreationState, script: freeScriptText, duration: desiredDuration,
           selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName,
@@ -419,10 +471,12 @@ export default function SocialCreationWorkbench({
             materialRole: freeHookMaterial ? 'hook' : undefined,
           },
         } });
-      })();
+        if (saved.ok) lastSavedDraftTitleRef.current = title;
+        setDraftTitleStatus(saved.ok ? 'saved' : 'error');
+      })().catch(() => setDraftTitleStatus('error'));
     }, 600);
     return () => window.clearTimeout(draftSaveTimer.current);
-  }, [desiredDuration, draftProjectId, freeCreationState, freeGeneration, freeHookMaterial, freeScriptText, isReplication, selectedFreeProducts, selectedProductIds]);
+  }, [desiredDuration, draftProjectId, draftTitle, freeCreationState, freeGeneration, freeHookMaterial, freeScriptText, isReplication, selectedFreeProducts, selectedProductIds]);
   const referenceShots = isReplication ? taskReferenceShots || seed?.referenceShots || [] : [];
   const referenceLines: ReferenceSpeechLine[] = taskSpeechLines.length
     ? groupSpeechShots(taskSpeechLines, referenceShots).map(group => {
@@ -555,7 +609,10 @@ export default function SocialCreationWorkbench({
     let refreshed = false;
     const load = () => void socialContentApi.getTask(seed.continueTaskId!).then(async initial => {
       let task = initial;
-      if (!refreshed) { refreshed = true; task = await socialContentApi.refreshReference(initial.taskId, initial.version).catch(() => initial); }
+      if (!refreshed && initial.referenceVideoAnalysis?.status !== 'ready') {
+        refreshed = true;
+        task = await socialContentApi.refreshReference(initial.taskId, initial.version).catch(() => initial);
+      }
       if (!active || task.referenceVideoAnalysis?.status !== 'ready') return;
       window.clearInterval(timer);
       setTaskPresenterAssetId(task.brief.presenterAssetId || task.brief.requestedPresenterAssetId || '');
@@ -705,7 +762,7 @@ export default function SocialCreationWorkbench({
         if (resolvedDraftProjectId) {
           const saved = await studioApi.saveProject({
             id: resolvedDraftProjectId,
-            title: `${productName || '自由创作'} · 新内容`, status: 'draft',
+            title: draftTitle.trim() || '自由创作 · 未命名草稿', status: 'draft',
             spec: {
               creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true,
               freeCreation: confirmedFreeState, script: freeScriptText, duration: desiredDuration,
@@ -714,6 +771,8 @@ export default function SocialCreationWorkbench({
             },
           });
           if (!saved.ok) throw new Error(saved.error || '自由创作草稿保存失败，请重试');
+          lastSavedDraftTitleRef.current = saved.project?.title || draftTitle.trim();
+          setDraftTitleStatus('saved');
           setDraftProjectId(resolvedDraftProjectId);
         }
       }
@@ -727,9 +786,7 @@ export default function SocialCreationWorkbench({
         draftProjectId: isReplication ? seed?.continueProjectId : resolvedDraftProjectId,
         requestId: submissionRequestIdRef.current,
         creationPath: mode,
-        title: isReplication
-          ? productName ? `${productName} · 爆款复刻` : '爆款复刻'
-          : `${productName || '自由创作'} · 新内容`,
+        title: draftTitle.trim() || (isReplication ? '爆款复刻 · 未命名草稿' : '自由创作 · 未命名草稿'),
         productId: isReplication ? productMappings[0]?.productId || '' : selected?.id || '',
         productName,
         productMappings: isReplication ? productMappings : selectedFreeProducts.map(item => ({ sourceTerm: item.name, productId: item.id, productName: item.name })),
@@ -789,7 +846,7 @@ export default function SocialCreationWorkbench({
       const id = draftProjectId || await draftCreationRef.current || '';
       if (!id) throw new Error('自由创作草稿尚未建立，请重试。');
       const productName = selectedFreeProducts.map(item => item.name).join('、');
-      const saved = await studioApi.saveProject({ id, title: `${productName || '自由创作'} · AI 钩子草稿`, status: 'draft', spec: {
+      const saved = await studioApi.saveProject({ id, title: draftTitle.trim() || '自由创作 · 未命名草稿', status: 'draft', spec: {
         creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true,
         freeCreation: { ...freeCreationState, hookSource: 'ai', hookMaterialId: '' }, script: freeScriptText, duration: desiredDuration,
         selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName,
@@ -838,12 +895,60 @@ export default function SocialCreationWorkbench({
       setFreeHookMaterial(null);
     }
   };
+  const updateDraftTitle = (value: string) => {
+    draftTitleEditedRef.current = true;
+    setDraftTitle(value);
+    setDraftTitleStatus(isReplication ? 'idle' : 'saving');
+  };
+  const commitDraftTitle = async () => {
+    const normalized = draftTitle.trim().slice(0, 120);
+    if (!normalized) {
+      setDraftTitle(lastSavedDraftTitleRef.current);
+      setDraftTitleStatus('error');
+      return;
+    }
+    if (normalized !== draftTitle) setDraftTitle(normalized);
+    if (!isReplication) return;
+    const projectId = String(seed?.continueProjectId || '').trim();
+    if (!projectId) {
+      lastSavedDraftTitleRef.current = normalized;
+      setDraftTitleStatus('saved');
+      return;
+    }
+    setDraftTitleStatus('saving');
+    try {
+      const current = await studioApi.getProject(projectId);
+      const saved = await studioApi.saveProject({
+        id: current.id,
+        title: normalized,
+        status: current.status,
+        spec: current.spec,
+        thumbSeed: current.thumbSeed,
+        baseUpdatedAt: current.updatedAt,
+      });
+      if (!saved.ok) throw new Error(saved.error || '草稿名称保存失败');
+      lastSavedDraftTitleRef.current = saved.project?.title || normalized;
+      setDraftTitle(saved.project?.title || normalized);
+      setDraftTitleStatus('saved');
+    } catch {
+      setDraftTitleStatus('error');
+    }
+  };
   const freeReady = selectedProductIds.length > 0 && Boolean(contentGoal.trim()) && Boolean(targetAudience.trim()) && freeLines.length > 0
     && freeLines.every(line => line.visual.trim() && (line.silent || line.speech.trim())) && freeLines.filter(line => line.hook).length === 1;
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-white">
-      <ReplicationWorkbenchHeader activeStep={0} compact={!isReplication} showTaskIdentity={isReplication} stepLabels={isReplication ? undefined : ['创意与口播确认', '分镜匹配与制作', '成片渲染和导出']} onStepChange={index => { if (index > 0 && (isReplication ? speechGenerated : Boolean(freeScriptText))) void startGeneration(); }} navigationDisabled={submitting || productSelectionLoading || (isReplication ? !speechGenerated : !freeScriptText)} title={isReplication ? seed?.referenceTitle : undefined} actions={<><Button htmlType="button" onClick={onShowCreations} className="whitespace-nowrap font-semibold">我的创作</Button><Button type="primary" htmlType="button" onClick={onOpenChooser} className="whitespace-nowrap font-semibold">切换制作方式</Button></>} />
+      <ReplicationWorkbenchHeader
+        activeStep={0}
+        compact
+        editableTitle
+        title={draftTitle}
+        titleStatus={draftTitleStatus}
+        onTitleChange={updateDraftTitle}
+        onTitleCommit={() => { void commitDraftTitle(); }}
+        actions={<><Button htmlType="button" onClick={onShowCreations} className="whitespace-nowrap font-semibold">我的创作</Button><Button type="primary" htmlType="button" onClick={onOpenChooser} className="whitespace-nowrap font-semibold">切换制作方式</Button></>}
+      />
 
       <Modal
         open={!isReplication && hookChooserOpen}
@@ -854,7 +959,7 @@ export default function SocialCreationWorkbench({
         title="选择开场方式"
         onCancel={() => setHookChooserOpen(false)}
       >
-        <p className="mb-5 text-sm text-text-secondary">选择本次内容如何开始；稍后仍可在画面预览区更换。</p>
+        <p className="mb-5 text-sm text-text-secondary">选择本次内容如何开始；稍后仍可在预览区更换。</p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {([
             ['ai', 'AI 生成', '根据产品与受众生成钩子', Sparkles],
@@ -933,11 +1038,8 @@ export default function SocialCreationWorkbench({
         </aside>
 
         <main className="flex min-h-[560px] min-w-0 flex-col bg-[#f5f8f5] lg:min-h-0">
-          <div className="flex items-center justify-between border-b border-black/5 px-5 py-3">
-            <div><p className="text-xs font-semibold text-text-primary">画面预览</p>{isReplication && <p className="mt-0.5 text-[10px] text-text-muted">当前对应第 {activeLine + 1} 句口播</p>}</div>
-            {!isReplication && <Button size="small" htmlType="button" onClick={() => setHookChooserOpen(true)} className="whitespace-nowrap">更换开场方式</Button>}
-          </div>
-          <input ref={uploadRef} type="file" accept="video/*,image/*" className="hidden" onChange={event => { setFiles(Array.from(event.currentTarget.files || []).slice(0, 1)); setHookMode('upload'); setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); setFreeHookMaterial(null); }} />
+          {!isReplication && <div className="flex items-center justify-end border-b border-black/5 px-5 py-3"><Button size="small" htmlType="button" onClick={() => setHookChooserOpen(true)} className="whitespace-nowrap">更换开场方式</Button></div>}
+          <input ref={uploadRef} type="file" multiple={isReplication} accept="video/*,image/*" className="hidden" onChange={event => { const selected = Array.from(event.currentTarget.files || []).slice(0, isReplication ? 12 : 1); event.currentTarget.value = ''; setFiles(selected); if (!isReplication) { setHookMode('upload'); setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); setFreeHookMaterial(null); } }} />
           {!isReplication && hookMode === 'library' && <div className="max-h-36 overflow-y-auto border-b border-border p-3">{libraryLoading ? <p className="text-xs text-text-muted">正在读取素材库…</p> : libraryHooks.length ? <div className="grid grid-cols-2 gap-2">{libraryHooks.map(item => <button type="button" key={item.id} onClick={() => { setFreeHookMaterial(item); setFiles([]); }} className={`rounded-lg border p-2 text-left text-[10px] ${freeHookMaterial?.id === item.id ? 'border-blue-500 bg-blue-50' : 'border-border'}`}><span className="line-clamp-2 font-bold">{item.name}</span></button>)}</div> : <p className="text-xs text-text-muted">素材库暂无可用图片或视频，可改用上传或暂不指定。</p>}</div>}
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 sm:p-5">
             <div className="relative flex h-full min-h-0 max-h-full w-full items-center justify-center overflow-hidden rounded-lg border border-[#dfe5e1] bg-[#eef0f3] ">
@@ -958,7 +1060,7 @@ export default function SocialCreationWorkbench({
               <div className="flex gap-2">{aiHookCandidate && freeHookMaterial?.id !== aiHookCandidate.id && <button type="button" onClick={adoptAiHook} className="rounded-lg bg-blue-600 px-3 py-1.5 font-semibold text-white">采纳此钩子</button>}<button type="button" disabled={['saving','frame','video'].includes(aiHookPhase)} onClick={() => void generateAiHook()} className="rounded-lg border border-blue-200 px-3 py-1.5 font-semibold text-blue-700 disabled:opacity-50">{aiHookPhase === 'failed' ? '重试生成' : aiHookCandidate ? '重新生成' : '确认费用并生成'}</button></div></div>
             {aiHookFrame && !aiHookCandidate && <p className="mt-1 text-text-muted">首帧已生成并入库，正在继续生成视频。</p>}{aiHookEstimatedCost > 0 && <p className="mt-1 text-text-muted">本次已核算预计费用约 ¥{aiHookEstimatedCost.toFixed(2)}</p>}{aiHookError && <p role="alert" className="mt-1 text-red-600">{aiHookError}</p>}{freeHookMaterial && freeHookMaterial.id === aiHookCandidate?.id && <p className="mt-1 font-bold text-emerald-700">已采纳并保存到素材库；刷新后可从当前草稿恢复。</p>}
           </div>}
-          {(files.length > 0 || freeHookMaterial || isReplication || hookMode === 'ai') && <div className="flex items-center justify-between border-t border-black/5 px-5 py-3 text-[11px] text-text-muted"><span>{files.length ? `已选择开场钩子：${files[0]?.name}` : freeHookMaterial ? `已选择开场钩子：${freeHookMaterial.name}` : isReplication ? '原片仅供分析' : '请生成、预览并采纳 AI 钩子'}</span>{!isReplication && hookMode === 'upload' && <button type="button" onClick={()=>uploadRef.current?.click()} className="whitespace-nowrap font-semibold text-emerald-700">更换钩子</button>}</div>}
+          {!isReplication && (files.length > 0 || freeHookMaterial || hookMode === 'ai') && <div className="flex items-center justify-between border-t border-black/5 px-5 py-3 text-[11px] text-text-muted"><span>{files.length ? `已选择开场钩子：${files[0]?.name}` : freeHookMaterial ? `已选择开场钩子：${freeHookMaterial.name}` : '请生成、预览并采纳 AI 钩子'}</span>{hookMode === 'upload' && <button type="button" onClick={()=>uploadRef.current?.click()} className="whitespace-nowrap font-semibold text-emerald-700">更换钩子</button>}</div>}
         </main>
 
         <aside className="flex min-h-0 flex-col border-t border-border bg-white lg:border-l lg:border-t-0">
@@ -1002,6 +1104,7 @@ export default function SocialCreationWorkbench({
               {!productSlots.length && referenceLines.length > 0 && <p className="text-[10px] leading-4 text-text-muted">原口播未识别到产品词，无需选择企业产品。若识别有遗漏，可补充原词。</p>}
               {referenceLines.length > 0 && <div className="mt-2 flex gap-1.5"><input aria-label="补充原口播产品词" value={newProductTerm} onChange={event => setNewProductTerm(event.target.value)} placeholder="补充未识别的原产品词" className="min-w-0 flex-1 rounded-md border border-border px-2 py-1.5 text-[10px]" /><button type="button" disabled={!newProductTerm.trim()} onClick={() => { const term = newProductTerm.trim(); if (!script.join(' ').toLocaleLowerCase().includes(term.toLocaleLowerCase())) { setGenerationNotice('补充的产品词必须出现在原片口播中。'); return; } if (!productSlots.some(slot => slot.sourceLabel.toLocaleLowerCase() === term.toLocaleLowerCase())) setManualProductTerms(current => [...current, term]); setNewProductTerm(''); setGenerationNotice(''); }} className="rounded-md border border-border bg-white px-2 text-[10px] font-bold disabled:opacity-40">添加</button></div>}
               <div className="mt-3 rounded-lg border border-border bg-surface-2 p-2.5"><p className="text-[10px] font-bold text-text-secondary">企业品牌 · 自动读取</p><p className="mt-1 text-xs text-text-primary">{enterpriseBrandName || '企业知识库尚未填写品牌名称'}</p><p className="mt-1 text-[10px] text-text-muted">新口播使用企业知识库中的品牌信息，无需填写原片品牌名。</p></div>
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 p-3" data-replication-material-supplement><p className="text-[10px] font-bold text-amber-950">本任务商品素材</p><p className="mt-1 text-[10px] leading-4 text-amber-800">上传已选企业产品的包装图片或实拍视频。文件会进入当前制作项目，下一页仍需逐镜确认；不会自动替换第三方包装。</p><button type="button" disabled={submitting} onClick={() => uploadRef.current?.click()} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-amber-800 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50"><Upload size={12} />{files.length ? '重新选择商品素材' : '上传商品图片或视频'}</button>{files.length > 0 && <ul className="mt-2 space-y-1">{files.map(file => <li key={`${file.name}:${file.size}:${file.lastModified}`} className="truncate text-[10px] text-amber-900">已选择：{file.name}</li>)}</ul>}<p className="mt-2 text-[10px] leading-4 text-amber-800">人物镜头将在下一页绑定已授权人物；没有授权或账号身份锁时只阻塞人物分支。</p></div>
             </div>}
 
             {!isReplication && <div className="mt-4 space-y-3">
@@ -1031,7 +1134,6 @@ export default function SocialCreationWorkbench({
         </aside>
       </div>
       <footer className="min-h-[76px] shrink-0 border-t border-border bg-white px-5 py-3"><div className="flex w-full items-center justify-end gap-6">
-            {generationNotice && <p role="alert" className="mb-3 text-xs text-amber-700">{generationNotice}</p>}
             {/* GENERATION_INTEGRATION_GAP: the server calculates estimatedCostCny only
                 after a task plan exists; there is no preflight quote endpoint yet. */}
             {isReplication && <div className="flex items-center gap-3 text-[11px]"><span className="text-text-muted">预计消耗</span><span className="font-semibold text-text-primary" title="生成任务建立后由服务端返回真实预估">待生成服务核算</span></div>}

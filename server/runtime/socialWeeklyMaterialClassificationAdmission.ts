@@ -5,10 +5,19 @@ import type { SocialInspirationHandoff } from '../../shared/contracts/socialCont
 import { socialJson, socialObject, socialRequestHash } from '../starter198/socialContentValidation.js';
 import { verifyMaterialEvidenceRequirements } from '../socialPrograms/materialEvidenceClassification.js';
 import { WEEKLY_MATERIAL_REQUESTS, type WeeklyMaterialRequest } from '../socialPrograms/weeklyMaterialRequests.js';
-export async function checkWeeklyMaterialClassification(input:{store:DataStore;tenantId:string;programId?:string;packageId:string;packageVersion:number;item:WeeklyDetailedContentScheduleItem;analysis:WeeklyDirectorPlanningAnalysis|undefined}):Promise<{ready:true;contract:WeeklyMaterialEvidenceRequirements}|{ready:false;code:string}> {
+export async function checkWeeklyMaterialClassification(input:{store:DataStore;tenantId:string;programId?:string;packageId:string;packageVersion:number;item:WeeklyDetailedContentScheduleItem;analysis:WeeklyDirectorPlanningAnalysis|undefined;requireReferenceBinding?:boolean}):Promise<{ready:true;contract:WeeklyMaterialEvidenceRequirements}|{ready:false;code:string}> {
  const {item,analysis}=input;const c=item.materialEvidenceRequirements;
  if(!c||!analysis?.materialEvidenceRequirements)return {ready:false,code:'weekly_material_classification_required'};
  if(analysis.analysisId!==item.directorAnalysisRef?.id||analysis.packageId!==input.packageId||analysis.packageVersion!==input.packageVersion||analysis.slotId!==item.slotId||socialRequestHash(c)!==socialRequestHash(analysis.materialEvidenceRequirements)||socialRequestHash(item.materialRequirements)!==socialRequestHash(c.items.map(i=>i.description)))return {ready:false,code:'weekly_material_classification_lineage_invalid'};
+ // A valid frozen handoff must be the reference named by both Director and
+ // dispatch. A copied material contract cannot authorize an unrelated video.
+ const directorVideos=analysis.benchmarkVideoRefs,dispatchVideos=item.benchmarkVideoRefs;
+ if(c.handoffRef&&(
+   (input.requireReferenceBinding&&(!Array.isArray(directorVideos)||!Array.isArray(dispatchVideos)))
+   ||(directorVideos!==undefined&&(!Array.isArray(directorVideos)||directorVideos.length!==1||directorVideos[0]?.id!==c.handoffRef.inspirationId))
+   ||(dispatchVideos!==undefined&&(!Array.isArray(dispatchVideos)||dispatchVideos.length!==1||dispatchVideos[0]?.id!==c.handoffRef.inspirationId))
+   ||(Array.isArray(directorVideos)&&Array.isArray(dispatchVideos)&&socialRequestHash(dispatchVideos)!==socialRequestHash(directorVideos))
+ ))return {ready:false,code:'weekly_material_classification_lineage_invalid'};
  let handoff:SocialInspirationHandoff|null=null;
  if(c.handoffRef){const rows=await input.store.list<any>('starter_social_inspiration_handoff_versions',{where:{tenant_id:input.tenantId,handoff_version:c.handoffRef.version,record_hash:c.handoffRef.recordHash},perPage:2});
  const matching=rows.items.map(row=>({row,handoff:socialJson(row.payload) as SocialInspirationHandoff})).filter(v=>v.row.tenant_id===input.tenantId&&v.handoff?.inspirationId===c.handoffRef!.inspirationId&&socialRequestHash(v.handoff)===v.row.record_hash);

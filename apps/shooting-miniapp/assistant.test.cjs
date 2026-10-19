@@ -11,8 +11,9 @@ function fixture(extra) {
     calls.push({ path, method, body })
     if (extra) { const value = await extra(path, method, body); if (value !== undefined) return value }
     if (path.endsWith('/context')) return { quickQuestions: [{ id: 'risk', text: '哪些任务需要我介入？' }] }
-    if (path.endsWith('/sessions')) return { sessions: [{ id: 'session-1' }] }
+    if (path.includes('/sessions?contextMode=')) return { sessions: [{ id: 'session-1' }] }
     if (path.endsWith('/commands')) return { ok: true }
+    if (path.endsWith('/archive')) return { session: { id: 'session-1', archivedAt: '2026-10-16T10:00:00Z' } }
     if (path.endsWith('/messages')) return { messages: [{ id: 'server-message', role: 'assistant', content: '真实会话' }] }
     if (path.endsWith('/query')) return { text: '建议重试', evidence: [{ id: 'task-1' }], links: [{ kind: 'retry_task' }] }
     if (path.endsWith('/preview')) return { previewId: 'preview-1', confirmation: { body: { kind: 'retry_task', targetId: 'task-1', expectedVersion: '7', payload: {} } } }
@@ -53,6 +54,14 @@ test('voice is editable draft and failure preserves draft without sending', asyn
   assert.equal(controller.getState().input, '帮我查看进度')
   assert.equal(calls.length, 0)
 })
+test('assistant sessions are edition scoped and can be archived and inspected', async () => {
+  const { controller, calls } = fixture(path => path.includes('archived=all') ? { sessions: [{ id: 'history-1', archivedAt: '2026-10-16T10:00:00Z' }] } : undefined)
+  await controller.restore('tenant:user:operator')
+  assert.match(calls.find(call => call.path.includes('/sessions?'))?.path || '', /contextMode=operator/)
+  assert.equal((await controller.listSessions())[0].id, 'history-1')
+  await controller.archive()
+  assert.equal(calls.some(call => call.path.endsWith('/session-1/archive')), true)
+})
 test('assistant pages use mutually exclusive text and hold-to-talk modes without redundant avatar or sync button', () => {
   const workbench = fs.readFileSync(__dirname + '/pages/workbench/index.wxml', 'utf8')
   const assistant = fs.readFileSync(__dirname + '/packages/operator/assistant/index.wxml', 'utf8')
@@ -81,6 +90,9 @@ test('operator assistant opens in voice mode with the dispatch prompt above two-
   assert.match(script, /inputMode: 'voice'/)
   assert.match(markup, /长按问灵小枢/)
   assert.match(markup, /可按住提问或者派活/)
+  assert.match(markup, /我的会话/)
+  assert.match(script, /duration:20000/)
+  assert.doesNotMatch(script, /controller\?\.send\(text\)/)
 })
 test('operator assistant recovers denied microphone permission without leaving a page-level error', async () => {
   let definition, modal, opened = 0

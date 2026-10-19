@@ -617,7 +617,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
       />
 
       {/* ── Main content ─────────────────────────────── */}
-      <main className="app-main relative flex min-w-0 flex-1 basis-0 flex-col overflow-hidden">
+      <main className="app-main relative flex min-w-0 flex-1 basis-0 flex-col overflow-clip">
         {supportAccess && (
           <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-border bg-white px-4 text-xs">
             <div className="flex min-w-0 items-center gap-2 text-text-primary">

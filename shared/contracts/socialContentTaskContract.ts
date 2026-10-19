@@ -248,7 +248,7 @@ export interface SocialContentTaskBrief {
   /** Defaults to the zero-paid-provider customer-material edit. */
   productionApproach?: SocialProductionApproach;
   /** Explicit new-plan policy; omission preserves historical frozen routing. */
-  materialRoutingPolicyVersion?: 'type-aware.v1';
+  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2';
   referenceReuse?: SocialReferenceReuseBinding;
 }
 
@@ -294,6 +294,9 @@ export interface SocialDirectorPlanSummary {
 
 export interface SocialContentTaskSummary {
   taskId: string;
+  /** Read-only server binding. Historic tasks have no implicit new allowance. */
+  contentOrder?: {schemaVersion:'social-content-order.v1';contentId:string;budgetTaskId:string;
+    entry:'weekly_package'|'workspace'|'assistant';programId:string|null;originWeek:string|null};
   brief: SocialContentTaskBrief;
   status: SocialContentTaskStatus;
   version: string;
@@ -430,6 +433,27 @@ export interface SocialMetricSubmission {
 }
 
 export interface SocialContentTaskDetail extends SocialContentTaskSummary {
+  /** Read-only exact-window revision identity; does not admit a worker. */
+  footageRevisionPlanHash?: string;
+  /** Read-only prepared fallback candidate. Never an execution authorization. */
+  preparedProductAssetRevisionCandidate?: {
+    plan: SocialAssetSupplyPlan;
+    preparedVersion: string;
+    revisedPlanHash: string;
+    budgetLedgerRef: string;
+    authorizesStart: false;
+  };
+  /** Exact product row bound to a verified Enterprise Center fact revision. */
+  enterpriseProductBinding?: {
+    productId: string;
+    productName: string;
+    productSku: string | null;
+    enterpriseFactRef: string;
+    enterpriseFactId: string;
+    enterpriseFactRevision: number;
+    enterpriseFactContentHash: string;
+    confirmedAt: string;
+  };
   /** Server-owned read projection; absent or missing evidence stays unverified. */
   socialMvpHandoff?: SocialMvpHandoffRead;
   referencePreparation?: { status: 'pending' | 'review_required' | 'blocked'; reason: string | null };
@@ -556,7 +580,7 @@ export interface CreateSocialContentTaskInput {
   productionMode?: SocialContentProductionMode;
   productionApproach?: SocialProductionApproach;
   mode?: SocialContentTaskMode;
-  materialRoutingPolicyVersion?: 'type-aware.v1';
+  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2';
   referenceReuse?: SocialReferenceReuseBinding;
   weeklyPlanId?: string | null;
   themeId?: SocialContentThemeId | null;

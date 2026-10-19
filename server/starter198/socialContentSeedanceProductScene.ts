@@ -102,7 +102,7 @@ function productScenePrompt(spec: Parameters<ProductSceneExecutionPorts['execute
 
 export function createEnvironmentSeedanceProductScenePorts(options:{replacementPorts?:ProductReplacementPorts; replacementEnvironment?:ProductReplacementEnvironmentContext; maximumCostCny?:number}={}): ProductSceneExecutionPorts {
   return {
-    maximumCostCny: options.maximumCostCny === undefined ? Math.max(0.5, Number(process.env.SEEDANCE_MAX_SHOT_COST_CNY || 3)) : Math.min(10, options.maximumCostCny, Number(process.env.SEEDANCE_MAX_SHOT_COST_CNY || 10)),
+    maximumCostCny: options.maximumCostCny === undefined ? Math.min(15, Math.max(0.5, Number(process.env.SEEDANCE_MAX_SHOT_COST_CNY || 3))) : Math.min(15, options.maximumCostCny, Number(process.env.SEEDANCE_MAX_SHOT_COST_CNY || 15)),
     async execute(input) {
       if(input.materialRouting){
         if(input.materialRouting.policy!=='local_first_product_i2v')return{status:'failed',error:'material_route_not_product_generation'};
@@ -280,7 +280,7 @@ export function createEnvironmentSeedanceProductScenePorts(options:{replacementP
         qa = await qualityCheckStoryboardFramesWithQwen({
           frames: qaFrames,
           storyboard: productScenePrompt(input.spec),
-          productInfo: `前 ${loadedProducts.length} 张是同一生成任务的商品身份参考；后 3 张是生成视频。必须逐项核对外形、颜色、材质、Logo、标签文字和包装结构，不得把不同 SKU 混成同一商品。`,
+          productInfo: `前 ${loadedProducts.length} 张是同一生成任务的商品身份参考；后 3 张是生成视频。必须逐项核对外形、颜色、材质、Logo、标签文字和包装结构，不得把不同 SKU 混成同一商品。轻微遮挡可以接受，但任何瓶盖、泵头或喷嘴都不能被完全遮住；同组产品至少有一个必须完整露出品牌、主标签和可识别包装轮廓。标题、搜索框、渐变、字幕、按钮和角标必须留在安全区，不得遮住人物脸部、关键动作、核心产品或新闻事件主体。若违反，请在 issues 中明确写“包装可见性失败”或“主体可见性失败”。`,
           critical: true,
         });
       } catch (error) {
@@ -291,6 +291,8 @@ export function createEnvironmentSeedanceProductScenePorts(options:{replacementP
       const storyboardMatch = (qa.checks.storyboardMatch || 0) / 100;
       const visualIntegrity = (qa.checks.visualIntegrity || 0) / 100;
       const labelOcrExactMatch = productIdentity >= 0.78 && !/(?:logo|label|文字|标签|ocr).{0,20}(?:错误|变化|不一致|模糊|乱码|缺失)/i.test(issues);
+      const packagingVisibilityPassed = visualIntegrity >= 0.75 && !/(?:包装可见性失败|瓶盖|泵头|喷嘴|cap|pump|nozzle).{0,24}(?:完全遮挡|被遮住|不可见|缺失|hidden|obscured|missing)/i.test(issues);
+      const subjectVisibilityPassed = visualIntegrity >= 0.75 && !/(?:主体可见性失败|人物脸部|关键动作|核心产品|新闻事件主体|hero subject|key action).{0,24}(?:遮挡|被遮住|不可见|hidden|obscured|covered)/i.test(issues);
       const evidencePath = path.join(input.outputDirectory, `${input.shotId}-product-scene-quality.json`);
       await fsp.writeFile(evidencePath, JSON.stringify({ firstFrameProviderRequestId: firstFrame.providerRequestId, seedanceTaskId: video.providerTaskId, qa }, null, 2), 'utf8');
       const contentHash = createHash('sha256').update(video.bytes).digest('hex');
@@ -305,6 +307,8 @@ export function createEnvironmentSeedanceProductScenePorts(options:{replacementP
         actualCostCny: Number((firstFrame.estimatedCostCny + video.estimatedCostCny).toFixed(4)),
         quality: {
           productIdentitySimilarity: Object.fromEntries(input.spec.productIdentity.groups.map(group => [group.productRef, productIdentity])),
+          packagingVisibilityPassed,
+          subjectVisibilityPassed,
           labelOcrExactMatch,
           sceneTopologyScore: storyboardMatch,
           productSlotLayoutScore: Math.min(productIdentity, visualIntegrity),

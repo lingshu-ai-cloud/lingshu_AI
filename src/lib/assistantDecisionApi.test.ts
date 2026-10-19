@@ -111,6 +111,22 @@ test('invalid actions and unbounded text cannot enter the decision UI', () => {
   assert.deepEqual(feed.items[0].actions.map(action => action.id), ['approve']);
 });
 
+test('workflow recovery actions survive transport normalization', () => {
+  const feed = normalizeAssistantDecisionFeed({
+    page: 'scheduled',
+    items: [card({
+      id: 'task:failed-collection',
+      kind: 'input_required',
+      subject: { type: 'workflow_task', id: 'failed-collection', version: 'task:2' },
+      actions: [
+        { id: 'retry_task', label: '从当前节点重试', mode: 'command', emphasis: 'primary' },
+        { id: 'replan_task', label: '重新规划本周任务', mode: 'command', emphasis: 'default' },
+      ],
+    })],
+  });
+  assert.deepEqual(feed.items[0]?.actions.map(action => action.id), ['retry_task', 'replan_task']);
+});
+
 test('API sends page context and optimistic version without leaking extra payload', async () => {
   const originalFetch = globalThis.fetch;
   const originalLocalStorage = globalThis.localStorage;
@@ -127,10 +143,12 @@ test('API sends page context and optimistic version without leaking extra payloa
     return new Response(JSON.stringify(response), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }) as typeof fetch;
   try {
-    const feed = await fetchAssistantDecisionFeed({ page: 'digitalEmployees', goalId: 'goal 1' });
+    const feed = await fetchAssistantDecisionFeed({ page: 'digitalEmployees', goalId: 'goal 1', decisionId: 'task:content-1', expectedVersion: 'task:7|status:waiting_human' });
     assert.equal(feed.items[0].id, 'approval:one');
     assert.match(calls[0].url, /page=digitalEmployees/);
     assert.match(calls[0].url, /goalId=goal\+1/);
+    assert.match(calls[0].url, /decisionId=task%3Acontent-1/);
+    assert.match(calls[0].url, /expectedVersion=task%3A7%7Cstatus%3Awaiting_human/);
     assert.equal((calls[0].init?.headers as Record<string, string>).Authorization, 'Bearer test-token');
 
     await executeAssistantDecision({

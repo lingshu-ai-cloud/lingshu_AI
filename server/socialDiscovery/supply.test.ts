@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { DataStore, ListQuery, ListResult } from '../storage/datastore.js';
-import { evaluateSocialDiscoveryReadiness, listSocialDiscoverySupply } from './supply.js';
+import { evaluateSocialDiscoveryReadiness, listCompleteSocialDiscoverySupply, listSocialDiscoverySupply } from './supply.js';
 
 class MemoryStore implements DataStore {
   rows = new Map<string, Array<Record<string, unknown> & { id: string }>>();
@@ -86,6 +86,8 @@ test('full supply filtering and readiness include records beyond legacy scan cap
   assert.equal(first.totalItems, 1105);
   assert.equal(last.items.length, 5);
   assert.equal(new Set([...first.items, ...last.items].map(item => item.candidateId)).size, 105);
+  const complete = await listCompleteSocialDiscoverySupply({ tenantId: 'tenant-1', dataStore, filters: { candidateType: 'video', decision: 'accepted', sort: 'score' } });
+  assert.equal(complete.items.length, 1105, 'internal planning must not inherit the UI page limit');
   const newer = { ...videos[0]!, evidenceId: 'latest-at-end', version: 2, evidence: { ...videos[0]!.evidence, sceneIds: ['new-scene'] } };
   dataStore.rows.get('social_candidate_evidence')!.push(newer);
   const newest = await listSocialDiscoverySupply({ tenantId: 'tenant-1', dataStore, filters: { candidateType: 'video', search: 'video-0000', sceneId: 'new-scene' } });
@@ -94,6 +96,8 @@ test('full supply filtering and readiness include records beyond legacy scan cap
   dataStore.rows.set('social_tracked_accounts', accounts);
   const accountTail = await listSocialDiscoverySupply({ tenantId: 'tenant-1', dataStore, filters: { candidateType: 'account', search: 'factory-504' } });
   assert.equal(accountTail.totalItems, 1);
+  const completeAccounts=await listCompleteSocialDiscoverySupply({tenantId:'tenant-1',dataStore,filters:{candidateType:'account'}});
+  assert.equal(completeAccounts.items.length,505);
   const readiness = await evaluateSocialDiscoveryReadiness({ tenantId: 'tenant-1', dataStore, thresholds: { acceptedVideos: 1105, benchmarkAccounts: 1, sceneClusters: 3 } });
   assert.equal(readiness.actual.acceptedVideos, 1105);
   assert.equal(readiness.actual.benchmarkAccounts, 1);

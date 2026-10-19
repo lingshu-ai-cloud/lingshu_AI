@@ -6,17 +6,32 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 
 /** Ark Assets API client. Consent and tenant ownership are enforced by the caller. */
 export class VolcengineArkAssets {
-  constructor(private readonly accessKey = process.env.VOLCENGINE_ACCESS_KEY_ID || '', private readonly secretKey = process.env.VOLCENGINE_SECRET_ACCESS_KEY || '', private readonly region = process.env.VOLCENGINE_ARK_ASSET_REGION || 'cn-beijing') {}
-  configured() { return Boolean(this.accessKey && this.secretKey); }
+  constructor(
+    private readonly configuredAccessKey?: string,
+    private readonly configuredSecretKey?: string,
+    private readonly configuredRegion?: string,
+  ) {}
+  private credentials() {
+    return {
+      accessKey: this.configuredAccessKey ?? process.env.VOLCENGINE_ACCESS_KEY_ID ?? '',
+      secretKey: this.configuredSecretKey ?? process.env.VOLCENGINE_SECRET_ACCESS_KEY ?? '',
+      region: this.configuredRegion ?? process.env.VOLCENGINE_ARK_ASSET_REGION ?? 'cn-beijing',
+    };
+  }
+  configured() {
+    const { accessKey, secretKey } = this.credentials();
+    return Boolean(accessKey.trim() && secretKey.trim());
+  }
   async call<T extends Record<string, unknown>>(action: string, payload: Record<string, unknown>): Promise<T> {
-    if (!this.configured()) throw new Error('未配置方舟 Assets API 访问密钥');
+    const { accessKey, secretKey, region } = this.credentials();
+    if (!accessKey.trim() || !secretKey.trim()) throw new Error('未配置方舟 Assets API 访问密钥');
     const body = JSON.stringify(payload);
-    const host = `ark.${this.region}.volcengineapi.com`; const date = new Date(); const stamp = date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z'); const day = stamp.slice(0, 8);
+    const host = `ark.${region}.volcengineapi.com`; const date = new Date(); const stamp = date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z'); const day = stamp.slice(0, 8);
     const signedHeaders = 'content-type;host;x-content-sha256;x-date'; const payloadHash = hash(body);
     const canonical = `POST\n/\nAction=${action}&Version=2024-01-01\ncontent-type:application/json\nhost:${host}\nx-content-sha256:${payloadHash}\nx-date:${stamp}\n\n${signedHeaders}\n${payloadHash}`;
-    const scope = `${day}/${this.region}/ark/request`; const stringToSign = `HMAC-SHA256\n${stamp}\n${scope}\n${hash(canonical)}`;
-    const signingKey = hmac(hmac(hmac(hmac(this.secretKey, day), this.region), 'ark'), 'request'); const signature = createHmac('sha256', signingKey).update(stringToSign).digest('hex');
-    const response = await fetch(`https://${host}/?Action=${action}&Version=2024-01-01`, { method: 'POST', headers: { 'content-type': 'application/json', host, 'x-date': stamp, 'x-content-sha256': payloadHash, authorization: `HMAC-SHA256 Credential=${this.accessKey}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}` }, body, signal: AbortSignal.timeout(15_000) });
+    const scope = `${day}/${region}/ark/request`; const stringToSign = `HMAC-SHA256\n${stamp}\n${scope}\n${hash(canonical)}`;
+    const signingKey = hmac(hmac(hmac(hmac(secretKey, day), region), 'ark'), 'request'); const signature = createHmac('sha256', signingKey).update(stringToSign).digest('hex');
+    const response = await fetch(`https://${host}/?Action=${action}&Version=2024-01-01`, { method: 'POST', headers: { 'content-type': 'application/json', host, 'x-date': stamp, 'x-content-sha256': payloadHash, authorization: `HMAC-SHA256 Credential=${accessKey}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}` }, body, signal: AbortSignal.timeout(15_000) });
     const json = await response.json() as T & { Result?: T; ResponseMetadata?: { Error?: { Message?: string } } };
     if (!response.ok || json.ResponseMetadata?.Error) throw new Error(json.ResponseMetadata?.Error?.Message || `方舟 ${action} 请求失败：HTTP ${response.status}`);
     return (json.Result || json) as T;

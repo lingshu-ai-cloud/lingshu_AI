@@ -96,7 +96,7 @@ function workItem(input: R3CandidateEvidenceAdapterInput, record: Record<string,
   const origin = (Array.isArray(analysis.discoveryOrigins) ? analysis.discoveryOrigins : [])
     .map(object)
     .find(item => item.runId === input.runId && item.mode === input.mode && item.queryRef === input.queryRef);
-  const analysisRef = String(analysis.analysisId || gemini.analysisId || '').trim();
+  const analysisRef = String(analysis.analysisId || gemini.analysisId || analysis.analysisRunId || '').trim();
   const evidenceRefs = [...new Set([
     sourceUrl,
     analysisRef ? `reference_analysis:${analysisRef}` : '',

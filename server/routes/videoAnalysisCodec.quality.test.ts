@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { VideoAiAnalysis } from '../types/index.js';
-import { exactVideoReviewReasons, hasCompletedExactVideoEvidence } from '../lib/videoAnalysisCodec.js';
+import { analysisTimelineQualityError, exactVideoClassificationQualityError, exactVideoReviewReasons, hasCompletedExactVideoEvidence } from '../lib/videoAnalysisCodec.js';
 
 const storedExact = { analysisMode: 'exact', analysisQuality: 'video_review_required', geminiStatus: 'waiting_for_video',
   gemini: { scriptDetails15s: [{ time: '0-1s', visual: '真人靠近镜头' }, { time: '1-3s', visual: '站立口播' }] } };
@@ -14,6 +14,12 @@ const analysis = (details: NonNullable<VideoAiAnalysis['scriptDetails15s']>): Vi
   theme: '产品视频', hooks: [], sellingPoints: [], mood: '', structure: '', recommendedScriptType: 'storyboard',
   scriptDetails15s: details,
 });
+
+const classified = analysis([{ time: '0-3s', visual: '产品瓶身特写', materialType: 'product', narrativeRole: 'hook', classificationEvidence: '画面可见产品瓶身特写' }]);
+assert.equal(exactVideoClassificationQualityError(classified), null);
+assert.equal(exactVideoClassificationQualityError(analysis([{ time: '0-3s', visual: '产品瓶身特写' }])), 'shot_1_material_type_missing');
+assert.equal(analysisTimelineQualityError(analysis([{ time: '0-3s', visual: '产品瓶身特写' }]), 3, 'exact'), 'shot_1_material_type_missing',
+  '时间线完整但缺少生产分类字段时不能标记为精确分析完成');
 
 const repeatedSpeech = Array.from({ length: 41 }, (_, index) => ({
   time: `${(index * 63.72 / 41).toFixed(2)}-${((index + 1) * 63.72 / 41).toFixed(2)}s`,

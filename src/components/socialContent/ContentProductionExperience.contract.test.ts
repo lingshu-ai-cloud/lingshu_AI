@@ -23,6 +23,11 @@ for (const title of ['任务概览', '逐镜进度', '异常任务']) assert.mat
 for (const detail of ['影响范围', '系统已经做了什么', '需要你做什么', '完成后从哪里继续']) assert.match(panel, new RegExp(detail));
 assert.match(panel, /刷新或离开页面不会重新分析/);
 assert.match(panel, /只展示系统已有的真实结果/);
+assert.match(panel, /focusedShotId/);
+assert.match(panel, /data-shot-id/);
+assert.match(panel, /scrollIntoView/);
+assert.match(panel, /shot\.previewMediaType === 'video'/);
+assert.match(panel, /shot\.previewMediaType === 'image'/);
 assert.match(overview, /onOpenExceptions=\{\(\) => openProductionView\('exceptions'\)\}/);
 assert.match(overview, /onOpenShots=\{\(\) => openProductionView\('shots'\)\}/);
 

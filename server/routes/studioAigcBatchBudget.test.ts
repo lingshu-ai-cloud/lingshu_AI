@@ -62,11 +62,14 @@ const freeWithObserverEnabled = studioAigcBatchBudgetPreview([route('free-shot',
 });
 assert.equal(freeWithObserverEnabled.shotPlans[0]?.estimatedFirstFrameCostCny, 0.3);
 assert.equal(studioAigcBudgetConfigForSpec({ automation: { managedBy: 'digital_employee' },
-  contentOrder: { operatingContext: { estimatedContentCost: 12.5 } } }).batchBudgetCny, 12.5,
-'managed production uses the already-frozen per-content estimate instead of the 30 yuan environment default');
+  contentOrder: { operatingContext: { estimatedContentCost: 37.8, estimatedContentCostMax: 75.6, maxAigcRetries: 1 } } }).batchBudgetCny, 75.6,
+'managed production uses the reviewed per-content ceiling instead of the hidden 30 yuan default');
 assert.equal(studioAigcBudgetConfigForSpec({ automation: { managedBy: 'digital_employee' },
-  contentOrder: { operatingContext: { estimatedContentCost: 12.5 } } }, 8).batchBudgetCny, 8,
+  contentOrder: { operatingContext: { estimatedContentCost: 37.8, estimatedContentCostMax: 75.6, maxAigcRetries: 1 } } }, 8).batchBudgetCny, 8,
 'a native request may lower but never raise the frozen limit');
+assert.equal(studioAigcBudgetConfigForSpec({ automation: { managedBy: 'digital_employee' },
+  contentOrder: { operatingContext: { estimatedContentCost: 37.8, estimatedContentCostMax: 37.8, maxAigcRetries: 0 } } }).maxRetries, 0,
+'the user-selected economy plan removes the paid retry allowance before execution');
 assert.equal(studioAigcBudgetConfigForSpec({ automation: { managedBy: 'digital_employee' } }).batchBudgetCny, 0,
 'managed production without a frozen order limit fails closed');
 const ledgerAware = studioAigcBatchBudgetPreview([route('done', 'local_material'), route('next', 'aigc_first_frame')], {

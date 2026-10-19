@@ -6,7 +6,8 @@ export interface WeeklyScheduleTargetGraph {tenantId:string;programId:string;pac
 export interface WeeklyScheduleProposal {
  proposalId:string;tenantId:string;programId:string;packageId:string;packageVersion:number;createdBy:string;createdAt:string;inputEvidenceHash:string;
  templateCarryovers?:WeeklyContentTemplateRevisionPlan[];
- targetGraph?:WeeklyScheduleTargetGraph;capacity:WeeklyScheduleCapacityInput;plan:WeeklyBackwardSchedule;inputAuthority:'stored_tasks_with_user_confirmed_capacity_assumptions'|'target_graph_with_verified_source_tasks_and_user_confirmed_capacity';
+ targetGraph?:WeeklyScheduleTargetGraph;capacity:WeeklyScheduleCapacityInput;plan:WeeklyBackwardSchedule;inputAuthority:'stored_tasks_with_user_confirmed_capacity_assumptions'|'target_graph_with_verified_source_tasks_and_user_confirmed_capacity'|'target_graph_with_automatic_template_capacity';
+ automaticAdoption?:{source:'automatic_template';templateVersion:string;adoptedAt:string;userApproval:null};
 }
 export interface WeeklyScheduleSnapshot {
  snapshotId:string;proposalId:string;tenantId:string;programId:string;packageId:string;sourceVersion:number;targetVersion:number;confirmedBy:string;confirmedAt:string;inputEvidenceHash:string;
@@ -15,6 +16,7 @@ export interface WeeklyScheduleSnapshot {
  publicationTimes:Array<{publicationTaskId:string;publishWindow:string|null}>;
  queueConfigurationHash?:string;queueCapacityEvidenceHash?:string;
  capacity:WeeklyScheduleCapacityInput;previousPublishingAuthorizationAllowed:boolean;
+ automaticAdoption?:WeeklyScheduleProposal['automaticAdoption'];
 }
 export type WeeklyScheduledPackage=WeeklyOperatingPackage&{scheduleRevisionRef?:VersionedSocialRef};
 export interface WeeklyScheduleConfirmation {item:WeeklyScheduledPackage;snapshot:WeeklyScheduleSnapshot;materialConsumerRepairs:Array<{requestId:string;reason:string}>;activated:false;previousPublishingAuthorizationRevoked:boolean;}

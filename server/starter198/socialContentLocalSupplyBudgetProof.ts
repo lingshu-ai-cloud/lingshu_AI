@@ -131,7 +131,10 @@ export function createSocialContentLocalSupplyBudgetProofReader(input: {
     const segment = canonical.scriptAnalysis.shots.find(item => item.segmentId === selected.segmentId);
     if (!segment || segment.needsReview || !Number.isFinite(selected.startSeconds) || !Number.isFinite(selected.endSeconds)
       || selected.startSeconds < segment.startSeconds || selected.endSeconds > segment.endSeconds
-      || selected.endSeconds <= selected.startSeconds || selected.endSeconds > asset.duration
+      // Container time bases can report 3.9999967 for an exact four-second
+      // source. Permit only sub-millisecond measurement quantization; this
+      // must not authorize a genuinely shorter source or padded scene.
+      || selected.endSeconds <= selected.startSeconds || selected.endSeconds - asset.duration > 0.001
       || requirement.durationSeconds === null || requirement.durationSeconds <= 0
       || selected.endSeconds - selected.startSeconds < requirement.durationSeconds) return null;
     const sha = createHash('sha256').update(await readFile(canonical.localPath)).digest('hex');

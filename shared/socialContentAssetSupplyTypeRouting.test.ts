@@ -15,7 +15,7 @@ test('factory and consumer scenes remain real local media even with people, prod
  assert.equal(missingFactory.feasibility,'goal_degraded');assert.equal(missingFactory.productSceneReplication,undefined);
  assert.equal(plan({shotId:'f',function:'trust',materialType:'factory'}).feasibility,'goal_degraded','Flat factory inventory is only a candidate pool, never evidence of this shot matching');
 });
-test('products require per-shot semantic and product evidence before local reuse; otherwise choose reference first-frame I2V',()=>{
+test('products require per-shot semantic, archetype and product evidence; missing local video blocks before generation',()=>{
  const request={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product',productPolicy:'locked'};
  const matched=plan({...request,localVideoMatch:{sourceRefs:['product-local'],semanticMatch:'verified',evidenceRef:'semantic:product-action',productRef:'own-product'}});
  assert.equal(matched.sourceStrategy,'customer_real_asset');assert.equal(matched.productSceneReplication,undefined);assert.equal(matched.fallbackSourceStrategy,null);
@@ -24,11 +24,11 @@ test('products require per-shot semantic and product evidence before local reuse
  assert.deepEqual(plan(withSegment).selectedMaterialSegment,segment);
  for(const invalid of [{...segment,sourceRef:'outside'},{...segment,startSeconds:NaN},{...segment,endSeconds:4},{...segment,startSeconds:-1}])assert.throws(()=>plan({...withSegment,selectedMaterialSegment:invalid}),/material_local_match_segment_invalid/);
  for(const match of [undefined,{sourceRefs:['product-local'],semanticMatch:'verified',evidenceRef:'',productRef:'own-product'},{sourceRefs:['product-local'],semanticMatch:'verified',evidenceRef:'semantic',productRef:'wrong-product'},{sourceRefs:['outside-tenant'],semanticMatch:'verified',evidenceRef:'semantic',productRef:'own-product'}]){
-  const generated=plan({...request,localVideoMatch:match});
-  assert.equal(generated.sourceStrategy,'aigc_product_scene_replication');assert.equal(generated.materialRouting?.localMatch.state,'missing');assert.equal(generated.materialRouting?.generation?.method,'enterprise_authored_product_first_frame_i2v');assert.equal(generated.materialRouting?.generation?.durationSeconds,3);assert.deepEqual(generated.materialRouting?.generation?.productImageRefs,['own-image']);assert.equal(generated.fallbackSourceStrategy,null);
+  const blocked=plan({...request,localVideoMatch:match});
+  assert.equal(blocked.sourceStrategy,'customer_real_asset');assert.equal(blocked.materialRouting?.policy,'local_only');assert.equal(blocked.materialRouting?.localMatch.state,'missing');assert.equal(blocked.materialRouting?.generation,undefined);assert.equal(blocked.feasibility,'goal_degraded');assert.equal(blocked.fallbackSourceStrategy,null);
  }
  const missingOwnProduct=plan({...request,productRef:'not-in-kb'});assert.equal(missingOwnProduct.feasibility,'goal_degraded');assert.deepEqual(missingOwnProduct.sourceRefs,[]);
- assert.equal(plan({...request,plannedDurationSeconds:8}).productSceneReplication?.cameraLock.durationSeconds,8);
+ assert.equal(plan({...request,plannedDurationSeconds:8}).productSceneReplication,undefined);
  for(const duration of [NaN,Infinity,0,-1])assert.throws(()=>plan({...request,plannedDurationSeconds:duration}),/material_planned_duration_invalid/);
 });
 test('only actual talking-head classification requests a presenter and unknown scenes cannot silently become products',()=>{
@@ -73,30 +73,23 @@ test('visible presenter evidence selects five slots in three runs while narrated
  assert.deepEqual(types.map((type,index)=>type==='talking_head'?references[index]!.shotId:null).filter(Boolean),['r1','r2','r30','r35','r36']);
  assert.equal(types.filter(type=>type==='talking_head').length,5);
 });
-test('historical plans omit the new contract and explicit approved generation duration stays frozen',()=>{
+test('historical plans remain unmarked while new typed plans do not infer a generation route',()=>{
  const shot:any={shotId:'p',function:'demonstration',requestedDescription:'纯产品展示',productRef:'own-product',productPolicy:'locked'};
  const historic=createSocialAssetSupplyPlan({creationMode:'viral_replication',inventory,shots:[shot]});assert.equal(historic.materialRoutingPolicyVersion,undefined);assert.equal(historic.shots[0].materialRouting,undefined);
- const original=historic.shots[0].productSceneReplication!;const snapshot=JSON.stringify(original);const current=plan({...shot,materialType:'product',productSceneReplication:original});
- assert.equal(current.materialRouting?.generation?.durationSeconds,original.cameraLock.durationSeconds);assert.equal(JSON.stringify(original),snapshot);
- assert.throws(()=>plan({...shot,materialType:'product',productSceneReplication:original,plannedDurationSeconds:original.cameraLock.durationSeconds+1}),/material_frozen_duration_changed/);
+ const current=plan({...shot,materialType:'product'});
+ assert.equal(current.materialRouting?.policy,'local_only');assert.equal(current.materialRouting?.generation,undefined);assert.equal(current.productSceneReplication,undefined);
 });
 
-test('named preferred products cannot borrow another SKU packaging, and reference composition is rebuilt without benchmark pixels',()=>{
+test('named preferred products cannot borrow another SKU or use packaging images as executable video',()=>{
  const extra={inventory:{...inventory,referenceVideoIds:['benchmark'],productIdentityGroups:[...inventory.productIdentityGroups,{productRef:'other-product',imageIds:['other-packaging']}]}};
  const request={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product',productPolicy:'preferred',referenceShotId:'reference-p'};
- const generated=plan(request,extra);
- assert.deepEqual(generated.materialRouting?.generation?.productImageRefs,['own-image']);
- assert.equal(generated.materialRouting?.generation?.method,'enterprise_authored_product_first_frame_i2v');
- assert.equal(generated.materialRouting?.generation?.firstFrameOrigin,'enterprise_authored_storyboard');
- assert.equal(generated.materialRouting?.generation?.referenceSourceId,'benchmark');
- assert.equal(generated.materialRouting?.generation?.durationSeconds,3);
+ const blocked=plan(request,extra);
+ assert.equal(blocked.materialRouting?.policy,'local_only');
+ assert.equal(blocked.materialRouting?.generation,undefined);
+ assert.deepEqual(blocked.sourceRefs,[]);
  const missing=plan({...request,productRef:'missing-product'},extra);
  assert.equal(missing.feasibility,'goal_degraded');
  assert.deepEqual(missing.sourceRefs,[]);
- const frozen=structuredClone(generated.materialRouting!);
- frozen.generation!.method='enterprise_authored_product_first_frame_i2v';
- const refreshed=plan({...request,materialRouting:frozen,productSceneReplication:generated.productSceneReplication},extra);
- assert.equal(refreshed.materialRouting?.generation?.method,'enterprise_authored_product_first_frame_i2v');
 });
 test('explicit free edits retain a verified exact video window without enabling paid generation',()=>{
  const segment={sourceRef:'product-local',segmentId:'real-segment',startSeconds:2,endSeconds:5},shot={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product',localVideoMatch:{sourceRefs:['product-local'],semanticMatch:'verified',evidenceRef:'semantic:free',productRef:'own-product'},selectedMaterialSegment:segment};
@@ -105,13 +98,11 @@ test('explicit free edits retain a verified exact video window without enabling 
  assert.equal(plan({...shot,localVideoMatch:{...shot.localVideoMatch,evidenceRef:''}},{productionApproach:'material_cut'}).selectedMaterialSegment,undefined);
 });
 
-test('normal plan refresh preserves an explicitly frozen original-pixel replacement route',()=>{
- const shot:any={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product',productPolicy:'locked'};
- const fresh=plan(shot);assert.equal(fresh.materialRouting?.generation?.firstFrameOrigin,'enterprise_authored_storyboard');
- const frozen=structuredClone(fresh.materialRouting!);frozen.generation!.method='reference_first_frame_product_replacement_i2v';delete frozen.generation!.firstFrameOrigin;
- const refreshed=plan({...shot,productSceneReplication:fresh.productSceneReplication,materialRouting:frozen});
- assert.equal(refreshed.materialRouting?.generation?.method,'reference_first_frame_product_replacement_i2v');
- assert.equal(refreshed.materialRouting?.generation?.firstFrameOrigin,undefined);
+test('new typed product plans never register an image or paid generation adapter',()=>{
+ const request={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product'};
+ const fresh=plan(request);
+ assert.equal(fresh.sourceStrategy,'customer_real_asset');
+ assert.equal(fresh.materialRouting?.policy,'local_only');
+ assert.equal(fresh.materialRouting?.generation,undefined);
+ assert.equal(fresh.productSceneReplication,undefined);
 });
-
-test('new generation freezes Wan while refresh cannot switch existing unspecified provider',()=>{const request={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product'};const fresh=plan(request);assert.equal(fresh.materialRouting?.generation?.videoProvider,'wan');assert.equal(fresh.materialRouting?.generation?.videoModel,'wan2.6-i2v-flash');assert.equal(fresh.materialRouting?.generation?.qaModel,'qwen3-vl-plus');const old=structuredClone(fresh.materialRouting!);delete old.generation!.videoProvider;delete old.generation!.videoModel;delete old.generation!.qaModel;const refresh=plan({...request,materialRouting:old,productSceneReplication:fresh.productSceneReplication});assert.equal(refresh.materialRouting?.generation?.videoProvider,undefined);assert.equal(refresh.materialRouting?.generation?.videoModel,undefined);assert.equal(refresh.materialRouting?.generation?.qaModel,undefined);});

@@ -52,7 +52,7 @@ const adapter = createSocialProductSceneAdapter({
     return {
       status: 'completed', providerId: 'mock-video', providerTaskId: 'provider-task-1', model: 'mock-v1',
       localPath: output, contentHash: 'scene-hash', duration: 3, actualCostCny: 2.7,
-      quality: { productIdentitySimilarity: { 'serum-a': 0.96, 'cream-b': 0.95 }, labelOcrExactMatch: true,
+      quality: { productIdentitySimilarity: { 'serum-a': 0.96, 'cream-b': 0.95 }, packagingVisibilityPassed: true, subjectVisibilityPassed: true, labelOcrExactMatch: true,
         sceneTopologyScore: 0.94, productSlotLayoutScore: 0.93, cameraTrajectoryScore: 0.95,
         evidenceRefs: ['qa://identity', 'qa://trajectory'] },
     };
@@ -77,7 +77,7 @@ assert.equal(request.idempotencyKey, repairKey);
 const identityFailed = createSocialProductSceneAdapter({ maximumCostCny: 3, async execute() {
   return { status: 'completed', providerId: 'mock-video', providerTaskId: 'provider-task-2', model: 'mock-v1',
     localPath: output, contentHash: 'bad-scene-hash', duration: 3, actualCostCny: 2.7,
-    quality: { productIdentitySimilarity: { 'serum-a': 0.96, 'cream-b': 0.71 }, labelOcrExactMatch: true,
+    quality: { productIdentitySimilarity: { 'serum-a': 0.96, 'cream-b': 0.71 }, packagingVisibilityPassed: true, subjectVisibilityPassed: true, labelOcrExactMatch: true,
       sceneTopologyScore: 0.94, productSlotLayoutScore: 0.93, cameraTrajectoryScore: 0.95, evidenceRefs: ['qa://identity'] } };
 } });
 await assert.rejects(() => identityFailed.execute(context), /product_identity_failed:cream-b/);
@@ -85,7 +85,7 @@ await assert.rejects(() => identityFailed.execute(context), /product_identity_fa
 const cameraFailed = createSocialProductSceneAdapter({ maximumCostCny: 3, async execute() {
   return { status: 'completed', providerId: 'mock-video', providerTaskId: 'provider-task-3', model: 'mock-v1',
     localPath: output, contentHash: 'bad-camera-hash', duration: 3, actualCostCny: 2.7,
-    quality: { productIdentitySimilarity: { 'serum-a': 0.96, 'cream-b': 0.95 }, labelOcrExactMatch: true,
+    quality: { productIdentitySimilarity: { 'serum-a': 0.96, 'cream-b': 0.95 }, packagingVisibilityPassed: true, subjectVisibilityPassed: true, labelOcrExactMatch: true,
       sceneTopologyScore: 0.94, productSlotLayoutScore: 0.93, cameraTrajectoryScore: 0.6, evidenceRefs: ['qa://trajectory'] } };
 } });
 await assert.rejects(() => cameraFailed.execute(context), /camera_trajectory_failed/);
@@ -93,7 +93,7 @@ await assert.rejects(() => cameraFailed.execute(context), /camera_trajectory_fai
 const localFallback = createSocialProductSceneAdapter({ maximumCostCny: 3, async execute() {
   return { status: 'completed', providerId: 'local-product-low-motion', providerTaskId: 'local:verified', model: 'ffmpeg-zoompan-v1',
     localPath: output, contentHash: 'local-scene-hash', duration: 3, actualCostCny: 0,
-    quality: { productIdentitySimilarity: { 'serum-a': 0.96, 'cream-b': 0.95 }, labelOcrExactMatch: true,
+    quality: { productIdentitySimilarity: { 'serum-a': 0.96, 'cream-b': 0.95 }, packagingVisibilityPassed: true, subjectVisibilityPassed: true, labelOcrExactMatch: true,
       sceneTopologyScore: 0.95, productSlotLayoutScore: 0.95, cameraTrajectoryScore: 0.95, evidenceRefs: ['qa://affine-ssim'] } };
 } });
 await assert.rejects(() => localFallback.execute(context), /product_scene_still_image_motion_forbidden/);

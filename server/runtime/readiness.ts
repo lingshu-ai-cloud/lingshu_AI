@@ -219,6 +219,7 @@ export async function digitalHumanQualityRuntimeReadiness(
     const syncnetDir = String(env.DIGITAL_HUMAN_SYNCNET_DIR || '').trim();
     const required = [
       path.join(syncnetDir, 'data', 'syncnet_v2.model'),
+      path.join(syncnetDir, 'detectors', 's3fd', 'weights', 'sfd_face.pth'),
       path.join(syncnetDir, 'run_pipeline.py'),
       path.join(syncnetDir, 'run_syncnet.py'),
       path.resolve(process.cwd(), 'scripts/validate-syncnet.py'),
@@ -270,7 +271,10 @@ export function runtimeCapabilities(role: ProcessRole): Record<RuntimeCapability
   const background = processRoleStartsBackgroundJobs(role);
   const textGeneration = textGenerationCapability();
   const qwenReady = dashscopeCredentialConfigured(process.env);
-  const ttsReady = present('MINIMAX_API_KEY') || present('PIPER_BIN') || present('XTTS_BIN');
+  // Qwen3-TTS uses the same DashScope credential as the verified Qwen
+  // generation route. Do not report speech as unavailable merely because the
+  // optional MiniMax/custom-voice provider is absent or quarantined.
+  const ttsReady = qwenReady || present('MINIMAX_API_KEY') || present('PIPER_BIN') || present('XTTS_BIN');
   const videoReady = (enabled('SEEDANCE_VIDEO_ENABLED') && present('SEEDANCE_API_KEY'))
     || (enabled('GEMINI_VIDEO_ENABLED') && present('GEMINI_API_KEY'));
   const digitalHumanProviders = digitalHumanProviderReadiness();

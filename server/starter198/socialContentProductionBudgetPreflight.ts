@@ -5,7 +5,7 @@ import {readNativeVoicePublishedTariff} from '../lib/studioVoicePublishedPricing
 import {readWanPublishedTariff} from '../lib/wanPublishedPricing.js';
 import fs from 'node:fs';
 import {getQwenProviderBinding} from '../agents/qwen.js';
-import {createSocialContentLocalPublishedTariffReader} from '../lib/socialContentPublishedTariffs.js';
+import {createQwenMaaSPublishedTariffReader,createSocialContentLocalPublishedTariffReader} from '../lib/socialContentPublishedTariffs.js';
 import path from 'node:path';
 import os from 'node:os';
 import {createProductionBudgetRouteReaders,type CanonicalProductBudgetBounds} from './socialContentProductionBudgetRoutes.js';
@@ -13,21 +13,24 @@ import {readProductReplacementRequestBounds} from './socialContentProductReplace
 import {createSocialContentLocalSupplyBudgetProofReader} from './socialContentLocalSupplyBudgetProof.js';
 import { createSocialContentPaidOperationPermit } from '../lib/socialContentPaidOperationPermit.js';
 import { createHash } from 'node:crypto';
-import type { Starter198Repository } from './repository.js';
+import { STARTER_COLLECTIONS, type Starter198Repository } from './repository.js';
 import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.js';
 import { socialJson, socialObject, socialRequestHash, socialText } from './socialContentValidation.js';
-import { readContentExecutionJob } from '../contentExecution/durableQueue.js';
-import { assertCurrentContentExecutionActive, recordCurrentContentExecutionCheckpoint } from '../contentExecution/context.js';
+import { hasCompleteFootageRevisionProductionAdmission, readContentExecutionJob } from '../contentExecution/durableQueue.js';
+import { assertCurrentContentExecutionActive, assertSocialContentOrderActive, recordCurrentContentExecutionCheckpoint } from '../contentExecution/context.js';
 import { socialMaterialAnalysisInputHash } from './socialContentProductionCheckpoints.js';
 import type { SocialProductionAsset } from './socialContentProductionPlan.js';
 import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 import type { SocialGraphApprovedContext } from './socialContentProductionExecution.js';
 import type { SocialAssetSupplyPlan } from '../../shared/contracts/socialContentReplication.js';
 import { appendPresenterFirstFrameCorrectionAttempts, createSocialContentPaidOperationPlanner, paidProductionApprovalHash, paidProductionRecordHash, paidProductionHash, presenterGroupContractHash, type FrozenPaidProduction, type FrozenPresenterGroup, type PaidOperationPlannerPorts, type BoundPaidRoute, type PaidStageRequirement } from './socialContentPaidOperationPlan.js';
-import { createSocialContentTaskBudgetAuthority, quoteSocialPaidOperationTariff, socialPaidIntentOperation, type SocialApprovedBudgetPlan, type SocialVerifiedAccountTariff } from '../lib/socialContentTaskBudgetAuthority.js';
+import { createSocialContentTaskBudgetAuthority, quoteSocialPaidOperationTariff, socialPaidIntentOperation, type SocialApprovedBudgetPlan, type SocialPaidOperationIntent, type SocialVerifiedAccountTariff } from '../lib/socialContentTaskBudgetAuthority.js';
 import { createSocialContentVerifiedTariffReader } from '../lib/socialContentVerifiedTariffs.js';
 import { SocialContentTaskBudget, type SocialTaskBudgetScope } from '../lib/socialContentTaskBudget.js';
+import {resolveSocialContentCostLineage} from './socialContentCostLineage.js';
 import {automaticallyConfirmPresenterFirstFrameApproval,readConfirmedPresenterFirstFrameApproval} from './socialContentPresenterFirstFrameApproval.js';
+import {currentPresenterFirstFrameAssetProvenanceHash} from './socialContentPresenterFirstFrameRuntime.js';
+import {carryForwardWeeklyCandidateExactProductionCost} from '../runtime/weeklyCandidateExactProductionEscrowPorts.js';
 export interface ProductionBudgetReadPorts {
     /** Trusted readonly runtime/account readers. Never task/body supplied manifests. */
     resolveBoundRoute?: PaidOperationPlannerPorts['resolveBoundRoute'];
@@ -46,6 +49,9 @@ export interface ProductionBudgetReadPorts {
      * reservation exists. Dynamic presenter video remains confirmation-gated. */
     preparePresenterFirstFrameReviews?: (input:{scope:SocialTaskBudgetScope;groups:FrozenPresenterGroup[];requirements:PaidStageRequirement[];intents:SocialApprovedBudgetPlan['paidOperations'];paidPermit:ReturnType<typeof createSocialContentPaidOperationPermit>})=>Promise<void>;
     ledgerRoot?: string;
+    carryForwardWeeklyExactCost?: typeof carryForwardWeeklyCandidateExactProductionCost;
+    /** Authoritative weekly claim recheck immediately before any new paid POST claim. */
+    assertNewSubmit?: () => Promise<void>;
 }
 export interface ProductionBudgetPreflightInput {
     repository: Starter198Repository;
@@ -60,12 +66,15 @@ export interface ProductionBudgetPreflightInput {
     supplyPlan: SocialAssetSupplyPlan | null;
     graphApprovedContext?: SocialGraphApprovedContext;
     recoveryOnly?: boolean;
+    /** Read canonical prices and retained spend without reservations, checkpoints
+     * or provider submissions. Used to allocate the whole-film residual. */
+    quoteOnly?: boolean;
     ports?: ProductionBudgetReadPorts;
 }
 const STAGE = 'social.whole_film_budget';
 const error = (gap: string): never => { throw Error(`user_input_required:whole_film_budget_preflight:${gap}`); };
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
-async function readOrAutomaticallyConfirmPresenterFirstFrame(store:NonNullable<Starter198Repository['dataStore']>,scope:SocialTaskBudgetScope,group:FrozenPresenterGroup){const existing=await readConfirmedPresenterFirstFrameApproval(store,{scope,groupId:group.groupId,presenterGroupContractHash:group.contractHash,presenterAssetId:group.presenterAssetId});if(existing)return existing;const approvals=await store.list<any>('social_presenter_first_frame_approvals',{where:{tenant_id:scope.tenantId,task_id:scope.taskId,run_id:scope.runId,plan_hash:scope.planHash,group_id:group.groupId},perPage:2});if(approvals.totalItems!==1||approvals.items.length!==1)return null;const approval=approvals.items[0]?.payload;if(!approval?.qa?.passed||approval.presenterGroupContractHash!==group.contractHash||approval.presenter?.assetId!==group.presenterAssetId||approval.recordHash!==approvals.items[0]?.record_hash)return null;await automaticallyConfirmPresenterFirstFrameApproval(store,{scope,groupId:group.groupId,expectedRecordHash:approval.recordHash});return readConfirmedPresenterFirstFrameApproval(store,{scope,groupId:group.groupId,presenterGroupContractHash:group.contractHash,presenterAssetId:group.presenterAssetId});}
+async function readOrAutomaticallyConfirmPresenterFirstFrame(store:NonNullable<Starter198Repository['dataStore']>,scope:SocialTaskBudgetScope,group:FrozenPresenterGroup){const approvals=await store.list<any>('social_presenter_first_frame_approvals',{where:{tenant_id:scope.tenantId,task_id:scope.taskId,run_id:scope.runId,plan_hash:scope.planHash,group_id:group.groupId},perPage:2});if(approvals.totalItems!==1||approvals.items.length!==1)return null;const approval=approvals.items[0]?.payload;if(!approval?.qa?.passed||approval.presenterGroupContractHash!==group.contractHash||approval.presenter?.assetId!==group.presenterAssetId||approval.recordHash!==approvals.items[0]?.record_hash)return null;const expectedAssetProvenanceHash=await currentPresenterFirstFrameAssetProvenanceHash(store,{tenantId:scope.tenantId,approval});if(!expectedAssetProvenanceHash)return null;const query={scope,groupId:group.groupId,presenterGroupContractHash:group.contractHash,presenterAssetId:group.presenterAssetId,expectedAssetProvenanceHash};const existing=await readConfirmedPresenterFirstFrameApproval(store,query);if(existing)return existing;await automaticallyConfirmPresenterFirstFrameApproval(store,{scope,groupId:group.groupId,expectedRecordHash:approval.recordHash});return readConfirmedPresenterFirstFrameApproval(store,query);}
 const paidBaselineContractHash = (baseline: StoredSocialScriptBaseline) => socialRequestHash({
   language: baseline.language,
   scenes: baseline.scenes.map(scene => ({sceneId: scene.sceneId,
@@ -119,15 +128,85 @@ async function bytesHash(asset: SocialProductionAsset) {
  * gate reads approved task facts and never creates prices, approvals or media. */
 export async function prepareSocialContentProductionBudget(input: ProductionBudgetPreflightInput) {
     const row = await requireSocialTask(input), brief = socialObject(socialJson(row.brief));
+    if(input.repository.dataStore)await assertSocialContentOrderActive(input.repository.dataStore,input.tenantId,input.taskId);
+    const footageRevision=socialObject(brief?._productFootageRevision);
     // Historical frozen jobs retain their existing admission and recovery contracts.
-    if (brief?.materialRoutingPolicyVersion !== 'type-aware.v1')
+    if (!['type-aware.v1', 'type-aware.v2'].includes(String(brief?.materialRoutingPolicyVersion))&&!brief?._productionRevision&&!brief?._weeklyCreativeRepairProof
+        &&!(footageRevision&&input.runId!==socialText(footageRevision.sourceRunId)))
         return { status: 'legacy' as const };
     const store = input.repository.dataStore;
     if (!store)
         return error('canonical_store_missing');
+    const costLineage=await resolveSocialContentCostLineage(input);
+    const inheritedBudgetScope=costLineage.budgetTaskId===input.taskId?{}:{budgetTaskId:costLineage.budgetTaskId};
+    if(costLineage.kind==='creative_repair'){
+      const order=socialObject(socialJson(row.content_order));
+      if(order?.contentId!==costLineage.contentId||order?.budgetTaskId!==costLineage.budgetTaskId)return error('revision_content_order_not_bound');
+      const childLedger=new SocialContentTaskBudget(input.ports?.ledgerRoot,{authorization:async()=>error('read_only'),quote:async()=>error('read_only'),assertCurrent:async()=>{},verifyRejection:async()=>false})
+        .status({tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,planHash:'0'.repeat(64)});
+      if(childLedger?.entries.length)return error('revision_existing_child_ledger_requires_reconciliation');
+    }
     const job = await readContentExecutionJob(store, input.tenantId, input.taskId, input.runId);
     if (!job)
         return error('canonical_job_missing');
+    if(footageRevision&&input.runId!==socialText(footageRevision.sourceRunId)){
+      if(!hasCompleteFootageRevisionProductionAdmission(job,footageRevision))return error('product_footage_revision_admission_changed');
+      const run=await input.repository.get(STARTER_COLLECTIONS.runs,input.tenantId,input.runId);
+      const freeze=socialObject(socialObject(socialJson(run?.starter_context))?.paidPlanFreeze);
+      const plan=socialObject(freeze?.canonicalPlan) as import('./socialContentProductFootageRevisionPaidPreflight.js').SocialProductFootageRevisionCanonicalPlan|null;
+      const adapter=socialObject(plan?.productionAdapter),scope=plan?.scope;
+      const admission=socialObject(job.checkpoints['social.footage_revision_worker_admission']?.payload);
+      if(!freeze||freeze.schemaVersion!=='social-product-footage-revision-paid-plan-freeze.v1'||!plan||!scope
+        ||socialRequestHash(plan)!==freeze.planHash||admission?.paidPlanFreezeHash!==freeze.recordHash
+        ||admission?.canonicalPlanHash!==socialRequestHash(plan)||scope.tenantId!==input.tenantId
+        ||scope.taskId!==input.taskId||scope.runId!==input.runId||scope.planHash!==plan.revisedPlanHash
+        ||scope.budgetTaskId!==undefined||plan.maximumCny!==10
+        ||adapter?.schemaVersion!=='social-product-footage-revision-production-budget.v1')
+        return error('product_footage_revision_paid_plan_adapter_invalid');
+      const requirements=Array.isArray(adapter.requirements)?adapter.requirements as PaidStageRequirement[]:[];
+      const routeBindings=socialObject(adapter.routeBindings) as Record<string,BoundPaidRoute>|null;
+      const quotes=socialObject(adapter.quotes) as Record<string,import('../lib/socialContentTaskBudget.js').SocialTaskBudgetQuote>|null;
+      if(!requirements.length||!routeBindings||!quotes||requirements.length!==plan.paidOperations.length)
+        return error('product_footage_revision_paid_plan_adapter_invalid');
+      const operations=plan.paidOperations.map(intent=>socialPaidIntentOperation(scope,intent));
+      for(const intent of plan.paidOperations){
+        const matches=requirements.filter(requirement=>requirement.stage===intent.stage&&requirement.shotId===intent.shotId);
+        const requirement=matches[0],route=requirement&&routeBindings[requirement.key];
+        if(matches.length!==1||!route||intent.provider!==route.provider||intent.model!==route.model
+          ||intent.accountRef!==route.accountRef||paidProductionHash(intent.maximumUnits)!==paidProductionHash(route.maximumUnits)
+          ||intent.inputContractHash!==paidProductionHash({requirement,route,attempt:0})
+          ||intent.operationId!==`paid-plan:${paidProductionHash({scope,key:requirement.key,attempt:0})}`
+          ||!quotes[intent.operationId])return error('product_footage_revision_paid_plan_adapter_invalid');
+      }
+      const ledger=new SocialContentTaskBudget(input.ports?.ledgerRoot,{authorization:async()=>error('product_footage_revision_never_authorizes'),
+        quote:async()=>error('product_footage_revision_never_quotes'),assertCurrent:async()=>{},verifyRejection:async()=>false});
+      const status=ledger.status(scope);
+      const entries=status?.entries.filter(entry=>entry.runId===scope.runId&&entry.planHash===scope.planHash&&entry.status!=='rejected')??[];
+      if(!status||status.limitCny!==10||status.authorizedLimitCny!==10||status.hasCorrectionAuthorization
+        ||entries.length!==operations.length||operations.some(operation=>{const entry=entries.find(row=>row.operationId===operation.operationId),quote=quotes[operation.operationId];return !entry||entry.fingerprint!==operation.fingerprint
+          ||!quote||quote.quoteRef!==entry.quoteRef||Math.round(quote.upperBoundCny*1e6)!==entry.reservedMicros
+          ||!Number.isFinite(Date.parse(quote.validUntil));}))
+        return error('product_footage_revision_original_ten_yuan_ledger_changed');
+      const assertRevisionCurrent=async()=>{
+        await assertCurrentContentExecutionActive();
+        const current=await readContentExecutionJob(store,input.tenantId,input.taskId,input.runId);
+        const currentRun=await input.repository.get(STARTER_COLLECTIONS.runs,input.tenantId,input.runId);
+        const currentFreeze=socialObject(socialObject(socialJson(currentRun?.starter_context))?.paidPlanFreeze);
+        if(!current||current.id!==job.id||!hasCompleteFootageRevisionProductionAdmission(current,footageRevision)
+          ||socialRequestHash(currentFreeze)!==socialRequestHash(freeze))return error('product_footage_revision_authority_changed');
+      };
+      const paidPermit=createSocialContentPaidOperationPermit({scope,operations:entries,intents:plan.paidOperations,ledger,
+        root:path.join(input.ports?.ledgerRoot||process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR||'data/social-content-task-budget','.permits'),
+        assertCurrent:assertRevisionCurrent,
+        assertNewSubmit:async()=>{
+          await assertRevisionCurrent();
+          if(!input.ports?.assertNewSubmit)
+            return error('product_footage_revision_current_provider_authority_adapter_required');
+          await input.ports.assertNewSubmit();
+        }});
+      return {status:'reserved' as const,scope,reserved:{scope,operations:entries,intents:plan.paidOperations,
+        quotes,status,ledger},paidPermit,requirements,routeBindings};
+    }
     if (socialText(row.run_id) !== input.runId)
         return error('run_superseded');
     const graph = await import('./socialContentProductionGraph.js');
@@ -153,19 +232,22 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     // The ledger is the durable financial authority. If an interrupted worker
     // wrote a newer planning checkpoint through a different working directory,
     // keep the single already-funded scope for this same run.
-    const ledgerProbe = new SocialContentTaskBudget(input.ports?.ledgerRoot, {
+    let ledgerProbe = new SocialContentTaskBudget(input.ports?.ledgerRoot, {
       authorization: async()=>{throw Error('budget_probe_read_only');}, quote:async()=>{throw Error('budget_probe_read_only');},
       assertCurrent:async()=>{},verifyRejection:async()=>false,
-    }).status({tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,planHash:calculatedPlanHash});
-    const fundedPlanHashes=[...new Set((ledgerProbe?.entries||[]).filter(entry=>entry.runId===input.runId&&entry.status!=='rejected').map(entry=>entry.planHash))];
+    }).status({tenantId:input.tenantId,taskId:input.taskId,...inheritedBudgetScope,runId:input.runId,planHash:calculatedPlanHash});
+    const fundedPlanHashes=[...new Set((ledgerProbe?.entries||[]).filter(entry=>(entry.executionTaskId??costLineage.budgetTaskId)===input.taskId&&entry.runId===input.runId&&entry.status!=='rejected').map(entry=>entry.planHash))];
     const planHash = fundedPlanHashes.length===1 ? fundedPlanHashes[0]! : calculatedPlanHash;
     const graphBindingHash=input.graphApprovedContext?graph.socialProductionGraphInput(detail,input.graphApprovedContext).inputHash:null;
     if (input.graphApprovedContext && graphBindingHash !== planHash&&!graph.matchesAuthorizedCorrectionContext(job,input.graphApprovedContext,planHash,ledgerProbe?.correctionAuthorization?.recordHash,graphBindingHash || undefined))
         return error('graph_binding_changed');
     const initialWorkflowHash = socialRequestHash({ plan: detail.agentWorkflow.executionPlan, review: detail.agentWorkflow.executionPlanReview, director: detail.agentWorkflow.directorBrief });
-    const scope: SocialTaskBudgetScope = { tenantId: input.tenantId, taskId: input.taskId, runId: input.runId, planHash };
+    const scope: SocialTaskBudgetScope = { tenantId: input.tenantId, taskId: input.taskId, ...inheritedBudgetScope,runId: input.runId, planHash };
     const assertCurrent = async () => {
         await assertCurrentContentExecutionActive();
+        await assertSocialContentOrderActive(store,input.tenantId,input.taskId);
+        const liveLineage=await resolveSocialContentCostLineage(input);
+        if(liveLineage.lineageHash!==costLineage.lineageHash)return error('revision_cost_lineage_changed');
         const current = await requireSocialTask(input);
         if (socialText(current.run_id) !== input.runId || socialRequestHash(socialObject(socialJson(current.brief))) !== socialRequestHash(brief))
             return error('task_authority_changed');
@@ -176,9 +258,20 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         if (!active || active.id !== job.id || ['cancelled', 'failed'].includes(active.status))
             return error('job_authority_changed');
     };
+    const exactCostWeeklyAuthority=socialObject(brief?._weeklyAuthority);
+    if(exactCostWeeklyAuthority&&costLineage.kind==='original'){
+      const preproductionBudget=new SocialContentTaskBudget(input.ports?.ledgerRoot,{
+        authorization:async()=>({maximumCny:Number(brief?.perItemBudgetCny),authorizationRef:`weekly-production:${socialRequestHash(exactCostWeeklyAuthority)}`}),
+        quote:async()=>{throw Error('weekly_preproduction_carry_never_quotes');},assertCurrent,verifyRejection:async()=>false,
+      });
+      const exactEscrowRoot=process.env.WEEKLY_CANDIDATE_EXACT_LEDGER_ROOT?.trim()||process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR?.trim()||'';
+      await (input.ports?.carryForwardWeeklyExactCost??carryForwardWeeklyCandidateExactProductionCost)({store,escrowRoot:exactEscrowRoot,scope,taskRow:row,budget:preproductionBudget,mode:input.quoteOnly?'read':'carry'});
+      ledgerProbe=preproductionBudget.status(scope);
+    }
     // Once this run has a frozen whole-film reservation, every later execution
     // is recovery. Re-planning could append newly priced operations after local
     // code or routing changes and spend beyond the user's original cap.
+    if (input.quoteOnly && (input.recoveryOnly || prior)) return error('quote_requires_unfunded_plan');
     if (input.recoveryOnly || prior) {
         // Read-only recovery cannot obtain a new quote, reserve or reset task expenses.
         if (!prior || prior.inputHash !== planHash)
@@ -294,7 +387,8 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         const operations=activeOperationIds.map(id=>activeStatus.entries.find(entry=>entry.operationId===id)).filter((entry):entry is NonNullable<typeof entry>=>Boolean(entry));
         if(operations.length!==activeOperationIds.length)return error('presenter_correction_reservation_missing');
         const paidPermit = createSocialContentPaidOperationPermit({scope,operations,intents:activeIntents,
-          ledger,root:path.join(input.ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget','.permits'),assertCurrent});
+          ledger,root:path.join(input.ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget','.permits'),assertCurrent,
+          assertNewSubmit:input.ports?.assertNewSubmit});
         await input.ports?.preparePresenterFirstFrameReviews?.({scope,groups:recoveryPresenterGroups,requirements,intents:activeIntents,paidPermit});
         await assertCurrent();
         return {status:'reserved' as const,scope,reserved:{scope,operations,intents:activeIntents,quotes:activeQuotes,status:activeStatus,ledger},paidPermit,requirements,routeBindings:activeRouteBindings};
@@ -325,7 +419,9 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     const voice = lines.length ? await (ports?.readVoicePlan || (async () => null))(input.baseline) : { mode: 'none' as const, lines: [], requiresClone: false, allowFallback: false, requiresAsr: false, reuseReceiptRef: null };
     if (!voice)
         return error('selected_voice_runtime_route_missing');
-    const amount = Number(brief?.perItemBudgetCny), retry = Number(brief?.retryReserveCny || 0);
+    // Repair allowance bounds incremental work, not a new whole-film ceiling.
+    // The original lower ceiling and every retained charge remain authoritative.
+    const amount = costLineage.kind==='creative_repair'?costLineage.originalMaximumCny??ledgerProbe?.limitCny??NaN:Number(brief?.perItemBudgetCny), retry = Number(brief?.retryReserveCny || 0);
     if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(retry) || retry < 0)
         return error('task_budget_missing');
     const priorPlan = socialObject(priorPayload?.plan);
@@ -338,14 +434,31 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     // the retry impossible because recovery is deliberately read-only. Runtime
     // still exposes attempt one only after attempt-zero QA fails.
     const authorizedRetryShots = productRetryReservationShotIds(input.supplyPlan.shots, directedRetryShotIds);
-    const frozenScenes:FrozenPaidProduction['scenes']=approved.directorBrief.scenes.map(scene => ({ ...(voice.mode === 'continuous' && voice.requiresAlignment && input.supplyPlan?.shots.some(shot => shot.shotId === scene.sceneId && shot.sourceStrategy === 'authorized_digital_presenter') ? {presenterSpeech:'whole_track' as const} : {}), shotId: scene.sceneId, durationSeconds: scene.duration.endSeconds - scene.duration.startSeconds, spokenText: input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.voiceover || input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.narration || '' }));
+    const frozenScenes:FrozenPaidProduction['scenes']=approved.directorBrief.scenes.map(scene => ({ ...(voice.mode === 'continuous' && voice.requiresAlignment && input.supplyPlan?.shots.some(shot => shot.shotId === scene.sceneId && shot.sourceStrategy === 'authorized_digital_presenter'&&shot.digitalHumanPlan?.method!=='reenact') ? {presenterSpeech:'whole_track' as const} : {}), shotId: scene.sceneId, durationSeconds: scene.duration.endSeconds - scene.duration.startSeconds, spokenText: input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.voiceover || input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.narration || '' }));
     const presenterGroups:FrozenPresenterGroup[]=[];
     let pending:{presenterAssetId:string;scenes:typeof frozenScenes}|null=null;
     const flushPresenterGroup=()=>{if(!pending?.scenes.length)return;const value={shotIds:pending.scenes.map(scene=>scene.shotId),durationSeconds:pending.scenes.reduce((sum,scene)=>sum+scene.durationSeconds,0),spokenText:pending.scenes.map(scene=>scene.spokenText).join(' '),presenterAssetId:pending.presenterAssetId};const groupId=`presenter-mother-${presenterGroups.length+1}`;const group={groupId,...value,contractHash:''};group.contractHash=presenterGroupContractHash(group);presenterGroups.push(group);pending=null;};
     for(const scene of frozenScenes){const shot=input.supplyPlan.shots.find(item=>item.shotId===scene.shotId);const ids=[...new Set(shot?.digitalHumanPlan?.presenterAssetIds?.length?shot.digitalHumanPlan.presenterAssetIds:shot?.sourceRefs||[])];const eligible=scene.presenterSpeech==='whole_track'&&shot?.sourceStrategy==='authorized_digital_presenter'&&ids.length===1;if(!eligible){flushPresenterGroup();continue;}if(pending&&pending.presenterAssetId!==ids[0])flushPresenterGroup();if(!pending)pending={presenterAssetId:ids[0]!,scenes:[]};pending.scenes.push(scene);}
     flushPresenterGroup();
-    const snapshot: FrozenPaidProduction = { scope, baselineHash, recordHash: '', approval: { approved: true, reviewRef: review.reviewId, sourceHash: '', planHash }, authorization: { ref: `task-budget:${socialRequestHash({ tenantId: input.tenantId, taskId: input.taskId, createdBy: row.created_by, budget: amount, retry })}`, maximumCny: Math.min(10, amount) }, maximumRetries: authorizedRetryShots.length ? 1 : 0, directedRetryShotIds: authorizedRetryShots,
-        scenes:frozenScenes, presenterGroups, shots: input.supplyPlan.shots, assets: assetInputs, voice, finalReview: 'local' };
+    for(const scene of frozenScenes){const shot=input.supplyPlan.shots.find(item=>item.shotId===scene.shotId);if(shot?.sourceStrategy!=='authorized_digital_presenter'||shot.digitalHumanPlan?.method!=='reenact'||(shot.digitalHumanPlan as typeof shot.digitalHumanPlan&{silentMotion?:boolean}).silentMotion!==true)continue;const ids=[...new Set(shot.digitalHumanPlan.presenterAssetIds)];if(ids.length!==1)return error('motion_presenter_identity_ambiguous');const group:FrozenPresenterGroup={groupId:`presenter-motion:${scene.shotId}`,shotIds:[scene.shotId],durationSeconds:scene.durationSeconds,spokenText:scene.spokenText,presenterAssetId:ids[0]!,executionKind:'seedance_motion',contractHash:''};group.contractHash=presenterGroupContractHash(group);presenterGroups.push(group);}
+    presenterGroups.sort((a,b)=>frozenScenes.findIndex(scene=>scene.shotId===a.shotIds[0])-frozenScenes.findIndex(scene=>scene.shotId===b.shotIds[0]));
+    let automaticWeeklyG5=false;
+    const weeklyAuthority=socialObject(brief?._weeklyAuthority),frozenWeek=socialObject(weeklyAuthority?.weeklyPackage),frozenPublication=socialObject(weeklyAuthority?.publicationTask);
+    if(costLineage.kind==='original'&&frozenWeek&&frozenPublication){
+      const weeklyScope={tenantId:input.tenantId,programId:String(frozenWeek.programId??''),packageId:String(frozenWeek.packageId??''),packageVersion:Number(frozenWeek.version)};
+      const rows=await store.list<{payload:import('../../shared/contracts/socialProgram.js').WeeklyOperatingPackage}>('social_weekly_operating_packages',{where:{tenant_id:input.tenantId,program_id:weeklyScope.programId,package_id:weeklyScope.packageId,version:weeklyScope.packageVersion},perPage:2});
+      if(rows.totalItems!==1||rows.items.length!==1)return error('weekly_g5_original_package_missing');
+      const {createWeeklyPlanningAuthority}=await import('../socialPrograms/planningAuthority.js');
+      const planning=await createWeeklyPlanningAuthority(store).get(weeklyScope.tenantId,weeklyScope.programId,weeklyScope.packageId,weeklyScope.packageVersion);
+      if(planning.automaticTemplateAdoption){
+        const {readWeeklyAutomaticProductionIntent}=await import('../socialPrograms/weeklyAutomaticProductionPlanning.js');
+        if(!await readWeeklyAutomaticProductionIntent(store,weeklyScope,rows.items[0]!.payload,String(frozenPublication.publicationTaskId??'')))return error('weekly_g5_automatic_intent_missing');
+        automaticWeeklyG5=true;
+      }
+    }
+    const snapshot: FrozenPaidProduction = { scope, baselineHash, recordHash: '', approval: { approved: true, reviewRef: review.reviewId, sourceHash: '', planHash }, authorization: { ref: `task-budget:${socialRequestHash({ tenantId: input.tenantId, taskId: input.taskId, createdBy: row.created_by, budget: amount, retry })}`, maximumCny: Math.min(15, amount) }, maximumRetries: authorizedRetryShots.length ? 1 : 0, directedRetryShotIds: authorizedRetryShots,
+        scenes:frozenScenes, presenterGroups, shots: input.supplyPlan.shots, assets: assetInputs, voice, finalReview: automaticWeeklyG5?'paid_capacity':'local' };
+    if(costLineage.maximumAdditionalCostCny!==null)snapshot.authorization.maximumExecutionCny=costLineage.maximumAdditionalCostCny;
     snapshot.approval.sourceHash = paidProductionApprovalHash(snapshot);
     snapshot.recordHash = paidProductionRecordHash(snapshot);
     const localSupplyProof=createSocialContentLocalSupplyBudgetProofReader({scope,supplyPlan:input.supplyPlan,baseline:input.baseline,
@@ -355,7 +468,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
       if(!req.shotId)return null;const shot=input.supplyPlan!.shots.find(s=>s.shotId===req.shotId);
       if(!shot?.materialRouting||!shot.productSceneReplication)return null;
       await assertCurrent();
-      const value=await readProductReplacementRequestBounds({tenantId:input.tenantId,taskId:input.taskId,shotId:req.shotId,idempotencyKey:`budget-read:${planHash}:${req.shotId}`,spec:shot.productSceneReplication,materialRouting:shot.materialRouting,referenceImages:[],outputDirectory:os.tmpdir(),maximumCostCny:Math.min(10,amount)}, {
+      const value=await readProductReplacementRequestBounds({tenantId:input.tenantId,taskId:input.taskId,shotId:req.shotId,idempotencyKey:`budget-read:${planHash}:${req.shotId}`,spec:shot.productSceneReplication,materialRouting:shot.materialRouting,referenceImages:[],outputDirectory:os.tmpdir(),maximumCostCny:Math.min(15,amount)}, {
         dataStore:store,
         materials:input.repository.materialLibrary,
         assertCurrent,
@@ -367,7 +480,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     }});
     const presenterBindings = new Map<string, TrustedHeyGenRuntimeBinding>();
     const readPresenterRoute = async (requirement: Parameters<PaidOperationPlannerPorts['resolveBoundRoute']>[0]): Promise<BoundPaidRoute | null> => {
-      if (!requirement.presenterGroupId || !['first_frame','first_frame_qa','presenter_video'].includes(requirement.stage)) return null;
+      if (!requirement.presenterGroupId || !['first_frame','first_frame_qa','presenter_video','video_qa'].includes(requirement.stage)) return null;
       const memberIds=requirement.presenterGroupId?requirement.presenterGroupShotIds:requirement.shotId?[requirement.shotId]:null;
       if(!memberIds?.length)return null;
       const frozenGroup=requirement.presenterGroupId?snapshot.presenterGroups?.find(group=>group.groupId===requirement.presenterGroupId):null;
@@ -376,6 +489,14 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
       if(memberShots.some(shot=>!shot||shot.sourceStrategy!=='authorized_digital_presenter'))return null;
       const presenterIds=[...new Set(memberShots.flatMap(shot=>shot?.digitalHumanPlan?.presenterAssetIds?.length?shot.digitalHumanPlan.presenterAssetIds:shot?.sourceRefs||[]))];
       if (presenterIds.length !== 1 || (requirement.presenterAssetId&&requirement.presenterAssetId!==presenterIds[0])) return null;
+      if(frozenGroup?.executionKind==='seedance_motion'&&requirement.stage==='video_qa'){
+        const qaReader=createProductionBudgetRouteReaders({readCanonicalProductBounds:async()=>({qaModel:'qwen3-vl-plus',firstFrameMaximumFrames:3,videoMaximumFrames:4,productSha256s:[frozenGroup.contractHash],providerDurationSeconds:Math.max(4,Math.ceil(frozenGroup.durationSeconds)),evidenceRef:`presenter-motion-qa:${frozenGroup.contractHash}`})});
+        return qaReader.resolveBoundRoute(requirement);
+      }
+      // Seedance needs a trusted enforced usage/charge ceiling. Do not quote
+      // HeyGen pricing for this route, or invent a hard bound from a token
+      // estimate. A deployment can supply the exact route through ports.
+      if(frozenGroup?.executionKind==='seedance_motion'&&requirement.stage==='presenter_video')return null;
       if(requirement.stage==='first_frame'||requirement.stage==='first_frame_qa'){
         const generic=await canonicalRoutes.resolveBoundRoute(requirement);
         if(generic)return generic;
@@ -415,29 +536,44 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     const planned = await planner.plan(scope);
     if (!planned.plan)
         return error(planned.gaps.join('|'));
-    if (!planned.plan.paidOperations.length)
+    if (!planned.plan.paidOperations.length) {
+        if (input.quoteOnly) return {status: 'quoted' as const, scope, items: [], maximumCny: Math.min(15, amount, ledgerProbe?.limitCny ?? 15), retainedCny: ledgerProbe?.retainedCny || 0, wholeTaskUpperBoundCny: ledgerProbe?.retainedCny || 0};
         return { status: 'local' as const, scope };
+    }
     const reader = createSocialContentVerifiedTariffReader(store, input.tenantId);
-    const publishedReader=createSocialContentLocalPublishedTariffReader({readProviderBinding:async intent=>{
+    const readPublishedQwenBinding=async (intent:SocialPaidOperationIntent)=>{
       if(intent.provider!=='qwen')return null;let b:ReturnType<typeof getQwenProviderBinding>;try{b=getQwenProviderBinding();}catch{return null;}
-      const model=intent.stage==='material_image_analysis'?b.imageModel:['material_video_analysis','material_video_review'].includes(intent.stage)?b.materialModel:['first_frame_qa','video_qa'].includes(intent.stage)?(intent.model==='qwen3-vl-plus'?intent.model:process.env.QWEN_VL_MODEL||'qwen3-vl-plus'):null;
+      const model=intent.stage==='material_image_analysis'?b.imageModel:['material_video_analysis','material_video_review'].includes(intent.stage)?b.materialModel:intent.stage==='director_review_capacity'?intent.model:['first_frame_qa','video_qa'].includes(intent.stage)?(intent.model==='qwen3-vl-plus'?intent.model:process.env.QWEN_VL_MODEL||'qwen3-vl-plus'):null;
       return model?{provider:'qwen',model,baseUrl:b.baseUrl,credentialSha256:b.credentialSha256}:null;
-    }});
-    const authority = createSocialContentTaskBudgetAuthority({ ledgerRoot: ports?.ledgerRoot, ports: { assertCurrent, readApprovedPlan: async () => { await assertCurrent(); return planned.plan!; }, readVerifiedTariff: async intent=>await ports?.readTariff?.(intent)||await reader.read(intent)||(intent.provider==='heygen' && intent.stage==='tts' ? await readHeyGenPublishedTariff(intent,{readBinding:async operation=>{const binding=[...presenterBindings.values()].find(b=>operation.accountRef==='heygen:'+createHash('sha256').update(JSON.stringify({baseUrl:'https://api.heygen.com/v3/voices/speech',credentialSha256:b.credentialSha256})).digest('hex'));return binding?{...binding,accountRef:operation.accountRef}:null;}}) : ['tts','voice_asr','voice_alignment'].includes(intent.stage)?await readNativeVoicePublishedTariff(intent):intent.provider==='seedream'?await readSeedreamPublishedTariff(intent,{baseUrl:process.env.SEEDREAM_BASE_URL||process.env.SEEDANCE_BASE_URL||'https://ark.cn-beijing.volces.com/api/v3',credentialSha256:createHash('sha256').update((process.env.SEEDREAM_API_KEY||process.env.SEEDANCE_API_KEY||'').trim()).digest('hex')}):intent.provider==='wan'?await readWanPublishedTariff(intent,getQwenProviderBinding()):intent.provider==='heygen'?await readHeyGenPublishedTariff(intent,{readBinding:async operation=>[...presenterBindings.values()].find(binding=>binding.accountRef===operation.accountRef)||null}):await publishedReader.read(intent)), verifyRejection: async () => false } });
+    };
+    const publishedReader=createSocialContentLocalPublishedTariffReader({readProviderBinding:readPublishedQwenBinding});
+    const maasPublishedReader=createQwenMaaSPublishedTariffReader({readProviderBinding:readPublishedQwenBinding});
+    const authority = createSocialContentTaskBudgetAuthority({ ledgerRoot: ports?.ledgerRoot, ports: { assertCurrent, readApprovedPlan: async () => { await assertCurrent(); return planned.plan!; }, readVerifiedTariff: async intent=>await ports?.readTariff?.(intent)||await reader.read(intent)||(intent.provider==='heygen' && intent.stage==='tts' ? await readHeyGenPublishedTariff(intent,{readBinding:async operation=>{const binding=[...presenterBindings.values()].find(b=>operation.accountRef==='heygen:'+createHash('sha256').update(JSON.stringify({baseUrl:'https://api.heygen.com/v3/voices/speech',credentialSha256:b.credentialSha256})).digest('hex'));return binding?{...binding,accountRef:operation.accountRef}:null;}}) : ['tts','voice_asr','voice_alignment'].includes(intent.stage)?await readNativeVoicePublishedTariff(intent):intent.provider==='seedream'?await readSeedreamPublishedTariff(intent,{baseUrl:process.env.SEEDREAM_BASE_URL||process.env.SEEDANCE_BASE_URL||'https://ark.cn-beijing.volces.com/api/v3',credentialSha256:createHash('sha256').update((process.env.SEEDREAM_API_KEY||process.env.SEEDANCE_API_KEY||'').trim()).digest('hex')}):intent.provider==='wan'?await readWanPublishedTariff(intent,{baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',credentialSha256:getQwenProviderBinding().credentialSha256}):intent.provider==='heygen'?await readHeyGenPublishedTariff(intent,{readBinding:async operation=>[...presenterBindings.values()].find(binding=>binding.accountRef===operation.accountRef)||null}):await maasPublishedReader.read(intent)||await publishedReader.read(intent)), verifyRejection: async () => false } });
     // Quote the complete frozen plan before mutating the task ledger.  Besides
     // keeping over-budget retries free, the stage breakdown is durable in the
     // graph node failure reason and makes the degradation decision auditable.
     const preview = await authority.prepare(scope);
-    const previewItems = planned.plan.paidOperations.map(intent => ({
+    const previewItems = planned.plan.paidOperations.map(intent => {
+      const quote=preview.quotes.get(intent.operationId);
+      if(!quote || !Number.isFinite(quote.upperBoundCny) || quote.upperBoundCny<=0 || !quote.quoteRef) return error(`formal_paid_route_quote_missing:${intent.operationId}`);
+      return ({
       operationId: intent.operationId,
       stage: intent.stage,
       shotId: intent.shotId,
       provider: intent.provider,
       model: intent.model,
-      upperBoundCny: preview.quotes.get(intent.operationId)?.upperBoundCny ?? 0,
-    }));
+      upperBoundCny: quote.upperBoundCny,
+      quoteRef: quote.quoteRef,
+    }); });
     const previewUpperBoundCny = previewItems.reduce((sum, item) => sum + item.upperBoundCny, 0);
-    if (previewUpperBoundCny > planned.plan.maximumCny || previewUpperBoundCny > 10) {
+    const retained = ledgerProbe?.retainedCny || 0;
+    const existingOperationIds = new Set((ledgerProbe?.entries || []).filter(entry => entry.status !== 'rejected').map(entry => entry.operationId));
+    const wholeTaskUpperBoundCny = retained + previewItems.filter(item => !existingOperationIds.has(item.operationId)).reduce((sum, item) => sum + item.upperBoundCny, 0);
+    const childRetained=(ledgerProbe?.entries||[]).filter(entry=>entry.executionTaskId===input.taskId&&entry.status!=='rejected').reduce((sum,entry)=>sum+entry.reservedMicros/1e6,0);
+    const revisionCeiling=costLineage.maximumAdditionalCostCny===null?Infinity:retained+costLineage.maximumAdditionalCostCny-childRetained;
+    if (input.quoteOnly) return { status: 'quoted' as const, scope, items: previewItems, maximumCny: Math.min(15, planned.plan.maximumCny, ledgerProbe?.limitCny ?? 15,revisionCeiling), retainedCny: retained, wholeTaskUpperBoundCny };
+    if(wholeTaskUpperBoundCny>revisionCeiling)return error('revision_incremental_allowance_exceeded');
+    if (wholeTaskUpperBoundCny > planned.plan.maximumCny || wholeTaskUpperBoundCny > 15) {
       const stageTotals = Object.entries(previewItems.reduce<Record<string, number>>((totals, item) => {
         totals[item.stage] = (totals[item.stage] || 0) + item.upperBoundCny;
         return totals;
@@ -446,11 +582,12 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     }
     const reserved = await authority.prepareAndReserve(scope);
     const formalPaidRouteUpperBoundCny=Object.values(reserved.quotes).reduce((sum,quote)=>sum+quote.upperBoundCny,0);
-    if(formalPaidRouteUpperBoundCny>planned.plan.maximumCny||formalPaidRouteUpperBoundCny>10)
+    if(formalPaidRouteUpperBoundCny>planned.plan.maximumCny||formalPaidRouteUpperBoundCny>15)
       return error(`formal_paid_route_budget_exceeded:${formalPaidRouteUpperBoundCny.toFixed(6)}`);
     await recordCurrentContentExecutionCheckpoint({ stage: STAGE, version: '1', inputHash: planHash, payload: { scopeHash: paidProductionHash(scope), baselineHash,
       paidBaselineContractHash: paidBaselineContractHash(input.baseline), presenterVoiceBinding:voice.presenterBinding || null, operationIds: reserved.operations.map(o => o.operationId), requirements: planned.requirements, routeBindings, quotes: reserved.quotes, formalPaidRouteUpperBoundCny, wholeTaskRetainedCny:reserved.status.retainedCny, plan: planned.plan } });
-    const paidPermit = createSocialContentPaidOperationPermit({ ...reserved, root: path.join(ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget', '.permits'), assertCurrent });
+    const paidPermit = createSocialContentPaidOperationPermit({ ...reserved, root: path.join(ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget', '.permits'), assertCurrent,
+      assertNewSubmit:ports?.assertNewSubmit });
     await input.ports?.preparePresenterFirstFrameReviews?.({scope,groups:presenterGroups,requirements:planned.requirements,intents:planned.plan.paidOperations,paidPermit});
     const approvalReader=input.ports?.readConfirmedPresenterFirstFrame??(async({scope,group}:{scope:SocialTaskBudgetScope;group:FrozenPresenterGroup})=>readOrAutomaticallyConfirmPresenterFirstFrame(store,scope,group));
     for(const group of presenterGroups)if(!await approvalReader({scope,group}))return error(`presenter_first_frame_confirmation_missing:${group.groupId}`);

@@ -42,11 +42,20 @@ for (const mutate of mutations) {
 }
 const unknown = structuredClone(content);
 unknown.replicationEvaluation.status = 'review_required';
-unknown.replicationEvaluation.accountAndFactFit = { status: 'review_required' };
-assert.equal(check(unknown).approved, true, 'human can resolve account evidence unknown');
-assert.equal(check(unknown, 'managed').approved, false);
 unknown.replicationEvaluation.viralFactorFidelity = { status: 'review_required' };
-assert.equal(check(unknown).approved, false, 'timeline unknown cannot be waived');
+assert.equal(check(unknown).approved, true, 'subjective fidelity belongs in final human review');
+assert.equal(check(unknown, 'managed').approved, false, 'subjective review is not automatic acceptance');
+for (const key of ['identityReplacement', 'originalityDifference', 'unauthorizedReuseRisk', 'accountAndFactFit'] as const) {
+  const unverified = structuredClone(unknown);
+  unverified.replicationEvaluation[key] = { status: 'review_required' };
+  assert.equal(check(unverified).approved, false, `${key} is a hard evidence gate`);
+}
+const missingTimeline = structuredClone(unknown);
+missingTimeline.replicationEvaluation.referenceTimelineAudit.fullCoverageValidated = false;
+assert.equal(check(missingTimeline).approved, false, 'timeline unknown cannot be waived');
+const failedFidelity = structuredClone(unknown);
+failedFidelity.replicationEvaluation.viralFactorFidelity = { status: 'failed' };
+assert.equal(check(failedFidelity).approved, false, 'explicitly failed fidelity cannot be waived');
 assert.equal(inspectSocialContentReleaseQuality({ brief: {} as SocialContentTaskBrief, content, mode: 'human' }).applicable, false);
 const managedInput = { brief, trustedAgentOrigin: true, origin: 'agent', kind: 'short_video', resourceRef: 'socialfile:verified', content };
 assert.equal(socialManagedArtifactReview(managedInput).approved, true);

@@ -19,6 +19,10 @@ const task = {
 
 assert.throws(() => socialTaskEnvelope({}), /内容不完整/);
 assert.equal(socialTaskEnvelope({ task }).taskId, task.taskId);
+for (const status of ['cancelling', 'cancelled']) {
+  assert.equal(socialTaskEnvelope({ task: { ...task, status } }).status, status);
+  assert.equal(socialTaskPage({ items: [{ ...task, status }], page: 1, perPage: 50, totalItems: 1, totalPages: 1 }).items[0].status, status);
+}
 assert.throws(() => socialTaskEnvelope({ task: { ...task, sourceCount: -1 } }), /内容不完整/);
 assert.equal(socialMutationEnvelope({ source: { sourceId: 'source_1', taskId: task.taskId }, task }, 'source').source.sourceId, 'source_1');
 assert.throws(() => socialMutationEnvelope({ source: { sourceId: 'source_1', taskId: 'another_task' }, task }, 'source'), /内容不完整/);

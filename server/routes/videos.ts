@@ -1,8 +1,20 @@
 import {createReferenceReviewReadHandlers} from '../lib/referenceReviewReadHandlers.js';
+import {classifyDiscoverySourceFailure} from '../socialDiscovery/sourceFailure.js';
+import { runPaidApifyTikTokDataset, type PaidApifyTikTokPermit } from './apifyPaidTikTokTransport.js';
+import {frozenWeeklyAccountFiveVideoActorInput} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
+import {readVerifiedWeeklyOriginalDatasetReplay,type VerifiedWeeklyOriginalDatasetReplay} from '../socialDiscovery/weeklyAccountCollectionDatasetContinuation.js';
+import type {DataStore} from '../storage/datastore.js';
+import {discoveryVideoRecordId,loadKnownVideoSourceIdentities,sourceAccountFromProviderMetadata,sourceAccountFromVideoUrl,sourceAccountFromYouTubeRenderer,videoSourceIdentity} from './videoSourceIdentity.js';
+import {canFingerprintThumbnailUrl,fingerprintVideoThumbnail,likelySameVideoThumbnail,loadKnownVideoThumbnailFingerprints} from './videoThumbnailDuplicate.js';
+import {acquireDurableOperationLease,assertDurableOperationLease,releaseDurableOperationLease} from '../runtime/durableLease.js';
+import {executeExactChunks} from '../lib/exactChunkExecution.js';
+import {exactQwenScope} from '../agents/exactQwenScope.js';
+import {createCandidateContextAssessment,type CandidateContextInput} from '../socialDiscovery/candidateContextAssessment.js';
+import {assessCandidateSemantics} from '../socialDiscovery/candidateSemanticAssessment.js';
+import {resolveCandidateSemanticPaidCall} from '../socialDiscovery/candidateSemanticBudgetResolver.js';
 import {createReferencePhraseAsrHandler} from './referencePhraseAsr.js';
-import {readCachedReferenceNarration} from '../lib/referenceNarration.js';
 import { registerReferenceExactShotMaterializationRoutes } from './referenceExactShotMaterialization.js';
-import { prepareReferenceNarration } from '../lib/referenceNarration.js';
+import { prepareReferenceNarration, readCachedReferenceNarration } from '../lib/referenceNarration.js';
 import { lockReferenceSpeechTimeline, type ReferenceSpeechTranscript } from '../lib/referenceSpeechAnalysis.js';
 import { joinReferenceWords } from '../lib/referenceWordAlignment.js';
 import { probeReferenceMediaClock } from '../lib/referenceMediaClock.js';
@@ -12,6 +24,7 @@ import { AnalysisAlreadyRunningError, AnalysisLeaseRegistry } from '../lib/analy
 import { DownloadBudget, RecordWorkRegistry, terminalDownloadFailure } from '../lib/downloadExecution.js';
 import { Router, type Request, type Response } from 'express';
 import { execFile } from 'child_process';
+import { createVideoDownloaderPythonResolver } from '../lib/videoDownloaderPython.js';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
@@ -20,12 +33,13 @@ import { fileURLToPath } from 'url';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import ffmpegStatic from 'ffmpeg-static';
+import { presenterDenseSamplingRanges, requiresPresenterDenseSampling, type ReferenceFrameSamplingProfile, type ReferenceFrameSamplingRange } from '../lib/referenceFrameSamplingPolicy.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { attachFile, fetchFile } from '../storage/files.js';
 import { objectStorageEnabled, objectStorageDownload, objectStorageGetObject, objectStorageHead, objectStorageUpload } from '../storage/objectStorage.js';
 import { analyzeImagePostEvidenceWithGemini, analyzeVideo, analyzeYouTubeUrl } from '../agents/gemini.js';
-import { analyzeImagePostEvidenceWithQwen, analyzeVideoFramesWithQwen, analyzeVideoTimelineDetailsWithQwen, inspectVideoOpeningFrameWithQwen, transcribeAudioWithQwen, type ImagePostEvidenceAnalysis, type QwenTimelinePlan } from '../agents/qwen.js';
+import { analyzeImagePostEvidenceWithQwen, analyzeVideoFramesWithQwen, analyzeVideoTimelineDetailsWithQwen, inspectVideoOpeningFrameWithQwen, repairVideoShotClassificationsWithQwen, transcribeAudioWithQwen, type ImagePostEvidenceAnalysis, type QwenTimelinePlan } from '../agents/qwen.js';
 import { inspectOpeningHookMotionWithGemini } from '../agents/geminiHookMotion.js';
 import type { Platform, VideoAiAnalysis, VideoStatus } from '../types/index.js';
 import type { SocialDiscoveryMode } from '../../shared/contracts/socialContentWorkflow.js';
@@ -46,7 +60,9 @@ import { resolvePublicVideoSource, validatePublicVideoSourceUrl, type ValidatedP
 import { fetchCloudMaterial, getCloudMaterialRecord } from '../lib/cloudMaterials.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAuthority.js';
-import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, exactVideoReviewReasons, hasCompleteVideoGeminiAnalysis, hasCompletedExactVideoEvidence, isAutoSeededVideo, isVideoLevelAnalysis, parseAnalysisTimeRange, serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
+import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, exactVideoClassificationQualityError, exactVideoReviewReasons, hasCompleteVideoGeminiAnalysis, hasCompletedExactVideoEvidence, isAutoSeededVideo, isVideoLevelAnalysis, parseAnalysisTimeRange, serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
+import { benchmarkAnalysisForRecord } from '../lib/benchmarkAnalysis.js';
+import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
 import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot, reconcileStoredOpeningHookMotionEvidence } from './hookMotionEvidence.js';
 import { isDiscoveryVideoEligible, youtubeShortUrl } from '../../shared/contracts/discoveryVideoPolicy.js';
 import {
@@ -79,13 +95,7 @@ const MAX_DOWNLOAD_JOBS = Number(process.env.VIDEO_DOWNLOAD_CONCURRENCY || 3);
 const pendingVisibleBackfillJobs = new Set<string>();
 const pocketBaseBackfillFailures = new Map<string, number>();
 
-function ytDlpPythonPath(): string {
-  const configured = String(process.env.YT_DLP_PYTHON || '').trim();
-  if (configured) return configured;
-  const bundled = path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3');
-  if (fs.existsSync(bundled)) return bundled;
-  return process.env.PYTHON || 'python3';
-}
+const ytDlpPythonPath = createVideoDownloaderPythonResolver();
 
 function crawlerCosKey(record: Record<string, unknown>, role: string, extension: string): string {
   const tenantId = String(record.tenantId || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -215,6 +225,8 @@ interface CrawledVideo {
   uploadedAt?: string;
   dateEvidence?: string;
   author?: string;
+  /** Account URL returned with this exact video, not inferred from its title. */
+  sourceAccountUrl?: string;
   likes?: string;
   comments?: string;
   shares?: string;
@@ -391,6 +403,63 @@ export function queuedVideoAnalysisFailurePatch(
     manualRequiredReason: 'manual_upload_analysis_failed',
     userVisible: retainedEvidence ? previous.userVisible : false,
   };
+}
+
+export type VideoAnalysisRetryQueueKind = 'material' | 'stored_video' | 'source_url' | 'classification_repair';
+
+/** A retry is a new durable run. Terminal fields from the previous run must
+ * not keep the new run projected as failed while it is queued or running. */
+export function videoAnalysisRetryQueuePatch(
+  previous: Record<string, unknown>,
+  input: {
+    analysisMode: 'exact' | 'strategy';
+    analysisRunId: string;
+    queueKind: VideoAnalysisRetryQueueKind;
+    queuedAt: string;
+    userId: string;
+  },
+): Record<string, unknown> {
+  const sourceQueue = input.queueKind === 'source_url';
+  return {
+    ...previous,
+    requestedAnalysisMode: input.analysisMode,
+    analysisRunId: input.analysisRunId,
+    analysisRunMode: input.analysisMode,
+    analysisQueueKind: input.queueKind,
+    analysisQueueState: 'queued',
+    analysisQueuedAt: input.queuedAt,
+    analysisStage: 'queued',
+    analysisStageUpdatedAt: input.queuedAt,
+    reanalyzeQueuedAt: input.queuedAt,
+    geminiStatus: sourceQueue ? 'waiting_for_video' : 'queued',
+    downloadStatus: sourceQueue ? 'ops_queued' : input.queueKind === 'material' ? 'analyzing' : 'uploaded',
+    videoFetchStatus: sourceQueue ? 'ops_queued' : 'fetched',
+    analysisPausedAt: undefined,
+    analysisPausedBy: undefined,
+    analysisCancelledAt: undefined,
+    analysisCancelledBy: undefined,
+    analysisCompletedAt: undefined,
+    analysisFailedAt: undefined,
+    analysisRetryable: undefined,
+    analysisError: undefined,
+    downloadError: undefined,
+    videoLevelFailureStatus: undefined,
+    manualRequiredReason: undefined,
+    adminOnlyVideoFailure: undefined,
+    crawlerOpsLastError: undefined,
+    crawlerOpsReason: sourceQueue ? 'explicit_reanalyze_started' : 'explicit_reanalyze_uses_local_file',
+    crawlerOpsStatus: sourceQueue ? 'queued' : 'resolved',
+    crawlerOpsAttempt: 0,
+    crawlerOpsRetryResetAt: input.queuedAt,
+    crawlerOpsRetryResetBy: input.userId,
+  };
+}
+
+export function queuedMaterialFailureRequiresSourceFallback(analysis: Record<string, unknown>): boolean {
+  const evidence = [analysis.analysisError, analysis.videoLevelFailureStatus, analysis.manualRequiredReason]
+    .map(value => String(value || ''))
+    .join(' ');
+  return /queued_(?:cloud_)?material_(?:not_found|unreadable)|queued_local_material_missing/i.test(evidence);
 }
 
 function compareCrawledAtDesc(a: Record<string, unknown>, b: Record<string, unknown>): number {
@@ -581,6 +650,7 @@ function compactVideoPipelineError(message: unknown, max = 900): string {
 function publicVideoPipelineError(message: unknown): string {
   const text = compactVideoPipelineError(message, 500);
   if (!text) return '视频分析失败，请稍后重试。';
+  if (/video_downloader_not_installed|No module named yt_dlp/i.test(text)) return '视频读取组件未安装，请管理员补齐 yt-dlp 后重新分析。';
   if (/GEMINI_API_KEY\s+is\s+not\s+set|gemini[^\n]*(?:not configured|missing api)/i.test(text)) return 'Gemini 未配置，请联系管理员配置后重新分析，或切换到已配置的 Qwen。';
   if (/video_analysis_hard_timeout|exact_chunk_timeout|qwen[^\n]*(?:timeout|timed out|超时)/i.test(text)) return 'Qwen 分析超时，可点击重新分析；连续超时时请改用策略分析或缩短视频。';
   if (/404|not found|unable to download|download webpage|unsupported url/i.test(text)) return '源视频暂时无法获取，请确认链接有效后重新分析。';
@@ -591,7 +661,7 @@ function publicVideoPipelineError(message: unknown): string {
 }
 
 export type VideoAnalysisRecovery = {
-  code: 'gemini_missing' | 'qwen_timeout' | 'candidate_hidden' | 'source_unavailable' | 'analysis_failed' | 'none';
+  code: 'downloader_missing' | 'gemini_missing' | 'qwen_timeout' | 'candidate_hidden' | 'source_unavailable' | 'analysis_failed' | 'none';
   reason: string;
   recoveryAction: string;
   provider: 'Gemini' | 'Qwen' | 'AI';
@@ -615,6 +685,14 @@ export function describeVideoAnalysisRecovery(
   const provider: VideoAnalysisRecovery['provider'] = /qwen|dashscope/.test(`${source} ${rawError}`)
     ? 'Qwen'
     : /gemini/.test(`${source} ${rawError}`) ? 'Gemini' : 'AI';
+
+  if (/video_downloader_not_installed|No module named yt_dlp/i.test(rawError)) {
+    return {
+      code: 'downloader_missing', provider, hidden,
+      reason: '视频读取组件未安装，重复点击不会完成分析。',
+      recoveryAction: '请管理员安装 yt-dlp；组件就绪后再点击“重新分析”。',
+    };
+  }
 
   if (/GEMINI_API_KEY\s+is\s+not\s+set|gemini[^\n]*(?:not configured|missing api)/i.test(rawError)) {
     return {
@@ -971,6 +1049,14 @@ export interface CrawlVideosInput {
   deferAnalysis?: boolean;
   /** Maintenance callers may take immediate ownership of exact analysis after persistence. */
   suppressAnalysisQueue?: boolean;
+  /** Approved discovery only counts newly imported videos, never a previously stored URL or platform video ID. */
+  newCandidatesOnly?: boolean;
+  /** Mandatory authority for scoped weekly TikTok account collection; never used by manual crawls. */
+  paidPermit?: PaidApifyTikTokPermit;
+  /** Opaque, in-process proof issued only after the original journal and wallet agree. */
+  originalDatasetReplay?: VerifiedWeeklyOriginalDatasetReplay;
+  /** Trusted worker store; never accepted from an HTTP request. */
+  dataStore?: DataStore;
   /** Immutable discovery provenance attached to every imported or deduplicated candidate. */
   discoveryContext?: {
     runId: string;
@@ -978,7 +1064,19 @@ export interface CrawlVideosInput {
     scopeVersion: number;
     mode: SocialDiscoveryMode;
     queryRef: string;
+    /** A same-run five-video collection is never eligible for legacy Actor
+     * sync or a second Actor download, even when an old paid permit exists. */
+    weeklyOriginalAccountCollection?: {originalRunKey:string;accountUrl:string;actorInputSha256:string};
   };
+}
+
+export function isWeeklyOriginalAccountCollectionRecord(record?:Record<string,unknown>|null):boolean{
+  const analysis=record?.aiAnalysis;
+  let parsed:Record<string,unknown>|null=null;
+  if(typeof analysis==='string'){
+    try{const value:unknown=JSON.parse(analysis);parsed=value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:null;}catch{return false;}
+  }else if(analysis&&typeof analysis==='object'&&!Array.isArray(analysis))parsed=analysis as Record<string,unknown>;
+  return Array.isArray(parsed?.discoveryOrigins)&&parsed.discoveryOrigins.some(origin=>origin&&typeof origin==='object'&&'weeklyOriginalAccountCollection' in origin);
 }
 
 function discoveryOrigins(
@@ -993,6 +1091,19 @@ function discoveryOrigins(
 
 class NoCrawlResultsError extends Error {}
 
+export async function acquireDiscoveryAdmissionLease(tenantId: string, dataStore:DataStore=store) {
+  const deadline = Date.now() + 90_000;
+  for (;;) {
+    const lease = await acquireDurableOperationLease({
+      dataStore, tenantId, scope: 'social-discovery-video-admission',
+      subjectId: 'tenant-candidates', ownerId: randomUUID(), leaseDurationMs: 30_000,
+    });
+    if (lease) return lease;
+    if (Date.now() >= deadline) throw Error('discovery_video_admission_busy');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+}
+
 export interface CrawlVideosResult {
   outcome?: 'collected' | 'no_data';
   candidateIds?: string[];
@@ -1003,6 +1114,8 @@ export interface CrawlVideosResult {
   refreshed: number;
   skipped: number;
   skippedExisting: number;
+  skippedNearDuplicate?: number;
+  nearDuplicateUnchecked?: number;
   returnedExisting: number;
   requested: number;
   total: number;
@@ -1268,6 +1381,7 @@ export async function crawlImagePostsForTenant(input: {
 }
 
 export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<CrawlVideosResult> {
+  const dataStore=input.dataStore??store;
   const tenantId = input.tenantId;
   const platform = input.platform ?? 'youtube';
   const accountMode = input.mode === 'account' && looksLikeAccountUrl(input.accountUrl ?? '', platform);
@@ -1280,8 +1394,31 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
   const dateTo = input.dateTo ?? '';
   const crawlRule = accountMode ? '对标账号主页' : '关键词检索';
 
-  await purgeLegacyFakeVideos();
-  const testTenant = await isTestTenantId(tenantId);
+  const originalFive=input.discoveryContext?.weeklyOriginalAccountCollection;
+  const replay=input.originalDatasetReplay?readVerifiedWeeklyOriginalDatasetReplay(input.originalDatasetReplay):null;
+  if(originalFive){
+    const expected=originalFive.accountUrl===accountUrl&&input.mode==='account'&&platform==='tiktok'&&input.limit===5&&
+      originalFive.originalRunKey.startsWith('weekly-preproduction:')&&
+      createHash('sha256').update(JSON.stringify(frozenWeeklyAccountFiveVideoActorInput(originalFive.accountUrl))).digest('hex')===originalFive.actorInputSha256;
+    if(!expected)throw Error('weekly_preproduction_collection_original_input_changed');
+    if(!replay||replay.tenantId!==tenantId||replay.originalRunKey!==originalFive.originalRunKey||replay.accountUrl!==accountUrl||
+      input.discoveryContext?.queryRef!==accountUrl||input.discoveryContext.mode!=='account'||!input.newCandidatesOnly||!input.disableBackfill||input.paidPermit)
+      throw Error('weekly_preproduction_collection_original_transport_required');
+  }else if(replay){
+    throw Error('weekly_original_dataset_replay_scope_mismatch');
+  }
+
+  // A weekly account run must not accidentally fall through the historical
+  // synchronous Actor fallback, which loses the paid run ID on interruption.
+  if (input.discoveryContext && input.mode === 'account' && platform === 'tiktok' && !input.paidPermit && !replay) {
+    throw Error('weekly_preproduction_collection_paid_permit_required');
+  }
+  if (input.paidPermit && (!input.discoveryContext || !accountMode || platform !== 'tiktok')) {
+    throw Error('apify_paid_permit_scope_mismatch');
+  }
+
+  if(!replay)await purgeLegacyFakeVideos();
+  const testTenant = replay?false:await isTestTenantId(tenantId);
   const target = Math.min(30, Math.max(1, Number(limit) || 5));
   let crawlerSource = accountMode ? `${platform}-account` : `${platform}-search`;
   let crawlerMessage = '';
@@ -1290,19 +1427,28 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
   // 账号主页采集与直链一样跳过关键词/封面/补齐等以搜索为前提的过滤。
   const directUrlInput = accountMode || isPlatformUrl(keyword, platform);
   try {
-    const safeLimit = Math.min(120, Math.max(target * 5, target));
-    if (accountMode) {
-      items = await crawlAccountHomepage(platform, accountUrl, Math.max(target, Math.min(safeLimit, 30)), dateFrom, dateTo, input.cloudFallback === true);
+    // Approved discovery has a separately reserved daily item budget. Do not
+    // turn one reserved candidate into five provider-fetched candidates.
+    const safeLimit = input.newCandidatesOnly ? target : Math.min(120, Math.max(target * 5, target));
+    if (replay) {
+      items=replay.rows.map(row=>apifyTikTokItemToCrawledVideo(row,keyword)).filter((item):item is CrawledVideo=>Boolean(item));
+      crawlerSource='apify-tiktok-original-dataset-journal';
+    } else if (input.paidPermit) {
+      items = await crawlTikTokWithPaidPermit(accountUrl, target, dateFrom, dateTo, input.paidPermit);
+      crawlerSource = 'apify-tiktok-account';
+      if (hasDateRange(dateFrom, dateTo)) items = filterDateRangeItems(items, dateFrom, dateTo);
+    } else if (accountMode) {
+      items = await crawlAccountHomepage(platform, accountUrl, Math.max(target, Math.min(safeLimit, 30)), dateFrom, dateTo, input.cloudFallback === true, input.newCandidatesOnly === true);
       if (hasDateRange(dateFrom, dateTo)) items = filterDateRangeItems(items, dateFrom, dateTo);
       if (items.some(item => item.source === 'apify')) crawlerSource = `apify-${platform}-account`;
     } else if (platform === 'youtube') {
       items = await crawlYouTubeSearch(keyword, safeLimit, dateFrom, dateTo);
     } else if (platform === 'facebook') {
       crawlerSource = /^https?:\/\/(?:www\.|m\.|mbasic\.)?facebook\.com\//i.test(keyword.trim()) ? 'facebook-url' : 'facebook-search';
-      items = await crawlFacebook(keyword, safeLimit, dateFrom, dateTo);
+      items = await crawlFacebook(keyword, safeLimit, dateFrom, dateTo, input.newCandidatesOnly === true);
     } else if (platform === 'tiktok') {
       crawlerSource = isPlatformUrl(keyword, 'tiktok') ? 'tiktok-url' : 'tiktok-search';
-      items = await crawlTikTokWithApifyFallback(keyword, safeLimit, dateFrom, dateTo);
+      items = await crawlTikTokWithApifyFallback(keyword, safeLimit, dateFrom, dateTo, input.newCandidatesOnly === true);
       if (items.some(item => item.source === 'apify')) crawlerSource = 'apify-tiktok';
     } else if (platform === 'instagram') {
       crawlerSource = isPlatformUrl(keyword, 'instagram') ? 'instagram-url' : 'instagram-search';
@@ -1339,7 +1485,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
         throw new NoCrawlResultsError(`没有找到与关键词「${keyword}」相关的公开视频（候选 ${beforeFilter} 条已过滤）`);
       }
     }
-    if (!directUrlInput && items.length < target) {
+    if (!input.disableBackfill && !directUrlInput && items.length < target) {
       const beforeTopUp = items.length;
       items = await topUpCrawledItems({ platform, keyword, target, items, dateFrom, dateTo });
       const topUpCount = Math.max(0, items.length - beforeTopUp);
@@ -1363,6 +1509,10 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
   const records: unknown[] = [];
   const existingRecords: unknown[] = [];
   const seenKeys = new Set<string>();
+  let skippedNearDuplicate = 0;
+  let nearDuplicateUnchecked = 0;
+  const knownSourceIdentities = new Set<string>();
+  const knownThumbnailFingerprints: Awaited<ReturnType<typeof loadKnownVideoThumbnailFingerprints>> = [];
   const orderedItems = sortByHeat(items.map(normalizeCrawledVideo))
     .filter(item => item.platform === platform && isPlatformUrl(item.sourceUrl, platform))
     .filter(item => isDiscoveryVideoEligible(item))
@@ -1384,15 +1534,51 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
   }
 
   for (const item of orderedItems) {
-    const existingByUrl = await store.list(COL, {
+    // Re-read under the existing database-backed lease: two source queries can
+    // return the same picture under different URLs after both initially see an
+    // empty inventory. The stable source-ID alone cannot arbitrate that race.
+    const admissionLease = input.newCandidatesOnly ? await acquireDiscoveryAdmissionLease(tenantId,dataStore) : null;
+    try {
+      if (admissionLease) {
+        knownSourceIdentities.clear();
+        for (const known of await loadKnownVideoSourceIdentities(dataStore, COL, tenantId)) knownSourceIdentities.add(known);
+        knownThumbnailFingerprints.splice(0, knownThumbnailFingerprints.length, ...await loadKnownVideoThumbnailFingerprints(dataStore, tenantId));
+      }
+    const identity = videoSourceIdentity(item.platform, item.sourceUrl);
+    const videoUrlAccount = sourceAccountFromVideoUrl(item.platform,item.sourceUrl);
+    const metadataAccount = sourceAccountFromProviderMetadata(item.platform,item.sourceAccountUrl || '');
+    const homepageAccount = accountMode ? sourceAccountFromProviderMetadata(item.platform,accountUrl) : null;
+    const resolvedAccount = videoUrlAccount ?? metadataAccount ?? homepageAccount;
+    const sourceAccountEvidence = videoUrlAccount ? 'video_url' : metadataAccount ? 'provider_metadata' : homepageAccount ? 'account_homepage' : undefined;
+    if (input.newCandidatesOnly && knownSourceIdentities.has(identity) && !replay) {
+      skipped += 1;
+      skippedExisting += 1;
+      continue;
+    }
+    const existingByUrl = await dataStore.list(COL, {
       where: { tenantId, sourceUrl: item.sourceUrl },
       page: 1,
       perPage: 1,
     });
     const existingRecord = existingByUrl?.items[0];
     if (existingRecord) {
+      if(replay){
+        const analysis=parseJsonRecord<Record<string,unknown>>(existingRecord.aiAnalysis,{});
+        const origins=Array.isArray(analysis.discoveryOrigins)?analysis.discoveryOrigins:[];
+        const sameRun=origins.some(origin=>origin&&typeof origin==='object'&&
+          (origin as Record<string,unknown>).runId===input.discoveryContext?.runId&&
+          (origin as Record<string,unknown>).scopeId===input.discoveryContext?.scopeId&&
+          (origin as Record<string,unknown>).scopeVersion===input.discoveryContext?.scopeVersion&&
+          (origin as Record<string,unknown>).queryRef===accountUrl&&
+          JSON.stringify((origin as Record<string,unknown>).weeklyOriginalAccountCollection)===JSON.stringify(originalFive));
+        if(!sameRun){skipped++;skippedExisting++;continue;}
+        existingRecords.push(existingRecord);
+        knownSourceIdentities.add(identity);
+        continue;
+      }
       skipped += 1;
       skippedExisting += 1;
+      if (input.newCandidatesOnly) { knownSourceIdentities.add(identity); continue; }
       const existingAnalysis = parseJsonRecord<Record<string, unknown>>(existingRecord.aiAnalysis, {});
       const refreshedRecord = {
         ...existingRecord,
@@ -1410,8 +1596,9 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
           author: item.author || existingAnalysis.author || (accountMode ? accountName : undefined),
           keyword,
           crawlRule,
-          sourceAccount: accountMode ? accountUrl : existingAnalysis.sourceAccount,
-          sourceAccountName: accountMode ? accountName : existingAnalysis.sourceAccountName,
+          sourceAccount: resolvedAccount ?? existingAnalysis.sourceAccount,
+          sourceAccountName: resolvedAccount ? item.author || (accountMode ? accountName : existingAnalysis.sourceAccountName) : existingAnalysis.sourceAccountName,
+          sourceAccountEvidence: resolvedAccount ? sourceAccountEvidence : existingAnalysis.sourceAccountEvidence,
           dateFrom,
           dateTo,
           discoveryOrigins: discoveryOrigins(existingAnalysis.discoveryOrigins, input.discoveryContext),
@@ -1419,7 +1606,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
       };
       // 已有本地落盘缩略图时不要用新的临时签名链接覆盖
       const keepLocalThumb = String(existingRecord.thumbnailUrl || '').startsWith('/media/') && isSignedExpiringThumbnail(item.thumbnailUrl);
-      await store.update(COL, String(existingRecord.id), {
+      await dataStore.update(COL, String(existingRecord.id), {
         contentFormat: 'video',
         thumbnailUrl: keepLocalThumb ? String(existingRecord.thumbnailUrl) : (item.thumbnailUrl || String(existingRecord.thumbnailUrl || '')),
         sourceUrl: item.sourceUrl || String(existingRecord.sourceUrl || ''),
@@ -1432,7 +1619,28 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
       continue;
     }
 
-    const record = await store.create(COL, {
+    let thumbnailFingerprint: Awaited<ReturnType<typeof fingerprintVideoThumbnail>> | null = null;
+    if (input.newCandidatesOnly && !replay && canFingerprintThumbnailUrl(item.platform,item.thumbnailUrl)) {
+      const image = await fetchThumbnailBuffer(item.thumbnailUrl, 5_000, true);
+      if (image) {
+        try { thumbnailFingerprint = await fingerprintVideoThumbnail(image.buf); } catch { /* invalid image stays unverified */ }
+      }
+    }
+    if (input.newCandidatesOnly && !thumbnailFingerprint) nearDuplicateUnchecked += 1;
+    if (thumbnailFingerprint && knownThumbnailFingerprints.some(existing => likelySameVideoThumbnail(
+      {fingerprint:thumbnailFingerprint!,title:item.title,duration:item.duration},existing))) {
+      skipped += 1;
+      skippedNearDuplicate += 1;
+      continue;
+    }
+
+    // A stable row ID makes simultaneous approved collections of the same
+    // platform video elect one winner even if both read an empty inventory.
+    const newCandidateId = input.newCandidatesOnly ? discoveryVideoRecordId(tenantId,item.platform,item.sourceUrl) : null;
+    if (admissionLease) await assertDurableOperationLease({dataStore,lease:admissionLease});
+    let record: Record<string, unknown> | null;
+    try { record = await dataStore.create<Record<string, unknown>>(COL, {
+      ...(newCandidateId ? {id:newCandidateId} : {}),
       tenantId,
       contentFormat: 'video',
       platform: item.platform,
@@ -1453,8 +1661,10 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
         analysisQuality: 'metadata',
         keyword,
         crawlRule,
-        sourceAccount: accountMode ? accountUrl : undefined,
-        sourceAccountName: accountMode ? accountName : undefined,
+        sourceAccount: resolvedAccount ?? undefined,
+        sourceAccountName: resolvedAccount ? item.author || (accountMode ? accountName : undefined) : undefined,
+        sourceAccountEvidence,
+        thumbnailFingerprint: thumbnailFingerprint ?? undefined,
         dateFrom,
         dateTo,
         importedAt: new Date().toISOString(),
@@ -1463,13 +1673,28 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
       }),
       status: 'analyzed' as VideoStatus,
       crawledAt: new Date().toISOString(),
-    });
+    }); } catch (cause) {
+      if (!newCandidateId) throw cause;
+      const winner = await dataStore.getById<Record<string, unknown>>(COL, newCandidateId);
+      if (!winner || videoSourceIdentity(String(winner.platform || item.platform), String(winner.sourceUrl || '')) !== identity) throw cause;
+      skipped += 1; skippedExisting += 1; knownSourceIdentities.add(identity); continue;
+    }
+    if (!record && newCandidateId) {
+      const winner = await dataStore.getById<Record<string, unknown>>(COL, newCandidateId);
+      if (!winner || videoSourceIdentity(String(winner.platform || item.platform), String(winner.sourceUrl || '')) !== identity) throw Error('discovery_video_identity_conflict');
+      skipped += 1; skippedExisting += 1; knownSourceIdentities.add(identity); continue;
+    }
     if (record) {
       imported += 1;
       records.push(record);
-      void persistThumbnailIfExpiring(String((record as Record<string, unknown>).id), item.thumbnailUrl).catch(() => {});
+      if (input.newCandidatesOnly) knownSourceIdentities.add(identity);
+      if (thumbnailFingerprint) knownThumbnailFingerprints.push({fingerprint:thumbnailFingerprint,title:item.title,duration:item.duration});
+      if(!replay)void persistThumbnailIfExpiring(String((record as Record<string, unknown>).id), item.thumbnailUrl).catch(() => {});
     }
     if (imported >= target) break;
+    } finally {
+      if (admissionLease) await releaseDurableOperationLease({dataStore,lease:admissionLease});
+    }
   }
 
   let resultRecords = [...records, ...existingRecords].slice(0, target);
@@ -1513,7 +1738,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
         forceCreate: true,
       });
     }
-  } else if (resultRecords.length > 0) {
+  } else if (resultRecords.length > 0 && !replay) {
     await enqueueCrawledRecordsForAnalysis(resultRecords);
   }
 
@@ -1542,6 +1767,8 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
     refreshed,
     skipped,
     skippedExisting,
+    skippedNearDuplicate,
+    nearDuplicateUnchecked,
     returnedExisting,
     requested: target,
     total: items.length,
@@ -1689,6 +1916,20 @@ videosRouter.post('/analyze-source', async (req, res) => {
 videosRouter.post('/:id/analyze-source', async (req, res) => {
   const { sourceUrl, title, platform, async } = req.body as { sourceUrl?: string; title?: string; platform?: Platform; async?: boolean };
   await handleAnalyzeSource(req, res, { id: req.params.id, sourceUrl, title, platform, async });
+});
+
+// Adopts business context for an existing canonical analysis only. No exact
+// analysis, semantic model, collection, quota or production start occurs here.
+videosRouter.post('/:id/context-assessment', async(req,res)=>{
+ const {tenantId,userId}=res.locals as AuthLocals;
+ try{const item=await createCandidateContextAssessment(store,tenantId,userId,req.params.id,req.body as CandidateContextInput,path.resolve(__dirname,'../../data/media'));res.json({ok:true,assessment:item,providerCalled:false,exactAnalysisReused:true});}
+ catch(error){const code=error instanceof Error?error.message:'candidate_context_assessment_failed';res.status(code==='candidate_context_actor_forbidden'?403:409).json({error:code});}
+});
+videosRouter.post('/:id/context-assessment/:assessmentId/evaluate',async(req,res)=>{
+ const {tenantId,userId}=res.locals as AuthLocals;
+ try{const taskId=typeof (req.body as Record<string,unknown>)?.taskId==='string'?String((req.body as Record<string,unknown>).taskId).trim():'';const contextRow=await store.getById<Record<string,unknown>>('social_candidate_context_assessments',req.params.assessmentId),context=contextRow?.payload as import('../socialDiscovery/candidateContextAssessment.js').CandidateContextAssessment|undefined;
+  const result=await assessCandidateSemantics(store,tenantId,userId,req.params.id,req.params.assessmentId,taskId&&context?{paidCall:async()=>resolveCandidateSemanticPaidCall({store,tenantId,taskId,candidateId:req.params.id,context})}:{});res.status(result.state==='blocked'?409:result.state==='unknown'?202:200).json(result);}
+ catch(error){const code=error instanceof Error?error.message:'candidate_semantic_failed';res.status(code==='candidate_semantic_actor_forbidden'?403:409).json({error:code});}
 });
 
 // ─── Internal crawler ops queue ──────────────────────────────────────────────
@@ -1875,8 +2116,11 @@ async function findTenantReferenceByHash(tenantId: string, sha256: string): Prom
 
 export function shouldResumeReferenceAnalysis(analysis: Record<string, unknown>, duration = 0): boolean {
   if (hasCompletedExactVideoEvidence(analysis)) {
+    const gemini = analysis.gemini && typeof analysis.gemini === 'object'
+      ? analysis.gemini as VideoAiAnalysis
+      : parseJsonRecord<VideoAiAnalysis>(analysis.gemini, {} as VideoAiAnalysis);
+    if (exactVideoClassificationQualityError(gemini)) return true;
     if (duration <= 0) return false;
-    const gemini = parseJsonRecord<VideoAiAnalysis>(analysis.gemini, {} as VideoAiAnalysis);
     return Boolean(analysisTimelineQualityError(gemini, duration, 'exact'));
   }
   const status = String(analysis.geminiStatus || '');
@@ -1884,6 +2128,21 @@ export function shouldResumeReferenceAnalysis(analysis: Record<string, unknown>,
     && ['queued', 'waiting_for_video', 'analyzing'].includes(status)
     && !analysis.analysisError;
   return !activelyRunning;
+}
+
+export function canRepairStoredExactClassification(
+  record: Record<string, unknown>,
+  analysis: Record<string, unknown>,
+): boolean {
+  const gemini = analysis.gemini && typeof analysis.gemini === 'object'
+    ? analysis.gemini as VideoAiAnalysis
+    : parseJsonRecord<VideoAiAnalysis>(analysis.gemini, {} as VideoAiAnalysis);
+  if (!['video', 'video_review_required'].includes(String(analysis.analysisQuality || ''))
+    || !canPromoteExistingAnalysisToExact(gemini, Number(record.duration || 0))) return false;
+  const admission = productionReferenceAdmission(benchmarkAnalysisForRecord(record, analysis));
+  return !admission.ready && admission.blockers.length > 0 && admission.blockers.every(blocker => (
+    /镜头类型未确认|画面、用途或分类依据待复核/.test(blocker)
+  ));
 }
 
 async function recoverExistingReferenceImport(input: {
@@ -3273,29 +3532,30 @@ videosRouter.post('/:id/analysis-resume', async (req, res) => {
     : String(previous.analysisRunMode || previous.analysisMode) === 'strategy' ? 'strategy' : 'exact';
   const analysisRunId = randomUUID();
   const queuedAt = new Date().toISOString();
-  const analysisQueueKind = materialId ? 'material' : fileId ? 'stored_video' : 'source_url';
+  const missingMaterial = queuedMaterialFailureRequiresSourceFallback(previous);
+  const analysisQueueKind: VideoAnalysisRetryQueueKind = fileId
+    ? 'stored_video'
+    : materialId && !missingMaterial ? 'material'
+      : 'source_url';
+  if (analysisQueueKind === 'source_url' && !/^https?:\/\//i.test(sourceUrl)) {
+    res.status(409).json({ error: '原素材已不存在，请重新上传可读的原视频后再分析' });
+    return;
+  }
+  resetCrawlerOpsTaskForExplicitRetry({
+    recordId: req.params.id,
+    tenantId: String(record.tenantId || tenantId),
+    userId,
+    usesSourceQueue: analysisQueueKind === 'source_url',
+    now: queuedAt,
+  });
   const nextAnalysis = {
-    ...previous,
-    requestedAnalysisMode: analysisMode,
-    analysisRunId,
-    analysisRunMode: analysisMode,
-    analysisQueueKind,
-    analysisQueueState: 'queued',
-    analysisQueuedAt: queuedAt,
-    analysisStage: 'queued',
-    analysisStageUpdatedAt: queuedAt,
-    reanalyzeQueuedAt: queuedAt,
-    geminiStatus: fileId || materialId ? 'queued' : 'waiting_for_video',
-    analysisPausedAt: undefined,
-    analysisPausedBy: undefined,
-    analysisCancelledAt: undefined,
-    analysisCancelledBy: undefined,
-    analysisError: undefined,
-    downloadError: undefined,
+    ...videoAnalysisRetryQueuePatch(previous, {
+      analysisMode, analysisRunId, queueKind: analysisQueueKind, queuedAt, userId,
+    }),
     analysisResumedAt: queuedAt,
     analysisResumedBy: userId,
   };
-  const queuedRecord = { ...record, aiAnalysis: JSON.stringify(nextAnalysis) };
+  const queuedRecord = { ...record, status: 'pending' as VideoStatus, aiAnalysis: JSON.stringify(nextAnalysis) };
   await store.update(COL, req.params.id, { status: 'pending' as VideoStatus, aiAnalysis: queuedRecord.aiAnalysis });
   if (analysisQueueKind === 'source_url') await queueAnalyzeSource(queuedRecord);
   else if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(req.params.id);
@@ -3365,6 +3625,15 @@ videosRouter.post('/material-exact-analysis', async (req, res) => {
       id: String(existing.id),
       analysisRunId: existingAnalysis.analysisRunId,
       deduplicated: true,
+    });
+    return;
+  }
+  if (existing && productionReferenceAdmission(benchmarkAnalysisForRecord(existing, existingAnalysis)).ready) {
+    res.json({
+      status: 'analyzed',
+      id: String(existing.id),
+      analysisRunId: existingAnalysis.analysisRunId,
+      reused: true,
     });
     return;
   }
@@ -3453,9 +3722,26 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
   const recordTenantId = String(record.tenantId || tenantId);
   if (analysisMode === 'exact'
     && req.body?.force !== true
+    && canRepairStoredExactClassification(record, previous)) {
+    const queuedAt = new Date().toISOString();
+    resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: false, now: queuedAt });
+    await store.update(COL, req.params.id, {
+      status: 'pending' as VideoStatus,
+      aiAnalysis: JSON.stringify(videoAnalysisRetryQueuePatch(previous, {
+        analysisMode, analysisRunId, queueKind: 'classification_repair', queuedAt, userId,
+      })),
+    });
+    if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(req.params.id);
+    res.status(202).json({ status: 'pending', analysisRunId, repair: 'classification_only' });
+    return;
+  }
+  if (analysisMode === 'exact'
+    && req.body?.force !== true
     && Boolean(fileId)
     && ['video', 'video_review_required'].includes(String(previous.analysisQuality || ''))
-    && canPromoteExistingAnalysisToExact(previous.gemini, Number(record.duration || 0))) {
+    && canPromoteExistingAnalysisToExact(previous.gemini, Number(record.duration || 0))
+    && !exactVideoClassificationQualityError(previous.gemini as VideoAiAnalysis)
+    && !exactVideoReviewReasons(previous.gemini as VideoAiAnalysis, Number(record.duration || 0)).length) {
     const localReference = localReferenceVideoPath(String(fileId), String(record.tenantId || tenantId));
     const sourceSha256 = localReference && fs.existsSync(localReference)
       ? createHash('sha256').update(fs.readFileSync(localReference)).digest('hex') : '';
@@ -3494,41 +3780,31 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
     return;
   }
   if (!fileId) {
-    if (previous.materialId) {
+    const sourceUrl = String(record.sourceUrl || '').trim();
+    const materialUnavailable = queuedMaterialFailureRequiresSourceFallback(previous);
+    if (previous.materialId && !materialUnavailable) {
       const retryResetAt = new Date().toISOString();
       await store.update(COL, req.params.id, {
         status: 'pending' as VideoStatus,
-        aiAnalysis: JSON.stringify({
-          ...previous,
-          requestedAnalysisMode: analysisMode,
-          analysisRunId,
-          analysisRunMode: analysisMode,
-          analysisQueueKind: 'material',
-          analysisQueueState: 'queued',
-          analysisQueuedAt: retryResetAt,
-          analysisStage: 'queued',
-          analysisStageUpdatedAt: retryResetAt,
-          reanalyzeQueuedAt: retryResetAt,
-          geminiStatus: 'queued',
-          analysisPausedAt: undefined,
-          analysisPausedBy: undefined,
-          analysisCancelledAt: undefined,
-          analysisCancelledBy: undefined,
-          analysisError: undefined,
-        }),
+        aiAnalysis: JSON.stringify(videoAnalysisRetryQueuePatch(previous, {
+          analysisMode, analysisRunId, queueKind: 'material', queuedAt: retryResetAt, userId,
+        })),
       });
       if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(req.params.id);
       res.status(202).json({ status: 'pending', analysisRunId });
       return;
     }
-    const sourceUrl = String(record.sourceUrl || '').trim();
     if (!/^https?:\/\//i.test(sourceUrl)) {
-      res.status(400).json({ error: 'No video file or public sourceUrl attached to this record' });
+      res.status(materialUnavailable ? 409 : 400).json({ error: materialUnavailable
+        ? '原素材已不存在，请重新上传可读的原视频后再分析'
+        : 'No video file or public sourceUrl attached to this record' });
       return;
     }
     const retryResetAt = new Date().toISOString();
     resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: true, now: retryResetAt });
-    const queuedRecord = { ...record, aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisQueueKind: 'source_url', analysisQueueState: 'queued', analysisStage: 'queued', analysisStageUpdatedAt: retryResetAt, analysisQueuedAt: retryResetAt, analysisPausedAt: undefined, analysisPausedBy: undefined, analysisCancelledAt: undefined, analysisCancelledBy: undefined, analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_started', crawlerOpsStatus: 'queued', crawlerOpsAttempt: 0, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }) };
+    const queuedRecord = { ...record, status: 'pending' as VideoStatus, aiAnalysis: JSON.stringify(videoAnalysisRetryQueuePatch(previous, {
+      analysisMode, analysisRunId, queueKind: 'source_url', queuedAt: retryResetAt, userId,
+    })) };
     await store.update(COL, req.params.id, { aiAnalysis: queuedRecord.aiAnalysis });
     await queueAnalyzeSource(queuedRecord);
     res.json({ status: 'pending', analysisRunId });
@@ -3539,7 +3815,9 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
   resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: false, now: retryResetAt });
   await store.update(COL, req.params.id, {
     status: 'pending',
-    aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisQueueKind: 'stored_video', analysisQueueState: 'queued', analysisQueuedAt: retryResetAt, analysisStage: 'queued', analysisStageUpdatedAt: retryResetAt, geminiStatus: 'queued', analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_uses_local_file', crawlerOpsStatus: 'resolved', crawlerOpsAttempt: 0, analysisPausedAt: undefined, analysisPausedBy: undefined, analysisCancelledAt: undefined, analysisCancelledBy: undefined, reanalyzeQueuedAt: retryResetAt, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }),
+    aiAnalysis: JSON.stringify(videoAnalysisRetryQueuePatch(previous, {
+      analysisMode, analysisRunId, queueKind: 'stored_video', queuedAt: retryResetAt, userId,
+    })),
   });
   if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(req.params.id);
 
@@ -3906,7 +4184,10 @@ export async function queueExactSourceAnalysisForTenant(input: {
   const record = await store.getById<Record<string, unknown>>(COL, input.recordId);
   if (!record || String(record.tenantId || '') !== input.tenantId) throw new Error('Trend video not found');
   const previous = videoAnalysisOf(record);
-  if (hasCompletedExactVideoEvidence(previous)) {
+  const admission = hasCompletedExactVideoEvidence(previous)
+    ? productionReferenceAdmission(benchmarkAnalysisForRecord(record, previous))
+    : null;
+  if (admission?.ready) {
     // An earlier queue attempt could mark a local:// upload as
     // waiting_for_video before failing public-URL validation. Restore the
     // completed exact evidence in place; keep its run id and source hash so
@@ -3946,7 +4227,11 @@ export async function queueExactSourceAnalysisForTenant(input: {
     status: 'pending' as VideoStatus,
     aiAnalysis: JSON.stringify(nextAnalysis),
   });
-  await queueAnalyzeSource({ ...record, aiAnalysis: JSON.stringify(nextAnalysis) });
+  if (record.videoFileId) {
+    if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(input.recordId);
+  } else {
+    await queueAnalyzeSource({ ...record, aiAnalysis: JSON.stringify(nextAnalysis) });
+  }
   return 'queued';
 }
 
@@ -4016,10 +4301,11 @@ async function cacheThumbnailLocally(recordId: string, url: string): Promise<str
   return storeThumbnailBuffer(recordId, image.buf, image.contentType);
 }
 
-async function fetchThumbnailBuffer(url: string): Promise<{ buf: Buffer; contentType: string } | null> {
+async function fetchThumbnailBuffer(url: string, timeoutMs = 20_000, noRedirect = false): Promise<{ buf: Buffer; contentType: string } | null> {
   try {
     const resp = await fetch(url, {
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(timeoutMs),
+      redirect: noRedirect ? 'error' : 'follow',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/125 Safari/537.36',
         'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
@@ -4028,6 +4314,7 @@ async function fetchThumbnailBuffer(url: string): Promise<{ buf: Buffer; content
     if (!resp.ok) return null;
     const type = resp.headers.get('content-type') || '';
     if (!type.startsWith('image/')) return null;
+    if (Number(resp.headers.get('content-length') || 0) > 5 * 1024 * 1024) return null;
     const buf = Buffer.from(await resp.arrayBuffer());
     if (!buf.length || buf.length > 5 * 1024 * 1024) return null;
     return { buf, contentType: type };
@@ -5015,9 +5302,9 @@ async function analyzeSourceVideoJobInner(input: {
             crawlerOpsStatus: 'failed',
             crawlerOpsReason: compactReason,
             analysisError: compactError,
-            analysisRetryable: true,
-            analysisFailureKind: 'quality_or_timeout',
-            videoLevelFailureStatus: '全片精确分析失败，可重试',
+            analysisRetryable: classifyDiscoverySourceFailure(e) !== 'model_unavailable',
+            analysisFailureKind: classifyDiscoverySourceFailure(e) === 'model_unavailable' ? 'model_configuration' : 'quality_or_timeout',
+            videoLevelFailureStatus: classifyDiscoverySourceFailure(e) === 'model_unavailable' ? '分析模型不可用，等待配置修复' : '全片精确分析失败，可重试',
             downloadError: compactError,
           }),
         });
@@ -5054,15 +5341,15 @@ async function analyzeSourceVideoJobInner(input: {
           analysisSource: previous.gemini ? previous.analysisSource || 'metadata-fallback' : isRetryableAnalysisFailure(e) ? 'analysis-pending' : 'metadata-fallback',
           analysisQuality: previous.gemini ? previous.analysisQuality || 'metadata' : isRetryableAnalysisFailure(e) ? 'pending' : 'metadata',
           videoAnalysisAttemptedAt: new Date().toISOString(),
-          downloadStatus: 'ops_queued',
-          videoFetchStatus: 'ops_queued',
-          geminiStatus: 'waiting_for_video',
+          downloadStatus: remainsQueued ? 'ops_queued' : 'manual_required',
+          videoFetchStatus: remainsQueued ? 'ops_queued' : previous.contentSha256 ? 'fetched' : 'manual_required',
+          geminiStatus: remainsQueued ? 'waiting_for_video' : 'video_failed',
           crawlerOpsTaskId: opsTask?.id || input.opsTaskId || previous.crawlerOpsTaskId,
           crawlerOpsStatus: opsTask?.status || 'failed',
           crawlerOpsReason: compactReason,
           analysisError: compactError,
           analysisRetryable: isRetryableAnalysisFailure(e),
-          analysisFailureKind: isRetryableAnalysisFailure(e) ? 'quality_or_timeout' : previous.analysisFailureKind,
+          analysisFailureKind: classifyDiscoverySourceFailure(e) === 'model_unavailable' ? 'model_configuration' : isRetryableAnalysisFailure(e) ? 'quality_or_timeout' : previous.analysisFailureKind,
           downloadError: compactError,
           requestedAnalysisMode: remainsQueued ? previous.requestedAnalysisMode : undefined,
           analysisQueueKind: remainsQueued ? 'source_url' : previous.analysisQueueKind,
@@ -5520,6 +5807,7 @@ async function executeQueuedLocalAnalysisRecord(recordId: string): Promise<boole
     if (!analysis.requestedAnalysisMode || ['paused', 'cancelled', 'completed'].includes(queueState)) return false;
     const analysisRunId = String(analysis.analysisRunId || randomUUID());
     const analysisMode = analysis.requestedAnalysisMode === 'strategy' ? 'strategy' : 'exact';
+    const queueKind = String(analysis.analysisQueueKind || '');
     const workerStartedAt = new Date().toISOString();
     await store.update(COL, recordId, {
       status: 'pending' as VideoStatus,
@@ -5529,14 +5817,38 @@ async function executeQueuedLocalAnalysisRecord(recordId: string): Promise<boole
         analysisRunMode: analysisMode,
         analysisQueueState: 'running',
         analysisWorkerStartedAt: workerStartedAt,
-        analysisStage: 'downloading',
+        analysisStage: queueKind === 'classification_repair' ? 'repairing_classification' : 'downloading',
         analysisStageUpdatedAt: workerStartedAt,
         analysisWorkerAttempt: Number(analysis.analysisWorkerAttempt || 0) + 1,
         geminiStatus: 'analyzing',
       }),
     });
     try {
-      if (String(analysis.analysisQueueKind || '') === 'material' || (!record.videoFileId && analysis.materialId)) {
+      if (queueKind === 'classification_repair') {
+        const gemini = analysis.gemini && typeof analysis.gemini === 'object'
+          ? analysis.gemini as VideoAiAnalysis
+          : parseJsonRecord<VideoAiAnalysis>(analysis.gemini, {} as VideoAiAnalysis);
+        const repaired = await repairVideoShotClassificationsWithQwen(gemini);
+        const latest = await store.getById<Record<string, unknown>>(COL, recordId);
+        const previous = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis, {});
+        if (String(previous.analysisRunId || '') !== analysisRunId) return false;
+        await store.update(COL, recordId, {
+          status: 'analyzed' as VideoStatus,
+          aiAnalysis: JSON.stringify({
+            ...previous,
+            ...videoLevelSuccessPatch({
+              analysis: repaired,
+              source: `${String(analysis.analysisSource || 'video')}-classification-repair`,
+              videoFetchStatus: String(analysis.videoFetchStatus || 'fetched'),
+              extra: {
+                analysisMode: 'exact',
+                requestedAnalysisMode: undefined,
+                classificationRepairedAt: new Date().toISOString(),
+              },
+            }),
+          }),
+        });
+      } else if (queueKind === 'material' || (!record.videoFileId && analysis.materialId)) {
         const resolved = await materialForQueuedAnalysis(record, analysis);
         try {
           await analyzeDownloadedMaterial(recordId, resolved.filePath, resolved.material, analysisMode, analysisRunId);
@@ -5620,7 +5932,7 @@ async function crawlSocialUrlOrFallback(platform: Platform, keyword: string, lim
   return crawlPublicSearch(platform, input, limit, dateFrom, dateTo);
 }
 
-async function crawlTikTokWithApifyFallback(keyword: string, limit: number, dateFrom = '', dateTo = ''): Promise<CrawledVideo[]> {
+async function crawlTikTokWithApifyFallback(keyword: string, limit: number, dateFrom = '', dateTo = '', strictProviderLimit = false): Promise<CrawledVideo[]> {
   const input = keyword.trim();
   if (isPlatformUrl(input, 'tiktok')) {
     try {
@@ -5643,7 +5955,7 @@ async function crawlTikTokWithApifyFallback(keyword: string, limit: number, date
   const seen = new Set(items.map(item => item.sourceUrl));
   if (items.length < limit && canUseApifyTikTokCrawlFallback()) {
     try {
-      const apifyItems = await crawlTikTokApify(input, Math.max(limit - items.length, limit), dateFrom, dateTo);
+      const apifyItems = await crawlTikTokApify(input, Math.max(limit - items.length, limit), dateFrom, dateTo, strictProviderLimit);
       for (const item of apifyItems) {
         if (seen.has(item.sourceUrl)) continue;
         if (!isKeywordRelevant(item, input)) continue;
@@ -5704,14 +6016,18 @@ async function crawlTikTokPublicApi(sourceUrl: string): Promise<CrawledVideo> {
   };
 }
 
-async function crawlTikTokApify(keyword: string, limit: number, dateFrom = '', dateTo = ''): Promise<CrawledVideo[]> {
+export function apifyCandidateWindow(limit: number, platform: 'tiktok' | 'facebook', strictProviderLimit: boolean): number {
+  if (strictProviderLimit) return Math.max(1, limit);
+  return platform === 'tiktok' ? Math.max(limit * 5, 5) : Math.min(50, Math.max(limit * 4, limit, 10));
+}
+
+async function crawlTikTokApify(keyword: string, limit: number, dateFrom = '', dateTo = '', strictProviderLimit = false): Promise<CrawledVideo[]> {
   const token = process.env.APIFY_TOKEN?.trim();
   if (!token) throw new Error('APIFY_TOKEN is not configured');
   const actor = process.env.APIFY_TIKTOK_ACTOR?.trim() || 'clockworks/tiktok-scraper';
-  // TikTok profiles can interleave photo-mode slideshows with actual videos.
-  // Fetch a small candidate window so a video-only task with limit=1 does not
-  // persist the first slideshow and then fail forever in the video downloader.
-  const input = buildApifyTikTokInput(keyword, Math.max(limit * 5, 5), dateFrom, dateTo);
+  // Manual collection keeps its video/slideshow oversampling. Approved weekly
+  // discovery requests only its reserved item count from the paid actor.
+  const input = buildApifyTikTokInput(keyword, apifyCandidateWindow(limit, 'tiktok', strictProviderLimit), dateFrom, dateTo);
   const runUrl = `https://api.apify.com/v2/acts/${encodeURIComponent(actor)}/run-sync-get-dataset-items?clean=true&token=${encodeURIComponent(token)}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Number(process.env.APIFY_TIMEOUT_MS || 120_000));
@@ -5733,6 +6049,23 @@ async function crawlTikTokApify(keyword: string, limit: number, dateFrom = '', d
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function crawlTikTokWithPaidPermit(accountUrl: string, limit: number, dateFrom: string, dateTo: string, permit: PaidApifyTikTokPermit): Promise<CrawledVideo[]> {
+  const token = process.env.APIFY_TOKEN?.trim();
+  if (!token) throw Error('apify_paid_credentials_required');
+  const actor = process.env.APIFY_TIKTOK_ACTOR?.trim() || 'clockworks/tiktok-scraper';
+  const rows = await runPaidApifyTikTokDataset({
+    actorId: actor,
+    actorInput: buildApifyTikTokInput(accountUrl, Math.max(1, limit), dateFrom, dateTo),
+    permit,
+    token,
+    maxItems: Math.max(1, limit),
+    timeoutMs: Number(process.env.APIFY_TIMEOUT_MS || 120_000),
+    pollIntervalMs: Number(process.env.APIFY_POLL_INTERVAL_MS || 5_000),
+  });
+  return rows.map(item => apifyTikTokItemToCrawledVideo(item, accountUrl))
+    .filter((item): item is CrawledVideo => Boolean(item)).slice(0, limit);
 }
 
 export function buildApifyTikTokInput(keyword: string, limit: number, dateFrom = '', dateTo = ''): Record<string, unknown> {
@@ -5952,6 +6285,7 @@ function apifyInstagramItemToCrawledVideo(item: Record<string, unknown>, keyword
     tags,
     uploadedAt: apifyInstagramUploadedAt(item),
     author,
+    sourceAccountUrl: author ? sourceAccountFromProviderMetadata('instagram',`https://www.instagram.com/${author}`) ?? undefined : undefined,
     likes: likeCount > 0 ? compactNumber(likeCount) : undefined,
     comments: commentCount > 0 ? compactNumber(commentCount) : undefined,
     source: 'apify',
@@ -5978,11 +6312,11 @@ function apifyInstagramTags(item: Record<string, unknown>, keyword: string): str
 // ─── Facebook 账号主页采集：yt-dlp 为主，Apify posts actor 兜底 ───────────────
 // Facebook Page 的 /videos 列表经常无法匿名枚举。Apify 返回的是帖子列表，
 // 因此这里严格只收 media 中确认为 Video 的条目，避免把图片帖混入视频库。
-async function crawlFacebookAccountApify(accountUrl: string, limit: number, dateFrom = '', dateTo = ''): Promise<CrawledVideo[]> {
+async function crawlFacebookAccountApify(accountUrl: string, limit: number, dateFrom = '', dateTo = '', strictProviderLimit = false): Promise<CrawledVideo[]> {
   const token = process.env.APIFY_TOKEN?.trim();
   if (!token) throw new Error('APIFY_TOKEN is not configured');
   const actor = process.env.APIFY_FACEBOOK_ACTOR?.trim() || 'apify/facebook-posts-scraper';
-  const input = buildApifyFacebookAccountInput(accountUrl, limit);
+  const input = buildApifyFacebookAccountInput(accountUrl, limit, strictProviderLimit);
   const rows = await runApifyActorDatasetItems(actor, input, Number(process.env.APIFY_TIMEOUT_MS || 240_000), 'Facebook account crawl');
   return rows
     .map(item => apifyFacebookPostToCrawledVideo(item, accountUrl))
@@ -5991,8 +6325,8 @@ async function crawlFacebookAccountApify(accountUrl: string, limit: number, date
     .slice(0, limit);
 }
 
-function buildApifyFacebookAccountInput(accountUrl: string, limit: number): Record<string, unknown> {
-  const resultsLimit = Math.min(50, Math.max(limit * 4, limit, 10));
+export function buildApifyFacebookAccountInput(accountUrl: string, limit: number, strictProviderLimit = false): Record<string, unknown> {
+  const resultsLimit = apifyCandidateWindow(limit, 'facebook', strictProviderLimit);
   return {
     startUrls: [{ url: accountUrl }],
     resultsLimit,
@@ -6023,6 +6357,7 @@ function apifyFacebookPostToCrawledVideo(item: Record<string, unknown>, accountU
     tags: facebookTagsFromPost(item, accountUrl),
     uploadedAt: apifyFacebookUploadedAt(item, media),
     author,
+    sourceAccountUrl: [item.pageUrl,item.facebookUrl,accountUrl].map(value=>sourceAccountFromProviderMetadata('facebook',String(value||''))).find(Boolean) ?? undefined,
     likes: likes > 0 ? compactNumber(likes) : undefined,
     comments: comments > 0 ? compactNumber(comments) : undefined,
     source: 'apify',
@@ -6455,7 +6790,7 @@ async function crawlYtDlpMetadataNow(platform: Platform, url: string, keyword: s
   const tags = Array.isArray(meta.tags)
     ? meta.tags.filter((t): t is string => typeof t === 'string').slice(0, 5)
     : [];
-  return normalizeCrawledVideo({ platform, title, sourceUrl: webpageUrl, thumbnailUrl: thumbnail, duration, views, tags, uploadedAt });
+  return normalizeCrawledVideo({ platform, title, sourceUrl: webpageUrl, thumbnailUrl: thumbnail, duration, views, tags, uploadedAt,sourceAccountUrl:metadataCreatorAccount(platform,meta) });
 }
 
 async function downloadVideoToMaterial(input: {
@@ -6466,6 +6801,7 @@ async function downloadVideoToMaterial(input: {
   tenantId: string;
   record?: Record<string, unknown> | null;
 }): Promise<Material> {
+  if(isWeeklyOriginalAccountCollectionRecord(input.record))throw Error('weekly_original_account_media_requires_same_run_kv');
   const tenantMediaDir = tenantAssetDir(MEDIA_DIR, input.tenantId);
   fs.mkdirSync(tenantMediaDir, { recursive: true });
   const id = randomUUID();
@@ -6548,7 +6884,10 @@ export async function downloadVideoForAnalysis(input: {
   title: string;
   platform: Platform;
   record?: Record<string, unknown> | null;
+  allowPaidFallback?: boolean;
+  allowCookieFallback?: boolean;
 }, executeDownload = execFileAsync, budget = new DownloadBudget(Math.max(10_000, Number(process.env.VIDEO_ANALYSIS_DOWNLOAD_TIMEOUT_MS || 150_000)))): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
+  if(isWeeklyOriginalAccountCollectionRecord(input.record))throw Error('weekly_original_account_media_requires_same_run_kv');
   const source = validatePublicVideoSourceUrl(input.sourceUrl, input.platform);
   if (!source) throw new Error('unsafe_public_video_source');
   input = { ...input, ...source };
@@ -6566,7 +6905,7 @@ export async function downloadVideoForAnalysis(input: {
   // Facebook's public page frequently blocks yt-dlp or makes it retry several
   // formats before failing. The configured posts actor already exposes the
   // playable CDN URL, so use it first for an explicit analysis request.
-  if (input.platform === 'facebook' && canUseApifyVideoFallback(tenantId, 'facebook')) {
+  if (input.allowPaidFallback !== false && input.platform === 'facebook' && canUseApifyVideoFallback(tenantId, 'facebook')) {
     try {
       return await downloadFacebookVideoViaApify(input.sourceUrl, tenantId, budget);
     } catch (error) {
@@ -6578,7 +6917,7 @@ export async function downloadVideoForAnalysis(input: {
   // Datacenter YouTube traffic is commonly challenged before yt-dlp can obtain
   // media bytes. A dedicated downloader actor stores one low-res MP4 in Apify
   // KVS, which we immediately copy into our own PocketBase-backed pipeline.
-  if (input.platform === 'youtube' && canUseApifyVideoFallback(tenantId, 'youtube')) {
+  if (input.allowPaidFallback !== false && input.platform === 'youtube' && canUseApifyVideoFallback(tenantId, 'youtube')) {
     try {
       return await downloadYouTubeVideoViaApify(input.sourceUrl, tenantId, budget);
     } catch (error) {
@@ -6622,7 +6961,7 @@ export async function downloadVideoForAnalysis(input: {
       lastError = e;
       budget.record(candidate.label, e);
       if (terminalDownloadFailure(e)) break;
-      if (usesServerCookiesForCrawl(input.platform) && (cookieBrowsers().length > 0 || cookieFiles().length > 0)) {
+      if (input.allowCookieFallback !== false && usesServerCookiesForCrawl(input.platform) && (cookieBrowsers().length > 0 || cookieFiles().length > 0)) {
         try {
           await execYtDlpWithCookieFallback(downloadArgs, input.sourceUrl, budget.remaining(), 4 * 1024 * 1024, budget);
           lastError = null;
@@ -6638,7 +6977,7 @@ export async function downloadVideoForAnalysis(input: {
   }
   if (lastError) {
     cleanupDownloadedFilesById(id, ANALYSIS_DIR);
-    if (input.platform === 'tiktok' && canUseApifyVideoFallback(tenantId, 'tiktok')) {
+    if (input.allowPaidFallback !== false && input.platform === 'tiktok' && canUseApifyVideoFallback(tenantId, 'tiktok')) {
       try {
         console.warn('[videos] TikTok yt-dlp analysis download failed, trying Apify video fallback:', lastError instanceof Error ? lastError.message : lastError);
         return await downloadTikTokVideoViaApify(input.sourceUrl, tenantId, budget);
@@ -6655,7 +6994,7 @@ export async function downloadVideoForAnalysis(input: {
         console.warn('[videos] TikTok public API analysis fallback failed:', publicApiError instanceof Error ? publicApiError.message : publicApiError);
       }
     }
-    if (input.platform === 'instagram' && canUseApifyVideoFallback(tenantId, 'instagram')) {
+    if (input.allowPaidFallback !== false && input.platform === 'instagram' && canUseApifyVideoFallback(tenantId, 'instagram')) {
       try {
         console.warn('[videos] Instagram yt-dlp analysis download failed, trying Apify video fallback:', lastError instanceof Error ? lastError.message : lastError);
         return await downloadInstagramVideoViaApify(input.sourceUrl, tenantId, budget);
@@ -7139,6 +7478,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 }
 
 function isRetryableAnalysisFailure(error: unknown): boolean {
+  if (classifyDiscoverySourceFailure(error) === 'model_unavailable') return false;
   return /analysis_quality_retryable|analysis_retryable|chunk_quality_failed|video_analysis_hard_timeout|exact_chunk_timeout/i
     .test(error instanceof Error ? error.message : String(error));
 }
@@ -7187,29 +7527,33 @@ export function selectFramesForPhysicalCuts<T extends { timeLabel: string }>(
   return [...required.slice(0, limit), ...context].sort((a, b) => qwenFrameSeconds(a.timeLabel) - qwenFrameSeconds(b.timeLabel));
 }
 
-export async function extractQwenAnalysisFrames(filePath: string, maxFrames = 30, duration = 0, analysisMode: 'strategy' | 'exact' = 'exact', physicalCuts: number[] = []): Promise<Array<{ base64: string; mimeType: string; timeLabel: string }>> {
+export async function extractQwenAnalysisFrames(filePath: string, maxFrames = 30, duration = 0, analysisMode: 'strategy' | 'exact' = 'exact', physicalCuts: number[] = [], samplingProfile: ReferenceFrameSamplingProfile = 'coarse', denseRanges: ReferenceFrameSamplingRange[] = []): Promise<Array<{ base64: string; mimeType: string; timeLabel: string }>> {
   if (!ffmpegBin) throw new Error('ffmpeg is not available for Qwen frame analysis');
   if (!fs.existsSync(ANALYSIS_DIR)) fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
 
   const frameDir = path.join(ANALYSIS_DIR, `qwen-frames-${Date.now()}-${randomUUID()}`);
   fs.mkdirSync(frameDir, { recursive: true });
   try {
-    // The opening hook often contains sub-second hand/object actions. Keep every
-    // frame from the first four seconds at 3 fps; similarity de-duplication here
-    // previously erased the exact motion boundary that the director needs.
-    const densePattern = path.join(frameDir, 'dense-%02d.jpg');
-    const denseFps = analysisMode === 'exact' ? (maxFrames <= 24 ? 2 : 3) : 0;
-    const denseCount = denseFps * 4;
-    if (denseCount) {
-      await execFileAsync(ffmpegBin, [
-        '-hide_banner',
-        '-loglevel', 'error',
-        '-i', filePath,
-        '-vf', `trim=duration=4,fps=${denseFps},scale=384:-1`,
-        '-frames:v', String(denseCount),
-        '-q:v', '4',
-        densePattern,
-      ], { timeout: 90_000 });
+    // Sub-second sampling is reserved for footage already classified as a real
+    // presenter shot. Factory, product and D2C footage retain the less costly
+    // scene-cut/uniform evidence below.
+    const denseFps = analysisMode === 'exact' && samplingProfile === 'talking_head_dense'
+      ? 2
+      : 0;
+    const densePlan = denseFps ? denseRanges.flatMap((range, rangeIndex) => {
+      const count = Math.max(1, Math.ceil((range.endSeconds - range.startSeconds) * denseFps));
+      return Array.from({ length: count }, (_, frameIndex) => ({
+        file: `dense-${String(rangeIndex).padStart(3, '0')}-${String(frameIndex + 1).padStart(3, '0')}.jpg`,
+        time: Math.min(range.endSeconds - 0.001, range.startSeconds + frameIndex / denseFps), dense: true,
+      }));
+    }) : [];
+    const denseCount = densePlan.length;
+    if (denseCount > 120) throw new Error('presenter_dense_sampling_budget_exceeded');
+    for (const [rangeIndex, range] of denseRanges.entries()) {
+      const count = Math.max(1, Math.ceil((range.endSeconds - range.startSeconds) * denseFps));
+      await execFileAsync(ffmpegBin, ['-hide_banner', '-loglevel', 'error', '-ss', String(range.startSeconds), '-i', filePath,
+        '-t', String(range.endSeconds - range.startSeconds), '-vf', `fps=${denseFps},scale=384:-1`,
+        '-frames:v', String(count), '-q:v', '4', path.join(frameDir, `dense-${String(rangeIndex).padStart(3, '0')}-%03d.jpg`)], { timeout: 90_000 });
     }
     const uniformPattern = path.join(frameDir, 'uniform-%02d.jpg');
     const strategyInterval = 5;
@@ -7258,10 +7602,7 @@ export async function extractQwenAnalysisFrames(filePath: string, maxFrames = 30
         } catch { /* keep the other sampled frames */ }
       }
     }
-    const denseRows = fs.readdirSync(frameDir)
-      .filter(file => /^dense-\d+\.jpg$/i.test(file))
-      .sort()
-      .map((file, index) => ({ file, time: denseFps ? index / denseFps : 0, dense: true }));
+    const denseRows = densePlan.filter(row => fs.existsSync(path.join(frameDir, row.file)));
     const supplementalRows = [
       ...fs.readdirSync(frameDir).filter(file => /^uniform-\d+\.jpg$/i.test(file)).sort().map((file, index) => ({ file, time: index * uniformInterval, dense: false })),
       ...fs.readdirSync(frameDir).filter(file => /^scene-\d+\.jpg$/i.test(file)).sort().map((file, index) => ({ file, time: sceneTimes[index] ?? index * 3, dense: false })),
@@ -7474,10 +7815,9 @@ async function analyzeExactLongVideoChunks(input: {
   analysisMode?: 'strategy' | 'exact';
   sceneCuts?: number[];
 }): Promise<VideoAiAnalysis> {
-  // Keep each VL request small enough to finish reliably. Dense montage clips
-  // can contain twenty or more observation boundaries in twelve seconds; that
-  // response repeatedly exceeds the provider timeout even after reducing the
-  // frame count. Six-second chunks bound both image input and schema output.
+  // Dense montage clips can contain twenty or more observation boundaries in
+  // twelve seconds. Six-second chunks bound both image input and schema output
+  // so exact analysis can finish inside the provider timeout.
   const chunkSeconds = Math.max(4, Math.min(30, Number(process.env.VIDEO_EXACT_CHUNK_SECONDS || 6)));
   const inferredDuration = exactAnalysisDuration(input.duration, input.frames.map(frame => qwenFrameSeconds(frame.timeLabel)));
   const chunks = exactAnalysisChunkRanges(inferredDuration, chunkSeconds);
@@ -7601,25 +7941,10 @@ async function analyzeExactLongVideoChunks(input: {
       clearTimeout(timeout);
     }
   };
-  const analyzeWithRetry = async (chunk: { start: number; end: number }) => {
-    try {
-      return await runWithTimeout(chunk, primaryFrameLimit, 1);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // Changing the frame count cannot repair authentication, quota or
-      // billing failures. Repeating those requests only burns time and can
-      // create ambiguous provider-side usage.
-      if (/\b(?:401|402|403)\b|quota exhausted|insufficient (?:quota|balance|funds)|billing|invalid api key/i.test(message)) throw error;
-      return await runWithTimeout(chunk, retryFrameLimit, 2);
-    }
-  };
-  const settled: PromiseSettledResult<VideoAiAnalysis>[] = [];
   const concurrency = Math.max(1, Math.min(3, Number(process.env.VIDEO_EXACT_CHUNK_CONCURRENCY || 2)));
-  for (let offset = 0; offset < chunks.length; offset += concurrency) {
-    settled.push(...await Promise.allSettled(chunks.slice(offset, offset + concurrency).map(analyzeWithRetry)));
-  }
+  const settled = await executeExactChunks(chunks,exactQwenScope()?1:concurrency,(chunk,attempt)=>runWithTimeout(chunk,attempt===1?primaryFrameLimit:retryFrameLimit,attempt),!exactQwenScope());
   const failure = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-  if (failure) throw new Error(`${input.analysisMode || 'exact'}_analysis_retryable: ${failure.reason instanceof Error ? failure.reason.message : String(failure.reason)}`);
+  if (failure) throw new Error(`${classifyDiscoverySourceFailure(failure.reason) === 'model_unavailable' ? 'model_unavailable' : `${input.analysisMode || 'exact'}_analysis_retryable`}: ${failure.reason instanceof Error ? failure.reason.message : String(failure.reason)}`);
   const results = settled.map(result => (result as PromiseFulfilledResult<VideoAiAnalysis>).value);
   const first = results[0];
   const unique = (values: string[]) => [...new Set(values.filter(Boolean))];
@@ -7655,6 +7980,32 @@ export function exactSourceClockDuration(analysis: VideoAiAnalysis, expectedRunI
   return clock.duration;
 }
 
+export async function referenceNarrationForVideoAnalysis(
+  filePath: string,
+  duration: number,
+  tenantId: string,
+  ports: {
+    readCached?: typeof readCachedReferenceNarration;
+    prepare?: typeof prepareReferenceNarration;
+  } = {},
+) {
+  const readCached = ports.readCached || readCachedReferenceNarration;
+  const prepare = ports.prepare || prepareReferenceNarration;
+  if (!exactQwenScope()) return prepare(filePath, duration, { tenantId });
+  try {
+    return readCached(filePath, tenantId) || {
+      text: '', segments: [], words: [], alignmentStatus: 'unavailable',
+      alignmentError: 'scoped_visual_revision_has_no_asr_authorization',
+    };
+  } catch {
+    return { text: '', segments: [], words: [], alignmentStatus: 'unavailable',
+      alignmentError: 'scoped_visual_revision_cached_asr_unavailable' };
+  }
+}
+
+export const permitsCrossProviderHookMotionInspection = () => !exactQwenScope();
+export function readExactQwenScopeContinuity(){const current=exactQwenScope();return current?{model:current.model,configurationHash:current.configurationHash,endpoint:current.endpoint,credentialDigest:current.credentialDigest}:null;}
+
 export async function analyzeDownloadedVideoWithFallback(opts: {
   filePath: string;
   mimeType: string;
@@ -7674,7 +8025,11 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
   opts = { ...opts, duration: sourceClock.duration };
   const sourceSha256 = createHash('sha256').update(fs.readFileSync(opts.filePath)).digest('hex');
   let speechPromise: Promise<ReferenceSpeechTranscript | undefined> | undefined;
-  const sourceSpeech = () => speechPromise ??= prepareReferenceNarration(opts.filePath, Number(opts.duration), { tenantId: opts.tenantId || undefined })
+  // A weekly candidate model revision authorizes one exact VL model/provider,
+  // not an additional ASR product. Reuse already measured words when present,
+  // but never turn the scoped visual retry into an unapproved paid ASR submit.
+  const sourceSpeech = () => speechPromise ??= referenceNarrationForVideoAnalysis(
+    opts.filePath, Number(opts.duration), opts.tenantId || 'reference_analysis')
     .catch(error => {
       console.warn('[videos] Measured source speech unavailable:', error instanceof Error ? error.message : error);
       return { text: '', segments: [], words: [], alignmentStatus: 'unavailable',
@@ -7712,14 +8067,43 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
     const exactFrameCount = Math.max(24, Math.min(72, Number(process.env.VIDEO_QWEN_EXACT_FRAME_COUNT || 42)));
     const strategyFrameCount = Math.max(3, Math.min(24, Number(process.env.VIDEO_QWEN_FRAME_COUNT || Math.ceil(Math.max(Number(opts.duration || 0), 10) / 5) + 1)));
     const detectedSceneCuts = opts.analysisMode === 'exact' ? await detectVideoSceneCuts(opts.filePath) : [];
-    const frames = await extractQwenAnalysisFrames(
+    const coarseFrames = await extractQwenAnalysisFrames(
       opts.filePath,
       opts.analysisMode === 'exact' ? exactFrameCount : strategyFrameCount,
       Number(opts.duration || 0),
       opts.analysisMode === 'exact' ? 'exact' : 'strategy',
       detectedSceneCuts,
+      'coarse',
     );
     const transcript = await sourceSpeech();
+    let frames = coarseFrames;
+    let presenterDenseSampling: { intervalSeconds: 0.5; ranges: ReferenceFrameSamplingRange[] } | null = null;
+    if (opts.analysisMode === 'exact') {
+      // Pass one answers only the material-type question from coarse, whole-video
+      // evidence. Only a confirmed presenter shot authorizes the second,
+      // temporally dense extraction used to distinguish stable/dynamic speech.
+      const classificationFrames = selectFramesForPhysicalCuts(
+        coarseFrames, detectedSceneCuts, 0, Number(opts.duration || 0), Math.min(12, coarseFrames.length),
+      );
+      const preliminary = await analyzeVideoFramesWithQwen({
+        frames: classificationFrames,
+        title: opts.title,
+        platform: opts.platform,
+        duration: opts.duration,
+        views: opts.views,
+        tags: opts.tags,
+        transcript,
+        analysisMode: 'strategy',
+      });
+      if (requiresPresenterDenseSampling(preliminary)) {
+        const denseRanges = presenterDenseSamplingRanges(preliminary, Number(opts.duration || 0));
+        presenterDenseSampling = { intervalSeconds: 0.5, ranges: denseRanges };
+        frames = await extractQwenAnalysisFrames(
+          opts.filePath, Math.max(exactFrameCount, Math.ceil(denseRanges.reduce((sum, range) => sum + range.endSeconds - range.startSeconds, 0) * 2)),
+          Number(opts.duration || 0), 'exact', detectedSceneCuts, 'talking_head_dense', denseRanges,
+        );
+      }
+    }
     // Exact mode always uses the chunk path, including short clips. Strategy
     // mode also chunks longer clips so each request stays bounded. Missing or
     // low-quality timelines now fail as retryable instead of being padded with
@@ -7744,6 +8128,10 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
       ? groupExactObservationWindows(observationAnalysis, detectedSceneCuts)
       : observationAnalysis;
     analysis = lockReferenceSpeechTimeline(analysis, transcript, { duration: Number(opts.duration), fps: sourceClock.fps ?? undefined });
+    if (opts.analysisMode === 'exact' && (exactVideoClassificationQualityError(analysis)
+      || (analysis.scriptDetails15s || []).some(shot => shot.needsReview === true))) {
+      analysis = await repairVideoShotClassificationsWithQwen(analysis);
+    }
     let hookReviewReasons: string[] = [];
     if (opts.analysisMode === 'exact') {
       const hookIndex = firstSubstantiveOpeningShot(analysis);
@@ -7753,6 +8141,10 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
         if (range) {
           let motionEvidence;
           try {
+            // The exact weekly revision is provider/model scoped to Qwen VL.
+            // Gemini motion inspection is optional enrichment and must not
+            // silently spend against a different provider authorization.
+            if (!permitsCrossProviderHookMotionInspection()) throw new Error('scoped_visual_revision_skips_cross_provider_hook_motion');
             const hookFrames = await extractOpeningHookFrames(opts.filePath);
             motionEvidence = await inspectOpeningHookMotionWithGemini({ frames: hookFrames });
           } catch (error) {
@@ -7767,10 +8159,11 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
         hookReviewReasons = ['opening_hook_no_substantive_shot'];
       }
     }
-    return { analysis: await finishSourceAnalysis({ ...analysis, detectedSceneCuts, hookReviewReasons } as VideoAiAnalysis), source: 'qwen-frame-video' };
+    return { analysis: await finishSourceAnalysis({ ...analysis, detectedSceneCuts, hookReviewReasons,
+      ...(presenterDenseSampling ? { presenterDenseSampling } : {}) } as VideoAiAnalysis), source: 'qwen-frame-video' };
   };
 
-  if (shouldUseQwenFirst()) {
+  if (exactQwenScope() || shouldUseQwenFirst()) {
     if (!isQwenConfigured()) throw new Error('DASHSCOPE_API_KEY is not set');
     return withTimeout(runQwen(), videoAnalysisHardTimeoutMs(opts.analysisMode), 'video_analysis_hard_timeout');
   }
@@ -7915,6 +8308,7 @@ async function crawlYouTubeSearch(keyword: string, limit: number, dateFrom = '',
       tags: keyword.split(/\s+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean).slice(0, 5),
       uploadedAt: undefined,
       dateEvidence,
+      sourceAccountUrl: sourceAccountFromYouTubeRenderer(renderer) ?? undefined,
       youtubeShort: true,
     });
     if (out.length >= limit) break;
@@ -8478,7 +8872,7 @@ function accountListUrlCandidates(platform: Platform, url: string): string[] {
 }
 
 // 采集某个对标账号主页的最新视频列表（flat-playlist 枚举，最多 limit 条）。
-async function crawlAccountHomepage(platform: Platform, accountUrl: string, limit: number, dateFrom = '', dateTo = '', cloudFallback = false): Promise<CrawledVideo[]> {
+async function crawlAccountHomepage(platform: Platform, accountUrl: string, limit: number, dateFrom = '', dateTo = '', cloudFallback = false, strictProviderLimit = false): Promise<CrawledVideo[]> {
   if (platform === 'instagram') {
     let instagramItems: CrawledVideo[] = [];
     if (canUseApifyInstagramCrawlFallback()) {
@@ -8501,7 +8895,7 @@ async function crawlAccountHomepage(platform: Platform, accountUrl: string, limi
   let items: CrawledVideo[];
   if (platform === 'tiktok' && cloudFallback && canUseApifyTikTokCrawlFallback()) {
     try {
-      const apifyItems = await crawlTikTokApify(accountUrl, safeLimit, dateFrom, dateTo);
+      const apifyItems = await crawlTikTokApify(accountUrl, safeLimit, dateFrom, dateTo, strictProviderLimit);
       const eligible = apifyItems.filter(item => isDiscoveryVideoEligible(item));
       if (eligible.length > 0) return eligible.slice(0, limit);
     } catch (apifyError) {
@@ -8512,7 +8906,7 @@ async function crawlAccountHomepage(platform: Platform, accountUrl: string, limi
     items = [];
     if (canUseApifyFacebookCrawlFallback()) {
       try {
-        const apifyItems = await crawlFacebookAccountApify(accountUrl, safeLimit, dateFrom, dateTo);
+        const apifyItems = await crawlFacebookAccountApify(accountUrl, safeLimit, dateFrom, dateTo, strictProviderLimit);
         items = mergeCrawledVideos(items, apifyItems);
       } catch (apifyError) {
         console.warn('[videos] Facebook account Apify crawl failed:', apifyError instanceof Error ? apifyError.message : apifyError);
@@ -8672,6 +9066,7 @@ function metaToCrawledVideo(platform: Platform, keyword: string, youtubeShortsSo
       views,
       tags,
       uploadedAt: uploadedAtFromMeta(meta),
+      sourceAccountUrl: metadataCreatorAccount(platform,meta),
       youtubeShort: isYouTubeShort || undefined,
     });
   };
@@ -8813,6 +9208,13 @@ function metadataUploader(meta: Record<string, unknown>): string {
   return String(meta.uploader_id || meta.uploader || meta.channel_id || meta.channel || '').trim();
 }
 
+function metadataCreatorAccount(platform: Platform, meta: Record<string, unknown>): string | undefined {
+  const candidates=[meta.channel_url,meta.uploader_url,meta.creator_url];
+  if(platform==='youtube'&&/^UC[A-Za-z0-9_-]{20,}$/.test(String(meta.channel_id||'')))candidates.push(`https://www.youtube.com/channel/${meta.channel_id}`);
+  if(platform==='instagram'&&/^[A-Za-z0-9._]{1,30}$/.test(String(meta.uploader_id||'')))candidates.push(`https://www.instagram.com/${meta.uploader_id}`);
+  return candidates.map(value=>sourceAccountFromProviderMetadata(platform,String(value||''))).find(Boolean)??undefined;
+}
+
 function stripTrackingParams(rawUrl: string): string {
   try {
     const parsed = new URL(rawUrl);
@@ -8929,7 +9331,7 @@ function isLegacyFakeVideo(title: string, sourceUrl: string): boolean {
     || /explore\/search\/keyword\/\?q=.*#auto-crawl/i.test(sourceUrl);
 }
 
-async function crawlFacebook(keyword: string, limit: number, dateFrom = '', dateTo = ''): Promise<CrawledVideo[]> {
+async function crawlFacebook(keyword: string, limit: number, dateFrom = '', dateTo = '', strictProviderLimit = false): Promise<CrawledVideo[]> {
   const input = keyword.trim();
   if (/^https?:\/\/(?:www\.|m\.|mbasic\.)?facebook\.com\//i.test(input)) {
     return [await crawlFacebookUrl(input, keyword)];
@@ -8942,7 +9344,7 @@ async function crawlFacebook(keyword: string, limit: number, dateFrom = '', date
   }
   if (!canUseApifyFacebookCrawlFallback()) throw new Error(`Facebook public search returned no videos for: ${input}`);
   const pageUrl = await discoverFacebookPageUrl(input);
-  return crawlFacebookAccountApify(pageUrl, limit, dateFrom, dateTo);
+  return crawlFacebookAccountApify(pageUrl, limit, dateFrom, dateTo, strictProviderLimit);
 }
 
 async function crawlFacebookUrl(url: string, keyword: string): Promise<CrawledVideo> {
@@ -9155,8 +9557,7 @@ function parseDuration(label: string): number {
 }
 
 function videoDedupeKey(item: CrawledVideo): string {
-  const urlKey = item.sourceUrl.trim().toLowerCase().replace(/\/+$/, '');
-  if (urlKey) return `${item.platform}:url:${urlKey}`;
+  if (item.sourceUrl.trim()) return videoSourceIdentity(item.platform, item.sourceUrl);
   return `${item.platform}:title:${item.title.toLowerCase().replace(/\s+/g, ' ').replace(/[^\p{L}\p{N} ]/gu, '').trim()}`;
 }
 
@@ -9893,7 +10294,7 @@ export async function runQueuedLocalAnalysisWorkerOnce(options: { recoverInterru
       if (!analysis.requestedAnalysisMode) return false;
       const kind = String(analysis.analysisQueueKind || '');
       if (kind === 'source_url') return false;
-      if (!['material', 'stored_video'].includes(kind) && !record.videoFileId && !analysis.materialId) return false;
+      if (!['material', 'stored_video', 'classification_repair'].includes(kind) && !record.videoFileId && !analysis.materialId) return false;
       const state = String(analysis.analysisQueueState || 'queued');
       if (state === 'queued') return true;
       if (state !== 'running') return false;
@@ -10363,16 +10764,22 @@ export async function getVideoPipelineStats(tenantId?: string): Promise<Record<s
     const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
     const gemini = String(analysis.geminiStatus || '');
     const fetchStatus = String(analysis.downloadStatus || analysis.videoFetchStatus || '');
+    const queueState = String(analysis.analysisQueueState || '');
     const paused = Boolean(analysis.analysisPausedAt) || gemini === 'paused';
     const cancelled = Boolean(analysis.analysisCancelledAt) || gemini === 'cancelled' || analysis.analysisQueueState === 'cancelled';
     const failed = String(record.status || '') === 'failed'
       || Boolean(analysis.analysisError || analysis.videoLevelFailureStatus)
       || ['video_failed', 'analysis_retryable', 'ops_failed', 'url_failed', 'unavailable'].includes(gemini)
       || ['ops_failed', 'url_failed', 'unavailable'].includes(fetchStatus);
-    const analyzing = Boolean(analysis.requestedAnalysisMode)
+    const analyzing = !['failed', 'cancelled', 'paused', 'completed'].includes(queueState) && (Boolean(analysis.requestedAnalysisMode)
       || ['queued', 'analyzing', 'waiting_for_video', 'downloading', 'download_retrying'].includes(gemini)
-      || ['queued', 'downloading', 'download_retrying', 'ops_queued', 'ops_processing'].includes(fetchStatus);
-    const itemStatus = cancelled ? 'cancelled' : paused ? 'paused' : failed ? 'failed' : analyzing ? 'analyzing' : 'analyzed';
+      || ['queued', 'downloading', 'download_retrying', 'ops_queued', 'ops_processing'].includes(fetchStatus));
+    const requestedMode = String(analysis.requestedAnalysisMode || analysis.analysisMode || 'strategy');
+    const admission = requestedMode === 'exact' && !cancelled && !paused && !analyzing && !failed
+      ? productionReferenceAdmission(benchmarkAnalysisForRecord(record, analysis))
+      : null;
+    const itemStatus = cancelled ? 'cancelled' : paused ? 'paused' : analyzing ? 'analyzing' : failed ? 'failed'
+      : requestedMode !== 'exact' ? 'strategy' : admission && !admission.ready ? 'review' : 'analyzed';
     const recovery = describeVideoAnalysisRecovery(analysis, String(record.status || ''));
     return {
       id: String(record.id || ''),
@@ -10381,7 +10788,9 @@ export async function getVideoPipelineStats(tenantId?: string): Promise<Record<s
       thumbnailUrl: recordThumbnailUrl(String(record.id || '')),
       duration: Number(record.duration || 0),
       status: itemStatus,
-      analysisMode: String(analysis.requestedAnalysisMode || analysis.analysisMode || 'strategy'),
+      analysisMode: requestedMode,
+      productionReady: admission?.ready,
+      productionBlockers: admission?.blockers.slice(0, 3) || [],
       updatedAt: String(record.updated || record.crawledAt || ''),
       error: failed ? publicVideoPipelineError(analysis.analysisError || analysis.videoLevelFailureStatus) : '',
       statusReason: cancelled ? '任务已取消，旧运行结果不会再写回。'
@@ -10420,8 +10829,9 @@ export async function getVideoPipelineStats(tenantId?: string): Promise<Record<s
         acc[item.status] = (acc[item.status] || 0) + 1;
         return acc;
       }, {}),
-      pendingRecords: analysisItems.filter(item => item.status === 'analyzing' || item.status === 'paused').length,
+      pendingRecords: analysisItems.filter(item => item.status === 'analyzing' || item.status === 'paused' || item.status === 'review').length,
       analyzedRecords: analysisItems.filter(item => item.status === 'analyzed').length,
+      strategyRecords: analysisItems.filter(item => item.status === 'strategy').length,
       failedRecords: analysisItems.filter(item => item.status === 'failed').length,
       hiddenRecords: analysisItems.filter(item => item.visibility === 'hidden').length,
       providerStatus: {

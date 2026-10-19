@@ -312,15 +312,26 @@ export function buildPublishingApprovalPackage(input: {
     for (const target of input.targets) {
       const own = expanded.filter(item => item.accountIds[0] === target.accountId);
       if (!own.length) continue;
-      const timezone = input.scheduling.timezone === 'account' ? target.timezone || '' : 'Asia/Shanghai';
-      const slots = boundedPublishingSlots({ ...input.scheduling, timezone, count: own.length, now });
-      own.forEach((item, index) => {
+      const fallbackItems: PublishingApprovalItem[] = [];
+      own.forEach(item => {
         const requested = item.plannedPublishDate;
         const requestedAt = item.plannedPublishAt;
-        item.scheduledAt = requested && requested >= input.scheduling!.startsAt && requested <= input.scheduling!.endsAt
-          ? Number.isFinite(Date.parse(requestedAt || '')) ? new Date(requestedAt!).toISOString() : new Date(`${requested}T18:00:00+08:00`).toISOString()
-          : slots[index];
+        if (requested && requested >= input.scheduling!.startsAt && requested <= input.scheduling!.endsAt) {
+          item.scheduledAt = Number.isFinite(Date.parse(requestedAt || ''))
+            ? new Date(requestedAt!).toISOString()
+            : new Date(`${requested}T18:00:00+08:00`).toISOString();
+        } else {
+          fallbackItems.push(item);
+        }
       });
+      // A frozen weekly plan already carries an absolute publish instant (or
+      // the product's explicit 18:00 Beijing date default). Account timezone
+      // is needed only when this package must calculate an unplanned slot.
+      if (fallbackItems.length) {
+        const timezone = input.scheduling.timezone === 'account' ? target.timezone || '' : 'Asia/Shanghai';
+        const slots = boundedPublishingSlots({ ...input.scheduling, timezone, count: fallbackItems.length, now });
+        fallbackItems.forEach((item, index) => { item.scheduledAt = slots[index]!; });
+      }
     }
     items.splice(0, items.length, ...expanded);
   }

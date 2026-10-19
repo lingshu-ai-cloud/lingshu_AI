@@ -2,6 +2,7 @@ import { discoveryCatalog } from '../lib/discoveryCatalog.js';
 import { assertBroadTermsMatchPerspective, assertGenericSearchTerms, discoveryPerspective, generateProductKeywords } from '../lib/productDiscovery.js';
 import { fiveProductKeywords } from '../../shared/productDiscovery.js';
 import { Router } from 'express';
+import {fileURLToPath} from 'node:url';
 import { recommendDiscoveryKeywords } from '../lib/discoveryRecommendations.js';
 import { enforceSupportSessionReadOnly, requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
@@ -12,6 +13,13 @@ import { buildDiscoverySummary, nextDiscoveryRunAt, normalizeModePolicies } from
 import { ensureSocialDiscoveryCollectionTask } from './scheduler.js';
 import { DISCOVERY_RUN_COLLECTION, DISCOVERY_SCOPE_COLLECTION, executeApprovedDiscoveryRun, loadActiveDiscoveryScope, type DiscoveryScopeRecord } from '../socialDiscovery/service.js';
 import { evaluateSocialDiscoveryReadiness, listSocialDiscoverySupply } from '../socialDiscovery/supply.js';
+import { reviseWeeklyAccountCollectionScope } from '../socialDiscovery/weeklyAccountScopeRevision.js';
+import { socialRequestHash } from '../starter198/socialContentValidation.js';
+import {issueWeeklyCandidateSemanticBudgetAuthorization,revokeWeeklyCandidateSemanticBudgetAuthorization,WEEKLY_CANDIDATE_SEMANTIC_BUDGET_AUTHORIZATIONS} from '../socialDiscovery/weeklyCandidateSemanticBudget.js';
+import {issueWeeklyAccountCollectionBudgetAuthorization,revokeWeeklyAccountCollectionBudgetAuthorization,WEEKLY_ACCOUNT_COLLECTION_BUDGET_AUTHORIZATIONS} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
+import {readWeeklyCandidateStoryboardBriefs} from '../runtime/weeklyCandidateStoryboardBrief.js';
+import {WEEKLY_PREPRODUCTION_JOBS,type WeeklyPreproductionJob} from '../runtime/weeklyPreproductionProducer.js';
+import {PREPRODUCTION_RETRY_ATTEMPTS,type WeeklyPreproductionRetryAttempt} from '../runtime/weeklyPreproductionRetryAttempts.js';
 import type {
   SocialAccountTrackingDecision,
   SocialAudienceRole,
@@ -96,6 +104,13 @@ socialDiscoveryRouter.get('/scope', async (_req, res) => {
     res.json({
       scope: strategy,
       persisted: Boolean(existing),
+      revisionAuthority: existing ? {
+        scopeId: existing.id,
+        scopeVersion: existing.version,
+        scopeHash: socialRequestHash(strategy),
+        productFactBindingHash: (strategy as SocialCrawlStrategy & {productFactBinding?:unknown}).productFactBinding
+          ? socialRequestHash((strategy as SocialCrawlStrategy & {productFactBinding?:unknown}).productFactBinding) : null,
+      } : null,
       needsConfirmation: !existing || strategy.keywordSet.status !== 'active' || strategy.approval?.status !== 'approved',
     });
   } catch (error) {
@@ -273,7 +288,7 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
   (strategy.discoveryBrief as typeof strategy.discoveryBrief & { innovationExperimentShare: number }).innovationExperimentShare = innovationExperimentShare;
   strategy.discoveryBrief.createdBy = 'director_agent';
   strategy.createdBy = 'user';
-  strategy.approval = { status: 'approved', approvedBy: 'user', approvedAt: new Date().toISOString(), scopeVersion: strategy.keywordSet.version };
+  strategy.approval = { status: 'approved', approvedBy: 'user', approvedByUserId: userId, approvedAt: new Date().toISOString(), scopeVersion: strategy.keywordSet.version };
 
   const now = new Date().toISOString();
   const data = {
@@ -295,6 +310,80 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
   }
   ensureSocialDiscoveryCollectionTask({ tenantId, discoveryScopeId: saved.id, discoveryScopeVersion: saved.version });
   res.json({ scope: strategy, persisted: true, needsConfirmation: false });
+});
+
+// This is an explicit, authenticated revision of one approved weekly source.
+// It does not crawl, analyze, or modify any existing weekly package in place.
+socialDiscoveryRouter.post('/scope/weekly-account-revision', async (req,res)=>{
+  const {tenantId,userId}=res.locals as AuthLocals;
+  const body=req.body||{};
+  try{
+    if(!body||typeof body!=='object'||Object.keys(body).sort().join(',')!==['accountId','expectedProductFactBindingHash','expectedScopeHash','expectedScopeId','expectedScopeVersion','targetCount'].sort().join(','))throw Error('weekly_account_scope_input_invalid');
+    const result=await reviseWeeklyAccountCollectionScope(store,{tenantId,actorUserId:userId,accountId:body.accountId,expectedScopeId:body.expectedScopeId,expectedScopeVersion:body.expectedScopeVersion,expectedScopeHash:body.expectedScopeHash,expectedProductFactBindingHash:body.expectedProductFactBindingHash,targetCount:body.targetCount});
+    ensureSocialDiscoveryCollectionTask({tenantId,discoveryScopeId:result.scopeId,discoveryScopeVersion:result.scopeVersion});
+    res.status(201).json({revision:result,weeklyPackageMigration:'pending_background_reconciliation',crawlStarted:false});
+  }catch(error){const code=error instanceof Error?error.message:'weekly_account_scope_unavailable';res.status(code==='weekly_account_scope_input_invalid'?400:code==='weekly_account_scope_actor_forbidden'?403:code.includes('atomic_storage')?503:409).json({error:code});}
+});
+
+// Explicit weekly Actor spending authority is separate from the five-item
+// account scope. Issuing it does not start or retry a paid provider run.
+socialDiscoveryRouter.post('/weekly-account-collection-budget',async(req,res)=>{
+ const {tenantId,userId}=res.locals as AuthLocals,body=req.body||{};
+ try{
+  if(!body||typeof body!=='object'||Object.keys(body).sort().join(',')!==['programId','packageId','packageVersion','scopeId','scopeVersion','scopeHash','actorId','totalLimitCny','perRunLimitCny','expiresAt'].sort().join(','))throw Error('weekly_account_collection_budget_approval_input_invalid');
+  const authorization=await issueWeeklyAccountCollectionBudgetAuthorization({store,tenantId,actorUserId:userId,programId:body.programId,packageId:body.packageId,packageVersion:body.packageVersion,scopeId:body.scopeId,scopeVersion:body.scopeVersion,scopeHash:body.scopeHash,actorId:body.actorId,totalLimitCny:body.totalLimitCny,perRunLimitCny:body.perRunLimitCny,expiresAt:body.expiresAt});
+  res.status(201).json({authorization,providerRequestStarted:false});
+ }catch(error){const code=error instanceof Error?error.message:'weekly_account_collection_budget_unavailable';res.status(code.includes('actor_invalid')?403:code.includes('input_invalid')?400:code.includes('write_unknown')?503:409).json({error:code});}
+});
+socialDiscoveryRouter.get('/weekly-account-collection-budget/:authorizationId',async(req,res)=>{
+ const {tenantId}=res.locals as AuthLocals,row=await store.getById<Record<string,unknown>>(WEEKLY_ACCOUNT_COLLECTION_BUDGET_AUTHORIZATIONS,String(req.params.authorizationId));
+ if(!row||row.tenant_id!==tenantId){res.status(404).json({error:'weekly_account_collection_budget_not_found'});return;}res.json({authorization:row.payload});
+});
+socialDiscoveryRouter.post('/weekly-account-collection-budget/:authorizationId/revoke',async(req,res)=>{
+ const {tenantId,userId}=res.locals as AuthLocals,body=req.body||{};
+ try{if(!body||typeof body!=='object'||Object.keys(body).join(',')!=='reason'||typeof body.reason!=='string')throw Error('weekly_account_collection_budget_revocation_input_invalid');
+  const revocation=await revokeWeeklyAccountCollectionBudgetAuthorization({store,tenantId,actorUserId:userId,authorizationId:String(req.params.authorizationId),reason:body.reason});res.status(201).json({revocation});
+ }catch(error){const code=error instanceof Error?error.message:'weekly_account_collection_budget_revocation_unavailable';res.status(code.includes('actor_invalid')?403:code.includes('input_invalid')?400:code.includes('write_unknown')?503:409).json({error:code});}
+});
+
+// Separate authenticated paid authority. The client supplies explicit CNY
+// ceilings; the server re-verifies exact weekly lineage, original bytes and
+// account tariff before signing. No default amount is inferred from a package.
+socialDiscoveryRouter.post('/weekly-candidate-semantic-budget',async(req,res)=>{
+ const {tenantId,userId}=res.locals as AuthLocals,body=req.body||{};
+ try{
+  if(!body||typeof body!=='object'||Object.keys(body).sort().join(',')!==['candidateLimits','expiresAt','jobId','packageId','packageVersion','programId','runId','totalLimitCny'].sort().join(','))throw Error('weekly_candidate_semantic_budget_approval_input_invalid');
+  const item=await issueWeeklyCandidateSemanticBudgetAuthorization({store,tenantId,actorUserId:userId,programId:body.programId,packageId:body.packageId,packageVersion:body.packageVersion,jobId:body.jobId,runId:body.runId,candidateLimits:body.candidateLimits,totalLimitCny:body.totalLimitCny,expiresAt:body.expiresAt,mediaRoot:fileURLToPath(new URL('../../data/media',import.meta.url))});
+  res.status(201).json({authorization:item,providerRequestStarted:false});
+ }catch(error){const code=error instanceof Error?error.message:'weekly_candidate_semantic_budget_unavailable';res.status(code.includes('actor_invalid')?403:code.includes('input_invalid')?400:code.includes('write_unknown')?503:409).json({error:code});}
+});
+socialDiscoveryRouter.get('/weekly-candidate-semantic-budget/:authorizationId',async(req,res)=>{
+ const {tenantId}=res.locals as AuthLocals;
+ const row=await store.getById<Record<string,unknown>>(WEEKLY_CANDIDATE_SEMANTIC_BUDGET_AUTHORIZATIONS,String(req.params.authorizationId));
+ if(!row||row.tenant_id!==tenantId){res.status(404).json({error:'weekly_candidate_semantic_budget_not_found'});return;}
+ res.json({authorization:row.payload});
+});
+socialDiscoveryRouter.post('/weekly-candidate-semantic-budget/:authorizationId/revoke',async(req,res)=>{
+ const {tenantId,userId}=res.locals as AuthLocals,body=req.body||{};
+ try{if(!body||typeof body!=='object'||Object.keys(body).join(',')!=='reason'||typeof body.reason!=='string')throw Error('weekly_candidate_semantic_budget_revocation_input_invalid');
+  const revoked=await revokeWeeklyCandidateSemanticBudgetAuthorization({store,tenantId,actorUserId:userId,authorizationId:String(req.params.authorizationId),reason:body.reason});res.status(201).json({revocation:revoked});
+ }catch(error){const code=error instanceof Error?error.message:'weekly_candidate_semantic_budget_revocation_unavailable';res.status(code.includes('actor_invalid')?403:code.includes('input_invalid')?400:code.includes('write_unknown')?503:409).json({error:code});}
+});
+
+// Candidate-only storyboard diagnostics for the Content Agent. This GET never
+// writes a formal Director plan, content task, supplier request, or media grant.
+socialDiscoveryRouter.get('/weekly-candidate-storyboard-briefs',async(req,res)=>{
+ const {tenantId}=res.locals as AuthLocals,jobId=String(req.query.jobId??''),runId=String(req.query.runId??'');
+ if(!/^[A-Za-z0-9_-]{1,150}$/.test(jobId)||!/^[A-Za-z0-9_:-]{1,180}$/.test(runId)){res.status(400).json({error:'weekly_candidate_storyboard_input_invalid'});return;}
+ try{
+  const row=await store.getById<Record<string,unknown>>(WEEKLY_PREPRODUCTION_JOBS,jobId)??await store.getById<Record<string,unknown>>(PREPRODUCTION_RETRY_ATTEMPTS,jobId);
+  const job=row?.payload as WeeklyPreproductionJob|WeeklyPreproductionRetryAttempt|undefined;
+  if(!row||row.tenant_id!==tenantId||!job||job.tenantId!==tenantId||job.jobId!==jobId||row.record_hash!==job.recordHash||job.recordHash!==socialRequestHash({...job,recordHash:''})){res.status(404).json({error:'weekly_candidate_storyboard_job_not_found'});return;}
+  const runs=await store.list<SocialInspirationCollectionRun&{tenant_id:string}>('social_discovery_runs',{where:{tenant_id:tenantId,runId},perPage:2});
+  if(runs.totalItems!==1||runs.items.length!==1){res.status(404).json({error:'weekly_candidate_storyboard_run_not_found'});return;}
+  const briefs=await readWeeklyCandidateStoryboardBriefs({store,job,run:runs.items[0]!,mediaRoot:fileURLToPath(new URL('../../data/media',import.meta.url))});
+  res.json({status:'candidate_analysis_only',authorizesProduction:false,briefs});
+ }catch(error){res.status(409).json({error:error instanceof Error?error.message:'weekly_candidate_storyboard_unavailable'});}
 });
 
 socialDiscoveryRouter.get('/accounts', async (_req, res) => {

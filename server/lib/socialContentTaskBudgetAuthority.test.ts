@@ -6,6 +6,19 @@ import path from 'node:path';
 import { createSocialContentTaskBudgetAuthority, type SocialTaskBudgetAuthorityPorts, type SocialVerifiedAccountTariff, type SocialPaidOperationIntent } from './socialContentTaskBudgetAuthority.js';
 const scope = { tenantId: 't', taskId: 'task', runId: 'r', planHash: 'a'.repeat(64) };
 const intent = (id: string, stage = 'video'): SocialPaidOperationIntent => ({ operationId: id, provider: 'supplier', model: 'model', accountRef: 'actual-account', stage, shotId: 'S01', inputContractHash: 'b'.repeat(64), maximumUnits: { providerSeconds: 3 } });
+test('canonical fifteen-yuan authority admits twelve-yuan full plan and recovery without resetting spend', async () => {
+    const f=fixture();
+    try {
+        f.plan.maximumCny=15;
+        const read=f.ports.readVerifiedTariff;
+        f.ports.readVerifiedTariff=async i=>{const tariff=await read(i); return tariff ? {...tariff,meters:{providerSeconds:{priceCny:.5,unitsPerPrice:1,minimumUnits:4,increment:1}}}:null;};
+        const reserved=await f.service.prepareAndReserve(scope);
+        assert.equal(reserved.status.limitCny,15); assert.equal(reserved.status.retainedCny,12);
+        await reserved.ledger.markOutcome(scope,'video','unknown','actual-unknown-receipt');
+        const recovered=await f.service.recoverAccepted(scope,['video']);
+        assert.equal(recovered.status.retainedCny,12);
+    } finally {f.clean();}
+});
 function fixture() { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-budget-authority-')); let paidCalls = 0; const plan = { scope, authorizationRef: 'owner-authorized-frozen-task', maximumCny: 10, paidOperations: [intent('first-frame', 'first_frame'), intent('qa1', 'first_frame_qa'), intent('video'), intent('qa2', 'video_qa'), intent('voice', 'tts'), intent('retry', 'retry')] }; const ports: SocialTaskBudgetAuthorityPorts = { readApprovedPlan: async () => structuredClone(plan), assertCurrent: async () => { }, verifyRejection: async () => false, readVerifiedTariff: async (i) => ({ ...i, currency: 'CNY', verifiedAccountPrice: true, evidenceRef: 'account-price-original-evidence', checkedAt: '2026-01-01', validUntil: '2099-01-01', meters: { providerSeconds: { priceCny: .2, unitsPerPrice: 1, minimumUnits: 4, increment: 1 } } }) }; return { root, plan, ports, service: createSocialContentTaskBudgetAuthority({ ledgerRoot: root, ports }), get paidCalls() { return paidCalls; }, paid: () => paidCalls++, clean: () => fs.rmSync(root, { recursive: true, force: true }) }; }
 test('whole frozen plan reserves all stages and retries before payment using provider 4s minimum', async () => { const f = fixture(); try {
     const result = await f.service.prepareAndReserve(scope);

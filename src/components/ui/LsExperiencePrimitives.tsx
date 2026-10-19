@@ -116,7 +116,6 @@ export function LsProgressiveMedia({
       className={`ls-progressive-media ls-media-reveal ${className}`.trim()}
       rootClassName={`ls-progressive-media-root ${rootClassName}`.trim()}
       fallback={fallback}
-      placeholder={{ progress: true }}
       style={{ ...props.style, opacity: ready ? props.style?.opacity ?? 1 : 0 }}
       onLoad={event => { setLoadedSource(props.src); props.onLoad?.(event); }}
       onError={event => { setLoadedSource(props.src); props.onError?.(event); }}

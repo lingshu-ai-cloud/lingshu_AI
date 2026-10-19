@@ -45,6 +45,7 @@ export function storyboardProjectShotInput(spec: Record<string, any>, shotId: st
       actionStartState: String(plan.actionStartState || ''),
       actionBeats: String(plan.actionBeats || ''),
       actionEndState: String(plan.actionEndState || ''),
+      ...(String(plan.fallbackMode || '') ? { fallbackMode: String(plan.fallbackMode) } : {}),
       actionKeyStates: String(plan.actionKeyStates || ''),
       placementOverride: plan.placementOverride && typeof plan.placementOverride === 'object'
         ? plan.placementOverride : null,
@@ -80,7 +81,9 @@ export function storyboardProjectShotRequestIssue(input: {
   if (Number.isFinite(current.duration) && current.duration > 0
     && Math.abs(current.duration - input.targetDurationSeconds) > 0.2) return '时长与本片已确认分镜不一致';
   if (current.ratio && current.ratio !== input.ratio) return '画幅与本片设置不一致';
-  if (current.mode && (current.mode === 'clone' ? 'replication' : 'free_creation') !== input.mode) return '创作模式与本片设置不一致';
+  const expectedMode = current.mode === 'clone' && current.source.fallbackMode !== 'enterprise_product_display'
+    ? 'replication' : 'free_creation';
+  if (current.mode && expectedMode !== input.mode) return '创作模式与本片设置不一致';
   if (current.source.sceneType && current.source.sceneType !== input.sceneType) return '场景类型与当前镜头配置不一致';
   if (current.source.productIds.length && JSON.stringify(current.source.productIds) !== JSON.stringify(input.productIds)) return '产品映射与当前镜头配置不一致';
   if (current.source.environmentMaterialId !== String(input.environmentMaterialId || '')) return '环境参考图与当前镜头配置不一致';

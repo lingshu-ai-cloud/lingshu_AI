@@ -1,5 +1,6 @@
 import type {WeeklyOwnedProductIdentityPorts} from './weeklyOwnedProductIdentityDemand.js';
-export interface WeeklyExecutionResultValidationPorts {ownedProductIdentity?:WeeklyOwnedProductIdentityPorts}
+import {weeklyProductionEvidenceTask,currentSharedWeeklyArtifactRef} from './weeklyContentProductionIdentity.js';
+export interface WeeklyExecutionResultValidationPorts {ownedProductIdentity?:WeeklyOwnedProductIdentityPorts; exactAnalysisPortsForRun?:import('./weeklyPreproductionProducer.js').WeeklyExactSettlementPortsForRun}
 import type { VersionedSocialRef, WeeklyExecutionTask, WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
 import {assertWeeklyPublicationStoredScope} from '../publishing/weeklyFormalPublicationBoundary.js';
 import type {StoredPublicationAssignment} from '../publishing/weeklyLineage.js';
@@ -20,8 +21,11 @@ import { readMaterialEvidenceConfiguration } from '../socialPrograms/materialEvi
 import { createCustomerFeedbackTopicService } from '../socialPrograms/customerFeedbackTopics.js';
 import { createWeeklyExecutionContinuationService } from '../socialPrograms/weeklyExecutionContinuations.js';
 import { assertWeeklyPlanningCoverage } from '../socialPrograms/weeklyPlanningCoverage.js';
+import {weeklyPlanningExecutionActor,weeklyPlanningExecutionSelection} from '../socialPrograms/weeklyPlanningTemplateAdoption.js';
 import { socialJson, socialRequestHash } from '../starter198/socialContentValidation.js';
 import { checkWeeklyMaterialClassification, checkWeeklyHumanRequirementBindings } from './socialWeeklyMaterialClassificationAdmission.js';
+import { readContentExecutionJob } from '../contentExecution/durableQueue.js';
+import { assertSocialContentGraphQuality } from '../starter198/socialContentGraphQualityGate.js';
 
 const object = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 const text = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
@@ -54,6 +58,10 @@ async function materialClassification(store: DataStore, task: WeeklyExecutionTas
 
 /** Verify persisted authority, never accept a client-supplied success label. */
 export async function validateWeeklyExecutionResults(store: DataStore, task: WeeklyExecutionTask, refs: VersionedSocialRef[], now = new Date(),ports:WeeklyExecutionResultValidationPorts={}): Promise<void> {
+  if(['material_preparation','material_readiness','script','storyboard','asset_generation','video_generation','quality_check','rework'].includes(task.schedule.stepKind)&&!task.inputSnapshot?.weeklyCreativeRepairRef){
+    const canonical=await weeklyProductionEvidenceTask(store,task);
+    if(canonical.taskId!==task.taskId){const canonicalRefs=await Promise.all(canonical.resultRefs.map(ref=>currentSharedWeeklyArtifactRef(store,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!},ref)));requireResult(canonical.status==='succeeded'&&socialRequestHash(canonicalRefs)===socialRequestHash(refs),'weekly_shared_original_result_unverified');task=canonical;}
+  }
   requireResult(Array.isArray(refs) && refs.length > 0 && refs.every(ref => text(ref?.type) && text(ref?.id) && Number.isSafeInteger(ref?.version) && ref.version > 0), 'weekly_execution_result_refs_invalid');
   if (task.inputSnapshot?.inventoryReuseRef && task.schedule.stepKind === 'user_approval') {
     requireResult(task.schedule.stepKind === 'user_approval' && task.schedule.responsibleActor === 'user', 'inventory_result_step_unsupported');
@@ -72,6 +80,13 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
   if (['template_extraction','template_performance_validation'].includes(String(task.schedule?.stepKind))) {const {createWeeklyContentTemplateService}=await import('../socialPrograms/weeklyContentTemplates.js');await createWeeklyContentTemplateService(store,{now:()=>now.toISOString()}).validateTemplateExecutionEvidence(task,refs);return;}
   if(refs.some(ref=>ref.type==='weekly_inventory_outline')){const {validateWeeklyInventoryOutlineRefs}=await import('./weeklyInventoryOutlineEvidence.js');await validateWeeklyInventoryOutlineRefs(store,task,refs);return;}
   if(refs.some(ref=>ref.type==='weekly_customer_channel_execution')){const {validateWeeklyCustomerChannelExecution}=await import('./socialWeeklyCustomerChannelAdapter.js');await validateWeeklyCustomerChannelExecution(store,task,refs);return;}
+  if(refs.some(ref=>['operating_authority_snapshot','social_discovery_run'].includes(ref.type))){
+    requireResult(['business_outline','benchmark_collection'].includes(task.schedule.stepKind),'weekly_preproduction_step_invalid');
+    const {readWeeklyPreproductionExecutionGate}=await import('./weeklyPreproductionProducer.js');
+    const gate=await readWeeklyPreproductionExecutionGate(store,task,ports.exactAnalysisPortsForRun);
+    requireResult(gate.ready&&gate.resultRefs.length>0&&socialRequestHash(gate.resultRefs)===socialRequestHash(refs),'weekly_preproduction_result_unverified');
+    return;
+  }
   if (refs.some(ref => ref.type === 'social_metric_snapshot')) {
     const { validateWeeklyPublicationMetricRefs } = await import('./weeklyPublicationMetricEvidence.js');
     await validateWeeklyPublicationMetricRefs(store, task, refs, now);
@@ -83,7 +98,7 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
       requireResult(planningWorkflow[task.schedule.stepKind as keyof typeof planningWorkflow] === task.workflowKind, 'weekly_planning_step_evidence_invalid');
       const row = await unique(store, 'social_weekly_agent_planning', { tenant_id: task.tenantId, program_id: task.programId, package_id: task.packageId, package_version: task.packageVersion, planning_version: ref.version });
       const plan = object(row.payload);
-      requireResult(plan.planningId === ref.id && plan.version === ref.version && plan.status === 'dispatched' && text(plan.userConfirmation?.confirmedBy) && text(plan.userConfirmation?.confirmedAt) && plan.dispatch?.scheduleItems?.length && plan.detailedSchedule?.items?.length);
+      requireResult(plan.planningId === ref.id && plan.version === ref.version && plan.status === 'dispatched' && weeklyPlanningExecutionActor(plan as any) && plan.dispatch?.scheduleItems?.length && plan.detailedSchedule?.items?.length);
       if ('referenceSourcePolicy' in task.inputSnapshot) {
         const weekly = await unique(store, 'social_weekly_operating_packages', { tenant_id: task.tenantId, package_id: task.packageId, version: task.packageVersion });
         const pkg = object(weekly.payload);
@@ -98,7 +113,7 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
       const motherId = String(task.inputSnapshot.motherContentId ?? '');
       const coverage = plan.dispatch.coverage;
       if (coverage) {
-        assertWeeklyPlanningCoverage(plan as any, coverage, plan.userConfirmation.selectedSlotIds);
+        assertWeeklyPlanningCoverage(plan as any, coverage, weeklyPlanningExecutionSelection(plan as any)??[]);
         requireResult(socialRequestHash(plan.detailedSchedule.coverage) === socialRequestHash(coverage), 'weekly_partial_coverage_changed');
         if (task.publicationTaskId) requireResult(plan.skeleton.slots.some((slot: any) => coverage.selectedSlotIds.includes(slot.slotId) && slot.publicationTaskIds.includes(task.publicationTaskId)) && plan.dispatch.scheduleItems.some((item: any) => item.publicationTaskId === task.publicationTaskId), 'weekly_slot_not_dispatched');
       }
@@ -172,6 +187,12 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
       await validateWeeklyTemplateProductionOutput({store,task,contentRow:row,preSupply:handoff});
     } else if (['content', 'directing'].includes(task.workflowKind) && (ref.type === 'starter_social_content_script_baseline' && task.schedule.stepKind === 'script'
       || ref.type === 'starter_social_content_director_plan' && task.schedule.stepKind === 'storyboard')) {
+      if (task.schedule.stepKind === 'storyboard') {
+        const packageRow = await unique(store, 'social_weekly_operating_packages', { tenant_id: task.tenantId, program_id: task.programId, package_id: task.packageId, version: task.packageVersion });
+        const weeklyPackage = object(socialJson(packageRow.payload));
+        requireResult(weeklyPackage.programId === task.programId && weeklyPackage.packageId === task.packageId && weeklyPackage.version === task.packageVersion
+          && Number(weeklyPackage.executionGraphVersion ?? 1) < 2, 'weekly_pre_supply_handoff_required');
+      }
       const row = await unique(store, 'starter_social_content_tasks', { tenant_id: task.tenantId, task_id: ref.id });
       const brief = object(row.brief);
       requireResult(brief.programRef?.id === task.programId && row.create_idempotency_key === `weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}`);
@@ -276,6 +297,8 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
 }
 
 export async function validateContentArtifact(store: DataStore, task: WeeklyExecutionTask, ref: VersionedSocialRef) {
+  ref=await currentSharedWeeklyArtifactRef(store,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!},ref);
+  task=await weeklyProductionEvidenceTask(store,task);
   const row = await unique(store, 'starter_social_content_artifacts', { tenant_id: task.tenantId, artifact_id: ref.id });
   requireResult(version(row.version) === ref.version && ['draft', 'review_required', 'approved'].includes(String(row.status)));
   const content = object(row.content);
@@ -290,6 +313,35 @@ export async function validateContentArtifact(store: DataStore, task: WeeklyExec
   requireResult(text(source.run_id) && !['cancelled', 'paused', 'attention', 'needs_input'].includes(String(source.status)));
   const run = await store.getById<Record_>('workflow_runs', String(source.run_id));
   requireResult(run?.tenant_id === task.tenantId && !['cancelled', 'failed', 'dead_letter'].includes(String(run.status)));
+  // A recovered weekly result cannot borrow a completed artifact from another
+  // execution of the same content task. Legacy artifacts predate this field;
+  // current graph-produced artifacts must pin their actual producer run.
+  const workspaceSource = object(content.productionWorkspaceSource);
+  if (content.workflowSchema === 'social-content.auto-production.v3' || workspaceSource.runId !== undefined)
+    requireResult(text(workspaceSource.runId) === text(source.run_id), 'weekly_production_artifact_run_changed');
+  if (content.workflowSchema === 'social-content.auto-production.v3' && ['quality_check', 'rework'].includes(task.schedule.stepKind)) {
+    const job = await readContentExecutionJob(store, task.tenantId, String(source.task_id), String(source.run_id));
+    const checkpoint = object(job?.checkpoints['social.graph_review']);
+    const subject = object(checkpoint.payload);
+    const media = object(object(content.mediaStorage).video);
+    requireResult(job && job.runId === source.run_id && checkpoint.version === '1'
+      && subject.waitingReview === true && subject.runId === source.run_id
+      && subject.artifactId === ref.id && Number(subject.version) === ref.version - (row.status === 'approved' ? 1 : 0)
+      && subject.contentHash === socialRequestHash(socialJson(row.content))
+      && /^[a-f0-9]{64}$/i.test(text(subject.outputSha256))
+      && subject.outputSha256 === workspaceSource.outputSha256
+      && subject.outputSha256 === media.sha256,
+    'weekly_production_graph_review_unverified');
+    if (row.status === 'approved') {
+      const { loadSocialProductionGraphApproval } = await import('../starter198/socialContentProductionGraph.js');
+      requireResult(await loadSocialProductionGraphApproval((await import('../starter198/repository.js')).createStarter198Repository(store), job), 'weekly_production_graph_review_unverified');
+    } else {
+      requireResult(job.status === 'paused' && run.status === 'waiting_human'
+        && run.pause_reason === 'langgraph_artifact_review_required', 'weekly_production_graph_review_unverified');
+    }
+    try { assertSocialContentGraphQuality(content); }
+    catch { requireResult(false, 'weekly_production_graph_quality_unverified'); }
+  }
   requireResult(row.artifact_kind === 'short_video' && row.origin === 'agent' && text(row.resource_ref) && content.render?.completed === true);
   const media = object(content.mediaStorage?.video);
   requireResult(text(media.fileId) && /^[a-f0-9]{64}$/i.test(text(media.sha256)) && text(media.url));
@@ -312,7 +364,7 @@ export async function validateContentArtifact(store: DataStore, task: WeeklyExec
   else if (step === 'video_generation') requireResult(text(content.mediaStorage?.video?.url) && text(content.mediaStorage?.video?.sha256));
   else if (['quality_check', 'rework'].includes(step)) {
     requireResult(text(content.mediaStorage?.video?.url));
-    if (!creativeRepair && !(content.productionResult?.technicalReview?.approved === true && content.productionResult?.creativeReview?.approved === true)) {
+    if (!creativeRepair && (content.workflowSchema === 'social-content.auto-production.v3' || !(content.productionResult?.technicalReview?.approved === true && content.productionResult?.creativeReview?.approved === true))) {
       const { assertWeeklyContentQualityAudit } = await import('./weeklyContentQualityAudit.js');
       await assertWeeklyContentQualityAudit(store, task, ref);
     }

@@ -101,6 +101,72 @@ function stableId(...parts: string[]): string {
   return createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 15);
 }
 
+/** Generic admission/retry is never the authority for a frozen same-task
+ * footage revision. The revision admission must first bind current-window
+ * evidence, new approval and the original-ledger paid plan before the existing
+ * production worker may claim that run. */
+async function footageRevisionNeedsAdmission(dataStore: DataStore, tenantId: string,
+  taskId: string, runId: string, job?: ContentExecutionJob): Promise<boolean> {
+  const rows = await dataStore.list<Record<string, unknown>>('starter_social_content_tasks', {
+    where: { tenant_id: tenantId, task_id: taskId }, perPage: 2,
+  });
+  if (rows.totalItems > 1 || rows.items.length > 1) throw new Error('content_execution_order_identity_ambiguous');
+  const raw = rows.items[0]?.brief;
+  let brief: unknown = raw;
+  if (typeof brief === 'string') {
+    try { brief = JSON.parse(brief); } catch { throw new Error('content_execution_revision_identity_invalid'); }
+  }
+  if (!brief || typeof brief !== 'object' || Array.isArray(brief)) return false;
+  const marker = (brief as Record<string, unknown>)._productFootageRevision;
+  if (!marker) return false;
+  if (typeof marker !== 'object' || Array.isArray(marker)) throw new Error('content_execution_revision_identity_invalid');
+  return runId !== (marker as Record<string, unknown>).sourceRunId
+    && (!job || !hasCompleteFootageRevisionProductionAdmission(job, marker as Record<string, unknown>));
+}
+
+/** The revision exception is deliberately data-only so the generic durable
+ * queue can verify it without depending on the Starter198 production module.
+ * It is not a second worker lane: a complete checkpoint merely admits the
+ * frozen revision run back into the existing content-production worker. */
+export function hasCompleteFootageRevisionProductionAdmission(
+  job: ContentExecutionJob,
+  marker: Record<string, unknown>,
+): boolean {
+  const checkpoint = job.checkpoints['social.footage_revision_worker_admission'];
+  const payload = checkpoint?.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const admission = payload as Record<string, unknown>;
+  const recordHash = text(admission.recordHash, 64);
+  const sha256 = (value: unknown) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+  const approvalBindings = admission.approvalBindings;
+  const revision = marker.revision && typeof marker.revision === 'object' && !Array.isArray(marker.revision)
+    ? marker.revision as Record<string, unknown> : null;
+  const revisedPlanHash = marker.revisedPlanHash ?? revision?.revisedPlanHash;
+  if (!/^[a-f0-9]{64}$/.test(recordHash) || checkpoint.version !== '1'
+    || checkpoint.inputHash !== recordHash
+    || admission.schemaVersion !== 'social-product-footage-revision-worker-admission.v1'
+    || admission.tenantId !== job.tenantId || admission.taskId !== job.taskId
+    || admission.runId !== job.runId
+    || admission.workerLane !== 'social_content_production'
+    || admission.planHash !== revisedPlanHash
+    || !sha256(admission.guardHash) || !sha256(admission.paidPlanFreezeHash)
+    || !sha256(admission.canonicalPlanHash) || !sha256(admission.planHash)
+    || !Array.isArray(approvalBindings) || !approvalBindings.length
+    || approvalBindings.some(binding => !binding || typeof binding !== 'object' || Array.isArray(binding)
+      || !text((binding as Record<string, unknown>).groupId)
+      || !sha256((binding as Record<string, unknown>).approvalRecordHash)
+      || !sha256((binding as Record<string, unknown>).decisionRecordHash)
+      || !sha256((binding as Record<string, unknown>).assetProvenanceHash))
+    || typeof admission.admittedAt !== 'string' || !Number.isFinite(Date.parse(admission.admittedAt))) return false;
+  const { recordHash: _recordHash, ...body } = admission;
+  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(Object.keys(value as Record<string, unknown>).sort()
+        .map(key => [key, canonical((value as Record<string, unknown>)[key])]))
+      : value;
+  return createHash('sha256').update(JSON.stringify(canonical(body))).digest('hex') === recordHash;
+}
+
 function jobFromRow(row: JobRow): ContentExecutionJob {
   const status = text(row.status, 40) as ContentExecutionJobStatus;
   if (!row.id || !['queued', 'running', 'retry_wait', 'reconciling', 'blocked', 'paused', 'succeeded', 'cancelled', 'dead_letter'].includes(status)) {
@@ -164,10 +230,12 @@ async function listAll<T extends { id: string }>(dataStore: DataStore, collectio
 export function contentExecutionDefaults(env: NodeJS.ProcessEnv = process.env) {
   const bounded = (value: unknown, fallback: number) => Math.min(Math.max(integer(value, fallback), 1), 100);
   return {
-    tenantMaxRunning: bounded(env.CONTENT_MAX_RUNNING_PER_TENANT, 2),
+    // One shared production pool, not one pool per business Agent. Explicit
+    // customer limits and environment overrides remain authoritative.
+    tenantMaxRunning: bounded(env.CONTENT_MAX_RUNNING_PER_TENANT, 3),
     accountMaxRunning: bounded(env.CONTENT_MAX_RUNNING_PER_ACCOUNT, 1),
-    taskTypeMaxRunning: bounded(env.CONTENT_MAX_RUNNING_PER_TASK_TYPE, 2),
-    workerConcurrency: bounded(env.CONTENT_EXECUTION_WORKER_CONCURRENCY, 4),
+    taskTypeMaxRunning: bounded(env.CONTENT_MAX_RUNNING_PER_TASK_TYPE, 3),
+    workerConcurrency: bounded(env.CONTENT_EXECUTION_WORKER_CONCURRENCY, 3),
     pollIntervalMs: Math.min(Math.max(integer(env.CONTENT_EXECUTION_POLL_INTERVAL_MS, 2_000), 250), 60_000),
     leaseDurationMs: Math.min(Math.max(integer(env.CONTENT_EXECUTION_LEASE_MS, 30 * 60_000), 60_000), 2 * 60 * 60_000),
   };
@@ -257,6 +325,8 @@ export async function admitContentExecutionJob(input: {
   const runId = requiredIdentity(input.runId, 'run');
   const accountId = requiredIdentity(input.accountId || '_unassigned', 'account');
   const taskType = requiredIdentity(input.taskType, 'task_type');
+  if (await footageRevisionNeedsAdmission(input.dataStore, tenantId, taskId, runId))
+    throw new Error('content_execution_footage_revision_admission_required');
   const jobKey = createHash('sha256').update([tenantId, taskId, runId, taskType].join('\0')).digest('hex');
   const id = stableId('content-job', jobKey);
   const existing = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, id);
@@ -284,6 +354,66 @@ export async function admitContentExecutionJob(input: {
   return jobFromRow(created);
 }
 
+/** Stage an independently verified same-task revision in the existing queue
+ * identity, but leave it unclaimable. A later, separate first-frame/paid
+ * admission must change its state; generic retry/resume remains fenced. */
+export async function stageBlockedFootageRevisionJob(input: {
+  dataStore: DataStore; tenantId: string; taskId: string; runId: string;
+  userId: string; accountId?: string | null; taskType: string;
+  checkpoints: ContentExecutionCheckpoints; assertAuthority: () => Promise<void>;
+  now?: Date;
+}): Promise<ContentExecutionJob> {
+  const tenantId = requiredIdentity(input.tenantId, 'tenant');
+  const taskId = requiredIdentity(input.taskId, 'task');
+  const runId = requiredIdentity(input.runId, 'run');
+  const userId = requiredIdentity(input.userId, 'user');
+  const accountId = requiredIdentity(input.accountId || '_unassigned', 'account');
+  const taskType = requiredIdentity(input.taskType, 'task_type');
+  if (!await footageRevisionNeedsAdmission(input.dataStore, tenantId, taskId, runId))
+    throw new Error('content_execution_footage_revision_identity_missing');
+  const checkpoints = parseContentExecutionCheckpoints(input.checkpoints);
+  const identity = (value: ContentExecutionCheckpoints) => JSON.stringify(Object.entries(value)
+    .map(([key, checkpoint]) => [key, checkpoint.version, checkpoint.inputHash, checkpoint.payload])
+    .sort(([left], [right]) => String(left).localeCompare(String(right))));
+  if ((checkpoints['social.executor']?.payload as { executor?: unknown } | undefined)?.executor !== 'langgraph'
+    || !checkpoints['social.executor']?.inputHash || !checkpoints['content.production_bridge'])
+    throw new Error('content_execution_footage_revision_checkpoint_invalid');
+  await input.assertAuthority();
+  const jobKey = createHash('sha256').update([tenantId, taskId, runId, taskType].join('\0')).digest('hex');
+  const id = stableId('content-job', jobKey);
+  const now = (input.now ?? new Date()).toISOString();
+  const existing = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, id);
+  if (existing) {
+    const parsed = jobFromRow(existing);
+    if (parsed.jobKey !== jobKey || parsed.tenantId !== tenantId || parsed.taskId !== taskId
+      || parsed.runId !== runId || parsed.status !== 'blocked'
+      || parsed.providerState !== 'none' || parsed.providerReceipts.length
+      || identity(parsed.checkpoints) !== identity(checkpoints))
+      throw new Error('content_execution_footage_revision_stage_conflict');
+    await input.assertAuthority();
+    return parsed;
+  }
+  const created = await input.dataStore.create<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, {
+    id, tenant_id: tenantId, job_key: jobKey, task_id: taskId, run_id: runId, user_id: userId,
+    account_id: accountId, task_type: taskType, status: 'blocked', attempt: 0,
+    reconciliation_attempt: 0, next_attempt_at: '', worker_id: '', lease_expires_at: '',
+    retry_class: '', last_error: 'product_footage_revision_new_first_frame_approval_required',
+    provider_state: 'none', provider_receipts: [], checkpoints,
+    created_at: now, updated_at: now, last_started_at: '', completed_at: '',
+  }).catch(async error => {
+    const raced = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, id);
+    if (raced) return raced;
+    throw error;
+  });
+  if (!created) throw new Error('content_execution_footage_revision_stage_failed');
+  const staged = jobFromRow(created);
+  if (staged.status !== 'blocked' || staged.jobKey !== jobKey
+    || identity(staged.checkpoints) !== identity(checkpoints))
+    throw new Error('content_execution_footage_revision_stage_conflict');
+  await input.assertAuthority();
+  return staged;
+}
+
 async function readSchedulerJobs(dataStore: DataStore): Promise<ContentExecutionJob[]> {
   const statuses: ContentExecutionJobStatus[] = ['running', 'queued', 'retry_wait', 'reconciling'];
   const rows = (await Promise.all(statuses.map(status => listAll<JobRow>(
@@ -300,6 +430,45 @@ function isDue(job: ContentExecutionJob, now: Date): boolean {
 
 function hasProviderWork(job: ContentExecutionJob): boolean {
   return job.providerReceipts.some(receipt => ['submitting', 'accepted', 'unknown'].includes(receipt.state));
+}
+
+/** Persistent group fence, independent of the root's historical completion
+ * status. Legacy non-content jobs are deliberately left on their own gates. */
+async function contentOrderCancelled(dataStore: DataStore, job: ContentExecutionJob): Promise<boolean> {
+  const rows = await dataStore.list<Record<string, unknown>>('starter_social_content_tasks', {
+    where: { tenant_id: job.tenantId, task_id: job.taskId }, perPage: 2,
+  });
+  if (rows.totalItems > 1) throw new Error('content_execution_order_identity_ambiguous');
+  const task = rows.items[0];
+  const parse = (raw: unknown): Record<string, unknown> | null => {
+    if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { throw new Error('content_execution_order_identity_invalid'); } }
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+  };
+  const binding = parse(task?.content_order);
+  // A same-task footage revision has a new run pointer but its paid plan is
+  // only frozen, not admitted to a worker. Never claim a generic queued/retry
+  // job for that run (including after a restart or manual retry).
+  const brief = parse(task?.brief);
+  const rawFootageRevision = brief?._productFootageRevision;
+  const footageRevision = parse(rawFootageRevision);
+  if (rawFootageRevision && !footageRevision) throw new Error('content_execution_revision_identity_invalid');
+  if (footageRevision && job.runId !== footageRevision.sourceRunId
+    && !hasCompleteFootageRevisionProductionAdmission(job, footageRevision)) return true;
+  const stopped = (row: Record<string, unknown> | undefined, order: Record<string, unknown> | null) =>
+    Boolean(order?.cancellation || order?.replacedByContentId || order?.supersededByContentId
+      || ['cancelled', 'cancelling'].includes(String(row?.status)));
+  if (stopped(task, binding)) return true;
+  if (binding?.contentId && binding.contentId !== job.taskId) {
+    const roots = await dataStore.list<Record<string, unknown>>('starter_social_content_tasks', {
+      where: { tenant_id: job.tenantId, task_id: String(binding.contentId) }, perPage: 2,
+    });
+    if (roots.totalItems !== 1 || roots.items.length !== 1) throw new Error('content_execution_order_root_missing');
+    const root = roots.items[0], rootBinding = parse(root.content_order);
+    if (!rootBinding || rootBinding.contentId !== binding.contentId || rootBinding.budgetTaskId !== binding.budgetTaskId)
+      throw new Error('content_execution_order_identity_invalid');
+    return stopped(root, rootBinding);
+  }
+  return false;
 }
 
 function effectiveLimit(
@@ -385,6 +554,16 @@ async function claimNextJob(input: {
         || left.id.localeCompare(right.id);
     });
     for (const candidate of candidates) {
+      // The same scheduler lock is used by cancellation. Check the durable
+      // root fence before any claim; unknown provider receipts stay untouched.
+      try { if (await contentOrderCancelled(input.dataStore, candidate)) continue; }
+      catch (error) {
+        // Corrupt/ambiguous lineage is fail-closed for this branch, not a
+        // reason to starve unrelated executable content in the same pool.
+        console.error('[content-execution] order claim blocked', { jobId: candidate.id,
+          error: error instanceof Error ? error.message : String(error) });
+        continue;
+      }
       if (!canRun(candidate, running, limits.filter(item => item.tenantId === candidate.tenantId), input.env)) continue;
       const priorLeases = await input.dataStore.list<Record<string, unknown>>('durable_operation_leases', {
         where: { tenant_id: candidate.tenantId, lease_scope: 'content_execution_job', subject_id: candidate.id }, perPage: 2,
@@ -429,11 +608,22 @@ function sameClaim(current: ContentExecutionJob, claimed: ContentExecutionJob): 
   return current.workerId === claimed.workerId && current.attempt === claimed.attempt;
 }
 
+async function withSettlementControl<T>(dataStore: DataStore, job: ContentExecutionJob, action: () => Promise<T>): Promise<T> {
+  const lease = await acquireDurableOperationLease({ dataStore, tenantId: job.tenantId, subjectId: job.id,
+    scope: 'content_execution_control', ownerId: `content-settle:${randomUUID()}`, leaseDurationMs: 30_000 });
+  if (!lease) throw new Error('content_execution_job_control_busy');
+  try { return await action(); }
+  finally { await releaseDurableOperationLease({ dataStore, lease }).catch(() => undefined); }
+}
+
 async function finishSucceeded(dataStore: DataStore, job: ContentExecutionJob, now: Date): Promise<boolean> {
+  return withSettlementControl(dataStore, job, () => finishSucceededUnderControl(dataStore, job, now));
+}
+async function finishSucceededUnderControl(dataStore: DataStore, job: ContentExecutionJob, now: Date): Promise<boolean> {
   const currentRow = await dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, job.id);
   const current = currentRow ? jobFromRow(currentRow) : job;
   if (!sameClaim(current, job)) return false;
-  if (current.status === 'paused' || current.status === 'cancelled') {
+  if (current.status === 'paused' || current.status === 'cancelled' || await contentOrderCancelled(dataStore, current)) {
     if (!await dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
       worker_id: '', lease_expires_at: '', updated_at: now.toISOString(),
     })) throw new Error('content_execution_job_control_settlement_failed');
@@ -453,6 +643,11 @@ async function finishFailed(input: {
   now: Date;
   env: NodeJS.ProcessEnv;
 }): Promise<{ decision: ContentExecutionRetryDecision; settled: boolean }> {
+  return withSettlementControl(input.dataStore, input.job, () => finishFailedUnderControl(input));
+}
+async function finishFailedUnderControl(input: {
+  dataStore: DataStore; job: ContentExecutionJob; error: unknown; now: Date; env: NodeJS.ProcessEnv;
+}): Promise<{ decision: ContentExecutionRetryDecision; settled: boolean }> {
   const currentRow = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, input.job.id);
   const current = currentRow ? jobFromRow(currentRow) : input.job;
   if (!sameClaim(current, input.job)) {
@@ -465,7 +660,7 @@ async function finishFailed(input: {
       settled: false,
     };
   }
-  if (current.status === 'paused' || current.status === 'cancelled') {
+  if (current.status === 'paused' || current.status === 'cancelled' || await contentOrderCancelled(input.dataStore, current)) {
     await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, {
       worker_id: '', lease_expires_at: '', updated_at: input.now.toISOString(),
     });
@@ -650,6 +845,29 @@ export async function readContentExecutionJob(
 }
 
 export type ContentExecutionControlAction = 'pause' | 'cancel' | 'resume' | 'retry';
+
+/** A later rights/visual review cannot add evidence to an already frozen plan.
+ * Keep this deliberately narrow: older jobs without a readable frozen plan
+ * retain their existing recovery path, while an explicitly unbound footage
+ * segment needs a formal task/run revision rather than a same-run retry. */
+function frozenProductFootageRevisionRequired(job: ContentExecutionJob): boolean {
+  if (!job.lastError?.includes('product_footage_shot_review_required')) return false;
+  const payload = job.checkpoints['social.executor']?.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const binding = payload as Record<string, unknown>;
+  const object = (value: unknown): Record<string, unknown> | null =>
+    value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  const frozen = object(binding.frozenPlan);
+  const approved = object(binding.approvedContext);
+  const supply = object(approved?.assetSupplyPlan);
+  const shots = Array.isArray(supply?.shots) ? supply.shots : [];
+  const segments = [frozen?.selectedMaterialSegment, ...shots.map(shot => object(shot)?.selectedMaterialSegment)];
+  return segments.some(segment => {
+    const selected = object(segment);
+    return selected && typeof selected.sourceRef === 'string' && selected.sourceRef.length > 0
+      && !object(selected.footageEvidence);
+  });
+}
 export type ContentExecutionPauseOrigin =
   | 'manual'
   | 'workflow_review'
@@ -684,6 +902,45 @@ async function applyContentExecutionControl(input: {
   if (!row) throw new Error('content_execution_job_not_found');
   const current = jobFromRow(row);
   if (current.tenantId !== tenantId) throw new Error('content_execution_job_not_found');
+  if (input.action === 'resume' || input.action === 'retry') {
+    if (await footageRevisionNeedsAdmission(input.dataStore, tenantId, current.taskId, current.runId, current))
+      throw new Error('content_execution_footage_revision_admission_required');
+    const tasks = await input.dataStore.list<Record<string, unknown>>('starter_social_content_tasks', {
+      where: { tenant_id: tenantId, task_id: current.taskId }, perPage: 2,
+    });
+    if (tasks.totalItems > 1) throw new Error('content_execution_order_identity_ambiguous');
+    const task = tasks.items[0];
+    let binding = task?.content_order;
+    if (typeof binding === 'string') { try { binding = JSON.parse(binding); } catch { throw new Error('content_execution_order_identity_invalid'); } }
+    if (binding && typeof binding === 'object' && !Array.isArray(binding)) {
+      const order = binding as Record<string, unknown>;
+      if (order.cancellation || order.replacedByContentId || order.supersededByContentId || ['cancelled','cancelling'].includes(String(task?.status)))
+        throw new Error('content_execution_order_cancelled_or_replaced');
+      if (order.contentId && order.contentId !== current.taskId) {
+        const roots = await input.dataStore.list<Record<string, unknown>>('starter_social_content_tasks', {
+          where: { tenant_id: tenantId, task_id: String(order.contentId) }, perPage: 2,
+        });
+        if (roots.totalItems !== 1 || roots.items.length !== 1) throw new Error('content_execution_order_root_missing');
+        const root = roots.items[0];
+        let rootOrder = root.content_order;
+        if (typeof rootOrder === 'string') { try { rootOrder = JSON.parse(rootOrder); } catch { throw new Error('content_execution_order_identity_invalid'); } }
+        const rootBinding = rootOrder as Record<string, unknown> | null;
+        if (!rootBinding || rootBinding.contentId !== order.contentId || rootBinding.budgetTaskId !== order.budgetTaskId)
+          throw new Error('content_execution_order_identity_invalid');
+        if (rootBinding.cancellation || rootBinding.replacedByContentId || ['cancelled','cancelling'].includes(String(root.status)))
+          throw new Error('content_execution_order_cancelled_or_replaced');
+      }
+      if (order.programId && order.originWeek && order.contentId) {
+        const pools = await input.dataStore.list<Record<string, unknown>>('social_content_creation_quotas', {
+          where: { tenant_id: tenantId, program_id: String(order.programId), week_start: String(order.originWeek) }, perPage: 2,
+        });
+        if (pools.totalItems !== 1 || pools.items.length !== 1) throw new Error('content_execution_order_quota_missing');
+        const payload = pools.items[0].payload as { orders?: Record<string, { state?: string }> } | undefined;
+        const reservation = payload?.orders?.[String(order.contentId)];
+        if (!reservation || ['planned','released'].includes(String(reservation.state))) throw new Error('content_execution_order_not_reserved');
+      }
+    }
+  }
   const now = (input.now ?? new Date()).toISOString();
   let patch: Record<string, unknown>;
   if (input.action === 'pause') {
@@ -723,6 +980,8 @@ async function applyContentExecutionControl(input: {
   } else {
     if (['queued', 'running', 'retry_wait', 'reconciling'].includes(current.status)) return current;
     if (!['blocked', 'dead_letter'].includes(current.status)) throw new Error('content_execution_job_not_retryable');
+    if (!hasProviderWork(current) && frozenProductFootageRevisionRequired(current))
+      throw new Error('content_execution_frozen_footage_revision_required');
     const reconcile = hasProviderWork(current);
     patch = {
       status: reconcile ? 'reconciling' : 'queued',

@@ -352,6 +352,24 @@ export interface WeeklyAgentPlanningMutation {
 }
 
 export interface WeeklyAgentPlanningState {
+  /** A user-selected reference, frozen only after current-run admission and exact media/handoff verification. */
+  pinnedReference?: {
+    schema: 'weekly-pinned-reference.v1';
+    slotId: string;
+    candidateId: string;
+    evidenceVersion: number;
+    accountCandidateId: string;
+    accountEvidenceVersion: number;
+    accountSourceUrl: string;
+    mediaSha256: string;
+    handoffRecordHash: string;
+    sourceUrl: string;
+    selectedBy: string;
+    selectedAt: string;
+    discoveryAuthority: { rootJobId: string; currentJobId: string; runId: string };
+    recordHash: string;
+  };
+  automaticTemplateAdoption?: {source:'automatic_template';templateVersion:'weekly-automation.v3';adoptedAt:string;actorUserId:string;userApproval:null;selectedSlotIds:string[];analysisEvidenceHash:string;detailedScheduleHash:string;recordHash:string;authorizesPublishing:false;authorizesContentAcceptance:false;authorizesCustomerMessages:false};
   referenceSourcePolicy?: WeeklyReferenceSourcePolicy | null;
   planningId: string;
   version: number;
@@ -433,6 +451,8 @@ export interface SocialWeeklyPublicationTask {
 }
 
 export interface SocialWeeklyContentPackage {
+  /** New immutable packages share original production; legacy packages retain per-publication runs. */
+  productionIdentityVersion?: 'shared-original.v1';
   contentPackageId: string;
   operatingPackageId: string;
   version: number;

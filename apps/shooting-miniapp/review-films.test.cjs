@@ -31,6 +31,6 @@ test('review page exposes queue and full-height vertical feed modes', () => {
   assert.doesNotMatch(styles, /box-shadow|backdrop-filter/)
   assert.doesNotMatch(nav, /待验收成片/)
   assert.match(nav, /label: '工作'/)
-  assert.match(nav, /label: '经营 Agent'/)
+  assert.match(nav, /label: '编导 Agent'/)
   assert.doesNotMatch(nav, /label: '待处理'/)
 })

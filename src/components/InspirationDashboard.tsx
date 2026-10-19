@@ -60,7 +60,8 @@ type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry' | 'ind
 type MaterialOrientationFilter = 'all' | 'vertical' | 'horizontal';
 type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
 type FavoriteFilter = 'all' | 'favorite';
-export type MaterialAssetTab = 'enterprise' | 'ai' | 'cloud';
+type MaterialAssetGroup = 'enterprise' | 'ai' | 'cloud';
+export type MaterialAssetTab = 'all' | MaterialAssetGroup;
 type DiscoveryDecisionFilter = 'all' | SocialDiscoveryScoreDecision;
 type BusinessModelFilter = 'all' | SocialBusinessModel;
 
@@ -265,11 +266,22 @@ const MATERIAL_APPLICABILITY_LABELS: Record<string, string> = {
   all: '全部适用范围', universal: '通用素材', cross_industry: '跨行业素材', industry_specific: '行业专属',
 };
 /** Product-facing ownership groups. Upload entry only affects traceability, never ownership. */
-export function materialAssetTabOf(material: Pick<Material, 'sourceType' | 'folder' | 'scope'>): MaterialAssetTab {
+export function materialAssetTabOf(material: Pick<Material, 'sourceType' | 'folder' | 'scope'>): MaterialAssetGroup {
   const source = String(material.sourceType || '').toLowerCase();
   if (material.scope === 'shared' || material.folder === 'hot' || /official|viral|licensed[-_ ]?stock|cloud/.test(source)) return 'cloud';
-  if (/seedance|seedream|gemini|qwen|ai[-_ ]?generated|aigc/.test(source)) return 'ai';
+  if (/seedance|seedream|gemini|qwen|ai[-_ ]?generated|aigc|^ai[-_]/.test(source)) return 'ai';
   return 'enterprise';
+}
+
+export function generatedMaterialOriginLabel(material: Pick<Material, 'sourceType' | 'provenance'>): string {
+  const source = String(material.sourceType || '').toLowerCase();
+  if (!/seedance|seedream|gemini|qwen|ai[-_]?generated|aigc|^ai[-_]/.test(source)) return '';
+  const provenance = material.provenance || {};
+  const rawShotId = String(provenance.shotId || '').trim();
+  const shotLabel = rawShotId.replace(/^slot[-_]?/i, '').trim();
+  if (provenance.storyboardAigc === true) return `内容制作 · ${shotLabel ? `分镜 ${shotLabel}` : '分镜生成'}`;
+  if (provenance.freeCreationHook === true) return '内容制作 · 自由创作';
+  return source.includes('seedance') ? '内容制作 · Seedance 生成' : '内容制作 · AI 生成';
 }
 
 export function materialAssetBadge(material: Pick<Material, 'sourceType' | 'folder' | 'scope'>): { label: string; className: string } {
@@ -3356,7 +3368,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     closeOnEscape: () => !manageBusy,
   });
   const [materialSearch, setMaterialSearch] = useState('');
-  const [materialAssetTab, setMaterialAssetTab] = useState<MaterialAssetTab>('enterprise');
+  const [materialAssetTab, setMaterialAssetTab] = useState<MaterialAssetTab>('all');
   const [materialIndustry, setMaterialIndustry] = useState<MaterialIndustryFilter>('all');
   const [materialFunction, setMaterialFunction] = useState('all');
   const [materialApplicability, setMaterialApplicability] = useState<MaterialApplicabilityFilter>('all');
@@ -3938,7 +3950,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         productRef: materialProductRef,
       });
       return (!q || searchable.includes(q))
-        && materialAssetTabOf(material) === materialAssetTab
+        && (materialAssetTab === 'all' || materialAssetTabOf(material) === materialAssetTab)
         && (materialTheme === 'all' || materialThemeTagsOf(material).includes(materialTheme))
         && (materialType === 'all' || material.type === materialType)
         && (materialIndustry === 'all' || material.industry === materialIndustry)
@@ -4640,6 +4652,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
   const clearMaterialFilters = () => {
     setMaterialSearch('');
+    setMaterialAssetTab('all');
     setMaterialSource('all');
     setMaterialTheme('all');
     setMaterialType('all');
@@ -4668,6 +4681,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     + Number(sortMode !== 'crawlTime')
     + Number(viewMode !== 'grid');
   const materialFilterCount = Number(materialSearch.trim().length > 0)
+    + Number(materialAssetTab !== 'all')
     + Number(materialTheme !== 'all')
     + Number(materialSource !== 'all')
     + Number(materialType !== 'all')
@@ -4737,11 +4751,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             />}
             {innerView === 'inspiration' && <div className="mb-4 space-y-4 rounded-lg border border-border bg-surface p-4">
               <div className="overflow-x-auto pb-1">
-              <div className="grid min-w-[940px] grid-cols-[160px_minmax(240px,2fr)_minmax(130px,1fr)_minmax(170px,1fr)_160px] gap-3">
-                <Select value={platform} onChange={value => handlePlatformFilter(value as Platform)} aria-label="社媒平台" options={PLATFORM_FILTERS.map(item => ({ value: item.id, label: item.label }))} />
+              <div className="grid min-w-[940px] grid-cols-[minmax(240px,2fr)_160px_minmax(130px,1fr)_minmax(170px,1fr)_160px] gap-3">
                 <Input allowClear prefix={<Search size={15} />} value={search}
                   onChange={event => { setLastCrawlVideoIds([]); setSearch(event.target.value); }}
                   aria-label="搜索爆款灵感" placeholder="搜索标题或标签" />
+                <Select value={platform} onChange={value => handlePlatformFilter(value as Platform)} aria-label="社媒平台" options={PLATFORM_FILTERS.map(item => ({ value: item.id, label: item.label }))} />
                 <Select value={contentFormat} onChange={value => handleContentFormatFilter(value as ContentFormat)} aria-label="内容形式"
                   options={[{ value: 'video', label: '视频' }, { value: 'image', label: '图文' }]} />
                 <Select value={inspirationFavoriteFilter} onChange={value => setInspirationFavoriteFilter(value as FavoriteFilter)} aria-label="爆款收藏状态"
@@ -4850,9 +4864,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
               <div className="space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
                 <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1" aria-label="我的素材筛选">
-                  <Select className="w-32 shrink-0" aria-label="素材分类" value={materialAssetTab} onChange={setMaterialAssetTab} options={[{value:"enterprise",label:"产品素材"},{value:"ai",label:"AI 素材"},{value:"cloud",label:"云素材"}]} />
-                  <Input allowClear prefix={<Search size={15} />} value={materialSearch} onChange={event => setMaterialSearch(event.target.value)}
-                    aria-label="搜索我的素材" placeholder="搜索素材名称、产品或主要内容" className="min-w-60 flex-1" />
+                  <div className="flex-1" style={{ minWidth: 260 }}>
+                    <Input allowClear prefix={<Search size={15} />} value={materialSearch} onChange={event => setMaterialSearch(event.target.value)}
+                      aria-label="搜索我的素材" placeholder="搜索素材名称、产品或主要内容" className="w-full" />
+                  </div>
+                  <Select className="w-32 shrink-0" aria-label="素材分类" value={materialAssetTab} onChange={setMaterialAssetTab} options={[{value:"all",label:"全部素材"},{value:"enterprise",label:"产品素材"},{value:"ai",label:"AI 素材"},{value:"cloud",label:"云素材"}]} />
                   <MaterialTaxonomyFilters source={materialSource} theme={materialTheme} total={materialSource === 'all' && materialTheme === 'all' ? materialTotal : Object.values(materialFacets?.sources || {}).reduce((sum, count) => sum + count, 0)}
                     sourceCounts={materialFacets?.sources || { local_upload: 0, official_import: 0, user_generated: 0 }}
                     onSourceChange={setMaterialSource} onThemeChange={setMaterialTheme} />
@@ -4961,6 +4977,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     <div className="flex min-h-52 flex-1 flex-col p-3">
                       <p className="line-clamp-2 text-sm font-bold leading-snug text-text-primary">{material.name}</p>
                       <p className="mt-1 line-clamp-1 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
+                      {generatedMaterialOriginLabel(material) && <p className="mt-1 line-clamp-1 text-[11px] font-medium leading-5 text-text-muted" title={generatedMaterialOriginLabel(material)}>{generatedMaterialOriginLabel(material)}</p>}
                       <div className="mt-3 grid grid-cols-2 gap-2">
                         <button
                           type="button"
@@ -5041,7 +5058,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       ['素材类型', detailMaterial.type === 'video' ? '视频' : detailMaterial.type === 'image' ? '图片' : '音频'],
                       ['关联产品', detailMaterial.productName || '企业通用素材'],
                       ['主要内容', materialSemanticLabel(detailMaterial)],
-                      ['素材来源', detailMaterial.sourceName || detailMaterial.sourceProvider || (detailMaterial.scope === 'shared' ? '共享素材' : '我的素材')],
+                      ['素材来源', generatedMaterialOriginLabel(detailMaterial) || detailMaterial.sourceName || detailMaterial.sourceProvider || (detailMaterial.scope === 'shared' ? '共享素材' : '我的素材')],
                       ['时长', detailMaterial.type === 'video' || detailMaterial.type === 'audio' ? displayDuration(detailMaterial.duration) : '—'],
                       ['入库时间', detailMaterial.createdAt ? new Date(detailMaterial.createdAt).toLocaleString('zh-CN') : '—'],
                     ].map(([label, value]) => <div key={label} className="rounded-lg border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">{label}</p><p className="mt-1 break-words font-bold leading-5 text-text-primary">{value}</p></div>)}

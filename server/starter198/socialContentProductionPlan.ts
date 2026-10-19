@@ -442,7 +442,7 @@ export function buildSocialProductionPlan(input: {
   /** Exact per-scene outputs from the reviewed asset-supply execution. These
    * bind generated media to its frozen scene; they are not a visual-quality
    * pass and every resulting scene remains marked for independent review. */
-  routedSceneAssets?: Array<{ sceneId: string; assetId: string }>;
+  routedSceneAssets?: Array<{ sceneId: string; assetId: string; durationSeconds?: number }>;
 }): SocialProductionPlan {
   const materialPolicy = socialContentMaterialPolicy(input.themeId ?? input.baseline.themeId ?? null);
   const fullReplication = input.baseline.source === 'inspiration_script';
@@ -487,15 +487,12 @@ export function buildSocialProductionPlan(input: {
     const routedSourceCursors = new Map<string, number>();
     const scenes = input.baseline.scenes.flatMap((scene, sceneIndex) => {
       const assetId = routed.get(scene.sceneId), asset = assetId ? assetsById.get(assetId) : null;
+      const frozenDuration=Number(scene.referenceStructure?.sourceTiming.durationSeconds)
+        ||(Number(scene.referenceStructure?.sourceTiming.endSeconds)-Number(scene.referenceStructure?.sourceTiming.startSeconds))
+        ||input.routedSceneAssets!.find(item=>item.sceneId===scene.sceneId)?.durationSeconds||0;
       if (!asset || asset.type !== 'video' || !asset.localPath || !asset.contentHash
-        || !Number.isFinite(asset.duration) || asset.duration <= 0 || !asset.visualObservations.length) return [];
-      const referenceDuration = Number(scene.referenceStructure?.sourceTiming.durationSeconds)
-        || (Number(scene.referenceStructure?.sourceTiming.endSeconds) - Number(scene.referenceStructure?.sourceTiming.startSeconds)) || 0;
-      // System-theme and knowledge baselines have no reference-video timing.
-      // Their reviewed scene-owned output is still real media, so give it a
-      // bounded edit window instead of collapsing the frozen timeline to 1 ms.
-      const frozenDuration = Math.max(0.001, referenceDuration || Math.min(3, asset.duration));
-      if (asset.duration + 0.02 < frozenDuration) return [];
+        ||!Number.isFinite(frozenDuration)||frozenDuration<=0
+        || !Number.isFinite(asset.duration) || asset.duration+0.02<frozenDuration || !asset.visualObservations.length) return [];
       // A routed asset may cover several consecutive micro-shots. Preserve
       // continuity by consuming the source in frozen-timeline order instead
       // of restarting every scene at frame zero. When the requested windows

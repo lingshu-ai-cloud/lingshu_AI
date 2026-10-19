@@ -141,11 +141,11 @@ test('source quota is persisted across immutable revisions and allocated per mot
     weekStart: '2026-10-05', objective: '采购询盘', successCriteria: ['有效发布'], referenceSourcePolicy: policy,
   });
   assert.deepEqual(initial.referenceSourcePolicy, policy);
-  assert.equal(initial.agentPlanning?.skeleton.slots.filter(slot => slot.referenceSource === 'owned').length, 4);
+  assert.equal(initial.agentPlanning?.skeleton.slots.filter(slot => slot.referenceSource === 'owned').length, 2);
   const revised = await packages.revise('tenant-a', 'owner', program.programId, initial.packageId, { expectedVersion: 1, changeReason: '修改目标', objective: '验证采购需求' });
   assert.deepEqual(revised.referenceSourcePolicy, policy);
   const changed = await packages.revise('tenant-a', 'owner', program.programId, initial.packageId, { expectedVersion: 2, changeReason: '确认20/80', referenceSourcePolicy: { ...policy, ownedPercent: 20, externalPercent: 80 } });
-  assert.equal(changed.agentPlanning?.skeleton.slots.filter(slot => slot.referenceSource === 'owned').length, 2);
+  assert.equal(changed.agentPlanning?.skeleton.slots.filter(slot => slot.referenceSource === 'owned').length, 1);
   const history = await packages.list('tenant-a', program.programId);
   assert.equal(history.find(item => item.version === 1)?.referenceSourcePolicy?.ownedPercent, 40);
 });
@@ -164,8 +164,8 @@ test('weekly operating package: default six-account cadence creates seven workfl
   assert.ok(item.planningBlockers.includes('capacity_plan_unavailable'));
   assert.ok(item.planningBlockers.some(reason => reason.endsWith(':cta_required')));
   assert.equal(item.workflows.find(workflow => workflow.kind === 'readiness')!.status, 'blocked');
-  assert.equal(item.socialContentPackage.originalContentTarget, 10);
-  assert.equal(item.socialContentPackage.adaptationVersionTarget, 16);
+  assert.equal(item.socialContentPackage.originalContentTarget, 5);
+  assert.equal(item.socialContentPackage.adaptationVersionTarget, 21);
   assert.equal(item.socialContentPackage.publicationTaskTarget, 26);
   assert.equal(item.socialContentPackage.publicationTasks.length, 26);
   assert.equal(item.socialContentPackage.authorization.mode, 'bounded');
@@ -203,6 +203,7 @@ test('weekly operating package: user cadence creates an immutable revision and e
   assert.equal(revised.previousVersion, 1);
   assert.equal(revised.socialContentPackage.publicationTaskTarget, 6);
   assert.equal(revised.socialContentPackage.adaptationVersionTarget, 2);
+  assert.equal(revised.socialContentPackage.originalContentTarget, 4, 'explicit user target is not overwritten by the new five-video default');
   assert.equal(revised.socialContentPackage.authorization.maxPublishItems, 6);
   assert.equal(revised.taskVersionMappings.length, 7);
   const history = await packages.list('tenant-a', program.programId);

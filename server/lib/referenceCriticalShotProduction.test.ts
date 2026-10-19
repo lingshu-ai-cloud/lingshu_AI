@@ -76,7 +76,7 @@ test('saved validation response is revalidated without another paid call and ret
     uniqueVisualMechanism: false, explicitAudioVisualSync: false, confidence: .8,
     reason: '普通静态镜头', evidence: ['原片为静态黑色画面'], actionEvents: [], syncPoints: [] }] }]);
   const classify: any = async () => { calls++; throw new ReferenceCriticalValidationError('old_envelope_parser',
-    { raw, usage: { total_tokens: 123 }, model: process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-flash' }); };
+    { raw, usage: { total_tokens: 123 }, model: process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-plus' }); };
   const input = { filePath: file, analysis: baseline, videoId: 'test', sourceSha256: 'hash', duration: 1 };
   const cacheRoot = path.join(dir, 'cache');
   try {

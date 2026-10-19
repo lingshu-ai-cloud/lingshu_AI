@@ -16,6 +16,7 @@ import { isSocialTaskContextPage } from './lib/socialTaskContext';
 import {
   SOCIAL_CONTENT_NAVIGATION_EVENT,
   attachSocialContentNavigationState,
+  readSocialContentNavigationQueryTaskId,
   readSocialContentNavigationTaskId,
   setActiveSocialContentTaskId,
   type SocialContentNavigationEventDetail,
@@ -70,7 +71,6 @@ const StarterWorkflowContextBar = lazy(loadStarterWorkflowContextBar);
 const DesignPrototype = import.meta.env.DEV ? lazy(() => import('./dev/DesignPrototype')) : null;
 const SocialContentPreview = import.meta.env.DEV ? lazy(() => import('./dev/SocialContentPreview')) : null;
 const SmartBusinessPreview = import.meta.env.DEV ? lazy(() => import('./dev/SmartBusinessPreview')) : null;
-const StartupHubPage = lazy(() => import('./components/StartupHubPage'));
 
 type PageModuleLoader = () => Promise<unknown>;
 const ADS_PAGES: Page[] = [...PLATFORM_ADS_PAGE_IDS];
@@ -161,13 +161,6 @@ export type { AgentAction, AgentType, Conversation, ConversationContext, Kickoff
 export default function App() {
   const publicPath = window.location.pathname.replace(/\/+$/, '') || '/';
   const localForeignTradeMock = isLocalForeignTradeMockEnabled();
-  if (publicPath === '/startup-hub-preview') {
-    return (
-      <Suspense fallback={<PageLoading />}>
-        <StartupHubPage preview />
-      </Suspense>
-    );
-  }
   if (import.meta.env.DEV && DesignPrototype && publicPath === '/design-prototype') {
     return (
       <Suspense fallback={<PageLoading />}>
@@ -245,7 +238,8 @@ export default function App() {
   } | null>(() => {
     const initialPage = loadPage();
     if (!isSocialTaskContextPage(initialPage)) return null;
-    const taskId = canRestoreProductionHistoryState(window.history.state) ? readSocialContentNavigationTaskId(initialPage, window.history.state) : null;
+    const taskId = (canRestoreProductionHistoryState(window.history.state) ? readSocialContentNavigationTaskId(initialPage, window.history.state) : null)
+      || readSocialContentNavigationQueryTaskId(initialPage, window.location.search);
     return taskId ? { page: initialPage, taskId } : null;
   });
   useEffect(() => {
@@ -319,6 +313,7 @@ export default function App() {
     const detail = canRestoreProductionHistoryState(window.history.state) ? window.history.state?.productionDetail : null;
     return Boolean(
       readSocialContentNavigationTaskId('smartAssets', window.history.state)
+      || readSocialContentNavigationQueryTaskId('smartAssets', window.location.search)
       || window.__agentProductionTarget?.link.page === 'smartAssets'
       || detail?.workflowTaskId
       || detail?.businessRef?.entityId,
@@ -348,8 +343,16 @@ export default function App() {
   });
   const [smartAssetsStudioOpen, setSmartAssetsStudioOpen] = useState(() => {
     const detail = canRestoreProductionHistoryState(window.history.state) ? window.history.state?.productionDetail : null;
-    return Boolean(new URLSearchParams(window.location.search).get('project') || detail?.directStudio);
+    return Boolean(new URLSearchParams(window.location.search).get('project')
+      || readSocialContentNavigationQueryTaskId('smartAssets', window.location.search)
+      || detail?.directStudio);
   });
+
+  useEffect(() => {
+    const taskId = readSocialContentNavigationQueryTaskId(pageRef.current, window.location.search);
+    if (!taskId || !isSocialTaskContextPage(pageRef.current)) return;
+    attachSocialContentNavigationState(taskId, pageRef.current);
+  }, []);
 
   useEffect(() => {
     if (page === 'smartAssets' && (
@@ -399,7 +402,8 @@ export default function App() {
         setAuthLoading(false);
       },
       onRetry: () => {
-        setSessionRefreshError('本地服务正在启动，正在恢复预览会话。');
+        setSessionRefreshError('服务暂时不可用，正在自动重新连接。');
+        if (getToken()) setAuthLoading(false);
       },
       onFailure: () => {
         setSessionRefreshError('暂时无法连接服务，登录状态未被清除。');
@@ -874,7 +878,8 @@ export default function App() {
   const showSocialContentPlanning = page === 'smartAssets'
     && smartAssetsView === 'create'
     && !smartAssetsStudioOpen
-    && (smartAssetsCreateRequest?.creationPath === 'viral_replication'
+    && (Boolean(smartAssetsContentTaskId && !smartAssetsWorkflowContext && !smartAssetsCreateRequest)
+      || smartAssetsCreateRequest?.creationPath === 'viral_replication'
       || (!smartAssetsContentTaskId && !smartAssetsWorkflowContext && !smartAssetsCreateRequest));
 
 
@@ -996,6 +1001,7 @@ export default function App() {
             <div className="h-full min-h-0">
               {showSocialContentPlanning ? (
                 <SocialContentPlanningPage
+                  taskOnly={Boolean(smartAssetsContentTaskId && !smartAssetsCreateRequest)}
                   onNavigate={handleNavigate}
                   onNavigateWithTask={handleSocialContentNavigate}
                   initialCreateRequest={smartAssetsCreateRequest}

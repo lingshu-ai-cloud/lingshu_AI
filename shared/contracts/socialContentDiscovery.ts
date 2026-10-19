@@ -193,6 +193,8 @@ export interface SocialDiscoveryBrief {
   createdBy: 'director_agent' | 'user';
   /** Per-channel execution policy. No product ratio is implied when omitted. */
   modePolicies?: Partial<Record<SocialDiscoveryMode, SocialDiscoveryModePolicy>>;
+  /** Explicit, approved weekly source revision; ordinary account minimum remains one. */
+  weeklyAccountCollectionTarget?: { accountUrl: string; targetCount: number };
 }
 
 export interface SocialDiscoveryModePolicy {
@@ -205,12 +207,17 @@ export interface SocialDiscoveryModePolicy {
 }
 
 export type SocialCollectionRunStatus = 'queued' | 'running' | 'succeeded' | 'partial' | 'failed' | 'stopped';
-export type SocialCollectionStopReason = 'completed' | 'duplicate_limit' | 'no_valid_results' | 'budget_limited' | 'source_failed' | 'manual';
+export type SocialCollectionStopReason = 'completed' | 'duplicate_limit' | 'no_valid_results' | 'budget_limited' | 'source_failed' | 'daily_collection_limit_reached' | 'manual';
 
 export interface SocialDiscoveryModeRunStats {
   requested: number;
   fetched: number;
   deduplicated: number;
+  /** Optional cost-funnel details; old run snapshots remain readable. */
+  exactDuplicates?: number;
+  nearDuplicates?: number;
+  nearDuplicateUnchecked?: number;
+  analyzed?: number;
   accepted: number;
   momentumCandidates: number;
   failed: number;
@@ -239,7 +246,7 @@ export interface SocialInspirationCollectionRun {
     failedCandidateIds: string[];
   }>>;
   sourceRunRefs: string[];
-  failureDetails?: Array<{ mode: SocialDiscoveryMode; platform: string; queryRef: string; error: string }>;
+  failureDetails?: Array<{ mode: SocialDiscoveryMode; platform: string; queryRef: string; error: string; errorCode?: 'model_unavailable' | 'provider_budget_exhausted' | 'provider_authorization_required' | 'downloader_missing' | 'source_media_unavailable' | 'source_rate_limited' | 'source_failed' }>;
   queryBasis: Partial<Record<SocialDiscoveryMode, string[]>>;
   market: string;
   language: string;
@@ -413,6 +420,8 @@ export interface SocialCrawlStrategy {
   approval?: {
     status: 'approved' | 'pending' | 'rejected';
     approvedBy: 'business_agent' | 'user' | null;
+    /** Authenticated actor identity, separate from the business-role enum. */
+    approvedByUserId?: string;
     approvedAt: string | null;
     scopeVersion: number;
   };
@@ -484,6 +493,18 @@ export interface SocialReplicationScriptVersion {
   structureFidelitySummary: string;
   originalityDifferenceSummary: string;
   createdAt: string;
+  /** Present only after an authenticated advanced-workflow review command has
+   * approved every shot against the exact analysis and script hashes. */
+  review?: {
+    schemaVersion: 'social-replication-script-review.v1';
+    analysisId: string;
+    analysisHash: string;
+    scriptHash: string;
+    sceneDecisions: Array<{shotId: string; conclusion: 'approved'; evidence: string[]}>;
+    evidence: string[];
+    reviewedBy: string;
+    reviewedAt: string;
+  };
 }
 
 export interface SocialShotMaterialMapEntry {

@@ -17,7 +17,16 @@ export class FirstFrameBudget {
     if (ledger.version !== 1 || ledger.tenantId !== tenantId || ledger.videoId !== videoId || ledger.limitMicros !== limitMicros || ledger.maxFrames !== maxFrames || !ledger.entries) throw new Error('首帧预算账本异常或配置已改变，请先核账');
     return ledger;
   }
-  private write(ledger: Ledger) { const file = this.file(ledger.tenantId, ledger.videoId); fs.mkdirSync(path.dirname(file), { recursive: true }); const temp = `${file}.${randomUUID()}.tmp`; fs.writeFileSync(temp, JSON.stringify(ledger), { mode: 0o600 }); fs.renameSync(temp, file); }
+  private write(ledger: Ledger) {
+    const file = this.file(ledger.tenantId, ledger.videoId), directory = path.dirname(file);
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const temp = `${file}.${randomUUID()}.tmp`, fd = fs.openSync(temp, 'wx', 0o600);
+    try { fs.writeFileSync(fd, JSON.stringify(ledger)); fs.fsyncSync(fd); }
+    finally { fs.closeSync(fd); }
+    fs.renameSync(temp, file);
+    const directoryFd = fs.openSync(directory, 'r');
+    try { fs.fsyncSync(directoryFd); } finally { fs.closeSync(directoryFd); }
+  }
   async reserve(input: { tenantId: string; videoId: string; operationId: string; compositionId: string; estimatedCostCny: number }) {
     return withPaidOperationLock(path.join(this.root, '.locks'), `${input.tenantId}:${input.videoId}`, async () => {
       const ledger = this.read(input.tenantId, input.videoId); const existing = ledger.entries[input.operationId];

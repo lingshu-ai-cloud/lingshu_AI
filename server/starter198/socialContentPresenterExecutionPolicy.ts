@@ -11,6 +11,12 @@ export interface PresenterExecutionSelection {
   providerId: 'heygen' | 'seedance' | null;
   executionStatus: 'ready' | 'blocked';
   reasonCodes: string[];
+  /** Exact enterprise product evidence carried into dynamic-presenter execution. */
+  enterpriseProductAssetLock: {
+    productId: string;
+    enterpriseFactRef: string;
+    referenceImageIds: string[];
+  } | null;
 }
 
 export interface ReplicationExecutionGap {
@@ -134,6 +140,7 @@ export async function verifyNamedPresenterLock(input: {
   name?: string | null;
   requestedPresenterAssetId?: string | null;
   selectedEnterprisePresenterAssetId?: string | null;
+  provider?: 'heygen' | 'volcengine_ark';
   lock: NonNullable<SocialContentTaskDetail['agentWorkflow']>['directorBrief']['accountPresenterLock'];
 }): Promise<{ ok: true; presenterAssetId: string; assetVersion: number } | { ok: false; reason: string }> {
   if (!input.lock && !String(input.selectedEnterprisePresenterAssetId || '').trim()) {
@@ -155,7 +162,7 @@ export async function verifyNamedPresenterLock(input: {
   const presenter = matches[0]!;
   const version = Number(presenter.assetVersion);
   const rights = validatePresenterRightsEvidence(presenter.rightsEvidence, {
-    provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis'],
+    provider: input.provider??'heygen', uses: input.provider==='volcengine_ark'?['digital_presenter','person_replacement']:['digital_presenter', 'voice_synthesis'],
   });
   if (!rights.ok) return { ok: false, reason: `named_presenter_rights_invalid:${rights.reasons.join(',')}` };
   // During production setup the enterprise asset is authoritative even before
@@ -164,8 +171,8 @@ export async function verifyNamedPresenterLock(input: {
   // asset ID, immutable version, provider mapping and rights evidence.
   if (!input.lock) {
     if (presenter.authorized !== true || !Number.isSafeInteger(version) || version < 1
-      || !String((presenter.toolMappings as { heygen?: { avatarId?: string; voiceId?: string } } | undefined)?.heygen?.avatarId || presenter.avatarId || '').trim()
-      || !String((presenter.toolMappings as { heygen?: { avatarId?: string; voiceId?: string } } | undefined)?.heygen?.voiceId || presenter.voiceId || '').trim()) {
+      || (input.provider!=='volcengine_ark'&&(!String((presenter.toolMappings as { heygen?: { avatarId?: string; voiceId?: string } } | undefined)?.heygen?.avatarId || presenter.avatarId || '').trim()
+      || !String((presenter.toolMappings as { heygen?: { avatarId?: string; voiceId?: string } } | undefined)?.heygen?.voiceId || presenter.voiceId || '').trim()))) {
       return { ok: false, reason: 'named_enterprise_presenter_not_authorized' };
     }
     return { ok: true, presenterAssetId: String(presenter.id), assetVersion: version };
@@ -181,8 +188,8 @@ export async function verifyNamedPresenterLock(input: {
     || lock.presenterProfileVersion !== presenter.presenterProfileVersion
     || lock.consistencyKey !== presenter.consistencyKey
     || lock.consentRef !== presenter.consentRef
-    || lock.avatarId !== String((presenter.toolMappings as { heygen?: { avatarId?: string } } | undefined)?.heygen?.avatarId || presenter.avatarId || '')
-    || lock.voiceProfileId !== String((presenter.toolMappings as { heygen?: { voiceId?: string } } | undefined)?.heygen?.voiceId || presenter.voiceId || '')) {
+    || (input.provider!=='volcengine_ark'&&(lock.avatarId !== String((presenter.toolMappings as { heygen?: { avatarId?: string } } | undefined)?.heygen?.avatarId || presenter.avatarId || '')
+    || lock.voiceProfileId !== String((presenter.toolMappings as { heygen?: { voiceId?: string } } | undefined)?.heygen?.voiceId || presenter.voiceId || '')))) {
     return { ok: false, reason: 'named_presenter_lock_mismatch' };
   }
   return { ok: true, presenterAssetId: String(presenter.id), assetVersion: version };
@@ -191,7 +198,7 @@ export async function verifyNamedPresenterLock(input: {
 /** A missing model measurement is an explicit non-executable decision. The
  * social Seedance product-scene adapter is not a presenter reenactment adapter. */
 export function selectPresenterExecutions(input: {
-  detail: Pick<SocialContentTaskDetail, 'agentWorkflow' | 'referenceVideoAnalysis'>;
+  detail: Pick<SocialContentTaskDetail, 'agentWorkflow' | 'referenceVideoAnalysis' | 'assetSupplyPlan' | 'enterpriseProductBinding'>;
   heygenReady: boolean;
   /** Must describe an actual social presenter first-frame executor, not product-scene Seedance. */
   seedancePresenterReady: boolean;
@@ -201,12 +208,28 @@ export function selectPresenterExecutions(input: {
   if (!workflow) return [];
   const references = new Map((input.detail.referenceVideoAnalysis?.shots ?? []).map(shot => [shot.shotId, shot]));
   const executionByScene = new Map(workflow.executionPlan.scenes.map(scene => [scene.sceneId, scene]));
+  const supplyByScene = new Map((input.detail.assetSupplyPlan?.shots ?? []).map(shot => [shot.shotId, shot]));
+  const normalizeProductRef = (value: unknown) => String(value ?? '').normalize('NFKC').trim()
+    .replace(/^product\s*:\s*/i, '').toLocaleLowerCase();
   return workflow.directorBrief.scenes.filter(scene => scene.productionRouting?.needsPreciseLipSync
     || scene.productionRouting?.presenterIdentityReplacementRequired).map(scene => {
     const execution = executionByScene.get(scene.sceneId);
     const selectedCandidate = execution?.candidates?.find(item => execution.recommendedCandidateIds?.includes(item.candidateId));
     const selectedStrategy = selectedCandidate?.sourceStrategy ?? execution?.selectedSourceStrategy;
     const reference = scene.referenceShotId ? references.get(scene.referenceShotId) : undefined;
+    const supply = supplyByScene.get(scene.sceneId);
+    const productBinding = input.detail.enterpriseProductBinding;
+    const productAliases = new Set([productBinding?.productId, productBinding?.productSku]
+      .map(normalizeProductRef).filter(Boolean));
+    const matchingProductGroups = productBinding ? (supply?.productSceneReplication?.productIdentity.groups ?? [])
+      .filter(group => productAliases.has(normalizeProductRef(group.productRef))) : [];
+    const productImageIds = [...new Set(matchingProductGroups.flatMap(group => group.referenceImageIds)
+      .map(value => value.trim()).filter(Boolean))];
+    const enterpriseProductAssetLock = productBinding && productImageIds.length ? {
+      productId: productBinding.productId,
+      enterpriseFactRef: productBinding.enterpriseFactRef,
+      referenceImageIds: productImageIds,
+    } : null;
     const measurement = reference?.presenterMeasurements as PresenterShotMeasurements | undefined;
     const missing: PresenterShotMeasurements = {
       shotId: scene.referenceShotId || scene.sceneId,
@@ -255,6 +278,7 @@ export function selectPresenterExecutions(input: {
     }
     let decision = decidePresenterStack(governed, {
       heygen: input.heygenReady, seedance: input.seedancePresenterReady, budget: input.budgetReady,
+      enterpriseProductAsset: Boolean(enterpriseProductAssetLock),
     });
     const selected = selectedStrategy;
     // Exact source speech plus the Director's frozen lip-sync requirement is
@@ -275,11 +299,8 @@ export function selectPresenterExecutions(input: {
     } else if (decision.route === 'heygen_talking' && decision.executable) {
       providerId = 'heygen';
     }
-    if (decision.route === 'seedance_first_frame' && decision.executable) {
-      // No social presenter Seedance executor is registered at present. Keep
-      // this branch explicit so future capability registration is auditable.
-      reasonCodes.push('social_seedance_presenter_executor_not_registered');
-    }
+    if (selected === 'authorized_digital_presenter' && decision.route === 'seedance_first_frame'
+      && decision.executable && input.seedancePresenterReady) providerId = 'seedance';
     if (decision.route === 'no_presenter_stack') reasonCodes.push('presenter_visible_but_no_executable_stack_required');
     return {
       sceneId: scene.sceneId,
@@ -288,6 +309,7 @@ export function selectPresenterExecutions(input: {
       providerId,
       executionStatus: providerId ? 'ready' : 'blocked',
       reasonCodes,
+      enterpriseProductAssetLock,
     };
   });
 }

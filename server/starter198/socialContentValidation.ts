@@ -236,7 +236,7 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
   }
   return {
     ...parseSocialReplicationContext(source),
-    materialRoutingPolicyVersion: 'type-aware.v1',
+    materialRoutingPolicyVersion: 'type-aware.v2',
     ...(source.referenceReuse != null ? {referenceReuse: parseSocialReferenceReuse(source.referenceReuse)} : {}),
     title: requiredText(source.title, 'social_content_title_invalid', 120),
     objective: requiredText(source.objective, 'social_content_objective_invalid', 1_000),
@@ -254,7 +254,7 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     cadence: optionalText(source.cadence, 'social_content_cadence_invalid', 200),
     requestedOutputCount: mode === 'instant' ? 1 : requestedOutputCount,
     weeklyBudgetCny: optionalNumber(source.weeklyBudgetCny, 'social_content_weekly_budget_invalid', 10_000_000),
-    perItemBudgetCny: Math.min(10, optionalNumber(source.perItemBudgetCny, 'social_content_item_budget_invalid', 1_000_000) ?? 10),
+    perItemBudgetCny: Math.min(15, optionalNumber(source.perItemBudgetCny, 'social_content_item_budget_invalid', 1_000_000) ?? 15),
     targetDurationSeconds,
     retryReserveCny: optionalNumber(source.retryReserveCny, 'social_content_retry_reserve_invalid', 10_000_000),
     planningMode: planningMode as CreateSocialContentTaskInput['planningMode'],

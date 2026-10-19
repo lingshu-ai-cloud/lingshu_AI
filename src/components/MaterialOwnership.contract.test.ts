@@ -68,6 +68,8 @@ assert.match(inspirationSource, /innerView === 'library' && <Button[\s\S]{0,400}
 assert.doesNotMatch(inspirationSource, /id="material-upload-product"/, '我的素材主页面不得继续展示独立的上传产品选择行');
 assert.match(inspirationSource, /aria-label="我的素材筛选"[^]*?MaterialTaxonomyFilters[^]*?aria-label="内容形式"[^]*?aria-controls="material-more-filters"/, '我的素材主工具栏应只保留来源、主题和内容形式三个筛选');
 const materialMainFilters = inspirationSource.slice(inspirationSource.indexOf('aria-label="我的素材筛选"'), inspirationSource.indexOf('id="material-more-filters"'));
+assert.match(materialMainFilters, /style=\{\{ minWidth: 260 \}\}[^]*?<Input allowClear[^]*?aria-label="搜索我的素材"[^]*?<Select[^]*?aria-label="素材分类"/, '搜索框必须位于我的素材主筛选最左侧且保持可用宽度');
+assert.match(materialMainFilters, /aria-label="素材分类"[^]*?\{value:"all",label:"全部素材"\}/, '素材分类必须允许查看全部素材');
 assert.doesNotMatch(materialMainFilters, /aria-label="素材收藏状态"/, '收藏状态不得继续占用我的素材主筛选位');
 assert.match(inspirationSource, /id="material-more-filters"[^]*?aria-label="素材收藏状态"/, '收藏状态必须收进更多筛选');
 assert.match(inspirationSource, /updateMaterial\(result\.material\.id,[^]*?productId: uploadProductId/, '前端 P0 上传后必须保存产品归属');
@@ -93,6 +95,7 @@ assert.doesNotMatch(inspirationSource, /采集参考 · 仅供分析|参考素�
 assert.match(inspirationSource, /<LsMasonryGallery layout="grid" items=\{filteredMaterials\.map/, '我的素材必须复用完整媒体卡的齐行网格');
 assert.match(inspirationSource, /title=\{materialSemanticLabel\(material\)\}>\{materialSemanticLabel\(material\)\}<\/p>/, '每张我的素材卡片必须显示产品名或主要内容关键词');
 const materialCardSource = inspirationSource.slice(inspirationSource.indexOf('<LsMasonryGallery layout="grid" items={filteredMaterials.map'), inspirationSource.indexOf('aria-label="我的素材分页"'));
+assert.match(materialCardSource, /generatedMaterialOriginLabel\(material\)/, 'AI 生成素材卡必须解释其来自内容制作流程');
 assert.doesNotMatch(materialCardSource, /visibleMaterialTags\(material\.tags\)|materialAssetBadge\(material\)/, '素材卡首页不得展示标签');
 assert.match(inspirationSource, /aria-label="素材标签"[^]*?materialAssetBadge\(detailMaterial\)[^]*?visibleMaterialTags\(detailMaterial\.tags\)/, '素材标签必须集中展示在详情顶部');
 assert.match(inspirationSource, /onClick=\{\(\) => setDetailMaterial\(material\)\}[\s\S]{0,600}查看详情/, '每张素材卡必须提供查看详情入口');

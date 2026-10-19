@@ -18,6 +18,10 @@ assert.equal(cards.length, 3);
 assert.equal(cards[0]?.status, 'ready');
 assert.match(cards[0]?.conclusion || '', /工厂透明度/);
 assert.equal(cards[0]?.thumbnailUrl, 'https://cdn.example.com/content-1.jpg');
+assert.deepEqual(cards[0]?.analysis?.map(item => item.label), ['结构判断', '表现依据', '放大条件']);
+assert.match(cards[0]?.analysis?.[0]?.value || '', /真人口播.*工厂生产.*采购行动/);
+assert.match(cards[0]?.analysis?.[1]?.value || '', /本期综合表现最高/);
+assert.match(cards[0]?.analysis?.[2]?.value || '', /小额测试/);
 assert.match(cards[1]?.evidence.join('\n') || '', /#smallbatch/);
 assert.match(cards[1]?.sellingPoints?.join('\n') || '', /工厂直供/);
 assert.equal(cards[2]?.links[0]?.url, 'https://www.tiktok.com/@factory/video/2');
@@ -25,5 +29,6 @@ assert.equal(cards[2]?.links[0]?.url, 'https://www.tiktok.com/@factory/video/2')
 const fallback = buildNextRoundRecommendationCards();
 assert.equal(fallback.every(card => card.status === 'waiting'), true);
 assert.equal(fallback.flatMap(card => card.links).length, 0);
+assert.equal(fallback[0]?.analysis?.length, 0);
 
 console.log('next round recommendation view model tests passed');

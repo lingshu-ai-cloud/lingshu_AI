@@ -8,6 +8,7 @@ import { STARTER_COLLECTIONS, type Starter198Repository } from '../starter198/re
 import { persistSocialDiscoveryDirectorAuthority } from '../starter198/socialDiscoveryAuthorityAdapter.js';
 import { buildSocialContentAuthorityLineage, parseSocialContentAuthorityLineage, persistAuthoritativeContentBundle } from '../starter198/socialContentLineage.js';
 import { socialJson, socialRequestHash } from '../starter198/socialContentValidation.js';
+import { readWeeklyAutomaticProductionIntent } from '../socialPrograms/weeklyAutomaticProductionPlanning.js';
 import type { BuildSocialAgentWorkflowInput } from '../starter198/socialContentAgentWorkflow.js';
 
 type Authority = NonNullable<BuildSocialAgentWorkflowInput['authoritativeContext']>;
@@ -21,7 +22,17 @@ export async function bindWeeklyProductionAuthority(input: {
     ref.type === 'weekly_publication_task' && ref.id === publication.publicationTaskId && ref.version === pkg.version));
   if (!weeklyWorkflowTask || !pkg.enterpriseProfileRef || !pkg.businessContentGoalRef) throw new Error('weekly_production_authority_required');
   const businessGoal = await createSocialOperatingRepository(dataStore).getGoal(tenantId, pkg.programId, pkg.businessContentGoalRef.id, pkg.businessContentGoalRef.version);
-  if (!businessGoal || businessGoal.status !== 'ready') throw new Error('weekly_production_business_goal_required');
+  if (!businessGoal) throw new Error('weekly_production_business_goal_required');
+  if (businessGoal.status !== 'ready') {
+    const automatic = await readWeeklyAutomaticProductionIntent(dataStore, {
+      tenantId, programId: pkg.programId, packageId: pkg.packageId, packageVersion: pkg.version,
+    }, pkg, publication.publicationTaskId);
+    if (!automatic || automatic.authority.proof.goalRef.id !== pkg.businessContentGoalRef.id
+      || automatic.authority.proof.goalRef.version !== pkg.businessContentGoalRef.version
+      || socialRequestHash(automatic.authority.goal) !== socialRequestHash(businessGoal)) {
+      throw new Error('weekly_production_business_goal_required');
+    }
+  }
   const program = await dataStore.list<any>('social_programs', { where: { tenant_id: tenantId, program_id: pkg.programId }, perPage: 2 });
   const programVersion = Number(program.items[0]?.payload?.version);
   if (program.totalItems !== 1 || !Number.isSafeInteger(programVersion) || programVersion < 1) throw new Error('weekly_production_program_required');

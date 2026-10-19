@@ -23,6 +23,8 @@ export interface ProductSceneReferenceImage {
 
 export interface ProductSceneQualityReport {
   productIdentitySimilarity: Record<string, number>;
+  packagingVisibilityPassed: boolean;
+  subjectVisibilityPassed: boolean;
   labelOcrExactMatch: boolean;
   sceneTopologyScore: number;
   productSlotLayoutScore: number;

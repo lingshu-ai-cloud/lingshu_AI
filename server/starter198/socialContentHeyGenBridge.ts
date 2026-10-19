@@ -175,6 +175,7 @@ export function createMvpSocialHeyGenHookAudioPort(options: {
   authorizeUpload(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest, source: PresenterHookAudioSource): Promise<boolean>;
 }): NonNullable<SocialHeyGenBridgeDependencies['speechAudio']> {
   return createSocialHeyGenHookAudioPort({ ...options, load: async input => {
+    if(!input.presenter.providerPresenterId||!input.presenter.providerVoiceId)throw Error('heygen_avatar_voice_mapping_required');
     const ref = await options.receiptRef(input);
     const adoption = options.useAdoptedSpeech === true ? readAdoptedMvpHeyGenSpeech(ref, options.adoptionRoot) : null;
     const result = adoption || readMvpHeyGenSpeech(ref, options.speechRoot);
@@ -310,6 +311,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
       return ports.execute({ ...input, recoveryOnly: true, reservationRef: input.idempotencyKey });
     },
     async execute(input) {
+      if(!input.presenter.providerPresenterId||!input.presenter.providerVoiceId)throw Error('heygen_avatar_voice_mapping_required');
       if(input.accountPlaybookConstraints)assertSocialAccountProductionConstraints(input.accountPlaybookConstraints);
       const existing = await deps.store.list<any>('studio_social_presenter_jobs',
         { where: { tenant_id: input.tenantId, request_id: input.idempotencyKey }, perPage: 2 });
@@ -360,6 +362,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
             provider: 'heygen', requestId: input.idempotencyKey, state: 'submitting',
             metadata: { reservationRef: input.reservationRef },
           });
+          if(!input.presenter.providerVoiceId)throw Error('heygen_voice_mapping_required');
           providerTaskId = await deps.client.create({ avatarId: '',imageAssetId:approvedFirstFrame.imageAssetId,
             ...(input.speechAudio ? { voiceId: '', script: '', audioAssetId: input.speechAudio.audioAssetId, engine: 'avatar_iv' as const } : { voiceId: input.presenter.providerVoiceId, script: input.script }), ratio: input.aspectRatio,
             transparent: false, title: `灵枢社媒镜头 ${input.shotId}` }, input.idempotencyKey);

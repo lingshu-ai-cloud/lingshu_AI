@@ -1,6 +1,7 @@
 import { dashscopeApiKey } from '../agents/qwen.js';
 import { benchmarkTimeRange, recordOf } from '../../shared/benchmarkAnalysis.js';
 import type { VideoAiAnalysis } from '../types/index.js';
+import {QWEN_COMPATIBLE_BASE_URL} from './qwenCompatibleEndpoint.js';
 
 export const REFERENCE_CRITICAL_RULE_VERSION = 'critical_shot_word_frame_v1';
 export const REFERENCE_CRITICAL_EVIDENCE_VERSION = 'frame-word-id-projection-v2';
@@ -117,13 +118,13 @@ export async function classifyReferenceCriticalShots(input: ClassificationInput,
 } = {}): Promise<VideoAiAnalysis> {
   const details = input.analysis.scriptDetails15s || [];
   if (!details.length || !input.frames.length || input.frames.length > 80) fail('missing_or_oversized_input');
-  const provider = options.provider || (process.env.REFERENCE_CRITICAL_PROVIDER === 'gemini' ? 'gemini' : 'qwen');
-  const model = options.model || (provider === 'gemini'
+  const provider = exactQwenScope() ? 'qwen' : options.provider || (process.env.REFERENCE_CRITICAL_PROVIDER === 'gemini' ? 'gemini' : 'qwen');
+  const model = exactQwenScope()?.model || options.model || (provider === 'gemini'
     ? process.env.GEMINI_CRITICAL_SHOT_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash'
-    : process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-flash');
-  const base = (options.baseUrl || (provider === 'gemini'
+    : process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-plus');
+  const base = (exactQwenScope()?.endpoint || options.baseUrl || (provider === 'gemini'
     ? 'https://generativelanguage.googleapis.com/v1beta/openai'
-    : process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1')).trim().replace(/\/+$/, '');
+    : process.env.DASHSCOPE_BASE_URL || QWEN_COMPATIBLE_BASE_URL)).trim().replace(/\/+$/, '');
   const frames = input.frames.filter(frame => {
     const index = Number(frame.shotId.replace(/^shot-/, '')) - 1;
     const range = details[index] && benchmarkTimeRange(details[index].time || details[index].timestamp || '');
@@ -151,10 +152,13 @@ syncPoints只输出wordIds、eventIndex、reason，不要生成syncTime。仅引
     content.push({ type: 'text', text: `原片证据 ${frame.shotId}，实际抽帧时刻 ${frame.seconds.toFixed(3)}s` });
     content.push({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } });
   }
+  const requestBody=JSON.stringify({ model, temperature: 0, response_format: { type: 'json_object' }, max_tokens: 14000,
+    messages: [{ role: 'user', content }] });
+  if(exactQwenScope())await authorizeExactQwenProviderRequest(requestBody);
   const response = await (options.fetcher || fetch)(`${base}/chat/completions`, { method: 'POST',
     headers: { Authorization: `Bearer ${options.apiKey || (provider === 'gemini' ? process.env.GEMINI_API_KEY?.trim() : dashscopeApiKey())}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, temperature: 0, response_format: { type: 'json_object' }, max_tokens: 14000,
-      messages: [{ role: 'user', content }] }), signal: AbortSignal.timeout(120_000) });
+    body: requestBody, signal: AbortSignal.timeout(120_000), redirect: 'error' });
+  if(exactQwenScope())await recordExactQwenProviderResponse(response,requestBody);
   if (!response.ok) throw new Error(`reference_critical_qwen_http_${response.status}`);
   const payload = recordOf(await response.json());
   const choice = recordOf(Array.isArray(payload.choices) ? payload.choices[0] : null);
@@ -181,3 +185,4 @@ export function restoreReferenceCriticalResponse(input: ClassificationInput,
     usage: providerResponse.usage, validationWarnings: checked.validationWarnings };
   return { ...input.analysis, scriptDetails15s: checked.details, criticalShotSummary: summary };
 }
+import {authorizeExactQwenProviderRequest,exactQwenScope,recordExactQwenProviderResponse} from '../agents/exactQwenScope.js';

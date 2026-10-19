@@ -43,7 +43,7 @@ export function createSocialWeeklyProducerEvidenceRouter(store: DataStore) {
     const bindingOptions = consumers.items.flatMap(row => {
       const task = socialObject(socialJson(row.payload)) as unknown as WeeklyExecutionTask;
       if (!task || task.tenantId !== scope.tenantId || task.programId !== scope.programId || task.packageId !== scope.packageId || task.packageVersion !== scope.packageVersion || row.task_id !== task.taskId) throw new SocialProgramError('weekly_producer_consumer_changed', 409, '原周任务身份已变化。');
-      if (!['business_outline', 'benchmark_collection'].includes(task.schedule.stepKind) || !['queued', 'blocked'].includes(task.status) || task.lease) return [];
+      if (!['business_outline', 'benchmark_collection'].includes(task.schedule.stepKind) || !['pending_activation', 'queued', 'blocked'].includes(task.status) || task.lease) return [];
       return [{ taskId: task.taskId, kind: task.schedule.stepKind === 'business_outline' ? 'outline' : 'discovery', expectedConsumerInputHash: supplementConsumerHash(task) }];
     });
     res.json({ items: { preproduction, metrics, templates }, bindingOptions });

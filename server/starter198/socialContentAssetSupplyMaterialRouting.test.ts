@@ -8,6 +8,14 @@ import { defaultBrief } from './socialContentTaskSupport.js';
 import { parseSocialTaskBrief } from './socialContentRecords.js';
 import { materialRoutingRequests } from './socialContentMaterialRoutingRequests.js';
 import { normalizeSceneVisualContract } from '../../shared/sceneVisualContract.js';
+import { buildLocalMaterialSegmentProfile, inferLocalMaterialSegmentType } from '../../shared/contracts/localMaterialSegmentProfile.js';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import ffmpeg from 'ffmpeg-static';
 const baseline = {schemaVersion:'social-content-script-baseline.v1',version:'route-fixture',source:'knowledge_fallback',formulaReference:null,themeId:null,language:'en',lockedAt:'2026-10-11T00:00:00Z',createdBeforeMaterialAdaptation:true,scenes:[{sceneId:'S01',formulaNodeId:null,shotFunction:'value',subject:'product',action:'demonstrate',voiceover:'Meet the product.',narration:'Meet the product.'}]} as StoredSocialScriptBaseline;
 function plan(type:'factory'|'product'|'consumer_demo',state:'matched'|'missing'='matched') {
  const result=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',inventory:{productImageIds:['actual-product-image']},shots:[{shotId:'S01',function:'value',requestedDescription:'Product scene'}]});
@@ -61,6 +69,26 @@ test('actual versioned planner and existing library adapter preserve reviewed pr
  const result=await executeSocialAssetSupplyPlan({tenantId:'tenant',taskId:'task',outputDirectory:'/tmp/local-no-paid',plan:p,baseline,availableAssets:[asset],adapters:existingAssetSupplyAdapters()});
  assert.equal(result.plan.materialRoutingPolicyVersion,'type-aware.v1');assert.equal(result.execution.shots[0]!.sourceStrategy,'customer_real_asset');assert.deepEqual(result.assets[0]!.segments,[{id:'reviewed-segment',start:4,end:7}]);assert.equal(result.execution.shots[0]!.attempts.length,1);
 });
+test('same-product authorized local MP4 bytes satisfy the product route without generation',async t=>{
+ assert.ok(ffmpeg);
+ const directory=await mkdtemp(path.join(tmpdir(),'weekly-local-product-'));
+ t.after(()=>rm(directory,{recursive:true,force:true}));
+ const video=path.join(directory,'owned-product.mp4');
+ await promisify(execFile)(ffmpeg,['-hide_banner','-loglevel','error','-f','lavfi','-i','color=c=blue:s=160x284:r=12','-t','3','-c:v','libx264','-pix_fmt','yuv420p','-y',video]);
+ const sha=createHash('sha256').update(await readFile(video)).digest('hex');
+ const p=plan('product');
+ const shot=p.shots[0]!;
+ shot.sourceRefs=['real-video'];
+ shot.materialRouting!.localMatch={state:'matched',sourceRefs:['real-video'],evidenceRef:`isolated-reviewed-same-product:${sha}`,productRef:'product'};
+ const asset={id:'real-video',sourceId:'real-video',name:'isolated same-product local bytes',type:'video' as const,url:video,localPath:video,contentHash:sha,authorizationRef:'isolated-owner-commercial-rights',duration:3,visualObservations:['isolated product fixture'],segments:[{id:'same-product',start:0,end:3}],explicitProductAssociation:{productRef:'product',basis:'tenant_task_upload' as const,exactTaskProductMatch:true as const}};
+ const {existingAssetSupplyAdapters}=await import('./socialContentProductionSupport.js');
+ let generated=0;
+ const result=await executeSocialAssetSupplyPlan({tenantId:'tenant',taskId:'task',outputDirectory:directory,plan:p,baseline,availableAssets:[asset],adapters:[...existingAssetSupplyAdapters(),{adapterId:'forbid-product-generation',sourceStrategies:['aigc_product_scene_replication'],async execute(){generated++;throw Error('nonlocal generation forbidden');}}]});
+ assert.equal(result.execution.shots[0]?.sourceStrategy,'customer_real_asset');
+ assert.equal(result.assets[0]?.contentHash,sha);
+ assert.equal(result.assets[0]?.authorizationRef,asset.authorizationRef);
+ assert.equal(generated,0);
+});
 test('mismatched generation duration stops before any paid adapter',async()=>{
  const p=plan('product','missing');p.shots[0]!.productSceneReplication!.cameraLock.durationSeconds=4;let paid=0;
  await assert.rejects(run(p,[{adapterId:'must-not-pay',sourceStrategies:['aigc_product_scene_replication'],async execute(){paid++;return null;}}]),/product_generation_contract/);assert.equal(paid,0);
@@ -73,24 +101,42 @@ function entryPlan(kind:'factory'|'consumer_demo'|'product', candidates: Paramet
  const requests=materialRoutingRequests({policyVersion:brief.materialRoutingPolicyVersion,tenantId:'tenant',productRef:brief.productRef,shots:[{shotId:'S01',function:'value',materialType:kind,requestedDescription:description,visualContract:visual}],candidates});
  return {visual,plan:createSocialAssetSupplyPlan({creationMode:brief.creationMode!,productionApproach:brief.productionApproach!,materialRoutingPolicyVersion:brief.materialRoutingPolicyVersion,inventory:{customerVideoIds:['real-video'],factoryEvidenceAssetIds:['real-video'],productIdentityGroups:[{productRef:'SKU-1',imageIds:['actual-product-image']}]},shots:requests})};
 }
-test('normal task API parser and persisted brief drive real local execution for factory, consumer and exact SKU action',async()=>{
+function profiledCandidate(value: Record<string, any>): Parameters<typeof materialRoutingRequests>[0]['candidates'][number] {
+ const materialRoles=value.materialRoles??[],visualContract=value.visualContract;
+ const assessment=buildLocalMaterialSegmentProfile({tenantId:'tenant',sourceTenantId:'tenant',origin:'my_materials',assetId:value.assetId,
+  segmentId:value.segmentId,sourceRevision:`revision:${value.assetId}`,currentSourceRevision:`revision:${value.assetId}`,
+  mediaType:value.mediaType??'video',synthetic:false,startSeconds:value.timeRange?.startSeconds??null,endSeconds:value.timeRange?.endSeconds??null,
+  materialType:inferLocalMaterialSegmentType({materialRoles,visualContract}),materialRoles,productId:value.productId??null,productRef:value.productRef??null,
+  visualContract,observedActionTags:[visualContract.action.path,visualContract.interaction.description],rightsEvidenceRefs:[`rights:${value.assetId}`],
+  commercialUseApproved:true,modelInputAllowed:false,derivativeUseAllowed:true,confidence:.95,needsReview:false,cleanEntry:true,cleanExit:true});
+ const candidate={...value,segmentProfile:assessment.profile,segmentProfileRejectionReasons:assessment.rejectionReasons};
+ return candidate as unknown as Parameters<typeof materialRoutingRequests>[0]['candidates'][number];
+}
+test('normal task API parser and persisted brief drive real local execution after selecting the local budget branch',async()=>{
  const {existingAssetSupplyAdapters}=await import('./socialContentProductionSupport.js');
  for(const kind of ['factory','consumer_demo','product'] as const){
   const {visual}=entryPlan(kind,[]);
-  const candidate={assetId:'real-video',sourceRef:'real-video',segmentId:'verified-action',origin:'my_materials',mediaType:'video',productRef:'SKU-1',materialRoles:kind==='factory'?['factory']:kind==='consumer_demo'?['person_usage']:['product'],visualContract:visual,timeRange:{startSeconds:3,endSeconds:6}} as Parameters<typeof materialRoutingRequests>[0]['candidates'][number];
+  const candidate=profiledCandidate({assetId:'real-video',sourceRef:'real-video',segmentId:'verified-action',origin:'my_materials',mediaType:'video',productRef:'SKU-1',materialRoles:kind==='factory'?['factory']:kind==='consumer_demo'?['person_usage']:['product'],visualContract:visual,timeRange:{startSeconds:3,endSeconds:6}});
   const p=entryPlan(kind,[candidate]).plan;let paid=0;
+  // This executor test explicitly finalizes the local branch. The whole-film
+  // allocator has its own quote/selection tests and must do this before dispatch.
+  if(kind==='product'){
+   assert.equal(p.shots[0]!.materialRouting?.productGenerationDecision?.state,'eligible');
+   delete p.shots[0]!.materialRouting!.generation;delete p.shots[0]!.productSceneReplication;
+   p.shots[0]!.materialRouting!.productGenerationDecision!.state='local_only';
+  }
   const result=await executeSocialAssetSupplyPlan({tenantId:'tenant',taskId:'new-task',outputDirectory:'/unused',plan:p,baseline,availableAssets:[{id:'real-video',sourceId:'real-video',type:'video',name:'owned',url:'local',localPath:'local',duration:9,segments:[{id:'verified-action',start:3,end:6}]} as any],adapters:[...existingAssetSupplyAdapters(),{adapterId:'paid-trap',sourceStrategies:['aigc_product_scene_replication','non_evidentiary_ai_visual'],async execute(){paid++;throw Error('paid');}}]});
-  assert.equal(result.plan.materialRoutingPolicyVersion,'type-aware.v1');assert.equal(result.execution.shots[0]!.sourceStrategy,'customer_real_asset');assert.deepEqual(result.assets[0]!.segments,[{id:'verified-action',start:3,end:6}]);assert.equal(paid,0);
+  assert.equal(result.plan.materialRoutingPolicyVersion,'type-aware.v2');assert.equal(result.execution.shots[0]!.sourceStrategy,'customer_real_asset');assert.deepEqual(result.assets[0]!.segments,[{id:'verified-action',start:3,end:6}]);assert.equal(paid,0);
  }
 });
 test('normal new task missing factory or consumer evidence blocks instead of converting inventory into AI permission',async()=>{
  for(const kind of ['factory','consumer_demo'] as const){let calls=0;await assert.rejects(run(entryPlan(kind,[]).plan,[{adapterId:'any-provider',sourceStrategies:['customer_real_asset','aigc_product_scene_replication','authorized_digital_presenter'],async execute(){calls++;return null;}}]),/local_real_video_required/);assert.equal(calls,0);}
 });
-test('normal new task wrong SKU or missing requested movement selects product replacement, not unrelated local footage',()=>{
+test('normal new task wrong SKU or missing requested movement blocks instead of generating or using unrelated footage',()=>{
  const {visual}=entryPlan('product',[]);
  for(const candidate of [{productRef:'OTHER',visualContract:visual},{productRef:'SKU-1',visualContract:normalizeSceneVisualContract({...visual,action:{path:'手握包装盒静止展示'},interaction:{kind:'person_holding_product',description:'手握包装盒静止展示'}})}]){
-  const p=entryPlan('product',[{assetId:'real-video',sourceRef:'real-video',segmentId:'wrong',origin:'my_materials',mediaType:'video',materialRoles:['product'],timeRange:{startSeconds:3,endSeconds:6},...candidate} as Parameters<typeof materialRoutingRequests>[0]['candidates'][number]]).plan;
-  assert.equal(p.shots[0]!.sourceStrategy,'aigc_product_scene_replication');assert.equal(p.shots[0]!.materialRouting?.localMatch.state,'missing');assert.equal(p.shots[0]!.materialRouting?.generation?.durationSeconds,3);
+  const p=entryPlan('product',[profiledCandidate({assetId:'real-video',sourceRef:'real-video',segmentId:'wrong',origin:'my_materials',mediaType:'video',materialRoles:['product'],timeRange:{startSeconds:3,endSeconds:6},...candidate})]).plan;
+  assert.equal(p.shots[0]!.sourceStrategy,'customer_real_asset');assert.equal(p.shots[0]!.materialRouting?.policy,'local_only');assert.equal(p.shots[0]!.materialRouting?.localMatch.state,'missing');assert.equal(p.shots[0]!.materialRouting?.productGenerationDecision?.state,'eligible');assert.equal(p.shots[0]!.feasibility,'functional_equivalent');
  }
 });
 test('stored historical brief and frozen plan remain unmarked through baseline alignment',()=>{

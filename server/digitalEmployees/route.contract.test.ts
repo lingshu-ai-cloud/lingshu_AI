@@ -33,6 +33,38 @@ assert.match(source, /critical_business_change/, 'critical product, market, audi
 assert.match(source, /本周预算、产品、市场或发布授权范围已变更/, 'authorization invalidation must explicitly warn about budget and business-boundary changes');
 assert.match(source, /appendAuthorizationRequiredEvent/, 'weekly-package changes must emit a visible reauthorization event');
 assert.match(source, /invalidatePublishingAuthorizationForRun/, 'weekly-package changes must pause already materialized work that has no provider receipt');
+assert.match(source, /savedPackage && plan && taskCorrectionInvalidatesWeeklyAuthorization\(input\.action\)/,
+  'an execution-only retry must retain the weekly budget and publishing boundary already approved before production');
+assert.match(source, /const invalidatesAuthorization = directorDecisionInvalidatesWeeklyAuthorization\(decision\)/,
+  'director decisions must invalidate the weekly authorization only when they actually change the frozen direction');
+assert.match(source, /restoreExecutionOnlyInvalidatedAuthorization\(tenantId, goal, run, plan\)/,
+  'a previously approved weekly boundary must be recoverable only through its durable approval and invalidation evidence');
+assert.match(source, /weekly_package\.authorization_recovered/,
+  'an automatic authorization restoration must leave an explicit audit receipt');
+assert.match(source, /task\.requires_approval && task\.status === 'failed'[\s\S]{0,500}dataStatus === 'execution_failed'/,
+  'an approval preflight exception must be safely re-observed instead of remaining a terminal workflow failure');
+assert.match(source, /run\.status === 'waiting_human' && !recoverableApprovalFailure/,
+  'a run paused by a recoverable approval preflight exception must be allowed to reconcile');
+assert.match(source, /const reobservableUserInputWait = taskResult\.items\.some[\s\S]{0,420}\['input', 'manual'\]\.includes[\s\S]{0,160}waitState/,
+  'an actionable input wait must be re-observed so completing the requested setup resumes automatically');
+assert.match(source, /error\.message\.includes\('IANA'\)[\s\S]{0,220}发布账号尚未配置有效时区/,
+  'a missing publishing timezone must become an actionable approval preflight result instead of an execution exception');
+assert.match(source, /error\.message === 'bounded_authorization_actor_missing'[\s\S]{0,220}重新确认周计划/,
+  'an invalidated bounded publishing grant must explain the required re-authorization instead of reporting a generic failure');
+assert.match(source, /dataStatus: 'preflight_blocked',[\s\S]{0,220}waitState: waitState\('input', preflight\.reason\)/,
+  'approval configuration gaps must be presented as explicit user input, not a vague external-service wait');
+assert.match(source, /const needsHumanInput = remaining\.find[\s\S]{0,400}'waiting_human'/,
+  'a run with an actionable input gap must be owned by the user rather than labeled as an external wait');
+assert.match(source, /status: 'waiting_human', output, business_refs: preflight\.businessRefs/,
+  'approval preflight inputs such as missing account authorization must be persisted as human work, not an external-service wait');
+assert.match(source, /const waitStatus = workflowStatusForWait\(diagnostic\)/,
+  'every diagnostic wait must map input, approval and provider states to distinct workflow statuses');
+assert.match(source, /const active = agentTasks\.find[\s\S]{0,180}'waiting_human'/,
+  'an Agent waiting for user input must remain visible in the live employee status instead of appearing idle');
+assert.match(source, /const shouldResetTask = \['waiting_external', 'waiting_approval', 'waiting_human', 'pending'\]/,
+  'attaching the requested evidence must reset a human-input task so the run can continue');
+assert.match(source, /const shouldReconcile = !\['succeeded', 'failed', 'cancelled', 'paused'\]\.includes\(run\.status\)/,
+  'a waiting-human run must reconcile immediately after the requested evidence is attached');
 const socialContentBridgeGoal = { id: 'social-bridge', metric: 'approved_social_content_artifacts', scope: { socialTaskId: 'socialtask-1' } };
 const weeklyOperatingGoal = { id: 'weekly-operating', metric: 'qualified_leads', scope: { description: '本周经营范围' } };
 assert.equal(isDigitalEmployeeOperatingGoal(socialContentBridgeGoal), false, 'a social-content execution bridge is not a Digital Employee weekly goal');
@@ -49,6 +81,8 @@ assert.match(packageDetailsRoute, /assertDurableOperationLease/, 'only the activ
 assert.match(packageDetailsRoute, /releaseDurableOperationLease/, 'completed detail generation must release its database lease');
 assert.match(packageDetailsRoute, /detailGeneration\?\.status === 'ready'/, 'a repeated request must reuse an already persisted ready preview');
 assert.match(packageDetailsRoute, /status: 'generating'/, 'detail generation must persist an in-progress checkpoint before calling Agents');
+assert.match(packageDetailsRoute, /readServerProductionOnboardingReadiness/, 'detail generation must verify authoritative production inputs before acquiring paid work');
+assert.match(packageDetailsRoute, /production_onboarding_preflight_blocked/, 'detail generation must return actionable onboarding blockers before calling Agents');
 assert.match(packageDetailsRoute, /generateWeeklyTaskPreviews/, 'step 2 must run the Director and Content pre-production analysis');
 assert.match(packageDetailsRoute, /status: 'blocked'/, 'a failed detail generation must preserve a retryable blocked state');
 const packageUpdateRoute = routeBlock("digitalEmployeesRouter.put('/goals/:goalId/package'");
@@ -83,8 +117,11 @@ assert.match(approveGoal, /correction_version:\s*0/, 'new workflow tasks must st
 assert.doesNotMatch(approveGoal, /missingGoalResources/, 'missing delivery resources must not block independent branches from starting');
 assert.doesNotMatch(approveGoal, /missing_required_resources|publishing_accounts_invalid/, 'delivery checks belong to runtime tasks, not whole-plan activation');
 assert.match(approveGoal, /active_goal_exists/, 'a tenant must not start overlapping active weekly goals');
-assert.match(approveGoal, /validatePackageForStart/, 'activation must use the structural start validator and defer per-content readiness');
-assert.doesNotMatch(approveGoal, /package_details_blocked|preproduction\?\.readiness\.canStart/, 'preview readiness must not block the whole operating run');
+assert.match(approveGoal, /validatePackageForStart/, 'activation must retain structural plan validation');
+assert.match(approveGoal, /preproduction\?\.readiness\.canStart[\s\S]{0,600}package_details_blocked/, 'every independently produced video must pass persisted preparation before the run exists');
+assert.match(approveGoal, /readServerProductionOnboardingReadiness/, 'activation must recompute readiness from authoritative server records');
+assert.match(approveGoal, /production_onboarding_preflight_blocked/, 'activation must return exact remediation without creating a run');
+assert.ok(approveGoal.indexOf('readServerProductionOnboardingReadiness') < approveGoal.indexOf('compareAndSwap?.(COLLECTION.plans'), 'zero-cost readiness must run before plan, goal or run mutations');
 assert.match(source, /const activeProjects = projectAutomationStates\.filter/, 'content observation must distinguish runnable siblings from item-local blockers');
 assert.match(source, /const blocker = activeProjects\.length \? ''/, 'one blocked content item must not pause other runnable content');
 assert.match(approveGoal, /savedFactsVersion !== canonicalFactsVersion/, 'a new run must compare the draft fact label with the canonical enterprise fact version');
@@ -135,6 +172,11 @@ for (const control of ['pause', 'resume']) {
   assert.match(routeBlock(`digitalEmployeesRouter.post('/runs/:runId/${control}'`), /withDigitalEmployeeRunLock/, `${control} must share the execution lock`);
 }
 assert.match(routeBlock("digitalEmployeesRouter.post('/runs/:runId/pause'"), /pauseContentExecutionJobsForRun[\s\S]*workflow_run_pause/, 'pausing a workflow must durably pause its production jobs');
+assert.match(
+  routeBlock("digitalEmployeesRouter.post('/runs/:runId/pause'"),
+  /\['running', 'waiting_external', 'waiting_approval', 'waiting_human'\]\.includes\(run\.status\)/,
+  'a run waiting for human input must still be pausable before publication',
+);
 assert.match(routeBlock("digitalEmployeesRouter.post('/runs/:runId/resume'"), /resumeContentExecutionJobsForRun[\s\S]*workflow_run_pause/, 'resuming a workflow must resume only its own controlled production jobs');
 assert.match(source, /cancelDigitalEmployeeRunApplication/, 'the cancel route must use the shared lifecycle application service');
 assert.match(cancellationApplication, /withDigitalEmployeeRunLock/, 'cancel must share the execution lock');
@@ -173,6 +215,15 @@ assert.match(correctionRoute, /status:\s*['"]skipped['"]/, 'skip must change the
 for (const suffix of ['retry', 'skip', 'complete']) {
   assert.match(source, new RegExp(`digitalEmployeesRouter\\.post\\('/tasks/:taskId/${suffix}'`), `missing ${suffix} task-control endpoint`);
 }
+const productionBudgetRecovery = routeBlock("digitalEmployeesRouter.post('/tasks/:taskId/production-budget-reforecast'");
+assert.match(productionBudgetRecovery, /withDigitalEmployeeRunLock/, 'legacy budget recovery must serialize with the active production run');
+assert.match(productionBudgetRecovery, /verifiedStoryboardProviderCostRange/, 'legacy budget recovery must reprice the exact frozen storyboard');
+assert.match(productionBudgetRecovery, /productionBudgetMode:[\s\S]*maxAigcRetries:/, 'the reviewed protected or economy choice must freeze the runtime retry policy');
+assert.match(productionBudgetRecovery, /contentBatchPlans[\s\S]*studio_projects/, 'the plan, frozen handoff and existing projects must receive one consistent ceiling');
+assert.match(productionBudgetRecovery, /legacyRepairProjects/, 'the recovery route must refuse to rewrite unrelated production blockers');
+assert.match(productionBudgetRecovery, /managedReplicationPlanHasExecutionGraph/, 'a version-only legacy replication shell must be recognized as incomplete');
+assert.match(productionBudgetRecovery, /hasFrozenSpeechEvidence/, 'legacy script repair must protect frozen person speech receipts while allowing narration-only repair to preserve paid visual receipts');
+assert.match(productionBudgetRecovery, /appendEvent[\s\S]*appendAudit/, 'a historical budget repair must be visible and auditable');
 assert.match(source, /digitalEmployeesRouter\.post\('\/tasks\/:taskId\/evidence'/, 'current-run tasks need an explicit tenant-validated business evidence link');
 assert.match(source, /canonicalEvidenceRef/, 'attached evidence must be resolved against tenant-owned records');
 
@@ -180,7 +231,7 @@ assert.match(source, /runReviewSummary/, 'active workflow runs must expose a liv
 assert.match(source, /liveReview/, 'overview must return a live review before the run is terminal');
 assert.match(source, /recordBelongsToTask/, 'business evidence must be scoped to the workflow run and task lineage');
 assert.match(source, /const canonicalBusinessRefs = observation\.businessRefs\.length[\s\S]{0,180}task\.business_refs/, 'observe reconciliation must preserve business refs prepared earlier in the same tick');
-assert.match(source, /status: (?:'waiting_external'|waitingStatus)[\s\S]{0,180}business_refs: canonicalBusinessRefs/, 'waiting or input-blocked tasks must persist canonical prepared/observed business refs');
+assert.match(source, /const taskUpdate = \{ status: waitStatus[\s\S]{0,180}business_refs: canonicalBusinessRefs/, 'waiting or input-blocked tasks must persist canonical prepared/observed business refs');
 assert.match(source, /status: 'succeeded'[\s\S]{0,180}business_refs: canonicalBusinessRefs/, 'successful tasks must persist the same canonical business refs contract');
 assert.match(source, /runScheduledTaskNow/, 'the first scheduled collection must reuse the real scheduler execution entry point');
 assert.match(source, /ensureContentBatchPlan/, 'content mode routing must persist a real content batch plan');

@@ -95,7 +95,9 @@ export function startInitialAuthSessionRefresh<TTimer>(ports: {
         if (!disposed) ports.onSuccess(session);
       } catch (error) {
         if (disposed) return;
-        const delay = ports.getToken() ? undefined : INITIAL_AUTH_RETRY_DELAYS_MS[retryIndex];
+        // A retained bearer is not evidence that the service is reachable.
+        // Temporary backend restarts must recover without clearing credentials.
+        const delay = INITIAL_AUTH_RETRY_DELAYS_MS[retryIndex];
         if (delay !== undefined) {
           retryIndex += 1;
           ports.onRetry?.(error, delay);
@@ -117,7 +119,10 @@ export function startInitialAuthSessionRefresh<TTimer>(ports: {
 function localPreviewBootstrapEnabled(): boolean {
   const env = import.meta.env;
   if (!env?.DEV || env.VITE_LINGSHU_LOCAL_PREVIEW !== '1' || typeof window === 'undefined') return false;
-  return window.location.port === '5177'
+  const configuredOrigin = String(env.VITE_LINGSHU_LOCAL_PREVIEW_ORIGIN || '').trim();
+  const expectedOrigin = configuredOrigin || 'http://127.0.0.1:5177';
+  return window.location.origin === expectedOrigin
+    && window.location.protocol === 'http:'
     && ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(window.location.hostname);
 }
 

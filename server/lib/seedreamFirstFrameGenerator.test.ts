@@ -73,7 +73,7 @@ for (const status of [302, 408, 409, 429, 500, 502, 503, 504]) {
   });
 }
 
-test('Seedream explicit authorization rejection releases reservation without recording an accepted task', async t => {
+test('Seedream HTTP 403 preserves the submitted operation and blocks a second paid POST', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'seedream-rejected-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   let calls = 0;
@@ -82,8 +82,11 @@ test('Seedream explicit authorization rejection releases reservation without rec
     return Response.json({ error: { message: 'authorization denied' } }, { status: 403 });
   } });
   const budget = new FirstFrameBudget(root, () => 2, () => 3), input = request();
-  for (let attempt = 0; attempt < 2; attempt++) await assert.rejects(produceFirstFrame(input, generator, { budget }), error => error instanceof FirstFrameProviderError && error.status === 'rejected');
-  assert.equal(calls, 2);
+  await assert.rejects(produceFirstFrame(input, generator, { budget }), error => error instanceof FirstFrameProviderError && error.status === 'rejected');
+  await assert.rejects(produceFirstFrame(input, generator, { budget: new FirstFrameBudget(root, () => 2, () => 3) }), /禁止自动重提/);
+  const reservation = await budget.reserve({ tenantId: input.tenantId, videoId: input.videoId, operationId: input.idempotencyKey, compositionId: input.compositionId, estimatedCostCny: generator.estimatedCostCny });
+  assert.equal(reservation.entry.status, 'uncertain');
+  assert.equal(calls, 1);
 });
 
 test('Seedream generation and image download refuse redirects while the download carries no API credential', async () => {

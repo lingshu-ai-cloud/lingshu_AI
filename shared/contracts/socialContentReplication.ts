@@ -5,7 +5,16 @@ import type {
   SocialSceneProductionAdmission,
   SocialSceneVisualContract,
 } from '../sceneVisualContract.js';
+import type { FixedYieldArchetypeId } from '../fixedYieldMaterialRegistry.js';
 import type { PresenterShotMeasurements } from './presenterStackPolicy.js';
+
+export type SocialProductFootageEvidenceBinding = {
+  contentSha256: string;
+  productId: string;
+  sceneFunction: string;
+  approvalId: string;
+  visualFindingId: string;
+};
 
 export const SOCIAL_CONTENT_TASK_STATUSES = [
   'draft',
@@ -20,6 +29,8 @@ export const SOCIAL_CONTENT_TASK_STATUSES = [
   'reviewed',
   'paused',
   'attention',
+  'cancelling',
+  'cancelled',
 ] as const;
 export type SocialContentTaskStatus = typeof SOCIAL_CONTENT_TASK_STATUSES[number];
 
@@ -282,6 +293,15 @@ export interface SocialProductSceneReplicationSpec {
       scale: number;
     }>;
   };
+  compositionSafety: {
+    /** Benchmark overlay positions stay stable; the source composition adapts around them. */
+    contentModulePolicy: 'benchmark_locked';
+    reservedSafeZoneSource: 'reference_content_modules' | 'system_template';
+    subjectPlacement: 'outside_content_module_safe_zone';
+    visualCenterBias: 'lower_when_upper_modules';
+    minimumClearanceRatio: number;
+    repairOrder: ['lower_visual_center', 'rescale_subject', 'regenerate_composition', 'adjust_content_module'];
+  };
   cameraLock: {
     shotSize: string;
     cameraAngle: string;
@@ -299,7 +319,7 @@ export interface SocialProductSceneReplicationSpec {
     cameraPathDeviationRatio: number;
   };
   validation: {
-    requiredChecks: Array<'product_identity' | 'label_ocr' | 'scene_topology' | 'product_slot_layout' | 'camera_trajectory'>;
+    requiredChecks: Array<'product_identity' | 'packaging_visibility' | 'subject_visibility' | 'label_ocr' | 'scene_topology' | 'product_slot_layout' | 'camera_trajectory'>;
     singleShotRetryOnFailure: true;
   };
 }
@@ -329,13 +349,42 @@ export interface SocialAssetSupplyShotPlan {
     segmentId: string;
     startSeconds: number;
     endSeconds: number;
+    /** Required for independently reviewed product-footage candidates. Legacy
+     * local video segments omit this and cannot acquire it by editing metadata. */
+    footageEvidence?: SocialProductFootageEvidenceBinding;
   } | null;
   /** Present when real product reference images drive a full generated scene. */
   productSceneReplication?: SocialProductSceneReplicationSpec;
+  /** Exact enterprise-KB product evidence required by a dynamic presenter
+   * who physically handles or displays the product. */
+  enterpriseProductAssetLock?: {
+    productId: string;
+    enterpriseFactRef: string;
+    referenceImageIds: string[];
+  };
+  /** Task-scoped background evidence copied from the exact benchmark shot.
+   * It is a lock over existing reference media, not a new library asset. */
+  referenceBackgroundAssetLock?: {
+    schemaVersion: 'social-reference-background-lock.v1';
+    referenceRecordId: string;
+    referenceSourceId: string;
+    sourceContentSha256: string;
+    analysisId: string;
+    analysisHash: string;
+    referenceShotId: string;
+    startSeconds: number;
+    endSeconds: number;
+    clipRef: string;
+    firstFrameRef: string;
+    firstFrameSeconds: number;
+    lockHash: string;
+  };
   /** Present only when this storyboard shot uses the shared digital-human stack. */
   digitalHumanPlan?: {
     workflow: 'material_processing' | 'viral_replication';
     method: 'talking' | 'replace' | 'reenact';
+    /** Runtime-frozen only from verified lipSyncRequired=false measurements. */
+    silentMotion?: boolean;
     presenterAssetIds: string[];
     referenceMaterialIds: string[];
     referenceRequired: boolean;
@@ -351,9 +400,16 @@ export interface SocialMaterialRouting {
   materialType: import('../benchmarkAnalysis').BenchmarkMaterialType;
   policy: 'local_only' | 'local_first_product_i2v' | 'authorized_presenter';
   localMatch: { state: 'matched' | 'missing'; sourceRefs: string[]; evidenceRef: string | null;
+    /** V2 exact-SKU identity of the verified segment, never a library-wide hint. */
+    productRef?: string | null;
+    /** Frozen fixed-yield archetype used for deterministic local matching. */
+    archetypeId?: FixedYieldArchetypeId;
     /** Frozen budget-degradation tier. Historic plans omit it. */
     sourceTier?: 'product_high_fidelity_local' | 'product_packaging_first_frame_i2v'
-      | 'product_local' | 'factory_local' | 'other_local' };
+      | 'product_local' | 'factory_local' | 'other_local';
+    /** Segment-level failures retained so the material gap remains actionable. */
+    rejections?: import('./localMaterialSegmentProfile.js').LocalMaterialSegmentRejection[];
+  };
   generation?: {
     sourceTier?: 'product_packaging_first_frame_i2v';
     method: 'reference_first_frame_product_replacement_i2v' | 'enterprise_authored_product_first_frame_i2v';
@@ -368,6 +424,16 @@ export interface SocialMaterialRouting {
     referenceShotId: string | null;
     referenceSourceId: string | null;
   };
+  /** V2 candidate is not permission to call a provider. The whole-film planner
+   * must select it against a real quote before any paid operation is admitted. */
+  productGenerationDecision?: {
+    state: 'eligible' | 'selected' | 'local_only';
+    importance: 'critical' | 'standard';
+    reason: string;
+    quoteRef?: string;
+    estimatedCostCny?: number;
+    budgetPlanRef?: string;
+  };
 }
 
 /**
@@ -375,7 +441,7 @@ export interface SocialMaterialRouting {
  * the system; only unconfirmed facts or rights may remain as customer actions.
  */
 export interface SocialAssetSupplyPlan {
-  materialRoutingPolicyVersion?: 'type-aware.v1';
+  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2';
   inventoryAudit?: { scannedAt:string; records:Array<{id:string;sha256:string|null;mediaType:string;productRef:string|null;width:number|null;height:number|null;durationSeconds:number|null;rightsEvidenceRef:string|null;productionEligible:boolean;gaps:string[]}> };
   planVersion: string;
   creationMode: SocialContentCreationMode;

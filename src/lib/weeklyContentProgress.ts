@@ -640,12 +640,12 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
     const claimedCompleteWithoutReceipts = ['completed', 'waiting_review'].includes(directSocial.status) && (!renderVerified || !qualityVerified);
     const status: StageStatus = directSocial.status === 'completed' && renderVerified && qualityVerified ? 'completed'
       : directSocial.status === 'blocked' ? 'blocked'
-        : directSocial.status === 'waiting_review' && renderVerified ? 'waiting'
+        : directSocial.status === 'waiting_review' && renderVerified && qualityVerified ? 'waiting'
           : claimedCompleteWithoutReceipts ? 'unavailable'
           : directSocial.status === 'producing' ? 'running' : 'pending';
     const summary = claimedCompleteWithoutReceipts
       ? '任务状态已经推进，但当前尚未同步到与这条内容绑定的完整成片和质检回执；未将其显示为制作完成。'
-      : directSocial.status === 'waiting_review' && renderVerified
+      : directSocial.status === 'waiting_review' && renderVerified && qualityVerified
         ? '已取得真实成片输出，等待内容验收；质检结果以独立回执为准。'
         : directSocial.stage || '已读取真实单条内容任务。';
     return {
@@ -657,7 +657,7 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
       taskId: directSocial.socialContentTaskId || contentId,
       projectIds: directSocial.projectIds,
       status,
-      statusLabel: status === 'unavailable' ? '回执待同步' : directSocial.status === 'waiting_review' && renderVerified ? '待验收' : labels[status],
+      statusLabel: status === 'unavailable' ? '回执待同步' : directSocial.status === 'waiting_review' && renderVerified && qualityVerified ? '待验收' : labels[status],
       summary,
       stages,
       shots: [],

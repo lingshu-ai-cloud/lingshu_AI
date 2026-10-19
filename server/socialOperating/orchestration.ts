@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import {naturalWeek} from '../../shared/naturalWeek.js';
 import type {
   BusinessGoalBuildInput,
   ConversionRouteInput,
@@ -17,6 +18,7 @@ import { resolveAutomationPolicy } from './automationPolicyResolver.js';
 import { deterministicFingerprint } from './businessGoalBuilder.js';
 import { planCapacity } from './capacityPlanner.js';
 import { resolveReferenceMode } from './referenceModeResolver.js';
+import { evaluateProductionOutlineReadiness } from './productionReadiness.js';
 import { createSocialOperatingRepository } from './repository.js';
 import { createSocialOperatingDecisionService, SocialOperatingDecisionError } from './service.js';
 
@@ -82,7 +84,7 @@ function validateWeekStart(value: unknown): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
     throw new SocialOperatingDecisionError('week_start_invalid', 400, '周起始日期必须使用 YYYY-MM-DD。');
   }
-  return date;
+  return naturalWeek(date).start;
 }
 
 export function createSocialOperatingOrchestrationService(
@@ -147,6 +149,7 @@ export function createSocialOperatingOrchestrationService(
 
     async resolve(tenantId: string, userId: string, programId: string, request: OperatingPlanningRequest, producerOriginal?:{key:string;recoveryOnly?:boolean}): Promise<OperatingPlanningResolution> {
       const weekStart = validateWeekStart(request.weekStart);
+      request={...request,weekStart};
       const producerHash=producerOriginal?deterministicFingerprint({tenantId,userId,programId,request}):null;
       if(producerOriginal){
         if(!producerOriginal.key)throw Error('weekly_outline_original_key_required');
@@ -223,7 +226,12 @@ export function createSocialOperatingOrchestrationService(
       const studioRef = studioRows.items[0] ? ref('studio_production_defaults', text(studioRows.items[0].id), sourceVersion(studioRows.items[0])) : null;
       const activeConfig = text(configRow?.status) === 'active' && Boolean(text(configRow?.activated_at));
       const capabilityStates: Record<OperatingCapabilityKey, OperatingCapabilityState> = {
-        'studio.production': activeConfig && studioRef && config.enabledWorkflows.some(item => item === 'product_content' || item === 'material_content') ? 'available' : configRow ? 'unavailable' : 'unknown',
+        // The workflow configuration proves that the studio production system
+        // is enabled. A missing default presenter/voice is a shot-level input
+        // exception handled by the existing production adapter and decision
+        // card; it must not disable factory/product/local-material production
+        // or prevent the package from reaching that auditable exception.
+        'studio.production': activeConfig && config.enabledWorkflows.some(item => item === 'product_content' || item === 'material_content' || item === 'viral_clone') ? 'available' : configRow ? 'unavailable' : 'unknown',
         'publishing.calendar': activeConfig && config.enabledWorkflows.includes('content_publish') && config.publishingTargets.length > 0 ? 'available' : configRow ? 'unavailable' : 'unknown',
         'customer.attribution': activeConfig && config.enabledWorkflows.includes('customer_segmentation') && conversionRoutes.some(item => item.verified) ? 'available' : configRow ? 'unavailable' : 'unknown',
       };
@@ -246,7 +254,7 @@ export function createSocialOperatingOrchestrationService(
       }, options);
       const automation = resolveAutomationPolicy({
         goal, mode: normalizeMode(config.autonomyMode), action: 'draft', capability: { key: 'studio.production', availability: capabilityStates['studio.production'] },
-        factsVerified: goal.status === 'ready', withinBudget: capacity.plan.status !== 'blocked', rightsSufficient: true,
+        factsVerified: goal.status === 'ready' || evaluateProductionOutlineReadiness(goal).ready, withinBudget: capacity.plan.status !== 'blocked', rightsSufficient: true,
       }, options);
       let referenceRef = request.referenceSelectionRef ?? ref('inspiration_inventory', programId, 1);
       let referenceRights: 'authorized' | 'restricted' | 'unknown' = 'restricted';
@@ -290,8 +298,15 @@ export function createSocialOperatingOrchestrationService(
         ref('decision_record', automation.decision.decisionId, 1),
         ref('decision_record', reference.decision.decisionId, 1),
       ];
-      const status = goal.status === 'blocked' || capacity.plan.status === 'blocked' || automation.policy.status === 'blocked' || reference.resolution.status === 'blocked'
-        ? 'blocked' as const : capacity.plan.status === 'degraded' || automation.policy.status === 'approval_required' || reference.resolution.status === 'degraded' ? 'degraded' as const : 'ready' as const;
+      const productionOnlyReady=evaluateProductionOutlineReadiness(goal).ready&&capacity.plan.status!=='blocked'&&automation.policy.automaticExecutionAllowed;
+      // A production-only snapshot may be degraded while conversion routes,
+      // publishing or a concrete reference selection remain unresolved. It is
+      // sufficient only for draft production; the weekly package continues to
+      // carry no publishing, acceptance or customer-message authorization.
+      const status = productionOnlyReady
+        ? 'degraded' as const
+        : goal.status === 'blocked' || capacity.plan.status === 'blocked' || automation.policy.status === 'blocked' || reference.resolution.status === 'blocked'
+          ? 'blocked' as const : capacity.plan.status === 'degraded' || automation.policy.status === 'approval_required' || reference.resolution.status === 'degraded' ? 'degraded' as const : 'ready' as const;
       const snapshot: OperatingAuthoritySnapshot = {
         snapshotId: stableId('operating_snapshot', { tenantId, programId }), programId, version, status, planningWeekStart: weekStart,
         programRef: ref('social_program', programId, programRow.payload.version), enterprise,

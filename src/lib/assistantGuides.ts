@@ -1,3 +1,5 @@
+import { ASSISTANT_READABLE_POLICY, ASSISTANT_DETAILS_POLICY } from '../../shared/assistantReadableReply';
+
 export type AssistantGuide = {
   title: string;
   message: string;
@@ -9,8 +11,9 @@ export type AssistantGuide = {
  * 对话窗口只负责给结论、必要依据和下一步选择。
  */
 export const ASSISTANT_RESPONSE_CONTRACT = [
-  '先给 1 个明确结论，不复述用户问题。',
-  '结论后最多补充 3 条完成当前决定所必需的细节。',
+  ASSISTANT_READABLE_POLICY,
+  ASSISTANT_DETAILS_POLICY,
+  '回应当前问题，保留足以判断的解释，不复述已知背景，也不按句数或建议条数机械截断。',
   '如需用户操作，只给 1 个主操作和最多 2 个次操作；完整结果引导到工作区查看。',
   '同一任务的后续进度更新原任务，不重复创建新任务或新提醒。',
   '暂停、继续、确认、修改、删除、发布等写操作只能通过当前任务卡的已签名动作执行；无法唯一绑定时必须明确说明未执行，禁止用对话文本声称成功。',

@@ -77,7 +77,12 @@ export default function ArkPresenterEnrollmentPanel(props: {
     </section>;
   }
   return <section aria-label="人物认证与方舟图片入库" className="space-y-2 rounded-lg border border-border bg-white p-4 text-xs">
-    <p className="font-bold">人物替换认证 · {enrollment?.state === 'ready' ? '可用于 Seedance' : enrollment?.state === 'processing' ? '方舟审核中' : enrollment?.state === 'needs_verification' ? '等待本人验证' : '待提交'}</p>
+    <p className="font-bold">人物替换认证 · {enrollment?.state === 'ready' ? '可用于 Seedance' : enrollment?.state === 'processing' ? '方舟图片审核中' : enrollment?.state === 'needs_verification' ? '等待本人验证' : enrollment?.state === 'uncertain' ? '提交结果待核对' : enrollment?.state === 'failed' ? '认证未完成' : '待提交'}</p>
+    <ol className="list-inside list-decimal space-y-1 text-text-secondary" aria-label="方舟人物认证步骤">
+      <li>上传或复用当前人物的正面照片和本人视频，并确认成年人及人物处理授权。</li>
+      <li>打开方舟页面，由出镜本人完成真人验证；此步需要离开灵枢。</li>
+      <li>返回企业知识库，等待系统查询验证结果、提交照片并核验方舟图片资产达到 Active。</li>
+    </ol>
     <p>{reusedMaterials ? '已复用统一接入时上传的照片和本人视频，不需要再次录入。' : '仅旧人物缺少认证资料时需要在这里补充一次照片和本人视频。'}</p>
     {!enrollment || enrollment.state === 'failed' ? <div className="space-y-2">
       {!props.presenterId && <label className="block">人物名称<input aria-label="认证人物名称" value={name} onChange={event => setName(event.target.value)} className="mt-1 w-full rounded border p-2" /></label>}
@@ -86,9 +91,9 @@ export default function ArkPresenterEnrollmentPanel(props: {
         <label className="block">清晰正面照片<input aria-label="人物认证照片" type="file" accept="image/jpeg,image/png,image/heic,image/heif,.jpg,.jpeg,.png,.heic" onChange={event => { setPhoto(event.target.files?.[0]); setPhotoMaterialId(''); }} className="mt-1 block w-full" /></label>
         {!!props.photos.length && <select aria-label="选择已有本人人物照片" value={photoMaterialId} onChange={event => { setPhotoMaterialId(event.target.value); setPhoto(undefined); }} className="w-full rounded border p-2"><option value="">或选择已上传照片</option>{props.photos.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}</>}
       {props.authorizationConfirmed ? <p className="rounded bg-white p-2 text-emerald-800">成年人及人物处理授权已在统一接入时确认。</p> : <label className="flex gap-2"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} />我确认出镜人为成年人，已取得本人同意：由方舟进行真人验证、处理照片并用于数字人制作</label>}
-      <button type="button" disabled={busy || !consent || (!props.presenterId && !name.trim()) || !(photo || photoMaterialId) || !(video || videoMaterialId)} onClick={() => void start()} className="rounded bg-accent px-3 py-2 font-bold text-white disabled:opacity-40">{busy ? '正在提交…' : '提交人物资料并开始认证'}</button>
+      <button type="button" disabled={busy || !consent || (!props.presenterId && !name.trim()) || !(photo || photoMaterialId) || !(video || videoMaterialId)} onClick={() => void start()} className="rounded bg-accent px-3 py-2 font-bold text-white disabled:opacity-40">{busy ? '正在提交…' : reusedMaterials ? '开始人物认证' : '提交人物资料并开始认证'}</button>
     </div> : null}
-    {enrollment?.state === 'needs_verification' && <a href={enrollment.verificationUrl} target="_blank" rel="noreferrer" className="inline-block rounded bg-accent px-3 py-2 font-bold text-white">打开本人验证</a>}
+    {enrollment?.state === 'needs_verification' && <div className="space-y-2 rounded bg-amber-50 p-2 text-amber-900"><p role="status">资料已提交，但尚未获得方舟真人验证结果。点击后会在新页面打开方舟；请由出镜本人操作，完成后返回这里等待审核。</p><a href={enrollment.verificationUrl} target="_blank" rel="noreferrer" className="inline-block rounded bg-accent px-3 py-2 font-bold text-white">前往方舟完成本人验证</a></div>}
     {enrollment?.state === 'processing' && <p role="status">本人验证已完成，正在等待方舟图片审核；完成后会自动用于当前人物。</p>}
     {enrollment?.state === 'uncertain' && <div className="space-y-2"><p role="alert">方舟上传结果尚不明确。系统已暂停再次提交，请先核对原任务。</p><button type="button" onClick={() => void productionApi.refreshArkEnrollment(enrollment.id).then(next => { setEnrollment(next); if (next.state === 'ready') void props.onReady(); }).catch(cause => setError(cause instanceof Error ? cause.message : '原任务核对失败'))} className="rounded border bg-white px-3 py-2">核对原方舟任务</button></div>}
     {(enrollment?.error || error) && <p role="alert" className="text-red-700">{enrollment?.error || error}</p>}

@@ -53,6 +53,13 @@ assert.equal(uncertainRank.exact, true, 'retain completed exact evidence without
 assert.equal(uncertainRank.productionReady, false);
 assert.ok(uncertainRank.admission.blockers.some(reason => reason.includes('第 2 镜') && reason.includes('类型未确认')));
 assert.ok(!uncertainRank.factors.some(reason => reason.includes('发布前需轻量复核')));
+const locallyStored = video('local-exact-video', '本地工厂检测参考', '先看真实检测过程', '');
+locallyStored.sourceUrl = '';
+Object.assign(locallyStored, { videoFileId: 'tenants/tenant-a/reference-videos/local-exact-video.mp4' });
+delete (locallyStored.aiAnalysis as any).candidateEvidence;
+const locallyStoredRank = rankContentReferences({ videos: [locallyStored], benchmarks: [], platform: 'tiktok', productName: '工业检测设备', audience: '采购', direction: '采购教育' })[0]!;
+assert.equal(locallyStoredRank.productionReady, true, 'tenant-owned exact analysis remains usable without a public crawl URL');
+assert.equal(locallyStoredRank.contentRelevant, true, 'legacy exact analysis without a relevance envelope can be reused when its production evidence is ready');
 const uncertainPack = enrichPackageWithContentSignals({ pack: recommendPackage(goal, config), goal, config, videos: [uncertain], benchmarks });
 assert.ok(uncertainPack.tasks.find(task => task.templateId === 'production')!.videoPlans!.every(plan => !plan.referenceId),
   'an unresolved exact analysis is not auto-selected for a new production plan');
@@ -90,7 +97,9 @@ assert.ok(plans.every(plan => plan.publication?.title && plan.publication.captio
 assert.ok(plans.every(plan => /[⚡✨💡🎯]/u.test(plan.publication?.title || '')), 'publication titles must start with a platform-appropriate visual hook');
 assert.ok(plans.every(plan => (plan.publication?.caption || '').includes('\n')), 'publication copy must separate the hook from the supporting message');
 assert.ok(plans.every(plan => Number(plan.estimatedCost) > 0), 'each video must carry the production stack highest-tier estimate');
-assert.equal(enriched.directorPlan?.productionBudget, plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0), 'weekly budget must equal the sum of per-video estimates');
+assert.ok(plans.every(plan => plan.estimatedCostRange?.basis === 'verified_storyboard_provider_envelope'), 'exact clone plans must use the provider-priced storyboard envelope');
+assert.equal(plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0), plans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0), 'the point estimate must equal the one-attempt storyboard forecast');
+assert.equal(enriched.directorPlan?.productionBudget, plans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0), 'the default protected budget must authorize the reviewed retry envelope');
 assert.equal(enriched.operatingContext?.budget.productionCny, enriched.directorPlan?.productionBudget, 'weekly goal and account allocation must read the same production budget');
 assert.ok(plans[0]?.buyerProblem);
 assert.ok(plans[0]?.plannedPublishDate);
@@ -104,6 +113,31 @@ assert.deepEqual(
 const shortage = enrichPackageWithContentSignals({ pack: recommendPackage(goal, config), goal, config, videos: videos.slice(0, 1), benchmarks });
 const shortagePlans = shortage.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
 assert.equal(shortagePlans.filter(plan => !plan.referenceId).length, shortagePlans.length - 1, 'viral shortages must remain explicit blockers rather than falling back to another route');
+
+const sameSpeech = 'Need a private label beauty product? We support packaging formula and design in one place. MOQ starts from ten thousand pieces.';
+const duplicateOriginal = video('duplicate-a', '私有品牌美妆一站式服务', '需要一个私有品牌美妆产品吗？', '1.1M');
+Object.assign(duplicateOriginal.aiAnalysis.gemini, { audioTranscript: { rawText: sameSpeech } });
+duplicateOriginal.aiAnalysis.gemini.theme = '私有品牌美妆产品一站式代工服务';
+const duplicateReencode = structuredClone(duplicateOriginal);
+duplicateReencode.id = 'duplicate-b';
+duplicateReencode.sourceUrl = 'https://tiktok.com/@benchmark/video/duplicate-b';
+duplicateReencode.title = '同一视频重新导出';
+duplicateReencode.thumbnailUrl = 'https://cdn.example.com/duplicate-b.jpg';
+delete (duplicateReencode.aiAnalysis.gemini as any).audioTranscript;
+duplicateReencode.aiAnalysis.gemini.scriptDetails15s.forEach(shot => {
+  Object.assign(shot, { dialogue: sameSpeech.replace('ten thousand', '10, 000') });
+});
+const distinctReference = video('distinct-c', '采购验机证据', '采购经理先看这三个验机证据', '900K');
+Object.assign(distinctReference.aiAnalysis.gemini, { audioTranscript: { rawText: 'Before accepting industrial equipment, verify the calibration report, inspection footage, and signed delivery checklist.' } });
+const deduplicated = enrichPackageWithContentSignals({
+  pack: recommendPackage(goal, config), goal, config,
+  videos: [duplicateOriginal, duplicateReencode, distinctReference], benchmarks,
+});
+const deduplicatedReferences = (deduplicated.tasks.find(task => task.templateId === 'production')?.videoPlans || [])
+  .map(plan => plan.referenceId).filter(Boolean);
+assert.equal(deduplicatedReferences.filter(id => id === 'duplicate-a' || id === 'duplicate-b').length, 1,
+  'different records containing the same video may occupy only one slot in a weekly plan');
+assert.ok(deduplicatedReferences.includes('distinct-c'), 'a genuinely different analyzed video must remain available for another weekly slot');
 
 const blankProductPack = recommendPackage(goal, normalizeDigitalEmployeeConfig({ ...config, focusProducts: '' }));
 const productBound = bindDefaultProductsToPackage(blankProductPack, [{ id: 'product-1', name: '默认检测设备', materialIds: ['asset-1'] }]);
@@ -160,9 +194,9 @@ for (const master of fourPlatformMasters) {
   const family = fourPlatformPlans.filter(plan => plan.contentFamilyId === master.contentFamilyId);
   assert.ok(family.every(plan => plan.referenceId === master.referenceId), 'cross-platform variants inherit the same benchmark and normalized structure');
 }
-assert.equal(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0), 200);
-assert.equal(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0), 160);
-assert.equal(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0), 240);
+assert.equal(Math.round(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) * 100) / 100, 134.4);
+assert.equal(Math.round(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0) * 100) / 100, 134.4);
+assert.equal(Math.round(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0) * 100) / 100, 268.8);
 const fourPlatformBatch = buildContentBatchPlan({
   goalId: 'four-platform-goal',
   goal: { ...fourPlatformGoal, videoPlans: fourPlatformPlans },

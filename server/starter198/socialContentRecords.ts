@@ -1,5 +1,6 @@
 import {parseSocialReferenceReuse} from './socialContentValidation.js';
 import {applySocialContentRevisionSupply} from './socialContentRevisionProjection.js';
+import {readHandoffProductFootageRevisionSupply} from './socialContentProductFootageRevisionProjection.js';
 import {auditWeeklyMaterialInventory} from './weeklyMaterialInventory.js';
 import {readWeeklyStageObservation} from './socialWeeklyStageObservation.js';
 import {readWeeklyReplicationContext} from './weeklyReplicationContext.js';
@@ -60,7 +61,14 @@ import {
 import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply.js';
 import { materialRoutingRequests } from './socialContentMaterialRoutingRequests.js';
 import { ownedProductReferenceImageIds } from './socialContentProductReferenceInventory.js';
-import type { SocialShotFunction } from '../../shared/contracts/socialContentReplication.js';
+import type { SocialShotFunction, SocialProductFootageEvidenceBinding } from '../../shared/contracts/socialContentReplication.js';
+import {
+  buildLocalMaterialSegmentProfile,
+  inferLocalMaterialSegmentType,
+  usableLocalMaterialRightsEvidence,
+  type LocalMaterialSegmentProfile,
+  type LocalMaterialSegmentRejectionReason,
+} from '../../shared/contracts/localMaterialSegmentProfile.js';
 import {
   parseStoredSocialReferenceVideoAnalysis,
   parseStoredSocialReplicationScript,
@@ -79,6 +87,7 @@ import { readSocialProductionState } from './socialContentProductionHandoff.js';
 import { listProductionInputRequests } from '../production/productionInputRequests.js';
 import { listProductionCostQuotes } from '../production/productionCostQuotes.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
+import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
 import {
   AUTO_TASK_KEY,
   automaticMaterialScore,
@@ -87,6 +96,11 @@ import {
   materialTenantId,
 } from './socialContentProductionMaterials.js';
 import { visualEvidenceScore } from '../digitalEmployees/sceneEvidence.js';
+import type { EnterpriseProfile } from '../lib/socialContentLegacyPorts.js';
+import {
+  projectShotMaterialRequirements,
+  resolveSocialEnterpriseProductBinding,
+} from './socialContentTaskEvidenceProjection.js';
 import {
   buildMaterialScriptAnalysis,
   type MaterialScriptAnalysis,
@@ -273,14 +287,14 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     || (referenceMode && !SOCIAL_REPLICATION_REFERENCE_MODES.includes(referenceMode as typeof SOCIAL_REPLICATION_REFERENCE_MODES[number]))) {
     throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
   }
-  if (record.materialRoutingPolicyVersion != null && record.materialRoutingPolicyVersion !== 'type-aware.v1') {
+  if (record.materialRoutingPolicyVersion != null && record.materialRoutingPolicyVersion !== 'type-aware.v1' && record.materialRoutingPolicyVersion !== 'type-aware.v2') {
     throw new SocialContentWorkflowError('social_material_routing_policy_invalid', 503);
   }
   return {
     title,
     objective,
     ...(record.referenceReuse != null ? {referenceReuse: parseSocialReferenceReuse(record.referenceReuse)} : {}),
-    ...(record.materialRoutingPolicyVersion === 'type-aware.v1' ? { materialRoutingPolicyVersion: 'type-aware.v1' as const } : {}),
+    ...(record.materialRoutingPolicyVersion === 'type-aware.v1' || record.materialRoutingPolicyVersion === 'type-aware.v2' ? { materialRoutingPolicyVersion: record.materialRoutingPolicyVersion } : {}),
     productId: nullable(record.productId),
     productRef: nullable(record.productRef),
     requestedPresenterName: nullable(record.requestedPresenterName),
@@ -436,6 +450,8 @@ export function socialTaskSummary(record: StarterRecord): SocialContentTaskSumma
   }
   return {
     taskId,
+    ...(socialObject(socialJson(record.content_order))?.schemaVersion==='social-content-order.v1'
+      ?{contentOrder:structuredClone(socialJson(record.content_order)) as SocialContentTaskSummary['contentOrder']}:{}),
     brief,
     status,
     version,
@@ -608,6 +624,7 @@ async function taskRows(
 export interface SocialWorkflowMaterialClipCandidate extends SocialWorkflowMaterialCandidate {
   synthetic?: boolean;
   segmentId: string;
+  footageEvidence?: SocialProductFootageEvidenceBinding;
   /** Stable material identity, independent from the task's requested product. */
   productId: string | null;
   productRef: string | null;
@@ -616,12 +633,16 @@ export interface SocialWorkflowMaterialClipCandidate extends SocialWorkflowMater
   materialRoles: SocialMaterialRole[];
   visualContract: SocialSceneVisualContract;
   timeRange: { startSeconds: number; endSeconds: number } | null;
+  /** Versioned segment-level admission evidence consumed by fixed-yield V2. */
+  segmentProfile: LocalMaterialSegmentProfile | null;
+  segmentProfileRejectionReasons: LocalMaterialSegmentRejectionReason[];
   segmentCandidateId: string;
   sourceRevision: string;
 }
 
 export interface SocialWorkflowMaterialCandidateSet {
   candidates: SocialWorkflowMaterialClipCandidate[];
+  rejectedSegments: import('../../shared/contracts/localMaterialSegmentProfile.js').LocalMaterialSegmentRejection[];
   productPolicy: SocialProductPolicy;
   requestedProductId: string | null;
   requestedProductRef: string | null;
@@ -698,8 +719,96 @@ function sameProduct(
   return Boolean(candidateRef && requestedRef && candidateRef === requestedRef);
 }
 
+function materialRightsEvidenceRefs(record: MaterialRecord): string[] {
+  return usableLocalMaterialRightsEvidence([
+    record.rightsEvidenceRef,
+    record.licenseEvidence,
+    record.consentRef,
+    ...(Array.isArray(record.rightsEvidenceRefs) ? record.rightsEvidenceRefs : []),
+    record.provenance?.rightsEvidenceRef,
+    record.provenance?.authorizationRef,
+  ]);
+}
+
+function materialSourceRevision(record: MaterialRecord, shot: MaterialScriptShot): { analysis: string; current: string } {
+  const stored = socialObject(record.scriptAnalysis);
+  const analysis = socialText(stored?.sourceRevision)
+    || socialText(record.analysisSourceRevision)
+    || socialText(record.sourceRevision)
+    || `material:${socialText(record.id)}`;
+  const current = socialText(record.analysisSourceRevision)
+    || socialText(record.sourceRevision)
+    || socialText(record.contentSha256)
+    || socialText(record.sha256)
+    || analysis;
+  return { analysis, current };
+}
+
+function segmentProfile(input: {
+  record: MaterialRecord;
+  shot: MaterialScriptShot;
+  tenantId: string;
+  assetId: string;
+  mediaType: 'video' | 'image';
+  materialRoles: SocialMaterialRole[];
+  identity: { productId: string | null; productRef: string | null };
+}): ReturnType<typeof buildLocalMaterialSegmentProfile> {
+  const { record, shot } = input;
+  const sourceTenantId = materialTenantId(record);
+  const origin = sourceTenantId === input.tenantId ? 'my_materials' as const : 'shared_library' as const;
+  const sourceRevision = materialSourceRevision(record, shot);
+  const rightsEvidenceRefs = materialRightsEvidenceRefs(record);
+  const rightsStatus = socialText(record.rightsStatus).toLocaleLowerCase();
+  const commercialUseApproved = record.commercialUseApproved === true;
+  // Old tenant-owned rows can prove local editing rights with an explicit
+  // owned/authorized status plus commercial approval. Shared rows still need
+  // the dedicated derivatives flag; mere visibility is not production proof.
+  const derivativeUseAllowed = record.derivativeUseAllowed === true
+    || record.derivativesApproved === true
+    || (origin === 'my_materials' && commercialUseApproved && ['owned', 'authorized'].includes(rightsStatus));
+  const authorizationScopes: string[] = Array.isArray(record.provenance?.authorizationScopes)
+    ? record.provenance.authorizationScopes.map(socialText) : [];
+  const modelInputAllowed = record.modelInputAllowed === true
+    || (record.rawLibraryUseApproved === true && authorizationScopes.some((scope: string) => /model|provider|enterprise-video/i.test(scope)));
+  const materialType = inferLocalMaterialSegmentType({ materialRoles: input.materialRoles, visualContract: shot.visualContract });
+  return buildLocalMaterialSegmentProfile({
+    tenantId: input.tenantId,
+    sourceTenantId: sourceTenantId || null,
+    origin,
+    assetId: input.assetId,
+    segmentId: shot.segmentId,
+    sourceRevision: sourceRevision.analysis,
+    currentSourceRevision: sourceRevision.current,
+    mediaType: input.mediaType,
+    synthetic: isSyntheticMaterial(record),
+    startSeconds: Number.isFinite(shot.startSeconds) ? shot.startSeconds : null,
+    endSeconds: Number.isFinite(shot.endSeconds) ? shot.endSeconds : null,
+    materialType,
+    materialRoles: input.materialRoles,
+    productId: input.identity.productId,
+    productRef: input.identity.productRef,
+    visualContract: shot.visualContract,
+    observedActionTags: [...shot.editorial.actions, shot.visualContract.action.path,
+      shot.visualContract.action.startState, shot.visualContract.action.peakState, shot.visualContract.action.endState],
+    framingTags: [...shot.editorial.shotLanguage, shot.visualContract.camera.shotSize,
+      shot.visualContract.camera.angle, shot.visualContract.camera.composition],
+    cameraMovementTags: [shot.visualContract.camera.movement],
+    entityAndTextTags: [...shot.editorial.subjects, ...shot.observedEvidence, ...shot.matchTags],
+    rightsEvidenceRefs,
+    commercialUseApproved,
+    modelInputAllowed,
+    derivativeUseAllowed,
+    confidence: shot.confidence,
+    needsReview: shot.needsReview,
+    cleanEntry: shot.editorial.trim.cleanEntry,
+    cleanExit: shot.editorial.trim.cleanExit,
+  });
+}
+
 export function buildSocialWorkflowMaterialCandidates(input: {
   records: MaterialRecord[];
+  /** Only overlays returned by the independent signed byte/visual reader. */
+  reviewedFootageOverlays?: MaterialRecord[];
   tenantId: string;
   voiceoverRows: Array<{ cueId: string; text: string }>;
   selectedProductRef?: string | null;
@@ -708,8 +817,8 @@ export function buildSocialWorkflowMaterialCandidates(input: {
   linkedRecordIds?: Set<string>;
 }): SocialWorkflowMaterialCandidateSet {
   const linkedRecordIds = input.linkedRecordIds ?? new Set<string>();
-  const raw = input.records
-    .filter(record => automaticSocialMaterialEligible(record, input.tenantId))
+  const trustedOverlays = input.reviewedFootageOverlays ?? [];
+  const raw = [...input.records.filter(record => automaticSocialMaterialEligible(record, input.tenantId)), ...trustedOverlays]
     .flatMap(record => {
       const assetId = socialText(record.id);
       const mediaType = socialText(record.type) as 'video' | 'image';
@@ -727,8 +836,6 @@ export function buildSocialWorkflowMaterialCandidates(input: {
         };
         const startSeconds = Number(shot.startSeconds);
         const endSeconds = Number(shot.endSeconds);
-        if (shot.needsReview || !Number.isFinite(shot.confidence) || shot.confidence < 0.6) return [];
-        if (mediaType === 'video' && (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds)) return [];
         const observed = [
           ...shot.observedEvidence,
           ...shot.matchTags,
@@ -744,6 +851,8 @@ export function buildSocialWorkflowMaterialCandidates(input: {
           ...inferMaterialRoles(shot.visualContract),
           ...(Array.isArray(record.materialRoles) ? record.materialRoles.map(socialText) : []),
         ].filter(role => ['factory', 'customer_case', 'product', 'person_usage', 'presenter', 'environment', 'general'].includes(role)))] as SocialMaterialRole[];
+        const profileAssessment = segmentProfile({ record, shot, tenantId: input.tenantId, assetId,
+          mediaType, materialRoles, identity: shotIdentity });
         return [{
           record,
           shot,
@@ -752,6 +861,8 @@ export function buildSocialWorkflowMaterialCandidates(input: {
           identity: shotIdentity,
           enterpriseCommon,
           materialRoles,
+          segmentProfile: profileAssessment.profile,
+          segmentProfileRejectionReasons: profileAssessment.rejectionReasons,
           materialV2,
           sourceRevision,
           cueScores,
@@ -785,7 +896,16 @@ export function buildSocialWorkflowMaterialCandidates(input: {
     || inferred?.identity.productRef || null;
   const productPolicy: SocialProductPolicy = hasExplicitProduct ? 'locked' : inferred ? 'preferred' : 'open';
   const requested = { productId: requestedProductId, productRef: requestedProductRef };
+  const rejectedSegments = raw.flatMap(item => item.mediaType === 'video' && !item.segmentProfile?.productionEligible
+    ? [{ assetId: item.assetId, segmentId: item.shot.segmentId,
+      sourceRevision: item.segmentProfile?.sourceRevision ?? null,
+      reasons: item.segmentProfileRejectionReasons }]
+    : []);
   const candidates = raw.flatMap(item => {
+    // Images remain available to historic product-identity flows. Fixed-yield
+    // local video routes only receive segments whose version, rights and edit
+    // boundaries passed the server-owned profile gate.
+    if (item.mediaType === 'video' && !item.segmentProfile?.productionEligible) return [];
     const productCompatibility = resolveProductCompatibility({
       policy: productPolicy,
       requestedProductId,
@@ -826,6 +946,8 @@ export function buildSocialWorkflowMaterialCandidates(input: {
       assetId: item.assetId,
       sourceRef: item.assetId,
       segmentId: item.shot.segmentId,
+      ...(item.record.provenance?.footageCandidate && item.shot.footageEvidence
+        ? { footageEvidence: structuredClone(item.shot.footageEvidence) } : {}),
       label: `${socialText(item.record.name || item.record.title) || '未命名素材'} · ${item.shot.segmentId}`,
       mediaType: item.mediaType,
       previewUrl: null,
@@ -839,6 +961,8 @@ export function buildSocialWorkflowMaterialCandidates(input: {
       materialRoles: item.materialRoles,
       visualContract,
       timeRange,
+      segmentProfile: item.segmentProfile,
+      segmentProfileRejectionReasons: item.segmentProfileRejectionReasons,
       segmentCandidateId: `${item.assetId}:${item.sourceRevision}:${item.shot.segmentId}`,
       sourceRevision: item.sourceRevision,
       materialV2: item.materialV2,
@@ -846,13 +970,20 @@ export function buildSocialWorkflowMaterialCandidates(input: {
   }).sort((left, right) => right.matchScore - left.matchScore
     || left.assetId.localeCompare(right.assetId)
     || left.segmentId.localeCompare(right.segmentId));
-  return { candidates, productPolicy, requestedProductId, requestedProductRef };
+  return { candidates, rejectedSegments, productPolicy, requestedProductId, requestedProductRef };
 }
 
 export async function readSocialTaskDetail(input: {
   repository: Starter198Repository;
   tenantId: string;
   taskId: string;
+  /** Server-only authority readers. An unverified marker is never projected. */
+  preparedProductAssetRevisionReaders?: {
+    readBudgetLedgerRef: () => Promise<string>;
+    readReplacementMaterial: (assetId: string, tenantId: string) => Promise<MaterialRecord | null>;
+    readReplacementBytes: (assetId: string, tenantId: string) => Promise<Buffer>;
+  };
+  ledgerRoot?: string;
 }): Promise<SocialContentTaskDetail | null> {
   const task = await socialTaskRecord(input);
   if (!task) return null;
@@ -891,6 +1022,16 @@ export async function readSocialTaskDetail(input: {
   }
   const activeMaterials = activeSources.filter(source => source.kind === 'material');
   const materialInventory = await (input.repository.materialLibrary ?? readMaterialLibrary)(input.tenantId, {dataStore: input.repository.dataStore}).catch(() => {throw new SocialContentWorkflowError('social_content_material_inventory_unavailable',503);});
+  const enterpriseProfile = await (async (): Promise<EnterpriseProfile | null> => {
+    if (!input.repository.dataStore) return null;
+    const profiles = await input.repository.dataStore.list<Record<string, unknown>>('tenant_profiles', {
+      where: { tenant_id: input.tenantId }, page: 1, perPage: 2,
+    });
+    if (profiles.totalItems > 1 || profiles.items.some(row => row.tenant_id !== input.tenantId)) {
+      throw new SocialContentWorkflowError('enterprise_product_inventory_scope_invalid', 503);
+    }
+    return socialObject(socialJson(profiles.items[0]?.profile)) as unknown as EnterpriseProfile | null;
+  })();
   const materialById = new Map(materialInventory.items.map(item => [socialText(item.id), item]));
   const linkedMaterialRows = activeMaterials.flatMap(source => {
     const record = materialById.get(decodeMaterialRef(source.sourceRef));
@@ -903,8 +1044,10 @@ export async function readSocialTaskDetail(input: {
     summary.brief.presenterAssetId,
   );
   const weeklyAuthority = socialObject(socialJson(task.brief))?._weeklyAuthority as Parameters<typeof buildSocialAgentWorkflow>[0]['authoritativeContext'];
+  const enterpriseProductBinding = resolveSocialEnterpriseProductBinding(enterpriseProfile, summary.brief.productId);
   const confirmedFactRefs = [
     ...(weeklyAuthority?.publicationTask.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`) ?? []),
+    ...(enterpriseProductBinding ? [enterpriseProductBinding.enterpriseFactRef] : []),
     ...activeSources.filter(source => source.kind === 'knowledge').map(source => source.sourceId),
     ...(summary.brief.brandNotes ? ['brief:confirmed-facts'] : []),
   ];
@@ -931,16 +1074,8 @@ export async function readSocialTaskDetail(input: {
   const selectedTaskProductId = socialText(summary.brief.productId) || null;
   const selectedTaskProductRef = socialText(summary.brief.productRef) || null;
   let enterpriseProductImageUrls: string[] = [];
-  if (selectedTaskProductId && input.repository.dataStore) {
-    const profiles = await input.repository.dataStore.list<Record<string, unknown>>('tenant_profiles', {
-      where: { tenant_id: input.tenantId }, page: 1, perPage: 2,
-    });
-    if (profiles.totalItems > 1 || profiles.items.some(row => row.tenant_id !== input.tenantId)) {
-      throw new SocialContentWorkflowError('enterprise_product_inventory_scope_invalid', 503);
-    }
-    const profile = socialObject(socialJson(profiles.items[0]?.profile));
-    const products = socialObject(profile?.products);
-    const items = Array.isArray(products?.items) ? products.items.map(item => socialObject(item)).filter(Boolean) : [];
+  if (selectedTaskProductId && enterpriseProfile) {
+    const items = (enterpriseProfile.products.items ?? []).map(item => socialObject(item)).filter(Boolean);
     const selected = items.find(product => {
       const persisted = [product?.id, product?.productId, product?.sku].map(socialText).find(Boolean);
       return persisted === selectedTaskProductId;
@@ -953,8 +1088,25 @@ export async function readSocialTaskDetail(input: {
       ].filter(Boolean))];
     }
   }
+  const reviewedFootageOverlays: MaterialRecord[] = [];
+  if (selectedTaskProductId && input.repository.dataStore) {
+    const { configuredFootageVisualAuthorities, readApprovedProductFootageVisualOverlay } =
+      await import('../routes/enterpriseProductFootageVisualReview.js');
+    if (configuredFootageVisualAuthorities().length) {
+      for (const record of materialInventory.items) {
+        if (record.type !== 'video' || !record.provenance?.footageCandidate
+          || materialTenantId(record) !== input.tenantId || socialText(record.productId) !== selectedTaskProductId) continue;
+        const overlay = await readApprovedProductFootageVisualOverlay({
+          store: input.repository.dataStore, material: record, tenantId: input.tenantId,
+          productId: selectedTaskProductId,
+        }).catch(() => null);
+        if (overlay) reviewedFootageOverlays.push(overlay);
+      }
+    }
+  }
   const candidateSet = buildSocialWorkflowMaterialCandidates({
     records: materialInventory.items,
+    reviewedFootageOverlays,
     tenantId: input.tenantId,
     voiceoverRows,
     selectedProductRef: selectedTaskProductRef,
@@ -964,7 +1116,7 @@ export async function readSocialTaskDetail(input: {
   });
   const materialCandidates: SocialWorkflowMaterialClipCandidate[] = candidateSet.candidates.map(candidate => ({
     ...candidate,
-    ...(summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' ? {
+    ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || summary.brief.materialRoutingPolicyVersion === 'type-aware.v2') ? {
       synthetic: /ai.generated|seedream|seedance|synthetic|generated/i.test(String(materialById.get(candidate.assetId)?.sourceType || ''))
         || materialById.get(candidate.assetId)?.synthetic === true,
     } : {}),
@@ -982,7 +1134,7 @@ export async function readSocialTaskDetail(input: {
       || Boolean(candidate.productRef && candidate.productRef === productRows[0]?.productRef))
     : productRows.filter(sameRequestedProduct);
   const productImageIds = [...new Set([...uniqueAssetIds(productFamilyRows),
-    ...(summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' ? ownedProductReferenceImageIds({
+    ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || summary.brief.materialRoutingPolicyVersion === 'type-aware.v2') ? ownedProductReferenceImageIds({
       records: materialInventory.items, tenantId: input.tenantId,
       productId: selectedTaskProductId, productRef: selectedTaskProductRef,
       enterpriseProductImageUrls,
@@ -1048,7 +1200,7 @@ export async function readSocialTaskDetail(input: {
       }
     }
   }
-  const assetSupplyPlan = applySocialContentRevisionSupply({ tenantId: input.tenantId, taskId: summary.taskId, brief: task.brief, script: replicationScript, plan: createSocialAssetSupplyPlan({
+  let assetSupplyPlan = applySocialContentRevisionSupply({ tenantId: input.tenantId, taskId: summary.taskId, brief: task.brief, script: replicationScript, plan: createSocialAssetSupplyPlan({
     materialRoutingPolicyVersion: summary.brief.materialRoutingPolicyVersion,
     creationMode: summary.brief.creationMode ?? 'material_processing',
     assetAvailability: summary.brief.assetAvailability,
@@ -1073,14 +1225,15 @@ export async function readSocialTaskDetail(input: {
     presenterSelectionConfirmed: Boolean(summary.brief.presenterAssetId && presenterInventory.assetIds.length === 1),
     referenceShots: referenceVideoAnalysis?.shots,
     shots: materialRoutingRequests({ policyVersion: summary.brief.materialRoutingPolicyVersion,
-      tenantId: input.tenantId, candidates: materialCandidates, referenceShots: referenceVideoAnalysis?.shots,
+      tenantId: input.tenantId, candidates: materialCandidates, rejectedSegments: candidateSet.rejectedSegments,
+      referenceShots: referenceVideoAnalysis?.shots,
       productRef: primaryProductRef, shots: replicationScript?.shots.map(shot => ({
       shotId: shot.shotId,
       function: shot.purpose,
       requestedDescription: shot.visualInstruction,
       truthSensitiveSubject: shot.materialPlan.truthBoundary.subject,
       referenceShotId: shot.referenceShotId,
-      ...(summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' && shot.materialPlan.materialRouting ? {
+      ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || summary.brief.materialRoutingPolicyVersion === 'type-aware.v2') && shot.materialPlan.materialRouting ? {
         plannedDurationSeconds: shot.endSeconds - shot.startSeconds,
         ...(shot.materialPlan.visualContract ? { visualContract: structuredClone(shot.materialPlan.visualContract) } : {}),
         ...(shot.materialPlan.productSceneReplication ? { productSceneReplication: shot.materialPlan.productSceneReplication } : {}),
@@ -1093,7 +1246,10 @@ export async function readSocialTaskDetail(input: {
     })) ?? [] }),
     rightsConfirmationRequired: false,
   }) });
-  assetSupplyPlan.inventoryAudit=auditWeeklyMaterialInventory(input.tenantId,materialInventory.items);
+  const footageRevision = await readHandoffProductFootageRevisionSupply({ repository: input.repository,
+    tenantId: input.tenantId, taskId: summary.taskId, task, ledgerRoot: input.ledgerRoot });
+  if (footageRevision) assetSupplyPlan = footageRevision.plan;
+  if (!footageRevision) assetSupplyPlan.inventoryAudit=auditWeeklyMaterialInventory(input.tenantId,materialInventory.items);
   const presenterLock = presenterInventory.accountPresenterLock;
   const referenceReviewHandoff = summary.brief.creationMode === 'viral_replication'
     ? referenceRecord ? buildSocialReferenceReviewHandoff({
@@ -1119,6 +1275,7 @@ export async function readSocialTaskDetail(input: {
     sources: activeSources,
     factSourceRefs: confirmedFactRefs,
     assetSupplyPlan,
+    ...(footageRevision ? { footageRevisionPlanHash: footageRevision.planHash } : {}),
     referenceAnalysis: referenceVideoAnalysis,
     referenceReviewHandoff,
     replicationScript,
@@ -1252,6 +1409,23 @@ export async function readSocialTaskDetail(input: {
     inputRequests: projectProductionInputRequests(durableInputRequests, summary.taskId),
   });
   const privateBrief = socialObject(socialJson(task.brief));
+  const preparedMarker = socialObject(privateBrief?._productAssetFallback);
+  const preparedReaders = input.preparedProductAssetRevisionReaders;
+  const preparedProductAssetRevisionCandidate = preparedMarker && preparedReaders
+    ? await (async () => {
+      const { readPreparedSocialProductAssetFallback } = await import('./socialContentProductAssetRevisionPrepare.js');
+      const result = await readPreparedSocialProductAssetFallback({
+        repository: input.repository, tenantId: input.tenantId, taskId: input.taskId,
+        expectedPreparedVersion: summary.version,
+        sourceRunId: socialText(preparedMarker.sourceRunId),
+        budgetLedgerRef: socialText(preparedMarker.budgetLedgerRef),
+        ...preparedReaders,
+      });
+      return { plan: result.plan, preparedVersion: result.preparedVersion,
+        revisedPlanHash: result.revisedPlanHash, budgetLedgerRef: result.budgetLedgerRef,
+        authorizesStart: false as const };
+    })()
+    : undefined;
   const referenceRecovery = socialObject(privateBrief?._managedStart);
   const publishingRecovery = socialObject(privateBrief?._managedPublishing);
   const recoveryView = (value: Record<string, unknown>) => ({
@@ -1272,8 +1446,22 @@ export async function readSocialTaskDetail(input: {
       return await readSocialMvpHandoff(input.repository.dataStore, scope as unknown as import('../../shared/contracts/socialMvpHandoff.js').SocialMvpScope);
     } catch { return {...missing,gaps:['mvp_authoritative_storage_unavailable']}; }
   })();
+  const storedRequirements = summary.theme
+    ? publicMaterialRequirements(parseStoredMaterialRequirements(task.material_requirements)) : [];
+  const shotRequirements = projectShotMaterialRequirements({
+    plan: assetSupplyPlan,
+    shotMaterialMap,
+    themeId: summary.theme?.themeId,
+    aspectRatio: summary.brief.aspectRatio,
+    recalculatedAt: summary.updatedAt,
+  });
+  // Once a concrete shot plan exists it is the authoritative material demand.
+  // The old theme/formula column remains readable only for tasks without shots.
+  const effectiveMaterialRequirements = shotRequirements.length ? shotRequirements : storedRequirements;
   return {
     ...summary,
+    ...(enterpriseProductBinding ? { enterpriseProductBinding } : {}),
+    ...((summary.theme || shotRequirements.length) ? { materialReadiness: materialReadiness(effectiveMaterialRequirements) } : {}),
     socialMvpHandoff,
     ...(referenceRecovery || publishingRecovery ? { managedExecution: {
       ...(referenceRecovery ? { reference: { ...recoveryView(referenceRecovery),
@@ -1283,6 +1471,7 @@ export async function readSocialTaskDetail(input: {
       ...(publishingRecovery ? { publishing: { ...recoveryView(publishingRecovery), retryExhausted: publishingRecovery.retryExhausted === true } } : {}),
     } } : {}),
     assetSupplyPlan,
+    ...(preparedProductAssetRevisionCandidate ? { preparedProductAssetRevisionCandidate } : {}),
     sources: sourceViews,
     artifacts: artifactViews,
     deliveryPackages: packages.map(socialDeliveryPackage),
@@ -1294,9 +1483,7 @@ export async function readSocialTaskDetail(input: {
     ...(referenceVideoAnalysis ? { referenceVideoAnalysis } : {}),
     ...(replicationScript ? { replicationScript } : {}),
     ...(shotMaterialMap.length ? { shotMaterialMap } : {}),
-    ...(summary.theme
-      ? { materialRequirements: publicMaterialRequirements(parseStoredMaterialRequirements(task.material_requirements)) }
-      : {}),
+    ...((summary.theme || shotRequirements.length) ? { materialRequirements: effectiveMaterialRequirements } : {}),
   };
 }
 
