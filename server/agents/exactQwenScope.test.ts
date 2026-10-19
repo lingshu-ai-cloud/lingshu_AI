@@ -1,4 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';
+import {createServer} from 'node:http';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {assertExactQwenRequestModel,withExactQwenScope,exactQwenScope} from './exactQwenScope.js';import {analyzeVideoFramesWithQwen,analyzeVideoTimelineDetailsWithQwen} from './qwen.js';
 import {permitsCrossProviderHookMotionInspection,referenceNarrationForVideoAnalysis} from '../routes/videos.js';
@@ -10,6 +11,27 @@ test('actual Qwen request selects only authorized scoped model and provider; env
  await assert.rejects(withExactQwenScope(scope,()=>analyzeVideoTimelineDetailsWithQwen({frames:[{base64:'isolated',mimeType:'image/jpeg',timeLabel:'0s'}],timeline:{boundaries:[{id:'b1',start:0,end:1,reason:'real test clock'}]} as any})),/Model not exist/);assert.equal(calls,1);assert.equal(exactQwenScope(),undefined);assert.equal(process.env.QWEN_EXACT_VL_MODEL,'unchanged-global-model');
  assert.equal(receipts.length,1);assert.deepEqual({...receipts[0],requestHash:'redacted',receivedAt:'redacted'}, {provider:'qwen',responseId:null,model:null,usage:null,httpStatus:404,requestModel:'human-approved-plus',requestHash:'redacted',receivedAt:'redacted',responseBodySha256:createHash('sha256').update(JSON.stringify({error:{message:'Model not exist.',type:'model_not_found'}})).digest('hex'),providerRequestId:null});assert.ok(Number.isFinite(Date.parse(receipts[0].receivedAt)));
  await assert.rejects(withExactQwenScope({...scope,credentialDigest:'a'.repeat(64)},()=>analyzeVideoTimelineDetailsWithQwen({frames:[],timeline:{boundaries:[{id:'b1',start:0,end:1}]}} as any)),/provider_binding_changed/);assert.equal(calls,1);
+});
+test('scoped Qwen paid POST rejects 307 and 308 without replaying credentials or body',async t=>{
+ const before={key:process.env.DASHSCOPE_API_KEY,url:process.env.DASHSCOPE_BASE_URL};
+ process.env.DASHSCOPE_API_KEY='isolated-redirect-key';
+ let redirectStatus=307,originalCalls=0,targetCalls=0;
+ const server=createServer((request,response)=>{
+  if(request.url==='/redirect-target'){targetCalls++;response.writeHead(200,{'content-type':'application/json'});response.end('{}');return;}
+  originalCalls++;response.writeHead(redirectStatus,{location:'/redirect-target'});response.end();
+ });
+ await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+ t.after(async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()));for(const[k,v]of Object.entries({DASHSCOPE_API_KEY:before.key,DASHSCOPE_BASE_URL:before.url}))if(v===undefined)delete process.env[k];else process.env[k]=v;});
+ const address=server.address();assert.ok(address&&typeof address==='object');
+ const endpoint=`http://127.0.0.1:${address.port}/v1`;process.env.DASHSCOPE_BASE_URL=endpoint;
+ let claims=0,receipts=0;
+ const binding={model:'human-approved-plus',configurationHash:'frozen',endpoint,credentialDigest:createHash('sha256').update('isolated-redirect-key').digest('hex'),paidGuardRequired:true,
+  beforeProviderRequest:async()=>{claims++;},onProviderReceipt:async()=>{receipts++;}};
+ for(const status of [307,308]){
+  redirectStatus=status;
+  await assert.rejects(withExactQwenScope(binding,()=>analyzeVideoTimelineDetailsWithQwen({frames:[{base64:'isolated',mimeType:'image/jpeg',timeLabel:'0s'}],timeline:{boundaries:[{id:'b1',start:0,end:1,reason:'redirect test'}]} as any})));
+ }
+ assert.equal(originalCalls,2);assert.equal(targetCalls,0);assert.equal(claims,2);assert.equal(receipts,0);
 });
 test('scoped paid request refuses a child model change before HTTP transport',async()=>{
  const binding={model:'human-approved-plus',configurationHash:'frozen',endpoint:'https://isolated.invalid/v1',credentialDigest:'a'.repeat(64)};

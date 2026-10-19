@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { classifyReferenceCriticalShots, validateReferenceCriticalShots, ReferenceCriticalValidationError,
   REFERENCE_CRITICAL_EVIDENCE_VERSION, type ReferenceCriticalFrame } from './referenceCriticalShots.js';
 import { lockReferenceSpeechTimeline } from './referenceSpeechAnalysis.js';
 import type { VideoAiAnalysis } from '../types/index.js';
+import { withExactQwenScope } from '../agents/exactQwenScope.js';
 
 function fixture() {
   const analysis: VideoAiAnalysis = { theme: 'factory', hooks: [], sellingPoints: [], mood: '', structure: '',
@@ -59,6 +62,27 @@ test('Qwen multimodal decision retains actual frame and word evidence; product d
   assert.equal(result.criticalShotSummary?.provider, 'qwen');
   assert.equal(result.criticalShotSummary?.evidenceVersion, REFERENCE_CRITICAL_EVIDENCE_VERSION);
   assert.equal(result.criticalShotSummary?.providerResponse.raw, JSON.stringify(output));
+});
+
+test('critical-shot paid POST rejects 307 and 308 without following the Location target', async t => {
+  const { input } = fixture();
+  let status = 307, originalCalls = 0, targetCalls = 0, claims = 0, receipts = 0;
+  const server = createServer((request, response) => {
+    if (request.url === '/redirect-target') { targetCalls++; response.writeHead(200); response.end('{}'); return; }
+    originalCalls++; response.writeHead(status, { location: '/redirect-target' }); response.end();
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  const address = server.address(); assert.ok(address && typeof address === 'object');
+  const endpoint = `http://127.0.0.1:${address.port}/v1`;
+  const scope = { model: 'qwen3-vl-plus', configurationHash: 'frozen', endpoint, credentialDigest: createHash('sha256').update('redirect-key').digest('hex'), paidGuardRequired: true,
+    beforeProviderRequest: async () => { claims++; }, onProviderReceipt: async () => { receipts++; } };
+  for (const redirect of [307, 308]) {
+    status = redirect;
+    await assert.rejects(withExactQwenScope(scope, () => classifyReferenceCriticalShots(input,
+      { apiKey: 'redirect-key', baseUrl: endpoint })));
+  }
+  assert.equal(originalCalls, 2); assert.equal(targetCalls, 0); assert.equal(claims, 2); assert.equal(receipts, 0);
 });
 
 test('simultaneous generic narration stays noncritical; unique visual mechanism alone does not satisfy formula', () => {
