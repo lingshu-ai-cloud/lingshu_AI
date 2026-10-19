@@ -217,12 +217,13 @@ export interface WeeklyCandidateDynamicExactPlanV2{
 export type WeeklyCandidateDynamicExactEntryV2=WeeklyExactRequestCeiling&{
  sequence:number;state:'unknown'|'response_recorded';response?:ExactQwenProviderReceipt;integrityMac:string;
 };
-type DynamicLedgerV2={
+export type WeeklyCandidateDynamicExactLedgerV2={
  schema:'weekly-candidate-dynamic-exact-paid.v2';authorizationHash:string;planHash:string;
  pricingEvidenceHash:string;pricingPolicyHash:string;measurementPolicyHash:string;
  candidateMaximumMicros:number;protocolMaximumRequests:number;generation:number;previousHeadHash:string|null;
  entries:WeeklyCandidateDynamicExactEntryV2[];integrityMac:string;
 };
+type DynamicLedgerV2=WeeklyCandidateDynamicExactLedgerV2;
 export interface WeeklyCandidateDynamicExactHeadV2{
  schema:'weekly-candidate-dynamic-exact-head.v2';operationId:string;authorizationHash:string;planHash:string;generation:number;ledgerHash:string;
 }
@@ -340,7 +341,7 @@ export function createWeeklyCandidateDynamicExactPaidRequestsV2(input:{
  const planHash=v2PlanHash(input.plan),file=weeklyCandidateDynamicExactV2LedgerPath(input.root,input.authorizationHash,input.plan);
  const exclusive=<T>(body:()=>Promise<T>)=>withPaidOperationLock(path.join(path.resolve(input.root),'.locks'),
   `weekly-exact-dynamic-v2:${input.plan.operationId}:${input.authorizationHash}`,body);
- const readAnchored=async():Promise<{ledger:DynamicLedgerV2;head:WeeklyCandidateDynamicExactHeadV2}>=>{
+ const readAnchored=async(recoverInterrupted=true):Promise<{ledger:DynamicLedgerV2;head:WeeklyCandidateDynamicExactHeadV2}>=>{
   const head=await input.headAnchor.read(),exists=fs.existsSync(file);
   const initial=weeklyCandidateDynamicExactInitialHeadV2(input.authorizationHash,input.plan,input.integrityKey);
   if(!head)return fail('dynamic_v2_anchor_missing');const currentHead=head;
@@ -353,7 +354,7 @@ export function createWeeklyCandidateDynamicExactPaidRequestsV2(input:{
   // The file is fsynced before CAS. Exactly one authenticated generation ahead
   // is an interrupted commit: finish its monotonic head update, but never
   // re-authorize the unknown request or accept an older/multi-step snapshot.
-  if(ledger.generation===currentHead.generation+1&&ledger.previousHeadHash===sha(JSON.stringify(currentHead))){
+  if(recoverInterrupted&&ledger.generation===currentHead.generation+1&&ledger.previousHeadHash===sha(JSON.stringify(currentHead))){
    const recovered:WeeklyCandidateDynamicExactHeadV2={schema:'weekly-candidate-dynamic-exact-head.v2',operationId:input.plan.operationId,
     authorizationHash:input.authorizationHash,planHash,generation:ledger.generation,ledgerHash};
    if(await input.headAnchor.compareAndSwap(currentHead,recovered))return{ledger,head:recovered};
@@ -405,6 +406,9 @@ export function createWeeklyCandidateDynamicExactPaidRequestsV2(input:{
     allResponsesRecorded:ledger.entries.length>0&&ledger.entries.every(entry=>entry.state==='response_recorded')};
   });},
   async readRecordedChildren(){return exclusive(async()=>structuredClone((await readAnchored()).ledger));},
+  /** Strictly read-only settlement view. Interrupted commits must first be
+   * repaired through the normal recovery path; settlement never moves head. */
+  async readAnchoredSnapshot(){return exclusive(async()=>{const value=await readAnchored(false);return structuredClone(value);});},
   async readClaim(requestHash:string){return exclusive(async()=>(await readAnchored()).ledger.entries.find(entry=>entry.requestBodySha256===requestHash)??null);},
  };
 }
