@@ -138,7 +138,7 @@ export async function createAgentNotification(input: {
 export async function createAgentAdjustmentNotification(input: {
   tenantId: string;
   eventKey: string;
-  type: Extract<AgentNotificationType, 'scope_changed' | 'weekly_package_adjusted' | 'critical_business_change' | 'authorization_required'>;
+  type: Extract<AgentNotificationType, 'scope_changed' | 'weekly_package_adjusted' | 'critical_business_change' | 'authorization_required' | 'content_task_blocked'>;
   title: string;
   summary: string;
   sourceAgent: string;
@@ -168,7 +168,8 @@ export type AgentNotificationDomainEvent = {
     | 'weekly_package.adjusted'
     | 'business_information.changed'
     | 'authorization.required'
-    | 'review.updated';
+    | 'review.updated'
+    | 'weekly_execution.blocked';
   tenantId: string;
   programId: string;
   packageId?: string | null;
@@ -184,7 +185,7 @@ export type AgentNotificationDomainEvent = {
 
 const DOMAIN_NOTIFICATION_TYPE: Record<
   AgentNotificationDomainEvent['kind'],
-  Extract<AgentNotificationType, 'scope_changed' | 'weekly_package_adjusted' | 'critical_business_change' | 'authorization_required'>
+  Extract<AgentNotificationType, 'scope_changed' | 'weekly_package_adjusted' | 'critical_business_change' | 'authorization_required' | 'content_task_blocked'>
 > = {
   'scope.changed': 'scope_changed',
   'weekly_package.adjusted': 'weekly_package_adjusted',
@@ -193,6 +194,7 @@ const DOMAIN_NOTIFICATION_TYPE: Record<
   // The public notification taxonomy remains frozen while T7 is parallel.
   // Review is a weekly-package lifecycle update, not a second review model.
   'review.updated': 'weekly_package_adjusted',
+  'weekly_execution.blocked': 'content_task_blocked',
 };
 
 function workbenchHref(event: AgentNotificationDomainEvent): string {
@@ -200,6 +202,7 @@ function workbenchHref(event: AgentNotificationDomainEvent): string {
   if (event.packageId) query.set('packageId', clean(event.packageId, 180));
   if (Number.isInteger(event.packageVersion) && Number(event.packageVersion) > 0) query.set('version', String(event.packageVersion));
   if (event.taskId) query.set('taskId', clean(event.taskId, 180));
+  if (event.kind === 'weekly_execution.blocked' && event.taskId) query.set('executionTaskId', clean(event.taskId, 180));
   return `/?${query.toString()}`;
 }
 
@@ -214,15 +217,18 @@ export async function consumeAgentNotificationDomainEvent(event: AgentNotificati
     tenantId: event.tenantId,
     eventKey: `domain:${event.kind}:${eventId}`,
     type: DOMAIN_NOTIFICATION_TYPE[event.kind],
-    severity: event.kind === 'business_information.changed' || event.kind === 'authorization.required' ? 'critical' : 'info',
+    severity: event.kind === 'business_information.changed' || event.kind === 'authorization.required' ? 'critical'
+      : event.kind === 'weekly_execution.blocked' ? 'warning' : 'info',
     title: event.title,
     summary: event.summary,
     sourceAgent: event.sourceAgent,
-    entityType: event.kind === 'scope.changed' ? 'discovery_scope' : event.kind === 'review.updated' ? 'weekly_review' : 'weekly_operating_package',
+    entityType: event.kind === 'scope.changed' ? 'discovery_scope'
+      : event.kind === 'review.updated' ? 'weekly_review'
+        : event.kind === 'weekly_execution.blocked' ? 'weekly_execution_task' : 'weekly_operating_package',
     entityId: event.entityId,
     changes: event.changes,
     action: {
-      label: event.kind === 'scope.changed' ? '查看发现范围' : event.kind === 'authorization.required' ? '处理授权' : event.kind === 'review.updated' ? '查看复盘任务' : '查看周工作台',
+      label: event.kind === 'scope.changed' ? '查看发现范围' : event.kind === 'authorization.required' ? '处理授权' : event.kind === 'review.updated' ? '查看复盘任务' : event.kind === 'weekly_execution.blocked' ? '进入任务详情处理' : '查看周工作台',
       page: event.kind === 'scope.changed' ? 'socialInspiration' : 'socialWorkspace',
       href: workbenchHref(event),
     },

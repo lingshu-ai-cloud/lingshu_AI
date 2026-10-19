@@ -31,6 +31,7 @@ import type { SocialWeeklyExecutionAdapter, WeeklyExecutionAdapterResult } from 
 import {TEMPLATE_EXECUTION_INPUT_BLOCKERS} from '../socialPrograms/templateExecutionBlockingCodes.js';
 import {readIndependentAdmission} from '../socialPrograms/weeklyIndependentAdmission.js';
 import {runWeeklyIndependentPreproductionRecovery} from './weeklyIndependentPreproductionRecovery.js';
+import {projectWeeklyBlockedTaskNotifications} from './weeklyExecutionBlockedNotification.js';
 
 export const WEEKLY_PREPRODUCTION_STEPS: WeeklyProductionStepKind[] = ['business_outline', 'benchmark_collection', 'benchmark_scoring', 'director_analysis', 'business_schedule'];
 export type WeeklyTrustedPreproductionPorts=Omit<Parameters<typeof runWeeklyPreproductionProducerScan>[0], 'store' | 'now'>;
@@ -247,7 +248,8 @@ export async function runSocialWeeklyExecutionScan(input: {
     }
   }
   const humanMaterialAfterExecution = await runWeeklyHumanMaterialRecoveryScan({ store: dataStore, now: input.now, materialPorts: input.humanMaterialPorts,scope:input.scope });
-  return { ...report, preproduction, preproductionRecovery, metricRecovery, templateRecovery, deadlineRecovery, supplementRecovery, customerAuthorizationRecovery, humanMaterialRecovery, productionSelectionRecovery, ctaEvidenceRecovery, presenterVoiceRecovery, humanMaterialAfterExecution };
+  const blockedNotifications = await projectWeeklyBlockedTaskNotifications({store:dataStore,scope:input.scope});
+  return { ...report, preproduction, preproductionRecovery, metricRecovery, templateRecovery, deadlineRecovery, supplementRecovery, customerAuthorizationRecovery, humanMaterialRecovery, productionSelectionRecovery, ctaEvidenceRecovery, presenterVoiceRecovery, humanMaterialAfterExecution, blockedNotifications };
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;

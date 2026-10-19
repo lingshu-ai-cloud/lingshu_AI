@@ -9,6 +9,7 @@ import { WEEKLY_EXECUTION_TASKS } from '../socialPrograms/executionTasks.js';
 import type { WeeklyAgentPlanningState, WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
 import { createSocialWeeklyPlanningAdapter, runSocialWeeklyExecutionScan, initSocialWeeklyExecutionRuntime } from './socialWeeklyExecutionRuntime.js';
 import { independentAdmissionId, WEEKLY_INDEPENDENT_ADMISSIONS } from '../socialPrograms/weeklyIndependentAdmission.js';
+import { AGENT_NOTIFICATION_OUTBOX } from '../notifications/agentNotificationOutbox.js';
 function memoryStore(): DataStore {
   const rows = new Map<string, Record_[]>();
   let counter = 0;
@@ -130,6 +131,26 @@ test('scoped consumer skips blocked dependency descendants while executing indep
  const report=await runSocialWeeklyExecutionScan({dataStore,scope:{tenantId:blocked.tenantId,programId:blocked.programId,packageId:blocked.packageId,packageVersion:1},adapters:{quality_check:{async execute(t){seen.push(t.taskId);return t.taskId===blocked.taskId?{status:'blocked',code:'weekly_required_materials_missing',message:'真实资料缺失'}:{status:'pending',code:'real_production_pending',message:'等待真实结果',retryDelayMs:30000};}}}});
  assert.deepEqual(seen,[blocked.taskId,independent.taskId]);assert.equal(report.blocked,1);assert.equal(report.pending,1);
  const rows=await dataStore.list<any>(WEEKLY_EXECUTION_TASKS);assert.equal(rows.items.find(r=>r.task_id===child.taskId).payload.attempt,0);assert.equal(rows.items.find(r=>r.task_id===other.taskId).payload.attempt,0);assert(rows.items.every(r=>r.payload.status!=='succeeded'));
+});
+test('blocked weekly execution durably enqueues one exact task-detail notification and replay is idempotent',async()=>{
+ const dataStore=memoryStore(),value=pendingQualityTask();await saveTask(dataStore,value);
+ const scope={tenantId:value.tenantId,programId:value.programId,packageId:value.packageId,packageVersion:value.packageVersion};
+ const adapters={quality_check:{async execute(){return{status:'blocked' as const,code:'weekly_sample_policy_required',message:'免费样品政策需要在当前任务中核验。'};}}};
+ const first=await runSocialWeeklyExecutionScan({dataStore,scope,adapters});
+ assert.equal(first.blocked,1);assert.equal(first.blockedNotifications.inspected,1);assert.equal(first.blockedNotifications.enqueued,1);
+ const rows=await dataStore.list<any>(AGENT_NOTIFICATION_OUTBOX);assert.equal(rows.totalItems,1);
+ const event=rows.items[0]!.payload;assert.equal(event.kind,'weekly_execution.blocked');assert.equal(event.tenantId,value.tenantId);assert.equal(event.programId,value.programId);assert.equal(event.packageId,value.packageId);assert.equal(event.packageVersion,value.packageVersion);assert.equal(event.taskId,value.taskId);
+ const replay=await runSocialWeeklyExecutionScan({dataStore,scope,adapters});
+ assert.equal(replay.claimed,0);assert.equal(replay.blockedNotifications.inspected,1);assert.equal((await dataStore.list(AGENT_NOTIFICATION_OUTBOX)).totalItems,1);
+});
+test('notification outbox failure never rolls back a blocked task and the next scan recovers it',async()=>{
+ const base=memoryStore(),value=pendingQualityTask();await saveTask(base,value);let failOutbox=true;
+ const dataStore:DataStore={...base,async create<T>(collection:string,data:Record<string,unknown>){if(collection===AGENT_NOTIFICATION_OUTBOX&&failOutbox){failOutbox=false;throw Error('controlled outbox unavailable');}return base.create<T>(collection,data);}};
+ const scope={tenantId:value.tenantId,programId:value.programId,packageId:value.packageId,packageVersion:value.packageVersion};
+ const first=await runSocialWeeklyExecutionScan({dataStore,scope,adapters:{quality_check:{async execute(){return{status:'blocked',code:'weekly_required_materials_missing',message:'需要补齐真实素材'} as const;}}}});
+ assert.equal(first.blocked,1);assert.equal(first.blockedNotifications.failed,1);
+ const blocked=(await base.list<any>(WEEKLY_EXECUTION_TASKS)).items[0]!.payload;assert.equal(blocked.status,'blocked');assert.equal(blocked.lastError.code,'weekly_required_materials_missing');assert.equal((await base.list(AGENT_NOTIFICATION_OUTBOX)).totalItems,0);
+ const recovered=await runSocialWeeklyExecutionScan({dataStore,scope,adapters:{}});assert.equal(recovered.claimed,0);assert.equal(recovered.blockedNotifications.enqueued,1);assert.equal((await base.list(AGENT_NOTIFICATION_OUTBOX)).totalItems,1);
 });
 test('scoped scan completes stored planning checkpoints in dependency order through the real adapter and result validator',async()=>{
  const dataStore=memoryStore(),parent={...task(),taskId:'1-parent',idempotencyKey:'checkpoint-parent',workflowKind:'directing' as const};parent.schedule={...parent.schedule,stepKind:'business_schedule',responsibleActor:'business_agent'};

@@ -68,6 +68,15 @@ try {
   assert.equal(reviewCreated.created, true);
   assert.equal(reviewReplay.created, false, 'domain event replay must be idempotent');
   assert.equal(reviewCreated.notification.action?.href, '/?page=socialWorkspace&programId=program-1&packageId=package-1&version=3&taskId=task-review');
+  const blockedCreated = await consumeAgentNotificationDomainEvent({
+    ...domainEvent, eventId: 'blocked-event-1', kind: 'weekly_execution.blocked', taskId: 'execution-task-1', entityId: 'execution-task-1',
+    title: '本周任务需要你处理', summary: '缺少样品政策证据。',
+    changes: [{ field: 'executionStatus', label: '任务状态', before: 'running', after: { status: 'blocked', code: 'sample_policy_required' } }],
+  });
+  assert.equal(blockedCreated.notification.type, 'content_task_blocked');
+  assert.equal(blockedCreated.notification.severity, 'warning');
+  assert.equal(blockedCreated.notification.action?.label, '进入任务详情处理');
+  assert.equal(blockedCreated.notification.action?.href, '/?page=socialWorkspace&programId=program-1&packageId=package-1&version=3&taskId=execution-task-1&executionTaskId=execution-task-1');
   assert.equal((await listAgentNotifications('tenant-b', 'user-a')).items.length, 0, 'domain events must retain tenant isolation');
 
   await assert.rejects(() => createAgentAdjustmentNotification({
