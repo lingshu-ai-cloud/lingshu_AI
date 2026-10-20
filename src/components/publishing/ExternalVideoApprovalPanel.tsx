@@ -31,7 +31,7 @@ type Approval = {
 };
 
 const LABEL: Record<PublishPlatform, string> = {
-  youtube: 'YouTube', instagram: 'Instagram', facebook: 'Facebook', tiktok: 'TikTok',
+  youtube: 'YouTube', instagram: 'Instagram', facebook: 'Facebook', tiktok: 'TikTok', linkedin: 'LinkedIn',
 };
 const BASE = '/api/overseas/publishing/external-video-approvals';
 
@@ -144,7 +144,7 @@ export function ExternalVideoApprovalPanel({ storageScope }: { storageScope?: st
     setPreviousApprovalIds(current => [...new Set([...current, ...abandoned.map(approval => approval.id)])]);
     setApprovals({});
     setScheduledAt(futureLocalValue());
-    setNotice('旧审批单编号已保留。请核对新的发布时间，再提交四平台新审批单。');
+    setNotice('旧审批单编号已保留。请核对新的发布时间，再提交五平台新审批单。');
     setError('');
   };
 
@@ -152,13 +152,13 @@ export function ExternalVideoApprovalPanel({ storageScope }: { storageScope?: st
     let active = true;
     void Promise.all([
       json<{ items?: Array<{ id: string; channelTitle: string; status: string }> }>('/api/overseas/youtube/accounts'),
-      ...(['instagram', 'facebook', 'tiktok'] as const).map(platform =>
+      ...(['instagram', 'facebook', 'tiktok', 'linkedin'] as const).map(platform =>
         json<{ items?: Array<{ id: string; title: string; handle?: string; status: string }> }>(`/api/overseas/social/accounts?platform=${platform}`)),
-    ]).then(([youtube, instagram, facebook, tiktok]) => {
+    ]).then(([youtube, instagram, facebook, tiktok, linkedin]) => {
       if (!active) return;
       const next: ExternalVideoAccount[] = [
         ...(youtube.items || []).map(account => ({ id: account.id, platform: 'youtube' as const, label: account.channelTitle, status: account.status })),
-        ...([['instagram', instagram], ['facebook', facebook], ['tiktok', tiktok]] as const).flatMap(([platform, result]) =>
+        ...([['instagram', instagram], ['facebook', facebook], ['tiktok', tiktok], ['linkedin', linkedin]] as const).flatMap(([platform, result]) =>
           (result.items || []).map(account => ({ id: account.id, platform, label: account.handle || account.title, status: account.status }))),
       ];
       setAccounts(next);
@@ -201,7 +201,7 @@ export function ExternalVideoApprovalPanel({ storageScope }: { storageScope?: st
         next[request.platform] = result.approval;
         setApprovals({ ...next });
       }
-      setNotice('四个平台的审批单已创建。请逐张核对内容与账号，再批准排期。');
+      setNotice('五个平台的审批单已创建。请逐张核对内容与账号，再批准排期。');
     } catch (cause) { setError(cause instanceof Error ? cause.message : '提交审批失败；已创建的审批单保留，请核对后重试'); }
     finally { setBusy(false); }
   };
@@ -237,8 +237,8 @@ export function ExternalVideoApprovalPanel({ storageScope }: { storageScope?: st
   try { if (tikTokCreator) { buildTikTokPostOptions(tikTokDraft, tikTokCreator, accountIds.tiktok || ''); tikTokSettingsReady = true; } } catch { /* incomplete user choices keep submission disabled */ }
 
   return <section aria-label="获授权外部素材发布审批" className="rounded-2xl border border-amber-200 bg-amber-50/40 p-4 shadow-sm">
-    <h3 className="text-sm font-bold text-text-primary">获授权外部素材 · 四平台审批发布</h3>
-    <p className="mt-1 text-xs text-text-secondary">从灵枢上传原视频，分别核对四个平台的账号与内容。此素材作为外部素材单独审批，不标记为经营编导自动生产结果；批准前不会提交平台。</p>
+    <h3 className="text-sm font-bold text-text-primary">获授权外部素材 · 五平台审批发布</h3>
+    <p className="mt-1 text-xs text-text-secondary">从灵枢上传原视频，分别核对五个平台的账号与内容。此素材作为外部素材单独审批，不标记为经营编导自动生产结果；批准前不会提交平台。</p>
     {error && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
     {notice && <p role="status" className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{notice}</p>}
     <label className="mt-4 block text-xs font-bold text-text-secondary">授权视频文件<input type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,video/x-msvideo" disabled={busy || Object.keys(approvals).length > 0} onChange={event => { void upload(event.target.files?.[0]); event.currentTarget.value = ''; }} className="mt-1 block w-full text-xs" /></label>
@@ -248,11 +248,11 @@ export function ExternalVideoApprovalPanel({ storageScope }: { storageScope?: st
       <label className="text-xs font-bold text-text-secondary">发布时间<input type="datetime-local" value={scheduledAt} disabled={busy || Object.keys(approvals).length > 0} onChange={event => setScheduledAt(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs" /></label>
     </div>
     <label className="mt-3 block text-xs font-bold text-text-secondary">配文<textarea value={description} disabled={busy || Object.keys(approvals).length > 0} onChange={event => setDescription(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs" /></label>
-    <div className="mt-3 grid gap-2 md:grid-cols-4">{EXTERNAL_VIDEO_PLATFORMS.map(platform => <label key={platform} className="text-xs font-bold text-text-secondary">{LABEL[platform]} 目标账号<select value={accountIds[platform] || ''} disabled={busy || Object.keys(approvals).length > 0} onChange={event => setAccountIds(current => ({ ...current, [platform]: event.target.value }))} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs"><option value="">请选择已授权账号</option>{accounts.filter(account => account.platform === platform && account.status === 'connected').map(account => <option key={account.id} value={account.id}>{account.label}</option>)}</select></label>)}</div>
+    <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-5">{EXTERNAL_VIDEO_PLATFORMS.map(platform => <label key={platform} className="text-xs font-bold text-text-secondary">{LABEL[platform]} 目标账号<select value={accountIds[platform] || ''} disabled={busy || Object.keys(approvals).length > 0} onChange={event => setAccountIds(current => ({ ...current, [platform]: event.target.value }))} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs"><option value="">请选择已授权账号</option>{accounts.filter(account => account.platform === platform && account.status === 'connected').map(account => <option key={account.id} value={account.id}>{account.label}</option>)}</select></label>)}</div>
     <TikTokPostSettings accountId={accountIds.tiktok || ''} creator={tikTokCreator} draft={tikTokDraft} onChange={setTikTokDraft} disabled={busy || Object.keys(approvals).length > 0} loading={tikTokLoading} error={tikTokError} onRefresh={() => setTikTokRefreshKey(value => value + 1)} />
-    <button type="button" onClick={() => void submit()} disabled={busy || !approvalsLoaded || !videoPath || Object.keys(approvals).length === 4 || !tikTokSettingsReady} className="mt-4 rounded-lg bg-amber-700 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">提交四平台审批</button>
+    <button type="button" onClick={() => void submit()} disabled={busy || !approvalsLoaded || !videoPath || Object.keys(approvals).length === EXTERNAL_VIDEO_PLATFORMS.length || !tikTokSettingsReady} className="mt-4 rounded-lg bg-amber-700 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">提交五平台审批</button>
     {canRestart && <button type="button" disabled={busy || !historyLoaded} onClick={restartApproval} className="ml-2 rounded-lg border border-amber-400 bg-white px-4 py-2 text-xs font-bold text-amber-800 disabled:opacity-50">旧单过期或被拒绝 · 重新准备审批</button>}
-    {canStartNextExternalVideo(EXTERNAL_VIDEO_PLATFORMS.map(platform => approvals[platform])) && <button type="button" disabled={busy} onClick={() => { setPreviousApprovals(current => [...current, ...Object.values(approvals).filter((item): item is Approval => Boolean(item))]); setPreviousApprovalIds(current => [...new Set([...current, ...Object.values(approvals).map(item => item?.id).filter((id): id is string => Boolean(id))])]); setApprovals({}); setVideoPath(''); setPreviewUrl(''); setTitle(''); setDescription(''); setScheduledAt(futureLocalValue()); setNotice('四个平台均有最终作品回执，可以上传下一份获授权外部素材。'); }} className="ml-2 rounded-lg border border-border bg-white px-4 py-2 text-xs font-bold text-text-secondary disabled:opacity-50">开始下一份素材</button>}
+    {canStartNextExternalVideo(EXTERNAL_VIDEO_PLATFORMS.map(platform => approvals[platform])) && <button type="button" disabled={busy} onClick={() => { setPreviousApprovals(current => [...current, ...Object.values(approvals).filter((item): item is Approval => Boolean(item))]); setPreviousApprovalIds(current => [...new Set([...current, ...Object.values(approvals).map(item => item?.id).filter((id): id is string => Boolean(id))])]); setApprovals({}); setVideoPath(''); setPreviewUrl(''); setTitle(''); setDescription(''); setScheduledAt(futureLocalValue()); setNotice('五个平台均有最终作品回执，可以上传下一份获授权外部素材。'); }} className="ml-2 rounded-lg border border-border bg-white px-4 py-2 text-xs font-bold text-text-secondary disabled:opacity-50">开始下一份素材</button>}
     {Object.values(approvals).length > 0 && <div className="mt-4 grid gap-2 md:grid-cols-2">{Object.values(approvals).map(approval => approval && <div key={approval.id} className="rounded-xl border border-border bg-white p-3">
       <strong className="text-xs">{LABEL[approval.platform]} · {approval.status}</strong>
       <p className="mt-1 text-xs">{approval.title}</p>

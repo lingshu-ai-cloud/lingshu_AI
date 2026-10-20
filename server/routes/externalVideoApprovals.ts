@@ -64,14 +64,14 @@ externalVideoApprovalsRouter.post('/', async (req, res) => {
   const description = text(req.body?.description);
   const scheduledAt = text(req.body?.scheduledAt);
   const accountIds: string[] = Array.isArray(req.body?.targetAccountIds) ? req.body.targetAccountIds.map(text).filter(Boolean) : [];
-  if (!['youtube', 'facebook', 'instagram', 'tiktok'].includes(platform) || !title || !videoPath
+  if (!['youtube', 'facebook', 'instagram', 'tiktok', 'linkedin'].includes(platform) || !title || !videoPath
     || !accountIds.length || !Number.isFinite(Date.parse(scheduledAt)) || Date.parse(scheduledAt) <= Date.now()) {
     res.status(400).json({ error: 'external_video_approval_fields_invalid' });
     return;
   }
   try {
     const sourceClaim = await freezePublishSourceClaim(tenantId, { sourceKind: 'manual_upload', videoPath });
-    const { targets, invalidAccountIds } = await bindPublishingTargets(tenantId, accountIds.map(accountId => ({ platform: platform as 'youtube' | 'facebook' | 'instagram' | 'tiktok', accountId, accountLabel: '' })));
+    const { targets, invalidAccountIds } = await bindPublishingTargets(tenantId, accountIds.map(accountId => ({ platform: platform as 'youtube' | 'facebook' | 'instagram' | 'tiktok' | 'linkedin', accountId, accountLabel: '' })));
     if (invalidAccountIds.length || targets.length !== new Set(accountIds).size) {
       res.status(409).json({ error: 'external_video_accounts_not_connected' });
       return;
@@ -165,7 +165,7 @@ externalVideoApprovalsRouter.post('/:id/approve', async (req, res) => {
         res.status(409).json({ error: 'external_video_changed' }); return;
       }
       const accountIds = Array.isArray(stats.targetAccountIds) ? stats.targetAccountIds.map(text).filter(Boolean) : [];
-      const { targets, invalidAccountIds } = await bindPublishingTargets(tenantId, accountIds.map(accountId => ({ platform: post.platform as 'youtube' | 'facebook' | 'instagram' | 'tiktok', accountId, accountLabel: '' })));
+      const { targets, invalidAccountIds } = await bindPublishingTargets(tenantId, accountIds.map(accountId => ({ platform: post.platform as 'youtube' | 'facebook' | 'instagram' | 'tiktok' | 'linkedin', accountId, accountLabel: '' })));
       if (invalidAccountIds.length || targets.length !== accountIds.length) {
         res.status(409).json({ error: 'external_video_accounts_not_connected' }); return;
       }

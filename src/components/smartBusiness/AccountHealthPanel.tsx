@@ -72,6 +72,7 @@ type AccountHealthSources = {
 
 const platformLabels: Record<PublishingPlatform, string> = {
   youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook',
+  linkedin: 'LinkedIn',
 };
 
 function dayTimestamp(value: string, end = false): number | null {

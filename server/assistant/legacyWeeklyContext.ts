@@ -19,7 +19,7 @@ export async function readLegacyWeeklyPackages(store: DataStore, tenantId: strin
     if (!Number.isSafeInteger(version) || version < 1) continue;
     const platforms = socialJson(goal.content_platforms);
     const profile = enterpriseProfileFromKnowledgeBinding(body.knowledgeBinding, { allowLegacy: false });
-    packages.push({ model: 'legacy', programId: goal.id, packageId: plan.id, packageVersion: version, goalId: goal.id, planId: plan.id, planVersion: version, runId: run.id, expectedPlanHash: legacyWeeklyPlanHash(body), title: `${String(goal.title || '当前周任务')} · 第 ${version} 版`, platforms: (Array.isArray(platforms) ? platforms : []).filter(p => ['tiktok', 'instagram', 'facebook', 'youtube'].includes(String(p))), allowedProductIds: (profile?.products?.items ?? []).map(enterpriseProductIdentity), name: String(goal.title || '当前周任务') });
+    packages.push({ model: 'legacy', programId: goal.id, packageId: plan.id, packageVersion: version, goalId: goal.id, planId: plan.id, planVersion: version, runId: run.id, expectedPlanHash: legacyWeeklyPlanHash(body), title: `${String(goal.title || '当前周任务')} · 第 ${version} 版`, platforms: (Array.isArray(platforms) ? platforms : []).filter(p => ['tiktok', 'instagram', 'facebook', 'youtube', 'linkedin'].includes(String(p))), allowedProductIds: (profile?.products?.items ?? []).map(enterpriseProductIdentity), name: String(goal.title || '当前周任务') });
   }
   return packages;
 }

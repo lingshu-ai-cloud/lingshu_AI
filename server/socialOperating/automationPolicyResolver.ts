@@ -18,7 +18,7 @@ export interface AutomationPolicyInput {
   factsVerified: boolean | null;
   withinBudget: boolean | null;
   rightsSufficient: boolean | null;
-  publishTarget?: { accountId: string; platform: 'facebook' | 'instagram' | 'tiktok' | 'youtube'; scheduledAt: string };
+  publishTarget?: { accountId: string; platform: 'facebook' | 'instagram' | 'tiktok' | 'youtube' | 'linkedin'; scheduledAt: string };
   publishingAuthorization?: BoundedPublishingAuthorizationSnapshot;
 }
 

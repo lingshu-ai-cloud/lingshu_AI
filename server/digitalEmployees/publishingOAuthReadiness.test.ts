@@ -26,6 +26,17 @@ test('Instagram may connect through either Instagram Login or the Meta applicati
   }), []);
 });
 
+test('LinkedIn requires its own application unless a real account is already connected', () => {
+  assert.deepEqual(missingPublishingOAuthConfiguration({
+    targetPlatforms: ['linkedin'], connectedPlatforms: [],
+    clients: { meta: true, instagram: true, tiktok: true, google: true, linkedin: false },
+  }), ['linkedin']);
+  assert.deepEqual(missingPublishingOAuthConfiguration({
+    targetPlatforms: ['linkedin'], connectedPlatforms: ['linkedin'],
+    clients: { meta: false, instagram: false, tiktok: false, google: false, linkedin: false },
+  }), []);
+});
+
 test('unknown or already connected platforms never create a false configuration blocker', () => {
   assert.deepEqual(missingPublishingOAuthConfiguration({
     targetPlatforms: ['facebook', 'unknown', 'toString'], connectedPlatforms: ['facebook'],

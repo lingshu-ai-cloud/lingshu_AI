@@ -10,7 +10,7 @@ import {
 } from '../runtime/durableLease.js';
 import type { VersionedSocialRef } from '../../shared/contracts/socialProgram.js';
 
-export type StarterPublishingPlatform = 'facebook' | 'instagram' | 'tiktok' | 'youtube';
+export type StarterPublishingPlatform = 'facebook' | 'instagram' | 'tiktok' | 'youtube' | 'linkedin';
 export type PublicationPackageStatus =
   | 'awaiting_user_publish'
   | 'evidence_submitted'
@@ -191,7 +191,7 @@ function assertBuildInput(input: BuildStarterPublicationPackageInput): void {
   if (!/^[a-f0-9]{32,128}$/i.test(text(input.contentHash))) {
     throw new StarterPublicationPackageError('publication_content_hash_invalid');
   }
-  if (!['facebook', 'instagram', 'tiktok', 'youtube'].includes(input.platform)) {
+  if (!['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin'].includes(input.platform)) {
     throw new StarterPublicationPackageError('publication_platform_invalid');
   }
   if (!/^[a-z0-9:_-]{8,200}$/i.test(text(input.idempotencyKey))) {
@@ -283,6 +283,7 @@ function allowedEvidenceHost(platform: StarterPublishingPlatform, hostname: stri
     instagram: ['instagram.com'],
     tiktok: ['tiktok.com'],
     youtube: ['youtube.com', 'youtu.be'],
+    linkedin: ['linkedin.com'],
   };
   return domains[platform].some(domain => hostname === domain || hostname.endsWith(`.${domain}`));
 }

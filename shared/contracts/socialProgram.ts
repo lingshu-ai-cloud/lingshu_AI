@@ -14,7 +14,7 @@ export type SocialProgramStage =
   | 'executing'
   | 'reviewing';
 
-export type SocialPlatform = 'tiktok' | 'instagram' | 'youtube' | 'facebook' | 'douyin' | 'xiaohongshu' | 'other';
+export type SocialPlatform = 'tiktok' | 'instagram' | 'youtube' | 'facebook' | 'linkedin' | 'douyin' | 'xiaohongshu' | 'other';
 
 export interface VersionedSocialRef {
   type: string;
@@ -431,7 +431,7 @@ export interface SocialWeeklyPublicationTask {
   publicationTaskId: string;
   motherContentId: string;
   adaptationOfPublicationTaskId: string | null;
-  platform: Extract<SocialPlatform, 'tiktok' | 'facebook' | 'instagram' | 'youtube'>;
+  platform: Extract<SocialPlatform, 'tiktok' | 'facebook' | 'instagram' | 'youtube' | 'linkedin'>;
   accountId: string;
   accountPositioning: string | null;
   businessProposition: string | null;

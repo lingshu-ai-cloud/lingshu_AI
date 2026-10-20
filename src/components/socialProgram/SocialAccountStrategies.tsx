@@ -10,6 +10,7 @@ import { showActionSuccess } from '../../lib/actionFeedback';
 
 const PLATFORM_LABELS: Record<SocialPlatform, string> = {
   tiktok: 'TikTok', instagram: 'Instagram', youtube: 'YouTube', facebook: 'Facebook',
+  linkedin: 'LinkedIn',
   douyin: '抖音', xiaohongshu: '小红书', other: '其他',
 };
 

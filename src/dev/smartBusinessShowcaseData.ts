@@ -28,6 +28,7 @@ const PLATFORM_LABELS: Record<PublishingPlatform, string> = {
   instagram: 'Instagram',
   tiktok: 'TikTok',
   youtube: 'YouTube',
+  linkedin: 'LinkedIn',
 };
 
 const SHOWCASE_THUMBNAILS = [

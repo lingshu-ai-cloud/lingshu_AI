@@ -18,6 +18,12 @@ import axios from 'axios';
 import ffmpegStatic from 'ffmpeg-static';
 import { getAccessToken, uploadVideoToYouTube, type YouTubeConfig } from '../integrations/youtube.js';
 import {
+  getLinkedInPost,
+  linkedInAuthorUrn,
+  linkedInRequiredPublishingScope,
+  publishLinkedInVideo,
+} from '../integrations/linkedin.js';
+import {
   getTikTokPublishStatus,
   publishInstagramReel,
   uploadFacebookVideo,
@@ -59,6 +65,7 @@ interface SocialAccountRecord {
   accessToken: string;
   oauthProvider?: string;
   scope?: string;
+  parentPageId?: string;
   status: 'connected' | 'error' | 'expired';
 }
 
@@ -516,6 +523,39 @@ export async function resolvePendingPublishToAccount(input: {
       providerStatus: 'published', error: '',
     };
   }
+  if (input.platform === 'linkedin') {
+    const account = await store.getById<SocialAccountRecord>('social_accounts', input.accountId);
+    if (!account || account.tenantId !== input.tenantId || account.platform !== 'linkedin') throw publishError('LinkedIn account not found', 404);
+    if (account.status !== 'connected') throw publishError('LinkedIn account is not connected', 400);
+    const authorUrn = linkedInAuthorUrn(account);
+    const readScope = authorUrn.startsWith('urn:li:organization:') ? 'r_organization_social' : 'r_member_social';
+    if (!new Set(String(account.scope || '').split(/[\s,]+/).filter(Boolean)).has(readScope)) {
+      return {
+        status: 'unknown', providerReceiptId: receipt, platformPostId: receipt,
+        platformUrl: `https://www.linkedin.com/feed/update/${receipt}`,
+        providerStatus: 'READ_SCOPE_MISSING',
+        error: `LinkedIn 已保存发布回执，但当前应用未获授 ${readScope}，需人工核对状态；禁止自动重发`,
+      };
+    }
+    const result = await getLinkedInPost({
+      accessToken: socialAccessToken(account as unknown as Record<string, unknown>),
+      postId: receipt,
+    });
+    if (result.id !== receipt || result.author !== authorUrn) {
+      return { status: 'unknown', providerReceiptId: receipt, platformPostId: '', platformUrl: '', providerStatus: 'ACCOUNT_POST_UNVERIFIED', error: 'LinkedIn 原帖子不属于目标账号，禁止重新发布' };
+    }
+    const state = result.lifecycleState.toUpperCase();
+    if (['PUBLISHED', 'PUBLISHED_EDITED'].includes(state)) {
+      return { status: 'published', providerReceiptId: receipt, platformPostId: receipt, platformUrl: result.url, providerStatus: state, error: '' };
+    }
+    if (['PROCESSING', 'DRAFT', 'PUBLISH_REQUESTED'].includes(state)) {
+      return { status: 'processing', providerReceiptId: receipt, platformPostId: receipt, platformUrl: result.url, providerStatus: state, error: '' };
+    }
+    if (['DELETED', 'REJECTED', 'FAILED', 'PUBLISH_FAILED'].includes(state)) {
+      return { status: 'failed', providerReceiptId: receipt, platformPostId: receipt, platformUrl: result.url, providerStatus: state, error: 'LinkedIn 帖子未发布成功' };
+    }
+    return { status: 'unknown', providerReceiptId: receipt, platformPostId: receipt, platformUrl: result.url, providerStatus: state || 'UNKNOWN', error: 'LinkedIn 未返回可确认的发布状态' };
+  }
   if (input.platform !== 'tiktok') {
     return {
       status: 'unknown',
@@ -652,7 +692,11 @@ async function publishVideoToAccountWithLease(
     if (contract.oauthProvider === 'instagram_login') assertInstagramPublishingScopes(account);
   }
   const filePath = input.videoPath
-    ? validateLocalVideo(input.videoPath, ['.mp4', '.mov', '.webm'], Number(process.env.SOCIAL_MAX_UPLOAD_MB ?? 2048))
+    ? validateLocalVideo(
+      input.videoPath,
+      input.platform === 'linkedin' ? ['.mp4'] : ['.mp4', '.mov', '.webm'],
+      input.platform === 'linkedin' ? Number(process.env.LINKEDIN_MAX_UPLOAD_MB ?? 500) : Number(process.env.SOCIAL_MAX_UPLOAD_MB ?? 2048),
+    )
     : undefined;
   if (!filePath && !input.videoUrl) throw publishError('缺少待发布的视频文件或公开视频地址', 400);
   if (account.platform === 'tiktok' && !filePath) {
@@ -761,6 +805,53 @@ async function publishVideoToAccountWithLease(
         await revalidatePublishSource(input);
       } });
     }
+    if (account.platform === 'linkedin') {
+      if (!filePath) throw publishError('LinkedIn 发布需要本地 MP4 视频文件', 400);
+      const requiredScope = linkedInRequiredPublishingScope(account);
+      if (!new Set(String(account.scope || '').split(/[\s,]+/).filter(Boolean)).has(requiredScope)) {
+        throw publishError(`LinkedIn 账号缺少 ${requiredScope} 发布权限，请重新授权`, 403);
+      }
+      const persistLinkedInReceipt = async (receiptId: string) => {
+        // Persist the provider receipt locally before forwarding it to the
+        // weekly projection. A projection outage must never erase evidence of
+        // an already-created LinkedIn post and trigger a duplicate retry.
+        if (directAttempt && input.finalizeTracking !== false) {
+          const current = await store.getById<PostRecord>('posts', tracked.id);
+          if (!current || current.tenant_id !== input.tenantId) throw publishError('linkedin_attempt_missing', 503);
+          const stats = recordObject(current.stats);
+          const results = recordObject(stats.publishResults);
+          const attempt = recordObject(results[input.accountId]);
+          if (attempt.attemptId !== directAttempt.attemptId || attempt.status !== 'in_flight') throw publishError('linkedin_attempt_changed', 409);
+          if (attempt.providerReceiptId && attempt.providerReceiptId !== receiptId) throw publishError('linkedin_receipt_changed', 409);
+          const saved = await store.update('posts', tracked.id, {
+            stats: { ...stats, publishResults: { ...results, [input.accountId]: { ...attempt, providerReceiptId: receiptId } } },
+          });
+          if (!saved) throw publishError('linkedin_receipt_persistence_failed', 503);
+        }
+        if (input.onProviderReceipt) await input.onProviderReceipt(receiptId);
+      };
+      video = await publishLinkedInVideo({
+        accessToken,
+        account,
+        filePath,
+        title: input.title,
+        commentary: socialInput.description || '',
+        async beforeInitialize() {
+          await publishLease.beforeEffect();
+          await revalidatePublishSource(input);
+          providerStarted = true;
+        },
+        async beforeUpload() {
+          await publishLease.beforeEffect();
+          await revalidatePublishSource(input);
+        },
+        async beforePublish() {
+          await publishLease.beforeEffect();
+          await revalidatePublishSource(input);
+        },
+        onProviderReceipt: persistLinkedInReceipt,
+      });
+    }
     const deliveryStatus = (video as { deliveryStatus?: unknown } | undefined)?.deliveryStatus;
     const providerReceiptId = String((video as { providerReceiptId?: unknown } | undefined)?.providerReceiptId || '').trim();
     if (account.platform === 'tiktok' && deliveryStatus === 'provider_accepted') {
@@ -803,7 +894,8 @@ async function publishVideoToAccountWithLease(
     } catch (error) {
       console.error(`[publishing] ${account.platform} history write failed:`, error);
     }
-    return { video, tracking: tracked, publishRecord, platformPostId: id, deliveryStatus: 'published', ...(providerReceiptId ? { providerReceiptId } : {}) };
+    const platformUrl = String((video as { url?: unknown } | undefined)?.url || '').trim();
+    return { video, tracking: tracked, publishRecord, platformPostId: id, deliveryStatus: 'published', ...(providerReceiptId ? { providerReceiptId } : {}), ...(platformUrl ? { platformUrl } : {}) };
   } catch (error) {
     if (providerStarted) await markDirectAttemptUnknown(input, tracked, directAttempt, error);
     else await markDirectAttemptNotSubmitted(input, tracked, directAttempt, error);

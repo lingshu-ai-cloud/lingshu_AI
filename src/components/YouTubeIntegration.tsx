@@ -70,7 +70,7 @@ interface YouTubeComment {
   videoId: string;
 }
 
-type SocialPlatform = 'tiktok' | 'instagram' | 'facebook';
+type SocialPlatform = 'tiktok' | 'instagram' | 'facebook' | 'linkedin';
 
 interface SocialAccount {
   id: string;
@@ -120,9 +120,10 @@ function channelUrl(account: YouTubeAccount) {
   return `https://www.youtube.com/channel/${account.channelId}`;
 }
 
-function externalAccountUrl(account: { platform: string; providerAccountId: string; handle?: string }) {
+function externalAccountUrl(account: { platform: string; providerAccountId: string; handle?: string; parentPageName?: string }) {
   if (account.platform === 'youtube') return `https://www.youtube.com/channel/${account.providerAccountId}`;
   if (account.platform === 'facebook') return `https://www.facebook.com/${account.providerAccountId}`;
+  if (account.platform === 'linkedin') return account.parentPageName ? `https://www.linkedin.com/company/${account.providerAccountId}` : '';
   if (account.platform === 'instagram') {
     const handle = account.handle?.replace(/^@/, '').trim();
     return handle ? `https://www.instagram.com/${handle}/` : '';
@@ -464,6 +465,13 @@ const SOCIAL_META: Record<SocialPlatform, {
     color: '#1877f2',
     bg: '#eff6ff',
   },
+  linkedin: {
+    label: 'LinkedIn',
+    description: '连接个人账号后可发布 MP4 视频；企业主页发布仅在已获 LinkedIn 组织权限时启用。',
+    envHint: 'LINKEDIN_CLIENT_ID / LINKEDIN_CLIENT_SECRET',
+    color: '#0A66C2',
+    bg: '#EFF6FF',
+  },
 };
 
 const emptyManualSocialValues: ManualSocialValues = {
@@ -504,6 +512,13 @@ const SOCIAL_MANUAL_COPY: Record<SocialPlatform, {
     accountLabel: 'Facebook Page ID（可选）',
     accountPlaceholder: '不填则自动识别',
     helper: '填一个未过期的 Meta Access Token 即可；系统会自动查找并连接可管理的 Facebook Page。',
+  },
+  linkedin: {
+    tokenLabel: 'Access Token',
+    tokenPlaceholder: '请通过 OAuth 连接',
+    accountLabel: 'LinkedIn Member ID',
+    accountPlaceholder: '请通过 OAuth 自动识别',
+    helper: 'LinkedIn 不开放手动凭证接入，请使用上方 OAuth 授权，系统会核验真实账号与发布权限。',
   },
 };
 
@@ -675,7 +690,7 @@ export function SocialConnectionPanel({ platform }: { platform: SocialPlatform }
         )}
       </div>
 
-      {status?.manualConnectEnabled && (
+      {status?.manualConnectEnabled && platform !== 'linkedin' && (
       <div className="mt-4 border-t border-border pt-4">
         <button
           onClick={() => setManualOpen(v => !v)}
@@ -816,7 +831,7 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 export function ChannelOverview() {
-  type OverviewPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
+  type OverviewPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'linkedin';
   const [platform, setPlatform] = useState<OverviewPlatform>('youtube');
   type OverviewAccount = {
     id: string;
@@ -834,7 +849,7 @@ export function ChannelOverview() {
   };
   type OverviewVideo = YouTubeVideo & { permalinkUrl?: string };
   const [accounts, setAccounts] = useState<OverviewAccount[]>([]);
-  const [counts, setCounts] = useState<Record<OverviewPlatform, number>>({ youtube: 0, tiktok: 0, instagram: 0, facebook: 0 });
+  const [counts, setCounts] = useState<Record<OverviewPlatform, number>>({ youtube: 0, tiktok: 0, instagram: 0, facebook: 0, linkedin: 0 });
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [videos, setVideos] = useState<OverviewVideo[]>([]);
   const [selectedVideoId, setSelectedVideoId] = useState('');
@@ -848,7 +863,7 @@ export function ChannelOverview() {
   const selectedVideo = videos.find(v => v.id === selectedVideoId) ?? null;
 
   const currentPlatform = platform as OverviewPlatform;
-  const commentsEnabled = currentPlatform !== 'facebook' && currentPlatform !== 'instagram';
+  const commentsEnabled = currentPlatform !== 'facebook' && currentPlatform !== 'instagram' && currentPlatform !== 'linkedin';
   const accountUrl = (account: OverviewAccount) => externalAccountUrl(account);
   const mapYouTube = (a: YouTubeAccount): OverviewAccount => ({
     id: a.id,
@@ -886,9 +901,9 @@ export function ChannelOverview() {
   };
 
   const loadCounts = async () => {
-    const platforms: OverviewPlatform[] = ['youtube', 'tiktok', 'instagram', 'facebook'];
+    const platforms: OverviewPlatform[] = ['youtube', 'tiktok', 'instagram', 'facebook', 'linkedin'];
     const results = await Promise.allSettled(platforms.map(loadPlatformAccounts));
-    const next = { youtube: 0, tiktok: 0, instagram: 0, facebook: 0 };
+    const next: Record<OverviewPlatform, number> = { youtube: 0, tiktok: 0, instagram: 0, facebook: 0, linkedin: 0 };
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') next[platforms[index]] = result.value.length;
     });

@@ -6,6 +6,7 @@ const platformLabel: Record<PublishingTarget["platform"], string> = {
   instagram: "Instagram",
   facebook: "Facebook",
   tiktok: "TikTok",
+  linkedin: "LinkedIn",
 };
 
 export type SmartOperationsAccount = PublishingTarget & {

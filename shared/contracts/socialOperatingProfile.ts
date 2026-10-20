@@ -1,6 +1,6 @@
 export type SocialOperatingProfileId = 'starter_four_platform' | 'dual_account_growth';
 export type SocialOperatingStage = 'validation' | 'growth';
-export type SocialOperatingPlatform = 'tiktok' | 'facebook' | 'instagram' | 'youtube';
+export type SocialOperatingPlatform = 'tiktok' | 'facebook' | 'instagram' | 'youtube' | 'linkedin';
 export type SocialAccountRole = 'brand_capability' | 'buyer_advisor' | 'brand_combined';
 
 export interface SocialPlatformAccountPlan {
@@ -124,6 +124,11 @@ export const SOCIAL_PLATFORM_EXECUTION_RULES: Record<SocialOperatingPlatform, {
     adaptation: ['标题围绕一个可搜索的买家问题', 'Shorts 只保留最完整的一条证据链', '频道身份、描述和主页采购入口保持一致'],
     ctaRule: '采购链接放在频道个人资料入口；不得把 Shorts 评论或描述中的普通 URL 当作可点击承接。',
     metrics: ['选择观看率', '平均观看时长', '观看百分比', '频道访问', '有效询盘'],
+  },
+  linkedin: {
+    adaptation: ['首段先交代业务问题与可核验证据', '正文使用专业短段落，避免消费化口号堆叠', '视频标题和正文保持企业采购语境'],
+    ctaRule: '优先引导私信、主页或已验证的企业承接入口；不承诺未确认的价格、交期或认证。',
+    metrics: ['视频观看', '互动', '主页访问', '私信', '有效询盘'],
   },
 };
 

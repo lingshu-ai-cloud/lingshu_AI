@@ -42,7 +42,7 @@ export async function listConnectedPublishingAccounts(tenantId: string, companyN
   ]);
   const connected: ConnectedPublishingAccount[] = [
     ...social.items
-      .filter(account => account.status === 'connected' && ['facebook', 'instagram', 'tiktok'].includes(account.platform))
+      .filter(account => account.status === 'connected' && ['facebook', 'instagram', 'tiktok', 'linkedin'].includes(account.platform))
       .map(account => ({
         platform: account.platform,
         accountId: account.id,
@@ -60,7 +60,7 @@ export async function listConnectedPublishingAccounts(tenantId: string, companyN
   ];
   if (!localPublishingAccountMocksEnabled()) return connected;
   const localLabel = text(companyName) || '本地演示企业';
-  for (const platform of ['youtube', 'tiktok', 'instagram', 'facebook'] as const) {
+  for (const platform of ['youtube', 'tiktok', 'instagram', 'facebook', 'linkedin'] as const) {
     if (connected.some(account => account.platform === platform)) continue;
     connected.push({
       platform,

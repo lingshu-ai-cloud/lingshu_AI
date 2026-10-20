@@ -7,12 +7,12 @@ import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import { withLegacyExternalEffectAllowed } from '../starter198/legacyEffectGuard.js';
 import { createStarter198Repository } from '../starter198/repository.js';
-import { getPublicOrigin, getInstagramOAuthClient, getMetaOAuthClient, getTikTokOAuthClient, getYouTubeOAuthClient } from './oauthConfig.js';
+import { getPublicOrigin, getInstagramOAuthClient, getLinkedInOAuthClient, getMetaOAuthClient, getTikTokOAuthClient, getYouTubeOAuthClient } from './oauthConfig.js';
 import { sendDingTalkMarkdown, sendDingTalkText } from '../integrations/dingtalk.js';
 import { sendFeishuCard, sendFeishuText } from '../integrations/feishu.js';
 import { sendWeComMarkdown } from '../integrations/wecom.js';
 
-export type TenantPlatform = 'meta' | 'instagram' | 'google' | 'tiktok' | 'wecom';
+export type TenantPlatform = 'meta' | 'instagram' | 'google' | 'tiktok' | 'linkedin' | 'wecom';
 export type TenantTokenType = 'user_60d' | 'system_user_permanent';
 export type TenantPlatformStatus =
   | 'pending'
@@ -231,6 +231,8 @@ export function publicTenantPlatformApp(req: Request, app: TenantPlatformAppReco
         ? `${getPublicOrigin(req)}/api/overseas/social/oauth/instagram/callback`
       : app.platform === 'tiktok'
         ? `${getPublicOrigin(req)}/api/overseas/social/oauth/tiktok/callback`
+      : app.platform === 'linkedin'
+        ? `${getPublicOrigin(req)}/api/overseas/social/oauth/linkedin/callback`
         : '',
     tokenType: app.token_type || 'user_60d',
     accessTokenSet: Boolean(accessToken),
@@ -351,6 +353,17 @@ export async function getTenantTikTokOAuthClient(tenantId?: string, dataStore: D
     return null;
   }
   return getTikTokOAuthClient();
+}
+
+export async function getTenantLinkedInOAuthClient(tenantId?: string, dataStore: DataStore = store): Promise<{ clientId: string; clientSecret: string } | null> {
+  if (tenantId) {
+    const app = await getTenantPlatformAppFrom(dataStore, tenantId, 'linkedin');
+    const clientId = text(app?.app_id);
+    const clientSecret = decryptSecret(app?.app_secret);
+    if (app?.tenant_id === tenantId && clientId && clientSecret) return { clientId, clientSecret };
+    return null;
+  }
+  return getLinkedInOAuthClient();
 }
 
 export function signOAuthState(input: {

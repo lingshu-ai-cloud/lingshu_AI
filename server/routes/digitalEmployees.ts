@@ -46,7 +46,7 @@ import { weeklyAuthorizationRecoveryDecision } from '../digitalEmployees/weeklyA
 import { missingPublishingOAuthConfiguration, publishingAccountConnectionMessage, publishingOAuthConfigurationMessage, type PublishingOAuthPlatform, type PublishingReadinessSnapshot } from '../digitalEmployees/publishingOAuthReadiness.js';
 import { readTenantPublishingReadiness } from '../digitalEmployees/publishingRuntimeReadiness.js';
 import { migrateLegacyPublishingPlanAccountBindings, packageGrantWasInvalidatedAfterApproval } from '../digitalEmployees/publishingPlanAccountMigration.js';
-import { getTenantAwareGoogleOAuthClient, getTenantAwareInstagramOAuthClient, getTenantAwareMetaOAuthClient, getTenantAwareTikTokOAuthClient } from '../lib/oauthConfig.js';
+import { getTenantAwareGoogleOAuthClient, getTenantAwareInstagramOAuthClient, getTenantAwareLinkedInOAuthClient, getTenantAwareMetaOAuthClient, getTenantAwareTikTokOAuthClient } from '../lib/oauthConfig.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
 import { normalizeVideoPlan, spokenLanguageMatches, videoPlanErrors, type VideoCreationPlan, type VideoPreproductionPreview } from '../../shared/contracts/videoCreationPlan.js';
@@ -1680,20 +1680,21 @@ async function approvalPreflight(
       const connectedIds = new Set(connectedAccounts.map(account => account.accountId));
       const targetPlatforms = goalInput(goal).contentPlatforms;
       const connectedPlatforms = connectedAccounts.map(account => account.platform);
-      const [metaClient, instagramClient, tiktokClient, googleClient] = await Promise.all([
+      const [metaClient, instagramClient, tiktokClient, googleClient, linkedinClient] = await Promise.all([
         getTenantAwareMetaOAuthClient(tenantId),
         getTenantAwareInstagramOAuthClient(tenantId),
         getTenantAwareTikTokOAuthClient(tenantId),
         getTenantAwareGoogleOAuthClient(tenantId),
+        getTenantAwareLinkedInOAuthClient(tenantId),
       ]);
       const oauthConfigurationGaps = missingPublishingOAuthConfiguration({
         targetPlatforms,
         connectedPlatforms,
-        clients: { meta: Boolean(metaClient), instagram: Boolean(instagramClient), tiktok: Boolean(tiktokClient), google: Boolean(googleClient) },
+        clients: { meta: Boolean(metaClient), instagram: Boolean(instagramClient), tiktok: Boolean(tiktokClient), google: Boolean(googleClient), linkedin: Boolean(linkedinClient) },
       });
       const connectedPlatformSet = new Set(connectedPlatforms);
       const missingAccountPlatforms = targetPlatforms
-        .filter((platform): platform is PublishingOAuthPlatform => ['facebook', 'instagram', 'tiktok', 'youtube'].includes(platform))
+        .filter((platform): platform is PublishingOAuthPlatform => ['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin'].includes(platform))
         .filter(platform => !connectedPlatformSet.has(platform));
       checks.push({
         key: 'publishing_oauth_configuration',

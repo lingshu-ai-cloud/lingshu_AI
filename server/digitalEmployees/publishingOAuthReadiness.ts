@@ -1,10 +1,11 @@
-export type PublishingOAuthPlatform = 'facebook' | 'instagram' | 'tiktok' | 'youtube';
+export type PublishingOAuthPlatform = 'facebook' | 'instagram' | 'tiktok' | 'youtube' | 'linkedin';
 
 export type PublishingOAuthClients = {
   meta: boolean;
   instagram: boolean;
   tiktok: boolean;
   google: boolean;
+  linkedin?: boolean;
 };
 
 export type PublishingReadinessSnapshot = {
@@ -24,6 +25,7 @@ const labels: Record<PublishingOAuthPlatform, string> = {
   instagram: 'Instagram',
   tiktok: 'TikTok',
   youtube: 'YouTube',
+  linkedin: 'LinkedIn',
 };
 
 const isPublishingOAuthPlatform = (platform: string): platform is PublishingOAuthPlatform =>
@@ -46,7 +48,8 @@ export function missingPublishingOAuthConfiguration(input: {
     .filter(platform => platform === 'facebook' ? !input.clients.meta
       : platform === 'instagram' ? !(input.clients.instagram || input.clients.meta)
         : platform === 'tiktok' ? !input.clients.tiktok
-          : !input.clients.google);
+          : platform === 'linkedin' ? !input.clients.linkedin
+            : !input.clients.google);
 }
 
 export function publishingOAuthConfigurationMessage(platforms: PublishingOAuthPlatform[]): string {

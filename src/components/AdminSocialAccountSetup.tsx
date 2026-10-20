@@ -28,6 +28,8 @@ interface OAuthForm {
   instagramAppSecret: string;
   tiktokClientKey: string;
   tiktokClientSecret: string;
+  linkedinClientId: string;
+  linkedinClientSecret: string;
   advancedManualConnectEnabled: boolean;
 }
 
@@ -40,6 +42,8 @@ const EMPTY_FORM: OAuthForm = {
   instagramAppSecret: '',
   tiktokClientKey: '',
   tiktokClientSecret: '',
+  linkedinClientId: '',
+  linkedinClientSecret: '',
   advancedManualConnectEnabled: false,
 };
 
@@ -53,6 +57,8 @@ function formFromConfig(config: AdminOAuthConfig): OAuthForm {
     instagramAppSecret: '',
     tiktokClientKey: config.values.tiktokClientKey,
     tiktokClientSecret: '',
+    linkedinClientId: config.values.linkedinClientId,
+    linkedinClientSecret: '',
     advancedManualConnectEnabled: config.values.advancedManualConnectEnabled,
   };
 }
@@ -209,6 +215,7 @@ export default function AdminSocialAccountSetup() {
       { label: 'Facebook / Messenger', clientId: form.metaSocialAppId, clientSecret: form.metaSocialAppSecret, savedClientId: config?.values.metaSocialAppId || '', savedSecret: Boolean(config?.secretSet.metaSocialAppSecret) },
       { label: 'Instagram 私信', clientId: form.instagramAppId, clientSecret: form.instagramAppSecret, savedClientId: config?.values.instagramAppId || '', savedSecret: Boolean(config?.secretSet.instagramAppSecret) },
       { label: 'TikTok', clientId: form.tiktokClientKey, clientSecret: form.tiktokClientSecret, savedClientId: config?.values.tiktokClientKey || '', savedSecret: Boolean(config?.secretSet.tiktokClientSecret) },
+      { label: 'LinkedIn', clientId: form.linkedinClientId, clientSecret: form.linkedinClientSecret, savedClientId: config?.values.linkedinClientId || '', savedSecret: Boolean(config?.secretSet.linkedinClientSecret) },
     ]);
     if (validationError) { setError(validationError); return; }
     setSaving(true);
@@ -263,7 +270,9 @@ export default function AdminSocialAccountSetup() {
           ? 'Facebook / Messenger'
           : target === 'instagram'
             ? 'Instagram 私信'
-          : 'TikTok';
+          : target === 'tiktok'
+            ? 'TikTok'
+            : 'LinkedIn';
       const accountCount = data.disconnectedAccounts ?? 0;
       setNotice(`${label} 配置已清除${accountCount > 0 ? `，并已断开 ${accountCount} 个已连接账号` : ''}。`);
       setClearTarget(null);
@@ -280,6 +289,7 @@ export default function AdminSocialAccountSetup() {
   const metaConfigured = Boolean(form.metaSocialAppId.trim() || form.metaSocialAppSecret.trim() || config?.secretSet.metaSocialAppSecret);
   const instagramConfigured = Boolean(form.instagramAppId.trim() || form.instagramAppSecret.trim() || config?.secretSet.instagramAppSecret);
   const tiktokConfigured = Boolean(form.tiktokClientKey.trim() || form.tiktokClientSecret.trim() || config?.secretSet.tiktokClientSecret);
+  const linkedinConfigured = Boolean(form.linkedinClientId.trim() || form.linkedinClientSecret.trim() || config?.secretSet.linkedinClientSecret);
 
   return (
     <>
@@ -392,6 +402,19 @@ export default function AdminSocialAccountSetup() {
                     <CredentialField required secret saved={config.secretSet.tiktokClientSecret} fieldName="tiktok-client-secret" label="Client Secret" value={form.tiktokClientSecret} onChange={value => setField('tiktokClientSecret', value)} />
                     <CallbackLine label="Redirect URI" value={config.callbacks.tiktok} />
                   </div>
+
+                  <div className="space-y-3 rounded-lg border border-border p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="flex items-center gap-2 text-sm font-black text-text-primary"><SocialPlatformIcon platform="linkedin" size={20} /> LinkedIn</p>
+                        <p className="mt-1 text-[11px] text-text-muted">OpenID Connect + Posts / Videos API</p>
+                      </div>
+                      <ClearConfigButton platformLabel="LinkedIn" disabled={!linkedinConfigured || clearing} onClick={() => setClearTarget('linkedin')} />
+                    </div>
+                    <CredentialField required fieldName="linkedin-client-id" label="Client ID" value={form.linkedinClientId} onChange={value => setField('linkedinClientId', value)} />
+                    <CredentialField required secret saved={config.secretSet.linkedinClientSecret} fieldName="linkedin-client-secret" label="Client Secret" value={form.linkedinClientSecret} onChange={value => setField('linkedinClientSecret', value)} />
+                    <CallbackLine label="Authorized redirect URL" value={config.callbacks.linkedin} />
+                  </div>
                 </div>
 
                 <div className="mt-4 flex justify-end">
@@ -417,6 +440,7 @@ export default function AdminSocialAccountSetup() {
                   <SocialConnectionPanel platform="instagram" />
                   <SocialConnectionPanel platform="facebook" />
                   <SocialConnectionPanel platform="tiktok" />
+                  <SocialConnectionPanel platform="linkedin" />
                 </div>
               </div>
             </>

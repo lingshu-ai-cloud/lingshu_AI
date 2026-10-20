@@ -435,7 +435,7 @@ function isoDay(offset: number): string {
 
 const EMPTY_GOAL = {
   businessLine: "full_funnel" as BusinessLine,
-  contentPlatforms: ["facebook", "instagram", "tiktok", "youtube"] as Array<Exclude<ContentPlatform, "all">>,
+  contentPlatforms: ["facebook", "instagram", "tiktok", "youtube", "linkedin"] as Array<Exclude<ContentPlatform, "all">>,
   title: "本周内容增长目标",
   objective: "形成一组面向目标市场、证据充分且可进入审批的内容执行包",
   metric: "approved_content_packages",
@@ -634,7 +634,7 @@ function Field({
 const inputClass =
   "w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100";
 
-const publishingPlatforms = ["youtube", "tiktok", "instagram", "facebook"] as const;
+const publishingPlatforms = ["youtube", "tiktok", "instagram", "facebook", "linkedin"] as const;
 
 function primaryEnterpriseLanguage(value: unknown): string {
   const first = String(value || "").split(/[,，、;/]/).map((item) => item.trim()).find(Boolean);
@@ -2191,7 +2191,7 @@ function EventTimeline({
 
 type WorkspaceView = "today" | "matrix" | "overview" | "live" | "review" | "rules";
 type BusinessLine = "full_funnel" | "content_growth" | "customer_conversion";
-type ContentPlatform = "all" | "facebook" | "instagram" | "tiktok" | "youtube";
+type ContentPlatform = "all" | "facebook" | "instagram" | "tiktok" | "youtube" | "linkedin";
 
 const businessLineLabel: Record<BusinessLine, string> = {
   full_funnel: "全链路经营",
@@ -2205,6 +2205,7 @@ const contentPlatformLabel: Record<ContentPlatform, string> = {
   instagram: "Instagram",
   tiktok: "TikTok",
   youtube: "YouTube",
+  linkedin: "LinkedIn",
 };
 
 function taskBusinessLine(task: WorkflowTask): BusinessLine {
@@ -2232,7 +2233,7 @@ function BusinessLineNav({ value, platform, onChange, onPlatformChange }: { valu
     ["content_growth", "内容增长", "情报到获客"],
     ["customer_conversion", "客户转化", "询盘到成交"],
   ];
-  const platforms: Array<[ContentPlatform, string]> = [["all","全部平台"],["facebook","Facebook"],["instagram","Instagram"],["tiktok","TikTok"],["youtube","YouTube"]];
+  const platforms: Array<[ContentPlatform, string]> = [["all","全部平台"],["facebook","Facebook"],["instagram","Instagram"],["tiktok","TikTok"],["youtube","YouTube"],["linkedin","LinkedIn"]];
   return <section aria-label="经营视角切换" className="border-b border-slate-200 bg-transparent">
     <div className="flex flex-wrap items-center gap-5">
       <span className="flex items-center gap-1.5 py-3 text-[10px] font-bold text-slate-400"><Layers3 size={13}/>经营视角</span>

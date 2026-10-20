@@ -18,6 +18,7 @@ function normalizePlatform(platform: string): string {
   if (value.includes('tiktok') || value.includes('tik tok')) return 'tiktok';
   if (value.includes('instagram')) return 'instagram';
   if (value.includes('facebook')) return 'facebook';
+  if (value.includes('linkedin')) return 'linkedin';
   return value;
 }
 
@@ -38,6 +39,9 @@ export function platformMeta(platform: string): PlatformMeta {
   if (normalized === 'facebook') {
     return { label: 'Facebook', className: 'bg-blue-50 text-blue-700' };
   }
+  if (normalized === 'linkedin') {
+    return { label: 'LinkedIn', className: 'bg-blue-50 text-[#0A66C2]' };
+  }
   return {
     label: platform || '其他平台',
     className: 'bg-slate-600 text-white',
@@ -53,7 +57,7 @@ export function PlatformBadge({
 }) {
   const meta = platformMeta(platform);
   const normalized = normalizePlatform(platform);
-  const hasBrandLogo = normalized === 'youtube' || normalized === 'tiktok' || normalized === 'instagram' || normalized === 'facebook';
+  const hasBrandLogo = normalized === 'youtube' || normalized === 'tiktok' || normalized === 'instagram' || normalized === 'facebook' || normalized === 'linkedin';
   return (
     <span
       aria-label={`发布平台：${meta.label}`}

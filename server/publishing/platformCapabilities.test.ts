@@ -65,6 +65,13 @@ const providers = (calls: string[]): PlatformCapabilityProbeProviders => ({
   async instagram() { calls.push('instagram'); return { id: 'ig-a', publishGranted: true }; },
   async tiktok() { calls.push('tiktok'); return { openId: 'open-a', publishGranted: true }; },
   async tiktokReceipt(_token, receipt) { calls.push('receipt'); return { publishId: receipt }; },
+  async linkedin(_token, account) {
+    calls.push('linkedin');
+    return {
+      authorUrn: String(account.parentPageId || `urn:li:person:${String(account.providerAccountId || '')}`),
+      publishGranted: true,
+    };
+  },
 });
 
 test('refresh performs a provider read and persists short-lived official evidence', async () => {
@@ -124,6 +131,23 @@ test('identity probe plus stored scope cannot substitute for provider-granted pu
   const evidence = await refreshPlatformCapabilityEvidence({ tenantId: 'tenant-a', accountId: 'fb-account', platform: 'facebook', capability: 'publishing.official', now, dataStore, providers: denied });
   assert.equal(evidence.status, 'unavailable');
   assert.equal(evidence.reason_code, 'provider_publish_permission_not_granted');
+});
+
+test('LinkedIn publishing proof is bound to the exact member identity and credential', async () => {
+  const dataStore = new MemoryStore();
+  const account = {
+    id: 'linkedin-account', tenantId: 'tenant-a', platform: 'linkedin', status: 'connected',
+    providerAccountId: 'member-123', accessToken: sealAccountCredential('access'), scope: 'openid w_member_social',
+  };
+  dataStore.rows.set('social_accounts', [account]);
+  const calls: string[] = [];
+  const input = { tenantId: 'tenant-a', accountId: 'linkedin-account', platform: 'linkedin' as const,
+    capability: 'publishing.official' as const, now, dataStore, providers: providers(calls) };
+  assert.equal((await refreshPlatformCapabilityEvidence(input)).status, 'verified');
+  assert.deepEqual(calls, ['linkedin']);
+  assert.equal((await platformCapabilityDecision(input)).status, 'available');
+  account.providerAccountId = 'member-456';
+  assert.equal((await platformCapabilityDecision(input)).reason, 'provider_account_identity_changed');
 });
 
 test('production ensure refreshes missing evidence and throttles a recent failed probe', async () => {

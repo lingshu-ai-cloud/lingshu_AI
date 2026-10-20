@@ -90,7 +90,7 @@ export async function runWeeklyPublicationExecutionScan(input: {
         assertWeeklyPublicationStoredScope(actual,weeklyRows.items[0]!.payload);
         if ((actual as unknown as Record<string, unknown>).receipt_recovery_required !== true) return;
         const started = publicationInstant(fresh.started_at), resolved = publicationInstant(fresh.resolved_at);
-        const expectedProvider = row.platform === 'tiktok' ? 'tiktok-content-posting-api' : row.platform === 'youtube' ? 'youtube-data-api' : 'meta-graph-api';
+        const expectedProvider = row.platform === 'tiktok' ? 'tiktok-content-posting-api' : row.platform === 'youtube' ? 'youtube-data-api' : row.platform === 'linkedin' ? 'linkedin-posts-api' : 'meta-graph-api';
         if (started === null || resolved === null || resolved < started || resolved > (input.now ?? new Date()).getTime() || fresh.provider !== expectedProvider || (fresh.status === 'published' ? !fresh.provider_receipt_id?.trim() || !fresh.platform_post_id?.trim() : !fresh.failure_code?.trim())) throw Error('publication_recovery_terminal_evidence_invalid');
         if(!await dataStore.update(PUBLICATION_ASSIGNMENTS,row.id,{receipt_recovery_required:false}))throw Error('publication_recovery_projection_failed');
       };

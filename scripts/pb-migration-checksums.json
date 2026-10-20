@@ -187,6 +187,7 @@
     "1792195216_create_weekly_account_collection_provider_evidence.js": "02a44be93298732b72e8dbe799a20781902d3b3063c1aa35b7b2fb08a2dba617",
     "1792195217_create_weekly_candidate_exact_evidence.js": "a3ed90fa8d0d0d94ec7582c0166dbc027957e4a5ac6bc4bae2ba10e3d47951ae",
     "1792195218_create_weekly_candidate_exact_production_escrows.js": "d46cf8d5cd13d05dc5dcea0abb01810fef9939c4eea6685b75eff4099fe75320",
-    "1792195219_create_weekly_candidate_exact_dynamic_heads.js": "b415e33d7ae14e4e359d0106299f73ed9bfc350bd5ace7b517123c1e606c62dc"
+    "1792195219_create_weekly_candidate_exact_dynamic_heads.js": "b415e33d7ae14e4e359d0106299f73ed9bfc350bd5ace7b517123c1e606c62dc",
+    "1792195220_add_linkedin_tenant_app.js": "03dcd38e5e3304eb71a65d9dec7dd97c54fb49a6e603d4afeb850a2b3148fc91"
   }
 }

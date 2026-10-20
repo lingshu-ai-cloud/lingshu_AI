@@ -21,7 +21,7 @@ import {weeklyReviewWindowBounds} from '../socialReview/weeklyReviewTiming.js';
 
 export interface WeeklyContentActionInput {
   requestId:string; programId:string; packageId:string; expectedVersion:number;
-  accountId:string; productId:string; goal:string; platform:'tiktok'|'instagram'|'facebook'|'youtube'; dueAt:string;
+  accountId:string; productId:string; goal:string; platform:'tiktok'|'instagram'|'facebook'|'youtube'|'linkedin'; dueAt:string;
   /** A persisted, confirmed capacity decision, never an inline quota override. */
   capacityPlanRef?:{type:'capacity_plan';id:string;version:number};
   operatingDecisionSnapshotRef?:{type:'operating_authority_snapshot';id:string;version:number};
@@ -151,7 +151,7 @@ export function createWeeklyContentActions(store:DataStore,ports:{now?:()=>strin
    return {...saved,materialConsumerRepairs:result.materialConsumerRepairs};
   },
   async create(scope:WeeklyContentActionScope,input:WeeklyContentActionInput){
-  if(!input||!input.requestId||input.requestId.length>160||!input.programId||!input.packageId||!input.accountId||!input.productId||!input.goal?.trim()||input.goal.length>1000||!['tiktok','instagram','facebook','youtube'].includes(input.platform)||!Number.isFinite(Date.parse(input.dueAt)))fail('assistant_weekly_content_input_invalid','请选择产品、发布账号，填写内容目标和明确的交付时间。',400);
+  if(!input||!input.requestId||input.requestId.length>160||!input.programId||!input.packageId||!input.accountId||!input.productId||!input.goal?.trim()||input.goal.length>1000||!['tiktok','instagram','facebook','youtube','linkedin'].includes(input.platform)||!Number.isFinite(Date.parse(input.dueAt)))fail('assistant_weekly_content_input_invalid','请选择产品、发布账号，填写内容目标和明确的交付时间。',400);
   await assertWeeklyScheduleActor(store,{tenantId:scope.tenantId,actorUserId:scope.userId,packageVersion:input.expectedVersion});
   const publicationTaskId=`assistant_${createHash('sha256').update(JSON.stringify([scope.tenantId,scope.userId,input.packageId,input.requestId])).digest('hex').slice(0,28)}`;
   const result=await executeSocialContentMutation({repository:createStarter198Repository(store),tenantId:scope.tenantId,userId:scope.userId,idempotencyKey:`assistant-weekly-content:${scope.userId}:${input.requestId}`,requestHash:socialRequestHash(input),operation:'assistant_create_weekly_content',targetId:input.packageId,

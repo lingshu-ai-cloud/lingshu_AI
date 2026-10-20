@@ -1,6 +1,6 @@
 import type { PublishDeliveryMode } from '../components/publishing/schedulePolicy';
 
-export type PublishPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
+export type PublishPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'linkedin';
 export type PublishWorkflowContext = { runId: string; taskId: string; taskKey: string };
 export type StudioGenerationKind = 'script' | 'poster';
 
@@ -157,7 +157,7 @@ export function publishItemId() {
     : `publish-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-const PUBLISH_PLATFORMS = new Set<PublishPlatform>(['youtube', 'tiktok', 'instagram', 'facebook']);
+const PUBLISH_PLATFORMS = new Set<PublishPlatform>(['youtube', 'tiktok', 'instagram', 'facebook', 'linkedin']);
 const PUBLISH_ITEM_STATUSES = new Set<PublishItemStatus>(['draft', 'ready', 'publishing', 'provider_processing', 'scheduled', 'published', 'partial', 'failed']);
 const PUBLISH_DELIVERY_MODES = new Set<DeliveryMode>(['now', 'flexible', 'schedule']);
 

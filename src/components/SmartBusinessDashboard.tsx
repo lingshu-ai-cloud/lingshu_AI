@@ -81,13 +81,14 @@ const starterUsageRole: Record<AgentCard["role"], StarterAgentRole> = {
   customer: "sales",
 };
 
-const platformOptions = ["youtube", "tiktok", "instagram", "facebook"] as const;
+const platformOptions = ["youtube", "tiktok", "instagram", "facebook", "linkedin"] as const;
 type Platform = (typeof platformOptions)[number];
 const platformLabels: Record<Platform, string> = {
   youtube: "YouTube",
   tiktok: "TikTok",
   instagram: "Instagram",
   facebook: "Facebook",
+  linkedin: "LinkedIn",
 };
 
 const runningStatuses = new Set(["running", "active", "planning", "waiting_external"]);
@@ -818,6 +819,7 @@ const demoPerformanceBase: Record<Platform, { views: number; engagementRate: num
   tiktok: { views: 5_200, engagementRate: 6.8 },
   instagram: { views: 3_600, engagementRate: 5.5 },
   facebook: { views: 1_800, engagementRate: 3.4 },
+  linkedin: { views: 1_200, engagementRate: 3.8 },
 };
 
 function deterministicSeed(value: string) {

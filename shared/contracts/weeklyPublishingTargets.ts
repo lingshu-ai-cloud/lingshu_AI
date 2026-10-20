@@ -1,4 +1,4 @@
-export const WEEKLY_PUBLISHING_PLATFORMS = ['facebook', 'instagram', 'tiktok', 'youtube'] as const;
+export const WEEKLY_PUBLISHING_PLATFORMS = ['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin'] as const;
 export type WeeklyPublishingPlatform = (typeof WEEKLY_PUBLISHING_PLATFORMS)[number];
 
 export interface WeeklyPublishingTargetLike {

@@ -193,6 +193,7 @@ const PLATFORM_META: Record<PublishPlatform, { label: string; color: string; for
   tiktok: { label: 'TikTok', color: '#111827', format: '9:16 短视频' },
   instagram: { label: 'Instagram', color: '#c13584', format: 'Reels' },
   facebook: { label: 'Facebook', color: '#1877f2', format: 'Reels / Page Video' },
+  linkedin: { label: 'LinkedIn', color: '#0A66C2', format: 'Feed Video' },
 };
 
 const ALL_PUBLISH_PLATFORMS = Object.keys(PLATFORM_META) as PublishPlatform[];
@@ -220,7 +221,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 function platformBody(platform: PublishPlatform, copy?: PlatformCopy, fallback = '') {
   if (!copy) return fallback;
   if (platform === 'youtube') return copy.description || fallback;
-  if (platform === 'facebook') return copy.text || fallback;
+  if (platform === 'facebook' || platform === 'linkedin') return copy.text || fallback;
   return copy.caption || fallback;
 }
 
@@ -1034,17 +1035,19 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     setLoading(true);
     setError('');
     try {
-      const [youtube, tiktok, instagram, facebook] = await Promise.all([
+      const [youtube, tiktok, instagram, facebook, linkedin] = await Promise.all([
         fetchJson<{ items?: Array<{ id: string; channelTitle: string; status: PublishAccount['status']; thumbnailUrl?: string }> }>('/api/overseas/youtube/accounts'),
         fetchJson<{ items?: Array<{ id: string; title: string; handle?: string; status: PublishAccount['status']; avatarUrl?: string }> }>('/api/overseas/social/accounts?platform=tiktok'),
         fetchJson<{ items?: Array<{ id: string; title: string; handle?: string; status: PublishAccount['status']; avatarUrl?: string }> }>('/api/overseas/social/accounts?platform=instagram'),
         fetchJson<{ items?: Array<{ id: string; title: string; handle?: string; status: PublishAccount['status']; avatarUrl?: string }> }>('/api/overseas/social/accounts?platform=facebook'),
+        fetchJson<{ items?: Array<{ id: string; title: string; handle?: string; status: PublishAccount['status']; avatarUrl?: string }> }>('/api/overseas/social/accounts?platform=linkedin'),
       ]);
       const next: PublishAccount[] = [
         ...(youtube.items ?? []).map(account => ({ id: account.id, platform: 'youtube' as const, title: account.channelTitle, handle: account.channelTitle, status: account.status, avatarUrl: account.thumbnailUrl })),
         ...(tiktok.items ?? []).map(account => ({ id: account.id, platform: 'tiktok' as const, title: account.title, handle: account.handle, status: account.status, avatarUrl: account.avatarUrl })),
         ...(instagram.items ?? []).map(account => ({ id: account.id, platform: 'instagram' as const, title: account.title, handle: account.handle, status: account.status, avatarUrl: account.avatarUrl })),
         ...(facebook.items ?? []).map(account => ({ id: account.id, platform: 'facebook' as const, title: account.title, handle: account.handle, status: account.status, avatarUrl: account.avatarUrl })),
+        ...(linkedin.items ?? []).map(account => ({ id: account.id, platform: 'linkedin' as const, title: account.title, handle: account.handle, status: account.status, avatarUrl: account.avatarUrl })),
       ];
       setAccounts(next);
       if (!pendingAccountTargetsSeededRef.current) {
@@ -1757,7 +1760,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                       {platform === 'youtube' && (
                         <input value={platformTitle(platform, copy, activeItem?.title || '')} onChange={event => activeItem && updateItem(activeItem.id, { platformCopy: { ...activeItem.platformCopy, [platform]: { ...activeItem.platformCopy[platform], title: event.target.value } }, status: 'draft', error: undefined })} className="mt-3 w-full rounded-lg border border-border bg-white px-3 py-2 text-xs outline-none focus:border-accent" />
                       )}
-                      <textarea value={body} onChange={event => activeItem && updateItem(activeItem.id, { platformCopy: { ...activeItem.platformCopy, [platform]: { ...activeItem.platformCopy[platform], ...(platform === 'facebook' ? { text: event.target.value } : platform === 'youtube' ? { description: event.target.value } : { caption: event.target.value }) } }, status: 'draft', error: undefined })} rows={4} className="mt-3 w-full resize-none rounded-lg border border-border bg-white px-3 py-2 text-xs outline-none focus:border-accent" />
+                      <textarea value={body} onChange={event => activeItem && updateItem(activeItem.id, { platformCopy: { ...activeItem.platformCopy, [platform]: { ...activeItem.platformCopy[platform], ...(platform === 'facebook' || platform === 'linkedin' ? { text: event.target.value } : platform === 'youtube' ? { description: event.target.value } : { caption: event.target.value }) } }, status: 'draft', error: undefined })} rows={4} className="mt-3 w-full resize-none rounded-lg border border-border bg-white px-3 py-2 text-xs outline-none focus:border-accent" />
                       <div className="mt-2 flex items-center justify-between text-[11px] text-text-muted">
                         <span>{body.length} 字符</span>
                         <span>{platform === 'tiktok' && body.length > 120 ? '超出建议长度' : '长度正常'}</span>

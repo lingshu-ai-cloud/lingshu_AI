@@ -3,6 +3,7 @@ import {
   getTenantAwareInstagramOAuthClient,
   getTenantAwareMetaOAuthClient,
   getTenantAwareTikTokOAuthClient,
+  getTenantAwareLinkedInOAuthClient,
 } from '../lib/oauthConfig.js';
 import { buildPublishingReadinessSnapshot, type PublishingReadinessSnapshot } from './publishingOAuthReadiness.js';
 import { listConnectedPublishingAccounts, type ConnectedPublishingAccount } from './publishingTargets.js';
@@ -33,12 +34,13 @@ export async function readTenantPublishingReadiness(
       }),
     };
   }
-  const [connectedAccounts, metaClient, instagramClient, tiktokClient, googleClient] = await Promise.all([
+  const [connectedAccounts, metaClient, instagramClient, tiktokClient, googleClient, linkedinClient] = await Promise.all([
     listConnectedPublishingAccounts(tenantId),
     getTenantAwareMetaOAuthClient(tenantId),
     getTenantAwareInstagramOAuthClient(tenantId),
     getTenantAwareTikTokOAuthClient(tenantId),
     getTenantAwareGoogleOAuthClient(tenantId),
+    getTenantAwareLinkedInOAuthClient(tenantId),
   ]);
   return {
     connectedAccounts,
@@ -51,6 +53,7 @@ export async function readTenantPublishingReadiness(
         instagram: Boolean(instagramClient),
         tiktok: Boolean(tiktokClient),
         google: Boolean(googleClient),
+        linkedin: Boolean(linkedinClient),
       },
     }),
   };

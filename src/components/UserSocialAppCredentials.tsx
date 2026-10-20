@@ -15,8 +15,8 @@ type AppInfo = {
   status: string;
 } | null;
 type Config = {
-  callbacks: Record<'youtube' | 'instagram' | 'facebook' | 'tiktok', string>;
-  apps: Record<'google' | 'meta' | 'instagram' | 'tiktok', AppInfo>;
+  callbacks: Record<'youtube' | 'instagram' | 'facebook' | 'tiktok' | 'linkedin', string>;
+  apps: Record<'google' | 'meta' | 'instagram' | 'tiktok' | 'linkedin', AppInfo>;
 };
 type ConfigPlatform = keyof Config['apps'];
 type Form = {
@@ -28,21 +28,25 @@ type Form = {
   instagramAppSecret: string;
   tiktokClientKey: string;
   tiktokClientSecret: string;
+  linkedinClientId: string;
+  linkedinClientSecret: string;
 };
-const EMPTY: Form = { youtubeOAuthClientId: '', youtubeOAuthClientSecret: '', metaSocialAppId: '', metaSocialAppSecret: '', instagramAppId: '', instagramAppSecret: '', tiktokClientKey: '', tiktokClientSecret: '' };
+const EMPTY: Form = { youtubeOAuthClientId: '', youtubeOAuthClientSecret: '', metaSocialAppId: '', metaSocialAppSecret: '', instagramAppId: '', instagramAppSecret: '', tiktokClientKey: '', tiktokClientSecret: '', linkedinClientId: '', linkedinClientSecret: '' };
 
 const PLATFORM_LABELS: Record<ConfigPlatform, string> = {
   google: 'YouTube / Google',
   meta: 'Facebook',
   instagram: 'Instagram',
   tiktok: 'TikTok',
+  linkedin: 'LinkedIn',
 };
 
 function withoutPlatformCredentials(form: Form, platform: ConfigPlatform): Form {
   if (platform === 'google') return { ...form, youtubeOAuthClientId: '', youtubeOAuthClientSecret: '' };
   if (platform === 'meta') return { ...form, metaSocialAppId: '', metaSocialAppSecret: '' };
   if (platform === 'instagram') return { ...form, instagramAppId: '', instagramAppSecret: '' };
-  return { ...form, tiktokClientKey: '', tiktokClientSecret: '' };
+  if (platform === 'tiktok') return { ...form, tiktokClientKey: '', tiktokClientSecret: '' };
+  return { ...form, linkedinClientId: '', linkedinClientSecret: '' };
 }
 
 function Callback({ label, value }: { label: string; value: string }) {
@@ -90,7 +94,7 @@ export default function UserSocialAppCredentials() {
       const data = await response.json() as Config & { error?: string };
       if (!response.ok) throw new Error(data.error || '读取社媒应用配置失败');
       setConfig(data);
-      setForm(current => ({ ...current, youtubeOAuthClientId: data.apps.google?.appId || '', metaSocialAppId: data.apps.meta?.appId || '', instagramAppId: data.apps.instagram?.appId || '', tiktokClientKey: data.apps.tiktok?.appId || '' }));
+      setForm(current => ({ ...current, youtubeOAuthClientId: data.apps.google?.appId || '', metaSocialAppId: data.apps.meta?.appId || '', instagramAppId: data.apps.instagram?.appId || '', tiktokClientKey: data.apps.tiktok?.appId || '', linkedinClientId: data.apps.linkedin?.appId || '' }));
     } catch (reason) { setError(reason instanceof Error ? reason.message : '读取社媒应用配置失败'); }
     finally { setLoading(false); }
   }
@@ -102,6 +106,7 @@ export default function UserSocialAppCredentials() {
       { label: 'Facebook', clientId: form.metaSocialAppId, clientSecret: form.metaSocialAppSecret, savedClientId: config?.apps.meta?.appId || '', savedSecret: Boolean(config?.apps.meta?.appSecretSet) },
       { label: 'Instagram', clientId: form.instagramAppId, clientSecret: form.instagramAppSecret, savedClientId: config?.apps.instagram?.appId || '', savedSecret: Boolean(config?.apps.instagram?.appSecretSet) },
       { label: 'TikTok', clientId: form.tiktokClientKey, clientSecret: form.tiktokClientSecret, savedClientId: config?.apps.tiktok?.appId || '', savedSecret: Boolean(config?.apps.tiktok?.appSecretSet) },
+      { label: 'LinkedIn', clientId: form.linkedinClientId, clientSecret: form.linkedinClientSecret, savedClientId: config?.apps.linkedin?.appId || '', savedSecret: Boolean(config?.apps.linkedin?.appSecretSet) },
     ]);
     if (validationError) { setError(validationError); return; }
     setSaving(true); setMessage(''); setError('');
@@ -110,7 +115,7 @@ export default function UserSocialAppCredentials() {
       const data = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(data.error || '保存失败');
       setMessage('已保存到你的企业空间。请把下方回调地址原样添加到各平台后台，再连接账号。');
-      setForm(current => ({ ...current, youtubeOAuthClientSecret: '', metaSocialAppSecret: '', instagramAppSecret: '', tiktokClientSecret: '' }));
+      setForm(current => ({ ...current, youtubeOAuthClientSecret: '', metaSocialAppSecret: '', instagramAppSecret: '', tiktokClientSecret: '', linkedinClientSecret: '' }));
       await load();
     } catch (reason) { setError(reason instanceof Error ? reason.message : '保存失败'); }
     finally { setSaving(false); }
@@ -141,6 +146,7 @@ export default function UserSocialAppCredentials() {
     { key: 'meta', title: 'Facebook', icon: <SocialPlatformIcon platform="facebook" size={20} />, sub: 'Page 基本信息读取与内容发布', idLabel: 'App ID', idKey: 'metaSocialAppId' as const, secretLabel: 'App Secret', secretKey: 'metaSocialAppSecret' as const, callbacks: [['Facebook redirect URI', config.callbacks.facebook]] },
     { key: 'instagram', title: 'Instagram', icon: <SocialPlatformIcon platform="instagram" size={20} />, sub: '专业账号基本信息读取与内容发布', idLabel: 'Instagram App ID', idKey: 'instagramAppId' as const, secretLabel: 'Instagram App Secret', secretKey: 'instagramAppSecret' as const, callbacks: [['Instagram redirect URI', config.callbacks.instagram]] },
     { key: 'tiktok', title: 'TikTok', icon: <SocialPlatformIcon platform="tiktok" size={20} />, sub: 'Login Kit + Content Posting API', idLabel: 'Client Key', idKey: 'tiktokClientKey' as const, secretLabel: 'Client Secret', secretKey: 'tiktokClientSecret' as const, callbacks: [['Redirect URI', config.callbacks.tiktok]] },
+    { key: 'linkedin', title: 'LinkedIn', icon: <SocialPlatformIcon platform="linkedin" size={20} />, sub: 'OpenID Connect + Posts / Videos API', idLabel: 'Client ID', idKey: 'linkedinClientId' as const, secretLabel: 'Client Secret', secretKey: 'linkedinClientSecret' as const, callbacks: [['Authorized redirect URL', config.callbacks.linkedin]] },
   ];
   return <>
   <section className="mb-5 overflow-hidden rounded-lg border border-border bg-white">
@@ -148,7 +154,7 @@ export default function UserSocialAppCredentials() {
       <div><h2 className="flex items-center gap-2 text-sm font-bold text-text-primary"><KeyRound size={16} className="text-accent" />配置我自己的社媒应用</h2><p className="mt-1 text-xs text-text-secondary">凭证只用于你的企业空间，账号授权与发布不与其他用户共用出口配置。</p></div><ChevronDown aria-hidden="true" size={16} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
     </button>
     {open && <div id="social-app-credentials-content" className="space-y-4 border-t border-border p-4 sm:p-5">
-      <p className="border-l-2 border-insight bg-insight-soft px-3 py-2 text-[11px] leading-5 text-insight-action">先在 Google、Meta 或 TikTok 开发者后台创建应用，再填写凭证。Secret 会加密保存，页面不会再次明文显示。</p>
+      <p className="border-l-2 border-insight bg-insight-soft px-3 py-2 text-[11px] leading-5 text-insight-action">先在对应平台开发者后台创建应用，再填写凭证。Secret 会加密保存，页面不会再次明文显示。</p>
       {message && <p role="status" className="border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-bold text-accent">{message}</p>}{error && <p role="alert" className="border-l-2 border-red bg-red/5 px-3 py-2 text-xs font-bold text-red">{error}</p>}
       {loading ? <div className="flex h-24 items-center justify-center gap-2 text-sm text-text-muted"><Loader2 size={16} className="animate-spin" />正在读取配置...</div> : <>
         <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-3">{cards?.map(card => <div key={card.key} className="min-w-0 space-y-3 rounded-lg border border-border p-4">

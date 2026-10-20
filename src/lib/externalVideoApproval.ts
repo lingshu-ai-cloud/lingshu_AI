@@ -1,7 +1,7 @@
 import type { TikTokDirectPostOptions } from './tikTokPostSettings';
 import type { PublishPlatform } from './publishQueueState';
 
-export const EXTERNAL_VIDEO_PLATFORMS: readonly PublishPlatform[] = ['youtube', 'instagram', 'facebook', 'tiktok'];
+export const EXTERNAL_VIDEO_PLATFORMS: readonly PublishPlatform[] = ['youtube', 'instagram', 'facebook', 'tiktok', 'linkedin'];
 
 export type ExternalVideoAccount = {
   id: string;

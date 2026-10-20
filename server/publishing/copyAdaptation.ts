@@ -1,4 +1,4 @@
-export const PUBLISH_COPY_PLATFORMS = ['youtube', 'tiktok', 'instagram', 'facebook'] as const;
+export const PUBLISH_COPY_PLATFORMS = ['youtube', 'tiktok', 'instagram', 'facebook', 'linkedin'] as const;
 
 export type PublishCopyPlatform = typeof PUBLISH_COPY_PLATFORMS[number];
 
@@ -197,6 +197,18 @@ export function platformCopyFallback(
     };
   }
 
+  if (platform === 'linkedin') {
+    const endings = [
+      'Contact us to verify specifications or discuss your sourcing requirements.',
+      'Which technical detail would help your evaluation? Share it in the comments.',
+      'Connect with us to discuss applications, lead time, or customization.',
+    ];
+    return {
+      text: `${shorten(base, 2400)}\n\n${endings[selectedVariant]}`,
+      hashtags: hashTags,
+    };
+  }
+
   const endings = [
     'Message us if you want to verify specifications or discuss your requirements.',
     'Tell us which product detail would help your evaluation.',
@@ -213,7 +225,7 @@ function visibleCopyFingerprint(platform: PublishCopyPlatform, copy?: PlatformCo
   if (!copy) return '';
   const values = platform === 'youtube'
     ? [copy.title, copy.description]
-    : platform === 'facebook'
+    : platform === 'facebook' || platform === 'linkedin'
       ? [copy.text]
       : [copy.caption];
   return values.map(value => cleanText(value).replace(/\s+/g, ' ').toLocaleLowerCase()).join('\n');

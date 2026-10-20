@@ -1,6 +1,6 @@
 import { authHeader } from './auth';
 
-export type SocialPerformancePlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
+export type SocialPerformancePlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'linkedin';
 
 export interface ConnectedSocialPerformanceAccount {
   id: string;

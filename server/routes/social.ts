@@ -29,10 +29,19 @@ import {
   type SocialUploadInput,
 } from '../integrations/social.js';
 import {
+  exchangeLinkedInCode,
+  getLinkedInAdminOrganizations,
+  getLinkedInProfile,
+  linkedInAuthorUrn,
+  linkedInOAuthScopes,
+  linkedInOrganizationPublishingEnabled,
+} from '../integrations/linkedin.js';
+import {
   advancedManualConnectEnabled as readAdvancedManualConnectEnabled,
   getTenantAwareMetaOAuthClient,
   getTenantAwareTikTokOAuthClient,
   getTenantAwareInstagramOAuthClient,
+  getTenantAwareLinkedInOAuthClient,
 } from '../lib/oauthConfig.js';
 import { parseOAuthState, signOAuthState } from '../lib/tenantPlatformApps.js';
 import { publishVideoToAccount, type PublishToAccountInput } from '../publishing/platformPublisher.js';
@@ -49,6 +58,7 @@ const COL = 'social_accounts';
 const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize/';
 const META_AUTH_URL = 'https://www.facebook.com';
 const INSTAGRAM_AUTH_URL = 'https://www.instagram.com/oauth/authorize';
+const LINKEDIN_AUTH_URL = 'https://www.linkedin.com/oauth/v2/authorization';
 
 export const socialRouter = Router();
 
@@ -76,7 +86,7 @@ interface SocialAccountRecord {
   refreshToken?: string;
   tokenExpiresAt?: string;
   scope?: string;
-  oauthProvider?: 'instagram_login' | 'facebook_login';
+  oauthProvider?: 'instagram_login' | 'facebook_login' | 'linkedin_oidc';
   parentPageId?: string;
   parentPageName?: string;
   followerCount: number;
@@ -109,12 +119,16 @@ async function getInstagramClient(tenantId?: string) {
   return getTenantAwareInstagramOAuthClient(tenantId);
 }
 
+async function getLinkedInClient(tenantId?: string) {
+  return getTenantAwareLinkedInOAuthClient(tenantId);
+}
+
 function advancedManualConnectEnabled() {
   return readAdvancedManualConnectEnabled();
 }
 
 function isPlatform(value: string): value is SocialPlatform {
-  return value === 'tiktok' || value === 'instagram' || value === 'facebook';
+  return value === 'tiktok' || value === 'instagram' || value === 'facebook' || value === 'linkedin';
 }
 
 function getPublicOrigin(req: Request) {
@@ -215,6 +229,9 @@ function readableSocialError(error: any) {
     if (lower.includes('tiktok') || lower.includes('video.publish') || lower.includes('content posting')) {
       return 'TikTok 发布权限暂不可用。请检查平台应用权限配置后重新连接账号。';
     }
+    if (lower.includes('linkedin') || lower.includes('w_member_social') || lower.includes('w_organization_social')) {
+      return 'LinkedIn 发布权限不足。个人账号需要 w_member_social；企业主页还需要通过 Community Management API 审核并授予主页发布权限。';
+    }
     return '平台授权权限不足。请重新连接账号，并确认 Meta 应用已开通 pages_manage_posts / instagram_content_publish 等发布权限。';
   }
   if (lower.includes('unsupported post request') || lower.includes('object does not exist')) {
@@ -285,6 +302,8 @@ function publicSocialAccount(a: SocialAccountRecord) {
     instagramLegacyContentReady: a.platform === 'instagram' && a.oauthProvider !== 'instagram_login',
     instagramWebhookSubscribed: a.instagramWebhookSubscribed === true,
     instagramWebhookSubscriptionError: a.instagramWebhookSubscriptionError || '',
+    linkedinOwnerType: a.platform === 'linkedin' && String(a.parentPageId || '').startsWith('urn:li:organization:') ? 'organization' : a.platform === 'linkedin' ? 'member' : undefined,
+    linkedinAuthorUrn: a.platform === 'linkedin' ? linkedInAuthorUrn(a) : undefined,
   };
 }
 
@@ -531,6 +550,59 @@ async function connectMeta(pending: PendingOAuthState, code: string, req: Reques
   }
 }
 
+async function connectLinkedIn(pending: PendingOAuthState, code: string, req: Request) {
+  const client = await getLinkedInClient(pending.tenantId);
+  if (!client || oauthClientIdentityHash(client) !== pending.clientHash) throw new Error('oauth_tenant_client_changed');
+  const tokens = await exchangeLinkedInCode({ ...client, code, redirectUri: redirectUri(req, 'linkedin') });
+  const grantedScopes = tokens.scope || linkedInOAuthScopes().join(' ');
+  const profile = await getLinkedInProfile(tokens.accessToken);
+  const tokenExpiresAt = tokens.expiresIn ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString() : '';
+  await upsertSocialAccount({
+    tenantId: pending.tenantId,
+    userId: pending.userId,
+    platform: 'linkedin',
+    providerAccountId: profile.id,
+    title: profile.name,
+    handle: '',
+    avatarUrl: profile.pictureUrl,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    tokenExpiresAt,
+    scope: grantedScopes,
+    oauthProvider: 'linkedin_oidc',
+    parentPageId: '',
+    parentPageName: '',
+    followerCount: 0,
+    videoCount: 0,
+    viewCount: 0,
+    likeCount: 0,
+  });
+  if (!linkedInOrganizationPublishingEnabled()) return;
+  const organizations = await getLinkedInAdminOrganizations(tokens.accessToken);
+  for (const organization of organizations) {
+    await upsertSocialAccount({
+      tenantId: pending.tenantId,
+      userId: pending.userId,
+      platform: 'linkedin',
+      providerAccountId: organization.id,
+      title: organization.name,
+      handle: organization.vanityName,
+      avatarUrl: '',
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      tokenExpiresAt,
+      scope: grantedScopes,
+      oauthProvider: 'linkedin_oidc',
+      parentPageId: organization.authorUrn,
+      parentPageName: organization.name,
+      followerCount: 0,
+      videoCount: 0,
+      viewCount: 0,
+      likeCount: 0,
+    });
+  }
+}
+
 socialRouter.get('/oauth/:platform/callback', async (req, res) => {
   const platform = String(req.params.platform);
   if (!isPlatform(platform)) {
@@ -548,12 +620,16 @@ socialRouter.get('/oauth/:platform/callback', async (req, res) => {
   }
   try {
     assertExactOAuthRedirectUri(pending.redirectUri, redirectUri(req, platform));
-    const client = platform === 'tiktok' ? await getTikTokClient(pending.tenantId) : platform === 'instagram' ? await getInstagramClient(pending.tenantId) : await getMetaClient(pending.tenantId);
+    const client = platform === 'tiktok' ? await getTikTokClient(pending.tenantId)
+      : platform === 'instagram' ? await getInstagramClient(pending.tenantId)
+        : platform === 'linkedin' ? await getLinkedInClient(pending.tenantId)
+          : await getMetaClient(pending.tenantId);
     if (!client || !await consumeOAuthNonce(state, { ...pending, clientHash: oauthClientIdentityHash(client) })) throw new Error('oauth_state_consumed_or_invalid');
     pending.clientHash = oauthClientIdentityHash(client);
     if (!code) throw new Error(String(req.query.error_description || req.query.error || '缺少授权码'));
     if (platform === 'tiktok') await connectTikTok(pending, code, req);
     else if (platform === 'instagram') await connectInstagramLogin(pending, code, req);
+    else if (platform === 'linkedin') await connectLinkedIn(pending, code, req);
     else await connectMeta(pending, code, req);
     res.type('html').send(callbackHtml({ ok: true, title: '账号已连接', message: '授权完成，可以关闭这个窗口。', returnTo, platform }));
   } catch (error: any) {
@@ -571,8 +647,14 @@ socialRouter.get('/oauth/:platform/status', async (req, res) => {
     return;
   }
   const { tenantId } = res.locals as AuthLocals;
-  const configured = platform === 'tiktok' ? Boolean(await getTikTokClient(tenantId)) : platform === 'instagram' ? Boolean(await getInstagramClient(tenantId)) : Boolean(await getMetaClient(tenantId));
-  const scopes = platform === 'tiktok' ? tikTokOAuthScopes() : platform === 'instagram' ? instagramLoginOAuthScopes() : metaOAuthScopes(platform);
+  const configured = platform === 'tiktok' ? Boolean(await getTikTokClient(tenantId))
+    : platform === 'instagram' ? Boolean(await getInstagramClient(tenantId))
+      : platform === 'linkedin' ? Boolean(await getLinkedInClient(tenantId))
+        : Boolean(await getMetaClient(tenantId));
+  const scopes = platform === 'tiktok' ? tikTokOAuthScopes()
+    : platform === 'instagram' ? instagramLoginOAuthScopes()
+      : platform === 'linkedin' ? linkedInOAuthScopes()
+        : metaOAuthScopes(platform);
   res.json({
     configured,
     redirectUri: redirectUri(req, platform),
@@ -591,7 +673,8 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
   const tiktokClient = platform === 'tiktok' ? await getTikTokClient(tenantId) : null;
   const metaClient = platform === 'facebook' ? await getMetaClient(tenantId) : null;
   const instagramClient = platform === 'instagram' ? await getInstagramClient(tenantId) : null;
-  if (platform === 'tiktok' ? !tiktokClient : platform === 'instagram' ? !instagramClient : !metaClient) {
+  const linkedinClient = platform === 'linkedin' ? await getLinkedInClient(tenantId) : null;
+  if (platform === 'tiktok' ? !tiktokClient : platform === 'instagram' ? !instagramClient : platform === 'linkedin' ? !linkedinClient : !metaClient) {
     res.status(503).json({ error: `${platform} 一键授权暂未开启，请联系服务顾问配置平台应用和回调地址。` });
     return;
   }
@@ -607,7 +690,7 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
   const parsedState = parseOAuthState(state);
   if (!parsedState) { res.status(503).json({ error: 'oauth_state_invalid' }); return; }
   try {
-    await issueOAuthNonce(state, { ...parsedState, clientHash: oauthClientIdentityHash(tiktokClient || instagramClient || metaClient) });
+    await issueOAuthNonce(state, { ...parsedState, clientHash: oauthClientIdentityHash(tiktokClient || instagramClient || linkedinClient || metaClient) });
   } catch { res.status(503).json({ error: 'oauth_state_storage_unavailable' }); return; }
 
 
@@ -635,6 +718,18 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
     return;
   }
 
+  if (platform === 'linkedin') {
+    const scopes = linkedInOAuthScopes();
+    const url = new URL(LINKEDIN_AUTH_URL);
+    url.searchParams.set('client_id', linkedinClient!.clientId);
+    url.searchParams.set('redirect_uri', redirectUri(req, platform));
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope', scopes.join(' '));
+    url.searchParams.set('state', state);
+    res.json({ url: url.toString(), redirectUri: redirectUri(req, platform), scopes });
+    return;
+  }
+
   const scopes = metaOAuthScopes(purpose || platform);
   const url = new URL(`${META_AUTH_URL}/${graphVersion()}/dialog/oauth`);
   url.searchParams.set('client_id', metaClient!.appId);
@@ -657,6 +752,10 @@ socialRouter.post('/connect/manual', async (req, res) => {
   const platform = bodyText(req.body?.platform);
   if (!isPlatform(platform)) {
     res.status(400).json({ error: 'Unknown platform' });
+    return;
+  }
+  if (platform === 'linkedin') {
+    res.status(409).json({ error: 'LinkedIn 仅支持 OAuth 授权接入，请使用“连接 LinkedIn”。' });
     return;
   }
 
@@ -890,6 +989,13 @@ socialRouter.get('/accounts/:id/insights', async (req, res) => {
     });
     return;
   }
+  if (account.platform === 'linkedin') {
+    res.status(501).json({
+      error: 'LinkedIn 数据洞察需要额外的 Community Management API 读取权限；当前连接仅声明已真实走通的发布能力。',
+      code: 'LINKEDIN_INSIGHTS_PERMISSION_REQUIRED',
+    });
+    return;
+  }
   const range = insightDateRange(req);
   if (!range) {
     res.status(400).json({ error: 'since/until 必须是 YYYY-MM-DD，范围不能超过 92 天' });
@@ -950,6 +1056,10 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
   const account = await getAccount(req, res);
   if (!account) {
     res.status(404).json({ error: 'Account not found' });
+    return;
+  }
+  if (account.platform === 'linkedin') {
+    res.status(501).json({ error: 'LinkedIn 帖子读取需要额外审核权限；当前不会伪造内容列表。', code: 'LINKEDIN_POST_READ_PERMISSION_REQUIRED' });
     return;
   }
   const maxResults = Number(req.query.maxResults ?? 25);
@@ -1022,6 +1132,10 @@ socialRouter.get('/accounts/:id/video/:videoId/comments', async (req, res) => {
   const account = await getAccount(req, res);
   if (!account) {
     res.status(404).json({ error: 'Account not found' });
+    return;
+  }
+  if (account.platform === 'linkedin') {
+    res.status(501).json({ error: 'LinkedIn 评论读取需要额外审核权限，当前暂未开放。', code: 'LINKEDIN_COMMENT_PERMISSION_REQUIRED' });
     return;
   }
   const maxResults = Number(req.query.maxResults ?? 50);
