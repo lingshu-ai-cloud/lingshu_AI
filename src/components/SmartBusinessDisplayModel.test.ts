@@ -18,6 +18,7 @@ const context: Record<string, any> = {
   inspirationReferenceForPlan: () => null,
   contentThumbnailUrl: () => '/cover.jpg',
   demoMetrics: () => ({ views: 0, likes: 0, comments: 0, shares: 0, interactions: 0, engagementRate: 0, source: 'demo' }),
+  isSmartBusinessWeeklyPlanPreviewEnabled: () => false,
   performanceForQueueItem: (item: any) => { performanceCalls.push(item.contentId); return { views: 111, likes: 1, comments: 0, shares: 0, interactions: 1, engagementRate: 1, hasPlatformData: true }; },
 };
 vm.createContext(context);

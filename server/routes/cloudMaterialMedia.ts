@@ -5,6 +5,7 @@ import { entitlementGate } from '../middleware/subscription.js';
 import { fetchCloudMaterial } from '../lib/cloudMaterials.js';
 import { assetIdentity, verifyAssetToken } from '../lib/assetAccess.js';
 import type { AuthLocals } from '../middleware/auth.js';
+import { bindDataAuthority } from '../storage/dataAuthority.js';
 
 /**
  * Browser-safe cloud material playback.
@@ -48,7 +49,8 @@ cloudMaterialMediaRouter.use(async (req, res, next) => {
   }
   (res.locals as AuthLocals).userId = identity?.userId || 'signed-media';
   (res.locals as AuthLocals).tenantId = identity?.tenantId || signed!.tenantId;
-  (res.locals as AuthLocals).dataAuthority = identity?.dataAuthority;
+  (res.locals as AuthLocals).dataAuthority = identity?.dataAuthority || signed?.dataAuthority;
+  if (signed?.dataAuthority) bindDataAuthority(signed.dataAuthority);
   next();
 });
 cloudMaterialMediaRouter.use(entitlementGate());

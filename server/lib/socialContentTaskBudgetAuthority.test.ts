@@ -110,6 +110,30 @@ test('accepted receipt recovery retains original funding without a fresh tariff 
         assert.equal(f.paidCalls, 0);
     } finally { f.clean(); }
 });
+test('exact exempt tenant can recover accepted receipts above the nominal limit without weakening receipt checks', async () => {
+    const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+    process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
+    const f = fixture();
+    const exemptScope = { ...scope, tenantId: 'local_tenant_customer_aurelia_beauty' };
+    try {
+        f.plan.scope = exemptScope;
+        f.plan.paidOperations = [intent('video-a'), intent('video-b')];
+        f.ports.readVerifiedTariff = async i => ({ ...i, currency: 'CNY', verifiedAccountPrice: true,
+            evidenceRef: 'verified-expensive-tariff', checkedAt: '2026-01-01', validUntil: '2099-01-01',
+            meters: { providerSeconds: { priceCny: 1.5, unitsPerPrice: 1, minimumUnits: 4, increment: 1 } } });
+        const reserved = await f.service.prepareAndReserve(exemptScope);
+        assert.equal(reserved.status.limitCny, 10);
+        assert.equal(reserved.status.retainedCny, 12);
+        await reserved.ledger.markOutcome(exemptScope, 'video-a', 'accepted', 'provider-task:accepted');
+        const recovered = await f.service.recoverAccepted(exemptScope, ['video-a']);
+        assert.equal(recovered.entries[0]!.receiptRef, 'provider-task:accepted');
+        await assert.rejects(f.service.recoverAccepted(exemptScope, ['video-b']), /recovery_receipt_missing_or_changed/);
+    } finally {
+        f.clean();
+        if (configured === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+        else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = configured;
+    }
+});
 test('in-flight same-scope plan extension prices only new retry intents and preserves old receipts',async()=>{const f=fixture();try{
  const first={...f.plan,paidOperations:f.plan.paidOperations.slice(0,4)};f.ports.readApprovedPlan=async()=>structuredClone(first);const reserved=await f.service.prepareAndReserve(scope);await reserved.ledger.markOutcome(scope,'video','completed','wan:existing');
  const extended={...f.plan,paidOperations:[...first.paidOperations,intent('video-attempt-1'),intent('qa-attempt-1','video_qa')]};f.ports.readApprovedPlan=async()=>structuredClone(extended);let reads=0;const tariff=f.ports.readVerifiedTariff;f.ports.readVerifiedTariff=async operation=>{reads++;assert.ok(['video-attempt-1','qa-attempt-1'].includes(operation.operationId));return tariff(operation);};

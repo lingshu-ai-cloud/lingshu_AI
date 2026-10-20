@@ -3,7 +3,7 @@ import { studioPaidBudget } from './studioPaidBudget.js';
 
 /** The exact image is uploaded; no avatar-training step or fallback to a different identity. */
 export async function generateHeyGenPhotoVideo(input: {
-  bytes: Uint8Array; mimeType: string; voiceId: string; script: string; ratio: string; requestId: string;
+  bytes: Uint8Array; mimeType: string; voiceId: string; script: string; ratio: string; requestId: string; tenantId?: string;
   onSubmitted?: (id: string) => Promise<void> | void; client?: HeyGenClient;
   reserve?: (operationId: string) => Promise<void>; reserveCny?: number; pollMs?: number; timeoutMs?: number; existingTaskId?: string;
 }): Promise<{ taskId: string; videoUrl: string; duration: number }> {
@@ -13,14 +13,14 @@ export async function generateHeyGenPhotoVideo(input: {
   let taskId: string;
   if (input.existingTaskId) taskId = input.existingTaskId;
   else {
-    await (input.reserve || (id => studioPaidBudget.reserve('heygen', id, input.reserveCny)))(input.requestId);
+    await (input.reserve || (id => studioPaidBudget.reserve('heygen', id, input.reserveCny, input.tenantId)))(input.requestId);
     const imageAssetId = await client.uploadImage(input.bytes, input.mimeType, `${input.requestId}:image`);
     try {
       taskId = await client.create({ avatarId: '', imageAssetId, voiceId: input.voiceId, script: input.script,
         ratio: input.ratio, transparent: false, title: '灵枢照片口播' }, input.requestId);
     } catch (error) {
       if (error instanceof HeyGenRequestError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) {
-        if (!input.reserve) await studioPaidBudget.releaseRejected('heygen', input.requestId);
+        if (!input.reserve) await studioPaidBudget.releaseRejected('heygen', input.requestId, input.tenantId);
         throw new Error(`HeyGen 照片口播明确拒绝（请求 ${input.requestId}）：${error.message}；未创建视频任务`);
       }
       throw new Error(`HeyGen 照片口播提交结果未知（请求 ${input.requestId}）：${error instanceof Error ? error.message : String(error)}；请核对原请求，不要重复提交`);

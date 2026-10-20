@@ -5,6 +5,7 @@ import {verifyWanPublishedTariff,type WanPublishedPricingEvidence} from './wanPu
 import {isVerifiedPublishedTariff,type LocalPublishedPricingEvidence,type MaaSPublishedPricingEvidence,type PublishedPricingEvidence} from './socialContentPublishedTariffs.js';
 import { createHash } from 'node:crypto';
 import { SocialContentTaskBudget, type SocialTaskBudgetScope, type SocialTaskBudgetOperation, type SocialTaskBudgetQuote } from './socialContentTaskBudget.js';
+import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
 /** Server-frozen maximum input usage. Token stages must bound both prompt and
  * response; retry attempts appear as distinct operations in this complete plan. */
 export interface SocialPaidOperationIntent {
@@ -186,11 +187,13 @@ export function createSocialContentTaskBudgetAuthority(input: {
             verifyRejection: ports.verifyRejection,
         });
         const status = ledger.status(scope);
-        if (!status || status.retainedCny > status.limitCny
+        if (!status) fail('recovery_budget_missing');
+        const enforceInternalAmountLimit = !isInternalBudgetExemptTenant(scope.tenantId);
+        if (enforceInternalAmountLimit && (status.retainedCny > status.limitCny
             || (status.limitCny > Math.min(15, plan.maximumCny)
                 && (!status.correctionAuthorization
                     || status.correctionAuthorization.runId !== scope.runId
-                    || status.correctionAuthorization.planHash !== scope.planHash))) fail('recovery_budget_missing');
+                    || status.correctionAuthorization.planHash !== scope.planHash)))) fail('recovery_budget_missing');
         const entries = operationIds.map(id => {
             const operation = operations.find(candidate => candidate.operationId === id);
             const entry = status.entries.find(candidate => candidate.operationId === id);

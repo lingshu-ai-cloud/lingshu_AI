@@ -1,4 +1,4 @@
-import { formatDemoQuotaError } from './studioQuotaMessage';
+import { readStudioHttpError } from './studioQuotaMessage';
 import { failedAiGeneration } from './studioAiFailure';
 /* 混剪工作台 AI 接口封装 */
 import { authHeader } from './auth';
@@ -7,6 +7,9 @@ import { fetchMaterialLibrary, type MaterialLibraryPurpose } from './studioDigit
 import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis';
 import { type EffectPlanV1 } from '../../shared/contracts/effectPlan';
 import type { EmphasisPlanV1 } from '../../shared/contracts/emphasisTimeline';
+import type { ProductSceneKind } from '../../shared/contracts/productScenePreparation';
+import { studioMaterialFileMimeType } from './studioMaterialFile';
+import { mergeStudioProjectWrite, studioProjectValueChanged, type StudioProjectMergeWrite } from './studioProjectMerge';
 
 export interface HeyGenAvatarOption {
   id: string;
@@ -41,8 +44,7 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
         signal,
       });
       if (r.status === 402 || r.status === 429) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(formatDemoQuotaError(j));
+        throw new Error(await readStudioHttpError(r));
       }
       if (!r.ok) {
         const payload = await r.json().catch(() => ({})) as Record<string, unknown> & { error?: string; source?: string; code?: string; retryable?: boolean };
@@ -181,8 +183,7 @@ async function postSeedanceVideo(body: unknown): Promise<SeedanceVideoResult> {
       body: JSON.stringify(body),
     });
     if (r.status === 402 || r.status === 429) {
-      const j = await r.json().catch(() => ({}));
-      throw new Error(j.error === 'demo_expired' ? '试用已到期，请联系服务顾问开通或延长试用。' : '今日试用额度已用完，请明天再试或联系服务顾问开通更多额度。');
+      throw new Error(await readStudioHttpError(r));
     }
     if (!r.ok) throw new Error(String(r.status));
     return (await r.json()) as SeedanceVideoResult;
@@ -341,7 +342,50 @@ export interface StudioProject {
   updatedAt: string;
 }
 const studioProjectRevisions = new Map<string, string>();
+const studioProjectBaselines = new Map<string, StudioProject>();
 const studioProjectSaveQueues = new Map<string, Promise<void>>();
+
+type StudioProjectWrite = StudioProjectMergeWrite & { baseUpdatedAt?: string };
+type StudioProjectSaveResult = {
+  ok: boolean;
+  project: StudioProject;
+  error?: string;
+  code?: string;
+  conflicts?: string[];
+  recovery?: 'merged' | 'reload_required';
+  recoveredFromConflict?: boolean;
+};
+
+function detachedStudioProject(project: StudioProject): StudioProject {
+  const { _baseUpdatedAt: _transportRevision, ...spec } = project.spec || {};
+  return { ...project, spec: structuredClone(spec) };
+}
+
+function adoptStudioProject(project: StudioProject) {
+  const baseline = detachedStudioProject(project);
+  studioProjectRevisions.set(baseline.id, baseline.updatedAt);
+  studioProjectBaselines.set(baseline.id, baseline);
+}
+
+function normalizedStudioProjectWrite(input: StudioProjectWrite): StudioProjectWrite {
+  const { _baseUpdatedAt: _transportRevision, ...spec } = input.spec || {};
+  return { ...input, spec };
+}
+
+function reloadRequiredProjectSave(
+  project: StudioProject,
+  conflicts: string[],
+  code = 'studio_project_version_conflict',
+): StudioProjectSaveResult {
+  return {
+    ok: false,
+    project,
+    code,
+    conflicts,
+    recovery: 'reload_required',
+    error: '后台生产结果与本页同时修改了同一内容。系统未覆盖服务端更新，请重新载入最新版本后再修改。',
+  };
+}
 export interface VariationBatch {
   id: string;
   title: string;
@@ -455,9 +499,12 @@ export interface FbPosterRenderResult {
   url?: string;
   material?: Material;
   references?: number;
+  deliverableType?: import('../../shared/imageCreativePlanning').ImageDeliverable;
+  productionStrategy?: import('../../shared/imageCreativePlanning').ImageProductionStrategy;
   fieldsToConfirm?: string[];
-  qualityStatus?: 'passed' | 'needs_confirmation';
-  error?: string;
+  qualityStatus?: 'needs_review' | 'needs_confirmation' | 'passed' | 'rejected';
+  publishable?: boolean;
+  code?: string;  error?: string;
 }
 
 export interface LeadContentPackageResult {
@@ -484,12 +531,13 @@ export interface LeadContentPackageResult {
   error?: string;
 }
 
-async function del(path: string): Promise<{ ok: boolean }> {
+async function del(path: string): Promise<{ ok: boolean; error?: string; code?: string }> {
   try {
     const r = await fetch(`/api/overseas/studio/${path}`, { method: 'DELETE', headers: authHeader() });
-    return { ok: r.ok };
-  } catch {
-    return { ok: false };
+    const data = await r.json().catch(() => ({})) as { error?: string; code?: string };
+    return { ok: r.ok, error: data.error, code: data.code };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : '删除请求失败' };
   }
 }
 
@@ -536,7 +584,10 @@ export const studioApi = {
     post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; caption: string; hashtags: string[]; fieldsToConfirm?: string[]; error?: string }>('caption', b, { ok: false, caption: '', hashtags: [] }),
 
   fbPoster: (b: {
-    mode: 'material' | 'clone' | 'product';
+    /** Legacy callers may still send mode; current UI selects a deliverable instead. */
+    mode?: 'material' | 'clone' | 'product';
+    deliverableType?: import('../../shared/imageCreativePlanning').ImageDeliverable;
+    productionStrategy?: import('../../shared/imageCreativePlanning').ImageProductionStrategy;
     productInfo?: string;
     platform: string;
     ratio: string;
@@ -559,7 +610,9 @@ export const studioApi = {
     ratio: string;
     materialIds?: string[];
     productIds?: string[];
-    referenceImageUrls?: string[];
+    deliverableType?: import('../../shared/imageCreativePlanning').ImageDeliverable;
+    productionStrategy?: import('../../shared/imageCreativePlanning').ImageProductionStrategy;
+    referencePlan?: Array<{ materialId: string; role: 'exact_product' | 'style' | 'supporting' }>;    referenceImageUrls?: string[];
     idempotencyKey?: string;
     confirmedFields?: Record<string, string>;
   }, options?: { signal?: AbortSignal }) =>
@@ -717,8 +770,7 @@ export const studioApi = {
         body: JSON.stringify(spec),
       });
       if (r.status === 402 || r.status === 429) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(j.error === 'demo_expired' ? '试用已到期，请联系服务顾问开通或延长试用。' : '今日视频预览额度已用完，请明天再试或联系服务顾问开通更多额度。');
+        throw new Error(await readStudioHttpError(r));
       }
       if (!r.ok) throw new Error(String(r.status));
       return (await r.json()) as RenderAuthorization;
@@ -789,11 +841,9 @@ export const studioApi = {
       const r = await fetch('/api/overseas/studio/projects', { headers: authHeader() });
       if (!r.ok) throw new Error(String(r.status));
       const data = await r.json();
-      const projects = Array.isArray(data) ? (data as StudioProject[]) : [];
-      projects.forEach(project => {
-        if (!studioProjectRevisions.has(project.id)) studioProjectRevisions.set(project.id, project.updatedAt);
-      });
-      return projects;
+      // Listing is passive. The editor adopts a snapshot only when it actually
+      // loads that project, never merely because another surface refreshed.
+      return Array.isArray(data) ? (data as StudioProject[]) : [];
     } catch (error) {
       if (options?.throwOnError) throw error;
       return [];
@@ -808,13 +858,22 @@ export const studioApi = {
     const data = await r.json().catch(() => ({})) as StudioProject & { error?: string };
     if (!r.ok) throw new Error(data.error || String(r.status));
     if (!data.id || data.id !== id) throw new Error('项目读取身份不一致');
-    if (!studioProjectRevisions.has(data.id)) studioProjectRevisions.set(data.id, data.updatedAt);
+    // Reading can also be a status poll. Callers that replace editor state
+    // explicitly adopt the returned project via adoptProjectRevision.
     return data;
   },
   adoptProjectRevision: (project: StudioProject) => {
-    studioProjectRevisions.set(project.id, project.updatedAt);
+    adoptStudioProject(project);
   },
-  saveProject: async (b: { id?: string; title: string; status: 'draft' | 'ready_for_approval' | 'published' | 'template'; spec: Record<string, unknown>; thumbSeed?: string; baseUpdatedAt?: string }) => {
+  saveProject: async (raw: StudioProjectWrite): Promise<StudioProjectSaveResult & { source?: string }> => {
+    const b = normalizedStudioProjectWrite(raw);
+    // Capture the editor's actual comparison base now, before an earlier
+    // queued write can advance the module-level revision and baseline.
+    const invocationRevision = b.id ? b.baseUpdatedAt || studioProjectRevisions.get(b.id) : undefined;
+    const knownBaseline = b.id ? studioProjectBaselines.get(b.id) : undefined;
+    const invocationBaseline = knownBaseline && knownBaseline.updatedAt === invocationRevision
+      ? detachedStudioProject(knownBaseline)
+      : undefined;
     // Serialize each existing project across all save callers. Read its revision
     // after the previous write settles; independent projects can save in parallel.
     const previous = b.id ? studioProjectSaveQueues.get(b.id) : undefined;
@@ -823,14 +882,92 @@ export const studioApi = {
     if (b.id && pending) studioProjectSaveQueues.set(b.id, pending);
     try {
       if (previous) await previous;
-      const baseUpdatedAt = b.id ? b.baseUpdatedAt || studioProjectRevisions.get(b.id) : undefined;
-      const result = await post<{ ok: boolean; project: StudioProject; error?: string; code?: string }>(
+      let write = b;
+      let writeBaseline = invocationBaseline;
+      let baseUpdatedAt = invocationRevision;
+      let recoveredFromConflict = false;
+      const currentBaseline = b.id ? studioProjectBaselines.get(b.id) : undefined;
+
+      // A remounted editor can outlive this module (Vite Fast Refresh) and, in
+      // older callers, arrive without either an explicit revision or an adopted
+      // baseline. Read the server snapshot and require the page to reload; never
+      // send an unversioned full-spec POST merely to discover that it is stale.
+      if (b.id && !baseUpdatedAt && !currentBaseline) {
+        try {
+          const remote = await studioApi.getProject(b.id);
+          return reloadRequiredProjectSave(remote, ['<editor-baseline>'], 'studio_project_editor_baseline_missing');
+        } catch {
+          return {
+            ok: false,
+            project: null as unknown as StudioProject,
+            code: 'studio_project_editor_baseline_unavailable',
+            recovery: 'reload_required',
+            error: '无法确认当前草稿版本，系统未发送自动保存。请重新载入项目后继续。',
+          };
+        }
+      }
+
+      // A full snapshot can wait behind another save. If that previous save
+      // changed the authoritative project, merge this invocation against the
+      // baseline it actually saw instead of relabelling stale bytes with the
+      // newer revision and overwriting the first save.
+      if (b.id && currentBaseline && currentBaseline.updatedAt !== invocationRevision) {
+        if (!invocationBaseline) {
+          return reloadRequiredProjectSave(currentBaseline, ['<editor-baseline>'], 'studio_project_editor_baseline_missing');
+        }
+        const queuedMerge = mergeStudioProjectWrite(invocationBaseline, write, currentBaseline);
+        if (!queuedMerge.ok) {
+          return reloadRequiredProjectSave(currentBaseline, queuedMerge.conflictPaths, 'studio_project_local_queue_conflict');
+        }
+        write = { ...queuedMerge.write, baseUpdatedAt: currentBaseline.updatedAt };
+        writeBaseline = currentBaseline;
+        baseUpdatedAt = currentBaseline.updatedAt;
+        recoveredFromConflict = true;
+      } else if (!writeBaseline && currentBaseline?.updatedAt === baseUpdatedAt) {
+        writeBaseline = currentBaseline;
+      }
+
+      const result = await post<StudioProjectSaveResult>(
         'projects',
-        { ...b, ...(baseUpdatedAt ? { baseUpdatedAt } : {}) },
+        { ...write, ...(baseUpdatedAt ? { baseUpdatedAt } : {}) },
         { ok: false, project: null as unknown as StudioProject },
       );
-      if (result.ok && result.project?.id) studioProjectRevisions.set(result.project.id, result.project.updatedAt);
-      return result;
+      if (result.ok && result.project?.id) {
+        adoptStudioProject(result.project);
+        return { ...result, ...(recoveredFromConflict ? { recoveredFromConflict: true, recovery: 'merged' as const } : {}) };
+      }
+
+      if (result.code !== 'studio_project_version_conflict' || !result.project?.id) return result;
+      const remote = detachedStudioProject(result.project);
+      if (!writeBaseline || writeBaseline.updatedAt !== baseUpdatedAt) {
+        return reloadRequiredProjectSave(remote, ['<editor-baseline>']);
+      }
+      const merge = mergeStudioProjectWrite(writeBaseline, write, remote);
+      if (!merge.ok) return reloadRequiredProjectSave(remote, merge.conflictPaths);
+
+      const mergedWrite = normalizedStudioProjectWrite({ ...merge.write, baseUpdatedAt: remote.updatedAt });
+      const remoteAlreadyContainsMerge = !studioProjectValueChanged(mergedWrite.spec, remote.spec)
+        && mergedWrite.title === remote.title
+        && mergedWrite.status === remote.status
+        && mergedWrite.thumbSeed === remote.thumbSeed;
+      if (remoteAlreadyContainsMerge) {
+        adoptStudioProject(remote);
+        return { ok: true, project: result.project, recovery: 'merged', recoveredFromConflict: true };
+      }
+
+      const retried = await post<StudioProjectSaveResult>(
+        'projects',
+        { ...mergedWrite, baseUpdatedAt: remote.updatedAt },
+        { ok: false, project: null as unknown as StudioProject },
+      );
+      if (retried.ok && retried.project?.id) {
+        adoptStudioProject(retried.project);
+        return { ...retried, recovery: 'merged', recoveredFromConflict: true };
+      }
+      if (retried.code === 'studio_project_version_conflict' && retried.project?.id) {
+        return reloadRequiredProjectSave(detachedStudioProject(retried.project), ['<second-concurrent-update>']);
+      }
+      return retried;
     } finally {
       if (b.id && studioProjectSaveQueues.get(b.id) === pending) studioProjectSaveQueues.delete(b.id);
       release?.();
@@ -841,7 +978,15 @@ export const studioApi = {
     record?: { id: string; inputFingerprint: string; generationProvenance: 'ai'; qualityStatus: 'passed'; publishable: true; createdAt: string; renderPath: string; report: { gateVersion: string; checks: Array<{ id: string; passed: true; detail: string }> } };
     project?: StudioProject;
   }>(`projects/${encodeURIComponent(projectId)}/requality`, {}, { ok: false }),
-  deleteProject: (id: string) => del(`projects/${id}`),
+  deleteProject: async (id: string) => {
+    const result = await del(`projects/${encodeURIComponent(id)}`);
+    if (result.ok) {
+      studioProjectRevisions.delete(id);
+      studioProjectBaselines.delete(id);
+      studioProjectSaveQueues.delete(id);
+    }
+    return result;
+  },
   listManualHandoffs: (projectId: string) => get<{ ok: boolean; handoffs: StudioManualHandoff[] }>(
     `projects/${encodeURIComponent(projectId)}/manual-handoffs`, { ok: false, handoffs: [] }),
   createManualHandoff: (projectId: string, body: { action: StudioManualHandoff['action']; renderPath: string; reviewed: true }) =>
@@ -862,15 +1007,31 @@ export const studioApi = {
   // 素材库
   listMaterialLibrary: fetchMaterialLibrary,
   listMaterials: async (purpose: MaterialLibraryPurpose = 'library'): Promise<Material[]> => (await fetchMaterialLibrary(purpose)).items,
-  uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string }) =>
+  uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string; productId?: string; productSceneType?: ProductSceneKind; rightsConfirmed?: boolean }) =>
     post<{ ok: boolean; material: Material }>('materials', b, { ok: false, material: null as unknown as Material }),
   uploadMaterialFile: async (
     file: File,
-    metadata: { folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; sourceType?: string },
+    metadata: {
+      folder?: string;
+      type: 'video' | 'image' | 'audio';
+      duration?: number;
+      width?: number;
+      height?: number;
+      sourceType?: string;
+      productId?: string;
+      productSceneType?: ProductSceneKind;
+      rightsConfirmed?: boolean;
+    },
   ): Promise<{ ok: boolean; material: Material; error?: string }> => {
     const maxBytes = 100 * 1024 * 1024;
     if (!file.size) return { ok: false, material: null as unknown as Material, error: '素材文件为空' };
     if (file.size > maxBytes) return { ok: false, material: null as unknown as Material, error: '单个素材不能超过 100 MB' };
+    const mimeType = studioMaterialFileMimeType(file, metadata.type);
+    if (!mimeType) return {
+      ok: false,
+      material: null as unknown as Material,
+      error: `「${file.name}」的文件格式无法识别，请使用 MP4、MOV、WebM 或受支持的图片/音频格式`,
+    };
     const query = new URLSearchParams({
       name: file.name,
       folder: metadata.folder || 'upload',
@@ -878,9 +1039,12 @@ export const studioApi = {
       duration: String(metadata.duration || 0),
       width: String(metadata.width || 0),
       height: String(metadata.height || 0),
-      mimeType: file.type || 'application/octet-stream',
+      mimeType,
       sourceType: metadata.sourceType || '',
     });
+    if (metadata.productId) query.set('productId', metadata.productId);
+    if (metadata.productSceneType) query.set('productSceneType', metadata.productSceneType);
+    if (metadata.rightsConfirmed) query.set('rightsConfirmed', '1');
     try {
       const response = await fetch(`/api/overseas/studio/materials/file?${query.toString()}`, {
         method: 'POST',
@@ -914,7 +1078,15 @@ export const studioApi = {
     } catch { return { ok: false, error: '片段更新失败' }; }
   },
   materialProducts: () => get<{items:Array<{id:string;name:string}>}>('material-products', {items:[]}),
-  updateMaterial: async (id: string, changes: { name: string; tags?: string; productId?: string; enterpriseCommon?: boolean; materialV2?: Partial<import('../../shared/contracts/materialAssetV2').MaterialAssetV2Metadata>; primaryTheme?: import('../../shared/materialTaxonomy').MaterialTheme }): Promise<{ ok: boolean; material?: Material; error?: string }> => {
+  reviewGeneratedImage: async (id: string): Promise<{ ok: boolean; material?: Material; error?: string }> => {
+    try {
+      const response = await fetch(`/api/overseas/studio/materials/${encodeURIComponent(id)}/generated-image-review`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeader() }, body: JSON.stringify({ accepted: true }),
+      });
+      return await response.json();
+    } catch { return { ok: false, error: '图片复核结果保存失败' }; }
+  },
+  updateMaterial: async (id: string, changes: { name?: string; tags?: string; productId?: string; productSceneType?: ProductSceneKind; enterpriseCommon?: boolean; materialV2?: Partial<import('../../shared/contracts/materialAssetV2').MaterialAssetV2Metadata>; primaryTheme?: import('../../shared/materialTaxonomy').MaterialTheme }): Promise<{ ok: boolean; material?: Material; error?: string }> => {
     try {
       const response = await fetch(`/api/overseas/studio/materials/${id}`, {
         method: 'PATCH',
@@ -939,15 +1111,15 @@ export const studioApi = {
       return { ok: false, error: '收藏状态保存失败' };
     }
   },
-  deleteMaterial: async (id: string): Promise<{ ok: boolean; error?: string }> => {
+  deleteMaterial: async (id: string): Promise<{ ok: boolean; error?: string; retainedForProjectReferences?: boolean }> => {
     try {
       const response = await fetch(`/api/overseas/studio/materials/${encodeURIComponent(id)}`, {
         method: 'DELETE',
         headers: authHeader(),
       });
-      const payload = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+      const payload = await response.json().catch(() => ({})) as { ok?: boolean; error?: string; retainedForProjectReferences?: boolean };
       return response.ok && payload.ok
-        ? { ok: true }
+        ? { ok: true, retainedForProjectReferences: payload.retainedForProjectReferences === true }
         : { ok: false, error: payload.error || `素材删除失败（HTTP ${response.status}）` };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : '素材删除失败' };
@@ -1042,6 +1214,7 @@ export interface Material {
   poster?: string;
   scope?: 'shared' | 'own';
   usage?: 'editable' | 'reference_only';
+  usageSummary?: import('../../shared/contracts/materialUsageTracking').MaterialUsageSummary;
   canManage?: boolean;
   sourceType?: string;
   /** Canonical generated-library metadata. Physical folders remain presentation metadata. */
@@ -1064,6 +1237,8 @@ export interface Material {
   sourceCreator?: string;
   sourceUrl?: string;
   licenseEvidence?: string;
+  rightsStatus?: string;
+  rightsEvidenceRef?: string;
   licenseName?: string;
   licenseUrl?: string;
   attributionText?: string;
@@ -1077,6 +1252,7 @@ export interface Material {
   rawLibraryUseApproved?: boolean;
   provenance?: Record<string, unknown>;
   materialV2?: import('../../shared/contracts/materialAssetV2').MaterialAssetV2Metadata | null;
+  capabilityManifest?: import('../../shared/contracts/materialCapabilityManifest').MaterialCapabilityManifest;
   enterpriseCommon?: boolean;
   pinned?: boolean;
   industry?: string;
@@ -1085,12 +1261,14 @@ export interface Material {
   tags?: string;
   productId?: string;
   productName?: string;
+  productSceneType?: ProductSceneKind;
   segmentAnalysisStatus?: 'pending' | 'analyzing' | 'completed' | 'failed';
   segmentAnalysisError?: string;
   segments?: MaterialSegment[];
   visualObservations?: string[];
   scriptAnalysis?: MaterialScriptAnalysis;
   createdAt: string;
+  libraryRemovedAt?: string;
 }
 
 export interface VideoGenerationVersion {

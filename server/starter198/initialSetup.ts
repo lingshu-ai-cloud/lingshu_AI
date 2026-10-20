@@ -13,6 +13,7 @@ import type { DataStore, Record_ } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import { starter198Repository, type Starter198Repository } from './repository.js';
 import { Starter198RuntimePortError, type Starter198InitialSetupPort } from './runtimePorts.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 
 type Row = Record_ & Record<string, unknown>;
 type JsonObject = Record<string, unknown>;
@@ -120,13 +121,13 @@ function normalizeOperatingPlan(
   };
 }
 
-function assertOperatingPlanWithinLimits(plan: Starter198ConfirmedOperatingPlan, limits: Starter198ResourceLimits): void {
+function assertOperatingPlanWithinLimits(plan: Starter198ConfirmedOperatingPlan, limits: Starter198ResourceLimits, tenantId: string): void {
   const contentBudget = finiteNumber(limits.agentBudgetCny?.content);
   const overallBudget = finiteNumber(limits.budgetCnyPerCycle);
   const effectiveBudget = Math.min(contentBudget, overallBudget);
   if (plan.plannedAccounts.length > Math.max(0, integer(limits.primaryPlatformCount))
     || plan.weeklyMasterCount > Math.max(0, integer(limits.contentArtifactCountPerCycle))
-    || plan.estimatedCostCny.max > effectiveBudget) {
+    || (!isInternalBudgetExemptTenant(tenantId) && plan.estimatedCostCny.max > effectiveBudget)) {
     throw new Starter198RuntimePortError('starter_198_initial_setup_plan_exceeds_entitlement', 409);
   }
 }
@@ -270,7 +271,7 @@ export function createStarter198InitialSetupPort(dependencies: {
         const setup = normalizeSetup(input.setup);
         await assertNoActiveRun(repository, input.tenantId);
         const access = await repository.access(input.tenantId);
-        if (setup.operatingPlan) assertOperatingPlanWithinLimits(setup.operatingPlan, access.resourceLimits);
+        if (setup.operatingPlan) assertOperatingPlanWithinLimits(setup.operatingPlan, access.resourceLimits, input.tenantId);
         const [profileRow, configRow] = await Promise.all([
           exactTenantRow(dataStore, 'tenant_profiles', input.tenantId),
           exactTenantRow(dataStore, 'digital_employee_configs', input.tenantId),

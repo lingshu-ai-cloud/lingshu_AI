@@ -13,6 +13,7 @@ import type {
   SocialAssetSupplyAdapterResult,
   SocialAssetSupplyProviderAdapter,
 } from './socialContentAssetSupplyExecution.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 
 export interface SocialAiVisualGeneratedMedia {
   type: 'image' | 'video';
@@ -46,6 +47,13 @@ export interface SocialAiVisualAdapterOptions {
   generators: SocialAiVisualGenerator[];
   maxCostCnyPerShot: number;
   timeoutMs: number;
+  /** A confirmed scene-rework tariff remains an explicit authorization cap. */
+  enforceCostCeilingForExemptTenant?: boolean;
+}
+
+export function aiVisualExceedsInternalBudget(tenantId: string, amountCny: number, maximumCostCny: number): boolean {
+  if (!Number.isFinite(amountCny) || amountCny < 0 || !Number.isFinite(maximumCostCny) || maximumCostCny < 0) return true;
+  return !isInternalBudgetExemptTenant(tenantId) && amountCny > maximumCostCny;
 }
 
 function compact(value: unknown, max = 240): string {
@@ -159,8 +167,11 @@ export function createSocialAiVisualAdapter(options: SocialAiVisualAdapterOption
       if (existing) return existing;
       const execution = (async () => {
         const prompt = controlledPrompt(context);
+        const exceedsCostCeiling = (amountCny: number) => options.enforceCostCeilingForExemptTenant
+          ? amountCny > options.maxCostCnyPerShot
+          : aiVisualExceedsInternalBudget(context.tenantId, amountCny, options.maxCostCnyPerShot);
         const eligible = options.generators.filter(generator => (
-          generator.estimatedCostCny <= options.maxCostCnyPerShot
+          !exceedsCostCeiling(generator.estimatedCostCny)
         ));
         for (const generator of eligible) {
           try {
@@ -173,7 +184,7 @@ export function createSocialAiVisualAdapter(options: SocialAiVisualAdapterOption
               idempotencyKey: key,
               timeoutMs: options.timeoutMs,
             }), options.timeoutMs);
-            if (generated.estimatedCostCny > options.maxCostCnyPerShot) {
+            if (exceedsCostCeiling(generated.estimatedCostCny)) {
               throw new Error('ai_visual_actual_cost_exceeds_shot_budget');
             }
             return await materialize(context, generated, key);
@@ -274,5 +285,6 @@ export function createConfiguredSocialAiVisualAdapter(options:{recoveryOnly?:boo
     generators: [...videoGenerators, qwenImage],
     maxCostCnyPerShot: Number.isFinite(maxCostCnyPerShot) ? Math.max(0, maxCostCnyPerShot) : 2,
     timeoutMs: Number.isFinite(timeoutMs) ? Math.max(1_000, timeoutMs) : 120_000,
+    enforceCostCeilingForExemptTenant: options.qwenOnly === true,
   });
 }

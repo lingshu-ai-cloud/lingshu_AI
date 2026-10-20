@@ -5,6 +5,7 @@ import { startMessengerContextTagRecovery } from './messenger/conversations.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
+import { existsSync } from 'fs';
 import express from 'express';
 import compression from 'compression';
 import { configureNetworkProxy } from './lib/networkEnvironment.js';
@@ -35,11 +36,12 @@ import { socialEngagementRouter } from './routes/socialEngagement.js';
 import { socialDiscoveryRouter } from './routes/socialDiscovery.js';
 import { socialProgramsRouter } from './routes/socialPrograms.js';
 import { createCustomerRelationshipEvidenceRouter } from './routes/customerRelationshipEvidence.js';
-import { store as customerRelationshipStore } from './storage/index.js';
+import { auth, store as customerRelationshipStore } from './storage/index.js';
 import { socialChannelsRouter } from './socialChannels/router.js';
 import { platformIntegrationsRouter } from './routes/platformIntegrations.js';
 import { adminRouter } from './routes/admin.js';
 import { assistantThreadsRouter } from './routes/assistantThreads.js';
+import { assistantWeeklyActionsRouter } from './routes/assistantWeeklyActions.js';
 import { webhookRouter } from './routes/webhooks.js';
 import { isDemoMode, demoLimits } from './lib/demo.js';
 import { assistLinksRouter } from './routes/assistLinks.js';
@@ -133,9 +135,11 @@ async function ensureLocalPocketBase(): Promise<void> {
   const bin = process.env.PB_BIN || '';
   const dataDir = process.env.PB_DATA_DIR || '';
   if (!bin || !dataDir) { console.warn('[pb] auto-start skipped: PB_BIN/PB_DATA_DIR missing'); return; }
+  const migrationsDir = process.env.PB_MIGRATIONS_DIR || path.resolve(__dirname, '../pb_migrations');
+  if (!existsSync(migrationsDir)) { console.warn('[pb] auto-start skipped: PB_MIGRATIONS_DIR missing'); return; }
   const parsed = new URL(url);
   if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname)) { console.warn('[pb] auto-start requires a loopback database URL'); return; }
-  const child = spawn(bin, ['serve', `--http=${parsed.hostname}:${parsed.port || '8090'}`, `--dir=${dataDir}`], { cwd: path.dirname(bin), stdio: 'ignore', detached: true });
+  const child = spawn(bin, ['serve', `--http=${parsed.hostname}:${parsed.port || '8090'}`, `--dir=${dataDir}`, `--migrationsDir=${migrationsDir}`], { cwd: path.dirname(bin), stdio: 'ignore', detached: true });
   child.unref();
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await new Promise(resolve => setTimeout(resolve, 250));
@@ -177,7 +181,12 @@ app.get('/api/overseas/ready', async (_req, res) => {
   res.json(report);
 });
 
-app.use('/api', createRateLimiter(apiRateLimitConfig()));
+app.use('/api', createRateLimiter({
+  ...apiRateLimitConfig(),
+  // Exemptions are resolved only from a verified server-side identity. Client
+  // tenant/user headers are intentionally ignored by the limiter.
+  verifyIdentity: authorization => auth.verifyToken(authorization),
+}));
 
 // Skip compression for SSE and long TTS responses so intermediary buffering
 // cannot delay the first byte or strand a completed synthesis response.
@@ -258,6 +267,7 @@ app.use('/api/overseas/studio', studioRouter);
 app.use('/api/overseas/social-images', requireAuth, socialImageRouter);
 app.use('/api/overseas/platform-integrations', platformIntegrationsRouter);
 app.use('/api/overseas/assistant-threads', assistantThreadsRouter);
+app.use('/api/overseas/assistant-weekly-actions', assistantWeeklyActionsRouter);
 app.use('/api/overseas/agent-memory', agentMemoryRouter);
 app.use('/api/overseas/social-metrics', socialMetricsRouter);
 app.use('/api/overseas/digital-employees/followup', followupTemplatesRouter);

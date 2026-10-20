@@ -376,8 +376,7 @@ export async function failExecution(input: {
   const needsUserInput = rootMessage.startsWith('user_input_required:');
   const directorRevisionFailed = rootMessage.startsWith('director_revision_required:');
   const needsAttention = Boolean(failureClass) || needsMaterial || needsUserInput || directorRevisionFailed;
-  const failureDetail = rootMessage.replace(/^(?:production_input_required|user_input_required|director_revision_required):/, '').trim();
-  const message = publicReason && !failureDetail.startsWith(publicReason)
+  const failureDetail = rootMessage.replace(/^(?:production_input_required|user_input_required|director_revision_required):/, '').trim();  const message = publicReason && !failureDetail.startsWith(publicReason)
     ? `${publicReason}：${failureDetail}`
     : failureDetail || publicReason || '任务需要处理后才能继续';
   await writeExecutionStage({

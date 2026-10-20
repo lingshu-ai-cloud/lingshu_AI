@@ -11,18 +11,24 @@ import type {
   ConnectedSocialPerformance,
   ConnectedSocialPerformanceContent,
 } from '../lib/socialPerformance';
-
 const DAY_MS = 86_400_000;
 export const SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS = {
-  plannedVideoCount: 26,
+  plannedVideoCount: 32,
   waitingReviewCount: 3,
+  durationSeconds: 1_080,
+  budgetMinCny: 300,
+  budgetMaxCny: 360,
+  budgetMidCny: 320,
 } as const;
+
+const WEEKLY_PLAN_PREVIEW_PROJECT_ID = 'studio_projects_9d8c21b5f0cc4149aeab596574b6e61c';
 
 const PLATFORM_LABELS: Record<PublishingPlatform, string> = {
   facebook: 'Facebook',
   instagram: 'Instagram',
   tiktok: 'TikTok',
   youtube: 'YouTube',
+  linkedin: 'LinkedIn',
 };
 
 const SHOWCASE_THUMBNAILS = [
@@ -72,6 +78,28 @@ export function isSmartBusinessShowcaseEnabled(input: {
   const loopback = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname);
   // Localhost is used for real integration, not consent to invent receipts.
   return (dev || loopback) && explicitlyEnabled(setting);
+}
+
+export function isSmartBusinessWeeklyPlanPreviewEnabled(input: {
+  hostname?: string;
+  search?: string;
+} = {}): boolean {
+  const hostname = (input.hostname ?? (typeof window === 'undefined' ? '' : window.location.hostname)).trim().toLowerCase();
+  const loopback = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname);
+  if (!loopback) return false;
+  const search = input.search ?? (typeof window === 'undefined' ? '' : window.location.search);
+  return new URLSearchParams(search).get('project') === WEEKLY_PLAN_PREVIEW_PROJECT_ID;
+}
+
+export function isSmartBusinessOverviewPreviewEnabled(input: {
+  hostname?: string;
+  search?: string;
+} = {}): boolean {
+  const hostname = (input.hostname ?? (typeof window === 'undefined' ? '' : window.location.hostname)).trim().toLowerCase();
+  const loopback = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname);
+  if (!loopback) return false;
+  const search = input.search ?? (typeof window === 'undefined' ? '' : window.location.search);
+  return new URLSearchParams(search).get('page') === 'digitalEmployees';
 }
 
 function beijingDay(value: string | undefined, fallback: string): string {
@@ -337,6 +365,41 @@ function showcaseIndustryTrends(endsAt: string): NextRoundRecommendations['indus
   };
 }
 
+export function smartBusinessShowcaseNextRoundRecommendations(
+  data: DigitalEmployeeOverview,
+  enabled = isSmartBusinessShowcaseEnabled() || isSmartBusinessOverviewPreviewEnabled(),
+): NextRoundRecommendations | null {
+  if (!enabled) return null;
+  const range = currentRange(data);
+  const inheritedContentId = data.goal?.videoPlans?.find(item => item.platform === 'tiktok')?.contentId || 'tiktok-proof-1';
+  return {
+    contentInheritance: {
+      status: 'ready',
+      sourceContentId: inheritedContentId,
+      title: '3 秒质地测试：泡沫卸妆是否省步骤',
+      platform: 'TikTok',
+      hook: '先展示卸妆前后对比，再解释乳化速度。',
+      framework: ['效果对比', '质地特写', '步骤说明', '采购提示'],
+      tags: ['cleansingbalm', 'beautysupplier', 'privatelabel'],
+      sourceUrl: '',
+      thumbnailUrl: '/demo/feishu-viral-remix-final.jpg',
+      reason: '质地测试与采购提示组合具备清晰的产品证明路径，下一轮继续复用结构并更换表达与镜头。',
+      paidBoost: { status: 'recommended_for_review', reason: '内容结构与询盘目标匹配，可进入小预算投流复核。' },
+      systemActions: ['继承首镜问题结构并生成新的产品证据组合', '保留采购提示，替换重复镜头与措辞'],
+    },
+    tagAdaptation: {
+      status: 'changed',
+      publishedTags: ['beautysupplier', 'privatelabel', 'cleansingbalm'],
+      hotTags: ['beautysupplier', 'privatelabel', 'lowmoq', 'cosmeticfactory'],
+      newTags: ['lowmoq', 'cosmeticfactory'],
+      droppedTags: ['skincareroutine'],
+      requiresConfirmation: true,
+      systemActions: ['把新增 Tag 写入下周候选，不直接覆盖产品事实', '由编导在新脚本中验证低 MOQ 与工厂过程表达'],
+    },
+    industryTrends: showcaseIndustryTrends(range.endsAt),
+  };
+}
+
 export function applySmartBusinessShowcaseData<T>(value: T, enabled = isSmartBusinessShowcaseEnabled()): T {
   if (!enabled || !value || typeof value !== 'object') return value;
   const data = value as T & Partial<DigitalEmployeeOverview>;
@@ -468,9 +531,64 @@ export function smartBusinessShowcasePerformance(
   return { accounts, contents, unavailable: [], loadedAt: `${endsAt}T17:55:00+08:00` };
 }
 
-export function smartBusinessShowcaseChannels(
+export type SmartBusinessShowcaseWeeklyVideo = {
+  id: string;
+  title: string;
+  productName: string;
+  thumbnailUrl: string;
+  platform: PublishingPlatform;
+  accountId: string;
+  accountLabel: string;
+  plannedPublishDate: string;
+  plannedPublishAt: string;
+  duration: number;
+  status: 'planned' | 'waiting_review';
+  estimatedCostCny: number;
+  budgetMinCny: number;
+  budgetMaxCny: number;
+};
+
+export function smartBusinessShowcaseWeeklyVideos(
   data: DigitalEmployeeOverview,
   enabled = isSmartBusinessShowcaseEnabled(),
+): SmartBusinessShowcaseWeeklyVideo[] | null {
+  if (!enabled) return null;
+  const { startsAt, endsAt, days } = currentRange(data);
+  const performance = smartBusinessShowcasePerformance(data, true)!;
+  const currentContents = performance.contents.filter(item => {
+    const date = item.publishedAt.slice(0, 10);
+    return date >= startsAt && date <= endsAt;
+  });
+  const sources = currentContents.length ? currentContents : performance.contents;
+  const angles = ['采购痛点', '产品实测', '工厂能力', '打样流程', '包装细节', '交付说明'];
+  const products = ['云朵泡沫卸妆蜜', '紫苏控油去黑头泥膜 2.0', 'OEM 护肤定制', '低 MOQ 包装打样'];
+  const publishHours = ['10:00', '14:00', '18:00', '20:00'];
+  return Array.from({ length: SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount }, (_, index) => {
+    const source = sources[index % sources.length]!;
+    const angle = angles[index % angles.length]!;
+    const plannedPublishDate = days[index % days.length] || startsAt;
+    return {
+      id: `showcase-weekly-video-${String(index + 1).padStart(2, '0')}`,
+      title: index < sources.length ? source.title : `${source.title} · ${angle}`,
+      productName: products[index % products.length]!,
+      thumbnailUrl: source.thumbnailUrl || SHOWCASE_THUMBNAILS[showcaseAssetIndex(source.id, SHOWCASE_THUMBNAILS.length)]!,
+      platform: source.platform,
+      accountId: source.accountId,
+      accountLabel: source.accountTitle,
+      plannedPublishDate,
+      plannedPublishAt: `${plannedPublishDate}T${publishHours[index % publishHours.length]}:00+08:00`,
+      duration: [30, 30, 30, 45][index % 4]!,
+      status: index < SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.waitingReviewCount ? 'waiting_review' : 'planned',
+      estimatedCostCny: SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.budgetMidCny / SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount,
+      budgetMinCny: SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.budgetMinCny / SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount,
+      budgetMaxCny: SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.budgetMaxCny / SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount,
+    };
+  });
+}
+
+export function smartBusinessShowcaseChannels(
+  data: DigitalEmployeeOverview,
+  enabled = isSmartBusinessShowcaseEnabled() || isSmartBusinessOverviewPreviewEnabled(),
 ) {
   if (!enabled) return null;
   const facebook = configuredAccount(data, 'facebook');

@@ -36,9 +36,15 @@ test('locally imported video requires every production right before joining edit
 
 test('workflow first frames remain production evidence instead of user library assets', () => {
   assert.equal(isWorkflowInternalMaterial({ sourceType: 'ai-storyboard-first-frame' }), true);
+  assert.equal(isWorkflowInternalMaterial({ sourceType: 'storyboard-controlled-product-source-frame' }), true);
   assert.equal(isWorkflowInternalMaterial({ sourceType: 'digital-human-qwen-first-frame-draft' }), true);
   assert.equal(isWorkflowInternalMaterial({ sourceType: 'digital-human-target-first-frame' }), true);
   assert.equal(isWorkflowInternalMaterial({ sourceType: 'viral-sentence-first-frame' }), true);
+  assert.equal(isWorkflowInternalMaterial({ sourceType: 'presenter-inline-upload' }), true);
+  assert.equal(isWorkflowInternalMaterial({ sourceType: 'presenter-ark-enrollment' }), true);
+  assert.equal(isWorkflowInternalMaterial({ sourceType: 'presenter-video-frame' }), true);
   assert.equal(isWorkflowInternalMaterial({ sourceType: 'ai-storyboard-video' }), false,
     '完成的视频仍可作为用户素材，不应随首帧草稿一起隐藏');
+  assert.equal(isWorkflowInternalMaterial({ sourceType: 'heygen' }), false,
+    '已完成数字人成片仍是可复用创作素材，不能随人物认证原始资料一起隐藏');
 });

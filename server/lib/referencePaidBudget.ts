@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { withPaidOperationLock } from './paidOperationLock.js';
+import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
 
 type Ledger = { version: 1; limitMicros: number; entries: Record<string, { tool: string; amountMicros: number; at: string }> };
 const micros = (value: number) => {
@@ -13,7 +14,14 @@ const micros = (value: number) => {
 /** Durable admission ledger for reference-driven digital-human suppliers. Reservations are never auto-refunded. */
 export class ReferencePaidBudget {
   constructor(private readonly root: string, private readonly monthlyLimitCny: () => number = () => Number(process.env.DIGITAL_HUMAN_REFERENCE_MONTHLY_BUDGET_CNY)) {}
-  async reserve(tool: string, operationId: string, estimatedCostCny: number | null) {
+  async reserve(tool: string, operationId: string, estimatedCostCny: number | null, tenantId?: string) {
+    // Exempt tenants still require valid administrator pricing/budget configuration
+    // and a valid estimate, but do not consume the shared internal monthly ceiling.
+    if (isInternalBudgetExemptTenant(tenantId)) {
+      micros(this.monthlyLimitCny());
+      micros(Number(estimatedCostCny));
+      return;
+    }
     return withPaidOperationLock(path.join(this.root, '.locks'), 'budget', async () => {
       const limitMicros = micros(this.monthlyLimitCny()); const amountMicros = micros(Number(estimatedCostCny));
       const file = path.join(this.root, 'ledger.json');
@@ -31,7 +39,8 @@ export class ReferencePaidBudget {
       fs.writeFileSync(temporary, JSON.stringify(ledger), { mode: 0o600 }); fs.renameSync(temporary, file);
     });
   }
-  async release(tool: string, operationId: string) {
+  async release(tool: string, operationId: string, tenantId?: string) {
+    if (isInternalBudgetExemptTenant(tenantId)) return;
     return withPaidOperationLock(path.join(this.root, '.locks'), 'budget', async () => {
       const file = path.join(this.root, 'ledger.json');
       if (!fs.existsSync(file)) return;

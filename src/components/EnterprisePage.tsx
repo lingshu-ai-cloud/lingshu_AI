@@ -1,6 +1,6 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { cloneElement, isValidElement, useState, useEffect, useId, useRef } from 'react';
-import { Alert, Button, Checkbox, Form, Input, Modal, Pagination, Select, Tabs, Upload as AntUpload } from 'antd';
+import { Alert, Button, Checkbox, Collapse, Form, Input, Modal, Pagination, Select, Tabs, Upload as AntUpload } from 'antd';
 import { LsGradientProgress } from './ui/LsExperiencePrimitives';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, ArrowRight, Users, type LucideIcon } from 'lucide-react';
@@ -18,6 +18,7 @@ import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
 import type { AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import {readWeeklyEnterpriseFactTarget} from '../lib/weeklyEnterpriseFactNavigation';
+import type { ProductScenePreparationPlan } from '../../shared/contracts/productScenePreparation';
 
 interface ProductAsset {
   name: string;
@@ -52,6 +53,7 @@ interface ProductItem {
   certificateImages?: ProductAsset[];
   sceneImages?: ProductAsset[];
   brandAssets?: ProductAsset[];
+  productScenePreparation?: ProductScenePreparationPlan;
 }
 
 export interface EnterpriseProductsDeepLink {
@@ -1645,7 +1647,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   };
 
   const aiAutonomySection = (
-    <section id="ai-autonomy" data-lingshu-guide="enterprise-autonomy" className={`rounded-lg border border-border bg-white p-5  transition-all ${autonomyHighlight ? 'ring-2 ring-amber-300' : ''}`}>
+    <section id="ai-autonomy" data-lingshu-guide="enterprise-autonomy" className={`py-5 transition-all first:pt-0 ${autonomyHighlight ? 'rounded-lg ring-2 ring-amber-300 ring-offset-4' : ''}`}>
       <div className="flex items-start justify-between gap-3">
         <p className="text-sm font-semibold text-text-primary">AI 参与程度</p>
         <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">
@@ -1730,7 +1732,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   );
 
   const handoffSafetySection = (
-    <section className="rounded-lg border border-border bg-white p-5 ">
+    <section className="py-5">
       <div>
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -1882,7 +1884,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   );
 
   const notificationSettingsSection = (
-    <div id="notifications" className={`rounded-lg border border-border bg-surface-2/40 p-4 transition-all ${notificationsHighlight ? 'ring-2 ring-sky-300' : ''}`}>
+    <section id="notifications" className={`py-5 transition-all ${notificationsHighlight ? 'rounded-lg ring-2 ring-sky-300 ring-offset-4' : ''}`}>
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Bell size={14} className="text-text-secondary" />
@@ -1937,7 +1939,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
           {profile.notifications?.nightMode?.enabled ? '已开启' : '未开启'}
         </label>
       </div>
-    </div>
+    </section>
   );
 
   if (loading) {
@@ -1972,7 +1974,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
 
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1440px] space-y-5 px-4 py-5 sm:px-6">
-          {enterpriseArea !== 'appearance' && <section className="rounded-lg border border-emerald-200 bg-surface-2 p-4" aria-label="企业资料完整度">
+          {enterpriseArea === 'facts' && <section className="rounded-lg border border-emerald-200 bg-surface-2 p-4" aria-label="企业资料完整度">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
                 <span className="text-2xl font-semibold tabular-nums text-accent">{profileCompleteness.percentage}%</span>
@@ -1997,17 +1999,12 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
             })} />}
 
 
-          {enterpriseArea !== 'appearance' && <div className={`rounded-lg border p-4 ${enterpriseArea === 'facts' ? 'border-emerald-100 bg-emerald-50/60' : enterpriseArea === 'social' ? 'border-violet-100 bg-violet-50/60' : 'border-sky-100 bg-sky-50/60'}`}>
+          {(enterpriseArea === 'facts' || enterpriseArea === 'social') && <div className={`rounded-lg border p-4 ${enterpriseArea === 'facts' ? 'border-emerald-100 bg-emerald-50/60' : 'border-violet-100 bg-violet-50/60'}`}>
             <div className="flex items-start gap-3">
-              {enterpriseArea === 'facts' ? <Building2 size={15} className="mt-0.5 shrink-0 text-emerald-700" /> : enterpriseArea === 'social' ? <Megaphone size={15} className="mt-0.5 shrink-0 text-violet-700" /> : <ShieldCheck size={15} className="mt-0.5 shrink-0 text-sky-700" />}
+              {enterpriseArea === 'facts' ? <Building2 size={15} className="mt-0.5 shrink-0 text-emerald-700" /> : <Megaphone size={15} className="mt-0.5 shrink-0 text-violet-700" />}
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-text-primary">{enterpriseArea === 'facts' ? '已保存资料可供 AI 使用' : enterpriseArea === 'social' ? '设置社媒创作默认策略' : '设置客服边界'}</p>
+                <p className="text-xs font-semibold text-text-primary">{enterpriseArea === 'facts' ? '已保存资料可供 AI 使用' : '设置社媒创作默认策略'}</p>
               </div>
-              {enterpriseArea === 'service' && (
-                <button type="button" onClick={openKnowledgeIntake} className="shrink-0 rounded-lg border border-sky-200 bg-white px-3 py-2 text-[11px] font-semibold text-sky-700 hover:bg-sky-50">
-                  打开灵小枢快速采集
-                </button>
-              )}
             </div>
           </div>}
 
@@ -2390,65 +2387,69 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
           )}
 
           {knowledgeView === 'advanced' && (
-          <section className="rounded-lg border border-border bg-white ">
-            <div className="flex w-full items-center justify-between px-5 py-4 text-left">
-              <span>
-                <span className="block text-sm font-semibold text-text-primary">接待规则与高级设置</span>
-                <span className="mt-1 block text-[11px] text-text-muted">先选灵小枢参与到哪一步，再设置什么时候交给你。</span>
-              </span>
+          <section className="bg-white">
+            <div className="divide-y divide-border">
+              {aiAutonomySection}
+              {handoffSafetySection}
+              {notificationSettingsSection}
+              <SupportAccessControl />
             </div>
-              <div className="space-y-5 border-t border-border p-5">
-                {aiAutonomySection}
-                {handoffSafetySection}
-                {notificationSettingsSection}
 
-                <SupportAccessControl />
-
-                <div className="rounded-lg border border-border bg-surface-2/40 p-4">
-                  <div className="mb-3 flex items-center gap-2"><Compass size={14} className="text-text-secondary" /><h3 className="text-sm font-semibold text-text-primary">经营策略</h3></div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <Field label="当前阶段目标"><Input className={inputCls} value={profile.strategy?.currentGoal ?? ''} onChange={e => set('strategy')('currentGoal', e.target.value)} /></Field>
-                    <Field label="本期重点产品"><Input className={inputCls} value={profile.strategy?.focusProducts ?? ''} onChange={e => set('strategy')('focusProducts', e.target.value)} /></Field>
-                    <Field label="重点市场"><OptionSelector value={profile.strategy?.focusMarkets ?? ''} options={MARKET_OPTIONS} onChange={value => set('strategy')('focusMarkets', value)} placeholder="选择重点市场" /></Field>
-                    <Field label="暂不经营市场"><OptionSelector value={profile.strategy?.excludedMarkets ?? ''} options={MARKET_OPTIONS} onChange={value => set('strategy')('excludedMarkets', value)} placeholder="选择暂不经营市场" /></Field>
-                    <Field label="最低利润率"><Input className={inputCls} value={profile.strategy?.minMargin ?? ''} onChange={e => set('strategy')('minMargin', e.target.value)} /></Field>
-                  </div>
-                  <Field label="价格策略"><Input.TextArea className={textareaCls} rows={2} value={profile.strategy?.pricingStrategy ?? ''} onChange={e => set('strategy')('pricingStrategy', e.target.value)} /></Field>
-                </div>
-
-                <div className="rounded-lg border border-border bg-surface-2/40 p-4">
-                  <div className="mb-3 flex items-center gap-2"><Megaphone size={14} className="text-text-secondary" /><h3 className="text-sm font-semibold text-text-primary">品牌调性</h3></div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <Field label="品牌名称"><Input className={inputCls} value={profile.brand.name ?? ''} onChange={e => set('brand')('name', e.target.value)} /></Field>
-                    <Field label="品牌调性关键词"><OptionSelector value={profile.brand.tone} options={BRAND_TONE_OPTIONS} onChange={value => set('brand')('tone', value)} placeholder="选择品牌调性" /></Field>
-                    <Field label="沟通风格"><OptionSelector value={profile.brand.style} options={COMMUNICATION_STYLE_OPTIONS} multiple={false} onChange={value => set('brand')('style', value)} placeholder="选择沟通风格" /></Field>
-                    <Field label="首选输出语言"><OptionSelector value={profile.brand.preferredLanguages ?? ''} options={LANGUAGE_OPTIONS} onChange={value => set('brand')('preferredLanguages', value)} placeholder="选择首选输出语言" /></Field>
-                    <Field label="核心卖点"><Input className={inputCls} value={profile.brand.usp} onChange={e => set('brand')('usp', e.target.value)} /></Field>
-                  </div>
-                  <Field label="禁忌话题"><Input className={inputCls} value={profile.brand.taboos} onChange={e => set('brand')('taboos', e.target.value)} /></Field>
-                </div>
-
-                <div className="rounded-lg border border-border bg-surface-2/40 p-4">
-                  <div className="mb-3 flex items-center gap-2"><BookOpen size={14} className="text-text-secondary" /><h3 className="text-sm font-semibold text-text-primary">Agent 学习记录</h3></div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <Field label="已验证有效角度"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.provenAngles ?? ''} onChange={e => set('agentLearning')('provenAngles', e.target.value)} /></Field>
-                    <Field label="低效角度 / 需降权"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.weakAngles ?? ''} onChange={e => set('agentLearning')('weakAngles', e.target.value)} /></Field>
-                    <Field label="待确认推断"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.pendingAssumptions ?? ''} onChange={e => set('agentLearning')('pendingAssumptions', e.target.value)} /></Field>
-                    <Field label="用户纠正偏好"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.userCorrections ?? ''} onChange={e => set('agentLearning')('userCorrections', e.target.value)} /></Field>
-                  </div>
-                  <Field label="自由填写"><Input.TextArea className={textareaCls} rows={5} value={profile.knowledge} onChange={e => setProfile(prev => ({ ...prev, knowledge: e.target.value }))} /></Field>
-                </div>
-
-                <div className="rounded-lg border border-border bg-surface-2/40 p-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary">
-                      {orderImporting ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}上传订单 CSV
-                      <input type="file" accept=".csv,text/csv" className="hidden" disabled={orderImporting} onChange={e => { const file = e.target.files?.[0] || null; e.currentTarget.value = ''; void importOrderCsv(file); }} />
-                    </label>
-                  </div>
-                  {orderImportMessage && <p className="mt-2 text-[11px] font-bold text-emerald-700">{orderImportMessage}</p>}
-                </div>
-              </div>
+            <div className="border-t border-border pt-5">
+              <h3 className="mb-2 text-sm font-semibold text-text-primary">更多设置</h3>
+              <Collapse
+                ghost
+                className="enterprise-advanced-collapse"
+                items={[
+                  {
+                    key: 'strategy',
+                    label: <span className="inline-flex items-center gap-2 text-sm font-semibold"><Compass size={14} />经营策略</span>,
+                    children: <div className="grid gap-x-4 sm:grid-cols-2">
+                      <Field label="当前阶段目标"><Input className={inputCls} value={profile.strategy?.currentGoal ?? ''} onChange={e => set('strategy')('currentGoal', e.target.value)} /></Field>
+                      <Field label="本期重点产品"><Input className={inputCls} value={profile.strategy?.focusProducts ?? ''} onChange={e => set('strategy')('focusProducts', e.target.value)} /></Field>
+                      <Field label="重点市场"><OptionSelector value={profile.strategy?.focusMarkets ?? ''} options={MARKET_OPTIONS} onChange={value => set('strategy')('focusMarkets', value)} placeholder="选择重点市场" /></Field>
+                      <Field label="暂不经营市场"><OptionSelector value={profile.strategy?.excludedMarkets ?? ''} options={MARKET_OPTIONS} onChange={value => set('strategy')('excludedMarkets', value)} placeholder="选择暂不经营市场" /></Field>
+                      <Field label="最低利润率"><Input className={inputCls} value={profile.strategy?.minMargin ?? ''} onChange={e => set('strategy')('minMargin', e.target.value)} /></Field>
+                      <div className="sm:col-span-2"><Field label="价格策略"><Input.TextArea className={textareaCls} rows={2} value={profile.strategy?.pricingStrategy ?? ''} onChange={e => set('strategy')('pricingStrategy', e.target.value)} /></Field></div>
+                    </div>,
+                  },
+                  {
+                    key: 'brand',
+                    label: <span className="inline-flex items-center gap-2 text-sm font-semibold"><Megaphone size={14} />品牌与语气</span>,
+                    children: <div className="grid gap-x-4 sm:grid-cols-2">
+                      <Field label="品牌名称"><Input className={inputCls} value={profile.brand.name ?? ''} onChange={e => set('brand')('name', e.target.value)} /></Field>
+                      <Field label="品牌调性关键词"><OptionSelector value={profile.brand.tone} options={BRAND_TONE_OPTIONS} onChange={value => set('brand')('tone', value)} placeholder="选择品牌调性" /></Field>
+                      <Field label="沟通风格"><OptionSelector value={profile.brand.style} options={COMMUNICATION_STYLE_OPTIONS} multiple={false} onChange={value => set('brand')('style', value)} placeholder="选择沟通风格" /></Field>
+                      <Field label="首选输出语言"><OptionSelector value={profile.brand.preferredLanguages ?? ''} options={LANGUAGE_OPTIONS} onChange={value => set('brand')('preferredLanguages', value)} placeholder="选择首选输出语言" /></Field>
+                      <Field label="核心卖点"><Input className={inputCls} value={profile.brand.usp} onChange={e => set('brand')('usp', e.target.value)} /></Field>
+                      <Field label="禁忌话题"><Input className={inputCls} value={profile.brand.taboos} onChange={e => set('brand')('taboos', e.target.value)} /></Field>
+                    </div>,
+                  },
+                  {
+                    key: 'learning',
+                    label: <span className="inline-flex items-center gap-2 text-sm font-semibold"><BookOpen size={14} />Agent 学习记录</span>,
+                    children: <div className="grid gap-x-4 sm:grid-cols-2">
+                      <Field label="已验证有效角度"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.provenAngles ?? ''} onChange={e => set('agentLearning')('provenAngles', e.target.value)} /></Field>
+                      <Field label="低效角度 / 需降权"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.weakAngles ?? ''} onChange={e => set('agentLearning')('weakAngles', e.target.value)} /></Field>
+                      <Field label="待确认推断"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.pendingAssumptions ?? ''} onChange={e => set('agentLearning')('pendingAssumptions', e.target.value)} /></Field>
+                      <Field label="用户纠正偏好"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.userCorrections ?? ''} onChange={e => set('agentLearning')('userCorrections', e.target.value)} /></Field>
+                      <div className="sm:col-span-2"><Field label="自由填写"><Input.TextArea className={textareaCls} rows={4} value={profile.knowledge} onChange={e => setProfile(prev => ({ ...prev, knowledge: e.target.value }))} /></Field></div>
+                    </div>,
+                  },
+                  {
+                    key: 'orders',
+                    label: <span className="inline-flex items-center gap-2 text-sm font-semibold"><Upload size={14} />订单数据导入</span>,
+                    children: <div>
+                      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">
+                        {orderImporting ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}上传订单 CSV
+                        <input type="file" accept=".csv,text/csv" className="hidden" disabled={orderImporting} onChange={e => { const file = e.target.files?.[0] || null; e.currentTarget.value = ''; void importOrderCsv(file); }} />
+                      </label>
+                      {orderImportMessage && <p className="mt-2 text-[11px] font-bold text-emerald-700">{orderImportMessage}</p>}
+                    </div>,
+                  },
+                ]}
+              />
+            </div>
           </section>
           )}
 

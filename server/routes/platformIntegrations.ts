@@ -12,15 +12,16 @@ import { disconnectTenantPlatformAccounts } from '../lib/socialAccountCleanup.js
 
 export const platformIntegrationsRouter = Router();
 
-const SUPPORTED = ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube', 'messenger'] as const;
+const SUPPORTED = ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube', 'linkedin', 'messenger'] as const;
 
 platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const [google, meta, instagram, tiktok] = await Promise.all([
+  const [google, meta, instagram, tiktok, linkedin] = await Promise.all([
     getTenantPlatformApp(tenantId, 'google'),
     getTenantPlatformApp(tenantId, 'meta'),
     getTenantPlatformApp(tenantId, 'instagram'),
     getTenantPlatformApp(tenantId, 'tiktok'),
+    getTenantPlatformApp(tenantId, 'linkedin'),
   ]);
   const origin = getPublicOrigin(req);
   const publicMeta = meta ? publicTenantPlatformApp(req, meta) : null;
@@ -33,6 +34,7 @@ platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) =>
       facebook: `${origin}/api/overseas/social/oauth/facebook/callback`,
       messenger: `${origin}/api/webhooks/meta/${tenantId}`,
       tiktok: `${origin}/api/overseas/social/oauth/tiktok/callback`,
+      linkedin: `${origin}/api/overseas/social/oauth/linkedin/callback`,
     },
     metaWebhookUrl: publicMeta?.webhookUrl || '',
     apps: {
@@ -40,6 +42,7 @@ platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) =>
       meta: publicMeta,
       instagram: instagram ? publicTenantPlatformApp(req, instagram) : null,
       tiktok: tiktok ? publicTenantPlatformApp(req, tiktok) : null,
+      linkedin: linkedin ? publicTenantPlatformApp(req, linkedin) : null,
     },
   });
 });
@@ -56,6 +59,7 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
     getTenantPlatformApp(tenantId, 'meta'),
     getTenantPlatformApp(tenantId, 'instagram'),
     getTenantPlatformApp(tenantId, 'tiktok'),
+    getTenantPlatformApp(tenantId, 'linkedin'),
   ]);
   const appId = (value: unknown, current: string | undefined) => value === undefined ? text(current) : text(value);
   const entries = [
@@ -68,6 +72,7 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
     },
     { platform: 'instagram' as const, appId: appId(req.body?.instagramAppId, existing[2]?.app_id), appSecret: text(req.body?.instagramAppSecret), webhookVerifyToken: text(req.body?.instagramWebhookVerifyToken) },
     { platform: 'tiktok' as const, appId: appId(req.body?.tiktokClientKey, existing[3]?.app_id), appSecret: text(req.body?.tiktokClientSecret) },
+    { platform: 'linkedin' as const, appId: appId(req.body?.linkedinClientId, existing[4]?.app_id), appSecret: text(req.body?.linkedinClientSecret) },
   ];
   // Validate every pair before starting any write so one invalid application
   // cannot leave the other two partially updated.
@@ -89,13 +94,13 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
 platformIntegrationsRouter.delete('/oauth-config/:platform', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const platform = req.params.platform;
-  if (!['google', 'meta', 'instagram', 'tiktok'].includes(platform)) {
+  if (!['google', 'meta', 'instagram', 'tiktok', 'linkedin'].includes(platform)) {
     res.status(400).json({ error: 'invalid_oauth_platform' });
     return;
   }
 
   try {
-    const typedPlatform = platform as 'google' | 'meta' | 'instagram' | 'tiktok';
+    const typedPlatform = platform as 'google' | 'meta' | 'instagram' | 'tiktok' | 'linkedin';
     const disconnectedAccounts = await disconnectTenantPlatformAccounts(tenantId, typedPlatform);
     const existing = await getTenantPlatformApp(tenantId, typedPlatform);
     const configDeleted = await deleteTenantPlatformApp(tenantId, typedPlatform);
@@ -114,7 +119,7 @@ platformIntegrationsRouter.get('/providers', (_req, res) => {
   res.json({
     providers: SUPPORTED.map(id => ({
       id,
-      oauth: ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube', 'messenger'].includes(id),
+      oauth: ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube', 'linkedin', 'messenger'].includes(id),
       messaging: id === 'messenger',
       implemented: id === 'messenger',
       owner: 'platform-integrations',
@@ -136,6 +141,8 @@ platformIntegrationsRouter.get('/:provider/status', requireAuth, async (req, res
     ? 'meta'
     : provider === 'youtube'
       ? 'google'
+      : provider === 'linkedin'
+        ? 'linkedin'
       : null;
   if (appPlatform) {
     const app = await getTenantPlatformApp(tenantId, appPlatform);

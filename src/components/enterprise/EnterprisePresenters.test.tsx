@@ -14,12 +14,12 @@ test('initial configuration presents one unified presenter onboarding instead of
   assert.match(html, /正在读取数字人配置/);
   assert.doesNotMatch(html, /待配置/);
   assert.match(source, /!loaded \? loadError[\s\S]{0,900}<LsLoadingState loading label="正在读取数字人配置"/);
-  assert.match(source, /人物、声音与本人认证/);
-  assert.match(source, /设置人物与声音/);
-  assert.match(source, />更换数字人</);
-  assert.match(source, />录入本人声音</);
-  assert.match(source, /voiceOnlyPresenter=\{selectedPresenter\}/);
-  assert.match(source, /完善人物替换认证/);
+  assert.match(source, /数字人生产准备/);
+  assert.match(source, /1\. 建立数字人/);
+  assert.match(source, /2\. 完成平台认证/);
+  assert.match(source, /重新录入人物/);
+  assert.match(source, /直接录制本人人物（推荐）/);
+  assert.match(source, /配置方舟认证（可选）/);
   assert.doesNotMatch(html, /HeyGen 口播接入/);
   assert.doesNotMatch(html, /方舟人物认证/);
   assert.match(source, /<ArkPresenterEnrollmentPanel/);
@@ -27,6 +27,7 @@ test('initial configuration presents one unified presenter onboarding instead of
   assert.match(source, /productionApi\.uploadArkMaterial/);
   assert.match(source, /finishUnifiedPresenterSetup/);
   assert.match(source, /selectedPresenter\?\.referenceMaterialIds/);
+  assert.match(source, /fetchMaterialLibrary\('all'\)/, '人物管理必须从私有完整库存恢复认证资料，不能依赖“我的素材”公开列表');
   assert.match(source, /preparedArk\?\.presenterId === selectedPresenter\?\.id/);
   assert.match(source, /presenterApi\.creations\(\)\.catch\(\(\) => \[\]\)/);
   assert.match(source, /document:\\\/\\\/studio_presenter_assets/);
@@ -39,18 +40,21 @@ test('initial configuration presents one unified presenter onboarding instead of
   assert.match(arkPanelSource, /已复用统一接入时上传的照片和本人视频，不需要再次录入/);
   assert.match(arkPanelSource, /!reusedMaterials &&/);
   assert.match(arkPanelSource, /reusedMaterials \? '开始人物认证' : '提交人物资料并开始认证'/);
-  assert.match(source, /需要高级人物替换时，再点击“完善人物替换认证”单独授权/);
+  assert.match(source, /先建立人物，再完成平台认证/);
+  assert.match(source, /人物资料：\$\{pendingCreation\.name\} 已保存，请在第二步完成本人授权/);
+  assert.match(source, /pendingCreation/);
+  assert.match(source, /selectedPresenterSetupReady/);
+  assert.match(source, /方舟认证为可选增强，不影响数字人录入完成/);
   assert.match(source, /className="min-h-11 text-xs"/);
   assert.match(source, /authorizationConfirmed=\{false\}/);
   assert.doesNotMatch(source, /arkCapability = await productionApi\.arkEnrollmentCapabilities/);
   assert.match(arkPanelSource, /if \(!capability\.ready\)/);
-  assert.match(arkPanelSource, /不影响当前 HeyGen 口播人物/);
-  assert.match(arkPanelSource, /管理员还需配置/);
-  assert.match(arkPanelSource, /aria-label="人物认证视频"/);
-  assert.match(arkPanelSource, /aria-label="人物认证照片"/);
-  assert.match(arkPanelSource, /aria-label="选择已有本人人物照片"/);
-  assert.match(arkPanelSource, /方舟进行真人验证/);
-  assert.match(arkPanelSource, /提交人物资料并开始认证/);
+  assert.doesNotMatch(arkPanelSource, /当前无法完成数字人生产准备/);
+  assert.match(arkPanelSource, /不影响 HeyGen 数字人口播/);
+  assert.match(arkPanelSource, /方舟人物认证（可选增强）/);
+  assert.match(source, /selectedPresenterSetupReady = !pendingCreation && selectedHeyGenReady/);
+  assert.doesNotMatch(source, /selectedPresenterSetupReady =[^;]*selectedArkReady/);
+  assert.match(source, /initialStage=\{heyGenManagerMode\}/);
 });
 
 test('enterprise presenter recovery persists its intent and lets the visible digital employee page open the dialog', () => {
@@ -59,26 +63,28 @@ test('enterprise presenter recovery persists its intent and lets the visible dig
   assert.doesNotMatch(source, /requestAnimationFrame|setTimeout/);
 });
 
-test('enterprise presenter page supports editing, optional certification and revoking existing people', () => {
+test('enterprise presenter page supports editing, optional Ark enhancement and revoking existing people', () => {
   const html = renderToStaticMarkup(<EnterprisePresenters />);
   assert.match(html, /人物与出镜/);
-  assert.match(html, /补充可选的人物替换认证/);
+  assert.match(html, /按需配置方舟增强认证/);
   assert.match(source, />修改人物</);
-  assert.match(source, /certificationOpen \? '收起认证' : '人物替换认证'/);
+  assert.match(source, /certificationOpen \? '收起认证' : '配置方舟认证（可选）'/);
+  assert.match(source, /未配置（可选）/);
   assert.match(source, />取消授权</);
   assert.match(source, /presenterApi\.revoke/);
   assert.doesNotMatch(source, /默认出镜偏好|新分镜默认声音|新分镜默认布局|主体授权证据|方舟控制台人工核验|渠道与出镜策略/);
-  assert.match(enterprisePageSource, /enterpriseArea !== 'appearance' && <section[^>]+aria-label="企业资料完整度"/);
-  assert.match(enterprisePageSource, /enterpriseArea !== 'appearance' && <div className=\{`rounded-lg border p-4/);
+  assert.match(enterprisePageSource, /enterpriseArea === 'facts' && <section[^>]+aria-label="企业资料完整度"/);
+  assert.doesNotMatch(enterprisePageSource, /设置客服边界|打开灵小枢快速采集/);
+  assert.match(enterprisePageSource, /<Collapse[\s\S]{0,500}enterprise-advanced-collapse/);
   assert.doesNotMatch(enterprisePageSource, /<EnterprisePresenterRouting/);
 });
 
-test('content production records and selects the required presenter inside the production panel', () => {
+test('content production redirects setup to the shared beginner guide', () => {
   const html = renderToStaticMarkup(<EnterprisePresenters contentProduction />);
-  assert.match(html, /录入数字人形象/);
-  assert.match(html, /必须明确选择一个已授权数字人形象才能进入下一步/);
-  assert.match(source, /选择此形象/);
-  assert.match(source, /selectForProduction/);
+  assert.match(html, /打开数字人接入/);
+  assert.match(html, /制作页面不再重复承载人物供应商配置/);
+  assert.match(source, /lingshu:open-digital-employee-guide/);
+  assert.match(source, /setItem\('lingshu:open-digital-employee-guide', 'presenter'\)/);
 });
 
 test('all presenter mutations invalidate assistant decisions immediately', () => {

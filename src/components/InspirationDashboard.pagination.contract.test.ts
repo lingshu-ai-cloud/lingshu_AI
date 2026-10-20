@@ -5,13 +5,15 @@ const source = readFileSync(new URL('./InspirationDashboard.tsx', import.meta.ur
 const libraryStart = source.indexOf("{innerView === 'library'");
 const libraryEnd = source.indexOf("{previewMaterial?.type === 'video'", libraryStart);
 const librarySource = source.slice(libraryStart, libraryEnd);
-const materialGridIndex = librarySource.indexOf('<LsMasonryGallery layout="grid" items={filteredMaterials.map');
-const paginationIndex = librarySource.indexOf('aria-label="我的素材分页"');
+const materialGridIndex = librarySource.indexOf('<LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map');
+const paginationIndex = librarySource.indexOf('aria-label="普通素材分页"');
 
 assert.match(source, /const MATERIAL_LIBRARY_PAGE_SIZE = 20;/, '我的素材每页应限制为 20 条，避免单页过长');
-assert.match(source, /page, pageSize: MATERIAL_LIBRARY_PAGE_SIZE,/, '素材接口请求必须复用统一分页数量');
-assert.ok(materialGridIndex >= 0, '应使用统一的齐行媒体卡片网格');
+assert.match(source, /const MATERIAL_LIBRARY_FETCH_PAGE_SIZE = 100;/, '筛选前应分页读取完整普通素材集');
+assert.match(source, /pagedUngroupedFilteredMaterials[\s\S]*?slice\(offset, offset \+ MATERIAL_LIBRARY_PAGE_SIZE\)/, '普通素材应在完整筛选后统一分页');
+assert.match(source, /visibleProductGroupsForPage = materialPage === 1 \? visibleProductGroups : \[\]/, '产品集合卡不得在普通素材后续页重复');
+assert.ok(materialGridIndex >= 0, '应使用适配真实媒体比例的瀑布流');
 assert.ok(paginationIndex > materialGridIndex, '我的素材分页必须位于素材网格底部');
-assert.match(librarySource, /<Pagination[\s\S]*?pageSize=\{MATERIAL_LIBRARY_PAGE_SIZE\}[\s\S]*?showSizeChanger=\{false\}/, '素材分页应复用 Ant Design Pagination');
+assert.match(librarySource, /<Pagination[\s\S]*?total=\{ordinaryFilteredTotal\}[\s\S]*?pageSize=\{MATERIAL_LIBRARY_PAGE_SIZE\}[\s\S]*?onChange=\{setMaterialPage\}/, '普通素材分页总量必须与筛选后集合一致');
 
 console.log('Inspiration material pagination contract passed');

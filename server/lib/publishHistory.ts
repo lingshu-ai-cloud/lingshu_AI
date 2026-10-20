@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RECORDS_FILE = path.join(__dirname, '../../data/social-publish-records.json');
 
-export type PublishPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
+export type PublishPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'linkedin';
 
 export interface SocialPublishRecord {
   id: string;

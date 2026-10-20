@@ -3,7 +3,7 @@ import type {DataStore,Record_} from '../storage/datastore.js';
 import {socialAccessToken,youtubeCredentials} from '../lib/accountCredentials.js';
 import {ensurePlatformCapability,platformAccountIdentityHash} from './platformCapabilities.js';
 export type WeeklyPublishingPurpose='publish'|'receipt_lookup';
-export async function weeklyReceiptLookupAuthority(input:{tenantId:string;accountId:string;platform:'tiktok'|'youtube'|'facebook'|'instagram';providerReceiptId?:string;dataStore:DataStore;now?:Date}){
+export async function weeklyReceiptLookupAuthority(input:{tenantId:string;accountId:string;platform:'tiktok'|'youtube'|'facebook'|'instagram'|'linkedin';providerReceiptId?:string;dataStore:DataStore;now?:Date}){
  const receipt=input.providerReceiptId?.trim();if(!receipt)return {reason:'provider_receipt_missing',identityHash:null};
  const account=await input.dataStore.getById<Record_>(input.platform==='youtube'?'youtube_accounts':'social_accounts',input.accountId);
  if(!account||account.tenantId!==input.tenantId||(input.platform!=='youtube'&&account.platform!==input.platform))return {reason:'receipt_lookup_account_scope_mismatch',identityHash:null};

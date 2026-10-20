@@ -19,6 +19,7 @@ import { assertReferencePresenterComposition, type ReferencePresenterComposition
 import { automaticManagedFallbackFrameAdmission, automaticManagedFallbackVideoAdmission } from './storyboardAigcQuality.js';
 import { createControlledProductImageAnimation, type ControlledProductImageAnimationInput,
   type ControlledProductImageAnimationResult } from './controlledProductImageAnimation.js';
+import { compareAndSwapStudioProject } from './studioProjectRevision.js';
 
 export interface AutomatedReplicationShot {
   shotId: string; slotId: string; kind: 'person' | 'nonperson' | 'blocked'; start: number; end: number;
@@ -121,7 +122,10 @@ export async function advanceAutomatedReplication(input: { tenantId: string; pro
       if (!latest || latest.tenant_id !== input.tenantId || latest.status !== 'draft') throw new Error('逐镜草稿状态已变化');
       Object.assign(progress, latest.spec?.automatedReplicationProgress || {});
       progress[shotId] = { ...progress[shotId], blocker: '', blockerCode: '', ...value, updatedAt: new Date().toISOString() };
-      if (!await input.store.update('studio_projects', project.id, { spec: { ...latest.spec, ...patch, automatedReplicationProgress: progress } })) throw new Error('逐镜进度持久化失败，未继续调用供应商');
+      const saved = await compareAndSwapStudioProject(input.store, latest, {
+        spec: { ...latest.spec, ...patch, automatedReplicationProgress: progress },
+      });
+      if (!saved.ok) throw new Error('逐镜草稿已并发更新，未覆盖最新内容；请刷新后重试');
     };
     const materialFor = async (id: string) => (await (deps.materials || readLocalMaterials)()).find(item => item.id === id && String(item.tenantId || item.tenant_id || '') === input.tenantId);
     const validate = deps.validateVideo || validateReplicationVideo;

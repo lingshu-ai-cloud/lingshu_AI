@@ -277,7 +277,7 @@ export async function finishReplicationWorkbench(input: { tenantId: string; proj
         let measured: Awaited<ReturnType<typeof measureAvatarSourceCaptions>>;
         if (fs.existsSync(captionFile)) measured = JSON.parse(fs.readFileSync(captionFile, 'utf8'));
         else {
-          await (deps.reserveAsr || (id => studioPaidBudget.reserve('qwen_asr', id)))(`replication-finish:${tenantId}:${projectId}:${hash}`);
+          await (deps.reserveAsr || (id => studioPaidBudget.reserve('qwen_asr', id, undefined, tenantId)))(`replication-finish:${tenantId}:${projectId}:${hash}`);
           measured = await (deps.captions || measureAvatarSourceCaptions)({ ...material, duration: media.duration }, tenantId, loaded.bytes);
           if (measured.sourceHash !== hash || !measured.cues.length) throw new Error(`第 ${index + 1} 镜原声字幕缺少实测绑定`);
           fs.writeFileSync(captionFile, JSON.stringify(measured), { mode: 0o600 });

@@ -28,3 +28,32 @@ test('production reference adapters remain unavailable until an explicit valid b
     else process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT = saved;
   }
 });
+
+test('the exact exempt tenant does not depend on an internal reference ceiling', () => {
+  const savedBudget = process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT;
+  const savedExemptions = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+  const options: ProductionRouterOptions = {
+    adapters: [{ id: 'runway_act_two', methods: ['reenact'], async submit() { return { externalTaskId: 'unused' }; }, async status() { return { state: 'pending' }; } }],
+    reserveReference: async () => undefined,
+    importReferenceVideo: async () => ({ materialId: 'unused' }),
+    resolveReferenceInputs: async () => ({
+      referenceVideoUrl: 'https://controlled.invalid/reference.mp4',
+      characterUrl: 'https://controlled.invalid/person.png',
+      characterType: 'image',
+    }),
+  };
+  try {
+    delete process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT;
+    process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'tenant-exact';
+    const runtime = createProductionRuntime(options);
+    assert.ok(Number(runtime.referenceBudgetLimitCny('tenant-exact')) > 0);
+    assert.deepEqual(runtime.executableReferenceAdapters('tenant-exact'), options.adapters);
+    assert.equal(runtime.referenceBudgetLimitCny('tenant-other'), null);
+    assert.deepEqual(runtime.executableReferenceAdapters('tenant-other'), []);
+  } finally {
+    if (savedBudget === undefined) delete process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT;
+    else process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT = savedBudget;
+    if (savedExemptions === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+    else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = savedExemptions;
+  }
+});

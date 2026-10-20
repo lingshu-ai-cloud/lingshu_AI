@@ -7882,9 +7882,10 @@ async function analyzeExactLongVideoChunks(input: {
   analysisMode?: 'strategy' | 'exact';
   sceneCuts?: number[];
 }): Promise<VideoAiAnalysis> {
-  // Dense montage clips can contain twenty or more observation boundaries in
-  // twelve seconds. Six-second chunks bound both image input and schema output
-  // so exact analysis can finish inside the provider timeout.
+  // Keep each VL request small enough to finish reliably. Dense montage clips
+  // can contain twenty or more observation boundaries in twelve seconds; that
+  // response repeatedly exceeds the provider timeout even after reducing the
+  // frame count. Six-second chunks bound both image input and schema output.
   const chunkSeconds = Math.max(4, Math.min(30, Number(process.env.VIDEO_EXACT_CHUNK_SECONDS || 6)));
   const inferredDuration = exactAnalysisDuration(input.duration, input.frames.map(frame => qwenFrameSeconds(frame.timeLabel)));
   const chunks = exactAnalysisChunkRanges(inferredDuration, chunkSeconds);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createSocialProductionExecutorCheckpoint, socialProductionExecutor, socialProductionGraphInput } from '../server/starter198/socialContentProductionGraph.js';
 
 function detail() {
-  return { version: '3', brief: { productionApproach: 'material_cut' }, sources: [], assetSupplyPlan: {},
+  return { version: '3', mode: 'instant', brief: { productionApproach: 'material_cut' }, sources: [], assetSupplyPlan: {},
     agentWorkflow: { directorBrief: { version: '3', scenes: [{ sceneId: 'scene-1', voiceover: 'approved words' }] },
       executionPlan: { version: '3', directorBriefVersion: '3', scenes: [{ sceneId: 'scene-1', selectedSourceStrategy: 'customer_real_asset',
         idempotencyKey: 'derived-3', candidates: [{ candidateId: 'source-1', provenance: { inputVersion: '3', authorizationRef: 'tenant-source-1' } }] }] },
@@ -18,7 +18,7 @@ test('historic jobs without a binding stay legacy; selected graph bindings fail 
   const binding = createSocialProductionExecutorCheckpoint(detail(), { SOCIAL_CONTENT_EXECUTOR: 'langgraph' });
   assert.equal(socialProductionExecutor({ checkpoints: { 'social.executor': binding } } as any), 'langgraph');
   assert.throws(() => socialProductionExecutor({ checkpoints: { 'social.executor': { ...binding, inputHash: 'tampered' } } } as any), /binding_invalid/);
-  assert.equal(createSocialProductionExecutorCheckpoint(detail(), {}).payload.executor, 'langgraph');
+  assert.equal(createSocialProductionExecutorCheckpoint({ ...detail(), mode: 'weekly' }, {}).payload.executor, 'langgraph');
   assert.equal(createSocialProductionExecutorCheckpoint({ ...detail(), mode: 'instant' }, {}).payload.executor, 'legacy');
 });
 

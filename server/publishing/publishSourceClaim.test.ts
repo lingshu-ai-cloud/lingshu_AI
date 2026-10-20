@@ -89,6 +89,7 @@ try {
     'editing the active Studio script invalidates the frozen generation claim',
   );
 
+  assert.throws(() => digitalEmployeePublishSourceClaim(tenantId, { ...digitalProject, spec: { ...digitalProject.spec, contentOrder: { publishMode: 'draft_only' } } }, sourceVideo), (error: unknown) => error instanceof PublishSourceVerificationError && error.code === 'publish_source_production_only', 'production-only authority cannot be bypassed through a direct source claim');
   const digitalClaim = digitalEmployeePublishSourceClaim(tenantId, digitalProject, sourceVideo);
   await verifyFrozenPublishSourceClaim(tenantId, digitalClaim);
   digitalProject.spec.automation.quality.passed = false;

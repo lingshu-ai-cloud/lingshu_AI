@@ -75,7 +75,7 @@ async function createSynchronousWeeklyPublishingAdapter(input: {
   const ports = input.ports ?? { publish: publishVideoToAccount, reconcile: resolvePendingPublishToAccount };
 
   return {
-    provider: input.platform === 'youtube' ? 'youtube-data-api' : 'meta-graph-api',
+    provider: input.platform === 'youtube' ? 'youtube-data-api' : input.platform === 'linkedin' ? 'linkedin-posts-api' : 'meta-graph-api',
     platform: input.platform,
     capability: unavailableReason ? 'unavailable' : 'available',
     ...(unavailableReason ? { unavailableReason } : {}),
@@ -148,7 +148,7 @@ async function createSynchronousWeeklyPublishingAdapter(input: {
       } finally { if(delivery)await delivery.cleanup();await materialized.cleanup(); }
     },
     async reconcile({ assignment, attempt }) {
-      if (assignment.tenantId !== input.tenantId || assignment.accountId !== input.accountId || assignment.platform !== input.platform || attempt.tenant_id !== input.tenantId || attempt.assignment_id !== assignment.assignmentId || attempt.package_id !== assignment.packageId || attempt.provider !== (input.platform === 'youtube' ? 'youtube-data-api' : 'meta-graph-api') || !['unknown', 'in_flight'].includes(attempt.status)) return { status: 'unknown', failureCode: 'receipt_lookup_scope_mismatch' };
+      if (assignment.tenantId !== input.tenantId || assignment.accountId !== input.accountId || assignment.platform !== input.platform || attempt.tenant_id !== input.tenantId || attempt.assignment_id !== assignment.assignmentId || attempt.package_id !== assignment.packageId || attempt.provider !== (input.platform === 'youtube' ? 'youtube-data-api' : input.platform === 'linkedin' ? 'linkedin-posts-api' : 'meta-graph-api') || !['unknown', 'in_flight'].includes(attempt.status)) return { status: 'unknown', failureCode: 'receipt_lookup_scope_mismatch' };
       if(input.purpose==='receipt_lookup'){if(attempt.provider_receipt_id!==input.providerReceiptId)return {status:'unknown',failureCode:'receipt_lookup_scope_mismatch'};const fresh=await weeklyReceiptLookupAuthority({...input,dataStore});if(fresh.reason||fresh.identityHash!==lookup?.identityHash)return {status:'unknown',failureCode:fresh.reason||'receipt_lookup_account_changed'};}
       if (!attempt.provider_receipt_id) return { status: 'unknown', failureCode: 'provider_receipt_missing' };
       const result = await ports.reconcile({

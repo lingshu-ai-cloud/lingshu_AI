@@ -11,7 +11,7 @@ const input = {
   tiktokCreatorReceiptHash:'a'.repeat(64),
 };
 const requests = buildExternalVideoApprovalRequests(input);
-assert.deepEqual(requests.map(request => request.platform), ['youtube', 'instagram', 'facebook', 'tiktok']);
+assert.deepEqual(requests.map(request => request.platform), ['youtube', 'instagram', 'facebook', 'tiktok', 'linkedin']);
 assert.ok(requests.every(request => request.targetAccountIds.length === 1 && request.videoPath === input.videoPath));
 assert.deepEqual(requests.find(item => item.platform === 'tiktok')?.tiktokPostOptions,input.tiktokPostOptions);
 assert.equal(requests.find(item => item.platform === 'tiktok')?.tiktokCreatorReceiptHash,input.tiktokCreatorReceiptHash);

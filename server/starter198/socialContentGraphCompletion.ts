@@ -3,7 +3,7 @@ import {readGraphContextSnapshot} from './socialContentGraphContextSnapshots.js'
 import {matchesAuthorizedCorrectionContext, socialContentCorrectionRuntimeHash} from './socialContentProductionGraph.js';
 import type { ContentExecutionJob } from '../contentExecution/durableQueue.js';
 import { readContentExecutionJob } from '../contentExecution/durableQueue.js';
-import { graphIdentityHash, graphThreadId, CONTENT_GRAPH_VERSION } from '../contentExecution/langgraphIdentity.js';
+import { graphIdentityHash, graphThreadId, LEGACY_CONTENT_GRAPH_VERSION, SUPPORTED_CONTENT_GRAPH_VERSIONS, type ContentGraphVersion } from '../contentExecution/langgraphIdentity.js';
 import { ContentJobCheckpointSaver, createJobGraphCheckpointPort } from '../contentExecution/langgraphCheckpoint.js';
 import { STARTER_COLLECTIONS, type Starter198Repository } from './repository.js';
 import { loadSocialProductionGraphApproval } from './socialContentProductionGraph.js';
@@ -30,6 +30,8 @@ export async function completeSocialContentGraphRun(repository: Starter198Reposi
   const validCorrection=!!receipt&&!!correctedContext&&!!grant&&matchesAuthorizedCorrectionContext(job,correctedContext,String(binding?.inputHash),grant.recordHash)&&receipt.correctionHash===grant.recordHash&&receipt.correctionRuntimeHash===correctionHash&&receipt.financialPlanHash===binding?.inputHash;
   const expectedInputHash=validCorrection?socialRequestHash({originalInputHash:correctedPayload?.graphInputHash,correctionHash}):binding?.inputHash;
   const expectedPlanVersion=validCorrection?String(correctedContext!.agentWorkflow!.executionPlan.version):binding?.planVersion;
+  const expectedGraphVersion = (SUPPORTED_CONTENT_GRAPH_VERSIONS.includes(binding?.graphVersion as ContentGraphVersion)
+    ? binding?.graphVersion : LEGACY_CONTENT_GRAPH_VERSION) as ContentGraphVersion;
   // Historical graph jobs predate the bridge checkpoint and retain their
   // existing detailed terminal validation below. Every newly admitted graph
   // job must additionally cross the unified queue/identity boundary.
@@ -38,12 +40,12 @@ export async function completeSocialContentGraphRun(repository: Starter198Reposi
   );
   if (!receipt || checkpoint?.version !== '1' || binding?.executor !== 'langgraph'
     || checkpoint.inputHash !== expectedInputHash || receipt.inputHash !== expectedInputHash
-    || receipt.planVersion !== expectedPlanVersion || receipt.graphVersion !== CONTENT_GRAPH_VERSION
+    || receipt.planVersion !== expectedPlanVersion || receipt.graphVersion !== expectedGraphVersion
     || receipt.tenantId !== job.tenantId || receipt.taskId !== job.taskId || receipt.runId !== job.runId || receipt.jobId !== job.id) {
     throw new Error('content_graph_completion_receipt_invalid');
   }
   const identity = { tenantId: job.tenantId, taskId: job.taskId, runId: job.runId, jobId: job.id,
-    planVersion: String(receipt.planVersion), inputHash: String(receipt.inputHash), graphVersion: CONTENT_GRAPH_VERSION };
+    planVersion: String(receipt.planVersion), inputHash: String(receipt.inputHash), graphVersion: expectedGraphVersion };
   graphIdentityHash(identity);
   const saver = new ContentJobCheckpointSaver(identity, createJobGraphCheckpointPort({
     dataStore: repository.dataStore, identity,...(validCorrection?{correctionHash:correctionHash!}:{}), assertActive: async () => undefined,

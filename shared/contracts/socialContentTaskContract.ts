@@ -264,6 +264,8 @@ export interface SocialScriptBaselineSummary {
   groundingVersion?: string;
   /** Active task reference source; absent for system recommendations and historic records. */
   referenceSourceId?: string | null;
+  /** Customer-visible reference video identity used for authenticated previews. */
+  referenceVideoId?: string | null;
 }
 
 /**

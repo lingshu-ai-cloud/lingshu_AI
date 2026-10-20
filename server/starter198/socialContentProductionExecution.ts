@@ -1,5 +1,7 @@
 import {assertMeasuredCaptionTiming} from './socialContentCaptionTiming.js';
+import {isInternalBudgetExemptTenant} from '../lib/tenantBudgetExemption.js';
 import {applyPresenterFirstBudgetRouting} from './socialContentBudgetRouting.js';
+import {applyPresenterFirstBudgetDegradation} from './socialContentBudgetDegradation.js';
 import { assertBoundPresenterAudio, readBoundPresenterVoice, readWeeklyProductionVoice, weeklyProductionPresenterIds } from './socialContentBoundPresenterVoice.js';
 import { prepareSocialContentProductionBudget, type ProductionBudgetReadPorts } from './socialContentProductionBudgetPreflight.js';
 import type {PaidStageRequirement} from './socialContentPaidOperationPlan.js';
@@ -8,11 +10,16 @@ import {createSocialContentPaidOperationPermit} from '../lib/socialContentPaidOp
 import { admitExternalSupplyAdapters, socialProductionSupplyAdapters } from './socialContentRecoveryAdapters.js';
 import {
   assertCurrentContentExecutionActive,
-  currentContentProviderReceipt,
   readCurrentContentExecutionCheckpoint,
   recordCurrentContentExecutionCheckpoint,
   recordCurrentContentProviderReceipt,
 } from '../contentExecution/context.js';
+import {
+  beginContentProviderOperation,
+  completeContentProviderOperation,
+  failContentProviderOperation,
+  markContentProviderOperationUnknown,
+} from '../contentExecution/providerGateway.js';
 import {readWeeklyReplicationAuthority} from './socialWeeklyReplicationAuthority.js';
 import {assertAccountPlaybookBaselineCurrent} from './socialAccountProductionConstraints.js';
 import {readWeeklySchedulerMaterialPlan} from './socialWeeklySchedulerMaterialPlan.js';
@@ -111,7 +118,6 @@ import { socialContentReviewAdmissionAllowed } from './socialContentTestBypass.j
 import { voiceLearningReadiness } from '../videoProduction/voiceQualityLearning.js';
 import {
   analyzeSocialProductionAssetsWithCheckpoint,
-  narrationReceiptRequiresRecovery,
   readNarrationAudioCheckpoint,
   recordNarrationAudioCheckpoint,
   restoreSocialAssetSupplyCheckpointAssets,
@@ -499,7 +505,7 @@ export async function runSocialContentAutoProduction(input: {
       }
     }
     const heygenBridge = input.repository.dataStore
-      ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
+      ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore, input.tenantId)
       : null;
     const wholeFilmPresenterConfigured=['type-aware.v1','type-aware.v2'].includes(detail.brief.materialRoutingPolicyVersion||'')
       && process.env.SOCIAL_CONTENT_HEYGEN_ENABLED==='true' && process.env.HEYGEN_GENERATION_ENABLED==='true'
@@ -762,7 +768,11 @@ export async function runSocialContentAutoProduction(input: {
 	  const selectedSupplyPlan = detail.assetSupplyPlan
 	    ? assetSupplyPlanWithExecutionSelections(detail.assetSupplyPlan, agentWorkflow)
 	    : null;
-	  let reviewedSupplyPlan = selectedSupplyPlan;
+	  let reviewedSupplyPlan = selectedSupplyPlan && detail.brief.materialRoutingPolicyVersion==='type-aware.v1'
+	    && !isInternalBudgetExemptTenant(input.tenantId)
+	    ? applyPresenterFirstBudgetDegradation({plan:selectedSupplyPlan,workflow:agentWorkflow,
+	      maximumCny:Math.min(10,Number(detail.brief.perItemBudgetCny)||10)})
+	    : selectedSupplyPlan;
     if(reviewedSupplyPlan){
       reviewedSupplyPlan={...reviewedSupplyPlan,shots:reviewedSupplyPlan.shots.map(shot=>{
         const selected=presenterExecutions.find(item=>item.sceneId===shot.shotId&&item.providerId==='seedance'&&item.executionStatus==='ready');
@@ -1033,7 +1043,7 @@ export async function runSocialContentAutoProduction(input: {
                     if(!binding||binding.credentialSha256!==credentialSha256||binding.avatarId!==request.presenter.providerPresenterId||binding.voiceId!==request.presenter.providerVoiceId||binding.authorizationRef!==request.presenter.authorizationRef||binding.consentRef!==request.presenter.consentRef||binding.model!==route.model||binding.accountRef!==route.accountRef||route.routeEvidenceRef!==heyGenRuntimeRouteEvidence(binding))throw Error('whole_track_heygen_approved_person_changed');
                   },
                 }})}
-            : weeklyPackage ? null : createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
+            : weeklyPackage ? null : createEnvironmentSocialHeyGenBridge(input.repository.dataStore, input.tenantId)
           : null;
         const existingAdapters = existingAssetSupplyAdapters().filter(adapter => (
           paidVisualProvidersAllowed
@@ -1492,10 +1502,11 @@ export async function runSocialContentAutoProduction(input: {
           await assertCurrentContentExecutionActive();
           if (input.assetSupplyRecoveryOnly && !input.runtime?.synthesizeVoice) throw new Error('user_input_required:canonical_voice_tracks_missing_no_paid_tts');
           const ttsRequestId = `social-tts:${narrationCheckpointInputHash}`;
-          const priorTtsReceipt = currentContentProviderReceipt({
+          const ttsAdmission = await beginContentProviderOperation({
             provider: 'studio_tts', requestId: ttsRequestId,
+            metadata: { narrationCheckpointInputHash },
           });
-          if (narrationReceiptRequiresRecovery(priorTtsReceipt?.state)) {
+          if (ttsAdmission.action !== 'submit') {
             // The provider has no task-status API. Failing closed is safer than
             // silently charging a second TTS request after a crash between the
             // response and the audio checkpoint.
@@ -1504,10 +1515,6 @@ export async function runSocialContentAutoProduction(input: {
           // A custom voice runtime may not use the formal paid permit. Keep the
           // frozen weekly claim check at the actual new-call boundary as well.
           await assertWeeklyCtaNewSubmit();
-          await recordCurrentContentProviderReceipt({
-            provider: 'studio_tts', requestId: ttsRequestId, state: 'submitting',
-            metadata: { narrationCheckpointInputHash },
-          });
           try {
             voice = await (input.runtime?.synthesizeVoice ?? synthesizeStudioVoiceForAutomation)({
               tenantId: input.tenantId,
@@ -1531,8 +1538,8 @@ export async function runSocialContentAutoProduction(input: {
               },
             });
           } catch (error) {
-            await recordCurrentContentProviderReceipt({
-              provider: 'studio_tts', requestId: ttsRequestId, state: 'unknown',
+            await markContentProviderOperationUnknown({
+              provider: 'studio_tts', requestId: ttsRequestId,
               metadata: { narrationCheckpointInputHash },
             });
             throw error;
@@ -1541,9 +1548,9 @@ export async function runSocialContentAutoProduction(input: {
         transientVoicePath = voice.localPath || '';
         if (!voice.ok || !voice.localPath || !existsSync(voice.localPath) || !voice.cues?.length) {
           if (!voice.ok) {
-            await recordCurrentContentProviderReceipt({
+            await failContentProviderOperation({
               provider: 'studio_tts', requestId: `social-tts:${narrationCheckpointInputHash}`,
-              state: 'failed', metadata: { narrationCheckpointInputHash },
+              metadata: { narrationCheckpointInputHash },
             });
           }
           throw new Error(voice.error || '口播服务未返回可用音频和字幕时间轴');
@@ -1568,9 +1575,8 @@ export async function runSocialContentAutoProduction(input: {
             qualityReport: voice.qualityReport,
           },
         }) || retainVoiceForRecovery;
-        await recordCurrentContentProviderReceipt({
+        await completeContentProviderOperation({
           provider: 'studio_tts', requestId: `social-tts:${narrationCheckpointInputHash}`,
-          state: 'completed',
           metadata: { narrationCheckpointInputHash, duration: voiceDuration, filmDuration: duration },
         });
         if (voiceDuration <= contentHandoff.outputSpec.maximumDurationSeconds + 0.25) break;
@@ -1645,6 +1651,24 @@ export async function runSocialContentAutoProduction(input: {
         });
       }
       if (!voice || !voice.localPath || !voice.cues?.length) throw new Error('口播执行状态异常');
+      const voiceOutputSha256 = createHash('sha256').update(await fsp.readFile(voice.localPath)).digest('hex');
+      const voiceCheckpointInputHash = socialRequestHash({
+        directorPlanHash: directorPlan.lineageHash,
+        narrationCheckpointInputHash,
+        voice: selectedVoice?.logicalVoice || contentHandoff.direction.voiceover.voice,
+      });
+      await recordCurrentContentExecutionCheckpoint({
+        stage: 'social.graph_voice', version: '1', inputHash: voiceCheckpointInputHash,
+        payload: {
+          outputSha256: voiceOutputSha256,
+          durationSeconds: voiceDuration,
+          cueCount: voice.cues.length,
+          source: voice.source || 'unknown',
+          alignmentSource: voice.alignmentSource || 'unknown',
+          narrationCheckpointInputHash,
+        },
+      });
+      if (input.graphPhase === 'voice') return;
   const adaptedScript = socialDirectorScriptText(contentHandoff, duration, preserveReferenceTimeline);
   const bgm = await (input.runtime?.resolveBgm ?? resolveLockedBgm)(input.tenantId, contentHandoff);
   const bgmQualitySource = await (async () => {
@@ -1663,6 +1687,19 @@ export async function runSocialContentAutoProduction(input: {
   if (input.graphPhase) contentHandoff = await rebindSocialGraphRenderSources(contentHandoff, assets);
   const timeline = socialDirectorRenderTimeline(contentHandoff, duration, captionCues, preserveReferenceTimeline)
     .map((clip,index)=>({...clip,sceneId:contentHandoff.scenes[index]!.sceneId}));
+  const trimCheckpointInputHash = socialRequestHash({
+    directorPlanHash: directorPlan.lineageHash,
+    voiceSha256: voiceOutputSha256,
+    timeline: timeline.map(clip => ({
+      sceneId: clip.sceneId, type: clip.type, sourceAssetId: contentHandoff.scenes.find(scene => scene.sceneId === clip.sceneId)?.source.assetId,
+      trimStart: clip.trimStart, trimEnd: clip.trimEnd, targetStart: clip.targetStart, targetEnd: clip.targetEnd, speed: clip.speed,
+    })),
+  });
+  await recordCurrentContentExecutionCheckpoint({
+    stage: 'social.graph_trim', version: '1', inputHash: trimCheckpointInputHash,
+    payload: { sceneCount: timeline.length, durationSeconds: duration, timelineHash: socialRequestHash(timeline) },
+  });
+  if (input.graphPhase === 'trim') return;
   retainVoiceForRecovery = await recordNarrationAudioCheckpoint({
     inputHash: narrationCheckpointInputHash,
     narration: contentHandoff.narration,
@@ -1723,6 +1760,22 @@ export async function runSocialContentAutoProduction(input: {
       },
     },
   };
+  const effectsCheckpointInputHash = socialRequestHash({
+    trimCheckpointInputHash,
+    effectPlan: contentHandoff.effectPlan ?? null,
+    subtitles: compositeManifest.subtitles,
+    audioMix: { bgm: contentHandoff.bgmSelection, voiceVolume: contentHandoff.outputSpec.voiceVolume },
+  });
+  await recordCurrentContentExecutionCheckpoint({
+    stage: 'social.graph_effects', version: '1', inputHash: effectsCheckpointInputHash,
+    payload: {
+      effectPlanHash: socialRequestHash(contentHandoff.effectPlan ?? null),
+      subtitleCueHash: socialRequestHash(captionCues),
+      manifestHash: socialRequestHash(compositeManifest),
+      sceneCount: timeline.length,
+    },
+  });
+  if (input.graphPhase === 'effects') return;
   const result = await executeSocialRenderStage({ tenantId: input.tenantId, taskId: input.taskId, runId: input.runId,
     manifest: compositeManifest, outputDirectory: outputDir, render: input.runtime?.renderComposite ?? composite,
     checkpointEnabled: Boolean(input.graphPhase) });
@@ -1748,6 +1801,23 @@ export async function runSocialContentAutoProduction(input: {
   const mediaHardProbe=await probeSocialSceneMedia({filePath:result.outputPath,manifest:compositeManifest as unknown as Record<string,unknown>,frozenVoiceCues:voice.cues,subtitleRenderEvidence:result.receipt.subtitleRenderEvidence,frameRenderEvidence:result.receipt.frameRenderEvidence,
     ...(result.receipt.captionBaselineSidecar&&result.receipt.subtitleAssSidecar?{captionMaskSources:{baselinePath:result.receipt.captionBaselineSidecar.path,baselineSha256:result.receipt.captionBaselineSidecar.sha256,assPath:result.receipt.subtitleAssSidecar.path,assSha256:result.receipt.subtitleAssSidecar.sha256}}:{})});
   const technicalQualityReport:InitialSceneQualityReport={schemaVersion:'initial-scene-quality.v1',visual:quality,scenes:sceneQuality,audio:{ok:audio.ok&&(!audio.bgm||audio.bgm.passed),error:!audio.ok?'成片音轨无法解码':audio.bgm?.failure??null,...(audio.bgm?{bgm:audio.bgm}:{})},mediaHardProbe};
+  const technicalQualityInputHash = socialRequestHash({
+    outputSha256: result.receipt.sha256,
+    manifestHash: socialRequestHash(compositeManifest),
+    policyVersion: 'social-technical-quality.v2',
+  });
+  await recordCurrentContentExecutionCheckpoint({
+    stage: 'social.graph_technical_quality', version: '1', inputHash: technicalQualityInputHash,
+    payload: {
+      outputSha256: result.receipt.sha256,
+      approved: technicalApproved,
+      failureCount: technicalFailures.length,
+      failures: technicalFailures.slice(0, 100),
+      reportHash: socialRequestHash(technicalQualityReport),
+      checkedScenes: sceneQuality.checkedScenes,
+    },
+  });
+  if (input.graphPhase === 'technical_quality') return;
   const coverPath = await (input.runtime?.createCover ?? createVideoCover)({
     videoPath: result.outputPath,
     outputDirectory: outputDir,

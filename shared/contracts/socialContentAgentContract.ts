@@ -400,8 +400,7 @@ export interface SocialExecutionCandidate {
     candidateId?: string;
     segmentId: string;
     footageEvidence?: SocialProductFootageEvidenceBinding;
-    sourceRevision?: string;
-    startSeconds: number;
+    sourceRevision?: string;    startSeconds: number;
     endSeconds: number;
     assetRole?: import('./materialAssetV2.js').MaterialAssetRoleV2;
     contentRole?: import('./materialAssetV2.js').MaterialContentRoleV2;

@@ -54,6 +54,9 @@ import {
 import type { SocialReferenceReviewHandoff } from './socialReferenceReviewHandoff.js';
 import { socialReferenceFidelityFailures } from './socialContentReferenceFidelity.js';
 import type { MaterialAssetV2Metadata } from '../../shared/contracts/materialAssetV2.js';
+import type { MaterialCapabilityManifest } from '../../shared/contracts/materialCapabilityManifest.js';
+import { socialExecutionBudgetStatus } from './socialContentExecutionBudget.js';
+export { socialExecutionBudgetStatus, socialExecutionExternalCost } from './socialContentExecutionBudget.js';
 import { reviewSocialExecutionScene } from './socialContentExecutionSceneReview.js';
 import {
   buildBusinessContext,
@@ -90,6 +93,8 @@ export interface SocialWorkflowMaterialCandidate {
   segmentCandidateId?: string;
   sourceRevision?: string;
   materialV2?: MaterialAssetV2Metadata | null;
+  /** Unified Director handoff; downstream agents must not reinterpret raw rows. */
+  capabilityManifest?: MaterialCapabilityManifest;
 }
 export type {
   SocialContentCapabilityRuntime,
@@ -549,6 +554,7 @@ function eligibleProductBudgetCandidate(supply:SocialAssetSupplyShotPlan,policyV
      &&group.referenceImageIds.every(ref=>generation.productImageRefs.includes(ref)));
 }
 function capabilityCandidates(input: {
+  tenantId?: string;
   policyVersion?:string;
   taskId: string;
   taskVersion: string;
@@ -560,7 +566,7 @@ function capabilityCandidates(input: {
   preferLocalProductAnimation?: boolean;
 }): SocialExecutionCandidate[] {
   const targetSeconds = input.scene.duration.targetSeconds;
-  const registrations = input.capabilityRuntime ?? socialContentEmbeddedRuntimeRegistrations(input.supply.materialRouting ? { wholeFilmBudget: true, productVideoProvider: input.supply.materialRouting.generation?.videoProvider } : {});
+  const registrations = input.capabilityRuntime ?? socialContentEmbeddedRuntimeRegistrations(input.supply.materialRouting ? { tenantId: input.tenantId, wholeFilmBudget: true, productVideoProvider: input.supply.materialRouting.generation?.videoProvider } : { tenantId: input.tenantId });
   const runtimeRegistration = new Map(registrations
     .map(item => [item.strategy, item]));
   const sourceRuntime = runtimeRegistration.get(input.supply.sourceStrategy);
@@ -653,9 +659,8 @@ function capabilityCandidates(input: {
       materialSegments: [{
         candidateId: material.segmentCandidateId,
         segmentId: material.segmentId,
-        ...(material.footageEvidence ? { footageEvidence: structuredClone(material.footageEvidence) } : {}),
         sourceRevision: material.sourceRevision,
-        startSeconds: material.timeRange.startSeconds,
+        ...(material.footageEvidence ? { footageEvidence: structuredClone(material.footageEvidence) } : {}),        startSeconds: material.timeRange.startSeconds,
         endSeconds: material.timeRange.endSeconds,
         assetRole: material.materialV2?.assetRole,
         contentRole: material.materialV2?.contentRole,
@@ -788,6 +793,7 @@ function capabilityCandidates(input: {
   return diversified;
 }
 function executionScene(input: {
+  tenantId?: string;
   policyVersion?:string;
   taskId: string;
   taskVersion: string;
@@ -950,6 +956,7 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
     const productSceneOrdinal = supply?.sourceStrategy === 'aigc_product_scene_replication'
       ? ++paidProductSceneCount : 0;
     return supply ? [executionScene({
+      tenantId: input.tenantId,
       policyVersion:input.assetSupplyPlan.materialRoutingPolicyVersion,
       taskId: input.taskId,
       taskVersion: input.taskVersion,
@@ -1055,43 +1062,8 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
     createdBy: 'content_agent',
   };
 }
-export function socialExecutionExternalCost(plan: SocialContentExecutionPlan, directorBrief: SocialDirectorBrief): number {
-  const briefByScene = new Map(directorBrief.scenes.map(scene => [scene.sceneId, scene]));
-  const reusedExternal = new Set<string>();
-  return +plan.scenes.reduce((sum, scene) => {
-    const candidate = scene.candidates.find(item => scene.recommendedCandidateIds.includes(item.candidateId));
-    if (!candidate || candidate.dataTransfer === 'local_only') return sum;
-    const briefScene = briefByScene.get(scene.sceneId);
-    if (candidate.sourceStrategy === 'authorized_digital_presenter' && briefScene) {
-      const seconds = Math.max(0, briefScene.duration.endSeconds - briefScene.duration.startSeconds);
-      const configuredRate = Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND);
-      // The capability registry's candidate estimate is the planner's frozen
-      // quote. Override it only when operations configured an explicit,
-      // positive provider rate; an absent env var must not silently replace
-      // the quote with the historic 0.8 CNY/s placeholder.
-      return sum + (Number.isFinite(configuredRate) && configuredRate > 0
-        ? seconds * configuredRate : candidate.estimatedCostCny);
-    }
-    // A physical edit may split one semantic stock shot into adjacent cards.
-    // The library asset is acquired once and trimmed several times.
-    if (candidate.sourceStrategy === 'licensed_stock_asset') {
-      const key = `${candidate.sourceStrategy}:${briefScene?.visualTopic?.subject.trim().toLowerCase() || scene.sceneId}`;
-      if (reusedExternal.has(key)) return sum;
-      reusedExternal.add(key);
-    }
-    return sum + candidate.estimatedCostCny;
-  }, 0).toFixed(2);
-}
-export function socialExecutionBudgetStatus(plan: SocialContentExecutionPlan, directorBrief: SocialDirectorBrief): {
-  estimatedCostCny: number; budgetLimitCny: number | null; exceeded: boolean;
-} {
-  const estimatedCostCny = socialExecutionExternalCost(plan, directorBrief);
-  return { estimatedCostCny, budgetLimitCny: plan.budgetLimitCny,
-    exceeded: plan.budgetLimitCny !== null && estimatedCostCny > plan.budgetLimitCny };
-}
-
 function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: SocialDirectorBrief, plan: SocialContentExecutionPlan): SocialExecutionPlanReview {
-  const budget = socialExecutionBudgetStatus(plan, directorBrief);
+  const budget = socialExecutionBudgetStatus(plan, directorBrief, input.tenantId);
   const estimatedCost = budget.estimatedCostCny;
   const budgetPreflightRequired=input.assetSupplyPlan.materialRoutingPolicyVersion==='type-aware.v2';
   const budgetExceeded = budget.exceeded&&!budgetPreflightRequired;
@@ -1194,6 +1166,8 @@ function taskStage(input: BuildSocialAgentWorkflowInput, review: SocialExecution
 }
 
 export interface BuildSocialAgentWorkflowInput {
+  /** Exact tenant scope used for server-side internal budget policy. */
+  tenantId?: string;
   taskId: string;
   taskVersion: string;
   taskStatus: SocialContentTaskStatus;

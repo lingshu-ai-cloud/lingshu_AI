@@ -1,3 +1,5 @@
+import { isLegacyUnboundOperationNotice, isUnboundOperationError } from '../lib/assistantOperationNotice';
+import { sameAssistantRequestIdentity, withAssistantIdleTimeout } from '../lib/assistantRequestLifecycle';
 import {
   useCallback,
   useEffect,
@@ -52,6 +54,7 @@ import { createAssistantFile } from '../lib/assistantFilesApi';
 import { assistantWantsDetailedReply } from '../../shared/assistantReadableReply';
 import { AssistantStreamCompletion, appendAssistantStreamFailure } from '../lib/assistantStreamCompletion';
 import type { AssistantQuickExecution } from '../lib/assistantQuickEntries';
+import AssistantWeeklyActions from './assistant/AssistantWeeklyActions';
 import AssistantDecisionCenter, {
   assistantDecisionExecutionFeedback,
   type AssistantDecisionActionResult,
@@ -543,6 +546,7 @@ export default function GlobalAssistant({
   const [speechBubble, setSpeechBubble] = useState<AssistantSpeech | null>(null);
   const [weeklyPlanPromptDismissed, setWeeklyPlanPromptDismissed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [weeklyActionBusy, setWeeklyActionBusy] = useState(false);
   const [assistantThreadHydrated, setAssistantThreadHydrated] = useState(false);
   const [welcomeBubbleVisible, setWelcomeBubbleVisible] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
@@ -652,8 +656,6 @@ export default function GlobalAssistant({
     && pageContext.workflowStage === 'unplanned';
   const [pipelineEntries, setPipelineEntries] = useState<AssistantQuickExecution[]>([]);
   const [pipelineRefresh, setPipelineRefresh] = useState(0);
-  const [quickEntriesOpen, setQuickEntriesOpen] = useState(false);
-  useEffect(() => { setQuickEntriesOpen(false); }, [page, persistenceScopeKey]);
   const [fileGenerating, setFileGenerating] = useState(false);
   const [replyStreaming, setReplyStreaming] = useState(false);
   const pendingMapFileRef = useRef(false);
@@ -688,10 +690,6 @@ export default function GlobalAssistant({
     const timer = window.setInterval(refresh, 15_000);
     return () => { window.removeEventListener(SOCIAL_CONTENT_TASK_REFRESH_EVENT, refresh); window.clearInterval(timer); };
   }, [mode, selectedProductionTaskId]);
-  const productionSuggestions = normalizedPage === 'digitalEmployees'
-    && pageContext.workflowStage === 'running'
-    ? activeContext.suggestions.slice(0, 3)
-    : [];
   const openWeeklyPlanFromAssistant = useCallback(() => {
     setWeeklyPlanPromptDismissed(true);
     setMode('breathing');
@@ -700,9 +698,10 @@ export default function GlobalAssistant({
     }));
   }, []);
   const activeThread = threads[activeAgent];
-  const focusedTaskCard = activeThread.focusedTaskId
+  const focusedCardCandidate = activeThread.focusedTaskId
     ? activeThread.taskCards[activeThread.focusedTaskId] ?? null
     : null;
+  const focusedTaskCard = isLegacyUnboundOperationNotice(focusedCardCandidate) ? null : focusedCardCandidate;
   const dialogTaskCard = decisionDialog?.kind === 'task'
     ? activeThread.taskCards[decisionDialog.taskId] ?? null
     : null;
@@ -1167,6 +1166,7 @@ export default function GlobalAssistant({
     ): AssistantActionResponse => {
       const missingInput = httpStatus === 422 || /(?:^|_)(?:goal|required|missing)(?:_|$)/.test(errorCode);
       const staleAction = httpStatus === 409 || /(?:stale|conflict)/.test(errorCode);
+      const resultUnknown = errorCode === 'assistant_action_result_unknown';
       const status: AssistantActionResponse['status'] = missingInput
         ? 'missing_required_input'
         : staleAction ? 'stale_action' : 'failed';
@@ -1176,32 +1176,24 @@ export default function GlobalAssistant({
         requestId: request.requestId,
         card: {
           kind: missingInput ? 'decision' : 'operation_result',
-          title: missingInput ? '还需要补充信息' : staleAction ? '页面信息已更新' : '操作没有完成',
+          title: resultUnknown ? '操作结果待确认' : missingInput ? '还需要补充信息' : staleAction ? '页面信息已更新' : '操作没有完成',
           summary: message,
-          details: ['原任务和已填写内容均已保留，可以稍后重试。'],
+          details: [resultUnknown ? '请先查看周任务或原任务卡的最新状态，确认结果后再决定下一步。' : '原任务和已填写内容均已保留，可以稍后重试。'],
         },
         notification: { reason: missingInput ? 'missing_required_input' : 'failure', message },
         errorCode,
       };
     };
     const controller = new AbortController();
-    let actionTimedOut = false;
     try {
-      const response = await withAssistantTimeout(
-        fetch(`/api/overseas/assistant-threads/${agentId}/actions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeader() },
-          body: JSON.stringify(request),
-          signal: controller.signal,
-        }),
-        ASSISTANT_ACTION_TIMEOUT_MS,
-        () => {
-          actionTimedOut = true;
-          controller.abort();
-        },
-        '操作判断超时，已停止等待，请重新发送。',
-      );
-      const payload = await response.json().catch(() => null) as (AssistantActionResponse & { error?: string; message?: string }) | null;
+      const response = await withAssistantIdleTimeout(fetch(`/api/overseas/assistant-threads/${agentId}/actions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      }), controller, 20_000);
+      const payload = await withAssistantIdleTimeout(response.json(), controller, 20_000)
+        .catch(error => controller.signal.aborted ? Promise.reject(error) : null) as (AssistantActionResponse & { error?: string; message?: string }) | null;
       if (payload?.requestId && payload.card && payload.status) return payload;
       if (!response.ok) {
         return actionFailure(
@@ -1215,13 +1207,11 @@ export default function GlobalAssistant({
       // Never make a failed deterministic route look like a successful
       // generic conversation. Only an explicit delegated/not_handled
       // response is allowed to fall through to the normal chat endpoint.
-      return actionFailure(
-        actionTimedOut || error instanceof AssistantRequestTimeoutError
-          ? '操作判断超时，已停止等待，请重新发送。'
-          : error instanceof Error ? error.message : '助手操作暂时不可用。',
-        actionTimedOut || error instanceof AssistantRequestTimeoutError ? 'assistant_action_timeout' : 'assistant_action_unavailable',
-      );
-    }
+      return actionFailure(controller.signal.aborted
+        ? '操作结果尚未确认，请先查看原任务状态，不要重复提交。'
+        : error instanceof Error ? error.message : '助手操作暂时不可用。',
+        controller.signal.aborted ? 'assistant_action_result_unknown' : 'assistant_action_unavailable');
+    } finally { controller.abort(); }
   }, []);
 
   const presentActionResponse = useCallback((
@@ -1229,6 +1219,17 @@ export default function GlobalAssistant({
     request: AssistantActionRequest,
     response: AssistantActionResponse,
   ) => {
+    if (isUnboundOperationError(response.errorCode)) {
+      // A rejected, unbound command is a one-off explanation, not a task.
+      const current = useAssistantStore.getState().threads[agentId];
+      setMessages(agentId, [...current.messages, {
+        role: 'assistant',
+        content: response.card.summary,
+      }]);
+      setPanelView('chat');
+      setMode('chat');
+      return;
+    }
     const existingCards = useAssistantStore.getState().threads[agentId].taskCards;
     const stableTaskId = actionResponseCardId(request, response, existingCards);
     const displayResponse = responseWithoutCrossObjectActions(request, response);
@@ -1287,7 +1288,7 @@ export default function GlobalAssistant({
       setSpeechBubble({ id: Date.now(), message: response.notification.message });
     }
     refreshCurrentStatus();
-  }, [executeAssistantAction, focusTaskCard, page, persistThread, setUnreadCount, upsertTaskCard]);
+  }, [executeAssistantAction, focusTaskCard, page, persistThread, setMessages, setUnreadCount, upsertTaskCard]);
 
   const contentIntake = useContentTaskIntake({
     scopeKey: `${persistenceScopeKey}:${contentIntakeEpoch}`, page,
@@ -1325,17 +1326,18 @@ export default function GlobalAssistant({
   ) => {
     const userText = text.trim();
     if ((!userText && !uploadedAttachments.length) || loading || fileGenerating || replyStreaming) return;
-    setQuickEntriesOpen(false);
     if (contentIntake.active) {
       if (uploadedAttachments.length) { void uiMessage.warning('请先完成或取消当前任务问答，再发送附件。'); return; }
       contentIntake.answer(userText);
       setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
       return;
     }
+    const requestToken = getToken();
     const requestFence = persistenceFenceRef.current;
     const currentInstance = () => (
       requestFence.active
       && persistenceFenceRef.current === requestFence
+      && sameAssistantRequestIdentity(requestToken, getToken(), stablePersistenceScope)
     );
     // The fence is bound to tenantId + userId and is invalidated when the
     // authenticated scope changes. A same-user local-preview token rotation
@@ -1584,9 +1586,10 @@ export default function GlobalAssistant({
     };
 
     let chatTimedOut = false;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    const controller = new AbortController();
     try {
       abortRef.current?.abort();
-      const controller = new AbortController();
       abortRef.current = controller;
       const resp = await withAssistantTimeout(
         fetch(API_PATH[agentForOrbit(routeAgent)], {
@@ -1626,7 +1629,7 @@ export default function GlobalAssistant({
       if (!resp.ok) throw new Error(await responseErrorMessage(resp));
       if (!resp.body) throw new Error('模型响应为空，请稍后重试。');
       ensureAssistant();
-      const reader = resp.body.getReader();
+      reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
       const completion = new AssistantStreamCompletion();
@@ -1653,10 +1656,11 @@ export default function GlobalAssistant({
           () => {
             chatTimedOut = true;
             controller.abort();
-            void reader.cancel();
+            void reader?.cancel();
           },
           '模型流式回答超过 30 秒没有新内容。',
         );
+        if (!currentScope()) return;
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -1686,16 +1690,20 @@ export default function GlobalAssistant({
       if (assistantStarted) patchAssistant(msg => ({ ...msg, content: fileIntent ? `文件未生成：${message}` : msg.content ? appendAssistantStreamFailure(msg.content, message) : message }));
       else setMessages(threadAgent, [...useAssistantStore.getState().threads[threadAgent].messages, { role: 'assistant', content: message }]);
     } finally {
-      setLoading(false);
-      setFileGenerating(false);
-      setReplyStreaming(false);
-      abortRef.current = null;
+      if (reader) void reader.cancel().catch(() => {});
+      controller.abort();
+      if (abortRef.current === controller) {
+        setLoading(false);
+        setFileGenerating(false);
+        setReplyStreaming(false);
+        abortRef.current = null;
+      }
       if (currentScope()) {
         persistThread(threadAgent);
         onSessionRefresh?.();
       }
     }
-  }, [replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, loading, modal, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard]);
+  }, [replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, loading, modal, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard, stablePersistenceScope]);
 
   const sendComposerMessage = useCallback(async () => {
     if (loading || attachmentUploading) return;
@@ -2814,33 +2822,6 @@ export default function GlobalAssistant({
                   </div>
                 )}
 
-                {!contentIntake.active && activeThread.messages.length > 0 && <div className="shrink-0 px-4 pt-2">
-                  <Button type="text" size="small" aria-expanded={quickEntriesOpen} aria-controls="assistant-page-shortcuts" onClick={() => setQuickEntriesOpen(value => !value)}>{quickEntriesOpen ? '收起页面快捷入口' : '页面快捷入口'}</Button>
-                </div>}
-                <div id="assistant-page-shortcuts" hidden={contentIntake.active || (activeThread.messages.length > 0 && !quickEntriesOpen)} className="shrink-0">
-                {productionSuggestions.length > 0 && (
-                  <div
-                    className="flex shrink-0 flex-wrap gap-2 bg-surface px-4 pt-3"
-                    role="group"
-                    aria-label="生产快捷问题"
-                    data-assistant-surface="production-suggestions"
-                  >
-                    {productionSuggestions.map(suggestion => (
-                      <button
-                        key={suggestion}
-                        type="button"
-                        disabled={loading}
-                        onClick={() => suggestion === '查看周计划'
-                          ? openWeeklyPlanFromAssistant()
-                          : void send(suggestion, currentPageAgent)}
-                        className="ls-type-label-medium min-h-9 rounded-full border border-border bg-surface-2 px-3 text-text-secondary transition-colors hover:border-accent/40 hover:bg-accent-glow hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {suggestion}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
                 {!contentIntake.active && <AssistantQuickEntries
                   page={page}
                   executions={[
@@ -2854,13 +2835,34 @@ export default function GlobalAssistant({
                   onQuestion={entry => void send(entry.prompt, currentPageAgent)}
                   onExecute={entry => void runQuickExecution(entry)}
                 />}
-                </div>
 
+                <AssistantWeeklyActions
+                  page={page}
+                  scopeKey={persistenceScopeKey}
+                  disabled={loading || attachmentUploading}
+                  onBusyChange={setWeeklyActionBusy}
+                  onReceipt={receipt => {
+                    const thread = useAssistantStore.getState().threads[activeAgent];
+                    setMessages(activeAgent, [...thread.messages, { role: 'assistant', content: receipt.message }]);
+                    persistThread(activeAgent);
+                    setDecisionFeedRevision(value => value + 1);
+                    onSessionRefresh?.();
+                    window.dispatchEvent(new CustomEvent('lingshu:weekly-tasks-updated', { detail: { programId: receipt.programId, packageId: receipt.packageId, packageVersion: receipt.packageVersion } }));
+                    const navigation = receipt.navigation;
+                    if (navigation?.href && /^\/\?page=(?:smartAssets|digitalEmployees|traffic)(?:&|$)/.test(navigation.href)) {
+                      setMode('breathing');
+                      window.location.assign(navigation.href);
+                    } else if (navigation?.page && ['smartAssets', 'digitalEmployees', 'traffic'].includes(navigation.page)) {
+                      setMode('breathing');
+                      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: navigation }));
+                    }
+                  }}
+                />
                 <AssistantComposer
                   ref={assistantInputRef}
                   draft={activeThread.draftInput}
                   files={pendingAttachments}
-                  disabled={loading || replyStreaming || fileGenerating || contentIntake.busy}
+                  disabled={loading || replyStreaming || fileGenerating || contentIntake.busy || weeklyActionBusy}
                   uploading={attachmentUploading}
                   error={attachmentError}
                   onDraftChange={value => setDraftInput(activeAgent, value)}

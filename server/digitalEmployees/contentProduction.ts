@@ -46,9 +46,9 @@ import { aggregateNarrationStyleProfiles, deriveNarrationStyleProfile, narration
 import { containsInternalContentMarker, paginateAlignedCues, subtitleCuesAreSafe } from '../lib/subtitleCues.js';
 import { buildBenchmarkAnalysis, MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS } from '../../shared/benchmarkAnalysis.js';
 import { resolveMaterialProductAssociation, type ProductMaterialReference } from './materialProductionReadiness.js';
+import {legacyIncrementalCostBlocker,LEGACY_INCREMENTAL_COST_BLOCKER,readLegacyManualCompletion} from './legacyIncrementalCostGuard.js';export { containsInternalContentMarker, paginateAlignedCues, subtitleCuesAreSafe } from '../lib/subtitleCues.js';
 import { bindVoiceCuesToScenes, freezeStoryboardNarration, languageSceneAlignmentIssues, productionTiming, proportionalCues, splitSubtitleUnits, storyboardVoiceLanguageMatches, storyboardVoiceLines, translateStoryboardFromMaster, voiceoverText } from './contentProductionNarrationTiming.js';
 export { bindVoiceCuesToScenes, freezeStoryboardNarration, languageSceneAlignmentIssues, productionTiming, proportionalCues, splitSubtitleUnits, storyboardVoiceLanguageMatches, storyboardVoiceLines, translateStoryboardFromMaster } from './contentProductionNarrationTiming.js';
-export { containsInternalContentMarker, paginateAlignedCues, subtitleCuesAreSafe } from '../lib/subtitleCues.js';
 import type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, ProductionStage, RouteSourcePlan, SceneSourcePlanItem, StoredRecord } from './contentProductionContracts.js';
 export type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, RouteSourcePlan, SceneSourcePlanItem } from './contentProductionContracts.js';
 const require = createRequire(import.meta.url);
@@ -652,7 +652,7 @@ function frozenOrderProductItems(profile: EnterpriseProfile, orders: ContentProd
  * allowed to survive as a frozen runtime blocker. */
 export function immutableContentOrderBlockers(order: Pick<ContentProductionOrderInput, 'readinessBlockers'>): string[] {
   return (order.readinessBlockers || []).filter(reason =>
-    /指定内容路径未在 Agent 配置中开启|制作平台不在本周目标范围中|固定路径编译失败|制作前编导交接待复核/.test(reason));
+    reason===LEGACY_INCREMENTAL_COST_BLOCKER||/指定内容路径未在 Agent 配置中开启|制作平台不在本周目标范围中|固定路径编译失败|制作前编导交接待复核/.test(reason));
 }
 
 /**
@@ -1133,6 +1133,8 @@ export async function advanceOneProject(input: {
   tenantId: string; record: StoredRecord; config: DigitalEmployeeConfig; goal: WeeklyGoalInput; profile: EnterpriseProfile; assets: AssetCandidate[]; analyses: StoredRecord[]; allProjects: StoredRecord[];
 }): Promise<{ changed: boolean; blocker: string }> {
   const spec = json<Record<string, unknown>>(input.record.spec, {});
+  const incrementalCostBlocker=legacyIncrementalCostBlocker(json(spec.contentOrder,{}));
+  if(incrementalCostBlocker)return {changed:false,blocker:incrementalCostBlocker};
   const repairedSpec = repairFrozenOrderProductBinding({ spec, profile: input.profile, config: input.config, assets: input.assets });
   if (repairedSpec) {
     await updateProject(input.record, repairedSpec);
@@ -1882,6 +1884,9 @@ export async function advanceAutomatedContentProduction(input: {
   enterpriseProfile?: EnterpriseProfile;
   batchPlanId?: string;
   contentOrders?: ContentProductionOrderInput[];
+  /** Internal admission-only tick: persist missing real projects but never
+   * advance any project into scripts, voice, images or provider rendering. */
+  materializeOnly?:boolean;
 }): Promise<ContentProductionAdvanceResult> {
   const [profile, analysesResult, existingProjects] = await Promise.all([
     input.enterpriseProfile ? Promise.resolve(structuredClone(input.enterpriseProfile)) : readTenantEnterpriseProfile(input.tenantId),
@@ -2019,6 +2024,22 @@ export async function advanceAutomatedContentProduction(input: {
     changed = created.length > 0;
   }
 
+  if(input.materializeOnly)return {changed,ready:false,projectRefs:projects.map(project=>({type:'studio_project' as const,id:project.id,route:text(projectAutomation(project).route) as ContentProductionRoute,status:String(project.status||'draft'),stage:text(projectAutomation(project).stage)||'script'})),knowledgeGaps:[],blocker:LEGACY_INCREMENTAL_COST_BLOCKER,summary:'已登记真实内容制作项目，等待在生产工作台核对费用后继续。'};
+
+  // Manual workbench completion is a separate real authority. Recover its
+  // current signed quality + persisted render-job + actual bytes, without
+  // sending this cost-blocked order back through paid automatic stages.
+  projects=await Promise.all(projects.map(async project=>{
+    const spec=json<Record<string,unknown>>(project.spec,{});
+    if(!legacyIncrementalCostBlocker(json(spec.contentOrder,{})))return project;
+    const proof=await readLegacyManualCompletion(store,input.tenantId,project),automation=projectAutomation(project);
+    if(proof){const existing=json<Record<string,unknown>>(automation.manualStudioCompletion,{});if(automation.stage==='completed'&&existing.sha256===proof.sha256&&existing.inputFingerprint===proof.inputFingerprint)return project;
+      await updateProject(project,{...spec,renderOutputPath:proof.outputPath,automation:{...automation,stage:'completed',status:'ready_for_approval',blocker:'',renderOutputPath:proof.outputPath,manualStudioCompletion:proof,quality:{passed:true,source:'verified_manual_studio',ruleVersion:'studio-project-quality-v1',qualityRecordId:proof.qualityRecordId},completedAt:proof.verifiedAt}},'ready_for_approval');changed=true;return (await store.getById<StoredRecord>('studio_projects',project.id))!;
+    }
+    if(automation.manualStudioCompletion&&automation.stage==='completed'){await updateProject(project,{...spec,automation:{...automation,stage:'blocked',status:'blocked',blocker:LEGACY_INCREMENTAL_COST_BLOCKER,quality:{...json<Record<string,unknown>>(automation.quality,{}),passed:false}}});changed=true;return (await store.getById<StoredRecord>('studio_projects',project.id))!;}
+    return project;
+  }));
+
   // Repair the historical focus-product binding bug for every project in the
   // scoped run/task before allocating scarce production slots. The repair is
   // metadata-only: it neither generates media nor clears a genuine blocker.
@@ -2046,7 +2067,7 @@ export async function advanceAutomatedContentProduction(input: {
   // A historical `passed` result is not proof under newer fact/visual rules.
   // Re-open one stale project per tick so it is re-matched, re-voiced and
   // re-rendered before it can count as completed again.
-  const staleCompleted = projects.find(project => automatedContentQualityNeedsRevalidation(projectAutomation(project)));
+  const staleCompleted = projects.find(project => automatedContentQualityNeedsRevalidation(projectAutomation(project))&&!legacyIncrementalCostBlocker(json<Record<string,unknown>>(json<Record<string,unknown>>(project.spec,{}).contentOrder,{})));
   if (staleCompleted) {
     const staleSpec = json<Record<string, unknown>>(staleCompleted.spec, {});
     const staleAutomation = projectAutomation(staleCompleted);

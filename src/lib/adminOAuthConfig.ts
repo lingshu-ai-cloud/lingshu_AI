@@ -1,4 +1,4 @@
-export type ClearableOAuthPlatform = 'youtube' | 'meta' | 'instagram' | 'tiktok';
+export type ClearableOAuthPlatform = 'youtube' | 'meta' | 'instagram' | 'tiktok' | 'linkedin';
 
 export interface AdminOAuthConfig {
   admin: string;
@@ -9,6 +9,7 @@ export interface AdminOAuthConfig {
     instagram: string;
     facebook: string;
     tiktok: string;
+    linkedin: string;
   };
   values: {
     youtubeOAuthClientId: string;
@@ -19,6 +20,8 @@ export interface AdminOAuthConfig {
     instagramAppSecret: string;
     tiktokClientKey: string;
     tiktokClientSecret: string;
+    linkedinClientId: string;
+    linkedinClientSecret: string;
     advancedManualConnectEnabled: boolean;
   };
   secretSet: {
@@ -26,12 +29,14 @@ export interface AdminOAuthConfig {
     metaSocialAppSecret: boolean;
     instagramAppSecret: boolean;
     tiktokClientSecret: boolean;
+    linkedinClientSecret: boolean;
   };
   secretLength?: {
     youtubeOAuthClientSecret: number;
     metaSocialAppSecret: number;
     instagramAppSecret: number;
     tiktokClientSecret: number;
+    linkedinClientSecret: number;
   };
 }
 
@@ -53,6 +58,7 @@ export function normalizeAdminOAuthConfig(input: AdminOAuthConfigResponse): Admi
     callbacks: {
       youtube: text(callbacks?.youtube), facebook: text(callbacks?.facebook),
       instagram: text(callbacks?.instagram), tiktok: text(callbacks?.tiktok),
+      linkedin: text(callbacks?.linkedin),
     },
     values: {
       youtubeOAuthClientId: text(values?.youtubeOAuthClientId),
@@ -60,6 +66,7 @@ export function normalizeAdminOAuthConfig(input: AdminOAuthConfigResponse): Admi
       metaSocialAppId: text(values?.metaSocialAppId), metaSocialAppSecret: text(values?.metaSocialAppSecret),
       instagramAppId: text(values?.instagramAppId), instagramAppSecret: text(values?.instagramAppSecret),
       tiktokClientKey: text(values?.tiktokClientKey), tiktokClientSecret: text(values?.tiktokClientSecret),
+      linkedinClientId: text(values?.linkedinClientId), linkedinClientSecret: text(values?.linkedinClientSecret),
       advancedManualConnectEnabled: values?.advancedManualConnectEnabled === true,
     },
     secretSet: {
@@ -67,6 +74,7 @@ export function normalizeAdminOAuthConfig(input: AdminOAuthConfigResponse): Admi
       metaSocialAppSecret: secrets?.metaSocialAppSecret === true,
       instagramAppSecret: secrets?.instagramAppSecret === true,
       tiktokClientSecret: secrets?.tiktokClientSecret === true,
+      linkedinClientSecret: secrets?.linkedinClientSecret === true,
     },
   };
 }

@@ -12,10 +12,15 @@ const title = 'Precision assembly line review';
 const description = 'See how the visible assembly sequence keeps each station aligned.';
 
 assert.deepEqual(
-  sanitizePublishCopyPlatforms(['youtube', 'invalid', 'tiktok', 'youtube']),
-  ['youtube', 'tiktok'],
+  sanitizePublishCopyPlatforms(['youtube', 'invalid', 'linkedin', 'tiktok', 'youtube']),
+  ['youtube', 'linkedin', 'tiktok'],
   'only supported, unique platforms should reach copy generation',
 );
+
+const linkedIn = platformCopyFallback('linkedin', title, description, 0);
+assert.ok(linkedIn.text);
+assert.ok(linkedIn.text!.length <= 3000, 'LinkedIn fallback copy should respect the Posts API commentary limit');
+assert.deepEqual(Object.keys(normalizeVerifiedPlatformCopies({ linkedin: linkedIn }, ['linkedin'])), ['linkedin']);
 
 const firstTikTok = platformCopyFallback('tiktok', title, description, 0);
 assert.ok(firstTikTok.caption);

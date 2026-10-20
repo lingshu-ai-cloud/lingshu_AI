@@ -20,6 +20,10 @@ const accounts: Record<string, Record<string, unknown>> = {
     id: 'instagram-1', tenantId: 'tenant-a', platform: 'instagram', status: 'connected',
     providerAccountId: 'ig-1', accessToken: sealAccountCredential('instagram-token'),
   },
+  linkedin: {
+    id: 'linkedin-1', tenantId: 'tenant-a', platform: 'linkedin', status: 'connected',
+    providerAccountId: 'member-1', accessToken: sealAccountCredential('linkedin-token'), scope: 'w_member_social',
+  },
 };
 
 try {
@@ -27,6 +31,7 @@ try {
     if (collection === 'youtube_accounts' && id === 'youtube-1') return structuredClone(accounts.youtube);
     if (collection === 'social_accounts' && id === 'facebook-1') return structuredClone(accounts.facebook);
     if (collection === 'social_accounts' && id === 'instagram-1') return structuredClone(accounts.instagram);
+    if (collection === 'social_accounts' && id === 'linkedin-1') return structuredClone(accounts.linkedin);
     return null;
   }) as typeof store.getById;
 
@@ -60,6 +65,26 @@ try {
   await assert.rejects(resolvePendingPublishToAccount({
     tenantId: 'tenant-b', accountId: 'facebook-1', platform: 'facebook', providerReceiptId: 'facebook-video-1',
   }), /Social account not found/);
+
+  const linkedInWithoutReadScope = await resolvePendingPublishToAccount({
+    tenantId: 'tenant-a', accountId: 'linkedin-1', platform: 'linkedin', providerReceiptId: 'urn:li:share:123',
+  });
+  assert.equal(linkedInWithoutReadScope.status, 'unknown');
+  assert.equal(linkedInWithoutReadScope.providerStatus, 'READ_SCOPE_MISSING');
+  assert.match(linkedInWithoutReadScope.error, /禁止自动重发/);
+
+  accounts.linkedin!.scope = 'w_member_social r_member_social';
+  axios.get = (async (url: string, config: any) => {
+    assert.ok(url.endsWith('/rest/posts/urn%3Ali%3Ashare%3A123'));
+    assert.equal(config.params.viewContext, 'AUTHOR');
+    assert.equal(config.headers.Authorization, 'Bearer linkedin-token');
+    return { data: { id: 'urn:li:share:123', author: 'urn:li:person:member-1', lifecycleState: 'PUBLISH_REQUESTED' } };
+  }) as typeof axios.get;
+  const linkedInProcessing = await resolvePendingPublishToAccount({
+    tenantId: 'tenant-a', accountId: 'linkedin-1', platform: 'linkedin', providerReceiptId: 'urn:li:share:123',
+  });
+  assert.equal(linkedInProcessing.status, 'processing');
+  assert.equal(linkedInProcessing.providerStatus, 'PUBLISH_REQUESTED');
 
   // Neither a new submission nor recovery may send IG User tokens to legacy Graph.
   let wrongProviderCalls = 0;

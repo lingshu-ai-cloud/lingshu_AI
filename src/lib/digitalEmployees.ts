@@ -16,7 +16,7 @@ export type AutonomyMode = "suggest" | "collaborate" | "managed" | "automatic";
 export type DigitalEmployeeAgentRole = "orchestrator" | "business" | "director" | "content" | "customer";
 
 export type PrimaryGoal = "awareness" | "leads" | "sales" | "reactivation";
-export type PublishingPlatform = "facebook" | "instagram" | "tiktok" | "youtube";
+export type PublishingPlatform = "facebook" | "instagram" | "tiktok" | "youtube" | "linkedin";
 export interface PublishingTarget {
   platform: PublishingPlatform;
   accountId: string;
@@ -82,13 +82,13 @@ export interface DigitalEmployeeConfig {
 }
 
 export type BusinessLine = "full_funnel" | "content_growth" | "customer_conversion";
-export type ContentPlatform = "all" | "facebook" | "instagram" | "tiktok" | "youtube";
+export type ContentPlatform = "all" | "facebook" | "instagram" | "tiktok" | "youtube" | "linkedin";
 
 export interface WeeklyGoal {
   videoPlans?: VideoCreationPlan[];
   id: string;
   businessLine: "full_funnel" | "content_growth" | "customer_conversion";
-  contentPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
+  contentPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube" | "linkedin">;
   title: string;
   objective: string;
   metric: string;

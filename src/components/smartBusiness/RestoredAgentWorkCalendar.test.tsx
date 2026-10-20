@@ -17,11 +17,13 @@ test('only unfinished work before today receives an overdue exclamation mark',()
  assert.equal(calendarExecutionMark({...base,date:'2026-10-14',status:'no_data'},today),undefined);
  assert.equal(calendarExecutionMark({...base,date:'2026-10-14',status:'cancelled'},today),undefined);
 });
-test('weekly board is Monday through Sunday and direct execution never substitutes a status workspace',()=>{
+test('video task board uses the fixed production path and direct execution never substitutes a status workspace',()=>{
  const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
  const connected=readFileSync(new URL('./ConnectedAgentCalendar.tsx',import.meta.url),'utf8');
  const bridge=readFileSync(new URL('../socialProgram/WeeklyCustomerCalendar.tsx',import.meta.url),'utf8');
- assert.match(source,/firstDay=\{1\}/);
+ assert.match(source,/AgentVideoProductionBoard/);
+ assert.match(source,/productionStageContract/);
+ assert.doesNotMatch(source,/<LsCalendar[\s/>]|firstDay=|narrowView=|timeGridHeight=/);
  assert.match(source,/交付物与当前受阻原因/);assert.match(source,/executionBlockers/);assert.match(source,/executionResultRefs/);
  assert.match(source,/onEnterExecution\(source,controller.signal\)/);assert.match(source,/进入真实执行界面/);
  assert.match(bridge,/onEnterExecution=\{onEnterExecution\}/);assert.match(connected,/onEnterExecution=\{enterExecution\}/);
@@ -33,12 +35,12 @@ test('weekly board is Monday through Sunday and direct execution never substitut
 test('Agent filtering shows real cards directly without duplicate summary cards', () => {
   const tasks = [base, {...base,id:'content',agent:'content' as const,title:'冻结内容任务'}, {...base,id:'human',agent:'human' as const,title:'冻结人工交接'}];
   const html = renderToStaticMarkup(createElement(Calendar,{startsAt:base.date,tasks,agentRole:'business'}));
-assert.match(html,/2 张任务卡/); assert.match(html,/冻结经营任务/); assert.doesNotMatch(html,/显示所有独立卡/); assert.doesNotMatch(html,/冻结经营任务 等 2 项/); assert.doesNotMatch(html,/冻结内容任务/);
+  assert.match(html,/冻结经营任务/); assert.match(html,/冻结人工交接/); assert.doesNotMatch(html,/显示所有独立卡/); assert.doesNotMatch(html,/冻结经营任务 等 2 项/); assert.doesNotMatch(html,/冻结内容任务/);
   assert.deepEqual(tasks.map(task=>task.id),['business','content','human']);
 });
 test('restored calendar omits the duplicate page-level overdue alert', () => {
   const html=renderToStaticMarkup(createElement(Calendar,{startsAt:base.date,tasks:[{...base,id:'overdue',dueAt:'2020-10-12T10:00:00+08:00',date:'2020-10-12',status:'active',affectedPublicationIds:['original-publication']},{...base,id:'late',status:'completed',deliveryTiming:'late',actualFinishedAt:'2026-10-12T11:00:00+08:00'}]}));
-  assert.doesNotMatch(html,/当前待处理/);assert.match(html,/2 张任务卡/);
+  assert.doesNotMatch(html,/当前待处理|张任务卡|项工时待估/);
 });
 test('a passed unfinished slot is overdue while completed work keeps its terminal result',()=>{
   const now=Date.parse('2026-10-12T12:00:00+08:00');
@@ -84,15 +86,34 @@ test('calendar renders only independent task events and keeps task details in th
   assert.doesNotMatch(source,/交付已逾期[^\n]*description=/);
 });
 
-test('weekly calendar exposes focused filters and shows all daily work by default without an hour grid',()=>{
+test('weekly calendar receives the single completed-work filter from the monitoring Agent status row',()=>{
   const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
-  assert.match(source,/\[hideCompleted, setHideCompleted\] = useState\(false\)/);
-  assert.match(source,/需我处理/);
-  assert.match(source,/隐藏已完成/);
-  assert.match(source,/dateOnly[\s\S]*taskBoard[\s\S]*showAllEvents/);
+  const workspace=readFileSync(new URL('./DigitalEmployeeWorkspace.tsx',import.meta.url),'utf8');
+  const connected=readFileSync(new URL('./ConnectedAgentCalendar.tsx',import.meta.url),'utf8');
+  const bridge=readFileSync(new URL('../socialProgram/WeeklyCustomerCalendar.tsx',import.meta.url),'utf8');
+  assert.match(source,/hideCompleted = false/);
+  assert.match(source,/filter\(task => !hideCompleted \|\| !\['completed', 'cancelled', 'no_data'\]\.includes\(task\.status\)\)/);
+  assert.doesNotMatch(source,/aria-label="按智能体筛选"|需我处理|隐藏已完成|张任务卡|calendarDurationLabel/);
+  assert.match(workspace, /<h2[^>]*>数字员工实时状态<\/h2>[\s\S]{0,700}<Switch[^>]*checked=\{hideCompleted\}[^>]*aria-label="隐藏已完成"/);
+  assert.match(workspace, /<label className="[^"]*min-h-11[^"]*"[\s\S]{0,180}<Switch/, 'the completed-work switch must keep a 44px click target');
+  assert.match(workspace, /<RestoredAgentWorkCalendar[^>]*hideCompleted=\{hideCompleted\}/);
+  assert.match(workspace, /<ConnectedAgentCalendar[^>]*hideCompleted=\{hideCompleted\}/);
+  assert.doesNotMatch(connected, /经营项目：|请选择周任务包|查看周任务包版本/);
+  assert.match(connected, /<WeeklyCustomerCalendar[^>]*hideCompleted=\{hideCompleted\}/);
+  assert.match(bridge, /<AgentWeeklyCalendar[^>]*hideCompleted=\{hideCompleted\}/);
+  assert.match(source,/<AgentVideoProductionBoard events=\{events\}/);
   assert.match(source,/const allDay = true/);
-  assert.match(source,/visualVariant="agent"/);
+  assert.doesNotMatch(source,/visualVariant="agent"|dateOnly|taskBoard/);
   assert.doesNotMatch(source,/06:00 起|T\$\{resident\?'00:00':'06:00'/);
+});
+
+test('the external completed-work filter removes terminal events without mutating source tasks',()=>{
+  const tasks=[base,{...base,id:'done',title:'冻结已完成任务',status:'completed' as const}];
+  const visible=renderToStaticMarkup(createElement(Calendar,{startsAt:base.date,tasks}));
+  const hidden=renderToStaticMarkup(createElement(Calendar,{startsAt:base.date,tasks,hideCompleted:true}));
+  assert.match(visible,/冻结已完成任务/);
+  assert.doesNotMatch(hidden,/冻结已完成任务/);
+  assert.deepEqual(tasks.map(task=>task.id),['business','done']);
 });
 
 test('task details route specialized business targets before the generic execution fallback',()=>{
@@ -108,5 +129,5 @@ test('task details route specialized business targets before the generic executi
 test('connected calendars never render synthetic cadence summaries as tasks',()=>{
   const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
   assert.doesNotMatch(source,/calendarDisplayPlaceholders|buildAgentCalendarSummaries|aggregate:/);
-  assert.match(source,/\$\{independentTasks\.length\} 张任务卡/);
+  assert.doesNotMatch(source,/Agent 周任务日历<\/h3>|当前周视图：|任务包有效期：/);
 });

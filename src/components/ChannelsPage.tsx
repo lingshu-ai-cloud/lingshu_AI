@@ -23,6 +23,7 @@ export default function ChannelsPage() {
         {panel('instagram',<SocialConnectionPanel platform="instagram" />)}
         {panel('facebook',<SocialConnectionPanel platform="facebook" />)}
         {panel('tiktok',<SocialConnectionPanel platform="tiktok" />)}
+        {panel('linkedin',<SocialConnectionPanel platform="linkedin" />)}
         {panel('messenger',<MessengerConnectionPanel />)}
       </div>
       </div>

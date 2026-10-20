@@ -3,7 +3,7 @@ import {agentCalendarAuthIdentity, captureAgentCalendarReturnContext, readAgentC
 import type {LsCalendarView} from '../ui/LsCalendar';
 import { flushSync } from 'react-dom';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Steps, Switch, Tag } from 'antd';
+import { Alert, Button, Steps, Tag } from 'antd';
 import { UserRound } from 'lucide-react';
 import type { CrossWeekMaterialTarget } from '../socialProgram/crossWeekMaterialCalendar';
 import type { CustomerExecutionCalendarTarget } from '../socialProgram/customerExecutionCalendarNavigation';
@@ -27,13 +27,15 @@ import {socialProgramApi} from '../../lib/socialProgramApi';
 import { authHeader, getToken } from '../../lib/auth';
 import WeeklyTaskQuickActions from '../socialProgram/WeeklyTaskQuickActions';
 import WeeklyTaskRuntimeDetails from './WeeklyTaskRuntimeDetails';
+import { productionStageContract } from './agentVideoProductionModel';
+import PointsValue from '../ui/PointsValue';
+import { productPointRate } from '../../../shared/pointsPolicy';
 
 const LsCalendar = typeof document === 'undefined'
   ? function ServerCalendar({ events, label }: { events: LsCalendarEvent[]; label: string }) {
       return <div aria-label={label}>{events.map(event => <span key={event.id}>{event.title} · {event.statusLabel}</span>)}</div>;
     }
   : lazy(() => import('../ui/LsCalendar').then(module => ({ default: module.LsCalendar })));
-
 const agentLabels: Record<AgentCalendarTask['agent'], string> = {
   human: '人工处理',
   business: '经营智能体',
@@ -186,6 +188,7 @@ type Props = {
   onBindAccount?: (task: AgentCalendarTask) => void;
   scopeKey?: string;
   canOpenContentTask?: (task: AgentCalendarTask) => boolean;
+  hideCompleted?: boolean;
 };
 
 export default function RestoredAgentWorkCalendar({
@@ -204,8 +207,9 @@ export default function RestoredAgentWorkCalendar({
   onBindAccount,
   scopeKey,
   canOpenContentTask,
+  hideCompleted = false,
 }: Props) {
-  const positionKey = JSON.stringify([agentCalendarAuthIdentity(),scopeKey,startsAt,demo,'milestones-monday-v2']);
+  const positionKey = JSON.stringify([agentCalendarAuthIdentity(),scopeKey,startsAt,demo,'video-production-board-v1']);
   const stateKey = `restoredAgentCalendar:${positionKey}`;
   const saved = readAgentCalendarReturnContext();
   const previous = saved?.calendar.positionKey === positionKey ? saved.states[stateKey] as {date?: string; view?: LsCalendarView} | undefined : undefined;
@@ -241,9 +245,8 @@ export default function RestoredAgentWorkCalendar({
     void refresh();const timer=window.setInterval(()=>{if(!document.hidden)void refresh();},30000);
     return()=>{controller.abort();window.clearInterval(timer);};
   },[demo,positionKey,runtimeScopeKey]);
-  const [activeFilter, setActiveFilter] = useState<'attention' | AgentCalendarTask['agent'] | 'all'>(agentRole || 'all');
-  const [hideCompleted, setHideCompleted] = useState(false);
   const [taskWorkspace,setTaskWorkspace]=useState<{task:AgentCalendarTask;item:WeeklyTaskWorkspace|null;error:string;loading:boolean}|null>(null);
+  const [activeFilter, setActiveFilter] = useState<'attention' | AgentCalendarTask['agent'] | 'all'>(agentRole || 'all');
   const workspaceReadGeneration=useRef(0);
   useEffect(()=>{workspaceReadGeneration.current++;setTaskWorkspace(null);},[positionKey]);
   const openWorkspace=(task:AgentCalendarTask)=>{
@@ -259,8 +262,7 @@ export default function RestoredAgentWorkCalendar({
     });
   };
   const workspaceSource=(task:AgentCalendarTask)=>task.workspaceTarget?task:task.dailyTaskGroup?.tasks.find(source=>source.executionStep===task.executionStep&&source.workspaceTarget)??task.dailyTaskGroup?.tasks.find(source=>source.workspaceTarget)??task.customerServiceSummary?.sourceTasks.find(source=>source.workspaceTarget)??null;
-  useEffect(() => setActiveFilter(agentRole || 'all'), [agentRole]);
-  useEffect(() => {
+  useEffect(() => setActiveFilter(agentRole || 'all'), [agentRole]);  useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 10_000);
     return () => window.clearInterval(timer);
   }, []);
@@ -294,13 +296,10 @@ export default function RestoredAgentWorkCalendar({
   }, [ctaAuditScopeKey]);
   const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
   const todayKey = calendarDayKey(new Date(now), timeZone);
-  const attentionIds = useMemo(() => new Set(deliverables.filter(task => task.date < todayKey && !terminalTaskStatuses.has(task.status)).map(task=>task.id)), [deliverables, todayKey]);
-  const attentionCount=attentionIds.size;
   const scopedDeliverables = useMemo(() => deliverables.filter(task => {
-    if (activeFilter === 'all') return true;
-    if (activeFilter === 'attention') return attentionIds.has(task.id);
-    return task.agent === activeFilter || task.agent === 'human' || task.dailyTaskGroup?.tasks.some(source=>source.agent==='human');
-  }), [deliverables, activeFilter, attentionIds]);
+    if (!agentRole) return true;
+    return task.agent === agentRole || task.agent === 'human' || task.dailyTaskGroup?.tasks.some(source=>source.agent==='human');
+  }), [deliverables, agentRole]);
   const independentTasks = useMemo(() => scopedDeliverables.filter(taskHasDeliverableOrWorkspace), [scopedDeliverables]);
   const events = useMemo<LsCalendarEvent[]>(() => {
     const orderedTasks = orderDailyCalendarTasks(independentTasks);
@@ -399,11 +398,13 @@ export default function RestoredAgentWorkCalendar({
     const channelLabel={whatsapp:'WhatsApp',messenger:'Messenger',instagram:'Instagram'} as const;
     const summary=task.customerServiceSummary;
     const detailWorkspaceSource=workspaceSource(task);
+    const stageContract=productionStageContract(task);
     const ctaContactStatus=ctaAuditStatuses[task.id] ?? executionSources.map(source=>ctaAuditStatuses[source.id]).find(Boolean);
 
     return <div className="space-y-5">
       {!demo&&<WeeklyTaskQuickActions sources={executionSources} onOpen={source=>enterSource(source)} onPlanning={onOpenPlanning?()=>open(onOpenPlanning):undefined}/>}
       <div><div className="flex flex-wrap items-center gap-2"><Tag color={event.status === 'failed' ? 'error' : event.status === 'needs_action' ? 'warning' : event.status === 'working' ? 'processing' : event.status === 'done' ? 'success' : 'default'}>{event.statusLabel || statusLabels[task.status]}</Tag>{hasCtaContactGap(ctaContactStatus)&&task.status==='planned'&&<span className="text-xs text-text-secondary">{ctaContactStatus==='unavailable'?'原任务尚待激活；联系记录读取失败，待系统恢复后重试':'原任务尚待激活；请查看 CTA 联系与样品证据缺项'}</span>}{task.minutes !== null && <span className="text-xs text-text-secondary">预计 {task.minutes} 分钟</span>}</div><h3 className="mt-2 ls-type-title-medium text-text-primary">{task.title}</h3></div>
+      {stageContract&&<section aria-label="固定生产路径约束" className="overflow-hidden rounded-lg border border-border bg-white"><div className="border-b border-border bg-surface-2 px-4 py-3"><p className="text-[10px] font-bold text-accent">固定生产路径 · {stageContract.title}</p><h4 className="mt-1 text-sm font-semibold text-text-primary">{stageContract.owner} 主导</h4></div><dl className="grid gap-px bg-border sm:grid-cols-2"><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">如何调用</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.invocation}</dd></div><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">承接输入</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.input}</dd></div><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">交付下一步</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.handoff}</dd></div><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">稳定性门槛</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.qualityGate}</dd></div></dl>{stageContract.key==='materials'&&<div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3"><span className="text-xs text-text-secondary">产品、工厂和场景视频优先复用素材库</span><PointsValue value={productPointRate('material-library-reuse').points} suffix="/ 秒" className="text-xs font-semibold"/></div>}{stageContract.key==='production'&&<div className="border-t border-border px-4 py-3"><p className="text-xs font-semibold text-text-primary">产品功能按成功交付量结算</p><div className="mt-2 flex flex-wrap gap-x-5 gap-y-2 text-xs"><span className="inline-flex items-center gap-1.5">数字人 <PointsValue value={productPointRate('digital-human-video').points} suffix="/ 秒"/></span><span className="inline-flex items-center gap-1.5">AI 补镜 <PointsValue value={productPointRate('aigc-video-generation').points} estimated suffix="/ 秒"/></span><span className="inline-flex items-center gap-1.5">统一音色 <PointsValue value={productPointRate('voice-consistency').points} suffix="/ 秒"/></span></div></div>}</section>}
       <section aria-label="负责 Agent" className="space-y-2"><div className="flex flex-wrap gap-2"><AgentIdentityCard role={task.agent} relation="主 Agent"/>{assistantRoles.map(role => <AgentIdentityCard key={role} role={role} relation="辅助 Agent"/>)}</div>{assistantRoles.length === 0 && <p className="text-xs text-text-secondary">当前没有记录辅助 Agent；流程只显示已分配的真实责任。</p>}</section>
       <dl className="grid gap-3 rounded-lg border border-border bg-white p-4 sm:grid-cols-3">
         <div className="min-w-0"><dt className="text-xs text-text-secondary">交付时间</dt><dd className="mt-1 break-words text-sm font-medium text-text-primary">{deliveryTime}</dd></div>
@@ -424,26 +425,8 @@ export default function RestoredAgentWorkCalendar({
     </div>;
   };
 
-  return <section id="agent-weekly-calendar" key={scopeKey} data-agent-calendar-position-key={positionKey} className="scroll-mt-4 bg-white" aria-label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}>
-    <div className="border-b border-border px-5 py-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="ls-type-title-large text-text-primary">{demo ? 'B2B 零基础 · 首周任务日历' : 'Agent 周任务日历'}</h3>
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="按智能体筛选">
-          {([
-            ['attention', `需我处理 ${attentionCount}`],
-            ['business', '经营'],
-            ['director', '编导'],
-            ['content', '内容'],
-            ['customer', '客服'],
-            ['all', '全部'],
-          ] as const).map(([value, label]) => <Button key={value} size="small" type={activeFilter === value ? 'primary' : 'default'} aria-pressed={activeFilter === value} onClick={() => setActiveFilter(value)}>{label}</Button>)}
-          <span className="ml-1 inline-flex items-center gap-2 text-xs text-text-secondary"><Switch size="small" checked={hideCompleted} onChange={setHideCompleted}/>隐藏已完成</span>
-        </div>
-      </div>
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-text-secondary">{`${independentTasks.length} 张任务卡 · ${calendarDurationLabel(independentTasks)}`}</p></div>
-      {startsAt&&<p className="mt-2 text-xs text-text-secondary">当前周视图：周一至周日 · 任务包有效期：{startsAt.slice(0,10)} 至 {new Date(Date.parse(`${startsAt.slice(0,10)}T12:00:00Z`)+6*86400000).toISOString().slice(0,10)} · 有效期外不补造任务</p>}
-    </div>
-    {!demo && tasks.length === 0 && <Alert className="m-4" type="info" showIcon title="尚无 Agent 执行排期" description="发布计划不会自动视为制作任务；生成执行排期后将在此显示。"/>}
+  return <section id="agent-weekly-calendar" key={scopeKey} data-agent-calendar-position-key={positionKey} className="scroll-mt-4 bg-white" aria-label={demo ? 'B2B 零基础首周视频生产轨道' : 'Agent 视频生产轨道'}>
+    {!demo && tasks.length === 0 && <Alert className="m-4" type="info" showIcon title="尚无 Agent 视频任务" description="创建内容任务并生成执行节点后，每条视频会在此形成独立生产轨道。"/>}
     {demo && <Alert className="m-4" type="warning" showIcon title="参考排期" description="任务、工时与执行状态为参考预览，异常副链路仅用于验收。"/>}
     <ul className="sr-only">{events.map(event => {
       const task = event.data as AgentCalendarTask;
@@ -471,6 +454,5 @@ export default function RestoredAgentWorkCalendar({
         collapseEmptyTimeRanges
         detailsLayout="custom"
         renderDetails={renderDetails}
-      /></Suspense>}
-  </section>;
+      /></Suspense>}  </section>;
 }

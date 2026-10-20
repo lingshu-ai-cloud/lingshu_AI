@@ -6,6 +6,7 @@ import {
   type StarterRecord,
 } from './repository.js';
 import { starter198AccessCycleOpen, type Starter198AccessSnapshot } from './profile.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 
 // waiting_human and cancelling are still active: the user or a worker must
 // drive either state to a terminal outcome before another cycle is admitted.
@@ -193,7 +194,7 @@ async function assertBudgetAvailable(input: {
   if (!Number.isFinite(used) || !Number.isFinite(reserved) || reserved < 0) {
     throw new Starter198QuotaError('starter_198_budget_ledger_invalid', 503);
   }
-  if (used + reserved >= input.budgetCny) {
+  if (!isInternalBudgetExemptTenant(input.tenantId) && used + reserved >= input.budgetCny) {
     throw new Starter198QuotaError('starter_198_budget_exhausted', 409);
   }
 }

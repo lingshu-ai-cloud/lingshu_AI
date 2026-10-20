@@ -10,7 +10,7 @@ import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import { platformCapabilityEvidenceIsCurrent, type PlatformCapabilityEvidence } from './platformCapabilities.js';
 
-export type PublishingCapability = { platform: 'tiktok' | 'facebook' | 'instagram' | 'youtube'; status: 'available' | 'unavailable'; reason?: string; accountIds?: string[]; verifiedAt?: string };
+export type PublishingCapability = { platform: 'tiktok' | 'facebook' | 'instagram' | 'youtube' | 'linkedin'; status: 'available' | 'unavailable'; reason?: string; accountIds?: string[]; verifiedAt?: string };
 export type SimulatedReceiptOutcome = 'success' | 'rejected' | 'unknown';
 export type PublicationAttemptStatus = 'published' | 'failed' | 'unknown';
 
@@ -441,7 +441,7 @@ export function aggregatePublicationAttempts(attempts: PublicationAttempt[]): 'p
 }
 
 export function realPublishingCapabilities(evidence: PlatformCapabilityEvidence[] = [], now = new Date()): PublishingCapability[] {
-  const platforms: PublishingCapability['platform'][] = ['youtube', 'facebook', 'instagram', 'tiktok'];
+  const platforms: PublishingCapability['platform'][] = ['youtube', 'facebook', 'instagram', 'tiktok', 'linkedin'];
   return platforms.map(platform => {
     const verified = evidence.filter(item => item.platform === platform && item.capability === 'publishing.official'
       && platformCapabilityEvidenceIsCurrent(item, now));

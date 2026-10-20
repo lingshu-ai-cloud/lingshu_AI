@@ -16,7 +16,7 @@ interface StoredMetricSnapshot extends Record<string, unknown> {
 
 export interface SaveMetricSnapshotInput {
   tenantId: string;
-  platform: 'facebook' | 'instagram' | 'tiktok' | 'youtube';
+  platform: 'facebook' | 'instagram' | 'tiktok' | 'youtube' | 'linkedin';
   accountId: string;
   contentId?: string;
   capturedAt?: string;

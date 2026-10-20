@@ -1,4 +1,4 @@
-import { Button, Drawer, Pagination, Segmented } from 'antd';
+import { App as AntApp, Button, Drawer, Pagination, Popconfirm, Segmented } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ListVideo,
@@ -10,6 +10,7 @@ import {
   Loader2,
   Plus,
   Sparkles,
+  Trash2,
   X,
 } from 'lucide-react';
 import { studioApi, type StudioProject } from '../../lib/studioApi';
@@ -137,14 +138,21 @@ function openProject(project: StudioProject) {
   }));
 }
 
-export default function SocialContentHistoryHome({ onRequestCreate, onOpenImageProject }: { onRequestCreate: () => void; onOpenImageProject?: (task: SocialImageCreationTask) => void }) {
-  const [projects, setProjects] = useState<StudioProject[]>([]);
+export default function SocialContentHistoryHome({
+  onRequestCreate,
+  onOpenImageProject,
+}: {
+  onRequestCreate: () => void;
+  onOpenImageProject?: (task: SocialImageCreationTask) => void;
+}) {
+  const { message } = AntApp.useApp();  const [projects, setProjects] = useState<StudioProject[]>([]);
   const [filter, setFilter] = useState<CreationFilter>('all');
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [previewProject, setPreviewProject] = useState<StudioProject | null>(null);
+  const [deletingId, setDeletingId] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -180,6 +188,29 @@ export default function SocialContentHistoryHome({ onRequestCreate, onOpenImageP
   const changeFilter = (next: CreationFilter) => {
     setFilter(next);
     setPage(1);
+  };
+
+  const deleteProject = async (project: StudioProject) => {
+    if (deletingId) return;
+    setDeletingId(project.id);
+    try {
+      const result = await studioApi.deleteProject(project.id);
+      if (!result.ok) throw new Error(result.error || '删除失败，请稍后重试');
+      const remaining = projects.filter(item => item.id !== project.id);
+      setProjects(remaining);
+      setPreviewProject(current => current?.id === project.id ? null : current);
+      const remainingFilteredCount = filter === 'all'
+        ? remaining.length
+        : remaining.filter(item => projectCategory(item) === filter).length;
+      setPage(current => Math.min(current, Math.max(1, Math.ceil(remainingFilteredCount / PAGE_SIZE))));
+      message.success('创作已删除');
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : '删除失败，请稍后重试';
+      message.error(reason);
+      throw error;
+    } finally {
+      setDeletingId('');
+    }
   };
 
   if (historyOpen) return <CreationMaterialHistory projects={projects} loading={loading} error={loadError} onBack={() => setHistoryOpen(false)} onOpenProject={openProject} />;
@@ -229,21 +260,48 @@ export default function SocialContentHistoryHome({ onRequestCreate, onOpenImageP
               const previewUrl = projectPreviewUrl(project);
               const category = projectCategory(project);
               return (
-                <button key={project.id} type="button" onClick={() => previewUrl ? setPreviewProject(project) : project.spec.contentMode === 'image' && project.spec.socialImageTask ? onOpenImageProject?.(project.spec.socialImageTask as SocialImageCreationTask) : openProject(project)} className="group overflow-hidden rounded-lg border border-slate-200 bg-white text-left shadow-none transition  hover:border-emerald-300 ">
-                  <span className="relative flex aspect-[16/10] items-center justify-center overflow-hidden bg-surface-2">
-                    <CreationHistoryCover project={project} className="absolute inset-0 h-full w-full" />
-                    <span className="absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[9px] font-semibold text-white">{category === 'viral_replication' ? '爆款复刻模式' : '自由创作模式'}</span>
-                    {previewUrl && <span className="absolute inset-0 flex items-center justify-center bg-black/0 transition group-hover:bg-black/20"><CirclePlay size={36} className="text-white opacity-0 drop-shadow transition group-hover:opacity-100" /></span>}
-                  </span>
-                  <span className="block p-4">
-                    <span className="line-clamp-2 min-h-10 text-sm font-semibold leading-5 text-slate-950">{project.title}</span>
-                    <span className="mt-3 flex items-center justify-between gap-3 text-[10px]">
-                      <span className={`rounded-full px-2 py-1 font-semibold ${previewUrl ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>{statusLabel(project, previewUrl)}</span>
-                      <span className="flex items-center gap-1 font-semibold text-emerald-700">{previewUrl ? '预览成片 →' : '进入制作 →'}</span>
+                <article key={project.id} className="group overflow-hidden rounded-lg border border-slate-200 bg-white text-left shadow-none transition hover:border-blue-300">
+                  <button
+                    type="button"
+                    onClick={() => previewUrl ? setPreviewProject(project) : project.spec.contentMode === 'image' && project.spec.socialImageTask ? onOpenImageProject?.(project.spec.socialImageTask as SocialImageCreationTask) : openProject(project)}
+                    className="block w-full text-left"
+                  >
+                    <span className="relative flex aspect-[16/10] items-center justify-center overflow-hidden bg-surface-2">
+                      <CreationHistoryCover project={project} className="absolute inset-0 h-full w-full" />
+                      <span className="absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[9px] font-semibold text-white">{category === 'viral_replication' ? '爆款复刻模式' : '自由创作模式'}</span>
+                      {previewUrl && <span className="absolute inset-0 flex items-center justify-center bg-black/0 transition group-hover:bg-black/20"><CirclePlay size={36} className="text-white opacity-0 drop-shadow transition group-hover:opacity-100" /></span>}                    </span>
+                    <span className="block p-4">
+                      <span className="line-clamp-2 min-h-10 text-sm font-semibold leading-5 text-slate-950">{project.title}</span>
+                      <span className="mt-3 flex items-center justify-between gap-3 text-[10px]">
+                        <span className={`rounded-full px-2 py-1 font-semibold ${previewUrl ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>{statusLabel(project, previewUrl)}</span>
+                        <span className="flex items-center gap-1 font-semibold text-blue-700">{previewUrl ? '预览成片 →' : '进入制作 →'}</span>
+                      </span>
                     </span>
-                    <span className="mt-2 flex items-center gap-1 text-[9px] text-slate-400"><Clock3 size={10} />{dateLabel(project.updatedAt)}</span>
-                  </span>
-                </button>
+                  </button>
+                  <div className="flex min-w-0 items-center justify-between gap-2 border-t border-border px-4 py-2">
+                    <span className="min-w-0 truncate text-xs text-text-muted"><Clock3 size={12} className="mr-1 inline" />{dateLabel(project.updatedAt)}</span>
+                    <Popconfirm
+                      title="删除这条创作？"
+                      description={`“${project.title}”删除后无法恢复。`}
+                      okText="删除"
+                      cancelText="取消"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => deleteProject(project)}
+                    >
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        loading={deletingId === project.id}
+                        disabled={Boolean(deletingId && deletingId !== project.id)}
+                        icon={<Trash2 size={13} />}
+                        aria-label={`删除创作：${project.title}`}
+                      >
+                        删除
+                      </Button>
+                    </Popconfirm>
+                  </div>
+                </article>
               );
             })}
           </div>

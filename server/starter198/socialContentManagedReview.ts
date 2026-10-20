@@ -8,6 +8,7 @@ function object(value: unknown): Record<string, unknown> {
 /** Only the trusted worker can submit evidence for automatic acceptance.
  * Managed creation does not grant permission to publish on any account. */
 export function socialManagedArtifactReview(input: {
+  tenantId?: string;
   brief: SocialContentTaskBrief;
   trustedAgentOrigin?: boolean;
   origin: string;
@@ -20,7 +21,7 @@ export function socialManagedArtifactReview(input: {
     return { approved: false, reason: 'trusted_worker_required' };
   }
   const content = object(input.content);
-  if (!inspectSocialContentReleaseQuality({ brief: input.brief, content, mode: 'managed' }).approved) {
+  if (!inspectSocialContentReleaseQuality({ tenantId: input.tenantId, brief: input.brief, content, mode: 'managed' }).approved) {
     return { approved: false, reason: 'release_quality_evidence_incomplete_or_failed' };
   }
   const result = object(content.productionResult);

@@ -9,10 +9,10 @@ test('Seedance sentence generation sends target identity image plus an attested 
     if (init?.method === 'POST') return new Response(JSON.stringify({ id: 'task-123' }), { status: 200 });
     polls += 1; return new Response(JSON.stringify(polls === 1 ? { id: 'task-123', status: 'running' } : { id: 'task-123', status: 'completed', content: { video_url: 'https://cdn.example/result.mp4' } }), { status: 200 });
   }) as typeof fetch;
-  const result = await generateSeedanceSentenceVideo({ apiKey: 'secret', model: 'seedance-test', imageUrl: 'https://signed.example/target.png', referenceVideoUrl:'https://signed.example/anonymized-motion.mp4', motionGuideAttested:true, prompt: 'say hello', duration: 1.2, ratio: '9:16', pollMs: 1, transport, onSubmitted: id => { submitted.push(id); } });
+  const result = await generateSeedanceSentenceVideo({ apiKey: 'secret', model: 'seedance-test', imageUrl: 'https://signed.example/target.png', referenceVideoUrl:'https://signed.example/anonymized-motion.mp4', motionGuideAttested:true, referenceAudioUrl:'https://signed.example/presenter-voice.mp3', prompt: 'say hello', duration: 1.2, ratio: '9:16', pollMs: 1, transport, onSubmitted: id => { submitted.push(id); } });
   assert.deepEqual(result, { taskId: 'task-123', videoUrl: 'https://cdn.example/result.mp4' }); assert.deepEqual(submitted, ['task-123']);
   const body = JSON.parse(String(calls[0]!.init?.body)); assert.equal(body.duration, 4); assert.equal(body.generate_audio, true);
-  assert.deepEqual(body.content, [{ type: 'text', text: 'say hello' }, { type: 'image_url', image_url: { url: 'https://signed.example/target.png' }, role: 'reference_image' }, { type:'video_url', video_url:{url:'https://signed.example/anonymized-motion.mp4'}, role:'reference_video' }]);
+  assert.deepEqual(body.content, [{ type: 'text', text: 'say hello' }, { type: 'image_url', image_url: { url: 'https://signed.example/target.png' }, role: 'reference_image' }, { type:'video_url', video_url:{url:'https://signed.example/anonymized-motion.mp4'}, role:'reference_video' }, { type:'audio_url', audio_url:{url:'https://signed.example/presenter-voice.mp3'}, role:'reference_audio' }]);
   assert.equal(calls.filter(call => call.url.endsWith('/task-123')).length, 2);
 });
 
@@ -54,5 +54,11 @@ test('Seedance fails closed before POST when the motion guide is missing or unat
   let calls=0; const transport=(async()=>{calls+=1; return Response.json({id:'should-not-submit'});}) as typeof fetch;
   await assert.rejects(generateSeedanceSentenceVideo({apiKey:'secret',model:'seedance-test',imageUrl:'https://signed.example/target.png',prompt:'line',duration:4,ratio:'9:16',transport}),/动作参考缺少.*预处理证明/);
   await assert.rejects(generateSeedanceSentenceVideo({apiKey:'secret',model:'seedance-test',imageUrl:'https://signed.example/target.png',referenceVideoUrl:'http://localhost/raw.mp4',motionGuideAttested:true,prompt:'line',duration:4,ratio:'9:16',transport}),/HTTPS 脱敏视频/);
+  assert.equal(calls,0);
+});
+
+test('Seedance rejects an unsafe presenter voice reference before supplier submission', async () => {
+  let calls=0; const transport=(async()=>{calls+=1; return Response.json({id:'should-not-submit'});}) as typeof fetch;
+  await assert.rejects(generateSeedanceSentenceVideo({apiKey:'secret',model:'seedance-test',imageUrl:'https://signed.example/target.png',referenceVideoUrl:'https://signed.example/motion.mp4',motionGuideAttested:true,referenceAudioUrl:'http://localhost/voice.mp3',prompt:'line',duration:4,ratio:'9:16',transport}),/音色参考必须是供应商可访问/);
   assert.equal(calls,0);
 });

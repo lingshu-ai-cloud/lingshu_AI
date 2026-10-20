@@ -24,7 +24,9 @@ import {
 import { StarterWorkspaceRequestError, shouldBypassStarter198Probe, starterWorkspaceApi } from './lib/starterWorkspace';
 import { PAGE_REGISTRY, resolveNavigationPage, resolvePage, type LegacyTrafficView, type Page } from './pageRegistry';
 import { SocialProgramProvider } from './contexts/SocialProgramContext';
-import { PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
+import { readAssistantWeeklyNavigation } from './lib/assistantWeeklyNavigation';
+import { readLegacyWeeklyPlanNavigation } from './lib/assistantLegacyWeeklyNavigation';
+import { OptionalFeatureErrorBoundary, PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
 import type { SocialContentCreateRequest } from './components/socialContent/SocialContentWorkspace';
 import type { EnterpriseProductsDeepLink } from './components/EnterprisePage';
 import RuntimeVersionBanner from './components/RuntimeVersionBanner';
@@ -40,7 +42,22 @@ const loadEnterprisePage = () => import('./components/EnterprisePage');
 const loadIntegrationsPage = () => import('./components/IntegrationsPage');
 const loadAdminDashboard = () => import('./components/AdminDashboard');
 const loadAdminDeliveryPage = () => import('./components/AdminDeliveryPage');
-const loadGlobalAssistant = () => import('./components/GlobalAssistant');
+async function retryDynamicModule<T>(loader: () => Promise<T>, retryLoader: () => Promise<T>): Promise<T> {
+  try {
+    return await loader();
+  } catch {
+    await new Promise(resolve => window.setTimeout(resolve, 250));
+    // Browsers keep a failed ES module URL in the module map. Retry through a
+    // statically bundled, distinct URL so a recovered Vite server is actually
+    // contacted instead of immediately returning the cached rejection.
+    return retryLoader();
+  }
+}
+const loadGlobalAssistant = () => retryDynamicModule(
+  () => import('./components/GlobalAssistant'),
+  // @ts-expect-error Vite resource-query retry URL.
+  () => import('./components/GlobalAssistant?recovery'),
+);
 const loadWorkspaceManagementPages = () => import('./components/WorkspaceManagementPages');
 const loadDigitalEmployeePage = () => import('./components/DigitalEmployeePage');
 const loadAgentMonitorPage = () => import('./components/AgentMonitorPage');
@@ -58,6 +75,7 @@ const IntegrationsPage = lazy(loadIntegrationsPage);
 const AdminDashboard = lazy(loadAdminDashboard);
 const AdminDeliveryPage = lazy(loadAdminDeliveryPage);
 const GlobalAssistant = lazy(loadGlobalAssistant);
+const AssistantWeeklyProductionView = lazy(() => import('./components/assistant/AssistantWeeklyProductionView'));
 const AgentMemoryPage = lazy(() => loadWorkspaceManagementPages().then(module => ({ default: module.AgentMemoryPage })));
 const OrganizationPermissionsPage = lazy(() => loadWorkspaceManagementPages().then(module => ({ default: module.OrganizationPermissionsPage })));
 const ScriptLibraryPage = lazy(() => loadWorkspaceManagementPages().then(module => ({ default: module.ScriptLibraryPage })));
@@ -189,7 +207,10 @@ export default function App() {
   const [page, setPage] = useState<Page>(() => availableProductPage(loadPage()));
   const [weeklyPlanNavigation, setWeeklyPlanNavigation] = useState<{
     goalId: string; planId: string; requestId: number; identity: string;
-  } | null>(null);
+  } | null>(() => {
+    const target = readLegacyWeeklyPlanNavigation(window.location.search);
+    return target ? { ...target, requestId: 1, identity: productionNavigationIdentity() } : null;
+  });
   const [enterpriseProductsDeepLink, setEnterpriseProductsDeepLink] = useState<EnterpriseProductsDeepLink | null>(() => (
     loadPage() === 'enterprise'
       ? normalizeEnterpriseProductsDeepLink(window.history.state?.productionDetail)
@@ -280,6 +301,8 @@ export default function App() {
     const authChanged = () => {
       const nextAuthority = productionNavigationIdentity();if(nextAuthority===navigationAuthority)return;navigationAuthority=nextAuthority;
       const cleanUrl=new URL(window.location.href);cleanUrl.searchParams.set('page','digitalEmployees');
+      cleanUrl.searchParams.delete('goalId');cleanUrl.searchParams.delete('planId');
+      setWeeklyPlanNavigation(null);
       window.history.replaceState(stampProductionHistoryState({productionPage:'digitalEmployees',productionDepth:0}), '',cleanUrl);
       try { sessionStorage.removeItem('digitalEmployee.businessDeepLink'); sessionStorage.removeItem('digitalEmployee.returnContext'); } catch { /* optional storage */ }
       restoreAgentCalendarReturnContext(null);
@@ -633,7 +656,9 @@ export default function App() {
           delete nextHistoryState.weeklyContentTarget;
         }
         if (nextPage === 'smartAssets' && detail.contentCreationRequest
-          && (!detail.socialContentTaskId || (detail.contentCreationRequest.creationPath === 'viral_replication' && detail.directStudio === false))) {
+          && (!detail.contentCreationRequest.continueProjectId
+            || !detail.socialContentTaskId
+            || (detail.contentCreationRequest.creationPath === 'viral_replication' && detail.directStudio === false))) {
           try { localStorage.removeItem('ow_studio_open_project'); } catch { /* ignore */ }
           const freshUrl = new URL(window.location.href);
           freshUrl.searchParams.delete('project');
@@ -885,24 +910,29 @@ export default function App() {
       demoGuideActive={false}
       conversations={conversations} activeConvId={activeConvId} onOpenConversation={openConversation} onNewConversation={newConversation}
       suppressRightPanel={starterMode || scriptPanelOpen} onAction={startAgentTask}>
-      <Suspense fallback={null}>
-        <GlobalAssistant
-          primaryEntry
-          key={`assistant:${session.tenant?.id || session.user.tenantId}:${session.user.id}`}
-          page={page}
-          persistenceScope={{
-            tenantId: session.tenant?.id || session.user.tenantId,
-            userId: session.user.id,
-          }}
-          restore={restore}
-          kickoff={kickoff}
-          compactMode={starterMode || isAgentProductionSession()}
-          suppressForRightSidebar={page !== 'digitalEmployees' && (conversation !== null || page === 'agentMonitor')}
-          onKickoffConsumed={() => setKickoff(null)}
-          onAction={startAgentTask}
-          onSessionRefresh={() => void refreshSession()}
-        />
-      </Suspense>
+      <OptionalFeatureErrorBoundary
+        resetKey={`assistant:${session.tenant?.id || session.user.tenantId}:${session.user.id}`}
+        label="灵小枢"
+      >
+        <Suspense fallback={null}>
+          <GlobalAssistant
+            primaryEntry
+            key={`assistant:${session.tenant?.id || session.user.tenantId}:${session.user.id}`}
+            page={page}
+            persistenceScope={{
+              tenantId: session.tenant?.id || session.user.tenantId,
+              userId: session.user.id,
+            }}
+            restore={restore}
+            kickoff={kickoff}
+            compactMode={starterMode || isAgentProductionSession()}
+            suppressForRightSidebar={page !== 'digitalEmployees' && (conversation !== null || page === 'agentMonitor')}
+            onKickoffConsumed={() => setKickoff(null)}
+            onAction={startAgentTask}
+            onSessionRefresh={() => void refreshSession()}
+          />
+        </Suspense>
+      </OptionalFeatureErrorBoundary>
       <RuntimeVersionBanner />
       {sessionRefreshError && <div role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{sessionRefreshError} <button type="button" className="ml-2 font-semibold underline" onClick={() => void refreshSession()}>立即重试</button></div>}
       {starterMode && isSocialTaskContextPage(page) && (
@@ -923,7 +953,9 @@ export default function App() {
         <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('digitalEmployees')}>
           <Suspense fallback={<PageLoading />}>
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
-            {starterMode
+            {readAssistantWeeklyNavigation(window.location.search)
+              ? <AssistantWeeklyProductionView key={`${session.tenant?.id || session.user.tenantId}:${session.user.id}`} target={readAssistantWeeklyNavigation(window.location.search)!} />
+              : starterMode
               ? <StarterWorkspacePage onNavigate={handleNavigate} onNavigateWithTask={handleSocialContentNavigate} />
               : <DigitalEmployeePage active={page === 'digitalEmployees'} weeklyPlanNavigation={weeklyPlanNavigation?.identity === productionNavigationIdentity() ? weeklyPlanNavigation : null} onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
           </Activity>

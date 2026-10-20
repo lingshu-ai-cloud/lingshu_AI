@@ -108,7 +108,7 @@ export function publicationCopyForPlan(input: {
   const productName = text(input.productName || input.plan.productName || '本周主推产品', 80);
   const subject = text(input.reference?.hook || input.theme || input.plan.theme || '买家最关心的问题', 160);
   const platformEmoji: Partial<Record<VideoCreationPlan['platform'], string>> = {
-    tiktok: '⚡', instagram: '✨', facebook: '💡', youtube: '🎯',
+    tiktok: '⚡', instagram: '✨', facebook: '💡', youtube: '🎯', linkedin: '💼',
   };
   const emoji = platformEmoji[input.plan.platform] || '✨';
   const title = text(`${emoji} ${subject}｜${productName}`, 300);

@@ -17,15 +17,21 @@ function resolveMotionGuide(url: string, attested: boolean): string {
   if (!/^https:\/\//i.test(normalized)) throw new Error('Seedance 动作参考必须是供应商可访问的 HTTPS 脱敏视频，未调用供应商');
   return normalized;
 }
+function resolveReferenceAudio(url: string): string {
+  const normalized = String(url || '').trim();
+  if (!/^https:\/\//i.test(normalized) && !/^asset:\/\/[A-Za-z0-9_-]+$/i.test(normalized)) throw new Error('Seedance 音色参考必须是供应商可访问的 HTTPS 音频或音频素材 ID');
+  return normalized;
+}
 
-export async function generateSeedanceSentenceVideo(input: { apiKey: string; model: string; baseUrl?: string; imageUrl: string; trustedAssetKind?: SeedanceTrustedAssetKind; referenceVideoUrl?: string; motionGuideAttested?: boolean; prompt: string; duration: number; ratio: string; resolution?: '480p' | '720p'; existingTaskId?: string; pollMs?: number; timeoutMs?: number; transport?: typeof fetch; onSubmitted?: (taskId: string) => Promise<void> | void }): Promise<{ taskId: string; videoUrl: string }> {
+export async function generateSeedanceSentenceVideo(input: { apiKey: string; model: string; baseUrl?: string; imageUrl: string; trustedAssetKind?: SeedanceTrustedAssetKind; referenceVideoUrl?: string; motionGuideAttested?: boolean; referenceAudioUrl?: string; prompt: string; duration: number; ratio: string; resolution?: '480p' | '720p'; existingTaskId?: string; pollMs?: number; timeoutMs?: number; transport?: typeof fetch; onSubmitted?: (taskId: string) => Promise<void> | void }): Promise<{ taskId: string; videoUrl: string }> {
   if (!input.apiKey.trim()) throw new Error('Seedance 未配置方舟 API Key');
   const imageUrl = resolveFirstFrame({ url: input.imageUrl, trustedAssetKind: input.trustedAssetKind });
   const referenceVideoUrl = input.existingTaskId ? '' : resolveMotionGuide(String(input.referenceVideoUrl || ''), input.motionGuideAttested === true);
+  const referenceAudioUrl = input.existingTaskId || !input.referenceAudioUrl ? '' : resolveReferenceAudio(input.referenceAudioUrl);
   const fetcher = input.transport || fetch; const base = (input.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '');
   const request = async (url: string, init?: RequestInit) => { const response = await fetcher(url, { ...init, headers: { Authorization: `Bearer ${input.apiKey}`, 'Content-Type': 'application/json', ...(init?.headers || {}) }, signal: AbortSignal.timeout(45_000) }); const value = await response.json().catch(() => ({})) as Task & { message?: string }; if (!response.ok) throw new Error(`Seedance ${response.status}: ${typeof value.error === 'string' ? value.error : value.error?.message || value.message || response.statusText}`); return value; };
   const created = input.existingTaskId ? { id: input.existingTaskId } : await request(`${base}/contents/generations/tasks`, { method: 'POST', body: JSON.stringify({ model: input.model,
-    content: [{ type: 'text', text: input.prompt }, { type: 'image_url', image_url: { url: imageUrl }, role: 'reference_image' }, { type: 'video_url', video_url: { url: referenceVideoUrl }, role: 'reference_video' }],
+    content: [{ type: 'text', text: input.prompt }, { type: 'image_url', image_url: { url: imageUrl }, role: 'reference_image' }, { type: 'video_url', video_url: { url: referenceVideoUrl }, role: 'reference_video' }, ...(referenceAudioUrl ? [{ type: 'audio_url', audio_url: { url: referenceAudioUrl }, role: 'reference_audio' }] : [])],
     ratio: input.ratio, duration: Math.max(4, Math.min(15, Math.ceil(input.duration))), resolution: input.resolution || '720p', generate_audio: true, watermark: false }) });
   if (!created.id) throw new Error('Seedance 提交结果未知：未返回任务 ID，不能自动重试');
   if (!input.existingTaskId) await input.onSubmitted?.(created.id);

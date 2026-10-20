@@ -5,6 +5,7 @@ import {
   knowledgeCompletion,
   type EnterpriseProfile,
 } from './enterprise.js';
+import { ensureProductScenePreparationPlan } from '../../shared/contracts/productScenePreparation.js';
 
 const profile: EnterpriseProfile = {
   company: {
@@ -35,6 +36,16 @@ const metadataOnlyChange: EnterpriseProfile = {
   } as EnterpriseProfile['dataGovernance'] & { lastSavedBy: string },
 };
 assert.equal(enterpriseFactContentHash(metadataOnlyChange), firstHash, 'save metadata must not manufacture a new enterprise fact version');
+assert.equal(enterpriseFactContentHash({
+  ...profile,
+  products: {
+    ...profile.products,
+    items: profile.products.items?.map((item, index) => ({
+      ...item,
+      productScenePreparation: ensureProductScenePreparationPlan(item.id || item.productId || item.sku || `product-${index}`),
+    })),
+  },
+}), firstHash, 'product scene preparation plans are operational metadata and must not change the enterprise fact hash');
 assert.notEqual(
   enterpriseFactContentHash({ ...profile, products: { ...profile.products, priceRange: 'USD 100-200' } }),
   firstHash,

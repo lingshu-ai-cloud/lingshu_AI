@@ -13,7 +13,11 @@ import {
 } from './context.js';
 import type { DataStore } from '../storage/datastore.js';
 import { ContentJobCheckpointSaver, createJobGraphCheckpointPort, type ContentGraphCheckpointPort } from './langgraphCheckpoint.js';
-import { assertGraphJobScope, graphIdentityHash, graphThreadId, type ProductionGraphIdentity } from './langgraphIdentity.js';
+import { assertGraphJobScope, graphIdentityHash, graphThreadId, LEGACY_CONTENT_GRAPH_VERSION, type ProductionGraphIdentity } from './langgraphIdentity.js';
+import {
+  assertVideoProductionSupervisorDefinition,
+  type VideoProductionGraphPhase,
+} from '../../shared/contracts/videoProductionSupervisor.js';
 
 export interface PhaseEvidence {
   artifactRefs: string[];
@@ -45,7 +49,7 @@ export interface GraphApproval {
   subjectVersion: string;
   contentHash: string;
 }
-export type ProductionGraphPhase = 'assets' | 'render' | 'quality' | 'delivery';
+export type ProductionGraphPhase = VideoProductionGraphPhase;
 const GraphState = Annotation.Root({
   identity: Annotation<ProductionGraphIdentity>(),
   evidence: Annotation<Partial<Record<ProductionGraphPhase, PhaseEvidence>>>({ reducer: (prior,next) => ({...prior,...next}), default: () => ({}) }),
@@ -58,7 +62,7 @@ export interface LangGraphProductionInput {
   dataStore: DataStore;
   /** The durable worker must verify its current attempt/owner/lease before new work. */
   assertActive: () => Promise<void>;
-  phases: Record<ProductionGraphPhase, (state: ProductionGraphState) => Promise<PhaseEvidence>>;
+  phases: Partial<Record<ProductionGraphPhase, (state: ProductionGraphState) => Promise<PhaseEvidence>>>;
   review: {
     /** Must reload canonical business approval with tenant, artifact hash and version checks. */
     loadApproval: (state: ProductionGraphState) => Promise<GraphApproval | null>;
@@ -142,7 +146,9 @@ export async function runLangGraphProduction(input: LangGraphProductionInput): P
     await recordCurrentContentExecutionCheckpoint({ stage, version: NODE_EVIDENCE_VERSION,
       inputHash: nodeInputHash, payload: base() });
     try {
-      const result = evidence(await input.phases[name](state));
+      const handler = input.phases[name];
+      if (!handler) throw new Error(`content_graph_phase_handler_missing:${name}`);
+      const result = evidence(await handler(state));
       await active(state);
       const endedAt = new Date().toISOString();
       const completed: ProductionGraphNodeEvidence = {
@@ -177,39 +183,49 @@ export async function runLangGraphProduction(input: LangGraphProductionInput): P
   // Explicitly scoped tracing=false overrides LANGSMITH_TRACING and any inherited
   // tracer without mutating process-wide environment or exposing business state.
   return withRunTree(new RunTree({ name: 'content-production-local', tracingEnabled: false }), async (): Promise<LangGraphProductionResult> => {
-    const graph = new StateGraph(GraphState)
-      .addNode('assets', phase('assets'))
-      .addNode('render', phase('render'))
-      .addNode('quality', phase('quality'))
-      .addNode('review', async state => {
-        await active(state);
-        let receipt = await input.review.loadApproval(state);
-        if (!receipt?.approved) {
-          interrupt({ kind: 'content_review', tenantId: input.identity.tenantId, taskId: input.identity.taskId,
-            runId: input.identity.runId, planVersion: input.identity.planVersion, inputHash: input.identity.inputHash,
-            artifacts: state.evidence.quality?.artifactRefs ?? [] });
-          // interrupt resumes by restarting this node. Always read authority again;
-          // the resume payload is never used as an approval or a business result.
-          receipt = await input.review.loadApproval(state);
-        }
-        if (!receipt?.approved || !receipt.receiptRef || !receipt.contentHash || !receipt.subjectVersion) {
-          throw new Error('content_graph_review_receipt_required');
-        }
-        return { approval: receipt };
-      })
-      .addNode('delivery', async state => {
-        await active(state);
-        const receipt = await input.review.loadApproval(state);
-        if (!receipt?.approved || receipt.receiptRef !== state.approval?.receiptRef
-          || receipt.subjectVersion !== state.approval.subjectVersion || receipt.contentHash !== state.approval.contentHash) {
-          throw new Error('content_graph_review_changed');
-        }
-        return phase('delivery')(state);
-      })
-      .addEdge(START,'assets').addEdge('assets','render').addEdge('render','quality')
-      .addEdge('quality','review').addEdge('review','delivery').addEdge('delivery',END)
-      .compile({ checkpointer });
-    const config = { configurable: { thread_id: graphThreadId(input.identity) }, callbacks: [new LocalOnlyContentGraphCallbacks()], recursionLimit: 20, durability: 'sync' as const };
+    const reviewNode = async (state: ProductionGraphState) => {
+      await active(state);
+      let receipt = await input.review.loadApproval(state);
+      if (!receipt?.approved) {
+        interrupt({ kind: 'content_review', tenantId: input.identity.tenantId, taskId: input.identity.taskId,
+          runId: input.identity.runId, planVersion: input.identity.planVersion, inputHash: input.identity.inputHash,
+          artifacts: state.evidence.creative_quality?.artifactRefs ?? state.evidence.quality?.artifactRefs ?? [] });
+        // interrupt resumes by restarting this node. Always read authority again;
+        // the resume payload is never used as an approval or a business result.
+        receipt = await input.review.loadApproval(state);
+      }
+      if (!receipt?.approved || !receipt.receiptRef || !receipt.contentHash || !receipt.subjectVersion) {
+        throw new Error('content_graph_review_receipt_required');
+      }
+      return { approval: receipt };
+    };
+    const deliveryNode = async (state: ProductionGraphState) => {
+      await active(state);
+      const receipt = await input.review.loadApproval(state);
+      if (!receipt?.approved || receipt.receiptRef !== state.approval?.receiptRef
+        || receipt.subjectVersion !== state.approval.subjectVersion || receipt.contentHash !== state.approval.contentHash) {
+        throw new Error('content_graph_review_changed');
+      }
+      return phase('delivery')(state);
+    };
+    const graph: any = input.identity.graphVersion === LEGACY_CONTENT_GRAPH_VERSION
+      ? new StateGraph(GraphState)
+        .addNode('assets',phase('assets')).addNode('render',phase('render')).addNode('quality',phase('quality'))
+        .addNode('review',reviewNode).addNode('delivery',deliveryNode)
+        .addEdge(START,'assets').addEdge('assets','render').addEdge('render','quality').addEdge('quality','review')
+        .addEdge('review','delivery').addEdge('delivery',END).compile({checkpointer})
+      : (() => {
+        assertVideoProductionSupervisorDefinition();
+        return new StateGraph(GraphState)
+          .addNode('assets',phase('assets')).addNode('voice',phase('voice')).addNode('trim',phase('trim'))
+          .addNode('effects',phase('effects')).addNode('render',phase('render'))
+          .addNode('technical_quality',phase('technical_quality')).addNode('creative_quality',phase('creative_quality'))
+          .addNode('review',reviewNode).addNode('delivery',deliveryNode)
+          .addEdge(START,'assets').addEdge('assets','voice').addEdge('voice','trim').addEdge('trim','effects')
+          .addEdge('effects','render').addEdge('render','technical_quality').addEdge('technical_quality','creative_quality')
+          .addEdge('creative_quality','review').addEdge('review','delivery').addEdge('delivery',END).compile({checkpointer});
+      })();
+    const config = { configurable: { thread_id: graphThreadId(input.identity) }, callbacks: [new LocalOnlyContentGraphCallbacks()], recursionLimit: 32, durability: 'sync' as const };
     const previous = await checkpointer.getTuple(config);
     if (previous) {
       const restored = await graph.getState(config);
@@ -228,12 +244,12 @@ export async function runLangGraphProduction(input: LangGraphProductionInput): P
         || receipt.subjectVersion !== restored.approval.subjectVersion) throw new Error('content_graph_review_changed');
       return {status:'completed',state:restored,interrupts:[]};
     }
-    const resumeInterrupt = input.resume !== undefined && priorSnapshot?.tasks.some(task=>task.interrupts?.length);
+    const resumeInterrupt = input.resume !== undefined && priorSnapshot?.tasks.some((task: {interrupts?: unknown[]})=>task.interrupts?.length);
     await graph.invoke(resumeInterrupt ? new Command({resume: input.resume})
       : previous ? null : { identity: input.identity, evidence: {}, approval: null, completed: false }, config);
     const snapshot = await graph.getState(config);
     const state = snapshot.values as ProductionGraphState;
-    const interrupts = snapshot.tasks.flatMap(task => task.interrupts ?? []);
+    const interrupts = snapshot.tasks.flatMap((task: {interrupts?: unknown[]}) => task.interrupts ?? []);
     if (snapshot.next.length || interrupts.length || !state.completed) return {status:'waiting_review',state,interrupts};
     return {status:'completed',state,interrupts:[]};
   });

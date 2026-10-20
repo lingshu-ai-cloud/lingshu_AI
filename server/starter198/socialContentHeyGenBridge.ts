@@ -21,6 +21,7 @@ import type {
 } from './socialContentDigitalPresenterAdapter.js';
 import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
 import { recordCurrentContentProviderReceipt, ContentExecutionStoppedError } from '../contentExecution/context.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 
 type PresenterRecord = Record<string, unknown> & {
   id?: string; name?: string; authorized?: boolean; assetVersion?: number;
@@ -29,6 +30,12 @@ type PresenterRecord = Record<string, unknown> & {
   rightsEvidence?: unknown;
   toolMappings?: { heygen?: { avatarId?: string; voiceId?: string } };
 };
+
+export function socialPresenterReservationExceedsInternalBudget(
+  tenantId: string, reservationCny: number, maximumCostCny: number,
+): boolean {
+  return !isInternalBudgetExemptTenant(tenantId) && reservationCny > maximumCostCny;
+}
 
 export interface SocialHeyGenPresenterAudit {
   total: number;
@@ -291,14 +298,15 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
       if(deps.wholeBudget)return deps.wholeBudget.authorize(input);
       const {idempotencyKey,maximumCostCny}=input;
       if (!deps.storageReady()) return { allowed: false, reason: 'object_storage_unavailable' };
-      const status = deps.budget.status('heygen');
+      const status = deps.budget.status('heygen', undefined, input.tenantId);
       if (!(Number(status.reservationCny) > 0)) return { allowed: false, reason: status.reason || 'budget_unavailable' };
-      if (Number(status.reservationCny) > maximumCostCny) return { allowed: false, reason: 'reservation_exceeds_shot_limit' };
+      if (socialPresenterReservationExceedsInternalBudget(input.tenantId,
+        Number(status.reservationCny), maximumCostCny)) return { allowed: false, reason: 'reservation_exceeds_shot_limit' };
       try {
         // reserve() is idempotent for an existing request key. Always let it
         // decide so an already-paid provider task remains recoverable even
         // when the remaining budget is too small for a new generation.
-        await deps.budget.reserve('heygen', idempotencyKey);
+        await deps.budget.reserve('heygen', idempotencyKey, undefined, input.tenantId);
         return { allowed: true, reservationRef: idempotencyKey };
       } catch (error) {
         return { allowed: false, reason: error instanceof Error ? error.message : status.reason || 'budget_unavailable' };
@@ -440,11 +448,11 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
   return ports;
 }
 
-export function createEnvironmentSocialHeyGenBridge(store: DataStore): {
+export function createEnvironmentSocialHeyGenBridge(store: DataStore, tenantId?: string): {
   readiness: SocialHeyGenBridgeReadiness;
   ports: SocialDigitalPresenterBridgePorts | null;
 } {
-  const budget = studioPaidBudget.status('heygen');
+  const budget = studioPaidBudget.status('heygen', undefined, tenantId);
   const readiness = socialHeyGenBridgeReadiness({ enabled: process.env.SOCIAL_CONTENT_HEYGEN_ENABLED,
     generationEnabled: process.env.HEYGEN_GENERATION_ENABLED, apiKey: process.env.HEYGEN_API_KEY,
     storageReady: objectStorageEnabled(), budget });

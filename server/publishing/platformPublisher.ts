@@ -12,7 +12,6 @@ import {
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import axios from 'axios';
 import ffmpegStatic from 'ffmpeg-static';
@@ -38,9 +37,10 @@ import {
 import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
 import { tikTokDirectPostApproved } from '../lib/socialOAuthScopes.js';
 import { assertPublishingCopyFactVersion, type PublishingCopyAudit } from './copyFactVersion.js';
+import { publishLinkedInWithDurableReceipt, resolvePendingLinkedInPublish } from './linkedInPublisher.js';
+import { normalizeVideoPath, parsePublishingTags, publishError, publishingAccountStatus } from './platformPublisherUtils.js';
 
 const execFileAsync = promisify(execFile);
-
 interface YouTubeAccountRecord {
   id: string;
   tenantId: string;
@@ -59,6 +59,7 @@ interface SocialAccountRecord {
   accessToken: string;
   oauthProvider?: string;
   scope?: string;
+  parentPageId?: string;
   status: 'connected' | 'error' | 'expired';
 }
 
@@ -118,24 +119,6 @@ export interface PendingPublishResolution {
   error: string;
 }
 
-function publishError(message: string, statusCode: number): Error & { statusCode: number } {
-  return Object.assign(new Error(message), { statusCode });
-}
-
-function normalizeVideoPath(input: string): string {
-  const raw = input.trim();
-  return raw.startsWith('file://') ? fileURLToPath(raw) : path.resolve(raw);
-}
-
-function parseTags(tags: unknown, description: string): string[] {
-  if (Array.isArray(tags)) return tags.map(String).map(item => item.replace(/^#/, '').trim()).filter(Boolean);
-  if (typeof tags === 'string') return tags.split(/[\s,，]+/).map(item => item.replace(/^#/, '').trim()).filter(Boolean);
-  return Array.from(description.matchAll(/#([\p{L}\p{N}_-]+)/gu)).map(match => match[1]);
-}
-
-function accountStatus(error: any): number {
-  return Number(error?.statusCode || error?.response?.status || 500) || 500;
-}
 
 async function revalidatePublishSource(input: PublishToAccountInput): Promise<void> {
   if(input.sourceClaim?.weeklyAssignment&&input.videoUrl)throw Error('weekly_publish_remote_video_override_forbidden');
@@ -516,6 +499,9 @@ export async function resolvePendingPublishToAccount(input: {
       providerStatus: 'published', error: '',
     };
   }
+  if (input.platform === 'linkedin') {
+    return resolvePendingLinkedInPublish({ tenantId: input.tenantId, accountId: input.accountId, receipt });
+  }
   if (input.platform !== 'tiktok') {
     return {
       status: 'unknown',
@@ -607,7 +593,7 @@ async function publishVideoToAccountWithLease(
         filePath,
         title: input.title,
         description,
-        tags: parseTags(input.tags, description),
+        tags: parsePublishingTags(input.tags, description),
         privacyStatus,
         madeForKids: input.madeForKids ?? false,
       });
@@ -638,7 +624,7 @@ async function publishVideoToAccountWithLease(
     } catch (error) {
       if (providerStarted) await markDirectAttemptUnknown(input, tracked, directAttempt, error);
       else await markDirectAttemptNotSubmitted(input, tracked, directAttempt, error);
-      const status = accountStatus(error);
+      const status = publishingAccountStatus(error);
       if (status === 401 || status === 403) await store.update('youtube_accounts', input.accountId, { status: 'error' });
       throw error;
     }
@@ -652,7 +638,11 @@ async function publishVideoToAccountWithLease(
     if (contract.oauthProvider === 'instagram_login') assertInstagramPublishingScopes(account);
   }
   const filePath = input.videoPath
-    ? validateLocalVideo(input.videoPath, ['.mp4', '.mov', '.webm'], Number(process.env.SOCIAL_MAX_UPLOAD_MB ?? 2048))
+    ? validateLocalVideo(
+      input.videoPath,
+      input.platform === 'linkedin' ? ['.mp4'] : ['.mp4', '.mov', '.webm'],
+      input.platform === 'linkedin' ? Number(process.env.LINKEDIN_MAX_UPLOAD_MB ?? 500) : Number(process.env.SOCIAL_MAX_UPLOAD_MB ?? 2048),
+    )
     : undefined;
   if (!filePath && !input.videoUrl) throw publishError('缺少待发布的视频文件或公开视频地址', 400);
   if (account.platform === 'tiktok' && !filePath) {
@@ -761,6 +751,15 @@ async function publishVideoToAccountWithLease(
         await revalidatePublishSource(input);
       } });
     }
+    if (account.platform === 'linkedin') {
+      video = await publishLinkedInWithDurableReceipt({
+        tenantId: input.tenantId, accountId: input.accountId, account, filePath,
+        title: input.title, commentary: socialInput.description || '', tracked, directAttempt,
+        finalizeTracking: input.finalizeTracking, onProviderReceipt: input.onProviderReceipt,
+        beforeEffect: () => publishLease.beforeEffect(), revalidate: () => revalidatePublishSource(input),
+        markProviderStarted: () => { providerStarted = true; },
+      });
+    }
     const deliveryStatus = (video as { deliveryStatus?: unknown } | undefined)?.deliveryStatus;
     const providerReceiptId = String((video as { providerReceiptId?: unknown } | undefined)?.providerReceiptId || '').trim();
     if (account.platform === 'tiktok' && deliveryStatus === 'provider_accepted') {
@@ -803,11 +802,12 @@ async function publishVideoToAccountWithLease(
     } catch (error) {
       console.error(`[publishing] ${account.platform} history write failed:`, error);
     }
-    return { video, tracking: tracked, publishRecord, platformPostId: id, deliveryStatus: 'published', ...(providerReceiptId ? { providerReceiptId } : {}) };
+    const platformUrl = String((video as { url?: unknown } | undefined)?.url || '').trim();
+    return { video, tracking: tracked, publishRecord, platformPostId: id, deliveryStatus: 'published', ...(providerReceiptId ? { providerReceiptId } : {}), ...(platformUrl ? { platformUrl } : {}) };
   } catch (error) {
     if (providerStarted) await markDirectAttemptUnknown(input, tracked, directAttempt, error);
     else await markDirectAttemptNotSubmitted(input, tracked, directAttempt, error);
-    const status = accountStatus(error);
+    const status = publishingAccountStatus(error);
     if (status === 401 || status === 403) await store.update('social_accounts', input.accountId, { status: 'error' });
     throw error;
   }

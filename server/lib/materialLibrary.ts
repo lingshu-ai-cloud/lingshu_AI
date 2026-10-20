@@ -4,7 +4,6 @@ import { createHash } from 'node:crypto';
 import { assertExactMaterialProductBindingImmutable, readCloudMaterialLibrary, type MaterialSourceStatus } from './cloudMaterials.js';
 import { materialAssetV2FromRecord } from '../../shared/contracts/materialAssetV2.js';
 import { isSyntheticMaterial } from './materialTruthfulness.js';
-import { currentDataAuthority } from '../storage/dataAuthority.js';
 import type { DataStore } from '../storage/datastore.js';
 import { tenantCatalogImageFile } from './enterpriseMediaImage.js';
 import sharp from 'sharp';
@@ -12,6 +11,31 @@ import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/e
 import { objectStorageDownload, objectStorageEnabled, objectStorageHead } from '../storage/objectStorage.js';
 import { store } from '../storage/index.js';
 export type MaterialRecord = Record<string, any> & { id: string };
+
+/**
+ * A referenced production asset may be removed from the user's library while
+ * its immutable bytes remain available to the project that already uses it.
+ * Production reads explicitly request purpose=all; every user-facing library
+ * purpose must hide the removed record.
+ */
+export function materialVisibleForPurpose(material: MaterialRecord, purpose: string): boolean {
+  return purpose === 'all' || !String(material.libraryRemovedAt || '').trim();
+}
+
+export function hideLocalMaterialFromLibrary(
+  records: MaterialRecord[],
+  materialId: string,
+  tenantId: string,
+  removedAt: string,
+): { records: MaterialRecord[]; material?: MaterialRecord } {
+  let hidden: MaterialRecord | undefined;
+  const next = records.map(record => {
+    if (record.id !== materialId || String(record.tenantId || record.tenant_id || '') !== tenantId || record.scope === 'shared') return record;
+    hidden = { ...record, libraryRemovedAt: removedAt };
+    return hidden;
+  });
+  return { records: next, material: hidden };
+}
 
 export interface SocialTaskMaterialRecordInput {
   id: string;
@@ -266,6 +290,7 @@ async function enterpriseProductImageMaterials(tenantId: string, ownedRecords: M
         contentSha256, contentHash: contentSha256, sourceRevision: contentSha256,
         width: metadata.width, height: metadata.height,
         rightsStatus: 'authorized', rightsEvidenceRef: licenseEvidence, licenseEvidence, commercialUseApproved: true,
+        derivativesApproved: true, rawLibraryUseApproved: true,
         createdAt: String(row.updatedAt || new Date(0).toISOString()),
     } satisfies MaterialRecord;
   });
@@ -283,9 +308,10 @@ export async function readMaterialLibrary(tenantId: string, adapters: {
   let localStatus: MaterialSourceStatus = { source: 'server', state: 'ready', message: '服务端素材目录可用' };
   try { local = (adapters.local || readLocalMaterials)(); }
   catch { localStatus = { source: 'server', state: 'unavailable', message: '服务端素材目录读取失败，请重试或联系管理员' }; }
-  const cloud = currentDataAuthority() === 'local' && !adapters.cloud
-    ? { items: [] as MaterialRecord[], source: { source: 'database', state: 'ready', message: '本地账号使用本地素材库' } as MaterialSourceStatus }
-    : await (adapters.cloud || readCloudMaterialLibrary)(tenantId, undefined, adapters.dataStore);
+  // readCloudMaterialLibrary follows the request's bound data authority. In a
+  // local-authenticated preview it reads the local DataStore, so uploaded
+  // object-backed materials remain visible without attempting PocketBase.
+  const cloud = await (adapters.cloud || readCloudMaterialLibrary)(tenantId, undefined, adapters.dataStore);
   const sources = [localStatus, cloud.source];
   let enterpriseProducts: MaterialRecord[] = [];
   try { enterpriseProducts = await enterpriseProductImageMaterials(tenantId, [...local, ...cloud.items] as MaterialRecord[], profileStore); }

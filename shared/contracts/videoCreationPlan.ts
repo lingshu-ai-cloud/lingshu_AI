@@ -57,7 +57,7 @@ export interface VideoCreationPlan {
   theme: string;
   language: string;
   duration: number;
-  platform: 'facebook' | 'instagram' | 'tiktok' | 'youtube';
+  platform: 'facebook' | 'instagram' | 'tiktok' | 'youtube' | 'linkedin';
   materialIds: string[];
   referenceId: string;
   presenter: 'material' | 'heygen' | 'avatar';
@@ -295,7 +295,7 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
     productId: String(value.productId || '').trim().slice(0, 160),
     productName: String(value.productName || '').trim().slice(0, 180), theme: String(value.theme || '').trim().slice(0, 500),
     language: normalizeVideoLanguage(value.language || 'en'), duration: Math.max(10, Math.min(180, Number(value.duration) || 30)),
-    platform: ['facebook', 'instagram', 'tiktok', 'youtube'].includes(String(value.platform)) ? value.platform! : 'youtube',
+    platform: ['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin'].includes(String(value.platform)) ? value.platform! : 'youtube',
     materialIds: Array.isArray(value.materialIds) ? [...new Set(value.materialIds.map(String))].slice(0, 30) : [],
     referenceId: String(value.referenceId || '').trim().slice(0, 160),
     presenter: value.presenter === 'heygen' || value.presenter === 'avatar' ? value.presenter : 'material',

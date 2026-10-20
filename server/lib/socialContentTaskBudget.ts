@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { withPaidOperationLock } from './paidOperationLock.js';
+import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
 export interface SocialTaskBudgetScope {
     tenantId: string;
     taskId: string;
@@ -323,7 +324,7 @@ export class SocialContentTaskBudget {
                     fail('quote_missing_or_expired');
                 l.entries[id] = { ...o, executionTaskId:scope.taskId, authorizationRef:a.authorizationRef, runId: scope.runId, planHash: scope.planHash, quoteRef: q.quoteRef, reservedMicros: micros(q.upperBoundCny), status: 'reserved', receiptRef: null };
             }
-            if (used(l) > l.limitMicros)
+            if (!isInternalBudgetExemptTenant(scope.tenantId) && used(l) > l.limitMicros)
                 fail('exceeded');
             const executionLimit=l.executionLimitMicros?.[hash(scope.taskId)];
             if(executionLimit!==undefined&&Object.values(l.entries).filter(e=>(e.executionTaskId??l.taskId)===scope.taskId&&e.status!=='rejected').reduce((sum,e)=>sum+e.reservedMicros,0)>executionLimit)fail('execution_allowance_exceeded');

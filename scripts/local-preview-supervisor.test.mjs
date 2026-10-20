@@ -8,6 +8,12 @@ assert.doesNotMatch(source, /node_modules\/vite\/bin\/vite\.js'\),\s*'preview'/,
 assert.match(source, /verifyModuleScripts: true/, '前端健康检查必须验证入口模块可读取，不能只检查空 root 容器');
 assert.match(source, /moduleSources[^]*?modules\.every\(module => module\.ok\)/, '入口模块失败时必须触发前端自愈');
 assert.match(source, /optimizedDependencies[^]*?dependencies\.every\(dependency => dependency\.ok\)/, '入口依赖优化失效时也必须判定白屏并自愈');
+assert.match(source, /verifyFrontendModuleGraph\(service, moduleSources, controller\.signal\)/, '前端健康检查必须递归验证 App 层模块，不能只检查 main 入口');
+assert.match(source, /depth <= maxFrontendModuleDepth[^]*?referencedFrontendModules/, '模块图探测必须有界递归，覆盖 App 的直接依赖且避免无限抓取');
+assert.match(source, /LINGSHU_PREVIEW_MODULE_DEPTH \|\| 1/, '默认只递归入口后一层，必须覆盖 App 依赖但不能每 15 秒抓取整个懒加载页面图');
+assert.match(source, /response\.status === 504[^]*?response\.statusText[^]*?Outdated Optimize Dep/, 'Vite 的空响应必须通过 504 statusText 精确识别依赖预构建缓存失效');
+assert.match(source, /has an outdated Vite optimized dependency; restarting once with --force/, '确认依赖缓存失效后必须立即强制重建，不能等待通用失败阈值');
+assert.match(source, /service\.vite && \(forceOptimizeDependencies \|\| service\.forceOptimizeNextStart\)[^]*?\[\.\.\.service\.args, '--force'\]/, '自愈重启必须只给 Vite 服务的下一次启动追加 --force');
 assert.match(source, /LINGSHU_PREVIEW_FORCE_OPTIMIZE/, '只有显式诊断时才强制重建依赖缓存，避免延长每次冷启动');
 assert.match(source, /!next \|\| next === repositoryRevision/, '临时无法读取提交 SHA 时不能把 unknown 当成版本变化并重启服务');
 assert.match(source, /startupGraceMs/, '健康检查必须给 Vite 和后端留出冷启动宽限，避免启动中被误杀');
@@ -26,5 +32,7 @@ assert.doesNotMatch(source, /(?:log|console\.[a-z]+)\([^\n]*providerConfiguratio
 assert.doesNotMatch(source, /'0\.0\.0\.0'/, '受监督的本地预览不能监听局域网接口');
 assert.match(source, /'--host',\s*'127\.0\.0\.1'/, '受监督的本地预览必须只绑定 IPv4 回环地址');
 assert.match(viteSource, /optimizeDeps:\s*\{[^}]*exclude:\s*\['xlsx'\]/s, '本地预览不能给 vendored xlsx 生成会失效的优化哈希');
+assert.match(viteSource, /'\/cloud-files':\s*\{[^}]*target:\s*devApiTarget/s, '本地预览必须转发历史云素材播放路由');
+assert.match(viteSource, /'\/studio-media':\s*\{[^}]*target:\s*devApiTarget/s, '本地预览必须转发当前素材播放路由');
 
 console.log('local preview supervisor contract passed');

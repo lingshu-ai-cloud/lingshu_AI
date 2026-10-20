@@ -214,16 +214,20 @@ for (const label of ['爆款视频预览', '素材组合预览', '效果置信�
 assert.match(matrixScheduleSource, /Agent 任务看板/, 'the overview schedule section must retain only the Agent task board');
 assert.doesNotMatch(matrixScheduleSource, /<LsCalendar|发布日历/, 'the publishing calendar must not be duplicated inside the Agent task board');
 assert.doesNotMatch(weeklyCommandCenterSource, /<LsCalendar|WeeklyContentProgressPanel|本周发布日历/, 'the weekly-plan metrics must not duplicate the publishing calendar');
-assert.match(digitalEmployeeWorkspaceSource, /aria-label="数字员工视图"[\s\S]{0,300}员工排期[\s\S]{0,200}发布日历/, 'the Digital Employee tab must expose employee scheduling and publishing as two switchable views');
-assert.match(digitalEmployeeWorkspaceSource, /状态随当前周任务回执实时更新/, '员工卡必须说明状态来自当前周任务的实时回执');
+assert.doesNotMatch(digitalEmployeeWorkspaceSource, /aria-label="数字员工视图"|<Segmented/, 'the Digital Employee monitor must not split production and publishing into first-level pages');
+assert.match(digitalEmployeeWorkspaceSource, /数字员工生产指挥舱[\s\S]{0,12000}发布与投流[\s\S]{0,2500}客服承接/, 'the Digital Employee monitor must show content projects, traffic and customer service in one view');
+assert.doesNotMatch(digitalEmployeeWorkspaceSource, /异常与待处理/, '异常不得成为脱离内容工程的独立固定模块');
+assert.match(digitalEmployeeWorkspaceSource, /状态来自真实任务回执/, '员工卡必须说明状态来自当前周任务的真实回执');
 assert.match(digitalEmployeeWorkspaceSource, /data-agent-running=\{working \? 'true'/, '执行中的员工必须暴露稳定的运行态语义');
 assert.match(digitalEmployeeWorkspaceSource, /LoaderCircle[\s\S]{0,160}motion-safe:animate-spin/, '执行中的员工必须显示遵守减少动态偏好的旋转状态标识');
 assert.match(pageSource, /!\["live", "matrix"\]\.includes\(workspaceView\)[\s\S]{0,700}setInterval\(reconcile, 15_000\)/, '任务执行与员工排期都必须用实时流加低频权威回读校准状态');
-assert.match(digitalEmployeeWorkspaceSource, /\{workspaceView === 'agents' && onOpenAgentSettings && <Button[\s\S]{0,180}onClick=\{onOpenAgentSettings\}>Agent 设置<\/Button>\}/, 'Agent settings must live at the upper right of the employee-schedule view only');
+assert.match(digitalEmployeeWorkspaceSource, /onOpenAgentSettings && <Button[\s\S]{0,180}onClick=\{onOpenAgentSettings\}>Agent 设置<\/Button>/, 'Agent settings must remain at the upper right of the monitoring view');
+assert.match(digitalEmployeeWorkspaceSource, /publishingExpanded[\s\S]{0,800}展开发布日历[\s\S]{0,10000}完整发布日历/, 'the full publishing calendar must expand inline instead of opening another first-level page');
 assert.match(matrixViewSource, /publishingCalendar=\{<WeeklyPublishingCalendar data=\{data\} onRefresh=\{onRefresh\}\/>\}/, 'the publishing calendar must be injected into the Digital Employee workspace');
 assert.match(matrixViewSource, /<DigitalEmployeeWorkspace[^>]*onOpenAgentSettings=\{onOpenAgentSettings\}/, 'the Digital Employee workspace must receive the settings action');
 assert.match(restoredAgentWorkCalendarSource, /identity: \{ kind: 'agent', role: task\.agent \}/, 'employee schedule cards must use the responsible Agent icon instead of a missing cover');
-assert.match(restoredAgentWorkCalendarSource, /detailsLayout="custom"/, 'Agent schedule details must remove the duplicated generic summary');
+assert.match(restoredAgentWorkCalendarSource, /<AgentVideoProductionBoard[^>]*renderDetails=\{renderDetails\}/, 'Agent video production must use the task-centric board with its custom detail drawer');
+assert.match(restoredAgentWorkCalendarSource, /productionStageContract/, 'task details must explain the deterministic production handoff contract');
 for (const label of ['主 Agent', '辅助 Agent', '交付时间', '交付内容', '交付形式', '当前进度']) {
   assert.match(restoredAgentWorkCalendarSource, new RegExp(label), `Agent schedule details must expose ${label}`);
 }
@@ -317,7 +321,7 @@ assert.doesNotMatch(layoutSource, /aria-label="主导航"[\s\S]{0,900}新手引�
 assert.match(layoutSource, /lingshu:open-digital-employee-guide/, 'the user-menu guide entry must open the Digital Employee guide');
 assert.match(pageSource, /addEventListener\('lingshu:open-digital-employee-guide'/, 'Smart Business must respond to the sidebar guide entry');
 assert.doesNotMatch(pageSource, /SMART OPERATIONS/, 'the redundant Smart Operations masthead must be removed');
-assert.doesNotMatch(weeklyPlanControlsSource, /查看周计划|setWeeklyPlanDetailsOpen/, 'the current-plan controls must not retain the removed weekly-plan details action');
+assert.doesNotMatch(weeklyPlanControlsSource, /查看周计划/, 'the current-plan controls must not restore the deprecated weekly-plan wording');
 assert.doesNotMatch(weeklyPlanControlsSource, /Agent 设置/, 'Agent settings must not remain in the weekly-plan header');
 assert.match(weeklyPlanControlsSource, /历史计划[\s\S]{0,1500}weeklyControlLabel/, 'the current-plan controls must retain history and the primary execution action');
 assert.match(currentPlanSource, /actions=\{weeklyPlanControls\}/, 'the current-plan header must receive the weekly-plan controls');
@@ -346,7 +350,8 @@ for (const removedCopy of ['本周计划详情', '确认本周视频计划', '�
   assert.doesNotMatch(pageSource, new RegExp(removedCopy), `the removed weekly-plan detail flow must not retain: ${removedCopy}`);
 }
 assert.match(pageSource, /aria-label="周计划生成"/, 'new and next-week goals may retain a dedicated editing flow');
-assert.doesNotMatch(pageSource, /WeeklyPlanDetailsDrawer|weeklyPlanDetailsOpen|setWeeklyPlanDetailsOpen/, 'the removed weekly-plan details drawer and its state must not remain on the page');
+assert.match(pageSource, /const \[weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen\] = useState\(false\)/, 'the page must own explicit state for the in-page weekly-plan drawer');
+assert.match(pageSource, /weeklyPlanDetailsOpen&&<WeeklyPlanDetailsDrawer data=\{data\} open onClose=\{\(\)=>setWeeklyPlanDetailsOpen\(false\)\}/, 'the detailed weekly plan must remain in-page and close without navigation');
 assert.match(pageSource, /setWeeklyPlanOpen\(false\);[\s\S]{0,200}setWorkspaceView\("today"\)[\s\S]{0,300}aria-label=\"当前周计划\"/, 'the assistant weekly-plan action must focus the inline current-plan summary without restoring the removed drawer');
 assert.doesNotMatch(pageSource, /BusinessAnnouncementBar/, 'the Smart Business home must not retain the deleted announcement bar');
 assert.match(pageSource, /const openWeeklyPlan = \(\) => \{[\s\S]{0,320}setNewGoal\(true\)[\s\S]{0,120}setWeeklyPlanOpen\(true\)[\s\S]{0,520}addEventListener\('lingshu:open-weekly-plan'/, 'the assistant entry must open the same weekly-plan composer as the page action');
@@ -414,13 +419,13 @@ assert.match(inspirationSource, /weekly-plan-snapshot[\s\S]{0,600}setSelectedVid
 assert.match(weeklyPlanConfirmationSource, /具体缺少/, 'weekly-plan validation must name the missing business fields instead of showing a generic warning');
 assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,160}void controlWeeklyWork\(\)/, 'the account-matrix next step must share the direct-start/new-goal control instead of reopening the removed detail page');
 assert.match(weeklyPlanControlsSource, /查看周任务/, 'an active weekly plan must expose a direct task-calendar action');
-assert.match(weeklyPlanControlsSource, /setWorkspaceView\("matrix"\)[\s\S]{0,500}getElementById\("agent-weekly-calendar"\)/, 'viewing weekly tasks must open and focus the Agent weekly calendar instead of an earlier duplicate schedule label');
+assert.match(weeklyPlanControlsSource, /onClick=\{\(\) => setWeeklyPlanDetailsOpen\(true\)\}[\s\S]{0,120}查看周任务/, 'viewing weekly tasks must open the in-page detail drawer');
+assert.doesNotMatch(weeklyPlanControlsSource, /setWorkspaceView\("matrix"\)|getElementById\("agent-weekly-calendar"\)|scrollIntoView/, 'viewing weekly tasks must not change tabs or scroll to the employee calendar');
 assert.match(weeklyPlanControlsSource, /历史计划/, 'Smart Business must retain plan history outside the active-run controls');
 assert.doesNotMatch(weeklyPlanControlsSource, /删除旧任务/, 'active weekly controls must not expose the destructive legacy cancellation action');
 assert.doesNotMatch(smartBusinessSource, /后台并发与异常中心|Background operations/, 'the overview must not expose the deleted background-operations panel');
 assert.match(planHistorySource, /按周查看[\s\S]{0,200}按月查看/, 'plan history must support weekly and monthly views');
 assert.match(planHistorySource, /completion[\s\S]{0,350}completed/, 'plan history completion must come from persisted task statuses');
-assert.match(homeSource, /<BusinessHealthOverview[^>]*data=\{data\}/, 'the overview must visualize asset health from the persisted business data');
 assert.match(homeSource, /<BusinessHealthOverview[^]*<NextRoundRecommendationsSection/, 'next-round recommendations must appear at the bottom of the health overview');
 assert.match(matrixScheduleSource, /AgentWorkMonitor/, 'Agent progress must come from the retained task board');
 assert.doesNotMatch(homeSource, /Agent 工作轨道/, 'the overview must remove the duplicated Agent work-track section');
@@ -456,8 +461,7 @@ for (const role of ['orchestrator', 'business', 'director', 'content', 'customer
 }
 assert.doesNotMatch(pageSource + presentationPolicySource, /\{ id: ["']industry["']/, 'legacy industry must not remain a public role card');
 assert.match(presentationPolicySource, /id: ['"]business['"][\s\S]{0,400}workflows: \[['"]content_publish['"]\]/, 'content publishing belongs to the business Agent');
-assert.match(presentationPolicySource, /id: ['"]content['"][\s\S]{0,400}workflows: \[\]/, 'the content Agent renders and quality-checks without owning publishing');
-assert.match(pageSource, /activeRuleAgent === "business"[\s\S]{0,2200}周草稿、发布平台与具体账号/, 'publishing controls belong to the business Agent panel');
+assert.match(presentationPolicySource, /id: ['"]content['"][\s\S]{0,400}workflows: \[\]/, 'the content Agent renders and quality-checks without owning publishing');assert.match(pageSource, /activeRuleAgent === "business"[\s\S]{0,2200}周草稿、发布平台与具体账号/, 'publishing controls belong to the business Agent panel');
 for (const label of ['经营 Agent', '编导 Agent', '内容 Agent', '客服 Agent', '当前动作', '查看详情']) {
   assert.match(executionStatusSource, new RegExp(label), `live Agent status must expose ${label}`);
 }
@@ -512,7 +516,7 @@ assert.match(pageSource, /xlsx\?\|csv\|pdf\|docx\|txt[\s\S]{0,300}请选择 Exce
 assert.match(pageSource, /file\.size > 50 \* 1024 \* 1024[\s\S]{0,220}文件不能超过 50MB/, 'product onboarding must validate the documented file-size limit');
 assert.match(pageSource, /parseProductDocument\(file\)/, 'product onboarding must parse PDF and DOCX through the document importer');
 assert.match(pageSource, /unassignedImages = documentResult\.unassignedImages[\s\S]*uploadProductEvidence\(image\.file\)/, 'document images must be retained in the existing enterprise asset library instead of silently discarded');
-assert.match(pageSource, /需在产品档案核对绑定后才能用于指定产品镜头/, 'unverified document pages must not be silently bound as product images');
+assert.match(pageSource, /未能确认产品归属的图片已存入企业素材库，需在产品档案核对绑定/, 'unverified document pages must not be silently bound as product images');
 assert.match(pageSource, /productsFromLabeledText\(await readProductDiscoveryFile\(file\)\)/, 'product onboarding must parse labeled TXT product fields');
 assert.doesNotMatch(productTableOnboardingSource, /确认重点产品|按资料完整度推荐产品|本期暂无产品，先继续|快速添加产品|Agent 设置/, 'product-table onboarding must only accept an imported or existing table, without focus-product or Agent setup');
 assert.match(pageSource, /primaryLabel=\{allowInitialPlan \? "生成推荐计划" : "完成引导并保存"\}/, 'the fourth onboarding step must lead into the recommended initial operating plan');
@@ -684,15 +688,15 @@ assert.doesNotMatch(enterpriseFactsRecoverySource, /digitalEmployeeApi\.(?:saveP
 assert.match(mutationActionSource, /catch \(actionError\)[\s\S]{0,180}recoverEnterpriseFactsChanged\(actionError, actionGoal\)[\s\S]{0,80}return null/, 'mutations must stop after handled fact recovery instead of replaying the original action');
 assert.match(confirmWeeklyPlanSource, /catch \(actionError\)[\s\S]{0,180}recoverEnterpriseFactsChanged\(actionError, goal\)[\s\S]{0,40}return/, 'plan confirmation must stop after rebuilding and must not auto-start the replacement plan');
 assert.doesNotMatch(pageSource, /经营包未保存，请检查页面提示后重试|未能启动，请检查账号、资料和授权范围后重试/, 'a handled rebuild must not be replaced by the legacy red save or launch blocker');
-assert.match(pageSource, /OnboardingGuideFrame[\s\S]{0,180}step=\{4\}[\s\S]{0,180}title="最后，确认这轮视频怎么制作"/, 'the production contract must remain the fourth guided step');
-const enterpriseStepIndex = pageSource.indexOf('title="先告诉我们你的企业和品牌"');
+assert.match(pageSource, /OnboardingGuideFrame[\s\S]{0,180}step=\{4\}[\s\S]{0,180}title="最后，确认这轮视频怎么制作"/, 'the production contract must remain the fourth guided step');const enterpriseStepIndex = pageSource.indexOf('title="先告诉我们你的企业和品牌"');
 const publicContactIndex = pageSource.indexOf('你想用哪种联系方式让客户找到你？');
 const productStepIndex = pageSource.indexOf('title="这次想重点推广哪些产品？"');
 assert.ok(enterpriseStepIndex >= 0 && enterpriseStepIndex < publicContactIndex && publicContactIndex < productStepIndex, 'public contact and CTA must live in the first enterprise-and-brand step');
 assert.equal(pageSource.match(/你想用哪种联系方式让客户找到你？/g)?.length, 1, 'public contact and CTA must not remain duplicated in the production step');
 assert.doesNotMatch(firstOnboardingSource, /公开联系方式与行动号召|只填写允许公开出现在视频里的信息/, 'the first step must not retain the removed internal-facing contact copy');
 assert.doesNotMatch(pageSource, /title="(?:填写企业与品牌|导入或确认产品表|选择社媒经营阶段|确认生产资料与数字人)"/, 'onboarding titles must stay user-facing');
-assert.match(pageSource, /本轮人物策略[\s\S]*<EnterprisePresenters initialConfiguration/, 'the fourth step must retain only the production presenter decision and setup');
+assert.doesNotMatch(pageSource, /本轮人物策略|未完成数字人物和声音授权时，系统会在选择参考视频前排除真人口播路径/, 'the presenter step must not repeat internal strategy copy below its user-facing title');
+assert.match(pageSource, /<AntRadio\.Group[\s\S]*<EnterprisePresenters initialConfiguration/, 'the fourth step must retain only the production presenter decision and setup');
 assert.match(pageSource, /<Form[^>]+layout="vertical"[^>]+aria-label="企业与品牌资料"/, 'enterprise-and-brand onboarding must use the themed Ant form contract');
 assert.match(pageSource, /<Form[^>]+layout="vertical"[^>]+aria-label="生产开工资料"/, 'production onboarding must use the themed Ant form contract');
 const enterpriseOnboardingFormTag = firstOnboardingSource.match(/<Form\b[^>]*aria-label="企业与品牌资料"[^>]*>/)?.[0] ?? '';
@@ -701,7 +705,7 @@ assert.doesNotMatch(enterpriseOnboardingFormTag, /rounded-lg|\bborder\b|bg-surfa
 assert.match(pageSource, /<Select[\s\S]{0,220}id="production-contact-kind"/, 'public contact kind must use the accessible Ant Select');
 assert.match(pageSource, /<Input[\s\S]{0,160}id="production-contact-value"[\s\S]{0,320}aria-required=/, 'public contact value must expose semantic required state');
 assert.match(pageSource, /const invalidProductionContact[\s\S]{0,180}productionContactValue\.trim\(\)[\s\S]{0,80}productionCta\.trim\(\)[\s\S]{0,180}saveEnterpriseProfile[\s\S]{0,120}invalidProductionContact/, 'the first-step save must enforce complete public contact and CTA values when display is enabled');
-assert.match(pageSource, /<AntRadio\.Group[\s\S]{0,300}aria-labelledby="onboarding-presenter-title"/, 'presenter policy must use the themed Ant radio group with an accessible name');
+assert.match(pageSource, /<AntRadio\.Group[\s\S]{0,300}aria-label="出镜方式"[\s\S]{0,1400}<AntRadio\.Button/, 'presenter policy must use accessible themed Ant choice cards');
 assert.doesNotMatch(pageSource, /<select[^>]+value=\{productionContactKind\}|<input[^>]+name="production-presenter-policy"/, 'production onboarding must not reintroduce parallel native controls');
 assert.match(pageSource, /onSkip=\{\(\) => \{\s*void completeMinimalOnboarding\(undefined, "local_video_only"\);\s*\}\}/, 'choosing local-only production must preserve the contact preference already confirmed with enterprise and brand details');
 assert.match(pageSource, /applicationGuideSteps[\s\S]{0,160}label: "企业信息"[\s\S]{0,120}label: "推广产品"[\s\S]{0,120}label: "经营阶段"[\s\S]{0,120}label: "视频制作"/, 'Ant Steps must expose the four guided steps in their required order');
@@ -872,7 +876,6 @@ try {
 assert.match(pageSource, /title="确认开始本周生产"/, 'weekly production must show a final confirmation before starting');
 assert.match(pageSource, /okButtonProps=\{\{ disabled: weeklyPresenterLoading \|\| !weeklyPresenterGate\.ready \}\}/, 'weekly production must stay blocked until a presenter appearance is ready');
 assert.match(pageSource, /没有形象，无法进入生产/, 'the weekly confirmation must explain the hard presenter gate');
-assert.match(pageSource, /不会降级为素材匹配或其他制作路线/, 'onboarding must state that presenter production has no material fallback');
 
 console.log('DigitalEmployeePage contract tests passed');
 

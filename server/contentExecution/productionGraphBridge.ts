@@ -1,7 +1,7 @@
 import type { DataStore } from '../storage/datastore.js';
 import type { ContentExecutionCheckpoint, ContentExecutionCheckpoints } from './context.js';
 import { admitContentExecutionJob, type ContentExecutionJob } from './durableQueue.js';
-import { CONTENT_GRAPH_VERSION, graphIdentityHash, type ProductionGraphIdentity } from './langgraphIdentity.js';
+import { CONTENT_GRAPH_VERSION, SUPPORTED_CONTENT_GRAPH_VERSIONS, graphIdentityHash, type ContentGraphVersion, type ProductionGraphIdentity } from './langgraphIdentity.js';
 
 export const PRODUCTION_GRAPH_BRIDGE_CHECKPOINT = 'content.production_bridge';
 export const PRODUCTION_GRAPH_BRIDGE_VERSION = '1';
@@ -10,7 +10,7 @@ export interface ProductionGraphBridgeBinding {
   schemaVersion: 'content-production-bridge.v1';
   planVersion: string;
   inputHash: string;
-  graphVersion: typeof CONTENT_GRAPH_VERSION;
+  graphVersion: ContentGraphVersion;
   approvalAuthority: 'canonical_business_receipt';
   completionAuthority: 'terminal_graph_and_delivery_receipt';
 }
@@ -47,7 +47,7 @@ export function productionGraphIdentityFromJob(job: ContentExecutionJob): Produc
   if (!checkpoint || checkpoint.version !== PRODUCTION_GRAPH_BRIDGE_VERSION
     || binding?.schemaVersion !== 'content-production-bridge.v1'
     || checkpoint.inputHash !== binding.inputHash
-    || binding.graphVersion !== CONTENT_GRAPH_VERSION
+    || !SUPPORTED_CONTENT_GRAPH_VERSIONS.includes(binding.graphVersion as ContentGraphVersion)
     || binding.approvalAuthority !== 'canonical_business_receipt'
     || binding.completionAuthority !== 'terminal_graph_and_delivery_receipt') {
     throw new Error('content_production_bridge_binding_invalid');
@@ -56,7 +56,7 @@ export function productionGraphIdentityFromJob(job: ContentExecutionJob): Produc
     tenantId: job.tenantId, taskId: job.taskId, runId: job.runId, jobId: job.id,
     planVersion: required(binding.planVersion, 'content_production_bridge_plan_version_invalid'),
     inputHash: required(binding.inputHash, 'content_production_bridge_input_hash_invalid'),
-    graphVersion: CONTENT_GRAPH_VERSION,
+    graphVersion: binding.graphVersion as ContentGraphVersion,
   };
   graphIdentityHash(identity);
   return identity;

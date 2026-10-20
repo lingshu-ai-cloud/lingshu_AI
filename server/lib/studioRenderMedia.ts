@@ -5,7 +5,9 @@ import { Router } from 'express';
 /** Resolve an existing export only inside the authenticated tenant's render directory. */
 export function safeStudioRenderOutputPath(root: string, tenantId: string, input: unknown): string | null {
   const filePath = typeof input === 'string' ? input : '';
-  if (!/^[\w-]+$/.test(tenantId) || !path.isAbsolute(filePath) || !/^[\w-]+\.mp4$/.test(path.basename(filePath))) return null;
+  const fileName = path.basename(filePath);
+  if (!/^[\w-]+$/.test(tenantId) || !path.isAbsolute(filePath) || !fileName || fileName.length > 255
+    || path.extname(fileName).toLowerCase() !== '.mp4' || /[\0/\\]/.test(fileName)) return null;
   try {
     const requested = path.join(path.resolve(root), tenantId, path.basename(filePath));
     const folder = path.join(fs.realpathSync(root), tenantId);

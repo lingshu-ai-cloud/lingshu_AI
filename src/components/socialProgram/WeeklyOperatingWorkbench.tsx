@@ -104,11 +104,12 @@ function TaskDeadlineNotice({ task }: { task: WeeklyExecutionTask }) {
   </div>;
 }
 
-export default function WeeklyOperatingWorkbench({ pkg, loading, error, selectedTaskId, onRefresh, programRoute, onRevision }: {
+export default function WeeklyOperatingWorkbench({ pkg, loading, error, selectedTaskId, selectedPublicationId, onRefresh, programRoute, onRevision }: {
   pkg: WeeklyOperatingPackage | null;
   loading: boolean;
   error: string;
   selectedTaskId?: string | null;
+  selectedPublicationId?: string | null;
   onRefresh: () => void;
   programRoute?: 'cold_start' | 'account_repair' | null;
   onRevision?: (pkg: WeeklyOperatingPackage) => void;
@@ -189,9 +190,10 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
   const publicationTasks = pkg?.socialContentPackage.publicationTasks ?? [];
   useEffect(() => {
     if (!publicationTasks.length) { setSelectedPublicationTaskId(''); return; }
-    const linked = executionTasks.find(item => item.taskId === selectedTaskId)?.publicationTaskId;
+    const linked = executionTasks.find(item => item.taskId === selectedTaskId)?.publicationTaskId
+      || (publicationTasks.some(item => item.publicationTaskId === selectedPublicationId) ? selectedPublicationId : null);
     setSelectedPublicationTaskId(current => linked || (publicationTasks.some(item => item.publicationTaskId === current) ? current : publicationTasks[0]!.publicationTaskId));
-  }, [executionTasks, publicationTasks, selectedTaskId]);
+  }, [executionTasks, publicationTasks, selectedTaskId, selectedPublicationId]);
 
   const selectedPublication = publicationTasks.find(item => item.publicationTaskId === selectedPublicationTaskId) ?? null;
   const selectedProductionTasks = useMemo(() => executionTasks

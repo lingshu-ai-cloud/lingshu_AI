@@ -1,6 +1,6 @@
 import { useId } from 'react';
 
-export type SocialBrand = 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'messenger' | 'whatsapp';
+export type SocialBrand = 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'linkedin' | 'messenger' | 'whatsapp';
 
 export function normalizeSocialBrand(value: string): SocialBrand | null {
   const normalized = String(value || '').trim().toLowerCase();
@@ -8,6 +8,7 @@ export function normalizeSocialBrand(value: string): SocialBrand | null {
   if (normalized.includes('tiktok') || normalized.includes('tik tok')) return 'tiktok';
   if (normalized.includes('instagram')) return 'instagram';
   if (normalized.includes('facebook')) return 'facebook';
+  if (normalized.includes('linkedin') || normalized.includes('linked in')) return 'linkedin';
   if (normalized.includes('messenger')) return 'messenger';
   if (normalized.includes('whatsapp')) return 'whatsapp';
   return null;
@@ -19,6 +20,7 @@ export function socialBrandLabel(value: string): string {
   if (brand === 'tiktok') return 'TikTok';
   if (brand === 'instagram') return 'Instagram';
   if (brand === 'facebook') return 'Facebook';
+  if (brand === 'linkedin') return 'LinkedIn';
   if (brand === 'messenger') return 'Messenger';
   if (brand === 'whatsapp') return 'WhatsApp';
   return value || '社媒平台';
@@ -87,6 +89,15 @@ export function SocialPlatformIcon({
       <svg {...common} viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="11" fill={monochrome ? 'currentColor' : '#1877F2'} />
         <path fill="#fff" d="M13.8 20v-7h2.4l.4-2.8h-2.8V8.4c0-.8.2-1.4 1.4-1.4h1.5V4.5c-.3 0-1.2-.1-2.3-.1-2.3 0-3.9 1.4-3.9 4v1.8H8.2V13h2.3v7h3.3Z" />
+      </svg>
+    );
+  }
+
+  if (brand === 'linkedin') {
+    return (
+      <svg {...common} viewBox="0 0 24 24">
+        <rect x="1.5" y="1.5" width="21" height="21" rx="3" fill={monochrome ? 'currentColor' : '#0A66C2'} />
+        <path fill="#fff" d="M7.3 9.3H4.7V18h2.6V9.3ZM6 5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Zm6 4.3H9.5V18H12v-4.3c0-1.1.2-2.2 1.6-2.2s1.4 1.3 1.4 2.3V18h2.6v-4.8c0-2.4-.5-4.2-3.3-4.2-1.3 0-2.2.7-2.6 1.4h-.1V9.3H12Z" />
       </svg>
     );
   }

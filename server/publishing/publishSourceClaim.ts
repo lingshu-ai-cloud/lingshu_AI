@@ -140,6 +140,12 @@ function projectTenant(project: StoredProject): string {
 
 function assertProjectArtifact(project: StoredProject, sourceVideoPath: string): Record<string, any> {
   const spec = record(project.spec);
+  if (record(spec.contentOrder).publishMode === 'draft_only') {
+    throw new PublishSourceVerificationError('publish_source_production_only', 409, '这条新增内容仅授权制作；请先明确确认发布账号、时间与发布授权。');
+  }
+  if (record(record(spec.contentOrder).explicitPublishingIntent).state === 'pending') {
+    throw new PublishSourceVerificationError('publish_configuration_uncommitted', 409, '发布配置尚未完整保存，不能使用旧审批发布。');
+  }
   if (!sourceVideoPath || !currentPublishableVideoPaths(spec).includes(sourceVideoPath)) {
     throw new PublishSourceVerificationError(
       'publish_source_artifact_stale',

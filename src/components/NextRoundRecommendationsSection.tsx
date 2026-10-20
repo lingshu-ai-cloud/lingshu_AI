@@ -1,7 +1,7 @@
 import { Empty } from 'antd';
 import { ArrowRight, ArrowUpRight, Hash, Radar, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import type { BusinessDestination, WeeklyReviewSummary } from '../lib/digitalEmployees';
+import type { BusinessDestination, NextRoundRecommendations, WeeklyReviewSummary } from '../lib/digitalEmployees';
 import { buildNextRoundRecommendationCards, type NextRoundRecommendationCard, type NextRoundRecommendationKind } from '../lib/nextRoundRecommendations';
 import { authHeader } from '../lib/auth';
 import { LsMediaStateFrame, LsProgressiveMedia } from './ui/LsExperiencePrimitives';
@@ -81,8 +81,8 @@ function TrendVisual({ card }: { card: NextRoundRecommendationCard }) {
   </div>;
 }
 
-export default function NextRoundRecommendationsSection({ summary, industryTrends, onOpen }: { summary?: WeeklyReviewSummary; industryTrends?: import('../lib/digitalEmployees').NextRoundRecommendations['industryTrends']; onOpen: (page: BusinessDestination, view?: 'create' | 'publish') => void }) {
-  const cards = buildNextRoundRecommendationCards(summary, industryTrends);
+export default function NextRoundRecommendationsSection({ summary, industryTrends, recommendations, onOpen }: { summary?: WeeklyReviewSummary; industryTrends?: NextRoundRecommendations['industryTrends']; recommendations?: NextRoundRecommendations; onOpen: (page: BusinessDestination, view?: 'create' | 'publish') => void }) {
+  const cards = buildNextRoundRecommendationCards(summary, industryTrends, recommendations);
   return <section aria-label="下一轮建议" className="rounded-lg border border-border bg-white p-5 sm:p-6">
     <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold text-text-primary">下一轮建议</h2></div>
     <div className="grid gap-4 lg:grid-cols-3">{cards.map(card => {

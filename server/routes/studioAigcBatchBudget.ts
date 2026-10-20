@@ -3,6 +3,9 @@ import { estimateSeedanceCostCny } from '../lib/seedanceBudget.js';
 import { storyboardProjectShotInput } from '../lib/storyboardProjectShotInput.js';
 import { automaticManagedFallbackFrameAdmission } from '../lib/storyboardAigcQuality.js';
 import { planStudioBatchShotRoutes, type StudioBatchShotRoute, type StudioVerifiedAdoptionContext } from './studioBatchShotRoutes.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
+
+export const INTERNAL_BUDGET_EXEMPT_CEILING_CNY = 1_000_000_000;
 
 export interface StudioAigcBudgetContext extends StudioVerifiedAdoptionContext {
   /** Sum of ALL native allocations, including completed/uncertain/reserved.
@@ -76,8 +79,9 @@ export function studioAigcBudgetConfigFromEnv() {
 /** Managed weekly production must use the cost already frozen on its content
  * order. A request may lower that ceiling, but cannot raise either the frozen
  * order limit or the installation-wide storyboard limit. */
-export function studioAigcBudgetConfigForSpec(spec: Record<string, any>, requestedMaxCostCny?: unknown) {
+export function studioAigcBudgetConfigForSpec(spec: Record<string, any>, requestedMaxCostCny?: unknown, tenantId?: string) {
   const config = studioAigcBudgetConfigFromEnv();
+  const internalBudgetExempt = isInternalBudgetExemptTenant(tenantId);
   const managed = spec?.automation?.managedBy === 'digital_employee';
   const context = spec?.contentOrder?.operatingContext || {};
   const frozen = Number(context.estimatedContentCostMax ?? context.estimatedContentCost);
@@ -89,7 +93,8 @@ export function studioAigcBudgetConfigForSpec(spec: Record<string, any>, request
   if (managed && (!Number.isFinite(frozen) || frozen <= 0)) {
     return { ...config, batchBudgetCny: 0 };
   }
-  const installationCeiling = process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY === undefined
+  const installationCeiling = internalBudgetExempt ? INTERNAL_BUDGET_EXEMPT_CEILING_CNY
+    : process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY === undefined
     ? Number.POSITIVE_INFINITY : config.batchBudgetCny;
   return { ...config,
     ...(managed && Number.isInteger(managedRetries) && managedRetries >= 0 && managedRetries <= 1 ? { maxRetries: managedRetries } : {}),

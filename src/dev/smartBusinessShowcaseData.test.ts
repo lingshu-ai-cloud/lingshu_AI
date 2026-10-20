@@ -4,11 +4,15 @@ import test from 'node:test';
 import type { DigitalEmployeeOverview } from '../lib/digitalEmployees';
 import {
   applySmartBusinessShowcaseData,
+  isSmartBusinessOverviewPreviewEnabled,
   isSmartBusinessShowcaseEnabled,
+  isSmartBusinessWeeklyPlanPreviewEnabled,
   SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS,
   smartBusinessShowcaseAds,
   smartBusinessShowcaseChannels,
+  smartBusinessShowcaseNextRoundRecommendations,
   smartBusinessShowcasePerformance,
+  smartBusinessShowcaseWeeklyVideos,
 } from './smartBusinessShowcaseData';
 
 function overview(): DigitalEmployeeOverview {
@@ -39,7 +43,48 @@ test('showcase data is fail-closed away from local preview and can be explicitly
 });
 
 test('local weekly command center uses the requested showcase counts', () => {
-  assert.deepEqual(SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS, { plannedVideoCount: 26, waitingReviewCount: 3 });
+  assert.deepEqual(SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS, {
+    plannedVideoCount: 32,
+    waitingReviewCount: 3,
+    durationSeconds: 1_080,
+    budgetMinCny: 300,
+    budgetMaxCny: 360,
+    budgetMidCny: 320,
+  });
+  const videos = smartBusinessShowcaseWeeklyVideos(overview(), true)!;
+  assert.equal(videos.length, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount);
+  assert.equal(new Set(videos.map(item => item.id)).size, 32);
+  assert.equal(videos.filter(item => item.status === 'waiting_review').length, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.waitingReviewCount);
+  assert.equal(videos.every(item => item.thumbnailUrl.startsWith('/demo/') && existsSync(new URL(`../../public${item.thumbnailUrl}`, import.meta.url))), true);
+  assert.equal(videos.reduce((sum, item) => sum + item.duration, 0), 1_080);
+  assert.equal(videos.reduce((sum, item) => sum + item.estimatedCostCny, 0), 320);
+  assert.equal(videos.reduce((sum, item) => sum + item.budgetMinCny, 0), 300);
+  assert.equal(videos.reduce((sum, item) => sum + item.budgetMaxCny, 0), 360);
+});
+
+test('weekly plan preview is scoped to the requested local project', () => {
+  const search = '?page=digitalEmployees&project=studio_projects_9d8c21b5f0cc4149aeab596574b6e61c';
+  assert.equal(isSmartBusinessWeeklyPlanPreviewEnabled({ hostname: '127.0.0.1', search }), true);
+  assert.equal(isSmartBusinessWeeklyPlanPreviewEnabled({ hostname: 'app.example.com', search }), false);
+  assert.equal(isSmartBusinessWeeklyPlanPreviewEnabled({ hostname: '127.0.0.1', search: '?page=digitalEmployees&project=another' }), false);
+});
+
+test('business overview preview is local-only and does not depend on a project query', () => {
+  assert.equal(isSmartBusinessOverviewPreviewEnabled({ hostname: '127.0.0.1', search: '?page=digitalEmployees' }), true);
+  assert.equal(isSmartBusinessOverviewPreviewEnabled({ hostname: 'localhost', search: '?page=digitalEmployees&project=another' }), true);
+  assert.equal(isSmartBusinessOverviewPreviewEnabled({ hostname: 'app.example.com', search: '?page=digitalEmployees' }), false);
+  assert.equal(isSmartBusinessOverviewPreviewEnabled({ hostname: '127.0.0.1', search: '?page=smartAssets' }), false);
+});
+
+test('weekly plan preview fills all next-round recommendation sections', () => {
+  const recommendations = smartBusinessShowcaseNextRoundRecommendations(overview(), true)!;
+  assert.equal(recommendations.contentInheritance.status, 'ready');
+  assert.equal(recommendations.contentInheritance.framework.length, 4);
+  assert.equal(recommendations.tagAdaptation.status, 'changed');
+  assert.equal(recommendations.tagAdaptation.newTags.length, 2);
+  assert.equal(recommendations.industryTrends.status, 'available');
+  assert.equal(recommendations.industryTrends.signals.length, 3);
+  assert.doesNotMatch(JSON.stringify(recommendations), /模拟数据|mock data/i);
 });
 
 test('one local dataset fills every Smart Business domain with aligned account identities', () => {

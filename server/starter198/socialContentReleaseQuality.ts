@@ -1,4 +1,5 @@
 import type { SocialContentTaskBrief } from '../../shared/contracts/socialContentWorkflow.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
   ? value as Record<string, unknown> : {};
@@ -6,6 +7,7 @@ const amount = (value: unknown): value is number => typeof value === 'number' &&
 const nonempty = (value: unknown) => Array.isArray(value) && value.length > 0;
 
 export interface SocialContentReleaseQualityInput {
+  tenantId?: string;
   brief: SocialContentTaskBrief;
   content: unknown;
   mode: 'human' | 'managed';
@@ -45,12 +47,14 @@ export function inspectSocialContentReleaseQuality(input: SocialContentReleaseQu
     || object(replication.directorDecision).status === 'changes_required'
     || nonempty(object(replication.directorDecision).failedCriteria)) failures.push('replication_failed');
   const cost = object(content.costSummary), limit = input.brief.perItemBudgetCny;
+  const internalBudgetExempt = isInternalBudgetExemptTenant(input.tenantId);
   const estimated = cost.estimatedBeforeGenerationCny;
   const recorded = [cost.recordedProviderCostCny, cost.recordedProviderEstimatedCostCny].filter(amount);
   const invalidRecorded = [cost.recordedProviderCostCny, cost.recordedProviderEstimatedCostCny]
     .some(value => value != null && !amount(value));
-  if (!amount(limit) || !amount(estimated) || !recorded.length || invalidRecorded || cost.currency !== 'CNY') failures.push('budget_evidence_missing');
-  else if ([estimated, ...recorded].some(value => value > limit + 1e-6)) failures.push('budget_exceeded');
+  if ((!internalBudgetExempt && !amount(limit)) || !amount(estimated) || !recorded.length || invalidRecorded || cost.currency !== 'CNY') failures.push('budget_evidence_missing');
+  else if (!internalBudgetExempt && amount(limit)
+    && [estimated, ...recorded].some(value => value > limit + 1e-6)) failures.push('budget_exceeded');
   if (input.mode === 'managed' && (technical.approved !== true || creative.approved !== true
     || render.completed !== true || render.qualityPassed !== true || render.audioDecoded !== true
     || replication.status !== 'passed'

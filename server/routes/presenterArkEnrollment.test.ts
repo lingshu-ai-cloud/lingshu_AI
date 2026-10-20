@@ -53,6 +53,10 @@ test('Ark enrollment keeps consent, liveness, image approval and tenant binding 
     const uploaded = await uploadedPhoto.json();
     assert.equal(readLocalMaterials().find(item => item.id === uploaded.id)?.type, 'image');
     assert.match(readLocalMaterials().find(item => item.id === uploaded.id)?.objectKey || '', /\.jpg$/);
+    const browserWebm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(32)]);
+    const uploadedVideo = await fetch(`${base}/ark-enrollments/materials?type=video&mime=${encodeURIComponent('video/webm;codecs=vp8,opus')}`, { method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' }, body: browserWebm });
+    assert.equal(uploadedVideo.status, 201, await uploadedVideo.text());
     const photoKey = materialAssetObjectKey('tenant-a', 'photo.jpg'), videoKey = materialAssetObjectKey('tenant-a', 'video.mp4');
     await objectStorageUpload({ key: photoKey, body: Buffer.from('photo'), contentType: 'image/jpeg' });
     await objectStorageUpload({ key: videoKey, body: Buffer.from('video'), contentType: 'video/mp4' });

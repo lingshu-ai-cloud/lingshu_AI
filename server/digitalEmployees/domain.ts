@@ -20,7 +20,7 @@ import {
 export type AutonomyMode = 'suggest' | 'collaborate' | 'managed' | 'automatic';
 /** The five user-facing roles. Legacy persisted `industry` values are mapped at the read boundary. */
 export type DigitalEmployeeAgentRole = 'orchestrator' | 'business' | 'director' | 'content' | 'customer';
-export type PublishingPlatform = 'facebook' | 'instagram' | 'tiktok' | 'youtube';
+export type PublishingPlatform = 'facebook' | 'instagram' | 'tiktok' | 'youtube' | 'linkedin';
 export interface PublishingTarget {
   platform: PublishingPlatform;
   accountId: string;
@@ -99,7 +99,7 @@ export interface DigitalEmployeeConfig {
 export interface WeeklyGoalInput {
   videoPlans?: VideoCreationPlan[];
   businessLine: 'full_funnel' | 'content_growth' | 'customer_conversion';
-  contentPlatforms: Array<'facebook' | 'instagram' | 'tiktok' | 'youtube'>;
+  contentPlatforms: Array<'facebook' | 'instagram' | 'tiktok' | 'youtube' | 'linkedin'>;
   title: string;
   objective: string;
   metric: string;
@@ -154,7 +154,7 @@ const number = (value: unknown, fallback = 0): number => {
 function normalizeConfirmedOperatingPlan(value: unknown): Starter198ConfirmedOperatingPlan | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const source = value as Partial<Starter198ConfirmedOperatingPlan>;
-  const allowedPlatforms = new Set<PublishingPlatform>(['facebook', 'instagram', 'tiktok', 'youtube']);
+  const allowedPlatforms = new Set<PublishingPlatform>(['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin']);
   const presenter = ['brand_spokesperson', 'product_expert', 'none'].includes(String(source.presenter))
     ? source.presenter as Starter198ConfirmedOperatingPlan['presenter']
     : null;
@@ -173,7 +173,7 @@ function normalizeConfirmedOperatingPlan(value: unknown): Starter198ConfirmedOpe
   const maxCost = Math.floor(number(source.estimatedCostCny?.max, -1));
   const deliveryDays = Math.floor(number(source.deliveryDays, 0));
   const accountOutput = plannedAccounts.reduce((sum, item) => sum + item.weeklyOutput, 0);
-  if (!text(source.brandName, 120) || !presenter || plannedAccounts.length === 0 || plannedAccounts.length > 4
+  if (!text(source.brandName, 120) || !presenter || plannedAccounts.length === 0 || plannedAccounts.length > 5
     || rawAccountCount !== plannedAccounts.length
     || weeklyMasterCount < 1 || weeklyVariantCount < 1 || weeklyVariantCount !== accountOutput
     || weeklyVariantCount > weeklyMasterCount * plannedAccounts.length
@@ -207,7 +207,7 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
   const enabledWorkflows = Array.isArray(input.enabledWorkflows)
     ? input.enabledWorkflows.filter((item): item is DigitalEmployeeConfig['enabledWorkflows'][number] => allowedWorkflows.has(item as DigitalEmployeeConfig['enabledWorkflows'][number]))
     : [];
-  const allowedPublishingPlatforms = new Set<PublishingPlatform>(['facebook', 'instagram', 'tiktok', 'youtube']);
+  const allowedPublishingPlatforms = new Set<PublishingPlatform>(['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin']);
   const socialCadence = text(input.socialCadence, 1000) || 'YouTube、TikTok、Instagram、Facebook；公开行业关键词与已确认对标账号；近 7 天；每天 09:00；每次最多 20 条；按链接与标题去重 30 天；每周生成 5 条发布草稿，发布前人工审批';
   const publishingTargets: PublishingTarget[] = hydrateWeeklyPublishingTargets(Array.isArray(input.publishingTargets)
     ? input.publishingTargets
@@ -301,7 +301,7 @@ export function normalizeWeeklyGoal(input: Partial<WeeklyGoalInput>, config: Dig
   const businessLine = ['full_funnel', 'content_growth', 'customer_conversion'].includes(String(input.businessLine))
     ? input.businessLine as WeeklyGoalInput['businessLine']
     : 'full_funnel';
-  const allowedPlatforms = new Set<WeeklyGoalInput['contentPlatforms'][number]>(['facebook', 'instagram', 'tiktok', 'youtube']);
+  const allowedPlatforms = new Set<WeeklyGoalInput['contentPlatforms'][number]>(['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin']);
   const configuredPlatforms = [...new Set(config.publishingTargets.map(target => target.platform))];
   const defaultPlatforms = config.enabledWorkflows.includes('content_publish') && configuredPlatforms.length
     ? configuredPlatforms
@@ -345,7 +345,7 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
   const operatingProfile = socialOperatingProfile(config.socialOperatingProfile);
   const profileConnectionIssues = connectedAccountIssues(operatingProfile.id, config.publishingTargets);
   const businessLineName = goal.businessLine === 'content_growth' ? '内容增长' : goal.businessLine === 'customer_conversion' ? '客户转化' : '全链路经营';
-  const platformName: Record<WeeklyGoalInput['contentPlatforms'][number], string> = { facebook: 'Facebook', instagram: 'Instagram', tiktok: 'TikTok', youtube: 'YouTube' };
+  const platformName: Record<WeeklyGoalInput['contentPlatforms'][number], string> = { facebook: 'Facebook', instagram: 'Instagram', tiktok: 'TikTok', youtube: 'YouTube', linkedin: 'LinkedIn' };
   const contentPlatformNames = goal.contentPlatforms.map(item => platformName[item]).join(' / ');
   const taskCatalog: Array<Omit<PlannedTask, 'automaticExecutionAllowed' | 'policySource'>> = [
     {

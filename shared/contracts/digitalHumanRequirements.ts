@@ -59,3 +59,37 @@ export interface DigitalHumanRequirements {
     cues?: DigitalHumanReferenceCue[];
   };
 }
+
+/**
+ * `presenterMode` is an explicit user choice and therefore outranks legacy
+ * analysis fields left on older drafts. In particular, switching an old viral
+ * reenactment shot to an existing HeyGen video twin must not keep routing it
+ * through sentence-first-frame analysis.
+ */
+export function effectiveDigitalHumanRequirements(
+  requirements?: DigitalHumanRequirements,
+): DigitalHumanRequirements | undefined {
+  if (!requirements?.presenterMode) return requirements;
+  const photoReplication = requirements.presenterMode === 'photo_talking'
+    && requirements.workflow === 'viral_replication';
+  if (photoReplication) return {
+    ...requirements,
+    method: 'reenact',
+    preferredProvider: 'sd',
+    replicationMode: 'sentence_first_frame',
+  };
+  return {
+    ...requirements,
+    workflow: 'material_processing',
+    method: 'talking',
+    preferredProvider: 'auto',
+    replicationMode: 'sentence_first_frame',
+    replacementScope: undefined,
+    targetEffect: 'natural_talking',
+    action: '',
+    scene: '',
+    preserve: '',
+    reference: undefined,
+    targetFramesConfirmed: undefined,
+  };
+}

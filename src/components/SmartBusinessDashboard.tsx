@@ -1,5 +1,5 @@
 import type { AgentCalendarTask } from "./smartBusiness/AgentWeeklyCalendar";
-import { Alert, Button, Drawer, Empty, Radio, Segmented, Select, Statistic, Table, Tabs, Tag, Timeline } from "antd";
+import { Alert, Button, Drawer, Empty, Modal, Segmented, Select, Statistic, Table, Tabs, Tag, Timeline } from "antd";
 import LsDataChart from "./ui/LsDataChart";
 import { LsGradientProgress } from "./ui/LsExperiencePrimitives";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
@@ -14,14 +14,17 @@ import {
   LayoutGrid,
   Loader2,
   MessageSquareText,
+  Megaphone,
   Pencil,
   RefreshCcw,
+  Send,
   TrendingUp,
   Trophy,
+  UserRound,
   Users,
   X,
 } from "lucide-react";
-import { digitalEmployeeApi, type ContentExecutionRuntimeJob, type ContentQueueItem, type DigitalEmployeeOverview, type DigitalEmployeeAgentRole, type NextRoundRecommendations, type WeeklyReviewSummary } from "../lib/digitalEmployees";
+import { digitalEmployeeApi, type ContentExecutionRuntimeJob, type ContentQueueItem, type DigitalEmployeeOverview, type DigitalEmployeeAgentRole, type NextRoundRecommendations, type PlanTask, type WeeklyReviewSummary } from "../lib/digitalEmployees";
 import type { DeliveryResource } from "../lib/delivery";
 import type { Page } from "../pageRegistry";
 import { SocialPlatformIcon } from "./SocialPlatformIcon";
@@ -30,8 +33,8 @@ import AgentRoleIcon from "./ui/AgentRoleIcon";
 import WeeklyMatrixEditor from "./WeeklyMatrixEditor";
 import type { WeeklyPackage } from "../lib/weeklyPackage";
 import { defaultMatrixPlan, fillMatrixVideos } from "../lib/weeklyMatrix";
-import type { VideoCreationPlan } from "../lib/videoCreationPlan";
-import { SOCIAL_PLATFORM_EXECUTION_RULES, socialOperatingProfile } from "../../shared/contracts/socialOperatingProfile";
+import { VIDEO_PRESENTATIONS, type VideoCreationPlan, type VideoPreproductionPreview } from "../lib/videoCreationPlan";
+import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS } from "../../shared/benchmarkAnalysis";import { SOCIAL_PLATFORM_EXECUTION_RULES, socialOperatingProfile } from "../../shared/contracts/socialOperatingProfile";
 import { MASTER_VIDEO_COST_MAX_CNY, MASTER_VIDEO_COST_MIN_CNY, MASTER_VIDEO_COST_POINT_CNY } from "../../shared/contracts/contentCostModel";
 import { loadConnectedSocialPerformance, type ConnectedSocialPerformance } from "../lib/socialPerformance";
 import { starterWorkspaceApi, type StarterAgentRole } from "../lib/starterWorkspace";
@@ -45,9 +48,8 @@ import { LsCalendar, calendarDayKey, type LsCalendarEvent } from "./ui/LsCalenda
 import { calendarWeekday, thumbnailUrlWithSourceFallback } from "../lib/calendarModel";
 import WeeklyContentProgressPanel from "./smartBusiness/WeeklyContentProgressPanel";
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
-import { isSmartBusinessShowcaseEnabled, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS } from "../dev/smartBusinessShowcaseData";
-import { TaskPreviewCards, inspirationReferenceForPlan, inspirationReferenceNavigationDetail, referencePlanForPublication, type WeeklyInspirationReference } from "./smartBusiness/TaskPreviewCards";
-
+import { applySmartBusinessShowcaseData, isSmartBusinessOverviewPreviewEnabled, isSmartBusinessShowcaseEnabled, isSmartBusinessWeeklyPlanPreviewEnabled, smartBusinessShowcaseAds, smartBusinessShowcaseNextRoundRecommendations, smartBusinessShowcaseWeeklyVideos, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS } from "../dev/smartBusinessShowcaseData";
+import { TaskPreviewCards } from "./smartBusiness/TaskPreviewCards";
 export type SmartBusinessView = "home" | "matrix" | "production" | "review";
 
 type AgentCard = {
@@ -78,13 +80,14 @@ const starterUsageRole: Record<AgentCard["role"], StarterAgentRole> = {
   customer: "sales",
 };
 
-const platformOptions = ["youtube", "tiktok", "instagram", "facebook"] as const;
+const platformOptions = ["youtube", "tiktok", "instagram", "facebook", "linkedin"] as const;
 type Platform = (typeof platformOptions)[number];
 const platformLabels: Record<Platform, string> = {
   youtube: "YouTube",
   tiktok: "TikTok",
   instagram: "Instagram",
   facebook: "Facebook",
+  linkedin: "LinkedIn",
 };
 
 const runningStatuses = new Set(["running", "active", "planning", "waiting_external"]);
@@ -300,6 +303,71 @@ function WeeklyRangeVisual({ startsAt, endsAt }: { startsAt: string; endsAt: str
   </div>;
 }
 
+type WeeklyInspirationReference = {
+  referenceId: string;
+  sourceUrl: string;
+  title: string;
+  platform: Platform;
+  thumbnailUrl: string;
+  duration: number;
+  benchmarkAnalysis?: VideoCreationPlan["benchmarkAnalysis"];
+};
+
+function videoPlanFamilyKey(plan: VideoCreationPlan) {
+  return plan.contentFamilyId || plan.masterContentId || plan.contentId || "";
+}
+
+/** Resolve an adapted publication back to its frozen original before reading reference identity. */
+function referencePlanForPublication(plans: VideoCreationPlan[], plan: VideoCreationPlan) {
+  const explicitMaster = plan.masterContentId
+    ? plans.find(candidate => candidate.contentId === plan.masterContentId)
+    : undefined;
+  if (explicitMaster) return explicitMaster;
+  const familyKey = videoPlanFamilyKey(plan);
+  if (!familyKey) return plan;
+  return plans.find(candidate => videoPlanFamilyKey(candidate) === familyKey && candidate.productionRole === "master")
+    || plans.find(candidate => videoPlanFamilyKey(candidate) === familyKey)
+    || plan;
+}
+
+/** Only persisted plan evidence may establish the exact inspiration destination. */
+function inspirationReferenceForPlan(plan: VideoCreationPlan): WeeklyInspirationReference | null {
+  const referenceId = String(plan.referenceId || plan.preproduction?.benchmark.referenceId || "").trim();
+  const sourceUrl = String(plan.preproduction?.benchmark.sourceUrl || plan.planningEvidence?.referenceSourceUrl || "").trim();
+  if (!referenceId && !sourceUrl) return null;
+  return {
+    referenceId,
+    sourceUrl,
+    title: String(plan.planningEvidence?.referenceTitle || plan.preproduction?.benchmark.title || plan.theme || "").trim(),
+    platform: plan.platform,
+    thumbnailUrl: String(plan.preproduction?.benchmark.thumbnailUrl || plan.planningEvidence?.referenceThumbnailUrl || "").trim(),
+    duration: Math.max(0, Number(plan.duration || 0)),
+    benchmarkAnalysis: plan.benchmarkAnalysis,
+  };
+}
+
+function inspirationReferenceNavigationDetail(reference: WeeklyInspirationReference, contentItemId?: string) {
+  return {
+    page: "socialInspiration" as const,
+    view: "inspiration" as const,
+    businessRef: { referenceId: reference.referenceId },
+    inspirationReference: reference,
+    ...(contentItemId ? { contentItemId } : {}),
+  };
+}
+
+const PAID_MEDIA_CAPABILITY_TOKENS = new Set(['ad', 'ads', 'traffic', 'promotion']);
+
+function isPaidMediaPlanTask(task: PlanTask) {
+  const capabilityMatch = [task.capabilityKey, task.kind, task.statusSource].filter(Boolean).some(value => {
+    const normalized = String(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    const tokens = normalized.split('_').filter(Boolean);
+    return tokens.some(token => PAID_MEDIA_CAPABILITY_TOKENS.has(token))
+      || /(?:^|_)(?:paid_media|media_buying)(?:_|$)/.test(normalized);
+  });
+  const titleMatch = /(?:投流|广告投放|付费投放|付费推广|内容加热)|(?:^|[\s/_-])(?:ads?|traffic|promotion|paid[\s_-]+media|media[\s_-]+buying)(?:$|[\s/_-])/i.test(task.title);
+  return capabilityMatch || titleMatch;
+}
 export function WeeklyCommandCenter({
   data,
   statusLabel,
@@ -319,19 +387,30 @@ export function WeeklyCommandCenter({
   const contentQueue = data.contentQueue?.items || [];
   const operatingContext = data.plan?.businessPackage?.operatingContext;
   const packageBudget = weeklyVideoBudget(data);
+  const useShowcaseBudget = (isSmartBusinessShowcaseEnabled() || isSmartBusinessWeeklyPlanPreviewEnabled()) && display.contents.length === SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount;
   const weeklyQueue = contentQueue.filter(item => item.origin === "weekly_plan");
   const dashboardMockScale = display.totals.versionCount === 2 && packageBudget.estimated === 210;
   const plannedOutputCount = dashboardMockScale ? 16 : display.totals.versionCount;
   const plannedDurationSeconds = dashboardMockScale ? 480 : display.totals.durationSeconds;
-  const estimatedContentCost = Math.max(
+  const estimatedContentCost = useShowcaseBudget ? display.totals.budgetMidCny : Math.max(
     weeklyQueue.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0),
     packageBudget.estimated,
   );
   const settledContentCost = weeklyQueue.reduce((sum, item) => sum + Number(item.settledCostCny || 0), 0);
-  const budgetMin = Math.max(operatingContext?.budget.totalMinCny || 0, packageBudget.min,
-    weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 0.8 : 0);
-  const budgetMax = Math.max(operatingContext?.budget.totalMaxCny || 0, packageBudget.max,
-    weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 1.25 : 0);
+  const hasExplicitProductionRange = Boolean(
+    Number(operatingContext?.budget.productionMinCny || packageBudget.min) > 0
+    || Number(operatingContext?.budget.productionMaxCny || packageBudget.max) > 0,
+  );
+  const budgetMin = useShowcaseBudget ? display.totals.budgetMinCny : Math.max(
+    operatingContext?.budget.productionMinCny || 0,
+    packageBudget.min,
+    !hasExplicitProductionRange && weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 0.8 : 0,
+  );
+  const budgetMax = useShowcaseBudget ? display.totals.budgetMaxCny : Math.max(
+    operatingContext?.budget.productionMaxCny || 0,
+    packageBudget.max,
+    !hasExplicitProductionRange && weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 1.25 : 0,
+  );
 
   return <section className={`flex flex-col overflow-hidden bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
     <div className="flex flex-wrap items-start justify-between gap-3 px-6 pb-4 pt-5 text-text-primary xl:min-h-[112px]">
@@ -373,38 +452,28 @@ export function WeeklyPlanDetailsDrawer({
   data,
   open,
   onClose,
-  onBudgetModeChange,
 }: {
   data: DigitalEmployeeOverview;
   open: boolean;
   onClose: () => void;
-  onBudgetModeChange?: (mode: "protected" | "economy") => Promise<void>;
 }) {
+  const [selectedPlanId, setSelectedPlanId] = useState("");
+  useEffect(() => {
+    if (!open) setSelectedPlanId("");
+  }, [open]);
   const display = buildSmartBusinessDisplayModel(data);
   const director = data.plan?.businessPackage?.directorPlan;
-  const savedBudgetMode = director?.productionBudgetMode === "economy" ? "economy" : "protected";
-  const [budgetMode, setBudgetMode] = useState<"protected" | "economy">(savedBudgetMode);
-  const [budgetBusy, setBudgetBusy] = useState(false);
-  useEffect(() => setBudgetMode(savedBudgetMode), [savedBudgetMode, open]);
-  const budgetMin = Number(director?.productionBudgetMin || 0);
-  const budgetMax = Number(director?.productionBudgetMax || 0);
-  const masterPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans?.filter(item => item.productionRole !== "platform_adaptation") || [];
-  const reliableBudgetReady = masterPlans.length > 0 && masterPlans.every(item => item.route !== "clone"
-    || item.estimatedCostRange?.basis === "verified_storyboard_provider_envelope");
-  const canEditBudget = Boolean(onBudgetModeChange && data.goal?.status === "draft" && !data.run && reliableBudgetReady);
-  const saveBudgetMode = async () => {
-    if (!onBudgetModeChange || budgetMode === savedBudgetMode) return;
-    setBudgetBusy(true);
-    try { await onBudgetModeChange(budgetMode); }
-    finally { setBudgetBusy(false); }
-  };
-  const weeklyReferences = [...new Map(display.masters.flatMap(item => {
-    const reference = item.inspirationReference;
-    if (!reference) return [];
-    const identity = reference.referenceId || reference.sourceUrl || reference.title;
-    return [[identity, { item, reference }] as const];
-  })).values()];
-  const missingReferenceCount = display.masters.filter(item => !item.inspirationReference).length;
+  const productionPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans
+    || data.goal?.videoPlans
+    || [];
+  const useShowcasePlanRows = isSmartBusinessShowcaseEnabled() || isSmartBusinessWeeklyPlanPreviewEnabled();
+  const planByContentId = new Map(productionPlans.flatMap(plan => plan.contentId ? [[plan.contentId, plan] as const] : []));
+  const productionBudget = { min: display.totals.budgetMinCny, max: display.totals.budgetMaxCny };
+  const trafficTasks = (data.plan?.tasks || []).filter(isPaidMediaPlanTask);
+  const paidMediaBudget = Math.max(
+    Number(data.plan?.businessPackage?.operatingContext?.budget.paidMediaCny || 0),
+    Number(director?.paidMediaBudget || 0),
+  );
   const formatPublishTime = (item: UnifiedPlanContent) => {
     const parsed = item.plannedPublishAt ? new Date(item.plannedPublishAt) : null;
     if (parsed && !Number.isNaN(parsed.getTime())) {
@@ -419,94 +488,220 @@ export function WeeklyPlanDetailsDrawer({
     }
     return item.plannedPublishDate || '待排期';
   };
+  const formatCost = (plan: VideoCreationPlan | undefined, item: UnifiedPlanContent) => {
+    const min = Number(item.estimatedCostRange?.minCny ?? plan?.estimatedCostRange?.minCny ?? 0);
+    const max = Number(item.estimatedCostRange?.maxCny ?? plan?.estimatedCostRange?.maxCny ?? 0);
+    if (min > 0 || max > 0) return min === max ? `¥${max.toFixed(2)}` : `¥${min.toFixed(2)}–${max.toFixed(2)}`;
+    const point = Math.max(Number(item.estimatedCostCny || 0), Number(plan?.estimatedCost || 0), Number(item.queueItem?.estimatedCostCny || 0));
+    if (point > 0) return `¥${point.toFixed(2)}`;
+    return plan?.productionRole === 'platform_adaptation' ? '已计入主片' : '待核算';
+  };
+  const planRows = display.contents.map((item, index) => {
+    const exactPlan = planByContentId.get(item.contentId)
+      || productionPlans[index]
+      || (useShowcasePlanRows && productionPlans.length ? productionPlans[index % productionPlans.length] : undefined);
+    const structurePlan = exactPlan ? referencePlanForPublication(productionPlans, exactPlan) : undefined;
+    const reference = item.inspirationReference;
+    const analysis = structurePlan?.benchmarkAnalysis;
+    const structuredSegments = (analysis?.structure || []).map((segment, segmentIndex) => {
+      const shots = (analysis?.shots || []).filter(shot => segment.shotIds.includes(shot.shotId));
+      const starts = shots.flatMap(shot => typeof shot.start === 'number' ? [shot.start] : []);
+      const ends = shots.flatMap(shot => typeof shot.end === 'number' ? [shot.end] : []);
+      const start = starts.length ? Math.min(...starts) : null;
+      const end = ends.length ? Math.max(...ends) : null;
+      return {
+        key: `${item.id}-structure-${segmentIndex}`,
+        title: `${MATERIAL_TYPE_LABELS[segment.materialType]} · ${SHOT_ROLE_LABELS[segment.narrativeRole]}`,
+        meta: start !== null && end !== null ? `${start.toFixed(1)}–${end.toFixed(1)} 秒` : `${segment.shotIds.length} 镜`,
+      };
+    });
+    const fallbackSegments = (structurePlan?.preproduction?.benchmark.shotSummary || []).slice(0, 8).map((title, segmentIndex) => ({
+      key: `${item.id}-summary-${segmentIndex}`,
+      title,
+      meta: `第 ${segmentIndex + 1} 段`,
+    }));
+    const segments = structuredSegments.length ? structuredSegments : fallbackSegments;
+    const presenterMode = exactPlan?.presenter || structurePlan?.presenter;
+    const presenterId = exactPlan?.heygenAvatarId || structurePlan?.heygenAvatarId || '';
+    return {
+      item,
+      exactPlan,
+      reference,
+      segments,
+      presenterLabel: presenterMode === 'material'
+        ? '本地素材（无需数字人）'
+        : presenterId || (presenterMode ? '数字人待绑定' : '待确认'),
+      presenterModeLabel: presenterMode ? VIDEO_PRESENTATIONS[presenterMode] : '形象方案待确认',
+      costLabel: formatCost(exactPlan, item),
+    };
+  });
+  const publishingDays = [...new Map(display.contents.map(item => [item.plannedPublishDate || '待排期', [] as UnifiedPlanContent[]])).entries()]
+    .map(([date]) => ({ date, items: display.contents.filter(item => (item.plannedPublishDate || '待排期') === date) }))
+    .sort((left, right) => left.date.localeCompare(right.date));
+  const selectedPlan = planRows.find(row => row.item.id === selectedPlanId) || null;
+  const statusCopy: Record<ContentQueueItem["status"], { label: string; color?: string }> = {
+    planned: { label: '计划中' },
+    queued: { label: '待执行', color: 'blue' },
+    producing: { label: '制作中', color: 'processing' },
+    waiting_review: { label: '待验收', color: 'warning' },
+    completed: { label: '已完成', color: 'success' },
+    blocked: { label: '待处理', color: 'error' },
+  };
+  const targetPlatforms = display.platforms.filter(item => item.plannedCount > 0).map(item => item.platform);
+  const hasPersistedPaidMediaPlan = paidMediaBudget > 0 || trafficTasks.length > 0;
+  const displayPaidMediaTasks = hasPersistedPaidMediaPlan || !useShowcasePlanRows
+    ? []
+    : smartBusinessShowcaseAds(display.startsAt || '2026-10-13', display.endsAt || '2026-10-19', true)?.tasks || [];
+  const displayPaidMediaBudget = displayPaidMediaTasks.reduce((sum, task) => sum + Number(task.budget || 0), 0);
+  const paidMediaRows = hasPersistedPaidMediaPlan
+    ? (trafficTasks.length ? trafficTasks.map((task, index) => ({
+      key: task.key,
+      title: task.title,
+      description: task.description || '按本周经营计划完成投流配置与排期。',
+      platform: targetPlatforms[index % Math.max(targetPlatforms.length, 1)] || platformOptions[index % platformOptions.length],
+      status: '计划中',
+      budgetCny: paidMediaBudget > 0 ? paidMediaBudget / trafficTasks.length : null,
+      goal: task.businessDomain === 'publishing' ? '扩大重点内容触达' : '验证内容获客效率',
+      audience: '按经营计划定向',
+      timing: '本周排期内',
+      content: display.contents[index % Math.max(display.contents.length, 1)] || null,
+    })) : [{
+      key: 'persisted-paid-media-budget',
+      title: '平台投流配置',
+      description: '预算已进入本周计划，投流任务等待经营确认后排期。',
+      platform: targetPlatforms[0] || platformOptions[0],
+      status: '计划中',
+      budgetCny: paidMediaBudget,
+      goal: '验证重点内容触达与询盘转化',
+      audience: '待经营确认',
+      timing: '本周排期内',
+      content: display.contents[0] || null,
+    }])
+    : displayPaidMediaTasks.map((task, index) => {
+      const plannedChannel = task.channels.find(channel => platformOptions.includes(channel as Platform)) as Platform | undefined;
+      return {
+        key: task.id,
+        title: task.name,
+        description: `${task.video} · ${task.configuration.placements || '版位待确认'}`,
+        platform: plannedChannel || targetPlatforms[index % Math.max(targetPlatforms.length, 1)] || platformOptions[index % platformOptions.length],
+        status: index === 0 ? '计划中' : '待执行',
+        budgetCny: task.budget,
+        goal: task.goal,
+        audience: task.configuration.audience || '待经营确认',
+        timing: task.configuration.startsAt && task.configuration.endsAt
+          ? `${task.configuration.startsAt.slice(5)}–${task.configuration.endsAt.slice(5)}`
+          : '本周排期内',
+        content: display.masters[index] || display.contents[index] || display.contents[0] || null,
+      };
+    });
 
-  return <Drawer open={open} title="本周计划" size={720} onClose={onClose} destroyOnHidden>
-    <div className="space-y-6" aria-label="详细周计划">
-      <section>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-text-primary">{data.goal?.title || '本周经营计划'}</h2>
-            {data.goal?.objective && <p className="mt-2 text-sm leading-6 text-text-secondary">{data.goal.objective}</p>}
+  return <>
+    <Drawer open={open} title="本周计划" size={840} onClose={onClose} destroyOnHidden>
+      <div className="space-y-6" aria-label="详细周计划">
+        <section>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0"><h2 className="text-lg font-semibold text-text-primary">{data.goal?.title || '本周经营计划'}</h2>{data.goal?.objective && <p className="mt-2 text-sm leading-6 text-text-secondary">{data.goal.objective}</p>}</div>
+            {data.goal && <WeeklyRangeVisual startsAt={data.goal.startsAt} endsAt={data.goal.endsAt}/>}
           </div>
-          {data.goal && <WeeklyRangeVisual startsAt={data.goal.startsAt} endsAt={data.goal.endsAt}/>}
-        </div>
-        <dl className="mt-5 grid gap-4 border-y border-border py-4 sm:grid-cols-3">
-          <div><dt className="text-xs text-text-muted">计划内容</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.totals.versionCount} 条</dd></div>
-          <div><dt className="text-xs text-text-muted">视频总时长</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.totals.durationSeconds > 0 ? `${display.totals.durationSeconds} 秒` : '待确认'}</dd></div>
-          <div><dt className="text-xs text-text-muted">目标平台</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.platforms.filter(item => item.plannedCount > 0).map(item => platformLabels[item.platform]).join('、') || '待确认'}</dd></div>
-        </dl>
-      </section>
+          <dl className="mt-5 grid gap-3 border-y border-border py-4 sm:grid-cols-4">
+            <div><dt className="text-xs text-text-muted">计划视频</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.totals.versionCount} 条</dd></div>
+            <div><dt className="text-xs text-text-muted">视频总时长</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.totals.durationSeconds > 0 ? `${display.totals.durationSeconds} 秒` : '待确认'}</dd></div>
+            <div><dt className="text-xs text-text-muted">预计制作成本</dt><dd className="mt-1 text-base font-semibold tabular-nums text-text-primary">{productionBudget.max > 0 ? `¥${productionBudget.min.toFixed(0)}–${productionBudget.max.toFixed(0)}` : '待核算'}</dd></div>
+            <div><dt className="text-xs text-text-muted">目标平台</dt><dd className="mt-1 text-base font-semibold text-text-primary">{targetPlatforms.map(platform => platformLabels[platform]).join('、') || '待确认'}</dd></div>
+          </dl>
+        </section>
 
-      <section aria-label="开工预算方案" className="border-t border-border pt-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="text-base font-semibold text-text-primary">开工预算方案</h3>
-            <p className="mt-1 text-xs leading-5 text-text-secondary">费用按已确认分镜、480p 供应商价格和首帧调用次数预估；开始生产即授权所选上限，执行中不再逐镜询问预算。</p>
+        <section aria-label="计划视频清单">
+          <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-base font-semibold text-text-primary">计划视频</h3><Tag>{planRows.length} 条</Tag></div>
+          {planRows.length ? <div className="mt-3 divide-y divide-border border-y border-border">
+            {planRows.map(({ item, reference, costLabel }, index) => {
+              const status = statusCopy[item.status];
+              return <article key={item.id} className="grid gap-4 py-4 sm:grid-cols-[72px_minmax(0,1fr)_auto] sm:items-center" aria-label={`${item.title} 计划摘要`}>
+                <div className="relative h-[112px] w-[63px] overflow-hidden rounded-md border border-border bg-surface-2">
+                  {item.thumbnailUrl ? <img
+                    src={item.thumbnailUrl}
+                    alt={`${reference?.title || item.title} 爆款视频缩略图`}
+                    className="h-full w-full object-cover"
+                  /> : <span className="flex h-full items-center justify-center text-text-muted" aria-label="爆款参考缩略图待绑定"><Clapperboard size={22}/></span>}
+                  <span className="absolute left-1 top-1 flex h-6 w-6 items-center justify-center rounded bg-white/90" aria-hidden="true"><SocialPlatformIcon platform={reference?.platform || item.platform} size={14}/></span>
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2"><span className="text-xs font-medium text-text-muted">{String(index + 1).padStart(2, '0')}</span><h4 className="line-clamp-2 text-sm font-semibold text-text-primary">{item.title}</h4><Tag color={status.color}>{status.label}</Tag></div>
+                  <p className="mt-1 truncate text-xs text-text-secondary">{item.productName} · {platformLabels[item.platform]}</p>
+                  <p className="mt-2 flex items-center gap-1 text-xs text-text-muted"><CalendarRange size={13}/>{formatPublishTime(item)}</p>
+                </div>
+                <div className="flex min-w-[136px] flex-col items-start gap-3 sm:items-end">
+                  <div><p className="flex items-center gap-1 text-xs text-text-muted"><CircleDollarSign size={13}/>单条预算</p><p className="mt-1 text-sm font-semibold tabular-nums text-text-primary">{costLabel}</p></div>
+                  <Button className="min-h-11 min-w-[104px]" onClick={() => setSelectedPlanId(item.id)} aria-label={`查看 ${item.title} 详情`}>查看详情</Button>
+                </div>
+              </article>;
+            })}
+          </div> : <Empty className="py-8" image={Empty.PRESENTED_IMAGE_SIMPLE} description="计划视频正在生成"/>}
+        </section>
+
+        <section className="grid gap-4 lg:grid-cols-2" aria-label="发布与投流计划">
+          <article className="rounded-lg border border-blue-200 bg-blue-50/40 p-4" aria-label="发布计划">
+            <header className="flex items-center justify-between gap-3"><h3 className="flex items-center gap-2 text-base font-semibold text-text-primary"><Send size={17} className="text-blue-600"/>发布计划</h3><Tag color="blue">{display.contents.length} 条排期</Tag></header>
+            {publishingDays.length ? <ol className="mt-4 space-y-3 border-l border-blue-200 pl-4">{publishingDays.map(day => <li key={day.date} className="relative before:absolute before:-left-[21px] before:top-1 before:h-2.5 before:w-2.5 before:rounded-full before:border-2 before:border-blue-500 before:bg-white"><p className="text-xs font-semibold text-text-primary">{day.date === '待排期' ? day.date : `${day.date.slice(5).replace('-', '/')} · 北京时间`}</p><div className="mt-2 flex flex-wrap gap-2">{day.items.map(item => <span key={item.id} className="inline-flex min-h-8 items-center gap-2 rounded-md border border-blue-100 bg-white px-2 py-1 text-xs text-text-secondary"><SocialPlatformIcon platform={item.platform} size={14}/><span className="max-w-[150px] truncate">{item.title}</span></span>)}</div></li>)}</ol> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="发布排期待确认"/>}
+          </article>
+          <article className="rounded-lg border border-amber-200 bg-amber-50/40 p-4" aria-label="投流计划">
+            <header className="flex items-center justify-between gap-3"><h3 className="flex items-center gap-2 text-base font-semibold text-text-primary"><Megaphone size={17} className="text-amber-700"/>投流计划</h3><Tag color="gold">{hasPersistedPaidMediaPlan ? '已规划' : '预算草案'}</Tag></header>
+            <div className="mt-4 flex flex-wrap items-end justify-between gap-3 border-b border-amber-200 pb-4">
+              <div><p className="text-xs text-text-muted">{hasPersistedPaidMediaPlan ? '本周投流预算' : '建议预算上限'}</p><p className="mt-1 text-2xl font-semibold tabular-nums text-text-primary">{hasPersistedPaidMediaPlan && paidMediaBudget <= 0 ? '待核算' : `¥${(hasPersistedPaidMediaPlan ? paidMediaBudget : displayPaidMediaBudget).toFixed(2)}`}</p></div>
+              <p className="max-w-[210px] text-right text-xs leading-5 text-text-secondary">{hasPersistedPaidMediaPlan ? '按已保存的本周预算与投流任务展示' : '待经营确认后进入执行排期'}</p>
+            </div>
+            <ol className="mt-1 divide-y divide-amber-200">
+              {paidMediaRows.map(row => <li key={row.key} className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2"><span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-amber-200 bg-white"><SocialPlatformIcon platform={row.platform} size={15}/></span><h4 className="text-sm font-semibold text-text-primary">{row.title}</h4><Tag color={row.status === '计划中' ? 'gold' : undefined}>{row.status}</Tag></div>
+                  <p className="mt-2 text-xs leading-5 text-text-secondary">{row.description}</p>
+                  <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-text-muted"><div><dt className="inline">目标：</dt><dd className="inline text-text-secondary">{row.goal}</dd></div><div><dt className="inline">人群：</dt><dd className="inline text-text-secondary">{row.audience}</dd></div><div><dt className="inline">排期：</dt><dd className="inline text-text-secondary">{row.timing}</dd></div>{row.content && <div><dt className="inline">内容：</dt><dd className="inline text-text-secondary">{row.content.title}</dd></div>}</dl>
+                </div>
+                <div className="sm:text-right"><p className="text-[11px] text-text-muted">计划预算</p><p className="mt-1 text-sm font-semibold tabular-nums text-text-primary">{row.budgetCny === null ? '待核算' : `¥${row.budgetCny.toFixed(2)}`}</p></div>
+              </li>)}
+            </ol>
+          </article>
+        </section>
+      </div>
+    </Drawer>
+
+    <Modal
+      open={Boolean(selectedPlan)}
+      title="计划视频详情"
+      width={760}
+      footer={<Button type="primary" className="min-h-11" onClick={() => setSelectedPlanId("")}>关闭</Button>}
+      onCancel={() => setSelectedPlanId("")}
+      destroyOnHidden
+    >
+      {selectedPlan && <div className="space-y-6" aria-label={`${selectedPlan.item.title} 详细计划`}>
+        <header className="grid gap-4 border-b border-border pb-5 sm:grid-cols-[72px_minmax(0,1fr)_auto] sm:items-center">
+          <div className="relative h-[112px] w-[63px] overflow-hidden rounded-md border border-border bg-surface-2">
+            {selectedPlan.item.thumbnailUrl ? <img src={selectedPlan.item.thumbnailUrl} alt={`${selectedPlan.reference?.title || selectedPlan.item.title} 爆款视频缩略图`} className="h-full w-full object-cover"/> : <span className="flex h-full items-center justify-center text-text-muted"><Clapperboard size={22}/></span>}
           </div>
-          {reliableBudgetReady && <Tag color={savedBudgetMode === "economy" ? "warning" : "success"}>{savedBudgetMode === "economy" ? "精简预算" : "完整保障"}</Tag>}
-        </div>
-        {!reliableBudgetReady ? <Alert className="mt-3" type="warning" showIcon title="可靠预算尚未生成" description="请先完成周计划详情准备；系统不会在预算未知时启动生产。" /> : <>
-          <Radio.Group className="mt-3 block w-full" value={budgetMode} disabled={!canEditBudget || budgetBusy} onChange={event => setBudgetMode(event.target.value)}>
-            <div className="divide-y divide-border border-y border-border">
-              <label className="flex cursor-pointer items-start gap-3 py-3">
-                <Radio value="protected" />
-                <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-text-primary">完整保障（推荐） · 上限 ¥{budgetMax.toFixed(2)}</span><span className="mt-1 block text-xs leading-5 text-text-secondary">覆盖全部分镜的一次生成，并预留每镜一次付费重做；确认后按该上限连续生产。</span></span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-3 py-3">
-                <Radio value="economy" />
-                <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-text-primary">精简预算 · 上限 ¥{budgetMin.toFixed(2)}</span><span className="mt-1 block text-xs leading-5 text-text-secondary">固定 480p、每镜一次生成，不预留付费重做；质检不通过时需重新确认追加预算。</span></span>
-              </label>
-            </div>
-          </Radio.Group>
-          {canEditBudget && budgetMode !== savedBudgetMode && <div className="mt-3 flex justify-end"><Button type="primary" loading={budgetBusy} onClick={() => void saveBudgetMode()}>应用预算方案</Button></div>}
-          {!canEditBudget && <p className="mt-3 text-xs text-text-muted">{data.run ? "生产已开始，本次预算授权已冻结。" : "历史计划仅供查看，不能修改预算。"}</p>}
-        </>}
-      </section>
-
-      <section aria-label="周计划内容与排期">
-        <h3 className="text-base font-semibold text-text-primary">内容与发布时间</h3>
-        <div className="mt-3 divide-y divide-border border-y border-border">
-          {display.contents.map(item => <article key={item.id} className="flex min-w-0 items-start gap-3 py-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-surface-2" aria-hidden="true"><SocialPlatformIcon platform={item.platform} size={18}/></span>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-text-primary">{item.title}</p>
-              <p className="mt-1 text-xs text-text-secondary">{item.productName} · {platformLabels[item.platform]} · {formatPublishTime(item)}</p>
-            </div>
-          </article>)}
-          {display.contents.length === 0 && <p className="py-4 text-sm text-text-secondary">计划内容正在生成，完成后会在这里显示。</p>}
-        </div>
-      </section>
-
-      <section aria-label="本周计划爆款依据" className="border-t border-border pt-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><h3 className="text-base font-semibold text-text-primary">计划依据 · 爆款参考</h3><p className="mt-1 text-xs text-text-secondary">这里记录本周选题实际绑定的爆款视频；点击可回到爆款库查看原素材与分析。</p></div>
-          <Tag color={missingReferenceCount > 0 ? 'warning' : 'success'}>{weeklyReferences.length} 条已绑定{missingReferenceCount > 0 ? ` · ${missingReferenceCount} 条待补` : ''}</Tag>
-        </div>
-        {weeklyReferences.length > 0 ? <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {weeklyReferences.map(({ item, reference }) => <button
-            key={reference.referenceId || reference.sourceUrl || reference.title}
-            type="button"
-            onClick={() => window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: inspirationReferenceNavigationDetail(reference, item.contentId) }))}
-            className="group overflow-hidden rounded-lg border border-border bg-white text-left transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          >
-            <span className="relative flex aspect-video w-full items-center justify-center overflow-hidden bg-surface-2">
-              {reference.thumbnailUrl ? <img
-                src={thumbnailUrlWithSourceFallback(reference.thumbnailUrl, reference.sourceUrl)}
-                alt={`${reference.title || item.title} 视频缩略图`}
-                className="h-full w-full object-cover transition-transform duration-200 motion-safe:group-hover:scale-[1.02]"
-              /> : <SocialPlatformIcon platform={reference.platform} size={32}/>}
-              <span className="absolute left-2 top-2 flex h-7 w-7 items-center justify-center rounded-md bg-white/90 shadow-sm" aria-hidden="true"><SocialPlatformIcon platform={reference.platform} size={16}/></span>
-              <span className="absolute bottom-2 right-2 rounded-full bg-black/65 px-2 py-1 text-[10px] font-semibold text-white">查看原视频</span>
-            </span>
-            <span className="flex min-w-0 items-center gap-3 px-3 py-3">
-              <span className="min-w-0 flex-1"><span className="block line-clamp-2 text-sm font-semibold text-text-primary">{reference.title || item.title}</span><span className="mt-1 block truncate text-xs text-text-secondary">用于：{item.productName} · {platformLabels[item.platform]}</span></span>
-              <Eye size={16} className="shrink-0 text-accent" aria-hidden="true"/>
-            </span>
-          </button>)}
-        </div> : <p className="mt-3 text-sm text-text-secondary">当前计划尚未绑定可核验的爆款参考；系统不会用虚构素材填充。</p>}
-      </section>
-    </div>
-  </Drawer>;
+          <div className="min-w-0"><h3 className="text-base font-semibold text-text-primary">{selectedPlan.item.title}</h3><p className="mt-2 text-sm text-text-secondary">{selectedPlan.item.productName} · {platformLabels[selectedPlan.item.platform]} · {formatPublishTime(selectedPlan.item)}</p></div>
+          <div className="sm:text-right"><p className="text-xs text-text-muted">预计制作成本</p><p className="mt-1 text-base font-semibold tabular-nums text-text-primary">{selectedPlan.costLabel}</p></div>
+        </header>
+        <section aria-label={`${selectedPlan.item.title} 内容结构`}>
+          <h4 className="text-sm font-semibold text-text-primary">内容结构</h4>
+          {selectedPlan.segments.length ? <ol className="mt-3 flex min-w-0 gap-2 overflow-x-auto pb-2">
+            {selectedPlan.segments.map((segment, segmentIndex) => <li key={segment.key} className="relative min-w-[132px] flex-1 rounded-md border border-border bg-white px-3 py-3 before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:rounded-l-md before:bg-accent/70">
+              <span className="text-[11px] font-medium text-text-muted">{String(segmentIndex + 1).padStart(2, '0')} · {segment.meta}</span>
+              <strong className="mt-1 block text-xs font-semibold leading-5 text-text-primary">{segment.title}</strong>
+            </li>)}
+          </ol> : <p className="mt-3 text-sm text-text-secondary">编导结构尚未写入本周计划。</p>}
+        </section>
+        <section aria-label={`${selectedPlan.item.title} 数字人形象`} className="border-t border-border pt-5">
+          <h4 className="flex items-center gap-2 text-sm font-semibold text-text-primary"><UserRound size={16}/>数字人形象与制作依据</h4>
+          <dl className="mt-3 grid gap-4 text-xs sm:grid-cols-3">
+            <div><dt className="text-text-muted">形象方案</dt><dd className="mt-1 font-medium text-text-primary">{selectedPlan.presenterModeLabel}</dd></div>
+            <div><dt className="text-text-muted">选用形象</dt><dd className="mt-1 break-words font-medium text-text-primary">{selectedPlan.presenterLabel}</dd></div>
+            <div><dt className="text-text-muted">参考视频</dt><dd className="mt-1 font-medium text-text-primary">{selectedPlan.reference?.title || '待绑定'}</dd></div>
+          </dl>
+          {selectedPlan.reference && <Button className="mt-4 min-h-11" icon={<Eye size={15}/>} onClick={() => window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: inspirationReferenceNavigationDetail(selectedPlan.reference!, selectedPlan.item.contentId) }))}>查看爆款原片</Button>}
+        </section>
+      </div>}
+    </Modal>
+  </>;
 }
 
 export function BusinessInterpretation({ data, onViewReview }: { data: DigitalEmployeeOverview; onViewReview: () => void }) {
@@ -514,7 +709,8 @@ export function BusinessInterpretation({ data, onViewReview }: { data: DigitalEm
   const display = buildSmartBusinessDisplayModel(data);
   const weeklyItems = (data.contentQueue?.items || []).filter(item => item.origin === 'weekly_plan');
   const packageBudget = weeklyVideoBudget(data);
-  const estimatedCost = Math.max(
+  const useShowcaseBudget = (isSmartBusinessShowcaseEnabled() || isSmartBusinessWeeklyPlanPreviewEnabled()) && display.contents.length === SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount;
+  const estimatedCost = useShowcaseBudget ? display.totals.budgetMidCny : Math.max(
     weeklyItems.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0),
     packageBudget.estimated,
   );
@@ -559,6 +755,8 @@ type UnifiedPlanContent = {
   productionRole: "master" | "platform_adaptation";
   status: ContentQueueItem["status"];
   queueItem: ContentQueueItem | null;
+  estimatedCostCny: number | null;
+  estimatedCostRange: { minCny: number; maxCny: number } | null;
   metrics: {
     views: number;
     likes: number;
@@ -619,6 +817,7 @@ const demoPerformanceBase: Record<Platform, { views: number; engagementRate: num
   tiktok: { views: 5_200, engagementRate: 6.8 },
   instagram: { views: 3_600, engagementRate: 5.5 },
   facebook: { views: 1_800, engagementRate: 3.4 },
+  linkedin: { views: 1_200, engagementRate: 3.8 },
 };
 
 function deterministicSeed(value: string) {
@@ -662,7 +861,10 @@ function contentThumbnailUrl(plan: VideoCreationPlan, queueItem: ContentQueueIte
 }
 
 function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedAccountId = ""): SmartBusinessDisplayModel {
-  const showcaseTotals = isSmartBusinessShowcaseEnabled() ? SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS : null;
+  const showcaseTotals = isSmartBusinessShowcaseEnabled() || isSmartBusinessWeeklyPlanPreviewEnabled()
+    ? SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS
+    : null;
+  const showcaseWeeklyVideos = showcaseTotals ? smartBusinessShowcaseWeeklyVideos(data, true) : null;
   // Older model responses sometimes persisted a structured title or its accidental
   // string coercion. Only named text fields are displayable; never stringify facts.
   const displayText = (value: unknown, depth = 0): string => {
@@ -768,6 +970,13 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
       productionRole: plan.productionRole === "platform_adaptation" ? "platform_adaptation" : "master",
       status: queueItem?.status || "planned",
       queueItem,
+      estimatedCostCny: plan.productionRole === "platform_adaptation"
+        ? 0
+        : Number(plan.estimatedCost || queueItem?.estimatedCostCny || 0) || null,
+      estimatedCostRange: plan.estimatedCostRange ? {
+        minCny: Number(plan.estimatedCostRange.minCny || 0),
+        maxCny: Number(plan.estimatedCostRange.maxCny || 0),
+      } : null,
       metrics: { views, likes, comments, shares, interactions, engagementRate, source: hasActual ? "real" : "demo" },
     };
   });
@@ -794,6 +1003,8 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
       productionRole: 'master',
       status: item.status,
       queueItem: item,
+      estimatedCostCny: item.estimatedCostCny,
+      estimatedCostRange: null,
       metrics: {
         views: hasActual ? actual?.views || 0 : fallback.views,
         likes: hasActual ? actual?.likes || 0 : fallback.likes,
@@ -808,7 +1019,34 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
   // Until weekly orders have real task bindings, show the tenant's actual content
   // executions instead of five generated placeholders that all appear unstarted.
   const mappedContents = queue.length ? plannedContents : manualContents.length ? manualContents : plannedContents;
-  const contents = mappedContents.filter(item => !selectedAccountId || item.accountId === selectedAccountId);
+  const showcaseContents = showcaseWeeklyVideos?.map((video, index): UnifiedPlanContent => {
+    const base = mappedContents.length ? mappedContents[index % mappedContents.length]! : null;
+    return {
+      id: video.id,
+      contentId: video.id,
+      familyId: video.id,
+      title: engagingContentTitle(video.title, index),
+      caption: base?.caption || '',
+      tags: base?.tags || [],
+      productName: video.productName,
+      thumbnailUrl: video.thumbnailUrl,
+      platform: video.platform,
+      accountId: video.accountId,
+      accountLabel: video.accountLabel,
+      plannedPublishDate: video.plannedPublishDate,
+      plannedPublishAt: video.plannedPublishAt,
+      duration: video.duration,
+      inspirationReference: base?.inspirationReference || null,
+      productionRole: 'master',
+      status: video.status,
+      queueItem: null,
+      estimatedCostCny: video.estimatedCostCny,
+      estimatedCostRange: { minCny: video.budgetMinCny, maxCny: video.budgetMaxCny },
+      metrics: demoMetrics(video.platform, video.id),
+    };
+  }) || [];
+  const allContents = showcaseContents.length ? showcaseContents : mappedContents;
+  const contents = allContents.filter(item => !selectedAccountId || item.accountId === selectedAccountId);
   const masters = contents.filter(item => item.productionRole === "master");
   const groupedAccounts = new Map<string, UnifiedAccountRow>();
   for (const item of contents) {
@@ -839,13 +1077,15 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
     }
   }
   const accounts = [...groupedAccounts.values()];
-  const planByContentId = new Map(sourcePlans.map(plan => [plan.contentId, plan]));
-  const budgetMinCny = operatingContext?.budget.totalMinCny
-    ?? masters.reduce((sum, item) => sum + Number(planByContentId.get(item.contentId)?.estimatedCostRange?.minCny || 0), 0);
-  const budgetMaxCny = operatingContext?.budget.totalMaxCny
-    ?? masters.reduce((sum, item) => sum + Number(planByContentId.get(item.contentId)?.estimatedCostRange?.maxCny || 0), 0);
-  const fallbackBudget = operatingContext?.budget.totalCny
-    ?? masters.reduce((sum, item) => sum + Number(planByContentId.get(item.contentId)?.estimatedCost || 0), 0);
+  const itemBudgetMin = masters.reduce((sum, item) => sum + Number(item.estimatedCostRange?.minCny || 0), 0);
+  const itemBudgetMax = masters.reduce((sum, item) => sum + Number(item.estimatedCostRange?.maxCny || 0), 0);
+  const itemBudgetPoint = masters.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0);
+  const budgetMinCny = showcaseContents.length ? itemBudgetMin : operatingContext?.budget.productionMinCny
+    ?? itemBudgetMin;
+  const budgetMaxCny = showcaseContents.length ? itemBudgetMax : operatingContext?.budget.productionMaxCny
+    ?? itemBudgetMax;
+  const fallbackBudget = showcaseContents.length ? itemBudgetPoint : operatingContext?.budget.productionCny
+    ?? itemBudgetPoint;
   const normalizedMin = budgetMinCny || fallbackBudget;
   const normalizedMax = budgetMaxCny || fallbackBudget;
   const realAggregateViews = data.businessSnapshot?.social.views.value;
@@ -889,11 +1129,10 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
     totals: {
       accountCount: accounts.length,
       originalCount: operatingContext?.outputs.originalCount ?? masters.length,
-      versionCount: showcaseTotals?.plannedVideoCount
-        ?? (contents.length
-          || operatingContext?.outputs.platformVersionCount
-          || operatingContext?.outputs.count
-          || 0),
+      versionCount: contents.length
+        || operatingContext?.outputs.platformVersionCount
+        || operatingContext?.outputs.count
+        || 0,
       durationSeconds: contents.reduce((sum, item) => sum + item.duration, 0)
         || operatingContext?.outputs.totalDurationSeconds
         || 0,
@@ -901,8 +1140,7 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
       budgetMaxCny: normalizedMax,
       budgetMidCny: fallbackBudget || (normalizedMin + normalizedMax) / 2,
       completedCount: contents.filter(item => item.status === "completed").length,
-      waitingReviewCount: showcaseTotals?.waitingReviewCount
-        ?? contents.filter(item => item.status === "waiting_review").length,
+      waitingReviewCount: contents.filter(item => item.status === "waiting_review").length,
       blockedCount: contents.filter(item => item.status === "blocked").length,
       views,
       interactions,
@@ -919,9 +1157,12 @@ function PlanDataSourceBadge({ source }: { source: DisplayMetricSource }) {
 }
 
 function HomeView({ data, onNavigate, selectedAccountId = "", overviewRangeBusy = false, onOverviewRangeChange }: { data: DigitalEmployeeOverview; onNavigate?: (page: Page) => void; selectedAccountId?: string; overviewRangeBusy?: boolean; onOverviewRangeChange?: (range: BusinessHealthOverviewRange) => void }) {
+  const useOverviewPreview = isSmartBusinessOverviewPreviewEnabled();
+  const overviewData = useOverviewPreview ? applySmartBusinessShowcaseData(data, true) : data;
+  const previewRecommendations = smartBusinessShowcaseNextRoundRecommendations(overviewData, useOverviewPreview || isSmartBusinessShowcaseEnabled());
   return <div className="space-y-6">
-    <BusinessHealthOverview detailsOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={overviewRangeBusy} onOverviewRangeChange={onOverviewRangeChange} onNavigate={onNavigate}/>
-    <NextRoundRecommendationsSection summary={data.review?.status === "generated" ? data.review.summary : undefined} industryTrends={data.industryTrends} onOpen={page => onNavigate?.(page as Page)}/>
+    <BusinessHealthOverview detailsOnly data={overviewData} selectedAccountId={selectedAccountId} overviewRangeBusy={overviewRangeBusy} onOverviewRangeChange={onOverviewRangeChange} onNavigate={onNavigate}/>
+    <NextRoundRecommendationsSection summary={overviewData.review?.status === "generated" ? overviewData.review.summary : undefined} recommendations={previewRecommendations || undefined} industryTrends={previewRecommendations?.industryTrends || overviewData.industryTrends} onOpen={page => onNavigate?.(page as Page)}/>
   </div>;
 }
 

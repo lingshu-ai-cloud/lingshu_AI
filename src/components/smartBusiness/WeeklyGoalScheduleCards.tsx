@@ -1,7 +1,7 @@
 import { Button, Tag } from 'antd';
 import type { VideoCreationPlan } from '../../lib/videoCreationPlan';
 import { scheduleWeeklyVideos, weeklyPipelineCards } from '../../lib/weeklyGoalSchedule';
-const labels = { tiktok: 'TikTok', facebook: 'Facebook', instagram: 'Instagram', youtube: 'YouTube' };
+const labels = { tiktok: 'TikTok', facebook: 'Facebook', instagram: 'Instagram', youtube: 'YouTube', linkedin: 'LinkedIn' };
 export default function WeeklyGoalScheduleCards({ plans, startsAt, endsAt, onEdit, accounts = [] }: { plans: VideoCreationPlan[]; accounts?: Array<{ accountId: string; accountLabel: string }>; startsAt: string; endsAt: string; onEdit: () => void }) {
   const scheduled = scheduleWeeklyVideos(plans, startsAt, endsAt);
   const accountPlans = new Map<string, VideoCreationPlan[]>();

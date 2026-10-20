@@ -15,8 +15,12 @@ import type {SocialPaidOperationIntent} from '../lib/socialContentTaskBudgetAuth
 import type {createSocialContentPaidOperationPermit} from '../lib/socialContentPaidOperationPermit.js';
 import type {DigitalPresenterExecutionRequest} from './socialContentDigitalPresenterAdapter.js';
 import type {WholeTrackPresenterSpeech} from './socialContentWholeTrackPresenterAudio.js';
+import {isInternalBudgetExemptTenant} from '../lib/tenantBudgetExemption.js';
 
 const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
+export function wholeTrackReservationExceedsInternalBudget(tenantId:string,reservationCny:number,maximumCostCny:number){
+ return !isInternalBudgetExemptTenant(tenantId)&&reservationCny>maximumCostCny;
+}
 export interface WholeTrackHeyGenFunding {
  scope:SocialTaskBudgetScope;requirements:PaidStageRequirement[];routeBindings:Record<string,BoundPaidRoute>;
  intents:SocialPaidOperationIntent[];permit:ReturnType<typeof createSocialContentPaidOperationPermit>;
@@ -206,7 +210,7 @@ export function createWholeTrackSocialHeyGenBridge(input:{
      if(!bound)throw Error('whole_track_heygen_audio_not_resolved');
      const {intent}=canonical({...request,approvedFirstFrame:bound.request.approvedFirstFrame});
      const reservation=funding.readReservedCny(intent.operationId);
-     if(!(reservation>0)||reservation>request.maximumCostCny)throw Error('whole_track_heygen_reservation_exceeds_plan');
+     if(!(reservation>0)||wholeTrackReservationExceedsInternalBudget(request.tenantId,reservation,request.maximumCostCny))throw Error('whole_track_heygen_reservation_exceeds_plan');
      requestIds.set(request.idempotencyKey,bound);return {allowed:true,reservationRef:intent.operationId};
     }catch(error){return {allowed:false,reason:String(error instanceof Error?error.message:error)};}
    },

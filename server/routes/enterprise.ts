@@ -8,6 +8,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { enterpriseProductIdentity, mergeEnterpriseProductIdentity } from '../lib/enterpriseProductIdentity.js';
+import {
+  ensureProductScenePreparationPlan,
+  type ProductScenePreparationPlan,
+} from '../../shared/contracts/productScenePreparation.js';
 import type { Request } from 'express';
 import { store } from '../storage/index.js';
 import type { AutonomyLevel } from '../autonomy/actionRules.js';
@@ -236,6 +240,7 @@ export interface EnterpriseProfile {
       certificateImages?: Array<{ name: string; type: string; size: number; updatedAt: string; url?: string }>;
       sceneImages?: Array<{ name: string; type: string; size: number; updatedAt: string; url?: string }>;
       brandAssets?: Array<{ name: string; type: string; size: number; updatedAt: string; url?: string }>;
+      productScenePreparation?: ProductScenePreparationPlan;
     }>;
   };
   brand: {
@@ -764,20 +769,24 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
   const products = profile.products ?? { categories: '', priceRange: '', moq: '', certifications: '', highlights: '' };
   const existing = Array.isArray(products.items) ? products.items : [];
   const items = existing.length
-    ? existing.map((item, index) => ({
-      ...item,
-      id: enterpriseProductIdentity(item, index),
-      // 空名称代表尚在编辑的产品草稿，不能在保存时隐式删除。
-      name: typeof item.name === 'string' ? item.name : (item.sku || ''),
-      images: Array.isArray(item.images) ? item.images : [],
-      videos: Array.isArray(item.videos) ? item.videos : [],
-      documents: Array.isArray(item.documents) ? item.documents : [],
-      factoryImages: Array.isArray(item.factoryImages) && item.factoryImages.length ? item.factoryImages : (Array.isArray(item.videos) ? item.videos : []),
-      packagingImages: Array.isArray(item.packagingImages) ? item.packagingImages : [],
-      certificateImages: Array.isArray(item.certificateImages) && item.certificateImages.length ? item.certificateImages : (Array.isArray(item.documents) ? item.documents : []),
-      sceneImages: Array.isArray(item.sceneImages) ? item.sceneImages : [],
-      brandAssets: Array.isArray(item.brandAssets) ? item.brandAssets : [],
-    }))
+    ? existing.map((item, index) => {
+      const id = enterpriseProductIdentity(item, index);
+      return {
+        ...item,
+        id,
+        // 空名称代表尚在编辑的产品草稿，不能在保存时隐式删除。
+        name: typeof item.name === 'string' ? item.name : (item.sku || ''),
+        images: Array.isArray(item.images) ? item.images : [],
+        videos: Array.isArray(item.videos) ? item.videos : [],
+        documents: Array.isArray(item.documents) ? item.documents : [],
+        factoryImages: Array.isArray(item.factoryImages) && item.factoryImages.length ? item.factoryImages : (Array.isArray(item.videos) ? item.videos : []),
+        packagingImages: Array.isArray(item.packagingImages) ? item.packagingImages : [],
+        certificateImages: Array.isArray(item.certificateImages) && item.certificateImages.length ? item.certificateImages : (Array.isArray(item.documents) ? item.documents : []),
+        sceneImages: Array.isArray(item.sceneImages) ? item.sceneImages : [],
+        brandAssets: Array.isArray(item.brandAssets) ? item.brandAssets : [],
+        productScenePreparation: ensureProductScenePreparationPlan(id, item.productScenePreparation),
+      };
+    })
     : [];
   const operations = {
     leadTime: '',
@@ -875,7 +884,8 @@ function stableFactJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableFactJson).join(',')}]`;
   if (value && typeof value === 'object') {
     return `{${Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => key !== 'factVersion' && key !== 'lastSavedAt' && key !== 'lastSavedSource' && key !== 'lastSavedBy')
+      .filter(([key]) => key !== 'factVersion' && key !== 'lastSavedAt' && key !== 'lastSavedSource'
+        && key !== 'lastSavedBy' && key !== 'productScenePreparation')
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, child]) => `${JSON.stringify(key)}:${stableFactJson(child)}`).join(',')}}`;
   }

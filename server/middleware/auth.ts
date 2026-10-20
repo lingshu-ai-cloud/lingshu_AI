@@ -122,7 +122,7 @@ export async function requireAuth(
   const locals = res.locals as AuthLocals;
   locals.userId = authenticated?.userId || 'signed-media';
   locals.tenantId = authenticated?.tenantId || signedMedia!.tenantId;
-  locals.dataAuthority = authenticated?.dataAuthority;
+  locals.dataAuthority = authenticated?.dataAuthority || signedMedia?.dataAuthority;
   locals.supportAccess = authenticated?.supportAccess;
   if (locals.supportAccess) { enforceSupportSessionReadOnly(req, res, next); return; }
   // A signed media URL is already bound to one tenant, one exact path and a
@@ -133,6 +133,7 @@ export async function requireAuth(
       res.status(403).json({ error: 'asset_tenant_mismatch' });
       return;
     }
+    if (signedMedia.dataAuthority) bindDataAuthority(signedMedia.dataAuthority);
     next();
     return;
   }

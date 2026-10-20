@@ -55,6 +55,11 @@ assert.equal(stableRender, '/api/overseas/studio/local-renders/studio-example.mp
 const freshOutput = refreshStudioProjectAssetUrls(savedOutput, tenantId);
 const freshRender = new URL((freshOutput.languageRenderOutputs as any).zh.previewUrl, 'http://local');
 assert.deepEqual(verifyAssetToken(freshRender.searchParams.get('assetToken'), freshRender.pathname), { tenantId });
+const unicodeOutput = studioProjectSpecForStorage({ renderOutputPreviewUrl: '/api/overseas/publishing/local-videos/微信成片.mp4' });
+assert.equal(unicodeOutput.renderOutputPreviewUrl, '/api/overseas/studio/local-renders/微信成片.mp4');
+const freshUnicodeRender = new URL(String(refreshStudioProjectAssetUrls(unicodeOutput, tenantId).renderOutputPreviewUrl), 'http://local');
+assert.equal(decodeURIComponent(freshUnicodeRender.pathname), '/api/overseas/studio/local-renders/微信成片.mp4');
+assert.deepEqual(verifyAssetToken(freshUnicodeRender.searchParams.get('assetToken'), freshUnicodeRender.pathname), { tenantId });
 const previewUi = studioUi.slice(studioUi.indexOf('/* ⑥ 成片预览 */'));
 assert.match(previewUi, /RenderedVideoPlayer key=\{formalPreviewUrl\}/);
 assert.match(previewUi, /onActivate=\{stopPreview\}/, 'rendered playback stops simulated narration and BGM');

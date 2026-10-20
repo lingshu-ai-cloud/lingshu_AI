@@ -68,6 +68,9 @@ pb_data/
 /data/social-content-upload-temp/
 /data/studio-presenter-paid-budget/
 
+# WeChat DevTools machine-local settings
+/apps/shooting-miniapp/project.private.config.json
+
 # Local media and product runtime state
 /data/media/
 /data/bgm/
@@ -100,6 +103,7 @@ pb_data/
 /data/materials.json
 /data/messenger-customers.json
 /data/messenger-customers.json.*.tmp
+/dist-weekly-task-card/
 /data/migration-tenant-id-map.json
 /data/oauth-config.json
 /data/orders.json

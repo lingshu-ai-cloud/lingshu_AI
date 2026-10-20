@@ -9,7 +9,7 @@ const CONFIG_FILE = process.env.NODE_ENV === 'test' && process.env.OAUTH_CONFIG_
   ? path.resolve(process.env.OAUTH_CONFIG_FILE)
   : path.join(__dirname, '../../data/oauth-config.json');
 
-export type OAuthPlatform = 'youtube' | 'meta' | 'instagram' | 'tiktok';
+export type OAuthPlatform = 'youtube' | 'meta' | 'instagram' | 'tiktok' | 'linkedin';
 
 export interface StoredOAuthConfig {
   youtubeOAuthClientId?: string;
@@ -20,6 +20,8 @@ export interface StoredOAuthConfig {
   instagramAppSecret?: string;
   tiktokClientKey?: string;
   tiktokClientSecret?: string;
+  linkedinClientId?: string;
+  linkedinClientSecret?: string;
   disabledPlatforms?: OAuthPlatform[];
   advancedManualConnectEnabled?: boolean;
   updatedAt?: string;
@@ -34,6 +36,8 @@ export interface EffectiveOAuthConfig {
   instagramAppSecret: string;
   tiktokClientKey: string;
   tiktokClientSecret: string;
+  linkedinClientId: string;
+  linkedinClientSecret: string;
   advancedManualConnectEnabled: boolean;
 }
 
@@ -49,9 +53,10 @@ export class OAuthConfigUnavailableError extends Error {
 const allowedKeys = new Set([
   'youtubeOAuthClientId', 'youtubeOAuthClientSecret', 'metaSocialAppId', 'metaSocialAppSecret',
   'instagramAppId', 'instagramAppSecret',
-  'tiktokClientKey', 'tiktokClientSecret', 'disabledPlatforms', 'advancedManualConnectEnabled', 'updatedAt',
+  'tiktokClientKey', 'tiktokClientSecret', 'linkedinClientId', 'linkedinClientSecret',
+  'disabledPlatforms', 'advancedManualConnectEnabled', 'updatedAt',
 ]);
-const oauthPlatforms = new Set<OAuthPlatform>(['youtube', 'meta', 'instagram', 'tiktok']);
+const oauthPlatforms = new Set<OAuthPlatform>(['youtube', 'meta', 'instagram', 'tiktok', 'linkedin']);
 let mutationQueue: Promise<void> = Promise.resolve();
 
 function text(value: unknown): string {
@@ -141,6 +146,7 @@ export function effectiveOAuthConfig(stored: StoredOAuthConfig = readOAuthConfig
   const metaDisabled = platformDisabled(stored, 'meta');
   const instagramDisabled = platformDisabled(stored, 'instagram');
   const tiktokDisabled = platformDisabled(stored, 'tiktok');
+  const linkedinDisabled = platformDisabled(stored, 'linkedin');
   return {
     youtubeOAuthClientId: youtubeDisabled ? '' : text(stored.youtubeOAuthClientId) || envText('YOUTUBE_OAUTH_CLIENT_ID'),
     youtubeOAuthClientSecret: youtubeDisabled ? '' : text(stored.youtubeOAuthClientSecret) || envText('YOUTUBE_OAUTH_CLIENT_SECRET'),
@@ -150,6 +156,8 @@ export function effectiveOAuthConfig(stored: StoredOAuthConfig = readOAuthConfig
     instagramAppSecret: instagramDisabled ? '' : text(stored.instagramAppSecret) || envText('INSTAGRAM_APP_SECRET'),
     tiktokClientKey: tiktokDisabled ? '' : text(stored.tiktokClientKey) || envText('TIKTOK_CLIENT_KEY'),
     tiktokClientSecret: tiktokDisabled ? '' : text(stored.tiktokClientSecret) || envText('TIKTOK_CLIENT_SECRET'),
+    linkedinClientId: linkedinDisabled ? '' : text(stored.linkedinClientId) || envText('LINKEDIN_CLIENT_ID'),
+    linkedinClientSecret: linkedinDisabled ? '' : text(stored.linkedinClientSecret) || envText('LINKEDIN_CLIENT_SECRET'),
     advancedManualConnectEnabled: stored.advancedManualConnectEnabled ?? envText('ADVANCED_MANUAL_CONNECT_ENABLED') === 'true',
   };
 }
@@ -176,6 +184,12 @@ export function getTikTokOAuthClient(): { clientKey: string; clientSecret: strin
   const config = effectiveOAuthConfig();
   if (!config.tiktokClientKey || !config.tiktokClientSecret) return null;
   return { clientKey: config.tiktokClientKey, clientSecret: config.tiktokClientSecret };
+}
+
+export function getLinkedInOAuthClient(): { clientId: string; clientSecret: string } | null {
+  const config = effectiveOAuthConfig();
+  if (!config.linkedinClientId || !config.linkedinClientSecret) return null;
+  return { clientId: config.linkedinClientId, clientSecret: config.linkedinClientSecret };
 }
 
 export function advancedManualConnectEnabled(): boolean {
@@ -212,6 +226,7 @@ export function oauthCallbackUrls(req: Request) {
     instagram: `${origin}/api/overseas/social/oauth/instagram/callback`,
     facebook: `${origin}/api/overseas/social/oauth/facebook/callback`,
     tiktok: `${origin}/api/overseas/social/oauth/tiktok/callback`,
+    linkedin: `${origin}/api/overseas/social/oauth/linkedin/callback`,
   };
 }
 
@@ -233,4 +248,9 @@ export async function getTenantAwareGoogleOAuthClient(tenantId?: string): Promis
 export async function getTenantAwareTikTokOAuthClient(tenantId?: string): Promise<{ clientKey: string; clientSecret: string } | null> {
   const { getTenantTikTokOAuthClient } = await import('./tenantPlatformApps.js');
   return getTenantTikTokOAuthClient(tenantId);
+}
+
+export async function getTenantAwareLinkedInOAuthClient(tenantId?: string): Promise<{ clientId: string; clientSecret: string } | null> {
+  const { getTenantLinkedInOAuthClient } = await import('./tenantPlatformApps.js');
+  return getTenantLinkedInOAuthClient(tenantId);
 }

@@ -12,6 +12,14 @@ import { createShootingTasksRouter } from './shootingTasks.js';
 import { createProductionCostQuotesRouter, createProductionInputRequestsRouter } from './productionGovernance.js';
 import { autoFulfillProductionInputRequestsForMaterial } from '../production/productionInputRequests.js';
 import { materialAssetV2FromRecord, normalizeMaterialAssetV2, type MaterialAssetV2Metadata } from '../../shared/contracts/materialAssetV2.js';
+import { buildMaterialCapabilityManifest, type MaterialCapabilityManifest } from '../../shared/contracts/materialCapabilityManifest.js';
+import {
+  IMAGE_DELIVERABLES,
+  IMAGE_DELIVERABLE_LABELS,
+  IMAGE_PRODUCTION_STRATEGIES,
+  type ImageDeliverable,
+  type ImageProductionStrategy,
+} from '../../shared/imageCreativePlanning.js';
 import { auditShotEvidence } from '../lib/shotEvidenceAudit.js';
 import { validateSpeechCues } from '../../src/lib/narrationAlignment.js';
 import { safeStudioRenderOutputPath, studioRenderMediaRouter } from '../lib/studioRenderMedia.js';
@@ -21,7 +29,7 @@ import { createStudioAvatarProductionRouter } from '../lib/studioAvatarProductio
 import { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
 import { freeCreationCompletionIssues, normalizeFreeCreationProjectSpec } from '../../shared/contracts/freeCreationProject.js';
 import { STUDIO_MANUAL_HANDOFF_ACTIONS, isManualStudioProject, studioProjectRenderPaths } from '../../shared/contracts/studioManualHandoff.js';
-import { studioProjectRevisionConflict } from '../lib/studioProjectRevision.js';
+import { compareAndSwapStudioProject, studioProjectRevisionConflict } from '../lib/studioProjectRevision.js';
 export { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
 import { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
 export { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
@@ -30,9 +38,21 @@ import { productIdentity } from '../digitalEmployees/contentProduction.js';
 import { enterpriseAssetStableId } from '../digitalEmployees/contentBatchPlan.js';
 import { resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
 import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis } from '../lib/materialLibraryAnalysis.js';
-import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
+import { hideLocalMaterialFromLibrary, materialVisibleForPurpose, readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
 import { filterMyGeneratedMaterials, projectGeneratedMaterial } from '../../src/lib/generatedMaterial.js';
 import { ASSET_GENERATION_KINDS } from '../../shared/contracts/generatedMaterial.js';
+import {
+  PRODUCT_SCENE_KINDS,
+  PRODUCT_SCENE_PREPARATION_SCHEMA_VERSION,
+  buildProductScenePreparationReadModels,
+  ensureProductScenePreparationPlan,
+  stableProductScenePreparationSlotId,
+  type ProductSceneKind,
+  type ProductScenePreparationMaterialBinding,
+  type ProductScenePreparationReadModel,
+  type ProductScenePreparationStatus,
+} from '../../shared/contracts/productScenePreparation.js';
+import { ProductSceneUploadProbeError, probeProductSceneUploadVideo } from '../lib/productSceneUploadProbe.js';
 import { reconcileStudioProductionSpec, studioProductionSnapshotIssues } from '../../shared/studioProductionContract.js';
 import { mixedStoryboardRules, mixedStoryboardIssues } from './mixedStoryboardContract.js';
 import { alignQwenFile } from '../integrations/qwenAlignment.js';
@@ -105,6 +125,7 @@ import { applyStoryboardReplicationAutomation, automaticManagedFallbackFrameAdmi
 import { CONTROLLED_PRODUCT_FRAME_SOURCE } from '../lib/controlledProductImageAnimation.js';
 import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
 import { studioAigcBudgetConfigForSpec, studioAigcBudgetConfigFromEnv, studioAigcBudgetPreviewForSpec, type StudioAigcBudgetContext } from './studioAigcBatchBudget.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 import { validateReplicationVideo } from '../lib/automatedReplicationBridge.js';
 import { evaluateStoryboardFirstFrameQuality } from '../lib/storyboardFirstFrameQualityEvaluation.js';
 import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
@@ -174,6 +195,14 @@ import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllo
 import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
 import { MATERIAL_SOURCE_CATEGORIES, MATERIAL_THEMES, materialSourceCategoryOf, materialThemeTagsOf } from '../../shared/materialTaxonomy.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
+import {
+  appendMaterialUsageManifest,
+  buildStudioMaterialUsageManifest,
+  materialUsageSummariesFromProjects,
+  type StudioMaterialPublishLink,
+  type StudioMaterialUsageProject,
+} from '../lib/materialUsageTracking.js';
+import { EMPTY_MATERIAL_USAGE_SUMMARY, type MaterialUsageSummary } from '../../shared/contracts/materialUsageTracking.js';
 import { bindSocialProjectSpec, digitalEmployeeProjectBelongs, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
 import { assertFrozenStudioProjectWrite, frozenStudioProjectSpec } from '../starter198/socialContentStudioFrozenBridge.js';
 import { readFrozenStudioOperationalEvidence } from '../starter198/socialContentStudioOperationalEvidence.js';
@@ -194,6 +223,98 @@ import {
    视频生成必须真实调用外部模型；失败时返回明确错误，不生成本地假预览。
 ─────────────────────────────────────────────────────────────────────────── */
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLISH_LINKS_FILE = path.join(__dirname, '../../data/studio-publish-links.json');
+
+function loadStudioPublishLinks(tenantId: string): StudioMaterialPublishLink[] {
+  try {
+    const rows = JSON.parse(fs.readFileSync(PUBLISH_LINKS_FILE, 'utf8')) as Array<StudioMaterialPublishLink & { tenantId?: string }>;
+    return Array.isArray(rows) ? rows.filter(item => item.tenantId === tenantId) : [];
+  } catch {
+    return [];
+  }
+}
+
+function recordValue(value: unknown): Record<string, any> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, any> : {};
+    } catch { /* malformed durable evidence is ignored */ }
+  }
+  return {};
+}
+
+async function listAllTenantRows<T extends { id?: string }>(collection: string, tenantId: string): Promise<T[]> {
+  const rows: T[] = [];
+  const identities = new Set<string>();
+  let expectedTotal: number | null = null;
+  for (let page = 1; page <= 10_000; page += 1) {
+    const result = await store.list<T>(collection, { where: { tenant_id: tenantId }, page, perPage: 500 });
+    if (!Number.isSafeInteger(result.totalItems) || result.totalItems < 0
+      || expectedTotal !== null && result.totalItems !== expectedTotal) throw new Error(`${collection}_scan_changed`);
+    expectedTotal = result.totalItems;
+    for (const row of result.items) {
+      const identity = String(row.id || '').trim();
+      if (identity && identities.has(identity)) throw new Error(`${collection}_scan_duplicate`);
+      if (identity) identities.add(identity);
+      rows.push(row);
+    }
+    if (rows.length === expectedTotal) return rows;
+    if (!result.items.length || rows.length > expectedTotal) throw new Error(`${collection}_scan_incomplete`);
+  }
+  throw new Error(`${collection}_scan_limit`);
+}
+
+async function loadDurableMaterialPublishLinks(
+  tenantId: string,
+  projects: StudioMaterialUsageProject[],
+): Promise<StudioMaterialPublishLink[]> {
+  const scopedProjects = projects.flatMap(project => {
+    const artifactId = String(recordValue(recordValue(project.spec).socialProductionOutput).artifactId || '').trim();
+    return artifactId ? [{ project, artifactId }] : [];
+  });
+  if (!scopedProjects.length) return [];
+  const [artifacts, assignments, attempts, metricSnapshots] = await Promise.all([
+    listAllTenantRows<Record<string, any>>('starter_social_content_artifacts', tenantId),
+    listAllTenantRows<Record<string, any>>('social_publication_assignments', tenantId),
+    listAllTenantRows<Record<string, any>>('social_publication_attempts', tenantId),
+    listAllTenantRows<Record<string, any>>('social_metric_snapshots', tenantId),
+  ]);
+  const links: StudioMaterialPublishLink[] = [];
+  for (const { project, artifactId } of scopedProjects) {
+    const artifact = artifacts.find(item => String(item.artifact_id || '') === artifactId);
+    const productionResultId = String(recordValue(recordValue(artifact?.content).productionResult).productionResultId || '').trim();
+    if (!productionResultId) continue;
+    for (const assignment of assignments.filter(item => String(item.production_result_id || '') === productionResultId)) {
+      for (const attempt of attempts.filter(item => item.assignment_id === assignment.assignment_id
+        && item.status === 'published' && String(item.platform_post_id || '').trim())) {
+        const resolvedAt = String(attempt.resolved_at || attempt.updated_at || '').trim();
+        const snapshots = metricSnapshots.filter(item => item.account_id === assignment.account_id
+          && item.platform === assignment.platform
+          && String(item.content_id || '') === String(attempt.platform_post_id)
+          && !item.mock && !item.simulated && !/mock|simulat/i.test(String(item.source || ''))
+          && (!resolvedAt || Date.parse(String(item.captured_at || '')) >= Date.parse(resolvedAt)))
+          .sort((a, b) => Date.parse(String(b.captured_at || '')) - Date.parse(String(a.captured_at || '')));
+        const latestMetrics = recordValue(snapshots[0]?.metrics);
+        links.push({
+          id: String(attempt.attempt_id || attempt.id || ''),
+          projectId: project.id,
+          platform: String(assignment.platform || ''),
+          publishedAt: resolvedAt,
+          publishResult: { ok: true, deliveryStatus: 'published', platformPostId: attempt.platform_post_id },
+          metrics: snapshots.length ? Object.fromEntries(
+            (['views', 'likes', 'comments', 'shares'] as const)
+              .filter(key => typeof latestMetrics[key] === 'number' && Number.isFinite(latestMetrics[key]) && latestMetrics[key] >= 0)
+              .map(key => [key, latestMetrics[key]]),
+          ) : undefined,
+        });
+      }
+    }
+  }
+  return links;
+}
+
 const studioTenantContext = new AsyncLocalStorage<string>();
 function scopedStudioAssetDir(root: string): string {
   const tenantId = studioTenantContext.getStore();
@@ -389,6 +510,10 @@ async function createGeneratedImageMaterial(input: {
   mimeType: string;
   source?: string;
   tenantId: string;
+  sourceType?: string;
+  productId?: string;
+  productName?: string;
+  provenance?: Record<string, unknown>;
 }): Promise<Material> {
   const outputDir = tenantAssetDir(MEDIA_DIR, input.tenantId);
   fs.mkdirSync(outputDir, { recursive: true });
@@ -397,6 +522,9 @@ async function createGeneratedImageMaterial(input: {
   const filename = `${id}.${ext}`;
   const filePath = path.join(outputDir, filename);
   fs.writeFileSync(filePath, input.bytes);
+  const contentSha256 = createHash('sha256').update(input.bytes).digest('hex');
+  const metadata = await sharp(input.bytes).metadata().catch(() => null);
+  const rightsEvidenceRef = `generated:${input.source || 'image-model'}:${contentSha256}`;
   const material: Material = {
     id,
     name: input.title || 'AI 图文海报',
@@ -409,6 +537,26 @@ async function createGeneratedImageMaterial(input: {
     poster: generatedMediaUrl(input.tenantId, filename),
     scope: 'own',
     tenantId: input.tenantId,
+    sourceType: input.sourceType || 'ai_generated_image',
+    sourceProvider: input.source || 'image-model',
+    contentSha256,
+    width: metadata?.width,
+    height: metadata?.height,
+    ...(metadata?.width && metadata.height ? { aspectRatio: metadata.width / metadata.height } : {}),
+    ...(input.productId ? { productId: input.productId } : {}),
+    ...(input.productName ? { productName: input.productName } : {}),
+    rightsStatus: 'authorized',
+    rightsEvidenceRef,
+    licenseEvidence: rightsEvidenceRef,
+    commercialUseApproved: true,
+    derivativesApproved: true,
+    rawLibraryUseApproved: true,
+    provenance: {
+      schemaVersion: 'generated-image-lineage.v1',
+      generatedAt: new Date().toISOString(),
+      provider: input.source || 'image-model',
+      ...(input.provenance || {}),
+    },
     createdAt: new Date().toISOString(),
   };
   if (objectStorageEnabled()) {
@@ -1536,7 +1684,7 @@ studioRouter.post('/free-creation-hook/first-frame', async (req, res) => {
     res.json({ ok: true, reused: true, material: await materialResponse(previous, tenantId), fingerprint, estimatedCostCny: previous.provenance?.estimatedCostCny }); return;
   }
   const configuredBudget = Number(process.env.FREE_CREATION_HOOK_MAX_COST_CNY || 6);
-  if (!Number.isFinite(configuredBudget) || configuredBudget < generator.estimatedCostCny) {
+  if (!isInternalBudgetExemptTenant(tenantId) && (!Number.isFinite(configuredBudget) || configuredBudget < generator.estimatedCostCny)) {
     res.status(429).json({ ok: false, code: 'FREE_HOOK_BUDGET_EXCEEDED', error: 'AI 钩子首帧预计费用超过本项目预算，未调用供应商' }); return;
   }
   if (!await consumeDemoQuota(req, res, 'generation')) return;
@@ -2134,7 +2282,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
     tenantId, String(body.projectId), frameOperationId)) existingFrameOperation = undefined;
   if (await replyExistingFrame(existingFrameOperation)) return;
   const budgetPlan = studioAigcBudgetPreviewForSpec(firstFrameProject?.spec ?? {},
-    studioAigcBudgetConfigForSpec(firstFrameProject?.spec ?? {}, body.maxCostCny),
+    studioAigcBudgetConfigForSpec(firstFrameProject?.spec ?? {}, body.maxCostCny, tenantId),
     await studioAigcBudgetContext(tenantId, firstFrameProject));
   const planned = budgetPlan.shotPlans.find(item => item.shotId === firstFrameProjectShotId);
   if (!planned || planned.status !== 'ready') {
@@ -2711,7 +2859,7 @@ studioRouter.post('/storyboard-action-video', async (req, res) => {
     res.status(423).json({ ok: false, code: 'ACTION_VIDEO_PROVIDER_UNAVAILABLE', error: '当前分段视频生成或本地视频组件不可用' }); return;
   }
   const budgetPreview = studioAigcBudgetPreviewForSpec(project.spec ?? {},
-    studioAigcBudgetConfigForSpec(project.spec ?? {}, req.body?.maxCostCny),
+    studioAigcBudgetConfigForSpec(project.spec ?? {}, req.body?.maxCostCny, tenantId),
     await studioAigcBudgetContext(tenantId, project));
   const budgetShotId = String((Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : [])
     .find((slot: any) => String(slot.slotId || slot.id || '') === shotId || String(slot.id || '') === shotId)?.id || shotId);
@@ -3087,7 +3235,7 @@ studioRouter.post('/seedance-video', async (req, res) => {
       if (!recoverable && await replyExistingVideo(existingStoryboardVideoOperation)) return;
     } else {
       const preview = studioAigcBudgetPreviewForSpec(project.spec ?? {},
-        studioAigcBudgetConfigForSpec(project.spec ?? {}, req.body?.maxCostCny),
+        studioAigcBudgetConfigForSpec(project.spec ?? {}, req.body?.maxCostCny, tenantId),
         await studioAigcBudgetContext(tenantId, project));
       storyboardBudgetLimitCny = preview.batchBudgetCny;
       const persistedShotId = String((Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : [])
@@ -4724,11 +4872,12 @@ Return ONLY a JSON array of 3 strings. No other text.`;
 });
 
 /* ── ⑦ 发布文案 + 话题标签 ─────────────────────────────────────────────── */
-// POST /studio/fb-poster  Body: { mode, productInfo, platform, ratio, posterStyle, language, materials? }
+// POST /studio/fb-poster  Body: { deliverableType, productionStrategy, productInfo, ... }
 studioRouter.post('/fb-poster', async (req, res) => {
   if (!await consumeDemoQuota(req, res, 'generation')) return;
   const {
-    mode = 'product',
+    deliverableType: rawDeliverableType = 'social_poster',
+    productionStrategy: rawProductionStrategy = 'reference_generate',
     productInfo = '',
     platform = 'facebook',
     ratio = '1:1',
@@ -4739,6 +4888,10 @@ studioRouter.post('/fb-poster', async (req, res) => {
     referenceNotes = '',
     confirmedFields = {},
   } = req.body ?? {};
+  const deliverableType: ImageDeliverable = IMAGE_DELIVERABLES.includes(rawDeliverableType)
+    ? rawDeliverableType : 'social_poster';
+  const productionStrategy: ImageProductionStrategy = IMAGE_PRODUCTION_STRATEGIES.includes(rawProductionStrategy)
+    ? rawProductionStrategy : 'reference_generate';
   const providerOpt: 'qwen' = 'qwen';
   const lang = langName(language);
   const enterprise = await enterpriseCtx();
@@ -4779,21 +4932,19 @@ studioRouter.post('/fb-poster', async (req, res) => {
   const materialLines = Array.isArray(materials)
     ? materials.slice(0, 8).map((item: any, index: number) => `${index + 1}. ${String(item?.name || item || '').slice(0, 120)}${item?.role ? ` (${item.role})` : ''}`).join('\n')
     : '';
-  const modeGuide = mode === 'clone'
-    ? [
-        'First modularly deconstruct the reference poster into reusable layout modules: headline zone, product hero, background atmosphere, evidence strip, badges, process row, category cards, CTA/bottom bar, and caption framework.',
-        'Then map each reusable module to verified local/enterprise assets: replace competitor product with our product photo, reuse only generic background/composition style, omit any evidence module that has no matching verified asset, and rebuild copy from verified enterprise/product info.',
-        'Do not copy competitor brand, logo, certifications, price, MOQ, lead time, export country, factory qualification, or any unverified commercial promise.',
-      ].join(' ')
-    : mode === 'material'
-      ? 'Use selected materials only for directly visible product appearance and composition. Material names or folders do not prove factory ownership, certification, export, delivery, pricing, MOQ, or customization capability.'
-      : 'Use enterprise profile and product info as the primary source.';
+  const strategyGuide: Record<ImageProductionStrategy, string> = {
+    reuse_existing: 'Reuse only a production-admitted template or finished asset; replace text and product content with verified enterprise facts.',
+    compose_assets: 'Keep the exact product reference unchanged as the identity anchor, then compose it with admitted supporting scene or evidence assets.',
+    reference_generate: 'Lock product appearance to the exact enterprise product reference. Style references may guide layout and rhythm only; rebuild all brand, product and text content.',
+    generate_supporting: 'Generate only neutral supporting visuals that do not carry product identity, certification or commercial proof.',
+  };
 
   const prompt = `You are a senior B2B social media creative director. Never assume that the company is a factory, exporter, OEM/ODM supplier, private-label provider, or certified business unless the authenticated enterprise profile explicitly says so.
 Create a structured poster brief and ${platform} caption in ${lang}.
 
-Generation channel: ${mode}
-Channel rule: ${modeGuide}
+Requested finished image: ${IMAGE_DELIVERABLE_LABELS[deliverableType]} (${deliverableType})
+Agent-selected production strategy: ${productionStrategy}
+Strategy rule: ${strategyGuide[productionStrategy]}
 Poster style: ${posterStyle === 'oem-factory' ? 'structured B2B product-information layout (the legacy id is visual only; it does not authorize any OEM or factory claim)' : posterStyle}
 Canvas ratio: ${ratio}
 Selected product context (selection only; authenticated enterprise profile remains the sole source of commercial facts):
@@ -4810,9 +4961,9 @@ ${String(referenceNotes || '').slice(0, 1500) || '(none)'}
 
 Hard rules:
 - AI may optimize expression, but must not invent commercial promises.
-- MOQ, certifications, lead time, price, export countries, factory qualifications must come from the authenticated profile or the explicit user-confirmed task facts above; otherwise place them in fieldsToConfirm.
-- If Generation channel is clone, output a module-level deconstruction and local asset matching plan. The final poster must be a new composition using our product/materials, not a copy of the competitor poster.
-- Poster text should be concise enough for a dense B2B product-information poster.
+- MOQ, certifications, lead time, price, export countries, factory qualifications must come from the authenticated profile or explicit user-confirmed task facts; otherwise place them in fieldsToConfirm.
+- If inspiration notes exist, output a module-level deconstruction and local asset matching plan. The final image must be a new composition using our product/materials, not a copy of the reference.
+- Shape the composition for the requested finished image (${deliverableType}); do not silently change it into another asset type.- Poster text should be concise enough for a dense B2B product-information poster.
 - Use exact English text for poster fields when language is English.
 - Return ONLY valid JSON. No markdown.
 
@@ -5060,7 +5211,7 @@ Schema:
   });
 });
 
-// POST /studio/fb-poster/render  Body: { poster, caption, imagePrompt, ratio, materialIds? }
+// POST /studio/fb-poster/render  Body: { poster, imagePrompt, ratio, materialIds, productIds, deliverableType, productionStrategy }
 studioRouter.post('/fb-poster/render', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   if (!await consumeDemoQuota(req, res, 'generation')) return;
@@ -5070,10 +5221,16 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
     ratio = '1:1',
     materialIds = [],
     productIds = [],
-    referenceImageUrls = [],
+    deliverableType: rawDeliverableType = 'social_poster',
+    productionStrategy: rawProductionStrategy = 'reference_generate',
+    referencePlan = [],    referenceImageUrls = [],
     idempotencyKey = '',
     confirmedFields = {},
   } = req.body ?? {};
+  const deliverableType: ImageDeliverable = IMAGE_DELIVERABLES.includes(rawDeliverableType)
+    ? rawDeliverableType : 'social_poster';
+  const productionStrategy: ImageProductionStrategy = IMAGE_PRODUCTION_STRATEGIES.includes(rawProductionStrategy)
+    ? rawProductionStrategy : 'reference_generate';
   const enterprise = await enterpriseCtx();
   if (!hasConfirmedEnterpriseFacts(enterprise)) {
     res.status(422).json({
@@ -5107,9 +5264,9 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
     const reference = await storyboardUrlImage(url, tenantId) || await storyboardEnterpriseImage(url, tenantId);
     if (reference) benchmarkReferences.push(reference);
   }
-  const productReferences: ReferenceImage[] = [];
+  const productReferences: Array<{ productId: string; image: ReferenceImage }> = [];
   const assetFieldsToConfirm: string[] = [];
-  const requestedProductIds = Array.isArray(productIds) ? productIds.map(String).slice(0, 2) : [];
+  const requestedProductIds = Array.isArray(productIds) ? productIds.map(String).filter(Boolean).slice(0, 2) : [];
   if (requestedProductIds.length) {
     const profile = await readTenantEnterpriseProfile(tenantId);
     const products = profile.products.items || [];
@@ -5121,27 +5278,55 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
         assetFieldsToConfirm.push(`产品主图待补充：${String(product?.name || requestedId)}`);
         continue;
       }
-      productReferences.push(image);
+      productReferences.push({ productId: requestedId, image });
     }
   }
-  const materialReferences = await resolveReferenceImages(materialIds, tenantId);
-  const ownedReferences = [...productReferences, ...materialReferences];
-  // Provider accepts at most three ordered references. Benchmark controls
-  // structure only; owned enterprise assets control product and brand identity.
-  const references = [...benchmarkReferences, ...ownedReferences].slice(0, 3);
+  const hasMaterialReferences = Array.isArray(materialIds) && materialIds.some(Boolean);
+  const referenceResolution = hasMaterialReferences
+    ? await resolveReferenceImages(materialIds, tenantId, referencePlan)
+    : { images: [] as ReferenceImage[], descriptors: [] as PosterReferenceDescriptor[], blockers: [] as string[] };
+  const exactProductIds = new Set(referenceResolution.descriptors
+    .filter(item => item.role === 'exact_product').map(item => item.productId).filter(Boolean));
+  for (const item of productReferences) exactProductIds.add(item.productId);
+  const missingProductIds = requestedProductIds.filter(id => !exactProductIds.has(id));
+  const ownedReferences = [...productReferences.map(item => item.image), ...referenceResolution.images].slice(0, 3);
+  const referenceBlockers = [
+    ...referenceResolution.blockers,
+    ...(missingProductIds.length ? [`缺少当前产品的精准身份图片：${missingProductIds.join('、')}`] : []),
+    ...(!ownedReferences.length ? ['没有可用于锁定产品或企业身份的已授权图片'] : []),
+  ];
+  if (referenceBlockers.length) {
+    res.status(422).json({
+      ok: false, code: 'IMAGE_REFERENCE_ADMISSION_FAILED', publishable: false, qualityStatus: 'rejected',
+      error: `图片参考素材未通过生产准入：${referenceBlockers.join('；')}`,
+      fieldsToConfirm: confirmationFields(assetFieldsToConfirm),
+    });
+    return;
+  }
+  // Tenant-owned identity references stay first. A competitor image can only
+  // be the final style benchmark and never becomes product authority.
+  const references = [...ownedReferences, ...benchmarkReferences].slice(0, 3);
+  const referenceRoleText = [
+    ...productReferences.map((item, index) => `Reference ${index + 1}: exact_product; enterpriseProduct=${item.productId}`),
+    ...referenceResolution.descriptors.map((item, index) => (
+      `Reference ${productReferences.length + index + 1}: ${item.role}; material=${item.materialId}; product=${item.productId || 'none'}`
+    )),
+    ...benchmarkReferences.map((_, index) => `Reference ${ownedReferences.length + index + 1}: style_benchmark_only`),
+  ].slice(0, 3).join('\n');
   const prompt = [
     safeImagePrompt,
-    'Generate one finished high-end B2B social media product poster. Do not imply OEM/ODM, export, factory, certification, pricing, MOQ, lead-time, delivery, or customization capabilities unless they appear verbatim in the verified JSON.',
-    `Use this exact poster JSON as the content source:\n${JSON.stringify(safePoster, null, 2)}`,
+    `Generate one finished ${IMAGE_DELIVERABLE_LABELS[deliverableType]} (${deliverableType}). Production strategy: ${productionStrategy}.`,
+    'Do not imply OEM/ODM, export, factory, certification, pricing, MOQ, lead-time, delivery, or customization capabilities unless they appear verbatim in the verified JSON.',    `Use this exact poster JSON as the content source:\n${JSON.stringify(safePoster, null, 2)}`,
     `Aspect ratio: ${ratio}.`,
+    referenceRoleText,
+    'An exact_product reference is the only product identity authority. A style reference may influence composition and visual rhythm only, never product, logo, packaging, text or commercial facts.',
     'Use only the sections that contain verified JSON content. Empty badge, proof, process, category, or CTA sections must stay absent rather than being filled with generic marketing claims.',
     'All visible text must match the JSON exactly. Avoid extra fake certifications, fake numbers, fake flags, watermarks, or unreadable tiny claims.',
     benchmarkReferences.length
-      ? 'The first reference is a benchmark: use it only for generic layout hierarchy, visual rhythm and image-copy relationship. Never copy its brand, logo, product, packaging, claims, contact information or exact wording.'
+      ? 'The final reference is a benchmark: use it only for generic layout hierarchy, visual rhythm and image-copy relationship. Never copy its brand, logo, product, packaging, claims, contact information or exact wording.'
       : '',
     ownedReferences.length
-      ? `The remaining ${Math.min(ownedReferences.length, 2)} reference image(s) are tenant-owned enterprise assets and are the only authority for product appearance, packaging and brand identity. Do not redraw or invent their labels or logos.`
-      : 'No tenant-owned product or brand reference was provided. Keep product and Logo areas empty rather than copying them from the benchmark or inventing enterprise identity.',
+      ? `The first ${ownedReferences.length} reference image(s) are tenant-owned enterprise assets and are the only authority for product appearance, packaging and brand identity. Do not redraw or invent their labels or logos.`      : 'No tenant-owned product or brand reference was provided. Keep product and Logo areas empty rather than copying them from the benchmark or inventing enterprise identity.',
   ].filter(Boolean).join('\n\n');
 
   try {
@@ -5152,6 +5337,22 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       mimeType: generated.mimeType,
       source: generated.source,
       tenantId,
+      sourceType: 'ai_generated_marketing_image',
+      productId: requestedProductIds.length === 1 ? requestedProductIds[0] : undefined,
+      provenance: {
+        deliverableType,
+        productionStrategy,
+        inputMaterialIds: referenceResolution.descriptors.map(item => item.materialId),
+        inputRoles: referenceResolution.descriptors,
+        inputProductIds: requestedProductIds,
+        benchmarkReferenceCount: benchmarkReferences.length,
+        promptSha256: createHash('sha256').update(prompt).digest('hex'),
+        model: generated.model,
+        qualityStatus: 'needs_review',
+      },
+    });
+    void requestMaterialAnalysis(tenantId, material.id).catch(error => {
+      console.warn('[studio] generated poster material analysis could not start', error instanceof Error ? error.message : error);
     });
     const responseMaterial = await materialResponse(material, tenantId);
     res.json({
@@ -5161,9 +5362,13 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       url: responseMaterial.url,
       material: responseMaterial,
       references: references.length,
+      deliverableType,
+      productionStrategy,
       fieldsToConfirm: confirmationFields([...commercialAudit.fieldsToConfirm, ...assetFieldsToConfirm]),
-      qualityStatus: commercialAudit.fieldsToConfirm.length || commercialAudit.issues.length || assetFieldsToConfirm.length ? 'needs_confirmation' : 'passed',
-    });
+      qualityStatus: commercialAudit.fieldsToConfirm.length || commercialAudit.issues.length || assetFieldsToConfirm.length
+        ? 'needs_confirmation'
+        : 'needs_review',
+      publishable: false,    });
   } catch (err: any) {
     console.warn('[studio] fb-poster image generation failed:', String(err?.message || err).slice(0, 800));
     if (err instanceof ImageProviderRejectedError) {
@@ -5986,13 +6191,26 @@ async function runPersistentStudioRender(jobId: string, tenantId: string, origin
       const priorVersions = Array.isArray(versions[current.output_key]) ? versions[current.output_key] : [];
       const generation = { id: jobId, versionNumber: Number(priorVersions[0]?.versionNumber || 0) + 1,
         status: 'done', path: outputPath, previewUrl, inputSignature: current.input_signature, createdAt: finishedAt };
-      const nextSpec = { ...projectSpec, languageRenderOutputs: { ...outputs,
+      const renderedSpec = { ...projectSpec, languageRenderOutputs: { ...outputs,
         [current.output_key]: { status: 'done', path: outputPath, previewUrl, inputSignature: current.input_signature } },
         languageRenderVersions: { ...versions, [current.output_key]: [generation, ...priorVersions.filter((item: any) => item?.id !== jobId)] },
         manualRenderJob: { id: jobId, status: 'completed', outputKey: current.output_key,
           inputSignature: current.input_signature, outputPath, previewUrl, updatedAt: finishedAt },
         staleReason: '' };
-      await store.update('studio_projects', current.project_id, { spec: nextSpec, updated_at: finishedAt });
+      const nextSpec = appendMaterialUsageManifest(renderedSpec, buildStudioMaterialUsageManifest({
+        projectId: current.project_id,
+        projectTitle: String(project.title || ''),
+        artifactId: jobId,
+        usedAt: finishedAt,
+        spec: renderedSpec,
+      }));
+      const savedProject = await compareAndSwapStudioProject(store, project, { spec: nextSpec }, finishedAt);
+      if (!savedProject.ok) {
+        await store.update('studio_render_jobs', jobId, {
+          error: '渲染完成，但草稿在渲染期间已更新；系统未覆盖新版本，请刷新后重新关联成片。',
+          updated_at: new Date().toISOString(),
+        });
+      }
     }
   } catch (error) {
     await store.update('studio_render_jobs', jobId, { status: 'failed', progress: 0,
@@ -6178,9 +6396,12 @@ interface Material {
   sourceType?: string;
   sourceName?: string;
   sourceProvider?: string;
+  contentSha256?: string;
   sourceCreator?: string;
   sourceUrl?: string;
   licenseEvidence?: string;
+  rightsStatus?: string;
+  rightsEvidenceRef?: string;
   licenseName?: string;
   licenseUrl?: string;
   attributionText?: string;
@@ -6194,6 +6415,7 @@ interface Material {
   rawLibraryUseApproved?: boolean;
   provenance?: Record<string, unknown>;
   materialV2?: MaterialAssetV2Metadata | null;
+  capabilityManifest?: MaterialCapabilityManifest;
   enterpriseCommon?: boolean;
   pinned?: boolean;
   industry?: string;
@@ -6202,6 +6424,7 @@ interface Material {
   tags?: string;
   productId?: string;
   productName?: string;
+  productSceneType?: ProductSceneKind;
   segmentAnalysisStatus?: 'pending' | 'analyzing' | 'completed' | 'failed';
   segmentAnalysisError?: string;
   segments?: MaterialSegment[];
@@ -6209,6 +6432,8 @@ interface Material {
   analysisSourceRevision?: string;
   sourceRevision?: string;
   createdAt: string;
+  libraryRemovedAt?: string;
+  usageSummary?: MaterialUsageSummary;
 }
 
 interface MaterialSegment {
@@ -6692,14 +6917,418 @@ function materialSignedUrlTtlSeconds(): number {
   return Number.isFinite(configured) ? Math.max(60, Math.min(3600, configured)) : 900;
 }
 
+const PRODUCT_SCENE_PROVENANCE_KEY = 'productScenePreparation';
+const PRODUCT_SCENE_UPLOAD_SOURCE = 'product-scene-preparation';
+
+interface ProductSceneUploadIntent {
+  productId: string;
+  productName: string;
+  kind: ProductSceneKind;
+}
+
+interface MaterialUploadProductBinding {
+  productId: string;
+  productName: string;
+}
+
+class ProductSceneUploadContextError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ProductSceneUploadContextError';
+    this.status = status;
+  }
+}
+
+async function resolveProductSceneUploadIntent(input: {
+  tenantId: string;
+  type: string;
+  sourceType: string;
+  productId: unknown;
+  productSceneType: unknown;
+}): Promise<ProductSceneUploadIntent | undefined> {
+  const productId = String(input.productId || '').trim();
+  const rawKind = String(input.productSceneType || '').trim();
+  const requested = input.sourceType === PRODUCT_SCENE_UPLOAD_SOURCE || Boolean(rawKind);
+  if (!requested) return undefined;
+  if (input.type !== 'video') throw new ProductSceneUploadContextError(400, '预制素材仅支持视频文件');
+  if (!productId || !rawKind) throw new ProductSceneUploadContextError(400, '请从产品详情中选择预制素材位后上传');
+  const kind = rawKind as ProductSceneKind;
+  if (!PRODUCT_SCENE_KINDS.includes(kind)) throw new ProductSceneUploadContextError(400, '预制素材位无效');
+  const profile = await readTenantEnterpriseProfile(input.tenantId);
+  const product = (profile.products.items || []).find((item, index) => productIdentity(item, index) === productId);
+  if (!product) throw new ProductSceneUploadContextError(400, '关联产品不在当前企业资料中');
+  return { productId, productName: String(product.name || product.sku || '').trim(), kind };
+}
+
+async function resolveMaterialUploadProductBinding(
+  tenantId: string,
+  productIdValue: unknown,
+): Promise<MaterialUploadProductBinding | undefined> {
+  const productId = String(productIdValue || '').trim();
+  if (!productId) return undefined;
+  const profile = await readTenantEnterpriseProfile(tenantId);
+  const product = (profile.products.items || []).find((item, index) => productIdentity(item, index) === productId);
+  if (!product) throw new ProductSceneUploadContextError(400, '关联产品不在当前企业资料中');
+  return { productId, productName: String(product.name || product.sku || productId).trim() };
+}
+
+async function verifyProductSceneUpload(
+  intent: ProductSceneUploadIntent | undefined,
+  mediaPath: string,
+  contentSha256: string,
+): Promise<VerifiedProductSceneUpload | undefined> {
+  if (!intent) return undefined;
+  const verified = await probeProductSceneUploadVideo(mediaPath);
+  return { ...intent, ...verified, contentSha256: contentSha256.toLowerCase() };
+}
+
+function productSceneUploadErrorResponse(error: unknown): { status: number; message: string } | undefined {
+  if (error instanceof ProductSceneUploadContextError) return { status: error.status, message: error.message };
+  if (error instanceof ProductSceneUploadProbeError) return {
+    status: error.code === 'product_scene_media_probe_unavailable' ? 503 : 422,
+    message: error.message,
+  };
+  return undefined;
+}
+
+export interface VerifiedProductSceneUpload {
+  productId: string;
+  productName: string;
+  kind: ProductSceneKind;
+  durationSeconds: number;
+  width: number;
+  height: number;
+  decodedFrameCount: number;
+  verificationMethod: 'ffmpeg_full_decode';
+  contentSha256: string;
+}
+
+export function productSceneUploadReuseMetadata(context?: VerifiedProductSceneUpload): {
+  licenseEvidence?: string;
+  commercialUseApproved?: boolean;
+  derivativesApproved?: boolean;
+  rawLibraryUseApproved?: boolean;
+  authorizationScopes?: string[];
+} {
+  if (!context
+    || !String(context.productId || '').trim()
+    || !PRODUCT_SCENE_KINDS.includes(context.kind)
+    || context.verificationMethod !== 'ffmpeg_full_decode'
+    || !Number.isFinite(context.durationSeconds)
+    || context.durationSeconds <= 0
+    || !Number.isSafeInteger(context.decodedFrameCount)
+    || context.decodedFrameCount < 1
+    || !/^[a-f0-9]{64}$/i.test(context.contentSha256)) return {};
+  return {
+    licenseEvidence: 'tenant_product_scene_upload',
+    commercialUseApproved: true,
+    derivativesApproved: true,
+    rawLibraryUseApproved: true,
+    authorizationScopes: ['content_reuse', 'model_input', 'enterprise-video'],
+  };
+}
+
+interface ProductSceneMaterialProvenance {
+  schemaVersion: typeof PRODUCT_SCENE_PREPARATION_SCHEMA_VERSION;
+  slotId: string;
+  productId: string;
+  kind: ProductSceneKind;
+  verifiedDurationSeconds: number;
+  verifiedWidth: number;
+  verifiedHeight: number;
+  decodedFrameCount: number;
+  verificationMethod: 'ffmpeg_full_decode';
+  contentSha256: string;
+  boundAt?: string;
+}
+
+function recordObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value === 'string' && value.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    } catch { return {}; }
+  }
+  return {};
+}
+
+export function productSceneMaterialProvenanceOf(material: Record<string, unknown>): ProductSceneMaterialProvenance | undefined {
+  const provenance = recordObject(material.provenance);
+  const binding = recordObject(provenance[PRODUCT_SCENE_PROVENANCE_KEY]);
+  const kind = String(binding.kind || '') as ProductSceneKind;
+  const productId = String(binding.productId || '').trim();
+  const verifiedDurationSeconds = Number(binding.verifiedDurationSeconds);
+  const verifiedWidth = Number(binding.verifiedWidth);
+  const verifiedHeight = Number(binding.verifiedHeight);
+  const decodedFrameCount = Number(binding.decodedFrameCount);
+  const verificationMethod = String(binding.verificationMethod || '');
+  const contentSha256 = String(binding.contentSha256 || '').trim().toLowerCase();
+  if (binding.schemaVersion !== PRODUCT_SCENE_PREPARATION_SCHEMA_VERSION
+    || !PRODUCT_SCENE_KINDS.includes(kind)
+    || !productId
+    || verificationMethod !== 'ffmpeg_full_decode'
+    || !Number.isFinite(verifiedDurationSeconds)
+    || verifiedDurationSeconds <= 0
+    || !Number.isSafeInteger(decodedFrameCount)
+    || decodedFrameCount < 1
+    || !/^[a-f0-9]{64}$/.test(contentSha256)) return undefined;
+  let expectedSlotId = '';
+  try { expectedSlotId = stableProductScenePreparationSlotId(productId, kind); }
+  catch { return undefined; }
+  if (String(binding.slotId || '') !== expectedSlotId) return undefined;
+  return {
+    schemaVersion: PRODUCT_SCENE_PREPARATION_SCHEMA_VERSION,
+    slotId: expectedSlotId,
+    productId,
+    kind,
+    verifiedDurationSeconds,
+    verifiedWidth: Number.isFinite(verifiedWidth) && verifiedWidth > 0 ? Math.round(verifiedWidth) : 0,
+    verifiedHeight: Number.isFinite(verifiedHeight) && verifiedHeight > 0 ? Math.round(verifiedHeight) : 0,
+    decodedFrameCount,
+    verificationMethod: 'ffmpeg_full_decode',
+    contentSha256,
+    ...(String(binding.boundAt || '').trim() ? { boundAt: String(binding.boundAt) } : {}),
+  };
+}
+
+function mergedSearchLabels(...values: unknown[]): string {
+  const labels = values.flatMap(value => String(value || '')
+    .split(/[,，、;；|\n]+/)
+    .map(item => item.trim())
+    .filter(Boolean));
+  return Array.from(new Set(labels)).join(',').slice(0, 500);
+}
+
+export function productSceneMaterialBindingChanges(input: {
+  material: Record<string, unknown>;
+  productId: string;
+  productName: string;
+  kind: ProductSceneKind;
+  verification: Pick<VerifiedProductSceneUpload,
+    'durationSeconds' | 'width' | 'height' | 'decodedFrameCount' | 'verificationMethod' | 'contentSha256'>;
+  boundAt?: string;
+}): Record<string, unknown> {
+  if (!PRODUCT_SCENE_KINDS.includes(input.kind)) throw new Error('product_scene_preparation_kind_invalid');
+  const productId = String(input.productId || '').trim();
+  if (!productId) throw new Error('product_scene_preparation_product_id_required');
+  const durationSeconds = Number(input.verification.durationSeconds);
+  const decodedFrameCount = Number(input.verification.decodedFrameCount);
+  const contentSha256 = String(input.verification.contentSha256 || '').trim().toLowerCase();
+  if (input.verification.verificationMethod !== 'ffmpeg_full_decode'
+    || !Number.isFinite(durationSeconds)
+    || durationSeconds <= 0
+    || !Number.isSafeInteger(decodedFrameCount)
+    || decodedFrameCount < 1
+    || !/^[a-f0-9]{64}$/.test(contentSha256)) throw new Error('product_scene_preparation_verification_invalid');
+  const provenance = recordObject(input.material.provenance);
+  const productScenePreparation: ProductSceneMaterialProvenance = {
+    schemaVersion: PRODUCT_SCENE_PREPARATION_SCHEMA_VERSION,
+    slotId: stableProductScenePreparationSlotId(productId, input.kind),
+    productId,
+    kind: input.kind,
+    verifiedDurationSeconds: durationSeconds,
+    verifiedWidth: Math.max(0, Math.round(Number(input.verification.width) || 0)),
+    verifiedHeight: Math.max(0, Math.round(Number(input.verification.height) || 0)),
+    decodedFrameCount,
+    verificationMethod: 'ffmpeg_full_decode',
+    contentSha256,
+    boundAt: input.boundAt || new Date().toISOString(),
+  };
+  return {
+    productId,
+    productName: String(input.productName || '').trim(),
+    provenance: { ...provenance, [PRODUCT_SCENE_PROVENANCE_KEY]: productScenePreparation },
+    tags: mergedSearchLabels('产品预制素材', input.material.tags),
+    shotFunction: mergedSearchLabels('产品展示', input.material.shotFunction),
+  };
+}
+
+export function productSceneMaterialProductAssociationChanges(input: {
+  material: Record<string, unknown>;
+  productId: string;
+  productName: string;
+}): Record<string, unknown> {
+  const productId = String(input.productId || '').trim();
+  const productName = String(input.productName || '').trim();
+  const provenance = recordObject(input.material.provenance);
+  const existingBinding = productSceneMaterialProvenanceOf(input.material);
+  if (!existingBinding || !productId) {
+    const nextProvenance = { ...provenance };
+    delete nextProvenance[PRODUCT_SCENE_PROVENANCE_KEY];
+    return { productId, productName, provenance: nextProvenance };
+  }
+  return productSceneMaterialBindingChanges({
+    material: input.material,
+    productId,
+    productName,
+    kind: existingBinding.kind,
+    verification: {
+      durationSeconds: existingBinding.verifiedDurationSeconds,
+      width: existingBinding.verifiedWidth,
+      height: existingBinding.verifiedHeight,
+      decodedFrameCount: existingBinding.decodedFrameCount,
+      verificationMethod: existingBinding.verificationMethod,
+      contentSha256: existingBinding.contentSha256,
+    },
+  });
+}
+
+function productSceneSourceImageUrl(product: Record<string, unknown>): string {
+  const direct = String(product.imageUrl || '').trim();
+  if (direct) return direct;
+  for (const key of ['images', 'packagingImages', 'sceneImages', 'brandAssets']) {
+    const rows = Array.isArray(product[key]) ? product[key] as Array<Record<string, unknown>> : [];
+    const url = rows.map(row => String(row?.url || '').trim()).find(Boolean);
+    if (url) return url;
+  }
+  return '';
+}
+
+function productSceneMaterialProductionEligible(
+  material: Record<string, unknown>,
+  binding = productSceneMaterialProvenanceOf(material),
+): boolean {
+  const duration = Number(material.duration);
+  const contentSha256 = String(material.sha256 || material.contentSha256 || '').trim().toLowerCase();
+  return material.type === 'video'
+    && Boolean(binding)
+    && Boolean(String(material.id || '').trim())
+    && Boolean(String(material.url || '').trim())
+    && String(material.scope || 'own') !== 'shared'
+    && Number.isFinite(duration)
+    && duration > 0
+    && Math.abs(duration - Number(binding?.verifiedDurationSeconds)) <= 0.05
+    && contentSha256 === binding?.contentSha256
+    && !String(material.libraryRemovedAt || '').trim()
+    && !isSyntheticMaterial(material)
+    && !isReferenceOnlyMaterial(material)
+    && !isWorkflowInternalMaterial(material);
+}
+
+/**
+ * Read-only join used by the materials envelope. Empty preparation slots are
+ * projections of the product plan and are never persisted as material rows.
+ */
+export function buildStudioProductScenePreparationSlots(input: {
+  products: readonly Record<string, unknown>[];
+  materials: readonly Record<string, unknown>[];
+  resolveSourceImageUrl?: (product: Record<string, unknown>, index: number) => string;
+}): ProductScenePreparationReadModel[] {
+  const orderedMaterials = [...input.materials].sort((left, right) => (
+    (Date.parse(String(right.updatedAt || right.createdAt || '')) || 0)
+    - (Date.parse(String(left.updatedAt || left.createdAt || '')) || 0)
+  ));
+  return input.products.flatMap((product, productIndex) => {
+    const productId = productIdentity(product as Parameters<typeof productIdentity>[0], productIndex);
+    const plan = ensureProductScenePreparationPlan(productId, product.productScenePreparation);
+    const associatedImage = orderedMaterials.find(material => material.type === 'image'
+      && String(material.productId || '').trim() === productId
+      && String(material.scope || 'own') !== 'shared'
+      && !String(material.libraryRemovedAt || '').trim()
+      && !isSyntheticMaterial(material)
+      && !isReferenceOnlyMaterial(material)
+      && !isWorkflowInternalMaterial(material)
+      && Boolean(String(material.url || material.poster || '').trim()));
+    const sourceImageUrl = String(input.resolveSourceImageUrl?.(product, productIndex)
+      || productSceneSourceImageUrl(product)
+      || associatedImage?.url
+      || associatedImage?.poster
+      || '').trim();
+    const candidates = orderedMaterials
+      .map(material => ({ material, binding: productSceneMaterialProvenanceOf(material) }))
+      .filter(candidate => candidate.binding?.productId === productId);
+    const statusBySlotId: Record<string, ProductScenePreparationStatus | undefined> = {};
+    const materialBindings: ProductScenePreparationMaterialBinding[] = [];
+    for (const slot of plan.slots) {
+      const claimed = candidates.filter(candidate => candidate.binding?.slotId === slot.slotId);
+      const usable = claimed.find(candidate => (
+        String(candidate.material.productId || '').trim() === productId
+        && productSceneMaterialProductionEligible(candidate.material, candidate.binding)
+      ));
+      if (usable?.binding) {
+        materialBindings.push({
+          slotId: slot.slotId,
+          productId,
+          kind: slot.kind,
+          materialId: String(usable.material.id),
+          materialUrl: String(usable.material.url),
+          ...(String(usable.material.poster || '').trim() ? { posterUrl: String(usable.material.poster) } : {}),
+          ...(String(usable.material.name || '').trim() ? { materialName: String(usable.material.name) } : {}),
+          mediaType: 'video',
+          actualDurationSeconds: usable.binding.verifiedDurationSeconds,
+          productionEligible: true,
+          synthetic: false,
+        });
+      } else if (claimed.length) {
+        statusBySlotId[slot.slotId] = 'needs_replacement';
+      }
+    }
+    return buildProductScenePreparationReadModels({
+      productId,
+      plan,
+      sourceImageUrl,
+      statusBySlotId,
+      materialBindings,
+    });
+  });
+}
+
+export function filterMaterialsByProductAssociation<T extends object>(
+  materials: readonly T[],
+  input: { productId?: unknown; excludeProductAssociated?: boolean },
+): T[] {
+  const productId = String(input.productId || '').trim();
+  if (productId && input.excludeProductAssociated) throw new Error('material_product_filter_conflict');
+  const associatedProductId = (material: T) => String((material as { productId?: unknown }).productId || '').trim();
+  if (productId) return materials.filter(material => associatedProductId(material) === productId);
+  if (input.excludeProductAssociated) return materials.filter(material => !associatedProductId(material));
+  return [...materials];
+}
+
+export function scopeProductSceneProjection<
+  TProduct extends Record<string, unknown>,
+  TMaterial extends object,
+>(input: {
+  products: readonly TProduct[];
+  materials: readonly TMaterial[];
+  productId?: unknown;
+}): { products: TProduct[]; materials: TMaterial[] } {
+  const productId = String(input.productId || '').trim();
+  if (!productId) return { products: [...input.products], materials: [...input.materials] };
+  const products = input.products.flatMap((product, index) => {
+    const canonicalId = productIdentity(product as unknown as Parameters<typeof productIdentity>[0], index);
+    return canonicalId === productId ? [{ ...product, id: canonicalId } as TProduct] : [];
+  });
+  if (!products.length) return { products: [], materials: [] };
+  return {
+    products,
+    materials: input.materials.filter(material => (
+      String((material as { productId?: unknown }).productId || '').trim() === productId
+    )),
+  };
+}
+
 async function materialResponse(material: Material, tenantId: string): Promise<Material & { canManage: boolean }> {
+  // Some deterministic local renderers persist a tenant-scoped `file` before
+  // object-storage mirroring is available.  The record is still a valid media
+  // asset; expose its protected local route instead of returning an empty URL
+  // that leaves the shared media frame in a permanent error state.
+  const storedFileUrl = material.file
+    ? `/media/${material.scope === 'shared'
+      ? sharedAssetRelativePath(material.file)
+      : tenantAssetRelativePath(tenantId, material.file)}`
+    : '';
+  const sourceUrl = material.url || storedFileUrl;
   const url = material.objectKey
     ? privateStudioAssetUrl('materials', tenantId, path.basename(material.objectKey))
-    : /^\/(?:cloud-files|studio-media)\//.test(material.url)
+    : /^\/(?:cloud-files|studio-media)\//.test(sourceUrl)
       // Studio workflows often span script, material, music and render steps.
       // Keep the protected playback URL valid for the whole editing session.
-      ? signPathAssetUrl(material.url, tenantId, 24 * 60 * 60 * 1000)
-      : /^\/(?:media|api\/overseas\/studio\/materials\/pb)\//.test(material.url) ? signAssetUrl(material.url, tenantId) : material.url;
+      ? signPathAssetUrl(sourceUrl, tenantId, 24 * 60 * 60 * 1000)
+      : /^\/(?:media|api\/overseas\/studio\/materials\/pb)\//.test(sourceUrl) ? signAssetUrl(sourceUrl, tenantId) : sourceUrl;
   const poster = material.posterObjectKey
     ? privateStudioAssetUrl('materials', tenantId, path.basename(material.posterObjectKey))
     : material.poster && /^\/(?:cloud-files|studio-media)\//.test(material.poster)
@@ -6723,7 +7352,11 @@ async function materialResponse(material: Material, tenantId: string): Promise<M
     })
     : undefined);
   const materialV2 = materialAssetV2FromRecord(material as unknown as Record<string, unknown>);
-  return { ...material, url: url || material.url, poster, segments, scriptAnalysis, materialV2, enterpriseCommon: materialV2?.enterpriseCommon ?? material.enterpriseCommon ?? false, canManage: material.sourceType !== 'enterprise_product_table' && material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
+  const capabilityManifest = buildMaterialCapabilityManifest({
+    ...material, scriptAnalysis, materialV2,
+  } as unknown as Record<string, unknown>);
+  const productSceneType = productSceneMaterialProvenanceOf(material as unknown as Record<string, unknown>)?.kind;
+  return { ...material, url: url || material.url, poster, segments, scriptAnalysis, materialV2, capabilityManifest, enterpriseCommon: materialV2?.enterpriseCommon ?? material.enterpriseCommon ?? false, ...(productSceneType ? { productSceneType } : {}), canManage: material.sourceType !== 'enterprise_product_table' && material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
 }
 
 function enterpriseProductMaterials(tenantId: string, profile: Awaited<ReturnType<typeof readTenantEnterpriseProfile>>): Material[] {
@@ -6753,6 +7386,12 @@ function enterpriseProductMaterials(tenantId: string, profile: Awaited<ReturnTyp
         usage: 'editable' as const,
         sourceType: 'enterprise_product_table',
         sourceName: '企业中心产品表',
+        rightsStatus: 'authorized',
+        rightsEvidenceRef: `enterprise_profile:product:${productId}`,
+        licenseEvidence: `enterprise_profile:product:${productId}`,
+        commercialUseApproved: true,
+        derivativesApproved: true,
+        rawLibraryUseApproved: true,
         productId,
         productName,
         tags: `产品素材,${productName}`,
@@ -6875,8 +7514,17 @@ studioRouter.get('/materials', async (req, res) => {
     const association = resolveMaterialProductAssociation(material as unknown as Record<string, unknown>, productReferences);
     return association ? { ...material, productId: association.productId, productName: association.productName } : material;
   });
+  const productSceneProjectionMaterials = [...list];
+  const productIdFilter = String(req.query.productId || '').trim();
+  const excludeProductAssociated = req.query.excludeProductAssociated === '1';
+  if (productIdFilter && excludeProductAssociated) {
+    res.status(400).json({ error: '产品筛选条件冲突' });
+    return;
+  }
+  list = filterMaterialsByProductAssociation(list, { productId: productIdFilter, excludeProductAssociated });
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
+  list = list.filter(material => materialVisibleForPurpose(material, purpose));
   if (purpose === 'reference') list = list.filter(m => isReferenceOnlyMaterial(m) && !isWorkflowInternalMaterial(m));
   else if (purpose !== 'all') list = list.filter(m => !isReferenceOnlyMaterial(m) && !isWorkflowInternalMaterial(m));
   const origin = String(req.query.origin || '');
@@ -6914,15 +7562,86 @@ studioRouter.get('/materials', async (req, res) => {
   const page = Math.max(1, Number(req.query.page || 1));
   const ordered = list.sort((a, b) => (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0));
   const sorted = paginated ? ordered.slice((page - 1) * pageSize, page * pageSize) : ordered;
+  let usageByMaterial = new Map<string, MaterialUsageSummary>();
+  try {
+    const projects = await listAllTenantRows<StudioMaterialUsageProject>('studio_projects', tenantId);
+    usageByMaterial = materialUsageSummariesFromProjects({
+      projects,
+      publishLinks: [...loadStudioPublishLinks(tenantId), ...await loadDurableMaterialPublishLinks(tenantId, projects)],
+      knownMaterialIds: list.map(material => material.id),
+    });
+  } catch {
+    // The material library remains usable when historical project or metric
+    // storage is temporarily unavailable; usage evidence simply stays empty.
+  }
   const response = await Promise.all(sorted.map(async m => ({
     ...(await materialResponse(m, tenantId)),
     usage: materialUsage(m),
+    usageSummary: usageByMaterial.get(m.id) || {
+      ...EMPTY_MATERIAL_USAGE_SUMMARY,
+      metrics: { ...EMPTY_MATERIAL_USAGE_SUMMARY.metrics },
+      history: [],
+    },
     ...(['pending','analyzing'].includes(m.segmentAnalysisStatus || '') && !isMaterialAnalysisActive(tenantId,m.id)
       ? {segmentAnalysisStatus:'failed' as const, segmentAnalysisError:'分析任务已中断，请重试以继续处理原片'} : {}),
   })));
+  const productSceneProjection = req.query.envelope === '1'
+    ? scopeProductSceneProjection({
+      products: (enterpriseProfile.products.items || [])
+        .filter(product => String(product.name || product.sku || '').trim()) as unknown as Record<string, unknown>[],
+      materials: productSceneProjectionMaterials,
+      productId: productIdFilter,
+    })
+    : { products: [], materials: [] as Material[] };
+  const productSceneSlots = req.query.envelope === '1'
+    ? buildStudioProductScenePreparationSlots({
+      products: productSceneProjection.products,
+      materials: await Promise.all(productSceneProjection.materials
+        .filter(material => Boolean(productSceneMaterialProvenanceOf(material as unknown as Record<string, unknown>))
+          || (material.type === 'image' && Boolean(String(material.productId || '').trim())))
+        .map(material => materialResponse(material, tenantId))) as unknown as Record<string, unknown>[],
+      resolveSourceImageUrl: product => {
+        const raw = productSceneSourceImageUrl(product);
+        return /^\/(?:cloud-files|studio-media)\//.test(raw)
+          ? signPathAssetUrl(raw, tenantId, 24 * 60 * 60 * 1000)
+          : /^\/(?:media|api\/overseas\/studio\/materials\/pb)\//.test(raw)
+            ? signAssetUrl(raw, tenantId)
+            : raw;
+      },
+    })
+    : [];
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-  if (req.query.envelope === '1') res.status(inventory.status === 'unavailable' ? 503 : 200).json({ ...inventory, items: response, total, page, pageSize, facets });
+  if (req.query.envelope === '1') res.status(inventory.status === 'unavailable' ? 503 : 200).json({ ...inventory, items: response, total, page, pageSize, facets, productSceneSlots });
   else { res.setHeader('X-Material-Library-Status', inventory.status); res.json(response); }
+});
+
+studioRouter.get('/materials/:id/usage', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const [inventory, enterpriseProfile] = await Promise.all([
+    readMaterialLibrary(tenantId),
+    readTenantEnterpriseProfile(tenantId),
+  ]);
+  const materialId = String(req.params.id || '').trim();
+  const accessibleIds = new Set([
+    ...inventory.items.map(item => item.id),
+    ...enterpriseProductMaterials(tenantId, enterpriseProfile).map(item => item.id),
+  ]);
+  if (!accessibleIds.has(materialId)) {
+    res.status(404).json({ ok: false, error: 'Material not found' });
+    return;
+  }
+  const projects = await listAllTenantRows<StudioMaterialUsageProject>('studio_projects', tenantId);
+  const summary = materialUsageSummariesFromProjects({
+    projects,
+    publishLinks: [...loadStudioPublishLinks(tenantId), ...await loadDurableMaterialPublishLinks(tenantId, projects)],
+    knownMaterialIds: [materialId],
+  }).get(materialId) || {
+    ...EMPTY_MATERIAL_USAGE_SUMMARY,
+    metrics: { ...EMPTY_MATERIAL_USAGE_SUMMARY.metrics },
+    history: [],
+  };
+  res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+  res.json({ ok: true, materialId, summary });
 });
 
 studioRouter.get('/materials/pb/:id/:kind', async (req, res) => {
@@ -7020,13 +7739,57 @@ async function saveMaterialUploadToDatabase(input: {
   sizeBytes: number;
   sha256: string;
   tempDirectory: string;
+  productScene?: VerifiedProductSceneUpload;
+  productBinding?: MaterialUploadProductBinding;
+  rightsConfirmed?: boolean;
 }): Promise<Material> {
   const requestedUsage: MaterialUsage = 'editable';
+  if (input.productScene && input.productScene.contentSha256 !== input.sha256.toLowerCase()) {
+    throw new Error('product_scene_upload_hash_mismatch');
+  }
+  const productSceneReuse = productSceneUploadReuseMetadata(input.productScene);
+  if (input.productScene && !productSceneReuse.licenseEvidence) {
+    throw new Error('product_scene_upload_verification_invalid');
+  }
+  const sourceType = input.productScene ? PRODUCT_SCENE_UPLOAD_SOURCE : input.sourceType || 'tenant_upload';
+  const productBinding = input.productScene || input.productBinding;
+  const rightsEvidence = input.productScene
+    ? productSceneReuse.licenseEvidence
+    : input.rightsConfirmed ? `tenant-upload-confirmation:${input.tenantId}:${input.sha256}` : undefined;
+  const rightsConfirmed = Boolean(input.productScene || input.rightsConfirmed);
+  const duration = input.productScene?.durationSeconds ?? (Number.isFinite(input.duration) ? Math.max(0, input.duration) : 0);
+  const width = input.productScene?.width ?? input.width;
+  const height = input.productScene?.height ?? input.height;
+  const baseProvenance: Record<string, unknown> = {
+    uploadMethod: 'studio_my_materials',
+    sourceEntry: 'studio_workspace',
+    originalName: input.name || input.mediaName,
+    mimeType: input.mimeType,
+    receivedAt: new Date().toISOString(),
+    ...(rightsConfirmed ? {
+      rightsConfirmation: {
+        schemaVersion: 'tenant-material-rights-confirmation.v1',
+        confirmedAt: new Date().toISOString(),
+        scope: ['commercial_use', 'derivative_use', 'model_input'],
+        evidenceRef: rightsEvidence,
+      },
+    } : {}),
+    ...(productSceneReuse.authorizationScopes ? { authorizationScopes: productSceneReuse.authorizationScopes } : {}),
+  };
+  const productSceneChanges = input.productScene
+    ? productSceneMaterialBindingChanges({
+      material: { provenance: baseProvenance },
+      productId: input.productScene.productId,
+      productName: input.productScene.productName,
+      kind: input.productScene.kind,
+      verification: input.productScene,
+    })
+    : {};
   const poster = await createTransientMaterialPoster({
     directory: input.tempDirectory,
     mediaPath: input.mediaPath,
     type: input.type,
-    duration: input.duration,
+    duration,
   });
 
   if (!objectStorageEnabled()) throw new Error('对象存储未配置，素材文件不会写入数据库文件字段');
@@ -7050,25 +7813,47 @@ async function saveMaterialUploadToDatabase(input: {
     title: input.name || input.mediaName,
     folder: input.folder,
     type: input.type,
-    duration: Number.isFinite(input.duration) ? Math.max(0, input.duration) : 0,
-    width: input.width > 0 ? Math.round(input.width) : undefined,
-    height: input.height > 0 ? Math.round(input.height) : undefined,
+    duration,
+    width: width > 0 ? Math.round(width) : undefined,
+    height: height > 0 ? Math.round(height) : undefined,
     sizeBytes: input.sizeBytes,
     sha256: input.sha256,
     scope: 'own',
     usage: requestedUsage,
-    sourceType: input.sourceType || 'tenant_upload',
+    sourceType,
     sourceName: input.name || input.mediaName,
     sourceProvider: 'tenant',
     sourceUrl: input.sourceUrl || undefined,
-    provenance: {
-      uploadMethod: 'studio_my_materials',
-      sourceEntry: 'studio_workspace',
-      originalName: input.name || input.mediaName,
-      mimeType: input.mimeType,
-      receivedAt: new Date().toISOString(),
-    },
+    productId: productBinding?.productId,
+    productName: productBinding?.productName,
+    tags: typeof productSceneChanges.tags === 'string' ? productSceneChanges.tags : undefined,
+    shotFunction: typeof productSceneChanges.shotFunction === 'string' ? productSceneChanges.shotFunction : undefined,
+    licenseEvidence: rightsEvidence,
+    commercialUseApproved: rightsConfirmed,
+    derivativesApproved: rightsConfirmed,
+    rawLibraryUseApproved: rightsConfirmed,
+    provenance: recordObject(productSceneChanges.provenance || baseProvenance),
     sourceEntry: 'studio_workspace',
+    ...((input.productScene || input.productBinding || rightsConfirmed) ? {
+      verifiedDeduplicatedUpdate: {
+        title: input.name || input.mediaName,
+        folder: input.folder,
+        type: input.type,
+        duration,
+        width: width > 0 ? Math.round(width) : 0,
+        height: height > 0 ? Math.round(height) : 0,
+        sourceType,
+        sourceName: input.name || input.mediaName,
+        productId: productBinding?.productId,
+        productName: productBinding?.productName,
+        tags: typeof productSceneChanges.tags === 'string' ? productSceneChanges.tags : undefined,
+        shotFunction: typeof productSceneChanges.shotFunction === 'string' ? productSceneChanges.shotFunction : undefined,
+        licenseEvidence: rightsEvidence,
+        commercialUseApproved: rightsConfirmed,
+        derivativesApproved: rightsConfirmed,
+        rawLibraryUseApproved: rightsConfirmed,
+      },
+    } : {}),
     media: { key: objectKey, etag: storedMedia.head.etag, contentType: input.mimeType },
     poster: { key: posterKey, etag: storedPoster.head.etag, contentType: poster.contentType },
   });
@@ -7091,8 +7876,25 @@ studioRouter.post('/materials/file', async (req, res) => {
   const usage = String(req.query.usage || '');
   const sourceType = String(req.query.sourceType || '');
   const sourceUrl = String(req.query.sourceUrl || '');
+  const rightsConfirmed = String(req.query.rightsConfirmed || '') === '1';
   if (!['video', 'image', 'audio'].includes(type)) {
     res.status(400).json({ ok: false, error: 'invalid type' });
+    return;
+  }
+  let productSceneIntent: ProductSceneUploadIntent | undefined;
+  let productBinding: MaterialUploadProductBinding | undefined;
+  try {
+    productSceneIntent = await resolveProductSceneUploadIntent({
+      tenantId,
+      type,
+      sourceType,
+      productId: req.query.productId,
+      productSceneType: req.query.productSceneType,
+    });
+    productBinding = productSceneIntent ? undefined : await resolveMaterialUploadProductBinding(tenantId, req.query.productId);
+  } catch (error) {
+    const response = productSceneUploadErrorResponse(error);
+    res.status(response?.status || 503).json({ ok: false, error: response?.message || '产品资料暂不可读取，请稍后重试' });
     return;
   }
 
@@ -7143,11 +7945,22 @@ studioRouter.post('/materials/file', async (req, res) => {
     return;
   }
 
+  const sha256 = digest.digest('hex');
+  let productScene: VerifiedProductSceneUpload | undefined;
+  try {
+    productScene = await verifyProductSceneUpload(productSceneIntent, storedPath, sha256);
+  } catch (error) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    const response = productSceneUploadErrorResponse(error);
+    res.status(response?.status || 422).json({ ok: false, error: response?.message || '视频文件校验失败' });
+    return;
+  }
+
   try {
     const material = await saveMaterialUploadToDatabase({
       tenantId, name, folder, type: type as Material['type'], duration, width, height,
       usage, sourceType, sourceUrl, mimeType: contentType, mediaName: file,
-      mediaPath: storedPath, sizeBytes: bytes, sha256: digest.digest('hex'), tempDirectory: tempDir,
+      mediaPath: storedPath, sizeBytes: bytes, sha256, tempDirectory: tempDir, productScene, productBinding, rightsConfirmed,
     });
     if (['video', 'image'].includes(material.type)) {
       void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
@@ -7164,9 +7977,25 @@ studioRouter.post('/materials/file', async (req, res) => {
 // POST /studio/materials  Body: { name, folder?, type, duration?, dataBase64, mimeType?, scope? } → 上传单个文件
 studioRouter.post('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const { name, folder = 'upload', type, duration = 0, width = 0, height = 0, dataBase64, mimeType, usage, sourceType, sourceUrl } = req.body ?? {};
+  const { name, folder = 'upload', type, duration = 0, width = 0, height = 0, dataBase64, mimeType, usage, sourceType, sourceUrl, productId, productSceneType, rightsConfirmed = false } = req.body ?? {};
   if (!dataBase64 || !type) { res.status(400).json({ ok: false, error: 'dataBase64 and type required' }); return; }
   if (!['video', 'image', 'audio'].includes(type)) { res.status(400).json({ ok: false, error: 'invalid type' }); return; }
+  let productSceneIntent: ProductSceneUploadIntent | undefined;
+  let productBinding: MaterialUploadProductBinding | undefined;
+  try {
+    productSceneIntent = await resolveProductSceneUploadIntent({
+      tenantId,
+      type: String(type),
+      sourceType: String(sourceType || ''),
+      productId,
+      productSceneType,
+    });
+    productBinding = productSceneIntent ? undefined : await resolveMaterialUploadProductBinding(tenantId, productId);
+  } catch (error) {
+    const response = productSceneUploadErrorResponse(error);
+    res.status(response?.status || 503).json({ ok: false, error: response?.message || '产品资料暂不可读取，请稍后重试' });
+    return;
+  }
 
   const file = materialUploadFileName(type, String(mimeType || ''));
   const buf = Buffer.from(String(dataBase64).replace(/^data:[^,]+,/, ''), 'base64');
@@ -7176,6 +8005,16 @@ studioRouter.post('/materials', async (req, res) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-material-upload-'));
   const tempFile = path.join(tempDir, file);
   fs.writeFileSync(tempFile, buf, { mode: 0o600 });
+  const sha256 = createHash('sha256').update(buf).digest('hex');
+  let productScene: VerifiedProductSceneUpload | undefined;
+  try {
+    productScene = await verifyProductSceneUpload(productSceneIntent, tempFile, sha256);
+  } catch (error) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    const response = productSceneUploadErrorResponse(error);
+    res.status(response?.status || 422).json({ ok: false, error: response?.message || '视频文件校验失败' });
+    return;
+  }
 
   try {
     const material = await saveMaterialUploadToDatabase({
@@ -7183,7 +8022,7 @@ studioRouter.post('/materials', async (req, res) => {
       duration: Number(duration) || 0, width: Number(width) || 0, height: Number(height) || 0,
       usage: String(usage || ''), sourceType: String(sourceType || ''), sourceUrl: String(sourceUrl || ''),
       mimeType: contentType, mediaName: file, mediaPath: tempFile, sizeBytes: buf.length,
-      sha256: createHash('sha256').update(buf).digest('hex'), tempDirectory: tempDir,
+      sha256, tempDirectory: tempDir, productScene, productBinding, rightsConfirmed: rightsConfirmed === true,
     });
     if (['video', 'image'].includes(material.type)) {
       void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
@@ -7390,42 +8229,89 @@ studioRouter.get('/material-products', async (_req, res) => {
   } catch { res.status(503).json({error:'产品资料暂不可读取，请稍后重试'}); }
 });
 
+studioRouter.patch('/materials/:id/generated-image-review', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const inventory = await readMaterialLibrary(tenantId);
+  const material = inventory.items.find(item => item.id === req.params.id && item.tenantId === tenantId && item.scope !== 'shared');
+  if (!material) { res.status(404).json({ ok: false, error: '生成图片不存在或不可编辑' }); return; }
+  if (material.type !== 'image' || material.sourceType !== 'ai_generated_marketing_image') {
+    res.status(409).json({ ok: false, error: '只有当前工作流生成的营销图片可以在这里确认' }); return;
+  }
+  if (req.body?.accepted !== true) { res.status(400).json({ ok: false, error: '请明确确认图片已通过人工复核' }); return; }
+  const changes = {
+    provenance: {
+      ...recordObject(material.provenance),
+      qualityStatus: 'accepted',
+      confirmed: true,
+      confirmationSource: 'user',
+      generatedImageReview: {
+        schemaVersion: 'generated-image-review.v1',
+        status: 'accepted',
+        reviewedAt: new Date().toISOString(),
+      },
+    },
+  };
+  const saved = material.id.startsWith('pb-')
+    ? Boolean(await getOwnedCloudMaterialRecord(material.id.slice(3), tenantId))
+      && await updateCloudMaterial(material.id.slice(3), changes)
+    : updateLocalMaterial(material.id, tenantId, changes);
+  if (!saved) { res.status(500).json({ ok: false, error: '图片复核结果保存失败' }); return; }
+  const nextMaterial = { ...(material as unknown as Material), ...changes } as Material;
+  void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
+  res.json({ ok: true, material: await materialResponse(nextMaterial, tenantId) });
+});
+
 studioRouter.patch('/materials/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   try {
     const inventory = await readMaterialLibrary(tenantId);
     const material = inventory.items.find(item => item.id === req.params.id && item.tenantId === tenantId && item.scope !== 'shared');
     if (!material) { res.status(404).json({ok:false,error:'素材不存在或不可编辑'}); return; }
-    const name = String(req.body?.name ?? '').trim().slice(0,120);
+    const body = recordObject(req.body);
+    const hasName = Object.prototype.hasOwnProperty.call(body, 'name');
+    const name = String(hasName ? body.name : material.name || '').trim().slice(0,120);
     if (!name) { res.status(400).json({ok:false,error:'请填写素材名称'}); return; }
-    const changes: Record<string,unknown> = {name};
-    let finalProductId = String(material.productId || '');
-    if ('tags' in (req.body || {})) changes.tags = String(req.body.tags || '').trim().slice(0,500);
-    if ('productId' in (req.body || {})) {
-      const id = String(req.body.productId || '');
+    const changes: Record<string,unknown> = hasName ? {name} : {};
+    if ('tags' in body) changes.tags = String(body.tags || '').trim().slice(0,500);
+    const hasProductSceneType = Object.prototype.hasOwnProperty.call(body, 'productSceneType');
+    const requestedProductId = String('productId' in body ? body.productId || '' : material.productId || '').trim();
+    const existingSceneBinding = productSceneMaterialProvenanceOf(material as unknown as Record<string, unknown>);
+    let product: NonNullable<Awaited<ReturnType<typeof readTenantEnterpriseProfile>>['products']['items']>[number] | undefined;
+    if ('productId' in body || hasProductSceneType) {
       const profile = await readTenantEnterpriseProfile(tenantId);
-      const product = (profile.products.items || []).find((item,index) => productIdentity(item,index) === id);
-      if (id && !product) { res.status(400).json({ok:false,error:'关联产品不在当前企业资料中'}); return; }
-      changes.productId = id; changes.productName = product?.name || '';
-      finalProductId = id;
+      product = (profile.products.items || []).find((item,index) => productIdentity(item,index) === requestedProductId);
+      if (requestedProductId && !product) { res.status(400).json({ok:false,error:'关联产品不在当前企业资料中'}); return; }
+      if (hasProductSceneType && !product) { res.status(400).json({ok:false,error:'请先选择当前企业资料中的产品'}); return; }
+      Object.assign(changes, 'productId' in body
+        ? productSceneMaterialProductAssociationChanges({
+          material: { ...material, ...changes },
+          productId: requestedProductId,
+          productName: String(product?.name || ''),
+        })
+        : { productId: requestedProductId, productName: product?.name || '' });
     }
-    if ('primaryTheme' in (req.body || {})) {
-      const theme = String(req.body.primaryTheme || '');
+    const finalProductId = requestedProductId;
+    if ('primaryTheme' in body) {
+      const theme = String(body.primaryTheme || '');
       if (!MATERIAL_THEMES.includes(theme as any)) { res.status(400).json({ok:false,error:'主题标签无效'}); return; }
       changes.primaryTheme = theme;
       changes.themeTags = [theme];
       changes.classificationStatus = 'completed';
       changes.classificationSource = 'user';
     }
-    if ('materialV2' in (req.body || {}) || 'enterpriseCommon' in (req.body || {})) {
+    if ('materialV2' in body || 'enterpriseCommon' in body) {
       const current = material.materialV2 || (material.provenance && typeof material.provenance === 'object'
         ? material.provenance.materialAssetV2 : undefined) || {};
       const metadata = normalizeMaterialAssetV2({
         ...(current as Record<string, unknown>),
-        ...(req.body?.materialV2 && typeof req.body.materialV2 === 'object' && !Array.isArray(req.body.materialV2) ? req.body.materialV2 : {}),
-        ...('enterpriseCommon' in (req.body || {}) ? { enterpriseCommon: req.body.enterpriseCommon === true } : {}),
+        ...(body.materialV2 && typeof body.materialV2 === 'object' && !Array.isArray(body.materialV2) ? body.materialV2 : {}),
+        ...('enterpriseCommon' in body ? { enterpriseCommon: body.enterpriseCommon === true } : {}),
       });
-      changes.provenance = { ...(material.provenance || {}), materialAssetV2: metadata };
+      changes.provenance = {
+        ...recordObject(changes.provenance || material.provenance),
+        materialAssetV2: metadata,
+        ...('materialV2' in body ? { materialAssetV2Source: 'user' } : {}),
+      };
     }
     const effectiveMetadata = materialAssetV2FromRecord({
       ...(material as unknown as Record<string, unknown>),
@@ -7452,8 +8338,34 @@ studioRouter.patch('/materials/:id', async (req, res) => {
       }
       throw error;
     }
+    if (hasProductSceneType) {
+      const kind = String(body.productSceneType || '') as ProductSceneKind;
+      if (!PRODUCT_SCENE_KINDS.includes(kind)) { res.status(400).json({ok:false,error:'产品预制场景类型无效'}); return; }
+      if (!existingSceneBinding) {
+        res.status(409).json({ok:false,error:'请从产品素材详情中上传预制素材，系统需要校验原始视频文件'});
+        return;
+      }
+      if (!productSceneMaterialProductionEligible(material as unknown as Record<string, unknown>, existingSceneBinding)) {
+        res.status(409).json({ok:false,error:'该素材的原始文件校验凭证已失效，请重新上传'});
+        return;
+      }
+      Object.assign(changes, productSceneMaterialBindingChanges({
+        material: { ...material, ...changes },
+        productId: requestedProductId,
+        productName: String(product?.name || ''),
+        kind,
+        verification: {
+          durationSeconds: existingSceneBinding.verifiedDurationSeconds,
+          width: existingSceneBinding.verifiedWidth,
+          height: existingSceneBinding.verifiedHeight,
+          decodedFrameCount: existingSceneBinding.decodedFrameCount,
+          verificationMethod: existingSceneBinding.verificationMethod,
+          contentSha256: existingSceneBinding.contentSha256,
+        },
+      }));
+    }
     const saved = material.id.startsWith('pb-')
-      ? Boolean(await getOwnedCloudMaterialRecord(material.id.slice(3), tenantId)) && await updateCloudMaterial(material.id.slice(3), {...changes,title:name})
+      ? Boolean(await getOwnedCloudMaterialRecord(material.id.slice(3), tenantId)) && await updateCloudMaterial(material.id.slice(3), {...changes,...(hasName ? {title:name} : {})})
       : updateLocalMaterial(material.id,tenantId,changes);
     if (!saved) throw Error('素材修改保存失败');
     const nextMaterial = { ...material, ...changes } as Material;
@@ -7493,8 +8405,16 @@ studioRouter.delete('/materials/:id', async (req, res) => {
     return visit(project.spec, 'spec');
   });
   if (referencedBy.length) {
-    res.status(409).json({ ok: false, error: '素材仍被制作项目引用，请先从相关分镜移除',
-      references: referencedBy.map(project => ({ projectId: project.id, title: project.title })) });
+    if (materialId.startsWith('pb-')) {
+      res.status(409).json({ ok: false, error: '云素材仍被制作项目引用，请先从相关分镜移除',
+        references: referencedBy.map(project => ({ projectId: project.id, title: project.title })) });
+      return;
+    }
+    const current = loadMaterials();
+    const hidden = hideLocalMaterialFromLibrary(current, materialId, tenantId, new Date().toISOString());
+    if (!hidden.material) { res.status(404).json({ ok: false, error: 'Material not found' }); return; }
+    persistMaterials(hidden.records as Material[]);
+    res.json({ ok: true, retainedForProjectReferences: true });
     return;
   }
   if (req.params.id.startsWith('pb-')) {
@@ -9911,6 +10831,36 @@ async function storyboardEnvironmentFrameVersionIssues(tenantId: string, project
   return issues;
 }
 
+async function appendCompletedPosterMaterialUsage(input: {
+  tenantId: string;
+  projectId: string;
+  projectTitle: string;
+  spec: Record<string, any>;
+  usedAt: string;
+}): Promise<Record<string, any>> {
+  if (String(input.spec.contentMode || '') !== 'poster') return input.spec;
+  const outputMaterialId = String(input.spec.posterImageMaterialId || '').trim();
+  if (!outputMaterialId) return input.spec;
+  const verification = verifiedStudioGenerationFromSpec(input.spec, {
+    generationKind: 'poster',
+    generationProvenance: 'ai',
+    qualityStatus: 'passed',
+    publishable: true,
+    generationRecordId: 'poster-current',
+  });
+  if (!verification.ok) return input.spec;
+  const inventory = await readMaterialLibrary(input.tenantId);
+  const output = inventory.items.find(item => item.id === outputMaterialId && item.type === 'image');
+  if (!output) return input.spec;
+  return appendMaterialUsageManifest(input.spec, buildStudioMaterialUsageManifest({
+    projectId: input.projectId,
+    projectTitle: input.projectTitle,
+    artifactId: `poster:${outputMaterialId}`,
+    usedAt: output.createdAt || input.usedAt,
+    spec: input.spec,
+  }));
+}
+
 // POST /studio/projects  Body: { id?, title?, status?, spec, thumbSeed? } → 新建或更新
 studioRouter.post('/projects', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -10007,13 +10957,48 @@ studioRouter.post('/projects', async (req, res) => {
         return;
       }
 
+      spec = await appendCompletedPosterMaterialUsage({
+        tenantId,
+        projectId: String(id),
+        projectTitle: String(title ?? existing.title ?? ''),
+        spec,
+        usedAt: now,
+      });
+
       const changed = JSON.stringify(existing.spec || {}) !== JSON.stringify(spec || {})
         || String(existing.title || '') !== String(title ?? existing.title ?? '')
         || String(existing.status || '') !== String(status || '');
-      const updated = await store.update('studio_projects', String(id), { title: title ?? existing.title, status, spec, thumb_seed: thumbSeed || '', updated_at: now });
-      if (!updated) { res.status(503).json({ ok: false, code: 'studio_project_storage_unavailable', error: '草稿未能写入存储，请重试；当前编辑仍保留在页面中。' }); return; }
+      let write: Awaited<ReturnType<typeof compareAndSwapStudioProject>>;
+      try {
+        write = await compareAndSwapStudioProject(store, existing, {
+          title: title ?? existing.title,
+          status,
+          spec,
+          thumb_seed: thumbSeed || '',
+        }, now);
+      } catch (error) {
+        if (error instanceof Error && error.message === 'STUDIO_PROJECT_ATOMIC_STORE_REQUIRED') {
+          res.status(503).json({ ok: false, code: 'studio_project_atomic_storage_required', error: '当前存储暂不支持安全保存，页面修改尚未覆盖服务端项目。请稍后重试。' });
+          return;
+        }
+        throw error;
+      }
+      if (!write.ok) {
+        const latest = await store.getById<any>('studio_projects', String(id));
+        if (latest?.tenant_id === tenantId) {
+          res.status(409).json({
+            ok: false,
+            code: 'studio_project_version_conflict',
+            error: '保存期间后台生产结果已更新。系统未覆盖新结果，请重新载入最新版本后继续。',
+            project: projectFromRecord(latest, tenantId),
+          });
+        } else {
+          res.status(503).json({ ok: false, code: 'studio_project_storage_unavailable', error: '草稿未能写入存储，请重试；当前编辑仍保留在页面中。' });
+        }
+        return;
+      }
       if (changed) await invalidatePublishingApprovalForProject(tenantId, String(id));
-      res.json({ ok: true, project: projectFromRecord({ ...existing, title: title ?? existing.title, status, spec, thumb_seed: thumbSeed, updated_at: now }, tenantId) });
+      res.json({ ok: true, project: projectFromRecord({ ...existing, title: title ?? existing.title, status, spec, thumb_seed: thumbSeed, updated_at: write.updatedAt }, tenantId) });
       return;
     }
   }
@@ -10107,9 +11092,18 @@ studioRouter.post('/projects/:id/requality', async (req, res) => {
   };
   const records = Array.isArray(spec.projectQualityRecords) ? spec.projectQualityRecords : [];
   const nextSpec = { ...spec, projectQualityRecords: [...records, record].slice(-50), activeProjectQualityRecordId: record.id };
-  const updated = await store.update('studio_projects', req.params.id, { spec: nextSpec, updated_at: now });
-  if (!updated) { res.status(503).json({ ok: false, code: 'studio_project_quality_storage_unavailable', error: '质检签发记录保存失败，请重试' }); return; }
-  res.status(201).json({ ok: true, replayed: false, record, project: projectFromRecord({ ...project, spec: nextSpec, updated_at: now }, tenantId) });
+  const updated = await compareAndSwapStudioProject(store, project, { spec: nextSpec }, now);
+  if (!updated.ok) {
+    const latest = await store.getById<any>('studio_projects', req.params.id);
+    res.status(409).json({
+      ok: false,
+      code: 'studio_project_version_conflict',
+      error: '质检期间草稿已更新，签发记录未覆盖最新内容。请刷新后重新质检。',
+      ...(latest?.tenant_id === tenantId ? { project: projectFromRecord(latest, tenantId) } : {}),
+    });
+    return;
+  }
+  res.status(201).json({ ok: true, replayed: false, record, project: projectFromRecord({ ...project, spec: nextSpec, updated_at: updated.updatedAt }, tenantId) });
 });
 
 // These records are created only by an explicit user action after reviewing a
@@ -10240,7 +11234,6 @@ studioRouter.post('/variation-batches/:batchId/retry-failed', (req, res) => {
   if (count) batch.status = 'queued'; batch.updatedAt = now; persistVariationBatches(list); res.json({ ok: true, retried: count, batch });
 });
 
-const PUBLISH_LINKS_FILE = path.join(__dirname, '../../data/studio-publish-links.json');
 studioRouter.get('/publish-records', (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   res.json(listPublishRecords(tenantId, req.query.accountId ? String(req.query.accountId) : undefined));
@@ -10424,39 +11417,71 @@ function materialLocalFile(material: Material): string | null {
   return path.join(MEDIA_DIR, raw);
 }
 
-async function resolveReferenceImages(materialIds: unknown, tenantId: string): Promise<ReferenceImage[]> {
-  const ids = new Set(Array.isArray(materialIds) ? materialIds.map(String) : []);
-  if (!ids.size) return [];
-  const refs: ReferenceImage[] = [];
-  for (const material of loadMaterials()) {
-    if (!ids.has(material.id)) continue;
-    if (material.scope !== 'shared' && material.tenantId !== tenantId) continue;
-    if (material.objectKey) {
-      try {
-        const key = material.type === 'image' ? material.objectKey : material.posterObjectKey;
-        if (!key) continue;
-        const downloaded = await objectStorageDownload(key);
-        if (!downloaded?.buf.length) continue;
-        refs.push({ mimeType: downloaded.contentType, base64: downloaded.buf.toString('base64') });
-      } catch {
-        continue;
-      }
-      if (refs.length >= 4) break;
-      continue;
-    }
-    const filePath = materialLocalFile(material);
-    if (!filePath || !fs.existsSync(filePath)) continue;
-    try {
-      refs.push({
-        mimeType: mimeFromFile(filePath),
-        base64: fs.readFileSync(filePath).toString('base64'),
-      });
-    } catch {
-      // Skip unreadable references; generation can still proceed with remaining assets.
-    }
-    if (refs.length >= 4) break;
+type PosterReferenceRole = 'exact_product' | 'style' | 'supporting';
+type PosterReferenceDescriptor = { materialId: string; role: PosterReferenceRole; productId: string | null };
+
+async function posterReferenceBytes(material: Record<string, unknown>, tenantId: string): Promise<ReferenceImage | null> {
+  const objectKey = String(material.objectKey || '').trim();
+  if (objectKey) {
+    const downloaded = await objectStorageDownload(objectKey).catch(() => null);
+    if (downloaded?.buf.length) return { mimeType: downloaded.contentType, base64: downloaded.buf.toString('base64') };
   }
-  return refs;
+  const id = String(material.id || '');
+  if (id.startsWith('pb-')) {
+    const response = await fetchCloudMaterial(id.slice(3), 'videoFile', undefined, tenantId).catch(() => null);
+    if (response?.ok) {
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length) return { mimeType: response.headers.get('content-type') || 'image/png', base64: bytes.toString('base64') };
+    }
+  }
+  const local = materialLocalFile(material as unknown as Material);
+  if (local && fs.existsSync(local)) return { mimeType: mimeFromFile(local), base64: fs.readFileSync(local).toString('base64') };
+  const url = String(material.url || '').trim();
+  return url ? storyboardEnterpriseImage(url, tenantId) : null;
 }
 
-import { createProjectRevisionGuard, projectRevisionMatches } from '../lib/projectRevision.js';
+async function resolveReferenceImages(
+  materialIds: unknown,
+  tenantId: string,
+  rawReferencePlan: unknown = [],
+): Promise<{ images: ReferenceImage[]; descriptors: PosterReferenceDescriptor[]; blockers: string[] }> {
+  const orderedIds = Array.isArray(materialIds) ? [...new Set(materialIds.map(String).filter(Boolean))].slice(0, 3) : [];
+  if (!orderedIds.length) return { images: [], descriptors: [], blockers: ['没有选择可用于图片生成的参考素材'] };
+  const roles = new Map<string, PosterReferenceRole>();
+  if (Array.isArray(rawReferencePlan)) {
+    for (const raw of rawReferencePlan) {
+      const row = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+      const role = String(row.role || '');
+      if (['exact_product', 'style', 'supporting'].includes(role)) roles.set(String(row.materialId || ''), role as PosterReferenceRole);
+    }
+  }
+  const inventory = await readMaterialLibrary(tenantId);
+  const byId = new Map(inventory.items.map(item => [String(item.id), item]));
+  const images: ReferenceImage[] = [];
+  const descriptors: PosterReferenceDescriptor[] = [];
+  const blockers: string[] = [];
+  for (const materialId of orderedIds) {
+    const material = byId.get(materialId);
+    if (!material) { blockers.push(`素材 ${materialId} 不存在或已失去访问权限`); continue; }
+    if (material.type !== 'image') { blockers.push(`素材 ${materialId} 不是图片`); continue; }
+    const manifest = buildMaterialCapabilityManifest(material);
+    if (!manifest.capabilities.includes('image_generation_reference')) {
+      const reason = manifest.blockers.map(item => item.message).join('、') || '未通过图片模型输入准入';
+      blockers.push(`${material.name || materialId}：${reason}`);
+      continue;
+    }
+    const inferredRole: PosterReferenceRole = manifest.capabilities.includes('exact_product_reference')
+      ? 'exact_product'
+      : material.usage === 'reference_only' || material.folder === 'hot' ? 'style' : 'supporting';
+    const role = roles.get(materialId) || inferredRole;
+    if (role === 'exact_product' && !manifest.capabilities.includes('exact_product_reference')) {
+      blockers.push(`${material.name || materialId} 没有明确产品绑定，不能作为产品身份图`);
+      continue;
+    }
+    const bytes = await posterReferenceBytes(material, tenantId).catch(() => null);
+    if (!bytes) { blockers.push(`${material.name || materialId} 的原始图片不可读取`); continue; }
+    images.push(bytes);
+    descriptors.push({ materialId, role, productId: manifest.identity.productId });
+  }
+  return { images, descriptors, blockers };
+}

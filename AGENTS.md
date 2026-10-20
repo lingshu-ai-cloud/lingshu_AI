@@ -1,21 +1,5 @@
 # Repository working agreements
 
-## Workspace coordination and baseline ownership
-
-- The canonical integration worktree is this checkout: `mobile-dual-edition-20261012`, on branch `xixi数字员工联调v3`. Other worktrees and branches are evidence or isolated development inputs, not a newer baseline merely because their files have a later timestamp.
-- The chat titled `定位最新工作区代码` is the baseline owner. When it issues a freeze, checkpoint, file-scope assignment, or handoff request, finish only the current atomic write and comply before starting another change.
-- Only one chat may own real provider calls, paid-operation writes, migrations, golden-package state, or run/task/shot mutations at a time. Read-only audits and tests may run concurrently.
-- Before editing, declare the exact file set and confirm it does not overlap another active chat. Do not broaden the file set without handing the lease back to the baseline owner.
-- Do not switch branches, create commits, push, reset, checkout, stash, or alter another worktree while shared integration work is active unless the baseline owner explicitly assigns that operation.
-- A handoff must report: files changed, live processes and external run identifiers, last passing and failing commands, persisted business state, unresolved decisions, and the exact safe resume point.
-
-## Baseline acceptance gate
-
-- A reproducible baseline requires a named commit, a clean code-and-migration status, `git diff --check`, a passing TypeScript check, migration checksum/preflight verification, and the targeted recovery tests for the changed domain.
-- Runtime data, locks, downloaded media, credentials, local environment files, generated artifacts, and provider receipts are never committed as source baseline. Record their hashes or durable identifiers in the handoff instead.
-- Do not call a dirty worktree, an uncommitted snapshot, a passing narrow test, or a live local runtime a release candidate.
-- Before handing work back, run `node scripts/workspace-baseline-report.mjs` and include its JSON output. A nonzero exit is an explicit handoff blocker, not permission to bypass the gate.
-
 ## Frontend design policy
 
 - Every frontend change must follow `docs/product/PRD-灵枢AI全系统UI设计规范-v2-2026-10-09.md` as the sole product design authority, including motion, transitions, typography, accessibility, and component behavior. Reuse the shared theme, design tokens, and UI components; historical design documents are reference only.

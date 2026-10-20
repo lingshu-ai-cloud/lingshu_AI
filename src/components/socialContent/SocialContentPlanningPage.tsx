@@ -13,8 +13,7 @@ import SocialImageWorkbench from './SocialImageWorkbench';
 import SocialContentHistoryHome from './SocialContentHistoryHome';
 import { loadSocialContentStage, readSocialContentStage, type SocialContentStageProfile } from '../../lib/socialContentStage';
 import { studioApi } from '../../lib/studioApi';
-import { replicationResumeStep } from '../../lib/socialContentReplicationResume';
-import { socialContentApi } from '../../lib/socialContentApi';
+import { replicationResumeStep } from '../../lib/socialContentReplicationResume';import { socialContentApi } from '../../lib/socialContentApi';
 import {
   socialPlanningMaterialSource,
   socialPlanningOperationKey,
@@ -40,6 +39,7 @@ function seedFromRequest(request?: SocialContentCreateRequest | null): SocialCre
     referenceThumbnail: request.sourceContext?.referenceThumbnail,
     referenceMediaUrl: request.sourceContext?.referenceMediaUrl,
     referenceContentType: request.sourceContext?.referenceContentType,
+    aspectRatio: request.sourceContext?.aspectRatio,
     referenceShots: request.sourceContext?.referenceShots,
     referenceLinks: request.prefill?.referenceLinks,
     productMappings: request.identityMappings?.products,

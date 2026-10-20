@@ -28,19 +28,19 @@ export default function ReplicationWorkbenchHeader({ title, subtitle, actions, c
               aria-label="草稿名称"
               value={title || ''}
               maxLength={120}
-              variant="borderless"
+              variant="outlined"
               placeholder="请输入草稿名称"
               onChange={event => onTitleChange?.(event.target.value)}
               onBlur={onTitleCommit}
               onPressEnter={event => event.currentTarget.blur()}
               suffix={<PencilLine size={16} aria-hidden="true" className="text-text-muted" />}
-              className="ls-replication-draft-title px-0 text-text-primary focus-within:bg-surface-2"
+              className="ls-replication-draft-title min-h-11 rounded-lg border-border bg-white px-3 text-text-primary"
             />
             {subtitle && <p className="truncate text-[10px] text-text-muted">{subtitle}</p>}
             {titleStatus !== 'idle' && <p aria-live="polite" className={`mt-1 text-[11px] ${titleStatus === 'error' ? 'text-red-600' : 'text-text-muted'}`}>{titleStatus === 'saving' ? '正在保存草稿名称…' : titleStatus === 'saved' ? '草稿名称已保存' : '草稿名称保存失败，请重试'}</p>}
           </div>
         : <div className="max-w-xl"><h1 className="truncate text-xl font-semibold text-text-primary">{title || '未命名草稿'}</h1>{subtitle && <p className="mt-1 truncate text-[10px] text-text-muted">{subtitle}</p>}</div>)}
     </div>
-    {actions && <div className="flex shrink-0 flex-nowrap items-center gap-2">{actions}</div>}
+    {actions && <div className="replication-workbench-header-actions flex shrink-0 flex-nowrap items-center gap-2">{actions}</div>}
   </header>;
 }

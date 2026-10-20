@@ -69,10 +69,11 @@ test('tenant and full identity are isolated and atomic capability is mandatory',
  await assert.rejects(prepareWeeklyCandidateExactDynamicHeadAnchor({store:unavailable,tenantId:'tenant-a',initialHead:a}),/atomic_store_required/);
 });
 
-test('real PocketBase migration supports fresh, 183-to-184, down and replay in disposable databases',{skip:!existsSync(path.join(homedir(),'.local/share/lingshu/pocketbase/pocketbase'))||!existsSync('/usr/bin/sqlite3')},()=>{
+test('real PocketBase migration supports fresh, prior-to-current, down and replay in disposable databases',{skip:!existsSync(path.join(homedir(),'.local/share/lingshu/pocketbase/pocketbase'))||!existsSync('/usr/bin/sqlite3')},()=>{
  const pb=path.join(homedir(),'.local/share/lingshu/pocketbase/pocketbase'),scratch=mkdtempSync(path.join(tmpdir(),'weekly-head-migration-'));
  const source=path.resolve('pb_migrations'),all=path.join(scratch,'all'),baseline=path.join(scratch,'baseline');mkdirSync(all);mkdirSync(baseline);
- for(const name of readdirSync(source).filter(name=>name.endsWith('.js'))){cpSync(path.join(source,name),path.join(all,name));if(name!=='1792195219_create_weekly_candidate_exact_dynamic_heads.js')cpSync(path.join(source,name),path.join(baseline,name));}
+ const targetMigration='1792195219_create_weekly_candidate_exact_dynamic_heads.js';
+ for(const name of readdirSync(source).filter(name=>name.endsWith('.js'))){cpSync(path.join(source,name),path.join(all,name));if(name!==targetMigration)cpSync(path.join(source,name),path.join(baseline,name));}
  const run=(dir:string,migrations:string,...args:string[])=>execFileSync(pb,['migrate',...args,`--dir=${dir}`,`--migrationsDir=${migrations}`],{input:'y\n',encoding:'utf8',timeout:120000});
  const query=(dir:string,sql:string)=>execFileSync('/usr/bin/sqlite3',[path.join(dir,'data.db'),sql],{encoding:'utf8'}).trim();
  const verify=(dir:string)=>{assert.equal(query(dir,"select count(*) from _collections where name='weekly_candidate_exact_dynamic_heads';"),'1');
@@ -80,7 +81,8 @@ test('real PocketBase migration supports fresh, 183-to-184, down and replay in d
   for(const rule of ['listRule','viewRule','createRule','updateRule','deleteRule'])assert.equal(schema[rule],null);assert.match(schema.indexes.join('\n'),/UNIQUE INDEX idx_weekly_candidate_exact_dynamic_head_identity/);
   assert.equal(schema.fields.find((field:{name:string})=>field.name==='generation').onlyInt,true);};
  try{const fresh=path.join(scratch,'fresh');run(fresh,all,'up');verify(fresh);
-  assert.equal(readdirSync(baseline).filter(name=>name.endsWith('.js')).length,183);assert.equal(readdirSync(all).filter(name=>name.endsWith('.js')).length,184);
+  const baselineMigrations=readdirSync(baseline).filter(name=>name.endsWith('.js')),allMigrations=readdirSync(all).filter(name=>name.endsWith('.js'));
+  assert.equal(baselineMigrations.includes(targetMigration),false);assert.equal(allMigrations.includes(targetMigration),true);assert.equal(allMigrations.length,baselineMigrations.length+1);
   const upgrade=path.join(scratch,'upgrade');run(upgrade,baseline,'up');const before=Number(query(upgrade,'select count(*) from _migrations;'));run(upgrade,all,'up');assert.equal(Number(query(upgrade,'select count(*) from _migrations;')),before+1);verify(upgrade);
   run(upgrade,all,'down','1');assert.equal(query(upgrade,"select count(*) from _collections where name='weekly_candidate_exact_dynamic_heads';"),'0');assert.equal(Number(query(upgrade,'select count(*) from _migrations;')),before);
   run(upgrade,all,'up');verify(upgrade);assert.equal(Number(query(upgrade,'select count(*) from _migrations;')),before+1);

@@ -1,5 +1,6 @@
 import { digitalHumanDecisionIssues, enterpriseMaterialIssue } from '../../shared/contracts/smartStoryboardAdmission.js';
 import { recognizePresenterShot, salesPresenterRecognition, confirmedSalesPresenterRoute } from '../../shared/contracts/presenterShotRecognition.js';
+import { effectiveDigitalHumanRequirements } from '../../shared/contracts/digitalHumanRequirements.js';
 import { createHash } from 'node:crypto';
 import { shotFingerprint, type ShotProduction } from '../../src/lib/shotProduction.js';
 
@@ -129,6 +130,12 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
   talkingExecutorReady: boolean;
   actionExecutorReady: boolean;
   authorizedPresenterIds: string[];
+  /** Configured assets stay distinguishable from a genuinely missing person.
+   * Invalid trust evidence is still fail-closed through preflight issues. */
+  configuredPresenterIds?: string[];
+  presenterPreflightIssues?: Readonly<Record<string, readonly string[]>>;
+  presenterNamesById?: Readonly<Record<string, string>>;
+  presenterNativeOrientationsById?: Readonly<Record<string, string>>;
   defaultSalesPresenterId?: string | null;
   verifiedAdoptionContext?: StudioVerifiedAdoptionContext;
   materialIdentityEvidence?: Record<string, { productId: string; productIdentityLevel: 'exact' | 'category' | 'none' }>;
@@ -142,6 +149,7 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
     const shotId = String(slot.id || '');
     const slotId = String(slot.slotId || shotId);
     const shot = production[`${assemblyId}:${shotId}`];
+    const digitalHuman = effectiveDigitalHumanRequirements(shot?.digitalHuman);
     // `requirements` is a JSON snapshot that often contains the entire
     // product profile. `shot.source=avatar` may be an imported placeholder for
     // every reference cut. Neither is reliable evidence of what is on screen.
@@ -210,9 +218,9 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
     if ((shot?.source !== 'avatar' || spec.storyboardSourcePlans?.[slotId]?.confirmed) && assigned && !materialIssue)
       return { ...base, route: 'local_material', status: 'matched', reason: '采用已绑定的企业素材' };
     if (visualTopic === 'presenter' || choice === 'avatar') {
-      const missing = digitalHumanDecisionIssues(shot?.digitalHuman);
+      const missing = digitalHumanDecisionIssues(digitalHuman);
       if (!shot?.presenterId) missing.unshift('请选择企业人物');
-      if (!shot?.digitalHuman?.presenterMode && (!shot?.digitalHuman?.replacementScope || !shot?.digitalHuman?.targetEffect)) {
+      if (!digitalHuman?.presenterMode && (!digitalHuman?.replacementScope || !digitalHuman?.targetEffect)) {
         if (!missing.length) missing.push('请选择数字人替换范围和生成效果');
       }
       if (missing.length) return { ...base, route: 'digital_human', status: 'blocked', reason: missing.join('；') };
@@ -224,12 +232,25 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
         : '人物动作复刻执行器尚未接通，不能当作普通数字人口播生成' };
     }
     if (visualTopic === 'presenter') {
-      if (shot?.digitalHuman && shot.digitalHuman.method !== 'talking')
+      if (digitalHuman && digitalHuman.method !== 'talking')
         return { ...base, route: 'seedance_action', status: 'needs_plan', reason: '已选择场景重建方案，请在数字人工作面板完成首帧和模型预检；批量制作保留该选择，不改用 HeyGen' };
-      if (!options.talkingExecutorReady) return { ...base, route: 'digital_human', status: 'blocked', reason: '数字人口播执行器不可用' };
       const presenterId = shot?.presenterId;
-      if (!presenterId || !options.authorizedPresenterIds.includes(presenterId))
+      const configuredPresenterIds = options.configuredPresenterIds ?? options.authorizedPresenterIds;
+      if (!presenterId || !configuredPresenterIds.includes(presenterId))
         return { ...base, route: 'digital_human', status: 'blocked', reason: '缺少已授权且具备 HeyGen 人物、声音映射的企业销售资产' };
+      const preflightIssues = options.presenterPreflightIssues?.[presenterId] ?? [];
+      const presenterIssues = preflightIssues.length
+        ? [`HeyGen 人物、音色或授权预检未通过：${preflightIssues.join('、')}`]
+        : options.authorizedPresenterIds.includes(presenterId) ? [] : ['所选企业人物尚未通过 HeyGen 人物、音色或授权预检'];
+      const orientation = options.presenterNativeOrientationsById?.[presenterId] || 'unknown';
+      if (spec.ratio === '9:16' && digitalHuman?.presenterMode !== 'photo_talking' && !shot?.transparent && orientation !== 'portrait') {
+        const name = options.presenterNamesById?.[presenterId] || '所选人物';
+        presenterIssues.push(orientation === 'landscape'
+          ? `${name} 的原生画幅为横屏；请选择竖屏人物，或将成片画幅改为 16:9`
+          : `${name} 尚未确认原生竖屏画幅；请先完成人物画幅确认，选择竖屏人物，或将成片画幅改为 16:9`);
+      }
+      if (!options.talkingExecutorReady) presenterIssues.push('数字人口播执行器不可用');
+      if (presenterIssues.length) return { ...base, route: 'digital_human', status: 'blocked', reason: presenterIssues.join('；') };
       if (!String(shot?.narration || '').trim() || String(shot?.narration || '').trim() === '无')
         return { ...base, route: 'digital_human', status: 'blocked', reason: '该镜缺少逐句口播文案' };
       return { ...base, route: 'digital_human', status: 'needs_plan', reason: '可在保存草稿后逐镜创建数字人计划，执行器预检通过才可提交生成' };

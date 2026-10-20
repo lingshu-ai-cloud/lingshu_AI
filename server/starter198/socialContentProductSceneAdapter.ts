@@ -3,6 +3,7 @@ import {runVisualFfmpeg} from '../lib/renderVisualQuality.js';
 import type {SocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 import type { SocialMaterialRouting } from '../../shared/contracts/socialContentReplication.js';
 import type { SocialProductSceneReplicationSpec } from '../../shared/contracts/socialContentWorkflow.js';
 import type {
@@ -200,7 +201,8 @@ export function createSocialProductSceneAdapter(ports: ProductSceneExecutionPort
         throw new Error('product_scene_still_image_motion_forbidden');
       }
       const admissionCost=execution.estimatedCostCny??execution.actualCostCny;
-      if (admissionCost===null||!Number.isFinite(admissionCost)||admissionCost>maximumCostCny) throw new Error('product_scene_cost_exceeds_shot_budget');
+      if (admissionCost===null||!Number.isFinite(admissionCost)
+        || (!isInternalBudgetExemptTenant(context.tenantId) && admissionCost>maximumCostCny)) throw new Error('product_scene_cost_exceeds_shot_budget');
       const expectedDuration = spec.cameraLock.durationSeconds;
       if (Math.abs(execution.duration - expectedDuration) > spec.tolerance.durationSeconds) {
         throw new Error('product_scene_duration_out_of_tolerance');

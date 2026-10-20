@@ -57,7 +57,7 @@ const POLL_INTERVAL_MS = 30_000;
 const STALE_LOCK_MS = 15 * 60_000;
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
-const SUPPORTED_PLATFORMS = new Set<PublishPlatform>(['youtube', 'tiktok', 'instagram', 'facebook']);
+const SUPPORTED_PLATFORMS = new Set<PublishPlatform>(['youtube', 'tiktok', 'instagram', 'facebook', 'linkedin']);
 const SCHEDULED_PUBLISH_LEASE_SCOPE = 'legacy-scheduled-publish';
 
 type PublishResult = {

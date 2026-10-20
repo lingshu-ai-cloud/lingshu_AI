@@ -74,7 +74,7 @@ export interface Starter198QuoteInquiryInput {
 export type Starter198PresenterMode = 'brand_spokesperson' | 'product_expert' | 'none';
 
 export interface Starter198PlannedAccount {
-  platform: 'facebook' | 'instagram' | 'tiktok' | 'youtube';
+  platform: 'facebook' | 'instagram' | 'tiktok' | 'youtube' | 'linkedin';
   accountName: string;
   weeklyOutput: number;
 }
@@ -102,7 +102,7 @@ export interface Starter198InitialSetupInput {
   focusProducts: string;
   targetMarkets: string;
   customerProfile: string;
-  primaryPlatform: 'facebook' | 'instagram' | 'tiktok' | 'youtube';
+  primaryPlatform: 'facebook' | 'instagram' | 'tiktok' | 'youtube' | 'linkedin';
   primaryLanguage: string;
   constraints: string[];
   /** Structured confirmation used by the planner. Legacy callers may omit it. */

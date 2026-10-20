@@ -21,9 +21,9 @@ test('private voices can be listed, cloned and bound only for the owning tenant'
   const client = new HeyGenPresenterClient('test');
   client.voices = async (_token, _language, scope) => ({ items: scope === 'private' ? [{ id:'old-voice', name:'已有音色', language:'Chinese' }, ...(clones ? [{ id:'cloned-voice', name:'新音色', language:'Chinese' }] : [])] : [], nextToken:'' });
   client.voice = async id => ({ id, name:id === 'cloned-voice' ? '新音色' : '已有音色', language:'Chinese', status:'complete', type:'private' });
-  client.cloneVoice = async () => { clones++; return 'cloned-voice'; };
+  client.cloneVoice = async () => { clones++; return ['cloned-voice']; };
   const app = express(); app.use(express.json()); app.use((req,res,next) => { res.locals.tenantId = String(req.headers['x-tenant'] || 'tenant-a'); next(); });
-  app.use(createPresenterAssetsRouter(store, async (_key, action) => action(), { client }));
+  app.use(createPresenterAssetsRouter(store, async (_key, action) => action(), { client, normalizeVoiceAudio: async () => Buffer.from('ID3-controlled-audio') }));
   const server = app.listen(0,'127.0.0.1'); await new Promise<void>(resolve => server.once('listening',resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const audio = Buffer.alloc(12_000, 1); Buffer.from([26,69,223,163]).copy(audio);

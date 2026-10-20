@@ -116,10 +116,10 @@ import {
   type SocialSceneVisualContract,
 } from '../../shared/sceneVisualContract.js';
 import { materialAssetV2FromRecord } from '../../shared/contracts/materialAssetV2.js';
+import { buildMaterialCapabilityManifest } from '../../shared/contracts/materialCapabilityManifest.js';
 import { analyzedMaterialShots, assetSupplyShotFunction, buildMaterialSegmentProfile, materialIsEnterpriseCommon, materialProductIdentity, sameProduct,
   type SocialWorkflowMaterialCandidateSet, type SocialWorkflowMaterialClipCandidate } from './socialContentMaterialCandidateSupport.js';
 export type { SocialWorkflowMaterialCandidateSet, SocialWorkflowMaterialClipCandidate } from './socialContentMaterialCandidateSupport.js';
-
 type StoredPresenter = Record<string, unknown> & {
   id?: string; authorized?: boolean; avatarId?: string; voiceId?: string;
   socialAccountId?: string; presenterProfileId?: string; presenterProfileVersion?: string;
@@ -632,6 +632,7 @@ export function buildSocialWorkflowMaterialCandidates(input: {
       const identity = materialProductIdentity(record, input.selectedProductRef);
       const enterpriseCommon = materialIsEnterpriseCommon(record);
       const materialV2 = materialAssetV2FromRecord(record);
+      const capabilityManifest = buildMaterialCapabilityManifest(record);
       const sourceRevision = socialText(record.analysisSourceRevision || record.sourceRevision
         || socialObject(record.scriptAnalysis)?.sourceRevision || record.updatedAt)
         || `material:${assetId}`;
@@ -670,8 +671,7 @@ export function buildSocialWorkflowMaterialCandidates(input: {
           segmentProfile: profileAssessment.profile,
           segmentProfileRejectionReasons: profileAssessment.rejectionReasons,
           materialV2,
-          sourceRevision,
-          cueScores,
+          sourceRevision,          cueScores,
           baseScore: Math.max(0, ...cueScores.map(item => item.score)) * 100
             + automaticMaterialScore({
               record,
@@ -771,8 +771,7 @@ export function buildSocialWorkflowMaterialCandidates(input: {
       segmentProfileRejectionReasons: item.segmentProfileRejectionReasons,
       segmentCandidateId: `${item.assetId}:${item.sourceRevision}:${item.shot.segmentId}`,
       sourceRevision: item.sourceRevision,
-      materialV2: item.materialV2,
-    }];
+      materialV2: item.materialV2,    }];
   }).sort((left, right) => right.matchScore - left.matchScore
     || left.assetId.localeCompare(right.assetId)
     || left.segmentId.localeCompare(right.segmentId));
@@ -1069,6 +1068,7 @@ export async function readSocialTaskDetail(input: {
     }) : { productionExecutionAllowed: false as const, versionHash: 'reference-record-unavailable' }
     : null;
   const agentWorkflow = buildSocialAgentWorkflow({
+    tenantId: input.tenantId,
     taskId: summary.taskId,
     taskVersion: summary.version,
     taskStatus: summary.status,

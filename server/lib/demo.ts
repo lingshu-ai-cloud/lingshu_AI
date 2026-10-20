@@ -49,6 +49,20 @@ export function isDemoMode(): boolean {
   return process.env.DEMO_MODE === 'true';
 }
 
+export function demoQuotaExemptTenantIds(): ReadonlySet<string> {
+  return new Set(
+    String(process.env.DEMO_QUOTA_EXEMPT_TENANT_IDS ?? '')
+      .split(',')
+      .map(value => value.trim())
+      .filter(Boolean),
+  );
+}
+
+export function isDemoQuotaExemptTenant(tenantId: string | null | undefined): boolean {
+  const normalizedTenantId = String(tenantId ?? '').trim();
+  return !!normalizedTenantId && demoQuotaExemptTenantIds().has(normalizedTenantId);
+}
+
 function isTrialSubscription(sub: Subscription | null | undefined): boolean {
   const plan = String(sub?.plan ?? '').toLowerCase();
   return sub?.status === 'trialing' || plan === 'trial';
@@ -137,6 +151,26 @@ export function isExpired(expiresAt?: string | null): boolean {
 
 export async function buildDemoStatus(req: Request, tenantId?: string, expiresAt?: string | null, userId?: string): Promise<DemoStatus> {
   const limits = demoLimits();
+  if (isDemoQuotaExemptTenant(tenantId)) {
+    return {
+      enabled: false,
+      trialDays: limits.trialDays,
+      expiresAt: null,
+      daysRemaining: null,
+      expired: false,
+      limits,
+      usage: emptyUsage(),
+      remaining: {
+        aiChat: limits.aiChatDaily,
+        generation: limits.generationDaily,
+        render: limits.renderDaily,
+        videoGeneration: limits.videoGenerationDaily,
+        tokens: limits.tokenDaily,
+      },
+      totalUsage: { tokens: 0, videoGeneration: 0 },
+      totalRemaining: { tokens: limits.tokenTotal, videoGeneration: limits.videoGenerationDaily },
+    };
+  }
   let resolvedExpiresAt = expiresAt ?? null;
   let subscription: Subscription | null = null;
   if (!resolvedExpiresAt && tenantId) {
@@ -213,6 +247,7 @@ export async function consumeDemoQuota(req: Request, res: Response, kind: DemoQu
     && typeof locals.tenantId === 'string' && locals.tenantId
     ? { userId: locals.userId, tenantId: locals.tenantId }
     : await auth.verifyToken(req.headers.authorization);
+  if (isDemoQuotaExemptTenant(id?.tenantId)) return true;
   const sub = id?.tenantId ? await getTenantSubscription(id.tenantId) : null;
   if (isAdminSubscription(sub)) return true;
   const quotaEnforced = isDemoMode() || isTrialSubscription(sub);

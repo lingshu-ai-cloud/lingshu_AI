@@ -1,7 +1,7 @@
 import { readTenantEnterpriseFacts } from '../routes/enterprise.js';
 
 const FACT_HASH = /^[a-f0-9]{64}$/i;
-const PUBLISH_PLATFORMS = new Set(['youtube', 'tiktok', 'instagram', 'facebook']);
+const PUBLISH_PLATFORMS = new Set(['youtube', 'tiktok', 'instagram', 'facebook', 'linkedin']);
 
 export type PublishingCopyAudit = {
   enterpriseFactVersion: string;

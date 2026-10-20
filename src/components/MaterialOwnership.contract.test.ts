@@ -88,13 +88,15 @@ assert.doesNotMatch(inspirationSource, /任务中上传的图片、视频和音�
 assert.match(inspirationSource, /<span className="text-xs font-bold">音频素材<\/span>/, '音频素材必须用专属占位画面识别，不得继续误标为图片');
 assert.match(inspirationSource, /studioApi\.listMaterialLibrary\('library'/, '我的素材必须只读取用户可管理的正式素材，不得混入工作流中间产物');
 assert.doesNotMatch(inspirationSource, /studioApi\.listMaterialLibrary\('all'/, '我的素材不得绕过服务端的正式素材边界');
+assert.match(studioRouteSource, /purpose !== 'all'[\s\S]{0,300}!isWorkflowInternalMaterial/, '我的素材接口必须在分页和计数前排除人物认证原始资料与工作流中间产物');
+assert.match(studioRouteSource, /const storedFileUrl = material\.file[\s\S]{0,500}tenantAssetRelativePath\(tenantId, material\.file\)[\s\S]{0,300}const sourceUrl = material\.url \|\| storedFileUrl/, '本地已入库素材缺少显式 URL 时必须恢复为受保护媒体地址，不能显示封面加载失败');
 assert.doesNotMatch(inspirationSource, /enterMaterialSmartGeneration[\s\S]*?material\.usage === 'reference_only'/, '所有进入素材库的视觉素材都必须可以进入创作链路');
 assert.doesNotMatch(inspirationSource, /pinnedMaterialVideos/, '素材库内容不得反向混入爆款视频列表');
 assert.doesNotMatch(inspirationSource, /<MaterialAnalysisStatus material=\{material\}/, '我的素材卡片不得展示内部分析进度和区间标注');
 assert.doesNotMatch(inspirationSource, /采集参考 · 仅供分析|参考素材 ≠ 可商用素材|产品归属待确认|点击智能分类/, '我的素材卡片不得展示内部用途、归属和分类标注');
-assert.match(inspirationSource, /<LsMasonryGallery layout="grid" items=\{filteredMaterials\.map/, '我的素材必须复用完整媒体卡的齐行网格');
+assert.match(inspirationSource, /<LsMasonryGallery layout="masonry" items=\{pagedUngroupedFilteredMaterials\.map/, '我的素材必须使用适配真实媒体比例的瀑布流');
 assert.match(inspirationSource, /title=\{materialSemanticLabel\(material\)\}>\{materialSemanticLabel\(material\)\}<\/p>/, '每张我的素材卡片必须显示产品名或主要内容关键词');
-const materialCardSource = inspirationSource.slice(inspirationSource.indexOf('<LsMasonryGallery layout="grid" items={filteredMaterials.map'), inspirationSource.indexOf('aria-label="我的素材分页"'));
+const materialCardSource = inspirationSource.slice(inspirationSource.indexOf('<LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map'), inspirationSource.indexOf('aria-label="普通素材分页"'));
 assert.match(materialCardSource, /generatedMaterialOriginLabel\(material\)/, 'AI 生成素材卡必须解释其来自内容制作流程');
 assert.doesNotMatch(materialCardSource, /visibleMaterialTags\(material\.tags\)|materialAssetBadge\(material\)/, '素材卡首页不得展示标签');
 assert.match(inspirationSource, /aria-label="素材标签"[^]*?materialAssetBadge\(detailMaterial\)[^]*?visibleMaterialTags\(detailMaterial\.tags\)/, '素材标签必须集中展示在详情顶部');

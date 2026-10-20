@@ -4,7 +4,7 @@ import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { DataStore } from '../storage/datastore.js';
 import { HeyGenClient } from '../lib/heygen.js';
-import { candidateOutputFromImport, createProductionRouter } from './production.js';
+import { candidateOutputFromImport, createProductionRouter, presenterTrustReasonsForDisplay } from './production.js';
 import { newShotProduction, shotFingerprint } from '../../src/lib/shotProduction.js';
 import { createProjectRevisionGuard, projectRevisionMatches } from '../lib/projectRevision.js';
 import { DefinitiveSupplierSubmissionError, type DigitalHumanExecutionAdapter } from '../lib/digitalHumanProviderRegistry.js';
@@ -26,6 +26,18 @@ test('candidate evidence accepts versioned objects or tenant-local files only wi
     { materialId: 'local', localFile: 'tenants/a/video.mp4', contentSha256: sha.toLowerCase() });
   assert.equal(candidateOutputFromImport({ materialId: 'missing-version', objectKey: 'video.mp4', contentSha256: sha }), undefined);
   assert.equal(candidateOutputFromImport({ materialId: 'bad-hash', localFile: 'video.mp4', contentSha256: 'not-a-hash' }), undefined);
+});
+
+test('presenter trust failures are actionable Chinese messages rather than internal reason codes', () => {
+  const reasons = presenterTrustReasonsForDisplay([
+    'authorization_evidence_ref_invalid', 'subject_consent_ref_invalid', 'adult_subject_confirmation_missing',
+  ]);
+  assert.deepEqual(reasons, [
+    '人物授权依据格式无效，请重新完成授权确认',
+    '人物同意凭证无效，请重新完成授权确认',
+    '未完成人物成年人确认，请重新完成授权确认',
+  ]);
+  assert.doesNotMatch(reasons.join('；'), /authorization_|consent_|adult_/);
 });
 
 test('Qwen first-frame draft route persists its receipt, reuses the same request and isolates tenants', async () => {
@@ -73,6 +85,7 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     async getById<T>(collection: string, id: string) { return structuredClone(rows.get(`${collection}/${id}`) || null) as T | null; },
     async create<T>(collection: string, value: Record<string, unknown>) { if (failWrites) return null; const row = { ...value, id: `r${++seq}` }; rows.set(`${collection}/${row.id}`, structuredClone(row)); return row as T; },
     async update(collection, id, patch) { if (failWrites || !rows.has(`${collection}/${id}`)) return false; rows.set(`${collection}/${id}`, { ...rows.get(`${collection}/${id}`), ...structuredClone(patch) }); return true; },
+    async compareAndSwap(collection, id, expected, patch) { const key = `${collection}/${id}`; const row = rows.get(key); if (failWrites || !row) return false; for (const [field, value] of Object.entries(expected)) { try { assert.deepEqual(row[field], value); } catch { return false; } } rows.set(key, { ...row, ...structuredClone(patch) }); return true; },
     async delete(collection, id) { return rows.delete(`${collection}/${id}`); },
     async list<T>(collection: string, query = {}) { const where = (query as { where?: Record<string, unknown> }).where || {}; const items = [...rows.entries()].filter(([key, value]) => key.startsWith(`${collection}/`) && Object.entries(where).every(([field, expected]) => value[field] === expected)).map(([, value]) => structuredClone(value) as T); return { items, totalItems: items.length, totalPages: 1, page: 1, perPage: 500 }; },
   };
@@ -83,8 +96,10 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     if (url.endsWith('/assets')) return new Response(JSON.stringify({ data: { asset_id: 'audio1' } }));
     return new Response(JSON.stringify({ data: init.method === 'POST' ? { video_id: 'remote1' } : { status: 'completed', video_url: 'https://files.heygen.ai/video/test.mp4', duration: 3 } }));
   }) as typeof fetch);
-  const context = 'ctx'; const shot = { ...newShotProduction('hello', 'alice'), source: 'avatar' as const, sound: 'source' as const };
-  const project = { id: 'draft', tenant_id: 'A', status: 'draft', spec: { ratio: '9:16', shootingSlots: [{ id: 'shot1', slotId: 'slot-1', duration: 3 }], shotProductions: { 'video-1:shot1': shot }, shotProductionContext: context, storyboardAssignments: { 'slot-1': 'keep-existing' } } };
+  const context = 'ctx'; const shot = { ...newShotProduction('hello', 'alice'), source: 'avatar' as const, sound: 'source' as const,
+    digitalHuman: { presenterMode: 'video_twin' as const, workflow: 'material_processing' as const, method: 'talking' as const, preferredProvider: 'auto' as const,
+      action: '', scene: '', preserve: '', contentConfirmed: true, presenterSelected: true } };
+  const project = { id: 'draft', tenant_id: 'A', status: 'draft', spec: { ratio: '9:16', voiceoverMode: 'none', shootingSlots: [{ id: 'shot1', slotId: 'slot-1', duration: 3 }], shotProductions: { 'video-1:shot1': shot }, shotProductionContext: context, storyboardAssignments: { 'slot-1': 'keep-existing' } } };
   rows.set('studio_projects/draft', project);
   rows.set('studio_production_defaults/defaults', { id: 'defaults', tenant_id: 'A', payload: { preference: 'avatar', defaultPresenterId: 'alice', presenters: [{ id: 'alice', name: 'Alice', avatarId: 'avatar1', voiceId: 'voice1', authorized: true }] } });
   let imports = 0; let budgetDenied = false; let importRejected = true; let importEvidenceMissing = false; let candidateCurrent = true; const audioRefs: Array<{ start: number; duration: number }> = [];
@@ -115,6 +130,54 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     assert.equal(renamedReference.presenters[0].assetVersion, 1, 'display name does not invalidate generated media');
     const changedReference = await (await request('/defaults', { preference: 'auto', defaultPresenterId: 'reference-person', presenters: [{ ...renamedReference.presenters[0], referenceMaterialIds: ['photo-1', 'video-2'] }] })).json();
     assert.equal(changedReference.presenters[0].assetVersion, 2, 'generation input changes create a new presenter asset version');
+    const defaultsRow = rows.get('studio_production_defaults/defaults');
+    defaultsRow.payload.presenters.push({
+      id: 'liza', name: 'Liza', avatarId: 'avatar-liza', voiceId: 'voice-liza', authorized: true, supportsAlpha: false,
+      rightsEvidence: { authorizationRef: 'license://heygen/public-catalog/liza', consentRef: 'license://heygen/public-catalog/liza',
+        grantedAt: new Date(Date.now() - 1000).toISOString(), subjectAdultConfirmed: false,
+        permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'] },
+    });
+    defaultsRow.payload.presenters.push({
+      id: 'scope-upgrade', name: 'Scope Upgrade', avatarId: 'avatar-scope', voiceId: 'voice-scope', authorized: true, supportsAlpha: false,
+      authorizationConfirmation: { id: 'old-ark-declaration', recordedAt: '2026-01-01T00:00:00.000Z', version: 'presenter-upload-authorization-v1',
+        subjectAdultConfirmed: true, arkProcessingAuthorized: true },
+      rightsEvidence: { authorizationRef: 'document://presenter-declarations/old-ark-declaration', consentRef: 'consent://presenter-declarations/old-ark-declaration',
+        grantedAt: '2026-01-01T00:00:00.000Z', subjectAdultConfirmed: true,
+        permittedProviders: ['volcengine_ark'], permittedUses: ['digital_presenter', 'person_replacement'] },
+    });
+    defaultsRow.payload.presenters.push({
+      id: 'stale-scope', name: 'Stale Scope', avatarId: 'avatar-stale', voiceId: 'voice-stale', authorized: true, supportsAlpha: false,
+      authorizationConfirmation: { id: 'stale-scope-declaration', recordedAt: '2026-01-02T00:00:00.000Z', version: 'presenter-upload-authorization-v1',
+        subjectAdultConfirmed: true, arkProcessingAuthorized: true, heygenProcessingAuthorized: true },
+      rightsEvidence: { authorizationRef: 'document://presenter-declarations/stale-scope-declaration', consentRef: 'consent://presenter-declarations/stale-scope-declaration',
+        grantedAt: '2026-01-02T00:00:00.000Z', subjectAdultConfirmed: true,
+        permittedProviders: ['volcengine_ark'], permittedUses: ['digital_presenter', 'person_replacement'] },
+    });
+    const reboundResponse = await request('/defaults', { ...defaultsRow.payload, defaultPresenterId: 'liza', presenters: defaultsRow.payload.presenters.map((item: any) => item.id === 'liza'
+      ? { ...item, authorizationConfirmation: { subjectAdultConfirmed: true, heygenProcessingAuthorized: true } }
+      : item.id === 'scope-upgrade'
+        ? { ...item, authorizationConfirmation: { ...item.authorizationConfirmation, heygenProcessingAuthorized: true } }
+        : item) });
+    assert.equal(reboundResponse.status, 200);
+    const reboundDefaults = await reboundResponse.json();
+    const reboundLiza = reboundDefaults.presenters.find((item: any) => item.id === 'liza');
+    assert.match(reboundLiza.rightsEvidence.authorizationRef, /^document:\/\/presenter-declarations\//);
+    assert.match(reboundLiza.rightsEvidence.consentRef, /^consent:\/\/presenter-declarations\//);
+    assert.equal(reboundLiza.rightsEvidence.subjectAdultConfirmed, true);
+    assert.deepEqual(reboundLiza.rightsEvidence.providerScopes, [{ provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis'] }]);
+    const scopeUpgrade = reboundDefaults.presenters.find((item: any) => item.id === 'scope-upgrade');
+    assert.notEqual(scopeUpgrade.authorizationConfirmation.id, 'old-ark-declaration');
+    assert.notEqual(scopeUpgrade.authorizationConfirmation.recordedAt, '2026-01-01T00:00:00.000Z');
+    assert.equal(scopeUpgrade.authorizationConfirmation.version, 'presenter-upload-authorization-v2');
+    assert.notEqual(scopeUpgrade.rightsEvidence.authorizationRef, 'document://presenter-declarations/old-ark-declaration');
+    assert.notEqual(scopeUpgrade.rightsEvidence.consentRef, 'consent://presenter-declarations/old-ark-declaration');
+    assert.match(scopeUpgrade.rightsEvidence.authorizationRef, /^document:\/\/presenter-declarations\//);
+    assert.match(scopeUpgrade.rightsEvidence.consentRef, /^consent:\/\/presenter-declarations\//);
+    assert.equal(scopeUpgrade.authorizationConfirmation.heygenProcessingAuthorized, true);
+    const staleScope = reboundDefaults.presenters.find((item: any) => item.id === 'stale-scope');
+    assert.notEqual(staleScope.authorizationConfirmation.id, 'stale-scope-declaration', 'a declaration flag without matching rights evidence cannot silently grant a provider');
+    assert.equal(staleScope.authorizationConfirmation.version, 'presenter-upload-authorization-v2');
+    assert.notEqual(staleScope.rightsEvidence.authorizationRef, 'document://presenter-declarations/stale-scope-declaration');
     const talkingDefaults = await request('/defaults', { preference: 'avatar', defaultPresenterId: 'alice', defaultSound: 'source', defaultLayout: 'split', presenters: [{ id: 'alice', name: 'Alice', avatarId: 'avatar1', voiceId: 'voice1', authorized: true, supportsAlpha: false, nativeOrientation: 'unknown' }] });
     assert.equal(talkingDefaults.status, 200);
     const talkingDefaultsValue = await talkingDefaults.json();
@@ -123,9 +186,12 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     const untrustedPlan = await (await request('/plans', { projectId: 'draft', assemblyId: 'video-1', shotId: 'shot1', fingerprint: shotFingerprint(shot, context) })).json();
     assert.equal(untrustedPlan.state, 'needs_input');
     assert.match(untrustedPlan.reasons.join('；'), /授权预检未通过/);
+    assert.doesNotMatch(untrustedPlan.reasons.join('；'), /authorization_|consent_|adult_|provider_|use_/);
     const missingRights = await request('/jobs', input);
     assert.equal(missingRights.status, 400);
-    assert.match((await missingRights.json()).error, /授权预检未通过/);
+    const missingRightsError = (await missingRights.json()).error;
+    assert.match(missingRightsError, /授权预检未通过/);
+    assert.doesNotMatch(missingRightsError, /authorization_|consent_|adult_|provider_|use_/);
     assert.equal(calls.length, 0, 'missing person and voice rights cannot reach HeyGen');
     rows.get('studio_production_defaults/defaults').payload.presenters[0].rightsEvidence = {
       authorizationRef: 'document://unit-test/alice', consentRef: 'consent://heygen/unit-test-alice',
@@ -177,6 +243,7 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     const duplicate = await (await request('/jobs', input)).json(); assert.equal(duplicate.id, first.id); assert.equal(calls.length, 1);
     assert.equal((await request('/jobs', { ...input, requestId: 'parallel-new-id' })).status, 400); assert.equal(calls.length, 1);
     assert.equal(calls[0].body.script, 'hello'); assert.equal(calls[0].body.avatar_id, 'avatar1');
+    assert.equal(calls[0].body.audio_asset_id, undefined, '托管视频分身应直接使用绑定音色与确认口播，不依赖统一旁白');
     assert.deepEqual(await (await request('/jobs?projectId=draft', undefined, 'B')).json(), []);
     assert.equal((await request(`/jobs/${first.id}/refresh`, {}, 'B')).status, 400);
     const rejected = await (await request(`/jobs/${first.id}/refresh`, {})).json();
@@ -239,7 +306,10 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     adoptionPresenter.assetVersion = 1;
     adoptionPresenter.rightsEvidence.revokedAt = new Date().toISOString();
     const revokedPerson = await request(`/executions/${acceptedForAdoption.id}/adopt`, { candidateId: adoptionCandidate.id, materialId: adoptionCandidate.materialId });
-    assert.equal(revokedPerson.status, 400); assert.match(String((await revokedPerson.json()).error), /授权已失效/);
+    assert.equal(revokedPerson.status, 400);
+    const revokedPersonError = String((await revokedPerson.json()).error);
+    assert.match(revokedPersonError, /授权已失效/);
+    assert.doesNotMatch(revokedPersonError, /authorization_|consent_|adult_|provider_|use_|rights_/);
     delete adoptionPresenter.rightsEvidence.revokedAt;
     const adopted = await (await request(`/executions/${acceptedForAdoption.id}/adopt`, { candidateId: adoptionCandidate.id, materialId: adoptionCandidate.materialId })).json();
     assert.equal(adopted.adoption.candidateId, adoptionCandidate.id); assert.ok(adopted.adoption.assemblyVersion);
@@ -247,6 +317,7 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     assert.equal(adopted.adoption.presenterAssetVersion, 1); assert.equal(adopted.adoption.qualityReviewedAt, undefined); assert.equal(adopted.quality.reviewedAt,null);
     assert.equal(adopted.adoption.candidateObjectKey, 'materials/A/new-material.mp4'); assert.equal(adopted.adoption.candidateContentSha256, 'c'.repeat(64)); assert.equal(adopted.adoption.candidateObjectEtag, 'candidate-v3');
     assert.equal(adopted.routeSteps.find((step: any) => step.id === 'assembly').status, 'completed');
+    assert.match(String(rows.get('studio_projects/draft').updated_at || ''), /^\d{4}-\d{2}-\d{2}T/, 'candidate adoption advances the Studio revision');
     assert.equal(rows.get('studio_projects/draft').spec.shotProductions['video-1:shot1'].adoptedId, adoptionCandidate.id);
     assert.equal(rows.get('studio_projects/draft').spec.storyboardAssignments['slot-1'], 'new-material');
     const assemblyEvidence = rows.get('studio_projects/draft').spec.digitalHumanAssemblyAdoptions['video-1:shot1'];
@@ -492,6 +563,8 @@ test('batch preserves confirmed reconstruction and rejects inconsistent source-p
 test('photo talking first frame preparation is tenant scoped and never generates a video', async () => {
   const previousHeygenReserve = process.env.STUDIO_HEYGEN_RESERVE_CNY;
   const previousPhotoRate = process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND;
+  const previousBudgetExemptTenants = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+  delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
   process.env.STUDIO_HEYGEN_RESERVE_CNY = '10';
   process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND = '0.8';
   const rows = new Map<string, any>(); let seq = 0;
@@ -525,5 +598,9 @@ test('photo talking first frame preparation is tenant scoped and never generates
     const invalidSpeech=await request('tenant-a',true,shotFingerprint(unassigned,context,'shot-1'));assert.equal(invalidSpeech.status,400);assert.match(await invalidSpeech.text(),/填写本片对应语句/);assert.equal(frameCalls,0);
     rows.set('studio_projects/project-1',{...rows.get('studio_projects/project-1'),spec:{...rows.get('studio_projects/project-1').spec,shotProductions:{'assembly-1:shot-1':shot}}});
     const response=await request();assert.equal(response.status,200,await response.clone().text());const result=await response.json();assert.equal(result.cues[0].targetFirstFrame.state,'ready');assert.equal(frameCalls,1);assert.equal(videoCalls,0);
-  }finally{await new Promise<void>(resolve=>server.close(()=>resolve())); if (previousHeygenReserve === undefined) delete process.env.STUDIO_HEYGEN_RESERVE_CNY; else process.env.STUDIO_HEYGEN_RESERVE_CNY = previousHeygenReserve; if(previousPhotoRate===undefined)delete process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND;else process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND=previousPhotoRate;}
+    process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS='tenant-a';
+    process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND='20';
+    const exemptResponse=await request('tenant-a',true,shotFingerprint(shot,context,'shot-1'),200);
+    assert.equal(exemptResponse.status,200,await exemptResponse.clone().text());assert.equal(frameCalls,2);assert.equal(videoCalls,0);
+  }finally{await new Promise<void>(resolve=>server.close(()=>resolve())); if (previousHeygenReserve === undefined) delete process.env.STUDIO_HEYGEN_RESERVE_CNY; else process.env.STUDIO_HEYGEN_RESERVE_CNY = previousHeygenReserve; if(previousPhotoRate===undefined)delete process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND;else process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND=previousPhotoRate; if(previousBudgetExemptTenants===undefined)delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS=previousBudgetExemptTenants;}
 });

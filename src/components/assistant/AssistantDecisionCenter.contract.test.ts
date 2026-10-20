@@ -5,8 +5,7 @@ import test from 'node:test';
 const source = readFileSync(new URL('./AssistantDecisionCenter.tsx', import.meta.url), 'utf8');
 const navigationSource = readFileSync(new URL('./assistantDecisionNavigation.ts', import.meta.url), 'utf8');
 assert.doesNotMatch(source, /take_over:\s*UserRoundCheck/, 'Lingxiaoshu must not render a human-takeover action icon');
-const productionSource = readFileSync(new URL('./AssistantProductionDecisionCards.tsx', import.meta.url), 'utf8');
-const styles = readFileSync(new URL('./assistantDecisionCenter.css', import.meta.url), 'utf8');
+const productionSource = readFileSync(new URL('./AssistantProductionDecisionCards.tsx', import.meta.url), 'utf8');const styles = readFileSync(new URL('./assistantDecisionCenter.css', import.meta.url), 'utf8');
 assert.match(styles, /\.assistant-decision-card__action\s*\{[^}]*white-space:\s*nowrap/, 'decision buttons must keep short action labels on one line');
 
 test('assistant is a one-card decision surface with chat only in the detail empty state', () => {

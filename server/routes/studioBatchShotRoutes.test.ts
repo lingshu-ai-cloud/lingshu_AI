@@ -13,10 +13,10 @@ assert.equal(uniqueAuthorizedSalesPresenter([{ id: 'sales', name: '销售', auth
 const routes = planStudioBatchShotRoutes({
   activeAssemblyId: 'assembly',
   shootingSlots: [
-    { id: 'a', slotId: 'slot-a', detail: '销售对镜口播，提出问题', salesPresenterConfirmed: true, requirements: '建立信任' },
+    { id: 'a', slotId: 'slot-a', detail: '销售对镜口播，提出问题', salesPresenterConfirmed: true, observedPresenterRole: 'sales_presenter', personContinuityId: 'main-sales', requirements: '建立信任' },
     { id: 'b', slotId: 'slot-b', detail: '工厂灌装实拍', requirements: '证明生产流程' },
     { id: 'c', slotId: 'slot-c', detail: '产品瓶身和质地展示', requirements: '介绍产品' },
-    { id: 'd', slotId: 'slot-d', detail: '销售快速靠近摄像头并敲门', salesPresenterConfirmed: true, requirements: '动作截流' },
+    { id: 'd', slotId: 'slot-d', detail: '销售快速靠近摄像头并敲门', salesPresenterConfirmed: true, observedPresenterRole: 'presenter_action', personContinuityId: 'main-sales', requirements: '动作截流' },
   ],
   shotProductions: {
     'assembly:a': { source: 'avatar', presenterId: 'sales', narration: 'See the product.', contentType: 'enterprise_presenter' } as never,
@@ -39,7 +39,7 @@ assert.deepEqual([routes[1]?.matchedMaterialId, routes[1]?.matchedSegmentId, rou
 assert.match(routes[3]!.reason, /替换范围|生成效果/);
 
 const disabled = planStudioBatchShotRoutes({
-  activeAssemblyId: 'assembly', shootingSlots: [{ id: 'a', slotId: 'slot-a', detail: '销售口播', salesPresenterConfirmed: true }],
+  activeAssemblyId: 'assembly', shootingSlots: [{ id: 'a', slotId: 'slot-a', detail: '销售口播', salesPresenterConfirmed: true, observedPresenterRole: 'sales_presenter', personContinuityId: 'main-sales' }],
   shotProductions: { 'assembly:a': { source: 'avatar', presenterId: 'sales', narration: 'Hello.' } as never },
 }, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: ['sales'] });
 assert.equal(disabled[0]?.status, 'blocked');
@@ -48,7 +48,7 @@ assert.match(disabled[0]!.reason, /替换范围|生成效果/);
 const importedPlaceholder = planStudioBatchShotRoutes({
   activeAssemblyId: 'video-1',
   shootingSlots: [
-    { id: 'first', slotId: 'slot-1', detail: '画面：女性快速靠近镜头，敲门手势 镜头功能：hook 口播：Hello', salesPresenterConfirmed: true },
+    { id: 'first', slotId: 'slot-1', detail: '画面：女性快速靠近镜头，敲门手势 镜头功能：hook 口播：Hello', salesPresenterConfirmed: true, observedPresenterRole: 'presenter_action', personContinuityId: 'main-sales' },
     { id: 'factory', slotId: 'slot-2', detail: '画面：工人操作流水线，产品灌装 镜头功能：trust 口播：无' },
   ],
   shotProductions: {
@@ -72,7 +72,7 @@ const taggedNonProduct = planStudioBatchShotRoutes({ activeAssemblyId: 'a', shoo
 assert.deepEqual(taggedNonProduct.map(item => [item.visualTopic, item.route]), [['factory', 'aigc_first_frame'], ['other', 'aigc_first_frame']]);
 
 const salesDefault = planStudioBatchShotRoutes({
-  activeAssemblyId: 'video-1', shootingSlots: [{ id: 'talk', slotId: 'slot-talk', detail: '画面：销售对镜口播 镜头功能：value 口播：Hello', salesPresenterConfirmed: true }],
+  activeAssemblyId: 'video-1', shootingSlots: [{ id: 'talk', slotId: 'slot-talk', detail: '画面：销售对镜口播 镜头功能：value 口播：Hello', salesPresenterConfirmed: true, observedPresenterRole: 'sales_presenter', personContinuityId: 'main-sales' }],
   shotProductions: { 'video-1:talk': { source: 'avatar', presenterId: '', narration: 'Hello', digitalHuman: { method: 'reenact' } } as never },
 }, { talkingExecutorReady: true, actionExecutorReady: false, authorizedPresenterIds: ['sales'], defaultSalesPresenterId: 'sales' });
 assert.equal(salesDefault[0]?.status, 'blocked', '不得静默使用默认人物');
@@ -82,7 +82,7 @@ const voicedBroll = planStudioBatchShotRoutes({
   shootingSlots: [
     { id: 'factory-voice', slotId: 'factory-voice', detail: '画面：女性在工厂背景观察工人灌装流水线 镜头功能：trust 口播：We make it here.' },
     { id: 'product-voice', slotId: 'product-voice', detail: '画面：双手展示产品瓶身和质地 镜头功能：value 口播：This is our product.' },
-    { id: 'speaker', slotId: 'speaker', detail: '画面：销售正面直视镜头，嘴唇张合 镜头功能：call_to_action 口播：Contact us.', salesPresenterConfirmed: true },
+    { id: 'speaker', slotId: 'speaker', detail: '画面：销售正面直视镜头，嘴唇张合 镜头功能：call_to_action 口播：Contact us.', salesPresenterConfirmed: true, observedPresenterRole: 'sales_presenter', personContinuityId: 'main-sales' },
     { id: 'background', slotId: 'background', detail: '画面：工厂工人背影在流水线旁操作 镜头功能：trust 口播：We inspect every bottle.' },
     { id: 'meeting', slotId: 'meeting', detail: '画面：会议主讲者发言，其他人坐在桌旁 镜头功能：trust 口播：We have partners.' },
   ],
@@ -93,7 +93,7 @@ const voicedBroll = planStudioBatchShotRoutes({
 assert.deepEqual(voicedBroll.map(item => item.route), ['aigc_first_frame', 'aigc_first_frame', 'digital_human', 'aigc_first_frame', 'aigc_first_frame']);
 
 const factoryPresenter = planStudioBatchShotRoutes({
-  activeAssemblyId: 'a', shootingSlots: [{ id: 'speaker', detail: '画面：女性正面面对镜头说话，手举产品，背景工人正在工厂灌装。\n口播：欢迎了解我们的产品', salesPresenterConfirmed: true }],
+  activeAssemblyId: 'a', shootingSlots: [{ id: 'speaker', detail: '画面：女性正面面对镜头说话，手举产品，背景工人正在工厂灌装。\n口播：欢迎了解我们的产品', salesPresenterConfirmed: true, observedPresenterRole: 'sales_presenter', personContinuityId: 'main-sales' }],
   shotProductions: { 'a:speaker': { presenterId: 'sales', narration: '欢迎了解' } as never },
 }, { talkingExecutorReady: true, actionExecutorReady: false, authorizedPresenterIds: ['sales'] });
 assert.equal(factoryPresenter[0]?.route, 'digital_human', '背景工人和产品不能排除前景销售口播');
@@ -105,6 +105,54 @@ const structuredRole = planStudioBatchShotRoutes({
 assert.equal(structuredRole[0]?.visualTopic, 'presenter', '视觉模型角色识别优先于旧文字规则');
 assert.equal(structuredRole[0]?.route, 'seedance_action', '用户确认的场景重建方案不会被批量生成覆盖');
 assert.equal(structuredRole[0]?.status, 'needs_plan');
+
+const staleVideoTwin = planStudioBatchShotRoutes({
+  activeAssemblyId: 'a',
+  shootingSlots: [{ id: 'speaker', slotId: 'speaker', detail: '销售正面口播', observedPresenterRole: 'sales_presenter', personContinuityId: 'person_1' }],
+  shotProductions: { 'a:speaker': { presenterId: 'sales', narration: '欢迎了解', digitalHuman: {
+    presenterMode: 'video_twin', workflow: 'viral_replication', method: 'reenact', preferredProvider: 'sd',
+    contentConfirmed: true, presenterSelected: true, replacementScope: 'person_and_scene', targetEffect: 'flexible_scene',
+  } } as never },
+}, { talkingExecutorReady: true, actionExecutorReady: true, authorizedPresenterIds: ['sales'] });
+assert.equal(staleVideoTwin[0]?.route, 'digital_human');
+assert.equal(staleVideoTwin[0]?.status, 'needs_plan', 'saved video-twin choice must not be routed by stale reenactment fields');
+
+const configuredButUntrusted = planStudioBatchShotRoutes({
+  activeAssemblyId: 'a', ratio: '9:16',
+  shootingSlots: [{ id: 'speaker', slotId: 'speaker', detail: '销售正面口播', observedPresenterRole: 'sales_presenter', personContinuityId: 'person_1', salesPresenterConfirmed: true }],
+  shotProductions: { 'a:speaker': { ...newShotProduction('欢迎了解', 'liza'), source: 'avatar', sound: 'source', digitalHuman: {
+    presenterMode: 'video_twin', workflow: 'material_processing', method: 'talking', preferredProvider: 'auto', action: '', scene: '', preserve: '', contentConfirmed: true, presenterSelected: true,
+  } } },
+}, {
+  talkingExecutorReady: false,
+  actionExecutorReady: false,
+  authorizedPresenterIds: [],
+  configuredPresenterIds: ['liza'],
+  presenterPreflightIssues: { liza: ['人物授权依据无效', '未确认人物已成年'] },
+  presenterNamesById: { liza: 'Liza' },
+  presenterNativeOrientationsById: { liza: 'landscape' },
+});
+assert.equal(configuredButUntrusted[0]?.route, 'digital_human');
+assert.equal(configuredButUntrusted[0]?.status, 'blocked');
+assert.match(configuredButUntrusted[0]!.reason, /授权依据无效.*未确认人物已成年/);
+assert.match(configuredButUntrusted[0]!.reason, /Liza.*横屏.*竖屏人物.*16:9/);
+assert.match(configuredButUntrusted[0]!.reason, /数字人口播执行器不可用/);
+assert.doesNotMatch(configuredButUntrusted[0]!.reason, /缺少已授权.*企业销售资产/,
+  '已经配置的人物必须显示真实预检原因，不能误报为没有人物');
+
+const landscapePresenter = planStudioBatchShotRoutes({
+  activeAssemblyId: 'a', ratio: '9:16',
+  shootingSlots: [{ id: 'speaker', slotId: 'speaker', detail: '销售正面口播', observedPresenterRole: 'sales_presenter', personContinuityId: 'person_1', salesPresenterConfirmed: true }],
+  shotProductions: { 'a:speaker': { ...newShotProduction('欢迎了解', 'liza'), source: 'avatar', sound: 'source', digitalHuman: {
+    presenterMode: 'video_twin', workflow: 'material_processing', method: 'talking', preferredProvider: 'auto', action: '', scene: '', preserve: '', contentConfirmed: true, presenterSelected: true,
+  } } },
+}, {
+  talkingExecutorReady: true, actionExecutorReady: false, authorizedPresenterIds: ['liza'], configuredPresenterIds: ['liza'],
+  presenterNamesById: { liza: 'Liza' }, presenterNativeOrientationsById: { liza: 'landscape' },
+});
+assert.equal(landscapePresenter[0]?.status, 'blocked');
+assert.match(landscapePresenter[0]!.reason, /Liza.*横屏.*竖屏人物.*16:9/);
+assert.doesNotMatch(landscapePresenter[0]!.reason, /缺少已授权|presenter_|authorization_/);
 
 const unconfirmedPeople = planStudioBatchShotRoutes({ shootingSlots: [
   { id: 'hook', detail: '画面：女性靠近镜头，敲门手势 镜头功能：d_to_c 口播：Hello' },
@@ -135,7 +183,7 @@ assert.ok(identityConflict.every(route => route.status === 'blocked' && route.re
 // A red, confirmed salesperson can use enterprise footage without any presenter asset.
 const materialSalesRoute = planStudioBatchShotRoutes({
   activeAssemblyId: 'assembly', ratio: '9:16',
-  shootingSlots: [{ id: 'sales', slotId: 'sales-slot', detail: '销售对镜口播', salesPresenterConfirmed: true, duration: 3 }],
+  shootingSlots: [{ id: 'sales', slotId: 'sales-slot', detail: '销售对镜口播', salesPresenterConfirmed: true, observedPresenterRole: 'sales_presenter', personContinuityId: 'main-sales', duration: 3 }],
   shotProductions: { 'assembly:sales': { source: 'avatar', sound: 'source', presenterId: '', narration: 'New speech' } as never },
   storyboardSourcePlans: { 'sales-slot': { userSource: 'material' } },
   storyboardAssignments: { 'sales-slot': 'owned' },

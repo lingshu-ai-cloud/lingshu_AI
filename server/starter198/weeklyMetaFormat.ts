@@ -4,16 +4,24 @@ import {socialRequestHash} from './socialContentValidation.js';
 const instagramSource='https://github.com/fbsamples/reels_publishing_apis/blob/main/insta_reels_publishing_api_sample/README.md';
 const instagramCollection='https://www.postman.com/meta/instagram/folder/y6xustx/reels-publishing';
 const facebookReference='https://developers.facebook.com/docs/graph-api/reference/page/videos/';
+const linkedinReference='https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/videos-api';
 /** Versioned local archive admission based on Meta's official sample, checked
  * 2026-10-10. Exact owned bytes must prove the MP4 structure and AVC sync samples.
  * The local 110 MiB ceiling is stricter than the sample's 1 GB limit. This is
  * technical format evidence; account permission and provider acceptance remain
  * independent G6 checks. Facebook Page Videos keeps its separate unknown rules. */
-export function checkWeeklyMetaFormat(platform:'instagram'|'facebook',metadata:SocialOwnedVideoMetadata|null,delivery?:{deliveryProofHash:string;streamProof?:InstagramArchivedStreamProof}):SocialWeeklyG6Check{
- const result=(status:SocialWeeklyG6Check['status'],reasons:string[]):SocialWeeklyG6Check=>({code:'platform_format',status,reasons,evidenceRefs:[...(platform==='instagram'?[instagramSource,instagramCollection]:[facebookReference]),'meta_format_archived_rules:2026-10-10',...(metadata?[`owned_metadata:${metadata.recordHash}`]:[]),...(delivery&&/^[a-f0-9]{64}$/.test(delivery.deliveryProofHash)?[`archived_instagram_delivery:${delivery.deliveryProofHash}`]:[]),...(delivery?.streamProof?[`instagram_stream_proof:${delivery.streamProof.proofHash}`]:[])]});
+export function checkWeeklyMetaFormat(platform:'instagram'|'facebook'|'linkedin',metadata:SocialOwnedVideoMetadata|null,delivery?:{deliveryProofHash:string;streamProof?:InstagramArchivedStreamProof}):SocialWeeklyG6Check{
+ const result=(status:SocialWeeklyG6Check['status'],reasons:string[]):SocialWeeklyG6Check=>({code:'platform_format',status,reasons,evidenceRefs:[...(platform==='instagram'?[instagramSource,instagramCollection]:platform==='linkedin'?[linkedinReference]:[facebookReference]),platform==='linkedin'?'linkedin_video_rules:2026-10':'meta_format_archived_rules:2026-10-10',...(metadata?[`owned_metadata:${metadata.recordHash}`]:[]),...(delivery&&/^[a-f0-9]{64}$/.test(delivery.deliveryProofHash)?[`archived_instagram_delivery:${delivery.deliveryProofHash}`]:[]),...(delivery?.streamProof?[`instagram_stream_proof:${delivery.streamProof.proofHash}`]:[])]});
  if(!metadata)return result('unknown',['owned_media_metadata_unavailable']);
  const {recordHash,...body}=metadata;
  if(recordHash!==socialRequestHash(body)||!/^[a-f0-9]{64}$/.test(metadata.fileSha256)||metadata.probeTool!=='ffmpeg_owned_byte_decode'||!metadata.probeVersion||!Number.isSafeInteger(metadata.bytes)||metadata.bytes<=0||![metadata.width,metadata.height].every(x=>Number.isSafeInteger(x)&&x>0)||![metadata.framesPerSecond,metadata.durationSeconds].every(x=>Number.isFinite(x)&&x>0))return result('unknown',['owned_media_metadata_integrity_unverified']);
+ if(platform==='linkedin'){
+  const reasons:string[]=[];
+  if(metadata.container!=='mp4')reasons.push('linkedin_video_container_not_supported');
+  if(metadata.bytes<75*1024||metadata.bytes>500*1024*1024)reasons.push('linkedin_video_file_size_outside_rule');
+  if(metadata.durationSeconds<3||metadata.durationSeconds>30*60)reasons.push('linkedin_video_duration_outside_rule');
+  return result(reasons.length?'blocked':'passed',reasons);
+ }
  if(platform==='facebook')return result('unknown',['facebook_page_videos_current_format_rules_unverified']);
  const reasons:string[]=[];
  if(!metadata.container||!['mp4','mov'].includes(metadata.container))reasons.push('instagram_reels_container_not_supported');

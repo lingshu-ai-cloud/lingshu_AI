@@ -715,8 +715,7 @@ function planShot(
     && selected.productSceneReplication.productIdentity.groups.length === 0) || (
     normalizedVisualContract.product.policy === 'locked'
       && Boolean(requestedProductRef)
-      && !exactVerifiedLocalProduct
-      && !inventory.productIdentityGroups.some(group => (
+      && !exactVerifiedLocalProduct      && !inventory.productIdentityGroups.some(group => (
         normalizedProductIdentity(group.productRef) === requestedProductRef
         && group.imageIds.length > 0
       ))
@@ -728,8 +727,7 @@ function planShot(
     &&selected.materialRouting.productGenerationDecision?.state==='eligible'&&Boolean(selected.productSceneReplication?.productIdentity.groups.length);
   const feasibility = noFreeMaterial || lockedProductUnavailable || selected.blocked || realFactoryBackgroundMissing
     ? 'goal_degraded'
-    : awaitingProductBudget&&!selected.refs.length||usesFunctionalEquivalent
-      ? 'functional_equivalent'
+    : awaitingProductBudget&&!selected.refs.length||usesFunctionalEquivalent      ? 'functional_equivalent'
     : selected.strategy === 'customer_real_asset' || selected.strategy === 'customer_product_image_animation'
       || selected.strategy === 'aigc_product_scene_replication'
       ? 'full_fidelity'
@@ -780,8 +778,7 @@ function planShot(
           ? '当前产品镜头仅可进入整片预算与生成能力预检；未获得付费授权，也未产生交付。'
           : usesFunctionalEquivalent
           ? '当前完整交互不在已验收范围，系统将使用素材或拆镜保留表达功能'
-          : '可使用当前已入库素材或已配置生成能力完成该镜头'
-        : realFactoryBackgroundMissing
+          : '可使用当前已入库素材或已配置生成能力完成该镜头'        : realFactoryBackgroundMissing
           ? '真人口播仍需绑定真实本地工厂背景；不允许数字人 provider 虚构工厂，无法复合时必须停止'
         : selected.blocked
           ? '当前素材类型缺少合格的本地匹配或对应企业产品图；必须保留缺口，不切换类型或静默生成'

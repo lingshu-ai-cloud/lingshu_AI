@@ -32,7 +32,7 @@ export function projectOutputs(project: Row) {
   const seen = new Set<string>();
   const add = (key: string, file: any, language: string, version: number, current: boolean, snapshot?: Row) => {
     if (!file || seen.has(file)) return; seen.add(file);
-    outputs.push({ id: project.id + ':' + key, projectId: project.id, title: project.title || '未命名成片', language, platform: spec.platform, product: spec.contentOrder?.productName || spec.productInfo?.slice?.(0, 80) || '', mode: spec.presentationMode || 'material', taskId: spec.workflowTaskId || '', runId: spec.workflowRunId || '', file, version, current, createdAt: project.updated_at || project.created_at, productionStatus: spec.automation?.stage || project.status, reviewStatus: current && contentAccepted(spec) ? 'approved' : 'pending', published: Boolean(spec.publishingReceipt?.id || spec.publishedAt), cover: (snapshot || spec).coverImagePath, spec: current || snapshot ? { ...spec, ...(snapshot || {}) } : { lang: language, ratio: spec.ratio }, metadataComplete: current || Boolean(snapshot) });
+    outputs.push({ id: project.id + ':' + key, projectId: project.id, title: project.title || '未命名成片', language, platform: spec.platform, product: spec.contentOrder?.productName || spec.productInfo?.slice?.(0, 80) || '', mode: spec.presentationMode || 'material', taskId: spec.workflowTaskId || '', runId: spec.workflowRunId || '', file, version, current, pinned: spec.libraryPinned === true, createdAt: project.updated_at || project.created_at, productionStatus: spec.automation?.stage || project.status, reviewStatus: current && contentAccepted(spec) ? 'approved' : 'pending', published: Boolean(spec.publishingReceipt?.id || spec.publishedAt), cover: (snapshot || spec).coverImagePath, spec: current || snapshot ? { ...spec, ...(snapshot || {}) } : { lang: language, ratio: spec.ratio }, metadataComplete: current || Boolean(snapshot) });
   };
   add('current', spec.renderOutputPath || spec.automation?.renderOutputPath, spec.lang || 'en', spec.automation?.contentVersion || 1, true);
   for (const [key, value] of Object.entries<Row>(spec.languageRenderOutputs || {})) if (value.status === 'done') add(key, value.path, decode(key.split('::')[1] || spec.lang || 'en'), 1, true);
@@ -45,7 +45,11 @@ async function library(tenant: string) {
  const posts: any[] = [];
  for (let page=1;;page++) { const result=await store.list<any>('posts',{where:{tenant_id:tenant},page,perPage:100}); posts.push(...result.items); if(result.items.length<100)break; }
  for (const row of outputs) row.published = posts.some(post => { const stats=object(post.stats); return stats.sourceProjectId===row.projectId && stats.videoPath===row.file && Object.values<any>(stats.publishResults||{}).some(result=>result.status==='published' && (result.platformPostId || result.postId || result.url || result.id)); });
- return outputs;
+ return outputs.sort(contentLibraryOutputOrder);
+}
+export function contentLibraryOutputOrder(a: Row, b: Row) {
+  return Number(b.pinned) - Number(a.pinned)
+    || Date.parse(String(b.createdAt || '')) - Date.parse(String(a.createdAt || ''));
 }
 const root = (tenant: string) => path.resolve('data/content-exports', tenant.replace(/[^\w.-]+/g, '-'));
 const jobsFile = (tenant: string) => path.join(root(tenant), 'jobs.json');

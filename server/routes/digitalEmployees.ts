@@ -46,7 +46,7 @@ import { weeklyAuthorizationRecoveryDecision } from '../digitalEmployees/weeklyA
 import { missingPublishingOAuthConfiguration, publishingAccountConnectionMessage, publishingOAuthConfigurationMessage, type PublishingOAuthPlatform, type PublishingReadinessSnapshot } from '../digitalEmployees/publishingOAuthReadiness.js';
 import { readTenantPublishingReadiness } from '../digitalEmployees/publishingRuntimeReadiness.js';
 import { migrateLegacyPublishingPlanAccountBindings, packageGrantWasInvalidatedAfterApproval } from '../digitalEmployees/publishingPlanAccountMigration.js';
-import { getTenantAwareGoogleOAuthClient, getTenantAwareInstagramOAuthClient, getTenantAwareMetaOAuthClient, getTenantAwareTikTokOAuthClient } from '../lib/oauthConfig.js';
+import { getTenantAwareGoogleOAuthClient, getTenantAwareInstagramOAuthClient, getTenantAwareLinkedInOAuthClient, getTenantAwareMetaOAuthClient, getTenantAwareTikTokOAuthClient } from '../lib/oauthConfig.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
 import { normalizeVideoPlan, spokenLanguageMatches, videoPlanErrors, type VideoCreationPlan, type VideoPreproductionPreview } from '../../shared/contracts/videoCreationPlan.js';
@@ -70,6 +70,7 @@ import { listRunEventsAfter } from '../digitalEmployees/runEventReplay.js';
 import { enforceSupportSessionReadOnly, requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { settledSeedanceUsageForTenant } from '../lib/seedanceBudget.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 import type { ExecutionStoreRecord } from './productionContracts.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
@@ -166,6 +167,7 @@ import {
 } from '../digitalEmployees/domain.js';
 export const digitalEmployeesRouter = Router();
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, withLocalQueue, type ApprovalRecord, type ConfigRecord, type ContentBatchPlanRecord, type CorrectionRecord, type EventRecord, type GoalRecord, type HandoffRecord, type PlanRecord, type RunRecord, type StoredRecord, type TaskRecord } from './digitalEmployeeRecords.js';
+import { pointsFromCny } from '../../shared/pointsPolicy.js';
 digitalEmployeesRouter.use(requireAuth);
 digitalEmployeesRouter.use(enforceSupportSessionReadOnly);
 digitalEmployeesRouter.get('/publishing-accounts', async (_req, res) => {
@@ -197,7 +199,7 @@ digitalEmployeesRouter.get('/agent-usage-costs', async (_req, res) => {
     roles: {
       business: null,
       director: null,
-      content: contentCount ? { settledCny: Number(contentSettled.toFixed(4)), entryCount: contentCount, updatedAt: contentUpdatedAt, source: '账号真实供应商结算账本' } : null,
+      content: contentCount ? { settledCny: Number(contentSettled.toFixed(4)), settledPoints: pointsFromCny(contentSettled), entryCount: contentCount, updatedAt: contentUpdatedAt, source: '账号真实供应商结算账本' } : null,
       customer: null,
     },
   });
@@ -1109,6 +1111,7 @@ type ApprovalPreflight = {
   businessRefs: Array<Record<string, unknown>>;
 };
 function dependenciesReady(task: TaskRecord, tasks: TaskRecord[]): boolean {
+  tasks = tasks.filter(item => !jsonObject<Record<string, unknown>>(item.output, {}).assistantIndependent || item.id === task.id);
   const byKey = new Map(tasks.map(item => [item.task_key, item]));
   return jsonObject<string[]>(task.depends_on, []).every(key => {
     const upstream = byKey.get(key);
@@ -1143,20 +1146,21 @@ async function approvalPreflight(
       const connectedIds = new Set(connectedAccounts.map(account => account.accountId));
       const targetPlatforms = goalInput(goal).contentPlatforms;
       const connectedPlatforms = connectedAccounts.map(account => account.platform);
-      const [metaClient, instagramClient, tiktokClient, googleClient] = await Promise.all([
+      const [metaClient, instagramClient, tiktokClient, googleClient, linkedinClient] = await Promise.all([
         getTenantAwareMetaOAuthClient(tenantId),
         getTenantAwareInstagramOAuthClient(tenantId),
         getTenantAwareTikTokOAuthClient(tenantId),
         getTenantAwareGoogleOAuthClient(tenantId),
+        getTenantAwareLinkedInOAuthClient(tenantId),
       ]);
       const oauthConfigurationGaps = missingPublishingOAuthConfiguration({
         targetPlatforms,
         connectedPlatforms,
-        clients: { meta: Boolean(metaClient), instagram: Boolean(instagramClient), tiktok: Boolean(tiktokClient), google: Boolean(googleClient) },
+        clients: { meta: Boolean(metaClient), instagram: Boolean(instagramClient), tiktok: Boolean(tiktokClient), google: Boolean(googleClient), linkedin: Boolean(linkedinClient) },
       });
       const connectedPlatformSet = new Set(connectedPlatforms);
       const missingAccountPlatforms = targetPlatforms
-        .filter((platform): platform is PublishingOAuthPlatform => ['facebook', 'instagram', 'tiktok', 'youtube'].includes(platform))
+        .filter((platform): platform is PublishingOAuthPlatform => ['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin'].includes(platform))
         .filter(platform => !connectedPlatformSet.has(platform));
       checks.push({
         key: 'publishing_oauth_configuration',
@@ -1420,6 +1424,8 @@ function destinationLabel(destination: string): string {
   } as Record<string, string>)[destination] || '对应业务工作台';
 }
 function taskScope(task: TaskRecord, tasks: TaskRecord[]): { taskIds: Set<string>; refIds: Set<string> } {
+  const independent = Boolean(jsonObject<Record<string, unknown>>(task.output, {}).assistantIndependent);
+  tasks = tasks.filter(item => independent ? item.id === task.id : !jsonObject<Record<string, unknown>>(item.output, {}).assistantIndependent);
   const taskIds = new Set([task.id]);
   const keys = new Set([task.task_key]);
   let changed = true;
@@ -1447,6 +1453,7 @@ function taskScope(task: TaskRecord, tasks: TaskRecord[]): { taskIds: Set<string
   return { taskIds, refIds };
 }
 function contentProjectTaskScope(task: TaskRecord, tasks: TaskRecord[]): { taskIds: Set<string>; refIds: Set<string> } {
+  tasks = tasks.filter(item => !jsonObject<Record<string, unknown>>(item.output, {}).assistantIndependent || item.id === task.id);
   const scope = taskScope(task, tasks);
   const taskIds = task.task_key === 'content_production'
     ? new Set([task.id])
@@ -1528,10 +1535,18 @@ async function publishingApprovalPackage(
   const weeklyPackage = planBody.businessPackage as WeeklyPackage | undefined;
   const scope = contentProjectTaskScope(task, tasks);
   const completed = projects.items.filter(item => recordBelongsToTask(item, run, scope) && studioProjectCompleted(item));
+  const assistantPublicationTargets = jsonObject<Array<Record<string, unknown>>>(task.business_refs, []).filter(ref => ref.type === 'assistant_publication_intent');
+  if (assistantPublicationTargets.length > 1) throw new Error('assistant_publication_target_ambiguous');
+  const assistantPublicationTarget = assistantPublicationTargets[0];
+  if (assistantPublicationTarget) {
+    const selected = completed.filter(project => project.id === assistantPublicationTarget.id);
+    if (selected.length !== 1 || contentAcceptanceHash(jsonObject<Record<string, any>>(selected[0]!.spec, {})) !== assistantPublicationTarget.contentHash) throw new Error('assistant_publication_target_changed');
+  }
   return buildPublishingApprovalPackage({
     tenantId,
     matrixPlan: jsonObject<{ businessPackage?: WeeklyPackage }>(plan?.plan, {}).businessPackage?.matrixPlan,
     projects: completed,
+    ...(assistantPublicationTarget ? { selectedProjectId: String(assistantPublicationTarget.id) } : {}),
     targets: config.publishingTargets,
     goalPlatforms: goalInput(goal).contentPlatforms,
     allowRealPublishing: config.allowRealPublishing,
@@ -2172,6 +2187,18 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, sort: 'sequence', perPage: 100 }),
   ]);
   const tenantConfig = publicConfig(configRecord);
+  // Independent insertions own their production project and proof recovery.
+  // Never feed them into batch dependency scopes or run paid batch work for them.
+  const independentTasks = taskResult.items.filter(task => jsonObject<Record<string, unknown>>(task.output, {}).assistantIndependent);
+  if (independentTasks.length) {
+    const { recoverIndependentContentTask } = await import('../assistant/independentWeeklyContent.js');
+    for (const task of independentTasks) {
+      const projectId = String(jsonObject<Record<string, unknown>>(task.output, {}).projectId || '');
+      const project = projectId ? await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', projectId, tenantId) : null;
+      if (project) await recoverIndependentContentTask(store, tenantId, task as any, project as any);
+    }
+    taskResult.items = taskResult.items.filter(task => !independentTasks.includes(task));
+  }
   if (!goal || !tenantConfig) throw new Error('run_context_missing');
   const recoverableApprovalFailure = taskResult.items.some(task => task.requires_approval
     && task.status === 'failed'
@@ -2584,8 +2611,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
       await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.execution_failed', level: 'error', summary: `${task.title}：执行异常`, payload: { attempts: failure.attempts, retryAt: failure.retryAt, error: error instanceof Error ? error.message.slice(0, 500) : 'task_execution_failed' } });
     }
   }
-  const remaining = taskResult.items.filter(task => !['succeeded', 'skipped'].includes(task.status));
-  if (remaining.length) {
+  const remaining = taskResult.items.filter(task => !['succeeded', 'skipped'].includes(task.status));  if (remaining.length) {
     const handedOff = remaining.find(task => task.status === 'handed_off');
     const waitingApproval = remaining.find(task => task.status === 'waiting_approval');
     const directBlocks = remaining.filter(task => ['waiting_external', 'waiting_approval', 'waiting_human', 'handed_off', 'failed', 'cancelled'].includes(task.status));
@@ -2817,6 +2843,11 @@ async function buildDigitalEmployeeAssistantFeed(
     : productionDefaults.items.length === 0
       ? managedReplicationPresenterReadiness({})
       : { state: 'production_setup_required' as const, presenterCount: 0, presenterId: '', presenterName: '' };
+  const {recoverIndependentContentTask}=await import('../assistant/independentWeeklyContent.js');
+  for(const task of taskResult.items.filter(t=>jsonObject<Record<string,unknown>>(t.output,{}).assistantIndependent)){
+    const project=productionProjects.find(p=>p&&jsonObject<Record<string,unknown>>(p.spec,{}).workflowTaskId===task.id);
+    if(project)await recoverIndependentContentTask(store,tenantId,task as any,project as any);
+  }
   const assistantTasks = taskResult.items.map(task => taskWithAssistantProductionInput(
     task,
     productionProjects.filter((project): project is StoredRecord & { tenant_id: string } => Boolean(project)),
@@ -4490,7 +4521,7 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
     }
     const installationCeiling = process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY === undefined
       ? null : Number(process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY);
-    if (installationCeiling !== null && (!Number.isFinite(installationCeiling) || installationCeiling <= 0
+    if (!isInternalBudgetExemptTenant(tenantId) && installationCeiling !== null && (!Number.isFinite(installationCeiling) || installationCeiling <= 0
       || selectedCaps.some(value => value > installationCeiling + 0.000001))) {
       return { status: 409, body: { error: 'production_budget_installation_ceiling', message: `系统单条制作上限不足以执行已选方案（当前上限 ¥${Number.isFinite(installationCeiling) ? installationCeiling.toFixed(2) : '0.00'}），请在开工前调整系统额度或选择精简预算。` } };
     }
@@ -5516,8 +5547,7 @@ digitalEmployeesRouter.post('/tasks/:taskId/director-decision', async (req, res)
 });
 registerProductionBudgetReforecastRoute(digitalEmployeesRouter, {
   tenantRecord, publicConfig, configForTenant, executionConfigForPlan,
-  ensureFrozenEnterpriseProfileForRun, goalInput, appendEvent, appendAudit, buildOverview,
-});
+  ensureFrozenEnterpriseProfileForRun, goalInput, appendEvent, appendAudit, buildOverview,});
 digitalEmployeesRouter.post('/tasks/:taskId/retry', async (req, res) => handleTaskControl(req, res, 'retry'));
 digitalEmployeesRouter.post('/tasks/:taskId/skip', async (req, res) => handleTaskControl(req, res, 'skip'));
 digitalEmployeesRouter.post('/tasks/:taskId/complete', async (req, res) => handleTaskControl(req, res, 'manual_complete'));

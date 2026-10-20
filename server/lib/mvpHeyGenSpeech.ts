@@ -113,7 +113,7 @@ export async function generateMvpHeyGenSpeech(input: MvpHeyGenSpeechInput, ports
       await (ports.admission || mvpBudgetAdmission).reserve({ scope:s,tenantId:s.tenantId,taskId:s.taskId,version:s.version,
         session:s.session,accountId:s.accountId,productId:s.productId,runId:s.runId,action:'generate_media',
         provider:'heygen',model:'starfish',shotId:input.shotId,estimatedCostCny:input.reservationCny,operationId:`mvp-tts:${id}`,fingerprint:id });
-      await (ports.legacyBudget || studioPaidBudget).reserve('heygen', `mvp-tts:${id}`, input.reservationCny);
+      await (ports.legacyBudget || studioPaidBudget).reserve('heygen', `mvp-tts:${id}`, input.reservationCny, input.scope.tenantId);
       await ports.assertCurrentScope(input);
       row = { schemaVersion:1,fingerprint:id,input,state:'prepared' }; write(row);
       try {

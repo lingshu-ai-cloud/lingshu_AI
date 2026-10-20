@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, Film, RefreshCw, X } from 'lucide-react';
+import { Download, Film, Pin, RefreshCw, X } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import ContentVideoPreview from './ContentVideoPreview';
 
@@ -150,7 +150,10 @@ export default function ContentLibrary({ exportsOnly = false, onPublish, onOpenP
           <div className="flex items-start gap-2 border-b border-border px-4 py-3">
             <input aria-label={'选择' + item.title} className="mt-1 accent-accent" type="checkbox" disabled={!item.available} checked={selected.includes(item.id)} onChange={event => setSelected(event.target.checked ? [...selected, item.id] : selected.filter(id => id !== item.id))} />
             <div className="min-w-0">
-              <h3 className="truncate text-sm font-bold text-text-primary">{item.title}</h3>
+              <h3 className="flex min-w-0 items-center gap-1.5 text-sm font-bold text-text-primary">
+                <span className="truncate">{item.title}</span>
+                {item.pinned && <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-accent"><Pin size={12} aria-hidden="true" />置顶</span>}
+              </h3>
               <p className="mt-1 text-[11px] text-text-muted">{item.language} · {item.platform} · v{item.version} · {item.current ? '当前版本' : '历史版本'} · {item.exportSpec?.resolution}</p>
             </div>
           </div>

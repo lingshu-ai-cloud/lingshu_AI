@@ -90,6 +90,24 @@ const cameraFailed = createSocialProductSceneAdapter({ maximumCostCny: 3, async 
 } });
 await assert.rejects(() => cameraFailed.execute(context), /camera_trajectory_failed/);
 
+{
+  const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+  process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
+  const overBudget = createSocialProductSceneAdapter({ maximumCostCny: 3, async execute() {
+    return { status: 'completed', providerId: 'mock-video', providerTaskId: 'provider-task-over-budget', model: 'mock-v1',
+      localPath: output, contentHash: 'over-budget-scene-hash', duration: 3, actualCostCny: 4,
+      quality: { productIdentitySimilarity: { 'serum-a': 0.96, 'cream-b': 0.95 }, packagingVisibilityPassed: true, subjectVisibilityPassed: true, labelOcrExactMatch: true,
+        sceneTopologyScore: 0.94, productSlotLayoutScore: 0.93, cameraTrajectoryScore: 0.95, evidenceRefs: ['qa://cost'] } };
+  } });
+  try {
+    await assert.rejects(() => overBudget.execute(context), /product_scene_cost_exceeds_shot_budget/);
+    assert.ok(await overBudget.execute({ ...context, tenantId: 'local_tenant_customer_aurelia_beauty' }));
+  } finally {
+    if (configured === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+    else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = configured;
+  }
+}
+
 const localFallback = createSocialProductSceneAdapter({ maximumCostCny: 3, async execute() {
   return { status: 'completed', providerId: 'local-product-low-motion', providerTaskId: 'local:verified', model: 'ffmpeg-zoompan-v1',
     localPath: output, contentHash: 'local-scene-hash', duration: 3, actualCostCny: 0,

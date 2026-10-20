@@ -68,6 +68,19 @@ export default defineConfig(({ mode }) => {
         target: devApiTarget,
         changeOrigin: true,
       },
+      // Cloud/PocketBase material playback intentionally lives outside
+      // `/api` so Safari media elements can stream it without custom headers.
+      // Keep both historical and current routes on the same local backend;
+      // otherwise Vite falls back to index.html and the video remains stuck in
+      // the "preparing" state.
+      '/cloud-files': {
+        target: devApiTarget,
+        changeOrigin: true,
+      },
+      '/studio-media': {
+        target: devApiTarget,
+        changeOrigin: true,
+      },
       '/bgm': {
         target: devApiTarget,
         changeOrigin: true,

@@ -11,7 +11,7 @@ const META_GRAPH = 'https://graph.facebook.com';
 const META_GRAPH_VIDEO = 'https://graph-video.facebook.com';
 const INSTAGRAM_GRAPH = 'https://graph.instagram.com';
 
-export type SocialPlatform = 'tiktok' | 'instagram' | 'facebook';
+export type SocialPlatform = 'tiktok' | 'instagram' | 'facebook' | 'linkedin';
 
 export interface SocialUploadInput {
   filePath?: string;

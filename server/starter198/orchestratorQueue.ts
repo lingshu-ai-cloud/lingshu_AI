@@ -31,6 +31,7 @@ import { STARTER_CONTENT_RELEASE_APPROVAL_TASK_KEY } from '../../shared/contract
 import { scheduleSocialContentWork } from './socialContentScheduler.js';
 import type { SocialContentAccessResolver } from './socialContentAccess.js';
 import { enqueueSocialContentAutoProduction } from './socialContentAutoProduction.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 
 type JsonObject = Record<string, unknown>;
 type Row = Record_ & JsonObject;
@@ -240,7 +241,7 @@ function assertConfirmedPlanAllowed(config: DigitalEmployeeConfig, access: Start
   const effectiveBudget = Math.min(overallBudget, contentBudget);
   if (plan.plannedAccounts.length > limits.primaryPlatformCount
     || plan.weeklyMasterCount > limits.contentArtifactCountPerCycle
-    || plan.estimatedCostCny.max > effectiveBudget) {
+    || (!isInternalBudgetExemptTenant(access.tenantId) && plan.estimatedCostCny.max > effectiveBudget)) {
     throw new Starter198RuntimePortError('starter_198_confirmed_plan_entitlement_changed', 409);
   }
 }

@@ -23,6 +23,25 @@ const content = {
 const check = (value: unknown, mode: 'human'|'managed' = 'human') => inspectSocialContentReleaseQuality({ brief, content: value, mode });
 assert.equal(check(content).approved, true);
 assert.equal(check(content, 'managed').approved, true);
+{
+  const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+  try {
+    process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
+    const overBudget = structuredClone(content);
+    overBudget.costSummary.estimatedBeforeGenerationCny = 12;
+    overBudget.costSummary.recordedProviderEstimatedCostCny = 12;
+    assert.equal(inspectSocialContentReleaseQuality({ tenantId: 'another-tenant', brief, content: overBudget, mode: 'human' }).failures.includes('budget_exceeded'), true);
+    assert.equal(inspectSocialContentReleaseQuality({ tenantId: 'local_tenant_customer_aurelia_beauty', brief, content: overBudget, mode: 'human' }).approved, true);
+    assert.equal(inspectSocialContentReleaseQuality({ tenantId: 'local_tenant_customer_aurelia_beauty', brief: { ...brief, perItemBudgetCny: undefined }, content: overBudget, mode: 'human' }).approved, true);
+    assert.equal(inspectSocialContentReleaseQuality({ tenantId: 'another-tenant', brief: { ...brief, perItemBudgetCny: undefined }, content: overBudget, mode: 'human' }).failures.includes('budget_evidence_missing'), true);
+    const missingEvidence = structuredClone(overBudget);
+    delete (missingEvidence as Partial<typeof content>).costSummary;
+    assert.equal(inspectSocialContentReleaseQuality({ tenantId: 'local_tenant_customer_aurelia_beauty', brief, content: missingEvidence, mode: 'human' }).failures.includes('budget_evidence_missing'), true);
+  } finally {
+    if (configured === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+    else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = configured;
+  }
+}
 const mutations: Array<(value: typeof content) => void> = [
   value => { value.productionResult.technicalReview.approved = false; },
   value => { value.productionResult.creativeReview.failedCriteria = ['missing shot']; },

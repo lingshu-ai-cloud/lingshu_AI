@@ -31,6 +31,7 @@ const platformLabel: Record<Exclude<ContentPlatform, 'all'>, string> = {
   instagram: 'Instagram',
   tiktok: 'TikTok',
   youtube: 'YouTube',
+  linkedin: 'LinkedIn',
 };
 
 /**

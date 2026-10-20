@@ -6,10 +6,11 @@ import { store } from '../storage/index.js';
 import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
 import { getMyChannelInfo, probeYouTubeUploadPermission } from '../integrations/youtube.js';
 import { getFacebookPage, getInstagramAccount, getMetaGrantedPermissions, getTikTokPublishStatus, getTikTokUser, probeTikTokPublishingPermission } from '../integrations/social.js';
+import { getLinkedInOrganization, getLinkedInProfile, linkedInAuthorUrn, linkedInRequiredPublishingScope } from '../integrations/linkedin.js';
 
 export const PLATFORM_CAPABILITY_EVIDENCE_COLLECTION = 'social_platform_capability_evidence';
 
-export type RuntimeSocialPlatform = 'youtube' | 'facebook' | 'instagram' | 'tiktok';
+export type RuntimeSocialPlatform = 'youtube' | 'facebook' | 'instagram' | 'tiktok' | 'linkedin';
 export type RuntimePlatformCapability =
   | 'publishing.official'
   | 'publishing.receipt_lookup'
@@ -102,7 +103,7 @@ export async function platformCapabilityDecision(input: {
       verifiedAt: evidence.verified_at, evidenceRef: evidence.evidence_ref,
     };
   }
-  if(input.platform === 'instagram' && LIVE_PROBE_REQUIRED.has(input.capability)) {
+  if((input.platform === 'instagram' || input.platform === 'linkedin') && LIVE_PROBE_REQUIRED.has(input.capability)) {
     const account = await dataStore.getById<AccountRecord>('social_accounts',text(input.accountId));
     if(!account || evidence.account_identity_hash !== platformAccountIdentityHash(account,input.platform)) return {platform:input.platform,accountId:input.accountId,capability:input.capability,status:'unavailable',reason:'provider_account_identity_changed'};
   }
@@ -121,6 +122,7 @@ export interface PlatformCapabilityProbeProviders {
   instagramLogin?(accountId: string, accessToken: string, graphVersion: string): Promise<{ id: string; publishGranted: boolean }>;
   tiktok(accessToken: string): Promise<{ openId: string; publishGranted: boolean }>;
   tiktokReceipt(accessToken: string, receiptId: string): Promise<{ publishId: string }>;
+  linkedin?(accessToken: string, account: AccountRecord): Promise<{ authorUrn: string; publishGranted: boolean }>;
 }
 
 const liveProviders: PlatformCapabilityProbeProviders = {
@@ -152,6 +154,15 @@ const liveProviders: PlatformCapabilityProbeProviders = {
     return { openId: user.openId, publishGranted: permission.granted };
   },
   tiktokReceipt: getTikTokPublishStatus,
+  linkedin: async (token, account) => {
+    const authorUrn = linkedInAuthorUrn({ providerAccountId: text(account.providerAccountId), parentPageId: text(account.parentPageId) });
+    if (authorUrn.startsWith('urn:li:organization:')) {
+      const organization = await getLinkedInOrganization(token, authorUrn.slice('urn:li:organization:'.length));
+      return { authorUrn: organization.authorUrn, publishGranted: true };
+    }
+    const profile = await getLinkedInProfile(token);
+    return { authorUrn: profile.authorUrn, publishGranted: true };
+  },
 };
 
 async function instagramPublishingBoundary(input: {tenantId:string;accountId:string;platform:RuntimeSocialPlatform;capability:RuntimePlatformCapability}, dataStore:DataStore): Promise<PlatformCapabilityDecision | null> {
@@ -164,7 +175,7 @@ async function instagramPublishingBoundary(input: {tenantId:string;accountId:str
 }
 
 /** Frozen actual native identity and credential configuration; never exposed as raw secrets. */
-export function platformAccountIdentityHash(record:Record<string,unknown>,platform:RuntimeSocialPlatform):string{return createHash('sha256').update(JSON.stringify({id:record.id,tenantId:record.tenantId,platform,oauthProvider:record.oauthProvider,nativeId:platform==='youtube'?record.channelId:record.providerAccountId,scope:record.scope,status:record.status,accessToken:record.accessToken,refreshToken:record.refreshToken,clientId:record.clientId,clientSecret:record.clientSecret})).digest('hex');}
+export function platformAccountIdentityHash(record:Record<string,unknown>,platform:RuntimeSocialPlatform):string{return createHash('sha256').update(JSON.stringify({id:record.id,tenantId:record.tenantId,platform,oauthProvider:record.oauthProvider,nativeId:platform==='youtube'?record.channelId:record.providerAccountId,parentPageId:record.parentPageId,scope:record.scope,status:record.status,accessToken:record.accessToken,refreshToken:record.refreshToken,clientId:record.clientId,clientSecret:record.clientSecret})).digest('hex');}
 
 function scopeSet(record: AccountRecord): Set<string> {
   return new Set(text(record.scope).split(/[\s,]+/).filter(Boolean));
@@ -257,6 +268,15 @@ export async function refreshPlatformCapabilityEvidence(input: {
       if (text(result.id) !== text(account.providerAccountId)) throw new Error('provider_account_mismatch');
       if (!result.publishGranted) throw new Error('provider_publish_permission_not_granted');
       providerRef = `account:${text(result.id)}`;
+    } else if (input.platform === 'linkedin') {
+      const requiredScope = linkedInRequiredPublishingScope({ providerAccountId: text(account.providerAccountId), parentPageId: text(account.parentPageId) });
+      if (!scopeSet(account).has(requiredScope)) throw new Error('provider_publish_scope_missing');
+      if (!providers.linkedin) throw new Error('linkedin_capability_probe_unavailable');
+      const result = await providers.linkedin(socialAccessToken(account), account);
+      const expectedAuthor = linkedInAuthorUrn({ providerAccountId: text(account.providerAccountId), parentPageId: text(account.parentPageId) });
+      if (result.authorUrn !== expectedAuthor) throw new Error('provider_account_mismatch');
+      if (!result.publishGranted) throw new Error('provider_publish_permission_not_granted');
+      providerRef = `account:${expectedAuthor}`;
     } else {
       if (!scopeSet(account).has('video.publish')) throw new Error('provider_publish_scope_missing');
       const result = await providers.tiktok(socialAccessToken(account));
