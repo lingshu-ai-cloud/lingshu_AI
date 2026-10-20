@@ -26,6 +26,7 @@ import type {WeeklyTaskWorkspace} from '../../../shared/contracts/weeklyTaskWork
 import {socialProgramApi} from '../../lib/socialProgramApi';
 import { authHeader, getToken } from '../../lib/auth';
 import WeeklyTaskQuickActions from '../socialProgram/WeeklyTaskQuickActions';
+import WeeklyTaskRuntimeDetails from './WeeklyTaskRuntimeDetails';
 
 const LsCalendar = typeof document === 'undefined'
   ? function ServerCalendar({ events, label }: { events: LsCalendarEvent[]; label: string }) {
@@ -257,6 +258,7 @@ export default function RestoredAgentWorkCalendar({
       if(workspaceReadGeneration.current===generation)setTaskWorkspace(current=>current?.task.id===task.id?{task,item:null,error:cause instanceof Error?cause.message:'任务生产现场读取失败。',loading:false}:current);
     });
   };
+  const workspaceSource=(task:AgentCalendarTask)=>task.workspaceTarget?task:task.dailyTaskGroup?.tasks.find(source=>source.executionStep===task.executionStep&&source.workspaceTarget)??task.dailyTaskGroup?.tasks.find(source=>source.workspaceTarget)??task.customerServiceSummary?.sourceTasks.find(source=>source.workspaceTarget)??null;
   useEffect(() => setActiveFilter(agentRole || 'all'), [agentRole]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 10_000);
@@ -368,7 +370,7 @@ export default function RestoredAgentWorkCalendar({
       if(hasPlanningCalendarTarget(source)&&onOpenPlanning)return open(onOpenPlanning,source);
       if((hasCalendarProductionBinding(source)||canOpenContentTask?.(source))&&onOpenProduction)return open(onOpenProduction,source);
       if(onEnterExecution)return enterSource(source);
-      if(source.workspaceTarget){flushSync(closeDetails);openWorkspace(source);}
+      if(source.workspaceTarget)openWorkspace(source);
     };
     const action = !demo && task.enterpriseFactExceptionId && onOpenEnterpriseFacts
       ? { label: "进入企业知识库补齐原任务事实", run: () => open(onOpenEnterpriseFacts) }
@@ -396,6 +398,7 @@ export default function RestoredAgentWorkCalendar({
 
     const channelLabel={whatsapp:'WhatsApp',messenger:'Messenger',instagram:'Instagram'} as const;
     const summary=task.customerServiceSummary;
+    const detailWorkspaceSource=workspaceSource(task);
     const ctaContactStatus=ctaAuditStatuses[task.id] ?? executionSources.map(source=>ctaAuditStatuses[source.id]).find(Boolean);
 
     return <div className="space-y-5">
@@ -408,6 +411,7 @@ export default function RestoredAgentWorkCalendar({
         <div className="min-w-0"><dt className="text-xs text-text-secondary">交付形式</dt><dd className="mt-1 break-words text-sm font-medium text-text-primary">{deliveryFormLabel(task)}</dd></div>
       </dl>
       <section aria-label="交付物与当前受阻原因" className="rounded-lg border border-border p-4"><h4 className="text-sm font-semibold">交付物与当前受阻原因</h4><p className="mt-2 text-sm">预期交付：{task.output}</p><p className="mt-2 text-sm">实际结果：{resultRefs.length?`已有 ${resultRefs.length} 项后端结果凭据；不等同于整个节点已交付`:'尚无后端结果凭据，未生成可核验交付物'}</p>{resultRefs.length>0&&<details className="mt-2 text-xs"><summary>查看真实结果引用</summary>{resultRefs.map(ref=><p key={JSON.stringify(ref)} className="break-all">{ref.type} · {ref.id} · v{ref.version}</p>)}</details>}<h5 className="mt-3 text-xs font-semibold">当前受阻原因</h5>{blockers.length?<ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-amber-800">{blockers.map(code=><li key={code}>{blockerLabels[code]??code}</li>)}</ul>:<p className="mt-2 text-xs text-text-secondary">后端暂无独立阻塞记录；不代表任务已启动或完成。</p>}{entryState?.id===task.id&&entryState.error&&<Alert className="mt-3" showIcon type="warning" title="真实执行入口未就绪" description={entryState.error}/>}</section>
+      {detailWorkspaceSource&&<WeeklyTaskRuntimeDetails executionTaskId={detailWorkspaceSource.workspaceTarget!.executionTaskId} loading={taskWorkspace?.task.id===detailWorkspaceSource.id&&taskWorkspace.loading} error={taskWorkspace?.task.id===detailWorkspaceSource.id?taskWorkspace.error:''} workspace={taskWorkspace?.task.id===detailWorkspaceSource.id?taskWorkspace.item:null}/>}
 {summary&&<section aria-label="常驻客服任务详情" className="rounded-lg border border-border bg-white p-4"><h4 className="text-sm font-semibold text-text-primary">渠道运行状态</h4><div className="mt-3 flex flex-wrap gap-2">{summary.channels.map(item=><Tag key={item.channel} color={item.status==='failed'?'error':item.status==='blocked'?'warning':item.status==='active'?'processing':item.status==='completed'?'success':'default'}>{channelLabel[item.channel]} · {statusLabels[item.status]}</Tag>)}</div><dl className="mt-4 grid gap-3 sm:grid-cols-3"><div><dt className="text-xs text-text-secondary">关联运行记录</dt><dd className="mt-1 text-lg font-semibold">{summary.sourceTaskCount}</dd></div><div><dt className="text-xs text-text-secondary">已完成核验</dt><dd className="mt-1 text-lg font-semibold">{summary.completedCount}</dd></div><div><dt className="text-xs text-text-secondary">需要处理</dt><dd className="mt-1 text-lg font-semibold">{summary.attentionCount}</dd></div></dl><p className="mt-3 text-xs text-text-secondary">常驻卡片是每日客服入口；真实客户会话、审批、交接和渠道回执仍以后台持久化记录为准。</p></section>}
       {summary&&<section aria-label="客服真实任务与生产线程" className="space-y-2"><h4 className="text-sm font-semibold">客服真实任务与生产线程</h4>{summary.channels.map(({channel})=><details key={channel} className="rounded-lg border border-border p-3"><summary className="cursor-pointer text-sm font-medium">{channelLabel[channel]} · {summary.sourceTasks.filter(source=>source.customerExecutionTarget?.channel===channel).length} 项真实任务</summary><div className="mt-2 space-y-2">{summary.sourceTasks.filter(source=>source.customerExecutionTarget?.channel===channel).map(source=><Button key={source.id} data-customer-execution-id={source.id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>openSource(source)}>{source.date} · {source.title} · {statusLabels[source.status]}</Button>)}</div></details>)}</section>}
       {task.dailyTaskGroup&&<details aria-label="同日合并的真实任务" className="space-y-2"><summary className="cursor-pointer text-sm font-semibold">包含 {task.dailyTaskGroup.tasks.length} 项真实生产步骤与对象</summary>{task.dailyTaskGroup.tasks.map(source=><Button key={source.id} data-daily-execution-id={source.id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>openSource(source)}>{conciseCalendarTitle(source.title)} · {statusLabels[source.status]}<span className="block text-xs text-text-secondary">{source.context}</span></Button>)}</details>}
@@ -458,7 +462,8 @@ export default function RestoredAgentWorkCalendar({
         visualVariant="agent"
         narrowView="dayGridDay"
         detailsTitle="任务详情"
-        onDetailsClose={()=>{entryController.current?.abort();setEntryState(null);}}
+        onDetailsClose={()=>{entryController.current?.abort();setEntryState(null);workspaceReadGeneration.current++;setTaskWorkspace(null);}}
+        onEventClick={event=>{const source=workspaceSource(event.data as AgentCalendarTask);if(source)openWorkspace(source);return false;}}
         onDatesSet={info => { const next = calendarDayKey(info.view.calendar.getDate(), timeZone); setCalendarDate(next); setCalendarView(info.view.type as LsCalendarView); }}
         firstDay={1}
         timeZone={timeZone}
@@ -467,6 +472,5 @@ export default function RestoredAgentWorkCalendar({
         detailsLayout="custom"
         renderDetails={renderDetails}
       /></Suspense>}
-    {taskWorkspace&&<div className="fixed inset-0 z-[230] flex items-center justify-center bg-slate-950/35 p-4" onClick={()=>setTaskWorkspace(null)}><section role="dialog" aria-modal="true" aria-label="任务生产现场" className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl" onClick={event=>event.stopPropagation()}><div className="flex items-center justify-between gap-3"><div><Tag color="blue">任务生产现场</Tag><h3 className="mt-2 ls-type-title-medium">{taskWorkspace.task.title}</h3></div><Button onClick={()=>setTaskWorkspace(null)}>关闭</Button></div>{taskWorkspace.loading&&<p role="status" className="mt-5 text-sm text-text-secondary">正在核验持久化生产现场…</p>}{taskWorkspace.error&&<Alert className="mt-5" type="error" showIcon title="生产现场无法读取" description={taskWorkspace.error}/>} {taskWorkspace.item&&<div className="mt-5 space-y-4"><dl className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2"><div><dt className="text-xs text-text-secondary">现场身份</dt><dd className="break-all text-sm">{taskWorkspace.item.workspaceId}</dd></div><div><dt className="text-xs text-text-secondary">当前阶段</dt><dd className="text-sm font-semibold">{taskWorkspace.item.phase}</dd></div><div><dt className="text-xs text-text-secondary">执行任务</dt><dd className="break-all text-sm">{taskWorkspace.item.executionTaskId}</dd></div><div><dt className="text-xs text-text-secondary">负责角色</dt><dd className="text-sm">{taskWorkspace.item.responsibleActor}</dd></div></dl><section className="rounded-xl bg-surface-2 p-4"><h4 className="text-sm font-semibold">真实依赖与卡点</h4>{taskWorkspace.item.upstreamTaskIds.length?<p className="mt-2 break-all text-xs">上游：{taskWorkspace.item.upstreamTaskIds.join('、')}</p>:<p className="mt-2 text-xs">无上游依赖</p>}{taskWorkspace.item.blockingCodes.length?<ul className="mt-2 list-disc pl-5 text-sm text-amber-800">{taskWorkspace.item.blockingCodes.map(code=><li key={code}>{code}</li>)}</ul>:<p className="mt-2 text-sm text-emerald-700">当前没有后端阻塞记录</p>}</section><section className="rounded-xl border p-4"><h4 className="text-sm font-semibold">真实业务对象</h4><p className="mt-2 text-xs">内容任务：{taskWorkspace.item.contentTaskId||'尚未由上游创建'}</p><p className="mt-1 text-xs">运行：{taskWorkspace.item.runId||'尚未启动'}</p><p className="mt-1 text-xs">结果引用：{taskWorkspace.item.resultRefs.length?taskWorkspace.item.resultRefs.map(ref=>`${ref.type}:${ref.id}:v${ref.version}`).join('、'):'尚无权威结果'}</p></section>{(taskWorkspace.task.enterpriseFactExceptionId&&onOpenEnterpriseFacts||taskWorkspace.task.accountBindingTarget&&onBindAccount||taskWorkspace.task.customerExecutionTarget&&onOpenCustomerExecution||taskWorkspace.task.supplementTarget&&onOpenSupplement||hasTemplateCalendarTarget(taskWorkspace.task)&&onOpenTemplate||hasReviewCalendarTarget(taskWorkspace.task)&&onOpenReview||hasPlanningCalendarTarget(taskWorkspace.task)&&onOpenPlanning||(hasCalendarProductionBinding(taskWorkspace.task)||canOpenContentTask?.(taskWorkspace.task))&&onOpenProduction)&&<Button type="primary" onClick={()=>{const task=taskWorkspace.task;setTaskWorkspace(null);if(task.enterpriseFactExceptionId&&onOpenEnterpriseFacts)return onOpenEnterpriseFacts(task);if(task.accountBindingTarget&&onBindAccount)return onBindAccount(task);if(task.customerExecutionTarget&&onOpenCustomerExecution)return onOpenCustomerExecution(task);if(task.supplementTarget&&onOpenSupplement)return onOpenSupplement(task);if(hasTemplateCalendarTarget(task)&&onOpenTemplate)return onOpenTemplate(task);if(hasReviewCalendarTarget(task)&&onOpenReview)return onOpenReview(task);if(hasPlanningCalendarTarget(task)&&onOpenPlanning)return onOpenPlanning(task);if(onOpenProduction)return onOpenProduction(task);}}>进入对应业务执行页面</Button>}</div>}</section></div>}
   </section>;
 }
