@@ -8,6 +8,7 @@ import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } fro
 import { mergeSocialImageVisualChecks, socialImageDeterministicChecks } from '../socialImage/socialImageQuality.js';
 import { qualityCheckSocialImageWithQwen } from '../agents/qwen.js';
 import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
+import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import { SOCIAL_IMAGE_HARD_CHECKS } from '../../shared/contracts/socialImageCreation.js';
 import { compileLuxuryProductHero } from '../socialImage/templates/luxuryProductHero.js';
 import { assertSocialImageLayerGraph } from '../socialImage/layerGraphValidation.js';
@@ -55,6 +56,31 @@ async function outputImageBytes(tenantId: string, output: { mediaUrl?: string; m
   if (!match) return null;
   const file = path.join(renderRoot(tenantId), path.basename(match[1]!));
   return fs.existsSync(file) ? { bytes: fs.readFileSync(file), mimeType: 'image/png' } : null;
+}
+
+async function referenceImageBytes(tenantId: string, raw: string): Promise<{ bytes: Buffer; mimeType: string } | null> {
+  let route = '';
+  try { route = new URL(raw, 'http://local.invalid').pathname; } catch { return null; }
+  const rendered = route.match(/^\/api\/overseas\/social-images\/renders\/([a-zA-Z0-9._-]+\.png)$/);
+  if (rendered) return outputImageBytes(tenantId, { mediaUrl: route });
+  const enterprise = route.match(/^\/api\/overseas\/enterprise\/assets\/([\w.-]+)$/);
+  if (enterprise) {
+    const filename = path.basename(enterprise[1]!);
+    const local = path.resolve(process.cwd(), 'data', 'enterprise-assets', enterpriseAssetTenantKey(tenantId), filename);
+    if (local.startsWith(path.resolve(process.cwd(), 'data', 'enterprise-assets')) && fs.existsSync(local)) return { bytes: fs.readFileSync(local), mimeType: /\.png$/i.test(filename) ? 'image/png' : /\.webp$/i.test(filename) ? 'image/webp' : 'image/jpeg' };
+    if (objectStorageEnabled()) {
+      const object = await objectStorageDownload(enterpriseAssetObjectKey(tenantId, filename));
+      if (object?.buf?.length) return { bytes: object.buf, mimeType: object.contentType || 'image/jpeg' };
+    }
+  }
+  const library = await readMaterialLibrary(tenantId).catch(() => null);
+  const privateName = route.match(/^\/api\/overseas\/studio\/private-assets\/materials\/([\w.-]+)$/)?.[1];
+  const material = library?.items.find(item => item.type === 'image' && String(item.tenantId || item.tenant_id || '') === tenantId && (
+    [item.url, item.poster].some(url => {
+      try { return url && new URL(String(url), 'http://local.invalid').pathname === route; } catch { return false; }
+    }) || (privateName && [item.objectKey, item.posterObjectKey].some(key => key && path.basename(String(key)) === privateName))
+  ));
+  return material ? readTenantMaterialBytes(material as any, tenantId).catch(() => null) : null;
 }
 
 socialImageRouter.get('/renders/:filename', (req, res) => {
@@ -291,13 +317,15 @@ socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
     const products = (await Promise.all(task.contentBrief.productRefs.map(id => enterpriseProductAsset(tenantId, id))))
       .filter((item): item is { name: string; bytes: Buffer } => Boolean(item))
       .map(item => ({ ...item, mimeType: 'image/png' }));
+    const reference = (await Promise.all([...(task.referenceSnapshot?.imageUrls || []), ...task.referenceUrls]
+      .slice(0, 4).map(url => referenceImageBytes(tenantId, url)))).find(Boolean) || undefined;
     const outputs = await Promise.all(task.outputs.map(async output => {
       if (output.state === 'superseded') return output;
       const generated = await outputImageBytes(tenantId, output);
       if (!generated) return { ...output, state: 'repair_required' as const, qualityChecks: deterministic };
       let visual = [] as Awaited<ReturnType<typeof qualityCheckSocialImageWithQwen>>;
       try {
-        visual = await qualityCheckSocialImageWithQwen({ generated, products, expected: {
+        visual = await qualityCheckSocialImageWithQwen({ generated, products, reference, expected: {
           headline: task.imageTextContract.headline, supportingText: task.imageTextContract.supportingText,
           cta: task.imageTextContract.cta, facts: task.imageTextContract.requiredFacts, format: task.deliverySpec.format,
         } });

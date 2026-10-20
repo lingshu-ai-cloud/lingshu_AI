@@ -93,4 +93,6 @@ assert.match(source, /已恢复后台生成结果并完成自动视觉质检/, '
 assert.match(studioRoute, /updateSocialImageTask\(store, tenantId, currentTask\.id/, 'the generation route must persist outputs server-side');
 assert.match(studioRoute, /social_image_task_version_conflict_after_generation/, 'a stale generation must not overwrite a newer task');
 assert.match(socialImageRoute, /status: 'completed' as const/, 'quality completion must close the durable generation job');
+assert.match(socialImageRoute, /referenceImageBytes\(tenantId, url\)/, 'visual QA must load the original benchmark pixels when available');
+assert.match(socialImageRoute, /qualityCheckSocialImageWithQwen\(\{ generated, products, reference, expected:/, 'structure fidelity must be judged against the original benchmark');
 assert.doesNotMatch(source, /contentMode:\s*'video'/);
