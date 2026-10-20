@@ -3,6 +3,7 @@ import type {WeeklyPipelineStartInput,WeeklyPipelineStatus} from '../../shared/c
 import type { WeeklyScheduleTargetGraph, WeeklyScheduleCapacityInput, WeeklyScheduleProposal, WeeklyScheduleConfirmation } from '../../shared/contracts/socialWeeklyScheduleRevision';
 import type {WeeklyProductionRepairCase} from '../../shared/contracts/weeklyProductionRepairCase';
 import type {UnplannedSocialDeliveryCard,WeeklyDeliveryCard} from '../../shared/contracts/weeklyDeliveryCard';
+import type {WeeklyDeliveryAcceptancePreview,WeeklyDeliveryAcceptanceReceipt} from '../../shared/contracts/weeklyDeliveryAcceptance';
 import type {SceneReworkAdmissionPreview} from '../../server/starter198/socialContentSceneReworkAdmission';
 import type {WeeklyCreativeRepairCapacityPreview} from '../../shared/contracts/weeklyCreativeRepairExecution';
 import type {CreativeRepairConfiguration} from '../../server/socialPrograms/weeklyCreativeRepairConfiguration';
@@ -255,6 +256,8 @@ export const socialProgramApi = {
   async listDeliveryCards(programId:string,packageId:string,version:number):Promise<WeeklyDeliveryCard[]> {
     return (await request<{items:WeeklyDeliveryCard[]}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/delivery-cards?version=${version}`)).items;
   },
+  async readWeeklyDeliveryAcceptance(programId:string,packageId:string,version:number):Promise<{preview:WeeklyDeliveryAcceptancePreview;receipt:WeeklyDeliveryAcceptanceReceipt|null}>{return request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/delivery-acceptance?version=${version}`);},
+  async acceptWeeklyDelivery(programId:string,packageId:string,version:number,expectedEvidenceHash:string):Promise<WeeklyDeliveryAcceptanceReceipt>{return (await request<{item:WeeklyDeliveryAcceptanceReceipt}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/delivery-acceptance`,{method:'POST',...json({expectedPackageVersion:version,expectedEvidenceHash})})).item;},
   async listUnplannedDeliveryCards():Promise<UnplannedSocialDeliveryCard[]> {return (await request<{items:UnplannedSocialDeliveryCard[]}>('/unplanned-delivery-cards')).items;},
   async listRepairCases(programId:string,packageId:string,version:number):Promise<WeeklyProductionRepairCase[]>{
     return (await request<{items:WeeklyProductionRepairCase[]}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/repair-cases?version=${version}`)).items;

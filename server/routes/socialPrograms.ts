@@ -46,6 +46,7 @@ import { createSocialWeeklyMaterialEvidenceConfigurationRouter } from './socialW
 import { createSocialCustomerFeedbackTopicsRouter } from './socialCustomerFeedbackTopics.js';
 import { projectWeeklyContinuationCalendar } from '../socialPrograms/weeklyContinuationCalendar.js';
 import { listUnplannedSocialDeliveryCards, projectWeeklyDeliveryCards } from '../socialPrograms/weeklyDeliveryCards.js';
+import {createSocialWeeklyDeliveryAcceptanceRouter} from './socialWeeklyDeliveryAcceptance.js';
 import { createSocialWeeklyContentTemplatesRouter } from './socialWeeklyContentTemplates.js';
 import { createSocialWeeklyReviewEvidenceRouter } from './socialWeeklyReviewEvidence.js';
 import { createSocialWeeklyRunningResourceEvidenceRouter } from './socialWeeklyRunningResourceEvidence.js';
@@ -603,6 +604,7 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     res.setHeader('Cache-Control','private, no-store');
     res.json({items:await projectWeeklyDeliveryCards(dataStore,tenantId,pkg,tasks)});
   }));
+  router.use('/:programId/operating-packages/:packageId/delivery-acceptance',createSocialWeeklyDeliveryAcceptanceRouter(dataStore));
 
   router.get('/:programId/operating-packages/:packageId/repair-cases',asyncRoute(async(req,res)=>{
     const {tenantId}=res.locals as AuthLocals,programId=String(req.params.programId||''),packageId=String(req.params.packageId||'');
