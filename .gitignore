@@ -78,6 +78,10 @@ pb_data/
 /data/startup-hub-files/
 /data/enterprise-assets/
 /data/tenant-orders/
+/data/social-content-native-voice-receipts/
+/data/social-content-task-budget/
+/data/social-content-voice-alignment/
+/data/social-content-whole-voice/
 
 # Runtime files containing customer, account, billing, or operational data
 /data/apify-video-usage.json
