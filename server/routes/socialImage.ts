@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { Router } from 'express';
+import sharp from 'sharp';
 import type { AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } from '../socialImage/socialImageTask.js';
@@ -314,9 +315,12 @@ socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
     const expectedVersion = Number(req.body?.expectedVersion);
     if (expectedVersion !== task.version) { res.status(409).json({ ok: false, error: '任务已被更新，请刷新后继续', task }); return; }
     const deterministic = socialImageDeterministicChecks(task);
-    const products = (await Promise.all(task.contentBrief.productRefs.map(id => enterpriseProductAsset(tenantId, id))))
-      .filter((item): item is { name: string; bytes: Buffer } => Boolean(item))
-      .map(item => ({ ...item, mimeType: 'image/png' }));
+    const productAssets = (await Promise.all(task.contentBrief.productRefs.map(id => enterpriseProductAsset(tenantId, id))))
+      .filter((item): item is { name: string; bytes: Buffer } => Boolean(item));
+    const products = await Promise.all(productAssets.map(async item => {
+      const format = (await sharp(item.bytes).metadata()).format;
+      return { ...item, mimeType: format === 'png' ? 'image/png' : format === 'webp' ? 'image/webp' : 'image/jpeg' };
+    }));
     const reference = (await Promise.all([...(task.referenceSnapshot?.imageUrls || []), ...task.referenceUrls]
       .slice(0, 4).map(url => referenceImageBytes(tenantId, url)))).find(Boolean) || undefined;
     const outputs = await Promise.all(task.outputs.map(async output => {
