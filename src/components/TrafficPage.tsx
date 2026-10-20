@@ -219,6 +219,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 function platformBody(platform: PublishPlatform, copy?: PlatformCopy, fallback = '') {
+  if (fallback.trim()) return fallback;
   if (!copy) return fallback;
   if (platform === 'youtube') return copy.description || fallback;
   if (platform === 'facebook' || platform === 'linkedin') return copy.text || fallback;
@@ -226,6 +227,7 @@ function platformBody(platform: PublishPlatform, copy?: PlatformCopy, fallback =
 }
 
 function platformTitle(platform: PublishPlatform, copy?: PlatformCopy, fallback = '') {
+  if (fallback.trim()) return fallback;
   if (platform === 'youtube') return copy?.title || fallback;
   return fallback;
 }
@@ -347,8 +349,8 @@ export default function TrafficPage({
         suggestions: ['生成一套主推品素材', '把卖点改成外语口播', '设计 Facebook 图文文案', '优化视频开头 3 秒钩子'],
       },
       publish: {
-        summary: '当前在内容创作的发布阶段，适合检查授权账号、生成分平台文案包、确认首评和 WhatsApp 追踪链接。',
-        suggestions: ['生成四个平台的差异化文案', '检查首评内容', '确认追踪链接', '排到建议时段发布'],
+        summary: '当前在内容创作的发布阶段，适合检查授权账号、确认统一发布文案与 Tag、首评和 WhatsApp 追踪链接。',
+        suggestions: ['检查统一发布文案与 Tag', '检查首评内容', '确认追踪链接', '排到建议时段发布'],
       },
       accounts: {
         summary: '当前在账号管理，适合查看账号表现，以及识别评论中的高意向商机。',
@@ -668,11 +670,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
   const [publishing, setPublishing] = useState(false);
   const [publishConfirmationOpen, setPublishConfirmationOpen] = useState(false);
   const [systemLibraryOpen, setSystemLibraryOpen] = useState(false);
-  const [adaptingTarget, setAdaptingTarget] = useState<'all' | PublishPlatform | null>(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
-  const [contentEditorMode, setContentEditorMode] = useState<'common' | 'platform'>('common');
   const [pendingTargetAccountIds, setPendingTargetAccountIds] = useState<string[]>([]);
   const accountTargetsSeededRef = useRef(false);
   const pendingAccountTargetsSeededRef = useRef(false);
@@ -1267,59 +1267,6 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     window.setTimeout(() => document.getElementById('publishing-video-preview')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 80);
   };
 
-  const adaptCopy = async (platform?: PublishPlatform) => {
-    if (!activeItem || adaptingTarget) return;
-    if (activeItem.status === 'provider_processing') {
-      setError('平台仍在处理这条发布，请等待最终回执后再创建新版本。');
-      return;
-    }
-    if (!activeItem.title.trim() && !activeItem.description.trim()) {
-      setError('请先在“通用内容”中填写作品标题或发布配文');
-      return;
-    }
-    const requestItem = activeItem;
-    const platforms = platform ? [platform] : visiblePlatforms;
-    const mode = platform ? 'regenerate' : 'generate';
-    setAdaptingTarget(platform || 'all');
-    setError('');
-    setNotice('');
-    try {
-      const data = await fetchJson<{ ok: boolean; copy: Record<string, PlatformCopy>; source?: string; provenance?: string; qualityStatus?: string; publishable?: boolean; audit?: CopyAuditRecord }>('/api/overseas/publishing/adapt-copy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: requestItem.title,
-          description: requestItem.description,
-          platforms,
-          language: 'English',
-          mode,
-          projectId: requestItem.sourceProjectId,
-          currentCopy: Object.fromEntries(platforms.map(target => [target, requestItem.platformCopy[target] || {}])),
-        }),
-      });
-      if (data.ok !== true || data.source !== 'ai' || data.provenance !== 'ai'
-        || data.qualityStatus !== 'passed' || data.publishable !== true || !data.audit?.enterpriseFactVersion) {
-        throw new Error('平台文案未返回可审计的 AI 事实校验结果，原内容已保留。');
-      }
-      const first = platforms[0];
-      setItems(previous => previous.map(item => item.id === requestItem.id ? {
-        ...item,
-        platformCopy: { ...item.platformCopy, ...data.copy },
-        firstComment: data.copy[first]?.firstComment || item.firstComment,
-        copyAudit: data.audit,
-        status: 'draft',
-        error: undefined,
-      } : item));
-      setNotice(platform
-        ? `${PLATFORM_META[platform].label} 已换成新版本。`
-        : `已生成 ${platforms.map(target => PLATFORM_META[target].label).join('、')} 的差异化文案。`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '生成平台文案失败');
-    } finally {
-      setAdaptingTarget(null);
-    }
-  };
-
   const requestPublishConfirmation = () => {
     if (!publishableItems.length) {
       setError('请至少配置一条含视频路径、标题和发布账号的视频');
@@ -1673,11 +1620,12 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-bold text-text-primary">发布内容编辑</h3>
-                  <p className="mt-1 text-xs text-text-muted">统一编辑通用内容，或切换到各平台的差异化文案。</p>
+                  <p className="mt-1 text-xs text-text-muted">一份文案和 Tag 作为所有平台的发布原稿；平台只处理账号、媒体格式和发布时间。</p>
                 </div>
-                <Segmented aria-label="内容编辑方式" value={contentEditorMode} onChange={value => setContentEditorMode(value as 'common' | 'platform')} options={[{ value: 'common', label: '通用内容' }, { value: 'platform', label: '分平台内容' }]}/>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {visiblePlatforms.map(platform => <span key={platform} className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[10px] font-semibold text-text-secondary"><SocialPlatformIcon platform={platform} size={12}/>{PLATFORM_META[platform].label}</span>)}
+                </div>
               </div>
-              {contentEditorMode === 'common' && (
               <div className="mt-4 space-y-3">
                 <label className="block">
                   <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">素材文件</span>
@@ -1688,8 +1636,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                   <Input value={activeItem?.title || ''} onChange={event => activeItem && updateItem(activeItem.id, { title: event.target.value, status: 'draft', error: undefined })} placeholder="发布标题" />
                 </label>
                 <label className="block">
-                  <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">发布配文</span>
-                  <Input.TextArea value={activeItem?.description || ''} onChange={event => activeItem && updateItem(activeItem.id, { description: event.target.value, status: 'draft', error: undefined })} rows={3} placeholder="输入卖点、脚本摘要和话题标签" />
+                  <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">统一发布文案 + Tag</span>
+                  <Input.TextArea value={activeItem?.description || ''} onChange={event => activeItem && updateItem(activeItem.id, { description: event.target.value, status: 'draft', error: undefined })} rows={5} placeholder="输入最终发布文案，并在末尾保留同一组 #Tag；所有平台原样使用" />
+                  <span className="mt-1.5 block text-[11px] text-text-muted">只在内容计划中替换商品名、品牌名、企业名等已绑定事实；认证、价格、交期和功效不能自动替换。</span>
                 </label>
                 <div className="rounded-xl border border-emerald-100 bg-emerald-50/80 p-3">
                   <label className="flex cursor-pointer items-start gap-3">
@@ -1722,55 +1671,6 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                   {error && <p role="status" className="w-full text-right text-[11px] font-semibold text-red-600">{error}</p>}
                 </div>
               </div>
-              )}
-
-              {contentEditorMode === 'platform' && (
-              <div className="mt-4 border-t border-border pt-4">
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[11px] text-text-muted">
-                  {selectedPlatforms.length
-                    ? `将按已选账号生成 ${visiblePlatforms.length} 个平台版本。`
-                    : '尚未连接账号，也可以先生成四个平台版本；连接账号后直接使用。'}
-                </p>
-                <button type="button" onClick={() => void adaptCopy()} disabled={Boolean(adaptingTarget) || !activeItem} className="inline-flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
-                  {adaptingTarget === 'all' ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
-                  {adaptingTarget === 'all' ? '正在生成' : '一键生成'}
-                </button>
-              </div>
-              <div className="mt-4 grid gap-3 md:grid-cols-2">
-                {visiblePlatforms.map(platform => {
-                  const meta = PLATFORM_META[platform];
-                  const copy = activeItem?.platformCopy[platform];
-                  const body = platformBody(platform, copy, activeItem?.description || '');
-                  return (
-                    <div key={platform} className="rounded-2xl border border-border bg-surface p-4">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="inline-flex items-center gap-1.5 text-sm font-black text-text-primary"><SocialPlatformIcon platform={platform} size={16} /> {meta.label}</span>
-                        <button
-                          type="button"
-                          onClick={() => void adaptCopy(platform)}
-                          disabled={Boolean(adaptingTarget) || !activeItem}
-                          aria-label={`为 ${meta.label} 换一版文案`}
-                          className="inline-flex min-w-[64px] items-center justify-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] font-bold text-text-secondary hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {adaptingTarget === platform && <Loader2 size={11} className="animate-spin" />}
-                          {adaptingTarget === platform ? '生成中' : '换一版'}
-                        </button>
-                      </div>
-                      {platform === 'youtube' && (
-                        <input value={platformTitle(platform, copy, activeItem?.title || '')} onChange={event => activeItem && updateItem(activeItem.id, { platformCopy: { ...activeItem.platformCopy, [platform]: { ...activeItem.platformCopy[platform], title: event.target.value } }, status: 'draft', error: undefined })} className="mt-3 w-full rounded-lg border border-border bg-white px-3 py-2 text-xs outline-none focus:border-accent" />
-                      )}
-                      <textarea value={body} onChange={event => activeItem && updateItem(activeItem.id, { platformCopy: { ...activeItem.platformCopy, [platform]: { ...activeItem.platformCopy[platform], ...(platform === 'facebook' || platform === 'linkedin' ? { text: event.target.value } : platform === 'youtube' ? { description: event.target.value } : { caption: event.target.value }) } }, status: 'draft', error: undefined })} rows={4} className="mt-3 w-full resize-none rounded-lg border border-border bg-white px-3 py-2 text-xs outline-none focus:border-accent" />
-                      <div className="mt-2 flex items-center justify-between text-[11px] text-text-muted">
-                        <span>{body.length} 字符</span>
-                        <span>{platform === 'tiktok' && body.length > 120 ? '超出建议长度' : '长度正常'}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              </div>
-              )}
             </section>
           </section>
 

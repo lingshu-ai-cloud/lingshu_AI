@@ -14,12 +14,10 @@ import {PREPRODUCTION_RETRY_ATTEMPTS} from '../runtime/weeklyPreproductionRetryA
 import {WEEKLY_QUALIFIED_CONTINUATION_STAGES,readWeeklyQualifiedContinuationSubmitReadiness,type WeeklyQualifiedContinuationStage} from '../runtime/weeklyQualifiedContinuationStage.js';
 import type {readWeeklyCandidateAdmissionSnapshot} from '../runtime/weeklyCandidateAdmissionSnapshot.js';
 import { store } from '../storage/index.js';
-import { crawlVideosForTenant, inferPlatformFromUrl } from '../routes/videos.js';
+import { crawlImagePostsForTenant, crawlVideosForTenant, inferPlatformFromUrl } from '../routes/videos.js';
 import { dueDiscoveryModes, nextDiscoveryRunAt, validateDiscoveryBrief } from './domain.js';
 import { planRollingSevenDayQuotas } from './qualityOrchestration.js';
-import { hasLegacyProductTitleQueries } from '../../shared/productDiscovery.js';
 import { normalizeSocialPlatformQuotas } from '../../shared/socialInspirationStrategy.js';
-import { planWeeklyKeywordSources } from './dailySourceAllocation.js';
 import { runCandidateEvidenceWorker, type CandidateEvidenceWorkResult } from './candidateEvidenceWorker.js';
 import { createR3CandidateEvidenceAdapter, type R3CandidateEvidenceAdapter } from './r3CandidateEvidenceAdapter.js';
 import type { CrawlVideosInput, CrawlVideosResult } from '../routes/videos.js';
@@ -40,6 +38,7 @@ export const DISCOVERY_RUN_COLLECTION = 'social_discovery_runs';
 export interface ApprovedDiscoveryRunDependencies {
   dataStore: DataStore;
   crawl(input: CrawlVideosInput): Promise<CrawlVideosResult>;
+  crawlImages?: typeof crawlImagePostsForTenant;
   candidateEvidenceAdapter: R3CandidateEvidenceAdapter;
   runCandidateEvidence(items: Parameters<typeof runCandidateEvidenceWorker>[0]): Promise<CandidateEvidenceWorkResult>;
   /** Isolation-only; production always uses the real persisted admission reader. */
@@ -52,6 +51,7 @@ export interface ApprovedDiscoveryRunDependencies {
 export function createDefaultApprovedDiscoveryRunDependencies(dataStore:DataStore=store):ApprovedDiscoveryRunDependencies{return {
   dataStore,
   crawl: crawlVideosForTenant,
+  crawlImages: crawlImagePostsForTenant,
   candidateEvidenceAdapter: createR3CandidateEvidenceAdapter(),
   runCandidateEvidence: runCandidateEvidenceWorker,
 };}
@@ -339,32 +339,18 @@ export async function executeApprovedDiscoveryRun(input: {
   const dueCandidates = input.triggerType === 'scheduled'
     ? dueDiscoveryModes(brief, previousRuns)
     : input.requestedModes ?? brief.discoveryModes;
-  const candidates = accountOnlyUrl ? ['account' as const] : input.triggerType !== 'production_gap' && !input.retry && accountRefsToCollect.length ? ['account' as const,...dueCandidates] : dueCandidates;
-  const legacyProductTitles = !scope.payload.keywordRecommendation
-    && hasLegacyProductTitleQueries(scope.payload.keywordSet?.graph?.discoverySeeds ?? []);
-  const configuredShare = Number((brief as SocialDiscoveryBriefWithQuality).innovationExperimentShare ?? 0.15);
-  const weeklyRoot = Boolean(input.originalRun && !input.retry && input.triggerType === 'manual');
-  const weeklyRefs = weeklyRoot ? modeRefs(scope, 'momentum') : [];
-  const weeklyPlatforms = brief.modePolicies?.momentum?.platforms.length ? brief.modePolicies.momentum.platforms : brief.platforms;
-  // The approved 10-slot allocation belongs to the current five-term,
-  // four-platform template. Older single-source weekly scopes retain their
-  // frozen per-source limit and retry accounting.
-  const weeklyKeywordPlan = weeklyRoot && !accountOnlyUrl && new Set(weeklyRefs).size === 5 && ['tiktok','facebook','instagram','youtube'].every(platform => weeklyPlatforms.includes(platform)) ? planWeeklyKeywordSources({
-    refs: weeklyRefs, platforms: weeklyPlatforms, configuredAccountCount: brief.competitorAccounts.length + (weeklyAccountTarget ? weeklyAccountTarget.targetCount - 1 : 0),
-    businessDate: collectionBusinessDate(input.now ?? new Date()),
-  }) : null;
-  if(weeklyKeywordPlan)weeklyKeywordPlan.sources=weeklyKeywordPlan.sources.filter(source=>!reservedDailySources.has(`momentum:${source.platform}:${source.ref}`));
+  const candidates = dueCandidates.includes('account') || accountRefsToCollect.length ? ['account' as const] : [];
+  const configuredShare = Number((brief as SocialDiscoveryBriefWithQuality).innovationExperimentShare ?? 0.1);
   const quotaPlan = planRollingSevenDayQuotas(previousRuns, {
     totalAcceptedTarget: brief.resultLimit,
     innovationShare: configuredShare,
+    accountShare: 1,
+    enabledModes: accountRefsToCollect.length > 0 ? ['account'] : [],
   });
   const requestedModes = [...new Set(candidates)].filter(mode => brief.discoveryModes.includes(mode)
     && brief.modePolicies?.[mode]?.enabled
-    && (mode === 'account' || !legacyProductTitles)
     && (mode !== 'account' || accountRefsToCollect.length > 0)
-    && (weeklyRoot && mode === 'momentum' && weeklyKeywordPlan
-      ? weeklyKeywordPlan.sources.length > 0
-      : input.triggerType === 'production_gap' || mode === 'account' || Boolean(input.retry?.sourceSelection.some(source => source.mode === mode)) || quotaPlan.remainingByMode[mode] > 0))
+    && mode === 'account')
     .sort((left,right)=>Number(right==='account')-Number(left==='account'));
   if (!requestedModes.length) return { skipped: true, reason: 'no_discovery_mode_due', nextRunAt: nextDiscoveryRunAt(brief, previousRuns) };
   brief.discoveryModes = requestedModes;
@@ -396,7 +382,7 @@ export async function executeApprovedDiscoveryRun(input: {
     ...brief.competitorAccounts.map(account => inferPlatformFromUrl(account)),
   ])];
   const retryPlatformLimits = input.retry ? new Map<string,number>([...new Set(input.retry.sourceSelection.map(source => source.platform))].map(platform => [platform,input.retry!.sourceSelection.filter(source => source.platform === platform).length])) : null;
-  const remainingPlatformQuota = new Map<string, number>(retryPlatformLimits ?? weeklyKeywordPlan?.platformLimits
+  const remainingPlatformQuota = new Map<string, number>(retryPlatformLimits
     ?? normalizeSocialPlatformQuotas(quotaPlatforms, brief.resultLimit).map(item => [item.platform, item.limit]));
   let error: string | null = null;
   for (const mode of requestedModes) {
@@ -408,20 +394,17 @@ export async function executeApprovedDiscoveryRun(input: {
       const tier = keywordTier(scope, mode, ref);
       if (/^https?:\/\//i.test(ref)) return [{ ref, platform: inferPlatformFromUrl(ref), tier }];
       return configuredPlatforms
-        .filter(platform => ['tiktok', 'instagram', 'youtube', 'facebook'].includes(platform))
+        .filter(platform => ['linkedin', 'facebook', 'tiktok', 'instagram', 'youtube'].includes(platform))
         .filter(platform => platform !== 'youtube' || tier !== 'broad')
         .map(platform => ({ ref, platform: platform as ReturnType<typeof inferPlatformFromUrl>, tier }));
     }).filter(target=>!input.retry||input.retry.sourceSelection.some(source=>source.mode===mode&&source.platform===target.platform&&source.queryRef===target.ref));
-    const targets = mode === 'momentum' && weeklyKeywordPlan
-      ? weeklyKeywordPlan.sources.map(source => ({...source,tier:keywordTier(scope,mode,source.ref)}))
-      : ordinaryTargets;
+    const targets = ordinaryTargets;
     // Scheduled/manual discovery fills accepted-item gaps. A production gap owns its
     // independent budget and is therefore bounded by its explicit mode policy.
     let remaining = input.retry ? input.retry.sourceSelection.filter(source => source.mode === mode).length
       : input.triggerType === 'production_gap'
       ? policy.resultLimit
       : mode === 'account' ? accountOnlyUrl ? 5 : Math.max(brief.competitorAccounts.length + (weeklyAccountTarget ? weeklyAccountTarget.targetCount - 1 : 0), Math.min(policy.resultLimit, quotaPlan.remainingByMode[mode]))
-        : mode === 'momentum' && weeklyKeywordPlan ? weeklyKeywordPlan.keywordLimit
         : Math.min(policy.resultLimit, quotaPlan.remainingByMode[mode]);
     const alreadyAccepted = new Set(quotaPlan.acceptedCandidateIdsByMode[mode]);
     const acceptedCandidateIds = new Set<string>();
@@ -442,7 +425,7 @@ export async function executeApprovedDiscoveryRun(input: {
       try{const retryAuthorization=input.retry?.authorization??(input.retry?.grant?{kind:'explicit_grant' as const,grant:input.retry.grant}:null);perSourceLimit=await reserveDailyCollection(dependencies.dataStore,{tenantId:input.tenantId,runId,requestKey:`${mode}:${target.platform}:${target.ref}`,requested:requestedLimit,now:input.now,...(accountOnlyUrl&&!input.retry&&mode==='account'&&target.ref===accountOnlyUrl?{minimumRequired:5}:{}),...(retryAuthorization?.kind==='explicit_grant'?{retryGrant:retryAuthorization.grant}:{}),...(weeklyRootScope?{weeklyOriginal:weeklyRootScope}:{})});}
       catch(cause){completeEmptyVerified=false;const message=cause instanceof Error?cause.message:'daily_collection_quota_unavailable';stats.failed++;error=message;failureDetails.push({mode,platform:target.platform,queryRef:target.ref,error:message});break;}
       if(!perSourceLimit){dailyLimitReached=true;completeEmptyVerified=false;break;}
-      if (mode !== 'account' || !weeklyKeywordPlan) remainingPlatformQuota.set(target.platform, configuredPlatformRemaining - perSourceLimit);
+      if (mode !== 'account') remainingPlatformQuota.set(target.platform, configuredPlatformRemaining - perSourceLimit);
       stats.requested += perSourceLimit;
       platformStats[target.platform] ??= emptyStats();
       keywordTierStats[target.tier] ??= emptyStats();
@@ -451,7 +434,7 @@ export async function executeApprovedDiscoveryRun(input: {
       try {
         const dateTo = new Date().toISOString().slice(0, 10);
         const dateFrom = new Date(Date.now() - brief.lookbackDays * 86_400_000).toISOString().slice(0, 10);
-        const result = await dependencies.crawl({
+        const videoResult = await dependencies.crawl({
           tenantId: input.tenantId,
           platform: target.platform,
           newCandidatesOnly: true,
@@ -469,8 +452,34 @@ export async function executeApprovedDiscoveryRun(input: {
           }} : {}) },
           ...(input.originalDatasetReplay?{originalDatasetReplay:input.originalDatasetReplay}:{}),
         });
+        const sourceResults: CrawlVideosResult[] = [videoResult];
+        if (!input.originalRun && mode === 'account' && dependencies.crawlImages) {
+          sourceResults.push(await dependencies.crawlImages({
+            tenantId: input.tenantId,
+            platform: target.platform,
+            mode: 'account',
+            accountUrl: target.ref,
+            accountName: accountNameByUrl.get(target.ref) || target.ref,
+            limit: perSourceLimit,
+            dateFrom,
+            dateTo,
+          }));
+        }
+        for (const sourceResult of sourceResults) {
+          if ((sourceResult.items?.length ?? 0) > perSourceLimit || (sourceResult.candidateIds?.length ?? 0) > perSourceLimit) throw Error('daily_collection_provider_limit_exceeded');
+        }
+        const combinedItems = sourceResults.flatMap(sourceResult => sourceResult.items ?? []);
+        const result: CrawlVideosResult = {
+          ...videoResult,
+          total: sourceResults.reduce((sum, sourceResult) => sum + Number(sourceResult.total || 0), 0),
+          imported: sourceResults.reduce((sum, sourceResult) => sum + Number(sourceResult.imported || 0), 0),
+          skipped: sourceResults.reduce((sum, sourceResult) => sum + Number(sourceResult.skipped || 0), 0),
+          skippedExisting: sourceResults.reduce((sum, sourceResult) => sum + Number(sourceResult.skippedExisting || 0), 0),
+          items: combinedItems,
+          candidateIds: [...new Set(sourceResults.flatMap(sourceResult => sourceResult.candidateIds ?? sourceResult.items?.map(item => String((item as { id?: unknown }).id || '')).filter(Boolean) ?? []))],
+          source: sourceResults.map(sourceResult => sourceResult.source).filter(Boolean).join('+'),
+        };
         if(input.originalRun&&(!Array.isArray(result.items)||!Array.isArray(result.candidateIds)||!Number.isSafeInteger(result.total)||result.total<0))throw Error('weekly_discovery_source_incomplete');
-        if((result.items?.length??0)>perSourceLimit||(result.candidateIds?.length??0)>perSourceLimit)throw Error('daily_collection_provider_limit_exceeded');
         if(result.total!==0||result.items?.length!==0||result.candidateIds?.length!==0)completeEmptyVerified=false;
         stats.fetched += Number(result.total || 0);
         const exactDuplicates=Number(result.skippedExisting || 0),nearDuplicates=Number(result.skippedNearDuplicate || 0),nearDuplicateUnchecked=Number(result.nearDuplicateUnchecked || 0);
@@ -500,9 +509,6 @@ export async function executeApprovedDiscoveryRun(input: {
         const callAccepted = acceptedCandidateIds.size - acceptedBefore;
         addStats(platformStats[target.platform]!, { accepted: callAccepted, failed: evidenceResult.failed.length });
         addStats(keywordTierStats[target.tier]!, { accepted: callAccepted, failed: evidenceResult.failed.length });
-        if (mode === 'momentum') evidenceResult.accepted
-          .filter(item => item.evidence.momentum.level !== 'unknown')
-          .forEach(item => momentumCandidateIds.add(item.candidateId));
         const newlyQualified = evidenceResult.accepted
           .filter(item => !alreadyAccepted.has(item.candidateId))
           .filter((item, itemIndex, values) => values.findIndex(value => value.candidateId === item.candidateId) === itemIndex).length;

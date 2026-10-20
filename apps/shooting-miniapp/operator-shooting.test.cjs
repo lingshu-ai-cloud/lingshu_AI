@@ -58,6 +58,9 @@ test('reference preview requires exact project, shot assignment and video materi
   })
   assert.equal(list.referencePreview(task, { ...project, id: 'other' }), null)
   assert.equal(list.referencePreview(task, { ...project, spec: { ...project.spec, storyboardAssignments: { 'slot-1': 'missing' } } }), null)
+  assert.deepEqual(JSON.parse(JSON.stringify(list.cardPreview(task, project))), {
+    materialId: 'video-1', url: '/video.mp4', poster: '/poster.jpg', start: 1.25, end: 4.25, rangeText: '前三秒预览',
+  })
 })
 
 test('shooting detail resolves signed reference assets from the project projection', async () => {
@@ -100,6 +103,22 @@ test('operator shooting presents pending totals and never exposes task creation'
   assert.match(markup, /收音要求/)
   assert.match(markup, /factory-benchmark-frame\.jpg/)
   assert.match(markup, /工厂镜头构图参考/)
+  assert.match(markup, /预览 3 秒/)
+  assert.match(markup, /bindtimeupdate="cardPreviewTimeUpdate"/)
+})
+
+test('shooting cards load signed previews and stop after three seconds', async () => {
+  const calls = []
+  const api = {
+    studioProject: async () => ({ id: 'project', spec: { shootingSlots: [{ id: 'shot', slotId: 'slot' }], storyboardAssignments: { slot: 'video' }, materialSnapshots: [{ id: 'video', type: 'video', url: '/video.mp4', poster: '/poster.jpg' }], clipEdits: {} } }),
+    assetUrl: value => 'https://local.test' + value,
+  }
+  const page = pageWith(api, { createVideoContext(id) { return { pause() { calls.push('pause:' + id) }, seek(value) { calls.push('seek:' + value) } } } })
+  const tasks = await page.loadCardPreviews([{ id: 'task', sourceProjectId: 'project', sourceStoryboardSlotId: 'slot', sourceShotId: 'shot', uploadedMaterialIds: [] }])
+  assert.equal(tasks[0].cardPreview.url, 'https://local.test/video.mp4')
+  assert.equal(tasks[0].cardPreview.end, 3)
+  page.cardPreviewTimeUpdate({ currentTarget: { dataset: { player: tasks[0].previewPlayerId, start: 0, end: 3 } }, detail: { currentTime: 3 } })
+  assert.deepEqual(calls, ['pause:shot-preview-task', 'seek:0'])
 })
 
 test('uploaded material completes the selected task and keeps recovery state on attach failure', async () => {

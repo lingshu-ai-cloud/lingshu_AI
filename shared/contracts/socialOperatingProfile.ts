@@ -100,6 +100,19 @@ export const SOCIAL_AGENT_BOUNDARIES = {
   },
 } as const;
 
+/**
+ * One approved copy is the cross-platform source of truth. Platform adapters
+ * may change media packaging and the verified destination, but must not ask a
+ * model to rewrite captions or hashtags. Only enterprise facts explicitly
+ * bound in the plan may be replaced.
+ */
+export const SOCIAL_DISTRIBUTION_COPY_POLICY = {
+  caption: '同一条已确认发布文案跨平台原样复用，不做平台二次改写。',
+  hashtags: '同一组已确认 Tag 跨平台原样复用，不自动增删或排序。',
+  replacements: ['商品名', '品牌名', '企业名'] as const,
+  sourceReuseGate: '采集原文仅在自有、已授权或用户明确确认可复用时进入发布文案。',
+} as const;
+
 export const SOCIAL_PLATFORM_EXECUTION_RULES: Record<SocialOperatingPlatform, {
   adaptation: string[];
   ctaRule: string;
@@ -132,11 +145,9 @@ export const SOCIAL_PLATFORM_EXECUTION_RULES: Record<SocialOperatingPlatform, {
   },
 };
 
-/** Cold-start allocation only. Weekly review may rebalance it with owned-account evidence. */
+/** Discovery is account-led: keyword search is only used to nominate accounts for approval, never to fill production inventory. */
 export const SOCIAL_DISCOVERY_BASELINE = [
-  { mode: 'momentum', percent: 50, purpose: '发现正在上升的题材、结构与买家问题。' },
-  { mode: 'account', percent: 35, purpose: '追踪已确认对标账号的重复格式和相对表现。' },
-  { mode: 'innovation', percent: 15, purpose: '保留跨行业、跨表达方式的新颖样本，防止内容收敛。' },
+  { mode: 'account', percent: 100, purpose: '只追踪已确认对标账号的高表现视频与图文；图文必须同时保留原帖配文，候选通过生产准入后才进入内容链路。' },
 ] as const;
 
 export function socialDiscoveryMixIssues(mix: ReadonlyArray<{ mode: string; percent: number }>): string[] {
@@ -179,6 +190,11 @@ export function connectedAccountIssues(
 
 export function platformExecutionConstraints(platform: string): string[] {
   return platform in SOCIAL_PLATFORM_EXECUTION_RULES
-    ? [...SOCIAL_PLATFORM_EXECUTION_RULES[platform as SocialOperatingPlatform].adaptation, SOCIAL_PLATFORM_EXECUTION_RULES[platform as SocialOperatingPlatform].ctaRule]
+    ? [
+        SOCIAL_DISTRIBUTION_COPY_POLICY.caption,
+        SOCIAL_DISTRIBUTION_COPY_POLICY.hashtags,
+        ...SOCIAL_PLATFORM_EXECUTION_RULES[platform as SocialOperatingPlatform].adaptation,
+        SOCIAL_PLATFORM_EXECUTION_RULES[platform as SocialOperatingPlatform].ctaRule,
+      ]
     : [];
 }

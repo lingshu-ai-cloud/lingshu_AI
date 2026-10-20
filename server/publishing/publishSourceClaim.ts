@@ -16,16 +16,19 @@ import {
 } from '../lib/studioGenerationVerification.js';
 import { store } from '../storage/index.js';
 import type { DataStore } from '../storage/datastore.js';
+import { enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
+import { socialImageCurrentOutputs, socialImageTaskCanPublish, type SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
 
 export const PUBLISH_VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.mkv', '.avi']);
 export type PublishSourceRequestKind = 'project' | 'manual_upload';
-export type FrozenPublishSourceKind = 'studio_project' | 'digital_employee_project' | 'manual_upload' | 'social_content_artifact' | 'social_production_artifact' | 'social_instagram_delivery';
+export type FrozenPublishSourceKind = 'studio_project' | 'digital_employee_project' | 'manual_upload' | 'social_content_artifact' | 'social_production_artifact' | 'social_instagram_delivery' | 'social_image_artifact';
 
 export interface PublishSourceRequest {
   sourceKind?: PublishSourceRequestKind;
   projectId?: string;
   videoPath?: string;
   videoUrl?: string;
+  imagePaths?: string[];
   sourceVideoPath?: string;
   generationKind?: 'script' | 'poster';
   generationProvenance?: string;
@@ -57,6 +60,8 @@ export interface FrozenPublishSourceClaim {
   artifactVideoUrl?: string;
   artifactFileId?: string;
   artifactFileRef?: string;
+  sourceImagePaths?: string[];
+  imageHashes?: string[];
 }
 
 type StoredProject = { id: string; tenant_id?: unknown; tenantId?: unknown; status?: unknown; spec?: unknown };
@@ -279,6 +284,44 @@ function manualUploadClaim(tenantId: string, videoPathValue: unknown): FrozenPub
   };
 }
 
+async function socialImagePublishSourceClaim(input: { tenantId: string; projectId: string; imagePaths: string[] }): Promise<FrozenPublishSourceClaim> {
+  const row = await store.getById<StoredProject & { spec?: { socialImageTask?: SocialImageCreationTask } }>('studio_projects', input.projectId);
+  const task = row?.spec?.socialImageTask;
+  if (!row || projectTenant(row) !== input.tenantId || !task || !socialImageTaskCanPublish(task)) {
+    throw new PublishSourceVerificationError('social_image_artifact_not_publishable', 409, '图片任务尚未完成统一质检与批准。');
+  }
+  const root = path.resolve(process.cwd(), 'data', 'social-image-renders', enterpriseAssetTenantKey(input.tenantId));
+  const expected = socialImageCurrentOutputs(task).flatMap(output => {
+    const filename = path.basename(text(output.mediaUrl));
+    return filename ? [path.resolve(root, filename)] : [];
+  });
+  const images = [...new Set(input.imagePaths.map(normalizedFilePath).filter(Boolean))];
+  if (!images.length || images.length !== expected.length || images.some((item, index) => item !== expected[index])) {
+    throw new PublishSourceVerificationError('social_image_artifact_stale', 409, '发布图片与已批准的当前输出不一致。');
+  }
+  const imageHashes = images.map(imagePath => {
+    if (!imagePath.startsWith(`${root}${path.sep}`) || !fs.existsSync(imagePath) || !fs.statSync(imagePath).isFile()) {
+      throw new PublishSourceVerificationError('social_image_artifact_missing', 409, '已批准图片文件不存在。');
+    }
+    return createHash('sha256').update(fs.readFileSync(imagePath)).digest('hex');
+  });
+  return {
+    schemaVersion: 1,
+    sourceKind: 'social_image_artifact',
+    projectId: input.projectId,
+    sourceVideoPath: '',
+    deliveryVideoPath: '',
+    sourceImagePaths: images,
+    imageHashes,
+    generationKind: 'poster',
+    generationProvenance: 'ai',
+    qualityStatus: 'passed',
+    publishable: true,
+    generationRecordId: `${task.id}:v${task.version}`,
+    sourceFingerprint: fingerprint({ tenantId: input.tenantId, projectId: input.projectId, version: task.version, images, imageHashes }),
+  };
+}
+
 function sameClaim(left: FrozenPublishSourceClaim, right: FrozenPublishSourceClaim): boolean {
   // PocketBase canonicalizes JSON object key order while persisting the claim.
   // The frozen values matter; serialization order does not.
@@ -355,6 +398,13 @@ export async function freezePublishSourceClaim(
   tenantId: string,
   request: PublishSourceRequest,
 ): Promise<FrozenPublishSourceClaim> {
+  const imagePaths = [...new Set((request.imagePaths ?? []).map(normalizedFilePath).filter(Boolean))];
+  if (imagePaths.length) {
+    if (request.videoPath || request.videoUrl || !text(request.projectId) || request.sourceKind === 'manual_upload') {
+      throw new PublishSourceVerificationError('publish_image_source_invalid', 400, '图片发布必须绑定一个已批准的图片任务。');
+    }
+    return socialImagePublishSourceClaim({ tenantId, projectId: text(request.projectId), imagePaths });
+  }
   if (request.videoUrl || !text(request.videoPath)) {
     throw new PublishSourceVerificationError('publish_source_local_video_required', 400, '发布必须绑定当前项目成片或本企业手工上传的视频。');
   }
@@ -392,13 +442,16 @@ export async function verifyFrozenPublishSourceClaim(
   tenantId: string,
   claimValue: unknown,
   deliveryVideoPathValue?: unknown,
+  deliveryImagePathsValue?: unknown,
 ): Promise<FrozenPublishSourceClaim> {
   const claim = record(claimValue) as unknown as FrozenPublishSourceClaim;
   if (claim.schemaVersion !== 1) {
     throw new PublishSourceVerificationError('publish_source_claim_missing', 409, '排期缺少冻结的发布来源，请重新审核。');
   }
   let current: FrozenPublishSourceClaim;
-  if (claim.sourceKind === 'social_content_artifact') {
+  if (claim.sourceKind === 'social_image_artifact') {
+    current = await socialImagePublishSourceClaim({ tenantId, projectId: text(claim.projectId), imagePaths: Array.isArray(claim.sourceImagePaths) ? claim.sourceImagePaths : [] });
+  } else if (claim.sourceKind === 'social_content_artifact') {
     const { verifySocialContentPublishSource } = await import('./socialContentSourceClaim.js');
     current = await verifySocialContentPublishSource(tenantId, claim);
   } else if (claim.sourceKind === 'social_instagram_delivery') {
@@ -431,6 +484,12 @@ export async function verifyFrozenPublishSourceClaim(
   if (deliveryVideoPathValue !== undefined
     && normalizedFilePath(deliveryVideoPathValue) !== text(claim.deliveryVideoPath)) {
     throw new PublishSourceVerificationError('publish_delivery_artifact_stale', 409, '排期中的发布文件与已审核产物不一致，请重新审核。');
+  }
+  if (deliveryImagePathsValue !== undefined) {
+    const supplied = Array.isArray(deliveryImagePathsValue) ? deliveryImagePathsValue.map(normalizedFilePath) : [];
+    if (!isDeepStrictEqual(supplied, claim.sourceImagePaths ?? [])) {
+      throw new PublishSourceVerificationError('publish_delivery_artifact_stale', 409, '排期中的发布图片与已审核产物不一致，请重新审核。');
+    }
   }
   if (!sameClaim(current, claim)) {
     throw new PublishSourceVerificationError('publish_source_claim_stale', 409, '项目、生成记录或视频产物已变化，请重新审核后发布。');

@@ -3,12 +3,12 @@ import test from 'node:test';
 import { planWeeklyKeywordSources } from './dailySourceAllocation.js';
 
 const refs = ['cleansing foam factory', 'cleansing foam supplier', 'cleansing foam', 'makeup remover foam', 'foaming cleanser'];
-const platforms = ['youtube', 'tiktok', 'instagram', 'facebook'];
+const platforms = ['linkedin', 'facebook', 'youtube', 'tiktok', 'instagram'];
 
-test('ten keyword slots use the approved 4:3:2:1 platform split and cover five terms twice', () => {
+test('ten keyword slots keep LinkedIn and Facebook as the seven-slot primary discovery surface', () => {
   const plan = planWeeklyKeywordSources({ refs, platforms, configuredAccountCount: 0 });
   assert.equal(plan.keywordLimit, 10);
-  assert.deepEqual(Object.fromEntries(plan.platformLimits), { tiktok: 4, facebook: 3, instagram: 2, youtube: 1 });
+  assert.deepEqual(Object.fromEntries(plan.platformLimits), { linkedin: 4, facebook: 3, tiktok: 1, instagram: 1, youtube: 1 });
   for (const ref of refs) assert.equal(plan.sources.filter(source => source.ref === ref).reduce((sum, source) => sum + source.limit, 0), 2);
   assert.equal(plan.sources.reduce((sum, source) => sum + source.limit, 0), 10);
 });
@@ -26,7 +26,7 @@ test('daily rotation changes keyword-platform pairing without changing either qu
  const second=planWeeklyKeywordSources({refs,platforms,configuredAccountCount:0,businessDate:'2026-10-19'});
  assert.notDeepEqual(first.sources,second.sources);
  for(const plan of [first,second]){
-  assert.deepEqual(Object.fromEntries(plan.platformLimits),{tiktok:4,facebook:3,instagram:2,youtube:1});
+  assert.deepEqual(Object.fromEntries(plan.platformLimits),{linkedin:4,facebook:3,tiktok:1,instagram:1,youtube:1});
   for(const ref of refs)assert.equal(plan.sources.filter(source=>source.ref===ref).reduce((sum,source)=>sum+source.limit,0),2);
  }
 });

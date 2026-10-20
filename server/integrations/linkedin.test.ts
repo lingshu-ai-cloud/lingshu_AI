@@ -6,10 +6,13 @@ import test from 'node:test';
 import type { AxiosInstance } from 'axios';
 import {
   exchangeLinkedInCode,
+  getLinkedInComments,
   getLinkedInPost,
+  getLinkedInPostMetrics,
   linkedInAuthorUrn,
   linkedInOAuthScopes,
   linkedInRequiredPublishingScope,
+  publishLinkedInImages,
   publishLinkedInVideo,
 } from './linkedin.js';
 
@@ -25,7 +28,82 @@ test('LinkedIn identity and publishing scope distinguish people from organizatio
     'w_organization_social',
   );
   assert.deepEqual(linkedInOAuthScopes({} as NodeJS.ProcessEnv), ['openid', 'profile', 'email', 'w_member_social']);
-  assert.ok(linkedInOAuthScopes({ LINKEDIN_MEMBER_READ_ENABLED: 'true' } as NodeJS.ProcessEnv).includes('r_member_social'));
+  const memberReadScopes = linkedInOAuthScopes({ LINKEDIN_MEMBER_READ_ENABLED: 'true' } as NodeJS.ProcessEnv);
+  assert.ok(memberReadScopes.includes('r_member_social'));
+  assert.ok(memberReadScopes.includes('r_member_social_feed'));
+  const organizationScopes = linkedInOAuthScopes({ LINKEDIN_ORGANIZATION_PUBLISHING_ENABLED: 'true' } as NodeJS.ProcessEnv);
+  assert.ok(organizationScopes.includes('rw_organization_admin'));
+  assert.ok(organizationScopes.includes('r_organization_social_feed'));
+});
+
+test('LinkedIn image publishing uploads approved images and persists one post receipt', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'linkedin-images-'));
+  const imagePaths = [path.join(directory, 'one.jpg'), path.join(directory, 'two.png')];
+  imagePaths.forEach((imagePath, index) => fs.writeFileSync(imagePath, Buffer.alloc(1_024 + index, index + 1)));
+  const postId = 'urn:li:share:987654';
+  let initialized = 0;
+  const publishedBodies: Array<Record<string, any>> = [];
+  const http = {
+    async post(url: string, body: Record<string, any>) {
+      if (url.endsWith('/rest/images?action=initializeUpload')) {
+        initialized += 1;
+        return { data: { value: { image: `urn:li:image:image-${initialized}`, uploadUrl: `https://upload.example.test/image-${initialized}` } } };
+      }
+      publishedBodies.push(body);
+      return { data: {}, headers: { 'x-restli-id': postId } };
+    },
+    async put() { return { data: {} }; },
+  } as unknown as AxiosInstance;
+  try {
+    let receipt = '';
+    const result = await publishLinkedInImages({
+      accessToken: 'access', account: { providerAccountId: 'member-123' }, imagePaths,
+      title: 'Factory proof', commentary: 'Same approved caption #OEM', http,
+      async onProviderReceipt(value) { receipt = value; },
+    });
+    assert.equal(initialized, 2);
+    assert.equal(result.imageUrns.length, 2);
+    assert.equal(receipt, postId);
+    assert.deepEqual(publishedBodies[0]?.content.multiImage.images.map((item: { id: string }) => item.id), ['urn:li:image:image-1', 'urn:li:image:image-2']);
+    assert.equal(publishedBodies[0]?.commentary, 'Same approved caption #OEM');
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('LinkedIn registered-post metrics and comments normalize provider evidence', async () => {
+  const postId = 'urn:li:ugcPost:123';
+  const http = {
+    async get(url: string) {
+      if (url.endsWith('/comments')) return { data: { elements: [{ id: 'comment-1', actor: 'urn:li:person:1', message: { text: 'Interested' }, likesSummary: { totalLikes: 2 }, created: { time: 1_760_000_000_000 } }] } };
+      assert.match(url, /\/rest\/socialMetadata\//);
+      return { data: { entity: postId, reactionSummaries: { LIKE: { count: 4 } }, commentSummary: { count: 1 } } };
+    },
+  } as unknown as AxiosInstance;
+  const metrics = await getLinkedInPostMetrics({ accessToken: 'access', postId, http });
+  assert.deepEqual(metrics, { likes: 4, comments: 1 });
+  const comments = await getLinkedInComments({ accessToken: 'access', postId, http });
+  assert.equal(comments[0]?.textDisplay, 'Interested');
+  assert.equal(comments[0]?.postId, postId);
+});
+
+test('LinkedIn organization metrics merge official share statistics for the exact registered post', async () => {
+  const postId = 'urn:li:share:456';
+  const http = {
+    async get(url: string, config?: { params?: Record<string, string> }) {
+      if (url.includes('/rest/socialMetadata/')) {
+        return { data: { entity: postId, reactionSummaries: { LIKE: { count: 2 } }, commentSummary: { count: 1 } } };
+      }
+      assert.match(url, /organizationalEntityShareStatistics$/);
+      assert.equal(config?.params?.organizationalEntity, 'urn:li:organization:99');
+      assert.equal(config?.params?.shares, `List(${postId})`);
+      return { data: { elements: [{ share: postId, totalShareStatistics: {
+        impressionCount: 120, uniqueImpressionsCount: 90, likeCount: 5, commentCount: 3, shareCount: 4, clickCount: 8,
+      } }] } };
+    },
+  } as unknown as AxiosInstance;
+  const metrics = await getLinkedInPostMetrics({
+    accessToken: 'access', postId, authorUrn: 'urn:li:organization:99', http,
+  });
+  assert.deepEqual(metrics, { views: 120, impressions: 90, likes: 5, comments: 3, shares: 4, clicks: 8 });
 });
 
 test('LinkedIn OAuth exchange sends the exact authorization-code contract', async () => {

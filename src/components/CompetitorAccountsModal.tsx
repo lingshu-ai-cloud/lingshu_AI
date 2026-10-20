@@ -4,7 +4,7 @@ import { Plus, Loader2, Trash2, Download, Users, ExternalLink, AlertCircle } fro
 import { authHeader } from '../lib/auth';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 
-type AccountPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
+type AccountPlatform = 'linkedin' | 'facebook' | 'youtube' | 'tiktok' | 'instagram';
 type CrawlContentMode = 'video' | 'image' | 'mixed';
 
 interface CompetitorAccount {
@@ -24,10 +24,11 @@ interface CompetitorAccount {
 }
 
 const PLATFORM_META: Record<AccountPlatform, { label: string }> = {
+  linkedin: { label: 'LinkedIn' },
+  facebook: { label: 'Facebook' },
   youtube: { label: 'YouTube' },
   tiktok: { label: 'TikTok' },
   instagram: { label: 'Instagram' },
-  facebook: { label: 'Facebook' },
 };
 
 const CRAWL_COUNT_OPTIONS = [3, 10, 20, 30].map(value => ({ value, label: `${value} 条` }));
@@ -54,6 +55,7 @@ async function readError(r: Response, fallback: string): Promise<string> {
 }
 
 function accountPlaceholder(platform: AccountPlatform): string {
+  if (platform === 'linkedin') return 'https://www.linkedin.com/company/company-name';
   if (platform === 'youtube') return 'https://www.youtube.com/@handle';
   if (platform === 'tiktok') return 'https://www.tiktok.com/@user';
   if (platform === 'instagram') return 'https://www.instagram.com/username';
@@ -75,7 +77,7 @@ export default function CompetitorAccountsModal({
 }) {
   const [accounts, setAccounts] = useState<CompetitorAccount[]>([]);
   const [loading, setLoading] = useState(false);
-  const [platform, setPlatform] = useState<AccountPlatform>('youtube');
+  const [platform, setPlatform] = useState<AccountPlatform>('linkedin');
   const [crawlMode, setCrawlMode] = useState<CrawlContentMode>('mixed');
   const [crawlCount, setCrawlCount] = useState(10);
   const [url, setUrl] = useState('');
@@ -214,7 +216,7 @@ export default function CompetitorAccountsModal({
                   className="min-w-24"
                   options={CRAWL_COUNT_OPTIONS}
                 />
-                <span className="text-xs text-text-muted">混合模式按每种内容计算上限；已有原帖不会重复入库。</span>
+                <span className="text-xs text-text-muted">混合模式优先采集主页高表现视频和图文；图文会保留原帖配文，已有原帖不重复入库。</span>
               </div>
               {error && (
                 <p role="alert" className="mt-2 flex items-center gap-1.5 border-l-2 border-red bg-red/5 px-2 py-1.5 text-xs font-semibold text-red">
@@ -267,7 +269,7 @@ export default function CompetitorAccountsModal({
                           {account.crawlStatus === 'failed' && <p className="mt-1 truncate text-xs font-semibold text-red" title={account.crawlError}>采集失败 · {account.crawlError || '请稍后重试'}</p>}
                         </div>
                         <div className="flex w-full items-center gap-2 pl-12 sm:w-auto sm:pl-0">
-                        <Button onClick={() => void crawlAccount(account)} loading={crawling} disabled={Boolean(crawlingId) && !crawling} icon={<Download size={13} />} title={`以${crawlModeLabel(crawlMode)}采集最新作品，每种最多 ${crawlCount} 条`}>采集最新</Button>
+                        <Button onClick={() => void crawlAccount(account)} loading={crawling} disabled={Boolean(crawlingId) && !crawling} icon={<Download size={13} />} title={`以${crawlModeLabel(crawlMode)}采集主页高表现作品，每种最多 ${crawlCount} 条`}>采集爆款</Button>
                         <Popconfirm title="移除这个对标账号？" description="已采集的灵感内容会保留。" onConfirm={() => deleteAccount(account)} okText="移除" cancelText="取消"><Button danger loading={deletingId === account.id} icon={<Trash2 size={13} />} aria-label={`移除对标账号 ${account.accountName}`} /></Popconfirm>
                         </div>
                       </li>

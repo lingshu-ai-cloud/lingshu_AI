@@ -5,6 +5,8 @@ export type Unknown<T> = T | 'unknown';
 export interface DiscoveryQuotaPolicy {
   totalAcceptedTarget: number;
   innovationShare: number;
+  accountShare?: number;
+  enabledModes?: SocialDiscoveryMode[];
   minimumPerCoreMode?: number;
 }
 
@@ -32,15 +34,27 @@ export function planRollingSevenDayQuotas(
   if (!Number.isFinite(policy.innovationShare) || policy.innovationShare < 0.1 || policy.innovationShare > 0.2) {
     throw new Error('innovation_share_out_of_experiment_bounds');
   }
+  const enabledModes = new Set(policy.enabledModes === undefined ? MODES : policy.enabledModes);
+  const accountShare = policy.accountShare ?? 1;
+  if (!Number.isFinite(accountShare) || accountShare < 0 || accountShare > 1
+    || (enabledModes.has('innovation') && accountShare > 1 - policy.innovationShare)) {
+    throw new Error('account_share_out_of_bounds');
+  }
   const total = Math.max(1, boundedInteger(policy.totalAcceptedTarget));
-  const innovationTarget = Math.floor(total * policy.innovationShare);
+  const innovationTarget = enabledModes.has('innovation') ? Math.floor(total * policy.innovationShare) : 0;
   const coreTotal = total - innovationTarget;
   const minimum = Math.min(Math.floor(coreTotal / 2), boundedInteger(policy.minimumPerCoreMode ?? 0));
-  const momentumTarget = Math.max(minimum, Math.ceil(coreTotal / 2));
+  const accountEnabled = enabledModes.has('account');
+  const momentumEnabled = enabledModes.has('momentum');
+  const accountTarget = accountEnabled
+    ? momentumEnabled
+      ? Math.max(minimum, Math.min(coreTotal - minimum, Math.round(total * accountShare)))
+      : coreTotal
+    : 0;
   const targets: Record<SocialDiscoveryMode, number> = {
-    momentum: momentumTarget,
-    account: coreTotal - momentumTarget,
-    innovation: innovationTarget,
+    momentum: momentumEnabled ? coreTotal - accountTarget : 0,
+    account: accountTarget,
+    innovation: enabledModes.has('innovation') && !accountEnabled && !momentumEnabled ? total : innovationTarget,
   };
   const windowStartMs = now.getTime() - 7 * 86_400_000;
   const accepted = { momentum: 0, account: 0, innovation: 0 };

@@ -1,10 +1,10 @@
 const api = require('../../../lib/api')
 const { shootingTaskPresentation } = require('../../../lib/shootingWorkflow')
 const { materialSourceCategoryOf, materialThemeTagsOf, MATERIAL_SOURCE_LABELS, MATERIAL_THEME_LABELS } = require('../../../lib/materialTaxonomy')
-const { groupShootingTasks, referencePreview } = require('../../../lib/shootingList')
+const { groupShootingTasks, referencePreview, cardPreview } = require('../../../lib/shootingList')
 
 Page({
-  data: { loggedIn: false, loading: false, referenceLoading: false, referencePreview: null, email: '', password: '', userName: '', tasks: [], taskGroups: [], pendingCount: 0, completedCount: 0, selected: null, busy: false, progress: 0, progressStep: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' },
+  data: { loggedIn: false, loading: false, referenceLoading: false, referencePreview: null, activePreviewId: '', email: '', password: '', userName: '', tasks: [], taskGroups: [], pendingCount: 0, completedCount: 0, selected: null, busy: false, progress: 0, progressStep: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' },
   onLoad(options) {
     this.initialTaskId = options && options.taskId
     this.initialAutoShoot = !!(options && (options.autoShoot === true || options.autoShoot === '1'))
@@ -70,6 +70,35 @@ Page({
     } catch (_) { /* Reference is optional; task execution remains available. */ }
     finally { this.setData({ referenceLoading: false }) }
   },
+  async loadCardPreviews(tasks) {
+    if (typeof api.studioProject !== 'function') return tasks
+    const projectIds = Array.from(new Set(tasks.filter(task => !(task.uploadedMaterialIds || []).length).map(task => String(task.sourceProjectId || '')).filter(Boolean)))
+    const projects = new Map()
+    await Promise.all(projectIds.map(async id => {
+      try { projects.set(id, await api.studioProject(id)) } catch (_) { /* A preview failure must not block shooting. */ }
+    }))
+    return tasks.map(task => {
+      const preview = cardPreview(task, projects.get(String(task.sourceProjectId || '')))
+      if (!preview) return task
+      const safeId = String(task.id || '').replace(/[^a-zA-Z0-9_-]/g, '-')
+      return { ...task, previewPlayerId: 'shot-preview-' + safeId, cardPreview: { ...preview, url: api.assetUrl(preview.url), poster: api.assetUrl(preview.poster) } }
+    })
+  },
+  ignoreCardTap() {},
+  cardPreviewPlay(e) {
+    const player = String(e.currentTarget.dataset.player || '')
+    const previous = this.data.activePreviewId
+    if (previous && previous !== player) wx.createVideoContext(previous, this).pause()
+    this.setData({ activePreviewId: player })
+  },
+  cardPreviewTimeUpdate(e) {
+    const end = Number(e.currentTarget.dataset.end)
+    if (!Number.isFinite(end) || Number(e.detail.currentTime) < end) return
+    const player = wx.createVideoContext(String(e.currentTarget.dataset.player || ''), this)
+    player.pause()
+    player.seek(Number(e.currentTarget.dataset.start) || 0)
+    this.setData({ activePreviewId: '' })
+  },
   referenceTimeUpdate(e) {
     const preview = this.data.referencePreview
     if (!preview || preview.end === null || Number(e.detail.currentTime) < preview.end) return
@@ -81,7 +110,7 @@ Page({
   async refresh() {
     this.setData({ loading: true })
     try {
-      const state = this.present(await api.tasks())
+      const state = this.present(await this.loadCardPreviews(await api.tasks()))
       this.setData(state)
       if (this.initialTaskId) {
         const selected = state.tasks.find(task => String(task.id) === String(this.initialTaskId)) || null

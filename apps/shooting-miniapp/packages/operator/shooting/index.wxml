@@ -23,7 +23,11 @@
       <view wx:for="{{taskGroups}}" wx:for-item="group" wx:key="key" class="date-section">
         <view class="date-heading"><text>{{group.label}}</text><text class="date-text">{{group.dateText}}</text></view>
         <view wx:for="{{group.tasks}}" wx:for-item="item" wx:key="id" class="shoot-card surface {{item.done ? 'shoot-card-done' : ''}}" data-id="{{item.id}}" bindtap="selectTask">
-          <view class="shot-media {{item.done ? 'shot-media-done' : ''}}">
+          <view wx:if="{{!item.done && item.cardPreview}}" class="shot-media shot-preview-shell" catchtap="ignoreCardTap">
+            <video id="{{item.previewPlayerId}}" class="shot-preview" src="{{item.cardPreview.url}}" poster="{{item.cardPreview.poster}}" initial-time="{{item.cardPreview.start}}" controls="{{false}}" show-center-play-btn object-fit="cover" data-player="{{item.previewPlayerId}}" data-start="{{item.cardPreview.start}}" data-end="{{item.cardPreview.end}}" bindplay="cardPreviewPlay" bindtimeupdate="cardPreviewTimeUpdate"></video>
+            <text class="shot-preview-badge">预览 3 秒</text>
+          </view>
+          <view wx:else class="shot-media {{item.done ? 'shot-media-done' : ''}}">
             <text class="shot-media-label">{{item.done ? '已拍' : '分镜'}}</text>
             <text class="shot-media-ratio">{{item.ratio || '9:16'}}</text>
           </view>
@@ -103,4 +107,5 @@
     </view>
   </block>
   <view wx:if="{{message}}" class="message">{{message}}</view>
+  <operator-nav wx:if="{{loggedIn && !selected}}" active="shooting"></operator-nav>
 </view>

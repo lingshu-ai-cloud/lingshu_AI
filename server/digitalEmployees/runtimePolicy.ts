@@ -4,7 +4,7 @@ export type DigitalEmployeeAgent = 'business' | 'industry' | 'content' | 'custom
 
 export interface SocialCadencePolicy {
   raw: string;
-  platforms: Array<'youtube' | 'tiktok' | 'instagram' | 'facebook'>;
+  platforms: Array<'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'linkedin'>;
   time: string;
   lookbackDays: number;
   maxItems: number;
@@ -85,7 +85,7 @@ export function parseSocialCadence(value: unknown): SocialCadencePolicy {
   const raw = clean(value);
   const platforms: SocialCadencePolicy['platforms'] = [];
   for (const [pattern, platform] of [
-    [/youtube/i, 'youtube'], [/tiktok/i, 'tiktok'], [/instagram/i, 'instagram'], [/facebook/i, 'facebook'],
+    [/linkedin|linked\s*in/i, 'linkedin'], [/facebook/i, 'facebook'], [/youtube/i, 'youtube'], [/tiktok/i, 'tiktok'], [/instagram/i, 'instagram'],
   ] as const) {
     if (pattern.test(raw)) platforms.push(platform);
   }

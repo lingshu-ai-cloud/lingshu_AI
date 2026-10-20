@@ -174,6 +174,7 @@ function allowedEvidenceHost(channelId: SocialChannelId, hostname: string): bool
     tiktok_global: ['tiktok.com'],
     instagram: ['instagram.com'],
     facebook: ['facebook.com', 'fb.watch'],
+    linkedin: ['linkedin.com'],
     youtube: ['youtube.com', 'youtu.be'],
   };
   return domains[channelId].some(domain => hostname === domain || hostname.endsWith(`.${domain}`));

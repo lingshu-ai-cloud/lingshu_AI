@@ -42,6 +42,8 @@ export const presenterApi = {
     const response = await fetch(`${root}/photo-materials?mime=${encodeURIComponent(file.type)}&name=${encodeURIComponent(name)}`, {method:'POST', headers:{...authHeader(),'Content-Type':'application/octet-stream'},body:file});
     const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || '人物照片上传失败'); return result;
   },
+  saveProfile: (body: { requestId: string; name: string; photoMaterialId: string; videoMaterialId: string; storageAuthorized: true; adultConfirmed: true }) =>
+    request<{ defaults: ProductionDefaults; presenter: import('./shotProduction').PresenterAsset }>('/profiles', body),
   uploadStatus: (requestId: string) => request<{ id?: string; status: string; stage: string; error?: string }>(`/uploads/status?requestId=${encodeURIComponent(requestId)}`),
   async upload(file: File, requestId: string, trimSeconds?: 7, frameAtSeconds?: number, trainingVideo = false, onProgress?: (percent: number) => void): Promise<{ id: string; processedDurationSeconds?: number; extractedFrame?: boolean; trainingInfo?: { duration: number; width: number; height: number; fps: number; hasAudio: boolean } }> {
     const mime = file.type.split(';')[0].trim().toLowerCase();

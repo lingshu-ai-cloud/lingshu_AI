@@ -1,9 +1,10 @@
 import { WEEKLY_AUTOMATION_TEMPLATE } from '../../shared/weeklyAutomationTemplate.js';
 
 const PLATFORM_WEIGHTS = [
-  { platform: 'tiktok', weight: 4 },
+  { platform: 'linkedin', weight: 4 },
   { platform: 'facebook', weight: 3 },
-  { platform: 'instagram', weight: 2 },
+  { platform: 'tiktok', weight: 1 },
+  { platform: 'instagram', weight: 1 },
   { platform: 'youtube', weight: 1 },
 ] as const;
 

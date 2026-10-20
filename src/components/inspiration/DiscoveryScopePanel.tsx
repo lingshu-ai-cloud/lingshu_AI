@@ -44,7 +44,7 @@ function inputFromStrategy(strategy: SocialCrawlStrategy): SocialDiscoveryScopeI
 
 const EMPTY_INPUT: SocialDiscoveryScopeInput = {
   productRef: '', productTerms: [], market: '', language: '英语', companyRole: 'brand', audienceRole: 'consumer',
-  platforms: ['tiktok', 'instagram', 'youtube', 'facebook'], discoveryModes: ['momentum', 'account', 'innovation'],
+  platforms: ['linkedin', 'facebook', 'instagram', 'tiktok', 'youtube'], discoveryModes: ['momentum', 'account', 'innovation'],
   lookbackDays: 7, resultLimit: 30, sceneClusters: [],
 };
 

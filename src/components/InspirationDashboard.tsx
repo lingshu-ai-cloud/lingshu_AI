@@ -541,6 +541,7 @@ const PLATFORM_META: Record<Exclude<Platform, 'all'>, { label: string; color: st
   instagram: { label: 'Instagram', color: '#fff', bg: '#c13584' },
   youtube:   { label: 'YouTube',   color: '#fff', bg: '#ff0000' },
   facebook:  { label: 'Facebook',  color: '#fff', bg: '#1877f2' },
+  linkedin:  { label: 'LinkedIn',  color: '#fff', bg: '#0A66C2' },
 };
 const PLATFORM_FALLBACK = { label: 'Unknown', color: '#fff', bg: '#64748b' };
 export const getPlatformMeta = (p: string) => PLATFORM_META[p as Exclude<Platform, 'all'>] ?? PLATFORM_FALLBACK;
@@ -551,8 +552,9 @@ const PLATFORM_FILTERS: { id: Platform; label: string }[] = [
   { id: 'tiktok',    label: 'TikTok' },
   { id: 'instagram', label: 'Instagram' },
   { id: 'facebook',  label: 'Facebook' },
+  { id: 'linkedin',  label: 'LinkedIn' },
 ];
-const ACTIVE_PLATFORMS: Array<Exclude<Platform, 'all'>> = ['youtube', 'tiktok', 'instagram', 'facebook'];
+const ACTIVE_PLATFORMS: Array<Exclude<Platform, 'all'>> = ['linkedin', 'facebook', 'youtube', 'tiktok', 'instagram'];
 
 const LANGUAGES = [
   { code: 'en', label: 'English' }, { code: 'zh', label: '中文' },
@@ -3025,7 +3027,7 @@ function median(values: number[]): number {
 }
 
 function reliablePublicViews(value: string): number {
-  if (!/\d/.test(value) || /shares?|likes?|facebook|instagram|tiktok|youtube|本地素材/i.test(value)) return 0;
+  if (!/\d/.test(value) || /shares?|likes?|facebook|linkedin|instagram|tiktok|youtube|本地素材/i.test(value)) return 0;
   return heatValue(value);
 }
 
@@ -4680,26 +4682,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setMaterialUploadDialogOpen(true);
   };
 
-  const routeProductionNeed = (item: ShootingNeed | ScriptGapTask) => {
-    const title = item.title;
-    const ratio = item.ratio || '9:16';
-    const requirement = 'origin' in item
-      ? `${item.shotBrief}；关联主题：${item.themeTitle}；主体：${item.productLabel || '未指定'}`
-      : `${item.suggestion}；参考画面：${item.example?.visual || '未提供'}`;
-    window.dispatchEvent(new CustomEvent('lingshu-assistant-open', { detail: {
-      context: {
-        agent: 'traffic',
-        label: '生产缺口协同',
-        summary: '灵小枢正在协助处理分镜生产缺口，优先复用素材、通用素材、确定性合成与现有 AIGC 能力，实拍是用户主动选择的补充路线。',
-        suggestions: ['为这个缺口选择最低成本路线', '列出系统可直接复用的素材', '说明还缺哪项最小输入', '估算本镜头成本与成功率'],
-      },
-      assistantText: `已接手“${title}”的生产选路。我会先核对现有素材与已接入能力，不会直接发起付费生成，也不会默认要求你实拍。`,
-      text: `请为以下镜头缺口制定可执行生产路线：${title}。要求：${requirement}。画幅 ${ratio}。请按“已有素材复用 → 已授权/开放素材 → 确定性合成或数字人 → 已接入 AIGC → 可选实拍”排序，明确真实产品/事实边界、预计成本、所需最小输入和失败后的降级路线；当前不要直接调用付费生成。`,
-    } }));
-    setMaterialMessage(`灵小枢已接手“${title}”的生产选路；当前不会直接产生生成费用。`);
-    setTimeout(() => setMaterialMessage(''), 3200);
-  };
-
   const handlePlatformFilter = (nextPlatform: Platform) => {
     setLastCrawlVideoIds([]);
     setPlatform(nextPlatform);
@@ -5422,18 +5404,19 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       <div className="transition-all duration-300">
         <div className="px-4 py-5 sm:px-6 lg:py-6">
           <LsPageHeader title="灵感中心" description="查看外部参考、管理产品素材，并将内容证据交接到制作流程。" />
-          <div className="mb-4 flex min-w-0 items-start gap-3 border-b border-border">
+          <div className="mb-4 flex min-w-0 flex-col gap-3 border-b border-border lg:flex-row lg:items-start">
             <Tabs className="min-w-0 flex-1" activeKey={innerView} onChange={key => setInnerView(key as InspirationInnerView)} aria-label="灵感中心分类"
               items={[
                 { key: 'inspiration', label: `灵感发现 · ${tenantVideoTotalItems ?? '…'}`, icon: <Flame size={16} /> },
                 { key: 'library', label: `我的素材 · ${visibleMaterialTotal}`, icon: <Film size={16} /> },
                 { key: 'accounts', label: `对标账号 · ${competitorAccountCount ?? '…'}`, icon: <Users size={16} /> },
-                { key: 'shooting', label: `生产缺口 · ${shootingNeeds.length + scriptGapTasks.length}`, icon: <Lightbulb size={16} /> },
+                { key: 'shooting', label: `待拍任务 · ${shootingNeeds.length + scriptGapTasks.length}`, icon: <Lightbulb size={16} /> },
               ]} />
-            {innerView === 'inspiration' && <div className="flex shrink-0 items-center gap-2 pt-1">
-              <Button icon={<Images size={15} />} onClick={openImageCrawl}>采集图片</Button>
+            {innerView === 'inspiration' && <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 pt-1 lg:w-auto">
+              <Button type="primary" icon={<Users size={15} />} onClick={() => setInnerView('accounts')}>采集对标账号爆款</Button>
+              <Button icon={<Images size={15} />} onClick={openImageCrawl}>关键词补充</Button>
               <AntUpload accept="video/mp4,.mp4" showUploadList={false} disabled={importingReference} beforeUpload={file => { void importReferenceVideo(file); return false; }}>
-                <Button type="primary" loading={importingReference} icon={<Upload size={15} />}>导入 MP4 并分析</Button>
+                <Button loading={importingReference} icon={<Upload size={15} />}>导入 MP4 并分析</Button>
               </AntUpload>
             </div>}
             <div className="flex shrink-0 items-center gap-2">
@@ -5443,7 +5426,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           </div>
 
           <Modal
-            title="采集图片内容"
+            title="关键词补充采集"
             open={imageCrawlOpen}
             footer={null}
             width={560}
@@ -5453,15 +5436,17 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             destroyOnHidden
           >
             <Form layout="vertical" onFinish={() => void runImageCrawl()} requiredMark={false}>
+              <p className="mb-4 text-sm leading-6 text-text-secondary">用于补充对标账号库之外的图文线索；图文会同时保留图片、轮播顺序和原帖配文。</p>
               <Form.Item label="平台">
                 <Select value={imageCrawlPlatform} onChange={value => setImageCrawlPlatform(value as InspirationImageCrawlPlatform)} options={[
                   { value: 'instagram', label: 'Instagram' },
+                  { value: 'linkedin', label: 'LinkedIn' },
                   { value: 'facebook', label: 'Facebook' },
                   { value: 'tiktok', label: 'TikTok' },
                   { value: 'youtube', label: 'YouTube 社区' },
                 ]} />
               </Form.Item>
-              <Form.Item label="关键词" validateStatus={imageCrawlError ? 'error' : undefined} help={imageCrawlError || undefined}>
+              <Form.Item label="补充关键词" validateStatus={imageCrawlError ? 'error' : undefined} help={imageCrawlError || undefined}>
                 <Input autoFocus allowClear value={imageCrawlKeyword} onChange={event => { setImageCrawlKeyword(event.target.value); setImageCrawlError(''); }} placeholder="例如：cosmetic packaging design" />
               </Form.Item>
               <Form.Item label="采集数量">
@@ -5684,7 +5669,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                     <Film size={30} className="mx-auto mb-3 text-text-muted opacity-50" />
                     <p className="text-sm font-bold text-text-primary">还没有本地社媒素材</p>
-                    <p className="mt-1 text-xs text-text-muted">可上传企业通用素材或具体产品素材；生产缺口会先由系统匹配复用、合成和已接入生成能力。</p>
+                    <p className="mt-1 text-xs text-text-muted">可上传企业通用素材或具体产品素材；待拍任务会先由系统匹配复用、合成和已接入生成能力。</p>
                   </div>
                 ) : visibleMaterialGalleryCount === 0 ? (
                   <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
@@ -5867,7 +5852,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-3">
                 {[
-                  { label: '待选路缺口', value: shootingNeeds.length + scriptGapTasks.length, color: 'text-accent' },
+                  { label: '待拍任务', value: shootingNeeds.length + scriptGapTasks.length, color: 'text-accent' },
                   { label: '高频可复用需求', value: shootingNeeds.length, color: 'text-accent' },
                   { label: '已入库素材', value: localMaterials.length, color: 'text-accent' },
                 ].map(item => (
@@ -5880,7 +5865,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               <div className="grid grid-cols-3 gap-2" role="group" aria-label="筛选待拍清单">
                 {([
                   ['all', '全部', shootingNeeds.length + scriptGapTasks.length],
-                  ['storyboard', '分镜缺口', scriptGapTasks.length],
+                  ['storyboard', '分镜待拍', scriptGapTasks.length],
                   ['common', '高频需求', shootingNeeds.length],
                 ] as const).map(([key, label, count]) => (
                   <button key={key} type="button" aria-pressed={shootingFilter === key} onClick={() => setShootingFilter(key)}
@@ -5889,11 +5874,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   </button>
                 ))}
               </div>
-              <input ref={shootingCameraInputRef} aria-label="为生产缺口补充实拍素材" type="file" accept="video/*" capture="environment" className="hidden" onChange={event => { void handleUploadMaterials(event.currentTarget.files); event.currentTarget.value = ''; }}/>
+              <input ref={shootingCameraInputRef} aria-label="为待拍任务补充实拍素材" type="file" accept="video/*" capture="environment" className="hidden" onChange={event => { void handleUploadMaterials(event.currentTarget.files); event.currentTarget.value = ''; }}/>
               {visibleShootingCards.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                   <Check size={30} className="mx-auto mb-3 text-accent" />
-                  <p className="text-sm font-bold text-text-primary">当前筛选下没有待处理的生产缺口</p>
+                  <p className="text-sm font-bold text-text-primary">当前筛选下没有待拍任务</p>
                   <p className="mt-1 text-xs text-text-muted">可以切换上方筛选查看其他需求。</p>
                 </div>
               ) : (
@@ -5906,7 +5891,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent">{task ? '分镜缺口' : '高频需求'}</span>
+                            <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent">{task ? '分镜待拍' : '高频需求'}</span>
                             <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{need?.ratio || task?.ratio || '9:16'}</span>
                             <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{need ? <><SocialPlatformIcon platform={need.platform} size={12} />{getPlatformMeta(need.platform).label}</> : '内容制作'}</span>
                           </div>
@@ -5918,7 +5903,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         <div className="flex shrink-0 flex-col items-end gap-2">
                           {latestShootingCardIds.has(card.id) && <span role="img" aria-label="最新待拍任务" title="最新待拍任务" className="text-sm leading-none">❗</span>}
                           <div className="flex flex-wrap justify-end gap-2">
-                            <Button type="primary" size="small" icon={<Sparkles size={12} />} onClick={() => routeProductionNeed(task || need!)}>让灵小枢选路</Button>
                             <button type="button" onClick={() => requestMaterialUpload(task?.id || '')} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary">上传现有素材</button>
                             <button type="button" disabled={uploadingMaterial} onClick={() => { setUploadingScriptGapId(task?.id || ''); shootingCameraInputRef.current?.click(); }} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary disabled:opacity-50">可选实拍</button>
                             {task && task.uploadedMaterialIds.length > 0 && task.sourceProjectId && <a href={`?page=smartAssets&project=${encodeURIComponent(task.sourceProjectId)}`} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary">返回分镜</a>}

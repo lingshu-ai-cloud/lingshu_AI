@@ -197,6 +197,7 @@
     "@remotion/bundler": "4.0.530",
     "@remotion/gif": "4.0.530",
     "@remotion/renderer": "4.0.530",
+    "@svar-ui/react-gantt": "2.8.1",
     "@tailwindcss/vite": "^4.3.3",
     "@tesseract.js-data/chi_sim": "1.0.0",
     "@tesseract.js-data/eng": "1.0.0",

@@ -545,6 +545,25 @@ export async function ensureDeliveryCollections(): Promise<void> {
     { name: 'kind', type: 'text', required: true },
     { name: 'payload', type: 'json', required: true },
   ]);
+  await ensureCollection('customer_points_wallets', [
+    { name: 'tenant_id', type: 'text', required: true },
+    { name: 'schema_version', type: 'text', required: true },
+    { name: 'revision', type: 'number', required: true },
+    { name: 'wallet', type: 'json', required: true },
+    { name: 'updated_at', type: 'text', required: true },
+  ], [
+    'CREATE UNIQUE INDEX idx_customer_points_wallet_tenant ON customer_points_wallets (tenant_id)',
+    'CREATE INDEX idx_customer_points_wallet_updated ON customer_points_wallets (updated_at)',
+  ], true);
+  await ensureCollection('customer_points_events', [
+    ...['tenant_id', 'event_id', 'operation_id', 'event_type', 'section', 'feature_rate_id', 'occurred_at'].map(name => ({ name, type: 'text' as const })),
+    { name: 'points', type: 'number', required: true },
+    { name: 'payload', type: 'json', required: true },
+  ], [
+    'CREATE UNIQUE INDEX idx_customer_points_event_identity ON customer_points_events (tenant_id, event_id)',
+    'CREATE INDEX idx_customer_points_event_operation ON customer_points_events (tenant_id, operation_id)',
+    'CREATE INDEX idx_customer_points_event_time ON customer_points_events (tenant_id, occurred_at)',
+  ], true);
   await ensureCollection('platform_ad_worker_health', [
     ...'tenant_id workerId state lastStartedAt lastCompletedAt lastFailedAt nextCheckAt updatedAt'.split(' ').map(name => ({ name, type: 'text' as const })),
   ]);

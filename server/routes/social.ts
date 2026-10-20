@@ -31,6 +31,9 @@ import {
 import {
   exchangeLinkedInCode,
   getLinkedInAdminOrganizations,
+  getLinkedInComments,
+  getLinkedInPost,
+  getLinkedInPostMetrics,
   getLinkedInProfile,
   linkedInAuthorUrn,
   linkedInOAuthScopes,
@@ -975,6 +978,28 @@ function insightDateRange(req: Request) {
   return { since, until };
 }
 
+function routeRecord(value: unknown): Record<string, any> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
+  if (typeof value === 'string') try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, any> : {};
+  } catch { return {}; }
+  return {};
+}
+
+async function linkedInRegisteredPosts(tenantId: string, accountId: string): Promise<Array<{ id: string; title: string; description: string }>> {
+  const result = await store.list<Record<string, unknown>>('posts', { where: { tenant_id: tenantId, platform: 'linkedin' }, page: 1, perPage: 500 });
+  if (result.totalItems > result.items.length) throw new Error('linkedin_registered_post_scan_incomplete');
+  const posts = new Map<string, { id: string; title: string; description: string }>();
+  for (const item of result.items) {
+    const attempt = routeRecord(routeRecord(routeRecord(item.stats).publishResults)[accountId]);
+    const id = bodyText(attempt.platformPostId || attempt.providerReceiptId);
+    if (!/^urn:li:(?:share|ugcPost):/.test(id)) continue;
+    posts.set(id, { id, title: bodyText(item.title), description: bodyText(item.description) });
+  }
+  return [...posts.values()];
+}
+
 socialRouter.get('/accounts/:id/insights', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const account = await getAccount(req, res);
@@ -989,19 +1014,42 @@ socialRouter.get('/accounts/:id/insights', async (req, res) => {
     });
     return;
   }
-  if (account.platform === 'linkedin') {
-    res.status(501).json({
-      error: 'LinkedIn 数据洞察需要额外的 Community Management API 读取权限；当前连接仅声明已真实走通的发布能力。',
-      code: 'LINKEDIN_INSIGHTS_PERMISSION_REQUIRED',
-    });
-    return;
-  }
   const range = insightDateRange(req);
   if (!range) {
     res.status(400).json({ error: 'since/until 必须是 YYYY-MM-DD，范围不能超过 92 天' });
     return;
   }
   try {
+    if (account.platform === 'linkedin') {
+      const accessToken = socialAccessToken(account as unknown as Record<string, unknown>);
+      const authorUrn = linkedInAuthorUrn(account);
+      const posts = await linkedInRegisteredPosts(tenantId, account.id);
+      const capturedAt = new Date().toISOString();
+      const points: Array<{ contentId: string; metrics: ReturnType<typeof normalizeMetricValues> }> = [];
+      for (const post of posts) {
+        const raw = await getLinkedInPostMetrics({ accessToken, postId: post.id, authorUrn });
+        const metrics = normalizeMetricValues({
+          views: raw.views,
+          reach: raw.impressions,
+          likes: raw.likes,
+          comments: raw.comments,
+          shares: raw.shares,
+        });
+        await saveSocialMetricSnapshot({
+          tenantId,
+          platform: 'linkedin',
+          accountId: account.id,
+          contentId: post.id,
+          capturedAt,
+          valueKind: 'cumulative',
+          metrics,
+          rawMetrics: { source: 'linkedin_social_actions', coverage: 'registered_content_only', provider: raw },
+        });
+        points.push({ contentId: post.id, metrics });
+      }
+      res.json({ platform: 'linkedin', accountId: account.id, range, points, coverage: 'registered_content_only', fetchedAt: capturedAt });
+      return;
+    }
     const points = account.platform === 'facebook'
       ? await getFacebookPageInsights(account.providerAccountId, socialAccessToken(account as unknown as Record<string, unknown>), graphVersion(), range)
       : await getInstagramAccountInsights(account.providerAccountId, socialAccessToken(account as unknown as Record<string, unknown>), graphVersion(), range);
@@ -1058,14 +1106,34 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
     res.status(404).json({ error: 'Account not found' });
     return;
   }
-  if (account.platform === 'linkedin') {
-    res.status(501).json({ error: 'LinkedIn 帖子读取需要额外审核权限；当前不会伪造内容列表。', code: 'LINKEDIN_POST_READ_PERMISSION_REQUIRED' });
-    return;
-  }
   const maxResults = Number(req.query.maxResults ?? 25);
   try {
     let videos: unknown[] = []; const accessToken = socialAccessToken(account as unknown as Record<string, unknown>);
     let profilePatch: Partial<SocialAccountRecord> = {};
+    if (account.platform === 'linkedin') {
+      const authorUrn = linkedInAuthorUrn(account);
+      const registered = (await linkedInRegisteredPosts(tenantId, account.id)).slice(0, Math.min(100, Math.max(1, maxResults)));
+      videos = await Promise.all(registered.map(async local => {
+        const [post, metrics] = await Promise.all([
+          getLinkedInPost({ accessToken, postId: local.id }),
+          getLinkedInPostMetrics({ accessToken, postId: local.id, authorUrn }),
+        ]);
+        return {
+          id: post.id,
+          title: local.title || 'LinkedIn post',
+          description: local.description,
+          publishedAt: '',
+          thumbnailUrl: '',
+          viewCount: metrics.views,
+          likeCount: metrics.likes,
+          commentCount: metrics.comments,
+          shareCount: metrics.shares,
+          duration: '',
+          permalinkUrl: post.url,
+        };
+      }));
+      profilePatch = { videoCount: videos.length };
+    }
     if (account.platform === 'tiktok') {
       const [profile, items] = await Promise.all([getTikTokUser(accessToken), getTikTokVideos(accessToken, maxResults)]);
       videos = items;
@@ -1095,7 +1163,7 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
         likes: video.likeCount,
         comments: video.commentCount,
         ...(account.platform !== 'instagram' ? { views: video.viewCount } : {}),
-        ...(account.platform === 'tiktok' ? { shares: video.shareCount } : {}),
+        ...(account.platform === 'tiktok' || account.platform === 'linkedin' ? { shares: video.shareCount } : {}),
       });
       // Instagram media listing does not return plays, and Facebook listing does
       // not return shares. Omit unavailable metrics instead of writing fake zeroes.
@@ -1106,7 +1174,10 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
         contentId: String(video.id || ''),
         valueKind: 'cumulative',
         metrics,
-        rawMetrics: { source: 'platform_video_list' },
+        rawMetrics: {
+          source: account.platform === 'linkedin' ? 'linkedin_registered_content' : 'platform_video_list',
+          ...(account.platform === 'linkedin' ? { coverage: 'registered_content_only' } : {}),
+        },
       });
     }));
     const knownViews = (videos as Array<Record<string, unknown>>).reduce((sum, video) => sum + (typeof video.viewCount === 'number' ? video.viewCount : 0), 0);
@@ -1134,10 +1205,6 @@ socialRouter.get('/accounts/:id/video/:videoId/comments', async (req, res) => {
     res.status(404).json({ error: 'Account not found' });
     return;
   }
-  if (account.platform === 'linkedin') {
-    res.status(501).json({ error: 'LinkedIn 评论读取需要额外审核权限，当前暂未开放。', code: 'LINKEDIN_COMMENT_PERMISSION_REQUIRED' });
-    return;
-  }
   const maxResults = Number(req.query.maxResults ?? 50);
   try {
     let comments: unknown[] = []; const accessToken = socialAccessToken(account as unknown as Record<string, unknown>);
@@ -1147,6 +1214,7 @@ socialRouter.get('/accounts/:id/video/:videoId/comments', async (req, res) => {
     }
     if (account.platform === 'facebook') comments = await getFacebookComments(req.params.videoId, accessToken, graphVersion(), maxResults);
     if (account.platform === 'instagram') comments = await getInstagramComments(req.params.videoId, accessToken, graphVersion(), maxResults);
+    if (account.platform === 'linkedin') comments = await getLinkedInComments({ accessToken, postId: req.params.videoId, count: maxResults });
     res.json({ comments, total: comments.length });
   } catch (error: any) {
     console.error(`${account.platform} comments error:`, error?.response?.data ?? error?.message ?? error);
@@ -1164,9 +1232,9 @@ socialRouter.post('/accounts/:id/upload', async (req, res) => {
     res.status(400).json({ error: 'Account is not connected' });
     return;
   }
-  const body = req.body as SocialUploadInput & { videoPath?: string; projectId?: string; generationVersionId?: string; ratio?: string; contentId?: string; language?: string; trackWaLink?: boolean; generationKind?: 'script' | 'poster'; generationProvenance?: string; qualityStatus?: string; publishable?: boolean; generationRecordId?: string; sourceKind?: 'project' | 'manual_upload'; sourceVideoPath?: string; enterpriseFactVersion?: string; copyAudit?: PublishToAccountInput['copyAudit'] };
-  if (!body.title || (!body.videoPath && !body.videoUrl)) {
-    res.status(400).json({ error: 'title and videoPath/videoUrl are required' });
+  const body = req.body as SocialUploadInput & { imagePaths?: string[]; videoPath?: string; projectId?: string; generationVersionId?: string; ratio?: string; contentId?: string; language?: string; trackWaLink?: boolean; generationKind?: 'script' | 'poster'; generationProvenance?: string; qualityStatus?: string; publishable?: boolean; generationRecordId?: string; sourceKind?: 'project' | 'manual_upload'; sourceVideoPath?: string; enterpriseFactVersion?: string; copyAudit?: PublishToAccountInput['copyAudit'] };
+  if (!body.title || (!body.videoPath && !body.videoUrl && !body.imagePaths?.length)) {
+    res.status(400).json({ error: 'title and videoPath/videoUrl/imagePaths are required' });
     return;
   }
   try {
@@ -1176,6 +1244,7 @@ socialRouter.post('/accounts/:id/upload', async (req, res) => {
       platform: account.platform,
       videoPath: body.videoPath,
       videoUrl: body.videoUrl,
+      imagePaths: body.imagePaths,
       title: body.title,
       description: body.description,
       privacyStatus: body.privacyStatus,

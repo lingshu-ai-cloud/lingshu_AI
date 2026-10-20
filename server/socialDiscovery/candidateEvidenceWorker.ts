@@ -3,6 +3,7 @@ import { evaluateInnovationGate, type InnovationEvidence, type VersionedCandidat
 
 export interface CandidateEvidenceWorkItem extends CandidateEvidenceInput {
   innovationEvidence?: InnovationEvidence;
+  productionEligibilityIssues?: string[];
 }
 
 export interface CandidateEvidenceWorkResult {
@@ -21,6 +22,10 @@ export async function runCandidateEvidenceWorker(
 ): Promise<CandidateEvidenceWorkResult> {
   const result: CandidateEvidenceWorkResult = { accepted: [], suggestions: [], failed: [] };
   for (const item of items) {
+    if (item.productionEligibilityIssues?.length) {
+      result.suggestions.push({ candidateId: item.candidateId, reasons: [...new Set(item.productionEligibilityIssues)] });
+      continue;
+    }
     if (!item.evidenceRefs?.length || !item.g1.sourceUrl || item.g1.sourceUrl === 'unknown') {
       result.suggestions.push({ candidateId: item.candidateId, reasons: ['候选缺少可追溯来源或证据引用'] });
       continue;

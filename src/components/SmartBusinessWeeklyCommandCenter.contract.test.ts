@@ -58,7 +58,9 @@ assert.equal(isPaidMediaPlanTask({ capabilityKey: 'platform_ads', kind: 'campaig
 assert.equal(isPaidMediaPlanTask({ capabilityKey: 'business', kind: 'planning', statusSource: 'weekly_plan', title: '制定 TikTok 投流预算' }), true, '明确投流标题必须识别为投流任务');
 for (const label of ['待验收成片', '本周计划视频', '本周视频总时长', '本周成本范围', '预计制作成本', '已结算成本']) {
   assert.match(commandCenter, new RegExp(label), `周经营计划必须展示“${label}”`);
+  assert.match(commandCenter, new RegExp(`aria-label=\\{\`查看\\$\\{item\\.label\\}\`\\}`), `“${label}”所在指标必须提供可访问的详情入口`);
 }
+assert.match(commandCenter, /onMetricClick\?\.\(item\.id as WeeklyCommandMetricId\)/, '六项周计划指标必须把对应指标身份交给页面导航');
 for (const label of ['计划视频', '爆款视频缩略图', '内容结构', '数字人形象', '预计制作成本', '发布计划', '投流计划']) {
   assert.match(planDetails, new RegExp(label), `详细周计划必须用可视化卡片展示“${label}”`);
 }

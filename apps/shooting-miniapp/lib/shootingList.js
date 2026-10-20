@@ -48,4 +48,10 @@ function referencePreview(task, project) {
     rangeText: end !== null && end > (start === null ? 0 : start) ? (start === null ? 0 : start).toFixed(1) + '–' + end.toFixed(1) + ' 秒' : '完整参考素材',
   }
 }
-module.exports = { groupShootingTasks, taskDate, referencePreview }
+function cardPreview(task, project) {
+  const preview = referencePreview(task, project)
+  if (!preview) return null
+  const end = preview.end === null ? preview.start + 3 : Math.min(preview.end, preview.start + 3)
+  return { ...preview, end, rangeText: '前三秒预览' }
+}
+module.exports = { groupShootingTasks, taskDate, referencePreview, cardPreview }

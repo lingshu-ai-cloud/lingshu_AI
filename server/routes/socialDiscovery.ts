@@ -91,7 +91,7 @@ async function derivedScope(tenantId: string): Promise<SocialCrawlStrategy> {
   return resolveCrawlStrategy({
     explicit: '',
     profile,
-    platforms: ['tiktok', 'instagram', 'youtube', 'facebook'],
+    platforms: ['linkedin', 'facebook', 'instagram', 'tiktok', 'youtube'],
     businessGoal: '发现与当前产品、市场和沟通对象相符，并可迁移到生产的内容机会',
   });
 }
@@ -259,7 +259,7 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
       : sceneClusters,
     competitorTerms: unique(body.competitorTerms, 20),
     benchmarkAccounts: benchmarkAccounts(body.benchmarkAccounts),
-    platforms: unique(body.platforms, 4).length ? unique(body.platforms, 4) : ['tiktok', 'instagram', 'youtube', 'facebook'],
+    platforms: unique(body.platforms, 5).length ? unique(body.platforms, 5) : ['linkedin', 'facebook', 'instagram', 'tiktok', 'youtube'],
     market,
     language,
     companyRole: companyRole(body.companyRole),

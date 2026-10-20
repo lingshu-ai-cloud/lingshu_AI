@@ -1,6 +1,6 @@
 import type { Material, MaterialSegment } from './studioApi';
 import type { SocialBusinessModel, SocialDiscoveryCandidateScore } from '../../shared/contracts/socialContentWorkflow';
-export type Platform = 'all' | 'tiktok' | 'instagram' | 'youtube' | 'facebook';
+export type Platform = 'all' | 'tiktok' | 'instagram' | 'youtube' | 'facebook' | 'linkedin';
 export type ScriptResultProvenance = 'ai' | 'ai_rejected' | 'template';
 export type ContentFormat = 'video' | 'image';
 

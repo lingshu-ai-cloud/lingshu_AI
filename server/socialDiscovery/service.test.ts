@@ -120,17 +120,19 @@ function accepted(item: CandidateEvidenceWorkItem): VersionedCandidateEvidence {
   };
 }
 
-test('approved collection calls CandidateEvidence worker and fills quota with qualified evidence, not imported rows', async () => {
+test('approved benchmark-account collection calls CandidateEvidence worker and fills quota with qualified evidence, not imported rows', async () => {
   const dataStore = new MemoryStore();
+  const accounts = ['https://www.linkedin.com/company/factory-one', 'https://www.facebook.com/factory-two'];
+  dataStore.rows.set('competitor_accounts', accounts.map((accountUrl, index) => ({ id: `account-${index}`, tenantId: 'tenant-1', accountUrl })));
   const scope: DiscoveryScopeRecord = {
     id: 'scope-1', tenant_id: 'tenant-1', keyword_set_id: 'keywords-1', version: 1, status: 'active', created_by: 'user', created_at: '', updated_at: '',
     payload: {
       crawlStrategyId: 'crawl-1', version: '1', businessGoal: 'goal', keywordSet: {} as never,
       discoveryBrief: {
         discoveryBriefId: 'brief-1', keywordSetId: 'keywords-1', keywordSetVersion: 1, productRef: 'product', market: 'US', audience: 'buyer',
-        discoverySeedIds: [], trackedSceneIds: [], competitorAccounts: [], discoveryModes: ['momentum'], platforms: ['tiktok'], lookbackDays: 7,
+        discoverySeedIds: [], trackedSceneIds: [], competitorAccounts: accounts, discoveryModes: ['account'], platforms: ['linkedin', 'facebook'], lookbackDays: 7,
         resultLimit: 4, budgetLimitCny: 10, productionGap: null, createdBy: 'director_agent',
-        modePolicies: { momentum: { enabled: true, sourceRefs: ['query-1', 'query-2'], platforms: ['tiktok'], resultLimit: 4, refreshIntervalMinutes: 60, budgetLimitCny: 10 } },
+        modePolicies: { account: { enabled: true, sourceRefs: accounts, platforms: ['linkedin', 'facebook'], resultLimit: 4, refreshIntervalMinutes: 60, budgetLimitCny: 10 } },
       },
       keywords: [], benchmarkAccounts: [], platformQuotas: [], refreshIntervalMinutes: 60, stopConditions: [], availableCapabilities: [], priorities: [], successCriteria: [], metricTargets: [], createdBy: 'business_agent',
       approval: { status: 'approved', scopeVersion: 1, approvedBy: 'user', approvedAt: '2026-09-26T00:00:00Z' }, market: 'US', language: 'en',
@@ -141,14 +143,14 @@ test('approved collection calls CandidateEvidence worker and fills quota with qu
   let workerCalls = 0;
   const result = await executeApprovedDiscoveryRun({ tenantId: 'tenant-1', triggerType: 'manual' }, {
     dataStore,
-    async crawl() { crawlCalls += 1; return { platform: 'tiktok', keyword: 'q', imported: 10, refreshed: 0, skipped: 0, skippedExisting: 0, returnedExisting: 0, requested: 1, total: 10, source: 'r3', message: '', candidateIds: [`candidate-${crawlCalls}`], items: [] }; },
-    candidateEvidenceAdapter: { async toEvidenceWorkItems(input) { return [{ tenantId: input.tenantId, candidateId: input.result.candidateIds![0]!, discoveryPath: ['keyword', 'performance'], evidenceRefs: ['source'], g1: { runId: input.runId, queryRef: input.queryRef, discoveryMode: input.mode, sourceUrl: 'source' } }]; } },
+    async crawl(input) { crawlCalls += 1; return { platform: input.platform ?? 'linkedin', keyword: '', imported: 1, refreshed: 0, skipped: 0, skippedExisting: 0, returnedExisting: 0, requested: 1, total: 1, source: 'r3', message: '', candidateIds: [`candidate-${crawlCalls}`], items: [] }; },
+    candidateEvidenceAdapter: { async toEvidenceWorkItems(input) { return [{ tenantId: input.tenantId, candidateId: input.result.candidateIds![0]!, discoveryPath: ['account', 'performance'], evidenceRefs: ['source'], g1: { runId: input.runId, queryRef: input.queryRef, discoveryMode: input.mode, sourceUrl: 'source' } }]; } },
     async runCandidateEvidence(items) { workerCalls += 1; return { accepted: items.map(accepted), suggestions: [], failed: [] }; },
   });
-  assert.equal(crawlCalls, 2, `ten imported rows from the first source must not fill a two-evidence quota: ${JSON.stringify(result.run?.failureDetails)}`);
+  assert.equal(crawlCalls, 2, `imported rows alone must not fill qualified-evidence quota: ${JSON.stringify(result.run?.failureDetails)}`);
   assert.equal(workerCalls, 2);
-  assert.equal(result.run?.modeStats.momentum?.accepted, 2);
-  assert.deepEqual(result.run?.evidenceOutcomes?.momentum?.acceptedCandidateIds, ['candidate-1', 'candidate-2']);
+  assert.equal(result.run?.modeStats.account?.accepted, 2);
+  assert.deepEqual(result.run?.evidenceOutcomes?.account?.acceptedCandidateIds, ['candidate-1', 'candidate-2']);
 });
 
 test('account discovery reads the current account library and forwards the saved name and date range', async () => {
@@ -282,7 +284,7 @@ test('approved account-only revision cannot spend on inherited keyword or a seco
   assert.equal(dataStore.rows.get('social_discovery_daily_reservations'),undefined);
 });
 
-test('account-only revision rejects scheduled and unbound manual entry before reservation, leaving independently authorized production gap available', async () => {
+test('account-only revision rejects scheduled and unbound manual entry while production gaps also stay on the approved account', async () => {
   const dataStore = new MemoryStore(), accountUrl = 'https://www.tiktok.com/@fixture_factory';
   dataStore.rows.set('competitor_accounts', [{ id: 'account', tenantId: 'tenant-1', accountUrl }]);
   const payload = { approval: { status: 'approved', scopeVersion: 3, approvedBy: 'owner' }, weeklyAccountRevision: { accountUrl, targetCount: 5 }, keywords: [], discoveryBrief: {
@@ -291,12 +293,12 @@ test('account-only revision rejects scheduled and unbound manual entry before re
   } };
   dataStore.rows.set('social_discovery_scopes', [{ id: 'scope-3', tenant_id: 'tenant-1', version: 3, status: 'active', payload }]);
   let calls = 0;
-  const dependencies = { dataStore, async crawl(request: { keyword?: string; limit?: number }) { calls++; assert.equal(request.keyword, 'gap query'); return { platform: 'tiktok', keyword: request.keyword ?? '', imported: 0, refreshed: 0, skipped: 0, skippedExisting: 0, returnedExisting: 0, requested: request.limit ?? 0, total: 0, source: 'test', message: '', candidateIds: [], items: [] }; }, candidateEvidenceAdapter: { async toEvidenceWorkItems() { return []; } }, async runCandidateEvidence() { return { accepted: [], suggestions: [], failed: [] }; } } as any;
+  const dependencies = { dataStore, async crawl(request: { accountUrl?: string; keyword?: string; limit?: number }) { calls++; assert.equal(request.accountUrl, accountUrl); assert.equal(request.keyword, undefined); return { platform: 'tiktok', keyword: '', imported: 0, refreshed: 0, skipped: 0, skippedExisting: 0, returnedExisting: 0, requested: request.limit ?? 0, total: 0, source: 'test', message: '', candidateIds: [], items: [] }; }, candidateEvidenceAdapter: { async toEvidenceWorkItems() { return []; } }, async runCandidateEvidence() { return { accepted: [], suggestions: [], failed: [] }; } } as any;
   for (const triggerType of ['scheduled', 'manual'] as const) await assert.rejects(executeApprovedDiscoveryRun({ tenantId: 'tenant-1', triggerType, requestedModes: ['momentum'] }, dependencies), /weekly_discovery_account_only_authority_required/);
   assert.equal(calls, 0);
   assert.equal(dataStore.rows.get('social_discovery_daily_reservations'), undefined);
   const independent = await executeApprovedDiscoveryRun({ tenantId: 'tenant-1', triggerType: 'production_gap', requestedModes: ['momentum'], productionGapContext: { gapTaskId: 'gap', upstreamTaskRef: 'upstream', description: 'gap query', remainingBudgetCny: 1 } }, dependencies);
-  assert.equal(independent.run?.modeStats.momentum?.requested, 1);
+  assert.equal(independent.run?.modeStats.account?.requested, 1);
   assert.equal(calls, 1);
 });
 
@@ -386,64 +388,63 @@ test('five-from-account rejects provider surplus before candidate analysis', asy
   assert.equal(analyzed, 0);
 });
 
-test('real weekly discovery entry applies ten-slot four-platform and five-keyword allocation', async () => {
- const dataStore=new MemoryStore(),refs=['cleansing foam factory','cleansing foam supplier','cleansing foam','makeup remover foam','foaming cleanser'];
- const payload={approval:{status:'approved',scopeVersion:1},keywords:[{category:'discovery_seed',values:refs.slice(0,2)},{category:'scene_cluster',values:refs.slice(2)}],discoveryBrief:{discoveryBriefId:'brief',keywordSetId:'keywords',keywordSetVersion:1,productRef:'product',market:'US',audience:'buyer',discoverySeedIds:[],trackedSceneIds:[],competitorAccounts:[],discoveryModes:['momentum'],platforms:['youtube','tiktok','instagram','facebook'],lookbackDays:7,resultLimit:16,budgetLimitCny:null,productionGap:null,createdBy:'director_agent',modePolicies:{momentum:{enabled:true,sourceRefs:[],platforms:['youtube','tiktok','instagram','facebook'],resultLimit:16,refreshIntervalMinutes:1440,budgetLimitCny:null}}}};
+test('discovery inventory is sourced only from approved LinkedIn and Facebook benchmark accounts', async () => {
+ const dataStore=new MemoryStore();
+ const accounts=['https://www.linkedin.com/company/factory-one','https://www.facebook.com/factory-two'];
+ dataStore.rows.set('competitor_accounts',accounts.map((accountUrl,index)=>({id:`account-${index}`,tenantId:'tenant-1',accountUrl})));
+ const payload={approval:{status:'approved',scopeVersion:1},keywords:[{category:'discovery_seed',values:['must not run']}],discoveryBrief:{discoveryBriefId:'brief',keywordSetId:'keywords',keywordSetVersion:1,productRef:'product',market:'US',audience:'buyer',discoverySeedIds:[],trackedSceneIds:[],competitorAccounts:accounts,discoveryModes:['account','momentum'],platforms:['linkedin','facebook'],lookbackDays:7,resultLimit:10,budgetLimitCny:null,productionGap:null,createdBy:'director_agent',modePolicies:{account:{enabled:true,sourceRefs:accounts,platforms:['linkedin','facebook'],resultLimit:10,refreshIntervalMinutes:1440,budgetLimitCny:null},momentum:{enabled:true,sourceRefs:['must not run'],platforms:['linkedin'],resultLimit:10,refreshIntervalMinutes:1440,budgetLimitCny:null}}}};
  dataStore.rows.set('social_discovery_scopes',[{id:'scope',tenant_id:'tenant-1',keyword_set_id:'keywords',version:1,status:'active',payload}]);
- const calls:Array<{platform:string;keyword:string;limit:number}>=[];
- const result=await executeApprovedDiscoveryRun({tenantId:'tenant-1',triggerType:'manual',requestedModes:['momentum'],expectedScopeId:'scope',expectedScopeVersion:1,originalRun:{key:'weekly-allocation',scopeHash:socialRequestHash(payload)}},{
+ const calls:Array<{platform:string;accountUrl?:string;keyword?:string;limit:number}>=[];
+ const result=await executeApprovedDiscoveryRun({tenantId:'tenant-1',triggerType:'manual',requestedModes:['account','momentum']},{
   dataStore,
-  async crawl(input){assert.equal(input.newCandidatesOnly,true);assert.equal(input.disableBackfill,true);const platform=input.platform??'tiktok',keyword=input.keyword??'';calls.push({platform,keyword,limit:input.limit??0});return{platform,keyword,imported:1,refreshed:0,skipped:0,skippedExisting:0,skippedNearDuplicate:0,nearDuplicateUnchecked:1,returnedExisting:0,requested:input.limit??0,total:1,source:'test',message:'',candidateIds:[`${platform}:${keyword}`],items:[]};},
-  candidateEvidenceAdapter:{async toEvidenceWorkItems(input){return[{tenantId:input.tenantId,candidateId:input.result.candidateIds![0]!,discoveryPath:['keyword'],evidenceRefs:['source'],g1:{runId:input.runId,queryRef:input.queryRef,discoveryMode:input.mode,sourceUrl:'https://example.invalid/video'}}];}},
+  async crawl(input){const platform=input.platform??'facebook';calls.push({platform,accountUrl:input.accountUrl,keyword:input.keyword,limit:input.limit??0});return{platform,keyword:'',imported:1,refreshed:0,skipped:0,skippedExisting:0,skippedNearDuplicate:0,nearDuplicateUnchecked:1,returnedExisting:0,requested:input.limit??0,total:1,source:'test',message:'',candidateIds:[`${platform}:${input.accountUrl}`],items:[]};},
+  candidateEvidenceAdapter:{async toEvidenceWorkItems(input){return[{tenantId:input.tenantId,candidateId:input.result.candidateIds![0]!,discoveryPath:['account'],evidenceRefs:['source'],g1:{runId:input.runId,queryRef:input.queryRef,discoveryMode:'account',sourceUrl:'https://example.invalid/post'}}];}},
   async runCandidateEvidence(items){return{accepted:items.map(accepted),suggestions:[],failed:[]};},
  });
- assert.equal(result.run?.modeStats.momentum?.requested,10);
- assert.deepEqual(Object.fromEntries(['tiktok','facebook','instagram','youtube'].map(platform=>[platform,calls.filter(call=>call.platform===platform).reduce((sum,call)=>sum+call.limit,0)])),{tiktok:4,facebook:3,instagram:2,youtube:1});
- for(const ref of refs)assert.equal(calls.filter(call=>call.keyword===ref).reduce((sum,call)=>sum+call.limit,0),2);
- assert.equal(new Set(result.run?.evidenceOutcomes?.momentum?.acceptedCandidateIds).size,10);
- assert.equal(result.run?.modeStats.momentum?.nearDuplicateUnchecked,10);
- assert.equal(result.run?.modeStats.momentum?.analyzed,10);
- const duplicateRequest=await executeApprovedDiscoveryRun({tenantId:'tenant-1',triggerType:'manual',requestedModes:['momentum'],expectedScopeId:'scope',expectedScopeVersion:1,originalRun:{key:'weekly-allocation-same-day-again',scopeHash:socialRequestHash(payload)}},{
-  dataStore,async crawl(){throw Error('same-day keyword source must not be paid twice');},
-  candidateEvidenceAdapter:{async toEvidenceWorkItems(){throw Error('no new source');}},
-  async runCandidateEvidence(){throw Error('no new source');},
- });
- assert.equal(duplicateRequest.reason,'no_discovery_mode_due');
- assert.equal(calls.length,10);
+ assert.deepEqual(calls.map(call=>call.platform),['linkedin','facebook']);
+ assert.deepEqual(calls.map(call=>call.accountUrl),accounts);
+ assert.ok(calls.every(call=>call.keyword===undefined));
+ assert.equal(result.run?.modeStats.account?.requested,2);
+ assert.equal(result.run?.modeStats.momentum,undefined);
+ assert.equal(new Set(result.run?.evidenceOutcomes?.account?.acceptedCandidateIds).size,2);
 });
 
 test('failed sources preserve every platform and query root cause instead of only the final error', async () => {
   const dataStore = new MemoryStore();
+  const accounts = ['https://www.linkedin.com/company/factory-one', 'https://www.facebook.com/factory-two'];
+  dataStore.rows.set('competitor_accounts', accounts.map((accountUrl, index) => ({ id: `account-${index}`, tenantId: 'tenant-1', accountUrl })));
   dataStore.rows.set('social_discovery_scopes', [{
     id: 'scope-errors', tenant_id: 'tenant-1', keyword_set_id: 'keywords-errors', version: 1, status: 'active',
     payload: {
       market: 'US', language: 'en', approval: { status: 'approved', scopeVersion: 1 }, keywords: [],
       discoveryBrief: {
         discoveryBriefId: 'brief-errors', keywordSetId: 'keywords-errors', keywordSetVersion: 1, productRef: 'product', market: 'US', audience: 'buyer',
-        discoverySeedIds: [], trackedSceneIds: [], competitorAccounts: [], discoveryModes: ['momentum'], platforms: ['tiktok', 'instagram'],
+        discoverySeedIds: [], trackedSceneIds: [], competitorAccounts: accounts, discoveryModes: ['account'], platforms: ['linkedin', 'facebook'],
         lookbackDays: 7, resultLimit: 4, budgetLimitCny: null, productionGap: null, createdBy: 'director_agent',
-        modePolicies: { momentum: { enabled: true, sourceRefs: ['face cleanser supplier', 'clay mask'], platforms: ['tiktok', 'instagram'], resultLimit: 4, refreshIntervalMinutes: 60, budgetLimitCny: null } },
+        modePolicies: { account: { enabled: true, sourceRefs: accounts, platforms: ['linkedin', 'facebook'], resultLimit: 4, refreshIntervalMinutes: 60, budgetLimitCny: null } },
       },
     },
   }]);
   const result = await executeApprovedDiscoveryRun({ tenantId: 'tenant-1', triggerType: 'manual' }, {
     dataStore,
-    async crawl(input) { throw new Error(`${input.platform} rejected ${input.keyword}`); },
+    async crawl(input) { throw new Error(`${input.platform} rejected ${input.accountUrl}`); },
     candidateEvidenceAdapter: { async toEvidenceWorkItems() { return []; } },
     async runCandidateEvidence() { return { accepted: [], suggestions: [], failed: [] }; },
   });
   assert.equal(result.run?.status, 'failed');
   assert.ok((result.run?.failureDetails?.length || 0) >= 2);
-  assert.match(result.run?.error || '', /tiktok\/face cleanser supplier: tiktok rejected face cleanser supplier/);
-  assert.match(result.run?.error || '', /tiktok\/clay mask: tiktok rejected clay mask/);
+  assert.match(result.run?.error || '', /linkedin\/https:\/\/www\.linkedin\.com\/company\/factory-one: linkedin rejected/);
+  assert.match(result.run?.error || '', /facebook\/https:\/\/www\.facebook\.com\/factory-two: facebook rejected/);
   const persisted = dataStore.rows.get('social_discovery_runs')?.[0] as any;
   assert.deepEqual(persisted.failureDetails, result.run?.failureDetails);
 });
 test('one provider budget failure does not discard another source actual accepted evidence',async()=>{
  const dataStore=new MemoryStore();
- dataStore.rows.set('social_discovery_scopes',[{id:'scope-partial',tenant_id:'tenant',version:1,status:'active',payload:{market:'US',language:'en',approval:{status:'approved',scopeVersion:1},keywords:[],discoveryBrief:{discoveryBriefId:'brief-partial',keywordSetId:'partial',keywordSetVersion:1,productRef:'product',market:'US',audience:'buyer',discoverySeedIds:[],trackedSceneIds:[],competitorAccounts:[],discoveryModes:['momentum'],platforms:['tiktok','youtube'],lookbackDays:7,resultLimit:10,budgetLimitCny:null,productionGap:null,createdBy:'director_agent',modePolicies:{momentum:{enabled:true,sourceRefs:['query'],platforms:['tiktok','youtube'],resultLimit:10,refreshIntervalMinutes:60,budgetLimitCny:null}}}}}]);
- const result=await executeApprovedDiscoveryRun({tenantId:'tenant',triggerType:'manual'},{dataStore,async crawl(input){if(input.platform==='tiktok')throw Error('Apify HTTP 402 not-enough-usage-to-run-paid-actor');return {platform:'youtube',keyword:'query',imported:1,refreshed:0,skipped:0,skippedExisting:0,returnedExisting:0,requested:input.limit??1,total:1,source:'r3',message:'',candidateIds:['actual-source'],items:[]};},candidateEvidenceAdapter:{async toEvidenceWorkItems(input){return [{tenantId:input.tenantId,candidateId:'actual-source',discoveryPath:['keyword'],evidenceRefs:['https://www.youtube.com/shorts/actual'],g1:{runId:input.runId,queryRef:'query',discoveryMode:'momentum',sourceUrl:'https://www.youtube.com/shorts/actual'}}];}},async runCandidateEvidence(items){return{accepted:items.map(accepted),suggestions:[],failed:[]};}});
- assert.equal(result.run?.status,'partial',JSON.stringify(result.run));assert.equal(result.run?.platformStats?.youtube?.accepted,1);
- assert.equal(result.run?.failureDetails?.find(f=>f.platform==='tiktok')?.errorCode,'provider_budget_exhausted');
- assert.deepEqual(result.run?.evidenceOutcomes?.momentum?.acceptedCandidateIds,['actual-source']);
+ const accounts=['https://www.facebook.com/factory-one','https://www.linkedin.com/company/factory-two'];
+ dataStore.rows.set('competitor_accounts',accounts.map((accountUrl,index)=>({id:`account-${index}`,tenantId:'tenant',accountUrl})));
+ dataStore.rows.set('social_discovery_scopes',[{id:'scope-partial',tenant_id:'tenant',version:1,status:'active',payload:{market:'US',language:'en',approval:{status:'approved',scopeVersion:1},keywords:[],discoveryBrief:{discoveryBriefId:'brief-partial',keywordSetId:'partial',keywordSetVersion:1,productRef:'product',market:'US',audience:'buyer',discoverySeedIds:[],trackedSceneIds:[],competitorAccounts:accounts,discoveryModes:['account'],platforms:['facebook','linkedin'],lookbackDays:7,resultLimit:10,budgetLimitCny:null,productionGap:null,createdBy:'director_agent',modePolicies:{account:{enabled:true,sourceRefs:accounts,platforms:['facebook','linkedin'],resultLimit:10,refreshIntervalMinutes:60,budgetLimitCny:null}}}}}]);
+ const result=await executeApprovedDiscoveryRun({tenantId:'tenant',triggerType:'manual'},{dataStore,async crawl(input){if(input.platform==='facebook')throw Error('Apify HTTP 402 not-enough-usage-to-run-paid-actor');return {platform:'linkedin',keyword:'',imported:1,refreshed:0,skipped:0,skippedExisting:0,returnedExisting:0,requested:input.limit??1,total:1,source:'r3',message:'',candidateIds:['actual-source'],items:[]};},candidateEvidenceAdapter:{async toEvidenceWorkItems(input){return [{tenantId:input.tenantId,candidateId:'actual-source',discoveryPath:['account'],evidenceRefs:['https://www.linkedin.com/feed/update/actual'],g1:{runId:input.runId,queryRef:input.queryRef,discoveryMode:'account',sourceUrl:'https://www.linkedin.com/feed/update/actual'}}];}},async runCandidateEvidence(items){return{accepted:items.map(accepted),suggestions:[],failed:[]};}});
+ assert.equal(result.run?.status,'partial',JSON.stringify(result.run));assert.equal(result.run?.platformStats?.linkedin?.accepted,1);
+ assert.equal(result.run?.failureDetails?.find(f=>f.platform==='facebook')?.errorCode,'provider_budget_exhausted');
+ assert.deepEqual(result.run?.evidenceOutcomes?.account?.acceptedCandidateIds,['actual-source']);
 });

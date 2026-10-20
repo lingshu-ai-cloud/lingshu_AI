@@ -104,10 +104,10 @@ test('initial onboarding starts with only the two source choices and keeps the s
   assert.doesNotMatch(html, /声音名称|录音语言/);
   assert.match(source, /setVoiceLanguage\('zh-CN'\)/);
   assert.match(source, /if \(inheritedName\) setVoiceName\(inheritedName\)/);
-  assert.ok(source.indexOf('{videoFile && videoVoiceReview}') < source.indexOf("initialConfiguration ? '完成' : '提交资料并继续本人授权'"), 'voice review appears before the completion action');
+  assert.ok(source.indexOf('{videoFile && videoVoiceReview}') < source.indexOf("initialConfiguration && initialStage === 'person' ? '保存人物资料'"), 'voice review appears before the completion action');
   assert.doesNotMatch(source, /aria-label="视频口播声音"/);
   assert.doesNotMatch(source, /前往企业知识库认证|方舟认证为可选功能/);
-  assert.match(source, /initialConfiguration \? 'choose' : 'create'/);
+  assert.match(source, /initialConfiguration && initialStage !== 'certification' \? 'choose' : 'create'/);
   assert.match(source, /const heyGenVideoSource = initialConfiguration \|\| Boolean/, 'the unified video onboarding must use Digital Twin capability before files are selected');
   assert.doesNotMatch(html, /提交后需要在 HeyGen 官方页面完成本人授权/);
   assert.doesNotMatch(html, /我已取得此人物的肖像及素材使用授权/);
@@ -115,10 +115,14 @@ test('initial onboarding starts with only the two source choices and keeps the s
   assert.doesNotMatch(html, /确认创建人物并接受供应商计费/);
   assert.doesNotMatch(html, /还需完成：/);
   assert.doesNotMatch(html, /人物授权状态/);
-  assert.match(source, /initialConfiguration \|\| authorized/);
-  assert.match(source, /initialConfiguration \|\| adultConfirmed/);
-  assert.match(source, /initialConfiguration \|\| confirmed/);
-  assert.match(source, /initialConfiguration \? '完成' : '提交资料并继续本人授权'/);
+  assert.doesNotMatch(source, /initialConfiguration \|\| authorized/);
+  assert.doesNotMatch(source, /initialConfiguration \|\| adultConfirmed/);
+  assert.doesNotMatch(source, /initialConfiguration \|\| confirmed/);
+  assert.match(source, /presenterApi\.saveProfile/);
+  assert.match(source, /本步骤只把资料安全保存到当前企业，不调用 HeyGen，也不产生供应商费用/);
+  assert.match(source, /storageAuthorized: true/);
+  assert.match(source, /initialConfiguration && initialStage === 'person' \? '保存人物资料'/);
+  assert.match(source, /authorized, adultConfirmed, confirmed, arkPreparation/);
   assert.match(source, /<CheckCircle2 size=\{15\} \/>已完成/);
   assert.match(source, /确认前往 HeyGen/);
   assert.match(source, /授权已发起 · HeyGen 确认中/);
@@ -164,10 +168,13 @@ test('existing onboarding presenter can record and bind a new voice without dupl
   assert.match(source, /重新录入声音/);
 });
 
-test('onboarding separates person capture from authorization and guides upper-body framing', () => {
+test('onboarding separates person capture from authorization and guides a smiling human pose', () => {
   assert.match(source, /initialStage\?: 'person' \| 'certification'/);
   assert.match(source, /initialStage === 'certification'/);
   assert.match(source, /initialStage === 'person' && onPersonPrepared/);
   assert.match(styles, /统一人物资料/);
-  assert.match(styles, /建议露出上半身和手部，保持自然微笑与适度手势/);
+  assert.match(styles, /head-and-shoulders silhouette/);
+  assert.match(styles, /%3Cellipse cx='200' cy='65' rx='34' ry='43'/);
+  assert.match(styles, /当前动作  ·  看镜头，保持自然微笑/);
+  assert.doesNotMatch(styles, /border-radius: 48% 48% 24% 24%/);
 });

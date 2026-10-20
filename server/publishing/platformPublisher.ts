@@ -21,10 +21,12 @@ import {
   getLinkedInPost,
   linkedInAuthorUrn,
   linkedInRequiredPublishingScope,
+  publishLinkedInImages,
   publishLinkedInVideo,
 } from '../integrations/linkedin.js';
 import {
   getTikTokPublishStatus,
+  publishFacebookImagePost,
   publishInstagramReel,
   uploadFacebookVideo,
   uploadTikTokVideo,
@@ -44,6 +46,7 @@ import {
 import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
 import { tikTokDirectPostApproved } from '../lib/socialOAuthScopes.js';
 import { assertPublishingCopyFactVersion, type PublishingCopyAudit } from './copyFactVersion.js';
+import { assertUnifiedPublishPreflight } from './unifiedPublishPreflight.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -75,6 +78,7 @@ export interface PublishToAccountInput {
   platform: PublishPlatform;
   videoPath?: string;
   videoUrl?: string;
+  imagePaths?: string[];
   title: string;
   description?: string;
   tags?: unknown;
@@ -149,7 +153,7 @@ async function revalidatePublishSource(input: PublishToAccountInput): Promise<vo
   if (input.trackingPost) await assertManagedPublishingAuthorization(input.trackingPost, input.accountId);
   await assertPublishingCopyFactVersion(input.tenantId, input);
   if (!input.sourceClaim) throw publishError('发布来源校验记录缺失', 409);
-  await verifyFrozenPublishSourceClaim(input.tenantId, input.sourceClaim, input.videoPath);
+  await verifyFrozenPublishSourceClaim(input.tenantId, input.sourceClaim, input.videoPath, input.imagePaths);
 }
 
 async function trackingPost(input: PublishToAccountInput): Promise<PostRecord> {
@@ -321,6 +325,7 @@ async function beginDirectAttempt(
       targetAccountIds: [input.accountId],
       videoPath: input.videoPath || '',
       videoUrl: input.videoUrl || '',
+      imagePaths: input.imagePaths || [],
       publishAttempts: Math.max(1, Number(currentStats.publishAttempts || 0)),
       publishResults: {
         ...publishResults,
@@ -622,7 +627,11 @@ async function publishVideoToAccountWithLease(
   input: PublishToAccountInput,
   publishLease: DirectPublishingLeaseGuard,
 ): Promise<PublishToAccountResult> {
-  await assertNoUnresolvedPublishing({ tenantId: input.tenantId, platform: input.platform, accountIds: [input.accountId], contentId: input.contentId, videoPath: input.videoPath, videoUrl: input.videoUrl, currentPostId: input.trackingPost?.id, currentAttemptId: input.publishAttemptId });
+  await assertNoUnresolvedPublishing({ tenantId: input.tenantId, platform: input.platform, accountIds: [input.accountId], contentId: input.contentId || input.sourceClaim?.projectId, videoPath: input.videoPath, videoUrl: input.videoUrl, currentPostId: input.trackingPost?.id, currentAttemptId: input.publishAttemptId });
+  const imagePaths = [...new Set((input.imagePaths ?? []).map(normalizeVideoPath))];
+  if (imagePaths.length && input.platform !== 'facebook' && input.platform !== 'linkedin') {
+    throw publishError('当前统一图文发布只支持 Facebook 与 LinkedIn', 400);
+  }
   if (input.platform === 'tiktok' && !tikTokDirectPostApproved()) {
     throw publishError('TikTok Direct Post 尚未通过正式审核，当前仅开放账号连接与发布准备，不会向 TikTok 提交内容。', 409);
   }
@@ -691,14 +700,14 @@ async function publishVideoToAccountWithLease(
     const contract = resolveInstagramPublishingContract(account);
     if (contract.oauthProvider === 'instagram_login') assertInstagramPublishingScopes(account);
   }
-  const filePath = input.videoPath
+  const filePath = !imagePaths.length && input.videoPath
     ? validateLocalVideo(
       input.videoPath,
       input.platform === 'linkedin' ? ['.mp4'] : ['.mp4', '.mov', '.webm'],
       input.platform === 'linkedin' ? Number(process.env.LINKEDIN_MAX_UPLOAD_MB ?? 500) : Number(process.env.SOCIAL_MAX_UPLOAD_MB ?? 2048),
     )
     : undefined;
-  if (!filePath && !input.videoUrl) throw publishError('缺少待发布的视频文件或公开视频地址', 400);
+  if (!imagePaths.length && !filePath && !input.videoUrl) throw publishError('缺少待发布的视频文件、公开视频地址或图片产物', 400);
   if (account.platform === 'tiktok' && !filePath) {
     throw publishError('当前 TikTok 发布实现需要本地视频文件', 400);
   }
@@ -753,10 +762,29 @@ async function publishVideoToAccountWithLease(
       });
     }
     if (account.platform === 'facebook') {
-      await publishLease.beforeEffect();
-      await revalidatePublishSource(input);
-      providerStarted = true;
-      video = await uploadFacebookVideo(account.providerAccountId, accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', socialInput);
+      if (imagePaths.length) {
+        video = await publishFacebookImagePost(account.providerAccountId, accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', {
+          imagePaths,
+          title: input.title,
+          description: socialInput.description || '',
+        }, {
+          async beforeImageUpload() {
+            await publishLease.beforeEffect();
+            await revalidatePublishSource(input);
+            providerStarted = true;
+          },
+          async beforePublish() {
+            await publishLease.beforeEffect();
+            await revalidatePublishSource(input);
+          },
+          onProviderReceipt: input.onProviderReceipt,
+        });
+      } else {
+        await publishLease.beforeEffect();
+        await revalidatePublishSource(input);
+        providerStarted = true;
+        video = await uploadFacebookVideo(account.providerAccountId, accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', socialInput);
+      }
     }
     if (account.platform === 'instagram') {
       if (input.finalizeTracking === false && !input.onProviderReceipt) throw publishError('instagram_container_persistence_required', 503);
@@ -806,7 +834,7 @@ async function publishVideoToAccountWithLease(
       } });
     }
     if (account.platform === 'linkedin') {
-      if (!filePath) throw publishError('LinkedIn 发布需要本地 MP4 视频文件', 400);
+      if (!filePath && !imagePaths.length) throw publishError('LinkedIn 发布需要本地 MP4 视频或已批准图片', 400);
       const requiredScope = linkedInRequiredPublishingScope(account);
       if (!new Set(String(account.scope || '').split(/[\s,]+/).filter(Boolean)).has(requiredScope)) {
         throw publishError(`LinkedIn 账号缺少 ${requiredScope} 发布权限，请重新授权`, 403);
@@ -830,12 +858,7 @@ async function publishVideoToAccountWithLease(
         }
         if (input.onProviderReceipt) await input.onProviderReceipt(receiptId);
       };
-      video = await publishLinkedInVideo({
-        accessToken,
-        account,
-        filePath,
-        title: input.title,
-        commentary: socialInput.description || '',
+      const lifecycle = {
         async beforeInitialize() {
           await publishLease.beforeEffect();
           await revalidatePublishSource(input);
@@ -850,7 +873,24 @@ async function publishVideoToAccountWithLease(
           await revalidatePublishSource(input);
         },
         onProviderReceipt: persistLinkedInReceipt,
-      });
+      };
+      video = imagePaths.length
+        ? await publishLinkedInImages({
+            accessToken,
+            account,
+            imagePaths,
+            title: input.title,
+            commentary: socialInput.description || '',
+            ...lifecycle,
+          })
+        : await publishLinkedInVideo({
+            accessToken,
+            account,
+            filePath: filePath!,
+            title: input.title,
+            commentary: socialInput.description || '',
+            ...lifecycle,
+          });
     }
     const deliveryStatus = (video as { deliveryStatus?: unknown } | undefined)?.deliveryStatus;
     const providerReceiptId = String((video as { providerReceiptId?: unknown } | undefined)?.providerReceiptId || '').trim();
@@ -916,10 +956,10 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
     if (input.finalizeTracking === false && !input.onPublishedMedia) throw publishError('instagram_media_persistence_required', 503);
   }
   await assertPublicationAtomicStore(store);
-  if (!input.title.trim()) throw publishError('发布标题不能为空', 400);
+  assertUnifiedPublishPreflight(input);
   const copyAudit = await assertPublishingCopyFactVersion(input.tenantId, input);
   const sourceClaim = input.sourceClaim
-    ? await verifyFrozenPublishSourceClaim(input.tenantId, input.sourceClaim, input.videoPath)
+    ? await verifyFrozenPublishSourceClaim(input.tenantId, input.sourceClaim, input.videoPath, input.imagePaths)
     : await freezePublishSourceClaim(input.tenantId, input);
   const verifiedInput = {
     ...input,
@@ -931,7 +971,7 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
     tenantId: verifiedInput.tenantId,
     platform: verifiedInput.platform,
     accountId: verifiedInput.accountId,
-    contentId: verifiedInput.contentId,
+    contentId: verifiedInput.contentId || sourceClaim.projectId,
     videoPath: verifiedInput.videoPath,
     videoUrl: verifiedInput.videoUrl,
   }, publishLease => publishVideoToAccountWithLease(verifiedInput, publishLease));

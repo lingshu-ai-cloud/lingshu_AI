@@ -3,7 +3,7 @@ import { cloneElement, isValidElement, useState, useEffect, useId, useRef } from
 import { Alert, Button, Checkbox, Collapse, Form, Input, Modal, Pagination, Select, Tabs, Upload as AntUpload } from 'antd';
 import { LsGradientProgress } from './ui/LsExperiencePrimitives';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
-import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, ArrowRight, Users, type LucideIcon } from 'lucide-react';
+import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, Globe2, ShieldCheck, ArrowRight, Users, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { completeDemoStep } from '../lib/demoProgress';
 import {
@@ -241,27 +241,23 @@ const MARKET_OPTIONS = ['中东', '东南亚', '中亚', '南亚', '东亚', '�
 const LANGUAGE_OPTIONS = ['英语', '阿拉伯语', '西班牙语', '法语', '俄语', '葡萄牙语', '德语', '日语', '韩语', '土耳其语', '印地语', '印尼语', '泰语', '越南语'];
 const CATEGORY_OPTIONS = ['服装', '家居', '饰品', '五金', '美妆个护', '玩具', '消费电子', '汽摩配件', '机械设备', '工业自动化与智能装备', '包装印刷', '食品饮料', '宠物用品'];
 const COMPANY_TYPE_OPTIONS = ['工厂', '工贸一体', '贸易商', '出口型企业', '品牌商', '跨境电商'];
-const COOPERATION_ROUTE_OPTIONS: Array<{ value: CooperationRoute; label: string; buyers: string[] }> = [
-  { value: 'oem_odm', label: 'OEM / ODM（品牌定制与开发）', buyers: ['品牌创始人', '产品经理', '采购'] },
-  { value: 'wholesale_distribution', label: '现货批发 / 经销', buyers: ['进口商', '经销商', '渠道采购'] },
-  { value: 'consumer_retail', label: 'C 端零售', buyers: ['终端消费者'] },
-];
 const CERTIFICATION_OPTIONS = ['CE', 'FDA', 'SGS', 'RoHS', 'FCC', 'MSDS', 'ISO', 'BSCI', 'GOTS', 'OEKO-TEX'];
 const BRAND_TONE_OPTIONS = ['专业可靠', '亲切自然', '简洁直接', '高端克制', '热情主动', '务实高效'];
 const COMMUNICATION_STYLE_OPTIONS = ['专业', '轻松', '亲切', '正式'];
 const PAGE_SIZE = 5;
 const SERVICE_INTAKE_AUTO_OPEN_KEY = 'lingshu:enterprise:service-intake-auto-opened';
 
-type KnowledgeView = 'products' | 'bizRules' | 'faq' | 'company' | 'socialStrategy' | 'materials' | 'salesStyle' | 'advanced' | 'presenters' | 'presenterRouting';
-type EnterpriseArea = 'facts' | 'social' | 'appearance' | 'service';
+type KnowledgeView = 'products' | 'bizRules' | 'faq' | 'company' | 'materials' | 'salesStyle' | 'advanced' | 'presenters' | 'presenterRouting';
+type EnterpriseArea = 'facts' | 'appearance' | 'service';
 
 function advisorInitialEnterpriseView(): KnowledgeView {
   try {
     if (new URLSearchParams(window.location.search).get('arkVerification') === 'complete') return 'presenters';
-    const value = localStorage.getItem('lingshu:enterprise:initial-view') as KnowledgeView | null;
+    const value = localStorage.getItem('lingshu:enterprise:initial-view');
     if (value === 'materials') return 'products';
     if (value === 'presenterRouting') return 'presenters';
-    if (value && ['products', 'bizRules', 'faq', 'company', 'socialStrategy', 'materials', 'salesStyle', 'advanced', 'presenters', 'presenterRouting'].includes(value)) return value;
+    if (value === 'socialStrategy') return 'company';
+    if (value && ['products', 'bizRules', 'faq', 'company', 'materials', 'salesStyle', 'advanced', 'presenters', 'presenterRouting'].includes(value)) return value as KnowledgeView;
   } catch { /* ignore */ }
   return 'company';
 }
@@ -278,7 +274,6 @@ const SERVICE_VIEWS: Array<{ id: KnowledgeView; label: string; hint: string }> =
   { id: 'advanced', label: '接待与转人工', hint: '权限和提醒' },
 ];
 function enterpriseAreaForView(view: KnowledgeView): EnterpriseArea {
-  if (view === 'socialStrategy') return 'social';
   if (['presenters', 'presenterRouting'].includes(view)) return 'appearance';
   if (['bizRules', 'faq', 'salesStyle', 'advanced'].includes(view)) return 'service';
   return 'facts';
@@ -286,7 +281,6 @@ function enterpriseAreaForView(view: KnowledgeView): EnterpriseArea {
 
 const KNOWLEDGE_VIEW_ICONS: Record<KnowledgeView, LucideIcon> = {
   company: Globe2,
-  socialStrategy: Megaphone,
   products: Package,
   materials: Image,
   bizRules: ShieldCheck,
@@ -485,7 +479,7 @@ export function sectionCompletion(profile: Profile): Record<SectionKey, boolean>
     bizRules: Boolean(profile.bizRules?.quoteMode && profile.bizRules?.samplePolicy?.trim() && profile.bizRules?.paymentTerms?.trim()),
     faq: (profile.faq ?? []).length >= 5,
     market: Boolean(profile.company.mainMarkets.trim() && profile.company.primaryLanguages?.trim()),
-    company: profile.company.description.trim().length >= 50,
+    company: Boolean(profile.company.name.trim() && profile.company.industry.trim() && profile.company.companyType?.trim()),
   };
 }
 
@@ -1010,9 +1004,10 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const view = (event as CustomEvent<{ view?: KnowledgeView }>).detail?.view;
-      if (!view || !['products', 'bizRules', 'faq', 'company', 'socialStrategy', 'salesStyle', 'advanced', 'presenters', 'presenterRouting'].includes(view)) return;
-      const normalized = view === 'presenterRouting' ? 'presenters' : view;
+      const view = (event as CustomEvent<{ view?: string }>).detail?.view;
+      if (view === 'socialStrategy') { setEnterpriseArea('facts'); setKnowledgeView('company'); return; }
+      if (!view || !['products', 'bizRules', 'faq', 'company', 'salesStyle', 'advanced', 'presenters', 'presenterRouting'].includes(view)) return;
+      const normalized = (view === 'presenterRouting' ? 'presenters' : view) as KnowledgeView;
       setKnowledgeView(normalized);
       setEnterpriseArea(enterpriseAreaForView(normalized));
     };
@@ -1825,7 +1820,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   );
 
   const companySection = (
-    <KnowledgeCard icon={Building2} title="公司介绍" purpose="AI 开场白和自我介绍的素材" completed={completions.company} stat={`已填写 ${profile.company.description.trim().length} 字 · 建议至少 50 字`}>
+    <KnowledgeCard icon={Building2} title="企业基本资料" purpose="供内容、客服和数字员工识别企业身份" completed={completions.company} stat={completions.company ? '基础资料已填写' : '请填写名称、行业和企业类型'}>
       <div className="grid grid-cols-2 gap-4">
         <Field label="公司名称">
           <Input className={inputCls} value={profile.company.name} onChange={e => set('company')('name', e.target.value)} placeholder="示例贸易有限公司" />
@@ -1836,49 +1831,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
         <Field label="企业类型">
           <OptionSelector value={profile.company.companyType ?? ''} options={COMPANY_TYPE_OPTIONS} multiple={false} onChange={value => set('company')('companyType', value)} placeholder="选择企业类型" />
         </Field>
-        <Field label="成立年份">
-          <Input className={inputCls} value={profile.company.founded} onChange={e => set('company')('founded', e.target.value)} placeholder="2018" />
-        </Field>
-      </div>
-      <Field label="公司简介">
-        <Input.TextArea className={textareaCls} rows={4} value={profile.company.description} onChange={e => set('company')('description', e.target.value)} placeholder="介绍公司背景、主营品类、供应链优势、交付能力和海外服务经验。" />
-      </Field>
-      <button type="button" onClick={() => { setEnterpriseArea('social'); setKnowledgeView('socialStrategy'); }} className="mt-4 flex w-full items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50/60 px-4 py-3 text-left hover:bg-emerald-50">
-        <span><span className="block text-xs font-semibold text-emerald-900">社媒脚本策略</span><span className="mt-1 block text-[11px] text-emerald-700">已启用 {profile.socialStrategy?.enabledRoutes.length ?? 0} 条合作路线 · 管理默认买家与主 CTA</span></span>
-        <ChevronRight size={16} className="text-emerald-700" />
-      </button>
-    </KnowledgeCard>
-  );
-
-  const socialStrategySection = (
-    <KnowledgeCard icon={Megaphone} title="社媒策略" purpose="为新建社媒脚本提供路线、默认买家和主 CTA" completed={Boolean(profile.socialStrategy?.enabledRoutes.length)}>
-      <p className="mb-4 text-[11px] leading-5 text-text-muted">系统会参考企业资料预填；你修改过的内容会作为企业默认值保留。多条路线时，创作工作台会为单条视频再次确认路线。</p>
-      <div className="mb-4 rounded-lg border border-border bg-surface-2/60 p-3">
-        <p className="text-xs font-semibold text-text-primary">承接渠道</p>
-        <p className="mt-1 text-[11px] text-text-muted">状态仅从账号连接或官网配置同步，此处不可手动修改。</p>
-        <div className="mt-2 flex flex-wrap gap-2">{['Messenger', '表单', '私信', '官网'].map(channel => <span key={channel} className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-slate-500">{channel} · 未验证</span>)}</div>
-      </div>
-      <div className="space-y-3">
-        {COOPERATION_ROUTE_OPTIONS.map(option => {
-          const selected = profile.socialStrategy?.enabledRoutes.includes(option.value) ?? false;
-          const route = profile.socialStrategy?.routeStrategies[option.value];
-          return <div key={option.value} className={`rounded-lg border p-4 ${selected ? 'border-emerald-200 bg-emerald-50/40' : 'border-border bg-white'}`}>
-            <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-text-primary">
-              <input type="checkbox" className="h-4 w-4 accent-emerald-600" checked={selected} onChange={event => setProfile(prev => {
-                const current = prev.socialStrategy ?? DEFAULT.socialStrategy!;
-                const enabledRoutes = event.target.checked ? [...current.enabledRoutes, option.value] : current.enabledRoutes.filter(value => value !== option.value);
-                const routeStrategies = { ...current.routeStrategies };
-                if (event.target.checked && !routeStrategies[option.value]) routeStrategies[option.value] = { targetBuyerRoles: option.buyers, primaryCta: '引导通过 Messenger 联系' };
-                return { ...prev, socialStrategy: { ...current, enabledRoutes, routeStrategies } };
-              })} />
-              {option.label}
-            </label>
-            {selected && <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <Field label="默认买家（顺序即优先级）"><Input className={inputCls} value={(route?.targetBuyerRoles ?? option.buyers).join('、')} onChange={event => setProfile(prev => ({ ...prev, socialStrategy: { ...(prev.socialStrategy ?? DEFAULT.socialStrategy!), routeStrategies: { ...(prev.socialStrategy?.routeStrategies ?? {}), [option.value]: { targetBuyerRoles: splitTokens(event.target.value), primaryCta: route?.primaryCta ?? '引导通过 Messenger 联系' } } } }))} /></Field>
-              <Field label="默认主 CTA"><Input className={inputCls} value={route?.primaryCta ?? '引导通过 Messenger 联系'} onChange={event => setProfile(prev => ({ ...prev, socialStrategy: { ...(prev.socialStrategy ?? DEFAULT.socialStrategy!), routeStrategies: { ...(prev.socialStrategy?.routeStrategies ?? {}), [option.value]: { targetBuyerRoles: route?.targetBuyerRoles ?? option.buyers, primaryCta: event.target.value } } } }))} /></Field>
-            </div>}
-          </div>;
-        })}
       </div>
     </KnowledgeCard>
   );
@@ -1958,14 +1910,13 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
         <Tabs activeKey={enterpriseArea} onChange={key => {
           const area = key as EnterpriseArea;
           setEnterpriseArea(area);
-          setKnowledgeView(area === 'facts' ? 'company' : area === 'social' ? 'socialStrategy' : area === 'appearance' ? 'presenters' : 'bizRules');
+          setKnowledgeView(area === 'facts' ? 'company' : area === 'appearance' ? 'presenters' : 'bizRules');
           if (area === 'service') openKnowledgeIntakeOnce();
         }} tabBarExtraContent={enterpriseArea === 'appearance' ? undefined : { right: <Button type="primary" onClick={handleSave} loading={saving} disabled={!hasUnsavedChanges}
           icon={saveError ? <X size={14} /> : !hasUnsavedChanges ? <CheckCircle2 size={14} /> : <Save size={14} />}>
           {saveError ? '重试保存' : !hasUnsavedChanges ? '已保存' : '保存资料'}
         </Button> }} items={[
           { key: 'facts', label: '企业真实资料', icon: <Building2 size={16} /> },
-          { key: 'social', label: '社媒策略', icon: <Megaphone size={16} /> },
           { key: 'appearance', label: '人物与出镜', icon: <Users size={16} /> },
           { key: 'service', label: '智能客服规范', icon: <MessageSquare size={16} /> },
         ]} />
@@ -1992,24 +1943,23 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
               </button>)}
             </div> : <p className="mt-3 rounded-lg bg-emerald-100/70 px-3 py-2 text-xs font-bold text-emerald-800">关键资料已补齐，所有 Agent 将读取同一已确认版本。</p>}
           </section>}
-          {enterpriseArea !== 'social' && enterpriseArea !== 'appearance' && <Tabs activeKey={knowledgeView} onChange={key => setKnowledgeView(key as KnowledgeView)}
+          {enterpriseArea !== 'appearance' && <Tabs activeKey={knowledgeView} onChange={key => setKnowledgeView(key as KnowledgeView)}
             items={(enterpriseArea === 'facts' ? FACT_VIEWS : SERVICE_VIEWS).map(item => {
               const Icon = KNOWLEDGE_VIEW_ICONS[item.id];
               return { key: item.id, label: item.label, icon: <Icon size={16} /> };
             })} />}
 
 
-          {(enterpriseArea === 'facts' || enterpriseArea === 'social') && <div className={`rounded-lg border p-4 ${enterpriseArea === 'facts' ? 'border-emerald-100 bg-emerald-50/60' : 'border-violet-100 bg-violet-50/60'}`}>
+          {enterpriseArea === 'facts' && <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-4">
             <div className="flex items-start gap-3">
-              {enterpriseArea === 'facts' ? <Building2 size={15} className="mt-0.5 shrink-0 text-emerald-700" /> : <Megaphone size={15} className="mt-0.5 shrink-0 text-violet-700" />}
+              <Building2 size={15} className="mt-0.5 shrink-0 text-emerald-700" />
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-text-primary">{enterpriseArea === 'facts' ? '已保存资料可供 AI 使用' : '设置社媒创作默认策略'}</p>
+                <p className="text-xs font-semibold text-text-primary">已保存资料可供 AI 使用</p>
               </div>
             </div>
           </div>}
 
           {knowledgeView === 'company' && <>{marketSection}{companySection}</>}
-          {knowledgeView === 'socialStrategy' && socialStrategySection}
           {knowledgeView === 'presenters' && <EnterprisePresenters />}
 
           {knowledgeView === 'products' && (

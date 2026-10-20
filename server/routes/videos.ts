@@ -234,6 +234,8 @@ interface CrawledVideo {
   duration: number;
   views: string;
   tags: string[];
+  /** Original public post copy. Kept as source evidence, never as publish authority. */
+  caption?: string;
   uploadedAt?: string;
   dateEvidence?: string;
   author?: string;
@@ -507,6 +509,7 @@ function isValidImagePostRecord(record: Record<string, unknown>): boolean {
   const platform = (record.platform || inferPlatformFromUrl(sourceUrl)) as Platform;
   if (platform === 'instagram') return /\/p\//i.test(sourceUrl);
   if (platform === 'facebook') return !/\/(?:watch|reel|videos)\b/i.test(sourceUrl);
+  if (platform === 'linkedin') return /\/posts\//i.test(sourceUrl) || /activity[:-]\d+/i.test(sourceUrl);
   return true;
 }
 
@@ -1143,7 +1146,7 @@ export interface CrawlVideosResult {
 }
 
 // ─── POST /videos/crawl ──────────────────────────────────────────────────────
-// Body: { platform?: 'youtube' | 'tiktok' | 'facebook' | 'instagram', keyword?: string, limit?: number, dateFrom?: string, dateTo?: string }
+// Body: { platform?: 'linkedin' | 'facebook' | 'youtube' | 'tiktok' | 'instagram', keyword?: string, limit?: number, dateFrom?: string, dateTo?: string }
 videosRouter.post('/crawl', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const {
@@ -1166,8 +1169,8 @@ videosRouter.post('/crawl', async (req, res) => {
     accountName?: string;
   };
 
-  if (!['youtube', 'tiktok', 'facebook', 'instagram'].includes(platform)) {
-    res.status(400).json({ error: 'Only youtube, tiktok, facebook and instagram are supported by this crawler task' });
+  if (!['linkedin', 'facebook', 'youtube', 'tiktok', 'instagram'].includes(platform)) {
+    res.status(400).json({ error: 'Only linkedin, facebook, youtube, tiktok and instagram are supported by this crawler task' });
     return;
   }
 
@@ -1181,17 +1184,22 @@ videosRouter.post('/crawl', async (req, res) => {
 });
 
 // ─── POST /videos/crawl-image-posts ──────────────────────────────────────────
-// Body: { platform?: 'youtube' | 'tiktok' | 'facebook' | 'instagram', keyword?: string, limit?: number }
+// Body: { platform?: 'linkedin' | 'facebook' | 'youtube' | 'tiktok' | 'instagram', keyword?: string, limit?: number }
 videosRouter.post('/crawl-image-posts', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const { platform = 'instagram', keyword = DEFAULT_CRAWL_KEYWORDS, limit = 5 } = req.body as {
+  const { platform = 'instagram', keyword = DEFAULT_CRAWL_KEYWORDS, limit = 5, mode, accountUrl, accountName, dateFrom, dateTo } = req.body as {
     platform?: Platform;
     keyword?: string;
     limit?: number;
+    mode?: 'keyword' | 'account';
+    accountUrl?: string;
+    accountName?: string;
+    dateFrom?: string;
+    dateTo?: string;
   };
 
-  if (!['youtube', 'tiktok', 'facebook', 'instagram'].includes(platform)) {
-    res.status(400).json({ error: 'Only youtube, tiktok, facebook and instagram are supported by this crawler task' });
+  if (!['linkedin', 'facebook', 'youtube', 'tiktok', 'instagram'].includes(platform)) {
+    res.status(400).json({ error: 'Only linkedin, facebook, youtube, tiktok and instagram are supported by this crawler task' });
     return;
   }
 
@@ -1201,6 +1209,11 @@ videosRouter.post('/crawl-image-posts', async (req, res) => {
       platform,
       keyword,
       limit,
+      mode,
+      accountUrl,
+      accountName,
+      dateFrom,
+      dateTo,
     });
     res.json(result);
   } catch (e) {
@@ -1235,7 +1248,9 @@ export async function crawlImagePostsForTenant(input: {
 
   try {
     const safeLimit = Math.max(target * 4, target, 12);
-    if (input.platform === 'instagram') {
+    if (input.platform === 'linkedin') {
+      items = await crawlLinkedInImagePostsApify(accountUrl || keyword, safeLimit);
+    } else if (input.platform === 'instagram') {
       items = await crawlInstagramImagePostsApify(keyword, safeLimit, accountUrl);
     } else if (input.platform === 'tiktok') {
       items = await crawlTikTokImagePostsApify(keyword, safeLimit, accountUrl, dateFrom, dateTo);
@@ -1257,7 +1272,8 @@ export async function crawlImagePostsForTenant(input: {
   }
 
   const seen = new Set<string>();
-  const orderedItems = items
+  const orderedItems = [...items]
+    .sort((left, right) => imagePostHeatValue(right) - imagePostHeatValue(left))
     .filter(item => {
       if (seen.has(item.sourceUrl)) return false;
       seen.add(item.sourceUrl);
@@ -1482,6 +1498,10 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
       items = await crawlAccountHomepage(platform, accountUrl, Math.max(target, Math.min(safeLimit, 30)), dateFrom, dateTo, input.cloudFallback === true, input.newCandidatesOnly === true);
       if (hasDateRange(dateFrom, dateTo)) items = filterDateRangeItems(items, dateFrom, dateTo);
       if (items.some(item => item.source === 'apify')) crawlerSource = `apify-${platform}-account`;
+    } else if (platform === 'linkedin') {
+      crawlerSource = 'apify-linkedin-company-posts';
+      const linkedInPosts = await crawlLinkedInCompanyPostsApify(accountUrl || keyword, safeLimit, dateFrom, dateTo);
+      items = linkedInPosts.videos;
     } else if (platform === 'youtube') {
       items = await crawlYouTubeSearch(keyword, safeLimit, dateFrom, dateTo);
     } else if (platform === 'facebook') {
@@ -1632,6 +1652,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
         aiAnalysis: JSON.stringify({
           ...existingAnalysis,
           views: item.views || existingAnalysis.views,
+          caption: item.caption || existingAnalysis.caption,
           uploadedAt: item.uploadedAt || existingAnalysis.uploadedAt,
           dateEvidence: item.dateEvidence || existingAnalysis.dateEvidence,
           author: item.author || existingAnalysis.author || (accountMode ? accountName : undefined),
@@ -1694,6 +1715,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
       aiAnalysis: JSON.stringify({
         source: crawlerSource,
         views: item.views,
+        caption: item.caption,
         uploadedAt: item.uploadedAt,
         dateEvidence: item.dateEvidence,
         author: item.author || (accountMode ? accountName : undefined),
@@ -2085,7 +2107,7 @@ videosRouter.post('/import-reference-file', async (req, res) => {
         return { ...recovered, deduplicated: true };
       }
       const title = String(req.query.title || '本地参考视频').trim().slice(0, 160) || '本地参考视频';
-      const platform = req.query.platform === 'instagram' || req.query.platform === 'facebook' || req.query.platform === 'youtube'
+      const platform = req.query.platform === 'linkedin' || req.query.platform === 'instagram' || req.query.platform === 'facebook' || req.query.platform === 'youtube'
         ? req.query.platform : 'tiktok';
       const sourceUrl = String(req.query.sourceUrl || '').trim().slice(0, 1000);
       const now = new Date().toISOString();
@@ -3639,7 +3661,7 @@ videosRouter.post('/material-exact-analysis', async (req, res) => {
   const materialId = String(req.body?.materialId || '').trim();
   const rawMaterialId = materialId.replace(/^pb-/, '');
   const title = String(req.body?.title || '置顶素材').trim().slice(0, 200);
-  const platform = (['tiktok', 'instagram', 'youtube', 'facebook'].includes(String(req.body?.platform))
+  const platform = (['linkedin', 'facebook', 'tiktok', 'instagram', 'youtube'].includes(String(req.body?.platform))
     ? req.body.platform : 'tiktok') as Platform;
   const duration = Math.max(0, Number(req.body?.duration || 0));
   if (!materialId) { res.status(400).json({ error: 'materialId is required' }); return; }
@@ -6582,6 +6604,136 @@ function apifyTikTokItemToImagePost(item: Record<string, unknown>, keyword: stri
   };
 }
 
+type LinkedInCompanyPostResult = { videos: CrawledVideo[]; images: CrawledImagePost[] };
+
+/**
+ * LinkedIn is deliberately account-first. The provider receives a company
+ * page URL; keyword mode may only discover that public company page before it
+ * uses the same adapter. This keeps the main feed tied to confirmed benchmark
+ * accounts instead of turning LinkedIn into a broad, low-signal search source.
+ */
+async function crawlLinkedInCompanyPostsApify(
+  companyUrlOrKeyword: string,
+  limit: number,
+  dateFrom = '',
+  dateTo = '',
+): Promise<LinkedInCompanyPostResult> {
+  const token = process.env.APIFY_TOKEN?.trim();
+  if (!token) throw new Error('APIFY_TOKEN is not configured');
+  const actor = process.env.APIFY_LINKEDIN_ACTOR?.trim() || 'logical_scrapers/linkedin-company-posts-scraper';
+  const companyUrl = isPlatformUrl(companyUrlOrKeyword, 'linkedin')
+    ? stripTrackingParams(companyUrlOrKeyword)
+    : await discoverLinkedInCompanyUrl(companyUrlOrKeyword);
+  const maxItems = Math.min(60, Math.max(limit * 3, limit, 10));
+  const rows = await runApifyActorDatasetItems(actor, {
+    startUrls: [{ url: companyUrl }],
+    maxItems,
+    ...(dateFrom ? { untilDate: dateFrom } : {}),
+    proxyConfiguration: { useApifyProxy: true },
+  }, Number(process.env.APIFY_TIMEOUT_MS || 240_000), 'LinkedIn company posts');
+  const images: CrawledImagePost[] = [];
+  const videos: CrawledVideo[] = [];
+  for (const item of rows) {
+    const mapped = linkedInCompanyPost(item, companyUrl);
+    if (!mapped || !isWithinDateRange(mapped.uploadedAt, dateFrom, dateTo)) continue;
+    if (mapped.kind === 'image') images.push(mapped.item);
+    else videos.push(mapped.item);
+  }
+  return { videos: videos.slice(0, limit), images: images.slice(0, limit) };
+}
+
+async function crawlLinkedInImagePostsApify(companyUrlOrKeyword: string, limit: number): Promise<CrawledImagePost[]> {
+  const result = await crawlLinkedInCompanyPostsApify(companyUrlOrKeyword, limit);
+  if (!result.images.length) throw new Error('LinkedIn company page returned no public image/text posts');
+  return result.images;
+}
+
+async function discoverLinkedInCompanyUrl(keyword: string): Promise<string> {
+  const query = `site:linkedin.com/company "${keyword.trim()}"`;
+  const xml = await fetchText(`https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`, 20_000);
+  for (const match of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
+    const block = match[1] || '';
+    const link = cleanSearchResultUrl(decodeHtml(block.match(/<link>([^<]+)<\/link>/i)?.[1] || '').trim());
+    if (isPlatformUrl(link, 'linkedin') && /\/company\/[^/?#]+/i.test(link)) return stripTrackingParams(link);
+  }
+  throw new Error(`LinkedIn company search returned no public company page for: ${keyword}`);
+}
+
+function linkedInCompanyPost(item: Record<string, unknown>, companyUrl: string):
+  | { kind: 'image'; uploadedAt?: string; item: CrawledImagePost }
+  | { kind: 'video'; uploadedAt?: string; item: CrawledVideo }
+  | null {
+  const postUrl = [item.postUrl, item.url, item.linkedinUrl, item.postLink, item.link]
+    .map(value => String(value || '').trim())
+    .find(value => isPlatformUrl(value, 'linkedin')) || '';
+  if (!postUrl) return null;
+  const sourceUrl = stripTrackingParams(postUrl);
+  const caption = String(item.text || item.content || item.commentary || item.description || item.postText || '').trim();
+  const company = asRecord(item.company);
+  const author = String(item.companyName || item.authorName || company.name || accountLabelFromUrl(companyUrl)).trim();
+  const accountUrl = [item.companyUrl, item.companyLinkedInUrl, item.authorUrl, company.url, companyUrl]
+    .map(value => String(value || '').trim())
+    .find(value => isPlatformUrl(value, 'linkedin')) || companyUrl;
+  const imageUrls = imageUrlsFrom([
+    item.images, item.imageUrls, item.media, item.attachments, item.documentImages,
+    item.thumbnail, item.videoThumbnail, item.videoPoster,
+  ]).filter(url => !/\.(?:mp4|mov|webm)(?:[?#]|$)/i.test(url));
+  const videoUrl = [item.videoUrl, item.videoDownloadUrl, item.mediaUrl]
+    .map(value => String(value || '').trim())
+    .find(value => /^https?:\/\//i.test(value) && /(?:video|mp4|mov|webm)/i.test(value)) || '';
+  const mediaType = String(item.mediaType || item.postType || item.type || '').toLowerCase();
+  const isVideo = Boolean(videoUrl) || mediaType.includes('video');
+  const uploadedAt = linkedInPostUploadedAt(item);
+  const tags = linkedInPostTags(item, caption);
+  const likes = Number(item.reactionCount || item.reactionsCount || item.likesCount || item.numLikes || item.likes || 0);
+  const comments = Number(item.commentCount || item.commentsCount || item.numComments || item.comments || 0);
+  const shares = Number(item.repostCount || item.repostsCount || item.shareCount || item.shares || 0);
+  const followers = Number(item.companyFollowersCount || item.followersCount || company.followersCount || 0) || undefined;
+  const title = cleanupAnalysisTitle(caption || (author ? `LinkedIn post by ${author}` : 'LinkedIn company post'));
+  if (isVideo) {
+    const duration = Number(item.videoDuration || item.duration || item.durationSeconds || 0);
+    const thumbnailUrl = firstImageUrl([item.videoThumbnail, item.videoPoster, item.thumbnail, imageUrls]);
+    if (!thumbnailUrl || !duration) return null;
+    return { kind: 'video', uploadedAt, item: {
+      platform: 'linkedin', title, caption, sourceUrl, thumbnailUrl, duration,
+      views: likes > 0 ? `${compactNumber(likes)} reactions` : 'LinkedIn', tags, uploadedAt, author,
+      sourceAccountUrl: sourceAccountFromProviderMetadata('linkedin', accountUrl) ?? undefined,
+      likes: likes > 0 ? compactNumber(likes) : undefined,
+      comments: comments > 0 ? compactNumber(comments) : undefined,
+      shares: shares > 0 ? compactNumber(shares) : undefined,
+      followers, source: 'apify',
+    } };
+  }
+  const thumbnailUrl = imageUrls[0] || '';
+  if (!thumbnailUrl) return null;
+  return { kind: 'image', uploadedAt, item: {
+    platform: 'linkedin', title, sourceUrl, thumbnailUrl, caption,
+    imageUrls, views: likes > 0 ? `${compactNumber(likes)} reactions` : 'LinkedIn', tags, uploadedAt, author,
+    likes: likes > 0 ? compactNumber(likes) : undefined,
+    comments: comments > 0 ? compactNumber(comments) : undefined,
+    shares: shares > 0 ? compactNumber(shares) : undefined,
+    followers, source: 'apify-image',
+  } };
+}
+
+function linkedInPostUploadedAt(item: Record<string, unknown>): string | undefined {
+  const raw = String(item.postedAt || item.publishedAt || item.createdAt || item.date || item.postedDate || '').trim();
+  if (raw && !Number.isFinite(Number(raw)) && Number.isFinite(Date.parse(raw))) return new Date(raw).toISOString();
+  const timestamp = Number(item.timestamp || item.postedTimestamp || 0);
+  if (timestamp > 1_000_000_000_000) return new Date(timestamp).toISOString();
+  if (timestamp > 1_000_000_000) return new Date(timestamp * 1000).toISOString();
+  return undefined;
+}
+
+function linkedInPostTags(item: Record<string, unknown>, caption: string): string[] {
+  const supplied = Array.isArray(item.hashtags) ? item.hashtags : [];
+  const inline = [...caption.matchAll(/#([\p{L}\p{N}_-]+)/gu)].map(match => match[1]);
+  return [...new Set([...supplied, ...inline]
+    .map(value => typeof value === 'string' ? value : String(asRecord(value).name || asRecord(value).text || ''))
+    .map(value => value.replace(/^#/, '').trim())
+    .filter(Boolean))].slice(0, 20);
+}
+
 async function crawlFacebookImagePostsApify(keyword: string, limit: number): Promise<CrawledImagePost[]> {
   const token = process.env.APIFY_TOKEN?.trim();
   if (!token) throw new Error('APIFY_TOKEN is not configured');
@@ -8886,6 +9038,7 @@ function looksLikeVideoUrl(url: string, platform: Platform): boolean {
   if (platform === 'tiktok') return /\/video\/\d+/i.test(url);
   if (platform === 'instagram') return /\/(?:reel|p)\//i.test(url);
   if (platform === 'facebook') return /\/(?:reel|watch|videos)\b/i.test(url) || /[?&]v=\d+/i.test(url);
+  if (platform === 'linkedin') return /\/(?:posts|feed\/update)\//i.test(url) || /activity[:-]\d+/i.test(url);
   return true;
 }
 
@@ -8916,6 +9069,9 @@ export function looksLikeAccountUrl(input: string, platform: Platform): boolean 
       const first = segments[0] || '';
       return Boolean(first)
         && !['watch', 'reel', 'reels', 'videos', 'groups', 'events', 'marketplace', 'share'].includes(first.toLowerCase());
+    }
+    if (platform === 'linkedin') {
+      return segments[0]?.toLowerCase() === 'company' && Boolean(segments[1]);
     }
   } catch {
     return false;
@@ -8951,6 +9107,7 @@ function normalizeAccountListUrl(platform: Platform, url: string): string {
     if (/\/(?:videos|reels)$/i.test(clean)) return clean;
     return `${clean}/videos`;
   }
+  if (platform === 'linkedin') return clean;
   return clean;
 }
 
@@ -8965,6 +9122,11 @@ function accountListUrlCandidates(platform: Platform, url: string): string[] {
 
 // 采集某个对标账号主页的最新视频列表（flat-playlist 枚举，最多 limit 条）。
 async function crawlAccountHomepage(platform: Platform, accountUrl: string, limit: number, dateFrom = '', dateTo = '', cloudFallback = false, strictProviderLimit = false): Promise<CrawledVideo[]> {
+  if (platform === 'linkedin') {
+    const result = await crawlLinkedInCompanyPostsApify(accountUrl, Math.max(1, limit), dateFrom, dateTo);
+    if (!result.videos.length) throw new Error('LinkedIn 公司主页未抓到带可核验时长和封面的公开视频；图文帖子请使用混合或图文采集。');
+    return result.videos.slice(0, limit);
+  }
   if (platform === 'instagram') {
     let instagramItems: CrawledVideo[] = [];
     if (canUseApifyInstagramCrawlFallback()) {
@@ -9657,6 +9819,13 @@ function sortByHeat(items: CrawledVideo[]): CrawledVideo[] {
   return [...items].sort((a, b) => heatValue(b.views) - heatValue(a.views));
 }
 
+function imagePostHeatValue(item: CrawledImagePost): number {
+  return heatValue(item.plays || '')
+    + heatValue(item.likes || '') * 4
+    + heatValue(item.comments || '') * 8
+    + heatValue(item.shares || '') * 12;
+}
+
 function heatValue(views: string): number {
   const raw = String(views || '').toLowerCase().replace(/,/g, '');
   const n = Number(raw.replace(/[^\d.]/g, ''));
@@ -9739,6 +9908,7 @@ function hasRealThumbnail(item: CrawledVideo): boolean {
 }
 
 const PLATFORM_LABEL: Partial<Record<Platform, string>> = {
+  linkedin: 'LinkedIn',
   youtube: 'YouTube',
   facebook: 'Facebook',
   tiktok: 'TikTok',
@@ -9857,6 +10027,7 @@ function isPlatformUrl(input: string, platform: Platform): boolean {
   if (platform === 'tiktok') return /(?:^|\.)tiktok\.com$/i.test(host);
   if (platform === 'instagram') return /(?:^|\.)instagram\.com$/i.test(host);
   if (platform === 'facebook') return /(?:^|\.)facebook\.com$/i.test(host);
+  if (platform === 'linkedin') return /(?:^|\.)linkedin\.com$/i.test(host);
   if (platform === 'youtube') return /(?:^|\.)youtube\.com$|(?:^|\.)youtu\.be$/i.test(host);
   return false;
 }
@@ -9867,6 +10038,7 @@ export function inferPlatformFromUrl(input: string): Platform {
     if (/tiktok\.com$/i.test(host)) return 'tiktok';
     if (/instagram\.com$/i.test(host)) return 'instagram';
     if (/facebook\.com$/i.test(host)) return 'facebook';
+    if (/linkedin\.com$/i.test(host)) return 'linkedin';
     if (/youtu\.be$|youtube\.com$/i.test(host)) return 'youtube';
   } catch { /* ignore */ }
   return 'tiktok';
@@ -10964,6 +11136,7 @@ function redactProxy(proxy: string): string {
 }
 
 function platformOpsPriority(platform: Platform): number {
+  if (platform === 'linkedin') return 0;
   if (platform === 'youtube') return 0;
   if (platform === 'tiktok') return 1;
   if (platform === 'instagram') return 2;

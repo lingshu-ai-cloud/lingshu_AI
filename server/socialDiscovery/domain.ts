@@ -8,7 +8,7 @@ import type {
 } from '../../shared/contracts/socialContentWorkflow.js';
 
 export const DISCOVERY_MODES: SocialDiscoveryMode[] = ['momentum', 'account', 'innovation'];
-const SUPPORTED_PLATFORMS = new Set(['tiktok', 'instagram', 'youtube', 'facebook']);
+const SUPPORTED_PLATFORMS = new Set(['linkedin', 'facebook', 'tiktok', 'instagram', 'youtube']);
 
 const emptyStats = (): SocialDiscoveryModeRunStats => ({
   requested: 0,

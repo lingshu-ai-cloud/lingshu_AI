@@ -29,6 +29,10 @@ export interface VideoCreationPlan {
     tags: string[];
     status: 'planned' | 'generated' | 'confirmed';
     generatedBy: 'business_agent' | 'content_agent';
+    /** One canonical copy is reused by every platform delivery. */
+    copyMode?: 'canonical_original' | 'authorized_source_reuse';
+    sourceReferenceId?: string;
+    factReplacements?: Array<{ from: string; to: string; kind: 'company' | 'brand' | 'product' }>;
   };
   /** Auditable evidence used by the Business Agent when it proposed this slot. */
   planningEvidence?: {
@@ -195,6 +199,13 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
       tags: cleanList(value.publication.tags, 20, 80).map(item => item.replace(/^#+/, '')),
       status: ['planned', 'generated', 'confirmed'].includes(String(value.publication.status)) ? value.publication.status : 'planned',
       generatedBy: value.publication.generatedBy === 'content_agent' ? 'content_agent' as const : 'business_agent' as const,
+      copyMode: value.publication.copyMode === 'authorized_source_reuse' ? 'authorized_source_reuse' as const : 'canonical_original' as const,
+      sourceReferenceId: String(value.publication.sourceReferenceId || '').trim().slice(0, 160),
+      factReplacements: Array.isArray(value.publication.factReplacements)
+        ? value.publication.factReplacements.flatMap(item => item && typeof item === 'object' && ['company', 'brand', 'product'].includes(String(item.kind))
+          ? [{ from: String(item.from || '').trim().slice(0, 160), to: String(item.to || '').trim().slice(0, 160), kind: item.kind as 'company' | 'brand' | 'product' }]
+          : []).filter(item => item.from && item.to).slice(0, 20)
+        : [],
     } } : {}),
     ...(value.planningEvidence && typeof value.planningEvidence === 'object' ? { planningEvidence: {
       generatedFrom: ['matrix_benchmark_viral', 'matrix_viral', 'matrix_product'].includes(String(value.planningEvidence.generatedFrom))

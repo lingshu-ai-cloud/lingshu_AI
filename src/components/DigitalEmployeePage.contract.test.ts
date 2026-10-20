@@ -211,9 +211,8 @@ assert.doesNotMatch(weeklyCommandCenterSource, /<LsCalendar|WeeklyContentProgres
 assert.doesNotMatch(digitalEmployeeWorkspaceSource, /aria-label="数字员工视图"|<Segmented/, 'the Digital Employee monitor must not split production and publishing into first-level pages');
 assert.match(digitalEmployeeWorkspaceSource, /数字员工生产指挥舱[\s\S]{0,12000}发布与投流[\s\S]{0,2500}客服承接/, 'the Digital Employee monitor must show content projects, traffic and customer service in one view');
 assert.doesNotMatch(digitalEmployeeWorkspaceSource, /异常与待处理/, '异常不得成为脱离内容工程的独立固定模块');
-assert.match(digitalEmployeeWorkspaceSource, /状态来自真实任务回执/, '员工卡必须说明状态来自当前周任务的真实回执');
-assert.match(digitalEmployeeWorkspaceSource, /data-agent-running=\{working \? 'true'/, '执行中的员工必须暴露稳定的运行态语义');
-assert.match(digitalEmployeeWorkspaceSource, /LoaderCircle[\s\S]{0,160}motion-safe:animate-spin/, '执行中的员工必须显示遵守减少动态偏好的旋转状态标识');
+assert.doesNotMatch(digitalEmployeeWorkspaceSource, /数字员工实时状态|四位数字员工正在如何协作|data-agent-running|Agent 协作在线/, 'overview must not duplicate Agent status outside content projects');
+assert.doesNotMatch(digitalEmployeeWorkspaceSource, /LoaderCircle/, 'removed Agent status cards must not leave decorative running indicators behind');
 assert.match(pageSource, /!\["live", "matrix"\]\.includes\(workspaceView\)[\s\S]{0,700}setInterval\(reconcile, 15_000\)/, '任务执行与员工排期都必须用实时流加低频权威回读校准状态');
 assert.match(digitalEmployeeWorkspaceSource, /onOpenAgentSettings && <Button[\s\S]{0,180}onClick=\{onOpenAgentSettings\}>Agent 设置<\/Button>/, 'Agent settings must remain at the upper right of the monitoring view');
 assert.match(digitalEmployeeWorkspaceSource, /publishingExpanded[\s\S]{0,800}展开发布日历[\s\S]{0,10000}完整发布日历/, 'the full publishing calendar must expand inline instead of opening another first-level page');
@@ -424,11 +423,8 @@ assert.match(homeSource, /<BusinessHealthOverview[^]*<NextRoundRecommendationsSe
 assert.match(matrixScheduleSource, /AgentWorkMonitor/, 'Agent progress must come from the retained task board');
 assert.doesNotMatch(homeSource, /Agent 工作轨道/, 'the overview must remove the duplicated Agent work-track section');
 assert.doesNotMatch(smartBusinessSource, /本地模拟 · \{foreignTradeBusinessMock\.factory\}/, 'the local-preview banner must not occupy dashboard space');
-assert.match(smartBusinessSource, /starterWorkspaceApi\.get\(\{ force: true \}\)/, 'Agent detail must load the current account usage ledger, including prior test runs');
-assert.match(smartBusinessSource, /digitalEmployeeApi\.agentUsageCosts\(\)/, 'Agent detail must use the shared account ledger even when the Starter workspace is unavailable');
-assert.match(smartBusinessSource, /costCny\.settlementStatus === "settled"[\s\S]{0,120}costCny\.settled/, 'Agent detail must use only the real settled cost rather than estimated or reserved spend');
-assert.match(smartBusinessSource, /过去已核算消耗/, 'Agent detail must expose historical settled spend');
-assert.match(smartBusinessSource, /账号真实结算账本/, 'Agent detail must identify the persisted account ledger as its source');
+assert.doesNotMatch(smartBusinessSource, /starterWorkspaceApi|agentUsageCosts|costCny\.settlementStatus|过去已核算消耗|账号真实结算账本/, 'Agent detail must not expose the internal provider-cost ledger');
+assert.match(smartBusinessSource, /用户积分统一在“套餐与积分”中展示；供应商成本仅用于后台成本优化。/, 'Agent detail must direct users to the separated customer points account');
 assert.match(smartBusinessSource, /<MatrixView[^>]*\bdata=\{data\}/, 'the account matrix tab must use the deterministic editable weekly matrix');
 assert.match(matrixViewSource, /<DigitalEmployeeWorkspace data=\{data\}/, 'the digital employee workspace must receive the complete persisted overview');
 assert.doesNotMatch(smartBusinessSource, /排期规则：/, 'the matrix must not add a redundant prose rule below the visual schedule');

@@ -3,7 +3,8 @@ import { PLATFORM_CAPABILITY_EVIDENCE_COLLECTION } from '../publishing/platformC
 import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import { ingestEngagementEvents } from './ingestion.js';
-import { createMetaCommentAdapter, createYouTubeCommentAdapter } from './platformAdapters.js';
+import { createLinkedInCommentAdapter, createMetaCommentAdapter, createYouTubeCommentAdapter } from './platformAdapters.js';
+import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
 
 const text = (value: unknown): string => String(value ?? '').trim();
 
@@ -40,6 +41,23 @@ export async function runEngagementIngestionScan(input: { dataStore?: DataStore;
         ? createYouTubeCommentAdapter(account, evidence.verified_at)
         : evidence.platform === 'facebook' || evidence.platform === 'instagram'
           ? createMetaCommentAdapter(account, evidence.platform, evidence.verified_at, process.env.META_GRAPH_VERSION?.trim() || 'v25.0')
+          : evidence.platform === 'linkedin'
+            ? createLinkedInCommentAdapter(account, evidence.verified_at, {
+                dataStore,
+                onMetric: async metric => { await saveSocialMetricSnapshot({
+                  tenantId: metric.tenantId,
+                  platform: 'linkedin',
+                  accountId: metric.accountId,
+                  contentId: metric.contentId,
+                  valueKind: 'cumulative',
+                  metrics: metric.metrics,
+                  rawMetrics: {
+                    source: 'linkedin_social_actions',
+                    coverage: 'registered_content_only',
+                    provider: metric.rawMetrics,
+                  },
+                }); },
+              })
           : null;
       if (!adapter) { result.unavailable += 1; continue; }
       const ingestion = await ingestEngagementEvents({

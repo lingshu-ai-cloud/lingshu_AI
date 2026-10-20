@@ -208,7 +208,7 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
     ? input.enabledWorkflows.filter((item): item is DigitalEmployeeConfig['enabledWorkflows'][number] => allowedWorkflows.has(item as DigitalEmployeeConfig['enabledWorkflows'][number]))
     : [];
   const allowedPublishingPlatforms = new Set<PublishingPlatform>(['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin']);
-  const socialCadence = text(input.socialCadence, 1000) || 'YouTube、TikTok、Instagram、Facebook；公开行业关键词与已确认对标账号；近 7 天；每天 09:00；每次最多 20 条；按链接与标题去重 30 天；每周生成 5 条发布草稿，发布前人工审批';
+  const socialCadence = text(input.socialCadence, 1000) || 'LinkedIn、Facebook 为主，TikTok、Instagram、YouTube 为补充；优先采集已确认对标账号，关键词仅补充发现；近 7 天；每天 09:00；每次最多 20 条；按链接与标题去重 30 天；每周生成 5 条发布草稿，发布前人工审批';
   const publishingTargets: PublishingTarget[] = hydrateWeeklyPublishingTargets(Array.isArray(input.publishingTargets)
     ? input.publishingTargets
       .map(item => ({
@@ -365,7 +365,7 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
     {
       key: 'scheduled_source_collection',
       title: '编导采集平台热点与对标',
-      description: `编导 Agent 调用采集能力，为 ${contentPlatformNames} 配置关键词、对标账号和采集范围，冷启动按趋势 / 对标账号 / 创新样本 ${SOCIAL_DISCOVERY_BASELINE.map(item => `${item.percent}%`).join(' / ')} 试配，周复盘后再按自有账号证据调整；过程结果同步到灵感中心，节奏为：${config.socialCadence}。`,
+      description: `编导 Agent 调用采集能力，只从 ${contentPlatformNames} 已确认的对标账号采集视频和图文；图文保留原帖配文，只有通过来源、分析、相关性和可迁移性准入的候选才进入生产库存。过程结果同步到灵感中心，节奏为：${config.socialCadence}。`,
       agentRole: 'director', backgroundCapability: 'channel', kind: 'activation', sequence: 3, priority: 'high', requiresApproval: false, dependsOn: ['goal_decomposition'], expectedMinutes: 4,
       businessDomain: 'content', capabilityKey: 'scheduler.social_collection', destination: 'scheduled', statusSource: 'scheduled_tasks + crawl_jobs', executionMode: 'observe', externalEffect: 'schedule',
     },
@@ -518,7 +518,7 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
     // is intentionally not part of the current digital-employee workflow.
     estimatedCost: 0,
     estimatedMinutes,
-    qualityGates: ['企业事实完整性', '爆款证据完整性', '平台改编差异化', '内容质量门', '发布与批量跟进审批', '业务结果可追溯'],
+    qualityGates: ['企业事实完整性', '爆款证据完整性', '平台媒体格式适配', '统一文案与 Tag 一致性', '内容质量门', '发布与批量跟进审批', '业务结果可追溯'],
     riskSummary: '读取、分析和内部草稿属于低风险动作；平台发布、批量发送与商业承诺仍需负责人批准。',
     tasks,
   };
@@ -567,7 +567,7 @@ export function buildTaskOutput(
     };
   }
   if (taskKey === 'scheduled_source_collection') {
-    return { capability: 'scheduler.social_collection', destination: 'scheduled', cadence: config.socialCadence, platforms: goal.contentPlatforms, discoveryBaseline: SOCIAL_DISCOVERY_BASELINE, mixPolicy: 'cold_start_only_rebalance_with_owned_account_evidence', taskTypes: ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'], statusSource: 'scheduled_tasks + crawl_jobs', externalWritePerformed: false };
+    return { capability: 'scheduler.social_collection', destination: 'scheduled', cadence: config.socialCadence, platforms: goal.contentPlatforms, discoveryBaseline: SOCIAL_DISCOVERY_BASELINE, mixPolicy: 'confirmed_competitor_accounts_only', taskTypes: ['competitor_account_crawl'], statusSource: 'scheduled_tasks + crawl_jobs + social_candidate_evidence', externalWritePerformed: false };
   }
   if (taskKey === 'viral_analysis') {
     return { capability: 'inspiration.exact_analysis', destination: 'socialInspiration', minimumEvidence: 'full_video_exact_analysis', statusSource: 'trend_videos.aiAnalysis', selectionPerformed: false };
