@@ -194,6 +194,14 @@ import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllo
 import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
 import { MATERIAL_SOURCE_CATEGORIES, MATERIAL_THEMES, materialSourceCategoryOf, materialThemeTagsOf } from '../../shared/materialTaxonomy.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
+import {
+  appendMaterialUsageManifest,
+  buildStudioMaterialUsageManifest,
+  materialUsageSummariesFromProjects,
+  type StudioMaterialPublishLink,
+  type StudioMaterialUsageProject,
+} from '../lib/materialUsageTracking.js';
+import { EMPTY_MATERIAL_USAGE_SUMMARY, type MaterialUsageSummary } from '../../shared/contracts/materialUsageTracking.js';
 import { bindSocialProjectSpec, digitalEmployeeProjectBelongs, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
 import { assertFrozenStudioProjectWrite, frozenStudioProjectSpec } from '../starter198/socialContentStudioFrozenBridge.js';
 import { readFrozenStudioOperationalEvidence } from '../starter198/socialContentStudioOperationalEvidence.js';
@@ -212,6 +220,98 @@ import {
    视频生成必须真实调用外部模型；失败时返回明确错误，不生成本地假预览。
 ─────────────────────────────────────────────────────────────────────────── */
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLISH_LINKS_FILE = path.join(__dirname, '../../data/studio-publish-links.json');
+
+function loadStudioPublishLinks(tenantId: string): StudioMaterialPublishLink[] {
+  try {
+    const rows = JSON.parse(fs.readFileSync(PUBLISH_LINKS_FILE, 'utf8')) as Array<StudioMaterialPublishLink & { tenantId?: string }>;
+    return Array.isArray(rows) ? rows.filter(item => item.tenantId === tenantId) : [];
+  } catch {
+    return [];
+  }
+}
+
+function recordValue(value: unknown): Record<string, any> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, any> : {};
+    } catch { /* malformed durable evidence is ignored */ }
+  }
+  return {};
+}
+
+async function listAllTenantRows<T extends { id?: string }>(collection: string, tenantId: string): Promise<T[]> {
+  const rows: T[] = [];
+  const identities = new Set<string>();
+  let expectedTotal: number | null = null;
+  for (let page = 1; page <= 10_000; page += 1) {
+    const result = await store.list<T>(collection, { where: { tenant_id: tenantId }, page, perPage: 500 });
+    if (!Number.isSafeInteger(result.totalItems) || result.totalItems < 0
+      || expectedTotal !== null && result.totalItems !== expectedTotal) throw new Error(`${collection}_scan_changed`);
+    expectedTotal = result.totalItems;
+    for (const row of result.items) {
+      const identity = String(row.id || '').trim();
+      if (identity && identities.has(identity)) throw new Error(`${collection}_scan_duplicate`);
+      if (identity) identities.add(identity);
+      rows.push(row);
+    }
+    if (rows.length === expectedTotal) return rows;
+    if (!result.items.length || rows.length > expectedTotal) throw new Error(`${collection}_scan_incomplete`);
+  }
+  throw new Error(`${collection}_scan_limit`);
+}
+
+async function loadDurableMaterialPublishLinks(
+  tenantId: string,
+  projects: StudioMaterialUsageProject[],
+): Promise<StudioMaterialPublishLink[]> {
+  const scopedProjects = projects.flatMap(project => {
+    const artifactId = String(recordValue(recordValue(project.spec).socialProductionOutput).artifactId || '').trim();
+    return artifactId ? [{ project, artifactId }] : [];
+  });
+  if (!scopedProjects.length) return [];
+  const [artifacts, assignments, attempts, metricSnapshots] = await Promise.all([
+    listAllTenantRows<Record<string, any>>('starter_social_content_artifacts', tenantId),
+    listAllTenantRows<Record<string, any>>('social_publication_assignments', tenantId),
+    listAllTenantRows<Record<string, any>>('social_publication_attempts', tenantId),
+    listAllTenantRows<Record<string, any>>('social_metric_snapshots', tenantId),
+  ]);
+  const links: StudioMaterialPublishLink[] = [];
+  for (const { project, artifactId } of scopedProjects) {
+    const artifact = artifacts.find(item => String(item.artifact_id || '') === artifactId);
+    const productionResultId = String(recordValue(recordValue(artifact?.content).productionResult).productionResultId || '').trim();
+    if (!productionResultId) continue;
+    for (const assignment of assignments.filter(item => String(item.production_result_id || '') === productionResultId)) {
+      for (const attempt of attempts.filter(item => item.assignment_id === assignment.assignment_id
+        && item.status === 'published' && String(item.platform_post_id || '').trim())) {
+        const resolvedAt = String(attempt.resolved_at || attempt.updated_at || '').trim();
+        const snapshots = metricSnapshots.filter(item => item.account_id === assignment.account_id
+          && item.platform === assignment.platform
+          && String(item.content_id || '') === String(attempt.platform_post_id)
+          && !item.mock && !item.simulated && !/mock|simulat/i.test(String(item.source || ''))
+          && (!resolvedAt || Date.parse(String(item.captured_at || '')) >= Date.parse(resolvedAt)))
+          .sort((a, b) => Date.parse(String(b.captured_at || '')) - Date.parse(String(a.captured_at || '')));
+        const latestMetrics = recordValue(snapshots[0]?.metrics);
+        links.push({
+          id: String(attempt.attempt_id || attempt.id || ''),
+          projectId: project.id,
+          platform: String(assignment.platform || ''),
+          publishedAt: resolvedAt,
+          publishResult: { ok: true, deliveryStatus: 'published', platformPostId: attempt.platform_post_id },
+          metrics: snapshots.length ? Object.fromEntries(
+            (['views', 'likes', 'comments', 'shares'] as const)
+              .filter(key => typeof latestMetrics[key] === 'number' && Number.isFinite(latestMetrics[key]) && latestMetrics[key] >= 0)
+              .map(key => [key, latestMetrics[key]]),
+          ) : undefined,
+        });
+      }
+    }
+  }
+  return links;
+}
+
 const studioTenantContext = new AsyncLocalStorage<string>();
 function scopedStudioAssetDir(root: string): string {
   const tenantId = studioTenantContext.getStore();
@@ -6139,12 +6239,19 @@ async function runPersistentStudioRender(jobId: string, tenantId: string, origin
       const priorVersions = Array.isArray(versions[current.output_key]) ? versions[current.output_key] : [];
       const generation = { id: jobId, versionNumber: Number(priorVersions[0]?.versionNumber || 0) + 1,
         status: 'done', path: outputPath, previewUrl, inputSignature: current.input_signature, createdAt: finishedAt };
-      const nextSpec = { ...projectSpec, languageRenderOutputs: { ...outputs,
+      const renderedSpec = { ...projectSpec, languageRenderOutputs: { ...outputs,
         [current.output_key]: { status: 'done', path: outputPath, previewUrl, inputSignature: current.input_signature } },
         languageRenderVersions: { ...versions, [current.output_key]: [generation, ...priorVersions.filter((item: any) => item?.id !== jobId)] },
         manualRenderJob: { id: jobId, status: 'completed', outputKey: current.output_key,
           inputSignature: current.input_signature, outputPath, previewUrl, updatedAt: finishedAt },
         staleReason: '' };
+      const nextSpec = appendMaterialUsageManifest(renderedSpec, buildStudioMaterialUsageManifest({
+        projectId: current.project_id,
+        projectTitle: String(project.title || ''),
+        artifactId: jobId,
+        usedAt: finishedAt,
+        spec: renderedSpec,
+      }));
       const savedProject = await compareAndSwapStudioProject(store, project, { spec: nextSpec }, finishedAt);
       if (!savedProject.ok) {
         await store.update('studio_render_jobs', jobId, {
@@ -6374,6 +6481,7 @@ interface Material {
   sourceRevision?: string;
   createdAt: string;
   libraryRemovedAt?: string;
+  usageSummary?: MaterialUsageSummary;
 }
 
 interface MaterialSegment {
@@ -7502,9 +7610,26 @@ studioRouter.get('/materials', async (req, res) => {
   const page = Math.max(1, Number(req.query.page || 1));
   const ordered = list.sort((a, b) => (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0));
   const sorted = paginated ? ordered.slice((page - 1) * pageSize, page * pageSize) : ordered;
+  let usageByMaterial = new Map<string, MaterialUsageSummary>();
+  try {
+    const projects = await listAllTenantRows<StudioMaterialUsageProject>('studio_projects', tenantId);
+    usageByMaterial = materialUsageSummariesFromProjects({
+      projects,
+      publishLinks: [...loadStudioPublishLinks(tenantId), ...await loadDurableMaterialPublishLinks(tenantId, projects)],
+      knownMaterialIds: list.map(material => material.id),
+    });
+  } catch {
+    // The material library remains usable when historical project or metric
+    // storage is temporarily unavailable; usage evidence simply stays empty.
+  }
   const response = await Promise.all(sorted.map(async m => ({
     ...(await materialResponse(m, tenantId)),
     usage: materialUsage(m),
+    usageSummary: usageByMaterial.get(m.id) || {
+      ...EMPTY_MATERIAL_USAGE_SUMMARY,
+      metrics: { ...EMPTY_MATERIAL_USAGE_SUMMARY.metrics },
+      history: [],
+    },
     ...(['pending','analyzing'].includes(m.segmentAnalysisStatus || '') && !isMaterialAnalysisActive(tenantId,m.id)
       ? {segmentAnalysisStatus:'failed' as const, segmentAnalysisError:'分析任务已中断，请重试以继续处理原片'} : {}),
   })));
@@ -7536,6 +7661,35 @@ studioRouter.get('/materials', async (req, res) => {
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
   if (req.query.envelope === '1') res.status(inventory.status === 'unavailable' ? 503 : 200).json({ ...inventory, items: response, total, page, pageSize, facets, productSceneSlots });
   else { res.setHeader('X-Material-Library-Status', inventory.status); res.json(response); }
+});
+
+studioRouter.get('/materials/:id/usage', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const [inventory, enterpriseProfile] = await Promise.all([
+    readMaterialLibrary(tenantId),
+    readTenantEnterpriseProfile(tenantId),
+  ]);
+  const materialId = String(req.params.id || '').trim();
+  const accessibleIds = new Set([
+    ...inventory.items.map(item => item.id),
+    ...enterpriseProductMaterials(tenantId, enterpriseProfile).map(item => item.id),
+  ]);
+  if (!accessibleIds.has(materialId)) {
+    res.status(404).json({ ok: false, error: 'Material not found' });
+    return;
+  }
+  const projects = await listAllTenantRows<StudioMaterialUsageProject>('studio_projects', tenantId);
+  const summary = materialUsageSummariesFromProjects({
+    projects,
+    publishLinks: [...loadStudioPublishLinks(tenantId), ...await loadDurableMaterialPublishLinks(tenantId, projects)],
+    knownMaterialIds: [materialId],
+  }).get(materialId) || {
+    ...EMPTY_MATERIAL_USAGE_SUMMARY,
+    metrics: { ...EMPTY_MATERIAL_USAGE_SUMMARY.metrics },
+    history: [],
+  };
+  res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+  res.json({ ok: true, materialId, summary });
 });
 
 studioRouter.get('/materials/pb/:id/:kind', async (req, res) => {
@@ -10725,6 +10879,36 @@ async function storyboardEnvironmentFrameVersionIssues(tenantId: string, project
   return issues;
 }
 
+async function appendCompletedPosterMaterialUsage(input: {
+  tenantId: string;
+  projectId: string;
+  projectTitle: string;
+  spec: Record<string, any>;
+  usedAt: string;
+}): Promise<Record<string, any>> {
+  if (String(input.spec.contentMode || '') !== 'poster') return input.spec;
+  const outputMaterialId = String(input.spec.posterImageMaterialId || '').trim();
+  if (!outputMaterialId) return input.spec;
+  const verification = verifiedStudioGenerationFromSpec(input.spec, {
+    generationKind: 'poster',
+    generationProvenance: 'ai',
+    qualityStatus: 'passed',
+    publishable: true,
+    generationRecordId: 'poster-current',
+  });
+  if (!verification.ok) return input.spec;
+  const inventory = await readMaterialLibrary(input.tenantId);
+  const output = inventory.items.find(item => item.id === outputMaterialId && item.type === 'image');
+  if (!output) return input.spec;
+  return appendMaterialUsageManifest(input.spec, buildStudioMaterialUsageManifest({
+    projectId: input.projectId,
+    projectTitle: input.projectTitle,
+    artifactId: `poster:${outputMaterialId}`,
+    usedAt: output.createdAt || input.usedAt,
+    spec: input.spec,
+  }));
+}
+
 // POST /studio/projects  Body: { id?, title?, status?, spec, thumbSeed? } → 新建或更新
 studioRouter.post('/projects', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -10820,6 +11004,14 @@ studioRouter.post('/projects', async (req, res) => {
         res.status(409).json({ ok: false, error: '此项目由任务自动生产，请通过交付看板纠偏重跑，或复制为新草稿后编辑。', code: 'managed_production_project' });
         return;
       }
+
+      spec = await appendCompletedPosterMaterialUsage({
+        tenantId,
+        projectId: String(id),
+        projectTitle: String(title ?? existing.title ?? ''),
+        spec,
+        usedAt: now,
+      });
 
       const changed = JSON.stringify(existing.spec || {}) !== JSON.stringify(spec || {})
         || String(existing.title || '') !== String(title ?? existing.title ?? '')
@@ -11090,7 +11282,6 @@ studioRouter.post('/variation-batches/:batchId/retry-failed', (req, res) => {
   if (count) batch.status = 'queued'; batch.updatedAt = now; persistVariationBatches(list); res.json({ ok: true, retried: count, batch });
 });
 
-const PUBLISH_LINKS_FILE = path.join(__dirname, '../../data/studio-publish-links.json');
 studioRouter.get('/publish-records', (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   res.json(listPublishRecords(tenantId, req.query.accountId ? String(req.query.accountId) : undefined));

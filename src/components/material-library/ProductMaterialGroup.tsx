@@ -262,6 +262,12 @@ function MaterialDetailTile({
       </div>
       <div className="flex flex-col p-3">
         <p className="line-clamp-2 ls-type-label-medium text-text-primary">{material.name}</p>
+        {Number(material.usageSummary?.totalUses || 0) > 0 ? (
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border pt-2 ls-type-label-small text-text-secondary" aria-label="素材使用记录">
+            <span>已用 {material.usageSummary?.totalUses} 次</span>
+            {Number(material.usageSummary?.hookUses || 0) > 0 ? <span className="text-accent">前三秒 {material.usageSummary?.hookUses} 次</span> : null}
+          </div>
+        ) : null}
         <div className="mt-3 grid grid-cols-2 gap-2">
           <Button className="min-w-0" icon={<Eye size={13} />} onClick={() => onOpenDetail(material)}>查看详情</Button>
           <Button type="primary" className="min-w-0" icon={<Sparkles size={13} />} disabled={!canCreate} onClick={() => onCreate(material)}>自由创作</Button>

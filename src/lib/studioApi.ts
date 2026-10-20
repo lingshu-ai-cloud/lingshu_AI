@@ -1211,6 +1211,7 @@ export interface Material {
   poster?: string;
   scope?: 'shared' | 'own';
   usage?: 'editable' | 'reference_only';
+  usageSummary?: import('../../shared/contracts/materialUsageTracking').MaterialUsageSummary;
   canManage?: boolean;
   sourceType?: string;
   /** Canonical generated-library metadata. Physical folders remain presentation metadata. */
