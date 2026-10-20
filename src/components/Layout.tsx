@@ -434,7 +434,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
         </div>
       </motion.aside>}
 
-      <PointsManagementDrawer open={quotaOpen} onClose={() => setQuotaOpen(false)}/>
+      <PointsManagementDrawer open={quotaOpen} onClose={() => setQuotaOpen(false)} session={activeSession}/>
 
       <AccountSettingsModal
         open={accountSettingsOpen}
