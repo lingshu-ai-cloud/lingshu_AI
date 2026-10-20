@@ -5232,7 +5232,7 @@ async function socialImageReferenceUnits(reference: ReferenceImage, limit: numbe
   return units;
 }
 
-async function createSocialImageGif(frames: Buffer[], width: number, height: number, loopDurationMs: number): Promise<Buffer> {
+export async function createSocialImageGif(frames: Buffer[], width: number, height: number, loopDurationMs: number): Promise<Buffer> {
   const normalized = await Promise.all(frames.map(frame => sharp(frame).rotate().resize(width, height, { fit: 'cover', position: 'attention' }).png().toBuffer()));
   const delay = Math.max(250, Math.round(loopDurationMs / Math.max(1, normalized.length)));
   if (!ffmpegStatic) throw new Error('GIF 编码器不可用');
