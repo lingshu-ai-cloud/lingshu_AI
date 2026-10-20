@@ -98,7 +98,7 @@ export default function DiscoveryScopePanel({ onAccountsCrawled }: { onAccountsC
     setAccountBusyId(account.id); setAccountMessage('');
     try {
       const response = await fetch(`/api/overseas/competitor-accounts/${encodeURIComponent(account.id)}/crawl`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() }, body: JSON.stringify({ limit: 3, lookbackDays: editor.lookbackDays }),
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() }, body: JSON.stringify({ limit: 3, lookbackDays: editor.lookbackDays, contentMode: 'video' }),
       });
       const data = await response.json() as { error?: string; message?: string; imported?: number };
       if (!response.ok) throw new Error(data.error || '采集失败');

@@ -133,6 +133,7 @@ import {
   normalizedFactValue,
   referenceForbiddenTerms,
   referenceIndustryLeakTerms,
+  sanitizePosterCommercialClaims,
   storyboardReferenceLeakIssues,
   stripStoryboardHashtags,
   stripStoryboardReferenceLeaks,
@@ -4736,6 +4737,7 @@ studioRouter.post('/fb-poster', async (req, res) => {
     provider,
     materials = [],
     referenceNotes = '',
+    confirmedFields = {},
   } = req.body ?? {};
   const providerOpt: 'qwen' = 'qwen';
   const lang = langName(language);
@@ -4757,6 +4759,14 @@ studioRouter.post('/fb-poster', async (req, res) => {
     return;
   }
   const productEnterprise = confirmedEnterpriseContextForProduct(productInfo, enterprise);
+  const taskConfirmedFacts = Object.entries(
+    confirmedFields && typeof confirmedFields === 'object' && !Array.isArray(confirmedFields) ? confirmedFields : {},
+  ).slice(0, 20).map(([field, value]) => {
+    const safeField = String(field || '').replace(/[\r\n：:]/g, ' ').trim().slice(0, 80);
+    const safeValue = String(value || '').replace(/[\r\n]/g, ' ').trim().slice(0, 500);
+    return safeField && safeValue ? `${safeField}：${safeValue}` : '';
+  }).filter(Boolean).join('\n');
+  const commercialEvidence = [productEnterprise, taskConfirmedFacts ? `本次任务由用户确认的商业事实：\n${taskConfirmedFacts}` : ''].filter(Boolean).join('\n');
   const unconfirmedProductFields = unconfirmedEnterpriseProductFields(productInfo, enterprise);
   if (unconfirmedProductFields.length) {
     res.status(422).json({
@@ -4789,8 +4799,8 @@ Canvas ratio: ${ratio}
 Selected product context (selection only; authenticated enterprise profile remains the sole source of commercial facts):
 ${productInfo || '(no product selected)'}
 
-Authenticated enterprise profile (sole commercial fact source):
-${productEnterprise}
+Authenticated enterprise profile and user-confirmed facts for this task (the only allowed commercial fact sources):
+${commercialEvidence}
 
 Selected material references:
 ${materialLines || '(none selected yet)'}
@@ -4800,7 +4810,7 @@ ${String(referenceNotes || '').slice(0, 1500) || '(none)'}
 
 Hard rules:
 - AI may optimize expression, but must not invent commercial promises.
-- MOQ, certifications, lead time, price, export countries, factory qualifications must come from product / enterprise info or be placed in fieldsToConfirm.
+- MOQ, certifications, lead time, price, export countries, factory qualifications must come from the authenticated profile or the explicit user-confirmed task facts above; otherwise place them in fieldsToConfirm.
 - If Generation channel is clone, output a module-level deconstruction and local asset matching plan. The final poster must be a new composition using our product/materials, not a copy of the competitor poster.
 - Poster text should be concise enough for a dense B2B product-information poster.
 - Use exact English text for poster fields when language is English.
@@ -4839,7 +4849,7 @@ Schema:
   const failures: string[] = [];
   for (const backend of backends) {
     try {
-      const text = await callLLM(prompt, { backend, systemPrompt: productEnterprise });
+      const text = await callLLM(prompt, { backend, systemPrompt: productEnterprise, timeoutMs: 30_000 });
       const obj = extractJSON<any>(text);
       if (obj?.poster?.headline && obj?.caption) {
         const normalized = {
@@ -4850,18 +4860,40 @@ Schema:
           dmOpening: String(obj.dmOpening || ''),
           imagePrompt: String(obj.imagePrompt || ''),
         };
-        const audit = auditCommercialClaims(userFacingPosterText(normalized), productEnterprise);
-        const fieldsToConfirm = confirmationFields([
-          ...(Array.isArray(obj.fieldsToConfirm) ? obj.fieldsToConfirm : []),
-          ...audit.fieldsToConfirm,
-        ]);
-        if (audit.issues.length) {
-          res.status(422).json({
-            ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
-            code: 'UNVERIFIED_COMMERCIAL_CLAIMS', caption: '', hashtags: [], fieldsToConfirm,
-            error: `海报草稿包含企业中心未确认的商业声明：${audit.issues.join('；')}`,
-          });
-          return;
+        const audit = auditCommercialClaims(userFacingPosterText(normalized), commercialEvidence);
+        // Missing commercial fields invented or requested by the model are not
+        // user requirements. Strip them from the draft and only block when the
+        // user's own brief/reference explicitly asks to retain such a claim.
+        const requestedCommercialFields = auditCommercialClaims(referenceNotes, commercialEvidence).fieldsToConfirm;
+        let fieldsToConfirm = confirmationFields([...requestedCommercialFields, ...audit.fieldsToConfirm]);
+        let safeDraft = audit.issues.length || audit.fieldsToConfirm.length
+          ? sanitizePosterCommercialClaims(normalized, commercialEvidence)
+          : normalized;
+        if (!safeDraft.poster.headline) safeDraft.poster.headline = language === 'zh' ? '产品概览' : 'Product overview';
+        const remainingAudit = auditCommercialClaims(userFacingPosterText(safeDraft), commercialEvidence);
+        if (remainingAudit.issues.length) {
+          // A stubborn model sentence must not block first-draft production.
+          // Fall back to deterministic neutral copy and carry every unresolved
+          // claim into review, where it blocks publishing rather than creation.
+          fieldsToConfirm = confirmationFields([...fieldsToConfirm, ...remainingAudit.fieldsToConfirm]);
+          safeDraft = {
+            ...safeDraft,
+            poster: {
+              ...normalizePosterBrief({}),
+              headline: language === 'zh' ? '产品概览' : 'Product overview',
+              subheadline: language === 'zh' ? '查看产品外观与包装信息' : 'Explore the product and packaging',
+              cta: language === 'zh' ? '联系获取已核实资料' : 'Message us for verified product details',
+            },
+            caption: language === 'zh'
+              ? '查看本次产品与包装展示。具体商业信息请以企业确认资料为准。'
+              : 'Explore this product and its packaging. Contact us for verified commercial details.',
+            hashtags: [],
+            commentCta: '',
+            dmOpening: '',
+            imagePrompt: language === 'zh'
+              ? '使用已提供的企业产品图片，制作不含额外商业声明的中性产品展示海报。'
+              : 'Create a neutral product presentation using the supplied enterprise product images, without additional commercial claims.',
+          };
         }
         const publishable = fieldsToConfirm.length === 0;
         res.json({
@@ -4872,13 +4904,13 @@ Schema:
           qualityStatus: publishable ? 'passed' : 'needs_confirmation',
           provider: backend,
           layoutModules: Array.isArray(obj.layoutModules) ? obj.layoutModules.slice(0, 12) : [],
-          poster: normalized.poster,
-          caption: normalized.caption,
-          hashtags: Array.isArray(obj.hashtags) ? obj.hashtags.map(String).slice(0, 10) : [],
-          commentCta: normalized.commentCta,
-          dmOpening: normalized.dmOpening,
+          poster: safeDraft.poster,
+          caption: safeDraft.caption,
+          hashtags: Array.isArray(safeDraft.hashtags) ? safeDraft.hashtags.map(String).slice(0, 10) : [],
+          commentCta: safeDraft.commentCta,
+          dmOpening: safeDraft.dmOpening,
           fieldsToConfirm,
-          imagePrompt: normalized.imagePrompt,
+          imagePrompt: safeDraft.imagePrompt,
         });
         return;
       }
@@ -4888,9 +4920,32 @@ Schema:
     }
   }
   console.warn('[studio] fb-poster generation failed:', failures.join(' | '));
-  res.status(502).json({
-    ...upstreamGenerationFailure(failures[0] || 'poster generation failed', '海报文案'),
-    caption: '', hashtags: [], fieldsToConfirm: [],
+  const selectedProductName = String(productInfo).match(/^\s*产品名称[：:]\s*([^\r\n]+)/m)?.[1]?.trim().slice(0, 120)
+    || (language === 'zh' ? '企业产品' : 'Enterprise product');
+  res.json({
+    ok: true,
+    source: 'ai',
+    provenance: 'deterministic_fallback',
+    publishable: false,
+    qualityStatus: 'needs_confirmation',
+    provider: 'local_fallback',
+    layoutModules: [],
+    poster: {
+      ...normalizePosterBrief({}),
+      headline: selectedProductName,
+      subheadline: language === 'zh' ? '产品与包装展示' : 'Product and packaging overview',
+      cta: language === 'zh' ? '联系获取已核实资料' : 'Message us for verified product details',
+    },
+    caption: language === 'zh'
+      ? `查看 ${selectedProductName} 的产品与包装展示。具体商业信息请以企业确认资料为准。`
+      : `Explore ${selectedProductName} and its packaging. Contact us for verified commercial details.`,
+    hashtags: [],
+    commentCta: '',
+    dmOpening: '',
+    fieldsToConfirm: [],
+    imagePrompt: language === 'zh'
+      ? `使用已提供的企业产品图片，为 ${selectedProductName} 制作中性产品展示海报，不添加未经确认的商业声明。`
+      : `Create a neutral product presentation for ${selectedProductName} using the supplied enterprise product images, without unverified commercial claims.`,
   });
 });
 
@@ -5014,6 +5069,10 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
     imagePrompt = '',
     ratio = '1:1',
     materialIds = [],
+    productIds = [],
+    referenceImageUrls = [],
+    idempotencyKey = '',
+    confirmedFields = {},
   } = req.body ?? {};
   const enterprise = await enterpriseCtx();
   if (!hasConfirmedEnterpriseFacts(enterprise)) {
@@ -5025,31 +5084,68 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
     return;
   }
   const normalizedPoster = normalizePosterBrief(poster || {});
-  const commercialAudit = auditCommercialClaims(userFacingPosterText({ poster: normalizedPoster, imagePrompt }), enterprise);
-  if (commercialAudit.issues.length) {
-    res.status(422).json({
-      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
-      code: 'UNVERIFIED_COMMERCIAL_CLAIMS', error: `海报图片输入包含企业中心未确认的商业声明：${commercialAudit.issues.join('；')}`,
-      fieldsToConfirm: commercialAudit.fieldsToConfirm,
-    });
-    return;
+  const taskConfirmedFacts = Object.entries(
+    confirmedFields && typeof confirmedFields === 'object' && !Array.isArray(confirmedFields) ? confirmedFields : {},
+  ).slice(0, 20).map(([field, value]) => {
+    const safeField = String(field || '').replace(/[\r\n：:]/g, ' ').trim().slice(0, 80);
+    const safeValue = String(value || '').replace(/[\r\n]/g, ' ').trim().slice(0, 500);
+    return safeField && safeValue ? `${safeField}：${safeValue}` : '';
+  }).filter(Boolean).join('\n');
+  const commercialEvidence = [enterprise, taskConfirmedFacts ? `本次任务由用户确认的商业事实：\n${taskConfirmedFacts}` : ''].filter(Boolean).join('\n');
+  const commercialAudit = auditCommercialClaims(userFacingPosterText({ poster: normalizedPoster, imagePrompt }), commercialEvidence);
+  // Generation is allowed to continue with a conservative draft. Unverified
+  // claims remain visible review warnings and block publishing, not creation.
+  const safeDraft = commercialAudit.issues.length || commercialAudit.fieldsToConfirm.length
+    ? sanitizePosterCommercialClaims({ poster: normalizedPoster, imagePrompt: String(imagePrompt || '') }, commercialEvidence)
+    : { poster: normalizedPoster, imagePrompt: String(imagePrompt || '') };
+  const safePoster = normalizePosterBrief(safeDraft.poster || {});
+  if (!safePoster.headline) safePoster.headline = 'Product overview';
+  const safeImagePrompt = String(safeDraft.imagePrompt || 'Create a neutral product presentation background.').trim();
+  const headline = safePoster.headline;
+  const benchmarkReferences: ReferenceImage[] = [];
+  for (const url of Array.isArray(referenceImageUrls) ? referenceImageUrls.map(String).slice(0, 1) : []) {
+    const reference = await storyboardUrlImage(url, tenantId) || await storyboardEnterpriseImage(url, tenantId);
+    if (reference) benchmarkReferences.push(reference);
   }
-  const headline = normalizedPoster.headline || 'AI 图文海报';
-  const references = await resolveReferenceImages(materialIds, tenantId);
+  const productReferences: ReferenceImage[] = [];
+  const assetFieldsToConfirm: string[] = [];
+  const requestedProductIds = Array.isArray(productIds) ? productIds.map(String).slice(0, 2) : [];
+  if (requestedProductIds.length) {
+    const profile = await readTenantEnterpriseProfile(tenantId);
+    const products = profile.products.items || [];
+    for (const requestedId of requestedProductIds) {
+      const product = products.find((item, index) => productIdentity(item, index) === requestedId);
+      const imageUrl = String(product?.images?.[0]?.url || product?.imageUrl || '');
+      const image = imageUrl ? await storyboardEnterpriseImage(imageUrl, tenantId) : null;
+      if (!product || !image) {
+        assetFieldsToConfirm.push(`产品主图待补充：${String(product?.name || requestedId)}`);
+        continue;
+      }
+      productReferences.push(image);
+    }
+  }
+  const materialReferences = await resolveReferenceImages(materialIds, tenantId);
+  const ownedReferences = [...productReferences, ...materialReferences];
+  // Provider accepts at most three ordered references. Benchmark controls
+  // structure only; owned enterprise assets control product and brand identity.
+  const references = [...benchmarkReferences, ...ownedReferences].slice(0, 3);
   const prompt = [
-    String(imagePrompt || '').trim(),
+    safeImagePrompt,
     'Generate one finished high-end B2B social media product poster. Do not imply OEM/ODM, export, factory, certification, pricing, MOQ, lead-time, delivery, or customization capabilities unless they appear verbatim in the verified JSON.',
-    `Use this exact poster JSON as the content source:\n${JSON.stringify(normalizedPoster, null, 2)}`,
+    `Use this exact poster JSON as the content source:\n${JSON.stringify(safePoster, null, 2)}`,
     `Aspect ratio: ${ratio}.`,
     'Use only the sections that contain verified JSON content. Empty badge, proof, process, category, or CTA sections must stay absent rather than being filled with generic marketing claims.',
     'All visible text must match the JSON exactly. Avoid extra fake certifications, fake numbers, fake flags, watermarks, or unreadable tiny claims.',
-    references.length
-      ? `Use the ${references.length} owned reference image(s) only for product appearance and directly visible environment guidance. Do not infer factory ownership or operational capability from an image.`
-      : 'No reference image was provided; create a neutral product-only studio composition. Do not add a factory, warehouse, certificate, flag, packaging claim, or operational proof scene.',
+    benchmarkReferences.length
+      ? 'The first reference is a benchmark: use it only for generic layout hierarchy, visual rhythm and image-copy relationship. Never copy its brand, logo, product, packaging, claims, contact information or exact wording.'
+      : '',
+    ownedReferences.length
+      ? `The remaining ${Math.min(ownedReferences.length, 2)} reference image(s) are tenant-owned enterprise assets and are the only authority for product appearance, packaging and brand identity. Do not redraw or invent their labels or logos.`
+      : 'No tenant-owned product or brand reference was provided. Keep product and Logo areas empty rather than copying them from the benchmark or inventing enterprise identity.',
   ].filter(Boolean).join('\n\n');
 
   try {
-    const generated = await generatePosterImage({ prompt, ratio: String(ratio || '1:1'), references });
+    const generated = await generatePosterImage({ prompt, ratio: String(ratio || '1:1'), references, idempotencyKey: String(idempotencyKey || '').trim() || undefined });
     const material = await createGeneratedImageMaterial({
       title: `AI 图文海报 · ${headline}`.slice(0, 120),
       bytes: generated.bytes,
@@ -5065,8 +5161,21 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       url: responseMaterial.url,
       material: responseMaterial,
       references: references.length,
+      fieldsToConfirm: confirmationFields([...commercialAudit.fieldsToConfirm, ...assetFieldsToConfirm]),
+      qualityStatus: commercialAudit.fieldsToConfirm.length || commercialAudit.issues.length || assetFieldsToConfirm.length ? 'needs_confirmation' : 'passed',
     });
   } catch (err: any) {
+    console.warn('[studio] fb-poster image generation failed:', String(err?.message || err).slice(0, 800));
+    if (err instanceof ImageProviderRejectedError) {
+      res.status(422).json({
+        ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+        code: 'IMAGE_PROVIDER_REJECTED', retryable: false,
+        error: err.statusCode === 400
+          ? '图片模型拒绝了当前请求格式或内容，系统未产生图片费用。请返回策划精简内容后重试。'
+          : `图片模型授权或请求不可用（HTTP ${err.statusCode}），系统未生成图片。`,
+      });
+      return;
+    }
     res.status(502).json(upstreamGenerationFailure(err, '海报图片'));
   }
 });

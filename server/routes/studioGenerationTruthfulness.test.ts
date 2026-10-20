@@ -8,6 +8,7 @@ import {
   unconfirmedEnterpriseProductFields,
   unpublishableGenerationReasons,
 } from './studio.js';
+import { sanitizePosterCommercialClaims, upstreamGenerationFailure, userFacingPosterText } from '../lib/studioGenerationTruthfulness.js';
 
 assert.equal(terminalPublishedPlatformPostId({
   deliveryStatus: 'provider_accepted',
@@ -72,6 +73,22 @@ for (const field of ['认证资质', 'MOQ / 起订量', '交期 / 周转时间',
   assert.ok(unsupported.fieldsToConfirm.includes(field), `missing ${field}`);
 }
 
+const safePoster = sanitizePosterCommercialClaims({
+  poster: {
+    headline: 'Gentle cleanser for daily routines',
+    sellingPoints: ['Low MOQ', 'Product texture and packaging overview'],
+    categories: [{ name: 'Cleanser', description: 'Fast turnaround for buyers' }],
+  },
+  caption: 'Explore the product texture. MOQ starts low with fast delivery.',
+  hashtags: ['cleanser', 'lowmoq'],
+  imagePrompt: 'Show the product. Add a low MOQ badge and fast delivery promise.',
+}, normalizedEmptyProfile);
+assert.equal(safePoster.poster.headline, 'Gentle cleanser for daily routines');
+assert.deepEqual(safePoster.poster.sellingPoints, ['Product texture and packaging overview']);
+assert.equal(safePoster.caption, 'Explore the product texture.');
+assert.deepEqual(safePoster.hashtags, ['cleanser']);
+assert.deepEqual(auditCommercialClaims(userFacingPosterText(safePoster), normalizedEmptyProfile).issues, []);
+
 const pending = auditCommercialClaims('MOQ 待确认\nGMP 待确认\n交期需确认', '公司名称：测试企业');
 assert.deepEqual(pending.issues, [], 'explicit pending placeholders are drafts, not asserted facts');
 assert.ok(pending.fieldsToConfirm.includes('MOQ / 起订量'));
@@ -118,6 +135,11 @@ const confirmed = auditCommercialClaims([
 ].join('\n'), confirmedProfile);
 assert.deepEqual(confirmed.issues, [], confirmed.issues.join('\n'));
 assert.deepEqual(confirmed.fieldsToConfirm, []);
+
+const uncertainSubmission = upstreamGenerationFailure('provider_submission_unknown:qwen_image:transport_outcome_uncertain', '海报图片');
+assert.equal(uncertainSubmission.code, 'UPSTREAM_SUBMISSION_OUTCOME_UNKNOWN');
+assert.equal(uncertainSubmission.retryable, false);
+assert.match(uncertainSubmission.error, /避免重复计费/);
 
 assert.ok(auditCommercialClaims('ISO 13485 certified', confirmedProfile).issues.some(issue => issue.includes('ISO 13485')), 'a different ISO standard must not be treated as the confirmed ISO9001 certification');
 

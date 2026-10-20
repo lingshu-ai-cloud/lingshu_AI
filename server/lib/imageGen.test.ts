@@ -24,7 +24,7 @@ test('Qwen Image rebuilds a poster from ordered reference images and downloads t
     assert.equal(result.bytes.toString(), 'image-output');
     const request = JSON.parse(String(calls[0]!.init?.body));
     assert.deepEqual(request.image, ['data:image/jpeg;base64,c291cmNl', 'data:image/jpeg;base64,cHJlc2VudGVy']);
-    assert.equal(request.size, '1024*1792');
+    assert.equal(request.size, '1024x1792');
     assert.equal((calls[0]!.init?.headers as Record<string, string>).Authorization, 'Bearer test-key');
   } finally {
     globalThis.fetch = previousFetch;

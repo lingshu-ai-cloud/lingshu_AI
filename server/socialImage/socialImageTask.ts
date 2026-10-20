@@ -1,0 +1,145 @@
+import { createHash, randomUUID } from 'node:crypto';
+import type { DataStore } from '../storage/datastore.js';
+import {
+  SOCIAL_IMAGE_CONTENT_TYPES,
+  socialImageTaskCanPublish,
+  socialImageTaskIssues,
+  type SocialImageCreationTask,
+  type SocialImageContentType,
+  type SocialImageCreationPath,
+} from '../../shared/contracts/socialImageCreation.js';
+
+// Reuse the canonical Studio project collection so PocketBase and Postgres
+// deployments persist image drafts without a second migration-only task silo.
+export const SOCIAL_IMAGE_TASKS_COLLECTION = 'studio_projects';
+type StoredImageTask = { id: string; tenant_id: string; title: string; status: string; spec: { socialImageTask?: SocialImageCreationTask }; created_at: string; updated_at: string };
+
+const text = (value: unknown, max = 5000) => String(value ?? '').trim().slice(0, max);
+const stringArray = (value: unknown, max = 20) => Array.isArray(value) ? value.map(item => text(item, 500)).filter(Boolean).slice(0, max) : [];
+
+export function defaultSocialImageTask(input: Record<string, unknown>, now = new Date().toISOString()): SocialImageCreationTask {
+  const imageType = SOCIAL_IMAGE_CONTENT_TYPES.includes(input.imageType as SocialImageContentType) ? input.imageType as SocialImageContentType : 'product_poster';
+  const creationPath: SocialImageCreationPath = input.creationPath === 'viral_replication' ? 'viral_replication' : 'material_processing';
+  const isGif = imageType === 'gif_poster';
+  const isCarousel = imageType === 'carousel';
+  const productRefs = stringArray(input.productRefs, 10);
+  const productNames = stringArray(input.productNames, 10);
+  const referenceUrls = stringArray(input.referenceUrls, 10);
+  const rawSnapshot = input.referenceSnapshot && typeof input.referenceSnapshot === 'object' ? input.referenceSnapshot as Record<string, unknown> : null;
+  const snapshotImageUrls = stringArray(rawSnapshot?.imageUrls, 10);
+  const referenceSnapshot = creationPath === 'viral_replication' ? {
+    sourceRecordId: text(rawSnapshot?.sourceRecordId, 200) || undefined,
+    sourceUrl: text(rawSnapshot?.sourceUrl, 2000) || referenceUrls[0] || undefined,
+    platform: text(rawSnapshot?.platform, 80) || undefined,
+    accountName: text(rawSnapshot?.accountName, 200) || undefined,
+    title: text(rawSnapshot?.title, 500) || undefined,
+    caption: text(rawSnapshot?.caption, 5000) || undefined,
+    imageUrls: snapshotImageUrls.length ? snapshotImageUrls : referenceUrls.filter(url => /\.(?:png|jpe?g|webp|gif)(?:\?|$)/i.test(url)),
+    collectedAt: text(rawSnapshot?.collectedAt, 80) || now,
+    fingerprint: text(rawSnapshot?.fingerprint, 200) || createHash('sha256').update(JSON.stringify(rawSnapshot || referenceUrls)).digest('hex'),
+  } : undefined;
+  const enterpriseAssets = Array.isArray(input.enterpriseAssets) ? input.enterpriseAssets.slice(0, 30).flatMap(item => {
+    if (!item || typeof item !== 'object') return [];
+    const asset = item as Record<string, unknown>;
+    const role = ['product', 'logo', 'scene', 'evidence'].includes(String(asset.role)) ? String(asset.role) as 'product' | 'logo' | 'scene' | 'evidence' : 'scene';
+    return [{ assetId: text(asset.assetId, 200), role, name: text(asset.name, 500), source: asset.source === 'enterprise_knowledge_base' ? 'enterprise_knowledge_base' as const : 'enterprise_material_library' as const, contentHash: text(asset.contentHash, 200) || undefined, required: asset.required !== false }];
+  }).filter(asset => asset.assetId) : [];
+  return {
+    schemaVersion: 'social-image-creation.v2', id: '', version: 1,
+    title: text(input.title, 200) || (creationPath === 'viral_replication' ? '爆款复刻 · 图片草稿' : '自由创作 · 图片草稿'),
+    creationPath, contentMode: 'image', imageType, step: 'inputs', status: 'draft',
+    contentBrief: {
+      objective: input.objective === 'awareness' || input.objective === 'trust' || input.objective === 'education' || input.objective === 'event_conversion' ? input.objective : 'lead_generation',
+      topicType: input.topicType === 'partnership_news' || input.topicType === 'brand_news' || input.topicType === 'experiment_comparison' || input.topicType === 'trend' ? input.topicType : 'technical_solution',
+      coreClaim: text(input.coreClaim, 2000), audience: stringArray(input.audience, 10), productRefs, productNames,
+      evidenceItems: [], partnerName: text(input.partnerName, 300) || undefined,
+      factuality: input.factuality === 'mock' || input.factuality === 'user_supplied' ? input.factuality : 'verified',
+      targetAction: text(input.targetAction, 500) || undefined, prohibitedClaims: stringArray(input.prohibitedClaims, 20),
+    },
+    creativeRecipe: {
+      narrativePattern: imageType === 'brand_news' ? 'news_announcement' : imageType === 'experiment_comparison' ? 'visible_experiment' : imageType === 'trend' ? 'trend_to_opportunity' : 'problem_solution',
+      visualProof: imageType === 'brand_news' ? 'event_photo' : imageType === 'experiment_comparison' ? 'before_after' : 'product_hero',
+      layoutRecipe: imageType === 'brand_news' ? 'news_search_card' : imageType === 'carousel' ? 'step_carousel' : imageType === 'infographic' ? 'technical_infographic' : 'hero_product_poster',
+      copyPattern: imageType === 'brand_news' ? '新闻结论→合作主体→事实→行业意义→CTA' : '用户问题→产品价值→证据→CTA',
+      imageTextRelation: imageType === 'experiment_comparison' || imageType === 'brand_news' ? 'image_proves_copy' : 'image_contextualizes_copy',
+      colorStrategy: 'derive_from_product', referenceStrength: creationPath === 'viral_replication' ? 0.8 : 0.35,
+    },
+    imageTextContract: { headline: '', caption: '', hashtags: [], requiredFacts: [], prohibitedInferences: [], visualMustShow: [], visualMustNotImply: [] },
+    deliverySpec: {
+      format: isGif ? 'gif' : isCarousel ? 'carousel' : 'jpg', platform: 'facebook', aspectRatio: '4:5', language: 'en', outputCount: isCarousel ? 5 : isGif ? 2 : 1,
+      ...(isGif ? { motion: { mechanism: 'background_switch' as const, fixedLayers: ['headline', 'content_module', 'brand'], dynamicLayers: ['background'], loopDurationMs: 6000 } } : {}),
+    },
+    materialIds: [], referenceUrls, referenceSnapshot,
+    replicationRecipe: creationPath === 'viral_replication' ? {
+      contentArchetype: imageType === 'brand_news' ? 'brand_news' : imageType,
+      imageCopyRelation: imageType === 'brand_news' || imageType === 'experiment_comparison' ? 'image_proves_copy' : 'image_contextualizes_copy',
+      preserve: ['信息层级', '版式节奏', '图文关系'], replace: ['品牌', '产品', '事实', '场景', '配色'], palette: [], layoutRegions: [],
+      protectedSubjects: ['产品包装', '主体人物'], overlayZones: ['标题区', '内容模块区', 'CTA区'],
+      ...(isGif ? { motionMechanism: 'background_switch' as const } : {}),
+    } : undefined,
+    enterpriseAssets, generationJobs: [], repairInstructions: [], outputs: [], fieldsToConfirm: [], publishable: false, createdAt: now, updatedAt: now,
+  };
+}
+
+export async function createSocialImageTask(store: DataStore, tenantId: string, input: Record<string, unknown>) {
+  const now = new Date().toISOString();
+  const payload = defaultSocialImageTask(input, now);
+  const issues = socialImageTaskIssues(payload).filter(issue => issue !== '缺少核心主张' && issue !== '至少选择一个企业产品');
+  if (issues.length) throw new Error(issues.join('；'));
+  const created = await store.create<StoredImageTask>(SOCIAL_IMAGE_TASKS_COLLECTION, {
+    tenant_id: tenantId, title: payload.title, status: 'draft',
+    spec: { contentMode: 'image', creationPath: payload.creationPath, socialImageTask: payload }, created_at: now, updated_at: now,
+  });
+  if (!created) throw new Error('图片任务保存失败');
+  const task = { ...payload, id: created.id };
+  if (!await store.update(SOCIAL_IMAGE_TASKS_COLLECTION, created.id, { spec: { contentMode: 'image', creationPath: task.creationPath, socialImageTask: task } })) {
+    throw new Error('图片任务标识保存失败');
+  }
+  return task;
+}
+
+export async function readSocialImageTask(store: DataStore, tenantId: string, id: string) {
+  const row = await store.getById<StoredImageTask>(SOCIAL_IMAGE_TASKS_COLLECTION, id);
+  const payload = row?.spec?.socialImageTask;
+  if (!row || row.tenant_id !== tenantId || !payload || payload.contentMode !== 'image') return null;
+  return {
+    ...payload, id: row.id, version: payload.version || 1,
+    enterpriseAssets: payload.enterpriseAssets || [],
+    generationJobs: payload.generationJobs || [],
+    repairInstructions: payload.repairInstructions || [],
+    layerGraph: payload.layerGraph,
+  };
+}
+
+export async function updateSocialImageTask(store: DataStore, tenantId: string, id: string, expectedVersion: number, patch: Partial<SocialImageCreationTask>) {
+  const row = await store.getById<StoredImageTask>(SOCIAL_IMAGE_TASKS_COLLECTION, id);
+  const current = row?.tenant_id === tenantId && row.spec?.socialImageTask ? { ...row.spec.socialImageTask, id: row.id } : null;
+  if (!current) return { kind: 'missing' as const };
+  if (current.version !== expectedVersion) return { kind: 'conflict' as const, task: current };
+  const now = new Date().toISOString();
+  const next: SocialImageCreationTask = {
+    ...current, ...patch, id: current.id, version: current.version + 1, schemaVersion: 'social-image-creation.v2', contentMode: 'image',
+    contentBrief: { ...current.contentBrief, ...(patch.contentBrief || {}) },
+    creativeRecipe: { ...current.creativeRecipe, ...(patch.creativeRecipe || {}) },
+    imageTextContract: { ...current.imageTextContract, ...(patch.imageTextContract || {}) },
+    deliverySpec: { ...current.deliverySpec, ...(patch.deliverySpec || {}) },
+    enterpriseAssets: patch.enterpriseAssets || current.enterpriseAssets || [],
+    generationJobs: patch.generationJobs || current.generationJobs || [],
+    repairInstructions: patch.repairInstructions || current.repairInstructions || [],
+    layerGraph: patch.layerGraph || current.layerGraph,
+    updatedAt: now, publishable: false,
+  };
+  if (patch.status === 'approved') next.publishable = socialImageTaskCanPublish({ ...next, publishable: false, status: 'approved' });
+  const issues = socialImageTaskIssues(next);
+  if (issues.length && patch.status === 'approved') return { kind: 'invalid' as const, issues, task: next };
+  const update = {
+    title: next.title, status: next.status === 'approved' ? 'done' : 'draft',
+    spec: { contentMode: 'image', creationPath: next.creationPath, socialImageTask: next }, updated_at: now,
+  };
+  const saved = store.compareAndSwap && row
+    ? await store.compareAndSwap(SOCIAL_IMAGE_TASKS_COLLECTION, id, { tenant_id: tenantId, spec: row.spec }, update)
+    : await store.update(SOCIAL_IMAGE_TASKS_COLLECTION, id, update);
+  if (!saved && store.compareAndSwap) return { kind: 'conflict' as const, task: await readSocialImageTask(store, tenantId, id) || current };
+  if (!saved) throw new Error('图片任务保存失败');
+  return { kind: 'updated' as const, task: next };
+}

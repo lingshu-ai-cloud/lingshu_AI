@@ -201,6 +201,18 @@ async function uploadCrawlerCosObject(
   return key;
 }
 
+async function recoverCrawlerImageObjectKey(
+  record: Record<string, unknown>,
+  role: string,
+): Promise<string> {
+  if (!objectStorageEnabled()) return '';
+  for (const extension of ['jpg', 'png', 'webp']) {
+    const key = crawlerCosKey(record, role, extension);
+    if (await objectStorageHead(key)) return key;
+  }
+  return '';
+}
+
 async function streamCrawlerCosObject(res: Response, key: string, range?: string): Promise<boolean> {
   const object = await objectStorageGetObject(key, range);
   if (!object) return false;
@@ -460,7 +472,13 @@ function isPublicImageRecord(record: Record<string, unknown>): boolean {
 function isValidImagePostRecord(record: Record<string, unknown>): boolean {
   const sourceUrl = String(record.sourceUrl || '').trim();
   const thumbnailUrl = String(record.thumbnailUrl || '').trim();
-  if (!sourceUrl || !thumbnailUrl) return false;
+  const analysis = videoAnalysisOf(record);
+  const hasCollectedImage = Array.isArray(analysis.imageUrls)
+    && analysis.imageUrls.some(url => typeof url === 'string' && url.trim());
+  // A failed visual-analysis attempt must not hide a successfully collected
+  // post. The first collected image remains a valid preview and gives the user
+  // an entry point to inspect the failure and retry analysis.
+  if (!sourceUrl || (!thumbnailUrl && !hasCollectedImage)) return false;
   if (/\/(?:search|explore\/tags)\b/i.test(sourceUrl)) return false;
   const platform = (record.platform || inferPlatformFromUrl(sourceUrl)) as Platform;
   if (platform === 'instagram') return /\/p\//i.test(sourceUrl);
@@ -1170,29 +1188,42 @@ videosRouter.post('/crawl-image-posts', async (req, res) => {
 export async function crawlImagePostsForTenant(input: {
   tenantId: string;
   platform: Platform;
-  keyword: string;
+  keyword?: string;
   limit: number;
+  mode?: 'keyword' | 'account';
+  accountUrl?: string;
+  accountName?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  deferImageAnalysis?: boolean;
 }): Promise<CrawlVideosResult> {
   const target = Math.min(30, Math.max(1, Number(input.limit) || 5));
-  const keyword = String(input.keyword || DEFAULT_CRAWL_KEYWORDS).trim();
+  const accountMode = input.mode === 'account' && looksLikeAccountUrl(input.accountUrl ?? '', input.platform);
+  const accountUrl = accountMode ? String(input.accountUrl).trim() : '';
+  const keyword = accountMode
+    ? String(input.accountName || accountLabelFromUrl(accountUrl)).trim()
+    : String(input.keyword || DEFAULT_CRAWL_KEYWORDS).trim();
+  const dateFrom = String(input.dateFrom || '');
+  const dateTo = String(input.dateTo || '');
   let items: CrawledImagePost[] = [];
   let crawlerMessage = '';
-  const crawlerSource = `${input.platform}-image-search`;
+  const crawlerSource = `${input.platform}-image-${accountMode ? 'account' : 'search'}`;
 
   try {
     const safeLimit = Math.max(target * 4, target, 12);
     if (input.platform === 'instagram') {
-      items = await crawlInstagramImagePostsApify(keyword, safeLimit);
+      items = await crawlInstagramImagePostsApify(keyword, safeLimit, accountUrl);
     } else if (input.platform === 'tiktok') {
-      items = await crawlTikTokImagePostsApify(keyword, safeLimit);
+      items = await crawlTikTokImagePostsApify(keyword, safeLimit, accountUrl, dateFrom, dateTo);
     } else if (input.platform === 'facebook') {
-      items = await crawlFacebookImagePostsApify(keyword, safeLimit);
+      items = await crawlFacebookImagePostsApify(accountUrl || keyword, safeLimit);
     } else if (input.platform === 'youtube') {
-      items = await crawlYouTubeCommunityPostsPublicSearch(keyword, safeLimit);
+      items = await crawlYouTubeCommunityPostsPublicSearch(keyword, safeLimit, accountUrl);
     }
     items = items
       .filter(item => item.platform === input.platform && isPlatformUrl(item.sourceUrl, input.platform))
-      .filter(item => imagePostRelevant(item, keyword));
+      .filter(item => accountMode || imagePostRelevant(item, keyword));
+    if (hasDateRange(dateFrom, dateTo)) items = items.filter(item => isWithinDateRange(item.uploadedAt, dateFrom, dateTo));
   } catch (e) {
     crawlerMessage = e instanceof Error
       ? `${input.platform} 图文采集未找到可入库内容：${e.message}`
@@ -1227,7 +1258,10 @@ export async function crawlImagePostsForTenant(input: {
       skipped += 1;
       skippedExisting += 1;
       const existingAnalysis = videoAnalysisOf(existingRecord);
-      const imageAnalysis = await analyzeImagePostBestEffort(item, keyword, existingAnalysis.gemini as VideoAiAnalysis | undefined);
+      const previouslyAnalyzed = (existingAnalysis.imageEvidence as { status?: string } | undefined)?.status === 'analyzed';
+      const imageAnalysis = input.deferImageAnalysis && !previouslyAnalyzed
+        ? { status: 'pending' as const }
+        : await analyzeImagePostBestEffort(item, keyword, existingAnalysis.gemini as VideoAiAnalysis | undefined);
       const recordId = String(existingRecord.id);
       const remoteThumbnail = item.thumbnailUrl || String(existingRecord.thumbnailUrl || '');
       const thumbnailUrl = await persistImagePostThumbnail(recordId, remoteThumbnail);
@@ -1238,7 +1272,7 @@ export async function crawlImagePostsForTenant(input: {
       await store.update(COL, recordId, {
         contentFormat: 'image',
         thumbnailUrl,
-        status: (imageAnalysis.status === 'analyzed' ? 'analyzed' : 'failed') as VideoStatus,
+        status: (imageAnalysis.status === 'analyzed' ? 'analyzed' : imageAnalysis.status === 'pending' ? 'pending' : 'failed') as VideoStatus,
         aiAnalysis: serializeImagePostAnalysis({
           ...existingAnalysis,
           imageStorage: storedAnalysis.imageStorage,
@@ -1262,20 +1296,24 @@ export async function crawlImagePostsForTenant(input: {
           publicAdSignals: { isAd: item.isAd, isPaidPartnership: item.isPaidPartnership },
           uploadedAt: item.uploadedAt || existingAnalysis.uploadedAt,
           keyword,
-          crawlRule: '图文检索',
-          imageEvidence: imageAnalysis.analysis || existingAnalysis.imageEvidence,
-          imageAnalysisStatus: imageAnalysis.status === 'analyzed' ? 'analyzed' : (existingAnalysis.imageAnalysisStatus || 'failed'),
-          imageAnalysisError: imageAnalysis.status === 'analyzed' ? undefined : imageAnalysis.error,
+          crawlRule: accountMode ? '对标账号主页' : '图文检索',
+          sourceAccountUrl: accountUrl || existingAnalysis.sourceAccountUrl,
+          imageEvidence: ('analysis' in imageAnalysis ? imageAnalysis.analysis : undefined) || existingAnalysis.imageEvidence,
+          imageAnalysisStatus: imageAnalysis.status === 'analyzed' ? 'analyzed' : imageAnalysis.status === 'pending' ? 'pending' : (existingAnalysis.imageAnalysisStatus || 'failed'),
+          imageAnalysisError: imageAnalysis.status === 'analyzed' ? undefined : ('error' in imageAnalysis ? imageAnalysis.error : undefined),
           analysisSource: imageAnalysis.status === 'analyzed' ? `${imageAnalysis.provider || 'qwen'}-image-evidence-v2` : (existingAnalysis.analysisSource || 'image-metadata'),
           analysisQuality: imageAnalysis.status === 'analyzed' ? 'image' : (existingAnalysis.analysisQuality || 'metadata'),
           importedAt: existingAnalysis.importedAt || new Date().toISOString(),
         }),
       });
+      if (imageAnalysis.status === 'pending') queueImagePostAnalysis(recordId, item, keyword);
       existingRecords.push({ ...existingRecord, thumbnailUrl });
       continue;
     }
 
-    const imageAnalysis = await analyzeImagePostBestEffort(item, keyword);
+    const imageAnalysis = input.deferImageAnalysis
+      ? { status: 'pending' as const }
+      : await analyzeImagePostBestEffort(item, keyword);
     const record = await store.create(COL, {
       tenantId: input.tenantId,
       contentFormat: 'image',
@@ -1306,16 +1344,17 @@ export async function crawlImagePostsForTenant(input: {
         author: item.author,
         likes: item.likes,
         comments: item.comments,
-        imageEvidence: imageAnalysis.analysis,
+        imageEvidence: 'analysis' in imageAnalysis ? imageAnalysis.analysis : undefined,
         imageAnalysisStatus: imageAnalysis.status,
-        imageAnalysisError: imageAnalysis.error,
+        imageAnalysisError: 'error' in imageAnalysis ? imageAnalysis.error : undefined,
         analysisSource: imageAnalysis.status === 'analyzed' ? `${imageAnalysis.provider || 'qwen'}-image-evidence-v2` : 'image-metadata',
         analysisQuality: imageAnalysis.status === 'analyzed' ? 'image' : 'metadata',
         keyword,
-        crawlRule: '图文检索',
+        crawlRule: accountMode ? '对标账号主页' : '图文检索',
+        sourceAccountUrl: accountUrl || undefined,
         importedAt: new Date().toISOString(),
       }),
-      status: (imageAnalysis.status === 'analyzed' ? 'analyzed' : 'failed') as VideoStatus,
+      status: (imageAnalysis.status === 'analyzed' ? 'analyzed' : imageAnalysis.status === 'pending' ? 'pending' : 'failed') as VideoStatus,
       crawledAt: new Date().toISOString(),
     });
     if (record) {
@@ -1323,7 +1362,8 @@ export async function crawlImagePostsForTenant(input: {
       const recordId = String((record as Record<string, unknown>).id);
       const thumbnailUrl = await persistImagePostThumbnail(recordId, item.thumbnailUrl);
       const storedImageUrls = await persistImagePostImages(recordId, item.imageUrls?.length ? item.imageUrls : [item.thumbnailUrl]);
-      const currentAnalysis = videoAnalysisOf(record as Record<string, unknown>);
+      const storedRecord = await store.getById<Record<string, unknown>>(COL, recordId);
+      const currentAnalysis = videoAnalysisOf(storedRecord || record as Record<string, unknown>);
       await store.update(COL, recordId, {
         thumbnailUrl,
         aiAnalysis: serializeImagePostAnalysis({
@@ -1332,6 +1372,7 @@ export async function crawlImagePostsForTenant(input: {
           imageCount: storedImageUrls.length || currentAnalysis.imageCount || 1,
         }),
       });
+      if (imageAnalysis.status === 'pending') queueImagePostAnalysis(recordId, item, keyword);
       records.push({ ...(record as Record<string, unknown>), thumbnailUrl });
     }
     if (imported >= target) break;
@@ -1350,7 +1391,7 @@ export async function crawlImagePostsForTenant(input: {
     total: items.length,
     source: crawlerSource,
     message: crawlerMessage || (resultRecords.length
-      ? `图文采集完成：返回 ${resultRecords.length} 条（新增 ${imported} 条，库内已有 ${Math.max(0, resultRecords.length - records.length)} 条）`
+      ? `${accountMode ? '主页图文' : '图文'}采集完成：返回 ${resultRecords.length} 条（新增 ${imported} 条，库内已有 ${Math.max(0, resultRecords.length - records.length)} 条）`
       : `图文采集完成：未找到可入库图文，请换关键词或平台账号主页`),
     items: resultRecords.map(record => publicVideoRecord(record as Record<string, unknown>)),
   };
@@ -1827,16 +1868,25 @@ async function analyzeFreshCrawledRecordsForTestTenant(records: unknown[], targe
   return out;
 }
 
+export function shouldCreateTestTenantAnalysisJob(analysis: Record<string, unknown>, normallyQueueable: boolean): boolean {
+  return normallyQueueable || !analysis.crawlerOpsTaskId;
+}
+
 async function queueTestTenantVideoLevelAnalysis(record: Record<string, unknown>): Promise<void> {
   const id = String(record.id || '');
   if (!id) return;
   const latest = await store.getById<Record<string, unknown>>(COL, id);
-  if (!latest || isPublicTestTenantVideo(latest) || !shouldQueueVideoAnalysis(latest)) return;
+  if (!latest || isPublicTestTenantVideo(latest)) return;
 
   const sourceUrl = String(latest.sourceUrl || '').trim();
   if (!sourceUrl) return;
   const platform = (latest.platform || inferPlatformFromUrl(sourceUrl)) as Platform;
   const analysis = parseJsonRecord<Record<string, unknown>>(latest.aiAnalysis, {});
+  // The batch preflight intentionally marks every candidate as queued before
+  // individual jobs are created. A queued marker without a durable ops receipt
+  // must continue into queueAnalyzeSource; otherwise Facebook/Instagram rows
+  // remain metadata-only forever. A receipt means the job was already accepted.
+  if (!shouldCreateTestTenantAnalysisJob(analysis, shouldQueueVideoAnalysis(latest))) return;
   await store.update(COL, id, {
     status: 'pending' as VideoStatus,
     aiAnalysis: JSON.stringify({
@@ -3310,7 +3360,15 @@ videosRouter.get('/:id/thumbnail', async (req, res) => {
   }
 
   const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
-  const cosKey = String(analysis.thumbnailObjectKey || '');
+  let cosKey = String(analysis.thumbnailObjectKey || '');
+  if (!cosKey && analysis.contentFormat === 'image') {
+    cosKey = await recoverCrawlerImageObjectKey(record, 'thumbnail');
+    if (cosKey) {
+      void store.update(COL, String(record.id), {
+        aiAnalysis: JSON.stringify({ ...analysis, thumbnailStorage: 'cos', thumbnailObjectKey: cosKey }),
+      });
+    }
+  }
   if (cosKey) {
     try {
       if (await streamCrawlerCosObject(res, cosKey, req.headers.range)) return;
@@ -3344,7 +3402,17 @@ videosRouter.get('/:id/image/:index', async (req, res) => {
   const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
   const keys = Array.isArray(analysis.imageObjectKeys) ? analysis.imageObjectKeys.map(String) : [];
   const index = Number(req.params.index);
-  const key = Number.isInteger(index) && index >= 0 ? keys[index] : '';
+  let key = Number.isInteger(index) && index >= 0 ? keys[index] : '';
+  if (!key && Number.isInteger(index) && index >= 0 && analysis.contentFormat === 'image') {
+    key = await recoverCrawlerImageObjectKey(record as Record<string, unknown>, `image-${index + 1}`);
+    if (key) {
+      const repairedKeys = [...keys];
+      repairedKeys[index] = key;
+      void store.update(COL, String(record.id), {
+        aiAnalysis: JSON.stringify({ ...analysis, imageStorage: 'cos', imageObjectKeys: repairedKeys }),
+      });
+    }
+  }
   if (!key || !await streamCrawlerCosObject(res, key, req.headers.range)) res.status(404).end();
 });
 
@@ -6384,13 +6452,13 @@ function facebookTagsFromPost(item: Record<string, unknown>, accountUrl: string)
 }
 
 // ─── 图文/图片帖采集 ─────────────────────────────────────────────────────────
-async function crawlInstagramImagePostsApify(keyword: string, limit: number): Promise<CrawledImagePost[]> {
+async function crawlInstagramImagePostsApify(keyword: string, limit: number, accountUrl = ''): Promise<CrawledImagePost[]> {
   const token = process.env.APIFY_TOKEN?.trim();
   if (!token) throw new Error('APIFY_TOKEN is not configured');
   const actor = process.env.APIFY_INSTAGRAM_ACTOR?.trim() || 'apify/instagram-scraper';
   const cleanKeyword = keyword.replace(/^#/, '').trim();
   const rows = await runApifyActorDatasetItems(actor, {
-    directUrls: [`https://www.instagram.com/explore/tags/${encodeURIComponent(cleanKeyword)}/`],
+    directUrls: [accountUrl || `https://www.instagram.com/explore/tags/${encodeURIComponent(cleanKeyword)}/`],
     resultsType: 'posts',
     resultsLimit: Math.min(50, Math.max(limit * 4, limit, 12)),
     addParentData: false,
@@ -6437,12 +6505,12 @@ function apifyInstagramItemToImagePost(item: Record<string, unknown>, keyword: s
   };
 }
 
-async function crawlTikTokImagePostsApify(keyword: string, limit: number): Promise<CrawledImagePost[]> {
+async function crawlTikTokImagePostsApify(keyword: string, limit: number, accountUrl = '', dateFrom = '', dateTo = ''): Promise<CrawledImagePost[]> {
   const token = process.env.APIFY_TOKEN?.trim();
   if (!token) throw new Error('APIFY_TOKEN is not configured');
   const actor = process.env.APIFY_TIKTOK_ACTOR?.trim() || 'clockworks/tiktok-scraper';
   const input = {
-    ...buildApifyTikTokInput(keyword, limit),
+    ...buildApifyTikTokInput(accountUrl || keyword, limit, dateFrom, dateTo),
     shouldDownloadSlideshowImages: true,
   };
   const rows = await runApifyActorDatasetItems(actor, input, Number(process.env.APIFY_TIMEOUT_MS || 240_000), 'TikTok image posts');
@@ -6614,8 +6682,9 @@ async function crawlFacebookImagePostsPublicSearch(keyword: string, limit: numbe
   return items;
 }
 
-async function crawlYouTubeCommunityPostsPublicSearch(keyword: string, limit: number): Promise<CrawledImagePost[]> {
-  const query = `site:youtube.com/post "${keyword}"`;
+async function crawlYouTubeCommunityPostsPublicSearch(keyword: string, limit: number, accountUrl = ''): Promise<CrawledImagePost[]> {
+  const account = accountUrl ? accountLabelFromUrl(accountUrl) : '';
+  const query = `site:youtube.com/post "${account || keyword}"`;
   const url = `https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`;
   const xml = await fetchText(url, 20_000);
   const items: CrawledImagePost[] = [];
@@ -6721,6 +6790,28 @@ async function analyzeImagePostBestEffort(item: CrawledImagePost, keyword: strin
       return { status: 'failed', error: `Qwen: ${qwenMessage}; Gemini: ${geminiMessage}`.slice(0, 900) };
     }
   }
+}
+
+function queueImagePostAnalysis(recordId: string, item: CrawledImagePost, keyword: string): void {
+  void analyzeImagePostBestEffort(item, keyword).then(async result => {
+    const latest = await store.getById<Record<string, unknown>>(COL, recordId);
+    if (!latest) return;
+    const analysis = videoAnalysisOf(latest);
+    await store.update(COL, recordId, {
+      status: (result.status === 'analyzed' ? 'analyzed' : 'failed') as VideoStatus,
+      aiAnalysis: serializeImagePostAnalysis({
+        ...analysis,
+        imageEvidence: result.analysis || analysis.imageEvidence,
+        imageAnalysisStatus: result.status,
+        imageAnalysisError: result.status === 'analyzed' ? undefined : result.error,
+        analysisSource: result.status === 'analyzed' ? `${result.provider || 'qwen'}-image-evidence-v2` : (analysis.analysisSource || 'image-metadata'),
+        analysisQuality: result.status === 'analyzed' ? 'image' : (analysis.analysisQuality || 'metadata'),
+        imageAnalysisCompletedAt: new Date().toISOString(),
+      }),
+    });
+  }).catch(error => {
+    console.warn('[videos] deferred image post analysis failed:', error instanceof Error ? error.message : error);
+  });
 }
 
 // 反爬节流：同一平台的元数据请求全局排队串行，条与条之间加随机间隔，
