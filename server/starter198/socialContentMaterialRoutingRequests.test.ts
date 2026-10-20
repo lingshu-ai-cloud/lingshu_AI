@@ -46,6 +46,7 @@ test('normal API creation persists the policy while historic briefs remain unmar
   assert.deepEqual(parseUpdateSocialTask({ expectedVersion: 'v65', changes: { title: '更新标题' } }).changes, { title: '更新标题' });
   assert.equal(parseUpdateSocialTask({ expectedVersion: 'v65', changes: { targetDurationSeconds: 18 } }).changes.targetDurationSeconds, 18);
   assert.throws(() => parseUpdateSocialTask({ expectedVersion: 'v65', changes: { targetDurationSeconds: 3 } }), /social_content_target_duration_invalid/);
+  assert.throws(() => parseUpdateSocialTask({ expectedVersion: 'v65', changes: { _weeklyAuthority: { forged: true } } }), /social_content_input_invalid/);
 });
 test('local product match retains its action evidence, SKU and exact analyzed segment', () => {
   const result = requests([candidate()])[0]!;
@@ -103,6 +104,35 @@ test('positive motion remains required beside a packaging prohibition and stale 
     shots: [prior], candidates: [candidate({ visualContract: visual('手握产品静止展示') })], productRef: 'SKU-1' })[0]!;
   assert.equal(result.localVideoMatch, undefined);
   assert.equal(result.selectedMaterialSegment, undefined);
+});
+
+test('server-reviewed weekly binding routes the exact current segment despite archetype mismatch', () => {
+  const weak = candidate({visualContract: visual('产品静止展示')}) as any;
+  weak.sourceRevision=weak.segmentProfile.sourceRevision;
+  const binding = {shotId:'S1',assetId:weak.assetId,segmentId:weak.segmentId,sourceRef:weak.sourceRef,
+    sourceRevision:weak.sourceRevision,rightsEvidenceRef:`rights:${weak.assetId}`};
+  const route = (patch:Record<string,unknown>={}) => materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',
+    shots:[shot],candidates:[{...weak,...patch}] as never[],productRef:'SKU-1',reviewedMaterialBindings:[binding]})[0]!;
+  assert.deepEqual(route().localVideoMatch?.sourceRefs,['own-video']);
+  assert.deepEqual(route().selectedMaterialSegment,{sourceRef:'own-video',segmentId:'seg-1',startSeconds:2,endSeconds:6});
+  assert.equal(materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',shots:[shot],candidates:[weak],productRef:'SKU-1'})[0]!.localVideoMatch,undefined);
+  assert.equal(route({mediaType:'image'}).localVideoMatch,undefined);
+  assert.equal(route({origin:'shared_library'}).localVideoMatch,undefined);
+});
+
+test('reviewed weekly binding fails closed on tenant, revision, rights and segment drift', () => {
+  const base = candidate({visualContract:visual('产品静止展示')}) as any;
+  base.sourceRevision=base.segmentProfile.sourceRevision;
+  const binding = {shotId:'S1',assetId:base.assetId,segmentId:base.segmentId,sourceRef:base.sourceRef,
+    sourceRevision:base.sourceRevision,rightsEvidenceRef:`rights:${base.assetId}`};
+  const invoke = (candidateValue:any,bindingPatch:Record<string,unknown>={}) => materialRoutingRequests({policyVersion:'type-aware.v2',
+    tenantId:'tenant',shots:[shot],candidates:[candidateValue] as never[],productRef:'SKU-1',
+    reviewedMaterialBindings:[{...binding,...bindingPatch}]})[0]!.localVideoMatch;
+  assert.equal(invoke(profiled({...base,tenantId:'foreign'})),undefined);
+  assert.equal(invoke(base,{sourceRevision:'changed'}),undefined);
+  assert.equal(invoke(base,{segmentId:'changed'}),undefined);
+  assert.equal(invoke(base,{rightsEvidenceRef:'unreviewed-request'}),undefined);
+  assert.equal(invoke({...base,segmentProfile:{...base.segmentProfile,commercialUseApproved:false}}),undefined);
 });
 
 test('negative prompt and evidence prohibitions never become positive local-match requirements', () => {

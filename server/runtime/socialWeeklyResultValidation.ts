@@ -87,6 +87,17 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
     requireResult(gate.ready&&gate.resultRefs.length>0&&socialRequestHash(gate.resultRefs)===socialRequestHash(refs),'weekly_preproduction_result_unverified');
     return;
   }
+  if(refs.some(ref=>ref.type==='quality_receipt')){
+    requireResult(task.workflowKind==='content'&&['quality_check','rework'].includes(task.schedule.stepKind),'weekly_quality_receipt_step_invalid');
+    const artifacts=refs.filter(ref=>ref.type==='starter_social_content_artifact');
+    const receipts=refs.filter(ref=>ref.type==='quality_receipt');
+    requireResult(refs.length===2&&artifacts.length===1&&receipts.length===1&&receipts[0]!.version===1,'weekly_quality_receipt_refs_invalid');
+    await validateContentArtifact(store,task,artifacts[0]!);
+    const {readVerifiedWeeklyContentQualityAudit}=await import('./weeklyContentQualityAudit.js');
+    const verified=await readVerifiedWeeklyContentQualityAudit(store,task,artifacts[0]!);
+    requireResult(receipts[0]!.id===verified.receiptId,'weekly_quality_receipt_unverified');
+    return;
+  }
   if (refs.some(ref => ref.type === 'social_metric_snapshot')) {
     const { validateWeeklyPublicationMetricRefs } = await import('./weeklyPublicationMetricEvidence.js');
     await validateWeeklyPublicationMetricRefs(store, task, refs, now);

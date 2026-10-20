@@ -1,20 +1,7 @@
-import type {
-  SocialAssetAvailability,
-  SocialAssetSupplyPlan,
-  SocialAssetSupplyRoute,
-  SocialAssetSupplyShotPlan,
-  SocialAccountPresenterLock,
-  SocialContentCreationMode,
-  SocialProductionApproach,
-  SocialProductIdentityGroup,
-  SocialProductSceneReplicationSpec,
-  SocialReferenceShotAnalysis,
-  SocialShotFunction,
-  SocialShotSourceStrategy,
-  SocialShotTruthBoundary,
-  SocialTruthProhibition,
-  SocialTruthSensitiveSubject,
-} from './contracts/socialContentWorkflow';
+import type {SocialAssetAvailability,SocialAssetSupplyPlan,SocialAssetSupplyRoute,SocialAssetSupplyShotPlan,
+  SocialAccountPresenterLock,SocialContentCreationMode,SocialProductionApproach,SocialProductIdentityGroup,
+  SocialProductSceneReplicationSpec,SocialReferenceShotAnalysis,SocialShotFunction,SocialShotSourceStrategy,
+  SocialShotTruthBoundary,SocialTruthProhibition,SocialTruthSensitiveSubject} from './contracts/socialContentWorkflow';
 import {
   normalizeSceneVisualContract,
   type SocialSceneVisualContract,
@@ -23,6 +10,7 @@ import type { BenchmarkMaterialType } from './benchmarkAnalysis';
 import type { SocialMaterialRouting } from './contracts/socialContentReplication';
 import {selectTypeAwareSocialMaterial,selectVerifiedSocialMaterialSegment,affirmativeSocialMaterialDescription,explicitSocialPresenterRequest} from './socialContentMaterialRouting';
 import type { CreateSocialAssetSupplyPlanInput, SocialAssetInventory, SocialAssetSupplyShotRequest } from './socialContentAssetSupplyContracts';
+import {selectVerifiedLocalMaterialCut} from './socialContentLocalMaterialCut';
 export type { CreateSocialAssetSupplyPlanInput, SocialAssetInventory, SocialAssetSupplyShotRequest } from './socialContentAssetSupplyContracts';
 
 const EMPTY_INVENTORY: Required<SocialAssetInventory> = {
@@ -390,11 +378,18 @@ function generalStrategy(
   materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2',
 ): { strategy: SocialShotSourceStrategy; refs: string[]; instruction: string; productSceneReplication?: SocialProductSceneReplicationSpec; materialRouting?: SocialMaterialRouting; blocked?: boolean } {
   const signals = shotSignals(shot, referenceShots);
-  if (productionApproach === 'ai_enhanced' && (materialRoutingPolicyVersion === 'type-aware.v1' || materialRoutingPolicyVersion === 'type-aware.v2')) return selectTypeAwareSocialMaterial({policyVersion:materialRoutingPolicyVersion,shot,inventory,materialType:classifySocialAssetSupplyMaterialType(shot,referenceShots),referenceVisualContract:referenceShot(shot,referenceShots)?.visualContract,presenterRefs:presenterLockReady(accountPresenterLock)?[accountPresenterLock.presenterAssetId]:inventory.presenterAssetIds,buildProductSpec:()=>buildSocialProductSceneReplicationSpec({shot,inventory,referenceShots})});
+  if(productionApproach==='material_cut'&&materialRoutingPolicyVersion==='type-aware.v2'){
+    const local=selectVerifiedLocalMaterialCut({shot,inventory,materialType:classifySocialAssetSupplyMaterialType(shot,referenceShots)});
+    if(local)return local;
+  }
+  if (materialRoutingPolicyVersion === 'type-aware.v1' || materialRoutingPolicyVersion === 'type-aware.v2') {
+    const routed=selectTypeAwareSocialMaterial({policyVersion:materialRoutingPolicyVersion,shot,inventory,materialType:classifySocialAssetSupplyMaterialType(shot,referenceShots),referenceVisualContract:referenceShot(shot,referenceShots)?.visualContract,presenterRefs:presenterLockReady(accountPresenterLock)?[accountPresenterLock.presenterAssetId]:inventory.presenterAssetIds,buildProductSpec:()=>buildSocialProductSceneReplicationSpec({shot,inventory,referenceShots})});
+    if(productionApproach==='ai_enhanced'||productionApproach==='material_cut'&&routed.materialRouting?.localMatch.state==='matched')return routed;
+  }
   const observedReferenceRouting = referenceShot(shot, referenceShots)?.referenceProductionRouting;
   const referenceRouting = observedReferenceRouting?.state === 'ready' && observedReferenceRouting.route !== 'undetermined'
     ? observedReferenceRouting : undefined;
-  if (referenceRouting) {
+  if (referenceRouting && productionApproach === 'ai_enhanced') {
     if (referenceRouting.route === 'reference_frame_presenter') return {
       strategy: 'authorized_digital_presenter', refs: presenterLockReady(accountPresenterLock)
         ? [accountPresenterLock.presenterAssetId] : inventory.presenterAssetIds,
@@ -689,7 +684,8 @@ function planShot(
   }
 
   const selected = generalStrategy(shot, inventory, confirmedFactRefs, accountPresenterLock, referenceShots, productionApproach,materialRoutingPolicyVersion);
-  const frozenReferenceRouting = referenceRouting ? structuredClone(referenceRouting) : undefined;
+  const frozenReferenceRouting = productionApproach === 'ai_enhanced' && referenceRouting
+    ? structuredClone(referenceRouting) : undefined;
   if(frozenReferenceRouting&&selected.materialRouting&&selected.materialRouting.policy!=='authorized_presenter'){
     frozenReferenceRouting.route=selected.strategy==='aigc_product_scene_replication'?'non_presenter_aigc_video':'non_presenter_library_match';
     frozenReferenceRouting.reason+='；按冻结素材类型执行本地匹配优先规则，禁止自动改为其他素材类型。';

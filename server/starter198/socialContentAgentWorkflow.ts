@@ -55,7 +55,6 @@ import type { SocialReferenceReviewHandoff } from './socialReferenceReviewHandof
 import { socialReferenceFidelityFailures } from './socialContentReferenceFidelity.js';
 import type { MaterialAssetV2Metadata } from '../../shared/contracts/materialAssetV2.js';
 import { reviewSocialExecutionScene } from './socialContentExecutionSceneReview.js';
-
 import {
   buildBusinessContext,
   buildDiscoveryBrief,
@@ -70,7 +69,6 @@ import {
   unique,
   type SocialContentCapabilityRuntimeRegistration,
 } from './socialContentAgentWorkflowContext.js';
-
 export interface SocialWorkflowMaterialCandidate {
   assetId: string;
   sourceRef: string;
@@ -108,7 +106,6 @@ function safeBoundary(boundary: SocialShotTruthBoundary): SocialShotTruthBoundar
     prohibitedRepresentations: [...boundary.prohibitedRepresentations],
   };
 }
-
 function requiredEvidence(boundary: SocialShotTruthBoundary, purpose: SocialDirectorBriefScene['purpose'], typedMaterial = false): string[] {
   const subjectLabel = boundary.subject === 'customer_factory' ? '优先使用“我的素材”中的真实工厂或生产过程'
     : boundary.subject === 'customer_case' ? '优先使用“我的素材”中的客户案例'
@@ -119,7 +116,6 @@ function requiredEvidence(boundary: SocialShotTruthBoundary, purpose: SocialDire
     ...(purpose === 'proof' ? ['直接优先调用已入库的工厂、客户案例或产品效果素材'] : []),
   ]);
 }
-
 function sceneProductSelection(input: BuildSocialAgentWorkflowInput): {
   policy: SocialProductPolicy;
   source: SocialProductPolicySource;
@@ -134,7 +130,6 @@ function sceneProductSelection(input: BuildSocialAgentWorkflowInput): {
   if (input.inferredProductRef) return { policy: 'preferred', source: 'agent_inferred', productId: null, productRef: input.inferredProductRef };
   return { policy: 'open', source: 'inventory_open', productId: null, productRef: null };
 }
-
 function shotLanguage(reference: SocialReferenceShotAnalysis | undefined) {
   const tags = reference?.tags.cameraLanguage ?? [];
   const pick = (pattern: RegExp, fallback: string) => tags.find(item => pattern.test(item)) || fallback;
@@ -145,7 +140,6 @@ function shotLanguage(reference: SocialReferenceShotAnalysis | undefined) {
     composition: pick(/构图|中心|对称|三分|前景|留白|composition/i, '主体、证据和字幕安全区互不遮挡'),
   };
 }
-
 function visualTopicFor(reference: SocialReferenceShotAnalysis | undefined, targetVisual: string, intent: string): NonNullable<SocialDirectorBriefScene['visualTopic']> {
   const subject = reference?.semanticLabel?.content || targetVisual;
   const description = [subject, reference?.visualDescription, ...(reference?.tags.sceneTypes ?? [])].filter(Boolean).join(' ');
@@ -163,7 +157,6 @@ function visualTopicFor(reference: SocialReferenceShotAnalysis | undefined, targ
         : personIsForeground ? 'visible_speech' : 'none';
   return { kind, subject, intent: reference?.semanticLabel?.intent || intent, personRole };
 }
-
 function directorScene(input: {
   index: number;
   script: SocialReplicationScriptShot | null;
@@ -173,6 +166,7 @@ function directorScene(input: {
   productSelection: ReturnType<typeof sceneProductSelection>;
   primaryHook: SocialReferenceVideoAnalysis['hookAnalysis'];
   enterprisePresenterAssetRef: string | null;
+  functionalReplacement: boolean;
 }): SocialDirectorBriefScene {
   const startSeconds = input.script?.startSeconds ?? input.reference?.startSeconds ?? input.index * 3;
   const endSeconds = input.script?.endSeconds ?? input.reference?.endSeconds ?? startSeconds + 3;
@@ -204,6 +198,7 @@ function directorScene(input: {
   });
   const reference = input.reference;
   const typedRouting = input.supply.materialRouting;
+  const reviewedLocalVideo = typedRouting?.policy === 'local_only' && typedRouting.localMatch?.state === 'matched';
   const referenceRouting = typedRouting && typedRouting.materialType !== 'talking_head' ? undefined : reference?.referenceProductionRouting;
   const identityLockedPresenter = referenceRouting?.state === 'ready' && referenceRouting.route === 'reference_frame_presenter';
   // Optional continuity analysis controls identity fidelity, not whether a
@@ -228,7 +223,7 @@ function directorScene(input: {
     && (Boolean(spokenText || reference?.spokenText) || /口播|说话|对镜|唇|talking|speaking/i.test([
       reference?.visualDescription, reference?.semanticLabel?.content,
     ].filter(Boolean).join(' '))));
-  const needsPreciseLipSync = presenterVisible && visibleMouth && Boolean(spokenText || reference?.spokenText);
+  const needsPreciseLipSync = !reviewedLocalVideo && presenterVisible && visibleMouth && Boolean(spokenText || reference?.spokenText);
   return {
     sceneId: input.script?.shotId || input.supply.shotId,
     order: input.index + 1,
@@ -248,8 +243,8 @@ function directorScene(input: {
       },
       productionRouting: {
         presenterVisible,
-        presenterIdentityReplacementRequired: presenterVisible && personRole !== 'background',
-        enterprisePresenterAssetRef: presenterVisible && personRole !== 'background' ? input.enterprisePresenterAssetRef : null,
+        presenterIdentityReplacementRequired: !reviewedLocalVideo && presenterVisible && personRole !== 'background',
+        enterprisePresenterAssetRef: !reviewedLocalVideo && presenterVisible && personRole !== 'background' ? input.enterprisePresenterAssetRef : null,
         needsPreciseLipSync,
         needsExpressiveAction,
         needsCameraOrCompositionReconstruction,
@@ -344,8 +339,9 @@ function directorScene(input: {
       productSceneReplication: structuredClone(input.supply.productSceneReplication),
     } : {}),
     replicationFactors: input.replicationFactors.map(factor => {
-      const remainsApplicable = input.script?.scriptOrigin !== 'budget_semantic_revision'
-        || factor.policy === 'prohibit_reuse' || factor.policy === 'replace_identity' || factor.category === 'identity';
+      const budgetReplacement = input.script?.scriptOrigin === 'budget_semantic_revision';
+      const remainsApplicable = input.functionalReplacement ? factor.policy === 'prohibit_reuse'
+        : !budgetReplacement || factor.policy === 'prohibit_reuse' || factor.policy === 'replace_identity' || factor.category === 'identity';
       const replacementReason = remainsApplicable ? null
         : '目标镜头为原创产品介绍；保留来源因素及谱系，但不声称逐项复现原工厂、DTC 或第三方视觉';
       return {
@@ -369,7 +365,6 @@ function directorScene(input: {
     mustDifferPoints: input.script?.mustDifferPoints ?? input.reference?.mustDifferPoints ?? [],
   };
 }
-
 function buildDirectorBrief(
   input: BuildSocialAgentWorkflowInput,
   context: ReturnType<typeof buildBusinessContext>,
@@ -408,6 +403,10 @@ function buildDirectorBrief(
       primaryHook: input.referenceAnalysis?.hookAnalysis ?? null,
       enterprisePresenterAssetRef: input.assetSupplyPlan.accountPresenterLock?.presenterAssetId
         ?? input.enterprisePresenterAssetRef ?? null,
+      functionalReplacement: input.brief.referenceMode === 'multi_source_hybrid'
+        && input.brief.productionApproach === 'material_cut'
+        && supply.sourceStrategy === 'customer_real_asset'
+        && supply.feasibility === 'functional_equivalent',
     });
   }).filter((scene): scene is SocialDirectorBriefScene => Boolean(scene));
   const coverage = input.referenceAnalysis?.coverage;
@@ -538,7 +537,6 @@ function buildDirectorBrief(
     createdBy: 'director_agent',
   };
 }
-
 function eligibleProductBudgetCandidate(supply:SocialAssetSupplyShotPlan,policyVersion?:string){
  const routing=supply.materialRouting,generation=routing?.generation,spec=supply.productSceneReplication;
  return policyVersion==='type-aware.v2'&&routing?.materialType==='product'
@@ -752,7 +750,12 @@ function capabilityCandidates(input: {
           ? candidate.sourceStrategy === 'authorized_digital_presenter'
           : candidate.sourceStrategy === 'aigc_product_scene_replication');
       }
-      const routing = input.scene.referenceProductionRouting;
+      // A user-selected local-only route may intentionally replace the
+      // reference production mechanism with a verified tenant clip. Keep the
+      // reference analysis on the Director brief for QA, but do not let its
+      // historic AIGC route erase the exact server-selected local asset.
+      const routing = input.supply.sourceStrategy === 'customer_real_asset'
+        && input.supply.sourceRefs.length ? undefined : input.scene.referenceProductionRouting;
       if (!routing) return true;
       // An unresolved optional person-continuity observation is retained for
       // audit, but does not suppress otherwise executable assets/capabilities.
@@ -784,7 +787,6 @@ function capabilityCandidates(input: {
   }
   return diversified;
 }
-
 function executionScene(input: {
   policyVersion?:string;
   taskId: string;
@@ -840,7 +842,8 @@ function executionScene(input: {
   const safeOriginalHookFallback = referenceHook
     ? undefined
     : capability('licensed_stock_asset') ?? capability('motion_graphics');
-  const generatedReference=Boolean(input.scene.referenceProductionRouting && ['aigc_video','non_presenter_aigc_video'].includes(input.scene.referenceProductionRouting.route));
+  const generatedReference=input.supply.sourceStrategy!=='customer_real_asset'
+    &&Boolean(input.scene.referenceProductionRouting && ['aigc_video','non_presenter_aigc_video'].includes(input.scene.referenceProductionRouting.route));
   const mandatoryProductGeneration = input.supply.sourceStrategy === 'aigc_product_scene_replication'
     && !!input.supply.productSceneReplication && input.supply.fallbackSourceStrategy === null;
   const typedPreferred = input.supply.materialRouting
@@ -939,7 +942,6 @@ function executionScene(input: {
     } : {}),
   };
 }
-
 function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief: SocialDirectorBrief): SocialContentExecutionPlan {
   const supplyById = new Map(input.assetSupplyPlan.shots.map(shot => [shot.shotId, shot]));
   let paidProductSceneCount = 0;
@@ -1053,7 +1055,6 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
     createdBy: 'content_agent',
   };
 }
-
 export function socialExecutionExternalCost(plan: SocialContentExecutionPlan, directorBrief: SocialDirectorBrief): number {
   const briefByScene = new Map(directorBrief.scenes.map(scene => [scene.sceneId, scene]));
   const reusedExternal = new Set<string>();
@@ -1081,7 +1082,6 @@ export function socialExecutionExternalCost(plan: SocialContentExecutionPlan, di
     return sum + candidate.estimatedCostCny;
   }, 0).toFixed(2);
 }
-
 export function socialExecutionBudgetStatus(plan: SocialContentExecutionPlan, directorBrief: SocialDirectorBrief): {
   estimatedCostCny: number; budgetLimitCny: number | null; exceeded: boolean;
 } {

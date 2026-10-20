@@ -103,8 +103,8 @@ function entryPlan(kind:'factory'|'consumer_demo'|'product', candidates: Paramet
 }
 function profiledCandidate(value: Record<string, any>): Parameters<typeof materialRoutingRequests>[0]['candidates'][number] {
  const materialRoles=value.materialRoles??[],visualContract=value.visualContract;
- const assessment=buildLocalMaterialSegmentProfile({tenantId:'tenant',sourceTenantId:'tenant',origin:'my_materials',assetId:value.assetId,
-  segmentId:value.segmentId,sourceRevision:`revision:${value.assetId}`,currentSourceRevision:`revision:${value.assetId}`,
+ const assessment=buildLocalMaterialSegmentProfile({tenantId:'tenant',sourceTenantId:value.sourceTenantId??'tenant',origin:'my_materials',assetId:value.assetId,
+  segmentId:value.segmentId,sourceRevision:`revision:${value.assetId}`,currentSourceRevision:value.currentSourceRevision??`revision:${value.assetId}`,
   mediaType:value.mediaType??'video',synthetic:false,startSeconds:value.timeRange?.startSeconds??null,endSeconds:value.timeRange?.endSeconds??null,
   materialType:inferLocalMaterialSegmentType({materialRoles,visualContract}),materialRoles,productId:value.productId??null,productRef:value.productRef??null,
   visualContract,observedActionTags:[visualContract.action.path,visualContract.interaction.description],rightsEvidenceRefs:[`rights:${value.assetId}`],
@@ -127,6 +127,17 @@ test('normal task API parser and persisted brief drive real local execution afte
   }
   const result=await executeSocialAssetSupplyPlan({tenantId:'tenant',taskId:'new-task',outputDirectory:'/unused',plan:p,baseline,availableAssets:[{id:'real-video',sourceId:'real-video',type:'video',name:'owned',url:'local',localPath:'local',duration:9,segments:[{id:'verified-action',start:3,end:6}]} as any],adapters:[...existingAssetSupplyAdapters(),{adapterId:'paid-trap',sourceStrategies:['aigc_product_scene_replication','non_evidentiary_ai_visual'],async execute(){paid++;throw Error('paid');}}]});
   assert.equal(result.plan.materialRoutingPolicyVersion,'type-aware.v2');assert.equal(result.execution.shots[0]!.sourceStrategy,'customer_real_asset');assert.deepEqual(result.assets[0]!.segments,[{id:'verified-action',start:3,end:6}]);assert.equal(paid,0);
+ }
+});
+test('forward material-cut revision retains only a verified local-only route',()=>{
+ const {visual}=entryPlan('product',[]),candidate=profiledCandidate({assetId:'real-video',sourceRef:'real-video',segmentId:'verified-action',origin:'my_materials',mediaType:'video',productRef:'SKU-1',materialRoles:['product'],visualContract:visual,timeRange:{startSeconds:3,endSeconds:6}});
+ const requests=materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',productRef:'SKU-1',shots:[{shotId:'S01',function:'value',materialType:'product',productRef:'SKU-1',requestedDescription:'手握包装盒晃一圈',visualContract:visual}],candidates:[candidate]});
+ const local=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'material_cut',materialRoutingPolicyVersion:'type-aware.v2',inventory:{customerVideoIds:['real-video'],productIdentityGroups:[{productRef:'SKU-1',imageIds:['actual-product-image']}]},shots:requests}).shots[0]!;
+ assert.equal(local.sourceStrategy,'customer_real_asset');assert.equal(local.materialRouting?.policy,'local_only');assert.equal(local.materialRouting?.localMatch.state,'matched');assert.equal(local.selectedMaterialSegment?.segmentId,'verified-action');
+ const invalidCandidates=[[],[profiledCandidate({assetId:'real-video',sourceRef:'real-video',segmentId:'foreign',origin:'my_materials',mediaType:'video',productRef:'SKU-1',materialRoles:['product'],visualContract:visual,timeRange:{startSeconds:3,endSeconds:6},sourceTenantId:'foreign'})],[profiledCandidate({assetId:'real-video',sourceRef:'real-video',segmentId:'changed',origin:'my_materials',mediaType:'video',productRef:'SKU-1',materialRoles:['product'],visualContract:visual,timeRange:{startSeconds:3,endSeconds:6},currentSourceRevision:'changed'})]];
+ for(const candidates of invalidCandidates){
+  const invalid=materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',productRef:'SKU-1',shots:[{shotId:'S01',function:'value',materialType:'product',productRef:'SKU-1',requestedDescription:'手握包装盒晃一圈',visualContract:visual}],candidates});
+  const shot=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'material_cut',materialRoutingPolicyVersion:'type-aware.v2',inventory:{customerVideoIds:['real-video']},shots:invalid}).shots[0]!;assert.equal(shot.materialRouting,undefined);
  }
 });
 test('normal new task missing factory or consumer evidence blocks instead of converting inventory into AI permission',async()=>{

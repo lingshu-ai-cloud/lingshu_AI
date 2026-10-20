@@ -231,19 +231,19 @@ export async function evaluateSocialReplicationResult(input: {
     productionResultId: input.productionResultId,
     attemptId: `attempt_${hash({ evaluationId, outputVideoPath: input.outputVideoPath })}`,
     status,
-    ...(fidelity ? { referenceTimelineAudit: {
-      referenceShotCount: input.referenceAnalysis?.shots.length ?? 0,
-      referenceDurationSeconds: input.referenceAnalysis?.durationSeconds ?? 0,
+    referenceTimelineAudit: {
+      referenceShotCount: referenceTimeline.length,
+      referenceDurationSeconds: referenceTimeline.reduce((total, shot) => total + Math.max(0, shot.endSeconds - shot.startSeconds), 0),
       outputShotCount: outputTimeline.length,
-      fullCoverageValidated: Boolean(input.referenceAnalysis?.shots.length)
+      fullCoverageValidated: Boolean(referenceTimeline.length)
         && referenceTimeline.length === outputTimeline.length
         && referenceTimeline.every((shot, index) => {
           const output = outputTimeline[index];
           return output?.referenceShotId === shot.shotId
-            && Math.abs(output.startSeconds - shot.startSeconds) <= 0.08
-            && Math.abs(output.endSeconds - shot.endSeconds) <= 0.08;
+            && (!fidelity || (Math.abs(output.startSeconds - shot.startSeconds) <= 0.08
+              && Math.abs(output.endSeconds - shot.endSeconds) <= 0.08));
         }),
-    } } : {}),
+    },
     viralFactorFidelity: dimension(report, 'viralFactorFidelity'),
     identityReplacement: dimension(report, 'identityReplacement'),
     originalityDifference: dimension(report, 'originalityDifference'),

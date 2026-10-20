@@ -141,7 +141,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     if(input.repository.dataStore)await assertSocialContentOrderActive(input.repository.dataStore,input.tenantId,input.taskId);
     const footageRevision=socialObject(brief?._productFootageRevision);
     // Historical frozen jobs retain their existing admission and recovery contracts.
-    if (!['type-aware.v1', 'type-aware.v2'].includes(String(brief?.materialRoutingPolicyVersion))&&!brief?._productionRevision&&!brief?._weeklyCreativeRepairProof
+    if (!['type-aware.v1', 'type-aware.v2'].includes(String(brief?.materialRoutingPolicyVersion))&&!brief?._productionRevision&&!brief?._weeklyCreativeRepairProof&&!brief?._weeklyAuthority
         &&!(footageRevision&&input.runId!==socialText(footageRevision.sourceRunId)))
         return { status: 'legacy' as const };
     const store = input.repository.dataStore;

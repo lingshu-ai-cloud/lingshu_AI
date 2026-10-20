@@ -102,6 +102,11 @@ test('ordinary supporting shot with empty library automatically chooses generate
  const result=createSocialAssetSupplyPlan({creationMode:'viral_replication',referenceShots:[source],inventory:{},shots:[{shotId:'support',referenceShotId:'reference-person',function:'transition',requestedDescription:'环境过渡'}]});
  assert.equal(result.shots[0]!.sourceStrategy,'non_evidentiary_ai_visual');assert.equal(result.shots[0]!.customerShootRequired,false);assert.equal(result.shots[0]!.fallbackSourceStrategy,null);
 });
+test('explicit local-only production does not let a frozen reference route re-enable generation',()=>{
+ const source=reference();source.referenceProductionRouting=buildReferenceShotProductionRouting({sourceSha256:'sha',shots:[{shotId:'reference-person',time:'0–3s',criticalShot:{classification:'non_critical'},presenterContinuityEvidence:{...source.presenterContinuityEvidence!,observedPresenterRole:'none',personPresence:'none',personContinuityId:null}}]}).shots[0].productionRouting;
+ const result=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'material_cut',referenceShots:[source],inventory:{customerVideoIds:['tenant-owned-video']},shots:[{shotId:'support',referenceShotId:'reference-person',function:'transition',requestedDescription:'环境过渡'}]});
+ assert.equal(result.shots[0]!.sourceStrategy,'customer_real_asset');assert.deepEqual(result.shots[0]!.sourceRefs,['tenant-owned-video']);assert.equal(result.shots[0]!.fallbackSourceStrategy,null);assert.equal(result.shots[0]!.referenceProductionRouting,undefined,'reference route remains analysis evidence but cannot override the explicit local execution route');
+});
 test('legacy spoken presenter still uses AIGC avatar instead of abundant factory stock',()=>{
  const result=createSocialAssetSupplyPlan({creationMode:'viral_replication',accountPresenterLock:lock,inventory:{factoryEvidenceAssetIds:['generic-factory'],presenterAssetIds:['account-presenter']},shots:[{shotId:'presenter',function:'proof',truthSensitiveSubject:'customer_factory',requestedDescription:'人物口播介绍工厂'}]});
  assert.equal(result.shots[0]!.sourceStrategy,'authorized_digital_presenter');assert.deepEqual(result.shots[0]!.sourceRefs,['account-presenter']);

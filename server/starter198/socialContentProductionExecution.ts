@@ -45,7 +45,7 @@ import type { SocialAssetSupplyPlan, SocialContentTaskBrief, SocialContentTaskDe
 import { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
 import { resolveSourceDurations } from '../lib/videoSourcePlan.js';
-import { automationBgmAudio, automationBgmCatalog, readTenantEnterpriseProfile, synthesizeStudioVoiceForAutomation } from '../lib/socialContentLegacyPorts.js';
+import { alignStudioVoiceForAutomation, automationBgmAudio, automationBgmCatalog, readTenantEnterpriseProfile, synthesizeStudioVoiceForAutomation } from '../lib/socialContentLegacyPorts.js';
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import { objectStorageEnabled, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
 import { createSocialContentArtifact } from './socialContentOutputs.js';
@@ -132,6 +132,7 @@ export interface SocialContentAutoProductionRuntime {
   analyzeAssets?: typeof analyzeProductionAssets;
   selectDirectorBgm?: typeof selectDirectorBgm;
   synthesizeVoice?: typeof synthesizeStudioVoiceForAutomation;
+  alignVoice?: typeof alignStudioVoiceForAutomation;
   resolveBgm?: typeof resolveLockedBgm;
   renderComposite?: typeof composite;
   inspectVisuals?: typeof inspectRenderedVisuals;
@@ -156,9 +157,7 @@ type ProductionTaskDetail = NonNullable<Awaited<ReturnType<typeof readSocialTask
 export type SocialGraphApprovedContext = Pick<ProductionTaskDetail, 'version' | 'agentWorkflow' | 'assetSupplyPlan'> & { revisionPlanHash?: string; footageRevisionPlanHash?: string };
 import { executeSocialRenderStage, executeSocialQualityStage, rebindSocialGraphRenderSources, type SocialProductionGraphPhase } from './socialContentProductionStages.js';
 import {freezeSocialRenderFrameContract} from './socialRenderFrameContract.js';
-
 export const SOCIAL_SHOOTING_PLAN_SCHEMA = 'social-content.shooting-plan.v1';
-
 async function readCurrentConfirmedPresenterFirstFrame(store:NonNullable<Starter198Repository['dataStore']>,input:{scope:{tenantId:string;taskId:string;runId:string;planHash:string};groupId:string;presenterGroupContractHash:string;presenterAssetId:string}){
   const rows=await store.list<any>('social_presenter_first_frame_approvals',{where:{tenant_id:input.scope.tenantId,task_id:input.scope.taskId,run_id:input.scope.runId,plan_hash:input.scope.planHash,group_id:input.groupId},perPage:2});
   if(rows.totalItems!==1||rows.items.length!==1)return null;
@@ -168,7 +167,6 @@ async function readCurrentConfirmedPresenterFirstFrame(store:NonNullable<Starter
   if(!expectedAssetProvenanceHash)return null;
   return readConfirmedPresenterFirstFrameApproval(store,{...input,expectedAssetProvenanceHash});
 }
-
 /** Type-aware routing is authored by the task planner, not by Content-Agent
  * candidates. Graph checkpoints created by older workers can omit these
  * execution-only fields, so bind them back from the current canonical plan
@@ -201,7 +199,6 @@ export function bindCanonicalTypeAwareRouting<T extends NonNullable<ProductionTa
     ||shots.some(shot=>shot.sourceStrategy!=='aigc_product_scene_replication'&&shot.productSceneReplication&&!(canonical.materialRoutingPolicyVersion==='type-aware.v2'&&shot.materialRouting?.productGenerationDecision?.state==='eligible')))throw Error('type_aware_frozen_product_contract_incomplete');
   return {...structuredClone(approved),materialRoutingPolicyVersion:canonical.materialRoutingPolicyVersion,shots} as T;
 }
-
 export function assertCompleteTypeAwareExecutionPlan(plan: NonNullable<ProductionTaskDetail['assetSupplyPlan']>, expectedShotIds?: readonly string[]) {
   const actualIds=plan.shots.map(shot=>shot.shotId);
   if(!actualIds.length||actualIds.some(id=>!id)||new Set(actualIds).size!==actualIds.length
@@ -215,7 +212,6 @@ export function assertCompleteTypeAwareExecutionPlan(plan: NonNullable<Productio
   const staleSpec=plan.shots.find(shot=>shot.sourceStrategy!=='aigc_product_scene_replication'&&shot.productSceneReplication);
   if(staleSpec)throw Error(`type_aware_execution_product_spec_unexpected:${staleSpec.shotId}`);
 }
-
 /** Freeze the Content Agent's reviewed candidate back into the executable
  * supply plan. This makes the keyframe/range shown for review authoritative. */
 export function assetSupplyPlanWithExecutionSelections(
@@ -277,8 +273,6 @@ export function assetSupplyPlanWithDynamicPresenterBackgroundLocks(input:{
     return{...shot,referenceBackgroundAssetLock:freezeSocialReferenceBackgroundAsset({referenceReuse:input.referenceReuse!,referenceAnalysis:input.referenceAnalysis!,referenceShotId})};
   })};
 }
-
-
 export function typeAwareRequiredMaterialIds(plan:SocialAssetSupplyPlan|null):string[]{
   return [...new Set((plan?.shots??[]).flatMap(shot=>[
     ...shot.sourceRefs,
@@ -847,7 +841,8 @@ export async function runSocialContentAutoProduction(input: {
   };
   const budgetRuntimeReaders = createProductionBudgetRuntimeReaders({tenantId:input.tenantId,formula:directorFormula,readPresenterVoice:readSelectedVoice,
     frozenTrackSeconds:agentWorkflow.directorBrief.scenes.reduce((total,scene)=>total+scene.duration.endSeconds-scene.duration.startSeconds,0),
-    requiresMeasuredAlignment:reviewedSupplyPlan?.shots.some(shot=>shot.sourceStrategy==='authorized_digital_presenter')});
+    requiresMeasuredAlignment:Boolean(selectedVoice)
+      || reviewedSupplyPlan?.shots.some(shot=>shot.sourceStrategy==='authorized_digital_presenter')});
   if(usesTypeAwareRouting&&detail.brief.materialRoutingPolicyVersion==='type-aware.v2'&&reviewedSupplyPlan){
     const allocationHash=socialRequestHash({runId:input.runId,baseline:activeBaseline,plan:reviewedSupplyPlan,
       executionPlan:agentWorkflow.executionPlan,maximumCny:detail.brief.perItemBudgetCny??15});
@@ -863,7 +858,7 @@ export async function runSocialContentAutoProduction(input: {
           const candidateInputs=socialContentMaterialAnalysisInputs({assets:rawAssets,plan:candidate,policyVersion:'type-aware.v2'});
           const quote=await prepareSocialContentProductionBudget({repository:input.repository,tenantId:input.tenantId,
             taskId:input.taskId,runId:input.runId,baseline:activeBaseline,assets:candidateInputs.analyze,
-            localSupplyAssets:candidateInputs.productReferences,supplyPlan:candidate,graphApprovedContext:input.graphApprovedContext,
+            localSupplyAssets:rawAssets,supplyPlan:candidate,graphApprovedContext:input.graphApprovedContext,
             quoteOnly:true,ports:{...budgetRuntimeReaders,...budgetRoutes,
               resolveBoundRoute:requirement=>['tts','tts_fallback','voice_clone','voice_asr','voice_alignment'].includes(requirement.stage)
                 ?budgetRuntimeReaders.resolveBoundRoute!(requirement):budgetRoutes.resolveBoundRoute(requirement),
@@ -879,7 +874,7 @@ export async function runSocialContentAutoProduction(input: {
     productionAssetsToAnalyze=materialInputs.analyze;
   }
 	  const frozenReviewedSupplyPlan = reviewedSupplyPlan ? structuredClone(reviewedSupplyPlan) : null;
-	  const productionBudget = await prepareSocialContentProductionBudget({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,baseline:activeBaseline,assets:productionAssetsToAnalyze,localSupplyAssets:materialInputs.productReferences,supplyPlan:reviewedSupplyPlan,graphApprovedContext:input.graphApprovedContext,recoveryOnly:input.assetSupplyRecoveryOnly,ports:{...budgetRuntimeReaders,...budgetRoutes,resolveBoundRoute: requirement => ['tts','tts_fallback','voice_clone','voice_asr','voice_alignment'].includes(requirement.stage) ? budgetRuntimeReaders.resolveBoundRoute!(requirement) : budgetRoutes.resolveBoundRoute(requirement),...input.runtime?.productionBudgetReadPorts,
+	  const productionBudget = await prepareSocialContentProductionBudget({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,baseline:activeBaseline,assets:productionAssetsToAnalyze,localSupplyAssets:rawAssets,supplyPlan:reviewedSupplyPlan,graphApprovedContext:input.graphApprovedContext,recoveryOnly:input.assetSupplyRecoveryOnly,ports:{...budgetRuntimeReaders,...budgetRoutes,resolveBoundRoute: requirement => ['tts','tts_fallback','voice_clone','voice_asr','voice_alignment'].includes(requirement.stage) ? budgetRuntimeReaders.resolveBoundRoute!(requirement) : budgetRoutes.resolveBoundRoute(requirement),...input.runtime?.productionBudgetReadPorts,
       assertNewSubmit:assertWeeklyCtaNewSubmit,
       preparePresenterFirstFrameReviews:async({scope,groups,requirements,intents,paidPermit})=>{
         if(!groups.length)return;
@@ -958,6 +953,7 @@ export async function runSocialContentAutoProduction(input: {
       targetDuration:agentWorkflow.directorBrief.scenes.reduce((total,scene)=>total+scene.duration.endSeconds-scene.duration.startSeconds,0),
       scenes:agentWorkflow.directorBrief.scenes.map(scene=>({shotId:scene.sceneId,spokenText:activeBaseline.scenes.find(item=>item.sceneId===scene.sceneId)?.voiceover || activeBaseline.scenes.find(item=>item.sceneId===scene.sceneId)?.narration || '',durationSeconds:scene.duration.endSeconds-scene.duration.startSeconds,startSeconds:scene.duration.startSeconds,endSeconds:scene.duration.endSeconds})),
       synthesize:input.runtime?.synthesizeVoice,
+      align:input.runtime?.alignVoice,
     });
   }
 
@@ -1814,16 +1810,20 @@ export async function runSocialContentAutoProduction(input: {
     // hash checks, so exclusion from editing does not erase QA evidence.
     if (!referenceVideoPath) {
       const reuse = detail.brief.referenceReuse;
-      const recordId = socialText(reuse?.recordId);
-      const expectedSha = socialText(reuse?.contentSha256).toLowerCase();
-      if (/^trend_videos_[a-zA-Z0-9_-]{8,100}$/.test(recordId) && /^[a-f0-9]{64}$/.test(expectedSha)) {
+      const recordId = socialText(reuse?.recordId || detail.referenceVideoAnalysis?.referenceRecordId);
+      if (/^[a-zA-Z0-9_-]{8,100}$/.test(recordId)) {
         const record = await input.repository.dataStore?.getById<Record<string, unknown>>('trend_videos', recordId);
+        const storedAnalysis = socialObject(socialJson(record?.aiAnalysis));
+        const expectedSha = socialText(reuse?.contentSha256 || storedAnalysis?.contentSha256).toLowerCase();
         const relative = socialText(record?.videoFileId).replace(/\\/g, '/');
         const expectedRelative = `tenants/${input.tenantId}/reference-videos/${recordId}.mp4`;
         const mediaRoot = path.resolve(process.env.SOCIAL_CONTENT_MEDIA_ROOT || path.join(process.cwd(), 'data/media'));
         const candidate = path.resolve(mediaRoot, relative);
         const tenantRoot = path.resolve(mediaRoot, 'tenants', input.tenantId);
-        if (record && [record.tenantId, record.tenant_id].includes(input.tenantId)
+        const activeReference = detail.sources.filter(source => source.kind === 'reference_link' && source.status === 'active');
+        if (/^[a-f0-9]{64}$/.test(expectedSha) && socialText(storedAnalysis?.analysisRunId)
+          && activeReference.length === 1 && record && activeReference[0]!.sourceRef === record.sourceUrl
+          && [record.tenantId, record.tenant_id].includes(input.tenantId)
           && relative === expectedRelative && candidate.startsWith(`${tenantRoot}${path.sep}`) && existsSync(candidate)) {
           const actualSha = createHash('sha256').update(await fsp.readFile(candidate)).digest('hex');
           if (actualSha === expectedSha) referenceVideoPath = candidate;
@@ -2136,7 +2136,7 @@ export async function runSocialContentAutoProduction(input: {
       },
     },
   });
-  if(executedSupplyPlan&&assetSupplyExecution&&detail.referenceVideoAnalysis){try{const surface=(value:unknown)=>({baseline:null,current:socialRequestHash(value)});const handoff=buildSocialProductionHandoff({taskId:input.taskId,version:agentWorkflow.executionPlan.version,sourceAnalysis:detail.referenceVideoAnalysis,directorBrief:agentWorkflow.directorBrief,executionPlan:agentWorkflow.executionPlan,executionPlanReview:agentWorkflow.executionPlanReview,variantDifference:{variantId:productionResultId,baselineVariantId:null,changedSceneIds:[],dimensions:[],hypothesis:'按已锁定编导执行方案建立首次成片基线，尚无对照变体和提升结论。',unchangedConstraints:['已锁定事实','逐镜真实供给','来源和权利边界'],surfaceHashes:{firstThreeSeconds:surface(timeline[0]),caption:surface(captionCues),cover:surface(storedCover.sha256),cta:surface(contentHandoff.scenes.at(-1)),copy:surface(adaptedScript),render:surface(stored.sha256)}}});await persistInitialSocialSceneCache({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,artifactId:artifactResult.artifact.artifactId,handoff,plan:executedSupplyPlan,baseline:activeBaseline,execution:assetSupplyExecution,assets,productionSceneIds:contentHandoff.scenes.map(scene=>socialProductionExecutionSceneForFinal(agentWorkflow,scene.sceneId)!.sceneId),manifest:compositeManifest as unknown as Record<string,unknown>,voicePath:voice.localPath,bgmUrl:bgm.url||null,report:technicalQualityReport,...(presenterMotherExecution?{presenterMotherExecution}:{})});await writeExecutionStage({...input,stage:'scene_media_cache',message:'首次逐镜真实媒体和检测报告已封存；未检测项目仍待核验。',extra:{handoffId:handoff.handoffId,handoffVersion:handoff.version}});}catch(error){await writeExecutionStage({...input,stage:'scene_media_cache_pending',message:'原成片已保留，真实逐镜缓存尚未通过来源或存储核验，不能从最终视频推造镜头缓存。',extra:{reason:error instanceof Error?error.message:'scene_cache_unavailable'}});}}else{await writeExecutionStage({...input,stage:'scene_media_cache_pending',message:'原成片已保留；缺少真实逐镜供给或完整参考分析，不能创建局部重制缓存。'});}
+  if(executedSupplyPlan&&assetSupplyExecution&&detail.referenceVideoAnalysis){try{const surface=(value:unknown)=>({baseline:null,current:socialRequestHash(value)});const handoff=buildSocialProductionHandoff({taskId:input.taskId,version:agentWorkflow.executionPlan.version,sourceAnalysis:detail.referenceVideoAnalysis,directorBrief:agentWorkflow.directorBrief,executionPlan:agentWorkflow.executionPlan,executionPlanReview:agentWorkflow.executionPlanReview,variantDifference:{variantId:productionResultId,baselineVariantId:null,changedSceneIds:[],dimensions:[],hypothesis:'按已锁定编导执行方案建立首次成片基线，尚无对照变体和提升结论。',unchangedConstraints:['已锁定事实','逐镜真实供给','来源和权利边界'],surfaceHashes:{firstThreeSeconds:surface(timeline[0]),caption:surface(captionCues),cover:surface(storedCover.sha256),cta:surface(contentHandoff.scenes.at(-1)),copy:surface(adaptedScript),render:surface(stored.sha256)}}});await persistInitialSocialSceneCache({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,artifactId:artifactResult.artifact.artifactId,handoff,plan:executedSupplyPlan,baseline:activeBaseline,execution:assetSupplyExecution,assets,productionSceneIds:contentHandoff.scenes.map(scene=>socialProductionExecutionSceneForFinal(agentWorkflow,scene.sceneId)!.sceneId),manifest:compositeManifest as unknown as Record<string,unknown>,voicePath:voice.localPath,bgmUrl:bgm.url||null,report:technicalQualityReport,...(presenterMotherExecution?{presenterMotherExecution}:{})});await writeExecutionStage({...input,stage:'scene_media_cache',message:'首次逐镜真实媒体和检测报告已封存；未检测项目仍待核验。',extra:{handoffId:handoff.handoffId,handoffVersion:handoff.version}});}catch(error){const reason=error instanceof Error?error.message:'scene_cache_unavailable';await writeExecutionStage({...input,stage:'scene_media_cache_pending',message:'原成片已保留，真实逐镜缓存尚未通过来源或存储核验，不能从最终视频推造镜头缓存。',extra:{reason}});const weeklyAuthority=socialObject(socialJson(taskRecord.brief))?._weeklyAuthority;if(weeklyAuthority){const stable=/^[a-z][a-z0-9_]+$/.test(reason)&&reason.startsWith('scene_')?`weekly_${reason}`:'weekly_scene_cache_persistence_failed';throw new SocialContentWorkflowError(stable,409);}}}else{await writeExecutionStage({...input,stage:'scene_media_cache_pending',message:'原成片已保留；缺少真实逐镜供给或完整参考分析，不能创建局部重制缓存。'});}
   try { await persistSocialProductionWorkspace({repository:input.repository,tenantId:input.tenantId,userId:input.userId,taskId:input.taskId,runId:input.runId,artifactId:artifactResult.artifact.artifactId,baseline:activeBaseline,manifest:compositeManifest as unknown as Record<string,unknown>,backendFilePort:input.runtime?.backendFilePort}); } catch(error) { await writeExecutionStage({...input,stage:'production_workspace_pending',message:'真实成片已保留；逐镜制作工作台快照尚未通过媒体或身份核验，不能推断项目关联。',extra:{reason:error instanceof Error&&/^(?:social_workspace_|social_content_)[a-z_]+$/.test(error.message)?error.message:'social_workspace_unavailable'}}); }
   if (!input.graphPhase) await finishExecution({ ...input, backendFilePort: input.runtime?.backendFilePort, artifactId: artifactResult.artifact.artifactId });
     } finally {

@@ -60,6 +60,7 @@ import {
 } from './socialContentDirectorPlan.js';
 import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply.js';
 import { materialRoutingRequests } from './socialContentMaterialRoutingRequests.js';
+import {matchesRequestedMaterialProduct,projectWeeklyReviewedMaterialRouting,uniqueMaterialAssetIds} from './weeklyReviewedMaterialRoutingProjection.js';
 import { ownedProductReferenceImageIds } from './socialContentProductReferenceInventory.js';
 import type { SocialShotFunction, SocialProductFootageEvidenceBinding } from '../../shared/contracts/socialContentReplication.js';
 import {
@@ -927,11 +928,9 @@ export async function readSocialTaskDetail(input: {
     } : {}),
     previewUrl: safeMaterialPreview(materialById.get(candidate.assetId) ?? { id: candidate.assetId }),
   }));
-  const uniqueAssetIds = (rows: SocialWorkflowMaterialClipCandidate[]) => [...new Set(rows.map(row => row.assetId))];
-  const sameRequestedProduct = (candidate: SocialWorkflowMaterialClipCandidate) => sameProduct(candidate, {
-    productId: candidateSet.requestedProductId,
-    productRef: candidateSet.requestedProductRef,
-  });
+  const reviewedMaterialBindings=projectWeeklyReviewedMaterialRouting({tenantId:input.tenantId,requestIds:weeklyAuthority?.publicationTask.materialRequirement?.requestIds??[],shotMaterialMap,candidates:materialCandidates,activeMaterials});
+  const uniqueAssetIds=uniqueMaterialAssetIds;
+  const sameRequestedProduct=(candidate:SocialWorkflowMaterialClipCandidate)=>matchesRequestedMaterialProduct(candidate,candidateSet);
   const productRows = materialCandidates.filter(candidate => candidate.mediaType === 'image'
     && candidate.materialRoles.includes('product'));
   const productFamilyRows = candidateSet.productPolicy === 'open'
@@ -1031,6 +1030,7 @@ export async function readSocialTaskDetail(input: {
     referenceShots: referenceVideoAnalysis?.shots,
     shots: materialRoutingRequests({ policyVersion: summary.brief.materialRoutingPolicyVersion,
       tenantId: input.tenantId, candidates: materialCandidates, rejectedSegments: candidateSet.rejectedSegments,
+      reviewedMaterialBindings,
       referenceShots: referenceVideoAnalysis?.shots,
       productRef: primaryProductRef, shots: replicationScript?.shots.map(shot => ({
       shotId: shot.shotId,

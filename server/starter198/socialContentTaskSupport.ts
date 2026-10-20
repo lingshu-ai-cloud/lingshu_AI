@@ -68,6 +68,7 @@ import {
 } from './socialContentScriptBaseline.js';
 import {
   pendingSocialTaskReferenceAnalysis,
+  parseStoredSocialShotMaterialMap,
   resolveSocialInspirationScript,
   resolveSocialRecommendedReferenceScript,
   resolveSocialTaskReferenceScript,
@@ -355,6 +356,18 @@ export async function refreshSocialTaskReferenceOutputs(input: {
     || right.sourceId.localeCompare(left.sourceId)
   ))[0] ?? null;
   const timestamp = (input.now ?? new Date()).toISOString();
+  const existingShotMap = new Map(parseStoredSocialShotMaterialMap(task.shot_material_map).map(item => [item.shotId, item]));
+  const resolvedShotMap = (resolved?.shotMaterialMap ?? []).map(item => {
+    const existing = existingShotMap.get(item.shotId);
+    if (!existing) return item;
+    const customerAssetIds = [...new Set([...existing.customerAssetIds, ...item.customerAssetIds])].sort();
+    return { ...item, customerAssetIds,
+      generatedAssetIds: [...new Set([...existing.generatedAssetIds, ...item.generatedAssetIds])].sort(),
+      licensedAssetIds: [...new Set([...existing.licensedAssetIds, ...item.licensedAssetIds])].sort(),
+      sourceStrategy: customerAssetIds.length ? 'customer_real_asset' as const : item.sourceStrategy,
+      truthBoundary: structuredClone(existing.truthBoundary),
+      functionalEquivalentReplacement: structuredClone(existing.functionalEquivalentReplacement) };
+  });
   await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, task.id, {
     ...(baseline ? { script_baseline: baseline } : {}),
     formula_reference: '',
@@ -366,7 +379,7 @@ export async function refreshSocialTaskReferenceOutputs(input: {
         createdAt: timestamp,
       }),
     replication_script: resolved?.replicationScript ?? '',
-    shot_material_map: resolved?.shotMaterialMap ?? [],
+    shot_material_map: resolved ? resolvedShotMap : [...existingShotMap.values()],
     version: nextVersion(task),
     last_operation_id: `${input.operationId}:reference-analysis`,
     updated_by: input.userId,

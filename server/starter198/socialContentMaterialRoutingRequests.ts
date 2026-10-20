@@ -7,10 +7,20 @@ import { classifyFixedYieldArchetype, fixedYieldCandidateMatches } from '../../s
 import type { BenchmarkMaterialType } from '../../shared/benchmarkAnalysis.js';
 import {
   evaluateLocalMaterialSegmentProfile,
+  normalizeLocalMaterialSegmentProfile,
   inferLocalMaterialSegmentType,
   type LocalMaterialSegmentRejection,
   type LocalMaterialSegmentRejectionReason,
 } from '../../shared/contracts/localMaterialSegmentProfile.js';
+
+export interface ReviewedMaterialRoutingBinding {
+  shotId: string;
+  assetId: string;
+  segmentId: string;
+  sourceRef: string;
+  sourceRevision: string;
+  rightsEvidenceRef: string;
+}
 
 const actionRequirements = [
   // Camera wording such as "横向摇移" is not a required subject action.
@@ -49,6 +59,9 @@ export function materialRoutingRequests(input: {
   tenantId: string;
   shots: SocialAssetSupplyShotRequest[];
   candidates: SocialWorkflowMaterialClipCandidate[];
+  /** Server-projected weekly reviewed-material bindings. Callers must derive
+   * these from the persisted shot map, active source and frozen request. */
+  reviewedMaterialBindings?: ReviewedMaterialRoutingBinding[];
   /** Inventory segments excluded before semantic ranking (rights/version/edit gates). */
   rejectedSegments?: LocalMaterialSegmentRejection[];
   referenceShots?: SocialReferenceShotAnalysis[];
@@ -114,6 +127,22 @@ export function materialRoutingRequests(input: {
         sourceRevision: candidate.segmentProfile?.sourceRevision ?? null, reasons });
       return true;
     };
+    const reviewed = input.reviewedMaterialBindings
+      ?.filter(binding => binding.shotId === shot.shotId)
+      .flatMap(binding => input.candidates.filter(candidate => {
+        const profile = normalizeLocalMaterialSegmentProfile(candidate.segmentProfile);
+        return candidate.assetId === binding.assetId && candidate.sourceRef === binding.sourceRef
+          && candidate.segmentId === binding.segmentId && candidate.sourceRevision === binding.sourceRevision
+          && candidate.mediaType === 'video' && candidate.origin === 'my_materials' && candidate.synthetic !== true
+          && Boolean(candidate.timeRange) && profile?.productionEligible === true
+          && profile.tenantId === input.tenantId && profile.assetId === candidate.assetId
+          && profile.segmentId === candidate.segmentId && profile.sourceRevision === binding.sourceRevision
+          && profile.rightsEvidenceRefs.includes(binding.rightsEvidenceRef)
+          && profile.commercialUseApproved && profile.commercialUseApprovalEvidenceRefs.includes(binding.rightsEvidenceRef)
+          && profile.derivativeUseAllowed;
+      }))
+      .sort((a, b) => usage(a).asset - usage(b).asset || usage(a).segment - usage(b).segment
+        || b.matchScore - a.matchScore || a.assetId.localeCompare(b.assetId))[0];
     const candidates = input.candidates.filter(candidate => {
       if (!fixedYieldArchetypeId || materialType === 'talking_head' || materialType === 'unknown') return false;
       const profileReasons = evaluateLocalMaterialSegmentProfile({
@@ -165,7 +194,10 @@ export function materialRoutingRequests(input: {
       || (materialType === 'consumer_demo' ? consumerSemanticScore(expected, b) - consumerSemanticScore(expected, a)
       : scoreSceneVisualCompatibility(expected, b.visualContract) - scoreSceneVisualCompatibility(expected, a.visualContract))
       || a.assetId.localeCompare(b.assetId));
-    const match = candidates[0];
+    // A frozen weekly reviewed binding is stronger than heuristic archetype
+    // similarity, but only after the current tenant/source/profile/rights
+    // evidence has been revalidated above.
+    const match = reviewed ?? candidates[0];
     const sourceTier: NonNullable<NonNullable<SocialAssetSupplyShotRequest['localVideoMatch']>['sourceTier']> | undefined
       = materialType === 'product' && match ? 'product_high_fidelity_local' : undefined;
     const localMaterialRejections = rejected.slice(0, 20);

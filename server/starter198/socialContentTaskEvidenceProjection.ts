@@ -75,6 +75,10 @@ export function projectShotMaterialRequirements(input: {
   recalculatedAt: string;
 }): SocialMaterialRequirement[] {
   const mapped = new Map(input.shotMaterialMap.map(entry => [entry.shotId, entry]));
+  const plannedSystemSupply = input.plan.status === 'ready'
+    && input.plan.canProduceWithoutCustomerShoot
+    && input.plan.productionApproach !== 'shooting_plan'
+    && input.plan.customerActions.length === 0;
   return input.plan.shots.map(shot => {
     const entry = mapped.get(shot.shotId);
     const consumed = entry
@@ -91,9 +95,18 @@ export function projectShotMaterialRequirements(input: {
       || shot.requestedDescription || shot.productionInstruction;
     const environment = visual?.environment.description || visual?.environment.kind || null;
     const satisfied = consumed.length > 0;
+    // A server-approved executable generation route is work for the existing
+    // producer, not a request for the customer to upload the producer's future
+    // output. Provider admission, budget, rights and product-identity gates
+    // still run later. Customer evidence and shooting routes remain required.
+    const generatedByPlannedExecutor = plannedSystemSupply
+      && shot.customerShootRequired === false
+      && shot.truthBoundary.syntheticVisualAllowed
+      && !shot.truthBoundary.customerEvidenceRequired
+      && ['aigc_product_scene_replication', 'non_evidentiary_ai_visual', 'motion_graphics', 'verified_fact_card'].includes(shot.sourceStrategy);
     return {
       requirementId: `shot-material:${shot.shotId}`,
-      required: true,
+      required: !generatedByPlannedExecutor,
       targetTheme: input.themeId ?? 'product_value',
       shotFunction: shot.function,
       subject,
@@ -105,7 +118,8 @@ export function projectShotMaterialRequirements(input: {
       status: satisfied ? 'satisfied' : 'missing',
       matchedSourceIds: consumed,
       confidence: satisfied ? 1 : null,
-      reason: satisfied ? '已有经分镜素材映射确认的可消费素材' : requirementReason(shot),
+      reason: satisfied ? '已有经分镜素材映射确认的可消费素材'
+        : generatedByPlannedExecutor ? '已由服务端冻结的执行器生成路线承担，非用户补交素材' : requirementReason(shot),
       recalculatedAt: input.recalculatedAt,
       ruleVersion: 'shot-material-projection-v1',
     };

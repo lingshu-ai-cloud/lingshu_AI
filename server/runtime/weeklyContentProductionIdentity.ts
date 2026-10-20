@@ -91,7 +91,8 @@ export function legacyWeeklyProductionKey(scope:Pick<WeeklyProductionScope,'pack
 /** Read-only migration boundary. Never renames an old run, merges by title, or
  * creates a replacement when the old provider outcome may be unknown. */
 export async function resolveWeeklyProductionRow(store:DataStore,scope:WeeklyProductionScope):Promise<Record_|null>{
- const where={tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,package_version:scope.packageVersion,publication_task_id:scope.publicationTaskId};
+ const identityScope:WeeklyProductionScope={tenantId:scope.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion,publicationTaskId:scope.publicationTaskId};
+ const where={tenant_id:identityScope.tenantId,program_id:identityScope.programId,package_id:identityScope.packageId,package_version:identityScope.packageVersion,publication_task_id:identityScope.publicationTaskId};
  const links=await store.list<Record_>(WEEKLY_CONTENT_DISTRIBUTION_BINDINGS,{where,perPage:2});
  if(links.totalItems>1||links.items.length>1)throw Error('weekly_content_distribution_binding_ambiguous');
  const legacy=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:scope.tenantId,create_idempotency_key:legacyWeeklyProductionKey(scope)},perPage:2});
@@ -101,7 +102,7 @@ export async function resolveWeeklyProductionRow(store:DataStore,scope:WeeklyPro
    return resolveWeeklyProductionRow(store,canonical);
  }
  const link=links.items[0]!,binding=link.payload as WeeklyContentDistributionBinding;
- if(!binding||binding.schemaVersion!=='weekly-content-distribution.v1'||socialRequestHash(binding.scope)!==socialRequestHash(scope)||link.content_hash!==socialRequestHash(binding)||!binding.contentId||!binding.productionTaskId||!binding.productionBindingKey)throw Error('weekly_content_distribution_binding_invalid');
+ if(!binding||binding.schemaVersion!=='weekly-content-distribution.v1'||socialRequestHash(binding.scope)!==socialRequestHash(identityScope)||link.content_hash!==socialRequestHash(binding)||!binding.contentId||!binding.productionTaskId||!binding.productionBindingKey)throw Error('weekly_content_distribution_binding_invalid');
  const found=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:scope.tenantId,task_id:binding.productionTaskId},perPage:2});
  if(found.totalItems!==1||found.items.length!==1)throw Error('weekly_content_production_identity_missing');
  const row=found.items[0]!,brief=row.brief as Record<string,any>|undefined;

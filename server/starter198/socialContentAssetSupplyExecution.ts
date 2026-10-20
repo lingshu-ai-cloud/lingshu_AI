@@ -359,6 +359,15 @@ function materialStrategyOrder(shot: SocialAssetSupplyShotPlan,policyVersion?:So
   const local = routing.localMatch;
   const matched = local.state === 'matched' && local.sourceRefs.length > 0
     && typeof local.evidenceRef === 'string' && local.evidenceRef.trim().length > 0;
+  // A server-reviewed local clip may replace a reference talking-head image
+  // while narration remains a separately measured whole-film track. It does
+  // not authorize a new presenter generation or require a presenter lock.
+  if (routing.policy === 'local_only' && matched) {
+    if (routing.generation || shot.sourceStrategy !== 'customer_real_asset'
+      || shot.fallbackSourceStrategy !== null || !shot.sourceRefs.length
+      || shot.sourceRefs.some(ref => !local.sourceRefs.includes(ref))) fail('local_reviewed_video_required');
+    return ['customer_real_asset'];
+  }
   if (['factory', 'consumer_demo', 'general', 'unknown'].includes(routing.materialType)) {
     if (routing.policy !== 'local_only' || routing.generation || !matched
       || shot.sourceStrategy !== 'customer_real_asset' || shot.fallbackSourceStrategy !== null

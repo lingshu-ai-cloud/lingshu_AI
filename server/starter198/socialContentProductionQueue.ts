@@ -34,6 +34,7 @@ import {
   bindPristineContentExecutionCheckpoints,
   DurableContentExecutionWorker,
   hasCompleteFootageRevisionProductionAdmission,
+  readContentExecutionJob,
   type ContentExecutionJob,
 } from '../contentExecution/durableQueue.js';
 import { admitProductionGraphJob, createProductionGraphBridgeCheckpoint, productionGraphIdentityFromJob, PRODUCTION_GRAPH_BRIDGE_CHECKPOINT } from '../contentExecution/productionGraphBridge.js';
@@ -339,7 +340,8 @@ export async function enqueueSocialContentAutoProduction(input: {
     const executorCheckpoint = createSocialProductionExecutorCheckpoint(detail, process.env, socialText(socialObject(socialObject(socialJson(record.brief))?._productionRevision)?.planHash) || undefined);
     const executorPayload = socialObject(executorCheckpoint.payload);
     const executorPlanVersion = socialText(executorPayload?.planVersion);
-    let job = executorPayload?.executor === 'langgraph' ? await admitProductionGraphJob({
+    const existingJob=await readContentExecutionJob(dataStore,input.tenantId,input.taskId,input.runId);
+    let job = executorPayload?.executor === 'langgraph'&&existingJob&&!existingJob.checkpoints['social.executor'] ? await bindPristineContentExecutionCheckpoints({dataStore,tenantId:input.tenantId,jobId:existingJob.id,runId:input.runId,checkpoints:{'social.executor':executorCheckpoint,[PRODUCTION_GRAPH_BRIDGE_CHECKPOINT]:createProductionGraphBridgeCheckpoint({planVersion:executorPlanVersion,inputHash:executorCheckpoint.inputHash})}}) : executorPayload?.executor === 'langgraph' ? await admitProductionGraphJob({
       dataStore,
       tenantId: input.tenantId,
       userId: input.userId,

@@ -31,7 +31,7 @@ test('enterprise product binding requires exact stable id inside verified fact r
     'a product row changed after confirmation must not retain authority');
 });
 
-test('seven planned shots with empty material map project seven concrete missing requirements', () => {
+test('server-planned generation shots do not become circular customer upload requirements', () => {
   const shots = Array.from({ length: 7 }, (_, index) => ({
     shotId: `shot-${index + 1}`,
     function: index === 0 ? 'hook' : index === 6 ? 'call_to_action' : 'demonstration',
@@ -53,8 +53,21 @@ test('seven planned shots with empty material map project seven concrete missing
     shotMaterialMap: [], themeId: 'product_value', aspectRatio: '9:16', recalculatedAt: '2026-10-16T00:00:00.000Z',
   });
   assert.equal(requirements.length, 7);
-  assert.ok(requirements.every(item => item.required && item.status === 'missing' && item.reason));
+  assert.ok(requirements.every(item => !item.required && item.status === 'missing' && item.reason));
   assert.deepEqual(requirements.map(item => item.requirementId), shots.map(shot => `shot-material:${shot.shotId}`));
+});
+
+test('customer evidence and non-ready generation routes remain fail-closed', () => {
+  const shot = { shotId: 'customer-proof', function: 'proof', requestedDescription: '客户工厂实拍', sourceStrategy: 'motion_graphics',
+    sourceRefs: [], fallbackSourceStrategy: null, productionInstruction: '制作镜头',
+    truthBoundary: { subject: 'customer_factory', syntheticVisualAllowed: true, customerEvidenceRequired: true,
+      customerEvidenceRefs: [], confirmedFactRefs: [], mustNotImplyCustomerReality: true, prohibitedRepresentations: [] },
+    functionalEquivalentReplacement: { required: false, preservesFunction: 'proof', replacesSubject: null, description: null, reason: null },
+    feasibility: 'goal_degraded', feasibilityReason: '缺真实证据', customerShootRequired: false };
+  const plan = { productionRoute: 'zero_asset_generation', status: 'ready', canProduceWithoutCustomerShoot: true, customerActions: [], shots: [shot] } as never;
+  assert.equal(projectShotMaterialRequirements({plan,shotMaterialMap:[],themeId:'product_value',recalculatedAt:'2026-10-20T00:00:00Z'})[0]?.required,true);
+  const systemShot={...shot,truthBoundary:{...shot.truthBoundary,subject:'none',customerEvidenceRequired:false}};
+  assert.equal(projectShotMaterialRequirements({plan:{...(plan as object),status:'blocked',shots:[systemShot]} as never,shotMaterialMap:[],themeId:'product_value',recalculatedAt:'2026-10-20T00:00:00Z'})[0]?.required,true);
 });
 
 test('only material ids consumed by the shot map satisfy a projected requirement', () => {

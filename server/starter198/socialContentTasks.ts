@@ -21,6 +21,7 @@ import type { Starter198OrchestratorQueuePort } from './runtimePorts.js';
 import { Starter198RuntimePortError } from './runtimePorts.js';
 import { readTenantEnterpriseProfile } from '../lib/socialContentLegacyPorts.js';
 import {registerEnterpriseProductMaterials} from './enterpriseProductMaterialRegistration.js';
+import {applyFunctionalReplacementRevision} from './socialContentFunctionalReplacement.js';
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
 import { executeSocialContentMutation } from './socialContentMutation.js';
 import {
@@ -73,7 +74,6 @@ import {
   resolveSocialTaskReferenceScript,
   type ResolvedSocialTaskReference,
 } from './socialContentScriptSources.js';
-
 import {
   SOURCE_EDITABLE_STATES,
   TASK_EDITABLE_STATES,
@@ -95,7 +95,6 @@ import { recoverSocialContentOrderDispatch } from './socialContentOrderDispatchR
 export { recoverSocialContentOrderDispatch } from './socialContentOrderDispatchRecovery.js';
 import { resolveEnterpriseProductSelection } from './socialContentTaskQueries.js';
 export { listSocialContentTasks, readSocialContentWorkspace, resolveEnterpriseProductSelection } from './socialContentTaskQueries.js';
-
 async function socialTaskSourcesEditable(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -120,7 +119,6 @@ async function socialTaskEditable(input: {
   if (TASK_EDITABLE_STATES.has(socialText(task.status))) return true;
   return socialTaskSourcesEditable(input, task);
 }
-
 export async function createSocialContentTask(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -231,7 +229,6 @@ export async function createSocialContentTask(input: {
   });
   return mutation.value.task;
 }
-
 export async function updateSocialContentTask(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -291,14 +288,13 @@ export async function updateSocialContentTask(input: {
         ? resolveSocialThemeSelection({ themeId, customTopic, topic })
         : currentSummary.theme ?? null;
       const timestamp = (input.now ?? new Date()).toISOString();
-      const currentRequirements = advisoryMaterialRequirements(parseStoredMaterialRequirements(record.material_requirements));
-      const currentBaseline = parseStoredSocialScriptBaseline(record.script_baseline);
+      const currentRequirements = advisoryMaterialRequirements(parseStoredMaterialRequirements(record.material_requirements)),currentBaseline = parseStoredSocialScriptBaseline(record.script_baseline),storedBrief = socialObject(socialJson(record.brief)) ?? {},serverBrief = Object.fromEntries(Object.entries(storedBrief).filter(([key]) => key.startsWith('_')));
       const themeChanged = (currentSummary.theme?.themeId ?? null) !== (theme?.themeId ?? null);
       // Existing shot suggestions remain advisory, but changing the theme
       // clears them so no historic formula structure leaks into the new plan.
       const materialRequirements = themeChanged ? [] : currentRequirements;
       const brief = {
-        ...current,
+        ...serverBrief,...current,
         ...briefChanges,
         requestedOutputCount: nextMode === 'instant'
           ? 1
@@ -307,6 +303,11 @@ export async function updateSocialContentTask(input: {
       const scriptFieldsChanged = [
         'title', 'objective', 'productId', 'productRef', 'languages', 'callToAction', 'brandNotes', 'restrictions',
       ].some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
+      const productionPlanFieldsChanged = ['productionApproach', 'assetAvailability', 'managementMode'].some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
+      if (productionPlanFieldsChanged) brief.materialRoutingPolicyVersion = 'type-aware.v2'; // Forward route revision uses the current planner.
+      await applyFunctionalReplacementRevision({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,record,
+        actorUserId:input.userId,revisedAt:timestamp,currentApproach:current.productionApproach,
+        nextApproach:briefChanges.productionApproach,brief,serverBrief});
       let scriptBaseline = currentBaseline;
       if (!theme || theme.classificationStatus !== 'confirmed' || !theme.themeId) {
         scriptBaseline = null;
@@ -337,8 +338,7 @@ export async function updateSocialContentTask(input: {
         weekly_plan_id: weeklyPlanId === undefined ? socialText(record.weekly_plan_id) : weeklyPlanId ?? '',
         theme_selection: theme ?? '',
         formula_reference: '',
-        script_baseline: scriptBaseline ?? '',
-        ...((themeChanged || hasThemeInput || scriptFieldsChanged || currentBaseline?.source === 'formula') ? { director_plan: '' } : {}),
+        script_baseline: scriptBaseline ?? '', ...((themeChanged || hasThemeInput || scriptFieldsChanged || productionPlanFieldsChanged || currentBaseline?.source === 'formula') ? { director_plan: '' } : {}),
         material_requirements: materialRequirements,
         legacy_creation_route: legacyCreationRoute === undefined
           ? socialText(record.legacy_creation_route)
