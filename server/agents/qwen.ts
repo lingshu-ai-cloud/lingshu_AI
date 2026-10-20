@@ -108,6 +108,45 @@ export interface ImagePostEvidenceAnalysis {
   uncertainties: string[];
 }
 
+export async function qualityCheckSocialImageWithQwen(input: {
+  generated: { bytes: Buffer; mimeType: string };
+  products: Array<{ name: string; bytes: Buffer; mimeType: string }>;
+  reference?: { bytes: Buffer; mimeType: string };
+  expected: { headline: string; supportingText?: string; cta?: string; facts: string[]; format: string };
+}): Promise<import('../../shared/contracts/socialImageCreation.js').SocialImageQualityCheck[]> {
+  const image = (label: string, value: { bytes: Buffer; mimeType: string }) => [
+    { type: 'text' as const, text: label },
+    { type: 'image_url' as const, image_url: { url: `data:${value.mimeType};base64,${value.bytes.toString('base64')}` } },
+  ];
+  const keys = ['packaging_visibility','subject_visibility','label_ocr','copy_visual_consistency','brand_consistency','text_overflow','safe_zone','reference_structure_similarity'] as const;
+  const completion = await client().chat.completions.create({
+    model: QWEN_EXACT_VL_MODEL(),
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: `你是图片成片质量检查器。只根据随附像素和 EXPECTED JSON 判定，不得把看不清或缺少对照的项目判为 pass。只返回 JSON：{"checks":[{"key":"packaging_visibility","verdict":"pass|fail|uncertain","note":"可观察证据","score":0.0,"evidence":["证据"],"repairSuggestion":"失败时的局部修复建议"}]}。必须完整返回这些 key：${keys.join(',')}。packaging_visibility 检查瓶盖/泵头/标签关键部位不能整体遮挡；subject_visibility 检查主体不被文字/UI遮挡；label_ocr 对比企业产品图，不可辨认则 uncertain；copy_visual_consistency 检查图文同一主题；brand_consistency 对比产品与品牌视觉；text_overflow 检查文字裁切溢出；safe_zone 检查主体与关键文字安全边距；reference_structure_similarity 只有提供原对标时才比较背景、产品组、角标、底栏、文字区域及比例，否则 uncertain。EXPECTED=${JSON.stringify(input.expected)}` },
+      ...image('GENERATED OUTPUT（待检成片）', input.generated),
+      ...input.products.flatMap((product, index) => image(`AUTHORITATIVE PRODUCT ${index + 1}: ${product.name}`, product)),
+      ...(input.reference ? image('ORIGINAL BENCHMARK（只比较结构，不借用其产品身份）', input.reference) : []),
+    ] as any }],
+    response_format: { type: 'json_object' }, enable_thinking: false, max_tokens: 2600,
+  } as any, { timeout: 120_000, maxRetries: 0 });
+  const parsed = parseJson<{ checks?: unknown[] }>(String(completion.choices[0]?.message?.content || ''), {});
+  const rows = Array.isArray(parsed.checks) ? parsed.checks : [];
+  const allowed = new Set(keys);
+  const result = rows.flatMap(raw => {
+    if (!raw || typeof raw !== 'object') return [];
+    const row = raw as Record<string, unknown>, key = String(row.key || '') as typeof keys[number];
+    const verdict = String(row.verdict || 'uncertain');
+    if (!allowed.has(key) || !['pass','fail','uncertain'].includes(verdict)) return [];
+    return [{ key, verdict: verdict as 'pass'|'fail'|'uncertain', severity: key === 'reference_structure_similarity' ? 'soft' as const : 'hard' as const,
+      checker: 'multimodal' as const, note: String(row.note || '视觉模型未提供充分说明').slice(0, 500),
+      ...(Number.isFinite(Number(row.score)) ? { score: Math.max(0, Math.min(1, Number(row.score))) } : {}),
+      ...(Array.isArray(row.evidence) ? { evidence: row.evidence.map(String).slice(0, 8) } : {}),
+      ...(row.repairSuggestion ? { repairSuggestion: String(row.repairSuggestion).slice(0, 500) } : {}),
+    }];
+  });
+  return result;
+}
+
 export function storyboardQaProviderFallbackEligible(error: unknown, env: NodeJS.ProcessEnv = process.env): boolean {
   if (!env.GEMINI_API_KEY?.trim()) return false;
   const record = error && typeof error === 'object' ? error as Record<string, any> : {};

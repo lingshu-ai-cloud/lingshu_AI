@@ -77,6 +77,11 @@ import { secureStudioRenderManifest, studioRenderAssetPath, studioRenderManifest
 import { studioBgmMediaPath, studioBgmObjectKey } from '../lib/studioBgmAccess.js';
 import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
 import { generatePosterImage, ImageProviderRejectedError, imageExt, type ReferenceImage } from '../lib/imageGen.js';
+import { buildSocialImageFirstDraftPrompt, socialImageUnitPoster } from '../socialImage/socialImageFirstDraft.js';
+import { conformSocialImageToCanvas, socialImageCanvasFromBenchmark } from '../socialImage/referenceCanvas.js';
+import { buildSocialImageRevisionPrompt, socialImageRequestedRatio, socialImageRevisionTarget } from '../socialImage/socialImageRevision.js';
+import { composeFixedSocialLayers } from '../socialImage/fixedOverlayComposer.js';
+import { SOCIAL_IMAGE_CONTENT_TYPES, type SocialImageContentType, type SocialImageReplicationRecipe } from '../../shared/contracts/socialImageCreation.js';
 import { SeedanceProductRecovery } from '../lib/seedanceProductRecovery.js';
 import { SeedreamFirstFrameGenerator } from '../lib/seedreamFirstFrameGenerator.js';
 import { FirstFrameProviderError, firstFrameInputFingerprint, type FirstFrameReferenceRole } from '../lib/firstFrameGenerator.js';
@@ -1708,7 +1713,7 @@ studioRouter.post('/free-creation-hook/first-frame', async (req, res) => {
 
 function storyboardImageMime(file: string): string {
   const ext = path.extname(file).toLowerCase();
-  return ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/png';
+  return ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : ext === '.gif' ? 'image/gif' : 'image/png';
 }
 
 studioRouter.post('/storyboard-product-match', async (req, res) => {
@@ -5213,6 +5218,38 @@ Schema:
   });
 });
 
+async function socialImageReferenceUnits(reference: ReferenceImage, limit: number): Promise<ReferenceImage[]> {
+  if (!/gif/i.test(reference.mimeType)) return [reference];
+  const bytes = Buffer.from(reference.base64, 'base64');
+  const metadata = await sharp(bytes, { animated: true, limitInputPixels: 40_000_000 }).metadata();
+  const pages = Math.min(limit, Math.max(1, Number(metadata.pages || 1)));
+  const units: ReferenceImage[] = [];
+  for (let page = 0; page < pages; page += 1) {
+    const frame = await sharp(bytes, { page, limitInputPixels: 40_000_000 }).rotate().png().toBuffer();
+    units.push({ mimeType: 'image/png', base64: frame.toString('base64') });
+  }
+  return units;
+}
+
+async function createSocialImageGif(frames: Buffer[], width: number, height: number, loopDurationMs: number): Promise<Buffer> {
+  const normalized = await Promise.all(frames.map(frame => sharp(frame).rotate().resize(width, height, { fit: 'cover', position: 'attention' }).png().toBuffer()));
+  const delay = Math.max(250, Math.round(loopDurationMs / Math.max(1, normalized.length)));
+  if (!ffmpegStatic) throw new Error('GIF 编码器不可用');
+  const gifEncoder = ffmpegStatic;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-social-gif-'));
+  const output = path.join(directory, 'output.gif');
+  try {
+    normalized.forEach((frame, index) => fs.writeFileSync(path.join(directory, `frame-${String(index).padStart(2, '0')}.png`), frame));
+    await new Promise<void>((resolve, reject) => execFile(gifEncoder, [
+      '-hide_banner', '-loglevel', 'error', '-y', '-framerate', String(1000 / delay),
+      '-i', path.join(directory, 'frame-%02d.png'), '-loop', '0', output,
+    ], { timeout: 60_000 }, (error: Error | null) => error ? reject(error) : resolve()));
+    return fs.readFileSync(output);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 // POST /studio/fb-poster/render  Body: { poster, caption, imagePrompt, ratio, materialIds? }
 studioRouter.post('/fb-poster/render', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -5226,7 +5263,17 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
     referenceImageUrls = [],
     idempotencyKey = '',
     confirmedFields = {},
+    imageModel = 'gpt-image-2',
+    imageQuality = 'low',
+    imageType = 'product_poster',
+    currentImageUrls = [],
+    repairInstruction = '',
+    replicationRecipe = undefined,
   } = req.body ?? {};
+  if (imageModel !== 'gpt-image-2' || !['low', 'medium', 'high'].includes(String(imageQuality))) {
+    res.status(400).json({ ok: false, code: 'INVALID_IMAGE_GENERATION_SPEC', error: '图片模型或质量档位无效。' });
+    return;
+  }
   const enterprise = await enterpriseCtx();
   if (!hasConfirmedEnterpriseFacts(enterprise)) {
     res.status(422).json({
@@ -5256,9 +5303,16 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
   const safeImagePrompt = String(safeDraft.imagePrompt || 'Create a neutral product presentation background.').trim();
   const headline = safePoster.headline;
   const benchmarkReferences: ReferenceImage[] = [];
-  for (const url of Array.isArray(referenceImageUrls) ? referenceImageUrls.map(String).slice(0, 1) : []) {
+  for (const url of Array.isArray(referenceImageUrls) ? referenceImageUrls.map(String).slice(0, 4) : []) {
     const reference = await storyboardUrlImage(url, tenantId) || await storyboardEnterpriseImage(url, tenantId);
-    if (reference) benchmarkReferences.push(reference);
+    if (!reference) continue;
+    benchmarkReferences.push(...await socialImageReferenceUnits(reference, 4 - benchmarkReferences.length));
+    if (benchmarkReferences.length >= 4) break;
+  }
+  const currentReferences: ReferenceImage[] = [];
+  for (const url of Array.isArray(currentImageUrls) ? currentImageUrls.map(String).slice(0, 4) : []) {
+    const reference = await storyboardUrlImage(url, tenantId) || await storyboardEnterpriseImage(url, tenantId);
+    if (reference) currentReferences.push(reference);
   }
   const productReferences: ReferenceImage[] = [];
   const assetFieldsToConfirm: string[] = [];
@@ -5279,41 +5333,98 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
   }
   const materialReferences = await resolveReferenceImages(materialIds, tenantId);
   const ownedReferences = [...productReferences, ...materialReferences];
-  // Provider accepts at most three ordered references. Benchmark controls
-  // structure only; owned enterprise assets control product and brand identity.
-  const references = [...benchmarkReferences, ...ownedReferences].slice(0, 3);
-  const prompt = [
-    safeImagePrompt,
-    'Generate one finished high-end B2B social media product poster. Do not imply OEM/ODM, export, factory, certification, pricing, MOQ, lead-time, delivery, or customization capabilities unless they appear verbatim in the verified JSON.',
-    `Use this exact poster JSON as the content source:\n${JSON.stringify(safePoster, null, 2)}`,
-    `Aspect ratio: ${ratio}.`,
-    'Use only the sections that contain verified JSON content. Empty badge, proof, process, category, or CTA sections must stay absent rather than being filled with generic marketing claims.',
-    'All visible text must match the JSON exactly. Avoid extra fake certifications, fake numbers, fake flags, watermarks, or unreadable tiny claims.',
-    benchmarkReferences.length
-      ? 'The first reference is a benchmark: use it only for generic layout hierarchy, visual rhythm and image-copy relationship. Never copy its brand, logo, product, packaging, claims, contact information or exact wording.'
-      : '',
-    ownedReferences.length
-      ? `The remaining ${Math.min(ownedReferences.length, 2)} reference image(s) are tenant-owned enterprise assets and are the only authority for product appearance, packaging and brand identity. Do not redraw or invent their labels or logos.`
-      : 'No tenant-owned product or brand reference was provided. Keep product and Logo areas empty rather than copying them from the benchmark or inventing enterprise identity.',
-  ].filter(Boolean).join('\n\n');
+  const normalizedImageType = SOCIAL_IMAGE_CONTENT_TYPES.includes(imageType as SocialImageContentType)
+    ? imageType as SocialImageContentType
+    : 'product_poster';
 
   try {
-    const generated = await generatePosterImage({ prompt, ratio: String(ratio || '1:1'), references, idempotencyKey: String(idempotencyKey || '').trim() || undefined });
-    const material = await createGeneratedImageMaterial({
-      title: `AI 图文海报 · ${headline}`.slice(0, 120),
-      bytes: generated.bytes,
-      mimeType: generated.mimeType,
-      source: generated.source,
-      tenantId,
-    });
-    const responseMaterial = await materialResponse(material, tenantId);
+    const isMultiUnit = normalizedImageType === 'carousel' || normalizedImageType === 'gif_poster';
+    const requestedUnits = isMultiUnit ? Math.min(4, Math.max(1, benchmarkReferences.length, currentReferences.length)) : 1;
+    const revision = String(repairInstruction || '').trim().slice(0, 1000);
+    const revisionTarget = revision ? socialImageRevisionTarget(revision) : null;
+    const revisionRatio = revision ? socialImageRequestedRatio(revision) : null;
+    const generatedItems: Array<{ url: string; material: Material; bytes: Buffer; source: 'openai' | 'qwen'; model: string; canvas?: { width: number; height: number; aspectRatio: number } }> = [];
+    for (let index = 0; index < requestedUnits; index += 1) {
+      const benchmark = benchmarkReferences[index] || benchmarkReferences[0];
+      const current = currentReferences[index] || currentReferences[0];
+      const sourceCanvas = benchmark
+        ? await socialImageCanvasFromBenchmark(Buffer.from(benchmark.base64, 'base64'))
+        : current ? await socialImageCanvasFromBenchmark(Buffer.from(current.base64, 'base64')) : null;
+      const canvas = revisionRatio ? ({
+        '1:1': { width: 1024, height: 1024, aspectRatio: 1, providerRatio: '1:1' as const },
+        '4:5': { width: 1080, height: 1350, aspectRatio: .8, providerRatio: '4:5' as const },
+        '9:16': { width: 1080, height: 1920, aspectRatio: .5625, providerRatio: '4:5' as const },
+        '16:9': { width: 1920, height: 1080, aspectRatio: 16 / 9, providerRatio: '16:9' as const },
+      }[revisionRatio]) : sourceCanvas;
+      const exactCanvas = canvas ? `${canvas.width}x${canvas.height}` : String(ratio || '1:1');
+      const unitPoster = socialImageUnitPoster(safePoster as unknown as Record<string, unknown>, normalizedImageType, index, requestedUnits);
+      const prompt = revision && revisionTarget
+        ? buildSocialImageRevisionPrompt({ instruction: revision, target: revisionTarget, unitIndex: index, unitCount: requestedUnits, exactCanvas })
+        : buildSocialImageFirstDraftPrompt({
+          imagePrompt: `${safeImagePrompt}\nThis is work unit ${index + 1} of ${requestedUnits}; preserve its role in the complete carousel or GIF work.`,
+          poster: unitPoster,
+          ratio: canvas ? `${canvas.width}:${canvas.height} (locked benchmark canvas; exact aspect ${canvas.aspectRatio.toFixed(6)})` : String(ratio || '1:1'),
+          imageType: normalizedImageType,
+          hasBenchmark: !!benchmark,
+          ownedReferenceCount: Math.min(ownedReferences.length, 2),
+          replicationRecipe: replicationRecipe && typeof replicationRecipe === 'object' ? replicationRecipe as SocialImageReplicationRecipe : undefined,
+          fixedIdentityComposition: normalizedImageType === 'gif_poster' && productReferences.length > 0,
+        });
+      // The current output is first during revision, followed by its benchmark
+      // and enterprise identity. The provider accepts three ordered images.
+      const references = (revision ? [current, benchmark, ...ownedReferences] : [benchmark, ...ownedReferences])
+        .filter(Boolean).slice(0, 3) as ReferenceImage[];
+      if (revision && !current) throw new Error(`第 ${index + 1} 个作品单元缺少当前成片，不能局部精修`);
+      const generated = await generatePosterImage({
+        prompt, ratio: canvas?.providerRatio || String(ratio || '1:1'), references, provider: 'openai', quality: imageQuality,
+        idempotencyKey: `${String(idempotencyKey || '').trim() || randomUUID()}:unit:${index + 1}`,
+      });
+      let outputBytes = canvas ? await conformSocialImageToCanvas(generated.bytes, canvas) : generated.bytes;
+      if (!revision && normalizedImageType === 'gif_poster' && productReferences.length > 0) {
+        const metadata = await sharp(outputBytes).metadata();
+        const width = canvas?.width || Number(metadata.width || 1024);
+        const height = canvas?.height || Number(metadata.height || 1024);
+        outputBytes = await composeFixedSocialLayers({
+          background: outputBytes,
+          products: productReferences.map(reference => Buffer.from(reference.base64, 'base64')),
+          poster: safePoster,
+          width,
+          height,
+          recipe: replicationRecipe && typeof replicationRecipe === 'object' ? replicationRecipe as SocialImageReplicationRecipe : undefined,
+        });
+      }
+      const material = await createGeneratedImageMaterial({
+        title: `${revision ? 'AI 局部精修' : 'AI 图文海报'} · ${headline}${requestedUnits > 1 ? ` · ${index + 1}` : ''}`.slice(0, 120),
+        bytes: outputBytes, mimeType: canvas ? 'image/png' : generated.mimeType, source: generated.source, tenantId,
+      });
+      const responseMaterial = await materialResponse(material, tenantId);
+      generatedItems.push({ url: responseMaterial.url, material: responseMaterial, bytes: outputBytes, source: generated.source, model: generated.model,
+        ...(canvas ? { canvas: { width: canvas.width, height: canvas.height, aspectRatio: canvas.aspectRatio } } : {}) });
+    }
+    let delivery = generatedItems[0]!;
+    if (normalizedImageType === 'gif_poster' && generatedItems.length > 1) {
+      const firstCanvas = generatedItems[0]!.canvas || { width: 1024, height: 1024, aspectRatio: 1 };
+      const gifBytes = await createSocialImageGif(generatedItems.map(item => item.bytes), firstCanvas.width, firstCanvas.height, 6000);
+      const gifMaterial = await createGeneratedImageMaterial({ title: `AI GIF 海报 · ${headline}`.slice(0, 120), bytes: gifBytes, mimeType: 'image/gif', source: 'openai', tenantId });
+      const responseMaterial = await materialResponse(gifMaterial, tenantId);
+      delivery = { ...generatedItems[0]!, url: responseMaterial.url, material: responseMaterial, bytes: gifBytes };
+    }
     res.json({
       ok: true,
-      source: generated.source,
-      model: generated.model,
-      url: responseMaterial.url,
-      material: responseMaterial,
-      references: references.length,
+      source: delivery.source,
+      model: delivery.model,
+      quality: imageQuality,
+      url: delivery.url,
+      material: delivery.material,
+      items: generatedItems.map(({ bytes: _bytes, ...item }, index) => ({ ...item, index })),
+      references: benchmarkReferences.length + ownedReferences.length,
+      revisionTarget,
+      canvas: delivery.canvas ? {
+        width: delivery.canvas.width,
+        height: delivery.canvas.height,
+        aspectRatio: delivery.canvas.aspectRatio,
+        lockedToBenchmark: true,
+      } : undefined,
       fieldsToConfirm: confirmationFields([...commercialAudit.fieldsToConfirm, ...assetFieldsToConfirm]),
       qualityStatus: commercialAudit.fieldsToConfirm.length || commercialAudit.issues.length || assetFieldsToConfirm.length ? 'needs_confirmation' : 'passed',
     });

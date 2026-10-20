@@ -43,3 +43,18 @@ export function socialImageDeterministicChecks(task: SocialImageCreationTask): S
   return [...new Set([...SOCIAL_IMAGE_HARD_CHECKS, 'reference_structure_similarity' as const, ...(task.deliverySpec.format === 'gif' ? ['motion_mechanism_similarity' as const] : [])])]
     .map(key => byKey[key] || uncertain(key, pixelNotes[key] || '等待视觉质检'));
 }
+
+/** Deterministic failures are authoritative. Visual evidence may resolve only
+ * checks that were still uncertain; missing model rows never become passes. */
+export function mergeSocialImageVisualChecks(
+  deterministic: SocialImageQualityCheck[],
+  visual: SocialImageQualityCheck[],
+): SocialImageQualityCheck[] {
+  const visualByKey = new Map(visual.map(check => [check.key, check]));
+  return deterministic.map(check => {
+    if (check.verdict === 'fail' || check.verdict === 'pass') return check;
+    const observed = visualByKey.get(check.key);
+    if (!observed || observed.checker !== 'multimodal') return check;
+    return { ...observed, severity: check.severity };
+  });
+}

@@ -231,6 +231,8 @@ export default function SocialContentPlanningPage({
             referenceTitle={seed?.referenceTitle}
             referenceThumbnail={seed?.referenceThumbnail}
             referenceMediaUrl={seed?.referenceMediaUrl}
+            referenceImageMode={sourceRequest?.sourceContext?.referenceImageMode}
+            referenceImageUrls={sourceRequest?.sourceContext?.referenceImageUrls}
             initialTask={imageTask}
             onShowCreations={() => setView('creations')}
           /> : <div className="flex h-full min-h-0 flex-col bg-white">
@@ -238,7 +240,7 @@ export default function SocialContentPlanningPage({
             <main className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
               <section className="w-full max-w-3xl" aria-labelledby="production-mode-heading">
                 <h2 id="production-mode-heading" className="text-center text-xl font-semibold text-text-primary">这次要制作什么内容？</h2>
-                <p className="mt-2 text-center text-sm text-text-secondary">先选择视频或图片；图片模式下一步再确认产品海报、品牌新闻、轮播图或 GIF。</p>
+                <p className="mt-2 text-center text-sm text-text-secondary">先选择视频或图片；图片模式只包含单图、GIF 和轮播图，内容题材由系统在后台判断。</p>
                 <div className="mt-6 grid gap-4 sm:grid-cols-2">
                   <button type="button" onClick={() => setProductionMode('video')} className="flex min-h-44 flex-col rounded-lg border border-border bg-white p-5 text-left transition-colors hover:border-blue-400 hover:bg-blue-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30">
                     <span className="flex h-10 w-10 items-center justify-center rounded-md bg-blue-50 text-blue-600"><Video size={20} /></span>
@@ -248,7 +250,7 @@ export default function SocialContentPlanningPage({
                   <button type="button" onClick={() => setProductionMode('image')} className="flex min-h-44 flex-col rounded-lg border border-border bg-white p-5 text-left transition-colors hover:border-violet-400 hover:bg-violet-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/30">
                     <span className="flex h-10 w-10 items-center justify-center rounded-md bg-violet-50 text-violet-600"><FileImage size={20} /></span>
                     <strong className="mt-5 text-base font-semibold text-text-primary">图片模式</strong>
-                    <span className="mt-2 text-sm leading-6 text-text-secondary">单图、产品海报、品牌新闻、轮播图与 GIF，并联合生成帖子配文。</span>
+                    <span className="mt-2 text-sm leading-6 text-text-secondary">单图、GIF 或轮播图，并联合生成帖子配文；复刻任务会依据爬取内容自动选择。</span>
                   </button>
                 </div>
               </section>

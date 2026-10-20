@@ -51,7 +51,7 @@ function textLayerSvg(layer: SocialImageLayer, width: number, height: number): B
   </svg>`);
 }
 
-async function connectedBorderToAlpha(input: Buffer): Promise<Buffer> {
+export async function connectedBorderToAlpha(input: Buffer): Promise<Buffer> {
   const image = sharp(input).ensureAlpha();
   const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
   const { width, height, channels } = info;

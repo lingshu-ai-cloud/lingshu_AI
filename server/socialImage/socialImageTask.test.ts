@@ -18,6 +18,9 @@ test('creates tenant-scoped image tasks with optimistic versions', async () => {
   const created = await createSocialImageTask(store, 'tenant-a', { title: '新闻图', imageType: 'brand_news', creationPath: 'viral_replication' });
   assert.equal(created.contentMode, 'image');
   assert.equal(created.imageType, 'brand_news');
+  assert.equal(created.replicationRecipe?.productPresentation, 'auto_from_reference');
+  assert.deepEqual(created.replicationRecipe?.layoutRegions.map(item => item.id), ['background', 'corner-badge', 'headline-zone', 'product-stage', 'bottom-bar']);
+  assert.deepEqual(created.replicationRecipe?.typographyRegions?.map(item => item.role), ['headline', 'subheadline', 'supporting']);
   assert.equal(created.version, 1);
   assert.equal(await readSocialImageTask(store, 'tenant-b', created.id), null);
   const updated = await updateSocialImageTask(store, 'tenant-a', created.id, 1, { title: '合作新闻图' });

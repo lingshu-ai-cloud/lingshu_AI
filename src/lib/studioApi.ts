@@ -450,10 +450,20 @@ export interface FbPosterResult {
 
 export interface FbPosterRenderResult {
   ok: boolean;
-  source?: 'gemini' | 'seedream' | 'local';
+  source?: 'openai' | 'qwen' | 'local';
   model?: string;
+  quality?: 'low' | 'medium' | 'high';
   url?: string;
   material?: Material;
+  items?: Array<{
+    index: number;
+    url: string;
+    material: Material;
+    source: 'openai' | 'qwen';
+    model: string;
+    canvas?: { width: number; height: number; aspectRatio: number };
+  }>;
+  revisionTarget?: 'background' | 'product' | 'logo' | 'typography' | 'full_composite' | null;
   references?: number;
   fieldsToConfirm?: string[];
   qualityStatus?: 'passed' | 'needs_confirmation';
@@ -562,6 +572,12 @@ export const studioApi = {
     referenceImageUrls?: string[];
     idempotencyKey?: string;
     confirmedFields?: Record<string, string>;
+    imageModel?: 'gpt-image-2';
+    imageQuality?: 'low' | 'medium' | 'high';
+    imageType?: import('../../shared/contracts/socialImageCreation').SocialImageContentType;
+    currentImageUrls?: string[];
+    repairInstruction?: string;
+    replicationRecipe?: import('../../shared/contracts/socialImageCreation').SocialImageReplicationRecipe;
   }, options?: { signal?: AbortSignal }) =>
     post<FbPosterRenderResult>('fb-poster/render', b, { ok: false }, options?.signal),
 

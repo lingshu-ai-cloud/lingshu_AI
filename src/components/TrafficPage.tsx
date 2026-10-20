@@ -69,6 +69,7 @@ import { useSocialContentNavigation } from './socialContent/useSocialContentNavi
 import {SOCIAL_CONTENT_NAVIGATION_EVENT,attachSocialContentNavigationState,hasWeeklyContentNavigationTarget,readWeeklyContentNavigationTarget} from '../lib/socialContentContext';
 import { resumeOrCreateInspirationTask } from '../lib/socialInspirationTask';
 import { PAGE_REGISTRY } from '../pageRegistry';
+import { inferSocialImageProductionMode } from '../lib/socialImageProductionMode';
 import ContentLibrary from './ContentLibrary';
 import { PageLoading, WorkspaceErrorBoundary } from './AppPageBoundary';
 
@@ -388,6 +389,7 @@ export default function TrafficPage({
         videoUrl?: string;
         contentFormat?: string;
         crawledAt?: string;
+        aiAnalysis?: { imageUrls?: string[]; imageCount?: number };
       };
     };
     if (kickoff.source === 'material_library' && kickoff.generatedVideo?.material) {
@@ -427,6 +429,14 @@ export default function TrafficPage({
     if (kickoff.source === 'inspiration_image_post' && kickoff.video?.contentFormat === 'image') {
       const referenceUrl = String(kickoff.video.sourceUrl || '').trim();
       const referenceImage = String(kickoff.video.thumbnail || '').trim();
+      const referenceImageUrls = (kickoff.video.aiAnalysis?.imageUrls || []).map(String).filter(Boolean);
+      const referenceImageMode = inferSocialImageProductionMode({
+        thumbnail: referenceImage,
+        mediaUrl: referenceImage,
+        imageUrls: referenceImageUrls,
+        imageCount: kickoff.video.aiAnalysis?.imageCount,
+        isAnimated: Boolean(kickoff.video.videoUrl),
+      });
       window.dispatchEvent(new CustomEvent('lingshu:navigate', {
         detail: {
           page: 'smartAssets',
@@ -454,6 +464,8 @@ export default function TrafficPage({
               referenceThumbnail: referenceImage || undefined,
               referenceMediaUrl: referenceImage || undefined,
               referenceContentType: 'image',
+              referenceImageMode,
+              referenceImageUrls,
             },
           },
         },
