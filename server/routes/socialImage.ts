@@ -306,7 +306,21 @@ socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
       const failed = qualityChecks.filter(check => check.severity === 'hard' && check.verdict !== 'pass');
       return { ...output, state: failed.length ? 'repair_required' as const : 'approved' as const, qualityChecks };
     }));
-    const result = await updateSocialImageTask(store, tenantId, task.id, task.version, { outputs, status: 'review_required', step: 'review' });
+    const generationJobs = task.generationJobs.map(job => job.status === 'quality_checking'
+      ? { ...job, status: 'completed' as const, updatedAt: new Date().toISOString() }
+      : job);
+    const repairInstructions = [...task.repairInstructions];
+    for (const output of outputs.filter(item => item.state === 'repair_required')) {
+      const failed = output.qualityChecks.filter(check => check.severity === 'hard' && check.verdict === 'fail');
+      if (!failed.length || repairInstructions.some(item => item.outputNodeId === output.id && item.status === 'pending')) continue;
+      repairInstructions.push({
+        id: randomUUID(), outputNodeId: output.id, failedChecks: failed.map(check => check.key),
+        targetLayer: failed.some(check => ['product_identity','packaging_visibility','subject_visibility','safe_zone'].includes(check.key)) ? 'product' : 'typography',
+        instruction: failed.map(check => check.repairSuggestion || check.note).join('；').slice(0, 1000),
+        status: 'pending', fromVersion: output.version,
+      });
+    }
+    const result = await updateSocialImageTask(store, tenantId, task.id, task.version, { outputs, generationJobs, repairInstructions, status: 'review_required', step: 'review' });
     if (result.kind !== 'updated') { res.status(result.kind === 'conflict' ? 409 : 422).json({ ok: false, error: result.kind === 'invalid' ? result.issues.join('；') : '质检结果保存失败' }); return; }
     res.json({ ok: true, task: result.task, checks: outputs.flatMap(output => output.qualityChecks) });
   } catch (error) {

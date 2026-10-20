@@ -87,4 +87,10 @@ assert.equal((source.match(/setConfirmationOpen\(true\)/g) || []).length, 2, 'th
 assert.match(source, /390_000/, 'image generation must have a finite client deadline beyond the provider timeout');
 assert.match(source, /停止等待/, 'the user must be able to leave a long-running image request without reloading');
 assert.match(source, /请不要立即重复提交/, 'unknown provider outcomes must warn against duplicate billing');
+assert.match(source, /socialImageTaskId: activeTask\.id/, 'the server must own durable result persistence before the browser response');
+assert.match(source, /socialImageTaskVersion: activeTask\.version/);
+assert.match(source, /已恢复后台生成结果并完成自动视觉质检/, 'reopening a task must recover the durable output without another paid submission');
+assert.match(studioRoute, /updateSocialImageTask\(store, tenantId, currentTask\.id/, 'the generation route must persist outputs server-side');
+assert.match(studioRoute, /social_image_task_version_conflict_after_generation/, 'a stale generation must not overwrite a newer task');
+assert.match(socialImageRoute, /status: 'completed' as const/, 'quality completion must close the durable generation job');
 assert.doesNotMatch(source, /contentMode:\s*'video'/);

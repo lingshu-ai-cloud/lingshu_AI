@@ -468,6 +468,7 @@ export interface FbPosterRenderResult {
   fieldsToConfirm?: string[];
   qualityStatus?: 'passed' | 'needs_confirmation';
   error?: string;
+  task?: import('../../shared/contracts/socialImageCreation').SocialImageCreationTask | null;
 }
 
 export interface LeadContentPackageResult {
@@ -578,6 +579,9 @@ export const studioApi = {
     currentImageUrls?: string[];
     repairInstruction?: string;
     replicationRecipe?: import('../../shared/contracts/socialImageCreation').SocialImageReplicationRecipe;
+    socialImageTaskId?: string;
+    socialImageJobId?: string;
+    socialImageTaskVersion?: number;
   }, options?: { signal?: AbortSignal }) =>
     post<FbPosterRenderResult>('fb-poster/render', b, { ok: false }, options?.signal),
 

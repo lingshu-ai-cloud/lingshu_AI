@@ -110,8 +110,40 @@ export default function SocialImageWorkbench({
   const uploadRef = useRef<HTMLInputElement>(null);
   const generationAbortRef = useRef<AbortController | null>(null);
   const generationAbortReasonRef = useRef<'manual' | 'deadline' | null>(null);
+  const recoveredQualityTaskRef = useRef('');
 
   useEffect(() => () => generationAbortRef.current?.abort(), []);
+
+  // Generation is persisted by the server before it responds. After a refresh
+  // poll the same task instead of submitting another paid image request, then
+  // resume QA exactly once when the durable outputs appear.
+  useEffect(() => {
+    if (!task?.id) return;
+    const activeJob = task.generationJobs?.some(job => ['queued', 'running', 'output_ready', 'quality_checking'].includes(job.status));
+    const needsQuality = task.outputs.some(output => output.state === 'quality_checking');
+    if (!activeJob && !needsQuality) return;
+    let cancelled = false;
+    const recover = async () => {
+      try {
+        const latest = (await socialImageApi.getTask(task.id)).task;
+        if (cancelled) return;
+        setTask(latest);
+        const currentOutput = latest.outputs.find(output => output.state === 'quality_checking' && output.mediaUrl);
+        if (currentOutput) {
+          setImageUrl(currentOutput.mediaUrl || '');
+          const token = `${latest.id}:${latest.version}`;
+          if (recoveredQualityTaskRef.current !== token) {
+            recoveredQualityTaskRef.current = token;
+            const checked = await socialImageApi.runPreflight(latest);
+            if (!cancelled) { setTask(checked.task); setStep('review'); setNotice('已恢复后台生成结果并完成自动视觉质检。'); }
+          }
+        }
+      } catch { /* retain the persisted task and retry on the next poll */ }
+    };
+    void recover();
+    const timer = window.setInterval(recover, 2500);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [task?.id, task?.version, task?.status, task?.generationJobs, task?.outputs]);
 
   useEffect(() => {
     let active = true;
@@ -357,6 +389,9 @@ export default function SocialImageWorkbench({
         idempotencyKey,
         confirmedFields: confirmationValues,
         replicationRecipe: activeTask.replicationRecipe,
+        socialImageTaskId: activeTask.id,
+        socialImageJobId: jobId,
+        socialImageTaskVersion: activeTask.version,
         imagePrompt: [resolvedCoreClaim,
           creationPath === 'viral_replication' ? 'Reconstruct the supplied benchmark with our verified enterprise content.' : 'Use the enterprise brand and product assets as the primary visual system.',
           ...(activeTask.repairInstructions || []).filter(item => item.status === 'pending').map(item => `Targeted repair (${item.targetLayer}): ${item.instruction}`),
@@ -368,6 +403,11 @@ export default function SocialImageWorkbench({
       }
       if (!rendered.ok || !rendered.url) throw new Error(rendered.error || '图片生成失败');
       setImageUrl(rendered.url);
+      if (rendered.task) {
+        const preflight = await socialImageApi.runPreflight(rendered.task);
+        setTask(preflight.task); setStep('review'); setNotice('图片已在后台持久化并完成自动视觉质检。');
+        return;
+      }
       const nextVersion = Math.max(0, ...activeTask.outputs.map(item => item.version)) + 1;
       const itemRole = imageType === 'carousel' ? 'carousel_page' as const : imageType === 'gif_poster' ? 'gif_plate' as const : 'single' as const;
       const renderItems = rendered.items?.length ? rendered.items : [{ index: 0, url: rendered.url, material: rendered.material }];
@@ -416,6 +456,7 @@ export default function SocialImageWorkbench({
 
   const applyNaturalLanguageRepair = async () => {
     if (!task || !repairRequest.trim()) return;
+    let queuedRepairTask: SocialImageCreationTask | null = null;
     setBusy(true); setError(''); setNotice('正在理解修改要求并只调整对应图层…');
     try {
       if (task.layerGraph) {
@@ -430,16 +471,33 @@ export default function SocialImageWorkbench({
       const currentUnits = task.outputs.filter(output => output.state !== 'superseded' && output.mediaUrl && output.role !== 'gif_output').slice(0, 4);
       if (!currentUnits.length) throw new Error('当前成片不可读取，请先重新生成首版。');
       const repairId = crypto.randomUUID();
+      const repairJobId = crypto.randomUUID();
+      const repairTarget = 'full_composite' as const;
+      const queuedRepair = await socialImageApi.updateTask(task, {
+        status: 'generating', step: 'generate',
+        repairInstructions: [...task.repairInstructions, { id: repairId, outputNodeId: currentUnits[0]!.id, failedChecks: [], targetLayer: repairTarget, instruction: repairRequest.trim(), status: 'pending', fromVersion: Math.max(1, ...currentUnits.map(item => item.version)) }],
+        generationJobs: [...task.generationJobs, { id: repairJobId, idempotencyKey: `${task.id}:repair:${repairId}:v${task.version}`, status: 'running', outputNodeIds: [], attempt: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      });
+      const repairTask = queuedRepair.task;
+      queuedRepairTask = repairTask;
+      setTask(repairTask);
       const rendered = await studioApi.fbPosterRender({
         poster, caption, ratio, materialIds, productIds, imageModel: 'gpt-image-2', imageQuality, imageType,
         referenceImageUrls: creationPath === 'viral_replication' ? referenceAssets.slice(0, 4) : [],
         currentImageUrls: currentUnits.map(output => output.mediaUrl!), repairInstruction: repairRequest.trim(),
-        replicationRecipe: task.replicationRecipe,
+        replicationRecipe: repairTask.replicationRecipe,
         idempotencyKey: `${task.id}:repair:${repairId}:v${task.version}`, confirmedFields: confirmationValues,
         imagePrompt: resolvedCoreClaim,
+        socialImageTaskId: repairTask.id, socialImageJobId: repairJobId, socialImageTaskVersion: repairTask.version,
       });
       if (!rendered.ok || !rendered.url) throw new Error(rendered.error || '局部精修失败');
-      const nextVersion = Math.max(0, ...task.outputs.map(output => output.version)) + 1;
+      if (rendered.task) {
+        const preflight = await socialImageApi.runPreflight(rendered.task);
+        setTask(preflight.task); setImageUrl(rendered.url); setStep('review'); setRepairRequest('');
+        setNotice(`已在后台对比原对标和当前成片，并完成${rendered.revisionTarget || '目标'}图层精修；其他区域保持原版本。`);
+        return;
+      }
+      const nextVersion = Math.max(0, ...repairTask.outputs.map(output => output.version)) + 1;
       const itemRole = imageType === 'carousel' ? 'carousel_page' as const : imageType === 'gif_poster' ? 'gif_plate' as const : 'single' as const;
       const renderItems = rendered.items?.length ? rendered.items : [{ index: 0, url: rendered.url, material: rendered.material }];
       const outputs: SocialImageOutputNode[] = renderItems.map((item, index) => ({
@@ -450,14 +508,24 @@ export default function SocialImageWorkbench({
       }));
       if (imageType === 'gif_poster') outputs.push({ id: crypto.randomUUID(), role: 'gif_output', label: 'GIF 成片', state: 'quality_checking', mediaUrl: rendered.url, materialId: rendered.material?.id, version: nextVersion, qualityChecks: hardChecks.map(key => ({ key, verdict: 'uncertain', severity: 'hard', note: '局部精修后等待复核' })) });
       const repair = { id: repairId, outputNodeId: currentUnits[0]!.id, failedChecks: [], targetLayer: rendered.revisionTarget || 'full_composite', instruction: repairRequest.trim(), status: 'completed' as const, fromVersion: nextVersion - 1, toVersion: nextVersion };
-      const saved = await socialImageApi.updateTask(task, {
-        status: 'review_required', step: 'review', outputs: [...task.outputs.map(output => output.state === 'superseded' ? output : { ...output, state: 'superseded' as const }), ...outputs],
-        repairInstructions: [...task.repairInstructions, repair],
+      const saved = await socialImageApi.updateTask(repairTask, {
+        status: 'review_required', step: 'review', outputs: [...repairTask.outputs.map(output => output.state === 'superseded' ? output : { ...output, state: 'superseded' as const }), ...outputs],
+        repairInstructions: repairTask.repairInstructions.map(item => item.id === repairId ? repair : item),
       });
       const preflight = await socialImageApi.runPreflight(saved.task);
       setTask(preflight.task); setImageUrl(rendered.url); setStep('review'); setRepairRequest('');
       setNotice(`已在后台对比原对标和当前成片，并完成${rendered.revisionTarget || '目标'}图层精修；其他区域保持原版本。`);
-    } catch (reason) { setNotice(''); setError(reason instanceof Error ? reason.message : '图层修改失败'); }
+    } catch (reason) {
+      if (queuedRepairTask) {
+        const failedTask = queuedRepairTask;
+        void socialImageApi.updateTask(failedTask, {
+          status: 'blocked',
+          generationJobs: failedTask.generationJobs.map(job => job.status === 'running' ? { ...job, status: 'failed' as const, error: reason instanceof Error ? reason.message : '局部精修失败', updatedAt: new Date().toISOString() } : job),
+          repairInstructions: failedTask.repairInstructions.map(item => item.status === 'pending' ? { ...item, status: 'failed' as const } : item),
+        }).then(result => setTask(result.task)).catch(() => undefined);
+      }
+      setNotice(''); setError(reason instanceof Error ? reason.message : '图层修改失败');
+    }
     finally { setBusy(false); }
   };
 

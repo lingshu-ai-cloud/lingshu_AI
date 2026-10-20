@@ -81,7 +81,8 @@ import { buildSocialImageFirstDraftPrompt, socialImageUnitPoster } from '../soci
 import { conformSocialImageToCanvas, socialImageCanvasFromBenchmark } from '../socialImage/referenceCanvas.js';
 import { buildSocialImageRevisionPrompt, socialImageRequestedRatio, socialImageRevisionTarget } from '../socialImage/socialImageRevision.js';
 import { composeFixedSocialLayers } from '../socialImage/fixedOverlayComposer.js';
-import { SOCIAL_IMAGE_CONTENT_TYPES, type SocialImageContentType, type SocialImageReplicationRecipe } from '../../shared/contracts/socialImageCreation.js';
+import { SOCIAL_IMAGE_CONTENT_TYPES, SOCIAL_IMAGE_HARD_CHECKS, type SocialImageContentType, type SocialImageOutputNode, type SocialImageReplicationRecipe } from '../../shared/contracts/socialImageCreation.js';
+import { readSocialImageTask, updateSocialImageTask } from '../socialImage/socialImageTask.js';
 import { SeedanceProductRecovery } from '../lib/seedanceProductRecovery.js';
 import { SeedreamFirstFrameGenerator } from '../lib/seedreamFirstFrameGenerator.js';
 import { FirstFrameProviderError, firstFrameInputFingerprint, type FirstFrameReferenceRole } from '../lib/firstFrameGenerator.js';
@@ -5269,6 +5270,9 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
     currentImageUrls = [],
     repairInstruction = '',
     replicationRecipe = undefined,
+    socialImageTaskId = '',
+    socialImageJobId = '',
+    socialImageTaskVersion = 0,
   } = req.body ?? {};
   if (imageModel !== 'gpt-image-2' || !['low', 'medium', 'high'].includes(String(imageQuality))) {
     res.status(400).json({ ok: false, code: 'INVALID_IMAGE_GENERATION_SPEC', error: '图片模型或质量档位无效。' });
@@ -5409,6 +5413,33 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       const responseMaterial = await materialResponse(gifMaterial, tenantId);
       delivery = { ...generatedItems[0]!, url: responseMaterial.url, material: responseMaterial, bytes: gifBytes };
     }
+    let persistedTask = null;
+    if (String(socialImageTaskId || '') && String(socialImageJobId || '') && Number.isSafeInteger(Number(socialImageTaskVersion))) {
+      const currentTask = await readSocialImageTask(store, tenantId, String(socialImageTaskId));
+      if (!currentTask || currentTask.version !== Number(socialImageTaskVersion)) throw new Error('social_image_task_version_conflict_after_generation');
+      const nextVersion = Math.max(0, ...currentTask.outputs.map(item => item.version)) + 1;
+      const role = normalizedImageType === 'carousel' ? 'carousel_page' as const : normalizedImageType === 'gif_poster' ? 'gif_plate' as const : 'single' as const;
+      const outputs: SocialImageOutputNode[] = generatedItems.map((item, index) => ({
+        id: randomUUID(), role, label: normalizedImageType === 'carousel' ? `轮播第 ${index + 1} 张` : normalizedImageType === 'gif_poster' ? `GIF 画面 ${index + 1}` : '主视觉',
+        state: 'quality_checking', mediaUrl: item.url, materialId: item.material.id, version: nextVersion,
+        qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'uncertain', severity: 'hard', checker: 'deterministic', note: '等待自动视觉质检' })),
+      }));
+      if (normalizedImageType === 'gif_poster') outputs.push({
+        id: randomUUID(), role: 'gif_output', label: 'GIF 成片', state: 'quality_checking', mediaUrl: delivery.url, materialId: delivery.material.id, version: nextVersion,
+        qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'uncertain', severity: 'hard', checker: 'deterministic', note: '等待自动视觉质检' })),
+      });
+      const saved = await updateSocialImageTask(store, tenantId, currentTask.id, currentTask.version, {
+        status: 'review_required', step: 'review',
+        outputs: [...currentTask.outputs.map(item => item.state === 'superseded' ? item : { ...item, state: 'superseded' as const }), ...outputs],
+        generationJobs: currentTask.generationJobs.map(job => job.id === String(socialImageJobId) ? {
+          ...job, status: 'quality_checking' as const, provider: delivery.source, outputNodeIds: outputs.map(output => output.id), updatedAt: new Date().toISOString(),
+        } : job),
+        repairInstructions: revision ? currentTask.repairInstructions.map(item => item.status === 'pending' ? { ...item, status: 'completed' as const, toVersion: nextVersion } : item) : currentTask.repairInstructions,
+        deliverySpec: { ...currentTask.deliverySpec, imageGeneration: { provider: 'openai', model: 'gpt-image-2', quality: imageQuality } },
+      });
+      if (saved.kind !== 'updated') throw new Error('social_image_task_persist_failed_after_generation');
+      persistedTask = saved.task;
+    }
     res.json({
       ok: true,
       source: delivery.source,
@@ -5427,6 +5458,7 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       } : undefined,
       fieldsToConfirm: confirmationFields([...commercialAudit.fieldsToConfirm, ...assetFieldsToConfirm]),
       qualityStatus: commercialAudit.fieldsToConfirm.length || commercialAudit.issues.length || assetFieldsToConfirm.length ? 'needs_confirmation' : 'passed',
+      task: persistedTask,
     });
   } catch (err: any) {
     console.warn('[studio] fb-poster image generation failed:', String(err?.message || err).slice(0, 800));
