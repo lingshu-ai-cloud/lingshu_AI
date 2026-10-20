@@ -18,6 +18,7 @@ import CreationMaterialHistory from './CreationMaterialHistory';
 import CreationHistoryCover from './CreationHistoryCover';
 import { dedupeSocialOutputHistoryProjects, socialOutputOwnedReviewMedia } from '../../lib/socialOutputHistoryProjects';
 import { loadOwnedReviewMedia } from '../../lib/socialReviewOwnedMedia';
+import type { SocialImageCreationTask } from '../../../shared/contracts/socialImageCreation';
 
 type CreationFilter = 'all' | 'viral_replication' | 'free_creation';
 
@@ -47,22 +48,28 @@ function CompletedVideoPreview({ project, onClose }: { project: StudioProject; o
     <Drawer open title={project.title} size={840} onClose={onClose}>
       <p className="mb-4 text-sm text-text-secondary">{projectCategory(project) === 'viral_replication' ? '爆款复刻模式' : '自由创作模式'} · {statusLabel(project, directUrl)}</p>
         <div className="min-h-0 flex-1 overflow-y-auto bg-black p-3 sm:p-5">
-          {error ? <p role="alert" className="p-8 text-center text-sm text-white">{error}</p> : url ? <video autoPlay controls playsInline preload="auto" src={url} className="mx-auto max-h-[76vh] w-full rounded-lg bg-black object-contain" aria-label={`${project.title}成片预览`}>
-            您的浏览器暂不支持视频预览。
-          </video> : <p className="p-8 text-center text-sm text-white">正在校验并加载成片…</p>}
+          {error ? <p role="alert" className="p-8 text-center text-sm text-white">{error}</p> : url ? project.spec.contentMode === 'image'
+            ? <img src={url} className="mx-auto max-h-[76vh] w-full rounded-lg bg-black object-contain" alt={`${project.title}成片预览`} />
+            : <video autoPlay controls playsInline preload="auto" src={url} className="mx-auto max-h-[76vh] w-full rounded-lg bg-black object-contain" aria-label={`${project.title}成片预览`}>您的浏览器暂不支持视频预览。</video>
+            : <p className="p-8 text-center text-sm text-white">正在校验并加载成片…</p>}
         </div>
     </Drawer>
   );
 }
 
 function projectCategory(project: StudioProject): Exclude<CreationFilter, 'all'> {
-  const mode = String(project.spec.mode || project.spec.creationMode || '').toLowerCase();
+  const imageTask = project.spec.socialImageTask as SocialImageCreationTask | undefined;
+  const mode = String(imageTask?.creationPath || project.spec.creationPath || project.spec.mode || project.spec.creationMode || '').toLowerCase();
   return mode === 'clone' || mode === 'viral_replication' || /爆款|复刻|裂变/.test(project.title)
     ? 'viral_replication'
     : 'free_creation';
 }
 
 function rawProjectPreviewUrl(project: StudioProject): string {
+  if (project.spec.contentMode === 'image') {
+    const imageTask = project.spec.socialImageTask as SocialImageCreationTask | undefined;
+    return imageTask?.outputs.find(output => output.mediaUrl)?.mediaUrl || '';
+  }
   const outputs = project.spec.languageRenderOutputs;
   if (outputs && typeof outputs === 'object') {
     const done = Object.values(outputs as Record<string, { status?: string; previewUrl?: string }>).find(
@@ -85,12 +92,23 @@ function projectPreviewUrl(project: StudioProject): string {
   // QA requests a revision. Review status controls approval and publishing;
   // it must not send the user back into the legacy creation wizard or hide the
   // exact media that QA evaluated.
+  if (project.spec.contentMode === 'image') {
+    const imageTask = project.spec.socialImageTask as SocialImageCreationTask | undefined;
+    return imageTask?.publishable && imageTask.status === 'approved' ? rawProjectPreviewUrl(project) : '';
+  }
   return socialOutputOwnedReviewMedia(project) || projectHasAcceptedRender(project)
     || project.status === 'ready_for_approval' || project.status === 'published'
     ? rawProjectPreviewUrl(project) : '';
 }
 
 function statusLabel(project: StudioProject, previewUrl: string): string {
+  if (project.spec.contentMode === 'image') {
+    const imageTask = project.spec.socialImageTask as SocialImageCreationTask | undefined;
+    if (imageTask?.publishable && imageTask.status === 'approved' && previewUrl) return '已验收成片';
+    if (imageTask?.status === 'review_required') return '待质检';
+    if (imageTask?.status === 'blocked') return '需返工';
+    if (imageTask?.status === 'planned') return '方案已确认';
+  }
   if (projectHasAcceptedRender(project)) return '已验收成片';
   if (project.status === 'published') return '已发布';
   if (project.status === 'ready_for_approval' && previewUrl) return '待验收成片';
@@ -120,7 +138,13 @@ function openProject(project: StudioProject) {
   }));
 }
 
-export default function SocialContentHistoryHome({ onRequestCreate }: { onRequestCreate: () => void }) {
+export default function SocialContentHistoryHome({
+  onRequestCreate,
+  onOpenImageProject,
+}: {
+  onRequestCreate: () => void;
+  onOpenImageProject?: (task: SocialImageCreationTask) => void;
+}) {
   const { message } = AntApp.useApp();
   const [projects, setProjects] = useState<StudioProject[]>([]);
   const [filter, setFilter] = useState<CreationFilter>('all');
@@ -154,6 +178,7 @@ export default function SocialContentHistoryHome({ onRequestCreate }: { onReques
   const openFeatured = () => {
     if (!featuredProject) return;
     if (featuredPreviewUrl) setPreviewProject(featuredProject);
+    else if (featuredProject.spec.contentMode === 'image' && featuredProject.spec.socialImageTask) onOpenImageProject?.(featuredProject.spec.socialImageTask as SocialImageCreationTask);
     else openProject(featuredProject);
   };
   const itemCount = filtered.length;
@@ -237,7 +262,11 @@ export default function SocialContentHistoryHome({ onRequestCreate }: { onReques
               const category = projectCategory(project);
               return (
                 <article key={project.id} className="group overflow-hidden rounded-lg border border-slate-200 bg-white text-left shadow-none transition hover:border-blue-300">
-                  <button type="button" onClick={() => previewUrl ? setPreviewProject(project) : openProject(project)} className="block w-full text-left">
+                  <button
+                    type="button"
+                    onClick={() => previewUrl ? setPreviewProject(project) : project.spec.contentMode === 'image' && project.spec.socialImageTask ? onOpenImageProject?.(project.spec.socialImageTask as SocialImageCreationTask) : openProject(project)}
+                    className="block w-full text-left"
+                  >
                     <span className="relative flex aspect-[16/10] items-center justify-center overflow-hidden bg-surface-2">
                       <CreationHistoryCover project={project} className="absolute inset-0 h-full w-full" />
                       <span className="absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[9px] font-semibold text-white">{category === 'viral_replication' ? '爆款复刻模式' : '自由创作模式'}</span>

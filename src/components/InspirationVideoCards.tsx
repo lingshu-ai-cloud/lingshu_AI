@@ -90,7 +90,7 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
       <div
         className="relative block w-full overflow-hidden text-left"
         style={{ background: 'var(--color-surface-2)', aspectRatio: mediaAspectRatio }}>
-        <LsMediaStateFrame state={mediaState} percent={analysisProgress?.percent} label={analysisProgress?.stageLabel} className="absolute inset-0">
+        <LsMediaStateFrame state={mediaState} percent={analysisProgress?.percent} label={isImagePost && mediaState === 'processing' ? '分析中' : isImagePost && mediaState === 'error' ? '分析失败，可查看详情后重试' : analysisProgress?.stageLabel} className="absolute inset-0">
           <VideoThumbnail platform={video.platform} title={video.title} />
           {video.thumbnail && (
             <ThumbnailImage src={video.thumbnail} platform={video.platform} title={video.title} className="absolute inset-0 h-full w-full object-cover" onNaturalAspectRatio={ratio => {

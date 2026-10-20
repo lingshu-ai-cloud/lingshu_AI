@@ -13,7 +13,7 @@ const COMMERCIAL_CLAIM_RULES: Array<{
 }> = [
   {
     field: 'MOQ / 起订量',
-    claim: /\bMOQ\b|起订量|最低订购|低起订|小批量(?:起订|订单)|(?:low|small|flexible)\s+(?:minimum order|MOQ)/i,
+    claim: /\bMOQ\b|\blow\s*moq\b|起订量|最低订购|低起订|小批量(?:起订|订单)|(?:low|small|flexible)\s+(?:minimum order|MOQ)/i,
     evidence: /起订量[：:]\s*[^；;\s]|\bMOQ\b\s*[：:=]\s*[^；;\s]|minimum order\s*[：:=]\s*[^；;\s]/i,
   },
   {
@@ -226,6 +226,51 @@ export function userFacingPosterText(value: any): string {
   ].filter(Boolean).map(String).join('\n');
 }
 
+function safeCommercialText(value: unknown, evidence: string): string {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const parts = text.split(/(?<=[。！？.!?])\s+|\n+/).map(item => item.trim()).filter(Boolean);
+  const safe = parts.filter(item => auditCommercialClaims(item, evidence).issues.length === 0);
+  return safe.join(parts.length > 1 ? '\n' : ' ').trim();
+}
+
+/**
+ * Keep a useful, conservative poster draft when the model adds an unsupported
+ * commercial promise. Unsafe sentences/items are removed and surfaced as
+ * confirmation fields; they never remain hidden in the image prompt.
+ */
+export function sanitizePosterCommercialClaims(value: any, evidence: string) {
+  const poster = value?.poster || {};
+  const safeArray = (items: unknown) => Array.isArray(items)
+    ? items.map(item => safeCommercialText(item, evidence)).filter(Boolean)
+    : [];
+  const categories = Array.isArray(poster.categories) ? poster.categories.map((item: any) => ({
+    name: safeCommercialText(item?.name || item, evidence),
+    description: safeCommercialText(item?.description, evidence),
+  })).filter((item: { name: string }) => item.name) : [];
+  const sanitized = {
+    ...value,
+    poster: {
+      ...poster,
+      headline: safeCommercialText(poster.headline, evidence),
+      subheadline: safeCommercialText(poster.subheadline, evidence),
+      originBadge: safeCommercialText(poster.originBadge, evidence),
+      trustBadges: safeArray(poster.trustBadges),
+      sellingPoints: safeArray(poster.sellingPoints),
+      process: safeArray(poster.process),
+      categories,
+      bottomBar: safeArray(poster.bottomBar),
+      cta: safeCommercialText(poster.cta, evidence),
+    },
+    caption: safeCommercialText(value?.caption, evidence),
+    hashtags: safeArray(value?.hashtags),
+    commentCta: safeCommercialText(value?.commentCta, evidence),
+    dmOpening: safeCommercialText(value?.dmOpening, evidence),
+    imagePrompt: safeCommercialText(value?.imagePrompt, evidence),
+  };
+  return sanitized;
+}
+
 export function userFacingLeadPackageText(value: any): string {
   return [
     value?.strategySummary,
@@ -248,6 +293,7 @@ export function confirmationFields(value: unknown): string[] {
 
 export function upstreamGenerationFailure(error: unknown, label: string) {
   const raw = String(error instanceof Error ? error.message : error || 'unknown upstream error');
+  const outcomeUnknown = /provider_submission_unknown|outcome_uncertain|requires_manual_reconciliation/i.test(raw);
   const quota = /429|RESOURCE_EXHAUSTED|prepayment credits|quota|billing|额度|余额/i.test(raw);
   const authFailure = /401|403|api.?key|unauthorized|permission|鉴权|权限/i.test(raw);
   const retryable = !quota && !authFailure && /timeout|timed out|超时|503|502|504|UNAVAILABLE|fetch|network/i.test(raw);
@@ -257,9 +303,11 @@ export function upstreamGenerationFailure(error: unknown, label: string) {
     provenance: 'ai_failed' as const,
     publishable: false,
     qualityStatus: 'failed' as const,
-    code: quota ? 'UPSTREAM_QUOTA_EXHAUSTED' : authFailure ? 'UPSTREAM_AUTH_UNAVAILABLE' : 'UPSTREAM_GENERATION_FAILED',
-    retryable,
-    error: quota
+    code: outcomeUnknown ? 'UPSTREAM_SUBMISSION_OUTCOME_UNKNOWN' : quota ? 'UPSTREAM_QUOTA_EXHAUSTED' : authFailure ? 'UPSTREAM_AUTH_UNAVAILABLE' : 'UPSTREAM_GENERATION_FAILED',
+    retryable: outcomeUnknown ? false : retryable,
+    error: outcomeUnknown
+      ? `${label}请求已提交，但供应商未在时限内返回结果。为避免重复计费，系统已停止自动重试。`
+      : quota
       ? `上游模型额度不足，未生成${label}。`
       : authFailure
         ? `上游模型授权不可用，未生成${label}。`

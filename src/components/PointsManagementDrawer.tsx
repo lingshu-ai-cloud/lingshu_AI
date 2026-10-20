@@ -68,11 +68,19 @@ const MOCK_POINT_PACKS = [
   { points: 8_000, label: '集中生产包', note: '适合多条视频并行生产' },
 ] as const;
 
-const MOCK_PLANS = [
+type MockPlan = {
+  id: string;
+  label: string;
+  points: string;
+  note: string;
+  current?: boolean;
+};
+
+const MOCK_PLANS: readonly MockPlan[] = [
   { id: 'trial', label: '试用版', points: '500', note: '体验基础策划与内容能力' },
   { id: 'professional', label: '专业版', points: '9,500', note: '适合稳定的月度内容生产', current: true },
   { id: 'enterprise', label: '企业版', points: '30,000', note: '适合团队协作与规模化生产' },
-] as const;
+];
 
 function displayDate(value?: string | null): string | null {
   if (!value) return null;

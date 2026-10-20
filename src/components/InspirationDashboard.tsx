@@ -698,7 +698,7 @@ export function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, stat
   if (analysis?.usage === 'reference_only'
     && Boolean(analysis.contentSha256)
     && analysis.userVisible !== false) return true;
-  if (status === 'failed') return false;
+  if (status === 'failed') return analysis?.contentFormat === 'image';
   // Collection results are useful before full-video analysis completes. The
   // card can already show verified platform metadata and a processing state.
   // Only terminal media/analysis failures should be removed from the feed.
@@ -2900,7 +2900,15 @@ function recordsToVideos(records: CrawlerRecord[]): TrendVideo[] {
       const trend = trendFromEvidence(analysis);
       const title = record.title || 'Untitled crawled video';
       const tags = parseRecordTags(record.tags);
-      const recordThumbnail = record.thumbnailUrl || (record.videoFileId ? `/api/overseas/videos/${record.id}/thumbnail` : '');
+      // Image-post analysis can fail after collection even though the crawler
+      // already returned usable source images. Keep that record visible so the
+      // user can inspect the failure and retry instead of silently losing it.
+      const firstCollectedImage = analysis.contentFormat === 'image' && Array.isArray(analysis.imageUrls)
+        ? String(analysis.imageUrls.find(url => typeof url === 'string' && url.trim()) || '')
+        : '';
+      const recordThumbnail = record.thumbnailUrl
+        || (record.videoFileId ? `/api/overseas/videos/${record.id}/thumbnail` : '')
+        || firstCollectedImage;
       if (!analysis.gemini && analysis.contentFormat !== 'image') {
         analysis = {
           ...analysis,
@@ -3542,8 +3550,8 @@ export function DirectorVideoDetailPanel({
         {!isImagePost && !analysisInterrupted && (payload?.analysisError || video.status === 'failed') && <Button onClick={onRetry} loading={analyzing}>重新分析</Button>}
         {isImagePost && !imageAnalysisReady && <Button onClick={onReanalyzeImage} loading={analyzing} icon={<Images size={13} />}>重新分析图文</Button>}
         <Button onClick={onPreview}>预览原内容</Button>
-        <Button type="primary" onClick={detailCreationReady ? onCreate : isImagePost ? onReanalyzeImage : onExactAnalysis} disabled={!detailCreationReady && !canRunDetailAnalysis} className="ml-auto">{isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}</Button>
-        {!detailCreationReady && <p className="w-full text-xs text-text-secondary">{isImagePost ? '点击“开始创作”会先完成图文证据分析。' : pending ? '详细分析完成后会开放复刻，当前任务不会重复提交。' : needsDirectorReview ? '逐镜分析已经完成；需先确认待复核的镜头证据，再进入制作。' : canRunExactAnalysis ? '点击“爆款复刻”会先完成详细分析，再进入制作。' : detailedAnalysisReason}</p>}
+        <Button type="primary" onClick={detailCreationReady ? onCreate : isImagePost ? onReanalyzeImage : onExactAnalysis} disabled={!detailCreationReady && !canRunDetailAnalysis} className="ml-auto">{video.id.startsWith('material-') ? '开始创作' : '爆款裂变'}</Button>
+        {!detailCreationReady && <p className="w-full text-xs text-text-secondary">{isImagePost ? '点击“爆款裂变”会先完成图文证据分析。' : pending ? '详细分析完成后会开放复刻，当前任务不会重复提交。' : needsDirectorReview ? '逐镜分析已经完成；需先确认待复核的镜头证据，再进入制作。' : canRunExactAnalysis ? '点击“爆款裂变”会先完成详细分析，再进入制作。' : detailedAnalysisReason}</p>}
       </div>}
       styles={{ body: { padding: 0 } }}>
       <div className="border-b border-border px-5 py-3">
@@ -3683,6 +3691,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [videoTotalPages, setVideoTotalPages] = useState(1);
   const [tenantVideoTotalItems, setTenantVideoTotalItems] = useState<number | null>(null);
   const [competitorAccountCount, setCompetitorAccountCount] = useState<number | null>(null);
+  const [competitorCollectionSyncing, setCompetitorCollectionSyncing] = useState(false);
   const [videosLoading, setVideosLoading] = useState(false);
   const [videosLoaded, setVideosLoaded] = useState(false);
   const [videosError, setVideosError] = useState('');
@@ -4344,6 +4353,25 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   }, [hasPendingVideos, contentFormat, videoPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (!competitorCollectionSyncing) return;
+    let cancelled = false;
+    const startedAt = Date.now();
+    const poll = async () => {
+      if (document.visibilityState === 'visible') {
+        await refreshVideos(1, true);
+        await refreshInventory();
+      }
+      if (!cancelled && Date.now() - startedAt < 5 * 60_000) {
+        window.setTimeout(() => void poll(), 4000);
+      } else if (!cancelled) {
+        setCompetitorCollectionSyncing(false);
+      }
+    };
+    void poll();
+    return () => { cancelled = true; };
+  }, [competitorCollectionSyncing, contentFormat]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     if (!selectedVideo) return;
     const latest = crawledVideos.find(v => v.id === selectedVideo.id);
     if (selectedVideo.id.startsWith('crawl-')) {
@@ -4768,10 +4796,39 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       showActionFeedback({ title: '当前内容还不能开始创作', description: availability.reason, tone: 'warning' });
       return;
     }
-    if (video.contentFormat === 'image' || video.id.startsWith('material-')) {
+    if (video.contentFormat === 'image') {
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
+        page: 'smartAssets',
+        view: 'create',
+        directStudio: false,
+        contentCreationRequest: {
+          requestId: Date.now(),
+          themeId: 'product_value',
+          mode: 'instant',
+          creationPath: 'viral_replication',
+          materialInput: video.thumbnail ? 'ready' : 'limited',
+          managedMode: 'one_click_managed',
+          prefill: {
+            title: `${video.title || '图文作品'} · 爆款复刻`,
+            topic: video.title || '',
+            referenceLinks: [video.sourceUrl || ''].filter(Boolean),
+            platforms: video.platform ? [video.platform] : undefined,
+          },
+          sourceContext: {
+            originLabel: '来自灵感中心',
+            referenceTitle: video.title || '已选对标图文',
+            referenceThumbnail: video.thumbnail,
+            referenceMediaUrl: video.thumbnail,
+            referenceContentType: 'image',
+          },
+        },
+      } }));
+      return;
+    }
+    if (video.id.startsWith('material-')) {
       const analysis = getAnalysis(video);
       onEnterWorkflow?.({
-        source: video.contentFormat === 'image' ? 'inspiration_image_post' : 'inspiration_analysis',
+        source: 'inspiration_analysis',
         video, scriptType: 'storyboard',
         referenceAnalysis: analysis ? { title: video.title, visualStyle: analysis.scriptSummary15s.visualStyle,
           coreEmotion: analysis.scriptSummary15s.coreEmotion, details: analysis.scriptDetails15s } : undefined,
@@ -5379,10 +5436,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 <Button type="primary" loading={importingReference} icon={<Upload size={15} />}>导入 MP4 并分析</Button>
               </AntUpload>
             </div>}
-            {innerView === 'library' && <div className="flex shrink-0 items-center gap-2">
-              <Button loading={uploadingMaterial} icon={<Upload size={15} />} onClick={() => { setUploadProductSceneKind(null); setMaterialUploadDialogOpen(true); }}>上传素材</Button>
-              <Button type="primary" icon={<Images size={15} />} onClick={startImageCreation}>生成图片</Button>
-            </div>}
+            <div className="flex shrink-0 items-center gap-2">
+              {innerView === 'library' && <Button loading={uploadingMaterial} icon={<Upload size={15} />} onClick={() => { setUploadProductSceneKind(null); setMaterialUploadDialogOpen(true); }}>上传素材</Button>}
+              {innerView === 'library' && <Button type="primary" icon={<Images size={15} />} onClick={startImageCreation}>生成图片</Button>}
+            </div>
           </div>
 
           <Modal
@@ -5433,11 +5490,16 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               open
               onClose={() => setInnerView('inspiration')}
               onCountChange={setCompetitorAccountCount}
-              onCrawled={() => {
+              onCrawled={(_imported, mode, queued) => {
                 setSortMode('crawlTime');
                 setPlatform('all');
                 setSearch('');
-                void refreshVideos(1, false);
+                if (mode === 'image') {
+                  setContentFormat('image');
+                  setInnerView('inspiration');
+                }
+                if (queued) setCompetitorCollectionSyncing(true);
+                if (!queued && mode !== 'image') void refreshVideos(1, false);
               }}
             />}
             {innerView === 'inspiration' && <div className="mb-4 space-y-4 rounded-lg border border-border bg-surface p-4">
@@ -5488,7 +5550,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       <VideoCard video={video} index={i} isSelected={false}
                         onSelect={() => openDirectorAnalysis(video)}
                         onCreate={() => startInspirationCreation(video)}
-                        createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.contentFormat === 'image' || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}
+                        createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.id.startsWith('material-') ? '开始创作' : '爆款裂变'}
                         creating={launchingReferences.includes(video.id)}
                         createDisabled={video.contentFormat === 'image' && !inspirationCreationAvailability(video).ready}
                         createDisabledReason={inspirationCreationAvailability(video).reason}
@@ -5511,7 +5573,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     <VideoListItem key={video.id} video={video} isSelected={false}
                       onSelect={() => openDirectorAnalysis(video)}
                       onCreate={() => startInspirationCreation(video)}
-                        createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.contentFormat === 'image' || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}
+                        createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.id.startsWith('material-') ? '开始创作' : '爆款裂变'}
                         creating={launchingReferences.includes(video.id)}
                       createDisabled={video.contentFormat === 'image' && !inspirationCreationAvailability(video).ready}
                       createDisabledReason={inspirationCreationAvailability(video).reason}
@@ -5921,7 +5983,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             aria-label="本次上传素材归属"
             className="mt-2 w-full"
             value={uploadProductId || undefined}
-            placeholder={uploadProductSceneKind ? '选择关联产品（必选）' : '企业通用素材（不绑定产品）'}
+            placeholder={uploadProductSceneKind ? '请选择对应产品' : '企业通用素材（不绑定产品）'}
             disabled={Boolean(uploadProductSceneKind)}
             onChange={setUploadProductId}
             options={[

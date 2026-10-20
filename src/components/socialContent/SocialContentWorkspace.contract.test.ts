@@ -83,8 +83,10 @@ assert.doesNotMatch(historyHome, /feishu-20260929-final\.mp4|FEATURED_COMPLETED_
   'the creation history must not inject a hard-coded demo video');
 assert.match(historyHome, /setPreviewProject\(featuredProject\)/,
   'the completed video must open a direct preview instead of navigating into the editor');
-assert.match(historyHome, /previewUrl \? setPreviewProject\(project\) : openProject\(project\)/,
-  'every completed history card must open its player instead of returning to the editor');
+assert.match(historyHome, /previewUrl \? setPreviewProject\(project\) : project\.spec\.contentMode === 'image'/,
+  'completed cards must preview while unfinished image tasks return to the image workbench');
+assert.match(historyHome, /onOpenImageProject\?\.\(project\.spec\.socialImageTask as SocialImageCreationTask\)/,
+  'unfinished image tasks must resume with their persisted image contract');
 assert.match(historyHome, /socialOutputOwnedReviewMedia\(project\)/,
   'server-owned output workspaces must resolve their signed task and artifact lineage');
 assert.match(historyHome, /loadOwnedReviewMedia\(owned, controller\.signal\)/,
