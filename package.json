@@ -183,7 +183,7 @@
     "test:production-runtime-gate-contract": "node --test scripts/production-runtime-gate.contract.test.mjs",
     "test:production-runtime-gate": "pnpm run test:process-role && tsx server/queues/bullmq.test.ts && pnpm run test:langgraph:local-production"
     ,"test:weekly-golden-journey-contract": "node --test scripts/weekly-golden-journey.contract.test.mjs"
-    ,"test:weekly-golden-journey": "tsx --test --test-concurrency=1 server/socialPrograms/weeklyExecutionPipeline.test.ts server/runtime/socialWeeklyExecutionRuntime.test.ts server/socialPrograms/weeklyTaskWorkspaces.test.ts server/socialPrograms/weeklyDeliveryNavigation.integration.test.ts && pnpm run test:langgraph:local-production"
+    ,"test:weekly-golden-journey": "tsx --test --test-concurrency=1 server/socialPrograms/weeklyExecutionPipeline.test.ts server/runtime/socialWeeklyExecutionRuntime.test.ts server/socialPrograms/weeklyTaskWorkspaces.test.ts server/socialPrograms/weeklyDeliveryNavigation.integration.test.ts server/socialPrograms/weeklyDeliveryAcceptance.test.ts server/routes/socialWeeklyDeliveryAcceptance.test.ts src/components/smartBusiness/WeeklyTaskRuntimeDetails.test.tsx server/runtime/weeklyM1ContinuousProduction.integration.test.ts && pnpm run test:langgraph:local-production"
   },
   "packageManager": "pnpm@11.19.0",
   "dependencies": {

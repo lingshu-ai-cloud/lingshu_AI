@@ -12,6 +12,10 @@ test('weekly golden journey gate covers the formal scheduler, worker, task detai
     'socialWeeklyExecutionRuntime.test.ts',
     'weeklyTaskWorkspaces.test.ts',
     'weeklyDeliveryNavigation.integration.test.ts',
+    'weeklyDeliveryAcceptance.test.ts',
+    'socialWeeklyDeliveryAcceptance.test.ts',
+    'WeeklyTaskRuntimeDetails.test.tsx',
+    'weeklyM1ContinuousProduction.integration.test.ts',
     'test:langgraph:local-production',
   ]) assert.match(gate, new RegExp(required.replaceAll('.', '\\.')));
   assert.match(pkg.scripts.quality, /test:weekly-golden-journey-contract/);
