@@ -74,7 +74,7 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
           await new Promise(resolve => window.setTimeout(resolve, [0, 2000, 5000, 10000][attempt] || 10000));
           continue;
         }
-        throw new Error(message);
+        throw Object.assign(new Error(message), { status: r.status, payload });
       }
       const payload = await r.json() as T & { source?: string; ok?: boolean; error?: string };
       if (VERIFIED_AI_GENERATION_PATHS.has(path) && (payload.ok !== true || payload.source !== 'ai')) {
@@ -455,6 +455,8 @@ export interface FbPosterRenderResult {
   url?: string;
   material?: Material;
   references?: number;
+  fieldsToConfirm?: string[];
+  qualityStatus?: 'passed' | 'needs_confirmation';
   error?: string;
 }
 
@@ -543,6 +545,7 @@ export const studioApi = {
     provider?: 'gemini' | 'qwen';
     materials?: Array<{ id?: string; name: string; type?: string; folder?: string; role?: string }>;
     referenceNotes?: string;
+    confirmedFields?: Record<string, string>;
   }) =>
     post<FbPosterResult>('fb-poster', b, { ok: false, caption: '', hashtags: [], commentCta: '', dmOpening: '', fieldsToConfirm: [], imagePrompt: '' }),
 
@@ -555,8 +558,12 @@ export const studioApi = {
     imagePrompt?: string;
     ratio: string;
     materialIds?: string[];
-  }) =>
-    post<FbPosterRenderResult>('fb-poster/render', b, { ok: false }),
+    productIds?: string[];
+    referenceImageUrls?: string[];
+    idempotencyKey?: string;
+    confirmedFields?: Record<string, string>;
+  }, options?: { signal?: AbortSignal }) =>
+    post<FbPosterRenderResult>('fb-poster/render', b, { ok: false }, options?.signal),
 
   select: (b: SelectInput, _fb: string[]) =>
     post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; selectedIds: string[]; reason: string; error?: string }>('select', b, { ok: false, selectedIds: [], reason: '' }),

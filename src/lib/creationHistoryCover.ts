@@ -6,6 +6,10 @@ export function creationHistoryCoverSources(spec: Record<string, unknown>, refer
   const add = (kind: CreationCoverSource['kind'], value: unknown, time = 0) => {
     if (typeof value === 'string' && value.trim() && !result.some(item => item.url === value.trim())) result.push({ kind, url: value.trim(), time });
   };
+  const imageTask = recordOf(spec.socialImageTask);
+  for (const value of Array.isArray(imageTask.outputs) ? imageTask.outputs : []) {
+    add('image', recordOf(value).mediaUrl);
+  }
   for (const value of Object.values(recordOf(spec.languageRenderOutputs))) {
     const output = recordOf(value); if (output.status === 'done') add('video', output.previewUrl);
   }

@@ -48,9 +48,9 @@ function qwenImageEndpoint(): string {
 
 function qwenSizeFor(ratio: string): string {
   const normalized = String(ratio || '').trim();
-  if (normalized === '9:16' || normalized === '720:1280') return '1024*1792';
-  if (normalized === '16:9' || normalized === '1280:720') return '1792*1024';
-  return '1024*1024';
+  if (normalized === '9:16' || normalized === '720:1280') return '1024x1792';
+  if (normalized === '16:9' || normalized === '1280:720') return '1792x1024';
+  return '1024x1024';
 }
 
 function qwenImageUrl(payload: any): string {
@@ -90,7 +90,10 @@ async function generateQwenImage(input: {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model, prompt: input.prompt, ...(refs.length ? { image: refs.map(ref => `data:${normalizeMime(ref.mimeType)};base64,${ref.base64}`) } : {}), n: 1, size: qwenSizeFor(input.ratio) }),
-        signal: AbortSignal.timeout(90_000),
+        // Image synthesis is synchronous on this endpoint and can exceed the
+        // text-generation timeout. Avoid turning a healthy long render into an
+        // outcome-unknown request that must not be blindly submitted again.
+        signal: AbortSignal.timeout(180_000),
       });
     } catch (error) {
       await recordCurrentContentProviderReceipt({ provider: 'qwen_image', requestId, state: 'unknown', metadata: { model } });
@@ -109,7 +112,7 @@ async function generateQwenImage(input: {
       provider: 'qwen_image', requestId, state: 'accepted', metadata: { model, outputUrl: url },
     });
   }
-  const image = await fetch(url, { signal: AbortSignal.timeout(90_000) });
+  const image = await fetch(url, { signal: AbortSignal.timeout(180_000) });
   if (!image.ok) throw new Error(`Qwen Image 产物下载失败：HTTP ${image.status}`);
   const result = { bytes: Buffer.from(await image.arrayBuffer()), mimeType: normalizeMime(image.headers.get('content-type') || 'image/png'), source: 'qwen' as const, model };
   await recordCurrentContentProviderReceipt({

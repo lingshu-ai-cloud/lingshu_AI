@@ -13,6 +13,12 @@ test('old reference only draft still has a usable video and duplicate sources co
   assert.deepEqual(creationHistoryCoverSources({ videoKickoff: { video: { videoUrl: '/reference.mp4', aiAnalysis: { materialUrl: '/reference.mp4' } } } }), [{ kind: 'video', url: '/reference.mp4', time: 0 }]);
   assert.deepEqual(creationHistoryCoverSources({}), []);
 });
+
+test('uses social image outputs as history covers', () => {
+  assert.deepEqual(creationHistoryCoverSources({
+    socialImageTask: { outputs: [{ mediaUrl: '/generated-poster.jpg' }, { mediaUrl: '/generated-poster.jpg' }] },
+  }), [{ kind: 'image', url: '/generated-poster.jpg', time: 0 }]);
+});
 test('persisted draft covers and timeline posters precede reference media', () => {
   assert.deepEqual(creationHistoryCoverSources({
     coverUrl: '/covers/draft.svg',

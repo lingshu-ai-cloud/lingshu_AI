@@ -5,6 +5,7 @@ import { authHeader } from '../lib/auth';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 
 type AccountPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
+type CrawlContentMode = 'video' | 'image' | 'mixed';
 
 interface CompetitorAccount {
   id: string;
@@ -16,6 +17,9 @@ interface CompetitorAccount {
   note: string;
   lastCrawledAt: string;
   lastCrawlCount: number;
+  lastCrawlMode?: CrawlContentMode;
+  crawlStatus?: 'running' | 'completed' | 'failed';
+  crawlError?: string;
   createdAt: string;
 }
 
@@ -26,7 +30,16 @@ const PLATFORM_META: Record<AccountPlatform, { label: string }> = {
   facebook: { label: 'Facebook' },
 };
 
-const CRAWL_COUNT = 3;
+const CRAWL_COUNT_OPTIONS = [3, 10, 20, 30].map(value => ({ value, label: `${value} 条` }));
+const CRAWL_MODE_OPTIONS: Array<{ value: CrawlContentMode; label: string }> = [
+  { value: 'mixed', label: '混合模式' },
+  { value: 'video', label: '仅视频' },
+  { value: 'image', label: '仅图文' },
+];
+
+function crawlModeLabel(mode?: CrawlContentMode): string {
+  return CRAWL_MODE_OPTIONS.find(option => option.value === mode)?.label || '仅视频';
+}
 
 function formatTime(iso: string): string {
   if (!iso) return '';
@@ -56,13 +69,15 @@ export default function CompetitorAccountsModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onCrawled: (importedCount: number) => void;
+  onCrawled: (importedCount: number, mode: CrawlContentMode, queued: boolean) => void;
   onCountChange?: (count: number) => void;
   embedded?: boolean;
 }) {
   const [accounts, setAccounts] = useState<CompetitorAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [platform, setPlatform] = useState<AccountPlatform>('youtube');
+  const [crawlMode, setCrawlMode] = useState<CrawlContentMode>('mixed');
+  const [crawlCount, setCrawlCount] = useState(10);
   const [url, setUrl] = useState('');
   const [adding, setAdding] = useState(false);
   const [crawlingId, setCrawlingId] = useState('');
@@ -70,8 +85,8 @@ export default function CompetitorAccountsModal({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
-  const loadAccounts = useCallback(async () => {
-    setLoading(true);
+  const loadAccounts = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
       const r = await fetch('/api/overseas/competitor-accounts', { headers: authHeader() });
       const data = await r.json().catch(() => ({})) as { items?: CompetitorAccount[] };
@@ -81,7 +96,7 @@ export default function CompetitorAccountsModal({
     } catch {
       setAccounts([]);
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }, [onCountChange]);
 
@@ -92,6 +107,13 @@ export default function CompetitorAccountsModal({
       void loadAccounts();
     }
   }, [open, loadAccounts]);
+
+  const hasRunningAccount = accounts.some(account => account.crawlStatus === 'running');
+  useEffect(() => {
+    if (!open || !hasRunningAccount) return;
+    const timer = window.setInterval(() => void loadAccounts(true), 4000);
+    return () => window.clearInterval(timer);
+  }, [open, hasRunningAccount, loadAccounts]);
 
   const addAccount = async () => {
     const trimmed = url.trim();
@@ -125,14 +147,14 @@ export default function CompetitorAccountsModal({
       const r = await fetch(`/api/overseas/competitor-accounts/${account.id}/crawl`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify({ limit: CRAWL_COUNT }),
+        body: JSON.stringify({ limit: crawlCount, contentMode: crawlMode }),
       });
       if (!r.ok) { setError(await readError(r, '采集失败')); return; }
-      const data = await r.json().catch(() => ({})) as { imported?: number; message?: string };
+      const data = await r.json().catch(() => ({})) as { imported?: number; message?: string; queued?: boolean };
       const imported = Number(data.imported || 0);
-      setNotice(data.message || `已从「${account.accountName}」采集 ${imported} 条最新视频`);
+      setNotice(data.message || `已从「${account.accountName}」以${crawlModeLabel(crawlMode)}采集 ${imported} 条作品`);
       await loadAccounts();
-      onCrawled(imported);
+      onCrawled(imported, crawlMode, data.queued === true);
     } catch {
       setError('采集失败，请稍后重试');
     } finally {
@@ -174,6 +196,25 @@ export default function CompetitorAccountsModal({
                   className="flex-1"
                 />
                 <Button type="primary" onClick={() => void addAccount()} loading={adding} icon={<Plus size={15} />}>添加账号</Button>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-text-secondary">采集内容</span>
+                <Select<CrawlContentMode>
+                  value={crawlMode}
+                  onChange={setCrawlMode}
+                  aria-label="主页作品采集模式"
+                  className="min-w-32"
+                  options={CRAWL_MODE_OPTIONS}
+                />
+                <span className="text-xs font-semibold text-text-secondary">采集数量</span>
+                <Select<number>
+                  value={crawlCount}
+                  onChange={setCrawlCount}
+                  aria-label="每种内容最多采集数量"
+                  className="min-w-24"
+                  options={CRAWL_COUNT_OPTIONS}
+                />
+                <span className="text-xs text-text-muted">混合模式按每种内容计算上限；已有原帖不会重复入库。</span>
               </div>
               {error && (
                 <p role="alert" className="mt-2 flex items-center gap-1.5 border-l-2 border-red bg-red/5 px-2 py-1.5 text-xs font-semibold text-red">
@@ -219,12 +260,14 @@ export default function CompetitorAccountsModal({
                           <p className="truncate text-xs text-text-muted">
                             {meta.label}
                             {account.lastCrawledAt
-                              ? ` · 上次采集 ${formatTime(account.lastCrawledAt)}（+${account.lastCrawlCount}）`
+                              ? ` · 上次${crawlModeLabel(account.lastCrawlMode)}采集 ${formatTime(account.lastCrawledAt)}（+${account.lastCrawlCount}）`
                               : ' · 尚未采集'}
                           </p>
+                          {account.crawlStatus === 'running' && <p className="mt-1 text-xs font-semibold text-accent">采集中 · 新作品会逐条同步到灵感大屏</p>}
+                          {account.crawlStatus === 'failed' && <p className="mt-1 truncate text-xs font-semibold text-red" title={account.crawlError}>采集失败 · {account.crawlError || '请稍后重试'}</p>}
                         </div>
                         <div className="flex w-full items-center gap-2 pl-12 sm:w-auto sm:pl-0">
-                        <Button onClick={() => void crawlAccount(account)} loading={crawling} disabled={Boolean(crawlingId) && !crawling} icon={<Download size={13} />} title={`采集最新 ${CRAWL_COUNT} 条`}>采集最新</Button>
+                        <Button onClick={() => void crawlAccount(account)} loading={crawling} disabled={Boolean(crawlingId) && !crawling} icon={<Download size={13} />} title={`以${crawlModeLabel(crawlMode)}采集最新作品，每种最多 ${crawlCount} 条`}>采集最新</Button>
                         <Popconfirm title="移除这个对标账号？" description="已采集的灵感内容会保留。" onConfirm={() => deleteAccount(account)} okText="移除" cancelText="取消"><Button danger loading={deletingId === account.id} icon={<Trash2 size={13} />} aria-label={`移除对标账号 ${account.accountName}`} /></Popconfirm>
                         </div>
                       </li>
