@@ -7,7 +7,7 @@ import type { SocialImageCreationTask } from '../../shared/contracts/socialImage
 import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } from './socialImageTask.js';
 import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, markSocialImagePaidJobUnknown, recordSocialImagePaidJobFailure, socialImageOwnedMaterialUrl, socialImageQueuedJobIssue } from './socialImagePaidJob.js';
 import { recoverSocialImagePaidMaterial } from './socialImageMaterialRecovery.js';
-import { persistSocialImageMultiUnitPlan, socialImagePlanSourceHash } from './socialImageDurablePlan.js';
+import { claimSocialImagePlannedUnit, persistSocialImageMultiUnitPlan, socialImagePlanSourceHash } from './socialImageDurablePlan.js';
 
 class AtomicMemoryStore implements DataStore {
   private sequence = 0;
@@ -236,4 +236,34 @@ test('multi-output planning fails closed without atomic storage and rejects stal
   store.supportsAtomicCompareAndSwap = () => true;
   await assert.rejects(persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id, expectedVersion: created.version }), /plan_version_conflict/);
   assert.equal((await readSocialImageTask(store, 'tenant-a', created.id))?.generationJobs.length, 0);
+});
+
+test('frozen carousel unit is claimed once, in order, with exact tenant and identity', async () => {
+  const store = new AtomicMemoryStore();
+  const created = await createSocialImageTask(store, 'tenant-a', { imageType: 'carousel', title: '轮播图' });
+  const prepared = await updateSocialImageTask(store, 'tenant-a', created.id, created.version, { renderBrief: {
+    headline: 'Main', subheadline: '', originBadge: '', trustBadges: [], sellingPoints: [],
+    process: [], categories: [], bottomBar: [], cta: '',
+  } });
+  assert.equal(prepared.kind, 'updated');
+  if (prepared.kind !== 'updated') return;
+  const planned = await persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id, expectedVersion: prepared.task.version });
+  const [first, second] = planned.renderPlan!.units;
+  const claim = () => claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: first!.jobId, idempotencyKey: first!.idempotencyKey, plannedInputHash: first!.plannedInputHash });
+  await assert.rejects(claimSocialImagePlannedUnit({ store, tenantId: 'tenant-b', taskId: created.id,
+    jobId: first!.jobId, idempotencyKey: first!.idempotencyKey, plannedInputHash: first!.plannedInputHash }), /task_missing/);
+  await assert.rejects(claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: first!.jobId, idempotencyKey: first!.idempotencyKey, plannedInputHash: hash }), /identity_invalid/);
+  await assert.rejects(claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: second!.jobId, idempotencyKey: second!.idempotencyKey, plannedInputHash: second!.plannedInputHash }), /prior_paid_job_unresolved/);
+  const results = await Promise.allSettled([claim(), claim()]);
+  assert.deepEqual(results.map(item => item.status).sort(), ['fulfilled', 'rejected']);
+  const persisted = await readSocialImageTask(store, 'tenant-a', created.id);
+  assert.equal(persisted?.generationJobs[0]?.inputHash, first!.plannedInputHash);
+  assert.equal(persisted?.generationJobs[0]?.attempt, 1);
+  await assert.rejects(claim(), /already_started/);
+  store.supportsAtomicCompareAndSwap = () => false;
+  await assert.rejects(claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: second!.jobId, idempotencyKey: second!.idempotencyKey, plannedInputHash: second!.plannedInputHash }), /atomic_store_required/);
 });

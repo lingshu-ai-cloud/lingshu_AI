@@ -75,3 +75,42 @@ export async function persistSocialImageMultiUnitPlan(input: {
   if (saved.kind !== 'updated') throw new SocialImagePaidJobError('social_image_plan_write_conflict');
   return saved.task;
 }
+
+/** Reserve one frozen multi-output unit. This does not submit a provider request. */
+export async function claimSocialImagePlannedUnit(input: {
+  store: DataStore; tenantId: string; taskId: string; jobId: string; idempotencyKey: string; plannedInputHash: string;
+}): Promise<SocialImageCreationTask> {
+  await requireSocialImageAtomicStore(input.store);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
+    if (!task) throw new SocialImagePaidJobError('social_image_task_missing');
+    const plan = task.renderPlan;
+    if ((task.imageType !== 'carousel' && task.imageType !== 'gif_poster') || !plan || plan.sourceHash !== socialImagePlanSourceHash(task)) {
+      throw new SocialImagePaidJobError('social_image_frozen_plan_invalid');
+    }
+    const unit = plan.units.find(item => item.jobId === input.jobId);
+    const job = task.generationJobs.find(item => item.id === input.jobId);
+    if (!unit || !job || unit.idempotencyKey !== input.idempotencyKey || unit.plannedInputHash !== input.plannedInputHash
+      || job.idempotencyKey !== unit.idempotencyKey || job.planVersion !== plan.version
+      || job.unitIndex !== unit.index || job.plannedInputHash !== unit.plannedInputHash) {
+      throw new SocialImagePaidJobError('social_image_planned_unit_identity_invalid');
+    }
+    if (job.status !== 'queued' || job.inputHash || job.outputNodeIds.length) {
+      throw new SocialImagePaidJobError('social_image_paid_job_already_started');
+    }
+    if (plan.units.some(other => other.index < unit.index && task.generationJobs.some(previous =>
+      previous.id === other.jobId && !previous.outputNodeIds.length))) {
+      throw new SocialImagePaidJobError('social_image_prior_paid_job_unresolved');
+    }
+    const now = new Date().toISOString();
+    const saved = await updateSocialImageTask(input.store, input.tenantId, task.id, task.version, {
+      status: 'generating', step: 'generate',
+      generationJobs: task.generationJobs.map(item => item.id === job.id
+        ? { ...item, status: 'running', inputHash: unit.plannedInputHash, attempt: item.attempt + 1, updatedAt: now }
+        : item),
+    });
+    if (saved.kind === 'updated') return saved.task;
+    if (saved.kind !== 'conflict') throw new SocialImagePaidJobError('social_image_planned_unit_claim_invalid');
+  }
+  throw new SocialImagePaidJobError('social_image_planned_unit_claim_conflict');
+}

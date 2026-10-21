@@ -164,3 +164,9 @@
 
 - 将深链接映射、Studio 任务归因与一次性返回上下文移入 `digitalEmployeeNavigation.ts`；将历史配置展示的 fail-closed 投影及展示指纹移入 `digitalEmployeeConfigSnapshot.ts`，`digitalEmployees.ts` 保留原公共导出。主文件从 1,018 行降至 779 行，撤销历史豁免；剩余 41 项。
 - 新导航/配置专项 5/5、周计划历史快照兼容测试通过。`DigitalEmployeePage.contract.test.ts` 的全文件执行仍被一条与本批无关的旧断言阻断：它要求已提交的 `RestoredAgentWorkCalendar.tsx` 使用 `AgentVideoProductionBoard`，而该基线实际仍渲染 `LsCalendar`。该失败不能被计为本批导航回归通过，也不应仅为凑绿擅自改变当前日历产品界面。
+
+## 轮播/GIF 逐单元认领合同（2026-10-22）
+
+- 在耐久计划之上增加仅供服务端调用的逐单元原子认领：必须匹配租户、冻结计划来源哈希、计划版本、单元顺序、Job ID、幂等键和计划输入哈希；并发重复认领只能有一次成功。未完成前序单元、失效计划及未验证原子存储均拒绝。
+- 现有单图付费入口继续拒绝轮播/GIF，未连接供应商执行、素材回写、逐单元费用结算、GIF 合成与 UI；此处只完善状态机合同，**不能**表述为多输出管线已可用。
+- 图片专项 34/34 与 workflow 合同 2/2、TypeScript、生产构建通过；生产构建仍提示大 chunk。未调用真实付费供应商，也未部署。
