@@ -8,6 +8,8 @@ import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis
 import { type EffectPlanV1 } from '../../shared/contracts/effectPlan';
 import type { EmphasisPlanV1 } from '../../shared/contracts/emphasisTimeline';
 import type { ProductSceneKind } from '../../shared/contracts/productScenePreparation';
+import type { FbPosterRenderResult } from './studioPosterRenderContract';
+export type { FbPosterRenderResult } from './studioPosterRenderContract';
 import { studioMaterialFileMimeType } from './studioMaterialFile';
 import { mergeStudioProjectWrite, studioProjectValueChanged, type StudioProjectMergeWrite } from './studioProjectMerge';
 
@@ -51,6 +53,9 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
         // Project conflicts carry diagnostics and a server snapshot. Keep them
         // structured, but never advance the client's revision on a rejected save.
         if (path === 'projects') return { ...fallback, ...payload, ok: false } as T & { source?: string };
+        if (path === 'fb-poster/render' && payload.code?.startsWith('social_image_')) {
+          return { ...fallback, ...payload, ok: false } as T & { source?: string };
+        }
         // Quality and fact gates are expected structured responses. Keep their
         // diagnostics, but never merge them with a local/previous draft.
         if (VERIFIED_AI_GENERATION_PATHS.has(path) && r.status === 422) {
@@ -492,20 +497,6 @@ export interface FbPosterResult {
   error?: string;
 }
 
-export interface FbPosterRenderResult {
-  ok: boolean;
-  source?: 'openai' | 'qwen' | 'local';
-  model?: string;
-  url?: string;
-  material?: Material;
-  references?: number;
-  deliverableType?: import('../../shared/imageCreativePlanning').ImageDeliverable;
-  productionStrategy?: import('../../shared/imageCreativePlanning').ImageProductionStrategy;
-  fieldsToConfirm?: string[];
-  qualityStatus?: 'needs_review' | 'needs_confirmation' | 'passed' | 'rejected';
-  publishable?: boolean;
-  code?: string;  error?: string;
-}
 
 export interface LeadContentPackageResult {
   ok: boolean;
@@ -614,6 +605,8 @@ export const studioApi = {
     productionStrategy?: import('../../shared/imageCreativePlanning').ImageProductionStrategy;
     referencePlan?: Array<{ materialId: string; role: 'exact_product' | 'style' | 'supporting' }>;    referenceImageUrls?: string[];
     idempotencyKey?: string;
+    imageTaskId?: string;
+    imageJobId?: string;
     confirmedFields?: Record<string, string>;
   }, options?: { signal?: AbortSignal }) =>
     post<FbPosterRenderResult>('fb-poster/render', b, { ok: false }, options?.signal),

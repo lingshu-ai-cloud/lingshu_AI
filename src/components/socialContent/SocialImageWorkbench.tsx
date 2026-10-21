@@ -288,7 +288,7 @@ export default function SocialImageWorkbench({
     const sourceCaption = planned?.caption ?? caption;
     if (!sourceTask || !sourcePoster) return;
     if (hasUnresolvedPaidImageJob(sourceTask)) {
-      setError('此前图片请求的供应商结果尚未核对。为避免重复付费，本任务暂不能再次生成；请先由管理员核对供应商回执和企业素材库。');
+      setError('本任务仍有未完成或待核对的生成单元，不能再次提交。请由管理员核对任务状态、供应商回执和企业素材库。');
       setStep('generate');
       return;
     }
@@ -311,7 +311,7 @@ export default function SocialImageWorkbench({
     try {
       const queued = await socialImageApi.updateTask(activeTask, {
         status: 'generating', step: 'generate', generationJobs: [...(activeTask.generationJobs || []), {
-          id: jobId, idempotencyKey, status: 'running', outputNodeIds: [], attempt: 1,
+          id: jobId, idempotencyKey, status: 'queued', outputNodeIds: [], attempt: 0,
           createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
         }],
       });
@@ -319,7 +319,7 @@ export default function SocialImageWorkbench({
       const renderRequest = {
         poster: sourcePoster, caption: sourceCaption, ratio, materialIds, productIds, imageQuality,
         referenceImageUrls: creationPath === 'viral_replication' ? [referenceMediaUrl || referenceThumbnail || ''].filter(Boolean) : [],
-        idempotencyKey,
+        idempotencyKey, imageTaskId: activeTask.id, imageJobId: jobId,
         confirmedFields: confirmationValues,
         imagePrompt: [resolvedCoreClaim, `Content type: ${imageType}.`,
           creationPath === 'viral_replication'
@@ -333,32 +333,20 @@ export default function SocialImageWorkbench({
       if (!rendered.ok && /产品.*(?:主图|资产|图片).*(?:不可读取|可读取)|(?:主图|资产|图片).*不可读取|PRODUCT_REFERENCE|ENTERPRISE_PRODUCT_IMAGE/i.test(String(rendered.error || ''))) {
         rendered = await studioApi.fbPosterRender({ ...renderRequest, productIds: [] }, { signal: controller.signal });
       }
-      if (!rendered.ok || !rendered.url) throw new Error(rendered.error || '图片生成失败');
+      if (!rendered.ok || !rendered.url || !rendered.task) throw new Error(rendered.code === 'social_image_atomic_store_required'
+        ? '当前数据存储尚未具备图片付费作业的原子认领能力，系统未调用图片供应商。请由管理员完成存储能力核验后再生成。'
+        : rendered.error || '图片生成结果未写入耐久任务');
       setImageUrl(rendered.url); setQualityPasses([]);
-      const nextVersion = Math.max(0, ...activeTask.outputs.filter(item => item.role === 'single' && item.label === '主视觉').map(item => item.version)) + 1;
-      const output = { id: crypto.randomUUID(), role: 'single' as const, label: '主视觉', state: 'quality_checking' as const, mediaUrl: rendered.url, materialId: rendered.material?.id, version: nextVersion, qualityChecks: hardChecks.map(key => ({ key, verdict: 'uncertain' as const, severity: 'hard' as const, note: '等待人工复核' })) };
-      const saved = await socialImageApi.updateTask(activeTask, {
-        status: 'review_required', step: 'review', outputs: [...activeTask.outputs.map(item => item.role === output.role && item.label === output.label ? { ...item, state: 'superseded' as const } : item), output],
-        repairInstructions: (activeTask.repairInstructions || []).map(item => item.status === 'pending' ? { ...item, status: 'completed' as const, toVersion: nextVersion } : item),
-        generationJobs: activeTask.generationJobs.map(job => job.id === jobId ? { ...job, status: 'quality_checking' as const, provider: rendered.source, outputNodeIds: [output.id], updatedAt: new Date().toISOString() } : job),
-      });
-      activeTask = saved.task;
-      const preflight = await socialImageApi.runPreflight(saved.task);
+      activeTask = rendered.task;
+      setTask(activeTask);
+      const preflight = await socialImageApi.runPreflight(activeTask);
       const automaticPasses = preflight.task.outputs.flatMap(item => item.qualityChecks.filter(check => check.verdict === 'pass').map(check => check.key));
       setQualityPasses([...new Set(automaticPasses)]);
       setTask(preflight.task); setStep('review'); setNotice('图片已生成并完成确定性预检；不确定的视觉项目仍需人工确认。');
     } catch (reason) {
       setNotice('');
       if (activeTask.generationJobs?.some(job => job.id === jobId && !job.outputNodeIds.length)) {
-        void socialImageApi.updateTask(activeTask, {
-          status: 'blocked',
-          generationJobs: activeTask.generationJobs.map(job => job.id === jobId ? {
-            // A rejected HTTP response does not prove the provider did not
-            // bill or return a result. Leave the paid operation unresolved.
-            ...job, status: 'outcome_unknown' as const,
-            error: reason instanceof Error ? reason.message : '图片生成失败', updatedAt: new Date().toISOString(),
-          } : job),
-        }).then(result => setTask(result.task)).catch(() => undefined);
+        void socialImageApi.getTask(activeTask.id).then(result => setTask(result.task)).catch(() => undefined);
       }
       if (controller.signal.aborted) {
         setError(generationAbortReasonRef.current === 'manual'
@@ -457,7 +445,7 @@ export default function SocialImageWorkbench({
           {step === 'type' && <><p className="text-sm font-semibold">交付规格</p><label className="block text-xs font-medium">平台<Select className="mt-1 w-full" value={platform} onChange={setPlatform} options={[{value:'facebook',label:'Facebook'},{value:'instagram',label:'Instagram'},{value:'linkedin',label:'LinkedIn'}]} /></label><label className="block text-xs font-medium">比例<Select className="mt-1 w-full" value={ratio} onChange={setRatio} options={['1:1','4:5','9:16'].map(value => ({value,label:value}))} /></label><label className="block text-xs font-medium">语言<Select className="mt-1 w-full" value={language} onChange={setLanguage} options={[{value:'en',label:'English'},{value:'zh',label:'中文'}]} /></label></>}
           {step === 'inputs' && <><p className="text-sm font-semibold">内容与资产</p><label className="block text-xs font-medium">内容类型<Select className="mt-1 w-full" value={imageType} onChange={setImageType} options={IMAGE_TYPES.filter(item => item.available).map(item => ({value:item.id,label:item.label}))} /></label><label className="block text-xs font-medium">任务名称<Input className="mt-1" value={title} onChange={event => setTitle(event.target.value)} /></label><label className="block text-xs font-medium">企业产品<Select mode="multiple" className="mt-1 w-full" value={productIds} onChange={setProductIds} options={products.map(item => ({value:item.id,label:item.name}))} placeholder="至少选择一个产品" /></label><label className="block text-xs font-medium">核心主张<Input.TextArea className="mt-1" rows={4} value={coreClaim} onChange={event => setCoreClaim(event.target.value)} placeholder="这条内容只讲清的一件事" /></label><label className="block text-xs font-medium">目标受众<Input className="mt-1" value={audience} onChange={event => setAudience(event.target.value)} /></label><label className="block text-xs font-medium">事实状态<Select className="mt-1 w-full" value={factuality} onChange={setFactuality} options={[{value:'verified',label:'企业资料已验证'},{value:'user_supplied',label:'用户提供，待核验'},{value:'mock',label:'模拟内容，不可直接发布'}]} /></label><div><div className="flex items-center justify-between gap-2"><p className="text-xs font-medium">企业图片素材</p><Button size="small" icon={<Upload size={13} />} loading={busy} onClick={() => uploadRef.current?.click()}>上传图片</Button><input ref={uploadRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple className="hidden" onChange={event => { const files = Array.from(event.currentTarget.files || []); event.currentTarget.value = ''; void uploadImages(files); }} /></div><div className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-lg border border-border p-2">{materials.length ? materials.map(item => <Checkbox key={item.id} checked={materialIds.includes(item.id)} onChange={event => setMaterialIds(current => event.target.checked ? [...current,item.id] : current.filter(id => id !== item.id))} className="flex text-xs"><span className="line-clamp-1">{item.name}</span></Checkbox>) : <p className="p-2 text-xs text-text-muted">素材库暂无企业图片，可以在这里直接上传。</p>}</div></div></>}
           {step === 'plan' && <><p className="text-sm font-semibold">策划依据</p><p className="rounded-lg bg-zinc-50 p-3 text-xs leading-5">题材：{IMAGE_TYPES.find(item => item.id === imageType)?.label}<br />图文关系：图片证明或解释核心主张<br />配色：从企业产品与品牌素材推导</p></>}
-          {step === 'generate' && <><p className="text-sm font-semibold">正在生成</p><p className="text-xs leading-5 text-text-secondary">系统将自动完成策划、资产匹配、首版渲染与预检，不再因补充信息中断。</p>{hasUnresolvedPaidImageJob(task) && !busy && <Alert type="warning" showIcon message="图片请求结果待核对" description="当前任务不会自动重试付费生成。请先核对供应商结果和企业素材库，确认是否已有成片。" />}</>}
+          {step === 'generate' && <><p className="text-sm font-semibold">正在生成</p><p className="text-xs leading-5 text-text-secondary">系统将自动完成策划、资产匹配、首版渲染与预检，不再因补充信息中断。</p>{hasUnresolvedPaidImageJob(task) && !busy && <Alert type="warning" showIcon message="图片生成单元待核对" description="当前任务不会自动重试付费生成。请先核对存储能力、任务回执和素材库，确认是否已提交供应商及是否已有成片。" />}</>}
           {step === 'review' && <><p className="text-sm font-semibold">自然语言修改</p><Input.TextArea rows={3} value={repairRequest} onChange={event => setRepairRequest(event.target.value)} placeholder="例如：产品缩小一点并下移；遮罩淡一点；标题改成 Golden Hair Ritual；删除认证信息" /><p className="text-xs leading-5 text-text-secondary">系统只修改对应图层并保留其他图层。所有待处理信息统一汇总，不影响成片生成和下载。</p>{fieldsToConfirm.length > 0 && <Alert type="warning" showIcon message={`待处理信息 · ${fieldsToConfirm.length} 项`} description={<Button size="small" className="mt-2" onClick={() => setConfirmationOpen(true)}>统一查看与补充</Button>} />}<p className="pt-2 text-sm font-semibold">自动检查（不阻断）</p><div className="flex flex-wrap gap-2">{hardChecks.map(key => <Tag key={key} color={qualityPasses.includes(key) ? 'success' : 'default'}>{CHECK_LABELS[key]}</Tag>)}</div>{factuality === 'mock' && <Alert type="warning" showIcon message="当前为模拟内容，请在发布前自行确认事实" />}</>}
           {error && <Alert type="error" showIcon message={error} />}{notice && <Alert type="info" showIcon message={notice} />}
         </div>

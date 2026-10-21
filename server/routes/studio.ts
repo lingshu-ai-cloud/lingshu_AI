@@ -102,6 +102,8 @@ import { secureStudioRenderManifest, studioRenderAssetPath, studioRenderManifest
 import { studioBgmMediaPath, studioBgmObjectKey } from '../lib/studioBgmAccess.js';
 import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
 import { generatePosterImage, ImageProviderRejectedError, imageExt, normalizeImageGenerationQuality, type ReferenceImage } from '../lib/imageGen.js';
+import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, markSocialImagePaidJobUnknown, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
+import { SOCIAL_IMAGE_HARD_CHECKS } from '../../shared/contracts/socialImageCreation.js';
 import { keywordPromptContext, mergePlannedHashtags, researchSocialImageKeywords } from '../lib/keywordIntelligence.js';
 import { SeedanceProductRecovery } from '../lib/seedanceProductRecovery.js';
 import { SeedreamFirstFrameGenerator } from '../lib/seedreamFirstFrameGenerator.js';
@@ -209,7 +211,8 @@ import { EMPTY_MATERIAL_USAGE_SUMMARY, type MaterialUsageSummary } from '../../s
 import { bindSocialProjectSpec, digitalEmployeeProjectBelongs, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
 import { assertFrozenStudioProjectWrite, frozenStudioProjectSpec } from '../starter198/socialContentStudioFrozenBridge.js';
 import { readFrozenStudioOperationalEvidence } from '../starter198/socialContentStudioOperationalEvidence.js';
-import { compactProductLabel, dedupeStoryboardProductNameSubtitles, enforceProductNameInScript, ensureSelectedProductNamesInScript, hasRepetitiveStoryboard, hasUnnaturalVoiceover, jaccardSimilarity, normalizeProductIdentity, normalizeScriptTimestamps, productFactCandidates, selectedProductNames, stripScriptAnalysisSummary } from '../lib/studioScriptNormalization.js';
+import { dedupeStoryboardProductNameSubtitles, enforceProductNameInScript, ensureSelectedProductNamesInScript, hasRepetitiveStoryboard, hasUnnaturalVoiceover, jaccardSimilarity, normalizeProductIdentity, normalizeScriptTimestamps, productFactCandidates, selectedProductNames, stripScriptAnalysisSummary } from '../lib/studioScriptNormalization.js';
+import { compactBriefCategory, productBrief } from '../lib/studioProductBrief.js';
 export { ensureSelectedProductNamesInScript } from '../lib/studioScriptNormalization.js';
 import {
   THEME_PROMPT_CONSTRAINTS,
@@ -5215,7 +5218,13 @@ Schema:
 // POST /studio/fb-poster/render  Body: { poster, imagePrompt, ratio, materialIds, productIds, deliverableType, productionStrategy }
 studioRouter.post('/fb-poster/render', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  if (!await consumeDemoQuota(req, res, 'generation')) return;
+  const imageTaskId = String(req.body?.imageTaskId || '').trim();
+  const imageJobId = String(req.body?.imageJobId || '').trim();
+  if (Boolean(imageTaskId) !== Boolean(imageJobId)) {
+    res.status(400).json({ ok: false, code: 'SOCIAL_IMAGE_JOB_IDENTITY_REQUIRED', error: '图片任务与生成单元必须同时指定' });
+    return;
+  }
+  if (!imageTaskId && !await consumeDemoQuota(req, res, 'generation')) return;
   const {
     poster = null,
     imagePrompt = '', imageQuality: rawImageQuality = 'low',
@@ -5329,7 +5338,27 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       ? `The first ${ownedReferences.length} reference image(s) are tenant-owned enterprise assets and are the only authority for product appearance, packaging and brand identity. Do not redraw or invent their labels or logos.`      : 'No tenant-owned product or brand reference was provided. Keep product and Logo areas empty rather than copying them from the benchmark or inventing enterprise identity.',
   ].filter(Boolean).join('\n\n');
 
+  let paidInputHash = '';
+  let paidRequestMayHaveStarted = false;
   try {
+    let claimedImageTask = null as Awaited<ReturnType<typeof claimSocialImagePaidJob>> | null;
+    if (imageTaskId) {
+      paidInputHash = createHash('sha256').update(JSON.stringify({
+        prompt, ratio, quality: normalizeImageGenerationQuality(rawImageQuality),
+        references: references.map(item => createHash('sha256').update(Buffer.from(item.base64, 'base64')).digest('hex')),
+        requestedProductIds, materialIds, imageTaskId, imageJobId,
+      })).digest('hex');
+      claimedImageTask = await claimSocialImagePaidJob({
+        store, tenantId, taskId: imageTaskId, jobId: imageJobId,
+        idempotencyKey: String(idempotencyKey || '').trim(), inputHash: paidInputHash,
+      });
+      if (!await consumeDemoQuota(req, res, 'generation')) {
+        await markSocialImagePaidJobNotSubmitted({ store, tenantId, taskId: imageTaskId, jobId: imageJobId, inputHash: paidInputHash, reason: 'demo_quota_denied' })
+          .catch(error => console.warn('[studio] image quota rejection could not release claimed job', error instanceof Error ? error.message : error));
+        return;
+      }
+    }
+    paidRequestMayHaveStarted = true;
     const generated = await generatePosterImage({ prompt, ratio: String(ratio || '1:1'), references, provider: 'openai', quality: normalizeImageGenerationQuality(rawImageQuality), idempotencyKey: String(idempotencyKey || '').trim() || undefined });
     const material = await createGeneratedImageMaterial({
       title: `AI 图文海报 · ${headline}`.slice(0, 120),
@@ -5347,6 +5376,7 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
         inputProductIds: requestedProductIds,
         benchmarkReferenceCount: benchmarkReferences.length,
         promptSha256: createHash('sha256').update(prompt).digest('hex'),
+        ...(imageTaskId ? { socialImageTaskId: imageTaskId, socialImageJobId: imageJobId, socialImageInputHash: paidInputHash } : {}),
         model: generated.model,
         qualityStatus: 'needs_review',
       },
@@ -5355,8 +5385,19 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       console.warn('[studio] generated poster material analysis could not start', error instanceof Error ? error.message : error);
     });
     const responseMaterial = await materialResponse(material, tenantId);
+    const imageTask = claimedImageTask ? await completeSocialImagePaidJob({
+      store, tenantId, taskId: imageTaskId, jobId: imageJobId, inputHash: paidInputHash,
+      provider: generated.source,
+      output: {
+        id: randomUUID(), role: 'single', label: '主视觉', state: 'quality_checking',
+        mediaUrl: responseMaterial.url, materialId: material.id,
+        version: Math.max(0, ...claimedImageTask.outputs.filter(item => item.role === 'single' && item.label === '主视觉').map(item => item.version)) + 1,
+        qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'uncertain', severity: 'hard', note: '等待人工复核' })),
+      },
+    }) : undefined;
     res.json({
       ok: true,
+      ...(imageTask ? { task: imageTask } : {}),
       source: generated.source,
       model: generated.model,
       url: responseMaterial.url,
@@ -5371,6 +5412,14 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       publishable: false,    });
   } catch (err: any) {
     console.warn('[studio] fb-poster image generation failed:', String(err?.message || err).slice(0, 800));
+    if (imageTaskId && paidInputHash && paidRequestMayHaveStarted) {
+      await markSocialImagePaidJobUnknown({ store, tenantId, taskId: imageTaskId, jobId: imageJobId, inputHash: paidInputHash, error: String(err?.message || err) })
+        .catch(error => console.warn('[studio] image request outcome could not be recorded', error instanceof Error ? error.message : error));
+    }
+    if (err instanceof SocialImagePaidJobError) {
+      res.status(err.code === 'social_image_atomic_store_required' ? 503 : 409).json({ ok: false, code: err.code, error: err.message });
+      return;
+    }
     if (err instanceof ImageProviderRejectedError) {
       res.status(422).json({
         ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
@@ -11203,73 +11252,6 @@ studioRouter.get('/publish-performance', (_req, res) => {
 });
 
 /* ── 本地降级生成 ──────────────────────────────────────────────────────── */
-
-function productField(productInfo: string, label: string): string {
-  const match = String(productInfo || '').match(new RegExp(`${label}[：:]\\s*([^\\n]+)`));
-  return match?.[1]?.trim() || '';
-}
-
-function firstProductField(productInfo: string, labels: string[]): string {
-  for (const label of labels) {
-    const value = productField(productInfo, label);
-    if (value) return value;
-  }
-  return '';
-}
-
-function productBrief(productInfo: string) {
-  const name = compactProductLabel(productInfo);
-  const category = firstProductField(productInfo, ['所属类目', '产品类目']) || '目标采购场景';
-  const highlights = conservativeClaim(firstProductField(productInfo, ['产品卖点', '核心优势']));
-  const moq = firstProductField(productInfo, ['起订量', 'MOQ']);
-  const cert = firstProductField(productInfo, ['认证资质', '认证']);
-  const price = firstProductField(productInfo, ['价格区间', '价格']);
-  const detailPoints = [
-    ['容量', firstProductField(productInfo, ['容量'])],
-    ['杯体材质', firstProductField(productInfo, ['杯体材质'])],
-    ['刀片材质', firstProductField(productInfo, ['刀片材质'])],
-    ['材质', firstProductField(productInfo, ['材质', '产品材质'])],
-    ['充电方式', firstProductField(productInfo, ['充电方式'])],
-    ['尺寸', firstProductField(productInfo, ['尺寸', '产品尺寸'])],
-    ['规格', firstProductField(productInfo, ['规格'])],
-  ].filter((item): item is string[] => Boolean(item[1])).map(([label, value]) => `${label} ${value}`);
-  const highlightPoints = highlights.split(/[、,，;；\n]/).map(item => item.trim()).filter(Boolean);
-  const pointList = [
-    ...detailPoints,
-    ...highlightPoints,
-    cert && cert !== '可按需求确认' ? `认证 ${cert}` : '',
-    moq && moq !== '可按需求确认' ? `起订量 ${moq}` : '',
-    price ? `报价 ${price}` : '',
-  ].filter(Boolean);
-  return {
-    name,
-    category,
-    highlights,
-    moq,
-    cert,
-    price,
-    firstPoint: pointList[0] || highlights || name,
-    secondPoint: pointList[1] || pointList[0] || name,
-    thirdPoint: pointList[2] || pointList[1] || pointList[0] || name,
-    detailPoints,
-    highlightPoints,
-    naturalTrustPoint: cert && cert !== '可按需求确认' ? '认证和检测资料能不能一次给齐' : '样品和资料能不能按需求确认',
-  };
-}
-
-function compactBriefCategory(p: ReturnType<typeof productBrief>): string {
-  const items = String(p.category || '').split(/[、,，/]/).map(item => item.trim()).filter(Boolean);
-  if (p.name && items.some(item => p.name.includes(item) || item.includes(p.name))) return p.name;
-  return items[0] || p.name || '产品';
-}
-
-function conservativeClaim(value: string): string {
-  return String(value || '')
-    .replace(/大风吹不烂/g, '不易撕裂，抗拉表现可打样测试')
-    .replace(/吹不烂|不破|不裂|纹丝不动/g, '不易撕裂')
-    .replace(/最耐用|最便宜|全网|保证/g, '可按需求确认')
-    .trim();
-}
 
 function normalizePosterBrief(raw: any) {
   const categories = Array.isArray(raw?.categories) ? raw.categories : [];

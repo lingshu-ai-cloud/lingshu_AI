@@ -54,6 +54,8 @@ export interface SocialImageEnterpriseAssetBinding {
 export interface SocialImageGenerationJob {
   id: string;
   idempotencyKey: string;
+  /** Hash of the server-admitted render request, frozen before a paid call. */
+  inputHash?: string;
   status: 'queued' | 'running' | 'output_ready' | 'quality_checking' | 'repairing' | 'completed' | 'failed' | 'outcome_unknown';
   outputNodeIds: string[];
   provider?: string;

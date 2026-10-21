@@ -22,6 +22,11 @@ assert.match(source, /\{ \.\.\.renderRequest, productIds: \[\] \}/, 'asset fallb
 assert.match(source, /referenceImageUrls:/, 'viral replication must send the benchmark image to rendering');
 assert.match(source, /productIds,/, 'rendering must resolve product identity from the enterprise knowledge base');
 assert.match(source, /idempotencyKey/, 'paid image generation must have a stable operation key');
+assert.match(source, /imageTaskId: activeTask\.id, imageJobId: jobId/, 'paid rendering must identify the persisted task and unit');
+assert.match(studioRoute, /claimSocialImagePaidJob\(/, 'server must claim the paid unit before rendering');
+assert.match(studioRoute, /completeSocialImagePaidJob\(/, 'server must attach the persisted material to the unit');
+assert.match(studioRoute, /markSocialImagePaidJobUnknown\(/, 'uncertain provider outcome must remain non-retryable');
+assert.match(socialImageRoute, /social_image_paid_inputs_frozen/, 'task inputs must remain fixed while a paid unit is unresolved');
 assert.match(source, /runPreflight/, 'generated images must enter deterministic quality preflight');
 assert.match(source, /repairLayered/, 'review must support natural-language layer repair');
 assert.match(source, /按描述修改对应图层/);
@@ -57,5 +62,5 @@ assert.match(source, /停止等待/, 'the user must be able to leave a long-runn
 assert.match(source, /请不要立即重复提交/, 'unknown provider outcomes must warn against duplicate billing');
 assert.match(source, /hasUnresolvedPaidImageJob\(sourceTask\)/, 'restored unresolved paid jobs must block another submission');
 assert.match(source, /disabled=\{busy \|\| !poster \|\| hasUnresolvedPaidImageJob\(task\)\}/, 'retry control must not submit while the prior outcome is unresolved');
-assert.match(source, /status: 'outcome_unknown' as const/, 'an interrupted paid request must not be marked safely retryable');
+assert.match(source, /socialImageApi\.getTask\(activeTask\.id\)/, 'the browser must read the server-owned paid job outcome');
 assert.doesNotMatch(source, /contentMode:\s*'video'/);

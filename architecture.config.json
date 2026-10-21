@@ -21,7 +21,7 @@
     "server/routes/publishing.ts": 863,
     "server/routes/scheduler.ts": 1708,
     "server/routes/social.ts": 1269,
-    "server/routes/studio.ts": 11380,
+    "server/routes/studio.ts": 11362,
     "server/routes/videos.ts": 10718,
     "server/routes/youtube.ts": 1046,
     "server/socialPrograms/executionTasks.ts": 983,
@@ -52,6 +52,6 @@
     "src/components/WorkspaceManagementPages.tsx": 1008,
     "src/components/YouTubeIntegration.tsx": 1199,
     "src/lib/digitalEmployees.ts": 1018,
-    "src/lib/studioApi.ts": 1323
+    "src/lib/studioApi.ts": 1316
   }
 }

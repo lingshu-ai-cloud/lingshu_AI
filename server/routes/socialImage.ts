@@ -6,6 +6,7 @@ import sharp from 'sharp';
 import type { AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } from '../socialImage/socialImageTask.js';
+import { socialImageQueuedJobIssue } from '../socialImage/socialImagePaidJob.js';
 import { mergeSocialImageVisualChecks, socialImageDeterministicChecks } from '../socialImage/socialImageQuality.js';
 import { qualityCheckSocialImageWithQwen } from '../agents/qwen.js';
 import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
@@ -131,7 +132,23 @@ socialImageRouter.patch('/tasks/:id', async (req, res) => {
     const { tenantId } = res.locals as AuthLocals;
     const expectedVersion = Number(req.body?.expectedVersion);
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) { res.status(400).json({ ok: false, error: '缺少有效任务版本' }); return; }
-    const result = await updateSocialImageTask(store, tenantId, req.params.id, expectedVersion, req.body?.patch || {});
+    const patch = req.body?.patch || {};
+    if (Object.prototype.hasOwnProperty.call(patch, 'generationJobs')) {
+      const current = await readSocialImageTask(store, tenantId, req.params.id);
+      if (!current) { res.status(404).json({ ok: false, error: '图片任务不存在' }); return; }
+      if (current.version !== expectedVersion) { res.status(409).json({ ok: false, error: '任务已被更新，请刷新后继续', task: current }); return; }
+      const issue = socialImageQueuedJobIssue(current, patch.generationJobs);
+      if (issue) { res.status(409).json({ ok: false, code: issue, error: '已有图片生成请求待完成或待核对，不能改写付费任务记录' }); return; }
+    }
+    if (['imageType', 'deliverySpec', 'contentBrief', 'enterpriseAssets', 'materialIds', 'referenceUrls', 'referenceSnapshot', 'replicationRecipe', 'renderBrief', 'imageTextContract']
+      .some(field => Object.prototype.hasOwnProperty.call(patch, field))) {
+      const current = await readSocialImageTask(store, tenantId, req.params.id);
+      if (current?.generationJobs.some(job => ['queued', 'running', 'outcome_unknown'].includes(job.status) && !job.outputNodeIds.length)) {
+        res.status(409).json({ ok: false, code: 'social_image_paid_inputs_frozen', error: '图片生成单元未完成或待核对，不能修改本次付费输入' });
+        return;
+      }
+    }
+    const result = await updateSocialImageTask(store, tenantId, req.params.id, expectedVersion, patch);
     if (result.kind === 'missing') { res.status(404).json({ ok: false, error: '图片任务不存在' }); return; }
     if (result.kind === 'conflict') { res.status(409).json({ ok: false, error: '任务已被更新，请刷新后继续', task: result.task }); return; }
     if (result.kind === 'invalid') { res.status(422).json({ ok: false, error: result.issues.join('；'), issues: result.issues, task: result.task }); return; }
