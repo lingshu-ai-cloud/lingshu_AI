@@ -13,7 +13,6 @@
     "server/routes/production.ts": 1453,
     "server/routes/presenterAssets.ts": 919,
     "server/routes/scheduler.ts": 1708,
-    "server/routes/social.ts": 1269,
     "server/routes/studio.ts": 11361,
     "server/routes/videos.ts": 10606,
     "server/starter198/socialContentProductionExecution.ts": 2221,

@@ -291,3 +291,8 @@
 
 - 将导演分镜、真实证据需求、产品选择及可用能力候选排序移入 `socialContentAgentWorkflowPlanning.ts`；`socialContentAgentWorkflow.ts` 保留执行场景、预算审阅与工作流组装，并清理拆分后多余依赖。主文件由 1290 行降至 580 行，规划模块 724 行；撤销超限豁免，剩余 28 项。
 - Agent 工作流、能力刷新与生产计划专项 15/15 通过；TypeScript、架构扫描/ratchet、生产构建及 191 项迁移仓库只读检查通过。构建的三个大 chunk 警告仍在；未调用真实付费供应商、执行迁移或部署。
+
+## 社媒平台 OAuth 与账号辅助边界拆分（2026-10-22）
+
+- 将 TikTok、Meta、Instagram、LinkedIn 的 OAuth 回调辅助、账号封存/更新和平台连接逻辑抽入 `socialOAuthSupport.ts`；`social.ts` 保留 HTTP 路由及原有公开上传响应导出。路由由 1269 行降至 713 行，辅助模块 585 行；撤销超限豁免，剩余 27 项。回调 HTML 的内联 JSON 现转义尖括号，避免供应商错误文本以 `</script>` 注入。
+- 新增同源回跳与脚本注入回归测试；相关受控平台配置、支持会话只读测试合计 6/6 通过。TypeScript、架构扫描/ratchet、生产构建和 191 项迁移仓库只读检查通过。构建仍有三个大 chunk 警告；未发起真实 OAuth、付费调用、迁移或部署。
