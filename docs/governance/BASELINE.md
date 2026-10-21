@@ -187,3 +187,9 @@
 
 - 安全响应测试不再只比对四个 Secret 的固定源码字串，改为确认成功保存分支清空 YouTube、Meta、Instagram、TikTok 和 LinkedIn 五个 Secret 草稿；生产组件原已执行这五项清空。`test:security-boundaries` 全链通过。
 - TikTok/YouTube 发布并发测试夹具补齐当前统一发布预检必需的文案，使测试实际到达付费前认领、并发阻断和未知回执恢复分支；发布相关 11 项测试通过。两处都只修正测试合同，没有放宽生产安全规则，也没有调用真实发布平台。
+
+## 其他工作树只读复核（2026-10-22）
+
+- 当前仓库共有 19 个已登记工作树；集成工作树干净。8 个干净的 exact-Qwen/weekly-exact/carry 来源工作树虽然含有相对集成分支的独有提交 SHA，但逐分支 `git cherry -v` 均显示这些提交已有 patch-id 等价版本，不应重复 cherry-pick，也不能仅以祖先关系否定其内容已集成。
+- 另有 5 个工作树仍含未提交文件：`local-preview-1002`、`local-integrated-flow`、`local-unified-20261010`、`mobile-dual-edition-20261012`、`total-merge-langgraph`。这些文件兼有源码与大量运行数据；本次只读盘点，没有覆盖、提交、删除或归档任何来源工作树。它们的未提交内容不属于权威集成基线。
+- 图片 AIGC 工作树已提交的 HEAD `95b0bcc` 是集成 HEAD 的祖先。其未提交源码主要是将 Agent 周任务日历替换为视频进度表及配套 `VideoProgressTable`，并非新的图片生成管线提交；是否纳入当前产品日历属于独立界面选择，不能作为“图片 AIGC 合并遗漏”直接覆盖现有界面。轮播/GIF 多输出服务端执行与交付仍未完成。
