@@ -7,7 +7,7 @@ import type { SocialImageCreationTask } from '../../shared/contracts/socialImage
 import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } from './socialImageTask.js';
 import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, markSocialImagePaidJobUnknown, recordSocialImagePaidJobFailure, socialImageOwnedMaterialUrl, socialImageQueuedJobIssue } from './socialImagePaidJob.js';
 import { recoverSocialImagePaidMaterial } from './socialImageMaterialRecovery.js';
-import { claimSocialImagePlannedUnit, persistSocialImageMultiUnitPlan, socialImagePlanSourceHash, socialImagePlannedRenderInput } from './socialImageDurablePlan.js';
+import { abandonSocialImageMultiUnitPlan, claimSocialImagePlannedUnit, persistSocialImageMultiUnitPlan, socialImagePlanSourceHash, socialImagePlannedRenderInput } from './socialImageDurablePlan.js';
 
 class AtomicMemoryStore implements DataStore {
   private sequence = 0;
@@ -381,4 +381,65 @@ test('paid multi-output request inputs are derived from the frozen server plan',
     { ...first, poster: { ...first.poster, headline: 'tampered' } }, ...planned.renderPlan!.units.slice(1),
   ] } }, first.jobId), /content_changed/);
   assert.throws(() => socialImagePlannedRenderInput(planned, 'unknown'), /identity_invalid/);
+});
+
+test('definitively rejected carousel page can retire untouched units and replan with new paid identities', async () => {
+  const store = new AtomicMemoryStore();
+  const created = await createSocialImageTask(store, 'tenant-a', { imageType: 'carousel', title: '轮播图' });
+  const prepared = await updateSocialImageTask(store, 'tenant-a', created.id, created.version, { renderBrief: {
+    headline: 'Main', subheadline: '', originBadge: '', trustBadges: [], sellingPoints: [],
+    process: [], categories: [], bottomBar: [], cta: '',
+  } });
+  assert.equal(prepared.kind, 'updated');
+  if (prepared.kind !== 'updated') return;
+  const planned = await persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id, expectedVersion: prepared.task.version });
+  const first = planned.renderPlan!.units[0]!;
+  const renderRequestHash = '9'.repeat(64);
+  await claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: first.jobId, idempotencyKey: first.idempotencyKey, plannedInputHash: first.plannedInputHash, renderRequestHash });
+  const rejected = await markSocialImagePaidJobNotSubmitted({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: first.jobId, inputHash: renderRequestHash, reason: 'provider rejected request' });
+  await assert.rejects(abandonSocialImageMultiUnitPlan({ store, tenantId: 'tenant-b', taskId: created.id,
+    expectedVersion: rejected.version }), /task_missing/);
+  const abandoned = await abandonSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id,
+    expectedVersion: rejected.version });
+  assert.equal(abandoned.renderPlan, undefined);
+  assert.equal(abandoned.step, 'inputs');
+  assert.ok(abandoned.generationJobs.slice(1).every(job => job.status === 'failed' && job.attempt === 0));
+  await assert.rejects(claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: first.jobId, idempotencyKey: first.idempotencyKey, plannedInputHash: first.plannedInputHash,
+    renderRequestHash: '8'.repeat(64) }), /frozen_plan_invalid/);
+  const replanned = await persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id,
+    expectedVersion: abandoned.version });
+  assert.equal(replanned.renderPlan?.version, 2);
+  assert.notEqual(replanned.renderPlan?.units[0]?.jobId, first.jobId);
+});
+
+test('plan retirement refuses unknown provider outcomes but preserves completed page receipts', async () => {
+  const store = new AtomicMemoryStore();
+  const created = await createSocialImageTask(store, 'tenant-a', { imageType: 'carousel', title: '轮播图' });
+  const prepared = await updateSocialImageTask(store, 'tenant-a', created.id, created.version, { renderBrief: {
+    headline: 'Main', subheadline: '', originBadge: '', trustBadges: [], sellingPoints: [],
+    process: [], categories: [], bottomBar: [], cta: '',
+  } });
+  assert.equal(prepared.kind, 'updated');
+  if (prepared.kind !== 'updated') return;
+  const planned = await persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id, expectedVersion: prepared.task.version });
+  const first = planned.renderPlan!.units[0]!;
+  const renderRequestHash = '7'.repeat(64);
+  await claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: first.jobId, idempotencyKey: first.idempotencyKey, plannedInputHash: first.plannedInputHash, renderRequestHash });
+  const unknown = await markSocialImagePaidJobUnknown({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: first.jobId, inputHash: renderRequestHash, error: 'transport unknown' });
+  await assert.rejects(abandonSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id,
+    expectedVersion: unknown.version }), /outcome_unresolved/);
+  const output = { id: 'page-1', role: 'carousel_page' as const, label: first.label, state: 'quality_checking' as const,
+    mediaUrl: '/media/tenants/tenant-a/page-1.png', materialId: 'material-1', version: 1, qualityChecks: [] };
+  const completed = await completeSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: first.jobId, inputHash: renderRequestHash, output, provider: 'openai' });
+  const abandoned = await abandonSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id,
+    expectedVersion: completed.version });
+  assert.equal(abandoned.outputs[0]?.state, 'superseded');
+  assert.equal(abandoned.outputs[0]?.materialId, 'material-1');
+  assert.deepEqual(abandoned.generationJobs[0]?.outputNodeIds, ['page-1']);
 });

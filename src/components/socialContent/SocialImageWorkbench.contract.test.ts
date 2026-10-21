@@ -21,6 +21,9 @@ assert.match(source, /id: 'carousel'[\s\S]{0,120}available: true/, 'carousel mus
 assert.match(source, /runPlannedCarousel\(\{/, 'carousel pages must use sequential frozen-unit orchestration');
 assert.match(source, /socialImageApi\.renderPlannedUnit\(taskId, jobId, controller\.signal\)/, 'the browser must submit only the frozen task and unit identity');
 assert.match(source, /imageType === 'carousel' \? carouselPages\.map/, 'carousel delivery must expose each persisted page separately');
+assert.match(source, /socialImageApi\.abandonPlan\(current\)/, 'a rejected carousel plan needs an explicit safe return to inputs');
+assert.match(source, /可能再次产生费用/, 'abandoning already generated pages must disclose potential repeat charges');
+assert.match(socialImageRoute, /abandonSocialImageMultiUnitPlan\(/, 'plan retirement must be server-owned and atomic');
 assert.match(source, /产品\.\*\(\?:主图\|资产\|图片\).*可读取/, 'an unreadable knowledge-base product image must fall back instead of blocking first draft');
 assert.match(source, /\{ \.\.\.renderRequest, productIds: \[\] \}/, 'asset fallback must retain the user-selected enterprise materials');
 assert.match(source, /referenceImageUrls:/, 'viral replication must send the benchmark image to rendering');

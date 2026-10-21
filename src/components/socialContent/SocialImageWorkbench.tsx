@@ -470,6 +470,31 @@ export default function SocialImageWorkbench({
     generationAbortRef.current.abort();
   };
 
+  const abandonCarouselPlan = () => {
+    if (!task?.renderPlan || task.imageType !== 'carousel' || hasUnresolvedPaidImageJob(task)) return;
+    const current = task;
+    const plan = task.renderPlan;
+    const renderedCount = plan.units.filter(unit => current.generationJobs.find(job => job.id === unit.jobId)?.outputNodeIds.length).length;
+    Modal.confirm({
+      title: '废弃当前轮播计划并重新策划？',
+      content: renderedCount
+        ? `已有 ${renderedCount} 张生成页。素材与付费记录会保留，但新计划需要重新生成这些页面，可能再次产生费用。结果不明的单元无法废弃。`
+        : '尚未保存成片的单元将关闭并保留记录。结果不明的单元无法废弃。',
+      okText: '确认废弃并返回输入', okType: 'danger', cancelText: '继续当前计划',
+      onOk: async () => {
+        setBusy(true); setError('');
+        try {
+          const result = await socialImageApi.abandonPlan(current);
+          setTask(result.task); setImageUrl(''); setQualityPasses([]); setStep('inputs');
+          setNotice('旧计划已安全归档。可修改输入并生成新的轮播计划；历史素材与回执仍保留。');
+        } catch (reason) {
+          setNotice(''); setError(reason instanceof Error ? reason.message : '计划未废弃，请刷新任务状态后重试');
+          void socialImageApi.getTask(current.id).then(result => setTask(result.task)).catch(() => undefined);
+        } finally { setBusy(false); }
+      },
+    });
+  };
+
   const startTargetedRepair = async () => {
     if (!task) return;
     const failedChecks = hardChecks.filter(key => !qualityPasses.includes(key));
@@ -535,8 +560,8 @@ export default function SocialImageWorkbench({
           {step === 'type' && <Button type="primary" block onClick={() => setStep('inputs')} icon={<ImagePlus size={15} />}>进入内容与资产</Button>}
           {step === 'inputs' && <Button type="primary" block loading={busy} onClick={() => void saveInputs()}>{busy ? '正在生成首版' : '一次生成首版'}</Button>}
           {step === 'plan' && <><Button type="primary" block loading={busy} disabled={busy} onClick={() => void generatePlan()}>{busy ? '正在自动策划并生成首版' : '重试一键生成'}</Button><Button block className="mt-2" disabled={busy} onClick={() => setStep('inputs')}>返回修改输入</Button></>}
-          {step === 'generate' && <><Button type="primary" block loading={busy} disabled={busy || !poster || hasUnresolvedPaidImageJob(task)} onClick={() => void generateImage()} icon={busy ? <Spin size="small" /> : <RefreshCw size={15} />}>{busy ? reconciling ? '正在核对已存素材' : `${imageType === 'carousel' ? '正在生成轮播页' : '正在生成首版'} · ${generationElapsed} 秒` : imageType === 'carousel' ? '继续未完成轮播页' : '重试生成首版'}</Button>{busy && !reconciling ? <Button block danger className="mt-2" onClick={stopWaitingForImage}>停止等待</Button> : !busy && !(imageType === 'carousel' && task?.renderPlan) ? <Button block className="mt-2" onClick={() => setStep('inputs')}>返回修改输入</Button> : null}</>}
-          {step === 'review' && <>{imageType !== 'carousel' && <Button type="primary" block loading={busy} disabled={!repairRequest.trim()} onClick={() => void applyNaturalLanguageRepair()}>按描述修改对应图层</Button>}{fieldsToConfirm.length > 0 && <Button block className="mt-2" onClick={() => setConfirmationOpen(true)}>统一处理待补充信息</Button>}{imageType !== 'carousel' && imageUrl && qualityPasses.length < hardChecks.length && <Button block className="mt-2" loading={busy} onClick={() => void startTargetedRepair()}>按检查结果优化一版</Button>}{imageType === 'carousel' ? carouselPages.map(({ unit, output }) => output?.mediaUrl && <Button key={unit.jobId} block className="mt-2" href={output.mediaUrl} target="_blank" icon={<CheckCircle2 size={15} />}>下载{unit.label}</Button>) : imageUrl && <Button block className="mt-2" href={imageUrl} target="_blank" icon={<CheckCircle2 size={15} />}>下载成片</Button>}</>}
+          {step === 'generate' && <><Button type="primary" block loading={busy} disabled={busy || !poster || hasUnresolvedPaidImageJob(task)} onClick={() => void generateImage()} icon={busy ? <Spin size="small" /> : <RefreshCw size={15} />}>{busy ? reconciling ? '正在核对已存素材' : `${imageType === 'carousel' ? '正在生成轮播页' : '正在生成首版'} · ${generationElapsed} 秒` : imageType === 'carousel' ? '继续未完成轮播页' : '重试生成首版'}</Button>{busy && !reconciling ? <Button block danger className="mt-2" onClick={stopWaitingForImage}>停止等待</Button> : !busy && !(imageType === 'carousel' && task?.renderPlan) ? <Button block className="mt-2" onClick={() => setStep('inputs')}>返回修改输入</Button> : null}{imageType === 'carousel' && task?.renderPlan && !busy && <Button block danger className="mt-2" disabled={hasUnresolvedPaidImageJob(task)} onClick={abandonCarouselPlan}>废弃计划并重新策划</Button>}</>}
+          {step === 'review' && <>{imageType !== 'carousel' && <Button type="primary" block loading={busy} disabled={!repairRequest.trim()} onClick={() => void applyNaturalLanguageRepair()}>按描述修改对应图层</Button>}{fieldsToConfirm.length > 0 && <Button block className="mt-2" onClick={() => setConfirmationOpen(true)}>统一处理待补充信息</Button>}{imageType !== 'carousel' && imageUrl && qualityPasses.length < hardChecks.length && <Button block className="mt-2" loading={busy} onClick={() => void startTargetedRepair()}>按检查结果优化一版</Button>}{imageType === 'carousel' ? carouselPages.map(({ unit, output }) => output?.mediaUrl && <Button key={unit.jobId} block className="mt-2" href={output.mediaUrl} target="_blank" icon={<CheckCircle2 size={15} />}>下载{unit.label}</Button>) : imageUrl && <Button block className="mt-2" href={imageUrl} target="_blank" icon={<CheckCircle2 size={15} />}>下载成片</Button>}{imageType === 'carousel' && task?.renderPlan && <Button block danger className="mt-3" disabled={busy || hasUnresolvedPaidImageJob(task)} onClick={abandonCarouselPlan}>废弃计划并重新策划</Button>}</>}
         </div>
       </aside>
     </div>

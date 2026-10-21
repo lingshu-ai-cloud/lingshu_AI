@@ -8,7 +8,7 @@ import { store } from '../storage/index.js';
 import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } from '../socialImage/socialImageTask.js';
 import { socialImageOwnedMaterialUrl, socialImageQueuedJobIssue, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
 import { recoverSocialImagePaidMaterial } from '../socialImage/socialImageMaterialRecovery.js';
-import { persistSocialImageMultiUnitPlan } from '../socialImage/socialImageDurablePlan.js';
+import { abandonSocialImageMultiUnitPlan, persistSocialImageMultiUnitPlan } from '../socialImage/socialImageDurablePlan.js';
 import { mergeSocialImageVisualChecks, socialImageDeterministicChecks } from '../socialImage/socialImageQuality.js';
 import { qualityCheckSocialImageWithQwen } from '../agents/qwen.js';
 import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
@@ -167,6 +167,24 @@ socialImageRouter.post('/tasks/:id/plan-units', async (req, res) => {
     const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_plan_failed';
     const status = code === 'social_image_task_missing' ? 404 : code === 'social_image_atomic_store_required' ? 503 : 409;
     res.status(status).json({ ok: false, code, error: '多图单元计划无法安全持久化；未调用图片供应商' });
+  }
+});
+
+/** Explicitly retire only known, non-running units; never infer a provider outcome. */
+socialImageRouter.post('/tasks/:id/abandon-plan', async (req, res) => {
+  try {
+    const { tenantId } = res.locals as AuthLocals;
+    const expectedVersion = Number(req.body?.expectedVersion);
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+      res.status(400).json({ ok: false, error: '缺少有效任务版本' }); return;
+    }
+    const task = await abandonSocialImageMultiUnitPlan({ store, tenantId, taskId: req.params.id, expectedVersion });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ ok: true, task });
+  } catch (error) {
+    const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_plan_abandon_failed';
+    const status = code === 'social_image_task_missing' ? 404 : code === 'social_image_atomic_store_required' ? 503 : 409;
+    res.status(status).json({ ok: false, code, error: '当前轮播/GIF 计划存在未确认的付费结果或版本冲突，未废弃计划' });
   }
 });
 

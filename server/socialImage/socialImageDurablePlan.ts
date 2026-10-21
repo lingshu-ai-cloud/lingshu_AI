@@ -3,7 +3,7 @@ import type { DataStore } from '../storage/datastore.js';
 import type { SocialImageCreationTask, SocialImageFrozenRenderPlan, SocialImageGenerationJob } from '../../shared/contracts/socialImageCreation.js';
 import { requireSocialImageAtomicStore, SocialImagePaidJobError } from './socialImagePaidJob.js';
 import { planSocialImageRenderUnits } from './socialImageRenderPlan.js';
-import { readSocialImageTask, updateSocialImageTask } from './socialImageTask.js';
+import { readSocialImageTask, updateSocialImageTask, SOCIAL_IMAGE_TASKS_COLLECTION } from './socialImageTask.js';
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -99,7 +99,7 @@ export async function persistSocialImageMultiUnitPlan(input: {
   if (task.generationJobs.some(job => ['queued', 'running', 'outcome_unknown'].includes(job.status) && !job.outputNodeIds.length)) {
     throw new SocialImagePaidJobError('social_image_prior_paid_job_unresolved');
   }
-  const planVersion = (task.renderPlan?.version || 0) + 1;
+  const planVersion = Math.max(task.renderPlan?.version || 0, ...task.generationJobs.map(job => job.planVersion || 0)) + 1;
   const createdAt = new Date().toISOString();
   const units = planSocialImageRenderUnits({
     imageType: task.imageType, poster: task.renderBrief as Record<string, unknown>,
@@ -123,6 +123,50 @@ export async function persistSocialImageMultiUnitPlan(input: {
   });
   if (saved.kind !== 'updated') throw new SocialImagePaidJobError('social_image_plan_write_conflict');
   return saved.task;
+}
+
+/** Retire an unresolvable plan without erasing receipts or retrying any paid unit. */
+export async function abandonSocialImageMultiUnitPlan(input: {
+  store: DataStore; tenantId: string; taskId: string; expectedVersion: number;
+}): Promise<SocialImageCreationTask> {
+  await requireSocialImageAtomicStore(input.store);
+  const row = await input.store.getById<{ id: string; tenant_id: string; spec: { socialImageTask?: SocialImageCreationTask } }>(
+    SOCIAL_IMAGE_TASKS_COLLECTION, input.taskId);
+  const task = row?.spec?.socialImageTask;
+  if (!row || row.tenant_id !== input.tenantId || !task || task.contentMode !== 'image') {
+    throw new SocialImagePaidJobError('social_image_task_missing');
+  }
+  if (task.version !== input.expectedVersion) throw new SocialImagePaidJobError('social_image_plan_version_conflict');
+  const plan = task.renderPlan;
+  if ((task.imageType !== 'carousel' && task.imageType !== 'gif_poster') || !plan) {
+    throw new SocialImagePaidJobError('social_image_frozen_plan_invalid');
+  }
+  if (task.status === 'approved') throw new SocialImagePaidJobError('social_image_approved_plan_immutable');
+  const planJobs = plan.units.map(unit => task.generationJobs.find(job => job.id === unit.jobId
+    && job.planVersion === plan.version && job.unitIndex === unit.index && job.plannedInputHash === unit.plannedInputHash));
+  if (planJobs.some((job, index) => !job || job.idempotencyKey !== plan.units[index]?.idempotencyKey)) {
+    throw new SocialImagePaidJobError('social_image_planned_unit_identity_invalid');
+  }
+  if (planJobs.some(job => !job || ['running', 'outcome_unknown'].includes(job.status)
+    || (job.status === 'queued' && (job.attempt !== 0 || job.inputHash || job.providerReceipt || job.outputNodeIds.length))
+    || (job.status === 'failed' && (job.providerReceipt || job.outputNodeIds.length))
+    || (!['queued', 'failed'].includes(job.status) && (!['quality_checking', 'completed'].includes(job.status)
+      || !job.outputNodeIds.length || !job.outputNodeIds.every(id => task.outputs.some(output => output.id === id && output.materialId && output.mediaUrl)))))) {
+    throw new SocialImagePaidJobError('social_image_plan_outcome_unresolved');
+  }
+  const retiredIds = new Set(planJobs.flatMap(job => job?.outputNodeIds || []));
+  const now = new Date().toISOString();
+  const next: SocialImageCreationTask = {
+    ...task, version: task.version + 1, renderPlan: undefined, status: 'planned', step: 'inputs', publishable: false, updatedAt: now,
+    generationJobs: task.generationJobs.map(job => planJobs.some(current => current?.id === job.id) && job.status === 'queued'
+      ? { ...job, status: 'failed', error: 'plan_abandoned_before_submission', updatedAt: now } : job),
+    outputs: task.outputs.map(output => retiredIds.has(output.id) ? { ...output, state: 'superseded' } : output),
+  };
+  const saved = await input.store.compareAndSwap!(SOCIAL_IMAGE_TASKS_COLLECTION, row.id,
+    { tenant_id: input.tenantId, spec: row.spec },
+    { spec: { ...row.spec, socialImageTask: next }, status: 'draft', updated_at: now });
+  if (!saved) throw new SocialImagePaidJobError('social_image_plan_abandon_conflict');
+  return next;
 }
 
 /** Reserve one frozen multi-output unit with the exact server-built provider request hash. This does not submit it. */

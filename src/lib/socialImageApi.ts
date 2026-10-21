@@ -21,6 +21,9 @@ export const socialImageApi = {
   planUnits: (task: SocialImageCreationTask) => request<{ ok: true; task: SocialImageCreationTask; paidExecutionEnabled: boolean }>(`/tasks/${encodeURIComponent(task.id)}/plan-units`, {
     method: 'POST', body: JSON.stringify({ expectedVersion: task.version }),
   }),
+  abandonPlan: (task: SocialImageCreationTask) => request<{ ok: true; task: SocialImageCreationTask }>(`/tasks/${encodeURIComponent(task.id)}/abandon-plan`, {
+    method: 'POST', body: JSON.stringify({ expectedVersion: task.version }),
+  }),
   renderPlannedUnit: async (taskId: string, jobId: string, signal?: AbortSignal): Promise<{ ok: boolean; task?: SocialImageCreationTask; url?: string; error?: string }> => {
     const response = await fetch('/api/overseas/studio/fb-poster/render', {
       method: 'POST', credentials: 'same-origin', signal,
