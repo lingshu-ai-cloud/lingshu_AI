@@ -224,3 +224,8 @@
 
 - 复核源码与提交历史：上述 `translatedBody: result.translatedDraft` 断言创建于 8 月的自动发送路径，当前界面在 9 月已改为人工确认发送。服务端返回的中文译文仍映射到草稿；手动输入与经人工确认的 AI 草稿均先翻译成客户目标语言，再通过 `queueSend` 同时保留中文原文，时间线用 `translatedBody` 保存可回看的中文文本。未恢复旧自动发送行为。
 - 将合同测试改为检查现行两条发送入口及真实客户通道状态展示，撤销已不存在的 UI 字面写法要求；没有修改生产组件。`test:customer-reply-ui` 与完整 `test:customer-service` 均通过。隔离测试产生预期的 PocketBase 无网络日志，但进程退出码为 0。此项不改变仍剩余 36 个超限文件或生产构建的大 chunk 提示。
+
+## 跟进发送 Worker 纯逻辑边界拆分（2026-10-22）
+
+- 将预检结果文案、客户本地发送时间窗、值解析与客户风险分类分别移至 `followupDispatchPresentation.ts`、`followupDeliveryWindow.ts` 和 `followupDispatchHelpers.ts`。原 Worker 保留准入、调度、供应商回执及持久化编排，对外导出保持兼容；由 901 行降至 772 行，撤销其历史超限豁免，剩余 35 项。
+- Worker 与原生每周跟进专项测试、TypeScript、架构扫描/ratchet、生产构建和 191 项迁移仓库只读预检通过。构建仍报告 `index`、`AiCreateStudio`、`DigitalEmployeePage` 三个约 824/881/920 kB 的大块；本次并未通过调高阈值掩盖警告。未触发真实发送、执行迁移或部署。
