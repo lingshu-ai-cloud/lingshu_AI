@@ -31,6 +31,7 @@ test('exact callback and scope contracts use dummy configuration only', () => {
    instagram: 'https://readiness.example.invalid/api/overseas/social/oauth/instagram/callback',
    facebook: 'https://readiness.example.invalid/api/overseas/social/oauth/facebook/callback',
    tiktok: 'https://readiness.example.invalid/api/overseas/social/oauth/tiktok/callback',
+   linkedin: 'https://readiness.example.invalid/api/overseas/social/oauth/linkedin/callback',
   });
   const isolated = effectiveOAuthConfig({ disabledPlatforms: ['youtube', 'meta', 'instagram', 'tiktok'] });
   for (const key of ['metaSocialAppId', 'metaSocialAppSecret', 'instagramAppId', 'instagramAppSecret', 'tiktokClientKey', 'tiktokClientSecret'] as const) assert.equal(isolated[key], '');

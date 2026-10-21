@@ -16,7 +16,6 @@
     "server/routes/social.ts": 1269,
     "server/routes/studio.ts": 11361,
     "server/routes/videos.ts": 10606,
-    "server/routes/youtube.ts": 1046,
     "server/starter198/socialContentAgentWorkflow.ts": 1290,
     "server/starter198/socialContentProductionExecution.ts": 2221,
     "server/starter198/socialContentRecords.ts": 1319,
