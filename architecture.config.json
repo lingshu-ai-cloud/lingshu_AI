@@ -9,7 +9,6 @@
     "server/contentExecution/durableQueue.ts": 946,
     "server/digitalEmployees/contentProduction.ts": 2129,
     "server/digitalEmployees/followupDispatchWorker.ts": 901,
-    "server/publishing/platformPublisher.ts": 873,
     "server/routes/admin.ts": 1415,
     "server/routes/auth.ts": 890,
     "server/routes/digitalEmployees.ts": 5931,
