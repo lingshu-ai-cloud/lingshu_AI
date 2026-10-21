@@ -282,3 +282,73 @@ test('frozen carousel unit is claimed once, in order, with exact tenant and iden
   await assert.rejects(claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
     jobId: second!.jobId, idempotencyKey: second!.idempotencyKey, plannedInputHash: second!.plannedInputHash, renderRequestHash }), /atomic_store_required/);
 });
+
+test('frozen carousel material recovery restores only the matching unit without a second paid call', async () => {
+  const store = new AtomicMemoryStore();
+  const created = await createSocialImageTask(store, 'tenant-a', { imageType: 'carousel', title: '轮播图' });
+  const prepared = await updateSocialImageTask(store, 'tenant-a', created.id, created.version, { renderBrief: {
+    headline: 'Main', subheadline: '', originBadge: '', trustBadges: [], sellingPoints: [],
+    process: [], categories: [], bottomBar: [], cta: '',
+  } });
+  assert.equal(prepared.kind, 'updated');
+  if (prepared.kind !== 'updated') return;
+  const planned = await persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id, expectedVersion: prepared.task.version });
+  const [first, second] = planned.renderPlan!.units;
+  const renderRequestHash = 'd'.repeat(64);
+  await claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: first!.jobId, idempotencyKey: first!.idempotencyKey, plannedInputHash: first!.plannedInputHash, renderRequestHash });
+  await markSocialImagePaidJobUnknown({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: first!.jobId, inputHash: renderRequestHash, error: 'task write lost' });
+  const bytes = await sharp({ create: { width: 2, height: 2, channels: 4, background: '#ffffff' } }).png().toBuffer();
+  const material = {
+    id: 'material-carousel-1', tenantId: 'tenant-a', scope: 'own', type: 'image', sourceType: 'ai_generated_marketing_image',
+    sourceProvider: 'openai', file: 'tenants/tenant-a/material-carousel-1.png',
+    contentSha256: createHash('sha256').update(bytes).digest('hex'),
+    provenance: { socialImageTaskId: created.id, socialImageJobId: first!.jobId, socialImageInputHash: renderRequestHash },
+  };
+  const recover = (materials = [material]) => recoverSocialImagePaidMaterial({
+    store, tenantId: 'tenant-a', taskId: created.id, jobId: first!.jobId, materials,
+    readBytes: async () => ({ bytes, mimeType: 'image/png' }),
+    materialUrl: () => '/media/tenants/tenant-a/material-carousel-1.png',
+  });
+  await assert.rejects(recover([{ ...material, provenance: { ...material.provenance, socialImageJobId: second!.jobId } }]), /material_not_found/);
+  const recovered = await recover();
+  assert.equal(recovered.task.outputs[0]?.role, 'carousel_page');
+  assert.equal(recovered.task.outputs[0]?.label, first!.label);
+  assert.equal(recovered.task.generationJobs[0]?.status, 'quality_checking');
+  assert.equal((await recover()).task.version, recovered.task.version);
+  await assert.rejects(completeSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: first!.jobId, inputHash: renderRequestHash, provider: 'openai',
+    output: { ...recovered.task.outputs[0]!, role: 'gif_plate' } }), /planned_unit_output_invalid/);
+  const next = await claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: second!.jobId, idempotencyKey: second!.idempotencyKey, plannedInputHash: second!.plannedInputHash,
+    renderRequestHash: 'e'.repeat(64) });
+  assert.equal(next.generationJobs[1]?.status, 'running');
+});
+
+test('frozen GIF plate recovery preserves the GIF unit role and label', async () => {
+  const store = new AtomicMemoryStore();
+  const created = await createSocialImageTask(store, 'tenant-a', { imageType: 'gif_poster', title: '动态海报' });
+  const prepared = await updateSocialImageTask(store, 'tenant-a', created.id, created.version, { renderBrief: {
+    headline: 'Main', subheadline: '', originBadge: '', trustBadges: [], sellingPoints: [],
+    process: [], categories: [], bottomBar: [], cta: '',
+  } });
+  assert.equal(prepared.kind, 'updated');
+  if (prepared.kind !== 'updated') return;
+  const planned = await persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id, expectedVersion: prepared.task.version });
+  const unit = planned.renderPlan!.units[0]!;
+  const renderRequestHash = 'f'.repeat(64);
+  await claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: unit.jobId, idempotencyKey: unit.idempotencyKey, plannedInputHash: unit.plannedInputHash, renderRequestHash });
+  const bytes = await sharp({ create: { width: 2, height: 2, channels: 4, background: '#ffffff' } }).png().toBuffer();
+  const material = {
+    id: 'material-gif-1', tenantId: 'tenant-a', scope: 'own', type: 'image', sourceType: 'ai_generated_marketing_image',
+    file: 'tenants/tenant-a/material-gif-1.png', contentSha256: createHash('sha256').update(bytes).digest('hex'),
+    provenance: { socialImageTaskId: created.id, socialImageJobId: unit.jobId, socialImageInputHash: renderRequestHash },
+  };
+  const recovered = await recoverSocialImagePaidMaterial({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: unit.jobId, materials: [material], readBytes: async () => ({ bytes, mimeType: 'image/png' }),
+    materialUrl: () => '/media/tenants/tenant-a/material-gif-1.png' });
+  assert.equal(recovered.task.outputs[0]?.role, 'gif_plate');
+  assert.equal(recovered.task.outputs[0]?.label, unit.label);
+});

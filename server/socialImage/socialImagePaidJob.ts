@@ -105,6 +105,14 @@ export async function completeSocialImagePaidJob(input: {
     const { row, task } = await taskRow(input.store, input.tenantId, input.taskId);
     const job = task.generationJobs.find(item => item.id === input.jobId);
     if (!job || job.inputHash !== input.inputHash) throw new SocialImagePaidJobError('social_image_paid_job_input_changed');
+    if (job.planVersion !== undefined) {
+      const unit = task.renderPlan?.units.find(item => item.jobId === job.id);
+      if (!unit || task.renderPlan?.version !== job.planVersion || unit.index !== job.unitIndex
+        || unit.plannedInputHash !== job.plannedInputHash || unit.idempotencyKey !== job.idempotencyKey
+        || input.output.role !== unit.role || input.output.label !== unit.label) {
+        throw new SocialImagePaidJobError('social_image_planned_unit_output_invalid');
+      }
+    }
     if (job.outputNodeIds.length) {
       const recorded = task.outputs.find(item => job.outputNodeIds.includes(item.id));
       if (recorded?.materialId === input.output.materialId) return task;

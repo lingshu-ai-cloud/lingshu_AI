@@ -34,8 +34,13 @@ export async function recoverSocialImagePaidMaterial(input: {
   if (!job?.inputHash || !['running', 'outcome_unknown', 'quality_checking'].includes(job.status)) {
     throw new SocialImagePaidJobError('social_image_paid_job_not_recoverable');
   }
-  if (task.imageType === 'carousel' || task.imageType === 'gif_poster') {
-    throw new SocialImagePaidJobError('social_image_multi_output_not_ready');
+  const multiOutput = task.imageType === 'carousel' || task.imageType === 'gif_poster';
+  const unit = multiOutput ? task.renderPlan?.units.find(item => item.jobId === job.id) : undefined;
+  if (multiOutput && (!unit || task.renderPlan?.version !== job.planVersion
+    || unit.index !== job.unitIndex || unit.plannedInputHash !== job.plannedInputHash
+    || unit.idempotencyKey !== job.idempotencyKey
+    || unit.role !== (task.imageType === 'carousel' ? 'carousel_page' : 'gif_plate'))) {
+    throw new SocialImagePaidJobError('social_image_planned_unit_identity_invalid');
   }
   const matches = input.materials.filter(item => matchingMaterial(item, input.tenantId, input.taskId, input.jobId, job.inputHash!));
   if (!matches.length) throw new SocialImagePaidJobError('social_image_material_not_found');
@@ -55,9 +60,9 @@ export async function recoverSocialImagePaidMaterial(input: {
     store: input.store, tenantId: input.tenantId, taskId: input.taskId, jobId: input.jobId,
     inputHash: job.inputHash, provider: String(material.sourceProvider || 'openai'),
     output: {
-      id: randomUUID(), role: 'single', label: '主视觉', state: 'quality_checking',
+      id: randomUUID(), role: unit?.role || 'single', label: unit?.label || '主视觉', state: 'quality_checking',
       mediaUrl, materialId: material.id,
-      version: Math.max(0, ...task.outputs.filter(item => item.role === 'single' && item.label === '主视觉').map(item => item.version)) + 1,
+      version: Math.max(0, ...task.outputs.filter(item => item.role === (unit?.role || 'single') && item.label === (unit?.label || '主视觉')).map(item => item.version)) + 1,
       qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'uncertain', severity: 'hard', note: '等待人工复核' })),
     },
   });
