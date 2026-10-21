@@ -182,3 +182,8 @@
 - 将本地预览 Origin/回环地址判定、本地账号凭据读写/密码比对和 PocketBase 登录身份解析从 `server/routes/auth.ts` 抽入 `server/auth/authIdentityHelpers.ts`；路由保留既有公开导出。`auth.ts` 由 890 行降至 792 行，撤销历史超限豁免，剩余 39 项。
 - 本地预览测试夹具明确声明其断言允许的 5183 端口，未改变生产默认 Origin。该测试及邀请注册测试通过；TypeScript、架构扫描/ratchet、生产构建及 191 项迁移仓库只读预检通过，构建仍有大 chunk 警告。
 - `test:security-boundaries` 全链在 `adminSecretResponse.test.ts` 的已有前端源码正则断言处失败，期望特定 `setForm` 字面写法，而当前组件使用 `withoutPlatformCredentials`；此失败与认证模块拆分无关，但全链不能计为通过。未执行外部登录、付费调用、迁移或部署。
+
+## 过时测试夹具与安全门禁收口（2026-10-22）
+
+- 安全响应测试不再只比对四个 Secret 的固定源码字串，改为确认成功保存分支清空 YouTube、Meta、Instagram、TikTok 和 LinkedIn 五个 Secret 草稿；生产组件原已执行这五项清空。`test:security-boundaries` 全链通过。
+- TikTok/YouTube 发布并发测试夹具补齐当前统一发布预检必需的文案，使测试实际到达付费前认领、并发阻断和未知回执恢复分支；发布相关 11 项测试通过。两处都只修正测试合同，没有放宽生产安全规则，也没有调用真实发布平台。

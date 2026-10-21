@@ -93,6 +93,7 @@ try {
     platform: 'tiktok',
     videoPath,
     title: 'Async TikTok fixture',
+    description: 'Async TikTok fixture description',
     privacyStatus: 'public',
     tiktokPostOptions: {privacyLevel:'PUBLIC_TO_EVERYONE',allowComment:false,allowDuet:false,allowStitch:false,commercial:{ownBrand:false,brandedContent:false},isAigc:false,musicUsageConfirmed:true,userConsent:true},
     contentId: 'content-1',
@@ -156,6 +157,7 @@ try {
     platform: 'tiktok',
     videoPath,
     title: 'Duplicate attempt',
+    description: 'Duplicate attempt description',
     privacyStatus: 'public',
     contentId: 'content-1',
     trackWaLink: false,
@@ -193,7 +195,7 @@ try {
   }) as typeof axios.put;
   const youtubeInput = {
     tenantId: 'tenant-1', accountId: 'youtube-account', platform: 'youtube', videoPath,
-    title: 'YouTube uncertain fixture', privacyStatus: 'public', contentId: 'youtube-content', trackWaLink: false,
+    title: 'YouTube uncertain fixture', description: 'YouTube uncertain fixture description', privacyStatus: 'public', contentId: 'youtube-content', trackWaLink: false,
     sourceKind: 'manual_upload',
   } as const;
   await assert.rejects(publishVideoToAccount(youtubeInput), /simulated connection reset/);

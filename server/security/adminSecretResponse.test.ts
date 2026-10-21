@@ -112,7 +112,10 @@ try {
   assert.doesNotMatch(tenantUiSource, /metaWebhookVerifyToken|webhookVerifyToken/, 'the OAuth-only tenant form must neither read nor submit webhook secrets');
   assert.match(tenantUiSource, /<Field secret[^\n]+value=\{form\[card\.secretKey\]\}/, 'tenant OAuth credentials must use password fields with write-only draft values');
   assert.match(tenantUiSource, /type=\{secret \? 'password' : 'text'\}/, 'secret fields must not display plaintext');
-  assert.match(tenantUiSource, /setForm\(current => \(\{ \.\.\.current, youtubeOAuthClientSecret: '', metaSocialAppSecret: '', instagramAppSecret: '', tiktokClientSecret: '' \}\)\)/, 'successful saves must clear every secret draft');
+  const saveSecretReset = tenantUiSource.match(/setForm\(current => \(\{ \.\.\.current, [^\n]+ \}\)\);\s*await load\(\);/)?.[0] || '';
+  for (const secret of ['youtubeOAuthClientSecret', 'metaSocialAppSecret', 'instagramAppSecret', 'tiktokClientSecret', 'linkedinClientSecret']) {
+    assert.match(saveSecretReset, new RegExp(`${secret}: ''`), `successful saves must clear ${secret}`);
+  }
 
   console.log('admin secret response tests passed');
 } finally {
