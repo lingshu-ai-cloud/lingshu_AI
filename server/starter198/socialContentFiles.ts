@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -6,7 +6,7 @@ import path from 'node:path';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { SocialContentFile } from '../../shared/contracts/socialContentWorkflow.js';
-import { upsertSocialTaskCloudMaterial, type UpsertSocialTaskCloudMaterialInput } from '../lib/cloudMaterials.js';
+import type { UpsertSocialTaskCloudMaterialInput } from '../lib/cloudMaterials.js';
 import { upsertSocialTaskMaterial, type MaterialRecord } from '../lib/materialLibrary.js';
 import {
   materialAssetObjectKey,
@@ -16,18 +16,21 @@ import {
 } from '../storage/materialAssets.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { objectStorageEnabled, objectStorageDownload, objectStorageGetObject, objectStorageHead, objectStorageUploadFile } from '../storage/objectStorage.js';
-import { attachFileFromPath, fetchFile } from '../storage/files.js';
-import {
-  acquireDurableOperationLease,
-  releaseDurableOperationLease,
-  type DurableOperationLease,
-} from '../runtime/durableLease.js';
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
 import { executeSocialContentMutation } from './socialContentMutation.js';
 import { socialTaskFileCapacity } from './socialContentLimits.js';
 import { generatedAssetArchive } from '../lib/generatedAssetArchive.js';
 import type { GeneratedAssetArchiveInput } from '../../shared/contracts/generatedMaterial.js';
 import { requireSocialTask } from './socialContentRecords.js';
+import { withSocialContentUploadAdmission } from './socialContentFileAdmission.js';
+export { MAX_CONCURRENT_SOCIAL_CONTENT_UPLOADS, withSocialContentUploadAdmission } from './socialContentFileAdmission.js';
+import {
+  MIME_EXTENSIONS, defaultBackendFilePort, defaultSocialTaskMaterialPort,
+  magicAllowed, mime, safeName, socialContentFileDownloadUrl,
+  type SocialContentBackendFilePort, type SocialTaskMaterialPort, type StoredSocialContentFile,
+} from './socialContentFilePrimitives.js';
+export type { SocialContentBackendFilePort, SocialTaskMaterialPort, StoredSocialContentFile } from './socialContentFilePrimitives.js';
+export { cleanupTransientSocialContentUpload, durableSocialContentFileDescriptor, socialContentFileDownloadUrl } from './socialContentFilePrimitives.js';
 import {
   SocialContentWorkflowError,
   socialPublicId,
@@ -36,174 +39,9 @@ import {
 } from './socialContentValidation.js';
 
 export const MAX_SOCIAL_CONTENT_FILE_BYTES = 110 * 1024 * 1024;
-export const MAX_CONCURRENT_SOCIAL_CONTENT_UPLOADS = 16;
 const ROOT = path.resolve(process.cwd(), 'data', 'social-content-sources');
 const TEMP = path.join(os.tmpdir(), 'lingshu-social-content-upload');
-const UPLOAD_POOL_TENANT = 'starter198-social-upload-pool';
 const BACKEND_FILE_FIELD = 'backend_file';
-const SOCIAL_CONTENT_API_ROOT = '/api/overseas/starter-198/social-content';
-
-const MIME_EXTENSIONS: Record<string, string> = {
-  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
-  'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm',
-  'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/mp4': 'm4a',
-  'application/pdf': 'pdf', 'text/plain': 'txt', 'text/csv': 'csv',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
-};
-
-export interface StoredSocialContentFile {
-  storageKind: 'local' | 'object' | 'backend_file';
-  storageKey: string;
-  name: string;
-  mimeType: string;
-  byteSize: number;
-  sha256: string;
-  /** OS-temp producer input. Never write this path into a backend record. */
-  transientPath?: string;
-}
-
-export interface SocialContentBackendFilePort {
-  attach(input: {
-    collection: string;
-    recordId: string;
-    field: string;
-    name: string;
-    path: string;
-    contentType: string;
-  }): Promise<string | null>;
-  fetch(input: {
-    collection: string;
-    recordId: string;
-    filename: string;
-  }): Promise<{ buf: Buffer; contentType: string } | null>;
-}
-
-const defaultBackendFilePort: SocialContentBackendFilePort = {
-  attach: input => attachFileFromPath(input.collection, input.recordId, input.field, {
-    name: input.name,
-    path: input.path,
-    contentType: input.contentType,
-  }),
-  fetch: input => fetchFile(input.collection, input.recordId, input.filename),
-};
-
-export interface SocialTaskMaterialPort {
-  upsert(input: UpsertSocialTaskCloudMaterialInput): Promise<Record<string, any>>;
-}
-
-const defaultSocialTaskMaterialPort: SocialTaskMaterialPort = {
-  upsert: input => upsertSocialTaskCloudMaterial(input),
-};
-
-export function socialContentFileDownloadUrl(fileId: string): string {
-  return `${SOCIAL_CONTENT_API_ROOT}/files/${encodeURIComponent(fileId)}`;
-}
-
-async function acquireUploadLease(input: {
-  repository: Starter198Repository;
-  tenantId: string;
-  scope: string;
-  subjectId: string;
-  ownerId: string;
-}): Promise<DurableOperationLease | null> {
-  if (!input.repository.dataStore) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new SocialContentWorkflowError('social_content_upload_admission_unavailable', 503);
-    }
-    return null;
-  }
-  try {
-    return await acquireDurableOperationLease({
-      dataStore: input.repository.dataStore,
-      tenantId: input.tenantId,
-      scope: input.scope,
-      subjectId: input.subjectId,
-      ownerId: input.ownerId,
-      leaseDurationMs: 15 * 60_000,
-    });
-  } catch {
-    throw new SocialContentWorkflowError('social_content_upload_admission_unavailable', 503);
-  }
-}
-
-/** Database-backed admission protects every process, not just one Node worker. */
-export async function withSocialContentUploadAdmission<T>(input: {
-  repository: Starter198Repository;
-  tenantId: string;
-  taskId: string;
-  action: () => Promise<T>;
-}): Promise<T> {
-  if (!input.repository.dataStore) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new SocialContentWorkflowError('social_content_upload_admission_unavailable', 503);
-    }
-    return input.action();
-  }
-  const ownerId = `social-upload:${process.pid}:${randomUUID()}`;
-  let poolLease: DurableOperationLease | null = null;
-  let taskLease: DurableOperationLease | null = null;
-  try {
-    for (let index = 0; index < MAX_CONCURRENT_SOCIAL_CONTENT_UPLOADS; index += 1) {
-      poolLease = await acquireUploadLease({
-        repository: input.repository,
-        tenantId: UPLOAD_POOL_TENANT,
-        scope: 'starter-social-upload-pool',
-        subjectId: `slot-${index}`,
-        ownerId,
-      });
-      if (poolLease) break;
-    }
-    if (!poolLease) throw new SocialContentWorkflowError('social_content_upload_busy', 429);
-    taskLease = await acquireUploadLease({
-      repository: input.repository,
-      tenantId: input.tenantId,
-      scope: 'starter-social-upload-task',
-      subjectId: input.taskId,
-      ownerId,
-    });
-    if (!taskLease) throw new SocialContentWorkflowError('social_content_task_upload_busy', 429);
-    return await input.action();
-  } finally {
-    if (taskLease) {
-      await releaseDurableOperationLease({ dataStore: input.repository.dataStore, lease: taskLease }).catch(() => undefined);
-    }
-    if (poolLease) {
-      await releaseDurableOperationLease({ dataStore: input.repository.dataStore, lease: poolLease }).catch(() => undefined);
-    }
-  }
-}
-
-function safeName(value: unknown): string {
-  const name = path.basename(socialText(value));
-  if (!name || name.length > 240 || /[\u0000-\u001f]/.test(name)) {
-    throw new SocialContentWorkflowError('social_content_file_name_invalid', 400);
-  }
-  return name;
-}
-
-function mime(value: unknown): string {
-  const type = socialText(value).toLowerCase().split(';', 1)[0];
-  if (!MIME_EXTENSIONS[type]) throw new SocialContentWorkflowError('social_content_file_type_unsupported', 415);
-  return type;
-}
-
-function magicAllowed(type: string, bytes: Buffer): boolean {
-  if (!bytes.length) return false;
-  if (type === 'image/jpeg') return bytes[0] === 0xff && bytes[1] === 0xd8;
-  if (type === 'image/png') return bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-  if (type === 'image/gif') return /^GIF8[79]a/.test(bytes.subarray(0, 6).toString('ascii'));
-  if (type === 'image/webp') return bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
-  if (type === 'application/pdf') return bytes.subarray(0, 5).toString('ascii') === '%PDF-';
-  if (type === 'video/mp4' || type === 'video/quicktime' || type === 'audio/mp4') return bytes.subarray(4, 8).toString('ascii') === 'ftyp';
-  if (type === 'video/webm') return bytes.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
-  if (type === 'audio/mpeg') return bytes.subarray(0, 3).toString('ascii') === 'ID3' || (bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0);
-  if (type.includes('officedocument')) return bytes[0] === 0x50 && bytes[1] === 0x4b;
-  if (type.startsWith('text/')) return !bytes.includes(0);
-  return type === 'audio/wav' || type === 'audio/x-wav'
-    ? bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WAVE'
-    : false;
-}
 
 export async function storeSocialContentFile(input: {
   stream: Readable;
@@ -300,22 +138,6 @@ export async function storeSocialContentFile(input: {
   } finally {
     if (!retainTemporary) await fsp.rm(temporary, { force: true }).catch(() => undefined);
   }
-}
-
-export async function cleanupTransientSocialContentUpload(upload: StoredSocialContentFile): Promise<void> {
-  const transientPath = upload.transientPath;
-  if (!transientPath) return;
-  const resolved = path.resolve(transientPath);
-  const root = path.resolve(TEMP);
-  if (!resolved.startsWith(`${root}${path.sep}`)) {
-    throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
-  }
-  await fsp.rm(resolved, { force: true });
-}
-
-export function durableSocialContentFileDescriptor(upload: StoredSocialContentFile): StoredSocialContentFile {
-  const { transientPath: _transientPath, ...stored } = upload;
-  return stored;
 }
 
 /**
