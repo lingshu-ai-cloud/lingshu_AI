@@ -445,6 +445,7 @@ export interface FbPosterResult {
   dmOpening: string;
   fieldsToConfirm: string[];
   imagePrompt: string;
+  keywordResearch?: import('../../shared/contracts/keywordResearch').KeywordResearchResult;
   error?: string;
 }
 
@@ -543,8 +544,12 @@ export const studioApi = {
     audience?: string;
     sellingPoints?: string;
     tone?: string;
+    referenceCaption?: string;
+    brandName?: string;
+    categoryTerms?: string[];
+    targetMarket?: string;
   }, _fb: { caption: string; hashtags: string[] } = { caption: '', hashtags: [] }) =>
-    post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; caption: string; hashtags: string[]; fieldsToConfirm?: string[]; error?: string }>('caption', b, { ok: false, caption: '', hashtags: [] }),
+    post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; caption: string; hashtags: string[]; keywordResearch?: import('../../shared/contracts/keywordResearch').KeywordResearchResult; fieldsToConfirm?: string[]; error?: string }>('caption', b, { ok: false, caption: '', hashtags: [] }),
 
   fbPoster: (b: {
     mode: 'material' | 'clone' | 'product';
@@ -556,6 +561,10 @@ export const studioApi = {
     provider?: 'gemini' | 'qwen';
     materials?: Array<{ id?: string; name: string; type?: string; folder?: string; role?: string }>;
     referenceNotes?: string;
+    referenceCaption?: string;
+    brandName?: string;
+    categoryTerms?: string[];
+    targetMarket?: string;
     confirmedFields?: Record<string, string>;
   }) =>
     post<FbPosterResult>('fb-poster', b, { ok: false, caption: '', hashtags: [], commentCta: '', dmOpening: '', fieldsToConfirm: [], imagePrompt: '' }),

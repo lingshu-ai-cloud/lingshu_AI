@@ -233,6 +233,7 @@ export default function SocialContentPlanningPage({
             referenceMediaUrl={seed?.referenceMediaUrl}
             referenceImageMode={sourceRequest?.sourceContext?.referenceImageMode}
             referenceImageUrls={sourceRequest?.sourceContext?.referenceImageUrls}
+            referenceCaption={sourceRequest?.sourceContext?.referenceCaption}
             initialTask={imageTask}
             onShowCreations={() => setView('creations')}
           /> : <div className="flex h-full min-h-0 flex-col bg-white">

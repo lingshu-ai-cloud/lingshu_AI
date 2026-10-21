@@ -1703,6 +1703,7 @@ export interface VideoKickoff {
     aiAnalysis?: {
       materialUrl?: string;
       materialPoster?: string;
+      caption?: string;
       imageEvidence?: {
         version?: number;
         status?: string;
@@ -8063,7 +8064,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setCaptionLoading(true);
     try {
       const result = await studioApi.caption(
-        { script, productInfo: activeProductInfo, platform, language: lang, provider, audience, sellingPoints, tone },
+        { script, productInfo: activeProductInfo, platform, language: lang, provider, audience, sellingPoints, tone,
+          referenceCaption: videoKickoff?.video?.aiAnalysis?.caption || '', targetMarket: audience },
         { caption, hashtags: [] },
       );
       if (!result.ok || result.source !== 'ai' || !result.caption.trim()) throw new Error(result.error || '发布文案生成失败，原文案已保留。');
@@ -8217,6 +8219,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         referenceNotes: mode === 'clone'
           ? [hotPosterRefs, videoKickoff ? cloneReferenceAnalysisText(videoKickoff) : ''].filter(Boolean).join('\n\n')
           : '',
+        referenceCaption: videoKickoff?.video?.aiAnalysis?.caption || '',
+        targetMarket: audience,
       });
       if (!result.ok || result.source !== 'ai' || !result.poster?.headline) throw new Error(result.error || '海报文案生成失败');
       const generatedPoster = result.poster;
@@ -8285,7 +8289,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       if (!coversResp.ok || coversResp.source !== 'ai' || !coversResp.covers[0]) throw new Error(coversResp.error || '封面标题生成失败');
       setCoverTitle(coversResp.covers[0]);
       const cap = await studioApi.caption(
-        { script: scriptResp.script, productInfo: activeProductInfo, platform, language: lang, provider, audience, sellingPoints, tone },
+        { script: scriptResp.script, productInfo: activeProductInfo, platform, language: lang, provider, audience, sellingPoints, tone,
+          referenceCaption: videoKickoff?.video?.aiAnalysis?.caption || '', targetMarket: audience },
         { caption, hashtags: [] },
       );
       if (!cap.ok || cap.source !== 'ai' || !cap.caption.trim()) throw new Error(cap.error || '发布文案生成失败');

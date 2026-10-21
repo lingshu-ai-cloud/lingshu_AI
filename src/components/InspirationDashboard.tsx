@@ -4210,6 +4210,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             referenceContentType: 'image',
             referenceImageMode,
             referenceImageUrls,
+            referenceCaption: video.aiAnalysis?.caption || '',
           },
         },
       } }));
@@ -4252,6 +4253,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             referenceThumbnail: video.thumbnail,
             referenceMediaUrl: video.videoUrl || undefined,
             referenceContentType: 'video',
+            referenceCaption: video.aiAnalysis?.caption || '',
             referenceShots: getAnalysis(video)?.scriptDetails15s.map(detail => ({ time: detail.time, dialogue: detail.dialogue, subtitle: detail.subtitle, visual: detail.visual, firstFrameRef: detail.materialEvidence?.firstFrameRef || undefined, firstFrameSeconds: detail.materialEvidence?.firstFrameSeconds })) || [],
           },
         },

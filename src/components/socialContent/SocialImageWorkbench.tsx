@@ -60,7 +60,7 @@ function posterStyleForType(type: SocialImageContentType) {
 }
 
 export default function SocialImageWorkbench({
-  creationPath, referenceTitle, referenceThumbnail, referenceMediaUrl, referenceImageMode, referenceImageUrls, initialTask, onShowCreations,
+  creationPath, referenceTitle, referenceThumbnail, referenceMediaUrl, referenceImageMode, referenceImageUrls, referenceCaption, initialTask, onShowCreations,
 }: {
   creationPath: SocialImageCreationPath;
   referenceTitle?: string;
@@ -68,6 +68,7 @@ export default function SocialImageWorkbench({
   referenceMediaUrl?: string;
   referenceImageMode?: SocialImageProductionMode;
   referenceImageUrls?: string[];
+  referenceCaption?: string;
   initialTask?: SocialImageCreationTask;
   onShowCreations: () => void;
 }) {
@@ -243,7 +244,7 @@ export default function SocialImageWorkbench({
       productRefs: productIds, productNames: selectedProducts.map(item => item.name), audience: [audience], factuality,
       targetAction: '联系销售或申请样品', referenceUrls: [benchmarkImage, referenceTitle].filter(Boolean), enterpriseAssets,
       ...(creationPath === 'viral_replication' ? { referenceSnapshot: {
-        sourceUrl: referenceTitle, title: referenceTitle, imageUrls: referenceImageUrls?.length ? referenceImageUrls : benchmarkImage ? [benchmarkImage] : [], collectedAt: new Date().toISOString(),
+        sourceUrl: referenceTitle, title: referenceTitle, caption: referenceCaption, imageUrls: referenceImageUrls?.length ? referenceImageUrls : benchmarkImage ? [benchmarkImage] : [], collectedAt: new Date().toISOString(),
       } } : {}),
     });
     setTask(created.task);
@@ -278,6 +279,9 @@ export default function SocialImageWorkbench({
       platform, ratio, posterStyle: posterStyleForType(imageType), language,
       materials: selectedMaterials.map(item => ({ id: item.id, name: item.name, type: item.type, folder: item.folder, role: item.shotFunction || item.primaryTheme || '企业图片素材' })),
       referenceNotes: [referenceTitle ? `对标作品：${referenceTitle}` : '', `核心主张：${resolvedCoreClaim}`, `成片模式：${PRODUCTION_MODES.find(item => item.id === productionMode)?.label}`, `后台题材：${CONTENT_ARCHETYPES.find(item => item.id === imageType)?.label}`].filter(Boolean).join('\n'),
+      referenceCaption: activeTask.referenceSnapshot?.caption || referenceCaption || '',
+      categoryTerms: selectedProducts.map(item => item.name),
+      targetMarket: audience,
       confirmedFields: confirmedFacts,
     });
     if (!result.ok || !result.poster) throw new Error(result.error || '图文策划生成失败');

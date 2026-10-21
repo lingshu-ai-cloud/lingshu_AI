@@ -389,7 +389,7 @@ export default function TrafficPage({
         videoUrl?: string;
         contentFormat?: string;
         crawledAt?: string;
-        aiAnalysis?: { imageUrls?: string[]; imageCount?: number };
+        aiAnalysis?: { imageUrls?: string[]; imageCount?: number; caption?: string };
       };
     };
     if (kickoff.source === 'material_library' && kickoff.generatedVideo?.material) {
@@ -466,6 +466,7 @@ export default function TrafficPage({
               referenceContentType: 'image',
               referenceImageMode,
               referenceImageUrls,
+              referenceCaption: kickoff.video.aiAnalysis?.caption || '',
             },
           },
         },

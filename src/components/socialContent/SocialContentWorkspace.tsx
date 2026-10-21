@@ -29,6 +29,7 @@ export interface SocialContentSourceContext {
   referenceContentType?: 'video' | 'image';
   referenceImageMode?: SocialImageProductionMode;
   referenceImageUrls?: string[];
+  referenceCaption?: string;
   referenceShots?: Array<{ time: string; dialogue?: string; subtitle?: string; visual?: string; firstFrameRef?: string; firstFrameSeconds?: number }>;
 }
 

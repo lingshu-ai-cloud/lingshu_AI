@@ -77,6 +77,7 @@ import { secureStudioRenderManifest, studioRenderAssetPath, studioRenderManifest
 import { studioBgmMediaPath, studioBgmObjectKey } from '../lib/studioBgmAccess.js';
 import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
 import { generatePosterImage, ImageProviderRejectedError, imageExt, type ReferenceImage } from '../lib/imageGen.js';
+import { keywordPromptContext, mergePlannedHashtags, researchKeywords } from '../lib/keywordIntelligence.js';
 import { buildSocialImageFirstDraftPrompt, socialImageUnitPoster } from '../socialImage/socialImageFirstDraft.js';
 import { conformSocialImageToCanvas, socialImageCanvasFromBenchmark } from '../socialImage/referenceCanvas.js';
 import { buildSocialImageRevisionPrompt, socialImageRequestedRatio, socialImageRevisionTarget } from '../socialImage/socialImageRevision.js';
@@ -4896,6 +4897,10 @@ studioRouter.post('/fb-poster', async (req, res) => {
     provider,
     materials = [],
     referenceNotes = '',
+    referenceCaption = '',
+    brandName = '',
+    categoryTerms = [],
+    targetMarket = '',
     confirmedFields = {},
   } = req.body ?? {};
   const providerOpt: 'qwen' = 'qwen';
@@ -4947,6 +4952,12 @@ studioRouter.post('/fb-poster', async (req, res) => {
     : mode === 'material'
       ? 'Use selected materials only for directly visible product appearance and composition. Material names or folders do not prove factory ownership, certification, export, delivery, pricing, MOQ, or customization capability.'
       : 'Use enterprise profile and product info as the primary source.';
+  const keywordResearch = researchKeywords({
+    platform, language, targetMarket, brandName,
+    productName: String(productInfo || '').split(/[\n；;]/)[0]?.replace(/^产品名称[:：]?\s*/, '').trim(),
+    categoryTerms: Array.isArray(categoryTerms) ? categoryTerms.map(String).slice(0, 8) : [],
+    valueThemes: [posterStyle].filter(Boolean), referenceCaption, maxHashtags: 10,
+  });
 
   const prompt = `You are a senior B2B social media creative director. Never assume that the company is a factory, exporter, OEM/ODM supplier, private-label provider, or certified business unless the authenticated enterprise profile explicitly says so.
 Create a structured poster brief and ${platform} caption in ${lang}.
@@ -4967,11 +4978,17 @@ ${materialLines || '(none selected yet)'}
 Reference / inspiration notes:
 ${String(referenceNotes || '').slice(0, 1500) || '(none)'}
 
+Benchmark post caption (structure only; do not copy competitor identity or facts):
+${String(referenceCaption || '').slice(0, 2500) || '(none supplied)'}
+
+${keywordPromptContext(keywordResearch)}
+
 Hard rules:
 - AI may optimize expression, but must not invent commercial promises.
 - MOQ, certifications, lead time, price, export countries, factory qualifications must come from the authenticated profile or the explicit user-confirmed task facts above; otherwise place them in fieldsToConfirm.
 - If Generation channel is clone, output a module-level deconstruction and local asset matching plan. The final poster must be a new composition using our product/materials, not a copy of the competitor poster.
 - Poster text should be concise enough for a dense B2B product-information poster.
+- Caption must follow the supplied replication contract: preserve paragraph rhythm, emoji positions, CTA position and hashtag role pattern, but replace every brand, product, partner and factual statement with verified enterprise context.
 - Use exact English text for poster fields when language is English.
 - Return ONLY valid JSON. No markdown.
 
@@ -5065,11 +5082,12 @@ Schema:
           layoutModules: Array.isArray(obj.layoutModules) ? obj.layoutModules.slice(0, 12) : [],
           poster: safeDraft.poster,
           caption: safeDraft.caption,
-          hashtags: Array.isArray(safeDraft.hashtags) ? safeDraft.hashtags.map(String).slice(0, 10) : [],
+          hashtags: mergePlannedHashtags(safeDraft.hashtags, keywordResearch, 10),
           commentCta: safeDraft.commentCta,
           dmOpening: safeDraft.dmOpening,
           fieldsToConfirm,
           imagePrompt: safeDraft.imagePrompt,
+          keywordResearch,
         });
         return;
       }
@@ -5479,7 +5497,7 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
 // POST /studio/caption  Body: { script?, productInfo?, platform?, language? }
 studioRouter.post('/caption', async (req, res) => {
   if (!await consumeDemoQuota(req, res, 'generation')) return;
-  const { script = '', productInfo = '', platform = 'tiktok', language = 'en', provider, audience = '', sellingPoints = '', tone = '' } = req.body ?? {};
+  const { script = '', productInfo = '', platform = 'tiktok', language = 'en', provider, audience = '', sellingPoints = '', tone = '', referenceCaption = '', brandName = '', categoryTerms = [], targetMarket = '' } = req.body ?? {};
   const lang = langName(language);
   const providerOpt: 'qwen' = 'qwen';
   const enterprise = await enterpriseCtx();
@@ -5504,17 +5522,26 @@ studioRouter.post('/caption', async (req, res) => {
     return;
   }
 
+  const keywordResearch = researchKeywords({
+    platform, language, targetMarket, brandName,
+    productName: String(productInfo || '').split(/[\n；;]/)[0]?.replace(/^产品名称[:：]?\s*/, '').trim(),
+    categoryTerms: Array.isArray(categoryTerms) ? categoryTerms.map(String).slice(0, 8) : [],
+    valueThemes: [sellingPoints].filter(Boolean), referenceCaption, maxHashtags: 8,
+  });
   const prompt = `Write a ${platform} post caption in ${lang} for this overseas e-commerce video.
 Product: ${productInfo || '(see enterprise profile)'} ; audience: ${audience || '(infer)'} ; selling points: ${sellingPoints || '(infer)'} ; tone: ${tone || '(fit platform)'} ; script: ${script.slice(0, 300)}
+Benchmark caption (structure only; never copy competitor identity or claims): ${String(referenceCaption || '').slice(0, 2000) || '(not supplied)'}
+${keywordPromptContext(keywordResearch)}
 Use only facts and product terms explicitly present above. Never invent a product category, certification, price, MOQ, shipping promise, lead time, geography or performance claim.
-Return ONLY JSON: { "caption": string (1-2 sentences, may include 1-2 emojis), "hashtags": string[] (5-8 trending tags, no # prefix) }`;
+Follow the replication contract closely. Preserve its paragraph count, emoji rhythm, CTA position and hashtag role order where available, while replacing all subject matter with verified enterprise content.
+Return ONLY JSON: { "caption": string, "hashtags": string[] (no # prefix) }`;
 
   try {
     const text = await callLLM(prompt, { backend: providerOpt, systemPrompt: productEnterprise });
     const obj = extractJSON<{ caption: string; hashtags: string[] }>(text);
     if (obj?.caption) {
       const caption = String(obj.caption || '').trim();
-      const hashtags = Array.isArray(obj.hashtags) ? obj.hashtags.map(String).slice(0, 8) : [];
+      const hashtags = mergePlannedHashtags(obj.hashtags, keywordResearch, 8);
       const audit = auditCommercialClaims([caption, ...hashtags].join('\n'), productEnterprise);
       if (audit.issues.length || audit.fieldsToConfirm.length) {
         res.status(422).json({
@@ -5527,7 +5554,7 @@ Return ONLY JSON: { "caption": string (1-2 sentences, may include 1-2 emojis), "
         });
         return;
       }
-      res.json({ ok: true, source: 'ai', provenance: 'ai', publishable: true, qualityStatus: 'passed', caption, hashtags });
+      res.json({ ok: true, source: 'ai', provenance: 'ai', publishable: true, qualityStatus: 'passed', caption, hashtags, keywordResearch });
       return;
     }
     throw new Error('parse');
