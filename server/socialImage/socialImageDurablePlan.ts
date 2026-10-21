@@ -31,6 +31,51 @@ export function socialImagePlanSourceHash(task: SocialImageCreationTask): string
   });
 }
 
+/** Derive paid render inputs solely from the frozen task, never from browser fields. */
+export function socialImagePlannedRenderInput(task: SocialImageCreationTask, jobId: string) {
+  const plan = task.renderPlan;
+  if ((task.imageType !== 'carousel' && task.imageType !== 'gif_poster') || !plan
+    || plan.sourceHash !== socialImagePlanSourceHash(task)) {
+    throw new SocialImagePaidJobError('social_image_frozen_plan_invalid');
+  }
+  const unit = plan.units.find(item => item.jobId === jobId);
+  const job = task.generationJobs.find(item => item.id === jobId);
+  if (!unit || !job || job.planVersion !== plan.version || job.unitIndex !== unit.index
+    || job.plannedInputHash !== unit.plannedInputHash || job.idempotencyKey !== unit.idempotencyKey
+    || unit.role !== (task.imageType === 'carousel' ? 'carousel_page' : 'gif_plate')) {
+    throw new SocialImagePaidJobError('social_image_planned_unit_identity_invalid');
+  }
+  if (unit.plannedInputHash !== digest({ sourceHash: plan.sourceHash, planVersion: plan.version,
+    unitIndex: unit.index, role: unit.role, poster: unit.poster })) {
+    throw new SocialImagePaidJobError('social_image_planned_unit_content_changed');
+  }
+  if (job.status !== 'queued' || job.inputHash || job.outputNodeIds.length) {
+    throw new SocialImagePaidJobError('social_image_paid_job_already_started');
+  }
+  const ratio = task.deliverySpec.aspectRatio;
+  const quality = task.deliverySpec.imageGeneration?.quality || 'low';
+  if (!['1:1', '4:5', '9:16'].includes(ratio) || !['low', 'medium', 'high'].includes(quality)) {
+    throw new SocialImagePaidJobError('social_image_planned_unit_render_config_invalid');
+  }
+  return {
+    unit,
+    poster: structuredClone(unit.poster),
+    ratio,
+    quality,
+    materialIds: [...task.materialIds],
+    productIds: [...task.contentBrief.productRefs],
+    referenceImageUrls: task.referenceSnapshot?.imageUrls.slice(0, 1) || [],
+    idempotencyKey: unit.idempotencyKey,
+    imagePrompt: [
+      `Create ${task.imageType === 'carousel' ? 'carousel page' : 'GIF background plate'} ${unit.index + 1} of ${unit.count}.`,
+      `Unit role: ${unit.role}. Core claim: ${task.contentBrief.coreClaim}.`,
+      task.imageType === 'gif_poster'
+        ? 'Generate only the variable background scene. The product, logo, badge, typography and bottom bar are fixed layers composed after all plates are ready.'
+        : 'Preserve the frozen page headline and subheadline. This page must remain distinct from the other carousel pages.',
+    ].join(' '),
+  };
+}
+
 /** Freeze carousel/GIF units and receipt identities before any paid call. */
 export async function persistSocialImageMultiUnitPlan(input: {
   store: DataStore; tenantId: string; taskId: string; expectedVersion: number;
@@ -88,6 +133,7 @@ export async function claimSocialImagePlannedUnit(input: {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
     if (!task) throw new SocialImagePaidJobError('social_image_task_missing');
+    socialImagePlannedRenderInput(task, input.jobId);
     const plan = task.renderPlan;
     if ((task.imageType !== 'carousel' && task.imageType !== 'gif_poster') || !plan || plan.sourceHash !== socialImagePlanSourceHash(task)) {
       throw new SocialImagePaidJobError('social_image_frozen_plan_invalid');

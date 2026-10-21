@@ -7,7 +7,7 @@ import type { SocialImageCreationTask } from '../../shared/contracts/socialImage
 import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } from './socialImageTask.js';
 import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, markSocialImagePaidJobUnknown, recordSocialImagePaidJobFailure, socialImageOwnedMaterialUrl, socialImageQueuedJobIssue } from './socialImagePaidJob.js';
 import { recoverSocialImagePaidMaterial } from './socialImageMaterialRecovery.js';
-import { claimSocialImagePlannedUnit, persistSocialImageMultiUnitPlan, socialImagePlanSourceHash } from './socialImageDurablePlan.js';
+import { claimSocialImagePlannedUnit, persistSocialImageMultiUnitPlan, socialImagePlanSourceHash, socialImagePlannedRenderInput } from './socialImageDurablePlan.js';
 
 class AtomicMemoryStore implements DataStore {
   private sequence = 0;
@@ -351,4 +351,34 @@ test('frozen GIF plate recovery preserves the GIF unit role and label', async ()
     materialUrl: () => '/media/tenants/tenant-a/material-gif-1.png' });
   assert.equal(recovered.task.outputs[0]?.role, 'gif_plate');
   assert.equal(recovered.task.outputs[0]?.label, unit.label);
+});
+
+test('paid multi-output request inputs are derived from the frozen server plan', async () => {
+  const store = new AtomicMemoryStore();
+  const created = await createSocialImageTask(store, 'tenant-a', { imageType: 'carousel', title: '轮播图' });
+  const prepared = await updateSocialImageTask(store, 'tenant-a', created.id, created.version, {
+    renderBrief: { headline: 'Frozen headline', subheadline: 'Frozen subheadline', originBadge: '',
+      trustBadges: [], sellingPoints: ['Value'], process: [], categories: [], bottomBar: [], cta: 'Contact us' },
+    materialIds: ['owned-material'],
+  });
+  assert.equal(prepared.kind, 'updated');
+  if (prepared.kind !== 'updated') return;
+  const planned = await persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id, expectedVersion: prepared.task.version });
+  const first = planned.renderPlan!.units[0]!;
+  const input = socialImagePlannedRenderInput(planned, first.jobId);
+  assert.equal(input.poster.headline, first.poster.headline);
+  assert.deepEqual(input.materialIds, ['owned-material']);
+  assert.equal(input.idempotencyKey, first.idempotencyKey);
+  assert.match(input.imagePrompt, /carousel page 1 of 4/);
+  input.poster.headline = 'Browser rewrite';
+  assert.equal(planned.renderPlan!.units[0]!.poster.headline, 'Frozen headline');
+  assert.throws(() => socialImagePlannedRenderInput({ ...planned, contentBrief: {
+    ...planned.contentBrief, coreClaim: 'changed after plan',
+  } }, first.jobId), /frozen_plan_invalid/);
+  assert.throws(() => socialImagePlannedRenderInput({ ...planned, generationJobs: planned.generationJobs.map(job =>
+    job.id === first.jobId ? { ...job, plannedInputHash: hash } : job) }, first.jobId), /identity_invalid/);
+  assert.throws(() => socialImagePlannedRenderInput({ ...planned, renderPlan: { ...planned.renderPlan!, units: [
+    { ...first, poster: { ...first.poster, headline: 'tampered' } }, ...planned.renderPlan!.units.slice(1),
+  ] } }, first.jobId), /content_changed/);
+  assert.throws(() => socialImagePlannedRenderInput(planned, 'unknown'), /identity_invalid/);
 });
