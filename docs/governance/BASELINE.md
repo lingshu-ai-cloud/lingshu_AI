@@ -1,6 +1,6 @@
 # 工程基线（阶段二集成）
 
-更新时间：2026-10-21（Asia/Shanghai）
+更新时间：2026-10-22（Asia/Shanghai）
 
 ## 当前集成基线
 
@@ -21,10 +21,10 @@
 ## 当前治理事实
 
 - `architecture.config.json` 使用 schema v2，普通生产 TypeScript 文件上限为 800 行；本次核验记录 49 个历史超限文件的精确行数预算。
-- CI 当前在 `build-release-images.yml` 的 `main` PR 校验步骤中调用架构检查，并以 PR base commit 为 ratchet 基线；其他 feature 分支 push 不会执行这条流水线。
+- CI 的 `build-release-images.yml` 对所有目标分支的 PR 执行架构、迁移、图片管线专项和生产构建校验，并以 PR base commit 为 ratchet 基线；push 到普通 feature 分支不触发镜像发布。
 - 本次新增的一次性债务快照仅适用于精确基线 `62f85f8cc00a41a4e492261d92e227f2786592fd` 和 ID `2026-10-21-stage1-verified-inventory`；后续 schema 或债务 ID 变更不能豁免预算上升。
 - 快照后历史预算只能保持或下降；新增文件仍受 800 行限制。
-- 工作流 `build-release-images.yml` 仅对指向 `main` 的 PR 运行验证；tag 或手动触发才进入镜像发布 job。环境部署/回滚工作流均为手动触发。
+- 工作流 `build-release-images.yml` 对所有 PR 运行验证；只有 tag 或手动触发才进入镜像发布 job。环境部署/回滚工作流均为手动触发。
 - 推送分支不等于部署授权；本项目仍遵守仓库 `AGENTS.md` 的部署限制。
 
 ## 独立状态，不混为一谈
@@ -61,3 +61,12 @@
 - 架构 ratchet 回归通过；迁移仓库只读预检 191 项通过、无 blocker；图片 AIGC 专项测试 31/31 通过。
 - 全量 TypeScript 检查通过；生产前端构建通过（保留既有大 chunk 警告）。
 - 该阶段验证只代表本地自动化/构建结果；不代表外部账号、真实供应商或线上部署验收。本次没有调用真实付费供应商、部署或推送。
+
+## 后续阶段：CI 覆盖与热点拆分（2026-10-22）
+
+- 阶段代码提交：`902d270a4aaa8a1d3b645991ec1634add70eef04`，位于集成分支 `xixi1021程永罗沟通前大整合`；这是本地阶段提交，未推送。
+- 所有目标分支的 Pull Request 现在都会运行 verify job；架构与迁移 ratchet 均以 PR base SHA 为比较基线。发布镜像的 publish/smoke job 仍排除 PR 事件，只保留 tag/手动触发路径。
+- CI 固定运行图片管线专项合同和 `server/lib/translationCues.ts` 回归。纯时间戳翻译解析从 `server/routes/studio.ts` 下沉至领域模块，Express 超时和连接生命周期仍留在路由 adapter；路由从 11,486 行降至 11,380 行，预算同步收紧。
+- AIGC render-plan 规格测试固定轮播最多 4 个独立幂等单元及角色顺序；这不是生产多输出实现。轮播/GIF UI 仍不可选，直到逐单元耐久任务、费用结算和恢复完成。
+- 验证：TypeScript 全量检查、生产前端构建、架构检查/ratchet、迁移 guard、翻译回归 3/3、图片管线 17/17、workflow 合同 2/2 均通过；Vite 有既有大 chunk 警告。无真实供应商调用、PocketBase 访问、部署或推送。
+- 阶段 0 的工作树盘点仍是 2026-10-21 历史只读快照，不表示其他工作树可清理；本轮未归档或删除任何工作树、分支或运行数据。
