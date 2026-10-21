@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import type * as XLSX from 'xlsx';
 
 /**
  * Product imports run in the browser, but the files are still untrusted input.
@@ -166,7 +166,7 @@ function assertCsvQuoteStructure(value: string): void {
   if (quoted) throw importError('CSV 文件存在未闭合的引号');
 }
 
-function effectiveDataRange(sheet: XLSX.WorkSheet): XLSX.Range | null {
+function effectiveDataRange(sheet: XLSX.WorkSheet, xlsx: typeof import('xlsx')): XLSX.Range | null {
   let range: XLSX.Range | null = null;
   let materializedCells = 0;
   for (const address of Object.keys(sheet)) {
@@ -181,7 +181,7 @@ function effectiveDataRange(sheet: XLSX.WorkSheet): XLSX.Range | null {
     // empty columns and write that inflated span into !ref. Only cells with an
     // actual value belong to the product-data range.
     if (value == null || String(value).trim() === '') continue;
-    const cell = XLSX.utils.decode_cell(address.replace(/\$/g, ''));
+    const cell = xlsx.utils.decode_cell(address.replace(/\$/g, ''));
     range = range
       ? { s: { r: Math.min(range.s.r, cell.r), c: Math.min(range.s.c, cell.c) }, e: { r: Math.max(range.e.r, cell.r), c: Math.max(range.e.c, cell.c) } }
       : { s: { ...cell }, e: { ...cell } };
@@ -205,7 +205,7 @@ function rangeDimensions(range: XLSX.Range | null): { rows: number; columns: num
   return { rows, columns, cells: rows * columns };
 }
 
-function assertWorkbookLimits(workbook: XLSX.WorkBook): void {
+function assertWorkbookLimits(workbook: XLSX.WorkBook, xlsx: typeof import('xlsx')): void {
   if (workbook.SheetNames.length > PRODUCT_IMPORT_LIMITS.maxSheets) {
     throw importError(`工作表不能超过 ${PRODUCT_IMPORT_LIMITS.maxSheets} 个`);
   }
@@ -215,7 +215,7 @@ function assertWorkbookLimits(workbook: XLSX.WorkBook): void {
   for (const name of workbook.SheetNames) {
     const sheet = workbook.Sheets[name];
     if (!sheet) throw importError(`工作表“${name}”缺少数据`);
-    let effectiveRange = effectiveDataRange(sheet);
+    let effectiveRange = effectiveDataRange(sheet, xlsx);
     const dimensions = rangeDimensions(effectiveRange);
     if (dimensions.cells > PRODUCT_IMPORT_LIMITS.maxCellsPerSheet) {
       throw importError(`工作表“${name}”单元格范围不能超过 ${PRODUCT_IMPORT_LIMITS.maxCellsPerSheet} 个`);
@@ -243,7 +243,7 @@ function assertWorkbookLimits(workbook: XLSX.WorkBook): void {
         ? { s: { r: Math.min(effectiveRange.s.r, merge.s.r), c: Math.min(effectiveRange.s.c, merge.s.c) }, e: { r: Math.max(effectiveRange.e.r, merge.e.r), c: Math.max(effectiveRange.e.c, merge.e.c) } }
         : { s: { ...merge.s }, e: { ...merge.e } };
     }
-    if (effectiveRange) sheet['!ref'] = XLSX.utils.encode_range(effectiveRange);
+    if (effectiveRange) sheet['!ref'] = xlsx.utils.encode_range(effectiveRange);
     else delete sheet['!ref'];
     delete sheet['!fullref'];
   }
@@ -285,17 +285,17 @@ export async function readSafeProductWorkbook(file: File): Promise<XLSX.WorkBook
     throw importError(`文件不能超过 ${PRODUCT_IMPORT_LIMITS.maxFileBytes / 1024 / 1024} MB`);
   }
   const bytes = new Uint8Array(buffer);
-  let workbook: XLSX.WorkBook;
+  let csvText: string | undefined;
   if (fileType === 'csv') {
     assertSafeCsvEnvelope(bytes);
-    const decoded = decodeCsv(bytes);
-    assertCsvQuoteStructure(decoded);
-    workbook = XLSX.read(decoded, { ...WORKBOOK_READ_OPTIONS, type: 'string' });
-  } else {
-    if (fileType === 'xlsx') assertSafeXlsxArchive(bytes);
-    else assertSafeXlsEnvelope(bytes);
-    workbook = XLSX.read(buffer, { ...WORKBOOK_READ_OPTIONS, type: 'array' });
-  }
-  assertWorkbookLimits(workbook);
+    csvText = decodeCsv(bytes);
+    assertCsvQuoteStructure(csvText);
+  } else if (fileType === 'xlsx') assertSafeXlsxArchive(bytes);
+  else assertSafeXlsEnvelope(bytes);
+  const XLSX = await import('xlsx');
+  let workbook: XLSX.WorkBook;
+  if (csvText !== undefined) workbook = XLSX.read(csvText, { ...WORKBOOK_READ_OPTIONS, type: 'string' });
+  else workbook = XLSX.read(buffer, { ...WORKBOOK_READ_OPTIONS, type: 'array' });
+  assertWorkbookLimits(workbook, XLSX);
   return workbook;
 }

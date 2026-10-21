@@ -1,4 +1,3 @@
-import * as XLSX from 'xlsx';
 import { assertRowsAndTrackText, readSafeProductWorkbook } from './productImportSecurity';
 
 export { PRODUCT_IMPORT_LIMITS } from './productImportSecurity';
@@ -143,6 +142,7 @@ function rowsToObjects(rows: string[][], headers: string[], start: number) {
 
 export async function parseWorkbook(file: File): Promise<ParsedSheet[]> {
   const workbook = await readSafeProductWorkbook(file);
+  const XLSX = await import('xlsx');
   let textCharacters = 0;
   return workbook.SheetNames.map(name => {
     const sheet = workbook.Sheets[name];
