@@ -131,6 +131,12 @@ export async function updateSocialImageTask(store: DataStore, tenantId: string, 
   const current = row?.tenant_id === tenantId && row.spec?.socialImageTask ? { ...row.spec.socialImageTask, id: row.id } : null;
   if (!current) return { kind: 'missing' as const };
   if (current.version !== expectedVersion) return { kind: 'conflict' as const, task: current };
+  if (current.generationJobs?.some(job => ['queued', 'running', 'outcome_unknown'].includes(job.status) && !job.outputNodeIds.length)
+    && ['imageType', 'creationPath', 'contentBrief', 'creativeRecipe', 'imageTextContract', 'renderBrief', 'deliverySpec',
+      'materialIds', 'referenceUrls', 'referenceSnapshot', 'replicationRecipe', 'enterpriseAssets', 'layerGraph', 'renderPlan']
+      .some(field => Object.prototype.hasOwnProperty.call(patch, field))) {
+    return { kind: 'invalid' as const, issues: ['图片付费单元未完成，生成输入不可修改'], task: current };
+  }
   const now = new Date().toISOString();
   const next: SocialImageCreationTask = {
     ...current, ...patch, id: current.id, version: current.version + 1, schemaVersion: 'social-image-creation.v2', contentMode: 'image',

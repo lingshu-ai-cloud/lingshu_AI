@@ -15,6 +15,7 @@ export function socialImageQueuedJobIssue(task: SocialImageCreationTask, propose
   if (task.generationJobs.some(item => ['queued', 'running', 'outcome_unknown'].includes(item.status) && !item.outputNodeIds.length)) return 'social_image_prior_paid_job_unresolved';
   const job = proposed.at(-1)!;
   if (!job.id || !job.idempotencyKey || job.status !== 'queued' || job.attempt !== 0 || job.outputNodeIds.length || job.inputHash
+    || job.planVersion !== undefined || job.unitIndex !== undefined || job.plannedInputHash
     || task.generationJobs.some(item => item.id === job.id || item.idempotencyKey === job.idempotencyKey)) return 'social_image_new_job_invalid';
   return null;
 }
@@ -38,7 +39,7 @@ export function socialImageOwnedMaterialUrl(material: MaterialRecord, tenantId: 
   throw new SocialImagePaidJobError('social_image_material_locator_missing');
 }
 
-async function requireAtomicStore(store: DataStore): Promise<void> {
+export async function requireSocialImageAtomicStore(store: DataStore): Promise<void> {
   const supported = store.supportsAtomicCompareAndSwapFor
     ? await store.supportsAtomicCompareAndSwapFor(SOCIAL_IMAGE_TASKS_COLLECTION)
     : await store.supportsAtomicCompareAndSwap?.();
@@ -70,7 +71,7 @@ function advance(task: SocialImageCreationTask, patch: Partial<SocialImageCreati
 export async function claimSocialImagePaidJob(input: {
   store: DataStore; tenantId: string; taskId: string; jobId: string; idempotencyKey: string; inputHash: string;
 }): Promise<SocialImageCreationTask> {
-  await requireAtomicStore(input.store);
+  await requireSocialImageAtomicStore(input.store);
   if (!/^[a-f0-9]{64}$/.test(input.inputHash) || !input.idempotencyKey.trim()) {
     throw new SocialImagePaidJobError('social_image_paid_job_identity_invalid');
   }
@@ -98,7 +99,7 @@ export async function completeSocialImagePaidJob(input: {
   store: DataStore; tenantId: string; taskId: string; jobId: string; inputHash: string;
   output: SocialImageOutputNode; provider: string;
 }): Promise<SocialImageCreationTask> {
-  await requireAtomicStore(input.store);
+  await requireSocialImageAtomicStore(input.store);
   if (!input.output.materialId || !input.output.mediaUrl) throw new SocialImagePaidJobError('social_image_output_not_durable');
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const { row, task } = await taskRow(input.store, input.tenantId, input.taskId);
@@ -129,7 +130,7 @@ export async function completeSocialImagePaidJob(input: {
 export async function markSocialImagePaidJobUnknown(input: {
   store: DataStore; tenantId: string; taskId: string; jobId: string; inputHash: string; error: string;
 }): Promise<SocialImageCreationTask> {
-  await requireAtomicStore(input.store);
+  await requireSocialImageAtomicStore(input.store);
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const { row, task } = await taskRow(input.store, input.tenantId, input.taskId);
     const job = task.generationJobs.find(item => item.id === input.jobId);
@@ -148,7 +149,7 @@ export async function markSocialImagePaidJobUnknown(input: {
 export async function markSocialImagePaidJobNotSubmitted(input: {
   store: DataStore; tenantId: string; taskId: string; jobId: string; inputHash: string; reason: string;
 }): Promise<SocialImageCreationTask> {
-  await requireAtomicStore(input.store);
+  await requireSocialImageAtomicStore(input.store);
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const { row, task } = await taskRow(input.store, input.tenantId, input.taskId);
     const job = task.generationJobs.find(item => item.id === input.jobId);

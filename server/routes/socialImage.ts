@@ -8,6 +8,7 @@ import { store } from '../storage/index.js';
 import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } from '../socialImage/socialImageTask.js';
 import { socialImageOwnedMaterialUrl, socialImageQueuedJobIssue, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
 import { recoverSocialImagePaidMaterial } from '../socialImage/socialImageMaterialRecovery.js';
+import { persistSocialImageMultiUnitPlan } from '../socialImage/socialImageDurablePlan.js';
 import { mergeSocialImageVisualChecks, socialImageDeterministicChecks } from '../socialImage/socialImageQuality.js';
 import { qualityCheckSocialImageWithQwen } from '../agents/qwen.js';
 import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
@@ -153,12 +154,29 @@ socialImageRouter.post('/tasks/:id/jobs/:jobId/reconcile-material', async (req, 
   }
 });
 
+/** Persist all bounded carousel/GIF units; paid multi-output execution remains disabled. */
+socialImageRouter.post('/tasks/:id/plan-units', async (req, res) => {
+  try {
+    const { tenantId } = res.locals as AuthLocals;
+    const expectedVersion = Number(req.body?.expectedVersion);
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) { res.status(400).json({ ok: false, error: '缺少有效任务版本' }); return; }
+    const task = await persistSocialImageMultiUnitPlan({ store, tenantId, taskId: req.params.id, expectedVersion });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ ok: true, task, paidExecutionEnabled: false });
+  } catch (error) {
+    const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_plan_failed';
+    const status = code === 'social_image_task_missing' ? 404 : code === 'social_image_atomic_store_required' ? 503 : 409;
+    res.status(status).json({ ok: false, code, error: '多图单元计划无法安全持久化；未调用图片供应商' });
+  }
+});
+
 socialImageRouter.patch('/tasks/:id', async (req, res) => {
   try {
     const { tenantId } = res.locals as AuthLocals;
     const expectedVersion = Number(req.body?.expectedVersion);
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) { res.status(400).json({ ok: false, error: '缺少有效任务版本' }); return; }
     const patch = req.body?.patch || {};
+    if (Object.prototype.hasOwnProperty.call(patch, 'renderPlan')) { res.status(403).json({ ok: false, code: 'social_image_render_plan_server_owned', error: '逐单元计划只能由服务端冻结' }); return; }
     if (Object.prototype.hasOwnProperty.call(patch, 'generationJobs')) {
       const current = await readSocialImageTask(store, tenantId, req.params.id);
       if (!current) { res.status(404).json({ ok: false, error: '图片任务不存在' }); return; }
@@ -166,7 +184,7 @@ socialImageRouter.patch('/tasks/:id', async (req, res) => {
       const issue = socialImageQueuedJobIssue(current, patch.generationJobs);
       if (issue) { res.status(409).json({ ok: false, code: issue, error: '已有图片生成请求待完成或待核对，不能改写付费任务记录' }); return; }
     }
-    if (['imageType', 'deliverySpec', 'contentBrief', 'enterpriseAssets', 'materialIds', 'referenceUrls', 'referenceSnapshot', 'replicationRecipe', 'renderBrief', 'imageTextContract']
+    if (['imageType', 'creationPath', 'deliverySpec', 'contentBrief', 'creativeRecipe', 'enterpriseAssets', 'materialIds', 'referenceUrls', 'referenceSnapshot', 'replicationRecipe', 'renderBrief', 'imageTextContract', 'layerGraph']
       .some(field => Object.prototype.hasOwnProperty.call(patch, field))) {
       const current = await readSocialImageTask(store, tenantId, req.params.id);
       if (current?.generationJobs.some(job => ['queued', 'running', 'outcome_unknown'].includes(job.status) && !job.outputNodeIds.length)) {

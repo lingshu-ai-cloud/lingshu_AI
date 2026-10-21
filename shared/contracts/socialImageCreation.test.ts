@@ -36,3 +36,18 @@ test('gif requires motion delivery spec', () => {
   value.deliverySpec.format = 'gif';
   assert.match(socialImageTaskIssues(value).join('；'), /GIF 缺少动效规格/);
 });
+
+test('carousel and GIF cannot publish a single image as a completed multi-output task', () => {
+  const carousel = task();
+  carousel.imageType = 'carousel';
+  carousel.deliverySpec = { ...carousel.deliverySpec, format: 'carousel', outputCount: 4 };
+  assert.match(socialImageTaskIssues(carousel).join('；'), /多图单元/);
+  assert.equal(socialImageTaskCanPublish(carousel), false);
+
+  const gif = task();
+  gif.imageType = 'gif_poster';
+  gif.deliverySpec = { ...gif.deliverySpec, format: 'gif', outputCount: 4,
+    motion: { mechanism: 'background_switch', fixedLayers: ['product', 'headline'], dynamicLayers: ['background'], loopDurationMs: 6000 } };
+  assert.match(socialImageTaskIssues(gif).join('；'), /多图单元/);
+  assert.equal(socialImageTaskCanPublish(gif), false);
+});

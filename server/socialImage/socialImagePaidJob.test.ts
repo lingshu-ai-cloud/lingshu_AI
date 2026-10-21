@@ -3,9 +3,11 @@ import test from 'node:test';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datastore.js';
+import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
 import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } from './socialImageTask.js';
 import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, markSocialImagePaidJobUnknown, recordSocialImagePaidJobFailure, socialImageOwnedMaterialUrl, socialImageQueuedJobIssue } from './socialImagePaidJob.js';
 import { recoverSocialImagePaidMaterial } from './socialImageMaterialRecovery.js';
+import { persistSocialImageMultiUnitPlan, socialImagePlanSourceHash } from './socialImageDurablePlan.js';
 
 class AtomicMemoryStore implements DataStore {
   private sequence = 0;
@@ -186,9 +188,52 @@ test('definitive provider rejection releases a unit while uncertain failure rema
 
 test('multi-output types stay closed until their unit delivery path is implemented', async () => {
   const store = new AtomicMemoryStore();
-  const taskId = await queuedTask(store);
-  const task = (await readSocialImageTask(store, 'tenant-a', taskId))!;
-  const changed = await updateSocialImageTask(store, 'tenant-a', taskId, task.version, { imageType: 'carousel' });
-  assert.equal(changed.kind, 'updated');
-  await assert.rejects(claimSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', idempotencyKey: 'operation-1', inputHash: hash }), /multi_output_not_ready/);
+  const task = await createSocialImageTask(store, 'tenant-a', { imageType: 'carousel', title: '轮播图' });
+  const queued = await updateSocialImageTask(store, 'tenant-a', task.id, task.version, { generationJobs: [{ id: 'unit-1', idempotencyKey: 'operation-1', status: 'queued', outputNodeIds: [], attempt: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }] });
+  assert.equal(queued.kind, 'updated');
+  await assert.rejects(claimSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId: task.id, jobId: 'unit-1', idempotencyKey: 'operation-1', inputHash: hash }), /multi_output_not_ready/);
+});
+
+test('carousel plan atomically freezes four deterministic paid units without opening execution', async () => {
+  const store = new AtomicMemoryStore();
+  const created = await createSocialImageTask(store, 'tenant-a', { imageType: 'carousel', title: '轮播图' });
+  const plannedBrief = {
+    headline: 'Main', subheadline: 'Value', originBadge: '', trustBadges: ['Proof'], sellingPoints: ['A', 'B'],
+    process: [], categories: [], bottomBar: [], cta: 'Contact',
+  };
+  const prepared = await updateSocialImageTask(store, 'tenant-a', created.id, created.version, { renderBrief: plannedBrief });
+  assert.equal(prepared.kind, 'updated');
+  if (prepared.kind !== 'updated') return;
+  const first = await persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id, expectedVersion: prepared.task.version });
+  assert.deepEqual(first.renderPlan?.units.map(unit => unit.poster.pageRole), ['cover', 'value', 'proof', 'conversion']);
+  assert.equal(first.generationJobs.length, 4);
+  assert.deepEqual(first.generationJobs.map(job => job.id), first.renderPlan?.units.map(unit => unit.jobId));
+  assert.ok(first.renderPlan?.units.every(unit => /^[a-f0-9]{64}$/.test(unit.plannedInputHash)));
+  assert.equal(first.renderPlan?.sourceHash, socialImagePlanSourceHash(first));
+  assert.equal((await readSocialImageTask(store, 'tenant-a', created.id))?.renderPlan?.version, 1);
+  const replay = await persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id, expectedVersion: prepared.task.version });
+  assert.equal(replay.version, first.version);
+  assert.equal(replay.generationJobs.length, 4);
+  const forged = await updateSocialImageTask(store, 'tenant-a', created.id, first.version, { renderBrief: { ...plannedBrief, headline: 'changed after queue' } });
+  assert.equal(forged.kind, 'invalid');
+  const alteredGraph = await updateSocialImageTask(store, 'tenant-a', created.id, first.version, { layerGraph: {} as SocialImageCreationTask['layerGraph'] });
+  assert.equal(alteredGraph.kind, 'invalid');
+  await assert.rejects(claimSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId: created.id, jobId: first.generationJobs[0]!.id, idempotencyKey: first.generationJobs[0]!.idempotencyKey, inputHash: hash }), /multi_output_not_ready/);
+  await assert.rejects(persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-b', taskId: created.id, expectedVersion: first.version }), /task_missing/);
+});
+
+test('multi-output planning fails closed without atomic storage and rejects stale input versions', async () => {
+  const store = new AtomicMemoryStore();
+  const created = await createSocialImageTask(store, 'tenant-a', { imageType: 'gif_poster', title: '动态海报' });
+  const prepared = await updateSocialImageTask(store, 'tenant-a', created.id, created.version, { renderBrief: {
+    headline: 'Main', subheadline: '', originBadge: '', trustBadges: [], sellingPoints: [],
+    process: [], categories: [], bottomBar: [], cta: '',
+  } });
+  assert.equal(prepared.kind, 'updated');
+  if (prepared.kind !== 'updated') return;
+  store.supportsAtomicCompareAndSwap = () => false;
+  await assert.rejects(persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id, expectedVersion: prepared.task.version }), /atomic_store_required/);
+  store.supportsAtomicCompareAndSwap = () => true;
+  await assert.rejects(persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id, expectedVersion: created.version }), /plan_version_conflict/);
+  assert.equal((await readSocialImageTask(store, 'tenant-a', created.id))?.generationJobs.length, 0);
 });
