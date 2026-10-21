@@ -176,3 +176,9 @@
 - 将本地视频格式/大小校验、公开素材暂存和 Instagram 兼容转码从 `platformPublisher.ts` 抽至 `publishVideoMedia.ts`，主发布模块由 873 行降至 787 行，撤销历史超限豁免；冻结超限项从 41 降至 40。
 - 新增媒体校验测试 1/1；发布恢复、Instagram 原生发布、来源声明和原子存储相关专项通过。TikTok 旧专项仍在入口的统一文案预检处失败：其测试输入未提供必需文案，执行尚未进入本次拆出的媒体模块，因此不能将发布专项整体计为通过。
 - TypeScript、架构扫描/ratchet、生产构建与 191 项迁移仓库只读预检通过；构建仍提示大 chunk。没有调用真实发布平台、运行迁移或部署。
+
+## 认证身份辅助模块拆分（2026-10-22）
+
+- 将本地预览 Origin/回环地址判定、本地账号凭据读写/密码比对和 PocketBase 登录身份解析从 `server/routes/auth.ts` 抽入 `server/auth/authIdentityHelpers.ts`；路由保留既有公开导出。`auth.ts` 由 890 行降至 792 行，撤销历史超限豁免，剩余 39 项。
+- 本地预览测试夹具明确声明其断言允许的 5183 端口，未改变生产默认 Origin。该测试及邀请注册测试通过；TypeScript、架构扫描/ratchet、生产构建及 191 项迁移仓库只读预检通过，构建仍有大 chunk 警告。
+- `test:security-boundaries` 全链在 `adminSecretResponse.test.ts` 的已有前端源码正则断言处失败，期望特定 `setForm` 字面写法，而当前组件使用 `withoutPlatformCredentials`；此失败与认证模块拆分无关，但全链不能计为通过。未执行外部登录、付费调用、迁移或部署。

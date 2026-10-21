@@ -21,6 +21,7 @@ const originalEnvironment = {
 process.env.NODE_ENV = 'test';
 process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
 process.env.LINGSHU_LOCAL_PREVIEW = '1';
+process.env.LINGSHU_LOCAL_PREVIEW_ORIGINS = 'http://127.0.0.1:5177,http://127.0.0.1:5183';
 process.env.LINGSHU_PREVIEW_AUTH_EMAIL = 'beauty-showcase@local.test';
 process.env.LOCAL_DEMO_TOKEN_SECRET = 'local-preview-test-secret-with-at-least-thirty-two-bytes';
 process.env.LOCAL_AUTH_ACCOUNTS_FILE = accountsFile;

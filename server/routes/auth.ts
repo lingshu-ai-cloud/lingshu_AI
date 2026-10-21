@@ -1,9 +1,6 @@
 import { Router } from 'express';
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import {
-  createPbRequestSignal,
-  getPbUrl,
-  getPbAdminToken,
   invalidatePbIdentityCache,
   pbCreate,
   pbDelete,
@@ -44,7 +41,7 @@ import {
 } from '../lib/organizationRole.js';
 import { syncPasswordChangeCredentialStateBestEffort } from '../lib/passwordChangeCredentialState.js';
 import { isBrowserReadToken } from '../digitalEmployees/browserReadSession.js';
-import { isLocalAccountStoreError, localAccountRecordsFile, readLocalAccountRecords, writeLocalAccountRecords, type LocalStoredAccount } from '../lib/localAccountStore.js';
+import { isLocalAccountStoreError } from '../lib/localAccountStore.js';
 import { assertStarter198MemberCapacity, Starter198MemberQuotaError } from '../starter198/memberQuota.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
@@ -53,14 +50,14 @@ import {
   publicInviteRegistrationError,
   registerPocketBaseInviteOwner,
 } from '../auth/inviteRegistration.js';
-import { issueVerifiedLocalIdentityToken, verifyLocalIdentity, type VerifiedLocalIdentity } from '../auth/localIdentity.js';
+import { issueVerifiedLocalIdentityToken } from '../auth/localIdentity.js';
 import { bindDataAuthority, currentDataAuthority } from '../storage/dataAuthority.js';
 import { resolveServerProductProfile } from '../starter198/productProfile.js';
-import { localPreviewOrigins } from '../lib/localPreviewOrigins.js';
+import { localId, localPasswordMatches, localPreviewRequestRejection, parseLocalToken, passwordHash, pbLogin, readLocalAccounts, writeLocalAccounts, type LocalAccount, type PbUser } from '../auth/authIdentityHelpers.js';
+
+export { isLocalPreviewLoopbackAddress, localPreviewRequestRejection } from '../auth/authIdentityHelpers.js';
 
 export const authRouter = Router();
-interface PbUser { id: string; email?: string; name?: string; tenantId?: string; role?: OrganizationRole }
-type LocalAccount = LocalStoredAccount;
 interface LocalLoginResult {
   token: string;
   record: PbUser;
@@ -68,103 +65,8 @@ interface LocalLoginResult {
   expiresAt?: string | null;
 }
 
-export function isLocalPreviewLoopbackAddress(address: string | undefined): boolean {
-  const normalized = String(address || '').trim().toLowerCase();
-  return normalized === '127.0.0.1'
-    || normalized === '::1'
-    || normalized === '::ffff:127.0.0.1';
-}
-
-export function localPreviewRequestRejection(
-  origin: string | undefined,
-  remoteAddress: string | undefined,
-): 'local_preview_origin_required' | 'local_preview_loopback_required' | null {
-  if (!localPreviewOrigins().has(String(origin || ''))) return 'local_preview_origin_required';
-  if (!isLocalPreviewLoopbackAddress(remoteAddress)) return 'local_preview_loopback_required';
-  return null;
-}
-
-function localId(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'demo';
-}
-
-function localUser(email: string, companyName = ''): PbUser {
-  const normalizedEmail = String(email).trim().toLowerCase();
-  const id = `local_user_${localId(normalizedEmail)}`;
-  return {
-    id,
-    email: normalizedEmail,
-    name: companyName || normalizedEmail.split('@')[0] || '本地账号',
-    tenantId: `local_tenant_${localId(normalizedEmail)}`,
-  };
-}
-
-function readLocalAccounts(): LocalAccount[] {
-  return readLocalAccountRecords(localAccountRecordsFile());
-}
-
-function writeLocalAccounts(accounts: LocalAccount[]): void {
-  writeLocalAccountRecords(localAccountRecordsFile(), accounts);
-}
-
 function localStoreUnavailable(res: { status(code: number): { json(body: unknown): unknown } }): void {
   res.status(503).json({ error: 'local_auth_store_unavailable', message: '本地认证数据暂时不可用，请联系管理员修复后重试。' });
-}
-
-function passwordHash(password: string, salt: string): Buffer {
-  return scryptSync(password, salt, 64);
-}
-
-function localPasswordMatches(account: LocalAccount, password: string): boolean {
-  try {
-    const stored = Buffer.from(account.passwordHash, 'hex');
-    const candidate = passwordHash(password, account.salt);
-    return stored.length === candidate.length && timingSafeEqual(stored, candidate);
-  } catch {
-    return false;
-  }
-}
-
-function parseLocalToken(authHeader: string | undefined): VerifiedLocalIdentity | null {
-  return verifyLocalIdentity(authHeader);
-}
-
-async function resolveLoginIdentity(identity: string): Promise<string> {
-  const raw = String(identity).trim();
-  if (raw.includes('@')) return raw;
-
-  const adminToken = await getPbAdminToken();
-  if (!adminToken) return raw;
-
-  const normalized = raw.replace(/\s+/g, ' ');
-  const filter = `name = "${normalized.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-  try {
-    const res = await fetch(`${getPbUrl()}/api/collections/users/records?perPage=1&filter=${encodeURIComponent(filter)}`, {
-      headers: { Authorization: adminToken },
-      signal: createPbRequestSignal(),
-    });
-    if (!res.ok) return raw;
-    const json = (await res.json()) as { items?: PbUser[] };
-    return json.items?.[0]?.email || raw;
-  } catch {
-    return raw;
-  }
-}
-
-async function pbLogin(identity: string, password: string): Promise<{ token: string; record: PbUser } | null> {
-  try {
-    const loginIdentity = await resolveLoginIdentity(identity);
-    const res = await fetch(`${getPbUrl()}/api/collections/users/auth-with-password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identity: loginIdentity, password }),
-      signal: createPbRequestSignal(),
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as { token: string; record: PbUser };
-  } catch {
-    return null;
-  }
 }
 
 function localLogin(email: string, password: string): LocalLoginResult | null {
