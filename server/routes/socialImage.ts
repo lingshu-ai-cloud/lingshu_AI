@@ -2,10 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { Router } from 'express';
+import sharp from 'sharp';
 import type { AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } from '../socialImage/socialImageTask.js';
-import { socialImageDeterministicChecks } from '../socialImage/socialImageQuality.js';
+import { mergeSocialImageVisualChecks, socialImageDeterministicChecks } from '../socialImage/socialImageQuality.js';
+import { qualityCheckSocialImageWithQwen } from '../agents/qwen.js';
+import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
+import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import { SOCIAL_IMAGE_HARD_CHECKS } from '../../shared/contracts/socialImageCreation.js';
 import { compileLuxuryProductHero } from '../socialImage/templates/luxuryProductHero.js';
 import { assertSocialImageLayerGraph } from '../socialImage/layerGraphValidation.js';
@@ -41,6 +45,43 @@ async function enterpriseProductAsset(tenantId: string, productId: string): Prom
     if (stored?.buf?.length) return { name: String(product.name || productId), bytes: stored.buf };
   }
   return null;
+}
+
+async function outputImageBytes(tenantId: string, output: { mediaUrl?: string; materialId?: string }): Promise<{ bytes: Buffer; mimeType: string } | null> {
+  if (output.materialId) {
+    const material = await store.getById('materials', output.materialId).catch(() => null);
+    if (material) return readTenantMaterialBytes(material as any, tenantId).catch(() => null);
+  }
+  const route = String(output.mediaUrl || '');
+  const match = route.match(/^\/api\/overseas\/social-images\/renders\/([a-zA-Z0-9._-]+\.png)$/);
+  if (!match) return null;
+  const file = path.join(renderRoot(tenantId), path.basename(match[1]!));
+  return fs.existsSync(file) ? { bytes: fs.readFileSync(file), mimeType: 'image/png' } : null;
+}
+
+async function referenceImageBytes(tenantId: string, raw: string): Promise<{ bytes: Buffer; mimeType: string } | null> {
+  let route = '';
+  try { route = new URL(raw, 'http://local.invalid').pathname; } catch { return null; }
+  const rendered = route.match(/^\/api\/overseas\/social-images\/renders\/([a-zA-Z0-9._-]+\.png)$/);
+  if (rendered) return outputImageBytes(tenantId, { mediaUrl: route });
+  const enterprise = route.match(/^\/api\/overseas\/enterprise\/assets\/([\w.-]+)$/);
+  if (enterprise) {
+    const filename = path.basename(enterprise[1]!);
+    const local = path.resolve(process.cwd(), 'data', 'enterprise-assets', enterpriseAssetTenantKey(tenantId), filename);
+    if (local.startsWith(path.resolve(process.cwd(), 'data', 'enterprise-assets')) && fs.existsSync(local)) return { bytes: fs.readFileSync(local), mimeType: /\.png$/i.test(filename) ? 'image/png' : /\.webp$/i.test(filename) ? 'image/webp' : 'image/jpeg' };
+    if (objectStorageEnabled()) {
+      const object = await objectStorageDownload(enterpriseAssetObjectKey(tenantId, filename));
+      if (object?.buf?.length) return { bytes: object.buf, mimeType: object.contentType || 'image/jpeg' };
+    }
+  }
+  const library = await readMaterialLibrary(tenantId).catch(() => null);
+  const privateName = route.match(/^\/api\/overseas\/studio\/private-assets\/materials\/([\w.-]+)$/)?.[1];
+  const material = library?.items.find(item => item.type === 'image' && String(item.tenantId || item.tenant_id || '') === tenantId && (
+    [item.url, item.poster].some(url => {
+      try { return url && new URL(String(url), 'http://local.invalid').pathname === route; } catch { return false; }
+    }) || (privateName && [item.objectKey, item.posterObjectKey].some(key => key && path.basename(String(key)) === privateName))
+  ));
+  return material ? readTenantMaterialBytes(material as any, tenantId).catch(() => null) : null;
 }
 
 socialImageRouter.get('/renders/:filename', (req, res) => {
@@ -273,11 +314,47 @@ socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
     if (!task) { res.status(404).json({ ok: false, error: '图片任务不存在' }); return; }
     const expectedVersion = Number(req.body?.expectedVersion);
     if (expectedVersion !== task.version) { res.status(409).json({ ok: false, error: '任务已被更新，请刷新后继续', task }); return; }
-    const checks = socialImageDeterministicChecks(task);
-    const outputs = task.outputs.map(output => ({ ...output, qualityChecks: checks }));
-    const result = await updateSocialImageTask(store, tenantId, task.id, task.version, { outputs, status: 'review_required', step: 'review' });
+    const deterministic = socialImageDeterministicChecks(task);
+    const productAssets = (await Promise.all(task.contentBrief.productRefs.map(id => enterpriseProductAsset(tenantId, id))))
+      .filter((item): item is { name: string; bytes: Buffer } => Boolean(item));
+    const products = await Promise.all(productAssets.map(async item => {
+      const format = (await sharp(item.bytes).metadata()).format;
+      return { ...item, mimeType: format === 'png' ? 'image/png' : format === 'webp' ? 'image/webp' : 'image/jpeg' };
+    }));
+    const reference = (await Promise.all([...(task.referenceSnapshot?.imageUrls || []), ...task.referenceUrls]
+      .slice(0, 4).map(url => referenceImageBytes(tenantId, url)))).find(Boolean) || undefined;
+    const outputs = await Promise.all(task.outputs.map(async output => {
+      if (output.state === 'superseded') return output;
+      const generated = await outputImageBytes(tenantId, output);
+      if (!generated) return { ...output, state: 'repair_required' as const, qualityChecks: deterministic };
+      let visual = [] as Awaited<ReturnType<typeof qualityCheckSocialImageWithQwen>>;
+      try {
+        visual = await qualityCheckSocialImageWithQwen({ generated, products, reference, expected: {
+          headline: task.imageTextContract.headline, supportingText: task.imageTextContract.supportingText,
+          cta: task.imageTextContract.cta, facts: task.imageTextContract.requiredFacts, format: task.deliverySpec.format,
+        } });
+      } catch { /* provider failure stays uncertain; never fabricate a pass */ }
+      const qualityChecks = mergeSocialImageVisualChecks(deterministic, visual);
+      const failed = qualityChecks.filter(check => check.severity === 'hard' && check.verdict !== 'pass');
+      return { ...output, state: failed.length ? 'repair_required' as const : 'approved' as const, qualityChecks };
+    }));
+    const generationJobs = task.generationJobs.map(job => job.status === 'quality_checking'
+      ? { ...job, status: 'completed' as const, updatedAt: new Date().toISOString() }
+      : job);
+    const repairInstructions = [...task.repairInstructions];
+    for (const output of outputs.filter(item => item.state === 'repair_required')) {
+      const failed = output.qualityChecks.filter(check => check.severity === 'hard' && check.verdict === 'fail');
+      if (!failed.length || repairInstructions.some(item => item.outputNodeId === output.id && item.status === 'pending')) continue;
+      repairInstructions.push({
+        id: randomUUID(), outputNodeId: output.id, failedChecks: failed.map(check => check.key),
+        targetLayer: failed.some(check => ['product_identity','packaging_visibility','subject_visibility','safe_zone'].includes(check.key)) ? 'product' : 'typography',
+        instruction: failed.map(check => check.repairSuggestion || check.note).join('；').slice(0, 1000),
+        status: 'pending', fromVersion: output.version,
+      });
+    }
+    const result = await updateSocialImageTask(store, tenantId, task.id, task.version, { outputs, generationJobs, repairInstructions, status: 'review_required', step: 'review' });
     if (result.kind !== 'updated') { res.status(result.kind === 'conflict' ? 409 : 422).json({ ok: false, error: result.kind === 'invalid' ? result.issues.join('；') : '质检结果保存失败' }); return; }
-    res.json({ ok: true, task: result.task, checks });
+    res.json({ ok: true, task: result.task, checks: outputs.flatMap(output => output.qualityChecks) });
   } catch (error) {
     res.status(503).json({ ok: false, error: error instanceof Error ? error.message : '自动预检失败' });
   }

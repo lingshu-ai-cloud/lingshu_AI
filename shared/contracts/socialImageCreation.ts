@@ -28,6 +28,14 @@ export interface SocialImageReplicationRecipe {
   replace: string[];
   palette: string[];
   layoutRegions: Array<{ id: string; role: string; x: number; y: number; width: number; height: number }>;
+  productPresentation?: 'single' | 'combination' | 'set' | 'auto_from_reference';
+  typographyRegions?: Array<{
+    role: 'headline' | 'subheadline' | 'supporting';
+    region: string;
+    relativeSize: 'display' | 'large' | 'medium' | 'small';
+    alignment: 'left' | 'center' | 'right';
+    preserveLineBreaks: boolean;
+  }>;
   protectedSubjects: string[];
   overlayZones: string[];
   motionMechanism?: SocialImageDeliverySpec['motion'] extends infer T ? T extends { mechanism: infer M } ? M : never : never;
@@ -116,6 +124,11 @@ export interface SocialImageDeliverySpec {
   aspectRatio: '1:1' | '4:5' | '9:16' | '16:9';
   language: string;
   outputCount: number;
+  imageGeneration?: {
+    provider: 'openai';
+    model: 'gpt-image-2';
+    quality: 'low' | 'medium' | 'high';
+  };
   motion?: {
     mechanism: 'background_switch' | 'typewriter' | 'state_reveal' | 'crossfade';
     fixedLayers: string[];

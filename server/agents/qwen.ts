@@ -570,6 +570,8 @@ observedFacts仅写真实可见内容；推断只写inferredIntent；缺失因�
   return normalized;
 }
 
+export { qualityCheckSocialImageWithQwen } from './socialImageQwen.js';
+
 export async function analyzeImagePostEvidenceWithQwen(opts: {
   paidOperation?: MaterialAnalysisPaidCall;
   images: Array<{ base64: string; mimeType: string; imageIndex: number }>;

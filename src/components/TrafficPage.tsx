@@ -66,7 +66,7 @@ export {
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { resolveInitialTrafficViewMode, resolveNavigationEventViewMode, resolveSignalViewMode, resolveWorkflowNavigationPage, type TrafficViewMode } from './trafficViewMode';
 import { useSocialContentNavigation } from './socialContent/useSocialContentNavigation';
-import {SOCIAL_CONTENT_NAVIGATION_EVENT,attachSocialContentNavigationState,hasWeeklyContentNavigationTarget,readWeeklyContentNavigationTarget} from '../lib/socialContentContext';
+import {SOCIAL_CONTENT_NAVIGATION_EVENT,attachSocialContentNavigationState,hasWeeklyContentNavigationTarget,openSocialImageReplication,readWeeklyContentNavigationTarget} from '../lib/socialContentContext';
 import { resumeOrCreateInspirationTask } from '../lib/socialInspirationTask';
 import { PAGE_REGISTRY } from '../pageRegistry';
 import ContentLibrary from './ContentLibrary';
@@ -455,78 +455,7 @@ export default function TrafficPage({
       }));
       return;
     }
-    if (kickoff.source === 'inspiration_image_post' && kickoff.video?.contentFormat === 'image') {
-      const referenceUrl = String(kickoff.video.sourceUrl || '').trim();
-      const referenceImage = String(kickoff.video.thumbnail || '').trim();
-      window.dispatchEvent(new CustomEvent('lingshu:navigate', {
-        detail: {
-          page: 'smartAssets',
-          view: 'create',
-          // Image replication is handled by the image workbench, not the
-          // legacy video studio. Keeping directStudio false opens that
-          // workbench immediately with the reference already attached.
-          directStudio: false,
-          contentCreationRequest: {
-            requestId: Date.now(),
-            themeId: 'product_value',
-            mode: 'instant',
-            creationPath: 'viral_replication',
-            materialInput: referenceImage ? 'ready' : 'limited',
-            managedMode: 'one_click_managed',
-            prefill: {
-              title: `${kickoff.video.title || '图文作品'} · 爆款复刻`,
-              topic: kickoff.video.title || '',
-              referenceLinks: referenceUrl ? [referenceUrl] : [],
-              platforms: kickoff.video.platform ? [kickoff.video.platform] : undefined,
-            },
-            sourceContext: {
-              originLabel: '来自灵感中心',
-              referenceTitle: kickoff.video.title || '已选对标图文',
-              referenceThumbnail: referenceImage || undefined,
-              referenceMediaUrl: referenceImage || undefined,
-              referenceContentType: 'image',
-            },
-          },
-        },
-      }));
-      return;
-    }
-    if (kickoff.source === 'inspiration_image_post' && kickoff.video?.contentFormat === 'image') {
-      const referenceUrl = String(kickoff.video.sourceUrl || '').trim();
-      const referenceImage = String(kickoff.video.thumbnail || '').trim();
-      window.dispatchEvent(new CustomEvent('lingshu:navigate', {
-        detail: {
-          page: 'smartAssets',
-          view: 'create',
-          // Image replication is handled by the image workbench, not the
-          // legacy video studio. Keeping directStudio false opens that
-          // workbench immediately with the reference already attached.
-          directStudio: false,
-          contentCreationRequest: {
-            requestId: Date.now(),
-            themeId: 'product_value',
-            mode: 'instant',
-            creationPath: 'viral_replication',
-            materialInput: referenceImage ? 'ready' : 'limited',
-            managedMode: 'one_click_managed',
-            prefill: {
-              title: `${kickoff.video.title || '图文作品'} · 爆款复刻`,
-              topic: kickoff.video.title || '',
-              referenceLinks: referenceUrl ? [referenceUrl] : [],
-              platforms: kickoff.video.platform ? [kickoff.video.platform] : undefined,
-            },
-            sourceContext: {
-              originLabel: '来自灵感中心',
-              referenceTitle: kickoff.video.title || '已选对标图文',
-              referenceThumbnail: referenceImage || undefined,
-              referenceMediaUrl: referenceImage || undefined,
-              referenceContentType: 'image',
-            },
-          },
-        },
-      }));
-      return;
-    }
+    if (kickoff.source === 'inspiration_image_post' && kickoff.video?.contentFormat === 'image') { openSocialImageReplication(kickoff.video as Parameters<typeof openSocialImageReplication>[0]); return; }
     if (kickoff.source === 'inspiration_analysis' && kickoff.video?.contentFormat !== 'image') {
       const playbackUrl = String(kickoff.video?.videoUrl || '').trim();
       const referenceUrl = String(kickoff.video?.sourceUrl || playbackUrl).trim();

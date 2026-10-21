@@ -1,5 +1,6 @@
 import type {WeeklyContentNavigation} from '../../shared/contracts/weeklyContentNavigation';
 import {parseWeeklyContentNavigation} from './weeklyContentNavigationApi';
+import { inferSocialImageProductionMode } from './socialImageProductionMode.js';
 const ACTIVE_SOCIAL_CONTENT_TASK_KEY = 'lingshu_active_social_content_task';
 export const SOCIAL_CONTENT_NAVIGATION_EVENT = 'lingshu:social-content-navigation';
 
@@ -12,6 +13,31 @@ export interface SocialContentNavigationState {
 export interface SocialContentNavigationEventDetail {
   taskId: string;
   page: string;
+}
+
+export function openSocialImageReplication(video: {
+  sourceUrl?: string; thumbnail?: string; title?: string; platform?: string; videoUrl?: string;
+  aiAnalysis?: { caption?: string; imageUrls?: string[]; imageCount?: number };
+}): void {
+  const referenceUrl = String(video.sourceUrl || '').trim(), referenceImage = String(video.thumbnail || '').trim();
+  const referenceImageUrls = (video.aiAnalysis?.imageUrls || []).map(String).filter(Boolean);
+  const referenceImageMode = inferSocialImageProductionMode({
+    thumbnail: referenceImage, mediaUrl: referenceImage, imageUrls: referenceImageUrls,
+    imageCount: video.aiAnalysis?.imageCount, isAnimated: Boolean(video.videoUrl),
+  });
+  window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
+    page: 'smartAssets', view: 'create', directStudio: false,
+    contentCreationRequest: {
+      requestId: Date.now(), themeId: 'product_value', mode: 'instant', creationPath: 'viral_replication',
+      materialInput: referenceImage ? 'ready' : 'limited', managedMode: 'one_click_managed',
+      prefill: { title: `${video.title || '图文作品'} · 爆款复刻`, topic: video.title || '', referenceLinks: referenceUrl ? [referenceUrl] : [], platforms: video.platform ? [video.platform] : undefined },
+      sourceContext: {
+        originLabel: '来自灵感中心', referenceTitle: video.title || '已选对标图文',
+        referenceThumbnail: referenceImage || undefined, referenceMediaUrl: referenceImage || undefined,
+        referenceContentType: 'image', referenceImageMode, referenceImageUrls, referenceCaption: video.aiAnalysis?.caption || '',
+      },
+    },
+  } }));
 }
 
 const SOCIAL_CONTENT_CONTEXT_PAGES = new Set([

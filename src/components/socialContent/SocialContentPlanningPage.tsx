@@ -267,6 +267,7 @@ export default function SocialContentPlanningPage({
             referenceTitle={seed?.referenceTitle}
             referenceThumbnail={seed?.referenceThumbnail}
             referenceMediaUrl={seed?.referenceMediaUrl}
+            referenceCaption={sourceRequest?.sourceContext?.referenceCaption}
             initialTask={imageTask}
             onShowCreations={() => setView('creations')}
           /> : <div className="flex h-full min-h-0 flex-col bg-white">

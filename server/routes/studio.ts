@@ -99,7 +99,8 @@ import { signRenderToken, verifyRenderToken } from '../lib/renderToken.js';
 import { secureStudioRenderManifest, studioRenderAssetPath, studioRenderManifestHash, MAX_STUDIO_RENDER_ASSET_BYTES, MAX_STUDIO_RENDER_TOTAL_BYTES } from '../lib/studioRenderSecurity.js';
 import { studioBgmMediaPath, studioBgmObjectKey } from '../lib/studioBgmAccess.js';
 import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
-import { generatePosterImage, ImageProviderRejectedError, imageExt, type ReferenceImage } from '../lib/imageGen.js';
+import { generatePosterImage, ImageProviderRejectedError, imageExt, normalizeImageGenerationQuality, type ReferenceImage } from '../lib/imageGen.js';
+import { keywordPromptContext, mergePlannedHashtags, researchSocialImageKeywords } from '../lib/keywordIntelligence.js';
 import { SeedanceProductRecovery } from '../lib/seedanceProductRecovery.js';
 import { SeedreamFirstFrameGenerator } from '../lib/seedreamFirstFrameGenerator.js';
 import { FirstFrameProviderError, firstFrameInputFingerprint, type FirstFrameReferenceRole } from '../lib/firstFrameGenerator.js';
@@ -1703,7 +1704,7 @@ studioRouter.post('/free-creation-hook/first-frame', async (req, res) => {
 
 function storyboardImageMime(file: string): string {
   const ext = path.extname(file).toLowerCase();
-  return ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/png';
+  return ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : ext === '.gif' ? 'image/gif' : 'image/png';
 }
 
 studioRouter.post('/storyboard-product-match', async (req, res) => {
@@ -4885,15 +4886,14 @@ studioRouter.post('/fb-poster', async (req, res) => {
     language = 'en',
     provider,
     materials = [],
-    referenceNotes = '',
+    referenceNotes = '', referenceCaption = '', brandName = '', categoryTerms = [], targetMarket = '',
     confirmedFields = {},
   } = req.body ?? {};
   const deliverableType: ImageDeliverable = IMAGE_DELIVERABLES.includes(rawDeliverableType)
     ? rawDeliverableType : 'social_poster';
-  const productionStrategy: ImageProductionStrategy = IMAGE_PRODUCTION_STRATEGIES.includes(rawProductionStrategy)
-    ? rawProductionStrategy : 'reference_generate';
+  const productionStrategy: ImageProductionStrategy = IMAGE_PRODUCTION_STRATEGIES.includes(rawProductionStrategy) ? rawProductionStrategy : 'reference_generate';
   const providerOpt: 'qwen' = 'qwen';
-  const lang = langName(language);
+  const lang = langName(language), keywordResearch = researchSocialImageKeywords({ platform, language, targetMarket, brandName, productInfo, categoryTerms, referenceCaption, maxHashtags: 8 });
   const enterprise = await enterpriseCtx();
   if (!hasConfirmedEnterpriseFacts(enterprise)) {
     res.status(422).json({
@@ -4956,8 +4956,7 @@ ${commercialEvidence}
 Selected material references:
 ${materialLines || '(none selected yet)'}
 
-Reference / inspiration notes:
-${String(referenceNotes || '').slice(0, 1500) || '(none)'}
+Reference / inspiration notes: ${String(referenceNotes || '').slice(0, 1500) || '(none)'}; ${keywordPromptContext(keywordResearch)}
 
 Hard rules:
 - AI may optimize expression, but must not invent commercial promises.
@@ -5057,7 +5056,7 @@ Schema:
           layoutModules: Array.isArray(obj.layoutModules) ? obj.layoutModules.slice(0, 12) : [],
           poster: safeDraft.poster,
           caption: safeDraft.caption,
-          hashtags: Array.isArray(safeDraft.hashtags) ? safeDraft.hashtags.map(String).slice(0, 10) : [],
+          hashtags: mergePlannedHashtags(safeDraft.hashtags, keywordResearch, 10),
           commentCta: safeDraft.commentCta,
           dmOpening: safeDraft.dmOpening,
           fieldsToConfirm,
@@ -5217,7 +5216,7 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
   if (!await consumeDemoQuota(req, res, 'generation')) return;
   const {
     poster = null,
-    imagePrompt = '',
+    imagePrompt = '', imageQuality: rawImageQuality = 'low',
     ratio = '1:1',
     materialIds = [],
     productIds = [],
@@ -5229,8 +5228,7 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
   } = req.body ?? {};
   const deliverableType: ImageDeliverable = IMAGE_DELIVERABLES.includes(rawDeliverableType)
     ? rawDeliverableType : 'social_poster';
-  const productionStrategy: ImageProductionStrategy = IMAGE_PRODUCTION_STRATEGIES.includes(rawProductionStrategy)
-    ? rawProductionStrategy : 'reference_generate';
+  const productionStrategy: ImageProductionStrategy = IMAGE_PRODUCTION_STRATEGIES.includes(rawProductionStrategy) ? rawProductionStrategy : 'reference_generate';
   const enterprise = await enterpriseCtx();
   if (!hasConfirmedEnterpriseFacts(enterprise)) {
     res.status(422).json({
@@ -5330,7 +5328,7 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
   ].filter(Boolean).join('\n\n');
 
   try {
-    const generated = await generatePosterImage({ prompt, ratio: String(ratio || '1:1'), references, idempotencyKey: String(idempotencyKey || '').trim() || undefined });
+    const generated = await generatePosterImage({ prompt, ratio: String(ratio || '1:1'), references, provider: 'openai', quality: normalizeImageGenerationQuality(rawImageQuality), idempotencyKey: String(idempotencyKey || '').trim() || undefined });
     const material = await createGeneratedImageMaterial({
       title: `AI 图文海报 · ${headline}`.slice(0, 120),
       bytes: generated.bytes,
@@ -5388,7 +5386,7 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
 // POST /studio/caption  Body: { script?, productInfo?, platform?, language? }
 studioRouter.post('/caption', async (req, res) => {
   if (!await consumeDemoQuota(req, res, 'generation')) return;
-  const { script = '', productInfo = '', platform = 'tiktok', language = 'en', provider, audience = '', sellingPoints = '', tone = '' } = req.body ?? {};
+  const { script = '', productInfo = '', platform = 'tiktok', language = 'en', provider, audience = '', sellingPoints = '', tone = '', referenceCaption = '', brandName = '', categoryTerms = [], targetMarket = '' } = req.body ?? {};
   const lang = langName(language);
   const providerOpt: 'qwen' = 'qwen';
   const enterprise = await enterpriseCtx();
@@ -5413,17 +5411,18 @@ studioRouter.post('/caption', async (req, res) => {
     return;
   }
 
+  const keywordResearch = researchSocialImageKeywords({ platform, language, targetMarket, brandName, productInfo, categoryTerms, valueThemes: [sellingPoints].filter(Boolean), referenceCaption, maxHashtags: 8 });
   const prompt = `Write a ${platform} post caption in ${lang} for this overseas e-commerce video.
-Product: ${productInfo || '(see enterprise profile)'} ; audience: ${audience || '(infer)'} ; selling points: ${sellingPoints || '(infer)'} ; tone: ${tone || '(fit platform)'} ; script: ${script.slice(0, 300)}
+Product: ${productInfo || '(see enterprise profile)'} ; audience: ${audience || '(infer)'} ; selling points: ${sellingPoints || '(infer)'} ; tone: ${tone || '(fit platform)'} ; script: ${script.slice(0, 300)} ; ${keywordPromptContext(keywordResearch)}
 Use only facts and product terms explicitly present above. Never invent a product category, certification, price, MOQ, shipping promise, lead time, geography or performance claim.
-Return ONLY JSON: { "caption": string (1-2 sentences, may include 1-2 emojis), "hashtags": string[] (5-8 trending tags, no # prefix) }`;
+Return ONLY JSON: { "caption": string, "hashtags": string[] (no # prefix) }`;
 
   try {
     const text = await callLLM(prompt, { backend: providerOpt, systemPrompt: productEnterprise });
     const obj = extractJSON<{ caption: string; hashtags: string[] }>(text);
     if (obj?.caption) {
       const caption = String(obj.caption || '').trim();
-      const hashtags = Array.isArray(obj.hashtags) ? obj.hashtags.map(String).slice(0, 8) : [];
+      const hashtags = mergePlannedHashtags(obj.hashtags, keywordResearch, 8);
       const audit = auditCommercialClaims([caption, ...hashtags].join('\n'), productEnterprise);
       if (audit.issues.length || audit.fieldsToConfirm.length) {
         res.status(422).json({
@@ -5436,7 +5435,7 @@ Return ONLY JSON: { "caption": string (1-2 sentences, may include 1-2 emojis), "
         });
         return;
       }
-      res.json({ ok: true, source: 'ai', provenance: 'ai', publishable: true, qualityStatus: 'passed', caption, hashtags });
+      res.json({ ok: true, source: 'ai', provenance: 'ai', publishable: true, qualityStatus: 'passed', caption, hashtags, keywordResearch });
       return;
     }
     throw new Error('parse');

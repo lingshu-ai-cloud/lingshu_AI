@@ -4781,7 +4781,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             referenceTitle: video.title || '已选对标图文',
             referenceThumbnail: video.thumbnail,
             referenceMediaUrl: video.thumbnail,
-            referenceContentType: 'image',
+            referenceContentType: 'image', referenceCaption: video.aiAnalysis?.caption || '',
           },
         },
       } }));
@@ -4823,7 +4823,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             referenceTitle: video.title || '已选参考视频',
             referenceThumbnail: video.thumbnail,
             referenceMediaUrl: video.videoUrl || undefined,
-            referenceContentType: 'video',
+            referenceContentType: 'video', referenceCaption: video.aiAnalysis?.caption || '',
             aspectRatio: video.aiAnalysis?.gemini?.globalSettings?.aspectRatio,
             referenceShots: getAnalysis(video)?.scriptDetails15s.map(detail => ({ time: detail.time, dialogue: detail.dialogue, subtitle: detail.subtitle, visual: detail.visual, firstFrameRef: detail.materialEvidence?.firstFrameRef || undefined, firstFrameSeconds: detail.materialEvidence?.firstFrameSeconds })) || [],
           },

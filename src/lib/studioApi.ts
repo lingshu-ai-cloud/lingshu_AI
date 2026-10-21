@@ -494,7 +494,7 @@ export interface FbPosterResult {
 
 export interface FbPosterRenderResult {
   ok: boolean;
-  source?: 'gemini' | 'seedream' | 'local';
+  source?: 'openai' | 'qwen' | 'local';
   model?: string;
   url?: string;
   material?: Material;
@@ -579,7 +579,7 @@ export const studioApi = {
     provider?: 'gemini' | 'qwen';
     audience?: string;
     sellingPoints?: string;
-    tone?: string;
+    tone?: string; referenceCaption?: string; brandName?: string; categoryTerms?: string[]; targetMarket?: string;
   }, _fb: { caption: string; hashtags: string[] } = { caption: '', hashtags: [] }) =>
     post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; caption: string; hashtags: string[]; fieldsToConfirm?: string[]; error?: string }>('caption', b, { ok: false, caption: '', hashtags: [] }),
 
@@ -595,7 +595,7 @@ export const studioApi = {
     language: string;
     provider?: 'gemini' | 'qwen';
     materials?: Array<{ id?: string; name: string; type?: string; folder?: string; role?: string }>;
-    referenceNotes?: string;
+    referenceNotes?: string; referenceCaption?: string; brandName?: string; categoryTerms?: string[]; targetMarket?: string;
     confirmedFields?: Record<string, string>;
   }) =>
     post<FbPosterResult>('fb-poster', b, { ok: false, caption: '', hashtags: [], commentCta: '', dmOpening: '', fieldsToConfirm: [], imagePrompt: '' }),
@@ -606,7 +606,7 @@ export const studioApi = {
   fbPosterRender: (b: {
     poster: FbPosterBrief;
     caption?: string;
-    imagePrompt?: string;
+    imagePrompt?: string; imageQuality?: 'low' | 'medium' | 'high';
     ratio: string;
     materialIds?: string[];
     productIds?: string[];

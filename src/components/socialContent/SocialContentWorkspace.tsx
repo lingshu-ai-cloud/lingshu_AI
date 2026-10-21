@@ -19,6 +19,7 @@ import { ArtifactBatchChangesDialog, ArtifactChangesDialog, MetricsDialog, Publi
 import SocialTaskOverview from './SocialTaskOverview';
 import SocialManagedExecutionNotice from './SocialManagedExecutionNotice';
 import { useSocialContentWorkspace } from './useSocialContentWorkspace';
+import type { SocialImageProductionMode } from '../../lib/socialImageProductionMode';
 
 export interface SocialContentSourceContext {
   originLabel: string;
@@ -26,6 +27,7 @@ export interface SocialContentSourceContext {
   referenceThumbnail?: string;
   referenceMediaUrl?: string;
   referenceContentType?: 'video' | 'image';
+  referenceCaption?: string;
   aspectRatio?: string;
   referenceShots?: Array<{ time: string; dialogue?: string; subtitle?: string; visual?: string; firstFrameRef?: string; firstFrameSeconds?: number }>;
 }

@@ -60,12 +60,13 @@ function posterStyleForType(type: SocialImageContentType) {
 }
 
 export default function SocialImageWorkbench({
-  creationPath, referenceTitle, referenceThumbnail, referenceMediaUrl, initialTask, onShowCreations,
+  creationPath, referenceTitle, referenceThumbnail, referenceMediaUrl, referenceCaption, initialTask, onShowCreations,
 }: {
   creationPath: SocialImageCreationPath;
   referenceTitle?: string;
   referenceThumbnail?: string;
   referenceMediaUrl?: string;
+  referenceCaption?: string;
   initialTask?: SocialImageCreationTask;
   onShowCreations: () => void;
 }) {
@@ -82,6 +83,7 @@ export default function SocialImageWorkbench({
   const [platform, setPlatform] = useState<'facebook' | 'instagram' | 'linkedin'>((initialTask?.deliverySpec.platform === 'instagram' || initialTask?.deliverySpec.platform === 'linkedin') ? initialTask.deliverySpec.platform : 'facebook');
   const [ratio, setRatio] = useState<'1:1' | '4:5' | '9:16'>((initialTask?.deliverySpec.aspectRatio === '1:1' || initialTask?.deliverySpec.aspectRatio === '9:16') ? initialTask.deliverySpec.aspectRatio : '4:5');
   const [language, setLanguage] = useState<'en' | 'zh'>(initialTask?.deliverySpec.language === 'zh' ? 'zh' : 'en');
+  const [imageQuality, setImageQuality] = useState<'low' | 'medium' | 'high'>(initialTask?.deliverySpec.imageGeneration?.quality || 'low');
   const [factuality, setFactuality] = useState<'verified' | 'user_supplied' | 'mock'>(initialTask?.contentBrief.factuality || 'verified');
   const [task, setTask] = useState<SocialImageCreationTask | null>(initialTask || null);
   const [poster, setPoster] = useState<FbPosterBrief | null>(initialTask?.renderBrief || null);
@@ -163,7 +165,7 @@ export default function SocialImageWorkbench({
       productRefs: productIds, productNames: selectedProducts.map(item => item.name), audience: [audience], factuality,
       targetAction: '联系销售或申请样品', referenceUrls: [benchmarkImage, referenceTitle].filter(Boolean), enterpriseAssets,
       ...(creationPath === 'viral_replication' ? { referenceSnapshot: {
-        sourceUrl: referenceTitle, title: referenceTitle, imageUrls: benchmarkImage ? [benchmarkImage] : [], collectedAt: new Date().toISOString(),
+        sourceUrl: referenceTitle, title: referenceTitle, caption: referenceCaption, imageUrls: benchmarkImage ? [benchmarkImage] : [], collectedAt: new Date().toISOString(),
       } } : {}),
     });
     setTask(created.task);
@@ -182,7 +184,7 @@ export default function SocialImageWorkbench({
           ...selectedMaterials.map(item => ({ assetId: item.id, role: /logo|标志|品牌标识/i.test(item.name) ? 'logo' as const : 'scene' as const, name: item.name, source: 'enterprise_material_library' as const, contentHash: item.contentSha256, required: true })),
         ],
         contentBrief: { ...current.contentBrief, coreClaim: resolvedCoreClaim, productRefs: productIds, productNames: selectedProducts.map(item => item.name), audience: [audience], factuality, topicType: topicForType(imageType) as SocialImageCreationTask['contentBrief']['topicType'] },
-        deliverySpec: { ...current.deliverySpec, platform, aspectRatio: ratio, language, format: imageType === 'gif_poster' ? 'gif' : imageType === 'carousel' ? 'carousel' : 'jpg', outputCount: imageType === 'carousel' ? 5 : imageType === 'gif_poster' ? 2 : 1 },
+        deliverySpec: { ...current.deliverySpec, platform, aspectRatio: ratio, language, imageGeneration: { provider: 'openai', model: 'gpt-image-2', quality: imageQuality }, format: imageType === 'gif_poster' ? 'gif' : imageType === 'carousel' ? 'carousel' : 'jpg', outputCount: imageType === 'carousel' ? 4 : imageType === 'gif_poster' ? 4 : 1 },
       });
       setTask(saved.task); setStep('plan'); setNotice('输入已冻结，正在自动完成对标拆解、图文策划与首版生成…');
       const planned = await requestPlan(saved.task, confirmationValues);
@@ -198,6 +200,9 @@ export default function SocialImageWorkbench({
       platform, ratio, posterStyle: posterStyleForType(imageType), language,
       materials: selectedMaterials.map(item => ({ id: item.id, name: item.name, type: item.type, folder: item.folder, role: item.shotFunction || item.primaryTheme || '企业图片素材' })),
       referenceNotes: [referenceTitle ? `对标作品：${referenceTitle}` : '', `核心主张：${resolvedCoreClaim}`, `内容类型：${IMAGE_TYPES.find(item => item.id === imageType)?.label}`].filter(Boolean).join('\n'),
+      referenceCaption: activeTask.referenceSnapshot?.caption || referenceCaption || '',
+      categoryTerms: selectedProducts.map(item => item.name),
+      targetMarket: audience,
       confirmedFields: confirmedFacts,
     });
     if (!result.ok || !result.poster) throw new Error(result.error || '图文策划生成失败');
@@ -301,7 +306,7 @@ export default function SocialImageWorkbench({
       });
       activeTask = queued.task; setTask(activeTask);
       const renderRequest = {
-        poster: sourcePoster, caption: sourceCaption, ratio, materialIds, productIds,
+        poster: sourcePoster, caption: sourceCaption, ratio, materialIds, productIds, imageQuality,
         referenceImageUrls: creationPath === 'viral_replication' ? [referenceMediaUrl || referenceThumbnail || ''].filter(Boolean) : [],
         idempotencyKey,
         confirmedFields: confirmationValues,
@@ -444,6 +449,7 @@ export default function SocialImageWorkbench({
           {error && <Alert type="error" showIcon message={error} />}{notice && <Alert type="info" showIcon message={notice} />}
         </div>
         <div className="border-t border-border px-4 pb-24 pt-4">
+          {step === 'inputs' && <label className="mb-3 block text-xs font-medium">GPT Image 2 质量<Select className="mt-1 w-full" value={imageQuality} onChange={setImageQuality} options={[{value:'low',label:'Low · 默认'},{value:'medium',label:'Medium'},{value:'high',label:'High'}]} /></label>}
           {step === 'type' && <Button type="primary" block onClick={() => setStep('inputs')} icon={<ImagePlus size={15} />}>进入内容与资产</Button>}
           {step === 'inputs' && <Button type="primary" block loading={busy} onClick={() => void saveInputs()}>{busy ? '正在生成首版' : '一次生成首版'}</Button>}
           {step === 'plan' && <><Button type="primary" block loading={busy} disabled={busy} onClick={() => void generatePlan()}>{busy ? '正在自动策划并生成首版' : '重试一键生成'}</Button><Button block className="mt-2" disabled={busy} onClick={() => setStep('inputs')}>返回修改输入</Button></>}
