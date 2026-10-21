@@ -76,11 +76,15 @@ export async function persistSocialImageMultiUnitPlan(input: {
   return saved.task;
 }
 
-/** Reserve one frozen multi-output unit. This does not submit a provider request. */
+/** Reserve one frozen multi-output unit with the exact server-built provider request hash. This does not submit it. */
 export async function claimSocialImagePlannedUnit(input: {
-  store: DataStore; tenantId: string; taskId: string; jobId: string; idempotencyKey: string; plannedInputHash: string;
+  store: DataStore; tenantId: string; taskId: string; jobId: string; idempotencyKey: string;
+  plannedInputHash: string; renderRequestHash: string;
 }): Promise<SocialImageCreationTask> {
   await requireSocialImageAtomicStore(input.store);
+  if (!/^[a-f0-9]{64}$/.test(input.renderRequestHash)) {
+    throw new SocialImagePaidJobError('social_image_render_request_hash_invalid');
+  }
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
     if (!task) throw new SocialImagePaidJobError('social_image_task_missing');
@@ -106,7 +110,7 @@ export async function claimSocialImagePlannedUnit(input: {
     const saved = await updateSocialImageTask(input.store, input.tenantId, task.id, task.version, {
       status: 'generating', step: 'generate',
       generationJobs: task.generationJobs.map(item => item.id === job.id
-        ? { ...item, status: 'running', inputHash: unit.plannedInputHash, attempt: item.attempt + 1, updatedAt: now }
+        ? { ...item, status: 'running', inputHash: input.renderRequestHash, attempt: item.attempt + 1, updatedAt: now }
         : item),
     });
     if (saved.kind === 'updated') return saved.task;

@@ -249,21 +249,36 @@ test('frozen carousel unit is claimed once, in order, with exact tenant and iden
   if (prepared.kind !== 'updated') return;
   const planned = await persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id, expectedVersion: prepared.task.version });
   const [first, second] = planned.renderPlan!.units;
+  const renderRequestHash = 'b'.repeat(64);
   const claim = () => claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
-    jobId: first!.jobId, idempotencyKey: first!.idempotencyKey, plannedInputHash: first!.plannedInputHash });
+    jobId: first!.jobId, idempotencyKey: first!.idempotencyKey, plannedInputHash: first!.plannedInputHash, renderRequestHash });
   await assert.rejects(claimSocialImagePlannedUnit({ store, tenantId: 'tenant-b', taskId: created.id,
-    jobId: first!.jobId, idempotencyKey: first!.idempotencyKey, plannedInputHash: first!.plannedInputHash }), /task_missing/);
+    jobId: first!.jobId, idempotencyKey: first!.idempotencyKey, plannedInputHash: first!.plannedInputHash, renderRequestHash }), /task_missing/);
   await assert.rejects(claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
-    jobId: first!.jobId, idempotencyKey: first!.idempotencyKey, plannedInputHash: hash }), /identity_invalid/);
+    jobId: first!.jobId, idempotencyKey: first!.idempotencyKey, plannedInputHash: hash, renderRequestHash }), /identity_invalid/);
   await assert.rejects(claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
-    jobId: second!.jobId, idempotencyKey: second!.idempotencyKey, plannedInputHash: second!.plannedInputHash }), /prior_paid_job_unresolved/);
+    jobId: first!.jobId, idempotencyKey: first!.idempotencyKey, plannedInputHash: first!.plannedInputHash, renderRequestHash: 'not-a-hash' }), /render_request_hash_invalid/);
+  await assert.rejects(claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: second!.jobId, idempotencyKey: second!.idempotencyKey, plannedInputHash: second!.plannedInputHash, renderRequestHash }), /prior_paid_job_unresolved/);
   const results = await Promise.allSettled([claim(), claim()]);
   assert.deepEqual(results.map(item => item.status).sort(), ['fulfilled', 'rejected']);
   const persisted = await readSocialImageTask(store, 'tenant-a', created.id);
-  assert.equal(persisted?.generationJobs[0]?.inputHash, first!.plannedInputHash);
+  assert.equal(persisted?.generationJobs[0]?.plannedInputHash, first!.plannedInputHash);
+  assert.equal(persisted?.generationJobs[0]?.inputHash, renderRequestHash);
   assert.equal(persisted?.generationJobs[0]?.attempt, 1);
   await assert.rejects(claim(), /already_started/);
+  const output = { id: 'carousel-output-1', role: 'carousel_page' as const, label: first!.label,
+    state: 'quality_checking' as const, mediaUrl: '/api/overseas/studio/private-assets/materials/output-1.png',
+    materialId: 'material-1', version: 1, qualityChecks: [] };
+  await assert.rejects(completeSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: first!.jobId, inputHash: first!.plannedInputHash, output, provider: 'openai' }), /input_changed/);
+  const completed = await completeSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: first!.jobId, inputHash: renderRequestHash, output, provider: 'openai' });
+  assert.deepEqual(completed.generationJobs[0]?.outputNodeIds, [output.id]);
+  const next = await claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
+    jobId: second!.jobId, idempotencyKey: second!.idempotencyKey, plannedInputHash: second!.plannedInputHash, renderRequestHash: 'c'.repeat(64) });
+  assert.equal(next.generationJobs[1]?.status, 'running');
   store.supportsAtomicCompareAndSwap = () => false;
   await assert.rejects(claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: created.id,
-    jobId: second!.jobId, idempotencyKey: second!.idempotencyKey, plannedInputHash: second!.plannedInputHash }), /atomic_store_required/);
+    jobId: second!.jobId, idempotencyKey: second!.idempotencyKey, plannedInputHash: second!.plannedInputHash, renderRequestHash }), /atomic_store_required/);
 });
