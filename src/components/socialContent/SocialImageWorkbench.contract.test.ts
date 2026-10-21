@@ -25,7 +25,8 @@ assert.match(source, /idempotencyKey/, 'paid image generation must have a stable
 assert.match(source, /imageTaskId: activeTask\.id, imageJobId: jobId/, 'paid rendering must identify the persisted task and unit');
 assert.match(studioRoute, /claimSocialImagePaidJob\(/, 'server must claim the paid unit before rendering');
 assert.match(studioRoute, /completeSocialImagePaidJob\(/, 'server must attach the persisted material to the unit');
-assert.match(studioRoute, /markSocialImagePaidJobUnknown\(/, 'uncertain provider outcome must remain non-retryable');
+assert.match(studioRoute, /recordSocialImagePaidJobFailure\(/, 'paid provider failure must persist a server-owned outcome');
+assert.match(studioRoute, /definitiveRejection: err instanceof ImageProviderRejectedError/, 'only an explicit provider rejection may release a paid unit');
 assert.match(socialImageRoute, /social_image_paid_inputs_frozen/, 'task inputs must remain fixed while a paid unit is unresolved');
 assert.match(source, /runPreflight/, 'generated images must enter deterministic quality preflight');
 assert.match(source, /repairLayered/, 'review must support natural-language layer repair');

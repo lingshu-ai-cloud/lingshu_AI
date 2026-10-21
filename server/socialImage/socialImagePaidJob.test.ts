@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datastore.js';
 import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } from './socialImageTask.js';
-import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, markSocialImagePaidJobUnknown, socialImageQueuedJobIssue } from './socialImagePaidJob.js';
+import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, markSocialImagePaidJobUnknown, recordSocialImagePaidJobFailure, socialImageQueuedJobIssue } from './socialImagePaidJob.js';
 
 class AtomicMemoryStore implements DataStore {
   private sequence = 0;
@@ -110,6 +110,22 @@ test('definitive pre-submission quota denial releases a unit without marking pro
   const released = await markSocialImagePaidJobNotSubmitted({ store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', inputHash: hash, reason: 'quota_denied' });
   assert.equal(released.generationJobs[0]?.status, 'failed');
   assert.equal(released.status, 'planned');
+});
+
+test('definitive provider rejection releases a unit while uncertain failure remains blocked', async () => {
+  const rejected = new AtomicMemoryStore();
+  const rejectedTaskId = await queuedTask(rejected);
+  await claimSocialImagePaidJob({ store: rejected, tenantId: 'tenant-a', taskId: rejectedTaskId, jobId: 'unit-1', idempotencyKey: 'operation-1', inputHash: hash });
+  const failed = await recordSocialImagePaidJobFailure({ store: rejected, tenantId: 'tenant-a', taskId: rejectedTaskId, jobId: 'unit-1', inputHash: hash, error: 'OpenAI Image 400: rejected', definitiveRejection: true });
+  assert.equal(failed.generationJobs[0]?.status, 'failed');
+  assert.equal(failed.status, 'planned');
+
+  const uncertain = new AtomicMemoryStore();
+  const uncertainTaskId = await queuedTask(uncertain);
+  await claimSocialImagePaidJob({ store: uncertain, tenantId: 'tenant-a', taskId: uncertainTaskId, jobId: 'unit-1', idempotencyKey: 'operation-1', inputHash: hash });
+  const blocked = await recordSocialImagePaidJobFailure({ store: uncertain, tenantId: 'tenant-a', taskId: uncertainTaskId, jobId: 'unit-1', inputHash: hash, error: 'transport outcome unknown', definitiveRejection: false });
+  assert.equal(blocked.generationJobs[0]?.status, 'outcome_unknown');
+  assert.equal(blocked.status, 'blocked');
 });
 
 test('multi-output types stay closed until their unit delivery path is implemented', async () => {

@@ -102,7 +102,7 @@ import { secureStudioRenderManifest, studioRenderAssetPath, studioRenderManifest
 import { studioBgmMediaPath, studioBgmObjectKey } from '../lib/studioBgmAccess.js';
 import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
 import { generatePosterImage, ImageProviderRejectedError, imageExt, normalizeImageGenerationQuality, type ReferenceImage } from '../lib/imageGen.js';
-import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, markSocialImagePaidJobUnknown, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
+import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, recordSocialImagePaidJobFailure, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
 import { SOCIAL_IMAGE_HARD_CHECKS } from '../../shared/contracts/socialImageCreation.js';
 import { keywordPromptContext, mergePlannedHashtags, researchSocialImageKeywords } from '../lib/keywordIntelligence.js';
 import { SeedanceProductRecovery } from '../lib/seedanceProductRecovery.js';
@@ -5413,7 +5413,7 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
   } catch (err: any) {
     console.warn('[studio] fb-poster image generation failed:', String(err?.message || err).slice(0, 800));
     if (imageTaskId && paidInputHash && paidRequestMayHaveStarted) {
-      await markSocialImagePaidJobUnknown({ store, tenantId, taskId: imageTaskId, jobId: imageJobId, inputHash: paidInputHash, error: String(err?.message || err) })
+      await recordSocialImagePaidJobFailure({ store, tenantId, taskId: imageTaskId, jobId: imageJobId, inputHash: paidInputHash, error: String(err?.message || err), definitiveRejection: err instanceof ImageProviderRejectedError })
         .catch(error => console.warn('[studio] image request outcome could not be recorded', error instanceof Error ? error.message : error));
     }
     if (err instanceof SocialImagePaidJobError) {

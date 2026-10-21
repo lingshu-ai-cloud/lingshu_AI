@@ -125,7 +125,7 @@ export async function markSocialImagePaidJobUnknown(input: {
   throw new SocialImagePaidJobError('social_image_paid_job_unknown_conflict');
 }
 
-/** Only call this before opening a provider request (for example, quota denial). */
+/** Only call when no paid task was accepted: preflight denial or a definitive provider rejection. */
 export async function markSocialImagePaidJobNotSubmitted(input: {
   store: DataStore; tenantId: string; taskId: string; jobId: string; inputHash: string; reason: string;
 }): Promise<SocialImageCreationTask> {
@@ -142,4 +142,15 @@ export async function markSocialImagePaidJobNotSubmitted(input: {
     if (await saveTask(input.store, row, next)) return next;
   }
   throw new SocialImagePaidJobError('social_image_paid_job_release_conflict');
+}
+
+/** Preserve uncertainty unless the provider explicitly rejected the request. */
+export async function recordSocialImagePaidJobFailure(input: {
+  store: DataStore; tenantId: string; taskId: string; jobId: string; inputHash: string;
+  error: string; definitiveRejection: boolean;
+}): Promise<SocialImageCreationTask> {
+  const { definitiveRejection, ...job } = input;
+  return definitiveRejection
+    ? markSocialImagePaidJobNotSubmitted({ ...job, reason: input.error })
+    : markSocialImagePaidJobUnknown(job);
 }
