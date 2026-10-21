@@ -148,3 +148,9 @@
 
 - 将账号展示名、跟踪参数清理、平台账号列表页规范化和 YouTube 缩略图 URL 继续移入 `videoCrawlerSourceUrls.ts`，路由保留原有 `accountLabelFromUrl` 导出。`videos.ts` 从 10,664 行降至 10,606 行，历史预算同步下调；功能路径未接入新的付费 Actor。
 - 离线来源测试 5/5、既有 crawler fallback/reference grouping 测试通过。已确认现行 `runPaidApifyTikTokDataset` 虽可对 Actor 提交做未知结果保护，但其付费许可属于周计划 TikTok 专用账本；不能把它视为 LinkedIn 的预算授权。
+
+## 社媒集成与发布路由结构拆分（2026-10-22）
+
+- Instagram Login 的授权码交换、专业账号读取与长期令牌续期从 `server/integrations/social.ts` 移入 `instagramLogin.ts`，原导出路径保留；主集成文件从 860 行降至 773 行。
+- 发布记录的公开视图、数值/JSON 解析、受保护视频预览 URL 和已发布目标判别从 `server/routes/publishing.ts` 移入 `server/publishing/postPresentation.ts`；路由从 863 行降至 784 行。两项历史超限豁免已删除，剩余 43 项。
+- Instagram Login 专项 2/2、发布记录新测试 2/2 与日历加载回归通过。此拆分没有触发 OAuth、平台发布或其他外部请求；仅调整模块边界和测试覆盖。
