@@ -193,3 +193,8 @@
 - 当前仓库共有 19 个已登记工作树；集成工作树干净。8 个干净的 exact-Qwen/weekly-exact/carry 来源工作树虽然含有相对集成分支的独有提交 SHA，但逐分支 `git cherry -v` 均显示这些提交已有 patch-id 等价版本，不应重复 cherry-pick，也不能仅以祖先关系否定其内容已集成。
 - 另有 5 个工作树仍含未提交文件：`local-preview-1002`、`local-integrated-flow`、`local-unified-20261010`、`mobile-dual-edition-20261012`、`total-merge-langgraph`。这些文件兼有源码与大量运行数据；本次只读盘点，没有覆盖、提交、删除或归档任何来源工作树。它们的未提交内容不属于权威集成基线。
 - 图片 AIGC 工作树已提交的 HEAD `95b0bcc` 是集成 HEAD 的祖先。其未提交源码主要是将 Agent 周任务日历替换为视频进度表及配套 `VideoProgressTable`，并非新的图片生成管线提交；是否纳入当前产品日历属于独立界面选择，不能作为“图片 AIGC 合并遗漏”直接覆盖现有界面。轮播/GIF 多输出服务端执行与交付仍未完成。
+
+## 社媒内容任务计划边界拆分（2026-10-22）
+
+- 将工作包选择和周计划父子任务编排抽入 `socialContentTaskPlanning.ts`；后者以任务创建函数注入避免运行时循环依赖，原 `socialContentTasks.ts` 公共入口保留。主模块从 913 行降至 784 行，撤销超限豁免，剩余 38 项。
+- 社媒内容工作流 HTTP 回归通过，覆盖周计划两项子任务、租户隔离、幂等、限额和工作包完整性；TypeScript、架构扫描/ratchet、生产构建及 191 项迁移仓库只读预检通过。生产构建仍有大 chunk 提示；没有调用真实付费服务、执行迁移或部署。
