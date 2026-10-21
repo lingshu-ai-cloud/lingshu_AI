@@ -35,6 +35,7 @@ import { verifySupportAccessToken } from '../lib/supportAccess.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { isLocalDemoAuthorization, verifyLocalIdentity } from '../auth/localIdentity.js';
 import { bindDataAuthority, currentDataAuthority } from './dataAuthority.js';
+import { pocketBaseCasClaimSchemaVerified } from './pbCasCapability.js';
 import {
   createLocalDataTenant,
   deleteLocalInviteTenant,
@@ -480,6 +481,10 @@ function toPbFilter(where?: Where): string | undefined {
 
 export const pbStore: DataStore = {
   supportsAtomicCompareAndSwap: () => currentDataAuthority() === 'local' && localFallbacksEnabled(),
+  supportsAtomicCompareAndSwapFor: async collection => {
+    if (currentDataAuthority() === 'local') return localFallbacksEnabled();
+    return collection === 'studio_projects' && await pocketBaseCasClaimSchemaVerified();
+  },
   // Remote schema verification has not yet been implemented. Static migration
   // presence and disabling fallback do not prove a deployed unique index.
   supportsAtomicOperationLease: () => false,

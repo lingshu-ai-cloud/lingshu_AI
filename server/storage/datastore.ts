@@ -40,6 +40,8 @@ export interface ListResult<T = Record_> {
 export interface DataStore {
   /** Verified atomic aggregate CAS capability in the currently selected domain. */
   supportsAtomicCompareAndSwap?(): boolean | Promise<boolean>;
+  /** Optional collection-scoped proof; callers may fall back to the global capability. */
+  supportsAtomicCompareAndSwapFor?(collection: string): boolean | Promise<boolean>;
   /** Database-arbitrated unique tenant/scope/subject lease support. */
   supportsAtomicOperationLease?(): boolean | Promise<boolean>;
   getById<T = Record_>(collection: string, id: string): Promise<T | null>;

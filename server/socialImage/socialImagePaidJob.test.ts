@@ -8,6 +8,7 @@ class AtomicMemoryStore implements DataStore {
   private sequence = 0;
   private rows = new Map<string, Record_>();
   supportsAtomicCompareAndSwap = () => true;
+  supportsAtomicCompareAndSwapFor?: DataStore['supportsAtomicCompareAndSwapFor'];
   async getById<T = Record_>(_collection: string, id: string): Promise<T | null> { return structuredClone(this.rows.get(id) || null) as T | null; }
   async create<T = Record_>(_collection: string, data: Record<string, unknown>): Promise<T> {
     const row = { id: `row-${++this.sequence}`, ...structuredClone(data) } as Record_;
@@ -75,6 +76,19 @@ test('paid units fail closed without a verified atomic store', async () => {
   store.supportsAtomicCompareAndSwap = () => false;
   await assert.rejects(claimSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', idempotencyKey: 'operation-1', inputHash: hash }), /atomic_store_required/);
   assert.equal((await readSocialImageTask(store, 'tenant-a', taskId))?.generationJobs[0]?.status, 'queued');
+});
+
+test('paid unit uses collection-scoped atomic proof when global capability is unavailable', async () => {
+  const store = new AtomicMemoryStore();
+  const taskId = await queuedTask(store);
+  store.supportsAtomicCompareAndSwap = () => false;
+  store.supportsAtomicCompareAndSwapFor = collection => collection === 'studio_projects';
+  const claimed = await claimSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', idempotencyKey: 'operation-1', inputHash: hash });
+  assert.equal(claimed.generationJobs[0]?.status, 'running');
+  const denied = new AtomicMemoryStore();
+  const deniedTaskId = await queuedTask(denied);
+  denied.supportsAtomicCompareAndSwapFor = () => false;
+  await assert.rejects(claimSocialImagePaidJob({ store: denied, tenantId: 'tenant-a', taskId: deniedTaskId, jobId: 'unit-1', idempotencyKey: 'operation-1', inputHash: hash }), /atomic_store_required/);
 });
 
 test('generic task writes cannot erase an unresolved paid job or forge its outcome', async () => {

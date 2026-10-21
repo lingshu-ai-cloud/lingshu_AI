@@ -20,7 +20,10 @@ export class SocialImagePaidJobError extends Error {
 }
 
 async function requireAtomicStore(store: DataStore): Promise<void> {
-  if (!store.compareAndSwap || await store.supportsAtomicCompareAndSwap?.() !== true) {
+  const supported = store.supportsAtomicCompareAndSwapFor
+    ? await store.supportsAtomicCompareAndSwapFor(SOCIAL_IMAGE_TASKS_COLLECTION)
+    : await store.supportsAtomicCompareAndSwap?.();
+  if (!store.compareAndSwap || supported !== true) {
     throw new SocialImagePaidJobError('social_image_atomic_store_required');
   }
 }

@@ -7,7 +7,7 @@
 
 图片工作台先由浏览器将 `generationJobs` 写入 `studio_projects.spec.socialImageTask`，再直接调用 `/studio/fb-poster/render`。该路由只返回单张图片；OpenAI 图片生成器虽接收 `idempotencyKey` 参数来计算本地请求标识，但未将其作为供应商保证的幂等键提交。供应商回执仅在 `runWithContentExecutionContext` 内写入耐久队列，普通 Studio 请求并未进入该上下文。断网、超时或服务进程退出后，客户端无法以任务状态证明供应商是否已收费或产物是否已落库。
 
-`DataStore.supportsAtomicCompareAndSwap()` 在本地回退存储和 Postgres cutover 可为真，远端 PocketBase 当前报告为假；不能把其兼容层的读写接口当作跨实例原子认领依据。单靠浏览器按钮禁用也不是服务端幂等保证。
+`DataStore.supportsAtomicCompareAndSwap()` 在本地回退存储和 Postgres cutover 可为真，远端 PocketBase 的全局能力仍报告为假；不能把其兼容层的读写接口当作跨实例原子认领依据。单靠浏览器按钮禁用也不是服务端幂等保证。
 
 ## 实现边界
 
@@ -22,8 +22,10 @@
 
 单图工作台现以 `queued` 状态入队；服务端在供应商调用前以原子 CAS 认领，将输入哈希冻结在 Job 上。无经验证的原子能力即拒绝调用。成功图片先落租户素材库，再由服务端把 `materialId` 与输出节点关联到 Job；重复认领被拒绝，未知结果不自动重发。通用任务 PATCH 只能追加新的排队 Job，不能删改既有付费记录，也不能在单元未解决时改写生成输入。素材来源记录包含任务 ID、Job ID 和输入哈希以供人工对账。
 
-该实现没有解决远端 PocketBase 的原子能力缺口，也没有实现供应商回执自动对账、断点恢复、逐页轮播或 GIF 编码的生产交付。服务端明确拒绝把多输出类型误送入单图链路。
+远端 PocketBase 现仅对 `studio_projects` 图片任务增加只读、逐次的 CAS claim 结构核验：必须能以管理员身份读取 `datastore_cas_claims` 的私有规则、必需字段与 `target_key` 唯一索引元数据，才能认领付费 Job。缺凭据、请求失败或结构不符均拒绝供应商调用；全局 CAS 能力不因此放开。代码与模拟测试不能证明目标 PocketBase 已应用迁移，本轮没有访问真实远端，也没有执行迁移。
+
+该实现仍没有供应商回执自动对账、断点恢复、逐页轮播或 GIF 编码的生产交付。服务端明确拒绝把多输出类型误送入单图链路。
 
 ## 本轮决策
 
-继续保持轮播/GIF UI 不可选。后续需完成供应商回执对账与人工恢复工具，并评估远端 PocketBase 的迁移或经验证的唯一约束方案；未完成前不声称图片 AIGC 全功能已合并。
+继续保持轮播/GIF UI 不可选。后续需在目标 PocketBase 上只读核验迁移状态、做不付费的跨实例故障注入，再完成供应商回执对账与人工恢复工具；未完成前不声称图片 AIGC 全功能已合并。
