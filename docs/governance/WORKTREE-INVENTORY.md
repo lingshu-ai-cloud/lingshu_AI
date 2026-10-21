@@ -1,7 +1,7 @@
 # Git 工作树盘点（只读快照）
 
 盘点日期：2026-10-21（Asia/Shanghai）
-来源：`git worktree list --porcelain`、`git branch -vv`；未检查或改写各工作树文件内容。
+来源：`git worktree list --porcelain`、`git branch -vv`、逐个 `git status --porcelain` 只读检查；未改写各工作树内容。
 
 ## 权威集成点
 
@@ -11,7 +11,7 @@
 
 ## 其余已注册工作树
 
-以下均保留原位；此快照未判断它们是否可删除或是否包含未提交工作：
+以下均保留原位。5 个有未提交内容的工作树全部保留；其余有效路径工作树在盘点时干净。干净只表示没有未提交内容，不代表可删除或归档：
 
 - `local-preview-1002` — `codex/integrated-operations-content-20261008`，`0f3bbed6`。
 - `local-integrated-flow` — `xixi`，`737484c9`。
@@ -29,6 +29,13 @@
 - `worktrees/weekly-exact-v2-settlement` — `codex/weekly-exact-v2-settlement`，`11f140b8`。
 - `/Users/julia1/Documents/Codex/2026-10-10/d/work/safe-merge-wu-ui` — detached HEAD `62373483`。
 - `/Users/julia1/Documents/Codex/2026-10-11/new-chat/work/total-merge-langgraph` — `xixi改数字人认证`，`3eac6674`。
+
+## 工作区状态分类
+
+- 有未提交改动，必须保留：`local-preview-1002`（含代码、运行数据/备份和分析产物）；`local-integrated-flow`（小程序工作台代码/测试）；`local-unified-20261010`（周历 UI 及新工作台模式代码/测试）；`mobile-dual-edition-20261012`（AIGC 来源工作树，含用户文档、日历改动、锁/分析文件和其他未跟踪目录）；`total-merge-langgraph`（数字人策略改动及运行数据/回执）。
+- 工作区干净：`safe-all-modules-ui-20261009`、`exact-qwen-no-redirect`、`exact-request-ceiling`、`exact-request-ledger-v2`、`phase3c-v2-carry-seam`、`weekly-budget-carry`、`xixi-test-1015`、`colleague-handoff-20261019`、`merge-image-aigc-into-architecture`、`weekly-exact-head-store`、`weekly-exact-v2-carry`、`weekly-exact-v2-settlement`、当前集成工作树、detached `safe-merge-wu-ui`。
+- 两个 `/private/tmp` prunable 项目标不存在，因此未能检查文件状态；注册记录和分支仍保留。
+- 除当前集成工作树以外，清理/归档及任何运行数据整理仍需单独授权和逐项备份检查。本盘点没有改动 `.git/worktrees`、分支、运行数据或任何工作区。
 
 ## 需人工处置但本次未触碰
 

@@ -11,7 +11,7 @@
 - 阶段一治理提交：`69813195277028455b6cc0a0c675de01d66217d5`
 - 上一稳定基线：`xixi数字员工架构待清理` / `2d6c5a62d516c6eb5fc83d7dc19c17080aa31d98`
 - 本地集成工作树：`/Users/julia1/.codex/worktrees/xixi1021-full-integration`
-- 工作树只读盘点：[`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)（21 个注册项；不代表其他工作树已逐一验证干净）。
+- 工作树只读盘点：[`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)（21 个注册项；5 个有未提交内容、14 个有效路径干净、2 个 prunable 路径失效；全部保留）。
 - 阶段 0 核验时工作区干净；图片 AIGC 工作树 `mobile-dual-edition-20261012` 有未提交改动，明确不属于本基线。
 
 ## 阶段一范围
