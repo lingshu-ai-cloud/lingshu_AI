@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { inferPlatformFromUrl, isPlatformUrl } from './videoCrawlerNormalization.js';
-import { looksLikeAccountUrl } from './videos.js';
+import { accountLabelFromUrl, looksLikeAccountUrl } from './videos.js';
 import { parseLinkedInCompanyPost } from './linkedinCompanyPost.js';
+import { accountListUrlCandidates, normalizeAccountListUrl, stripTrackingParams, youtubeThumbnailFromUrl } from './videoCrawlerSourceUrls.js';
 
 test('LinkedIn company source is recognized without accepting lookalike hosts or individual posts as accounts', () => {
   const company = 'https://www.linkedin.com/company/example-inc/';
@@ -15,6 +16,14 @@ test('LinkedIn company source is recognized without accepting lookalike hosts or
   assert.equal(looksLikeAccountUrl('https://www.youtube.com/@example', 'youtube'), true);
   assert.equal(looksLikeAccountUrl('https://www.youtube.com/watch?v=abcdefghijk', 'youtube'), false);
   assert.equal(looksLikeAccountUrl('https://www.tiktok.com/@example/video/123', 'tiktok'), false);
+});
+
+test('extracted account URL normalization keeps existing YouTube and social list behavior', () => {
+  assert.equal(accountLabelFromUrl('https://www.youtube.com/@example'), '@example');
+  assert.equal(normalizeAccountListUrl('youtube', 'https://www.youtube.com/@example/videos?utm_source=test'), 'https://www.youtube.com/@example/shorts');
+  assert.deepEqual(accountListUrlCandidates('facebook', 'https://www.facebook.com/example?fbclid=123'), ['https://www.facebook.com/example/videos']);
+  assert.equal(stripTrackingParams('https://www.linkedin.com/company/example/?utm_source=test'), 'https://www.linkedin.com/company/example/');
+  assert.equal(youtubeThumbnailFromUrl('https://www.youtube.com/watch?v=abcdefghijk'), 'https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg');
 });
 
 test('LinkedIn public image post preserves caption and media as source evidence', () => {

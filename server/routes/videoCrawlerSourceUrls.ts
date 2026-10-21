@@ -49,3 +49,54 @@ export function looksLikeAccountUrl(input: string, platform: Platform): boolean 
   } catch { return false; }
   return false;
 }
+
+export function accountLabelFromUrl(url: string): string {
+  try {
+    const path = new URL(url).pathname;
+    const handle = path.match(/\/(@[^/?#]+)/)?.[1]
+      || path.match(/\/(?:channel|c|user)\/([^/?#]+)/i)?.[1]
+      || path.split('/').filter(Boolean).pop();
+    return handle ? decodeURIComponent(handle) : url;
+  } catch { return url; }
+}
+
+export function stripTrackingParams(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    for (const key of [...parsed.searchParams.keys()]) {
+      if (/^utm_/i.test(key) || ['si', 'feature', 'fbclid', 'gclid'].includes(key)) parsed.searchParams.delete(key);
+    }
+    parsed.hash = '';
+    return parsed.toString();
+  } catch { return rawUrl; }
+}
+
+export function normalizeAccountListUrl(platform: Platform, url: string): string {
+  const clean = stripTrackingParams(String(url || '').trim()).replace(/\/+$/, '');
+  if (platform === 'youtube') {
+    const base = clean.replace(/\/(?:videos|shorts|streams|featured)$/i, '');
+    return `${base}/shorts`;
+  }
+  if (platform === 'instagram') {
+    if (/\/(?:reels|reels\/|tagged)$/i.test(clean)) return clean;
+    return `${clean}/reels`;
+  }
+  if (platform === 'facebook') {
+    if (/\/(?:videos|reels)$/i.test(clean)) return clean;
+    return `${clean}/videos`;
+  }
+  return clean;
+}
+
+export function accountListUrlCandidates(platform: Platform, url: string): string[] {
+  const primary = normalizeAccountListUrl(platform, url);
+  if (platform !== 'youtube') return [primary];
+  const clean = stripTrackingParams(String(url || '').trim()).replace(/\/+$/, '');
+  const base = clean.replace(/\/(?:videos|shorts|streams|featured)$/i, '');
+  return Array.from(new Set([primary, `${base}/shorts`]));
+}
+
+export function youtubeThumbnailFromUrl(url: string): string {
+  const id = youtubeVideoId(url);
+  return id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : '';
+}

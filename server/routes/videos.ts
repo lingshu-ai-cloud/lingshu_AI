@@ -1,6 +1,6 @@
 import {createReferenceReviewReadHandlers} from '../lib/referenceReviewReadHandlers.js';
-import { looksLikeAccountUrl, looksLikeVideoUrl, youtubeVideoId } from './videoCrawlerSourceUrls.js';
-export { looksLikeAccountUrl } from './videoCrawlerSourceUrls.js';
+import { accountLabelFromUrl, accountListUrlCandidates, looksLikeAccountUrl, looksLikeVideoUrl, normalizeAccountListUrl, stripTrackingParams, youtubeThumbnailFromUrl, youtubeVideoId } from './videoCrawlerSourceUrls.js';
+export { accountLabelFromUrl, looksLikeAccountUrl } from './videoCrawlerSourceUrls.js';
 import {classifyDiscoverySourceFailure} from '../socialDiscovery/sourceFailure.js';
 import { runPaidApifyTikTokDataset, type PaidApifyTikTokPermit } from './apifyPaidTikTokTransport.js';
 import {frozenWeeklyAccountFiveVideoActorInput} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
@@ -8861,46 +8861,6 @@ function publicSearchQuery(platform: Platform, keyword: string): string {
   return keyword;
 }
 
-// 从主页 URL 推断一个展示用账号名（@handle 或 channel 段）。
-export function accountLabelFromUrl(url: string): string {
-  try {
-    const path = new URL(url).pathname;
-    const handle = path.match(/\/(@[^/?#]+)/)?.[1]
-      || path.match(/\/(?:channel|c|user)\/([^/?#]+)/i)?.[1]
-      || path.split('/').filter(Boolean).pop();
-    return handle ? decodeURIComponent(handle) : url;
-  } catch {
-    return url;
-  }
-}
-
-// 把账号主页 URL 规范化成可被 yt-dlp flat-playlist 枚举的「视频列表页」。
-function normalizeAccountListUrl(platform: Platform, url: string): string {
-  const clean = stripTrackingParams(String(url || '').trim()).replace(/\/+$/, '');
-  if (platform === 'youtube') {
-    const base = clean.replace(/\/(?:videos|shorts|streams|featured)$/i, '');
-    return `${base}/shorts`;
-  }
-  if (platform === 'instagram') {
-    if (/\/(?:reels|reels\/|tagged)$/i.test(clean)) return clean;
-    return `${clean}/reels`;
-  }
-  if (platform === 'facebook') {
-    if (/\/(?:videos|reels)$/i.test(clean)) return clean;
-    return `${clean}/videos`;
-  }
-  return clean;
-}
-
-function accountListUrlCandidates(platform: Platform, url: string): string[] {
-  const primary = normalizeAccountListUrl(platform, url);
-  if (platform !== 'youtube') return [primary];
-
-  const clean = stripTrackingParams(String(url || '').trim()).replace(/\/+$/, '');
-  const base = clean.replace(/\/(?:videos|shorts|streams|featured)$/i, '');
-  return Array.from(new Set([primary, `${base}/shorts`]));
-}
-
 // 采集某个对标账号主页的最新视频列表（flat-playlist 枚举，最多 limit 条）。
 async function crawlAccountHomepage(platform: Platform, accountUrl: string, limit: number, dateFrom = '', dateTo = '', cloudFallback = false, strictProviderLimit = false): Promise<CrawledVideo[]> {
   if (platform === 'instagram') {
@@ -9243,24 +9203,6 @@ function metadataCreatorAccount(platform: Platform, meta: Record<string, unknown
   if(platform==='youtube'&&/^UC[A-Za-z0-9_-]{20,}$/.test(String(meta.channel_id||'')))candidates.push(`https://www.youtube.com/channel/${meta.channel_id}`);
   if(platform==='instagram'&&/^[A-Za-z0-9._]{1,30}$/.test(String(meta.uploader_id||'')))candidates.push(`https://www.instagram.com/${meta.uploader_id}`);
   return candidates.map(value=>sourceAccountFromProviderMetadata(platform,String(value||''))).find(Boolean)??undefined;
-}
-
-function stripTrackingParams(rawUrl: string): string {
-  try {
-    const parsed = new URL(rawUrl);
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/^utm_/i.test(key) || ['si', 'feature', 'fbclid', 'gclid'].includes(key)) parsed.searchParams.delete(key);
-    }
-    parsed.hash = '';
-    return parsed.toString();
-  } catch {
-    return rawUrl;
-  }
-}
-
-function youtubeThumbnailFromUrl(url: string): string {
-  const id = youtubeVideoId(url);
-  return id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : '';
 }
 
 function metadataTitle(platform: Platform, meta: Record<string, unknown>): string {

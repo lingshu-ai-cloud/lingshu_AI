@@ -143,3 +143,8 @@
 
 - 从 `fa28472f` 遗留的视频路由差异中先抽出不付费的来源识别与纯帖子行映射：LinkedIn 企业主页、帖子 URL、说明文案、图片、封面/时长及时间证据均可离线判别；伪装域名和缺失视频证据拒绝。账号/视频 URL 判别和 YouTube ID 解析移至独立模块，`videos.ts` 从 10,718 行降至 10,664 行并同步收紧预算。
 - CI 新增离线来源边界测试。当前**没有**把 LinkedIn 接入可调用的同步 Apify Actor 路由：现有 Actor transport 在启动后超时无法证明是否已计费，直接照搬来源补丁会产生无回执重试风险。后续需先明确持久化付费认领、Actor run ID/数据集回执恢复，再连通视频和图文采集路径；不要把本批准备工作称为已完成 LinkedIn 采集。
+
+## 视频来源 URL 模块继续拆分（2026-10-22）
+
+- 将账号展示名、跟踪参数清理、平台账号列表页规范化和 YouTube 缩略图 URL 继续移入 `videoCrawlerSourceUrls.ts`，路由保留原有 `accountLabelFromUrl` 导出。`videos.ts` 从 10,664 行降至 10,606 行，历史预算同步下调；功能路径未接入新的付费 Actor。
+- 离线来源测试 5/5、既有 crawler fallback/reference grouping 测试通过。已确认现行 `runPaidApifyTikTokDataset` 虽可对 Actor 提交做未知结果保护，但其付费许可属于周计划 TikTok 专用账本；不能把它视为 LinkedIn 的预算授权。
