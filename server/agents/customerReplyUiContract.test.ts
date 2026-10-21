@@ -83,10 +83,15 @@ assert.doesNotMatch(
   /const translation\s*=.*fallbackCustomerReplyZh/,
   'the timeline must not label a generic fallback sentence as the translation of an unrelated AI reply',
 );
-const forwardedTranslations = source.match(/translatedBody:\s*result\.translatedDraft/g) ?? [];
-assert.ok(
-  forwardedTranslations.length >= 2,
-  'handoff bridges and normal automatically sent replies must retain their matching Chinese translation',
+assert.match(
+  source,
+  /queueSend\(selected, body, input, null, draftMeta\?\.knowledgeMiss \? draftMeta : null\)/,
+  'a manual reply must retain its Chinese input alongside the translated target-language body',
+);
+assert.match(
+  source,
+  /queueSend\(selected, body, draftSuggestion, null, draftMeta\)/,
+  'an approved AI draft must retain its Chinese text alongside the translated target-language body',
 );
 assert.equal(
   isPredominantlyChineseText('We mainly carry 商品1. Is that what you are looking for?'),
@@ -97,7 +102,7 @@ assert.equal(isPredominantlyChineseText('帮我确认一下 MOQ 和交期'), tru
 
 assert.match(
   source,
-  /真实客户 · 通道未连接/,
+  /customer\.isMock \? <Tag color="purple"[\s\S]{0,220}channelReady \? '通道已连接' : '通道未连接'/,
   'real customers must not be described as reachable when WhatsApp is unavailable',
 );
 assert.match(

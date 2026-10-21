@@ -219,3 +219,8 @@
 - 将翻译/文本清理和事实验证提示词、风险解析、安全降级分别移入 `draftReplyLanguage.ts`、`draftReplyVerification.ts`；`draftReply.ts` 保留路由编排及原行为，由 979 行降至 781 行，撤销历史超限豁免，剩余 36 项。
 - 新模块直接测试、草稿事实版本合同、回复规划与事实安全测试通过；TypeScript、架构扫描/ratchet、生产构建和 191 项迁移仓库只读预检通过，构建仍有大 chunk 提示。
 - 更宽的 `test:customer-service` 链在既有 `customerReplyUiContract.test.ts` 源码断言处失败：它要求 `ConversionPage.tsx` 两次出现 `translatedBody: result.translatedDraft`，而当前组件无此字面写法。本批未改该组件，故不能宣称客户服务全链通过；需独立核验实际翻译在自动回复/人工承接消息中的保留行为，不能仅为凑绿修改断言。
+
+## 客户回复 UI 合同与现行发送路径对齐（2026-10-22）
+
+- 复核源码与提交历史：上述 `translatedBody: result.translatedDraft` 断言创建于 8 月的自动发送路径，当前界面在 9 月已改为人工确认发送。服务端返回的中文译文仍映射到草稿；手动输入与经人工确认的 AI 草稿均先翻译成客户目标语言，再通过 `queueSend` 同时保留中文原文，时间线用 `translatedBody` 保存可回看的中文文本。未恢复旧自动发送行为。
+- 将合同测试改为检查现行两条发送入口及真实客户通道状态展示，撤销已不存在的 UI 字面写法要求；没有修改生产组件。`test:customer-reply-ui` 与完整 `test:customer-service` 均通过。隔离测试产生预期的 PocketBase 无网络日志，但进程退出码为 0。此项不改变仍剩余 36 个超限文件或生产构建的大 chunk 提示。
