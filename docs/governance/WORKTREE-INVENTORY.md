@@ -3,6 +3,12 @@
 盘点日期：2026-10-22（Asia/Shanghai）
 来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。仅移除了两个目标路径已不存在的失效注册记录；未改写有效工作树、分支或运行数据。
 
+## 图片 AIGC 来源树复核（2026-10-22）
+
+- 集成分支当前 HEAD `0e5a3dc2664340c72fdd0b465bc915d8eb97cbd2` 与同名远端一致、工作区干净；来源树仍在 `95b0bcc16820e06fcc16ac75e040a6592abdc692`，其提交已是集成历史的祖先。
+- 来源树当前已跟踪的未提交改动为 `AGENTS.md` 与 `src/components/smartBusiness/RestoredAgentWorkCalendar.tsx`；后者将周任务日历改为视频生产进度表。未跟踪代码含 `VideoProgressTable.tsx` 及其测试；其余未跟踪内容主要是用户文档、分析锁/输出、视频和 UI 截图。此轮未发现新的未提交图片 AIGC 管线代码，但不能因此把整个来源树称为“已清理”。
+- 上述日历/视频进度改动与图片管线并非同一功能边界，且包含运行产物；未自动带入集成基线，也未删除、重置或归档来源树。若要合入，须单独验证 UI 需求、对照现行日历工作区并剔除运行数据。
+
 ## 权威集成点
 
 - `/Users/julia1/.codex/worktrees/xixi1021-full-integration` — `xixi1021程永罗沟通前大整合`，盘点时 HEAD `ce1105c21761c9d2d3755ffecd81ffe5ed822646`，远端同 SHA；本任务在此工作。
