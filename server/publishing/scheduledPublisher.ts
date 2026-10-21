@@ -42,7 +42,7 @@ interface ScheduledPublishingDependencies {
   assertLegacyAccess?: (tenantId: string) => Promise<void>;
   executeLegacyEffect?: LegacyEffectExecutor;
   acquirePublishLease?: ScheduledPublishLeaseAcquirer;
-  verifySource?: (tenantId: string, claim: unknown, videoPath?: unknown) => Promise<unknown>;
+  verifySource?: (tenantId: string, claim: unknown, videoPath?: unknown, imagePaths?: unknown) => Promise<unknown>;
 }
 const defaultDependencies: ScheduledPublishingDependencies = {
   publish: publishVideoToAccount,
@@ -317,8 +317,11 @@ async function publishScheduledPost(
   }
   const videoPath = text(initialStats.videoPath);
   const videoUrl = text(initialStats.videoUrl);
-  if (!videoPath && !videoUrl) {
-    await markFailed(post, lockedStats, attempts, '排期任务缺少视频文件');
+  const imagePaths = Array.isArray(initialStats.imagePaths)
+    ? initialStats.imagePaths.map(String).map(text).filter(Boolean)
+    : [];
+  if (!videoPath && !videoUrl && !imagePaths.length) {
+    await markFailed(post, lockedStats, attempts, '排期任务缺少已批准的视频或图片产物');
     return;
   }
 
@@ -418,7 +421,7 @@ async function publishScheduledPost(
     try {
       await lease.beforeEffect();
       await assertManagedPublishingAuthorization(post, accountId);
-      await (dependencies.verifySource ?? verifyFrozenPublishSourceClaim)(post.tenant_id, sourceClaim, videoPath);
+      await (dependencies.verifySource ?? verifyFrozenPublishSourceClaim)(post.tenant_id, sourceClaim, videoPath, imagePaths);
       if (initialStats.origin === 'authorized_external_video') {
         const latest = await store.getById<PostRecord>('posts', post.id);
         if (!latest || !externalVideoApprovalValid(latest)
@@ -434,8 +437,10 @@ async function publishScheduledPost(
         platform,
         videoPath: videoPath || undefined,
         videoUrl: videoUrl || undefined,
+        imagePaths: imagePaths.length ? imagePaths : undefined,
         title: text(post.title) || 'Untitled content',
         description: text(initialStats.description),
+        tags: initialStats.tags,
         privacyStatus: 'public',
         language: text(initialStats.language),
         contentId: text(post.content_id),

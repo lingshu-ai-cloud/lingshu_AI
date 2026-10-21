@@ -103,12 +103,28 @@ function workItem(input: R3CandidateEvidenceAdapterInput, record: Record<string,
     ...strings(analysis.evidenceRefs),
   ].filter(Boolean))];
   const analysisQuality = String(analysis.analysisQuality || '').trim();
+  const contentFormat = String(record.contentFormat || analysis.contentFormat || 'video').trim();
+  const taskRelevance = finite(analysis.taskRelevance ?? analysis.relevanceScore);
+  const transferability = finite(analysis.transferability ?? analysis.structuralTransferability);
+  const mechanisms = strings(analysis.mechanisms).length ? strings(analysis.mechanisms) : strings(gemini.hooks);
+  const hasUsableMedia = contentFormat === 'image'
+    ? strings(analysis.imageUrls).length > 0 && String(analysis.imageAnalysisStatus || object(analysis.imageEvidence).status || '').trim() === 'analyzed'
+    : analysisQuality === 'video';
+  const productionEligibilityIssues = [
+    ...(input.mode === 'account' ? [] : ['只允许已确认对标账号内容进入生产库存']),
+    ...(sourceUrl ? [] : ['缺少可追溯原帖地址']),
+    ...([record.title, analysis.caption].some(value => String(value || '').trim()) ? [] : ['缺少原帖标题或配文']),
+    ...(hasUsableMedia ? [] : [contentFormat === 'image' ? '图片与配文尚未完成统一分析' : '视频尚未完成可信多模态分析']),
+    ...(taskRelevance !== undefined && taskRelevance >= 0.7 ? [] : ['与当前生产任务的相关性不足']),
+    ...(transferability !== undefined && transferability >= 0.6 ? [] : ['结构可迁移性不足']),
+    ...(mechanisms.length ? [] : ['尚未提炼可复用内容机制']),
+  ];
   return {
     tenantId: input.tenantId,
     candidateId,
     discoveryPath: paths(input.mode),
     sceneIds: strings(analysis.sceneIds),
-    taskRelevance: finite(analysis.taskRelevance ?? analysis.relevanceScore),
+    taskRelevance,
     currentPerformance: metric(analysis.currentPerformance ?? analysis.views ?? analysis.plays),
     accountPlatformBaseline: metric(analysis.accountPlatformBaseline),
     performanceSnapshots: Array.isArray(analysis.performanceSnapshots)
@@ -117,8 +133,8 @@ function workItem(input: R3CandidateEvidenceAdapterInput, record: Record<string,
         const observedAt = String(item.observedAt || '').trim();
         return value === undefined || !observedAt ? [] : [{ observedAt, value }];
       }) : [],
-    transferability: finite(analysis.transferability ?? analysis.structuralTransferability),
-    mechanisms: strings(analysis.mechanisms).length ? strings(analysis.mechanisms) : strings(gemini.hooks),
+    transferability,
+    mechanisms,
     limitations: [
       ...strings(analysis.limitations),
       ...(analysisQuality && analysisQuality !== 'video' ? [`analysis_quality:${analysisQuality}`] : []),
@@ -131,6 +147,7 @@ function workItem(input: R3CandidateEvidenceAdapterInput, record: Record<string,
     sourceText: [record.title, analysis.caption, analysis.author, gemini.summary, input.queryRef]
       .map(value => String(value || '').trim()).filter(Boolean).join(' '),
     innovationEvidence: innovationEvidence(analysis.innovationEvidence),
+    productionEligibilityIssues,
     g1: {
       runId: input.runId,
       queryRef: input.queryRef,

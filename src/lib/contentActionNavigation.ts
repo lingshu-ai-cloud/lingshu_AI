@@ -1,6 +1,6 @@
 import type { Page } from '../App';
 
-export type SocialPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
+export type SocialPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'linkedin';
 
 export type ContentActionEvidence = {
   contentId?: string;

@@ -183,6 +183,94 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       }); res.status(201).json({ok:true, material});
     } catch(error) {res.status(400).json({error:message(error)});}
   });
+  router.post('/profiles', async (req, res) => {
+    try {
+      const tenant = res.locals.tenantId as string;
+      const b = req.body || {};
+      const requestId = String(b.requestId || '');
+      const name = String(b.name || '').trim();
+      const photoMaterialId = String(b.photoMaterialId || '');
+      const videoMaterialId = String(b.videoMaterialId || '');
+      if (!validId(requestId) || !name || name.length > 100 || !validId(photoMaterialId) || !validId(videoMaterialId)) {
+        throw new Error('请完整填写人物名称并上传本人照片和视频');
+      }
+      if (b.storageAuthorized !== true || b.adultConfirmed !== true) {
+        throw new Error('请确认肖像素材可由灵枢安全保存，且画面主体为成年人');
+      }
+      const ownsMaterial = (id: string, type: 'image' | 'video') => options.materialBelongs?.(tenant, id, type)
+        ?? readLocalMaterials().some(item => item.id === id && item.tenantId === tenant && item.scope === 'own' && item.type === type);
+      if (!ownsMaterial(photoMaterialId, 'image') || !ownsMaterial(videoMaterialId, 'video')) {
+        throw new Error('人物照片或视频不属于当前企业，无法录入');
+      }
+      const fingerprint = hash(JSON.stringify([name, photoMaterialId, videoMaterialId]));
+      const result = await exclusive(`defaults:${tenant}`, async () => {
+        let evidence = await find(tenant, 'profile_intake', requestId);
+        if (evidence && evidence.payload?.fingerprint !== fingerprint) throw new Error('请求标识已用于另一组人物资料');
+        if (!evidence) {
+          const created = await store.create<Row>(COLLECTION, {
+            tenant_id: tenant,
+            kind: 'profile_intake',
+            request_id: requestId,
+            payload: {
+              fingerprint,
+              name,
+              photoMaterialId,
+              videoMaterialId,
+              storageAuthorized: true,
+              adultConfirmed: true,
+              createdAt: new Date().toISOString(),
+            },
+          });
+          if (!created) throw new Error('人物资料留档失败，请保持文件不变后重试');
+          evidence = created;
+        }
+        const row = (await store.list<Row>('studio_production_defaults', { where: { tenant_id: tenant }, perPage: 1 })).items[0];
+        const defaults: ProductionDefaults = row?.payload || EMPTY_DEFAULTS;
+        const referenceMaterialIds = [photoMaterialId, videoMaterialId];
+        const matching = defaults.presenters.find(item => item.authorized === false
+          && item.arkCertification?.status === 'profile_incomplete'
+          && referenceMaterialIds.every(id => item.referenceMaterialIds?.includes(id)));
+        const presenterId = matching?.id || `presenter-profile-${hash(`${tenant}:${photoMaterialId}:${videoMaterialId}`).slice(0, 24)}`;
+        if (!matching && defaults.presenters.length >= 50) throw new Error('企业人物已达到 50 个上限');
+        const changed = !matching || matching.name !== name
+          || JSON.stringify(matching.referenceMaterialIds || []) !== JSON.stringify(referenceMaterialIds);
+        const presenter: PresenterAsset = {
+          id: presenterId,
+          name,
+          avatarId: '',
+          voiceId: '',
+          authorized: false,
+          supportsAlpha: false,
+          nativeOrientation: 'unknown',
+          assetVersion: matching ? Math.max(1, matching.assetVersion || 1) + (changed ? 1 : 0) : 1,
+          capabilities: ['reference_image', 'reference_video'],
+          referenceMaterialIds,
+          arkCertification: {
+            projectName: 'default',
+            assetUri: '',
+            assetType: '',
+            status: 'profile_incomplete',
+            materialId: photoMaterialId,
+          },
+          toolMappings: {
+            runway: { referenceMaterialIds },
+            sd: { referenceMaterialIds },
+            seedance: { referenceMaterialIds },
+          },
+        };
+        const presenters = matching
+          ? defaults.presenters.map(item => item.id === matching.id ? presenter : item)
+          : [...defaults.presenters, presenter];
+        const payload: ProductionDefaults = { ...EMPTY_DEFAULTS, ...defaults, presenters, defaultPresenterId: presenter.id };
+        const saved = row
+          ? await store.update('studio_production_defaults', row.id, { payload })
+          : await store.create('studio_production_defaults', { tenant_id: tenant, payload });
+        if (!saved) throw new Error('人物资料保存失败，请保持文件不变后重试');
+        return { defaults: payload, presenter };
+      });
+      res.status(201).json(result);
+    } catch (error) { res.status(400).json({ error: message(error) }); }
+  });
   router.get('/catalog', async (req, res) => {
     try {
       const tenant = res.locals.tenantId as string;

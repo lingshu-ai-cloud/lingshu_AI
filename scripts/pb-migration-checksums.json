@@ -191,6 +191,7 @@
     "1792195220_create_weekly_publication_recovery_schedules.js": "35c50a683a35baf06044a62401c83c67815176381290a5945488e7ea1a13a717",
     "1792195221_create_weekly_production_runtime_probes.js": "d0a55953956d9d95abcf276ad4620b1e14af2e3898dbb779e72c48e859fbf291",
     "1792195222_create_weekly_delivery_acceptance_receipts.js": "18c85613f900e2a81b95bd8c4e61513a4b7f9c4affa3408be2e4688d0197eb3e",
-    "1792195223_add_linkedin_tenant_app.js": "03dcd38e5e3304eb71a65d9dec7dd97c54fb49a6e603d4afeb850a2b3148fc91"
+    "1792195223_add_linkedin_tenant_app.js": "03dcd38e5e3304eb71a65d9dec7dd97c54fb49a6e603d4afeb850a2b3148fc91",
+    "1792195224_create_customer_points_ledger.js": "7c72335c86c03712171340b61dac2a23da14a82d479f5a3c3f3d555ecaf74ddc"
   }
 }

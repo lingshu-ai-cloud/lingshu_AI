@@ -20,7 +20,7 @@ export function planTerminalDiscoverySourceRetry(run: SocialInspirationCollectio
   ).map(source => ({ mode: source.mode, platform: source.platform, queryRef: source.queryRef }));
   const snapshot=run.scopeSnapshot as typeof run.scopeSnapshot&{modePolicies?:Record<string,{platforms?:string[]}>};
   const quotaSources=quotaLimited?Object.entries(run.queryBasis??{}).flatMap(([mode,refs])=>(refs??[]).flatMap(queryRef=>{
-    const urlPlatform=/tiktok\.com/i.test(queryRef)?'tiktok':/instagram\.com/i.test(queryRef)?'instagram':/youtu(?:\.be|be\.com)/i.test(queryRef)?'youtube':/facebook\.com/i.test(queryRef)?'facebook':null;
+    const urlPlatform=/linkedin\.com/i.test(queryRef)?'linkedin':/facebook\.com/i.test(queryRef)?'facebook':/tiktok\.com/i.test(queryRef)?'tiktok':/instagram\.com/i.test(queryRef)?'instagram':/youtu(?:\.be|be\.com)/i.test(queryRef)?'youtube':null;
     const platforms=urlPlatform?[urlPlatform]:(snapshot.modePolicies?.[mode]?.platforms??[]);
     return platforms.map(platform=>({mode:mode as typeof rejectedSources[number]['mode'],platform,queryRef}));
   })):[];

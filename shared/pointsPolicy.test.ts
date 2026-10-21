@@ -1,21 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  POINTS_PER_CNY,
   PRODUCT_FEATURE_POINT_RATES,
   PRODUCT_POINT_SECTIONS,
   pointsForQuantity,
   pointsForSeconds,
-  pointsFromCny,
   productPointRate,
 } from './pointsPolicy.js';
-
-test('technical cost conversion remains internal and rounds without understating spend', () => {
-  assert.equal(POINTS_PER_CNY, 100);
-  assert.equal(pointsFromCny(0.535), 54);
-  assert.equal(pointsFromCny(8.92), 892);
-  assert.throws(() => pointsFromCny(-1), /invalid_points_cost/);
-});
 
 test('product feature seconds use stable user-facing rates', () => {
   assert.equal(pointsForSeconds(productPointRate('digital-human-video'), 8), 432);

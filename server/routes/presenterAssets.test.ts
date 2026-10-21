@@ -7,6 +7,73 @@ import { createPresenterAssetsRouter } from './presenterAssets.js';
 import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
 import { HeyGenPresenterClient } from '../lib/heygenPresenters.js';
 
+test('local presenter profile intake is saved without provider creation or budget access', async () => {
+  const rows = new Map<string, any>();
+  let sequence = 0;
+  const store: DataStore = {
+    async getById<T>(collection: string, id: string) { return structuredClone(rows.get(`${collection}/${id}`) || null) as T | null; },
+    async create<T>(collection: string, value: Record<string, unknown>) {
+      const row = { ...value, id: `local-${++sequence}` };
+      rows.set(`${collection}/${row.id}`, structuredClone(row));
+      return row as T;
+    },
+    async update(collection, id, patch) {
+      const key = `${collection}/${id}`;
+      if (!rows.has(key)) return false;
+      rows.set(key, { ...rows.get(key), ...structuredClone(patch) });
+      return true;
+    },
+    async delete(collection, id) { return rows.delete(`${collection}/${id}`); },
+    async list<T>(collection: string, query = {}) {
+      const where = (query as any).where || {};
+      const items = [...rows.entries()]
+        .filter(([key, value]) => key.startsWith(`${collection}/`) && Object.entries(where).every(([field, expected]) => value[field] === expected))
+        .map(([, value]) => structuredClone(value) as T);
+      return { items, totalItems: items.length, totalPages: 1, page: 1, perPage: 100 };
+    },
+  };
+  let providerCalls = 0;
+  const client = new HeyGenPresenterClient('not-used', (async () => {
+    providerCalls++;
+    throw new Error('local intake must not call HeyGen');
+  }) as typeof fetch);
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => { res.locals.tenantId = req.headers['x-tenant'] || 'A'; next(); });
+  app.use(createPresenterAssetsRouter(store, async (_key, operation) => operation(), {
+    client,
+    configured: () => true,
+    enabled: () => true,
+    reserve: async () => { throw new Error('local intake must not reserve budget'); },
+    materialBelongs: (tenant, id, type) => tenant === 'A' && id === `profile-${type}`,
+  }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const root = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const post = (body: Record<string, unknown>, tenant = 'A') => fetch(`${root}/profiles`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-tenant': tenant },
+    body: JSON.stringify(body),
+  });
+  const input = { requestId: 'profile-request-1', name: '品牌主理人', photoMaterialId: 'profile-image', videoMaterialId: 'profile-video', storageAuthorized: true, adultConfirmed: true };
+  try {
+    assert.equal((await post({ ...input, storageAuthorized: false })).status, 400);
+    assert.equal((await post(input, 'B')).status, 400);
+    const created = await (await post(input)).json();
+    assert.equal(created.presenter.authorized, false);
+    assert.equal(created.presenter.arkCertification.status, 'profile_incomplete');
+    assert.deepEqual(created.presenter.referenceMaterialIds, ['profile-image', 'profile-video']);
+    assert.equal(created.defaults.defaultPresenterId, created.presenter.id);
+    assert.equal(providerCalls, 0);
+    const repeated = await (await post(input)).json();
+    assert.equal(repeated.presenter.id, created.presenter.id);
+    assert.equal((await post({ ...input, name: '另一人物' })).status, 400);
+    assert.equal(providerCalls, 0);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
 test('presenter creation, consent, import, tenant isolation, pagination and uncertain requests', async () => {
   const rows = new Map<string, any>(); let seq = 0, failWrites = false, lost = false, approved = false, consentOmitted = false, consentProcessing = false, budgetBlocked = false, trimCalls = 0, frameCalls = 0, normalizeCalls = 0, inspectCalls = 0;
   const store: DataStore = {

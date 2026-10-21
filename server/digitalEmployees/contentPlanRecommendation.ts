@@ -38,6 +38,10 @@ export interface RankedContentReference {
   factors: string[];
   analysis: BenchmarkAnalysis;
   contentIdentity: ReferenceContentIdentity;
+  caption: string;
+  tags: string[];
+  captionReuseAuthorized: boolean;
+  identityTerms: Array<{ text: string; kind: 'company' | 'brand' | 'product' }>;
 }
 
 const text = (value: unknown, limit = 500) => String(value ?? '').trim().slice(0, limit);
@@ -104,22 +108,34 @@ export function publicationCopyForPlan(input: {
   reference?: RankedContentReference;
   productName: string;
   theme: string;
+  companyName?: string;
 }): NonNullable<VideoCreationPlan['publication']> {
   const productName = text(input.productName || input.plan.productName || '本周主推产品', 80);
   const subject = text(input.reference?.hook || input.theme || input.plan.theme || '买家最关心的问题', 160);
-  const platformEmoji: Partial<Record<VideoCreationPlan['platform'], string>> = {
-    tiktok: '⚡', instagram: '✨', facebook: '💡', youtube: '🎯', linkedin: '💼',
-  };
-  const emoji = platformEmoji[input.plan.platform] || '✨';
-  const title = text(`${emoji} ${subject}｜${productName}`, 300);
-  const caption = text(`${emoji} ${subject}\n用 ${productName} 的真实画面与可核验信息，帮助目标买家快速判断是否匹配需求。${input.plan.matrix?.cta ? ` ${input.plan.matrix.cta}` : ''}`, 2_000);
+  const companyName = text(input.companyName, 120);
+  const replacements = (input.reference?.identityTerms || []).flatMap(term => {
+    const to = term.kind === 'product' ? productName : companyName;
+    return term.text && to && term.text.toLocaleLowerCase() !== to.toLocaleLowerCase()
+      ? [{ from: term.text, to, kind: term.kind }]
+      : [];
+  }).filter((item, index, items) => items.findIndex(candidate => candidate.from.toLocaleLowerCase() === item.from.toLocaleLowerCase()) === index);
+  const replaceFacts = (value: string) => replacements.reduce((copy, item) => copy.replace(new RegExp(item.from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'), item.to), value);
+  const authorizedReuse = Boolean(input.reference?.captionReuseAuthorized && input.reference.caption);
+  const title = text(`✨ ${subject}｜${productName}`, 300);
+  const caption = authorizedReuse
+    ? text(replaceFacts(input.reference!.caption), 2_000)
+    : text(`✨ ${subject}\n用 ${productName} 的真实画面与可核验信息，帮助目标买家快速判断是否匹配需求。${input.plan.matrix?.cta ? ` ${input.plan.matrix.cta}` : ''}`, 2_000);
   const normalizedProduct = productName.replace(/[^\p{L}\p{N}]+/gu, '');
+  const sourceTags = authorizedReuse ? input.reference!.tags.map(replaceFacts) : [];
   return {
     title,
     caption,
-    tags: [...new Set([normalizedProduct, input.plan.platform, 'B2B', '产品实拍', '采购决策'].filter(Boolean))].slice(0, 8),
+    tags: [...new Set((sourceTags.length ? sourceTags : [normalizedProduct, 'B2B', '产品实拍', '采购决策']).map(tag => tag.replace(/^#+/, '').trim()).filter(Boolean))].slice(0, 20),
     status: 'planned',
     generatedBy: 'business_agent',
+    copyMode: authorizedReuse ? 'authorized_source_reuse' : 'canonical_original',
+    sourceReferenceId: input.reference?.id || '',
+    factReplacements: replacements,
   };
 }
 
@@ -186,7 +202,7 @@ export function rankContentReferences(input: {
   const desiredTokens = tokens(input.productName, input.audience, input.direction);
   return input.videos.flatMap(video => {
     const platform = text(video.platform) as VideoCreationPlan['platform'];
-    if (!['facebook', 'instagram', 'tiktok', 'youtube'].includes(platform)) return [];
+    if (!['linkedin', 'facebook', 'instagram', 'tiktok', 'youtube'].includes(platform)) return [];
     const analysis = record(video.aiAnalysis);
     const gemini = record(analysis.gemini);
     const sourceUrl = previewUrl(video.sourceUrl, video.videoUrl, video.url);
@@ -219,6 +235,14 @@ export function rankContentReferences(input: {
     const theme = text(gemini.theme || title);
     const hooks = Array.isArray(gemini.hooks) ? gemini.hooks.map((item: unknown) => text(item)).filter(Boolean) : [];
     const sellingPoints = Array.isArray(gemini.sellingPoints) ? gemini.sellingPoints.map((item: unknown) => text(item)).filter(Boolean) : [];
+    const rawTags = Array.isArray(video.tags) ? video.tags : typeof video.tags === 'string' ? (() => { try { return JSON.parse(video.tags); } catch { return []; } })() : [];
+    const identityTerms = (Array.isArray(gemini.identityEntities) ? gemini.identityEntities : [])
+      .flatMap((item: unknown) => {
+        const entity = record(item);
+        const kind = String(entity.type);
+        const value = text(entity.text, 160);
+        return value && ['company', 'brand', 'product'].includes(kind) ? [{ text: value, kind: kind as 'company' | 'brand' | 'product' }] : [];
+      });
     const haystack = new Set(tokens(title, theme, analysis.caption, hooks.join(' '), sellingPoints.join(' ')));
     const overlap = desiredTokens.filter(item => haystack.has(item)).length;
     const contentRelevant = overlap > 0
@@ -264,6 +288,10 @@ export function rankContentReferences(input: {
       factors: [...new Set(factors)].slice(0, 8),
       analysis: benchmarkAnalysis,
       contentIdentity: referenceContentIdentity(video),
+      caption: text(analysis.caption, 2_000),
+      tags: Array.isArray(rawTags) ? rawTags.map((item: unknown) => text(item, 80).replace(/^#+/, '')).filter(Boolean).slice(0, 20) : [],
+      captionReuseAuthorized: analysis.usage === 'editable' || analysis.captionReuseAuthorized === true,
+      identityTerms,
     }];
   }).sort((left, right) => right.score - left.score || numericViews(right.views) - numericViews(left.views) || left.id.localeCompare(right.id));
 }
@@ -358,7 +386,7 @@ export function enrichPackageWithContentSignals(input: {
         referenceId: mayClone && reference ? reference.id : plan.referenceId,
         estimatedCost: master ? costRange.minCny : 0,
         estimatedCostRange: costRange,
-        publication: publicationCopyForPlan({ plan, reference, productName: plan.productName, theme }),
+        publication: publicationCopyForPlan({ plan, reference, productName: plan.productName, theme, companyName: input.config.companyName }),
         ...(mayClone && reference && plan.referenceId && plan.referenceId !== reference.id ? { preproduction: undefined } : {}),
         planningEvidence: {
           generatedFrom,

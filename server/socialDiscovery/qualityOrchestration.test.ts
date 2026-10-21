@@ -14,10 +14,14 @@ const run = (finishedAt: string, accepted: Partial<Record<'momentum' | 'account'
 const quotas = planRollingSevenDayQuotas([
   run('2026-09-25T12:00:00.000Z', { momentum: 5, account: 3, innovation: 0 }),
   run('2026-09-18T11:59:59.000Z', { innovation: 50 }),
-], { totalAcceptedTarget: 20, innovationShare: 0.15 }, now);
-assert.deepEqual(quotas.targetByMode, { momentum: 9, account: 8, innovation: 3 });
-assert.deepEqual(quotas.remainingByMode, { momentum: 4, account: 5, innovation: 3 });
+], { totalAcceptedTarget: 20, innovationShare: 0.1, accountShare: 0.7 }, now);
+assert.deepEqual(quotas.targetByMode, { momentum: 4, account: 14, innovation: 2 });
+assert.deepEqual(quotas.remainingByMode, { momentum: 0, account: 11, innovation: 2 });
+assert.deepEqual(planRollingSevenDayQuotas([], {
+  totalAcceptedTarget: 10, innovationShare: 0.1, accountShare: 0.7, enabledModes: ['momentum'],
+}, now).targetByMode, { momentum: 10, account: 0, innovation: 0 }, '单一启用模式必须获得完整配额');
 assert.throws(() => planRollingSevenDayQuotas([], { totalAcceptedTarget: 10, innovationShare: 0.21 }), /innovation_share/);
+assert.throws(() => planRollingSevenDayQuotas([], { totalAcceptedTarget: 10, innovationShare: 0.1, accountShare: 0.95 }), /account_share/);
 
 assert.equal(assessAccountRelativeMomentum({ currentPerformance: 160, accountPlatformBaseline: 100, snapshots: [{ observedAt: '2026-09-24', value: 100 }] }).level, 'high_performance');
 assert.equal(assessAccountRelativeMomentum({ currentPerformance: 160, accountPlatformBaseline: 100, snapshots: [

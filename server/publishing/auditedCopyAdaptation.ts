@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { callLLM } from '../agents/llm.js';
 import { buildEnterpriseContext, readTenantEnterpriseProfile } from '../routes/enterprise.js';
 import { store } from '../storage/index.js';
 import {
@@ -9,7 +8,7 @@ import {
   unconfirmedEnterpriseProductFields,
 } from '../lib/studioGenerationTruthfulness.js';
 import {
-  normalizeVerifiedPlatformCopies,
+  canonicalPlatformCopies,
   platformCopiesAuditText,
   type PlatformCopy,
   type PublishCopyPlatform,
@@ -29,7 +28,6 @@ export type AuditedCopyAdaptationInput = {
 type AuditedCopyAdaptationDependencies = {
   loadEnterpriseContext(tenantId: string): Promise<string>;
   loadProject(projectId: string): Promise<Record<string, unknown> | null>;
-  generate(prompt: string): Promise<string>;
   now(): Date;
 };
 
@@ -41,7 +39,6 @@ export type AuditedCopyAdaptationResult = {
 const defaults: AuditedCopyAdaptationDependencies = {
   loadEnterpriseContext: async tenantId => buildEnterpriseContext(await readTenantEnterpriseProfile(tenantId)),
   loadProject: projectId => store.getById<Record<string, unknown>>('studio_projects', projectId),
-  generate: callLLM,
   now: () => new Date(),
 };
 
@@ -118,55 +115,37 @@ export async function generateAuditedPlatformCopies(
     targetPlatforms: input.targetPlatforms,
     checkedAt: deps.now().toISOString(),
   };
-  const prompt = [
-    'Generate platform-native publishing copy as strict JSON only.',
-    `Target language: ${input.language}`,
-    `Title: ${input.title}`,
-    `Draft copy: ${input.description}`,
-    `Requested platforms: ${input.targetPlatforms.join(', ')}`,
-    `Confirmed enterprise facts (closed world; do not add facts absent here):\n${confirmedContext}`,
-    'Only return the requested platform keys.',
-    'youtube: { title <=70 chars, description, tags[], firstComment }',
-    'tiktok: { caption <=120 chars, hashtags[], firstComment }',
-    'instagram: { caption, hashtags[], firstComment }',
-    'facebook: { text, hashtags[], firstComment }',
-    'Make every platform different. Never invent features, specifications, certifications, prices, inventory, customer results, export capability or delivery promises.',
-    input.requireAlternative
-      ? `Create a materially different alternative while preserving confirmed facts: ${JSON.stringify(input.currentCopy)}`
-      : '',
-  ].filter(Boolean).join('\n');
-  try {
-    const raw = await deps.generate(prompt);
-    const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw) as unknown;
-    const copy = normalizeVerifiedPlatformCopies(parsed, input.targetPlatforms, {
-      currentCopy: input.currentCopy,
-      requireAlternative: input.requireAlternative,
-    });
-    const outputText = platformCopiesAuditText(copy);
-    const outputAudit = auditCommercialClaims(outputText, confirmedContext);
-    if (outputAudit.issues.length) {
-      return {
-        ...rejected('generated_copy_claims_unconfirmed', outputAudit.issues.join('；'), outputAudit.fieldsToConfirm),
-        body: {
-          ...rejected('generated_copy_claims_unconfirmed', outputAudit.issues.join('；'), outputAudit.fieldsToConfirm).body,
-          audit: auditBase,
-        },
-      };
-    }
+  if (input.requireAlternative) {
     return {
-      status: 200,
+      status: 422,
       body: {
-        ok: true, copy, source: 'ai', provenance: 'ai', qualityStatus: 'passed', publishable: true,
-        audit: { ...auditBase, outputHash: digest(outputText) },
-      },
-    };
-  } catch {
-    return {
-      status: 502,
-      body: {
-        ok: false, source: 'ai_failed', provenance: 'ai_failed', qualityStatus: 'failed', publishable: false,
-        error: 'copy_generation_failed', message: 'AI 平台文案生成失败，未替换当前内容。', audit: auditBase,
+        ok: false, source: 'canonical_copy', provenance: 'user_confirmed', qualityStatus: 'rejected', publishable: false,
+        error: 'platform_copy_rewrite_disabled', message: '当前使用统一发布文案；请直接修改原稿，系统不会按平台生成不同版本。', audit: auditBase,
       },
     };
   }
+  const copy = canonicalPlatformCopies({
+    platforms: input.targetPlatforms,
+    title: input.title,
+    body: input.description,
+    currentCopy: input.currentCopy,
+  });
+  const outputText = platformCopiesAuditText(copy);
+  const outputAudit = auditCommercialClaims(outputText, confirmedContext);
+  if (outputAudit.issues.length) {
+    return {
+      ...rejected('canonical_copy_claims_unconfirmed', outputAudit.issues.join('；'), outputAudit.fieldsToConfirm),
+      body: {
+        ...rejected('canonical_copy_claims_unconfirmed', outputAudit.issues.join('；'), outputAudit.fieldsToConfirm).body,
+        audit: auditBase,
+      },
+    };
+  }
+  return {
+    status: 200,
+    body: {
+      ok: true, copy, source: 'canonical_copy', provenance: 'user_confirmed', qualityStatus: 'passed', publishable: true,
+      audit: { ...auditBase, outputHash: digest(outputText) },
+    },
+  };
 }

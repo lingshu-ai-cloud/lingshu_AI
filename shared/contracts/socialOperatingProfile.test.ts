@@ -5,6 +5,7 @@ import {
   connectedAccountIssues,
   platformExecutionConstraints,
   SOCIAL_DISCOVERY_BASELINE,
+  SOCIAL_DISTRIBUTION_COPY_POLICY,
   socialDiscoveryMixIssues,
   socialOperatingProfileIssues,
 } from './socialOperatingProfile.js';
@@ -33,9 +34,15 @@ assert.ok(connectedAccountIssues('dual_account_growth', [
   { platform: 'youtube', accountId: 'yt' },
 ]).some(issue => issue.includes('tiktok')));
 assert.ok(platformExecutionConstraints('youtube').some(rule => rule.includes('频道个人资料入口')));
+assert.ok(platformExecutionConstraints('linkedin').some(rule => rule.includes('跨平台原样复用')));
+assert.deepEqual(SOCIAL_DISTRIBUTION_COPY_POLICY.replacements, ['商品名', '品牌名', '企业名']);
 assert.ok(SOCIAL_AGENT_BOUNDARIES.business.mustNot.some(rule => rule.includes('镜头参考')));
 assert.ok(SOCIAL_AGENT_BOUNDARIES.director.mustNot.some(rule => rule.includes('账号数量')));
 assert.deepEqual(socialDiscoveryMixIssues(SOCIAL_DISCOVERY_BASELINE), []);
+assert.deepEqual(SOCIAL_DISCOVERY_BASELINE.map(item => [item.mode, item.percent]), [
+  ['account', 100],
+], '生产库存只允许来自已确认对标账号');
+assert.match(SOCIAL_DISCOVERY_BASELINE[0].purpose, /图文.*配文/, '对标账号图文采集必须明确保留原帖配文');
 assert.deepEqual(socialDiscoveryMixIssues([
   { mode: 'momentum', percent: 33.3 },
   { mode: 'account', percent: 33.3 },

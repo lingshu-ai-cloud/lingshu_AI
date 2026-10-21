@@ -1,4 +1,4 @@
-export const POINTS_PER_CNY = 100;
+export const PRODUCT_POINT_PRICE_BOOK_VERSION = 'product-points.2026-10-20.v1';
 
 export type PointRateUnit = 'second' | 'action' | 'item' | 'conversation' | 'document';
 export type ProductPointSection =
@@ -25,6 +25,7 @@ export type ProductPointRate = {
   points: number;
   estimated?: boolean;
   current?: boolean;
+  billingMode?: 'metered' | 'plan_included' | 'free';
   note: string;
 };
 
@@ -55,16 +56,6 @@ export const PRODUCT_POINT_SECTIONS: readonly ProductPointSectionDefinition[] = 
   },
 ]);
 
-/**
- * Internal-only helper for reconciling technical cost. Customer-facing points
- * must come from PRODUCT_FEATURE_POINT_RATES and product usage events instead.
- */
-export function pointsFromCny(value: number): number {
-  if (!Number.isFinite(value) || value < 0) throw new Error('invalid_points_cost');
-  if (value === 0) return 0;
-  return Math.ceil((value * POINTS_PER_CNY) - Number.EPSILON);
-}
-
 export function pointsForSeconds(rate: Pick<ProductPointRate, 'unit' | 'points'>, seconds: number): number {
   if (rate.unit !== 'second' || !Number.isFinite(seconds) || seconds < 0) throw new Error('invalid_points_duration');
   return pointsForQuantity(rate, seconds);
@@ -84,7 +75,7 @@ export const PRODUCT_FEATURE_POINT_RATES: readonly ProductPointRate[] = Object.f
   {
     id: 'weekly-operating-plan', section: 'business_operations', feature: '生成周经营计划',
     description: '结合目标、企业资料与历史执行生成本周经营任务',
-    unit: 'action', points: 30, estimated: true, current: true, note: '按成功生成并保存的一份周经营计划结算；套餐内固定周任务只记录、不另扣加油包。',
+    unit: 'action', points: 30, estimated: true, current: true, billingMode: 'plan_included', note: '按成功生成并保存的一份周经营计划结算；套餐内固定周任务只记录、不另扣加油包。',
   },
   {
     id: 'business-diagnosis', section: 'business_operations', feature: '经营诊断与下一步建议',
@@ -94,7 +85,7 @@ export const PRODUCT_FEATURE_POINT_RATES: readonly ProductPointRate[] = Object.f
   {
     id: 'weekly-business-review', section: 'business_operations', feature: '生成周经营复盘',
     description: '汇总本周任务、内容、发布与客户结果形成复盘',
-    unit: 'action', points: 18, estimated: true, current: true, note: '按成功生成并保存的一份周复盘结算。',
+    unit: 'action', points: 18, estimated: true, current: true, billingMode: 'plan_included', note: '按成功生成并保存的一份周复盘结算。',
   },
   {
     id: 'reference-video-analysis', section: 'insight_planning', feature: '爆款视频深度分析',
@@ -119,7 +110,7 @@ export const PRODUCT_FEATURE_POINT_RATES: readonly ProductPointRate[] = Object.f
   {
     id: 'material-library-reuse', section: 'content_production', feature: '素材库视频复用',
     description: '产品、工厂与场景素材的检索、裁切和编排',
-    unit: 'second', points: 0, current: true, note: '复用已入库视频，不产生视频生成积分。',
+    unit: 'second', points: 0, current: true, billingMode: 'free', note: '复用已入库视频，不产生视频生成积分。',
   },
   {
     id: 'digital-human-video', section: 'content_production', feature: '数字人口播视频',

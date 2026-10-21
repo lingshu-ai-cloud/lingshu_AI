@@ -5,6 +5,7 @@ import { LsGradientProgress } from "./ui/LsExperiencePrimitives";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   AlertTriangle,
+  ArrowRight,
   ArrowLeft,
   CalendarRange,
   CheckCircle2,
@@ -37,7 +38,6 @@ import { VIDEO_PRESENTATIONS, type VideoCreationPlan, type VideoPreproductionPre
 import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS } from "../../shared/benchmarkAnalysis";import { SOCIAL_PLATFORM_EXECUTION_RULES, socialOperatingProfile } from "../../shared/contracts/socialOperatingProfile";
 import { MASTER_VIDEO_COST_MAX_CNY, MASTER_VIDEO_COST_MIN_CNY, MASTER_VIDEO_COST_POINT_CNY } from "../../shared/contracts/contentCostModel";
 import { loadConnectedSocialPerformance, type ConnectedSocialPerformance } from "../lib/socialPerformance";
-import { starterWorkspaceApi, type StarterAgentRole } from "../lib/starterWorkspace";
 import { authHeader } from "../lib/auth";
 import ProductionTaskScene from "./ProductionTaskScene";
 import DigitalEmployeeWorkspace from "./smartBusiness/DigitalEmployeeWorkspace";
@@ -71,13 +71,6 @@ const roleAliases: Record<AgentCard["role"], DigitalEmployeeAgentRole[]> = {
   director: ["director"],
   content: ["content"],
   customer: ["customer"],
-};
-
-const starterUsageRole: Record<AgentCard["role"], StarterAgentRole> = {
-  business: "traffic",
-  director: "orchestrator",
-  content: "content",
-  customer: "sales",
 };
 
 const platformOptions = ["youtube", "tiktok", "instagram", "facebook", "linkedin"] as const;
@@ -161,23 +154,9 @@ function relatedTasks(data: DigitalEmployeeOverview, role: AgentCard["role"]) {
 
 
 function AgentMonitor({ data, agent: agentCard, onClose }: { data: DigitalEmployeeOverview; agent: AgentCard; onClose: () => void }) {
-  const [settledUsage, setSettledUsage] = useState<{ value: number; updatedAt: string | null; count: number; source: string } | null>(null);
-  const [usageLoading, setUsageLoading] = useState(true);
   const tasks = relatedTasks(data, agentCard.role);
   const taskIds = new Set(tasks.map((task) => task.id));
   const agentStatus = data.agents.find((item) => roleAliases[agentCard.role].includes(item.role));
-  const costReceipts = (data.deliveries || [])
-    .filter(card => card.taskIds.some(taskId => taskIds.has(taskId)))
-    .map(card => deliveryMetric(card, /成本|费用|花费|消耗/))
-    .filter((value): value is number => value !== null);
-  const directorCosts = (data.plan?.businessPackage?.directorPlan?.progress || [])
-    .filter(item => item.owner === agentCard.role || (agentCard.role === "business" && item.owner === "team"))
-    .map(item => item.actualCost)
-    .filter(value => value > 0);
-  const fallbackActualSpend = [...costReceipts, ...directorCosts].reduce((sum, value) => sum + value, 0);
-  const fallbackReceiptCount = costReceipts.length + directorCosts.length;
-  const actualSpend = settledUsage?.value ?? fallbackActualSpend;
-  const hasActualSpend = Boolean(settledUsage) || fallbackReceiptCount > 0;
   const events = data.events
     .filter((event) => taskIds.has(event.task_id) || (agentCard.role === "business" && event.type.startsWith("business.")))
     .sort((left, right) => right.sequence - left.sequence)
@@ -193,40 +172,13 @@ function AgentMonitor({ data, agent: agentCard, onClose }: { data: DigitalEmploy
     return () => window.removeEventListener("keydown", close);
   }, [onClose]);
 
-  useEffect(() => {
-    let active = true;
-    setUsageLoading(true);
-    setSettledUsage(null);
-    void (async () => {
-      try {
-        const accountUsage = await digitalEmployeeApi.agentUsageCosts();
-        const usage = accountUsage.roles[agentCard.role];
-        if (active && usage) {
-          setSettledUsage({ value: usage.settledCny, updatedAt: usage.updatedAt, count: usage.entryCount, source: usage.source });
-          setUsageLoading(false);
-          return;
-        }
-      } catch { /* Fall through to the Starter ledger when the shared account-cost route is unavailable. */ }
-      try {
-        const workspace = await starterWorkspaceApi.get({ force: true });
-        if (!active) return;
-        const usage = workspace.agents.find(item => item.role === starterUsageRole[agentCard.role]);
-        if (usage?.costCny.settlementStatus === "settled" && usage.costCny.settled !== null) {
-          setSettledUsage({ value: usage.costCny.settled, updatedAt: usage.costCny.updatedAt, count: 1, source: "账号真实结算账本" });
-        }
-      } catch { /* Persisted delivery receipts below remain the final truthful fallback. */ }
-      finally { if (active) setUsageLoading(false); }
-    })();
-    return () => { active = false; };
-  }, [agentCard.role]);
-
   return <Drawer open title={`${agentCard.name} · 生产实况`} onClose={onClose} size={560}>
     <p className="mb-5 text-sm text-text-secondary">{currentTask}</p>
     <div className="grid grid-cols-2 gap-5 border-y border-border py-5">
       <Statistic title="当前进度" value={completed} suffix={`/ ${total}`}/>
-      <Statistic title="过去已核算消耗" value={usageLoading && !hasActualSpend ? "读取中…" : hasActualSpend ? actualSpend : "暂无核算"} precision={2} prefix={hasActualSpend ? "¥" : undefined}/>
+      <Statistic title="已完成交付" value={completed} suffix="项"/>
     </div>
-    <p className="mt-3 text-xs text-text-muted">{settledUsage ? `${settledUsage.source} · ${settledUsage.count} 条 · ${dateLabel(settledUsage.updatedAt || undefined)}` : fallbackReceiptCount ? `${fallbackReceiptCount} 条真实费用记录` : "仅在服务返回真实结算后计入"}</p>
+    <p className="mt-3 text-xs text-text-muted">用户积分统一在“套餐与积分”中展示；供应商成本仅用于后台成本优化。</p>
     <LsGradientProgress className="my-5" percent={total ? Math.round(completed / total * 100) : 0} status={active ? "active" : "normal"}/>
     <Timeline items={(events.length ? events : tasks.slice().sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))).map(item => ({
       title: dateLabel("summary" in item ? item.occurred_at : item.updated_at),
@@ -368,12 +320,16 @@ function isPaidMediaPlanTask(task: PlanTask) {
   const titleMatch = /(?:投流|广告投放|付费投放|付费推广|内容加热)|(?:^|[\s/_-])(?:ads?|traffic|promotion|paid[\s_-]+media|media[\s_-]+buying)(?:$|[\s/_-])/i.test(task.title);
   return capabilityMatch || titleMatch;
 }
+
+type WeeklyCommandMetricId = "waiting_review" | "planned_videos" | "planned_duration" | "budget_range" | "estimated_cost" | "settled_cost";
+
 export function WeeklyCommandCenter({
   data,
   statusLabel,
   actions,
   feedback,
   notice,
+  onMetricClick,
   className = "",
 }: {
   data: DigitalEmployeeOverview;
@@ -381,6 +337,7 @@ export function WeeklyCommandCenter({
   actions?: ReactNode;
   feedback?: ReactNode;
   notice?: ReactNode;
+  onMetricClick?: (metric: WeeklyCommandMetricId) => void;
   className?: string;
 }) {
   const display = buildSmartBusinessDisplayModel(data);
@@ -436,13 +393,13 @@ export function WeeklyCommandCenter({
     {feedback && <div aria-label="周任务操作反馈" className="border-b border-border bg-white px-4 py-2.5">{feedback}</div>}
     <div className="grid auto-rows-[112px] gap-x-6 gap-y-6 bg-white px-6 pb-6 pt-3 sm:grid-cols-3">
       {[
-        { label: "待验收成片", value: `${display.totals.waitingReviewCount} 条`, color: "var(--color-accent)" },
-        { label: "本周计划视频", value: `${plannedOutputCount} 条`, color: "var(--color-visual-lavender)" },
-        { label: "本周视频总时长", value: plannedDurationSeconds > 0 ? `${plannedDurationSeconds} 秒` : "待确认", color: "var(--color-visual-teal)" },
-        { label: "本周成本范围", value: budgetMax > 0 ? `¥${budgetMin.toFixed(0)}–${budgetMax.toFixed(0)}` : "待核算", color: "var(--color-visual-pink)" },
-        { label: "预计制作成本", value: estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : "待核算", color: "var(--color-text-primary)" },
-        { label: "已结算成本", value: settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : "暂无结算", color: "var(--color-text-primary)" },
-      ].map(item => <article key={item.label} className="min-w-0 bg-white"><Statistic title={item.label} value={item.value} styles={{ title: { fontSize: 16, lineHeight: "24px", fontWeight: 400, color: "var(--color-text-secondary)", marginBottom: 12 }, content: { color: "var(--color-text-primary)", fontSize: 28, fontWeight: 600, lineHeight: "36px" } }}/></article>)}
+        { id: "waiting_review", label: "待验收成片", value: `${display.totals.waitingReviewCount} 条` },
+        { id: "planned_videos", label: "本周计划视频", value: `${plannedOutputCount} 条` },
+        { id: "planned_duration", label: "本周视频总时长", value: plannedDurationSeconds > 0 ? `${plannedDurationSeconds} 秒` : "待确认" },
+        { id: "budget_range", label: "本周成本范围", value: budgetMax > 0 ? `¥${budgetMin.toFixed(0)}–${budgetMax.toFixed(0)}` : "待核算" },
+        { id: "estimated_cost", label: "预计制作成本", value: estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : "待核算" },
+        { id: "settled_cost", label: "已结算成本", value: settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : "暂无结算" },
+      ].map(item => <button key={item.id} type="button" aria-label={`查看${item.label}`} onClick={() => onMetricClick?.(item.id as WeeklyCommandMetricId)} disabled={!onMetricClick} className="group relative min-w-0 rounded-lg bg-white text-left outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-default disabled:hover:bg-white"><Statistic title={item.label} value={item.value} styles={{ title: { fontSize: 16, lineHeight: "24px", fontWeight: 400, color: "var(--color-text-secondary)", marginBottom: 12 }, content: { color: "var(--color-text-primary)", fontSize: 28, fontWeight: 600, lineHeight: "36px" } }}/><ArrowRight aria-hidden size={16} className="absolute right-3 top-3 text-text-muted transition-colors group-hover:text-accent" /></button>)}
     </div>
     {notice && <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-3">{notice}</div>}
   </section>;

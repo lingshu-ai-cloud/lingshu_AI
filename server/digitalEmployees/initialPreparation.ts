@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
-export type InitialPreparationSource={key:string;platform:'youtube'|'tiktok'|'instagram'|'facebook';mode:'keyword'|'account';value:string;origin:'external'|'owned';jobId?:string};
+export type InitialPreparationSource={key:string;platform:'youtube'|'tiktok'|'instagram'|'facebook'|'linkedin';mode:'keyword'|'account';value:string;origin:'external'|'owned';jobId?:string};
 export type InitialPreparation={requestId:string;goalId:string;revision:number;confirmedBy:string;confirmedAt:string;status:'collecting'|'analyzing'|'preparing'|'running'|'blocked';sources:InitialPreparationSource[];candidateIds:string[];reason:string;runId?:string};
 type PersistedInitialPreparationScope={goalPlatforms:unknown;businessPackage:unknown;config:unknown;profile:unknown};
 
@@ -9,11 +9,11 @@ function list(value:unknown):unknown[]{return Array.isArray(value)?value:[];}
 function strings(value:unknown):string[]{return list(value).map(String).map(item=>item.trim()).filter(Boolean);}
 function productNames(value:unknown):string[]{return typeof value==='string'?value.split(/[\n,，;；、]/).map(item=>item.trim()).filter(Boolean):[];}
 function platforms(value:unknown):InitialPreparationSource['platform'][]{
- return [...new Set(strings(value).filter((item):item is InitialPreparationSource['platform']=>['youtube','tiktok','instagram','facebook'].includes(item)))];
+ return [...new Set(strings(value).filter((item):item is InitialPreparationSource['platform']=>['youtube','tiktok','instagram','facebook','linkedin'].includes(item)))];
 }
 
 export function initialPreparationSources(input:{platforms:unknown;products:unknown;historyAccounts?:unknown;stage?:unknown;historyCollectionRequestId?:unknown}):InitialPreparationSource[]{
- const platforms=Array.isArray(input.platforms)?input.platforms.filter((p):p is InitialPreparationSource['platform']=>['youtube','tiktok','instagram','facebook'].includes(String(p))):[];
+ const platforms=Array.isArray(input.platforms)?input.platforms.filter((p):p is InitialPreparationSource['platform']=>['youtube','tiktok','instagram','facebook','linkedin'].includes(String(p))):[];
  const products=Array.isArray(input.products)?input.products.map(String).map(x=>x.trim()).filter(Boolean):[];
  if(!platforms.length||!products.length)throw Error('initial_preparation_scope_required');
  const sources:InitialPreparationSource[]=platforms.map(platform=>({key:`external:${platform}`,platform,mode:'keyword',value:products.join(' '),origin:'external'}));

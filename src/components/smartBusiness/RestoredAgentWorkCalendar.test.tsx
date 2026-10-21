@@ -4,8 +4,20 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import Calendar, {calendarExecutionMark,calendarTaskPresentation,hasCtaContactGap,isPastUnfinishedCalendarTask,taskProgressPercent} from './RestoredAgentWorkCalendar';
+import { ganttFocusDay, ganttWeeks, groupGanttNodesByWeek, type GanttRow } from './AgentVideoProductionBoard';
 import type { AgentCalendarTask } from './AgentWeeklyCalendar';
 const base: AgentCalendarTask = {id:'business',date:'2026-10-12',time:'10:00',agent:'business',title:'冻结经营任务',output:'经营交付',context:'实际范围',minutes:30,status:'planned',dueAt:'2026-10-12T10:00:00+08:00'};
+test('production nodes preserve their stage order inside weekly columns',()=>{
+ const rows: GanttRow[] = [
+  {id:'a',stage:null,task:{...base,id:'a'},status:'planned',label:'任务 A',owner:'经营 Agent'},
+  {id:'b',stage:null,task:{...base,id:'b'},status:'planned',label:'任务 B',owner:'经营 Agent'},
+  {id:'c',stage:null,task:{...base,id:'c',date:'2026-10-20'},status:'planned',label:'任务 C',owner:'经营 Agent'},
+ ];
+ const weeks=ganttWeeks(rows.map(row=>row.task!));
+ const grouped=groupGanttNodesByWeek(rows,weeks);
+ assert.deepEqual(grouped.map(nodes=>nodes.map(node=>node.id)),[['a','b'],['c']]);
+ assert.equal(ganttFocusDay(rows.map(row=>row.task!),'2026-10-20'),'2026-10-20');
+});
 test('only unfinished work before today receives an overdue exclamation mark',()=>{
  const today='2026-10-15';
  assert.equal(calendarExecutionMark({...base,date:'2026-10-14',status:'blocked'},today),'missing');
@@ -86,7 +98,7 @@ test('calendar renders only independent task events and keeps task details in th
   assert.doesNotMatch(source,/交付已逾期[^\n]*description=/);
 });
 
-test('weekly calendar receives the single completed-work filter from the monitoring Agent status row',()=>{
+test('production command center keeps filters out of the overview while lower-level calendars retain optional filtering',()=>{
   const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
   const workspace=readFileSync(new URL('./DigitalEmployeeWorkspace.tsx',import.meta.url),'utf8');
   const connected=readFileSync(new URL('./ConnectedAgentCalendar.tsx',import.meta.url),'utf8');
@@ -94,10 +106,9 @@ test('weekly calendar receives the single completed-work filter from the monitor
   assert.match(source,/hideCompleted = false/);
   assert.match(source,/filter\(task => !hideCompleted \|\| !\['completed', 'cancelled', 'no_data'\]\.includes\(task\.status\)\)/);
   assert.doesNotMatch(source,/aria-label="按智能体筛选"|需我处理|隐藏已完成|张任务卡|calendarDurationLabel/);
-  assert.match(workspace, /<h2[^>]*>数字员工实时状态<\/h2>[\s\S]{0,700}<Switch[^>]*checked=\{hideCompleted\}[^>]*aria-label="隐藏已完成"/);
-  assert.match(workspace, /<label className="[^"]*min-h-11[^"]*"[\s\S]{0,180}<Switch/, 'the completed-work switch must keep a 44px click target');
-  assert.match(workspace, /<RestoredAgentWorkCalendar[^>]*hideCompleted=\{hideCompleted\}/);
-  assert.match(workspace, /<ConnectedAgentCalendar[^>]*hideCompleted=\{hideCompleted\}/);
+  assert.doesNotMatch(workspace, /四位数字员工正在如何协作|数字员工实时状态|隐藏已完成|Agent 协作在线/);
+  assert.doesNotMatch(workspace, /<RestoredAgentWorkCalendar[^>]*(?:hideCompleted|agentRole)=/);
+  assert.doesNotMatch(workspace, /<ConnectedAgentCalendar[^>]*(?:hideCompleted|agentRole)=/);
   assert.doesNotMatch(connected, /经营项目：|请选择周任务包|查看周任务包版本/);
   assert.match(connected, /<WeeklyCustomerCalendar[^>]*hideCompleted=\{hideCompleted\}/);
   assert.match(bridge, /<AgentWeeklyCalendar[^>]*hideCompleted=\{hideCompleted\}/);

@@ -13,10 +13,12 @@ test('worker is the qualification boundary for source evidence and innovation ga
   };
   const result = await runCandidateEvidenceWorker([
     base,
+    { ...base, candidateId: 'not-production-ready', productionEligibilityIssues: ['图片与配文尚未完成统一分析'] },
     { ...base, candidateId: 'no-source', evidenceRefs: [], g1: { ...base.g1, sourceUrl: undefined } },
     { ...base, candidateId: 'innovation', discoveryPath: ['innovation'], innovationEvidence: { kind: 'comment_question', commentRefs: ['c1'], contentRefs: ['v1'] } },
   ], persist);
   assert.deepEqual(persisted, ['candidate']);
   assert.equal(result.accepted.length, 1);
-  assert.deepEqual(result.suggestions.map(item => item.candidateId), ['no-source', 'innovation']);
+  assert.deepEqual(result.suggestions.map(item => item.candidateId), ['not-production-ready', 'no-source', 'innovation']);
+  assert.deepEqual(result.suggestions[0]?.reasons, ['图片与配文尚未完成统一分析']);
 });

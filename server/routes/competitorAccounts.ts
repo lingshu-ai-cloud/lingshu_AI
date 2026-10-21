@@ -16,7 +16,7 @@ export const competitorAccountsRouter = Router();
 competitorAccountsRouter.use(requireAuth);
 
 const COL = 'competitor_accounts';
-const SUPPORTED: Platform[] = ['youtube', 'tiktok', 'instagram', 'facebook'];
+const SUPPORTED: Platform[] = ['linkedin', 'facebook', 'youtube', 'tiktok', 'instagram'];
 
 interface AccountRecord {
   id: string;
@@ -107,7 +107,7 @@ competitorAccountsRouter.get('/', async (_req, res) => {
 });
 
 // ─── POST /competitor-accounts ───────────────────────────────────────────────
-// Body: { url: string, platform?: 'youtube' | 'tiktok' | 'instagram' | 'facebook', accountName?: string, note?: string }
+// Body: { url: string, platform?: 'linkedin' | 'facebook' | 'youtube' | 'tiktok' | 'instagram', accountName?: string, note?: string }
 competitorAccountsRouter.post('/', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const { url = '', accountName = '', note = '' } = req.body as {
@@ -124,11 +124,11 @@ competitorAccountsRouter.post('/', async (req, res) => {
     ? (bodyPlatform as Platform)
     : inferPlatformFromUrl(trimmed);
   if (!SUPPORTED.includes(platform)) {
-    res.status(400).json({ error: '当前支持 YouTube、TikTok、Instagram、Facebook 对标账号主页' });
+    res.status(400).json({ error: '当前支持 LinkedIn、Facebook、YouTube、TikTok、Instagram 对标账号主页' });
     return;
   }
   if (!looksLikeAccountUrl(trimmed, platform)) {
-    res.status(400).json({ error: '这看起来不是账号主页链接（例如 YouTube @handle、TikTok @user、Instagram username 或 Facebook Page 主页）' });
+    res.status(400).json({ error: '这看起来不是账号主页链接（例如 LinkedIn Company、Facebook Page、YouTube @handle、TikTok @user 或 Instagram username）' });
     return;
   }
 

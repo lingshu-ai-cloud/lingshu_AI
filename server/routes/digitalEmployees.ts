@@ -69,9 +69,7 @@ import { agentBrowserSessions, browserExecutionEnabled, type BrowserScope, type 
 import { listRunEventsAfter } from '../digitalEmployees/runEventReplay.js';
 import { enforceSupportSessionReadOnly, requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
-import { settledSeedanceUsageForTenant } from '../lib/seedanceBudget.js';
 import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
-import type { ExecutionStoreRecord } from './productionContracts.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
 import { readAuthorizedWhatsAppCustomers as defaultGetWhatsAppCustomers } from '../whatsapp/authorizedCustomerRead.js';
@@ -167,7 +165,6 @@ import {
 } from '../digitalEmployees/domain.js';
 export const digitalEmployeesRouter = Router();
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, withLocalQueue, type ApprovalRecord, type ConfigRecord, type ContentBatchPlanRecord, type CorrectionRecord, type EventRecord, type GoalRecord, type HandoffRecord, type PlanRecord, type RunRecord, type StoredRecord, type TaskRecord } from './digitalEmployeeRecords.js';
-import { pointsFromCny } from '../../shared/pointsPolicy.js';
 digitalEmployeesRouter.use(requireAuth);
 digitalEmployeesRouter.use(enforceSupportSessionReadOnly);
 digitalEmployeesRouter.get('/publishing-accounts', async (_req, res) => {

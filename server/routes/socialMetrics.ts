@@ -8,7 +8,7 @@ socialMetricsRouter.use(requireAuth);
 
 function platformParam(value: unknown): string | undefined {
   const platform = typeof value === 'string' ? value.toLowerCase() : '';
-  return ['facebook', 'instagram', 'tiktok', 'youtube'].includes(platform) ? platform : undefined;
+  return ['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin'].includes(platform) ? platform : undefined;
 }
 
 socialMetricsRouter.get('/overview', async (req, res) => {

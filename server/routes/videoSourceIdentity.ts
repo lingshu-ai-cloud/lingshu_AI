@@ -12,7 +12,8 @@ export function videoSourceIdentity(platform: string, sourceUrl: string): string
     : normalizedPlatform === 'tiktok' ? path.match(/\/video\/(\d+)/i)?.[1]
       : normalizedPlatform === 'instagram' ? path.match(/^\/(?:reel|p|tv)\/([^/]+)/i)?.[1]
         : normalizedPlatform === 'facebook' ? path.match(/\/(?:reel|videos)\/(\d+)/i)?.[1] || url.searchParams.get('v')
-          : null;
+          : normalizedPlatform === 'linkedin' ? path.match(/activity[:-](\d+)/i)?.[1] || path.match(/\/posts\/[^/]*?(\d{8,})/i)?.[1]
+            : null;
   // YouTube IDs and Instagram shortcodes are case-sensitive.
   if (id) return `${normalizedPlatform}:id:${id}`;
   url.hash = '';
@@ -60,6 +61,10 @@ export function sourceAccountFromProviderMetadata(platform: string, value: strin
     const profileId = path === '/profile.php' ? url.searchParams.get('id') : null;
     if (profileId && /^\d{5,}$/.test(profileId)) return `https://www.facebook.com/profile.php?id=${profileId}`;
   }
+  if (platform === 'linkedin' && host === 'linkedin.com') {
+    const company = path.match(/^\/company\/([A-Za-z0-9._-]{2,120})$/)?.[1];
+    return company ? `https://www.linkedin.com/company/${company}` : null;
+  }
   return null;
 }
 
@@ -87,7 +92,7 @@ export async function loadKnownVideoSourceIdentities(dataStore: Pick<DataStore, 
     for (const row of existing.items) {
       const url = String(row.sourceUrl || '');
       if (!url) continue;
-      const platform = String(row.platform || (/tiktok/i.test(url) ? 'tiktok' : /instagram/i.test(url) ? 'instagram' : /facebook|fb\.watch/i.test(url) ? 'facebook' : /youtube|youtu\.be/i.test(url) ? 'youtube' : ''));
+      const platform = String(row.platform || (/linkedin/i.test(url) ? 'linkedin' : /tiktok/i.test(url) ? 'tiktok' : /instagram/i.test(url) ? 'instagram' : /facebook|fb\.watch/i.test(url) ? 'facebook' : /youtube|youtu\.be/i.test(url) ? 'youtube' : ''));
       known.add(videoSourceIdentity(platform, url));
     }
     if (page >= existing.totalPages) break;

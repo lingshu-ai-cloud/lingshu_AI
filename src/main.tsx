@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import { AppCrashBoundary } from './components/AppPageBoundary';
 import LingshuProvider from './components/ui/LingshuProvider';
+import '@svar-ui/react-gantt/all.css';
 import './index.css';
 import './styles/design-system.css';
 

@@ -3,7 +3,7 @@ import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js
 import { recommendPackage, validatePackage } from './weeklyPackage.js';
 import { fillMatrixVideos, matrixIssues } from '../../src/lib/weeklyMatrix.js';
 import type { VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
-import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, publishDateForAccountSlot, rankContentReferences } from './contentPlanRecommendation.js';
+import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, publicationCopyForPlan, publishDateForAccountSlot, rankContentReferences } from './contentPlanRecommendation.js';
 import { buildContentBatchPlan } from './contentBatchPlan.js';
 
 const config = normalizeDigitalEmployeeConfig({
@@ -96,6 +96,27 @@ assert.match(plans[0]?.benchmarkAnalysis?.shots[0]?.firstFrameRef || '', /shot\/
 assert.ok(plans.every(plan => plan.publication?.title && plan.publication.caption && plan.publication.tags.length), 'each planned video must carry future title, caption and tags into production');
 assert.ok(plans.every(plan => /[⚡✨💡🎯]/u.test(plan.publication?.title || '')), 'publication titles must start with a platform-appropriate visual hook');
 assert.ok(plans.every(plan => (plan.publication?.caption || '').includes('\n')), 'publication copy must separate the hook from the supporting message');
+const authorizedSource = video('authorized-copy', '品牌工厂能力', 'Why buyers verify the factory first', '210K');
+authorizedSource.platform = 'linkedin';
+Object.assign(authorizedSource.aiAnalysis, {
+  usage: 'editable',
+  caption: 'Topfeel makes trusted cleansing foam. DM Topfeel for details. #Topfeel #OEM',
+});
+Object.assign(authorizedSource.aiAnalysis.gemini, {
+  identityEntities: [
+    { type: 'brand', text: 'Topfeel' },
+    { type: 'product', text: 'cleansing foam' },
+  ],
+});
+const authorizedReference = rankContentReferences({ videos: [authorizedSource], benchmarks: [], platform: 'linkedin', productName: '云朵泡沫卸妆蜜', audience: '采购', direction: '采购教育' })[0]!;
+const tiktokCopy = publicationCopyForPlan({ plan: { ...plans[0]!, platform: 'tiktok' }, reference: authorizedReference, productName: '云朵泡沫卸妆蜜', theme: '工厂能力', companyName: '澄光美研' });
+const linkedInCopy = publicationCopyForPlan({ plan: { ...plans[0]!, platform: 'linkedin' }, reference: authorizedReference, productName: '云朵泡沫卸妆蜜', theme: '工厂能力', companyName: '澄光美研' });
+assert.equal(tiktokCopy.caption, linkedInCopy.caption, 'the approved caption must be identical across destination platforms');
+assert.deepEqual(tiktokCopy.tags, linkedInCopy.tags, 'the approved hashtag set must be identical across destination platforms');
+assert.match(tiktokCopy.caption, /澄光美研/);
+assert.match(tiktokCopy.caption, /云朵泡沫卸妆蜜/);
+assert.doesNotMatch(tiktokCopy.caption, /Topfeel|cleansing foam/);
+assert.equal(tiktokCopy.copyMode, 'authorized_source_reuse');
 assert.ok(plans.every(plan => Number(plan.estimatedCost) > 0), 'each video must carry the production stack highest-tier estimate');
 assert.ok(plans.every(plan => plan.estimatedCostRange?.basis === 'verified_storyboard_provider_envelope'), 'exact clone plans must use the provider-priced storyboard envelope');
 assert.equal(plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0), plans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0), 'the point estimate must equal the one-attempt storyboard forecast');

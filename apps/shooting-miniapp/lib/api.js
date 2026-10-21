@@ -63,11 +63,14 @@ async function login(email, password) {
   return request('auth/me')
 }
 
-function uploadVideo(file, onProgress) {
+function uploadMaterial(file, onProgress) {
+  const materialType = file.fileType === 'image' || /^image\//.test(String(file.mimeType || '')) ? 'image' : 'video'
+  const fallbackName = materialType === 'image' ? 'mobile-material.jpg' : 'mobile-shoot.mp4'
+  const fallbackMime = materialType === 'image' ? 'image/jpeg' : 'video/mp4'
   const query = [
-    ['name', file.name || 'mobile-shoot.mp4'], ['folder', 'social'], ['type', 'video'],
+    ['name', file.name || fallbackName], ['folder', 'social'], ['type', materialType],
     ['duration', String(file.duration || 0)], ['width', String(file.width || 0)],
-    ['height', String(file.height || 0)], ['mimeType', file.mimeType || 'video/mp4'], ['sourceType', 'local-upload']
+    ['height', String(file.height || 0)], ['mimeType', file.mimeType || fallbackMime], ['sourceType', 'local-upload']
   ].map(([key, value]) => encodeURIComponent(key) + '=' + encodeURIComponent(value)).join('&')
   return new Promise((resolve, reject) => {
     // 与网页端共用 application/octet-stream 上传接口。小程序请求需先组装 ArrayBuffer。
@@ -100,14 +103,18 @@ function uploadVideo(file, onProgress) {
         offset += length
         onProgress(Math.min(30, Math.floor(offset / file.size * 30)))
         readNext()
-      }, fail(err) { reject(new Error(err.errMsg || '读取视频失败')) } })
+      }, fail(err) { reject(new Error(err.errMsg || '读取素材失败')) } })
     }
     readNext()
   })
 }
 
+function uploadVideo(file, onProgress) {
+  return uploadMaterial({ ...file, fileType: 'video', mimeType: file.mimeType || 'video/mp4' }, onProgress)
+}
+
 module.exports = {
-  token, clearToken, login, uploadVideo, assetUrl,
+  token, clearToken, login, uploadMaterial, uploadVideo, assetUrl,
   me: () => request('auth/me'),
   products: async () => {
     const profile = await request('enterprise/profile')
@@ -118,6 +125,11 @@ module.exports = {
   },
   createTask: data => request('studio/shooting-tasks', 'POST', data),
   tasks: () => request('studio/shooting-tasks'),
+  materials: async () => {
+    const result = await request('studio/materials?scope=own&purpose=library')
+    if (!Array.isArray(result)) throw new Error('素材库返回异常，请稍后重试')
+    return result
+  },
   studioProject: id => request('studio/projects/' + encodeURIComponent(id)),
   attach: (id, materialId) => request('studio/shooting-tasks/' + encodeURIComponent(id) + '/uploads', 'POST', { uploadedMaterialIds: [materialId] })
 }

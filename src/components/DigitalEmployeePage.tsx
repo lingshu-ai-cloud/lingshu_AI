@@ -4851,6 +4851,18 @@ export default function DigitalEmployeePage({
               statusLabel={currentPlanStatusLabel}
               actions={weeklyPlanControls}
               feedback={weeklyActionFeedback}
+              onMetricClick={metric => {
+                setSelectedContentItemId("");
+                if (metric === "waiting_review") {
+                  setWorkspaceView("matrix");
+                  return;
+                }
+                if (metric === "settled_cost") {
+                  setWorkspaceView("review");
+                  return;
+                }
+                setWeeklyPlanDetailsOpen(true);
+              }}
               notice={publishingSetupRequired
                 ? <><p className="mr-auto text-xs leading-5 text-text-secondary"><strong className="text-warning">发布准备待完成：</strong>{publishingReadiness?.summary}。内容生产可以继续，系统不会把未连接账号当成已就绪。</p><Button size="small" onClick={openPublishingAccountSetup}>配置发布账号</Button></>
                 : !activeRun && !viewGoalId && (missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")

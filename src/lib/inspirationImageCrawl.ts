@@ -1,4 +1,4 @@
-export const INSPIRATION_IMAGE_CRAWL_PLATFORMS = ['instagram', 'facebook', 'tiktok', 'youtube'] as const;
+export const INSPIRATION_IMAGE_CRAWL_PLATFORMS = ['linkedin', 'facebook', 'instagram', 'tiktok', 'youtube'] as const;
 
 export type InspirationImageCrawlPlatform = typeof INSPIRATION_IMAGE_CRAWL_PLATFORMS[number];
 
@@ -46,7 +46,7 @@ export async function crawlInspirationImages(
 ): Promise<InspirationImageCrawlResult> {
   const keyword = input.keyword.trim();
   if (!keyword) throw new Error('请输入采集关键词');
-  if (!INSPIRATION_IMAGE_CRAWL_PLATFORMS.includes(input.platform)) throw new Error('暂不支持该平台的图片采集');
+  if (!INSPIRATION_IMAGE_CRAWL_PLATFORMS.includes(input.platform)) throw new Error('暂不支持该平台的图文采集');
   const limit = Math.min(30, Math.max(1, Math.round(Number(input.limit) || 0)));
   if (!limit) throw new Error('请选择采集数量');
 
@@ -57,7 +57,7 @@ export async function crawlInspirationImages(
     body: JSON.stringify({ platform: input.platform, keyword, limit }),
   });
   const result = await response.json().catch(() => ({})) as Partial<InspirationImageCrawlResult> & { error?: string };
-  if (!response.ok) throw new Error(result.error || `图片采集失败（HTTP ${response.status}）`);
+  if (!response.ok) throw new Error(result.error || `图文采集失败（HTTP ${response.status}）`);
 
   return {
     platform: input.platform,

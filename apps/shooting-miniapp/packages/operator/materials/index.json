@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "素材上传与整理",
+  "navigationStyle": "default",
+  "usingComponents": {
+    "operator-nav": "/components/operator-nav/index"
+  }
+}

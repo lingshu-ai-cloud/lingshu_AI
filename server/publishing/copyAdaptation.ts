@@ -305,6 +305,39 @@ export function platformCopiesAuditText(value: Record<string, PlatformCopy>): st
   ]).join('\n');
 }
 
+function canonicalBodyFromCopy(copy: PlatformCopy | undefined): string {
+  return cleanText(copy?.description || copy?.caption || copy?.text);
+}
+
+/**
+ * Preserve one approved caption and hashtag set across every destination.
+ * The per-platform object shape remains for provider compatibility only; it
+ * is not permission to rewrite the visible copy.
+ */
+export function canonicalPlatformCopies(input: {
+  platforms: PublishCopyPlatform[];
+  title: string;
+  body: string;
+  currentCopy?: Partial<Record<PublishCopyPlatform, PlatformCopy>>;
+  firstComment?: string;
+}): Record<string, PlatformCopy> {
+  const canonicalTitle = cleanText(input.title);
+  const firstExisting = input.platforms.map(platform => input.currentCopy?.[platform]).find(copy => canonicalBodyFromCopy(copy));
+  const body = cleanText(input.body) || canonicalBodyFromCopy(firstExisting) || canonicalTitle;
+  const inlineHashtags = [...body.matchAll(/#([\p{L}\p{N}_-]+)/gu)].map(match => match[1]);
+  const existingTags = input.platforms.flatMap(platform => {
+    const copy = input.currentCopy?.[platform];
+    return [...(copy?.tags || []), ...(copy?.hashtags || [])];
+  });
+  const tags = [...new Set([...inlineHashtags, ...existingTags].map(tag => cleanText(tag).replace(/^#+/, '')).filter(Boolean))].slice(0, 5);
+  const firstComment = cleanText(input.firstComment || firstExisting?.firstComment);
+  return Object.fromEntries(input.platforms.map(platform => {
+    if (platform === 'youtube') return [platform, { title: canonicalTitle, description: body, tags, ...(firstComment ? { firstComment } : {}) }];
+    if (platform === 'facebook' || platform === 'linkedin') return [platform, { text: body, hashtags: tags, ...(firstComment ? { firstComment } : {}) }];
+    return [platform, { caption: body, hashtags: tags, ...(firstComment ? { firstComment } : {}) }];
+  }));
+}
+
 export function sanitizePublishCopyPlatforms(value: unknown): PublishCopyPlatform[] {
   if (!Array.isArray(value)) return [];
   const allowed = new Set<string>(PUBLISH_COPY_PLATFORMS);

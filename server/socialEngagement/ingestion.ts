@@ -3,7 +3,7 @@ import { store } from '../storage/index.js';
 import type { PlatformCapabilityEvidence } from '../publishing/platformCapabilities.js';
 import { writebackInteraction, type InteractionKind, type StoredInteractionWriteback } from './writeback.js';
 
-export type EngagementPlatform = 'youtube' | 'facebook' | 'instagram' | 'tiktok' | 'web_form';
+export type EngagementPlatform = 'youtube' | 'facebook' | 'instagram' | 'tiktok' | 'linkedin' | 'web_form';
 export type EngagementSurface = 'comments' | 'direct_messages' | 'forms';
 
 export interface EngagementCapability {
@@ -80,6 +80,8 @@ export function declaredEngagementCapabilities(input: {
     decision('instagram', 'direct_messages', false),
     decision('tiktok', 'comments', false),
     decision('tiktok', 'direct_messages', false),
+    decision('linkedin', 'comments', true),
+    decision('linkedin', 'direct_messages', false),
     { platform: 'web_form', surface: 'forms', status: input.webFormConfigured ? 'available' : 'unavailable', reason: input.webFormConfigured ? 'signed_web_form_source_configured' : 'signed_web_form_source_required' },
   ];
 }

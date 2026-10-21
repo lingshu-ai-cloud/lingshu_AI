@@ -70,6 +70,7 @@ Page({
     if (['production', 'acceptance', 'shooting'].includes(key)) this.setData({ activeMetric: key })
   },
   openShooting() { wx.navigateTo({ url: '/packages/operator/shooting/index' }) },
+  openMaterials() { wx.navigateTo({ url: '/packages/operator/materials/index' }) },
   openInquiries() { wx.navigateTo({ url: '/packages/operator/inquiries/index' }) },
   openShot(e) {
     this.navigateShot(e)

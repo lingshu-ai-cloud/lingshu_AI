@@ -121,4 +121,6 @@ test('operator workbench keeps queue swipe UI removed and review out of primary 
   const nav = fs.readFileSync(__dirname + '/components/operator-nav/index.js', 'utf8')
   assert.doesNotMatch(markup, /queue-deck|queueTouch|左滑|右滑/)
   assert.doesNotMatch(nav, /key: 'review'/)
+  assert.match(nav, /label: '素材整理'/)
+  assert.match(nav, /label: '待拍任务'/)
 })

@@ -5,8 +5,8 @@ Component({
   },
   data: {
     items: [
-      { key: 'work', label: '工作', path: '/packages/operator/home/index' },
-      { key: 'assistant', label: '编导 Agent', path: '/packages/operator/assistant/index' }
+      { key: 'materials', label: '素材整理', path: '/packages/operator/materials/index' },
+      { key: 'shooting', label: '待拍任务', path: '/packages/operator/shooting/index' }
     ]
   },
   lifetimes: { attached() { this.configure(this.properties.mode) } },
@@ -16,8 +16,8 @@ Component({
         { key: 'work', label: '工作', path: '/packages/customer/home/index' },
         { key: 'assistant', label: '客服 Agent', path: '/packages/operator/assistant/index?edition=service' }
       ] : [
-        { key: 'work', label: '工作', path: '/packages/operator/home/index' },
-        { key: 'assistant', label: '编导 Agent', path: '/packages/operator/assistant/index' }
+        { key: 'materials', label: '素材整理', path: '/packages/operator/materials/index' },
+        { key: 'shooting', label: '待拍任务', path: '/packages/operator/shooting/index' }
       ] })
     },
     select(e) {

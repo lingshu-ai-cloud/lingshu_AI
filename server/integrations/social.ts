@@ -31,6 +31,10 @@ export interface SocialUploadResult {
   providerReceiptId?: string;
 }
 
+export interface FacebookImagePostResult extends SocialUploadResult {
+  photoIds: string[];
+}
+
 export interface TikTokPublishStatusResult {
   state: 'processing' | 'published' | 'failed' | 'unknown';
   publishId: string;
@@ -673,6 +677,60 @@ export async function uploadFacebookVideo(pageId: string, pageAccessToken: strin
     title,
     privacyStatus: input.privacyStatus === 'private' ? 'private' : 'public',
     url: `https://www.facebook.com/${pageId}/videos/${id}`,
+  };
+}
+
+export async function publishFacebookImagePost(
+  pageId: string,
+  pageAccessToken: string,
+  graphVersion: string,
+  input: { imagePaths: string[]; title: string; description: string },
+  lifecycle: {
+    beforeImageUpload?: (imagePath: string, index: number) => Promise<void>;
+    beforePublish?: () => Promise<void>;
+    onProviderReceipt?: (postId: string) => Promise<void>;
+  } = {},
+): Promise<FacebookImagePostResult> {
+  const photoIds: string[] = [];
+  for (const [index, imagePath] of input.imagePaths.entries()) {
+    const stat = requireFile(imagePath);
+    if (!['.jpg', '.jpeg', '.png'].includes(path.extname(imagePath).toLowerCase())) throw new Error('facebook_image_file_invalid');
+    if (lifecycle.beforeImageUpload) await lifecycle.beforeImageUpload(imagePath, index);
+    const form = new FormData();
+    form.append('published', 'false');
+    form.append('access_token', pageAccessToken);
+    form.append('source', fs.createReadStream(imagePath), {
+      filename: path.basename(imagePath),
+      contentType: path.extname(imagePath).toLowerCase() === '.png' ? 'image/png' : 'image/jpeg',
+      knownLength: stat.size,
+    });
+    const response = await axios.post(`${META_GRAPH}/${graphVersion}/${pageId}/photos`, form, {
+      headers: form.getHeaders(),
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      timeout: 120_000,
+    });
+    const photoId = String(response.data?.id || '').trim();
+    if (!photoId) throw new Error('facebook_photo_receipt_missing');
+    photoIds.push(photoId);
+  }
+  if (lifecycle.beforePublish) await lifecycle.beforePublish();
+  const body = new URLSearchParams({ access_token: pageAccessToken, message: input.description });
+  photoIds.forEach((mediaId, index) => body.set(`attached_media[${index}]`, JSON.stringify({ media_fbid: mediaId })));
+  const response = await axios.post(`${META_GRAPH}/${graphVersion}/${pageId}/feed`, body.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    maxRedirects: 0,
+    timeout: 30_000,
+  });
+  const id = String(response.data?.id || '').trim();
+  if (!id) throw new Error('facebook_post_receipt_missing');
+  if (lifecycle.onProviderReceipt) await lifecycle.onProviderReceipt(id);
+  return {
+    id,
+    photoIds,
+    title: input.title,
+    privacyStatus: 'public',
+    url: `https://www.facebook.com/${id}`,
   };
 }
 

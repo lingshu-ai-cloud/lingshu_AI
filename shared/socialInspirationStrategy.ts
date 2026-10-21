@@ -110,7 +110,7 @@ export function scoreSocialDiscoveryCandidate(input: {
   const momentum = input.evidence.momentum.level === 'rising' ? 95 : input.evidence.momentum.level === 'high_performance' ? 75 : 35;
   const hasSource = input.hasSource !== false && input.evidence.evidenceRefs.length > 0;
   const evidence = hasSource ? Math.min(100, 55 + input.evidence.evidenceRefs.length * 12) : 0;
-  const platformPriority = platform === 'tiktok' ? 100 : platform === 'instagram' ? 70 : platform === 'facebook' ? 65 : platform === 'youtube' ? 45 : 30;
+  const platformPriority = platform === 'linkedin' ? 100 : platform === 'facebook' ? 90 : platform === 'tiktok' ? 70 : platform === 'instagram' ? 60 : platform === 'youtube' ? 45 : 30;
   const tierBoost = input.keywordTier === 'medium' ? 10 : input.keywordTier === 'account' ? 8 : input.keywordTier === 'evidence' ? 5 : input.keywordTier === 'broad' ? -10 : 0;
   const overall = Math.max(0, Math.min(100, Math.round(
     relevance * 0.25 + transferability * 0.2 + momentum * 0.1 + evidence * 0.15
@@ -124,7 +124,7 @@ export function scoreSocialDiscoveryCandidate(input: {
   const decision = blockers.length ? 'rejected' : overall >= 70 ? 'accepted' : overall >= 50 ? 'review' : 'rejected';
   const reasons = [
     `相关性 ${relevance} / 可迁移性 ${transferability} / 证据 ${evidence}`,
-    platform === 'tiktok' ? 'TikTok 主采集阵地加权' : platform === 'youtube' ? 'YouTube 仅作为定向证据来源' : `${platform || '未知平台'} 辅助来源`,
+    platform === 'linkedin' || platform === 'facebook' ? `${platform} 对标账号主采集阵地加权` : `${platform || '未知平台'} 非主采集来源`,
     expectsBusiness ? `B2B 匹配：${businessModel}` : `消费者业务匹配：${businessModel}`,
     input.keywordTier === 'medium' ? '命中用户痛点或产品卖点中词' : `查询层级：${input.keywordTier ?? 'unknown'}`,
   ];

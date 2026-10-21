@@ -54,6 +54,7 @@ function genericInstructions(channelId: Exclude<SocialChannelId, 'douyin_cn'>): 
     instagram: 'Instagram',
     facebook: 'Facebook',
     youtube: 'YouTube',
+    linkedin: 'LinkedIn',
   };
   return [
     `在 ${names[channelId]} 打开新建内容页面，并核对目标账号。`,
@@ -119,6 +120,7 @@ export function createDefaultChannelRegistry(
   registry.register(createGenericAdapter('instagram'));
   registry.register(createGenericAdapter('facebook'));
   registry.register(createGenericAdapter('youtube'));
+  registry.register(createGenericAdapter('linkedin'));
   return registry;
 }
 

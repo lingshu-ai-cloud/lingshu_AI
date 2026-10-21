@@ -30,6 +30,7 @@ import { listTenantCapabilityEvidence } from '../publishing/platformCapabilities
 import { fallbackQueueSuggestion, normalizeScheduleSlots } from './publishingSuggestions.js';
 import { externalVideoApprovalsRouter } from './externalVideoApprovals.js';
 import { assertPublishingCopyFactVersion, PublishingCopyFactVersionError, type PublishingCopyAudit } from '../publishing/copyFactVersion.js';
+import { assertUnifiedPublishPreflight } from '../publishing/unifiedPublishPreflight.js';
 
 export const publishingRouter = Router();
 
@@ -137,6 +138,7 @@ function publicPost(post: PostRecord) {
     duration: numberValue(stats.duration),
     firstComment: text(stats.firstComment),
     videoPath: text(stats.videoPath),
+    imagePaths: Array.isArray(stats.imagePaths) ? stats.imagePaths.map(String).map(text).filter(Boolean) : [],
     videoPreviewUrl: publishingPreviewUrl(post.tenant_id, stats.videoPath) || text(stats.videoPreviewUrl),
     trackWaLink: stats.trackWaLink !== false,
     scheduleLocked: Boolean(stats.scheduleLocked),
@@ -419,9 +421,30 @@ publishingRouter.post('/calendar', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const scheduledAt = text(req.body?.scheduledAt);
   const platform = text(req.body?.platform) || 'tiktok';
-  const title = text(req.body?.title) || 'Untitled content';
+  const title = text(req.body?.title);
+  const imagePaths = Array.isArray(req.body?.imagePaths)
+    ? req.body.imagePaths.map(String).map(text).filter(Boolean)
+    : [];
   if (!scheduledAt) {
     res.status(400).json({ error: 'scheduled_at_required' });
+    return;
+  }
+  let preflight;
+  try {
+    preflight = assertUnifiedPublishPreflight({
+      platform: platform as Parameters<typeof assertUnifiedPublishPreflight>[0]['platform'],
+      title,
+      description: text(req.body?.description),
+      tags: req.body?.tags,
+      videoPath: text(req.body?.videoPath),
+      videoUrl: text(req.body?.videoUrl),
+      imagePaths,
+    });
+  } catch (error) {
+    res.status(Number((error as { statusCode?: unknown })?.statusCode) || 422).json({
+      error: text((error as { code?: unknown })?.code) || 'unified_publish_preflight_failed',
+      message: error instanceof Error ? error.message : '发布前检查未通过',
+    });
     return;
   }
   let copyAudit: PublishingCopyAudit | null;
@@ -447,7 +470,7 @@ publishingRouter.post('/calendar', async (req, res) => {
     return;
   }
   try {
-    await assertNoUnresolvedPublishing({ tenantId, platform, accountIds: Array.isArray(req.body?.targetAccountIds) ? req.body.targetAccountIds.map(String) : [], contentId: text(req.body?.contentId), videoPath: text(req.body?.videoPath), videoUrl: text(req.body?.videoUrl) });
+    await assertNoUnresolvedPublishing({ tenantId, platform, accountIds: Array.isArray(req.body?.targetAccountIds) ? req.body.targetAccountIds.map(String) : [], contentId: text(req.body?.contentId || req.body?.projectId), videoPath: text(req.body?.videoPath), videoUrl: text(req.body?.videoUrl) });
   } catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : '已有待核对发布' }); return; }
   let publishSourceClaim;
   try {
@@ -456,6 +479,7 @@ publishingRouter.post('/calendar', async (req, res) => {
       projectId: text(req.body?.projectId || req.body?.contentId),
       videoPath: text(req.body?.videoPath),
       videoUrl: text(req.body?.videoUrl),
+      imagePaths,
       sourceVideoPath: text(req.body?.sourceVideoPath),
       generationKind: req.body?.generationKind,
       generationProvenance: text(req.body?.generationProvenance),
@@ -481,8 +505,10 @@ publishingRouter.post('/calendar', async (req, res) => {
       status: 'scheduled',
       coverUrl: text(req.body?.coverUrl),
       description: text(req.body?.description),
+      tags: preflight.normalizedTags,
       firstComment: text(req.body?.firstComment),
       videoPath: text(req.body?.videoPath),
+      imagePaths,
       sourceProjectId: publishSourceClaim.projectId,
       publishSourceClaim,
       trackWaLink: req.body?.trackWaLink !== false,

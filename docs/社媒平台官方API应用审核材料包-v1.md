@@ -23,14 +23,14 @@
 
 推荐结构：
 
-| 用途 | URL | 是否登录 | 审核用途 |
-| --- | --- | --- | --- |
-| 公开产品主页 | `https://official.lingshu.site/` | 否 | 品牌、产品能力、法律链接 |
-| 审核说明页 | `https://official.lingshu.site/integrations` | 否 | 解释各平台连接、用户控制、数据使用和删除方式 |
-| 产品工作台 | `https://app.lingshu.site/` | 是 | 审核员登录并完成 OAuth、预览、确认和发布 |
-| 隐私政策 | `https://official.lingshu.site/privacy` | 否 | 所有平台统一填写 |
-| 用户协议（服务条款） | `https://official.lingshu.site/terms` | 否 | 所有平台统一填写 |
-| 数据删除 | `https://official.lingshu.site/data-deletion` | 否 | Meta 等平台填写 |
+| 用途         | URL                                           | 是否登录 | 审核用途                    |
+| ---------- | --------------------------------------------- | ---- | ----------------------- |
+| 公开产品主页     | `https://official.lingshu.site/`              | 否    | 品牌、产品能力、法律链接            |
+| 审核说明页      | `https://official.lingshu.site/integrations`  | 否    | 解释各平台连接、用户控制、数据使用和删除方式  |
+| 产品工作台      | `https://app.lingshu.site/`                   | 是    | 审核员登录并完成 OAuth、预览、确认和发布 |
+| 隐私政策       | `https://official.lingshu.site/privacy`       | 否    | 所有平台统一填写                |
+| 用户协议（服务条款） | `https://official.lingshu.site/terms`         | 否    | 所有平台统一填写                |
+| 数据删除       | `https://official.lingshu.site/data-deletion` | 否    | Meta 等平台填写              |
 
 审核租户应满足：
 
@@ -66,18 +66,18 @@
 
 ## 2. 当前状态与提交前阻断项
 
-| 状态 | 事项 | 审核前动作 |
-| --- | --- | --- |
-| 提交阻断：代码与镜像已验证，生产未生效 | 应用公开用户协议、登录页/注册页强制同意与长期法律入口 | 生产切换后匿名访问三个公开路由，并验证未勾选不能登录或注册；当前公网登录页仍不可提交审核 |
-| 已部署并公网验证 | 官网隐私政策缺少 Google/YouTube、TikTok 与抖音说明 | 已检查正文、Google Limited Use 声明和公开路由 |
-| 官网已部署，应用待生产切换 | 官网与产品支持邮箱不一致 | 源码已统一为 `support@lingshu.ai`；提交前确认邮箱可稳定收信，并复验应用公网版本 |
-| 已部署并公网验证 | 官网缺少统一的平台集成与用户控制说明 | 已增加 `/integrations` 公开页面，并公开各平台当前能力边界 |
-| 官网已部署，应用待生产切换 | 官网与发布页存在“规模化分发、自动发布”等易误解表述 | 官网已改为平台适配、人工复核和用户确认；应用发布页随已验证镜像一并等待生产切换 |
-| 本轮不提交，已服务端关闭 | TikTok Direct Post UX 尚不满足正式审核要求 | 默认不申请 `video.publish`，前端不允许选择 TikTok 直发目标，服务端拒绝直发；后续独立整改和审核 |
-| 已修复，待 OAuth 实测 | OAuth 默认权限多于首期场景所需权限 | Meta 按 Facebook/Instagram 分别只请求账号读取与发布权限；私信、评论、洞察、Webhook、商业资产、广告与 WhatsApp 权限不进入本轮 OAuth |
-| P1 | TikTok 官方不接受仅服务内部团队或只管理自有账号的上传工具 | 审核材料和真实产品都应体现面向外部企业客户/创作者，每位用户授权自己的账号并拥有完整控制权 |
-| P1 | 抖音代码已有能力门禁与适配器骨架，但未见完整生产 OAuth、真实发布和审核演示链路 | 暂不声称已支持官方发布；先以发布包为正式能力，完成真实 E2E 后再申请 |
-| 已部署并公网验证 | 官网首页有“规模化创作、多平台分发”等容易引起滥用疑虑的表述 | 已改为内容创作、平台适配和人工确认，并保留真实能力边界；旧 `/stitch` 原型已从发布产物移除 |
+| 状态                  | 事项                                         | 审核前动作                                                                                     |
+| ------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| 提交阻断：代码与镜像已验证，生产未生效 | 应用公开用户协议、登录页/注册页强制同意与长期法律入口                | 生产切换后匿名访问三个公开路由，并验证未勾选不能登录或注册；当前公网登录页仍不可提交审核                                              |
+| 已部署并公网验证            | 官网隐私政策缺少 Google/YouTube、TikTok 与抖音说明       | 已检查正文、Google Limited Use 声明和公开路由                                                          |
+| 官网已部署，应用待生产切换       | 官网与产品支持邮箱不一致                               | 源码已统一为 `support@lingshu.ai`；提交前确认邮箱可稳定收信，并复验应用公网版本                                        |
+| 已部署并公网验证            | 官网缺少统一的平台集成与用户控制说明                         | 已增加 `/integrations` 公开页面，并公开各平台当前能力边界                                                     |
+| 官网已部署，应用待生产切换       | 官网与发布页存在“规模化分发、自动发布”等易误解表述                 | 官网已改为平台适配、人工复核和用户确认；应用发布页随已验证镜像一并等待生产切换                                                   |
+| 本轮不提交，已服务端关闭        | TikTok Direct Post UX 尚不满足正式审核要求           | 默认不申请 `video.publish`，前端不允许选择 TikTok 直发目标，服务端拒绝直发；后续独立整改和审核                               |
+| 已修复，待 OAuth 实测      | OAuth 默认权限多于首期场景所需权限                       | Meta 按 Facebook/Instagram 分别只请求账号读取与发布权限；私信、评论、洞察、Webhook、商业资产、广告与 WhatsApp 权限不进入本轮 OAuth |
+| P1                  | TikTok 官方不接受仅服务内部团队或只管理自有账号的上传工具           | 审核材料和真实产品都应体现面向外部企业客户/创作者，每位用户授权自己的账号并拥有完整控制权                                             |
+| P1                  | 抖音代码已有能力门禁与适配器骨架，但未见完整生产 OAuth、真实发布和审核演示链路 | 暂不声称已支持官方发布；先以发布包为正式能力，完成真实 E2E 后再申请                                                      |
+| 已部署并公网验证            | 官网首页有“规模化创作、多平台分发”等容易引起滥用疑虑的表述             | 已改为内容创作、平台适配和人工确认，并保留真实能力边界；旧 `/stitch` 原型已从发布产物移除                                        |
 
 ---
 
@@ -85,23 +85,23 @@
 
 以下内容应在各平台后台、官网、隐私政策、录屏和应用 UI 中保持一致。
 
-| 字段 | 建议填写 |
-| --- | --- |
-| App Name | `Lingshu AI`（英文控制台）／`灵枢 AI`（中文控制台） |
-| Legal Entity | `灵小枢（杭州）科技有限公司` |
-| Product Homepage | `https://official.lingshu.site/` |
-| Web Application URL | `https://app.lingshu.site/` |
-| Platform Integration Page | `https://official.lingshu.site/integrations` |
-| Privacy Policy | `https://official.lingshu.site/privacy` |
-| Terms of Service | `https://official.lingshu.site/terms` |
-| Data Deletion | `https://official.lingshu.site/data-deletion` |
-| Support Email | `support@lingshu.ai` |
-| Developer Contact Email | `[公司长期维护邮箱，至少两人可接收]` |
-| Category | `Business / Productivity / Content Creation`（按平台可选项择一） |
-| Target Users | `Business content teams and authorized account managers` |
-| Business Model | `Subscription SaaS for business users` |
-| Countries/Regions | `[按真实开放地区填写，不为审核虚构]` |
-| App Logo | 正方形 PNG，建议 1024×1024；Google 另准备 120×120；无平台商标、无“官方”字样 |
+| 字段                        | 建议填写                                                     |
+| ------------------------- | -------------------------------------------------------- |
+| App Name                  | `Lingshu AI`（英文控制台）／`灵枢 AI`（中文控制台）                       |
+| Legal Entity              | `灵小枢（杭州）科技有限公司`                                          |
+| Product Homepage          | `https://official.lingshu.site/`                         |
+| Web Application URL       | `https://app.lingshu.site/`                              |
+| Platform Integration Page | `https://official.lingshu.site/integrations`             |
+| Privacy Policy            | `https://official.lingshu.site/privacy`                  |
+| Terms of Service          | `https://official.lingshu.site/terms`                    |
+| Data Deletion             | `https://official.lingshu.site/data-deletion`            |
+| Support Email             | `support@lingshu.ai`                                     |
+| Developer Contact Email   | `[公司长期维护邮箱，至少两人可接收]`                                     |
+| Category                  | `Business / Productivity / Content Creation`（按平台可选项择一）   |
+| Target Users              | `Business content teams and authorized account managers` |
+| Business Model            | `Subscription SaaS for business users`                   |
+| Countries/Regions         | `[按真实开放地区填写，不为审核虚构]`                                     |
+| App Logo                  | 正方形 PNG，建议 1024×1024；Google 另准备 120×120；无平台商标、无“官方”字样    |
 
 ### 3.1 一句话描述（英文）
 
@@ -127,7 +127,7 @@
 
 ### 3.6 通用审核员登录说明（英文，可复制）
 
-> **Review URL:** https://app.lingshu.site/
+> **Review URL:** <https://app.lingshu.site/>
 > **Test email:** [REVIEWER_EMAIL]
 > **Test password:** [REVIEWER_PASSWORD]
 >
@@ -137,9 +137,9 @@
 > 4. Return to Lingshu AI and confirm that the connected account name is shown.
 > 5. Open **Publishing**, select the prepared review video named **[ASSET_NAME]**, review the preview and caption, select the connected account and the available platform settings, then click **[EXACT_BUTTON_LABEL]**.
 > 6. The result page shows the platform processing status and receipt. If review of read permissions is required, open **Account Activity / Performance** to view only the connected user's content and metrics.
-> 7. To revoke access, return to **Integrations**, open the connected account menu, and click **Disconnect**. Data deletion instructions are publicly available at https://official.lingshu.site/data-deletion.
+> 7. To revoke access, return to **Integrations**, open the connected account menu, and click **Disconnect**. Data deletion instructions are publicly available at <https://official.lingshu.site/data-deletion>.
 >
-> Please contact support@lingshu.ai if the review account or prepared asset needs to be reset. The review account contains only synthetic demonstration data.
+> Please contact <support@lingshu.ai> if the review account or prepared asset needs to be reset. The review account contains only synthetic demonstration data.
 
 提交前必须把 `[REVIEWER_EMAIL]`、`[REVIEWER_PASSWORD]`、`[PLATFORM]`、`[ASSET_NAME]` 和 `[EXACT_BUTTON_LABEL]` 替换成真实审核环境值。保留任何占位符、让审核员自行注册或要求审核员联系销售获取邀请码，都会显著增加退回概率。
 
@@ -147,23 +147,23 @@
 
 以下能力不要为了“看起来全”而塞进首轮发布审核：
 
-| 能力 | 处理方式 |
-| --- | --- |
-| WhatsApp Business 消息 | 属于 Meta 的独立产品、权限、业务验证、号码与消息模板流程；单独准备消息收发、用户发起会话、Webhook、退订和数据删除材料 |
-| Meta / TikTok / Google Ads | 属于广告 API 与广告账户访问审核；自然内容发布获批不等于获得广告管理资格，建议独立应用或独立审核批次 |
-| Pinterest | 当前主链路未实现；完成 OAuth、Pins 创建、用户确认和真实 E2E 后再按同一模板补充 |
-| X、LinkedIn、微博、快手、Bilibili、小红书、微信视频号 | 当前仓库没有可提交的官方发布闭环；先确认是否对当前主体和应用类型开放 API，再实施和申请，不能只准备文案 |
+| 能力                                  | 处理方式                                                              |
+| ----------------------------------- | ----------------------------------------------------------------- |
+| WhatsApp Business 消息                | 属于 Meta 的独立产品、权限、业务验证、号码与消息模板流程；单独准备消息收发、用户发起会话、Webhook、退订和数据删除材料 |
+| Meta / TikTok / Google Ads          | 属于广告 API 与广告账户访问审核；自然内容发布获批不等于获得广告管理资格，建议独立应用或独立审核批次              |
+| Pinterest                           | 当前主链路未实现；完成 OAuth、Pins 创建、用户确认和真实 E2E 后再按同一模板补充                   |
+| X、LinkedIn、微博、快手、Bilibili、小红书、微信视频号 | 当前仓库没有可提交的官方发布闭环；先确认是否对当前主体和应用类型开放 API，再实施和申请，不能只准备文案             |
 
 未来新增平台时，复制本材料的结构即可：公开页面 → 最小 Scope → 逐项理由 → 审核账号 → 完整 OAuth → 用户可见控制 → 单项录屏 → 撤权与删除。
 
 ### 3.8 官方 API 申请直达入口
 
-| 平台 | 直接入口 | 本轮动作 |
-| --- | --- | --- |
-| Meta / Facebook / Instagram | [Meta for Developers — My Apps](https://developers.facebook.com/apps/) | 创建或打开生产应用，配置 Facebook Login、App Review、Business Verification 和数据删除 |
-| Google / YouTube | [Google Auth Platform](https://console.cloud.google.com/auth/overview) · [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com) | 配置品牌、Audience、Data Access、OAuth 客户端并提交验证 |
-| TikTok | [TikTok for Developers — Manage apps](https://developers.tiktok.com/apps/) | 本轮只配置 Login Kit 的 `user.info.basic`；不要申请 Direct Post |
-| 国内抖音 | [抖音开放平台控制台](https://developer.open-douyin.com/console/) | 创建“网站应用”；当前保留发布包，真实投稿闭环完成后再申请能力 |
+| 平台                          | 直接入口                                                                                                                                                                 | 本轮动作                                                               |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Meta / Facebook / Instagram | [Meta for Developers — My Apps](https://developers.facebook.com/apps/)                                                                                               | 创建或打开生产应用，配置 Facebook Login、App Review、Business Verification 和数据删除 |
+| Google / YouTube            | [Google Auth Platform](https://console.cloud.google.com/auth/overview) · [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com) | 配置品牌、Audience、Data Access、OAuth 客户端并提交验证                           |
+| TikTok                      | [TikTok for Developers — Manage apps](https://developers.tiktok.com/apps/)                                                                                           | 本轮只配置 Login Kit 的 `user.info.basic`；不要申请 Direct Post               |
+| 国内抖音                        | [抖音开放平台控制台](https://developer.open-douyin.com/console/)                                                                                                              | 创建“网站应用”；当前保留发布包，真实投稿闭环完成后再申请能力                                    |
 
 以上入口需要登录对应平台账号。若登录后落到首页，按“控制台 / My Apps / Manage apps”进入应用列表；不要使用搜索广告或第三方代办入口。
 
@@ -175,12 +175,12 @@
 
 ### 4.1 建议分期
 
-| 阶段 | 用户可见能力 | 权限原则 |
-| --- | --- | --- |
-| A：连接与发布 | 连接账号、选择目标、预览、确认、发布、查看回执 | 只申请身份/账号发现和发布权限 |
-| B：自有内容与指标 | 查看该账号自己的内容和表现 | 增加只读内容/洞察权限 |
-| C：评论管理 | 读取并由用户确认回复评论 | 增加评论读写权限，单独录屏 |
-| D：广告 | 广告账户、计划、投放、预算 | 使用独立应用或独立审核批次，不与自然内容发布混在一次说明中 |
+| 阶段        | 用户可见能力                  | 权限原则                          |
+| --------- | ----------------------- | ----------------------------- |
+| A：连接与发布   | 连接账号、选择目标、预览、确认、发布、查看回执 | 只申请身份/账号发现和发布权限               |
+| B：自有内容与指标 | 查看该账号自己的内容和表现           | 增加只读内容/洞察权限                   |
+| C：评论管理    | 读取并由用户确认回复评论            | 增加评论读写权限，单独录屏                 |
+| D：广告      | 广告账户、计划、投放、预算           | 使用独立应用或独立审核批次，不与自然内容发布混在一次说明中 |
 
 ### 4.2 审核文案的安全表达
 
@@ -202,63 +202,6 @@
 - `account farming`、`traffic matrix`、`engagement automation`
 - `guaranteed growth`、`guaranteed viral content`
 
----
-
-## 5. Meta：Facebook Page + Instagram Professional
-
-### 5.1 后台字段
-
-| 字段 | 填写内容 |
-| --- | --- |
-| App name | `Lingshu AI` |
-| App type/use case | `Business`；用于企业内容团队连接其有权管理的 Facebook Page 与 Instagram Professional Account |
-| App domains | `lingshu.site` |
-| Website URL | `https://app.lingshu.site/` |
-| Privacy Policy URL | `https://official.lingshu.site/privacy` |
-| Terms URL | `https://official.lingshu.site/terms` |
-| User data deletion | `https://official.lingshu.site/data-deletion`；若后台要求 callback，另实现可验证的 deletion callback |
-| Facebook OAuth callback | `https://app.lingshu.site/api/overseas/social/oauth/facebook/callback` |
-| Instagram OAuth callback | `https://app.lingshu.site/api/overseas/social/oauth/instagram/callback` |
-| Category | `Business and Pages` 或控制台最接近选项 |
-
-### 5.2 Meta 通用 Use Case（英文）
-
-> Lingshu AI allows an authenticated business user to connect Facebook Pages and Instagram professional accounts that the user is authorized to manage. The user selects a prepared video, reviews the preview and caption, chooses one connected destination, and explicitly submits the content. Lingshu AI uses the granted permissions only to identify the selected account, perform the user-requested publication, and display the resulting status. This submission does not request messaging, comments, insights, ads, WhatsApp, business asset, or webhook permissions. We do not request Facebook or Instagram passwords, publish without user instruction, sell Platform Data, or use Platform Data for unrelated advertising profiles.
-
-### 5.3 建议首批权限与逐项理由
-
-只保留真实流程需要的权限。当前产品的 Facebook 入口使用 Facebook Login，Instagram 入口使用 Instagram Login；本轮分别提交前三项与后两项，不同时申请旧的 Page 绑定型 Instagram 权限。
-
-| Permission | 可复制英文理由 | 录屏必须出现 |
-| --- | --- | --- |
-| `pages_show_list` | `We use pages_show_list to display the Facebook Pages that the signed-in user is authorized to manage, so the user can select the correct Page to connect to the Lingshu AI workspace.` | OAuth 后列出可管理主页，用户主动选择 |
-| `pages_read_engagement` | `We use pages_read_engagement to read the selected Page's basic profile and content metadata needed to identify the Page in the user's publishing workflow.` | 主页名称、头像与用户选择的目标主页 |
-| `pages_manage_posts` | `We use pages_manage_posts only when an authorized user previews a prepared video and explicitly clicks the publish button for the selected Facebook Page. The permission is not used to publish without user instruction.` | 视频预览、目标主页、确认弹窗、点击发布、回执 |
-| `instagram_business_basic` | `We use instagram_business_basic to identify and display the Instagram professional account that the signed-in user chooses to connect.` | Instagram Login 后显示专业账号名称和头像 |
-| `instagram_business_content_publish` | `We use instagram_business_content_publish only after an authorized user reviews the media and caption, selects the connected Instagram professional account, and explicitly submits the post.` | 预览、账号、文案、主动确认、处理状态 |
-
-本轮不要在 Meta 后台添加 `pages_messaging`、`pages_manage_metadata`、`pages_read_user_content`、`instagram_business_manage_messages`、`instagram_manage_comments`、`read_insights`、`instagram_manage_insights`、`business_management`、任何 Ads 权限或 WhatsApp 权限。
-
-### 5.4 Reviewer Notes（英文，可复制）
-
-> The requested permissions are used only for assets selected by the authenticated user. To review the publishing flow, sign in to the Lingshu AI review workspace, open Integrations, connect Facebook or Instagram through the official Meta authorization screen, and select an eligible Page or professional account. Then open Publishing, choose the prepared review video, confirm the destination and caption, and click the final publish button. The app displays the provider status after submission. No social account password is collected. The user can disconnect the account from Integrations, and public deletion instructions are available at https://official.lingshu.site/data-deletion.
-
-### 5.5 Meta 录屏脚本（每个权限组合单独录制，2–4 分钟）
-
-1. 浏览器地址栏展示 `https://official.lingshu.site/`，打开隐私政策、用户协议、数据删除页。
-2. 打开 `https://app.lingshu.site/`，使用审核账号登录。
-3. 进入“渠道连接”，点击 Facebook 或 Instagram 的“连接”。
-4. 完整展示 Meta 授权页、应用名和请求权限，不剪掉权限确认画面。
-5. 返回灵枢 AI，展示连接的 Page/专业账号名称；用鼠标指出用户选择的是哪个资产。
-6. 打开已准备的视频，展示预览、标题/文案、目标账号和最后确认界面。
-7. 用户主动点击一次最终发布按钮；展示“平台处理中”或平台回执，不把“请求已接受”误说成“已经公开发布”。
-8. 如申请洞察权限，进入“内容表现”，展示数据只来自刚连接的账号。
-9. 如申请评论权限，进入“账号动态”，展示一条评论；输入或确认回复后再点击发送。
-10. 回到“渠道连接”，展示“断开连接”；最后再次展示数据删除 URL。
-
-录屏旁白重点：`The user remains in control at every step. Lingshu AI accesses only the account selected by the user and publishes only after explicit confirmation.`
-
----
 
 ## 6. TikTok：暂缓 Direct Post 审核
 
@@ -283,19 +226,19 @@ TikTok Direct Post 审核不能只靠文案。发布页必须真实满足官方 
 
 ### 6.2 后台字段
 
-| 字段 | 填写内容 |
-| --- | --- |
-| App name | `Lingshu AI` |
-| Category | `Content Creation` 或最接近选项 |
-| Web URL | `https://app.lingshu.site/` |
-| Terms URL | `https://official.lingshu.site/terms` |
-| Privacy URL | `https://official.lingshu.site/privacy` |
-| Redirect URI | `https://app.lingshu.site/api/overseas/social/oauth/tiktok/callback` |
-| Products（当前批次） | `Login Kit` |
-| 当前 Scopes | `user.info.basic` |
+| 字段                  | 填写内容                                                                     |
+| ------------------- | ------------------------------------------------------------------------ |
+| App name            | `Lingshu AI`                                                             |
+| Category            | `Content Creation` 或最接近选项                                                |
+| Web URL             | `https://app.lingshu.site/`                                              |
+| Terms URL           | `https://official.lingshu.site/terms`                                    |
+| Privacy URL         | `https://official.lingshu.site/privacy`                                  |
+| Redirect URI        | `https://app.lingshu.site/api/overseas/social/oauth/tiktok/callback`     |
+| Products（当前批次）      | `Login Kit`                                                              |
+| 当前 Scopes           | `user.info.basic`                                                        |
 | 后续 Direct Post 独立批次 | 完成第 6.1 节全部交互和 Sandbox E2E 后，再添加 `Content Posting API` 与 `video.publish` |
-| 后续只读 Scopes | `video.list`；只有界面真实展示时再申请。`user.info.profile`、`user.info.stats` 同理 |
-| URL ownership | 验证 Web URL、Terms、Privacy；如使用 `PULL_FROM_URL`，同时验证媒体 URL 的域名或 URL prefix |
+| 后续只读 Scopes         | `video.list`；只有界面真实展示时再申请。`user.info.profile`、`user.info.stats` 同理       |
+| URL ownership       | 验证 Web URL、Terms、Privacy；如使用 `PULL_FROM_URL`，同时验证媒体 URL 的域名或 URL prefix  |
 
 ### 6.3 TikTok 产品用途（英文，可复制）
 
@@ -317,7 +260,7 @@ TikTok Direct Post 审核不能只靠文案。发布页必须真实满足官方 
 
 ### 6.5 TikTok Reviewer Instructions（英文，可复制）
 
-> Sign in at https://app.lingshu.site/ with the review credentials. Open Integrations and select TikTok > Connect. Complete Login Kit in the TikTok sandbox account. After returning to Lingshu AI, open Publishing and select the prepared video “[ASSET_NAME].” The publishing screen displays the connected creator name and the available settings returned by TikTok. Manually choose a privacy option, review the interaction and content-disclosure settings, check the posting consent, and click the final Post to TikTok button. The result screen displays TikTok's processing receipt/status. The prepared asset is original demonstration content owned by the applicant and contains no third-party watermark.
+> Sign in at <https://app.lingshu.site/> with the review credentials. Open Integrations and select TikTok > Connect. Complete Login Kit in the TikTok sandbox account. After returning to Lingshu AI, open Publishing and select the prepared video “[ASSET_NAME].” The publishing screen displays the connected creator name and the available settings returned by TikTok. Manually choose a privacy option, review the interaction and content-disclosure settings, check the posting consent, and click the final Post to TikTok button. The result screen displays TikTok's processing receipt/status. The prepared asset is original demonstration content owned by the applicant and contains no third-party watermark.
 
 ### 6.6 TikTok 录屏脚本（建议 3–5 分钟）
 
@@ -339,18 +282,18 @@ TikTok Direct Post 审核不能只靠文案。发布页必须真实满足官方 
 
 ### 7.1 后台字段
 
-| 字段 | 填写内容 |
-| --- | --- |
-| App name | `Lingshu AI` |
-| User support email | `support@lingshu.ai` |
-| App logo | 120×120 方形品牌图标，文件不超过 Google 当前限制 |
-| Homepage | `https://official.lingshu.site/` |
-| Privacy Policy | `https://official.lingshu.site/privacy` |
-| Terms of Service | `https://official.lingshu.site/terms` |
-| Authorized domain | `lingshu.site` |
-| Redirect URI | `https://app.lingshu.site/api/overseas/youtube/oauth/callback` |
-| Developer contacts | `[至少两个长期维护邮箱]` |
-| Audience | `External` |
+| 字段                 | 填写内容                                                           |
+| ------------------ | -------------------------------------------------------------- |
+| App name           | `Lingshu AI`                                                   |
+| User support email | `support@lingshu.ai`                                           |
+| App logo           | 120×120 方形品牌图标，文件不超过 Google 当前限制                               |
+| Homepage           | `https://official.lingshu.site/`                               |
+| Privacy Policy     | `https://official.lingshu.site/privacy`                        |
+| Terms of Service   | `https://official.lingshu.site/terms`                          |
+| Authorized domain  | `lingshu.site`                                                 |
+| Redirect URI       | `https://app.lingshu.site/api/overseas/youtube/oauth/callback` |
+| Developer contacts | `[至少两个长期维护邮箱]`                                                 |
+| Audience           | `External`                                                     |
 
 需由 Google Cloud 项目 Owner/Editor 在 Search Console 验证 `lingshu.site` 所有权。开发/测试/生产应使用不同项目；只把生产项目提交验证。
 
@@ -368,6 +311,7 @@ TikTok Direct Post 审核不能只靠文案。发布页必须真实满足官方 
 ### 7.3 Google App Purpose（英文，可复制）
 
 > Lingshu AI is a content operations workspace for business teams. A signed-in user connects a YouTube channel through Google OAuth, selects a prepared video, reviews the title, description, audience setting and visibility, and explicitly starts the upload. Lingshu AI uses Google user data only to provide these visible user-facing features for the connected channel. Where separately authorized, the application displays the user's own channel content, comments, and analytics. Google user data is not sold, used for advertising profiles, or used to train generalized AI models without separate explicit consent.
+
 
 ### 7.4 Scope Justifications（英文，可复制）
 
@@ -585,7 +529,7 @@ TikTok Direct Post 审核不能只靠文案。发布页必须真实满足官方 
 
 ## 13. 推荐提交顺序
 
-1. **当前首要阻断：**将已通过镜像冒烟的应用版本切换到生产，验证公司名、应用名、域名、`support@lingshu.ai`、产品内条款入口以及登录/注册强制同意。
+1. **当前首要阻断：**&#x5C06;已通过镜像冒烟的应用版本切换到生产，验证公司名、应用名、域名、`support@lingshu.ai`、产品内条款入口以及登录/注册强制同意。
 2. 官网隐私政策与 `/integrations` 平台集成说明页已部署并完成公网验证；提交当天再做一次可用性检查。
 3. 建立审核租户、审核账号、演示素材和权限最小化开关。
 4. 先做 Meta 的“连接 + 单账号用户确认发布”，评论和洞察后置。

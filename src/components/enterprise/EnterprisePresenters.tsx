@@ -35,10 +35,10 @@ function arkReady(presenter?: PresenterAsset): boolean {
 
 function openDigitalHumanOnboarding(): void {
   try { window.sessionStorage.setItem('lingshu:open-digital-employee-guide', 'presenter'); } catch { /* optional */ }
-  // DigitalEmployeePage is retained in a hidden React Activity. Its effects
-  // reconnect after navigation and consume this persisted request. Opening an
-  // Ant modal from the hidden page crashes rc-dialog while it restores focus.
   window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'digitalEmployees' } }));
+  const openGuide = () => window.dispatchEvent(new CustomEvent('lingshu:open-digital-employee-guide', { detail: { step: 'presenter' } }));
+  openGuide();
+  window.requestAnimationFrame?.(openGuide);
 }
 
 export default function EnterprisePresenters({
@@ -133,7 +133,12 @@ export default function EnterprisePresenters({
     ?.match(/^document:\/\/studio_presenter_assets\/([^/]+)\//)?.[1];
   const pendingCreation = creationJobs.find(item => item.id !== selectedCreationId
     && ['submitting', 'processing', 'pending_consent', 'uncertain'].includes(item.status));
-  const presenterIntakeReady = Boolean(pendingCreation?.arkPreparation) || (!pendingCreation && selectedPresenterSelected && selectedVoiceReady);
+  const selectedLocalProfileReady = Boolean(selectedPresenter?.authorized === false
+    && selectedPresenter.arkCertification?.status === 'profile_incomplete'
+    && selectedReferenceMaterials.some(item => item.type === 'image')
+    && selectedReferenceMaterials.some(item => item.type === 'video'));
+  const presenterIntakeReady = Boolean(pendingCreation?.arkPreparation) || selectedLocalProfileReady
+    || (!pendingCreation && selectedPresenterSelected && selectedVoiceReady);
   const selectedPresenterSetupReady = !pendingCreation && selectedHeyGenReady;
   const platformCertificationReady = selectedPresenterSetupReady;
   const selectedPreparedArk = (preparedArk?.presenterId === selectedPresenter?.id ? preparedArk : undefined)
@@ -288,7 +293,7 @@ export default function EnterprisePresenters({
             <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-accent"><UserRound size={18} aria-hidden="true" /></span>
             <span className={`inline-flex items-center gap-1 text-xs font-semibold ${presenterIntakeReady ? 'text-green' : pendingCreation ? 'text-amber-700' : 'text-text-muted'}`}>{presenterIntakeReady && <CheckCircle2 size={14} aria-hidden="true" />}{presenterIntakeReady ? '已完成' : pendingCreation ? '进行中' : '待完成'}</span>
           </div>
-          <div className="mt-4 flex-1"><p className="text-sm font-semibold text-text-primary">1. 建立数字人</p><p className="mt-1 text-xs leading-5 text-text-muted">{pendingCreation ? `人物资料：${pendingCreation.name} 已保存，请在第二步完成本人授权。` : presenterIntakeReady ? `当前人物：${selectedPresenter?.name}，人物与声音均已就绪。` : '选择 HeyGen 已有人物，或直接录制本人人物（推荐）。'}</p></div>
+          <div className="mt-4 flex-1"><p className="text-sm font-semibold text-text-primary">1. 建立数字人</p><p className="mt-1 text-xs leading-5 text-text-muted">{pendingCreation ? `人物资料：${pendingCreation.name} 已保存，请在第二步完成本人授权。` : selectedLocalProfileReady ? `当前人物：${selectedPresenter?.name}，照片和视频已安全入库，等待平台认证。` : presenterIntakeReady ? `当前人物：${selectedPresenter?.name}，人物与声音均已就绪。` : '选择 HeyGen 已有人物，或直接录制本人人物（推荐）。'}</p></div>
           <Button block className="mt-4 min-h-10 text-xs" onClick={() => openPresenterManager('person')}>{pendingCreation ? '重新录入人物' : presenterIntakeReady ? '更换数字人' : '开始建立人物'}</Button>
         </article>
         <article className={`flex min-h-48 flex-col rounded-lg border p-4 ${platformCertificationReady ? 'border-accent/30 bg-accent-glow' : 'border-border bg-surface'}`}>
@@ -311,7 +316,7 @@ export default function EnterprisePresenters({
         onReady={async () => { await refresh('方舟人物认证已完成，当前人物可以用于人物替换。'); }}
       />}
       {selectedPresenterSetupReady && <div className="flex items-center gap-2 rounded-lg bg-green/10 px-4 py-3 text-xs font-semibold text-green"><CheckCircle2 size={16} />数字人、本人声音和 HeyGen 授权均已完成，可以进入生产。方舟认证可按需补充。</div>}
-      {showHeyGenManager && <PresenterManager initialConfiguration initialStage={heyGenManagerMode} onPersonPrepared={() => { setShowHeyGenManager(false); setMessage('人物资料已保存。请在第二步继续完成 HeyGen 本人授权。'); void load(); }} onClose={() => { setShowHeyGenManager(false); void load(); }} onSynced={next => { setValue(next); notifyPresenterAssetsUpdated(); }} onSaved={(next, context) => finishUnifiedPresenterSetup(next, context)} />}
+      {showHeyGenManager && <PresenterManager initialConfiguration initialStage={heyGenManagerMode} onPersonPrepared={() => { setShowHeyGenManager(false); setMessage('人物照片和视频已安全入库，未调用 HeyGen。请在第二步继续平台认证。'); void load(); }} onClose={() => { setShowHeyGenManager(false); void load(); }} onSynced={next => { setValue(next); notifyPresenterAssetsUpdated(); }} onSaved={(next, context) => finishUnifiedPresenterSetup(next, context)} />}
     </>}
   </section>;
 

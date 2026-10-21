@@ -1059,6 +1059,10 @@ async function executeCompetitorAccountCrawl(task: ScheduledTask): Promise<strin
   for (const account of accounts.items) {
     const accountUrl = String(account.accountUrl || '');
     const accountName = String(account.accountName || account.handle || accountUrl);
+    let accountImported = 0;
+    let completedFormats = 0;
+    let videoQueued = false;
+    const accountLines: string[] = [];
     try {
       if (platform === 'youtube' && task.config.localWorker !== '0') {
         const job = await createCrawlWorkerJob({
@@ -1074,10 +1078,34 @@ async function executeCompetitorAccountCrawl(task: ScheduledTask): Promise<strin
         });
         if (!job) throw new Error('Mac 本地采集任务创建失败');
         queued += 1;
-        lines.push(`${accountName}: 已提交 Mac 登录态采集队列（1 个任务）`);
-        continue;
+        videoQueued = true;
+        accountLines.push('视频已提交 Mac 登录态采集队列');
+      } else {
+        const result = await crawlVideosForTenant({
+          tenantId,
+          platform,
+          mode: 'account',
+          accountUrl,
+          accountName,
+          limit,
+          dateFrom,
+          dateTo,
+          cloudFallback: true,
+          disableBackfill: task.config.smokeTest === '1',
+        });
+        await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'account', accountUrl, accountName, limit, dateFrom, dateTo,
+          completed: { result: { ...result, items: undefined } } });
+        accountImported += result.imported;
+        completedFormats += 1;
+        accountLines.push(`视频返回 ${result.items.length} 条，新增 ${result.imported} 条`);
       }
-      const result = await crawlVideosForTenant({
+    } catch (e) {
+      await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'account', accountUrl, accountName, limit, dateFrom, dateTo,
+        completed: { error: e instanceof Error ? e.message : String(e) } });
+      accountLines.push(`视频失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+    try {
+      const imageResult = await crawlImagePostsForTenant({
         tenantId,
         platform,
         mode: 'account',
@@ -1086,26 +1114,53 @@ async function executeCompetitorAccountCrawl(task: ScheduledTask): Promise<strin
         limit,
         dateFrom,
         dateTo,
-        cloudFallback: true,
-        disableBackfill: task.config.smokeTest === '1',
+        deferImageAnalysis: true,
       });
-      await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'account', accountUrl, accountName, limit, dateFrom, dateTo,
-        completed: { result: { ...result, items: undefined } } });
-      imported += result.imported;
-      succeeded += 1;
-      await store.update('competitor_accounts', String(account.id), { lastCrawledAt: new Date().toISOString(), lastCrawlCount: result.imported });
-      lines.push(`${accountName}: 返回 ${result.items.length} 条，新增 ${result.imported} 条`);
+      if (imageResult.items.length === 0 && imageResult.imported === 0 && /未找到|无可用|失败|blocked|degraded/i.test(imageResult.message)) {
+        throw new Error(imageResult.message);
+      }
+      await createCrawlWorkerJob({
+        tenantId,
+        requestedBy: workerBatch,
+        platform,
+        mode: 'account',
+        accountUrl,
+        accountName: `${accountName} · 图文`,
+        limit,
+        dateFrom,
+        dateTo,
+        completed: { result: { ...imageResult, items: undefined } },
+      });
+      accountImported += imageResult.imported;
+      completedFormats += 1;
+      accountLines.push(`图文返回 ${imageResult.items.length} 条，新增 ${imageResult.imported} 条（含原帖配文）`);
     } catch (e) {
-      failed += 1;
-      await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'account', accountUrl, accountName, limit, dateFrom, dateTo,
-        completed: { error: e instanceof Error ? e.message : String(e) } });
-      lines.push(`${accountName}: 执行失败 - ${e instanceof Error ? e.message : String(e)}`);
+      accountLines.push(`图文失败：${e instanceof Error ? e.message : String(e)}`);
     }
+    if (completedFormats > 0 || videoQueued) {
+      imported += accountImported;
+      succeeded += 1;
+      await store.update('competitor_accounts', String(account.id), {
+        lastCrawledAt: new Date().toISOString(),
+        lastCrawlCount: accountImported,
+        lastCrawlMode: 'mixed',
+        crawlError: '',
+      });
+    } else {
+      failed += 1;
+      await store.update('competitor_accounts', String(account.id), {
+        lastCrawledAt: new Date().toISOString(),
+        lastCrawlMode: 'mixed',
+        crawlStatus: 'failed',
+        crawlError: accountLines.join('；'),
+      });
+    }
+    lines.push(`${accountName}: ${accountLines.join('；')}`);
   }
   return [
-    `【${platform} 对标账号自动采集】账号 ${accounts.items.length} 个；每账号最多 ${limit} 条`,
+    `【${platform} 对标账号爆款自动采集】账号 ${accounts.items.length} 个；视频和图文每类最多 ${limit} 条`,
     `执行状态：${queued > 0 ? `已排队（${queued} 个账号等待 Worker）` : succeeded > 0 ? '执行成功' : '执行失败'}${failed > 0 ? `（另有 ${failed} 个账号提交失败）` : ''}`,
-    `本次结论：${queued > 0 ? '采集请求已进入队列，Worker 完成后自动回写最终结果' : succeeded === 0 ? '账号采集请求均未完成，请根据账号错误处理后重试' : imported > 0 ? `已新增 ${imported} 条对标内容` : '已完成账号检索，本次暂无新增内容'}`,
+    `本次结论：${queued > 0 ? '视频请求已进入队列，图文已同步采集；Worker 完成后自动回写最终结果' : succeeded === 0 ? '账号采集请求均未完成，请根据账号错误处理后重试' : imported > 0 ? `已新增 ${imported} 条对标视频或图文` : '已完成账号检索，本次暂无新增内容'}`,
     `汇总：新增 ${imported} 条`, ...lines, `队列批次：${workerBatch}`,
   ].join('\n');
 }

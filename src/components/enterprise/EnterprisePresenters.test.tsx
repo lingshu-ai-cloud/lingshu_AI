@@ -60,7 +60,8 @@ test('initial configuration presents one unified presenter onboarding instead of
 test('enterprise presenter recovery persists its intent and lets the visible digital employee page open the dialog', () => {
   assert.match(source, /sessionStorage\.setItem\('lingshu:open-digital-employee-guide', 'presenter'\)/);
   assert.match(source, /CustomEvent\('lingshu:navigate', \{ detail: \{ page: 'digitalEmployees' \} \}\)/);
-  assert.doesNotMatch(source, /requestAnimationFrame|setTimeout/);
+  assert.match(source, /CustomEvent\('lingshu:open-digital-employee-guide', \{ detail: \{ step: 'presenter' \} \}\)/);
+  assert.match(source, /requestAnimationFrame\?\.\(openGuide\)/);
 });
 
 test('enterprise presenter page supports editing, optional Ark enhancement and revoking existing people', () => {

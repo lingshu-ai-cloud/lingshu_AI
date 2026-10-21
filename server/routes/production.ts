@@ -828,10 +828,20 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
     try {
       const tenantId = res.locals.tenantId as string;
       const b = req.body as ProductionDefaults;
-      if (!b || !['auto', 'avatar', 'real', 'none'].includes(b.preference) || !Array.isArray(b.presenters) || b.presenters.length > 50 || b.presenters.some(item => !item || !item.id || !item.name || item.authorized !== true
-        || (!((item.avatarId && item.voiceId) || (item.toolMappings?.heygen?.avatarId && item.toolMappings?.heygen?.voiceId)) && !(Array.isArray(item.referenceMaterialIds) && item.referenceMaterialIds.some(Boolean))))
+      const invalidPresenter = (item: PresenterAsset) => {
+        const referenceMaterialIds = Array.isArray(item?.referenceMaterialIds) ? item.referenceMaterialIds.filter(Boolean) : [];
+        const hasHeyGenPair = Boolean((item?.avatarId && item?.voiceId)
+          || (item?.toolMappings?.heygen?.avatarId && item?.toolMappings?.heygen?.voiceId));
+        const safeLocalProfile = item?.authorized === false
+          && !item.avatarId && !item.voiceId && !item.toolMappings?.heygen?.avatarId && !item.toolMappings?.heygen?.voiceId
+          && referenceMaterialIds.length >= 2 && item.arkCertification?.status === 'profile_incomplete';
+        return !item || !item.id || !item.name
+          || (item.authorized !== true && !safeLocalProfile)
+          || (item.authorized === true && !hasHeyGenPair && referenceMaterialIds.length === 0);
+      };
+      if (!b || !['auto', 'avatar', 'real', 'none'].includes(b.preference) || !Array.isArray(b.presenters) || b.presenters.length > 50 || b.presenters.some(invalidPresenter)
         || new Set(b.presenters.map(item => item.id)).size !== b.presenters.length || (b.defaultPresenterId && !b.presenters.some(item => item.id === b.defaultPresenterId))) {
-        res.status(400).json({ error: '请完整填写人物、声音ID并确认已取得使用授权' }); return;
+        res.status(400).json({ error: '请完整填写人物资料；未完成平台授权的人物只能保存为本地待认证资料' }); return;
       }
       if (options.validatePresenterMaterials) {
         const presenterMaterialIds = b.presenters.flatMap(item => [item.referenceMaterialIds,

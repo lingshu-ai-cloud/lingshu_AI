@@ -12,7 +12,7 @@ const inspirationDashboard = fs.readFileSync(new URL('../../src/components/Inspi
 const inspirationVideoCards = fs.readFileSync(new URL('../../src/components/InspirationVideoCards.tsx', import.meta.url), 'utf8');
 
 assert.match(route, /benchmarkAccounts:\s*benchmarkAccounts\(body\.benchmarkAccounts\)/, '用户确认的对标账号必须写入发现范围');
-assert.match(route, /\['tiktok', 'instagram', 'youtube', 'facebook'\]/, 'Facebook 必须在可配置采集平台中');
+assert.match(route, /\['linkedin', 'facebook', 'instagram', 'tiktok', 'youtube'\]/, 'LinkedIn 与 Facebook 必须作为默认主采集平台');
 assert.match(scheduler, /taskType: 'social_discovery_collection'/, '必须由真实调度器执行连续发现');
 assert.match(scheduler, /discoveryScopeId:\s*input\.discoveryScopeId/, '调度任务只能保存权威范围引用');
 assert.doesNotMatch(scheduler, /managedBy: 'social_discovery_scope'[\s\S]{0,200}keywords:/, '权威范围调度不得另存关键词事实');
@@ -28,6 +28,7 @@ assert.match(api, /getSummary:/, 'DiscoverySummary 必须对前端客户端可�
 assert.match(dashboard, /socialDiscoveryApi\.getSummary\(\)/, '大屏必须展示 DiscoverySummary');
 assert.match(dashboard, /socialDiscoveryApi\.listRuns\(1, 5\)/, '大屏必须展示可追溯运行记录');
 assert.match(dashboard, /modePolicies:\s*strategy\.discoveryBrief\.modePolicies/, '前端保存不得丢失三类独立采集策略');
+assert.match(dashboard, /'linkedin'/, '发现范围必须可配置 LinkedIn');
 assert.match(dashboard, /'facebook'/, '发现范围必须可配置 Facebook');
 assert.match(service, /discoveryContext:\s*\{ runId, scopeId: scope\.id, scopeVersion: scope\.version, mode, queryRef: target\.ref,/, '采集必须向素材写入运行溯源');
 assert.match(service, /weeklyOriginalAccountCollection:[\s\S]*?actorInputSha256:/, '黄金五条原运行必须锁定同 run 下载输入身份');
