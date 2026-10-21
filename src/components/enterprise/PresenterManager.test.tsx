@@ -6,6 +6,8 @@ import PresenterManager from './PresenterManager.js';
 
 const props = { onClose: () => {}, onSaved: () => {} };
 const source = fs.readFileSync('src/components/enterprise/PresenterManager.tsx', 'utf8');
+const frameSource = fs.readFileSync('src/lib/presenterVideoFrame.ts', 'utf8');
+const modelSource = fs.readFileSync('src/components/enterprise/presenterManagerModel.ts', 'utf8');
 const styles = fs.readFileSync('src/index.css', 'utf8');
 
 test('presenter onboarding keeps the existing single-source editor and adds unified onboarding reuse', () => {
@@ -94,7 +96,7 @@ test('initial onboarding starts with only the two source choices and keeps the s
   assert.match(source, /clearPresenterOnboardingDraft\(\)/);
   assert.match(source, /一次录制完成人物资料/);
   assert.match(source, /extractPresenterPhoto\(selectedFile\)/);
-  assert.match(source, /canvas\.toBlob\(resolve, 'image\/jpeg'/);
+  assert.match(frameSource, /canvas\.toBlob\(resolve, 'image\/jpeg'/);
   assert.match(source, />更换照片</);
   assert.match(source, /photoSource === 'frame' \? '从本人视频抽取的图片素材帧'/);
   assert.ok(source.indexOf('aria-label="统一人物本人视频"') < source.indexOf('aria-label="统一人物正面照片"'), 'video input precedes photo override');
@@ -125,7 +127,7 @@ test('initial onboarding starts with only the two source choices and keeps the s
   assert.match(source, /authorized, adultConfirmed, confirmed, arkPreparation/);
   assert.match(source, /<CheckCircle2 size=\{15\} \/>已完成/);
   assert.match(source, /确认前往 HeyGen/);
-  assert.match(source, /授权已发起 · HeyGen 确认中/);
+  assert.match(modelSource, /授权已发起 · HeyGen 确认中/);
   assert.match(source, /job\.status === 'pending_consent' && !job\.consentRequestedAt/);
   assert.match(source, /刷新授权状态/);
   assert.match(source, /selected\.creationId \? ownCreationVoice : voicePicker/);

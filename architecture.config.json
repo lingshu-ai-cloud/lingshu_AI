@@ -43,7 +43,6 @@
     "src/components/GlobalAssistant.tsx": 3075,
     "src/components/InspirationDashboard.tsx": 5992,
     "src/components/PluginsPage.tsx": 1088,
-    "src/components/enterprise/PresenterManager.tsx": 827,
     "src/components/ScheduledPage.tsx": 2276,
     "src/components/SmartBusinessDashboard.tsx": 1540,
     "src/components/socialContent/SocialCreationWorkbench.tsx": 1008,

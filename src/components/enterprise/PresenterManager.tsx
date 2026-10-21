@@ -3,41 +3,13 @@ import { Camera, CheckCircle2, UserRoundPlus, UsersRound } from 'lucide-react';
 import { presenterApi } from '../../lib/presenterApi';
 import { productionApi } from '../../lib/productionApi';
 import { clearPresenterOnboardingDraft, loadPresenterOnboardingDraft, savePresenterOnboardingDraft } from '../../lib/presenterOnboardingDraft';
-import type { ArkPresenterPreparation, PresenterCapabilities, PresenterCreation, PresenterLook, PresenterVoice, PresenterVoiceCandidate } from '../../lib/presenterAssets';
+import type { ArkPresenterPreparation, PresenterCapabilities, PresenterCreation, PresenterLook, PresenterVoice } from '../../lib/presenterAssets';
 import type { PresenterAsset, ProductionDefaults } from '../../lib/shotProduction';
 import { extractPresenterPhoto } from '../../lib/presenterVideoFrame';
+import { button, field, groupPresenterLooks, statusText, storedVoiceCloneJob, type VoiceCloneJob } from './presenterManagerModel';
+export { groupPresenterLooks } from './presenterManagerModel';
 
-const statusText = (job: PresenterCreation) => job.status === 'pending_consent'
-  ? job.consentRequestedAt ? '授权已发起 · HeyGen 确认中' : '待发起本人授权'
-  : ({ submitting: '正在提交', processing: '处理中', completed: '可用', failed: '创建未受理', uncertain: '提交结果待核实' } as const)[job.status];
-const field = 'w-full rounded-lg border border-border bg-white p-2 text-sm';
-const button = 'rounded-lg border border-border px-3 py-2 text-sm disabled:opacity-40';
-type PresenterLookGroup = { id: string; name: string; representative: PresenterLook; looks: PresenterLook[] };
-export const groupPresenterLooks = (looks: PresenterLook[]): PresenterLookGroup[] => {
-  const groups = new Map<string, PresenterLook[]>();
-  for (const look of looks) {
-    const id = look.groupId || `look:${look.id}`;
-    groups.set(id, [...(groups.get(id) || []), look]);
-  }
-  return [...groups].map(([id, groupLooks]) => {
-    const representative = groupLooks.find(look => look.imageUrl) || groupLooks[0];
-    const commonName = groupLooks.length > 1
-      ? groupLooks.map(look => look.name.trim().split(/\s+/)[0]).find(Boolean) || representative.name
-      : representative.name;
-    return { id, name: commonName, representative, looks: groupLooks };
-  });
-};
 export type PresenterSaveContext = { creationId?: string; arkPreparation?: ArkPresenterPreparation };
-type VoiceCloneJob = { id: string; status: string; voiceId: string; candidates?: PresenterVoiceCandidate[]; arkVoice?: { speakerId?: string; status: string; error?: string } };
-const storedVoiceCloneJob = (lookId: string): VoiceCloneJob | undefined => {
-  if (!lookId || typeof window === 'undefined') return undefined;
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(`presenter-voice-job:${lookId}`) || 'null');
-    return saved && typeof saved.id === 'string' && ['processing', 'submitting', 'completed', 'failed', 'uncertain'].includes(saved.status)
-      ? saved as VoiceCloneJob
-      : undefined;
-  } catch { return undefined; }
-};
 export default function PresenterManager({ onClose, onSaved, onSynced, onPersonPrepared, reusePresenterId, initialConfiguration = false, initialStage = 'person', voiceOnlyPresenter }: { onClose: () => void; onSaved: (value: ProductionDefaults, context?: PresenterSaveContext) => void | Promise<void>; onSynced?: (value: ProductionDefaults) => void | Promise<void>; onPersonPrepared?: () => void; /** @deprecated 素材类型现在由上传文件自动识别。 */ initialMode?: 'quick' | 'expert'; /** @deprecated 创建流程已统一。 */ fixedMode?: boolean; reusePresenterId?: string; initialConfiguration?: boolean; initialStage?: 'person' | 'certification'; voiceOnlyPresenter?: PresenterAsset }) {
   const voiceOnlyAvatarId = voiceOnlyPresenter?.toolMappings?.heygen?.avatarId || voiceOnlyPresenter?.avatarId || '';
   const voiceOnlyLook: PresenterLook | undefined = voiceOnlyPresenter && voiceOnlyAvatarId ? {
