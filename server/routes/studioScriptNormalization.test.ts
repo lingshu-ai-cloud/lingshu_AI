@@ -12,8 +12,6 @@ import {
   isPackagingOnlyProductInfo,
   isBeautyProductInfo,
   isNonBlockingScriptQualityIssue,
-  normalizeCompleteTimestampTranslation,
-  normalizeTimestampTranslationValue,
   normalizeStoryboardFieldLines,
   openingMatchesCooperationRoute,
   productVoicePlanSupportsTheme,
@@ -29,6 +27,7 @@ import {
   splitVoiceoverLanguageLines,
   voiceoverLineNeedsLanguageRepair,
 } from './studio.js';
+import { normalizeCompleteTimestampTranslation, normalizeTimestampTranslationValue } from '../lib/translationCues.js';
 
 assert.equal(isBeautyProductInfo('LX-Press Servo Press-Fit Cell · Industrial Automation'), false);
 assert.equal(isBeautyProductInfo('Hydrating lip balm skincare product'), true);

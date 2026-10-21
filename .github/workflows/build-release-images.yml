@@ -2,8 +2,6 @@ name: Build release images
 
 on:
   pull_request:
-    branches:
-      - main
   push:
     tags:
       - "v*"
@@ -100,6 +98,12 @@ jobs:
           pnpm run test:architecture-ratchet
           pnpm run check:digital-employee-migrations
           pnpm run test:migration-guard
+
+      - name: Verify social image production pipeline
+        run: pnpm run test:social-image-pipeline
+
+      - name: Verify translation adapter extraction
+        run: pnpm run test:translation-cues
 
       - name: Build application
         run: pnpm run build
