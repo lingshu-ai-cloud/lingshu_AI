@@ -10,6 +10,8 @@ export interface CrawledVideo {
   duration: number;
   views: string;
   tags: string[];
+  /** Public source post copy is evidence, not permission to republish. */
+  caption?: string;
   uploadedAt?: string;
   dateEvidence?: string;
   author?: string;
@@ -262,6 +264,7 @@ export function hasRealThumbnail(item: CrawledVideo): boolean {
 }
 
 export const PLATFORM_LABEL: Partial<Record<Platform, string>> = {
+  linkedin: 'LinkedIn',
   youtube: 'YouTube',
   facebook: 'Facebook',
   tiktok: 'TikTok',
@@ -380,6 +383,7 @@ export function isPlatformUrl(input: string, platform: Platform): boolean {
   if (platform === 'tiktok') return /(?:^|\.)tiktok\.com$/i.test(host);
   if (platform === 'instagram') return /(?:^|\.)instagram\.com$/i.test(host);
   if (platform === 'facebook') return /(?:^|\.)facebook\.com$/i.test(host);
+  if (platform === 'linkedin') return /(?:^|\.)linkedin\.com$/i.test(host);
   if (platform === 'youtube') return /(?:^|\.)youtube\.com$|(?:^|\.)youtu\.be$/i.test(host);
   return false;
 }
@@ -390,6 +394,7 @@ export function inferPlatformFromUrl(input: string): Platform {
     if (/tiktok\.com$/i.test(host)) return 'tiktok';
     if (/instagram\.com$/i.test(host)) return 'instagram';
     if (/facebook\.com$/i.test(host)) return 'facebook';
+    if (/(?:^|\.)linkedin\.com$/i.test(host)) return 'linkedin';
     if (/youtu\.be$|youtube\.com$/i.test(host)) return 'youtube';
   } catch { /* ignore */ }
   return 'tiktok';

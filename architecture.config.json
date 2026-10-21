@@ -22,7 +22,7 @@
     "server/routes/scheduler.ts": 1708,
     "server/routes/social.ts": 1269,
     "server/routes/studio.ts": 11362,
-    "server/routes/videos.ts": 10718,
+    "server/routes/videos.ts": 10664,
     "server/routes/youtube.ts": 1046,
     "server/socialPrograms/executionTasks.ts": 983,
     "server/starter198/socialContentAgentWorkflow.ts": 1290,

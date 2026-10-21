@@ -105,6 +105,9 @@ jobs:
       - name: Verify translation adapter extraction
         run: pnpm run test:translation-cues
 
+      - name: Verify video source boundaries
+        run: pnpm run test:video-source-boundaries
+
       - name: Build application
         run: pnpm run build
 

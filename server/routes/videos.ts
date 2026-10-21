@@ -1,4 +1,6 @@
 import {createReferenceReviewReadHandlers} from '../lib/referenceReviewReadHandlers.js';
+import { looksLikeAccountUrl, looksLikeVideoUrl, youtubeVideoId } from './videoCrawlerSourceUrls.js';
+export { looksLikeAccountUrl } from './videoCrawlerSourceUrls.js';
 import {classifyDiscoverySourceFailure} from '../socialDiscovery/sourceFailure.js';
 import { runPaidApifyTikTokDataset, type PaidApifyTikTokPermit } from './apifyPaidTikTokTransport.js';
 import {frozenWeeklyAccountFiveVideoActorInput} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
@@ -483,6 +485,7 @@ function isValidImagePostRecord(record: Record<string, unknown>): boolean {
   const platform = (record.platform || inferPlatformFromUrl(sourceUrl)) as Platform;
   if (platform === 'instagram') return /\/p\//i.test(sourceUrl);
   if (platform === 'facebook') return !/\/(?:watch|reel|videos)\b/i.test(sourceUrl);
+  if (platform === 'linkedin') return /\/posts\//i.test(sourceUrl) || /activity[:-]\d+/i.test(sourceUrl);
   return true;
 }
 
@@ -8858,47 +8861,6 @@ function publicSearchQuery(platform: Platform, keyword: string): string {
   return keyword;
 }
 
-function looksLikeVideoUrl(url: string, platform: Platform): boolean {
-  if (platform === 'tiktok') return /\/video\/\d+/i.test(url);
-  if (platform === 'instagram') return /\/(?:reel|p)\//i.test(url);
-  if (platform === 'facebook') return /\/(?:reel|watch|videos)\b/i.test(url) || /[?&]v=\d+/i.test(url);
-  return true;
-}
-
-// ─── 对标账号主页采集 ──────────────────────────────────────────────────────────
-// 判断输入是否为「账号主页 URL」（而非单条视频链接）。
-export function looksLikeAccountUrl(input: string, platform: Platform): boolean {
-  const url = String(input || '').trim();
-  if (!isPlatformUrl(url, platform)) return false;
-  try {
-    const parsed = new URL(url);
-    const path = parsed.pathname.replace(/\/+$/, '');
-    const segments = path.split('/').filter(Boolean);
-    if (platform === 'youtube') {
-      if (youtubeVideoId(url)) return false; // 是单条视频
-      return /\/(?:@[^/?#]+|channel\/[^/?#]+|c\/[^/?#]+|user\/[^/?#]+)/i.test(path);
-    }
-    if (platform === 'tiktok') {
-      return /\/@[^/?#]+/i.test(path) && !/\/video\/\d+/i.test(path);
-    }
-    if (platform === 'instagram') {
-      if (looksLikeVideoUrl(url, 'instagram')) return false;
-      const first = segments[0] || '';
-      return Boolean(first)
-        && !['accounts', 'explore', 'reel', 'reels', 'p', 'stories', 'tv', 'direct'].includes(first.toLowerCase());
-    }
-    if (platform === 'facebook') {
-      if (looksLikeVideoUrl(url, 'facebook')) return false;
-      const first = segments[0] || '';
-      return Boolean(first)
-        && !['watch', 'reel', 'reels', 'videos', 'groups', 'events', 'marketplace', 'share'].includes(first.toLowerCase());
-    }
-  } catch {
-    return false;
-  }
-  return false;
-}
-
 // 从主页 URL 推断一个展示用账号名（@handle 或 channel 段）。
 export function accountLabelFromUrl(url: string): string {
   try {
@@ -9299,22 +9261,6 @@ function stripTrackingParams(rawUrl: string): string {
 function youtubeThumbnailFromUrl(url: string): string {
   const id = youtubeVideoId(url);
   return id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : '';
-}
-
-function youtubeVideoId(url: string): string {
-  const trimmed = String(url || '').trim();
-  // yt-dlp --flat-playlist returns the bare 11-character video id in `url`
-  // instead of a watch URL. Treat it as a real YouTube id before URL parsing;
-  // otherwise keyword-search candidates are normalized to non-HTTP strings and
-  // are all discarded by isPlatformUrl().
-  if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) return trimmed;
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.hostname.includes('youtu.be')) return parsed.pathname.replace(/^\//, '');
-    return parsed.searchParams.get('v') || parsed.pathname.match(/\/(?:shorts|embed)\/([^/?#]+)/)?.[1] || '';
-  } catch {
-    return trimmed.match(/(?:v=|youtu\.be\/|\/shorts\/)([A-Za-z0-9_-]{6,})/)?.[1] || '';
-  }
 }
 
 function metadataTitle(platform: Platform, meta: Record<string, unknown>): string {
