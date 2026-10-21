@@ -103,6 +103,9 @@ import { studioBgmMediaPath, studioBgmObjectKey } from '../lib/studioBgmAccess.j
 import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
 import { generatePosterImage, ImageProviderRejectedError, imageExt, normalizeImageGenerationQuality, type ReferenceImage } from '../lib/imageGen.js';
 import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, recordSocialImagePaidJobFailure, socialImageOwnedMaterialUrl, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
+import { claimSocialImagePlannedUnit, socialImagePlannedRenderInput } from '../socialImage/socialImageDurablePlan.js';
+import { readSocialImageTask } from '../socialImage/socialImageTask.js';
+import { materialLocalFile, mimeFromFile, normalizePosterBrief } from '../socialImage/studioPosterHelpers.js';
 import { SOCIAL_IMAGE_HARD_CHECKS } from '../../shared/contracts/socialImageCreation.js';
 import { keywordPromptContext, mergePlannedHashtags, researchSocialImageKeywords } from '../lib/keywordIntelligence.js';
 import { SeedanceProductRecovery } from '../lib/seedanceProductRecovery.js';
@@ -1791,7 +1794,7 @@ async function storyboardMaterialImage(id: string, tenantId: string): Promise<Re
     const object = await objectStorageDownload(key);
     return object?.buf?.length ? { mimeType: object.contentType, base64: object.buf.toString('base64') } : null;
   }
-  const local = materialLocalFile(material);
+  const local = materialLocalFile(material, MEDIA_DIR, GENERATED_MEDIA_DIR);
   return local && fs.existsSync(local) ? { mimeType: storyboardImageMime(local), base64: fs.readFileSync(local).toString('base64') } : null;
 }
 
@@ -5224,6 +5227,19 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
     res.status(400).json({ ok: false, code: 'SOCIAL_IMAGE_JOB_IDENTITY_REQUIRED', error: '图片任务与生成单元必须同时指定' });
     return;
   }
+  let plannedInput: ReturnType<typeof socialImagePlannedRenderInput> | null = null;
+  if (imageTaskId) {
+    try {
+      const imageTask = await readSocialImageTask(store, tenantId, imageTaskId);
+      if (!imageTask) throw new SocialImagePaidJobError('social_image_task_missing');
+      if (imageTask.imageType === 'gif_poster') throw new SocialImagePaidJobError('social_image_gif_delivery_not_ready');
+      if (imageTask.imageType === 'carousel') plannedInput = socialImagePlannedRenderInput(imageTask, imageJobId);
+    } catch (error) {
+      const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_render_admission_failed';
+      res.status(code === 'social_image_task_missing' ? 404 : 409).json({ ok: false, code, error: '图片多输出单元未通过冻结计划校验；未调用图片供应商' });
+      return;
+    }
+  }
   if (!imageTaskId && !await consumeDemoQuota(req, res, 'generation')) return;
   const {
     poster = null,
@@ -5236,7 +5252,20 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
     referencePlan = [],    referenceImageUrls = [],
     idempotencyKey = '',
     confirmedFields = {},
-  } = req.body ?? {};
+  } = plannedInput ? {
+    poster: plannedInput.poster,
+    imagePrompt: plannedInput.imagePrompt,
+    imageQuality: plannedInput.quality,
+    ratio: plannedInput.ratio,
+    materialIds: plannedInput.materialIds,
+    productIds: plannedInput.productIds,
+    referenceImageUrls: plannedInput.referenceImageUrls,
+    referencePlan: plannedInput.referencePlan,
+    deliverableType: plannedInput.deliverableType,
+    productionStrategy: plannedInput.productionStrategy,
+    idempotencyKey: plannedInput.idempotencyKey,
+    confirmedFields: {},
+  } : req.body ?? {};
   const deliverableType: ImageDeliverable = IMAGE_DELIVERABLES.includes(rawDeliverableType)
     ? rawDeliverableType : 'social_poster';
   const productionStrategy: ImageProductionStrategy = IMAGE_PRODUCTION_STRATEGIES.includes(rawProductionStrategy) ? rawProductionStrategy : 'reference_generate';
@@ -5347,11 +5376,19 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
         prompt, ratio, quality: normalizeImageGenerationQuality(rawImageQuality),
         references: references.map(item => createHash('sha256').update(Buffer.from(item.base64, 'base64')).digest('hex')),
         requestedProductIds, materialIds, imageTaskId, imageJobId,
+        plannedInputHash: plannedInput?.unit.plannedInputHash || null,
       })).digest('hex');
-      claimedImageTask = await claimSocialImagePaidJob({
-        store, tenantId, taskId: imageTaskId, jobId: imageJobId,
-        idempotencyKey: String(idempotencyKey || '').trim(), inputHash: paidInputHash,
-      });
+      claimedImageTask = plannedInput
+        ? await claimSocialImagePlannedUnit({
+            store, tenantId, taskId: imageTaskId, jobId: imageJobId,
+            idempotencyKey: plannedInput.idempotencyKey,
+            plannedInputHash: plannedInput.unit.plannedInputHash,
+            renderRequestHash: paidInputHash,
+          })
+        : await claimSocialImagePaidJob({
+            store, tenantId, taskId: imageTaskId, jobId: imageJobId,
+            idempotencyKey: String(idempotencyKey || '').trim(), inputHash: paidInputHash,
+          });
       if (!await consumeDemoQuota(req, res, 'generation')) {
         await markSocialImagePaidJobNotSubmitted({ store, tenantId, taskId: imageTaskId, jobId: imageJobId, inputHash: paidInputHash, reason: 'demo_quota_denied' })
           .catch(error => console.warn('[studio] image quota rejection could not release claimed job', error instanceof Error ? error.message : error));
@@ -5389,9 +5426,9 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       store, tenantId, taskId: imageTaskId, jobId: imageJobId, inputHash: paidInputHash,
       provider: generated.source,
       output: {
-        id: randomUUID(), role: 'single', label: '主视觉', state: 'quality_checking',
+        id: randomUUID(), role: plannedInput?.unit.role || 'single', label: plannedInput?.unit.label || '主视觉', state: 'quality_checking',
         mediaUrl: socialImageOwnedMaterialUrl(material, tenantId), materialId: material.id,
-        version: Math.max(0, ...claimedImageTask.outputs.filter(item => item.role === 'single' && item.label === '主视觉').map(item => item.version)) + 1,
+        version: Math.max(0, ...claimedImageTask.outputs.filter(item => item.role === (plannedInput?.unit.role || 'single') && item.label === (plannedInput?.unit.label || '主视觉')).map(item => item.version)) + 1,
         qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'uncertain', severity: 'hard', note: '等待人工复核' })),
       },
     }) : undefined;
@@ -11253,44 +11290,6 @@ studioRouter.get('/publish-performance', (_req, res) => {
 
 /* ── 本地降级生成 ──────────────────────────────────────────────────────── */
 
-function normalizePosterBrief(raw: any) {
-  const categories = Array.isArray(raw?.categories) ? raw.categories : [];
-  return {
-    // Empty model fields stay empty. Filling them with generic supplier claims
-    // would turn a parse omission into an unverified business promise.
-    headline: String(raw?.headline || '').slice(0, 120),
-    subheadline: String(raw?.subheadline || '').slice(0, 140),
-    originBadge: String(raw?.originBadge || '').slice(0, 80),
-    trustBadges: Array.isArray(raw?.trustBadges) ? raw.trustBadges.map(String).slice(0, 8) : [],
-    sellingPoints: Array.isArray(raw?.sellingPoints) ? raw.sellingPoints.map(String).slice(0, 8) : [],
-    process: Array.isArray(raw?.process) ? raw.process.map(String).slice(0, 8) : [],
-    categories: categories.slice(0, 8).map((item: any) => ({
-      name: String(item?.name || item || '').slice(0, 80),
-      description: String(item?.description || '').slice(0, 140),
-    })).filter((item: { name: string }) => item.name),
-    bottomBar: Array.isArray(raw?.bottomBar) ? raw.bottomBar.map(String).slice(0, 8) : [],
-    cta: String(raw?.cta || '').slice(0, 120),
-  };
-}
-
-function mimeFromFile(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
-  if (ext === '.webp') return 'image/webp';
-  if (ext === '.gif') return 'image/gif';
-  return 'image/png';
-}
-
-function materialLocalFile(material: Material): string | null {
-  const raw = material.type === 'image'
-    ? material.file
-    : material.poster ? material.poster.replace(/^\/media\//, '').split('?')[0] : '';
-  if (!raw) return null;
-  if (raw.includes('/')) return path.join(MEDIA_DIR, raw);
-  const generatedCandidate = path.join(GENERATED_MEDIA_DIR, raw);
-  if (fs.existsSync(generatedCandidate)) return generatedCandidate;
-  return path.join(MEDIA_DIR, raw);
-}
 
 type PosterReferenceRole = 'exact_product' | 'style' | 'supporting';
 type PosterReferenceDescriptor = { materialId: string; role: PosterReferenceRole; productId: string | null };
@@ -11309,7 +11308,7 @@ async function posterReferenceBytes(material: Record<string, unknown>, tenantId:
       if (bytes.length) return { mimeType: response.headers.get('content-type') || 'image/png', base64: bytes.toString('base64') };
     }
   }
-  const local = materialLocalFile(material as unknown as Material);
+  const local = materialLocalFile(material as unknown as Material, MEDIA_DIR, GENERATED_MEDIA_DIR);
   if (local && fs.existsSync(local)) return { mimeType: mimeFromFile(local), base64: fs.readFileSync(local).toString('base64') };
   const url = String(material.url || '').trim();
   return url ? storyboardEnterpriseImage(url, tenantId) : null;

@@ -65,10 +65,14 @@ export function socialImagePlannedRenderInput(task: SocialImageCreationTask, job
     materialIds: [...task.materialIds],
     productIds: [...task.contentBrief.productRefs],
     referenceImageUrls: task.referenceSnapshot?.imageUrls.slice(0, 1) || [],
+    referencePlan: [],
+    deliverableType: unit.index === 0 && task.imageType === 'carousel' ? 'carousel_cover' : 'social_poster',
+    productionStrategy: 'reference_generate',
     idempotencyKey: unit.idempotencyKey,
     imagePrompt: [
       `Create ${task.imageType === 'carousel' ? 'carousel page' : 'GIF background plate'} ${unit.index + 1} of ${unit.count}.`,
       `Unit role: ${unit.role}. Core claim: ${task.contentBrief.coreClaim}.`,
+      task.imageType === 'carousel' ? `Narrative page role: ${String(unit.poster.pageRole || 'cover')}.` : '',
       task.imageType === 'gif_poster'
         ? 'Generate only the variable background scene. The product, logo, badge, typography and bottom bar are fixed layers composed after all plates are ready.'
         : 'Preserve the frozen page headline and subheadline. This page must remain distinct from the other carousel pages.',
