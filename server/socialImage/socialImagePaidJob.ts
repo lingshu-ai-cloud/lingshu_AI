@@ -1,4 +1,8 @@
 import type { DataStore } from '../storage/datastore.js';
+import path from 'node:path';
+import type { MaterialRecord } from '../lib/materialLibrary.js';
+import { tenantAssetRelativePath } from '../lib/assetAccess.js';
+import { materialAssetObjectKey } from '../storage/materialAssets.js';
 import type { SocialImageCreationTask, SocialImageOutputNode } from '../../shared/contracts/socialImageCreation.js';
 import { SOCIAL_IMAGE_TASKS_COLLECTION } from './socialImageTask.js';
 
@@ -17,6 +21,21 @@ export function socialImageQueuedJobIssue(task: SocialImageCreationTask, propose
 
 export class SocialImagePaidJobError extends Error {
   constructor(public readonly code: string) { super(code); }
+}
+
+/** Stable authenticated media path; signed URLs expire and must not enter task history. */
+export function socialImageOwnedMaterialUrl(material: MaterialRecord, tenantId: string): string {
+  const file = String(material.file || '');
+  const objectKey = String(material.objectKey || '');
+  if (file && file !== tenantAssetRelativePath(tenantId, path.basename(file))) {
+    throw new SocialImagePaidJobError('social_image_material_locator_invalid');
+  }
+  if (objectKey && objectKey !== materialAssetObjectKey(tenantId, path.basename(objectKey))) {
+    throw new SocialImagePaidJobError('social_image_material_locator_invalid');
+  }
+  if (objectKey) return `/api/overseas/studio/private-assets/materials/${path.basename(objectKey)}`;
+  if (file) return `/media/${file}`;
+  throw new SocialImagePaidJobError('social_image_material_locator_missing');
 }
 
 async function requireAtomicStore(store: DataStore): Promise<void> {

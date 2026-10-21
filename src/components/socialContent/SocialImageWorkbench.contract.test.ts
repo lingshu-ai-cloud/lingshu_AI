@@ -27,6 +27,9 @@ assert.match(studioRoute, /claimSocialImagePaidJob\(/, 'server must claim the pa
 assert.match(studioRoute, /completeSocialImagePaidJob\(/, 'server must attach the persisted material to the unit');
 assert.match(studioRoute, /recordSocialImagePaidJobFailure\(/, 'paid provider failure must persist a server-owned outcome');
 assert.match(studioRoute, /definitiveRejection: err instanceof ImageProviderRejectedError/, 'only an explicit provider rejection may release a paid unit');
+assert.match(studioRoute, /mediaUrl: socialImageOwnedMaterialUrl\(material, tenantId\)/, 'paid task history must store a stable tenant-scoped media path');
+assert.match(socialImageRoute, /reconcile-material/, 'existing paid image materials need a no-provider recovery endpoint');
+assert.match(socialImageRoute, /readMaterialLibrary\(tenantId\)\)\.items\.find/, 'quality preflight must read generated images stored in the local tenant library');
 assert.match(socialImageRoute, /social_image_paid_inputs_frozen/, 'task inputs must remain fixed while a paid unit is unresolved');
 assert.match(source, /runPreflight/, 'generated images must enter deterministic quality preflight');
 assert.match(source, /repairLayered/, 'review must support natural-language layer repair');
@@ -64,4 +67,6 @@ assert.match(source, /请不要立即重复提交/, 'unknown provider outcomes m
 assert.match(source, /hasUnresolvedPaidImageJob\(sourceTask\)/, 'restored unresolved paid jobs must block another submission');
 assert.match(source, /disabled=\{busy \|\| !poster \|\| hasUnresolvedPaidImageJob\(task\)\}/, 'retry control must not submit while the prior outcome is unresolved');
 assert.match(source, /socialImageApi\.getTask\(activeTask\.id\)/, 'the browser must read the server-owned paid job outcome');
+assert.match(source, /socialImageApi\.reconcileMaterial\(task\.id, recoverableJob\.id\)/, 'an unresolved paid job may only recover an already persisted material');
+assert.match(source, /核对已落库成片（不重新生成）/, 'the recovery action must make its no-provider boundary clear');
 assert.doesNotMatch(source, /contentMode:\s*'video'/);

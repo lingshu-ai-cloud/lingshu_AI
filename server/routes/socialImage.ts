@@ -6,7 +6,8 @@ import sharp from 'sharp';
 import type { AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } from '../socialImage/socialImageTask.js';
-import { socialImageQueuedJobIssue } from '../socialImage/socialImagePaidJob.js';
+import { socialImageOwnedMaterialUrl, socialImageQueuedJobIssue, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
+import { recoverSocialImagePaidMaterial } from '../socialImage/socialImageMaterialRecovery.js';
 import { mergeSocialImageVisualChecks, socialImageDeterministicChecks } from '../socialImage/socialImageQuality.js';
 import { qualityCheckSocialImageWithQwen } from '../agents/qwen.js';
 import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
@@ -50,7 +51,8 @@ async function enterpriseProductAsset(tenantId: string, productId: string): Prom
 
 async function outputImageBytes(tenantId: string, output: { mediaUrl?: string; materialId?: string }): Promise<{ bytes: Buffer; mimeType: string } | null> {
   if (output.materialId) {
-    const material = await store.getById('materials', output.materialId).catch(() => null);
+    const material = await store.getById('materials', output.materialId).catch(() => null)
+      || (await readMaterialLibrary(tenantId)).items.find(item => item.id === output.materialId);
     if (material) return readTenantMaterialBytes(material as any, tenantId).catch(() => null);
   }
   const route = String(output.mediaUrl || '');
@@ -124,6 +126,30 @@ socialImageRouter.get('/tasks/:id', async (req, res) => {
     res.json({ ok: true, task });
   } catch {
     res.status(503).json({ ok: false, error: '图片任务读取失败' });
+  }
+});
+
+/** Attach a proven existing image material after a lost task-write response; never call the provider. */
+socialImageRouter.post('/tasks/:id/jobs/:jobId/reconcile-material', async (req, res) => {
+  let inventoryComplete = false;
+  try {
+    const { tenantId } = res.locals as AuthLocals;
+    const library = await readMaterialLibrary(tenantId);
+    inventoryComplete = library.status === 'ready';
+    const recovered = await recoverSocialImagePaidMaterial({
+      store, tenantId, taskId: req.params.id, jobId: req.params.jobId,
+      materials: library.items,
+      readBytes: readTenantMaterialBytes,
+      materialUrl: socialImageOwnedMaterialUrl,
+    });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ ok: true, recovered: true, ...recovered });
+  } catch (error) {
+    const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_material_reconcile_failed';
+    const status = code === 'social_image_task_missing' ? 404
+      : code === 'social_image_atomic_store_required' ? 503
+      : code === 'social_image_material_not_found' ? inventoryComplete ? 404 : 503 : 409;
+    res.status(status).json({ ok: false, code, error: '未找到可安全关联的同租户已生成素材；不会重新调用图片供应商' });
   }
 });
 

@@ -103,6 +103,7 @@ export default function SocialImageWorkbench({
   ));
   const [qualityPasses, setQualityPasses] = useState<SocialImageQualityCheckKey[]>(initialTask?.outputs.flatMap(output => output.qualityChecks.filter(check => check.verdict === 'pass').map(check => check.key)) || []);
   const [busy, setBusy] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
   const [generationElapsed, setGenerationElapsed] = useState(0);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -139,6 +140,21 @@ export default function SocialImageWorkbench({
     ? STEP_ITEMS.findIndex(item => item.key === 'production')
     : STEP_ITEMS.findIndex(item => item.key === step);
   const hardChecks = SOCIAL_IMAGE_HARD_CHECKS;
+  const recoverableJob = task?.generationJobs.find(job => ['running', 'outcome_unknown'].includes(job.status) && !job.outputNodeIds.length);
+
+  const reconcileSavedImage = async () => {
+    if (!task || !recoverableJob) return;
+    setBusy(true); setReconciling(true); setError(''); setNotice('正在核对已有素材；不会重新调用图片供应商。');
+    try {
+      const result = await socialImageApi.reconcileMaterial(task.id, recoverableJob.id);
+      setTask(result.task); setImageUrl(result.url); setStep('review');
+      setQualityPasses(result.task.outputs.flatMap(output => output.qualityChecks.filter(check => check.verdict === 'pass').map(check => check.key)));
+      setNotice('已从企业素材库找回成片并关联任务；质量检查仍待确认。');
+    } catch (reason) {
+      setNotice(''); setError(reason instanceof Error ? reason.message : '未找到可安全关联的成片；不会重新生成图片。');
+      void socialImageApi.getTask(task.id).then(result => setTask(result.task)).catch(() => undefined);
+    } finally { setReconciling(false); setBusy(false); }
+  };
 
   const uploadImages = async (files: File[]) => {
     const valid = files.filter(file => file.type.startsWith('image/')).slice(0, 8);
@@ -445,7 +461,7 @@ export default function SocialImageWorkbench({
           {step === 'type' && <><p className="text-sm font-semibold">交付规格</p><label className="block text-xs font-medium">平台<Select className="mt-1 w-full" value={platform} onChange={setPlatform} options={[{value:'facebook',label:'Facebook'},{value:'instagram',label:'Instagram'},{value:'linkedin',label:'LinkedIn'}]} /></label><label className="block text-xs font-medium">比例<Select className="mt-1 w-full" value={ratio} onChange={setRatio} options={['1:1','4:5','9:16'].map(value => ({value,label:value}))} /></label><label className="block text-xs font-medium">语言<Select className="mt-1 w-full" value={language} onChange={setLanguage} options={[{value:'en',label:'English'},{value:'zh',label:'中文'}]} /></label></>}
           {step === 'inputs' && <><p className="text-sm font-semibold">内容与资产</p><label className="block text-xs font-medium">内容类型<Select className="mt-1 w-full" value={imageType} onChange={setImageType} options={IMAGE_TYPES.filter(item => item.available).map(item => ({value:item.id,label:item.label}))} /></label><label className="block text-xs font-medium">任务名称<Input className="mt-1" value={title} onChange={event => setTitle(event.target.value)} /></label><label className="block text-xs font-medium">企业产品<Select mode="multiple" className="mt-1 w-full" value={productIds} onChange={setProductIds} options={products.map(item => ({value:item.id,label:item.name}))} placeholder="至少选择一个产品" /></label><label className="block text-xs font-medium">核心主张<Input.TextArea className="mt-1" rows={4} value={coreClaim} onChange={event => setCoreClaim(event.target.value)} placeholder="这条内容只讲清的一件事" /></label><label className="block text-xs font-medium">目标受众<Input className="mt-1" value={audience} onChange={event => setAudience(event.target.value)} /></label><label className="block text-xs font-medium">事实状态<Select className="mt-1 w-full" value={factuality} onChange={setFactuality} options={[{value:'verified',label:'企业资料已验证'},{value:'user_supplied',label:'用户提供，待核验'},{value:'mock',label:'模拟内容，不可直接发布'}]} /></label><div><div className="flex items-center justify-between gap-2"><p className="text-xs font-medium">企业图片素材</p><Button size="small" icon={<Upload size={13} />} loading={busy} onClick={() => uploadRef.current?.click()}>上传图片</Button><input ref={uploadRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple className="hidden" onChange={event => { const files = Array.from(event.currentTarget.files || []); event.currentTarget.value = ''; void uploadImages(files); }} /></div><div className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-lg border border-border p-2">{materials.length ? materials.map(item => <Checkbox key={item.id} checked={materialIds.includes(item.id)} onChange={event => setMaterialIds(current => event.target.checked ? [...current,item.id] : current.filter(id => id !== item.id))} className="flex text-xs"><span className="line-clamp-1">{item.name}</span></Checkbox>) : <p className="p-2 text-xs text-text-muted">素材库暂无企业图片，可以在这里直接上传。</p>}</div></div></>}
           {step === 'plan' && <><p className="text-sm font-semibold">策划依据</p><p className="rounded-lg bg-zinc-50 p-3 text-xs leading-5">题材：{IMAGE_TYPES.find(item => item.id === imageType)?.label}<br />图文关系：图片证明或解释核心主张<br />配色：从企业产品与品牌素材推导</p></>}
-          {step === 'generate' && <><p className="text-sm font-semibold">正在生成</p><p className="text-xs leading-5 text-text-secondary">系统将自动完成策划、资产匹配、首版渲染与预检，不再因补充信息中断。</p>{hasUnresolvedPaidImageJob(task) && !busy && <Alert type="warning" showIcon message="图片生成单元待核对" description="当前任务不会自动重试付费生成。请先核对存储能力、任务回执和素材库，确认是否已提交供应商及是否已有成片。" />}</>}
+          {step === 'generate' && <><p className="text-sm font-semibold">正在生成</p><p className="text-xs leading-5 text-text-secondary">系统将自动完成策划、资产匹配、首版渲染与预检，不再因补充信息中断。</p>{hasUnresolvedPaidImageJob(task) && !busy && <Alert type="warning" showIcon message="图片生成单元待核对" description={<>当前任务不会自动重试付费生成。请核对供应商回执和企业素材库。{recoverableJob && <Button size="small" className="mt-2" onClick={() => void reconcileSavedImage()}>核对已落库成片（不重新生成）</Button>}</>} />}</>}
           {step === 'review' && <><p className="text-sm font-semibold">自然语言修改</p><Input.TextArea rows={3} value={repairRequest} onChange={event => setRepairRequest(event.target.value)} placeholder="例如：产品缩小一点并下移；遮罩淡一点；标题改成 Golden Hair Ritual；删除认证信息" /><p className="text-xs leading-5 text-text-secondary">系统只修改对应图层并保留其他图层。所有待处理信息统一汇总，不影响成片生成和下载。</p>{fieldsToConfirm.length > 0 && <Alert type="warning" showIcon message={`待处理信息 · ${fieldsToConfirm.length} 项`} description={<Button size="small" className="mt-2" onClick={() => setConfirmationOpen(true)}>统一查看与补充</Button>} />}<p className="pt-2 text-sm font-semibold">自动检查（不阻断）</p><div className="flex flex-wrap gap-2">{hardChecks.map(key => <Tag key={key} color={qualityPasses.includes(key) ? 'success' : 'default'}>{CHECK_LABELS[key]}</Tag>)}</div>{factuality === 'mock' && <Alert type="warning" showIcon message="当前为模拟内容，请在发布前自行确认事实" />}</>}
           {error && <Alert type="error" showIcon message={error} />}{notice && <Alert type="info" showIcon message={notice} />}
         </div>
@@ -454,7 +470,7 @@ export default function SocialImageWorkbench({
           {step === 'type' && <Button type="primary" block onClick={() => setStep('inputs')} icon={<ImagePlus size={15} />}>进入内容与资产</Button>}
           {step === 'inputs' && <Button type="primary" block loading={busy} onClick={() => void saveInputs()}>{busy ? '正在生成首版' : '一次生成首版'}</Button>}
           {step === 'plan' && <><Button type="primary" block loading={busy} disabled={busy} onClick={() => void generatePlan()}>{busy ? '正在自动策划并生成首版' : '重试一键生成'}</Button><Button block className="mt-2" disabled={busy} onClick={() => setStep('inputs')}>返回修改输入</Button></>}
-          {step === 'generate' && <><Button type="primary" block loading={busy} disabled={busy || !poster || hasUnresolvedPaidImageJob(task)} onClick={() => void generateImage()} icon={busy ? <Spin size="small" /> : <RefreshCw size={15} />}>{busy ? `正在生成首版 · ${generationElapsed} 秒` : '重试生成首版'}</Button>{busy ? <Button block danger className="mt-2" onClick={stopWaitingForImage}>停止等待</Button> : <Button block className="mt-2" onClick={() => setStep('inputs')}>返回修改输入</Button>}</>}
+          {step === 'generate' && <><Button type="primary" block loading={busy} disabled={busy || !poster || hasUnresolvedPaidImageJob(task)} onClick={() => void generateImage()} icon={busy ? <Spin size="small" /> : <RefreshCw size={15} />}>{busy ? reconciling ? '正在核对已存素材' : `正在生成首版 · ${generationElapsed} 秒` : '重试生成首版'}</Button>{busy && !reconciling ? <Button block danger className="mt-2" onClick={stopWaitingForImage}>停止等待</Button> : !busy ? <Button block className="mt-2" onClick={() => setStep('inputs')}>返回修改输入</Button> : null}</>}
           {step === 'review' && <><Button type="primary" block loading={busy} disabled={!repairRequest.trim()} onClick={() => void applyNaturalLanguageRepair()}>按描述修改对应图层</Button>{fieldsToConfirm.length > 0 && <Button block className="mt-2" onClick={() => setConfirmationOpen(true)}>统一处理待补充信息</Button>}{imageUrl && qualityPasses.length < hardChecks.length && <Button block className="mt-2" loading={busy} onClick={() => void startTargetedRepair()}>按检查结果优化一版</Button>}{imageUrl && <Button block className="mt-2" href={imageUrl} target="_blank" icon={<CheckCircle2 size={15} />}>下载成片</Button>}</>}
         </div>
       </aside>

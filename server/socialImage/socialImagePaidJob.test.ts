@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
+import sharp from 'sharp';
 import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datastore.js';
 import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } from './socialImageTask.js';
-import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, markSocialImagePaidJobUnknown, recordSocialImagePaidJobFailure, socialImageQueuedJobIssue } from './socialImagePaidJob.js';
+import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, markSocialImagePaidJobUnknown, recordSocialImagePaidJobFailure, socialImageOwnedMaterialUrl, socialImageQueuedJobIssue } from './socialImagePaidJob.js';
+import { recoverSocialImagePaidMaterial } from './socialImageMaterialRecovery.js';
 
 class AtomicMemoryStore implements DataStore {
   private sequence = 0;
@@ -68,6 +71,59 @@ test('uncertain outcome stays blocked but an existing material can be attached w
   const repeated = await completeSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', inputHash: hash, output, provider: 'openai' });
   assert.equal(repeated.version, ready.version);
   await assert.rejects(completeSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', inputHash: hash, output: { ...output, materialId: 'different' }, provider: 'openai' }), /output_conflict/);
+});
+
+test('persisted matching tenant material can repair a lost task write without another provider call', async () => {
+  const store = new AtomicMemoryStore();
+  const taskId = await queuedTask(store);
+  await claimSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', idempotencyKey: 'operation-1', inputHash: hash });
+  await markSocialImagePaidJobUnknown({ store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', inputHash: hash, error: 'task write lost' });
+  const bytes = await sharp({ create: { width: 2, height: 2, channels: 4, background: '#ffffff' } }).png().toBuffer();
+  const material = {
+    id: 'material-1', tenantId: 'tenant-a', scope: 'own', type: 'image', sourceType: 'ai_generated_marketing_image',
+    sourceProvider: 'openai', file: 'tenants/tenant-a/material-1.png', contentSha256: createHash('sha256').update(bytes).digest('hex'),
+    provenance: { socialImageTaskId: taskId, socialImageJobId: 'unit-1', socialImageInputHash: hash },
+  };
+  let reads = 0;
+  const recover = (materials = [material]) => recoverSocialImagePaidMaterial({
+    store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', materials,
+    readBytes: async () => { reads += 1; return { bytes, mimeType: 'image/png' }; },
+    materialUrl: () => '/media/tenants/tenant-a/material-1.png',
+  });
+  const first = await recover([{ ...material, tenantId: 'tenant-b' }, material]);
+  assert.equal(first.task.generationJobs[0]?.status, 'quality_checking');
+  assert.equal(first.task.outputs[0]?.materialId, material.id);
+  const repeated = await recover();
+  assert.equal(repeated.task.version, first.task.version);
+  assert.equal(reads, 2);
+});
+
+test('material recovery rejects wrong tenant, ambiguous provenance and corrupt bytes', async () => {
+  const store = new AtomicMemoryStore();
+  const taskId = await queuedTask(store);
+  await claimSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', idempotencyKey: 'operation-1', inputHash: hash });
+  const bytes = await sharp({ create: { width: 2, height: 2, channels: 4, background: '#ffffff' } }).png().toBuffer();
+  const material = {
+    id: 'material-1', tenantId: 'tenant-a', scope: 'own', type: 'image', sourceType: 'ai_generated_marketing_image',
+    file: 'tenants/tenant-a/material-1.png', contentSha256: createHash('sha256').update(bytes).digest('hex'),
+    provenance: { socialImageTaskId: taskId, socialImageJobId: 'unit-1', socialImageInputHash: hash },
+  };
+  const recover = (materials: Array<typeof material>, actualBytes = bytes) => recoverSocialImagePaidMaterial({
+    store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', materials,
+    readBytes: async () => ({ bytes: actualBytes, mimeType: 'image/png' }),
+    materialUrl: () => '/media/tenants/tenant-a/material-1.png',
+  });
+  await assert.rejects(recover([{ ...material, tenantId: 'tenant-b' }]), /material_not_found/);
+  await assert.rejects(recover([material, { ...material, id: 'material-2', file: 'tenants/tenant-a/material-2.png' }]), /material_ambiguous/);
+  await assert.rejects(recover([material], Buffer.from('altered')), /material_hash_mismatch/);
+  await assert.rejects(recover([{ ...material, file: 'tenants/tenant-b/material-1.png' }]), /material_not_found/);
+  assert.equal((await readSocialImageTask(store, 'tenant-a', taskId))?.generationJobs[0]?.status, 'running');
+});
+
+test('recovered media paths are stable and tenant-scoped', () => {
+  assert.equal(socialImageOwnedMaterialUrl({ id: 'a', file: 'tenants/tenant-a/a.png' }, 'tenant-a'), '/media/tenants/tenant-a/a.png');
+  assert.equal(socialImageOwnedMaterialUrl({ id: 'a', objectKey: 'materials/tenants/dGVuYW50LWE/a.png' }, 'tenant-a'), '/api/overseas/studio/private-assets/materials/a.png');
+  assert.throws(() => socialImageOwnedMaterialUrl({ id: 'a', objectKey: 'materials/tenants/dGVuYW50LWI/a.png' }, 'tenant-a'), /locator_invalid/);
 });
 
 test('paid units fail closed without a verified atomic store', async () => {

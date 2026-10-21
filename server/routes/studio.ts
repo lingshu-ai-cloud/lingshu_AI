@@ -102,7 +102,7 @@ import { secureStudioRenderManifest, studioRenderAssetPath, studioRenderManifest
 import { studioBgmMediaPath, studioBgmObjectKey } from '../lib/studioBgmAccess.js';
 import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
 import { generatePosterImage, ImageProviderRejectedError, imageExt, normalizeImageGenerationQuality, type ReferenceImage } from '../lib/imageGen.js';
-import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, recordSocialImagePaidJobFailure, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
+import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, recordSocialImagePaidJobFailure, socialImageOwnedMaterialUrl, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
 import { SOCIAL_IMAGE_HARD_CHECKS } from '../../shared/contracts/socialImageCreation.js';
 import { keywordPromptContext, mergePlannedHashtags, researchSocialImageKeywords } from '../lib/keywordIntelligence.js';
 import { SeedanceProductRecovery } from '../lib/seedanceProductRecovery.js';
@@ -5390,7 +5390,7 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       provider: generated.source,
       output: {
         id: randomUUID(), role: 'single', label: '主视觉', state: 'quality_checking',
-        mediaUrl: responseMaterial.url, materialId: material.id,
+        mediaUrl: socialImageOwnedMaterialUrl(material, tenantId), materialId: material.id,
         version: Math.max(0, ...claimedImageTask.outputs.filter(item => item.role === 'single' && item.label === '主视觉').map(item => item.version)) + 1,
         qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'uncertain', severity: 'hard', note: '等待人工复核' })),
       },

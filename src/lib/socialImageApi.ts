@@ -17,6 +17,7 @@ export const socialImageApi = {
   createTask: (input: Record<string, unknown>) => request<{ ok: true; task: SocialImageCreationTask }>('/tasks', { method: 'POST', body: JSON.stringify(input) }),
   createFromReference: (input: Record<string, unknown>) => request<{ ok: true; task: SocialImageCreationTask }>('/tasks/from-reference', { method: 'POST', body: JSON.stringify(input) }),
   getTask: (id: string) => request<{ ok: true; task: SocialImageCreationTask }>(`/tasks/${encodeURIComponent(id)}`),
+  reconcileMaterial: (taskId: string, jobId: string) => request<{ ok: true; recovered: true; task: SocialImageCreationTask; materialId: string; url: string }>(`/tasks/${encodeURIComponent(taskId)}/jobs/${encodeURIComponent(jobId)}/reconcile-material`, { method: 'POST' }),
   updateTask: (task: SocialImageCreationTask, patch: Partial<SocialImageCreationTask>) => request<{ ok: true; task: SocialImageCreationTask }>(`/tasks/${encodeURIComponent(task.id)}`, {
     method: 'PATCH', body: JSON.stringify({ expectedVersion: task.version, patch }),
   }),
