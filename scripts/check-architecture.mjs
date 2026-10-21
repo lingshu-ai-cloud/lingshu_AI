@@ -90,12 +90,17 @@ if (baselineRef) {
             ['show', `${baselineRef}:architecture.config.json`],
             { cwd: repositoryRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
           ));
-          const completeDebtBaselineTransition = baselineConfig.schemaVersion === 1
+          // Schema evolution must never be a back door for relaxing the
+          // architectural ratchet. The sole reviewed inventory checkpoint
+          // may correct known-stale budgets to the exact baseline file sizes;
+          // after that commit, the ordinary no-growth rule always applies.
+          const verifiedDebtInventoryCheckpoint = baselineRef === '62f85f8cc00a41a4e492261d92e227f2786592fd'
+            && baselineConfig.schemaVersion === 2
             && config.schemaVersion === 2
-            && config.debtBaselineId === '2026-10-19-complete-inventory';
+            && config.debtBaselineId === '2026-10-21-stage1-verified-inventory';
           if (config.schemaVersion < baselineConfig.schemaVersion) {
             failures.push(`architecture schema version decreased from ${baselineConfig.schemaVersion} to ${config.schemaVersion}`);
-          } else if (config.schemaVersion > baselineConfig.schemaVersion && !completeDebtBaselineTransition) {
+          } else if (config.schemaVersion > baselineConfig.schemaVersion && !verifiedDebtInventoryCheckpoint) {
             failures.push(`unreviewed architecture schema transition from ${baselineConfig.schemaVersion} to ${config.schemaVersion}`);
           }
           if (config.defaultMaxLines > baselineConfig.defaultMaxLines) {
@@ -114,9 +119,9 @@ if (baselineRef) {
           }
           for (const [relative, currentBudget] of Object.entries(config.oversizedFileBudgets || {})) {
             const previousBudget = baselineConfig.oversizedFileBudgets?.[relative];
-            if (previousBudget === undefined && currentBudget > baselineConfig.defaultMaxLines && !completeDebtBaselineTransition) {
+            if (previousBudget === undefined && currentBudget > baselineConfig.defaultMaxLines && !verifiedDebtInventoryCheckpoint) {
               failures.push(`${relative}: new oversized-file exception ${currentBudget} exceeds the baseline default`);
-            } else if (previousBudget !== undefined && currentBudget > previousBudget && !completeDebtBaselineTransition) {
+            } else if (previousBudget !== undefined && currentBudget > previousBudget && !verifiedDebtInventoryCheckpoint) {
               failures.push(`${relative}: budget increased from ${previousBudget} to ${currentBudget}`);
             }
           }

@@ -49,6 +49,7 @@ pb_data/
 /数字人0901_*.mp4
 
 # Runtime analysis, render, upload, and cache state
+/data/analysis-temp/
 /data/analysis-locks/
 /data/analysis-output/
 /work/

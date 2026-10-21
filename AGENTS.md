@@ -17,6 +17,13 @@
 - Do not modify or bypass the global deployment guard for ordinary development.
 - Local commands such as `npm test`, `npm run build`, and development servers are allowed and are not deployments.
 
+## Repository baseline and session handoff
+
+- The shared integration baseline and latest verification checkpoint are recorded in `docs/governance/BASELINE.md`; update it when advancing the branch.
+- `mobile-dual-edition-20261012` is an experimental image-AIGC worktree, not the canonical integration checkout; it may contain valuable uncommitted work and must not be cleaned, reset, or archived without explicit review.
+- Keep source baseline, preview/runtime data, and real-provider readiness as separate states. A source commit does not establish a runtime or provider baseline.
+- Update `docs/governance/BASELINE.md` when the integration baseline moves. Do not infer a new baseline from recency alone.
+
 ## Canonical deployment path
 
 - When the user explicitly requests deployment, use only an interactive SSH terminal to the existing Ubuntu server, then update the existing server checkout over GitHub HTTPS, and run `bash deploy/update.sh` from that checkout.

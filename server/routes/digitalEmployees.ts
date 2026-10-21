@@ -172,35 +172,6 @@ digitalEmployeesRouter.get('/publishing-accounts', async (_req, res) => {
   const enterprise = await readTenantEnterpriseProfile(tenantId);
   res.json({ items: await listConnectedPublishingAccounts(tenantId, enterprise.company.name) });
 });
-digitalEmployeesRouter.get('/agent-usage-costs', async (_req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const seedance = settledSeedanceUsageForTenant(tenantId);
-  let otherSettledCny = 0;
-  let otherCount = 0;
-  let otherUpdatedAt: string | null = null;
-  try {
-    const executions = await store.list<ExecutionStoreRecord>('studio_digital_human_executions', { where: { tenant_id: tenantId }, perPage: 500 });
-    for (const record of executions.items) {
-      const execution = record.payload;
-      if (execution.costStatus !== 'reconciled' || execution.actualCostCny === null) continue;
-      if (/seedance/i.test(`${execution.tool} ${execution.provider} ${execution.model || ''}`)) continue;
-      otherSettledCny += execution.actualCostCny;
-      otherCount += 1;
-      if (!otherUpdatedAt || execution.updatedAt > otherUpdatedAt) otherUpdatedAt = execution.updatedAt;
-    }
-  } catch { /* A tenant with no digital-human collection still has valid Seedance account usage. */ }
-  const contentCount = (seedance?.entryCount || 0) + otherCount;
-  const contentSettled = (seedance?.settledCny || 0) + otherSettledCny;
-  const contentUpdatedAt = [seedance?.updatedAt || null, otherUpdatedAt].filter((value): value is string => Boolean(value)).sort().at(-1) || null;
-  res.json({
-    roles: {
-      business: null,
-      director: null,
-      content: contentCount ? { settledCny: Number(contentSettled.toFixed(4)), settledPoints: pointsFromCny(contentSettled), entryCount: contentCount, updatedAt: contentUpdatedAt, source: '账号真实供应商结算账本' } : null,
-      customer: null,
-    },
-  });
-});
 const streamClients = new Map<string, Set<Response>>();
 const eventAppendQueues = new Map<string, Promise<void>>();
 const goalApprovalQueues = new Map<string, Promise<void>>();

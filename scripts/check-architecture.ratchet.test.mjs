@@ -116,6 +116,18 @@ try {
     config.extensions = config.extensions.filter(extension => extension !== '.tsx');
   }, /source extension removed from architecture guard: \.tsx/);
 
+  await expectRejected(baselineCommit, 'a schema upgrade that expands legacy debt', config => {
+    config.schemaVersion = 2;
+    config.debtBaselineId = 'fixture-inventory';
+    config.oversizedFileBudgets['src/legacy.ts'] = 7;
+  }, /src\/legacy\.ts: budget increased from 6 to 7/);
+
+  await expectRejected(baselineCommit, 'a schema upgrade that introduces oversized debt', config => {
+    config.schemaVersion = 2;
+    config.debtBaselineId = 'fixture-inventory';
+    config.oversizedFileBudgets['src/new-legacy.ts'] = 6;
+  }, /src\/new-legacy\.ts: new oversized-file exception 6 exceeds the baseline default/);
+
   await writeFile(path.join(fixtureRoot, 'src/legacy.ts'), [
     'export const legacy = {',
     '  one: 1,',
