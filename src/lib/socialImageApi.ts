@@ -18,6 +18,18 @@ export const socialImageApi = {
   createFromReference: (input: Record<string, unknown>) => request<{ ok: true; task: SocialImageCreationTask }>('/tasks/from-reference', { method: 'POST', body: JSON.stringify(input) }),
   getTask: (id: string) => request<{ ok: true; task: SocialImageCreationTask }>(`/tasks/${encodeURIComponent(id)}`),
   reconcileMaterial: (taskId: string, jobId: string) => request<{ ok: true; recovered: true; task: SocialImageCreationTask; materialId: string; url: string }>(`/tasks/${encodeURIComponent(taskId)}/jobs/${encodeURIComponent(jobId)}/reconcile-material`, { method: 'POST' }),
+  planUnits: (task: SocialImageCreationTask) => request<{ ok: true; task: SocialImageCreationTask; paidExecutionEnabled: boolean }>(`/tasks/${encodeURIComponent(task.id)}/plan-units`, {
+    method: 'POST', body: JSON.stringify({ expectedVersion: task.version }),
+  }),
+  renderPlannedUnit: async (taskId: string, jobId: string, signal?: AbortSignal): Promise<{ ok: boolean; task?: SocialImageCreationTask; url?: string; error?: string }> => {
+    const response = await fetch('/api/overseas/studio/fb-poster/render', {
+      method: 'POST', credentials: 'same-origin', signal,
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ imageTaskId: taskId, imageJobId: jobId }),
+    });
+    const payload = await response.json().catch(() => ({})) as { ok?: boolean; task?: SocialImageCreationTask; url?: string; error?: string };
+    return { ...payload, ok: response.ok && payload.ok === true };
+  },
   updateTask: (task: SocialImageCreationTask, patch: Partial<SocialImageCreationTask>) => request<{ ok: true; task: SocialImageCreationTask }>(`/tasks/${encodeURIComponent(task.id)}`, {
     method: 'PATCH', body: JSON.stringify({ expectedVersion: task.version, patch }),
   }),

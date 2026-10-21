@@ -17,6 +17,10 @@ assert.match(source, /\{ key: 'inputs', title: '内容与资产' \}.*\{ key: 'pr
 assert.match(source, /studioApi\.fbPoster\(/);
 assert.match(source, /产品名称：\$\{item\.name\}/, 'each selected enterprise product must be checked as an independent fact record');
 assert.match(source, /studioApi\.fbPosterRender\(/);
+assert.match(source, /id: 'carousel'[\s\S]{0,120}available: true/, 'carousel must be selectable in the image workbench');
+assert.match(source, /runPlannedCarousel\(\{/, 'carousel pages must use sequential frozen-unit orchestration');
+assert.match(source, /socialImageApi\.renderPlannedUnit\(taskId, jobId, controller\.signal\)/, 'the browser must submit only the frozen task and unit identity');
+assert.match(source, /imageType === 'carousel' \? carouselPages\.map/, 'carousel delivery must expose each persisted page separately');
 assert.match(source, /产品\.\*\(\?:主图\|资产\|图片\).*可读取/, 'an unreadable knowledge-base product image must fall back instead of blocking first draft');
 assert.match(source, /\{ \.\.\.renderRequest, productIds: \[\] \}/, 'asset fallback must retain the user-selected enterprise materials');
 assert.match(source, /referenceImageUrls:/, 'viral replication must send the benchmark image to rendering');

@@ -186,7 +186,7 @@ test('definitive provider rejection releases a unit while uncertain failure rema
   assert.equal(blocked.status, 'blocked');
 });
 
-test('multi-output types stay closed until their unit delivery path is implemented', async () => {
+test('generic single-image claim stays closed for multi-output types', async () => {
   const store = new AtomicMemoryStore();
   const task = await createSocialImageTask(store, 'tenant-a', { imageType: 'carousel', title: '轮播图' });
   const queued = await updateSocialImageTask(store, 'tenant-a', task.id, task.version, { generationJobs: [{ id: 'unit-1', idempotencyKey: 'operation-1', status: 'queued', outputNodeIds: [], attempt: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }] });

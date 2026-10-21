@@ -154,7 +154,7 @@ socialImageRouter.post('/tasks/:id/jobs/:jobId/reconcile-material', async (req, 
   }
 });
 
-/** Persist all bounded carousel/GIF units; paid multi-output execution remains disabled. */
+/** Persist bounded units; carousel pages may render sequentially, GIF delivery stays closed. */
 socialImageRouter.post('/tasks/:id/plan-units', async (req, res) => {
   try {
     const { tenantId } = res.locals as AuthLocals;
@@ -162,7 +162,7 @@ socialImageRouter.post('/tasks/:id/plan-units', async (req, res) => {
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) { res.status(400).json({ ok: false, error: '缺少有效任务版本' }); return; }
     const task = await persistSocialImageMultiUnitPlan({ store, tenantId, taskId: req.params.id, expectedVersion });
     res.setHeader('Cache-Control', 'private, no-store');
-    res.json({ ok: true, task, paidExecutionEnabled: false });
+    res.json({ ok: true, task, paidExecutionEnabled: task.imageType === 'carousel' });
   } catch (error) {
     const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_plan_failed';
     const status = code === 'social_image_task_missing' ? 404 : code === 'social_image_atomic_store_required' ? 503 : 409;
@@ -386,12 +386,14 @@ socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
       .slice(0, 4).map(url => referenceImageBytes(tenantId, url)))).find(Boolean) || undefined;
     const outputs = await Promise.all(task.outputs.map(async output => {
       if (output.state === 'superseded') return output;
+      const plannedUnit = task.renderPlan?.units.find(unit => unit.role === output.role && unit.label === output.label);
       const generated = await outputImageBytes(tenantId, output);
       if (!generated) return { ...output, state: 'repair_required' as const, qualityChecks: deterministic };
       let visual = [] as Awaited<ReturnType<typeof qualityCheckSocialImageWithQwen>>;
       try {
         visual = await qualityCheckSocialImageWithQwen({ generated, products, reference, expected: {
-          headline: task.imageTextContract.headline, supportingText: task.imageTextContract.supportingText,
+          headline: String(plannedUnit?.poster.headline || task.imageTextContract.headline),
+          supportingText: String(plannedUnit?.poster.subheadline || task.imageTextContract.supportingText),
           cta: task.imageTextContract.cta, facts: task.imageTextContract.requiredFacts, format: task.deliverySpec.format,
         } });
       } catch { /* provider failure stays uncertain; never fabricate a pass */ }
