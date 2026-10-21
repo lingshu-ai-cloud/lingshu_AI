@@ -55,4 +55,7 @@ assert.equal((source.match(/setConfirmationOpen\(true\)/g) || []).length, 2, 'th
 assert.match(source, /195_000/, 'image generation must have a finite client deadline');
 assert.match(source, /停止等待/, 'the user must be able to leave a long-running image request without reloading');
 assert.match(source, /请不要立即重复提交/, 'unknown provider outcomes must warn against duplicate billing');
+assert.match(source, /hasUnresolvedPaidImageJob\(sourceTask\)/, 'restored unresolved paid jobs must block another submission');
+assert.match(source, /disabled=\{busy \|\| !poster \|\| hasUnresolvedPaidImageJob\(task\)\}/, 'retry control must not submit while the prior outcome is unresolved');
+assert.match(source, /status: 'outcome_unknown' as const/, 'an interrupted paid request must not be marked safely retryable');
 assert.doesNotMatch(source, /contentMode:\s*'video'/);
