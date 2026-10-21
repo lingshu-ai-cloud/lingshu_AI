@@ -261,3 +261,8 @@
 
 - 将跨进程上传租约准入移入 `socialContentFileAdmission.ts`，将文件类型/魔数检查、后端文件端口、素材端口及临时文件清理等基础能力移入 `socialContentFilePrimitives.ts`；原 `socialContentFiles.ts` 对外重导出既有 API。主模块由 968 行降至 789 行，撤销其历史超限豁免，剩余 34 项。
 - 后端文件与社媒内容工作流测试通过（两个测试文件）；TypeScript、架构扫描/ratchet、生产构建及 191 项迁移仓库只读检查通过。构建仍提示三个大 chunk；没有调用真实付费供应商、执行迁移或部署。
+
+## 社媒脚本基线合同与兜底场景拆分（2026-10-22）
+
+- 将脚本基线持久化合同及事实快照类型移入 `socialContentScriptBaselineContract.ts`，将受控系统主题兜底场景移入 `socialContentScriptFallbackScenes.ts`；原模块保留现有导出和冻结/解析逻辑。主文件从 971 行降至 790 行，撤销其历史超限豁免，剩余 33 项。
+- 脚本来源、灵感结构、导演计划及自动生产四组专项通过；TypeScript、架构扫描/ratchet、生产构建和 191 项迁移仓库只读检查通过。构建的三个大 chunk 警告仍在；未调用真实付费供应商、执行迁移或部署。
