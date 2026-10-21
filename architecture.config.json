@@ -10,7 +10,6 @@
     "server/digitalEmployees/followupDispatchWorker.ts": 901,
     "server/routes/admin.ts": 1415,
     "server/routes/digitalEmployees.ts": 5931,
-    "server/routes/draftReply.ts": 979,
     "server/routes/enterprise.ts": 2661,
     "server/routes/production.ts": 1453,
     "server/routes/presenterAssets.ts": 919,

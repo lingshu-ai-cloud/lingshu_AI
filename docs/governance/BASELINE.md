@@ -213,3 +213,9 @@
 
 - 将 `xlsx` 从产品导入模块的静态运行时依赖改为文件解析时动态加载；类型仍静态检查，CSV/XLS/XLSX 文件信封、ZIP 展开上限、单元格与文本量门禁保持原样。产品导入与安全解析测试 6/6 通过。
 - 实际生产构建中 `enterpriseProductAssetUpload` 共享块由约 388 kB 降至约 26 kB，`xlsx` 成为按需加载的约 492 kB 独立块。`index`、`AiCreateStudio` 与 `DigitalEmployeePage` 仍分别约 824/881/920 kB，故大 chunk 警告**仍未消除**。TypeScript、架构扫描/ratchet、生产构建和 191 项迁移仓库只读预检通过；未部署。
+
+## 回复草稿翻译与事实校验边界拆分（2026-10-22）
+
+- 将翻译/文本清理和事实验证提示词、风险解析、安全降级分别移入 `draftReplyLanguage.ts`、`draftReplyVerification.ts`；`draftReply.ts` 保留路由编排及原行为，由 979 行降至 781 行，撤销历史超限豁免，剩余 36 项。
+- 新模块直接测试、草稿事实版本合同、回复规划与事实安全测试通过；TypeScript、架构扫描/ratchet、生产构建和 191 项迁移仓库只读预检通过，构建仍有大 chunk 提示。
+- 更宽的 `test:customer-service` 链在既有 `customerReplyUiContract.test.ts` 源码断言处失败：它要求 `ConversionPage.tsx` 两次出现 `translatedBody: result.translatedDraft`，而当前组件无此字面写法。本批未改该组件，故不能宣称客户服务全链通过；需独立核验实际翻译在自动回复/人工承接消息中的保留行为，不能仅为凑绿修改断言。
