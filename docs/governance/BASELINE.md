@@ -154,3 +154,8 @@
 - Instagram Login 的授权码交换、专业账号读取与长期令牌续期从 `server/integrations/social.ts` 移入 `instagramLogin.ts`，原导出路径保留；主集成文件从 860 行降至 773 行。
 - 发布记录的公开视图、数值/JSON 解析、受保护视频预览 URL 和已发布目标判别从 `server/routes/publishing.ts` 移入 `server/publishing/postPresentation.ts`；路由从 863 行降至 784 行。两项历史超限豁免已删除，剩余 43 项。
 - Instagram Login 专项 2/2、发布记录新测试 2/2 与日历加载回归通过。此拆分没有触发 OAuth、平台发布或其他外部请求；仅调整模块边界和测试覆盖。
+
+## 素材供应计划纯策略拆分（2026-10-22）
+
+- 将库存标准化、默认镜头、可用性/制作路由判别、账号主播锁与备用策略从 `shared/socialContentAssetSupply.ts` 移到纯策略模块，并保持 `inferSocialAssetAvailability` 既有导出。主文件从 894 行降至 793 行，历史超限豁免由 43 项降至 42 项。
+- 同时修正原有免费 `material_cut` 路径：本地已验证片段仍保留精确时间窗，但不再携带面向生成的 `materialRouting` 合同；避免免费剪辑被解释为付费画面生成准入。相关素材供应/类型路由/时间线测试 25/25 通过。
