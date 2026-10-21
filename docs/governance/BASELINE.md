@@ -159,3 +159,8 @@
 
 - 将库存标准化、默认镜头、可用性/制作路由判别、账号主播锁与备用策略从 `shared/socialContentAssetSupply.ts` 移到纯策略模块，并保持 `inferSocialAssetAvailability` 既有导出。主文件从 894 行降至 793 行，历史超限豁免由 43 项降至 42 项。
 - 同时修正原有免费 `material_cut` 路径：本地已验证片段仍保留精确时间窗，但不再携带面向生成的 `materialRouting` 合同；避免免费剪辑被解释为付费画面生成准入。相关素材供应/类型路由/时间线测试 25/25 通过。
+
+## 数字员工导航与配置快照拆分（2026-10-22）
+
+- 将深链接映射、Studio 任务归因与一次性返回上下文移入 `digitalEmployeeNavigation.ts`；将历史配置展示的 fail-closed 投影及展示指纹移入 `digitalEmployeeConfigSnapshot.ts`，`digitalEmployees.ts` 保留原公共导出。主文件从 1,018 行降至 779 行，撤销历史豁免；剩余 41 项。
+- 新导航/配置专项 5/5、周计划历史快照兼容测试通过。`DigitalEmployeePage.contract.test.ts` 的全文件执行仍被一条与本批无关的旧断言阻断：它要求已提交的 `RestoredAgentWorkCalendar.tsx` 使用 `AgentVideoProductionBoard`，而该基线实际仍渲染 `LsCalendar`。该失败不能被计为本批导航回归通过，也不应仅为凑绿擅自改变当前日历产品界面。

@@ -108,6 +108,9 @@ jobs:
       - name: Verify video source boundaries
         run: pnpm run test:video-source-boundaries
 
+      - name: Verify digital employee navigation extraction
+        run: pnpm run test:digital-employee-navigation
+
       - name: Build application
         run: pnpm run build
 

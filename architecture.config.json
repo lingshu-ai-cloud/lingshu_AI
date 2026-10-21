@@ -46,7 +46,6 @@
     "src/components/TrafficPage.tsx": 1750,
     "src/components/WorkspaceManagementPages.tsx": 1008,
     "src/components/YouTubeIntegration.tsx": 1199,
-    "src/lib/digitalEmployees.ts": 1018,
     "src/lib/studioApi.ts": 1316
   }
 }
