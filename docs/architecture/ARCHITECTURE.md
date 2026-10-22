@@ -76,7 +76,7 @@
 - `server/lib/translationCues.ts`：时间戳配音翻译的纯文本解析、cue 完整性校验和响应形态归一化；Express 超时/连接生命周期保留在路由 adapter。
 - `server/lib/imageGen.ts`、`server/agents/qwen.ts`：供应商适配；调用由服务端显式选择并受预算/回执边界约束。
 - `server/socialDiscovery/imageEvidenceReviewApproval.ts`：图片证据 GPT 复核的逐记录人工批准权威，持久冻结租户、来源快照、精确请求和人民币上限；每次读取都复核批准、来源、有效期及撤销。批准记录不是付费许可，也不签发报价。
-- `server/socialDiscovery/imageEvidenceReviewPreparation.ts`：仅在可信图片记录需要复核时，从服务端图片字节、主分析和受信任账号模型构造精确请求哈希；可信模型感知输入 token 上界及有效账号费率缺失、报价超过人工上限或来源变化时，拒绝写批准。公开图片 token 计算器只提供估算，不能代替该上界；准备模块尚未挂到 HTTP/worker，不能被自动爬取视为付费授权。
+- `server/socialDiscovery/imageEvidenceReviewPreparation.ts`：仅在可信图片记录需要复核时，从服务端图片字节、主分析和受信任账号模型构造精确请求哈希。先返回不写入批准的报价指纹；人工批准时重新读取同一来源、图片字节、请求、可信模型感知输入 token 上界及有效账号费率，指纹不符或报价超过人工上限均拒绝。公开图片 token 计算器只提供估算，不能代替该上界；准备模块尚未挂到 HTTP/worker，报价或批准都不是付费发送许可。
 - `server/agents/imageEvidencePaidContext.ts` 与 `imageEvidenceReceiptStore.ts`：图片证据 GPT 复核的冻结记录/租户绑定、现有预算账本与一次性许可复用，以及原始响应的共享卷持久回执。它们不从浏览器参数推导批准，不以 `trend_videos` 的非原子普通更新认领付费请求；当前爬取与重分析路由尚未接线，Qwen→Gemini 现有降级行为未改变。
 
 ## 图片管线数据流

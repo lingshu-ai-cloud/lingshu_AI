@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## GPT 图片证据报价与人工批准拆分（2026-10-23）
+
+- 代码提交 `d756a186a62ffa48e3b73167a144cb655a06d971` 为逐记录 GPT 图片复核增加只读报价，批准前必须重算并匹配租户、记录来源、实际图片字节、精确请求、模型/账号、用量上界及费率证据的报价指纹；预算仍受人工人民币上限约束。报价不写批准，批准不是付费发送许可。未改变现有 Qwen→Gemini 降级，也未接通 GPT HTTP/worker 入口。
+- 报价/批准直测 7/7，覆盖价格、来源 URL、图片字节变化及超预算拒绝；`test:video-source-boundaries` 129/129、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,367 个生产 TypeScript 文件，仍有 6 个历史超限文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过；`AiCreateStudio` chunk 为 496,002/500,000 字节。目标账号费率/可信多模态上界、跨实例共享卷和付费回执实际联调仍未验证；未调用真实付费供应商、未做目标库迁移或部署。最终本地/远端 SHA 及工作区状态以推送后核对为准。
+
 ## 视频可见性与分析终态规则拆分（2026-10-23）
 
 - 代码提交 `5ec2b97a463a874cdefb09c0e4181f7b898485d6` 将公开视频/图文来源资格、完成/暂停可见性与内容类型投影迁至 `videoRecordVisibility.ts`，将完整 Gemini 分析后的成功终态补丁迁至 `videoAnalysisSuccessPatch.ts`；`videos.ts` 仍负责租户读取、写入与执行编排，从 9,012 降至 8,878 行，预算同步收紧。原 `isDisplayableTestTenantVideo` 导出继续转发，未改变现有 AIGC 或付费调用。全仓仍有 6 个历史超限文件。
