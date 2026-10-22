@@ -31,6 +31,17 @@ const forceOptimizeDependencies = process.env.LINGSHU_PREVIEW_FORCE_OPTIMIZE ===
 // page graph every 15 seconds.
 const maxFrontendModuleDepth = Number(process.env.LINGSHU_PREVIEW_MODULE_DEPTH || 1);
 const maxFrontendModuleCount = Number(process.env.LINGSHU_PREVIEW_MODULE_LIMIT || 160);
+function previewPort(name, fallback) {
+  const value = Number(process.env[name] || fallback);
+  if (!Number.isSafeInteger(value) || value < 1024 || value > 65535) throw new Error(`${name} must be a non-privileged TCP port`);
+  return String(value);
+}
+const backendPort = previewPort('LINGSHU_PREVIEW_BACKEND_PORT', 8790);
+const frontendPort = previewPort('LINGSHU_PREVIEW_FRONTEND_PORT', 5177);
+const accountHubPort = previewPort('LINGSHU_PREVIEW_ACCOUNT_HUB_PORT', 5178);
+if (new Set([backendPort, frontendPort, accountHubPort]).size !== 3) throw new Error('Local preview services must use distinct ports');
+const backendOrigin = `http://127.0.0.1:${backendPort}`;
+const frontendOrigin = `http://127.0.0.1:${frontendPort}`;
 const localPreviewAuthEmail = String(
   process.env.LINGSHU_PREVIEW_AUTH_EMAIL || 'beauty-showcase@local.test',
 ).trim().toLowerCase();
@@ -95,10 +106,11 @@ const services = [
     // tasks edit unrelated files, leaving Vite with a temporary 502 upstream.
     args: [path.join(runtimeRoot, 'node_modules/tsx/dist/cli.mjs'), 'server/index.ts'],
     env: {
-      PORT: '8790',
-      LINGSHU_LOCAL_PORT: '8790',
+      PORT: backendPort,
+      LINGSHU_LOCAL_PORT: backendPort,
       NODE_USE_ENV_PROXY: '1',
       LINGSHU_LOCAL_PREVIEW: '1',
+      LINGSHU_LOCAL_PREVIEW_ORIGINS: frontendOrigin,
       // The preview exercises the real task lifecycle, including queue recovery
       // after a backend restart. Use the combined role until the persistent
       // queue/scheduler migration makes a split local worker safe.
@@ -116,7 +128,7 @@ const services = [
     // Health monitoring must stay cheap and independent of business data.
     // Business queries can be temporarily slow while background jobs are busy;
     // treating that as a process failure can kill a healthy backend and leave a white UI.
-    probe: { url: 'http://127.0.0.1:8790/api/overseas/health', expectText: '"status":"ok"' },
+    probe: { url: `${backendOrigin}/api/overseas/health`, expectText: '"status":"ok"' },
   },
   {
     name: 'frontend',
@@ -126,17 +138,18 @@ const services = [
       '--host',
       '127.0.0.1',
       '--port',
-      '5177',
+      frontendPort,
       '--strictPort',
     ],
     env: {
-      DEV_API_TARGET: 'http://127.0.0.1:8790',
+      DEV_API_TARGET: backendOrigin,
       VITE_LINGSHU_LOCAL_PREVIEW: '1',
+      VITE_LINGSHU_LOCAL_PREVIEW_ORIGIN: frontendOrigin,
     },
     // Serve source in the local workspace. A dist preview can keep an old HTML
     // document while a build removes its hashed chunks, which Safari presents
     // as an intermittent white screen.
-    probe: { url: 'http://127.0.0.1:5177/', expectText: 'id="root"', verifyModuleScripts: true },
+    probe: { url: `${frontendOrigin}/`, expectText: 'id="root"', verifyModuleScripts: true },
   },
   {
     name: 'account-hub-frontend',
@@ -148,14 +161,14 @@ const services = [
       '--host',
       '127.0.0.1',
       '--port',
-      '5178',
+      accountHubPort,
       '--strictPort',
     ],
     env: {
-      DEV_API_TARGET: 'http://127.0.0.1:8790',
-      ACCOUNT_HUB_DEV_PORT: '5178',
+      DEV_API_TARGET: backendOrigin,
+      ACCOUNT_HUB_DEV_PORT: accountHubPort,
     },
-    probe: { url: 'http://127.0.0.1:5178/', expectText: 'id="root"', verifyModuleScripts: true },
+    probe: { url: `http://127.0.0.1:${accountHubPort}/`, expectText: 'id="root"', verifyModuleScripts: true },
   },
 ];
 

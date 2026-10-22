@@ -11,6 +11,7 @@
     "test:managed-replication": "tsx --test server/digitalEmployees/replicationContentProduction.test.ts server/digitalEmployees/replicationWorkbenchPlan.test.ts server/digitalEmployees/replicationWorkbenchFinish.test.ts server/lib/automatedReplicationBridge.test.ts server/lib/automatedReplicationBridge.production.test.ts server/lib/replicationMaterialMatching.test.ts server/routes/studioStoryboardAigcE2e.test.ts",
     "dev": "node scripts/sync-mobile-shared.mjs --check && vite",
     "dev:preview:keepalive": "node scripts/local-preview-supervisor.mjs",
+    "dev:preview:platform-ads": "LINGSHU_PREVIEW_BACKEND_PORT=8890 LINGSHU_PREVIEW_FRONTEND_PORT=5187 LINGSHU_PREVIEW_ACCOUNT_HUB_PORT=5188 node scripts/local-preview-supervisor.mjs",
     "dev:account-hub": "node scripts/sync-mobile-shared.mjs --check && vite --config apps/account-hub/vite.config.ts",
     "dev:server": "NODE_USE_ENV_PROXY=1 tsx watch --exclude data server/index.ts",
     "dev:weekly-cta-only": "tsx server/runtime/startWeeklyCtaOnlyLocal.ts",
