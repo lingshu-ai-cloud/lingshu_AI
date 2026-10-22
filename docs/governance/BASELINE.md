@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工旧首页与计划预览脚手架清理（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `6e5e4fcc49b9442b09f035a2f8e0f0bee1309a88` 删除未挂载的 `TodayNextAction`、`BusinessLoopMap`、`ResourcePreflightPanel`、`NextActionBanner`、`DraftPlanPreview` 与未使用的彩纸常量；实际首页 `TodayFocusPanel`、任务包 `WeeklyExecutionNodes`、任务详情及 `OnboardingPanel` 的就绪资产跳转仍保留。页面从 3,818 降到 3,319 行，历史预算同步收紧；全仓仍有 6 个超限文件。
+- 旧源码契约测试曾以未挂载的业务流转图和草案预览文案证明已交付，现改为检查实际任务包节点、已保存的任务状态来源和旧视图不存在。`DigitalEmployeePage.contract.test.ts`、`test:digital-employees`、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,352 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未做浏览器交互、真实供应商调用、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 数字员工旧生产现场链清理（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `3e4183d64f06d4b4ed498bc7c01a0e6ac3ea1e35` 移除了仅在彼此内部引用、未挂到页面的 `ProductionScene` 及其任务图标、事件时间线、截图流、纠偏和跳过/人工完成操作面板。当前选中任务仍挂 `ProductionTaskScene`，业务深链和 `SmartBusinessDashboard` 重试入口未变。`DigitalEmployeePage.tsx` 从 4,477 降至 3,818 行，历史预算同步收紧；全仓仍有 6 个超限文件。
