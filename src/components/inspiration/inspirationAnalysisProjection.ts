@@ -1,8 +1,93 @@
 import { buildBenchmarkAnalysis } from '../../../shared/benchmarkAnalysis';
 import { productionReferenceAdmission } from '../../../shared/productionReferenceAdmission';
 import { analysisProgressIsActive } from './VideoAnalysisProgressPanel';
-import { parseFrameTimeRange } from './inspirationFrameMatching';
+import { parseFrameTimeRange, shortenText } from './inspirationFrameMatching';
 import type { ContentFormat, FirstTenSecondInsight, GeminiVideoAnalysis, ScriptAnalysis, ScriptDetail15s, ScriptSummary15s, StructureStep, TrendVideo, VideoAnalysisPayload } from '../../lib/inspirationTypes';
+
+export function referenceHighlights(video: TrendVideo, analysis: ScriptAnalysis | null): string[] {
+  if (!analysis) return [
+    `参考标题只提炼钩子类型，不复述原文：${shortenText(video.title, 60)}`,
+    video.tags.length ? `标签只用于判断受众，不输出原 hashtag：${video.tags.slice(0, 4).join('、')}` : '按平台短视频节奏生成',
+    '必须用产品真实细节替换空泛卖点',
+  ].filter(Boolean);
+  return [
+    ...analysis.referenceHighlights,
+    ...analysis.structure.slice(0, 4).map(item => `${item.time} ${item.label}: ${item.desc}`),
+    ...analysis.scriptDetails15s.slice(0, 3).map(item => `${item.time}: ${item.visual}`),
+  ].filter(Boolean).slice(0, 8);
+}
+
+function summarizePipelineError(raw?: string): string {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  if (/could not find .*cookies database|cookies database/i.test(text)) {
+    return '下载需要平台登录态，但服务端没有读到浏览器 cookies。请配置可用的 YT_DLP_COOKIES_BROWSER，或换一个无需登录即可下载的公开视频链接。';
+  }
+  if (/fetch failed/i.test(text)) {
+    return '真实视频已拿到，但 Gemini 分析请求失败。通常是服务端无法访问 Gemini 或代理/API Key 配置异常；恢复网络后可重新分析。';
+  }
+  if (/GEMINI_API_KEY/i.test(text)) {
+    return 'Gemini API Key 未配置或不可用，暂时无法完成视频理解分析。';
+  }
+  if (/429|RESOURCE_EXHAUSTED|quota|prepayment credits|额度|余额/i.test(text)) {
+    return '待测试用户填入真实 Gemini API Key。当前只展示基础资料分析；配置可用 Key 后，队列会继续升级为视频级分析。';
+  }
+  return text.length > 180 ? `${text.slice(0, 180)}...` : text;
+}
+
+export function pipelineState(video: TrendVideo): { title: string; desc: string; spinning: boolean; failed: boolean } {
+  const analysis = video.aiAnalysis || {};
+  const quotaError = /429|RESOURCE_EXHAUSTED|quota|prepayment credits|额度|余额/i.test(String(analysis.analysisError || analysis.downloadError || analysis.crawlerOpsLastError || ''));
+  if (quotaError) {
+    return { title: '待测试用户填入真实 Gemini API Key', desc: summarizePipelineError(analysis.analysisError || analysis.downloadError || analysis.crawlerOpsLastError), spinning: false, failed: true };
+  }
+  if (analysis.downloadStatus === 'ops_queued') {
+    return { title: '后台增强分析中', desc: '已先生成基础分析；视频获取失败后已进入后台增强队列，成功后会升级为视频级分析。', spinning: true, failed: false };
+  }
+  if (analysis.gemini && (analysis.geminiStatus === 'needs_review' || analysis.analysisQuality === 'video_review_required')) {
+    const reviewCount = analysis.analysisReviewReasons?.length || 1;
+    return { title: '全片分析已完成，待人工复核', desc: `真实视频的全片结构和逐镜证据已经生成；还有 ${reviewCount} 项质量校验需要编导确认，不会继续显示为“生成中”。`, spinning: false, failed: false };
+  }
+  if (analysis.gemini && (analysis.geminiStatus === 'analyzed' || analysis.analysisQuality === 'video')) {
+    return { title: 'AI 策略分析完成', desc: '已基于真实视频提取全片结构、前 10 秒五维拆解和可复用爆点。', spinning: false, failed: false };
+  }
+  if (analysis.analysisError) {
+    return { title: 'AI 策略分析失败', desc: summarizePipelineError(analysis.analysisError), spinning: false, failed: true };
+  }
+  if (analysis.downloadStatus === 'failed' || video.status === 'failed') {
+    return { title: '视频下载失败', desc: summarizePipelineError(analysis.downloadError || analysis.analysisError) || '真实视频没有下载成功，因此无法提交 Gemini 分析。', spinning: false, failed: true };
+  }
+  if (analysis.downloadStatus === 'needs_cookies') {
+    return { title: '下载需要平台登录态', desc: summarizePipelineError(analysis.downloadError), spinning: false, failed: true };
+  }
+  if (analysis.downloadStatus === 'queued') {
+    return { title: '已加入自动策略分析队列', desc: '后台会临时获取真实视频用于全片分析，不写入素材库。长视频通常需要数分钟。', spinning: true, failed: false };
+  }
+  if (analysis.downloadStatus === 'downloading') {
+    return { title: '正在获取真实视频', desc: '正在拉取分析版视频，完成后会立即启动 AI 全片策略分析。', spinning: true, failed: false };
+  }
+  if (analysis.downloadStatus === 'analyzing') {
+    return { title: 'AI 正在进行全片策略分析', desc: '真实视频已拿到，正在分析全片画面、语音、结构和可复用爆点；长视频需要数分钟，完成后会自动替换基础分析。', spinning: true, failed: false };
+  }
+  if (analysis.downloadStatus === 'downloaded' || video.videoUrl) {
+    return { title: 'AI 正在进行全片策略分析', desc: '真实视频已下载，正在提取全片结构和脚本细节。短视频通常几十秒，长视频需要数分钟。', spinning: true, failed: false };
+  }
+  return { title: '等待自动策略分析', desc: '后台会先获取真实视频，再自动完成全片策略分析；等待期间先展示基础资料，不存入素材库。', spinning: true, failed: false };
+}
+
+export function needsVideoEnhancement(video: TrendVideo): boolean {
+  const analysis = video.aiAnalysis;
+  if (!analysis?.gemini) return true;
+  if (analysis.analysisMode === 'exact' && hasCompleteGeminiAnalysis(analysis.gemini)) return false;
+  const analyzedUntil = (analysis.gemini.scriptDetails15s || []).reduce((max, item) => {
+    const numbers = String(item.time || '').match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
+    return Math.max(max, numbers[1] ?? numbers[0] ?? 0);
+  }, 0);
+  if (video.duration > 0 && analyzedUntil > 0 && analyzedUntil + 1 < video.duration) return true;
+  return analysis.analysisSource === 'metadata-fallback' ||
+    analysis.analysisQuality === 'metadata' ||
+    analysis.downloadStatus === 'ops_queued';
+}
 
 export function cleanAnalysisText(value: unknown): string {
   return String(value || '')

@@ -9,6 +9,10 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 9 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## 灵感分析面板边界（2026-10-22）
+
+- 以集成提交 `2a67b2bd5b907c2c356649fb06158d63ab53daff` 为起点，把图文证据标签、视频分析面板、人工校对保存和逐镜素材匹配展示迁入 `InspirationAnalysisPanel.tsx`；分析阶段状态和可复用爆点投影迁入既有纯规则模块。页面只负责打开面板与传入回调，原有 `pipelineState` 导出继续转发。`InspirationDashboard.tsx` 从 4,973 降至 4,403 行；新面板为 500 行、规则模块为 445 行，均在普通文件预算内。`pnpm run lint`、`pnpm run test:social-content-frontend`、灵感页 15 项合同测试、架构扫描与 ratchet、191 项迁移清单只读检查、`pnpm run build` 和 `git diff --check` 通过；未触发真实分析、付费请求或部署。
+
 ## 灵感素材库规则边界（2026-10-22）
 
 - 以集成提交 `fe5a686323d1cab3f419f85a76e4453c45c4e205` 为起点，将素材标签归属、可见语义、分类、入口参数、产品和方向筛选迁至 `inspirationMaterialLibrary.ts`，权威宽高比规则下沉到 `src/lib/materialAspectRatio.ts`；保留灵感页及产品素材组件原有公开导出。`InspirationDashboard.tsx` 从 5,167 降至 4,973 行并收紧预算，未修改租户读取、付费供应商或生产任务路径。新增直接测试覆盖企业通用标签不外显、产品/方向/语义筛选和收藏素材来源关联。`pnpm run lint`、`pnpm run test:social-content-frontend`、灵感页 15 项合同测试、产品素材比例合同、架构扫描与 ratchet、191 项迁移清单只读检查、`pnpm run build` 和 `git diff --check` 通过；未做真实供应商或部署验收。
