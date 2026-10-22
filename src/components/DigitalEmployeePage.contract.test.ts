@@ -304,7 +304,9 @@ for (const period of ['本周', '上周', '本月', '上月']) {
   assert.match(productionSource, new RegExp(period), `production view must support ${period}`);
 }
 assert.doesNotMatch(productionSource, /流量转化漏斗|平台贡献/, 'production must not duplicate the home results dashboard');
-assert.doesNotMatch(pageSource, /<NextActionBanner[\s\S]{0,500}workspaceView === ["']today["']/, 'the overview must not mix its data center with the old task-oriented hero');
+for (const oldView of ['TodayNextAction', 'BusinessLoopMap', 'ResourcePreflightPanel', 'NextActionBanner', 'DraftPlanPreview']) {
+  assert.doesNotMatch(pageSource, new RegExp(`(?:function|<)${oldView}\\b`), `the unmounted ${oldView} view must not be mistaken for a delivered workspace`);
+}
 assert.match(pageSource, /Agent 设置/, 'Agent settings must remain available as a secondary management entry');
 assert.doesNotMatch(pageSource, /通用设置|本 Agent 审批红线|总体审批红线/, 'Agent settings must hide general settings and every per-Agent approval-redline panel');
 assert.match(pageSource, /useState<"business" \| "director" \| "content" \| "customer">\("business"\)/, 'Agent settings must enter the business Agent settings directly');
@@ -508,13 +510,10 @@ assert.match(pageSource, /workspaceView === ["']live["'][\s\S]{0,25000}<Producti
 assert.match(pageSource, /workspaceView === ["']review["'][\s\S]{0,5000}<WeeklyReviewPanel/, 'Weekly Review must have its own render branch');
 assert.match(pageSource, /workspaceView === ["']rules["'][\s\S]{0,8000}(?:OnboardingPanel|approvalPolicy|\u89c4\u5219)/, 'Rules and Permissions must have its own render branch');
 
-for (const capability of ['\u793e\u5a92\u5b9a\u65f6\u4efb\u52a1', '\u9009\u62e9\u7d20\u6750\u52a0\u5de5 / \u7206\u6b3e\u88c2\u53d8', '\u7f16\u5bfc\u9010\u955c\u5206\u6790', '\u5185\u5bb9 Agent \u81ea\u52a8\u4f9b\u7ed9\u753b\u9762', '\u5185\u5bb9\u53d1\u5e03', '\u5ba2\u6237\u5206\u5c42', '\u6279\u91cf\u8ddf\u8fdb']) {
-  assert.match(pageSource, new RegExp(capability), `task-flow map must expose ${capability}`);
-}
-assert.match(pageSource, /\u6570\u5b57\u5458\u5de5\u4efb\u52a1\u6d41\u8f6c\u56fe/, 'the business-native task-flow diagram must remain visible');
+assert.match(packageSource, /<WeeklyExecutionNodes[^>]+data=\{data\}/, 'the current task package must render persisted execution nodes');
 assert.match(pageSource, /readiness=\{data\.businessSnapshot\?\.readiness\s*\|\|\s*\[\]\}/, 'Agent settings must receive readiness from the saved business snapshot instead of inventing it');
 assert.match(packageSource, /确认范围并启动/, 'first-run goal approval must expose the package scope confirmation');
-assert.match(pageSource, /statusSourceLabel\[task\.statusSource\]/, 'plan preview must translate each task status source instead of collapsing every task to a generic placeholder');
+assert.match(pageSource, /selectedTask\.status_source\s*\|\|\s*selectedPlanTask\?\.statusSource/, 'the mounted task scene must show the persisted status source when available');
 assert.match(pageSource, /\/api\/overseas\/enterprise\/profile/, 'the onboarding product table must be loaded from the tenant enterprise knowledge profile');
 assert.match(firstOnboardingSource, /label="企业名称"[\s\S]*label="品牌名称"/, 'first onboarding step must ask only for enterprise and brand names');
 assert.doesNotMatch(firstOnboardingSource, /label="(?:所属行业|目标市场|核心客户|经营目标|重点产品|Agent 设置)"/, 'first onboarding step must not ask for operating assumptions');
