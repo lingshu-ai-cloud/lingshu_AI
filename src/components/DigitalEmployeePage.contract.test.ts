@@ -15,6 +15,7 @@ import { DigitalEmployeeApiError } from '../lib/digitalEmployeeApi.js';
 import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
+const batchFollowupSource = fs.readFileSync('src/components/smartBusiness/BatchFollowupTruthPanel.tsx', 'utf8');
 const todayFocusSource = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeTodayFocusPanel.tsx', 'utf8');
 const weeklyPlanConfirmationSource = fs.readFileSync('src/components/WeeklyPlanConfirmationCard.tsx', 'utf8');
 const weeklyGoalPanelSource = fs.readFileSync('src/components/smartBusiness/WeeklyGoalPanel.tsx', 'utf8');
@@ -581,10 +582,10 @@ assert.deepEqual(agentCursorPercent(uiAction), { left: 50, top: 50 }, 'worker pi
 assert.match(libSource, /correctTask:[\s\S]{0,350}instruction:[\s\S]{0,100}scope:[\s\S]{0,100}rerunDownstream/, 'correction API must preserve all three contract fields');
 
 assert.match(insightSource, /status === 'available'/, 'review findings must use available receipts');
-assert.match(pageSource, /\u6279\u51c6\u7684\u662f\u9010\u5ba2\u8349\u7a3f\u6279\u6b21\uff0c\u4e0d\u7b49\u4e8e\u6d88\u606f\u5df2\u7ecf\u53d1\u51fa/, 'batch approval must not be presented as delivery');
-assert.match(pageSource, /\u53d1\u9001\u6267\u884c\u670d\u52a1\u5f53\u524d\u4e3a\u624b\u52a8\u89e6\u53d1\u6a21\u5f0f/, 'the batch panel must distinguish manual mode from a ready automatic worker');
-assert.match(pageSource, /\u771f\u5b9e\u53d1\u9001\u56de\u6267/, 'the batch panel must wait for provider evidence');
-assert.match(pageSource, /\u53d1\u9001\u5df2\u5230\u671f\u5ba2\u6237/, 'manual-only mode must expose an explicit due-item dispatch action');
+assert.match(batchFollowupSource, /\u6279\u51c6\u7684\u662f\u9010\u5ba2\u8349\u7a3f\u6279\u6b21\uff0c\u4e0d\u7b49\u4e8e\u6d88\u606f\u5df2\u7ecf\u53d1\u51fa/, 'batch approval must not be presented as delivery');
+assert.match(batchFollowupSource, /\u53d1\u9001\u6267\u884c\u670d\u52a1\u5f53\u524d\u4e3a\u624b\u52a8\u89e6\u53d1\u6a21\u5f0f/, 'the batch panel must distinguish manual mode from a ready automatic worker');
+assert.match(batchFollowupSource, /\u771f\u5b9e\u53d1\u9001\u56de\u6267/, 'the batch panel must wait for provider evidence');
+assert.match(batchFollowupSource, /\u53d1\u9001\u5df2\u5230\u671f\u5ba2\u6237/, 'manual-only mode must expose an explicit due-item dispatch action');
 assert.match(pageSource, /digitalEmployeeApi\.dispatchFollowupBatch/, 'the manual dispatch action must call the worker route');
 
 assert.match(pageSource, /<BusinessHealthOverview summaryOnly data=\{data\}/, 'the home overview must mount its real business-health summary');
@@ -782,9 +783,9 @@ assert.match(reviewSource, /liveReview/, 'an active run must use the server live
 assert.match(reviewSource, /本轮仍在运行，以下为阶段性发现/, 'the review view must label active-run results as provisional');
 assert.match(productionSource, /aria-label="生产统计周期"/, 'the overview period selector must expose an accessible group label');
 assert.match(productionSource, /aria-pressed=\{period === id\}/, 'the selected overview period must be machine-readable');
-assert.match(pageSource, /dispatch\?\.blocked_reason/, 'the follow-up truth panel must display the server preflight field from dispatch preflight');
-assert.match(pageSource, /manualFollowupSendAllowed/, 'the manual send CTA must be gated by the tenant/provider authorization facts');
-assert.match(pageSource, /真实发送未就绪/, 'the UI must state that real sending is unavailable instead of implying it only waits for time or receipt');
+assert.match(batchFollowupSource, /dispatch\?\.blocked_reason/, 'the follow-up truth panel must display the server preflight field from dispatch preflight');
+assert.match(batchFollowupSource, /manualFollowupSendAllowed/, 'the manual send CTA must be gated by the tenant/provider authorization facts');
+assert.match(batchFollowupSource, /真实发送未就绪/, 'the UI must state that real sending is unavailable instead of implying it only waits for time or receipt');
 assert.doesNotMatch(pageSource, /sticky top-2 z-40/, 'workspace navigation must scroll with the page instead of covering operating data');
 assert.match(assistantSource, /data-global-assistant="root"[\s\S]{0,240}fixed[\s\S]{0,160}bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, 'the assistant must retain a fixed entry that clears the device safe area');
 assert.match(assistantSource, /launcherRetracted && mode === 'breathing' \? 'right-0 md:right-0' : 'right-4 md:right-5'/, 'the expanded assistant entry must keep its bottom-right page inset');
