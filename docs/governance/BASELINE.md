@@ -2,6 +2,12 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Instagram/TikTok 图片帖投影拆分与 LinkedIn 门禁复核（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `f9983810` 将 Instagram/TikTok Apify 图片帖的来源、图片和互动数据纯投影迁至 `server/routes/videoCrawlerImageProjection.ts`，保留原有平台/视频排除规则；`videos.ts` 仍负责 Actor 调用、付费准入和持久化，从 9,720 降至 9,647 行，历史预算同步收紧。全仓仍有 7 个超限文件，结构治理未完成。
+- 新直测 4/4、`test:video-source-boundaries` 43/43、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,331 个生产 TypeScript 文件）、192 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未执行真实供应商调用、目标库迁移、浏览器验收或部署。
+- 复核现有 LinkedIn 逐 run 批准/撤销、受控 Actor 传输和原始 HTTP 回执后，真实入口仍因缺少可信账号报价及汇率、独立 dataset/传输费用预算、跨实例唯一付费许可签发与目标共享卷验证而保持关闭。批准记录不能充当付费许可；下一步须先补齐这些证据及签发器，再做不调用真实供应商的端到端门禁测试。最终本地/远端 SHA 与工作区状态以推送后 Git 核对为准。
+
 ## 灵小枢确定性操作请求边界拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `9203396d` 将带鉴权的确定性动作 HTTP 请求、409 冲突、422 缺输入、超时结果待确认与无效响应的可见错误卡映射迁至 `src/lib/assistantActionRequest.ts`。浮层仍只从服务端签名卡片构造变更操作、保留身份范围与任务卡编排；请求故障不得回退为通用聊天。`GlobalAssistant.tsx` 从 1,682 降至 1,622 行，历史预算同步收紧；全仓仍有 7 个超限文件，架构治理未完成。
