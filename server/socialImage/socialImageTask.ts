@@ -126,6 +126,26 @@ export async function readSocialImageTask(store: DataStore, tenantId: string, id
   };
 }
 
+/** A browser may request repair, but may not invent or approve a delivery node. */
+export function socialImageClientOutputPatchIssue(
+  current: SocialImageCreationTask['outputs'],
+  proposed: SocialImageCreationTask['outputs'],
+): string | null {
+  if (!Array.isArray(proposed) || proposed.length !== current.length) return 'social_image_outputs_server_owned';
+  for (let index = 0; index < current.length; index += 1) {
+    const existing = current[index]!;
+    const candidate = proposed[index]!;
+    if (!candidate || candidate.id !== existing.id) return 'social_image_outputs_server_owned';
+    const { state: oldState, ...oldFields } = existing;
+    const { state: nextState, ...nextFields } = candidate;
+    if (JSON.stringify(nextFields) !== JSON.stringify(oldFields)) return 'social_image_outputs_server_owned';
+    if (nextState !== oldState && (nextState !== 'repair_required' || oldState === 'superseded')) {
+      return 'social_image_output_transition_invalid';
+    }
+  }
+  return null;
+}
+
 export async function updateSocialImageTask(store: DataStore, tenantId: string, id: string, expectedVersion: number, patch: Partial<SocialImageCreationTask>) {
   const row = await store.getById<StoredImageTask>(SOCIAL_IMAGE_TASKS_COLLECTION, id);
   const current = row?.tenant_id === tenantId && row.spec?.socialImageTask ? { ...row.spec.socialImageTask, id: row.id } : null;

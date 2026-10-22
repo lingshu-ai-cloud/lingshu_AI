@@ -5,7 +5,7 @@ import { Router } from 'express';
 import sharp from 'sharp';
 import type { AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
-import { createSocialImageTask, readSocialImageTask, updateSocialImageTask } from '../socialImage/socialImageTask.js';
+import { createSocialImageTask, readSocialImageTask, socialImageClientOutputPatchIssue, updateSocialImageTask } from '../socialImage/socialImageTask.js';
 import { socialImageOwnedMaterialUrl, socialImageQueuedJobIssue, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
 import { recoverSocialImagePaidMaterial } from '../socialImage/socialImageMaterialRecovery.js';
 import { abandonSocialImageMultiUnitPlan, persistSocialImageMultiUnitPlan } from '../socialImage/socialImageDurablePlan.js';
@@ -201,6 +201,13 @@ socialImageRouter.patch('/tasks/:id', async (req, res) => {
       if (current.version !== expectedVersion) { res.status(409).json({ ok: false, error: '任务已被更新，请刷新后继续', task: current }); return; }
       const issue = socialImageQueuedJobIssue(current, patch.generationJobs);
       if (issue) { res.status(409).json({ ok: false, code: issue, error: '已有图片生成请求待完成或待核对，不能改写付费任务记录' }); return; }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'outputs')) {
+      const current = await readSocialImageTask(store, tenantId, req.params.id);
+      if (!current) { res.status(404).json({ ok: false, error: '图片任务不存在' }); return; }
+      if (current.version !== expectedVersion) { res.status(409).json({ ok: false, error: '任务已被更新，请刷新后继续', task: current }); return; }
+      const issue = socialImageClientOutputPatchIssue(current.outputs, patch.outputs);
+      if (issue) { res.status(409).json({ ok: false, code: issue, error: '成片与质检证据由服务端写入，页面只能将现有成片标记为待修复' }); return; }
     }
     if (['imageType', 'creationPath', 'deliverySpec', 'contentBrief', 'creativeRecipe', 'enterpriseAssets', 'materialIds', 'referenceUrls', 'referenceSnapshot', 'replicationRecipe', 'renderBrief', 'imageTextContract', 'layerGraph']
       .some(field => Object.prototype.hasOwnProperty.call(patch, field))) {
