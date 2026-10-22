@@ -72,7 +72,10 @@ assert.match(localRenderRoute, /verifyRenderToken\(req\.body\?\.token\)/, 'local
 assert.match(localRenderRoute, /studioRenderManifestHash\(manifest\)/, 'local export must bind token to the exact manifest');
 assert.match(localRenderRoute, /secureStudioRenderManifest\(manifest, tenantId/, 'local export must normalize and scope media before rendering');
 assert.match(localRenderRoute, /requireVisualAssets: true/, 'local export must require every declared visual');
-assert.match(studioBackend, /absoluteAssetUrl\(base, studioBgmMediaPath\(track, tenantId\)\)/, 'render manifest must use a tenant-scoped BGM stream URL');
+assert.match(studioBackend, /track && tenantId \? studioBgmMediaPath\(track, tenantId\) : null/, 'render route must select a tenant-scoped BGM stream URL');
+assert.match(readFileSync(new URL('./studioRenderManifestProjection.ts', import.meta.url), 'utf8'),
+  /bgm: \{ id: spec\.bgm \?\? null, url: absoluteAssetUrl\(base, bgmUrl\) \}/,
+  'render manifest must resolve the selected tenant-scoped BGM stream URL');
 assert.match(studioBackend, /studioRouter\.get\('\/bgm\/media\/:id'[\s\S]*?objectStorageGetObject\(key, req\.headers\.range\)/, 'cloud BGM must stream from storage through the authenticated route');
 const openOutputRoute = studioBackend.slice(studioBackend.indexOf("studioRouter.post('/render/open-output'"), studioBackend.indexOf('/* ── 素材库', studioBackend.indexOf("studioRouter.post('/render/open-output'")));
 assert.match(openOutputRoute, /safeStudioRenderOutputPath\(/, 'opening a render folder must enforce the tenant output boundary');

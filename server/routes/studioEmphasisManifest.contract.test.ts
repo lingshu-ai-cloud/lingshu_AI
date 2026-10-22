@@ -3,9 +3,11 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
-const renderContract = source.slice(source.indexOf('interface RenderSpec'), source.indexOf('// POST /studio/render/local'));
+const renderContract = readFileSync(new URL('./studioRenderManifestProjection.ts', import.meta.url), 'utf8');
 
 test('render authorization always builds one canonical emphasis plan into the signed manifest', () => {
+  assert.match(source, /return buildStudioRenderManifest\(\{ jobId, spec, base, materialUrlByName: urlByName,/);
+  assert.match(source, /studioRenderManifestHash\(manifest\)/);
   assert.match(renderContract, /const emphasisPlan = buildStudioEmphasisPlan\(\{/);
   assert.match(renderContract, /subtitles: spec\.subtitles/);
   assert.match(renderContract, /timeline: rawTimeline/);

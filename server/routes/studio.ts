@@ -60,6 +60,7 @@ import { productSceneMaterialBindingChanges, productSceneMaterialProductAssociat
 export { productSceneMaterialBindingChanges, productSceneMaterialProductAssociationChanges, productSceneMaterialProvenanceOf } from './studioProductSceneProvenance.js';
 import { buildStudioProductScenePreparationSlots, productSceneMaterialProductionEligible, productSceneSourceImageUrl, scopeProductSceneProjection } from './studioProductSceneProjection.js';
 import { projectStudioMaterialLibrary } from './studioMaterialLibraryProjection.js';
+import { buildStudioRenderManifest, type RenderManifest, type RenderSpec, type SubCue } from './studioRenderManifestProjection.js';
 import { analysisDetailsTimelineQuality, referenceTimelineQuality } from './studioReferenceTimelineQuality.js';
 export { buildStudioProductScenePreparationSlots, filterMaterialsByProductAssociation, scopeProductSceneProjection } from './studioProductSceneProjection.js';
 import { PRODUCT_SCENE_UPLOAD_SOURCE, productSceneUploadErrorResponse, productSceneUploadReuseMetadata, resolveMaterialUploadProductBinding, resolveProductSceneUploadIntent, verifyProductSceneUpload, type MaterialUploadProductBinding, type ProductSceneUploadIntent, type VerifiedProductSceneUpload } from './studioProductSceneUpload.js';
@@ -110,8 +111,6 @@ import { normalizeCompleteTimestampTranslation, normalizeTimestampTranslationVal
 export { normalizeCompleteTimestampTranslation, normalizeTimestampTranslationValue, timestampedTranslationCues } from '../lib/translationCues.js';
 import { buildMaterialScriptAnalysis, type MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 import { VIDEO_LANGUAGES } from '../../shared/contracts/videoLanguages.js';
-import { normalizeEffectPlan, type EffectPlanV1 } from '../../shared/contracts/effectPlan.js';
-import { buildStudioEmphasisPlan, type StudioEmphasisPlan, type StudioEmphasisPlanInput } from '../lib/studioEmphasisManifest.js';
 import { runStudioEmphasisPrepass } from '../lib/studioEmphasisPrepass.js';
 import type { StudioEmphasisPreanalysis } from '../lib/studioEmphasisAlignment.js';
 import { eligibleStudioEmphasisSource } from '../lib/studioRenderEmphasisPrepass.js';
@@ -4942,131 +4941,16 @@ Return ONLY JSON: { "selectedIds": string[] (ordered), "reason": string (one sho
    接入后只需把对应 url 填上，对外契约不变。
 ─────────────────────────────────────────────────────────────────────────── */
 
-interface SubCue { start: number; end: number; text: string; zh?: string }
-interface SubtitleSpec { mode: 'off' | 'target' | 'bilingual'; cues: SubCue[]; style: Record<string, unknown> }
-
-interface RenderSpec {
-  materials?: string[];
-  timeline?: {
-    sceneId?: string;
-    clipId?: string;
-    name: string;
-    url?: string;
-    type?: 'video' | 'image' | 'audio';
-    trimStart?: number;
-    trimEnd?: number;
-    speed?: number;
-    targetStart?: number;
-    targetEnd?: number;
-    targetDuration?: number;
-    purpose?: string;
-    caption?: string;
-    targetVisual?: string;
-    action?: string;
-  }[];
-  script?: string;
-  voice?: string;
-  bgm?: string;
-  bgmVol?: number;
-  voiceVol?: number;
-  coverId?: string;
-  coverTitle?: string;
-  coverUrl?: string; // 前端封面步生成的 /covers/xxx.svg
-  ratio?: string;
-  duration?: number;
-  platform?: string;
-  language?: string;
-  voiceoverUrl?: string; // 前端在脚本步生成配音后回传的 /tts/xxx.wav
-  subtitles?: SubtitleSpec; // 字幕轨：桌面端 ffmpeg 按 cue 烧录
-  effectPlan?: EffectPlanV1; // 白名单特效计划；服务端会再次标准化
-  emphasisPlan?: StudioEmphasisPlanInput; // 可选人工/Agent 校正；缺省时由字幕与分镜静默生成
-}
-
-interface RenderManifest {
-  jobId: string;
-  requireVisualAssets: true;
-  spec: { ratio: string; resolution?: string; duration: number; platform: string; language: string; bgmVol: number; voiceVol: number };
-  script: string;
-  timeline: {
-    index: number;
-    name: string;
-    url: string | null;
-    trimStart?: number;
-    trimEnd?: number;
-    speed?: number;
-    targetStart?: number;
-    targetEnd?: number;
-    targetDuration?: number;
-  }[];
-  voiceover: { voice: string | null; url: string | null };
-  cover: { id: string | null; title: string; url: string | null };
-  bgm: { id: string | null; url: string | null };
-  subtitles?: SubtitleSpec;
-  effectPlan?: EffectPlanV1;
-  emphasisPlan: StudioEmphasisPlan;
-}
-
-function absoluteAssetUrl(base: string, value?: string | null): string | null {
-  const raw = String(value || '').trim();
-  if (!raw) return null;
-  if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
-  return `${base}${raw.startsWith('/') ? raw : `/${raw}`}`;
-}
-
 function buildManifest(jobId: string, spec: RenderSpec, base: string, emphasisPreanalysis?: StudioEmphasisPreanalysis): RenderManifest {
   // 选中素材按名称映射到素材库的真实 URL（已上传的给绝对地址，ffmpeg 可直接拉取）
   const tenantId = studioTenantContext.getStore();
   const urlByName = new Map(loadMaterials()
     .filter(m => m.scope === 'shared' || (tenantId && m.tenantId === tenantId))
     .map(m => [m.name, m.url]));
-  const rawTimeline: NonNullable<RenderSpec['timeline']> = spec.timeline?.length
-    ? spec.timeline
-    : (spec.materials ?? []).map(name => ({ name }));
-  const normalizedEffectPlan = spec.effectPlan ? normalizeEffectPlan(spec.effectPlan, rawTimeline.map((item, index) => ({
-    sceneId: item.sceneId || item.clipId || String(index),
-    clipId: item.clipId,
-    targetDuration: item.targetDuration,
-  }))) : undefined;
-  const emphasisPlan = buildStudioEmphasisPlan({
-    durationSeconds: spec.duration ?? 20,
-    script: spec.script,
-    subtitles: spec.subtitles,
-    timeline: rawTimeline,
-    emphasisPlan: spec.emphasisPlan,
-    emphasisPreanalysis,
-  });
-  return {
-    jobId,
-    requireVisualAssets: true,
-    spec: {
-      ratio: spec.ratio || '9:16',
-      duration: spec.duration ?? 20,
-      platform: spec.platform || 'tiktok',
-      language: spec.language || 'en',
-      bgmVol: spec.bgmVol ?? 35,
-      resolution: (spec as any).resolution || '1080p',
-      voiceVol: spec.voiceVol ?? 100,
-    },
-    script: spec.script ?? '',
-    timeline: rawTimeline.map((item, index) => {
-      const rel = urlByName.get(item.name);
-      const directUrl = 'url' in item && typeof item.url === 'string' ? item.url : undefined;
-      const resolvedUrl = absoluteAssetUrl(base, directUrl || rel);
-      return { index, ...item, url: resolvedUrl,
-        productUrl: absoluteAssetUrl(base, 'productUrl' in item ? String(item.productUrl || '') : ''),
-        backgroundUrl: absoluteAssetUrl(base, 'backgroundUrl' in item ? String(item.backgroundUrl || '') : ''),
-      }; // 优先使用逐镜传入 URL，避免 AI/临时素材被名称映射覆盖
-    }),
-    voiceover: { voice: spec.voice ?? null, url: absoluteAssetUrl(base, spec.voiceoverUrl) },
-    cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: absoluteAssetUrl(base, spec.coverUrl) },
-    bgm: (() => {
-      const track = spec.bgm && tenantId ? withRecommendedBgmNames(userBgms(tenantId)).find(t => t.id === spec.bgm) : null;
-      return { id: spec.bgm ?? null, url: track && tenantId ? absoluteAssetUrl(base, studioBgmMediaPath(track, tenantId)) : null };
-    })(),
-    subtitles: spec.subtitles && spec.subtitles.mode !== 'off' ? spec.subtitles : undefined,
-    effectPlan: normalizedEffectPlan,
-    emphasisPlan,
-  };
+  const track = spec.bgm && tenantId ? withRecommendedBgmNames(userBgms(tenantId)).find(t => t.id === spec.bgm) : null;
+  const bgmUrl = track && tenantId ? studioBgmMediaPath(track, tenantId) : null;
+  return buildStudioRenderManifest({ jobId, spec, base, materialUrlByName: urlByName,
+    bgmUrl, emphasisPreanalysis });
 }
 
 // POST /studio/render  Body: RenderSpec → { ok, token, expiresAt, manifest }
