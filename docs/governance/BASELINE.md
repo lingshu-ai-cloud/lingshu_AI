@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 视频爬虫静态来源目录拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `07414ec1` 将 Facebook/Instagram 静态来源 URL、TikTok 账号种子及按关键词选择的历史候选从 `server/routes/videos.ts` 迁至纯规则模块 `videoCrawlerSeedCatalog.ts`。路由保留实时检索、媒体读取、来源资格筛选、租户边界及付费准入；从 9,424 降至 9,200 行，架构预算同步收紧。全仓仍有 6 个历史超限文件，不能称结构拆分完成。
+- 新目录直测 2/2、`test:video-source-boundaries` 89/89、`test:production-workflows`、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,347 个生产 TypeScript 文件）、193 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。没有对静态 URL 做实时可访问性或授权确认，也没有真实下载、付费调用、目标库迁移、浏览器验收或部署。最终本地/远端 SHA 与工作区状态以推送后 Git 核对为准。
+
 ## LinkedIn 公司帖付费报价边界（2026-10-23）
 
 - 代码提交 `a91c11ee` 新增 `linkedinCompanyCollectionQuote.ts`：在逐 run 批准与来源仍有效时，从受信任端口读取账号/Token 指纹、Actor USD 上限、汇率 CNY 上界和数据集读取等非 Actor 费用上界，计算不超过人工批准金额的人民币最坏情况报价；缺项或变化均拒绝。报价前后重读权威批准，并将任务、账号、Actor 输入和证据哈希绑定到稳定操作标识。

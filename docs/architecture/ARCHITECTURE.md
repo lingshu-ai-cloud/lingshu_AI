@@ -36,6 +36,7 @@
 - `server/routes/videoAnalysisRecovery.ts`：视频级失败保留已有证据、显式重试清空旧终态、供应商错误脱敏及用户恢复提示的纯规则；`videos.ts` 保留旧导出并负责租户数据读写、队列与 HTTP 响应。该拆分不改变供应商调用或付费许可。
 - `server/routes/videoCrawlerProviderProjection.ts`：TikTok、Instagram、Facebook 的 Apify 视频行转候选、媒体封面 URL、标题与指标的纯投影；原路由继续负责 Actor 请求、付费门禁、账号范围、队列和持久化，图片帖投影可复用这些基础规则。
 - `server/routes/videoCrawlerImageProjection.ts`：Instagram 与 TikTok 的 Apify 图片帖纯投影，保留来源 URL、图片、互动数据与视频排除规则；`videos.ts` 继续负责 Actor 调用、付费准入、账号范围、队列和持久化。Facebook 图片帖转换仍在原路由。
+- `server/routes/videoCrawlerSeedCatalog.ts`：按平台及关键词选择历史静态公开 URL 和兜底候选的纯目录；`videos.ts` 保留实时检索、下载、资格筛选和失败处理。目录项不是当前可访问性或素材授权证明，不得直接升级为已验证媒体。
 - `server/routes/videoAnalysisTimelineProjection.ts`：精确视频分析的纯时间线规则，包括物理剪辑点选帧、观察窗口合并、跨镜头语义片段切分及局部时间标签平移；`videos.ts` 保留原有公开导出，并继续负责帧提取、模型请求、分析状态和回执。
 - `server/routes/videoDownloaderArgs.ts`：按显式传入的代理、浏览器、User-Agent 与 Node 可执行路径纯组装 yt-dlp 参数和平台 Referer；`videos.ts` 负责读取运行环境、执行下载及旧公开函数转发，不让伪搜索 URL 中的中文关键词进入 HTTP Referer。
 - `server/routes/videoCrawlerRuntimeConfig.ts`：本地爬虫代理、子进程环境、Cookie 文件和浏览器候选的运行配置；路由仅持有当前尝试的代理选择并执行下载。逗号分隔的浏览器配置按实际候选拆分，单浏览器参数只取首项，不能把整串作为 yt-dlp 浏览器名。
