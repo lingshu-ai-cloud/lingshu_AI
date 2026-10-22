@@ -12,11 +12,10 @@ assert.match(weekly.url, /search_query=face%20cleanser%20supplier/);
 assert.match(weekly.url, /sp=EgIIAw%253D%253D/);
 assert.equal(weekly.dateEvidence, 'youtube-upload-filter');
 
-const source = readFileSync(new URL('./videos.ts', import.meta.url), 'utf8');
-const youtube = source.slice(source.indexOf('async function crawlYouTubeSearch'), source.indexOf('async function crawlYouTubeUploadDateFilteredSearch'));
-assert.doesNotMatch(youtube, /catch \(e\) \{\s*throw new Error\(`YouTube Shorts search failed/,
-  'yt-dlp failure must not make the existing HTML parser unreachable');
-assert.match(youtube, /YouTube yt-dlp search failed, trying HTML search/);
-assert.match(youtube, /dateEvidence,/);
+const route = readFileSync(new URL('./videos.ts', import.meta.url), 'utf8');
+const publicDiscovery = readFileSync(new URL('./videoCrawlerPublicDiscovery.ts', import.meta.url), 'utf8');
+assert.match(route, /crawlYouTubePublicSearch\(\{ keyword, limit, dateFrom, dateTo, crawlFlatSearch: crawlYtDlpSearch \}\)/);
+assert.match(publicDiscovery, /YouTube yt-dlp search failed, trying HTML search/);
+assert.match(publicDiscovery, /dateEvidence,/);
 
 console.log('crawler fallback tests passed');

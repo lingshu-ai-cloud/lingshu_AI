@@ -1,8 +1,9 @@
 import {createReferenceReviewReadHandlers} from '../lib/referenceReviewReadHandlers.js';
 import { apifyFacebookPostToCrawledVideo, apifyInstagramItemToCrawledVideo, apifyTikTokItemToCrawledVideo, asRecord, cleanupAnalysisTitle, compactNumber, firstImageUrl, normalizeThumbnailUrl } from './videoCrawlerProviderProjection.js';
 import { apifyFacebookPostToImagePost, apifyInstagramItemToImagePost, apifyTikTokItemToImagePost } from './videoCrawlerImageProjection.js';
-import { crawlFailureMessage, youtubeHtmlSearchUrl, publicSearchQuery, cleanSearchResultUrl, mergeCrawledVideos, metaToCrawledVideo, normalizeCrawledVideo, thumbnailForPlatform, softDownloadFailure, isNonRetryableVideoFetch } from './videoCrawlerPublicProjection.js';
+import { crawlFailureMessage, cleanSearchResultUrl, mergeCrawledVideos, metaToCrawledVideo, normalizeCrawledVideo, thumbnailForPlatform, softDownloadFailure, isNonRetryableVideoFetch } from './videoCrawlerPublicProjection.js';
 import { projectVideoPipelineStats } from './videoPipelineStatsProjection.js';
+import { crawlYouTubePublicSearch, fetchPublicText as fetchText, searchPublicVideoUrls, searchPublicVideoUrlsByQuery } from './videoCrawlerPublicDiscovery.js';
 export { crawlFailureMessage, youtubeHtmlSearchUrl } from './videoCrawlerPublicProjection.js';
 import { metadataFallbackAnalysis } from './videoCrawlerMetadataFallback.js';
 import { analysisQueuePositions, publicVideoRecord, recordMatchesKeyword } from './videoPublicRecordProjection.js';
@@ -37,7 +38,7 @@ import { assertConfiguredLinkedInCompanyPaidCollection, runConfiguredLinkedInCom
 import {frozenWeeklyAccountFiveVideoActorInput} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
 import {readVerifiedWeeklyOriginalDatasetReplay,type VerifiedWeeklyOriginalDatasetReplay} from '../socialDiscovery/weeklyAccountCollectionDatasetContinuation.js';
 import type {DataStore} from '../storage/datastore.js';
-import {discoveryVideoRecordId,loadKnownVideoSourceIdentities,sourceAccountFromProviderMetadata,sourceAccountFromVideoUrl,sourceAccountFromYouTubeRenderer,videoSourceIdentity} from './videoSourceIdentity.js';
+import {discoveryVideoRecordId,loadKnownVideoSourceIdentities,sourceAccountFromProviderMetadata,sourceAccountFromVideoUrl,videoSourceIdentity} from './videoSourceIdentity.js';
 import {canFingerprintThumbnailUrl,fingerprintVideoThumbnail,likelySameVideoThumbnail,loadKnownVideoThumbnailFingerprints} from './videoThumbnailDuplicate.js';
 import {acquireDurableOperationLease,assertDurableOperationLease,releaseDurableOperationLease} from '../runtime/durableLease.js';
 import {executeExactChunks} from '../lib/exactChunkExecution.js';
@@ -97,8 +98,8 @@ import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, exactV
 import { benchmarkAnalysisForRecord } from '../lib/benchmarkAnalysis.js';
 import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
 import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot, reconcileStoredOpeningHookMotionEvidence } from './hookMotionEvidence.js';
-import { isDiscoveryVideoEligible, youtubeShortUrl } from '../../shared/contracts/discoveryVideoPolicy.js';
-import { apifyCandidateWindow, cleanupFacebookTitle, dateOnly, decodeHtml, extractBestThumbnail, extractFacebookViews, extractFacebookWatchUrls, extractMeta, extractRunsText, extractTitle, extractYtInitialData, filterDateRangeItems, filterKeywordRelevantItems, filterRealMediaItems, findObjectsByKey, hasDateRange, hasRealThumbnail, heatValue, humanSize, inferPlatformFromUrl, isGenericSocialTitle, isKeywordRelevant, isPlatformUrl, isWithinDateRange, keywordRequiredTermGroups, keywordSearchTerms, mergeExistingTags, metadataCreatorAccount, metadataTitle, metadataUploader, mimeFromPath, parseDuration, parseJsonRecord, safeMaterialName, safeVideoExtension, sortByHeat, tagsFromKeyword, textAt, uploadedAtFromMeta, videoDedupeKey, ytdlpDateArgs, type CrawledVideo } from './videoCrawlerNormalization.js';
+import { isDiscoveryVideoEligible } from '../../shared/contracts/discoveryVideoPolicy.js';
+import { apifyCandidateWindow, cleanupFacebookTitle, dateOnly, decodeHtml, extractFacebookViews, extractFacebookWatchUrls, extractMeta, extractTitle, filterDateRangeItems, filterKeywordRelevantItems, filterRealMediaItems, hasDateRange, hasRealThumbnail, heatValue, humanSize, inferPlatformFromUrl, isGenericSocialTitle, isKeywordRelevant, isPlatformUrl, isWithinDateRange, keywordRequiredTermGroups, keywordSearchTerms, mergeExistingTags, metadataCreatorAccount, metadataTitle, metadataUploader, mimeFromPath, parseJsonRecord, safeMaterialName, safeVideoExtension, sortByHeat, tagsFromKeyword, uploadedAtFromMeta, videoDedupeKey, ytdlpDateArgs, type CrawledVideo } from './videoCrawlerNormalization.js';
 export { apifyCandidateWindow, inferPlatformFromUrl } from './videoCrawlerNormalization.js';
 import {
   hasDurableExactAnalysisOwner,
@@ -7105,82 +7106,7 @@ async function normalizeVideoForGemini(filePath: string): Promise<string> {
 }
 
 async function crawlYouTubeSearch(keyword: string, limit: number, dateFrom = '', dateTo = ''): Promise<CrawledVideo[]> {
-  const shortsUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}&sp=EgIYAQ%253D%253D`;
-  let ytDlpFailure = '';
-  try {
-    const items = await crawlYtDlpSearch('youtube', shortsUrl, keyword, Math.max(limit * 3, limit), '', '', true);
-    return items
-      .filter(item => isWithinDateRange(item.uploadedAt, dateFrom, dateTo))
-      .filter(item => isDiscoveryVideoEligible(item))
-      .slice(0, limit);
-  } catch (e) {
-    ytDlpFailure = e instanceof Error ? e.message : String(e);
-    console.warn('[videos] YouTube yt-dlp search failed, trying HTML search:', ytDlpFailure);
-  }
-  const { url, dateEvidence } = youtubeHtmlSearchUrl(keyword, dateFrom, dateTo);
-  const r = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-  });
-  if (!r.ok) throw new Error(crawlFailureMessage('YouTube', [ytDlpFailure, `HTML search HTTP ${r.status}`], 'search returned no videos'));
-
-  const html = await r.text();
-  const data = extractYtInitialData(html);
-  const renderers = findObjectsByKey(data, 'videoRenderer')
-    .map(obj => obj.videoRenderer as Record<string, unknown>)
-    .filter(Boolean);
-
-  const seen = new Set<string>();
-  const out: CrawledVideo[] = [];
-  for (const renderer of renderers) {
-    const videoId = textAt(renderer, ['videoId']);
-    if (!videoId || seen.has(videoId)) continue;
-    seen.add(videoId);
-
-    const title = extractRunsText(renderer.title) || extractRunsText(renderer.headline) || 'Untitled YouTube video';
-    const sourceUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    const thumbnailUrl = extractBestThumbnail(renderer.thumbnail);
-    const durationLabel = extractRunsText(renderer.lengthText);
-    const views = extractRunsText(renderer.viewCountText) || extractRunsText(renderer.shortViewCountText);
-
-    out.push({
-      platform: 'youtube',
-      title,
-      sourceUrl: youtubeShortUrl(sourceUrl),
-      thumbnailUrl,
-      duration: parseDuration(durationLabel),
-      views,
-      tags: keyword.split(/\s+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean).slice(0, 5),
-      uploadedAt: undefined,
-      dateEvidence,
-      sourceAccountUrl: sourceAccountFromYouTubeRenderer(renderer) ?? undefined,
-      youtubeShort: true,
-    });
-    if (out.length >= limit) break;
-  }
-
-  if (out.length === 0) throw new Error(crawlFailureMessage('YouTube', [ytDlpFailure, 'No videos parsed from HTML search results'], 'search returned no videos'));
-  return out;
-}
-
-async function crawlYouTubeUploadDateFilteredSearch(keyword: string, limit: number, dateFrom = '', dateTo = ''): Promise<CrawledVideo[]> {
-  const { url: searchUrl, dateEvidence } = youtubeHtmlSearchUrl(keyword, dateFrom, dateTo);
-  if (dateEvidence !== 'youtube-upload-filter') return [];
-  try {
-    const items = await crawlYtDlpSearch('youtube', searchUrl, keyword, limit, '', '', true);
-    return items
-      .map(item => ({
-        ...item,
-        thumbnailUrl: item.thumbnailUrl || youtubeThumbnailFromUrl(item.sourceUrl),
-        dateEvidence: 'youtube-upload-filter',
-      }))
-      .filter(item => hasRealThumbnail(item));
-  } catch (e) {
-    console.warn('[videos] youtube upload-date filtered search failed:', e);
-    return [];
-  }
+  return crawlYouTubePublicSearch({ keyword, limit, dateFrom, dateTo, crawlFlatSearch: crawlYtDlpSearch });
 }
 
 async function crawlYtDlpSearch(platform: Platform, searchUrl: string, keyword: string, limit: number, dateFrom = '', dateTo = '', youtubeShortsSource = false): Promise<CrawledVideo[]> {
@@ -7364,25 +7290,6 @@ async function crawlTikTokKeywordFallback(keyword: string, limit: number, exclud
   return out.slice(0, limit);
 }
 
-async function searchPublicVideoUrls(platform: Platform, keyword: string, limit: number): Promise<string[]> {
-  const query = publicSearchQuery(platform, keyword);
-  return searchPublicVideoUrlsByQuery(platform, query, limit);
-}
-
-async function searchPublicVideoUrlsByQuery(platform: Platform, query: string, limit: number): Promise<string[]> {
-  const url = `https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`;
-  const xml = await fetchText(url, 20_000);
-  const urls = new Set<string>();
-  for (const raw of xml.matchAll(/<link>([^<]+)<\/link>/gi)) {
-    const link = decodeHtml(raw[1] || '').trim();
-    if (isPlatformUrl(link, platform) && looksLikeVideoUrl(link, platform)) urls.add(cleanSearchResultUrl(link));
-  }
-  for (const raw of xml.matchAll(/https?:\/\/[^"<\s]+/gi)) {
-    const link = decodeHtml(raw[0] || '').trim();
-    if (isPlatformUrl(link, platform) && looksLikeVideoUrl(link, platform)) urls.add(cleanSearchResultUrl(link));
-  }
-  return [...urls].slice(0, limit);
-}
 
 // 采集某个对标账号主页的最新视频列表（flat-playlist 枚举，最多 limit 条）。
 async function crawlAccountHomepage(platform: Platform, accountUrl: string, limit: number, dateFrom = '', dateTo = '', cloudFallback = false, strictProviderLimit = false): Promise<CrawledVideo[]> {
@@ -7522,23 +7429,6 @@ async function enumerateAccountWithCookies(platform: Platform, listUrl: string, 
   return items.slice(0, limit);
 }
 
-async function fetchText(url: string, timeoutMs: number): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/125 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return await r.text();
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 function isTikTokUnusableWithoutVideoFallback(platform: Platform, message: string, record?: Record<string, unknown> | null): boolean {
   if (platform !== 'tiktok') return false;
