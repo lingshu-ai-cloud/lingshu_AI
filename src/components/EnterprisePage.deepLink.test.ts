@@ -21,9 +21,11 @@ test('enterprise product deep-link only resolves a unique exact product name', (
 
 test('application passes sanitized task context and enterprise page explains material fallback honestly', () => {
   const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+  const pageSlotSource = readFileSync(new URL('../AppPageSlot.tsx', import.meta.url), 'utf8');
   const enterpriseSource = readFileSync(new URL('./EnterprisePage.tsx', import.meta.url), 'utf8');
   assert.match(appSource, /normalizeEnterpriseProductsDeepLink\(detail\)/);
-  assert.match(appSource, /<EnterprisePage productsDeepLink=\{enterpriseProductsDeepLink\}/);
+  assert.match(appSource, /<AppPageSlot[^>]*enterpriseProductsDeepLink/s);
+  assert.match(pageSlotSource, /<EnterprisePage productsDeepLink=\{enterpriseProductsDeepLink\}/);
   assert.match(enterpriseSource, /setKnowledgeView\('products'\)/);
   assert.match(enterpriseSource, /setProductPage\(Math\.floor\(productIndex \/ PAGE_SIZE\) \+ 1\)/);
   assert.match(enterpriseSource, /不会把素材 ID 伪装成页内文件定位/);

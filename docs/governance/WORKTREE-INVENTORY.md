@@ -7,6 +7,8 @@
 
 下文其余章节保留处置前的 19 树历史盘点。用户随后明确选择归档 8 个干净且补丁等价的来源树。再次核验各树无已跟踪/未跟踪改动、相对集成分支 `git cherry` 无正向独有补丁，忽略项仅为可重建的 `node_modules/`。由于这些不是当前任务的 Codex 托管工作树，无法生成 Codex 归档快照；已用 `git worktree remove` 移除 `exact-qwen-no-redirect`、`exact-request-ceiling`、`exact-request-ledger-v2`、`phase3c-v2-carry-seam`、`weekly-budget-carry`、`weekly-exact-head-store`、`weekly-exact-v2-carry`、`weekly-exact-v2-settlement` 的检出目录和注册记录。分支及提交全部保留，可重新检出；依赖目录需重装。现余 11 个有效工作树；5 个含未提交内容的来源树完全未动。
 
+再次按用户的归档选择复核后，另移除 3 个无已跟踪/未跟踪改动、相对集成分支无独有补丁的工作树：`merge-image-aigc-into-architecture`、`xixi-test-1015`、`safe-merge-wu-ui`。后两者的忽略项仅有可重建的 `dist/`、`node_modules/`；detached 的 `safe-merge-wu-ui` 在移除前以 `archive/safe-merge-wu-ui-20261010` 保留 HEAD 引用。现余 8 个有效工作树。`safe-all-modules-ui-20261009` 与 `colleague-handoff-20261019` 虽无 Git 未提交项，但含被忽略的业务/运行数据，未归档；5 个有未提交内容的来源树也未动。以上“移除”仅删除工作树检出目录和其中可重建的构建/依赖缓存，未删除命名分支。
+
 ## 图片 AIGC 来源树复核（2026-10-22）
 
 - 集成分支当前 HEAD `0e5a3dc2664340c72fdd0b465bc915d8eb97cbd2` 与同名远端一致、工作区干净；来源树仍在 `95b0bcc16820e06fcc16ac75e040a6592abdc692`，其提交已是集成历史的祖先。
