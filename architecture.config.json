@@ -10,7 +10,7 @@
     "server/routes/studio.ts": 11292,
     "server/routes/videos.ts": 10486,
     "server/starter198/socialContentProductionExecution.ts": 1787,
-    "src/components/AiCreateStudio.tsx": 13263,
+    "src/components/AiCreateStudio.tsx": 12896,
     "src/components/DigitalEmployeePage.tsx": 4943,
     "src/components/GlobalAssistant.tsx": 2692,
     "src/components/InspirationDashboard.tsx": 3173
