@@ -5,6 +5,7 @@ import { isPredominantlyChineseText } from '../../src/lib/messageLanguage.js';
 const source = fs.readFileSync('src/components/ConversionPage.tsx', 'utf8');
 const chatSource = fs.readFileSync('src/components/customers/ConversionChatThread.tsx', 'utf8');
 const railSource = fs.readFileSync('src/components/customers/ConversionCustomerRail.tsx', 'utf8');
+const replySource = fs.readFileSync('src/components/customers/customerReplyPreparation.ts', 'utf8');
 
 assert.doesNotMatch(
   source,
@@ -33,7 +34,7 @@ assert.match(
   'the composer should make Chinese the default editing language',
 );
 assert.match(
-  source,
+  replySource,
   /source: '简体中文', target: replyLanguage\(customer\)/,
   'translation preview and sending must translate Chinese into the customer target language',
 );
@@ -75,7 +76,7 @@ assert.match(
   'the blank simulation customer must expose an editable procurement stage',
 );
 
-const translatedDraftMappings = source.match(/typeof data\?\.translatedDraft === 'string'/g) ?? [];
+const translatedDraftMappings = replySource.match(/typeof data\?\.translatedDraft === 'string'/g) ?? [];
 assert.ok(
   translatedDraftMappings.length >= 2,
   'handoff and normal AI replies must both use the Chinese translation returned for editing',
