@@ -3,6 +3,12 @@
 最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。本次只读复核未改写工作树、分支或运行数据；历史移除记录见下文。
 
+## 2026-10-23 集成点 `481cfef6` 后复核
+
+- Git 仍登记 11 个有效工作树。集成树在本次只读复核开始时本地/远端同为 `481cfef675c58be458d7791390e8a141f6b4a6cc`，工作区干净；此点位不是永久 HEAD。6 个非集成树仍有未提交源码、文档或运行项：`local-preview-1002`、`local-integrated-flow`、`local-unified-20261010`、`mobile-dual-edition-20261012`、`客服`、`total-merge-langgraph`，均未移动。
+- 4 个干净非集成树中，`safe-all-modules-ui-20261009` 和 `colleague-handoff-20261019` 含被忽略的业务媒体/运行数据；广告树 `xixi1021-full-integration` 已前进至 `20441982`，相对集成点有 15 个独有提交且含广告审计与运行数据；`1022图片生成模块` 的 `23b1bb93` 仍有 1 个非等价独有补丁，仅有可重建依赖缓存并不足以归档。故本轮没有符合“干净、无独有补丁、无不可丢失忽略数据”条件的新归档候选。
+- 原图片 AIGC 来源 `95b0bcc1` 仍是集成祖先；新图片分支 `23b1bb93` 的剩余自动 GPT 降级会改变用户要求暂留的 Qwen→Gemini 行为，且未满足逐记录付费许可，不整笔合入。上述判断只覆盖已提交补丁；来源树未提交的日历/视频进度代码继续保留，不当作已合并。
+
 ## 2026-10-23 图片 AIGC 与归档条件复核
 
 - 当前仍有 11 个有效工作树。集成树在复核点 `d837f94f574ad60adbb3ac23e47eea5a4a07445b` 与同名远端一致，Git 状态干净；该 SHA 不是永久 HEAD。6 个非集成树仍有未提交项：`local-preview-1002` 53、`local-integrated-flow` 91、`local-unified-20261010` 6、`mobile-dual-edition-20261012` 28、`客服` 1、`total-merge-langgraph` 20。计数按 `git status --porcelain` 条目，不代表独立文件数；全部保留。
