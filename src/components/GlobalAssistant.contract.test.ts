@@ -9,6 +9,7 @@ const appShellChromeSource = fs.readFileSync(new URL('./AppShellChrome.tsx', imp
 const appPageSlotSource = fs.readFileSync(new URL('../AppPageSlot.tsx', import.meta.url), 'utf8');
 const appBoundarySource = fs.readFileSync(new URL('./AppPageBoundary.tsx', import.meta.url), 'utf8');
 const conversionPageSource = fs.readFileSync(new URL('./ConversionPage.tsx', import.meta.url), 'utf8');
+const conversionDraftEffectsSource = fs.readFileSync(new URL('./customers/useConversionDraftEffects.ts', import.meta.url), 'utf8');
 const trafficPageSource = fs.readFileSync(new URL('./TrafficWorkspacePage.tsx', import.meta.url), 'utf8');
 const composerSource = fs.readFileSync(new URL('./assistant/AssistantComposer.tsx', import.meta.url), 'utf8');
 const assistantStylesSource = fs.readFileSync(new URL('./assistant/assistantDecisionCenter.css', import.meta.url), 'utf8');
@@ -161,7 +162,8 @@ const liveContextSource = sourceSection(
 );
 assert.match(liveContextSource, /const sourcePage = contextIdentifier\(detail\.sourcePage, 80\);[\s\S]{0,100}if \(!sourcePage \|\| sourcePage !== pageKey\(page\)\) return;/, '所有页面上下文事件都必须显式标记来源页面');
 assert.doesNotMatch(liveContextSource, /contextIdentifier\(detail\.sourcePage, 80\) \?\? pageKey\(page\)/, '缺失 sourcePage 的事件不得默认归属当前页');
-assert.match(conversionPageSource, /agent: 'conversion',[\s\S]{0,80}sourcePage: 'conversion'/, '客户转化页必须绑定自己的页面来源');
+assert.match(conversionPageSource, /useConversionDraftEffects\(/, '客户转化页必须接入上下文副作用');
+assert.match(conversionDraftEffectsSource, /agent: 'conversion',[\s\S]{0,80}sourcePage: 'conversion'/, '客户转化页必须绑定自己的页面来源');
 assert.match(trafficPageSource, /agent: 'traffic',[\s\S]{0,80}sourcePage,/, '社媒共享页必须发送由路由传入的准确页面来源');
 for (const [key, sourcePage] of [['legacy-traffic', 'traffic'], ['social-inspiration', 'socialInspiration'], ['smart-assets-', 'smartAssets'], ['social-monitoring-accounts', 'socialMonitoring']]) {
   assert.match(appPageSlotSource, new RegExp(`key=[^\\n]*${key}[\\s\\S]{0,160}sourcePage=["']${sourcePage}["']`), `${key} 必须标记准确的助手上下文来源`);

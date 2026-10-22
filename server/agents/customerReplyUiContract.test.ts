@@ -6,6 +6,8 @@ const source = fs.readFileSync('src/components/ConversionPage.tsx', 'utf8');
 const chatSource = fs.readFileSync('src/components/customers/ConversionChatThread.tsx', 'utf8');
 const railSource = fs.readFileSync('src/components/customers/ConversionCustomerRail.tsx', 'utf8');
 const replySource = fs.readFileSync('src/components/customers/customerReplyPreparation.ts', 'utf8');
+const sessionEffectsSource = fs.readFileSync('src/components/customers/useConversionSessionEffects.ts', 'utf8');
+const draftEffectsSource = fs.readFileSync('src/components/customers/useConversionDraftEffects.ts', 'utf8');
 
 assert.doesNotMatch(
   source,
@@ -19,7 +21,7 @@ assert.doesNotMatch(chatSource, /const REPLY_EMOJIS\s*=/, 'the emoji picker must
 assert.match(chatSource, /<Input\.TextArea[\s\S]{0,250}data-customer-reply-input[\s\S]{0,500}variant="borderless"/, 'the reply textarea must use the shared borderless input inside the focusable composer');
 assert.match(source, /const openCustomer = \(id: string\)[\s\S]{0,220}customer\?\.hasUnread[\s\S]{0,120}persistCustomerPatch\(id, \{ hasUnread: false \}\)/, 'opening a conversation must clear and persist its unread indicator');
 assert.match(
-  source,
+  sessionEffectsSource,
   /attempt\s*<\s*4/,
   'customer-service status loading must retry transient startup failures',
 );
@@ -49,7 +51,7 @@ assert.match(
   'a sent target-language reply must retain the Chinese text that the operator edited',
 );
 assert.match(
-  source,
+  draftEffectsSource,
   /if \(selected\.pendingDraft\?\.trim\(\)\)[\s\S]{0,180}setDraftSuggestion\(selected\.pendingDraft\.trim\(\)\)/,
   'a pending AI draft must be restored when the customer is revisited',
 );

@@ -1,12 +1,10 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { ChatThread } from './customers/ConversionChatThread';
-import { CustomerInfoRail, isSuggestionDismissed } from './customers/ConversionCustomerRail';
+import { CustomerInfoRail } from './customers/ConversionCustomerRail';
 import { CompactCustomerList, VIEW_META, filterCustomers, type CustomerView } from './customers/ConversionCustomerList';
-import { STAGE_LABEL, customerDisplayName } from './customers/conversionPresentation';
 import { isWaitingForHumanQuote, latestBuyerText, requestDraft, translateReplyToCustomerLanguage, type DraftResult, type MessageTemplate, type StyleMemoryPayload, type TemplatePlan } from './customers/customerReplyPreparation';
 import { Alert, App, Button, Input, Modal } from "antd";
 import { PAGE_REGISTRY } from "../pageRegistry";
-import {readCustomerItemNavigation,matchCustomerItemNavigation} from '../lib/weeklyCustomerProductionLink';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
 import CustomerWorkflowPanel from './CustomerWorkflowPanel';
 import { useDeliveryHandoff } from "../hooks/useDeliveryHandoff";
@@ -25,8 +23,12 @@ import { DailyBriefing } from './customers/DailyBriefing';
 import { isOutsideWhatsAppWindow, type ConversationDraftIntent } from './customers/conversationTiming';
 import { useCustomers } from '../hooks/useCustomers';
 import { buildPrioritySuggestion, dailyTodoCustomers, isTodoCompleted, pendingCount } from '../lib/customerPriority';
-import type { AutonomyLevel, CustomerProfile, HandlingMode, TimelineEvent } from '../types/customer';
-import { getCustomerServiceStatus, updateCustomerServiceStatus, type CustomerServiceStatus } from '../lib/customerService';
+import type { AutonomyLevel, CustomerProfile, HandlingMode } from '../types/customer';
+import { updateCustomerServiceStatus, type CustomerServiceStatus } from '../lib/customerService';
+import { createMessageEvent, sendCustomerOutbox } from './customers/customerConversationDelivery';
+import { useConversionSessionEffects } from './customers/useConversionSessionEffects';
+import { useConversionDraftEffects } from './customers/useConversionDraftEffects';
+import { customerServicePresentation } from './customers/customerServicePresentation';
 
 type DraftIntent = ConversationDraftIntent;
 
@@ -51,39 +53,6 @@ interface Props {
   mockCustomerScope?: string;
 }
 
-function createMessageEvent(
-  customerId: string,
-  body: string,
-  actor: 'seller' | 'buyer' | 'ai',
-  extra: Partial<TimelineEvent> = {},
-): TimelineEvent {
-  const timestamp = Date.now();
-  const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return {
-    id: `${customerId}-${Date.now()}-${actor}`,
-    type: 'messenger',
-    actor,
-    title: actor === 'buyer' ? '客户消息' : actor === 'ai' ? 'AI 回复' : '我的回复',
-    body,
-    time,
-    timestamp,
-    ...extra,
-  };
-}
-
-async function sendCustomerOutbox(customer: CustomerProfile, requestId: string, body: string, outsideWindow: boolean, templatePlan?: TemplatePlan | null, styleMemory?: StyleMemoryPayload | null) {
-  if (customer.isMock) return { status: 'delivered' as const, outboxId: `mock-${Date.now()}` };
-  const resp = await fetch(`/api/overseas/customers/${encodeURIComponent(customer.id)}/outbox`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify(templatePlan
-      ? { requestId, body: templatePlan.rendered, mode: 'template', outsideWindow, to: customer.source === 'instagram' ? customer.instagramUserId : customer.messengerUserId, styleMemory }
-      : { requestId, body, mode: 'free_text', outsideWindow, to: customer.source === 'instagram' ? customer.instagramUserId : customer.messengerUserId, styleMemory }),
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.message || data.error || '发送失败');
-  return data as { status?: 'queued' | 'sent' | 'delivered'; outboxId?: string; providerMessageIds?: string[] };
-}
 
 export default function ConversionPage({ onLeaveConversation: _onLeaveConversation, isDemo = false, includeMockCustomers = false, mockCustomerScope = 'admin' }: Props) {
   const { modal } = App.useApp();
@@ -211,239 +180,18 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     });
   }, [updateCustomer]);
 
-  useEffect(() => {
-    if (deepLinkConsumedRef.current || !customers.length) return;
-    if(deliveryHandoff?.businessRef.followupItemId)return;
-    const customerId = new URLSearchParams(window.location.search).get('customer');
-    if (!customerId) {
-      deepLinkConsumedRef.current = true;
-      return;
-    }
-    if (customers.some(customer => customer.id === customerId)) {
-      setSelectedId(customerId);
-      const customer = customers.find(item => item.id === customerId)!;
-      setView(customer.stage === 'won' ? 'won' : ['silent30', 'silent60'].includes(customer.stage) ? 'silent' : 'leads');
-      deepLinkConsumedRef.current = true;
-    }
-  }, [customers]);
+  useConversionSessionEffects({
+    customers, customersInActiveView, selectedId, deliveryHandoff, agentProductionActive: agentProduction.active,
+    customerPendingCount, deepLinkConsumedRef, filterEmptySelectionRef, setSelectedId, setView, setDeliveryError,
+    updateCustomer, setCustomerServiceStatus, setCustomerServiceStatusLoadFailed, setAutonomyLevel,
+    setPriceRulesReady, setNotificationReady, setTemplates, setDailyBriefingOpen,
+  });
 
-  useEffect(() => {
-    if(deliveryHandoff?.businessRef.followupItemId)return;
-    if (agentProduction.active && window.__agentProductionTarget?.customerId) {
-      setSelectedId(window.__agentProductionTarget.customerId);
-      return;
-    }
-    if (selectedId && customersInActiveView.some(customer => customer.id === selectedId)) return;
-    if (!selectedId && filterEmptySelectionRef.current) return;
-    setSelectedId(customersInActiveView[0]?.id ?? null);
-  }, [customersInActiveView, selectedId,deliveryHandoff]);
-
-  useEffect(() => {
-    const link=deliveryHandoff;
-    if (!link?.businessRef.followupItemId) return;
-    let active=true;
-    setSelectedId(null);
-    setDeliveryError('');
-    void readCustomerItemNavigation(link).then(async binding=>{
-      if(!active)return;
-      if(binding.programId){
-        if(!binding.accountId||!binding.conversationId)throw new Error('原周包渠道账号或真实会话身份缺失。');
-        const actual=await customerManualTakeoverApi.read(binding.customerId);
-        if(!active)return;
-        if(['tenantId','channel','accountId','nativeAccountId','conversationId'].some(key=>actual.scope[key as keyof typeof actual.scope]!==binding[key as keyof typeof binding]))throw new Error('原任务与当前真实渠道账号或会话不一致。');
-      }
-      const customer=matchCustomerItemNavigation(binding,customers);
-      if(!customer){if(customers.length)setDeliveryError('原任务客户或渠道当前不可访问，请核对实际渠道接入。');return;}
-      setSelectedId(customer.id);
-      setView(customer.stage==='won'?'won':['silent30','silent60'].includes(customer.stage)?'silent':'leads');
-    }).catch(cause=>{if(active)setDeliveryError(cause instanceof Error?cause.message:'原客服条目无法核验。');});
-    return()=>{active=false;};
-  },[deliveryHandoff,customers,JSON.stringify(deliveryHandoff?.businessRef.customerNavigation),authHeader().Authorization]);
-
-  useEffect(() => {
-    const ref = deliveryHandoff?.businessRef;
-    if (!ref?.entityId||ref.followupItemId) return;
-    const customer = customers.find(item => item.id === ref.entityId);
-    if (!customer) { if (customers.length) setDeliveryError('关联客户暂不可访问，请返回交付看板核对。'); return; }
-    setDeliveryError('');
-    setSelectedId(customer.id);
-    setView(customer.stage === 'won' ? 'won' : ['silent30', 'silent60'].includes(customer.stage) ? 'silent' : 'leads');
-  }, [deliveryHandoff, customers]);
-
-
-  useEffect(() => {
-    customers.forEach(customer => {
-      if (customer.isHistorical || customer.todoCompletedAt) return;
-      const suggestion = buildPrioritySuggestion(customer);
-      if (suggestion.suggestionType !== 'none' && isSuggestionDismissed(customer.id, suggestion.suggestionType)) {
-        updateCustomer(customer.id, { todoCompletedAt: new Date().toISOString(), hasUnread: false });
-      }
-    });
-  }, [customers, updateCustomer]);
-
-  useEffect(() => {
-    let alive = true;
-    let retryTimer: number | null = null;
-    let attempt = 0;
-
-    const loadStatus = async () => {
-      try {
-        const status = await getCustomerServiceStatus();
-        if (!alive) return;
-        setCustomerServiceStatus(status);
-        setCustomerServiceStatusLoadFailed(false);
-      } catch {
-        if (!alive) return;
-        attempt += 1;
-        if (attempt < 4) {
-          retryTimer = window.setTimeout(() => void loadStatus(), 700 * (2 ** (attempt - 1)));
-          return;
-        }
-        setCustomerServiceStatus(null);
-        setCustomerServiceStatusLoadFailed(true);
-      }
-    };
-
-    void loadStatus();
-    return () => {
-      alive = false;
-      if (retryTimer !== null) window.clearTimeout(retryTimer);
-    };
-  }, []);
-
-  useEffect(() => {
-    fetch('/api/overseas/enterprise/profile', { headers: authHeader() })
-      .then(resp => resp.ok ? resp.json() : null)
-      .then(data => {
-        const value = data?.strategy?.aiAutonomy;
-        const approvedFaqCount = Array.isArray(data?.faq)
-          ? data.faq.filter((item: any) => item?.approvedForAuto && String(item?.question || '').trim() && String(item?.answer || '').trim()).length
-          : 0;
-        if (value === 'auto') setAutonomyLevel(approvedFaqCount >= 5 ? 'auto' : 'draft');
-        else if (value === 'remind' || value === 'draft') setAutonomyLevel(value);
-        setPriceRulesReady(Boolean(data?.bizRules?.quoteMode && data?.bizRules?.samplePolicy && data?.bizRules?.paymentTerms));
-        const firstProduct = Array.isArray(data?.products?.items)
-          ? data.products.items.find((item: any) => String(item?.name || '').trim())
-          : null;
-        const enterpriseProduct = String(firstProduct?.name || data?.products?.categories || data?.company?.industry || '').trim();
-        updateCustomer('mock-customer-conversation', {
-          product: enterpriseProduct,
-          outboundProduct: enterpriseProduct,
-          summary: `当前绑定企业：${String(data?.company?.name || '当前企业')}；主营：${enterpriseProduct || '等待客户说明具体需求'}`,
-        });
-      })
-      .catch(() => {});
-    fetch('/api/overseas/enterprise/knowledge-completion', { headers: authHeader() })
-      .then(resp => resp.ok ? resp.json() : null)
-      .then(data => {
-        if (data?.sections?.bizRules) setPriceRulesReady(Boolean(data.sections.bizRules.completed));
-        if (typeof data?.notificationsReady === 'boolean') {
-          setNotificationReady(data.notificationsReady);
-        }
-      })
-      .catch(() => {});
-  }, [updateCustomer]);
-
-  useEffect(() => {
-    fetch('/api/overseas/customers/templates', { headers: authHeader() })
-      .then(resp => resp.ok ? resp.json() : null)
-      .then(data => setTemplates(Array.isArray(data?.items) ? data.items : []))
-      .catch(() => setTemplates([]));
-  }, []);
-
-  useEffect(() => {
-    if (agentProduction.active || deliveryHandoff || customerPendingCount <= 0) return;
-    const today = new Date().toISOString().slice(0, 10);
-    const key = 'lingshu:briefing:lastShown';
-    if (localStorage.getItem(key) === today) return;
-    localStorage.setItem(key, today);
-    setDailyBriefingOpen(true);
-  }, [customerPendingCount, deliveryHandoff, agentProduction.active]);
-
-  useEffect(() => {
-    const handler = () => setDailyBriefingOpen(true);
-    window.addEventListener('lingshu:open-daily-briefing', handler);
-    return () => window.removeEventListener('lingshu:open-daily-briefing', handler);
-  }, []);
-
-  useEffect(() => {
-    translationRequestRef.current += 1;
-    setDraftSuggestion(null);
-    setDraftMeta(null);
-    setLastDraftKey('');
-    setInput('');
-    setTranslatedInput('');
-  }, [selectedId]);
-
-  useEffect(() => {
-    if (!selected || selected.isHistorical) return;
-    const untranslated = selected.timeline.filter(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && !/[\u4e00-\u9fff]/.test(event.body) && !event.translatedBody);
-    if (!untranslated.length) return;
-    let cancelled = false;
-    void Promise.all(untranslated.map(async event => {
-      try {
-        const response = await fetch('/api/overseas/plugins/translate/run', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeader() },
-          body: JSON.stringify({ text: event.body, target: '简体中文' }),
-        });
-        const data = await response.json();
-        if (!cancelled && response.ok && data.translatedText) {
-          updateTimelineEvent(selected.id, event.id, { translatedBody: String(data.translatedText).trim() });
-        }
-      } catch { /* 翻译为辅助信息，失败时保留原文。 */ }
-    }));
-    return () => { cancelled = true; };
-  }, [selected?.id, selected?.timeline, updateTimelineEvent]);
-
-  useEffect(() => {
-    if (!selected || selected.isHistorical) return;
-    if (!customerServiceStatus?.enabled) return;
-    const lastBuyer = [...selected.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && event.actor === 'buyer');
-    if (!lastBuyer) return;
-    if (isWaitingForHumanQuote(selected)) {
-      setDraftSuggestion(null);
-      setDraftMeta(null);
-      return;
-    }
-    const key = `${selected.id}:${lastBuyer.id}`;
-    if (key === lastDraftKey) return;
-    setLastDraftKey(key);
-    if (selected.pendingDraft?.trim()) {
-      setDraftSuggestion(selected.pendingDraft.trim());
-      return;
-    }
-    let cancelled = false;
-    void requestDraft(selected).then(result => {
-      if (cancelled) return;
-      setDraftSuggestion(result.draft);
-      setDraftMeta(result);
-      savePendingDraft(selected, result.draft);
-    });
-    return () => { cancelled = true; };
-    // lastDraftKey is intentionally a guard, not a dependency: adding it here
-    // would cancel the request immediately after the key is recorded.
-  }, [selected?.id, selectedLatestBuyerId, selected?.pendingDraft, selected?.handlingReason, customerServiceStatus?.enabled, savePendingDraft]);
-
-  useEffect(() => {
-    const viewLabel = selected ? `客户详情 / ${selected.name}` : activeView.label;
-    const summary = selected
-      ? `当前页面：客户详情。客户：${selected.name}。阶段：${STAGE_LABEL[selected.stage]}。意向：${selected.intentScore}。产品：${selected.product}。预估价值：${selected.estimatedValue}。摘要：${selected.summary}`
-      : `当前页面：我的客户 - ${activeView.label}。${activeView.desc}`;
-    window.dispatchEvent(new CustomEvent('lingshu-assistant-context', {
-      detail: {
-        agent: 'conversion',
-        sourcePage: 'conversion',
-        label: viewLabel,
-        summary,
-        pendingCount: customerPendingCount,
-        todoItems: customerTodoItems,
-        suggestions: selected
-          ? ['生成下一条回复', '整理触达要点', '生成报价跟进', '创建今日触达任务']
-          : ['现在该先回谁？', '筛选紧急客户', '筛选高意向客户', '创建老客唤醒批次'],
-      },
-    }));
-  }, [view, selected, activeView, customerPendingCount, customerTodoItems]);
+  useConversionDraftEffects({
+    selected, selectedId, selectedLatestBuyerId, customerServiceStatus, lastDraftKey, view, activeView,
+    customerPendingCount, customerTodoItems, translationRequestRef, setDraftSuggestion, setDraftMeta,
+    setLastDraftKey, setInput, setTranslatedInput, updateTimelineEvent, savePendingDraft,
+  });
 
   const showToast = (message: string) => {
     setToast(message);
@@ -861,26 +609,9 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     focusReplyInput();
   };
 
-  const customerServiceLabel = !customerServiceStatus
-    ? (customerServiceStatusLoadFailed ? '读取失败' : '正在读取')
-    : !customerServiceStatus.enabled
-      ? '已关闭'
-      : partialAutoReplyActive
-        ? '部分直回'
-        : `只给建议 · 第 ${customerServiceStatus.observationDay}/3 天`;
-  const customerServiceSummary = !customerServiceStatus
-    ? (customerServiceStatusLoadFailed
-      ? '暂时没读到客服状态，点一下开关可重新尝试。'
-      : '正在读取智能客服状态…')
-    : !customerServiceStatus.enabled
-      ? '账号消息只进入收件箱，灵小枢不会自行处理。'
-    : partialAutoReplyActive
-      ? '仅高置信命中已审批常见问答时直回；其余内容仍等你确认。'
-      : customerServiceStatus.partialAutoReplyEnabled
-        ? '已开放权限，但已审批问答不足 5 条，目前仍只给建议。'
-        : customerServiceStatus.eligibleForPartialAutoReply
-          ? '建议模式已运行满 3 天，是否开放部分直接回复由你决定。'
-          : '灵小枢只生成建议回复，所有消息都要由你确认后发送。';
+  const { label: customerServiceLabel, summary: customerServiceSummary } = customerServicePresentation(
+    customerServiceStatus, customerServiceStatusLoadFailed, partialAutoReplyActive,
+  );
 
 
   return (

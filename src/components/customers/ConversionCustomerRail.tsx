@@ -11,6 +11,7 @@ import { STAGE_LABEL, customerDisplayName } from './conversionPresentation';
 import { LiveLocalTime } from './LiveLocalTime';
 import { QuoteSkillCard } from './QuoteSkillCard';
 import { LsGradientProgress } from '../ui/LsExperiencePrimitives';
+import { isSuggestionDismissed, suggestionDismissKey } from './customerSuggestionDismissal';
 
 type DraftIntent = ConversationDraftIntent;
 
@@ -48,15 +49,6 @@ async function requestHandoffSummary(customer: CustomerProfile): Promise<string>
     // Local fallback keeps the handoff context available.
   }
   return fallbackHandoffSummary(customer);
-}
-
-function suggestionDismissKey(customerId: string, suggestionType: string) {
-  return `lingshu:crm:dismissed:${customerId}:${suggestionType}`;
-}
-
-export function isSuggestionDismissed(customerId: string, suggestionType: string) {
-  const until = Number(localStorage.getItem(suggestionDismissKey(customerId, suggestionType)) || 0);
-  return Date.now() < until;
 }
 
 function intentLevelLabel(customer: CustomerProfile) {

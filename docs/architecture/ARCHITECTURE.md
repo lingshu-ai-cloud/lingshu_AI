@@ -5,6 +5,7 @@
 ## 边界
 
 - `src/components/socialContent/`：工作台与用户交互；不得自行绕过服务端租户鉴权或供应商成本控制。
+- `src/components/ConversionPage.tsx` 与 `src/components/customers/`：页面持有会话状态和三栏视图；客户定位/加载、草稿翻译副作用与渠道发送适配分别落在客户子模块，真实发送仍经过现有服务端出站接口和回执边界。
 - `src/lib/studioApi.ts`、`src/lib/socialImageApi.ts`：前端 API 适配层。
 - `shared/contracts/`：跨端任务、内容与交付合同；字段变更需检查旧任务兼容性。
 - `server/routes/`：HTTP 鉴权、输入规范化、租户上下文和响应编排；业务算法逐步下沉到领域模块。
