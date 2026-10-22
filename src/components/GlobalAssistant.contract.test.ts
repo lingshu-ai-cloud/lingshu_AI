@@ -5,6 +5,9 @@ const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url)
 const sendHookSource = fs.readFileSync(new URL('./assistant/useAssistantSend.ts', import.meta.url), 'utf8');
 const quickExecutionHookSource = fs.readFileSync(new URL('./assistant/useAssistantQuickExecution.tsx', import.meta.url), 'utf8');
 const taskCardActionsHookSource = fs.readFileSync(new URL('./assistant/useAssistantTaskCardActions.ts', import.meta.url), 'utf8');
+const decisionDialogHookSource = fs.readFileSync(new URL('./assistant/useAssistantDecisionDialog.ts', import.meta.url), 'utf8');
+const panelControlsHookSource = fs.readFileSync(new URL('./assistant/useAssistantPanelControls.ts', import.meta.url), 'utf8');
+const conversationPanelSource = fs.readFileSync(new URL('./assistant/AssistantConversationPanel.tsx', import.meta.url), 'utf8');
 const chatStreamSource = fs.readFileSync(new URL('../lib/assistantChatStream.ts', import.meta.url), 'utf8');
 const actionRequestSource = fs.readFileSync(new URL('../lib/assistantActionRequest.ts', import.meta.url), 'utf8');
 const decisionDialogSource = fs.readFileSync(new URL('./assistant/AssistantDecisionDialog.tsx', import.meta.url), 'utf8');
@@ -44,16 +47,17 @@ function sourceSection(startMarker: string, endMarker: string, label: string, ta
 }
 
 for (const surface of ['floating-reminder', 'conversation', 'decision']) {
-  assert.match(`${source}\n${decisionDialogSource}\n${floatingRemindersSource}`, new RegExp(`data-assistant-surface=["']${surface}["']`), `缺少 ${surface} 助手形态`);
+  assert.match(`${source}\n${conversationPanelSource}\n${decisionDialogSource}\n${floatingRemindersSource}`, new RegExp(`data-assistant-surface=["']${surface}["']`), `缺少 ${surface} 助手形态`);
 }
 assert.doesNotMatch(source, /data-assistant-surface=["']quick-actions["']|SKILL_AGENTS/, '灵小枢不得再展示四助手快捷轮盘');
 assert.equal(source.match(/data-global-assistant=["']root["']/g)?.length, 1, '页面只能渲染一个灵小枢根入口');
+assert.match(source, /<AssistantConversationPanel[\s\S]*activeThread=\{activeThread\}[\s\S]*send=\{send\}[\s\S]*persistThread=\{persistThread\}/, '浮层必须把当前线程与发送、保存动作接入独立对话面板');
 
-const launcherClickSource = sourceSection('const handleLauncherClick', '\n  useEffect(', '灵小枢点击处理');
+const launcherClickSource = sourceSection('const handleLauncherClick', '\n  useEffect(', '灵小枢点击处理', panelControlsHookSource);
 const launcherMarkup = sourceSection('ref={launcherButtonRef}', '</Button>', '灵小枢右下角入口', launcherSource);
 const edgeLauncherMarkup = sourceSection('ref={edgeLauncherButtonRef}', 'title="展开灵小枢入口"', '灵小枢贴边入口', launcherSource);
 const retractControlMarkup = sourceSection('data-global-assistant="retract-control"', 'title="收起灵小枢入口到右侧"', '灵小枢收起控件', launcherSource);
-const assistantRootMarkup = sourceSection('data-global-assistant="root"', '<AnimatePresence>', '灵小枢根定位容器');
+const assistantRootMarkup = sourceSection('data-global-assistant="root"', '<AssistantConversationPanel', '灵小枢根定位容器');
 assert.match(launcherClickSource, /openCurrentPageAgent\(\)/, '主入口点击灵小枢必须直接进入当前工作对话');
 assert.doesNotMatch(launcherClickSource, /setMode\('expanded'\)|quick-actions|SKILL_AGENTS/, '点击灵小枢不得打开四助手快捷轮盘');
 assert.match(assistantRootMarkup, /fixed/, '灵小枢完整入口必须使用固定定位');
@@ -62,7 +66,7 @@ assert.match(assistantRootMarkup, /bottom-\[calc\(env\(safe-area-inset-bottom\)\
 assert.match(assistantRootMarkup, /launcherRetracted && mode === 'breathing'[\s\S]*right-0 md:right-0[\s\S]*right-4 md:right-5/, '灵小枢收起后必须贴右边，展开时恢复页面内边距');
 assert.match(assistantRootMarkup, /bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\][\s\S]*md:bottom-5/, '灵小枢入口必须使用统一安全区基准，桌面端不得留下大块底部空白');
 assert.doesNotMatch(assistantRootMarkup, /5\.5rem/, '制作页不得通过额外抬高灵小枢入口制造底部空白');
-assert.match(source, /assistantUsesMobileClearance[\s\S]{0,240}viewport\.height - \(assistantUsesMobileClearance \? 160 : 96\)/, '移动端抬高入口时必须同步收紧对话高度，不能把面板顶部裁掉');
+assert.match(conversationPanelSource, /assistantUsesMobileClearance[\s\S]{0,240}viewport\.height - \(assistantUsesMobileClearance \? 160 : 96\)/, '移动端抬高入口时必须同步收紧对话高度，不能把面板顶部裁掉');
 assert.match(launcherSource, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{chatOpen \? '收起灵小枢对话' : '询问灵小枢'\}/, '右下角入口必须以清晰文本直接打开或收起对话');
 assert.match(launcherMarkup, /shape="round"/, '灵小枢入口必须采用紧凑胶囊形态');
 assert.match(launcherMarkup, /!h-11/, '灵小枢入口必须保留 44px 触控高度');
@@ -81,13 +85,13 @@ assert.match(floatingRemindersSource, /const canShow = !launcherRetracted && mod
 assert.match(floatingRemindersSource, /canShow && hasPerformancePriority && performance[\s\S]*canShow && !hasPerformancePriority && speechBubble[\s\S]*weeklyPlanKickoffAvailable[\s\S]*featureGuide/, '等待、短消息、周计划和引导提示优先级必须保留');
 assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY/, '右下角入口不得恢复拖动、旧坐标或自动缩边交互');
 assert.match(launcherMarkup, /!bg-white[\s\S]*active:!bg-white[\s\S]*focus-visible:!bg-white/, '灵小枢入口在点击和聚焦时必须保持不透明白底');assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
-assert.match(source, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
-assert.match(source, /max-h-\[calc\(100dvh-env\(safe-area-inset-bottom\)-96px\)\]/, '灵小枢弹窗高度必须避让移动设备底部安全区');
-assert.match(source, /role="dialog"[\s\S]{0,160}aria-modal="false"[\s\S]{0,160}aria-labelledby="global-assistant-panel-title"[\s\S]{0,160}aria-describedby="global-assistant-panel-description"/, '灵小枢必须以有名称和说明的非模态对话浮层呈现');
+assert.match(conversationPanelSource, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
+assert.match(conversationPanelSource, /max-h-\[calc\(100dvh-env\(safe-area-inset-bottom\)-96px\)\]/, '灵小枢弹窗高度必须避让移动设备底部安全区');
+assert.match(conversationPanelSource, /role="dialog"[\s\S]{0,160}aria-modal="false"[\s\S]{0,160}aria-labelledby="global-assistant-panel-title"[\s\S]{0,160}aria-describedby="global-assistant-panel-description"/, '灵小枢必须以有名称和说明的非模态对话浮层呈现');
 assert.match(source, /mode !== 'chat'\) return;[\s\S]{0,300}panel\?\.focus\(\{ preventScroll: true \}\)/, '打开弹窗后必须在不滚动页面的前提下把焦点移入对话区域');
 assert.match(source, /appMain\?\.scrollTop[\s\S]{0,80}appMain\.scrollTop = 0/, '打开助手时必须修正历史滚动偏移，避免页面底部出现空白');
 assert.match(layoutSource, /<main className="app-main[^\n]*overflow-clip"/, '应用主容器不得成为可被焦点程序滚动的隐藏滚动容器');
-assert.match(source, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => \{\s*if \(launcherRetracted\) edgeLauncherButtonRef\.current\?\.focus\(\);\s*else launcherButtonRef\.current\?\.focus\(\)/, '关闭弹窗后必须按用户偏好把焦点归还完整或贴边入口');
+assert.match(panelControlsHookSource, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => \{\s*if \(launcherRetracted\) edgeLauncherButtonRef\.current\?\.focus\(\);\s*else launcherButtonRef\.current\?\.focus\(\)/, '关闭弹窗后必须按用户偏好把焦点归还完整或贴边入口');
 assert.match(appSource, /<AppShellChrome/);
 assert.match(appShellChromeSource, /<GlobalAssistant[\s\S]{0,650}compactMode=\{starterMode \|\| isAgentProductionSession\(\)\}/, '制作会话保留紧凑的灵小枢审批和聊天入口');
 assert.match(appModulesSource, /const loadGlobalAssistant = \(\) => retryDynamicModule\([\s\S]{0,160}import\('\.\/components\/GlobalAssistant'\)[\s\S]{0,160}import\('\.\/components\/GlobalAssistant\?recovery'\)/, '灵小枢异步模块必须用不同模块 URL 自动重试一次，避免复用浏览器缓存的失败结果');
@@ -96,7 +100,7 @@ assert.match(appBoundarySource, /class OptionalFeatureErrorBoundary[\s\S]*重新
 assert.match(source, /useState<AssistantPanelView>\('chat'\)/, '灵小枢默认页必须是单列对话');
 assert.match(source, /openAgent\(currentPageAgent, 'chat'\)/, '入口必须直接打开单列对话而不是强制进入审批详情');
 assert.doesNotMatch(source, /aria-label="灵小枢工作视图"/, '单列对话不得保留待办与聊天页签');
-assert.match(source, /const \[decisionDialog,\s*setDecisionDialog\]/, '外部决策弹窗必须使用独立状态，不得复用助手内部分页');
+assert.match(decisionDialogHookSource, /const \[decisionDialog,\s*setDecisionDialog\]/, '外部决策弹窗必须使用独立状态，不得复用助手内部分页');
 const taskSummarySource = sourceSection(
   'data-assistant-bubble="task-summary"',
   'data-assistant-bubble="weekly-plan-kickoff"',
@@ -104,7 +108,7 @@ const taskSummarySource = sourceSection(
   conversationBubblesSource,
 );
 assert.match(taskSummarySource, /onClick=\{event => onOpenTaskDetail\(/, '普通任务概要必须交给外部决策弹窗回调');
-assert.match(source, /onOpenTaskDetail=\{[\s\S]*openDecisionDialog\(\{ kind: 'task', taskId \}, trigger\)/, '普通任务概要必须打开统一外部决策弹窗');
+assert.match(conversationPanelSource, /onOpenTaskDetail=\{[\s\S]*openDecisionDialog\(\{ kind: 'task', taskId \}, trigger\)/, '普通任务概要必须打开统一外部决策弹窗');
 assert.doesNotMatch(taskSummarySource, /setPanelView\('decision'\)/, '普通任务详情不得再渲染在助手内部');
 const decisionFeedSummarySource = sourceSection(
   'data-assistant-summary="decision-feed"',
@@ -113,9 +117,9 @@ const decisionFeedSummarySource = sourceSection(
   conversationBubblesSource,
 );
 assert.match(decisionFeedSummarySource, /onOpenDetail=\{onOpenFeedDetail\}/, '权威待办概要必须通过外部详情回调打开');
-assert.match(source, /onOpenFeedDetail=\{trigger => openDecisionDialog\(\{ kind: 'feed' \}, trigger\)\}/, '权威待办概要必须打开统一外部决策弹窗');
+assert.match(conversationPanelSource, /onOpenFeedDetail=\{trigger => openDecisionDialog\(\{ kind: 'feed' \}, trigger\)\}/, '权威待办概要必须打开统一外部决策弹窗');
 assert.doesNotMatch(decisionFeedSummarySource, /setPanelView\('approvals'\)/, '权威待办详情不得再渲染在助手内部');
-assert.match(source, /<AssistantConversationBubbles[\s\S]*goalId=\{pageContext\.goalId\}/, '权威待办概要必须读取当前数字员工周目标，而不是默认最新目标');
+assert.match(conversationPanelSource, /<AssistantConversationBubbles[\s\S]*goalId=\{pageContext\.goalId\}/, '权威待办概要必须读取当前数字员工周目标，而不是默认最新目标');
 assert.ok(
   conversationBubblesSource.indexOf('data-assistant-summary="decision-feed"') < conversationBubblesSource.indexOf('{messages.map'),
   '权威待办概要必须固定在历史对话消息之前',
@@ -132,8 +136,9 @@ assert.match(sendHookSource, /finally \{[\s\S]{0,220}setLoading\(false\)/, '请�
 
 const assistantPanelSource = sourceSection(
   'id="global-assistant-panel"',
-  '<AssistantDecisionDialog',
+  '</motion.section>',
   '灵小枢对话面板',
+  conversationPanelSource,
 );
 assert.doesNotMatch(assistantPanelSource, /variant="detail"|data-assistant-page="decision-detail"|focusedTaskCard\.details\.map/, '助手面板内不得渲染任何决策详情');
 assert.match(source, /<AssistantDecisionDialog[\s\S]*goalId=\{pageContext\.goalId\}[\s\S]*closeDecisionDialog=\{closeDecisionDialog\}/, '页面必须把当前周目标和关闭流程传给独立决策弹窗');
@@ -154,6 +159,7 @@ const closeExternalDecisionDialogSource = sourceSection(
   'const closeDecisionDialog',
   'const handleDecisionActionResult',
   '关闭外部决策弹窗',
+  decisionDialogHookSource,
 );
 assert.match(closeExternalDecisionDialogSource, /setDecisionDialog\(null\)/, '关闭详情只清理外部弹窗状态');
 assert.doesNotMatch(closeExternalDecisionDialogSource, /setMode\(|setMessages\(|setDraftInput\(|closeAssistant\(/, '关闭详情必须保留对话、草稿、附件与助手开启状态');
@@ -161,8 +167,9 @@ assert.match(closeExternalDecisionDialogSource, /setDecisionFeedRevision\(revisi
 assert.match(closeExternalDecisionDialogSource, /closeDecisionDialogForNavigation[\s\S]{0,360}decisionDialogRestoreFocusRef\.current = false;[\s\S]{0,120}setDecisionDialog\(null\)/, '深链导航必须先关闭外部弹窗并禁止把焦点送回旧页面');
 const restoreExternalDecisionDialogFocusSource = sourceSection(
   'const restoreDecisionDialogFocus',
-  'const presentActionResponse',
+  '  return {',
   '外部决策弹窗焦点恢复',
+  decisionDialogHookSource,
 );
 assert.match(restoreExternalDecisionDialogFocusSource, /originalTrigger\?\.isConnected[\s\S]*querySelector<HTMLButtonElement>/, '概要刷新替换触发器后仍必须恢复到当前语义按钮');
 assert.match(restoreExternalDecisionDialogFocusSource, /const shouldRestoreFocus = decisionDialogRestoreFocusRef\.current[\s\S]{0,300}if \(!shouldRestoreFocus\) return;\s*window\.requestAnimationFrame/, '导航关闭后不得由 afterClose 抢回新页面焦点');
@@ -175,8 +182,8 @@ assert.match(featureGuidesSource, /GUIDE_COOLDOWN_MS = 45_000[\s\S]*GUIDE_VISIBL
 assert.match(featureGuidesSource, /document\.addEventListener\('pointerover'[\s\S]*document\.removeEventListener\('pointerover'/, '功能引导的事件监听必须配对清理');
 assert.match(externalDecisionDialogSource, /href=\{dialogTaskCard\.workspace\.href\}[\s\S]{0,120}onClick=\{\(\) => closeDecisionDialogForNavigation\(\)\}/, '普通任务工作区链接也必须在导航前关闭外部弹窗');
 assert.match(appShellChromeSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
-assert.match(source, /width: assistantPanelWidth,\s*maxWidth: 'calc\(100vw - 32px\)'/, '灵小枢面板必须用视口宽度约束，不能被零宽定位根节点压缩');
-assert.match(source, /assistantTool === 'knowledge-intake' \? 560 : 420/, '灵小枢对话面板必须保持 420px 基准宽度，外部详情不得挤压对话宽度');
+assert.match(conversationPanelSource, /width: assistantPanelWidth,\s*maxWidth: 'calc\(100vw - 32px\)'/, '灵小枢面板必须用视口宽度约束，不能被零宽定位根节点压缩');
+assert.match(conversationPanelSource, /assistantTool === 'knowledge-intake' \? 560 : 420/, '灵小枢对话面板必须保持 420px 基准宽度，外部详情不得挤压对话宽度');
 
 const closedDecisionCountSource = sourceSection(
   "if (mode === 'chat' || suppressForRightSidebar) return;",
@@ -219,6 +226,7 @@ const pageQuickEntrySource = sourceSection(
   '<AssistantQuickEntries',
   '<AssistantComposer',
   '输入框上方的页面快捷入口',
+  conversationPanelSource,
 );
 assert.match(pageQuickEntrySource, /page=\{page\}/, '移除重复生产问题后仍须保留当前页面快捷入口');
 assert.match(pageQuickEntrySource, /onQuestion=\{entry => void send\(entry\.prompt, currentPageAgent\)\}/, '页面快捷问题仍须进入当前业务上下文');
@@ -227,6 +235,7 @@ const decisionActionResultSource = sourceSection(
   'const handleDecisionActionResult',
   'const restoreDecisionDialogFocus',
   '周任务结果气泡',
+  decisionDialogHookSource,
 );
 assert.match(decisionActionResultSource, /execution\.goalId !== result\.card\.subject\.id/, '结果气泡只能接受与当前周目标相符的真实执行回执');
 assert.match(decisionActionResultSource, /`\$\{execution\.runId\}:\$\{execution\.status\}`/, '结果必须按真实运行与状态去重');
@@ -262,9 +271,9 @@ assert.match(runtimeSource, /if \(page === 'socialInspiration' \|\| page === 'sc
 assert.match(runtimeSource, /if \(page === 'smartAssets'\) return 'content'/, '内容制作页仍需路由到内部内容能力');
 assert.match(runtimeSource, /if \(page === 'conversion'[^\n]+return 'customer'/, '客户相关页面仍需路由到内部客户能力');
 
-assert.match(source, /scroller\.scrollHeight - scroller\.scrollTop - scroller\.clientHeight <= 24/, '必须识别用户是否仍在跟随最新消息');
+assert.match(conversationPanelSource, /scroller\.scrollHeight - scroller\.scrollTop - scroller\.clientHeight <= 24/, '必须识别用户是否仍在跟随最新消息');
 assert.match(source, /!activeThread\.isFollowingLatest/, '用户浏览历史时不得强制滚动到底部');
-assert.match(source, /跳到最新消息|回到最新消息/, '浏览历史消息时必须提供回到最新消息的明确入口');
+assert.match(conversationPanelSource, /跳到最新消息|回到最新消息/, '浏览历史消息时必须提供回到最新消息的明确入口');
 assert.doesNotMatch(source, /setPanelView\('(approvals|decision)'\)/, '决策详情已统一外置，不得恢复助手内部详情分页');
 
 const revealWelcomeSource = sourceSection(
@@ -285,7 +294,7 @@ const welcomeBubbleSource = sourceSection(
 );
 assert.match(welcomeBubbleSource, /ls-assistant-bubble-enter/, '欢迎语必须作为普通可滚动气泡进入消息流');
 assert.match(conversationBubblesSource, /welcomeBubbleVisible && !messages\.length/, '线程恢复出任意消息后必须立即隐藏欢迎语');
-assert.match(source, /messages=\{activeThread\.messages\}/, '气泡必须使用当前已恢复的对话线程');
+assert.match(conversationPanelSource, /messages=\{activeThread\.messages\}/, '气泡必须使用当前已恢复的对话线程');
 assert.doesNotMatch(welcomeBubbleSource, /\b(?:sticky|fixed|absolute)\b/, '欢迎语不得置顶、固定或脱离消息滚动流');
 
 assert.match(runtimeSource, /function assistantBubbleStyle\(index: number\)[\s\S]*Math\.min\(Math\.max\(0, index\), 6\)[\s\S]*--assistant-bubble-delay': `\$\{boundedIndex \* 15\}ms`/, '气泡进入顺序必须使用 15ms 间隔并在第 6 项封顶');
@@ -300,12 +309,12 @@ assert.match(assistantStylesSource, /\[data-assistant-bubble\] \.assistant-decis
 assert.match(assistantStylesSource, /@keyframes ls-assistant-bubble-enter\s*\{[\s\S]{0,160}opacity:\s*0;\s*transform:\s*translateY\((?:[1-8])px\)/, '气泡进入只能使用不超过 8px 的轻位移与透明度');
 assert.match(assistantStylesSource, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*\.ls-assistant-bubble-enter[\s\S]{0,180}animation:\s*none\s*!important/, '减少动态效果时必须立即显示全部气泡');
 
-assert.match(source, /关闭窗口（任务继续）/, '关闭窗口必须与暂停任务分离');
+assert.match(conversationPanelSource, /关闭窗口（任务继续）/, '关闭窗口必须与暂停任务分离');
 assert.match(decisionDialogSource, /暂停当前任务/, '必须提供独立的暂停操作');
 assert.match(source, /assistantRunControl\(dialogTaskCard\)/, '外部任务详情的暂停按钮只能由可执行运行任务的后端目标决定');
 assert.doesNotMatch(source, /objectId:\s*dialogTaskCard\.taskId/, '不得把展示卡片编号猜成可执行运行编号');
 assert.match(taskCardActionsHookSource, /const accepted = response\.status === 'accepted' \|\| response\.status === 'completed'/, '只有后端确认后才能改变本地暂停状态');
-assert.match(source, /persistThread\(activeAgent\)/, '关闭前必须保留任务、对话和草稿');
+assert.match(panelControlsHookSource, /persistThread\(activeAgent\)/, '关闭前必须保留任务、对话和草稿');
 
 const sendSource = sendHookSource;
 assert.match(sendSource, /const threadAgent = PRIMARY_ASSISTANT_THREAD/, '发送消息必须写入 business 主线程');
@@ -425,14 +434,14 @@ assert.match(transientConversationResetSource, /setPendingAttachments\(\[\]\)/, 
 
 const samePageConversationExpirySource = sourceSection(
   'const openCurrentPageAgent = useCallback',
-  'const handleDecisionFeedChange',
+  'const presentActionResponse',
   '同页关闭会话过期规则',
 );
 assert.match(samePageConversationExpirySource, /closed\.page === page/, '只有同一页面关闭的会话才适用五分钟保留期');
 assert.match(samePageConversationExpirySource, /Date\.now\(\) - closed\.at >= ASSISTANT_CLOSED_CONVERSATION_TTL_MS/, '同页关闭满五分钟后重开必须过期');
 assert.match(samePageConversationExpirySource, /resetTransientConversation\(\)/, '过期后必须开启空会话');
 assert.match(source, /ASSISTANT_CLOSED_CONVERSATION_TTL_MS = 5 \* 60 \* 1000/, '同页会话关闭保留期必须是五分钟');
-assert.match(source, /assistantClosedRef\.current = \{ page, at: Date\.now\(\) \}/, '关闭会话时必须记录当前页面和关闭时间');
+assert.match(panelControlsHookSource, /assistantClosedRef\.current = \{ page, at: Date\.now\(\) \}/, '关闭会话时必须记录当前页面和关闭时间');
 
 const quickExecutionSource = sourceSection(
   'return useCallback(async function executeEntry',
@@ -444,7 +453,7 @@ assert.match(quickExecutionSource, /if \(!confirmations\)/, '生产任务启动�
 assert.match(quickExecutionSource, /startAssistantAction\(entry\.taskId, entry\.expectedVersion, executionRequestId\)/, '确认完成后必须向真实任务提交对象版本和幂等键');
 assert.match(quickExecutionSource, /upsertTaskCard\(PRIMARY_ASSISTANT_THREAD/, '真实执行回执必须投影为任务卡片');
 assert.match(taskCardActionsHookSource, /destination\.origin === window\.location\.origin[\s\S]*socialContentTaskId: productionTaskId, socialContentPage: 'smartAssets', directStudio: true/, '生产回执链接必须原子恢复指定任务而非刷新成空制作页');
-assert.match(source, /<AssistantQuickEntries[\s\S]*onQuestion=\{entry => void send\(entry\.prompt, currentPageAgent\)\}[\s\S]*onExecute=\{entry => void runQuickExecution\(entry\)\}/, '输入框上方必须同时接通页面问答与快捷执行');
+assert.match(conversationPanelSource, /<AssistantQuickEntries[\s\S]*onQuestion=\{entry => void send\(entry\.prompt, currentPageAgent\)\}[\s\S]*onExecute=\{entry => void runQuickExecution\(entry\)\}/, '输入框上方必须同时接通页面问答与快捷执行');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*threadBeforeRequest/, '旧线程快照不得覆盖请求期间产生的本地输入');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*hydratedThread/, '过期重签结果不得覆盖请求期间产生的新卡片或焦点');
 assert.match(hydrationSource, /actionCardToTaskCard\(response\.card, response, CURRENT_STATUS_TASK_ID\)/, '重新签发的动作必须进入专用的权威状态卡');
@@ -513,9 +522,9 @@ assert.match(source, /useAssistantNotifications\(\{[\s\S]*mode, setMode, primary
 assert.match(decisionDialogSource, /dialogTaskCard\.secondaryActions\.map/, '外部决策弹窗必须渲染交互选择卡操作');
 assert.match(decisionDialogSource, /dialogTaskCard\.workspace\.href/, '外部弹窗中的完整结果必须可以进入工作区');
 assert.match(conversationBubblesSource, /data-assistant-summary="task-card"[\s\S]{0,1100}onOpenTaskDetail\(/, '任务结果必须先以概要气泡呈现');
-assert.match(source, /onOpenTaskDetail=\{[\s\S]*openDecisionDialog\(\{ kind: 'task', taskId \}, trigger\)/, '任务结果点击后才打开外部详情');
-assert.match(source, /<AssistantComposer/, '灵小枢必须使用统一输入组件');
-assert.match(source, /onSuggest=\{suggestion => void send\(suggestion, currentPageAgent\)\}/, '快捷回复卡片必须点击后直接进入当前灵小枢对话');
+assert.match(conversationPanelSource, /onOpenTaskDetail=\{[\s\S]*openDecisionDialog\(\{ kind: 'task', taskId \}, trigger\)/, '任务结果点击后才打开外部详情');
+assert.match(conversationPanelSource, /<AssistantComposer/, '灵小枢必须使用统一输入组件');
+assert.match(conversationPanelSource, /onSuggest=\{suggestion => void send\(suggestion, currentPageAgent\)\}/, '快捷回复卡片必须点击后直接进入当前灵小枢对话');
 assert.match(composerSource, /rows=\{1\}/, '输入框必须默认只占一行');
 assert.match(composerSource, /maxLength=\{4000\}/, '输入框必须遵守确定性操作接口的长度边界');
 assert.match(composerSource, /max-h-\[88px\]/, '输入框最多只能扩展到三行');

@@ -5,7 +5,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import AssistantCustomerTodoView from './AssistantCustomerTodoView';
 
-const parentSource = readFileSync(new URL('../GlobalAssistant.tsx', import.meta.url), 'utf8');
+const panelSource = readFileSync(new URL('./AssistantConversationPanel.tsx', import.meta.url), 'utf8');
 
 test('customer todo view keeps its ordered rows, completion mark and empty state', () => {
   const row = { id: 'customer-1', name: '客户 A', product: '产品', headline: '需要报价',
@@ -23,7 +23,7 @@ test('customer todo view keeps its ordered rows, completion mark and empty state
   })), /暂无今日待办/);
 });
 
-test('global assistant retains the select-customer event and returns to conversation', () => {
-  assert.match(parentSource, /<AssistantCustomerTodoView items=\{orderedTodoItems\} pendingCount=\{pendingCount\}/);
-  assert.match(parentSource, /onBack=\{returnToConversation\} onSelect=\{id => \{[\s\S]*?lingshu:select-customer[\s\S]*?returnToConversation\(\)/);
+test('assistant panel retains the select-customer event and returns to conversation', () => {
+  assert.match(panelSource, /<AssistantCustomerTodoView items=\{orderedTodoItems\} pendingCount=\{pendingCount\}/);
+  assert.match(panelSource, /onBack=\{returnToConversation\} onSelect=\{id => \{[\s\S]*?lingshu:select-customer[\s\S]*?returnToConversation\(\)/);
 });

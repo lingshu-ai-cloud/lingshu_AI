@@ -1,4 +1,4 @@
-import { isLegacyUnboundOperationNotice, isUnboundOperationError } from '../lib/assistantOperationNotice';
+import { isUnboundOperationError } from '../lib/assistantOperationNotice';
 import { executeAssistantAction } from '../lib/assistantActionRequest';
 import {
   useCallback,
@@ -7,32 +7,20 @@ import {
   useRef,
   useState,
 } from 'react';
-import { App as AntApp, Button } from 'antd';
-import { AnimatePresence, motion } from 'motion/react';
-import {
-  ArrowLeft,
-  ArrowDown,
-  Bot,
-  X,
-} from 'lucide-react';
+import { App as AntApp } from 'antd';
 import type { AgentAction, AgentType, Message, Page } from '../App';
 import { authHeader, getToken } from '../lib/auth';
-import { lsMotion } from '../lib/designTokens';
 import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import {
   assistantRunControl,
   shouldNotifyAssistant,
-  type AgentThreadState,
   type OrbitAgentId,
   useAssistantStore,
 } from '../stores/assistantStore';
-import AssistantComposer from './assistant/AssistantComposer';
-import AssistantConversationBubbles from './assistant/AssistantConversationBubbles';
+import AssistantConversationPanel from './assistant/AssistantConversationPanel';
 import AssistantFloatingReminders from './assistant/AssistantFloatingReminders';
 import AssistantLauncher from './assistant/AssistantLauncher';
 import { actionCardToTaskCard, actionResponseCardId, notificationReasonFromResponse, responseWithoutCrossObjectActions } from './assistant/assistantActionProjection';
-import AssistantQuickEntries from './assistant/AssistantQuickEntries';
-import AssistantCustomerTodoView from './assistant/AssistantCustomerTodoView';
 import { useContentTaskIntake } from './assistant/useContentTaskIntake';
 import { useAssistantThreadSaveQueue } from './assistant/useAssistantThreadSaveQueue';
 import { useAssistantThreadHydration } from './assistant/useAssistantThreadHydration';
@@ -42,22 +30,17 @@ import { useAssistantNotifications } from './assistant/useAssistantNotifications
 import { useAssistantSend } from './assistant/useAssistantSend';
 import { useAssistantQuickExecution } from './assistant/useAssistantQuickExecution';
 import { useAssistantTaskCardActions } from './assistant/useAssistantTaskCardActions';
+import { useAssistantDecisionDialog } from './assistant/useAssistantDecisionDialog';
+import { useAssistantPanelControls } from './assistant/useAssistantPanelControls';
 import { useAssistantDecisionCount, useAssistantPageContextSignal } from './assistant/useAssistantPageSignals';
 import type { AssistantQuickExecution } from '../lib/assistantQuickEntries';
-import AssistantWeeklyActions from './assistant/AssistantWeeklyActions';
-import {
-  assistantDecisionExecutionFeedback,
-  type AssistantDecisionActionResult,
-} from './assistant/AssistantDecisionCenter';
-import AssistantDecisionDialog, { type AssistantDecisionDialog as AssistantDecisionDialogState } from './assistant/AssistantDecisionDialog';
-import type { AssistantDecisionDeepLink, AssistantDecisionFeed } from '../../shared/contracts/assistantDecisionCenter';
+import AssistantDecisionDialog from './assistant/AssistantDecisionDialog';
 import {
   ASSISTANT_PRODUCTION_CONTEXT_EVENT,
   type AssistantProductionContext,
   type AssistantProductionContextEventDetail,
 } from '../lib/assistantProductionDecision';
 import { WEEKLY_WORK_UPDATED_EVENT } from '../lib/weeklyWorkEvents';
-import KnowledgeIntakePanel, { type AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import { socialContentApi } from '../lib/socialContentApi';
 import { readSocialContentNavigationTaskId, SOCIAL_CONTENT_NAVIGATION_EVENT } from '../lib/socialContentContext';
 import { SOCIAL_CONTENT_TASK_REFRESH_EVENT } from '../lib/socialContentTaskRefresh';
@@ -72,7 +55,6 @@ import {
   PRIMARY_ASSISTANT_THREAD,
   WORKFLOW_MUTATION_ACTIONS,
   assistantPersistenceCanRun,
-  contextForOrbit,
   mergeConsecutiveAssistant,
   orbitIdForAgent,
   orbitIdForPage,
@@ -132,15 +114,9 @@ export default function GlobalAssistant({
 }: Props) {
   const { modal, message: uiMessage } = AntApp.useApp();
   const reduceMotion = usePrefersReducedMotion();
-  const fadeTransition = { duration: (reduceMotion ? lsMotion.duration.instant : lsMotion.duration.enter) / 1000, ease: lsMotion.ease.enter };
-  const fadeExit = { opacity: 0, transition: { duration: (reduceMotion ? lsMotion.duration.instant : lsMotion.duration.exit) / 1000, ease: lsMotion.ease.exit } };
-  const spatialTransition = reduceMotion ? { duration: 0 } : { ...lsMotion.spring.standard, opacity: fadeTransition };
   const [mode, setMode] = useState<'breathing' | 'chat'>('breathing');
   const [launcherRetracted, setLauncherRetracted] = useState(readLauncherRetractedPreference);
   const [panelView, setPanelView] = useState<AssistantPanelView>('chat');
-  const [decisionDialog, setDecisionDialog] = useState<AssistantDecisionDialogState>(null);
-  const [decisionFeedRevision, setDecisionFeedRevision] = useState(0);
-  const [decisionTotal, setDecisionTotal] = useState<number | null>(null);
   const [productionDecisionContext, setProductionDecisionContext] = useState<AssistantProductionContext | null>(null);
   const activeAgent = PRIMARY_ASSISTANT_THREAD;
   const [assistantTool, setAssistantTool] = useState<AssistantTool | null>(null);
@@ -162,10 +138,6 @@ export default function GlobalAssistant({
   const assistantInputRef = useRef<HTMLTextAreaElement>(null);
   const launcherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
   const edgeLauncherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
-  const decisionDialogTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const decisionDialogKindRef = useRef<Exclude<AssistantDecisionDialogState, null>['kind'] | null>(null);
-  const decisionDialogRestoreFocusRef = useRef(true);
-  const handledDecisionResultsRef = useRef(new Set<string>());
   const abortRef = useRef<AbortController | null>(null);
   const handledKickoffs = useRef(new Set<string>());
   const handledRestores = useRef(new Set<string>());
@@ -245,7 +217,6 @@ export default function GlobalAssistant({
       : DEFAULT_CONTEXT[normalizedPage] ?? DEFAULT_CONTEXT.strategy
   ), [liveContext, normalizedPage]);
   const currentPageAgent = useMemo(() => orbitIdForPage(page), [page]);
-  const activeContext = useMemo(() => contextForOrbit(currentPageAgent, pageContext), [currentPageAgent, pageContext]);
   const weeklyPlanKickoffAvailable = normalizedPage === 'digitalEmployees'
     && pageContext.workflowStage === 'unplanned';
   const [pipelineEntries, setPipelineEntries] = useState<AssistantQuickExecution[]>([]);
@@ -292,31 +263,9 @@ export default function GlobalAssistant({
     }));
   }, []);
   const activeThread = threads[activeAgent];
-  const focusedCardCandidate = activeThread.focusedTaskId
-    ? activeThread.taskCards[activeThread.focusedTaskId] ?? null
-    : null;
-  const focusedTaskCard = isLegacyUnboundOperationNotice(focusedCardCandidate) ? null : focusedCardCandidate;
-  const dialogTaskCard = decisionDialog?.kind === 'task'
-    ? activeThread.taskCards[decisionDialog.taskId] ?? null
-    : null;
-  const focusedRunControl = assistantRunControl(dialogTaskCard);
   const todoItems = pageContext.todoItems ?? [];
   const activeTodoItems = todoItems.filter(item => !item.completed);
-  const completedTodoItems = todoItems.filter(item => item.completed);
-  const orderedTodoItems = [...activeTodoItems, ...completedTodoItems];
   const pendingCount = todoItems.length ? activeTodoItems.length : Math.max(0, Number(pageContext.pendingCount ?? 0));
-  const activeAgentLabel = '灵小枢';
-  const isCustomerTodoView = panelView === 'todo' && pageContext.agent === 'conversion';
-  const panelTitle = assistantTool === 'knowledge-intake'
-    ? '灵小枢 · 快速采集'
-    : isCustomerTodoView ? '今日待办' : activeAgentLabel;
-  const panelSubtitle = assistantTool === 'knowledge-intake'
-    ? '当前：智能客服规范'
-    : isCustomerTodoView ? '当前：我的客户' : `当前：${activeContext.label}`;
-  const assistantUsesMobileClearance = viewport.width < 768
-    && (page === 'conversion' || page === 'smartAssets' || page === 'digitalEmployees');
-  const assistantPanelHeight = Math.max(120, Math.min(720, viewport.height - (assistantUsesMobileClearance ? 160 : 96)));
-  const assistantPanelWidth = Math.min(assistantTool === 'knowledge-intake' ? 560 : 420, viewport.width - 32);
 
   useEffect(() => {
     if (!loading) return;
@@ -339,6 +288,19 @@ export default function GlobalAssistant({
     stablePersistenceScope, persistenceFenceRef, assistantThreadSaveQueuesRef,
     hydrateThread, setPersistenceMetadata,
   });
+  const {
+    decisionDialog, setDecisionDialog, decisionFeedRevision, setDecisionFeedRevision,
+    decisionTotal, setDecisionTotal, decisionDialogRestoreFocusRef,
+    handleDecisionFeedChange, openDecisionDialog, closeDecisionDialog,
+    closeDecisionDialogForNavigation, handleDecisionDialogFeedChange,
+    handleDecisionActionResult, restoreDecisionDialogFocus,
+  } = useAssistantDecisionDialog({
+    launcherButtonRef, setMessages, setFollowingLatest, persistThread, onSessionRefresh,
+  });
+  const dialogTaskCard = decisionDialog?.kind === 'task'
+    ? activeThread.taskCards[decisionDialog.taskId] ?? null
+    : null;
+  const focusedRunControl = assistantRunControl(dialogTaskCard);
 
   useEffect(() => {
     const retryPendingThreads = () => {
@@ -435,87 +397,6 @@ export default function GlobalAssistant({
     assistantClosedRef.current = null;
     openAgent(currentPageAgent, 'chat');
   }, [currentPageAgent, openAgent, page, resetTransientConversation]);
-
-  const handleDecisionFeedChange = useCallback((feed: AssistantDecisionFeed) => {
-    setDecisionTotal(Math.max(0, feed.total));
-  }, []);
-
-  const openDecisionDialog = useCallback((
-    dialog: Exclude<AssistantDecisionDialogState, null>,
-    trigger?: HTMLButtonElement | null,
-  ) => {
-    decisionDialogTriggerRef.current = trigger ?? null;
-    decisionDialogKindRef.current = dialog.kind;
-    decisionDialogRestoreFocusRef.current = true;
-    setDecisionDialog(dialog);
-  }, []);
-
-  const closeDecisionDialog = useCallback(() => {
-    decisionDialogRestoreFocusRef.current = true;
-    setDecisionDialog(null);
-    // The conversation summary owns an independent request. Refresh it only
-    // after the external dialog closes so opening a detail does not immediately
-    // remount the trigger or duplicate the authoritative detail request.
-    setDecisionFeedRevision(revision => revision + 1);
-  }, []);
-
-  const closeDecisionDialogForNavigation = useCallback((_link?: AssistantDecisionDeepLink) => {
-    // Navigation replaces the trigger's page context. Close the external
-    // detail immediately, but do not move focus back into the page being left.
-    decisionDialogRestoreFocusRef.current = false;
-    setDecisionDialog(null);
-  }, []);
-
-  const handleDecisionDialogFeedChange = useCallback((feed: AssistantDecisionFeed) => {
-    handleDecisionFeedChange(feed);
-  }, [handleDecisionFeedChange]);
-
-  const handleDecisionActionResult = useCallback((result: AssistantDecisionActionResult) => {
-    if (result.action.id !== 'approve_and_start' || !result.response.execution) return;
-    const execution = result.response.execution;
-    if (execution.goalId !== result.card.subject.id) return;
-    const resultKey = `${execution.runId}:${execution.status}`;
-    if (handledDecisionResultsRef.current.has(resultKey)) return;
-    handledDecisionResultsRef.current.add(resultKey);
-    const feedback = assistantDecisionExecutionFeedback(execution);
-    const current = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages;
-    setMessages(PRIMARY_ASSISTANT_THREAD, [
-      ...current,
-      { role: 'assistant', content: `**${feedback.title}**\n\n${feedback.detail}` },
-    ]);
-    setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true);
-    setDecisionTotal(Math.max(0, result.response.total));
-    closeDecisionDialog();
-    persistThread(PRIMARY_ASSISTANT_THREAD);
-    onSessionRefresh?.();
-  }, [closeDecisionDialog, onSessionRefresh, persistThread, setFollowingLatest, setMessages]);
-
-  const restoreDecisionDialogFocus = useCallback(() => {
-    const shouldRestoreFocus = decisionDialogRestoreFocusRef.current;
-    const originalTrigger = decisionDialogTriggerRef.current;
-    const triggerKind = decisionDialogKindRef.current;
-    decisionDialogRestoreFocusRef.current = true;
-    decisionDialogTriggerRef.current = null;
-    decisionDialogKindRef.current = null;
-    if (!shouldRestoreFocus) return;
-    window.requestAnimationFrame(() => {
-      if (originalTrigger?.isConnected) {
-        originalTrigger.focus();
-        return;
-      }
-      // Closing refreshes the authoritative summary, so the original trigger
-      // may have been replaced. Restore focus to its current semantic peer.
-      const summaryScope = triggerKind === 'feed'
-        ? '[data-assistant-summary="decision-feed"]'
-        : '[data-assistant-summary="task-card"]';
-      const replacement = document.querySelector<HTMLButtonElement>(
-        `#global-assistant-panel ${summaryScope} .assistant-decision-summary`,
-      );
-      if (replacement) replacement.focus();
-      else if (document.getElementById('global-assistant-panel')) document.getElementById('global-assistant-panel')?.focus();
-      else launcherButtonRef.current?.focus();
-    });
-  }, []);
 
   const presentActionResponse = useCallback((
     agentId: OrbitAgentId,
@@ -819,60 +700,12 @@ export default function GlobalAssistant({
     return () => window.clearTimeout(timer);
   }, [activeAgent, activeThread.draftInput, activeThread.focusedTaskId, activeThread.isFollowingLatest, activeThread.messages, activeThread.paused, activeThread.scrollPosition, activeThread.taskCards, activeThread.unreadCount, mode, persistThread]);
 
-  const closeAssistant = useCallback(() => {
-    persistThread(activeAgent);
-    assistantClosedRef.current = { page, at: Date.now() };
-    setAssistantTool(null);
-    setPanelView('chat');
-    setDecisionDialog(null);
-    setWelcomeBubbleVisible(false);
-    setMode('breathing');
-    window.requestAnimationFrame(() => {
-      if (launcherRetracted) edgeLauncherButtonRef.current?.focus();
-      else launcherButtonRef.current?.focus();
-    });
-  }, [activeAgent, launcherRetracted, page, persistThread]);
-
-  const returnToConversation = useCallback(() => {
-    const thread = useAssistantStore.getState().threads[activeAgent];
-    setPanelView('chat');
-    window.requestAnimationFrame(() => {
-      const scroller = messageScrollRef.current;
-      if (!scroller) return;
-      if (!thread.isFollowingLatest) scroller.scrollTop = thread.scrollPosition;
-      else scroller.scrollTop = scroller.scrollHeight;
-    });
-  }, [activeAgent]);
-
-  const handleLauncherClick = () => {
-    if (mode === 'chat') {
-      closeAssistant();
-      return;
-    }
-    if (assistantTool === 'knowledge-intake') {
-      setMode('chat');
-      return;
-    }
-    openCurrentPageAgent();
-  };
-
-  useEffect(() => {
-    if (mode !== 'chat' && assistantTool !== 'knowledge-intake') return;
-    const closePanel = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented || decisionDialog) return;
-      closeAssistant();
-    };
-    window.addEventListener('keydown', closePanel);
-    return () => window.removeEventListener('keydown', closePanel);
-  }, [assistantTool, closeAssistant, decisionDialog, mode]);
-
-  useEffect(() => {
-    const handleResize = () => {
-      setViewport({ width: window.innerWidth, height: window.innerHeight });
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  const { closeAssistant, returnToConversation, handleLauncherClick } = useAssistantPanelControls({
+    activeAgent, page, mode, assistantTool, decisionDialog, launcherRetracted,
+    assistantClosedRef, launcherButtonRef, edgeLauncherButtonRef, messageScrollRef,
+    persistThread, setAssistantTool, setPanelView, setDecisionDialog,
+    setWelcomeBubbleVisible, setMode, setViewport, openCurrentPageAgent,
+  });
 
   if (suppressForRightSidebar) return null;
 
@@ -907,189 +740,30 @@ export default function GlobalAssistant({
         onOpenCurrentPageAgent={openCurrentPageAgent}
       />
 
-      <AnimatePresence>
-        {(mode === 'chat' || assistantTool === 'knowledge-intake') && (
-          <motion.section
-            data-global-assistant="panel"
-            id="global-assistant-panel"
-            role="dialog"
-            aria-modal="false"
-            aria-labelledby="global-assistant-panel-title"
-            aria-describedby="global-assistant-panel-description"
-            tabIndex={-1}
-            initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }}
-            animate={mode === 'chat' ? { opacity: 1, y: 0 } : { opacity: 0, y: reduceMotion ? 0 : 8 }}
-            exit={{ y: reduceMotion ? 0 : 8, opacity: 0, transition: { ...spatialTransition, opacity: fadeExit.transition } }}
-            transition={spatialTransition}
-            className={`absolute bottom-14 right-0 z-10 flex max-h-[calc(100dvh-env(safe-area-inset-bottom)-96px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
-            style={{
-              height: assistantPanelHeight,
-              width: assistantPanelWidth,
-              maxWidth: 'calc(100vw - 32px)',
-            }}
-          >
-            <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50 px-4">
-              <div className="flex min-w-0 items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (assistantTool === 'knowledge-intake') {
-                      setAssistantTool(null);
-                      returnToConversation();
-                    } else if (panelView !== 'chat') returnToConversation();
-                    else closeAssistant();
-                  }}
-                  className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                  aria-label={assistantTool === 'knowledge-intake' || panelView !== 'chat' ? '返回灵小枢对话' : '收起灵小枢对话'}
-                  title={assistantTool === 'knowledge-intake' || panelView !== 'chat' ? '返回灵小枢对话' : '收起灵小枢对话'}
-                >
-                  <ArrowLeft size={16} />
-                </button>
-                <div className="min-w-0">
-                  <p id="global-assistant-panel-title" className="ls-type-title-small truncate text-text-primary">{panelTitle}</p>
-                  <p id="global-assistant-panel-description" className="ls-type-body-small truncate text-text-muted">{panelSubtitle}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-1">
-                <button type="button" onClick={closeAssistant} className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" title="关闭窗口（任务继续）" aria-label="关闭灵枢助手窗口，任务继续运行">
-                  <X size={15} />
-                </button>
-              </div>
-            </header>
-
-            {assistantTool === 'knowledge-intake' ? (
-              <div className="min-h-0 flex-1 overflow-y-auto bg-surface-2 p-3">
-                <KnowledgeIntakePanel
-                  mode="center"
-                  compact
-                  onApplied={(profile: AppliedProfile) => {
-                    window.dispatchEvent(new CustomEvent('lingshu:knowledge-intake-applied', { detail: { profile } }));
-                    onSessionRefresh?.();
-                  }}
-                />
-              </div>
-            ) : isCustomerTodoView ? (
-              <AssistantCustomerTodoView items={orderedTodoItems} pendingCount={pendingCount}
-                onBack={returnToConversation} onSelect={id => {
-                  window.dispatchEvent(new CustomEvent('lingshu:select-customer', { detail: { id } }));
-                  returnToConversation();
-                }} />
-            ) : (
-              <>
-                <div
-                  ref={messageScrollRef}
-                  data-assistant-surface="conversation"
-                  className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
-                  onScroll={event => {
-                    const scroller = event.currentTarget;
-                    setScrollPosition(activeAgent, scroller.scrollTop);
-                    setFollowingLatest(
-                      activeAgent,
-                      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 24,
-                    );
-                  }}
-                >
-                  <AssistantConversationBubbles
-                    page={page}
-                    goalId={pageContext.goalId}
-                    productionContext={productionDecisionContext}
-                    decisionFeedRevision={decisionFeedRevision}
-                    decisionFeedKey={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:summary:${decisionFeedRevision}`}
-                    decisionFeedActive={mode === 'chat' && panelView === 'chat'}
-                    onOpenChat={returnToConversation}
-                    onOpenFeedDetail={trigger => openDecisionDialog({ kind: 'feed' }, trigger)}
-                    onFeedChange={handleDecisionFeedChange}
-                    welcomeBubbleVisible={welcomeBubbleVisible}
-                    activeAgentLabel={activeAgentLabel}
-                    messages={activeThread.messages}
-                    onAction={onAction}
-                    onSuggest={suggestion => void send(suggestion, currentPageAgent)}
-                    contentIntakeNode={contentIntake.node}
-                    loading={loading}
-                    focusedTaskCard={focusedTaskCard}
-                    onOpenTaskDetail={(trigger, taskId) => {
-                      focusTaskCard(activeAgent, taskId);
-                      openDecisionDialog({ kind: 'task', taskId }, trigger);
-                    }}
-                    weeklyPlanKickoffAvailable={weeklyPlanKickoffAvailable}
-                    onOpenWeeklyPlan={openWeeklyPlanFromAssistant}
-                  />
-                </div>
-
-                {!activeThread.isFollowingLatest && (
-                  <div className="flex shrink-0 justify-center border-t border-border/60 bg-surface px-3 py-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const scroller = messageScrollRef.current;
-                        if (scroller) scroller.scrollTop = scroller.scrollHeight;
-                        setFollowingLatest(activeAgent, true);
-                        setScrollPosition(activeAgent, scroller?.scrollHeight ?? activeThread.scrollPosition);
-                      }}
-                      className="ls-type-label-small inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1 text-accent hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                      aria-label="回到最新消息"
-                    >
-                      <ArrowDown size={12} /> 回到最新消息
-                    </button>
-                  </div>
-                )}
-
-                {!contentIntake.active && <AssistantQuickEntries
-                  page={page}
-                  executions={[
-                    ...(page === 'digitalEmployees' ? [{ id: 'business-create-week-plan', kind: 'execute' as const,
-                      label: weeklyPlanKickoffAvailable ? '制定本周计划' : '查看当前周计划', prompt: '打开当前周计划', confirmation: 'none' as const }] : []),
-                    ...(['smartAssets', 'socialInspiration'].includes(page) ? [{ id: 'content-create-single', kind: 'execute' as const,
-                      label: '新建单条内容任务', prompt: '填写产品和内容目标', confirmation: 'preview' as const, operation: 'create' as const }] : []),
-                    ...pipelineEntries,
-                  ]}
-                  disabled={loading || fileGenerating || attachmentUploading}
-                  onQuestion={entry => void send(entry.prompt, currentPageAgent)}
-                  onExecute={entry => void runQuickExecution(entry)}
-                />}
-
-                <AssistantWeeklyActions
-                  page={page}
-                  scopeKey={persistenceScopeKey}
-                  disabled={loading || attachmentUploading}
-                  onBusyChange={setWeeklyActionBusy}
-                  onReceipt={receipt => {
-                    const thread = useAssistantStore.getState().threads[activeAgent];
-                    setMessages(activeAgent, [...thread.messages, { role: 'assistant', content: receipt.message }]);
-                    persistThread(activeAgent);
-                    setDecisionFeedRevision(value => value + 1);
-                    onSessionRefresh?.();
-                    window.dispatchEvent(new CustomEvent('lingshu:weekly-tasks-updated', { detail: { programId: receipt.programId, packageId: receipt.packageId, packageVersion: receipt.packageVersion } }));
-                    const navigation = receipt.navigation;
-                    if (navigation?.href && /^\/\?page=(?:smartAssets|digitalEmployees|traffic)(?:&|$)/.test(navigation.href)) {
-                      setMode('breathing');
-                      window.location.assign(navigation.href);
-                    } else if (navigation?.page && ['smartAssets', 'digitalEmployees', 'traffic'].includes(navigation.page)) {
-                      setMode('breathing');
-                      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: navigation }));
-                    }
-                  }}
-                />
-                <AssistantComposer
-                  ref={assistantInputRef}
-                  draft={activeThread.draftInput}
-                  files={pendingAttachments}
-                  disabled={loading || replyStreaming || fileGenerating || contentIntake.busy || weeklyActionBusy}
-                  uploading={attachmentUploading}
-                  error={attachmentError}
-                  onDraftChange={value => setDraftInput(activeAgent, value)}
-                  onFilesChange={files => {
-                    setPendingAttachments(files);
-                    if (!files.length) setAttachmentError('');
-                  }}
-                  onValidationError={setAttachmentError}
-                  onSubmit={() => void sendComposerMessage()}
-                />
-              </>
-            )}
-          </motion.section>
-        )}
-      </AnimatePresence>
+      <AssistantConversationPanel
+        page={page} pageContext={pageContext} currentPageAgent={currentPageAgent}
+        activeAgent={activeAgent} activeThread={activeThread} mode={mode} panelView={panelView}
+        assistantTool={assistantTool} viewport={viewport} reduceMotion={reduceMotion}
+        productionDecisionContext={productionDecisionContext} decisionFeedRevision={decisionFeedRevision}
+        persistenceScopeKey={persistenceScopeKey} welcomeBubbleVisible={welcomeBubbleVisible}
+        loading={loading} fileGenerating={fileGenerating} replyStreaming={replyStreaming}
+        attachmentUploading={attachmentUploading} attachmentError={attachmentError}
+        pendingAttachments={pendingAttachments} weeklyActionBusy={weeklyActionBusy}
+        weeklyPlanKickoffAvailable={weeklyPlanKickoffAvailable} pipelineEntries={pipelineEntries}
+        pendingCount={pendingCount} contentIntake={contentIntake}
+        messageScrollRef={messageScrollRef} assistantInputRef={assistantInputRef}
+        onAction={onAction} onSessionRefresh={onSessionRefresh} closeAssistant={closeAssistant}
+        returnToConversation={returnToConversation} openDecisionDialog={openDecisionDialog}
+        handleDecisionFeedChange={handleDecisionFeedChange}
+        openWeeklyPlanFromAssistant={openWeeklyPlanFromAssistant} send={send}
+        sendComposerMessage={sendComposerMessage} runQuickExecution={runQuickExecution}
+        setAssistantTool={setAssistantTool} setScrollPosition={setScrollPosition}
+        setFollowingLatest={setFollowingLatest} focusTaskCard={focusTaskCard}
+        setMessages={setMessages} setDraftInput={setDraftInput}
+        setDecisionFeedRevision={setDecisionFeedRevision} setMode={setMode}
+        setWeeklyActionBusy={setWeeklyActionBusy} setPendingAttachments={setPendingAttachments}
+        setAttachmentError={setAttachmentError} persistThread={persistThread}
+      />
 
       <AssistantDecisionDialog
         decisionDialog={decisionDialog}
