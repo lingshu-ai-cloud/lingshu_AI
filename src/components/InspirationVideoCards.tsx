@@ -4,6 +4,7 @@ import { Clock, Eye, Images, Loader2, Play, Sparkles, Star } from 'lucide-react'
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import type { TrendVideo } from '../lib/inspirationTypes';
 import { AuthenticatedVideo, ThumbnailImage, VideoThumbnail } from './inspiration/InspirationMedia';
+import { imagePostAnalysisQueuePresentation } from './inspiration/imagePostAnalysisPresentation';
 import { candidateDimensionLabels, discoveryOriginTitle, discoverySupplyLabel, getPlatformMeta, inspirationScoresForVideo } from './inspiration/inspirationVideoProjection';
 import { LsMediaStateFrame } from './ui/LsExperiencePrimitives';
 
@@ -62,10 +63,11 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
     setMediaReady(false);
     setMediaAspectRatio(trendVideoAspectRatio(video));
   }, [video.id, video.thumbnail, video.videoUrl]);
-  const imageAnalyzed = video.aiAnalysis?.imageEvidence?.status === 'analyzed' && Boolean(video.aiAnalysis.imageEvidence.observedFacts?.length);
+  const imageQueue = imagePostAnalysisQueuePresentation(video);
+  const imageAnalyzed = !imageQueue && video.aiAnalysis?.imageEvidence?.status === 'analyzed' && Boolean(video.aiAnalysis.imageEvidence.observedFacts?.length);
   const imageFailed = video.aiAnalysis?.imageAnalysisStatus === 'failed' || video.status === 'failed';
   const trendLabel = isImagePost
-    ? (imageAnalyzed ? '✓ 已完成拆解' : imageFailed ? '! 分析失败' : '… 待分析')
+    ? (imageAnalyzed ? '✓ 已完成拆解' : imageQueue?.label || (imageFailed ? '! 分析失败' : '… 待分析'))
     : video.trend === 'hot' ? '🔥 热门' : video.trend === 'rising' ? '↑ 上升' : '— 平稳';
   const trendColor = isImagePost
     ? (imageAnalyzed ? 'text-green' : imageFailed ? 'text-red-500' : 'text-text-muted')
@@ -78,7 +80,7 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
   const analysisStage = analysisProgress?.stage;
   const analysisPaused = ['paused', 'cancelled'].includes(String(analysisStage || '')) || video.aiAnalysis?.geminiStatus === 'paused';
   const analysisActive = ['queued', 'downloading', 'transcoding', 'analyzing', 'extracting_evidence'].includes(String(analysisStage || ''));
-  const mediaState = !analysisPaused && (imageFailed || analysisStage === 'failed')
+  const mediaState = !analysisPaused && (imageQueue?.state === 'unknown' || imageFailed || analysisStage === 'failed')
     ? 'error'
     : analysisActive || (video.status === 'pending' && !analysisPaused)
       ? 'processing'
@@ -91,7 +93,7 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
       <div
         className="relative block w-full overflow-hidden text-left"
         style={{ background: 'var(--color-surface-2)', aspectRatio: mediaAspectRatio }}>
-        <LsMediaStateFrame state={mediaState} percent={analysisProgress?.percent} label={isImagePost && mediaState === 'processing' ? '分析中' : isImagePost && mediaState === 'error' ? '分析失败，可查看详情后重试' : analysisProgress?.stageLabel} className="absolute inset-0">
+        <LsMediaStateFrame state={mediaState} percent={analysisProgress?.percent} label={imageQueue?.label || (isImagePost && mediaState === 'processing' ? '分析中' : isImagePost && mediaState === 'error' ? '分析失败，可查看详情后重试' : analysisProgress?.stageLabel)} className="absolute inset-0">
           <VideoThumbnail platform={video.platform} title={video.title} />
           {video.thumbnail && (
             <ThumbnailImage src={video.thumbnail} platform={video.platform} title={video.title} className="absolute inset-0 h-full w-full object-cover" onNaturalAspectRatio={ratio => {

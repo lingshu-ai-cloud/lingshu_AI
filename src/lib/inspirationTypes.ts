@@ -128,6 +128,7 @@ export interface VideoAnalysisPayload {
     uncertainties: string[];
   };
   imageAnalysisStatus?: 'pending' | 'queued' | 'processing' | 'unknown' | 'analyzed' | 'failed';
+  imageAnalysisQueueState?: 'queued' | 'processing' | 'unknown' | 'completed' | 'failed' | 'source_changed';
   imageAnalysisError?: string;
   publicMetrics?: { likes?: string; comments?: string; shares?: string; plays?: string; followers?: number; observedAt?: string };
   publicBaseline?: { sampleSize: number; medianWeightedEngagement: number | null; currentWeightedEngagement: number | null; relativeMultiple: number | null; status: 'usable' | 'insufficient_sample'; method: string };

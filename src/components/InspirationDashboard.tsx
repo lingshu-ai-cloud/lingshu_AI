@@ -40,7 +40,8 @@ export {
   materialMatchesProductFilter, materialAssetBadge, materialMatchesOrientation,
   materialMatchesLibraryFilters, type MaterialLibraryEntryContext,
 } from './inspiration/inspirationMaterialLibrary';
-import { exactAnalysisQuality, getAnalysis, inspirationCreationAvailability, isDisplayableForFormat } from './inspiration/inspirationAnalysisProjection';
+import { exactAnalysisQuality, getAnalysis, inspirationCreationAvailability, inspirationDetailStatusLabel, isDisplayableForFormat } from './inspiration/inspirationAnalysisProjection';
+import { imagePostAnalysisQueuePresentation } from './inspiration/imagePostAnalysisPresentation';
 export { directorReviewAction, inspirationCreationShotPreflight, inspirationCreationAvailability, isDisplayableVideoAnalysis } from './inspiration/inspirationAnalysisProjection';
 import { ACTIVE_PLATFORMS, PLATFORM_META, getPlatformMeta, heatValue, inspirationScoresForVideo, median, metadataPanelFallback, recordsToVideos, reliablePublicViews, specialRecommendationForVideo, supplyItemsToVideos, timeValue, type CrawlerRecord } from './inspiration/inspirationVideoProjection';
 export { getPlatformMeta, inspirationScoresForVideo, candidateDimensionLabels, latestDiscoveryOrigin, discoverySupplyLabel, discoveryOriginTitle } from './inspiration/inspirationVideoProjection';
@@ -640,7 +641,8 @@ export function DirectorVideoDetailPanel({
   const payload = video.aiAnalysis;
   const imageEvidence = payload?.imageEvidence;
   const isImagePost = video.contentFormat === 'image';
-  const imageAnalysisReady = imageEvidence?.status === 'analyzed' && Boolean(imageEvidence.observedFacts?.length);
+  const imageQueue = imagePostAnalysisQueuePresentation(video);
+  const imageAnalysisReady = !imageQueue && imageEvidence?.status === 'analyzed' && Boolean(imageEvidence.observedFacts?.length);
   const progressStage = payload?.analysisProgress?.stage;
   const hasServerProgress = Boolean(payload?.analysisProgress);
   const terminalAnalysisState = Boolean(payload?.analysisError)
@@ -674,7 +676,7 @@ export function DirectorVideoDetailPanel({
   const detailCreationReady = video.id.startsWith('material-') ? true : isImagePost ? imageAnalysisReady : exactQuality.ready && !pending;
   const isReadOnlySnapshot = payload?.analysisSource === 'weekly-plan-snapshot' || video.id.startsWith('weekly-reference-');
   const canRunExactAnalysis = !isReadOnlySnapshot && Boolean(video.recordId || video.id.startsWith('material-'));
-  const canRunDetailAnalysis = isImagePost ? Boolean(video.recordId) : canRunExactAnalysis;
+  const canRunDetailAnalysis = isImagePost ? Boolean(video.recordId) && !imageQueue : canRunExactAnalysis;
   const needsDirectorReview = !isImagePost && (payload?.geminiStatus === 'needs_review' || payload?.analysisQuality === 'video_review_required');
   const detailedAnalysisReason = isReadOnlySnapshot
     ? '原爆款已删除，仅可查看周计划保存的历史分析快照。'
@@ -684,22 +686,8 @@ export function DirectorVideoDetailPanel({
   const showAnalysisProgress = !isImagePost && progressStage !== 'completed'
     && (pending || ['failed', 'paused', 'cancelled'].includes(String(progressStage || '')));
   const analysisInterrupted = ['paused', 'cancelled'].includes(String(progressStage || '')) || payload?.geminiStatus === 'paused';
-  const statusLabel = payload?.analysisProgress && (analysisProgressIsActive(payload.analysisProgress)
-    || ['failed', 'paused', 'cancelled'].includes(payload.analysisProgress.stage))
-    ? payload.analysisProgress.stageLabel
-    : pending
-      ? '编导 Agent 分析中'
-    : isImagePost && imageAnalysisReady
-      ? '图文证据分析已完成'
-      : exactQuality.ready
-      ? '全片精确分析已完成'
-      : payload?.geminiStatus === 'needs_review'
-        ? '逐镜分析待复核'
-      : analysis
-        ? '策略分析已完成'
-        : payload?.analysisError || video.status === 'failed'
-          ? '分析需要重试'
-          : '等待编导 Agent 分析';
+  const statusLabel = inspirationDetailStatusLabel(video, { pending, imageAnalysisReady,
+    exactAnalysisReady: exactQuality.ready, hasStrategyAnalysis: Boolean(analysis) });
 
   return (
     <Drawer open title={video.title} size={800} onClose={onClose}
@@ -709,10 +697,10 @@ export function DirectorVideoDetailPanel({
           ? <Button onClick={onCancelAnalysis} icon={<X size={13} />}>停止分析</Button>
           : <Button onClick={analysisInterrupted ? (onReanalyze || onExactAnalysis) : exactQuality.ready ? (onReanalyze || onExactAnalysis) : onExactAnalysis} icon={<BarChart2 size={13} />}>{analysisInterrupted ? '继续详细分析' : exactQuality.ready ? '重新详细分析' : '详细分析'}</Button>)}
         {!isImagePost && !analysisInterrupted && (payload?.analysisError || video.status === 'failed') && <Button onClick={onRetry} loading={analyzing}>重新分析</Button>}
-        {isImagePost && !imageAnalysisReady && <Button onClick={onReanalyzeImage} loading={analyzing} icon={<Images size={13} />}>重新分析图文</Button>}
+        {isImagePost && !imageAnalysisReady && !imageQueue && <Button onClick={onReanalyzeImage} loading={analyzing} icon={<Images size={13} />}>重新分析图文</Button>}
         <Button onClick={onPreview}>预览原内容</Button>
         <Button type="primary" onClick={detailCreationReady ? onCreate : isImagePost ? onReanalyzeImage : onExactAnalysis} disabled={!detailCreationReady && !canRunDetailAnalysis} className="ml-auto">{video.id.startsWith('material-') ? '开始创作' : '爆款裂变'}</Button>
-        {!detailCreationReady && <p className="w-full text-xs text-text-secondary">{isImagePost ? '点击“爆款裂变”会先完成图文证据分析。' : pending ? '详细分析完成后会开放复刻，当前任务不会重复提交。' : needsDirectorReview ? '逐镜分析已经完成；需先确认待复核的镜头证据，再进入制作。' : canRunExactAnalysis ? '点击“爆款裂变”会先完成详细分析，再进入制作。' : detailedAnalysisReason}</p>}
+        {!detailCreationReady && <p className="w-full text-xs text-text-secondary">{isImagePost ? imageQueue?.detail || '点击“爆款裂变”会先完成图文证据分析。' : pending ? '详细分析完成后会开放复刻，当前任务不会重复提交。' : needsDirectorReview ? '逐镜分析已经完成；需先确认待复核的镜头证据，再进入制作。' : canRunExactAnalysis ? '点击“爆款裂变”会先完成详细分析，再进入制作。' : detailedAnalysisReason}</p>}
       </div>}
       styles={{ body: { padding: 0 } }}>
       <div className="border-b border-border px-5 py-3">
@@ -729,9 +717,9 @@ export function DirectorVideoDetailPanel({
             <ImageEvidenceSummaryPanel evidence={imageEvidence} />
           ) : isImagePost ? (
             <section className="mt-4 rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
-              {pending ? <Loader2 size={24} className="mx-auto animate-spin text-accent" /> : <BarChart2 size={24} className="mx-auto text-text-muted" />}
+              {pending && imageQueue?.state !== 'unknown' ? <Loader2 size={24} className="mx-auto animate-spin text-accent" /> : <BarChart2 size={24} className="mx-auto text-text-muted" />}
               <p className="mt-3 text-sm font-semibold text-text-primary">{statusLabel}</p>
-              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-text-muted">{pending ? '可以先关闭此页；完成时间与失败状态以后台返回为准。' : '完成后会展示图文证据与轮播节奏。'}</p>
+              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-text-muted">{imageQueue?.detail || (pending ? '可以先关闭此页；完成时间与失败状态以后台返回为准。' : '完成后会展示图文证据与轮播节奏。')}</p>
             </section>
           ) : (
             <InspirationVideoAnalysisTabs
@@ -2173,6 +2161,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   };
 
   const reanalyzeImagePost = async (video: TrendVideo) => {
+    const queued = imagePostAnalysisQueuePresentation(video);
+    if (queued) { setMaterialMessage(queued.detail); return; }
     const recordId = video.recordId || video.id.replace(/^crawl-/, '');
     if (!recordId || analyzingVideoIds.includes(video.id)) return;
     setAnalyzingVideoIds(ids => [...ids, video.id]);

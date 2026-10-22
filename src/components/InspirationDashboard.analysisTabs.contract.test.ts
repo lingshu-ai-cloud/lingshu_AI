@@ -8,6 +8,7 @@ import { inspirationCreationAvailability, inspirationCreationShotPreflight } fro
 const source = readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
 const analysisProjectionSource = readFileSync(new URL('./inspiration/inspirationAnalysisProjection.ts', import.meta.url), 'utf8');
 const analysisTabsSource = readFileSync(new URL('./inspiration/InspirationVideoAnalysisTabs.tsx', import.meta.url), 'utf8');
+const videoCardsSource = readFileSync(new URL('./InspirationVideoCards.tsx', import.meta.url), 'utf8');
 
 test('director detail keeps analysis evidence inside the three analysis tabs', () => {
   assert.match(source, /import InspirationVideoAnalysisTabs from '.\/inspiration\/InspirationVideoAnalysisTabs';/);
@@ -64,8 +65,14 @@ test('image creation waits for trusted image evidence and uses the image-only re
   };
   assert.match(inspirationCreationAvailability(image).reason, /图文证据尚未完成/);
 
+  image.aiAnalysis = { ...image.aiAnalysis, imageAnalysisQueueState: 'unknown', imageAnalysisStatus: 'unknown' };
+  assert.match(inspirationCreationAvailability(image).reason, /请先核对任务与费用/);
+  assert.match(source, /isImagePost && !imageAnalysisReady && !imageQueue && <Button onClick=\{onReanalyzeImage\}/);
+  assert.match(source, /canRunDetailAnalysis = isImagePost \? Boolean\(video\.recordId\) && !imageQueue/);
+  assert.match(videoCardsSource, /const imageAnalyzed = !imageQueue &&/);
+
   image.status = 'failed';
-  image.aiAnalysis = { ...image.aiAnalysis, imageAnalysisStatus: 'failed' };
+  image.aiAnalysis = { ...image.aiAnalysis, imageAnalysisQueueState: undefined, imageAnalysisStatus: 'failed' };
   assert.match(inspirationCreationAvailability(image).reason, /图文分析失败/);
 
   image.status = 'analyzed';
