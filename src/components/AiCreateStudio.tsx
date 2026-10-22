@@ -3160,7 +3160,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [variationBatches, setVariationBatches] = useState<VariationBatch[]>([]);
 
   useDismissibleLayer(productSelectorOpen, productSelectorRef, () => setProductSelectorOpen(false));
-  const splitVariations = (value: string) => value.split(/[，,\n]/).map(item => item.trim()).filter(Boolean);
   const activeVideoTheme = VIDEO_THEMES.find(item => item.id === videoThemeId) || VIDEO_THEMES[0]!;
   const effectiveContentGoal = mode === 'product' ? productContentGoal : 'leads';
   const effectivePrimaryCta = effectiveContentGoal === 'reach' ? reachCta.trim() : enterprisePrimaryCta.trim() || primaryCta.trim();
@@ -3197,42 +3196,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     { label: '语言版本', hint: '生成独立口播与字幕版本', value: variationLanguages, setter: setVariationLanguages, suggestions: ['中文', 'English', 'Español', 'العربية'] },
     { label: '开场变体', hint: '钩子可AI重制，正文按镜头决策', value: variationHooks, setter: setVariationHooks, suggestions: ['沿用原钩子', '痛点提问', '结果先行', '买家质疑'] },
   ];
-  const createVariationBatch = async () => {
-    setVariationBatchCreating(true);
-    setVariationBatchState('idle');
-    try {
-      const result = await studioApi.createVariationBatch({
-        title: projectTitle.trim() || '爆款复刻批次', templateProjectId: projectId || undefined, duration, maxItems: variationMax,
-        dimensions: {
-          strategy: [variationStrategy],
-          product: selectedProductIds.length ? selectedProductIds : ['当前产品'],
-          person: splitVariations(variationPeople).length ? splitVariations(variationPeople) : ['原人物'],
-          scene: splitVariations(variationScenes).length ? splitVariations(variationScenes) : ['原场景'],
-          language: splitVariations(variationLanguages).length ? splitVariations(variationLanguages) : ['中文'],
-          hook: splitVariations(variationHooks).length ? splitVariations(variationHooks) : ['原钩子'],
-        },
-        plan: {
-          platform, ratio, contentMode, mode, strategy: variationStrategy, duration, maxItems: variationMax,
-          productInfo, productSelectMode, selectedProductIds, audience, sellingPoints, tone, language: lang, provider,
-          dimensions: {
-            product: selectedProductIds.length ? selectedProductIds : ['当前产品'],
-            person: splitVariations(variationPeople).length ? splitVariations(variationPeople) : ['原人物'],
-            scene: splitVariations(variationScenes).length ? splitVariations(variationScenes) : ['原场景'],
-            language: splitVariations(variationLanguages).length ? splitVariations(variationLanguages) : ['中文'],
-            hook: splitVariations(variationHooks).length ? splitVariations(variationHooks) : ['原钩子'],
-          },
-        },
-      });
-      if (!result.ok || !result.batch) throw new Error('save_failed');
-      setVariationBatches(current => [result.batch, ...current.filter(item => item.id !== result.batch.id)]);
-      setVariationBatchState('saved');
-      setShowProjects(true);
-    } catch {
-      setVariationBatchState('error');
-    } finally {
-      setVariationBatchCreating(false);
-    }
-  };
 
   const [activeFolder, setActiveFolder] = useState('recommend');
   const [search, setSearch] = useState('');
@@ -3248,25 +3211,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [storyboardAssemblies, setStoryboardAssemblies] = useState<StoryboardAssembly[]>([
     { id: 'video-1', name: '视频1', assignments: {}, sourcePlans: {}, selected: [] },
   ]);
-  const activateContentPlan = (targetId: string) => {
-    if (targetId === activeAssemblyId) return;
-    const target = storyboardAssemblies.find(item => item.id === targetId);
-    if (!target) return;
-    const current: StoryboardAssembly = { id: activeAssemblyId, name: assemblyName, assignments: storyboardAssignments, sourcePlans: storyboardSourcePlans, selected };
-    setStoryboardAssemblies(items => items.map(item => item.id === activeAssemblyId ? current : item));
-    setActiveAssemblyId(target.id); setAssemblyName(target.name); setStoryboardAssignments(target.assignments); setStoryboardSourcePlans(target.sourcePlans); setSelected(target.selected);
-  };
-  const configureVariationStrategy = (strategy: VariationStrategy) => {
-    setVariationStrategy(strategy);
-    setStoryboardSourcePlans({});
-    if (strategy === 'remix') {
-      setVariationPeople('自动优选素材组'); setVariationScenes('沿用原节奏'); setVariationLanguages('中文'); setVariationHooks('沿用原钩子');
-    } else if (strategy === 'recreate') {
-      setVariationPeople('沿用对标人物设定'); setVariationScenes('沿用对标场景结构'); setVariationLanguages('中文'); setVariationHooks('沿用原钩子');
-    } else {
-      setVariationPeople('关键镜头保真'); setVariationScenes('逐镜自动决策'); setVariationLanguages('中文'); setVariationHooks('沿用原钩子');
-    }
-  };
 
   const [materials, setMaterials] = useState<Clip[]>([]);
   const [previewClip, setPreviewClip] = useState<Clip | null>(null);
@@ -3478,8 +3422,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   });
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const bgmInputRef = useRef<HTMLInputElement>(null);
-  const previewBgmAudioRef = useRef<HTMLAudioElement | null>(null);
-  const previewVoiceAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const [cover, setCover] = useState(''); // 某素材 id（用其帧画面作封面底图）
   const [coverTitle, setCoverTitle] = useState('');
@@ -3736,18 +3678,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
   }, [productSelectMode, selectedProductIds]);
 
-  // 成片预览：网页端只顺序播放带可访问地址的真实视频片段。
-  const [previewIdx, setPreviewIdx] = useState<number | null>(null);
-  const [previewNote, setPreviewNote] = useState(false);
-  const [previewVideoReady, setPreviewVideoReady] = useState(false);
-  const [previewPreparing, setPreviewPreparing] = useState(false);
-  const [previewPlaybackError, setPreviewPlaybackError] = useState('');
-  const [previewVoicePlayableUrl, setPreviewVoicePlayableUrl] = useState('');
-  const [previewVoiceLoading, setPreviewVoiceLoading] = useState(false);
-  const [previewOriginalOn, setPreviewOriginalOn] = useState(false);
-  const [previewVoiceOn, setPreviewVoiceOn] = useState(true);
-  const [previewBgmOn, setPreviewBgmOn] = useState(true);
-  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const workbenchVideoRef = useRef<HTMLVideoElement | null>(null);
   const [workbenchTimelineTime, setWorkbenchTimelineTime] = useState(0);
   const [workbenchPlaying, setWorkbenchPlaying] = useState(false);
@@ -3755,17 +3685,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const workbenchImageTimerRef = useRef<number | null>(null);
   const workbenchLoopOffsetRef = useRef(0);
   const workbenchAdvanceLockRef = useRef(false);
-  const previewVideoCacheRef = useRef<Map<string, HTMLVideoElement>>(new Map());
-  const previewAdvanceTimerRef = useRef<number | null>(null);
-  const previewAdvanceLockRef = useRef(false);
-  const previewStartRequestRef = useRef(0);
 
   // 字幕（A 层：脚本兜底对齐 + 沿用封面样式；桌面端 ffmpeg 烧录）
   const [subtitlesOn, setSubtitlesOn] = useState(true);
   const [subMode, setSubMode] = useState<'target' | 'bilingual'>('target');
   const [subPreviewIdx, setSubPreviewIdx] = useState(0); // 预览叠层当前展示的 cue
   const [cueZh, setCueZh] = useState<string[]>([]);       // 双语字幕的中文译文（与 cues 对齐）
-  const [previewTime, setPreviewTime] = useState(0);
   const [clipEdits, setClipEdits] = useState<Record<string, ClipEdit>>({});
 
   // 草稿 / 作品
@@ -4520,115 +4445,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     confirmed: false,
     critical: isCriticalStoryboardSlot(slot),
   };
-  const updateStoryboardActionState = (slot: StoryboardSlot, patch: Partial<Pick<StoryboardSourcePlan, 'actionStartState' | 'actionBeats' | 'actionEndState' | 'actionKeyStates'>>) => {
-    setStoryboardSourcePlans(current => ({ ...current, [slot.id]: {
-      ...(current[slot.id] || sourcePlanFor(slot)), ...patch,
-      firstFrameMaterialId: undefined, firstFrameUrl: undefined, firstFrameFingerprint: undefined,
-      firstFrameRequestId: undefined,
-      videoRequestId: undefined,
-      actionVideoRequestId: undefined,
-      firstFrameConfirmed: false, firstFrameQuality: undefined, firstFrameIdentityNotice: undefined,
-      generatedClipId: undefined, quality: undefined, qualityError: undefined,
-      confirmed: false,
-    } }));
-  };
-  const updateStoryboardProductIds = (slot: StoryboardSlot, productIds: string[]) => {
-    setStoryboardSourcePlans(current => ({ ...current, [slot.id]: {
-      ...(current[slot.id] || sourcePlanFor(slot)), productIds,
-      firstFrameMaterialId: undefined, firstFrameUrl: undefined, firstFrameFingerprint: undefined,
-      firstFrameRequestId: undefined,
-      videoRequestId: undefined,
-      actionVideoRequestId: undefined,
-      firstFrameConfirmed: false, firstFrameQuality: undefined, firstFrameIdentityNotice: undefined,
-      generatedClipId: undefined, quality: undefined, qualityError: undefined,
-      confirmed: false,
-    } }));
-  };
-  const updateStoryboardEnvironmentReference = (slot: StoryboardSlot, choice: string) => {
-    if (productionFor(slot).locked) { setModeNotice('镜头已锁定，请先解锁后调整场景参考'); return; }
-    const previousCandidateId = sourcePlanFor(slot).generatedClipId;
-    if (previousCandidateId) {
-      setStoryboardAssignments(current => {
-        if (current[slot.id] !== previousCandidateId) return current;
-        const next = { ...current }; delete next[slot.id]; return next;
-      });
-      setShotProductions(current => {
-        const key = productionKey(slot.id);
-        const shot = current[key];
-        return shot?.candidates.some(candidate => candidate.id === shot.adoptedId && candidate.materialId === previousCandidateId)
-          ? { ...current, [key]: { ...shot, adoptedId: '' } } : current;
-      });
-      setRendered(false);
-    }
-    setStoryboardSourcePlans(current => ({ ...current, [slot.id]: {
-      ...(current[slot.id] || sourcePlanFor(slot)),
-      environmentMaterialId: choice !== 'auto' && choice !== 'none' ? choice : undefined,
-      environmentReferenceManual: choice !== 'auto' && choice !== 'none',
-      environmentReferenceDisabled: choice === 'none',
-      firstFrameMaterialId: undefined, firstFrameUrl: undefined, firstFrameFingerprint: undefined,
-      firstFrameRequestId: undefined, videoRequestId: undefined, actionVideoRequestId: undefined,
-      firstFrameConfirmed: false, firstFrameQuality: undefined, firstFrameIdentityNotice: undefined,
-      generatedClipId: undefined, quality: undefined, qualityError: undefined, confirmed: false,
-    } }));
-  };
-  const updateStoryboardCharacterReference = (slot: StoryboardSlot, choice: string) => {
-    if (productionFor(slot).locked) { setModeNotice('镜头已锁定，请先解锁后调整人物参考'); return; }
-    const previousCandidateId = sourcePlanFor(slot).generatedClipId;
-    if (previousCandidateId) {
-      setStoryboardAssignments(current => {
-        if (current[slot.id] !== previousCandidateId) return current;
-        const next = { ...current }; delete next[slot.id]; return next;
-      });
-      setShotProductions(current => {
-        const key = productionKey(slot.id);
-        const shot = current[key];
-        return shot?.candidates.some(candidate => candidate.id === shot.adoptedId && candidate.materialId === previousCandidateId)
-          ? { ...current, [key]: { ...shot, adoptedId: '' } } : current;
-      });
-      setRendered(false);
-    }
-    setStoryboardSourcePlans(current => ({ ...current, [slot.id]: {
-      ...(current[slot.id] || sourcePlanFor(slot)),
-      characterMaterialId: choice !== 'auto' && choice !== 'none' ? choice : undefined,
-      characterReferenceManual: choice !== 'auto' && choice !== 'none',
-      characterReferenceDisabled: choice === 'none',
-      firstFrameMaterialId: undefined, firstFrameUrl: undefined, firstFrameFingerprint: undefined,
-      firstFrameRequestId: undefined, videoRequestId: undefined, actionVideoRequestId: undefined,
-      firstFrameConfirmed: false, firstFrameQuality: undefined, firstFrameIdentityNotice: undefined,
-      generatedClipId: undefined, quality: undefined, qualityError: undefined, confirmed: false,
-    } }));
-  };
-  const placementSceneFor = (slot: StoryboardSlot): ProductPlacementScene | null => {
-    const text = `${slot.title} ${slot.detail}`;
-    if (!/产品|商品|包装|瓶|盒|product|item/i.test(text)) return null;
-    if (/传送带|输送带|流水线|产线|conveyor/i.test(text)) return 'conveyor';
-    if (/桌面|桌上|台面|tabletop|on (?:a |the )?table/i.test(text)) return 'tabletop';
-    return null;
-  };
-  const updateStoryboardPlacement = (slot: StoryboardSlot, placementOverride?: ProductPlacementOverride, placementPreset?: StoryboardSourcePlan['placementPreset']) => {
-    if (productionFor(slot).locked) { setModeNotice('镜头已锁定，请先解锁后调整产品位置'); return; }
-    const previousCandidateId = sourcePlanFor(slot).generatedClipId;
-    if (previousCandidateId) {
-      setStoryboardAssignments(current => {
-        if (current[slot.id] !== previousCandidateId) return current;
-        const next = { ...current }; delete next[slot.id]; return next;
-      });
-      setShotProductions(current => {
-        const key = productionKey(slot.id);
-        const shot = current[key];
-        return shot?.candidates.some(candidate => candidate.id === shot.adoptedId && candidate.materialId === previousCandidateId)
-          ? { ...current, [key]: { ...shot, adoptedId: '' } } : current;
-      });
-      setRendered(false);
-    }
-    setStoryboardSourcePlans(current => ({ ...current, [slot.id]: {
-      ...(current[slot.id] || sourcePlanFor(slot)), placementOverride, placementPreset,
-      firstFrameMaterialId: undefined, firstFrameUrl: undefined, firstFrameFingerprint: undefined,
-      firstFrameRequestId: undefined, videoRequestId: undefined, actionVideoRequestId: undefined,
-      firstFrameConfirmed: false, firstFrameQuality: undefined, firstFrameIdentityNotice: undefined,
-      generatedClipId: undefined, quality: undefined, qualityError: undefined, confirmed: false,
-    } }));
-  };
   const storyboardTopicFor = (slot: StoryboardSlot): NonNullable<StoryboardSourcePlan['shotTopic']> => {
     const override = storyboardSourcePlans[slot.id]?.shotTopic;
     if (override) return override;
@@ -4651,18 +4467,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     return 'product';
   };
   const effectiveStoryboardSceneType = (slot: StoryboardSlot) => storyboardSceneType(slot);
-  const updateStoryboardTopic = (slot: StoryboardSlot, shotTopic: NonNullable<StoryboardSourcePlan['shotTopic']>) => {
-    const normalizedTopic = mode !== 'clone' && shotTopic === 'general' ? 'consumer_demo' : shotTopic;
-    setStoryboardSourcePlans(current => ({ ...current, [slot.id]: {
-      ...(current[slot.id] || sourcePlanFor(slot)), shotTopic: normalizedTopic,
-      shotType: mode === 'clone' ? current[slot.id]?.shotType : normalizedTopic as FreeCreationShotType,
-      sceneType: normalizedTopic === 'product' ? 'product' : normalizedTopic === 'factory' ? 'factory' : normalizedTopic === 'consumer_demo' ? 'usage' : 'general', productIds: undefined,
-      firstFrameMaterialId: undefined, firstFrameUrl: undefined, firstFrameFingerprint: undefined,
-      firstFrameRequestId: undefined, videoRequestId: undefined, actionVideoRequestId: undefined,
-      firstFrameConfirmed: false, generatedClipId: undefined, quality: undefined, qualityError: undefined,
-      confirmed: false, error: '',
-    } }));
-  };
   const referenceDetailForSlot = (slot: StoryboardSlot) => {
     if (mode !== 'clone') return undefined;
     const details = videoKickoff?.referenceAnalysis?.details || [];
@@ -4728,25 +4532,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         ...prev,
         [slot.id]: { ...plan, ...prev[slot.id], generatedClipId: materialId, confirmed: false, qualityError: error instanceof Error ? error.message : '自动质检失败' },
       }));
-    } finally {
-      setStoryboardQualityChecking(prev => ({ ...prev, [slot.id]: false }));
-    }
-  };
-  const reviewStoryboardQuality = async (slot: StoryboardSlot, decision: 'accept' | 'reject') => {
-    const plan = sourcePlanFor(slot);
-    if (!plan.generatedClipId || !plan.quality?.reportId || storyboardQualityChecking[slot.id]) return;
-    setStoryboardQualityChecking(prev => ({ ...prev, [slot.id]: true }));
-    try {
-      const result = await studioApi.reviewStoryboardQuality(plan.generatedClipId, {
-        shotId: slot.id,
-        reportId: plan.quality.reportId,
-        decision,
-      });
-      if (!result.ok || !result.quality) throw new Error(result.error || '人工复核结果未保存');
-      setStoryboardSourcePlans(prev => ({ ...prev, [slot.id]: { ...sourcePlanFor(slot), quality: result.quality, qualityError: '' } }));
-      setModeNotice(decision === 'accept' ? '人工复核已记录，可以在镜头编辑中采用该候选。' : '已拒绝该视频候选，请根据质检问题重做。');
-    } catch (error) {
-      setStoryboardSourcePlans(prev => ({ ...prev, [slot.id]: { ...sourcePlanFor(slot), qualityError: error instanceof Error ? error.message : '人工复核保存失败' } }));
     } finally {
       setStoryboardQualityChecking(prev => ({ ...prev, [slot.id]: false }));
     }
@@ -5709,11 +5494,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       return { ...current, [key]: next };
     });
   };
-  const patchStoryboardVisualEdit = (slot: StoryboardSlot, clip: Clip, patch: Partial<ClipEdit>) => {
-    if (productionFor(slot).locked) { setModeNotice('镜头已锁定，请先解锁'); return; }
-    const key = slotClipEditKey(slot.id, clip.id);
-    setClipEdits(current => ({ ...current, [key]: { ...(current[key] || defaultEditForSlot(clip, slot)), ...patch } }));
-  };
   const hasAvatarSourceVoice = (slot: StoryboardSlot) => {
     const production = productionFor(slot);
     const materialId = storyboardAssignments[slot.id] || '';
@@ -6033,117 +5813,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       });
     });
   };
-  const previewTimeline = useMemo(() => renderTimeline
-    .map(item => {
-      const clip = materialById.get(item.clipId || '') || materials.find(candidate => candidate.name === item.name);
-      if (!clip || !clip.url || clip.type === 'audio') return null;
-      return { ...item, clip };
-    })
-    .filter((item): item is NonNullable<typeof item> => Boolean(item)), [materials, materialById, renderTimeline]);
-  useEffect(() => {
-    let active = true;
-    const sourceUrl = voiceoverMode === 'none' || !previewVoiceOn ? '' : voiceoverUrl || '';
-    setPreviewVoicePlayableUrl('');
-    if (!sourceUrl) {
-      setPreviewVoiceLoading(false);
-      return () => { active = false; };
-    }
-    setPreviewVoiceLoading(true);
-    void withStudioTimeout(authenticatedAudioBlobUrl(sourceUrl), 20_000)
-      .then(playableUrl => {
-        if (!active) return;
-        setPreviewVoicePlayableUrl(playableUrl);
-        setPreviewPlaybackError(current => current.startsWith('口播加载失败') ? '' : current);
-      })
-      .catch((error: unknown) => {
-        if (!active) return;
-        const message = error instanceof Error ? error.message : String(error || '未知错误');
-        setPreviewPlaybackError(`口播加载失败：${message}`);
-      })
-      .finally(() => { if (active) setPreviewVoiceLoading(false); });
-    return () => { active = false; };
-  }, [previewVoiceOn, voiceoverMode, voiceoverUrl]);
-  useEffect(() => {
-    const cache = previewVideoCacheRef.current;
-    const activeUrls = new Set<string>();
-    const warmIndex = previewIdx === null ? 0 : previewIdx + 1;
-    const warmItem = previewTimeline[warmIndex];
-    if (warmItem?.clip.type === 'video' && warmItem.clip.url) {
-      activeUrls.add(warmItem.clip.url);
-      if (!cache.has(warmItem.clip.url)) {
-        const video = document.createElement('video');
-        video.preload = 'auto';
-        video.muted = true;
-        video.playsInline = true;
-        video.src = warmItem.clip.url;
-        video.load();
-        cache.set(warmItem.clip.url, video);
-      }
-    }
-    cache.forEach((video, url) => {
-      if (activeUrls.has(url)) return;
-      video.pause();
-      video.removeAttribute('src');
-      video.load();
-      cache.delete(url);
-    });
-
-    const nextItem = warmItem;
-    const nextVideoUrl = nextItem?.clip.type === 'video' ? nextItem.clip.url : '';
-    if (nextItem && nextVideoUrl) {
-      const nextVideo = cache.get(nextVideoUrl);
-      if (nextVideo) {
-        const warmNextFrame = () => {
-          const seekTo = Math.max(0, nextItem.trimStart || 0);
-          try { nextVideo.currentTime = seekTo; } catch { /* ignore preload seek edge cases */ }
-        };
-        if (nextVideo.readyState >= 1) warmNextFrame();
-        else nextVideo.addEventListener('loadedmetadata', warmNextFrame, { once: true });
-      }
-    }
-  }, [previewIdx, previewTimeline]);
-  useEffect(() => () => {
-    previewVideoCacheRef.current.forEach(video => {
-      video.pause();
-      video.removeAttribute('src');
-      video.load();
-    });
-    previewVideoCacheRef.current.clear();
-  }, []);
-  const previewOffsetByIndex = useMemo(() => {
-    const offsets: number[] = [];
-    let cursor = 0;
-    previewTimeline.forEach((item, index) => {
-      offsets[index] = cursor;
-      cursor += Math.max(0.5, item.targetDuration || ((item.trimEnd || 0) - (item.trimStart || 0)) || 3);
-    });
-    return offsets;
-  }, [previewTimeline]);
-  const cueAtTime = (time: number): SubCue | null => {
-    if (!subtitlesOn || !cues.length) return null;
-    const current = cues.find(cue => time >= cue.start && time < cue.end);
-    if (current) return current;
-    return cues.find(cue => Math.abs(time - cue.start) < 0.25) || null;
-  };
-  const activePreviewCue = cueAtTime(previewTime);
-  const patchClipEdit = (clip: Clip, patch: Partial<ClipEdit>) => {
-    setClipEdits(prev => {
-      const base = prev[clip.id] ?? {
-        trimStart: 0,
-        trimEnd: clip.type === 'image' ? 3 : clip.duration,
-        speed: 1,
-        transition: '硬切',
-        note: '',
-      };
-      const next = { ...base, ...patch };
-      const maxEnd = clip.type === 'image' ? 10 : Math.max(1, clip.duration);
-      next.trimStart = Math.max(0, Math.min(Number(next.trimStart) || 0, maxEnd));
-      next.trimEnd = Math.max(next.trimStart + 0.5, Math.min(Number(next.trimEnd) || maxEnd, maxEnd));
-      next.speed = Math.max(0.25, Math.min(Number(next.speed) || 1, 4));
-      return { ...prev, [clip.id]: next };
-    });
-  };
-
   const goPreview = async (scriptOverride?: string, renderOverride?: { language?: string; voiceoverUrl?: string; voiceoverDur?: number; cues?: SubCue[]; outputOnly?: boolean; timeline?: typeof renderTimeline; bgmId?: string; serverPreviewRequired?: boolean; outputKey?: string; inputSignature?: string }) => {
     const blockers = storyboardSlots.flatMap(slot => shotBlockers(productionFor(slot), shotProductionContext,
       undefined, { sourceMaterialVerified: hasAvatarSourceVoice(slot) }).map(message => `${slot.title}：${message}`));
@@ -6515,46 +6184,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       setBatchRenderingLangs(false);
     }
   };
-  const retryLanguageRender = async (combination: { key: string; code: string; plan: StoryboardAssembly; bgmId: string }) => {
-    const { key, code, bgmId, plan } = combination;
-    if (plan.id !== activeAssemblyId || code !== activeVoiceLang) {
-      setModeNotice('请先切换到要重试的分镜方案与语言版本。');
-      return;
-    }
-    if (socialViralTask && !renderReadiness.ready) {
-      setModeNotice(renderReadiness.issues[0]?.message || '请先完成全部分镜');
-      return;
-    }
-    if (subtitleSourceBlockReason || voiceoverAlignmentBlockReason) {
-      setModeNotice(subtitleSourceBlockReason || voiceoverAlignmentBlockReason);
-      return;
-    }
-    const currentVersion = buildRenderableVideoVersions().find(item => item.key === key);
-    if (!currentVersion) {
-      setModeNotice('当前语言或分镜版本已变化，请重新选择可渲染版本。');
-      return;
-    }
-    const audio = voiceoverForLanguage(code);
-    setLanguageRenderOutputs(prev => ({ ...prev, [key]: { status: 'rendering' } }));
-    try {
-      const outputPath = await goPreview(currentVersion.script, {
-        language: code,
-        voiceoverUrl: audio.url,
-        voiceoverDur: audio.duration,
-        cues: alignedCuesByLang[code] || audio.cues,
-        outputOnly: true,
-        timeline: currentVersion.timeline as typeof renderTimeline,
-        bgmId, serverPreviewRequired: Boolean(socialContentTaskId),
-      });
-      if (!outputPath) throw new Error('成片渲染未返回文件，请重试当前版本');
-      const previewUrl = outputPath ? renderPreviewUrlsRef.current[outputPath] : undefined;
-      setLanguageRenderOutputs(prev => ({ ...prev, [key]: { status: 'done', path: outputPath, previewUrl, inputSignature: currentVersion.inputSignature } }));
-      setLanguageRenderVersions(prev => ({ ...prev, [key]: [{ id: `${key}-${Date.now()}`, versionNumber: (prev[key]?.[0]?.versionNumber || 0) + 1, status: 'done', path: outputPath, previewUrl, inputSignature: currentVersion.inputSignature, createdAt: new Date().toISOString() }, ...(prev[key] || [])] }));
-    } catch (err: any) {
-      setLanguageRenderOutputs(prev => ({ ...prev, [key]: { status: 'failed', error: err?.message || '生成失败' } }));
-      setLanguageRenderVersions(prev => ({ ...prev, [key]: [{ id: `${key}-${Date.now()}`, versionNumber: (prev[key]?.[0]?.versionNumber || 0) + 1, status: 'failed', error: err?.message || '生成失败', createdAt: new Date().toISOString() }, ...(prev[key] || [])] }));
-    }
-  };
   const prev = () => {
     if (mode === 'clone' && contentMode === 'video' && (step === 'material' || step === 'script')) {
       setStepIdx(activeSteps.findIndex(item => item.id === 'mode'));
@@ -6582,46 +6211,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       return;
     }
     setStepIdx(i => Math.max(i - 1, 0));
-  };
-
-  const regenScript = async (type: 'voiceover' | 'storyboard' = scriptType) => {
-    if (!activeProductInfo.trim() || !activeProductLabel) {
-      alert('请先在第一步选择企业中心产品，再生成脚本。');
-      setStepIdx(0);
-      return;
-    }
-    const requestId = ++scriptTaskRequestRef.current;
-    const specEpoch = studioSpecEpochRef.current;
-    const isCurrentRequest = () => scriptTaskRequestRef.current === requestId && studioSpecEpochRef.current === specEpoch;
-    setScriptLoading(true);
-    try {
-      const response = await studioApi.script(
-        {
-          materials: matNames, materialInfos: buildMaterialInfosForScript(selectedVisualClips, duration, hookMaterialId),
-          productInfo: activeProductInfo, language: lang, platform, duration, scriptType: type, generationMode: mode,
-          voiceoverMode: voiceoverMode === 'unselected' ? 'ai' : voiceoverMode,
-          cooperationRoute, provider, audience, sellingPoints, tone, videoTheme: videoThemePayload,
-          existingScripts: modeScripts.filter(item => item.mode === mode).map(item => item.script).concat(script || []),
-          variantSeed: modeScripts.filter(item => item.mode === mode).length,
-        }, script,
-      );
-      if (!isCurrentRequest()) return;
-      if (type === 'storyboard') announceRejectedStoryboard(response);
-      const qualityFailure = scriptQualityFailure(response, 'AI脚本未通过检查，未返回可编辑结果。', true);
-      if (qualityFailure) throw new Error(qualityFailure);
-      const s = response.script || '';
-      if (!s.trim()) throw new Error('模型没有返回可用脚本。');
-      const nextScript = sanitizeStoryboardScript(s, activeProductInfo, activeProductLabel);
-      setScript(nextScript);
-      setModeScripts(current => current.map(item => item.id === activeModeScriptId
-        ? { ...item, script: nextScript, ...qualityFields(response) }
-        : item));
-      setModeNotice(qualitySuccessNotice(response, '脚本已重新生成并写入结果区。'));
-    } catch (err: any) {
-      if (isCurrentRequest()) setModeNotice(err?.message || '脚本生成失败，请稍后重试。');
-    } finally {
-      if (isCurrentRequest()) setScriptLoading(false);
-    }
   };
 
   const fillLocalDemoMaterials = (preferredMaterialIds: string[]) => {
@@ -7281,13 +6870,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setActiveModeScriptId(itemId);
     setStepIdx(STEPS.findIndex(item => item.id === 'material'));
     setCanvasView('creation');
-  }, [mode, videoKickoff, activeProductInfo]); // eslint-disable-line react-hooks/exhaustive-deps
-
-
-  const openModeScript = (item: ModeScriptOutput) => {
-    setActiveModeScriptId(item.id);
-    applyTimestampScript(item.script, activeProductInfo, false);
-  };
+  }, [mode, videoKickoff, activeProductInfo]);
 
   useEffect(() => {
     if (activeModeScriptId || !modeScripts.length) return;
@@ -7450,96 +7033,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     void generateTimestampScriptsForMode();
   }, [activeProductInfo, activeProductLabel, mode, modeActionLoading, pendingRealCloneGeneration, videoKickoff]);
 
-  const optimizeCurrentTimestampScript = async () => {
-    const currentScript = script.trim();
-    if (!currentScript || modeActionLoading) return;
-    if (mode === 'clone' && !videoKickoff) {
-      setModeNotice('已停止生成：当前草稿没有真实对标逐镜分析。请返回灵感中心完成全片精确分析后再优化脚本。');
-      return;
-    }
-    const requestId = ++scriptTaskRequestRef.current;
-    const specEpoch = studioSpecEpochRef.current;
-    const isCurrentRequest = () => scriptTaskRequestRef.current === requestId && studioSpecEpochRef.current === specEpoch;
-    setModeActionLoading(true);
-    setModeNotice('');
-    try {
-      const response = await studioApi.script(
-        {
-          materials: matNames,
-          productInfo: activeProductInfo,
-          language: enterpriseScriptLanguage,
-          platform,
-          duration,
-          scriptType: 'storyboard',
-          generationMode: mode,
-          cooperationRoute,
-          provider,
-          audience,
-          sellingPoints,
-          tone: [
-            tone,
-            mode === 'clone' ? '基于当前脚本重新思考，生成一版更自然的新标准分镜脚本' : '优化当前时间戳脚本',
-            '保留原有时间段结构',
-            mode === 'clone' ? '每段必须包含环境/景别/运镜/画面/配乐/台词/字幕' : '每段必须包含时间/画面/人物说/字幕',
-            mode === 'clone' ? '台词必须是真人能直接说出口的买家痛点、需求洞察、证明点或CTA' : '人物说必须是真人能直接说出口的话',
-            '不得加入镜头、画面、字幕、参考节奏等制作指令到台词或人物说',
-            '不得编造未提供的数据',
-          ].filter(Boolean).join(' · '),
-          videoTheme: videoThemePayload,
-          referenceTitle: mode === 'clone' ? videoKickoff?.video?.title || '' : '',
-          referenceAnalysis: mode === 'clone' && videoKickoff ? cloneReferenceAnalysisText(videoKickoff) : '',
-          referenceHighlights: mode === 'clone' && videoKickoff ? cloneReferenceHighlights(videoKickoff) : [],
-        },
-        currentScript,
-      );
-      if (!isCurrentRequest()) return;
-      announceRejectedStoryboard(response);
-      const qualityFailure = scriptQualityFailure(response, 'AI脚本未通过检查，未返回可编辑结果。');
-      if (qualityFailure) throw new Error(qualityFailure);
-      const optimized = response.script || '';
-      const cloneOptimized = mode === 'clone'
-        ? ensureDistinctCloneStoryboard({
-          script: optimized,
-          kickoff: videoKickoff || { referenceAnalysis: { details: [] } },
-          productInfo: activeProductInfo,
-          languageCode: 'zh',
-          strictProductName: activeProductLabel,
-          existingScripts: modeScripts.filter(item => item.mode === 'clone' && item.id !== activeModeScriptId).map(item => item.script),
-          variantSeed: modeScripts.filter(item => item.mode === 'clone').findIndex(item => item.id === activeModeScriptId) + 1,
-          migrationMode,
-        })
-        : null;
-      if (cloneOptimized?.normalized) throw new Error('模型返回脚本未满足标准分镜字段或与已有脚本过于相似，未生成兜底稿。');
-      const sanitizedOptimized = cloneOptimized
-        ? cloneOptimized.script
-        : sanitizeStoryboardScript(optimized, activeProductInfo, activeProductLabel);
-      if (!sanitizedOptimized.trim()) throw new Error('模型没有返回可用脚本。');
-      applyTimestampScript(sanitizedOptimized, activeProductInfo, false);
-      setModeNotice(qualitySuccessNotice(response, mode === 'clone'
-        ? '已按当前产品信息和标准分镜字段优化脚本。'
-        : '已按当前产品信息和口播约束优化脚本。'));
-      if (modeScripts[0]) setActiveModeScriptId(modeScripts[0].id);
-      setModeScripts(prev => prev.map((item, index) => index === 0 ? { ...item, script: sanitizedOptimized, title: `${item.title}（已优化）`, ...qualityFields(response) } : item));
-    } catch (err: any) {
-      if (isCurrentRequest()) setModeNotice(err?.message || '脚本优化失败，请稍后重试。');
-    } finally {
-      if (isCurrentRequest()) setModeActionLoading(false);
-    }
-  };
-
   const extractVoiceoverText = (value: string) => {
     return formatVoiceoverWithTimestamps(value);
-  };
-
-  const cancelVoiceDraftGeneration = () => {
-    const controller = voiceDraftAbortRef.current;
-    if (!controller) return;
-    controller.abort();
-    setVoiceDraftFailedLangs(current => [...new Set([...current, ...voiceDraftPendingLangs])]);
-    setVoiceDraftStaleLangs(current => [...new Set([...current, ...voiceDraftPendingLangs])]);
-    setVoiceDraftPendingLangs([]);
-    setVoiceDraftLoading(false);
-    setVoiceDraftNotice('已取消翻译；已完成的语种已保留，未完成语种可重新翻译。');
   };
 
   const generateVoiceDrafts = async () => {
@@ -7697,14 +7192,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
   };
 
-  // 脚本生成入口集中在「口播脚本」页按钮，避免进入步骤时自动覆盖用户已编辑内容。
-
-  const switchScriptType = (type: 'voiceover' | 'storyboard') => {
-    if (type === scriptType) return;
-    setScriptType(type);
-    void regenScript(type);
-  };
-
 
   const regenCovers = async () => {
     setCoverLoading(true);
@@ -7757,37 +7244,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
   };
 
-  const importCanvaCover = async (files: FileList | null) => {
-    const file = files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      alert('请从可画导出 PNG、JPG 或 WebP 图片后再导回。');
-      return;
-    }
-    setCoverCanvaOpening(true);
-    try {
-      const [dataBase64, media] = await Promise.all([fileToDataUrl(file), probeMedia(file)]);
-      const { material } = await studioApi.uploadMaterial({
-        name: file.name,
-        folder: 'upload',
-        type: 'image',
-        width: media.width,
-        height: media.height,
-        dataBase64,
-        mimeType: file.type,
-      });
-      if (!material?.id || !material.url) throw new Error('封面上传失败');
-      setMaterials(current => [materialToClip(material), ...current.filter(item => item.id !== material.id)]);
-      setCover(material.id);
-      setCoverUrl(material.url);
-    } catch (err: any) {
-      alert(err?.message || '可画封面导回失败，请稍后重试。');
-    } finally {
-      setCoverCanvaOpening(false);
-      if (canvaReturnInputRef.current) canvaReturnInputRef.current.value = '';
-    }
-  };
-
   // Never seed a cover with generic promotional claims (years, shipping
   // promises, popularity). Until the user asks AI to rewrite it, the verified
   // enterprise product name is the only safe default.
@@ -7808,21 +7264,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coverTitle, lang, step]);
 
-  // 官方导入字体模版（.ttf/.otf/.woff/.woff2）：注册为可用字体
-  const importFont = async (files: FileList | null) => {
-    const f = files?.[0];
-    if (!f) return;
-    try {
-      const buf = await f.arrayBuffer();
-      const family = `custom-${f.name.replace(/\.[^.]+$/, '').replace(/\W+/g, '-')}-${Date.now()}`;
-      const face = new FontFace(family, buf);
-      await face.load();
-      (document.fonts as FontFaceSet).add(face);
-      setCustomFonts(list => [...list, { family, label: f.name.replace(/\.[^.]+$/, '') }]);
-      setCoverStyle(s => ({ ...s, fontFamily: family }));
-    } catch { /* 字体加载失败忽略 */ }
-  };
-
   // 双语字幕：进入预览且开启双语时，翻译各 cue（目标语言为中文则无需翻译）
   useEffect(() => {
     if (step !== 'preview' || !subtitlesOn || subMode !== 'bilingual' || lang === 'zh' || cues.length === 0) {
@@ -7839,266 +7280,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
   // cue 数量变化时，把预览高亮夹回有效范围
   useEffect(() => { if (subPreviewIdx >= cues.length) setSubPreviewIdx(0); }, [cues.length, subPreviewIdx]);
-
-  // 成片预览：开始 / 结束顺序播放
-  const clearPreviewAdvanceTimer = () => {
-    if (previewAdvanceTimerRef.current !== null) {
-      window.clearTimeout(previewAdvanceTimerRef.current);
-      previewAdvanceTimerRef.current = null;
-    }
-  };
-  const startPreview = async (voiceSourceOverride?: string) => {
-    if (rendering) return;
-    if (previewTimeline.length === 0) { setPreviewNote(true); return; }
-    const requestId = ++previewStartRequestRef.current;
-    const requestedVoiceUrl = typeof voiceSourceOverride === 'string' ? voiceSourceOverride : voiceoverUrl || '';
-    const needsVoice = previewVoiceOn && voiceoverMode !== 'none';
-    setPreviewPreparing(true);
-    setPreviewPlaybackError('');
-    setPreviewNote(false);
-    try {
-      if (needsVoice) {
-        if (!requestedVoiceUrl) throw new Error('当前版本没有可用的口播文件');
-        const playableVoiceUrl = await withStudioTimeout(authenticatedAudioBlobUrl(requestedVoiceUrl), 20_000);
-        if (requestId !== previewStartRequestRef.current) return;
-        setPreviewVoicePlayableUrl(playableVoiceUrl);
-        const voiceEl = previewVoiceAudioRef.current;
-        if (!voiceEl) throw new Error('口播播放器尚未初始化');
-        if (voiceEl.src !== playableVoiceUrl) {
-          voiceEl.pause();
-          voiceEl.src = playableVoiceUrl;
-          voiceEl.dataset.sourceUrl = requestedVoiceUrl;
-          voiceEl.load();
-        }
-        await waitForStudioMediaReady(voiceEl, 8_000);
-        if (requestId !== previewStartRequestRef.current) return;
-        voiceEl.currentTime = 0;
-      }
-      setPreviewVideoReady(false);
-      setPreviewTime(0);
-      setPreviewIdx(0);
-    } catch (error: unknown) {
-      if (requestId !== previewStartRequestRef.current) return;
-      const message = error instanceof Error ? error.message : String(error || '未知错误');
-      setPreviewPlaybackError(`预览准备失败：${message}`);
-    } finally {
-      if (requestId === previewStartRequestRef.current) setPreviewPreparing(false);
-    }
-  };
-  const previewLanguageVersion = (code: string, autoPlay = true) => {
-    const audio = voiceoverMode === 'ai' ? voiceoverAudios[code] : { url: voiceoverUrl || '', duration: voiceoverDur };
-    if (autoPlay) stopPreview();
-    setActiveVoiceLang(code);
-    setLang(code);
-    if (voiceoverMode === 'ai') {
-      setVoiceoverUrl(audio?.url || null);
-      setVoiceoverDur(audio?.duration || 0);
-    } else if (audio?.url) {
-      setVoiceoverMode(voiceoverMode === 'none' ? 'ai' : voiceoverMode);
-      setVoiceoverUrl(audio.url);
-      setVoiceoverDur(audio.duration || 0);
-    }
-    setSubPreviewIdx(0);
-    setRenderDownloadMessage('');
-    if (!autoPlay) return;
-    if (previewTimeline.length === 0) {
-      setPreviewNote(true);
-      return;
-    }
-    setPreviewVideoReady(false);
-    void startPreview(audio?.url || '');
-  };
-  const stopPreview = () => {
-    previewStartRequestRef.current += 1;
-    clearPreviewAdvanceTimer();
-    previewAdvanceLockRef.current = false;
-    setPreviewPreparing(false);
-    setPreviewIdx(null);
-    setPreviewTime(0);
-    [previewBgmAudioRef.current, previewVoiceAudioRef.current].forEach(el => {
-      if (!el) return;
-      el.pause();
-      el.currentTime = 0;
-    });
-  };
-  const handlePreviewClipEnded = () => {
-    if (previewAdvanceLockRef.current) return;
-    previewAdvanceLockRef.current = true;
-    clearPreviewAdvanceTimer();
-    setPreviewVideoReady(false);
-    setPreviewIdx(i => {
-      if (i !== null && i + 1 < previewTimeline.length) return i + 1;
-      [previewBgmAudioRef.current, previewVoiceAudioRef.current].forEach(el => {
-        if (!el) return;
-        el.pause();
-        el.currentTime = 0;
-      });
-      return null;
-    });
-  };
-  const pausePreviewAudio = () => {
-    [previewBgmAudioRef.current, previewVoiceAudioRef.current].forEach(el => el?.pause());
-  };
-  const resumePreviewAudio = () => {
-    if (!previewPlaying) return;
-    const currentItem = previewIdx === null ? null : previewTimeline[previewIdx];
-    const base = previewIdx === null ? 0 : previewOffsetByIndex[previewIdx] || 0;
-    const video = currentItem?.clip.type === 'video' ? previewVideoRef.current : null;
-    const trimStart = currentItem?.trimStart || 0;
-    const speed = Math.max(0.25, Math.min(currentItem?.speed || 1, 4));
-    const local = video ? Math.max(0, (video.currentTime || trimStart) - trimStart) / speed : 0;
-    const expectedTime = Math.max(0, base + local);
-    const usesEmbeddedAvatarVoice = Boolean(currentItem && 'production' in currentItem
-      && currentItem.production?.source === 'avatar' && currentItem.production.sound === 'source');
-    [previewBgmAudioRef.current, previewVoiceAudioRef.current].forEach((el, index) => {
-      if (index === 1 && usesEmbeddedAvatarVoice) { el?.pause(); return; }
-      if (!el || !el.src || el.volume <= 0) return;
-      try {
-        const targetTime = el.loop && Number.isFinite(el.duration) && el.duration > 0
-          ? expectedTime % el.duration
-          : expectedTime;
-        if (Number.isFinite(targetTime) && Math.abs((el.currentTime || 0) - targetTime) > 0.18) el.currentTime = targetTime;
-      } catch { /* wait for metadata before the next playing event */ }
-      void el.play().catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error || '浏览器拒绝播放');
-        setPreviewPlaybackError(`音轨播放失败：${message}`);
-      });
-    });
-  };
-  const previewPlaying = previewIdx !== null;
-  useEffect(() => {
-    previewAdvanceLockRef.current = false;
-    setPreviewVideoReady(false);
-  }, [previewIdx]);
-  const jumpToPreviewClip = (index: number) => {
-    if (!previewTimeline[index]) return;
-    const offset = previewOffsetByIndex[index] || 0;
-    setPreviewNote(false);
-    setPreviewPlaybackError('');
-    setPreviewVideoReady(false);
-    setPreviewTime(offset);
-    setPreviewIdx(index);
-    [previewBgmAudioRef.current, previewVoiceAudioRef.current].forEach(el => {
-      if (!el?.src) return;
-      try { el.currentTime = offset; } catch { /* ignore seek edge cases */ }
-    });
-  };
-  useEffect(() => {
-    clearPreviewAdvanceTimer();
-    if (previewIdx === null) return;
-    const item = previewTimeline[previewIdx];
-    if (!item) {
-      setPreviewIdx(null);
-      return;
-    }
-    const durationMs = Math.max(0.5, item.targetDuration || ((item.trimEnd || 0) - (item.trimStart || 0)) || 3) * 1000;
-    const offset = previewOffsetByIndex[previewIdx] || 0;
-    setPreviewTime(offset);
-    if (item.clip.type === 'image') {
-      resumePreviewAudio();
-      previewAdvanceTimerRef.current = window.setTimeout(handlePreviewClipEnded, durationMs);
-      return () => clearPreviewAdvanceTimer();
-    }
-    // Never advance the storyboard while a remote clip is still buffering.
-    // `timeupdate` below advances at the real media clock instead of wall time.
-    if (!previewVideoReady) return;
-    const video = previewVideoRef.current;
-    if (video) {
-      video.playbackRate = Math.max(0.25, Math.min(item.speed || 1, 4));
-      const seekTo = Math.max(0, item.trimStart || 0);
-      const applySeek = () => {
-        try {
-          if (Number.isFinite(video.duration) && video.duration > seekTo) video.currentTime = seekTo;
-          else video.currentTime = seekTo;
-        } catch { /* ignore browser seek edge cases */ }
-        void video.play().catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error || '浏览器拒绝播放');
-          setPreviewPlaybackError(`视频播放失败：${message}`);
-        });
-      };
-      if (video.readyState >= 1) applySeek();
-      else video.onloadedmetadata = applySeek;
-    }
-    return () => clearPreviewAdvanceTimer();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewIdx, previewOffsetByIndex, previewTimeline, previewVideoReady]);
-  const updatePreviewClock = () => {
-    if (previewIdx === null) return;
-    const item = previewTimeline[previewIdx];
-    if (!item) return;
-    const base = previewOffsetByIndex[previewIdx] || 0;
-    if (item.type === 'image') {
-      setPreviewTime(base);
-      return;
-    }
-    const video = previewVideoRef.current;
-    const trimStart = item.trimStart || 0;
-    const speed = Math.max(0.25, Math.min(item.speed || 1, 4));
-    const local = video ? Math.max(0, (video.currentTime || trimStart) - trimStart) / speed : 0;
-    setPreviewTime(base + local);
-    const targetDuration = Math.max(0.5, item.targetDuration || ((item.trimEnd || 0) - trimStart) || 3);
-    if (local >= targetDuration - 0.04) handlePreviewClipEnded();
-  };
-  useEffect(() => {
-    const bgmEl = previewBgmAudioRef.current;
-    const voiceEl = previewVoiceAudioRef.current;
-    const bgmUrl = selectedBgmTrack?.url || '';
-    const currentVoiceUrl = previewVoiceOn ? activeVoiceoverUrl : '';
-    const bgmGain = previewBgmOn ? Math.max(0, Math.min(1, (bgmVol || 0) / 100)) : 0;
-    const voiceGain = previewVoiceOn ? Math.max(0, Math.min(1, (voiceVol || 0) / 100)) : 0;
-
-    if (bgmEl) {
-      bgmEl.volume = bgmUrl ? bgmGain : 0;
-      bgmEl.loop = true;
-    }
-    if (voiceEl) {
-      voiceEl.volume = currentVoiceUrl ? voiceGain : 0;
-    }
-    if (!previewPlaying) return;
-
-    if (bgmEl && bgmUrl && bgmGain > 0) {
-      if (bgmEl.src !== new URL(bgmUrl, window.location.href).href) bgmEl.src = bgmUrl;
-      bgmEl.currentTime = Math.max(0, previewTime);
-      void bgmEl.play().catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error || '浏览器拒绝播放');
-        setPreviewPlaybackError(`背景音乐播放失败：${message}`);
-      });
-    }
-    if (voiceEl && currentVoiceUrl && voiceGain > 0) {
-      if (voiceEl.src !== new URL(currentVoiceUrl, window.location.href).href) voiceEl.src = currentVoiceUrl;
-      voiceEl.currentTime = Math.max(0, previewTime);
-      void voiceEl.play().catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error || '浏览器拒绝播放');
-        setPreviewPlaybackError(`口播播放失败：${message}`);
-      });
-    }
-  }, [activeVoiceoverUrl, bgmVol, previewBgmOn, previewPlaying, previewVoiceOn, selectedBgmTrack, voiceVol]);
-  // 离开预览步时停止播放
-  useEffect(() => {
-    if (step !== 'preview' && step !== 'bgm') {
-      stopPreview();
-      setPreviewNote(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step]);
-
-  // 导出 / 我的作品
-  const openRenderOutputFolder = async (filePath = renderOutputPath) => {
-    if (!filePath) return false;
-    const desktop = getDesktopRender();
-    if (desktop?.showItemInFolder) {
-      const result = await desktop.showItemInFolder(filePath);
-      if (result?.ok) return true;
-    }
-    const opened = await studioApi.openRenderOutput(filePath);
-    if (!opened.ok) {
-      const message = opened.error || '打开本地文件夹失败，请手动前往保存路径查看。';
-      setRenderDownloadMessage(message);
-      if (/不存在|重新导出|not found|404/i.test(message)) setRenderOutputPath(null);
-      return false;
-    }
-    return true;
-  };
 
   const downloadMp4 = async (filePath?: string | null) => {
     if (rendering) return;
@@ -8119,11 +7300,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       link.href = url; link.download = '成片.mp4'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 60000);
       setRenderDownloadMessage('成片已开始下载');
     } catch (error) { setRenderDownloadMessage((error as Error).message); }
-  };
-  const saveToWorks = async () => {
-    if (!await saveProject('ready_for_approval')) return; // 保存作品不等于平台发布
-    setSavedToWorks(true);
-    setTimeout(() => setSavedToWorks(false), 2200);
   };
 
   const currentPublishGeneration = () => ({
@@ -8216,24 +7392,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
     if (!items.some(item => Boolean(item.videoPath?.trim()))) return;
     onGoPublish?.(payload);
-  };
-
-  const aiCaption = async () => {
-    setCaptionLoading(true);
-    try {
-      const result = await studioApi.caption(
-        { script, productInfo: activeProductInfo, platform, language: lang, provider, audience, sellingPoints, tone, referenceCaption: videoKickoff?.video?.aiAnalysis?.caption || '', targetMarket: audience },
-        { caption, hashtags: [] },
-      );
-      if (!result.ok || result.source !== 'ai' || !result.caption.trim()) throw new Error(result.error || '发布文案生成失败，原文案已保留。');
-      const { caption: cap, hashtags } = result;
-      const tags = (hashtags ?? []).map(t => `#${t.replace(/^#/, '')}`).join(' ');
-      setCaption(tags ? `${cap} ${tags}` : cap);
-    } catch (err: any) {
-      alert(err?.message || '发布文案生成失败，请稍后重试。');
-    } finally {
-      setCaptionLoading(false);
-    }
   };
 
   const generatePosterBrief = async () => {
@@ -8437,52 +7595,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
   };
 
-  const demoAutoCreate = async () => {
-    setDemoAutoLoading(true);
-    try {
-      if (selected.length === 0) setSelected(materials.slice(0, 3).map(m => m.id));
-      const matNamesForDemo = selected.length > 0
-        ? materials.filter(m => selected.includes(m.id)).map(m => m.name)
-        : materials.slice(0, 3).map(m => m.name);
-      const scriptResp = await studioApi.script(
-        { materials: matNamesForDemo, productInfo: activeProductInfo, language: lang, platform, duration, scriptType, generationMode: mode, provider, audience, sellingPoints, tone, videoTheme: videoThemePayload },
-        script,
-      );
-      if (scriptType === 'storyboard') announceRejectedStoryboard(scriptResp);
-      const qualityFailure = scriptQualityFailure(scriptResp, 'AI脚本未通过检查，未返回可编辑结果。');
-      if (qualityFailure) throw new Error(qualityFailure);
-      if (!String(scriptResp.script || '').trim()) throw new Error('模型没有返回可用脚本。');
-      setScript(scriptResp.script);
-      const generatedScriptId = `demo-${Date.now()}`;
-      setModeScripts(current => [...current, {
-        id: generatedScriptId,
-        title: 'AI 自动生成脚本',
-        script: scriptResp.script,
-        mode,
-        contentTheme: activeVideoTheme.id,
-        buyerLabel: audience.trim() || '默认买家',
-        ...qualityFields(scriptResp),
-      }]);
-      setActiveModeScriptId(generatedScriptId);
-      setModeNotice(qualitySuccessNotice(scriptResp, '脚本与发布内容已生成。'));
-      const coversResp = await studioApi.covers({ script: scriptResp.script, productInfo: activeProductInfo, language: lang, provider, tone }, [coverTitle]);
-      if (!coversResp.ok || coversResp.source !== 'ai' || !coversResp.covers[0]) throw new Error(coversResp.error || '封面标题生成失败');
-      setCoverTitle(coversResp.covers[0]);
-      const cap = await studioApi.caption(
-        { script: scriptResp.script, productInfo: activeProductInfo, platform, language: lang, provider, audience, sellingPoints, tone, referenceCaption: videoKickoff?.video?.aiAnalysis?.caption || '', targetMarket: audience },
-        { caption, hashtags: [] },
-      );
-      if (!cap.ok || cap.source !== 'ai' || !cap.caption.trim()) throw new Error(cap.error || '发布文案生成失败');
-      const tags = (cap.hashtags ?? []).map(t => `#${t.replace(/^#/, '')}`).join(' ');
-      setCaption(tags ? `${cap.caption} ${tags}` : cap.caption);
-      await goPreview(scriptResp.script);
-    } catch (err: any) {
-      alert(err?.message || 'Demo 自动生成失败，请稍后重试。');
-    } finally {
-      setDemoAutoLoading(false);
-    }
-  };
-
   /* ── 素材库：只拉取真实素材 ──────────────────────── */
   const refreshMaterials = async () => {
     try {
@@ -8619,21 +7731,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setUploading(false);
   };
 
-  const generateDigitalHumanPresenter = async () => {
-    const slot = storyboardSlots.find(item => item.id === activeStoryboardSlotId) || storyboardSlots[0];
-    if (!slot) { setDigitalHumanNotice('请先确认分镜脚本，再为具体镜头配置数字人'); return; }
-    openProduction(slot);
-    if (!productionFor(slot).locked) {
-      setShotProductions(current => ({
-        ...current,
-        [productionKey(slot.id)]: { ...productionFor(slot), source: 'avatar', sound: 'source' },
-      }));
-    }
-    if (!productionCapability.configured) {
-      setDigitalHumanNotice(productionCapability.reason || '数字人服务尚未接入');
-    }
-  };
-
   /* ── BGM 曲库 ────────────────────────────────────────────────────────── */
   const refreshBgm = async () => {
     const list = await studioApi.listBgm();
@@ -8689,7 +7786,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         setBgm(track.id);
         setAssemblyBgms(current => ({ ...current, [activeAssemblyId]: track.id }));
         setMaterialVersionBgms(current => ({ ...current, [materialVersionKey(activeAssemblyId, activeVoiceLang)]: track.id }));
-        setPreviewBgmOn(true);
         setBgmNotice(`已上传并选中「${track.name || f.name}」`);
       } else {
         setBgmNotice('音乐已上传，但未返回可用曲目，请刷新后重试。');
@@ -8798,23 +7894,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     } finally {
       setTtsLoading(false);
       setTtsLoadingScope(null);
-    }
-  };
-
-  const openVoiceSamplePicker = () => {
-    voiceSampleInputRef.current?.click();
-  };
-
-  const diagnoseMinimax = async () => {
-    setMinimaxDiagnosing(true);
-    setMinimaxDiagnostic('正在检查 MiniMax Key、网络和音色查询权限…');
-    try {
-      const result = await studioApi.diagnoseMinimax();
-      setMinimaxDiagnostic(result.ok
-        ? `${result.message || 'MiniMax 连接正常'}${result.latencyMs != null ? `（${result.latencyMs}ms）` : ''}`
-        : `诊断失败：${result.error || '未知错误'}`);
-    } finally {
-      setMinimaxDiagnosing(false);
     }
   };
 
@@ -9098,139 +8177,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         setTtsNotice(`配音播放失败：${message}。请重新生成配音后再试。`);
       });
   };
-  const switchVoicePreviewLanguage = (code: string) => {
-    if (!code || code === activeVoiceLang) return;
-    const audio = voiceoverAudios[code];
-    const el = ttsAudioRef.current;
-    if (el) {
-      el.pause();
-      el.currentTime = 0;
-    }
-    setTtsPlaying(false);
-    setVoicePreviewIdx(null);
-    setActiveVoiceLang(code);
-    setLang(code);
-    if (voiceoverMode === 'ai') {
-      setVoiceoverUrl(audio?.url || null);
-      setVoiceoverDur(audio?.duration || 0);
-    }
-    setSubPreviewIdx(0);
-    setTtsNotice(audio?.url
-      ? `已切换到${langZh(code)}试听。`
-      : `${langZh(code)}还没有可试听配音，请先生成当前语言或生成全部语种。`);
-  };
-	  const toggleTts = () => {
-	    const el = ttsAudioRef.current;
-	    const currentVoiceUrl = activeVoiceoverUrl;
-	    if (!el || !currentVoiceUrl) {
-      setTtsNotice('暂时无法试听：当前语种还没有可用配音，请先生成或上传音频。');
-      return;
-    }
-    if (ttsPlaying) {
-      el.pause();
-      setTtsPlaying(false);
-      setTtsNotice('配音试听已暂停。');
-      return;
-    }
-    void playAudioWithAuthenticatedFallback(el, currentVoiceUrl, voiceVol / 100).then(() => {
-      setTtsPlaying(true);
-      setTtsNotice('正在试听当前语种配音。');
-    }).catch((error: unknown) => {
-      setTtsPlaying(false);
-      const message = error instanceof Error ? error.message : String(error || '浏览器未能加载音频');
-      setTtsNotice(`配音播放失败：${message}。请重新生成配音后再试。`);
-    });
-  };
-  const startVoiceAssemblyPreview = () => {
-    const currentVoiceUrl = activeVoiceoverUrl;
-    const currentVoiceDuration = activeVoiceDuration;
-    if (!currentVoiceUrl || currentVoiceDuration <= 0) {
-      setTtsNotice('暂时无法预览：当前音频时长为 0 秒，请重新上传或重新生成配音。');
-      return;
-    }
-    if (!cues.length) {
-      setTtsNotice('暂时无法预览：当前没有字幕，请先生成配音并完成字幕对齐。');
-      return;
-    }
-    setPreviewNote(false);
-    setSubtitlesOn(true);
-    setVoicePreviewIdx(0);
-    const el = ttsAudioRef.current;
-    if (el) {
-      // 必须在点击事件的用户手势中直接 play，不能等 React effect，否则浏览器会按自动播放拦截。
-      void playAudioWithAuthenticatedFallback(el, currentVoiceUrl, voiceVol / 100).then(() => {
-        setTtsPlaying(true);
-        setTtsNotice('配音预览播放中。');
-      }).catch((error: unknown) => {
-        setVoicePreviewIdx(null);
-        setTtsPlaying(false);
-        const message = error instanceof Error ? error.message : String(error || '浏览器未能加载音频');
-        setTtsNotice(`配音播放失败：${message}。请重新生成配音后再试。`);
-      });
-    }
-  };
-  const stopVoiceAssemblyPreview = () => {
-    setVoicePreviewIdx(null);
-    if (ttsAudioRef.current) ttsAudioRef.current.pause();
-    setTtsPlaying(false);
-  };
-  const applyTtsPreset = (presetId: TtsStyleOptions['preset']) => {
-    const preset = TTS_PRESETS.find(item => item.id === presetId) || TTS_PRESETS[1];
-    setTtsPreset(preset.id);
-    setTtsEmotion(preset.emotion);
-    setTtsEmotionIntensity(preset.intensity);
-    setTtsSpeed(preset.speed);
-    setUseReferenceVoiceStyle(false);
-    setVoiceoverUrl(null);
-    setVoiceoverAudios({});
-    setAlignedCuesByLang({});
-    setTtsNotice('表达方式已调整，请重新生成配音。');
-  };
-  const toggleReferenceVoiceStyle = () => {
-    const enabled = !useReferenceVoiceStyle;
-    setUseReferenceVoiceStyle(enabled);
-    setVoiceoverUrl(null);
-    setVoiceoverAudios({});
-    setAlignedCuesByLang({});
-    setTtsNotice(enabled
-      ? '生成试听配音时将自动沿用对标口播的情绪、信息密度和停顿节奏。'
-      : '已关闭对标口播节奏，将使用当前手动配音参数。');
-  };
-  const patchAlignedCue = (index: number, patch: Partial<SubCue>) => {
-    setVoiceoverAudios(current => current[activeVoiceLang] ? { ...current, [activeVoiceLang]: { ...current[activeVoiceLang], alignmentSource: 'manual_pending' } } : current);
-    setAlignedCuesByLang(current => {
-      const base = current[activeVoiceLang]?.length ? current[activeVoiceLang] : cues;
-      const next = base.map((cue, cueIndex) => cueIndex === index ? { ...cue, ...patch, words: undefined } : cue);
-      return { ...current, [activeVoiceLang]: next };
-    });
-  };
-  const refreshQwenAsr = async () => {
-    if (ttsLoading || !productionAudioUrl) return;
-    const context = asrContextRef.current; const code = activeVoiceLang;
-    const audioDuration = voiceoverMode === 'ai' ? voiceoverAudios[code]?.duration || 0 : voiceoverDur;
-    const request = { url: productionAudioUrl, duration: audioDuration, text: voiceDrafts[code] || activeSpokenScript };
-    setTtsLoading(true); setTtsNotice('正在读取千问转写任务；命中缓存不会重新扣费…');
-    try {
-      let result = await studioApi.qwenAsr(request);
-      if (asrContextRef.current !== context) return;
-      if (result.status === 'needs_confirmation') {
-        if (!window.confirm(`此音频暂无千问转写缓存，将提交 ${audioDuration.toFixed(1)} 秒音频并产生ASR费用。北京公开原价0.00022元/秒，其他地域及实际费用以账单为准。确认提交？`)) { setTtsNotice('已取消，没有提交转写。'); return; }
-        result = await studioApi.qwenAsr({ ...request, confirmed: true });
-      }
-      if (asrContextRef.current !== context) return;
-      if (!result.ok || ['FAILED', 'uncertain', 'submitting'].includes(result.status || '')) throw new Error(result.error || '转写提交状态需人工核对，不自动重复提交');
-      if (result.status !== 'SUCCEEDED') { setTtsNotice(`千问转写任务${result.taskId ? ` ${result.taskId}` : ''}处理中，可稍后点击同一按钮刷新，关闭页面后任务仍可恢复。`); return; }
-      if (!result.matches) { setTtsNotice(`识别台词与当前文案不一致，未覆盖草稿。识别内容：${result.text}`); return; }
-      if (!result.cues?.length) throw new Error('未返回字词时间戳');
-      setAlignedCuesByLang(current => ({ ...current, [code]: result.cues! }));
-      setVoiceoverAudios(current => ({ ...current, [code]: { ...current[code], url: request.url, duration: audioDuration, cues: result.cues, text: result.text, alignmentSource: 'qwen_asr' } }));
-      setRendered(false);
-      setTtsNotice('千问字词时间戳已应用，台词核对一致。请保存草稿；旧数字人口型候选需重新核验，不代表人工试听已通过。');
-    } catch (error) { if (asrContextRef.current === context) setTtsNotice(error instanceof Error ? error.message : '转写失败'); }
-    finally { setTtsLoading(false); }
-  };
-  // 换音色 / 改脚本类型后，旧配音失效
-  const pickVoice = (id: string) => { setVoice(id); setVoiceCandidates(current => current.includes(id) ? current : [...current, id]); setVoiceoverUrl(null); setVoiceoverAudios({}); setAlignedCuesByLang({}); setTtsNotice(''); setTtsPlaying(false); };
   // 离开脚本步时停止试听
   useEffect(() => {
     if (step !== 'script' && ttsAudioRef.current) { ttsAudioRef.current.pause(); setTtsPlaying(false); }
@@ -10506,7 +9452,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setScript(''); setVoiceoverLines(''); setVoiceDrafts({}); setModeScripts([]); setActiveModeScriptId('');
     setSelected([]); setScriptRecommendedMaterialIds([]); setStoryboardAssignments({}); setStoryboardSourcePlans({});
     setVoiceoverUrl(null); setVoiceoverAudios({}); setAlignedCuesByLang({}); setLanguageRenderOutputs({});
-    setBgm(''); setCover(''); setCoverUrl(null); setCapturedCoverFrameUrl(''); setCoverTimelineCaptureMode(false); setCaption(''); setClipEdits({}); setRendered(false); setPreviewIdx(null);
+    setBgm(''); setCover(''); setCoverUrl(null); setCapturedCoverFrameUrl(''); setCoverTimelineCaptureMode(false); setCaption(''); setClipEdits({}); setRendered(false);
     setPosterDraft(null); setLeadContentPackage(null); setPosterJsonText(''); setPosterImageUrl(''); setPosterImageMaterialId(''); setPosterImageReviewStatus('none');
     setProjectId(saved.project.id); setProjectTitle(nextTitle); setProjects(current => [saved.project, ...current.filter(item => item.id !== saved.project.id)]);
     setStepIdx(0); setShowProjects(false); setSavedTick(true); window.setTimeout(() => setSavedTick(false), 1800);
@@ -10709,7 +9655,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       setContentMode('video');
       setShowProjects(false);
       setPublished(false);
-      setPreviewIdx(null);
       window.setTimeout(() => setStepIdx(previewIndex >= 0 ? previewIndex : Math.max(0, STEPS.length - 1)), 0);
     };
     try {
@@ -13158,7 +12103,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setBgm(trackId);
     setAssemblyBgms(current => ({ ...current, [activeAssemblyId]: trackId }));
     setMaterialVersionBgms(current => ({ ...current, [materialVersionKey(activeAssemblyId, activeVoiceLang)]: trackId }));
-    setPreviewBgmOn(Boolean(trackId));
   };
   const workbenchProductionPanel = ((threeStepWorkflow && step === 'preview') || step === 'bgm' || (step === 'script' && scriptStageTab === 'bgm')) ? (
     <section ref={bgmLibraryRef} className="space-y-3">

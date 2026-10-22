@@ -15,10 +15,11 @@ test('shooting dialog explains voiceover and safe refill, and exposes save failu
   assert.match(html, /保存草稿并创建任务/);
 });
 
-test('the live workbench mounts the storyboard list and digital generation does not copy video', () => {
+test('the live workbench mounts the storyboard list and reviewed digital candidates', () => {
   const source = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
+  const productionPanel = readFileSync(new URL('./ShotProductionPanel.tsx', import.meta.url), 'utf8');
   assert.match(source, /<StudioStoryboardList items=\{items\} selectedId=\{activeWorkbenchSlot\?\.id\}/);
-  const generator = source.slice(source.indexOf('const generateDigitalHumanPresenter ='), source.indexOf('/* ── BGM 曲库'));
-  assert.match(generator, /尚未接入/);
-  assert.doesNotMatch(generator, /uploadMaterial|fetch\(|blobToDataUrl|已生成数字人口播/);
+  assert.match(source, /const ShotProductionPanel = lazy\(\(\) => import\('\.\/ShotProductionPanel'\)\)/);
+  assert.match(productionPanel, /aria-label="数字人候选片段"/);
+  assert.match(productionPanel, /提交结果未知时只核对原任务，不自动再次生成/);
 });

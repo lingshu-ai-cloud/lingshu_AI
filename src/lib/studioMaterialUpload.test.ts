@@ -12,7 +12,8 @@ assert.match(studioApiSource, /单个素材不能超过 100 MB/, '超限素材�
 assert.match(inspirationSource, /studioApi\.uploadMaterialFile\(file/, '灵感中心素材库必须走二进制文件上传');
 assert.doesNotMatch(inspirationSource, /readAsDataURL/, '灵感中心不能把本地视频扩展为 data URL');
 
-const studioUploadHandler = studioSource.match(/const handleUpload = async[\s\S]*?const generateDigitalHumanPresenter/)?.[0] || '';
+const studioUploadHandler = studioSource.match(/const handleUpload = async[\s\S]*?\/\* ── BGM 曲库/)?.[0] || '';
+assert.match(studioSource, /onChange=\{event => \{ void handleUpload\(event\.target\.files\)/, '实际挂载的上传入口必须调用该处理器');
 assert.match(studioUploadHandler, /studioApi\.uploadMaterialFile\(f/, '内容创作素材上传必须走二进制文件上传');
 assert.doesNotMatch(studioUploadHandler, /fileToDataUrl/, '内容创作素材上传不能把视频扩展为 data URL');
 

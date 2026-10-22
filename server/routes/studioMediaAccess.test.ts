@@ -35,11 +35,9 @@ assert.equal(refreshed.unrelated, source.unrelated, 'public URLs must remain unc
 
 const studioUi = readFileSync(new URL('../../src/components/AiCreateStudio.tsx', import.meta.url), 'utf8');
 const studioMediaPreviews = readFileSync(new URL('../../src/components/StudioMediaPreviews.tsx', import.meta.url), 'utf8');
-const previewBlock = studioUi.slice(studioUi.indexOf('const startPreview = async'), studioUi.indexOf('// 离开预览步时停止播放'));
-assert.match(previewBlock, /authenticatedAudioBlobUrl\(requestedVoiceUrl\)/, 'preview must authenticate and validate voiceover media before playback');
-assert.match(previewBlock, /waitForStudioMediaReady\(voiceEl/, 'preview must wait for the voice track to become playable');
-assert.match(previewBlock, /if \(!previewVideoReady\) return;/, 'the storyboard clock must wait for video readiness');
-assert.doesNotMatch(previewBlock, /\.play\(\)\.catch\(\(\) => \{\}\)/, 'preview playback errors must not be swallowed');
+assert.match(studioUi, /const workbenchFormalPreviewUrl =/, 'formal preview must have an explicit current output source');
+assert.match(studioUi, /<video[\s\S]{0,200}key=\{workbenchFormalPreviewUrl\}[\s\S]{0,100}src=\{workbenchFormalPreviewUrl\}/, 'the mounted player must use that output source');
+assert.match(studioUi, /onLoadedMetadata=\{event => \{[\s\S]{0,350}video\.currentTime =/, 'formal playback must restore a bounded timeline position');
 
 const cloudMedia = readFileSync(new URL('../lib/cloudMaterials.ts', import.meta.url), 'utf8');
 assert.match(cloudMedia, /playbackUrlCache/, 'cloud media playback URLs must be cached across range requests');
@@ -64,7 +62,8 @@ const previewUi = studioUi.slice(studioUi.indexOf('const workbenchFormalPreviewU
 assert.match(previewUi, /<video[\s\S]{0,200}key=\{workbenchFormalPreviewUrl\}[\s\S]{0,100}src=\{workbenchFormalPreviewUrl\}/, 'the live workbench must play the formal output URL');
 assert.match(studioMediaPreviews, /failedCover !== coverUrl/, 'broken uploaded covers must fall back to source media');
 assert.match(studioUi, /assigned\.length \? assigned : selectedClips/, 'cover selection must prefer actual shot assignments over stale selected references');
-assert.match(studioUi, /if \(\/不存在\|重新导出\|not found\|404\/i\.test\(message\)\) setRenderOutputPath\(null\)/, 'missing local exports must clear the stale output path');
+assert.match(studioUi, /if \(!response\.ok\) throw Error\('文件不可下载，请检查文件是否存在或已同步到服务器'\)/, 'failed downloads must not report success');
+assert.match(studioUi, /catch \(error\) \{ setRenderDownloadMessage\(\(error as Error\)\.message\); \}/, 'failed downloads must surface the actual error');
 assert.match(studioUi, /threeStepWorkflow && step === 'preview'\) \{ void downloadMp4\(\); return; \}/, 'the live export action must use the current download path');
 
 const studioBackend = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
