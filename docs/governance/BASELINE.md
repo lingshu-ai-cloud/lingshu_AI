@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Apify 视频候选纯投影拆分（2026-10-23）
+
+- 代码提交 `1220b17e809db19b7d6801323277d6317baabd59` 将 TikTok、Instagram、Facebook 的 Apify 视频行转换、封面 URL、标题与数量格式化迁至 `server/routes/videoCrawlerProviderProjection.ts`。原 `videos.ts` 仍负责 Actor 请求、付费门禁、账号范围、队列与持久化；图片帖转换继续复用相同的基础投影。主路由从 10,005 降至 9,720 行，预算同步收紧，历史超限文件仍有 7 个。
+- 新模块视频候选/封面测试 4/4 已纳入视频来源边界回归，整组 39/39；原视频恢复测试、TypeScript、架构扫描及相对上一基线 ratchet、192 项迁移仓库只读检查、生产构建和 `git diff --check` 通过。`AiCreateStudio` chunk 为 497,209/500,000 字节。未执行真实 Apify、其他付费供应商、目标库迁移或部署；最终本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 视频分析失败与恢复规则拆分（2026-10-23）
 
 - 代码提交 `30386f5884b3254d7cfcce0d142a184a8b45b8ba` 将视频级失败保留已完成证据、显式重试清空旧终态、供应商错误脱敏及用户恢复提示迁至 `server/routes/videoAnalysisRecovery.ts`。`videos.ts` 保留旧公开导出和租户数据读写、队列、HTTP 编排；不改变供应商调用或付费许可。主路由从 10,186 降至 10,005 行，预算同步收紧；历史超限文件仍有 7 个。
