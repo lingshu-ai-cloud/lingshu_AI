@@ -449,6 +449,7 @@ try {
 const root = process.cwd();
 const routeSource = fs.readFileSync(path.join(root, 'server/routes/digitalEmployees.ts'), 'utf8');
 const executorSource = fs.readFileSync(path.join(root, 'server/digitalEmployees/contentProduction.ts'), 'utf8');
+const scriptSource = fs.readFileSync(path.join(root, 'server/digitalEmployees/contentProductionScripts.ts'), 'utf8');
 assert.match(routeSource, /advanceAutomatedContentProduction\(/, 'runtime reconciliation must actively invoke content production');
 assert.match(routeSource, /studioProjectRendered/, 'production must wait for a rendered artifact rather than any draft project');
 assert.match(routeSource, /automation\.quality/, 'quality gate must require the persisted automated quality result');
@@ -456,8 +457,8 @@ assert.match(routeSource, /contentKnowledgeGaps/, 'an all-inputs-missing run mus
 assert.match(routeSource, /supersedeAffectedBusinessState[\s\S]*?resumeContentProjectForTaskControl/, 'task retry/replan must clear the matching automated Studio project backoff');
 assert.match(routeSource, /applyTaskControl\([\s\S]*?await advanceRun\(tenantId, result\.runId\)/, 'the retry endpoint must reconcile the run immediately after clearing project backoff');
 assert.match(executorSource, /managedBy:\s*'digital_employee'/, 'created Studio projects must remain traceable to the digital employee');
-assert.match(executorSource, /产品事实与视觉素材证据严格分离/, 'generation must explicitly separate structured product facts from visible material evidence');
-assert.match(executorSource, /二维码、邮箱、VI/, 'generation must forbid unsupported labels and contact/identity visuals');
+assert.match(scriptSource, /产品事实与视觉素材证据严格分离/, 'generation must explicitly separate structured product facts from visible material evidence');
+assert.match(scriptSource, /二维码、邮箱、VI/, 'generation must forbid unsupported labels and contact/identity visuals');
 assert.match(executorSource, /fs\.existsSync\(result\.outputPath\)/, 'render stage must verify a real output file');
 assert.match(executorSource, /inspectRenderedVisuals/, 'quality stage must decode representative frames rather than trusting file existence');
 assert.match(executorSource, /requireVisualAssets:\s*true/, 'automated rendering must not downgrade missing bound assets to a solid background');

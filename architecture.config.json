@@ -6,7 +6,7 @@
   "defaultMaxLines": 800,
   "excludeNameFragments": [".test.", ".d.ts"],
   "oversizedFileBudgets": {
-    "server/digitalEmployees/contentProduction.ts": 1594,
+    "server/digitalEmployees/contentProduction.ts": 1287,
     "server/routes/digitalEmployees.ts": 5931,
     "server/routes/studio.ts": 11361,
     "server/routes/videos.ts": 10606,
