@@ -9,6 +9,11 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 11 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## 数字员工今日关注面板边界（2026-10-22）
+
+- 将当前首页实际挂载的“本周进度/需要你处理”视图迁至 `DigitalEmployeeTodayFocusPanel.tsx`，保留草稿计划、待审批、阻塞任务、至多三项关注动作和页面原有状态文案。旧业务流转图虽未挂载，现有页面合同仍要求保留其内容，本批没有把它当作已批准的死代码删除。
+- `DigitalEmployeePage.tsx` 从 5,062 降至 4,943 行并收紧历史预算；**8 个历史文件仍超限**。新面板及既有页面合同、生产入口 27/27、TypeScript、架构扫描/ratchet、191 项迁移清单只读检查、生产构建和 `git diff --check` 通过；`AiCreateStudio` 主 chunk 为 497117/500000 字节。未进行真实供应商、生产迁移或部署验收；提交、远端与工作区状态须在本批操作后分别复核。
+
 ## 数字员工新周目标草稿边界（2026-10-22）
 
 - 从 `DigitalEmployeePage.tsx` 抽出周目标草稿、B2B 方案预设、制作平台选择、视频计划校验和确认排期到 `WeeklyGoalPanel.tsx`，共享字段视图迁至 `DigitalEmployeeFormField.tsx`。原页面继续负责 `createWeeklyOutline` 提交、冲突恢复与运行导航；新面板不触发服务端写入。周目标 UI 与准入规则未作产品变更。
