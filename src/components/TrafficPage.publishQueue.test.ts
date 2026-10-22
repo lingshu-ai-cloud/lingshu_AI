@@ -187,13 +187,15 @@ assert.equal(draft.items?.[1].videoPath, undefined);
 assert.equal(draft.items?.[1].platform, undefined);
 
 const trafficSource = fs.readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
+const publishViewSource = fs.readFileSync(new URL('./SocialPublishPanelView.tsx', import.meta.url), 'utf8');
 const workspaceSource = fs.readFileSync(new URL('./TrafficWorkspacePage.tsx', import.meta.url), 'utf8');
 assert.match(trafficSource, /<TrafficWorkspacePage/);
 assert.doesNotMatch(trafficSource, /<DouyinPublicationPackagePanel|<ExternalVideoApprovalPanel/, '新建发布不得重复显示旧发布包和外部素材审批表单');
-assert.match(trafficSource, /<ContentLibrary onPublish=\{addSystemFinishedVideo\}/, '一键发布必须直接从系统成片库选择社媒成片');
+assert.match(trafficSource, /<SocialPublishPanelView controller=\{controller\}/, '发布控制器必须挂载独立视图');
+assert.match(publishViewSource, /<ContentLibrary onPublish=\{addSystemFinishedVideo\}/, '一键发布必须直接从系统成片库选择社媒成片');
 assert.match(workspaceSource, /source === 'material_library'[\s\S]{0,900}creationPath: 'material_processing'/, '我的素材自由创作必须明确进入自由创作三栏工作台');
-assert.match(trafficSource, /统一发布文案 \+ Tag/);
-assert.doesNotMatch(trafficSource, /分平台内容|差异化文案|adaptCopy\(/, '发布工作台不得再按平台改写已确认文案');
+assert.match(publishViewSource, /统一发布文案 \+ Tag/);
+assert.doesNotMatch(trafficSource + publishViewSource, /分平台内容|差异化文案|adaptCopy\(/, '发布工作台不得再按平台改写已确认文案');
 assert.match(trafficSource, /if \(fallback\.trim\(\)\) return fallback;/, '最终发布必须优先使用统一原稿，而非历史平台副本');
 
 console.log('TrafficPage publish queue compatibility tests passed');

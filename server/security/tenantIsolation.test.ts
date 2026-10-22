@@ -66,12 +66,13 @@ for (const styleClass of ['.ui-field', '.ui-select', '.ui-chart-panel', '.ui-flo
   assert.match(globalStyles, new RegExp(styleClass.replace('.', '\\.')), `${styleClass} must remain part of the shared UI system`);
 }
 const publishingUi = read('src/components/TrafficPage.tsx');
-assert.doesNotMatch(publishingUi, /平台发布推荐|publish-recommendations/, 'one-click publishing must not render the removed platform recommendation panel');
+const publishingView = read('src/components/SocialPublishPanelView.tsx');
+assert.doesNotMatch(publishingUi + publishingView, /平台发布推荐|publish-recommendations/, 'one-click publishing must not render the removed platform recommendation panel');
 assert.match(publishingUi, /applyContentToAll[\s\S]*?title: activeItem\.title[\s\S]*?description: activeItem\.description[\s\S]*?platformCopy:[\s\S]*?firstComment: activeItem\.firstComment/, 'applying content to all videos must copy the current publishing content');
-assert.match(publishingUi, /发布队列[\s\S]*?平台账号选择[\s\S]*?内容编辑/, 'publishing queue, account selection, and content editing must remain separate sections');
-assert.match(publishingUi, /<Segmented[\s\S]{0,200}aria-label="发布方式"[\s\S]{0,200}setDeliveryMode\(value as DeliveryMode\)/, 'publishing delivery mode must use the shared segmented control');
+assert.match(publishingView, /发布队列[\s\S]*?平台账号选择[\s\S]*?内容编辑/, 'publishing queue, account selection, and content editing must remain separate sections');
+assert.match(publishingView, /<Segmented[\s\S]{0,200}aria-label="发布方式"[\s\S]{0,200}setDeliveryMode\(value as DeliveryMode\)/, 'publishing delivery mode must use the shared segmented control');
 for (const [value, label] of [['now', '立即发布'], ['flexible', '时间待定'], ['schedule', '定点排期']]) {
-  assert.match(publishingUi, new RegExp(`value: '${value}', label: '${label}'`), 'one-click publishing must expose three unambiguous delivery modes');
+  assert.match(publishingView, new RegExp(`value: '${value}', label: '${label}'`), 'one-click publishing must expose three unambiguous delivery modes');
 }
 assert.match(publishingUi, /item\.deliveryMode !== 'flexible'/, 'time-undecided content must never be included in direct real publishing');
 const calendarPlannerUi = read('src/components/publishing/CalendarPlanner.tsx');
