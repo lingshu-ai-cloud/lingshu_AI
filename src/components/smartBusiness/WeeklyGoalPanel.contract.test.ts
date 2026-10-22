@@ -4,7 +4,7 @@ import fs from 'node:fs';
 const page = fs.readFileSync(new URL('../DigitalEmployeePage.tsx', import.meta.url), 'utf8');
 const panel = fs.readFileSync(new URL('./WeeklyGoalPanel.tsx', import.meta.url), 'utf8');
 
-assert.match(page, /import \{ GoalPanel, EMPTY_GOAL, isoDay, contentPlatformLabel, type GoalDraft, type BusinessLine, type ContentPlatform \} from '\.\/smartBusiness\/WeeklyGoalPanel'/,
+assert.match(page, /import \{ GoalPanel, EMPTY_GOAL, contentPlatformLabel, type GoalDraft, type BusinessLine, type ContentPlatform \} from '\.\/smartBusiness\/WeeklyGoalPanel'/,
   'page must use the extracted weekly goal boundary');
 assert.match(page, /<GoalPanel[\s\S]*?onSave=\{goalInput => void createWeeklyOutline\(goalInput\)\}/,
   'goal confirmation must still invoke the existing page submission path');

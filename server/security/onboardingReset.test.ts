@@ -36,7 +36,7 @@ assert.match(authRoutes, /authRouter\.post\('\/guide-seen'[\s\S]*?consumeDemoGui
 
 const app = read('src/App.tsx');
 assert.doesNotMatch(app, /BusinessDiagnosisModal|setBusinessDiagnosisOpen|showBusinessDiagnosisFor/, 'login must not reopen a duplicate reception configuration');
-const customerConfig = read('src/components/DigitalEmployeePage.tsx');
+const customerConfig = read('src/components/smartBusiness/DigitalEmployeeOnboardingPanel.tsx');
 assert.match(customerConfig, /activeRuleAgent === "customer"[\s\S]*?<KnowledgeIntakePanel/, 'customer Agent configuration must retain reception knowledge intake');
 
 const resetScript = read('scripts/reset-account-guide.ts');
