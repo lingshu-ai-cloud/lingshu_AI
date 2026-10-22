@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const decisionDialogSource = fs.readFileSync(new URL('./assistant/AssistantDecisionDialog.tsx', import.meta.url), 'utf8');
+const floatingRemindersSource = fs.readFileSync(new URL('./assistant/AssistantFloatingReminders.tsx', import.meta.url), 'utf8');
 const runtimeSource = fs.readFileSync(new URL('./assistant/globalAssistantRuntime.ts', import.meta.url), 'utf8');
 const saveQueueSource = fs.readFileSync(new URL('./assistant/useAssistantThreadSaveQueue.ts', import.meta.url), 'utf8');
 const actionProjectionSource = fs.readFileSync(new URL('./assistant/assistantActionProjection.ts', import.meta.url), 'utf8');
@@ -30,7 +31,7 @@ function sourceSection(startMarker: string, endMarker: string, label: string, ta
 }
 
 for (const surface of ['floating-reminder', 'conversation', 'decision']) {
-  assert.match(`${source}\n${decisionDialogSource}`, new RegExp(`data-assistant-surface=["']${surface}["']`), `缺少 ${surface} 助手形态`);
+  assert.match(`${source}\n${decisionDialogSource}\n${floatingRemindersSource}`, new RegExp(`data-assistant-surface=["']${surface}["']`), `缺少 ${surface} 助手形态`);
 }
 assert.doesNotMatch(source, /data-assistant-surface=["']quick-actions["']|SKILL_AGENTS/, '灵小枢不得再展示四助手快捷轮盘');
 assert.equal(source.match(/data-global-assistant=["']root["']/g)?.length, 1, '页面只能渲染一个灵小枢根入口');
@@ -61,7 +62,9 @@ assert.match(source, /launcherRetracted && mode === 'breathing'[\s\S]{0,180}<Bad
 assert.match(source, /ASSISTANT_LAUNCHER_RETRACTED_KEY[\s\S]*localStorage\.getItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY\)[\s\S]*localStorage\.setItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY, String\(retracted\)\)/, '用户手动收起偏好必须跨刷新保存');
 assert.match(source, /const retractLauncher[\s\S]{0,260}edgeLauncherButtonRef\.current\?\.focus\(\)/, '收起后焦点必须交给贴边恢复入口');
 assert.match(source, /const restoreLauncher[\s\S]{0,260}launcherButtonRef\.current\?\.focus\(\)/, '恢复后焦点必须交回完整入口');
-assert.match(source, /\{!launcherRetracted && mode === 'breathing' && performance[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*speechBubble[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*weeklyPlanKickoffAvailable[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*featureGuide/, '收起态不得显示任何横向提示气泡');
+assert.match(source, /<AssistantFloatingReminders[\s\S]*launcherRetracted=\{launcherRetracted\}/, '提示气泡必须接收当前入口收起状态');
+assert.match(floatingRemindersSource, /const canShow = !launcherRetracted && mode === 'breathing'/, '收起态不得显示任何横向提示气泡');
+assert.match(floatingRemindersSource, /canShow && hasPerformancePriority && performance[\s\S]*canShow && !hasPerformancePriority && speechBubble[\s\S]*weeklyPlanKickoffAvailable[\s\S]*featureGuide/, '等待、短消息、周计划和引导提示优先级必须保留');
 assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY/, '右下角入口不得恢复拖动、旧坐标或自动缩边交互');
 assert.match(launcherMarkup, /!bg-white[\s\S]*active:!bg-white[\s\S]*focus-visible:!bg-white/, '灵小枢入口在点击和聚焦时必须保持不透明白底');assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
 assert.match(source, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
@@ -181,7 +184,7 @@ assert.match(liveContextSource, /workflowStage: detail\.workflowStage/, '灵小�
 assert.match(source, /assistantBusinessObjectContext\(context\)/, '问答请求必须携带当前选中的业务对象边界');
 assert.match(source, /liveContext\?\.sourcePage === normalizedPage/, '切换页面后不得继续使用上一页的任务上下文');
 assert.match(source, /workflowStage === 'unplanned'/, '灵小枢必须识别尚未制定周计划的真实空白状态');
-assert.match(source, /data-lingshu-weekly-plan-prompt="true"[\s\S]{0,900}先制定本周计划[\s\S]{0,500}制定周计划/, '关闭态灵小枢必须主动说明先预览计划再生产');
+assert.match(floatingRemindersSource, /data-lingshu-weekly-plan-prompt="true"[\s\S]{0,900}先制定本周计划[\s\S]{0,500}制定周计划/, '关闭态灵小枢必须主动说明先预览计划再生产');
 assert.match(source, /data-assistant-bubble="weekly-plan-kickoff"[\s\S]{0,900}确认后，数字员工才会开始生产[\s\S]{0,500}制定周计划/, '打开灵小枢后必须提供同一条计划制定入口');
 assert.match(source, /openWeeklyPlanFromAssistant[\s\S]{0,300}lingshu:open-weekly-plan[\s\S]{0,120}source: 'assistant'/, '灵小枢计划按钮必须派发明确来源的页面动作');
 assert.doesNotMatch(source, /productionSuggestions|data-assistant-surface="production-suggestions"|aria-label="生产快捷问题"/, '不得在页面快捷入口上方重复渲染生产快捷问题');

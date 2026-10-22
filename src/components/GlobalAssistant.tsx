@@ -43,6 +43,7 @@ import {
 } from '../stores/assistantStore';
 import AgentReply from './AgentReply';
 import AssistantComposer, { assistantAttachmentKind } from './assistant/AssistantComposer';
+import AssistantFloatingReminders from './assistant/AssistantFloatingReminders';
 import { actionCardToTaskCard, actionResponseCardId, focusedNaturalLanguageActionId, focusedNaturalLanguageActionInput, isWeeklyPlanKickoffRequest, notificationReasonFromResponse, responseWithoutCrossObjectActions } from './assistant/assistantActionProjection';
 import AssistantQuickEntries from './assistant/AssistantQuickEntries';
 import AssistantCustomerTodoView from './assistant/AssistantCustomerTodoView';
@@ -1986,154 +1987,31 @@ export default function GlobalAssistant({
       data-global-assistant="root"
       className={`fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'}`}
     >
-      <AnimatePresence>
-        {!launcherRetracted && mode === 'breathing' && performance && shouldNotifyAssistant(performance.reason) && !performanceHidden && (
-          <motion.div
-            key={`performance-${performance.phase}`}
-            data-assistant-surface="floating-reminder"
-            data-lingshu-assistant-performance={performance.phase}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={fadeExit}
-            transition={fadeTransition}
-            className="absolute bottom-0 right-[calc(100%+8px)] z-30 w-[248px] max-w-[calc(100vw-176px)] rounded-lg border border-border bg-surface p-3 shadow-lg"
-            style={{
-              width: Math.min(248, viewport.width - 104),
-              maxWidth: 'calc(100vw - 176px)',
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => setPerformanceHidden(true)}
-              className="absolute right-2 top-2 rounded-md p-1 text-text-muted transition hover:bg-surface-2 hover:text-text-primary"
-              aria-label="隐藏灵小枢等待提示"
-              title="先隐藏"
-            >
-              <X size={13} />
-            </button>
-            <p className="ls-type-label-medium pr-6 text-accent">灵小枢陪你等</p>
-            <p className="ls-type-body-small mt-1 text-text-secondary">{performanceMessage}</p>
-            <span className="ls-type-label-medium mt-2 inline-flex items-center gap-1.5 text-accent"><Loader2 size={12} className="motion-safe:animate-spin" aria-hidden="true" />处理中</span>
-            <span className="absolute -right-2 bottom-5 h-4 w-4 rotate-45 border-r border-t border-border bg-surface" />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {!launcherRetracted && mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && speechBubble && (
-          <motion.div
-            key={`speech-${speechBubble.id}`}
-            data-assistant-surface="floating-reminder"
-            data-lingshu-assistant-speech="true"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={fadeExit}
-            transition={fadeTransition}
-            className="absolute bottom-0 right-[calc(100%+8px)] z-30 w-[248px] max-w-[calc(100vw-176px)] rounded-lg border border-border bg-surface p-3 shadow-lg"
-            style={{
-              width: Math.min(248, viewport.width - 104),
-              maxWidth: 'calc(100vw - 176px)',
-            }}
-          >
-            <p className="ls-type-label-medium text-accent">灵小枢</p>
-            <p className="ls-type-body-small mt-1 text-text-secondary">{speechBubble.message}</p>
-            <span className="absolute -right-2 bottom-5 h-4 w-4 rotate-45 border-r border-t border-border bg-surface" />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {!launcherRetracted && mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && weeklyPlanKickoffAvailable && !weeklyPlanPromptDismissed && (
-          <motion.div
-            key="weekly-plan-kickoff"
-            data-assistant-surface="floating-reminder"
-            data-lingshu-weekly-plan-prompt="true"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={fadeExit}
-            transition={fadeTransition}
-            className="absolute bottom-0 right-[calc(100%+8px)] z-30 w-[264px] max-w-[calc(100vw-176px)] rounded-lg border border-border bg-surface p-3 shadow-lg"
-            style={{
-              width: Math.min(264, viewport.width - 104),
-              maxWidth: 'calc(100vw - 176px)',
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => setWeeklyPlanPromptDismissed(true)}
-              className="absolute right-2 top-2 rounded-md p-1 text-text-muted transition hover:bg-surface-2 hover:text-text-primary"
-              aria-label="暂时关闭周计划提示"
-            >
-              <X size={13} />
-            </button>
-            <p className="ls-type-label-medium pr-6 text-accent">先制定本周计划</p>
-            <p className="ls-type-body-small mt-1 text-text-secondary">我会先整理平台、产量、预算和排期，给你预览；你确认后才开始生产。</p>
-            <button
-              type="button"
-              onClick={openWeeklyPlanFromAssistant}
-              className="ls-type-label-medium mt-2 inline-flex items-center gap-1.5 text-accent hover:text-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            >
-              制定周计划 <ArrowRight size={13} aria-hidden="true" />
-            </button>
-            <span className="absolute -right-2 bottom-5 h-4 w-4 rotate-45 border-r border-t border-border bg-surface" />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {!launcherRetracted && mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && (!weeklyPlanKickoffAvailable || weeklyPlanPromptDismissed) && featureGuide && (
-          <motion.div
-            key={featureGuide.id}
-            data-assistant-surface="floating-reminder"
-            data-lingshu-guide-bubble={featureGuide.id}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={fadeExit}
-            transition={fadeTransition}
-            className="absolute bottom-0 right-[calc(100%+8px)] z-20 w-[236px] max-w-[calc(100vw-176px)] rounded-lg border border-border bg-surface p-3 shadow-lg"
-            style={{
-              width: Math.min(236, viewport.width - 104),
-              maxWidth: 'calc(100vw - 176px)',
-            }}
-          >
-            <button type="button" onClick={() => setFeatureGuide(null)} className="absolute right-2.5 top-2.5 rounded-lg p-1 text-text-muted hover:bg-surface-2" aria-label="关闭用法提示">
-              <X size={13} />
-            </button>
-            <div className="pr-6">
-              <p className="ls-type-label-medium text-accent">{featureGuide.title}</p>
-              <p className="ls-type-body-small mt-1 text-text-secondary">{featureGuide.message}</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                const agentId = orbitIdForAgent(featureGuide.agent, currentPageAgent);
-                setFeatureGuide(null);
-                openAgent(agentId);
-              }}
-              className="ls-type-label-medium mt-2 text-accent hover:text-accent-dim"
-            >
-              问问灵小枢 →
-            </button>
-            <span className="absolute -right-2 bottom-5 h-4 w-4 rotate-45 border-r border-t border-border bg-surface" />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {!launcherRetracted && page === 'enterprise' && mode === 'breathing' && enterpriseGuideSeen && !featureGuide && !speechBubble && (
-          <motion.button
-            type="button"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={fadeExit}
-            transition={fadeTransition}
-            onClick={openCurrentPageAgent}
-            className="ls-type-label-medium absolute bottom-2 right-[calc(100%+8px)] z-10 whitespace-nowrap rounded-md border border-border bg-surface px-3 py-1.5 text-accent shadow-sm hover:border-accent/30 hover:bg-accent-glow"
-          >
-            要补资料？点我
-          </motion.button>
-        )}
-      </AnimatePresence>
+      <AssistantFloatingReminders
+        page={page}
+        mode={mode}
+        launcherRetracted={launcherRetracted}
+        reduceMotion={reduceMotion}
+        viewportWidth={viewport.width}
+        performance={performance}
+        performanceHidden={performanceHidden}
+        performanceMessage={performanceMessage}
+        onHidePerformance={() => setPerformanceHidden(true)}
+        speechBubble={speechBubble}
+        weeklyPlanKickoffAvailable={weeklyPlanKickoffAvailable}
+        weeklyPlanPromptDismissed={weeklyPlanPromptDismissed}
+        onDismissWeeklyPlanPrompt={() => setWeeklyPlanPromptDismissed(true)}
+        onOpenWeeklyPlan={openWeeklyPlanFromAssistant}
+        featureGuide={featureGuide}
+        onDismissFeatureGuide={() => setFeatureGuide(null)}
+        onOpenFeatureGuide={agent => {
+          const agentId = orbitIdForAgent(agent, currentPageAgent);
+          setFeatureGuide(null);
+          openAgent(agentId);
+        }}
+        enterpriseGuideSeen={enterpriseGuideSeen}
+        onOpenCurrentPageAgent={openCurrentPageAgent}
+      />
 
       <AnimatePresence>
         {(mode === 'chat' || assistantTool === 'knowledge-intake') && (
