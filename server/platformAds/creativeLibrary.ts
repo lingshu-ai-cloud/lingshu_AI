@@ -7,6 +7,7 @@ import { getPlatformAdTask, PLATFORM_AD_TASKS_COLLECTION, type PlatformAdTask } 
 import { MetaAdsAdapter } from './metaAdapter.js';
 import { aggregateAdMetrics } from './metrics.js';
 import { creativeReadCache } from './creativeReadCache.js';
+import { readMetaVideoPlan } from './metaPlanReadback.js';
 const cachedReport = creativeReadCache<AdCreativeReport>(60_000);
 const cachedPreview = creativeReadCache<AdCreativePreview>(300_000);
 
@@ -55,14 +56,10 @@ export async function readExecutedCreative(tenantId: string, executionId: string
   const ids = (receipt.result || {}) as Record<string, string>;
   if (!['campaignId', 'adsetId', 'creativeId', 'adId'].every(k => /^\d+$/.test(ids[k] || ''))) throw new PlatformAdCreativeError('缺少完整广告资源标识', 409);
   const adapter = new MetaAdsAdapter(accessToken);
-  const campaign = await adapter.request(ids.campaignId, { fields: 'id,account_id,status,effective_status,objective' });
-  const adset = await adapter.request(ids.adsetId, { fields: 'id,account_id,campaign_id,status,effective_status,optimization_goal,attribution_spec' });
-  const ad = await adapter.request(ids.adId, { fields: 'id,account_id,adset_id,creative,status,effective_status,issues_info' });
-  const creative = await adapter.request(ids.creativeId, { fields: 'id,account_id,object_story_spec' });
-  if ([campaign, adset, ad, creative].some((r, index) => String(r.account_id) !== connection.accountId || String(r.id) !== [ids.campaignId, ids.adsetId, ids.adId, ids.creativeId][index]) || String(adset.campaign_id) !== ids.campaignId || String(ad.adset_id) !== ids.adsetId || String(ad.creative?.id) !== ids.creativeId) throw new PlatformAdCreativeError('平台账户归属或资源关联已变化', 409);
+  const { campaign, adset, ad, creative } = await readMetaVideoPlan(adapter, connection.accountId, ids);
   const videoId = String(creative.object_story_spec?.video_data?.video_id || ''), pageId = String(creative.object_story_spec?.page_id || '');
   if (!/^\d+$/.test(videoId) || !/^\d+$/.test(pageId)) throw new PlatformAdCreativeError('平台创意不是可核对的视频素材', 409);
-  return { receipt, task, connection, adapter, ids, campaign, adset, ad, videoId, pageId };
+  return { receipt, task, connection, adapter, ids, campaign, adset, ad, creative, videoId, pageId };
 }
 
 export async function getAdCreativeReport(tenantId: string, executionId: string): Promise<AdCreativeReport> {

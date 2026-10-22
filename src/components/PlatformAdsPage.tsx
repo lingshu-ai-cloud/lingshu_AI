@@ -28,6 +28,7 @@ import type { AdConnection } from './AdAccountConnections';
 import { AdAccountConnections, AdTaskControls, AdTaskMetrics } from './PlatformAdsOperations';
 import AdPerformanceOverview from './AdPerformanceOverview';
 import AdCreativeLibrary from './AdCreativeLibrary';
+import MetaPlanAuditPanel from './MetaPlanAuditPanel';
 import AdManagedWorkspace from './AdManagedWorkspace';
 import { PlatformAdsManagedPreview, PlatformAdsPerformancePreview } from './PlatformAdsPreviewSections';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
@@ -252,7 +253,7 @@ export default function PlatformAdsPage({
         </LsPageHeader>
         {notice && <Alert className="mb-4" type={notice.includes('失败') ? 'error' : 'success'} showIcon title={notice} closable onClose={() => setNotice('')} />}
 
-        {isPerformancePage && !previewMode && <AdPerformanceOverview tasks={drafts} loading={loadingTasks} onOpen={id => { const task = drafts.find(item => item.id === id); if (task) { setSelectedDraft(task); onNavigate('adsPlans'); } }} />}
+        {isPerformancePage && !previewMode && <AdPerformanceOverview initialTaskId={selectedDraft?.id} tasks={drafts} loading={loadingTasks} onOpen={id => { const task = drafts.find(item => item.id === id); if (task) { setSelectedDraft(task); onNavigate('adsPlans'); } }} />}
         {isPerformancePage && previewMode && <PlatformAdsPerformancePreview channels={channels} onOpenAccounts={() => setDialog('accounts')} onOpenManaged={() => setManagedOpen(true)} />}
 
         {page === "adsPlans" &&
@@ -302,6 +303,7 @@ export default function PlatformAdsPage({
                   </div>
                 ))}
               </div>
+              {!previewMode && selectedDraft.channels.every(c => ['Facebook', 'Instagram'].includes(c)) && <MetaPlanAuditPanel taskId={selectedDraft.id} version={selectedDraft.version || 1} onData={() => onNavigate('adsOverview')} onCreatives={() => onNavigate('adsCreatives')}/>}
               {!previewMode && <AdTaskControls key={selectedDraft.id} task={{ ...selectedDraft, budget: Number(selectedDraft.budget), createdAt: selectedDraft.createdAt || '', updatedAt: '' }} onUpdate={replaceTask} onExecution={() => setExecutionLockedIds(ids => new Set(ids).add(selectedDraft.id))} />}
               <button className="ads-text-button" onClick={() => onNavigate('digitalEmployees')}>返回智能经营</button>
               <div className="ads-overview-grid">
@@ -431,7 +433,7 @@ export default function PlatformAdsPage({
           ))}
 
         {isCreativePage && (
-          <AdCreativeLibrary onOpenTask={id => { const task = drafts.find(item => item.id === id); if (task) setSelectedDraft(task); onNavigate('adsPlans'); }} />
+          <AdCreativeLibrary onOpenTask={id => { const task = drafts.find(item => item.id === id); if (task) setSelectedDraft(task); onNavigate('adsPlans'); }} initialTaskId={selectedDraft?.id} />
         )}
 
         <Drawer title="AI 投手" placement="right" size={720} open={managedOpen} onClose={() => setManagedOpen(false)} destroyOnHidden={false}>

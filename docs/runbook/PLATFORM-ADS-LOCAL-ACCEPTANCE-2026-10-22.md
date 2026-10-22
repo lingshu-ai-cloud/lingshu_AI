@@ -2,6 +2,21 @@
 
 时间：2026-10-22，Asia/Shanghai。功能分支：`feature/platform-ads-meta-workspace-20261022`。
 
+## 计划创编审计与三页联通（本轮增量）
+
+- 起点 `e5a38e96086a0dd8ee69d49e0ee102585754c249`，工作区干净。继续在独立分支、5187 / 8890 / 8891 开发；真实测试只有 GET，不重复创建、不改账单、不启动广告、不更改现有任务或原始回执，也未合并或推送。
+- 修复执行端只查最近 200 条回执的问题：重复创建/未知操作保护现在扫描完整历史。新增超过 200 条失败记录掩盖旧 UNKNOWN 的回归，确认不产生供应商写入。
+- Meta 创建前检查实时账户 ID、币种、可用状态、平台最低限额；USD/CNY 预算最多两位小数，不静默四舍五入。补齐执行端结束时间必须晚于开始时间、非空 Meta 渠道检查；既有暂停发布策略仍生效。
+- 新创建回执只有在四层资源 ID/归属/父子关系、三层 PAUSED、目标/优化/目的地/计费、系列 spend_cap、广告组 daily_budget、主页/视频/CTA、国家/平台版位和指定排期读回一致后才能 VERIFIED。差异保留 UNKNOWN 与已有资源，阻止重建。模拟测试故意让视频读回错误，证明只创建一次、之后重试不重建。没有为测试调用真实创建。
+- 四层读回复用 `metaPlanReadback`，同时供素材/数据的既有资源核验使用。计划页新增只读 `tasks/:id/meta-audit`：当前事实与创建历史分离；ThruPlay 的 post_execution 映射不冒充创建时绑定。`connections/:id/meta-setup` 返回账户实时币种/时区/最低预算及主体已授权主页，不返回 Page/access token；主页列表可读不等于可以创建。
+- 创编新增已授权主页选择和明确的手动 ID 降级；账户切换清空旧主页、视频、封面和落地页；同币种且 connected 才可选。绑定素材使用现有平台封面，非草稿不提供“用于本次创建”；已有创建/未知结果禁止前端再新建。同配置的网络错误重试复用请求 ID；仅明确成功/失败后释放。视频观看明确 ON_VIDEO，不宣称落地页被用于该目标。
+- 计划详情可带当前 taskId 跳往投放数据（实际按该计划过滤资源与 KPI）和素材库（按计划查找其真实视频），两页仍可清除范围查看其他授权资源。Meta 详情不再并排调用旧 UTC 统计与新原生统计，避免同页口径分叉。
+- 21:33:43 / 21:33:47（Asia/Shanghai）真实核对两条原沙盒计划，检查项全部一致：CNY、Asia/Shanghai、系列限额 500、日预算 50、主页 1323567870837055、视频 1580768800024852、Facebook / US。网站访问为 OUTCOME_TRAFFIC / LINK_CLICKS / WEBSITE，ThruPlay 为 OUTCOME_ENGAGEMENT / THRUPLAY / ON_VIDEO；计费均 IMPRESSIONS，三层 PAUSED、广告 PENDING_REVIEW。原执行 ID / 文件 SHA 与前两节一致。
+- 21:33 的 Meta setup 真实返回账户状态 1、最低系列限额 CNY 500、最低日预算 CNY 6.72；所选主页仅返回 ID 与 ADVERTISE，未返回名称，界面不编造主页名。当前真实验收版位为 Facebook，未新建 Instagram 广告或验收实际消耗、审核通过。
+- 字段对照 [Meta Campaign 官方 SDK](https://github.com/facebook/facebook-python-business-sdk/blob/main/facebook_business/adobjects/campaign.py)、[Ad Set 官方 SDK](https://github.com/facebook/facebook-python-business-sdk/blob/main/facebook_business/adobjects/adset.py)。spend_cap / daily_budget / lifetime_budget 不混用；传给 Meta 的预算为该币种最小单位，页面显示主单位。
+- 浏览器从 ThruPlay 计划进入投放数据，21:40 返回该计划 1/1 资源范围的真实空报告；进入素材管理定位同一平台视频（共享素材仍如实显示两条广告关联）。已有计划的创建入口禁用，未触发任何真实执行。
+- 最终回归：39 个投流测试文件通过，TypeScript 无错误，架构检查 2241 个生产 TypeScript 文件通过，构建通过，Studio 分包 497093 / 500000 字节，`git diff --check` 通过。新增创建校验使用模拟供应商验证；本轮真实平台验证仅覆盖已有暂停资源的读取，不宣称新增创建、审核通过、消耗归因或生产上线验收完成。
+
 ## 投放数据页 Meta 原生报表接通（本轮增量）
 
 - 开发起点 `02024f56ec9bdc813b9594f9f4070866cb1ca8b3`，干净工作区；继续使用前端 5187、后端 8890、隔离数据库 8891。本轮全部 Meta 请求为 GET，没有创建/上传/激活/改预算/改账单请求，没有新应用、迁移、合并或推送。

@@ -25,6 +25,7 @@ try {
   const { listAdCreativeLibrary, getAdCreativeReport, getAdCreativePreview } = await import('./creativeLibrary.js');
   const { attachExistingAdCreative } = await import('./creativeMapping.js');
   const { getMetaPerformanceReport, parseMetaPerformanceQuery, normalizeMetaPerformance } = await import('./metaPerformance.js');
+  const { getMetaPlanAudit, getMetaSetup } = await import('./metaPlanAudit.js');
   const bytes = Buffer.from('isolated library video');
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   fs.mkdirSync(mediaDir, { recursive: true }); fs.writeFileSync(path.join(mediaDir, `${sha256}.mp4`), bytes);
@@ -47,9 +48,10 @@ try {
     const u = new URL(String(url)); requests.push(u.pathname);
     assert.equal(u.origin, 'https://graph.facebook.com');
     const common = { account_id: accountId, status };
-    if (u.pathname.endsWith('/act_1')) return Response.json({ id: 'act_1', currency: 'USD', timezone_name: 'America/Los_Angeles', name: 'Real account metadata' });
-    if (u.pathname.endsWith('/101')) return Response.json({ ...common, id: '101', effective_status: status, objective: 'OUTCOME_ENGAGEMENT' });
-    if (u.pathname.endsWith('/102')) return Response.json({ ...common, id: '102', campaign_id: '101', effective_status: status, optimization_goal: 'THRUPLAY', attribution_spec: [{ event_type: 'CLICK_THROUGH', window_days: 7 }] });
+    if (u.pathname.endsWith('/me/accounts')) return Response.json({ data: [{ id: '600', name: 'Real Page', tasks: ['ADVERTISE'], access_token: 'must-never-return-this-field' }] });
+    if (u.pathname.endsWith('/act_1')) return Response.json({ id: 'act_1', currency: 'USD', timezone_name: 'America/Los_Angeles', name: 'Real account metadata', account_status: 1, min_daily_budget: '100', min_campaign_group_spend_cap: '5000' });
+    if (u.pathname.endsWith('/101')) return Response.json({ ...common, id: '101', effective_status: status, objective: 'OUTCOME_ENGAGEMENT', spend_cap: '10000' });
+    if (u.pathname.endsWith('/102')) return Response.json({ ...common, id: '102', campaign_id: '101', effective_status: status, optimization_goal: 'THRUPLAY', daily_budget: '500', destination_type: 'ON_VIDEO', billing_event: 'IMPRESSIONS', targeting: { geo_locations: { countries: ['US'] }, publisher_platforms: ['facebook'] }, attribution_spec: [{ event_type: 'CLICK_THROUGH', window_days: 7 }] });
     if (u.pathname.endsWith('/103')) return Response.json({ ...common, id: '103', object_story_spec: { page_id: '600', video_data: { video_id: videoId } } });
     if (u.pathname.endsWith('/104')) return Response.json({ ...common, id: '104', adset_id: '102', creative: { id: '103' }, effective_status: 'PENDING_REVIEW', issues_info: [] });
     if (u.pathname.endsWith('/insights') && u.searchParams.get('fields')?.includes('account_currency')) {
@@ -96,6 +98,17 @@ try {
   assert.equal((await getAdCreativeReport('tenant', receipt.id)).spend, 0, 'real zero differs from empty');
   assert.equal((await getAdCreativeReport('tenant', receipt.id)).costPerResult, null);
   assert.equal((await getAdCreativePreview('tenant', creative.id)).height, 1280);
+  const audit = await getMetaPlanAudit('tenant', views.id);
+  assert.equal(audit.entries[0].mapping, 'post_execution');
+  assert.equal(audit.entries[0].spendCap, 100); assert.equal(audit.entries[0].dailyBudget, 5);
+  assert.ok(!audit.entries[0].checks.some(c => c.status === 'mismatch'));
+  assert.deepEqual(await getPlatformAdTask('tenant', views.id), beforeTask);
+  assert.deepEqual(await store.getById('platform_ad_executions', receipt.id), beforeReceipt, 'read-only audit never rewrites original provenance');
+  const setup = await getMetaSetup('tenant', account.id);
+  assert.equal(setup.pages[0].id, '600'); assert.equal(setup.account.minDailyBudget, 1);
+  assert.ok(!JSON.stringify(setup).includes('must-never-return-this-field'));
+  await assert.rejects(getMetaPlanAudit('other-tenant', views.id), /未找到/);
+  await assert.rejects(getMetaSetup('other-tenant', account.id), /未找到/);
   assert.ok(!requests.some(p => p.endsWith('/101/insights')), 'never attribute campaign totals to material');
   const query = { preset: 'custom', since: '2020-01-01', until: '2020-01-02' };
   for (const level of ['campaign', 'adset', 'ad']) {

@@ -50,10 +50,10 @@ function VideoPreview({ bindingId }: { bindingId: string }) {
   </LsMediaStateFrame>{error && <Button onClick={() => setRetry(v => v + 1)}>重试预览</Button>}</div>;
 }
 
-export default function AdCreativeLibrary({ onOpenTask }: { onOpenTask: (id: string) => void }) {
+export default function AdCreativeLibrary({ onOpenTask, initialTaskId }: { onOpenTask: (id: string) => void; initialTaskId?: string }) {
   const [data, setData] = useState<AdCreativeLibraryPage | null>(null), [page, setPage] = useState(1), [refresh, setRefresh] = useState(0);
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const [search, setSearch] = useState(''), [account, setAccount] = useState('all'), [selected, setSelected] = useState<string | null>(null);
+  const [search, setSearch] = useState(initialTaskId || ''), [account, setAccount] = useState('all'), [selected, setSelected] = useState<string | null>(null);
   const [reports, setReports] = useState<Record<string, AdCreativeReport>>({}), [reportErrors, setReportErrors] = useState<Record<string, string>>({});
   const [reading, setReading] = useState(false), [reportRefresh, setReportRefresh] = useState(0), [mapping, setMapping] = useState('');
   useEffect(() => {
@@ -69,7 +69,7 @@ export default function AdCreativeLibrary({ onOpenTask }: { onOpenTask: (id: str
       const key = groupKey(item), group = map.get(key);
       if (group) group.items.push(item); else map.set(key, { key, items: [item], representative: item });
     }
-    return [...map.values()].filter(g => !search || g.items.some(i => `${i.binding?.name || ''} ${i.task.name} ${i.binding?.platformVideoId || ''} ${i.connection.name}`.toLowerCase().includes(search.toLowerCase())));
+    return [...map.values()].filter(g => !search || g.items.some(i => `${i.task.id} ${i.binding?.name || ''} ${i.task.name} ${i.binding?.platformVideoId || ''} ${i.connection.name}`.toLowerCase().includes(search.toLowerCase())));
   }, [data, account, search]);
   const opened = groups.find(g => g.key === selected);
   const executionKey = opened?.items.map(i => i.execution?.id || '').join(',') || '';

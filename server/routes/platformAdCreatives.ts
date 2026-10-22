@@ -10,8 +10,15 @@ import { Readable } from 'node:stream';
 import { listAdCreativeLibrary, getAdCreativeReport, getAdCreativePreview } from '../platformAds/creativeLibrary.js';
 import { attachExistingAdCreative } from '../platformAds/creativeMapping.js';
 import { openPlatformAdCreativeMedia } from '../platformAds/creatives.js';
+import { getMetaSetup, getMetaPlanAudit } from '../platformAds/metaPlanAudit.js';
 export const platformAdCreativesRouter = Router();
 platformAdCreativesRouter.use(requireAuth, requireAdWriteAccess);
+platformAdCreativesRouter.get('/connections/:id/meta-setup', async (req, res) => {
+  try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await getMetaSetup((res.locals as AuthLocals).tenantId, req.params.id)); } catch (error) { failure(res, error); }
+});
+platformAdCreativesRouter.get('/tasks/:id/meta-audit', async (req, res) => {
+  try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await getMetaPlanAudit((res.locals as AuthLocals).tenantId, req.params.id)); } catch (error) { failure(res, error); }
+});
 function failure(res: import('express').Response, error: unknown) {
   let status = 503, message = '投放素材暂不可用，请刷新后重试';
   if (error instanceof PlatformAdCreativeError) { status = error.status; message = error.message; }

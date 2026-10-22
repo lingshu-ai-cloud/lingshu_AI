@@ -14,7 +14,7 @@ export class MetaAdsAdapter {
     private beforeProviderWrite?: () => Promise<void>,
   ) {}
   async request(path: string, params: Record<string, unknown> = {}, method: 'GET' | 'POST' = 'GET'): Promise<any> {
-    if (!/^(?:act_)?\d+(?:\/[a-z_]+)?$/.test(path)) throw new AdProviderError('广告资源路径无效', 'INVALID_INPUT');
+    if (path !== 'me/accounts' && !/^(?:act_)?\d+(?:\/[a-z_]+)?$/.test(path)) throw new AdProviderError('广告资源路径无效', 'INVALID_INPUT');
     const version = process.env.META_ADS_API_VERSION;
     if (!version || !/^v\d+\.0$/.test(version)) throw new AdProviderError('请配置 META_ADS_API_VERSION', 'NOT_CONFIGURED');
     const url = new URL(`https://graph.facebook.com/${version}/${path}`);
@@ -99,5 +99,6 @@ export function validateMetaVideoInput(value: unknown, maxBudget: number, videoV
   if (!countries.length || countries.length > 50 || countries.some(x => !/^[A-Z]{2}$/.test(x))) throw new AdProviderError('请提供有效国家代码', 'INVALID_INPUT');
   const dailyBudget = Number(raw.dailyBudget);
   if (!Number.isFinite(dailyBudget) || dailyBudget < 1 || dailyBudget > maxBudget) throw new AdProviderError('日预算超出任务预算', 'INVALID_INPUT');
+  if (!Number.isSafeInteger(Math.round(maxBudget * 100)) || Math.abs(maxBudget * 100 - Math.round(maxBudget * 100)) > 1e-7 || Math.abs(dailyBudget * 100 - Math.round(dailyBudget * 100)) > 1e-7) throw new AdProviderError('Meta 预算最多两位小数，不会静默四舍五入', 'INVALID_INPUT');
   return { pageId, videoId, imageUrl, linkUrl, countries, dailyBudget, message: String(raw.message || '').slice(0, 2000) };
 }

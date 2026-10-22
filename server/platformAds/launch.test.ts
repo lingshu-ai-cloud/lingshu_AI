@@ -23,6 +23,7 @@ try {
   const launch = await saveAdLaunch('tenant', task.id, { expectedVersion: managed.version, connectionId: connection!.id, meta: { pageId: '101', videoId: '102', imageUrl: 'https://example.com/image.jpg', linkUrl: 'https://example.com', message: 'test', countries: ['US'], dailyBudget: 50 } });
   let creates = 0, writes = 0;
   const statuses: Record<string, string> = {};
+  const saved: Record<string, any> = {};
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     const parsed = new URL(String(url));
     if (parsed.hostname !== 'graph.facebook.com') return originalFetch(url, init);
@@ -31,10 +32,10 @@ try {
     const id = parsed.pathname.split('/').pop()!;
     if (init?.method === 'POST') {
       writes++;
-      if (/\/(campaigns|adsets|adcreatives|ads)$/.test(parsed.pathname)) { const createdId = String(200 + creates++); statuses[createdId] = 'PAUSED'; result = { id: createdId }; }
+      if (/\/(campaigns|adsets|adcreatives|ads)$/.test(parsed.pathname)) { const createdId = String(200 + creates++); statuses[createdId] = 'PAUSED'; saved[createdId] = Object.fromEntries(new URLSearchParams(String(init.body))); result = { id: createdId }; }
       else { statuses[id] = new URLSearchParams(String(init.body)).get('status')!; result = { success: true }; }
     } else if (parsed.searchParams.get('fields') === 'account_id') result = { account_id: '100' };
-    else result = { id, status: statuses[id] || 'PAUSED', daily_budget: '5000', spend_cap: '50000' };
+    else { const data = { ...saved[id] }; for (const k of ['creative', 'object_story_spec', 'targeting']) if (data[k]) data[k] = JSON.parse(data[k]); if (data.creative?.creative_id) data.creative = { id: data.creative.creative_id }; result = { ...data, id, account_id: '100', currency: 'USD', account_status: 1, status: statuses[id] || 'PAUSED', daily_budget: '5000', spend_cap: '50000' }; }
     return new Response(JSON.stringify(result), { status: 200 });
   }) as typeof fetch;
   const oldReleaseMode = process.env.PLATFORM_ADS_RELEASE_MODE;

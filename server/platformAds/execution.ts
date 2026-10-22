@@ -1,4 +1,5 @@
 import { resolveAdCreativeExecution } from './creativeExecution.js';
+import { readMetaVideoPlan, assertPausedMetaVideoPlan } from './metaPlanReadback.js';
 import { store } from '../storage/index.js';
 import { assertAdReleaseAction } from './releasePolicy.js';
 import { getPlatformAdTask, withPlatformAdTaskLock } from './tasks.js';
@@ -13,6 +14,14 @@ export type AdExecution = { id: string; tenant_id: string; taskId: string; reque
 const publicReceipt = ({ tenant_id: _tenant, ...receipt }: AdExecution) => receipt;
 export async function listAdExecutions(tenantId: string, taskId: string) {
   return (await store.list<AdExecution>(AD_EXECUTIONS, { where: { tenant_id: tenantId, taskId }, sort: '-createdAt', perPage: 200 })).items.map(publicReceipt);
+}
+export async function listAllAdExecutions(tenantId: string, taskId: string) {
+  const items: ReturnType<typeof publicReceipt>[] = [];
+  for (let page = 1; ; page++) {
+    const result = await store.list<AdExecution>(AD_EXECUTIONS, { where: { tenant_id: tenantId, taskId }, page, perPage: 200, sort: '-createdAt' });
+    items.push(...result.items.map(publicReceipt));
+    if (page >= result.totalPages) return items;
+  }
 }
 export async function executeAdAction(tenantId: string, taskId: string, input: Record<string, unknown>) {
   return execute(tenantId, taskId, input, 'manual');
@@ -53,7 +62,7 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
         await assertProposalFactsCurrent();
       } }
       : leaseGuard;
-    const allReceipts = await listAdExecutions(tenantId, taskId);
+    const allReceipts = await listAllAdExecutions(tenantId, taskId);
     if (allReceipts.some(receipt => ['EXECUTING', 'PROVIDER_ACCEPTED', 'UNKNOWN'].includes(receipt.status))) throw new AdProviderError('存在待核对操作，请完成平台对账后再执行', 'RECONCILIATION_REQUIRED');
     if (action === 'create' && allReceipts.some(receipt => receipt.action === 'create' && receipt.status !== 'FAILED')) throw new AdProviderError('该任务已创建广告，请管理已有广告或建立独立预算任务', 'ALREADY_CREATED');
     const connectionId = String(input.connectionId || '');
@@ -101,19 +110,22 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
       const { startsAt, endsAt } = task.configuration;
       for (const date of [startsAt, endsAt]) if (date && (!/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(date) || !Number.isFinite(Date.parse(date)))) throw new AdProviderError('投放排期无效', 'INVALID_INPUT');
       if (endsAt && Date.parse(endsAt) <= Date.now()) throw new AdProviderError('投放结束时间已过期', 'INVALID_INPUT');
+      if (startsAt && endsAt && Date.parse(endsAt) <= Date.parse(startsAt)) throw new AdProviderError('结束时间必须晚于开始时间', 'INVALID_INPUT');
       if (action === 'create' && startsAt && Date.parse(startsAt) <= Date.now()) throw new AdProviderError('开始时间已过期，请更新投放排期', 'INVALID_INPUT');
     }
     if (mode !== 'manual' && metaInput && (metaInput.dailyBudget > task.authorization!.maxDailyBudget || task.budget > task.authorization!.maxTotalBudget)) throw new AdProviderError('创建预算超出授权', 'BUDGET_LIMIT');
     if (action === 'create' && !['提升网站访问', '提升有效视频观看'].includes(task.goal)) throw new AdProviderError('当前 Meta 视频创编支持网站访问或有效视频观看目标', 'UNSUPPORTED_OBJECTIVE');
-    if (action === 'create' && task.channels.some(channel => !['Facebook', 'Instagram'].includes(channel))) throw new AdProviderError('当前真实创建仅支持 Meta 渠道，请为其他平台单独建立投放任务', 'UNSUPPORTED_CHANNEL');
+    if (action === 'create' && (!task.channels.length || task.channels.some(channel => !['Facebook', 'Instagram'].includes(channel)))) throw new AdProviderError('当前真实创建仅支持 Meta 渠道，请为其他平台单独建立投放任务', 'UNSUPPORTED_CHANNEL');
     const prior = action === 'create' ? null : (await listAdExecutions(tenantId, taskId)).find(r => r.action === 'create' && r.connectionId === connectionId && r.resourceId === resourceId && r.status === 'VERIFIED');
     const resources = (prior?.result || {}) as Record<string, string>;
     if (action !== 'create' && (!resources.adsetId || !resources.adId)) throw new AdProviderError('完整广告组和广告尚未关联，无法执行', 'PREFLIGHT_REQUIRED');
     const dailyBudget = Number(input.dailyBudget);
     if (action === 'adjust_budget' && (!Number.isFinite(dailyBudget) || dailyBudget < 1 || dailyBudget > task.budget)) throw new AdProviderError('日预算必须在任务预算范围内', 'INVALID_INPUT');
+    if (action === 'adjust_budget' && Math.abs(dailyBudget * 100 - Math.round(dailyBudget * 100)) > 1e-7) throw new AdProviderError('日预算最多两位小数，不会静默四舍五入', 'INVALID_INPUT');
     const adapter = new MetaAdsAdapter(accessToken, fetch, () => effectLeaseGuard.beforeEffect());
     if (action === 'create') {
       const account = await adapter.account(connection.accountId);
+      if (String(account.account_id || account.id).replace(/^act_/, '') !== connection.accountId || account.currency !== connection.currency || Number(account.account_status) !== 1) throw new AdProviderError('Meta 账户身份、币种或可用状态与保存连接不一致，未创建资源', 'ACCOUNT_MISMATCH');
       const minimumCap = Number(account.min_campaign_group_spend_cap);
       const minimumDaily = Number(account.min_daily_budget);
       if (Number.isFinite(minimumCap) && minimumCap > 0 && Math.round(task.budget * 100) < minimumCap) throw new AdProviderError(`平台要求广告系列花费限额至少为 ${connection.currency} ${(minimumCap / 100).toFixed(2)}，请更新计划预算；尚未创建平台资源。`, 'BUDGET_BELOW_PLATFORM_MINIMUM');
@@ -168,9 +180,9 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
       if (!await store.update(AD_EXECUTIONS, receipt.id, { resourceId: actualId, status: 'PROVIDER_ACCEPTED' })) throw new AdProviderError('平台已接受操作，但本地保存失败', 'STORAGE_ERROR', true);
       const verified = await adapter.request(action === 'adjust_budget' ? resources.adsetId : actualId, { fields: action === 'adjust_budget' ? 'id,status,daily_budget' : 'id,status' });
       if (action === 'create') {
-        const adset = await adapter.request(createdResources.adsetId, { fields: 'daily_budget,status' });
-        if (Number(adset.daily_budget) !== Math.round(metaInput!.dailyBudget * 100) || adset.status !== 'PAUSED') throw new AdProviderError('广告组预算或暂停状态尚未确认', 'RECONCILIATION_REQUIRED', true);
-        verified.daily_budget = adset.daily_budget;
+        const snapshot = await readMetaVideoPlan(adapter, connection.accountId, createdResources);
+        assertPausedMetaVideoPlan(snapshot, metaInput!, task.budget, task.goal === '提升有效视频观看', task.channels, task.configuration);
+        verified.daily_budget = snapshot.adset.daily_budget;
       }
       if ((action === 'create' || action === 'pause') && verified.status !== 'PAUSED') throw new AdProviderError('平台状态尚未确认', 'RECONCILIATION_REQUIRED', true);
       if (action === 'adjust_budget' && Number(verified.daily_budget) !== Math.round(dailyBudget * 100)) throw new AdProviderError('平台预算尚未确认', 'RECONCILIATION_REQUIRED', true);

@@ -17,7 +17,8 @@ const metricKeys = Object.keys(META_PERFORMANCE_FIELDS) as MetaMetricKey[];
 const defaultColumns: MetaMetricKey[] = ['spend', 'impressions', 'clicks', 'linkClicks', 'thruPlays', 'cpm', 'ctr'];
 const errorText = (e: unknown) => e instanceof Error ? e.message : '读取失败，请稍后刷新';
 const resource = (i: AdCreativeLibraryItem, level: MetaReportLevel) => i.execution?.[level === 'campaign' ? 'campaignId' : level === 'adset' ? 'adsetId' : 'adId'] || '';
-export default function AdPerformanceOverview({ loading, onOpen }: { tasks: Task[]; loading: boolean; onOpen: (id: string) => void }) {
+export default function AdPerformanceOverview({ loading, onOpen, initialTaskId }: { tasks: Task[]; loading: boolean; onOpen: (id: string) => void; initialTaskId?: string }) {
+  const [taskFilter, setTaskFilter] = useState(initialTaskId || '');
   const [directory, setDirectory] = useState<AdCreativeLibraryPage | null>(null), [page, setPage] = useState(1), [catalogRefresh, setCatalogRefresh] = useState(0), [catalogBusy, setCatalogBusy] = useState(false);
   const [error, setError] = useState(''), [account, setAccount] = useState(''), [level, setLevel] = useState<MetaReportLevel>('campaign'), [preset, setPreset] = useState('7');
   const [range, setRange] = useState<[string, string] | null>(null), [search, setSearch] = useState(''), [columns, setColumns] = useState<MetaMetricKey[]>(defaultColumns);
@@ -31,8 +32,8 @@ export default function AdPerformanceOverview({ loading, onOpen }: { tasks: Task
     const items = directory?.items.filter(i => i.connection.provider === 'meta') || [];
     return [...new Map([...items.filter(i => i.execution), ...items].map(i => [i.connection.id, i.connection])).values()];
   }, [directory]);
-  const selectedAccount = accounts.find(a => a.id === account) || accounts[0];
-  const rows = useMemo(() => [...new Map((directory?.items || []).filter(i => i.connection.id === selectedAccount?.id && i.execution).map(i => [resource(i, level), i])).values()], [directory, selectedAccount?.id, level]);
+  const selectedAccount = accounts.find(a => a.id === account) || accounts.find(a => directory?.items.some(i => i.task.id === taskFilter && i.connection.id === a.id)) || accounts[0];
+  const rows = useMemo(() => [...new Map((directory?.items || []).filter(i => i.connection.id === selectedAccount?.id && i.execution && (!taskFilter || i.task.id === taskFilter)).map(i => [resource(i, level), i])).values()], [directory, selectedAccount?.id, level, taskFilter]);
   const ids = rows.map(i => i.execution!.id).join(',');
   const valid = preset !== 'custom' || !!range && metaDateRange(...range).length > 0;
   const query = new URLSearchParams({ level, preset, ...(preset === 'custom' && range ? { since: range[0], until: range[1] } : {}) }).toString();
@@ -72,6 +73,7 @@ export default function AdPerformanceOverview({ loading, onOpen }: { tasks: Task
   };
   return <div className="meta-performance" aria-label="Meta 真实投放数据">
     <div className="meta-performance-toolbar">
+      <Select aria-label="计划范围" value={taskFilter} onChange={setTaskFilter} options={[{ value: '', label: '本页全部计划' }, ...[...new Map((directory?.items || []).map(i => [i.task.id, i.task])).values()].map(t => ({ value: t.id, label: t.name }))]} />
       <Select aria-label="广告账户" value={selectedAccount?.id} placeholder="选择 Meta 广告账户" onChange={setAccount} options={accounts.map(a => ({ value: a.id, label: `${a.name} · ${a.currency}` }))} />
       <Select aria-label="报告层级" value={level} onChange={setLevel} options={Object.entries(levelLabels).map(([value, label]) => ({ value, label }))} />
       <Select aria-label="报告周期" value={preset} onChange={setPreset} options={[{ value: '1', label: '今天（账户时区）' }, { value: '7', label: '近 7 天（含今天）' }, { value: '30', label: '近 30 天（含今天）' }, { value: 'custom', label: '自定义日期' }]} />

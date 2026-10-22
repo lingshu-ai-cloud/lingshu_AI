@@ -26,6 +26,12 @@ test('the advertising unit exposes three workspaces and keeps AI management in a
 });
 
 test('material first-level page uses the real library rather than simulated performance or a placeholder', () => {
+  assert.match(source, /MetaPlanAuditPanel taskId=\{selectedDraft.id\}/);
+  assert.match(source, /initialTaskId=\{selectedDraft\?\.id\}/);
+  const controls = readFileSync(new URL('./PlatformAdsOperations.tsx', import.meta.url), 'utf8');
+  assert.match(controls, /creationBlocked/);
+  assert.match(controls, /requestId: request.current.id/);
+  assert.match(controls, /MetaPageSelect connectionId/);
   assert.match(source, /isCreativePage && \([\s\S]*<AdCreativeLibrary onOpenTask=/);
   assert.doesNotMatch(source, /mockCreativePerformance|广告素材及效果接口尚未接入/);
   const library = readFileSync(new URL('./AdCreativeLibrary.tsx', import.meta.url), 'utf8');

@@ -26,7 +26,11 @@ try {
     calls++;
     if (new URL(String(url)).searchParams.get('fields') === 'id,access_token') return Response.json({ id: '1', access_token: 'test-page-token' });
     if (init.method === 'POST') { const params = new URLSearchParams(init.body); posts.push(params); if (params.has('daily_budget')) actualBudget = params.get('daily_budget')!; return Response.json({ id: String(100 + posts.length) }); }
-    return Response.json({ id: '101', status: 'PAUSED', account_id: '1', daily_budget: actualBudget, min_campaign_group_spend_cap: minimumCap, min_daily_budget: minimumDaily });
+    const id = new URL(String(url)).pathname.split('/').pop()!;
+    const data: any = Object.fromEntries(posts[Number(id) - 101] || []);
+    for (const k of ['creative', 'object_story_spec', 'targeting']) if (data[k]) data[k] = JSON.parse(data[k]);
+    if (data.creative?.creative_id) data.creative = { id: data.creative.creative_id };
+    return Response.json({ ...data, id, status: 'PAUSED', account_id: '1', currency: 'CNY', account_status: 1, daily_budget: actualBudget, min_campaign_group_spend_cap: minimumCap, min_daily_budget: minimumDaily });
   }) as typeof fetch;
   const createTask = (currency: string) => createPlatformAdTask('t1', 'u1', { name: `Currency ${currency}`, video: 'video', market: 'CN', budget: 1234.56, currency, goal: '提升网站访问', channels: ['Facebook'] });
   const connection = (provider: string, currency: string) => store.create<any>('platform_ad_connections', { tenant_id: 't1', provider, accountId: '1', status: 'connected', currency, tokenCipher: encryptSecret('test') });

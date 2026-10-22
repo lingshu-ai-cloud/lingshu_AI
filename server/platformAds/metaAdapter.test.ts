@@ -15,6 +15,8 @@ assert.equal(calls.length, 1);
 assert.ok(!calls[0].url.includes('secret'));
 const input = validateMetaVideoInput({ pageId: '1', videoId: '2', imageUrl: 'https://example.com/a.png', linkUrl: 'https://example.com', countries: ['US'], dailyBudget: 5 }, 100);
 assert.throws(() => validateMetaVideoInput({ ...input, dailyBudget: 101 }, 100));
+assert.throws(() => validateMetaVideoInput({ ...input, dailyBudget: 5.001 }, 100), /两位小数/);
+assert.throws(() => validateMetaVideoInput(input, 100.001), /两位小数/);
 const ids: string[] = [];
 await adapter.createPausedVideoTraffic('1', 'Test', input, 100, async (_kind, id) => { ids.push(id); });
 assert.equal(ids.length, 4);

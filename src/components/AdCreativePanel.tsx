@@ -74,7 +74,7 @@ export default function AdCreativePanel({ task, connections, onUpdate, onUse, up
           <div className="ads-actions">
             <button type="button" className="ads-button" disabled={busy || !uploadAllowed || task.managementMode !== 'manual' || task.status !== 'draft' || creative.status !== 'pending' || !!creative.platformVideoId} onClick={() => void operate(creative, 'upload')}>上传到 Meta</button>
             <button type="button" className="ads-button" disabled={busy || !creative.platformVideoId} onClick={() => void operate(creative, 'reconcile')}>核对视频状态</button>
-            <button type="button" className="ads-button primary" disabled={busy || creative.status !== 'ready' || task.managementMode !== 'manual'} onClick={() => onUse(creative)}>用于本次人工创建</button>
+            <button type="button" className="ads-button primary" disabled={busy || creative.status !== 'ready' || task.managementMode !== 'manual' || task.status !== 'draft'} onClick={() => onUse(creative)}>用于本次人工创建</button>
           </div>{['unknown', 'uploading'].includes(creative.status) && !creative.platformVideoId && <p className="ads-muted">未取得可核对的视频 ID，请由账户管理员在 Meta 核对；此页面不会自动重传。</p>}{creative.status === 'failed' && <p className="ads-muted">本次上传已失败，请核对原因后重新绑定成片，再发起新的上传。</p>}{!uploadAllowed && <p className="ads-muted">当前平台写入未开放，仍可管理本地素材绑定。</p>}
         </> : <p className="ads-muted">TikTok 仍需使用既有可推广 Spark 帖子；此绑定仅记录成片版本，不上传视频或自动取得帖子授权。</p>}
       </article>)}
