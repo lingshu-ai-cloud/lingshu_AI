@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation';
-import { runPlannedCarousel } from './socialImageCarousel';
+import { runPlannedCarousel, runPlannedMultiOutput } from './socialImageCarousel';
 
 function plannedTask(): SocialImageCreationTask {
   return {
@@ -55,4 +55,25 @@ test('unknown or unpersisted first-page outcome stops before the next paid unit'
     renderUnit: async () => { throw new Error('must not submit'); } }), /requires_reconciliation/);
   await assert.rejects(runPlannedCarousel({ task: plannedTask(), planUnits: async task => task,
     renderUnit: async () => ({ ok: true, task: plannedTask() }) }), /not_durable/);
+});
+
+test('GIF plates use the same frozen sequential runner and stop on uncertain payment', async () => {
+  const gif = plannedTask();
+  gif.imageType = 'gif_poster';
+  gif.renderPlan!.units = gif.renderPlan!.units.map(unit => ({ ...unit, role: 'gif_plate' }));
+  const calls: string[] = [];
+  await assert.rejects(runPlannedMultiOutput({ task: gif, planUnits: async task => task,
+    renderUnit: async (_taskId, jobId) => { calls.push(jobId); return { ok: false, error: 'GIF paid outcome unknown' }; } }),
+  /GIF paid outcome unknown/);
+  assert.deepEqual(calls, ['job-0']);
+  const completedGif = (task: SocialImageCreationTask, index: number) => {
+    const page = completed(task, index);
+    return { ...page, outputs: page.outputs.map(output => ({ ...output, role: 'gif_plate' as const })) };
+  };
+  const complete = await runPlannedMultiOutput({ task: gif, planUnits: async () => { throw new Error('already planned'); },
+    renderUnit: async (_taskId, jobId) => {
+      const index = Number(jobId.slice(-1));
+      return { ok: true, task: completedGif(index === 0 ? gif : completedGif(gif, 0), index) };
+    } });
+  assert.equal(complete.generationJobs.every(job => job.outputNodeIds.length === 1), true);
 });

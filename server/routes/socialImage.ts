@@ -161,7 +161,7 @@ socialImageRouter.post('/tasks/:id/jobs/:jobId/reconcile-material', async (req, 
   }
 });
 
-/** Persist bounded units; carousel pages may render sequentially, GIF delivery stays closed. */
+/** Persist bounded multi-output units before any paid call. */
 socialImageRouter.post('/tasks/:id/plan-units', async (req, res) => {
   try {
     const { tenantId } = res.locals as AuthLocals;
@@ -177,7 +177,7 @@ socialImageRouter.post('/tasks/:id/plan-units', async (req, res) => {
     }
     const task = await persistSocialImageMultiUnitPlan({ store, tenantId, taskId: req.params.id, expectedVersion, productHashes });
     res.setHeader('Cache-Control', 'private, no-store');
-    res.json({ ok: true, task, paidExecutionEnabled: task.imageType === 'carousel' });
+    res.json({ ok: true, task, paidExecutionEnabled: task.imageType === 'carousel' || task.imageType === 'gif_poster' });
   } catch (error) {
     const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_plan_failed';
     const status = code === 'social_image_task_missing' ? 404 : code === 'social_image_atomic_store_required' ? 503 : 409;

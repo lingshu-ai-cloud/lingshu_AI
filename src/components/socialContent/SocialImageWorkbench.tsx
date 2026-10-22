@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Checkbox, Input, Modal, Select, Spin, Steps, Tag } from 'antd';
 import { CheckCircle2, FileImage, ImagePlus, Layers3, RefreshCw, Upload } from 'lucide-react';
 import LsPageHeader from '../ui/LsPageHeader';
+import { LsMediaStateFrame, LsProgressiveMedia } from '../ui/LsExperiencePrimitives';
 import { authHeader } from '../../lib/auth';
 import { socialImageApi } from '../../lib/socialImageApi';
-import { runPlannedCarousel } from '../../lib/socialImageCarousel';
+import { runPlannedMultiOutput } from '../../lib/socialImageCarousel';
 import { studioApi, type FbPosterBrief, type Material } from '../../lib/studioApi';
 import {
   SOCIAL_IMAGE_HARD_CHECKS,
@@ -26,7 +27,7 @@ const IMAGE_TYPES: Array<{ id: SocialImageContentType; label: string; descriptio
   { id: 'trend', label: '趋势内容', description: '趋势洞察连接企业产品机会', available: true },
   { id: 'infographic', label: '信息图', description: '结构化解释技术、流程或数据', available: true },
   { id: 'carousel', label: '轮播图', description: '连续多页讲清问题、证据和方案', available: true },
-  { id: 'gif_poster', label: 'GIF 动态海报', description: '底图切换、打字或状态出现', available: false },
+  { id: 'gif_poster', label: 'GIF 动态海报', description: '多底图切换，产品与文字固定', available: true },
 ];
 
 const STEP_ITEMS = [
@@ -41,7 +42,7 @@ function actionableConfirmationFields(fields: string[] = []) {
 
 function hasUnresolvedPaidImageJob(task: SocialImageCreationTask | null): boolean {
   return Boolean(task?.generationJobs?.some(job =>
-    (task.imageType === 'carousel' ? ['running', 'outcome_unknown'] : ['queued', 'running', 'outcome_unknown']).includes(job.status)
+    (task.imageType === 'carousel' || task.imageType === 'gif_poster' ? ['running', 'outcome_unknown'] : ['queued', 'running', 'outcome_unknown']).includes(job.status)
       && !job.outputNodeIds.length,
   ));
 }
@@ -67,6 +68,16 @@ function posterStyleForType(type: SocialImageContentType) {
   return 'oem-factory';
 }
 
+function ReviewImage({ src, alt }: { src: string; alt: string }) {
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  return <LsMediaStateFrame state={failed ? 'error' : loaded ? 'ready' : 'loading'}
+    label={failed ? '预览加载失败，可使用下载链接核对原文件' : '正在加载图片'} className="h-full w-full">
+    <LsProgressiveMedia src={src} alt={alt} className="h-full w-full object-contain" preview={false}
+      onLoad={() => setLoaded(true)} onError={() => setFailed(true)} />
+  </LsMediaStateFrame>;
+}
+
 export default function SocialImageWorkbench({
   creationPath, referenceTitle, referenceThumbnail, referenceMediaUrl, referenceCaption, initialTask, onShowCreations,
 }: {
@@ -78,7 +89,7 @@ export default function SocialImageWorkbench({
   initialTask?: SocialImageCreationTask;
   onShowCreations: () => void;
 }) {
-  const carouselPending = initialTask?.imageType === 'carousel' && initialTask.renderPlan?.units.some(unit =>
+  const carouselPending = (initialTask?.imageType === 'carousel' || initialTask?.imageType === 'gif_poster') && initialTask.renderPlan?.units.some(unit =>
     !initialTask.generationJobs.find(job => job.id === unit.jobId)?.outputNodeIds.length);
   const restoredStep: WorkbenchStep = carouselPending ? 'generate' : initialTask?.step === 'motion' ? 'review' : initialTask?.step === 'type' ? 'inputs' : initialTask?.step || 'inputs';
   const [step, setStep] = useState<WorkbenchStep>(restoredStep);
@@ -99,7 +110,8 @@ export default function SocialImageWorkbench({
   const [poster, setPoster] = useState<FbPosterBrief | null>(initialTask?.renderBrief || null);
   const [caption, setCaption] = useState(initialTask?.imageTextContract.caption || '');
   const [hashtags, setHashtags] = useState<string[]>(initialTask?.imageTextContract.hashtags || []);
-  const [imageUrl, setImageUrl] = useState(initialTask?.outputs.find(output => output.mediaUrl)?.mediaUrl || '');
+  const [imageUrl, setImageUrl] = useState(initialTask?.outputs.find(output => output.role === 'gif_output' && output.state !== 'superseded')?.mediaUrl
+    || initialTask?.outputs.find(output => output.mediaUrl && output.role !== 'gif_plate')?.mediaUrl || '');
   const [fieldsToConfirm, setFieldsToConfirm] = useState<string[]>(actionableConfirmationFields(initialTask?.fieldsToConfirm));
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [confirmationValues, setConfirmationValues] = useState<Record<string, string>>(() => Object.fromEntries(
@@ -144,9 +156,11 @@ export default function SocialImageWorkbench({
     ? STEP_ITEMS.findIndex(item => item.key === 'production')
     : STEP_ITEMS.findIndex(item => item.key === step);
   const hardChecks = SOCIAL_IMAGE_HARD_CHECKS;
+  const multiOutput = imageType === 'carousel' || imageType === 'gif_poster';
   const recoverableJob = task?.generationJobs.find(job => ['running', 'outcome_unknown'].includes(job.status) && !job.outputNodeIds.length);
-  const carouselPages = task?.imageType === 'carousel' ? task.renderPlan?.units.map(unit => ({
-    unit, output: task.outputs.find(output => output.role === unit.role && output.label === unit.label && output.state !== 'superseded'),
+  const carouselPages = task?.imageType === 'carousel' || task?.imageType === 'gif_poster' ? task.renderPlan?.units.map(unit => ({
+    unit, output: task.outputs.find(output => output.role === (task.imageType === 'gif_poster' && task.gifDelivery ? 'gif_frame' : unit.role)
+      && output.label === unit.label && output.state !== 'superseded'),
   })) || [] : [];
 
   const reconcileSavedImage = async () => {
@@ -154,11 +168,14 @@ export default function SocialImageWorkbench({
     setBusy(true); setReconciling(true); setError(''); setNotice('正在核对已有素材；不会重新调用图片供应商。');
     try {
       const result = await socialImageApi.reconcileMaterial(task.id, recoverableJob.id);
-      const pendingCarouselPage = result.task.imageType === 'carousel' && result.task.renderPlan?.units.some(unit =>
+      const pendingCarouselPage = (result.task.imageType === 'carousel' || result.task.imageType === 'gif_poster') && result.task.renderPlan?.units.some(unit =>
         !result.task.generationJobs.find(job => job.id === unit.jobId)?.outputNodeIds.length);
-      setTask(result.task); setImageUrl(result.url); setStep(pendingCarouselPage ? 'generate' : 'review');
+      const gifNeedsFinalization = result.task.imageType === 'gif_poster' && !result.task.gifDelivery;
+      setTask(result.task); if (result.task.imageType !== 'gif_poster') setImageUrl(result.url);
+      setStep(pendingCarouselPage || gifNeedsFinalization ? 'generate' : 'review');
       setQualityPasses(result.task.outputs.flatMap(output => output.qualityChecks.filter(check => check.verdict === 'pass').map(check => check.key)));
-      setNotice(pendingCarouselPage ? '已找回当前轮播页。核对后可继续尚未提交的页面，不会重新生成已保存页面。' : '已从企业素材库找回成片并关联任务；质量检查仍待确认。');
+      setNotice(pendingCarouselPage || gifNeedsFinalization ? '已找回当前多图单元。可继续未提交的单元或收口 GIF，不会重新生成已保存单元。'
+        : '已从企业素材库找回成片并关联任务；质量检查仍待确认。');
     } catch (reason) {
       setNotice(''); setError(reason instanceof Error ? reason.message : '未找到可安全关联的成片；不会重新生成图片。');
       void socialImageApi.getTask(task.id).then(result => setTask(result.task)).catch(() => undefined);
@@ -205,6 +222,7 @@ export default function SocialImageWorkbench({
 
   const saveInputs = async () => {
     if (!selectedProducts.length) { setError('请选择至少一个企业产品。'); return; }
+    if (imageType === 'gif_poster' && selectedProducts.length > 2) { setError('GIF 固定图层目前支持 1–2 个企业产品。'); return; }
     setBusy(true); setError('');
     try {
       const current = await ensureTask();
@@ -215,7 +233,8 @@ export default function SocialImageWorkbench({
           ...selectedMaterials.map(item => ({ assetId: item.id, role: /logo|标志|品牌标识/i.test(item.name) ? 'logo' as const : 'scene' as const, name: item.name, source: 'enterprise_material_library' as const, contentHash: item.contentSha256, required: true })),
         ],
         contentBrief: { ...current.contentBrief, coreClaim: resolvedCoreClaim, productRefs: productIds, productNames: selectedProducts.map(item => item.name), audience: [audience], factuality, topicType: topicForType(imageType) as SocialImageCreationTask['contentBrief']['topicType'] },
-        deliverySpec: { ...current.deliverySpec, platform, aspectRatio: ratio, language, imageGeneration: { provider: 'openai', model: 'gpt-image-2', quality: imageQuality }, format: imageType === 'gif_poster' ? 'gif' : imageType === 'carousel' ? 'carousel' : 'jpg', outputCount: imageType === 'carousel' ? 4 : imageType === 'gif_poster' ? 4 : 1 },
+        deliverySpec: { ...current.deliverySpec, platform, aspectRatio: ratio, language, imageGeneration: { provider: 'openai', model: 'gpt-image-2', quality: imageQuality }, format: imageType === 'gif_poster' ? 'gif' : imageType === 'carousel' ? 'carousel' : 'jpg', outputCount: imageType === 'carousel' || imageType === 'gif_poster' ? 4 : 1,
+          motion: imageType === 'gif_poster' ? current.deliverySpec.motion || { mechanism: 'background_switch', fixedLayers: ['headline', 'content_module', 'brand'], dynamicLayers: ['background'], loopDurationMs: 6000 } : undefined },
       });
       setTask(saved.task); setStep('plan'); setNotice('输入已冻结，正在自动完成对标拆解、图文策划与首版生成…');
       const planned = await requestPlan(saved.task, confirmationValues);
@@ -268,6 +287,7 @@ export default function SocialImageWorkbench({
 
   const confirmMissingInformation = async () => {
     if (!task) return;
+    if (task.renderPlan) { setConfirmationOpen(false); setError('图片付费计划已冻结；请先显式废弃计划并核对已有回执，再修改事实输入。'); return; }
     const suppliedFields = fieldsToConfirm.filter(field => confirmationValues[field]?.trim());
     const remainingFields = fieldsToConfirm.filter(field => !confirmationValues[field]?.trim());
     setBusy(true); setError(''); setNotice('正在统一保存已补充信息…');
@@ -307,23 +327,33 @@ export default function SocialImageWorkbench({
     finally { setBusy(false); }
   };
 
-  const generateCarouselImage = async (sourceTask: SocialImageCreationTask) => {
+  const generateMultiOutputImage = async (sourceTask: SocialImageCreationTask) => {
+    const isGif = sourceTask.imageType === 'gif_poster';
     if (hasUnresolvedPaidImageJob(sourceTask)) {
-      setError('轮播图有结果未明的单元，请先核对已落库成片；不会自动重复提交付费请求。');
+      setError('多图任务有结果未明的单元，请先核对已落库成片；不会自动重复提交付费请求。');
       return;
+    }
+    if (isGif && !sourceTask.renderPlan) {
+      const confirmed = await new Promise<boolean>(resolve => Modal.confirm({
+        title: '确认生成 GIF 的 4 张背景底图？',
+        content: `这将按顺序最多提交 4 个独立的 GPT Image 2 付费请求（当前质量：${sourceTask.deliverySpec.imageGeneration?.quality || 'low'}）。每张底图保存后才继续下一张；结果不明时停止，不自动重试。`,
+        okText: '确认并生成', cancelText: '暂不生成',
+        onOk: () => { resolve(true); }, onCancel: () => { resolve(false); },
+      }));
+      if (!confirmed) { setStep('generate'); setNotice('尚未提交 GIF 背景底图付费请求；可稍后继续。'); return; }
     }
     const controller = new AbortController();
     generationAbortRef.current = controller;
     generationAbortReasonRef.current = null;
     setGenerationElapsed(0);
     const elapsedTimer = window.setInterval(() => setGenerationElapsed(value => value + 1), 1000);
-    setBusy(true); setError(''); setStep('generate'); setNotice('已冻结轮播计划，正在按页顺序生成；任一页结果不明会停止后续提交。');
+    setBusy(true); setError(''); setStep('generate'); setNotice('已冻结多图计划，正在逐单元生成；任一结果不明会停止后续付费提交。');
     try {
-      const rendered = await runPlannedCarousel({
+      const rendered = await runPlannedMultiOutput({
         task: sourceTask,
         planUnits: async current => {
           const result = await socialImageApi.planUnits(current);
-          if (!result.paidExecutionEnabled) throw new Error('轮播图付费执行尚未通过服务端准入');
+          if (!result.paidExecutionEnabled) throw new Error('多图付费执行尚未通过服务端准入');
           return result.task;
         },
         renderUnit: async (taskId, jobId) => {
@@ -333,19 +363,24 @@ export default function SocialImageWorkbench({
         },
         onTask: (current, url) => {
           setTask(current);
-          if (url) setImageUrl(url);
+          if (url && !isGif) setImageUrl(url);
           const completed = current.renderPlan?.units.filter(unit => current.generationJobs.find(job => job.id === unit.jobId)?.outputNodeIds.length).length || 0;
-          setNotice(`轮播图已保存 ${completed}/${current.renderPlan?.units.length || 4} 张；下一张只在上一张持久化后提交。`);
+          setNotice(`${isGif ? 'GIF 底图' : '轮播页'}已保存 ${completed}/${current.renderPlan?.units.length || 4} 张；下一张只在上一张持久化后提交。`);
         },
         signal: controller.signal,
       });
-      const preflight = await socialImageApi.runPreflight(rendered);
+      const finished = isGif ? await socialImageApi.finalizeGif(rendered) : null;
+      if (finished) { setTask(finished.task); setImageUrl(finished.url); }
+      const preflight = await socialImageApi.runPreflight(finished?.task || rendered);
       setTask(preflight.task); setStep('review');
       setQualityPasses(hardChecks.filter(key => preflight.task.renderPlan?.units.every(unit => {
-        const output = preflight.task.outputs.find(item => item.role === unit.role && item.label === unit.label && item.state !== 'superseded');
-        return output?.qualityChecks.some(check => check.key === key && check.verdict === 'pass');
+        const output = preflight.task.outputs.find(item => item.role === (isGif ? 'gif_frame' : unit.role) && item.label === unit.label && item.state !== 'superseded');
+        const final = isGif ? preflight.task.outputs.find(item => item.role === 'gif_output' && item.id === preflight.task.gifDelivery?.finalOutputId) : null;
+        return output?.qualityChecks.some(check => check.key === key && check.verdict === 'pass')
+          && (!isGif || final?.qualityChecks.some(check => check.key === key && check.verdict === 'pass'));
       })));
-      setNotice('轮播图各页已持久化并完成预检；不确定的视觉项目仍需人工逐页审阅。');
+      setNotice(isGif ? 'GIF 各背景与固定图层成片已持久化并完成预检；请逐帧审阅产品、文字与安全区。'
+        : '轮播图各页已持久化并完成预检；不确定的视觉项目仍需人工逐页审阅。');
     } catch (reason) {
       const latest = await socialImageApi.getTask(sourceTask.id).catch(() => null);
       if (latest) setTask(latest.task);
@@ -366,7 +401,7 @@ export default function SocialImageWorkbench({
     const sourcePoster = planned?.poster || poster;
     const sourceCaption = planned?.caption ?? caption;
     if (!sourceTask || !sourcePoster) return;
-    if (sourceTask.imageType === 'carousel') { await generateCarouselImage(sourceTask); return; }
+    if (sourceTask.imageType === 'carousel' || sourceTask.imageType === 'gif_poster') { await generateMultiOutputImage(sourceTask); return; }
     if (hasUnresolvedPaidImageJob(sourceTask)) {
       setError('本任务仍有未完成或待核对的生成单元，不能再次提交。请由管理员核对任务状态、供应商回执和企业素材库。');
       setStep('generate');
@@ -471,12 +506,12 @@ export default function SocialImageWorkbench({
   };
 
   const abandonCarouselPlan = () => {
-    if (!task?.renderPlan || task.imageType !== 'carousel' || hasUnresolvedPaidImageJob(task)) return;
+    if (!task?.renderPlan || !['carousel', 'gif_poster'].includes(task.imageType) || hasUnresolvedPaidImageJob(task)) return;
     const current = task;
     const plan = task.renderPlan;
     const renderedCount = plan.units.filter(unit => current.generationJobs.find(job => job.id === unit.jobId)?.outputNodeIds.length).length;
     Modal.confirm({
-      title: '废弃当前轮播计划并重新策划？',
+      title: `废弃当前${task.imageType === 'gif_poster' ? 'GIF' : '轮播'}计划并重新策划？`,
       content: renderedCount
         ? `已有 ${renderedCount} 张生成页。素材与付费记录会保留，但新计划需要重新生成这些页面，可能再次产生费用。结果不明的单元无法废弃。`
         : '尚未保存成片的单元将关闭并保留记录。结果不明的单元无法废弃。',
@@ -486,7 +521,7 @@ export default function SocialImageWorkbench({
         try {
           const result = await socialImageApi.abandonPlan(current);
           setTask(result.task); setImageUrl(''); setQualityPasses([]); setStep('inputs');
-          setNotice('旧计划已安全归档。可修改输入并生成新的轮播计划；历史素材与回执仍保留。');
+          setNotice('旧计划已安全归档。可修改输入并生成新计划；历史素材与回执仍保留。');
         } catch (reason) {
           setNotice(''); setError(reason instanceof Error ? reason.message : '计划未废弃，请刷新任务状态后重试');
           void socialImageApi.getTask(current.id).then(result => setTask(result.task)).catch(() => undefined);
@@ -524,8 +559,8 @@ export default function SocialImageWorkbench({
     if (step === 'type') return <div className="space-y-2 p-3">{IMAGE_TYPES.map(item => <button key={item.id} type="button" disabled={!item.available} onClick={() => setImageType(item.id)} className={`w-full rounded-lg border p-3 text-left ${!item.available ? 'cursor-not-allowed border-border bg-zinc-50 opacity-60' : imageType === item.id ? 'border-blue-500 bg-blue-50' : 'border-border bg-white hover:bg-zinc-50'}`}><span className="flex items-center justify-between gap-2 text-sm font-semibold text-text-primary"><span>{item.label}</span>{!item.available && <Tag>后续阶段</Tag>}</span><span className="mt-1 block text-xs leading-5 text-text-secondary">{item.description}</span></button>)}</div>;
     if (step === 'inputs') return <div className="space-y-3 p-3"><p className="text-sm font-semibold">内容节点</p>{['内容类型', '核心主张', '企业产品', '图片素材', '受众与平台', '事实真实性'].map((label, index) => <div key={label} className="flex items-center justify-between rounded-lg border border-border bg-white px-3 py-2 text-xs"><span>{label}</span><Tag color={(index === 0 ? imageType : index === 1 ? coreClaim : index === 2 ? productIds.length : index === 3 ? materialIds.length : true) ? 'success' : 'warning'}>{(index === 0 ? imageType : index === 1 ? coreClaim : index === 2 ? productIds.length : index === 3 ? materialIds.length : true) ? '已填写' : '待补充'}</Tag></div>)}</div>;
     if (step === 'plan') return <div className="space-y-2 p-3"><p className="text-sm font-semibold">图文合同</p>{['核心主张', '画面标题', '帖子配文', 'CTA', '事实边界'].map(label => <div key={label} className="rounded-lg border border-border bg-white p-3 text-xs">{label}<span className="float-right text-text-muted">{poster ? '已生成' : '待生成'}</span></div>)}</div>;
-    if (step === 'generate') return <div className="space-y-2 p-3"><p className="text-sm font-semibold">候选版本</p>{imageType === 'carousel' && carouselPages.length ? carouselPages.map(({ unit, output }) => <div key={unit.jobId} className="rounded-lg border border-blue-300 bg-blue-50 p-3 text-xs">{unit.label}<span className="float-right">{output?.mediaUrl ? '已保存' : '待生成'}</span></div>) : <div className="rounded-lg border border-blue-300 bg-blue-50 p-3 text-xs">候选 1<span className="float-right">{imageUrl ? '已生成' : '待生成'}</span></div>}</div>;
-    return <div className="space-y-2 p-3"><p className="text-sm font-semibold">交付物</p><div className="rounded-lg border border-border bg-white p-3 text-xs">{imageType === 'carousel' ? `轮播图 · ${carouselPages.filter(page => page.output?.mediaUrl).length}/${carouselPages.length || 4} 张` : '主视觉'} <Tag color={task?.publishable ? 'success' : 'warning'}>{task?.publishable ? '可发布' : '待审核'}</Tag></div><div className="rounded-lg border border-border bg-white p-3 text-xs">帖子配文 <Tag color={caption ? 'success' : 'default'}>{caption ? '已生成' : '待生成'}</Tag></div></div>;
+    if (step === 'generate') return <div className="space-y-2 p-3"><p className="text-sm font-semibold">候选版本</p>{(imageType === 'carousel' || imageType === 'gif_poster') && carouselPages.length ? carouselPages.map(({ unit, output }) => <div key={unit.jobId} className="rounded-lg border border-blue-300 bg-blue-50 p-3 text-xs">{unit.label}<span className="float-right">{output?.mediaUrl ? '已保存' : '待生成'}</span></div>) : <div className="rounded-lg border border-blue-300 bg-blue-50 p-3 text-xs">候选 1<span className="float-right">{imageUrl ? '已生成' : '待生成'}</span></div>}</div>;
+    return <div className="space-y-2 p-3"><p className="text-sm font-semibold">交付物</p><div className="rounded-lg border border-border bg-white p-3 text-xs">{imageType === 'carousel' ? `轮播图 · ${carouselPages.filter(page => page.output?.mediaUrl).length}/${carouselPages.length || 4} 张` : imageType === 'gif_poster' ? `GIF 动态海报 · ${task?.gifDelivery ? '成片已保存' : '待合成'}` : '主视觉'} <Tag color={task?.publishable ? 'success' : 'warning'}>{task?.publishable ? '可发布' : '待审核'}</Tag></div><div className="rounded-lg border border-border bg-white p-3 text-xs">帖子配文 <Tag color={caption ? 'success' : 'default'}>{caption ? '已生成' : '待生成'}</Tag></div></div>;
   };
 
   return <div className="flex h-full min-h-0 flex-col bg-white">
@@ -537,8 +572,8 @@ export default function SocialImageWorkbench({
       <main className="flex min-h-[460px] min-w-0 flex-col bg-[#f5f5f5] md:min-h-0">
         <div className="flex min-h-0 flex-1 items-center justify-center p-4">
           <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-lg border border-border bg-white">
-            {carouselPages.some(page => page.output?.mediaUrl) ? <div className="grid h-full w-full grid-cols-2 gap-3 overflow-y-auto p-3">{carouselPages.map(({ unit, output }) => <div key={unit.jobId} className="flex min-h-0 flex-col rounded-lg border border-border bg-white p-2"><p className="pb-2 text-xs font-medium">{unit.label}</p>{output?.mediaUrl ? <img src={output.mediaUrl} alt={unit.label} className="min-h-0 flex-1 object-contain" /> : <div className="flex min-h-32 flex-1 items-center justify-center bg-zinc-50 text-xs text-text-muted">等待生成</div>}</div>)}</div>
-              : imageUrl ? <img src={imageUrl} alt="生成图片预览" className="h-full w-full object-contain" />
+            {(imageType === 'carousel' || imageType === 'gif_poster' && !task?.gifDelivery) && carouselPages.some(page => page.output?.mediaUrl) ? <div className="grid h-full w-full grid-cols-2 gap-3 overflow-y-auto p-3">{carouselPages.map(({ unit, output }) => <div key={unit.jobId} className="flex min-h-0 flex-col rounded-lg border border-border bg-white p-2"><p className="pb-2 text-xs font-medium">{unit.label}</p>{output?.mediaUrl ? <ReviewImage key={output.mediaUrl} src={output.mediaUrl} alt={unit.label} /> : <LsMediaStateFrame state="processing" label="等待背景底图" className="min-h-32 flex-1" />}</div>)}</div>
+              : imageUrl ? <ReviewImage key={imageUrl} src={imageUrl} alt={imageType === 'gif_poster' ? 'GIF 成片预览' : '生成图片预览'} />
               : referenceThumbnail && creationPath === 'viral_replication' ? <img src={referenceThumbnail} alt="对标作品" className="h-full w-full object-contain" />
               : poster ? <div className="max-w-xl p-8 text-center"><Layers3 className="mx-auto text-blue-600" /><h2 className="mt-4 text-xl font-semibold">{poster.headline}</h2><p className="mt-2 text-sm text-text-secondary">{poster.subheadline}</p><p className="mt-6 text-xs text-text-muted">已完成图文策划，下一步生成正式图片</p></div>
               : <div className="max-w-md px-8 text-center"><FileImage size={40} className="mx-auto text-zinc-400" /><p className="mt-4 text-base font-semibold">图片内容制作</p><p className="mt-2 text-sm leading-6 text-text-secondary">选择内容类型、绑定企业产品和事实，再联合生成图片与帖子配文。</p></div>}
@@ -552,7 +587,16 @@ export default function SocialImageWorkbench({
           {step === 'inputs' && <><p className="text-sm font-semibold">内容与资产</p><label className="block text-xs font-medium">内容类型<Select className="mt-1 w-full" value={imageType} onChange={setImageType} options={IMAGE_TYPES.filter(item => item.available).map(item => ({value:item.id,label:item.label}))} /></label><label className="block text-xs font-medium">任务名称<Input className="mt-1" value={title} onChange={event => setTitle(event.target.value)} /></label><label className="block text-xs font-medium">企业产品<Select mode="multiple" className="mt-1 w-full" value={productIds} onChange={setProductIds} options={products.map(item => ({value:item.id,label:item.name}))} placeholder="至少选择一个产品" /></label><label className="block text-xs font-medium">核心主张<Input.TextArea className="mt-1" rows={4} value={coreClaim} onChange={event => setCoreClaim(event.target.value)} placeholder="这条内容只讲清的一件事" /></label><label className="block text-xs font-medium">目标受众<Input className="mt-1" value={audience} onChange={event => setAudience(event.target.value)} /></label><label className="block text-xs font-medium">事实状态<Select className="mt-1 w-full" value={factuality} onChange={setFactuality} options={[{value:'verified',label:'企业资料已验证'},{value:'user_supplied',label:'用户提供，待核验'},{value:'mock',label:'模拟内容，不可直接发布'}]} /></label><div><div className="flex items-center justify-between gap-2"><p className="text-xs font-medium">企业图片素材</p><Button size="small" icon={<Upload size={13} />} loading={busy} onClick={() => uploadRef.current?.click()}>上传图片</Button><input ref={uploadRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple className="hidden" onChange={event => { const files = Array.from(event.currentTarget.files || []); event.currentTarget.value = ''; void uploadImages(files); }} /></div><div className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-lg border border-border p-2">{materials.length ? materials.map(item => <Checkbox key={item.id} checked={materialIds.includes(item.id)} onChange={event => setMaterialIds(current => event.target.checked ? [...current,item.id] : current.filter(id => id !== item.id))} className="flex text-xs"><span className="line-clamp-1">{item.name}</span></Checkbox>) : <p className="p-2 text-xs text-text-muted">素材库暂无企业图片，可以在这里直接上传。</p>}</div></div></>}
           {step === 'plan' && <><p className="text-sm font-semibold">策划依据</p><p className="rounded-lg bg-zinc-50 p-3 text-xs leading-5">题材：{IMAGE_TYPES.find(item => item.id === imageType)?.label}<br />图文关系：图片证明或解释核心主张<br />配色：从企业产品与品牌素材推导</p></>}
           {step === 'generate' && <><p className="text-sm font-semibold">正在生成</p><p className="text-xs leading-5 text-text-secondary">系统将自动完成策划、资产匹配、首版渲染与预检，不再因补充信息中断。</p>{hasUnresolvedPaidImageJob(task) && !busy && <Alert type="warning" showIcon message="图片生成单元待核对" description={<>当前任务不会自动重试付费生成。请核对供应商回执和企业素材库。{recoverableJob && <Button size="small" className="mt-2" onClick={() => void reconcileSavedImage()}>核对已落库成片（不重新生成）</Button>}</>} />}</>}
-          {step === 'review' && <>{imageType === 'carousel' ? <><p className="text-sm font-semibold">轮播页审阅</p><p className="text-xs leading-5 text-text-secondary">逐页检查产品、文字和安全区；各页独立下载。若要改变内容，请返回输入重新规划，已提交的付费单元不会自动重试。</p></> : <><p className="text-sm font-semibold">自然语言修改</p><Input.TextArea rows={3} value={repairRequest} onChange={event => setRepairRequest(event.target.value)} placeholder="例如：产品缩小一点并下移；遮罩淡一点；标题改成 Golden Hair Ritual；删除认证信息" /><p className="text-xs leading-5 text-text-secondary">系统只修改对应图层并保留其他图层。所有待处理信息统一汇总，不影响成片生成和下载。</p></>}{fieldsToConfirm.length > 0 && <Alert type="warning" showIcon message={`待处理信息 · ${fieldsToConfirm.length} 项`} description={<Button size="small" className="mt-2" onClick={() => setConfirmationOpen(true)}>统一查看与补充</Button>} />}<p className="pt-2 text-sm font-semibold">自动检查（不阻断）</p><div className="flex flex-wrap gap-2">{hardChecks.map(key => <Tag key={key} color={qualityPasses.includes(key) ? 'success' : 'default'}>{CHECK_LABELS[key]}</Tag>)}</div>{factuality === 'mock' && <Alert type="warning" showIcon message="当前为模拟内容，请在发布前自行确认事实" />}</>}
+          {step === 'review' && <>
+            {multiOutput ? <><p className="text-sm font-semibold">{imageType === 'gif_poster' ? 'GIF 逐帧审阅' : '轮播页审阅'}</p><p className="text-xs leading-5 text-text-secondary">逐帧检查产品、文字和安全区；GIF 成片需另看循环效果。若要改变内容，请废弃计划重新策划，已提交的付费单元不会自动重试。</p></>
+              : <><p className="text-sm font-semibold">自然语言修改</p><Input.TextArea rows={3} value={repairRequest} onChange={event => setRepairRequest(event.target.value)} placeholder="例如：产品缩小一点并下移；遮罩淡一点；标题改成 Golden Hair Ritual；删除认证信息" /><p className="text-xs leading-5 text-text-secondary">系统只修改对应图层并保留其他图层。所有待处理信息统一汇总，不影响成片生成和下载。</p></>}
+            {fieldsToConfirm.length > 0 && <Alert type="warning" showIcon message={`待处理信息 · ${fieldsToConfirm.length} 项`}
+              description={task?.renderPlan ? '付费计划已冻结。审阅和下载不受影响；修改事实前需显式废弃计划。'
+                : <Button size="small" className="mt-2" onClick={() => setConfirmationOpen(true)}>统一查看与补充</Button>} />}
+            <p className="pt-2 text-sm font-semibold">自动检查（不阻断）</p>
+            <div className="flex flex-wrap gap-2">{hardChecks.map(key => <Tag key={key} color={qualityPasses.includes(key) ? 'success' : 'default'}>{CHECK_LABELS[key]}</Tag>)}</div>
+            {factuality === 'mock' && <Alert type="warning" showIcon message="当前为模拟内容，请在发布前自行确认事实" />}
+          </>}
           {error && <Alert type="error" showIcon message={error} />}{notice && <Alert type="info" showIcon message={notice} />}
         </div>
         <div className="border-t border-border px-4 pb-24 pt-4">
@@ -560,8 +604,10 @@ export default function SocialImageWorkbench({
           {step === 'type' && <Button type="primary" block onClick={() => setStep('inputs')} icon={<ImagePlus size={15} />}>进入内容与资产</Button>}
           {step === 'inputs' && <Button type="primary" block loading={busy} onClick={() => void saveInputs()}>{busy ? '正在生成首版' : '一次生成首版'}</Button>}
           {step === 'plan' && <><Button type="primary" block loading={busy} disabled={busy} onClick={() => void generatePlan()}>{busy ? '正在自动策划并生成首版' : '重试一键生成'}</Button><Button block className="mt-2" disabled={busy} onClick={() => setStep('inputs')}>返回修改输入</Button></>}
-          {step === 'generate' && <><Button type="primary" block loading={busy} disabled={busy || !poster || hasUnresolvedPaidImageJob(task)} onClick={() => void generateImage()} icon={busy ? <Spin size="small" /> : <RefreshCw size={15} />}>{busy ? reconciling ? '正在核对已存素材' : `${imageType === 'carousel' ? '正在生成轮播页' : '正在生成首版'} · ${generationElapsed} 秒` : imageType === 'carousel' ? '继续未完成轮播页' : '重试生成首版'}</Button>{busy && !reconciling ? <Button block danger className="mt-2" onClick={stopWaitingForImage}>停止等待</Button> : !busy && !(imageType === 'carousel' && task?.renderPlan) ? <Button block className="mt-2" onClick={() => setStep('inputs')}>返回修改输入</Button> : null}{imageType === 'carousel' && task?.renderPlan && !busy && <Button block danger className="mt-2" disabled={hasUnresolvedPaidImageJob(task)} onClick={abandonCarouselPlan}>废弃计划并重新策划</Button>}</>}
-          {step === 'review' && <>{imageType !== 'carousel' && <Button type="primary" block loading={busy} disabled={!repairRequest.trim()} onClick={() => void applyNaturalLanguageRepair()}>按描述修改对应图层</Button>}{fieldsToConfirm.length > 0 && <Button block className="mt-2" onClick={() => setConfirmationOpen(true)}>统一处理待补充信息</Button>}{imageType !== 'carousel' && imageUrl && qualityPasses.length < hardChecks.length && <Button block className="mt-2" loading={busy} onClick={() => void startTargetedRepair()}>按检查结果优化一版</Button>}{imageType === 'carousel' ? carouselPages.map(({ unit, output }) => output?.mediaUrl && <Button key={unit.jobId} block className="mt-2" href={output.mediaUrl} target="_blank" icon={<CheckCircle2 size={15} />}>下载{unit.label}</Button>) : imageUrl && <Button block className="mt-2" href={imageUrl} target="_blank" icon={<CheckCircle2 size={15} />}>下载成片</Button>}{imageType === 'carousel' && task?.renderPlan && <Button block danger className="mt-3" disabled={busy || hasUnresolvedPaidImageJob(task)} onClick={abandonCarouselPlan}>废弃计划并重新策划</Button>}</>}
+          {step === 'generate' && <><Button type="primary" block loading={busy} disabled={busy || !poster || hasUnresolvedPaidImageJob(task)} onClick={() => void generateImage()} icon={busy ? <Spin size="small" /> : <RefreshCw size={15} />}>{busy ? reconciling ? '正在核对已存素材' : `${multiOutput ? '正在生成多图单元' : '正在生成首版'} · ${generationElapsed} 秒` : multiOutput ? '继续未完成单元或收口成片' : '重试生成首版'}</Button>{busy && !reconciling ? <Button block danger className="mt-2" onClick={stopWaitingForImage}>停止等待</Button> : !busy && !(multiOutput && task?.renderPlan) ? <Button block className="mt-2" onClick={() => setStep('inputs')}>返回修改输入</Button> : null}{multiOutput && task?.renderPlan && !busy && <Button block danger className="mt-2" disabled={hasUnresolvedPaidImageJob(task)} onClick={abandonCarouselPlan}>废弃计划并重新策划</Button>}</>}
+          {step === 'review' && <>{!multiOutput && <Button type="primary" block loading={busy} disabled={!repairRequest.trim()} onClick={() => void applyNaturalLanguageRepair()}>按描述修改对应图层</Button>}{fieldsToConfirm.length > 0 && !task?.renderPlan && <Button block className="mt-2" onClick={() => setConfirmationOpen(true)}>统一处理待补充信息</Button>}{!multiOutput && imageUrl && qualityPasses.length < hardChecks.length && <Button block className="mt-2" loading={busy} onClick={() => void startTargetedRepair()}>按检查结果优化一版</Button>}{imageType === 'carousel' ? carouselPages.map(({ unit, output }) => output?.mediaUrl && <Button key={unit.jobId} block className="mt-2" href={output.mediaUrl} target="_blank" icon={<CheckCircle2 size={15} />}>下载{unit.label}</Button>) : imageUrl && <Button block className="mt-2" href={imageUrl} target="_blank" icon={<CheckCircle2 size={15} />}>下载{imageType === 'gif_poster' ? 'GIF 成片' : '成片'}</Button>}{multiOutput && task?.renderPlan && <Button block danger className="mt-3" disabled={busy || hasUnresolvedPaidImageJob(task)} onClick={abandonCarouselPlan}>废弃计划并重新策划</Button>}</>}
+          {step === 'review' && imageType === 'gif_poster' && task?.gifDelivery && carouselPages.map(({ unit, output }) => output?.mediaUrl && <Button key={unit.jobId} block className="mt-2" href={output.mediaUrl} target="_blank">查看{unit.label}合成帧</Button>)}
+          {step === 'review' && fieldsToConfirm.length > 0 && task?.renderPlan && <Alert className="mt-2" type="warning" showIcon message="待确认事实不可改写已冻结的付费计划；可先下载审阅，修改前需显式废弃计划。" />}
         </div>
       </aside>
     </div>

@@ -135,8 +135,9 @@ test('HTTP image routes reject forged evidence and finalize durable GIF plates i
     const plannedResponse = await fetch(`http://127.0.0.1:${address.port}/social-images/tasks/${gif.id}/plan-units`, {
       method: 'POST', headers, body: JSON.stringify({ expectedVersion: configured.task.version }),
     });
-    const plannedBody = await plannedResponse.json() as { task?: typeof configured.task; code?: string };
+    const plannedBody = await plannedResponse.json() as { task?: typeof configured.task; code?: string; paidExecutionEnabled?: boolean };
     assert.equal(plannedResponse.status, 200, JSON.stringify(plannedBody));
+    assert.equal(plannedBody.paidExecutionEnabled, true);
     let current = plannedBody.task!;
     assert.equal(current.enterpriseAssets[0]?.contentHash, createHash('sha256').update(product).digest('hex'));
     await objectStorageUpload({ key: enterpriseAssetObjectKey(tenantId, productFilename), body: Buffer.from('changed'), contentType: 'image/png' });
