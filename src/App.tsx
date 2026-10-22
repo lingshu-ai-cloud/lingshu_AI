@@ -1,6 +1,5 @@
 import { restoreAgentCalendarReturnContext } from './lib/agentCalendarReturnContext';
 import { pushProductionLocation, requestProductionBack, stampProductionHistoryState, canRestoreProductionHistoryState, restorableProductionDetail, productionNavigationIdentity } from './lib/productionNavigation';
-import { isAgentProductionSession } from './lib/agentProductionSession';
 import { Activity, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Result } from 'antd';
 import { Loader2 } from 'lucide-react';
@@ -24,16 +23,16 @@ import { PAGE_REGISTRY, resolveNavigationPage, resolvePage, type LegacyTrafficVi
 import { SocialProgramProvider } from './contexts/SocialProgramContext';
 import { readAssistantWeeklyNavigation } from './lib/assistantWeeklyNavigation';
 import { readLegacyWeeklyPlanNavigation } from './lib/assistantLegacyWeeklyNavigation';
-import { OptionalFeatureErrorBoundary, PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
+import { PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
 import type { SocialContentCreateRequest } from './components/socialContent/SocialContentWorkspace';
 import type { EnterpriseProductsDeepLink } from './components/EnterprisePage';
-import RuntimeVersionBanner from './components/RuntimeVersionBanner';
+import AppShellChrome from './components/AppShellChrome';
 import { availableProductPage, PLATFORM_ADS_SURFACE_ENABLED } from './config/productSurfaceFlags';
 import { AGENT_PAGES, ROLE_PAGE_ACCESS, customerUnifiedAgent, firstUserText, isAdminSession, isExternalCustomerServiceDemoSession, isLocalCustomerReplyLab, loadConvs, loadPage, pagePreferenceScope, type AgentAction, type AgentType, type Conversation, type ConversationContext, type KickoffSignal, type Message, type RestoreSignal, type StarterAccessState } from './appSession';
 import { useSocialContentQueryNavigation } from './lib/useSocialContentQueryNavigation';
 import { Layout, AuthScreen } from './components/AppDeferredShell';
 
-import { PlatformAdsPage, StrategyPage, TrafficPage, ConversionPage, EnterprisePage, IntegrationsPage, AdminDashboard, AdminDeliveryPage, GlobalAssistant, AssistantWeeklyProductionView, AgentMemoryPage, OrganizationPermissionsPage, ScriptLibraryPage, DigitalEmployeePage, AgentMonitorPage, StarterWorkspacePage, SocialContentPlanningPage, SocialTaskContextBar, StarterWorkflowContextBar, DesignPrototype, SocialContentPreview, SmartBusinessPreview, ADS_PAGES, INTEGRATION_PAGES, prefetchPageModule, scheduleLocalPreviewPreload, normalizeEnterpriseProductsDeepLink } from './appPageModules';
+import { PlatformAdsPage, StrategyPage, TrafficPage, ConversionPage, EnterprisePage, IntegrationsPage, AdminDashboard, AdminDeliveryPage, AssistantWeeklyProductionView, AgentMemoryPage, OrganizationPermissionsPage, ScriptLibraryPage, DigitalEmployeePage, AgentMonitorPage, StarterWorkspacePage, SocialContentPlanningPage, DesignPrototype, SocialContentPreview, SmartBusinessPreview, ADS_PAGES, INTEGRATION_PAGES, prefetchPageModule, scheduleLocalPreviewPreload, normalizeEnterpriseProductsDeepLink } from './appPageModules';
 export { normalizeEnterpriseProductsDeepLink } from './appPageModules';
 
 export type { Page } from './pageRegistry';
@@ -775,45 +774,13 @@ export default function App() {
       demoGuideActive={false}
       conversations={conversations} activeConvId={activeConvId} onOpenConversation={openConversation} onNewConversation={newConversation}
       suppressRightPanel={starterMode || scriptPanelOpen} onAction={startAgentTask}>
-      <OptionalFeatureErrorBoundary
-        resetKey={`assistant:${session.tenant?.id || session.user.tenantId}:${session.user.id}`}
-        label="灵小枢"
-      >
-        <Suspense fallback={null}>
-          <GlobalAssistant
-            primaryEntry
-            key={`assistant:${session.tenant?.id || session.user.tenantId}:${session.user.id}`}
-            page={page}
-            persistenceScope={{
-              tenantId: session.tenant?.id || session.user.tenantId,
-              userId: session.user.id,
-            }}
-            restore={restore}
-            kickoff={kickoff}
-            compactMode={starterMode || isAgentProductionSession()}
-            suppressForRightSidebar={page !== 'digitalEmployees' && (conversation !== null || page === 'agentMonitor')}
-            onKickoffConsumed={() => setKickoff(null)}
-            onAction={startAgentTask}
-            onSessionRefresh={() => void refreshSession()}
-          />
-        </Suspense>
-      </OptionalFeatureErrorBoundary>
-      <RuntimeVersionBanner />
-      {sessionRefreshError && <div role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{sessionRefreshError} <button type="button" className="ml-2 font-semibold underline" onClick={() => void refreshSession()}>立即重试</button></div>}
-      {starterMode && isSocialTaskContextPage(page) && (
-        <Suspense fallback={null}>
-          <SocialTaskContextBar
-            page={page}
-            view={page === 'smartAssets' ? smartAssetsView : undefined}
-            onNavigate={handleNavigate}
-          />
-        </Suspense>
-      )}
-      {starterMode && page !== 'digitalEmployees' && !isSocialTaskContextPage(page) && (
-        <Suspense fallback={null}>
-          <StarterWorkflowContextBar page={page} onNavigate={handleNavigate} />
-        </Suspense>
-      )}
+      <AppShellChrome
+        page={page} session={session} starterMode={starterMode} conversation={conversation}
+        restore={restore} kickoff={kickoff} sessionRefreshError={sessionRefreshError}
+        smartAssetsView={smartAssetsView} onKickoffConsumed={() => setKickoff(null)}
+        onAction={startAgentTask} onSessionRefresh={() => void refreshSession()}
+        onNavigate={handleNavigate}
+      />
       <div data-app-page-slot className="min-h-0 flex-1 overflow-hidden">
         <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('digitalEmployees')}>
           <Suspense fallback={<PageLoading />}>

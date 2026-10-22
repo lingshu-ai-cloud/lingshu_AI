@@ -15,7 +15,7 @@
     "server/routes/videos.ts": 10606,
     "server/starter198/socialContentProductionExecution.ts": 2221,
     "server/whatsapp/historyImport.ts": 1880,
-    "src/App.tsx": 984,
+    "src/App.tsx": 951,
     "src/components/AiCreateStudio.tsx": 17807,
     "src/components/ConversionPage.tsx": 2492,
     "src/components/EnterprisePage.tsx": 2443,
