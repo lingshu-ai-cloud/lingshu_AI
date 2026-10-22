@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const assetsDir = path.resolve('dist/assets');
-const maxBytes = 500_000;
+const maxBytes = 485_000;
 
 if (!fs.existsSync(assetsDir)) {
   throw new Error('Production assets are missing; run pnpm run build first.');

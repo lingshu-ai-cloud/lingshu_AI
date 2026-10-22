@@ -44,7 +44,7 @@ export default defineConfig(({ mode }) => {
           codeSplitting: {
             groups: [{
               name: 'studio-support',
-              test: /[\\/](?:StudioWorkbenchFrame|StudioMediaPreviews|useStudioSocialTaskHydration|narrationTimeline|effectPlan|socialContentManualBridge|digitalHumanPlan|socialContentArtifactMedia|studioAuthenticatedMedia|frozenStudioProject|studioAutosave|storyboardRenderReadiness|personShotClustering|studioValidation)\.(?:ts|tsx)$/,
+              test: /[\\/](?:StudioWorkbenchFrame|StudioMediaPreviews|StudioPreviewStage|ShotSourceDecisionPanel|DigitalHumanProductionOverview|StudioOperationalEvidencePanel|studioSourceMaterial|studioLanguageRules|useStudioSocialTaskHydration|narrationTimeline|effectPlan|socialContentManualBridge|digitalHumanPlan|socialContentArtifactMedia|studioAuthenticatedMedia|frozenStudioProject|studioAutosave|storyboardRenderReadiness|personShotClustering|studioValidation)\.(?:ts|tsx)$/,
               includeDependenciesRecursively: false,
             }],
           },
