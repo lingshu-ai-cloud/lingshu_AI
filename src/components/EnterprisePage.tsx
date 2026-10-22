@@ -18,43 +18,10 @@ import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
 import type { AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import {readWeeklyEnterpriseFactTarget} from '../lib/weeklyEnterpriseFactNavigation';
-import type { ProductScenePreparationPlan } from '../../shared/contracts/productScenePreparation';
+import type { ProductItem, AutonomyLevel, BargainPolicy, NotificationChannel, BizRules, FaqItem, FaqPack, NotificationReceiver, NotificationSettings, CooperationRoute, SocialStrategy, Profile } from './enterprise/enterpriseProfileTypes';
+import { CATEGORY_OPTIONS, CERTIFICATION_OPTIONS, COMPANY_TYPE_OPTIONS, LANGUAGE_OPTIONS, MARKET_OPTIONS, emptyProduct, joinTokens, normalizeEnterpriseProfile, normalizeProductItems, splitTokens } from './enterprise/enterpriseProfileNormalization';
+export { normalizeEnterpriseProfile } from './enterprise/enterpriseProfileNormalization';
 
-interface ProductAsset {
-  name: string;
-  type: string;
-  size: number;
-  updatedAt: string;
-  url?: string;
-}
-
-interface ProductItem {
-  id?: string;
-  productId?: string;
-  sku?: string;
-  name: string;
-  category?: string;
-  color?: string;
-  size?: string;
-  tagPrice?: string;
-  retailPrice?: string;
-  brand?: string;
-  material?: string;
-  imageUrl?: string;
-  priceRange?: string;
-  moq?: string;
-  certifications?: string;
-  highlights?: string;
-  images?: ProductAsset[];
-  videos?: ProductAsset[];
-  documents?: ProductAsset[];
-  factoryImages?: ProductAsset[];
-  packagingImages?: ProductAsset[];
-  certificateImages?: ProductAsset[];
-  sceneImages?: ProductAsset[];
-  brandAssets?: ProductAsset[];
-  productScenePreparation?: ProductScenePreparationPlan;
-}
 
 export interface EnterpriseProductsDeepLink {
   productName: string;
@@ -92,112 +59,6 @@ interface PendingProductImport {
   remoteImageTransfers: Record<number, { status: 'pending' | 'uploading' | 'uploaded' | 'failed'; error?: string; originalUrl: string }>;
 }
 
-type AutonomyLevel = 'remind' | 'draft' | 'auto';
-type QuoteMode = '' | 'range' | 'human_only';
-type BargainPolicy = '' | 'no' | 'limited' | 'open';
-type NotificationChannel = 'wecom' | 'dingtalk' | 'feishu' | 'sms';
-
-interface BizRules {
-  quoteMode: QuoteMode;
-  priceRange?: string;
-  bargainPolicy: BargainPolicy;
-  bargainFloor?: string;
-  moq: string;
-  samplePolicy: string;
-  paymentTerms: string;
-  leadTime: string;
-}
-
-interface FaqItem {
-  id: string;
-  question: string;
-  answer: string;
-  approvedForAuto: boolean;
-  source?: 'manual' | 'pack' | 'learned';
-}
-
-interface FaqPackItem {
-  q: string;
-  a: string;
-  vars: string[];
-  missingVars: string[];
-  ready: boolean;
-  exists?: boolean;
-}
-
-interface FaqPack {
-  id: string;
-  industry: 'apparel' | 'home' | 'general';
-  industryLabel: string;
-  scenario: 'presales' | 'shipping' | 'aftersales' | 'credentials';
-  scenarioLabel: string;
-  count: number;
-  preview: FaqPackItem[];
-  items: FaqPackItem[];
-}
-
-interface NotificationReceiver {
-  name: string;
-  channel: NotificationChannel;
-  target: string;
-}
-
-interface NotificationSettings {
-  receivers: NotificationReceiver[];
-  workHours: { start: string; end: string };
-  quietOutsideHours: boolean;
-  nightMode: { enabled: boolean; autoCategories: 'approved' };
-  lastTestAt?: string;
-}
-
-interface HandoffRules {
-  keywords: string[];
-  missStreakToDraft: 1 | 2 | 3;
-  negativeSentiment: boolean;
-}
-
-interface SalesStyleProfile {
-  learnedFromCount: number;
-  lastDistilledAt?: string;
-  greeting_style?: { value: string; evidence: string; manual?: boolean };
-  quoting_stance?: { value: string; evidence: string; manual?: boolean };
-  followup_rhythm?: { value: string; evidence: string; manual?: boolean };
-  taboo_phrases?: { value: string[]; evidence: string; manual?: boolean };
-  sample_pairs?: Array<{ trigger: string; final: string; evidence?: string }>;
-}
-
-interface CustomerServiceSettings {
-  enabled: boolean;
-  enabledAt?: string;
-  disabledAt?: string;
-  partialAutoReplyEnabled: boolean;
-  partialAutoReplyDecision: 'pending' | 'enabled' | 'declined';
-  partialAutoReplyDecisionAt?: string;
-}
-
-type CooperationRoute = 'oem_odm' | 'wholesale_distribution' | 'consumer_retail';
-type SocialStrategy = { enabledRoutes: CooperationRoute[]; routeStrategies: Partial<Record<CooperationRoute, { targetBuyerRoles: string[]; primaryCta: string }>>; manuallyEditedFields?: string[] };
-
-interface Profile {
-  factVersion?: { id: string; revision: number; contentHash: string; confirmedAt: string; confirmedBy: string };
-  company: { name: string; industry: string; companyType?: string; mainMarkets: string; primaryLanguages?: string; socialPlatformExperience?: string; founded: string; description: string };
-  socialStrategy?: SocialStrategy;
-  products: { categories: string; searchKeywords?: string; priceRange: string; moq: string; certifications: string; highlights: string; items?: ProductItem[] };
-  brand: { name?: string; tone: string; style: string; taboos: string; usp: string; preferredLanguages?: string };
-  strategy?: { currentGoal?: string; focusProducts?: string; focusMarkets?: string; excludedMarkets?: string; pricingStrategy?: string; minMargin?: string; agentAutonomy?: string; aiAutonomy?: AutonomyLevel };
-  customers?: { targetProfiles?: string; highValueSignals?: string; lowQualitySignals?: string; commonQuestions?: string; followupStyle?: string };
-  operations?: { leadTime?: string; customization?: string; logistics?: string; paymentTerms?: string; riskNotes?: string };
-  agentLearning?: { provenAngles?: string; weakAngles?: string; pendingAssumptions?: string; userCorrections?: string };
-  bizRules?: BizRules;
-  faq?: FaqItem[];
-  notifications?: NotificationSettings;
-  handoffRules?: HandoffRules;
-  customerService?: CustomerServiceSettings;
-  salesStyleProfile?: SalesStyleProfile;
-  knowledgeIntake?: { lastExtractedAt?: string; source?: 'history' | 'products' | 'interview'; extractedMessages?: number; confirmedSections?: string[] };
-  dataGovernance?: { aiAccessEnabled: boolean; lastSavedAt?: string; lastSavedSource?: 'diagnosis' | 'enterprise_center' | 'knowledge_intake' | 'system' | 'template' };
-  knowledge: string;
-}
 
 const DEFAULT: Profile = {
   company: { name: '', industry: '', companyType: '', mainMarkets: '', primaryLanguages: '', socialPlatformExperience: '', founded: '', description: '' },
@@ -237,11 +98,6 @@ const AUTONOMY_OPTIONS: Array<{ value: AutonomyLevel; title: string; desc: strin
 ];
 
 const AUTO_REPLY_SCOPE = ['当前问题与已审批 FAQ 语义一致', '语境判定置信度不低于 90%', '回答原文通过价格与承诺红线检查'];
-const MARKET_OPTIONS = ['中东', '东南亚', '中亚', '南亚', '东亚', '欧洲', '北美', '拉美', '非洲', '大洋洲', '俄罗斯及独联体'];
-const LANGUAGE_OPTIONS = ['英语', '阿拉伯语', '西班牙语', '法语', '俄语', '葡萄牙语', '德语', '日语', '韩语', '土耳其语', '印地语', '印尼语', '泰语', '越南语'];
-const CATEGORY_OPTIONS = ['服装', '家居', '饰品', '五金', '美妆个护', '玩具', '消费电子', '汽摩配件', '机械设备', '工业自动化与智能装备', '包装印刷', '食品饮料', '宠物用品'];
-const COMPANY_TYPE_OPTIONS = ['工厂', '工贸一体', '贸易商', '出口型企业', '品牌商', '跨境电商'];
-const CERTIFICATION_OPTIONS = ['CE', 'FDA', 'SGS', 'RoHS', 'FCC', 'MSDS', 'ISO', 'BSCI', 'GOTS', 'OEKO-TEX'];
 const BRAND_TONE_OPTIONS = ['专业可靠', '亲切自然', '简洁直接', '高端克制', '热情主动', '务实高效'];
 const COMMUNICATION_STYLE_OPTIONS = ['专业', '轻松', '亲切', '正式'];
 const PAGE_SIZE = 5;
@@ -307,133 +163,6 @@ type EnterpriseCompletenessTodo = {
   productIndex?: number;
 };
 
-function splitTokens(value?: string): string[] {
-  return String(value ?? '').split(/[、,，;；\n]+/).map(item => item.trim()).filter(Boolean);
-}
-
-function joinTokens(items: string[]): string {
-  return Array.from(new Set(items.map(item => item.trim()).filter(Boolean))).join('、');
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function includesKnownValue(raw: string, candidate: string): boolean {
-  const source = raw.toLocaleLowerCase();
-  const target = candidate.trim().toLocaleLowerCase();
-  if (!target) return false;
-  // 英文缩写必须是完整词，避免把 service 之类的描述文字误判成 CE 认证。
-  if (/^[a-z0-9][a-z0-9 ._\-/]*$/i.test(target)) {
-    return new RegExp(`(^|[^a-z0-9])${escapeRegExp(target)}([^a-z0-9]|$)`, 'i').test(source);
-  }
-  return source.includes(target);
-}
-
-function isConciseLegacyOption(value: string): boolean {
-  const token = value.trim();
-  if (!token || token === '/' || token.length > 20) return false;
-  if (/[\u3002！？!?]/.test(token)) return false;
-  if (/[a-z]/.test(token) && /\s/.test(token) && token !== token.toLocaleUpperCase()) return false;
-  return !/(我们|本公司|主要|主营|专注|面向|覆盖|客户|业务|产品|平台|经验|市场为|销售至|出口到)/.test(token);
-}
-
-function normalizeKnownMulti(value: string | undefined, options: string[], aliases: Record<string, string> = {}, preserveCustom = false): string {
-  const raw = String(value ?? '').trim();
-  if (!raw) return '';
-  const canonical: string[] = [];
-  for (const option of options) {
-    if (includesKnownValue(raw, option)) canonical.push(option);
-  }
-  for (const [legacy, replacement] of Object.entries(aliases)) {
-    if (includesKnownValue(raw, legacy)) canonical.push(replacement);
-  }
-  const custom = preserveCustom
-    ? splitTokens(raw).filter(token => {
-      const hasKnownValue = options.some(option => includesKnownValue(token, option))
-        || Object.keys(aliases).some(alias => includesKnownValue(token, alias));
-      return !hasKnownValue && isConciseLegacyOption(token);
-    })
-    : [];
-  return joinTokens([...canonical, ...custom]);
-}
-
-function normalizeKnownSingle(value: string | undefined, options: string[], aliases: Record<string, string> = {}, preserveCustom = false): string {
-  const raw = String(value ?? '').trim();
-  if (!raw || raw === '/') return '';
-  const alias = Object.entries(aliases).find(([legacy]) => includesKnownValue(raw, legacy));
-  if (alias) return alias[1];
-  const option = options.find(item => includesKnownValue(raw, item));
-  if (option) return option;
-  return preserveCustom && isConciseLegacyOption(raw) ? raw : '';
-}
-
-function normalizeSocialExperience(value?: string): string {
-  const raw = String(value ?? '').trim();
-  if (!raw) return '';
-  if (/没做过|未做过|没有|no experience/i.test(raw)) return '没做过';
-  if (/准备|筹备|planning/i.test(raw)) return '正在准备';
-  if (/做过|youtube|tiktok|facebook|instagram|whatsapp|linkedin/i.test(raw)) return '做过';
-  return '';
-}
-
-export function normalizeEnterpriseProfile(profile: Profile): Profile {
-  const items = normalizeProductItems(profile.products).map(item => ({
-    ...item,
-    category: normalizeKnownSingle(item.category, CATEGORY_OPTIONS, {
-      工业自动化: '工业自动化与智能装备',
-      自动化设备: '工业自动化与智能装备',
-      工业设备: '机械设备',
-      'industrial automation': '工业自动化与智能装备',
-      machinery: '机械设备',
-    }, true),
-    certifications: normalizeKnownMulti(item.certifications, CERTIFICATION_OPTIONS, { 'iso 9001': 'ISO', iso9001: 'ISO' }, true),
-  }));
-  return {
-    ...profile,
-    company: {
-      ...profile.company,
-      industry: normalizeKnownMulti(profile.company.industry, CATEGORY_OPTIONS, {
-        工业自动化: '工业自动化与智能装备',
-        自动化设备: '工业自动化与智能装备',
-        工业设备: '机械设备',
-        'industrial automation': '工业自动化与智能装备',
-        machinery: '机械设备',
-      }, true),
-      companyType: normalizeKnownSingle(profile.company.companyType, COMPANY_TYPE_OPTIONS, { 出口型: '出口型企业' }, true),
-      mainMarkets: normalizeKnownMulti(profile.company.mainMarkets, MARKET_OPTIONS, {
-        拉丁美洲: '拉美',
-        'latin america': '拉美',
-        'north america': '北美',
-        'middle east': '中东',
-        europe: '欧洲',
-        africa: '非洲',
-      }, true),
-      primaryLanguages: normalizeKnownMulti(profile.company.primaryLanguages, LANGUAGE_OPTIONS, {
-        english: '英语',
-        spanish: '西班牙语',
-        arabic: '阿拉伯语',
-        french: '法语',
-        russian: '俄语',
-        portuguese: '葡萄牙语',
-        german: '德语',
-      }, true),
-      socialPlatformExperience: normalizeSocialExperience(profile.company.socialPlatformExperience),
-    },
-    products: {
-      ...profile.products,
-      categories: normalizeKnownMulti(profile.products.categories, CATEGORY_OPTIONS, {
-        工业自动化: '工业自动化与智能装备',
-        自动化设备: '工业自动化与智能装备',
-        工业设备: '机械设备',
-        'industrial automation': '工业自动化与智能装备',
-        machinery: '机械设备',
-      }, true),
-      certifications: normalizeKnownMulti(profile.products.certifications, CERTIFICATION_OPTIONS, { 'iso 9001': 'ISO', iso9001: 'ISO' }, true),
-      items,
-    },
-  };
-}
 
 export function profileSnapshot(profile: Profile): string {
   const stable = JSON.parse(JSON.stringify(profile)) as Profile;
@@ -608,43 +337,6 @@ export function productMaterialLibraryParams(product: Pick<ProductItem, 'id' | '
   };
 }
 
-function emptyProduct(index: number): ProductItem {
-  return {
-    id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `product-${Date.now()}-${index}`,
-    name: `产品${index + 1}`,
-    images: [],
-    videos: [],
-    documents: [],
-    factoryImages: [],
-    packagingImages: [],
-    certificateImages: [],
-    sceneImages: [],
-    brandAssets: [],
-  };
-}
-
-function normalizeProductItems(products: Profile['products']): ProductItem[] {
-  const existing = Array.isArray(products.items) ? products.items : [];
-  if (existing.length) {
-    // 编辑中的空白产品也是有效草稿；仅“删除产品”按钮可以移除产品项。
-    return existing.map((item, index) => ({
-      ...emptyProduct(index),
-      ...item,
-      name: typeof item.name === 'string' ? item.name : `产品${index + 1}`,
-      images: Array.isArray(item.images) ? item.images : [],
-      videos: Array.isArray(item.videos) ? item.videos : [],
-      documents: Array.isArray(item.documents) ? item.documents : [],
-      factoryImages: Array.isArray(item.factoryImages) && item.factoryImages.length ? item.factoryImages : (Array.isArray(item.videos) ? item.videos : []),
-      packagingImages: Array.isArray(item.packagingImages) ? item.packagingImages : [],
-      certificateImages: Array.isArray(item.certificateImages) && item.certificateImages.length ? item.certificateImages : (Array.isArray(item.documents) ? item.documents : []),
-      sceneImages: Array.isArray(item.sceneImages) ? item.sceneImages : [],
-      brandAssets: Array.isArray(item.brandAssets) ? item.brandAssets : [],
-    }));
-  }
-  return [];
-}
 
 function formatSize(size: number): string {
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)}MB`;
