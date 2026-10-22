@@ -6,27 +6,26 @@ import type { TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes.j
 import { inspirationCreationAvailability, inspirationCreationShotPreflight } from './InspirationDashboard.js';
 
 const source = readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
+const detailSource = readFileSync(new URL('./inspiration/DirectorVideoDetailPanel.tsx', import.meta.url), 'utf8');
 const analysisProjectionSource = readFileSync(new URL('./inspiration/inspirationAnalysisProjection.ts', import.meta.url), 'utf8');
 const analysisTabsSource = readFileSync(new URL('./inspiration/InspirationVideoAnalysisTabs.tsx', import.meta.url), 'utf8');
 const videoCardsSource = readFileSync(new URL('./InspirationVideoCards.tsx', import.meta.url), 'utf8');
 
 test('director detail keeps analysis evidence inside the three analysis tabs', () => {
-  assert.match(source, /import InspirationVideoAnalysisTabs from '.\/inspiration\/InspirationVideoAnalysisTabs';/);
-  assert.match(source, /<Drawer open title=\{video\.title\}/);
-  assert.match(source, /<InspirationVideoAnalysisTabs/);
-  assert.match(source, /analysisActionAvailable=\{canRunExactAnalysis\}/);
-  assert.match(source, /storyboardStatus=\{<>[^]*?<VideoAnalysisProgressPanel[^]*?编导到内容 Agent 交接状态[^]*?<\/>\}/, '进度与交接状态必须进入“分镜与脚本”页');
-  assert.match(source, /speechAlignment=\{<ReferenceSpeechAlignmentPanel/, '口播对齐证据必须进入“分镜与脚本”页');
+  assert.match(source, /import \{ DirectorVideoDetailPanel \} from '.\/inspiration\/DirectorVideoDetailPanel';/);
+  assert.match(detailSource, /import InspirationVideoAnalysisTabs from '.\/InspirationVideoAnalysisTabs';/);
+  assert.match(detailSource, /<Drawer open title=\{video\.title\}/);
+  assert.match(detailSource, /<InspirationVideoAnalysisTabs/);
+  assert.match(detailSource, /analysisActionAvailable=\{canRunExactAnalysis\}/);
+  assert.match(detailSource, /storyboardStatus=\{<>[^]*?<VideoAnalysisProgressPanel[^]*?编导到内容 Agent 交接状态[^]*?<\/>\}/, '进度与交接状态必须进入“分镜与脚本”页');
+  assert.match(detailSource, /speechAlignment=\{<ReferenceSpeechAlignmentPanel/, '口播对齐证据必须进入“分镜与脚本”页');
   assert.match(analysisTabsSource, /tab\.id === 'storyboard'[^]*?\{storyboardStatus\}[^]*?<DirectorShotAnalysisStatus[^]*?<BenchmarkAnalysisSections[^]*?\{speechAlignment\}/, '分镜页应依次承载状态、逐镜证据与口播对齐');
   assert.match(analysisTabsSource, /return <section aria-label="视频分析详情">/, '分析 Tab 不得在 Drawer 正文内重复增加顶部空白');
   assert.doesNotMatch(analysisTabsSource, /return <section className="mt-4" aria-label="视频分析详情">/);
-  assert.match(source, /<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">/, 'Drawer 正文顶部应与分析 Tab 紧邻');
+  assert.match(detailSource, /<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">/, 'Drawer 正文顶部应与分析 Tab 紧邻');
 });
 
 test('completed precision analysis hides transient progress and redundant review summaries', () => {
-  const detailStart = source.indexOf('function DirectorVideoDetailPanel');
-  const detailEnd = source.indexOf('// ── Main page', detailStart);
-  const detailSource = source.slice(detailStart, detailEnd);
   assert.match(detailSource, /const showAnalysisProgress = !isImagePost && progressStage !== 'completed'/);
   assert.match(detailSource, /\{showAnalysisProgress && <VideoAnalysisProgressPanel/);
   assert.doesNotMatch(detailSource, /<BenchmarkAnalysisSections/, 'Drawer 不得在三个 Tab 外重复渲染全片拆解');
@@ -38,10 +37,10 @@ test('completed precision analysis hides transient progress and redundant review
 });
 
 test('image posts and deleted weekly snapshots keep safe detail states', () => {
-  assert.match(source, /\) : isImagePost \? \(/);
-  assert.match(source, /完成后会展示图文证据与轮播节奏/);
-  assert.match(source, /analysisSource === 'weekly-plan-snapshot'/);
-  assert.match(source, /video\.id\.startsWith\('weekly-reference-'\)/);
+  assert.match(detailSource, /\) : isImagePost \? \(/);
+  assert.match(detailSource, /完成后会展示图文证据与轮播节奏/);
+  assert.match(detailSource, /analysisSource === 'weekly-plan-snapshot'/);
+  assert.match(detailSource, /video\.id\.startsWith\('weekly-reference-'\)/);
 });
 
 test('active server progress wins over an older completed analysis result', () => {
@@ -51,8 +50,8 @@ test('active server progress wins over an older completed analysis result', () =
   assert.match(analysisProjectionSource, /benchmark\.shots\.some\(shot => shot\.granularity !== 'shot'\)/);
   assert.match(analysisProjectionSource, /!benchmark\.timelineComplete/);
   assert.match(source, /from '\.\/inspiration\/inspirationAnalysisProjection'/);
-  assert.match(source, /activeServerAnalysis \|\| !recordId/);
-  assert.match(source, /const draftReady = !pending && reviewHandoff\?\.directorHandoffReady/);
+  assert.match(detailSource, /activeServerAnalysis \|\| !recordId/);
+  assert.match(detailSource, /const draftReady = !pending && reviewHandoff\?\.directorHandoffReady/);
   assert.match(source, /const availability = inspirationCreationAvailability\(video\)/);
   assert.match(source, /createDisabled=\{video\.contentFormat === 'image' && !inspirationCreationAvailability\(video\)\.ready\}/);
 });
@@ -67,8 +66,8 @@ test('image creation waits for trusted image evidence and uses the image-only re
 
   image.aiAnalysis = { ...image.aiAnalysis, imageAnalysisQueueState: 'unknown', imageAnalysisStatus: 'unknown' };
   assert.match(inspirationCreationAvailability(image).reason, /请先核对任务与费用/);
-  assert.match(source, /isImagePost && !imageAnalysisReady && !imageQueue && <Button onClick=\{onReanalyzeImage\}/);
-  assert.match(source, /canRunDetailAnalysis = isImagePost \? Boolean\(video\.recordId\) && !imageQueue/);
+  assert.match(detailSource, /isImagePost && !imageAnalysisReady && !imageQueue && <Button onClick=\{onReanalyzeImage\}/);
+  assert.match(detailSource, /canRunDetailAnalysis = isImagePost \? Boolean\(video\.recordId\) && !imageQueue/);
   assert.match(videoCardsSource, /const imageAnalyzed = !imageQueue &&/);
 
   image.status = 'failed';
@@ -87,7 +86,7 @@ test('image creation waits for trusted image evidence and uses the image-only re
 
   assert.match(source, /\/reanalyze-image`, \{\s*method: 'POST'/);
   assert.match(source, /onReanalyzeImage=\{\(\) => void reanalyzeImagePost\(selectedVideo\)\}/);
-  assert.match(source, /!isImagePost && !analysisInterrupted && \(payload\?\.analysisError \|\| video\.status === 'failed'\)/);
+  assert.match(detailSource, /!isImagePost && !analysisInterrupted && \(payload\?\.analysisError \|\| video\.status === 'failed'\)/);
 });
 
 function benchmarkVideo(): TrendVideo {
