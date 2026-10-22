@@ -173,6 +173,17 @@ store.update = (async (collection, id, patch) => {
   projectSpec = project.spec;
   return true;
 }) as typeof store.update;
+store.compareAndSwap = (async (collection, id, expected, patch) => {
+  assert.equal(collection, 'studio_projects');
+  if (id !== projectId) return false;
+  for (const [key, value] of Object.entries(expected)) {
+    try { assert.deepEqual((project as Record<string, unknown>)[key], value); }
+    catch { return false; }
+  }
+  project = { ...project, ...structuredClone(patch) } as typeof project;
+  projectSpec = project.spec;
+  return true;
+}) as typeof store.compareAndSwap;
 const { studioRouter } = await import('./studio.js');
 const app = express();
 app.use(dataAuthorityRequestScope);
