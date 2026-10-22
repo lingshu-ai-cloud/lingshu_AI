@@ -2,6 +2,12 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工旧生产现场链清理（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `3e4183d64f06d4b4ed498bc7c01a0e6ac3ea1e35` 移除了仅在彼此内部引用、未挂到页面的 `ProductionScene` 及其任务图标、事件时间线、截图流、纠偏和跳过/人工完成操作面板。当前选中任务仍挂 `ProductionTaskScene`，业务深链和 `SmartBusinessDashboard` 重试入口未变。`DigitalEmployeePage.tsx` 从 4,477 降至 3,818 行，历史预算同步收紧；全仓仍有 6 个超限文件。
+- 修复了旧源码契约测试把死代码的按钮与文案算作已交付的问题；现断言实际 `ProductionTaskScene`、真实任务深链与重试 API 接线，并保留后端跳过/人工完成端点的独立检查。后端端点存在不证明当前页面提供这些按钮，不能据旧测试宣称交互已验收。
+- `test:digital-employees` 整组、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,352 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未做浏览器交互、真实供应商调用、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 客户批量跟进真实发送边界展示拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `5ae9a0cf3fd67218141bfa2a425974b94da7d385` 将正在挂载的批量跟进真相面板及可用性徽标迁至 `BatchFollowupTruthPanel.tsx`；页面仍持有原派发 API、租户上下文、忙碌状态和跳转，向组件显式传入原状态文案。`DigitalEmployeePage.tsx` 从 4,641 降至 4,477 行并收紧预算；全仓仍有 6 个历史超限文件。
