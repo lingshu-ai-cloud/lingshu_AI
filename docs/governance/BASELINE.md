@@ -2,6 +2,12 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## LinkedIn 公司帖付费报价边界（2026-10-23）
+
+- 代码提交 `a91c11ee` 新增 `linkedinCompanyCollectionQuote.ts`：在逐 run 批准与来源仍有效时，从受信任端口读取账号/Token 指纹、Actor USD 上限、汇率 CNY 上界和数据集读取等非 Actor 费用上界，计算不超过人工批准金额的人民币最坏情况报价；缺项或变化均拒绝。报价前后重读权威批准，并将任务、账号、Actor 输入和证据哈希绑定到稳定操作标识。
+- 离线报价直测 4/4、`test:video-source-boundaries` 87/87、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,346 个生产 TypeScript 文件，仍有 6 个历史超限文件）、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过。首次 TypeScript 检查指出测试夹具未标参数类型，修正后复跑通过。
+- 报价端口尚无目标账号的真实费率/汇率/非 Actor 费用权威实现，也没有跨实例原子预算预约、唯一许可签发和目标共享卷证明。输出仅供后续门禁，不能触发真实 Actor 或数据集 GET；原有 LinkedIn 生产入口继续默认拒绝。未执行真实付费请求、目标库迁移或部署。最终本地/远端 SHA 与工作区状态以推送后 Git 核对为准。
+
 ## 图片证据 GPT 复核批准准备（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `964222ef` 增加 `imageEvidenceReviewPreparation.ts`：以权威租户图片记录、来源图片字节和现有主分析冻结精确 GPT 请求；只接受可信账号模型、模型感知输入 token 上界与有效人民币费率，在报价不超过逐记录人工上限且来源未变化时才写入现有批准记录。完整高置信度主分析不无故进入付费复核。没有默认费率、估算 token 兜底或浏览器提供的付费意图。
