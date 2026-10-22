@@ -6,6 +6,7 @@ export { filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, re
 import {classifyDiscoverySourceFailure} from '../socialDiscovery/sourceFailure.js';
 import {createImagePostEvidenceAnalyzer, type CrawledImagePost} from '../socialDiscovery/imagePostEvidenceAnalysis.js';
 import {importNewImagePost} from '../socialDiscovery/imagePostImport.js';
+import {refreshExistingImagePost} from '../socialDiscovery/imagePostRefresh.js';
 import { runPaidApifyTikTokDataset, type PaidApifyTikTokPermit } from './apifyPaidTikTokTransport.js';
 import {frozenWeeklyAccountFiveVideoActorInput} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
 import {readVerifiedWeeklyOriginalDatasetReplay,type VerifiedWeeklyOriginalDatasetReplay} from '../socialDiscovery/weeklyAccountCollectionDatasetContinuation.js';
@@ -1224,57 +1225,13 @@ export async function crawlImagePostsForTenant(input: {
     if (existingRecord) {
       skipped += 1;
       skippedExisting += 1;
-      const existingAnalysis = videoAnalysisOf(existingRecord);
-      const previouslyAnalyzed = (existingAnalysis.imageEvidence as { status?: string } | undefined)?.status === 'analyzed';
-      const imageAnalysis = input.deferImageAnalysis && !previouslyAnalyzed
-        ? { status: 'pending' as const }
-        : await analyzeImagePostBestEffort(item, keyword, existingAnalysis.gemini as VideoAiAnalysis | undefined);
-      const recordId = String(existingRecord.id);
-      const remoteThumbnail = item.thumbnailUrl || String(existingRecord.thumbnailUrl || '');
-      const thumbnailUrl = await persistImagePostThumbnail(recordId, remoteThumbnail);
-      const storedImageUrls = await persistImagePostImages(recordId, item.imageUrls?.length ? item.imageUrls : [remoteThumbnail]);
-      const storedRecord = await store.getById<Record<string, unknown>>(COL, recordId);
-      const storedAnalysis = videoAnalysisOf(storedRecord || existingRecord);
-      const downloadStartedAt = new Date().toISOString();
-      await store.update(COL, recordId, {
-        contentFormat: 'image',
-        thumbnailUrl,
-        status: (imageAnalysis.status === 'analyzed' ? 'analyzed' : imageAnalysis.status === 'pending' ? 'pending' : 'failed') as VideoStatus,
-        aiAnalysis: serializeImagePostAnalysis({
-          ...existingAnalysis,
-          imageStorage: storedAnalysis.imageStorage,
-          imageObjectKeys: storedAnalysis.imageObjectKeys,
-          thumbnailStorage: storedAnalysis.thumbnailStorage,
-          thumbnailObjectKey: storedAnalysis.thumbnailObjectKey,
-          contentFormat: 'image',
-          caption: item.caption || existingAnalysis.caption || item.title,
-          imageUrls: storedImageUrls.length ? storedImageUrls : (item.imageUrls?.length ? item.imageUrls : existingAnalysis.imageUrls),
-          imageCount: storedImageUrls.length || item.imageUrls?.length || existingAnalysis.imageCount || 1,
-          views: item.views || existingAnalysis.views,
-          publicMetrics: {
-            likes: item.likes,
-            comments: item.comments,
-            shares: item.shares,
-            plays: item.plays,
-            followers: item.followers,
-            observedAt: new Date().toISOString(),
-          },
-          author: item.author || existingAnalysis.author,
-          publicAdSignals: { isAd: item.isAd, isPaidPartnership: item.isPaidPartnership },
-          uploadedAt: item.uploadedAt || existingAnalysis.uploadedAt,
-          keyword,
-          crawlRule: accountMode ? '对标账号主页' : '图文检索',
-          sourceAccountUrl: accountUrl || existingAnalysis.sourceAccountUrl,
-          imageEvidence: ('analysis' in imageAnalysis ? imageAnalysis.analysis : undefined) || existingAnalysis.imageEvidence,
-          imageAnalysisStatus: imageAnalysis.status === 'analyzed' ? 'analyzed' : imageAnalysis.status === 'pending' ? 'pending' : (existingAnalysis.imageAnalysisStatus || 'failed'),
-          imageAnalysisError: imageAnalysis.status === 'analyzed' ? undefined : ('error' in imageAnalysis ? imageAnalysis.error : undefined),
-          analysisSource: imageAnalysis.status === 'analyzed' ? `${imageAnalysis.provider || 'qwen'}-image-evidence-v2` : (existingAnalysis.analysisSource || 'image-metadata'),
-          analysisQuality: imageAnalysis.status === 'analyzed' ? 'image' : (existingAnalysis.analysisQuality || 'metadata'),
-          importedAt: existingAnalysis.importedAt || new Date().toISOString(),
-        }),
+      const refreshed = await refreshExistingImagePost({
+        store, collection: COL, tenantId: input.tenantId, existingRecord, item, keyword,
+        accountMode, accountUrl, deferImageAnalysis: Boolean(input.deferImageAnalysis),
+        persistThumbnail: persistImagePostThumbnail, persistImages: persistImagePostImages,
+        analyze: analyzeImagePostBestEffort, queue: queueImagePostAnalysis,
       });
-      if (imageAnalysis.status === 'pending') queueImagePostAnalysis(recordId, item, keyword);
-      existingRecords.push({ ...existingRecord, thumbnailUrl });
+      existingRecords.push(refreshed);
       continue;
     }
 

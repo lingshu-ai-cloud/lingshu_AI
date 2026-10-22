@@ -22,7 +22,7 @@
 - `server/routes/`：HTTP 鉴权、输入规范化、租户上下文和响应编排；业务算法逐步下沉到领域模块。
 - `server/digitalEmployees/taskEvidenceProjection.ts`：数字员工任务的执行元数据、依赖与业务引用范围、工作流归属、项目完成/渲染证据的纯规则；路由仅在租户范围内读写记录并调用这些规则，不能用历史草稿或可变引用覆盖托管项目的索引血缘。
 - `server/routes/videoCrawlerOpsTaskState.ts`：视频来源爬虫任务的纯状态规则，包括中断恢复、显式重试、耗尽终止和待处理优先级；`videos.ts` 保留原导出并负责持久化、租户可见性与执行编排。
-- `server/socialDiscovery/imagePostEvidenceAnalysis.ts`：公开图片下载、Qwen 主分析/Gemini 旧降级与延迟分析写回。`server/socialDiscovery/imagePostImport.ts`：新增图文先创建租户记录并持久化图片来源，确认写入后才启动现有分析或排入延迟队列；`videos.ts` 保留爬取入口、既有记录刷新、租户鉴权和图片 URL 规范化。新模块尚不调用未批准的 GPT 图片复核；既有记录刷新与显式重分析仍需迁入共用的逐记录批准/恢复边界。
+- `server/socialDiscovery/imagePostEvidenceAnalysis.ts`：公开图片下载、Qwen 主分析/Gemini 旧降级与延迟分析写回。`imagePostImport.ts` 与 `imagePostRefresh.ts`：新增和既有图文均先持久化来源及状态，确认写入后才启动现有分析或排入延迟队列；`videos.ts` 保留爬取入口、租户鉴权和图片 URL 规范化。新模块尚不调用未批准的 GPT 图片复核；显式重分析与延迟执行仍需迁入共用的逐记录批准/恢复边界。
 - `server/socialImage/`：图片任务、参考画布、首版策划、图层合成、修订和质量判定。参考图层蓝图在任务创建/更新和合成入口均规范化；蒙版层级不能绕过产品遮挡上限。
 - `server/starter198/socialContentProductionExecution.ts`：社媒自动生产 worker 的阶段编排；素材路线重绑定与动态主持人背景锁由 `socialContentProductionRouting.ts` 负责，`socialContentProductionMaterialPreparation.ts` 在预算认领前读取任务素材、核对已批准本地路线并记录重绑定证据，非渲染代拍清单投影由 `socialContentShootingPlan.ts` 负责。`socialContentProductionScriptBaseline.ts` 负责已冻结脚本快照校验、兼容重建和原任务持久化；不能在恢复时悄悄采用更新的企业事实或模板。成片后复刻评估的参考视频只从任务素材或租户路径、来源和哈希均匹配的缓存读取，由 `socialContentProductionReplicationEvaluation.ts` 负责。原 worker 导出维持兼容。
 - `server/lib/translationCues.ts`：时间戳配音翻译的纯文本解析、cue 完整性校验和响应形态归一化；Express 超时/连接生命周期保留在路由 adapter。
