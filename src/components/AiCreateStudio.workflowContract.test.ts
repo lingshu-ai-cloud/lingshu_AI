@@ -392,9 +392,11 @@ assert.match(
 );
 
 const trafficSource = readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
-assert.match(trafficSource, /digitalEmployee\.businessDeepLink/, 'the content workspace must consume the persisted Digital Employee handoff');
-assert.match(trafficSource, /sessionStorage\.removeItem\('digitalEmployee\.businessDeepLink'\)/, 'the persisted handoff must be consumed once instead of leaking into later manual sessions');
-assert.match(trafficSource, /DIGITAL_EMPLOYEE_CONTEXT_TTL/, 'a never-opened stale handoff must expire');
+const trafficWorkflowContextSource = readFileSync(new URL('./trafficWorkflowContext.ts', import.meta.url), 'utf8');
+assert.match(trafficSource, /consumeWorkflowContext=\{consumeDigitalEmployeeWorkflowContext\}/, 'the content workspace must mount the persisted Digital Employee handoff consumer');
+assert.match(trafficWorkflowContextSource, /digitalEmployee\.businessDeepLink/, 'the content workspace must consume the persisted Digital Employee handoff');
+assert.match(trafficWorkflowContextSource, /sessionStorage\.removeItem\('digitalEmployee\.businessDeepLink'\)/, 'the persisted handoff must be consumed once instead of leaking into later manual sessions');
+assert.match(trafficWorkflowContextSource, /DIGITAL_EMPLOYEE_CONTEXT_TTL/, 'a never-opened stale handoff must expire');
 assert.match(trafficSource, /workflowRunId:\s*item\.workflowRunId\s*\|\|\s*''/, 'publishing calendar writes must use per-item workflow attribution');
 assert.match(trafficSource, /workflowTaskId:\s*item\.workflowTaskId\s*\|\|\s*''/, 'publishing calendar writes must use per-item task attribution');
 assert.doesNotMatch(trafficSource, /workflowRunId:\s*item\.workflowRunId\s*\|\|\s*workflowContext/, 'an unrelated queued item must not inherit the page-level workflow context');

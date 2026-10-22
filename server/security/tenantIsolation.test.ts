@@ -67,6 +67,7 @@ for (const styleClass of ['.ui-field', '.ui-select', '.ui-chart-panel', '.ui-flo
 }
 const publishingUi = read('src/components/TrafficPage.tsx');
 const publishingView = read('src/components/SocialPublishPanelView.tsx');
+const publishingSelection = read('src/components/publishing/publishPanelSelection.ts');
 assert.doesNotMatch(publishingUi + publishingView, /平台发布推荐|publish-recommendations/, 'one-click publishing must not render the removed platform recommendation panel');
 assert.match(publishingUi, /applyContentToAll[\s\S]*?title: activeItem\.title[\s\S]*?description: activeItem\.description[\s\S]*?platformCopy:[\s\S]*?firstComment: activeItem\.firstComment/, 'applying content to all videos must copy the current publishing content');
 assert.match(publishingView, /发布队列[\s\S]*?平台账号选择[\s\S]*?内容编辑/, 'publishing queue, account selection, and content editing must remain separate sections');
@@ -74,7 +75,8 @@ assert.match(publishingView, /<Segmented[\s\S]{0,200}aria-label="发布方式"[\
 for (const [value, label] of [['now', '立即发布'], ['flexible', '时间待定'], ['schedule', '定点排期']]) {
   assert.match(publishingView, new RegExp(`value: '${value}', label: '${label}'`), 'one-click publishing must expose three unambiguous delivery modes');
 }
-assert.match(publishingUi, /item\.deliveryMode !== 'flexible'/, 'time-undecided content must never be included in direct real publishing');
+assert.match(publishingUi, /publishableItems/, 'publishing must use the explicit publishable selection');
+assert.match(publishingSelection, /item\.deliveryMode !== 'flexible'/, 'time-undecided content must never be included in direct real publishing');
 const calendarPlannerUi = read('src/components/publishing/CalendarPlanner.tsx');
 const calendarUi = read('src/components/ui/LsCalendar.tsx');
 assert.match(calendarPlannerUi, /<LsCalendar[\s\S]*?onDatesSet=\{info => \{ setVisibleRange/, 'publishing uses the shared calendar and its visible range');
@@ -151,7 +153,8 @@ assert.match(adminSocialSetup, /role="dialog"[\s\S]*?确认清除/, 'clearing a 
 assert.match(adminSocialSetup, /disconnectedAccounts[\s\S]*?配置已清除/, 'the administrator must receive a clear success result after platform cleanup');
 
 const socialRoutes = read('server/routes/social.ts');
-assert.match(socialRoutes, /getTenantAwareTikTokOAuthClient/, 'customer TikTok OAuth must resolve tenant-aware credentials');
+const socialOAuthSupport = read('server/routes/socialOAuthSupport.ts');
+assert.match(socialOAuthSupport, /getTikTokClient\(tenantId\?: string\)[\s\S]*?getTenantAwareTikTokOAuthClient\(tenantId\)/, 'customer TikTok OAuth must resolve tenant-aware credentials');
 assert.match(socialRoutes, /getTikTokClient\(tenantId\)/, 'customer TikTok OAuth must pass the authenticated tenant');
 const platformIntegrationRoutes = read('server/routes/platformIntegrations.ts');
 assert.match(platformIntegrationRoutes, /put\('\/oauth-config', requireAuth[\s\S]*?tenantId[\s\S]*?upsertTenantPlatformApp/, 'customer OAuth credentials must be authenticated and tenant scoped');
@@ -168,8 +171,10 @@ const assistLinks = read('server/routes/assistLinks.ts');
 assert.match(assistLinks, /platform === 'meta' \|\| platform === 'google' \|\| platform === 'tiktok'/, 'assist links must accept TikTok');
 assert.match(assistLinks, /getTenantAwareTikTokOAuthClient\(tenantId\)/, 'TikTok assist links must use the tenant application');
 const deliveryUi = read('src/components/AdminDeliveryPage.tsx');
-assert.match(deliveryUi, /type Platform = 'meta' \| 'google' \| 'tiktok' \| 'wecom'/, 'admin delivery UI must include TikTok');
-assert.match(deliveryUi, /label="Client Key"[\s\S]*?label="Client Secret"[\s\S]*?app\.oauthRedirectUri/, 'admin delivery UI must expose TikTok credentials and callback');
+const deliveryComponents = read('src/components/AdminDeliveryComponents.tsx');
+assert.match(deliveryUi, /<PlatformWizard/, 'admin delivery UI must mount the platform setup wizard');
+assert.match(deliveryComponents, /type Platform = 'meta' \| 'google' \| 'tiktok' \| 'wecom'/, 'admin delivery UI must include TikTok');
+assert.match(deliveryComponents, /label="Client Key"[\s\S]*?label="Client Secret"[\s\S]*?app\.oauthRedirectUri/, 'admin delivery UI must expose TikTok credentials and callback');
 assert.match(read('pb_migrations/1784800000_expand_tiktok_tenant_apps.js'), /\^\(meta\|google\|tiktok\|wecom\)\$/, 'PocketBase tenant platform validation must accept TikTok');
 
 const videos = read('server/routes/videos.ts');

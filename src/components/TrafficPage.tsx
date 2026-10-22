@@ -24,7 +24,6 @@ import {
   titleFromVideoPath,
   type DeliveryMode,
   type DirectPublishResponse,
-  type PlatformCopy,
   type PublishDraft,
   type PublishItemStatus,
   type PublishPlatform,
@@ -43,86 +42,22 @@ import type { TrafficViewMode } from './trafficViewMode';
 import TrafficWorkspacePage from './TrafficWorkspacePage';
 import SocialPublishPanelView from './SocialPublishPanelView';
 import { PLATFORM_META } from './publishing/publishPlatformMeta';
+import { derivePublishPanelSelection } from './publishing/publishPanelSelection';
+import { fetchPublishingJson as fetchJson, platformBody, platformTitle } from './publishing/publishRequest';
+import { usePublishingAccounts } from './publishing/usePublishingAccounts';
+import { usePublishingVideoUpload } from './publishing/usePublishingVideoUpload';
+import {
+  consumeDigitalEmployeeWorkflowContext,
+  contentCreationAspectRatio,
+  type DigitalEmployeeWorkflowContext,
+} from './trafficWorkflowContext';
+export {
+  consumeDigitalEmployeeWorkflowContext,
+  parseDigitalEmployeeWorkflowContext,
+} from './trafficWorkflowContext';
+export type { DigitalEmployeeWorkflowContext } from './trafficWorkflowContext';
 
 type ViewMode = TrafficViewMode;
-
-function contentCreationAspectRatio(aspectRatio?: number, width?: number, height?: number): '9:16' | '1:1' | '16:9' | undefined {
-  const measured = Number(aspectRatio) > 0
-    ? Number(aspectRatio)
-    : Number(width) > 0 && Number(height) > 0 ? Number(width) / Number(height) : 0;
-  if (!Number.isFinite(measured) || measured <= 0) return undefined;
-  if (measured > 1.12) return '16:9';
-  if (measured < 0.89) return '9:16';
-  return '1:1';
-}
-
-export type DigitalEmployeeWorkflowContext = {
-  runId: string;
-  taskId: string;
-  taskKey: string;
-  entityId?: string;
-  preview?: boolean;
-};
-
-const DIGITAL_EMPLOYEE_CONTEXT_TTL = 15 * 60 * 1000;
-
-export function parseDigitalEmployeeWorkflowContext(
-  raw: string,
-  now = Date.now(),
-): DigitalEmployeeWorkflowContext | null {
-  try {
-    const parsed = JSON.parse(raw) as {
-      page?: string;
-      runId?: string;
-      taskId?: string;
-      workflowRunId?: string;
-      workflowTaskId?: string;
-      issuedAt?: number;
-      businessRef?: { taskKey?: string; preview?: boolean; entityId?: string };
-    };
-    const runId = String(parsed.workflowRunId || parsed.runId || '').trim();
-    const taskId = String(parsed.workflowTaskId || parsed.taskId || '').trim();
-    const preview = parsed.businessRef?.preview === true;
-    if (
-      parsed.page !== 'smartAssets' ||
-      (!preview && (!runId || !taskId)) ||
-      (preview && !String(parsed.businessRef?.taskKey || '').trim()) ||
-      !Number.isFinite(parsed.issuedAt) ||
-      now - Number(parsed.issuedAt) > DIGITAL_EMPLOYEE_CONTEXT_TTL
-    ) return null;
-    return {
-      runId,
-      taskId,
-      taskKey: String(parsed.businessRef?.taskKey || ''),
-      ...(parsed.businessRef?.entityId ? { entityId: parsed.businessRef.entityId } : {}),
-      ...(preview ? { preview: true } : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function consumeDigitalEmployeeWorkflowContext(): DigitalEmployeeWorkflowContext | null {
-  try {
-    const raw = sessionStorage.getItem('digitalEmployee.businessDeepLink');
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { page?: string };
-    if (parsed.page !== 'smartAssets') return null;
-    sessionStorage.removeItem('digitalEmployee.businessDeepLink');
-    return parseDigitalEmployeeWorkflowContext(raw);
-  } catch {
-    return null;
-  }
-}
-
-type PublishAccount = {
-  id: string;
-  platform: PublishPlatform;
-  title: string;
-  handle?: string;
-  status: 'connected' | 'error' | 'expired';
-  avatarUrl?: string;
-};
 
 export interface Props {
   sourcePage: Page;
@@ -151,29 +86,6 @@ export interface Props {
   onReturnToContentPlanning?: (request: SocialContentCreateRequest) => void;
 }
 
-const ALL_PUBLISH_PLATFORMS = Object.keys(PLATFORM_META) as PublishPlatform[];
-
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...init, headers: { ...authHeader(), ...(init?.headers ?? {}) } });
-  const data = await response.json().catch(() => ({})) as T & { error?: string; message?: string };
-  if (!response.ok) throw Object.assign(new Error(data.message || data.error || '请求失败'), { statusCode: response.status });
-  return data;
-}
-
-function platformBody(platform: PublishPlatform, copy?: PlatformCopy, fallback = '') {
-  if (fallback.trim()) return fallback;
-  if (!copy) return fallback;
-  if (platform === 'youtube') return copy.description || fallback;
-  if (platform === 'facebook' || platform === 'linkedin') return copy.text || fallback;
-  return copy.caption || fallback;
-}
-
-function platformTitle(platform: PublishPlatform, copy?: PlatformCopy, fallback = '') {
-  if (fallback.trim()) return fallback;
-  if (platform === 'youtube') return copy?.title || fallback;
-  return fallback;
-}
-
 export default function TrafficPage(props: Props) {
   return (
     <TrafficWorkspacePage
@@ -195,7 +107,6 @@ function SocialPublishPanel(props: { onNavigate?: (p: Page) => void; draft?: Pub
 
 export function useSocialPublishPanelController({ onNavigate, draft, onReturnToPreview, workflowContext, storageScope }: { onNavigate?: (p: Page) => void; draft?: PublishDraft | null; onReturnToPreview?: (projectId?: string) => void; workflowContext?: DigitalEmployeeWorkflowContext; storageScope?: string }) {
   const [workspaceTab, setWorkspaceTab] = useState<'schedule' | 'publish'>(() => isPublishingCalendarNode(workflowContext?.taskKey) ? 'schedule' : draft || readStoredPublishDraft(storageScope) ? 'publish' : 'schedule');
-  const [accounts, setAccounts] = useState<PublishAccount[]>([]);
   const [items, setItems] = useState<PublishQueueItem[]>(() => {
     // A direct Digital Employee handoff must not adopt an arbitrary draft left
     // in localStorage by an earlier manual session.
@@ -209,21 +120,16 @@ export function useSocialPublishPanelController({ onNavigate, draft, onReturnToP
     return stored.length ? stored : [createPublishItem(null)];
   });
   const [activeItemId, setActiveItemId] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [uploadingVideos, setUploadingVideos] = useState(false);
   const [savingContent, setSavingContent] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publishConfirmationOpen, setPublishConfirmationOpen] = useState(false);
   const [systemLibraryOpen, setSystemLibraryOpen] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const { accounts, loading, pendingTargetAccountIds, setPendingTargetAccountIds, loadAccounts } = usePublishingAccounts(setItems, setError);
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
-  const [pendingTargetAccountIds, setPendingTargetAccountIds] = useState<string[]>([]);
-  const accountTargetsSeededRef = useRef(false);
-  const pendingAccountTargetsSeededRef = useRef(false);
   const appliedDraftRef = useRef(JSON.stringify(draft || readStoredPublishDraft(storageScope) || {}));
   const materializedVideoPathsRef = useRef(new Set<string>());
-  const videoInputRef = useRef<HTMLInputElement | null>(null);
   const publishSettingsRef = useRef<HTMLElement | null>(null);
   const handledWorkflowContextRef = useRef(
     workflowContext ? `${workflowContext.runId}:${workflowContext.taskId}` : '',
@@ -252,56 +158,15 @@ export function useSocialPublishPanelController({ onNavigate, draft, onReturnToP
     setNotice('已从数字员工执行中心进入；新内容将单独归属当前任务，原有队列不受影响。');
   }, [workflowContext]);
 
-  const connectedAccounts = accounts.filter(account => account.status === 'connected' && account.platform !== 'tiktok');
-  const activeItem = items.find(item => item.id === activeItemId) || items[0] || null;
-  const activePreviewUrl = activeItem?.previewUrl || browserVideoUrl(activeItem?.videoPath);
-  const activeCalendarPost = Boolean(activeItem?.calendarPostIds?.length);
-  const pendingCalendarItems = items
-    .filter(item => (
-      ['ready', 'partial', 'failed'].includes(item.status) &&
-      Boolean(item.videoPath.trim() || item.title.trim() || item.sourceProjectId || item.sourcePlatform)
-    ))
-    .map(item => ({
-      id: item.id,
-      title: item.title || titleFromVideoPath(item.videoPath),
-      description: item.description,
-      sourceProjectId: item.sourceProjectId,
-      sourcePlatform: item.sourcePlatform,
-      platforms: Array.from(new Set(
-        connectedAccounts
-          .filter(account => item.targetAccountIds.includes(account.id))
-          .map(account => account.platform),
-      )),
-      deliveryMode: item.deliveryMode,
-      scheduledAt: item.scheduledAt,
-      status: item.status,
-    }));
-  const selectedTargetAccountIds = activeItem?.targetAccountIds ?? pendingTargetAccountIds;
-  const selectedConnectedAccounts = connectedAccounts.filter(account => selectedTargetAccountIds.includes(account.id));
-  const selectedPlatforms = Array.from(new Set(selectedConnectedAccounts.map(account => account.platform)));
-  const visiblePlatforms = selectedPlatforms.length ? selectedPlatforms : ALL_PUBLISH_PLATFORMS;
-  const connectedAccountIds = new Set(connectedAccounts.map(account => account.id));
-  const totalAssignments = items.reduce(
-    (sum, item) => sum + item.targetAccountIds.filter(id => connectedAccountIds.has(id)).length,
-    0,
-  );
-  const publishableItems = items.filter(item => (
-    item.selected &&
-    item.deliveryMode !== 'flexible' &&
-    (item.deliveryMode === 'now' || Boolean(item.scheduledAt)) &&
-    item.videoPath.trim() &&
-    item.title.trim() &&
-    (!item.sourceProjectId || studioGenerationIsVerified(item)) &&
-    item.targetAccountIds.some(id => connectedAccountIds.has(id)) &&
-    ['ready', 'partial', 'failed'].includes(item.status)
-  ));
-  const immediateItems = publishableItems.filter(item => item.deliveryMode === 'now');
-  const scheduledItems = publishableItems.filter(item => item.deliveryMode === 'schedule' && Boolean(item.scheduledAt));
-  const flexibleItems = items.filter(item => item.selected && item.deliveryMode === 'flexible' && ['ready', 'partial', 'failed'].includes(item.status));
-  const publishableAssignments = publishableItems.reduce(
-    (sum, item) => sum + item.targetAccountIds.filter(id => connectedAccountIds.has(id)).length,
-    0,
-  );
+  const {
+    connectedAccounts, activeItem, activePreviewUrl, activeCalendarPost, pendingCalendarItems,
+    selectedTargetAccountIds, selectedConnectedAccounts, selectedPlatforms, visiblePlatforms,
+    connectedAccountIds, totalAssignments, publishableItems, immediateItems, scheduledItems,
+    flexibleItems, publishableAssignments,
+  } = derivePublishPanelSelection(items, accounts, activeItemId, pendingTargetAccountIds);
+  const { uploadingVideos, videoInputRef, addSelectedVideoFiles } = usePublishingVideoUpload({
+    activeItem, pendingTargetAccountIds, setItems, setActiveItemId, setWorkspaceTab, setNotice, setError,
+  });
 
   const updateItem = (id: string, patch: Partial<PublishQueueItem>) => {
     setItems(prev => prev.map(item => {
@@ -576,50 +441,6 @@ export function useSocialPublishPanelController({ onNavigate, draft, onReturnToP
     window.setTimeout(() => publishSettingsRef.current?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 60);
   };
 
-  const loadAccounts = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const [youtube, tiktok, instagram, facebook, linkedin] = await Promise.all([
-        fetchJson<{ items?: Array<{ id: string; channelTitle: string; status: PublishAccount['status']; thumbnailUrl?: string }> }>('/api/overseas/youtube/accounts'),
-        fetchJson<{ items?: Array<{ id: string; title: string; handle?: string; status: PublishAccount['status']; avatarUrl?: string }> }>('/api/overseas/social/accounts?platform=tiktok'),
-        fetchJson<{ items?: Array<{ id: string; title: string; handle?: string; status: PublishAccount['status']; avatarUrl?: string }> }>('/api/overseas/social/accounts?platform=instagram'),
-        fetchJson<{ items?: Array<{ id: string; title: string; handle?: string; status: PublishAccount['status']; avatarUrl?: string }> }>('/api/overseas/social/accounts?platform=facebook'),
-        fetchJson<{ items?: Array<{ id: string; title: string; handle?: string; status: PublishAccount['status']; avatarUrl?: string }> }>('/api/overseas/social/accounts?platform=linkedin'),
-      ]);
-      const next: PublishAccount[] = [
-        ...(youtube.items ?? []).map(account => ({ id: account.id, platform: 'youtube' as const, title: account.channelTitle, handle: account.channelTitle, status: account.status, avatarUrl: account.thumbnailUrl })),
-        ...(tiktok.items ?? []).map(account => ({ id: account.id, platform: 'tiktok' as const, title: account.title, handle: account.handle, status: account.status, avatarUrl: account.avatarUrl })),
-        ...(instagram.items ?? []).map(account => ({ id: account.id, platform: 'instagram' as const, title: account.title, handle: account.handle, status: account.status, avatarUrl: account.avatarUrl })),
-        ...(facebook.items ?? []).map(account => ({ id: account.id, platform: 'facebook' as const, title: account.title, handle: account.handle, status: account.status, avatarUrl: account.avatarUrl })),
-        ...(linkedin.items ?? []).map(account => ({ id: account.id, platform: 'linkedin' as const, title: account.title, handle: account.handle, status: account.status, avatarUrl: account.avatarUrl })),
-      ];
-      setAccounts(next);
-      if (!pendingAccountTargetsSeededRef.current) {
-        setPendingTargetAccountIds(next.filter(account => account.status === 'connected' && account.platform !== 'tiktok').map(account => account.id));
-        pendingAccountTargetsSeededRef.current = true;
-      }
-      if (!accountTargetsSeededRef.current) {
-        const connected = next.filter(account => account.status === 'connected' && account.platform !== 'tiktok');
-        setItems(prev => prev.map(item => {
-          if (item.targetAccountIds.length) return item;
-          const matchingSource = item.sourcePlatform
-            ? connected.filter(account => account.platform === item.sourcePlatform)
-            : [];
-          return {
-            ...item,
-            targetAccountIds: (matchingSource.length ? matchingSource : connected).map(account => account.id),
-          };
-        }));
-        accountTargetsSeededRef.current = true;
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '无法读取授权账号');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => { void loadAccounts(); }, []);
 
   useEffect(() => {
@@ -739,58 +560,6 @@ export function useSocialPublishPanelController({ onNavigate, draft, onReturnToP
       if (activeItem?.id === id) setActiveItemId(next[0]?.id || '');
       return next;
     });
-  };
-
-  const addSelectedVideoFiles = async (fileList: FileList | null) => {
-    const files = Array.from(fileList || []).filter(file => /\.(mp4|mov|webm|mkv|avi)$/i.test(file.name));
-    if (!files.length) return;
-    setUploadingVideos(true);
-    setError('');
-    setNotice('');
-    const targetAccountIds = activeItem ? activeItem.targetAccountIds : pendingTargetAccountIds;
-    const additions: PublishQueueItem[] = [];
-    const failures: string[] = [];
-    for (const file of files) {
-      try {
-        const response = await fetch('/api/overseas/publishing/local-videos', {
-          method: 'POST',
-          headers: {
-            ...authHeader(),
-            'Content-Type': 'application/octet-stream',
-            'X-File-Name': encodeURIComponent(file.name),
-          },
-          body: file,
-        });
-        const data = await response.json().catch(() => ({})) as { video?: { videoPath?: string; previewUrl?: string }; error?: string };
-        if (!response.ok || !data.video?.videoPath) throw new Error(data.error || '视频接收失败');
-        additions.push(createPublishItem({
-          videoPath: data.video.videoPath,
-          previewUrl: data.video.previewUrl,
-          title: titleFromVideoPath(file.name),
-          description: activeItem?.description || '',
-          ratio: activeItem?.ratio,
-          platform: activeItem?.sourcePlatform,
-          workflowRunId: activeItem?.workflowRunId,
-          workflowTaskId: activeItem?.workflowTaskId,
-          workflowTaskKey: activeItem?.workflowTaskKey,
-        }, targetAccountIds));
-      } catch (uploadError) {
-        failures.push(`${file.name}: ${uploadError instanceof Error ? uploadError.message : '添加失败'}`);
-      }
-    }
-    if (additions.length) {
-      setItems(prev => {
-        const onlyBlank = prev.length === 1 && !prev[0].videoPath.trim() && !prev[0].title.trim();
-        return onlyBlank ? additions : [...prev, ...additions];
-      });
-      setActiveItemId(additions[0].id);
-      setWorkspaceTab('publish');
-      setNotice(`已加入 ${additions.length} 条视频，发布预览已启动。`);
-      window.setTimeout(() => document.getElementById('publishing-video-preview')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 80);
-    }
-    if (failures.length) setError(failures.join('；'));
-    setUploadingVideos(false);
-    if (videoInputRef.current) videoInputRef.current.value = '';
   };
 
   const addSystemFinishedVideo = (selectedDraft: PublishDraft) => {
