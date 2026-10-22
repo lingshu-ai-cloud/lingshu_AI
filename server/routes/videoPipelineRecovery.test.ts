@@ -18,6 +18,7 @@ import {
   videoAnalysisRetryQueuePatch,
 } from './videos.js';
 import { analysisTimelineQualityError } from '../lib/videoAnalysisCodec.js';
+import { classifyCrawlerFailure, crawlerRetryDelayMs } from './videoCrawlerOpsTaskState.js';
 
 const chineseSearch = 'ytsearch5:工业视觉 爆款';
 assert.equal(platformReferer(chineseSearch), 'https://www.youtube.com/');
@@ -145,6 +146,13 @@ assert.equal(explicitRetry.status, 'resolved', 'the old task must retire so it c
 assert.equal(explicitRetry.attempts, 0);
 assert.equal(explicitRetry.lastError, undefined);
 assert.equal(explicitRetry.retryResetBy, 'user-b');
+assert.equal(crawlerRetryDelayMs(0), 30_000);
+assert.equal(crawlerRetryDelayMs(2), 120_000);
+assert.equal(crawlerRetryDelayMs(100), 30 * 60_000);
+assert.equal(classifyCrawlerFailure('Requested format is not available'), 'format_unavailable');
+assert.equal(classifyCrawlerFailure('Login required after timeout'), 'network_timeout');
+assert.equal(classifyCrawlerFailure('Gemini API_KEY is missing'), 'gemini_failed');
+assert.equal(classifyCrawlerFailure('unclassified provider error'), 'download_failed');
 
 assert.equal(shouldResumeReferenceAnalysis({
   usage: 'reference_only',

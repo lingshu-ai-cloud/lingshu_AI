@@ -48,6 +48,25 @@ export function crawlerProxyPool(env: NodeJS.ProcessEnv = process.env): string[]
     .filter(Boolean);
 }
 
+export function selectCrawlerProxy(attemptNo: number, env: NodeJS.ProcessEnv = process.env): string {
+  const pool = crawlerProxyPool(env);
+  if (pool.length === 0) return env.CRAWLER_PROXY || '';
+  return pool[(attemptNo - 1) % pool.length] || '';
+}
+
+export function redactProxy(proxy: string): string {
+  try {
+    const parsed = new URL(proxy);
+    if (parsed.username || parsed.password) {
+      parsed.username = '***';
+      parsed.password = '***';
+    }
+    return parsed.toString();
+  } catch {
+    return proxy.replace(/\/\/[^@]+@/, '//***@');
+  }
+}
+
 export function browserUserAgent(env: NodeJS.ProcessEnv = process.env): string {
   return env.CRAWLER_USER_AGENT
     || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';

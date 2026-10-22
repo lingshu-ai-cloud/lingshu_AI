@@ -120,3 +120,19 @@ function platformOpsPriority(platform: Platform): number {
   if (platform === 'facebook') return 3;
   return 9;
 }
+
+export function crawlerRetryDelayMs(attemptNo: number): number {
+  return Math.min(30 * 60_000, Math.max(30_000, attemptNo * attemptNo * 30_000));
+}
+
+export function classifyCrawlerFailure(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes('incomplete_gemini_video_analysis')) return 'incomplete_gemini_video_analysis';
+  if (lower.includes('requested format is not available')) return 'format_unavailable';
+  if (lower.includes('timed out') || lower.includes('timeout')) return 'network_timeout';
+  if (lower.includes('cookies') || lower.includes('login') || lower.includes('sign in')) return 'login_required';
+  if (lower.includes('private') || lower.includes('permission')) return 'permission_required';
+  if (lower.includes('429') || lower.includes('rate')) return 'rate_limited';
+  if (lower.includes('gemini') || lower.includes('api_key')) return 'gemini_failed';
+  return 'download_failed';
+}

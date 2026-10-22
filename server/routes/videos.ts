@@ -17,7 +17,7 @@ export { describeVideoAnalysisRecovery, queuedMaterialFailureRequiresSourceFallb
 export type { VideoAnalysisRecovery, VideoAnalysisRetryQueueKind } from './videoAnalysisRecovery.js';
 import { accountLabelFromUrl, accountListUrlCandidates, canonicalSourceUrl, looksLikeAccountUrl, looksLikeVideoUrl, normalizeAccountListUrl, stripTrackingParams, tiktokVideoId, youtubeThumbnailFromUrl } from './videoCrawlerSourceUrls.js';
 export { accountLabelFromUrl, looksLikeAccountUrl } from './videoCrawlerSourceUrls.js';
-import { filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, resetCrawlerOpsTaskForExplicitRetryState, selectPendingCrawlerOpsTasks, terminalizeExhaustedCrawlerOpsTask, type CrawlerOpsTask } from './videoCrawlerOpsTaskState.js';
+import { classifyCrawlerFailure, crawlerRetryDelayMs, filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, resetCrawlerOpsTaskForExplicitRetryState, selectPendingCrawlerOpsTasks, terminalizeExhaustedCrawlerOpsTask, type CrawlerOpsTask } from './videoCrawlerOpsTaskState.js';
 export { filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, resetCrawlerOpsTaskForExplicitRetryState, selectPendingCrawlerOpsTasks, terminalizeExhaustedCrawlerOpsTask } from './videoCrawlerOpsTaskState.js';
 import {classifyDiscoverySourceFailure} from '../socialDiscovery/sourceFailure.js';
 import {createImagePostEvidenceAnalyzer, type CrawledImagePost} from '../socialDiscovery/imagePostEvidenceAnalysis.js';
@@ -32,7 +32,7 @@ export { buildApifyTikTokInput } from './apifyTikTokInput.js';
 import { buildVideoDownloaderArgs } from './videoDownloaderArgs.js';
 export { platformReferer } from './videoDownloaderArgs.js';
 import { browserUserAgent, cookieBrowsers, cookieFiles, cookiesBrowser, crawlerExecutionEnv,
-  crawlerProxyPool, crawlerProxyUrl, usesServerCookiesForCrawl } from './videoCrawlerRuntimeConfig.js';
+  crawlerProxyPool, crawlerProxyUrl, redactProxy, selectCrawlerProxy, usesServerCookiesForCrawl } from './videoCrawlerRuntimeConfig.js';
 import { assertConfiguredLinkedInCompanyPaidCollection, runConfiguredLinkedInCompanyPaidCollection, type LinkedInCompanyPaidPermit } from './linkedinCompanyPostPaidCollection.js';
 import {frozenWeeklyAccountFiveVideoActorInput} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
 import {readVerifiedWeeklyOriginalDatasetReplay,type VerifiedWeeklyOriginalDatasetReplay} from '../socialDiscovery/weeklyAccountCollectionDatasetContinuation.js';
@@ -8381,41 +8381,6 @@ export async function getVideoPipelineStats(tenantId?: string): Promise<Record<s
     geminiConfigured: isGeminiConfigured(),
     qwenConfigured: isQwenConfigured(),
   });
-}
-
-function selectCrawlerProxy(attemptNo: number): string {
-  const pool = crawlerProxyPool();
-  if (pool.length === 0) return process.env.CRAWLER_PROXY || '';
-  return pool[(attemptNo - 1) % pool.length] || '';
-}
-
-function redactProxy(proxy: string): string {
-  try {
-    const parsed = new URL(proxy);
-    if (parsed.username || parsed.password) {
-      parsed.username = '***';
-      parsed.password = '***';
-    }
-    return parsed.toString();
-  } catch {
-    return proxy.replace(/\/\/[^@]+@/, '//***@');
-  }
-}
-
-function crawlerRetryDelayMs(attemptNo: number): number {
-  return Math.min(30 * 60_000, Math.max(30_000, attemptNo * attemptNo * 30_000));
-}
-
-function classifyCrawlerFailure(message: string): string {
-  const lower = message.toLowerCase();
-  if (lower.includes('incomplete_gemini_video_analysis')) return 'incomplete_gemini_video_analysis';
-  if (lower.includes('requested format is not available')) return 'format_unavailable';
-  if (lower.includes('timed out') || lower.includes('timeout')) return 'network_timeout';
-  if (lower.includes('cookies') || lower.includes('login') || lower.includes('sign in')) return 'login_required';
-  if (lower.includes('private') || lower.includes('permission')) return 'permission_required';
-  if (lower.includes('429') || lower.includes('rate')) return 'rate_limited';
-  if (lower.includes('gemini') || lower.includes('api_key')) return 'gemini_failed';
-  return 'download_failed';
 }
 
 async function pushCrawlerOpsTask(task: CrawlerOpsTask): Promise<void> {

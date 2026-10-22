@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { browserCookiesLikelyAvailable, browserUserAgent, cookieBrowsers, cookieFiles,
-  cookiesBrowser, crawlerExecutionEnv, crawlerProxyPool, crawlerProxyUrl,
+  cookiesBrowser, crawlerExecutionEnv, crawlerProxyPool, crawlerProxyUrl, redactProxy, selectCrawlerProxy,
   usesServerCookiesForCrawl } from './videoCrawlerRuntimeConfig.js';
 
 test('runtime proxy wins over configured pool and never mutates the inherited process environment', () => {
@@ -20,6 +20,12 @@ test('runtime proxy wins over configured pool and never mutates the inherited pr
   assert.equal(source.NODE_USE_ENV_PROXY, '1');
   assert.equal(source.HTTPS_PROXY, undefined);
   assert.equal(crawlerProxyUrl('', { CRAWLER_PROXY_POOL: 'http://pool-a,http://pool-b' }), 'http://pool-a');
+  assert.equal(selectCrawlerProxy(1, source), 'http://pool-a');
+  assert.equal(selectCrawlerProxy(2, source), 'http://pool-b');
+  assert.equal(selectCrawlerProxy(3, source), 'http://pool-a');
+  assert.equal(selectCrawlerProxy(1, { CRAWLER_PROXY: 'http://fallback' }), 'http://fallback');
+  assert.equal(redactProxy('https://user:secret@proxy.example:443'), 'https://***:***@proxy.example/');
+  assert.equal(redactProxy('not-a-url://user:secret@proxy'), 'not-a-url://***:***@proxy');
 });
 
 test('cookie file and browser discovery respect configured files and platform scope', () => {
