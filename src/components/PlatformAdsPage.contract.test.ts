@@ -17,3 +17,10 @@ test('creation labels capability without changing persisted goal values or remov
   assert.match(source, /保存草稿/);
   assert.doesNotMatch(source, /disabled=\{[^}]*!formCapability\.supportsCreate/);
 });
+
+test('the advertising unit exposes three workspaces and keeps AI management in a drawer', () => {
+  assert.match(source, /page === 'adsPlans' \? '计划创编' : page === 'adsCreatives' \? '素材管理' : '投放数据'/);
+  assert.match(source, /<Drawer title="AI 投手"/);
+  assert.match(source, /if \(page !== 'adsManaged'\) return;[\s\S]*setManagedOpen\(true\);[\s\S]*onNavigate\('adsPlans'\)/);
+  assert.doesNotMatch(source, /aria-label="投放总览视图"/);
+});

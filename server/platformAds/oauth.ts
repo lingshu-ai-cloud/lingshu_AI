@@ -5,7 +5,7 @@ import { withPlatformAdTaskLock } from './taskLock.js';
 import { AdProviderError } from './metaAdapter.js';
 import { connectAccount } from './connections.js';
 export const AD_OAUTH_STATES = 'platform_ad_oauth_states';
-type OAuthState = { id: string; tenant_id: string; userId: string; stateHash: string; expiresAt: string; status: string; tokenCipher?: string; accounts?: Array<{ id: string; name: string; currency: string }> };
+type OAuthState = { id: string; tenant_id: string; userId: string; stateHash: string; expiresAt: string; status: string; tokenCipher?: string; accounts?: Array<{ id: string; name: string; currency: string; accountStatus: number | null; timezoneName: string }> };
 function config() {
   const appId = process.env.META_ADS_APP_ID, appSecret = process.env.META_ADS_APP_SECRET, redirectUri = process.env.META_ADS_REDIRECT_URI, version = process.env.META_ADS_API_VERSION;
   if (!appId || !appSecret || !redirectUri || !version || !/^v\d+\.0$/.test(version)) throw new AdProviderError('Meta 广告 OAuth 尚未配置', 'NOT_CONFIGURED');
@@ -37,10 +37,10 @@ export async function finishMetaOAuth(state: string, code: string) {
       const response = await fetch(`https://graph.facebook.com/${cfg.version}/oauth/access_token`, { method: 'POST', body: new URLSearchParams({ client_id: cfg.appId, client_secret: cfg.appSecret, redirect_uri: cfg.redirectUri, code }), signal: AbortSignal.timeout(30000) });
       const token = await response.json() as any;
       if (!response.ok || !token.access_token) throw new AdProviderError('Meta 授权交换失败，请重新连接', 'AUTH_REQUIRED');
-      const accountsResponse = await fetch(`https://graph.facebook.com/${cfg.version}/me/adaccounts?fields=id,name,currency&limit=100`, { headers: { Authorization: `Bearer ${token.access_token}` }, signal: AbortSignal.timeout(30000) });
+      const accountsResponse = await fetch(`https://graph.facebook.com/${cfg.version}/me/adaccounts?fields=id,name,currency,account_status,timezone_name&limit=100`, { headers: { Authorization: `Bearer ${token.access_token}` }, signal: AbortSignal.timeout(30000) });
       const body = await accountsResponse.json() as any;
       if (!accountsResponse.ok || !Array.isArray(body.data)) throw new AdProviderError('无法获取 Meta 广告账户', 'AUTH_REQUIRED');
-      const accounts = body.data.map((item: any) => ({ id: String(item.id), name: String(item.name || item.id), currency: String(item.currency || '') }));
+      const accounts = body.data.map((item: any) => ({ id: String(item.id), name: String(item.name || item.id), currency: String(item.currency || ''), accountStatus: Number.isSafeInteger(Number(item.account_status)) ? Number(item.account_status) : null, timezoneName: String(item.timezone_name || '') }));
       if (!await store.update(AD_OAUTH_STATES, fresh.id, { status: 'ready', tokenCipher: encryptSecret(String(token.access_token)), accounts })) throw new AdProviderError('无法保存授权结果', 'STORAGE_ERROR');
       return fresh.id;
     } catch (error) {

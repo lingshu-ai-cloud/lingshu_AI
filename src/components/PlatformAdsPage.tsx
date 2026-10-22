@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Drawer } from 'antd';
 import {
   ArrowRight,
   ArrowUpRight,
@@ -103,9 +104,7 @@ export default function PlatformAdsPage({
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [overviewTab, setOverviewTab] = useState<"performance" | "creatives">(
-    page === "adsCreatives" ? "creatives" : "performance",
-  );
+  const [managedOpen, setManagedOpen] = useState(page === 'adsManaged');
   const [selectedDraft, setSelectedDraft] = useState<Draft | null>(null);
   const [executionLockedIds, setExecutionLockedIds] = useState<Set<string>>(() => new Set());
   const [selected, setSelected] = useState("全部渠道");
@@ -124,12 +123,15 @@ export default function PlatformAdsPage({
   });
   const formCapability = getAdPlanCapability(form);
   const isOverviewPage = page === "adsOverview" || page === "adsCreatives";
+  const isPerformancePage = page === 'adsOverview';
+  const isCreativePage = page === 'adsCreatives';
   useEffect(() => {
-    if (page === "adsCreatives") setOverviewTab("creatives");
-  }, [page]);
+    if (page !== 'adsManaged') return;
+    setManagedOpen(true);
+    onNavigate('adsPlans');
+  }, [page, onNavigate]);
   const openCreativeTab = () => {
-    setOverviewTab("creatives");
-    onNavigate("adsOverview");
+    onNavigate("adsCreatives");
   };
   useEffect(() => {
     if (previewMode) { setLoadingTasks(false); return; }
@@ -159,7 +161,9 @@ export default function PlatformAdsPage({
     window.addEventListener('lingshu:navigate', consume);
     return () => window.removeEventListener('lingshu:navigate', consume);
   }, [drafts]);
-  const managedTasks = useMemo(() => drafts.map(task => ({ ...task, budget: Number(task.budget), createdAt: task.createdAt || '', updatedAt: '' })), [drafts]);
+  const managedTasks = useMemo(() => drafts
+    .filter(task => !isForeignTradeMockId(task.id))
+    .map(task => ({ ...task, budget: Number(task.budget), createdAt: task.createdAt || '', updatedAt: '' })), [drafts]);
   const replaceTask = (task: PlatformAdTask) => {
     setDrafts(items => items.map(item => item.id === task.id ? taskToDraft(task) : item));
     setSelectedDraft(current => current?.id === task.id ? taskToDraft(task) : current);
@@ -234,8 +238,8 @@ export default function PlatformAdsPage({
       <main className="ads-main">
         {isLocalForeignTradeMockEnabled() && <div className="ads-notice" role="status"><Check size={16}/><span><strong>本地模拟 · 外贸工厂投放</strong>　展示中东、欧洲和拉美市场的跨平台计划与近 7 天效果，不会触发真实广告操作。</span></div>}
         <div className="ads-page-purpose">
-          <strong>{page === 'adsManaged' ? 'AI 托管' : page === 'adsPlans' ? '投放计划' : '投放总览'}</strong>
-          <p>{page === 'adsManaged' ? '查看 Agent 建议、审批与授权边界，追踪执行依据和异常。' : page === 'adsPlans' ? '配置目标、素材与预算，审阅方案并追踪平台执行回执。' : '查看花费、效果与数据覆盖，定位需要处理的投放计划。'}</p>
+          <strong>{page === 'adsPlans' ? '计划创编' : page === 'adsCreatives' ? '素材管理' : '投放数据'}</strong>
+          <p>{page === 'adsPlans' ? '配置目标、素材与预算，审阅方案并追踪 Meta 平台执行回执。' : page === 'adsCreatives' ? '管理素材版本、广告绑定和效果证据，推动下一轮内容迭代。' : '按平台原始口径查看花费、效果、覆盖范围和数据新鲜度。'}</p>
           <details>
             <summary>查看各平台已实现能力与限制</summary>
             <p className="ads-muted">以下为当前产品实现范围；连接账户或保存配置不代表可实际投递，真实账户验收尚未完成。</p>
@@ -245,26 +249,6 @@ export default function PlatformAdsPage({
           </details>
         </div>
         <div className={isOverviewPage ? "ads-overview-toolbar" : "ads-page-toolbar"}>
-          {isOverviewPage && (
-            <nav className="ads-overview-tabs" aria-label="投放总览视图">
-              <button
-                type="button"
-                className={overviewTab === "performance" ? "active" : ""}
-                aria-current={overviewTab === "performance" ? "page" : undefined}
-                onClick={() => setOverviewTab("performance")}
-              >
-                <BarChart3 size={16} />整体表现
-              </button>
-              <button
-                type="button"
-                className={overviewTab === "creatives" ? "active" : ""}
-                aria-current={overviewTab === "creatives" ? "page" : undefined}
-                onClick={() => setOverviewTab("creatives")}
-              >
-                <Layers3 size={16} />素材效果
-              </button>
-            </nav>
-          )}
           <div className="ads-actions">
             <button
               className="ads-button"
@@ -273,13 +257,13 @@ export default function PlatformAdsPage({
               <Link2 size={15} />
               连接广告账户
             </button>
-            {page !== 'adsManaged' && <><button className="ads-button primary" onClick={openCreate}>
+            <><button className="ads-button primary" onClick={openCreate}>
               <Plus size={16} />
               手动创建投放
             </button>
             <button className="ads-button" onClick={() => { openCreate(); setEntry('ai_assisted'); }}><Sparkles size={16} />AI 辅助创编</button>
-            <button className="ads-button" onClick={() => { openCreate(); setEntry('ai_managed'); }}><Bot size={16} />AI 托管创编</button></>}
-            {page === 'adsManaged' && <button className="ads-button" onClick={() => onNavigate('adsPlans')}>管理投放计划</button>}
+            <button className="ads-button" onClick={() => { openCreate(); setEntry('ai_managed'); }}><Bot size={16} />AI 托管创编</button></>
+            <button className="ads-button" onClick={() => setManagedOpen(true)}><Bot size={16} />AI 投手</button>
           </div>
         </div>
         {notice && (
@@ -292,8 +276,8 @@ export default function PlatformAdsPage({
           </div>
         )}
 
-        {isOverviewPage && overviewTab === 'performance' && !previewMode && <AdPerformanceOverview tasks={drafts} loading={loadingTasks} onOpen={id => { const task = drafts.find(item => item.id === id); if (task) { setSelectedDraft(task); onNavigate('adsPlans'); } }} />}
-        {isOverviewPage && overviewTab === "performance" && previewMode && <PlatformAdsPerformancePreview channels={channels} onOpenAccounts={() => setDialog('accounts')} onOpenManaged={() => onNavigate('adsManaged')} />}
+        {isPerformancePage && !previewMode && <AdPerformanceOverview tasks={drafts} loading={loadingTasks} onOpen={id => { const task = drafts.find(item => item.id === id); if (task) { setSelectedDraft(task); onNavigate('adsPlans'); } }} />}
+        {isPerformancePage && previewMode && <PlatformAdsPerformancePreview channels={channels} onOpenAccounts={() => setDialog('accounts')} onOpenManaged={() => setManagedOpen(true)} />}
 
         {page === "adsPlans" &&
           (selectedDraft ? (
@@ -375,7 +359,7 @@ export default function PlatformAdsPage({
                     </span>
                     <ChevronRight size={15} />
                   </button>
-                  <button onClick={() => onNavigate("adsManaged")}>
+                  <button onClick={() => setManagedOpen(true)}>
                     <Bot size={17} />
                     <span>
                       <strong>了解 AI 建议</strong>
@@ -473,7 +457,7 @@ export default function PlatformAdsPage({
             </section>
           ))}
 
-        {isOverviewPage && overviewTab === "creatives" && (
+        {isCreativePage && (
           <>
             <div className="ads-context-banner">
               <Layers3 size={22} />
@@ -537,8 +521,9 @@ export default function PlatformAdsPage({
           </>
         )}
 
-        {page === 'adsManaged' && !previewMode && <AdManagedWorkspace selectedTaskId={selectedDraft?.id} tasks={managedTasks} loading={loadingTasks} onUpdate={replaceTask} onPlans={() => onNavigate('adsPlans')} />}
-        {page === "adsManaged" && previewMode && <PlatformAdsManagedPreview mode={mode} onModeChange={setMode} />}
+        <Drawer title="AI 投手" placement="right" size={720} open={managedOpen} onClose={() => setManagedOpen(false)} destroyOnHidden={false}>
+          {managedOpen && (!previewMode ? <AdManagedWorkspace selectedTaskId={selectedDraft?.id} tasks={managedTasks} loading={loadingTasks} onUpdate={replaceTask} onPlans={() => { setManagedOpen(false); onNavigate('adsPlans'); }} /> : <PlatformAdsManagedPreview mode={mode} onModeChange={setMode} />)}
+        </Drawer>
         <footer className="ads-footer">
           <ShieldCheck size={13} />{" "}
           {previewMode

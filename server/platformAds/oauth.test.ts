@@ -26,7 +26,9 @@ try {
   globalThis.fetch = (async (url: any, init: any) => {
     if (!String(url).startsWith('https://graph.facebook.com/')) return originalFetch(url, init);
     if (String(url).includes('oauth/access_token')) { exchanges++; return Response.json({ access_token: 'top-secret' }); }
-    return Response.json({ data: [{ id: 'act_1', name: 'Account', currency: 'USD' }] });
+    const accountFields = new URL(String(url)).searchParams.get('fields')?.split(',') || [];
+    for (const field of ['id', 'name', 'currency', 'account_status', 'timezone_name']) assert.ok(accountFields.includes(field));
+    return Response.json({ data: [{ id: 'act_1', name: 'Account', currency: 'USD', account_status: 1, timezone_name: 'America/Los_Angeles' }] });
   }) as typeof fetch;
   const state = url.searchParams.get('state')!;
   await finishMetaOAuth(state, 'code');
@@ -35,6 +37,8 @@ try {
   const accounts = await oauthAccounts('t1', 'u1', first.sessionId);
   assert.equal(accounts.status, 'ready');
   assert.equal(accounts.accounts[0].id, 'act_1');
+  assert.equal(accounts.accounts[0].accountStatus, 1);
+  assert.equal(accounts.accounts[0].timezoneName, 'America/Los_Angeles');
   assert.ok(!JSON.stringify(accounts).includes('top-secret'));
   console.log('ad OAuth tests passed');
 } finally { globalThis.fetch = originalFetch; fs.rmSync(dir, { recursive: true, force: true }); }

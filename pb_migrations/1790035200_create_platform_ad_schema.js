@@ -17,6 +17,17 @@ migrate((app) => {
   });
 
   const specs = [
+    ...["platform_ad_campaigns", "platform_ad_adsets", "platform_ad_ads"].map(name => ({
+      name,
+      fields: [
+        ...["tenant_id", "provider", "connectionId", "accountId", "providerResourceId", "level", "parentResourceId", "campaignId", "adsetId", "name", "configuredStatus", "effectiveStatus", "currency", "accountTimezone", "syncRunId", "lastSyncedAt"].map(field => text(field)),
+        json("providerSnapshot")
+      ],
+      indexes: [
+        `CREATE UNIQUE INDEX idx_${name}_identity ON ${name} (tenant_id, connectionId, providerResourceId, syncRunId)`,
+        `CREATE INDEX idx_${name}_connection ON ${name} (tenant_id, connectionId)`
+      ]
+    })),
     {
       name: "platform_ad_imports",
       fields: [
@@ -90,7 +101,8 @@ migrate((app) => {
       name: "platform_ad_connections",
       fields: [
         text("tenant_id", true), text("provider", true), text("accountId", true),
-        text("name"), text("currency"), text("tokenCipher"), text("status"), text("updatedAt")
+        text("name"), text("currency"), text("tokenCipher"), text("status"), text("businessName"),
+        number("accountStatus"), number("timezoneId"), text("timezoneName"), number("timezoneOffsetHoursUtc"), text("updatedAt"), text("resourceSyncRunId"), text("resourceSyncedAt")
       ],
       indexes: []
     },
@@ -168,7 +180,7 @@ migrate((app) => {
     "platform_ad_tasks", "platform_ad_connections", "platform_ad_handoffs",
     "platform_ad_executions", "platform_ad_automation_runs", "platform_ad_automation_rules",
     "platform_ad_oauth_states", "platform_ad_approvals", "platform_ad_launches",
-    "platform_ad_imports"
+    "platform_ad_imports", "platform_ad_campaigns", "platform_ad_adsets", "platform_ad_ads"
   ];
   let result;
   for (const name of names) {

@@ -35,7 +35,7 @@ export class MetaAdsAdapter {
     }
     return data;
   }
-  account(id: string) { return this.request(`act_${metaAccountId(id)}`, { fields: 'id,account_id,name,currency,account_status,timezone_name' }); }
+  account(id: string) { return this.request(`act_${metaAccountId(id)}`, { fields: 'id,account_id,name,business_name,currency,account_status,timezone_id,timezone_name,timezone_offset_hours_utc' }); }
   campaigns(id: string) { return this.request(`act_${metaAccountId(id)}/campaigns`, { fields: 'id,name,status,effective_status,objective,daily_budget,lifetime_budget', limit: 100 }); }
   async assertOwnership(accountId: string, objectId: string) {
     const object = await this.request(objectId, { fields: 'account_id' });

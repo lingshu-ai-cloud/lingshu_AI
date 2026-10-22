@@ -6,6 +6,8 @@ import { AdProviderError, MetaAdsAdapter } from '../platformAds/metaAdapter.js';
 import { beginMetaOAuth, finishMetaOAuth, oauthAccounts, selectOAuthAccount, metaOAuthConfigured } from '../platformAds/oauth.js';
 import { requireAdWriteAccess } from '../platformAds/access.js';
 import { GoogleAdsAdapter, TikTokAdsAdapter } from '../platformAds/otherAdapters.js';
+import { listPlatformAdResources, syncPlatformAdResources } from '../platformAds/resources.js';
+import type { PlatformAdResourceLevel } from '../../shared/platformAdResources.js';
 export const platformAdConnectionsRouter = Router();
 platformAdConnectionsRouter.get('/oauth/meta/callback', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -28,7 +30,10 @@ platformAdConnectionsRouter.post('/oauth/meta/:id/connect', async (req, res) => 
 });
 function failure(res: import('express').Response, error: unknown) {
   const known = error instanceof AdProviderError;
-  res.status(known && error.code === 'NOT_FOUND' ? 404 : known && error.code === 'INVALID_INPUT' ? 400 : 503).json({ error: known ? error.message : '广告账户服务暂不可用', code: known ? error.code : 'SERVICE_ERROR' });
+  const status = known && error.code === 'NOT_FOUND' ? 404
+    : known && error.code === 'INVALID_INPUT' ? 400
+      : known && ['NOT_SUPPORTED', 'ACCOUNT_CONTEXT_REQUIRED', 'AUTH_REQUIRED'].includes(error.code) ? 409 : 503;
+  res.status(status).json({ error: known ? error.message : '广告账户服务暂不可用', code: known ? error.code : 'SERVICE_ERROR' });
 }
 platformAdConnectionsRouter.get('/connections', async (_req, res) => {
   try { res.json({ items: await listConnections((res.locals as AuthLocals).tenantId), releasePolicy: adReleasePolicy(), capabilities: [
@@ -53,5 +58,15 @@ platformAdConnectionsRouter.post('/connections/:id/verify', async (req, res) => 
   try {
     const { connection, accessToken } = await getConnectionCredential((res.locals as AuthLocals).tenantId, req.params.id);
     res.json({ connection: await connectAccount(connection.tenant_id, { provider: connection.provider, accountId: connection.accountId, accessToken }) });
+  } catch (error) { failure(res, error); }
+});
+platformAdConnectionsRouter.post('/connections/:id/resources/sync', async (req, res) => {
+  try { res.json(await syncPlatformAdResources((res.locals as AuthLocals).tenantId, req.params.id)); }
+  catch (error) { failure(res, error); }
+});
+platformAdConnectionsRouter.get('/connections/:id/resources', async (req, res) => {
+  try {
+    const level = String(req.query.level || '') as PlatformAdResourceLevel;
+    res.json(await listPlatformAdResources((res.locals as AuthLocals).tenantId, req.params.id, level));
   } catch (error) { failure(res, error); }
 });

@@ -161,7 +161,7 @@ try {
   await page.getByLabel('Facebook 主页 ID', { exact: true }).fill('124');
   await page.getByText('配置已变化，请重新检查。', { exact: true }).waitFor();
 
-  for (const [name, label] of [['adsOverview', '投放总览'], ['adsPlans', '投放计划'], ['adsManaged', 'AI 托管']]) {
+  for (const [name, label] of [['adsOverview', '投放数据'], ['adsPlans', '计划创编'], ['adsCreatives', '素材管理']]) {
     await open(`page=${name}`);
     await page.locator('.ads-page-purpose > strong').filter({ hasText: label }).waitFor();
     if (name === 'adsOverview') {
@@ -175,14 +175,14 @@ try {
       if (process.env.PLATFORM_ADS_TEST_SCREENSHOT) await page.screenshot({ path: process.env.PLATFORM_ADS_TEST_SCREENSHOT, fullPage: true });
     }
     if (name === 'adsPlans') await page.getByText('投放测试计划', { exact: true }).waitFor();
-    if (name === 'adsManaged') {
-      await page.getByText('历史观察证据', { exact: true }).waitFor();
-      await page.getByText('最近检查已完成', { exact: true }).waitFor();
-      await page.getByText('日预算：观察 → 拟议', { exact: true }).waitFor();
-      await page.getByText('missing-execution（当前返回记录中未找到）', { exact: true }).waitFor();
-      await page.getByText('此记录未保存结构化决策证据，无法还原预算前后、规则版本和 CPC 样本。请查看下方原始记录。', { exact: true }).waitFor();
-    }
   }
+  await open('page=adsManaged');
+  await page.getByRole('dialog', { name: 'AI 投手' }).waitFor();
+  await page.getByText('历史观察证据', { exact: true }).waitFor();
+  await page.getByText('最近检查已完成', { exact: true }).waitFor();
+  await page.getByText('日预算：观察 → 拟议', { exact: true }).waitFor();
+  await page.getByText('missing-execution（当前返回记录中未找到）', { exact: true }).waitFor();
+  await page.getByText('此记录未保存结构化决策证据，无法还原预算前后、规则版本和 CPC 样本。请查看下方原始记录。', { exact: true }).waitFor();
   for (const [worker, label] of [['stale', '运行证据已过期'], ['unknown', '运行状态未知']]) {
     await open(`page=adsManaged&worker=${worker}`);
     await page.getByText(label, { exact: true }).waitFor();

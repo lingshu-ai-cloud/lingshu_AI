@@ -42,11 +42,11 @@ const SOCIAL_NAV: NavSection = {
 };
 
 const ADS_NAV: NavSection = {
-  label: '平台投放',
+  label: '投放管理',
   items: [
-    navItem('adsOverview', <DuotoneGlyph kind="ads" />),
     navItem('adsPlans', <DuotoneGlyph kind="campaign" />),
-    navItem('adsManaged', <DuotoneGlyph kind="agent" />),
+    navItem('adsOverview', <DuotoneGlyph kind="ads" />),
+    navItem('adsCreatives', <DuotoneGlyph kind="create" />),
   ],
 };
 
@@ -81,8 +81,6 @@ const SYSTEM_NAV: NavSection = {
   ],
 };
 
-// Platform Ads is temporarily hidden behind a reversible product-surface flag;
-// ADS_NAV remains intact as the restoration backup.
 const NAV_SECTIONS = [SOCIAL_NAV, ...(PLATFORM_ADS_SURFACE_ENABLED ? [ADS_NAV] : []), CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
 
 const STARTER_HOME_NAV_ITEM = navItem('digitalEmployees', <DuotoneGlyph kind="home" />);

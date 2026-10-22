@@ -29,4 +29,8 @@ let fencedTransportCalled = false;
 const fenced = new MetaAdsAdapter('token', (async () => { fencedTransportCalled = true; return Response.json({ id: '1' }); }) as typeof fetch, async () => { throw new Error('lease generation lost'); });
 await assert.rejects(fenced.request('123', { status: 'ACTIVE' }, 'POST'), /lease generation lost/);
 assert.equal(fencedTransportCalled, false, 'a lost task lease must fence Meta before transport');
+let accountUrl = '';
+await new MetaAdsAdapter('token', (async (url: string | URL | Request) => { accountUrl = String(url); return Response.json({ id: 'act_1' }); }) as typeof fetch).account('1');
+const accountFields = new URL(accountUrl).searchParams.get('fields')?.split(',') || [];
+for (const field of ['business_name', 'currency', 'account_status', 'timezone_id', 'timezone_name', 'timezone_offset_hours_utc']) assert.ok(accountFields.includes(field), `Meta account read must request ${field}`);
 console.log('meta adapter tests passed');
