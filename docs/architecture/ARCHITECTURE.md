@@ -6,6 +6,7 @@
 
 - `src/components/socialContent/`：工作台与用户交互；不得自行绕过服务端租户鉴权或供应商成本控制。
 - `src/components/ConversionPage.tsx` 与 `src/components/customers/`：页面持有会话状态和三栏视图；客户定位/加载、草稿翻译副作用与渠道发送适配分别落在客户子模块，真实发送仍经过现有服务端出站接口和回执边界。
+- `src/components/GlobalAssistant.tsx` 与 `src/components/assistant/assistantProductionIntake.ts`：浮层负责对话与任务入口，后者负责明确的生产请求识别及从企业中心核验已确认产品；不得仅凭对话文本虚构产品身份。
 - `src/components/EnterprisePage.tsx` 与 `src/components/enterprise/`：页面持有可编辑企业资料和导航；资料默认值/快照、服务端读写校验、FAQ/销售风格控制器及业务视图由企业资料模块负责。保存成功必须以服务端读回和产品身份校验为依据。
 - `src/lib/studioApi.ts`、`src/lib/socialImageApi.ts`：前端 API 适配层。
 - `shared/contracts/`：跨端任务、内容与交付合同；字段变更需检查旧任务兼容性。

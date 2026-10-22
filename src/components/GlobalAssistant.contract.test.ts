@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const runtimeSource = fs.readFileSync(new URL('./assistant/globalAssistantRuntime.ts', import.meta.url), 'utf8');
+const productionIntakeSource = fs.readFileSync(new URL('./assistant/assistantProductionIntake.ts', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const appModulesSource = fs.readFileSync(new URL('../appPageModules.tsx', import.meta.url), 'utf8');
 const appShellChromeSource = fs.readFileSync(new URL('./AppShellChrome.tsx', import.meta.url), 'utf8');
@@ -270,7 +271,8 @@ assert.match(source, /persistThread\(activeAgent\)/, '关闭前必须保留任�
 
 const sendSource = sourceSection('const send = useCallback', 'const handleTaskCardAction', '自然语言发送流程');
 assert.match(sendSource, /const threadAgent = PRIMARY_ASSISTANT_THREAD/, '发送消息必须写入 business 主线程');
-assert.match(source, /function assistantProductionIntent[\s\S]*hasProductionVerb[\s\S]*hasProductionArtifact/, '明确的脚本、视频与分镜生产指令必须被识别为生产任务');
+assert.match(productionIntakeSource, /function assistantProductionIntent[\s\S]*hasProductionVerb[\s\S]*hasProductionArtifact/, '明确的脚本、视频与分镜生产指令必须被识别为生产任务');
+assert.match(source, /import \{ assistantProductionIntent, resolveAssistantEnterpriseProduct \} from '\.\/assistant\/assistantProductionIntake'/, '助手必须调用企业产品准入模块');
 assert.match(sendSource, /assistantProductionIntent\(visibleText\)[\s\S]*socialContentApi\.createAssistantAction\(/, '生产指令必须创建真实周任务并调用后端生产入口');
 assert.match(sendSource, /resolveAssistantEnterpriseProduct\(productionIntent\.productQuery\)/, '生产指令必须解析真实企业产品');
 assert.match(sendSource, /dueAt: confirmedDueAt/, '生产任务必须带明确的交付截止时间');
