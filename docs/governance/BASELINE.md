@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵感素材详情与创作准入边界拆分（2026-10-23）
+
+- 代码提交 `02e66b216709a6f3f628cb54101cacbabfb8b2b6` 将素材标签、媒体预览、编导识别、主题选择和完整使用记录抽入 `InspirationMaterialDetailDrawer.tsx`；灵感页继续持有素材读取、主题保存及进入创作回调。卡片与详情统一使用 `canCreateFromLibraryMaterial`，音频、未知时长视频或无可用来源不得进入视觉创作。`InspirationDashboard.tsx` 从 2,423 降至 2,389 行，架构预算同步收紧；全仓仍有 6 个历史超限文件。
+- 素材归属合同中三项旧文件位置断言改查当前实际媒体组件与服务端素材列表投影，没有放宽音频占位、内部素材排除或可持久化收藏约束。聚焦直测/合同 8/8、完整 `test:social-content-frontend`、产品导入 35/35、`pnpm run lint`、架构扫描/ratchet（2,380 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建及 `git diff --check` 通过。`AiCreateStudio` chunk 为 496,106/500,000 字节，仍有大 chunk 提示。按用户决定，本批不测 LinkedIn 付费采集；未调用真实供应商、执行目标库迁移、部署或登录后浏览器验收。远端 SHA 与工作区状态须在推送后单独核验。
+
 ## 周任务启动证据与冲突展示边界拆分（2026-10-23）
 
 - 代码提交 `bc4d37216184c5584ce1b9c9b1f0e46bddf76ed8` 将已存在的另一轮任务冲突解析、真实运行回执核验、未知结果只读核对判定迁入 `weeklyStartValidation.ts`，冲突提示迁入 `WeeklyStartConflictAlert.tsx`。页面仍只执行一次带精确计划版本的 `approveGoal`，未知结果只读核对一次，不新增启动或付费请求。`DigitalEmployeePage.tsx` 从 2,101 降至 2,033 行，历史预算同步收紧；全仓仍有 6 个历史超限文件。
