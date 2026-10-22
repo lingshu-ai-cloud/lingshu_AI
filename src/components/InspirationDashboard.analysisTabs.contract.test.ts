@@ -6,6 +6,7 @@ import type { TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes.j
 import { inspirationCreationAvailability, inspirationCreationShotPreflight } from './InspirationDashboard.js';
 
 const source = readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
+const analysisProjectionSource = readFileSync(new URL('./inspiration/inspirationAnalysisProjection.ts', import.meta.url), 'utf8');
 const analysisTabsSource = readFileSync(new URL('./inspiration/InspirationVideoAnalysisTabs.tsx', import.meta.url), 'utf8');
 
 test('director detail keeps analysis evidence inside the three analysis tabs', () => {
@@ -43,11 +44,12 @@ test('image posts and deleted weekly snapshots keep safe detail states', () => {
 });
 
 test('active server progress wins over an older completed analysis result', () => {
-  const progressGate = source.indexOf('if (analysisProgressIsActive(progress))');
-  const exactModeGate = source.indexOf("if (payload?.analysisMode !== 'exact')");
+  const progressGate = analysisProjectionSource.indexOf('if (analysisProgressIsActive(progress))');
+  const exactModeGate = analysisProjectionSource.indexOf("if (payload?.analysisMode !== 'exact')");
   assert.ok(progressGate >= 0 && progressGate < exactModeGate);
-  assert.match(source, /benchmark\.shots\.some\(shot => shot\.granularity !== 'shot'\)/);
-  assert.match(source, /!benchmark\.timelineComplete/);
+  assert.match(analysisProjectionSource, /benchmark\.shots\.some\(shot => shot\.granularity !== 'shot'\)/);
+  assert.match(analysisProjectionSource, /!benchmark\.timelineComplete/);
+  assert.match(source, /from '\.\/inspiration\/inspirationAnalysisProjection'/);
   assert.match(source, /activeServerAnalysis \|\| !recordId/);
   assert.match(source, /const draftReady = !pending && reviewHandoff\?\.directorHandoffReady/);
   assert.match(source, /const availability = inspirationCreationAvailability\(video\)/);

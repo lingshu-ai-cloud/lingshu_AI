@@ -9,6 +9,7 @@
 - `src/components/GlobalAssistant.tsx` 与 `src/components/assistant/assistantProductionIntake.ts`：浮层负责对话与任务入口，后者负责明确的生产请求识别及从企业中心核验已确认产品；不得仅凭对话文本虚构产品身份。
 - `src/components/InspirationDashboard.tsx` 与 `src/components/inspiration/inspirationFrameMatching.ts`：灵感页负责展示、交互和素材读取，逐镜素材评分、硬条件、可复制性与替代路线由纯匹配模块负责；未核验的产品主体或真实性证据不得靠软评分提升为可复用片段。
 - `src/components/inspiration/inspirationVideoProjection.ts`：爬虫/发现记录投影为前端视频、元数据兜底、发现评分、来源标签及账号基线推荐；页面保留请求、鉴权、排序编排和展示，旧的页面导出继续转发以兼容消费者。
+- `src/components/inspiration/inspirationAnalysisProjection.ts`：分析文本清洗、精确分析准入、展示资格、粗结构与逐镜摘要构建；页面继续负责请求、复核交互与结果展示，不将策略级或不确定文本标成通过的全片证据。
 - `src/components/EnterprisePage.tsx` 与 `src/components/enterprise/`：页面持有可编辑企业资料和导航；资料默认值/快照、服务端读写校验、FAQ/销售风格控制器及业务视图由企业资料模块负责。保存成功必须以服务端读回和产品身份校验为依据。
 - `src/lib/studioApi.ts`、`src/lib/socialImageApi.ts`：前端 API 适配层。
 - `shared/contracts/`：跨端任务、内容与交付合同；字段变更需检查旧任务兼容性。

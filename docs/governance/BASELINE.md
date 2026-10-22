@@ -9,6 +9,10 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 9 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## 灵感分析投影与准入边界（2026-10-22）
+
+- 以干净集成提交 `6618a6b6ce1ca8f4168cb4ebdfb1df32dfff50b9` 为起点，将分析文本清洗、精确分析门槛、图文展示准入、粗结构与逐镜摘要构建迁至 `inspirationAnalysisProjection.ts`，页面保留网络请求和复核交互；原页面导出继续转发。`InspirationDashboard.tsx` 从 5,520 降至 5,167 行并收紧预算，历史超限文件仍有 8 个。新增直接测试证明不确定口播不会进入已确认字幕、单镜头不构成完整视频分析；既有精确分析和图文门禁合同改为检查新模块及页面接线。`pnpm run lint`、`pnpm run test:social-content-frontend`、灵感页 15 项合同测试、架构扫描与 ratchet、191 项迁移清单只读检查、`pnpm run build` 和 `git diff --check` 通过；构建仅证明静态产物可生成，未做真实供应商或部署验收。
+
 ## 灵感发现数据投影边界（2026-10-22）
 
 - 以干净集成提交 `da985ee69647a96e75df2bc1f1d98263bc49abde` 为起点，把爬虫记录到前端视频的投影、图片证据保留、元数据兜底、发现评分、账号基线推荐迁至 `inspirationVideoProjection.ts`。页面保留所有请求、租户上下文、排序/筛选与展示；既有页面导出转发保持兼容。`InspirationDashboard.tsx` 从 5,784 降至 5,520 行并收紧预算，历史超限文件仍有 8 个。新增直接测试覆盖图片证据、来源去重、无效平台和八条可度量账号历史的推荐门槛；完整验证以本批最终命令为准。
