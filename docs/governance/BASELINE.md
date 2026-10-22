@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工首次引导状态与保存边界拆分（2026-10-23）
+
+- 代码提交 `8b887bb001c57cfb92ecbf780b5612051958f783` 将首次引导及运行规则的本地状态、企业与产品资料读取/保存、阶段确认、出镜策略和推荐计划接线整体迁至 `DigitalEmployeeOnboardingPanel.tsx`（752 行）；`DigitalEmployeePage.tsx` 保留页面导航、周目标与执行状态，通过原 `onSave`/就绪跳转回调挂载引导。主页面从 2,883 降至 2,103 行，历史预算同步收紧；仍有 6 个历史超限文件，不能视为整体拆分完成。
+- `test:digital-employees` 整组、引导重置、发布账号安全与周目标面板定向契约、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,376 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过。`AiCreateStudio` chunk 为 496,106/500,000 字节，仍有大 chunk 提示。额外扫描的 3 条旧源码契约（监控页动态导入、旧周计划确认接线、旧采集诊断展示）失败；所查目标在改动前 `HEAD` 也不存在，本批未以改写无关业务来凑绿。未做真实浏览器交互、付费供应商调用、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 数字员工首次引导展示边界拆分（2026-10-23）
 
 - 代码提交 `17fb32dee5b30290a1f29f51f37f6304b35f1596` 将企业与品牌、产品表、经营阶段、出镜方式四步展示和共用弹窗框架迁至 `DigitalEmployeeOnboardingSteps.tsx`；页面仍持有企业资料与产品导入、阶段保存、推荐计划和数字人授权判断。`DigitalEmployeePage.tsx` 从 3,101 降至 2,883 行，预算同步收紧；全仓仍有 6 个历史超限文件。
