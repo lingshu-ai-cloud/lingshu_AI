@@ -9,7 +9,7 @@ export default function ImageEvidenceSummaryPanel({ evidence }: { evidence: Imag
     <section className="rounded-lg border border-border bg-white p-4">
       <h3 className="text-sm font-semibold text-text-primary">图文证据与轮播节奏</h3>
       <div className="mt-3 space-y-2">
-        {evidence.carouselFlow.map(item => <div key={`${item.imageIndex}-${item.role}`} className="rounded-lg bg-surface-2 px-3 py-2 text-xs leading-5"><strong className="text-text-primary">第 {item.imageIndex + 1} 张 · {item.role}</strong><p className="text-text-secondary">{item.evidence}</p></div>)}
+        {evidence.carouselFlow.map(item => <div key={`${item.imageIndex}-${item.role}`} className="rounded-lg bg-surface-2 px-3 py-2 text-xs leading-5"><strong className="text-text-primary">第 {item.imageIndex} 张 · {item.role}</strong><p className="text-text-secondary">{item.evidence}</p></div>)}
       </div>
     </section>
     <section className="rounded-lg border border-border bg-white p-4">
