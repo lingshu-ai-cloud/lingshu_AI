@@ -7,6 +7,7 @@ import {
   type SocialImageCreationTask,
   type SocialImageContentType,
   type SocialImageCreationPath,
+  type SocialImageReferenceLayerBlueprint,
 } from '../../shared/contracts/socialImageCreation.js';
 
 // Reuse the canonical Studio project collection so PocketBase and Postgres
@@ -16,6 +17,46 @@ type StoredImageTask = { id: string; tenant_id: string; title: string; status: s
 
 const text = (value: unknown, max = 5000) => String(value ?? '').trim().slice(0, max);
 const stringArray = (value: unknown, max = 20) => Array.isArray(value) ? value.map(item => text(item, 500)).filter(Boolean).slice(0, max) : [];
+const clamp01 = (value: unknown) => Number.isFinite(Number(value)) ? Math.max(0, Math.min(1, Number(value))) : 0;
+const normalizedRect = (value: unknown) => {
+  const row = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const x = clamp01(row.x), y = clamp01(row.y);
+  return { x, y, width: Math.min(1 - x, clamp01(row.width)), height: Math.min(1 - y, clamp01(row.height)) };
+};
+
+export function normalizeSocialImageReferenceLayerBlueprints(value: unknown): SocialImageReferenceLayerBlueprint[] {
+  const roles = new Set(['background', 'mask', 'product', 'text', 'logo', 'decoration']);
+  const shapes = new Set(['rectangle', 'rounded_rectangle', 'ellipse', 'polygon', 'linear_gradient']);
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 10).flatMap((raw, blueprintIndex) => {
+    if (!raw || typeof raw !== 'object') return [];
+    const row = raw as Record<string, unknown>;
+    const layers = (Array.isArray(row.layers) ? row.layers : []).slice(0, 20).flatMap((rawLayer, layerIndex) => {
+      if (!rawLayer || typeof rawLayer !== 'object') return [];
+      const layer = rawLayer as Record<string, unknown>, role = String(layer.role || '');
+      const bounds = normalizedRect(layer.bounds);
+      if (!roles.has(role) || !bounds.width || !bounds.height) return [];
+      return [{ id: text(layer.id, 80) || `${role}-${layerIndex + 1}`, role: role as SocialImageReferenceLayerBlueprint['layers'][number]['role'], zIndex: Math.max(0, Math.min(100, Math.round(Number(layer.zIndex) || layerIndex))), bounds, confidence: clamp01(layer.confidence) }];
+    });
+    const masks = (Array.isArray(row.masks) ? row.masks : []).slice(0, 12).flatMap((rawMask, maskIndex) => {
+      if (!rawMask || typeof rawMask !== 'object') return [];
+      const mask = rawMask as Record<string, unknown>, shape = String(mask.shape || '');
+      const bounds = normalizedRect(mask.bounds);
+      if (!shapes.has(shape) || !bounds.width || !bounds.height) return [];
+      const points = Array.isArray(mask.points) ? mask.points.slice(0, 24).flatMap(point => {
+        if (!point || typeof point !== 'object') return [];
+        const item = point as Record<string, unknown>;
+        return [{ x: clamp01(item.x), y: clamp01(item.y) }];
+      }) : [];
+      return [{ id: text(mask.id, 80) || `mask-${maskIndex + 1}`, shape: shape as SocialImageReferenceLayerBlueprint['masks'][number]['shape'], bounds,
+        opacity: clamp01(mask.opacity), color: /^#[0-9a-f]{6}$/i.test(String(mask.color || '')) ? String(mask.color) : undefined,
+        cornerRadius: mask.cornerRadius === undefined ? undefined : clamp01(mask.cornerRadius), feather: mask.feather === undefined ? undefined : clamp01(mask.feather),
+        angle: Number.isFinite(Number(mask.angle)) ? Math.max(-360, Math.min(360, Number(mask.angle))) : undefined,
+        points: points.length >= 3 ? points : undefined, zIndex: Math.max(0, Math.min(100, Math.round(Number(mask.zIndex) || maskIndex + 1))), confidence: clamp01(mask.confidence) }];
+    });
+    return layers.length || masks.length ? [{ imageIndex: Math.max(1, Math.round(Number(row.imageIndex) || blueprintIndex + 1)), layers, masks }] : [];
+  });
+}
 
 export function defaultSocialImageTask(input: Record<string, unknown>, now = new Date().toISOString()): SocialImageCreationTask {
   const imageType = SOCIAL_IMAGE_CONTENT_TYPES.includes(input.imageType as SocialImageContentType) ? input.imageType as SocialImageContentType : 'product_poster';
@@ -27,6 +68,7 @@ export function defaultSocialImageTask(input: Record<string, unknown>, now = new
   const referenceUrls = stringArray(input.referenceUrls, 10);
   const rawSnapshot = input.referenceSnapshot && typeof input.referenceSnapshot === 'object' ? input.referenceSnapshot as Record<string, unknown> : null;
   const snapshotImageUrls = stringArray(rawSnapshot?.imageUrls, 10);
+  const layerBlueprints = creationPath === 'viral_replication' ? normalizeSocialImageReferenceLayerBlueprints(input.referenceLayerBlueprints) : [];
   const referenceSnapshot = creationPath === 'viral_replication' ? {
     sourceRecordId: text(rawSnapshot?.sourceRecordId, 200) || undefined,
     sourceUrl: text(rawSnapshot?.sourceUrl, 2000) || referenceUrls[0] || undefined,
@@ -90,6 +132,7 @@ export function defaultSocialImageTask(input: Record<string, unknown>, now = new
         { role: 'supporting', region: 'headline-zone', relativeSize: 'small', alignment: 'left', preserveLineBreaks: true },
       ],
       protectedSubjects: ['产品包装', '主体人物'], overlayZones: ['标题区', '内容模块区', 'CTA区'],
+      ...(layerBlueprints.length ? { referenceLayerBlueprints: layerBlueprints } : {}),
       ...(isGif ? { motionMechanism: 'background_switch' as const } : {}),
     } : undefined,
     enterpriseAssets, generationJobs: [], repairInstructions: [], outputs: [], fieldsToConfirm: [], publishable: false, createdAt: now, updatedAt: now,
@@ -165,6 +208,10 @@ export async function updateSocialImageTask(store: DataStore, tenantId: string, 
     creativeRecipe: { ...current.creativeRecipe, ...(patch.creativeRecipe || {}) },
     imageTextContract: { ...current.imageTextContract, ...(patch.imageTextContract || {}) },
     deliverySpec: { ...current.deliverySpec, ...(patch.deliverySpec || {}) },
+    replicationRecipe: patch.replicationRecipe ? {
+      ...patch.replicationRecipe,
+      referenceLayerBlueprints: normalizeSocialImageReferenceLayerBlueprints(patch.replicationRecipe.referenceLayerBlueprints),
+    } : current.replicationRecipe,
     enterpriseAssets: patch.enterpriseAssets || current.enterpriseAssets || [],
     generationJobs: patch.generationJobs || current.generationJobs || [],
     repairInstructions: patch.repairInstructions || current.repairInstructions || [],

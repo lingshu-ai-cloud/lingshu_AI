@@ -18,6 +18,14 @@ export function socialImageLayerGraphIssues(graph: SocialImageLayerGraph): strin
     if ((layer.kind === 'product' || layer.kind === 'logo') && !layer.sourceAssetId) issues.push(`${layer.kind} 图层缺少企业资产：${layer.id}`);
     if ((layer.kind === 'text' || layer.kind === 'cta') && !String(layer.content || '').trim()) issues.push(`文字图层内容为空：${layer.id}`);
     if (layer.opacity !== undefined && (layer.opacity < 0 || layer.opacity > 1)) issues.push(`图层透明度无效：${layer.id}`);
+    if (layer.mask) {
+      if (layer.kind !== 'overlay') issues.push(`非覆盖图层不能携带蒙版：${layer.id}`);
+      if (layer.mask.color && !/^#[0-9a-f]{6}$/i.test(layer.mask.color)) issues.push(`蒙版颜色无效：${layer.id}`);
+      if (layer.mask.points?.some(point => !Number.isFinite(point.x) || !Number.isFinite(point.y) || point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1)) issues.push(`蒙版坐标无效：${layer.id}`);
+      if (layer.mask.feather !== undefined && (!Number.isFinite(layer.mask.feather) || layer.mask.feather < 0 || layer.mask.feather > 1)) issues.push(`蒙版羽化无效：${layer.id}`);
+      if (layer.mask.cornerRadius !== undefined && (!Number.isFinite(layer.mask.cornerRadius) || layer.mask.cornerRadius < 0 || layer.mask.cornerRadius > 1)) issues.push(`蒙版圆角无效：${layer.id}`);
+      if (layer.mask.angle !== undefined && (!Number.isFinite(layer.mask.angle) || Math.abs(layer.mask.angle) > 360)) issues.push(`蒙版角度无效：${layer.id}`);
+    }
   }
   const products = graph.layers.filter(layer => layer.kind === 'product');
   const foreground = graph.layers.filter(layer => ['overlay', 'text', 'cta', 'logo', 'badge'].includes(layer.kind));

@@ -1,4 +1,5 @@
 import InspirationVideoAnalysisTabs from './inspiration/InspirationVideoAnalysisTabs';
+import ImageEvidenceSummaryPanel from './inspiration/ImageEvidenceSummaryPanel';
 import VideoAnalysisProgressPanel, { analysisProgressIsActive } from './inspiration/VideoAnalysisProgressPanel';
 import { Alert, Button, Drawer, Form, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
 import LsPageHeader from './ui/LsPageHeader';
@@ -1169,18 +1170,7 @@ export function DirectorVideoDetailPanel({
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
           {isImagePost && notice && <p role="status" className="mb-4 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">{notice}</p>}
           {isImagePost && imageAnalysisReady && imageEvidence ? (
-            <div className="mt-4 space-y-4">
-              <section className="rounded-lg border border-border bg-white p-4">
-                <h3 className="text-sm font-semibold text-text-primary">图文证据与轮播节奏</h3>
-                <div className="mt-3 space-y-2">
-                  {imageEvidence.carouselFlow.map(item => <div key={`${item.imageIndex}-${item.role}`} className="rounded-lg bg-surface-2 px-3 py-2 text-xs leading-5"><strong className="text-text-primary">第 {item.imageIndex + 1} 张 · {item.role}</strong><p className="text-text-secondary">{item.evidence}</p></div>)}
-                </div>
-              </section>
-              <section className="rounded-lg border border-border bg-white p-4">
-                <h3 className="text-sm font-semibold text-text-primary">可复用模块</h3>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">{imageEvidence.reusableModules.map(item => <div key={item.module} className="rounded-lg border border-border p-3 text-xs"><strong>{item.module}</strong><p className="mt-1 leading-5 text-text-secondary">保留：{item.preserve}</p><p className="leading-5 text-text-muted">替换：{item.replace}</p></div>)}</div>
-              </section>
-            </div>
+            <ImageEvidenceSummaryPanel evidence={imageEvidence} />
           ) : isImagePost ? (
             <section className="mt-4 rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
               {pending ? <Loader2 size={24} className="mx-auto animate-spin text-accent" /> : <BarChart2 size={24} className="mx-auto text-text-muted" />}
@@ -2416,6 +2406,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             referenceThumbnail: video.thumbnail,
             referenceMediaUrl: video.thumbnail,
             referenceContentType: 'image', referenceCaption: video.aiAnalysis?.caption || '',
+            referenceLayerBlueprints: video.aiAnalysis?.imageEvidence?.layerBlueprints || [],
           },
         },
       } }));

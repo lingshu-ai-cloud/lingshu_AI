@@ -49,11 +49,19 @@ function recipeSummary(recipe?: SocialImageReplicationRecipe): string {
   const typography = (recipe.typographyRegions || []).map(region =>
     `${region.role}:${region.region}/${region.relativeSize}/${region.alignment}/line-breaks=${region.preserveLineBreaks}`,
   ).join('; ');
+  const blueprint = recipe.referenceLayerBlueprints?.[0];
+  const layerOrder = blueprint?.layers.slice().sort((a, b) => a.zIndex - b.zIndex)
+    .map(layer => `${layer.role}:${layer.id}@z${layer.zIndex}`).join(' > ');
+  const masks = blueprint?.masks.map(mask =>
+    `${mask.id}:${mask.shape}/box=[${mask.bounds.x},${mask.bounds.y},${mask.bounds.width},${mask.bounds.height}]/opacity=${mask.opacity}/z=${mask.zIndex}`,
+  ).join('; ');
   return [
     regions ? `Normalized layout priors: ${regions}.` : '',
     typography ? `Typography priors: ${typography}.` : '',
     recipe.productPresentation ? `Product presentation: ${recipe.productPresentation}.` : '',
     recipe.protectedSubjects.length ? `Protected subjects: ${recipe.protectedSubjects.join(', ')}.` : '',
+    layerOrder ? `Measured back-to-front layer order: ${layerOrder}.` : '',
+    masks ? `Measured masks (preserve contour, coverage and opacity): ${masks}.` : '',
   ].filter(Boolean).join(' ');
 }
 

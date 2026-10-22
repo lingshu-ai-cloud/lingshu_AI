@@ -7,7 +7,7 @@
 - `src/components/socialContent/`：工作台与用户交互；不得自行绕过服务端租户鉴权或供应商成本控制。
 - `src/components/ConversionPage.tsx` 与 `src/components/customers/`：页面持有会话状态和三栏视图；客户定位/加载、草稿翻译副作用与渠道发送适配分别落在客户子模块，真实发送仍经过现有服务端出站接口和回执边界。
 - `src/components/GlobalAssistant.tsx` 与 `src/components/assistant/`：浮层负责对话、任务入口和请求编排；`assistantProductionIntake.ts` 负责明确生产请求识别及从企业中心核验已确认产品，不得仅凭对话文本虚构产品身份；`assistantActionProjection.ts` 负责聚焦卡自然语言动作、后端签名目标与参数、响应卡身份和跨对象动作过滤。页面只调用这些规则，不自行推断业务对象或放行跨对象操作。
-- `src/components/InspirationDashboard.tsx` 与 `src/components/inspiration/inspirationFrameMatching.ts`：灵感页负责展示、交互和素材读取，逐镜素材评分、硬条件、可复制性与替代路线由纯匹配模块负责；未核验的产品主体或真实性证据不得靠软评分提升为可复用片段。
+- `src/components/InspirationDashboard.tsx` 与 `src/components/inspiration/inspirationFrameMatching.ts`：灵感页负责展示、交互和素材读取，逐镜素材评分、硬条件、可复制性与替代路线由纯匹配模块负责；图片证据面板由 `ImageEvidenceSummaryPanel.tsx` 承载，展示轮播节奏、可复用模块和图层蓝图。未核验的产品主体或真实性证据不得靠软评分提升为可复用片段。
 - `src/components/inspiration/inspirationVideoProjection.ts`：爬虫/发现记录投影为前端视频、元数据兜底、发现评分、来源标签及账号基线推荐；页面保留请求、鉴权、排序编排和展示，旧的页面导出继续转发以兼容消费者。
 - `src/components/inspiration/inspirationAnalysisProjection.ts`：分析文本清洗、精确分析准入、展示资格、粗结构与逐镜摘要构建；当前选中视频由灵感页挂载 `DirectorVideoDetailPanel` 展示与复核。旧 `ScriptPanel`/`AnalysisPanel` 及其 Seedance 脚本侧栏没有挂载，已清理；不将策略级或不确定文本标成通过的全片证据。
 - `src/components/inspiration/inspirationMaterialLibrary.ts`：素材库入口参数、企业通用/产品归属、可见标签与语义、分类徽标、产品/方向/图库筛选；权威媒体比例计算在 `src/lib/materialAspectRatio.ts`，规则模块不反向依赖 React 组件。页面保留素材加载、用户操作和展示，原页面导出继续转发。
@@ -17,7 +17,7 @@
 - `server/routes/`：HTTP 鉴权、输入规范化、租户上下文和响应编排；业务算法逐步下沉到领域模块。
 - `server/digitalEmployees/taskEvidenceProjection.ts`：数字员工任务的执行元数据、依赖与业务引用范围、工作流归属、项目完成/渲染证据的纯规则；路由仅在租户范围内读写记录并调用这些规则，不能用历史草稿或可变引用覆盖托管项目的索引血缘。
 - `server/routes/videoCrawlerOpsTaskState.ts`：视频来源爬虫任务的纯状态规则，包括中断恢复、显式重试、耗尽终止和待处理优先级；`videos.ts` 保留原导出并负责持久化、租户可见性与执行编排。
-- `server/socialImage/`：图片任务、参考画布、首版策划、图层合成、修订和质量判定。
+- `server/socialImage/`：图片任务、参考画布、首版策划、图层合成、修订和质量判定。参考图层蓝图在任务创建/更新和合成入口均规范化；蒙版层级不能绕过产品遮挡上限。
 - `server/starter198/socialContentProductionExecution.ts`：社媒自动生产 worker 的阶段编排；素材路线重绑定与动态主持人背景锁由 `socialContentProductionRouting.ts` 负责，`socialContentProductionMaterialPreparation.ts` 在预算认领前读取任务素材、核对已批准本地路线并记录重绑定证据，非渲染代拍清单投影由 `socialContentShootingPlan.ts` 负责。`socialContentProductionScriptBaseline.ts` 负责已冻结脚本快照校验、兼容重建和原任务持久化；不能在恢复时悄悄采用更新的企业事实或模板。成片后复刻评估的参考视频只从任务素材或租户路径、来源和哈希均匹配的缓存读取，由 `socialContentProductionReplicationEvaluation.ts` 负责。原 worker 导出维持兼容。
 - `server/lib/translationCues.ts`：时间戳配音翻译的纯文本解析、cue 完整性校验和响应形态归一化；Express 超时/连接生命周期保留在路由 adapter。
 - `server/lib/imageGen.ts`、`server/agents/qwen.ts`：供应商适配；调用由服务端显式选择并受预算/回执边界约束。

@@ -14,7 +14,7 @@ import type { StoryboardQaPhase, StoryboardQaScene, StoryboardQaObservation } fr
 import {submitDirectorG5PaidRequest} from '../starter198/socialDirectorG5PaidRequest.js';
 import { mergeShotClassificationRepair, repairVideoShotClassifications } from './qwenClassificationRepair.js';
 export { mergeShotClassificationRepair } from './qwenClassificationRepair.js';
-import { normalizeQwenQualityScore, storyboardQaProviderFallbackEligible, type ImagePostEvidenceAnalysis, type QwenAsrSegment, type QwenTimelinePlan } from './qwenContracts.js';
+import { normalizeImageLayerBlueprints, normalizeQwenQualityScore, storyboardQaProviderFallbackEligible, type ImagePostEvidenceAnalysis, type QwenAsrSegment, type QwenTimelinePlan } from './qwenContracts.js';
 import { createQwenClient, dashscopeApiKey, getQwenAsrProviderBinding as readQwenAsrProviderBinding, getQwenProviderBinding as readQwenProviderBinding, qwenAsrBaseUrl } from './qwenClient.js';
 export { dashscopeApiKey } from './qwenClient.js';
 export { normalizeQwenQualityScore, storyboardQaProviderFallbackEligible, type ImagePostEvidenceAnalysis, type QwenAsrSegment, type QwenTimelinePlan } from './qwenContracts.js';
@@ -597,6 +597,7 @@ Schema:
     "cta": ["原文或OCR中明确出现的行动指令"]
   },
   "reusableModules": [{"module":"布局或信息模块","evidence":"可见证据","preserve":"可复用的通用结构","replace":"必须替换的竞品内容","confidence":0.0}],
+  "layerBlueprints": [{"imageIndex":1,"layers":[{"id":"background","role":"background|mask|product|text|logo|decoration","zIndex":0,"bounds":{"x":0,"y":0,"width":1,"height":1},"confidence":0.0}],"masks":[{"id":"mask-1","shape":"rectangle|rounded_rectangle|ellipse|polygon|linear_gradient","bounds":{"x":0,"y":0,"width":1,"height":1},"opacity":0.0,"color":"#000000","cornerRadius":0.0,"feather":0.0,"angle":0,"points":[],"zIndex":1,"confidence":0.0}]}],
   "uncertainties": []
 }
 
@@ -604,6 +605,7 @@ Schema:
 - observedFacts 按每张图分别输出，imageIndex 从 1 开始。
 - visibleText 只能写实际能读清的 OCR 文字。
 - reusableModules 只能复用构图、信息层级、色彩关系、轮播功能；竞品品牌、Logo、产品、包装、联系方式必须写入 replace。
+- layerBlueprints 只提取后续生产所需的遮罩轮廓/透明度和图层前后关系。坐标是 0..1 归一化数值；zIndex 越大越靠前。layers 覆盖实际可见的背景、遮罩、产品、文字、Logo 和装饰层，不确定时降低 confidence，不得猜测。masks 按像素观察记录形状、范围、透明度、颜色、边缘柔化及层级；polygon points 是画布绝对归一化坐标；看不清时不输出。
 - 不输出爆款评分，不根据点赞量推断因果。`;
   const meta = untrustedPromptData('image_post_metadata', JSON.stringify({
     title: opts.title || '',
@@ -641,6 +643,7 @@ Schema:
       cta: Array.isArray(parsed.copyEvidence?.cta) ? parsed.copyEvidence!.cta.slice(0, 6) : [],
     },
     reusableModules: Array.isArray(parsed.reusableModules) ? parsed.reusableModules.slice(0, 12) : [],
+    layerBlueprints: normalizeImageLayerBlueprints(parsed.layerBlueprints, opts.images.length),
     uncertainties: Array.isArray(parsed.uncertainties) ? parsed.uncertainties.map(String).slice(0, 12) : [],
   };
 }
