@@ -105,6 +105,7 @@ import { generatePosterImage, ImageProviderRejectedError, imageExt, normalizeIma
 import { createGeneratedImageMaterial } from '../lib/generatedImageMaterial.js';
 import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, recordSocialImagePaidJobFailure, socialImageOwnedMaterialUrl, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
 import { claimSocialImagePlannedUnit, socialImagePlannedRenderInput } from '../socialImage/socialImageDurablePlan.js';
+import { buildStudioSocialImagePaidPrompt, socialImageReferenceRoleText, verifyFrozenGifProductAssets } from '../socialImage/socialImagePaidRenderAdmission.js';
 import { readSocialImageTask } from '../socialImage/socialImageTask.js';
 import { materialLocalFile, mimeFromFile, normalizePosterBrief } from '../socialImage/studioPosterHelpers.js';
 import { SOCIAL_IMAGE_HARD_CHECKS } from '../../shared/contracts/socialImageCreation.js';
@@ -5159,12 +5160,15 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
     return;
   }
   let plannedInput: ReturnType<typeof socialImagePlannedRenderInput> | null = null;
+  let plannedImageTask: Awaited<ReturnType<typeof readSocialImageTask>> = null;
   if (imageTaskId) {
     try {
       const imageTask = await readSocialImageTask(store, tenantId, imageTaskId);
       if (!imageTask) throw new SocialImagePaidJobError('social_image_task_missing');
-      if (imageTask.imageType === 'gif_poster') throw new SocialImagePaidJobError('social_image_gif_delivery_not_ready');
-      if (imageTask.imageType === 'carousel') plannedInput = socialImagePlannedRenderInput(imageTask, imageJobId);
+      if (imageTask.imageType === 'carousel' || imageTask.imageType === 'gif_poster') {
+        plannedInput = socialImagePlannedRenderInput(imageTask, imageJobId);
+        plannedImageTask = imageTask;
+      }
     } catch (error) {
       const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_render_admission_failed';
       res.status(code === 'social_image_task_missing' ? 404 : 409).json({ ok: false, code, error: '图片多输出单元未通过冻结计划校验；未调用图片供应商' });
@@ -5235,6 +5239,17 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
   }
   const productReferences: Array<{ productId: string; image: ReferenceImage }> = [];
   const assetFieldsToConfirm: string[] = [];
+  if (plannedInput?.unit.role === 'gif_plate' && plannedImageTask) {
+    const profile = await readTenantEnterpriseProfile(tenantId);
+    const products = profile.products.items || [];
+    try { await verifyFrozenGifProductAssets(plannedImageTask, products, productIdentity, async imageUrl => {
+      const image = await storyboardEnterpriseImage(imageUrl, tenantId);
+      return image ? Buffer.from(image.base64, 'base64') : null;
+    }); } catch (error) {
+      res.status(409).json({ ok: false, code: error instanceof SocialImagePaidJobError ? error.code : 'social_image_gif_product_identity_changed',
+        error: '企业产品主图与冻结计划不一致；未调用图片供应商' }); return;
+    }
+  }
   const requestedProductIds = Array.isArray(productIds) ? productIds.map(String).filter(Boolean).slice(0, 2) : [];
   if (requestedProductIds.length) {
     const profile = await readTenantEnterpriseProfile(tenantId);
@@ -5262,7 +5277,7 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
   const referenceBlockers = [
     ...referenceResolution.blockers,
     ...(missingProductIds.length ? [`缺少当前产品的精准身份图片：${missingProductIds.join('、')}`] : []),
-    ...(!ownedReferences.length ? ['没有可用于锁定产品或企业身份的已授权图片'] : []),
+    ...(!ownedReferences.length && plannedInput?.unit.role !== 'gif_plate' ? ['没有可用于锁定产品或企业身份的已授权图片'] : []),
   ];
   if (referenceBlockers.length) {
     res.status(422).json({
@@ -5275,29 +5290,14 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
   // Tenant-owned identity references stay first. A competitor image can only
   // be the final style benchmark and never becomes product authority.
   const references = [...ownedReferences, ...benchmarkReferences].slice(0, 3);
-  const referenceRoleText = [
-    ...productReferences.map((item, index) => `Reference ${index + 1}: exact_product; enterpriseProduct=${item.productId}`),
-    ...referenceResolution.descriptors.map((item, index) => (
-      `Reference ${productReferences.length + index + 1}: ${item.role}; material=${item.materialId}; product=${item.productId || 'none'}`
-    )),
-    ...benchmarkReferences.map((_, index) => `Reference ${ownedReferences.length + index + 1}: style_benchmark_only`),
-  ].slice(0, 3).join('\n');
-  const prompt = [
-    safeImagePrompt,
-    `Generate one finished ${IMAGE_DELIVERABLE_LABELS[deliverableType]} (${deliverableType}). Production strategy: ${productionStrategy}.`,
-    'Do not imply OEM/ODM, export, factory, certification, pricing, MOQ, lead-time, delivery, or customization capabilities unless they appear verbatim in the verified JSON.',    `Use this exact poster JSON as the content source:\n${JSON.stringify(safePoster, null, 2)}`,
-    `Aspect ratio: ${ratio}.`,
-    referenceRoleText,
-    'An exact_product reference is the only product identity authority. A style reference may influence composition and visual rhythm only, never product, logo, packaging, text or commercial facts.',
-    'Use only the sections that contain verified JSON content. Empty badge, proof, process, category, or CTA sections must stay absent rather than being filled with generic marketing claims.',
-    'All visible text must match the JSON exactly. Avoid extra fake certifications, fake numbers, fake flags, watermarks, or unreadable tiny claims.',
-    benchmarkReferences.length
-      ? 'The final reference is a benchmark: use it only for generic layout hierarchy, visual rhythm and image-copy relationship. Never copy its brand, logo, product, packaging, claims, contact information or exact wording.'
-      : '',
-    ownedReferences.length
-      ? `The first ${ownedReferences.length} reference image(s) are tenant-owned enterprise assets and are the only authority for product appearance, packaging and brand identity. Do not redraw or invent their labels or logos.`      : 'No tenant-owned product or brand reference was provided. Keep product and Logo areas empty rather than copying them from the benchmark or inventing enterprise identity.',
-  ].filter(Boolean).join('\n\n');
-
+  const referenceRoleText = socialImageReferenceRoleText({ productIds: productReferences.map(item => item.productId),
+    materialReferences: referenceResolution.descriptors, benchmarkCount: benchmarkReferences.length,
+    ownedReferenceCount: ownedReferences.length });
+  const prompt = buildStudioSocialImagePaidPrompt({ sceneIntent: safeImagePrompt, ratio: String(ratio),
+    poster: safePoster, deliverableType, productionStrategy, referenceRoleText,
+    benchmarkCount: benchmarkReferences.length, ownedReferenceCount: ownedReferences.length,
+    ...(plannedInput?.unit.role === 'gif_plate' ? { gifUnit: plannedInput.unit } : {}),
+  });
   let paidInputHash = '';
   let paidRequestMayHaveStarted = false;
   try {

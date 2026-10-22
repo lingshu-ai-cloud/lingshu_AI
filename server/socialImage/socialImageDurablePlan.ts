@@ -62,21 +62,23 @@ export function socialImagePlannedRenderInput(task: SocialImageCreationTask, job
     poster: structuredClone(unit.poster),
     ratio,
     quality,
-    materialIds: [...task.materialIds],
-    productIds: [...task.contentBrief.productRefs],
+    // GIF units buy background plates only. Frozen enterprise product bytes are
+    // added by the deterministic compositor, never sent to the image model.
+    materialIds: task.imageType === 'gif_poster' ? [] : [...task.materialIds],
+    productIds: task.imageType === 'gif_poster' ? [] : [...task.contentBrief.productRefs],
     referenceImageUrls: task.referenceSnapshot?.imageUrls.slice(0, 1) || [],
     referencePlan: [],
     deliverableType: unit.index === 0 && task.imageType === 'carousel' ? 'carousel_cover' : 'social_poster',
     productionStrategy: 'reference_generate',
     idempotencyKey: unit.idempotencyKey,
-    imagePrompt: [
-      `Create ${task.imageType === 'carousel' ? 'carousel page' : 'GIF background plate'} ${unit.index + 1} of ${unit.count}.`,
-      `Unit role: ${unit.role}. Core claim: ${task.contentBrief.coreClaim}.`,
-      task.imageType === 'carousel' ? `Narrative page role: ${String(unit.poster.pageRole || 'cover')}.` : '',
-      task.imageType === 'gif_poster'
-        ? 'Generate only the variable background scene. The product, logo, badge, typography and bottom bar are fixed layers composed after all plates are ready.'
-        : 'Preserve the frozen page headline and subheadline. This page must remain distinct from the other carousel pages.',
-    ].join(' '),
+    imagePrompt: task.imageType === 'gif_poster'
+      ? `Variable scene background ${unit.index + 1} of ${unit.count}; use a distinct lighting or atmosphere state. No product, package, brand or text.`
+      : [
+          `Create carousel page ${unit.index + 1} of ${unit.count}.`,
+          `Unit role: ${unit.role}. Core claim: ${task.contentBrief.coreClaim}.`,
+          `Narrative page role: ${String(unit.poster.pageRole || 'cover')}.`,
+          'Preserve the frozen page headline and subheadline. This page must remain distinct from the other carousel pages.',
+        ].join(' '),
   };
 }
 

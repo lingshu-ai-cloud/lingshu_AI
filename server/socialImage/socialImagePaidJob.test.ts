@@ -353,6 +353,28 @@ test('frozen GIF plate recovery preserves the GIF unit role and label', async ()
   assert.equal(recovered.task.outputs[0]?.label, unit.label);
 });
 
+test('frozen GIF paid input excludes product and material bytes reserved for fixed composition', async () => {
+  const store = new AtomicMemoryStore();
+  const created = await createSocialImageTask(store, 'tenant-a', { imageType: 'gif_poster', title: 'Background-only GIF' });
+  const prepared = await updateSocialImageTask(store, 'tenant-a', created.id, created.version, {
+    renderBrief: { headline: 'Product', subheadline: '', originBadge: '', trustBadges: [], sellingPoints: [],
+      process: [], categories: [], bottomBar: [], cta: '' },
+    contentBrief: { ...created.contentBrief, productRefs: ['product-a'], coreClaim: 'Known product' },
+    enterpriseAssets: [{ assetId: 'product-a', role: 'product', name: 'Product A',
+      source: 'enterprise_knowledge_base', required: true }],
+    materialIds: ['owned-material'],
+  });
+  assert.equal(prepared.kind, 'updated');
+  if (prepared.kind !== 'updated') return;
+  const planned = await persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: created.id,
+    expectedVersion: prepared.task.version, productHashes: { 'product-a': hash } });
+  const input = socialImagePlannedRenderInput(planned, planned.renderPlan!.units[0]!.jobId);
+  assert.equal(input.unit.role, 'gif_plate');
+  assert.deepEqual(input.productIds, []);
+  assert.deepEqual(input.materialIds, []);
+  assert.equal(planned.enterpriseAssets[0]?.contentHash, hash);
+});
+
 test('paid multi-output request inputs are derived from the frozen server plan', async () => {
   const store = new AtomicMemoryStore();
   const created = await createSocialImageTask(store, 'tenant-a', { imageType: 'carousel', title: '轮播图' });

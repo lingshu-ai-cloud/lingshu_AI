@@ -11,6 +11,22 @@ export interface SocialImageFirstDraftPromptInput {
   fixedIdentityComposition?: boolean;
 }
 
+/** A paid GIF unit is only a scene plate; all customer-visible identity and copy are composited later. */
+export function buildSocialImageGifPlatePrompt(input: {
+  sceneIntent: string; ratio: string; index: number; count: number; hasBenchmark: boolean;
+}): string {
+  return [
+    `Generate exactly one background plate for frame ${input.index + 1} of ${input.count} in a multi-background GIF.`,
+    `Canvas aspect ratio: ${input.ratio}. Keep the background visually distinct from the other frames while preserving a stable scene category and lighting system.`,
+    `Scene intent: ${input.sceneIntent}`,
+    'BACKGROUND ONLY. Do not draw any product, package, bottle, cap, logo, brand mark, person holding a product, headline, letter, number, badge, search card, bottom bar, CTA, watermark, or interface element.',
+    'Keep a calm upper copy zone, a clear central product stage, and a bottom CTA zone. These fixed identity and text layers are added deterministically after every background plate is durable.',
+    input.hasBenchmark
+      ? 'The reference image is a structural benchmark only. Preserve its canvas dimensions, perspective, zone geometry, whitespace and background rhythm; do not copy its product, brand, text, logo or other identity.'
+      : '',
+  ].filter(Boolean).join('\n\n');
+}
+
 export function socialImageUnitPoster(poster: Record<string, unknown>, imageType: SocialImageContentType | undefined, index: number, count: number): Record<string, unknown> {
   if (imageType !== 'carousel' || count <= 1) return poster;
   const sellingPoints = Array.isArray(poster.sellingPoints) ? poster.sellingPoints.map(String).filter(Boolean) : [];

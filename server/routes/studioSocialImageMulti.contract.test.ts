@@ -4,8 +4,14 @@ import fs from 'node:fs';
 const source = fs.readFileSync('server/routes/studio.ts', 'utf8');
 const route = source.split("studioRouter.post('/fb-poster/render'")[1]?.split("// POST /studio/caption")[0] || '';
 
-assert.match(route, /imageTask\.imageType === 'gif_poster'\) throw new SocialImagePaidJobError\('social_image_gif_delivery_not_ready'\)/,
-  'GIF plates must remain closed until fixed-layer composition and delivery are wired');
+assert.match(route, /imageTask\.imageType === 'carousel' \|\| imageTask\.imageType === 'gif_poster'/,
+  'both carousel and GIF must read a frozen server unit before paid submission');
+assert.match(route, /buildStudioSocialImagePaidPrompt\(\{/,
+  'GIF paid units must use the background-only prompt contract');
+assert.match(route, /plannedInput\?\.unit\.role !== 'gif_plate'/,
+  'only GIF background plates may proceed without sending product references to the provider');
+assert.match(route, /social_image_gif_product_identity_changed/,
+  'frozen product bytes must be verified before a GIF paid claim');
 assert.match(route, /socialImagePlannedRenderInput\(imageTask, imageJobId\)/,
   'carousel paid rendering must read the frozen server unit before processing references');
 assert.match(route, /\} = plannedInput \? \{\s*poster: plannedInput\.poster/,

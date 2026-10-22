@@ -53,7 +53,7 @@ test('HTTP image routes reject forged evidence and finalize durable GIF plates i
 
   try {
     for (const [imageType, expectedCode] of [
-      ['gif_poster', 'social_image_gif_delivery_not_ready'],
+      ['gif_poster', 'social_image_frozen_plan_invalid'],
       ['carousel', 'social_image_frozen_plan_invalid'],
     ] as const) {
       const task = await createSocialImageTask(store, tenantId, { title: `Admission ${imageType}`, imageType });
@@ -139,6 +139,13 @@ test('HTTP image routes reject forged evidence and finalize durable GIF plates i
     assert.equal(plannedResponse.status, 200, JSON.stringify(plannedBody));
     let current = plannedBody.task!;
     assert.equal(current.enterpriseAssets[0]?.contentHash, createHash('sha256').update(product).digest('hex'));
+    await objectStorageUpload({ key: enterpriseAssetObjectKey(tenantId, productFilename), body: Buffer.from('changed'), contentType: 'image/png' });
+    const stalePlate = await fetch(url, { method: 'POST', headers,
+      body: JSON.stringify({ imageTaskId: gif.id, imageJobId: current.renderPlan!.units[0]!.jobId }) });
+    assert.equal(stalePlate.status, 409);
+    assert.equal((await stalePlate.json() as { code?: string }).code, 'social_image_gif_product_identity_changed');
+    assert.equal(current.generationJobs[0]?.status, 'queued');
+    await objectStorageUpload({ key: enterpriseAssetObjectKey(tenantId, productFilename), body: product, contentType: 'image/png' });
     for (const unit of current.renderPlan!.units) {
       const background = await sharp({ create: { width: 120, height: 150, channels: 4,
         background: ['#1769aa', '#39a96b', '#f29f05', '#9b51e0'][unit.index]! } }).png().toBuffer();

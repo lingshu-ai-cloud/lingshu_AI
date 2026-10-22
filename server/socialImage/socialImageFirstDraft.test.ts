@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildSocialImageFirstDraftPrompt, socialImageUnitPoster } from './socialImageFirstDraft.js';
+import { createHash } from 'node:crypto';
+import { buildSocialImageFirstDraftPrompt, buildSocialImageGifPlatePrompt, socialImageUnitPoster } from './socialImageFirstDraft.js';
+import { buildStudioSocialImagePaidPrompt, verifyFrozenGifProductAssets } from './socialImagePaidRenderAdmission.js';
+import { defaultSocialImageTask } from './socialImageTask.js';
 
 test('server first-draft contract locks benchmark structure and protects packaging anchors', () => {
   const prompt = buildSocialImageFirstDraftPrompt({
@@ -35,7 +38,31 @@ test('carousel units have stable cover, value, proof, and conversion roles', () 
 });
 
 test('GIF with owned products requests a background-only plate for fixed composition', () => {
-  const prompt = buildSocialImageFirstDraftPrompt({ imagePrompt: 'test', poster: { headline: 'Title' }, ratio: '4:5', imageType: 'gif_poster', hasBenchmark: true, ownedReferenceCount: 1, fixedIdentityComposition: true });
-  assert.match(prompt, /GIF BACKGROUND PLATE ONLY/);
-  assert.match(prompt, /composited deterministically/);
+  const prompt = buildSocialImageGifPlatePrompt({ sceneIntent: 'Industrial laboratory', ratio: '4:5',
+    index: 1, count: 4, hasBenchmark: true });
+  assert.match(prompt, /BACKGROUND ONLY/);
+  assert.match(prompt, /frame 2 of 4/);
+  assert.match(prompt, /Do not draw any product, package, bottle, cap, logo/);
+  assert.match(prompt, /fixed identity and text layers are added deterministically/);
+  assert.doesNotMatch(prompt, /"headline"/);
+  const routed = buildStudioSocialImagePaidPrompt({ sceneIntent: 'Quiet scene', ratio: '4:5',
+    poster: { headline: 'Must stay off plate' }, deliverableType: 'social_poster', productionStrategy: 'reference_generate',
+    referenceRoleText: '', benchmarkCount: 1, ownedReferenceCount: 0, gifUnit: { index: 1, count: 4 } });
+  assert.match(routed, /BACKGROUND ONLY/);
+  assert.doesNotMatch(routed, /Must stay off plate/);
+});
+
+test('paid GIF admission verifies frozen enterprise product bytes before provider submission', async () => {
+  const bytes = Buffer.from('fixture-product');
+  const expectedHash = createHash('sha256').update(bytes).digest('hex');
+  const task = defaultSocialImageTask({ imageType: 'gif_poster', productRefs: ['product-a'],
+    enterpriseAssets: [{ assetId: 'product-a', role: 'product', name: 'Product A',
+      source: 'enterprise_knowledge_base', required: true, contentHash: expectedHash }] });
+  task.renderPlan = { version: 1, sourceHash: 'frozen', createdAt: '2026-10-22T00:00:00Z', units: [] };
+  const products = [{ id: 'product-a', name: 'Product A', imageUrl: '/tenant/product-a.png' }];
+  const verify = (loaded: Buffer | null) => verifyFrozenGifProductAssets(task, products,
+    product => product.id || '', async () => loaded);
+  await verify(bytes);
+  await assert.rejects(verify(Buffer.from('changed')), /social_image_gif_product_identity_changed/);
+  await assert.rejects(verify(null), /social_image_gif_product_identity_changed/);
 });
