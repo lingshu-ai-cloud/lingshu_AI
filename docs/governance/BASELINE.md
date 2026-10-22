@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工配置安全规则拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `f87f3aeb6dc1c2a4c1c408e58e48d9ceb47839c5` 将首次配置默认值、旧发布节奏配额换算、配置补全与发布/跟进人工审批校验迁至 `digitalEmployeeConfigRules.ts`；页面保留引导、资料读取与既有保存链。`DigitalEmployeePage.tsx` 从 3,319 降至 3,181 行，历史预算同步收紧；全仓仍有 6 个历史超限文件。
+- 新规则直测 3/3、`test:digital-employees` 整组、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,359 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未做浏览器交互、真实发布/付费供应商调用、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 灵感页待拍清单视图拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `0f32f8777f6189a731e146f134c44d112b106d85` 将实际挂载的待拍清单、排序/筛选和可选实拍入口迁至 `InspirationShootingPanel.tsx`；页面继续拥有视频/素材读取、上传状态与任务回写。`InspirationDashboard.tsx` 从 2,550 降至 2,474 行，架构预算同步收紧；全仓仍有 6 个历史超限文件。
