@@ -414,9 +414,10 @@ assert.match(publishingSource, /task\.tenant_id !== tenantId/, 'the publishing A
 assert.match(publishingSource, /text\(task\.run_id\) !== runId/, 'the publishing API must verify the workflow task belongs to the claimed run');
 
 const scheduledSource = readFileSync(new URL('./ScheduledPage.tsx', import.meta.url), 'utf8');
+const scheduledControllerSource = readFileSync(new URL('./useScheduledPageController.tsx', import.meta.url), 'utf8');
 for (const label of ['已入队', '执行中', '成功', '失败', 'Worker 离线']) assert.match(scheduledSource, new RegExp(label));
 assert.match(scheduledSource, /正在加载生产状态/);
-assert.match(scheduledSource, /setInterval\([\s\S]{0,220}fetchVideoStats\(false\)/, '生产状态必须自动刷新');
+assert.match(scheduledControllerSource, /setInterval\([\s\S]{0,220}fetchVideoStats\(false\)/, '生产状态必须自动刷新');
 assert.match(scheduledSource, /人工恢复：/);
 
 const conversionSource = readFileSync(new URL('./ConversionPage.tsx', import.meta.url), 'utf8');

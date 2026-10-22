@@ -55,35 +55,44 @@ assert.deepEqual(
 );
 
 const source = readFileSync(new URL('./ScheduledPage.tsx', import.meta.url), 'utf8');
+const controllerSource = readFileSync(new URL('./useScheduledPageController.tsx', import.meta.url), 'utf8');
+const addModalSource = readFileSync(new URL('./ScheduledTaskAddModal.tsx', import.meta.url), 'utf8');
+const resultDrawerSource = readFileSync(new URL('./ScheduledTaskResultDrawer.tsx', import.meta.url), 'utf8');
 const templateSource = readFileSync(new URL('./scheduledTaskTemplates.tsx', import.meta.url), 'utf8');
 const handoffSource = readFileSync(new URL('../lib/scheduledWorkflowHandoff.ts', import.meta.url), 'utf8');
 assert.match(handoffSource, /SCHEDULED_WORKFLOW_HANDOFF_TTL\s*=\s*15\s*\*\s*60\s*\*\s*1000/);
 assert.match(handoffSource, /sessionStorage\.removeItem\('digitalEmployee\.businessDeepLink'\)/, 'the persisted handoff must be consumed once');
-assert.match(source, /setActiveGroup\('social'\)[\s\S]{0,120}setSocialTaskTab\('crawler'\)/, 'the handoff must land on the social crawler workspace');
-assert.match(source, /addEventListener\('lingshu:navigate'/, 'an already-mounted scheduler must also accept a workflow handoff');
+assert.match(controllerSource, /setActiveGroup\('social'\)[\s\S]{0,120}setSocialTaskTab\('crawler'\)/, 'the handoff must land on the social crawler workspace');
+assert.match(controllerSource, /addEventListener\('lingshu:navigate'/, 'an already-mounted scheduler must also accept a workflow handoff');
 assert.match(templateSource, /const CRAWLER_LIMIT_MAX\s*=\s*50;/, 'the UI crawler limit must match the server limit');
 assert.match(source, /from '\.\/scheduledTaskTemplates'/, 'the scheduler must use the shared template and limit rules');
 assert.match(source, /<ScheduledBusinessDynamicsWorkspace[\s\S]{0,420}renderAutomationTemplates=\{renderAutomationTemplates\}/, 'the conversion workspace must receive the existing task templates and refresh boundary');
+assert.match(source, /useScheduledPageController\(onAction\)/, 'the page must use the existing scheduler controller');
+assert.match(source, /\{showAdd && <ScheduledTaskAddModal/, 'task creation modal must keep its conditional mount');
+assert.match(source, /\{resultTask && <ScheduledTaskResultDrawer/, 'task result drawer must keep its conditional mount');
+assert.match(addModalSource, /disabled=\{selectedTemplates\.length === 0 \|\| creatingTasks \|\| !keywordReviewConfirmed\}/, 'task creation must remain gated on keyword confirmation');
+assert.match(controllerSource, /confirmedKeywordSignature !== signature[\s\S]{0,100}请先确认自动清洗后的关键词/, 'the controller must independently enforce keyword confirmation');
+assert.match(resultDrawerSource, /disabled=\{exportingId === resultTask\.id \|\| !resultTask\.lastRun \|\| !resultTask\.lastResult\}/, 'PDF export must require a completed task result');
 assert.doesNotMatch(source, /最多爬取\s*10\s*条/, 'the obsolete 10-item limit must not remain visible');
 assert.match(
-  source,
+  controllerSource,
   /const tasksController = tasksRequestRef\.current;\s*tasksRequestRef\.current = null;\s*tasksController\?\.abort\(\);/,
   'StrictMode cleanup must release the task request lock before aborting the old request',
 );
 assert.match(
-  source,
+  controllerSource,
   /const videoStatsController = videoStatsRequestRef\.current;\s*videoStatsRequestRef\.current = null;\s*videoStatsController\?\.abort\(\);/,
   'StrictMode cleanup must release the stats request lock before aborting the old request',
 );
 assert.match(
-  source,
+  controllerSource,
   /if \(tasksRequestRef\.current === controller\) \{\s*tasksRequestRef\.current = null;\s*if \(showLoading\) setLoading\(false\);/,
   'an aborted stale request must not finish the replacement request loading state',
 );
-assert.match(source, /error instanceof Error && error\.name === 'AbortError'\) return;/, 'intentional StrictMode aborts must not be presented as production failures');
+assert.match(controllerSource, /error instanceof Error && error\.name === 'AbortError'\) return;/, 'intentional StrictMode aborts must not be presented as production failures');
 assert.match(source, /crawlTasks\.map\(task => `\$\{task\.name\} · \$\{task\.cronLabel\}`\)/, 'the social summary must use each persisted task schedule instead of a hard-coded preset');
-assert.match(source, /action: 'pause' \| 'cancel' \| 'resume' \| 'reanalyze'/, 'video analysis controls must support pause, cancel, resume and retry');
-assert.match(source, /analysis-\$\{action\}/, 'pause, cancel and resume must use the durable task-control API');
+assert.match(controllerSource, /action: 'pause' \| 'cancel' \| 'resume' \| 'reanalyze'/, 'video analysis controls must support pause, cancel, resume and retry');
+assert.match(controllerSource, /analysis-\$\{action\}/, 'pause, cancel and resume must use the durable task-control API');
 assert.match(source, /item\.status === 'review'[\s\S]{0,180}分析完成，待生产复核/, 'completed timelines that fail the production contract must remain visibly under review');
 assert.match(source, /\{item\.status === 'review' && \(/, 'review-required analysis must provide a direct production-analysis repair action');
 assert.doesNotMatch(source, /item\.status === 'analyzed' \|\| item\.status === 'review'/, 'production-ready videos must not be analyzed repeatedly');
@@ -94,8 +103,8 @@ assert.match(
   'a failed analysis must restart cleanly while paused or cancelled analysis remains resumable',
 );
 assert.match(source, /item\.status === 'failed' \? 'reanalyze' : 'resume'/, 'a failed analysis must create a clean retry run instead of resuming terminal state');
-assert.match(source, /visibleState === 'succeeded'[\s\S]{0,120}执行成功/, 'only an explicit succeeded state may display execution success');
-assert.match(source, /状态未知（\$\{time\}），请展开结果查看。/, 'idle or unknown execution state must remain visibly unresolved');
-assert.match(source, /error: !\['queued', 'running', 'no_data', 'collected', 'partial', 'succeeded'\]\.includes\(String\(visibleState\)\)/, 'idle and unknown states must use the error notice treatment');
+assert.match(controllerSource, /visibleState === 'succeeded'[\s\S]{0,120}执行成功/, 'only an explicit succeeded state may display execution success');
+assert.match(controllerSource, /状态未知（\$\{time\}），请展开结果查看。/, 'idle or unknown execution state must remain visibly unresolved');
+assert.match(controllerSource, /error: !\['queued', 'running', 'no_data', 'collected', 'partial', 'succeeded'\]\.includes\(String\(visibleState\)\)/, 'idle and unknown states must use the error notice treatment');
 
 console.log('scheduled workspace contract tests passed');
