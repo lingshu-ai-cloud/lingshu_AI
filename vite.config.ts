@@ -34,6 +34,23 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     define: { __APP_BUILD_SHA__: JSON.stringify(buildSha) },
+    build: {
+      rolldownOptions: {
+        output: {
+          // Keep reusable Studio support code cached separately from the large,
+          // frequently changing workbench controller. Preserve execution order
+          // because these modules remain static dependencies of that controller.
+          strictExecutionOrder: true,
+          codeSplitting: {
+            groups: [{
+              name: 'studio-support',
+              test: /[\\/](?:StudioWorkbenchFrame|StudioMediaPreviews|useStudioSocialTaskHydration|narrationTimeline|effectPlan|socialContentManualBridge|digitalHumanPlan|socialContentArtifactMedia|studioAuthenticatedMedia|frozenStudioProject|studioAutosave|storyboardRenderReadiness|personShotClustering|studioValidation)\.(?:ts|tsx)$/,
+              includeDependenciesRecursively: false,
+            }],
+          },
+        },
+      },
+    },
     // xlsx is installed from the vendored tarball. Vite 8 can invalidate its
     // optimized hash after the initial page graph has already been served,
     // making the default DigitalEmployeePage lazy import fail with a 504 and
