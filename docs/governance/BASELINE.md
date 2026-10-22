@@ -2,6 +2,16 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 素材逐镜规则拆分验收点（2026-10-23）
+
+- 代码提交 `28d84e481fe3975442fd7b71cc24cb0f68cd2c16` 将素材逐镜投影类型与纯规则移到 `studioMaterialAnalysisSegments.ts`；`studio.ts` 保留原公开导出、供应商选择、租户读写和 HTTP 编排，从 10,855 降到 10,768 行，历史预算随之收紧。剩余超限文件仍为 8 个，不能称为全仓结构拆分完成。
+- 新增规则测试 3/3、完整 `test:studio-media`、TypeScript、架构扫描/ratchet、192 项迁移仓库只读检查、生产构建与 `git diff --check` 通过。`AiCreateStudio` chunk 为 497,209/500,000 字节；未进行真实供应商请求、生产迁移或部署。当前分支和工作区状态须在推送后按 Git 命令复核。
+
+## LinkedIn 逐 run 批准记录验收点（2026-10-23）
+
+- 集成分支提交 `5ccc1ff8134468073e7f4d4c1427791b99e6eaf4` 已普通推送并复核本地/远端一致，工作区在该提交后干净。新增私有、不可更新的 LinkedIn 公司帖逐 run 批准和撤销记录，绑定当前发现范围、租户公司账号、Actor 输入摘要及 CNY 上限；**记录不是付费许可**，没有生产签发器，真实 Actor 入口仍关闭。
+- LinkedIn 离线定向测试 7/7、TypeScript、生产构建、架构扫描/ratchet、192 项迁移仓库只读检查和 `git diff --check` 通过。迁移文件尚未在目标库执行或做实际升级演练；未做真实付费请求、部署或发布。后续仍需费用覆盖证据、唯一付费认领、原始回执与结果不明恢复。
+
 ## 当前权威源码检出（2026-10-22 复核）
 
 - 集成分支：`xixi1021程永罗沟通前大整合`；独立本地检出：`/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`。此文档不把会随提交变化的 SHA 写成永久“当前 HEAD”；交接时必须以 `git rev-parse HEAD`、`git status --porcelain` 和 `git ls-remote` 核对本地、远端和工作区状态。
