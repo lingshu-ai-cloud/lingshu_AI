@@ -2,6 +2,20 @@
 
 时间：2026-10-22，Asia/Shanghai。功能分支：`feature/platform-ads-meta-workspace-20261022`。
 
+## 投放数据页 Meta 原生报表接通（本轮增量）
+
+- 开发起点 `02024f56ec9bdc813b9594f9f4070866cb1ca8b3`，干净工作区；继续使用前端 5187、后端 8890、隔离数据库 8891。本轮全部 Meta 请求为 GET，没有创建/上传/激活/改预算/改账单请求，没有新应用、迁移、合并或推送。
+- `AdPerformanceOverview` 替换旧 UTC 本地切片与模拟询盘/成交漏斗，复用 Ant Select/RangePicker/Table/Collapse、共享 `LsMetricStrip` 与 Chart.js `LsDataChart`。提供账户、Campaign/Ad Set/Ad 层级、今天/近 7/30 天/自定义最多 93 天、本页搜索、自定义 13 个指标列、来源时间和 CSV 导出。宽表只在表格内部滚动，不撑宽指标带或页面。
+- 新增只读 GET `performance/:executionId`，复用现有 VERIFIED 回执、资源四层归属核对、账户凭据和 Meta 适配器。开始/结束日期真正传入 Meta `time_range`；预设日期基于 Meta 账户 `timezone_name`，金额采用 `currency` 的主单位，不自行转汇、不与预算分单位混用。
+- 每个资源分别请求所选日期窗口汇总与逐日 Insights；汇总的 CPM、CPC、CTR、链接点击率、单次链接点击/ThruPlay 成本、reach/frequency 直接用原字段，不平均日比率或相加去重人数。`clicks`、`inline_link_clicks`、`video_thruplay_watched_actions.video_view` 分列，不泛称询盘或同一种转化。
+- 查询显式指定 `action_report_time=impression`、`use_unified_attribution_setting=true`。展示关联广告组实际返回的 `attribution_spec`；此次沙盒未返回窗口，明确“未返回，不推断”，不擅自填 7 天点击/1 天浏览。Campaign 不把一个关联广告组的优化目标宣称为整个系列统一结果口径。
+- 总览只对同账户/币种/时区/日期/层级的去重资源加总花费、展示、全部点击和链接点击；任何资源或字段未返回时该项不冒充完整总额。明确是本地计划范围，不是完整账户总账。空报告与请求失败分别计数，不填零、不画假趋势、不计算未经归因的 ROAS。
+- 字段核对来源：[Meta 官方 Business SDK AdsInsights](https://github.com/facebook/facebook-python-business-sdk/blob/main/facebook_business/adobjects/adsinsights.py)。同时用现有沙盒真实查询验证这些字段/参数被 Meta 接受；空数据不等于已验证真实非零归因/成本。
+- 20:15:45–50：两条 Campaign 原生汇总和日 Insights 成功；20:16:59–20:17:00：两条 Ad Set 原生报告成功，目标 LINK_CLICKS / THRUPLAY。20:21:39–40：两条 Ad 原生报告成功。均 CNY / Asia/Shanghai，窗口 2026-10-16 至 2026-10-22，totals=null、daily=[]；广告 PAUSED / PENDING_REVIEW、issues=[]，不是 0 消耗或审核通过的证据。
+- 20:23:51 在页面将近 7 天切换为“今天（账户时区）”，两份新报告均返回窗口 2026-10-22 至 2026-10-22；不是在旧 7 天响应上仅做前端过滤。
+- 广告层级首次读取曾出现网络超时，界面显示读取失败而非空报告；后续受控只读复核和页面刷新成功。单次失败不盲重试，60 秒报告缓存与并发合并复用现有公共读模型缓存；账户公共元数据缓存 5 分钟，不缓存凭据。
+- 本轮定向与领域回归 39 个文件通过，覆盖三层正确资源路径、账户时区/日期边界、原生比率与真零/空值、缓存、不改平台、租户鉴权、查询校验及跨币种/时区/重复资源汇总边界。TypeScript、架构检查（2237 文件）、构建与 Studio 分包预算通过；无生产部署或真实消耗验收。
+
 ## 素材一级页接通（本轮增量）
 
 - 开发起点 `86cee777926a38c7ec4a1b27102263008700e00d`。仍使用功能分支、前端 5187、后端 8890、PocketBase 8891；未合并、推送、部署或修改基线。

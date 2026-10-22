@@ -24,6 +24,7 @@ try {
   const { bindPlatformAdCreative, getPlatformAdCreative } = await import('./creatives.js');
   const { listAdCreativeLibrary, getAdCreativeReport, getAdCreativePreview } = await import('./creativeLibrary.js');
   const { attachExistingAdCreative } = await import('./creativeMapping.js');
+  const { getMetaPerformanceReport, parseMetaPerformanceQuery, normalizeMetaPerformance } = await import('./metaPerformance.js');
   const bytes = Buffer.from('isolated library video');
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   fs.mkdirSync(mediaDir, { recursive: true }); fs.writeFileSync(path.join(mediaDir, `${sha256}.mp4`), bytes);
@@ -46,10 +47,20 @@ try {
     const u = new URL(String(url)); requests.push(u.pathname);
     assert.equal(u.origin, 'https://graph.facebook.com');
     const common = { account_id: accountId, status };
-    if (u.pathname.endsWith('/101')) return Response.json({ ...common, id: '101' });
-    if (u.pathname.endsWith('/102')) return Response.json({ ...common, id: '102', campaign_id: '101' });
+    if (u.pathname.endsWith('/act_1')) return Response.json({ id: 'act_1', currency: 'USD', timezone_name: 'America/Los_Angeles', name: 'Real account metadata' });
+    if (u.pathname.endsWith('/101')) return Response.json({ ...common, id: '101', effective_status: status, objective: 'OUTCOME_ENGAGEMENT' });
+    if (u.pathname.endsWith('/102')) return Response.json({ ...common, id: '102', campaign_id: '101', effective_status: status, optimization_goal: 'THRUPLAY', attribution_spec: [{ event_type: 'CLICK_THROUGH', window_days: 7 }] });
     if (u.pathname.endsWith('/103')) return Response.json({ ...common, id: '103', object_story_spec: { page_id: '600', video_data: { video_id: videoId } } });
     if (u.pathname.endsWith('/104')) return Response.json({ ...common, id: '104', adset_id: '102', creative: { id: '103' }, effective_status: 'PENDING_REVIEW', issues_info: [] });
+    if (u.pathname.endsWith('/insights') && u.searchParams.get('fields')?.includes('account_currency')) {
+      assert.equal(u.searchParams.get('action_report_time'), 'impression');
+      assert.equal(u.searchParams.get('use_unified_attribution_setting'), 'true');
+      assert.deepEqual(JSON.parse(u.searchParams.get('time_range')!), { since: '2020-01-01', until: '2020-01-02' });
+      const level = u.searchParams.get('level')!;
+      const id = { campaign: '101', adset: '102', ad: '104' }[level]!;
+      assert.ok(u.pathname.endsWith(`/${id}/insights`));
+      return Response.json({ data: rows.length ? [{ account_id: accountId, account_currency: 'USD', [`${level}_id`]: id, date_start: '2020-01-01', date_stop: u.searchParams.get('time_increment') === '1' ? '2020-01-01' : '2020-01-02', spend: '12', impressions: '1000', clicks: '20', inline_link_clicks: '8', video_thruplay_watched_actions: [{ action_type: 'video_view', value: '6' }], cpm: '12.125', ctr: '2.01', cpc: '0.605', reach: '950', frequency: '1.05', cost_per_thruplay: [{ action_type: 'video_view', value: '2.005' }] }] : [] });
+    }
     if (u.pathname.endsWith('/104/insights')) { assert.deepEqual(JSON.parse(u.searchParams.get('time_range')!).until.length, 10); return Response.json({ data: rows }); }
     if (u.pathname.endsWith('/500')) return Response.json({ id: '500', status: { video_status: 'ready' }, length: 6, thumbnails: { data: [{ uri: 'https://example.com/real.jpg', width: 720, height: 1280, is_preferred: true }] } });
     throw new Error(`Unexpected request ${u.pathname}`);
@@ -86,5 +97,29 @@ try {
   assert.equal((await getAdCreativeReport('tenant', receipt.id)).costPerResult, null);
   assert.equal((await getAdCreativePreview('tenant', creative.id)).height, 1280);
   assert.ok(!requests.some(p => p.endsWith('/101/insights')), 'never attribute campaign totals to material');
+  const query = { preset: 'custom', since: '2020-01-01', until: '2020-01-02' };
+  for (const level of ['campaign', 'adset', 'ad']) {
+    const report = await getMetaPerformanceReport('tenant', receipt.id, { ...query, level });
+    assert.equal(report.level, level); assert.equal(report.reportTimezone, 'America/Los_Angeles');
+    assert.equal(report.totals?.cpm, 12.125, 'native total ratio, not rounded/recomputed daily value');
+    assert.equal(report.totals?.ctr, 2.01); assert.equal(report.totals?.thruPlays, 6);
+    assert.equal(report.totals?.costPerThruPlay, 2.005);
+    assert.equal(report.attributionSpec[0].window_days, 7);
+    assert.equal(report.optimizationGoal, level === 'campaign' ? '' : 'THRUPLAY');
+    const count = requests.length;
+    assert.deepEqual(await getMetaPerformanceReport('tenant', receipt.id, { ...query, level }), report);
+    assert.equal(requests.length, count, 'cache avoids repeated Meta calls');
+  }
+  await assert.rejects(getMetaPerformanceReport('other-tenant', receipt.id, query), /未找到/);
+  assert.throws(() => parseMetaPerformanceQuery({ preset: 'custom', since: '2026-02-30', until: '2026-03-01' }), /日期/);
+  assert.throws(() => parseMetaPerformanceQuery({ level: 'account' }), /层级/);
+  assert.throws(() => parseMetaPerformanceQuery({ preset: '7', since: '2020-01-01' }), /日期/);
+  assert.throws(() => parseMetaPerformanceQuery({ access_token: 'injected' }), /参数/);
+  assert.equal(normalizeMetaPerformance({ spend: '0', ctr: null }).spend, 0);
+  assert.equal(normalizeMetaPerformance({ spend: false }).spend, null);
+  rows = []; clockOffset += 120_001;
+  const emptyNative = await getMetaPerformanceReport('tenant', receipt.id, { ...query, level: 'ad' });
+  assert.equal(emptyNative.totals, null); assert.deepEqual(emptyNative.daily, []);
+  console.log('Meta performance: all 3 resource levels, account timezone, actual attribution, native ratios, bounded range, cached reads and empty totals passed.');
   console.log('Creative library: tenant boundaries, immutable/idempotent post-execution mapping, ad-level empty/zero/positive metrics and real thumbnail readback passed (provider mocked, GET only).');
 } finally { Date.now = originalNow; globalThis.fetch = originalFetch; fs.rmSync(temp, { recursive: true, force: true }); fs.rmSync(mediaDir, { recursive: true, force: true }); }
