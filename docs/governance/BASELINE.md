@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工助手待决事项读取组装拆分（2026-10-23）
+
+- 代码提交 `cadaa7bc3c3b0a6439a6df79bb5b9ec83003a34d` 将租户范围内的周目标、计划、运行、任务、审批及 Starter 决策卡组装迁至 `assistantDecisionFeedService.ts`；原有独立内容任务恢复仍在相同读取时机执行，操作写入与响应回执仍留在路由。`digitalEmployees.ts` 从 5,645 降至 5,558 行，架构预算同步收紧；全仓仍有 6 个历史超限文件，结构拆分尚未完成。
+- 决策中心路由契约随文件边界调整，业务整组 69/69、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,374 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过。`AiCreateStudio` chunk 为 496,106/500,000 字节，仍有大 chunk 提示。未做真实付费调用、目标库迁移、浏览器验收或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## Studio 原片口播与时间线规则拆分（2026-10-23）
 
 - 代码提交 `a4b3c0b4d90c0640df9125a3abad4116fbaba43f` 将按原片切点和 ASR 构造/人工编辑复刻口播的规则迁至 `studioReferenceSpeechPlan.ts`，将配音 cue、分镜与数字人成片时长拟合迁至 `studioTimelineFitting.ts`，参考视频与槽位类型独立放置；`AiCreateStudio.tsx` 保留请求和页面状态并转发旧公开导出。该文件从 12,609 降至 12,355 行，预算同步收紧；全仓仍有 6 个历史超限文件。
