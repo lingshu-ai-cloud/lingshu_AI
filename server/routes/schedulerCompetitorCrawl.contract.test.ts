@@ -7,6 +7,7 @@ const crawlSource = readFileSync(new URL('./schedulerCrawlTasks.ts', import.meta
 const start = crawlSource.indexOf('export async function executeCompetitorAccountCrawl');
 const competitorCrawl = crawlSource.slice(start);
 const videosSource = readFileSync(new URL('./videos.ts', import.meta.url), 'utf8');
+const imagePostImportSource = readFileSync(new URL('../socialDiscovery/imagePostImport.ts', import.meta.url), 'utf8');
 
 test('scheduled benchmark collection imports videos and scoped image posts with captions', () => {
   assert.ok(start >= 0, '对标账号定时采集器必须存在');
@@ -18,5 +19,6 @@ test('scheduled benchmark collection imports videos and scoped image posts with 
   assert.match(competitorCrawl, /含原帖配文/);
   assert.match(videosSource, /\.filter\(item => item\.platform === input\.platform && isPlatformUrl\(item\.sourceUrl, input\.platform\)\)/);
   assert.match(videosSource, /if \(seen\.has\(item\.sourceUrl\)\) return false;/);
-  assert.match(videosSource, /caption: item\.caption \|\| item\.title/);
+  assert.match(videosSource, /importNewImagePost\(\{/);
+  assert.match(imagePostImportSource, /caption: item\.caption \|\| item\.title/);
 });

@@ -5,6 +5,7 @@ import { filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, re
 export { filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, resetCrawlerOpsTaskForExplicitRetryState, selectPendingCrawlerOpsTasks, terminalizeExhaustedCrawlerOpsTask } from './videoCrawlerOpsTaskState.js';
 import {classifyDiscoverySourceFailure} from '../socialDiscovery/sourceFailure.js';
 import {createImagePostEvidenceAnalyzer, type CrawledImagePost} from '../socialDiscovery/imagePostEvidenceAnalysis.js';
+import {importNewImagePost} from '../socialDiscovery/imagePostImport.js';
 import { runPaidApifyTikTokDataset, type PaidApifyTikTokPermit } from './apifyPaidTikTokTransport.js';
 import {frozenWeeklyAccountFiveVideoActorInput} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
 import {readVerifiedWeeklyOriginalDatasetReplay,type VerifiedWeeklyOriginalDatasetReplay} from '../socialDiscovery/weeklyAccountCollectionDatasetContinuation.js';
@@ -1277,69 +1278,15 @@ export async function crawlImagePostsForTenant(input: {
       continue;
     }
 
-    const imageAnalysis = input.deferImageAnalysis
-      ? { status: 'pending' as const }
-      : await analyzeImagePostBestEffort(item, keyword);
-    const record = await store.create(COL, {
-      tenantId: input.tenantId,
-      contentFormat: 'image',
-      platform: item.platform,
-      title: item.title,
-      thumbnailUrl: item.thumbnailUrl,
-      videoFileId: '',
-      duration: 0,
-      sourceUrl: item.sourceUrl,
-      tags: JSON.stringify(item.tags),
-      aiAnalysis: serializeImagePostAnalysis({
-        contentFormat: 'image',
-        source: item.source || crawlerSource,
-        caption: item.caption || item.title,
-        imageUrls: item.imageUrls?.length ? item.imageUrls : [item.thumbnailUrl].filter(Boolean),
-        imageCount: item.imageUrls?.length || 1,
-        views: item.views,
-        publicMetrics: {
-          likes: item.likes,
-          comments: item.comments,
-          shares: item.shares,
-          plays: item.plays,
-          followers: item.followers,
-          observedAt: new Date().toISOString(),
-        },
-        publicAdSignals: { isAd: item.isAd, isPaidPartnership: item.isPaidPartnership },
-        uploadedAt: item.uploadedAt,
-        author: item.author,
-        likes: item.likes,
-        comments: item.comments,
-        imageEvidence: 'analysis' in imageAnalysis ? imageAnalysis.analysis : undefined,
-        imageAnalysisStatus: imageAnalysis.status,
-        imageAnalysisError: 'error' in imageAnalysis ? imageAnalysis.error : undefined,
-        analysisSource: imageAnalysis.status === 'analyzed' ? `${imageAnalysis.provider || 'qwen'}-image-evidence-v2` : 'image-metadata',
-        analysisQuality: imageAnalysis.status === 'analyzed' ? 'image' : 'metadata',
-        keyword,
-        crawlRule: accountMode ? '对标账号主页' : '图文检索',
-        sourceAccountUrl: accountUrl || undefined,
-        importedAt: new Date().toISOString(),
-      }),
-      status: (imageAnalysis.status === 'analyzed' ? 'analyzed' : imageAnalysis.status === 'pending' ? 'pending' : 'failed') as VideoStatus,
-      crawledAt: new Date().toISOString(),
+    const record = await importNewImagePost({
+      store, collection: COL, tenantId: input.tenantId, item, keyword, crawlerSource,
+      accountMode, accountUrl, deferImageAnalysis: Boolean(input.deferImageAnalysis),
+      persistThumbnail: persistImagePostThumbnail, persistImages: persistImagePostImages,
+      analyze: analyzeImagePostBestEffort, queue: queueImagePostAnalysis,
     });
     if (record) {
       imported += 1;
-      const recordId = String((record as Record<string, unknown>).id);
-      const thumbnailUrl = await persistImagePostThumbnail(recordId, item.thumbnailUrl);
-      const storedImageUrls = await persistImagePostImages(recordId, item.imageUrls?.length ? item.imageUrls : [item.thumbnailUrl]);
-      const storedRecord = await store.getById<Record<string, unknown>>(COL, recordId);
-      const currentAnalysis = videoAnalysisOf(storedRecord || record as Record<string, unknown>);
-      await store.update(COL, recordId, {
-        thumbnailUrl,
-        aiAnalysis: serializeImagePostAnalysis({
-          ...currentAnalysis,
-          imageUrls: storedImageUrls.length ? storedImageUrls : currentAnalysis.imageUrls,
-          imageCount: storedImageUrls.length || currentAnalysis.imageCount || 1,
-        }),
-      });
-      if (imageAnalysis.status === 'pending') queueImagePostAnalysis(recordId, item, keyword);
-      records.push({ ...(record as Record<string, unknown>), thumbnailUrl });
+      records.push(record);
     }
     if (imported >= target) break;
   }
@@ -4437,9 +4384,9 @@ async function persistImagePostImages(recordId: string, urls: string[]): Promise
   }
   const record = await store.getById<Record<string, unknown>>(COL, recordId);
   const analysis = parseJsonRecord<Record<string, unknown>>(record?.aiAnalysis, {});
-  await store.update(COL, recordId, {
+  if (!await store.update(COL, recordId, {
     aiAnalysis: JSON.stringify({ ...analysis, imageStorage: 'cos', imageObjectKeys: objectKeys }),
-  });
+  })) throw Error('image_post_source_persistence_failed');
   return stored;
 }
 
