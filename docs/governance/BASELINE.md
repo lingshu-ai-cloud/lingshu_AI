@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵感页原视频预览与拍摄缺口拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `bbe7bf39f9ef4acc24feaca6d9e684a041b7c4b3` 将当前挂载的原视频预览弹窗迁至 `InspirationWatchModal.tsx`，将分析与素材匹配驱动的拍摄缺口汇总迁至 `inspirationShootingNeeds.ts`；页面继续拥有预览选择、视频与素材读取。`InspirationDashboard.tsx` 从 2,828 降至 2,677 行，历史预算同步收紧；全仓仍有 6 个超限文件。
+- 新拍摄缺口直测 2/2，源码契约检查迁出弹窗及页面接线；`test:video-source-boundaries` 109/109、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,355 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未做浏览器交互、真实供应商调用、目标库迁移或部署；本地/远端 SHA 和工作区状态以推送后核对为准。
+
 ## LinkedIn 公司帖唯一付费许可账本（2026-10-23）
 
 - 代码提交 `0322c213728268708dc95602f049ab0ad7c2683b` 增加逐 run 持久预算预约和唯一提交许可账本；许可通过服务端端口重新计算最坏情况报价，在 POST 与数据集 GET 前分别认领，绑定原始运行/结算/读取回执，并核对实际传输 Token 指纹。离线 Mock 集成覆盖并发认领、重启后禁重发、报价变化、撤销、回执与数据集独立门禁。普通发现 worker 尚未签发此许可。
