@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 已有草稿弹窗与旧预览清理（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `cf6eaad6c0f688ed85bf3007e699e85977ef250e` 将实际挂载的同源草稿选择弹窗迁至按需加载的 `ExistingSourceDraftDialog.tsx`，页面仍持有草稿恢复和新建清理动作；删除未挂载的 `ProductInfoPreview` 与仅供它使用的行投影。`AiCreateStudio.tsx` 从 12,896 降至 12,793 行，预算同步收紧；主 chunk 从 497,209 降至 496,002/500,000 字节，全仓仍有 6 个历史超限文件。
+- 新弹窗内容直测 1/1、`test:studio-media` 整组、分镜 AIGC 66/66、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,361 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过。Studio 媒体测试初跑发现一条旧断言仍从 `GlobalAssistant.tsx` 查一次性提示；核对已拆出的通知监听与提示气泡模块后修正测试目标，整组复跑通过。未做浏览器交互、真实供应商调用、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 数字员工引导产品导入拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `27eba5a8e51c8adb65eece8d0198bf0258221efb` 将产品文件格式/大小校验、文档解析、图片证据上传、稳定产品 ID 合并及现有鉴权企业档案写入迁至 `onboardingProductImport.ts`；页面保留文件选择、忙碌态与错误/成功反馈。未归属文档图片仍只保存在企业素材库，不凭位置自动绑定产品。`DigitalEmployeePage.tsx` 从 3,181 降至 3,101 行，预算同步收紧；全仓仍有 6 个历史超限文件。
