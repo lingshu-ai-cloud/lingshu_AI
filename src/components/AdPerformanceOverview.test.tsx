@@ -27,6 +27,7 @@ test('directory pages and invalid report ranges cannot display another scope as 
   assert.match(data, /不改变上方小计/);
   assert.match(library, /采用广告组归因设置/);
   assert.match(library, /r\.attributionSpec/);
+  for (const source of [data, library]) { assert.match(source, /metaAccountDate/); assert.match(source, /addEventListener\('focus', check\)/); assert.match(source, /clearInterval/); }
 });
 test('summary de-duplicates resources and refuses missing, mixed account/currency/timezone/window data', () => {
   const r = { accountId: '1', resourceId: '101', level: 'campaign', currency: 'CNY', reportTimezone: 'Asia/Shanghai', window: { since: '2026-10-16', until: '2026-10-22' }, totals: { spend: 12, impressions: 100, clicks: 10, linkClicks: 5 } } as MetaPerformanceReport;

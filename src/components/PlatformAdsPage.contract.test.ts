@@ -44,3 +44,15 @@ test('material first-level page uses the real library rather than simulated perf
   assert.match(library, /URL\.revokeObjectURL/);
   assert.doesNotMatch(library, /campaignId\}\/insights|spend \|\| 0|token=/);
 });
+test('history and advertising share a source lifecycle component without guessing ROI or CRM enquiries', () => {
+  const lifecycle = readFileSync(new URL('./AdSourceLifecycle.tsx', import.meta.url), 'utf8');
+  const catalog = readFileSync(new URL('./AdSourceCatalog.tsx', import.meta.url), 'utf8');
+  const material = readFileSync(new URL('./AdCreativeLibrary.tsx', import.meta.url), 'utf8');
+  const history = readFileSync(new URL('./socialContent/CreationMaterialHistory.tsx', import.meta.url), 'utf8');
+  const home = readFileSync(new URL('./socialContent/SocialContentHistoryHome.tsx', import.meta.url), 'utf8');
+  for (const text of [material, history, home]) assert.match(text, /AdSourceLifecycle/);
+  assert.match(material, /AdSourceCatalog/); assert.match(catalog, /origin=\$\{origin\}/);
+  assert.match(lifecycle, /snapshot\?\.query === query/); assert.match(lifecycle, /非 ROI/);
+  assert.match(lifecycle, /不是 0/); assert.match(lifecycle, /窗口未返回/);
+  assert.doesNotMatch(lifecycle, /\.purchaseValue\s*\/|crmInquiries\s*\|\|\s*0/);
+});

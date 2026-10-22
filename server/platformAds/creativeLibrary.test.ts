@@ -26,6 +26,8 @@ try {
   const { attachExistingAdCreative } = await import('./creativeMapping.js');
   const { getMetaPerformanceReport, parseMetaPerformanceQuery, normalizeMetaPerformance } = await import('./metaPerformance.js');
   const { getMetaPlanAudit, getMetaSetup } = await import('./metaPlanAudit.js');
+  const { listAdSourceCatalog, getAdSourceLifecycle, parseAdSourceIdentity } = await import('./creativeHistory.js');
+  const { preserveAdLifecycleReports } = await import('../../shared/adSourceLifecycle.js');
   const bytes = Buffer.from('isolated library video');
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   fs.mkdirSync(mediaDir, { recursive: true }); fs.writeFileSync(path.join(mediaDir, `${sha256}.mp4`), bytes);
@@ -57,12 +59,14 @@ try {
     if (u.pathname.endsWith('/insights') && u.searchParams.get('fields')?.includes('account_currency')) {
       assert.equal(u.searchParams.get('action_report_time'), 'impression');
       assert.equal(u.searchParams.get('use_unified_attribution_setting'), 'true');
-      const window = JSON.parse(u.searchParams.get('time_range')!);
+      const maximum = u.searchParams.get('date_preset') === 'maximum';
+      if (maximum) { assert.equal(u.searchParams.has('time_range'), false); assert.equal(u.searchParams.get('time_increment'), 'all_days'); }
+      const window = maximum ? { since: '2020-01-01', until: '2026-10-22' } : JSON.parse(u.searchParams.get('time_range')!);
       const level = u.searchParams.get('level')!;
       const id = { campaign: '101', adset: '102', ad: '104' }[level]!;
       assert.ok(u.pathname.endsWith(`/${id}/insights`));
       const custom = window.since === '2020-01-01';
-      const values = custom ? { spend: '12', impressions: '1000', clicks: '20', inline_link_clicks: '8', video_thruplay_watched_actions: [{ action_type: 'video_view', value: '6' }] } : rows[0];
+      const values = custom ? { spend: '12', impressions: '1000', clicks: '20', inline_link_clicks: '8', video_thruplay_watched_actions: [{ action_type: 'video_view', value: '6' }], actions: [{ action_type: 'lead', value: '3' }, { action_type: 'offsite_conversion.fb_pixel_lead', value: '2' }, { action_type: 'onsite_conversion.messaging_conversation_started_7d', value: '4' }], action_values: [{ action_type: 'omni_purchase', value: '99' }], purchase_roas: [{ action_type: 'omni_purchase', value: '8.25' }] } : rows[0];
       return Response.json({ ...(insightFault === 'paging' ? { paging: { next: 'https://graph.facebook.com/next' } } : {}), data: rows.length ? [{ ...values, account_id: insightFault === 'account' ? '2' : accountId, account_currency: insightFault === 'currency' ? 'CNY' : 'USD', [`${level}_id`]: insightFault === 'resource' ? '999' : id, date_start: window.since, date_stop: u.searchParams.get('time_increment') === '1' ? window.since : window.until, cpm: '12.125', ctr: '2.01', cpc: '0.605', reach: '950', frequency: '1.05', cost_per_inline_link_click: '1.234', cost_per_thruplay: [{ action_type: 'video_view', value: custom ? '2.005' : rows[0].cost }] }] : [] });
     }
     if (u.pathname.endsWith('/104/insights')) { assert.deepEqual(JSON.parse(u.searchParams.get('time_range')!).until.length, 10); return Response.json({ data: rows }); }
@@ -120,6 +124,27 @@ try {
   assert.ok(!JSON.stringify(setup).includes('must-never-return-this-field'));
   await assert.rejects(getMetaPlanAudit('other-tenant', views.id), /未找到/);
   await assert.rejects(getMetaSetup('other-tenant', account.id), /未找到/);
+  const historySpec = { automation: { managedBy: 'social_content_output' }, socialContentTaskId: 'source', renderOutputSha256: sha256, socialProductionOutput: { type: 'social_production_artifact', version: 1, taskId: 'source', artifactId: 'artifact', fileSha256: sha256 } };
+  await store.create('studio_projects', { id: 'historyproject', tenant_id: 'tenant', title: 'Original history', status: 'ready_for_approval', spec: historySpec, created_at: '2026-01-01' });
+  await store.create('studio_projects', { id: 'untrustedhistory', tenant_id: 'tenant', title: 'Original history', status: 'draft', spec: { renderOutputSha256: sha256 } });
+  const catalog = await listAdSourceCatalog('tenant', { origin: 'studio' });
+  assert.equal(catalog.items.find(i => i.projectId === 'historyproject')?.verifiedSource, true);
+  assert.equal(catalog.items.find(i => i.projectId === 'untrustedhistory')?.verifiedSource, false);
+  assert.ok(!JSON.stringify(catalog).includes('fileRef'));
+  await assert.rejects(getAdSourceLifecycle('other-tenant', { origin: 'studio', projectId: 'historyproject' }), /未找到/);
+  assert.throws(() => parseAdSourceIdentity({ origin: 'social', sourceTaskId: 'source', artifactId: 'artifact', sha256 }), /查询无效/);
+  const unverified = await getAdSourceLifecycle('tenant', { origin: 'studio', projectId: 'untrustedhistory' });
+  assert.equal(unverified.source.verifiedSource, false); assert.deepEqual(unverified.ads, []);
+  const lifecycle = await getAdSourceLifecycle('tenant', { origin: 'studio', projectId: 'historyproject' });
+  const socialLifecycle = await getAdSourceLifecycle('tenant', { origin: 'social', sourceTaskId: 'source', artifactId: 'artifact' });
+  assert.deepEqual(lifecycle.ads, socialLifecycle.ads, 'both source datasets share identical Meta lifecycle data');
+  assert.equal(lifecycle.ads.length, 1); assert.equal(lifecycle.roi, null); assert.equal(lifecycle.crmInquiries, null);
+  const historyReport = lifecycle.ads[0].report!;
+  assert.equal(historyReport.historyScope, 'maximum'); assert.equal(historyReport.windowAvailable, true);
+  assert.equal(historyReport.window.since, '2020-01-01'); assert.deepEqual(historyReport.daily, []);
+  assert.equal(historyReport.totals?.leads, 3, 'do not add overlapping aggregate and pixel lead actions');
+  assert.equal(historyReport.totals?.messagingConversations, 4); assert.equal(historyReport.totals?.purchaseValue, 99); assert.equal(historyReport.totals?.purchaseRoas, 8.25);
+  assert.deepEqual(await getPlatformAdTask('tenant', views.id), beforeTask); assert.deepEqual(await store.getById('platform_ad_executions', receipt.id), beforeReceipt);
   assert.ok(!requests.some(p => p.endsWith('/101/insights')), 'never attribute campaign totals to material');
   const query = { preset: 'custom', since: '2020-01-01', until: '2020-01-02' };
   for (const level of ['campaign', 'adset', 'ad']) {
@@ -141,6 +166,8 @@ try {
   assert.throws(() => parseMetaPerformanceQuery({ access_token: 'injected' }), /参数/);
   assert.equal(normalizeMetaPerformance({ spend: '0', ctr: null }).spend, 0);
   assert.equal(normalizeMetaPerformance({ spend: false }).spend, null);
+  assert.equal(normalizeMetaPerformance({ actions: [{ action_type: 'lead', value: '0' }] }).leads, 0);
+  assert.equal(normalizeMetaPerformance({ actions: [{ action_type: 'lead', value: 1 }, { action_type: 'lead', value: 2 }] }).leads, null);
   rows = []; clockOffset += 120_001;
   const emptyNative = await getMetaPerformanceReport('tenant', receipt.id, { ...query, level: 'ad' });
   assert.equal(emptyNative.totals, null); assert.deepEqual(emptyNative.daily, []);
@@ -155,6 +182,13 @@ try {
     insightFault = fault; clockOffset += 120_001;
     await assert.rejects(getAdCreativeReport('tenant', receipt.id), /归属、日期或分页不完整/);
   }
+  const failedLifecycle = await getAdSourceLifecycle('tenant', { origin: 'social', sourceTaskId: 'source', artifactId: 'artifact' });
+  assert.equal(failedLifecycle.ads[0].report, null); assert.match(failedLifecycle.ads[0].error, /读取失败/);
+  const previousLifecycle = { ...socialLifecycle, ads: [{ ...socialLifecycle.ads[0], report: historyReport }] };
+  assert.equal(preserveAdLifecycleReports(previousLifecycle, failedLifecycle).ads[0].report, historyReport);
+  assert.ok(preserveAdLifecycleReports(previousLifecycle, failedLifecycle).ads[0].error);
+  assert.equal(preserveAdLifecycleReports(previousLifecycle, { ...failedLifecycle, source: { ...failedLifecycle.source, sha256: 'changed' } }).ads[0].report, null);
+  assert.equal(preserveAdLifecycleReports(previousLifecycle, { ...failedLifecycle, ads: [{ ...failedLifecycle.ads[0], accountId: 'other' }] }).ads[0].report, null);
   console.log('Meta performance: all 3 resource levels, account timezone, actual attribution, native ratios, bounded range, cached reads and empty totals passed.');
   console.log('Creative library: tenant boundaries, immutable/idempotent post-execution mapping, ad-level empty/zero/positive metrics and real thumbnail readback passed (provider mocked, GET only).');
 } finally { Date.now = originalNow; globalThis.fetch = originalFetch; fs.rmSync(temp, { recursive: true, force: true }); fs.rmSync(mediaDir, { recursive: true, force: true }); }

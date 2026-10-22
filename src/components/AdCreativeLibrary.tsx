@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Descriptions, Drawer, Empty, Input, Pagination, Select, Space, Table, Tag } from 'antd';
+import { Alert, Button, Collapse, Descriptions, Drawer, Empty, Input, Pagination, Select, Space, Table, Tag } from 'antd';
+import AdSourceCatalog from './AdSourceCatalog';
+import AdSourceLifecycle from './AdSourceLifecycle';
+import { metaAccountDate } from '../../shared/metaPerformance';
 import { RefreshCw, Play, Link2 } from 'lucide-react';
 import { platformAdsRequest } from '../lib/platformAds';
 import { authHeader } from '../lib/auth';
@@ -74,6 +77,14 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId }: { onOpe
   }, [data, account, search]);
   const opened = groups.find(g => g.key === selected);
   const executionKey = opened?.items.map(i => i.execution?.id || '').join(',') || '';
+  const activeReports = (opened?.items || []).flatMap(i => reports[i.execution?.id || ''] ? [reports[i.execution!.id]] : []);
+  const reportDates = JSON.stringify(activeReports.map(r => [r.reportTimezone, r.window.until]));
+  useEffect(() => {
+    if (!opened || !reportDates) return;
+    const check = () => { if (activeReports.some(r => metaAccountDate(r.reportTimezone) !== r.window.until)) setReportRefresh(n => n + 1); };
+    const timer = window.setInterval(check, 60_000); window.addEventListener('focus', check); check();
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', check); };
+  }, [!!opened, reportDates]);
   useEffect(() => {
     if (!opened) return;
     const controller = new AbortController(); setReading(true); setReportErrors({});
@@ -94,6 +105,8 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId }: { onOpe
   }
   const accounts = [...new Map((data?.items || []).map(i => [i.connection.id, i.connection])).values()];
   return <section aria-label="真实投放素材库" className="ads-library">
+    <Collapse defaultActiveKey={['sources']} items={[{ key: 'sources', label: '我的历史素材 / 社媒成片 · 直接数据源', children: <AdSourceCatalog/> }]}/>
+    <h3>已关联投放素材</h3>
     <div className="ads-library-toolbar"><Input.Search aria-label="搜索本页素材" placeholder="搜索本页素材、计划或视频 ID" allowClear value={search} onChange={e => setSearch(e.target.value)} />
       <Select aria-label="本页素材账户" value={account} onChange={setAccount} options={[{ value: 'all', label: '本页全部账户' }, ...accounts.map(a => ({ value: a.id, label: `${a.name} · ${a.currency}` }))]} />
       <Button icon={<RefreshCw size={15}/>} loading={loading} onClick={() => setRefresh(v => v + 1)}>刷新素材</Button>
@@ -123,6 +136,7 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId }: { onOpe
         ]}/></>}
         <Space className="ads-library-detail-heading"><h3>计划关联与广告级报告</h3><Button loading={reading} onClick={() => setReportRefresh(v => v + 1)}>刷新平台报告</Button></Space>
         <Alert type="info" showIcon title="与投放数据共用广告级、最近 7 个账户日期报告；按展示时间回报，采用广告组归因设置。全部点击不等于链接点击，单次成本使用 Meta 原值；空数据不补零。报告缓存 60 秒、封面 5 分钟，以采集时间为准；刷新不启用广告。" />
+        {opened.representative.binding && <Collapse items={[{ key: 'lifecycle', label: '查看同源素材全投放周期 / Meta 线索与 ROAS', children: <AdSourceLifecycle origin="social" sourceTaskId={opened.representative.binding.sourceTaskId} artifactId={opened.representative.binding.artifactId}/> }]}/>}
         <Table<AdCreativeLibraryItem> tableLayout="fixed" rowKey="key" pagination={false} dataSource={opened.items} scroll={{ x: 780 }} columns={[
           { title: '计划 / 映射', key: 'task', width: 210, render: (_, i) => <><Button className="ads-library-task-link" type="link" onClick={() => onOpenTask(i.task.id)}>{i.task.name}</Button><p>{i.mapping === 'creation_binding' ? '创建时绑定' : i.mapping === 'verified_existing' ? '投放后核对映射（不改原回执）' : i.mapping === 'platform_only' ? '仅平台记录，未关联本地源文件' : '本地成片，尚无核验广告'}</p><span className="ads-library-id">{i.execution?.adId || '—'}</span></> },
           { title: '平台状态', key: 'status', width: 150, render: (_, i) => { const r = reports[i.execution?.id || '']; return r ? <><p>配置：{statusLabels[r.configuredStatus] || r.configuredStatus}</p><p>有效：{statusLabels[r.effectiveStatus] || r.effectiveStatus}</p>{r.issues.map(issue => <p key={issue.code}>{issue.code} · {issue.message}</p>)}</> : reportErrors[i.execution?.id || ''] || (i.execution ? '正在核对 / 暂无读回' : '尚未创建广告'); } },

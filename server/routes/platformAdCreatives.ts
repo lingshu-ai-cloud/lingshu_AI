@@ -11,8 +11,15 @@ import { listAdCreativeLibrary, getAdCreativeReport, getAdCreativePreview } from
 import { attachExistingAdCreative } from '../platformAds/creativeMapping.js';
 import { openPlatformAdCreativeMedia } from '../platformAds/creatives.js';
 import { getMetaSetup, getMetaPlanAudit } from '../platformAds/metaPlanAudit.js';
+import { getAdSourceLifecycle, listAdSourceCatalog, parseAdSourceIdentity } from '../platformAds/creativeHistory.js';
 export const platformAdCreativesRouter = Router();
 platformAdCreativesRouter.use(requireAuth, requireAdWriteAccess);
+platformAdCreativesRouter.get('/creative-history', async (req, res) => {
+  try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await listAdSourceCatalog((res.locals as AuthLocals).tenantId, req.query)); } catch (error) { failure(res, error); }
+});
+platformAdCreativesRouter.get('/creative-lifecycle', async (req, res) => {
+  try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await getAdSourceLifecycle((res.locals as AuthLocals).tenantId, parseAdSourceIdentity(req.query))); } catch (error) { failure(res, error); }
+});
 platformAdCreativesRouter.get('/connections/:id/meta-setup', async (req, res) => {
   try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await getMetaSetup((res.locals as AuthLocals).tenantId, req.params.id)); } catch (error) { failure(res, error); }
 });

@@ -20,7 +20,7 @@ function identity(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,200}$/.test(value)) throw new PlatformAdCreativeError('素材标识无效');
   return value;
 }
-async function source(tenantId: string, sourceTaskId: string, artifactId: string) {
+export async function resolveAdCreativeSource(tenantId: string, sourceTaskId: string, artifactId: string) {
   const artifact = socialArtifact(await findSocialRecord({ repository, tenantId, collection: STARTER_COLLECTIONS.socialContentArtifacts,
     where: { task_id: sourceTaskId, artifact_id: artifactId }, notFoundCode: 'social_artifact_not_found' }));
   if (socialArtifactMediaFamily(artifact.kind, artifact.content) !== 'video') throw new PlatformAdCreativeError('请选择已保存的视频成片');
@@ -28,6 +28,7 @@ async function source(tenantId: string, sourceTaskId: string, artifactId: string
   if (!resolved || !resolved.file.mimeType.startsWith('video/')) throw new PlatformAdCreativeError('视频文件尚未持久化');
   return resolved.file;
 }
+const source = resolveAdCreativeSource;
 export async function listPlatformAdCreativeSources(tenantId: string, query: { page?: unknown; perPage?: unknown; sourceTaskId?: unknown } = {}) {
   const page = Math.max(1, Math.min(100000, Math.floor(Number(query.page) || 1)));
   const perPage = Math.max(1, Math.min(50, Math.floor(Number(query.perPage) || 20)));

@@ -2,6 +2,20 @@
 
 时间：2026-10-22，Asia/Shanghai。功能分支：`feature/platform-ads-meta-workspace-20261022`。
 
+## 10 月 23 日复核与历史素材生命周期联通
+
+- 开发起点 `faae7b9c6147d83ffd3e71cbdeb46c85011ed7ef`，工作区干净。仍为隔离功能分支、5187 / 8890 / 8891，无合并、推送、生产部署或数据库迁移；本轮真实 Meta 操作只允许 GET，不创建/补建/上传/激活、不改账单。
+- 00:09:35（Asia/Shanghai）原两条沙盒广告最新读回均 PAUSED / PENDING_REVIEW；原版本 Traffic 2 / ThruPlay 1 和创建回执未变。近 7 天日期实际滚动到 2026-10-17—2026-10-23，仍 totals=null，三页缺失数据不补零。
+- 新增只读 `creative-history`（Studio 历史 / 已保存社媒成片两个直接数据源）与 `creative-lifecycle`。不复制素材、不新增映射表；复用 studio_projects、社媒成片、冻结投放绑定和原执行回执。Studio 仅信任已有服务端 social_content_output 血缘，逐一核对源任务/成片 ID 与持久化文件 SHA；普通旧草稿、仅客户端 SHA 或缺血缘项目显示“未核验”，不靠标题、URL 猜测投放关联。
+- 统一生命周期组件供投放素材来源目录、已投放素材详情、我的创作成片预览和历史素材详情使用。相同源版本的关联广告按账户/Ad ID 去重，最多展示 20 条；读取截断和部分失败明确提示。源版本变化、跨租户和上传证据不一致不得挂入当前 Meta 数据；失败保留同源、同账户/广告的旧报告，逐条显示采集时间，不冒充最新。
+- 生命周期读取 Meta `date_preset=maximum` 的可用历史汇总，显示平台实际返回的窗口；空报告不编造历史起点。不请求无限日明细、不宣称无限终身覆盖；范围仅本系统已记录且核验的绑定，不是全账户或全平台素材总账。
+- 新指标严格分列：actions.lead（Meta 归因线索）、actions.onsite_conversion.messaging_conversation_started_7d（Meta 新消息会话）、action_values.omni_purchase（归因购买金额）、purchase_roas.omni_purchase（购买 ROAS）。不累加重叠父子 action_type；缺失或重复类型保持 null，真零保留 0。数据页自定义列和 CSV 标明 action_type；沿用同一币种、账户时区、展示时间回报及广告组统一归因设置。
+- Meta 线索/消息会话不是 CRM 有效询盘，购买 ROAS 不是利润 ROI。订单利润、CRM 去重与跨触点归因尚未接通；ROI / CRM 有效询盘明确未接通，不生成虚构指标或用点击、播放代替。没有新增 Pixel/CAPI、线索明细抓取权限或账单配置。
+- 补齐计划页实时 issues_info 提示。修复页面跨账户日期边界后仍保留旧“近 7 天”窗口：聚焦和每分钟仅检查账户日期，日期变化才只读刷新；自定义日期不自动改动，关闭视图清理监听器。
+- 回归覆盖最大可用历史超过 93 天、精确 action_type/零/缺失/重复值、两来源同一 Meta 报告、源版本与跨租户隔离、不可验证历史不误关联、读取失败保留旧版本范围及原计划/回执不变。源码验证和实际非零归因、审核通过、生产上线是不同结论。
+- 字段依据：[Meta AdsInsights 官方 SDK](https://github.com/facebook/facebook-python-business-sdk/blob/main/facebook_business/adobjects/adsinsights.py)。无利润与 CRM 归因输入，不能仅凭 Meta 广告数据计算经营利润 ROI。
+- 源码验证：39 个投流测试文件通过；历史去重、血缘、封面与分析 13 项测试、历史素材列表 SSR 1 项测试通过；TypeScript（仓库 lint）、架构检查 2246 生产文件、构建和 Studio 分包预算通过。没有修改主生产工作台、排期或 CRM 结构，仅在历史详情接入共享只读组件。
+
 ## 三页端到端联调与口径收口（本轮增量）
 
 - 起点 `018d6444c0ba83f07bf15a63ecc92b5977906320`，工作区干净；仅功能分支与 5187 / 8890 / 8891，无基线合并、推送或生产部署。现有两条沙盒广告为唯一真实验证对象，不创建、上传、补映射、启用、改预算或改账单。

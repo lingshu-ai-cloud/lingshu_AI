@@ -22,10 +22,13 @@ const auth = (role = 'admin') => ({ Authorization: `Bearer ${issueLocalIdentityT
 try {
   assert.equal((await fetch(base + '/creative-sources')).status, 401);
   assert.equal((await fetch(base + '/creative-sources', { headers: auth() })).status, 200);
-  for (const route of ['/creative-library', '/creative-library/missing/report', '/creatives/missing/platform-preview', '/creatives/missing/media', '/connections/missing/meta-setup', '/tasks/missing/meta-audit']) {
+  for (const route of ['/creative-history?origin=studio', '/creative-lifecycle?origin=studio&projectId=missing', '/creative-library', '/creative-library/missing/report', '/creatives/missing/platform-preview', '/creatives/missing/media', '/connections/missing/meta-setup', '/tasks/missing/meta-audit']) {
     assert.equal((await fetch(base + route)).status, 401);
   }
   assert.equal((await fetch(base + '/creative-library', { headers: auth() })).status, 200);
+  assert.equal((await fetch(base + '/creative-history?origin=studio', { headers: auth() })).status, 200);
+  assert.equal((await fetch(base + '/creative-lifecycle?origin=studio&projectId=missing', { headers: auth() })).status, 404);
+  assert.equal((await fetch(base + '/creative-lifecycle?origin=studio&projectId=missing&sha256=spoof', { headers: auth() })).status, 400);
   assert.equal((await fetch(base + '/performance/missing')).status, 401);
   assert.equal((await fetch(base + '/performance/missing?level=account', { headers: auth() })).status, 400);
   assert.equal((await fetch(base + '/tasks/missing/creatives', { headers: auth() })).status, 404);

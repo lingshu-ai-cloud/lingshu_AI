@@ -4,7 +4,7 @@ import { RefreshCw, Download } from 'lucide-react';
 import dayjs from 'dayjs';
 import { platformAdsRequest } from '../lib/platformAds';
 import type { AdCreativeLibraryPage, AdCreativeLibraryItem } from '../../shared/platformAdCreativeLibrary';
-import { META_PERFORMANCE_FIELDS, metaDateRange, metaPerformanceSummary, type MetaPerformanceReport, type MetaMetricKey, type MetaReportLevel } from '../../shared/metaPerformance';
+import { META_PERFORMANCE_FIELDS, metaAccountDate, metaDateRange, metaPerformanceSummary, type MetaPerformanceReport, type MetaMetricKey, type MetaReportLevel } from '../../shared/metaPerformance';
 import { LsMetricStrip } from './ui/LsExperiencePrimitives';
 import LsDataChart from './ui/LsDataChart';
 import './metaPerformance.css';
@@ -16,6 +16,7 @@ const levelLabels = { campaign: '广告系列', adset: '广告组', ad: '广告'
 const metricKeys = Object.keys(META_PERFORMANCE_FIELDS) as MetaMetricKey[];
 const defaultColumns: MetaMetricKey[] = ['spend', 'impressions', 'clicks', 'linkClicks', 'thruPlays', 'cpm', 'ctr'];
 const errorText = (e: unknown) => e instanceof Error ? e.message : '读取失败，请稍后刷新';
+const fieldRef = (key: MetaMetricKey) => { const def = META_PERFORMANCE_FIELDS[key]; return def.field + ('actionType' in def ? `[${def.actionType}]` : ''); };
 const resource = (i: AdCreativeLibraryItem, level: MetaReportLevel) => i.execution?.[level === 'campaign' ? 'campaignId' : level === 'adset' ? 'adsetId' : 'adId'] || '';
 export default function AdPerformanceOverview({ loading, onOpen, initialTaskId }: { tasks: Task[]; loading: boolean; onOpen: (id: string) => void; initialTaskId?: string }) {
   const [taskFilter, setTaskFilter] = useState(initialTaskId || '');
@@ -64,11 +65,17 @@ export default function AdPerformanceOverview({ loading, onOpen, initialTaskId }
   const successful = rows.flatMap(i => current[i.execution!.id] ? [current[i.execution!.id]] : []);
   const summary = metaPerformanceSummary(successful, rows.length), currency = selectedAccount?.currency || '';
   const first = successful[0];
+  useEffect(() => {
+    if (!first || preset === 'custom') return;
+    const check = () => { if (metaAccountDate(first.reportTimezone) !== first.window.until) setRefresh(n => n + 1); };
+    const timer = window.setInterval(check, 60_000); window.addEventListener('focus', check); check();
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', check); };
+  }, [first?.reportTimezone, first?.window.until, preset]);
   const dates = first ? metaDateRange(first.window.since, first.window.until) : [];
   const displayedRows = rows.filter(i => !search || `${i.task.name} ${resource(i, level)}`.toLowerCase().includes(search.toLowerCase()));
   const exportRows = () => {
     const cell = (v: unknown) => { const s = String(v ?? ''); return `"${(/^[\s\u0000-\u001f]*[=+@-]/.test(s) ? "'" + s : s).replaceAll('"', '""')}"`; };
-    const data = [['计划', '账户', '层级', '资源 ID', '币种', '账户时区', '开始日期', '结束日期', '采集时间', '刷新错误', ...columns.map(k => META_PERFORMANCE_FIELDS[k].field)], ...displayedRows.map(i => { const r = current[i.execution!.id]; return [i.task.name, i.connection.accountId, level, resource(i, level), r?.currency, r?.reportTimezone, r?.window.since, r?.window.until, r?.reportedAt, currentErrors[i.execution!.id] || '', ...columns.map(k => r?.totals?.[k] ?? '')]; })];
+    const data = [['计划', '账户', '层级', '资源 ID', '币种', '账户时区', '开始日期', '结束日期', '采集时间', '刷新错误', ...columns.map(fieldRef)], ...displayedRows.map(i => { const r = current[i.execution!.id]; return [i.task.name, i.connection.accountId, level, resource(i, level), r?.currency, r?.reportTimezone, r?.window.since, r?.window.until, r?.reportedAt, currentErrors[i.execution!.id] || '', ...columns.map(k => r?.totals?.[k] ?? '')]; })];
     const url = URL.createObjectURL(new Blob(['\uFEFF', data.map(row => row.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a'); link.href = url; link.download = `Meta-${level}-报告.csv`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
@@ -96,7 +103,7 @@ export default function AdPerformanceOverview({ loading, onOpen, initialTaskId }
     <Table<AdCreativeLibraryItem> size="small" tableLayout="fixed" rowKey={i => resource(i, level)} dataSource={displayedRows} loading={catalogBusy && !directory} pagination={{ pageSize: 10, showSizeChanger: false }} scroll={{ x: 720 + columns.length * 135 }} columns={[
       { title: `${levelLabels[level]} / 本地计划`, width: 250, fixed: 'left', render: (_, i) => <><Button className="meta-performance-task" type="link" onClick={() => onOpen(i.task.id)}>{i.task.name}</Button><p>{resource(i, level)}</p></> },
       { title: '平台状态 / 目标', width: 180, render: (_, i) => { const r = current[i.execution!.id]; return r ? <><p>配置：{labels[r.configuredStatus] || r.configuredStatus || '未知'}</p><p>有效：{labels[r.effectiveStatus] || r.effectiveStatus || '未知'}</p>{level !== 'ad' && <p>关联广告：{labels[r.adEffectiveStatus] || r.adEffectiveStatus || '未知'}</p>}<p>{r.optimizationGoal || r.objective || '未返回目标'}</p>{r.issues.map(issue => <p key={issue.code}>{issue.code} · {issue.message}</p>)}</> : currentErrors[i.execution!.id] || (busy ? '读取中' : '暂无报告'); } },
-      ...columns.map(key => ({ title: <Tooltip title={`Meta 字段：${META_PERFORMANCE_FIELDS[key].field}`}><span>{META_PERFORMANCE_FIELDS[key].label}{META_PERFORMANCE_FIELDS[key].unit === 'money' ? ` (${currency})` : META_PERFORMANCE_FIELDS[key].unit === 'percent' ? ' (%)' : ''}</span></Tooltip>, key, width: 135, align: 'right' as const, render: (_: unknown, i: AdCreativeLibraryItem) => format(current[i.execution!.id]?.totals?.[key]) })),
+      ...columns.map(key => ({ title: <Tooltip title={`Meta 字段：${fieldRef(key)}`}><span>{META_PERFORMANCE_FIELDS[key].label}{META_PERFORMANCE_FIELDS[key].unit === 'money' ? ` (${currency})` : META_PERFORMANCE_FIELDS[key].unit === 'percent' ? ' (%)' : ''}</span></Tooltip>, key, width: 135, align: 'right' as const, render: (_: unknown, i: AdCreativeLibraryItem) => format(current[i.execution!.id]?.totals?.[key]) })),
       { title: '来源 / 采集时间', width: 290, render: (_, i) => { const r = current[i.execution!.id]; return r ? <><p>{r.totals ? 'Meta 平台汇总' : 'Meta 返回空报告'}</p><p>{r.window.since} — {r.window.until}</p><p>{r.reportTimezone} · {new Date(r.reportedAt).toLocaleString('zh-CN')}</p><p>展示时间回报 · 关联广告组归因设置</p><p>{r.attributionSpec.length ? r.attributionSpec.map(a => `${a.event_type} ${a.window_days} 天`).join(' / ') : '归因窗口未返回，不推断'}</p>{currentErrors[i.execution!.id] && <p role="alert">旧报告 · {currentErrors[i.execution!.id]}</p>}</> : '—'; } },
     ]}/>
     {catalog && <div className="meta-performance-footer"><span>{directory ? `按本地计划分页 · 本页 ${directory.items.filter(i => i.connection.id === selectedAccount?.id && !i.execution && (!taskFilter || i.task.id === taskFilter)).length} 个关联尚无完整广告回执；不计入报告。${directory.truncated ? '本页目录存在截断，非完整总账。' : ''}` : '当前页目录未返回，可刷新或返回其他页。'}</span><Pagination current={page} pageSize={20} total={catalog.totalItems} showSizeChanger={false} onChange={setPage} /></div>}
