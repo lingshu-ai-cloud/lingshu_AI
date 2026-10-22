@@ -6,6 +6,7 @@ import {
 } from './overviewGoalScope.js';
 
 const source = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const overviewProjectionSource = fs.readFileSync('server/digitalEmployees/overviewProjection.ts', 'utf8');
 const productionBudgetRouteSource = fs.readFileSync('server/routes/digitalEmployeeProductionBudgetRoute.ts', 'utf8');
 const taskEvidenceProjectionSource = fs.readFileSync('server/digitalEmployees/taskEvidenceProjection.ts', 'utf8');
 const approvalApplication = fs.readFileSync('server/digitalEmployees/approvalDecision.ts', 'utf8');
@@ -25,9 +26,9 @@ assert.match(source, /VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLE
 assert.match(source, /agents:\s*projectDirectorAnalysisStatus\(publicAgentStatuses\(normalizedTasks\)/, 'overview must return a fixed four-expert Agent summary enriched with Director analysis');
 assert.match(source, /agents:\s*projectDirectorAnalysisStatus\(publicAgentStatuses\(\[\]\)/, 'overview without a goal must still return four idle expert roles enriched with Director analysis');
 assert.match(source, /agent_role: visibleAgentRole\(task\.agent_role, task\.task_key\)/, 'persisted workflow tasks must be normalized at the read boundary');
-assert.match(source, /agentRole: visibleAgentRole\(String\(task\.agentRole/, 'persisted plan tasks must be normalized at the read boundary');
+assert.match(overviewProjectionSource, /agentRole: visibleAgentRole\(String\(task\.agentRole/, 'persisted plan tasks must be normalized at the read boundary');
 assert.match(source, /requested_by_agent: visibleAgentRole/, 'legacy approval ownership must be normalized at the read boundary');
-assert.match(source, /team: \[\.\.\.VISIBLE_AGENT_ROLES\]/, 'legacy plan snapshots must expose the fixed four-expert team');
+assert.match(overviewProjectionSource, /team: \[\.\.\.VISIBLE_AGENT_ROLES\]/, 'legacy plan snapshots must expose the fixed four-expert team');
 assert.match(source, /committedDigitalEmployeeOperatingGoals\(tenantId, goalResult\.items\)/, 'overview must exclude non-operating and uncommitted rebuild lineage records before selecting the current weekly goal');
 assert.match(source, /isDigitalEmployeeOperatingGoal\(goal\)/, 'direct overview links must reject non-operating lineage records');
 assert.match(source, /updateTenantEnterpriseProfile/, 'onboarding must synchronize missing company basics into the tenant enterprise profile');
@@ -61,7 +62,7 @@ assert.match(source, /status: 'waiting_human', output, business_refs: preflight\
   'approval preflight inputs such as missing account authorization must be persisted as human work, not an external-service wait');
 assert.match(source, /const waitStatus = workflowStatusForWait\(diagnostic\)/,
   'every diagnostic wait must map input, approval and provider states to distinct workflow statuses');
-assert.match(source, /const active = agentTasks\.find[\s\S]{0,180}'waiting_human'/,
+assert.match(overviewProjectionSource, /const active = agentTasks\.find[\s\S]{0,180}'waiting_human'/,
   'an Agent waiting for user input must remain visible in the live employee status instead of appearing idle');
 assert.match(source, /const shouldResetTask = \['waiting_external', 'waiting_approval', 'waiting_human', 'pending'\]/,
   'attaching the requested evidence must reset a human-input task so the run can continue');
@@ -137,7 +138,7 @@ assert.match(streamRoute, /sequence[^\n]*after|after[^\n]*sequence/, 'SSE reconn
 assert.match(source, /response\.write\(`id:\s*\$\{event\.sequence\}/, 'SSE events need stable sequence IDs for reconnect');
 assert.match(source, /response\.write\(`event:\s*\$\{event\.type\}/, 'SSE events must retain their semantic event type');
 assert.match(source, /response\.write\(`data:\s*\$\{JSON\.stringify\(event\)\}/, 'SSE must externalize the persisted event payload');
-assert.match(source, /publicEventPayload[\s\S]*?chain_of_thought/, 'event payloads must strip private reasoning fields before persistence and streaming');
+assert.match(overviewProjectionSource, /publicEventPayload[\s\S]*?chain_of_thought/, 'event payloads must strip private reasoning fields before persistence and streaming');
 assert.match(source, /payload:\s*publicEventPayload\(input\.payload/, 'the SSE source must persist the filtered public event payload');
 const uiEventRoute = routeBlock("digitalEmployeesRouter.post('/runs/:runId/tasks/:taskId/ui-events'");
 assert.match(uiEventRoute, /x-agent-worker-token/, 'Agent UI telemetry must require the worker credential');

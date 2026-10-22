@@ -109,7 +109,6 @@ import { canonicalScheduledCollectionRecords, evaluateScheduledDiscoveryRuns, mu
 import {
   VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLES,
   visibleDigitalEmployeeAgentRole as visibleAgentRole,
-  type VisibleDigitalEmployeeAgentRole as VisibleAgentRole,
 } from '../digitalEmployees/agentRoles.js';
 import { buildPublishingApprovalPackage, createPublishingCalendarEntries, type PublishingApprovalPackage } from '../digitalEmployees/publishingExecution.js';
 import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, socialScheduleFromCadence } from '../digitalEmployees/runtimeSchedule.js';
@@ -135,6 +134,7 @@ import { createStarter198ApprovalDecisionPort } from '../starter198/approvalDeci
 import { createStarter198QuoteDecisionPort } from '../starter198/quoteDecision.js';
 import { registerProductionBudgetReforecastRoute } from './digitalEmployeeProductionBudgetRoute.js';
 import { createDigitalEmployeeContentPlanning } from './digitalEmployeeContentPlanning.js';
+import { configSnapshotForPlan, goalInput, publicAgentStatuses, publicConfig, publicConfigurationMetadata, publicEventPayload, publicGoal, publicOverviewPlan } from '../digitalEmployees/overviewProjection.js';
 import { availableTaskActions, runReviewSummary } from './digitalEmployeeReviewSummary.js';
 import { downstreamTasks, irreversibleEffects, postHasPublishedReceipt } from '../digitalEmployees/taskCorrectionSafety.js';
 import { supersedeAffectedBusinessState as supersedeTaskCorrectionBusinessState } from '../digitalEmployees/taskCorrectionSupersession.js';
@@ -180,9 +180,6 @@ const eventAppendQueues = new Map<string, Promise<void>>();
 const goalApprovalQueues = new Map<string, Promise<void>>();
 const customerWorkflowQueues = new Map<string, Promise<void>>();
 const scheduledReviewQueues = new Map<string, Promise<void>>();
-function publicConfig(record: ConfigRecord | null): DigitalEmployeeConfig | null {
-  return record ? normalizeDigitalEmployeeConfig(jsonObject(record.config, {})) : null;
-}
 async function resolveCurrentConfiguration(
   tenantId: string,
   record?: ConfigRecord | null,
@@ -209,26 +206,12 @@ async function resolveCurrentConfiguration(
     configVersion: Number(configRecord.config_version || 1),
   });
 }
-function publicConfigurationMetadata(resolved: ResolvedDigitalEmployeeConfiguration | null) {
-  if (!resolved) return null;
-  return {
-    configVersion: resolved.configVersion,
-    policyVersion: resolved.policyVersion,
-    knowledgeBinding: resolved.knowledgeBinding,
-    runtimePolicy: resolved.runtimePolicy,
-  };
-}
 async function publishingReadinessForOverview(
   tenantId: string,
   required: boolean,
   targetPlatforms: string[],
 ): Promise<PublishingReadinessSnapshot> {
   return (await readTenantPublishingReadiness(tenantId, required, targetPlatforms)).snapshot;
-}
-function configSnapshotForPlan(plan: PlanRecord | null, fallback: DigitalEmployeeConfig): DigitalEmployeeConfig {
-  if (!plan) return fallback;
-  const body = jsonObject<Record<string, unknown>>(plan.plan, {});
-  return body.configSnapshot ? normalizeDigitalEmployeeConfig(jsonObject(body.configSnapshot, fallback)) : fallback;
 }
 function executionConfigForPlan(plan: PlanRecord | null, fallback: DigitalEmployeeConfig): DigitalEmployeeConfig {
   const config = configSnapshotForPlan(plan, fallback);
@@ -266,28 +249,6 @@ async function ensureFrozenEnterpriseProfileForRun(
   const frozen = enterpriseProfileFromKnowledgeBinding(knowledgeBinding);
   if (!frozen) throw new Error('run_fact_snapshot_missing');
   return frozen as EnterpriseProfile;
-}
-function publicGoal(record: GoalRecord): WeeklyGoalInput & { id: string; status: string; version: number; createdAt: string; updatedAt: string } {
-  return {
-    id: record.id,
-    businessLine: ['content_growth', 'customer_conversion'].includes(String(record.business_line)) ? record.business_line as WeeklyGoalInput['businessLine'] : 'full_funnel',
-    contentPlatforms: jsonObject<WeeklyGoalInput['contentPlatforms']>(record.content_platforms, ['facebook', 'instagram', 'tiktok', 'youtube']),
-    title: String(record.title || ''),
-    objective: String(record.objective || ''),
-    metric: String(record.metric || ''),
-    baseline: Number(record.baseline || 0),
-    target: Number(record.target || 0),
-    unit: String(record.unit || ''),
-    startsAt: String(record.starts_at || ''),
-    endsAt: String(record.ends_at || ''),
-    scope: typeof jsonObject(record.scope, record.scope || '') === 'object' ? String(jsonObject<any>(record.scope, {}).description || '') : String(jsonObject(record.scope, record.scope || '')),
-    videoPlans: jsonObject<any>(record.scope, {}).videoPlans,
-    constraints: jsonObject<string[]>(record.constraints, []),
-    status: String(record.status || 'draft'),
-    version: Number(record.version || 1),
-    createdAt: String(record.created_at || ''),
-    updatedAt: String(record.updated_at || ''),
-  };
 }
 async function first<T extends StoredRecord>(collection: string, where: Record<string, string | number | boolean>, sort = '-created_at'): Promise<T | null> {
   const result = await store.list<T>(collection, { where, sort, page: 1, perPage: 1 });
@@ -462,24 +423,6 @@ async function committedDigitalEmployeeOperatingGoals(tenantId: string, goals: G
   const operatingGoals = digitalEmployeeOperatingGoals(goals);
   const commitStates = await Promise.all(operatingGoals.map(goal => weeklyGoalFactRebuildTargetCommitted(tenantId, goal)));
   return operatingGoals.filter((_goal, index) => commitStates[index]);
-}
-function goalInput(record: GoalRecord): WeeklyGoalInput {
-  const publicRecord = publicGoal(record);
-  const { id: _id, status: _status, version: _version, createdAt: _created, updatedAt: _updated, ...goal } = publicRecord;
-  return goal;
-}
-function publicAgentStatuses(tasks: Array<TaskRecord & { agent_role: VisibleAgentRole }>) {
-  return VISIBLE_AGENT_ROLES.map(role => {
-    const agentTasks = tasks.filter(task => task.agent_role === role);
-    const active = agentTasks.find(task => ['running', 'waiting_external', 'waiting_approval', 'waiting_human', 'handed_off'].includes(task.status));
-    return {
-      role,
-      status: active?.status || (agentTasks.length > 0 && agentTasks.every(task => ['succeeded', 'skipped'].includes(task.status)) ? 'completed' : 'idle'),
-      currentTask: active?.title || '',
-      completed: agentTasks.filter(task => task.status === 'succeeded').length,
-      total: agentTasks.length,
-    };
-  });
 }
 function stableProductId(product: Record<string, unknown>, index: number): string {
   return productIdentity(product as Parameters<typeof productIdentity>[0], index);
@@ -704,17 +647,6 @@ function sendEvent(response: Response, event: EventRecord): void {
   response.write(`id: ${event.sequence}\n`);
   response.write(`event: ${event.type}\n`);
   response.write(`data: ${JSON.stringify(event)}\n\n`);
-}
-function publicEventPayload(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(publicEventPayload);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-    .filter(([key]) => {
-      const normalized = key.toLowerCase();
-      return !['thought', 'thoughts', 'reasoning', 'chain_of_thought'].includes(normalized)
-        && !/(thought|reasoning|chain.?of.?thought)/i.test(key);
-    })
-    .map(([key, item]) => [key, publicEventPayload(item)]));
 }
 async function appendEvent(input: {
   tenantId: string;
@@ -1030,28 +962,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     configuration: publicConfigurationMetadata(resolvedConfiguration),
     goals: operatingGoals.map(publicGoal),
     goal: publicGoal(goal),
-    plan: plan ? (() => {
-      const body = overviewPlanBody;
-      const publicTasks = Array.isArray(body.tasks)
-        ? body.tasks.map(item => {
-          const task = jsonObject<Record<string, unknown>>(item, {});
-          return { ...task, agentRole: visibleAgentRole(String(task.agentRole || ''), String(task.key || '')) };
-        })
-        : [];
-      const configSnapshot = body.configSnapshot && typeof body.configSnapshot === 'object'
-        ? { ...jsonObject<Record<string, unknown>>(body.configSnapshot, {}), team: [...VISIBLE_AGENT_ROLES] }
-        : body.configSnapshot;
-      return {
-        id: plan.id,
-        status: plan.status,
-        ...body,
-        tasks: publicTasks,
-        ...(configSnapshot ? { configSnapshot } : {}),
-        businessPackage: body.businessPackage
-          ? repairCollapsedWeeklyVideoProduction(body.businessPackage as WeeklyPackage)
-          : (resolvedConfiguration ? { ...recommendPackage(goalInput(goal), configSnapshotForPlan(plan, resolvedConfiguration.config), goal.owner_id), revision: 0 } : undefined),
-      };
-    })() : null,
+    plan: publicOverviewPlan({ plan, body: overviewPlanBody, goal, resolvedConfiguration }),
     run,
     tasks: normalizedTasks.map(task => ({ ...task, depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })),
     ...deliveryData,
