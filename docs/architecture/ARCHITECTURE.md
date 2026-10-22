@@ -27,6 +27,7 @@
 - `src/components/inspiration/inspirationMaterialLibrary.ts`：素材库入口参数、企业通用/产品归属、可见标签与语义、分类徽标、产品/方向/图库筛选；权威媒体比例计算在 `src/lib/materialAspectRatio.ts`，规则模块不反向依赖 React 组件。页面保留素材加载、用户操作和展示，原页面导出继续转发。
 - `src/components/EnterprisePage.tsx` 与 `src/components/enterprise/`：页面持有可编辑企业资料和导航；资料默认值/快照、服务端读写校验、FAQ/销售风格控制器及业务视图由企业资料模块负责。保存成功必须以服务端读回和产品身份校验为依据。
 - `src/components/DigitalEmployeePage.tsx` 与 `src/components/smartBusiness/WeeklyGoalPanel.tsx`：数字员工页负责新周目标的提交、冲突恢复与运行导航；独立周目标面板持有草稿、预设方案、平台配额重算、视频计划校验和排期确认，不直接调用生产 API。`DigitalEmployeeFormField.tsx` 是页面与周目标面板共用的表单字段样式。
+- 数字员工首页实际挂载 `BusinessHealthOverview`、`SmartBusinessDashboard` 和 `DigitalEmployeeTodayFocusPanel`；旧的未挂载“今日经营快照”、指标卡与转化图表脚手架已移除。源码契约测试必须检查实际挂载路径，不以死函数存在证明界面已交付。
 - `src/components/smartBusiness/DigitalEmployeeTodayFocusPanel.tsx`：首页“本周进度/需要你处理”的可达视图，依据真实任务、待审批项与计划状态展示至多三项关注动作。页面继续提供执行导航和状态文案；原页面内受现有合同保护的业务流转图定义未随本批移除。
 - `src/lib/studioApi.ts`、`src/lib/socialImageApi.ts`：前端 API 适配层。
 - `shared/contracts/`：跨端任务、内容与交付合同；字段变更需检查旧任务兼容性。

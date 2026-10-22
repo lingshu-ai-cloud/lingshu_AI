@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工未挂载旧视图清理（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `71e08ceb42ff3799c608b891b8341570ae125f92` 删除 `DigitalEmployeePage.tsx` 中未被调用的旧“今日经营快照”、指标卡与转化图表脚手架，当前实际挂载的 `BusinessHealthOverview`、`SmartBusinessDashboard`、`DigitalEmployeeTodayFocusPanel` 未改。页面从 4,943 降至 4,641 行并同步收紧架构预算；全仓仍有 6 个历史超限文件。
+- 同步修复源码契约测试的过时目标：数字员工页检查实际挂载而非死函数；WhatsApp 入站授权读取定位到已拆分的 `historyInbound.ts`；平台排程仅要求平台集合、不把内部扫描次序当业务顺序；本地 Mock 检查当前 `AppPageSlot` 与集中本地门禁。`test:digital-employees` 初次被这些旧断言阻断，逐项核对现行实现后整组重跑通过；`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,351 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过。`AiCreateStudio` chunk 为 497,209/500,000 字节。未做浏览器交互、真实付费供应商调用、目标库迁移或部署；最终本地/远端 SHA 和工作区状态以推送后核对为准。
+
 ## 爬虫元数据兜底分析拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `0ead7702a6e0caa010954c622472c5d7f8778b1b` 将元数据兜底分析的纯规则迁至 `videoCrawlerMetadataFallback.ts`，原函数正文逐行比对一致；7 个原调用点仍由 `videos.ts` 编排，未触碰分析队列、真实模型调用或付费许可。`videos.ts` 从 9,200 降至 9,111 行，架构预算同步收紧；全仓仍有 6 个历史超限文件。
