@@ -76,7 +76,7 @@ test('enterprise presenter page supports editing, optional Ark enhancement and r
   assert.doesNotMatch(source, /默认出镜偏好|新分镜默认声音|新分镜默认布局|主体授权证据|方舟控制台人工核验|渠道与出镜策略/);
   assert.match(enterprisePageSource, /enterpriseArea === 'facts' && <section[^>]+aria-label="企业资料完整度"/);
   assert.doesNotMatch(enterprisePageSource, /设置客服边界|打开灵小枢快速采集/);
-  assert.match(enterprisePageSource, /<Collapse[\s\S]{0,500}enterprise-advanced-collapse/);
+  assert.match(enterprisePageSource, /<EnterpriseAdditionalSettings/);
   assert.doesNotMatch(enterprisePageSource, /<EnterprisePresenterRouting/);
 });
 

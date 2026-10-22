@@ -1,17 +1,19 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { useState, useEffect, useRef } from 'react';
-import { Alert, Button, Collapse, Input, Tabs } from 'antd';
+import { Alert, Button, Input, Tabs } from 'antd';
 import { LsGradientProgress } from './ui/LsExperiencePrimitives';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import EnterpriseNotificationSettings from './enterprise/EnterpriseNotificationSettings';
 import EnterpriseFaqPanel from './enterprise/EnterpriseFaqPanel';
 import EnterpriseProductPanel from './enterprise/EnterpriseProductPanel';
 import EnterpriseProductImportReviewModal from './enterprise/EnterpriseProductImportReviewModal';
+import EnterpriseAdditionalSettings from './enterprise/EnterpriseAdditionalSettings';
+import EnterpriseBizRulesPanel from './enterprise/EnterpriseBizRulesPanel';
 import EnterpriseSalesStylePanel from './enterprise/EnterpriseSalesStylePanel';
 import { useEnterpriseSalesStyle } from './enterprise/useEnterpriseSalesStyle';
 import { AUTO_REPLY_SCOPE, EnterpriseAiAutonomySection, EnterpriseHandoffSafetySection } from './enterprise/EnterpriseCustomerServiceSettings';
 import { Field, Toggle, KnowledgeCard, OptionSelector } from './enterprise/EnterpriseFormControls';
-import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, Plus, Upload, X, Image, FileText, Bell, ChevronLeft, Globe2, ShieldCheck, ArrowRight, Users, type LucideIcon } from 'lucide-react';
+import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, Plus, X, Image, Bell, ChevronLeft, Globe2, ShieldCheck, ArrowRight, Users, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { completeDemoStep } from '../lib/demoProgress';
 import { prepareEnterpriseProductImport, removePendingImportedProduct, type PendingProductImport } from './enterprise/enterpriseProductImportPreparation';
@@ -22,7 +24,7 @@ import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
 import type { AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import {readWeeklyEnterpriseFactTarget} from '../lib/weeklyEnterpriseFactNavigation';
-import type { ProductItem, AutonomyLevel, BargainPolicy, BizRules, FaqItem, FaqPack, NotificationSettings, CooperationRoute, SocialStrategy, Profile } from './enterprise/enterpriseProfileTypes';
+import type { ProductItem, AutonomyLevel, BizRules, FaqItem, FaqPack, NotificationSettings, CooperationRoute, SocialStrategy, Profile } from './enterprise/enterpriseProfileTypes';
 import { CATEGORY_OPTIONS, COMPANY_TYPE_OPTIONS, LANGUAGE_OPTIONS, MARKET_OPTIONS, emptyProduct, normalizeEnterpriseProfile, normalizeProductItems } from './enterprise/enterpriseProfileNormalization';
 import { enterpriseProfileCompleteness, productAssetStats, productCreativeMaterialCount, sectionCompletion, type EnterpriseCompletenessTodo } from './enterprise/enterpriseProfileCompleteness';
 export { normalizeEnterpriseProfile } from './enterprise/enterpriseProfileNormalization';
@@ -85,8 +87,6 @@ const AGENTS = [
   { icon: MessageSquare, label: '我的客户', color: '#0891b2' },
 ];
 
-const BRAND_TONE_OPTIONS = ['专业可靠', '亲切自然', '简洁直接', '高端克制', '热情主动', '务实高效'];
-const COMMUNICATION_STYLE_OPTIONS = ['专业', '轻松', '亲切', '正式'];
 const PAGE_SIZE = 5;
 const SERVICE_INTAKE_AUTO_OPEN_KEY = 'lingshu:enterprise:service-intake-auto-opened';
 
@@ -147,7 +147,6 @@ export function profileSnapshot(profile: Profile): string {
 
 
 const inputCls = 'w-full';
-const textareaCls = 'w-full resize-y';
 
 const MAX_PRODUCT_DOCUMENTS = 3;
 
@@ -1027,53 +1026,13 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
           />}
 
           {knowledgeView === 'bizRules' && (
-          <KnowledgeCard id="biz-rules" icon={ShieldCheck} title="报价与业务规则" purpose="决定 AI 回复客户时的分寸——它能说什么、不能说什么" completed={completions.bizRules} highlight={bizRulesHighlight}>
-            {!completions.bizRules && <p className="mb-4 rounded-lg bg-sky-50 px-3 py-2 text-xs font-bold text-sky-800">补充样品、付款和交期后，AI 转人工时会替销售整理好询价条件。</p>}
-            <div className="space-y-4">
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-                <p className="text-sm font-semibold text-amber-900">客户询价 → 标记“等待人工报价”</p>
-                <p className="mt-1 text-xs leading-5 text-amber-800">AI 不回复价格，也不发送“稍后报价”占位消息；系统提醒销售查看数量、规格和包装要求后亲自回复。</p>
-              </div>
-              <div className="rounded-lg border border-border bg-surface-2/50 p-4">
-                <p className="text-sm font-semibold text-text-primary">业务资料</p>
-                <p className="mt-1 text-[11px] text-text-muted">与“产品资料 → 资质文书”同步显示，同一文件不重复上传。</p>
-                <div className="mt-3 space-y-1">{products.flatMap(product => (product.documents ?? []).map(file => ({ product: product.name || '未命名产品', file }))).map(({ product, file }, index) => <div key={`${file.name}-${index}`} className="flex items-center gap-2 rounded bg-white px-2 py-1.5 text-[11px]"><FileText size={12} className="text-text-muted" /><span className="min-w-0 flex-1 truncate">{file.name}</span><span className="text-text-muted">{product}</span></div>)}</div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="内部参考价格（不会自动发给客户）">
-                  <Input className={inputCls} value={profile.bizRules?.priceRange ?? ''} onChange={e => setBizRule('priceRange', e.target.value)} placeholder="$5 - $500 USD，仅供销售参考" />
-                </Field>
-                <Field label="客户问 MOQ 时，AI 应怎么说">
-                  <Input className={inputCls} value={profile.bizRules?.moq ?? ''} onChange={e => setBizRule('moq', e.target.value)} placeholder="常规 50 件起，支持混批" />
-                </Field>
-                <Field label="样品是否免费、运费谁出">
-                  <Input className={inputCls} value={profile.bizRules?.samplePolicy ?? ''} onChange={e => setBizRule('samplePolicy', e.target.value)} placeholder="样品可付费申请，运费由买家承担" />
-                </Field>
-                <Field label="付款方式和节点">
-                  <Input className={inputCls} value={profile.bizRules?.paymentTerms ?? ''} onChange={e => setBizRule('paymentTerms', e.target.value)} placeholder="T/T 30% 预付，尾款出货前结清" />
-                </Field>
-                <Field label="交期怎么表述">
-                  <Input className={inputCls} value={profile.bizRules?.leadTime ?? ''} onChange={e => setBizRule('leadTime', e.target.value)} placeholder="样品 3-7 天，大货 20-35 天" />
-                </Field>
-                <Field label="议价底线说明">
-                  <Input className={inputCls} value={profile.bizRules?.bargainFloor ?? ''} onChange={e => setBizRule('bargainFloor', e.target.value)} placeholder="可小幅让利，但不承诺低于成本线" />
-                </Field>
-              </div>
-              <Field label="销售议价偏好（仅用于内部建议）：">
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { value: 'no' as BargainPolicy, label: '不议价' },
-                    { value: 'limited' as BargainPolicy, label: '有限让步' },
-                    { value: 'open' as BargainPolicy, label: '开放协商' },
-                  ].map(option => (
-                    <button key={option.value} type="button" onClick={() => setBizRule('bargainPolicy', option.value)} className={`rounded-lg border px-3 py-2 text-xs font-bold ${profile.bizRules?.bargainPolicy === option.value ? 'border-slate-950 bg-slate-950 text-white' : 'border-border bg-white text-text-secondary'}`}>
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </Field>
-            </div>
-          </KnowledgeCard>
+            <EnterpriseBizRulesPanel
+              bizRules={profile.bizRules}
+              products={products}
+              completed={completions.bizRules}
+              highlighted={bizRulesHighlight}
+              onChange={setBizRule}
+            />
           )}
 
           {knowledgeView === 'faq' && <EnterpriseFaqPanel
@@ -1144,61 +1103,14 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
               <SupportAccessControl />
             </div>
 
-            <div className="border-t border-border pt-5">
-              <h3 className="mb-2 text-sm font-semibold text-text-primary">更多设置</h3>
-              <Collapse
-                ghost
-                className="enterprise-advanced-collapse"
-                items={[
-                  {
-                    key: 'strategy',
-                    label: <span className="inline-flex items-center gap-2 text-sm font-semibold"><Compass size={14} />经营策略</span>,
-                    children: <div className="grid gap-x-4 sm:grid-cols-2">
-                      <Field label="当前阶段目标"><Input className={inputCls} value={profile.strategy?.currentGoal ?? ''} onChange={e => set('strategy')('currentGoal', e.target.value)} /></Field>
-                      <Field label="本期重点产品"><Input className={inputCls} value={profile.strategy?.focusProducts ?? ''} onChange={e => set('strategy')('focusProducts', e.target.value)} /></Field>
-                      <Field label="重点市场"><OptionSelector value={profile.strategy?.focusMarkets ?? ''} options={MARKET_OPTIONS} onChange={value => set('strategy')('focusMarkets', value)} placeholder="选择重点市场" /></Field>
-                      <Field label="暂不经营市场"><OptionSelector value={profile.strategy?.excludedMarkets ?? ''} options={MARKET_OPTIONS} onChange={value => set('strategy')('excludedMarkets', value)} placeholder="选择暂不经营市场" /></Field>
-                      <Field label="最低利润率"><Input className={inputCls} value={profile.strategy?.minMargin ?? ''} onChange={e => set('strategy')('minMargin', e.target.value)} /></Field>
-                      <div className="sm:col-span-2"><Field label="价格策略"><Input.TextArea className={textareaCls} rows={2} value={profile.strategy?.pricingStrategy ?? ''} onChange={e => set('strategy')('pricingStrategy', e.target.value)} /></Field></div>
-                    </div>,
-                  },
-                  {
-                    key: 'brand',
-                    label: <span className="inline-flex items-center gap-2 text-sm font-semibold"><Megaphone size={14} />品牌与语气</span>,
-                    children: <div className="grid gap-x-4 sm:grid-cols-2">
-                      <Field label="品牌名称"><Input className={inputCls} value={profile.brand.name ?? ''} onChange={e => set('brand')('name', e.target.value)} /></Field>
-                      <Field label="品牌调性关键词"><OptionSelector value={profile.brand.tone} options={BRAND_TONE_OPTIONS} onChange={value => set('brand')('tone', value)} placeholder="选择品牌调性" /></Field>
-                      <Field label="沟通风格"><OptionSelector value={profile.brand.style} options={COMMUNICATION_STYLE_OPTIONS} multiple={false} onChange={value => set('brand')('style', value)} placeholder="选择沟通风格" /></Field>
-                      <Field label="首选输出语言"><OptionSelector value={profile.brand.preferredLanguages ?? ''} options={LANGUAGE_OPTIONS} onChange={value => set('brand')('preferredLanguages', value)} placeholder="选择首选输出语言" /></Field>
-                      <Field label="核心卖点"><Input className={inputCls} value={profile.brand.usp} onChange={e => set('brand')('usp', e.target.value)} /></Field>
-                      <Field label="禁忌话题"><Input className={inputCls} value={profile.brand.taboos} onChange={e => set('brand')('taboos', e.target.value)} /></Field>
-                    </div>,
-                  },
-                  {
-                    key: 'learning',
-                    label: <span className="inline-flex items-center gap-2 text-sm font-semibold"><BookOpen size={14} />Agent 学习记录</span>,
-                    children: <div className="grid gap-x-4 sm:grid-cols-2">
-                      <Field label="已验证有效角度"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.provenAngles ?? ''} onChange={e => set('agentLearning')('provenAngles', e.target.value)} /></Field>
-                      <Field label="低效角度 / 需降权"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.weakAngles ?? ''} onChange={e => set('agentLearning')('weakAngles', e.target.value)} /></Field>
-                      <Field label="待确认推断"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.pendingAssumptions ?? ''} onChange={e => set('agentLearning')('pendingAssumptions', e.target.value)} /></Field>
-                      <Field label="用户纠正偏好"><Input.TextArea className={textareaCls} rows={2} value={profile.agentLearning?.userCorrections ?? ''} onChange={e => set('agentLearning')('userCorrections', e.target.value)} /></Field>
-                      <div className="sm:col-span-2"><Field label="自由填写"><Input.TextArea className={textareaCls} rows={4} value={profile.knowledge} onChange={e => setProfile(prev => ({ ...prev, knowledge: e.target.value }))} /></Field></div>
-                    </div>,
-                  },
-                  {
-                    key: 'orders',
-                    label: <span className="inline-flex items-center gap-2 text-sm font-semibold"><Upload size={14} />订单数据导入</span>,
-                    children: <div>
-                      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">
-                        {orderImporting ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}上传订单 CSV
-                        <input type="file" accept=".csv,text/csv" className="hidden" disabled={orderImporting} onChange={e => { const file = e.target.files?.[0] || null; e.currentTarget.value = ''; void importOrderCsv(file); }} />
-                      </label>
-                      {orderImportMessage && <p className="mt-2 text-[11px] font-bold text-emerald-700">{orderImportMessage}</p>}
-                    </div>,
-                  },
-                ]}
-              />
-            </div>
+            <EnterpriseAdditionalSettings
+              profile={profile}
+              orderImporting={orderImporting}
+              orderImportMessage={orderImportMessage}
+              onFieldChange={(section, field, value) => set(section)(field, value)}
+              onKnowledgeChange={value => setProfile(prev => ({ ...prev, knowledge: value }))}
+              onImportOrderCsv={importOrderCsv}
+            />
           </section>
           )}
 

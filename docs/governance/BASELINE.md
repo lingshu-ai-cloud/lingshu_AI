@@ -9,6 +9,11 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 9 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## 企业资料更多设置与报价规则视图边界（2026-10-22）
+
+- 以集成分支 `afe4359e190c026f445ee204cb79720019b137aa` 为干净起点，将低频的经营策略、品牌与语气、Agent 学习记录、订单 CSV 导入展示移入 `EnterpriseAdditionalSettings.tsx`；将报价与业务规则、产品资质文书共用展示移入 `EnterpriseBizRulesPanel.tsx`。原 Collapse 收纳、询价转人工和内部价格不自动发送的说明保持；父页面继续持有字段变更、订单导入请求与企业资料保存。
+- `EnterprisePage.tsx` 从 1,223 行降至 1,135 行，历史预算同步收紧，仍有 9 个历史超限文件。两处视图的定向渲染/接线测试 10/10、完整 `test:customer-service` 链、TypeScript、架构扫描/ratchet、生产构建及 191 项迁移只读检查通过；`AiCreateStudio` 主 chunk 为 497103/500000 字节。客服隔离测试仍有本地 PocketBase `ECONNREFUSED` 日志，不代表真实服务验收；真实订单导入、客户发送、付费供应商和部署均未执行。
+
 ## 企业产品导入复核边界（2026-10-22）
 
 - 以集成分支 `af43973ddab09080dd563547e5bea34fcc5ed2dd` 为干净起点，产品导入复核弹窗移入 `EnterpriseProductImportReviewModal.tsx`；移除导入草稿产品时，对已归属图片和外链主图转存状态的索引重排成为 `removePendingImportedProduct` 纯函数。父页面继续持有草稿、确认状态与真实资产写入流程；确认期间禁用移除行，避免产品索引在写入中变化。原复核文案、资产归属和确认接口保持不变。
