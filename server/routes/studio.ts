@@ -3,13 +3,14 @@ import {submitStudioVoicePaidRequest, studioVoicePaidContext, StudioVoicePaidBou
 import { submitStoryboardSeedance } from '../lib/storyboardSeedanceSubmission.js';
 import { mvpBudgetAdmission } from '../lib/mvpBudgetAdmission.js';
 import { isTrustedSocialOutputWorkspace, socialOutputWorkspaceClientWriteBlocked } from '../starter198/socialContentProductionWorkspace.js';
-import { MINIMAX_ENGLISH_PRESETS, ttsPostProcessingSpeed } from '../lib/studioVoiceSelection.js';
+import { ttsPostProcessingSpeed } from '../lib/studioVoiceSelection.js';
 import { parseMiniMaxSubtitleTiming } from '../lib/minimaxSubtitleTiming.js';
 import { credentialFingerprint, DurableCredentialQuarantine } from '../lib/providerCredentialQuarantine.js';
 import { wavDurationFromBytes } from '../lib/wavDuration';
 import { finalizeMaterialScript } from '../lib/materialScriptFinalizer.js';
 import { createShootingTasksRouter } from './shootingTasks.js';
 import { buildCoverSvg } from './studioCoverSvg.js';
+import { minimaxLanguageBoost, minimaxPronunciationDict, minimaxSpeechText, minimaxVoiceFor, minimaxVoiceModify, normalizeTtsLanguage, normalizeTtsStyle, QWEN_TTS_VOICE_MAP, SAY_LANGUAGE_VOICE_MAP, type TtsStyleOptions } from './studioTtsStyle.js';
 import { createProductionCostQuotesRouter, createProductionInputRequestsRouter } from './productionGovernance.js';
 import { autoFulfillProductionInputRequestsForMaterial } from '../production/productionInputRequests.js';
 import { materialAssetV2FromRecord, normalizeMaterialAssetV2, type MaterialAssetV2Metadata } from '../../shared/contracts/materialAssetV2.js';
@@ -62,7 +63,7 @@ import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.
 import { normalizeCompleteTimestampTranslation, normalizeTimestampTranslationValue, timestampedTranslationCues, translationValueForLanguage } from '../lib/translationCues.js';
 export { normalizeCompleteTimestampTranslation, normalizeTimestampTranslationValue, timestampedTranslationCues } from '../lib/translationCues.js';
 import { buildMaterialScriptAnalysis, type MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
-import { normalizeVideoLanguage, VIDEO_LANGUAGES } from '../../shared/contracts/videoLanguages.js';
+import { VIDEO_LANGUAGES } from '../../shared/contracts/videoLanguages.js';
 import { normalizeEffectPlan, type EffectPlanV1 } from '../../shared/contracts/effectPlan.js';
 import { buildStudioEmphasisPlan, type StudioEmphasisPlan, type StudioEmphasisPlanInput } from '../lib/studioEmphasisManifest.js';
 import { runStudioEmphasisPrepass } from '../lib/studioEmphasisPrepass.js';
@@ -8461,150 +8462,8 @@ function minimaxCredentialQuarantineFile(): string {
   return path.join(scopedStudioAssetDir(VOICE_SAMPLES_ROOT), 'minimax-credential-quarantine.json');
 }
 
-type TtsPreset = 'tiktok_excited' | 'authentic_review' | 'professional_b2b' | 'warm_story' | 'urgent_cta';
-interface TtsStyleOptions {
-  preset?: TtsPreset;
-  emotion?: string;
-  emotionIntensity?: number;
-  speed?: number;
-  targetDuration?: number;
-  pauseStyle?: 'few' | 'natural' | 'dramatic';
-  pronunciations?: Array<{ word: string; pronunciation: string }>;
-}
 interface AlignedWord { text: string; start: number; end: number }
 interface AlignedCue { text: string; start: number; end: number; words?: AlignedWord[] }
-
-const TTS_PRESET_GUIDE: Record<TtsPreset, string> = {
-  tiktok_excited: 'High-energy TikTok product recommendation. Start with excited surprise, use crisp emphasis and quick but intelligible pacing, then land the CTA strongly.',
-  authentic_review: 'Authentic personal product review. Sound conversational, specific and pleasantly surprised, never like a hard-sell announcer.',
-  professional_b2b: 'Professional cross-border B2B presenter. Sound confident, credible and restrained, with clear pronunciation of specifications and sourcing terms.',
-  warm_story: 'Warm lifestyle storytelling. Use a gentle smile, natural breathing and slightly slower emotional pacing.',
-  urgent_cta: 'Conversion-focused call to action. Build urgency without shouting, emphasize the offer and finish decisively.',
-};
-
-function normalizeTtsStyle(input: unknown): TtsStyleOptions {
-  const raw = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-  const preset = String(raw.preset || '') as TtsPreset;
-  return {
-    preset: preset in TTS_PRESET_GUIDE ? preset : 'authentic_review',
-    emotion: String(raw.emotion || '自然可信').slice(0, 40),
-    emotionIntensity: Math.max(0, Math.min(100, Number(raw.emotionIntensity ?? 65) || 65)),
-    speed: Math.max(0.75, Math.min(1.35, Number(raw.speed ?? 1) || 1)),
-    targetDuration: Math.max(0, Math.min(180, Number(raw.targetDuration ?? 0) || 0)),
-    pauseStyle: raw.pauseStyle === 'few' || raw.pauseStyle === 'dramatic' ? raw.pauseStyle : 'natural',
-    pronunciations: Array.isArray(raw.pronunciations) ? raw.pronunciations.slice(0, 20).map(item => {
-      const row = item && typeof item === 'object' ? item as Record<string, unknown> : {};
-      return { word: String(row.word || '').trim().slice(0, 60), pronunciation: String(row.pronunciation || '').trim().slice(0, 120) };
-    }).filter(item => item.word && item.pronunciation) : [],
-  };
-}
-
-// 工作台音色 → Qwen3-TTS 系统人声。三种音色均支持中、英等主要语种。
-const QWEN_TTS_VOICE_MAP: Record<string, string> = {
-  v1: 'Cherry',
-  v2: 'Ethan',
-  v3: 'Serena',
-};
-
-const MINIMAX_VOICE_MAP: Record<string, Record<string, string>> = {
-  zh: {
-    v1: 'Chinese (Mandarin)_Warm_Bestie',
-    v2: 'Chinese (Mandarin)_Reliable_Executive',
-    v3: 'Chinese (Mandarin)_Warm_Girl',
-  },
-  en: {
-    v1: MINIMAX_ENGLISH_PRESETS.v1.voiceId,
-    v2: MINIMAX_ENGLISH_PRESETS.v2.voiceId,
-    v3: MINIMAX_ENGLISH_PRESETS.v3.voiceId,
-  },
-  es: {
-    v1: 'Spanish_SereneWoman',
-    v2: 'Spanish_MaturePartner',
-    v3: 'Spanish_ConfidentWoman',
-  },
-  ar: {
-    v1: 'Arabic_CalmWoman',
-    v2: 'Arabic_FriendlyGuy',
-    v3: 'Arabic_CalmWoman',
-  },
-  pt: {
-    v1: 'Portuguese_SentimentalLady',
-    v2: 'Portuguese_Deep-VoicedGentleman',
-    v3: 'Portuguese_ConfidentWoman',
-  },
-  id: {
-    v1: 'Indonesian_SweetGirl',
-    v2: 'Indonesian_ReservedYoungMan',
-    v3: 'Indonesian_CalmWoman',
-  },
-  fr: {
-    v1: 'French_MovieLeadFemale',
-    v2: 'French_MaleNarrator',
-    v3: 'French_FemaleAnchor',
-  },
-  de: {
-    v1: 'German_SweetLady',
-    v2: 'German_FriendlyMan',
-    v3: 'German_SweetLady',
-  },
-};
-
-const SAY_VOICE_MAP: Record<string, string[]> = {
-  v1: ['Samantha', 'Ting-Ting'],
-  v2: ['Daniel', 'Alex'],
-  v3: ['Karen', 'Samantha'],
-};
-
-const SAY_LANGUAGE_VOICE_MAP: Record<string, Record<string, string[]>> = {
-  ja: { v1: ['Kyoko'], v2: ['Reed (日语（日本）)'], v3: ['Kyoko'] },
-  zh: {
-    // macOS exposes these exact identifiers. The former hyphenated spellings
-    // do not exist, which silently skipped Mandarin and fell through to a
-    // Cantonese voice for Chinese social-video copy.
-    v1: ['Tingting', 'Sandy (中文（中国大陆）)', 'Meijia', 'Sinji'],
-    v2: ['Reed (中文（中国大陆）)', 'Tingting', 'Sinji'],
-    v3: ['Sandy (中文（中国大陆）)', 'Tingting', 'Meijia', 'Sinji'],
-  },
-  en: {
-    v1: ['Samantha', 'Karen', 'Moira'],
-    v2: ['Daniel', 'Alex', 'Fred'],
-    v3: ['Karen', 'Samantha', 'Moira'],
-  },
-  es: {
-    v1: ['Monica', 'Paulina'],
-    v2: ['Jorge', 'Juan', 'Diego'],
-    v3: ['Paulina', 'Monica'],
-  },
-  ar: {
-    v1: ['Maged'],
-    v2: ['Maged'],
-    v3: ['Maged'],
-  },
-  pt: {
-    v1: ['Luciana', 'Joana'],
-    v2: ['Felipe'],
-    v3: ['Joana', 'Luciana'],
-  },
-  id: {
-    v1: ['Damayanti'],
-    v2: ['Damayanti'],
-    v3: ['Damayanti'],
-  },
-  fr: {
-    v1: ['Amelie', 'Thomas'],
-    v2: ['Thomas'],
-    v3: ['Amelie'],
-  },
-  de: {
-    v1: ['Anna', 'Markus'],
-    v2: ['Markus'],
-    v3: ['Anna'],
-  },
-};
-
-function normalizeTtsLanguage(value: unknown): string {
-  return normalizeVideoLanguage(value || 'zh');
-}
 
 function piperModelForLanguage(language: string): string {
   const code = normalizeTtsLanguage(language).toUpperCase().replace(/[^A-Z0-9]/g, '_');
@@ -8622,38 +8481,12 @@ function xttsLanguageCode(language: string): string {
   return code;
 }
 
-function minimaxLanguageBoost(language: string): string {
-  const code = normalizeTtsLanguage(language);
-  const map: Record<string, string> = {
-    zh: 'Chinese',
-    en: 'English',
-    es: 'Spanish',
-    ar: 'Arabic',
-    pt: 'Portuguese',
-    id: 'Indonesian',
-    fr: 'French',
-    de: 'German',
-  };
-  return map[code] || 'auto';
-}
-
 function minimaxEndpoint(pathname: string, env: NodeJS.ProcessEnv = process.env): string {
   const base = (env.MINIMAX_BASE_URL || 'https://api.minimax.io').replace(/\/+$/, '');
   const url = new URL(`${base}${pathname.startsWith('/') ? pathname : `/${pathname}`}`);
   const groupId = process.env.MINIMAX_GROUP_ID || env.MINIMAX_GROUPID || '';
   if (groupId) url.searchParams.set(env.MINIMAX_GROUP_ID_PARAM || 'GroupId', groupId);
   return url.toString();
-}
-
-function minimaxVoiceFor(voice: string, language: string, env: NodeJS.ProcessEnv = process.env): string {
-  const lang = normalizeTtsLanguage(language);
-  const envCode = lang.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-  const voiceCode = String(voice || 'v1').toUpperCase().replace(/[^A-Z0-9]/g, '_');
-  return env[`MINIMAX_VOICE_${envCode}_${voiceCode}`]
-    || env[`MINIMAX_VOICE_${voiceCode}`]
-    || MINIMAX_VOICE_MAP[lang]?.[voice]
-    || MINIMAX_VOICE_MAP.en?.[voice]
-    || MINIMAX_ENGLISH_PRESETS.v1.voiceId;
 }
 
 interface MinimaxVoiceCacheEntry {
@@ -8823,54 +8656,6 @@ async function minimaxFetchJson(pathname: string, body: Record<string, unknown>,
   };
   if (pathname === '/v1/t2a_v2' || pathname === '/v1/voice_clone') return submitStudioVoicePaidRequest({stage:pathname === '/v1/voice_clone'?'voice_clone':'tts',provider:'minimax',endpoint:minimaxEndpoint(pathname),accountKeyHash:createHash('sha256').update(apiKey).digest('hex'),model:String(body.model||''),voiceId:String((body.voice_setting as any)?.voice_id || body.voice_id || ''),request:body},send);
   return send();
-}
-
-function minimaxSpeechText(text: string, style: TtsStyleOptions): string {
-  const clean = String(text || '').replace(/<#\d+(?:\.\d+)?#>/g, '').trim();
-  if (style.pauseStyle === 'few') return clean;
-  // Slightly varied pauses sound less metronomic than applying one fixed gap
-  // after every comma/full stop. The sequence is deterministic so regenerating
-  // the same copy remains predictable.
-  const sentencePauses = style.pauseStyle === 'dramatic'
-    ? [0.34, 0.46, 0.39, 0.52]
-    : [0.18, 0.27, 0.22, 0.31];
-  const clausePauses = style.pauseStyle === 'dramatic'
-    ? [0.16, 0.24, 0.19]
-    : [0.07, 0.13, 0.09];
-  let sentenceIndex = 0;
-  let clauseIndex = 0;
-  return clean
-    .replace(/([。！？!?；;]|\.(?=\s+[\p{Lu}]))(?=\s*\S)/gu, punctuation => {
-      const pause = sentencePauses[sentenceIndex++ % sentencePauses.length];
-      return `${punctuation}<#${pause.toFixed(2)}#>`;
-    })
-    .replace(/([，,：:])(?=\s*\S)/g, punctuation => {
-      const pause = clausePauses[clauseIndex++ % clausePauses.length];
-      return `${punctuation}<#${pause.toFixed(2)}#>`;
-    });
-}
-
-function minimaxVoiceModify(style: TtsStyleOptions): { pitch: number; intensity: number; timbre: number } {
-  const preset = style.preset || 'authentic_review';
-  const presetShape: Record<TtsPreset, { pitch: number; timbre: number }> = {
-    tiktok_excited: { pitch: 2, timbre: 2 },
-    authentic_review: { pitch: 0, timbre: 1 },
-    professional_b2b: { pitch: -1, timbre: -2 },
-    warm_story: { pitch: -1, timbre: 3 },
-    urgent_cta: { pitch: 1, timbre: -1 },
-  };
-  // Keep modification restrained: large values make speech processed rather
-  // than expressive. This makes the UI emotion control affect MiniMax while
-  // preserving the selected speaker's identity.
-  const intensity = Math.max(-8, Math.min(14, Math.round(((style.emotionIntensity ?? 65) - 50) * 0.35)));
-  return { ...presetShape[preset], intensity };
-}
-
-function minimaxPronunciationDict(style: TtsStyleOptions): { tone: string[] } | undefined {
-  const tone = (style.pronunciations || [])
-    .map(item => `${item.word}/${item.pronunciation}`)
-    .filter(item => !/[\r\n]/.test(item));
-  return tone.length ? { tone } : undefined;
 }
 
 async function minimaxSubtitleCues(url: unknown, duration: number): Promise<AlignedCue[]> {
