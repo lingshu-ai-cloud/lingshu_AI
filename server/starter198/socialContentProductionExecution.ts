@@ -29,6 +29,7 @@ import { socialContentMaterialAnalysisInputs } from './socialContentMaterialAnal
 import {prepareSocialProductionMaterialRouting} from './socialContentProductionMaterialPreparation.js';
 import {prepareSocialContentProductionDirector} from './socialContentProductionDirectorPreparation.js';
 import {admitSocialContentProduction} from './socialContentProductionAdmission.js';
+import {prepareSocialContentFinalDelivery} from './socialContentProductionFinalDelivery.js';
 import {currentPresenterFirstFrameAssetProvenanceHash,ensureStrictPresenterFirstFrames} from './socialContentPresenterFirstFrameRuntime.js';
 import { createProductionBudgetRouteReaders } from './socialContentProductionBudgetRoutes.js';
 import { createSocialContentPaidRuntimePorts } from './socialContentPaidRuntimePorts.js';
@@ -44,7 +45,7 @@ import fsp from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import sharp from 'sharp';
-import type { SocialAssetSupplyPlan, SocialContentThemeId, SocialProductionResult, SocialTaskSource } from '../../shared/contracts/socialContentWorkflow.js';
+import type { SocialAssetSupplyPlan, SocialContentThemeId, SocialTaskSource } from '../../shared/contracts/socialContentWorkflow.js';
 import { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
 import { resolveSourceDurations } from '../lib/videoSourcePlan.js';
@@ -52,7 +53,7 @@ import { alignStudioVoiceForAutomation, automationBgmAudio, automationBgmCatalog
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import { objectStorageSignedGetUrl } from '../storage/objectStorage.js';
 import { createSocialContentArtifact } from './socialContentOutputs.js';
-import { archiveGeneratedSocialContentFile, registerSocialContentFile, socialContentFileDownloadUrl, storeTransientSocialContentFile, type SocialContentBackendFilePort } from './socialContentFiles.js';
+import { socialContentFileDownloadUrl, type SocialContentBackendFilePort } from './socialContentFiles.js';
 import { materializeSocialContentCloudMaterial, socialContentCloudMaterialRecordId, type SocialContentCloudMaterialPort } from './socialContentMaterialAccess.js';
 import { withSocialContentRenderWorkspace } from './socialContentRenderWorkspace.js';
 import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.js';
@@ -67,19 +68,14 @@ import {
 import {freezeSocialScriptBaseline,verifiedSocialScriptContext} from './socialContentScriptBaseline.js';
 import {prepareSocialProductionScriptBaseline} from './socialContentProductionScriptBaseline.js';
 import { runOutsideSocialContentMutationScope } from './socialContentMutation.js';
-import { socialExecutionExternalCost } from './socialContentAgentWorkflow.js';
 import {
   buildSocialProductionPlan,
   type SocialProductionAsset,
   type SocialProductionPlan,
 } from './socialContentProductionPlan.js';
-import { summarizeSelectedProviderCosts } from './socialContentProductionCost.js';
 import { evaluateSocialReplicationResult } from './replicationEvaluationAdapter.js';
-import {evaluateSocialProductionReplication} from './socialContentProductionReplicationEvaluation.js';
-import { socialReplicationHardQualityFailures } from './socialContentGraphQualityGate.js';
 import {
   executeSocialAssetSupplyPlan,
-  socialExecutedSceneMediaArtifact,
   type SocialAssetSupplyExecution,
   type SocialAssetSupplyProviderAdapter,
 } from './socialContentAssetSupplyExecution.js';
@@ -100,8 +96,8 @@ import {automaticallyConfirmPresenterFirstFrameApproval,readConfirmedPresenterFi
 import type {FrozenPresenterMotherSegments} from '../../shared/contracts/presenterMotherSegments.js';
 import {heyGenRuntimeRouteEvidence,readTrustedHeyGenRuntimeBinding} from './socialContentHeyGenRuntimeBinding.js';
 import { socialDirectorFrozenDirection, publicSocialDirectorPlanSummary, reviseSocialDirectorPlanForVoiceoverFit, socialDirectorContentHandoff, socialDirectorHandoffWithBoundVoice, socialDirectorCoverTimestamp, socialDirectorRenderTimeline, socialDirectorVoiceAlignedCaptionCues, socialDirectorScriptText, type SocialDirectorBgmSelection, type SocialDirectorBgmTrack, type SocialDirectorContentHandoff } from './socialContentDirectorPlan.js';
-import { persistSocialDirectorPlanVersion, resolveSocialDirectorArtifactLineage } from './socialContentDirectorPlanVersions.js';
-import { socialProductionReferenceFidelityFailures, socialProductionCollaborationFailures, socialProductionCollaborationTrace, socialProductionExecutionSceneForFinal } from './socialContentProductionCollaboration.js';
+import { persistSocialDirectorPlanVersion } from './socialContentDirectorPlanVersions.js';
+import { socialProductionReferenceFidelityFailures, socialProductionCollaborationTrace, socialProductionExecutionSceneForFinal } from './socialContentProductionCollaboration.js';
 import { voiceLearningReadiness } from '../videoProduction/voiceQualityLearning.js';
 import {
   analyzeSocialProductionAssetsWithCheckpoint,
@@ -1145,184 +1141,19 @@ export async function runSocialContentAutoProduction(input: {
     },
   });
   if (input.graphPhase === 'technical_quality') return;
-  const coverPath = await (input.runtime?.createCover ?? createVideoCover)({
-    videoPath: result.outputPath,
-    outputDirectory: outputDir,
-    timestamp: socialDirectorCoverTimestamp(contentHandoff, duration, captionCues, preserveReferenceTimeline),
+  const finalDelivery = await prepareSocialContentFinalDelivery({
+    execution: input, detail, agentWorkflow, outputDir, outputPath: result.outputPath,
+    duration, coverTimestamp: socialDirectorCoverTimestamp(contentHandoff, duration, captionCues, preserveReferenceTimeline),
+    createCover: input.runtime?.createCover ?? createVideoCover,
+    directorPlan, directorPlanReference: persistedDirectorPlan.reference,
+    contentHandoff, rawAssets, assets, assetSupplyExecution, adaptedScript, timeline,
+    measuredDurationSeconds, technicalApproved, technicalFailures, quality, sceneQuality, audio,
+    productionMode,
   });
-  await assertCurrentContentExecutionActive();
-  const stored = await storeTransientSocialContentFile({
-    filePath: result.outputPath,
-    tenantId: input.tenantId,
-    name: `${detail.brief.title || '社媒内容'}-成品.mp4`,
-    mimeType: 'video/mp4',
-  });
-  const file = await registerSocialContentFile({
-    repository: input.repository,
-    tenantId: input.tenantId,
-    userId: input.userId,
-    taskId: input.taskId,
-    usage: 'artifact_media',
-    idempotencyKey: `social-auto-file:v2:${input.taskId}:${stored.sha256}:${stored.storageKind}`,
-    stored,
-	...(stored.storageKind === 'backend_file' ? { transientPath: result.outputPath } : {}),
-	backendFilePort: input.runtime?.backendFilePort,
-  });
-  const storedCover = await storeTransientSocialContentFile({
-    filePath: coverPath,
-    tenantId: input.tenantId,
-    name: `${detail.brief.title || '社媒内容'}-封面.jpg`,
-    mimeType: 'image/jpeg',
-  });
-  const coverFile = await registerSocialContentFile({
-    repository: input.repository,
-    tenantId: input.tenantId,
-    userId: input.userId,
-    taskId: input.taskId,
-    usage: 'artifact_media',
-    idempotencyKey: `social-auto-cover:v2:${input.taskId}:${storedCover.sha256}:${storedCover.storageKind}`,
-    stored: storedCover,
-	...(storedCover.storageKind === 'backend_file' ? { transientPath: coverPath } : {}),
-	backendFilePort: input.runtime?.backendFilePort,
-  });
-  await resolveSocialDirectorArtifactLineage({
-    repository: input.repository,
-    tenantId: input.tenantId,
-    taskId: input.taskId,
-    reference: persistedDirectorPlan.reference,
-  });
-  const productionResultId = `production_result_${socialRequestHash({ taskId: input.taskId, runId: input.runId, executionPlanId: agentWorkflow.executionPlan.executionPlanId }).slice(0, 20)}`;
-  const replicationEvaluation=await evaluateSocialProductionReplication({
-    repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,
-    runtime:input.runtime,detail,agentWorkflow,rawAssets,productionResultId,
-    outputPath:result.outputPath,adaptedScript,
-  });
-  const creativeReviewFailures = socialProductionCollaborationFailures(agentWorkflow, contentHandoff, {
-    referenceAnalysis: detail.referenceVideoAnalysis, renderedDurationSeconds: measuredDurationSeconds ?? duration,
-    renderedTimeline: timeline.map(clip => ({ sceneId: clip.sceneId, startSeconds: clip.targetStart, endSeconds: clip.targetEnd })),
-  });
-  const replicationHardFailures = detail.brief.creationMode === 'viral_replication' && !replicationEvaluation
-    ? ['reference_evaluation_missing']
-    : socialReplicationHardQualityFailures(replicationEvaluation);
-  const replicationHumanReviewPending = replicationEvaluation?.status === 'review_required' && !replicationHardFailures.length;
-  await writeExecutionStage({
-    ...input,
-    stage: 'creative_review',
-    message: creativeReviewFailures.length
-      ? '编导 Agent 的结构与表达验收未通过，正在停止提交并保留当前结果。'
-      : !technicalApproved||creativeReviewFailures.length||replicationHardFailures.length
-        ? '成片已保留为候选；独立媒体检测尚未自动放行，等待编导逐镜复核或局部返工。'
-        : replicationHumanReviewPending
-          ? '事实、权利、时间线和技术硬门禁通过；主观复刻效果留待用户最终验收。'
-          : '技术质检和独立媒体检测通过，编导 Agent 已按 DirectorBrief 完成结构与表达验收。',
-    extra: {
-      directorBriefId: agentWorkflow.directorBrief.directorBriefId,
-      checkedSceneCount: contentHandoff.scenes.length,
-      failedCriteria: creativeReviewFailures,
-      replicationEvaluationId: replicationEvaluation?.evaluationId ?? null,
-      replicationEvaluationStatus: replicationEvaluation?.status ?? null,
-      replicationHumanReviewPending,
-    },
-  });
-
-  const evaluationFailures = [...creativeReviewFailures,...(replicationEvaluation?.status === 'passed'?[]:replicationEvaluation?.directorDecision.failedCriteria??[])];
-  const plannedCostCny = socialExecutionExternalCost(agentWorkflow.executionPlan, agentWorkflow.directorBrief);
-  const selectedAssetIds = new Set(contentHandoff.scenes.map(scene => scene.source.assetId));
-  const archivedMaterialIdByAssetId = new Map((assetSupplyExecution?.shots ?? [])
-    .filter(shot => shot.archivedMaterial)
-    .map(shot => [shot.assetId, shot.archivedMaterial!.materialId]));
-  const finalInputMaterialIds = [...selectedAssetIds]
-    .map(assetId => archivedMaterialIdByAssetId.get(assetId) || assetId);
-  const providerCostSummary = summarizeSelectedProviderCosts({ assets, selectedAssetIds });
-  const deliverableStatus = productionMode === 'concept_preview'
-    ? 'concept_preview'
-    : !technicalApproved || creativeReviewFailures.length > 0 || replicationHardFailures.length > 0
-      ? 'requires_revision'
-      : 'publish_candidate';
-  const finalQualityAccepted = technicalApproved&&!creativeReviewFailures.length&&!replicationHardFailures.length;
-  const finalGeneratedMaterial = await archiveGeneratedSocialContentFile({
-    file,
-    stored,
-    archiveMedia: input.runtime?.archiveGeneratedMedia,
-    archive: {
-      tenantId: input.tenantId,
-      name: `${detail.brief.title || '社媒内容'}-成品.mp4`,
-      media: {
-      type: 'video',
-      localPath: result.outputPath,
-      ...(stored.storageKind === 'object' ? { objectKey: stored.storageKey } : {}),
-      duration,
-      },
-      generation: {
-      pipelineId: 'non_person_generation',
-      assetGenerationKind: 'final_video',
-      pipelineVersion: AUTO_SCHEMA,
-      executionId: productionResultId,
-      provider: 'local_compositor',
-      model: 'desktop/render.cjs',
-      idempotencyKey: `social-auto-final:${input.taskId}:${stored.sha256}`,
-      inputFingerprint: socialRequestHash({
-        taskId: input.taskId,
-        directorPlanHash: directorPlan.lineageHash,
-        selectedAssetIds: finalInputMaterialIds,
-      }),
-      promptOrSpecHash: directorPlan.lineageHash,
-      inputMaterialIds: finalInputMaterialIds,
-      estimatedCostCny: plannedCostCny,
-      // Visual reservations omit audio, QA and unknown invoices; never label them actual cost.
-      actualCostCny: undefined,
-      },
-      lineage: { sourceTaskId: input.taskId, sourceAssemblyId: productionResultId },
-      quality: {
-      state: finalQualityAccepted ? 'accepted' : 'repair_required',
-      policyVersion: 'social-final-video.v1',
-      checkedAt: new Date().toISOString(),
-      checks: [
-        { key: 'visual_decode', status: quality.passed&&sceneQuality.passed?'passed':'failed', evidence: `checked_scenes:${sceneQuality.checkedScenes}` },
-        { key: 'audio_decode', status: audio.ok?'passed':'failed', evidence: audio.ok?'ffmpeg_audio_decode_passed':'ffmpeg_audio_decode_failed' },
-        { key: 'director_review', status: creativeReviewFailures.length?'failed':'passed', evidence: agentWorkflow.directorBrief.directorBriefId },
-        ...(replicationEvaluation ? [{
-          key: 'replication_evaluation',
-          status: replicationHardFailures.length ? 'failed' as const : 'passed' as const,
-          evidence: replicationEvaluation.evaluationId,
-        }] : []),
-      ],
-      rawReport: { visual: quality, scenes: sceneQuality, replicationEvaluation },
-      },
-      rightsScope: 'tenant_generated_reusable',
-    },
-  });
-  const productionResult: SocialProductionResult = {
-    productionResultId,
-    version: detail.version,
-    executionPlanId: agentWorkflow.executionPlan.executionPlanId,
-    executionPlanVersion: agentWorkflow.executionPlan.version,
-    executionPlanReviewId: agentWorkflow.executionPlanReview.reviewId,
-    artifactId: null,
-    creativeReviewId: `creative_review_${socialRequestHash({ taskId: input.taskId, runId: input.runId, directorBriefId: agentWorkflow.directorBrief.directorBriefId }).slice(0, 20)}`,
-    publishAssignmentId: null,
-    status: 'asset_review',
-    sceneResults: contentHandoff.scenes.map(finalScene => {
-      const scene = socialProductionExecutionSceneForFinal(agentWorkflow, finalScene.sceneId)!;
-      const mediaArtifact = socialExecutedSceneMediaArtifact({ sceneId: finalScene.sceneId, execution: assetSupplyExecution, assets });
-      return {
-        sceneId: scene.sceneId,
-        idempotencyKey: scene.idempotencyKey,
-        sourceStrategy: scene.selectedSourceStrategy,
-        feasibility: scene.feasibility,
-        provenanceCandidateIds: scene.recommendedCandidateIds,
-        ...(mediaArtifact ? { mediaArtifact } : {}),
-      };
-    }),
-    technicalReview: { approved: technicalApproved, checkedScenes: sceneQuality.checkedScenes, failures: technicalFailures },
-    creativeReview: {
-      approved: !creativeReviewFailures.length&&!replicationHardFailures.length,
-      failedCriteria: evaluationFailures,
-      reviewedBy: 'director_agent',
-    },
-    artifactResourceRef: file.fileRef,
-    createdAt: new Date().toISOString(),
-  };
+  const { stored, file, storedCover, coverFile, productionResultId, replicationEvaluation,
+    creativeReviewFailures, replicationHardFailures, replicationHumanReviewPending, plannedCostCny,
+    providerCostSummary, deliverableStatus, finalQualityAccepted, finalGeneratedMaterial,
+    productionResult } = finalDelivery;
   let initialSceneSourceEvidence:Awaited<ReturnType<typeof initialSceneSourceHashes>>|null=null;
   if(assetSupplyExecution){try{initialSceneSourceEvidence=await initialSceneSourceHashes({assets,execution:assetSupplyExecution,voicePath:voice.localPath,bgmUrl:bgm.url||null});}catch{/* Actual output remains reviewable; missing source bytes cannot create a cache. */}}
   await assertCurrentContentExecutionActive();
