@@ -9,6 +9,11 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 11 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## 灵小枢客户待办展示职责边界（2026-10-22）
+
+- 代码提交 `e78b735f3b8ea4a53db3a8aa5c49174f9d052fef` 将既有“今日待办”列表及状态样式移至 `AssistantCustomerTodoView.tsx`；`GlobalAssistant.tsx` 仍负责客户选择事件、返回对话和身份/导航状态。展示文案、排序输入与视觉样式未改变。父文件从 2,560 降至 2,496 行，历史预算同步收紧；全仓仍有 8 个历史超限文件。
+- 新组件渲染与父页面接线定向测试 5/5、更新后的 `test:assistant-production` 34/34、TypeScript、架构扫描/ratchet、191 项迁移文件只读检查、生产构建和 `git diff --check` 通过；`AiCreateStudio` chunk 仍为 497,209/500,000 字节。此批未做登录后浏览器交互、真实客服发送、真实供应商调用、生产迁移或部署，不能据此宣称整体架构拆分完成。
+
 ## 图文延迟分析的前端待核对状态（2026-10-22）
 
 - 代码提交 `70b3842faaeb794bddf8539d1e23a9a99c262172` 在灵感卡片、详情和创作准入中区分 `queued`、`processing`、`unknown`；持有这些状态的记录不再显示重分析入口或旧证据的“已完成”标签，结果不明提示先核对任务与费用。详情状态文案投影迁入 `inspirationAnalysisProjection.ts`，队列文案与禁重提判断在 `imagePostAnalysisPresentation.ts`；`InspirationDashboard.tsx` 从 3,173 降至 3,163 行，历史预算同步收紧，仍有 8 个历史超限文件。
