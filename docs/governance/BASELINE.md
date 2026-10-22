@@ -335,3 +335,8 @@
 
 - 将经营看板及其命名视图、周复盘改为按需加载，并在页面使用处加局部加载提示；声明集中在 `digitalEmployeeDeferredViews.tsx`，新增边界合同测试。`DigitalEmployeePage` 的架构行数预算由 5447 收紧到 5446 行，剩余超限文件仍为 22 项。
 - 聚焦测试 7/7、TypeScript、架构扫描/ratchet、生产构建和 191 项迁移仓库只读检查通过。数字员工主 chunk 由约 920 kB 降至约 487 kB；`index` 和 `AiCreateStudio` 仍超 500 kB。三项旧 UI 宽范围合同在变更前 HEAD 的源文件中也缺少其预期标记，本批未修改这些无关合同断言；未执行真实生产任务、迁移或部署。
+
+## 登录与应用布局互斥加载（2026-10-22）
+
+- 将 `AuthScreen` 和 `Layout` 置于 `AppDeferredShell.tsx` 的独立懒加载边界，并在 `App.tsx` 中分别提供页面加载提示；未登录时不加载完整工作台布局。`App.tsx` 的架构行数预算由 1119 收紧到 1118，剩余超限文件仍为 22 项。
+- 壳层/导航/登录等聚焦测试通过，TypeScript、架构扫描/ratchet、生产构建和 191 项迁移仓库只读检查通过。本地生产预览未登录页实际加载、浏览器错误日志为空；未输入账号或调用付费接口。`index` chunk 由约 806 kB 降至约 231 kB，当前仅 `AiCreateStudio` 仍超 500 kB。

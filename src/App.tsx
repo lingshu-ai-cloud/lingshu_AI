@@ -4,8 +4,6 @@ import { isAgentProductionSession } from './lib/agentProductionSession';
 import { Activity, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Result } from 'antd';
 import { Loader2 } from 'lucide-react';
-import Layout from './components/Layout';
-import AuthScreen from './components/AuthScreen';
 import { authApi, getToken, AUTH_TOKEN_CHANGED_EVENT, startInitialAuthSessionRefresh, type AuthSession } from './lib/auth';
 import { isEnterpriseHomepageDemoAccount } from './mocks/enterpriseHomepageDemo';
 import { isLocalForeignTradeMockEnabled } from './mocks/foreignTradeOperations';
@@ -33,6 +31,7 @@ import RuntimeVersionBanner from './components/RuntimeVersionBanner';
 import { availableProductPage, PLATFORM_ADS_PAGE_IDS, PLATFORM_ADS_SURFACE_ENABLED } from './config/productSurfaceFlags';
 import { AGENT_PAGES, ROLE_PAGE_ACCESS, customerUnifiedAgent, firstUserText, isAdminSession, isExternalCustomerServiceDemoSession, isLocalCustomerReplyLab, loadConvs, loadPage, pagePreferenceScope, type AgentAction, type AgentType, type Conversation, type ConversationContext, type KickoffSignal, type Message, type RestoreSignal, type StarterAccessState } from './appSession';
 import { useSocialContentQueryNavigation } from './lib/useSocialContentQueryNavigation';
+import { Layout, AuthScreen } from './components/AppDeferredShell';
 
 const loadPlatformAdsPage = () => import('./components/PlatformAdsPage');
 const loadStrategyPage = () => import('./components/StrategyPage');
@@ -816,7 +815,7 @@ export default function App() {
   };
 
   if (isRegistrationEntry) {
-    return <AuthScreen onAuthed={handleAuthed} />;
+    return <Suspense fallback={<PageLoading />}><AuthScreen onAuthed={handleAuthed} /></Suspense>;
   }
   if (authLoading) {
     return (
@@ -844,7 +843,7 @@ export default function App() {
       </div>
     );
   }
-  if (!session) return <AuthScreen onAuthed={handleAuthed} />;
+  if (!session) return <Suspense fallback={<PageLoading />}><AuthScreen onAuthed={handleAuthed} /></Suspense>;
   if (session.demo?.enabled && session.demo.expired) {
     return (
       <div className="flex min-h-[100dvh] items-center justify-center bg-surface-2 px-6">
@@ -904,7 +903,7 @@ export default function App() {
 
   return (
     <SocialProgramProvider scope={session.tenant?.id || session.user.tenantId} enabled={!starterMode}>
-    <Layout page={page} onNavigate={handleNavigate} onPrefetchPage={prefetchPageModule} conversation={conversation} session={session} onLogout={handleLogout}
+    <Suspense fallback={<PageLoading />}><Layout page={page} onNavigate={handleNavigate} onPrefetchPage={prefetchPageModule} conversation={conversation} session={session} onLogout={handleLogout}
       starterMode={starterMode}
       onSessionUpdate={setSession}
       demoGuideActive={false}
@@ -1113,7 +1112,7 @@ export default function App() {
           </Suspense>
         </PageErrorBoundary>
       </div>
-    </Layout>
+    </Layout></Suspense>
     </SocialProgramProvider>
   );
 }
