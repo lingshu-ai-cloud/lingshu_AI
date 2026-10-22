@@ -2,6 +2,12 @@
 
 更新时间：2026-10-22（Asia/Shanghai）
 
+## 企业资料路由职责拆分续批（2026-10-22）
+
+- 以集成分支 `cc8d41deabdb2cc29e47a5062da0e0419ec5827e` 为干净起点，将企业资料的默认值、规范化与事实版本持久化移入 `enterpriseProfileStore.ts`，知识完整性、FAQ 和业务说明移入 `enterpriseKnowledge.ts`，订单 HTTP 路由移入 `enterpriseOrderRoutes.ts`，租户识别共用函数移入 `enterpriseTenantAuth.ts`。原 `enterprise.ts` 的公开导出和路由挂载顺序保持兼容；客服激活安全合同改为检查实际承载默认值的模块。
+- `server/routes/enterprise.ts` 从 2,137 行降至 1,000 行，历史预算收紧至 1,000；新文件均不超过 800 行，历史超限项仍为 15。此处按持久化、知识规则与订单 HTTP 边界拆分，没有为达到单一行数强行继续拆散路由。
+- 企业事实、订单生命周期、产品素材归属、客服激活、产品 API 安全、资料 UI 规范化和助手企业事实读取等定向测试 8/8 通过；TypeScript、架构扫描/ratchet、生产构建和 191 项迁移仓库只读检查通过。构建仍提示 `AiCreateStudio` 598.69 kB 大 chunk，不能宣称体积治理完成。未调用真实付费供应商、执行迁移或部署。
+
 ## 企业资料合同与订单模块拆分（2026-10-22）
 
 - 以集成分支 `49d05baeb13fccd8d247732470222e8b13d5e4f4` 为干净起点，将跨服务使用的企业资料/客服/订单 TypeScript 合同移入 `enterpriseProfileContracts.ts`，并保留 `enterprise.ts` 原有类型导出；本地和 PocketBase 订单读取、CSV 归一化、幂等保存与客户摘要同步迁入 `enterpriseOrders.ts`，原 `readOrders` 导出路径仍兼容。订单模块按需读取 WhatsApp 同步函数，避免新增静态路由导入环。

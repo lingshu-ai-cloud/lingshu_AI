@@ -69,8 +69,9 @@ assert.equal(customerServiceStatus({ customerService: authorizedSettings, faq: a
 assert.equal(customerServiceStatus({ customerService: authorizedSettings, faq: approvedFaq, strategy: { aiAutonomy: 'auto' } } as never, now).autoReplyReady, true, 'only all safety gates together may enable limited direct replies');
 
 const enterpriseRoutes = read('server/routes/enterprise.ts');
-assert.match(enterpriseRoutes, /customerService:\s*\{ \.\.\.DEFAULT_CUSTOMER_SERVICE \}/, 'stored profiles must default the master switch to off');
-assert.match(enterpriseRoutes, /CUSTOMER_SERVICE_OBSERVATION_MS = 3 \* 24 \* 60 \* 60 \* 1000/, 'the observation period must be server controlled');
+const enterpriseProfileStore = read('server/routes/enterpriseProfileStore.ts');
+assert.match(enterpriseProfileStore, /customerService:\s*\{ \.\.\.DEFAULT_CUSTOMER_SERVICE \}/, 'stored profiles must default the master switch to off');
+assert.match(enterpriseProfileStore, /CUSTOMER_SERVICE_OBSERVATION_MS = 3 \* 24 \* 60 \* 60 \* 1000/, 'the observation period must be server controlled');
 assert.match(enterpriseRoutes, /enterpriseRouter\.patch\('\/customer-service\/status'[\s\S]*?enabledAt: now[\s\S]*?aiAutonomy: 'draft'/, 'enabling must start a server timestamp and force suggestion mode');
 assert.match(enterpriseRoutes, /customerService: current\.customerService/, 'generic enterprise saves must not spoof the master-switch history');
 
