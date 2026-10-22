@@ -7,6 +7,7 @@ import {
 
 const source = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
 const productionBudgetRouteSource = fs.readFileSync('server/routes/digitalEmployeeProductionBudgetRoute.ts', 'utf8');
+const taskEvidenceProjectionSource = fs.readFileSync('server/digitalEmployees/taskEvidenceProjection.ts', 'utf8');
 const approvalApplication = fs.readFileSync('server/digitalEmployees/approvalDecision.ts', 'utf8');
 const cancellationApplication = fs.readFileSync('server/digitalEmployees/runCancellation.ts', 'utf8');
 
@@ -242,7 +243,8 @@ assert.match(source, /batchPlanId: batchPlan\.id, contentOrders:/, 'content prod
 assert.match(source, /ensureFrozenEnterpriseProfileForRun/, 'active runs must resolve enterprise and product facts from their frozen plan snapshot');
 assert.match(source, /enterpriseProfile: await frozenRunFacts\(\)/, 'content production and follow-up drafting must receive the frozen run facts explicitly');
 assert.match(source, /metadata\.executionMode === 'observe' \|\| metadata\.executionMode === 'draft_executor'/, 'draft production must use an explicit executor mode rather than masquerading as observation');
-assert.match(source, /record\.status === 'ready_for_approval'/, 'completed production and published delivery must remain separate states');
+assert.match(taskEvidenceProjectionSource, /record\.status === 'ready_for_approval'/, 'completed production and published delivery must remain separate states');
+assert.match(source, /from '\.\.\/digitalEmployees\/taskEvidenceProjection\.js'/, 'the route must consume task evidence rules from the domain module');
 
 assert.match(source, /createCustomerSegmentSnapshot/, 'customer segmentation tasks must create a frozen customer snapshot');
 assert.match(source, /createFollowupBatch/, 'follow-up draft tasks must create per-customer draft records');

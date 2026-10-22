@@ -17,6 +17,9 @@ import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
 const weeklyPlanConfirmationSource = fs.readFileSync('src/components/WeeklyPlanConfirmationCard.tsx', 'utf8');
 const smartBusinessSource = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
+const businessDataReviewSource = fs.readFileSync('src/components/smartBusiness/BusinessDataReview.tsx', 'utf8');
+const businessDataReviewModelSource = fs.readFileSync('src/components/smartBusiness/BusinessDataReview.model.ts', 'utf8');
+const socialPlatformIconSource = fs.readFileSync('src/components/SocialPlatformIcon.tsx', 'utf8');
 const smartBusinessModelSource = fs.readFileSync('src/components/smartBusiness/smartBusinessDisplayModel.ts', 'utf8');
 const weeklyPlanPresentationSource = fs.readFileSync('src/components/smartBusiness/WeeklyPlanPresentation.tsx', 'utf8');
 const taskPreviewCardsSource = fs.readFileSync('src/components/smartBusiness/TaskPreviewCards.tsx', 'utf8');
@@ -44,6 +47,7 @@ const productionSource = fs.readFileSync('src/components/ProductionProgressPanel
 const liveSceneSource = fs.readFileSync('src/components/ProductionTaskScene.tsx', 'utf8');
 const boardSource = fs.readFileSync('src/components/DeliveryBoard.tsx', 'utf8');
 const libSource = fs.readFileSync('src/lib/digitalEmployees.ts', 'utf8');
+const digitalEmployeeNavigationSource = fs.readFileSync('src/lib/digitalEmployeeNavigation.ts', 'utf8');
 const digitalEmployeeApiSource = fs.readFileSync('src/lib/digitalEmployeeApi.ts', 'utf8');
 const weeklyWorkStatusAdapterSource = fs.readFileSync('src/lib/weeklyWorkStatus.ts', 'utf8');
 const weeklyWorkStatusSource = fs.readFileSync('shared/weekly-work-status.mjs', 'utf8');
@@ -51,6 +55,7 @@ assert.match(weeklyWorkStatusAdapterSource, /import \{ weeklyWorkStatus as proje
 assert.match(weeklyWorkStatusAdapterSource, /return project\(data\)/, 'the desktop adapter must delegate the complete overview to the shared projection');
 const weeklyWorkEventsSource = fs.readFileSync('src/lib/weeklyWorkEvents.ts', 'utf8');
 const appSource = fs.readFileSync('src/App.tsx', 'utf8');
+const appPageSlotSource = fs.readFileSync('src/AppPageSlot.tsx', 'utf8');
 const layoutSource = fs.readFileSync('src/components/Layout.tsx', 'utf8');
 const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
 const assistantRuntimeSource = fs.readFileSync('src/components/assistant/globalAssistantRuntime.ts', 'utf8');
@@ -62,6 +67,8 @@ const taskPackagePresetSource = fs.readFileSync('src/lib/weeklyTaskPackagePreset
 const executionStatusSource = fs.readFileSync('src/components/AgentExecutionStatus.tsx', 'utf8');
 const digitalEmployeeRouteSource = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
 const enterpriseRouteSource = fs.readFileSync('server/routes/enterprise.ts', 'utf8');
+const enterpriseProfileContractsSource = fs.readFileSync('server/routes/enterpriseProfileContracts.ts', 'utf8');
+const enterpriseProfileStoreSource = fs.readFileSync('server/routes/enterpriseProfileStore.ts', 'utf8');
 const onboardingGuideFrameSource = pageSource.slice(
   pageSource.indexOf('const applicationGuideSteps'),
   pageSource.indexOf('function OnboardingPanel'),
@@ -227,7 +234,7 @@ assert.match(digitalEmployeeWorkspaceSource, /publishingExpanded[\s\S]{0,800}展
 assert.match(matrixViewSource, /publishingCalendar=\{<WeeklyPublishingCalendar data=\{data\} onRefresh=\{onRefresh\}\/>\}/, 'the publishing calendar must be injected into the Digital Employee workspace');
 assert.match(matrixViewSource, /<DigitalEmployeeWorkspace[^>]*onOpenAgentSettings=\{onOpenAgentSettings\}/, 'the Digital Employee workspace must receive the settings action');
 assert.match(restoredAgentWorkCalendarSource, /identity: \{ kind: 'agent', role: task\.agent \}/, 'employee schedule cards must use the responsible Agent icon instead of a missing cover');
-assert.match(restoredAgentWorkCalendarSource, /<AgentVideoProductionBoard[^>]*renderDetails=\{renderDetails\}/, 'Agent video production must use the task-centric board with its custom detail drawer');
+assert.match(restoredAgentWorkCalendarSource, /<LsCalendar[\s\S]{0,700}taskBoard[\s\S]{0,1000}detailsLayout="custom"[\s\S]{0,100}renderDetails=\{renderDetails\}/, 'Agent video production must use the shared task calendar with its custom detail drawer');
 assert.match(restoredAgentWorkCalendarSource, /productionStageContract/, 'task details must explain the deterministic production handoff contract');
 for (const label of ['主 Agent', '辅助 Agent', '交付时间', '交付内容', '交付形式', '当前进度']) {
   assert.match(restoredAgentWorkCalendarSource, new RegExp(label), `Agent schedule details must expose ${label}`);
@@ -305,7 +312,7 @@ assert.match(pageSource, /建议平台[\s\S]{0,500}建议来源[\s\S]{0,500}建�
 assert.match(pageSource, /实际搜索范围以已批准的灵感范围为准/, 'director recommendations must defer to the approved discovery scope');
 assert.match(pageSource, /输出内容语言/, 'content Agent settings must retain only its output-language requirement');
 assert.doesNotMatch(appSource, /SocialOperatingSummary/, 'Smart Business must not render the redundant social-operation background bar');
-assert.match(appSource, /page === 'traffic'[\s\S]{0,1200}initialView="publish"[\s\S]{0,300}visibleModes=\{\['publish'\]\}[\s\S]{0,200}showModeTabs=\{false\}/, 'publishing must not keep the redundant publish/account top-level tabs');
+assert.match(appPageSlotSource, /page === 'traffic'[\s\S]{0,1200}initialView="publish"[\s\S]{0,300}visibleModes=\{\['publish'\]\}[\s\S]{0,200}showModeTabs=\{false\}/, 'publishing must not keep the redundant publish/account top-level tabs');
 assert.doesNotMatch(matrixViewSource, /<AccountActivity|<AccountHealthPanel/, 'the matrix must retain account configuration, not duplicate health and pure numeric data');
 for (const label of ['经营总览', '数字员工', '数据复盘']) assert.match(workspaceTabsSource, new RegExp(label), `Smart Business must expose ${label}`);
 assert.equal((workspaceTabsSource.match(/^\s*\{ id:/gm) || []).length, 3, 'Smart Business must expose exactly three main tabs');
@@ -352,7 +359,7 @@ for (const removedCopy of ['本周计划详情', '确认本周视频计划', '�
 }
 assert.match(pageSource, /aria-label="周计划生成"/, 'new and next-week goals may retain a dedicated editing flow');
 assert.match(pageSource, /const \[weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen\] = useState\(false\)/, 'the page must own explicit state for the in-page weekly-plan drawer');
-assert.match(pageSource, /weeklyPlanDetailsOpen&&<WeeklyPlanDetailsDrawer data=\{data\} open onClose=\{\(\)=>setWeeklyPlanDetailsOpen\(false\)\}/, 'the detailed weekly plan must remain in-page and close without navigation');
+assert.match(pageSource, /weeklyPlanDetailsOpen&&<Suspense[^>]*><WeeklyPlanDetailsDrawer data=\{data\} open onClose=\{\(\)=>setWeeklyPlanDetailsOpen\(false\)\}/, 'the detailed weekly plan must remain in-page and close without navigation');
 assert.match(pageSource, /setWeeklyPlanOpen\(false\);[\s\S]{0,200}setWorkspaceView\("today"\)[\s\S]{0,300}aria-label=\"当前周计划\"/, 'the assistant weekly-plan action must focus the inline current-plan summary without restoring the removed drawer');
 assert.doesNotMatch(pageSource, /BusinessAnnouncementBar/, 'the Smart Business home must not retain the deleted announcement bar');
 assert.match(pageSource, /const openWeeklyPlan = \(\) => \{[\s\S]{0,320}setNewGoal\(true\)[\s\S]{0,120}setWeeklyPlanOpen\(true\)[\s\S]{0,520}addEventListener\('lingshu:open-weekly-plan'/, 'the assistant entry must open the same weekly-plan composer as the page action');
@@ -446,8 +453,11 @@ assert.match(dashboardRoutesSource, /view === "review"\) return <BusinessDataRev
 assert.doesNotMatch(smartBusinessSource, /原“内容监控”页已合并到这里/, 'account monitoring must not retain migration copy');
 assert.doesNotMatch(smartBusinessSource, /当前失败原因|reasonCounts/, 'Smart Business must not aggregate or display blocked-task reasons as a failure chart');
 assert.doesNotMatch(smartBusinessSource, /成本建议/, 'the content queue must not show cost advice');
-for (const platform of ['YouTube', 'TikTok', 'Instagram', 'Facebook']) assert.match(smartBusinessSource, new RegExp(platform), `review ranking must expose ${platform}`);
-assert.match(smartBusinessSource, /loadConnectedSocialPerformance/, 'review must read the same connected-account performance source as Content Monitoring');
+assert.match(businessDataReviewSource, /buildReviewAccounts/, 'review ranking must project connected accounts');
+assert.match(businessDataReviewSource, /SocialPlatformIcon platform=\{account\.platform\}/, 'review ranking must render each account platform identity');
+assert.match(businessDataReviewModelSource, /performance\?\.accounts[\s\S]{0,500}candidates\.values\(\)/, 'review ranking must include connected accounts without a hard-coded platform whitelist');
+for (const platform of ['YouTube', 'TikTok', 'Instagram', 'Facebook']) assert.match(socialPlatformIconSource, new RegExp(platform), `review ranking must expose ${platform}`);
+assert.match(businessDataReviewSource, /loadConnectedSocialPerformance/, 'review must read the same connected-account performance source as Content Monitoring');
 assert.match(socialPerformanceSource, /\/api\/overseas\/youtube\/accounts[\s\S]{0,500}\/api\/overseas\/social\/accounts/, 'performance loading must use the real account endpoints shared with Content Monitoring');
 for (const removedReviewCopy of ['全部账号', '暂无内容播放量', '热度候选', '加入 1 条验证任务', '暂无待办，可从上方建议直接加入', '先给出用户可阅读、可验证的结论', '给你看：结论、依据、原始来源', '系统使用：下一周编导与内容约束']) {
   assert.doesNotMatch(smartBusinessSource + nextRoundRecommendationsSource, new RegExp(removedReviewCopy), `data review must remove ${removedReviewCopy}`);
@@ -652,9 +662,9 @@ const customerLink = buildTaskDeepLink(task('followup_batch_draft'), undefined, 
 assert.equal(customerLink.page, 'conversion', 'customer segmentation and follow-up must open the existing customer workspace');
 assert.equal(customerLink.businessRef.taskKey, 'followup_batch_draft');
 
-assert.match(libSource, /workflowRunId:\s*link\.runId/, 'Studio navigation must carry an explicit workflow run id');
-assert.match(libSource, /workflowTaskId:\s*link\.taskId/, 'Studio navigation must carry an explicit workflow task id');
-assert.match(libSource, /CustomEvent\(["']lingshu:navigate["'],\s*\{\s*detail:\s*navigationDetail\s*\}\)/, 'deep-link navigation must emit the full workflow/business reference');
+assert.match(digitalEmployeeNavigationSource, /workflowRunId:\s*link\.runId/, 'Studio navigation must carry an explicit workflow run id');
+assert.match(digitalEmployeeNavigationSource, /workflowTaskId:\s*link\.taskId/, 'Studio navigation must carry an explicit workflow task id');
+assert.match(digitalEmployeeNavigationSource, /CustomEvent\(["']lingshu:navigate["'],\s*\{\s*detail:\s*navigationDetail\s*\}\)/, 'deep-link navigation must emit the full workflow/business reference');
 assert.match(appSource, /setSmartAssetsView\(detail\.view === ["']publish["'] \? ["']publish["'] : ["']create["']\)/, 'the application shell must honor create versus publish deep links');
 
 assert.match(pageSource, /allowGeneratedVisuals:\s*false/, 'generated visuals must default to fail-closed');
@@ -703,7 +713,7 @@ assert.doesNotMatch(enterpriseOnboardingFormTag, /rounded-lg|\bborder\b|bg-surfa
 assert.match(pageSource, /<Select[\s\S]{0,220}id="production-contact-kind"/, 'public contact kind must use the accessible Ant Select');
 assert.match(pageSource, /<Input[\s\S]{0,160}id="production-contact-value"[\s\S]{0,320}aria-required=/, 'public contact value must expose semantic required state');
 assert.match(pageSource, /const invalidProductionContact[\s\S]{0,180}productionContactValue\.trim\(\)[\s\S]{0,80}productionCta\.trim\(\)[\s\S]{0,180}saveEnterpriseProfile[\s\S]{0,120}invalidProductionContact/, 'the first-step save must enforce complete public contact and CTA values when display is enabled');
-assert.match(pageSource, /<AntRadio\.Group[\s\S]{0,300}aria-label="出镜方式"[\s\S]{0,1400}<AntRadio\.Button/, 'presenter policy must use accessible themed Ant choice cards');
+assert.match(pageSource, /<AntRadio\.Group[\s\S]{0,300}aria-label="出镜方式"[\s\S]{0,300}<AntRadio value="digital_presenter"[^>]*rounded-lg border/, 'presenter policy must use accessible themed Ant choice cards');
 assert.doesNotMatch(pageSource, /<select[^>]+value=\{productionContactKind\}|<input[^>]+name="production-presenter-policy"/, 'production onboarding must not reintroduce parallel native controls');
 assert.match(pageSource, /onSkip=\{\(\) => \{\s*void completeMinimalOnboarding\(undefined, "local_video_only"\);\s*\}\}/, 'choosing local-only production must preserve the contact preference already confirmed with enterprise and brand details');
 assert.match(pageSource, /applicationGuideSteps[\s\S]{0,160}label: "企业信息"[\s\S]{0,120}label: "推广产品"[\s\S]{0,120}label: "经营阶段"[\s\S]{0,120}label: "视频制作"/, 'Ant Steps must expose the four guided steps in their required order');
@@ -711,7 +721,7 @@ assert.match(pageSource, /productionOnboarding[\s\S]{0,900}allowGeneratedVisuals
 assert.match(onboardingGuideFrameSource, /<LsFlowDialog[\s\S]{0,600}steps=\{applicationGuideSteps\.map/, 'the beginner guide must use the shared flow dialog and Ant Steps contract');
 assert.match(pageSource, /active && applicationGuideOpen/, 'the onboarding modal must not mount while the retained digital employee Activity is hidden');
 assert.match(pageSource, /deferredOpen = window\.setTimeout\([\s\S]{0,300}setApplicationGuideOpen\(true\)/, 'a retained page must defer the modal until Activity effect reconnection has completed');
-assert.match(appSource, /<DigitalEmployeePage active=\{page === 'digitalEmployees'\}/, 'the shell must tell the retained page when it is visible');
+assert.match(appPageSlotSource, /<DigitalEmployeePage active=\{page === 'digitalEmployees'\}/, 'the shell must tell the retained page when it is visible');
 assert.match(onboardingGuideFrameSource, /footer=\{\[[\s\S]{0,900}<LsBrandAction/, 'the guide must keep a single branded primary action in the fixed modal footer');
 assert.doesNotMatch(onboardingGuideFrameSource, /OnboardingStepVisual|企业与品牌关系图|产品资料入库流程图|社媒经营阶段选择图|数字人统一接入图/, 'the beginner guide must not reserve space for redundant explanatory diagrams');
 assert.match(onboardingGuideFrameSource, /<section aria-labelledby=\{`onboarding-step-\$\{step\}-title`\}>/, 'the current onboarding form must use the full dialog content width');
@@ -731,13 +741,13 @@ assert.match(digitalEmployeeRouteSource, /!minimalContentStage\s*\?\s*\['社媒�
 assert.match(digitalEmployeeRouteSource, /const enterprisePatch = minimalOnboarding \? \{[\s\S]{0,500}brand:\s*\{ \.\.\.enterprise\.brand, name: minimalBrandName \}/, 'minimal defaults must not be written as fabricated enterprise facts');
 assert.match(pageSource, /applicationGuideOpen[\s\S]{0,1000}restartFromBeginning/, 'configured users must have an application-level entry to reopen onboarding');
 assert.match(pageSource, /function OnboardingWelcome[\s\S]{0,600}<Modal open title="准备工作已经完成"[\s\S]{0,600}开始使用灵枢/, 'first completion must show an accessible completion modal with a clear next step');
-assert.match(enterpriseRouteSource, /brand:\s*\{[\s\S]{0,100}name:\s*string/, 'EnterpriseProfile must store a brand name');
-assert.match(enterpriseRouteSource, /const brandInput[\s\S]{0,500}name:\s*text\(brandInput\.name\)/, 'brand name must be normalized as text');
+assert.match(enterpriseProfileContractsSource, /brand:\s*\{[\s\S]{0,100}name:\s*string/, 'EnterpriseProfile must store a brand name');
+assert.match(enterpriseProfileStoreSource, /const brandInput[\s\S]{0,500}name:\s*text\(brandInput\.name\)/, 'brand name must be normalized as text');
 assert.match(pageSource, /id:\s*String\(existing\.id \|\| existing\.productId \|\| product\.id\)/,
   're-importing the onboarding product table must retain the existing stable product id');
 assert.match(enterpriseRouteSource, /mergeEnterpriseProductIdentity\(next\[index\], product, index\)/,
   'server-side product API upserts must retain the existing stable product id');
-assert.match(enterpriseRouteSource, /return \{[\s\S]{0,200}\bcompany,[\s\S]{0,100}\bbrand,/, 'normalized brand must be returned and preserved by recursive profile merge');
+assert.match(enterpriseProfileStoreSource, /return \{[\s\S]{0,200}\bcompany,[\s\S]{0,100}\bbrand,/, 'normalized brand must be returned and preserved by recursive profile merge');
 assert.match(pageSource, /weeklyPlanOpen && \(!goal \|\| newGoal\) && !activeRun/, 'an active run must suppress the new-goal editor instead of exposing a duplicate plan flow');
 assert.match(pageSource, /const presentConfirmedWeeklyExecution[\s\S]{0,500}setWeeklyPlanOpen\(false\)[\s\S]{0,120}setNewGoal\(false\)/, 'a successful direct start must close and reset any new-goal editor state');
 assert.match(pageSource, /完成或取消当前运行后才能制定下一周目标/, 'the UI must explain why a second active goal is unavailable');
@@ -759,7 +769,7 @@ for (const endpoint of ['retryTask', 'skipTask', 'completeTask']) {
   assert.match(libSource, new RegExp(`${endpoint}:[\\s\\S]{0,250}/tasks/`), `${endpoint} must call the canonical task route`);
 }
 assert.match(pageSource, /const saved = await onSubmit[\s\S]{0,500}纠偏尚未登记/, 'correction input must only clear after a persisted success');
-assert.match(libSource, /digitalEmployee\.returnContext/, 'business deep links must persist a return-to-live context');
+assert.match(digitalEmployeeNavigationSource, /digitalEmployee\.returnContext/, 'business deep links must persist a return-to-live context');
 assert.match(pageSource, /consumeDigitalEmployeeReturnContext/, 'returning from a business workspace must restore the production task context');
 assert.match(pageSource, /完成业务操作后返回“数字员工”即可继续/, 'business CTAs must tell the user how to return');
 assert.match(reviewSource, /liveReview/, 'an active run must use the server live review rather than fake a final review');

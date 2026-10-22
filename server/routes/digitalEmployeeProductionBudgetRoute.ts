@@ -1,6 +1,7 @@
 import type { Router } from 'express';
 import type { AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, type ConfigRecord, type ContentBatchPlanRecord, type GoalRecord, type PlanRecord, type RunRecord, type StoredRecord, type TaskRecord } from './digitalEmployeeRecords.js';
 import type { DigitalEmployeeConfig, WeeklyGoalInput } from '../digitalEmployees/domain.js';
 import type { EnterpriseProfile } from './enterprise.js';
@@ -117,7 +118,7 @@ router.post('/tasks/:taskId/production-budget-reforecast', async (req, res) => {
         : item.estimatedCostRange?.maxCny || item.estimatedCost || 0);
       const explicitBatchCeiling = process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY === undefined
         ? null : Number(process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY);
-      if (explicitBatchCeiling !== null && (!Number.isFinite(explicitBatchCeiling) || explicitBatchCeiling <= 0
+      if (!isInternalBudgetExemptTenant(tenantId) && explicitBatchCeiling !== null && (!Number.isFinite(explicitBatchCeiling) || explicitBatchCeiling <= 0
         || masters.some(item => selectedContentCap(item) > explicitBatchCeiling + 0.000001))) {
         throw new Error('production_budget_environment_ceiling_too_low');
       }

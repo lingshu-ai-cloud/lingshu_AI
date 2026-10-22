@@ -9,6 +9,10 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 9 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## 生产入口合同与预算重报价一致性（2026-10-22）
+
+- 以干净集成提交 `b046ef6bf0c0881fff6e82b82b22664457852907` 为起点，修复历史重报价路由对 `STORYBOARD_AIGC_BATCH_BUDGET_CNY` 的精确内部测试租户豁免缺口，使其与现行周计划开工入口一致。豁免仅针对已配置的完整租户 ID 与安装级批次上限，不改变真实供应商余额、租户鉴权或其他付费门禁。源码合同改为检查已拆出的任务证据模块；数字员工页面合同改为沿 `AppPageSlot`、共享 `LsCalendar`、数据复盘组件、企业资料合同/存储及深链接模块检查同一行为约束，保留原安全与业务断言。`test:production-entry` 从此前 23/25 恢复为 25/25，`test:weekly-start-feedback` 69/69、精确租户豁免测试 3/3；TypeScript、架构扫描/ratchet、191 项迁移仓库只读检查、生产构建及 `git diff --check` 通过。该批是代码与合同验证，不代表真实付费供应商、浏览器 E2E 或部署验收；历史超限文件仍有 8 个。
+
 ## 数字员工任务证据投影边界（2026-10-22）
 
 - 将任务执行元数据、审批祖先、业务引用范围、工作流归属、证据状态与 Studio 完成/渲染判定从 `digitalEmployees.ts` 迁至 `taskEvidenceProjection.ts`，保留原判定顺序与路由接线。路由从 5,931 降至 5,783 行并收紧历史预算；8 个历史超限文件仍未全部拆分。新增直接测试覆盖独立助手任务隔离、可变引用不得覆盖托管项目血缘、渲染证据和待处理状态。直接测试 3/3、现有内容生产与项目血缘测试、TypeScript、架构扫描/ratchet、191 项迁移仓库只读检查、生产构建和 `git diff --check` 通过。完整 `test:production-entry` 为 23/25：既有 `route.contract.test.ts` 要求测试租户绕过批次预算上限，而当前拆出的重报价路由无此例外；既有 `DigitalEmployeePage.contract.test.ts` 仍要求旧 `AgentVideoProductionBoard` 接线，当前页面为 `LsCalendar`。两处被检查的文件在本批前的 HEAD 中已是相同状态，本批未改预算策略或 UI 来凑绿。未做真实供应商或部署验收；最终 SHA 以推送后核验为准。
