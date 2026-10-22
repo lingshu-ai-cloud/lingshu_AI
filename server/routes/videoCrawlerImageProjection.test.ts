@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { apifyInstagramItemToImagePost, apifyTikTokItemToImagePost } from './videoCrawlerImageProjection.js';
+import { apifyFacebookPostToImagePost, apifyInstagramItemToImagePost, apifyTikTokItemToImagePost } from './videoCrawlerImageProjection.js';
 
 test('Instagram photo row keeps source, caption, images and public engagement evidence', () => {
   const post = apifyInstagramItemToImagePost({
@@ -44,4 +44,28 @@ test('TikTok photo row retains source and image/engagement evidence', () => {
 test('TikTok video-only and spoofed source rows remain excluded', () => {
   assert.equal(apifyTikTokItemToImagePost({ type: 'Video', webVideoUrl: 'https://www.tiktok.com/@factory/video/123' }, 'OEM'), null);
   assert.equal(apifyTikTokItemToImagePost({ type: 'Photo', webVideoUrl: 'https://tiktok.com.evil.test/@factory/video/123', imageUrls: ['https://cdn.example.test/a.jpg'] }, 'OEM'), null);
+});
+
+test('Facebook image projection keeps post scope, image evidence, and engagement', () => {
+  const post = apifyFacebookPostToImagePost({
+    url: 'https://www.facebook.com/factory/posts/123?utm_source=feed',
+    pageName: 'Factory',
+    text: 'New release #product',
+    likes: 14,
+    media: { __typename: 'Photo', image: { uri: 'https://scontent.xx.fbcdn.net/product.jpg' } },
+  }, 'manufacturing');
+  assert.ok(post);
+  assert.equal(post.sourceUrl, 'https://www.facebook.com/factory/posts/123');
+  assert.equal(post.thumbnailUrl, 'https://scontent.xx.fbcdn.net/product.jpg');
+  assert.deepEqual(post.imageUrls, ['https://scontent.xx.fbcdn.net/product.jpg']);
+  assert.equal(post.author, 'Factory');
+  assert.equal(post.likes, '14');
+  assert.ok(post.tags.includes('product'));
+});
+
+test('Facebook image projection rejects video, search, and missing image evidence', () => {
+  const image = { __typename: 'Photo', image: { uri: 'https://scontent.xx.fbcdn.net/product.jpg' } };
+  assert.equal(apifyFacebookPostToImagePost({ url: 'https://www.facebook.com/factory/videos/123', media: { __typename: 'Video', is_playable: true, image } }, ''), null);
+  assert.equal(apifyFacebookPostToImagePost({ url: 'https://www.facebook.com/search/posts?q=product', media: image }, ''), null);
+  assert.equal(apifyFacebookPostToImagePost({ url: 'https://www.facebook.com/factory/posts/123', media: { __typename: 'Photo' } }, ''), null);
 });

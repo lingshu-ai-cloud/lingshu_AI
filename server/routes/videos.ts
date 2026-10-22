@@ -1,6 +1,6 @@
 import {createReferenceReviewReadHandlers} from '../lib/referenceReviewReadHandlers.js';
-import { apifyFacebookPostToCrawledVideo, apifyFacebookUploadedAt, apifyInstagramItemToCrawledVideo, apifyTikTokItemToCrawledVideo, asRecord, cleanupAnalysisTitle, compactNumber, findFacebookVideoMedia, firstImageUrl, imageUrlsFrom, normalizeThumbnailUrl } from './videoCrawlerProviderProjection.js';
-import { apifyInstagramItemToImagePost, apifyTikTokItemToImagePost } from './videoCrawlerImageProjection.js';
+import { apifyFacebookPostToCrawledVideo, apifyInstagramItemToCrawledVideo, apifyTikTokItemToCrawledVideo, asRecord, cleanupAnalysisTitle, compactNumber, firstImageUrl, normalizeThumbnailUrl } from './videoCrawlerProviderProjection.js';
+import { apifyFacebookPostToImagePost, apifyInstagramItemToImagePost, apifyTikTokItemToImagePost } from './videoCrawlerImageProjection.js';
 import { metadataFallbackAnalysis } from './videoCrawlerMetadataFallback.js';
 import { analysisQueuePositions, publicVideoRecord, recordMatchesKeyword } from './videoPublicRecordProjection.js';
 import { compareCrawledAtDesc, isDisplayableTestTenantVideo, isPublicImageRecord, isPublicTestTenantVideo, isValidImagePostRecord, isVisibleVideoPipelineRecord, recordContentFormat, type ContentFormat } from './videoRecordVisibility.js';
@@ -5759,69 +5759,6 @@ async function discoverFacebookPageUrl(keyword: string): Promise<string> {
   return stripTrackingParams(pageUrl);
 }
 
-function isDirectFacebookImageAsset(value: string): boolean {
-  try {
-    const url = new URL(value);
-    const host = url.hostname.toLowerCase();
-    if (host === 'facebook.com' || host.endsWith('.facebook.com')) return false;
-    return host.endsWith('.fbcdn.net') || /\.(?:jpe?g|png|webp|avif)(?:$|[?#])/i.test(url.pathname + url.search);
-  } catch { return false; }
-}
-
-function apifyFacebookPostToImagePost(item: Record<string, unknown>, keyword: string): CrawledImagePost | null {
-  if (findFacebookVideoMedia(item)) return null;
-  const media = findFacebookImageMedia(item);
-  const sourceUrl = String(item.url || item.topLevelUrl || media?.url || '').trim();
-  if (!sourceUrl || !isPlatformUrl(sourceUrl, 'facebook')) return null;
-  if (/\/search\//i.test(sourceUrl)) return null;
-  const imageUrls = imageUrlsFrom([media, item.media, item]).filter(isDirectFacebookImageAsset);
-  const thumbnailUrl = imageUrls[0] || '';
-  if (!media || !thumbnailUrl) return null;
-  const author = String(item.pageName || asRecord(item.user).name || '').trim();
-  const text = String(item.text || item.message || '').trim();
-  const captionTags = [...text.matchAll(/#([\p{L}\p{N}_-]+)/gu)].map(match => match[1]!).filter(Boolean);
-  const likes = Number(item.likes || item.reactionLikeCount || 0);
-  const comments = Number(item.comments || 0);
-  const shares = Number(item.shares || item.shareCount || 0);
-  const user = asRecord(item.user);
-  return {
-    platform: 'facebook',
-    title: cleanupAnalysisTitle(text || (author ? `Facebook post by ${author}` : 'Facebook image post')),
-    sourceUrl: stripTrackingParams(sourceUrl),
-    thumbnailUrl,
-    caption: text,
-    imageUrls: imageUrls.length ? imageUrls : [thumbnailUrl],
-    views: likes > 0 ? `${compactNumber(likes)} likes` : 'Facebook',
-    tags: [...new Set([...captionTags, ...tagsFromKeyword(/^https?:\/\//i.test(keyword) ? '' : keyword, 'facebook')])].slice(0, 12),
-    uploadedAt: apifyFacebookUploadedAt(item, media || {}),
-    author,
-    likes: likes > 0 ? compactNumber(likes) : undefined,
-    comments: comments > 0 ? compactNumber(comments) : undefined,
-    shares: shares > 0 ? compactNumber(shares) : undefined,
-    followers: Number(item.followersCount || item.pageFollowers || user.followersCount || 0) || undefined,
-    source: 'apify-image',
-  };
-}
-
-function findFacebookImageMedia(value: unknown, depth = 0): Record<string, unknown> | null {
-  if (depth > 8 || value == null) return null;
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findFacebookImageMedia(item, depth + 1);
-      if (found) return found;
-    }
-    return null;
-  }
-  if (typeof value !== 'object') return null;
-  const record = value as Record<string, unknown>;
-  const type = String(record.__typename || record.__isMedia || '').toLowerCase();
-  if (type === 'photo' || record.photo_image || record.photoImage || record.image || record.thumbnail || record.thumbnail_image) return record;
-  for (const key of ['media', 'attachments', 'attachment', 'subattachments', 'all_subattachments', 'styles', 'photo', 'photos']) {
-    const found = findFacebookImageMedia(record[key], depth + 1);
-    if (found) return found;
-  }
-  return null;
-}
 
 async function crawlFacebookImagePostsPublicSearch(keyword: string, limit: number): Promise<CrawledImagePost[]> {
   const query = `site:facebook.com "${keyword}" ("/photos/" OR "photo" OR "/posts/")`;
