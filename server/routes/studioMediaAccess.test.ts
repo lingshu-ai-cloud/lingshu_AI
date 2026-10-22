@@ -60,14 +60,12 @@ assert.equal(unicodeOutput.renderOutputPreviewUrl, '/api/overseas/studio/local-r
 const freshUnicodeRender = new URL(String(refreshStudioProjectAssetUrls(unicodeOutput, tenantId).renderOutputPreviewUrl), 'http://local');
 assert.equal(decodeURIComponent(freshUnicodeRender.pathname), '/api/overseas/studio/local-renders/微信成片.mp4');
 assert.deepEqual(verifyAssetToken(freshUnicodeRender.searchParams.get('assetToken'), freshUnicodeRender.pathname), { tenantId });
-const previewUi = studioUi.slice(studioUi.indexOf('/* ⑥ 成片预览 */'));
-assert.match(previewUi, /RenderedVideoPlayer key=\{formalPreviewUrl\}/);
-assert.match(previewUi, /onActivate=\{stopPreview\}/, 'rendered playback stops simulated narration and BGM');
-assert.match(previewUi, /!formalPreviewUrl && previewIdx !== null && activePreviewCue/);
+const previewUi = studioUi.slice(studioUi.indexOf('const workbenchFormalPreviewUrl ='));
+assert.match(previewUi, /<video[\s\S]{0,200}key=\{workbenchFormalPreviewUrl\}[\s\S]{0,100}src=\{workbenchFormalPreviewUrl\}/, 'the live workbench must play the formal output URL');
 assert.match(studioMediaPreviews, /failedCover !== coverUrl/, 'broken uploaded covers must fall back to source media');
 assert.match(studioUi, /assigned\.length \? assigned : selectedClips/, 'cover selection must prefer actual shot assignments over stale selected references');
-assert.match(previewUi, /setRenderOutputPath\(generation\.status === 'done' \? generation\.path \|\| null : null\)/, 'failed output selection must clear the previous file path');
-assert.match(previewUi, /downloadMp4\(activeOutputVersion\?\.output\?\.status === 'done'/, 'reopened drafts must reuse the selected export instead of rendering again');
+assert.match(studioUi, /if \(\/不存在\|重新导出\|not found\|404\/i\.test\(message\)\) setRenderOutputPath\(null\)/, 'missing local exports must clear the stale output path');
+assert.match(studioUi, /threeStepWorkflow && step === 'preview'\) \{ void downloadMp4\(\); return; \}/, 'the live export action must use the current download path');
 
 const studioBackend = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
 const localRenderRoute = studioBackend.slice(studioBackend.indexOf("studioRouter.post('/render/local'"), studioBackend.indexOf("// POST /studio/render/open-output"));

@@ -6,6 +6,7 @@ const dashboard = readFileSync(new URL('../SmartBusinessDashboard.tsx', import.m
 const page = readFileSync(new URL('../DigitalEmployeePage.tsx', import.meta.url), 'utf8');
 const studio = readFileSync(new URL('../AiCreateStudio.tsx', import.meta.url), 'utf8');
 const entry = readFileSync(new URL('./WeeklyProductionStudioEntry.tsx', import.meta.url), 'utf8');
+const projectsOverlay = readFileSync(new URL('../studio/StudioProjectsOverlay.tsx', import.meta.url), 'utf8');
 
 test('every Smart Business production entry preserves its exact project id', () => {
   assert.match(dashboard, /<WeeklyContentProgressPanel[^>]*contentId=\{item\.contentId\}[^>]*onOpenWorkbench=\{closeDetails\}/);
@@ -21,8 +22,8 @@ test('every Smart Business production entry preserves its exact project id', () 
 
 test('opening an exact project replaces any notice left by the previous project', () => {
   assert.match(studio, /studioApi\.getProject\(workflowContext\.entityId,[\s\S]{0,160}runId: workflowContext\.runId,[\s\S]{0,100}taskId: workflowContext\.taskId/);
-  assert.match(studio, /loadProject\(project\);[\s\S]{0,180}setModeNotice\(`已打开当前任务的内容项目“\$\{project\.title\}”。`\)/);
+  assert.match(studio, /loadProject\(project\);\s*setShowProjects\(false\);/, 'exact task project must load and close the picker');
   assert.match(studio, /无法打开当前任务的内容项目：\$\{reason\}/);
   assert.match(studio, /emptyMessage=\{workflowContext\?\.entityId && modeNotice\.startsWith\('无法打开当前任务的内容项目：'\) \? modeNotice : undefined\}/);
-  assert.match(studio, /emptyMessage \|\| \(workflowContext \? '当前任务尚未创建内容项目'/);
+  assert.match(projectsOverlay, /emptyMessage \|\| \(workflowContext \? '当前任务尚未创建内容项目'/);
 });

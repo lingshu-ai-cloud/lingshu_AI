@@ -15,15 +15,9 @@ test('shooting dialog explains voiceover and safe refill, and exposes save failu
   assert.match(html, /保存草稿并创建任务/);
 });
 
-test('compact shot cards keep detailed controls behind More and digital generation does not copy video', () => {
+test('the live workbench mounts the storyboard list and digital generation does not copy video', () => {
   const source = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
-  const start = source.indexOf('aria-label={`分镜 ${index + 1}`}');
-  const more = source.indexOf('<summary', start);
-  const card = source.slice(start, more);
-  assert.ok(start > 0 && more > start);
-  assert.match(card, /换画面/); assert.match(card, /改台词/);
-  assert.match(card, /slotScript.voice/);
-  assert.doesNotMatch(card, /slotScript.visual|slotScript.subtitle|clip\.name|shotBrief|产品：|状态：/);
+  assert.match(source, /<StudioStoryboardList items=\{items\} selectedId=\{activeWorkbenchSlot\?\.id\}/);
   const generator = source.slice(source.indexOf('const generateDigitalHumanPresenter ='), source.indexOf('/* ── BGM 曲库'));
   assert.match(generator, /尚未接入/);
   assert.doesNotMatch(generator, /uploadMaterial|fetch\(|blobToDataUrl|已生成数字人口播/);

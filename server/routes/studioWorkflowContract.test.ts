@@ -17,7 +17,7 @@ const materialsReadRoute = routeSource.slice(routeSource.indexOf("studioRouter.g
 assert.match(apiSource, /post<StudioScriptResult>\('script', b,/, 'script requests must preserve the selected backend');
 assert.match(scriptRoute, /generationMode !== 'clone' && provider === 'gemini' \? 'gemini' : 'qwen'/, 'free creation must use the requested Gemini backend while clone remains on Qwen');
 assert.match(source, /provider: 'gemini'/, 'free creation must request Gemini');
-assert.match(source, /mode === 'material' \? 'Gemini' : '千问'/, 'UI must identify the actual script backend');
+assert.match(source, /口播由 Gemini 依据企业产品与钩子画面生成/, 'the live creation workbench must identify the script backend');
 assert.doesNotMatch(materialsReadRoute, /startPendingLocalMaterialAnalyses|requestMaterialAnalysis|analyzeProductionMaterial/, 'opening the material library must remain read-only and never start full-library provider work');
 
 console.log('studio workflow contract passed');

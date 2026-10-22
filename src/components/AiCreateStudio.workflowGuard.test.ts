@@ -179,7 +179,9 @@ assert.doesNotMatch(presenterControls, />改用企业素材<\/button>/, '数字�
 assert.match(presenterControls, /w-full[^>]*>列入待拍<\/button>/, '删除快捷按钮后待拍操作应独占整行');
 assert.doesNotMatch(workbenchSource, /生产信息|路线<\/dt>|成本<\/dt>/, '分镜列表不得显示路线、成本等生产信息');
 assert.match(studioSource, /本批计划上限[^]*?并非账户余额[^]*?不会自动提交/, '预算说明必须区分任务上限、账户余额与真实提交费用');
-assert.match(studioSource, /coverMaterialVersions\.filter\(item => Boolean\(materialVersionCovers\[item.key\]\)\)\.length/, '封面计数只能统计当前有效版本');
-assert.match(studioSource, /脚本已就绪 · 不配音 · 尚未配乐/, '不配音不能显示配音已生成');
+assert.match(studioSource, /frameCandidates\.length \? frameCandidates\.map\(item => <option key=\{item\.id\} value=\{item\.id\}/, '当前封面底图只能从有效帧候选选择');
+assert.match(studioSource, /coverRecommendationClips\.map\(\(item, index\)[\s\S]{0,650}cover === item\.id/, '推荐封面必须标识当前选中的真实素材');
+assert.doesNotMatch(studioSource, /coverMaterialVersions\.filter/, '不可达旧面板的跨版本封面计数不应返回');
+assert.match(studioSource, /voiceoverMode === 'none' \? '配置就绪：无配音' : '配置就绪，渲染后试听'/, '不配音不能显示配音已生成');
 assert.match(studioSource, /activeStepId: step, activeStoryboardSlotId, canvasView, scriptStageTab/, '草稿应保存工作位置');
 assert.match(studioSource, /s.activeStepId \?\? s.workspaceStep[^]*?restoredSteps\.findIndex\(item => item.id === restoredStepId\)/, '重新打开草稿应回到保存的步骤');

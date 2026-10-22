@@ -236,6 +236,7 @@ assert.deepEqual(parseDigitalEmployeeWorkflowContext(JSON.stringify({ page: 'sma
 }, 'a draft plan preview must retain its task identity without pretending that a run already exists');
 
 const studioSource = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
+const shotProductionSource = readFileSync(new URL('./ShotProductionPanel.tsx', import.meta.url), 'utf8');
 assert.match(
   studioSource,
   /const restoredTitle = p\.status === 'template' \? `\$\{p\.title\} · 副本` : loadedStudioProjectTitle\(p, incomingCreateRequest\)[\s\S]{0,500}setProjectTitle\(restoredTitle\)/,
@@ -369,10 +370,11 @@ assert.match(studioSource, /defaultPresenterId:productionDefaults\.defaultPresen
 assert.doesNotMatch(studioSource, /showProjects \|\| linkedProductionContext/, 'a linked Agent task must not hide the three-column Studio behind a status scene');
 assert.doesNotMatch(studioSource, /DirectorTaskContext|ProductionTaskScene|ProductionRevisionPanel/, 'the Studio must not embed weekly task details, task progress, or managed-flow revision panels');
 assert.match(studioSource, /className=\{showProjects \? 'hidden' : 'flex min-h-0 flex-1 flex-col'\}/, 'the Studio remains visible while scoped navigation is being verified instead of falling through to a blank page');
-assert.match(studioSource, /digitalHumanJob\?\.status === 'review'[\s\S]{0,180}<video/, 'generated digital-human candidates must be directly previewable before approval');
-assert.match(studioSource, /<RenderedVideoPlayer[^>]+src=\{formalPreviewUrl\}/, 'formal AIGC output must be directly playable in the final preview step');
+assert.match(studioSource, /<ShotProductionPanel[\s\S]*?shot=\{productionFor\(productionEditorSlot\)\}/, 'the active shot editor must receive generated candidates through the selected shot');
+assert.match(shotProductionSource, /aria-label="数字人候选片段"[^>]+src=\{candidate\.url\}[^>]+controls/, 'generated digital-human candidates must be directly previewable before approval');
+assert.match(studioSource, /step === 'preview' && workbenchFormalPreviewUrl[\s\S]{0,240}<video[\s\S]{0,140}src=\{workbenchFormalPreviewUrl\}/, 'formal AIGC output must be directly playable in the final preview step');
 assert.match(studioSource, /<DigitalHumanProductionOverview/, 'the production page must retain per-shot digital-human progress and settlement UI');
-assert.match(studioSource, /HeyGen 数字人口播生成/, 'the material workbench must expose the HeyGen asset selector');
+assert.match(shotProductionSource, /HeyGen 人物口播/, 'the live shot editor must expose the HeyGen production capability');
 assert.match(studioSource, /studioApi\.digitalHumanAvatars\(\)/, 'the Studio must load provider avatar assets instead of rendering an empty selector');
 assert.match(studioSource, /onDigitalHuman=\{\(\) => \{[\s\S]{0,1200}openProduction\(salesSlot\)/, 'the material decision panel must open the selected storyboard shot in digital-human production');
 assert.match(studioSource, /avatar\.defaultVoiceId/, 'provider-owned avatars must carry their default voice into production defaults');

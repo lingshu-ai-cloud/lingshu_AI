@@ -166,8 +166,11 @@ assert.deepEqual(
 
 const studioSource = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
 const assistantSource = readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
-assert.match(studioSource, /application\/x-lingshu-material-id/, '素材拖放必须使用专用传输类型');
-assert.match(studioSource, /activeFormalPreviewUrl[\s\S]*正式成片 · 连续 MP4/, '正式成片必须直接预览连续 MP4');
+const shotMaterialLibrarySource = readFileSync(new URL('./studio/ShotMaterialLibraryDialog.tsx', import.meta.url), 'utf8');
+assert.match(studioSource, /<ShotMaterialLibraryDialog[\s\S]*?onSelect=\{\(id, allSales\)/, '素材选择必须使用当前分镜的显式选择回调');
+assert.match(shotMaterialLibrarySource, /onClick=\{\(\) => onSelect\(item\.id, allSales\)\}/, '素材库不能依赖不受约束的跨组件拖放');
+assert.doesNotMatch(shotMaterialLibrarySource, /onDrop|onDragStart|dataTransfer/, '当前素材选择不提供跨组件拖放入口');
+assert.match(studioSource, /step === 'preview' && workbenchFormalPreviewUrl[\s\S]{0,240}<video[\s\S]{0,140}src=\{workbenchFormalPreviewUrl\}/, '正式成片必须直接预览连续 MP4');
 assert.doesNotMatch(studioSource, /方向不一致，已阻止加入/, '不同画幅素材应自动裁切，不应被硬拦截');
 assert.doesNotMatch(studioSource, /当前草稿不能进入配音、选材或成片/, '人工审核流程不应保留旧硬拦截文案');
 assert.doesNotMatch(studioSource, /Factory-direct home essentials|tiktokmademebuyit|You NEED this in 2026/, '发布文案和封面不得残留无关的家居演示默认值');
