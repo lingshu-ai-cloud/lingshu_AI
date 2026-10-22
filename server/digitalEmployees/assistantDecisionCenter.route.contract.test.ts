@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const routeSource = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
 const domainSource = fs.readFileSync('server/digitalEmployees/assistantDecisionCenter.ts', 'utf8');
+const feedSource = fs.readFileSync('server/digitalEmployees/assistantDecisionFeedService.ts', 'utf8');
 
 function routeBlock(start: string): string {
   const begin = routeSource.indexOf(start);
@@ -18,10 +19,11 @@ const postIndex = routeSource.indexOf("digitalEmployeesRouter.post('/assistant/d
 assert.ok(authIndex >= 0 && tenantReadOnlyIndex > authIndex, 'decision routes must inherit auth and support-session write protection');
 assert.ok(getIndex > tenantReadOnlyIndex && postIndex > tenantReadOnlyIndex, 'GET and POST must be registered after router security middleware');
 
-const feedLoaderStart = routeSource.indexOf('async function buildDigitalEmployeeAssistantFeed');
-const feedLoaderEnd = routeSource.indexOf('async function buildStarterAssistantCards', feedLoaderStart);
+assert.match(routeSource, /createAssistantDecisionFeedForRequest\(\{[\s\S]*?committedGoals:[\s\S]*?first,[\s\S]*?tenantRecord,/, 'route must wire the tenant-scoped feed read ports');
+const feedLoaderStart = feedSource.indexOf('async function buildDigitalEmployeeAssistantFeed');
+const feedLoaderEnd = feedSource.indexOf('async function buildStarterAssistantCards', feedLoaderStart);
 assert.ok(feedLoaderStart >= 0 && feedLoaderEnd > feedLoaderStart, 'missing decision feed loader');
-const feedLoader = routeSource.slice(feedLoaderStart, feedLoaderEnd);
+const feedLoader = feedSource.slice(feedLoaderStart, feedLoaderEnd);
 assert.match(feedLoader, /where:\s*\{\s*tenant_id:\s*tenantId\s*\}/, 'goals must be tenant scoped');
 assert.match(feedLoader, /first<PlanRecord>\([^\n]+tenant_id:\s*tenantId/, 'plans must be tenant scoped');
 assert.match(feedLoader, /first<RunRecord>\([^\n]+tenant_id:\s*tenantId/, 'runs must be tenant scoped');

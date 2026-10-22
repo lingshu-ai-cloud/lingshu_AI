@@ -6,7 +6,7 @@
   "defaultMaxLines": 800,
   "excludeNameFragments": [".test.", ".d.ts"],
   "oversizedFileBudgets": {
-    "server/routes/digitalEmployees.ts": 5645,
+    "server/routes/digitalEmployees.ts": 5558,
     "server/routes/studio.ts": 9296,
     "server/routes/videos.ts": 8878,
     "src/components/AiCreateStudio.tsx": 12355,

@@ -80,7 +80,7 @@ import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile, type Enterp
 import { buildBusinessSnapshot as defaultBuildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
 const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, range) => currentExecutionAdapters()?.snapshot?.(tenantId, range) ?? defaultBuildBusinessSnapshot(tenantId, range);
 import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, collectProductionAssets, generateDirectorScriptContracts, productIdentity, refreshExpandedContentOrderContract, resolveEnterpriseAssetLocation, storyboardVoiceLanguageMatches } from '../digitalEmployees/contentProduction.js';
-import { managedReplicationFailureState, managedReplicationPlanHasExecutionGraph, managedReplicationPresenterReadiness } from '../digitalEmployees/replicationContentProduction.js';
+import { managedReplicationFailureState, managedReplicationPlanHasExecutionGraph } from '../digitalEmployees/replicationContentProduction.js';
 import { assessStoryboardMaterialReadiness, resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
 import { contentProjectLineageFields } from '../digitalEmployees/contentProjectLineage.js';
 import { readServerProductionOnboardingReadiness, referenceCoveredByProductionEvidence } from '../digitalEmployees/productionOnboardingPreflight.js';
@@ -116,8 +116,9 @@ import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, socialSc
 import { withDigitalEmployeeRunLock } from '../digitalEmployees/runControl.js';
 import { planWorkflowHandoffAdmission, planWorkflowHandoffReturn, type ActiveWorkflowHandoff } from '../digitalEmployees/workflowHandoffPolicy.js';
 import { cancelDigitalEmployeeRun as cancelDigitalEmployeeRunApplication } from '../digitalEmployees/runCancellation.js';
-import { buildAssistantDecisionFeed, AssistantDecisionValidationError, executeAssistantDecisionCommand, mergeAssistantDecisionFeeds, starterDecisionCards, approvalDecisionVersion, taskWithAssistantProductionInput, weeklyPlanDecisionVersion, workflowTaskDecisionVersion } from '../digitalEmployees/assistantDecisionCenter.js';
-import { normalizeAssistantDecisionPage, normalizeAssistantDecisionExecutionReceipt, type AssistantDecisionExecutionReceipt, type AssistantDecisionActionId, type AssistantDecisionFeed, type AssistantDecisionPage, type AssistantDecisionCard } from '../../shared/contracts/assistantDecisionCenter.js';
+import { AssistantDecisionValidationError, executeAssistantDecisionCommand, approvalDecisionVersion, weeklyPlanDecisionVersion, workflowTaskDecisionVersion } from '../digitalEmployees/assistantDecisionCenter.js';
+import { normalizeAssistantDecisionPage, normalizeAssistantDecisionExecutionReceipt, type AssistantDecisionExecutionReceipt, type AssistantDecisionActionId, type AssistantDecisionCard } from '../../shared/contracts/assistantDecisionCenter.js';
+import { createAssistantDecisionFeedForRequest } from '../digitalEmployees/assistantDecisionFeedService.js';
 import { customerApprovalRequestHash } from '../digitalEmployees/customerTaskApprovalNavigation.js';
 import {
   createDigitalEmployeeApprovalDecisionApplication,
@@ -126,7 +127,6 @@ import {
   registerDigitalEmployeeApprovalDecisionApplication,
 } from '../digitalEmployees/approvalDecision.js';
 import { enqueueApprovedContentPublicationPackageTask } from '../starter198/agentTasks.js';
-import { buildStarter198Workspace } from '../starter198/workspace.js';
 import { starter198Repository } from '../starter198/repository.js';
 import { starter198OrgRole } from '../starter198/profile.js';
 import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
@@ -2475,98 +2475,11 @@ async function supersedeAffectedBusinessState(tenantId: string, run: RunRecord, 
 }
 const starterAssistantApprovalDecision = createStarter198ApprovalDecisionPort();
 const starterAssistantQuoteDecision = createStarter198QuoteDecisionPort();
-async function buildDigitalEmployeeAssistantFeed(
-  tenantId: string,
-  page: AssistantDecisionPage,
-  requestedGoalId = '',
-  limit = 3,
-): Promise<AssistantDecisionFeed> {
-  const goalResult = await store.list<GoalRecord>(COLLECTION.goals, {
-    where: { tenant_id: tenantId }, sort: '-created_at', page: 1, perPage: 500,
-  });
-  const goals = await committedDigitalEmployeeOperatingGoals(tenantId, goalResult.items);
-  const goal = requestedGoalId
-    ? goals.find(item => item.id === requestedGoalId) ?? null
-    : goals.find(item => ['draft', 'pending_approval', 'active', 'paused'].includes(item.status)) ?? goals[0] ?? null;
-  if (!goal) {
-    return buildAssistantDecisionFeed({ page, goal: null, plan: null, run: null, tasks: [], approvals: [], limit });
-  }
-  const [plan, run] = await Promise.all([
-    first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
-    first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id }, '-started_at'),
-  ]);
-  const taskResult = run
-    ? await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, sort: 'sequence', perPage: 100 })
-    : { items: [] as TaskRecord[] };
-  const approvalResult = run
-    ? await store.list<ApprovalRecord>(COLLECTION.approvals, { where: { tenant_id: tenantId, run_id: run.id, status: 'pending' }, sort: '-created_at', perPage: 100 })
-    : { items: [] as ApprovalRecord[] };
-  const productionProjectIds = [...new Set(taskResult.items.flatMap(task => {
-    const output = jsonObject<Record<string, unknown>>(task.output, {});
-    const refs = [
-      ...jsonObject<Array<Record<string, unknown>>>(task.business_refs, []),
-      ...(Array.isArray(output.businessRefs) ? output.businessRefs as Array<Record<string, unknown>> : []),
-    ];
-    return refs
-      .filter(ref => ref?.type === 'studio_project')
-      .map(ref => String(ref.id || ref.entityId || '').trim())
-      .filter(Boolean);
-  }))];
-  const [productionProjects, productionDefaults] = await Promise.all([
-    Promise.all(productionProjectIds.map(projectId =>
-      tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', projectId, tenantId))),
-    store.list<StoredRecord>('studio_production_defaults', {
-      where: { tenant_id: tenantId }, page: 1, perPage: 2,
-    }),
-  ]);
-  const presenterReadiness = productionDefaults.items.length === 1
-    ? managedReplicationPresenterReadiness(jsonObject<Record<string, unknown>>(productionDefaults.items[0]!.payload, {}))
-    : productionDefaults.items.length === 0
-      ? managedReplicationPresenterReadiness({})
-      : { state: 'production_setup_required' as const, presenterCount: 0, presenterId: '', presenterName: '' };
-  const {recoverIndependentContentTask}=await import('../assistant/independentWeeklyContent.js');
-  for(const task of taskResult.items.filter(t=>jsonObject<Record<string,unknown>>(t.output,{}).assistantIndependent)){
-    const project=productionProjects.find(p=>p&&jsonObject<Record<string,unknown>>(p.spec,{}).workflowTaskId===task.id);
-    if(project)await recoverIndependentContentTask(store,tenantId,task as any,project as any);
-  }
-  const assistantTasks = taskResult.items.map(task => taskWithAssistantProductionInput(
-    task,
-    productionProjects.filter((project): project is StoredRecord & { tenant_id: string } => Boolean(project)),
-    presenterReadiness,
-  ));
-  return buildAssistantDecisionFeed({ page, goal, plan, run, tasks: assistantTasks, approvals: approvalResult.items, limit });
-}
-async function buildStarterAssistantCards(req: Request, tenantId: string, userId: string) {
-  try {
-    const role = starter198OrgRole(await requestOrganizationRoleStrict(req.headers.authorization, userId));
-    if (!role) return [];
-    const workspace = await buildStarter198Workspace({
-      tenantId,
-      role,
-      repository: starter198Repository,
-      decisionAvailable: true,
-      quoteDecisionAvailable: true,
-    });
-    return starterDecisionCards(workspace.decisions);
-  } catch (error) {
-    const code = error instanceof Error ? error.message : '';
-    if (['starter_198_workspace_not_entitled', 'starter_198_not_provisioned'].includes(code)) return [];
-    throw error;
-  }
-}
-async function assistantDecisionFeedForRequest(
-  req: Request,
-  identity: AuthLocals,
-  page: AssistantDecisionPage,
-  requestedGoalId = '',
-  limit = 3,
-): Promise<AssistantDecisionFeed> {
-  const [base, starterCards] = await Promise.all([
-    buildDigitalEmployeeAssistantFeed(identity.tenantId, page, requestedGoalId, limit),
-    buildStarterAssistantCards(req, identity.tenantId, identity.userId),
-  ]);
-  return mergeAssistantDecisionFeeds(base, starterCards, limit);
-}
+const assistantDecisionFeedForRequest = createAssistantDecisionFeedForRequest({
+  committedGoals: committedDigitalEmployeeOperatingGoals,
+  first,
+  tenantRecord,
+});
 class AssistantDecisionCommandError extends Error {
   constructor(readonly code: string, readonly status: number, readonly details: Record<string, unknown> = {}) {
     super(code);
