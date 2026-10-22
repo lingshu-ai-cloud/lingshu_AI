@@ -58,7 +58,8 @@ export {
 } from './studioProductScriptRules.js';
 import { productSceneMaterialBindingChanges, productSceneMaterialProductAssociationChanges, productSceneMaterialProvenanceOf, recordObject, type ProductSceneMaterialProvenance } from './studioProductSceneProvenance.js';
 export { productSceneMaterialBindingChanges, productSceneMaterialProductAssociationChanges, productSceneMaterialProvenanceOf } from './studioProductSceneProvenance.js';
-import { buildStudioProductScenePreparationSlots, filterMaterialsByProductAssociation, productSceneMaterialProductionEligible, productSceneSourceImageUrl, scopeProductSceneProjection } from './studioProductSceneProjection.js';
+import { buildStudioProductScenePreparationSlots, productSceneMaterialProductionEligible, productSceneSourceImageUrl, scopeProductSceneProjection } from './studioProductSceneProjection.js';
+import { projectStudioMaterialLibrary } from './studioMaterialLibraryProjection.js';
 export { buildStudioProductScenePreparationSlots, filterMaterialsByProductAssociation, scopeProductSceneProjection } from './studioProductSceneProjection.js';
 import { PRODUCT_SCENE_UPLOAD_SOURCE, productSceneUploadErrorResponse, productSceneUploadReuseMetadata, resolveMaterialUploadProductBinding, resolveProductSceneUploadIntent, verifyProductSceneUpload, type MaterialUploadProductBinding, type ProductSceneUploadIntent, type VerifiedProductSceneUpload } from './studioProductSceneUpload.js';
 export { productSceneUploadReuseMetadata } from './studioProductSceneUpload.js';
@@ -93,11 +94,8 @@ export { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
 import { safeMaterialScenes, safeMaterialVoicePlan } from '../lib/studioMaterialPresentation.js';
 import { productIdentity } from '../digitalEmployees/contentProduction.js';
 import { enterpriseAssetStableId } from '../digitalEmployees/contentBatchPlan.js';
-import { resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
 import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis } from '../lib/materialLibraryAnalysis.js';
-import { hideLocalMaterialFromLibrary, materialVisibleForPurpose, readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
-import { filterMyGeneratedMaterials, projectGeneratedMaterial } from '../../src/lib/generatedMaterial.js';
-import { ASSET_GENERATION_KINDS } from '../../shared/contracts/generatedMaterial.js';
+import { hideLocalMaterialFromLibrary, readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
 import {
   PRODUCT_SCENE_KINDS,
   type ProductSceneKind,
@@ -231,7 +229,7 @@ export {
   unconfirmedEnterpriseProductFields,
   unsupportedNumericClaims,
 } from '../lib/studioGenerationTruthfulness.js';
-import { canAppearInSharedLibrary, isReferenceOnlyMaterial, isWorkflowInternalMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
+import { isReferenceOnlyMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
 import { assertExactMaterialProductBindingImmutable, cloudMaterialView, createCloudMaterial, deleteOwnedCloudMaterial, fetchCloudMaterial, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial, upsertTenantUploadCloudMaterial } from '../lib/cloudMaterials.js';
 import { analyzeVideo } from '../agents/gemini.js';
 import { analysisDetailToSegment, type MaterialSegment } from './studioMaterialAnalysisSegments.js';
@@ -252,7 +250,7 @@ import { assessTransformation, buildPersonExecutionStrategy, commercialDigitalHu
 import { objectStorageEnabled, objectStorageDelete, objectStorageDownload, objectStorageEnsureFile, objectStorageGetObject, objectStorageHead, objectStorageSignedGetUrl, objectStorageUpload } from '../storage/objectStorage.js';
 import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, materialContentAddressedObjectKey, materialPosterObjectKey, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
 import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
-import { MATERIAL_SOURCE_CATEGORIES, MATERIAL_THEMES, materialSourceCategoryOf, materialThemeTagsOf } from '../../shared/materialTaxonomy.js';
+import { MATERIAL_THEMES } from '../../shared/materialTaxonomy.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
 import {
   appendMaterialUsageManifest,
@@ -6129,67 +6127,25 @@ studioRouter.get('/materials', async (req, res) => {
   // Listing the library is read-only. Analysis is started only by an explicit
   // selected-material action below; opening a page must never scan every local
   // video, call a provider or consume a production budget.
-  let list = [...new Map([
-    ...enterpriseProductMaterials(tenantId, enterpriseProfile),
-    ...inventory.items as Material[],
-  ].map(material => [material.id, material])).values()];
   const productReferences = (enterpriseProfile.products.items || []).map((product, index) => ({
     id: productIdentity(product, index),
     name: String(product.name || '').trim(),
     sku: String(product.sku || '').trim(),
   })).filter(product => product.name);
-  list = list.map(material => {
-    const association = resolveMaterialProductAssociation(material as unknown as Record<string, unknown>, productReferences);
-    return association ? { ...material, productId: association.productId, productName: association.productName } : material;
+  const projection = projectStudioMaterialLibrary({
+    enterpriseMaterials: enterpriseProductMaterials(tenantId, enterpriseProfile),
+    inventoryMaterials: inventory.items as Material[],
+    productReferences,
+    tenantId,
+    query: req.query as Record<string, unknown>,
   });
-  const productSceneProjectionMaterials = [...list];
-  const productIdFilter = String(req.query.productId || '').trim();
-  const excludeProductAssociated = req.query.excludeProductAssociated === '1';
-  if (productIdFilter && excludeProductAssociated) {
-    res.status(400).json({ error: '产品筛选条件冲突' });
-    return;
-  }
-  list = filterMaterialsByProductAssociation(list, { productId: productIdFilter, excludeProductAssociated });
-  if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
-  else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
-  list = list.filter(material => materialVisibleForPurpose(material, purpose));
-  if (purpose === 'reference') list = list.filter(m => isReferenceOnlyMaterial(m) && !isWorkflowInternalMaterial(m));
-  else if (purpose !== 'all') list = list.filter(m => !isReferenceOnlyMaterial(m) && !isWorkflowInternalMaterial(m));
-  const origin = String(req.query.origin || '');
-  const assetGenerationKind = String(req.query.assetGenerationKind || '');
-  const qualityState = String(req.query.qualityState || '');
-  if (assetGenerationKind && !ASSET_GENERATION_KINDS.includes(assetGenerationKind as any)) {
-    res.status(400).json({ error: '生成素材类型无效' }); return;
-  }
-  if (qualityState && !['accepted', 'repair_required', 'failed'].includes(qualityState)) {
-    res.status(400).json({ error: '生成素材质量状态无效' }); return;
-  }
-  if (origin === 'generated' || assetGenerationKind || qualityState || req.query.reusableOnly === '1') {
-    list = filterMyGeneratedMaterials(list, {
-      tenantId,
-      ...(assetGenerationKind ? { assetGenerationKind: assetGenerationKind as any } : {}),
-      ...(qualityState ? { qualityState: qualityState as any } : {}),
-      reusableOnly: req.query.reusableOnly === '1',
-    }) as Material[];
-  } else if (origin === 'uploaded') {
-    list = list.filter(item => !projectGeneratedMaterial(item));
-  }
-  const facets = {
-    sources: Object.fromEntries(MATERIAL_SOURCE_CATEGORIES.map(value => [value, list.filter(item => materialSourceCategoryOf(item) === value).length])),
-    themes: Object.fromEntries(MATERIAL_THEMES.map(value => [value, list.filter(item => materialThemeTagsOf(item).includes(value)).length])),
-  };
-  const sourceCategory = String(req.query.sourceCategory || '');
-  const theme = String(req.query.theme || '');
-  const query = String(req.query.query || '').trim().toLowerCase();
-  if (MATERIAL_SOURCE_CATEGORIES.includes(sourceCategory as any)) list = list.filter(item => materialSourceCategoryOf(item) === sourceCategory);
-  if (MATERIAL_THEMES.includes(theme as any)) list = list.filter(item => materialThemeTagsOf(item).includes(theme as any));
-  if (query) list = list.filter(item => [item.name, item.productName, item.tags, item.industry, item.shotFunction].some(value => String(value || '').toLowerCase().includes(query)));
-  const total = list.length;
-  const paginated = req.query.page !== undefined || req.query.pageSize !== undefined;
-  const pageSize = paginated ? Math.min(100, Math.max(1, Number(req.query.pageSize || 60))) : Math.max(1, total);
-  const page = Math.max(1, Number(req.query.page || 1));
-  const ordered = list.sort((a, b) => (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0));
-  const sorted = paginated ? ordered.slice((page - 1) * pageSize, page * pageSize) : ordered;
+  if (projection.error) { res.status(400).json({ error: projection.error }); return; }
+  const {
+    sceneMaterials: productSceneProjectionMaterials,
+    filteredMaterials: list,
+    pageItems: sorted,
+    total, page, pageSize, facets, productIdFilter,
+  } = projection;
   let usageByMaterial = new Map<string, MaterialUsageSummary>();
   try {
     const projects = await listAllTenantRows<StudioMaterialUsageProject>('studio_projects', tenantId);
