@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## LinkedIn 公司帖唯一付费许可账本（2026-10-23）
+
+- 代码提交 `0322c213728268708dc95602f049ab0ad7c2683b` 增加逐 run 持久预算预约和唯一提交许可账本；许可通过服务端端口重新计算最坏情况报价，在 POST 与数据集 GET 前分别认领，绑定原始运行/结算/读取回执，并核对实际传输 Token 指纹。离线 Mock 集成覆盖并发认领、重启后禁重发、报价变化、撤销、回执与数据集独立门禁。普通发现 worker 尚未签发此许可。
+- 新边界回归纳入固定脚本，`test:video-source-boundaries` 107/107、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,353 个生产 TypeScript 文件，仍有 6 个历史超限文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。真实费率/汇率及非 Actor 费用证据适配、目标共享卷跨实例语义和生产许可签发接线仍缺，未执行真实付费请求、目标库迁移或部署。最终本地/远端 SHA 与清洁度以推送后核对为准。
+
 ## 数字员工旧首页与计划预览脚手架清理（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `6e5e4fcc49b9442b09f035a2f8e0f0bee1309a88` 删除未挂载的 `TodayNextAction`、`BusinessLoopMap`、`ResourcePreflightPanel`、`NextActionBanner`、`DraftPlanPreview` 与未使用的彩纸常量；实际首页 `TodayFocusPanel`、任务包 `WeeklyExecutionNodes`、任务详情及 `OnboardingPanel` 的就绪资产跳转仍保留。页面从 3,818 降到 3,319 行，历史预算同步收紧；全仓仍有 6 个超限文件。
