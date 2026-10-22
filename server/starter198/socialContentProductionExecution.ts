@@ -1,6 +1,6 @@
 import {assertMeasuredCaptionTiming} from './socialContentCaptionTiming.js';
 import {applyPresenterFirstBudgetRouting} from './socialContentBudgetRouting.js';
-import { assertBoundPresenterAudio, readBoundPresenterVoice, readWeeklyProductionVoice, weeklyProductionPresenterIds } from './socialContentBoundPresenterVoice.js';
+import { readBoundPresenterVoice, readWeeklyProductionVoice, weeklyProductionPresenterIds } from './socialContentBoundPresenterVoice.js';
 import { prepareSocialContentProductionBudget, type ProductionBudgetReadPorts } from './socialContentProductionBudgetPreflight.js';
 import type {PaidStageRequirement} from './socialContentPaidOperationPlan.js';
 import type {SocialPaidOperationIntent} from '../lib/socialContentTaskBudgetAuthority.js';
@@ -15,15 +15,17 @@ import {
 import {assertWeeklyProductionMaterialAdmission} from './socialWeeklyProductionMaterialGate.js';
 import {freezeWeeklyPreSupplyHandoff,pauseWeeklyPreSupplyStage,readWeeklyPreSupplyHandoff} from './socialWeeklyPreSupplyHandoff.js';
 import { persistSocialProductionWorkspace } from './socialContentProductionWorkspace.js';
-import {persistInitialSocialSceneCache,initialSceneCacheInputFingerprint,initialSceneSourceHashes} from './socialContentInitialSceneCache.js';
+import {persistInitialSocialSceneCache} from './socialContentInitialSceneCache.js';
 import {buildSocialProductionHandoff} from './socialContentProductionHandoff.js';
 import { createProductionBudgetRuntimeReaders } from './socialContentProductionBudgetRuntimeReaders.js';
 import { createSocialContentMaterialPaidContext, type SocialMaterialPaidRuntimePorts } from './socialContentMaterialPaidContext.js';
 import { socialContentMaterialAnalysisInputs } from './socialContentMaterialAnalysisInputs.js';
 import {prepareSocialProductionMaterialRouting} from './socialContentProductionMaterialPreparation.js';
-import {prepareSocialContentProductionDirector} from './socialContentProductionDirectorPreparation.js';
+import {prepareSocialContentProductionPlanAndDirector} from './socialContentProductionPlanAndDirector.js';
+import {prepareSocialContentProductionRenderManifest} from './socialContentProductionRenderManifest.js';
 import {admitSocialContentProduction} from './socialContentProductionAdmission.js';
 import {prepareSocialContentFinalDelivery} from './socialContentProductionFinalDelivery.js';
+import {createSocialContentProductionArtifact} from './socialContentProductionArtifact.js';
 import {inspectSocialContentProductionTechnicalQuality} from './socialContentProductionTechnicalQuality.js';
 import {prepareSocialContentProductionVoice} from './socialContentProductionVoicePreparation.js';
 import {currentPresenterFirstFrameAssetProvenanceHash,ensureStrictPresenterFirstFrames} from './socialContentPresenterFirstFrameRuntime.js';
@@ -46,8 +48,7 @@ import { resolveSourceDurations } from '../lib/videoSourcePlan.js';
 import { alignStudioVoiceForAutomation, automationBgmAudio, automationBgmCatalog, readTenantEnterpriseProfile, synthesizeStudioVoiceForAutomation } from '../lib/socialContentLegacyPorts.js';
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import { objectStorageSignedGetUrl } from '../storage/objectStorage.js';
-import { createSocialContentArtifact } from './socialContentOutputs.js';
-import { socialContentFileDownloadUrl, type SocialContentBackendFilePort } from './socialContentFiles.js';
+import { type SocialContentBackendFilePort } from './socialContentFiles.js';
 import { materializeSocialContentCloudMaterial, socialContentCloudMaterialRecordId, type SocialContentCloudMaterialPort } from './socialContentMaterialAccess.js';
 import { withSocialContentRenderWorkspace } from './socialContentRenderWorkspace.js';
 import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.js';
@@ -59,11 +60,10 @@ import {
   socialRequestHash,
   socialText,
 } from './socialContentValidation.js';
-import {freezeSocialScriptBaseline,verifiedSocialScriptContext} from './socialContentScriptBaseline.js';
+import {verifiedSocialScriptContext} from './socialContentScriptBaseline.js';
 import {prepareSocialProductionScriptBaseline} from './socialContentProductionScriptBaseline.js';
 import { runOutsideSocialContentMutationScope } from './socialContentMutation.js';
 import {
-  buildSocialProductionPlan,
   type SocialProductionAsset,
   type SocialProductionPlan,
 } from './socialContentProductionPlan.js';
@@ -90,8 +90,7 @@ import {automaticallyConfirmPresenterFirstFrameApproval,readConfirmedPresenterFi
 import type {FrozenPresenterMotherSegments} from '../../shared/contracts/presenterMotherSegments.js';
 import {heyGenRuntimeRouteEvidence,readTrustedHeyGenRuntimeBinding} from './socialContentHeyGenRuntimeBinding.js';
 import { socialDirectorFrozenDirection, socialDirectorCoverTimestamp, socialDirectorRenderTimeline, socialDirectorVoiceAlignedCaptionCues, socialDirectorScriptText, type SocialDirectorBgmSelection, type SocialDirectorBgmTrack, type SocialDirectorContentHandoff } from './socialContentDirectorPlan.js';
-import { socialProductionReferenceFidelityFailures, socialProductionCollaborationTrace, socialProductionExecutionSceneForFinal } from './socialContentProductionCollaboration.js';
-import { voiceLearningReadiness } from '../videoProduction/voiceQualityLearning.js';
+import { socialProductionExecutionSceneForFinal } from './socialContentProductionCollaboration.js';
 import {
   analyzeSocialProductionAssetsWithCheckpoint,
   recordNarrationAudioCheckpoint,
@@ -103,8 +102,8 @@ export { archiveSocialGeneratedShots, socialGeneratedShotArchiveCandidates } fro
 import { generatedAssetArchive } from '../lib/generatedAssetArchive.js';
 const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as { composite: (manifest: unknown, onProgress?: (progress: number) => void, outputDir?: string) => Promise<{ ok: boolean; outputPath?: string; error?: string }> };
-import { MEDIA_ROOT, type ProductionAsset, type SocialProductionBaseline, type SocialProductionAdaptation, type SocialReviewRevisionDirective, automaticSocialMaterialEligible, detectDistinctTaskVideoSegments, hasExactTaskProductAssociation, resolveTaskProductionMaterialLocation, taskProductionAssets, systemThemeGraphicAssets, applyZeroAssetTruthSafeNarration, socialReviewRevisionDirective, applySocialReviewRevision, createVideoCover } from './socialContentAutoProduction.js';
-import { AUTO_SCHEMA, analyzeProductionAssets, existingAssetSupplyAdapters, finishExecution, productionAdaptation, resolveLockedBgm, selectDirectorBgm, writeExecutionStage } from './socialContentAutoProduction.js';
+import { MEDIA_ROOT, type ProductionAsset, type SocialProductionBaseline, type SocialProductionAdaptation, type SocialReviewRevisionDirective, automaticSocialMaterialEligible, detectDistinctTaskVideoSegments, hasExactTaskProductAssociation, resolveTaskProductionMaterialLocation, taskProductionAssets, socialReviewRevisionDirective, createVideoCover } from './socialContentAutoProduction.js';
+import { analyzeProductionAssets, existingAssetSupplyAdapters, finishExecution, resolveLockedBgm, selectDirectorBgm, writeExecutionStage } from './socialContentAutoProduction.js';
 export interface SocialContentAutoProductionRuntime {
   productionBudgetReadPorts?: ProductionBudgetReadPorts;
   materialPaidRuntimePorts?: SocialMaterialPaidRuntimePorts;
@@ -137,7 +136,6 @@ export interface SocialContentAutoProductionRuntime {
 type ProductionTaskDetail = NonNullable<Awaited<ReturnType<typeof readSocialTaskDetail>>>;
 export type SocialGraphApprovedContext = Pick<ProductionTaskDetail, 'version' | 'agentWorkflow' | 'assetSupplyPlan'> & { revisionPlanHash?: string; footageRevisionPlanHash?: string };
 import { executeSocialRenderStage, rebindSocialGraphRenderSources, type SocialProductionGraphPhase } from './socialContentProductionStages.js';
-import {freezeSocialRenderFrameContract} from './socialRenderFrameContract.js';
 async function readCurrentConfirmedPresenterFirstFrame(store:NonNullable<Starter198Repository['dataStore']>,input:{scope:{tenantId:string;taskId:string;runId:string;planHash:string};groupId:string;presenterGroupContractHash:string;presenterAssetId:string}){
   const rows=await store.list<any>('social_presenter_first_frame_approvals',{where:{tenant_id:input.scope.tenantId,task_id:input.scope.taskId,run_id:input.scope.runId,plan_hash:input.scope.planHash,group_id:input.groupId},perPage:2});
   if(rows.totalItems!==1||rows.items.length!==1)return null;
@@ -663,121 +661,18 @@ export async function runSocialContentAutoProduction(input: {
 	    });
 	  }
   if (input.graphPhase === 'assets') return;
-  if (['knowledge_fallback', 'system_theme_baseline'].includes(activeBaseline.source)
-    && !activeBaseline.formulaReference
-    && !activeBaseline.match?.inspirationReference) {
-    const associationIdentities = new Set(assets
-      .filter(asset => asset.explicitProductAssociation?.exactTaskProductMatch)
-      .map(asset => asset.contentHash || asset.localPath || asset.objectKey || asset.url || asset.id));
-    const requiresAssociationOnlySafety = activeBaseline.match?.verifiedKnowledgeSource === 'none';
-    const materialCategoryHint = assets.flatMap(asset => asset.visualObservations).map(socialText).filter(Boolean).join(' ');
-    // Exact tenant-authored product linkage is also a safe visual fallback
-    // when enterprise product facts exist but no vision provider is available.
-    // It authorizes using the files in an edit; it never turns filenames,
-    // labels or enterprise facts into claims about what the camera saw.
-    if (associationIdentities.size >= 1 && requiresAssociationOnlySafety) {
-      activeBaseline = freezeSocialScriptBaseline({
-        replicationContext,
-        contentTemplateStructure,
-        brief: detail.brief,
-        theme: detail.theme ?? null,
-        formula: null,
-        inspiration: null,
-        verifiedContext: executionVerifiedContext,
-        // This is confidence in the exact tenant-authored linkage only. Visual
-        // confidence remains 0 on every association-only production clip.
-        userProductAssociation: { basis: 'tenant_task_upload', confidence: 0.45 },
-        materialCategoryHint,
-        lockedAt: new Date().toISOString(),
-        previous: activeBaseline,
-      });
-      await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, taskRecord.id, {
-        script_baseline: activeBaseline,
-        formula_reference: '',
-        updated_at: activeBaseline.lockedAt,
-      });
-    }
-  }
-  let plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null,
-    ...(assetSupplyExecution?{routedSceneAssets:assetSupplyExecution.shots.map(shot=>{
-      const scene=agentWorkflow.directorBrief.scenes.find(scene=>scene.sceneId===shot.sceneId);
-      return {sceneId:shot.sceneId,assetId:shot.assetId,durationSeconds:scene?scene.duration.endSeconds-scene.duration.startSeconds:undefined};
-    })}:{}), });
-  if(!plan.ok&&assetSupplyExecution)throw new Error(`asset_supply_scene_binding_invalid:${plan.reasonCode}:${plan.message}`);
-  if (!plan.ok && productionApproach !== 'material_cut') {
-    if (productionMode === 'social_ready' && rawAssets.length === 0 && !assetSupplyExecution) {
-      throw new Error('production_input_required:当前没有可用于正式成片的客户画面。请上传至少一段产品视频或三张产品图片；系统不会把说明卡片冒充正式成片。');
-    }
-    const systemAssets = await systemThemeGraphicAssets({ outputDirectory: outputDir, baseline: activeBaseline });
-    assets = [...assets, ...systemAssets];
-    plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null });
-    if (plan.ok) {
-      plan.notes.push(productionMode === 'social_ready'
-        ? '客户素材不足，内容 Agent 按已审核的零素材路线使用可追溯系统图形、口播和字幕完成正式制作。'
-        : '现有素材覆盖不足，内容 Agent 按编导真实性边界使用平台安全主题图形完成预览版。');
-    }
-  }
-  if (!plan.ok && productionApproach === 'material_cut') {
-    throw new Error(`production_input_required:纯素材方案没有找到足够的逐句匹配片段。${plan.message}`);
-  }
-  plan.unusedAssets.push(...analyzed.failures.map(item => ({
-    assetId: item.assetId,
-    assetName: item.assetName,
-    reason: `素材分析未通过：${item.reason}`,
-  })));
-  if (!plan.ok) {
-    const failureSummary = analyzed.failures.length
-      ? ` 未通过分析：${analyzed.failures.map(item => `${item.assetName}（${item.reason}）`).join('；')}`
-      : '';
-    throw new Error(`production_input_required:系统无法建立安全的零素材画面方案，请稍后自动重试。${failureSummary}`);
-  }
-  const explanationOnlyRoute = assetSupplyExecution?.shots.length
-    && assetSupplyExecution.shots.every(shot => ['motion_graphics', 'verified_fact_card'].includes(shot.sourceStrategy));
-  if (productionMode === 'social_ready'
-    && detail.brief.creationMode === 'viral_replication'
-    && explanationOnlyRoute) {
-    throw new Error('production_input_required:当前方案只能生成说明卡片，无法达到爆款裂变的画面预期。请补充客户产品视频/图片，或明确改为“概念样片”后再生成。');
-  }
-  if (explanationOnlyRoute) plan = applyZeroAssetTruthSafeNarration(plan);
-  if (reviewDirective) plan = applySocialReviewRevision(plan, reviewDirective);
-  const adaptation = productionAdaptation(plan, assets.length);
-  const preparedDirector = await prepareSocialContentProductionDirector({
-    repository: input.repository, tenantId: input.tenantId, taskId: input.taskId,
-    detail, taskRecord, baseline: activeBaseline, plan, assets, agentWorkflow,
-    formula: directorFormula, contentTemplateStructure, verifiedContext: executionVerifiedContext,
-    selectedVoice, reviewMusicMood: reviewDirective?.musicMood ?? undefined,
-    selectBgm: input.runtime?.selectDirectorBgm ?? selectDirectorBgm,
+  const planAndDirector = await prepareSocialContentProductionPlanAndDirector({
+    execution: input, detail, taskRecord, agentWorkflow, baseline: activeBaseline, assets,
+    rawAssets, assetSupplyExecution, productionApproach, productionMode,
+    analysisFailures: analyzed.failures, replicationContext, contentTemplateStructure,
+    verifiedContext: executionVerifiedContext, formula: directorFormula, outputDir,
+    selectedVoice, revisionParent, reviewDirective,
   });
+  activeBaseline = planAndDirector.baseline;
+  assets = planAndDirector.assets;
+  const { plan, adaptation, preparedDirector } = planAndDirector;
   let { directorPlan, persistedDirectorPlan, directorSummary, contentHandoff } = preparedDirector;
   const directorCheckpointInputHash = preparedDirector.checkpointInputHash;
-  await writeExecutionStage({
-    ...input,
-    stage: 'content_production',
-    message: '编导方案已锁定并交给内容 Agent，正在生成配音、配乐并制作视频。',
-    extra: {
-      directorPlanVersion: directorPlan.version,
-      directorPlanHash: directorPlan.lineageHash,
-      directorPlanSummary: directorSummary,
-      adaptationNotes: adaptation.notes,
-      narrationChanged: adaptation.narrationChanged,
-      selectedAssetCount: plan.selectedAssetIds.length,
-      unusedAssetCount: plan.unusedAssets.length,
-      sourceClipSeconds: plan.sourceClipSeconds,
-	  directorCheckpointReused: preparedDirector.checkpointReused,
-	  ...(assetSupplyExecution ? { assetSupplyExecution } : {}),
-      ...(revisionParent && reviewDirective ? {
-        reviewRevision: {
-          parentArtifactId: revisionParent.artifactId,
-          feedbackHash: reviewDirective.feedbackHash,
-          categories: reviewDirective.categories,
-        },
-      } : {}),
-    },
-  });
-    const referenceFidelityFailures = socialProductionReferenceFidelityFailures(agentWorkflow, contentHandoff, {
-      referenceAnalysis: detail.referenceVideoAnalysis,
-    });
-    if (referenceFidelityFailures.length) throw new Error(`director_revision_required:${referenceFidelityFailures.join(';')}`);
     let transientVoicePath = '';
     let retainVoiceForRecovery = false;
     try {
@@ -841,64 +736,10 @@ export async function runSocialContentAutoProduction(input: {
     captionCues,
     renderTimeline: timeline,
   }) || retainVoiceForRecovery;
-  await writeExecutionStage({
-    ...input,
-    stage: 'rendering',
-    message: '内容 Agent 正在自动剪辑、混音并烧录字幕。',
-    extra: { duration, voiceDuration, sceneCount: timeline.length, voiceQuality: voice.qualityReport ?? null, narrationCheckpointReused },
-  });
-  if (selectedVoice) {
-    await assertSelectedVoiceCurrent();
-    if (!preparedWholeVoice || !voice.localPath) throw Error('selected_presenter_voice_render_proof_missing');
-    assertBoundPresenterAudio(selectedVoice.voiceId, preparedWholeVoice.nativeVoice);
-    if (createHash('sha256').update(await fsp.readFile(voice.localPath)).digest('hex') !== preparedWholeVoice.wholeTrackSha256) throw Error('selected_presenter_voice_render_audio_changed');
-    await recordCurrentContentExecutionCheckpoint({stage:'social.selected_presenter_voice_acceptance',version:'1',inputHash:socialRequestHash({binding:selectedVoice,wholeVoiceInputHash:preparedWholeVoice.inputHash,audioSha256:preparedWholeVoice.wholeTrackSha256}),payload:{binding:selectedVoice,audioSha256:preparedWholeVoice.wholeTrackSha256,sourceReceiptRefs:preparedWholeVoice.sourceReceiptRefs,alignmentReceiptRef:preparedWholeVoice.alignmentReceiptRef}});
-  }
-  const frameContract=Number.isFinite(duration)&&duration>=1&&duration<=45&&Math.abs(duration*1000-Math.round(duration*1000))<=1e-6?freezeSocialRenderFrameContract(duration):null;
-  const compositeManifest = {
-    jobId: `social-${input.taskId}-${createHash('sha256').update(input.runId).digest('hex').slice(0, 12)}`,
-    requireVisualAssets: true,
-    captureCaptionBaseline: true,
-    spec: {
-      ratio: contentHandoff.outputSpec.aspectRatio,
-      resolution: contentHandoff.outputSpec.resolution,
-      duration,
-      platform: contentHandoff.outputSpec.platform,
-      language: contentHandoff.outputSpec.language,
-      bgmVol: contentHandoff.bgmSelection.volume,
-      voiceVol: contentHandoff.outputSpec.voiceVolume,
-    },
-    ...(frameContract?{frameContract}:{}),
-    timeline,
-    ...(contentHandoff.effectPlan ? { effectPlan: contentHandoff.effectPlan } : {}),
-    voiceover: { url: voice.localPath },
-    bgm,
-    subtitles: {
-      mode: 'target',
-      cues: captionCues,
-      style: {
-        // Automated social films use a mobile-first minimum even when an older
-        // frozen Director plan predates the larger caption default.
-        fontScale: Math.max(1.45, contentHandoff.direction.subtitles.fontScale),
-        bottomRatio: contentHandoff.direction.subtitles.bottomRatio,
-        productNames: executionVerifiedContext.productName ? [executionVerifiedContext.productName] : [],
-      },
-    },
-  };
-  const effectsCheckpointInputHash = socialRequestHash({
-    trimCheckpointInputHash,
-    effectPlan: contentHandoff.effectPlan ?? null,
-    subtitles: compositeManifest.subtitles,
-    audioMix: { bgm: contentHandoff.bgmSelection, voiceVolume: contentHandoff.outputSpec.voiceVolume },
-  });
-  await recordCurrentContentExecutionCheckpoint({
-    stage: 'social.graph_effects', version: '1', inputHash: effectsCheckpointInputHash,
-    payload: {
-      effectPlanHash: socialRequestHash(contentHandoff.effectPlan ?? null),
-      subtitleCueHash: socialRequestHash(captionCues),
-      manifestHash: socialRequestHash(compositeManifest),
-      sceneCount: timeline.length,
-    },
+  const compositeManifest = await prepareSocialContentProductionRenderManifest({
+    execution: input, contentHandoff, voice, duration, voiceDuration, narrationCheckpointReused,
+    selectedVoice, assertSelectedVoiceCurrent, preparedWholeVoice, timeline, bgm, captionCues,
+    verifiedContext: executionVerifiedContext, trimCheckpointInputHash,
   });
   if (input.graphPhase === 'effects') return;
   const result = await executeSocialRenderStage({ tenantId: input.tenantId, taskId: input.taskId, runId: input.runId,
@@ -921,163 +762,16 @@ export async function runSocialContentAutoProduction(input: {
     measuredDurationSeconds, technicalApproved, technicalFailures, quality, sceneQuality, audio,
     productionMode,
   });
-  const { stored, file, storedCover, coverFile, productionResultId, replicationEvaluation,
-    creativeReviewFailures, replicationHardFailures, replicationHumanReviewPending, plannedCostCny,
-    providerCostSummary, deliverableStatus, finalQualityAccepted, finalGeneratedMaterial,
-    productionResult } = finalDelivery;
-  let initialSceneSourceEvidence:Awaited<ReturnType<typeof initialSceneSourceHashes>>|null=null;
-  if(assetSupplyExecution){try{initialSceneSourceEvidence=await initialSceneSourceHashes({assets,execution:assetSupplyExecution,voicePath:voice.localPath,bgmUrl:bgm.url||null});}catch{/* Actual output remains reviewable; missing source bytes cannot create a cache. */}}
-  await assertCurrentContentExecutionActive();
-  const artifactResult = await createSocialContentArtifact({
-    repository: input.repository,
-    tenantId: input.tenantId,
-    userId: input.userId,
-    taskId: input.taskId,
-    // A failed local render may be rebuilt within the same durable run after
-    // QA identifies a deterministic compositor defect. Bind artifact creation
-    // to the actual media bytes so the corrected render is reviewable while
-    // provider work and the run identity remain unchanged.
-    idempotencyKey: `social-auto-artifact:${input.runId}:${stored.sha256}`,
-    trustedAgentOrigin: true,
-    requireHumanReview: Boolean(input.graphPhase),
-    now: input.now,
-	backendFilePort: input.runtime?.backendFilePort,
-    value: {
-      kind: 'short_video',
-      platform: contentHandoff.outputSpec.platform,
-      language: contentHandoff.outputSpec.language,
-      origin: 'agent',
-      parentArtifactId: (input.graphPhase && input.graphApprovedContext?.revisionPlanHash ? socialText(socialObject(socialObject(socialJson(taskRecord.brief))?._productionRevision)?.parentArtifactId) : '') || revisionParent?.artifactId,
-      resourceRef: file.fileRef,
-      content: {
-        workflowSchema: AUTO_SCHEMA,
-        productionWorkspaceSource: {type:'actual_social_render',creationMode:detail.brief.creationMode||'material_processing',runId:input.runId,...(input.graphCorrectionHash?{correctionHash:input.graphCorrectionHash}:{}),baselineHash:socialRequestHash(activeBaseline),manifestHash:socialRequestHash(compositeManifest),outputSha256:file.sha256},
-        technicalQualityReport,
-        initialSceneSourceHashes:initialSceneSourceEvidence,
-        ...(executedSupplyPlan&&assetSupplyExecution?{initialSceneCacheInput:initialSceneCacheInputFingerprint({plan:executedSupplyPlan,baseline:activeBaseline,execution:assetSupplyExecution,manifest:compositeManifest as unknown as Record<string,unknown>,productionSceneIds:contentHandoff.scenes.map(scene=>socialProductionExecutionSceneForFinal(agentWorkflow,scene.sceneId)!.sceneId)})}:{}),
-        sourceKey: `social_task_auto:${input.taskId}`,
-        contentType: 'short_video',
-        mediaStorage: {
-          provider: stored.storageKind === 'object' ? 'object_storage' : 'pocketbase_file',
-          video: {
-            fileRef: file.fileRef,
-            fileId: file.fileId,
-            sha256: file.sha256,
-            url: file.downloadUrl || socialContentFileDownloadUrl(file.fileId),
-          },
-          cover: {
-            fileRef: coverFile.fileRef,
-            fileId: coverFile.fileId,
-            sha256: coverFile.sha256,
-            url: coverFile.downloadUrl || socialContentFileDownloadUrl(coverFile.fileId),
-          },
-        },
-        generatedMaterial: {
-          materialId: finalGeneratedMaterial.id,
-          materialRevision: stored.sha256,
-          generationExecutionId: productionResultId,
-          adoptedAt: new Date().toISOString(),
-        },
-        // G5 compares the rendered artifact against the exact frozen baseline
-        // used to build the scene cache. A lossy summary cannot prove that
-        // account constraints, fact keys, template structure, or timing stayed
-        // unchanged through rendering.
-        scriptBaseline: structuredClone(activeBaseline),
-        directorPlan: directorSummary,
-        directorPlanReference: persistedDirectorPlan.reference,
-        productionResult,
-        ...(replicationEvaluation ? { replicationEvaluation } : {}),
-        costSummary: {
-          currency: 'CNY',
-          estimatedBeforeGenerationCny: plannedCostCny,
-          // Compatibility total: actual charges plus estimates whose provider
-          // bill is still pending. The split fields and status prevent this
-          // number from being mistaken for a fully settled amount.
-          recordedProviderCostCny: providerCostSummary.recordedCostCny,
-          actualProviderCostCny: providerCostSummary.actualCostCny,
-          estimatedUnsettledProviderCostCny: providerCostSummary.estimatedUnsettledCostCny,
-          providerSegmentCount: providerCostSummary.providerSegmentCount,
-          settlementStatus: providerCostSummary.settlementStatus,
-          note: providerCostSummary.settlementStatus === 'settled'
-            ? '实际费用只统计本次已记录的媒体供应商调用；存储、带宽和人工审核未计入。'
-            : '部分供应商费用仍为预计或未知，不能视为最终结算；存储、带宽和人工审核未计入。',
-        },
-        delivery: {
-          status: deliverableStatus,
-          label: deliverableStatus === 'publish_candidate'
-            ? replicationHumanReviewPending ? '硬门禁通过，复刻效果待用户验收' : '待用户验收；验收后可主动发布'
-            : deliverableStatus === 'concept_preview'
-              ? '概念样片，不可直接发布'
-              : '需要修改后再发布',
-        },
-        adaptedScript,
-        scriptAdaptation: adaptation,
-	    ...(assetSupplyExecution ? { assetSupplyExecution } : {}),
-        narration: {
-          changedFromBaseline: adaptation.narrationChanged,
-          source: voice.source || 'unknown',
-          duration: voiceDuration,
-          cueCount: captionCues.length,
-          ...(captionTiming&&preparedWholeVoice?{timingProof:{...captionTiming,audioSha256:preparedWholeVoice.wholeTrackSha256,alignmentReceiptRef:preparedWholeVoice.alignmentReceiptRef}}:{}),
-          alignmentSource: voice.alignmentSource || 'unknown',
-          qualityReport: voice.qualityReport ?? null,
-          learningReadiness: voiceLearningReadiness({ technicalPassed: voice.qualityReport?.passed === true }),
-        },
-        agentCollaboration: socialProductionCollaborationTrace(agentWorkflow, contentHandoff),
-        materialLearning: plan.materialLearning ?? null,
-        effectPlan: contentHandoff.effectPlan,
-        render: {
-          completed: true,
-          materialSourceIds: [...new Set(contentHandoff.scenes.map(scene => scene.source.sourceId))],
-          selectedAssetIds: [...new Set(contentHandoff.scenes.map(scene => scene.source.assetId))],
-          unusedAssets: directorPlan.unusedAssets,
-          sourceClipSeconds: contentHandoff.scenes.reduce((sum, scene) => (
-            sum + Math.max(0, scene.source.sourceEnd - scene.source.sourceStart)
-          ), 0),
-          materialAnalysisConfidence: directorPlan.scenes.reduce((sum, scene) => (
-            sum + scene.shotPlan.confidence
-          ), 0) / Math.max(1, directorPlan.scenes.length),
-          materialMatchScore: directorPlan.scenes.reduce((sum, scene) => (
-            sum + scene.shotPlan.semanticScore
-          ), 0) / Math.max(1, directorPlan.scenes.length),
-          qualityPassed: technicalApproved,
-          qualityMetrics: quality.metrics,
-          checkedScenes: sceneQuality.checkedScenes,
-          audioDecoded: audio.ok,
-          bgm: {
-            id: bgm.id,
-            volume: contentHandoff.bgmSelection.volume,
-            mood: [contentHandoff.bgmSelection.primary, ...contentHandoff.bgmSelection.fallbacks]
-              .find(track => track.trackId === bgm.id)?.mood ?? contentHandoff.direction.music.mood,
-            authorization: [contentHandoff.bgmSelection.primary, ...contentHandoff.bgmSelection.fallbacks]
-              .find(track => track.trackId === bgm.id)?.authorization ?? null,
-          },
-          coverIntent: contentHandoff.coverIntent,
-          degradation: adaptation.limitedMaterialFallback ? adaptation.notes : [],
-        },
-        review: {
-          state: deliverableStatus === 'publish_candidate' ? 'requires_user_approval' : 'requires_revision',
-          deliverableStatus,
-          replicationHumanReviewPending,
-          technicalChecksPassed: technicalApproved,
-          creativeChecksPassed: !creativeReviewFailures.length&&!replicationHardFailures.length,
-          automatedChecksPassed: finalQualityAccepted,
-        },
-        ...(revisionParent && reviewDirective ? {
-          reviewRevision: {
-            parentArtifactId: revisionParent.artifactId,
-            feedbackHash: reviewDirective.feedbackHash,
-            categories: reviewDirective.categories,
-          },
-        } : {}),
-        productionHash: socialRequestHash({
-          directorPlan,
-          adaptation,
-          videoSha256: stored.sha256,
-          coverSha256: storedCover.sha256,
-        }),
-      },
-    },
+  const { stored, storedCover, productionResultId } = finalDelivery;
+  const artifactResult = await createSocialContentProductionArtifact({
+    execution: input, detail, taskRecord, revisionParent, reviewDirective, agentWorkflow,
+    baseline: activeBaseline, manifest: compositeManifest as unknown as Record<string, unknown>,
+    contentHandoff, directorPlan, directorSummary,
+    directorPlanReference: persistedDirectorPlan.reference, delivery: finalDelivery,
+    technical: { quality, sceneQuality, audio, measuredDurationSeconds, technicalFailures,
+      technicalApproved, technicalQualityReport },
+    voice, voiceDuration, captionCues, captionTiming, preparedWholeVoice, adaptation, plan,
+    executedSupplyPlan, assetSupplyExecution, assets, bgm, adaptedScript,
   });
   if(executedSupplyPlan&&assetSupplyExecution&&detail.referenceVideoAnalysis){try{const surface=(value:unknown)=>({baseline:null,current:socialRequestHash(value)});const handoff=buildSocialProductionHandoff({taskId:input.taskId,version:agentWorkflow.executionPlan.version,sourceAnalysis:detail.referenceVideoAnalysis,directorBrief:agentWorkflow.directorBrief,executionPlan:agentWorkflow.executionPlan,executionPlanReview:agentWorkflow.executionPlanReview,variantDifference:{variantId:productionResultId,baselineVariantId:null,changedSceneIds:[],dimensions:[],hypothesis:'按已锁定编导执行方案建立首次成片基线，尚无对照变体和提升结论。',unchangedConstraints:['已锁定事实','逐镜真实供给','来源和权利边界'],surfaceHashes:{firstThreeSeconds:surface(timeline[0]),caption:surface(captionCues),cover:surface(storedCover.sha256),cta:surface(contentHandoff.scenes.at(-1)),copy:surface(adaptedScript),render:surface(stored.sha256)}}});await persistInitialSocialSceneCache({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,artifactId:artifactResult.artifact.artifactId,handoff,plan:executedSupplyPlan,baseline:activeBaseline,execution:assetSupplyExecution,assets,productionSceneIds:contentHandoff.scenes.map(scene=>socialProductionExecutionSceneForFinal(agentWorkflow,scene.sceneId)!.sceneId),manifest:compositeManifest as unknown as Record<string,unknown>,voicePath:voice.localPath,bgmUrl:bgm.url||null,report:technicalQualityReport,...(presenterMotherExecution?{presenterMotherExecution}:{})});await writeExecutionStage({...input,stage:'scene_media_cache',message:'首次逐镜真实媒体和检测报告已封存；未检测项目仍待核验。',extra:{handoffId:handoff.handoffId,handoffVersion:handoff.version}});}catch(error){const reason=error instanceof Error?error.message:'scene_cache_unavailable';await writeExecutionStage({...input,stage:'scene_media_cache_pending',message:'原成片已保留，真实逐镜缓存尚未通过来源或存储核验，不能从最终视频推造镜头缓存。',extra:{reason}});const weeklyAuthority=socialObject(socialJson(taskRecord.brief))?._weeklyAuthority;if(weeklyAuthority){const stable=/^[a-z][a-z0-9_]+$/.test(reason)&&reason.startsWith('scene_')?`weekly_${reason}`:'weekly_scene_cache_persistence_failed';throw new SocialContentWorkflowError(stable,409);}}}else{await writeExecutionStage({...input,stage:'scene_media_cache_pending',message:'原成片已保留；缺少真实逐镜供给或完整参考分析，不能创建局部重制缓存。'});}
   try { await persistSocialProductionWorkspace({repository:input.repository,tenantId:input.tenantId,userId:input.userId,taskId:input.taskId,runId:input.runId,artifactId:artifactResult.artifact.artifactId,baseline:activeBaseline,manifest:compositeManifest as unknown as Record<string,unknown>,backendFilePort:input.runtime?.backendFilePort}); } catch(error) { await writeExecutionStage({...input,stage:'production_workspace_pending',message:'真实成片已保留；逐镜制作工作台快照尚未通过媒体或身份核验，不能推断项目关联。',extra:{reason:error instanceof Error&&/^(?:social_workspace_|social_content_)[a-z_]+$/.test(error.message)?error.message:'social_workspace_unavailable'}}); }
