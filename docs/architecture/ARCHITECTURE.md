@@ -49,7 +49,8 @@
 - `server/starter198/socialContentProductionExecution.ts`：社媒自动生产 worker 的阶段编排；`socialContentProductionAdmission.ts` 在制作前验证周任务授权、冻结路线、复刻证据与幂等。素材路由和预算前核对分别由 `socialContentProductionRouting.ts`、`socialContentProductionMaterialPreparation.ts` 负责。`socialContentProductionPlanAndDirector.ts` 管理安全素材方案、零素材真实性边界和编导冻结；`socialContentProductionVoicePreparation.ts` 负责配音检查点、一次性提交与结果不明保护、超时长修订；`socialContentProductionRenderManifest.ts` 校验人物声音绑定并冻结渲染/特效清单；`socialContentProductionTechnicalQuality.ts` 将独立媒体探针与技术检查点绑定到成片字节；`socialContentProductionFinalDelivery.ts` 负责成片归档和终审状态，`socialContentProductionArtifact.ts` 组装含成本、来源、质量与审阅证据的最终工件。非渲染代拍清单由 `socialContentShootingPlan.ts` 和 `socialContentShootingPlanExecution.ts` 负责；冻结脚本由 `socialContentProductionScriptBaseline.ts` 管理。原 worker 导出维持兼容，其下阶段仍通过原有检查点与付费门禁，未授权的真实供应商请求不得因结构拆分而开放。
 - `server/lib/translationCues.ts`：时间戳配音翻译的纯文本解析、cue 完整性校验和响应形态归一化；Express 超时/连接生命周期保留在路由 adapter。
 - `server/lib/imageGen.ts`、`server/agents/qwen.ts`：供应商适配；调用由服务端显式选择并受预算/回执边界约束。
-- `server/agents/imageEvidencePaidContext.ts` 与 `imageEvidenceReceiptStore.ts`：图片证据 GPT 复核的冻结记录/租户绑定、现有预算账本与一次性许可复用，以及原始响应的共享卷持久回执。它们不从浏览器参数推导批准，不以 `trend_videos` 的非原子普通更新认领付费请求；当前爬取与重分析路由尚未接线。
+- `server/socialDiscovery/imageEvidenceReviewApproval.ts`：图片证据 GPT 复核的逐记录人工批准权威，持久冻结租户、来源快照、精确请求和人民币上限；每次读取都复核批准、来源、有效期及撤销。批准记录不是付费许可，也不签发报价。
+- `server/agents/imageEvidencePaidContext.ts` 与 `imageEvidenceReceiptStore.ts`：图片证据 GPT 复核的冻结记录/租户绑定、现有预算账本与一次性许可复用，以及原始响应的共享卷持久回执。它们不从浏览器参数推导批准，不以 `trend_videos` 的非原子普通更新认领付费请求；当前爬取与重分析路由尚未接线，Qwen→Gemini 现有降级行为未改变。
 
 ## 图片管线数据流
 
