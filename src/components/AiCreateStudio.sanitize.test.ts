@@ -165,7 +165,8 @@ assert.deepEqual(
 );
 
 const studioSource = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
-const assistantSource = readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
+const assistantNotificationSource = readFileSync(new URL('./assistant/useAssistantNotifications.ts', import.meta.url), 'utf8');
+const assistantReminderSource = readFileSync(new URL('./assistant/AssistantFloatingReminders.tsx', import.meta.url), 'utf8');
 const shotMaterialLibrarySource = readFileSync(new URL('./studio/ShotMaterialLibraryDialog.tsx', import.meta.url), 'utf8');
 assert.match(studioSource, /<ShotMaterialLibraryDialog[\s\S]*?onSelect=\{\(id, allSales\)/, '素材选择必须使用当前分镜的显式选择回调');
 assert.match(shotMaterialLibrarySource, /onClick=\{\(\) => onSelect\(item\.id, allSales\)\}/, '素材库不能依赖不受约束的跨组件拖放');
@@ -181,7 +182,7 @@ assert.match(
 );
 assert.match(studioSource, /当前测试账号素材太少啦，换个创作模式再试试！/, '分镜校验失败时必须使用指定的灵小枢提示');
 assert.match(studioSource, /announceRejectedStoryboard\(response\)/, 'AI 分镜返回后必须检查是否需要触发灵小枢提示');
-assert.match(assistantSource, /lingshu-assistant-say/, '全局灵小枢必须监听一次性说话事件');
-assert.match(assistantSource, /data-lingshu-assistant-speech="true"/, '灵小枢提示必须使用右侧统一气泡展示');
+assert.match(assistantNotificationSource, /addEventListener\('lingshu-assistant-say', handler\)/, '全局灵小枢必须监听一次性说话事件');
+assert.match(assistantReminderSource, /data-lingshu-assistant-speech="true"/, '灵小枢提示必须使用右侧统一气泡展示');
 
 console.log('AiCreateStudio storyboard sanitizer tests passed');

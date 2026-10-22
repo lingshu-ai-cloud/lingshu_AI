@@ -7,7 +7,7 @@ import StudioOperationalEvidencePanel from './socialContent/StudioOperationalEvi
 import { readCurrentStudioSocialTask } from '../lib/studioSocialTaskRead';
 import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow';
 import { localFlowRenderRecovery, localFlowRenderInputIdentity } from '../lib/localFlowRenderRecovery';
-import { App as AntApp, Button, Modal } from 'antd';
+import { App as AntApp, Button } from 'antd';
 import { canOpenWorkbenchRenderSettings, workbenchExportBlockReason } from '../lib/replicationWorkbenchNavigation';
 import { digitalHumanQualityState } from '../lib/digitalHumanQuality';
 const StudioReviewIssueActions = lazy(() => import('./studio/StudioReviewIssueActions'));
@@ -36,6 +36,7 @@ import MaterialAnalysisStatus from './studio/MaterialAnalysisStatus';
 import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import { requestProductionBack } from '../lib/productionNavigation';
 const ProjectsOverlay = lazy(() => import('./studio/StudioProjectsOverlay'));
+const ExistingSourceDraftDialog = lazy(() => import('./studio/ExistingSourceDraftDialog'));
 import { useAgentProductionAction } from '../lib/agentProductionSession';
 import { VIDEO_PRESENTATIONS, type VideoCreationPlan } from '../lib/videoCreationPlan';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
@@ -1781,77 +1782,8 @@ function productOptionFromInfo(info: string, id = 'kickoff-product'): ProductOpt
   return { id, label, info: String(info || '').trim() };
 }
 
-function productInfoRows(info: string) {
-  const preferredLabels = ['所属类目', '产品卖点', '价格区间', '起订量', '认证资质'];
-  const rows = String(info || '').split('\n').map(line => {
-    const match = line.match(/^([^：:]+)[：:]\s*(.+)$/);
-    return match ? { label: match[1].trim(), value: match[2].trim() } : null;
-  }).filter((row): row is { label: string; value: string } => Boolean(row?.value));
-  return preferredLabels
-    .map(label => rows.find(row => row.label === label))
-    .filter((row): row is { label: string; value: string } => Boolean(row));
-}
-
 function productOptionCategory(option: ProductOption): string {
   return option.info.match(/所属类目[：:]\s*([^\n]+)/)?.[1]?.trim() || '未分类';
-}
-
-function ProductInfoPreview({ products }: { products: ProductOption[] }) {
-  return (
-    <aside className="sticky top-0 overflow-hidden rounded-lg border border-border bg-surface shadow-none">
-      <div className="border-b border-border px-4 py-3">
-        <p className="text-sm font-semibold text-text-primary">产品信息</p>
-        <p className="mt-0.5 text-[10px] text-text-muted">已选产品 · 生成内容将以此为准</p>
-      </div>
-      {products.length ? (
-        <div className="max-h-[680px] space-y-4 overflow-y-auto p-4">
-          {products.map(product => {
-            const rows = productInfoRows(product.info);
-            const images = product.imageUrls || [];
-            return (
-              <div key={product.id} className="overflow-hidden rounded-lg border border-border bg-surface-2">
-                <div className="relative aspect-[4/3] overflow-hidden bg-surface">
-                  {images[0] ? (
-                    <img src={images[0]} alt={product.label} className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="flex h-full flex-col items-center justify-center text-text-muted">
-                      <ImageIcon size={30} className="opacity-35" />
-                      <span className="mt-2 text-[10px]">暂无产品图片</span>
-                    </div>
-                  )}
-                  <span className="absolute left-3 top-3 rounded-md bg-black/60 px-2 py-1 text-[9px] font-bold text-white backdrop-blur">企业产品</span>
-                </div>
-                <div className="p-4">
-                  <p className="text-sm font-semibold leading-snug text-text-primary">{product.label}</p>
-                  <div className="mt-3 space-y-2.5">
-                    {rows.map(row => (
-                      <div key={row.label} className="grid grid-cols-[58px_1fr] gap-2 text-[11px] leading-relaxed">
-                        <span className="text-text-muted">{row.label}</span>
-                        <span className="font-semibold text-text-secondary">{row.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                  {images.length > 1 && (
-                    <div className="mt-3 flex gap-2 overflow-x-auto">
-                      {images.slice(1, 5).map((url, index) => (
-                        <img key={`${url}-${index}`} src={url} alt={`${product.label} ${index + 2}`} className="h-12 w-12 shrink-0 rounded-lg border border-border object-cover" />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="flex min-h-[360px] flex-col items-center justify-center px-8 text-center">
-          <ImageIcon size={28} className="text-text-muted opacity-35" />
-          <p className="mt-3 text-xs font-bold text-text-secondary">尚未选择产品</p>
-          <p className="mt-1 text-[10px] leading-relaxed text-text-muted">请从左侧“产品信息”中选择企业产品，图片和重点信息将在这里显示。</p>
-        </div>
-      )}
-    </aside>
-  );
 }
 
 function buildAiProductOptions(profile: EnterpriseProfileLite): ProductOption[] {
@@ -12815,61 +12747,26 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       {/* ── 我的作品 / 草稿 列表浮层 ─────────────────────── */}
       <AnimatePresence>
         {existingSourceDraftPrompt && (
-          <Modal open title="发现已有草稿" width={640} footer={null} mask={{ closable: false }} closable={false} keyboard={false}>
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_180px]">
-              <div className="flex min-w-0 flex-col justify-center p-6">
-                <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-accent-glow text-accent">
-                  <FolderOpen size={20} />
-                </div>
-                <h2 id="existing-source-draft-title" className="text-base font-semibold text-text-primary">
-                  基于本素材已经生成过草稿了，是否要新建作品集？
-                </h2>
-                <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-text-muted">{existingSourceDraftPrompt.title}</p>
-                <p className="mt-2 text-[11px] text-text-muted">
-                  {existingSourceDraftPrompt.matchCount > 1
-                    ? `检测到 ${existingSourceDraftPrompt.matchCount} 条历史草稿，将优先继续最近更新的一条。`
-                    : '可以继续最近的草稿，也可以从当前素材重新创建。'}
-                </p>
-                <div className="mt-6 flex flex-wrap gap-2">
-                  <Button
-                    type="primary"
-                    data-modal-initial-focus
-                    onClick={() => {
-                      const project = existingSourceDraftPrompt.project;
-                      setExistingSourceDraftPrompt(null);
-                      setSourceDraftCheckPending(false);
-                      loadProject(project);
-                    }}
-
-                  >
-                    <FolderOpen size={14} />继续编辑已有草稿
-                  </Button>
-                  <Button
-                    type="default"
-                    onClick={() => {
-                      frozenStudioSpecRef.current = null;
-      setBoundProductionSnapshot(null);
-      setProjectId(null);
-                      setExistingSourceDraftPrompt(null);
-                      setSourceDraftCheckPending(false);
-                    }}
-
-                  >
-                    <Plus size={14} />新建作品集
-                  </Button>
-                </div>
-              </div>
-              <div className="min-h-[180px] border-t border-border bg-surface-2 sm:min-h-[300px] sm:border-l sm:border-t-0">
-                {existingSourceDraftPrompt.poster ? (
-                  <img src={existingSourceDraftPrompt.poster} alt="来源视频素材封面" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="flex h-full min-h-[180px] items-center justify-center text-text-muted sm:min-h-[300px]">
-                    <Film size={34} className="opacity-35" />
-                  </div>
-                )}
-              </div>
-            </div>
-          </Modal>
+          <Suspense fallback={<div role="status" className="p-6 text-sm text-text-muted">正在打开已有草稿…</div>}>
+            <ExistingSourceDraftDialog
+              title={existingSourceDraftPrompt.title}
+              matchCount={existingSourceDraftPrompt.matchCount}
+              poster={existingSourceDraftPrompt.poster}
+              onResume={() => {
+                const project = existingSourceDraftPrompt.project;
+                setExistingSourceDraftPrompt(null);
+                setSourceDraftCheckPending(false);
+                loadProject(project);
+              }}
+              onCreate={() => {
+                frozenStudioSpecRef.current = null;
+                setBoundProductionSnapshot(null);
+                setProjectId(null);
+                setExistingSourceDraftPrompt(null);
+                setSourceDraftCheckPending(false);
+              }}
+            />
+          </Suspense>
         )}
         {showProjects && (
           <Suspense fallback={<div role="status" className="absolute inset-0 z-50 bg-surface p-6 text-sm text-text-secondary">正在打开我的创作…</div>}>
