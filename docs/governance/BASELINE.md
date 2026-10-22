@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵小枢入口控件职责拆分（2026-10-23）
+
+- 代码提交 `de8c2b5763867aa3b41100ed1cfe58760e9ffbdc` 将完整入口、贴边恢复入口、待办 Badge 和手动收起控件迁至 `src/components/assistant/AssistantLauncher.tsx`；浮层仍持有收起偏好、焦点交接及打开对话动作。原有 44px 触控目标、可访问名称、对话关联与白底/渐变样式保持。`GlobalAssistant.tsx` 从 2,270 降至 2,224 行，预算同步收紧，历史超限文件仍有 7 个。
+- 新入口三态渲染测试 3/3 已纳入 `test:assistant`；助手合同、TypeScript、架构扫描及相对上一基线 ratchet、192 项迁移仓库只读检查、生产构建及 `git diff --check` 通过。`AiCreateStudio` chunk 为 497,209/500,000 字节。未执行浏览器交互专项、真实付费供应商、目标库迁移或部署；最终本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 灵小枢对话气泡展示职责拆分（2026-10-23）
 
 - 代码提交 `8f12b60a96dddf2c3f53cf080e2d5cb71ce0855d` 将对话滚动区内的决策摘要、欢迎语、历史消息、加载态、任务摘要和周计划入口展示迁至 `src/components/assistant/AssistantConversationBubbles.tsx`。`GlobalAssistant.tsx` 仍控制滚动、草稿、发送、身份栅栏、持久化及详情弹窗动作；展示顺序、文案和动效索引保留。主文件从 2,374 降至 2,270 行，架构预算同步收紧；历史超限文件仍有 7 个。
