@@ -31,6 +31,7 @@
 - `server/routes/videoCrawlerNormalization.ts`：视频来源及供应商元数据归一化、Apify 候选窗口等纯规则；`videoCrawlerSourceUrls.ts` 负责规范来源 URL 与平台账号/帖子链接，`apifyTikTokInput.ts` 负责纯 Actor 输入组装；`videos.ts` 保留既有兼容导出。LinkedIn 公司帖的冻结输入、许可范围校验与受控传输在 `linkedinCompanyPostPaidCollection.ts`；内部视频/图文入口缺少受信任许可时仍明确报 `linkedin_company_paid_collection_permit_required`，手工 HTTP 不开放。当前没有生产许可签发器，不能将模拟许可或离线解析视为付费采集已开放；见 [`2026-10-23-linkedin-company-paid-collection.md`](./adr/2026-10-23-linkedin-company-paid-collection.md)。
 - `server/routes/studioCoverSvg.ts`：封面图的尺寸、换行、图层和 SVG 文本转义纯渲染；`studio.ts` 保留鉴权、租户限定的帧读取、文件保存和对象存储，不把客户端传入的路径直接交给渲染模块读取。
 - `server/routes/studioStoryboardSpeechRules.ts`：分镜口播时长估计与语义压缩、CTA 语义、字幕同步、字段规范化与重复/不一致检查纯规则；`studio.ts` 保留模型生成、租户素材读取、修复编排与旧公开导出，不让脚本文字后处理接触供应商或持久化。
+- `server/routes/studioProductScriptRules.ts`：产品与目标买家/合作路线的保守口播计划、完整 CTA、锁定分镜、素材证据与时间线检查的纯规则；依赖前述口播规则与已有产品事实/质量合同，`studio.ts` 保留模型生成、资料读取、租户状态及原公开导出，不将没有来源的素材画面或商业数字补写成事实。
 - `server/routes/studioProductSceneProvenance.ts`：产品预制素材的稳定槽位绑定、上传校验凭证解析、关联产品变更和检索标签纯规则；`studio.ts` 保留租户产品查询、上传媒体探针、素材持久化及原公开导出，不因投影拆分放宽上传或复用授权。
 - `server/routes/studioProductSceneProjection.ts`：产品场景来源图、素材可制作性、空槽位与素材/产品范围的只读投影；`studio.ts` 仍负责租户鉴权、签名媒体 URL、素材写回与 HTTP 响应，不把投影结果当作持久化素材或供应商验收。
 - `server/routes/studioProductSceneUpload.ts`：产品场景上传意图与企业产品身份校验、完整视频探针结果封装、错误到 HTTP 状态映射和复用授权元数据；`studio.ts` 仍持有上传请求生命周期、租户素材写入与对象存储。非视频、缺失或未知槽位在读取企业资料前拒绝，上传探针不可用不生成复用授权。
