@@ -4,7 +4,8 @@ import { platformAdsRequest } from '../lib/platformAds';
 import { dayRange, overviewData, overviewEntries, percentChange, type AdReport, type ReportEntry } from '../lib/adOverview';
 import './adPerformanceOverview.css';
 import AdMetricHistoryPanel from './AdMetricHistoryPanel';
-import { foreignTradeMockAdReport, isForeignTradeMockId, isLocalForeignTradeMockEnabled } from '../mocks/foreignTradeOperations';
+import { foreignTradeMockAdReport, isForeignTradeMockId } from '../mocks/foreignTradeOperations';
+import { isPlatformAdsDemoEnabled as isLocalForeignTradeMockEnabled } from '../lib/platformAdsPreview';
 import { CHART_CURSOR_STYLE, CHART_TOOLTIP_STYLE } from '../lib/uiStyles';
 import { chartPalette } from './ui/LsDataChart';
 

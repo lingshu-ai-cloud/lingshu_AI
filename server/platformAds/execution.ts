@@ -112,6 +112,13 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
     const dailyBudget = Number(input.dailyBudget);
     if (action === 'adjust_budget' && (!Number.isFinite(dailyBudget) || dailyBudget < 1 || dailyBudget > task.budget)) throw new AdProviderError('日预算必须在任务预算范围内', 'INVALID_INPUT');
     const adapter = new MetaAdsAdapter(accessToken, fetch, () => effectLeaseGuard.beforeEffect());
+    if (action === 'create') {
+      const account = await adapter.account(connection.accountId);
+      const minimumCap = Number(account.min_campaign_group_spend_cap);
+      const minimumDaily = Number(account.min_daily_budget);
+      if (Number.isFinite(minimumCap) && minimumCap > 0 && Math.round(task.budget * 100) < minimumCap) throw new AdProviderError(`平台要求广告系列花费限额至少为 ${connection.currency} ${(minimumCap / 100).toFixed(2)}，请更新计划预算；尚未创建平台资源。`, 'BUDGET_BELOW_PLATFORM_MINIMUM');
+      if (Number.isFinite(minimumDaily) && minimumDaily > 0 && Math.round(metaInput!.dailyBudget * 100) < minimumDaily) throw new AdProviderError(`平台要求日预算至少为 ${connection.currency} ${(minimumDaily / 100).toFixed(2)}，请更新日预算；尚未创建平台资源。`, 'BUDGET_BELOW_PLATFORM_MINIMUM');
+    }
     if (action === 'activate' || action === 'resume') {
       const campaignBudget = await adapter.request(resourceId, { fields: 'spend_cap' });
       const adsetBudget = await adapter.request(resources.adsetId, { fields: 'daily_budget' });

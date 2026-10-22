@@ -30,12 +30,19 @@ export class MetaAdsAdapter {
     if (!response.ok || data.error) {
       const code = Number.isSafeInteger(data.error?.code) ? data.error.code : response.status;
       const subcode = Number.isSafeInteger(data.error?.error_subcode) ? ` / ${data.error.error_subcode}` : '';
-      // Preserve actionable numeric diagnostics without reflecting provider messages or credentials.
-      throw new AdProviderError(`广告平台拒绝请求（${code}${subcode}）`, String(code), method === 'POST' && (response.status >= 500 || response.status === 408));
+      // Keep Meta's actionable field/permission diagnostic, never its credentials
+      // or credential-bearing URLs. Numeric code/subcode remain stable.
+      const diagnostic = String(data.error?.error_user_msg || data.error?.message || '')
+        .split(this.token).join('[redacted]')
+        .replace(/https?:\/\/[^\s<>]+/gi, '[URL]')
+        .replace(/EAA[A-Za-z0-9_-]{20,}/g, '[redacted]')
+        .replace(/(?:access_token|client_secret|authorization)\s*[:=]\s*[^\s,;]+/gi, '[redacted]')
+        .replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 500);
+      throw new AdProviderError(`广告平台拒绝请求（${code}${subcode}）${diagnostic ? `：${diagnostic}` : ''}`, String(code), method === 'POST' && (response.status >= 500 || response.status === 408));
     }
     return data;
   }
-  account(id: string) { return this.request(`act_${metaAccountId(id)}`, { fields: 'id,account_id,name,business_name,currency,account_status,timezone_id,timezone_name,timezone_offset_hours_utc' }); }
+  account(id: string) { return this.request(`act_${metaAccountId(id)}`, { fields: 'id,account_id,name,business_name,currency,account_status,timezone_id,timezone_name,timezone_offset_hours_utc,min_campaign_group_spend_cap,min_daily_budget' }); }
   campaigns(id: string) { return this.request(`act_${metaAccountId(id)}/campaigns`, { fields: 'id,name,status,effective_status,objective,daily_budget,lifetime_budget', limit: 100 }); }
   async assertOwnership(accountId: string, objectId: string) {
     const object = await this.request(objectId, { fields: 'account_id' });

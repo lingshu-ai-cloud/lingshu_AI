@@ -72,8 +72,11 @@ export async function bindPlatformAdCreative(tenantId: string, taskId: string, i
     if (input.expectedVersion !== task.version) throw new PlatformAdCreativeError('计划已更新，请刷新后重试', 409);
     if (task.status !== 'draft' || task.managementMode !== 'manual' || task.creationSource === 'platform_import') throw new PlatformAdCreativeError('仅人工草稿可绑定素材', 409);
     for (const collection of ['platform_ad_executions', 'platform_ad_launches']) {
-      const executions = await store.list<{ status: string }>(collection, { where: { tenant_id: tenantId, taskId }, perPage: 1 });
-      if (executions.items.length || executions.totalItems) throw new PlatformAdCreativeError('计划已有平台执行记录，不能换绑素材', 409);
+      const executions = await store.list<{ status: string }>(collection, { where: { tenant_id: tenantId, taskId }, perPage: 200 });
+      const blocked = collection === 'platform_ad_executions'
+        ? executions.totalPages > 1 || executions.items.some(item => item.status !== 'FAILED')
+        : executions.items.length > 0 || executions.totalItems > 0;
+      if (blocked) throw new PlatformAdCreativeError('计划已有平台执行记录，不能换绑素材', 409);
     }
     if (input.fileRef !== undefined || input.url !== undefined || input.path !== undefined) throw new PlatformAdCreativeError('仅接受已保存的社媒素材标识');
     const sourceTaskId = identity(input.sourceTaskId), artifactId = identity(input.artifactId), connectionId = identity(input.connectionId);
@@ -90,6 +93,15 @@ export async function bindPlatformAdCreative(tenantId: string, taskId: string, i
     if (existing && ['uploading', 'unknown', 'processing'].includes(existing.status)) throw new PlatformAdCreativeError('素材上传待核对，不能换绑', 409);
     const now = new Date().toISOString(), taskVersion = task.version + 1;
     const record: StoredPlatformAdCreative = { id, tenant_id: tenantId, taskId, taskVersion, sourceTaskId, artifactId, fileRef: file.fileRef, sha256: file.sha256, mimeType: file.mimeType, size: file.size, name: file.name, connectionId, provider: connection.provider as 'meta' | 'tiktok', platformVideoId, status: 'pending', createdAt: existing?.createdAt || now, updatedAt: now, attemptId: '', uploadError: '', uploadStartedAt: '', uploadReceipt: {} };
+    // A budget-only draft edit does not invalidate the same account's verified
+    // video bytes. Rebind the current plan version without uploading again.
+    const uploaded = existing?.uploadReceipt;
+    if (existing?.status === 'ready' && existing.sourceTaskId === sourceTaskId && existing.artifactId === artifactId
+      && existing.connectionId === connectionId && existing.fileRef === file.fileRef && existing.sha256 === file.sha256
+      && uploaded?.status === 'ready' && uploaded.sha256 === file.sha256 && uploaded.accountId === connection.accountId
+      && /^\d+$/.test(existing.platformVideoId) && uploaded.videoId === existing.platformVideoId) {
+      Object.assign(record, { status: 'ready', platformVideoId: existing.platformVideoId, uploadReceipt: uploaded, attemptId: existing.attemptId || '' });
+    }
     // Invalidate prior approvals before changing a binding; a partial failure is safe and requires a refresh.
     await guard.beforeEffect();
     if (!await store.update(PLATFORM_AD_TASKS_COLLECTION, taskId, { version: taskVersion, authorization: null, proposal: null, updatedAt: now })) throw new PlatformAdCreativeError('计划版本保存失败', 503);

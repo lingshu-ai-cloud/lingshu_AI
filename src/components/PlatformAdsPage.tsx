@@ -21,7 +21,7 @@ import {
 import type { Page } from "../App";
 import { useModalFocus } from "../hooks/useModalFocus";
 import { platformAdsApi, type PlatformAdTask } from "../lib/platformAds";
-import { emptyAdPlanConfiguration, creationSourceLabels, managementModeLabels, type AdManagement } from '../lib/platformAdsDomain';
+import { emptyAdPlanConfiguration, creationSourceLabels, managementModeLabels, adTaskStatusLabels, type AdManagement } from '../lib/platformAdsDomain';
 import "./platformAds.css";
 import { getAdPlanCapability, PLATFORM_AD_CAPABILITIES, PLATFORM_AD_GOALS } from "../../shared/platformAdCapabilities";
 import type { AdConnection } from './AdAccountConnections';
@@ -30,7 +30,8 @@ import AdPerformanceOverview from './AdPerformanceOverview';
 import AdManagedWorkspace from './AdManagedWorkspace';
 import { PlatformAdsManagedPreview, PlatformAdsPerformancePreview } from './PlatformAdsPreviewSections';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
-import { createForeignTradeMockAdTasks, isForeignTradeMockId, isLocalForeignTradeMockEnabled } from '../mocks/foreignTradeOperations';
+import { createForeignTradeMockAdTasks, isForeignTradeMockId } from '../mocks/foreignTradeOperations';
+import { isPlatformAdsDemoEnabled as isLocalForeignTradeMockEnabled } from '../lib/platformAdsPreview';
 import LsPageHeader from './ui/LsPageHeader';
 
 const channels = [
@@ -269,7 +270,7 @@ export default function PlatformAdsPage({
               </button>
               <div className="ads-task-title">
                 <div>
-                  <span className="ads-pill neutral">方案已保存 · 平台状态见执行回执</span>
+                  <span className="ads-pill neutral">{adTaskStatusLabels[selectedDraft.status] || '状态待核对'} · 平台状态见执行回执</span>
                   <h2>{selectedDraft.name}</h2>
                   <p>
                     {selectedDraft.video} · {selectedDraft.goal} ·{" "}
@@ -397,7 +398,7 @@ export default function PlatformAdsPage({
                           <td data-label="目标市场">{d.market}</td>
                           <td data-label="预算上限">{d.creationSource === 'platform_import' && Number(d.budget) === 0 ? '平台总预算未同步' : `${d.currency} ${Number(d.budget).toLocaleString()}`}</td>
                           <td data-label="状态">
-                            <span className="ads-pill neutral">方案已保存</span>
+                            <span className="ads-pill neutral">{adTaskStatusLabels[d.status] || '状态待核对'}</span>
                           </td>
                           <td data-label="创建来源 / 管理方式">{creationSourceLabels[d.creationSource || 'manual']}<small>{managementModeLabels[d.managementMode || 'manual']}</small></td>
                           <td data-label="操作">

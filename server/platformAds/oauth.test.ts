@@ -19,7 +19,7 @@ try {
   const { beginMetaOAuth, finishMetaOAuth, oauthAccounts } = await import('./oauth.js');
   const first = await beginMetaOAuth('t1', 'u1');
   const url = new URL(first.url);
-  assert.equal(url.searchParams.get('scope'), 'ads_read,ads_management');
+  assert.deepEqual(url.searchParams.get('scope')?.split(','), ['ads_read', 'ads_management', 'pages_show_list', 'pages_read_engagement', 'pages_manage_ads']);
   assert.ok(!first.url.includes('private'));
   await assert.rejects(oauthAccounts('t2', 'u1', first.sessionId), /无效/);
   let exchanges = 0;

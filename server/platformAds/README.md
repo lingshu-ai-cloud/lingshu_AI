@@ -14,7 +14,7 @@
 
 `META_ADS_API_VERSION` 必填，例如部署时核验仍受支持的 Graph 版本；不内置未经核实的默认版本。
 
-OAuth 另需 `META_ADS_APP_ID`、`META_ADS_APP_SECRET`、`META_ADS_REDIRECT_URI`。固定回调地址为 `{站点}/api/overseas/platform-ads/oauth/meta/callback`，需登记到 Meta 应用。申请 `ads_read,ads_management` 及对应生产访问权限。应用密钥保留服务端，授权令牌加密入库。
+OAuth 另需 `META_ADS_APP_ID`、`META_ADS_APP_SECRET`、`META_ADS_REDIRECT_URI`。固定回调地址为 `{站点}/api/overseas/platform-ads/oauth/meta/callback`，需登记到 Meta 应用。申请 `ads_read,ads_management,pages_show_list,pages_read_engagement,pages_manage_ads` 及对应生产访问权限；广告读写权限不等于主页列表、主页内容与主页广告权限，已有令牌需重新授权才能取得新增权限。应用密钥保留服务端，授权令牌加密入库。
 
 `GOOGLE_ADS_API_VERSION` 必填；如经过经理账户访问，配置 `GOOGLE_ADS_LOGIN_CUSTOMER_ID`。Google Ads API 自 2026-09-09 起以 OAuth 所属 Cloud 项目的访问等级鉴权，本实现不再要求或发送 developer-token。
 

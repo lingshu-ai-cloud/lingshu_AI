@@ -5,6 +5,9 @@ import { withPlatformAdTaskLock } from './taskLock.js';
 import { AdProviderError } from './metaAdapter.js';
 import { connectAccount } from './connections.js';
 export const AD_OAUTH_STATES = 'platform_ad_oauth_states';
+// Ads permissions do not grant access to the Page identity used by creatives.
+// Match the permissions offered by Meta's Marketing API authorization tool.
+export const META_AD_OAUTH_SCOPES = ['ads_read', 'ads_management', 'pages_show_list', 'pages_read_engagement', 'pages_manage_ads'] as const;
 type OAuthState = { id: string; tenant_id: string; userId: string; stateHash: string; expiresAt: string; status: string; tokenCipher?: string; accounts?: Array<{ id: string; name: string; currency: string; accountStatus: number | null; timezoneName: string }> };
 function config() {
   const appId = process.env.META_ADS_APP_ID, appSecret = process.env.META_ADS_APP_SECRET, redirectUri = process.env.META_ADS_REDIRECT_URI, version = process.env.META_ADS_API_VERSION;
@@ -20,7 +23,7 @@ export async function beginMetaOAuth(tenantId: string, userId: string) {
   const record = await store.create<OAuthState>(AD_OAUTH_STATES, { tenant_id: tenantId, userId, stateHash: createHash('sha256').update(state).digest('hex'), expiresAt: new Date(Date.now() + 10 * 60000).toISOString(), status: 'pending' });
   if (!record) throw new AdProviderError('无法创建授权会话', 'STORAGE_ERROR');
   const url = new URL(`https://www.facebook.com/${cfg.version}/dialog/oauth`);
-  url.search = new URLSearchParams({ client_id: cfg.appId, redirect_uri: cfg.redirectUri, state, response_type: 'code', scope: 'ads_read,ads_management' }).toString();
+  url.search = new URLSearchParams({ client_id: cfg.appId, redirect_uri: cfg.redirectUri, state, response_type: 'code', scope: META_AD_OAUTH_SCOPES.join(',') }).toString();
   return { url: url.toString(), sessionId: record.id };
 }
 export async function finishMetaOAuth(state: string, code: string) {

@@ -12,7 +12,7 @@ process.env.TEST_ONLY_EXTERNAL_EFFECT_LEASE_FALLBACK = 'true';
 const mediaDir = path.join(process.cwd(), 'data', 'social-content-sources', `ad-test-${process.pid}`);
 try {
   const { store } = await import('../storage/index.js');
-  const { createPlatformAdTask, getPlatformAdTask } = await import('./tasks.js');
+  const { createPlatformAdTask, getPlatformAdTask, updatePlatformAdTask } = await import('./tasks.js');
   const { bindPlatformAdCreative, listPlatformAdCreativeSources, getPlatformAdCreative, openPlatformAdCreativeMedia, validatePlatformAdCreativeSource, listPlatformAdCreatives } = await import('./creatives.js');
   const data = Buffer.from('persisted fixture video bytes');
   const sha256 = createHash('sha256').update(data).digest('hex');
@@ -72,6 +72,16 @@ try {
   await store.update('starter_social_content_artifacts', 'artifactrecord1', { resource_ref: 'https://untrusted.invalid/video.mp4' });
   await assert.rejects(validatePlatformAdCreativeSource('tenant-a', bound.creative.id), /ref_invalid/);
   await store.update('starter_social_content_artifacts', 'artifactrecord1', { resource_ref: `socialfile:${fileId}` });
+  const repairTask = await createPlatformAdTask('tenant-a', 'user-a', input);
+  const repairBinding = await bindPlatformAdCreative('tenant-a', repairTask.id, { ...bind, expectedVersion: repairTask.version });
+  await store.update('platform_ad_connections', 'connection-a', { accountId: '1' });
+  await store.update('platform_ad_creatives', repairBinding.creative.id, { status: 'ready', platformVideoId: '500', uploadReceipt: { status: 'ready', accountId: '1', sha256, videoId: '500' } });
+  await store.create('platform_ad_executions', { tenant_id: 'tenant-a', taskId: repairTask.id, status: 'FAILED' });
+  const edited = await updatePlatformAdTask('tenant-a', repairTask.id, { ...input, budget: 600, expectedVersion: 2 });
+  const rebound = await bindPlatformAdCreative('tenant-a', repairTask.id, { ...bind, expectedVersion: edited!.version });
+  assert.equal(rebound.creative.status, 'ready', 'budget correction preserves the same verified account video');
+  assert.equal(rebound.creative.platformVideoId, '500');
+  assert.equal(rebound.taskVersion, 4);
   await store.create('platform_ad_executions', { tenant_id: 'tenant-a', taskId: task.id, status: 'UNKNOWN' });
   await assert.rejects(bindPlatformAdCreative('tenant-a', task.id, { ...bind, expectedVersion: 2 }), /平台执行记录/);
   console.log('Platform advertising creative ownership, source integrity, version, execution lock and redaction tests passed');
