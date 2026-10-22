@@ -105,10 +105,12 @@ try {
   const tenantRouteSource = fs.readFileSync(path.resolve(process.cwd(), 'server/routes/platformIntegrations.ts'), 'utf8');
   const platformStoreSource = fs.readFileSync(path.resolve(process.cwd(), 'server/lib/tenantPlatformApps.ts'), 'utf8');
   const deliveryUiSource = fs.readFileSync(path.resolve(process.cwd(), 'src/components/AdminDeliveryPage.tsx'), 'utf8');
+  const deliveryComponentsSource = fs.readFileSync(path.resolve(process.cwd(), 'src/components/AdminDeliveryComponents.tsx'), 'utf8');
   const tenantUiSource = fs.readFileSync(path.resolve(process.cwd(), 'src/components/UserSocialAppCredentials.tsx'), 'utf8');
   assert.match(tenantRouteSource, /webhookVerifyToken:\s*text\(req\.body\?\.metaWebhookVerifyToken\)/);
   assert.match(platformStoreSource, /webhook_verify_token:\s*input\.webhookVerifyToken\s*\|\|\s*existing\?\.webhook_verify_token/);
-  assert.match(deliveryUiSource, /secret[^\n]+webhookVerifyToken/, 'delivery UI must treat webhook tokens as write-only secrets');
+  assert.match(deliveryUiSource, /import \{[^\n]*PlatformWizard[^\n]*\} from '\.\/AdminDeliveryComponents'/, 'delivery page must mount the reviewed platform wizard');
+  assert.match(deliveryComponentsSource, /secret[^\n]+webhookVerifyToken/, 'delivery UI must treat webhook tokens as write-only secrets');
   assert.doesNotMatch(tenantUiSource, /metaWebhookVerifyToken|webhookVerifyToken/, 'the OAuth-only tenant form must neither read nor submit webhook secrets');
   assert.match(tenantUiSource, /<Field secret[^\n]+value=\{form\[card\.secretKey\]\}/, 'tenant OAuth credentials must use password fields with write-only draft values');
   assert.match(tenantUiSource, /type=\{secret \? 'password' : 'text'\}/, 'secret fields must not display plaintext');
