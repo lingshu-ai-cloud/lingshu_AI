@@ -43,12 +43,12 @@ import {assertWeeklyCreativeRepairCtaAdmission} from '../runtime/weeklyCreativeR
 import {readWeeklyTemplateStructure} from '../socialPrograms/weeklyTemplateStructure.js';
 import {contentTemplateOutputMatches} from '../../shared/socialContentTemplateStructure.js';
 import { createHash } from 'node:crypto';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import sharp from 'sharp';
-import type { SocialAssetSupplyPlan, SocialContentTaskBrief, SocialContentTaskDetail, SocialContentThemeId, SocialProductionResult, SocialTaskSource } from '../../shared/contracts/socialContentWorkflow.js';
+import type { SocialAssetSupplyPlan, SocialContentThemeId, SocialProductionResult, SocialTaskSource } from '../../shared/contracts/socialContentWorkflow.js';
 import { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
 import { resolveSourceDurations } from '../lib/videoSourcePlan.js';
@@ -101,7 +101,7 @@ import { createEnvironmentSocialSeedancePresenterBridge } from './socialContentS
 import { createSeedancePresenterFunding } from './socialContentSeedancePresenterFunding.js';
 import { createEnvironmentSocialHeyGenBridge } from './socialContentHeyGenBridge.js';
 import {createWholeTrackSocialHeyGenBridge} from './socialContentWholeTrackHeyGenBridge.js';
-import {assertSocialReferenceBackgroundAssetCurrent,freezeSocialReferenceBackgroundAsset} from './socialContentReferenceBackgroundLock.js';
+import {assertSocialReferenceBackgroundAssetCurrent} from './socialContentReferenceBackgroundLock.js';
 import {freezePresenterMotherSegments} from '../../shared/contracts/presenterMotherSegments.js';
 import {preparePresenterMotherSupply} from './presenterMotherSupplyBridge.js';
 import {assertPresenterMotherSpeechQaReady,inspectPresenterMotherSpeechQa} from './presenterMotherSpeechQa.js';
@@ -163,7 +163,6 @@ type ProductionTaskDetail = NonNullable<Awaited<ReturnType<typeof readSocialTask
 export type SocialGraphApprovedContext = Pick<ProductionTaskDetail, 'version' | 'agentWorkflow' | 'assetSupplyPlan'> & { revisionPlanHash?: string; footageRevisionPlanHash?: string };
 import { executeSocialRenderStage, executeSocialQualityStage, rebindSocialGraphRenderSources, type SocialProductionGraphPhase } from './socialContentProductionStages.js';
 import {freezeSocialRenderFrameContract} from './socialRenderFrameContract.js';
-export const SOCIAL_SHOOTING_PLAN_SCHEMA = 'social-content.shooting-plan.v1';
 async function readCurrentConfirmedPresenterFirstFrame(store:NonNullable<Starter198Repository['dataStore']>,input:{scope:{tenantId:string;taskId:string;runId:string;planHash:string};groupId:string;presenterGroupContractHash:string;presenterAssetId:string}){
   const rows=await store.list<any>('social_presenter_first_frame_approvals',{where:{tenant_id:input.scope.tenantId,task_id:input.scope.taskId,run_id:input.scope.runId,plan_hash:input.scope.planHash,group_id:input.groupId},perPage:2});
   if(rows.totalItems!==1||rows.items.length!==1)return null;
@@ -175,112 +174,10 @@ async function readCurrentConfirmedPresenterFirstFrame(store:NonNullable<Starter
 }
 export {bindCanonicalTypeAwareRouting, assertCompleteTypeAwareExecutionPlan, assetSupplyPlanWithExecutionSelections} from './socialContentExecutionPlan.js';
 import {bindCanonicalTypeAwareRouting, assertCompleteTypeAwareExecutionPlan, assetSupplyPlanWithExecutionSelections} from './socialContentExecutionPlan.js';
-/** Bind the exact task-scoped benchmark background only for dynamic presenter
- * shots. Stable HeyGen and non-presenter shots deliberately retain no lock. */
-export function assetSupplyPlanWithDynamicPresenterBackgroundLocks(input:{
-  plan:SocialAssetSupplyPlan;
-  selections:PresenterExecutionSelection[];
-  referenceReuse:NonNullable<SocialContentTaskBrief['referenceReuse']>|null|undefined;
-  referenceAnalysis:SocialContentTaskDetail['referenceVideoAnalysis'];
-  scenes:NonNullable<SocialContentTaskDetail['agentWorkflow']>['directorBrief']['scenes'];
-}):SocialAssetSupplyPlan{
-  const dynamicIds=new Set(input.selections.filter(item=>item.providerId==='seedance'&&item.executionStatus==='ready').map(item=>item.sceneId));
-  if(!dynamicIds.size)return input.plan;
-  if(!input.referenceReuse||!input.referenceAnalysis)throw Error('reference_background_source_missing');
-  const scenes=new Map(input.scenes.map(scene=>[scene.sceneId,scene]));
-  return{...input.plan,shots:input.plan.shots.map(shot=>{
-    if(!dynamicIds.has(shot.shotId))return shot;
-    const referenceShotId=scenes.get(shot.shotId)?.referenceShotId;
-    if(!referenceShotId)throw Error(`reference_background_shot_missing:${shot.shotId}`);
-    return{...shot,referenceBackgroundAssetLock:freezeSocialReferenceBackgroundAsset({referenceReuse:input.referenceReuse!,referenceAnalysis:input.referenceAnalysis!,referenceShotId})};
-  })};
-}
-export function typeAwareRequiredMaterialIds(plan:SocialAssetSupplyPlan|null):string[]{
-  return [...new Set((plan?.shots??[]).flatMap(shot=>[
-    ...shot.sourceRefs,
-    ...(shot.materialRouting?.localMatch?.sourceRefs??[]),
-    ...(shot.materialRouting?.generation?.productImageRefs??[]),
-  ]).filter(Boolean))];
-}
-
-export function rebindDivergentLocalRoutesFromApprovedContext(input:{plan:SocialAssetSupplyPlan;approved:SocialAssetSupplyPlan;assets:ProductionAsset[]}){
-  const approvedById=new Map(input.approved.shots.map(shot=>[shot.shotId,shot]));
-  const usableAssets=new Map(input.assets.filter(asset=>asset.type==='video'&&Boolean(asset.localPath)&&existsSync(asset.localPath!)
-    &&statSync(asset.localPath!).size>0).map(asset=>[asset.id,asset]));
-  const rebindings:Array<{shotId:string;previousRefs:string[];selectedRefs:string[];approvalEvidenceRef:string;assetHashes:string[]}>=[];
-  const plan={...input.plan,shots:input.plan.shots.map(shot=>{
-    const route=shot.materialRouting;
-    if(route?.policy!=='local_only'||route.localMatch.state!=='matched')return shot;
-    const approved=approvedById.get(shot.shotId),approvedRoute=approved?.materialRouting;
-    if(approvedRoute?.localMatch.sourceRefs.length===route.localMatch.sourceRefs.length
-      &&approvedRoute.localMatch.sourceRefs.every(ref=>route.localMatch.sourceRefs.includes(ref)))return shot;
-    if(!approved||approvedRoute?.policy!=='local_only'||approvedRoute.localMatch.state!=='matched'
-      ||approvedRoute.materialType!==route.materialType||!approvedRoute.localMatch.evidenceRef
-      ||!approvedRoute.localMatch.sourceRefs.length
-      ||approvedRoute.localMatch.sourceRefs.some(ref=>!usableAssets.has(ref))
-      ||(shot.truthBoundary.subject==='customer_factory'&&approvedRoute.localMatch.sourceRefs.some(ref=>!ref.startsWith('owned-'))))return shot;
-    rebindings.push({shotId:shot.shotId,previousRefs:[...route.localMatch.sourceRefs],selectedRefs:[...approvedRoute.localMatch.sourceRefs],
-      approvalEvidenceRef:approvedRoute.localMatch.evidenceRef,
-      assetHashes:approvedRoute.localMatch.sourceRefs.map(ref=>usableAssets.get(ref)!.contentHash||'')});
-    return {...shot,sourceStrategy:'customer_real_asset' as const,sourceRefs:[...approvedRoute.localMatch.sourceRefs],fallbackSourceStrategy:null,
-      selectedMaterialSegment:approved.selectedMaterialSegment&&approvedRoute.localMatch.sourceRefs.includes(approved.selectedMaterialSegment.sourceRef)
-        ?structuredClone(approved.selectedMaterialSegment):undefined,materialRouting:structuredClone(approvedRoute)};
-  })};
-  return{plan,rebindings};
-}
-
-/** Pure projection used by the non-rendering third option. Keeping this
- * separate from the worker makes it testable that a shooting-plan request has
- * all Director controls without touching TTS, providers or the renderer. */
-export function buildSocialShootingPlanArtifactContent(
-  detail: Pick<SocialContentTaskDetail, 'taskId' | 'version' | 'brief' | 'agentWorkflow' | 'referenceVideoAnalysis'>,
-): Record<string, unknown> {
-  const workflow = detail.agentWorkflow;
-  if (!workflow) throw new Error('shooting_plan_director_brief_missing');
-  const director = workflow.directorBrief;
-  return {
-    workflowSchema: SOCIAL_SHOOTING_PLAN_SCHEMA,
-    sourceKey: `social_task_shooting_plan:${detail.taskId}`,
-    contentType: 'shooting_plan',
-    taskVersion: detail.version,
-    title: `${detail.brief.title || '社媒内容'}·代拍清单`,
-    estimatedOutputDurationSeconds: director.totalDurationSeconds,
-    productionMode: 'non_rendering_checklist',
-    providerCallsRequired: false,
-    product: director.contentRequirements?.product ?? {
-      required: Boolean(detail.brief.productRef),
-      productRef: detail.brief.productRef,
-      confidence: detail.brief.productRef ? 1 : 0,
-      reason: detail.brief.productRef ? '任务已指定产品' : '未锁定产品，代拍可使用现场可用产品',
-    },
-    hook: {
-      intervalSeconds: [0, Math.min(3, director.totalDurationSeconds)],
-      precision: 'hook_high',
-      referenceAnalysisId: director.referenceAnalysis?.analysisId ?? detail.referenceVideoAnalysis?.analysisId ?? null,
-      instruction: '前三秒必须逐帧复核第一帧主体、人物动作、人物-产品-环境交互、镜头轨迹、字幕和声音触发',
-    },
-    scenes: director.scenes.map(scene => ({
-      sceneId: scene.sceneId,
-      order: scene.order,
-      timing: structuredClone(scene.duration),
-      purpose: scene.purpose,
-      voiceover: scene.audioLayers.voiceover,
-      caption: scene.audioLayers.captionIntent,
-      targetVisual: scene.targetVisual,
-      action: structuredClone(scene.action),
-      shotLanguage: structuredClone(scene.shotLanguage),
-      spaceAndContinuity: [...scene.spaceAndContinuity],
-      requiredEvidence: [...scene.requiredEvidence],
-      productSceneReplication: scene.productSceneReplication
-        ? structuredClone(scene.productSceneReplication) : null,
-      truthBoundary: structuredClone(scene.truthBoundary),
-      acceptanceCriteria: [...scene.acceptanceCriteria],
-      hookPrecision: scene.duration.startSeconds < 3,
-    })),
-    createdBy: 'content_agent',
-  };
-}
-
+import { SOCIAL_SHOOTING_PLAN_SCHEMA, buildSocialShootingPlanArtifactContent } from './socialContentShootingPlan.js';
+export { SOCIAL_SHOOTING_PLAN_SCHEMA, buildSocialShootingPlanArtifactContent } from './socialContentShootingPlan.js';
+import { assetSupplyPlanWithDynamicPresenterBackgroundLocks, typeAwareRequiredMaterialIds, rebindDivergentLocalRoutesFromApprovedContext } from './socialContentProductionRouting.js';
+export { assetSupplyPlanWithDynamicPresenterBackgroundLocks, typeAwareRequiredMaterialIds, rebindDivergentLocalRoutesFromApprovedContext } from './socialContentProductionRouting.js';
 async function finishShootingPlanExecution(input: {
   repository: Starter198Repository;
   tenantId: string;

@@ -5,9 +5,14 @@
 ## 当前权威源码检出（2026-10-22 复核）
 
 - 集成分支：`xixi1021程永罗沟通前大整合`；独立本地检出：`/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`。此文档不把会随提交变化的 SHA 写成永久“当前 HEAD”；交接时必须以 `git rev-parse HEAD`、`git status --porcelain` 和 `git ls-remote` 核对本地、远端和工作区状态。
-- 最近图片准入代码验收点为 `eae873e78d4894bb001e210362a881c008447d77`，验证范围见下节。之前客服回复结构治理验收点为 `be8a7d1ff9abb8efcbbd7487eaa473d25122e7c7`。历史超限文件仍为 10 项；运行数据、真实供应商 Ready 和发布状态均未由这些代码验收。
+- 图片准入代码验收点 `eae873e78d4894bb001e210362a881c008447d77` 与客服回复结构治理验收点 `be8a7d1ff9abb8efcbbd7487eaa473d25122e7c7` 是历史批次；当时有 10 个历史超限文件，随后企业资料页面退出清单，当前仍有 8 个。运行数据、真实供应商 Ready 和发布状态均未由这些代码验收。
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 9 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
+
+## 社媒生产执行规则边界（2026-10-22）
+
+- 以干净集成提交 `f48687d5f044f180ee879f5f803f666cea8e4950` 为起点，将动态主持人参考背景锁、素材需求与已批准本地路线重绑定移入 `socialContentProductionRouting.ts`，非渲染代拍清单投影移入 `socialContentShootingPlan.ts`。worker 保留原公开导出和调用方式；首帧确认读取、阶段推进与付费准入不变。`socialContentProductionExecution.ts` 从 2,137 行降至 2,034 行，历史预算同步收紧；两个新模块均低于 800 行。仍有 8 个历史超限文件，**本批不代表全仓拆分完成**。
+- 助手交付隔离测试补齐原先缺失的 `social_programs` 前置记录，使现行内容订单准入可以接受有效任务；没有放宽生产准入。代拍/素材路线定向测试、完整助手生产回归、TypeScript、架构扫描/ratchet、生产构建、191 项迁移清单只读检查与 `git diff --check` 的结果以本批最终命令输出为准。未调用真实供应商、生产迁移或部署。提交、推送和工作区状态须在操作后分别核验。
 
 ## 企业资料页面退出历史超限清单（2026-10-22）
 
