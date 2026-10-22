@@ -9,6 +9,7 @@ const cockpit = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8'
 const memory = fs.readFileSync('src/components/WorkspaceManagementPages.tsx', 'utf8');
 const snapshot = fs.readFileSync('server/digitalEmployees/businessSnapshot.ts', 'utf8');
 const production = fs.readFileSync('server/digitalEmployees/contentProduction.ts', 'utf8');
+const productionAssets = fs.readFileSync('server/digitalEmployees/contentProductionAssets.ts', 'utf8');
 const productionPlanning = fs.readFileSync('server/digitalEmployees/contentProductionPlanning.ts', 'utf8');
 const studio = fs.readFileSync('server/routes/studio.ts', 'utf8');
 const materialLibrary = fs.readFileSync('server/lib/materialLibrary.ts', 'utf8');
@@ -31,7 +32,7 @@ assert.match(snapshot, /weekPosts\.filter\(hasPublishedReceipt\)/, 'published co
 assert.match(snapshot, /weekProjects\.filter\(completedWorkHasReceipt\)/, 'completed-work counts must require accessible render evidence');
 assert.match(snapshot, /provider_message_id/, 'customer outreach counts must require provider message receipts');
 
-assert.match(production, /isSyntheticMaterial\(record\)/, 'the content worker must reject synthetic material provenance');
+assert.match(productionAssets, /isSyntheticMaterial\(record\)/, 'the content worker must reject synthetic material provenance');
 assert.match(studio, /studioRouter\.get\('\/materials',[\s\S]{0,400}readMaterialLibrary\(tenantId\)/, 'Studio material listings must use the shared truth-filtered inventory');
 assert.match(materialLibrary, /accessibleMaterial[\s\S]{0,180}!isSyntheticMaterial\(item\)/, 'the shared material inventory must reject synthetic provenance');
 const truthfulInventory = await readMaterialLibrary('truthful-tenant', {
