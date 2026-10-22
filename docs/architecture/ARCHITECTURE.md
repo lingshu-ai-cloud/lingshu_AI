@@ -21,6 +21,7 @@
 - `src/components/inspiration/InspirationVideoResults.tsx`：承载灵感结果的首次加载、真实空态、卡片/列表及服务端分页展示，共用卡片操作准入。页面继续提供已筛选记录、来源/收藏状态、分页页码和选择/创作/预览/收藏/管理回调；展示组件不读取租户数据或执行供应商请求。
 - `src/components/inspiration/InspirationWatchModal.tsx`：原视频预览弹窗独立承担鉴权视频、原站嵌入回退、加载/失败/重试与高于详情 Drawer 的层级；灵感页仍拥有选中视频和打开/关闭动作。`inspirationShootingNeeds.ts` 从已有分析及素材匹配结果汇总拍摄缺口和优先级；`InspirationShootingPanel.tsx` 持有待拍清单的排序、筛选与可选拍摄入口展示，页面继续拥有视频/素材读取、上传状态和任务回写，不把元数据兜底冒充真实镜头证据。
 - `src/components/inspiration/inspirationProductMaterialInventory.ts`：按稳定产品 ID 读取完整素材库存、去重并受控逐页汇总；页面仍决定何时读取、筛选和打开详情，不能把未返回或属于其他产品的素材补成已就绪。`inspirationReferenceTarget.ts`：解析周任务导航中的参考目标，并按记录、URL 或标题匹配已取得的灵感记录；明确的精确参考审核仍走独立审核链，不降级为模糊匹配。
+- `src/components/inspiration/inspirationMaterialGalleryProjection.ts`：只根据页面已读取的租户素材与产品摘要投影镜头功能选项、筛选、用户上传优先排序、产品集合卡和普通素材分页。页面继续持有素材请求、过滤状态、产品详情与交互；产品集合卡仅在首页出现，限制条件下必须有真实摘要素材匹配。
 - `src/components/inspiration/MaterialLibraryCardMedia.tsx` 与 `MaterialUsageHistory.tsx`：前者持有素材卡真实宽高比、封面→视频首帧回退、短期地址刷新和操作按钮；后者只展示成品使用履历与有证据的表现回流。页面仍负责素材目录请求、产品归属、预览选择与动作执行，旧 `materialPreviewImageSources` 导出保持兼容。
 - `src/components/inspiration/DirectorVideoDetailPanel.tsx`：编导视频详情 Drawer 持有分析进度、图文证据、逐镜 Tab 与交接状态的展示及受租户鉴权的交接读取；灵感页继续持有选中对象、重分析/取消/收藏/创建动作与页面级身份边界，旧公开导出转发新组件。该职责迁移不放宽图文结果不明或逐镜证据未完成时的创作准入。
 - `src/components/inspiration/inspirationVideoProjection.ts`：爬虫/发现记录投影为前端视频、元数据兜底、发现评分、来源标签及账号基线推荐；页面保留请求、鉴权、排序编排和展示，旧的页面导出继续转发以兼容消费者。
