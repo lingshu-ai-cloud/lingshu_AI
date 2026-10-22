@@ -16,6 +16,7 @@ const productionRequestSource = fs.readFileSync(new URL('./assistant/assistantPr
 const featureGuidesSource = fs.readFileSync(new URL('./assistant/useAssistantFeatureGuides.ts', import.meta.url), 'utf8');
 const notificationsSource = fs.readFileSync(new URL('./assistant/useAssistantNotifications.ts', import.meta.url), 'utf8');
 const hydrationHookSource = fs.readFileSync(new URL('./assistant/useAssistantThreadHydration.ts', import.meta.url), 'utf8');
+const pageSignalsSource = fs.readFileSync(new URL('./assistant/useAssistantPageSignals.ts', import.meta.url), 'utf8');
 const chatPromptSource = fs.readFileSync(new URL('./assistant/assistantChatPrompt.ts', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const appModulesSource = fs.readFileSync(new URL('../appPageModules.tsx', import.meta.url), 'utf8');
@@ -116,7 +117,8 @@ assert.ok(
   conversationBubblesSource.indexOf('data-assistant-summary="decision-feed"') < conversationBubblesSource.indexOf('{messages.map'),
   '权威待办概要必须固定在历史对话消息之前',
 );
-assert.match(source, /ASSISTANT_ACTION_TIMEOUT_MS = 12_000[\s\S]*signal: controller\.signal/, '操作路由必须有客户端超时，不能永久保持思考中');
+assert.match(source, /executeAssistantAction\(/, '确定性操作必须走独立动作请求适配层');
+assert.match(actionRequestSource, /withAssistantIdleTimeout\(fetch\([\s\S]*signal: controller\.signal[\s\S]*options\?\.timeoutMs \?\? 20_000/, '操作路由必须有客户端超时，不能永久保持思考中');
 assert.match(chatStreamSource, /function withAssistantTimeout<T>[\s\S]*reject\(new AssistantRequestTimeoutError/, '超时必须由 Promise 竞速确定性结束，不能只依赖代理响应 abort');
 assert.match(chatStreamSource, /ASSISTANT_CHAT_RESPONSE_TIMEOUT_MS = 20_000[\s\S]*ASSISTANT_CHAT_STREAM_IDLE_TIMEOUT_MS = 30_000[\s\S]*onTimeout\(\); controller\.abort\(\)/, '模型首响应和流式空闲超时必须中止连接');
 assert.match(source, /await streamAssistantReply\([\s\S]*onTimeout: \(\) => \{ chatTimedOut = true; \}[\s\S]*finally \{[\s\S]{0,160}setLoading\(false\)/, '模型超时后必须退出思考状态');
@@ -175,18 +177,22 @@ assert.match(source, /assistantTool === 'knowledge-intake' \? 560 : 420/, '灵�
 
 const closedDecisionCountSource = sourceSection(
   "if (mode === 'chat' || suppressForRightSidebar) return;",
-  'const detail = (event as CustomEvent<{ text?: string;',
+  '  }, [mode, page, goalId,',
   '灵小枢关闭时的待办数量刷新',
+  pageSignalsSource,
 );
-assert.match(closedDecisionCountSource, /assistantDecisionApi\.feed\(\{[\s\S]{0,180}goalId: pageContext\.goalId/, '关闭助手时仍必须按当前周目标轻量读取真实待办数量');
+assert.match(source, /useAssistantDecisionCount\(\{ mode, page, goalId: pageContext\.goalId,/, '页面必须传入当前周目标给关闭态待办数量刷新');
+assert.match(closedDecisionCountSource, /assistantDecisionApi\.feed\(\{[\s\S]{0,180}goalId,/, '关闭助手时仍必须按当前周目标轻量读取真实待办数量');
 assert.match(closedDecisionCountSource, /setInterval\(refreshDecisionCount, 30_000\)/, '关闭态数量刷新必须低频轮询，不能充当运行监控台');
 assert.doesNotMatch(closedDecisionCountSource, /events|executionLog|providerLog|console\./, '关闭态刷新不得读取或展示执行日志');
 
 const liveContextSource = sourceSection(
   'const detail = (event as CustomEvent<Partial<AssistantContext>>).detail;',
-  "if (mode === 'chat' || suppressForRightSidebar) return;",
+  '  }, [page, setLiveContext]);',
   '灵小枢页面对象上下文',
+  pageSignalsSource,
 );
+assert.match(source, /useAssistantPageContextSignal\(page, setLiveContext\)/, '页面必须接入上下文来源过滤 hook');
 assert.match(liveContextSource, /const sourcePage = contextIdentifier\(detail\.sourcePage, 80\);[\s\S]{0,100}if \(!sourcePage \|\| sourcePage !== pageKey\(page\)\) return;/, '所有页面上下文事件都必须显式标记来源页面');
 assert.doesNotMatch(liveContextSource, /contextIdentifier\(detail\.sourcePage, 80\) \?\? pageKey\(page\)/, '缺失 sourcePage 的事件不得默认归属当前页');
 assert.match(conversionPageSource, /useConversionDraftEffects\(/, '客户转化页必须接入上下文副作用');

@@ -42,6 +42,7 @@ import { useAssistantThreadHydration } from './assistant/useAssistantThreadHydra
 import { buildAssistantChatMessages, type UploadedAssistantAttachment } from './assistant/assistantChatPrompt';
 import { useAssistantFeatureGuides } from './assistant/useAssistantFeatureGuides';
 import { useAssistantNotifications } from './assistant/useAssistantNotifications';
+import { useAssistantDecisionCount, useAssistantPageContextSignal } from './assistant/useAssistantPageSignals';
 import { assistantProductionIntent } from './assistant/assistantProductionIntake';
 import { runAssistantProductionRequest } from './assistant/assistantProductionRequest';
 import { assistantFileIntent } from '../../shared/assistantFileIntent';
@@ -55,7 +56,6 @@ import {
 } from './assistant/AssistantDecisionCenter';
 import AssistantDecisionDialog, { type AssistantDecisionDialog as AssistantDecisionDialogState } from './assistant/AssistantDecisionDialog';
 import type { AssistantDecisionDeepLink, AssistantDecisionFeed } from '../../shared/contracts/assistantDecisionCenter';
-import { assistantDecisionApi } from '../lib/assistantDecisionApi';
 import {
   ASSISTANT_PRODUCTION_CONTEXT_EVENT,
   type AssistantProductionContext,
@@ -81,7 +81,6 @@ import {
   assistantPersistenceCanRun,
   compactText,
   contextForOrbit,
-  contextIdentifier,
   loadLiveIntegrationFacts,
   mergeConsecutiveAssistant,
   orbitIdForAgent,
@@ -106,7 +105,6 @@ function readLauncherRetractedPreference() {
   }
 }
 
-const ASSISTANT_ACTION_TIMEOUT_MS = 12_000;
 const ASSISTANT_UI_WATCHDOG_TIMEOUT_MS = 25_000;
 const ASSISTANT_CLOSED_CONVERSATION_TTL_MS = 5 * 60 * 1000;
 
@@ -1082,77 +1080,14 @@ export default function GlobalAssistant({
     return () => { cancelled = true; };
   }, [persistenceScopeKey]);
 
-  useEffect(() => {
-    const handler = (event: Event) => {
-      const detail = (event as CustomEvent<Partial<AssistantContext>>).detail;
-      if (!detail?.agent || !detail.label || !detail.summary) return;
-      // Activity keeps visited pages mounted. Every emitter must identify its
-      // page so a hidden page can never replace the active business context.
-      const sourcePage = contextIdentifier(detail.sourcePage, 80);
-      if (!sourcePage || sourcePage !== pageKey(page)) return;
-      setLiveContext({
-        agent: detail.agent,
-        label: detail.label,
-        summary: detail.summary,
-        suggestions: detail.suggestions?.length ? detail.suggestions : DEFAULT_CONTEXT[pageKey(page)]?.suggestions ?? DEFAULT_CONTEXT.strategy.suggestions,
-        pendingCount: typeof detail.pendingCount === 'number' ? detail.pendingCount : undefined,
-        todoItems: Array.isArray(detail.todoItems) ? detail.todoItems : undefined,
-        sourcePage,
-        goalId: contextIdentifier(detail.goalId),
-        planId: contextIdentifier(detail.planId),
-        runId: contextIdentifier(detail.runId),
-        taskId: contextIdentifier(detail.taskId),
-        contentId: contextIdentifier(detail.contentId),
-        viewKey: contextIdentifier(detail.viewKey, 80),
-        workflowStage: detail.workflowStage,
-      });
-    };
-    window.addEventListener('lingshu-assistant-context', handler);
-    return () => window.removeEventListener('lingshu-assistant-context', handler);
-  }, [page]);
+  useAssistantPageContextSignal(page, setLiveContext);
 
   useEffect(() => {
     setWeeklyPlanPromptDismissed(false);
   }, [normalizedPage, pageContext.workflowStage]);
 
-  useEffect(() => {
-    if (mode === 'chat' || suppressForRightSidebar) return;
-    let controller: AbortController | null = null;
-    let disposed = false;
-    const refreshDecisionCount = () => {
-      if (disposed || document.visibilityState === 'hidden') return;
-      controller?.abort();
-      controller = new AbortController();
-      void assistantDecisionApi.feed({
-        page,
-        goalId: pageContext.goalId,
-        signal: controller.signal,
-      }).then(feed => {
-        if (!disposed) setDecisionTotal(Math.max(0, feed.total));
-      }).catch(reason => {
-        if (reason instanceof DOMException && reason.name === 'AbortError') return;
-        // The launcher keeps the last verified count. Errors are shown only
-        // when the user opens the decision surface; no execution log is emitted.
-      });
-    };
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') refreshDecisionCount();
-    };
-    const refreshAfterWeeklyWorkChange = () => refreshDecisionCount();
-    refreshDecisionCount();
-    const interval = window.setInterval(refreshDecisionCount, 30_000);
-    window.addEventListener('focus', refreshDecisionCount);
-    window.addEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshAfterWeeklyWorkChange);
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => {
-      disposed = true;
-      controller?.abort();
-      window.clearInterval(interval);
-      window.removeEventListener('focus', refreshDecisionCount);
-      window.removeEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshAfterWeeklyWorkChange);
-      document.removeEventListener('visibilitychange', handleVisibility);
-    };
-  }, [mode, page, pageContext.goalId, persistenceScopeKey, suppressForRightSidebar]);
+  useAssistantDecisionCount({ mode, page, goalId: pageContext.goalId,
+    persistenceScopeKey, suppressForRightSidebar, setDecisionTotal });
 
   const { performance, performanceHidden, setPerformanceHidden, performanceMessage,
     speechBubble, setSpeechBubble } = useAssistantNotifications({
