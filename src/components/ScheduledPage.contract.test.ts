@@ -55,12 +55,14 @@ assert.deepEqual(
 );
 
 const source = readFileSync(new URL('./ScheduledPage.tsx', import.meta.url), 'utf8');
+const templateSource = readFileSync(new URL('./scheduledTaskTemplates.tsx', import.meta.url), 'utf8');
 const handoffSource = readFileSync(new URL('../lib/scheduledWorkflowHandoff.ts', import.meta.url), 'utf8');
 assert.match(handoffSource, /SCHEDULED_WORKFLOW_HANDOFF_TTL\s*=\s*15\s*\*\s*60\s*\*\s*1000/);
 assert.match(handoffSource, /sessionStorage\.removeItem\('digitalEmployee\.businessDeepLink'\)/, 'the persisted handoff must be consumed once');
 assert.match(source, /setActiveGroup\('social'\)[\s\S]{0,120}setSocialTaskTab\('crawler'\)/, 'the handoff must land on the social crawler workspace');
 assert.match(source, /addEventListener\('lingshu:navigate'/, 'an already-mounted scheduler must also accept a workflow handoff');
-assert.match(source, /const CRAWLER_LIMIT_MAX\s*=\s*50;/, 'the UI crawler limit must match the server limit');
+assert.match(templateSource, /const CRAWLER_LIMIT_MAX\s*=\s*50;/, 'the UI crawler limit must match the server limit');
+assert.match(source, /from '\.\/scheduledTaskTemplates'/, 'the scheduler must use the shared template and limit rules');
 assert.doesNotMatch(source, /最多爬取\s*10\s*条/, 'the obsolete 10-item limit must not remain visible');
 assert.match(
   source,
