@@ -21,10 +21,8 @@ import { lsMotion } from '../lib/designTokens';
 import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import { renderAssistantConversationBoundary, selectAssistantConversationContext } from '../lib/assistantConversationContext';
 import {
-  ASSISTANT_GUIDES,
   ASSISTANT_NOTIFICATION_POLICY,
   ASSISTANT_RESPONSE_CONTRACT,
-  type AssistantGuide,
 } from '../lib/assistantGuides';
 import {
   assistantRunControl,
@@ -45,6 +43,7 @@ import AssistantQuickEntries from './assistant/AssistantQuickEntries';
 import AssistantCustomerTodoView from './assistant/AssistantCustomerTodoView';
 import { useContentTaskIntake } from './assistant/useContentTaskIntake';
 import { useAssistantThreadSaveQueue } from './assistant/useAssistantThreadSaveQueue';
+import { useAssistantFeatureGuides } from './assistant/useAssistantFeatureGuides';
 import { assistantProductionIntent, resolveAssistantEnterpriseProduct } from './assistant/assistantProductionIntake';
 import { assistantFileIntent } from '../../shared/assistantFileIntent';
 import { AssistantRequestTimeoutError, streamAssistantReply } from '../lib/assistantChatStream';
@@ -113,11 +112,6 @@ type UploadedAssistantAttachment = {
   materialUrl?: string;
 };
 
-const GUIDE_MEMORY_KEY = 'lingshu-feature-guides-human-v1';
-const GUIDE_HOVER_DELAY_MS = 900;
-const GUIDE_COOLDOWN_MS = 45_000;
-const GUIDE_VISIBLE_MS = 6_000;
-const ENTERPRISE_GUIDE_MEMORY_ID = '__enterprise-guide-shown__';
 const ASSISTANT_PRIMARY_ENTRY_SEEN_KEY = 'lingshu-assistant-primary-entry-seen-v1';
 const ASSISTANT_CONVERSATION_WELCOME_SEEN_KEY = 'lingshu-assistant-conversation-welcome-seen-v1';
 const ASSISTANT_LAUNCHER_RETRACTED_KEY = 'lingshu-assistant-launcher-retracted-v1';
@@ -146,11 +140,6 @@ const PERFORMANCE_LINES: Record<string, string[]> = {
   material: ['我正在替每个分镜挑合适的素材。', '素材匹配中，先看动作，再看画面是否真的能用。', '稍等，我正在把重复镜头和不合适的素材筛掉。'],
   render: ['成片正在合成，我先替进度条加加油。', '最后几步通常最费功夫，马上就能看成片。', '正在把画面、字幕和声音稳稳地合在一起。'],
   default: ['任务正在处理中，我会一直在这里陪你。', '稍等一下，好结果正在路上。', '后台任务正在继续执行。'],
-};
-
-type GuideMemory = {
-  seen: string[];
-  lastShownAt: number;
 };
 
 interface Props {
@@ -205,8 +194,7 @@ export default function GlobalAssistant({
   const activeAgent = PRIMARY_ASSISTANT_THREAD;
   const [assistantTool, setAssistantTool] = useState<AssistantTool | null>(null);
   const [liveContext, setLiveContext] = useState<AssistantContext | null>(null);
-  const [featureGuide, setFeatureGuide] = useState<(AssistantGuide & { id: string }) | null>(null);
-  const [enterpriseGuideSeen, setEnterpriseGuideSeen] = useState(false);
+  const { featureGuide, setFeatureGuide, enterpriseGuideSeen } = useAssistantFeatureGuides({ page, compactMode, mode });
   const [enterpriseContext, setEnterpriseContext] = useState('');
   const [performance, setPerformance] = useState<AssistantPerformance | null>(null);
   const [performanceHidden, setPerformanceHidden] = useState(false);
@@ -224,12 +212,7 @@ export default function GlobalAssistant({
     width: typeof window === 'undefined' ? 1440 : window.innerWidth,
     height: typeof window === 'undefined' ? 900 : window.innerHeight,
   }));
-  const featureGuideTimerRef = useRef<number | null>(null);
-  const featureGuideHoverTimerRef = useRef<number | null>(null);
   const speechTimerRef = useRef<number | null>(null);
-  const seenGuideIdsRef = useRef(new Set<string>());
-  const lastGuideShownAtRef = useRef(0);
-  const lastGuideTargetRef = useRef<HTMLElement | null>(null);
   const messageScrollRef = useRef<HTMLDivElement>(null);
   const assistantInputRef = useRef<HTMLTextAreaElement>(null);
   const launcherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
@@ -591,119 +574,6 @@ export default function GlobalAssistant({
       else if (document.getElementById('global-assistant-panel')) document.getElementById('global-assistant-panel')?.focus();
       else launcherButtonRef.current?.focus();
     });
-  }, []);
-
-  const rememberGuide = useCallback((id: string, shownAt: number) => {
-    seenGuideIdsRef.current.add(id);
-    lastGuideShownAtRef.current = shownAt;
-    try {
-      const memory: GuideMemory = {
-        seen: [...seenGuideIdsRef.current],
-        lastShownAt: shownAt,
-      };
-      window.localStorage.setItem(GUIDE_MEMORY_KEY, JSON.stringify(memory));
-    } catch {
-      // Storage can be unavailable in privacy mode; in-memory deduplication still works.
-    }
-  }, []);
-
-  const showFeatureGuide = useCallback((id: string) => {
-    const guide = ASSISTANT_GUIDES[id];
-    if (!guide || seenGuideIdsRef.current.has(id)) return;
-    const isEnterpriseGuide = page === 'enterprise' && id.startsWith('enterprise-');
-    if (
-      isEnterpriseGuide
-      && (enterpriseGuideSeen || seenGuideIdsRef.current.has(ENTERPRISE_GUIDE_MEMORY_ID))
-    ) return;
-    const now = Date.now();
-    if (now - lastGuideShownAtRef.current < GUIDE_COOLDOWN_MS) return;
-    if (featureGuideTimerRef.current) window.clearTimeout(featureGuideTimerRef.current);
-    if (isEnterpriseGuide) {
-      seenGuideIdsRef.current.add(ENTERPRISE_GUIDE_MEMORY_ID);
-      setEnterpriseGuideSeen(true);
-    }
-    rememberGuide(id, now);
-    setFeatureGuide({ ...guide, id });
-    featureGuideTimerRef.current = window.setTimeout(() => setFeatureGuide(null), GUIDE_VISIBLE_MS);
-  }, [enterpriseGuideSeen, page, rememberGuide]);
-
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(GUIDE_MEMORY_KEY);
-      if (!stored) return;
-      const memory = JSON.parse(stored) as Partial<GuideMemory>;
-      if (Array.isArray(memory.seen)) {
-        seenGuideIdsRef.current = new Set(memory.seen.filter(id => typeof id === 'string'));
-        setEnterpriseGuideSeen(
-          seenGuideIdsRef.current.has(ENTERPRISE_GUIDE_MEMORY_ID)
-          || [...seenGuideIdsRef.current].some(id => id.startsWith('enterprise-')),
-        );
-      }
-      if (typeof memory.lastShownAt === 'number') lastGuideShownAtRef.current = memory.lastShownAt;
-    } catch {
-      // Ignore malformed or unavailable storage and start with a clean guide memory.
-    }
-  }, []);
-
-  useEffect(() => {
-    if (compactMode || mode !== 'breathing') {
-      setFeatureGuide(null);
-      return;
-    }
-    const findTarget = (event: Event) => {
-      const target = event.target;
-      return target instanceof Element ? target.closest<HTMLElement>('[data-lingshu-guide]') : null;
-    };
-    const cancelPendingHover = () => {
-      if (featureGuideHoverTimerRef.current) window.clearTimeout(featureGuideHoverTimerRef.current);
-      featureGuideHoverTimerRef.current = null;
-    };
-    const showFromEvent = (event: Event) => {
-      const target = findTarget(event);
-      if (!target) return;
-      const id = target.dataset.lingshuGuide;
-      if (!id) return;
-      if (event.type === 'pointerover') {
-        const related = (event as PointerEvent).relatedTarget;
-        if (related instanceof Node && target.contains(related)) return;
-        if (lastGuideTargetRef.current === target) return;
-        cancelPendingHover();
-        lastGuideTargetRef.current = target;
-        featureGuideHoverTimerRef.current = window.setTimeout(() => {
-          if (lastGuideTargetRef.current === target) showFeatureGuide(id);
-        }, GUIDE_HOVER_DELAY_MS);
-        return;
-      }
-      cancelPendingHover();
-      lastGuideTargetRef.current = target;
-      showFeatureGuide(id);
-    };
-    const clearPointerTarget = (event: Event) => {
-      const target = findTarget(event);
-      if (!target) return;
-      const related = (event as PointerEvent).relatedTarget;
-      if (related instanceof Node && target.contains(related)) return;
-      if (lastGuideTargetRef.current === target) {
-        lastGuideTargetRef.current = null;
-        cancelPendingHover();
-      }
-    };
-    document.addEventListener('pointerover', showFromEvent, true);
-    document.addEventListener('pointerout', clearPointerTarget, true);
-    document.addEventListener('focusin', showFromEvent, true);
-    document.addEventListener('click', showFromEvent, true);
-    return () => {
-      cancelPendingHover();
-      document.removeEventListener('pointerover', showFromEvent, true);
-      document.removeEventListener('pointerout', clearPointerTarget, true);
-      document.removeEventListener('focusin', showFromEvent, true);
-      document.removeEventListener('click', showFromEvent, true);
-    };
-  }, [compactMode, mode, showFeatureGuide]);
-
-  useEffect(() => () => {
-    if (featureGuideTimerRef.current) window.clearTimeout(featureGuideTimerRef.current);
-    if (featureGuideHoverTimerRef.current) window.clearTimeout(featureGuideHoverTimerRef.current);
   }, []);
 
   const executeAssistantAction = useCallback(async (

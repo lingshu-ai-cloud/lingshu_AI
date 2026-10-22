@@ -11,6 +11,7 @@ const runtimeSource = fs.readFileSync(new URL('./assistant/globalAssistantRuntim
 const saveQueueSource = fs.readFileSync(new URL('./assistant/useAssistantThreadSaveQueue.ts', import.meta.url), 'utf8');
 const actionProjectionSource = fs.readFileSync(new URL('./assistant/assistantActionProjection.ts', import.meta.url), 'utf8');
 const productionIntakeSource = fs.readFileSync(new URL('./assistant/assistantProductionIntake.ts', import.meta.url), 'utf8');
+const featureGuidesSource = fs.readFileSync(new URL('./assistant/useAssistantFeatureGuides.ts', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const appModulesSource = fs.readFileSync(new URL('../appPageModules.tsx', import.meta.url), 'utf8');
 const appShellChromeSource = fs.readFileSync(new URL('./AppShellChrome.tsx', import.meta.url), 'utf8');
@@ -150,7 +151,7 @@ assert.match(closeExternalDecisionDialogSource, /setDecisionFeedRevision\(revisi
 assert.match(closeExternalDecisionDialogSource, /closeDecisionDialogForNavigation[\s\S]{0,360}decisionDialogRestoreFocusRef\.current = false;[\s\S]{0,120}setDecisionDialog\(null\)/, '深链导航必须先关闭外部弹窗并禁止把焦点送回旧页面');
 const restoreExternalDecisionDialogFocusSource = sourceSection(
   'const restoreDecisionDialogFocus',
-  'const rememberGuide',
+  'const executeAssistantAction',
   '外部决策弹窗焦点恢复',
 );
 assert.match(restoreExternalDecisionDialogFocusSource, /originalTrigger\?\.isConnected[\s\S]*querySelector<HTMLButtonElement>/, '概要刷新替换触发器后仍必须恢复到当前语义按钮');
@@ -159,6 +160,9 @@ assert.match(externalDecisionDialogSource, /afterClose=\{restoreDecisionDialogFo
 assert.match(externalDecisionDialogSource, /focusTriggerAfterClose=\{false\}/, '必须关闭 Ant 自带焦点回送，避免导航后抢回旧页面焦点');
 assert.match(externalDecisionDialogSource, /onNavigate=\{closeDecisionDialogForNavigation\}/, '权威待办深链必须通过显式回调关闭外部弹窗');
 assert.match(externalDecisionDialogSource, /onActionResult=\{handleDecisionActionResult\}/, '权威待办动作结果必须回到对话壳形成一次性结果反馈');
+assert.match(source, /useAssistantFeatureGuides\(\{ page, compactMode, mode \}\)/, '浮层必须将功能引导生命周期交给独立 hook');
+assert.match(featureGuidesSource, /GUIDE_COOLDOWN_MS = 45_000[\s\S]*GUIDE_VISIBLE_MS = 6_000[\s\S]*seenGuideIdsRef[\s\S]*setFeatureGuide/, '功能引导应保留冷却、去重和显示时限');
+assert.match(featureGuidesSource, /document\.addEventListener\('pointerover'[\s\S]*document\.removeEventListener\('pointerover'/, '功能引导的事件监听必须配对清理');
 assert.match(externalDecisionDialogSource, /href=\{dialogTaskCard\.workspace\.href\}[\s\S]{0,120}onClick=\{\(\) => closeDecisionDialogForNavigation\(\)\}/, '普通任务工作区链接也必须在导航前关闭外部弹窗');
 assert.match(appShellChromeSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
 assert.match(source, /width: assistantPanelWidth,\s*maxWidth: 'calc\(100vw - 32px\)'/, '灵小枢面板必须用视口宽度约束，不能被零宽定位根节点压缩');
