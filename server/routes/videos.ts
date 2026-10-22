@@ -20,6 +20,8 @@ import {createImagePostMediaPersistence} from '../socialDiscovery/imagePostMedia
 import { runPaidApifyTikTokDataset, type PaidApifyTikTokPermit } from './apifyPaidTikTokTransport.js';
 import { buildApifyTikTokInput } from './apifyTikTokInput.js';
 export { buildApifyTikTokInput } from './apifyTikTokInput.js';
+import { buildVideoDownloaderArgs } from './videoDownloaderArgs.js';
+export { platformReferer } from './videoDownloaderArgs.js';
 import { assertConfiguredLinkedInCompanyPaidCollection, runConfiguredLinkedInCompanyPaidCollection, type LinkedInCompanyPaidPermit } from './linkedinCompanyPostPaidCollection.js';
 import {frozenWeeklyAccountFiveVideoActorInput} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
 import {readVerifiedWeeklyOriginalDatasetReplay,type VerifiedWeeklyOriginalDatasetReplay} from '../socialDiscovery/weeklyAccountCollectionDatasetContinuation.js';
@@ -8440,44 +8442,15 @@ function firstCrawlerProxyFromPool(): string {
 }
 
 export function buildYtDlpArgs(extra: string[], url: string, withCookies: boolean): string[] {
-  const referer = platformReferer(url);
-  const args = [
-    '-m', 'yt_dlp',
-    '--ignore-config',
-    '--no-warnings',
-    '--user-agent', browserUserAgent(),
-    '--add-header', 'Accept-Language: en-US,en;q=0.9',
-  ];
-  // ytsearchN:<keyword> is an yt-dlp pseudo URL, not a valid HTTP referer.
-  // Always send a stable platform origin so Chinese keywords never become a
-  // header value or get interpreted as a second command argument.
-  if (referer) args.push('--referer', referer);
-  args.push(...extra);
-  if ((/^ytsearch\d*:/i.test(url) || /youtube\.com|youtu\.be/i.test(url)) && process.env.YT_DLP_YOUTUBE_EJS_ENABLED !== '0') {
-    args.push('--js-runtimes', `node:${process.execPath}`, '--remote-components', 'ejs:github');
-  }
-  const proxy = proxyUrl();
-  if (proxy) args.push('--proxy', proxy);
-  if (withCookies) args.push('--cookies-from-browser', cookiesBrowser());
-  args.push(url);
-  return args;
+  return buildVideoDownloaderArgs(extra, url, withCookies, {
+    userAgent: browserUserAgent(), proxy: proxyUrl(), cookiesBrowser: cookiesBrowser(),
+    nodeExecutable: process.execPath, youtubeEjsEnabled: process.env.YT_DLP_YOUTUBE_EJS_ENABLED !== '0',
+  });
 }
 
 function browserUserAgent(): string {
   return process.env.CRAWLER_USER_AGENT
     || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-}
-
-export function platformReferer(url: string): string {
-  if (/^ytsearch\d*:/i.test(String(url || '').trim())) return 'https://www.youtube.com/';
-  try {
-    const host = new URL(url).hostname.replace(/^www\./, '');
-    if (host.includes('tiktok.com')) return 'https://www.tiktok.com/';
-    if (host.includes('instagram.com')) return 'https://www.instagram.com/';
-    if (host.includes('facebook.com')) return 'https://www.facebook.com/';
-    if (host.includes('youtube.com') || host.includes('youtu.be')) return 'https://www.youtube.com/';
-  } catch { /* ignore */ }
-  return '';
 }
 
 async function execYtDlpWithCookieFallback(extra: string[], url: string, timeout: number, maxBuffer: number, budget = new DownloadBudget(timeout)): Promise<string> {
