@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { LinkedInCompanyCollectionScope, LinkedInCompanyPaidPermit } from '../routes/linkedinCompanyPostPaidCollection.js';
+import { APIFY_PAID_RAW_RECEIPT_MAX_BYTES } from '../routes/apifyPaidTikTokTransport.js';
 
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
 const hex = (value: string) => /^[a-f0-9]{64}$/.test(value);
@@ -48,7 +49,7 @@ export function createLinkedInCompanyReceiptStore(input: {
       || receipt.httpStatus < 100 || receipt.httpStatus > 599
       || typeof receipt.responseBody !== 'string'
       || (receipt.phase !== 'actor_submit' && (!receipt.runId || !receipt.datasetId))
-      || Buffer.byteLength(receipt.responseBody, 'utf8') > 8 * 1024 * 1024) {
+      || Buffer.byteLength(receipt.responseBody, 'utf8') > APIFY_PAID_RAW_RECEIPT_MAX_BYTES) {
       throw Error('linkedin_company_receipt_invalid');
     }
   };

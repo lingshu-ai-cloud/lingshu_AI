@@ -7,6 +7,7 @@ import {
   type LinkedInCompanyCollectionScope,
   type LinkedInCompanyPaidPermit,
 } from './linkedinCompanyPostPaidCollection.js';
+import { APIFY_PAID_RAW_RECEIPT_MAX_BYTES } from './apifyPaidTikTokTransport.js';
 
 const scope: LinkedInCompanyCollectionScope = {
   tenantId: 'tenant-a', runId: 'discovery-run-a',
@@ -166,6 +167,38 @@ test('missing durable raw receipt leaves a submitted Actor unknown and forbids r
     await assert.rejects(runLinkedInCompanyPaidCollection(input), /receipt_storage_unavailable/);
     await assert.rejects(runLinkedInCompanyPaidCollection(input), /apify_paid_submission_unknown_no_replay/);
     assert.equal(posts, 1);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test('oversized Actor response is stopped before raw receipt write and cannot be resubmitted', async () => {
+  const oldFetch = globalThis.fetch;
+  let posts = 0;
+  let receipts = 0;
+  let state: Awaited<ReturnType<LinkedInCompanyPaidPermit['inspect']>> = { status: 'reserved' };
+  globalThis.fetch = async (_request, init) => {
+    if (init?.method !== 'POST') throw Error('unexpected_read');
+    posts += 1;
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(APIFY_PAID_RAW_RECEIPT_MAX_BYTES));
+        controller.enqueue(new Uint8Array(1));
+        controller.close();
+      },
+    }), { status: 200 });
+  };
+  const bounded = permit({
+    async inspect() { return state; },
+    async beforeSubmit() { state = { status: 'submitted_unknown' }; },
+    async persistRawReceipt() { receipts += 1; return 'unexpected'; },
+    async recordRun() { throw Error('record_run_must_not_happen'); },
+  });
+  try {
+    const input = { scope, actorId, token: 'test-token', permit: bounded };
+    await assert.rejects(runLinkedInCompanyPaidCollection(input), /apify_paid_raw_receipt_too_large/);
+    await assert.rejects(runLinkedInCompanyPaidCollection(input), /apify_paid_submission_unknown_no_replay/);
+    assert.equal(posts, 1);
+    assert.equal(receipts, 0);
+    assert.equal(state.status, 'submitted_unknown');
   } finally { globalThis.fetch = oldFetch; }
 });
 

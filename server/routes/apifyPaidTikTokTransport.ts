@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 
+/** Maximum original HTTP body that a paid LinkedIn receipt can durably retain. */
+export const APIFY_PAID_RAW_RECEIPT_MAX_BYTES = 8 * 1024 * 1024;
+
 /** The authority/ledger owns these callbacks. This transport never grants itself a paid call. */
 export interface PaidApifyTikTokPermit {
   operationId: string;
@@ -69,6 +72,27 @@ function verifyRunCap(run: RunRecord, expectedCap: number): void {
   if (options.restartOnError !== undefined && options.restartOnError !== false) throw Error('apify_paid_restart_option_mismatch');
 }
 
+async function boundedReceiptBody(response: Response, controller: AbortController): Promise<string> {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > APIFY_PAID_RAW_RECEIPT_MAX_BYTES) {
+        controller.abort();
+        await reader.cancel().catch(() => undefined);
+        throw Error('apify_paid_raw_receipt_too_large');
+      }
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks, size).toString('utf8');
+  } finally { reader.releaseLock(); }
+}
+
 async function jsonRequest(url: URL, token: string, deadline: number, init: RequestInit,
   persistRawReceipt?: (httpStatus: number, responseBody: string) => Promise<string>): Promise<unknown> {
   if (Date.now() >= deadline) throw Error('apify_paid_observation_timeout');
@@ -84,7 +108,7 @@ async function jsonRequest(url: URL, token: string, deadline: number, init: Requ
     // Provider response bodies may contain input data. Never echo them into a log or task card.
     // Persist before parsing: a malformed or non-2xx billable response must not
     // disappear behind a retryable-looking error.
-    const responseBody = await response.text();
+    const responseBody = persistRawReceipt ? await boundedReceiptBody(response, controller) : await response.text();
     if (persistRawReceipt) await persistRawReceipt(response.status, responseBody);
     if (!response.ok) throw Error(`apify_paid_http_${response.status}`);
     try { return JSON.parse(responseBody) as unknown; }
