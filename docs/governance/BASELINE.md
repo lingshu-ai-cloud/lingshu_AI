@@ -2,6 +2,12 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 图片证据轮播编号与 AIGC 来源复核（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `4e4031b34b43a862c70576086e041d6c748e6fe0` 修正图文证据面板的轮播编号：分析输入、Qwen/Gemini 契约和图层蓝图均从第 1 张开始，原面板多加 1，现统一按证据 `imageIndex` 展示；新增服务端静态渲染回归，覆盖轮播证据与图层蓝图同号。
+- 复核新图片来源提交 `23b1bb93`：图层蓝图与蒙版确定性处理已在集成代码中；来源提交中的自动 GPT 降级会替换用户要求暂留的 Qwen→Gemini 行为，且未具备真实账号费率、持久唯一付费许可及未知结果恢复条件，因此未整笔 cherry-pick，来源树保留。此修正不接入新的付费请求，也不改变既有降级路由。
+- 定向测试 5/5、`test:video-source-boundaries` 100/100、`test:social-image-pipeline`、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,350 个生产 TypeScript 文件，仍有 6 个历史超限文件）、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未做真实供应商调用、浏览器交互验收、目标库迁移或部署；本地/远端 SHA 与清洁度以推送后核对为准。
+
 ## 素材卡与使用履历拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `432977c8` 将素材卡媒体/操作层和素材使用履历分别迁至 `MaterialLibraryCardMedia.tsx`、`MaterialUsageHistory.tsx`；原逻辑正文按 83 行与 99 行逐行核对一致，素材列表请求与详情选择仍在页面。`InspirationDashboard.tsx` 从 3,011 降至 2,828 行并同步收紧历史预算；全仓仍有 6 个超限文件。
