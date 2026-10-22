@@ -1,7 +1,14 @@
 # Git 工作树状态盘点
 
-盘点日期：2026-10-22（Asia/Shanghai）
-来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。仅移除了两个目标路径已不存在的失效注册记录；未改写有效工作树、分支或运行数据。
+最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
+来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。本次只读复核未改写工作树、分支或运行数据；历史移除记录见下文。
+
+## 2026-10-23 图片 AIGC 与归档条件复核
+
+- 当前仍有 11 个有效工作树。集成树在复核点 `d837f94f574ad60adbb3ac23e47eea5a4a07445b` 与同名远端一致，Git 状态干净；该 SHA 不是永久 HEAD。6 个非集成树仍有未提交项：`local-preview-1002` 53、`local-integrated-flow` 91、`local-unified-20261010` 6、`mobile-dual-edition-20261012` 28、`客服` 1、`total-merge-langgraph` 20。计数按 `git status --porcelain` 条目，不代表独立文件数；全部保留。
+- 4 个干净的非集成树中，`safe-all-modules-ui-20261009`、`colleague-handoff-20261019` 有被忽略的业务媒体/账本数据；广告树 `xixi1021-full-integration` 还有独有补丁与被忽略的账号、任务及审计数据；`1022图片生成模块` 的 `23b1bb93` 是独有补丁。四者均不满足“补丁等价且只有可重建缓存”的安全归档条件，本轮未归档、重置或移动任何工作树。
+- 原 `xixi图片AIGC管线` HEAD `95b0bcc16820e06fcc16ac75e040a6592abdc692` 是集成 HEAD 的祖先；其未提交源码仍是日历/视频进度 UI，不是新的图片管线补丁。`23b1bb93` 的确定性图层/蒙版部分已选择性合入；剩余自动 GPT 路由会替换用户要求暂留的 Qwen→Gemini 行为，且原补丁没有逐记录付费批准、预算认领、回执及结果不明恢复，不能整笔 cherry-pick。
+- 当前集成代码的图片专项 55/55、隔离 HTTP 1/1、路由/工作台合同和隔离 GIF 浏览器流程通过；TypeScript、架构扫描、192 项迁移文件只读检查与生产构建通过。GIF 浏览器测试零写入；没有真实付费供应商、目标库迁移或部署验收。已提交源码覆盖不等于其他来源树可删除，也不等于付费 GPT 自动复核可用。
 
 ## 2026-10-22 集成提交 `ed83980d` 后只读复核
 

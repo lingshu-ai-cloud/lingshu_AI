@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 图片 AIGC 来源与工作树现状复核（2026-10-23）
+
+- 在干净集成点 `d837f94f574ad60adbb3ac23e47eea5a4a07445b` 只读复核：原图片 AIGC 来源 HEAD `95b0bcc1` 已是集成祖先；新图片模块 `23b1bb93` 仍有独有补丁，其确定性图层/蒙版部分已有选择性合入。剩余自动 GPT 降级不能替换用户要求暂留的 Qwen→Gemini 行为，也缺逐记录付费许可和结果不明恢复，故未整笔合并。11 个工作树中 6 个仍有未提交项；4 个干净非集成树因被忽略业务数据或独有补丁不满足安全归档条件，均未动，详见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。
+- 当前图片管线专项 55/55、隔离 HTTP 1/1、路由/工作台合同和隔离 GIF 浏览器流程、TypeScript、架构扫描、192 项迁移文件只读检查及生产构建通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未运行真实付费供应商、目标 PocketBase 迁移或部署，也未将独有 GPT 路由标成已合入。此批仅更新审计证据，不修改图片功能代码；提交后仍须复核本地/远端 SHA 与工作区状态。
+
 ## 自动成片 worker 退出历史超限例外（2026-10-23）
 
 - 代码提交 `c717bf140ce0a2eb82b7f0dfb94e422eb676ece4` 将安全素材方案和编导冻结、人物声音绑定及渲染清单、最终工件的媒体/成本/质量/来源证据组装分别迁至 `socialContentProductionPlanAndDirector.ts`、`socialContentProductionRenderManifest.ts`、`socialContentProductionArtifact.ts`。`socialContentProductionExecution.ts` 从 1,094 降至 788 行，撤销其历史行数豁免；超限清单从 8 项降为 7 项。原 worker 仍负责阶段编排和既有付费门禁，结构拆分不开放新的真实供应商入口。
