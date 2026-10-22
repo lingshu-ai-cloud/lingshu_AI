@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 字幕 cue 时间轴规则拆分（2026-10-23）
+
+- 代码提交 `ac5282179d38e32a977b78bb3ab5f268dbfe6967` 将句子切分、已确认口播时间范围、字幕 cue 生成/归一化、SRT/VTT 文本和渲染边界迁至 `studioSubtitleCues.ts`；页面仍持有字幕使用时机、语言版本及现有导出流程，旧 `confirmedNarrationForTimeRange` 导出继续转发。`AiCreateStudio.tsx` 从 12,793 降至 12,609 行，历史预算同步收紧；全仓仍有 6 个超限文件。
+- 新字幕直测 4/4 并纳入 `test:studio-media`，原人物/口播持久化直测 1/1、Studio 媒体和工作流整组、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,370 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 496,056/500,000 字节，仍有大 chunk 提示。原图片 AIGC 来源分支已在集成祖先中；新图片分支独有提交 `23b1bb93` 的图层改进已选择性合入，剩余自动 GPT 降级与需暂留的 Qwen→Gemini 行为和逐记录付费门禁冲突，本次未整笔合并。未执行真实付费调用、目标库迁移、浏览器验收或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 灵感结果展示边界拆分（2026-10-23）
 
 - 代码提交 `a8d1230230c6b152e7461094b8b18a3117dd95ef` 将实际挂载的灵感加载/空态、瀑布流卡片、列表与服务端分页迁至 `InspirationVideoResults.tsx`；页面仍持有数据读取、筛选和动作回调，图文证据不完整时的创作禁用规则仍共用原投影。`InspirationDashboard.tsx` 从 2,450 降至 2,423 行，预算同步收紧；全仓仍有 6 个历史超限文件，未完成整体架构拆分。

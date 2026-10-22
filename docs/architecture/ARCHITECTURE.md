@@ -26,6 +26,7 @@
 - `src/components/inspiration/inspirationVideoProjection.ts`：爬虫/发现记录投影为前端视频、元数据兜底、发现评分、来源标签及账号基线推荐；页面保留请求、鉴权、排序编排和展示，旧的页面导出继续转发以兼容消费者。
 - `src/components/inspiration/InspirationMedia.tsx`：灵感缩略图、鉴权图片和视频的加载/播放边界；平台卡直接依赖该媒体模块与发现投影，避免反向导入整页。签名 HTTPS 图片直载，受保护媒体经鉴权取回；视频解析有超时、代际失效与一次媒体重试。页面保留旧公开导出以兼容消费者。
 - `src/components/studio/studioVoiceoverRules.ts`：工作台的纯口播规则，包括时间码解析、分镜台词抽取、字幕/音效区分、完整时间线覆盖与译文逐句对齐；`AiCreateStudio.tsx` 保留草稿状态、供应商请求和原公开函数转发，不把模型译文在规则校验失败时冒充已覆盖原片。
+- `src/components/studio/studioSubtitleCues.ts`：按已确认口播时间范围选句、生成/归一化字幕 cue、限制最终渲染时长并输出 SRT/VTT 文本；桌面下载动作只处理本地 Blob。`AiCreateStudio.tsx` 继续持有语言版本、配音结果和预览/导出的触发时机，并转发旧公开口播范围导出；分镜画面是否有人物的判断仍留在工作台原路径，不由字幕逻辑推断。
 - `src/components/studio/ExistingSourceDraftDialog.tsx`：仅在发现同源历史草稿时按需加载，展示继续编辑或新建作品集两种显式选择；`AiCreateStudio.tsx` 保留源草稿校验、冻结引用清理和项目加载动作。未挂载的旧产品预览已删除，当前产品筛选与信息读取不经该旧视图。
 - `src/components/studio/studioStoryboardMaterialMatching.ts`：分镜素材的画幅偏好、可定位片段证据、视觉语义评分及本地自动分配纯规则。`AiCreateStudio.tsx` 继续拥有任务草稿、素材请求、人工确认及原公开函数转发；时长和宽高比只能影响排序，不能替代片段真实性证据。
 - `src/components/inspiration/inspirationAnalysisProjection.ts`：分析文本清洗、精确分析准入、展示资格、粗结构与逐镜摘要构建；当前选中视频由灵感页挂载 `DirectorVideoDetailPanel` 展示。原参考的六段结构、镜头和口播人工复核归 `DirectorReviewWorkspace.tsx`，其登录身份栅栏、显式 ASR 许可和结果不明禁重提交不由页面替代。旧 `ScriptPanel`/`AnalysisPanel` 及其 Seedance 脚本侧栏没有挂载，已清理；不将策略级或不确定文本标成通过的全片证据。
