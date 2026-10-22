@@ -1,3 +1,4 @@
+import {readCustomerBusinessProfile} from '../customerService/businessProfile.js';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import { getWhatsAppCustomers } from './historyImport.js';
@@ -44,6 +45,6 @@ export async function readAuthorizedWhatsAppCustomers(tenantId: string, dataStor
     const finalProof = canonicalWhatsAppAccountFromRow(finalApp, tenantId, app.id, dependencies.openSecret);
     const finalAuthorization = await readCustomerMessagingAuthorization(tenantId, 'whatsapp', { dataStore, openWhatsAppSecret: dependencies.openSecret });
     if (!finalApp || whatsappAssetAuthorityHash(finalApp) !== whatsappAssetAuthorityHash(app) || finalProof.accountHash !== proof.accountHash || !finalAuthorization.manualFollowupSendAllowed || finalAuthorization.configVersion !== authorization.configVersion) return [];
-    return customers;
+    return Promise.all(customers.map(c=>readCustomerBusinessProfile(dataStore,tenantId,{...c,source:'whatsapp'})));
   } catch { return []; }
 }

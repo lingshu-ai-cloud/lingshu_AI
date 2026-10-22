@@ -1,3 +1,4 @@
+import {readCustomerBusinessProfile} from '../customerService/businessProfile.js';
 import {createHash} from 'node:crypto';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import {store} from '../storage/index.js';
@@ -24,7 +25,7 @@ export async function readAuthorizedMessengerCustomers(tenantId:string,dataStore
  const timeline:MessengerCustomer['timeline']=[];
  for(const rawMessage of Array.isArray(customer.timeline)?customer.timeline:[]){const message=object(rawMessage);const audit=object(message.audit);if(message.actor!=='buyer'||typeof message.id!=='string'||!message.id.startsWith('mid.')||typeof message.body!=='string'||typeof message.timestamp!=='number'||!Number.isFinite(message.timestamp)||message.timestamp<=0||message.timestamp>Date.now()||audit.inboundSource!=='verified_meta_webhook'||audit.accountId!==admitted.account.id||audit.pageId!==page||audit.accountHash!==admitted.hash||audit.providerMessageId!==message.id||audit.providerRecipientId!==recipient)continue;
  timeline.push({id:message.id,type:'messenger',actor:'buyer',title:'Customer message',body:message.body,time:new Date(message.timestamp).toISOString(),timestamp:message.timestamp,audit:{providerMessageId:message.id,providerRecipientId:recipient}});}
- if(!timeline.length)continue;timeline.sort((a,b)=>a.timestamp-b.timestamp);customers.push({id:customer.id,tenantId,pageId:page,messengerUserId:recipient,name:recipient,timeline,lastActiveAt:timeline.at(-1)!.timestamp,accountId:admitted.account.id,accountHash:admitted.hash,source:'messenger',isReal:true});
+ if(!timeline.length)continue;timeline.sort((a,b)=>a.timestamp-b.timestamp);customers.push(await readCustomerBusinessProfile(dataStore,tenantId,{id:customer.id,tenantId,pageId:page,messengerUserId:recipient,name:recipient,timeline,lastActiveAt:timeline.at(-1)!.timestamp,accountId:admitted.account.id,accountHash:admitted.hash,source:'messenger',isReal:true},customer) as MessengerCustomer);
  }
  for(const {account,hash} of accounts.values()){const current=await dataStore.getById<Record_>('social_accounts',account.id);if(!current||current.tenantId!==tenantId||current.status!=='connected'||messengerCustomerAccountIdentityHash(current,openToken)!==hash)return [];assertMessengerCapabilityAuthority(current,openToken);}
  const finalAuthorization=await readCustomerMessagingAuthorization(tenantId,'messenger',{dataStore,openMessengerToken:openToken});if(!finalAuthorization.manualFollowupSendAllowed||finalAuthorization.configVersion!==authorization.configVersion)return [];

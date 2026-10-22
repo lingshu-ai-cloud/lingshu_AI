@@ -3,6 +3,7 @@ import { authHeader } from './auth';
 export type PartialAutoReplyDecision = 'pending' | 'enabled' | 'declined';
 
 export interface CustomerServiceStatus {
+  ingressMode?:'persist_and_qualify_only'; inboundAutoReplyConnected?:boolean;
   messengerAuthorization?: CustomerServiceStatus['messagingAuthorization'];
   instagramAuthorization?: CustomerServiceStatus['messagingAuthorization'];
   enabled: boolean;

@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, copyFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { spawn, spawnSync } from 'node:child_process';
+import net from 'node:net';
+import express from 'express';
+const binary=process.env.CUSTOMER_TEST_PB_BIN||'/Users/julia1/.local/share/lingshu/pocketbase/pocketbase';
+const root=await mkdtemp(path.join(os.tmpdir(),'customer-pb-contract-'));
+const migrationDir=path.join(root,'migrations'),dataDir=path.join(root,'data');await mkdir(migrationDir);
+for(const name of ['1791536300_create_datastore_cas_claims.js','1792670400_create_customer_reply_requests.js'])await copyFile(path.resolve('pb_migrations',name),path.join(migrationDir,name));
+const email='isolated-customer@local.test',password=randomBytes(32).toString('hex');
+const migrate=spawnSync(binary,['migrate','up','--dir',dataDir,'--migrationsDir',migrationDir],{encoding:'utf8'});assert.equal(migrate.status,0,'isolated migration must apply');
+const admin=spawnSync(binary,['superuser','upsert',email,password,'--dir',dataDir],{encoding:'utf8'});assert.equal(admin.status,0,'isolated superuser must be created');
+const reservation=net.createServer();reservation.listen(0,'127.0.0.1');await new Promise<void>(resolve=>reservation.once('listening',resolve));const port=(reservation.address() as net.AddressInfo).port;await new Promise<void>(resolve=>reservation.close(()=>resolve()));
+const pb=spawn(binary,['serve',`--http=127.0.0.1:${port}`,'--dir',dataDir,'--migrationsDir',migrationDir,'--automigrate=false'],{stdio:'ignore'});
+let server:import('node:http').Server|undefined;
+const base=`http://127.0.0.1:${port}`;
+const realFetch=globalThis.fetch;let apiOrigin='';
+globalThis.fetch=async(input,init)=>{const url=new URL(typeof input==='string'?input:input instanceof URL?input.href:input.url);if(url.origin!==base&&url.origin!==apiOrigin)throw Error('isolated_customer_external_network_blocked');return realFetch(input,init);};
+try{
+ let ready=false;for(let i=0;i<50;i++){try{if((await fetch(`${base}/api/health`)).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}assert.ok(ready,'temporary PocketBase must become ready');
+ process.env.PB_URL=base;process.env.PB_ADMIN_EMAIL=email;process.env.PB_ADMIN_PASSWORD=password;process.env.NODE_ENV='production';process.env.ENABLE_LOCAL_DEV_FALLBACK='false';
+ const {pbStore}=await import('../server/storage/pbStore.js');const {createCustomerReplyRequests}=await import('../server/customerService/replyRequests.js');let modelCalls=0;
+ const requests=createCustomerReplyRequests(pbStore,async()=>{modelCalls++;return{status:200,factVersion:'isolated-facts-v1',body:{draft:'Confirmed safe draft.',verification:{status:'verified',issues:[]}}};});
+ const app=express();app.use(express.json(),(_req,res,next)=>{res.locals.tenantId='isolated-tenant';res.locals.userId='isolated-actor';next();});app.post('/draft',requests.execute);app.get('/draft/:requestId',requests.read);
+ server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server!.once('listening',resolve));apiOrigin=`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+ const input={requestId:'isolated-request-1',customerId:'controlled-buyer',timeline:[{actor:'buyer',body:'Hello'}]};const submit=()=>fetch(`${apiOrigin}/draft`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
+ const first=await submit();assert.equal(first.status,200,await first.clone().text());const result=await first.json();assert.equal(result.enterpriseFactVersion,'isolated-facts-v1');
+ assert.deepEqual(await(await submit()).json(),result);assert.equal(modelCalls,1);
+ const saved=await pbStore.list('customer_reply_requests',{where:{tenant_id:'isolated-tenant'}});assert.equal(saved.totalItems,1);assert.equal((saved.items[0] as any).status,'settled');
+ assert.deepEqual(await(await fetch(`${apiOrigin}/draft/isolated-request-1`)).json(),result);
+ const classification=await pbStore.create<any>('customer_classifications',{id:'classifytest001',tenant_id:'isolated-tenant',customer_id:'controlled-buyer',payload:{accountHash:'a',contextTagEvidence:[],reviewedProfile:{timeZone:'UTC',language:'English'}}});assert.ok(classification);
+ assert.equal(await pbStore.update('customer_classifications',classification.id,{payload:{accountHash:'a',contextTagEvidence:[{tag:'询价中',messageId:'m1',excerpt:'Please quote'}]}}),true);
+ console.log(JSON.stringify({status:'passed',scope:'disposable_pocketbase_0_39_5',migrations:2,checks:['HTTP draft contract','durable request replay','CAS result writeback','fact version roundtrip','classification JSON persistence'],providerCalls:0}));
+}finally{globalThis.fetch=realFetch;if(server){server.closeAllConnections();await new Promise<void>(r=>server!.close(()=>r()));}pb.kill('SIGTERM');await new Promise<void>(r=>pb.once('exit',()=>r()));await rm(root,{recursive:true,force:true});}

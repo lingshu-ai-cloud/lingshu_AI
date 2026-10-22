@@ -23,5 +23,7 @@ export function assertMessengerCapabilityAuthority(account:Record<string,unknown
  let proof:Record<string,unknown>;try{proof=JSON.parse(Buffer.from(payload,'base64url').toString('utf8'));}catch{throw Error('messenger_capability_unverified');}
  if(typeof proof.verifiedAt!=='number'||typeof proof.validUntil!=='number'||!Number.isFinite(proof.verifiedAt)||!Number.isFinite(proof.validUntil)||proof.verifiedAt>Date.now()||proof.validUntil<=Date.now()||proof.validUntil<=proof.verifiedAt||proof.validUntil-proof.verifiedAt>10*60*1000)throw Error('messenger_capability_expired');
  if(proof.version!==1||proof.tenantId!==account.tenantId||proof.accountId!==account.id||proof.pageId!==account.providerAccountId||typeof proof.appId!=='string'||!proof.appId||proof.credentialHash!==createHash('sha256').update(token).digest('hex')||!Array.isArray(proof.grants)||JSON.stringify(proof.grants)!==JSON.stringify(scopes.filter(scope=>!scope.startsWith(prefix)).sort())||!required.every(scope=>(proof.grants as unknown[]).includes(scope)))throw Error('messenger_capability_changed');
- return createHash('sha256').update(markers[0]!).digest('hex');
+ // The live proof expires, but unchanged permissions/credentials keep the same business authority.
+ // A routine re-probe must not invalidate a frozen customer selection merely because its timestamp changed.
+ return createHash('sha256').update(JSON.stringify({version:1,tenantId:proof.tenantId,accountId:proof.accountId,pageId:proof.pageId,appId:proof.appId,grants:proof.grants,credentialHash:proof.credentialHash})).digest('hex');
 }

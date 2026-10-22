@@ -1,0 +1,101 @@
+{
+  "date": "2026-10-22",
+  "branch": "xixi智能客服隔离测试",
+  "baseCommit": "43892e74f828b97ad51401cd96d48936553464a2",
+  "scope": "customer worktree only; pre-commit-and-push validation; no integration merge or deployment",
+  "tests": {
+    "customerPipeline": {
+      "tests": 80,
+      "pass": 80,
+      "fail": 0,
+      "skipped": 0
+    },
+    "additionalChannels": {
+      "tests": 54,
+      "pass": 54,
+      "fail": 0,
+      "skipped": 0
+    },
+    "distinctRunnerTestsPassed": 134,
+    "existingCustomerServiceScriptChain": "passed with isolated network guard"
+  },
+  "checks": {
+    "typescript": "passed",
+    "architecture": {
+      "status": "passed",
+      "productionTypeScriptFiles": 2280,
+      "frozenLegacyOversizeFiles": 8,
+      "ratchetBase": "43892e74"
+    },
+    "migrationIntegrity": {
+      "status": "passed",
+      "checkedMigrations": 192,
+      "blockers": []
+    },
+    "build": {
+      "status": "passed",
+      "AiCreateStudioBytes": 497037,
+      "budgetBytes": 500000
+    },
+    "gitDiffWhitespace": "passed"
+  },
+  "realStorageRehearsal": {
+    "status": "passed",
+    "scope": "disposable_pocketbase_0_39_5",
+    "migrations": 2,
+    "checks": [
+      "HTTP draft contract",
+      "durable request replay",
+      "CAS result writeback",
+      "fact version roundtrip",
+      "classification JSON persistence"
+    ],
+    "providerCalls": 0
+  },
+  "browser": {
+    "status": "passed",
+    "implementation": "real CustomerBatchPanel with isolated in-memory API",
+    "actions": [
+      "preview",
+      "select and classify",
+      "tag filter",
+      "language/timezone review",
+      "inspect buyer evidence",
+      "freeze without sending"
+    ],
+    "screenshot": "customer-batch-browser-20261022.png",
+    "screenshotSha256": "cf279ee575bf561d2f618b02a0b8100e4bd020d08dc8b41a6fc65111df638a25"
+  },
+  "limitations": [
+    "Controlled providers do not prove live platform or model readiness.",
+    "New collections rehearsed with existing CAS migration in disposable PocketBase 0.39.5; exact production schema upgrade not exercised.",
+    "Official WhatsApp inbound auto-reply remains disconnected; status now reports this explicitly.",
+    "Old Messenger authority hashes may require explicit revalidation or rebuilding approval scope."
+  ],
+  "validationLogSha256": {
+    "customer-review-pipeline.log": "5f68404cf6c1ae415bd6044a7fb59965110e3c551dc419d1c247e01b4264233e",
+    "customer-review-channels.log": "aeefdfe573e88d8025774d8cd7a6db9b59ad180b01b056917b5f969ea279c091",
+    "customer-review-service.log": "9f57491870e32a3cc252e3adebea858aa468bd2abd764c29f2f9c0223f9a8377",
+    "customer-review-lint.log": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+    "customer-review-architecture.log": "0a5540a3cb10b9b458e69b3da6d5725f05213983cd6040b57d842b4d704d07a8",
+    "customer-review-migrations.log": "b7e0587a7c3854a9f8174a75bc6c0fd19541226e5a70ad1ce2098d8f5ebcbcf6",
+    "customer-review-build.log": "91c7d593cb33c43aa4fff3ed395a171e5eb49d97d2386d5bc2c531b27ab39b67",
+    "customer-review-pocketbase.log": "800672175990c9f56af7e10edca7b8a296fa4459081816f12e2e5ed1236a01cc"
+  },
+  "codeReview": {
+    "status": "completed; no known outstanding commit blockers",
+    "fixes": [
+      "preserve source opt-out and manual handling across classification cache reads",
+      "verify complete aggregate readback before publication, including uncertain child-write recovery",
+      "retain environment bootstrap before new route dependencies"
+    ],
+    "newRegressionTests": 2
+  },
+  "externalEffectsAtValidation": {
+    "realModelCalls": 0,
+    "realCustomerMessagesSent": 0,
+    "existingDatabaseMigrations": 0,
+    "deployed": false,
+    "pushed": false
+  }
+}
