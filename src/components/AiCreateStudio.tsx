@@ -130,7 +130,6 @@ const PUBLISH_RETURN_PREVIEW_KEY = 'ow_publish_return_to_preview';
 const STUDIO_OPEN_PROJECT_KEY = 'ow_studio_open_project';
 const PUBLISH_RETURN_PREVIEW_TTL = 2 * 60 * 60 * 1000;
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-
 function normalizeExplicitPresenterMode(shot: ShotProduction): ShotProduction {
   const digitalHuman = effectiveDigitalHumanRequirements(shot.digitalHuman);
   return digitalHuman === shot.digitalHuman ? shot : { ...shot, digitalHuman };
@@ -10532,7 +10531,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     projectHydrationPendingRef.current = true;
     const restoredSpec = p.status === 'template' ? withoutStudioWorkflowContext(p.spec) : p.spec;
     const restoredProjectId = p.status === 'template' ? null : p.id;
-    const restoredTitle = p.status === 'template' ? `${p.title} · 副本` : loadedStudioProjectTitle(p, incomingCreateRequest);    lastSavedAutosaveFingerprintRef.current = studioAutosaveFingerprint(restoredProjectId, restoredTitle, restoredSpec);
+    const restoredTitle = p.status === 'template' ? `${p.title} · 副本` : loadedStudioProjectTitle(p, incomingCreateRequest);
+    lastSavedAutosaveFingerprintRef.current = studioAutosaveFingerprint(restoredProjectId, restoredTitle, restoredSpec);
     applySpec(restoredSpec);
     setProjectId(restoredProjectId);
     setProjectTitle(restoredTitle);

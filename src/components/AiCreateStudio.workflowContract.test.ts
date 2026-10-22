@@ -238,7 +238,7 @@ assert.deepEqual(parseDigitalEmployeeWorkflowContext(JSON.stringify({ page: 'sma
 const studioSource = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
 assert.match(
   studioSource,
-  /const restoredTitle = loadedStudioProjectTitle\(p, incomingCreateRequest\)[\s\S]{0,500}setProjectTitle\(restoredTitle\)/,
+  /const restoredTitle = p\.status === 'template' \? `\$\{p\.title\} · 副本` : loadedStudioProjectTitle\(p, incomingCreateRequest\)[\s\S]{0,500}setProjectTitle\(restoredTitle\)/,
   '载入项目时必须协调当前续接请求的草稿名',
 );
 assert.match(
@@ -323,8 +323,8 @@ assert.match(studioSource, /sourceWorkflowContext\.preview \? '制作方案预�
 assert.match(studioSource, /焦点产品/);
 assert.match(
   studioSource,
-  /preparedTargetShot[\s\S]{0,500}targetFramesConfirmed:true[\s\S]{0,700}studioApi\.saveProject/,
-  'a generated target frame is automatically persisted without a human review gate',
+  /preparedTargetShot[\s\S]{0,500}targetFramesConfirmed:true[\s\S]{0,700}saveStudioProjectVersioned/,
+  'a generated target frame is automatically persisted through the revision-aware save without a human review gate',
 );
 assert.match(studioSource, /数字人素材已生成并自动回填当前分镜/);
 assert.match(studioSource, /已完成.*目标人物视频，并自动回填当前分镜/);
