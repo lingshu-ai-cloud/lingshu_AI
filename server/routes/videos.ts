@@ -1,5 +1,5 @@
 import {createReferenceReviewReadHandlers} from '../lib/referenceReviewReadHandlers.js';
-import { accountLabelFromUrl, accountListUrlCandidates, looksLikeAccountUrl, looksLikeVideoUrl, normalizeAccountListUrl, stripTrackingParams, youtubeThumbnailFromUrl, youtubeVideoId } from './videoCrawlerSourceUrls.js';
+import { accountLabelFromUrl, accountListUrlCandidates, canonicalSourceUrl, looksLikeAccountUrl, looksLikeVideoUrl, normalizeAccountListUrl, stripTrackingParams, tiktokUsername, tiktokVideoId, youtubeThumbnailFromUrl } from './videoCrawlerSourceUrls.js';
 export { accountLabelFromUrl, looksLikeAccountUrl } from './videoCrawlerSourceUrls.js';
 import { filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, resetCrawlerOpsTaskForExplicitRetryState, selectPendingCrawlerOpsTasks, terminalizeExhaustedCrawlerOpsTask, type CrawlerOpsTask } from './videoCrawlerOpsTaskState.js';
 export { filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, resetCrawlerOpsTaskForExplicitRetryState, selectPendingCrawlerOpsTasks, terminalizeExhaustedCrawlerOpsTask } from './videoCrawlerOpsTaskState.js';
@@ -75,7 +75,7 @@ import { benchmarkAnalysisForRecord } from '../lib/benchmarkAnalysis.js';
 import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
 import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot, reconcileStoredOpeningHookMotionEvidence } from './hookMotionEvidence.js';
 import { isDiscoveryVideoEligible, youtubeShortUrl } from '../../shared/contracts/discoveryVideoPolicy.js';
-import { PLATFORM_LABEL, apifyCandidateWindow, cleanupFacebookTitle, compactDate, dateOnly, decodeHtml, extractBestThumbnail, extractFacebookViews, extractFacebookWatchUrls, extractMeta, extractRunsText, extractTitle, extractYtInitialData, filterDateRangeItems, filterKeywordRelevantItems, filterRealMediaItems, findObjectsByKey, hasDateRange, hasRealThumbnail, heatValue, humanSize, inferPlatformFromUrl, isKeywordRelevant, isPlatformUrl, isWithinDateRange, keywordCategory, keywordRequiredTermGroups, keywordSearchTerms, mergeExistingTags, mimeFromPath, normalizeSearchText, parseDuration, parseJsonRecord, safeMaterialName, safeVideoExtension, sortByHeat, tagsFromKeyword, textAt, uploadedAtFromMeta, videoDedupeKey, ytdlpDateArgs, type CrawledVideo } from './videoCrawlerNormalization.js';
+import { PLATFORM_LABEL, apifyCandidateWindow, cleanupFacebookTitle, compactDate, dateOnly, decodeHtml, extractBestThumbnail, extractFacebookViews, extractFacebookWatchUrls, extractMeta, extractRunsText, extractTitle, extractYtInitialData, filterDateRangeItems, filterKeywordRelevantItems, filterRealMediaItems, findObjectsByKey, hasDateRange, hasRealThumbnail, heatValue, humanSize, inferPlatformFromUrl, isGenericSocialTitle, isKeywordRelevant, isPlatformUrl, isWithinDateRange, keywordCategory, keywordRequiredTermGroups, keywordSearchTerms, mergeExistingTags, metadataCreatorAccount, metadataTitle, metadataUploader, mimeFromPath, parseDuration, parseJsonRecord, safeMaterialName, safeVideoExtension, sortByHeat, tagsFromKeyword, textAt, uploadedAtFromMeta, videoDedupeKey, ytdlpDateArgs, type CrawledVideo } from './videoCrawlerNormalization.js';
 export { apifyCandidateWindow, inferPlatformFromUrl } from './videoCrawlerNormalization.js';
 import {
   buildVideoAnalysisProgress,
@@ -8820,22 +8820,6 @@ function normalizeCrawledVideo(item: CrawledVideo): CrawledVideo {
   };
 }
 
-function canonicalSourceUrl(platform: Platform, rawUrl: string, author?: string): string {
-  const url = String(rawUrl || '').trim();
-  if (!url) return '';
-  if (platform === 'youtube') {
-    const id = youtubeVideoId(url);
-    return id ? `https://www.youtube.com/watch?v=${id}` : stripTrackingParams(url);
-  }
-  if (platform === 'tiktok') {
-    const id = tiktokVideoId(url);
-    if (!id) return stripTrackingParams(url);
-    const username = tiktokUsername(url) || cleanTikTokUsername(author || '');
-    return username ? `https://www.tiktok.com/@${username}/video/${id}` : stripTrackingParams(url);
-  }
-  return stripTrackingParams(url);
-}
-
 function thumbnailForPlatform(platform: Platform, sourceUrl: string, rawThumbnail: string): string {
   const thumbnail = normalizeThumbnailUrl(rawThumbnail);
   if (thumbnail) return thumbnail;
@@ -8924,53 +8908,6 @@ function findImageUrl(value: unknown, depth = 0): string {
     if (found) return found;
   }
   return '';
-}
-
-function tiktokVideoId(url: string): string {
-  return String(url || '').match(/\/video\/(\d{8,})/i)?.[1]
-    || String(url || '').match(/[?&](?:item_id|video_id|aweme_id)=(\d{8,})/i)?.[1]
-    || '';
-}
-
-function tiktokUsername(url: string): string {
-  return cleanTikTokUsername(String(url || '').match(/tiktok\.com\/@([^/?#]+)/i)?.[1] || '');
-}
-
-function cleanTikTokUsername(input: string): string {
-  return String(input || '').replace(/^@/, '').trim().replace(/[^\w.-]/g, '');
-}
-
-function metadataUploader(meta: Record<string, unknown>): string {
-  return String(meta.uploader_id || meta.uploader || meta.channel_id || meta.channel || '').trim();
-}
-
-function metadataCreatorAccount(platform: Platform, meta: Record<string, unknown>): string | undefined {
-  const candidates=[meta.channel_url,meta.uploader_url,meta.creator_url];
-  if(platform==='youtube'&&/^UC[A-Za-z0-9_-]{20,}$/.test(String(meta.channel_id||'')))candidates.push(`https://www.youtube.com/channel/${meta.channel_id}`);
-  if(platform==='instagram'&&/^[A-Za-z0-9._]{1,30}$/.test(String(meta.uploader_id||'')))candidates.push(`https://www.instagram.com/${meta.uploader_id}`);
-  return candidates.map(value=>sourceAccountFromProviderMetadata(platform,String(value||''))).find(Boolean)??undefined;
-}
-
-function metadataTitle(platform: Platform, meta: Record<string, unknown>): string {
-  const rawTitle = String(meta.title || meta.fulltitle || '').trim();
-  const description = String(meta.description || '').trim();
-  const descriptionTitle = description
-    .split(/\n+/)
-    .map(line => line.trim())
-    .find(Boolean);
-  if (descriptionTitle && (platform === 'instagram' || /^Video by /i.test(rawTitle))) {
-    return descriptionTitle.slice(0, 180);
-  }
-  return rawTitle || descriptionTitle?.slice(0, 180) || `${platform} video`;
-}
-
-function isGenericSocialTitle(title: string, platform: Platform): boolean {
-  const normalized = normalizeSearchText(title);
-  if (!normalized) return true;
-  if (normalized === `${platform} video`) return true;
-  if (platform === 'facebook' && /^(facebook|watch|reel|video)( video)?$/.test(normalized)) return true;
-  if (platform === 'instagram' && /^(instagram|reel|post)( video)?$/.test(normalized)) return true;
-  return /^video by /.test(normalized);
 }
 
 function softDownloadFailure(platform: Platform, error: unknown): { status: string } | null {

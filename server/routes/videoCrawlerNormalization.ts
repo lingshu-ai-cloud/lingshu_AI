@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { Platform } from '../types/index.js';
-import { videoSourceIdentity } from './videoSourceIdentity.js';
+import { sourceAccountFromProviderMetadata, videoSourceIdentity } from './videoSourceIdentity.js';
 
 export interface CrawledVideo {
   platform: Platform;
@@ -32,6 +32,34 @@ export interface CrawledVideo {
 export function apifyCandidateWindow(limit: number, platform: 'tiktok' | 'facebook', strictProviderLimit: boolean): number {
   if (strictProviderLimit) return Math.max(1, limit);
   return platform === 'tiktok' ? Math.max(limit * 5, 5) : Math.min(50, Math.max(limit * 4, limit, 10));
+}
+
+export function metadataUploader(meta: Record<string, unknown>): string {
+  return String(meta.uploader_id || meta.uploader || meta.channel_id || meta.channel || '').trim();
+}
+
+export function metadataCreatorAccount(platform: Platform, meta: Record<string, unknown>): string | undefined {
+  const candidates=[meta.channel_url,meta.uploader_url,meta.creator_url];
+  if(platform==='youtube'&&/^UC[A-Za-z0-9_-]{20,}$/.test(String(meta.channel_id||'')))candidates.push(`https://www.youtube.com/channel/${meta.channel_id}`);
+  if(platform==='instagram'&&/^[A-Za-z0-9._]{1,30}$/.test(String(meta.uploader_id||'')))candidates.push(`https://www.instagram.com/${meta.uploader_id}`);
+  return candidates.map(value=>sourceAccountFromProviderMetadata(platform,String(value||''))).find(Boolean)??undefined;
+}
+
+export function metadataTitle(platform: Platform, meta: Record<string, unknown>): string {
+  const rawTitle = String(meta.title || meta.fulltitle || '').trim();
+  const description = String(meta.description || '').trim();
+  const descriptionTitle = description.split(/\n+/).map(line => line.trim()).find(Boolean);
+  if (descriptionTitle && (platform === 'instagram' || /^Video by /i.test(rawTitle))) return descriptionTitle.slice(0, 180);
+  return rawTitle || descriptionTitle?.slice(0, 180) || `${platform} video`;
+}
+
+export function isGenericSocialTitle(title: string, platform: Platform): boolean {
+  const normalized = normalizeSearchText(title);
+  if (!normalized) return true;
+  if (normalized === `${platform} video`) return true;
+  if (platform === 'facebook' && /^(facebook|watch|reel|video)( video)?$/.test(normalized)) return true;
+  if (platform === 'instagram' && /^(instagram|reel|post)( video)?$/.test(normalized)) return true;
+  return /^video by /.test(normalized);
 }
 
 export function extractMeta(html: string, property: string): string {

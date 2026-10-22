@@ -1,6 +1,36 @@
 import type { Platform } from '../types/index.js';
 import { isPlatformUrl } from './videoCrawlerNormalization.js';
 
+export function tiktokVideoId(url: string): string {
+  return String(url || '').match(/\/video\/(\d{8,})/i)?.[1]
+    || String(url || '').match(/[?&](?:item_id|video_id|aweme_id)=(\d{8,})/i)?.[1]
+    || '';
+}
+
+export function cleanTikTokUsername(input: string): string {
+  return String(input || '').replace(/^@/, '').trim().replace(/[^\w.-]/g, '');
+}
+
+export function tiktokUsername(url: string): string {
+  return cleanTikTokUsername(String(url || '').match(/tiktok\.com\/@([^/?#]+)/i)?.[1] || '');
+}
+
+export function canonicalSourceUrl(platform: Platform, rawUrl: string, author?: string): string {
+  const url = String(rawUrl || '').trim();
+  if (!url) return '';
+  if (platform === 'youtube') {
+    const id = youtubeVideoId(url);
+    return id ? `https://www.youtube.com/watch?v=${id}` : stripTrackingParams(url);
+  }
+  if (platform === 'tiktok') {
+    const id = tiktokVideoId(url);
+    if (!id) return stripTrackingParams(url);
+    const username = tiktokUsername(url) || cleanTikTokUsername(author || '');
+    return username ? `https://www.tiktok.com/@${username}/video/${id}` : stripTrackingParams(url);
+  }
+  return stripTrackingParams(url);
+}
+
 export function youtubeVideoId(url: string): string {
   const trimmed = String(url || '').trim();
   // Flat playlists may return a bare 11-character video ID.

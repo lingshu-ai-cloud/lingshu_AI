@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { inferPlatformFromUrl, isPlatformUrl } from './videoCrawlerNormalization.js';
+import { inferPlatformFromUrl, isGenericSocialTitle, isPlatformUrl, metadataCreatorAccount, metadataTitle, metadataUploader } from './videoCrawlerNormalization.js';
 import { accountLabelFromUrl, crawlImagePostsForTenant, crawlVideosForTenant, looksLikeAccountUrl } from './videos.js';
 import { parseLinkedInCompanyPost } from './linkedinCompanyPost.js';
-import { accountListUrlCandidates, normalizeAccountListUrl, stripTrackingParams, youtubeThumbnailFromUrl } from './videoCrawlerSourceUrls.js';
+import { accountListUrlCandidates, canonicalSourceUrl, normalizeAccountListUrl, stripTrackingParams, tiktokVideoId, youtubeThumbnailFromUrl } from './videoCrawlerSourceUrls.js';
 
 test('LinkedIn company source is recognized without accepting lookalike hosts or individual posts as accounts', () => {
   const company = 'https://www.linkedin.com/company/example-inc/';
@@ -65,4 +65,17 @@ test('unlicensed LinkedIn collection fails before any paid Actor or record write
     mode: 'account' as const, accountUrl: 'https://www.linkedin.com/company/example/', limit: 5 };
   await assert.rejects(crawlVideosForTenant(input), /linkedin_company_paid_collection_permit_required/);
   await assert.rejects(crawlImagePostsForTenant(input), /linkedin_company_paid_collection_permit_required/);
+});
+
+test('provider metadata normalization keeps canonical source and creator evidence', () => {
+  assert.equal(tiktokVideoId('https://www.tiktok.com/@maker/video/1234567890123456789'), '1234567890123456789');
+  assert.equal(canonicalSourceUrl('tiktok', 'https://www.tiktok.com/@maker/video/1234567890123456789?utm_source=x'),
+    'https://www.tiktok.com/@maker/video/1234567890123456789');
+  assert.equal(canonicalSourceUrl('youtube', 'https://youtu.be/AbCdEfGhI12?si=old'),
+    'https://www.youtube.com/watch?v=AbCdEfGhI12');
+  const meta = { title: 'Video by creator', description: 'Factory tour\nMore detail', uploader_id: 'maker' };
+  assert.equal(metadataUploader(meta), 'maker');
+  assert.equal(metadataTitle('instagram', meta), 'Factory tour');
+  assert.equal(metadataCreatorAccount('instagram', meta), 'https://www.instagram.com/maker');
+  assert.equal(isGenericSocialTitle('Video by creator', 'instagram'), true);
 });
