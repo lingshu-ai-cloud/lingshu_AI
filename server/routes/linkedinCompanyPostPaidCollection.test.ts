@@ -24,6 +24,7 @@ function permit(overrides: Partial<LinkedInCompanyPaidPermit> = {}): LinkedInCom
     async inspect() { return { status: 'reserved' }; },
     async beforeSubmit() {}, async recordRun() {}, async recordTerminal() {},
     async beforeDatasetRead() {},
+    async persistRawReceipt() { return 'isolated-receipt'; },
     ...overrides,
   };
 }
@@ -50,6 +51,8 @@ test('missing, mismatched and unapproved permits make zero provider requests', a
   try {
     const base = { scope, actorId, token: 'test-token' };
     await assert.rejects(runLinkedInCompanyPaidCollection(base), /permit_required/);
+    await assert.rejects(runLinkedInCompanyPaidCollection({ ...base,
+      permit: permit({ persistRawReceipt: undefined as never }) }), /scope_mismatch/);
     await assert.rejects(runLinkedInCompanyPaidCollection({ ...base,
       permit: permit({ scope: { ...scope, tenantId: 'tenant-b' } }) }), /scope_mismatch/);
     await assert.rejects(runLinkedInCompanyPaidCollection({ ...base,
@@ -103,11 +106,18 @@ test('approved offline transport records Actor run and separate dataset-read per
     const approved = permit({
       async inspect() { return state; },
       async beforeSubmit() { state = { status: 'submitted_unknown' }; },
-      async recordRun({ runId, datasetId }) { state = { status: 'submitted_known', runId, datasetId }; },
+      async recordRun({ runId, datasetId }) { assert.ok(calls.includes('receipt:actor_submit')); state = { status: 'submitted_known', runId, datasetId }; },
       async recordTerminal({ runId, usageTotalUsd }) {
+        assert.ok(calls.includes('receipt:actor_poll'));
         state = { status: 'completed', runId, datasetId: 'dataset-a', usageTotalUsd };
       },
       async beforeDatasetRead({ maxItems }) { assert.equal(maxItems, 3); calls.push('dataset-approved'); },
+      async persistRawReceipt({ phase, httpStatus, responseBody }) {
+        assert.equal(httpStatus, 200);
+        assert.ok(responseBody.length > 0);
+        calls.push(`receipt:${phase}`);
+        return `receipt:${phase}`;
+      },
     });
     const result = await runLinkedInCompanyPaidCollection({ scope, actorId, token: 'test-token',
       permit: approved, settlementDelayMs: 0 });
@@ -116,6 +126,7 @@ test('approved offline transport records Actor run and separate dataset-read per
     assert.equal(result.videos.length, 0);
     assert.equal(calls.filter(call => call.startsWith('POST')).length, 1);
     assert.ok(calls.indexOf('dataset-approved') < calls.findIndex(call => call.includes('/datasets/')));
+    assert.ok(calls.includes('receipt:dataset_read'));
   } finally { globalThis.fetch = oldFetch; }
 });
 
@@ -132,6 +143,29 @@ test('approval changed after admission prevents the paid POST', async () => {
     }), /approval_revoked/);
     assert.equal(checks, 2);
     assert.equal(requests, 0);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test('missing durable raw receipt leaves a submitted Actor unknown and forbids replay', async () => {
+  const oldFetch = globalThis.fetch;
+  let posts = 0;
+  let state: Awaited<ReturnType<LinkedInCompanyPaidPermit['inspect']>> = { status: 'reserved' };
+  globalThis.fetch = async (_request, init) => {
+    if (init?.method !== 'POST') throw Error('unexpected_read');
+    posts += 1;
+    return new Response(JSON.stringify({ data: { id: 'run-a', defaultDatasetId: 'dataset-a' } }), { status: 200 });
+  };
+  const unreceipted = permit({
+    async inspect() { return state; },
+    async beforeSubmit() { state = { status: 'submitted_unknown' }; },
+    async persistRawReceipt() { throw Error('receipt_storage_unavailable'); },
+    async recordRun() { throw Error('record_run_must_not_happen'); },
+  });
+  try {
+    const input = { scope, actorId, token: 'test-token', permit: unreceipted };
+    await assert.rejects(runLinkedInCompanyPaidCollection(input), /receipt_storage_unavailable/);
+    await assert.rejects(runLinkedInCompanyPaidCollection(input), /apify_paid_submission_unknown_no_replay/);
+    assert.equal(posts, 1);
   } finally { globalThis.fetch = oldFetch; }
 });
 

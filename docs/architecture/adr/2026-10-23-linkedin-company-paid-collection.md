@@ -14,3 +14,9 @@ LinkedIn 公司帖只接受规范的公司主页 URL 和账户模式。服务端
 `linkedinCompanyPostPaidCollection.ts` 已实现冻结输入、许可范围校验、受控 Apify 传输和纯来源解析；视频与图文内部采集函数仅在受信任调用者提供许可时进入这条路径，原手工 HTTP 入口仍不接收 LinkedIn。`linkedinCompanyCollectionApproval.ts` 和对应迁移新增了私有、不可更新的逐 run 批准与撤销记录；批准绑定当前发现范围版本/摘要、租户公司账号、冻结 Actor 输入及 CNY 上限。重复批准由数据库唯一索引仲裁，读取时重新检查当前范围和账号。新增 store-backed 的批准断言，受控传输在 Actor 提交前及数据集读取前各再次核验撤销与范围变化；撤销无法取消已提交的 Actor，但会阻止尚未提交的请求和后续读取。该记录本身不是付费许可，也没有挂接普通发现 worker。当前仍缺可验证的 Apify 账号价格与汇率/非 Actor 费用凭据、跨实例唯一许可签发器和运行回执链，因此生产入口仍默认报 `linkedin_company_paid_collection_permit_required`。接口形状及模拟测试不等于真实付费门禁已经完整接线，更不授权真实 Actor 调用。
 
 下一阶段必须将已落库的逐任务批准和 CNY 上限，与 Actor USD 上限、独立数据集/传输费用、账号/Token 指纹、唯一操作认领和原始运行回执绑定到耐久权威记录；在真实目标存储上只读验证跨实例唯一写入能力，并做离线断连、恢复及租户隔离测试。未满足这些条件时不得通过前端请求标志或环境变量绕开默认拒绝。
+
+## 原始响应回执边界（2026-10-23 增量）
+
+受控 LinkedIn 许可现在必须提供原始回执持久化回调；共用 Apify 传输在 Actor POST、run GET 和 dataset GET 收到 HTTP 响应后，先等待该回调，再解析响应或更新运行终态。新增 `linkedinCompanyReceiptStore.ts` 以批准记录哈希、租户/run、Actor、冻结输入、操作和 Token 指纹绑定只写一次的原始状态码与正文；共享根目录缺失、回执冲突或超大响应时失败关闭。Actor POST 响应已到达但回执未落盘时仍保持 `submitted_unknown`，不得重发。现有 TikTok 传输未强制新回调，维持其已有许可边界。
+
+这只补齐回执存储原语和 LinkedIn 路径的必要接口；尚未建立可信账号价格/汇率与非 Actor 费用报价、跨实例预算预约和唯一许可签发器，也未在目标部署验证共享卷。模拟回调不构成生产许可。真实 LinkedIn Actor 请求及数据集 GET 继续默认关闭。

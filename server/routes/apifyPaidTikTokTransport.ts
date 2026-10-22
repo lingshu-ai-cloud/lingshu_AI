@@ -16,6 +16,12 @@ export interface PaidApifyTikTokPermit {
   recordTerminal(input: { runId: string; status: string; usageTotalUsd: number }): Promise<void>;
   /** Separate read/transfer cost authority; the Actor cap does not prove it. */
   beforeDatasetRead(input: { runId: string; datasetId: string; maxItems: number }): Promise<void>;
+  /** Persist the raw response before interpreting or settling a paid operation. */
+  persistRawReceipt?(input: {
+    phase: 'actor_submit' | 'actor_poll' | 'dataset_read';
+    actorId: string; operationId: string; requestHash: string;
+    runId?: string; datasetId?: string; httpStatus: number; responseBody: string;
+  }): Promise<string>;
 }
 
 /** The transport is actor-agnostic; existing TikTok callers retain their name. */
@@ -63,7 +69,8 @@ function verifyRunCap(run: RunRecord, expectedCap: number): void {
   if (options.restartOnError !== undefined && options.restartOnError !== false) throw Error('apify_paid_restart_option_mismatch');
 }
 
-async function jsonRequest(url: URL, token: string, deadline: number, init: RequestInit): Promise<unknown> {
+async function jsonRequest(url: URL, token: string, deadline: number, init: RequestInit,
+  persistRawReceipt?: (httpStatus: number, responseBody: string) => Promise<string>): Promise<unknown> {
   if (Date.now() >= deadline) throw Error('apify_paid_observation_timeout');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, deadline - Date.now()));
@@ -75,8 +82,13 @@ async function jsonRequest(url: URL, token: string, deadline: number, init: Requ
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...init.headers },
     });
     // Provider response bodies may contain input data. Never echo them into a log or task card.
+    // Persist before parsing: a malformed or non-2xx billable response must not
+    // disappear behind a retryable-looking error.
+    const responseBody = await response.text();
+    if (persistRawReceipt) await persistRawReceipt(response.status, responseBody);
     if (!response.ok) throw Error(`apify_paid_http_${response.status}`);
-    return await response.json() as unknown;
+    try { return JSON.parse(responseBody) as unknown; }
+    catch { throw Error('apify_paid_invalid_response'); }
   } finally {
     clearTimeout(timer);
   }
@@ -107,6 +119,12 @@ export async function runPaidApifyTikTokDataset(input: {
   const requestHash = createHash('sha256').update(JSON.stringify({
     actorId, actorInput, maxTotalChargeUsd: cap, restartOnError: false,
   })).digest('hex');
+  const rawReceipt = (phase: 'actor_submit' | 'actor_poll' | 'dataset_read', known?: { runId: string; datasetId: string }) =>
+    permit.persistRawReceipt && ((httpStatus: number, responseBody: string) => permit.persistRawReceipt!({
+      phase, actorId, operationId: permit.operationId, requestHash,
+      ...(known ? { runId: known.runId, datasetId: known.datasetId } : {}),
+      httpStatus, responseBody,
+    }));
   const deadline = Date.now() + Math.max(1, input.timeoutMs ?? 120_000);
   const base = 'https://api.apify.com/v2';
   const state = await permit.inspect({ actorId, requestHash, maxTotalChargeUsd: cap });
@@ -121,7 +139,7 @@ export async function runPaidApifyTikTokDataset(input: {
     url.searchParams.set('restartOnError', 'false');
     const started = wrappedData(await jsonRequest(url, token, deadline, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(actorInput),
-    }));
+    }, rawReceipt('actor_submit')));
     known = runIdentity(started);
     await permit.recordRun({ ...known, maxTotalChargeUsd: cap });
   } else if (state.status === 'submitted_known' || state.status === 'completed') {
@@ -134,7 +152,7 @@ export async function runPaidApifyTikTokDataset(input: {
   const pollInterval = Math.max(1, input.pollIntervalMs ?? 5_000);
   for (;;) {
     const runUrl = new URL(`${base}/actor-runs/${encodeURIComponent(known.runId)}`);
-    let run = wrappedData(await jsonRequest(runUrl, token, deadline, { method: 'GET' }));
+    let run = wrappedData(await jsonRequest(runUrl, token, deadline, { method: 'GET' }, rawReceipt('actor_poll', known)));
     runIdentity(run, known);
     verifyRunCap(run, cap);
     const status = String(run.status || '').toUpperCase();
@@ -146,7 +164,7 @@ export async function runPaidApifyTikTokDataset(input: {
       if (remainingDelay > 0) {
         if (Date.now() + remainingDelay >= deadline) throw Error('apify_paid_observation_timeout');
         await new Promise(resolve => setTimeout(resolve, remainingDelay));
-        run = wrappedData(await jsonRequest(runUrl, token, deadline, { method: 'GET' }));
+        run = wrappedData(await jsonRequest(runUrl, token, deadline, { method: 'GET' }, rawReceipt('actor_poll', known)));
         runIdentity(run, known);
         verifyRunCap(run, cap);
         if (String(run.status || '').toUpperCase() !== status) throw Error('apify_paid_terminal_status_changed');
@@ -162,7 +180,7 @@ export async function runPaidApifyTikTokDataset(input: {
       const datasetUrl = new URL(`${base}/datasets/${encodeURIComponent(known.datasetId)}/items`);
       datasetUrl.searchParams.set('clean', 'true');
       datasetUrl.searchParams.set('limit', String(maxItems));
-      const rows = await jsonRequest(datasetUrl, token, deadline, { method: 'GET' });
+      const rows = await jsonRequest(datasetUrl, token, deadline, { method: 'GET' }, rawReceipt('dataset_read', known));
       if (!Array.isArray(rows) || rows.length > maxItems || rows.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
         throw Error('apify_paid_dataset_invalid');
       }

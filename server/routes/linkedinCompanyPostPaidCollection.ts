@@ -16,6 +16,7 @@ export interface LinkedInCompanyPaidPermit extends PaidApifyDatasetPermit {
   scope: LinkedInCompanyCollectionScope;
   actorInputSha256: string;
   assertApproved(scope: LinkedInCompanyCollectionScope, actorInputSha256: string): Promise<void>;
+  persistRawReceipt: NonNullable<PaidApifyDatasetPermit['persistRawReceipt']>;
 }
 
 function canonicalCompanyUrl(raw: string): string {
@@ -58,7 +59,8 @@ export async function assertLinkedInCompanyPaidCollection(input: {
   if ((Object.keys(scope) as Array<keyof LinkedInCompanyCollectionScope>)
     .some(key => permit.scope[key] !== scope[key]) || permit.actorInputSha256 !== actorInputSha256
     || !permit.operationId || !input.actorId || permit.actorId !== input.actorId
-    || !Number.isFinite(permit.maxTotalChargeUsd) || permit.maxTotalChargeUsd <= 0) {
+    || !Number.isFinite(permit.maxTotalChargeUsd) || permit.maxTotalChargeUsd <= 0
+    || typeof permit.persistRawReceipt !== 'function') {
     throw Error('linkedin_company_paid_collection_scope_mismatch');
   }
   await permit.assertApproved(scope, actorInputSha256);
@@ -87,6 +89,7 @@ export async function runLinkedInCompanyPaidCollection(input: {
     },
     recordRun: receipt => permit.recordRun(receipt),
     recordTerminal: receipt => permit.recordTerminal(receipt),
+    persistRawReceipt: receipt => permit.persistRawReceipt(receipt),
     async beforeDatasetRead(request) {
       await permit.assertApproved(scope, permit.actorInputSha256);
       await permit.beforeDatasetRead(request);

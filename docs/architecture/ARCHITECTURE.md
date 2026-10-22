@@ -29,6 +29,7 @@
 - `server/routes/videoAnalysisRecovery.ts`：视频级失败保留已有证据、显式重试清空旧终态、供应商错误脱敏及用户恢复提示的纯规则；`videos.ts` 保留旧导出并负责租户数据读写、队列与 HTTP 响应。该拆分不改变供应商调用或付费许可。
 - `server/routes/videoCrawlerProviderProjection.ts`：TikTok、Instagram、Facebook 的 Apify 视频行转候选、媒体封面 URL、标题与指标的纯投影；原路由继续负责 Actor 请求、付费门禁、账号范围、队列和持久化，图片帖转换仍在原路由并复用这些基础投影。
 - `server/routes/videoCrawlerNormalization.ts`：视频来源及供应商元数据归一化、Apify 候选窗口等纯规则；`videoCrawlerSourceUrls.ts` 负责规范来源 URL 与平台账号/帖子链接，`apifyTikTokInput.ts` 负责纯 Actor 输入组装；`videos.ts` 保留既有兼容导出。LinkedIn 公司帖的冻结输入、许可范围校验与受控传输在 `linkedinCompanyPostPaidCollection.ts`；内部视频/图文入口缺少受信任许可时仍明确报 `linkedin_company_paid_collection_permit_required`，手工 HTTP 不开放。当前没有生产许可签发器，不能将模拟许可或离线解析视为付费采集已开放；见 [`2026-10-23-linkedin-company-paid-collection.md`](./adr/2026-10-23-linkedin-company-paid-collection.md)。
+- `server/socialDiscovery/linkedinCompanyReceiptStore.ts`：LinkedIn Actor POST、run GET 和 dataset GET 的原始 HTTP 响应以批准/任务/Actor/请求/Token 指纹绑定的只写一次文件保存；受控传输在解析和账本终态更新前等待持久回执。存储模块本身不是许可或预算签发器，缺少部署共享卷、可信报价和数据集读取许可时仍不开放真实采集。
 - `server/routes/studioCoverSvg.ts`：封面图的尺寸、换行、图层和 SVG 文本转义纯渲染；`studio.ts` 保留鉴权、租户限定的帧读取、文件保存和对象存储，不把客户端传入的路径直接交给渲染模块读取。
 - `server/routes/studioStoryboardSpeechRules.ts`：分镜口播时长估计与语义压缩、CTA 语义、字幕同步、字段规范化与重复/不一致检查纯规则；`studio.ts` 保留模型生成、租户素材读取、修复编排与旧公开导出，不让脚本文字后处理接触供应商或持久化。
 - `server/routes/studioProductScriptRules.ts`：产品与目标买家/合作路线的保守口播计划、完整 CTA、锁定分镜、素材证据与时间线检查的纯规则；依赖前述口播规则与已有产品事实/质量合同，`studio.ts` 保留模型生成、资料读取、租户状态及原公开导出，不将没有来源的素材画面或商业数字补写成事实。
