@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵小枢问答上下文纯组装职责拆分（2026-10-23）
+
+- 代码提交 `3f15afb2` 将当前页面提示、企业摘要、实时接入事实、已持久化附件元数据、有界历史约束与文件交付格式组装迁至 `src/components/assistant/assistantChatPrompt.ts`。策略主路由仍只传当前用户原文，由服务端注入权威经营事实；组件保留身份栅栏、任务/操作分流、附件上传与流式状态。`GlobalAssistant.tsx` 从 1,803 降至 1,756 行，历史预算同步收紧；仍有 7 个超限文件。
+- 新纯函数测试 3/3、`test:assistant`、TypeScript、架构扫描及相对上一基线 ratchet、192 项迁移仓库只读检查、生产构建和 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未做真实浏览器问答验收、付费供应商调用、目标库迁移或部署；最终本地/远端 SHA 和工作区状态以推送后 Git 核对为准。
+
 ## 灵小枢线程恢复与权威动作重签职责拆分（2026-10-23）
 
 - 代码提交 `b5e6217f` 将租户/用户限定的本地 journal 恢复、远端 CAS 快照合并、旧对话正文剔除与旧聚焦任务卡的权威状态/动作重签迁至 `src/components/assistant/useAssistantThreadHydration.ts`。浮层保留身份范围、保存队列、欢迎语时机和会话展示。`GlobalAssistant.tsx` 从 1,901 降至 1,803 行，历史预算同步收紧；全仓仍有 7 个超限文件。
