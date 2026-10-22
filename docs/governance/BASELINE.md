@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵小枢确定性操作请求边界拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `9203396d` 将带鉴权的确定性动作 HTTP 请求、409 冲突、422 缺输入、超时结果待确认与无效响应的可见错误卡映射迁至 `src/lib/assistantActionRequest.ts`。浮层仍只从服务端签名卡片构造变更操作、保留身份范围与任务卡编排；请求故障不得回退为通用聊天。`GlobalAssistant.tsx` 从 1,682 降至 1,622 行，历史预算同步收紧；全仓仍有 7 个超限文件，架构治理未完成。
+- 新离线适配层测试 4/4、`test:assistant`、`test:assistant-production` 34/34、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,330 个生产 TypeScript 文件）、192 项迁移仓库只读检查、`pnpm run build` 及 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未做真实浏览器操作、真实付费供应商调用、目标库迁移或部署。下一步继续缩减历史超限文件，并在独立授权和门禁证据齐备后处理 AIGC 未合的自动降级补丁与 LinkedIn 付费采集；最终本地/远端 SHA 及工作区状态以推送后 Git 核对为准。
+
 ## 灵小枢明确生产请求职责拆分（2026-10-23）
 
 - 代码提交 `ec41ba12` 将企业中心产品身份解析、单条内容任务截止时间确认、真实周任务创建、回执任务卡和深链导航整组迁至 `src/components/assistant/assistantProductionRequest.tsx`。浮层继续控制身份范围、生产意图与问答分流；新模块调用现有 `socialContentApi.createAssistantAction`，不绕过后端生产准入或付费门禁。`GlobalAssistant.tsx` 从 1,756 降至 1,682 行，历史预算同步收紧；全仓仍有 7 个超限文件。
