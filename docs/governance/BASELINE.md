@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 自动成片编导准备职责拆分验收点（2026-10-23）
+
+- 代码提交 `10efc066f7eb86a5aabefae89b04256467d3e6b3` 将编导方案检查点恢复、历史版本兼容封存、当前版本落库和交接快照迁至 `socialContentProductionDirectorPreparation.ts`；worker 保留配音拟合修订、渲染和交付编排。`socialContentProductionExecution.ts` 从 1,733 降至 1,633 行，架构预算同步收紧；全仓仍有 8 个历史超限文件。
+- 完整自动成片工作流 HTTP/任务测试、生产图执行 7/7、拍摄方案执行、编导版本与检查点 6/6、TypeScript、架构扫描/ratchet、192 项迁移文件只读检查、生产构建和 `git diff --check` 通过。`AiCreateStudio` chunk 为 497,209/500,000 字节。未执行真实供应商请求、生产迁移或部署；代码验证不等于真实成片 E2E。
+
 ## Studio 素材逐镜规则拆分验收点（2026-10-23）
 
 - 代码提交 `28d84e481fe3975442fd7b71cc24cb0f68cd2c16` 将素材逐镜投影类型与纯规则移到 `studioMaterialAnalysisSegments.ts`；`studio.ts` 保留原公开导出、供应商选择、租户读写和 HTTP 编排，从 10,855 降到 10,768 行，历史预算随之收紧。剩余超限文件仍为 8 个，不能称为全仓结构拆分完成。
