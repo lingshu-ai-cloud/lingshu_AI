@@ -26,6 +26,7 @@
 - `server/digitalEmployees/taskCorrectionSafety.ts`：任务纠偏的传递性下游范围和已发送/已发布回执判定；路由注入租户限定的存储及跟进发送回执读取，缺少可证明安全的外部动作仍保守拦截。拆分不改变外部发送、发布和重试许可。
 - `server/digitalEmployees/taskCorrectionSupersession.ts`：任务纠偏后按影响范围使生产 job、冻结内容批次、托管 Studio 项目、客户分群、跟进草稿及审批失效；路由持有运行锁并注入存储/队列/跟进项目读取。已发送或已送达的跟进项目不被回写为草稿，旧业务回执拦截仍先于失效操作执行。
 - `server/routes/videoCrawlerOpsTaskState.ts`：视频来源爬虫任务的纯状态规则，包括中断恢复、显式重试、耗尽终止和待处理优先级；`videos.ts` 保留原导出并负责持久化、租户可见性与执行编排。
+- `server/routes/videoAnalysisRecovery.ts`：视频级失败保留已有证据、显式重试清空旧终态、供应商错误脱敏及用户恢复提示的纯规则；`videos.ts` 保留旧导出并负责租户数据读写、队列与 HTTP 响应。该拆分不改变供应商调用或付费许可。
 - `server/routes/videoCrawlerNormalization.ts`：视频来源及供应商元数据归一化、Apify 候选窗口等纯规则；`videoCrawlerSourceUrls.ts` 负责规范来源 URL 与平台账号/帖子链接，`apifyTikTokInput.ts` 负责纯 Actor 输入组装；`videos.ts` 保留既有兼容导出。LinkedIn 公司帖的冻结输入、许可范围校验与受控传输在 `linkedinCompanyPostPaidCollection.ts`；内部视频/图文入口缺少受信任许可时仍明确报 `linkedin_company_paid_collection_permit_required`，手工 HTTP 不开放。当前没有生产许可签发器，不能将模拟许可或离线解析视为付费采集已开放；见 [`2026-10-23-linkedin-company-paid-collection.md`](./adr/2026-10-23-linkedin-company-paid-collection.md)。
 - `server/routes/studioCoverSvg.ts`：封面图的尺寸、换行、图层和 SVG 文本转义纯渲染；`studio.ts` 保留鉴权、租户限定的帧读取、文件保存和对象存储，不把客户端传入的路径直接交给渲染模块读取。
 - `server/routes/studioMaterialAnalysisSegments.ts`：将素材逐镜分析结果投影为片段的纯规则，供云端素材写回和自动生产共用；`studio.ts` 保留原公开导出、供应商选择、租户素材读写及 HTTP 编排。
