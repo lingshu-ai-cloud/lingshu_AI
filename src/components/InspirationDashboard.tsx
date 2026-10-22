@@ -3,7 +3,8 @@ export { DirectorVideoDetailPanel } from './inspiration/DirectorVideoDetailPanel
 import { MaterialUsageMark, MaterialUsagePanel } from './inspiration/MaterialUsageHistory';
 import { MaterialLibraryCardMedia } from './inspiration/MaterialLibraryCardMedia';
 import { WatchModal, sourceEmbedUrl } from './inspiration/InspirationWatchModal';
-import { buildShootingNeeds, shootingCreationDate } from './inspiration/inspirationShootingNeeds';
+import { buildShootingNeeds } from './inspiration/inspirationShootingNeeds';
+import { InspirationShootingPanel } from './inspiration/InspirationShootingPanel';
 import { MATERIAL_LIBRARY_FETCH_PAGE_SIZE, fetchCompleteProductMaterialInventory, fetchProductMaterialSummaries, type ProductMaterialSummary } from './inspiration/inspirationProductMaterialInventory';
 import { initialInspirationReferenceTarget, normalizedReferenceText, parseInspirationReferenceTarget, videoMatchesReference, type InspirationReferenceTarget } from './inspiration/inspirationReferenceTarget';
 export { materialPreviewImageSources } from './inspiration/MaterialLibraryCardMedia';
@@ -23,7 +24,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   Search, Play, Sparkles, FileText, Layout as LayoutIcon,
   Clock, Globe, ChevronDown, X, Loader2,
-  Check, Copy, ArrowRight, LayoutGrid, List,
+  Copy, ArrowRight, LayoutGrid, List,
   Lightbulb, Flame, Film,
   Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2, Music2,
   SlidersHorizontal, Package, Eye,
@@ -55,9 +56,8 @@ import { authHeader, getToken, AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
 import { readWeeklyReferenceReviewNavigation } from '../lib/weeklyReferenceReviewNavigationApi';
 import CompetitorAccountsModal from './CompetitorAccountsModal';
 import type { Page } from '../App';
-import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { useModalFocus } from '../hooks/useModalFocus';
-import { updateScriptGapTask, type ScriptGapTask } from '../lib/scriptGapQueue';
+import { updateScriptGapTask } from '../lib/scriptGapQueue';
 import { canProcessVideo, displayDuration, resultEmptyState } from '../lib/inspirationDataQuality';
 export { canProcessVideo, displayDuration, resultEmptyState, trendFromEvidence } from '../lib/inspirationDataQuality';
 import { useScriptGapTasks } from '../hooks/useScriptGapTasks';
@@ -191,7 +191,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [launchingReferences, setLaunchingReferences] = useState<string[]>([]);
   const [materialEntry] = useState(initialMaterialLibraryEntry);
   const [innerView, setInnerView] = useState<InspirationInnerView>(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('view') === 'shooting' ? 'shooting' : materialEntry.openLibrary ? 'library' : 'inspiration');
-  const [shootingFilter, setShootingFilter] = useState<'all' | 'storyboard' | 'common'>('all');
   const [platform, setPlatform] = useState<Platform>('all');
   const [search, setSearch] = useState(() => typeof window === 'undefined'
     ? ''
@@ -329,7 +328,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     materialTheme === 'all' ? url.searchParams.delete('theme') : url.searchParams.set('theme', materialTheme);
     window.history.replaceState(window.history.state, '', url);
   }, [innerView, materialSource, materialTheme]);
-  const shootingCameraInputRef = useRef<HTMLInputElement | null>(null);
   const videoRequestRef = useRef(0);
   const inventoryRequestRef = useRef(0);
   const materialLibraryRequestRef = useRef(0);
@@ -1059,14 +1057,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   }, [visibleVideos, platform, inspirationFavoriteFilter, favoritedVideoIds, favoriteSourceUrls, search, sortMode, contentFormat]);
 
   const shootingNeeds = useMemo(() => buildShootingNeeds(visibleVideos, localMaterials), [visibleVideos, localMaterials]);
-  const shootingCards = useMemo(() => [
-    ...scriptGapTasks.map(task => ({ id: task.id, kind: 'storyboard' as const, createdAt: task.createdAt, task })),
-    ...shootingNeeds.map(need => ({ id: need.id, kind: 'common' as const, createdAt: need.createdAt, need })),
-  ].sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0) || a.id.localeCompare(b.id)), [scriptGapTasks, shootingNeeds]);
-  const latestShootingCardIds = useMemo(() => new Set(shootingCards.slice(0, 3).map(card => card.id)), [shootingCards]);
-  const visibleShootingCards = shootingCards.filter(card => shootingFilter === 'all'
-    || (shootingFilter === 'storyboard' && card.kind === 'storyboard')
-    || (shootingFilter === 'common' && card.kind === 'common'));
   const materialFunctionOptions = useMemo(() => {
     const values = new Set<string>();
     const productMaterials = Object.values(productMaterialSummaries).flatMap(summary => summary.materials);
@@ -2386,73 +2376,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             </Drawer>
           )}
 
-          {innerView === 'shooting' && (
-            <div className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-3">
-                {[
-                  { label: '待拍任务', value: shootingNeeds.length + scriptGapTasks.length, color: 'text-accent' },
-                  { label: '高频可复用需求', value: shootingNeeds.length, color: 'text-accent' },
-                  { label: '已入库素材', value: localMaterials.length, color: 'text-accent' },
-                ].map(item => (
-                  <div key={item.label} className="card p-4">
-                    <p className={`text-2xl font-bold ${item.color}`}>{item.value}</p>
-                    <p className="mt-1 text-xs text-text-muted">{item.label}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="grid grid-cols-3 gap-2" role="group" aria-label="筛选待拍清单">
-                {([
-                  ['all', '全部', shootingNeeds.length + scriptGapTasks.length],
-                  ['storyboard', '分镜待拍', scriptGapTasks.length],
-                  ['common', '高频需求', shootingNeeds.length],
-                ] as const).map(([key, label, count]) => (
-                  <button key={key} type="button" aria-pressed={shootingFilter === key} onClick={() => setShootingFilter(key)}
-                    className={`min-w-0 rounded-lg border px-2 py-2.5 text-xs font-bold transition-colors sm:text-sm ${shootingFilter === key ? 'border-accent bg-accent text-white' : 'border-border bg-surface text-text-secondary hover:border-accent hover:text-accent'}`}>
-                    <span className="truncate">{label}</span><span className="ml-1 opacity-70">{count}</span>
-                  </button>
-                ))}
-              </div>
-              <input ref={shootingCameraInputRef} aria-label="为待拍任务补充实拍素材" type="file" accept="video/*" capture="environment" className="hidden" onChange={event => { void handleUploadMaterials(event.currentTarget.files); event.currentTarget.value = ''; }}/>
-              {visibleShootingCards.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
-                  <Check size={30} className="mx-auto mb-3 text-accent" />
-                  <p className="text-sm font-bold text-text-primary">当前筛选下没有待拍任务</p>
-                  <p className="mt-1 text-xs text-text-muted">可以切换上方筛选查看其他需求。</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {visibleShootingCards.map(card => {
-                    const task = card.kind === 'storyboard' ? card.task : null;
-                    const need = card.kind === 'common' ? card.need : null;
-                    const focused = task && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('task') === task.id;
-                    return <article key={card.id} id={task ? `shooting-task-${task.id}` : undefined} className={`rounded-lg border border-border bg-white p-4 ${focused ? 'ring-2 ring-amber-400' : ''}`}>
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent">{task ? '分镜待拍' : '高频需求'}</span>
-                            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{need?.ratio || task?.ratio || '9:16'}</span>
-                            <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{need ? <><SocialPlatformIcon platform={need.platform} size={12} />{getPlatformMeta(need.platform).label}</> : '内容制作'}</span>
-                          </div>
-                          <h3 className="mt-2 text-sm font-bold text-text-primary">{task?.title || need?.title}</h3>
-                          <p className="mt-1 text-xs leading-relaxed text-text-secondary">{task?.shotBrief || need?.suggestion}</p>
-                          <p className="mt-2 text-[11px] text-text-muted">{task ? `${task.productLabel} · ${task.themeTitle} · 建议 ${task.suggestedDurationSec} 秒` : `出现 ${need?.count} 次 · 来源：${need?.sourceVideos.slice(0, 3).join(' / ')}`}</p>
-                          <p className="mt-1 text-[11px] text-text-muted">创建日期：{shootingCreationDate(card.createdAt)}</p>
-                        </div>
-                        <div className="flex shrink-0 flex-col items-end gap-2">
-                          {latestShootingCardIds.has(card.id) && <span role="img" aria-label="最新待拍任务" title="最新待拍任务" className="text-sm leading-none">❗</span>}
-                          <div className="flex flex-wrap justify-end gap-2">
-                            <button type="button" onClick={() => requestMaterialUpload(task?.id || '')} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary">上传现有素材</button>
-                            <button type="button" disabled={uploadingMaterial} onClick={() => { setUploadingScriptGapId(task?.id || ''); shootingCameraInputRef.current?.click(); }} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary disabled:opacity-50">可选实拍</button>
-                            {task && task.uploadedMaterialIds.length > 0 && task.sourceProjectId && <a href={`?page=smartAssets&project=${encodeURIComponent(task.sourceProjectId)}`} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary">返回分镜</a>}
-                          </div>
-                        </div>
-                      </div>
-                    </article>;
-                  })}
-                </div>
-              )}
-            </div>
-          )}
+          {innerView === 'shooting' && <InspirationShootingPanel needs={shootingNeeds} scriptGapTasks={scriptGapTasks} materialCount={localMaterials.length} uploadingMaterial={uploadingMaterial} onUploadExisting={requestMaterialUpload} onCaptureStart={setUploadingScriptGapId} onUploadCaptured={files => { void handleUploadMaterials(files); }} />}
         </div>
       </div>
       </div>
