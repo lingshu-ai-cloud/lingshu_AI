@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { materialAnalysisTokenBudget, normalizeQwenQualityScore, QWEN_SHOT_CLASSIFICATION_FIELDS } from './qwen.js';
-import { normalizeImageLayerBlueprints } from './qwenContracts.js';
+import { imageEvidenceReviewReasons, normalizeImageLayerBlueprints, type ImagePostEvidenceAnalysis } from './qwenContracts.js';
 
 assert.equal(normalizeQwenQualityScore(9), 90);
 assert.equal(normalizeQwenQualityScore('8.5'), 85);
@@ -21,5 +21,14 @@ assert.deepEqual(blueprints[0]?.masks[0]?.bounds, { x: 0, y: .1, width: 1, heigh
 assert.equal(blueprints[0]?.masks[0]?.color, undefined);
 assert.equal(blueprints[0]?.masks[0]?.opacity, 1);
 assert.equal(blueprints[0]?.masks[0]?.points?.length, 3);
+
+const evidence: ImagePostEvidenceAnalysis = {
+  version: 2, status: 'analyzed', observedFacts: [{ imageIndex: 1, subjects: ['bottle'], scene: 'studio', composition: 'center', colors: ['white'], visibleText: [], confidence: .9 }],
+  carouselFlow: [], copyEvidence: { hooks: [], sellingPoints: [], cta: [] }, reusableModules: [],
+  layerBlueprints: [{ imageIndex: 1, layers: [{ id: 'bg', role: 'background', zIndex: 0, bounds: { x: 0, y: 0, width: 1, height: 1 }, confidence: .9 }], masks: [] }], uncertainties: [],
+};
+assert.deepEqual(imageEvidenceReviewReasons(evidence, 1), []);
+assert.deepEqual(imageEvidenceReviewReasons({ ...evidence, layerBlueprints: [] }, 1), ['missing_layer_blueprints']);
+assert.deepEqual(imageEvidenceReviewReasons({ ...evidence, observedFacts: [] }, 1), ['missing_image_facts']);
 
 console.log('qwen quality score normalization tests passed');

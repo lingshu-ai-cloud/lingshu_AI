@@ -35,6 +35,7 @@ export interface ImagePostEvidenceAnalysis {
   reusableModules: Array<{ module: string; evidence: string; preserve: string; replace: string; confidence: number }>;
   layerBlueprints?: SocialImageReferenceLayerBlueprint[];
   uncertainties: string[];
+  routing?: { primaryProvider: 'qwen'; finalProvider: 'qwen' | 'openai'; primaryModel: string; reviewModel?: string; reviewReasons: string[]; reviewed: boolean };
 }
 
 const clamp = (value: unknown) => Number.isFinite(Number(value)) ? Math.max(0, Math.min(1, Number(value))) : 0;
@@ -79,6 +80,30 @@ export function normalizeImageLayerBlueprints(value: unknown, imageCount: number
     });
     return layers.length || masks.length ? [{ imageIndex, layers, masks }] : [];
   }).sort((a, b) => a.imageIndex - b.imageIndex);
+}
+
+/** Pure review signal. It never authorizes or submits a paid fallback. */
+export function imageEvidenceReviewReasons(analysis: ImagePostEvidenceAnalysis, imageCount: number): string[] {
+  const reasons = new Set<string>();
+  const facts = analysis.observedFacts || [];
+  const blueprints = analysis.layerBlueprints || [];
+  if (facts.length < imageCount) reasons.add('missing_image_facts');
+  if (blueprints.length < imageCount) reasons.add('missing_layer_blueprints');
+  const confidence = [
+    ...facts.map(item => item.confidence),
+    ...(analysis.carouselFlow || []).map(item => item.confidence),
+    ...(analysis.reusableModules || []).map(item => item.confidence),
+    ...blueprints.flatMap(item => [...item.layers.map(layer => layer.confidence), ...item.masks.map(mask => mask.confidence)]),
+  ].filter(value => Number.isFinite(value));
+  if (!confidence.length || confidence.reduce((sum, value) => sum + value, 0) / confidence.length < .72) reasons.add('low_confidence');
+  if (blueprints.some(item => !item.layers.some(layer => layer.role === 'background'))) reasons.add('missing_background_layer');
+  if (blueprints.some(item => {
+    const ids = item.layers.map(layer => layer.id);
+    const z = item.layers.map(layer => layer.zIndex);
+    return new Set(ids).size !== ids.length || (item.layers.length > 1 && new Set(z).size === 1);
+  })) reasons.add('layer_order_conflict');
+  if ((analysis.uncertainties || []).length >= 4) reasons.add('excessive_uncertainty');
+  return [...reasons];
 }
 
 export function normalizeQwenQualityScore(value: unknown): number {
