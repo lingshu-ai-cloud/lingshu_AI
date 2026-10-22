@@ -64,6 +64,7 @@
 - `server/routes/studioProductSceneUpload.ts`：产品场景上传意图与企业产品身份校验、完整视频探针结果封装、错误到 HTTP 状态映射和复用授权元数据；`studio.ts` 仍持有上传请求生命周期、租户素材写入与对象存储。非视频、缺失或未知槽位在读取企业资料前拒绝，上传探针不可用不生成复用授权。
 - `server/routes/studioMaterialAnalysisSegments.ts`：将素材逐镜分析结果投影为片段的纯规则，供云端素材写回和自动生产共用；`studio.ts` 保留原公开导出、供应商选择、租户素材读写及 HTTP 编排。
 - `server/routes/studioReferenceTimelineQuality.ts`：参考逐镜文本和结构化镜头时间线的纯完整性规则；只识别行首物理镜头范围，检查片头、空档、重叠与真实片段缺失，`studio.ts` 保留生成流程与失败响应编排。
+- `server/routes/studioRenderManifestProjection.ts`：从路由提供的租户素材名称→URL 与已选配乐 URL 投影冻结渲染清单，保留逐镜显式 URL 优先、特效及强调计划标准化和签名清单字段；`studio.ts` 仍负责租户素材/配乐读取、清单安全校验、令牌、配额与本机导出。
 - `server/routes/studioTtsStyle.ts`：配音风格输入归一化、MiniMax 确定性停顿与发音词典、Qwen/MiniMax/macOS 音色及语言映射纯规则；`studio.ts` 保留语音文件、供应商请求、付费许可与回执编排，不因音色选择绕开现有付费门禁。
 - `server/routes/studioVoiceoverLanguageRules.ts`：口播文本的目标语种文字系统判定、逐句修复输入切分和配音句子边界纯规则；`studio.ts` 保留旧公开导出、模型译文校验与 TTS 供应商/文件编排，语种不符时仍按原合同停止生成。
 - `server/routes/studioLocalTtsAdapters.ts`：Piper、XTTS 与本机 `say` 的可选本地语音执行；从路由显式注入租户目录、样本查找、签名资产 URL 和转码接口。无可用引擎时不触碰租户文件；付费 Qwen/MiniMax/HeyGen 路径仍留在原有许可和回执边界内。

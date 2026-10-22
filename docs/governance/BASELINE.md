@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 渲染清单投影拆分（2026-10-23）
+
+- 代码提交 `a364daca6c503984e7097ecae90bdb012a247bff` 将渲染合同类型、素材 URL/字幕/特效/强调计划的纯清单投影迁至 `studioRenderManifestProjection.ts`。路由仍在租户范围内读取素材和配乐，并保留清单安全校验、签名令牌及 HTTP 编排。`studio.ts` 从 9,412 降至 9,296 行，预算同步收紧；全仓仍有 6 个历史超限文件。
+- 新投影直测 2/2，强调计划合同、渲染安全和媒体访问检查、`test:studio-workflow`、`test:studio-media`、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,364 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 496,002/500,000 字节。未做浏览器交互、真实供应商调用、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## Studio 参考时间线完整性规则拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `27b8c281` 将参考逐镜文本及结构化镜头时间线的纯完整性检查迁至 `studioReferenceTimelineQuality.ts`；仅识别行首物理镜头范围，维持片头、空档、重叠和缺少真实片段的原拒绝规则。`studio.ts` 保留生成流程及响应编排，从 9,458 降至 9,412 行，预算同步收紧；全仓仍有 6 个历史超限文件。
