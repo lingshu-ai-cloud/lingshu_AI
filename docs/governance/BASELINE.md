@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 视频下载器参数规则拆分（2026-10-23）
+
+- 代码提交 `43f3082e` 将 yt-dlp 参数和平台 Referer 纯规则迁至 `server/routes/videoDownloaderArgs.ts`，旧 `videos.ts` 公开导出继续兼容，运行环境、下载执行与 Cookie 回退仍由路由控制。`videos.ts` 从 9,522 降至 9,495 行，架构预算同步收紧；全仓仍有 7 个历史超限文件，结构治理并未完成。
+- 新规则测试 3/3、原视频管线恢复测试、`test:production-workflows`、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,336 个生产 TypeScript 文件）、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过。整组回归初次被脚本中已失效的 `scheduledTaskTemplates.test.ts` 路径阻断；确认同名测试实际为 `.tsx` 后修正脚本，原样复跑通过。`AiCreateStudio` chunk 为 497,209/500,000 字节。未执行真实下载、付费供应商、目标库迁移、浏览器验收或部署；最终本地/远端 SHA 和工作区状态以推送后 Git 核对为准。
+
 ## 图片证据逐记录人工批准权威（2026-10-23）
 
 - 代码提交 `7a90c1cf` 增加图片 GPT 复核的后台专用持久批准与撤销记录：由具备租户角色的人员批准一个确定的图片来源快照、精确 OpenAI 请求和不超过 15 元的上限，最长 24 小时；读取批准时重验租户、素材、请求哈希、有效期及撤销。批准适配层接到现有预算预留边界，批准本身不充当一次性付费许可，也不签发供应商报价。新增迁移只做仓库文件审查，尚未对目标 PocketBase 执行。
