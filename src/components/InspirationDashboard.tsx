@@ -9,7 +9,8 @@ import { InspirationShootingPanel } from './inspiration/InspirationShootingPanel
 import InspirationImageCrawlDialog from './inspiration/InspirationImageCrawlDialog';
 import InspirationVideoResults from './inspiration/InspirationVideoResults';
 import { MATERIAL_LIBRARY_FETCH_PAGE_SIZE, fetchCompleteProductMaterialInventory, fetchProductMaterialSummaries, type ProductMaterialSummary } from './inspiration/inspirationProductMaterialInventory';
-import { initialInspirationReferenceTarget, normalizedReferenceText, parseInspirationReferenceTarget, videoMatchesReference, type InspirationReferenceTarget } from './inspiration/inspirationReferenceTarget';
+import { initialInspirationReferenceTarget, parseInspirationReferenceTarget, type InspirationReferenceTarget } from './inspiration/inspirationReferenceTarget';
+import { resolveInspirationReference } from './inspiration/inspirationReferenceResolver';
 export { materialPreviewImageSources } from './inspiration/MaterialLibraryCardMedia';
 import DirectorReviewWorkspace, { type DirectorReviewHandoff } from './inspiration/DirectorReviewWorkspace';
 import { AuthenticatedImage, AuthenticatedVideo } from './inspiration/InspirationMedia';
@@ -357,64 +358,16 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     let cancelled = false;
     const openRequestedReference = async () => {
       setInnerView('inspiration');
-      const normalizedId = requestedReference.referenceId.replace(/^crawl-/, '');
-      let match = crawledVideos.find(video => videoMatchesReference(video, requestedReference));
-      if (!match && normalizedId) {
-        try {
-          const response = await fetch(`/api/overseas/videos/${encodeURIComponent(normalizedId)}`, { headers: authHeader() });
-          if (response.ok) {
-            const record = await response.json() as CrawlerRecord;
-            match = recordsToVideos([record])[0];
-          }
-        } catch {
-          // The loaded inventory is still searched by source URL and title below.
-        }
-      }
-      if (!match && requestedReference.title) {
-        try {
-          const searchTitle = normalizedReferenceText(requestedReference.title).split(' ').slice(0, 10).join(' ');
-          const response = await fetch(`/api/overseas/videos?page=1&perPage=100&contentFormat=video&crawlRange=all&search=${encodeURIComponent(searchTitle)}`, { headers: authHeader() });
-          if (response.ok) {
-            const payload = await response.json() as { items?: CrawlerRecord[] };
-            const candidates = recordsToVideos(payload.items || []);
-            match = candidates.find(video => videoMatchesReference(video, requestedReference));
-          }
-        } catch {
-          // The reference may have been removed after the weekly plan was created.
-        }
-      }
+      const resolved = await resolveInspirationReference({ target: requestedReference, loadedVideos: crawledVideos, headers: authHeader(), fetcher: window.fetch.bind(window) });
       if (cancelled) return;
-      if (!match) {
-        const platform = ACTIVE_PLATFORMS.includes(requestedReference.platform as Exclude<Platform, 'all'>)
-          ? requestedReference.platform as Exclude<Platform, 'all'>
-          : 'tiktok';
-        const snapshot: TrendVideo = {
-          id: `weekly-reference-${requestedReference.referenceId || normalizedReferenceText(requestedReference.title)}`,
-          platform,
-          title: requestedReference.title || '周计划爆款参考',
-          thumbnail: requestedReference.thumbnailUrl,
-          duration: requestedReference.duration,
-          tags: [],
-          views: '—',
-          trend: 'stable',
-          sourceUrl: requestedReference.sourceUrl || undefined,
-          status: 'analyzed',
-          contentFormat: 'video',
-          aiAnalysis: {
-            benchmarkAnalysis: requestedReference.benchmarkAnalysis,
-            analysisSource: 'weekly-plan-snapshot',
-            analysisQuality: 'snapshot',
-            geminiStatus: 'analyzed',
-            gemini: { theme: requestedReference.title || '周计划爆款参考' },
-          },
-        };
+      if (resolved.source === 'weekly-plan-snapshot') {
         setMaterialMessage('原爆款已从灵感库删除，当前打开的是周计划保存的分析快照。');
-        setSelectedVideo(snapshot);
+        setSelectedVideo(resolved.video);
         return;
       }
-      setCrawledVideos(items => [match!, ...items.filter(item => item.id !== match!.id)]);
+      setCrawledVideos(items => [resolved.video, ...items.filter(item => item.id !== resolved.video.id)]);
       setMaterialMessage('');
-      setSelectedVideo(match);
+      setSelectedVideo(resolved.video);
     };
     void openRequestedReference();
     return () => { cancelled = true; };

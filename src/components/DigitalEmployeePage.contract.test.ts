@@ -50,6 +50,7 @@ const nextRoundRecommendationsSource = fs.readFileSync('src/components/NextRound
 const planHistorySource = fs.readFileSync('src/components/PlanHistoryDialog.tsx', 'utf8');
 const socialPerformanceSource = fs.readFileSync('src/lib/socialPerformance.ts', 'utf8');
 const inspirationSource = fs.readFileSync('src/components/InspirationDashboard.tsx', 'utf8');
+const inspirationReferenceResolverSource = fs.readFileSync('src/components/inspiration/inspirationReferenceResolver.ts', 'utf8');
 const competitorAccountsSource = fs.readFileSync('src/components/CompetitorAccountsModal.tsx', 'utf8');
 const reviewSource = fs.readFileSync('src/components/WeeklyReviewPanel.tsx', 'utf8');
 const insightSource = fs.readFileSync('src/lib/reviewInsights.ts', 'utf8');
@@ -438,8 +439,10 @@ assert.match(publishingCalendarSource, /onOpenReference[\s\S]{0,350}inspirationR
 assert.doesNotMatch(confirmWeeklyPlanSource, /approvalBlocked|missingProducts|missingReferences|generatePackageDetails|readiness\.canStart/, 'launch must not duplicate production preparation or publishing readiness gates in the UI');
 assert.match(confirmWeeklyPlanSource, /approveGoal\(goal\.id, data\.plan\.businessPackage\.revision\)/, 'launch must submit the exact plan revision to authoritative server validation');
 assert.match(digitalEmployeeApiSource, /approveGoal:[\s\S]{0,900}AbortSignal\.timeout\(12_000\)/, 'weekly launch must stop indefinite loading and hand unknown results to read-only reconciliation');
-assert.match(inspirationSource, /receiveReference[\s\S]{0,5000}setSelectedVideo\(match\)/, 'Inspiration Center must open the exact requested viral-video detail');
-assert.match(inspirationSource, /weekly-plan-snapshot[\s\S]{0,600}setSelectedVideo\(snapshot\)/, 'deleted references must still open the frozen weekly-plan analysis snapshot');
+assert.match(inspirationSource, /receiveReference[\s\S]{0,2200}resolveInspirationReference\([\s\S]{0,900}setSelectedVideo\(resolved\.video\)/, 'Inspiration Center must resolve and open the requested viral-video detail');
+assert.match(inspirationReferenceResolverSource, /videoMatchesReference\(video, target\)[\s\S]{0,1500}recordsToVideos[\s\S]{0,1500}videoMatchesReference\(video, target\)/, 'reference resolver must match inventory and read-only search candidates against the requested reference');
+assert.match(inspirationReferenceResolverSource, /analysisSource: 'weekly-plan-snapshot'/, 'deleted references must retain the frozen weekly-plan analysis');
+assert.match(inspirationSource, /resolved\.source === 'weekly-plan-snapshot'[\s\S]{0,200}setSelectedVideo\(resolved\.video\)/, 'a missing source must open the frozen snapshot instead of a fabricated live record');
 assert.match(weeklyPlanConfirmationSource, /具体缺少/, 'weekly-plan validation must name the missing business fields instead of showing a generic warning');
 assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,160}void controlWeeklyWork\(\)/, 'the account-matrix next step must share the direct-start/new-goal control instead of reopening the removed detail page');
 assert.match(weeklyPlanControlsSource, /查看周任务/, 'an active weekly plan must expose a direct task-calendar action');
