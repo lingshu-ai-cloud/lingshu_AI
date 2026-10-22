@@ -9,6 +9,11 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 9 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## 企业资料销售风格职责边界（2026-10-22）
+
+- 以集成分支 `0425785446b66ef7cbb9d08e5605a1226a8deb0f` 为干净起点，将销售风格编辑规则、重新学习状态/请求和展示分别移入 `enterpriseSalesStyleModel.ts`、`useEnterpriseSalesStyle.ts`、`EnterpriseSalesStylePanel.tsx`。父页面仍持有企业资料和保存状态；学习 hook 位于页签条件之外，切换页签不会卸载学习状态。原重新学习接口、人工修正保留证据、禁用表达解析和明确删除语义保持不变。
+- `EnterprisePage.tsx` 从 1,375 行降至 1,241 行，历史预算同步收紧，仍有 9 个历史超限文件，不能称为全仓架构治理完成。销售风格规则/渲染/接线 4/4、完整 `test:customer-service` 链、TypeScript、架构扫描/ratchet、生产构建及 191 项迁移只读检查通过；构建主 `AiCreateStudio` chunk 为 497103/500000 字节。客服隔离测试中的 PocketBase `ECONNREFUSED` 日志不代表真实远端验收。本批仅做离线 UI/规则与源码接线验证，未调用真实付费供应商、执行迁移或部署。
+
 ## 企业资质凭证上传结果边界（2026-10-22）
 
 - 以集成分支 `209411cf826553f1aa3a0f873a4cd2a273bc4411` 为干净起点，修正产品资质凭证上传失败被伪装成本地“已上传凭证”的路径。上传批次现由 `enterpriseProductDocumentUpload.ts` 仅筛选带可用 URL 的确认回执，`useEnterpriseProductDocuments.ts` 持有上传中状态、部分成功合并与未确认提示；上传结果不明的文件不进入企业资料自动保存。上传中禁止在页面添加/删除产品或确认导入，以免产品索引漂移；按剩余凭证槽位提交，超额文件不发请求。成功回执可保留，失败或缺 URL 的回执不自动重试，并提示先核对服务端资产。
