@@ -13,6 +13,7 @@ const actionProjectionSource = fs.readFileSync(new URL('./assistant/assistantAct
 const productionIntakeSource = fs.readFileSync(new URL('./assistant/assistantProductionIntake.ts', import.meta.url), 'utf8');
 const featureGuidesSource = fs.readFileSync(new URL('./assistant/useAssistantFeatureGuides.ts', import.meta.url), 'utf8');
 const notificationsSource = fs.readFileSync(new URL('./assistant/useAssistantNotifications.ts', import.meta.url), 'utf8');
+const hydrationHookSource = fs.readFileSync(new URL('./assistant/useAssistantThreadHydration.ts', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const appModulesSource = fs.readFileSync(new URL('../appPageModules.tsx', import.meta.url), 'utf8');
 const appShellChromeSource = fs.readFileSync(new URL('./AppShellChrome.tsx', import.meta.url), 'utf8');
@@ -378,9 +379,11 @@ assert.match(taskCardActionSource, /\.\.\.\(parameters \? \{ parameters \} : \{\
 
 const hydrationSource = sourceSection(
   'if (assistantThreadHydrationStartedRef.current)',
-  "fetch('/api/overseas/enterprise/context'",
+  '  return assistantThreadHydrated;',
   '助手线程恢复流程',
+  hydrationHookSource,
 );
+assert.match(source, /useAssistantThreadHydration\(\{[\s\S]*page, stablePersistenceScope, persistThread, hydrateThread,[\s\S]*executeAssistantAction, upsertTaskCard, focusTaskCard, requestId/, '浮层必须将当前租户的线程恢复与动作重签交给独立 hook');
 assert.match(hydrationSource, /actionId:\s*'view_status'/, '恢复聚焦卡片时必须重新读取权威工作状态');
 assert.match(hydrationSource, /executeAssistantAction\(PRIMARY_ASSISTANT_THREAD, request\)/, '刷新后必须由服务端重新签发可执行动作');
 assert.match(hydrationSource, /assistantThreadHydrationStartedRef\.current/, '线程持久化快照每次挂载只能初始化一次');

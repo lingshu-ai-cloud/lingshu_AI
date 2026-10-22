@@ -41,6 +41,7 @@ import AssistantQuickEntries from './assistant/AssistantQuickEntries';
 import AssistantCustomerTodoView from './assistant/AssistantCustomerTodoView';
 import { useContentTaskIntake } from './assistant/useContentTaskIntake';
 import { useAssistantThreadSaveQueue } from './assistant/useAssistantThreadSaveQueue';
+import { useAssistantThreadHydration } from './assistant/useAssistantThreadHydration';
 import { useAssistantFeatureGuides } from './assistant/useAssistantFeatureGuides';
 import { useAssistantNotifications } from './assistant/useAssistantNotifications';
 import { assistantProductionIntent, resolveAssistantEnterpriseProduct } from './assistant/assistantProductionIntake';
@@ -67,10 +68,7 @@ import { studioApi } from '../lib/studioApi';
 import { socialContentApi } from '../lib/socialContentApi';
 import { readSocialContentNavigationTaskId, SOCIAL_CONTENT_NAVIGATION_EVENT } from '../lib/socialContentContext';
 import { SOCIAL_CONTENT_TASK_REFRESH_EVENT } from '../lib/socialContentTaskRefresh';
-import {
-  readAssistantThreadJournal,
-  type AssistantJournalScope,
-} from '../lib/assistantThreadJournal';
+import type { AssistantJournalScope } from '../lib/assistantThreadJournal';
 import type {
   AssistantActionId,
   AssistantActionRequest,
@@ -87,16 +85,12 @@ import {
   compactText,
   contextForOrbit,
   contextIdentifier,
-  emptyAssistantThread,
   loadLiveIntegrationFacts,
-  mergeAssistantThread,
   mergeConsecutiveAssistant,
   orbitIdForAgent,
   orbitIdForPage,
   pageKey,
-  persistedAssistantThread,
   responseErrorMessage,
-  withoutPersistedConversation,
   type AssistantContext,
   type AssistantThreadSaveQueue,
 } from './assistant/globalAssistantRuntime';
@@ -186,7 +180,6 @@ export default function GlobalAssistant({
   const [weeklyPlanPromptDismissed, setWeeklyPlanPromptDismissed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [weeklyActionBusy, setWeeklyActionBusy] = useState(false);
-  const [assistantThreadHydrated, setAssistantThreadHydrated] = useState(false);
   const [welcomeBubbleVisible, setWelcomeBubbleVisible] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
   const [attachmentError, setAttachmentError] = useState('');
@@ -206,8 +199,6 @@ export default function GlobalAssistant({
   const abortRef = useRef<AbortController | null>(null);
   const handledKickoffs = useRef(new Set<string>());
   const handledRestores = useRef(new Set<string>());
-  const assistantThreadHydrationStartedRef = useRef(false);
-  const initialAssistantPageRef = useRef(page);
   const conversationPageRef = useRef(page);
   const assistantClosedRef = useRef<{ page: Page; at: number } | null>(null);
   const assistantThreadSaveQueuesRef = useRef(new Map<OrbitAgentId, AssistantThreadSaveQueue>());
@@ -1242,99 +1233,10 @@ export default function GlobalAssistant({
     }
   }, [activeAgent, closeDecisionDialog, closeDecisionDialogForNavigation, currentPageAgent, executeAssistantAction, onSessionRefresh, page, persistThread, presentActionResponse, send]);
 
-  const persistRecoveredThread = useCallback(() => {
-    persistThread(PRIMARY_ASSISTANT_THREAD, 'retry');
-  }, [persistThread]);
-
-  useEffect(() => {
-    if (assistantThreadHydrationStartedRef.current) return undefined;
-    assistantThreadHydrationStartedRef.current = true;
-    let cancelled = false;
-    const journal = readAssistantThreadJournal(
-      window.localStorage,
-      stablePersistenceScope,
-      PRIMARY_ASSISTANT_THREAD,
-    );
-    // A keyed component instance starts from an empty scoped thread, then
-    // recovers only the matching tenant + user + agent journal. This prevents
-    // Zustand state from a prior login/support scope flashing into this one.
-    hydrateThread(
-      PRIMARY_ASSISTANT_THREAD,
-      journal ? withoutPersistedConversation(journal) : emptyAssistantThread(),
-    );
-    const threadBeforeRequest = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
-    fetch('/api/overseas/assistant-threads', { headers: authHeader() })
-      .then(resp => resp.ok ? resp.json() : null)
-      .then(async data => {
-        if (cancelled) return;
-        const localChangedWhileLoading = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD] !== threadBeforeRequest;
-        const latestLocal = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
-        if (!Array.isArray(data?.items)) {
-          if (journal) persistRecoveredThread();
-          setAssistantThreadHydrated(true);
-          return;
-        }
-        const item = data.items.find((candidate: { agentId?: unknown } | null) => candidate?.agentId === PRIMARY_ASSISTANT_THREAD);
-        const persistedRemote = item ? persistedAssistantThread({
-          version: Number.isSafeInteger(Number(item.version)) ? Number(item.version) : 0,
-          updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : '',
-          messages: Array.isArray(item.messages) ? item.messages : [],
-          draftInput: typeof item.draftInput === 'string' ? item.draftInput : '',
-          scrollPosition: Number(item.scrollPosition ?? 0),
-          unreadCount: Number(item.unreadCount ?? 0),
-          isFollowingLatest: typeof item.isFollowingLatest === 'boolean' ? item.isFollowingLatest : true,
-          paused: typeof item.paused === 'boolean' ? item.paused : false,
-          taskCards: item.taskCards && typeof item.taskCards === 'object' ? item.taskCards : {},
-          focusedTaskId: typeof item.focusedTaskId === 'string' ? item.focusedTaskId : null,
-        }, emptyAssistantThread()) : null;
-        const remote = persistedRemote ? withoutPersistedConversation(persistedRemote) : null;
-        const merged = remote
-          ? (journal || localChangedWhileLoading ? mergeAssistantThread(remote, latestLocal) : remote)
-          : latestLocal;
-        hydrateThread(PRIMARY_ASSISTANT_THREAD, merged);
-        const hydratedThread = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
-        const persistedFocusedTaskId = hydratedThread.focusedTaskId;
-        setAssistantThreadHydrated(true);
-
-        if (journal) persistRecoveredThread();
-
-        // Thread storage intentionally keeps presentation state only. Re-read
-        // the authoritative workspace after hydration and place its freshly
-        // signed actions on a dedicated current-status card. Never bind an
-        // arbitrary current decision to the ID of a possibly stale old card.
-        if (!persistedFocusedTaskId) return;
-        const request: AssistantActionRequest = {
-          source: 'button',
-          requestId: requestId(),
-          actionId: 'view_status',
-          page: initialAssistantPageRef.current,
-        };
-        const response = await executeAssistantAction(PRIMARY_ASSISTANT_THREAD, request);
-        if (
-          cancelled
-          || useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD] !== hydratedThread
-          || !response
-          || response.status === 'not_handled'
-          || response.status === 'delegated'
-          || response.status === 'failed'
-          || response.status === 'stale_action'
-        ) return;
-        upsertTaskCard(
-          PRIMARY_ASSISTANT_THREAD,
-          actionCardToTaskCard(response.card, response, CURRENT_STATUS_TASK_ID),
-        );
-        focusTaskCard(PRIMARY_ASSISTANT_THREAD, CURRENT_STATUS_TASK_ID);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          if (journal) persistRecoveredThread();
-          setAssistantThreadHydrated(true);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [executeAssistantAction, focusTaskCard, hydrateThread, persistRecoveredThread, stablePersistenceScope, upsertTaskCard]);
+  const assistantThreadHydrated = useAssistantThreadHydration({
+    page, stablePersistenceScope, persistThread, hydrateThread,
+    executeAssistantAction, upsertTaskCard, focusTaskCard, requestId,
+  });
 
   useEffect(() => {
     if (!assistantThreadHydrated || mode !== 'chat' || panelView !== 'chat') return;
