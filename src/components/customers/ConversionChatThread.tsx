@@ -10,7 +10,7 @@ import { SalesDecisionEvidence, type SalesDecisionMeta } from './SalesDecisionEv
 import { lastBuyerEvent, sceneChips, timelineEventAgeHours, type ConversationDraftIntent } from './conversationTiming';
 import { STAGE_LABEL, customerDisplayName } from './conversionPresentation';
 import type { CustomerProfile } from '../../types/customer';
-import type { MessageTemplate, TemplatePlan } from '../ConversionPage';
+import type { MessageTemplate, TemplatePlan } from './customerReplyPreparation';
 
 const EmojiPicker = lazy(async () => {
   const picker = await import('emoji-picker-react');
