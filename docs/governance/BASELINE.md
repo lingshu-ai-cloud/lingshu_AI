@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工首页公开投影边界拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `ec37bae7ca385d6e7d972fa8e55c196b963ddb1b` 将配置、周目标、计划、四专家状态及事件脱敏投影迁至 `server/digitalEmployees/overviewProjection.ts`；`digitalEmployees.ts` 仍负责租户范围内的读取、鉴权、写入及 SSE 发送。路由从 5,558 降至 5,469 行，架构预算同步收紧；全仓仍有 6 个历史超限文件，结构治理未完成。
+- 新模块直测 5/5、数字员工整组、`pnpm run lint`、架构扫描/ratchet（2,388 个生产 TypeScript 文件）、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过。初次 TypeScript 检查发现新增测试夹具的类型断言不完整，修正后复检通过。Studio 主 chunk 为 480,933/485,000 字节，仍有大 chunk 提示。LinkedIn 仅保留既有离线门禁，按用户要求暂不测试真实付费采集；本批未调用其他真实供应商、执行目标库迁移、浏览器交互或部署。远端 SHA 和工作区状态以推送后核验为准。
+
 ## 公开视频搜索传输边界拆分（2026-10-23）
 
 - 代码提交 `bed4be89` 将 YouTube Shorts 平面检索失败后的 HTML 回退、Bing 公开视频 URL 提取和限时 HTTP 文本读取迁至 `videoCrawlerPublicDiscovery.ts`；路由仍负责现有 yt-dlp 执行、租户范围、下载、付费准入及持久化。只被旧源码断言提及、无生产调用的 YouTube 日期过滤辅助函数已移除。`videos.ts` 从 8,514 降至 8,404 行，历史预算同步收紧；全仓仍有 6 个历史超限文件。
