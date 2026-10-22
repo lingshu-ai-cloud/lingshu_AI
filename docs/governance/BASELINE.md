@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 编导视频详情职责拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `027646f2` 将编导视频详情 Drawer 原样迁至 `src/components/inspiration/DirectorVideoDetailPanel.tsx`，页面仍拥有选中对象、任务动作和身份边界，并转发原公开组件导出。原组件正文与新组件的 151 行逐行核对一致；`InspirationDashboard.tsx` 从 3,163 降至 3,011 行并收紧预算。全仓仍有 6 个历史超限文件，架构债务尚未清零。
+- 详情/预览定向契约测试 7/7 加预览脚本通过，`test:video-source-boundaries` 89/89、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,348 个生产 TypeScript 文件）、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未做浏览器交互、真实付费供应商、目标库迁移或部署。最终本地/远端 SHA 与工作区状态以推送后 Git 核对为准。
+
 ## 视频爬虫静态来源目录拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `07414ec1` 将 Facebook/Instagram 静态来源 URL、TikTok 账号种子及按关键词选择的历史候选从 `server/routes/videos.ts` 迁至纯规则模块 `videoCrawlerSeedCatalog.ts`。路由保留实时检索、媒体读取、来源资格筛选、租户边界及付费准入；从 9,424 降至 9,200 行，架构预算同步收紧。全仓仍有 6 个历史超限文件，不能称结构拆分完成。
