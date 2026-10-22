@@ -107,8 +107,12 @@ test('approved offline transport records Actor run and separate dataset-read per
     const approved = permit({
       async inspect() { return state; },
       async beforeSubmit() { state = { status: 'submitted_unknown' }; },
-      async recordRun({ runId, datasetId }) { assert.ok(calls.includes('receipt:actor_submit')); state = { status: 'submitted_known', runId, datasetId }; },
-      async recordTerminal({ runId, usageTotalUsd }) {
+      async recordRun({ runId, datasetId, rawReceiptRef }) {
+        assert.equal(rawReceiptRef, 'receipt:actor_submit');
+        state = { status: 'submitted_known', runId, datasetId };
+      },
+      async recordTerminal({ runId, usageTotalUsd, rawReceiptRef }) {
+        assert.equal(rawReceiptRef, 'receipt:actor_poll');
         assert.ok(calls.includes('receipt:actor_poll'));
         state = { status: 'completed', runId, datasetId: 'dataset-a', usageTotalUsd };
       },
@@ -167,6 +171,65 @@ test('missing durable raw receipt leaves a submitted Actor unknown and forbids r
     await assert.rejects(runLinkedInCompanyPaidCollection(input), /receipt_storage_unavailable/);
     await assert.rejects(runLinkedInCompanyPaidCollection(input), /apify_paid_submission_unknown_no_replay/);
     assert.equal(posts, 1);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test('empty Actor receipt reference leaves the submitted operation unknown and forbids replay', async () => {
+  const oldFetch = globalThis.fetch;
+  let posts = 0;
+  let state: Awaited<ReturnType<LinkedInCompanyPaidPermit['inspect']>> = { status: 'reserved' };
+  globalThis.fetch = async (_request, init) => {
+    if (init?.method !== 'POST') throw Error('unexpected_read');
+    posts += 1;
+    return new Response(JSON.stringify({ data: { id: 'run-a', defaultDatasetId: 'dataset-a' } }), { status: 200 });
+  };
+  const unreceipted = permit({
+    async inspect() { return state; },
+    async beforeSubmit() { state = { status: 'submitted_unknown' }; },
+    async persistRawReceipt() { return ''; },
+    async recordRun() { throw Error('record_run_must_not_happen'); },
+  });
+  try {
+    const input = { scope, actorId, token: 'test-token', permit: unreceipted };
+    await assert.rejects(runLinkedInCompanyPaidCollection(input), /raw_receipt_ref_required/);
+    await assert.rejects(runLinkedInCompanyPaidCollection(input), /apify_paid_submission_unknown_no_replay/);
+    assert.equal(posts, 1);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test('empty terminal poll receipt cannot settle or start a dataset read', async () => {
+  const oldFetch = globalThis.fetch;
+  const calls: string[] = [];
+  let state: Awaited<ReturnType<LinkedInCompanyPaidPermit['inspect']>> = { status: 'reserved' };
+  globalThis.fetch = async (request, init) => {
+    const path = new URL(String(request)).pathname;
+    calls.push(`${init?.method || 'GET'} ${path}`);
+    if (init?.method === 'POST') return new Response(JSON.stringify({ data: {
+      id: 'run-a', defaultDatasetId: 'dataset-a',
+    } }), { status: 200 });
+    if (path.endsWith('/actor-runs/run-a')) return new Response(JSON.stringify({ data: {
+      id: 'run-a', defaultDatasetId: 'dataset-a', status: 'SUCCEEDED', usageTotalUsd: 0.2,
+      options: { maxTotalChargeUsd: 0.5, restartOnError: false },
+    } }), { status: 200 });
+    throw Error('dataset_read_must_not_happen');
+  };
+  const unreceipted = permit({
+    async inspect() { return state; },
+    async beforeSubmit() { state = { status: 'submitted_unknown' }; },
+    async recordRun({ runId, datasetId, rawReceiptRef }) {
+      assert.equal(rawReceiptRef, 'submit-receipt');
+      state = { status: 'submitted_known', runId, datasetId };
+    },
+    async persistRawReceipt({ phase }) { return phase === 'actor_submit' ? 'submit-receipt' : ''; },
+    async recordTerminal() { throw Error('terminal_record_must_not_happen'); },
+    async beforeDatasetRead() { throw Error('dataset_read_must_not_happen'); },
+  });
+  try {
+    const input = { scope, actorId, token: 'test-token', permit: unreceipted, settlementDelayMs: 0 };
+    await assert.rejects(runLinkedInCompanyPaidCollection(input), /raw_receipt_ref_required/);
+    await assert.rejects(runLinkedInCompanyPaidCollection(input), /raw_receipt_ref_required/);
+    assert.equal(calls.filter(call => call.startsWith('POST')).length, 1);
+    assert.equal(calls.some(call => call.includes('/datasets/')), false);
   } finally { globalThis.fetch = oldFetch; }
 });
 

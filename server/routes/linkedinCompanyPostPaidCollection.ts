@@ -87,9 +87,19 @@ export async function runLinkedInCompanyPaidCollection(input: {
       await permit.assertApproved(scope, permit.actorInputSha256);
       await permit.beforeSubmit(request);
     },
-    recordRun: receipt => permit.recordRun(receipt),
-    recordTerminal: receipt => permit.recordTerminal(receipt),
-    persistRawReceipt: receipt => permit.persistRawReceipt(receipt),
+    recordRun: receipt => {
+      if (!receipt.rawReceiptRef?.trim()) throw Error('linkedin_company_actor_submit_receipt_required');
+      return permit.recordRun(receipt);
+    },
+    recordTerminal: receipt => {
+      if (!receipt.rawReceiptRef?.trim()) throw Error('linkedin_company_actor_poll_receipt_required');
+      return permit.recordTerminal(receipt);
+    },
+    async persistRawReceipt(receipt) {
+      const ref = await permit.persistRawReceipt(receipt);
+      if (!ref?.trim()) throw Error('linkedin_company_raw_receipt_ref_required');
+      return ref;
+    },
     async beforeDatasetRead(request) {
       await permit.assertApproved(scope, permit.actorInputSha256);
       await permit.beforeDatasetRead(request);

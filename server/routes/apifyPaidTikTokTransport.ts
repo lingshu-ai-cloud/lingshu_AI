@@ -16,8 +16,8 @@ export interface PaidApifyTikTokPermit {
     | { status: 'completed'; runId: string; datasetId: string; usageTotalUsd: number }
   >;
   beforeSubmit(input: { actorId: string; requestHash: string; maxTotalChargeUsd: number }): Promise<void>;
-  recordRun(input: { runId: string; datasetId: string; maxTotalChargeUsd: number }): Promise<void>;
-  recordTerminal(input: { runId: string; status: string; usageTotalUsd: number }): Promise<void>;
+  recordRun(input: { runId: string; datasetId: string; maxTotalChargeUsd: number; rawReceiptRef?: string }): Promise<void>;
+  recordTerminal(input: { runId: string; status: string; usageTotalUsd: number; rawReceiptRef?: string }): Promise<void>;
   /** Separate read/transfer cost authority; the Actor cap does not prove it. */
   beforeDatasetRead(input: { runId: string; datasetId: string; maxItems: number }): Promise<void>;
   /** Persist the raw response before interpreting or settling a paid operation. */
@@ -74,7 +74,7 @@ function verifyRunCap(run: RunRecord, expectedCap: number): void {
 }
 
 async function jsonRequest(url: URL, token: string, deadline: number, init: RequestInit,
-  persistRawReceipt?: (httpStatus: number, responseBody: string) => Promise<string>): Promise<unknown> {
+  persistRawReceipt?: (httpStatus: number, responseBody: string) => Promise<string>): Promise<{ body: unknown; rawReceiptRef?: string }> {
   if (Date.now() >= deadline) throw Error('apify_paid_observation_timeout');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, deadline - Date.now()));
@@ -92,9 +92,9 @@ async function jsonRequest(url: URL, token: string, deadline: number, init: Requ
       ? await readBoundedProviderResponse(response, { maxBytes: APIFY_PAID_RAW_RECEIPT_MAX_BYTES,
         errorCode: 'apify_paid_raw_receipt_too_large', controller })
       : await response.text();
-    if (persistRawReceipt) await persistRawReceipt(response.status, responseBody);
+    const rawReceiptRef = persistRawReceipt ? await persistRawReceipt(response.status, responseBody) : undefined;
     if (!response.ok) throw Error(`apify_paid_http_${response.status}`);
-    try { return JSON.parse(responseBody) as unknown; }
+    try { return { body: JSON.parse(responseBody) as unknown, rawReceiptRef }; }
     catch { throw Error('apify_paid_invalid_response'); }
   } finally {
     clearTimeout(timer);
@@ -144,11 +144,12 @@ export async function runPaidApifyTikTokDataset(input: {
     const url = new URL(`${base}/acts/${encodeURIComponent(actorId)}/runs`);
     url.searchParams.set('maxTotalChargeUsd', String(cap));
     url.searchParams.set('restartOnError', 'false');
-    const started = wrappedData(await jsonRequest(url, token, deadline, {
+    const submitted = await jsonRequest(url, token, deadline, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(actorInput),
-    }, rawReceipt('actor_submit')));
+    }, rawReceipt('actor_submit'));
+    const started = wrappedData(submitted.body);
     known = runIdentity(started);
-    await permit.recordRun({ ...known, maxTotalChargeUsd: cap });
+    await permit.recordRun({ ...known, maxTotalChargeUsd: cap, rawReceiptRef: submitted.rawReceiptRef });
   } else if (state.status === 'submitted_known' || state.status === 'completed') {
     known = { runId: state.runId, datasetId: state.datasetId };
     if (!known.runId || !known.datasetId) throw Error('apify_paid_run_identity_mismatch');
@@ -159,7 +160,8 @@ export async function runPaidApifyTikTokDataset(input: {
   const pollInterval = Math.max(1, input.pollIntervalMs ?? 5_000);
   for (;;) {
     const runUrl = new URL(`${base}/actor-runs/${encodeURIComponent(known.runId)}`);
-    let run = wrappedData(await jsonRequest(runUrl, token, deadline, { method: 'GET' }, rawReceipt('actor_poll', known)));
+    let observed = await jsonRequest(runUrl, token, deadline, { method: 'GET' }, rawReceipt('actor_poll', known));
+    let run = wrappedData(observed.body);
     runIdentity(run, known);
     verifyRunCap(run, cap);
     const status = String(run.status || '').toUpperCase();
@@ -171,14 +173,15 @@ export async function runPaidApifyTikTokDataset(input: {
       if (remainingDelay > 0) {
         if (Date.now() + remainingDelay >= deadline) throw Error('apify_paid_observation_timeout');
         await new Promise(resolve => setTimeout(resolve, remainingDelay));
-        run = wrappedData(await jsonRequest(runUrl, token, deadline, { method: 'GET' }, rawReceipt('actor_poll', known)));
+        observed = await jsonRequest(runUrl, token, deadline, { method: 'GET' }, rawReceipt('actor_poll', known));
+        run = wrappedData(observed.body);
         runIdentity(run, known);
         verifyRunCap(run, cap);
         if (String(run.status || '').toUpperCase() !== status) throw Error('apify_paid_terminal_status_changed');
       }
       const usageTotalUsd = nonnegativeUsd(run.usageTotalUsd);
       if (usageTotalUsd > cap) throw Error('apify_paid_usage_exceeds_cap');
-      await permit.recordTerminal({ runId: known.runId, status, usageTotalUsd });
+      await permit.recordTerminal({ runId: known.runId, status, usageTotalUsd, rawReceiptRef: observed.rawReceiptRef });
       if (status !== 'SUCCEEDED') throw Error(`apify_paid_run_${status.toLowerCase()}`);
       // Dataset reads/transfers may be billed outside the Actor run cap.
       // In the absence of a separately verified reservation, stay closed even
@@ -187,7 +190,7 @@ export async function runPaidApifyTikTokDataset(input: {
       const datasetUrl = new URL(`${base}/datasets/${encodeURIComponent(known.datasetId)}/items`);
       datasetUrl.searchParams.set('clean', 'true');
       datasetUrl.searchParams.set('limit', String(maxItems));
-      const rows = await jsonRequest(datasetUrl, token, deadline, { method: 'GET' }, rawReceipt('dataset_read', known));
+      const { body: rows } = await jsonRequest(datasetUrl, token, deadline, { method: 'GET' }, rawReceipt('dataset_read', known));
       if (!Array.isArray(rows) || rows.length > maxItems || rows.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
         throw Error('apify_paid_dataset_invalid');
       }
