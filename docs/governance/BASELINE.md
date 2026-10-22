@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 公开视频投影与证据脱敏拆分（2026-10-23）
+
+- 代码提交 `dfee5e43d922a7a60cb42f41cec995d03f66a42d` 将公开视频响应投影、持久队列编号及关键词匹配迁至 `videoPublicRecordProjection.ts`，`videos.ts` 保留租户数据读取与 HTTP 编排，从 9,111 降至 9,012 行，预算同步收紧；全仓仍有 6 个历史超限文件。直测发现原有脱敏仅解析 JSON 字符串，逐镜证据以对象存储时私有 `clipObjectKey`/`firstFrameObjectKey` 会漏出；新投影对两种形态均清除这些键，保留公开进度和其他证据字段。
+- 新投影直测 3/3 并纳入 `test:video-source-boundaries`（122/122）；`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,365 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 496,002/500,000 字节。未做真实爬取/付费供应商调用、浏览器交互、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## Studio 渲染清单投影拆分（2026-10-23）
 
 - 代码提交 `a364daca6c503984e7097ecae90bdb012a247bff` 将渲染合同类型、素材 URL/字幕/特效/强调计划的纯清单投影迁至 `studioRenderManifestProjection.ts`。路由仍在租户范围内读取素材和配乐，并保留清单安全校验、签名令牌及 HTTP 编排。`studio.ts` 从 9,412 降至 9,296 行，预算同步收紧；全仓仍有 6 个历史超限文件。
