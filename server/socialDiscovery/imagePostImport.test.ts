@@ -41,7 +41,7 @@ function fixture(options: { failCreate?: boolean; failStageUpdate?: boolean; fai
     async analyze() { events.push('analyze'); return options.failAnalysis
       ? { status: 'failed' as const, error: 'vision_unavailable' }
       : { status: 'analyzed' as const, analysis: evidence, provider: 'qwen' as const }; },
-    queue() { events.push('queue'); },
+    async queue() { events.push('queue'); },
   };
   return { input, events, get row() { return row; } };
 }

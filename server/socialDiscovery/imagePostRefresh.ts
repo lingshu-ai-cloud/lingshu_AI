@@ -25,11 +25,14 @@ export async function refreshExistingImagePost(input: {
   persistThumbnail(recordId: string, url: string): Promise<string>;
   persistImages(recordId: string, urls: string[]): Promise<string[]>;
   analyze(item: CrawledImagePost, keyword: string, fallback?: VideoAiAnalysis): Promise<EvidenceResult>;
-  queue(recordId: string, item: CrawledImagePost, keyword: string): void;
+  queue(recordId: string, item: CrawledImagePost, keyword: string): Promise<void>;
 }): Promise<Record<string, unknown>> {
   const { existingRecord, item } = input;
   if (existingRecord.tenantId !== input.tenantId) throw Error('image_post_tenant_mismatch');
   const existingAnalysis = videoAnalysisOf(existingRecord);
+  if (['queued', 'processing', 'unknown'].includes(String(existingAnalysis.imageAnalysisQueueState || ''))) {
+    throw Error('image_post_queue_requires_reconciliation');
+  }
   const previouslyAnalyzed = (existingAnalysis.imageEvidence as { status?: string } | undefined)?.status === 'analyzed';
   const recordId = String(existingRecord.id);
   const remoteThumbnail = item.thumbnailUrl || String(existingRecord.thumbnailUrl || '');
@@ -66,7 +69,7 @@ export async function refreshExistingImagePost(input: {
     contentFormat: 'image', thumbnailUrl, status: 'pending' as VideoStatus, aiAnalysis: stagedAnalysis,
   })) throw Error('image_post_source_persistence_failed');
   if (input.deferImageAnalysis && !previouslyAnalyzed) {
-    input.queue(recordId, item, input.keyword);
+    await input.queue(recordId, item, input.keyword);
     return { ...existingRecord, thumbnailUrl };
   }
   const output = await input.analyze(item, input.keyword, existingAnalysis.gemini as VideoAiAnalysis | undefined);

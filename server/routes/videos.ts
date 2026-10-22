@@ -8,6 +8,8 @@ import {createImagePostEvidenceAnalyzer, type CrawledImagePost} from '../socialD
 import {importNewImagePost} from '../socialDiscovery/imagePostImport.js';
 import {refreshExistingImagePost} from '../socialDiscovery/imagePostRefresh.js';
 import {reanalyzeStoredImagePost} from '../socialDiscovery/imagePostReanalysis.js';
+import {createImagePostAnalysisQueue} from '../socialDiscovery/imagePostAnalysisQueue.js';
+import {createImagePostMediaPersistence} from '../socialDiscovery/imagePostMediaPersistence.js';
 import { runPaidApifyTikTokDataset, type PaidApifyTikTokPermit } from './apifyPaidTikTokTransport.js';
 import {frozenWeeklyAccountFiveVideoActorInput} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
 import {readVerifiedWeeklyOriginalDatasetReplay,type VerifiedWeeklyOriginalDatasetReplay} from '../socialDiscovery/weeklyAccountCollectionDatasetContinuation.js';
@@ -104,9 +106,15 @@ let activeDownloadJobs = 0;
 const MAX_DOWNLOAD_JOBS = Number(process.env.VIDEO_DOWNLOAD_CONCURRENCY || 3);
 const pendingVisibleBackfillJobs = new Set<string>();
 const pocketBaseBackfillFailures = new Map<string, number>();
-const { fetchImageForAnalysis, analyzeImagePostBestEffort, queueImagePostAnalysis } = createImagePostEvidenceAnalyzer({
+const { fetchImageForAnalysis, analyzeImagePostBestEffort } = createImagePostEvidenceAnalyzer({
   store, collection: COL, mediaDir: MEDIA_DIR, normalizeThumbnailUrl,
 });
+const { persistThumbnail: persistImagePostThumbnail, persistImages: persistImagePostImages } = createImagePostMediaPersistence({
+  store, collection: COL, cacheThumbnail: cacheThumbnailLocally,
+  fetchImage: fetchImageForAnalysis, uploadObject: uploadCrawlerCosObject,
+});
+export const imagePostAnalysisQueue = createImagePostAnalysisQueue({ store, collection: COL, analyze: analyzeImagePostBestEffort });
+const queueImagePostAnalysis = imagePostAnalysisQueue.queue;
 
 const ytDlpPythonPath = createVideoDownloaderPythonResolver();
 
@@ -1226,6 +1234,10 @@ export async function crawlImagePostsForTenant(input: {
     if (existingRecord) {
       skipped += 1;
       skippedExisting += 1;
+      if (['queued', 'processing', 'unknown'].includes(String(videoAnalysisOf(existingRecord).imageAnalysisQueueState || ''))) {
+        existingRecords.push(existingRecord);
+        continue;
+      }
       const refreshed = await refreshExistingImagePost({
         store, collection: COL, tenantId: input.tenantId, existingRecord, item, keyword,
         accountMode, accountUrl, deferImageAnalysis: Boolean(input.deferImageAnalysis),
@@ -2508,6 +2520,10 @@ videosRouter.post('/:id/reanalyze-image', async (req, res) => {
   const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
   if (!record || recordContentFormat(record) !== 'image') { res.status(404).json({ error: 'Image post not found' }); return; }
   if (record.tenantId !== tenantId && !await requireAdminUser(req)) { res.status(404).json({ error: 'Image post not found' }); return; }
+  if (['queued', 'processing', 'unknown'].includes(String(videoAnalysisOf(record).imageAnalysisQueueState || ''))) {
+    res.status(409).json({ ok: false, error: 'image_post_queue_requires_reconciliation' });
+    return;
+  }
   try {
     const output = await reanalyzeStoredImagePost({
       store, collection: COL, tenantId: String(record.tenantId), record, analyze: analyzeImagePostBestEffort,
@@ -4305,37 +4321,6 @@ async function persistThumbnailIfExpiring(recordId: string, url: string): Promis
   if (!/^https?:\/\//i.test(url)) return;
   const local = await cacheThumbnailLocally(recordId, url);
   if (local) await store.update(COL, recordId, { thumbnailUrl: local });
-}
-
-// 图文 CDN 地址普遍会过期或限制浏览器热链。图文入库时始终把首图落到本地，
-// 不能只依赖少数已知的签名参数（不同 Apify actor 返回的 URL 结构并不一致）。
-async function persistImagePostThumbnail(recordId: string, url: string): Promise<string> {
-  if (!/^https?:\/\//i.test(url)) return url;
-  const local = await cacheThumbnailLocally(recordId, url);
-  if (!local) return url;
-  await store.update(COL, recordId, { thumbnailUrl: local });
-  return local;
-}
-
-async function persistImagePostImages(recordId: string, urls: string[]): Promise<string[]> {
-  const unique = [...new Set(urls.filter(Boolean))].slice(0, 10);
-  const stored: string[] = [];
-  const objectKeys: string[] = [];
-  for (let index = 0; index < unique.length; index += 1) {
-    const url = unique[index]!;
-    if (!/^https?:\/\//i.test(url)) { stored.push(url); continue; }
-    const image = await fetchImageForAnalysis(url);
-    if (!image) continue;
-    const key = await uploadCrawlerCosObject(recordId, `image-${index + 1}`, Buffer.from(image.base64, 'base64'), image.mimeType);
-    objectKeys.push(key);
-    stored.push(`/api/overseas/videos/${recordId}/image/${objectKeys.length - 1}`);
-  }
-  const record = await store.getById<Record<string, unknown>>(COL, recordId);
-  const analysis = parseJsonRecord<Record<string, unknown>>(record?.aiAnalysis, {});
-  if (!await store.update(COL, recordId, {
-    aiAnalysis: JSON.stringify({ ...analysis, imageStorage: 'cos', imageObjectKeys: objectKeys }),
-  })) throw Error('image_post_source_persistence_failed');
-  return stored;
 }
 
 async function recrawlImagePostThumbnail(record: Record<string, unknown>): Promise<string> {

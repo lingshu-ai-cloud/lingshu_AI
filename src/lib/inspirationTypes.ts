@@ -127,7 +127,7 @@ export interface VideoAnalysisPayload {
     layerBlueprints?: import('../../shared/contracts/socialImageCreation').SocialImageReferenceLayerBlueprint[];
     uncertainties: string[];
   };
-  imageAnalysisStatus?: 'analyzed' | 'failed';
+  imageAnalysisStatus?: 'pending' | 'queued' | 'processing' | 'unknown' | 'analyzed' | 'failed';
   imageAnalysisError?: string;
   publicMetrics?: { likes?: string; comments?: string; shares?: string; plays?: string; followers?: number; observedAt?: string };
   publicBaseline?: { sampleSize: number; medianWeightedEngagement: number | null; currentWeightedEngagement: number | null; relativeMultiple: number | null; status: 'usable' | 'insufficient_sample'; method: string };

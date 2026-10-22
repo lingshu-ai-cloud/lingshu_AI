@@ -4,9 +4,7 @@ import { analyzeImagePostEvidenceWithGemini } from '../agents/gemini.js';
 import { analyzeImagePostEvidenceWithQwen } from '../agents/qwen.js';
 import type { ImagePostEvidenceAnalysis } from '../agents/qwenContracts.js';
 import type { Platform, VideoAiAnalysis } from '../types/index.js';
-import type { VideoStatus } from '../types/index.js';
 import type { DataStore } from '../storage/datastore.js';
-import { serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 import { tagsFromKeyword } from '../routes/videoCrawlerNormalization.js';
 
 export interface CrawledImagePost {
@@ -31,7 +29,8 @@ export interface CrawledImagePost {
 }
 
 type ImageBytes = { base64: string; mimeType: string };
-type EvidenceResult = { status: 'analyzed' | 'failed'; analysis?: ImagePostEvidenceAnalysis; error?: string; provider?: 'qwen' | 'gemini' };
+type EvidenceResult = { status: 'analyzed' | 'failed'; analysis?: ImagePostEvidenceAnalysis; error?: string;
+  provider?: 'qwen' | 'gemini'; providerAttempted?: boolean };
 
 /** Crawler-owned public image retrieval and existing primary/fallback selection. */
 export function createImagePostEvidenceAnalyzer(input: {
@@ -96,34 +95,12 @@ export function createImagePostEvidenceAnalyzer(input: {
         console.warn('[videos] Gemini image post analysis failed:', geminiError instanceof Error ? geminiError.message : geminiError);
         const qwenMessage = qwenError instanceof Error ? qwenError.message : String(qwenError);
         const geminiMessage = geminiError instanceof Error ? geminiError.message : String(geminiError);
-        return { status: 'failed', error: `Qwen: ${qwenMessage}; Gemini: ${geminiMessage}`.slice(0, 900) };
+        return { status: 'failed', error: `Qwen: ${qwenMessage}; Gemini: ${geminiMessage}`.slice(0, 900), providerAttempted: true };
       }
     }
   }
 
-  function queueImagePostAnalysis(recordId: string, item: CrawledImagePost, keyword: string): void {
-    void analyzeImagePostBestEffort(item, keyword).then(async result => {
-      const latest = await input.store.getById<Record<string, unknown>>(input.collection, recordId);
-      if (!latest) return;
-      const analysis = videoAnalysisOf(latest);
-      await input.store.update(input.collection, recordId, {
-        status: (result.status === 'analyzed' ? 'analyzed' : 'failed') as VideoStatus,
-        aiAnalysis: serializeImagePostAnalysis({
-          ...analysis,
-          imageEvidence: result.analysis || analysis.imageEvidence,
-          imageAnalysisStatus: result.status,
-          imageAnalysisError: result.status === 'analyzed' ? undefined : result.error,
-          analysisSource: result.status === 'analyzed' ? `${result.provider || 'qwen'}-image-evidence-v2` : (analysis.analysisSource || 'image-metadata'),
-          analysisQuality: result.status === 'analyzed' ? 'image' : (analysis.analysisQuality || 'metadata'),
-          imageAnalysisCompletedAt: new Date().toISOString(),
-        }),
-      });
-    }).catch(error => {
-      console.warn('[videos] deferred image post analysis failed:', error instanceof Error ? error.message : error);
-    });
-  }
-
-  return { fetchImageForAnalysis, analyzeImagePostBestEffort, queueImagePostAnalysis };
+  return { fetchImageForAnalysis, analyzeImagePostBestEffort };
 }
 
 function mimeFromImagePath(filePath: string): string {

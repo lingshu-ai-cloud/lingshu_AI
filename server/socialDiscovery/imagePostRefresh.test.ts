@@ -38,7 +38,7 @@ function fixture(options: { defer?: boolean; analyzedBefore?: boolean; failStage
     async analyze() { events.push('analyze'); assert.equal(row.status, 'pending');
       assert.equal(JSON.parse(String(row.aiAnalysis)).caption, 'New caption');
       return { status: 'analyzed' as const, analysis: evidence, provider: 'qwen' as const }; },
-    queue() { events.push('queue'); assert.equal(row.status, 'pending'); },
+    async queue() { events.push('queue'); assert.equal(row.status, 'pending'); },
   };
   return { input, events, get row() { return row; } };
 }

@@ -25,7 +25,7 @@ export async function importNewImagePost(input: {
   persistThumbnail(recordId: string, url: string): Promise<string>;
   persistImages(recordId: string, urls: string[]): Promise<string[]>;
   analyze(item: CrawledImagePost, keyword: string): Promise<ImageAnalysisResult>;
-  queue(recordId: string, item: CrawledImagePost, keyword: string): void;
+  queue(recordId: string, item: CrawledImagePost, keyword: string): Promise<void>;
 }): Promise<Record<string, unknown> | null> {
   const { item } = input;
   const initialAnalysis = serializeImagePostAnalysis({
@@ -65,7 +65,7 @@ export async function importNewImagePost(input: {
     throw Error('image_post_source_persistence_failed');
   }
   if (input.deferImageAnalysis) {
-    input.queue(recordId, item, input.keyword);
+    await input.queue(recordId, item, input.keyword);
     return await input.store.getById<Record<string, unknown>>(input.collection, recordId)
       || { ...record, thumbnailUrl, aiAnalysis: stagedAnalysis };
   }

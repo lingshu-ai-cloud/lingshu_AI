@@ -19,7 +19,7 @@ function tagsOf(value: unknown): string[] {
   } catch { return []; }
 }
 
-function sourceHash(record: Record<string, unknown>): string {
+export function imagePostSourceHash(record: Record<string, unknown>): string {
   const analysis = videoAnalysisOf(record);
   return createHash('sha256').update(JSON.stringify({
     tenantId: record.tenantId, id: record.id, sourceUrl: record.sourceUrl,
@@ -41,7 +41,10 @@ export async function reanalyzeStoredImagePost(input: {
   if (!recordId || record.tenantId !== input.tenantId) throw Error('image_post_tenant_mismatch');
   const current = videoAnalysisOf(record);
   if (current.contentFormat !== 'image' && record.contentFormat !== 'image') throw Error('image_post_format_mismatch');
-  const initialSourceHash = sourceHash(record);
+  if (['queued', 'processing', 'unknown'].includes(String(current.imageAnalysisQueueState || ''))) {
+    throw Error('image_post_queue_requires_reconciliation');
+  }
+  const initialSourceHash = imagePostSourceHash(record);
   const item: CrawledImagePost = {
     platform: String(record.platform || 'instagram') as CrawledImagePost['platform'],
     title: String(record.title || ''), sourceUrl: String(record.sourceUrl || ''),
@@ -64,7 +67,7 @@ export async function reanalyzeStoredImagePost(input: {
   if (!latest || latest.tenantId !== input.tenantId) throw Error('image_post_record_disappeared_after_analysis');
   const latestAnalysis = videoAnalysisOf(latest);
   if (latestAnalysis.imageAnalysisAttemptId !== attemptId) throw Error('image_post_analysis_superseded');
-  if (sourceHash(latest) !== initialSourceHash) throw Error('image_post_analysis_source_changed');
+  if (imagePostSourceHash(latest) !== initialSourceHash) throw Error('image_post_analysis_source_changed');
   const finalAnalysis = serializeImagePostAnalysis({ ...latestAnalysis,
     imageEvidence: output.analysis || latestAnalysis.imageEvidence,
     imageAnalysisStatus: output.status,

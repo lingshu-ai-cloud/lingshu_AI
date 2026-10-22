@@ -39,17 +39,12 @@ test('existing Gemini fallback and no-image failure remain unchanged', async () 
   assert.equal(fallbackCalls, 1);
 });
 
-test('deferred analysis stores provider evidence on the existing record', async () => {
-  let resolveUpdate!: (value: Record<string, unknown>) => void;
-  const updated = new Promise<Record<string, unknown>>(resolve => { resolveUpdate = resolve; });
-  const localStore = { async getById() { return { id: 'record-1', aiAnalysis: '{}' }; },
-    async update(_collection: string, _id: string, patch: Record<string, unknown>) { resolveUpdate(patch); return true; } } as unknown as DataStore;
-  const analyzer = createImagePostEvidenceAnalyzer({ store: localStore, collection: 'trend_videos', mediaDir: '/unused',
-    normalizeThumbnailUrl: url => url, fetcher, analyzeQwen: async () => evidence });
-  analyzer.queueImagePostAnalysis('record-1', item, '');
-  const patch = await updated;
-  assert.equal(patch.status, 'analyzed');
-  const analysis = JSON.parse(String(patch.aiAnalysis));
-  assert.equal(analysis.analysisSource, 'qwen-image-evidence-v2');
-  assert.equal(analysis.imageEvidence.observedFacts[0].subjects[0], 'bottle');
+test('after both providers fail, the caller can retain an unknown-cost state', async () => {
+  const analyzer = createImagePostEvidenceAnalyzer({ store, collection: 'trend_videos', mediaDir: '/unused',
+    normalizeThumbnailUrl: url => url, fetcher,
+    analyzeQwen: async () => { throw Error('qwen transport'); },
+    analyzeGemini: async () => { throw Error('gemini transport'); } });
+  const result = await analyzer.analyzeImagePostBestEffort(item, 'bottle');
+  assert.equal(result.status, 'failed');
+  assert.equal(result.providerAttempted, true);
 });

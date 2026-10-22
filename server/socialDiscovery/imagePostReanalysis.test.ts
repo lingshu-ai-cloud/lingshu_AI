@@ -72,3 +72,10 @@ test('cross-tenant input is rejected before any write or provider call', async (
   await assert.rejects(reanalyzeStoredImagePost({ ...f.input, tenantId: 'tenant-2' }), /tenant_mismatch/);
   assert.deepEqual(f.events, []);
 });
+
+test('active or unknown deferred work blocks a second manual supplier call', async () => {
+  const f = fixture();
+  f.input.record.aiAnalysis = JSON.stringify({ ...JSON.parse(String(f.input.record.aiAnalysis)), imageAnalysisQueueState: 'unknown' });
+  await assert.rejects(reanalyzeStoredImagePost(f.input), /requires_reconciliation/);
+  assert.deepEqual(f.events, []);
+});

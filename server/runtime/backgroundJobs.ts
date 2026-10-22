@@ -13,7 +13,8 @@ import { initStarter198OrchestratorWorker } from '../starter198/orchestratorWork
 import { initCrawlWorkerCloudFallback } from '../routes/crawlWorker.js';
 import { initScheduler } from '../routes/scheduler.js';
 import { initTenantPlatformTokenMonitor } from '../routes/tenantPlatformTokenMonitor.js';
-import { initCrawlerOpsWorker, initPocketBaseVideoBackfill } from '../routes/videos.js';
+import { imagePostAnalysisQueue, initCrawlerOpsWorker, initPocketBaseVideoBackfill } from '../routes/videos.js';
+import { startImagePostAnalysisWorker } from '../socialDiscovery/imagePostAnalysisQueue.js';
 import { initWhatsAppCustomerMaintenance } from '../whatsapp/historyImport.js';
 import { startAdAutomationWorker } from '../platformAds/automation.js';
 import { initWeeklyPublicationPackageWorker } from '../publishing/weeklyPublicationWorker.js';
@@ -38,6 +39,7 @@ import {createDefaultWeeklyPreproductionPorts} from './defaultWeeklyPreproductio
 export async function startBackgroundJobs(role: ProcessRole = 'all',options:{weeklyPreproductionPorts?:WeeklyTrustedPreproductionPorts}={}): Promise<() => void> {
   if (role === 'web') throw new Error('background_jobs_forbidden_for_web_role');
   let initialPreparationWorkerStarted = false;
+  let stopImagePostAnalysisWorker: (() => void) | null = null;
   markBackgroundJobsStarting();
   console.log('[runtime] starting background jobs');
   try {
@@ -48,6 +50,7 @@ export async function startBackgroundJobs(role: ProcessRole = 'all',options:{wee
     initSocialSceneReworkCompletionRecovery();
     initScheduledPublisher();
     initCrawlerOpsWorker();
+    stopImagePostAnalysisWorker = startImagePostAnalysisWorker(imagePostAnalysisQueue);
     initPocketBaseVideoBackfill();
     initCrawlWorkerCloudFallback();
     initTenantPlatformTokenMonitor();
@@ -81,6 +84,7 @@ export async function startBackgroundJobs(role: ProcessRole = 'all',options:{wee
     await startWorkerHeartbeat(role);
     console.log('[runtime] background jobs started');
     return () => {
+      stopImagePostAnalysisWorker?.();
       weeklyDiscoveryScopeMigrationRecoveryRuntime.stop();
       localWeeklyExecutionRuntime.stop();
       contentOrderOutboxRuntime.stop();
@@ -88,6 +92,7 @@ export async function startBackgroundJobs(role: ProcessRole = 'all',options:{wee
       if (initialPreparationWorkerStarted) stopInitialPreparationWorker();
     };
   } catch (error) {
+    stopImagePostAnalysisWorker?.();
     weeklyDiscoveryScopeMigrationRecoveryRuntime.stop();
     localWeeklyExecutionRuntime.stop();
     contentOrderOutboxRuntime.stop();
