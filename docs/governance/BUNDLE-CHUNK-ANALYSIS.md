@@ -9,3 +9,7 @@
 | `DigitalEmployeePage` | `DigitalEmployeePage.tsx` 约 263 kB、`SmartBusinessDashboard.tsx` 约 101 kB，另有日历、周包、交付和 Ant Design 日期组件 | 应按概览、生产、周任务等页面使用路径拆分静态子树，并核对共享命名导出是否阻止拆包。 |
 
 试验过 Rolldown 的 Motion 与 Ant Design 依赖分组：`index` 降到约 225 kB，但产生三十多个细碎 UI chunk，`DigitalEmployeePage` 仍约 797 kB，`AiCreateStudio` 仍约 881 kB。试验配置已撤回，未以提高告警阈值或碎片化分组掩盖问题。后续以页面/步骤级动态加载为主，逐项对比产物、加载体验与回归测试；当前不得宣称大 chunk 告警已解决。
+
+## 页面边界拆包进展（2026-10-22）
+
+`DigitalEmployeePage` 将经营看板的默认页及命名视图、周复盘改为按需加载，并在使用位置提供局部 Suspense 提示。常规构建后主页面从约 920 kB 降至约 487 kB；新看板 chunk 约 389 kB、周复盘约 36 kB；`index` 约 806 kB、`AiCreateStudio` 约 881 kB，故仍有两个大 chunk 告警。未采用提高阈值或手动 vendor 分组。

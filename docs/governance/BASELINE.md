@@ -330,3 +330,8 @@
 ## 构建体积归因（2026-10-22）
 
 - 对三个大 chunk 做了 source map 归因并记录在 [`BUNDLE-CHUNK-ANALYSIS.md`](./BUNDLE-CHUNK-ANALYSIS.md)。依赖分组试验虽缩小首屏 `index`，却造成大量小 chunk 且未解决两个业务页面告警，因此已撤回；目前构建行为不变，后续应按真实页面/步骤边界拆分。
+
+## 数字员工页按需加载边界（2026-10-22）
+
+- 将经营看板及其命名视图、周复盘改为按需加载，并在页面使用处加局部加载提示；声明集中在 `digitalEmployeeDeferredViews.tsx`，新增边界合同测试。`DigitalEmployeePage` 的架构行数预算由 5447 收紧到 5446 行，剩余超限文件仍为 22 项。
+- 聚焦测试 7/7、TypeScript、架构扫描/ratchet、生产构建和 191 项迁移仓库只读检查通过。数字员工主 chunk 由约 920 kB 降至约 487 kB；`index` 和 `AiCreateStudio` 仍超 500 kB。三项旧 UI 宽范围合同在变更前 HEAD 的源文件中也缺少其预期标记，本批未修改这些无关合同断言；未执行真实生产任务、迁移或部署。
