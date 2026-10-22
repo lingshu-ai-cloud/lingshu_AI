@@ -22,7 +22,7 @@
 - `server/routes/`：HTTP 鉴权、输入规范化、租户上下文和响应编排；业务算法逐步下沉到领域模块。
 - `server/digitalEmployees/taskEvidenceProjection.ts`：数字员工任务的执行元数据、依赖与业务引用范围、工作流归属、项目完成/渲染证据的纯规则；路由仅在租户范围内读写记录并调用这些规则，不能用历史草稿或可变引用覆盖托管项目的索引血缘。
 - `server/routes/videoCrawlerOpsTaskState.ts`：视频来源爬虫任务的纯状态规则，包括中断恢复、显式重试、耗尽终止和待处理优先级；`videos.ts` 保留原导出并负责持久化、租户可见性与执行编排。
-- `server/routes/videoCrawlerNormalization.ts`：视频来源及供应商元数据归一化、Apify 候选窗口等纯规则；`videoCrawlerSourceUrls.ts` 负责规范来源 URL 与平台账号/帖子链接，避免规范化模块反向依赖来源 URL 模块；`videos.ts` 保留既有兼容导出。LinkedIn 企业帖子的离线识别/解析不授予采集许可，当前视频和图文入口在付费 Actor 前明确返回 `linkedin_company_paid_collection_permit_required`，不可将无结果误报为已采集。
+- `server/routes/videoCrawlerNormalization.ts`：视频来源及供应商元数据归一化、Apify 候选窗口等纯规则；`videoCrawlerSourceUrls.ts` 负责规范来源 URL 与平台账号/帖子链接，`apifyTikTokInput.ts` 负责纯 Actor 输入组装；`videos.ts` 保留既有兼容导出。LinkedIn 公司帖的冻结输入、许可范围校验与受控传输在 `linkedinCompanyPostPaidCollection.ts`；内部视频/图文入口缺少受信任许可时仍明确报 `linkedin_company_paid_collection_permit_required`，手工 HTTP 不开放。当前没有生产许可签发器，不能将模拟许可或离线解析视为付费采集已开放；见 [`2026-10-23-linkedin-company-paid-collection.md`](./adr/2026-10-23-linkedin-company-paid-collection.md)。
 - `server/routes/studioCoverSvg.ts`：封面图的尺寸、换行、图层和 SVG 文本转义纯渲染；`studio.ts` 保留鉴权、租户限定的帧读取、文件保存和对象存储，不把客户端传入的路径直接交给渲染模块读取。
 - `server/routes/studioTtsStyle.ts`：配音风格输入归一化、MiniMax 确定性停顿与发音词典、Qwen/MiniMax/macOS 音色及语言映射纯规则；`studio.ts` 保留语音文件、供应商请求、付费许可与回执编排，不因音色选择绕开现有付费门禁。
 - `server/routes/studioLocalTtsAdapters.ts`：Piper、XTTS 与本机 `say` 的可选本地语音执行；从路由显式注入租户目录、样本查找、签名资产 URL 和转码接口。无可用引擎时不触碰租户文件；付费 Qwen/MiniMax/HeyGen 路径仍留在原有许可和回执边界内。

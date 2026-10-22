@@ -18,6 +18,9 @@ export interface PaidApifyTikTokPermit {
   beforeDatasetRead(input: { runId: string; datasetId: string; maxItems: number }): Promise<void>;
 }
 
+/** The transport is actor-agnostic; existing TikTok callers retain their name. */
+export type PaidApifyDatasetPermit = PaidApifyTikTokPermit;
+
 type RunRecord = Record<string, unknown>;
 
 function object(value: unknown): RunRecord {
@@ -170,3 +173,5 @@ export async function runPaidApifyTikTokDataset(input: {
     await new Promise(resolve => setTimeout(resolve, pollInterval));
   }
 }
+
+export const runPaidApifyDataset = runPaidApifyTikTokDataset;

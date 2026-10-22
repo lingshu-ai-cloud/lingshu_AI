@@ -8,7 +8,7 @@
   "oversizedFileBudgets": {
     "server/routes/digitalEmployees.ts": 5783,
     "server/routes/studio.ts": 10855,
-    "server/routes/videos.ts": 10189,
+    "server/routes/videos.ts": 10186,
     "server/starter198/socialContentProductionExecution.ts": 1733,
     "src/components/AiCreateStudio.tsx": 12896,
     "src/components/DigitalEmployeePage.tsx": 4943,

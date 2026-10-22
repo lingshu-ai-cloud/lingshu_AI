@@ -1,5 +1,5 @@
 import {createReferenceReviewReadHandlers} from '../lib/referenceReviewReadHandlers.js';
-import { accountLabelFromUrl, accountListUrlCandidates, canonicalSourceUrl, looksLikeAccountUrl, looksLikeVideoUrl, normalizeAccountListUrl, stripTrackingParams, tiktokUsername, tiktokVideoId, youtubeThumbnailFromUrl } from './videoCrawlerSourceUrls.js';
+import { accountLabelFromUrl, accountListUrlCandidates, canonicalSourceUrl, looksLikeAccountUrl, looksLikeVideoUrl, normalizeAccountListUrl, stripTrackingParams, tiktokVideoId, youtubeThumbnailFromUrl } from './videoCrawlerSourceUrls.js';
 export { accountLabelFromUrl, looksLikeAccountUrl } from './videoCrawlerSourceUrls.js';
 import { filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, resetCrawlerOpsTaskForExplicitRetryState, selectPendingCrawlerOpsTasks, terminalizeExhaustedCrawlerOpsTask, type CrawlerOpsTask } from './videoCrawlerOpsTaskState.js';
 export { filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, resetCrawlerOpsTaskForExplicitRetryState, selectPendingCrawlerOpsTasks, terminalizeExhaustedCrawlerOpsTask } from './videoCrawlerOpsTaskState.js';
@@ -11,6 +11,9 @@ import {reanalyzeStoredImagePost} from '../socialDiscovery/imagePostReanalysis.j
 import {createImagePostAnalysisQueue} from '../socialDiscovery/imagePostAnalysisQueue.js';
 import {createImagePostMediaPersistence} from '../socialDiscovery/imagePostMediaPersistence.js';
 import { runPaidApifyTikTokDataset, type PaidApifyTikTokPermit } from './apifyPaidTikTokTransport.js';
+import { buildApifyTikTokInput } from './apifyTikTokInput.js';
+export { buildApifyTikTokInput } from './apifyTikTokInput.js';
+import { assertConfiguredLinkedInCompanyPaidCollection, runConfiguredLinkedInCompanyPaidCollection, type LinkedInCompanyPaidPermit } from './linkedinCompanyPostPaidCollection.js';
 import {frozenWeeklyAccountFiveVideoActorInput} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
 import {readVerifiedWeeklyOriginalDatasetReplay,type VerifiedWeeklyOriginalDatasetReplay} from '../socialDiscovery/weeklyAccountCollectionDatasetContinuation.js';
 import type {DataStore} from '../storage/datastore.js';
@@ -1024,6 +1027,8 @@ export interface CrawlVideosInput {
   newCandidatesOnly?: boolean;
   /** Mandatory authority for scoped weekly TikTok account collection; never used by manual crawls. */
   paidPermit?: PaidApifyTikTokPermit;
+  /** Trusted discovery worker only; the HTTP crawler never accepts a permit from request JSON. */
+  linkedInPaidPermit?: LinkedInCompanyPaidPermit;
   /** Opaque, in-process proof issued only after the original journal and wallet agree. */
   originalDatasetReplay?: VerifiedWeeklyOriginalDatasetReplay;
   /** Trusted worker store; never accepted from an HTTP request. */
@@ -1173,8 +1178,14 @@ export async function crawlImagePostsForTenant(input: {
   dateFrom?: string;
   dateTo?: string;
   deferImageAnalysis?: boolean;
+  /** Trusted worker-issued grant. Ordinary HTTP image crawl never sets this. */
+  linkedInPaidCollection?: { runId: string; permit: LinkedInCompanyPaidPermit };
 }): Promise<CrawlVideosResult> {
-  if (input.platform === 'linkedin') throw Error('linkedin_company_paid_collection_permit_required');
+  if (input.platform === 'linkedin' && (!input.linkedInPaidCollection || input.mode !== 'account'
+    || !looksLikeAccountUrl(input.accountUrl ?? '', 'linkedin'))) {
+    throw Error('linkedin_company_paid_collection_permit_required');
+  }
+  if (input.linkedInPaidCollection && input.platform !== 'linkedin') throw Error('linkedin_company_paid_collection_scope_mismatch');
   const target = Math.min(30, Math.max(1, Number(input.limit) || 5));
   const accountMode = input.mode === 'account' && looksLikeAccountUrl(input.accountUrl ?? '', input.platform);
   const accountUrl = accountMode ? String(input.accountUrl).trim() : '';
@@ -1189,7 +1200,12 @@ export async function crawlImagePostsForTenant(input: {
 
   try {
     const safeLimit = Math.max(target * 4, target, 12);
-    if (input.platform === 'instagram') {
+    if (input.platform === 'linkedin') {
+      const approved = input.linkedInPaidCollection!;
+      const result = await runConfiguredLinkedInCompanyPaidCollection({ tenantId: input.tenantId,
+        runId: approved.runId, companyUrl: accountUrl, limit: target, dateFrom, dateTo }, approved.permit);
+      items = result.images;
+    } else if (input.platform === 'instagram') {
       items = await crawlInstagramImagePostsApify(keyword, safeLimit, accountUrl);
     } else if (input.platform === 'tiktok') {
       items = await crawlTikTokImagePostsApify(keyword, safeLimit, accountUrl, dateFrom, dateTo);
@@ -1203,6 +1219,7 @@ export async function crawlImagePostsForTenant(input: {
       .filter(item => accountMode || imagePostRelevant(item, keyword));
     if (hasDateRange(dateFrom, dateTo)) items = items.filter(item => isWithinDateRange(item.uploadedAt, dateFrom, dateTo));
   } catch (e) {
+    if (input.platform === 'linkedin') throw e;
     crawlerMessage = e instanceof Error
       ? `${input.platform} 图文采集未找到可入库内容：${e.message}`
       : `${input.platform} 图文采集未找到可入库内容`;
@@ -1317,10 +1334,18 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
   if (input.paidPermit && (!input.discoveryContext || !accountMode || platform !== 'tiktok')) {
     throw Error('apify_paid_permit_scope_mismatch');
   }
-  if (platform === 'linkedin') throw Error('linkedin_company_paid_collection_permit_required');
+  if (platform === 'linkedin' && (!input.linkedInPaidPermit || !accountMode
+    || !input.discoveryContext || input.discoveryContext.mode !== 'account'
+    || input.discoveryContext.queryRef !== accountUrl)) {
+    throw Error('linkedin_company_paid_collection_permit_required');
+  }
+  if (input.linkedInPaidPermit && platform !== 'linkedin') throw Error('linkedin_company_paid_collection_scope_mismatch');
+  if (platform === 'linkedin') await assertConfiguredLinkedInCompanyPaidCollection({ tenantId,
+    runId: input.discoveryContext!.runId, companyUrl: accountUrl,
+    limit: Math.min(30, Math.max(1, Number(limit) || 5)), dateFrom, dateTo }, input.linkedInPaidPermit);
 
-  if(!replay)await purgeLegacyFakeVideos();
-  const testTenant = replay?false:await isTestTenantId(tenantId);
+  if(!replay && platform !== 'linkedin')await purgeLegacyFakeVideos();
+  const testTenant = replay || platform === 'linkedin' ? false : await isTestTenantId(tenantId);
   const target = Math.min(30, Math.max(1, Number(limit) || 5));
   let crawlerSource = accountMode ? `${platform}-account` : `${platform}-search`;
   let crawlerMessage = '';
@@ -1339,6 +1364,12 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
       items = await crawlTikTokWithPaidPermit(accountUrl, target, dateFrom, dateTo, input.paidPermit);
       crawlerSource = 'apify-tiktok-account';
       if (hasDateRange(dateFrom, dateTo)) items = filterDateRangeItems(items, dateFrom, dateTo);
+    } else if (platform === 'linkedin') {
+      const result = await runConfiguredLinkedInCompanyPaidCollection({ tenantId,
+        runId: input.discoveryContext!.runId, companyUrl: accountUrl, limit: target,
+        dateFrom, dateTo }, input.linkedInPaidPermit);
+      items = result.videos;
+      crawlerSource = 'apify-linkedin-company-posts';
     } else if (accountMode) {
       items = await crawlAccountHomepage(platform, accountUrl, Math.max(target, Math.min(safeLimit, 30)), dateFrom, dateTo, input.cloudFallback === true, input.newCandidatesOnly === true);
       if (hasDateRange(dateFrom, dateTo)) items = filterDateRangeItems(items, dateFrom, dateTo);
@@ -5953,40 +5984,6 @@ async function crawlTikTokWithPaidPermit(accountUrl: string, limit: number, date
   });
   return rows.map(item => apifyTikTokItemToCrawledVideo(item, accountUrl))
     .filter((item): item is CrawledVideo => Boolean(item)).slice(0, limit);
-}
-
-export function buildApifyTikTokInput(keyword: string, limit: number, dateFrom = '', dateTo = ''): Record<string, unknown> {
-  const raw = keyword.trim();
-  const account = tiktokUsername(raw);
-  const videoId = tiktokVideoId(raw);
-  const cleanKeyword = raw.replace(/^#/, '').trim();
-  const input: Record<string, unknown> = {
-    resultsPerPage: Math.min(100, Math.max(1, limit)),
-    shouldDownloadVideos: false,
-    shouldDownloadCovers: false,
-    shouldDownloadSubtitles: false,
-    shouldDownloadSlideshowImages: false,
-    shouldDownloadAvatars: false,
-    shouldDownloadMusicCovers: false,
-    shouldDownloadMusic: false,
-  };
-  if (videoId) {
-    input.postURLs = [raw];
-  } else if (account) {
-    input.profiles = [account];
-  } else if (/^#[\p{L}\p{N}_-]+$/u.test(raw) || (/^[\p{L}\p{N}_-]+$/u.test(raw) && !/^(?:https?:|@)/i.test(raw))) {
-    input.hashtags = [cleanKeyword];
-  } else {
-    input.searchQueries = [raw];
-    input.searchSection = '/video';
-  }
-  if (hasDateRange(dateFrom, dateTo)) {
-    input.oldestPostDateUnified = dateFrom || undefined;
-    input.newestPostDate = dateTo || undefined;
-    const windowDays = Math.abs(Date.parse(`${dateTo}T00:00:00Z`) - Date.parse(`${dateFrom}T00:00:00Z`)) / 86_400_000;
-    if (Number.isFinite(windowDays) && windowDays <= 7) input.videoSearchDateFilter = 'PAST_WEEK';
-  }
-  return input;
 }
 
 function apifyTikTokItemToCrawledVideo(item: Record<string, unknown>, keyword: string): CrawledVideo | null {
