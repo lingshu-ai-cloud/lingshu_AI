@@ -4,6 +4,7 @@ export { accountLabelFromUrl, looksLikeAccountUrl } from './videoCrawlerSourceUr
 import { filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, resetCrawlerOpsTaskForExplicitRetryState, selectPendingCrawlerOpsTasks, terminalizeExhaustedCrawlerOpsTask, type CrawlerOpsTask } from './videoCrawlerOpsTaskState.js';
 export { filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, resetCrawlerOpsTaskForExplicitRetryState, selectPendingCrawlerOpsTasks, terminalizeExhaustedCrawlerOpsTask } from './videoCrawlerOpsTaskState.js';
 import {classifyDiscoverySourceFailure} from '../socialDiscovery/sourceFailure.js';
+import {createImagePostEvidenceAnalyzer, type CrawledImagePost} from '../socialDiscovery/imagePostEvidenceAnalysis.js';
 import { runPaidApifyTikTokDataset, type PaidApifyTikTokPermit } from './apifyPaidTikTokTransport.js';
 import {frozenWeeklyAccountFiveVideoActorInput} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
 import {readVerifiedWeeklyOriginalDatasetReplay,type VerifiedWeeklyOriginalDatasetReplay} from '../socialDiscovery/weeklyAccountCollectionDatasetContinuation.js';
@@ -42,8 +43,8 @@ import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { attachFile, fetchFile } from '../storage/files.js';
 import { objectStorageEnabled, objectStorageDownload, objectStorageGetObject, objectStorageHead, objectStorageUpload } from '../storage/objectStorage.js';
-import { analyzeImagePostEvidenceWithGemini, analyzeVideo, analyzeYouTubeUrl } from '../agents/gemini.js';
-import { analyzeImagePostEvidenceWithQwen, analyzeVideoFramesWithQwen, analyzeVideoTimelineDetailsWithQwen, inspectVideoOpeningFrameWithQwen, repairVideoShotClassificationsWithQwen, transcribeAudioWithQwen, type ImagePostEvidenceAnalysis, type QwenTimelinePlan } from '../agents/qwen.js';
+import { analyzeVideo, analyzeYouTubeUrl } from '../agents/gemini.js';
+import { analyzeVideoFramesWithQwen, analyzeVideoTimelineDetailsWithQwen, inspectVideoOpeningFrameWithQwen, repairVideoShotClassificationsWithQwen, transcribeAudioWithQwen, type QwenTimelinePlan } from '../agents/qwen.js';
 import { inspectOpeningHookMotionWithGemini } from '../agents/geminiHookMotion.js';
 import type { Platform, VideoAiAnalysis, VideoStatus } from '../types/index.js';
 import type { SocialDiscoveryMode } from '../../shared/contracts/socialContentWorkflow.js';
@@ -100,6 +101,9 @@ let activeDownloadJobs = 0;
 const MAX_DOWNLOAD_JOBS = Number(process.env.VIDEO_DOWNLOAD_CONCURRENCY || 3);
 const pendingVisibleBackfillJobs = new Set<string>();
 const pocketBaseBackfillFailures = new Map<string, number>();
+const { fetchImageForAnalysis, analyzeImagePostBestEffort, queueImagePostAnalysis } = createImagePostEvidenceAnalyzer({
+  store, collection: COL, mediaDir: MEDIA_DIR, normalizeThumbnailUrl,
+});
 
 const ytDlpPythonPath = createVideoDownloaderPythonResolver();
 
@@ -232,27 +236,6 @@ async function streamCrawlerCosObject(res: Response, key: string, range?: string
 }
 
 type ContentFormat = 'video' | 'image';
-
-interface CrawledImagePost {
-  platform: Platform;
-  title: string;
-  sourceUrl: string;
-  thumbnailUrl: string;
-  caption?: string;
-  imageUrls?: string[];
-  views: string;
-  tags: string[];
-  uploadedAt?: string;
-  author?: string;
-  likes?: string;
-  comments?: string;
-  shares?: string;
-  plays?: string;
-  followers?: number;
-  isAd?: boolean;
-  isPaidPartnership?: boolean;
-  source?: string;
-}
 
 interface Material {
   id: string;
@@ -6701,100 +6684,6 @@ function imagePostRelevant(item: CrawledImagePost, keyword: string): boolean {
   if (!clean || /^https?:\/\//i.test(clean)) return true;
   const text = `${item.title} ${item.tags.join(' ')}`.toLowerCase();
   return clean.split(/\s+/).some(token => token.length > 1 && text.includes(token.replace(/^#/, '')));
-}
-
-async function fetchImageForAnalysis(url: string): Promise<{ base64: string; mimeType: string } | null> {
-  const normalized = normalizeThumbnailUrl(url);
-  if (!normalized) return null;
-  try {
-    let filePath = '';
-    if (normalized.startsWith('/media/')) filePath = path.join(MEDIA_DIR, path.basename(normalized));
-    if (filePath && fs.existsSync(filePath)) {
-      return { base64: fs.readFileSync(filePath).toString('base64'), mimeType: mimeFromImagePath(filePath) };
-    }
-    const resp = await fetch(normalized, {
-      signal: AbortSignal.timeout(20_000),
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/125 Safari/537.36',
-        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-      },
-    });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const mimeType = resp.headers.get('content-type') || 'image/jpeg';
-    if (!mimeType.startsWith('image/')) return null;
-    const buf = Buffer.from(await resp.arrayBuffer());
-    if (!buf.length || buf.length > 8 * 1024 * 1024) return null;
-    return { base64: buf.toString('base64'), mimeType };
-  } catch {
-    return null;
-  }
-}
-
-function mimeFromImagePath(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === '.png') return 'image/png';
-  if (ext === '.webp') return 'image/webp';
-  if (ext === '.gif') return 'image/gif';
-  return 'image/jpeg';
-}
-
-async function analyzeImagePostBestEffort(item: CrawledImagePost, keyword: string, _fallback?: VideoAiAnalysis): Promise<{ status: 'analyzed' | 'failed'; analysis?: ImagePostEvidenceAnalysis; error?: string; provider?: 'qwen' | 'gemini' }> {
-  const urls = [...new Set((item.imageUrls?.length ? item.imageUrls : [item.thumbnailUrl]).filter(Boolean))].slice(0, 10);
-  const images = (await Promise.all(urls.map(async (url, index) => {
-    const image = await fetchImageForAnalysis(url);
-    return image ? { ...image, imageIndex: index + 1 } : null;
-  }))).filter((image): image is { base64: string; mimeType: string; imageIndex: number } => Boolean(image));
-  if (!images.length) return { status: 'failed', error: '公开图片下载失败，未执行视觉分析' };
-  const input = {
-    images,
-    title: item.title,
-    caption: item.caption,
-    platform: item.platform,
-    tags: [...new Set([...item.tags, ...tagsFromKeyword(keyword, item.platform)])],
-  };
-  try {
-    const analysis = await analyzeImagePostEvidenceWithQwen(input);
-    return { status: 'analyzed', analysis, provider: 'qwen' };
-  } catch (qwenError) {
-    console.warn('[videos] Qwen image post analysis failed, trying Gemini:', qwenError instanceof Error ? qwenError.message : qwenError);
-    try {
-      const analysis = await analyzeImagePostEvidenceWithGemini({
-      images,
-      title: item.title,
-      caption: item.caption,
-      platform: item.platform,
-      tags: [...new Set([...item.tags, ...tagsFromKeyword(keyword, item.platform)])],
-      });
-      return { status: 'analyzed', analysis, provider: 'gemini' };
-    } catch (geminiError) {
-      console.warn('[videos] Gemini image post analysis failed:', geminiError instanceof Error ? geminiError.message : geminiError);
-      const qwenMessage = qwenError instanceof Error ? qwenError.message : String(qwenError);
-      const geminiMessage = geminiError instanceof Error ? geminiError.message : String(geminiError);
-      return { status: 'failed', error: `Qwen: ${qwenMessage}; Gemini: ${geminiMessage}`.slice(0, 900) };
-    }
-  }
-}
-
-function queueImagePostAnalysis(recordId: string, item: CrawledImagePost, keyword: string): void {
-  void analyzeImagePostBestEffort(item, keyword).then(async result => {
-    const latest = await store.getById<Record<string, unknown>>(COL, recordId);
-    if (!latest) return;
-    const analysis = videoAnalysisOf(latest);
-    await store.update(COL, recordId, {
-      status: (result.status === 'analyzed' ? 'analyzed' : 'failed') as VideoStatus,
-      aiAnalysis: serializeImagePostAnalysis({
-        ...analysis,
-        imageEvidence: result.analysis || analysis.imageEvidence,
-        imageAnalysisStatus: result.status,
-        imageAnalysisError: result.status === 'analyzed' ? undefined : result.error,
-        analysisSource: result.status === 'analyzed' ? `${result.provider || 'qwen'}-image-evidence-v2` : (analysis.analysisSource || 'image-metadata'),
-        analysisQuality: result.status === 'analyzed' ? 'image' : (analysis.analysisQuality || 'metadata'),
-        imageAnalysisCompletedAt: new Date().toISOString(),
-      }),
-    });
-  }).catch(error => {
-    console.warn('[videos] deferred image post analysis failed:', error instanceof Error ? error.message : error);
-  });
 }
 
 // 反爬节流：同一平台的元数据请求全局排队串行，条与条之间加随机间隔，
