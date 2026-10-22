@@ -1,8 +1,10 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
-import { cloneElement, isValidElement, useState, useEffect, useId, useRef } from 'react';
-import { Alert, Button, Checkbox, Collapse, Form, Input, Modal, Pagination, Select, Tabs, Upload as AntUpload } from 'antd';
+import { useState, useEffect, useRef } from 'react';
+import { Alert, Button, Collapse, Input, Modal, Pagination, Select, Tabs, Upload as AntUpload } from 'antd';
 import { LsGradientProgress } from './ui/LsExperiencePrimitives';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
+import EnterpriseNotificationSettings from './enterprise/EnterpriseNotificationSettings';
+import { Field, Toggle } from './enterprise/EnterpriseFormControls';
 import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, Globe2, ShieldCheck, ArrowRight, Users, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { completeDemoStep } from '../lib/demoProgress';
@@ -13,7 +15,7 @@ import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
 import type { AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import {readWeeklyEnterpriseFactTarget} from '../lib/weeklyEnterpriseFactNavigation';
-import type { ProductItem, AutonomyLevel, BargainPolicy, NotificationChannel, BizRules, FaqItem, FaqPack, NotificationReceiver, NotificationSettings, CooperationRoute, SocialStrategy, Profile } from './enterprise/enterpriseProfileTypes';
+import type { ProductItem, AutonomyLevel, BargainPolicy, BizRules, FaqItem, FaqPack, NotificationSettings, CooperationRoute, SocialStrategy, Profile } from './enterprise/enterpriseProfileTypes';
 import { CATEGORY_OPTIONS, CERTIFICATION_OPTIONS, COMPANY_TYPE_OPTIONS, LANGUAGE_OPTIONS, MARKET_OPTIONS, emptyProduct, joinTokens, normalizeEnterpriseProfile, normalizeProductItems, splitTokens } from './enterprise/enterpriseProfileNormalization';
 import { enterpriseProfileCompleteness, productAssetStats, productCreativeMaterialCount, sectionCompletion, type EnterpriseCompletenessTodo } from './enterprise/enterpriseProfileCompleteness';
 export { normalizeEnterpriseProfile } from './enterprise/enterpriseProfileNormalization';
@@ -131,15 +133,6 @@ const KNOWLEDGE_VIEW_ICONS: Record<KnowledgeView, LucideIcon> = {
   presenters: Users,
   presenterRouting: Users,
 };
-const CHANNEL_OPTIONS: Array<{ value: NotificationChannel; label: string }> = [
-  { value: 'wecom', label: '企业微信' },
-  { value: 'dingtalk', label: '钉钉' },
-  { value: 'feishu', label: '飞书' },
-  { value: 'sms', label: '短信' },
-];
-
-
-
 export function profileSnapshot(profile: Profile): string {
   const stable = JSON.parse(JSON.stringify(profile)) as Profile;
   const enabledRoutes = Array.from(new Set(stable.socialStrategy?.enabledRoutes ?? [])).sort() as CooperationRoute[];
@@ -152,10 +145,6 @@ export function profileSnapshot(profile: Profile): string {
   return JSON.stringify(stable);
 }
 
-
-function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean }) {
-  return <Checkbox checked={checked} disabled={disabled} onChange={event => onChange(event.target.checked)} />;
-}
 
 function OptionSelector({ id, value, options, onChange, multiple = true, placeholder = '请选择' }: {
   id?: string;
@@ -230,13 +219,6 @@ function KnowledgeCard({
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  const id = useId();
-  return <Form.Item label={label} htmlFor={id} extra={hint} layout="vertical">
-    {isValidElement<{ id?: string }>(children) ? cloneElement(children, { id }) : children}
-  </Form.Item>;
-}
-
 const inputCls = 'w-full';
 const textareaCls = 'w-full resize-y';
 
@@ -280,9 +262,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   const [openPackId, setOpenPackId] = useState('');
   const [selectedPackQuestions, setSelectedPackQuestions] = useState<Record<string, string[]>>({});
   const [packImporting, setPackImporting] = useState('');
-  const [notificationTesting, setNotificationTesting] = useState('');
-  const [notificationMessage, setNotificationMessage] = useState('');
-  const [notificationMessageError, setNotificationMessageError] = useState(false);
   const [knowledgeView, setKnowledgeView] = useState<KnowledgeView>(advisorInitialEnterpriseView);
   const [enterpriseArea, setEnterpriseArea] = useState<EnterpriseArea>(() => enterpriseAreaForView(advisorInitialEnterpriseView()));
   const [languageSettingsHighlight, setLanguageSettingsHighlight] = useState(false);
@@ -507,7 +486,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   const assetStats = productAssetStats(products);
   const completions = sectionCompletion(profile);
   const profileCompleteness = enterpriseProfileCompleteness(profile);
-  const notificationCompleted = Boolean((profile.notifications?.receivers ?? []).length >= 1 && profile.notifications?.lastTestAt);
   const approvedFaqCount = (profile.faq ?? []).filter(item => item.approvedForAuto && item.question.trim() && item.answer.trim()).length;
   const customerServiceEnabled = profile.customerService?.enabled === true;
   const customerServiceEnabledAt = Date.parse(profile.customerService?.enabledAt || '');
@@ -711,60 +689,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     }
   };
 
-  const addReceiver = () => {
-    setProfile(prev => ({
-      ...prev,
-      notifications: {
-        ...(prev.notifications ?? DEFAULT.notifications!),
-        receivers: [...(prev.notifications?.receivers ?? []), { name: '', channel: 'wecom', target: '' }],
-      },
-    }));
-  };
-
-  const updateReceiver = (index: number, patch: Partial<NotificationReceiver>) => {
-    setProfile(prev => {
-      const notifications = prev.notifications ?? DEFAULT.notifications!;
-      const receivers = notifications.receivers.map((item, i) => i === index ? { ...item, ...patch } : item);
-      return { ...prev, notifications: { ...notifications, receivers } };
-    });
-  };
-
-  const removeReceiver = (index: number) => {
-    setProfile(prev => {
-      const notifications = prev.notifications ?? DEFAULT.notifications!;
-      return { ...prev, notifications: { ...notifications, receivers: notifications.receivers.filter((_, i) => i !== index) } };
-    });
-  };
-
-  const testReceiver = async (receiver: NotificationReceiver, index: number) => {
-    if (!receiver.target.trim()) {
-      setNotificationMessageError(true);
-      setNotificationMessage('请先填写接收目标');
-      return;
-    }
-    setNotificationTesting(String(index));
-    setNotificationMessage('');
-    setNotificationMessageError(false);
-    try {
-      const result = await fetch('/api/overseas/enterprise/notifications/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify({ receiver }),
-      }).then(r => r.json());
-      if (result.error) throw new Error(result.error);
-      setProfile(prev => ({
-        ...prev,
-        notifications: result.notifications ?? { ...(prev.notifications ?? DEFAULT.notifications!), lastTestAt: result.lastTestAt || new Date().toISOString() },
-      }));
-      setNotificationMessage('测试提醒已发送');
-    } catch (error) {
-      setNotificationMessageError(true);
-      setNotificationMessage(error instanceof Error ? error.message : '测试提醒发送失败');
-    } finally {
-      setNotificationTesting('');
-    }
-  };
-
   useEffect(() => {
     if (localStorage.getItem('lingshu:enterprise:highlight-autonomy') !== 'auto') return;
     localStorage.removeItem('lingshu:enterprise:highlight-autonomy');
@@ -805,28 +729,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
       if (!ok) return;
     }
     setProfile(prev => ({ ...prev, strategy: { ...prev.strategy, aiAutonomy: value } }));
-  };
-
-  const setNightModeEnabled = (enabled: boolean) => {
-    if (enabled && !profile.notifications?.nightMode?.enabled) {
-      const ok = window.confirm([
-        '开启夜班后，系统会在非工作时间继续按全局 AI 参与程度处理消息：',
-        '',
-        '· 全局为“只提醒我”时，夜间仍只提醒',
-        '· 全局为“草稿需确认”时，夜间仍只生成草稿',
-        '· 只有全局已允许自动回复时，夜间才可能发送已审批 FAQ 原文',
-        '',
-        '夜班不会扩大自动发送权限。需要人工确认的消息会进入次日晨报。',
-      ].join('\n'));
-      if (!ok) return;
-    }
-    setProfile(prev => ({
-      ...prev,
-      notifications: {
-        ...(prev.notifications ?? DEFAULT.notifications!),
-        nightMode: { enabled, autoCategories: 'approved' },
-      },
-    }));
   };
 
   const addHandoffKeyword = () => {
@@ -1340,65 +1242,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     </KnowledgeCard>
   );
 
-  const notificationSettingsSection = (
-    <section id="notifications" className={`py-5 transition-all ${notificationsHighlight ? 'rounded-lg ring-2 ring-sky-300 ring-offset-4' : ''}`}>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Bell size={14} className="text-text-secondary" />
-          <h3 className="text-sm font-semibold text-text-primary">通知接收方式</h3>
-        </div>
-        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${notificationCompleted ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-          {notificationCompleted ? '已完成' : '未完成'}
-        </span>
-      </div>
-      <p className="mb-4 text-[11px] leading-relaxed text-text-muted">大单、客户要通话时，提醒发给谁</p>
-      <div className="space-y-3">
-        {(profile.notifications?.receivers ?? []).map((receiver, index) => (
-          <div key={index} className="grid grid-cols-1 gap-2 rounded-lg border border-border bg-white p-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_130px_minmax(0,1.3fr)_auto_auto]">
-            <Input className={inputCls} value={receiver.name} onChange={e => updateReceiver(index, { name: e.target.value })} placeholder="接收人姓名" />
-            <select className={inputCls} value={receiver.channel} onChange={e => updateReceiver(index, { channel: e.target.value as NotificationChannel })}>
-              {CHANNEL_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-            <Input className="w-full sm:col-span-2 xl:col-span-1" value={receiver.target} onChange={e => updateReceiver(index, { target: e.target.value })} placeholder="Webhook / 手机号 / 账号" />
-            <div className="grid grid-cols-[1fr_auto] gap-2 sm:col-span-2 xl:contents">
-              <button type="button" onClick={() => void testReceiver(receiver, index)} disabled={notificationTesting === String(index)} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white disabled:opacity-60">
-                {notificationTesting === String(index) ? <Loader2 size={12} className="animate-spin" /> : <Bell size={12} />}测试
-              </button>
-              <button type="button" onClick={() => removeReceiver(index)} aria-label={`删除接收人 ${receiver.name || index + 1}`} title="删除接收人" className="flex min-h-10 items-center justify-center rounded-lg border border-border bg-white px-3 text-text-muted hover:text-red"><X size={13} /></button>
-            </div>
-          </div>
-        ))}
-        <button type="button" onClick={addReceiver} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">
-          <Plus size={12} />添加接收人
-        </button>
-        {notificationMessage && <p className={`text-xs font-bold ${notificationMessageError ? 'text-red-600' : 'text-emerald-700'}`}>{notificationMessage}</p>}
-      </div>
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <Field label="工作开始时间">
-          <Input className={inputCls} type="time" value={profile.notifications?.workHours.start ?? '09:00'} onChange={e => setProfile(prev => ({ ...prev, notifications: { ...(prev.notifications ?? DEFAULT.notifications!), workHours: { ...(prev.notifications?.workHours ?? DEFAULT.notifications!.workHours), start: e.target.value } } }))} />
-        </Field>
-        <Field label="工作结束时间">
-          <Input className={inputCls} type="time" value={profile.notifications?.workHours.end ?? '22:00'} onChange={e => setProfile(prev => ({ ...prev, notifications: { ...(prev.notifications ?? DEFAULT.notifications!), workHours: { ...(prev.notifications?.workHours ?? DEFAULT.notifications!.workHours), end: e.target.value } } }))} />
-        </Field>
-        <div className="sm:col-span-2 xl:col-span-1">
-        <Field label="非工作时段">
-          <div className="flex h-10 items-center gap-2 rounded-lg border border-border bg-white px-3">
-            <Toggle checked={profile.notifications?.quietOutsideHours ?? true} onChange={checked => setProfile(prev => ({ ...prev, notifications: { ...(prev.notifications ?? DEFAULT.notifications!), quietOutsideHours: checked } }))} />
-            <span className="text-xs text-text-secondary">仅记录不即时推送</span>
-          </div>
-        </Field>
-        </div>
-      </div>
-      <div data-lingshu-guide="enterprise-night-mode" className="mt-4 flex items-start justify-between gap-4 border-t border-border pt-4">
-        <p className="text-xs font-semibold text-text-primary">非工作时间继续接待</p>
-        <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 text-xs font-bold text-text-secondary">
-          <Toggle checked={Boolean(profile.notifications?.nightMode?.enabled)} onChange={setNightModeEnabled} />
-          {profile.notifications?.nightMode?.enabled ? '已开启' : '未开启'}
-        </label>
-      </div>
-    </section>
-  );
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -1846,7 +1689,14 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
             <div className="divide-y divide-border">
               {aiAutonomySection}
               {handoffSafetySection}
-              {notificationSettingsSection}
+              <EnterpriseNotificationSettings
+                notifications={profile.notifications ?? DEFAULT.notifications!}
+                highlighted={notificationsHighlight}
+                onChange={update => setProfile(prev => ({
+                  ...prev,
+                  notifications: update(prev.notifications ?? DEFAULT.notifications!),
+                }))}
+              />
               <SupportAccessControl />
             </div>
 
