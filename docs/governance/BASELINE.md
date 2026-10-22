@@ -326,3 +326,7 @@
 
 - 将内容运营概览的响应映射、指标标签与本地预览数据移入 `workspaceContentOps.ts`，将组织成员/权限页面移入 `OrganizationPermissionsPage.tsx`；`WorkspaceManagementPages.tsx` 保留脚本库、Agent 记忆页面及组织权限重导出。原文件由 1008 行降至 758 行，新模块分别为 128/135 行，撤销超限豁免，剩余 22 项。
 - 工作区管理合同测试继续覆盖组织角色保护、删除确认和记忆编辑，专项 3/3 通过；TypeScript、架构扫描/ratchet、生产构建及 191 项迁移仓库只读检查通过，原三个页面导出可加载。构建仍有三个大 chunk 提示；未访问真实客户数据、执行迁移或部署。
+
+## 构建体积归因（2026-10-22）
+
+- 对三个大 chunk 做了 source map 归因并记录在 [`BUNDLE-CHUNK-ANALYSIS.md`](./BUNDLE-CHUNK-ANALYSIS.md)。依赖分组试验虽缩小首屏 `index`，却造成大量小 chunk 且未解决两个业务页面告警，因此已撤回；目前构建行为不变，后续应按真实页面/步骤边界拆分。
