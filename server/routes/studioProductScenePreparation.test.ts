@@ -10,6 +10,8 @@ import {
   scopeProductSceneProjection,
 } from './studio.js';
 import { stableProductScenePreparationSlotId } from '../../shared/contracts/productScenePreparation.js';
+import { ProductSceneUploadProbeError } from '../lib/productSceneUploadProbe.js';
+import { productSceneUploadErrorResponse, resolveMaterialUploadProductBinding, resolveProductSceneUploadIntent, verifyProductSceneUpload } from './studioProductSceneUpload.js';
 
 const product = {
   id: 'product-1',
@@ -26,6 +28,22 @@ const verification = {
   verificationMethod: 'ffmpeg_full_decode' as const,
   contentSha256,
 };
+
+test('产品场景上传在租户查询前拒绝非视频、缺失槽位和未知槽位', async () => {
+  const base = { tenantId: 'tenant-1', type: 'video', sourceType: 'product-scene-preparation', productId: product.id, productSceneType: 'shelf_display' };
+  await assert.rejects(resolveProductSceneUploadIntent({ ...base, type: 'image' }), /预制素材仅支持视频文件/);
+  await assert.rejects(resolveProductSceneUploadIntent({ ...base, productId: '' }), /请从产品详情中选择预制素材位后上传/);
+  await assert.rejects(resolveProductSceneUploadIntent({ ...base, productSceneType: 'unknown' }), /预制素材位无效/);
+  assert.equal(await resolveProductSceneUploadIntent({ ...base, sourceType: 'tenant_upload', productSceneType: '' }), undefined);
+  assert.equal(await resolveMaterialUploadProductBinding('tenant-1', ''), undefined);
+  assert.equal(await verifyProductSceneUpload(undefined, '/unreadable-path', 'A'.repeat(64)), undefined);
+});
+
+test('上传探针错误映射为可恢复 HTTP 状态，不把校验失败当成功', () => {
+  assert.deepEqual(productSceneUploadErrorResponse(new ProductSceneUploadProbeError('product_scene_media_probe_unavailable', '探针不可用')), { status: 503, message: '探针不可用' });
+  assert.deepEqual(productSceneUploadErrorResponse(new ProductSceneUploadProbeError('product_scene_media_invalid', '素材无效')), { status: 422, message: '素材无效' });
+  assert.equal(productSceneUploadErrorResponse(new Error('unexpected')), undefined);
+});
 
 function boundMaterial(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const changes = productSceneMaterialBindingChanges({

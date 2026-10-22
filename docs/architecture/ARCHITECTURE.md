@@ -32,6 +32,7 @@
 - `server/routes/studioCoverSvg.ts`：封面图的尺寸、换行、图层和 SVG 文本转义纯渲染；`studio.ts` 保留鉴权、租户限定的帧读取、文件保存和对象存储，不把客户端传入的路径直接交给渲染模块读取。
 - `server/routes/studioProductSceneProvenance.ts`：产品预制素材的稳定槽位绑定、上传校验凭证解析、关联产品变更和检索标签纯规则；`studio.ts` 保留租户产品查询、上传媒体探针、素材持久化及原公开导出，不因投影拆分放宽上传或复用授权。
 - `server/routes/studioProductSceneProjection.ts`：产品场景来源图、素材可制作性、空槽位与素材/产品范围的只读投影；`studio.ts` 仍负责租户鉴权、签名媒体 URL、素材写回与 HTTP 响应，不把投影结果当作持久化素材或供应商验收。
+- `server/routes/studioProductSceneUpload.ts`：产品场景上传意图与企业产品身份校验、完整视频探针结果封装、错误到 HTTP 状态映射和复用授权元数据；`studio.ts` 仍持有上传请求生命周期、租户素材写入与对象存储。非视频、缺失或未知槽位在读取企业资料前拒绝，上传探针不可用不生成复用授权。
 - `server/routes/studioMaterialAnalysisSegments.ts`：将素材逐镜分析结果投影为片段的纯规则，供云端素材写回和自动生产共用；`studio.ts` 保留原公开导出、供应商选择、租户素材读写及 HTTP 编排。
 - `server/routes/studioTtsStyle.ts`：配音风格输入归一化、MiniMax 确定性停顿与发音词典、Qwen/MiniMax/macOS 音色及语言映射纯规则；`studio.ts` 保留语音文件、供应商请求、付费许可与回执编排，不因音色选择绕开现有付费门禁。
 - `server/routes/studioLocalTtsAdapters.ts`：Piper、XTTS 与本机 `say` 的可选本地语音执行；从路由显式注入租户目录、样本查找、签名资产 URL 和转码接口。无可用引擎时不触碰租户文件；付费 Qwen/MiniMax/HeyGen 路径仍留在原有许可和回执边界内。
