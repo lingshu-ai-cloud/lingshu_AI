@@ -281,8 +281,6 @@ assert.match(assistantSendSource, /if \(!currentScope\(\)\) return/, '跨身份�
 
 assert.match(pageSource, /输出内容语言/);
 assert.match(pageSource, /需要输出的语言/);
-assert.match(pageSource, /需要你观看成片并做判断/, 'the quality gate must explain the exact human decision');
-assert.match(pageSource, /查看成片并处理/, 'the quality gate must expose a direct review action');
 assert.match(pageSource, /<ProductionTaskScene[^>]+runId=\{data\.run\.id\}[^>]+taskId=\{selectedTask\.id\}/, 'Smart Operations must use the shared production scene');
 assert.match(revisionSource, /当前待验收成片/, 'the revision workspace must put the final video before editing controls');
 assert.match(revisionSource, /<video[^>]+aria-label="当前待验收成片"/, 'the revision workspace must render the actual final video');
@@ -572,7 +570,7 @@ assert.doesNotMatch(liveSceneSource, /absolute inset-0|AgentBrowserViewport|Dire
 assert.doesNotMatch(liveSceneSource, /\u601d\u8003\u4f9d\u636e|chain[_ -]?of[_ -]?thought/i, 'the UI must not claim to expose private model reasoning');
 assert.match(boardSource, /function DeliveryBoard/, 'execution center must render a real task kanban');
 assert.match(boardSource, /onOpenTask\(\{ \.\.\.selected\.link!.*deliveryId: selected\.id/, 'delivery detail must open its resource-specific business page');
-assert.match(pageSource, /onClick=\{\(\) => onOpenTask\(link\)\}/, 'clicking a task card must enter the mapped business workspace');
+assert.match(pageSource, /dispatchDigitalEmployeeDeepLink\(buildTaskDeepLink\(selectedTask, selectedPlanTask, data\.run!\.id\)\)/, 'the selected task must enter its mapped business workspace');
 assert.match(pageSource, /task\.business_line[\s\S]{0,200}task\.business_domain/, 'business-line classification must prefer persisted fields');
 assert.doesNotMatch(pageSource, /function taskBusinessLine[\s\S]{0,800}task_key/, 'task classification must not guess from task-key text');
 assert.match(libSource, /payload\?\.uiAction/, 'the Agent operation feed must consume persisted worker UI events');
@@ -764,21 +762,15 @@ assert.match(pageSource, /<WeeklyPackagePanel/, 'the execution view must expose 
 assert.match(packageSource, /每条内容发布到一个账号计一次/, 'bounded publishing must explain that the limit counts actual account-level publish actions');
 assert.doesNotMatch(pageSource, /required\.add\(["'](?:products|viral_library|customers)["']\)/, 'new tenants must not be blocked from starting merely because products, inspiration, or customers are still empty');
 
-for (const label of ['重试任务', '跳过并继续', '登记人工完成', '任务受阻，需要处理']) {
-  assert.match(pageSource, new RegExp(label), `blocked-task controls must expose ${label}`);
-}
-assert.equal(
-  (pageSource.match(/<BlockedTaskActions/g) || []).length,
-  1,
-  'the selected task must render exactly one retry/skip/manual-complete action block',
-);
+assert.match(pageSource, /<ProductionTaskScene runId=\{data\.run\.id\} taskId=\{selectedTask\.id\} embedded/, 'the selected task must mount the current production scene');
+assert.match(pageSource, /onRetryTask=\{async taskId => Boolean\(await act\(`retry:\$\{taskId\}`, \(\) => digitalEmployeeApi\.retryTask\(taskId\)\)\)\}/, 'the dashboard retry action must use the canonical task API');
+assert.doesNotMatch(pageSource, /function (?:ProductionScene|BlockedTaskActions|CorrectionPanel|EventTimeline|AgentOperationFeed)/, 'unmounted legacy production controls must not be mistaken for current UI');
 for (const endpoint of ['retryTask', 'skipTask', 'completeTask']) {
   assert.match(libSource, new RegExp(`${endpoint}:[\\s\\S]{0,250}/tasks/`), `${endpoint} must call the canonical task route`);
 }
-assert.match(pageSource, /const saved = await onSubmit[\s\S]{0,500}纠偏尚未登记/, 'correction input must only clear after a persisted success');
 assert.match(digitalEmployeeNavigationSource, /digitalEmployee\.returnContext/, 'business deep links must persist a return-to-live context');
 assert.match(pageSource, /consumeDigitalEmployeeReturnContext/, 'returning from a business workspace must restore the production task context');
-assert.match(pageSource, /完成业务操作后返回“数字员工”即可继续/, 'business CTAs must tell the user how to return');
+assert.match(digitalEmployeeNavigationSource, /返回数字员工生产现场继续查看此任务/, 'business deep links must retain the return-to-task guidance');
 assert.match(reviewSource, /liveReview/, 'an active run must use the server live review rather than fake a final review');
 assert.match(reviewSource, /本轮仍在运行，以下为阶段性发现/, 'the review view must label active-run results as provisional');
 assert.match(productionSource, /aria-label="生产统计周期"/, 'the overview period selector must expose an accessible group label');

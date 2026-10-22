@@ -21,7 +21,7 @@ import { managedPublishingGrantErrors } from '../../shared/contracts/managedPubl
 import KnowledgeIntakePanel from "./enterprise/KnowledgeIntakePanel";
 import { normalizeContinuationPolicy, recommendedContinuationPolicy } from '../lib/continuationPolicy';
 import { agentExecutionSummary } from '../lib/agentExecutionSummary';
-import { taskNeedsAttention, taskWaitLabels, type TaskWaitState } from '../lib/taskExecutionState';
+import { taskNeedsAttention } from '../lib/taskExecutionState';
 import { discoveryFailurePresentation } from '../lib/discoveryFailurePresentation';
 import OperatingAssessmentEditor from './OperatingAssessmentEditor';
 import { maturityLabels, maturityProfiles, assessMaturity, gapLabels } from '../lib/operatingMaturity';
@@ -55,11 +55,9 @@ import {
   ArrowRight,
   BarChart3,
   Bot,
-  BrainCircuit,
   CalendarRange,
   Check,
   CheckCircle2,
-  Circle,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -72,12 +70,9 @@ import {
   Heart,
   Layers3,
   Loader2,
-  MonitorPlay,
   MessageSquare,
-  MousePointer2,
   Pause,
   Play,
-  Radio,
   RefreshCcw,
   RotateCcw,
   Search,
@@ -109,15 +104,12 @@ import { uploadProductEvidence } from "../lib/enterpriseProductAssetUpload";
 import { readProductDiscoveryFile } from "../lib/productDiscoveryFile";
 import {
   buildTaskDeepLink,
-  agentCursorPercent,
-  agentUiActionFromEvent,
   consumeDigitalEmployeeReturnContext,
   digitalEmployeeApi,
   dispatchDigitalEmployeeDeepLink,
   ENTERPRISE_FACTS_CHANGED_ERROR_CODE,
   enterpriseFactsRebuildInput,
   streamRunEvents,
-  type AgentUiAction,
   type BusinessDestination,
   type BusinessSnapshot,
   type BusinessReadinessItem,
@@ -125,9 +117,7 @@ import {
   type DigitalEmployeeDeepLink,
   type DigitalEmployeeOverview,
   type DigitalEmployeeWorkflow,
-  type PlanTask,
   type PublishingTarget,
-  type RunEvent,
   type WeeklyGoal,
   type WorkflowTask,
 } from "../lib/digitalEmployees";
@@ -136,10 +126,8 @@ import {
   capabilityLabel,
   contentCreationWorkflows,
   destinationLabel,
-  eventTypeLabel,
   statusSourceLabel,
   synchronizeThemeContentWorkflows,
-  technicalKeyLabel,
   technicalValueLabel,
   workflowLabel,
   workflowOptions,
@@ -1472,23 +1460,6 @@ function OnboardingPanel({
   );
 }
 
-
-function TaskIcon({ status }: { status: string }) {
-  if (status === "succeeded")
-    return <CheckCircle2 size={18} className="text-emerald-600" />;
-  if (status === "running")
-    return <Loader2 size={18} className="animate-spin text-blue-600" />;
-  if (status === "waiting_external")
-    return <Clock3 size={18} className="text-sky-600" />;
-  if (status === "waiting_approval")
-    return <ShieldCheck size={18} className="text-amber-600" />;
-  if (status === "handed_off")
-    return <Hand size={18} className="text-violet-600" />;
-  if (status === "failed")
-    return <XCircle size={18} className="text-red-600" />;
-  return <Circle size={18} className="text-slate-300" />;
-}
-
 function outputSummary(task: WorkflowTask): string {
   if (task.output.dataStatus === "not_required") return String(task.output.summary || "本轮无需执行");
   if (task.output.dataStatus === "no_data") return "暂无符合条件的客户，本轮继续其他任务；未计为已完成或已发送。";
@@ -1504,66 +1475,6 @@ function outputSummary(task: WorkflowTask): string {
   return task.status === "succeeded"
     ? "结果已持久化并写入事件流"
     : task.blocked_reason || "";
-}
-
-function EventTimeline({
-  events,
-  activeTaskId,
-  actionEventId,
-  actionLabel,
-  onAction,
-}: {
-  events: RunEvent[];
-  activeTaskId?: string;
-  actionEventId?: string;
-  actionLabel?: string;
-  onAction?: () => void;
-}) {
-  return (
-    <div className="space-y-4">
-      {events.length === 0 && (
-        <p className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
-          目标批准后，这里会展示服务端真实运行事件。
-        </p>
-      )}
-      {[...events].reverse().map((event) => (
-        <div
-          key={event.id}
-          className={`relative flex gap-3 rounded-lg p-2 pl-2 transition ${activeTaskId && event.task_id === activeTaskId ? "bg-blue-50 ring-1 ring-blue-100" : ""}`}
-        >
-          <div
-            className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${event.level === "success" ? "bg-emerald-500" : event.level === "warning" ? "bg-amber-500" : event.level === "error" ? "bg-red-500" : "bg-blue-500"}`}
-          />
-          <div className="min-w-0 flex-1 border-b border-slate-100 pb-4">
-            <div className="flex items-start justify-between gap-3">
-              <p className="text-sm font-semibold text-slate-800">
-                {event.summary}
-              </p>
-              <span className="shrink-0 text-[10px] text-slate-400">
-                {event.occurred_at
-                  ? new Date(event.occurred_at).toLocaleTimeString("zh-CN", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  : ""}
-              </span>
-            </div>
-            <p className="mt-1 text-[11px] text-slate-400">
-              第 {event.sequence} 条 ·{" "}
-              {eventTypeLabel[event.type] || "工作状态已更新"}
-            </p>
-            {event.id === actionEventId && actionLabel && onAction && <Button
-              htmlType="button"
-              onClick={onAction}
-              className="!h-auto min-h-9 !whitespace-normal mt-3 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
-            >
-              {actionLabel} <ArrowRight size={13} />
-            </Button>}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 type WorkspaceView = "today" | "matrix" | "overview" | "live" | "review" | "rules";
@@ -1832,567 +1743,6 @@ function BusinessLoopMap({ onOpen }: { onOpen: OpenBusinessLink }) {
   );
 }
 
-function DetailValue({ value }: { value: unknown }) {
-  if (Array.isArray(value))
-    return (
-      <div className="mt-1 space-y-1">
-        {value.slice(0, 5).map((item, index) => (
-          <div
-            key={index}
-            className="rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] text-slate-600"
-          >
-            {item && typeof item === "object"
-              ? Object.entries(item as Record<string, unknown>)
-                  .filter(([, nested]) => nested !== undefined && nested !== "")
-                  .map(
-                    ([key, nested]) =>
-                      `${technicalKeyLabel[key] || "业务信息"}：${humanizeValue(nested)}`,
-                  )
-                  .join(" · ")
-              : humanizeValue(item)}
-          </div>
-        ))}
-      </div>
-    );
-  if (value && typeof value === "object")
-    return (
-      <div className="mt-1 space-y-1">
-        {Object.entries(value as Record<string, unknown>).map(([key, item]) => (
-          <p key={key} className="text-[11px] leading-relaxed text-slate-600">
-            <span className="text-slate-400">
-              {technicalKeyLabel[key] || "业务信息"}：
-            </span>
-            {humanizeValue(item)}
-          </p>
-        ))}
-      </div>
-    );
-  return (
-    <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
-      {humanizeValue(value)}
-    </p>
-  );
-}
-
-function CorrectionPanel({
-  busy,
-  onSubmit,
-}: {
-  busy: boolean;
-  onSubmit: (input: {
-    instruction: string;
-    scope: "one_off" | "rule_candidate";
-    rerunDownstream: boolean;
-  }) => Promise<boolean>;
-}) {
-  const [instruction, setInstruction] = useState("");
-  const [scope, setScope] = useState<"one_off" | "rule_candidate">("one_off");
-  const [rerunDownstream, setRerunDownstream] = useState(true);
-  const [feedback, setFeedback] = useState("");
-  const submit = async () => {
-    if (!instruction.trim()) return;
-    setFeedback("");
-    const saved = await onSubmit({
-      instruction: instruction.trim(),
-      scope,
-      rerunDownstream,
-    });
-    if (saved) {
-      setInstruction("");
-      setFeedback(
-        scope === "rule_candidate"
-          ? "长期规则候选已登记；审核通过前不会改变自动化规则。"
-          : `本次纠偏已登记${rerunDownstream ? "，下游将按新版本重算。" : "。"}`,
-      );
-    } else {
-      setFeedback("纠偏尚未登记，请根据上方错误提示调整后重试。");
-    }
-  };
-  return (
-    <div className="mt-5 rounded-lg border border-violet-200 bg-violet-50/60 p-4">
-      <div className="flex items-center gap-2 text-violet-800">
-        <RotateCcw size={15} />
-        <p className="text-xs font-semibold">纠偏当前任务</p>
-      </div>
-      <textarea
-        value={instruction}
-        onChange={(event) => setInstruction(event.target.value)}
-        className="mt-3 min-h-20 w-full resize-y rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none focus:border-violet-400"
-        placeholder="说明哪里不对，以及希望 Agent 如何调整。"
-      />
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <Button
-          htmlType="button"
-          onClick={() => setScope("one_off")}
-          className={`!h-auto min-h-9 !whitespace-normal rounded-lg border px-3 py-2 text-left ${scope === "one_off" ? "border-violet-400 bg-white text-violet-800 ring-1 ring-violet-100" : "border-violet-100 text-slate-500"}`}
-        >
-          <span className="block text-xs font-bold">仅本次</span>
-          <span className="mt-0.5 block text-[10px]">只修正当前运行</span>
-        </Button>
-        <Button
-          htmlType="button"
-          onClick={() => setScope("rule_candidate")}
-          className={`!h-auto min-h-9 !whitespace-normal rounded-lg border px-3 py-2 text-left ${scope === "rule_candidate" ? "border-violet-400 bg-white text-violet-800 ring-1 ring-violet-100" : "border-violet-100 text-slate-500"}`}
-        >
-          <span className="block text-xs font-bold">长期规则候选</span>
-          <span className="mt-0.5 block text-[10px]">
-            先进入候选，不直接改规则
-          </span>
-        </Button>
-      </div>
-      <label className="mt-3 flex cursor-pointer items-start gap-2 text-[11px] text-slate-600">
-        <input
-          type="checkbox"
-          checked={rerunDownstream}
-          onChange={(event) => setRerunDownstream(event.target.checked)}
-          className="mt-0.5 accent-violet-600"
-        />
-        <span>
-          <strong className="text-slate-800">重跑下游任务</strong>
-          <br />
-          从此节点之后重新计算，不重复已经确认的外部动作。
-        </span>
-      </label>
-      <Button
-        htmlType="button"
-        disabled={busy || !instruction.trim()}
-        onClick={() => void submit()}
-        className="!h-auto min-h-9 !whitespace-normal mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-violet-700 px-3 py-2.5 text-xs font-bold text-white hover:bg-violet-800 disabled:opacity-50"
-      >
-        {busy ? (
-          <Loader2 size={14} className="animate-spin" />
-        ) : (
-          <RotateCcw size={14} />
-        )}{" "}
-        提交纠偏
-      </Button>
-      {feedback && (
-        <p
-          role="status"
-          className={`mt-2 rounded-lg px-3 py-2 text-[11px] font-semibold ${feedback.startsWith("纠偏尚未") ? "bg-red-50 text-red-700" : "bg-white text-violet-700"}`}
-        >
-          {feedback}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function taskBusinessAction(link: DigitalEmployeeDeepLink): string {
-  if (link.page === "enterprise") return "补齐企业资料";
-  if (link.page === "accountManagement") return "核对社媒账号";
-  if (link.page === "scheduled") return "查看定时任务";
-  if (link.page === "socialInspiration") return "查看爆款证据";
-  if (link.page === "adsManaged") return "进入投流工作台";
-  if (link.page === "scriptLibrary") return "打开跟进话术";
-  if (link.page === "smartAssets" && link.view === "publish")
-    return "核对发布清单";
-  if (link.page === "smartAssets" && link.businessRef.taskKey === 'content_quality_gate')
-    return "查看成片并处理";
-  if (link.page === "smartAssets") return "继续内容制作";
-  if (link.page === "conversion")
-    return link.businessRef.taskKey === "customer_segmentation"
-      ? "查看分层客群"
-      : link.businessRef.taskKey.includes("followup")
-        ? "查看逐客跟进批次"
-        : "查看客户承接";
-  return "查看关联工作";
-}
-
-function BlockedTaskActions({
-  task,
-  busy,
-  onRetry,
-  onSkip,
-  onComplete,
-}: {
-  task: WorkflowTask;
-  busy: boolean;
-  onRetry: () => Promise<boolean>;
-  onSkip: (note: string) => Promise<boolean>;
-  onComplete: (note: string) => Promise<boolean>;
-}) {
-  const [mode, setMode] = useState<"skip" | "complete" | "">("");
-  const [note, setNote] = useState("");
-  const [feedback, setFeedback] = useState("");
-  const discoveryDiagnosis = task.task_key === "scheduled_source_collection"
-    ? discoveryFailurePresentation(task.blocked_reason)
-    : null;
-  const manualCompletionAllowed =
-    !["publish", "send"].includes(task.external_effect || "none") &&
-    !["platform_publish", "followup_dispatch"].includes(task.task_key);
-  const retry = async () => {
-    setFeedback("");
-    setFeedback(
-      (await onRetry())
-        ? "已提交重试，生产现场会在收到新事件后更新。"
-        : "重试没有提交成功，请查看页面上方提示。",
-    );
-  };
-  const confirm = async () => {
-    if (!mode || !note.trim()) return;
-    setFeedback("");
-    const saved =
-      mode === "skip"
-        ? await onSkip(note.trim())
-        : await onComplete(note.trim());
-    if (saved) {
-      setFeedback(
-        mode === "skip"
-          ? "跳过决定已审计记录，下游会按新状态继续。"
-          : "人工完成结果已审计记录，等待下游继续。",
-      );
-      setMode("");
-      setNote("");
-    } else setFeedback("操作没有生效，请查看页面上方提示。");
-  };
-  return (
-    <div className="mt-4 rounded-lg border border-red-200 bg-red-50/70 p-4">
-      <div className="flex items-center gap-2 text-red-800">
-        <AlertTriangle size={15} />
-        <p className="text-xs font-semibold">任务受阻，需要处理</p>
-      </div>
-      <p className="mt-1 text-[11px] leading-relaxed text-red-700">
-        {task.blocked_reason ||
-          "真实业务状态未能推进，请选择恢复方式。所有操作都会写入审计记录。"}
-      </p>
-      {discoveryDiagnosis && <div className="mt-2 rounded-md border border-red-200 bg-white/70 px-3 py-2 text-[11px] text-red-800"><p className="font-semibold">{discoveryDiagnosis.label}</p><p className="mt-0.5">{discoveryDiagnosis.action}</p></div>}
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <Button
-          htmlType="button"
-          disabled={busy}
-          onClick={() => void retry()}
-          className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-red-700 px-2 py-2.5 text-[11px] font-bold text-white disabled:opacity-50"
-        >
-          重试任务
-        </Button>
-        <Button
-          htmlType="button"
-          disabled={busy}
-          onClick={() =>
-            setMode((current) => (current === "skip" ? "" : "skip"))
-          }
-          className={`!h-auto min-h-9 !whitespace-normal rounded-lg border px-2 py-2.5 text-[11px] font-bold ${mode === "skip" ? "border-amber-400 bg-amber-50 text-amber-800" : "border-red-200 bg-white text-red-700"}`}
-        >
-          跳过并继续
-        </Button>
-        <Button
-          htmlType="button"
-          disabled={busy || !manualCompletionAllowed}
-          onClick={() =>
-            setMode((current) => (current === "complete" ? "" : "complete"))
-          }
-          title={
-            manualCompletionAllowed
-              ? "登记人工完成结果"
-              : "真实发布或发送必须取得渠道回执，不能手工标记完成"
-          }
-          className={`!h-auto min-h-9 !whitespace-normal rounded-lg border px-2 py-2.5 text-[11px] font-bold ${mode === "complete" ? "border-violet-400 bg-violet-50 text-violet-800" : "border-red-200 bg-white text-red-700"}`}
-        >
-          登记人工完成
-        </Button>
-      </div>
-      {!manualCompletionAllowed && (
-        <p className="mt-2 text-[10px] font-semibold text-red-700">
-          此节点涉及真实发布或发送，人工完成入口已锁定；请补充真实渠道回执或纠偏重试。
-        </p>
-      )}
-      {mode && (
-        <div className="mt-3 rounded-lg border border-red-100 bg-white p-3">
-          <p className="text-[10px] font-bold text-slate-600">
-            {mode === "skip"
-              ? "说明为什么可以跳过（必填）"
-              : "说明人工完成了什么、依据是什么（必填）"}
-          </p>
-          <textarea
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-            className="mt-2 min-h-16 w-full resize-y rounded-lg border border-slate-200 px-2.5 py-2 text-xs"
-            placeholder="这段说明会进入任务审计记录"
-          />
-          <Button
-            htmlType="button"
-            disabled={busy || !note.trim()}
-            onClick={() => void confirm()}
-            className="!h-auto min-h-9 !whitespace-normal mt-2 w-full rounded-lg bg-slate-950 px-3 py-2 text-[11px] font-bold text-white disabled:opacity-50"
-          >
-            确认{mode === "skip" ? "跳过" : "登记人工完成"}
-          </Button>
-          <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
-            涉及真实发布或发送的任务不能仅凭页面操作伪造完成，服务端会再次校验。
-          </p>
-        </div>
-      )}
-      {feedback && (
-        <p
-          role="status"
-          className="mt-2 text-[11px] font-semibold text-slate-700"
-        >
-          {feedback}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function ProductionScene({
-  task,
-  planTask,
-  runId,
-  events,
-  correcting,
-  controlling,
-  readOnly = false,
-  onOpenTask,
-  onCorrect,
-  onRetry,
-  onSkip,
-  onComplete,
-  deepLink,
-}: {
-  task?: WorkflowTask;
-  planTask?: PlanTask;
-  runId: string;
-  events: RunEvent[];
-  correcting: boolean;
-  controlling: boolean;
-  readOnly?: boolean;
-  onOpenTask: (link: DigitalEmployeeDeepLink) => void;
-  onCorrect: (input: {
-    instruction: string;
-    scope: "one_off" | "rule_candidate";
-    rerunDownstream: boolean;
-  }) => Promise<boolean>;
-  onRetry: () => Promise<boolean>;
-  onSkip: (note: string) => Promise<boolean>;
-  onComplete: (note: string) => Promise<boolean>;
-  deepLink?: DigitalEmployeeDeepLink;
-}) {
-  const taskEvents = task
-    ? events.filter((event) => event.task_id === task.id)
-    : events;
-  const link = deepLink || (task ? buildTaskDeepLink(task, planTask, runId) : null);
-  const isQualityReview = task?.task_key === 'content_quality_gate' && taskNeedsAttention(task);
-  const actionEventId = isQualityReview
-    ? [...taskEvents].reverse().find(event => !agentUiActionFromEvent(event))?.id
-    : undefined;
-  const evidence: Array<[string, unknown]> = task
-    ? (
-        [
-          [
-            "业务能力",
-            capabilityLabel[
-              String(
-                task.capability_key ||
-                  planTask?.capabilityKey ||
-                  task.output?.capability ||
-                  "",
-              )
-            ] || "按本任务调用现有业务能力",
-          ],
-          [
-            "真实状态来源",
-            task.status_source ||
-            planTask?.statusSource ||
-            task.output?.statusSource
-              ? "对应业务工作台的持久化记录与渠道回执"
-              : "等待业务系统返回核验来源",
-          ],
-          [
-            "执行模式",
-            humanizeValue(task.execution_mode || planTask?.executionMode),
-          ],
-          [
-            "外部影响",
-            humanizeValue(task.external_effect || planTask?.externalEffect),
-          ],
-          [
-            "任务 / 纠偏版本",
-            `${task.task_version || 1} / ${task.correction_version || 0}`,
-          ],
-          [
-            "前置任务",
-            task.depends_on?.length
-              ? `${task.depends_on.length} 个节点已经建立依赖`
-              : "无",
-          ],
-        ] as Array<[string, unknown]>
-      ).filter((item) => item[1] !== undefined && item[1] !== "")
-    : [];
-  return (
-    <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
-        <div className="flex items-center gap-3">
-          <span className="relative flex h-10 w-10 items-center justify-center rounded-lg bg-slate-950 text-white">
-            <Radio size={18} />
-            <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-pulse rounded-full border-2 border-white bg-emerald-400" />
-          </span>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="font-bold text-slate-950">Agent 实时生产现场</h2>
-              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                LIVE
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-400">
-              任务步骤、执行依据、中间产物与真实业务去向同步外显
-            </p>
-          </div>
-        </div>
-        {task && <Badge status={task.status} label={task.output.dataStatus === "no_data" ? "暂无数据" : task.output.dataStatus === "not_required" ? "本轮无需执行" : task.status === "waiting_external" && task.output.waitState ? taskWaitLabels[(task.output.waitState as TaskWaitState).kind] : undefined} />}
-      </div>
-      {!task ? (
-        <div className="px-5 py-10 text-center text-sm text-slate-400">
-          选择左侧任务，查看它的完整生产过程。
-        </div>
-      ) : (
-        <div className="grid min-h-[390px] lg:grid-cols-[minmax(0,0.9fr)_minmax(300px,1.1fr)]">
-          <div className="border-b border-slate-100 p-5 lg:border-b-0 lg:border-r">
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
-              当前工作台
-            </p>
-            <div className="mt-3 flex items-start gap-3">
-              <TaskIcon status={task.status} />
-              <div>
-                <p className="text-sm font-semibold text-slate-900">
-                  {task.title}
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                  {task.description}
-                </p>
-              </div>
-            </div>
-            <div className="mt-5 grid grid-cols-2 gap-2 text-[11px]">
-              <div className="rounded-lg bg-slate-50 p-3">
-                <p className="text-slate-400">执行角色</p>
-                <p className="mt-1 font-bold text-slate-700">
-                  {agentLabel[task.agent_role] || "业务 Agent"}
-                </p>
-              </div>
-              <div className="rounded-lg bg-slate-50 p-3">
-                <p className="text-slate-400">业务节点</p>
-                <p className="mt-1 font-bold text-slate-700">
-                  {task.kind === "production"
-                    ? "内容制作"
-                    : task.kind === "activation"
-                      ? "内容发布"
-                      : task.kind === "approval"
-                        ? "人工审批"
-                        : "经营任务"}
-                </p>
-              </div>
-            </div>
-            {!isQualityReview && <div className="mt-5 rounded-lg border border-blue-100 bg-blue-50/60 p-4">
-              <div className="flex items-center gap-2 text-blue-800">
-                <BrainCircuit size={15} />
-                <p className="text-xs font-semibold">执行依据</p>
-              </div>
-              {evidence.length ? (
-                <dl className="mt-3 space-y-2">
-                  {evidence.map(([label, value]) => (
-                    <div
-                      key={label}
-                      className="grid grid-cols-[88px_1fr] gap-2 text-[11px]"
-                    >
-                      <dt className="text-slate-400">{label}</dt>
-                      <dd className="font-semibold text-slate-700">
-                        {humanizeValue(value)}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              ) : (
-                <p className="mt-2 text-[11px] text-slate-500">
-                  该任务尚未返回能力映射或事实来源，不能据此宣称业务动作已完成。
-                </p>
-              )}
-            </div>}
-            {!isQualityReview && <div className="mt-5">
-              <p className="text-xs font-bold text-slate-700">中间产物</p>
-              {Object.keys(task.output || {}).length ? (
-                <div className="mt-2 space-y-2">
-                  {Object.entries(task.output)
-                    .slice(0, 6)
-                    .map(([key, value], index) => (
-                      <div
-                        key={key}
-                        className="rounded-lg border border-slate-100 p-3"
-                      >
-                        <p className="text-[10px] font-semibold text-slate-400">
-                          {technicalKeyLabel[key] || `业务产出 ${index + 1}`}
-                        </p>
-                        <DetailValue value={value} />
-                      </div>
-                    ))}
-                </div>
-              ) : (
-                <div className="mt-2 rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-[11px] text-slate-400">
-                  Agent 产出会在执行过程中持续写入
-                </div>
-              )}
-            </div>}
-            {isQualityReview && <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
-              <p className="text-xs font-semibold text-amber-900">需要你观看成片并做判断</p>
-              <p className="mt-2 text-xs leading-5 text-amber-800">{task.blocked_reason || '请确认当前成片是否可以进入发布；如果不通过，可直接修改配乐、配音、分镜素材、字幕、封面或导出规格。'}</p>
-            </div>}
-            {link && (
-              <div className="mt-4">
-                <Button
-                  htmlType="button"
-                  onClick={() => onOpenTask(link)}
-                  className="!h-auto min-h-9 !whitespace-normal inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-slate-950 px-3 py-3 text-xs font-bold text-white hover:bg-slate-800"
-                >
-                  {taskBusinessAction(link)} <ExternalLink size={12} />
-                </Button>
-                <p className="mt-1.5 text-center text-[10px] text-slate-400">
-                  已保留本次运行与任务位置；完成业务操作后返回“数字员工”即可继续。
-                </p>
-              </div>
-            )}
-            {!readOnly &&
-              taskNeedsAttention(task) && !isQualityReview && (
-                <BlockedTaskActions
-                  key={task.id}
-                  task={task}
-                  busy={controlling}
-                  onRetry={onRetry}
-                  onSkip={onSkip}
-                  onComplete={onComplete}
-                />
-              )}
-            {!isQualityReview && (!readOnly ? (
-              <CorrectionPanel
-                key={task.id}
-                busy={correcting}
-                onSubmit={onCorrect}
-              />
-            ) : (
-              <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
-                正在查看历史运行；可查看业务证据，但不会对历史任务执行纠偏或恢复操作。
-              </p>
-            ))}
-          </div>
-          <div className="max-h-[620px] overflow-y-auto p-5">
-            {!isQualityReview && <AgentOperationFeed task={task} events={taskEvents} />}
-            <div className="mb-4 flex items-center justify-between">
-              <p className="mt-5 text-xs font-bold text-slate-700">现场事件</p>
-              <span className="text-[10px] text-slate-400">
-                {taskEvents.length} 条已持久化
-              </span>
-            </div>
-            <EventTimeline
-              events={taskEvents}
-              activeTaskId={task.id}
-              actionEventId={actionEventId}
-              actionLabel={isQualityReview ? '查看成片并处理' : undefined}
-              onAction={isQualityReview && link ? () => onOpenTask(link) : undefined}
-            />
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
 
 
 type OverviewPeriod = "week" | "lastWeek" | "month" | "lastMonth";
@@ -2700,15 +2050,6 @@ function DraftPlanPreview({
 }
 
 
-function AgentOperationFeed({ task, events }: { task?: WorkflowTask; events: RunEvent[] }) {
-  const actions = events.map(agentUiActionFromEvent).filter((item): item is AgentUiAction => Boolean(item));
-  const latestScreenshot = [...actions].reverse().find((item) => item.kind === "screenshot" && item.screenshotUrl);
-  const cursorAction = [...actions].reverse().find((item) => agentCursorPercent(item));
-  const cursor = agentCursorPercent(cursorAction);
-  const viewportAction = [...actions].reverse().find((item) => item.viewportWidth && item.viewportHeight);
-  const viewportRatio = viewportAction?.viewportWidth && viewportAction.viewportHeight ? Math.max(0.75, Math.min(2.4, viewportAction.viewportWidth / viewportAction.viewportHeight)) : 16 / 9;
-  return <section className="overflow-hidden rounded-lg border border-slate-200 bg-slate-950 text-white"><div className="flex items-center justify-between border-b border-slate-800 px-4 py-3"><div className="flex items-center gap-2"><MonitorPlay size={15} className="text-emerald-400"/><p className="text-xs font-semibold">Agent 操作现场</p></div><span className="rounded-full bg-slate-800 px-2 py-1 text-[9px] font-bold text-slate-300">真实事件流</span></div>{latestScreenshot ? <div className="relative bg-black" style={{aspectRatio:viewportRatio}}><img src={latestScreenshot.screenshotUrl} alt="Agent Worker 上报的操作截图" className="absolute inset-0 h-full w-full object-contain"/>{cursor && <div className="pointer-events-none absolute z-10 transition-all duration-300" style={{left:`${cursor.left}%`,top:`${cursor.top}%`}}><MousePointer2 size={22} className="fill-white text-slate-950 drop-shadow"/>{cursorAction?.kind === "click" && <i className="absolute -left-2 -top-2 h-8 w-8 animate-ping rounded-full border-2 border-emerald-400"/>}</div>}<div className="absolute bottom-3 left-3 rounded-lg bg-black/70 px-2 py-1 text-[9px]">{latestScreenshot.label}</div></div> : actions.length ? <div className="relative p-4">{cursor && <div className="pointer-events-none absolute z-10 transition-all duration-300" style={{left:`${cursor.left}%`,top:`${cursor.top}%`}}><MousePointer2 size={20} className="fill-white text-slate-950 drop-shadow"/></div>}<div className="space-y-2">{actions.slice(-6).map((action,index)=><div key={`${action.kind}-${index}`} className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2"><MousePointer2 size={13} className="text-emerald-400"/><div><p className="text-[10px] font-bold text-slate-200">{action.label}</p><p className="text-[9px] text-slate-500">{action.kind}{action.page ? ` · ${action.page}` : ""}</p></div></div>)}</div></div> : <div className="px-5 py-10 text-center"><MonitorPlay size={24} className="mx-auto text-slate-600"/><p className="mt-3 text-xs font-semibold text-slate-300">现场画面流尚未接入</p><p className="mx-auto mt-2 max-w-md text-[10px] leading-5 text-slate-500">当前只展示真实任务状态、产物和事件。Agent Worker 上报带坐标的 navigation、click、input、screenshot 后，这里才会移动真实鼠标，不生成假鼠标动画。</p>{task && <p className="mt-3 text-[9px] text-slate-600">当前任务：{task.title}</p>}</div>}</section>;
-}
 
 const ONBOARDING_CONFETTI_COLORS = ['#117f51', '#65c99c', '#f4b860', '#e76f51', '#6c8ae4', '#f2d45c'];
 
