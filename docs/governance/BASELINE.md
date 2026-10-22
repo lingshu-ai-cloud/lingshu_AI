@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵小枢后台通知生命周期职责拆分（2026-10-23）
+
+- 代码提交 `238cb28c` 将后台任务卡、等待状态、一次性短消息和首次入口提示的事件订阅、静默策略、轮播与清理整组迁至 `src/components/assistant/useAssistantNotifications.ts`；浮层仍持有用户主动操作结果与对话状态。`GlobalAssistant.tsx` 从 2,008 降至 1,901 行，历史预算同步收紧；仍有 7 个超限文件。
+- `test:assistant`、TypeScript、架构扫描及相对上一基线 ratchet、192 项迁移仓库只读检查、生产构建和 `git diff --check` 通过。第一次架构检查因预算记录误写为 1,900 而失败，按实际 1,901 行修正后通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未做真实浏览器通知交互、付费供应商调用、目标库迁移或部署；最终远端 SHA 和工作区状态以推送后 Git 核对为准。
+
 ## 灵小枢功能引导生命周期职责拆分（2026-10-23）
 
 - 代码提交 `4b63a87d` 将功能引导的本地记忆、去重冷却、企业页一次性提示、指针/焦点触发及计时器/监听器清理整组迁至 `src/components/assistant/useAssistantFeatureGuides.ts`；浮层仍持有提示展示与打开对话动作。`GlobalAssistant.tsx` 从 2,138 降至 2,008 行，历史预算同步收紧；全仓仍有 7 个超限文件，不能据此称结构治理已完成。
