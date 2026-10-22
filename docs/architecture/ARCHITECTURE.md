@@ -26,6 +26,7 @@
 - `server/starter198/socialContentProductionExecution.ts`：社媒自动生产 worker 的阶段编排；素材路线重绑定与动态主持人背景锁由 `socialContentProductionRouting.ts` 负责，`socialContentProductionMaterialPreparation.ts` 在预算认领前读取任务素材、核对已批准本地路线并记录重绑定证据，非渲染代拍清单投影由 `socialContentShootingPlan.ts` 负责。`socialContentProductionScriptBaseline.ts` 负责已冻结脚本快照校验、兼容重建和原任务持久化；不能在恢复时悄悄采用更新的企业事实或模板。成片后复刻评估的参考视频只从任务素材或租户路径、来源和哈希均匹配的缓存读取，由 `socialContentProductionReplicationEvaluation.ts` 负责。原 worker 导出维持兼容。
 - `server/lib/translationCues.ts`：时间戳配音翻译的纯文本解析、cue 完整性校验和响应形态归一化；Express 超时/连接生命周期保留在路由 adapter。
 - `server/lib/imageGen.ts`、`server/agents/qwen.ts`：供应商适配；调用由服务端显式选择并受预算/回执边界约束。
+- `server/agents/imageEvidencePaidContext.ts` 与 `imageEvidenceReceiptStore.ts`：图片证据 GPT 复核的冻结记录/租户绑定、现有预算账本与一次性许可复用，以及原始响应的共享卷持久回执。它们不从浏览器参数推导批准，不以 `trend_videos` 的非原子普通更新认领付费请求；当前爬取与重分析路由尚未接线。
 
 ## 图片管线数据流
 

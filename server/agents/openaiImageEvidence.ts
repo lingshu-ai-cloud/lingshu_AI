@@ -6,7 +6,9 @@ import { normalizeImageLayerBlueprints, type ImagePostEvidenceAnalysis } from '.
 /** The caller must obtain this from a durable, approved and reserved task plan. */
 export interface OpenAiImageEvidencePaidCall {
   intent: SocialPaidOperationIntent;
+  assertProviderBinding(input: { model: string; accountRef: string; baseUrl: string; credentialSha256: string }): Promise<void>;
   permit: {
+    assertRecovery?(operationId: string): Promise<unknown>;
     beforeSubmit(request: PaidOperationSubmission): Promise<unknown>;
     markOutcome(operationId: string, status: 'accepted' | 'unknown' | 'completed', receiptRef: string): Promise<unknown>;
   };
@@ -58,6 +60,15 @@ function parseResult(payload: unknown, imageCount: number): ImagePostEvidenceAna
 export function buildOpenAiImageEvidenceRequest(opts: OpenAiImageEvidenceInput, model: string) {
   if (!opts.images.length || opts.images.length > 12) throw Error('openai_image_evidence_image_count_invalid');
   if (!model.trim()) throw Error('openai_image_evidence_model_missing');
+  for (const image of opts.images) {
+    const base64 = image.base64.replace(/^data:[^,]+,/, '');
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.mimeType)
+      || !Number.isInteger(image.imageIndex) || image.imageIndex < 1
+      || !base64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)
+      || Buffer.byteLength(base64, 'base64') > 8 * 1024 * 1024) {
+      throw Error('openai_image_evidence_image_invalid');
+    }
+  }
   const instruction = `Review social marketing images against the primary vision draft. Return corrected JSON only. Ground fields in visible pixels or supplied caption. Do not infer popularity, efficacy, certifications, price, MOQ, audience or business facts. Focus on mask contour, opacity and back-to-front layer order. Coordinates are normalized 0..1; zIndex increases toward the viewer. Required JSON keys: version, status, observedFacts, carouselFlow, copyEvidence, reusableModules, layerBlueprints, uncertainties.`;
   const metadata = JSON.stringify({ title: opts.title || '', caption: opts.caption || '', platform: opts.platform || '', tags: opts.tags || [], reviewReasons: opts.reviewReasons, primaryDraft: opts.primary || null }).slice(0, 45_000);
   const content = [
@@ -79,6 +90,8 @@ export async function reviewImagePostEvidenceWithOpenAI(opts: OpenAiImageEvidenc
   if (!/^https:\/\//i.test(baseUrl) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(baseUrl)) throw Error('openai_image_evidence_endpoint_untrusted');
   const { intent } = opts.paidCall;
   if (intent.provider !== 'openai' || intent.stage !== 'image_post_evidence_review') throw Error('openai_image_evidence_intent_invalid');
+  await opts.paidCall.assertProviderBinding({ model: intent.model, accountRef: intent.accountRef,
+    baseUrl, credentialSha256: createHash('sha256').update(apiKey).digest('hex') });
   const { body, requestSha256 } = buildOpenAiImageEvidenceRequest(opts, intent.model);
   if (intent.inputContractHash !== requestSha256) throw Error('openai_image_evidence_request_binding_invalid');
   const inputTokens = await opts.paidCall.measureInputTokens(structuredClone(body));

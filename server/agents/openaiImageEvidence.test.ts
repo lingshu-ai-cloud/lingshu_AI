@@ -6,6 +6,7 @@ const { requestSha256 } = buildOpenAiImageEvidenceRequest(input, 'gpt-4.1-mini')
 const events: string[] = [];
 const call: OpenAiImageEvidencePaidCall = {
   intent: { operationId: 'review-1', provider: 'openai', model: 'gpt-4.1-mini', accountRef: 'test', stage: 'image_post_evidence_review', shotId: null, inputContractHash: requestSha256, maximumUnits: { inputTokens: 1000, outputTokens: 7000, requests: 1 } },
+  async assertProviderBinding() {},
   permit: {
     async beforeSubmit(request) { events.push(`claim:${request.actualUnits.inputTokens}`); },
     async markOutcome(_id, status, receipt) { events.push(`${status}:${receipt}`); },
@@ -20,6 +21,10 @@ const fetcher = async () => {
   return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ observedFacts: [{ imageIndex: 1, subjects: ['bottle'], confidence: .9 }], layerBlueprints: [] }) } }] }), { status: 200 });
 };
 await assert.rejects(reviewImagePostEvidenceWithOpenAI({ ...input, apiKey: 'test', paidCall: { ...call, intent: { ...call.intent, inputContractHash: '0'.repeat(64) } }, fetcher }), /request_binding_invalid/);
+assert.equal(sent, 0);
+await assert.rejects(reviewImagePostEvidenceWithOpenAI({ ...input, apiKey: 'test', paidCall: {
+  ...call, async assertProviderBinding() { throw Error('account_changed'); },
+}, fetcher }), /account_changed/);
 assert.equal(sent, 0);
 const result = await reviewImagePostEvidenceWithOpenAI({ ...input, apiKey: 'test', paidCall: call, fetcher });
 assert.equal(result.observedFacts[0]?.subjects[0], 'bottle');
