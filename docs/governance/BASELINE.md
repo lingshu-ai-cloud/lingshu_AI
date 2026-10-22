@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 原片口播与时间线规则拆分（2026-10-23）
+
+- 代码提交 `a4b3c0b4d90c0640df9125a3abad4116fbaba43f` 将按原片切点和 ASR 构造/人工编辑复刻口播的规则迁至 `studioReferenceSpeechPlan.ts`，将配音 cue、分镜与数字人成片时长拟合迁至 `studioTimelineFitting.ts`，参考视频与槽位类型独立放置；`AiCreateStudio.tsx` 保留请求和页面状态并转发旧公开导出。该文件从 12,609 降至 12,355 行，预算同步收紧；全仓仍有 6 个历史超限文件。
+- 原参考口播/分镜媒体回归与工作流合同直测 2/2、`test:studio-media`、`test:studio-workflow`、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,373 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过。首轮类型检查发现迁移类型文件的相对路径错误，修正并复检通过；`AiCreateStudio` chunk 为 496,106/500,000 字节，仍有大 chunk 提示。未做真实供应商调用、浏览器验收、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## Studio 字幕 cue 时间轴规则拆分（2026-10-23）
 
 - 代码提交 `ac5282179d38e32a977b78bb3ab5f268dbfe6967` 将句子切分、已确认口播时间范围、字幕 cue 生成/归一化、SRT/VTT 文本和渲染边界迁至 `studioSubtitleCues.ts`；页面仍持有字幕使用时机、语言版本及现有导出流程，旧 `confirmedNarrationForTimeRange` 导出继续转发。`AiCreateStudio.tsx` 从 12,793 降至 12,609 行，历史预算同步收紧；全仓仍有 6 个超限文件。
