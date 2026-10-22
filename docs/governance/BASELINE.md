@@ -7,6 +7,7 @@
 - 集成分支：`xixi1021程永罗沟通前大整合`；独立本地检出：`/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`。此文档不把会随提交变化的 SHA 写成永久“当前 HEAD”；交接时必须以 `git rev-parse HEAD`、`git status --porcelain` 和 `git ls-remote` 核对本地、远端和工作区状态。
 - 图片准入代码验收点 `eae873e78d4894bb001e210362a881c008447d77` 与客服回复结构治理验收点 `be8a7d1ff9abb8efcbbd7487eaa473d25122e7c7` 是历史批次；当时有 10 个历史超限文件，随后企业资料页面退出清单，当前仍有 8 个。运行数据、真实供应商 Ready 和发布状态均未由这些代码验收。
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 11 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
+- 在 `ed83980d` 代码点位后重新只读盘点 11 树：6 个来源树有未提交项，4 个非集成树 Git 状态干净但含有业务/审计数据或独有图片补丁，没有新增可安全归档候选。图片分支 `23b1bb93` 剩余自动 GPT 路由不等价于现行 Gemini 降级和付费门禁，未直接合入；详见工作树清单。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
 ## LinkedIn 未授权采集显式失败边界（2026-10-22）
