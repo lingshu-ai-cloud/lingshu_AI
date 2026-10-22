@@ -7,7 +7,7 @@
   "excludeNameFragments": [".test.", ".d.ts"],
   "oversizedFileBudgets": {
     "server/routes/digitalEmployees.ts": 5783,
-    "server/routes/studio.ts": 10855,
+    "server/routes/studio.ts": 10768,
     "server/routes/videos.ts": 10186,
     "server/starter198/socialContentProductionExecution.ts": 1733,
     "src/components/AiCreateStudio.tsx": 12896,
