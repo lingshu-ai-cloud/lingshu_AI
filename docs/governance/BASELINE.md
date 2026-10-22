@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 自动成片 worker 退出历史超限例外（2026-10-23）
+
+- 代码提交 `c717bf140ce0a2eb82b7f0dfb94e422eb676ece4` 将安全素材方案和编导冻结、人物声音绑定及渲染清单、最终工件的媒体/成本/质量/来源证据组装分别迁至 `socialContentProductionPlanAndDirector.ts`、`socialContentProductionRenderManifest.ts`、`socialContentProductionArtifact.ts`。`socialContentProductionExecution.ts` 从 1,094 降至 788 行，撤销其历史行数豁免；超限清单从 8 项降为 7 项。原 worker 仍负责阶段编排和既有付费门禁，结构拆分不开放新的真实供应商入口。
+- 完整自动成片工作流、图执行/检查点/编导版本/复刻专项 14/14、配音身份/全轨恢复/预算预检/周任务材料准入专项 21/21、拍摄方案执行、TypeScript、架构扫描/ratchet、192 项迁移文件只读检查、生产构建和 `git diff --check` 通过。`AiCreateStudio` chunk 为 497,209/500,000 字节。未执行真实付费请求、目标数据库迁移、浏览器成片验收或部署；这些本地验证不证明全仓架构治理或生产发布就绪。远端和工作区状态以推送后 Git 核对为准。
+
 ## 自动成片配音恢复与编导重试职责拆分验收点（2026-10-23）
 
 - 代码提交 `671e00ea617244fc159ccb09c56a41157e8619af` 将冻结口播恢复、TTS 一次性操作认领与结果不明拒绝、声音检查点、超时长后编导压缩修订迁至 `socialContentProductionVoicePreparation.ts`。外层 worker 仍负责后续配乐、渲染与最终清理；阶段内异常由新模块清理未保留的临时音频。worker 从 1,293 降至 1,094 行，历史预算同步收紧；全仓仍有 8 个超限文件。
