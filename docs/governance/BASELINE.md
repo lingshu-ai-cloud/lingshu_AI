@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 关键词采集弹窗展示边界拆分（2026-10-23）
+
+- 代码提交 `0cd6aafaa8bd8b576c86956eb1166395c2108930` 将实际挂载的关键词补充采集弹窗迁至 `InspirationImageCrawlDialog.tsx`；页面保留采集请求、平台/关键词/数量状态及错误清理，原 Ant Design 表单与忙碌态未改。`InspirationDashboard.tsx` 从 2,474 降至 2,450 行，历史预算同步收紧；全仓仍有 6 个超限文件，并非整体架构拆分完成。
+- 弹窗合同直测 2/2、`test:video-source-boundaries` 129/129、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,368 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过；`AiCreateStudio` chunk 仍为 496,002/500,000 字节。没有执行真实采集、付费供应商调用、浏览器验收、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## GPT 图片证据报价与人工批准拆分（2026-10-23）
 
 - 代码提交 `d756a186a62ffa48e3b73167a144cb655a06d971` 为逐记录 GPT 图片复核增加只读报价，批准前必须重算并匹配租户、记录来源、实际图片字节、精确请求、模型/账号、用量上界及费率证据的报价指纹；预算仍受人工人民币上限约束。报价不写批准，批准不是付费发送许可。未改变现有 Qwen→Gemini 降级，也未接通 GPT HTTP/worker 入口。
