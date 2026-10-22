@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵小枢流式回答与文件交付职责拆分（2026-10-23）
+
+- 代码提交 `0921d93a` 将模型首响应/流式空闲超时、SSE 完整性与文件正文完成后生成迁至 `src/lib/assistantChatStream.ts`；`GlobalAssistant.tsx` 保留身份栅栏、消息状态、错误提示和任务分流。主组件从 2,224 降至 2,138 行，历史超限预算同步收紧；全仓仍有 7 个超限文件，结构治理尚未完成。
+- 新模块完整流、传输中断和 PDF 文件交付测试 3/3、`test:assistant`、TypeScript、架构扫描/相对上一基线 ratchet、192 项迁移仓库只读检查、生产构建及 `git diff --check` 通过。`AiCreateStudio` chunk 为 497,209/500,000 字节。未执行真实模型/付费供应商、目标库迁移或部署；离线测试不替代真实浏览器验收。最终本地/远端 SHA 和工作区状态以推送后 Git 核对为准。
+
 ## LinkedIn 公司帖原始付费回执硬门禁（2026-10-23）
 
 - 代码提交 `169ad3cdae06f5c6d8f9093815a851fb072e9fb7` 为受控 LinkedIn Apify 许可增加必需的原始响应持久化回调，共用传输在 Actor POST、run GET 与 dataset GET 响应到达后先交给回调，成功后才解析或更新账本状态。新增 `server/socialDiscovery/linkedinCompanyReceiptStore.ts`，以批准记录、租户/run、Actor、请求与 Token 指纹绑定 write-once 原始状态码/正文，缺共享根、冲突和篡改均拒绝。现有 TikTok 许可不被这次接口增量强制改动；LinkedIn POST 已发出但回执失败时保持结果不明且禁自动重提。
