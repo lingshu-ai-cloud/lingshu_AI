@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { App as AntApp, Badge, Button, Input, Modal } from 'antd';
+import { App as AntApp, Badge, Button, Input } from 'antd';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowLeft,
@@ -19,8 +19,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
-  Pause,
-  Play,
   X,
 } from 'lucide-react';
 import type { AgentAction, AgentType, Message, Page } from '../App';
@@ -61,6 +59,7 @@ import AssistantDecisionCenter, {
   assistantDecisionExecutionFeedback,
   type AssistantDecisionActionResult,
 } from './assistant/AssistantDecisionCenter';
+import AssistantDecisionDialog, { taskStatusLabel, type AssistantDecisionDialog as AssistantDecisionDialogState } from './assistant/AssistantDecisionDialog';
 import type { AssistantDecisionDeepLink, AssistantDecisionFeed } from '../../shared/contracts/assistantDecisionCenter';
 import { assistantDecisionApi } from '../lib/assistantDecisionApi';
 import {
@@ -173,10 +172,6 @@ function withAssistantTimeout<T>(
 type AssistantPerformance = { phase: string; message?: string; reason: AssistantNotificationReason };
 type AssistantSpeech = { id: number; message: string };
 type AssistantPanelView = 'todo' | 'chat';
-type AssistantDecisionDialog =
-  | { kind: 'feed' }
-  | { kind: 'task'; taskId: string }
-  | null;
 
 const PERFORMANCE_LINES: Record<string, string[]> = {
   script: ['我正在把卖点排成能拍的镜头，马上就好。', '好内容值得多想几秒，我先帮你把逻辑捋顺。', '别急，我正在检查每个镜头能不能真正执行。'],
@@ -228,15 +223,6 @@ function todoDotClass(tone: AssistantTodoItem['tone'], completed: boolean) {
   return 'bg-border-bright';
 }
 
-function taskStatusLabel(card: AssistantTaskCard) {
-  if (card.status === 'needs_input') return '待补信息';
-  if (card.status === 'approval') return '待确认';
-  if (card.status === 'ready') return '可开始';
-  if (card.status === 'running') return '执行中';
-  if (card.status === 'paused') return '已暂停';
-  if (card.status === 'failed') return '需要处理';
-  return '已完成';
-}
 
 function requestId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -263,7 +249,7 @@ export default function GlobalAssistant({
   const [mode, setMode] = useState<'breathing' | 'chat'>('breathing');
   const [launcherRetracted, setLauncherRetracted] = useState(readLauncherRetractedPreference);
   const [panelView, setPanelView] = useState<AssistantPanelView>('chat');
-  const [decisionDialog, setDecisionDialog] = useState<AssistantDecisionDialog>(null);
+  const [decisionDialog, setDecisionDialog] = useState<AssistantDecisionDialogState>(null);
   const [decisionFeedRevision, setDecisionFeedRevision] = useState(0);
   const [decisionTotal, setDecisionTotal] = useState<number | null>(null);
   const [productionDecisionContext, setProductionDecisionContext] = useState<AssistantProductionContext | null>(null);
@@ -300,7 +286,7 @@ export default function GlobalAssistant({
   const launcherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
   const edgeLauncherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
   const decisionDialogTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const decisionDialogKindRef = useRef<Exclude<AssistantDecisionDialog, null>['kind'] | null>(null);
+  const decisionDialogKindRef = useRef<Exclude<AssistantDecisionDialogState, null>['kind'] | null>(null);
   const decisionDialogRestoreFocusRef = useRef(true);
   const handledDecisionResultsRef = useRef(new Set<string>());
   const abortRef = useRef<AbortController | null>(null);
@@ -582,7 +568,7 @@ export default function GlobalAssistant({
   }, []);
 
   const openDecisionDialog = useCallback((
-    dialog: Exclude<AssistantDecisionDialog, null>,
+    dialog: Exclude<AssistantDecisionDialogState, null>,
     trigger?: HTMLButtonElement | null,
   ) => {
     decisionDialogTriggerRef.current = trigger ?? null;
@@ -2496,141 +2482,23 @@ export default function GlobalAssistant({
         )}
       </AnimatePresence>
 
-      <Modal
-        open={Boolean(decisionDialog)}
-        title={decisionDialog?.kind === 'task' ? (dialogTaskCard?.title || '任务详情') : '待你决定'}
-        footer={null}
-        width={640}
-        centered
-        destroyOnHidden
-        getContainer={() => document.body}
-        onCancel={closeDecisionDialog}
-        afterClose={restoreDecisionDialogFocus}
-        focusTriggerAfterClose={false}
-        mask={{ closable: false }}
-        className="ls-assistant-decision-dialog"
-        styles={{ body: { maxHeight: 'min(70dvh, 680px)', overflowY: 'auto' } }}
-      >
-        <div
-          data-global-assistant="decision-dialog"
-          data-assistant-detail-kind={decisionDialog?.kind || undefined}
-          data-assistant-surface="decision"
-        >
-          {decisionDialog?.kind === 'feed' ? (
-            <AssistantDecisionCenter
-              page={page}
-              goalId={pageContext.goalId}
-              productionContext={productionDecisionContext}
-              key={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:dialog`}
-              active
-              onOpenChat={closeDecisionDialog}
-              onNavigate={closeDecisionDialogForNavigation}
-              onFeedChange={handleDecisionDialogFeedChange}
-              onActionResult={handleDecisionActionResult}
-              variant="detail"
-              showHeading={false}
-            />
-          ) : dialogTaskCard ? (
-            <article className="assistant-task-dialog-card rounded-lg border border-border bg-surface">
-              <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
-                <p className="ls-type-label-medium text-accent">灵小枢已整理</p>
-                <div className="flex items-center gap-2">
-                  <span className="ls-type-label-medium shrink-0 rounded-full border border-border bg-surface-2 px-2 py-1 text-text-secondary">
-                    {taskStatusLabel(dialogTaskCard)}
-                  </span>
-                  {focusedRunControl && (
-                    <button
-                      type="button"
-                      onClick={() => void toggleTaskPaused()}
-                      disabled={loading}
-                      className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-text-secondary hover:border-accent/40 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
-                      title={focusedRunControl.actionId === 'resume_task' ? '继续当前任务' : '暂停当前任务'}
-                      aria-label={focusedRunControl.actionId === 'resume_task' ? '继续当前任务' : '暂停当前任务'}
-                    >
-                      {focusedRunControl.actionId === 'resume_task' ? <Play size={15} /> : <Pause size={15} />}
-                      <span className="ls-type-label-medium">{focusedRunControl.actionId === 'resume_task' ? '继续' : '暂停'}</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="px-5 py-4">
-                <p className="ls-type-body-medium font-semibold text-text-primary">{dialogTaskCard.conclusion}</p>
-                {dialogTaskCard.details.length > 0 && (
-                  <ul className="mt-3 space-y-2 border-l-2 border-accent/30 pl-3">
-                    {dialogTaskCard.details.map(detail => (
-                      <li key={detail} className="ls-type-body-small text-text-secondary">{detail}</li>
-                    ))}
-                  </ul>
-                )}
-
-                {dialogTaskCard.items.length > 0 && (
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2" aria-label="待调整视频">
-                    {dialogTaskCard.items.map(item => (
-                      <div key={item.id} className="flex min-w-0 gap-3 rounded-md border border-border bg-surface-2 p-2.5">
-                        <div className="h-20 w-14 shrink-0 overflow-hidden rounded bg-surface-3">
-                          {item.thumbnailUrl ? (
-                            <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
-                          ) : (
-                            <div className="ls-type-label-small flex h-full items-center justify-center px-1 text-center text-text-muted">暂无缩略图</div>
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="ls-type-label-medium line-clamp-2 text-text-primary">{item.title}</p>
-                          {item.accountLabel && <p className="ls-type-body-small mt-1 truncate text-text-muted">{item.accountLabel}</p>}
-                          <div className="mt-1.5 flex flex-wrap gap-1.5">
-                            {item.transition && <span className="ls-type-label-small rounded bg-accent-glow px-1.5 py-0.5 text-accent">{item.transition}</span>}
-                            {item.note && <span className="ls-type-label-small rounded bg-surface px-1.5 py-0.5 text-text-secondary">{item.note}</span>}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {(dialogTaskCard.primaryAction || dialogTaskCard.secondaryActions.length > 0 || dialogTaskCard.workspace) && (
-                <footer className="assistant-task-dialog-card__actions flex flex-wrap items-center justify-end gap-2 border-t border-border bg-surface px-5 py-3">
-                  {dialogTaskCard.workspace && (
-                    <a
-                      href={dialogTaskCard.workspace.href}
-                      onClick={() => closeDecisionDialogForNavigation()}
-                      className="ls-type-label-medium mr-auto inline-flex min-h-10 items-center rounded-md border border-border bg-surface px-3 text-accent hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                    >
-                      {dialogTaskCard.workspace.label}
-                    </a>
-                  )}
-                  {dialogTaskCard.secondaryActions.map(action => (
-                    <button
-                      key={action.id}
-                      type="button"
-                      disabled={action.disabled || loading}
-                      onClick={() => void handleTaskCardAction(dialogTaskCard, action)}
-                      className="ls-type-label-medium min-h-10 rounded-md border border-border bg-surface px-3 text-text-secondary hover:border-accent/40 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {action.label}
-                    </button>
-                  ))}
-                  {dialogTaskCard.primaryAction && (
-                    <button
-                      type="button"
-                      disabled={dialogTaskCard.primaryAction.disabled || loading}
-                      onClick={() => void handleTaskCardAction(dialogTaskCard, dialogTaskCard.primaryAction!)}
-                      className="btn-primary ls-type-label-large min-h-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
-                    >
-                      {dialogTaskCard.primaryAction.label}
-                    </button>
-                  )}
-                </footer>
-              )}
-            </article>
-          ) : decisionDialog?.kind === 'task' ? (
-            <div className="ls-type-body-medium rounded-lg border border-border bg-surface-2 px-4 py-8 text-center text-text-secondary" role="status">
-              任务状态已经更新，请关闭后查看最新概要。
-            </div>
-          ) : null}
-        </div>
-      </Modal>
+      <AssistantDecisionDialog
+        decisionDialog={decisionDialog}
+        dialogTaskCard={dialogTaskCard}
+        focusedRunControl={focusedRunControl}
+        page={page}
+        goalId={pageContext.goalId}
+        productionDecisionContext={productionDecisionContext}
+        persistenceScopeKey={persistenceScopeKey}
+        loading={loading}
+        closeDecisionDialog={closeDecisionDialog}
+        restoreDecisionDialogFocus={restoreDecisionDialogFocus}
+        closeDecisionDialogForNavigation={closeDecisionDialogForNavigation}
+        handleDecisionDialogFeedChange={handleDecisionDialogFeedChange}
+        handleDecisionActionResult={handleDecisionActionResult}
+        toggleTaskPaused={toggleTaskPaused}
+        handleTaskCardAction={handleTaskCardAction}
+      />
 
       {launcherRetracted && mode === 'breathing' ? (
         <Badge count={decisionTotal ?? pendingCount} overflowCount={9} size="small">

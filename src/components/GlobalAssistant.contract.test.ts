@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
+const decisionDialogSource = fs.readFileSync(new URL('./assistant/AssistantDecisionDialog.tsx', import.meta.url), 'utf8');
 const runtimeSource = fs.readFileSync(new URL('./assistant/globalAssistantRuntime.ts', import.meta.url), 'utf8');
 const saveQueueSource = fs.readFileSync(new URL('./assistant/useAssistantThreadSaveQueue.ts', import.meta.url), 'utf8');
 const actionProjectionSource = fs.readFileSync(new URL('./assistant/assistantActionProjection.ts', import.meta.url), 'utf8');
@@ -29,7 +30,7 @@ function sourceSection(startMarker: string, endMarker: string, label: string, ta
 }
 
 for (const surface of ['floating-reminder', 'conversation', 'decision']) {
-  assert.match(source, new RegExp(`data-assistant-surface=["']${surface}["']`), `缺少 ${surface} 助手形态`);
+  assert.match(`${source}\n${decisionDialogSource}`, new RegExp(`data-assistant-surface=["']${surface}["']`), `缺少 ${surface} 助手形态`);
 }
 assert.doesNotMatch(source, /data-assistant-surface=["']quick-actions["']|SKILL_AGENTS/, '灵小枢不得再展示四助手快捷轮盘');
 assert.equal(source.match(/data-global-assistant=["']root["']/g)?.length, 1, '页面只能渲染一个灵小枢根入口');
@@ -108,20 +109,22 @@ assert.match(source, /finally \{[\s\S]{0,220}setLoading\(false\)/, '请求作用
 
 const assistantPanelSource = sourceSection(
   'id="global-assistant-panel"',
-  '<Modal',
+  '<AssistantDecisionDialog',
   '灵小枢对话面板',
 );
 assert.doesNotMatch(assistantPanelSource, /variant="detail"|data-assistant-page="decision-detail"|focusedTaskCard\.details\.map/, '助手面板内不得渲染任何决策详情');
+assert.match(source, /<AssistantDecisionDialog[\s\S]*goalId=\{pageContext\.goalId\}[\s\S]*closeDecisionDialog=\{closeDecisionDialog\}/, '页面必须把当前周目标和关闭流程传给独立决策弹窗');
 const externalDecisionDialogSource = sourceSection(
   '<Modal',
-  '<Badge count={decisionTotal ?? pendingCount}',
+  '</Modal>',
   '外部决策弹窗',
+  decisionDialogSource,
 );
 assert.match(externalDecisionDialogSource, /data-global-assistant="decision-dialog"/, '外部决策弹窗必须有稳定语义标记');
 assert.match(externalDecisionDialogSource, /open=\{Boolean\(decisionDialog\)\}/, '外部 Modal 只能由独立决策弹窗状态控制');
 assert.match(externalDecisionDialogSource, /onCancel=\{closeDecisionDialog\}/, '关闭外部 Modal 必须走统一关闭流程');
 assert.match(externalDecisionDialogSource, /decisionDialog\?\.kind === 'feed'[\s\S]*variant="detail"/, '权威待办详情必须在外部 Modal 重新读取');
-assert.match(externalDecisionDialogSource, /goalId=\{pageContext\.goalId\}/, '权威待办详情必须与概要使用同一个当前周目标');
+assert.match(externalDecisionDialogSource, /goalId=\{goalId\}/, '权威待办详情必须使用页面传入的当前周目标');
 assert.match(externalDecisionDialogSource, /decisionDialog\?\.kind === 'task'[\s\S]*dialogTaskCard/, '普通任务详情必须使用同一外部 Modal');
 assert.doesNotMatch(externalDecisionDialogSource, /getContainer=\{false\}/, '外部 Modal 不得被挂载回灵小枢面板内');
 const closeExternalDecisionDialogSource = sourceSection(
@@ -266,7 +269,7 @@ assert.match(assistantStylesSource, /@keyframes ls-assistant-bubble-enter\s*\{[\
 assert.match(assistantStylesSource, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*\.ls-assistant-bubble-enter[\s\S]{0,180}animation:\s*none\s*!important/, '减少动态效果时必须立即显示全部气泡');
 
 assert.match(source, /关闭窗口（任务继续）/, '关闭窗口必须与暂停任务分离');
-assert.match(source, /暂停当前任务/, '必须提供独立的暂停操作');
+assert.match(decisionDialogSource, /暂停当前任务/, '必须提供独立的暂停操作');
 assert.match(source, /assistantRunControl\(dialogTaskCard\)/, '外部任务详情的暂停按钮只能由可执行运行任务的后端目标决定');
 assert.doesNotMatch(source, /objectId:\s*dialogTaskCard\.taskId/, '不得把展示卡片编号猜成可执行运行编号');
 assert.match(source, /const accepted = response\.status === 'accepted' \|\| response\.status === 'completed'/, '只有后端确认后才能改变本地暂停状态');
@@ -469,8 +472,8 @@ assert.match(source, /shouldNotifyAssistant\(detail\.reason \?\? 'routine'\)/, '
 const routinePerformanceIgnored = /if \(!shouldNotifyAssistant\(reason\)\)[\s\S]{0,160}(?:return|setPerformance\(null\))/.test(source);
 assert.ok(routinePerformanceIgnored, '常规后台性能事件不得触发灵小枢提示');
 
-assert.match(source, /dialogTaskCard\.secondaryActions\.map/, '外部决策弹窗必须渲染交互选择卡操作');
-assert.match(source, /dialogTaskCard\.workspace\.href/, '外部弹窗中的完整结果必须可以进入工作区');
+assert.match(decisionDialogSource, /dialogTaskCard\.secondaryActions\.map/, '外部决策弹窗必须渲染交互选择卡操作');
+assert.match(decisionDialogSource, /dialogTaskCard\.workspace\.href/, '外部弹窗中的完整结果必须可以进入工作区');
 assert.match(source, /data-assistant-summary="task-card"[\s\S]{0,1100}openDecisionDialog\([\s\S]{0,120}kind: 'task'/, '任务结果必须先以概要气泡呈现，用户点击后才打开外部详情');
 assert.match(source, /<AssistantComposer/, '灵小枢必须使用统一输入组件');
 assert.match(source, /onSuggest=\{suggestion => void send\(suggestion, currentPageAgent\)\}/, '快捷回复卡片必须点击后直接进入当前灵小枢对话');
