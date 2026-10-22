@@ -17,8 +17,10 @@ import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
 const weeklyPlanConfirmationSource = fs.readFileSync('src/components/WeeklyPlanConfirmationCard.tsx', 'utf8');
 const smartBusinessSource = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
+const smartBusinessModelSource = fs.readFileSync('src/components/smartBusiness/smartBusinessDisplayModel.ts', 'utf8');
+const weeklyPlanPresentationSource = fs.readFileSync('src/components/smartBusiness/WeeklyPlanPresentation.tsx', 'utf8');
 const taskPreviewCardsSource = fs.readFileSync('src/components/smartBusiness/TaskPreviewCards.tsx', 'utf8');
-const smartBusinessFeatureSource = smartBusinessSource + taskPreviewCardsSource;
+const smartBusinessFeatureSource = smartBusinessSource + smartBusinessModelSource + taskPreviewCardsSource;
 const presentationPolicySource = fs.readFileSync('src/lib/digitalEmployeePresentationPolicy.ts', 'utf8');
 const digitalEmployeeWorkspaceSource = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeWorkspace.tsx', 'utf8');
 const matrixScheduleSource = fs.readFileSync('src/components/smartBusiness/MatrixWorkSchedule.tsx', 'utf8');
@@ -76,9 +78,9 @@ const currentPlanSource = pageSource.slice(
   pageSource.indexOf('<div aria-label="当前周计划"'),
   pageSource.indexOf('<Tabs className=', pageSource.indexOf('<div aria-label="当前周计划"')),
 );
-const weeklyCommandCenterSource = smartBusinessSource.slice(
-  smartBusinessSource.indexOf('export function WeeklyCommandCenter'),
-  smartBusinessSource.indexOf('function HomeView'),
+const weeklyCommandCenterSource = weeklyPlanPresentationSource.slice(
+  weeklyPlanPresentationSource.indexOf('export function WeeklyCommandCenter'),
+  weeklyPlanPresentationSource.indexOf('export function WeeklyPlanDetailsDrawer'),
 );
 const homeSource = smartBusinessSource.slice(
   smartBusinessSource.indexOf('function HomeView'),

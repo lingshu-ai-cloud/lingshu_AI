@@ -1,4 +1,5 @@
 /* 混剪工作台 AI 接口封装 */
+import { readStudioHttpError } from './studioQuotaMessage';
 import { authHeader } from './auth';
 import type { DigitalHumanCapabilities, DigitalHumanJob, TransformationAssessment, TransformationAssessmentInput } from './studioDigitalHuman';
 import { fetchMaterialLibrary, type MaterialLibraryPurpose } from './studioDigitalHuman';

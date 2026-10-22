@@ -2,6 +2,12 @@
 
 更新时间：2026-10-22（Asia/Shanghai）
 
+## 经营看板结构治理（2026-10-22）
+
+- `SmartBusinessDashboard.tsx` 的周计划展示与统一展示模型分别移到 `smartBusiness/WeeklyPlanPresentation.tsx` 和 `smartBusiness/smartBusinessDisplayModel.ts`，原组件导出入口保留；主文件从 1,540 行降至 623 行，移除其超限豁免，剩余超限项 19 个。
+- 保持真实回传与参考估算、计划视频预算、精确爆款引用和缩略图回退规则不变。看板相关定向回归 8/8 通过。此前 `studioApi.ts` 拆分遗漏的 `readStudioHttpError` 依赖已恢复。
+- TypeScript 全量检查、生产构建、架构扫描/ratchet、架构 ratchet 回归与 191 项迁移只读核查通过。构建仍提示 `AiCreateStudio` 约 881 kB 大 chunk。本批推送 SHA 以最终核对为准；其他仍含未提交内容的来源工作树不在本批合并范围。
+
 ## 最新结构治理：工作台 API 边界（2026-10-22）
 
 - `studioApi.ts` 的公开类型合同与 POST 请求传输分别移入 `studioApiContracts.ts` 和 `studioApiTransport.ts`，原导出路径继续兼容。主文件从 1,316 行降至 735 行，移除其超限豁免；剩余超限项 20 个。

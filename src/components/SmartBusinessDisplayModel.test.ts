@@ -4,9 +4,9 @@ import vm from 'node:vm';
 import ts from 'typescript';
 
 // Exercise the actual dashboard projection without mounting React or fetching data.
-const source = readFileSync(new URL('./SmartBusinessDashboard.tsx', import.meta.url), 'utf8');
+const source = readFileSync(new URL('./smartBusiness/smartBusinessDisplayModel.ts', import.meta.url), 'utf8');
 const start = source.indexOf('function buildSmartBusinessDisplayModel(');
-const end = source.indexOf('\nfunction PlanDataSourceBadge', start);
+const end = source.indexOf('\n\ntype QueuePerformance', start);
 assert.ok(start >= 0 && end > start);
 const performanceCalls: string[] = [];
 const context: Record<string, any> = {

@@ -3,23 +3,24 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-const source = readFileSync(new URL('./SmartBusinessDashboard.tsx', import.meta.url), 'utf8');
-const dashboardSource = source;
+const source = readFileSync(new URL('./smartBusiness/WeeklyPlanPresentation.tsx', import.meta.url), 'utf8');
+const dashboardSource = readFileSync(new URL('./smartBusiness/smartBusinessDisplayModel.ts', import.meta.url), 'utf8');
+const mainSource = readFileSync(new URL('./SmartBusinessDashboard.tsx', import.meta.url), 'utf8');
 const taskPreviewSource = readFileSync(new URL('./smartBusiness/TaskPreviewCards.tsx', import.meta.url), 'utf8');
 const start = source.indexOf('export function WeeklyCommandCenter');
 const end = source.indexOf('\n\nexport function WeeklyPlanDetailsDrawer', start);
 const commandCenter = source.slice(start, end);
 const detailsStart = source.indexOf('export function WeeklyPlanDetailsDrawer');
-const detailsEnd = source.indexOf('\n\nexport function BusinessInterpretation', detailsStart);
+const detailsEnd = source.length;
 const planDetails = source.slice(detailsStart, detailsEnd);
-const interpretationStart = source.indexOf('export function BusinessInterpretation');
-const interpretationEnd = source.indexOf('\n\ntype DisplayMetricSource', interpretationStart);
-const businessInterpretation = source.slice(interpretationStart, interpretationEnd);
-const publishingStart = source.indexOf('function WeeklyPublishingCalendar');
-const publishingEnd = source.indexOf('const matrixRoleLabel', publishingStart);
-const publishingCalendar = source.slice(publishingStart, publishingEnd);
-const budgetStart = source.indexOf('const DEFAULT_VIDEO_COST_CNY');
-const budgetEnd = source.indexOf('\n\nfunction metricValue', budgetStart);
+const interpretationStart = mainSource.indexOf('export function BusinessInterpretation');
+const interpretationEnd = mainSource.indexOf('\n\nfunction PlanDataSourceBadge', interpretationStart);
+const businessInterpretation = mainSource.slice(interpretationStart, interpretationEnd);
+const publishingStart = mainSource.indexOf('function WeeklyPublishingCalendar');
+const publishingEnd = mainSource.indexOf('const matrixRoleLabel', publishingStart);
+const publishingCalendar = mainSource.slice(publishingStart, publishingEnd);
+const budgetStart = dashboardSource.indexOf('const DEFAULT_VIDEO_COST_CNY');
+const budgetEnd = dashboardSource.indexOf('\n\nconst contentTitleEmojis', budgetStart);
 const paidMediaHelperStart = source.indexOf('const PAID_MEDIA_CAPABILITY_TOKENS');
 const paidMediaHelperEnd = source.indexOf('\n\nexport function WeeklyCommandCenter', paidMediaHelperStart);
 assert.ok(start >= 0 && end > start, '周经营计划区必须存在');
@@ -34,7 +35,7 @@ const budgetContext: Record<string, unknown> = {
   MASTER_VIDEO_COST_MAX_CNY: 15,
 };
 vm.createContext(budgetContext);
-vm.runInContext(ts.transpileModule(`${dashboardSource.slice(budgetStart, budgetEnd)}\nglobalThis.weeklyVideoBudget = weeklyVideoBudget;`, {
+vm.runInContext(ts.transpileModule(`${dashboardSource.slice(budgetStart, budgetEnd).replace(/\bexport\s+/g, '')}\nglobalThis.weeklyVideoBudget = weeklyVideoBudget;`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText, budgetContext);
 const weeklyVideoBudget = budgetContext.weeklyVideoBudget as (data: unknown) => { estimated: number; min: number; max: number };
@@ -66,7 +67,7 @@ for (const label of ['计划视频', '爆款视频缩略图', '内容结构', '�
   assert.match(planDetails, new RegExp(label), `详细周计划必须用可视化卡片展示“${label}”`);
 }
 assert.match(planDetails, /display\.contents\.map\(\(item, index\)/, '详细周计划必须覆盖共享模型中的全部计划视频');
-assert.match(source, /const showcaseWeeklyVideos = showcaseTotals \? smartBusinessShowcaseWeeklyVideos\(data, true\) : null;[\s\S]*const allContents = showcaseContents\.length \? showcaseContents : mappedContents;[\s\S]*versionCount: contents\.length/, '本地展示的 32 条计划必须进入统一内容清单，计数不得与实际行数脱节');
+assert.match(dashboardSource, /const showcaseWeeklyVideos = showcaseTotals \? smartBusinessShowcaseWeeklyVideos\(data, true\) : null;[\s\S]*const allContents = showcaseContents\.length \? showcaseContents : mappedContents;[\s\S]*versionCount: contents\.length/, '本地展示的 32 条计划必须进入统一内容清单，计数不得与实际行数脱节');
 assert.match(businessInterpretation, /useShowcaseBudget \? display\.totals\.budgetMidCny : Math\.max/, '经营解读必须与周计划清单使用同一份本地预算汇总，不能继续显示旧预算');
 assert.match(commandCenter, /operatingContext\?\.budget\.productionMinCny/, '制作成本范围必须读取制作预算，不得把投流预算混入');
 assert.match(commandCenter, /operatingContext\?\.budget\.productionMaxCny/, '制作成本上限必须与投流预算分开');
@@ -101,9 +102,9 @@ assert.doesNotMatch(planDetails, />[^<]*(?:模拟数据|示例数据|mock)[^<]*<
 assert.doesNotMatch(planDetails, /发布账号尚未就绪|发布准备状态暂时无法核验|配置发布账号/, '详细周计划不得重复展示发布账号准备警告');
 assert.doesNotMatch(commandCenter, /note:|item\.note|当前没有待验收成片|发布任务 ·|逐镜生成与重试费用待核算|按当前周计划与供应商报价估算|仅统计供应商对账回执/, '六项周计划指标不得保留解释性小字');
 assert.doesNotMatch(commandCenter, /已包含本周全部视频制作/, '费用未核算前不得承诺覆盖本周全部视频制作');
-assert.match(source, /durationSeconds: contents\.reduce\(\(sum, item\) => sum \+ item\.duration, 0\)/, '视频总时长必须按本周全部计划视频合计');
-assert.match(source, /operatingContext\?\.budget\.productionMinCny[\s\S]*operatingContext\?\.budget\.productionMaxCny[\s\S]*operatingContext\?\.budget\.productionCny/, '周计划统一展示模型必须只汇总制作预算');
-assert.match(source, /plan\.productionRole === "platform_adaptation"[\s\S]*\? 0[\s\S]*plan\.estimatedCost/, '平台发布版本的单条预算必须计入母版，不能重复累加制作成本');
+assert.match(dashboardSource, /durationSeconds: contents\.reduce\(\(sum, item\) => sum \+ item\.duration, 0\)/, '视频总时长必须按本周全部计划视频合计');
+assert.match(dashboardSource, /operatingContext\?\.budget\.productionMinCny[\s\S]*operatingContext\?\.budget\.productionMaxCny[\s\S]*operatingContext\?\.budget\.productionCny/, '周计划统一展示模型必须只汇总制作预算');
+assert.match(dashboardSource, /plan\.productionRole === "platform_adaptation"[\s\S]*\? 0[\s\S]*plan\.estimatedCost/, '平台发布版本的单条预算必须计入母版，不能重复累加制作成本');
 assert.doesNotMatch(commandCenter, /<LsCalendar|WeeklyContentProgressPanel|本周发布日历/, '顶部周经营计划不得重复渲染发布日历');
 assert.match(publishingCalendar, /<h3[^>]*>发布日历<\/h3>[\s\S]{0,160}<Tag>\{calendarEvents\.length\} 项发布<\/Tag>/, '发布视图必须使用与员工排期一致的工作台标题栏');
 assert.match(publishingCalendar, /initialView="timeGridWeek"[^>]*\bshowAllEvents\b[^>]*fixedHeight="auto"[^>]*workspaceMode="expanded"[^>]*firstDay=\{display\.startsAt \? calendarWeekday\(display\.startsAt\) : 1\}/, '发布日历必须按真实计划起始日展示明确小时排期');
@@ -116,16 +117,16 @@ assert.match(publishingCalendar, /const calendarEvents:[\s\S]*display\.contents\
 assert.doesNotMatch(publishingCalendar, /onEventClick=/, '发布卡点击必须由共享日历打开侧栏，不能直接导航离开');
 assert.match(publishingCalendar, /detailsTitle="内容制作进度"[^]*<WeeklyContentProgressPanel[^]*contentId=\{item\.contentId\}/, '每条内容必须在共享侧栏展示其真实制作进度');
 assert.match(publishingCalendar, /onOpenReference=\{item\.inspirationReference[^]*inspirationReferenceNavigationDetail/, '精确爆款详情必须保留为侧栏里的次级入口');
-assert.match(source, /businessRef: \{ referenceId: reference\.referenceId \}[\s\S]*inspirationReference: reference/, '爆款跳转必须使用既有的嵌套引用协议');
-assert.match(source, /target === ['"]benchmark['"][\s\S]{0,500}inspirationReferenceNavigationDetail\(benchmarkReference, item\.id\)/, '内容预览的爆款入口也必须发送嵌套引用协议');
+assert.match(dashboardSource, /businessRef: \{ referenceId: reference\.referenceId \}[\s\S]*inspirationReference: reference/, '爆款跳转必须使用既有的嵌套引用协议');
+assert.match(taskPreviewSource, /target === ['"]benchmark['"][\s\S]{0,500}inspirationReferenceNavigationDetail\(benchmarkReference, item\.id\)/, '内容预览的爆款入口也必须发送嵌套引用协议');
 for (const internalLabel of ['平台轻适配', '适配版', '手动单项']) {
-  assert.doesNotMatch(source, new RegExp(internalLabel), `用户界面不得暴露内部生产分类“${internalLabel}”`);
+  assert.doesNotMatch(source + mainSource, new RegExp(internalLabel), `用户界面不得暴露内部生产分类“${internalLabel}”`);
 }
 
-const thumbnailStart = source.indexOf('function contentThumbnailUrl');
-const thumbnailEnd = source.indexOf('\nfunction buildSmartBusinessDisplayModel', thumbnailStart);
+const thumbnailStart = dashboardSource.indexOf('function contentThumbnailUrl');
+const thumbnailEnd = dashboardSource.indexOf('\n\nexport function buildSmartBusinessDisplayModel', thumbnailStart);
 assert.ok(thumbnailStart >= 0 && thumbnailEnd > thumbnailStart, '周日历必须有统一的缩略图选择规则');
-const thumbnailScript = ts.transpileModule(`${source.slice(thumbnailStart, thumbnailEnd)}\nglobalThis.selectThumbnail = contentThumbnailUrl;`, {
+const thumbnailScript = ts.transpileModule(`${dashboardSource.slice(thumbnailStart, thumbnailEnd)}\nglobalThis.selectThumbnail = contentThumbnailUrl;`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const thumbnailContext = vm.createContext({
