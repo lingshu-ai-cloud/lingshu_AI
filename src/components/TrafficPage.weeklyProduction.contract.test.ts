@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
 
-const source=readFileSync(new URL('./TrafficPage.tsx',import.meta.url),'utf8');
+const facade=readFileSync(new URL('./TrafficPage.tsx',import.meta.url),'utf8');
+const source=readFileSync(new URL('./TrafficWorkspacePage.tsx',import.meta.url),'utf8');
+assert.match(facade, /<TrafficWorkspacePage/);
 test('weekly publishing mounts the exact production workspace instead of a manual result queue',()=>{assert.match(source,/weeklyTargetState\.present \? weeklyTarget \? <WeeklyPublishingWorkspace[^\n]+target=\{weeklyTarget\}/);const publishing=readFileSync(new URL('./socialContent/WeeklyPublishingWorkspace.tsx',import.meta.url),'utf8');assert.match(publishing,/socialProgramApi\.approveExecutionTask/);assert.match(publishing,/socialProgramApi\.authorizeWeeklyPublishing/);assert.match(publishing,/SocialWeeklyG6ReviewPanel/);assert.doesNotMatch(publishing,/registerPublication|completeOnboarding/);});
 test('actual smartAssets create branch mounts the original production view for a bound weekly target',()=>{
   assert.match(source,/const WeeklyContentProductionView = lazy\(\(\) => import\('\.\/socialContent\/WeeklyContentProductionView'\)\)/);

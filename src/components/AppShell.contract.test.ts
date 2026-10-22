@@ -6,6 +6,7 @@ const pageSlot = readFileSync(new URL('../AppPageSlot.tsx', import.meta.url), 'u
 const layout = readFileSync(new URL('./Layout.tsx', import.meta.url), 'utf8');
 const pageTransition = readFileSync(new URL('./ui/LsPageTransition.tsx', import.meta.url), 'utf8');
 const traffic = readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
+const trafficWorkspace = readFileSync(new URL('./TrafficWorkspacePage.tsx', import.meta.url), 'utf8');
 const starter = readFileSync(new URL('./starter/StarterWorkspacePage.tsx', import.meta.url), 'utf8');
 const starterContext = readFileSync(new URL('./starter/StarterWorkflowContextBar.tsx', import.meta.url), 'utf8');
 const canonicalPageSources = {
@@ -24,7 +25,8 @@ assert.match(pageTransition, /data-app-content-stack[^>]+flex[^>]+min-h-0[^>]+fl
 assert.match(app, /<AppPageSlot/);
 assert.match(pageSlot, /data-app-page-slot[^>]+min-h-0[^>]+flex-1[^>]+overflow-hidden/,
   'context bars must leave one bounded page slot for the active page');
-assert.match(traffic, /flex h-full min-h-0 flex-col overflow-hidden/,
+assert.match(traffic, /<TrafficWorkspacePage/);
+assert.match(trafficWorkspace, /flex h-full min-h-0 flex-col overflow-hidden/,
   'the social workspace must hand scrolling to its active panel');
 assert.match(layout, /matchMedia\('\(max-width: 767px\)'\)[\s\S]+addEventListener\('change'/,
   'the mobile navigation must react when viewport width changes');

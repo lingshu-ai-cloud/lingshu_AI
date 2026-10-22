@@ -4,9 +4,12 @@ import fs from 'node:fs';
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const runtimeSource = fs.readFileSync(new URL('./assistant/globalAssistantRuntime.ts', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+const appModulesSource = fs.readFileSync(new URL('../appPageModules.tsx', import.meta.url), 'utf8');
+const appShellChromeSource = fs.readFileSync(new URL('./AppShellChrome.tsx', import.meta.url), 'utf8');
+const appPageSlotSource = fs.readFileSync(new URL('../AppPageSlot.tsx', import.meta.url), 'utf8');
 const appBoundarySource = fs.readFileSync(new URL('./AppPageBoundary.tsx', import.meta.url), 'utf8');
 const conversionPageSource = fs.readFileSync(new URL('./ConversionPage.tsx', import.meta.url), 'utf8');
-const trafficPageSource = fs.readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
+const trafficPageSource = fs.readFileSync(new URL('./TrafficWorkspacePage.tsx', import.meta.url), 'utf8');
 const composerSource = fs.readFileSync(new URL('./assistant/AssistantComposer.tsx', import.meta.url), 'utf8');
 const assistantStylesSource = fs.readFileSync(new URL('./assistant/assistantDecisionCenter.css', import.meta.url), 'utf8');
 const conversationContextSource = fs.readFileSync(new URL('../lib/assistantConversationContext.ts', import.meta.url), 'utf8');
@@ -63,9 +66,10 @@ assert.match(source, /mode !== 'chat'\) return;[\s\S]{0,300}panel\?\.focus\(\{ p
 assert.match(source, /appMain\?\.scrollTop[\s\S]{0,80}appMain\.scrollTop = 0/, '打开助手时必须修正历史滚动偏移，避免页面底部出现空白');
 assert.match(layoutSource, /<main className="app-main[^\n]*overflow-clip"/, '应用主容器不得成为可被焦点程序滚动的隐藏滚动容器');
 assert.match(source, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => \{\s*if \(launcherRetracted\) edgeLauncherButtonRef\.current\?\.focus\(\);\s*else launcherButtonRef\.current\?\.focus\(\)/, '关闭弹窗后必须按用户偏好把焦点归还完整或贴边入口');
-assert.match(appSource, /<GlobalAssistant[\s\S]{0,650}compactMode=\{starterMode \|\| isAgentProductionSession\(\)\}/, '制作会话保留紧凑的灵小枢审批和聊天入口');
-assert.match(appSource, /const loadGlobalAssistant = \(\) => retryDynamicModule\([\s\S]{0,160}import\('\.\/components\/GlobalAssistant'\)[\s\S]{0,160}import\('\.\/components\/GlobalAssistant\?recovery'\)/, '灵小枢异步模块必须用不同模块 URL 自动重试一次，避免复用浏览器缓存的失败结果');
-assert.match(appSource, /<OptionalFeatureErrorBoundary[\s\S]{0,260}<Suspense fallback=\{null\}>[\s\S]{0,120}<GlobalAssistant/, '灵小枢必须有独立错误边界，加载失败不得拖垮主页面');
+assert.match(appSource, /<AppShellChrome/);
+assert.match(appShellChromeSource, /<GlobalAssistant[\s\S]{0,650}compactMode=\{starterMode \|\| isAgentProductionSession\(\)\}/, '制作会话保留紧凑的灵小枢审批和聊天入口');
+assert.match(appModulesSource, /const loadGlobalAssistant = \(\) => retryDynamicModule\([\s\S]{0,160}import\('\.\/components\/GlobalAssistant'\)[\s\S]{0,160}import\('\.\/components\/GlobalAssistant\?recovery'\)/, '灵小枢异步模块必须用不同模块 URL 自动重试一次，避免复用浏览器缓存的失败结果');
+assert.match(appShellChromeSource, /<OptionalFeatureErrorBoundary[\s\S]{0,260}<Suspense fallback=\{null\}>[\s\S]{0,120}<GlobalAssistant/, '灵小枢必须有独立错误边界，加载失败不得拖垮主页面');
 assert.match(appBoundarySource, /class OptionalFeatureErrorBoundary[\s\S]*重新加载\{this\.props\.label\}/, '可选外壳能力失败时必须保留主页面并提供恢复入口');
 assert.match(source, /useState<AssistantPanelView>\('chat'\)/, '灵小枢默认页必须是单列对话');
 assert.match(source, /openAgent\(currentPageAgent, 'chat'\)/, '入口必须直接打开单列对话而不是强制进入审批详情');
@@ -137,7 +141,7 @@ assert.match(externalDecisionDialogSource, /focusTriggerAfterClose=\{false\}/, '
 assert.match(externalDecisionDialogSource, /onNavigate=\{closeDecisionDialogForNavigation\}/, '权威待办深链必须通过显式回调关闭外部弹窗');
 assert.match(externalDecisionDialogSource, /onActionResult=\{handleDecisionActionResult\}/, '权威待办动作结果必须回到对话壳形成一次性结果反馈');
 assert.match(externalDecisionDialogSource, /href=\{dialogTaskCard\.workspace\.href\}[\s\S]{0,120}onClick=\{\(\) => closeDecisionDialogForNavigation\(\)\}/, '普通任务工作区链接也必须在导航前关闭外部弹窗');
-assert.match(appSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
+assert.match(appShellChromeSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
 assert.match(source, /width: assistantPanelWidth,\s*maxWidth: 'calc\(100vw - 32px\)'/, '灵小枢面板必须用视口宽度约束，不能被零宽定位根节点压缩');
 assert.match(source, /assistantTool === 'knowledge-intake' \? 560 : 420/, '灵小枢对话面板必须保持 420px 基准宽度，外部详情不得挤压对话宽度');
 
@@ -160,7 +164,7 @@ assert.doesNotMatch(liveContextSource, /contextIdentifier\(detail\.sourcePage, 8
 assert.match(conversionPageSource, /agent: 'conversion',[\s\S]{0,80}sourcePage: 'conversion'/, '客户转化页必须绑定自己的页面来源');
 assert.match(trafficPageSource, /agent: 'traffic',[\s\S]{0,80}sourcePage,/, '社媒共享页必须发送由路由传入的准确页面来源');
 for (const [key, sourcePage] of [['legacy-traffic', 'traffic'], ['social-inspiration', 'socialInspiration'], ['smart-assets-', 'smartAssets'], ['social-monitoring-accounts', 'socialMonitoring']]) {
-  assert.match(appSource, new RegExp(`key=[^\\n]*${key}[\\s\\S]{0,160}sourcePage=["']${sourcePage}["']`), `${key} 必须标记准确的助手上下文来源`);
+  assert.match(appPageSlotSource, new RegExp(`key=[^\\n]*${key}[\\s\\S]{0,160}sourcePage=["']${sourcePage}["']`), `${key} 必须标记准确的助手上下文来源`);
 }
 for (const reference of ['goalId', 'planId', 'runId', 'taskId', 'contentId', 'viewKey']) {
   assert.match(liveContextSource, new RegExp(`${reference}: contextIdentifier\\(detail\\.${reference}`), `页面上下文必须安全绑定 ${reference}`);

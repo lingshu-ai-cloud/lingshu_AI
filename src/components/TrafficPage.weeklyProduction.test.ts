@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import React,{type ReactElement,type ReactNode} from 'react';
+import TrafficWorkspacePage from './TrafficWorkspacePage';
 import TrafficPage from './TrafficPage';
 import type {WeeklyContentNavigation} from '../../shared/contracts/weeklyContentNavigation';
 
@@ -19,10 +20,16 @@ function render(historyState:unknown,taskId='content'){
   const internals=(React as unknown as {__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE:{H:unknown}}).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
   const previous=internals.H;
   internals.H={useState:(initial:unknown)=>[typeof initial==='function'?initial():initial,()=>{}],useRef:(current:unknown)=>({current}),useEffect:()=>{},useCallback:(callback:unknown)=>callback};
-  try{return elements(TrafficPage({sourcePage:'smartAssets',initialView:'create',showModeTabs:false,socialContentTaskId:taskId,onEnterConversation:()=>{},onLeaveConversation:()=>{},isInConversation:false}));}
+  try{return elements(TrafficWorkspacePage({sourcePage:'smartAssets',initialView:'create',showModeTabs:false,socialContentTaskId:taskId,onEnterConversation:()=>{},onLeaveConversation:()=>{},isInConversation:false,PublishPanel:()=>null,consumeWorkflowContext:()=>null,contentCreationAspectRatio:()=>undefined}));}
   finally{internals.H=previous;if(originalWindow===undefined)delete globals.window;else globals.window=originalWindow;}
 }
 const studio=(nodes:Element[])=>nodes.filter(node=>typeof node.props.onGoPublish==='function'&&node.props.socialContentTaskId==='content');
+test('TrafficPage facade preserves task identity and supplies the publishing panel',()=>{
+  const view=TrafficPage({sourcePage:'smartAssets',socialContentTaskId:'content',onEnterConversation:()=>{},onLeaveConversation:()=>{},isInConversation:false});
+  assert.equal(view.type,TrafficWorkspacePage);
+  assert.equal(view.props.socialContentTaskId,'content');
+  assert.equal(typeof view.props.PublishPanel,'function');
+});
 test('actual Traffic create component chooses the original weekly view for a valid matching target',()=>{
   const nodes=render({productionDetail:{weeklyContentTarget:target,socialContentTaskId:'content',socialContentPage:'smartAssets'}});
   assert.equal(nodes.filter(node=>node.props.target===target).length,1);

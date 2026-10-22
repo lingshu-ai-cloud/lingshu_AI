@@ -9,7 +9,7 @@ test('operations are mounted on actual task and weekly production workspaces wit
   assert.match(workspace, /taskId=\{task.taskId\}/);
   const studio = readFileSync(new URL('../AiCreateStudio.tsx', import.meta.url), 'utf8');
   assert.match(studio, /<SocialContentOrderOperations key=\{socialContentTaskId\} taskId=\{socialContentTaskId\}/);
-  const traffic = readFileSync(new URL('../TrafficPage.tsx', import.meta.url), 'utf8');
+  const traffic = readFileSync(new URL('../TrafficWorkspacePage.tsx', import.meta.url), 'utf8');
   assert.match(traffic, /<SocialContentOrderOperations key=\{weeklyTarget.contentTaskId\} taskId=\{weeklyTarget.contentTaskId\}/);
   assert.match(source, /snapshot\?\.replacementTasks/);
   assert.match(source, /snapshot\?\.cancelable/);

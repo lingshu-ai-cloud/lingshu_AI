@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
-const traffic = readFileSync(new URL('../components/TrafficPage.tsx', import.meta.url), 'utf8');
+const pageSlot = readFileSync(new URL('../AppPageSlot.tsx', import.meta.url), 'utf8');
+const traffic = readFileSync(new URL('../components/TrafficWorkspacePage.tsx', import.meta.url), 'utf8');
 const studio = readFileSync(new URL('../components/AiCreateStudio.tsx', import.meta.url), 'utf8');
 const navigationHook = readFileSync(new URL('../components/socialContent/useSocialContentNavigation.ts', import.meta.url), 'utf8');
 const submissionHook = readFileSync(new URL('../components/socialContent/useStudioSocialArtifactSubmission.ts', import.meta.url), 'utf8');
@@ -11,14 +12,16 @@ const socialOutputs = readFileSync(new URL('../../server/starter198/socialConten
 
 assert.match(
   app,
-  /readSocialContentNavigationTaskId\(initialPage, window\.history\.state\)[\s\S]*?socialContentNavigation\?\.page === page[\s\S]*?socialContentTaskId=\{activeSocialContentTaskId\}/,
+  /readSocialContentNavigationTaskId\(initialPage, window\.history\.state\)[\s\S]*?socialContentNavigation\?\.page === page[\s\S]*?activeSocialContentTaskId,/,
   'the active task must be initialized from the exact page handoff and remain page-scoped',
 );
+assert.match(pageSlot, /socialContentTaskId=\{activeSocialContentTaskId\}/);
 assert.match(
   app,
-  /showSocialContentPlanning = page === 'smartAssets'[\s\S]{0,260}!smartAssetsCreateRequest[\s\S]*?<SocialContentPlanningPage[\s\S]*?: \([\s\S]*?<TrafficPage/,
+  /showSocialContentPlanning = page === 'smartAssets'[\s\S]{0,260}!smartAssetsCreateRequest[\s\S]*?showSocialContentPlanning,/,
   'a creation request must open Studio directly, while the generic entry may show the landing page',
 );
+assert.match(pageSlot, /showSocialContentPlanning \? \([\s\S]*?<SocialContentPlanningPage[\s\S]*?: \([\s\S]*?<TrafficPage/);
 assert.match(traffic, /kickoff\.source === 'inspiration_analysis'[\s\S]*?contentCreationRequest:[\s\S]*?creationPath: 'viral_replication'/,
   'an inspiration video must open the viral-replication task instead of dropping users on the generic content homepage');
 assert.match(traffic, /kickoff\.source === 'inspiration_analysis'[\s\S]*?resumeOrCreateInspirationTask\([\s\S]*?directStudio: true,[\s\S]*?socialContentTaskId: taskId/,
@@ -26,7 +29,8 @@ assert.match(traffic, /kickoff\.source === 'inspiration_analysis'[\s\S]*?resumeO
 assert.match(traffic, /referenceLinks: referenceUrl \? \[referenceUrl\] : \[\]/,
   'the inspiration handoff must preserve the selected reference URL');
 assert.match(app, /setSmartAssetsCreateRequest\(detail\.contentCreationRequest \|\| null\)/);
-assert.match(app, /studioCreateRequest=\{smartAssetsCreateRequest\}/);
+assert.match(app, /smartAssetsCreateRequest, handleLaunchContentStudio/);
+assert.match(pageSlot, /studioCreateRequest=\{smartAssetsCreateRequest\}/);
 assert.match(
   traffic,
   /useSocialContentNavigation\(onNavigate, socialContentTaskId\)[\s\S]*?<AiCreateStudio[\s\S]*?socialContentTaskId=\{socialContentTaskId\}/,
