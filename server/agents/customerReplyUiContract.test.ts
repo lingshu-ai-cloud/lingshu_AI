@@ -3,17 +3,19 @@ import fs from 'node:fs';
 import { isPredominantlyChineseText } from '../../src/lib/messageLanguage.js';
 
 const source = fs.readFileSync('src/components/ConversionPage.tsx', 'utf8');
+const chatSource = fs.readFileSync('src/components/customers/ConversionChatThread.tsx', 'utf8');
+const railSource = fs.readFileSync('src/components/customers/ConversionCustomerRail.tsx', 'utf8');
 
 assert.doesNotMatch(
   source,
   /disabled=\{!customerServiceStatus\s*\|\|\s*customerServiceSaving\}/,
   'a transient status-loading failure must not permanently disable the customer-service switch',
 );
-assert.match(source, /aria-label=\{previewOpen \? '隐藏目标语言译文' : '显示目标语言译文'\}/, 'the composer must expose the target-language translation toggle');
-assert.match(source, /aria-label="添加表情"/, 'the composer must expose an emoji picker button');
-assert.match(source, /<EmojiPicker[\s\S]{0,500}onEmojiClick=\{\(emojiData: EmojiClickData\) => insertEmoji\(emojiData\.emoji\)\}/, 'the full emoji picker must insert into the reply input');
-assert.doesNotMatch(source, /const REPLY_EMOJIS\s*=/, 'the emoji picker must not be limited to a short hard-coded list');
-assert.match(source, /<Input\.TextArea[\s\S]{0,250}data-customer-reply-input[\s\S]{0,500}variant="borderless"/, 'the reply textarea must use the shared borderless input inside the focusable composer');
+assert.match(chatSource, /aria-label=\{previewOpen \? '隐藏目标语言译文' : '显示目标语言译文'\}/, 'the composer must expose the target-language translation toggle');
+assert.match(chatSource, /aria-label="添加表情"/, 'the composer must expose an emoji picker button');
+assert.match(chatSource, /<EmojiPicker[\s\S]{0,500}onEmojiClick=\{\(emojiData: EmojiClickData\) => insertEmoji\(emojiData\.emoji\)\}/, 'the full emoji picker must insert into the reply input');
+assert.doesNotMatch(chatSource, /const REPLY_EMOJIS\s*=/, 'the emoji picker must not be limited to a short hard-coded list');
+assert.match(chatSource, /<Input\.TextArea[\s\S]{0,250}data-customer-reply-input[\s\S]{0,500}variant="borderless"/, 'the reply textarea must use the shared borderless input inside the focusable composer');
 assert.match(source, /const openCustomer = \(id: string\)[\s\S]{0,220}customer\?\.hasUnread[\s\S]{0,120}persistCustomerPatch\(id, \{ hasUnread: false \}\)/, 'opening a conversation must clear and persist its unread indicator');
 assert.match(
   source,
@@ -26,7 +28,7 @@ assert.doesNotMatch(
   'a mock customer timeline update must not erase the draft that was just generated',
 );
 assert.match(
-  source,
+  chatSource,
   /placeholder="输入中文回复…"/,
   'the composer should make Chinese the default editing language',
 );
@@ -56,12 +58,12 @@ assert.match(
   'AI drafts must be persisted so a page refresh does not lose them',
 );
 assert.match(
-  source,
+  railSource,
   /blocked_auto: hasReplyReady \? '查看草稿' : '生成建议'/,
   'a blocked-auto card must not claim that an absent draft can be viewed',
 );
 assert.match(
-  source,
+  chatSource,
   /\[data-draft-suggestion\][\s\S]{0,100}scrollIntoView\(\{ behavior: getScrollBehavior\(\), block: 'center' \}\)/,
   'a newly generated draft must scroll into the visible conversation area',
 );
@@ -79,7 +81,7 @@ assert.ok(
   'handoff and normal AI replies must both use the Chinese translation returned for editing',
 );
 assert.doesNotMatch(
-  source,
+  chatSource,
   /const translation\s*=.*fallbackCustomerReplyZh/,
   'the timeline must not label a generic fallback sentence as the translation of an unrelated AI reply',
 );
@@ -101,12 +103,12 @@ assert.equal(
 assert.equal(isPredominantlyChineseText('帮我确认一下 MOQ 和交期'), true);
 
 assert.match(
-  source,
+  chatSource,
   /customer\.isMock \? <Tag color="purple"[\s\S]{0,220}channelReady \? '通道已连接' : '通道未连接'/,
   'real customers must not be described as reachable when WhatsApp is unavailable',
 );
 assert.match(
-  source,
+  chatSource,
   /disabled=\{sending \|\| !channelReady/,
   'the real-send action must remain disabled until the provider channel is ready',
 );

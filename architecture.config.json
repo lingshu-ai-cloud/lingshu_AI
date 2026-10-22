@@ -11,7 +11,7 @@
     "server/routes/videos.ts": 10606,
     "server/starter198/socialContentProductionExecution.ts": 2137,
     "src/components/AiCreateStudio.tsx": 13577,
-    "src/components/ConversionPage.tsx": 2492,
+    "src/components/ConversionPage.tsx": 1368,
     "src/components/EnterprisePage.tsx": 2443,
     "src/components/DigitalEmployeePage.tsx": 5446,
     "src/components/GlobalAssistant.tsx": 3075,

@@ -421,11 +421,13 @@ assert.match(scheduledControllerSource, /setInterval\([\s\S]{0,220}fetchVideoSta
 assert.match(scheduledSource, /人工恢复：/);
 
 const conversionSource = readFileSync(new URL('./ConversionPage.tsx', import.meta.url), 'utf8');
-assert.match(conversionSource, /function customerDisplayName[\s\S]{0,260}replace\(\/模拟客户\/g, '客户'\)/,
+const conversionPresentationSource = readFileSync(new URL('./customers/conversionPresentation.ts', import.meta.url), 'utf8');
+const conversionChatSource = readFileSync(new URL('./customers/ConversionChatThread.tsx', import.meta.url), 'utf8');
+assert.match(conversionPresentationSource, /function customerDisplayName[\s\S]{0,260}replace\(\/模拟客户\/g, '客户'\)/,
   'customer names must not expose fixture terminology in the product UI');
 assert.doesNotMatch(conversionSource, /customer\.isMock \? '模拟客户'/,
   'fixture status must not be presented as a customer-facing data label');
-assert.match(conversionSource, /customer\.isMock \? <Tag[\s\S]{0,160}模拟客户 · 不对外发送[\s\S]{0,240}channelReady \? '通道已连接' : '通道未连接'/,
+assert.match(conversionChatSource, /customer\.isMock \? <Tag[\s\S]{0,160}模拟客户 · 不对外发送[\s\S]{0,240}channelReady \? '通道已连接' : '通道未连接'/,
   'simulation conversations need an isolation label while real customers retain truthful channel readiness');
 assert.doesNotMatch(conversionSource, /客户消息输入|输入下一条客户消息|添加客户消息/,
   'the conversation timeline must not expose the local buyer-message simulator');

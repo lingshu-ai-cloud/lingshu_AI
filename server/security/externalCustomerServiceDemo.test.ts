@@ -71,16 +71,17 @@ const draftRoute = fs.readFileSync(path.join(root, 'server/routes/draftReply.ts'
 assert.match(draftRoute, /evaluateHandoff\([\s\S]*?bantTotal:[\s\S]*?highValueHandoff/, 'high-value BANT opportunities must force a server-side human handoff');
 
 const customerUi = fs.readFileSync(path.join(root, 'src/components/ConversionPage.tsx'), 'utf8');
-assert.match(customerUi, /大单预警/, 'the customer list and conversation must expose the large-order warning');
-assert.match(customerUi, /data-testid="large-order-warning-tag"/, 'the large-order warning must remain a compact right-rail tag');
-const chatThreadUi = customerUi.slice(customerUi.indexOf('function ChatThread'), customerUi.indexOf('function CustomerIntentActionPanel'));
+const customerListUi = fs.readFileSync(path.join(root, 'src/components/customers/ConversionCustomerList.tsx'), 'utf8');
+const chatThreadUi = fs.readFileSync(path.join(root, 'src/components/customers/ConversionChatThread.tsx'), 'utf8');
+const customerRailUi = fs.readFileSync(path.join(root, 'src/components/customers/ConversionCustomerRail.tsx'), 'utf8').split('export function CustomerInfoRail')[1] || '';
+assert.match(customerListUi, /大单预警/, 'the customer list and conversation must expose the large-order warning');
+assert.match(fs.readFileSync(path.join(root, 'src/components/customers/ConversionCustomerRail.tsx'), 'utf8'), /data-testid="large-order-warning-tag"/, 'the large-order warning must remain a compact right-rail tag');
 assert.doesNotMatch(chatThreadUi, /simulation\?\.warning|大单预警/, 'the large-order warning must not occupy the conversation transcript');
-assert.match(customerUi, /data-testid="conversation-list"[^>]*w-52[^>]*xl:w-56/, 'the conversation list must stay compact so the transcript remains prominent on laptops');
-assert.match(customerUi, /data-testid="conversation-chat-thread"/, 'the main conversation transcript needs a stable layout target');
+assert.match(customerListUi, /data-testid="conversation-list"[^>]*w-52[^>]*xl:w-56/, 'the conversation list must stay compact so the transcript remains prominent on laptops');
+assert.match(chatThreadUi, /data-testid="conversation-chat-thread"/, 'the main conversation transcript needs a stable layout target');
 assert.match(customerUi, /data-testid="conversation-workspace-main"/, 'the three-column workspace must start directly without stacked page banners');
 assert.doesNotMatch(customerUi, /mockCustomerCount/, 'the simulation workspace must not reserve a full-width banner above conversations');
 assert.doesNotMatch(customerUi, /今日处理/, 'per-customer action guidance must be merged into the AI intent panel');
-const customerRailUi = customerUi.slice(customerUi.indexOf('function CustomerInfoRail'), customerUi.indexOf('function createMessageEvent'));
 for (const marker of ['CustomerInsightDisclosure', 'CustomerIntentActionPanel', 'QuoteSkillCard', 'RulesDisclosure']) {
   assert.match(customerRailUi, new RegExp(marker), `the customer rail must include ${marker}`);
 }
@@ -93,10 +94,10 @@ assert.deepEqual(
   'the customer rail must keep warning, AI intent, quote workbench and assignment rules in the requested order',
 );
 assert.doesNotMatch(customerRailUi, /OrderHistoryWidget|SortableWidget/, 'the compact customer rail must not contain extra or draggable panels');
-assert.match(customerUi, /AI 草稿 · 人工改过/, 'conversation history must expose human collaboration without adding fake messages');
-assert.match(customerUi, /已用学习记忆/, 'conversation history must expose memory usage without cluttering the transcript');
-assert.match(customerUi, /customer\.isMock \? <Tag[^>]*>模拟客户 · 不对外发送<\/Tag>/, 'each simulated conversation must clearly label its isolation from live sending');
-assert.match(customerUi, /只在演示沙盘里推进，不会发送到真实平台/, 'the simulation input must explain that it cannot send to real platforms');
+assert.match(chatThreadUi, /AI 草稿 · 人工改过/, 'conversation history must expose human collaboration without adding fake messages');
+assert.match(chatThreadUi, /已用学习记忆/, 'conversation history must expose memory usage without cluttering the transcript');
+assert.match(chatThreadUi, /customer\.isMock \? <Tag[^>]*>模拟客户 · 不对外发送<\/Tag>/, 'each simulated conversation must clearly label its isolation from live sending');
+assert.match(chatThreadUi, /只在演示沙盘里推进，不会发送到真实平台/, 'the simulation input must explain that it cannot send to real platforms');
 
 const memoryUi = fs.readFileSync(path.join(root, 'src/components/WorkspaceManagementPages.tsx'), 'utf8');
 assert.match(memoryUi, /includeMockCustomers/, 'the memory workspace must be able to show the same simulation customer contexts');

@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const page = readFileSync(new URL('./ConversionPage.tsx', import.meta.url), 'utf8');
+const chat = readFileSync(new URL('./customers/ConversionChatThread.tsx', import.meta.url), 'utf8');
+const list = readFileSync(new URL('./customers/ConversionCustomerList.tsx', import.meta.url), 'utf8');
+const presentation = readFileSync(new URL('./customers/conversionPresentation.ts', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../styles/design-system.css', import.meta.url), 'utf8');
 
 test('conversation workspace gives its internal scrollers a bounded desktop row', () => {
@@ -15,7 +18,7 @@ test('conversation workspace gives its internal scrollers a bounded desktop row'
     /\.ls-conversation-workspace__pane\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s,
   );
   assert.match(
-    page,
+    chat,
     /data-testid="conversation-chat-thread" className="[^"]*h-full[^"]*min-h-0[^"]*overflow-hidden[^"]*"/,
   );
   assert.match(
@@ -31,9 +34,9 @@ test('conversation workspace gives its internal scrollers a bounded desktop row'
   assert.doesNotMatch(page, /本地模拟 · 外贸客户全流程/, 'local mock copy should not occupy a permanent page banner');
   assert.doesNotMatch(page, /aria-label="客户快捷操作"/, 'customer rail should not show share, profile, notification, or search shortcut buttons');
   assert.doesNotMatch(page, /\{customer\.isMock \? '模拟客户|模拟发送|真实客户 ·/, 'customer-facing conversation UI should not expose environment labels');
-  assert.match(page, /function customerDisplayName[\s\S]{0,220}replace\(\/模拟客户\/g, '客户'\)/, 'stored customer names should also hide legacy simulation wording');
-  assert.match(page, /const lastMessagePreview = \(lastMessage\?\.translatedBody \|\| lastMessage\?\.body/, 'customer rows should derive the latest message preview');
-  assert.match(page, /line-clamp-2[^>]*title=\{lastMessagePreview\}>\{lastMessagePreview\}<\/p>/, 'customer rows should show the latest message preview below the customer name');
+  assert.match(presentation, /function customerDisplayName[\s\S]{0,220}replace\(\/模拟客户\/g, '客户'\)/, 'stored customer names should also hide legacy simulation wording');
+  assert.match(list, /const lastMessagePreview = \(lastMessage\?\.translatedBody \|\| lastMessage\?\.body/, 'customer rows should derive the latest message preview');
+  assert.match(list, /line-clamp-2[^>]*title=\{lastMessagePreview\}>\{lastMessagePreview\}<\/p>/, 'customer rows should show the latest message preview below the customer name');
   assert.doesNotMatch(page, /data-lingshu-guide="customer-workbench"[^>]*bg-ink|data-lingshu-guide="customer-workbench"[^>]*lg:p-3/,
     'conversation workspace should use the page edge directly without an outer padded frame');
 });

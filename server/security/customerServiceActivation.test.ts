@@ -75,9 +75,11 @@ assert.match(enterpriseProfileStore, /CUSTOMER_SERVICE_OBSERVATION_MS = 3 \* 24 
 assert.match(enterpriseRoutes, /enterpriseRouter\.patch\('\/customer-service\/status'[\s\S]*?enabledAt: now[\s\S]*?aiAutonomy: 'draft'/, 'enabling must start a server timestamp and force suggestion mode');
 assert.match(enterpriseRoutes, /customerService: current\.customerService/, 'generic enterprise saves must not spoof the master-switch history');
 
-const inbound = read('server/whatsapp/historyImport.ts');
+const inbound = read('server/whatsapp/historyInbound.ts');
 assert.match(inbound, /if \(!servicePolicy\.enabled\)[\s\S]*?智能客服未开启[\s\S]*?return;/, 'inbound messages must stop before draft generation when the master switch is off');
-assert.match(inbound, /customerServiceStatus\(profile\)\.autoReplyReady/, 'real inbound auto-send must require every safety gate');
+const inboundPolicy = read('server/whatsapp/historyPolicy.ts');
+assert.match(inbound, /const autonomy = autonomyLevel\(profile\)/, 'real inbound handling must use the centralized autonomy gate');
+assert.match(inboundPolicy, /customerServiceStatus\(profile\)\.autoReplyReady/, 'real inbound auto-send must require every safety gate');
 
 const drafts = read('server/routes/draftReply.ts');
 assert.match(drafts, /manualRequest = body\.manualRequest === true[\s\S]*?!customerServiceEnabled && !manualRequest[\s\S]*?customer_service_disabled/, 'automatic draft generation must stay disabled while explicit manual draft requests remain available');
@@ -87,7 +89,9 @@ assert.match(outbox, /req\.body\?\.auto === true[\s\S]*?customerServiceStatus[\s
 assert.match(outbox, /get\('\/:id\/suggestions'[\s\S]*?conversation_suggestions_disabled/, 'customer suggestions must stay off when conversation suggestions are disabled');
 
 const ui = read('src/components/ConversionPage.tsx');
-assert.match(ui, /aria-label="智能客服总开关"/, 'the customer workbench must expose a clear master switch');
+const railUi = read('src/components/customers/ConversionCustomerRail.tsx');
+assert.match(ui, /<CustomerInfoRail/, 'the customer workbench must mount its customer rail');
+assert.match(railUi, /aria-label="智能客服总开关"/, 'the customer workbench must expose a clear master switch');
 assert.match(ui, /manualRequest[\s\S]*?requestDraft\(selected, instruction, undefined, intent, true\)/, 'manual AI drafts must remain available even when automatic customer service is off');
 assert.match(ui, /if \(!customerServiceStatus\?\.enabled\) return;/, 'the automatic draft effect must stop quietly without erasing a manually generated draft');
 assert.doesNotMatch(ui, /if \(!customerServiceStatus\?\.enabled\) \{\s*setDraftSuggestion\(null\)/, 'disabled automatic service must not clear manual AI output');
