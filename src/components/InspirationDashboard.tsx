@@ -6,6 +6,7 @@ import { WatchModal, sourceEmbedUrl } from './inspiration/InspirationWatchModal'
 import { buildShootingNeeds } from './inspiration/inspirationShootingNeeds';
 import { InspirationShootingPanel } from './inspiration/InspirationShootingPanel';
 import InspirationImageCrawlDialog from './inspiration/InspirationImageCrawlDialog';
+import InspirationVideoResults from './inspiration/InspirationVideoResults';
 import { MATERIAL_LIBRARY_FETCH_PAGE_SIZE, fetchCompleteProductMaterialInventory, fetchProductMaterialSummaries, type ProductMaterialSummary } from './inspiration/inspirationProductMaterialInventory';
 import { initialInspirationReferenceTarget, normalizedReferenceText, parseInspirationReferenceTarget, videoMatchesReference, type InspirationReferenceTarget } from './inspiration/inspirationReferenceTarget';
 export { materialPreviewImageSources } from './inspiration/MaterialLibraryCardMedia';
@@ -15,7 +16,7 @@ export { AuthenticatedVideo, ThumbnailImage, VideoThumbnail } from './inspiratio
 import { analysisProgressIsActive } from './inspiration/VideoAnalysisProgressPanel';
 import { Alert, Button, Drawer, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
 import LsPageHeader from './ui/LsPageHeader';
-import { LsLoadingState, LsMasonryGallery } from './ui/LsExperiencePrimitives';
+import { LsMasonryGallery } from './ui/LsExperiencePrimitives';
 import { hasExactReferenceReview, parseExactReferenceReview, loadExactReferenceReview, exactReferenceReviewErrorMessage } from '../lib/exactReferenceReview';
 import BenchmarkAnalysisSections from './inspiration/BenchmarkAnalysisSections';
 import type { BenchmarkAnalysis } from '../../shared/benchmarkAnalysis';
@@ -27,7 +28,7 @@ import {
   Clock, Globe, ChevronDown, X, Loader2,
   Copy, ArrowRight, LayoutGrid, List,
   Lightbulb, Flame, Film,
-  Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2, Music2,
+  Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Music2,
   SlidersHorizontal, Package, Eye,
 } from 'lucide-react';
 import { studioApi, type Material } from '../lib/studioApi';
@@ -59,13 +60,11 @@ import CompetitorAccountsModal from './CompetitorAccountsModal';
 import type { Page } from '../App';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { updateScriptGapTask } from '../lib/scriptGapQueue';
-import { canProcessVideo, displayDuration, resultEmptyState } from '../lib/inspirationDataQuality';
+import { canProcessVideo, displayDuration } from '../lib/inspirationDataQuality';
 export { canProcessVideo, displayDuration, resultEmptyState, trendFromEvidence } from '../lib/inspirationDataQuality';
 import { useScriptGapTasks } from '../hooks/useScriptGapTasks';
-import InspirationEmptyState from './InspirationEmptyState';
 import { cachedProductInspirationCandidate, resumeOrCreateInspirationTask, soleInspirationCreationAccount } from '../lib/socialInspirationTask';
 import { useSocialProgram } from '../contexts/SocialProgramContext';
-import { VideoCard, VideoListItem } from './InspirationVideoCards';
 import { showActionFeedback, showActionSuccess } from '../lib/actionFeedback';
 import type { AccountSpecialRecommendation, ContentFormat, GeminiVideoAnalysis, Platform, ScriptAnalysis, TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes';
 import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
@@ -2026,61 +2025,35 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
         <div>
           {innerView === 'inspiration' && (
-            <>
-              {!videosLoaded && videosLoading ? (
-                <LsLoadingState loading mode="spin" label="正在读取真实视频库存" description="正在同步全部可展示灵感" className="min-h-[360px] rounded-lg border border-border bg-surface">
-                  <span />
-                </LsLoadingState>
-              ) : filtered.length === 0 ? (
-                <InspirationEmptyState state={resultEmptyState(visibleVideos.length, search, platform !== 'all' || crawlTimeRange !== 'all')} contentFormat={contentFormat} search={search} localMaterialCount={localMaterials.length} onReset={resetInspirationFilters} onOpenLibrary={() => setInnerView('library')} />
-              ) : viewMode === 'grid' ? (
-                <LsMasonryGallery layout="masonry" items={filtered.map((video, i) => ({ id: video.id, content:
-                    <div className="relative h-full">
-                      <VideoCard video={video} index={i} isSelected={false}
-                        onSelect={() => openDirectorAnalysis(video)}
-                        onCreate={() => startInspirationCreation(video)}
-                        createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.id.startsWith('material-') ? '开始创作' : '爆款裂变'}
-                        creating={launchingReferences.includes(video.id)}
-                        createDisabled={video.contentFormat === 'image' && !inspirationCreationAvailability(video).ready}
-                        createDisabledReason={inspirationCreationAvailability(video).reason}
-                        onWatch={() => handleWatch(video)}
-                        onFavoriteMaterial={() => void favoriteMaterial(video)}
-                        favoritingMaterial={favoritingMaterialIds.includes(video.id)}
-                        isFavoriteMaterial={favoritedVideoIds.includes(video.id) || favoriteSourceUrls.has(String(video.sourceUrl || '').trim())} />
-              {video.canManage && (
-                <div className="absolute right-12 top-2 z-30 flex gap-1">
-                  <button type="button" title="编辑素材" aria-label="编辑素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'edit' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow transition hover:text-accent"><Pencil size={14} /></button>
-                  <button type="button" title="删除素材" aria-label="删除素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'delete' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow transition hover:text-red-600"><Trash2 size={14} /></button>
-                </div>
-              )}
-
-                    </div>
-                }))} />
-              ) : (
-                <div className="card overflow-hidden divide-y divide-border">
-                  {filtered.map(video => (
-                    <VideoListItem key={video.id} video={video} isSelected={false}
-                      onSelect={() => openDirectorAnalysis(video)}
-                      onCreate={() => startInspirationCreation(video)}
-                        createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.id.startsWith('material-') ? '开始创作' : '爆款裂变'}
-                        creating={launchingReferences.includes(video.id)}
-                      createDisabled={video.contentFormat === 'image' && !inspirationCreationAvailability(video).ready}
-                      createDisabledReason={inspirationCreationAvailability(video).reason}
-                      onWatch={() => handleWatch(video)}
-                      onFavoriteMaterial={() => void favoriteMaterial(video)}
-                      favoritingMaterial={favoritingMaterialIds.includes(video.id)}
-                      isFavoriteMaterial={favoritedVideoIds.includes(video.id) || favoriteSourceUrls.has(String(video.sourceUrl || '').trim())} />
-                  ))}
-                </div>
-              )}
-              {videosLoaded && !serverDiscoveryFilterActive && videoTotalPages > 1 && (
-                <nav className="flex justify-center py-4" aria-label="灵感发现分页">
-                  <Pagination current={videoPage} total={videoTotalPages * INSPIRATION_PAGE_SIZE} pageSize={INSPIRATION_PAGE_SIZE}
-                    showSizeChanger={false} disabled={videosLoading} onChange={page => void refreshVideos(page)}
-                    showTotal={() => `第 ${videoPage} / ${videoTotalPages} 页`} />
-                </nav>
-              )}
-            </>
+            <InspirationVideoResults
+              videos={filtered}
+              visibleVideoCount={visibleVideos.length}
+              loaded={videosLoaded}
+              loading={videosLoading}
+              viewMode={viewMode}
+              search={search}
+              platformFiltered={platform !== 'all' || crawlTimeRange !== 'all'}
+              contentFormat={contentFormat}
+              localMaterialCount={localMaterials.length}
+              launchingReferences={launchingReferences}
+              replicationTasks={replicationTasks}
+              creationAccountId={creationAccountId}
+              favoritingMaterialIds={favoritingMaterialIds}
+              favoritedVideoIds={favoritedVideoIds}
+              favoriteSourceUrls={favoriteSourceUrls}
+              showPagination={!serverDiscoveryFilterActive}
+              page={videoPage}
+              totalPages={videoTotalPages}
+              pageSize={INSPIRATION_PAGE_SIZE}
+              onReset={resetInspirationFilters}
+              onOpenLibrary={() => setInnerView('library')}
+              onSelect={openDirectorAnalysis}
+              onCreate={startInspirationCreation}
+              onWatch={handleWatch}
+              onFavorite={video => void favoriteMaterial(video)}
+              onManage={(video, action) => openManageDialog({ kind: 'video', item: video, action })}
+              onPageChange={page => void refreshVideos(page)}
+            />
           )}
 
           {innerView === 'library' && (

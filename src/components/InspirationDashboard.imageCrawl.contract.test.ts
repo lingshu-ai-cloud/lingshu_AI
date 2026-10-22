@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
 const dialogSource = readFileSync(new URL('./inspiration/InspirationImageCrawlDialog.tsx', import.meta.url), 'utf8');
+const resultsSource = readFileSync(new URL('./inspiration/InspirationVideoResults.tsx', import.meta.url), 'utf8');
 
 test('viral library prioritizes benchmark accounts and keeps keyword image posts as a supplement', () => {
   assert.match(source, /type="primary" icon=\{<Users size=\{15\} \/>\} onClick=\{\(\) => setInnerView\('accounts'\)\}>采集对标账号爆款<\/Button>/);
@@ -16,7 +17,8 @@ test('viral library prioritizes benchmark accounts and keeps keyword image posts
   assert.match(source, /crawlInspirationImages\(\{/);
   assert.match(source, /setContentFormat\('image'\)/);
   assert.match(source, /refreshVideos\(1, false, \{\s*contentFormat: 'image'/);
-  assert.match(source, /<LsMasonryGallery layout="masonry" items=\{filtered\.map/);
+  assert.match(source, /<InspirationVideoResults[\s\S]*?videos=\{filtered\}/);
+  assert.match(resultsSource, /<LsMasonryGallery layout="masonry" items=\{videos\.map/);
 });
 
 test('pending production gaps are presented as shooting tasks without the assistant routing shortcut', () => {

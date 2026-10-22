@@ -10,6 +10,7 @@ const detailSource = readFileSync(new URL('./inspiration/DirectorVideoDetailPane
 const analysisProjectionSource = readFileSync(new URL('./inspiration/inspirationAnalysisProjection.ts', import.meta.url), 'utf8');
 const analysisTabsSource = readFileSync(new URL('./inspiration/InspirationVideoAnalysisTabs.tsx', import.meta.url), 'utf8');
 const videoCardsSource = readFileSync(new URL('./InspirationVideoCards.tsx', import.meta.url), 'utf8');
+const videoResultsSource = readFileSync(new URL('./inspiration/InspirationVideoResults.tsx', import.meta.url), 'utf8');
 
 test('director detail keeps analysis evidence inside the three analysis tabs', () => {
   assert.match(source, /import \{ DirectorVideoDetailPanel \} from '.\/inspiration\/DirectorVideoDetailPanel';/);
@@ -53,7 +54,8 @@ test('active server progress wins over an older completed analysis result', () =
   assert.match(detailSource, /activeServerAnalysis \|\| !recordId/);
   assert.match(detailSource, /const draftReady = !pending && reviewHandoff\?\.directorHandoffReady/);
   assert.match(source, /const availability = inspirationCreationAvailability\(video\)/);
-  assert.match(source, /createDisabled=\{video\.contentFormat === 'image' && !inspirationCreationAvailability\(video\)\.ready\}/);
+  assert.match(source, /<InspirationVideoResults[\s\S]*?onCreate=\{startInspirationCreation\}/);
+  assert.match(videoResultsSource, /createDisabled: video\.contentFormat === 'image' && !inspirationCreationAvailability\(video\)\.ready/);
 });
 
 test('image creation waits for trusted image evidence and uses the image-only reanalysis endpoint', () => {

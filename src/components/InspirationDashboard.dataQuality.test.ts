@@ -72,6 +72,7 @@ const componentSource = readFileSync(fileURLToPath(new URL('./InspirationDashboa
 const materialCardSource = readFileSync(fileURLToPath(new URL('./inspiration/MaterialLibraryCardMedia.tsx', import.meta.url)), 'utf8');
 const detailSource = readFileSync(fileURLToPath(new URL('./inspiration/DirectorVideoDetailPanel.tsx', import.meta.url)), 'utf8');
 const videoCardSource = readFileSync(fileURLToPath(new URL('./InspirationVideoCards.tsx', import.meta.url)), 'utf8');
+const videoResultsSource = readFileSync(fileURLToPath(new URL('./inspiration/InspirationVideoResults.tsx', import.meta.url)), 'utf8');
 assert.match(materialCardSource, /aria-label={`播放 \${material\.name}`}[^]*?event\.stopPropagation\(\); onPlay\(\);[^]*?z-20/, '播放按钮应稳定置于 hover 操作层之上');
 assert.match(componentSource, /onPlay=\{\(\) => setPreviewMaterial\(material\)\}/, '播放按钮只打开预览');
 assert.match(componentSource, /contentFormat: isImageMaterial \? 'image' : 'video'/, '图片素材进入工作流时必须保留图片类型，不能伪装成视频');
@@ -84,11 +85,14 @@ assert.match(materialCardSource, /aria-label={`编辑 \${material\.name}`}[^]*?a
 assert.match(componentSource, /INSPIRATION_PAGE_SIZE = 100/, '灵感列表必须一次读取当前租户的全部常规库存，避免分页后前端过滤造成假缺失');
 assert.match(componentSource, /inventory-summary[^]*?setTenantVideoTotalItems/, '首屏必须独立优先读取真实库存量');
 assert.match(componentSource, /setTenantVideoTotalItems\(Math\.max\(0, Number\(result\.totalItems \?\? 0\)\)\)/, '列表加载后 Tab 数量必须使用服务端完整可见结果数，不能用当前页长度覆盖');
-assert.match(componentSource, /正在读取真实视频库存/, '首次列表请求完成前必须显示加载动画，不能先显示空状态');
-assert.match(componentSource, /<Pagination current=\{videoPage\}[^]*?pageSize=\{INSPIRATION_PAGE_SIZE\}[^]*?showSizeChanger=\{false\}[^]*?onChange=\{page => void refreshVideos\(page\)\}/, '灵感列表必须使用固定页大小的服务端分页');
+assert.match(componentSource, /<InspirationVideoResults[^]*?loaded=\{videosLoaded\}[^]*?loading=\{videosLoading\}/, '页面必须向结果视图传入真实加载状态');
+assert.match(videoResultsSource, /!loaded && loading \?[^]*?正在读取真实视频库存/, '首次列表请求完成前必须显示加载动画，不能先显示空状态');
+assert.match(componentSource, /<InspirationVideoResults[^]*?pageSize=\{INSPIRATION_PAGE_SIZE\}[^]*?onPageChange=\{page => void refreshVideos\(page\)\}/, '页面必须维持固定页大小的服务端分页');
+assert.match(videoResultsSource, /<Pagination current=\{page\}[^]*?pageSize=\{pageSize\}[^]*?showSizeChanger=\{false\}[^]*?onChange=\{onPageChange\}/, '结果视图必须展示服务端分页');
 assert.doesNotMatch(componentSource, />\s*加载更多\s*</, '灵感列表不再使用追加式“加载更多”');
 assert.doesNotMatch(componentSource, /本页近 3 日新入库|当前显示 <strong/, '灵感中心不应再显示与真实结果集口径冲突的独立统计条');
-assert.ok([...componentSource.matchAll(/<LsMasonryGallery layout="masonry"/g)].length >= 2, '爆款灵感和我的素材必须共用真实比例瀑布流');
+assert.match(videoResultsSource, /<LsMasonryGallery layout="masonry"/, '爆款灵感必须使用真实比例瀑布流');
+assert.match(componentSource, /<LsMasonryGallery layout="masonry"/, '我的素材必须使用真实比例瀑布流');
 assert.match(videoCardSource, /style=\{\{ background: 'var\(--color-surface-2\)', aspectRatio: mediaAspectRatio \}\}/, '爆款卡媒体区必须跟随真实媒体比例');
 assert.doesNotMatch(videoCardSource, /aspect-\[9\/16\]/, '爆款卡不得把横版素材强制裁成 9:16');
 assert.doesNotMatch(videoCardSource, /min-h-52/, '爆款瀑布流卡不得强制内容区等高留白');
