@@ -2,6 +2,13 @@
 
 更新时间：2026-10-22（Asia/Shanghai）
 
+## 当前权威源码检出（2026-10-22 复核）
+
+- 集成分支：`xixi1021程永罗沟通前大整合`；独立本地检出：`/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`。本次文档修改前，本地与远端同为 `1270cfabfb83d51ad88d70f55f1b16e5a98cb7ba`，工作区干净。文档提交会推进该指针，交接时须再以 `git rev-parse HEAD`、`git status --porcelain` 和 `git ls-remote` 核对，不能沿用本行盘点起点作为提交后的 HEAD。
+- 最近独立代码验收点为 `be8a7d1ff9abb8efcbbd7487eaa473d25122e7c7`：其干净检出中 TypeScript、架构扫描、生产构建、191 项迁移清单只读检查和客服回复聚焦测试通过；历史超限文件仍为 10 项。`AiCreateStudio` 主 chunk 为 497090/500000 字节。运行数据、真实供应商 Ready 和发布状态均未由此验收。
+- 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 9 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
+- 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
+
 ## WhatsApp 历史与入站处理边界退出超限清单（2026-10-22）
 
 - 以集成提交 `1582684eb31d92af4012cdb67a0aa280493bb979` 为起点，按数据职责拆出历史去重/快照与 PocketBase 镜像持久化、客户夜间与地区策略、客户写入与内容归因、入站消息解析准备、单条消息处理五个模块。`historyImport.ts` 保留原公开入口、维护调度、Webhook 编排和客户查询。迁出的 59 个函数与起点提交逐段比对，除新增导出修饰外源码一致；没有新增入站消息发送、外部上传或镜像写入路径。
@@ -173,7 +180,7 @@
 - 本批仅重排模块，不改变请求重试、失败回退、项目保存或供应商调用规则。工作台 API 专项 10/10、TypeScript 全量检查、生产构建、架构扫描/ratchet 与 191 项迁移只读检查通过。构建仍提示 `AiCreateStudio` 约 881 kB 的大 chunk。
 - 本地和远端权威提交在本批提交、普通推送并核对 SHA 后确定；其他仍有未提交内容的工作树不属于本基线。
 
-## 当前集成基线
+## 阶段二集成基线（历史合并节点）
 
 - 仓库：`lingshu-ai-cloud/lingshu_AI`
 - 集成分支：`xixi1021程永罗沟通前大整合`
@@ -181,8 +188,8 @@
 - 上游冻结点：`62f85f8cc00a41a4e492261d92e227f2786592fd`
 - 阶段一治理提交：`69813195277028455b6cc0a0c675de01d66217d5`
 - 上一稳定基线：`xixi数字员工架构待清理` / `2d6c5a62d516c6eb5fc83d7dc19c17080aa31d98`
-- 本地集成工作树：`/Users/julia1/.codex/worktrees/xixi1021-full-integration`
-- 工作树最新盘点：[`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)（原 19 个有效注册项；其中 8 个补丁等价的干净来源树已退出工作树注册，现余 11 个；5 个有未提交内容的来源树保留）。
+- 当时的本地集成工作树：`/Users/julia1/.codex/worktrees/xixi1021-full-integration`（现已切为另一任务的广告功能分支，不是当前集成路径）。
+- 当时的工作树盘点：[`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)（该文件顶部另有当前 9 树复核；本段数字属于历史阶段）。
 - 阶段 0 核验时工作区干净；图片 AIGC 工作树 `mobile-dual-edition-20261012` 有未提交改动，明确不属于本基线。
 
 ## 阶段一范围
