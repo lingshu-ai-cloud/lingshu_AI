@@ -29,6 +29,7 @@ import { createProductionBudgetRuntimeReaders } from './socialContentProductionB
 import { createSocialContentMaterialPaidContext, type SocialMaterialPaidRuntimePorts } from './socialContentMaterialPaidContext.js';
 import { socialContentMaterialAnalysisInputs } from './socialContentMaterialAnalysisInputs.js';
 import {prepareSocialProductionMaterialRouting} from './socialContentProductionMaterialPreparation.js';
+import {prepareSocialContentProductionDirector} from './socialContentProductionDirectorPreparation.js';
 import {currentPresenterFirstFrameAssetProvenanceHash,ensureStrictPresenterFirstFrames} from './socialContentPresenterFirstFrameRuntime.js';
 import { createProductionBudgetRouteReaders } from './socialContentProductionBudgetRoutes.js';
 import { createSocialContentPaidRuntimePorts } from './socialContentPaidRuntimePorts.js';
@@ -39,7 +40,6 @@ import type { ProductPaidContext } from './socialContentProductPaidContext.js';
 import {assertStoredWeeklyProductionCoverage} from '../runtime/weeklyProductionCoverageAdmission.js';
 import {assertWeeklyCreativeRepairCtaAdmission} from '../runtime/weeklyCreativeRepairCtaAdmission.js';
 import {readWeeklyTemplateStructure} from '../socialPrograms/weeklyTemplateStructure.js';
-import {contentTemplateOutputMatches} from '../../shared/socialContentTemplateStructure.js';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -102,8 +102,8 @@ import {automaticallyConfirmPresenterFirstFrameApproval,readConfirmedPresenterFi
 import type {FrozenPresenterMotherSegments} from '../../shared/contracts/presenterMotherSegments.js';
 import {heyGenRuntimeRouteEvidence,readTrustedHeyGenRuntimeBinding} from './socialContentHeyGenRuntimeBinding.js';
 import { replicationExecutionGaps, selectPresenterExecutions, verifyNamedPresenterLock, type PresenterExecutionSelection } from './socialContentPresenterExecutionPolicy.js';
-import { socialDirectorFrozenDirection, buildSocialDirectorPlan, parseStoredSocialDirectorPlan, publicSocialDirectorPlanSummary, reviseSocialDirectorPlanForVoiceoverFit, socialDirectorContentHandoff, socialDirectorHandoffWithBoundVoice, socialDirectorCoverTimestamp, socialDirectorRenderTimeline, socialDirectorVoiceAlignedCaptionCues, socialDirectorScriptText, type SocialDirectorBgmSelection, type SocialDirectorBgmTrack, type SocialDirectorContentHandoff } from './socialContentDirectorPlan.js';
-import { latestSocialDirectorPlanVersion, persistSocialDirectorPlanVersion, resolveSocialDirectorArtifactLineage } from './socialContentDirectorPlanVersions.js';
+import { socialDirectorFrozenDirection, publicSocialDirectorPlanSummary, reviseSocialDirectorPlanForVoiceoverFit, socialDirectorContentHandoff, socialDirectorHandoffWithBoundVoice, socialDirectorCoverTimestamp, socialDirectorRenderTimeline, socialDirectorVoiceAlignedCaptionCues, socialDirectorScriptText, type SocialDirectorBgmSelection, type SocialDirectorBgmTrack, type SocialDirectorContentHandoff } from './socialContentDirectorPlan.js';
+import { persistSocialDirectorPlanVersion, resolveSocialDirectorArtifactLineage } from './socialContentDirectorPlanVersions.js';
 import { socialProductionReferenceFidelityFailures, socialProductionCollaborationFailures, socialProductionCollaborationTrace, socialProductionExecutionSceneForFinal } from './socialContentProductionCollaboration.js';
 import { socialContentReviewAdmissionAllowed } from './socialContentTestBypass.js';
 import { voiceLearningReadiness } from '../videoProduction/voiceQualityLearning.js';
@@ -894,115 +894,15 @@ export async function runSocialContentAutoProduction(input: {
   if (explanationOnlyRoute) plan = applyZeroAssetTruthSafeNarration(plan);
   if (reviewDirective) plan = applySocialReviewRevision(plan, reviewDirective);
   const adaptation = productionAdaptation(plan, assets.length);
-  const directorCheckpointInputHash = socialRequestHash({
-    taskId: input.taskId,
-    taskVersion: detail.version,
-    baselineVersion: activeBaseline.version,
-    baselineLockedAt: activeBaseline.lockedAt,
-    enterpriseFactVersion: activeBaseline.enterpriseFactVersion ?? null,
-    executionPlanId: agentWorkflow.executionPlan.executionPlanId,
-    executionPlanVersion: agentWorkflow.executionPlan.version,
-    productionPlan: plan,
-    assets: assets.map(asset => ({
-      id: asset.id,
-      sourceId: asset.sourceId,
-      contentHash: asset.contentHash ?? null,
-      providerTaskId: asset.providerTaskId ?? null,
-    })),
-    sourceVersions: Object.fromEntries(detail.sources.map(source => [source.sourceId, source.sourceVersion ?? ''])),
+  const preparedDirector = await prepareSocialContentProductionDirector({
+    repository: input.repository, tenantId: input.tenantId, taskId: input.taskId,
+    detail, taskRecord, baseline: activeBaseline, plan, assets, agentWorkflow,
+    formula: directorFormula, contentTemplateStructure, verifiedContext: executionVerifiedContext,
+    selectedVoice, reviewMusicMood: reviewDirective?.musicMood ?? undefined,
+    selectBgm: input.runtime?.selectDirectorBgm ?? selectDirectorBgm,
   });
-  const directorCheckpoint = readCurrentContentExecutionCheckpoint<{
-    directorPlan: unknown;
-  }>({ stage: 'social.director_storyboard', version: '1', inputHash: directorCheckpointInputHash });
-  const checkpointDirectorPlan = parseStoredSocialDirectorPlan(directorCheckpoint?.directorPlan);
-  const taskDirectorPlan = parseStoredSocialDirectorPlan(taskRecord.director_plan);
-  const recoveredDirectorVersion = taskDirectorPlan || checkpointDirectorPlan ? null : await latestSocialDirectorPlanVersion({
-    repository: input.repository,
-    tenantId: input.tenantId,
-    taskId: input.taskId,
-  });
-  const previousDirectorPlan = taskDirectorPlan ?? checkpointDirectorPlan ?? recoveredDirectorVersion?.plan ?? null;
-  if (previousDirectorPlan) {
-    // One-time compatibility backfill for tasks created before the immutable
-    // version collection existed. A mismatched historic baseline is recorded
-    // honestly as legacy_plan_only rather than attaching current facts to it.
-    await persistSocialDirectorPlanVersion({
-      repository: input.repository,
-      tenantId: input.tenantId,
-      taskId: input.taskId,
-      plan: previousDirectorPlan,
-    });
-  }
-  const defaultDirectorMood = detail.theme?.themeId === 'supplier_capability'
-    ? '稳重、可信、商务'
-    : detail.theme?.themeId === 'customer_case'
-      ? '温暖、克制、可信'
-      : '清晰、轻快、专业';
-	  let directorPlan = checkpointDirectorPlan;
-  if (!directorPlan) {
-    const bgmSelection = await (input.runtime?.selectDirectorBgm ?? selectDirectorBgm)({
-      tenantId: input.tenantId,
-      themeId: detail.theme?.themeId ?? null,
-      directorMood: reviewDirective?.musicMood
-        || socialText(directorFormula?.direction?.music?.mood)
-        || defaultDirectorMood,
-      volume: Number(directorFormula?.direction?.music?.volume ?? 18),
-    });
-    directorPlan = buildSocialDirectorPlan({
-      taskId: input.taskId,
-      baseline: activeBaseline,
-      productionPlan: plan,
-      productionAssets: assets,
-      sourceVersions: Object.fromEntries(detail.sources.map(source => [source.sourceId, source.sourceVersion ?? ''])),
-      outputSpec: {
-        aspectRatio: detail.brief.aspectRatio,
-        resolution: '720p',
-        platform: detail.brief.platforms[0] ?? 'douyin',
-      },
-      bgmSelection,
-      formula: directorFormula,
-      createdAt: new Date().toISOString(),
-      previous: previousDirectorPlan,
-      collaboration: {
-        schemaVersion: 'social-agent-collaboration.v1',
-        directorBrief: { id: agentWorkflow.directorBrief.directorBriefId, version: agentWorkflow.directorBrief.version },
-        contentExecutionPlan: { id: agentWorkflow.executionPlan.executionPlanId, version: agentWorkflow.executionPlan.version, selectedBy: 'content_agent' },
-        directorReview: { id: agentWorkflow.executionPlanReview.reviewId, version: agentWorkflow.executionPlanReview.version, approvedBy: 'director_agent' },
-      },
-    });
-  }
-  if(contentTemplateStructure&&!contentTemplateOutputMatches(contentTemplateStructure,activeBaseline,directorPlan))throw new SocialContentWorkflowError('content_template_output_mismatch',409);
-  let persistedDirectorPlan = await persistSocialDirectorPlanVersion({
-    repository: input.repository,
-    tenantId: input.tenantId,
-    taskId: input.taskId,
-    plan: directorPlan,
-    baseline: activeBaseline,
-    verifiedContext: executionVerifiedContext,
-  });
-  let directorSummary = publicSocialDirectorPlanSummary(directorPlan)!;
-  await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, taskRecord.id, {
-    director_plan: directorPlan,
-    updated_at: directorPlan.createdAt,
-  });
-  let contentHandoff = socialDirectorContentHandoff(directorPlan);
-  if (selectedVoice) contentHandoff = socialDirectorHandoffWithBoundVoice(contentHandoff,selectedVoice.logicalVoice);
-  await recordCurrentContentExecutionCheckpoint({
-    stage: 'social.director_storyboard',
-    version: '1',
-    inputHash: directorCheckpointInputHash,
-    payload: {
-      directorPlan,
-      directorPlanReference: persistedDirectorPlan.reference,
-      narration: contentHandoff.narration,
-      scenes: contentHandoff.scenes.map(scene => ({
-        sceneId: scene.sceneId,
-        source: structuredClone(scene.source),
-        voiceover: scene.voiceover,
-        caption: scene.caption,
-      })),
-    },
-  });
+  let { directorPlan, persistedDirectorPlan, directorSummary, contentHandoff } = preparedDirector;
+  const directorCheckpointInputHash = preparedDirector.checkpointInputHash;
   await writeExecutionStage({
     ...input,
     stage: 'content_production',
@@ -1016,7 +916,7 @@ export async function runSocialContentAutoProduction(input: {
       selectedAssetCount: plan.selectedAssetIds.length,
       unusedAssetCount: plan.unusedAssets.length,
       sourceClipSeconds: plan.sourceClipSeconds,
-	  directorCheckpointReused: Boolean(checkpointDirectorPlan),
+	  directorCheckpointReused: preparedDirector.checkpointReused,
 	  ...(assetSupplyExecution ? { assetSupplyExecution } : {}),
       ...(revisionParent && reviewDirective ? {
         reviewRevision: {
