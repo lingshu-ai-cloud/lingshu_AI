@@ -9,6 +9,11 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 9 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## 图片多输出 HTTP 准入回归（2026-10-22）
+
+- 代码提交 `eae873e7` 将隔离的真实 HTTP 路由测试加入 `test:social-image-pipeline`：GIF 任务在供应商前返回 `social_image_gif_delivery_not_ready`，未冻结的轮播单元返回 `social_image_frozen_plan_invalid`。测试使用临时本地数据目录并在结束时清理，不发起供应商请求。
+- 图片管线 44 项领域测试、新 HTTP 测试、现有路由源码合同、TypeScript、架构扫描与 ratchet 测试、生产构建、191 项迁移清单只读检查和 `git diff --check` 通过；主 Studio chunk 为 497103/500000 字节。此验收只证明拒绝路径，**不证明**轮播付费生成的 HTTP 全流程、GIF 合成交付、浏览器交互或真实供应商就绪；这些仍待完成。
+
 ## WhatsApp 历史与入站处理边界退出超限清单（2026-10-22）
 
 - 以集成提交 `1582684eb31d92af4012cdb67a0aa280493bb979` 为起点，按数据职责拆出历史去重/快照与 PocketBase 镜像持久化、客户夜间与地区策略、客户写入与内容归因、入站消息解析准备、单条消息处理五个模块。`historyImport.ts` 保留原公开入口、维护调度、Webhook 编排和客户查询。迁出的 59 个函数与起点提交逐段比对，除新增导出修饰外源码一致；没有新增入站消息发送、外部上传或镜像写入路径。
