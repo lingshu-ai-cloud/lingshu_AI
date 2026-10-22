@@ -7,7 +7,7 @@
 - 以集成提交 `c48ad6ff1b2735e0d7e259c9fbfc91daccd47221` 为起点，将项目状态、重试、证据快照和旧订单产品绑定恢复迁入 `contentProductionProjectState.ts`，单项目推进与真实渲染阶段迁入 `contentProductionExecution.ts`；原 `contentProduction.ts` 保留公开导出、租户批次编排和任务材料化。迁出的 13 个函数与起点源码逐段比对，除新增导出修饰外一致；没有改动付费供应商调用条件。
 - 原主文件由 1,287 行降至 314 行，状态模块 226 行，执行模块 768 行，均低于 800 行普通门禁；撤销原主文件历史超限预算，历史超限文件由 12 项降至 11 项。执行模块仍有较长的单项目推进函数，后续可按阶段细分；不能把全仓架构债务视为已完成。
 - 内容生产、恢复、编导决策、主持人审批、Starter 产物接线、周矩阵、素材分析、本地真实 FFmpeg 质量流程和上传素材溯源定向测试、TypeScript、架构扫描/ratchet 与生产构建以本批最终命令结果为准。构建 `AiCreateStudio` 主 chunk 497,094/500,000 字节。
-- 验证期间同一工作树存在另一批未提交广告页与广告账号改动，其中修改了已有 PocketBase migration，并新增未登记 migration；191 项迁移仓库只读检查因此报 `checksum_mismatch` 与 `unregistered_migration`，本批**不能宣称迁移检查通过或本地工作区干净**。本批不改动、不提交该并发改动；完整 `productionTruthfulness.contract.test.ts` 的既有 `App.tsx` 断言限制仍存在。未运行付费供应商、执行迁移或部署。
+- 验证期间同一工作树存在另一批未提交广告页与广告账号改动，其中修改了已有 PocketBase migration，并新增未登记 migration；共享工作树上的迁移检查因此报 `checksum_mismatch` 与 `unregistered_migration`。在仅含本批提交 `0bcdd579f58657772e132d71dc39d70c1e89a104` 的临时干净检出中重新执行同一只读检查，191 项全部通过且无阻塞；临时检出已移除。这证明提交的迁移文件状态，不代表当前共享工作树干净或并发迁移改动可合入。本批不改动、不提交该并发改动；完整 `productionTruthfulness.contract.test.ts` 的既有 `App.tsx` 断言限制仍存在。未运行付费供应商、执行迁移或部署。
 
 ## 内容生产事实与脚本生成边界（2026-10-22）
 
