@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
+const watchModal = fs.readFileSync(new URL('./inspiration/InspirationWatchModal.tsx', import.meta.url), 'utf8');
 const materialMediaSource = fs.readFileSync(new URL('./inspiration/MaterialLibraryCardMedia.tsx', import.meta.url), 'utf8');
 const cardsSource = fs.readFileSync(new URL('./InspirationVideoCards.tsx', import.meta.url), 'utf8');
 const mediaSource = fs.readFileSync(new URL('./inspiration/InspirationMedia.tsx', import.meta.url), 'utf8');
 const progressSource = fs.readFileSync(new URL('./inspiration/VideoAnalysisProgressPanel.tsx', import.meta.url), 'utf8');
-const watchModal = source.slice(source.indexOf('function WatchModal'), source.indexOf("export { splitDirectorReviewedShot"));
-
+assert.match(source, /import \{ WatchModal, sourceEmbedUrl \} from '.\/inspiration\/InspirationWatchModal'/);
 assert.match(watchModal, /zIndex=\{2200\}/, 'the original-content preview must render above the Ant detail drawer');
 assert.match(watchModal, /video\.videoUrl && !useEmbedPlayer/);
 assert.match(watchModal, /embedUrl \?/);
