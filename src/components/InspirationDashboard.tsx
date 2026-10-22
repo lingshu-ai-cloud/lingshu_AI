@@ -11,6 +11,7 @@ import InspirationVideoResults from './inspiration/InspirationVideoResults';
 import { MATERIAL_LIBRARY_FETCH_PAGE_SIZE, fetchCompleteProductMaterialInventory, fetchProductMaterialSummaries, type ProductMaterialSummary } from './inspiration/inspirationProductMaterialInventory';
 import { initialInspirationReferenceTarget, parseInspirationReferenceTarget, type InspirationReferenceTarget } from './inspiration/inspirationReferenceTarget';
 import { resolveInspirationReference } from './inspiration/inspirationReferenceResolver';
+import { projectMaterialGallery } from './inspiration/inspirationMaterialGalleryProjection';
 export { materialPreviewImageSources } from './inspiration/MaterialLibraryCardMedia';
 import DirectorReviewWorkspace, { type DirectorReviewHandoff } from './inspiration/DirectorReviewWorkspace';
 import { AuthenticatedImage, AuthenticatedVideo } from './inspiration/InspirationMedia';
@@ -36,7 +37,7 @@ import {
 import { studioApi, type Material } from '../lib/studioApi';
 import {
   initialMaterialLibraryEntry, initialMaterialTaxonomyFilters,
-  canCreateFromLibraryMaterial, materialMatchesProductFilter, materialMatchesLibraryFilters, isFavoriteMaterial,
+  canCreateFromLibraryMaterial, isFavoriteMaterial,
   materialOwnershipTags, materialSemanticLabel,
   resolveLinkedFavoriteMaterialId, visibleMaterialTags,
   MATERIAL_APPLICABILITY_LABELS, MATERIAL_FUNCTION_LABELS, MATERIAL_INDUSTRY_LABELS,
@@ -72,12 +73,11 @@ import type { AccountSpecialRecommendation, ContentFormat, GeminiVideoAnalysis, 
 import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
 import { crawlInspirationImages, type InspirationImageCrawlPlatform } from '../lib/inspirationImageCrawl';
 import type { SocialBusinessModel, SocialDiscoveryScoreDecision, SocialDiscoverySupplyItem } from '../../shared/contracts/socialContentWorkflow';
-import { MATERIAL_THEME_LABELS, materialSourceCategoryOf } from '../../shared/materialTaxonomy';
+import { MATERIAL_THEME_LABELS } from '../../shared/materialTaxonomy';
 import MaterialTaxonomyFilters, { type MaterialSourceFilter, type MaterialThemeFilter } from './material-library/MaterialTaxonomyFilters';
 import {
   ProductMaterialDetailDrawer,
   ProductMaterialGroupCard,
-  materialBelongsToKnownProduct,
   neutralProductSceneLabel,
   type ProductMaterialGroupProduct,
   type ProductScenePreparationSlotView,
@@ -1011,12 +1011,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   }, [visibleVideos, platform, inspirationFavoriteFilter, favoritedVideoIds, favoriteSourceUrls, search, sortMode, contentFormat]);
 
   const shootingNeeds = useMemo(() => buildShootingNeeds(visibleVideos, localMaterials), [visibleVideos, localMaterials]);
-  const materialFunctionOptions = useMemo(() => {
-    const values = new Set<string>();
-    const productMaterials = Object.values(productMaterialSummaries).flatMap(summary => summary.materials);
-    [...localMaterials, ...productMaterials].forEach(material => String(material.shotFunction || '').split(',').map(item => item.trim()).filter(Boolean).forEach(item => values.add(item)));
-    return [...values].sort((a, b) => (MATERIAL_FUNCTION_LABELS[a] || a).localeCompare(MATERIAL_FUNCTION_LABELS[b] || b, 'zh-CN'));
-  }, [localMaterials, productMaterialSummaries]);
   const activeMaterialFilters = useMemo<MaterialGalleryFilterSnapshot>(() => ({
     query: materialSearch,
     assetTab: materialAssetTab,
@@ -1029,63 +1023,23 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     theme: materialTheme,
     favorite: materialFavoriteFilter,
   }), [materialSearch, materialAssetTab, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialFavoriteFilter]);
-  const filteredMaterials = useMemo(() => {
-    return localMaterials.filter(material => {
-      const productMatches = materialMatchesProductFilter(material, {
-        enabled: materialProductFilterEnabled,
-        productId: materialProductId,
-        productRef: materialProductRef,
-      });
-      return materialMatchesLibraryFilters(material, activeMaterialFilters) && productMatches;
-    }).sort((a, b) => {
-      // User uploads are the primary working set. Seed/demo library records may
-      // have a later migration timestamp, which must not push fresh uploads down.
-      const sourcePriority = Number(materialSourceCategoryOf(b) === 'local_upload') - Number(materialSourceCategoryOf(a) === 'local_upload');
-      return sourcePriority || (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0);
-    });
-  }, [localMaterials, activeMaterialFilters, materialProductFilterEnabled, materialProductId, materialProductRef]);
-
-  const ungroupedFilteredMaterials = useMemo(
-    () => filteredMaterials.filter(material => !materialBelongsToKnownProduct(material, materialProducts)),
-    [filteredMaterials, materialProducts],
-  );
-  const visibleProductGroups = useMemo(() => {
-    const query = materialSearch.trim().toLowerCase();
-    return materialProducts.filter(product => {
-      if (materialProductFilterEnabled) {
-        if (materialProductId && product.id !== materialProductId) return false;
-        if (!materialProductId && materialProductRef && product.name !== materialProductRef) return false;
-        if (!materialProductId && !materialProductRef) return false;
-      }
-      const summary = productMaterialSummaries[product.id];
-      const productNameMatches = Boolean(query && product.name.toLowerCase().includes(query));
-      const requiresMaterialMatch = materialAssetTab === 'ai'
-        || materialAssetTab === 'cloud'
-        || materialType !== 'all'
-        || materialIndustry !== 'all'
-        || materialFunction !== 'all'
-        || materialApplicability !== 'all'
-        || materialOrientation !== 'all'
-        || materialSource !== 'all'
-        || materialTheme !== 'all'
-        || materialFavoriteFilter !== 'all'
-        || Boolean(query && !productNameMatches);
-      if (!requiresMaterialMatch) return !query || productNameMatches;
-      if (!summary) return false;
-      const productFilters = productNameMatches
-        ? { ...activeMaterialFilters, query: '' }
-        : activeMaterialFilters;
-      return summary.materials.some(material => materialMatchesLibraryFilters(material, productFilters));
-    });
-  }, [activeMaterialFilters, materialApplicability, materialAssetTab, materialFavoriteFilter, materialFunction, materialIndustry, materialOrientation, materialProductFilterEnabled, materialProductId, materialProductRef, materialProducts, materialSearch, materialSource, materialTheme, materialType, productMaterialSummaries]);
-  const ordinaryFilteredTotal = ungroupedFilteredMaterials.length;
-  const pagedUngroupedFilteredMaterials = useMemo(() => {
-    const offset = (materialPage - 1) * MATERIAL_LIBRARY_PAGE_SIZE;
-    return ungroupedFilteredMaterials.slice(offset, offset + MATERIAL_LIBRARY_PAGE_SIZE);
-  }, [materialPage, ungroupedFilteredMaterials]);
-  const visibleProductGroupsForPage = materialPage === 1 ? visibleProductGroups : [];
-  const visibleMaterialTotal = visibleProductGroups.length + ordinaryFilteredTotal;
-  const visibleMaterialGalleryCount = visibleProductGroupsForPage.length + pagedUngroupedFilteredMaterials.length;
+  const {
+    materialFunctionOptions,
+    visibleProductGroups,
+    ordinaryFilteredTotal,
+    pagedUngroupedFilteredMaterials,
+    visibleProductGroupsForPage,
+    visibleMaterialTotal,
+    visibleMaterialGalleryCount,
+  } = useMemo(() => projectMaterialGallery({
+    materials: localMaterials,
+    products: materialProducts,
+    summaries: productMaterialSummaries,
+    filters: activeMaterialFilters,
+    productFilter: { enabled: materialProductFilterEnabled, productId: materialProductId, productRef: materialProductRef },
+    page: materialPage,
+    pageSize: MATERIAL_LIBRARY_PAGE_SIZE,
+  }), [localMaterials, materialProducts, productMaterialSummaries, activeMaterialFilters, materialProductFilterEnabled, materialProductId, materialProductRef, materialPage]);
   useEffect(() => {
     const lastPage = Math.max(1, Math.ceil(ordinaryFilteredTotal / MATERIAL_LIBRARY_PAGE_SIZE));
     setMaterialPage(current => Math.min(current, lastPage));

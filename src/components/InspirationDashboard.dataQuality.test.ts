@@ -76,7 +76,7 @@ const videoResultsSource = readFileSync(fileURLToPath(new URL('./inspiration/Ins
 assert.match(materialCardSource, /aria-label={`播放 \${material\.name}`}[^]*?event\.stopPropagation\(\); onPlay\(\);[^]*?z-20/, '播放按钮应稳定置于 hover 操作层之上');
 assert.match(componentSource, /onPlay=\{\(\) => setPreviewMaterial\(material\)\}/, '播放按钮只打开预览');
 assert.match(componentSource, /contentFormat: isImageMaterial \? 'image' : 'video'/, '图片素材进入工作流时必须保留图片类型，不能伪装成视频');
-assert.match(componentSource, /disabled=\{material\.type === 'audio' \|\| \(material\.type === 'video' && !canProcessVideo\([^]*?<Sparkles[^]*?自由创作/, '图片素材必须可以直接进入生成，只有无有效时长的视频和音频被拦截');
+assert.match(componentSource, /disabled=\{!canCreateFromLibraryMaterial\(material\)\}[^]*?<Sparkles[^]*?自由创作/, '素材卡必须用共用门禁拦截音频、无有效时长的视频及无可用来源的素材');
 assert.match(componentSource, /refreshMaterialPreviewUrl[^]*?重新获取播放地址/, '素材预览失败后必须能刷新短期播放地址并重试');
 const previewRefreshSource = componentSource.slice(componentSource.indexOf('const refreshMaterialPreviewUrl'), componentSource.indexOf('const handleMaterialPreviewError'));
 assert.match(previewRefreshSource, /const previewProductId = String\(current\.productId[^]*?if \(previewProductId\)[^]*?fetchCompleteProductMaterialInventory\(product\)/, '产品视频预览失败必须按 productId 精确刷新详情库存');
@@ -103,7 +103,9 @@ assert.match(videoCardSource, /onNaturalAspectRatio=\{ratio => \{[^]*?!videoAspe
 const materialGridSource = componentSource.slice(componentSource.indexOf('<LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map'), componentSource.indexOf('aria-label="普通素材分页"'));
 assert.match(componentSource, /import \{ MaterialLibraryCardMedia \} from '.\/inspiration\/MaterialLibraryCardMedia'/);
 assert.match(materialCardSource, /function MaterialLibraryCardMedia[^]*?useState\(\(\) => materialIntrinsicAspectRatio\(material\)\)[^]*?source === 'image' && materialHasAuthoritativeAspectRatio\(material\)[^]*?setAspectRatio\(ratio\)/, '素材卡必须先用视频权威比例，封面只能在缺少视频比例时兜底');
-assert.match(componentSource, /const productMaterials = Object\.values\(productMaterialSummaries\)\.flatMap\(summary => summary\.materials\)[^]*?\[\.\.\.localMaterials, \.\.\.productMaterials\]/, '镜头功能筛选项必须合并产品集合素材');
+const gallerySource = readFileSync(new URL('./inspiration/inspirationMaterialGalleryProjection.ts', import.meta.url), 'utf8');
+assert.match(componentSource, /projectMaterialGallery\(\{[\s\S]*?materials: localMaterials,[\s\S]*?summaries: productMaterialSummaries/, '素材列表必须投影当前素材和产品集合');
+assert.match(gallerySource, /const productMaterials = Object\.values\(summaries\)\.flatMap\(summary => summary\.materials\)[^]*?\[\.\.\.materials, \.\.\.productMaterials\]/, '镜头功能筛选项必须合并产品集合素材');
 assert.match(materialGridSource, /<MaterialLibraryCardMedia[^]*?flex flex-1 flex-col p-3[^]*?mt-auto grid grid-cols-2 gap-2 pt-3/, '素材卡必须使用真实比例媒体组件，并把按钮固定在信息区底部');
 assert.doesNotMatch(materialGridSource, /min-h-52/, '素材卡信息区不得以固定最小高度在按钮下方制造大片空白');
 assert.match(componentSource, /grid-cols-\[minmax\(240px,2fr\)_[^]*?<Input allowClear[^]*?aria-label="搜索爆款灵感"[^]*?<Select value=\{platform\}/, '搜索框必须位于灵感发现主筛选最左侧');

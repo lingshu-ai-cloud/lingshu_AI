@@ -74,7 +74,9 @@ test('预制场景上传只限制视频类型，不把建议时长当作就绪�
 
 test('我的素材只渲染一个产品集合卡，详情从右侧展开完整库存', () => {
   assert.doesNotMatch(dashboardSource, /ProductScenePreparationBoard/);
-  assert.match(dashboardSource, /visibleProductGroupsForPage = materialPage === 1 \? visibleProductGroups : \[\]/, '产品卡只在普通素材首页出现，不随分页重复');
+  const gallerySource = readFileSync(new URL('../inspiration/inspirationMaterialGalleryProjection.ts', import.meta.url), 'utf8');
+  assert.match(dashboardSource, /projectMaterialGallery\(\{/, '产品卡必须由共用素材列表投影提供');
+  assert.match(gallerySource, /visibleProductGroupsForPage = page === 1 \? visibleProductGroups : \[\]/, '产品卡只在普通素材首页出现，不随分页重复');
   assert.match(dashboardSource, /visibleProductGroupsForPage\.map\(product/);
   assert.match(dashboardSource, /id: `product-\$\{product\.id\}`/);
   assert.match(dashboardSource, /pagedUngroupedFilteredMaterials/);
@@ -83,7 +85,7 @@ test('我的素材只渲染一个产品集合卡，详情从右侧展开完整�
   assert.match(inventorySource, /fetchCompleteProductMaterialInventory[\s\S]*?productId: product\.id[\s\S]*?pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE/, '产品摘要与侧边详情必须按稳定产品 ID 精确读取完整素材');
   assert.match(dashboardSource, /fetchProductMaterialSummaries\(materialProducts\)/, '主墙产品摘要必须批量读取，不得按产品 N\+1 请求');
   assert.match(inventorySource, /for \(let page = 2; page <= pageCount; page \+= 1\)/, '批量摘要应受控地逐页读取，避免并发风暴');
-  assert.match(dashboardSource, /materialMatchesLibraryFilters\(material, productFilters\)/, '产品卡必须使用真实详情素材响应筛选');
+  assert.match(gallerySource, /summary\.materials\.some\(material => materialMatchesLibraryFilters\(material, productFilters\)\)/, '产品卡必须使用真实详情素材响应筛选');
   assert.match(componentSource, /<Drawer[\s\S]*?placement="right"/);
   assert.match(componentSource, /产品素材集合/);
   assert.match(componentSource, /onRetry: \(product: ProductMaterialGroupProduct\)[\s\S]*?重新加载/, '抽屉读取失败必须可重试');
