@@ -5,6 +5,7 @@ import { MaterialLibraryCardMedia } from './inspiration/MaterialLibraryCardMedia
 import { WatchModal, sourceEmbedUrl } from './inspiration/InspirationWatchModal';
 import { buildShootingNeeds } from './inspiration/inspirationShootingNeeds';
 import { InspirationShootingPanel } from './inspiration/InspirationShootingPanel';
+import InspirationImageCrawlDialog from './inspiration/InspirationImageCrawlDialog';
 import { MATERIAL_LIBRARY_FETCH_PAGE_SIZE, fetchCompleteProductMaterialInventory, fetchProductMaterialSummaries, type ProductMaterialSummary } from './inspiration/inspirationProductMaterialInventory';
 import { initialInspirationReferenceTarget, normalizedReferenceText, parseInspirationReferenceTarget, videoMatchesReference, type InspirationReferenceTarget } from './inspiration/inspirationReferenceTarget';
 export { materialPreviewImageSources } from './inspiration/MaterialLibraryCardMedia';
@@ -12,7 +13,7 @@ import DirectorReviewWorkspace, { type DirectorReviewHandoff } from './inspirati
 import { AuthenticatedImage, AuthenticatedVideo } from './inspiration/InspirationMedia';
 export { AuthenticatedVideo, ThumbnailImage, VideoThumbnail } from './inspiration/InspirationMedia';
 import { analysisProgressIsActive } from './inspiration/VideoAnalysisProgressPanel';
-import { Alert, Button, Drawer, Form, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
+import { Alert, Button, Drawer, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
 import LsPageHeader from './ui/LsPageHeader';
 import { LsLoadingState, LsMasonryGallery } from './ui/LsExperiencePrimitives';
 import { hasExactReferenceReview, parseExactReferenceReview, loadExactReferenceReview, exactReferenceReviewErrorMessage } from '../lib/exactReferenceReview';
@@ -1953,44 +1954,19 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             </div>
           </div>
 
-          <Modal
-            title="关键词补充采集"
+          <InspirationImageCrawlDialog
             open={imageCrawlOpen}
-            footer={null}
-            width={560}
-            closable={!imageCrawlBusy}
-            mask={{ closable: false }}
-            onCancel={() => { if (!imageCrawlBusy) setImageCrawlOpen(false); }}
-            destroyOnHidden
-          >
-            <Form layout="vertical" onFinish={() => void runImageCrawl()} requiredMark={false}>
-              <p className="mb-4 text-sm leading-6 text-text-secondary">用于补充对标账号库之外的图文线索；图文会同时保留图片、轮播顺序和原帖配文。</p>
-              <Form.Item label="平台">
-                <Select value={imageCrawlPlatform} onChange={value => setImageCrawlPlatform(value as InspirationImageCrawlPlatform)} options={[
-                  { value: 'instagram', label: 'Instagram' },
-                  { value: 'linkedin', label: 'LinkedIn' },
-                  { value: 'facebook', label: 'Facebook' },
-                  { value: 'tiktok', label: 'TikTok' },
-                  { value: 'youtube', label: 'YouTube 社区' },
-                ]} />
-              </Form.Item>
-              <Form.Item label="补充关键词" validateStatus={imageCrawlError ? 'error' : undefined} help={imageCrawlError || undefined}>
-                <Input autoFocus allowClear value={imageCrawlKeyword} onChange={event => { setImageCrawlKeyword(event.target.value); setImageCrawlError(''); }} placeholder="例如：cosmetic packaging design" />
-              </Form.Item>
-              <Form.Item label="采集数量">
-                <Select value={imageCrawlLimit} onChange={setImageCrawlLimit} options={[
-                  { value: 6, label: '6 条' },
-                  { value: 12, label: '12 条' },
-                  { value: 20, label: '20 条' },
-                  { value: 30, label: '30 条' },
-                ]} />
-              </Form.Item>
-              <div className="flex justify-end gap-2 border-t border-border pt-4">
-                <Button disabled={imageCrawlBusy} onClick={() => setImageCrawlOpen(false)}>取消</Button>
-                <Button type="primary" htmlType="submit" loading={imageCrawlBusy}>开始采集</Button>
-              </div>
-            </Form>
-          </Modal>
+            busy={imageCrawlBusy}
+            platform={imageCrawlPlatform}
+            keyword={imageCrawlKeyword}
+            limit={imageCrawlLimit}
+            error={imageCrawlError}
+            onClose={() => setImageCrawlOpen(false)}
+            onSubmit={() => void runImageCrawl()}
+            onPlatformChange={setImageCrawlPlatform}
+            onKeywordChange={value => { setImageCrawlKeyword(value); setImageCrawlError(''); }}
+            onLimitChange={setImageCrawlLimit}
+          />
 
 
             {materialMessage && (
