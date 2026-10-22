@@ -15,3 +15,5 @@
 `DigitalEmployeePage` 将经营看板的默认页及命名视图、周复盘改为按需加载，并在使用位置提供局部 Suspense 提示。常规构建后主页面从约 920 kB 降至约 487 kB；新看板 chunk 约 389 kB、周复盘约 36 kB；`index` 约 806 kB、`AiCreateStudio` 约 881 kB，故仍有两个大 chunk 告警。未采用提高阈值或手动 vendor 分组。
 
 随后将登录页与已登录布局从首屏入口改为互斥的按需加载，并以 `PageLoading` 包住各自的 Suspense 边界。`index` 从约 806 kB 降至约 231 kB；`AuthScreen` 约 12 kB、`Layout` 约 57 kB，数字员工主 chunk 约 489 kB。生产预览的未登录页实际显示且没有浏览器错误；未输入账号。现只剩 `AiCreateStudio` 约 881 kB 的构建告警。
+
+进一步按 sourcemap 映射的产物跨度归因，`AiCreateStudio.tsx` 自身约占 571 kB，`ShotProductionPanel.tsx` 约 62 kB。即使单独延后现有子面板，主模块仍可能超过 500 kB；下一步须拆分 `AiCreateStudio` 内部的状态/步骤工作流，并对图片与视频生成的付费调用边界做专项回归，不能靠依赖分组或提高阈值消除告警。
