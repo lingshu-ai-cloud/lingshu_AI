@@ -13,6 +13,7 @@
 .ads-library-video .ls-media-state-frame { min-height: 220px; background: var(--color-fill-secondary, #f5f5f5); }
 .ads-library-video video { display: block; width: 100%; max-height: 360px; object-fit: contain; }
 .ads-library-id { overflow-wrap: anywhere; font-family: var(--font-mono, monospace); font-size: 12px; }
+.ads-library-task-link.ant-btn { max-width: 100%; height: auto; padding: 0; white-space: normal; text-align: left; overflow-wrap: anywhere; }
 .ads-library-pagination { display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .ads-library-detail-heading { display: flex; justify-content: space-between; margin: 20px 0 12px; flex-wrap: wrap; }
 .ads-library-detail-heading h3, .ads-library-mapping h3 { font-size: 16px; font-weight: 600; margin: 0; }
