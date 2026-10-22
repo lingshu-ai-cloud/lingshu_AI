@@ -569,7 +569,6 @@ observedFacts仅写真实可见内容；推断只写inferredIntent；缺失因�
   if (classificationError) normalized = await repairVideoShotClassificationsWithQwen(normalized, opts.signal);
   return normalized;
 }
-
 export { qualityCheckSocialImageWithQwen } from './socialImageQwen.js';
 
 export async function analyzeImagePostEvidenceWithQwen(opts: {

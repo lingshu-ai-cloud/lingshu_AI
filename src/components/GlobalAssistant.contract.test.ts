@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const runtimeSource = fs.readFileSync(new URL('./assistant/globalAssistantRuntime.ts', import.meta.url), 'utf8');
+const saveQueueSource = fs.readFileSync(new URL('./assistant/useAssistantThreadSaveQueue.ts', import.meta.url), 'utf8');
 const actionProjectionSource = fs.readFileSync(new URL('./assistant/assistantActionProjection.ts', import.meta.url), 'utf8');
 const productionIntakeSource = fs.readFileSync(new URL('./assistant/assistantProductionIntake.ts', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
@@ -202,7 +203,8 @@ assert.match(decisionActionResultSource, /setMessages\(PRIMARY_ASSISTANT_THREAD,
 assert.match(decisionActionResultSource, /closeDecisionDialog\(\)[\s\S]{0,120}persistThread\(PRIMARY_ASSISTANT_THREAD\)/, '结果到达后关闭已处理详情并保存对话状态');
 
 assert.match(runtimeSource, /const PRIMARY_ASSISTANT_THREAD:\s*OrbitAgentId\s*=\s*'business'/, '所有对话必须聚合到 business 主线程');
-const persistThreadSource = sourceSection('const persistThread = useCallback', 'const openAgent', '助手线程持久化队列');
+assert.match(source, /const persistThread = useAssistantThreadSaveQueue\(\{[\s\S]*stablePersistenceScope, persistenceFenceRef, assistantThreadSaveQueuesRef,[\s\S]*hydrateThread, setPersistenceMetadata/, '浮层必须连接同一作用域、身份栅栏和保存队列');
+const persistThreadSource = sourceSection('const persistThread = useCallback', 'return persistThread;', '助手线程持久化队列', saveQueueSource);
 assert.match(persistThreadSource, /if \(queue\.running\) return/, '同一线程保存必须串行执行，不能并发全量覆盖');
 assert.match(persistThreadSource, /expectedVersion/, '每次线程保存必须携带服务端版本前置条件');
 assert.match(persistThreadSource, /response\.status === 409/, '版本冲突必须进入显式合并流程');
