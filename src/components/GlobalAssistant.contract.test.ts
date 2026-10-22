@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const chatStreamSource = fs.readFileSync(new URL('../lib/assistantChatStream.ts', import.meta.url), 'utf8');
+const actionRequestSource = fs.readFileSync(new URL('../lib/assistantActionRequest.ts', import.meta.url), 'utf8');
 const decisionDialogSource = fs.readFileSync(new URL('./assistant/AssistantDecisionDialog.tsx', import.meta.url), 'utf8');
 const floatingRemindersSource = fs.readFileSync(new URL('./assistant/AssistantFloatingReminders.tsx', import.meta.url), 'utf8');
 const launcherSource = fs.readFileSync(new URL('./assistant/AssistantLauncher.tsx', import.meta.url), 'utf8');
@@ -155,7 +156,7 @@ assert.match(closeExternalDecisionDialogSource, /setDecisionFeedRevision\(revisi
 assert.match(closeExternalDecisionDialogSource, /closeDecisionDialogForNavigation[\s\S]{0,360}decisionDialogRestoreFocusRef\.current = false;[\s\S]{0,120}setDecisionDialog\(null\)/, '深链导航必须先关闭外部弹窗并禁止把焦点送回旧页面');
 const restoreExternalDecisionDialogFocusSource = sourceSection(
   'const restoreDecisionDialogFocus',
-  'const executeAssistantAction',
+  'const presentActionResponse',
   '外部决策弹窗焦点恢复',
 );
 assert.match(restoreExternalDecisionDialogFocusSource, /originalTrigger\?\.isConnected[\s\S]*querySelector<HTMLButtonElement>/, '概要刷新替换触发器后仍必须恢复到当前语义按钮');
@@ -346,7 +347,8 @@ const localizedMessageIndex = responseErrorSource.indexOf("if (typeof data?.mess
 const rawErrorIndex = responseErrorSource.indexOf('if (data?.error) return data.error;');
 assert.ok(localizedMessageIndex >= 0 && rawErrorIndex > localizedMessageIndex, '额度错误特殊处理后必须优先展示服务端本地化 message，而不是原始错误码');
 
-const actionExecutionSource = sourceSection('const executeAssistantAction = useCallback', 'const presentActionResponse', '确定性操作请求');
+assert.match(source, /import \{ executeAssistantAction \} from '\.\.\/lib\/assistantActionRequest'/, '浮层必须使用独立的确定性操作请求适配层');
+const actionExecutionSource = sourceSection('export async function executeAssistantAction', '\n}', '确定性操作请求', actionRequestSource);
 assert.match(actionExecutionSource, /httpStatus === 409/, '冲突 HTTP 状态必须转换成过期操作卡');
 assert.match(actionExecutionSource, /httpStatus === 422/, '缺输入 HTTP 状态必须转换成缺输入卡');
 assert.match(actionExecutionSource, /if \(!response\.ok\) \{[\s\S]*return actionFailure/, '任何操作路由 HTTP 失败都必须展示失败或缺输入卡');
