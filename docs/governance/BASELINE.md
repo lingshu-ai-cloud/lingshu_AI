@@ -2,6 +2,12 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 产品预制素材凭证规则拆分（2026-10-23）
+
+- 代码提交 `726e9b2e` 将产品预制素材的稳定槽位绑定、上传校验凭证解析、产品关联变更及检索标签迁至 `server/routes/studioProductSceneProvenance.ts`；`studio.ts` 保留原公开导出、租户产品查询、上传媒体探针和素材持久化。主路由从 10,768 降至 10,621 行，历史预算同步收紧；超限文件仍为 7 个，不能称全仓拆分完成。
+- 产品预制素材定向测试 8/8、`test:material-import` 11/11、TypeScript、架构扫描及相对拆分前 HEAD 的 ratchet、192 项迁移仓库只读检查、生产构建和 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未执行真实供应商、目标 PocketBase 迁移或部署。最终本地/远端 SHA 与工作区状态以推送后 Git 核对为准。
+- 图片 AIGC 来源复核：原来源 `95b0bcc1` 已在集成祖先中，新模块 `23b1bb93` 的确定性图层/蒙版能力已有选择性合入；仍独有的自动 GPT 路由会改变用户明确要求暂留的 Qwen→Gemini 降级，且没有完整逐记录付费许可与结果不明恢复，故未整笔 cherry-pick。该来源树及其他含独有补丁、未提交内容或被忽略业务数据的工作树继续保留，不能按“代码等价”归档。
+
 ## Apify 视频候选纯投影拆分（2026-10-23）
 
 - 代码提交 `1220b17e809db19b7d6801323277d6317baabd59` 将 TikTok、Instagram、Facebook 的 Apify 视频行转换、封面 URL、标题与数量格式化迁至 `server/routes/videoCrawlerProviderProjection.ts`。原 `videos.ts` 仍负责 Actor 请求、付费门禁、账号范围、队列与持久化；图片帖转换继续复用相同的基础投影。主路由从 10,005 降至 9,720 行，预算同步收紧，历史超限文件仍有 7 个。
