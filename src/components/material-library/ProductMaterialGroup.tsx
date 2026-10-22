@@ -8,6 +8,8 @@ import {
   type ProductScenePreparationReadModel,
 } from '../../../shared/contracts/productScenePreparation';
 import type { Material } from '../../lib/studioApi';
+import { materialHasAuthoritativeAspectRatio, materialIntrinsicAspectRatio } from '../../lib/materialAspectRatio';
+export { materialHasAuthoritativeAspectRatio, materialIntrinsicAspectRatio } from '../../lib/materialAspectRatio';
 import { LsMasonryGallery, LsMediaStateFrame, LsProgressiveMedia } from '../ui/LsExperiencePrimitives';
 
 export type ProductScenePreparationSlotView = ProductScenePreparationReadModel;
@@ -35,23 +37,6 @@ export function materialBelongsToKnownProduct(
   products: ReadonlyArray<ProductMaterialGroupProduct>,
 ): boolean {
   return products.some(product => materialMatchesProduct(material, product));
-}
-
-export function materialIntrinsicAspectRatio(material: Pick<Material, 'width' | 'height' | 'aspectRatio'> | undefined): number {
-  const width = Number(material?.width);
-  const height = Number(material?.height);
-  if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) return width / height;
-  const explicit = Number(material?.aspectRatio);
-  if (Number.isFinite(explicit) && explicit > 0) return explicit;
-  return 1;
-}
-
-export function materialHasAuthoritativeAspectRatio(material: Pick<Material, 'width' | 'height' | 'aspectRatio'> | undefined): boolean {
-  const width = Number(material?.width);
-  const height = Number(material?.height);
-  const explicit = Number(material?.aspectRatio);
-  return (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0)
-    || (Number.isFinite(explicit) && explicit > 0);
 }
 
 export function productSceneSlotHasReadyMaterial(slot: ProductScenePreparationSlotView): boolean {

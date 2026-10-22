@@ -9,6 +9,10 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 9 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## 灵感素材库规则边界（2026-10-22）
+
+- 以集成提交 `fe5a686323d1cab3f419f85a76e4453c45c4e205` 为起点，将素材标签归属、可见语义、分类、入口参数、产品和方向筛选迁至 `inspirationMaterialLibrary.ts`，权威宽高比规则下沉到 `src/lib/materialAspectRatio.ts`；保留灵感页及产品素材组件原有公开导出。`InspirationDashboard.tsx` 从 5,167 降至 4,973 行并收紧预算，未修改租户读取、付费供应商或生产任务路径。新增直接测试覆盖企业通用标签不外显、产品/方向/语义筛选和收藏素材来源关联。`pnpm run lint`、`pnpm run test:social-content-frontend`、灵感页 15 项合同测试、产品素材比例合同、架构扫描与 ratchet、191 项迁移清单只读检查、`pnpm run build` 和 `git diff --check` 通过；未做真实供应商或部署验收。
+
 ## 灵感分析投影与准入边界（2026-10-22）
 
 - 以干净集成提交 `6618a6b6ce1ca8f4168cb4ebdfb1df32dfff50b9` 为起点，将分析文本清洗、精确分析门槛、图文展示准入、粗结构与逐镜摘要构建迁至 `inspirationAnalysisProjection.ts`，页面保留网络请求和复核交互；原页面导出继续转发。`InspirationDashboard.tsx` 从 5,520 降至 5,167 行并收紧预算，历史超限文件仍有 8 个。新增直接测试证明不确定口播不会进入已确认字幕、单镜头不构成完整视频分析；既有精确分析和图文门禁合同改为检查新模块及页面接线。`pnpm run lint`、`pnpm run test:social-content-frontend`、灵感页 15 项合同测试、架构扫描与 ratchet、191 项迁移清单只读检查、`pnpm run build` 和 `git diff --check` 通过；构建仅证明静态产物可生成，未做真实供应商或部署验收。
