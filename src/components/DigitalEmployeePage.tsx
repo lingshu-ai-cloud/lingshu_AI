@@ -20,6 +20,7 @@ import { BatchFollowupTruthPanel, type OpenBusinessLink } from './smartBusiness/
 import DeliveryBoard from "./DeliveryBoard";
 import ProductionTaskScene from "./ProductionTaskScene";
 import DiscoveryTaskFailureNotice from "./DiscoveryTaskFailureNotice";
+import WeeklyStartConflictAlert from './WeeklyStartConflictAlert';
 import AgentDecisionCard, { type AgentDecisionKind } from "./AgentDecisionCard";
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
 import { type SmartOperationsAccount } from "./SmartOperationsAccountRail";
@@ -47,6 +48,7 @@ import {
 import { authHeader, AUTH_TOKEN_CHANGED_EVENT } from "../lib/auth";
 import { showActionFeedback, showActionSuccess } from "../lib/actionFeedback";
 import { DigitalEmployeeApiError } from "../lib/digitalEmployeeApi";
+import { confirmedWeeklyExecution, weeklyStartConflictFromError, weeklyStartResultNeedsReconciliation, type WeeklyStartConflict } from '../lib/weeklyStartValidation';
 import {
   WEEKLY_WORK_UPDATED_EVENT,
   notifyWeeklyWorkUpdated,
@@ -133,76 +135,6 @@ const statusTone: Record<string, string> = {
   cancelled: "border-slate-200 bg-slate-100 text-slate-600",
   paused: "border-slate-200 bg-slate-100 text-slate-600",
 };
-
-type WeeklyStartConflict = {
-  goalId: string;
-  runId: string;
-  goalTitle: string;
-  goalStatus: string;
-  runStatus: string;
-  startsAt: string;
-  endsAt: string;
-};
-
-function weeklyStartConflictFromError(error: unknown): WeeklyStartConflict | null {
-  if (!(error instanceof DigitalEmployeeApiError) || error.code !== "active_goal_exists") return null;
-  const stringDetail = (key: string) => typeof error.details[key] === "string" ? String(error.details[key]).trim() : "";
-  const goalId = stringDetail("activeGoalId");
-  const runId = stringDetail("activeRunId");
-  if (!goalId && !runId) return null;
-  return {
-    goalId,
-    runId,
-    goalTitle: stringDetail("activeGoalTitle"),
-    goalStatus: stringDetail("activeGoalStatus"),
-    runStatus: stringDetail("activeRunStatus"),
-    startsAt: stringDetail("activeStartsAt"),
-    endsAt: stringDetail("activeEndsAt"),
-  };
-}
-
-function confirmedWeeklyExecution(data: DigitalEmployeeOverview, goalId: string) {
-  const run = data.run;
-  if (!run || run.goal_id !== goalId || !Number.isFinite(Date.parse(run.started_at))) return null;
-  const tasks = data.tasks.filter((task) => task.run_id === run.id);
-  return tasks.length > 0 ? { run, tasks } : null;
-}
-
-function weeklyStartResultNeedsReconciliation(error: unknown): boolean {
-  if (!(error instanceof DigitalEmployeeApiError)) return true;
-  return error.status === 408 || error.status >= 500;
-}
-
-function WeeklyStartConflictAlert({
-  conflict,
-  onViewRun,
-}: {
-  conflict: WeeklyStartConflict;
-  onViewRun: () => void;
-}) {
-  const state = statusLabel[conflict.runStatus] || statusLabel[conflict.goalStatus] || conflict.runStatus || conflict.goalStatus || "执行中";
-  const range = conflict.startsAt && conflict.endsAt ? `${conflict.startsAt} 至 ${conflict.endsAt}` : "";
-  return (
-    <Alert
-      type="warning"
-      showIcon
-      title="周任务未启动：已有另一轮任务正在执行"
-      description={(
-        <div className="space-y-1 text-xs leading-5">
-          <p>
-            {conflict.goalTitle || "另一轮周任务"}{range ? `（${range}）` : ""}当前为“{state}”。本轮计划仍未开工，系统不会自动取消或重复启动任何运行。
-          </p>
-          {(conflict.runId || conflict.goalId) && (
-            <p className="font-mono text-text-muted">
-              {conflict.runId ? `运行 ${conflict.runId}` : ""}{conflict.runId && conflict.goalId ? " · " : ""}{conflict.goalId ? `目标 ${conflict.goalId}` : ""}
-            </p>
-          )}
-        </div>
-      )}
-      action={<Button className="min-h-11" onClick={onViewRun}>查看该运行</Button>}
-    />
-  );
-}
 
 const agentLabel: Record<string, string> = {
   orchestrator: "灵小枢 · 统筹 Agent",
@@ -1480,7 +1412,7 @@ export default function DigitalEmployeePage({
     // remains in the compact header and per-content progress, never a home banner.
     const weeklyActionFeedback = (weeklyStartConflict && !viewGoalId) || error ? (
       <div className="space-y-2">
-        {weeklyStartConflict && !viewGoalId && <WeeklyStartConflictAlert conflict={weeklyStartConflict} onViewRun={() => void openConflictingRun()} />}
+        {weeklyStartConflict && !viewGoalId && <WeeklyStartConflictAlert conflict={weeklyStartConflict} statusLabels={statusLabel} onViewRun={() => void openConflictingRun()} />}
         {error && <Alert type="error" showIcon title={error} closable onClose={() => setError("")} />}
       </div>
     ) : undefined;

@@ -15,6 +15,8 @@ import { DigitalEmployeeApiError } from '../lib/digitalEmployeeApi.js';
 import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
+const weeklyStartValidationSource = fs.readFileSync('src/lib/weeklyStartValidation.ts', 'utf8');
+const weeklyStartConflictAlertSource = fs.readFileSync('src/components/WeeklyStartConflictAlert.tsx', 'utf8');
 const onboardingPanelSource = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeOnboardingPanel.tsx', 'utf8');
 const onboardingStepsSource = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeOnboardingSteps.tsx', 'utf8');
 assert.match(pageSource, /import \{ OnboardingPanel \} from '\.\/smartBusiness\/DigitalEmployeeOnboardingPanel'/, 'the page must mount the extracted onboarding state and save boundary');
@@ -378,10 +380,12 @@ assert.match(pageSource, /const openWeeklyPlan = \(\) => \{[\s\S]{0,320}setNewGo
 assert.match(assistantContextSource, /workflowStage: weeklyPlanningStage/, 'the page must tell Lingxiaoshu whether weekly work is unplanned, planned, running, setup-only, or historical');
 assert.match(pageSource, /const weeklyControlLabel = busy === ["']confirm-weekly-plan["'][\s\S]{0,100}正在启动生产…/, 'the primary control must name its real production-start loading state');
 assert.match(weeklyPlanControlsSource, /loading=\{Boolean\(busy\)\}/, 'the primary start button must render a loading state and block duplicate clicks while launch is in flight');
-const confirmedExecutionSource = pageSource.slice(
-  pageSource.indexOf('function confirmedWeeklyExecution'),
-  pageSource.indexOf('function weeklyStartResultNeedsReconciliation'),
+const confirmedExecutionSource = weeklyStartValidationSource.slice(
+  weeklyStartValidationSource.indexOf('function confirmedWeeklyExecution'),
+  weeklyStartValidationSource.indexOf('function weeklyStartResultNeedsReconciliation'),
 );
+assert.match(pageSource, /import \{ confirmedWeeklyExecution, weeklyStartConflictFromError, weeklyStartResultNeedsReconciliation, type WeeklyStartConflict \} from '\.\.\/lib\/weeklyStartValidation'/, 'weekly launch must use the shared evidence checks rather than a page-local duplicate');
+assert.match(weeklyStartConflictAlertSource, /周任务未启动：已有另一轮任务正在执行[\s\S]{0,500}系统不会自动取消或重复启动任何运行/, 'the extracted conflict alert must retain the persisted run and no-duplicate-start explanation');
 assert.match(confirmedExecutionSource, /run\.goal_id !== goalId/, 'the page must verify the returned run belongs to the requested goal');
 assert.match(confirmedExecutionSource, /Date\.parse\(run\.started_at\)/, 'the page must require a persisted start time before treating launch as confirmed');
 assert.match(confirmedExecutionSource, /task\.run_id === run\.id[\s\S]{0,100}tasks\.length > 0/, 'the page must require tasks scoped to the returned run before treating launch as confirmed');
