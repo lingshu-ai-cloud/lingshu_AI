@@ -3,6 +3,12 @@
 最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。本次只读复核未改写工作树、分支或运行数据；历史移除记录见下文。
 
+## 2026-10-23 集成点 `f55296b8` 只读复核
+
+- Git 仍登记 11 个工作树。集成树 `xixi1021-governance-baseline` 在本次复核时本地/远端同为 `f55296b80766864e4555325027adc637945777ef`，Git 工作区干净；此 SHA 是复核点，不是永久最新指针。
+- 6 个非集成树仍有未提交项：`local-preview-1002` 53、`local-integrated-flow` 91、`local-unified-20261010` 6、`mobile-dual-edition-20261012` 28、`客服` 1、`total-merge-langgraph` 20。计数是 Git porcelain 条目，不代表文件数；均未移动、归档或清理。
+- 4 个干净的非集成树仍被保留。新图片树的 `23b1bb93` 相对当前集成点仍是正向独有补丁；广告树当前 HEAD `20441982` 也有正向独有补丁。`safe-all-modules-ui-20261009` 与 `colleague-handoff-20261019` 的历史复核显示有被忽略业务/运行数据，本轮未重新证明其可无损归档，因此不执行删除。原图片 AIGC 分支 HEAD `95b0bcc1` 和用户列出的 `6e2d2e4f` 仍是集成祖先；这不包括来源树的未提交内容，也不证明真实供应商链路。
+
 ## 2026-10-23 集成点 `bbc4ed58` 只读复核
 
 - 本轮代码提交后，集成树为 `bbc4ed583109986ac074d745df1bd0a87299688c`、工作区干净；Git 仍登记 11 个工作树。6 个非集成树有未提交内容：`local-preview-1002`、`local-integrated-flow`、`local-unified-20261010`、`mobile-dual-edition-20261012`、`客服`、`total-merge-langgraph`，全部保留原位。
