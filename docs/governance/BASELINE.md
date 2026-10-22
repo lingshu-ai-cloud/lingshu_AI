@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 公开视频搜索传输边界拆分（2026-10-23）
+
+- 代码提交 `bed4be89` 将 YouTube Shorts 平面检索失败后的 HTML 回退、Bing 公开视频 URL 提取和限时 HTTP 文本读取迁至 `videoCrawlerPublicDiscovery.ts`；路由仍负责现有 yt-dlp 执行、租户范围、下载、付费准入及持久化。只被旧源码断言提及、无生产调用的 YouTube 日期过滤辅助函数已移除。`videos.ts` 从 8,514 降至 8,404 行，历史预算同步收紧；全仓仍有 6 个历史超限文件。
+- 新模块直测 4/4、原回退合同脚本、`test:video-source-boundaries` 141/141、相关视频路由回归 4/4、`pnpm run lint`、架构扫描/ratchet（2,387 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建及 `git diff --check` 均通过。Studio 主 chunk 为 480,933/485,000 字节，仍有大 chunk 提示。LinkedIn 仅覆盖离线门禁测试，按用户要求未进行真实付费采集或许可签发验收；本批也未调用其他真实供应商、执行目标库迁移、浏览器交互或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## 爬虫运维失败与代理规则拆分（2026-10-23）
 
 - 代码提交 `dfc13e57` 将视频爬虫的重试退避和失败分类移入 `videoCrawlerOpsTaskState.ts`，代理轮换和日志凭据脱敏移入 `videoCrawlerRuntimeConfig.ts`；实际下载、失败持久化、租户范围和供应商调用仍由 `videos.ts` 控制。路由从 8,549 降至 8,514 行，历史预算同步收紧；全仓仍有 6 个历史超限文件。

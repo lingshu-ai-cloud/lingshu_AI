@@ -55,6 +55,7 @@
 - `server/routes/videoAnalysisRecovery.ts`：视频级失败保留已有证据、显式重试清空旧终态、供应商错误脱敏及用户恢复提示的纯规则；`videos.ts` 保留旧导出并负责租户数据读写、队列与 HTTP 响应。该拆分不改变供应商调用或付费许可。
 - `server/routes/videoCrawlerProviderProjection.ts`：TikTok、Instagram、Facebook 的 Apify 视频行转候选、媒体封面 URL、标题与指标的纯投影；原路由继续负责 Actor 请求、付费门禁、账号范围、队列和持久化，图片帖投影可复用这些基础规则。
 - `server/routes/videoCrawlerPublicProjection.ts`：公开视频检索日期/查询、候选元数据、URL 去重、缩略图和失败类别的纯投影；`videos.ts` 保留网络请求、付费准入、租户边界和持久化，并继续转发既有公开函数。
+- `server/routes/videoCrawlerPublicDiscovery.ts`：YouTube Shorts 平面检索失败后的 HTML 回退、Bing 公开视频 URL 读取及限时 HTTP 文本传输；路由注入现有 yt-dlp 入口并保留租户筛选、下载、付费准入与持久化。未被生产调用的旧 YouTube 日期过滤辅助函数已删除，不把搜索结果当作已完成媒体分析。
 - `server/routes/videoPipelineStatsProjection.ts`：按路由已限定租户可见性的记录、已取得的爬虫运维快照及供应商配置事实，纯投影抓取、下载、分析和精修队列统计；`videos.ts` 保留租户鉴权、分页读取、测试租户可见性判定与运维数据采集。投影不执行分析、重试或付费请求。
 - `server/routes/videoCrawlerImageProjection.ts`：Instagram、TikTok 与 Facebook 的 Apify 图片帖纯投影，保留来源 URL、图片、互动数据与视频排除规则；`videos.ts` 继续负责 Actor 调用、付费准入、账号范围、队列和持久化。
 - `server/routes/videoCrawlerSeedCatalog.ts`：按平台及关键词选择历史静态公开 URL 和兜底候选的纯目录；`videos.ts` 保留实时检索、下载、资格筛选和失败处理。目录项不是当前可访问性或素材授权证明，不得直接升级为已验证媒体。
