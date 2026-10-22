@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { buildOpenAiImageEvidenceRequest, reviewImagePostEvidenceWithOpenAI, type OpenAiImageEvidencePaidCall } from './openaiImageEvidence.js';
+import { buildOpenAiImageEvidenceRequest, IMAGE_EVIDENCE_RAW_RESPONSE_MAX_BYTES, reviewImagePostEvidenceWithOpenAI, type OpenAiImageEvidencePaidCall } from './openaiImageEvidence.js';
 
 const input = { images: [{ base64: 'aGVsbG8=', mimeType: 'image/png', imageIndex: 1 }], reviewReasons: ['missing_layer_blueprints'] };
 const { requestSha256 } = buildOpenAiImageEvidenceRequest(input, 'gpt-4.1-mini');
@@ -44,4 +44,16 @@ await assert.rejects(reviewImagePostEvidenceWithOpenAI({ ...input, apiKey: 'test
   events.push('send'); return new Response('{invalid', { status: 200 });
 } }), /response_json_invalid/);
 assert.deepEqual(events, ['claim:100', 'send', 'receipt', 'completed:receipt:test'], 'malformed output is recovered from its durable receipt, not a new POST');
+events.length = 0;
+await assert.rejects(reviewImagePostEvidenceWithOpenAI({ ...input, apiKey: 'test', paidCall: call, fetcher: async () => {
+  events.push('send');
+  return new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(IMAGE_EVIDENCE_RAW_RESPONSE_MAX_BYTES));
+      controller.enqueue(new Uint8Array(1));
+      controller.close();
+    },
+  }), { status: 200 });
+} }), /openai_image_evidence_raw_receipt_too_large/);
+assert.deepEqual(events, ['claim:100', 'send'], 'oversized response stays unknown after the durable claim');
 console.log('OpenAI image evidence paid boundary tests passed');

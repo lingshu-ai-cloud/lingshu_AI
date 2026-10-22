@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { imageEvidenceReviewPlanHash, reserveImageEvidencePaidCall, type ImageEvidenceApprovedPlan, type ImageEvidencePaidContextPorts } from './imageEvidencePaidContext.js';
 import type { SocialPaidOperationIntent } from '../lib/socialContentTaskBudgetAuthority.js';
-import { buildOpenAiImageEvidenceRequest, reviewImagePostEvidenceWithOpenAI } from './openaiImageEvidence.js';
+import { buildOpenAiImageEvidenceRequest, IMAGE_EVIDENCE_RAW_RESPONSE_MAX_BYTES, reviewImagePostEvidenceWithOpenAI } from './openaiImageEvidence.js';
 import { createImageEvidenceReceiptStore } from './imageEvidenceReceiptStore.js';
 
 const evidenceInput = { images: [{ base64: 'aGVsbG8=', mimeType: 'image/png', imageIndex: 1 }], reviewReasons: ['missing_layer_blueprints'] };
@@ -112,6 +112,29 @@ test('approved context executes once and recovers raw provider receipt without r
     assert.equal(result.observedFacts[0]?.subjects[0], 'bottle');
     const resumed = await reserveImageEvidencePaidCall(f.input);
     assert.equal((await resumed.recoverReceipt()).response?.status, 200);
+    await assert.rejects(reviewImagePostEvidenceWithOpenAI({ ...evidenceInput, apiKey: 'isolated-test-key', paidCall: resumed, fetcher }), /receipt_recovery_required/);
+    assert.equal(submits, 1);
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('oversized paid review response remains unknown across context instances and cannot repost', async () => {
+  const f = fixture();
+  let submits = 0;
+  const fetcher = async () => {
+    submits += 1;
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(IMAGE_EVIDENCE_RAW_RESPONSE_MAX_BYTES));
+        controller.enqueue(new Uint8Array(1));
+        controller.close();
+      },
+    }), { status: 200 });
+  };
+  try {
+    const call = await reserveImageEvidencePaidCall(f.input);
+    await assert.rejects(reviewImagePostEvidenceWithOpenAI({ ...evidenceInput, apiKey: 'isolated-test-key', paidCall: call, fetcher }), /raw_receipt_too_large/);
+    const resumed = await reserveImageEvidencePaidCall(f.input);
+    assert.deepEqual(await resumed.recoverReceipt(), { status: 'unknown', response: null });
     await assert.rejects(reviewImagePostEvidenceWithOpenAI({ ...evidenceInput, apiKey: 'isolated-test-key', paidCall: resumed, fetcher }), /receipt_recovery_required/);
     assert.equal(submits, 1);
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }

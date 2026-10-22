@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { SocialPaidOperationIntent } from '../lib/socialContentTaskBudgetAuthority.js';
 import type { PaidOperationSubmission } from '../lib/socialContentPaidOperationPermit.js';
+import { readBoundedProviderResponse } from '../lib/boundedProviderResponse.js';
 import { normalizeImageLayerBlueprints, type ImagePostEvidenceAnalysis } from './qwenContracts.js';
+
+/** Conservative raw-body ceiling below the 8 MiB encoded receipt envelope. */
+export const IMAGE_EVIDENCE_RAW_RESPONSE_MAX_BYTES = 1024 * 1024;
 
 /** The caller must obtain this from a durable, approved and reserved task plan. */
 export interface OpenAiImageEvidencePaidCall {
@@ -102,11 +106,13 @@ export async function reviewImagePostEvidenceWithOpenAI(opts: OpenAiImageEvidenc
   const { maximumUnits: _, ...binding } = intent;
   await opts.paidCall.permit.beforeSubmit({ ...binding, actualUnits });
   // From this point the claim is durably unknown. Failures must never retry this operation.
+  const controller = new AbortController();
   const response = await (opts.fetcher || fetch)(`${baseUrl}/chat/completions`, {
-    method: 'POST', signal: AbortSignal.timeout(60_000),
+    method: 'POST', signal: AbortSignal.any([AbortSignal.timeout(60_000), controller.signal]),
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
   });
-  const responseText = await response.text();
+  const responseText = await readBoundedProviderResponse(response, { maxBytes: IMAGE_EVIDENCE_RAW_RESPONSE_MAX_BYTES,
+    errorCode: 'openai_image_evidence_raw_receipt_too_large', controller });
   const receiptRef = await opts.paidCall.persistProviderReceipt({ requestSha256, response: { status: response.status, body: responseText } });
   if (!receiptRef) throw Error('openai_image_evidence_receipt_missing');
   if (!response.ok) {
