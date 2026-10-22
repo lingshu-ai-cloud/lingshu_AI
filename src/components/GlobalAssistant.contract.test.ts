@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
+const chatStreamSource = fs.readFileSync(new URL('../lib/assistantChatStream.ts', import.meta.url), 'utf8');
 const decisionDialogSource = fs.readFileSync(new URL('./assistant/AssistantDecisionDialog.tsx', import.meta.url), 'utf8');
 const floatingRemindersSource = fs.readFileSync(new URL('./assistant/AssistantFloatingReminders.tsx', import.meta.url), 'utf8');
 const launcherSource = fs.readFileSync(new URL('./assistant/AssistantLauncher.tsx', import.meta.url), 'utf8');
@@ -110,8 +111,9 @@ assert.ok(
   '权威待办概要必须固定在历史对话消息之前',
 );
 assert.match(source, /ASSISTANT_ACTION_TIMEOUT_MS = 12_000[\s\S]*signal: controller\.signal/, '操作路由必须有客户端超时，不能永久保持思考中');
-assert.match(source, /function withAssistantTimeout<T>[\s\S]*reject\(new AssistantRequestTimeoutError/, '超时必须由 Promise 竞速确定性结束，不能只依赖代理响应 abort');
-assert.match(source, /ASSISTANT_CHAT_RESPONSE_TIMEOUT_MS = 20_000[\s\S]*ASSISTANT_CHAT_STREAM_IDLE_TIMEOUT_MS = 30_000[\s\S]*chatTimedOut = true;[\s\S]*setLoading\(false\)/, '模型首响应和流式空闲超时后必须退出思考状态');
+assert.match(chatStreamSource, /function withAssistantTimeout<T>[\s\S]*reject\(new AssistantRequestTimeoutError/, '超时必须由 Promise 竞速确定性结束，不能只依赖代理响应 abort');
+assert.match(chatStreamSource, /ASSISTANT_CHAT_RESPONSE_TIMEOUT_MS = 20_000[\s\S]*ASSISTANT_CHAT_STREAM_IDLE_TIMEOUT_MS = 30_000[\s\S]*onTimeout\(\); controller\.abort\(\)/, '模型首响应和流式空闲超时必须中止连接');
+assert.match(source, /await streamAssistantReply\([\s\S]*onTimeout: \(\) => \{ chatTimedOut = true; \}[\s\S]*finally \{[\s\S]{0,160}setLoading\(false\)/, '模型超时后必须退出思考状态');
 assert.match(source, /ASSISTANT_UI_WATCHDOG_TIMEOUT_MS = 25_000[\s\S]*if \(!loading\) return;[\s\S]*setLoading\(false\)[\s\S]*本次连接在 25 秒内没有返回/, '独立 UI 看门狗必须在网络 Promise 不回调时结束思考状态并解释原因');
 assert.match(source, /if \(!fence\.active \|\| fence\.scopeKey !== persistenceScopeKey\)[\s\S]{0,180}persistenceFenceRef\.current = fence/, 'StrictMode 二次 effect setup 必须恢复当前用户作用域的活动栅栏');
 assert.match(source, /const currentInstance = \(\) => \([\s\S]*persistenceFenceRef\.current === requestFence[\s\S]*const currentScope = currentInstance/, '同一租户用户的令牌轮换不得丢弃回答，身份范围变化仍必须使实例栅栏失效');
@@ -299,8 +301,8 @@ assert.doesNotMatch(sendSource, /agentTaskDemo: true/, '真实执行不得进入
 assert.match(sendSource, /productId: productionProduct\.id[\s\S]*productRef: productionProduct\.label/, '周任务必须绑定企业中心的真实产品身份');
 assert.match(sendSource, /setAssistantTool\(null\)[\s\S]*setMode\('breathing'\)[\s\S]*page: 'smartAssets'/, '进入生产页前必须收起灵小枢对话窗口');
 assert.match(sendSource, /page: 'smartAssets'[\s\S]*socialContentTaskId: productionTask\.taskId/, '任务创建后必须定位到该任务的生产页面');
-assert.ok(sendSource.indexOf('socialContentApi.createAssistantAction') < sendSource.indexOf('fetch(API_PATH[agentForOrbit(routeAgent)]'), '生产任务分流必须发生在千问文本生成请求之前');
-assert.match(sendSource, /fetch\(API_PATH\[agentForOrbit\(routeAgent\)\]/, 'business 主线程聚合不得丢失当前页面的内部能力路由');
+assert.ok(sendSource.indexOf('socialContentApi.createAssistantAction') < sendSource.indexOf('await streamAssistantReply'), '生产任务分流必须发生在千问文本生成请求之前');
+assert.match(sendSource, /endpoint: API_PATH\[agentForOrbit\(routeAgent\)\]/, 'business 主线程聚合不得丢失当前页面的内部能力路由');
 assert.doesNotMatch(sendSource, /setPaused\(targetAgent,\s*false\)/, '发送普通消息不得擅自把任务恢复为运行中');
 assert.match(sendSource, /focusedNaturalLanguageActionInput\(focusedCard, focusedMutationActionId\)/, '自然语言确定性操作必须从当前卡片读取后端签发输入');
 assert.match(sendSource, /\.\.\.\(focusedActionInput \?\? \{\}\)/, '只有兼容的聚焦操作输入才可进入自然语言请求');

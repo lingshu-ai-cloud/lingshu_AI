@@ -46,9 +46,9 @@ import AssistantCustomerTodoView from './assistant/AssistantCustomerTodoView';
 import { useContentTaskIntake } from './assistant/useContentTaskIntake';
 import { useAssistantThreadSaveQueue } from './assistant/useAssistantThreadSaveQueue';
 import { assistantProductionIntent, resolveAssistantEnterpriseProduct } from './assistant/assistantProductionIntake';
-import { assistantFileIntent, assistantFileMarker } from '../../shared/assistantFileIntent';
-import { createAssistantFile } from '../lib/assistantFilesApi';
-import { AssistantStreamCompletion, appendAssistantStreamFailure } from '../lib/assistantStreamCompletion';
+import { assistantFileIntent } from '../../shared/assistantFileIntent';
+import { AssistantRequestTimeoutError, streamAssistantReply } from '../lib/assistantChatStream';
+import { appendAssistantStreamFailure } from '../lib/assistantStreamCompletion';
 import type { AssistantQuickExecution } from '../lib/assistantQuickEntries';
 import AssistantWeeklyActions from './assistant/AssistantWeeklyActions';
 import {
@@ -132,36 +132,8 @@ function readLauncherRetractedPreference() {
 }
 
 const ASSISTANT_ACTION_TIMEOUT_MS = 12_000;
-const ASSISTANT_CHAT_RESPONSE_TIMEOUT_MS = 20_000;
-const ASSISTANT_CHAT_STREAM_IDLE_TIMEOUT_MS = 30_000;
 const ASSISTANT_UI_WATCHDOG_TIMEOUT_MS = 25_000;
 const ASSISTANT_CLOSED_CONVERSATION_TTL_MS = 5 * 60 * 1000;
-
-class AssistantRequestTimeoutError extends Error {}
-
-function withAssistantTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  onTimeout: () => void,
-  message: string,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timeoutId = window.setTimeout(() => {
-      onTimeout();
-      reject(new AssistantRequestTimeoutError(message));
-    }, timeoutMs);
-    promise.then(
-      value => {
-        window.clearTimeout(timeoutId);
-        resolve(value);
-      },
-      error => {
-        window.clearTimeout(timeoutId);
-        reject(error);
-      },
-    );
-  });
-}
 
 type AssistantPerformance = { phase: string; message?: string; reason: AssistantNotificationReason };
 type AssistantSpeech = { id: number; message: string };
@@ -1143,8 +1115,6 @@ export default function GlobalAssistant({
     setReplyStreaming(true);
     let fileMessageIndex = -1;
     if (fileIntent) setFileGenerating(true);
-    let fileBody = '';
-    let fileStreamError = '';
     const ensureAssistant = () => {
       if (!currentScope()) return;
       if (assistantStarted) return;
@@ -1166,100 +1136,45 @@ export default function GlobalAssistant({
     };
 
     let chatTimedOut = false;
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     const controller = new AbortController();
     try {
       abortRef.current?.abort();
       abortRef.current = controller;
-      const resp = await withAssistantTimeout(
-        fetch(API_PATH[agentForOrbit(routeAgent)], {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeader() },
-          body: JSON.stringify({
-            messages: apiMessages,
-            deepThinking: false,
-            ...(strategyRequest ? {
-              userQuestion: visibleText,
-              pageContext: {
-                label: context.label,
-                summary: compactText(context.summary, 2000),
-                goalId: context.goalId,
-                planId: context.planId,
-                runId: context.runId,
-                taskId: context.taskId,
-                contentId: context.contentId,
-                viewKey: context.viewKey,
-              },
-              conversationContext: {
-                omittedTurns: conversationContext.omittedTurns,
-                retainedUserInstructions: conversationContext.retainedUserInstructions,
-              },
-            } : {}),
-          }),
-          signal: controller.signal,
-        }),
-        ASSISTANT_CHAT_RESPONSE_TIMEOUT_MS,
-        () => {
-          chatTimedOut = true;
-          controller.abort();
+      await streamAssistantReply({
+        endpoint: API_PATH[agentForOrbit(routeAgent)],
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: {
+          messages: apiMessages,
+          deepThinking: false,
+          ...(strategyRequest ? {
+            userQuestion: visibleText,
+            pageContext: {
+              label: context.label,
+              summary: compactText(context.summary, 2000),
+              goalId: context.goalId,
+              planId: context.planId,
+              runId: context.runId,
+              taskId: context.taskId,
+              contentId: context.contentId,
+              viewKey: context.viewKey,
+            },
+            conversationContext: {
+              omittedTurns: conversationContext.omittedTurns,
+              retainedUserInstructions: conversationContext.retainedUserInstructions,
+            },
+          } : {}),
         },
-        '模型连接在 20 秒内没有返回响应。',
-      );
-      if (!currentScope()) return;
-      if (!resp.ok) throw new Error(await responseErrorMessage(resp));
-      if (!resp.body) throw new Error('模型响应为空，请稍后重试。');
-      ensureAssistant();
-      reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      const completion = new AssistantStreamCompletion();
-      const consumeLine = (line: string) => {
-        if (!line.startsWith('data: ')) return;
-        const payload = line.slice(6).trim();
-        try {
-          const obj = completion.accept(payload);
-          if (!obj) return;
-          if (obj.text) {
-            if (fileIntent) fileBody += obj.text;
-            else patchAssistant(msg => ({ ...msg, content: msg.content + obj.text }));
-          }
-          else if (obj.sources?.length) patchAssistant(msg => ({ ...msg, sources: obj.sources }));
-          else if (obj.error) { fileStreamError = obj.error; }
-        } catch {
-          // Ignore malformed stream chunks.
-        }
-      };
-      while (true) {
-        const { done, value } = await withAssistantTimeout(
-          reader.read(),
-          ASSISTANT_CHAT_STREAM_IDLE_TIMEOUT_MS,
-          () => {
-            chatTimedOut = true;
-            controller.abort();
-            void reader?.cancel();
-          },
-          '模型流式回答超过 30 秒没有新内容。',
-        );
-        if (!currentScope()) return;
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) consumeLine(line);
-      }
-      buffer += decoder.decode();
-      if (buffer.trim()) consumeLine(buffer);
-      completion.assertComplete();
-      if (fileIntent) {
-        if (!currentScope()) return;
-        if (fileStreamError || !fileBody.trim()) throw new Error('文件内容未完整生成，请重试。');
-        const file = await withAssistantTimeout(createAssistantFile({
-          title: visibleText.replace(/^(?:请|帮我|生成|导出|制作|给我|想要)+/u, '').trim().slice(0, 100) || '会话文档',
-          content: fileBody, format: fileIntent.format, diagram: fileIntent.diagram,
-        }, controller.signal), 50_000, () => controller.abort(), '文件生成超时，请重试。');
-        if (!currentScope()) return;
-        patchAssistant(msg => ({ ...msg, content: `已生成 ${fileIntent.format.toUpperCase()} 文件，可在下方下载。\n${assistantFileMarker(file.id)}` }));
-      }
+        controller,
+        fileIntent,
+        fileTitle: visibleText.replace(/^(?:请|帮我|生成|导出|制作|给我|想要)+/u, '').trim().slice(0, 100) || '会话文档',
+        isCurrent: currentScope,
+        onStart: ensureAssistant,
+        onText: text => patchAssistant(msg => ({ ...msg, content: msg.content + text })),
+        onSources: sources => patchAssistant(msg => ({ ...msg, sources })),
+        onFileReady: content => patchAssistant(msg => ({ ...msg, content })),
+        onTimeout: () => { chatTimedOut = true; },
+        responseErrorMessage,
+      });
     } catch (err: any) {
       if (!currentScope()) return;
       const message = err instanceof AssistantRequestTimeoutError || chatTimedOut
@@ -1270,7 +1185,6 @@ export default function GlobalAssistant({
       if (assistantStarted) patchAssistant(msg => ({ ...msg, content: fileIntent ? `文件未生成：${message}` : msg.content ? appendAssistantStreamFailure(msg.content, message) : message }));
       else setMessages(threadAgent, [...useAssistantStore.getState().threads[threadAgent].messages, { role: 'assistant', content: message }]);
     } finally {
-      if (reader) void reader.cancel().catch(() => {});
       controller.abort();
       if (abortRef.current === controller) {
         setLoading(false);
