@@ -8,7 +8,7 @@
   "oversizedFileBudgets": {
     "server/digitalEmployees/contentProduction.ts": 2129,
     "server/routes/digitalEmployees.ts": 5931,
-    "server/routes/enterprise.ts": 2661,
+    "server/routes/enterprise.ts": 2137,
     "server/routes/studio.ts": 11361,
     "server/routes/videos.ts": 10606,
     "server/starter198/socialContentProductionExecution.ts": 2221,
