@@ -3,6 +3,13 @@
 最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。本次只读复核未改写工作树、分支或运行数据；历史移除记录见下文。
 
+## 2026-10-23 集成点 `ad4bf42e` 图片来源与归档复核
+
+- 只读检查时集成树 `xixi1021-governance-baseline` 为 `ad4bf42ea4636b93f17662c5c0bf5e0e35a93b38`，工作区干净；该点位不是永久 HEAD。共 11 个有效注册工作树。6 个非集成树仍有未提交项：`local-preview-1002` 53、`local-integrated-flow` 91、`local-unified-20261010` 6、`mobile-dual-edition-20261012` 28、`客服` 1、`total-merge-langgraph` 20；计数是 `git status --porcelain` 条目，未触碰这些树。
+- 4 个干净非集成树仍不可安全归档：`safe-all-modules-ui-20261009` 与 `colleague-handoff-20261019` 含被忽略的业务媒体／账本数据；广告树 `xixi1021-full-integration` 的 `20441982` 相对集成点有 14 个正向独有补丁及被忽略的账号、任务和审计数据；`1022图片生成模块` 的 `23b1bb93` 有 1 个非等价独有补丁，忽略项仅为可重建依赖缓存。没有满足“干净、无独有补丁、无不可丢失忽略数据”的新归档候选。
+- 原 AIGC 提交 `6e2d2e4f`、来源 HEAD `95b0bcc1` 及新图片补丁的父提交 `8d4c6d46` 均是当前集成祖先；原来源树未提交的日历／视频进度代码和运行数据仍保留。新图片补丁的确定性图层／蒙版能力在集成代码中存在，且集成实现额外保留蓝图归一化、前景遮挡校验及颜色校验；其余自动 GPT 降级会替换用户要求暂留的 Qwen→Gemini 行为，且没有生产可用的逐记录许可，不整笔 cherry-pick，也不归档来源树。
+- 本点位 `pnpm run test:social-image-pipeline` 与 `pnpm run test:video-source-boundaries`（75/75）通过；这些是离线源码回归，不证明真实付费供应商、目标共享卷、部署或浏览器端验收。本次未清理、归档、重置或合并其他工作树。后续需要先完成付费许可和来源差异的独立评审，或取得对剩余 GPT 路由行为的明确新决定。
+
 ## 2026-10-23 集成点 `481cfef6` 后复核
 
 - Git 仍登记 11 个有效工作树。集成树在本次只读复核开始时本地/远端同为 `481cfef675c58be458d7791390e8a141f6b4a6cc`，工作区干净；此点位不是永久 HEAD。6 个非集成树仍有未提交源码、文档或运行项：`local-preview-1002`、`local-integrated-flow`、`local-unified-20261010`、`mobile-dual-edition-20261012`、`客服`、`total-merge-langgraph`，均未移动。
