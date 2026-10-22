@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
+const sendHookSource = fs.readFileSync(new URL('./assistant/useAssistantSend.ts', import.meta.url), 'utf8');
 const chatStreamSource = fs.readFileSync(new URL('../lib/assistantChatStream.ts', import.meta.url), 'utf8');
 const actionRequestSource = fs.readFileSync(new URL('../lib/assistantActionRequest.ts', import.meta.url), 'utf8');
 const decisionDialogSource = fs.readFileSync(new URL('./assistant/AssistantDecisionDialog.tsx', import.meta.url), 'utf8');
@@ -121,11 +122,11 @@ assert.match(source, /executeAssistantAction\(/, '确定性操作必须走独立
 assert.match(actionRequestSource, /withAssistantIdleTimeout\(fetch\([\s\S]*signal: controller\.signal[\s\S]*options\?\.timeoutMs \?\? 20_000/, '操作路由必须有客户端超时，不能永久保持思考中');
 assert.match(chatStreamSource, /function withAssistantTimeout<T>[\s\S]*reject\(new AssistantRequestTimeoutError/, '超时必须由 Promise 竞速确定性结束，不能只依赖代理响应 abort');
 assert.match(chatStreamSource, /ASSISTANT_CHAT_RESPONSE_TIMEOUT_MS = 20_000[\s\S]*ASSISTANT_CHAT_STREAM_IDLE_TIMEOUT_MS = 30_000[\s\S]*onTimeout\(\); controller\.abort\(\)/, '模型首响应和流式空闲超时必须中止连接');
-assert.match(source, /await streamAssistantReply\([\s\S]*onTimeout: \(\) => \{ chatTimedOut = true; \}[\s\S]*finally \{[\s\S]{0,160}setLoading\(false\)/, '模型超时后必须退出思考状态');
+assert.match(sendHookSource, /await streamAssistantReply\([\s\S]*onTimeout: \(\) => \{ chatTimedOut = true; \}[\s\S]*finally \{[\s\S]{0,160}setLoading\(false\)/, '模型超时后必须退出思考状态');
 assert.match(source, /ASSISTANT_UI_WATCHDOG_TIMEOUT_MS = 25_000[\s\S]*if \(!loading\) return;[\s\S]*setLoading\(false\)[\s\S]*本次连接在 25 秒内没有返回/, '独立 UI 看门狗必须在网络 Promise 不回调时结束思考状态并解释原因');
 assert.match(source, /if \(!fence\.active \|\| fence\.scopeKey !== persistenceScopeKey\)[\s\S]{0,180}persistenceFenceRef\.current = fence/, 'StrictMode 二次 effect setup 必须恢复当前用户作用域的活动栅栏');
-assert.match(source, /const currentInstance = \(\) => \([\s\S]*persistenceFenceRef\.current === requestFence[\s\S]*const currentScope = currentInstance/, '同一租户用户的令牌轮换不得丢弃回答，身份范围变化仍必须使实例栅栏失效');
-assert.match(source, /finally \{[\s\S]{0,220}setLoading\(false\)/, '请求作用域变化、断线或异常退出时也必须无条件结束当前组件的思考状态');
+assert.match(sendHookSource, /const currentInstance = \(\) => \([\s\S]*persistenceFenceRef\.current === requestFence[\s\S]*const currentScope = currentInstance/, '同一租户用户的令牌轮换不得丢弃回答，身份范围变化仍必须使实例栅栏失效');
+assert.match(sendHookSource, /finally \{[\s\S]{0,220}setLoading\(false\)/, '请求作用域变化、断线或异常退出时也必须无条件结束当前组件的思考状态');
 
 const assistantPanelSource = sourceSection(
   'id="global-assistant-panel"',
@@ -304,10 +305,10 @@ assert.doesNotMatch(source, /objectId:\s*dialogTaskCard\.taskId/, '不得把展�
 assert.match(source, /const accepted = response\.status === 'accepted' \|\| response\.status === 'completed'/, '只有后端确认后才能改变本地暂停状态');
 assert.match(source, /persistThread\(activeAgent\)/, '关闭前必须保留任务、对话和草稿');
 
-const sendSource = sourceSection('const send = useCallback', 'const handleTaskCardAction', '自然语言发送流程');
+const sendSource = sendHookSource;
 assert.match(sendSource, /const threadAgent = PRIMARY_ASSISTANT_THREAD/, '发送消息必须写入 business 主线程');
 assert.match(productionIntakeSource, /function assistantProductionIntent[\s\S]*hasProductionVerb[\s\S]*hasProductionArtifact/, '明确的脚本、视频与分镜生产指令必须被识别为生产任务');
-assert.match(source, /import \{ assistantProductionIntent \} from '\.\/assistant\/assistantProductionIntake'/, '助手必须调用企业产品准入模块');
+assert.match(sendHookSource, /import \{ assistantProductionIntent \} from '\.\/assistantProductionIntake'/, '助手必须调用企业产品准入模块');
 assert.match(sendSource, /assistantProductionIntent\(visibleText\)[\s\S]*await runAssistantProductionRequest\(/, '生产指令必须交给真实任务执行链路');
 assert.match(productionRequestSource, /resolveProduct\(productionIntent\.productQuery\)/, '生产指令必须解析真实企业产品');
 assert.match(productionRequestSource, /createTask\(\{[\s\S]*dueAt: confirmedDueAt/, '生产任务必须带明确的交付截止时间并调用后端入口');
@@ -468,7 +469,7 @@ assert.match(crossObjectFilterSource, /responseHasCrossObjectAction\(request, re
 assert.match(crossObjectFilterSource, /action\.target\.objectId\.trim\(\) === requestObjectId/, '只可保留当前请求对象的签名动作');
 assert.match(crossObjectFilterSource, /secondaryActions:[\s\S]*\.filter\(safeAction\)/, '跨对象的次级动作也必须全部过滤');
 
-const presentResponseSource = sourceSection('const presentActionResponse', 'const send = useCallback', '操作结果展示');
+const presentResponseSource = sourceSection('const presentActionResponse', 'const contentIntake = useContentTaskIntake', '操作结果展示');
 const presentNotifyIndex = presentResponseSource.indexOf('shouldNotifyAssistant(');
 const presentFocusIndex = presentResponseSource.indexOf('focusTaskCard(');
 const presentConversationIndex = presentResponseSource.indexOf("setPanelView('chat')");
@@ -533,7 +534,7 @@ assert.match(assistantStylesSource, /@media \(forced-colors:\s*active\)[\s\S]*\.
 assert.match(composerSource, /h-11 min-w-11[\s\S]{0,520}aria-label="添加附件"/, '附件操作必须保留至少 44px 的可访问触控目标');
 assert.match(composerSource, /h-11 w-11[\s\S]{0,400}aria-label=\{uploading \? '正在上传附件' : '发送消息'\}/, '发送操作必须保留 44×44px 的可访问触控目标');
 
-const attachmentSendSource = sourceSection('const sendComposerMessage = useCallback', 'const handleTaskCardAction', '附件发送流程');
+const attachmentSendSource = sourceSection('const sendComposerMessage = useCallback', 'return { send, sendComposerMessage }', '附件发送流程', sendHookSource);
 assert.match(attachmentSendSource, /studioApi\.uploadMaterialFile/, '附件必须通过真实的我的素材上传接口持久化');
 assert.match(attachmentSendSource, /if \(!result\.ok \|\| !result\.material\?\.id\)/, '没有真实素材编号时不得展示上传成功');
 assert.match(attachmentSendSource, /uploadedAttachmentCacheRef\.current\.set/, '部分上传成功后必须缓存真实回执，重试不得重复上传');

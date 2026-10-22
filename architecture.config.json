@@ -11,7 +11,7 @@
     "server/routes/videos.ts": 9424,
     "src/components/AiCreateStudio.tsx": 12896,
     "src/components/DigitalEmployeePage.tsx": 4943,
-    "src/components/GlobalAssistant.tsx": 1557,
+    "src/components/GlobalAssistant.tsx": 1266,
     "src/components/InspirationDashboard.tsx": 3163
   }
 }
