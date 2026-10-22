@@ -63,7 +63,10 @@ assert.doesNotMatch(enterpriseSource + productPanelSource, /MAX_PRODUCT_ASSETS|�
 assert.doesNotMatch(enterpriseSource + productPanelSource, /accept=['"](?:image|video)\/\*/, '企业知识页不得再提供图片或视频创作素材上传');
 
 const inspirationSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
+const materialDetailSource = readFileSync(fileURLToPath(new URL('./inspiration/InspirationMaterialDetailDrawer.tsx', import.meta.url)), 'utf8');
+const materialCardMediaSource = readFileSync(fileURLToPath(new URL('./inspiration/MaterialLibraryCardMedia.tsx', import.meta.url)), 'utf8');
 const studioRouteSource = readFileSync(fileURLToPath(new URL('../../server/routes/studio.ts', import.meta.url)), 'utf8');
+const studioMaterialProjectionSource = readFileSync(fileURLToPath(new URL('../../server/routes/studioMaterialLibraryProjection.ts', import.meta.url)), 'utf8');
 const materialLibrarySource = readFileSync(new URL('./inspiration/inspirationMaterialLibrary.ts', import.meta.url), 'utf8');
 assert.doesNotMatch(inspirationSource, /本次上传必须关联产品|选择关联产品（必选）/, '企业通用素材上传不得被具体产品强绑定阻塞');
 assert.match(inspirationSource, /aria-label="本次上传素材归属"/, '紧凑上传入口仍必须有清晰的无障碍名称');
@@ -89,10 +92,12 @@ assert.match(taxonomySource, /MATERIAL_THEME_LABELS/, 'theme categories must com
 assert.match(taxonomySource, /<Select[^]*?aria-label="素材来源"[^]*?<Select[^]*?aria-label="主题标签"/, '来源与主题必须使用一致的 Select 筛选样式');
 assert.doesNotMatch(inspirationSource, /系统已按创作主题整理素材|项可匹配|主题待确认/, '素材库不得残留旧主题卡片和派生主题标签');
 assert.doesNotMatch(inspirationSource, /任务中上传的图片、视频和音频也会归入这里/, '上传入口不得再使用大段说明文字');
-assert.match(inspirationSource, /<span className="text-xs font-bold">音频素材<\/span>/, '音频素材必须用专属占位画面识别，不得继续误标为图片');
+assert.match(inspirationSource, /<MaterialLibraryCardMedia/, '我的素材卡必须使用当前媒体边界');
+assert.match(materialCardMediaSource, /<span className="text-xs font-bold">音频素材<\/span>/, '音频素材必须用专属占位画面识别，不得继续误标为图片');
 assert.match(inspirationSource, /studioApi\.listMaterialLibrary\('library'/, '我的素材必须只读取用户可管理的正式素材，不得混入工作流中间产物');
 assert.doesNotMatch(inspirationSource, /studioApi\.listMaterialLibrary\('all'/, '我的素材不得绕过服务端的正式素材边界');
-assert.match(studioRouteSource, /purpose !== 'all'[\s\S]{0,300}!isWorkflowInternalMaterial/, '我的素材接口必须在分页和计数前排除人物认证原始资料与工作流中间产物');
+assert.match(studioRouteSource, /projectStudioMaterialLibrary\(\{/, '素材列表路由必须使用受控投影');
+assert.match(studioMaterialProjectionSource, /purpose !== 'all'[\s\S]{0,300}!isWorkflowInternalMaterial/, '我的素材接口必须在分页和计数前排除人物认证原始资料与工作流中间产物');
 assert.match(studioRouteSource, /const storedFileUrl = material\.file[\s\S]{0,500}tenantAssetRelativePath\(tenantId, material\.file\)[\s\S]{0,300}const sourceUrl = material\.url \|\| storedFileUrl/, '本地已入库素材缺少显式 URL 时必须恢复为受保护媒体地址，不能显示封面加载失败');
 assert.doesNotMatch(inspirationSource, /enterMaterialSmartGeneration[\s\S]*?material\.usage === 'reference_only'/, '所有进入素材库的视觉素材都必须可以进入创作链路');
 assert.doesNotMatch(inspirationSource, /pinnedMaterialVideos/, '素材库内容不得反向混入爆款视频列表');
@@ -103,11 +108,13 @@ assert.match(inspirationSource, /title=\{materialSemanticLabel\(material\)\}>\{m
 const materialCardSource = inspirationSource.slice(inspirationSource.indexOf('<LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map'), inspirationSource.indexOf('aria-label="普通素材分页"'));
 assert.match(materialCardSource, /generatedMaterialOriginLabel\(material\)/, 'AI 生成素材卡必须解释其来自内容制作流程');
 assert.doesNotMatch(materialCardSource, /visibleMaterialTags\(material\.tags\)|materialAssetBadge\(material\)/, '素材卡首页不得展示标签');
-assert.match(inspirationSource, /aria-label="素材标签"[^]*?materialAssetBadge\(detailMaterial\)[^]*?visibleMaterialTags\(detailMaterial\.tags\)/, '素材标签必须集中展示在详情顶部');
+assert.match(inspirationSource, /<InspirationMaterialDetailDrawer[\s\S]{0,180}material=\{detailMaterial\}/, '素材库必须挂载唯一素材详情抽屉');
+assert.match(materialDetailSource, /materialAssetBadge\(material\)[^]*?aria-label="素材标签"[^]*?visibleMaterialTags\(material\.tags\)/, '素材标签必须集中展示在详情顶部');
 assert.match(inspirationSource, /onClick=\{\(\) => setDetailMaterial\(material\)\}[\s\S]{0,600}查看详情/, '每张素材卡必须提供查看详情入口');
 assert.match(inspirationSource, /enterMaterialSmartGeneration\(material\)[\s\S]{0,1000}自由创作/, '每张素材卡必须提供自由创作入口');
 assert.match(inspirationSource, /\{ key: 'library'[\s\S]{0,220}\{ key: 'accounts'/, '对标账号必须排列在我的素材之后');
-assert.match(inspirationSource, /aria-label=\{`\$\{isFavoriteMaterial\(material\) \? '取消收藏' : '收藏'\} \$\{material\.name\}`\}/, '素材卡必须提供可持久化的收藏按钮');
+assert.match(inspirationSource, /<MaterialLibraryCardMedia[\s\S]{0,500}onFavorite=\{\(\) => void toggleMaterialFavorite\(material\)\}/, '素材卡收藏操作必须使用页面持久化回调');
+assert.match(materialCardMediaSource, /aria-label=\{`\$\{isFavoriteMaterial\(material\) \? '取消收藏' : '收藏'\} \$\{material\.name\}`\}/, '素材卡必须提供可访问的收藏按钮');
 assert.match(studioRouteSource, /function enterpriseProductMaterials[\s\S]{0,5000}sourceType: 'enterprise_product_table'/, '产品表图片必须自动投影到正式素材接口并保留来源');
 assert.match(studioRouteSource, /enterpriseAssetStableId/, '产品表素材必须使用稳定 ID，保证周计划和制作工程引用同一条素材');
 assert.match(studioRouteSource, /enterpriseProductMaterials\(tenantId, enterpriseProfile\)[\s\S]{0,500}inventory\.items/, '素材接口必须合并产品表素材与用户素材，而不是仅在前端伪造分类');

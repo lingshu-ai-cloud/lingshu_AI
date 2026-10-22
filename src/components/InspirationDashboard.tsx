@@ -1,6 +1,7 @@
 import { DirectorVideoDetailPanel } from './inspiration/DirectorVideoDetailPanel';
 export { DirectorVideoDetailPanel } from './inspiration/DirectorVideoDetailPanel';
-import { MaterialUsageMark, MaterialUsagePanel } from './inspiration/MaterialUsageHistory';
+import { MaterialUsageMark } from './inspiration/MaterialUsageHistory';
+import InspirationMaterialDetailDrawer from './inspiration/InspirationMaterialDetailDrawer';
 import { MaterialLibraryCardMedia } from './inspiration/MaterialLibraryCardMedia';
 import { WatchModal, sourceEmbedUrl } from './inspiration/InspirationWatchModal';
 import { buildShootingNeeds } from './inspiration/inspirationShootingNeeds';
@@ -14,7 +15,7 @@ import DirectorReviewWorkspace, { type DirectorReviewHandoff } from './inspirati
 import { AuthenticatedImage, AuthenticatedVideo } from './inspiration/InspirationMedia';
 export { AuthenticatedVideo, ThumbnailImage, VideoThumbnail } from './inspiration/InspirationMedia';
 import { analysisProgressIsActive } from './inspiration/VideoAnalysisProgressPanel';
-import { Alert, Button, Drawer, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
+import { Alert, Button, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
 import LsPageHeader from './ui/LsPageHeader';
 import { LsMasonryGallery } from './ui/LsExperiencePrimitives';
 import { hasExactReferenceReview, parseExactReferenceReview, loadExactReferenceReview, exactReferenceReviewErrorMessage } from '../lib/exactReferenceReview';
@@ -28,14 +29,14 @@ import {
   Clock, Globe, ChevronDown, X, Loader2,
   Copy, ArrowRight, LayoutGrid, List,
   Lightbulb, Flame, Film,
-  Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Music2,
+  Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images,
   SlidersHorizontal, Package, Eye,
 } from 'lucide-react';
 import { studioApi, type Material } from '../lib/studioApi';
 import {
   initialMaterialLibraryEntry, initialMaterialTaxonomyFilters,
-  materialDirectorUi, materialMatchesProductFilter, materialMatchesLibraryFilters, isFavoriteMaterial,
-  materialOwnershipTags, materialSemanticLabel, materialAssetBadge,
+  canCreateFromLibraryMaterial, materialMatchesProductFilter, materialMatchesLibraryFilters, isFavoriteMaterial,
+  materialOwnershipTags, materialSemanticLabel,
   resolveLinkedFavoriteMaterialId, visibleMaterialTags,
   MATERIAL_APPLICABILITY_LABELS, MATERIAL_FUNCTION_LABELS, MATERIAL_INDUSTRY_LABELS,
   type FavoriteFilter, type MaterialGalleryFilterSnapshot, type MaterialIndustryFilter,
@@ -60,7 +61,7 @@ import CompetitorAccountsModal from './CompetitorAccountsModal';
 import type { Page } from '../App';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { updateScriptGapTask } from '../lib/scriptGapQueue';
-import { canProcessVideo, displayDuration } from '../lib/inspirationDataQuality';
+import { canProcessVideo } from '../lib/inspirationDataQuality';
 export { canProcessVideo, displayDuration, resultEmptyState, trendFromEvidence } from '../lib/inspirationDataQuality';
 import { useScriptGapTasks } from '../hooks/useScriptGapTasks';
 import { cachedProductInspirationCandidate, resumeOrCreateInspirationTask, soleInspirationCreationAccount } from '../lib/socialInspirationTask';
@@ -70,7 +71,7 @@ import type { AccountSpecialRecommendation, ContentFormat, GeminiVideoAnalysis, 
 import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
 import { crawlInspirationImages, type InspirationImageCrawlPlatform } from '../lib/inspirationImageCrawl';
 import type { SocialBusinessModel, SocialDiscoveryScoreDecision, SocialDiscoverySupplyItem } from '../../shared/contracts/socialContentWorkflow';
-import { MATERIAL_THEME_LABELS, materialPrimaryThemeOf, materialSourceCategoryOf } from '../../shared/materialTaxonomy';
+import { MATERIAL_THEME_LABELS, materialSourceCategoryOf } from '../../shared/materialTaxonomy';
 import MaterialTaxonomyFilters, { type MaterialSourceFilter, type MaterialThemeFilter } from './material-library/MaterialTaxonomyFilters';
 import {
   ProductMaterialDetailDrawer,
@@ -2208,7 +2209,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                                   <Eye size={12} className="shrink-0" /><span className="whitespace-nowrap">查看详情</span>
                                 </button>
                                 <button type="button" onClick={() => enterMaterialSmartGeneration(material)}
-                                  disabled={material.type === 'audio' || (material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration })) || !String(material.url || material.poster || '').trim()}
+                                  disabled={!canCreateFromLibraryMaterial(material)}
                                   title={material.type === 'audio' ? '音频素材不能单独进入画面创作' : material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration }) ? '视频时长尚未识别完成' : '带入内容制作的自由创作'}
                                   className="inline-flex h-9 min-w-0 flex-nowrap items-center justify-center gap-0.5 rounded-lg bg-accent px-1.5 text-[11px] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45">
                                   <Sparkles size={12} className="shrink-0" /><span className="whitespace-nowrap">{material.type === 'image' ? '用此图创作' : '自由创作'}</span>
@@ -2281,48 +2282,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           )}
 
           {detailMaterial && (
-            <Drawer open title={detailMaterial.name} size={800} onClose={() => setDetailMaterial(null)} styles={{ body: { padding: 0 } }}>
-                <section className="border-b border-border bg-surface-2 px-5 py-4" aria-label="素材标签">
-                  <p className="text-xs font-semibold text-text-primary">素材标签</p>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {(() => { const badge = materialAssetBadge(detailMaterial); return <span className="rounded-md border border-border bg-white px-2 py-1 text-xs font-semibold text-text-secondary">{badge.label}</span>; })()}
-                    <span className={`rounded-md border border-border px-2 py-1 text-xs font-semibold ${materialPrimaryThemeOf(detailMaterial) ? 'bg-accent-glow text-accent' : 'bg-white text-text-secondary'}`}>{materialPrimaryThemeOf(detailMaterial) ? MATERIAL_THEME_LABELS[materialPrimaryThemeOf(detailMaterial)!] : '主题待识别'}</span>
-                    {visibleMaterialTags(detailMaterial.tags).split(/[,，]/).map(tag => tag.trim()).filter(Boolean).map(tag => <span key={`detail-tag-${tag}`} className="rounded-md border border-border bg-white px-2 py-1 text-xs font-semibold text-text-secondary">{tag}</span>)}
-                  </div>
-                </section>
-                <div className="grid gap-5 p-5 md:grid-cols-[minmax(0,1.2fr)_minmax(240px,0.8fr)]">
-                  <div className="overflow-hidden rounded-lg border border-border bg-black">
-                    {detailMaterial.type === 'video' ? <video src={detailMaterial.url} poster={detailMaterial.poster} controls playsInline preload="metadata" className="aspect-video h-full max-h-[54vh] w-full object-contain" />
-                      : detailMaterial.type === 'image' ? <img src={detailMaterial.poster || detailMaterial.url} alt={detailMaterial.name} className="max-h-[54vh] w-full object-contain" />
-                      : <div className="flex min-h-44 flex-col items-center justify-center gap-4 bg-surface-2 p-6"><Music2 size={28} className="text-text-muted" /><audio src={detailMaterial.url} controls className="w-full" /></div>}
-                  </div>
-                  <div className="space-y-3 text-xs">
-                    {(() => {
-                      const director = materialDirectorUi(detailMaterial);
-                      return <div className="rounded-xl border border-accent/20 bg-accent-glow px-3 py-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="font-bold text-text-primary">编导 Agent 识别</p>
-                          <span className="text-[10px] font-bold text-accent">{director.status}</span>
-                        </div>
-                        <p className="mt-2 font-semibold text-text-primary">{director.role} · {director.content}</p>
-                        {director.uses.length > 0 && <p className="mt-1 leading-5 text-text-secondary">可用于：{director.uses.join('、')}</p>}
-                        {director.cautions.length > 0 && <p className="mt-1 leading-5 text-text-muted">注意：{director.cautions.join('；')}</p>}
-                      </div>;
-                    })()}
-                    <div className="rounded-xl border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">主题标签</p><div className="mt-2 flex flex-wrap gap-1.5">{Object.entries(MATERIAL_THEME_LABELS).map(([id,label]) => <button type="button" key={id} disabled={updatingMaterialTheme} onClick={() => void updateDetailMaterialTheme(id as keyof typeof MATERIAL_THEME_LABELS)} className={`rounded-full px-2.5 py-1 text-[11px] font-bold disabled:opacity-50 ${materialPrimaryThemeOf(detailMaterial) === id ? 'bg-accent text-white' : 'bg-surface-2 text-text-secondary'}`}>{label}</button>)}</div></div>
-                    {[
-                      ['素材类型', detailMaterial.type === 'video' ? '视频' : detailMaterial.type === 'image' ? '图片' : '音频'],
-                      ['关联产品', detailMaterial.productName || '企业通用素材'],
-                      ['主要内容', materialSemanticLabel(detailMaterial)],
-                      ['素材来源', generatedMaterialOriginLabel(detailMaterial) || detailMaterial.sourceName || detailMaterial.sourceProvider || (detailMaterial.scope === 'shared' ? '共享素材' : '我的素材')],
-                      ['时长', detailMaterial.type === 'video' || detailMaterial.type === 'audio' ? displayDuration(detailMaterial.duration) : '—'],
-                      ['入库时间', detailMaterial.createdAt ? new Date(detailMaterial.createdAt).toLocaleString('zh-CN') : '—'],
-                    ].map(([label, value]) => <div key={label} className="rounded-lg border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">{label}</p><p className="mt-1 break-words font-bold leading-5 text-text-primary">{value}</p></div>)}
-                    <Button type="primary" block onClick={() => { const material = detailMaterial; setDetailMaterial(null); enterMaterialSmartGeneration(material); }} disabled={detailMaterial.type === 'audio' || (detailMaterial.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: detailMaterial.duration })) || !String(detailMaterial.url || detailMaterial.poster || '').trim()}>{detailMaterial.type === 'image' ? '用此图制作图片' : '自由创作'}</Button>
-                  </div>
-                </div>
-                <MaterialUsagePanel material={detailMaterial} />
-            </Drawer>
+            <InspirationMaterialDetailDrawer
+              material={detailMaterial}
+              updatingTheme={updatingMaterialTheme}
+              onClose={() => setDetailMaterial(null)}
+              onUpdateTheme={theme => void updateDetailMaterialTheme(theme)}
+              onCreate={material => { setDetailMaterial(null); enterMaterialSmartGeneration(material); }}
+            />
           )}
 
           {innerView === 'shooting' && <InspirationShootingPanel needs={shootingNeeds} scriptGapTasks={scriptGapTasks} materialCount={localMaterials.length} uploadingMaterial={uploadingMaterial} onUploadExisting={requestMaterialUpload} onCaptureStart={setUploadingScriptGapId} onUploadCaptured={files => { void handleUploadMaterials(files); }} />}

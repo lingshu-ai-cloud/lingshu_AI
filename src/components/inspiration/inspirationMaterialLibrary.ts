@@ -5,6 +5,7 @@ import { MATERIAL_ASSET_ROLE_LABELS, MATERIAL_CONTENT_ROLE_LABELS, materialDirec
 import type { MaterialSourceFilter, MaterialThemeFilter } from '../material-library/MaterialTaxonomyFilters';
 import { materialHasAuthoritativeAspectRatio, materialIntrinsicAspectRatio } from '../../lib/materialAspectRatio';
 import { materialAssetTabOf, type MaterialAssetTab } from '../../lib/materialAssetOwnership';
+import { canProcessVideo } from '../../lib/inspirationDataQuality';
 
 export type MaterialIndustryFilter = 'all' | 'beauty_skincare' | 'universal_manufacturing' | 'apparel_textile' | 'metalworking';
 export type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry' | 'industry_specific';
@@ -13,6 +14,13 @@ export type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
 export type FavoriteFilter = 'all' | 'favorite';
 export type MaterialLibraryEntryContext = { openLibrary: boolean; productId: string; productRef: string };
 const ENTERPRISE_COMMON_MATERIAL_TAG = 'enterprise_common';
+
+/** Cards and detail drawers must share the same media-creation admission rule. */
+export function canCreateFromLibraryMaterial(material: Pick<Material, 'type' | 'duration' | 'url' | 'poster'>): boolean {
+  return material.type !== 'audio'
+    && (material.type !== 'video' || canProcessVideo({ contentFormat: 'video', duration: material.duration }))
+    && Boolean(String(material.url || material.poster || '').trim());
+}
 
 export function parseMaterialLibraryEntry(search: string): MaterialLibraryEntryContext {
   const params = new URLSearchParams(search);

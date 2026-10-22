@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Material } from '../../lib/studioApi';
 import {
+  canCreateFromLibraryMaterial,
   isEnterpriseCommonMaterial,
   materialMatchesLibraryFilters,
   materialMatchesOrientation,
@@ -13,6 +14,15 @@ import {
   visibleMaterialTags,
   type MaterialGalleryFilterSnapshot,
 } from './inspirationMaterialLibrary';
+
+test('material card and detail share creation admission for media type and usable source', () => {
+  assert.equal(canCreateFromLibraryMaterial({ type: 'image', url: '/asset.jpg', poster: '', duration: 0 }), true);
+  assert.equal(canCreateFromLibraryMaterial({ type: 'image', url: '', poster: '/poster.jpg', duration: 0 }), true);
+  assert.equal(canCreateFromLibraryMaterial({ type: 'image', url: '', poster: '', duration: 0 }), false);
+  assert.equal(canCreateFromLibraryMaterial({ type: 'audio', url: '/audio.mp3', poster: '', duration: 8 }), false);
+  assert.equal(canCreateFromLibraryMaterial({ type: 'video', url: '/video.mp4', poster: '', duration: 0 }), false);
+  assert.equal(canCreateFromLibraryMaterial({ type: 'video', url: '/video.mp4', poster: '', duration: 12 }), true);
+});
 
 test('material ownership tag is internal and product filtering stays explicit', () => {
   assert.equal(materialOwnershipTags('工厂, enterprise_common', 'product-1'), '工厂');
