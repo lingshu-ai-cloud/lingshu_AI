@@ -15,6 +15,7 @@ import { DigitalEmployeeApiError } from '../lib/digitalEmployeeApi.js';
 import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
+const onboardingProductImportSource = fs.readFileSync('src/components/smartBusiness/onboardingProductImport.ts', 'utf8');
 const batchFollowupSource = fs.readFileSync('src/components/smartBusiness/BatchFollowupTruthPanel.tsx', 'utf8');
 const todayFocusSource = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeTodayFocusPanel.tsx', 'utf8');
 const weeklyPlanConfirmationSource = fs.readFileSync('src/components/WeeklyPlanConfirmationCard.tsx', 'utf8');
@@ -523,12 +524,13 @@ assert.match(productTableOnboardingSource, /return Upload\.LIST_IGNORE/, 'the pr
 assert.match(productTableOnboardingSource, /accept="\.xlsx,\.xls,\.csv,\.pdf,\.docx,\.txt"/, 'product onboarding must accept spreadsheet, PDF, DOCX and TXT files');
 assert.doesNotMatch(productTableOnboardingSource, /支持 Excel（\.xlsx\/\.xls）、CSV、PDF、Word（\.docx）和 TXT|系统自动识别表格|单个文件最大 50MB/, 'product onboarding must not retain the removed format explanation');
 assert.doesNotMatch(productTableOnboardingSource, /企业知识库产品表/, 'product onboarding must not retain the redundant product-table heading row');
-assert.match(pageSource, /xlsx\?\|csv\|pdf\|docx\|txt[\s\S]{0,300}请选择 Excel、CSV、PDF、Word 或 TXT 文件/, 'product onboarding must validate supported file types after removing the explanation');
-assert.match(pageSource, /file\.size > 50 \* 1024 \* 1024[\s\S]{0,220}文件不能超过 50MB/, 'product onboarding must validate the documented file-size limit');
-assert.match(pageSource, /parseProductDocument\(file\)/, 'product onboarding must parse PDF and DOCX through the document importer');
-assert.match(pageSource, /unassignedImages = documentResult\.unassignedImages[\s\S]*uploadProductEvidence\(image\.file\)/, 'document images must be retained in the existing enterprise asset library instead of silently discarded');
+assert.match(pageSource, /importOnboardingProducts\(file, knowledgeProducts\)/, 'the product picker must call the extracted import and enterprise-write path');
+assert.match(onboardingProductImportSource, /xlsx\?\|csv\|pdf\|docx\|txt[\s\S]{0,300}请选择 Excel、CSV、PDF、Word 或 TXT 文件/, 'product onboarding must validate supported file types after removing the explanation');
+assert.match(onboardingProductImportSource, /file\.size > 50 \* 1024 \* 1024[\s\S]{0,220}文件不能超过 50MB/, 'product onboarding must validate the documented file-size limit');
+assert.match(onboardingProductImportSource, /parseProductDocument\(file\)/, 'product onboarding must parse PDF and DOCX through the document importer');
+assert.match(onboardingProductImportSource, /unassignedImages = documentResult\.unassignedImages[\s\S]*uploadProductEvidence\(image\.file\)/, 'document images must be retained in the existing enterprise asset library instead of silently discarded');
 assert.match(pageSource, /未能确认产品归属的图片已存入企业素材库，需在产品档案核对绑定/, 'unverified document pages must not be silently bound as product images');
-assert.match(pageSource, /productsFromLabeledText\(await readProductDiscoveryFile\(file\)\)/, 'product onboarding must parse labeled TXT product fields');
+assert.match(onboardingProductImportSource, /productsFromLabeledText\(await readProductDiscoveryFile\(file\)\)/, 'product onboarding must parse labeled TXT product fields');
 assert.doesNotMatch(productTableOnboardingSource, /确认重点产品|按资料完整度推荐产品|本期暂无产品，先继续|快速添加产品|Agent 设置/, 'product-table onboarding must only accept an imported or existing table, without focus-product or Agent setup');
 assert.match(pageSource, /primaryLabel=\{allowInitialPlan \? "生成推荐计划" : "完成引导并保存"\}/, 'the fourth onboarding step must lead into the recommended initial operating plan');
 assert.match(pageSource, /<InitialOperatingPlanDialog[\s\S]{0,1200}onConfirm=\{plan => void completeMinimalOnboarding\(plan\)\}/, 'the recommended plan must return the confirmed plan to onboarding');
@@ -747,7 +749,7 @@ assert.match(pageSource, /applicationGuideOpen[\s\S]{0,1000}restartFromBeginning
 assert.match(pageSource, /function OnboardingWelcome[\s\S]{0,600}<Modal open title="准备工作已经完成"[\s\S]{0,600}开始使用灵枢/, 'first completion must show an accessible completion modal with a clear next step');
 assert.match(enterpriseProfileContractsSource, /brand:\s*\{[\s\S]{0,100}name:\s*string/, 'EnterpriseProfile must store a brand name');
 assert.match(enterpriseProfileStoreSource, /const brandInput[\s\S]{0,500}name:\s*text\(brandInput\.name\)/, 'brand name must be normalized as text');
-assert.match(pageSource, /id:\s*String\(existing\.id \|\| existing\.productId \|\| product\.id\)/,
+assert.match(onboardingProductImportSource, /id:\s*String\(existing\.id \|\| existing\.productId \|\| product\.id\)/,
   're-importing the onboarding product table must retain the existing stable product id');
 assert.match(enterpriseRouteSource, /mergeEnterpriseProductIdentity\(next\[index\], product, index\)/,
   'server-side product API upserts must retain the existing stable product id');
