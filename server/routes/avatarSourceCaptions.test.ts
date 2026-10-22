@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { isDeepStrictEqual } from 'node:util';
 import test from 'node:test';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -23,6 +24,13 @@ test('legacy avatar snapshot restores measured provider SRT for its own tenant a
     async getById<T>(collection: string, id: string) { return structuredClone(rows.get(`${collection}/${id}`) || null) as T | null; },
     async create<T>() { return null as T | null; },
     async update(collection, id, patch) { const key = `${collection}/${id}`; if (!rows.has(key)) return false; rows.set(key, { ...rows.get(key), ...structuredClone(patch) }); return true; },
+    async compareAndSwap(collection, id, expected, patch) {
+      const key = `${collection}/${id}`;
+      const current = rows.get(key);
+      if (!current || !Object.entries(expected).every(([field, value]) => isDeepStrictEqual(current[field], value))) return false;
+      rows.set(key, { ...current, ...structuredClone(patch) });
+      return true;
+    },
     async delete() { return false; },
     async list<T>(collection: string, query = {}) { const where = (query as { where?: Record<string, unknown> }).where || {}; const items = [...rows.entries()]
       .filter(([key, value]) => key.startsWith(`${collection}/`) && Object.entries(where).every(([field, expected]) => value[field] === expected))
