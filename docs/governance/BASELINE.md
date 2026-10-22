@@ -9,6 +9,10 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 9 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## 灵小枢签名动作投影边界（2026-10-22）
+
+- 从 `GlobalAssistant.tsx` 抽出聚焦卡自然语言动作、签名目标与参数、响应卡身份、跨对象动作过滤、通知和任务状态投影至 `assistantActionProjection.ts`；浮层保留网络请求、对话和任务卡编排。主文件从 2,969 降至 2,814 行，并收紧历史预算。新增直接测试覆盖唯一签名动作目标与原始参数、歧义动作拒绝、跨对象响应隔离；原静态合同改为检查新模块与页面接线。历史超限文件仍有 8 个，此批不代表整体架构债务收口。验证结果以本批实际命令和推送后 SHA 复核为准；未调用真实付费供应商或部署。
+
 ## 未挂载脚本侧栏清理（2026-10-22）
 
 - 以集成提交 `95d18a1d6b05b7937e34b0720e76ea03103b04b0` 为起点，逐项核对 `ScriptPanel`/`AnalysisPanel` 的引用，确认当前选中视频只挂载 `DirectorVideoDetailPanel`，没有可到达的旧脚本/Seedance 侧栏。删除未挂载 UI、仅由其使用的阶段状态、脚本模板/产品选项及旧静态断言；保留当前详情和工作流回调类型。`InspirationDashboard.tsx` 从 4,403 降至 3,626 行，分析投影从 445 降至 333 行；历史超限文件仍有 8 个。这是死路径清理，不等于关闭当前图文/视频分析或生成链路。`pnpm run lint`、`pnpm run test:social-content-frontend`、灵感页 15 项合同测试、架构扫描与 ratchet、191 项迁移清单只读检查、`pnpm run build` 和 `git diff --check` 通过；未做真实供应商或部署验收。

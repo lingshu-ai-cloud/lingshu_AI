@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const runtimeSource = fs.readFileSync(new URL('./assistant/globalAssistantRuntime.ts', import.meta.url), 'utf8');
+const actionProjectionSource = fs.readFileSync(new URL('./assistant/assistantActionProjection.ts', import.meta.url), 'utf8');
 const productionIntakeSource = fs.readFileSync(new URL('./assistant/assistantProductionIntake.ts', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const appModulesSource = fs.readFileSync(new URL('../appPageModules.tsx', import.meta.url), 'utf8');
@@ -304,7 +305,8 @@ assert.match(sendSource, /strategyRequest \? '' : await loadLiveIntegrationFacts
 assert.match(sendSource, /content: strategyRequest \? visibleText : \[/, '经营主对话不得把前端导航提示和策略规则重复塞入千问上下文');
 assert.match(sendSource, /userQuestion: visibleText[\s\S]{0,700}retainedUserInstructions/, '经营主对话必须把当前问题、当前业务对象与有界历史约束交给服务端组装上下文');
 assert.match(sendSource, /requestFence\.active[\s\S]{0,100}persistenceFenceRef\.current === requestFence/, '租户或用户范围切换后旧请求的异步响应必须被丢弃');
-assert.match(source, /function isWeeklyPlanKickoffRequest[\s\S]{0,500}开始\|启动\|制定\|生成\|创建[\s\S]{0,220}生产\|制作\|周计划\|计划\|周任务/, '空白周计划必须识别用户对灵小枢发出的明确开工或制定计划请求');
+assert.match(actionProjectionSource, /function isWeeklyPlanKickoffRequest[\s\S]{0,500}开始\|启动\|制定\|生成\|创建[\s\S]{0,220}生产\|制作\|周计划\|计划\|周任务/, '空白周计划必须识别用户对灵小枢发出的明确开工或制定计划请求');
+assert.match(source, /from '\.\/assistant\/assistantActionProjection'/, '助手页面必须接入独立的签名动作投影');
 assert.match(sendSource, /weeklyPlanKickoffAvailable && isWeeklyPlanKickoffRequest\(draft\)[\s\S]{0,650}可预览的周计划[\s\S]{0,400}openWeeklyPlanFromAssistant\(\)/, '灵小枢收到明确开工请求时必须先打开计划预览，不能绕过用户确认直接生产');
 assert.match(sendSource, /sameAssistantRequestIdentity\(requestToken, getToken\(\), stablePersistenceScope\)/, '身份切换后丢弃旧响应，同身份令牌刷新不丢弃文字');
 
@@ -324,8 +326,8 @@ assert.match(actionExecutionSource, /missingInput \? 'missing_required_input' : 
 assert.doesNotMatch(actionExecutionSource, /return null/, '路由错误或无效响应不得伪装成未处理并回落通用聊天');
 assert.match(actionExecutionSource, /Only an explicit delegated\/not_handled/, '只有明确 delegated/not_handled 才允许回落通用聊天');
 
-const naturalLanguageInputSource = sourceSection('function focusedNaturalLanguageActionInput', '\n}', '自然语言操作输入');
-const focusedMutationPatternsSource = sourceSection('const FOCUSED_MUTATION_PATTERNS', '\n];', '聚焦卡自然语言动作匹配');
+const naturalLanguageInputSource = sourceSection('function focusedNaturalLanguageActionInput', '\n}', '自然语言操作输入', actionProjectionSource);
+const focusedMutationPatternsSource = sourceSection('const FOCUSED_MUTATION_PATTERNS', '\n];', '聚焦卡自然语言动作匹配', actionProjectionSource);
 assert.match(focusedMutationPatternsSource, /批准\|确认[^\n]+报价/, '聚焦报价卡必须识别批准报价、确认报价和批准这份报价');
 assert.match(focusedMutationPatternsSource, /'start_task'[^\n]+开始执行/, '开始执行当前任务只能映射到聚焦卡签发的 start_task 动作');
 assert.match(naturalLanguageInputSource, /assistantActionTarget\(card, actionId\)/, '自然语言操作目标必须由后端签发的卡片动作解析');
@@ -408,12 +410,12 @@ assert.match(hydrationSource, /focusTaskCard\(PRIMARY_ASSISTANT_THREAD, CURRENT_
 assert.doesNotMatch(hydrationSource, /actionCardToTaskCard\(response\.card, response, persistedFocusedTaskId\)/, '不得把当前任意决策错误绑定到旧聚焦卡片');
 assert.doesNotMatch(hydrationSource, /persistThread\(/, '重新签发的动作不得再次写回不可信线程快照');
 
-const responseStatusSource = sourceSection('function taskStatusFromResponse', '\n}', '助手任务状态映射');
+const responseStatusSource = sourceSection('function taskStatusFromResponse', '\n}', '助手任务状态映射', actionProjectionSource);
 assert.match(responseStatusSource, /signedRunControl/, '刷新后的运行状态必须来自服务端签发的运行控制');
 assert.match(responseStatusSource, /resume_task[^]*return 'paused'/, '签发继续动作时卡片必须恢复为已暂停状态');
 assert.match(responseStatusSource, /pause_task[^]*return 'running'/, '签发暂停动作时卡片必须恢复为执行中状态');
 
-const responseIdentitySource = sourceSection('function actionResponseCardId', '\n}', '响应卡片身份规则');
+const responseIdentitySource = sourceSection('function actionResponseCardId', '\n}', '响应卡片身份规则', actionProjectionSource);
 assert.match(responseIdentitySource, /request\.target\?\.objectId/, '同一业务对象的后续响应必须更新原卡片');
 assert.match(responseIdentitySource, /responseTargets\.some\(target =>/, '响应动作目标与请求不一致时不得覆盖原对象卡片');
 assert.match(responseIdentitySource, /target\.objectType !== requestObjectType/, '对象类型不一致也必须视为跨对象响应');
@@ -423,7 +425,7 @@ assert.match(responseIdentitySource, /matchingCardIds\.length === 1[\s\S]*respon
 assert.doesNotMatch(responseIdentitySource, /:\s*objectId\s*;/, '新卡片不得直接用业务 objectId 代替 requestId');
 assert.doesNotMatch(source, /`\$\{agentId\}:\$\{response\.actionId\}`/, '不得按 Agent 与动作名合并互不相关的新卡片');
 
-const crossObjectFilterSource = sourceSection('function responseWithoutCrossObjectActions', '\n}', '跨对象动作过滤');
+const crossObjectFilterSource = sourceSection('function responseWithoutCrossObjectActions', '\n}', '跨对象动作过滤', actionProjectionSource);
 assert.match(crossObjectFilterSource, /responseHasCrossObjectAction\(request, response\)/, '响应进入展示前必须识别跨对象动作');
 assert.match(crossObjectFilterSource, /action\.target\.objectId\.trim\(\) === requestObjectId/, '只可保留当前请求对象的签名动作');
 assert.match(crossObjectFilterSource, /secondaryActions:[\s\S]*\.filter\(safeAction\)/, '跨对象的次级动作也必须全部过滤');
