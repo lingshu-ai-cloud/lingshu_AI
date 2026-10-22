@@ -12,7 +12,7 @@ export default function AdSourceCatalog() {
     platformAdsRequest<Catalog>(`/creative-history?origin=${origin}&page=${page}&perPage=20`, { signal: c.signal }).then(value => { if (!c.signal.aborted) setData({ key, value }); }).catch(e => { if (!c.signal.aborted) setError(e.message || '来源读取失败'); }).finally(() => { if (!c.signal.aborted) setBusy(false); });
     return () => c.abort();
   }, [key, refresh]);
-  return <section aria-label="历史素材与社媒成片来源">
+  return <section aria-label="历史素材与社媒成片来源" style={{ minWidth: 0, maxWidth: '100%' }}>
     <Space wrap><Select aria-label="素材来源数据集" value={origin} onChange={v => { setOrigin(v); setPage(1); setSelected(null); }} options={[{ value: 'studio', label: '我的创作 · 历史素材' }, { value: 'social', label: '已保存社媒成片' }]}/><Button loading={busy} onClick={() => setRefresh(n => n + 1)}>刷新来源</Button></Space>
     <p>直接读取原数据源，不复制、不上传；有权威成片版本的来源可核对投放生命周期，未核验的历史草稿不会冒充已投放素材。按源记录分页，非视频/模板或不可用成片不作为可投放视频。</p>
     {error && <Alert type="error" showIcon title={error} description={data ? '保留同页来源快照，请重试。' : '当前来源未返回，不使用其他数据集冒充。'}/>}

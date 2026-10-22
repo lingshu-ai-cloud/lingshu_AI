@@ -15,6 +15,8 @@
 - 回归覆盖最大可用历史超过 93 天、精确 action_type/零/缺失/重复值、两来源同一 Meta 报告、源版本与跨租户隔离、不可验证历史不误关联、读取失败保留旧版本范围及原计划/回执不变。源码验证和实际非零归因、审核通过、生产上线是不同结论。
 - 字段依据：[Meta AdsInsights 官方 SDK](https://github.com/facebook/facebook-python-business-sdk/blob/main/facebook_business/adobjects/adsinsights.py)。无利润与 CRM 归因输入，不能仅凭 Meta 广告数据计算经营利润 ROI。
 - 源码验证：39 个投流测试文件通过；历史去重、血缘、封面与分析 13 项测试、历史素材列表 SSR 1 项测试通过；TypeScript（仓库 lint）、架构检查 2246 生产文件、构建和 Studio 分包预算通过。没有修改主生产工作台、排期或 CRM 结构，仅在历史详情接入共享只读组件。
+- `6e97bae5d05b26dbde1a6c9abaa01fcd01505df4` 同版本前后端重启后，00:26:02 真实验收通过：两条广告仍暂停/待审核，17 个原生指标字段及 maximum 参数被 Meta 接受，窗口为空时 windowAvailable=false；未改变原任务、回执、目录映射。隔离库 Studio 历史为 0 条、已保存社媒成片为 1 条，未为演示复制生产历史或新建项目；真实双端历史回流需有已核验历史记录，当前由隔离测试验证血缘联通。
+- 浏览器发现并修复新增生命周期宽表撑宽父级 Grid，以及旧投放表格 nowrap 样式影响口径说明的问题：使用 minmax(0,1fr)、内部宽表滚动和显式换行。桌面主区 clientWidth=scrollWidth=1277，窄屏主区 clientWidth=scrollWidth=252，表格自身保持 1500px 内部滚动；不调整全局缩放，不覆盖其他模块样式。
 
 ## 三页端到端联调与口径收口（本轮增量）
 

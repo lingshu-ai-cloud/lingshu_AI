@@ -54,5 +54,7 @@ test('history and advertising share a source lifecycle component without guessin
   assert.match(material, /AdSourceCatalog/); assert.match(catalog, /origin=\$\{origin\}/);
   assert.match(lifecycle, /snapshot\?\.query === query/); assert.match(lifecycle, /非 ROI/);
   assert.match(lifecycle, /不是 0/); assert.match(lifecycle, /窗口未返回/);
+  assert.match(lifecycle, /onHeaderCell/); assert.match(lifecycle, /whiteSpace: 'normal'/);
+  assert.match(readFileSync(new URL('./adCreativeLibrary.css', import.meta.url), 'utf8'), /grid-template-columns: minmax\(0, 1fr\)/);
   assert.doesNotMatch(lifecycle, /\.purchaseValue\s*\/|crmInquiries\s*\|\|\s*0/);
 });

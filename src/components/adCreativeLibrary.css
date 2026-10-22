@@ -1,4 +1,5 @@
-.ads-library { display: grid; gap: 16px; min-width: 0; }
+.ads-library { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
+.ads-library > * { min-width: 0; max-width: 100%; }
 .ads-library-toolbar { display: flex; gap: 12px; align-items: center; overflow-x: auto; padding: 2px; }
 .ads-library-toolbar .ant-input-search { min-width: 240px; max-width: 420px; }
 .ads-library-toolbar .ant-select { min-width: 220px; }
