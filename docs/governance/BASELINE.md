@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## LinkedIn 付费回执引用传递（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `7d549086` 让 Apify 受控运输层把原始 HTTP 回执引用传给 run 与终态记账回调；LinkedIn 包装层在回执引用为空时拒绝登记。Actor 已提交但提交回执引用缺失时维持结果不明且禁止第二次 POST；终态轮询回执引用缺失时不结算、不读取数据集。此改动不构成完整持久化许可签发器，也不证明回执已在目标共享卷核验。
+- 来源边界测试 75/75、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,333 个生产 TypeScript 文件）、192 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。缺少可信账号报价/汇率、非 Actor 费用上界、跨实例唯一许可和目标共享卷证明，LinkedIn 真实付费入口继续关闭；未执行供应商付费请求、目标库迁移或部署。最终本地/远端 SHA 与工作区状态以推送后 Git 核对为准。
+
 ## 灵小枢页面信号职责拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `adb0a2bf` 将页面上下文事件的来源过滤、关闭态按当前周目标读取权威待办数量的低频轮询与监听清理迁至 `src/components/assistant/useAssistantPageSignals.ts`。浮层保留状态和身份范围所有权，`GlobalAssistant.tsx` 从 1,622 降至 1,557 行，历史预算同步收紧。契约测试还更新了此前迁出动作请求后遗留的旧超时断言，改为核验实际请求适配层，并移除未使用常量。全仓仍有 7 个历史超限文件，结构治理尚未收口。
