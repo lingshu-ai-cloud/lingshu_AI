@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import { videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 import { quoteSocialPaidOperationTariff, type SocialPaidOperationIntent, type SocialVerifiedAccountTariff } from '../lib/socialContentTaskBudgetAuthority.js';
@@ -16,6 +17,8 @@ type TrustedPreparationPorts = {
   measureInputTokenUpperBound(body: Record<string, unknown>): Promise<number>;
   readVerifiedTariff(intent: SocialPaidOperationIntent): Promise<SocialVerifiedAccountTariff | null>;
 };
+type QuoteInput = { store: DataStore; tenantId: string; recordId: string; ports: TrustedPreparationPorts };
+const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 function tagsOf(value: unknown): string[] {
   try {
@@ -24,17 +27,8 @@ function tagsOf(value: unknown): string[] {
   } catch { return []; }
 }
 
-/** Freezes one existing image record and an exact request before writing human approval. */
-export async function prepareAndApproveImageEvidenceReview(input: {
-  store: DataStore;
-  tenantId: string;
-  recordId: string;
-  approvedBy: string;
-  maximumCny: number;
-  expiresAt: string;
-  ports: TrustedPreparationPorts;
-  now?: () => number;
-}) {
+/** Calculates an exact, non-persistent quote from server-owned record and account evidence. */
+async function prepareQuote(input: QuoteInput) {
   const record = await input.store.getById<Record_>('trend_videos', input.recordId);
   if (!record || record.id !== input.recordId || record.tenantId !== input.tenantId)
     throw Error('image_evidence_review_source_not_found');
@@ -77,13 +71,38 @@ export async function prepareAndApproveImageEvidenceReview(input: {
     maximumUnits: { inputTokens, outputTokens: 7000 } };
   const tariff = await input.ports.readVerifiedTariff(intent);
   const quote = quoteSocialPaidOperationTariff(intent, tariff);
-  if (!Number.isFinite(input.maximumCny) || quote.upperBoundCny > input.maximumCny)
-    throw Error('image_evidence_review_budget_insufficient');
   const current = await input.store.getById<Record_>('trend_videos', input.recordId);
   if (!current || current.tenantId !== input.tenantId || imagePostSourceHash(current) !== recordSha256)
     throw Error('image_evidence_review_source_changed');
+  const quoteFingerprint = digest({ schema: 'image-evidence-review-quote.v1',
+    tenantId: input.tenantId, recordId: input.recordId, recordSha256,
+    intent, quoteRef: quote.quoteRef, upperBoundCny: quote.upperBoundCny, validUntil: quote.validUntil });
+  return { recordSha256, intent, requestSha256, reviewReasons,
+    quotedUpperBoundCny: quote.upperBoundCny, quoteValidUntil: quote.validUntil, quoteFingerprint };
+}
+
+export async function quoteImageEvidenceReview(input: QuoteInput) {
+  const { intent, ...publicQuote } = await prepareQuote(input);
+  return { ...publicQuote, model: intent.model, accountRef: intent.accountRef };
+}
+
+/** Human approval must match the exact quote shown before this write. */
+export async function prepareAndApproveImageEvidenceReview(input: QuoteInput & {
+  approvedBy: string;
+  maximumCny: number;
+  expiresAt: string;
+  expectedQuoteFingerprint: string;
+  now?: () => number;
+}) {
+  const prepared = await prepareQuote(input);
+  if (!/^[a-f0-9]{64}$/.test(input.expectedQuoteFingerprint)
+    || prepared.quoteFingerprint !== input.expectedQuoteFingerprint)
+    throw Error('image_evidence_review_quote_changed');
+  if (!Number.isFinite(input.maximumCny) || prepared.quotedUpperBoundCny > input.maximumCny)
+    throw Error('image_evidence_review_budget_insufficient');
   const approval = await approveImageEvidenceReview({ store: input.store, tenantId: input.tenantId,
-    recordId: input.recordId, recordSha256, intent, maximumCny: input.maximumCny,
+    recordId: input.recordId, recordSha256: prepared.recordSha256, intent: prepared.intent, maximumCny: input.maximumCny,
     approvedBy: input.approvedBy, expiresAt: input.expiresAt, now: input.now });
-  return { approval, requestSha256, reviewReasons, quotedUpperBoundCny: quote.upperBoundCny };
+  return { approval, requestSha256: prepared.requestSha256, reviewReasons: prepared.reviewReasons,
+    quotedUpperBoundCny: prepared.quotedUpperBoundCny, quoteFingerprint: prepared.quoteFingerprint };
 }
