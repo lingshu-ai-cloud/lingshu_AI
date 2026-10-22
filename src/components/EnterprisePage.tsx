@@ -6,13 +6,7 @@ import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, Globe2, ShieldCheck, ArrowRight, Users, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { completeDemoStep } from '../lib/demoProgress';
-import {
-  heuristicProductMapping,
-  mapRowToProduct,
-  parseWorkbook,
-  prepareSheet,
-} from '../lib/productImport';
-import { parseProductDocument } from '../lib/productDocumentImport';
+import { prepareEnterpriseProductImport, type PendingProductImport } from './enterprise/enterpriseProductImportPreparation';
 import {importProductEvidenceUrl,uploadProductEvidence} from '../lib/enterpriseProductAssetUpload';
 import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
@@ -47,18 +41,6 @@ export function resolveEnterpriseProductsDeepLink(
   ));
   if (matches.length === 1) return { productIndex: matches[0]!, reason: 'exact_unique' };
   return { productIndex: null, reason: matches.length > 1 ? 'ambiguous' : 'not_found' };
-}
-
-interface PendingProductImport {
-  fileName: string;
-  sheetName: string;
-  products: ProductItem[];
-  totalRows: number;
-  skippedRows: number;
-  sourceLabel: string;
-  unassignedImages: Array<{ name: string; url: string; file: File; status?: 'pending' | 'uploading' | 'uploaded' | 'failed'; error?: string }>;
-  assignedImages: Array<{ productIndex: number; name: string; url: string; file: File; uploadedUrl?: string }>;
-  remoteImageTransfers: Record<number, { status: 'pending' | 'uploading' | 'uploaded' | 'failed'; error?: string; originalUrl: string }>;
 }
 
 
@@ -1017,62 +999,11 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     setProductImporting(true);
     setProductImportMessage('');
     try {
-      if (/\.(pdf|docx)$/i.test(file.name)) {
-        const parsed = await parseProductDocument(file);
-        const incoming = parsed.products.map((item, index): ProductItem => ({
-          ...item,
-          name: item.name || item.sku || `导入产品${index + 1}`,
-          priceRange: item.retailPrice || item.tagPrice,
-          category: profile.products.categories,
-          images: item.imageUrl ? [{ name: item.imageUrl.split('/').pop() || '商品主图', type: 'image/url', size: 0, updatedAt: new Date().toISOString(), url: item.imageUrl }] : [],
-          videos: [],
-          documents: [],
-        }));
-        setPendingProductImport({ fileName: file.name, sheetName: '文档正文', products: incoming, totalRows: incoming.length, skippedRows: 0, sourceLabel: parsed.sourceLabel, unassignedImages: parsed.unassignedImages, assignedImages: parsed.assignedImages, remoteImageTransfers: Object.fromEntries(incoming.map((item, index) => item.imageUrl && !item.imageUrl.startsWith('/api/overseas/enterprise/assets/') ? [index, { status: 'pending', originalUrl: item.imageUrl }] : null).filter(Boolean) as Array<[number, { status: 'pending'; originalUrl: string }]>) });
-        setProductImportMessage(`已从文档识别 ${incoming.length} 个产品，请确认字段与图片归属后导入`);
-        return;
-      }
-      const sheets = await parseWorkbook(file);
-      const selected = sheets.slice().sort((a, b) => b.rowCount - a.rowCount)[0];
-      if (!selected) throw new Error('没有读取到可导入的表格');
-      const prepared = prepareSheet(selected);
-      const mapping = heuristicProductMapping(prepared.headers);
-      const incoming = prepared.dataRows
-        .map(row => mapRowToProduct(row, mapping) as Partial<ProductItem>)
-        .filter(item => item.name || item.sku)
-        .map((item, index): ProductItem => ({
-          name: item.name || item.sku || `导入产品${index + 1}`,
-          sku: item.sku,
-          color: item.color,
-          size: item.size,
-          tagPrice: item.tagPrice,
-          retailPrice: item.retailPrice,
-          moq: item.moq,
-          brand: item.brand,
-          material: item.material,
-          imageUrl: item.imageUrl,
-          priceRange: item.retailPrice || item.tagPrice,
-          category: profile.products.categories,
-          highlights: item.highlights,
-          images: item.imageUrl ? [{ name: item.imageUrl.split('/').pop() || '商品主图', type: 'image/url', size: 0, updatedAt: new Date().toISOString(), url: item.imageUrl }] : [],
-          videos: [],
-          documents: [],
-        }));
-      if (!incoming.length) throw new Error('没有识别到有效产品行，请检查表头是否包含商品名称或 SKU');
-      const skipped = prepared.dataRows.length - incoming.length;
-      setPendingProductImport({
-        fileName: file.name,
-        sheetName: prepared.sheetName,
-        products: incoming,
-        totalRows: prepared.dataRows.length,
-        skippedRows: skipped,
-        sourceLabel: '表格字段映射',
-        unassignedImages: [], assignedImages: [],
-        remoteImageTransfers: Object.fromEntries(incoming.map((item, index) => item.imageUrl && !item.imageUrl.startsWith('/api/overseas/enterprise/assets/') ? [index, { status: 'pending', originalUrl: item.imageUrl }] : null).filter(Boolean) as Array<[number, { status: 'pending'; originalUrl: string }]>),
-      });
-      setProductImportMessage(`已解析 ${incoming.length} 个产品，请确认产品与图片对应关系后导入`);
-    } catch (e) {
-      setProductImportMessage(e instanceof Error ? e.message : '产品导入失败，请检查 CSV/XLSX 字段');
+      const { pending, message } = await prepareEnterpriseProductImport(file, profile.products.categories);
+      setPendingProductImport(pending);
+      setProductImportMessage(message);
+    } catch (error) {
+      setProductImportMessage(error instanceof Error ? error.message : '产品导入失败，请检查 CSV/XLSX 字段');
     } finally {
       setProductImporting(false);
     }
