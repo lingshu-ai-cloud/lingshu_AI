@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 自动成片前置准入职责拆分验收点（2026-10-23）
+
+- 代码提交 `649bca21753859d4d015d745a43921038ef95368` 将周任务授权、冻结路线/复刻证据、已有成品幂等收口、人物技术栈选择和执行方案通过记录移至 `socialContentProductionAdmission.ts`。worker 仅在准入未完成且通过后进入制作；`socialContentProductionExecution.ts` 从 1,633 降至 1,492 行，历史预算同步收紧。仍有 8 个超限文件，不能称整体架构债务已清。
+- 完整自动成片工作流、准入拒绝/生产图执行 9/9、拍摄方案执行、TypeScript、架构扫描/ratchet、192 项迁移文件只读检查、生产构建和 `git diff --check` 通过。`AiCreateStudio` chunk 为 497,209/500,000 字节。没有真实供应商请求、目标数据库迁移或部署；这些本地测试不证明真实付费或成片 E2E。
+
 ## 自动成片编导准备职责拆分验收点（2026-10-23）
 
 - 代码提交 `10efc066f7eb86a5aabefae89b04256467d3e6b3` 将编导方案检查点恢复、历史版本兼容封存、当前版本落库和交接快照迁至 `socialContentProductionDirectorPreparation.ts`；worker 保留配音拟合修订、渲染和交付编排。`socialContentProductionExecution.ts` 从 1,733 降至 1,633 行，架构预算同步收紧；全仓仍有 8 个历史超限文件。
