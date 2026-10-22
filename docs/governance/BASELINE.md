@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Facebook 图文采集投影拆分（2026-10-23）
+
+- 代码提交 `029927c6979c1f83e0d0fc92613aaac6887b094b` 将 Facebook 帖子图片/视频识别、图片证据和公开指标投影迁至既有 `videoCrawlerImageProjection.ts`，采集入口与供应商调用顺序未动。`videos.ts` 从 8,878 降至 8,815 行，预算同步收紧；全仓仍有 6 个历史超限文件。
+- 新 Facebook 投影直测 2/2，图文来源边界整组 131/131、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,374 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 仍为 496,106/500,000 字节。未做真实供应商调用、目标库迁移、浏览器验收或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 数字员工助手待决事项读取组装拆分（2026-10-23）
 
 - 代码提交 `cadaa7bc3c3b0a6439a6df79bb5b9ec83003a34d` 将租户范围内的周目标、计划、运行、任务、审批及 Starter 决策卡组装迁至 `assistantDecisionFeedService.ts`；原有独立内容任务恢复仍在相同读取时机执行，操作写入与响应回执仍留在路由。`digitalEmployees.ts` 从 5,645 降至 5,558 行，架构预算同步收紧；全仓仍有 6 个历史超限文件，结构拆分尚未完成。
