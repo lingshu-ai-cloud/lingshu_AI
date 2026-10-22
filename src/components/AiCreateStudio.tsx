@@ -23,7 +23,7 @@ import ReplicationWorkbenchHeader from './socialContent/ReplicationWorkbenchHead
 const AgentTaskDemoWorkbench = lazy(() => import('./socialContent/AgentTaskDemoWorkbench'));
 import { referenceSpeechLines as groupReferenceSpeechLines } from './socialContent/referenceSpeechLines';
 import { socialContentApi } from '../lib/socialContentApi';
-import { referenceProductTerms as detectSpokenProductTerms, replaceReferenceIdentities } from '../lib/referenceIdentityMapping';
+import { referenceProductTerms as detectSpokenProductTerms } from '../lib/referenceIdentityMapping';
 import { enterpriseBuyerText, validateStudioTimeline, pendingClaimLocations } from '../lib/studioValidation';
 export { enterpriseBuyerText, validateStudioTimeline, pendingClaimLocations } from '../lib/studioValidation';
 import { mediaType, fileToDataUrl, blobToDataUrl, localFileName } from '../lib/studioFileInputs';
@@ -127,6 +127,12 @@ import {
 export { formatVoiceoverWithTimestamps, voiceoverDraftCoversSource, selectCompleteVoiceoverSource, normalizeTranslatedVoiceover } from './studio/studioVoiceoverRules';
 import { buildCues, confirmedNarrationForTimeRange, parsePronunciationRules, renderSafeCues } from './studio/studioSubtitleCues';
 export { confirmedNarrationForTimeRange } from './studio/studioSubtitleCues';
+import { buildReferenceSpeechPlan, confirmReferenceSpeechEdits } from './studio/studioReferenceSpeechPlan';
+export { buildReferenceSpeechPlan, confirmReferenceSpeechEdits, referenceProductSlots, type ReferenceSpeechPlan } from './studio/studioReferenceSpeechPlan';
+import { fitStoryboardSlotsToDuration, fitTimelineToVoiceoverCues, followAdoptedDigitalHumanSlotDurations, type StoryboardSlot } from './studio/studioTimelineFitting';
+export { fitStoryboardSlotsToDuration, fitTimelineToVoiceover, fitTimelineToVoiceoverCues, followAdoptedDigitalHumanSlotDurations, type StoryboardSlot } from './studio/studioTimelineFitting';
+import type { VideoKickoff } from './studio/studioVideoKickoff';
+export type { VideoKickoff } from './studio/studioVideoKickoff';
 import { normalizeBenchmarkAnalysisSnapshot, type BenchmarkAnalysis } from '../../shared/benchmarkAnalysis';
 import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission';
 import { reconcileStudioProductionSpec } from '../../shared/studioProductionContract';
@@ -474,16 +480,6 @@ function mergeClipLists(primary: Clip[], fallback: Clip[]): Clip[] {
   return Array.from(byId.values());
 }
 
-export interface StoryboardSlot {
-  id: string;
-  /** Immutable source-task identity; unlike `id`, it survives Studio reordering. */
-  sourceShotId?: string;
-  time: string;
-  start: number;
-  end: number;
-  title: string;
-  detail: string;
-}
 type StoryboardSourceMode = 'auto' | 'online' | 'local' | 'ai' | 'hybrid';
 type VariationStrategy = 'remix' | 'recreate' | 'hybrid';
 interface StoryboardSourcePlan {
@@ -735,197 +731,6 @@ export function studioSpecHasCompiledStoryboard(spec: Record<string, unknown>): 
     || (Array.isArray(spec.shootingSlots) && spec.shootingSlots.length > 0);
 }
 
-/** Keep the source ASR sentence order while the observed visual cuts define production shots. */
-export function referenceProductSlots(kickoff: VideoKickoff | null): Array<{ shotId: string; sourceLabel: string; time: string; visual: string }> {
-  return (kickoff?.referenceAnalysis?.details || []).flatMap((detail, index) => {
-    const range = parseCueRange(detail.time);
-    if (!range || index === 0 || range.end - range.start > 2.5
-      || !/mask|marks|cream|foundation|essence|oil|shampoo|面膜|修护|美白|粉底|精华|按摩|洗发/i.test(detail.subtitle || '')
-      || /实验服|工人|灌装|传送带|试剂|设备|实验台|生产线/.test((detail.visual || '').slice(0, 45))) return [];
-    return [{ shotId: detail.shotId || `reference-shot-${index + 1}`, sourceLabel: detail.subtitle?.trim() || `原片产品 ${index + 1}`, time: detail.time, visual: detail.visual || '' }];
-  });
-}
-
-type ReferenceProductMapping = { shotId: string; sourceTerm: string; productId: string; productLabel: string };
-type ReferenceBrandMapping = { sourceTerm: string; brandLabel: string };
-
-export interface ReferenceSpeechPlan {
-  script: string;
-  lines: Array<{ id: string; source: string; draft: string; time: string; sourcePrecision?: string; productTerms?: string[]; words?: Array<{start: number; end: number; text: string}>; visuals: Array<{ time: string; label: string; shotId?: string }> }>;
-  error?: string;
-  fallbackMode?: 'enterprise_script_or_silent_subtitle';
-  notice?: string;
-}
-
-export function buildReferenceSpeechPlan(kickoff: VideoKickoff | null, productMappings: ReferenceProductMapping[] = [], brandMapping?: ReferenceBrandMapping): ReferenceSpeechPlan {
-  const details = kickoff?.referenceAnalysis?.details || [];
-  if (!details.length) return { script: '', lines: [], error: '参考视频尚无可用的画面切点。' };
-  const lines = new Map<string, { id: string; source: string; draft: string; time: string; sourcePrecision?: string; productTerms?: string[]; words?: Array<{start: number; end: number; text: string}>; visuals: Array<{ time: string; label: string; shotId?: string }> }>();
-  const shotRows = details.map((shot, shotIndex) => {
-    const range = parseCueRange(shot.time);
-    if (!range) return null;
-    const ownerId = shot.shotId || `shot-${shotIndex + 1}`;
-    const spoken: string[] = [];
-    for (const [lineIndex, line] of (shot.speechLines || []).entries()) {
-      if (line.narrationOwnerShotId && line.narrationOwnerShotId !== ownerId) continue;
-      const source = String(line.referenceText || '').trim();
-      const draft = productMappings.length || brandMapping?.sourceTerm
-        ? replaceReferenceIdentities(source, productMappings, brandMapping)
-        : String(line.draftText || source).trim();
-      if (!source || !draft) continue;
-      const id = line.lineId || `${ownerId}:${lineIndex}`;
-      if (lines.has(id)) continue;
-      const start = Number(line.sourceStartSeconds);
-      const end = Number(line.sourceEndSeconds);
-      const time = Number.isFinite(start) && Number.isFinite(end) && end > start
-        ? `${start.toFixed(2)}–${end.toFixed(2)}s` : `${range.start.toFixed(2)}–${range.end.toFixed(2)}s`;
-      const visualShots = details.filter(item => (item.speechLines || []).some(speech => speech.lineId === id));
-      lines.set(id, { id, source, draft, time, sourcePrecision: line.sourcePrecision, productTerms: kickoff?.referenceAnalysis?.narrationProducts || productMappings.map(mapping => mapping.sourceTerm), words: line.sourceWords, visuals: visualShots.map(item => ({ shotId: item.shotId, time: item.time, label: item.visual || item.shot || '画面待分析' })) });
-      spoken.push(draft);
-    }
-    const mappedProduct = productMappings.find(mapping => mapping.shotId === ownerId);
-    return `[${range.start.toFixed(2)}s-${range.end.toFixed(2)}s]\n画面：${shot.visual || shot.shot || '按参考视频画面'}\n${mappedProduct ? `目标产品：${mappedProduct.productLabel}\n` : ''}镜头功能：${shot.purpose || '沿用参考视频表达目的'}\n口播：${spoken.join(' ') || '无'}`;
-  }).filter((row): row is string => Boolean(row));
-  if (!lines.size) {
-    const enterpriseCaption = [...new Set([
-      ...productMappings.map(mapping => mapping.productLabel.trim()),
-      brandMapping?.brandLabel.trim() || '',
-    ].filter(Boolean))].join(' · ');
-    const silentScript = shotRows.map(row => `${row}\n字幕：${enterpriseCaption || '无'}`).join('\n\n');
-    if (!silentScript.trim()) return { script: '', lines: [], error: '参考视频缺少可用的真实画面切点，暂不能建立分镜。' };
-    return {
-      script: silentScript,
-      lines: [],
-      fallbackMode: 'enterprise_script_or_silent_subtitle',
-      notice: `参考视频没有可验证的原片口播，已改用${enterpriseCaption ? '企业自有产品字幕' : '无口播字幕'}方案；仅沿用真实画面切点，不推断或伪造原片台词。`,
-    };
-  }
-  const unmatched = productMappings.filter(mapping => mapping.sourceTerm.trim()
-    && ![...lines.values()].some(line => line.source.toLocaleLowerCase().includes(mapping.sourceTerm.trim().toLocaleLowerCase())));
-  if (unmatched.length) return { script: shotRows.join('\n\n'), lines: [...lines.values()],
-    error: `${unmatched.map(mapping => mapping.sourceTerm).join('、')} 未在原片口播中识别到；请核对产品词后再生成配音。` };
-  return { script: shotRows.join('\n\n'), lines: [...lines.values()] };
-}
-
-/** Apply approved narration edits without rebuilding or dropping visual shots. */
-export function confirmReferenceSpeechEdits(plan: ReturnType<typeof buildReferenceSpeechPlan>, confirmedLines: Array<{ id: string; source: string; draft: string; excludedShotIds?: string[] }>): ReturnType<typeof buildReferenceSpeechPlan> {
-  if (!confirmedLines.length) throw new Error('没有可确认的新口播。');
-  if (confirmedLines.some(item => !item.draft.trim() || !plan.lines.some(line => line.id === item.id && line.source === item.source))) throw new Error('口播来源已变化，请重新确认新口播。');
-  const kept = plan.lines.filter(line => confirmedLines.some(item => item.id === line.id));
-  const deleted = plan.lines.filter(line => !confirmedLines.some(item => item.id === line.id));
-  const replacements = plan.lines.map(line => ({ original: line.draft, edited: confirmedLines.find(item => item.id === line.id)?.draft.trim() || '' }));
-  const expression = new RegExp(replacements.map(item => item.original).filter(Boolean).sort((a,b) => b.length-a.length).map(value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
-  const excludedIds = new Set(confirmedLines.flatMap(line => line.excludedShotIds || []));
-  const excludedTimes = new Set(plan.lines.flatMap(line => line.visuals).filter(visual => excludedIds.has((visual as { shotId?: string }).shotId || '')).map(visual => visual.time));
-  const removedTimes = new Set(deleted.flatMap(line => line.visuals.map(visual => visual.time)));
-  const keptTimes = new Set(kept.flatMap(line => line.visuals.map(visual => visual.time)));
-  const script = plan.script.split('\n\n').filter(block => {
-    const range = parseCueRange(block.split('\n')[0]);
-    return ![...excludedTimes].some(time => { const excluded = parseCueRange(time); return excluded && range && excluded.start === range.start && excluded.end === range.end; }) && ![...removedTimes].some(time => { const removed = parseCueRange(time); return removed && range && removed.start === range.start && removed.end === range.end && !keptTimes.has(time); });
-  }).join('\n\n').replace(/^口播：(.*)$/gm, (_row, speech: string) => `口播：${speech.replace(expression, match => replacements.find(item => item.original === match)?.edited ?? match).trim() || '无'}`);
-  if (!script.trim()) throw new Error('至少保留一个独立镜头后再进入素材匹配。');
-  return { ...plan, script, lines: kept.map(line => ({ ...line, visuals: line.visuals.filter(visual => !excludedIds.has(visual.shotId || '')), draft: confirmedLines.find(item => item.id === line.id)!.draft.trim() })) };
-}
-
-/** Keep every storyboard shot, but make each language version end with its real voiceover. */
-export function fitTimelineToVoiceover<T extends {
-  trimStart?: number;
-  trimEnd?: number;
-  speed?: number;
-  targetStart?: number;
-  targetEnd?: number;
-  targetDuration: number;
-}>(timeline: T[], voiceoverDuration: number): T[] {
-  const sourceDuration = timeline.reduce((sum, item) => sum + Math.max(0, Number(item.targetDuration) || 0), 0);
-  if (!timeline.length || !Number.isFinite(voiceoverDuration) || voiceoverDuration <= 0 || sourceDuration <= 0) return timeline;
-  // A shorter voiceover may end before the visuals, but must not compress an
-  // approved storyboard. Only extend the visual timeline when narration needs
-  // more room so captions and speech are not cut off.
-  if (voiceoverDuration <= sourceDuration) return timeline;
-  const minimumShotDuration = Math.min(0.5, voiceoverDuration / timeline.length);
-  const scale = voiceoverDuration / sourceDuration;
-  let cursor = 0;
-  return timeline.map((item, index) => {
-    const isLast = index === timeline.length - 1;
-    const remainingShots = timeline.length - index - 1;
-    const remainingRoom = Math.max(minimumShotDuration, voiceoverDuration - cursor - remainingShots * minimumShotDuration);
-    const targetDuration = isLast
-      ? Math.max(minimumShotDuration, voiceoverDuration - cursor)
-      : Math.min(remainingRoom, Math.max(minimumShotDuration, item.targetDuration * scale));
-    const targetStart = cursor;
-    cursor += targetDuration;
-    const sourceClipDuration = Math.max(0, (Number(item.trimEnd) || 0) - (Number(item.trimStart) || 0));
-    return {
-      ...item,
-      targetStart: +targetStart.toFixed(3),
-      targetEnd: +(isLast ? voiceoverDuration : cursor).toFixed(3),
-      targetDuration: +targetDuration.toFixed(3),
-      speed: sourceClipDuration > 0 ? Math.max(0.25, Math.min(4, sourceClipDuration / targetDuration)) : item.speed,
-    };
-  });
-}
-
-/** Align one narration cue with one storyboard shot for each language version. */
-export function fitTimelineToVoiceoverCues<T extends {
-  trimStart?: number;
-  trimEnd?: number;
-  speed?: number;
-  targetStart?: number;
-  targetEnd?: number;
-  targetDuration: number;
-}>(timeline: T[], voiceoverDuration: number, cues?: SubCue[]): T[] {
-  if (!cues?.length || cues.length !== timeline.length) return fitTimelineToVoiceover(timeline, voiceoverDuration);
-  if (!Number.isFinite(voiceoverDuration) || voiceoverDuration <= 0) return timeline;
-  const boundaries = [0, ...cues.slice(1).map(cue => Number(cue.start)), voiceoverDuration];
-  if (boundaries.some((value, index) => !Number.isFinite(value) || value < 0 || (index > 0 && value <= boundaries[index - 1]))) {
-    return fitTimelineToVoiceover(timeline, voiceoverDuration);
-  }
-  return timeline.map((item, index) => {
-    const targetStart = boundaries[index];
-    const targetEnd = boundaries[index + 1];
-    const targetDuration = targetEnd - targetStart;
-    const sourceClipDuration = Math.max(0, (Number(item.trimEnd) || 0) - (Number(item.trimStart) || 0));
-    return {
-      ...item,
-      targetStart: +targetStart.toFixed(3),
-      targetEnd: +targetEnd.toFixed(3),
-      targetDuration: +targetDuration.toFixed(3),
-      speed: sourceClipDuration > 0 ? Math.max(0.25, Math.min(4, sourceClipDuration / targetDuration)) : item.speed,
-    };
-  });
-}
-
-export function fitStoryboardSlotsToDuration(slots: StoryboardSlot[], duration: number): StoryboardSlot[] {
-  const sourceDuration = slots.reduce((max, slot) => Math.max(max, slot.end), 0);
-  if (!slots.length || !Number.isFinite(duration) || duration <= 0 || sourceDuration <= 0) return slots;
-  if (duration <= sourceDuration) return slots;
-  const scale = duration / sourceDuration;
-  return slots.map((slot, index) => {
-    const start = index === 0 ? 0 : slot.start * scale;
-    const end = index === slots.length - 1 ? duration : slot.end * scale;
-    return { ...slot, start: +start.toFixed(3), end: +end.toFixed(3), time: `${start.toFixed(1)}s-${end.toFixed(1)}s` };
-  });
-}
-
-export function followAdoptedDigitalHumanSlotDurations(
-  slots: StoryboardSlot[], assignments: Record<string, string>, productions: Record<string, ShotProduction>, materialDurations: Map<string, number>,
-  assemblyId: string, persistedShotIds: Record<string, string>, digitalHumanMaterialIds: ReadonlySet<string> = new Set(),
-): StoryboardSlot[] {
-  let cursor = slots[0]?.start || 0;
-  return slots.map(slot => {
-    const materialId = assignments[slot.id] || '';
-    const persistedShotId = persistedShotIds[slot.id] || slot.id;
-    const shot = productions[`${assemblyId}:${persistedShotId}`];
-    const adoptedAvatar = Boolean(shot?.candidates.some(candidate => candidate.id === shot.adoptedId
-      && candidate.source === 'avatar' && candidate.materialId === materialId));
-    const measured = adoptedAvatar || digitalHumanMaterialIds.has(materialId) ? materialDurations.get(materialId) : undefined;
-    const length = measured && measured > 0 ? measured : Math.max(0.5, slot.end - slot.start);
-    const start = cursor, end = cursor + length; cursor = end;
-    return { ...slot, start: +start.toFixed(3), end: +end.toFixed(3), time: `${start.toFixed(1)}s-${end.toFixed(1)}s` };
-  });
-}
-
-
 // 封面字体（系统字体栈，预览与 SVG 一致）
 const COVER_FONTS: { id: CoverStyle['font']; label: string; css: string }[] = [
   { id: 'sans',    label: '黑体', css: `'PingFang SC','Microsoft YaHei',ui-sans-serif,sans-serif` },
@@ -1176,65 +981,6 @@ interface EnterpriseProfileLite {
   strategy?: { focusProducts?: string; focusMarkets?: string };
   customers?: { targetProfiles?: string };
   socialStrategy?: { enabledRoutes?: Array<'oem_odm' | 'wholesale_distribution' | 'consumer_retail'>; routeStrategies?: Record<string, { targetBuyerRoles?: string[]; primaryCta?: string }> };
-}
-
-export interface VideoKickoff {
-  source?: 'inspiration_analysis' | 'inspiration_image_post' | 'seedance_video' | string;
-  script?: string;
-  initialGeneration?: StudioScriptResult;
-  scriptType?: 'voiceover' | 'storyboard';
-  language?: string;
-  productInfo?: string;
-  actionContext?: { source?: string; recommendation?: string; workflowRunId?: string; workflowTaskId?: string };
-  referenceAnalysis?: {
-    narrationProducts?: string[]; narrationBrands?: string[];
-    /** Canonical Director handoff. New Inspiration entries must carry this
-     * snapshot so Studio evaluates the exact same evidence and shot rules. */
-    benchmarkAnalysis?: BenchmarkAnalysis;
-    title?: string;
-    narrationSourceStatus?: 'asr_aligned' | 'missing_source_asr';
-    visualStyle?: string;
-    coreEmotion?: string;
-    details?: { time: string; shotId?: string; personContinuityId?: string; observedPresenterRole?: import('../../shared/contracts/presenterShotRecognition').ObservedPresenterRole; firstFrameRef?: string; firstFrameSeconds?: number; salesPresenterConfirmed?: boolean; environment?: string; shot: string; camera: string; visual: string; subtitle?: string; audio?: string; note?: string; purpose?: string; dialogue?: string; speechLines?: Array<{ lineId?: string; referenceText: string; draftText?: string; sourceStartSeconds: number; sourceEndSeconds: number; sourcePrecision?: 'coarse' | 'phrase'; sourceWords?: Array<{start: number; end: number; text: string}>; sourceProvenance?: string; replacedEntityTypes?: string[]; narrationOwnerShotId?: string; visualShotIds?: string[] }>; onScreenText?: string; ambientSound?: string; bgm?: string; soundEffects?: string[]; beats?: Array<{ time?: string; action?: string; dialogue?: string; onScreenText?: string }>; startState?: string; endState?: string; persistentState?: string; authenticity?: string; confidence?: number; needsReview?: boolean }[];
-  };
-  generatedVideo?: {
-    id?: string;
-    title?: string;
-    url?: string;
-    poster?: string;
-    duration?: number;
-    createdAt?: string;
-    material?: Material;
-    width?: number;
-    height?: number;
-    aspectRatio?: number;
-  };
-  materialRole?: 'hook';
-  video?: {
-    title?: string;
-    referenceRecordId?: string;
-    platform?: string;
-    contentFormat?: 'video' | 'image';
-    videoUrl?: string;
-    thumbnail?: string;
-    duration?: number;
-    width?: number;
-    height?: number;
-    aspectRatio?: number;
-    sourceUrl?: string;
-    aiAnalysis?: {
-      materialUrl?: string; materialPoster?: string; caption?: string;
-      imageEvidence?: {
-        version?: number;
-        status?: string;
-        observedFacts?: Array<Record<string, unknown>>;
-        carouselFlow?: Array<Record<string, unknown>>;
-        copyEvidence?: Record<string, unknown>;
-        reusableModules?: Array<Record<string, unknown>>;
-        uncertainties?: string[];
-      };
-    };
-  };
 }
 
 type ReferenceVoiceStrength = 'light' | 'balanced' | 'strong';
