@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const assistantFeedSource = fs.readFileSync('server/digitalEmployees/assistantDecisionFeedService.ts', 'utf8');
 const routeStart = "digitalEmployeesRouter.post('/goals/:goalId/rebuild-from-latest-facts'";
 const begin = source.indexOf(routeStart);
 assert.notEqual(begin, -1, 'missing latest-enterprise-facts goal rebuild route');
@@ -60,7 +61,8 @@ assert.notEqual(approvalEnd, -1);
 assert.match(source.slice(approvalStart, approvalEnd), /weeklyGoalFactRebuildTargetCommitted/, 'a partially written replacement must not be activated before its source is durably cancelled');
 assert.match(source, /async function committedDigitalEmployeeOperatingGoals[\s\S]*weeklyGoalFactRebuildTargetCommitted/, 'overview and assistant goal selection must isolate uncommitted replacement targets');
 assert.match(source, /const operatingGoals = await committedDigitalEmployeeOperatingGoals\(tenantId, goalResult\.items\)/, 'overview must not select an uncommitted replacement as the current plan');
-assert.match(source, /const goals = await committedDigitalEmployeeOperatingGoals\(tenantId, goalResult\.items\)/, 'assistant feeds must not expose uncommitted replacement targets');
+assert.match(source, /createAssistantDecisionFeedForRequest\(\{[\s\S]*?committedGoals: committedDigitalEmployeeOperatingGoals/, 'assistant feed must use the committed-goal boundary');
+assert.match(assistantFeedSource, /const goals = await committedGoals\(tenantId, goalResult\.items\)/, 'assistant feeds must not expose uncommitted replacement targets');
 assert.match(source, /store\.compareAndSwap\?\.\(COLLECTION\.plans, existingPlan\.id[\s\S]*status: 'approved'/, 'approval must win the exact source-plan CAS before activating a goal');
 assert.ok(
   source.slice(approvalStart, approvalEnd).indexOf("store.compareAndSwap?.(COLLECTION.plans")

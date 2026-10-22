@@ -15,6 +15,7 @@ import { DigitalEmployeeApiError } from '../lib/digitalEmployeeApi.js';
 import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
+const onboardingStepsSource = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeOnboardingSteps.tsx', 'utf8');
 const onboardingProductImportSource = fs.readFileSync('src/components/smartBusiness/onboardingProductImport.ts', 'utf8');
 const batchFollowupSource = fs.readFileSync('src/components/smartBusiness/BatchFollowupTruthPanel.tsx', 'utf8');
 const todayFocusSource = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeTodayFocusPanel.tsx', 'utf8');
@@ -76,17 +77,17 @@ const digitalEmployeeRouteSource = fs.readFileSync('server/routes/digitalEmploye
 const enterpriseRouteSource = fs.readFileSync('server/routes/enterprise.ts', 'utf8');
 const enterpriseProfileContractsSource = fs.readFileSync('server/routes/enterpriseProfileContracts.ts', 'utf8');
 const enterpriseProfileStoreSource = fs.readFileSync('server/routes/enterpriseProfileStore.ts', 'utf8');
-const onboardingGuideFrameSource = pageSource.slice(
-  pageSource.indexOf('const applicationGuideSteps'),
-  pageSource.indexOf('function OnboardingPanel'),
+const onboardingGuideFrameSource = onboardingStepsSource.slice(
+  onboardingStepsSource.indexOf('const applicationGuideSteps'),
+  onboardingStepsSource.indexOf('export function OnboardingEnterpriseStep'),
 );
-const firstOnboardingSource = pageSource.slice(
-  pageSource.indexOf('if (mode === "first" && !profileConfirmed)'),
-  pageSource.indexOf('if (mode === "first" && profileConfirmed && !productConfirmed)'),
+const firstOnboardingSource = onboardingStepsSource.slice(
+  onboardingStepsSource.indexOf('export function OnboardingEnterpriseStep'),
+  onboardingStepsSource.indexOf('export function OnboardingProductsStep'),
 );
-const productTableOnboardingSource = pageSource.slice(
-  pageSource.indexOf('if (mode === "first" && profileConfirmed && !productConfirmed)'),
-  pageSource.indexOf('if (mode === "first" && profileConfirmed && productConfirmed && !stageConfirmed)'),
+const productTableOnboardingSource = onboardingStepsSource.slice(
+  onboardingStepsSource.indexOf('export function OnboardingProductsStep'),
+  onboardingStepsSource.indexOf('export function OnboardingStageStep'),
 );
 const currentPlanSource = pageSource.slice(
   pageSource.indexOf('<div aria-label="当前周计划"'),
@@ -532,7 +533,7 @@ assert.match(onboardingProductImportSource, /unassignedImages = documentResult\.
 assert.match(pageSource, /未能确认产品归属的图片已存入企业素材库，需在产品档案核对绑定/, 'unverified document pages must not be silently bound as product images');
 assert.match(onboardingProductImportSource, /productsFromLabeledText\(await readProductDiscoveryFile\(file\)\)/, 'product onboarding must parse labeled TXT product fields');
 assert.doesNotMatch(productTableOnboardingSource, /确认重点产品|按资料完整度推荐产品|本期暂无产品，先继续|快速添加产品|Agent 设置/, 'product-table onboarding must only accept an imported or existing table, without focus-product or Agent setup');
-assert.match(pageSource, /primaryLabel=\{allowInitialPlan \? "生成推荐计划" : "完成引导并保存"\}/, 'the fourth onboarding step must lead into the recommended initial operating plan');
+assert.match(onboardingStepsSource, /primaryLabel=\{allowInitialPlan \? ['"]生成推荐计划['"] : ['"]完成引导并保存['"]\}/, 'the fourth onboarding step must lead into the recommended initial operating plan');
 assert.match(pageSource, /<InitialOperatingPlanDialog[\s\S]{0,1200}onConfirm=\{plan => void completeMinimalOnboarding\(plan\)\}/, 'the recommended plan must return the confirmed plan to onboarding');
 assert.match(initialOperatingPlanSource, /validateInitialPlan\(plan\)/, 'the recommended plan dialog must validate the user-confirmed operating plan');
 for (const operation of ['digitalEmployeeApi.createGoal', 'digitalEmployeeApi.savePackage', 'digitalEmployeeApi.startInitialPreparation']) {
@@ -678,7 +679,8 @@ assert.match(pageSource, /setWorkspaceView\(launchedStatus\?\.phase === ["']runn
 assert.match(pageSource, /scrollIntoView\([\s\S]{0,120}behavior:\s*getScrollBehavior\(\)/, 'first-run transitions must focus the next required panel while respecting reduced-motion preferences');
 assert.match(pageSource, /digitalEmployeeOnboarding:\s*\{\s*profileConfirmedAt:/, 'the first-step confirmation must be persisted instead of living only in component memory');
 assert.match(pageSource, /setProductConfirmed\(true\)/, 'confirming the product table must advance to the social-stage step');
-assert.match(pageSource, /<OnboardingGuideFrame[\s\S]{0,160}step=\{3\}[\s\S]{0,160}title="你的社媒经营目前到了哪一步？"[\s\S]{0,400}primaryLabel="确认阶段，下一步"/, 'the social operating stage must be the third guided step');
+assert.match(onboardingStepsSource, /<OnboardingGuideFrame[\s\S]{0,160}step=\{3\}[\s\S]{0,160}title="你的社媒经营目前到了哪一步？"[\s\S]{0,400}primaryLabel="确认阶段，下一步"/, 'the social operating stage must be the third guided step');
+assert.match(pageSource, /<OnboardingStageStep[\s\S]{0,420}onConfirm=\{stageId => void confirmSocialStage\(stageId\)\}/, 'the page must keep the persisted social stage handler wired to the third step');
 assert.match(pageSource, /saveSocialContentStage\(stageId\)[\s\S]{0,180}!savedStage\.synced[\s\S]{0,180}setContentStage\(savedStage\.profile\.id\)[\s\S]{0,120}setStageConfirmed\(true\)/, 'the third step may advance only after its social stage is confirmed by persistence');
 assert.match(pageSource, /completeMinimalOnboarding[\s\S]{0,200}!stageConfirmed\s*\|\|\s*!contentStage[\s\S]{0,2200}minimalOnboarding:\s*true/, 'minimal onboarding may complete only after a persisted social stage exists');
 assert.match(pageSource, /profile\.digitalEmployeeOnboarding\?\.profileConfirmedAt[\s\S]{0,120}loadedProfile\.companyName[\s\S]{0,120}loadedProfile\.brandName[\s\S]{0,80}setProfileConfirmed\(true\)/, 'persisted onboarding progress may restore step two only after both names exist');
@@ -702,27 +704,29 @@ assert.doesNotMatch(enterpriseFactsRecoverySource, /digitalEmployeeApi\.(?:saveP
 assert.match(mutationActionSource, /catch \(actionError\)[\s\S]{0,180}recoverEnterpriseFactsChanged\(actionError, actionGoal\)[\s\S]{0,80}return null/, 'mutations must stop after handled fact recovery instead of replaying the original action');
 assert.match(confirmWeeklyPlanSource, /catch \(actionError\)[\s\S]{0,180}recoverEnterpriseFactsChanged\(actionError, goal\)[\s\S]{0,40}return/, 'plan confirmation must stop after rebuilding and must not auto-start the replacement plan');
 assert.doesNotMatch(pageSource, /经营包未保存，请检查页面提示后重试|未能启动，请检查账号、资料和授权范围后重试/, 'a handled rebuild must not be replaced by the legacy red save or launch blocker');
-assert.match(pageSource, /OnboardingGuideFrame[\s\S]{0,180}step=\{4\}[\s\S]{0,180}title="最后，确认这轮视频怎么制作"/, 'the production contract must remain the fourth guided step');const enterpriseStepIndex = pageSource.indexOf('title="先告诉我们你的企业和品牌"');
-const publicContactIndex = pageSource.indexOf('你想用哪种联系方式让客户找到你？');
-const productStepIndex = pageSource.indexOf('title="这次想重点推广哪些产品？"');
+assert.match(onboardingStepsSource, /OnboardingGuideFrame[\s\S]{0,180}step=\{4\}[\s\S]{0,180}title="最后，确认这轮视频怎么制作"/, 'the production contract must remain the fourth guided step');
+assert.match(pageSource, /<OnboardingPresenterStep[\s\S]{0,750}onSkip=\{\(\) => void completeMinimalOnboarding\(undefined, "local_video_only"\)\}/, 'the page must keep the explicit local-material skip behavior');
+const enterpriseStepIndex = onboardingStepsSource.indexOf('title="先告诉我们你的企业和品牌"');
+const publicContactIndex = onboardingStepsSource.indexOf('你想用哪种联系方式让客户找到你？');
+const productStepIndex = onboardingStepsSource.indexOf('title="这次想重点推广哪些产品？"');
 assert.ok(enterpriseStepIndex >= 0 && enterpriseStepIndex < publicContactIndex && publicContactIndex < productStepIndex, 'public contact and CTA must live in the first enterprise-and-brand step');
-assert.equal(pageSource.match(/你想用哪种联系方式让客户找到你？/g)?.length, 1, 'public contact and CTA must not remain duplicated in the production step');
+assert.equal(onboardingStepsSource.match(/你想用哪种联系方式让客户找到你？/g)?.length, 1, 'public contact and CTA must not remain duplicated in the production step');
 assert.doesNotMatch(firstOnboardingSource, /公开联系方式与行动号召|只填写允许公开出现在视频里的信息/, 'the first step must not retain the removed internal-facing contact copy');
-assert.doesNotMatch(pageSource, /title="(?:填写企业与品牌|导入或确认产品表|选择社媒经营阶段|确认生产资料与数字人)"/, 'onboarding titles must stay user-facing');
-assert.doesNotMatch(pageSource, /本轮人物策略|未完成数字人物和声音授权时，系统会在选择参考视频前排除真人口播路径/, 'the presenter step must not repeat internal strategy copy below its user-facing title');
-assert.match(pageSource, /<AntRadio\.Group[\s\S]*<EnterprisePresenters initialConfiguration/, 'the fourth step must retain only the production presenter decision and setup');
-assert.match(pageSource, /<Form[^>]+layout="vertical"[^>]+aria-label="企业与品牌资料"/, 'enterprise-and-brand onboarding must use the themed Ant form contract');
-assert.match(pageSource, /<Form[^>]+layout="vertical"[^>]+aria-label="生产开工资料"/, 'production onboarding must use the themed Ant form contract');
+assert.doesNotMatch(onboardingStepsSource, /title="(?:填写企业与品牌|导入或确认产品表|选择社媒经营阶段|确认生产资料与数字人)"/, 'onboarding titles must stay user-facing');
+assert.doesNotMatch(onboardingStepsSource, /本轮人物策略|未完成数字人物和声音授权时，系统会在选择参考视频前排除真人口播路径/, 'the presenter step must not repeat internal strategy copy below its user-facing title');
+assert.match(onboardingStepsSource, /<AntRadio\.Group[\s\S]*<EnterprisePresenters initialConfiguration/, 'the fourth step must retain only the production presenter decision and setup');
+assert.match(onboardingStepsSource, /<Form[^>]+layout="vertical"[^>]+aria-label="企业与品牌资料"/, 'enterprise-and-brand onboarding must use the themed Ant form contract');
+assert.match(onboardingStepsSource, /<Form[^>]+layout="vertical"[^>]+aria-label="生产开工资料"/, 'production onboarding must use the themed Ant form contract');
 const enterpriseOnboardingFormTag = firstOnboardingSource.match(/<Form\b[^>]*aria-label="企业与品牌资料"[^>]*>/)?.[0] ?? '';
 assert.ok(enterpriseOnboardingFormTag, 'enterprise-and-brand onboarding form must remain present');
 assert.doesNotMatch(enterpriseOnboardingFormTag, /rounded-lg|\bborder\b|bg-surface|\bp-5\b/, 'enterprise onboarding must not recreate the removed outer card');
-assert.match(pageSource, /<Select[\s\S]{0,220}id="production-contact-kind"/, 'public contact kind must use the accessible Ant Select');
-assert.match(pageSource, /<Input[\s\S]{0,160}id="production-contact-value"[\s\S]{0,320}aria-required=/, 'public contact value must expose semantic required state');
+assert.match(onboardingStepsSource, /<Select[\s\S]{0,220}id="production-contact-kind"/, 'public contact kind must use the accessible Ant Select');
+assert.match(onboardingStepsSource, /<Input[\s\S]{0,160}id="production-contact-value"[\s\S]{0,320}aria-required=/, 'public contact value must expose semantic required state');
 assert.match(pageSource, /const invalidProductionContact[\s\S]{0,180}productionContactValue\.trim\(\)[\s\S]{0,80}productionCta\.trim\(\)[\s\S]{0,180}saveEnterpriseProfile[\s\S]{0,120}invalidProductionContact/, 'the first-step save must enforce complete public contact and CTA values when display is enabled');
-assert.match(pageSource, /<AntRadio\.Group[\s\S]{0,300}aria-label="出镜方式"[\s\S]{0,300}<AntRadio value="digital_presenter"[^>]*rounded-lg border/, 'presenter policy must use accessible themed Ant choice cards');
-assert.doesNotMatch(pageSource, /<select[^>]+value=\{productionContactKind\}|<input[^>]+name="production-presenter-policy"/, 'production onboarding must not reintroduce parallel native controls');
-assert.match(pageSource, /onSkip=\{\(\) => \{\s*void completeMinimalOnboarding\(undefined, "local_video_only"\);\s*\}\}/, 'choosing local-only production must preserve the contact preference already confirmed with enterprise and brand details');
-assert.match(pageSource, /applicationGuideSteps[\s\S]{0,160}label: "企业信息"[\s\S]{0,120}label: "推广产品"[\s\S]{0,120}label: "经营阶段"[\s\S]{0,120}label: "视频制作"/, 'Ant Steps must expose the four guided steps in their required order');
+assert.match(onboardingStepsSource, /<AntRadio\.Group[\s\S]{0,300}aria-label="出镜方式"[\s\S]{0,300}<AntRadio value="digital_presenter"[^>]*rounded-lg border/, 'presenter policy must use accessible themed Ant choice cards');
+assert.doesNotMatch(onboardingStepsSource, /<select[^>]+value=\{productionContactKind\}|<input[^>]+name="production-presenter-policy"/, 'production onboarding must not reintroduce parallel native controls');
+assert.match(pageSource, /onSkip=\{\(\) => void completeMinimalOnboarding\(undefined, "local_video_only"\)\}/, 'choosing local-only production must preserve the contact preference already confirmed with enterprise and brand details');
+assert.match(onboardingStepsSource, /applicationGuideSteps[\s\S]{0,160}label: ['"]企业信息['"][\s\S]{0,120}label: ['"]推广产品['"][\s\S]{0,120}label: ['"]经营阶段['"][\s\S]{0,120}label: ['"]视频制作['"]/, 'Ant Steps must expose the four guided steps in their required order');
 assert.match(pageSource, /productionOnboarding[\s\S]{0,900}allowGeneratedVisuals:\s*false/, 'first-run production preferences must persist while legacy free visual generation remains disabled');
 assert.match(onboardingGuideFrameSource, /<LsFlowDialog[\s\S]{0,600}steps=\{applicationGuideSteps\.map/, 'the beginner guide must use the shared flow dialog and Ant Steps contract');
 assert.match(pageSource, /active && applicationGuideOpen/, 'the onboarding modal must not mount while the retained digital employee Activity is hidden');
