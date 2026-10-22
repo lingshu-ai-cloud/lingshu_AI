@@ -1,12 +1,15 @@
 import { DirectorVideoDetailPanel } from './inspiration/DirectorVideoDetailPanel';
 export { DirectorVideoDetailPanel } from './inspiration/DirectorVideoDetailPanel';
+import { MaterialUsageMark, MaterialUsagePanel } from './inspiration/MaterialUsageHistory';
+import { MaterialLibraryCardMedia } from './inspiration/MaterialLibraryCardMedia';
+export { materialPreviewImageSources } from './inspiration/MaterialLibraryCardMedia';
 import DirectorReviewWorkspace, { type DirectorReviewHandoff } from './inspiration/DirectorReviewWorkspace';
 import { AuthenticatedImage, AuthenticatedVideo } from './inspiration/InspirationMedia';
 export { AuthenticatedVideo, ThumbnailImage, VideoThumbnail } from './inspiration/InspirationMedia';
 import { analysisProgressIsActive } from './inspiration/VideoAnalysisProgressPanel';
 import { Alert, Button, Drawer, Form, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
 import LsPageHeader from './ui/LsPageHeader';
-import { LsLoadingState, LsMasonryGallery, LsMediaStateFrame } from './ui/LsExperiencePrimitives';
+import { LsLoadingState, LsMasonryGallery } from './ui/LsExperiencePrimitives';
 import { hasExactReferenceReview, parseExactReferenceReview, loadExactReferenceReview, exactReferenceReviewErrorMessage } from '../lib/exactReferenceReview';
 import BenchmarkAnalysisSections from './inspiration/BenchmarkAnalysisSections';
 import type { BenchmarkAnalysis } from '../../shared/benchmarkAnalysis';
@@ -16,10 +19,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   Search, Play, Sparkles, FileText, Layout as LayoutIcon,
   Clock, Globe, ChevronDown, X, Loader2,
-  Check, Copy, ArrowRight, Zap, LayoutGrid, List,
+  Check, Copy, ArrowRight, LayoutGrid, List,
   Lightbulb, Flame, Film,
   Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2, Music2,
-  SlidersHorizontal, Package, Star, Eye,
+  SlidersHorizontal, Package, Eye,
 } from 'lucide-react';
 import { studioApi, type Material } from '../lib/studioApi';
 import { matchMaterialsToFrames, shortenText } from './inspiration/inspirationFrameMatching';
@@ -70,8 +73,6 @@ import {
   ProductMaterialDetailDrawer,
   ProductMaterialGroupCard,
   materialBelongsToKnownProduct,
-  materialHasAuthoritativeAspectRatio,
-  materialIntrinsicAspectRatio,
   materialMatchesProduct,
   neutralProductSceneLabel,
   type ProductMaterialGroupProduct,
@@ -103,90 +104,6 @@ const MATERIAL_LIBRARY_FETCH_PAGE_SIZE = 100;
 const MATERIAL_PRODUCT_ALL = '__all_products__';
 const MATERIAL_PRODUCT_COMMON = '__enterprise_common__';
 const MATERIAL_PRODUCT_LINKED_REF = '__linked_product_ref__';
-
-function compactMetric(value: number | undefined): string {
-  const normalized = Number.isFinite(Number(value)) ? Number(value) : 0;
-  return new Intl.NumberFormat('zh-CN', { notation: normalized >= 10_000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(normalized);
-}
-
-function materialUsageRoleLabel(role: string): string {
-  return ({
-    three_second_hook: '前三秒钩子',
-    body: '正文画面',
-    proof: '证据画面',
-    cta: '行动引导',
-    cover: '封面',
-    generation_reference: '生成参考',
-  } as Record<string, string>)[role] || role;
-}
-
-function MaterialUsageMark({ material }: { material: Material }) {
-  const summary = material.usageSummary;
-  if (!summary || summary.totalUses < 1) return null;
-  return (
-    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border pt-2 text-[11px] font-semibold text-text-secondary" aria-label="素材使用记录">
-      <span>已使用 {summary.totalUses} 次</span>
-      {summary.hookUses > 0 ? <span className="inline-flex items-center gap-1 text-accent"><Zap size={11} aria-hidden="true" />前三秒 {summary.hookUses} 次</span> : null}
-    </div>
-  );
-}
-
-function MaterialUsagePanel({ material }: { material: Material }) {
-  const summary = material.usageSummary;
-  const stats = [
-    ['使用次数', compactMetric(summary?.totalUses)],
-    ['前三秒钩子', compactMetric(summary?.hookUses)],
-    ['已发布内容', compactMetric(summary?.publishedUses)],
-    ['累计播放', summary?.metrics.available.includes('views') ? compactMetric(summary.metrics.views) : '—'],
-  ];
-  return (
-    <section className="border-t border-border px-5 py-5" aria-labelledby="material-usage-history-title">
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h3 id="material-usage-history-title" className="ls-type-title-small text-text-primary">使用次数与历史表现</h3>
-          <p className="mt-1 ls-type-body-small text-text-muted">只统计已产出成品的真实使用；前三秒钩子单独追踪。</p>
-        </div>
-        {summary?.lastUsedAt ? <span className="ls-type-label-small text-text-muted">最近使用 {new Date(summary.lastUsedAt).toLocaleDateString('zh-CN')}</span> : null}
-      </div>
-      <dl className="mt-4 grid grid-cols-2 overflow-hidden rounded-lg border border-border bg-surface sm:grid-cols-4">
-        {stats.map(([label, value], index) => (
-          <div key={label} className={`px-4 py-3 ${index % 2 === 1 ? 'border-l border-border' : ''} ${index > 1 ? 'border-t border-border' : ''} ${index > 0 ? 'sm:border-l sm:border-border' : ''} ${index > 1 ? 'sm:border-t-0' : ''}`}>
-            <dt className="ls-type-label-small text-text-muted">{label}</dt>
-            <dd className="mt-1 text-xl font-semibold text-text-primary">{value}</dd>
-          </div>
-        ))}
-      </dl>
-      {summary?.history.length ? (
-        <div className="mt-4 divide-y divide-border rounded-lg border border-border bg-surface" aria-label="素材使用历史">
-          {summary.history.map(item => {
-            const performanceParts = [
-              item.metrics.available.includes('views') ? `${compactMetric(item.metrics.views)} 播放` : '',
-              item.metrics.available.some(key => ['likes', 'comments', 'shares'].includes(key)) ? `${item.metrics.engagementRate}% 互动` : '',
-              item.metrics.available.includes('leads') ? `${compactMetric(item.metrics.leads)} 条线索` : '',
-            ].filter(Boolean);
-            const performance = item.metricsStatus === 'synced'
-              ? performanceParts.join(' · ')
-              : item.metricsStatus === 'awaiting_sync' ? '已发布，等待平台数据回传' : '尚未发布';
-            return (
-              <article key={item.usageId} className="grid gap-2 px-4 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-                <div className="min-w-0">
-                  <p className="truncate ls-type-label-medium text-text-primary">{item.contentTitle}</p>
-                  <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 ls-type-label-small text-text-muted">
-                    <span>{new Date(item.usedAt).toLocaleDateString('zh-CN')}</span>
-                    {item.roles.map(role => <span key={`${item.usageId}-${role}`} className={role === 'three_second_hook' ? 'font-semibold text-accent' : ''}>{materialUsageRoleLabel(role)}</span>)}
-                  </div>
-                </div>
-                <p className={`ls-type-label-small ${item.metricsStatus === 'synced' ? 'text-text-primary' : 'text-text-muted'}`}>{performance}</p>
-              </article>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="mt-4 rounded-lg border border-dashed border-border bg-surface-2 px-4 py-8 text-center ls-type-body-small text-text-muted">这条素材还没有进入已完成的内容成品。</div>
-      )}
-    </section>
-  );
-}
 
 type ProductMaterialInventory = {
   materials: Material[];
@@ -386,106 +303,6 @@ function buildShootingNeeds(videos: TrendVideo[], materials: Material[]): Shooti
 function shootingCreationDate(value?: string): string {
   const timestamp = Date.parse(value || '');
   return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '待补录';
-}
-
-export function materialPreviewImageSources(material: Pick<Material, 'type' | 'poster' | 'url' | 'segments'>): string[] {
-  const candidates = [material.poster, ...(material.segments || []).map(segment => segment.poster), material.type === 'image' ? material.url : ''];
-  return Array.from(new Set(candidates.map(value => String(value || '').trim()).filter(Boolean)));
-}
-
-type MaterialCardMediaSource = 'image' | 'video';
-
-function MaterialCardMedia({ material, onRefresh, onNaturalAspectRatio }: { material: Material; onRefresh?: () => Promise<unknown>; onNaturalAspectRatio?: (ratio: number, source: MaterialCardMediaSource) => void }) {
-  const imageSources = materialPreviewImageSources(material);
-  const sourceIdentity = imageSources.join('|');
-  const [imageIndex, setImageIndex] = useState(0);
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [refreshing, setRefreshing] = useState(false);
-  useEffect(() => {
-    setImageIndex(0);
-    setState(imageSources.length || (material.type === 'video' && material.url) ? 'loading' : 'error');
-  }, [material.id, material.type, material.url, sourceIdentity, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
-  const imageSource = imageSources[imageIndex];
-  const videoFallback = material.type === 'video' && !imageSource && Boolean(material.url);
-  const failImage = () => {
-    if (imageIndex + 1 < imageSources.length) {
-      setImageIndex(index => index + 1);
-      setState('loading');
-    } else if (material.type === 'video' && material.url) {
-      setImageIndex(imageSources.length);
-      setState('loading');
-    } else setState('error');
-  };
-  return <div className="relative h-full w-full">
-    <LsMediaStateFrame state={state} label={state === 'error' ? '封面加载失败' : '正在加载封面'} className="h-full w-full bg-surface-2">
-      {imageSource ? <AuthenticatedImage key={`${imageSource}:${attempt}`} src={imageSource} alt={material.name} className="h-full w-full object-cover" onReady={() => setState('ready')} onError={failImage} onNaturalAspectRatio={ratio => onNaturalAspectRatio?.(ratio, 'image')} />
-        : videoFallback ? <AuthenticatedVideo key={`${material.url}:${attempt}`} apiUrl={material.url} loadOnMount previewFrame preload="auto" className="pointer-events-none h-full w-full bg-slate-950 object-cover" onReady={() => setState('ready')} onError={() => setState('error')} onLoadingChange={loading => loading && setState('loading')} onMetadata={metadata => { if (metadata.width > 0 && metadata.height > 0) onNaturalAspectRatio?.(metadata.width / metadata.height, 'video'); }} />
-          : null}
-    </LsMediaStateFrame>
-    {state === 'error' && <button type="button" disabled={refreshing} className="absolute bottom-3 left-1/2 z-20 inline-flex min-h-8 -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-white px-2.5 py-1.5 text-xs font-semibold text-text-secondary disabled:cursor-wait disabled:opacity-60" onClick={async event => {
-      event.stopPropagation();
-      setRefreshing(true);
-      try { await onRefresh?.(); }
-      finally { setAttempt(value => value + 1); setRefreshing(false); }
-    }}>
-      {refreshing && <Loader2 size={13} className="animate-spin" />}{refreshing ? '正在刷新' : '重新加载'}
-    </button>}
-  </div>;
-}
-
-function MaterialLibraryCardMedia({
-  material,
-  favoriting,
-  onRefresh,
-  onEdit,
-  onDelete,
-  onFavorite,
-  onPlay,
-}: {
-  material: Material;
-  favoriting: boolean;
-  onRefresh?: () => Promise<unknown>;
-  onEdit: () => void;
-  onDelete: () => void;
-  onFavorite: () => void;
-  onPlay: () => void;
-}) {
-  const [aspectRatio, setAspectRatio] = useState(() => materialIntrinsicAspectRatio(material));
-  useEffect(() => setAspectRatio(materialIntrinsicAspectRatio(material)), [material.aspectRatio, material.height, material.id, material.width]);
-  return (
-    <div className="relative bg-surface-2" style={{ aspectRatio }}>
-      <div className="absolute right-2 top-2 z-30 flex gap-1">
-        {material.canManage && <button type="button" aria-label={`编辑 ${material.name}`} title="编辑" onClick={onEdit} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-accent"><Pencil size={14} /></button>}
-        {material.canManage && <button type="button" aria-label={`删除 ${material.name}`} title="删除" onClick={onDelete} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-red-600"><Trash2 size={14} /></button>}
-        <button type="button" aria-label={`${isFavoriteMaterial(material) ? '取消收藏' : '收藏'} ${material.name}`} title={isFavoriteMaterial(material) ? '取消收藏' : '收藏'} onClick={onFavorite} disabled={favoriting}
-          className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow transition disabled:cursor-wait disabled:opacity-60 ${isFavoriteMaterial(material) ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-white/70 bg-white/95 text-text-secondary hover:text-amber-500'}`}>
-          {favoriting ? <Loader2 size={14} className="animate-spin" /> : <Star size={14} fill={isFavoriteMaterial(material) ? 'currentColor' : 'none'} />}
-        </button>
-      </div>
-      {material.type === 'video' || material.type === 'image' ? (
-        <MaterialCardMedia material={material} onRefresh={onRefresh} onNaturalAspectRatio={(ratio, source) => {
-          if (material.type === 'video' && source === 'image' && materialHasAuthoritativeAspectRatio(material)) return;
-          setAspectRatio(ratio);
-        }} />
-      ) : material.type === 'audio' ? (
-        <div className="flex h-full flex-col items-center justify-center gap-2 bg-surface-2 text-text-muted"><Music2 size={28} /><span className="text-xs font-bold">音频素材</span></div>
-      ) : (
-        <div className="flex h-full items-center justify-center text-text-muted"><Film size={22} /></div>
-      )}
-      {material.type === 'video' ? (
-        <button
-          type="button"
-          aria-label={`播放 ${material.name}`}
-          disabled={!material.url}
-          onClick={event => { event.stopPropagation(); onPlay(); }}
-          className="absolute left-1/2 top-1/2 z-20 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/65 text-white shadow-lg transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white disabled:hidden"
-        >
-          <Play size={19} fill="currentColor" />
-        </button>
-      ) : null}
-    </div>
-  );
 }
 
 // ── Script Panel ──────────────────────────────────────────────────────────────

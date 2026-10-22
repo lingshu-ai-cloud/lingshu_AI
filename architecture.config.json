@@ -11,6 +11,6 @@
     "server/routes/videos.ts": 9200,
     "src/components/AiCreateStudio.tsx": 12896,
     "src/components/DigitalEmployeePage.tsx": 4943,
-    "src/components/InspirationDashboard.tsx": 3011
+    "src/components/InspirationDashboard.tsx": 2828
   }
 }

@@ -24,11 +24,13 @@ assert.match(directorReviewAction('opening_frame_factory_showroom_conflict').nex
 assert.match(directorReviewAction('presenter_authorization_missing').next, /授权范围/);
 
 const source = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
+const detailSource = readFileSync(fileURLToPath(new URL('./inspiration/DirectorVideoDetailPanel.tsx', import.meta.url)), 'utf8');
 const mediaSource = readFileSync(fileURLToPath(new URL('./inspiration/InspirationMedia.tsx', import.meta.url)), 'utf8');
-assert.match(source, /const detailCreationReady = video\.id\.startsWith\('material-'\) \? true : isImagePost \? imageAnalysisReady : exactQuality\.ready && !pending/, '视频复刻入口必须有精确证据且分析不在执行中，图片入口保留自己的证据门');
-assert.match(source, /onClick=\{detailCreationReady \? onCreate : isImagePost \? onReanalyzeImage : onExactAnalysis\} disabled=\{!detailCreationReady && !canRunDetailAnalysis\}/, '证据不足必须进入真实分析或禁止操作，不得直接创建');
-assert.match(source, /const handoffReady = !pending && reviewHandoff\?\.status === 'production_ready' && reviewHandoff\.productionExecutionAllowed === true/, '开放任务起稿不能冒充成片制作已通过编导交接');
-assert.match(source, /review-handoff/, '编导分析抽屉必须读取服务端复核工作单');
+assert.match(source, /import \{ DirectorVideoDetailPanel \} from '.\/inspiration\/DirectorVideoDetailPanel'/);
+assert.match(detailSource, /const detailCreationReady = video\.id\.startsWith\('material-'\) \? true : isImagePost \? imageAnalysisReady : exactQuality\.ready && !pending/, '视频复刻入口必须有精确证据且分析不在执行中，图片入口保留自己的证据门');
+assert.match(detailSource, /onClick=\{detailCreationReady \? onCreate : isImagePost \? onReanalyzeImage : onExactAnalysis\} disabled=\{!detailCreationReady && !canRunDetailAnalysis\}/, '证据不足必须进入真实分析或禁止操作，不得直接创建');
+assert.match(detailSource, /const handoffReady = !pending && reviewHandoff\?\.status === 'production_ready' && reviewHandoff\.productionExecutionAllowed === true/, '开放任务起稿不能冒充成片制作已通过编导交接');
+assert.match(detailSource, /review-handoff/, '编导分析抽屉必须读取服务端复核工作单');
 assert.match(source, /<AuthenticatedVideo[^]*?apiUrl=\{previewMaterial\.url\}[^]*?loadOnMount/, '素材弹窗必须走带超时和重试的统一视频播放器');
 assert.match(mediaSource, /onLoadedMetadata=\{\(\) => \{[^]*?if \(controls\) reportMediaReady\(\)/, '带控件的视频预览读取到元数据后必须移除准备中遮罩，避免 Safari 已显示画面仍阻塞');
 assert.match(mediaSource, /onPlaying=\{reportMediaReady\}/, '视频实际开始播放时必须兜底结束准备状态');

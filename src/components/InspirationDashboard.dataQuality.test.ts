@@ -69,15 +69,18 @@ assert.equal(isDisplayableVideoAnalysis({
 assert.equal(isDisplayableVideoAnalysis({ geminiStatus: 'video_failed' }, 'analyzed'), false, '普通采集视频仍遵守失败隐藏规则');
 
 const componentSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
+const materialCardSource = readFileSync(fileURLToPath(new URL('./inspiration/MaterialLibraryCardMedia.tsx', import.meta.url)), 'utf8');
+const detailSource = readFileSync(fileURLToPath(new URL('./inspiration/DirectorVideoDetailPanel.tsx', import.meta.url)), 'utf8');
 const videoCardSource = readFileSync(fileURLToPath(new URL('./InspirationVideoCards.tsx', import.meta.url)), 'utf8');
-assert.match(componentSource, /aria-label={`播放 \${material\.name}`}[^]*?event\.stopPropagation\(\); onPlay\(\);[^]*?z-20[^]*?onPlay=\{\(\) => setPreviewMaterial\(material\)\}/, '播放按钮应稳定置于 hover 操作层之上且只打开预览');
+assert.match(materialCardSource, /aria-label={`播放 \${material\.name}`}[^]*?event\.stopPropagation\(\); onPlay\(\);[^]*?z-20/, '播放按钮应稳定置于 hover 操作层之上');
+assert.match(componentSource, /onPlay=\{\(\) => setPreviewMaterial\(material\)\}/, '播放按钮只打开预览');
 assert.match(componentSource, /contentFormat: isImageMaterial \? 'image' : 'video'/, '图片素材进入工作流时必须保留图片类型，不能伪装成视频');
 assert.match(componentSource, /disabled=\{material\.type === 'audio' \|\| \(material\.type === 'video' && !canProcessVideo\([^]*?<Sparkles[^]*?自由创作/, '图片素材必须可以直接进入生成，只有无有效时长的视频和音频被拦截');
 assert.match(componentSource, /refreshMaterialPreviewUrl[^]*?重新获取播放地址/, '素材预览失败后必须能刷新短期播放地址并重试');
 const previewRefreshSource = componentSource.slice(componentSource.indexOf('const refreshMaterialPreviewUrl'), componentSource.indexOf('const handleMaterialPreviewError'));
 assert.match(previewRefreshSource, /const previewProductId = String\(current\.productId[^]*?if \(previewProductId\)[^]*?fetchCompleteProductMaterialInventory\(product\)/, '产品视频预览失败必须按 productId 精确刷新详情库存');
 assert.doesNotMatch(previewRefreshSource, /excludeProductAssociated/, '产品视频预览刷新不得误走排除产品素材的主墙查询');
-assert.match(componentSource, /aria-label={`编辑 \${material\.name}`}[^]*?aria-label={`删除 \${material\.name}`}/, '每条可管理素材必须固定提供编辑与删除入口');
+assert.match(materialCardSource, /aria-label={`编辑 \${material\.name}`}[^]*?aria-label={`删除 \${material\.name}`}/, '每条可管理素材必须固定提供编辑与删除入口');
 assert.match(componentSource, /INSPIRATION_PAGE_SIZE = 100/, '灵感列表必须一次读取当前租户的全部常规库存，避免分页后前端过滤造成假缺失');
 assert.match(componentSource, /inventory-summary[^]*?setTenantVideoTotalItems/, '首屏必须独立优先读取真实库存量');
 assert.match(componentSource, /setTenantVideoTotalItems\(Math\.max\(0, Number\(result\.totalItems \?\? 0\)\)\)/, '列表加载后 Tab 数量必须使用服务端完整可见结果数，不能用当前页长度覆盖');
@@ -94,7 +97,8 @@ assert.match(videoCardSource, /<button[\s\S]*?aria-label=\{`\$\{isImagePost \? '
 assert.match(videoCardSource, /videoAspectRatioLockedRef\.current = true;[^]*?setMediaAspectRatio\(metadata\.width \/ metadata\.height\)/, '爆款视频元数据必须锁定真实视频比例');
 assert.match(videoCardSource, /onNaturalAspectRatio=\{ratio => \{[^]*?!videoAspectRatioLockedRef\.current[^]*?setMediaAspectRatio\(ratio\)/, '缩略图后到时不得覆盖已锁定的视频比例');
 const materialGridSource = componentSource.slice(componentSource.indexOf('<LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map'), componentSource.indexOf('aria-label="普通素材分页"'));
-assert.match(componentSource, /function MaterialLibraryCardMedia[^]*?useState\(\(\) => materialIntrinsicAspectRatio\(material\)\)[^]*?source === 'image' && materialHasAuthoritativeAspectRatio\(material\)[^]*?setAspectRatio\(ratio\)/, '素材卡必须先用视频权威比例，封面只能在缺少视频比例时兜底');
+assert.match(componentSource, /import \{ MaterialLibraryCardMedia \} from '.\/inspiration\/MaterialLibraryCardMedia'/);
+assert.match(materialCardSource, /function MaterialLibraryCardMedia[^]*?useState\(\(\) => materialIntrinsicAspectRatio\(material\)\)[^]*?source === 'image' && materialHasAuthoritativeAspectRatio\(material\)[^]*?setAspectRatio\(ratio\)/, '素材卡必须先用视频权威比例，封面只能在缺少视频比例时兜底');
 assert.match(componentSource, /const productMaterials = Object\.values\(productMaterialSummaries\)\.flatMap\(summary => summary\.materials\)[^]*?\[\.\.\.localMaterials, \.\.\.productMaterials\]/, '镜头功能筛选项必须合并产品集合素材');
 assert.match(materialGridSource, /<MaterialLibraryCardMedia[^]*?flex flex-1 flex-col p-3[^]*?mt-auto grid grid-cols-2 gap-2 pt-3/, '素材卡必须使用真实比例媒体组件，并把按钮固定在信息区底部');
 assert.doesNotMatch(materialGridSource, /min-h-52/, '素材卡信息区不得以固定最小高度在按钮下方制造大片空白');
@@ -106,9 +110,9 @@ for (const placeholderTag of ['来源待归类', '相关性待确认', '趋势�
   assert.match(videoCardSource, new RegExp(`HIDDEN_DISCOVERY_TAGS[^]*?${placeholderTag}`), `卡片必须隐藏无结论状态：${placeholderTag}`);
 }
 assert.match(videoCardSource, /hasVisibleSignals[^]*?Object\.values\(visibleSignals\)\.some\(Boolean\)/, '没有有效分析结论时不得保留空 Tag 容器');
-assert.match(componentSource, /aria-label="内容标签"[^]*?video\.tags\.map/, '爆款 hashtag 必须集中展示在详情顶部');
+assert.match(detailSource, /aria-label="内容标签"[^]*?video\.tags\.map/, '爆款 hashtag 必须集中展示在详情顶部');
 assert.match(componentSource, /startInspirationCreation[^]*?requestExactFullAnalysis/, '未完成详细分析的视频点击复刻时必须自动补齐分析');
-assert.match(componentSource, /detailCreationReady =[^;]*exactQuality\.ready && !pending/, '详情复刻入口不能依赖可失败的交接状态读取');
+assert.match(detailSource, /detailCreationReady =[^;]*exactQuality\.ready && !pending/, '详情复刻入口不能依赖可失败的交接状态读取');
 assert.match(componentSource, /const openTask = \(taskId: string\)[^]*?directStudio: true[^]*?continueTaskId: taskId/, '爆款复刻任务创建后必须直接进入生产工作台');
 assert.doesNotMatch(componentSource, /title: `\$\{video\.title \|\| '灵感视频'\} · 爆款裂变`/, '生产任务标题不得继续使用旧的“爆款裂变”名称');
 
