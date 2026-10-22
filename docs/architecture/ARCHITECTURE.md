@@ -7,6 +7,7 @@
 - `src/components/socialContent/`：工作台与用户交互；不得自行绕过服务端租户鉴权或供应商成本控制。
 - `src/components/ConversionPage.tsx` 与 `src/components/customers/`：页面持有会话状态和三栏视图；客户定位/加载、草稿翻译副作用与渠道发送适配分别落在客户子模块，真实发送仍经过现有服务端出站接口和回执边界。
 - `src/components/assistant/AssistantConversationBubbles.tsx`：只承载对话滚动区内已准备好的决策摘要、欢迎语、消息、加载态、任务卡及周计划入口展示；滚动、草稿、发送、身份栅栏与持久化仍由 `GlobalAssistant.tsx` 持有。
+- `src/components/assistant/AssistantLauncher.tsx`：只展示完整入口、贴边恢复入口、待办数量和手动收起按钮；收起偏好、焦点交接和打开对话动作仍由 `GlobalAssistant.tsx` 控制。
 - `src/components/GlobalAssistant.tsx` 与 `src/components/assistant/`：浮层负责对话、任务入口和请求编排；`AssistantFloatingReminders.tsx` 只展示右侧提示气泡，入口收起、已打开对话时不显示，等待/短消息/周计划/功能引导优先级由组件投影，状态与回调仍由浮层持有；`AssistantCustomerTodoView.tsx` 仅承载已有客户待办的展示，浮层保留选择客户事件与返回对话回调；`AssistantDecisionDialog.tsx` 承载对话面板之外共用的 Ant 决策详情弹窗，仅接收页面的当前周目标、权威卡和动作回调，关闭/导航焦点栅栏仍由浮层控制；`useAssistantThreadSaveQueue.ts` 负责已限定身份范围内的串行 CAS 保存、冲突合并与退避，浮层仍拥有身份栅栏和生命周期触发；`assistantProductionIntake.ts` 负责明确生产请求识别及从企业中心核验已确认产品，不得仅凭对话文本虚构产品身份；`assistantActionProjection.ts` 负责聚焦卡自然语言动作、后端签名目标与参数、响应卡身份和跨对象动作过滤。页面只调用这些规则，不自行推断业务对象或放行跨对象操作。
 - `src/components/InspirationDashboard.tsx` 与 `src/components/inspiration/inspirationFrameMatching.ts`：灵感页负责展示、交互和素材读取，逐镜素材评分、硬条件、可复制性与替代路线由纯匹配模块负责；图片证据面板由 `ImageEvidenceSummaryPanel.tsx` 承载，展示轮播节奏、可复用模块和图层蓝图。`imagePostAnalysisPresentation.ts` 与 `inspirationAnalysisProjection.ts` 投影图文排队、处理中、结果不明的可见状态和禁重提边界。未核验的产品主体或真实性证据不得靠软评分提升为可复用片段。
 - `src/components/inspiration/inspirationVideoProjection.ts`：爬虫/发现记录投影为前端视频、元数据兜底、发现评分、来源标签及账号基线推荐；页面保留请求、鉴权、排序编排和展示，旧的页面导出继续转发以兼容消费者。
