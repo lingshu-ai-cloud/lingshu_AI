@@ -1,5 +1,5 @@
 import { META_PERFORMANCE_FIELDS, metaAccountDate, metaDateRange, type MetaPerformanceReport, type MetaMetricValues, type MetaReportLevel } from '../../shared/metaPerformance.js';
-import { readExecutedCreative } from './creativeLibrary.js';
+import { readExecutedCreative } from './executedCreative.js';
 import { creativeReadCache } from './creativeReadCache.js';
 import { PlatformAdCreativeError } from './creatives.js';
 const cached = creativeReadCache<MetaPerformanceReport>(60_000);
@@ -41,7 +41,7 @@ export async function getMetaPerformanceReport(tenantId: string, executionId: st
       if (!Array.isArray(response.data) || response.paging?.next || response.data.some((r: any) => String(r.account_id) !== account.id || r.account_currency !== account.currency || String(r[idField]) !== resourceId || !metaDateRange(String(r.date_start || ''), String(r.date_stop || '')).length || r.date_start < since || r.date_stop > until)) throw new PlatformAdCreativeError('Meta 报告归属、日期或分页不完整', 503);
     }
     if (total.data.length > 1 || daily.data.some((r: any) => r.date_start !== r.date_stop) || new Set(daily.data.map((r: any) => r.date_start)).size !== daily.data.length || (total.data.length === 0) !== (daily.data.length === 0)) throw new PlatformAdCreativeError('Meta 汇总与日数据不一致，请稍后刷新', 503);
-    return { source: 'provider', level: query.level, resourceId, executionId, accountId: account.id, accountName: account.name, currency: account.currency, reportTimezone: account.timezone_name,
+    return { source: 'provider', level: query.level, resourceId, executionId, videoId: ctx.videoId, pageId: ctx.pageId, accountId: account.id, accountName: account.name, currency: account.currency, reportTimezone: account.timezone_name,
       configuredStatus: String(object.status || ''), effectiveStatus: String(object.effective_status || ''), objective: String(ctx.campaign.objective || ''), optimizationGoal: query.level === 'campaign' ? '' : String(ctx.adset.optimization_goal || ''),
       adConfiguredStatus: String(ctx.ad.status || ''), adEffectiveStatus: String(ctx.ad.effective_status || ''),
       attributionSpec: Array.isArray(ctx.adset.attribution_spec) ? ctx.adset.attribution_spec.map((a: any) => ({ event_type: String(a.event_type), window_days: Number(a.window_days) })) : [],

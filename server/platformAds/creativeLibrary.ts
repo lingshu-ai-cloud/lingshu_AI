@@ -2,13 +2,12 @@ import type { AdCreativeLibraryItem, AdCreativeLibraryPage, AdCreativeReport, Ad
 import { store } from '../storage/index.js';
 import { getConnectionCredential, getConnection } from './connections.js';
 import { AD_CREATIVES_COLLECTION, getPlatformAdCreative, publicPlatformAdCreative, type StoredPlatformAdCreative, PlatformAdCreativeError } from './creatives.js';
-import { AD_EXECUTIONS, type AdExecution, listAdExecutions } from './execution.js';
-import { getPlatformAdTask, PLATFORM_AD_TASKS_COLLECTION, type PlatformAdTask } from './tasks.js';
+import { listAdExecutions } from './execution.js';
+import { PLATFORM_AD_TASKS_COLLECTION, type PlatformAdTask } from './tasks.js';
 import { MetaAdsAdapter } from './metaAdapter.js';
-import { aggregateAdMetrics } from './metrics.js';
 import { creativeReadCache } from './creativeReadCache.js';
-import { readMetaVideoPlan } from './metaPlanReadback.js';
-const cachedReport = creativeReadCache<AdCreativeReport>(60_000);
+import { getMetaPerformanceReport } from './metaPerformance.js';
+export { readExecutedCreative } from './executedCreative.js';
 const cachedPreview = creativeReadCache<AdCreativePreview>(300_000);
 
 export async function listAdCreativeLibrary(tenantId: string, query: { page?: unknown; perPage?: unknown }): Promise<AdCreativeLibraryPage> {
@@ -45,37 +44,19 @@ export async function listAdCreativeLibrary(tenantId: string, query: { page?: un
   return { items, page, perPage, totalItems: tasks.totalItems, totalPages: tasks.totalPages, truncated };
 }
 
-export async function readExecutedCreative(tenantId: string, executionId: string) {
-  const receipt = await store.getById<AdExecution>(AD_EXECUTIONS, executionId);
-  if (!receipt || receipt.tenant_id !== tenantId) throw new PlatformAdCreativeError('未找到广告创建回执', 404);
-  if (receipt.action !== 'create' || receipt.status !== 'VERIFIED') throw new PlatformAdCreativeError('广告尚未核验完成', 409);
-  const task = await getPlatformAdTask(tenantId, receipt.taskId);
-  if (!task) throw new PlatformAdCreativeError('未找到投放计划', 404);
-  const { connection, accessToken } = await getConnectionCredential(tenantId, receipt.connectionId);
-  if (connection.provider !== 'meta' || connection.currency !== task.currency) throw new PlatformAdCreativeError('当前仅支持同币种 Meta 广告素材核对', 409);
-  const ids = (receipt.result || {}) as Record<string, string>;
-  if (!['campaignId', 'adsetId', 'creativeId', 'adId'].every(k => /^\d+$/.test(ids[k] || ''))) throw new PlatformAdCreativeError('缺少完整广告资源标识', 409);
-  const adapter = new MetaAdsAdapter(accessToken);
-  const { campaign, adset, ad, creative } = await readMetaVideoPlan(adapter, connection.accountId, ids);
-  const videoId = String(creative.object_story_spec?.video_data?.video_id || ''), pageId = String(creative.object_story_spec?.page_id || '');
-  if (!/^\d+$/.test(videoId) || !/^\d+$/.test(pageId)) throw new PlatformAdCreativeError('平台创意不是可核对的视频素材', 409);
-  return { receipt, task, connection, adapter, ids, campaign, adset, ad, creative, videoId, pageId };
-}
-
 export async function getAdCreativeReport(tenantId: string, executionId: string): Promise<AdCreativeReport> {
-  return cachedReport(tenantId, executionId, () => readAdCreativeReport(tenantId, executionId));
-}
-async function readAdCreativeReport(tenantId: string, executionId: string): Promise<AdCreativeReport> {
-  const ctx = await readExecutedCreative(tenantId, executionId);
-  if (!ctx.connection.timezoneName) throw new PlatformAdCreativeError('账户时区尚未核验', 409);
-  const until = new Intl.DateTimeFormat('en-CA', { timeZone: ctx.connection.timezoneName, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-  const since = new Date(Date.parse(`${until}T12:00:00Z`) - 6 * 86400000).toISOString().slice(0, 10);
-  const response = await ctx.adapter.request(`${ctx.ids.adId}/insights`, { fields: 'date_start,date_stop,spend,impressions,clicks,inline_link_clicks,video_thruplay_watched_actions', time_range: { since, until }, time_increment: 1, limit: 100 });
-  if (!Array.isArray(response.data) || response.paging?.next) throw new PlatformAdCreativeError('平台素材报告不完整，请稍后重试', 503);
-  return { source: 'provider', scope: 'ad', adId: ctx.ids.adId, accountId: ctx.connection.accountId, videoId: ctx.videoId, pageId: ctx.pageId,
-    configuredStatus: String(ctx.ad.status || ''), effectiveStatus: String(ctx.ad.effective_status || ''),
-    issues: (ctx.ad.issues_info || []).map((i: any) => ({ code: Number(i.error_code), message: String(i.error_summary || '平台广告异常') })),
-    currency: ctx.connection.currency, reportTimezone: ctx.connection.timezoneName, reportedAt: new Date().toISOString(), window: { since, until }, ...aggregateAdMetrics(response.data, ctx.task.goal) };
+  // Reuse the exact same native report/cache as the data page, never sum daily ratios.
+  const r = await getMetaPerformanceReport(tenantId, executionId, { level: 'ad', preset: '7' });
+  const resultKey = r.optimizationGoal === 'THRUPLAY' ? 'thruPlays' : r.optimizationGoal === 'LINK_CLICKS' ? 'linkClicks' : null;
+  const costKey = resultKey === 'thruPlays' ? 'costPerThruPlay' : resultKey === 'linkClicks' ? 'costPerLinkClick' : null;
+  return { source: 'provider', scope: 'ad', adId: r.resourceId, accountId: r.accountId, videoId: r.videoId, pageId: r.pageId,
+    configuredStatus: r.configuredStatus, effectiveStatus: r.effectiveStatus, issues: r.issues,
+    currency: r.currency, reportTimezone: r.reportTimezone, reportedAt: r.reportedAt, window: r.window,
+    actionReportTime: r.actionReportTime, useUnifiedAttributionSetting: r.useUnifiedAttributionSetting, attributionSpec: r.attributionSpec,
+    metricLabel: resultKey === 'thruPlays' ? 'ThruPlay' : resultKey === 'linkClicks' ? '链接点击' : `未映射优化目标 ${r.optimizationGoal || '未返回'}`,
+    spend: r.totals?.spend ?? null, impressions: r.totals?.impressions ?? null, clicks: r.totals?.clicks ?? null,
+    results: resultKey ? r.totals?.[resultKey] ?? null : null, costPerResult: costKey ? r.totals?.[costKey] ?? null : null,
+    daily: r.daily.map(d => ({ date: d.date, spend: d.spend, impressions: d.impressions, clicks: d.clicks, results: resultKey ? d[resultKey] : null })) };
 }
 
 export async function getAdCreativePreview(tenantId: string, bindingId: string): Promise<AdCreativePreview> {

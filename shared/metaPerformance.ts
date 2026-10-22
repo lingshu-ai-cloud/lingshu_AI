@@ -18,6 +18,7 @@ export type MetaMetricValues = Record<MetaMetricKey, number | null>;
 export type MetaReportLevel = 'campaign' | 'adset' | 'ad';
 export interface MetaPerformanceReport {
   source: 'provider'; level: MetaReportLevel; resourceId: string; executionId: string;
+  videoId: string; pageId: string;
   accountId: string; accountName: string; currency: string; reportTimezone: string;
   configuredStatus: string; effectiveStatus: string; objective: string; optimizationGoal: string;
   adConfiguredStatus: string; adEffectiveStatus: string;

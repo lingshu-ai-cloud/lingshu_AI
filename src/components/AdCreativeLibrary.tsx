@@ -51,7 +51,8 @@ function VideoPreview({ bindingId }: { bindingId: string }) {
 }
 
 export default function AdCreativeLibrary({ onOpenTask, initialTaskId }: { onOpenTask: (id: string) => void; initialTaskId?: string }) {
-  const [data, setData] = useState<AdCreativeLibraryPage | null>(null), [page, setPage] = useState(1), [refresh, setRefresh] = useState(0);
+  const [catalog, setData] = useState<AdCreativeLibraryPage | null>(null), [page, setPage] = useState(1), [refresh, setRefresh] = useState(0);
+  const data = catalog?.page === page ? catalog : null;
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [search, setSearch] = useState(initialTaskId || ''), [account, setAccount] = useState('all'), [selected, setSelected] = useState<string | null>(null);
   const [reports, setReports] = useState<Record<string, AdCreativeReport>>({}), [reportErrors, setReportErrors] = useState<Record<string, string>>({});
@@ -112,7 +113,7 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId }: { onOpe
           </div></article> };
       })} />}
     </LsLoadingState>
-    {data && <div className="ads-library-pagination"><span>按计划分页，当前页内按账户、素材指纹和平台视频去重</span><Pagination current={page} pageSize={20} total={data.totalItems} showSizeChanger={false} onChange={v => { setPage(v); setSelected(null); }} /></div>}
+    {catalog && <div className="ads-library-pagination"><span>{data ? '按计划分页，当前页内按账户、素材指纹和平台视频去重' : '当前页目录未返回，可刷新或返回其他页。'}</span><Pagination current={page} pageSize={20} total={catalog.totalItems} showSizeChanger={false} onChange={v => { setPage(v); setSelected(null); }} /></div>}
     <Drawer title="素材与广告表现" open={!!opened} onClose={() => setSelected(null)} size={840} destroyOnHidden>
       {opened && <>
         {opened.representative.binding && <><VideoPreview bindingId={opened.representative.binding.id}/><Descriptions size="small" column={1} items={[
@@ -121,11 +122,11 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId }: { onOpe
           { key: 'video', label: 'Meta 视频', children: opened.representative.binding.platformVideoId || '未上传' },
         ]}/></>}
         <Space className="ads-library-detail-heading"><h3>计划关联与广告级报告</h3><Button loading={reading} onClick={() => setReportRefresh(v => v + 1)}>刷新平台报告</Button></Space>
-        <Alert type="info" showIcon title="按广告 ID 展示最近 7 个账户日期的报告，空数据不补零。报告缓存 60 秒、封面缓存 5 分钟，以采集时间为准；刷新只读平台，不启用广告。" />
+        <Alert type="info" showIcon title="与投放数据共用广告级、最近 7 个账户日期报告；按展示时间回报，采用广告组归因设置。全部点击不等于链接点击，单次成本使用 Meta 原值；空数据不补零。报告缓存 60 秒、封面 5 分钟，以采集时间为准；刷新不启用广告。" />
         <Table<AdCreativeLibraryItem> tableLayout="fixed" rowKey="key" pagination={false} dataSource={opened.items} scroll={{ x: 780 }} columns={[
           { title: '计划 / 映射', key: 'task', width: 210, render: (_, i) => <><Button className="ads-library-task-link" type="link" onClick={() => onOpenTask(i.task.id)}>{i.task.name}</Button><p>{i.mapping === 'creation_binding' ? '创建时绑定' : i.mapping === 'verified_existing' ? '投放后核对映射（不改原回执）' : i.mapping === 'platform_only' ? '仅平台记录，未关联本地源文件' : '本地成片，尚无核验广告'}</p><span className="ads-library-id">{i.execution?.adId || '—'}</span></> },
           { title: '平台状态', key: 'status', width: 150, render: (_, i) => { const r = reports[i.execution?.id || '']; return r ? <><p>配置：{statusLabels[r.configuredStatus] || r.configuredStatus}</p><p>有效：{statusLabels[r.effectiveStatus] || r.effectiveStatus}</p>{r.issues.map(issue => <p key={issue.code}>{issue.code} · {issue.message}</p>)}</> : reportErrors[i.execution?.id || ''] || (i.execution ? '正在核对 / 暂无读回' : '尚未创建广告'); } },
-          { title: '广告表现 / 数据窗口', key: 'metrics', render: (_, i) => { const r = reports[i.execution?.id || '']; return r ? <><p>花费 {r.currency} {number(r.spend)} · 展示 {number(r.impressions)} · 点击 {number(r.clicks)}</p><p>{r.metricLabel} {number(r.results)} · 单次结果成本 {r.currency} {number(r.costPerResult)}</p><p>{r.window.since} — {r.window.until} · {r.reportTimezone}</p><p>采集：{new Date(r.reportedAt).toLocaleString('zh-CN')}{reportErrors[i.execution?.id || ''] ? ' · 刷新失败，保留旧报告' : ''}</p>{!r.daily.length && <p>平台返回空报告，尚无可核验指标。</p>}</> : '—'; } },
+          { title: '广告表现 / 数据窗口', key: 'metrics', render: (_, i) => { const r = reports[i.execution?.id || '']; return r ? <><p>花费 {r.currency} {number(r.spend)} · 展示 {number(r.impressions)} · 全部点击 {number(r.clicks)}</p><p>{r.metricLabel} {number(r.results)} · 单次结果成本 {r.currency} {number(r.costPerResult)}</p><p>{r.window.since} — {r.window.until} · {r.reportTimezone}</p><p>归因：{r.attributionSpec?.length ? r.attributionSpec.map(a => `${a.event_type} ${a.window_days} 天`).join(' / ') : '窗口未返回，不推断'}</p><p>采集：{new Date(r.reportedAt).toLocaleString('zh-CN')}{reportErrors[i.execution?.id || ''] ? ' · 刷新失败，保留旧报告' : ''}</p>{!r.daily.length && <p>平台返回空报告，尚无可核验指标。</p>}</> : '—'; } },
         ]}/>
         {opened.items.filter(i => !i.binding && i.execution).map(item => {
           const report = reports[item.execution!.id];

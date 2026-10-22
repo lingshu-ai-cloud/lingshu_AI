@@ -16,5 +16,7 @@ export interface AdCreativeReport {
   currency: string; reportTimezone: string; reportedAt: string; window: { since: string; until: string };
   metricLabel: string; spend: number | null; impressions: number | null; clicks: number | null;
   results: number | null; costPerResult: number | null; daily: Array<{ date: string; spend: number | null; impressions: number | null; clicks: number | null; results: number | null }>;
+  actionReportTime: 'impression'; useUnifiedAttributionSetting: true;
+  attributionSpec: Array<{ event_type: string; window_days: number }>;
 }
 export interface AdCreativePreview { videoId: string; thumbnailUrl: string; width: number | null; height: number | null; duration: number | null; videoStatus: string; checkedAt: string }

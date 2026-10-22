@@ -40,7 +40,7 @@ try {
   await store.update('platform_ad_tasks', traffic.id, { status: 'paused' });
   await store.update('platform_ad_tasks', views.id, { status: 'paused' });
   const receipt = await store.create<any>('platform_ad_executions', { tenant_id: 'tenant', taskId: views.id, connectionId: account.id, action: 'create', status: 'VERIFIED', result: { campaignId: '101', adsetId: '102', creativeId: '103', adId: '104' } });
-  let videoId = '500', accountId = '1', status = 'PAUSED', rows: any[] = [];
+  let videoId = '500', accountId = '1', status = 'PAUSED', rows: any[] = [], insightFault = '', optimizationGoal = 'THRUPLAY';
   const requests: string[] = [];
   globalThis.fetch = (async (url: any, init?: RequestInit) => {
     if (String(url).startsWith('http://127.0.0.1:1/')) return originalFetch(url, init);
@@ -51,17 +51,19 @@ try {
     if (u.pathname.endsWith('/me/accounts')) return Response.json({ data: [{ id: '600', name: 'Real Page', tasks: ['ADVERTISE'], access_token: 'must-never-return-this-field' }] });
     if (u.pathname.endsWith('/act_1')) return Response.json({ id: 'act_1', currency: 'USD', timezone_name: 'America/Los_Angeles', name: 'Real account metadata', account_status: 1, min_daily_budget: '100', min_campaign_group_spend_cap: '5000' });
     if (u.pathname.endsWith('/101')) return Response.json({ ...common, id: '101', effective_status: status, objective: 'OUTCOME_ENGAGEMENT', spend_cap: '10000' });
-    if (u.pathname.endsWith('/102')) return Response.json({ ...common, id: '102', campaign_id: '101', effective_status: status, optimization_goal: 'THRUPLAY', daily_budget: '500', destination_type: 'ON_VIDEO', billing_event: 'IMPRESSIONS', targeting: { geo_locations: { countries: ['US'] }, publisher_platforms: ['facebook'] }, attribution_spec: [{ event_type: 'CLICK_THROUGH', window_days: 7 }] });
+    if (u.pathname.endsWith('/102')) return Response.json({ ...common, id: '102', campaign_id: '101', effective_status: status, optimization_goal: optimizationGoal, daily_budget: '500', destination_type: 'ON_VIDEO', billing_event: 'IMPRESSIONS', targeting: { geo_locations: { countries: ['US'] }, publisher_platforms: ['facebook'] }, attribution_spec: [{ event_type: 'CLICK_THROUGH', window_days: 7 }] });
     if (u.pathname.endsWith('/103')) return Response.json({ ...common, id: '103', object_story_spec: { page_id: '600', video_data: { video_id: videoId } } });
     if (u.pathname.endsWith('/104')) return Response.json({ ...common, id: '104', adset_id: '102', creative: { id: '103' }, effective_status: 'PENDING_REVIEW', issues_info: [] });
     if (u.pathname.endsWith('/insights') && u.searchParams.get('fields')?.includes('account_currency')) {
       assert.equal(u.searchParams.get('action_report_time'), 'impression');
       assert.equal(u.searchParams.get('use_unified_attribution_setting'), 'true');
-      assert.deepEqual(JSON.parse(u.searchParams.get('time_range')!), { since: '2020-01-01', until: '2020-01-02' });
+      const window = JSON.parse(u.searchParams.get('time_range')!);
       const level = u.searchParams.get('level')!;
       const id = { campaign: '101', adset: '102', ad: '104' }[level]!;
       assert.ok(u.pathname.endsWith(`/${id}/insights`));
-      return Response.json({ data: rows.length ? [{ account_id: accountId, account_currency: 'USD', [`${level}_id`]: id, date_start: '2020-01-01', date_stop: u.searchParams.get('time_increment') === '1' ? '2020-01-01' : '2020-01-02', spend: '12', impressions: '1000', clicks: '20', inline_link_clicks: '8', video_thruplay_watched_actions: [{ action_type: 'video_view', value: '6' }], cpm: '12.125', ctr: '2.01', cpc: '0.605', reach: '950', frequency: '1.05', cost_per_thruplay: [{ action_type: 'video_view', value: '2.005' }] }] : [] });
+      const custom = window.since === '2020-01-01';
+      const values = custom ? { spend: '12', impressions: '1000', clicks: '20', inline_link_clicks: '8', video_thruplay_watched_actions: [{ action_type: 'video_view', value: '6' }] } : rows[0];
+      return Response.json({ ...(insightFault === 'paging' ? { paging: { next: 'https://graph.facebook.com/next' } } : {}), data: rows.length ? [{ ...values, account_id: insightFault === 'account' ? '2' : accountId, account_currency: insightFault === 'currency' ? 'CNY' : 'USD', [`${level}_id`]: insightFault === 'resource' ? '999' : id, date_start: window.since, date_stop: u.searchParams.get('time_increment') === '1' ? window.since : window.until, cpm: '12.125', ctr: '2.01', cpc: '0.605', reach: '950', frequency: '1.05', cost_per_inline_link_click: '1.234', cost_per_thruplay: [{ action_type: 'video_view', value: custom ? '2.005' : rows[0].cost }] }] : [] });
     }
     if (u.pathname.endsWith('/104/insights')) { assert.deepEqual(JSON.parse(u.searchParams.get('time_range')!).until.length, 10); return Response.json({ data: rows }); }
     if (u.pathname.endsWith('/500')) return Response.json({ id: '500', status: { video_status: 'ready' }, length: 6, thumbnails: { data: [{ uri: 'https://example.com/real.jpg', width: 720, height: 1280, is_preferred: true }] } });
@@ -89,14 +91,23 @@ try {
   assert.ok(!JSON.stringify(directory).includes('fileRef'));
   const empty = await getAdCreativeReport('tenant', receipt.id);
   assert.equal(empty.scope, 'ad'); assert.equal(empty.spend, null); assert.equal(empty.results, null); assert.equal(empty.effectiveStatus, 'PENDING_REVIEW');
-  rows = [{ date_start: '2026-10-22', date_stop: '2026-10-22', spend: '12', impressions: '1000', clicks: '20', inline_link_clicks: '8', video_thruplay_watched_actions: [{ action_type: 'video_view', value: '6' }] }];
+  rows = [{ cost: '2.005', spend: '12', impressions: '1000', clicks: '20', inline_link_clicks: '8', video_thruplay_watched_actions: [{ action_type: 'video_view', value: '6' }] }];
   clockOffset += 60_001;
   const positive = await getAdCreativeReport('tenant', receipt.id);
-  assert.equal(positive.results, 6); assert.equal(positive.costPerResult, 2); assert.equal(positive.reportTimezone, 'Asia/Shanghai');
-  rows = [{ ...rows[0], spend: '0', impressions: '0', clicks: '0', video_thruplay_watched_actions: [{ action_type: 'video_view', value: '0' }] }];
+  assert.equal(positive.results, 6); assert.equal(positive.costPerResult, 2.005); assert.equal(positive.reportTimezone, 'America/Los_Angeles', 'uses Meta timezone, not stale connection timezone');
+  const readCount = requests.length;
+  const sameNative = await getMetaPerformanceReport('tenant', receipt.id, { level: 'ad', preset: '7' });
+  assert.equal(requests.length, readCount, 'both pages share the same cached native read');
+  assert.equal(positive.reportedAt, sameNative.reportedAt); assert.deepEqual(positive.window, sameNative.window);
+  assert.equal(positive.spend, sameNative.totals?.spend); assert.equal(positive.costPerResult, sameNative.totals?.costPerThruPlay);
+  assert.equal(positive.actionReportTime, 'impression'); assert.equal(positive.useUnifiedAttributionSetting, true);
+  assert.deepEqual(positive.attributionSpec, sameNative.attributionSpec);
+  rows = [{ ...rows[0], spend: '0', impressions: '0', clicks: '0', cost: '0', video_thruplay_watched_actions: [{ action_type: 'video_view', value: '0' }] }];
   clockOffset += 60_001;
   assert.equal((await getAdCreativeReport('tenant', receipt.id)).spend, 0, 'real zero differs from empty');
-  assert.equal((await getAdCreativeReport('tenant', receipt.id)).costPerResult, null);
+  assert.equal((await getAdCreativeReport('tenant', receipt.id)).costPerResult, 0, 'native zero cost must not be replaced by inferred null');
+  rows = [{ ...rows[0], cost: undefined }]; clockOffset += 60_001;
+  assert.equal((await getAdCreativeReport('tenant', receipt.id)).costPerResult, null, 'missing native cost is never recomputed');
   assert.equal((await getAdCreativePreview('tenant', creative.id)).height, 1280);
   const audit = await getMetaPlanAudit('tenant', views.id);
   assert.equal(audit.entries[0].mapping, 'post_execution');
@@ -133,6 +144,17 @@ try {
   rows = []; clockOffset += 120_001;
   const emptyNative = await getMetaPerformanceReport('tenant', receipt.id, { ...query, level: 'ad' });
   assert.equal(emptyNative.totals, null); assert.deepEqual(emptyNative.daily, []);
+  rows = [{ spend: '12', inline_link_clicks: '8' }]; optimizationGoal = 'LINK_CLICKS'; clockOffset += 120_001;
+  const nativeTraffic = await getAdCreativeReport('tenant', receipt.id);
+  assert.equal(nativeTraffic.metricLabel, '链接点击', 'uses real optimization goal, not the local task label');
+  assert.equal(nativeTraffic.results, 8); assert.equal(nativeTraffic.costPerResult, 1.234);
+  optimizationGoal = 'OFFSITE_CONVERSIONS'; clockOffset += 120_001;
+  const unsupportedGoal = await getAdCreativeReport('tenant', receipt.id);
+  assert.equal(unsupportedGoal.results, null); assert.equal(unsupportedGoal.costPerResult, null, 'unknown conversion goal never relabelled as clicks');
+  for (const fault of ['account', 'currency', 'resource', 'paging']) {
+    insightFault = fault; clockOffset += 120_001;
+    await assert.rejects(getAdCreativeReport('tenant', receipt.id), /归属、日期或分页不完整/);
+  }
   console.log('Meta performance: all 3 resource levels, account timezone, actual attribution, native ratios, bounded range, cached reads and empty totals passed.');
   console.log('Creative library: tenant boundaries, immutable/idempotent post-execution mapping, ad-level empty/zero/positive metrics and real thumbnail readback passed (provider mocked, GET only).');
 } finally { Date.now = originalNow; globalThis.fetch = originalFetch; fs.rmSync(temp, { recursive: true, force: true }); fs.rmSync(mediaDir, { recursive: true, force: true }); }
