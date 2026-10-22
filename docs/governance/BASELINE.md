@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 客户批量跟进真实发送边界展示拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `5ae9a0cf3fd67218141bfa2a425974b94da7d385` 将正在挂载的批量跟进真相面板及可用性徽标迁至 `BatchFollowupTruthPanel.tsx`；页面仍持有原派发 API、租户上下文、忙碌状态和跳转，向组件显式传入原状态文案。`DigitalEmployeePage.tsx` 从 4,641 降至 4,477 行并收紧预算；全仓仍有 6 个历史超限文件。
+- 新 SSR 回归 2/2 验证缺授权禁发、授权后到期客户入口与真实回执后的禁重派发；页面契约测试改查迁出组件与页面接线。`test:digital-employees` 整组、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,352 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build`、`git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未进行浏览器交互、真实消息发送、付费供应商调用、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 数字员工未挂载旧视图清理（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `71e08ceb42ff3799c608b891b8341570ae125f92` 删除 `DigitalEmployeePage.tsx` 中未被调用的旧“今日经营快照”、指标卡与转化图表脚手架，当前实际挂载的 `BusinessHealthOverview`、`SmartBusinessDashboard`、`DigitalEmployeeTodayFocusPanel` 未改。页面从 4,943 降至 4,641 行并同步收紧架构预算；全仓仍有 6 个历史超限文件。

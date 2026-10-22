@@ -29,6 +29,7 @@
 - `src/components/DigitalEmployeePage.tsx` 与 `src/components/smartBusiness/WeeklyGoalPanel.tsx`：数字员工页负责新周目标的提交、冲突恢复与运行导航；独立周目标面板持有草稿、预设方案、平台配额重算、视频计划校验和排期确认，不直接调用生产 API。`DigitalEmployeeFormField.tsx` 是页面与周目标面板共用的表单字段样式。
 - 数字员工首页实际挂载 `BusinessHealthOverview`、`SmartBusinessDashboard` 和 `DigitalEmployeeTodayFocusPanel`；旧的未挂载“今日经营快照”、指标卡与转化图表脚手架已移除。源码契约测试必须检查实际挂载路径，不以死函数存在证明界面已交付。
 - `src/components/smartBusiness/DigitalEmployeeTodayFocusPanel.tsx`：首页“本周进度/需要你处理”的可达视图，依据真实任务、待审批项与计划状态展示至多三项关注动作。页面继续提供执行导航和状态文案；原页面内受现有合同保护的业务流转图定义未随本批移除。
+- `src/components/smartBusiness/BatchFollowupTruthPanel.tsx`：承载客户转化工作区内逐客草稿、整批人工批准、真实发送预检/回执及手动派发按钮的展示。仅以服务端任务输出中的租户/渠道授权事实启用按钮；页面仍持有已登录身份、批次派发 API、忙碌状态和业务跳转，组件不自行发送消息。
 - `src/lib/studioApi.ts`、`src/lib/socialImageApi.ts`：前端 API 适配层。
 - `shared/contracts/`：跨端任务、内容与交付合同；字段变更需检查旧任务兼容性。
 - `server/routes/`：HTTP 鉴权、输入规范化、租户上下文和响应编排；业务算法逐步下沉到领域模块。
