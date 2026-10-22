@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵小枢消息发送链拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `26c2bdc7` 将单轮消息发送、当前身份范围栅栏、明确生产请求与签名动作分流、附件上传缓存、周计划确认分流和流式答复编排迁至 `src/components/assistant/useAssistantSend.ts`。浮层仍拥有草稿、附件与消息状态、身份栅栏实例和持久化生命周期；未改变 Qwen→Gemini 现有降级或开放新付费入口。`GlobalAssistant.tsx` 从 1,557 降至 1,266 行，历史预算同步收紧；全仓仍有 7 个超限文件，结构治理未完成。
+- 新发送直测 1/1、`test:assistant`、`test:assistant-production` 34/34、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,339 个生产 TypeScript 文件）、193 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未做浏览器交互验收、真实付费供应商调用、目标库迁移或部署；最终本地/远端 SHA 与工作区状态以推送后 Git 核对为准。
+
 ## 视频爬虫运行配置拆分与工作树复核（2026-10-23）
 
 - 代码提交 `6934ca1a` 将代理池、子进程环境、Cookie 文件及浏览器候选选择迁至 `server/routes/videoCrawlerRuntimeConfig.ts`；`videos.ts` 继续负责当前尝试代理和实际下载，从 9,495 降至 9,424 行并收紧预算。修正原有逗号分隔浏览器配置会把整串送作单个 yt-dlp 浏览器名的问题。全仓仍有 7 个历史超限文件，架构债务未清零。

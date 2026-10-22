@@ -6,9 +6,10 @@
 
 - `src/components/socialContent/`：工作台与用户交互；不得自行绕过服务端租户鉴权或供应商成本控制。
 - `src/components/ConversionPage.tsx` 与 `src/components/customers/`：页面持有会话状态和三栏视图；客户定位/加载、草稿翻译副作用与渠道发送适配分别落在客户子模块，真实发送仍经过现有服务端出站接口和回执边界。
-- `src/components/assistant/AssistantConversationBubbles.tsx`：只承载对话滚动区内已准备好的决策摘要、欢迎语、消息、加载态、任务卡及周计划入口展示；滚动、草稿、发送、身份栅栏与持久化仍由 `GlobalAssistant.tsx` 持有。
+- `src/components/assistant/AssistantConversationBubbles.tsx`：只承载对话滚动区内已准备好的决策摘要、欢迎语、消息、加载态、任务卡及周计划入口展示；滚动、草稿、身份栅栏与持久化仍由 `GlobalAssistant.tsx` 持有，发送由 `useAssistantSend.ts` 编排。
 - `src/components/assistant/AssistantLauncher.tsx`：只展示完整入口、贴边恢复入口、待办数量和手动收起按钮；收起偏好、焦点交接和打开对话动作仍由 `GlobalAssistant.tsx` 控制。
 - `src/components/assistant/useAssistantPageSignals.ts`：按可见页面过滤业务上下文事件，并在助手关闭时按当前周目标低频读取权威待办数量；事件、定时器和请求中止在 hook 内成对清理，浮层保留页面与身份范围的状态所有权。
+- `src/components/assistant/useAssistantSend.ts`：编排单轮消息发送、当前身份范围栅栏、明确生产请求与签名动作分流、附件持久上传、周计划确认分流以及模型流式答复；浮层继续拥有对话与草稿状态、身份栅栏实例和持久化生命周期，hook 不绕过现有付费或生产门禁。
 - `src/components/assistant/assistantProductionRequest.tsx`：明确的内容生产指令在企业中心产品身份核验后，要求用户确认交付截止时间，再通过现有周任务 API 创建并按真实回执生成任务卡及任务深链；登录/租户作用域栅栏由浮层传入，不在对话文本里冒充脚本生成成功，也不绕过既有生产付费门禁。
 - `src/lib/assistantActionRequest.ts`：确定性助手动作请求的鉴权 HTTP 适配与错误卡映射；409 冲突、422 缺输入、超时结果待确认和无效响应都保持可见，不将请求故障伪装成可回退通用聊天的 `not_handled`。浮层仍负责仅从当前后端签名动作构造变更请求与呈现结果。
 - `src/components/GlobalAssistant.tsx` 与 `src/components/assistant/`：浮层负责对话、任务入口和请求编排；`assistantChatPrompt.ts` 纯组装当前页面、企业、附件和有界历史的问答上下文，策略主路由只传用户原文并由服务端做权威经营事实注入，不把导航提示升级为已核验事实；`src/lib/assistantChatStream.ts` 负责模型首响应/流式空闲超时、SSE 完整性和文件内容完成后生成，浮层保留身份栅栏、消息状态和错误提示；`useAssistantFeatureGuides.ts` 持有功能引导的本地记忆、冷却、企业页一次性提示、指针/焦点触发与计时器清理，浮层只接入展示和点击动作；`useAssistantNotifications.ts` 持有后台任务卡、等待状态、短消息及首次入口提示事件，按通知策略保持日常进度静默，浮层保留用户主动动作结果的展示决定；`useAssistantThreadHydration.ts` 在限定租户/用户范围内恢复线程展示状态、合并本地输入与服务端 CAS 版本，并对旧聚焦卡重新读取权威状态/签名动作，不把旧消息正文带进新会话；`AssistantFloatingReminders.tsx` 只展示右侧提示气泡，入口收起、已打开对话时不显示，等待/短消息/周计划/功能引导优先级由组件投影，状态与回调仍由浮层持有；`AssistantCustomerTodoView.tsx` 仅承载已有客户待办的展示，浮层保留选择客户事件与返回对话回调；`AssistantDecisionDialog.tsx` 承载对话面板之外共用的 Ant 决策详情弹窗，仅接收页面的当前周目标、权威卡和动作回调，关闭/导航焦点栅栏仍由浮层控制；`useAssistantThreadSaveQueue.ts` 负责已限定身份范围内的串行 CAS 保存、冲突合并与退避，浮层仍拥有身份栅栏和生命周期触发；`assistantProductionIntake.ts` 负责明确生产请求识别及从企业中心核验已确认产品，不得仅凭对话文本虚构产品身份；`assistantActionProjection.ts` 负责聚焦卡自然语言动作、后端签名目标与参数、响应卡身份和跨对象动作过滤。页面只调用这些规则，不自行推断业务对象或放行跨对象操作。
