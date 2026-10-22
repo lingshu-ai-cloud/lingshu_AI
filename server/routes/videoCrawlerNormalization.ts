@@ -29,6 +29,11 @@ export interface CrawledVideo {
   youtubeShort?: boolean;
 }
 
+export function apifyCandidateWindow(limit: number, platform: 'tiktok' | 'facebook', strictProviderLimit: boolean): number {
+  if (strictProviderLimit) return Math.max(1, limit);
+  return platform === 'tiktok' ? Math.max(limit * 5, 5) : Math.min(50, Math.max(limit * 4, limit, 10));
+}
+
 export function extractMeta(html: string, property: string): string {
   const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return html.match(new RegExp(`<meta[^>]+property=["']${escaped}["'][^>]+content=["']([^"']+)["']`, 'i'))?.[1]

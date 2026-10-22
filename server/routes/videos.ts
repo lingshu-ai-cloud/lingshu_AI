@@ -75,8 +75,8 @@ import { benchmarkAnalysisForRecord } from '../lib/benchmarkAnalysis.js';
 import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
 import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot, reconcileStoredOpeningHookMotionEvidence } from './hookMotionEvidence.js';
 import { isDiscoveryVideoEligible, youtubeShortUrl } from '../../shared/contracts/discoveryVideoPolicy.js';
-import { PLATFORM_LABEL, cleanupFacebookTitle, compactDate, dateOnly, decodeHtml, extractBestThumbnail, extractFacebookViews, extractFacebookWatchUrls, extractMeta, extractRunsText, extractTitle, extractYtInitialData, filterDateRangeItems, filterKeywordRelevantItems, filterRealMediaItems, findObjectsByKey, hasDateRange, hasRealThumbnail, heatValue, humanSize, inferPlatformFromUrl, isKeywordRelevant, isPlatformUrl, isWithinDateRange, keywordCategory, keywordRequiredTermGroups, keywordSearchTerms, mergeExistingTags, mimeFromPath, normalizeSearchText, parseDuration, parseJsonRecord, safeMaterialName, safeVideoExtension, sortByHeat, tagsFromKeyword, textAt, uploadedAtFromMeta, videoDedupeKey, ytdlpDateArgs, type CrawledVideo } from './videoCrawlerNormalization.js';
-export { inferPlatformFromUrl } from './videoCrawlerNormalization.js';
+import { PLATFORM_LABEL, apifyCandidateWindow, cleanupFacebookTitle, compactDate, dateOnly, decodeHtml, extractBestThumbnail, extractFacebookViews, extractFacebookWatchUrls, extractMeta, extractRunsText, extractTitle, extractYtInitialData, filterDateRangeItems, filterKeywordRelevantItems, filterRealMediaItems, findObjectsByKey, hasDateRange, hasRealThumbnail, heatValue, humanSize, inferPlatformFromUrl, isKeywordRelevant, isPlatformUrl, isWithinDateRange, keywordCategory, keywordRequiredTermGroups, keywordSearchTerms, mergeExistingTags, mimeFromPath, normalizeSearchText, parseDuration, parseJsonRecord, safeMaterialName, safeVideoExtension, sortByHeat, tagsFromKeyword, textAt, uploadedAtFromMeta, videoDedupeKey, ytdlpDateArgs, type CrawledVideo } from './videoCrawlerNormalization.js';
+export { apifyCandidateWindow, inferPlatformFromUrl } from './videoCrawlerNormalization.js';
 import {
   buildVideoAnalysisProgress,
   hasDurableExactAnalysisOwner,
@@ -1174,6 +1174,7 @@ export async function crawlImagePostsForTenant(input: {
   dateTo?: string;
   deferImageAnalysis?: boolean;
 }): Promise<CrawlVideosResult> {
+  if (input.platform === 'linkedin') throw Error('linkedin_company_paid_collection_permit_required');
   const target = Math.min(30, Math.max(1, Number(input.limit) || 5));
   const accountMode = input.mode === 'account' && looksLikeAccountUrl(input.accountUrl ?? '', input.platform);
   const accountUrl = accountMode ? String(input.accountUrl).trim() : '';
@@ -1316,6 +1317,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
   if (input.paidPermit && (!input.discoveryContext || !accountMode || platform !== 'tiktok')) {
     throw Error('apify_paid_permit_scope_mismatch');
   }
+  if (platform === 'linkedin') throw Error('linkedin_company_paid_collection_permit_required');
 
   if(!replay)await purgeLegacyFakeVideos();
   const testTenant = replay?false:await isTestTenantId(tenantId);
@@ -5904,11 +5906,6 @@ async function crawlTikTokPublicApi(sourceUrl: string): Promise<CrawledVideo> {
     likes: compactNumber(Number(data.digg_count || 0)), comments: compactNumber(Number(data.comment_count || 0)),
     shares: compactNumber(Number(data.share_count || 0)), plays: compactNumber(Number(data.play_count || 0)), source: 'tiktok-public-api',
   };
-}
-
-export function apifyCandidateWindow(limit: number, platform: 'tiktok' | 'facebook', strictProviderLimit: boolean): number {
-  if (strictProviderLimit) return Math.max(1, limit);
-  return platform === 'tiktok' ? Math.max(limit * 5, 5) : Math.min(50, Math.max(limit * 4, limit, 10));
 }
 
 async function crawlTikTokApify(keyword: string, limit: number, dateFrom = '', dateTo = '', strictProviderLimit = false): Promise<CrawledVideo[]> {

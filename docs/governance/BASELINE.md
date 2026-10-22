@@ -9,6 +9,11 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 11 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## LinkedIn 未授权采集显式失败边界（2026-10-22）
+
+- `fa28472f` 的 LinkedIn 企业帖子付费 Actor 尚未纳入当前逐任务批准、预算认领、提交回执和结果不明恢复链。视频与图文内部采集入口现于任何供应商请求或租户记录操作前明确报 `linkedin_company_paid_collection_permit_required`；外部手工爬取 HTTP 入口仍不开放 LinkedIn。原有离线 URL/帖子解析保留，不能据此称为功能已合入。Apify 候选窗口纯规则迁至 `videoCrawlerNormalization.ts`，`videos.ts` 保留兼容导出并从 10,255 降至 10,252 行；历史超限仍有 8 项。
+- LinkedIn 来源边界 34/34、相关采集合同 3/3、TypeScript、架构扫描/ratchet、191 项迁移文件只读检查、生产构建和 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。没有真实供应商调用、目标库检查、浏览器验收、生产迁移或部署。Qwen 失败后的现有 Gemini 降级按用户选择暂时保留，仍是独立的付费治理缺口。
+
 ## 图片 AIGC 当前接线复核（2026-10-22）
 
 - 在干净集成提交 `6865f13737afc1ddb774c0af61f11f16b931309d` 上只读复核：图片 AIGC 来源提交 `6e2d2e4ffde42e8240750c950763b0b5dd2859ea` 和 `95b0bcc16820e06fcc16ac75e040a6592abdc692` 均为祖先；当前轮播/GIF 已有工作台入口、冻结单元执行和 GIF 非付费合成/交付代码。旧 ADR 中“不可选”的语句是历史阶段状态，已在 ADR 末尾追加当前状态修正，而非删除历史决策。

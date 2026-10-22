@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { inferPlatformFromUrl, isPlatformUrl } from './videoCrawlerNormalization.js';
-import { accountLabelFromUrl, looksLikeAccountUrl } from './videos.js';
+import { accountLabelFromUrl, crawlImagePostsForTenant, crawlVideosForTenant, looksLikeAccountUrl } from './videos.js';
 import { parseLinkedInCompanyPost } from './linkedinCompanyPost.js';
 import { accountListUrlCandidates, normalizeAccountListUrl, stripTrackingParams, youtubeThumbnailFromUrl } from './videoCrawlerSourceUrls.js';
 
@@ -58,4 +58,11 @@ test('LinkedIn video source requires a bounded public poster and duration', () =
   assert.equal(parsed.item.duration, 42);
   assert.equal(parsed.item.sourceAccountUrl, 'https://www.linkedin.com/company/example/');
   assert.equal(parsed.item.caption, 'Factory demonstration');
+});
+
+test('unlicensed LinkedIn collection fails before any paid Actor or record write', async () => {
+  const input = { tenantId: 'tenant-test', platform: 'linkedin' as const,
+    mode: 'account' as const, accountUrl: 'https://www.linkedin.com/company/example/', limit: 5 };
+  await assert.rejects(crawlVideosForTenant(input), /linkedin_company_paid_collection_permit_required/);
+  await assert.rejects(crawlImagePostsForTenant(input), /linkedin_company_paid_collection_permit_required/);
 });
