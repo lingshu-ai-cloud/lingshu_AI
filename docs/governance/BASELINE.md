@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵感原对标只读解析边界拆分（2026-10-23）
+
+- 代码提交 `bbc4ed583109986ac074d745df1bd0a87299688c` 将周计划原对标的已加载列表匹配、冻结记录 ID 读取、标题搜索及快照回退迁至 `inspirationReferenceResolver.ts`；页面继续负责导航和选中状态，不增加付费、写入或重复请求。`InspirationDashboard.tsx` 从 2,389 降至 2,342 行，历史预算同步收紧；全仓仍有 6 个历史超限文件，结构拆分没有完成。
+- 新解析规则及页面合同聚焦 8/8、`test:social-content-frontend`、`test:digital-employees`、`pnpm run lint`、架构扫描/ratchet（2,381 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建和 `git diff --check` 通过。`AiCreateStudio` chunk 为 496,106/500,000 字节，仍有大 chunk 提示。按用户决定，LinkedIn 付费采集暂不测试；本批未调用真实供应商、执行目标库迁移、部署或登录后浏览器验收。远端 SHA 与工作区状态须在推送后单独核验。
+
 ## 灵感素材详情与创作准入边界拆分（2026-10-23）
 
 - 代码提交 `02e66b216709a6f3f628cb54101cacbabfb8b2b6` 将素材标签、媒体预览、编导识别、主题选择和完整使用记录抽入 `InspirationMaterialDetailDrawer.tsx`；灵感页继续持有素材读取、主题保存及进入创作回调。卡片与详情统一使用 `canCreateFromLibraryMaterial`，音频、未知时长视频或无可用来源不得进入视觉创作。`InspirationDashboard.tsx` 从 2,423 降至 2,389 行，架构预算同步收紧；全仓仍有 6 个历史超限文件。

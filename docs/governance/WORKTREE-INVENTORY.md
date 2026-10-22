@@ -3,6 +3,12 @@
 最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。本次只读复核未改写工作树、分支或运行数据；历史移除记录见下文。
 
+## 2026-10-23 集成点 `bbc4ed58` 只读复核
+
+- 本轮代码提交后，集成树为 `bbc4ed583109986ac074d745df1bd0a87299688c`、工作区干净；Git 仍登记 11 个工作树。6 个非集成树有未提交内容：`local-preview-1002`、`local-integrated-flow`、`local-unified-20261010`、`mobile-dual-edition-20261012`、`客服`、`total-merge-langgraph`，全部保留原位。
+- 其余 4 个非集成树虽干净，`safe-all-modules-ui-20261009`、`colleague-handoff-20261019` 含被忽略的业务媒体或运行数据，广告树 `xixi1021-full-integration` 含独有补丁及账号、任务和审计数据，`1022图片生成模块` 的 `23b1bb93` 仍有非等价独有补丁。没有新的无损归档候选，未归档、重置或移动任何工作树。
+- 原图片 AIGC 已提交管线仍在集成祖先中；新图片分支的确定性图层改进已选择性合入，剩余自动 GPT 路由会改变用户要求暂留的 Qwen→Gemini 降级，且逐记录付费许可尚未完成。本轮不整笔合并、不做 LinkedIn 付费采集测试；只读盘点不等于其他工作树或目标环境已清理验收。
+
 ## 2026-10-23 集成点 `f0fce7f7` 再盘点
 
 - 在集成树干净、HEAD 为 `f0fce7f72c7c2e32858bae586eb8662a48a1d0bb` 时逐一复核 11 个注册树。6 个非集成树有未提交项：`local-preview-1002` 53、`local-integrated-flow` 91、`local-unified-20261010` 6、`mobile-dual-edition-20261012` 28、`客服` 1、`total-merge-langgraph` 20；均保留原位。计数为 Git porcelain 条目，不代表文件数。
