@@ -152,18 +152,16 @@ assert.equal(content.scenes[0].action.path, '按压并涂抹');
 assert.equal(content.scenes[0].hookPrecision, true);
 
 const source = fs.readFileSync(new URL('./socialContentProductionExecution.ts', import.meta.url), 'utf8');
+const shootingPlanExecutionSource = fs.readFileSync(new URL('./socialContentShootingPlanExecution.ts', import.meta.url), 'utf8');
 const earlyBranch = source.indexOf("if (productionApproach === 'shooting_plan')");
 const renderWorkspace = source.indexOf('await withSocialContentRenderWorkspace(');
 assert.ok(earlyBranch >= 0 && renderWorkspace >= 0 && earlyBranch < renderWorkspace,
   'shooting_plan must return before opening a render workspace');
-assert.match(source, /kind: 'shooting_plan'[\s\S]*?finishShootingPlanExecution[\s\S]*?return;/);
-const shootingPlanFinalizer = source.slice(
-  source.indexOf('async function finishShootingPlanExecution'),
-  source.indexOf('export async function runSocialContentAutoProduction'),
-);
-assert.doesNotMatch(shootingPlanFinalizer, /finishExecution\(/,
+assert.match(source, /if \(productionApproach === 'shooting_plan'\) \{\s*await createShootingPlanExecution\([\s\S]*?return;/);
+assert.match(shootingPlanExecutionSource, /kind: 'shooting_plan'[\s\S]*?finishShootingPlanExecution\(input, artifactResult\.artifact\.artifactId\)/);
+assert.doesNotMatch(shootingPlanExecutionSource, /finishExecution\(|withSocialContentRenderWorkspace\(/,
   'shooting plans must not enter the video delivery/publishing finalizer');
-assert.match(shootingPlanFinalizer, /stage: 'review_ready'[\s\S]*?status: 'completed'/);
+assert.match(shootingPlanExecutionSource, /stage: 'review_ready'[\s\S]*?status: 'completed'/);
 
 const presenterPrepare=source.indexOf('preparePresenterFirstFrameReviews:async');
 const presenterPause=source.indexOf("stage:'social.presenter_first_frames'");

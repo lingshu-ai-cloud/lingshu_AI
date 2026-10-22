@@ -165,36 +165,10 @@ async function readCurrentConfirmedPresenterFirstFrame(store:NonNullable<Starter
 }
 export {bindCanonicalTypeAwareRouting, assertCompleteTypeAwareExecutionPlan, assetSupplyPlanWithExecutionSelections} from './socialContentExecutionPlan.js';
 import {bindCanonicalTypeAwareRouting, assertCompleteTypeAwareExecutionPlan} from './socialContentExecutionPlan.js';
-import { SOCIAL_SHOOTING_PLAN_SCHEMA, buildSocialShootingPlanArtifactContent } from './socialContentShootingPlan.js';
+import { SOCIAL_SHOOTING_PLAN_SCHEMA } from './socialContentShootingPlan.js';
+import { createShootingPlanExecution, finishShootingPlanExecution } from './socialContentShootingPlanExecution.js';
 export { SOCIAL_SHOOTING_PLAN_SCHEMA, buildSocialShootingPlanArtifactContent } from './socialContentShootingPlan.js';
 export { assetSupplyPlanWithDynamicPresenterBackgroundLocks, typeAwareRequiredMaterialIds, rebindDivergentLocalRoutesFromApprovedContext } from './socialContentProductionRouting.js';
-async function finishShootingPlanExecution(input: {
-  repository: Starter198Repository;
-  tenantId: string;
-  userId: string;
-  taskId: string;
-  runId: string;
-  backendFilePort?: SocialContentBackendFilePort;
-}, artifactId: string): Promise<void> {
-  await writeExecutionStage({
-    ...input,
-    stage: 'review_ready',
-    status: 'completed',
-    message: '逐镜代拍清单已生成，等待用户审核。',
-    extra: { artifactId, artifactKind: 'shooting_plan' },
-  });
-  // Do not call the video finalizer here: an approved checklist must never be
-  // scheduled for media delivery or publication. A checklist has no render
-  // evidence to review, so its worker run completes when the artifact exists.
-  const run = await input.repository.get(STARTER_COLLECTIONS.runs, input.tenantId, input.runId);
-  if (run) await input.repository.update(STARTER_COLLECTIONS.runs, input.tenantId, run.id, {
-    status: 'completed',
-    current_controller: 'system',
-    pause_reason: '',
-    completed_at: new Date().toISOString(),
-  });
-}
-
 export async function runSocialContentAutoProduction(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -360,35 +334,7 @@ export async function runSocialContentAutoProduction(input: {
   });
   const taskRecord = await requireSocialTask(input);
   if (productionApproach === 'shooting_plan') {
-    await writeExecutionStage({
-      ...input,
-      stage: 'shooting_plan',
-      message: '内容 Agent 正在把编导方案整理为逐镜代拍清单，不调用配音、数字人、IAIGC 或渲染服务。',
-      extra: {
-        directorBriefId: agentWorkflow.directorBrief.directorBriefId,
-        sceneCount: agentWorkflow.directorBrief.scenes.length,
-      },
-    });
-    const artifactResult = await createSocialContentArtifact({
-      repository: input.repository,
-      tenantId: input.tenantId,
-      userId: input.userId,
-      taskId: input.taskId,
-      idempotencyKey: `social-shooting-plan:${input.runId}`,
-      trustedAgentOrigin: true,
-      now: input.now,
-      backendFilePort: input.runtime?.backendFilePort,
-      value: {
-        kind: 'shooting_plan',
-        platform: detail.brief.platforms[0] ?? null,
-        language: detail.brief.languages[0] ?? null,
-        origin: 'agent',
-        resourceRef: null,
-        content: buildSocialShootingPlanArtifactContent(detail),
-      },
-    });
-    await finishShootingPlanExecution({ ...input, backendFilePort: input.runtime?.backendFilePort },
-      artifactResult.artifact.artifactId);
+    await createShootingPlanExecution({ ...input, backendFilePort: input.runtime?.backendFilePort }, detail);
     return;
   }
   let revisionNote = '';
