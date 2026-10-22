@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const source = readFileSync(new URL('./SocialCreationWorkbench.tsx', import.meta.url), 'utf8');
+const source = readFileSync(new URL('./useSocialCreationWorkbenchController.tsx', import.meta.url), 'utf8');
+const view = readFileSync(new URL('./SocialCreationWorkbench.tsx', import.meta.url), 'utf8');
+assert.match(view, /useSocialCreationWorkbenchController\(\{ mode, seed, stageProfile, onGenerate \}\)/,
+  'the view must use the controller whose draft and task recovery are checked below');
 
 assert.match(source, /freeCreation: freeCreationState, script: freeScriptText, duration: desiredDuration/,
   'autosave must persist the generated script with the structured free-creation draft');

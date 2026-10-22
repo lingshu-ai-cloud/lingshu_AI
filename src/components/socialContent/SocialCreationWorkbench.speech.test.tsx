@@ -55,12 +55,14 @@ assert.ok(!freeHtml.includes('aria-label="内容制作步骤"'));
 assert.ok(freeHtml.includes('更换开场方式'));
 assert.ok(freeHtml.includes('主推产品 · 多选'));
 const workbenchSource = fs.readFileSync(new URL('./SocialCreationWorkbench.tsx', import.meta.url), 'utf8');
+const controllerSource = fs.readFileSync(new URL('./useSocialCreationWorkbenchController.tsx', import.meta.url), 'utf8');
 const planningSource = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', import.meta.url), 'utf8');
 assert.match(planningSource, /draftTitle:\s*request\.prefill\?\.title/);
 assert.match(planningSource, /aspectRatio:\s*request\.sourceContext\?\.aspectRatio/);
 assert.match(planningSource, /!initialCreateRequest \|\| initialCreateRequest\.replicationStep \|\| !projectId/,
   'an explicit workbench step must not be overwritten by the background resume lookup');
-assert.match(workbenchSource, /title:\s*draftTitle\.trim\(\)/);
+assert.match(workbenchSource, /useSocialCreationWorkbenchController\(\{ mode, seed, stageProfile, onGenerate \}\)/);
+assert.match(controllerSource, /title:\s*draftTitle\.trim\(\)/);
 assert.match(workbenchSource, /选择开场方式/);
 assert.match(workbenchSource, /'暂不指定'/);
 assert.match(workbenchSource, /'上传素材'/);

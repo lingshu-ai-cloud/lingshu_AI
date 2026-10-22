@@ -36,15 +36,17 @@ assert.deepEqual(resolveReplicationProductMappings([], products, 'enterprise-a',
   'a reference without source products produces no product mappings');
 
 const workbenchSource = fs.readFileSync(new URL('./SocialCreationWorkbench.tsx', import.meta.url), 'utf8');
-assert.match(workbenchSource, /const chooseDefaultProduct = \(id: string\) => \{[\s\S]*?setProductAssignments\(assignReplicationDefaultProduct\(productSlots, id\)\)/,
+const controllerSource = fs.readFileSync(new URL('./useSocialCreationWorkbenchController.tsx', import.meta.url), 'utf8');
+assert.match(workbenchSource, /useSocialCreationWorkbenchController\(\{ mode, seed, stageProfile, onGenerate \}\)/);
+assert.match(controllerSource, /const chooseDefaultProduct = \(id: string\) => \{[\s\S]*?setProductAssignments\(assignReplicationDefaultProduct\(productSlots, id\)\)/,
   'changing the default must replace the restored assignments');
 assert.match(workbenchSource, /onChange=\{\(\) => chooseDefaultProduct\(item\.id\)\}/,
   'the primary product picker must apply the replacement assignments');
 assert.match(workbenchSource, /全部使用默认产品/,
   'a restored override can be reset even when the default radio is already selected');
-assert.match(workbenchSource, /if \(productSelectionChanged \|\| !seed\?\.productMappings\?\.length/,
+assert.match(controllerSource, /if \(productSelectionChanged \|\| !seed\?\.productMappings\?\.length/,
   'a later catalog refresh must not restore stale seed assignments');
-assert.match(workbenchSource, /if \(!isReplication \|\| productSelectionChanged \|\| !saved\?\.length/,
+assert.match(controllerSource, /if \(!isReplication \|\| productSelectionChanged \|\| !saved\?\.length/,
   'old confirmed speech must not be restored after product mappings change');
 
 const noProductHtml = renderToStaticMarkup(<SocialCreationWorkbench

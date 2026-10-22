@@ -2,6 +2,12 @@
 
 更新时间：2026-10-22（Asia/Shanghai）
 
+## 社媒创作工作台控制器与视图边界（2026-10-22）
+
+- 以 `e87c4e7f086f4a084b4925990cc670953ff08b13` 为干净起点。仓库工作约定的证据口径先由独立提交 `b3c184d1` 补充；本批再将 `SocialCreationWorkbench` 的状态、派生规则、异步操作和语音高亮控制移到 `useSocialCreationWorkbenchController.tsx`，时间辅助函数移到 `socialCreationWorkbenchTime.ts`，原组件保留公开合同和 JSX 视图。控制器与视图经原始提交逐段比对，除文件边界和空白外保持原逻辑及 JSX 不变。
+- 原组件由 1,008 行降至 323 行，新控制器 736 行，撤销原组件的历史超限豁免；历史超限文件由 14 项降至 13 项。相关源码位置合同已改为分别检查控制器规则和视图接线，未改变社媒生成、付费提交或预览状态模型。
+- 社媒前端及 Studio 媒体定向测试、`pnpm run lint`、架构扫描与 ratchet 回归、生产构建、191 项迁移仓库只读检查及迁移 guard 测试通过。构建中 `AiCreateStudio` 主 chunk 为 497,094/500,000 字节，无大 chunk 告警；这不代表真实用户操作、付费供应商 E2E 或发布验收。未调用真实付费供应商、执行迁移或部署。最终本地/远端 SHA 与工作树状态以本批提交、推送后的复核为准。
+
 ## Studio 支撑模块分包与构建体积门禁（2026-10-22）
 
 - 以集成分支 `e331a08cac40926e5bbb2f1c6c09ac3fdd0e3873` 为干净起点，使用当前 Vite/Rolldown 的明确模块分组，将工作台框架、媒体预览、任务水合与纯规则等静态依赖放入可缓存的 `studio-support` 包；保留严格执行顺序，避免分包改变静态依赖的求值先后。`pnpm run build` 新增 `check-studio-chunk.mjs`，在构建后对 `AiCreateStudio` 主 chunk 执行 500,000 字节硬门禁。
