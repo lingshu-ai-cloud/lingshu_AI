@@ -2,6 +2,12 @@
 
 更新时间：2026-10-22（Asia/Shanghai）
 
+## 创作工作台加载边界（2026-10-22）
+
+- 镜头制作面板和“我的创作”浮层改为按需加载，项目浮层源码移出 `AiCreateStudio.tsx`；主文件从 17,963 行降至 17,807 行，历史行数预算同步收紧。构建主 chunk 从约 881 kB 降至约 774 kB，仍有大 chunk 告警。
+- 主文件自身的生成代码约 570 kB，后续仍需拆分步骤工作流才能完成构建告警治理；本批不声称已解决。项目删除合同 1/1、相关创作工作台定向测试 14/16 通过，另两项旧断言失败未因本轮按需加载修改相关实现。
+- TypeScript、生产构建、架构扫描/ratchet、ratchet 回归及 191 项迁移只读检查通过。推送 SHA 以本批最终核对为准。
+
 ## 经营看板结构治理（2026-10-22）
 
 - `SmartBusinessDashboard.tsx` 的周计划展示与统一展示模型分别移到 `smartBusiness/WeeklyPlanPresentation.tsx` 和 `smartBusiness/smartBusinessDisplayModel.ts`，原组件导出入口保留；主文件从 1,540 行降至 623 行，移除其超限豁免，剩余超限项 19 个。

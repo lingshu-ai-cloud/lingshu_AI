@@ -3,14 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const source = fs.readFileSync(path.resolve('src/components/AiCreateStudio.tsx'), 'utf8');
+const overlaySource = fs.readFileSync(path.resolve('src/components/studio/StudioProjectsOverlay.tsx'), 'utf8');
 const historySource = fs.readFileSync(path.resolve('src/components/socialContent/SocialContentHistoryHome.tsx'), 'utf8');
 const apiSource = fs.readFileSync(path.resolve('src/lib/studioApi.ts'), 'utf8');
 
-assert.match(source, /import \{ App as AntApp, Button, Modal, Popconfirm \} from 'antd'/, 'project deletion must use the shared Ant Popconfirm');
-assert.match(source, /title="删除这条创作？"[\s\S]{0,500}description=\{`“\$\{p\.title\}”删除后无法恢复。`\}/, 'confirmation must identify the project and explain that deletion is irreversible');
-assert.match(source, /okButtonProps=\{\{ danger: true \}\}/, 'the confirmed delete action must use danger semantics');
-assert.match(source, /aria-label=\{`删除创作：\$\{p\.title\}`\}[\s\S]{0,180}>[\s\S]{0,80}删除/, 'each project card must expose an always visible, named delete action');
-assert.doesNotMatch(source, /opacity-0 group-hover:opacity-100[\s\S]{0,120}<Trash2/, 'deletion must not be hidden behind hover-only presentation');
+assert.match(overlaySource, /import \{ Button, Popconfirm \} from 'antd'/, 'project deletion must use the shared Ant Popconfirm');
+assert.match(overlaySource, /title="删除这条创作？"[\s\S]{0,500}description=\{`“\$\{p\.title\}”删除后无法恢复。`\}/, 'confirmation must identify the project and explain that deletion is irreversible');
+assert.match(overlaySource, /okButtonProps=\{\{ danger: true \}\}/, 'the confirmed delete action must use danger semantics');
+assert.match(overlaySource, /aria-label=\{`删除创作：\$\{p\.title\}`\}[\s\S]{0,180}>[\s\S]{0,80}删除/, 'each project card must expose an always visible, named delete action');
+assert.doesNotMatch(overlaySource, /opacity-0 group-hover:opacity-100[\s\S]{0,120}<Trash2/, 'deletion must not be hidden behind hover-only presentation');
 assert.match(source, /const result = await studioApi\.deleteProject\(id\);[\s\S]{0,250}if \(!result\.ok\)[\s\S]{0,250}throw new Error\(reason\)/, 'failed deletion must be reported instead of silently removing the card');
 assert.match(source, /setProjects\(items => items\.filter\(item => item\.id !== id\)\)/, 'successful deletion must remove the project from the visible list');
 assert.match(source, /if \(projectDeleteInFlightRef\.current\) \{[\s\S]{0,180}return false/, 'autosave must pause while the active project is being deleted');
