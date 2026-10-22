@@ -85,13 +85,15 @@ assert.doesNotMatch(authSource, /upsertDemoAccountRegistry\([\s\S]{0,220}\bpassw
 assert.match(authSource, /passwordHash:\s*passwordHash\(password, salt\)/, 'local customer login must retain one-way password hashing');
 
 const adminSource = read('server/routes/admin.ts');
-assert.doesNotMatch(adminSource, /decryptRegistrationPassword/, 'admin routes must not recover historical passwords');
-assert.doesNotMatch(adminSource, /registeredPasswordCipher/, 'admin flows must not depend on the removed credential field');
-const demoAccountsRoute = adminSource.slice(
-  adminSource.indexOf("adminRouter.get('/demo-accounts'"),
-  adminSource.indexOf("adminRouter.post('/trial-accounts/:tenantId/promote'"),
+const adminAccountRoutesSource = read('server/routes/adminAccountRoutes.ts');
+assert.match(adminSource, /registerAdminAccountRoutes\(adminRouter\)/, 'account routes must remain mounted on the admin router');
+assert.doesNotMatch(`${adminSource}\n${adminAccountRoutesSource}`, /decryptRegistrationPassword/, 'admin routes must not recover historical passwords');
+assert.doesNotMatch(`${adminSource}\n${adminAccountRoutesSource}`, /registeredPasswordCipher/, 'admin flows must not depend on the removed credential field');
+const demoAccountsRoute = adminAccountRoutesSource.slice(
+  adminAccountRoutesSource.indexOf("router.get('/demo-accounts'"),
+  adminAccountRoutesSource.indexOf("router.post('/trial-accounts/:tenantId/promote'"),
 );
-assert.ok(demoAccountsRoute.length > 0, 'demo accounts response route must be present');
+assert.ok(demoAccountsRoute.startsWith("router.get('/demo-accounts'") && demoAccountsRoute.length > 0, 'demo accounts response route must be present');
 assert.doesNotMatch(demoAccountsRoute, /\bpassword\s*:/, 'demo accounts response contract must not include password');
 assert.doesNotMatch(demoAccountsRoute, /rotationPassword/, 'demo accounts response contract must not include rotationPassword');
 assert.match(demoAccountsRoute, /credentialState/, 'demo accounts response must expose non-secret credential state');
