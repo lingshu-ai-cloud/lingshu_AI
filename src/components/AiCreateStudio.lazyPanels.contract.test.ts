@@ -19,4 +19,11 @@ for (const [name, path] of [
   );
 }
 
+assert.match(source, /const BenchmarkVideoPreview = lazy\(\(\) => import\('\.\/studio\/StudioPreviewPanels'\)/);
+assert.match(source, /const LeadContentPackagePreview = lazy\(\(\) => import\('\.\/studio\/StudioPreviewPanels'\)/);
+assert.match(source, /const StudioReviewIssueActions = lazy\(\(\) => import\('\.\/studio\/StudioReviewIssueActions'\)\)/);
+assert.match(source, /<Suspense[^\n]+<BenchmarkVideoPreview/);
+assert.match(source, /<Suspense[^\n]+<LeadContentPackagePreview/);
+assert.match(source, /<Suspense[^\n]+<StudioReviewIssueActions/);
+
 console.log('AiCreateStudio optional panels remain lazy-loaded');

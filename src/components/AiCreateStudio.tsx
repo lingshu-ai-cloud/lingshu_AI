@@ -10,7 +10,7 @@ import { localFlowRenderRecovery, localFlowRenderInputIdentity } from '../lib/lo
 import { App as AntApp, Button, Modal } from 'antd';
 import { canOpenWorkbenchRenderSettings, workbenchExportBlockReason } from '../lib/replicationWorkbenchNavigation';
 import { digitalHumanQualityState } from '../lib/digitalHumanQuality';
-import StudioReviewIssueActions from './studio/StudioReviewIssueActions';
+const StudioReviewIssueActions = lazy(() => import('./studio/StudioReviewIssueActions'));
 import { applyCaptionTextEdits, sourceCaptionEditKey, subtitleReviewCues } from '../lib/subtitleReview';
 import { studioPreviewRenderBlockers } from '../lib/studioPreviewReadiness';
 import { presenterApi } from '../lib/presenterApi';
@@ -103,7 +103,8 @@ import {
   waitForStudioMediaReady,
   withStudioTimeout,
 } from './studio/studioAuthenticatedMedia';
-import { BenchmarkVideoPreview, LeadContentPackagePreview, VariationChipEditor } from './studio/StudioPreviewPanels';
+const BenchmarkVideoPreview = lazy(() => import('./studio/StudioPreviewPanels').then(module => ({ default: module.BenchmarkVideoPreview })));
+const LeadContentPackagePreview = lazy(() => import('./studio/StudioPreviewPanels').then(module => ({ default: module.LeadContentPackagePreview })));
 import { newDigitalHumanRequirements, planDigitalHumanShot, type DigitalHumanExecutionRecord, type DigitalHumanPlanRecord } from '../lib/digitalHumanPlan';
 import { shotKeyframeCues } from '../lib/shotKeyframes';
 import { CoverFace, RealThumb, Thumb, coverArtCss } from './StudioMediaPreviews';
@@ -10290,7 +10291,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       : '需重新生成并通过企业资料事实校验。'}系统不会自动提交或交付此草稿。
                   </div>
                 )}
-                {leadContentPackage && <LeadContentPackagePreview value={leadContentPackage} imageUrl={posterImageUrl} />}
+                {leadContentPackage && <Suspense fallback={<div role="status" className="p-3 text-xs text-text-muted">正在打开图文预览…</div>}><LeadContentPackagePreview value={leadContentPackage} imageUrl={posterImageUrl} /></Suspense>}
                 {posterImageUrl && posterImageReviewStatus === 'needs_review' && (
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
                     <p className="text-xs leading-relaxed text-amber-800">请核对产品外观、包装文字和版式；确认结果会写入统一素材记录，确认前图片不会成为可交付成品或后续 Agent 输入。</p>
@@ -12458,7 +12459,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
-      {/* BGM 试听用的隐藏音频元素 */}
       <audio ref={audioRef} onEnded={() => setPlayingBgm(null)} className="hidden" />
 
       <div className={showProjects ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
@@ -13087,7 +13087,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         >
           {canvasView !== 'reference' && step !== 'preview' && storyboardSlots.length > 0 && workbenchPlaybackError && <span role="alert" className="absolute right-4 top-4 z-30 max-w-56 rounded-md bg-rose-950/90 px-2 py-1 text-[10px] text-white">{workbenchPlaybackError}</span>}
           {canvasView === 'reference' && mode === 'clone' && videoKickoff && step !== 'preview' ? (
-            <BenchmarkVideoPreview kickoff={videoKickoff} embedded seekRequest={referenceSeekRequest} onTimeUpdate={setReferenceTimelineTime} />
+            <Suspense fallback={<div role="status" className="p-3 text-xs text-text-muted">正在打开参考视频…</div>}><BenchmarkVideoPreview kickoff={videoKickoff} embedded seekRequest={referenceSeekRequest} onTimeUpdate={setReferenceTimelineTime} /></Suspense>
           ) : step === 'cover' && !coverTimelineCaptureMode ? (
             <div className="relative h-full w-full overflow-hidden bg-black shadow-xl">
               <CoverFace
@@ -13226,7 +13226,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，请重试');
             projectRevisionRef.current = saved.project.updatedAt; setProjectId(saved.project.id);
           };
-          return <StudioReviewIssueActions key={issue.id} digital={isDigital && !missingProductImage}
+          return <Suspense key={issue.id} fallback={<div role="status" className="p-3 text-xs text-text-muted">正在打开分镜处理项…</div>}><StudioReviewIssueActions digital={isDigital && !missingProductImage}
             requirements={shot.digitalHuman || newDigitalHumanRequirements()} presenterId={shot.presenterId || ''}
             presenters={productionDefaults.presenters} products={selectedProductOptions} productIds={plan.productIds || []}
             allowShooting={canRequestShootingFor(slot.id)}
@@ -13307,7 +13307,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 sourceProjectId: saved.project.id, sourceStoryboardSlotId: slot.id, sourceShotId: bound.id, sourceAssemblyId: activeAssemblyId,
                 requirements: bound.requirements, soundMode: shot.sound, expectedNarration: shot.narration });
               setShootingTasks(current => [task, ...current.filter(item => item.id !== task.id)]);
-            }} />;
+            }} /></Suspense>;
         }}
         onSelectIssueOption={selectBatchReviewIssue}
         onSubmit={() => void (async () => {
