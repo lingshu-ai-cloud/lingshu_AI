@@ -9,6 +9,7 @@ const cockpit = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8'
 const memory = fs.readFileSync('src/components/WorkspaceManagementPages.tsx', 'utf8');
 const snapshot = fs.readFileSync('server/digitalEmployees/businessSnapshot.ts', 'utf8');
 const production = fs.readFileSync('server/digitalEmployees/contentProduction.ts', 'utf8');
+const productionPlanning = fs.readFileSync('server/digitalEmployees/contentProductionPlanning.ts', 'utf8');
 const studio = fs.readFileSync('server/routes/studio.ts', 'utf8');
 const materialLibrary = fs.readFileSync('server/lib/materialLibrary.ts', 'utf8');
 const publisher = fs.readFileSync('server/publishing/scheduledPublisher.ts', 'utf8');
@@ -53,7 +54,8 @@ const truthfulInventory = await readMaterialLibrary('truthful-tenant', {
 assert.deepEqual(truthfulInventory.items.map(item => item.id), ['local-real', 'cloud-real'], 'shared inventory must behaviorally filter synthetic and cross-tenant local/cloud records');
 assert.match(production, /stat\.size < 10_000/, 'the content worker must verify a non-empty rendered file before completion');
 assert.match(production, /selectedMaterialEvidence/, 'rendered projects must retain material provenance');
-assert.match(production, /knowledge_gap/, 'missing product, material, or analysis must be persisted as an explicit knowledge gap');
+assert.match(production, /contentProductionKnowledgeGaps\(/, 'the worker must use route-specific knowledge gap planning');
+assert.match(productionPlanning, /knowledge_gap/, 'missing product, material, or analysis must be persisted as an explicit knowledge gap');
 assert.match(publisher, /realPublishingAuthorized !== true/, 'the real publisher must enforce the frozen tenant authorization');
 assert.match(messaging, /allowRealCustomerMessages/, 'real customer messages must enforce tenant authorization');
 
