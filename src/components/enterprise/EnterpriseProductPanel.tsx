@@ -23,6 +23,8 @@ interface Props {
   onProductFieldChange: (field: string, value: string) => void;
   productImporting: boolean;
   productImportMessage: string;
+  productDocumentMessage: string;
+  productDocumentUploading: boolean;
   importProductSheet: (file: File | null) => Promise<void>;
   addProduct: () => void;
   productPage: number;
@@ -50,7 +52,7 @@ export default function EnterpriseProductPanel({
   profileProducts, products, visibleProducts, completed, assetStats,
   productsDeepLink, productsDeepLinkResolved, deepLinkedProduct, deepLinkMaterialCount,
   openProductMaterials, openMaterialLibrary, onProductFieldChange,
-  productImporting, productImportMessage, importProductSheet, addProduct,
+  productImporting, productImportMessage, productDocumentMessage, productDocumentUploading, importProductSheet, addProduct,
   productPage, pageSize, expandedProductIndexes, setExpandedProductIndexes,
   removeProduct, updateProduct, addProductDocuments, removeProductDocument,
   maxProductDocuments, setProductPage,
@@ -94,12 +96,13 @@ export default function EnterpriseProductPanel({
               <Input.TextArea className={textareaCls} rows={2} value={profileProducts.highlights} onChange={e => onProductFieldChange('highlights', e.target.value)} placeholder="工厂直供、支持 OEM/ODM、备货稳定" />
             </Field>
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              <AntUpload accept=".xlsx,.xls,.csv,.pdf,.docx" showUploadList={false} disabled={productImporting} beforeUpload={file => { void importProductSheet(file); return false; }}>
-                <Button loading={productImporting} icon={<FileSpreadsheet size={14} />}>导入产品表</Button>
+              <AntUpload accept=".xlsx,.xls,.csv,.pdf,.docx" showUploadList={false} disabled={productImporting || productDocumentUploading} beforeUpload={file => { void importProductSheet(file); return false; }}>
+                <Button loading={productImporting} disabled={productDocumentUploading} icon={<FileSpreadsheet size={14} />}>导入产品表</Button>
               </AntUpload>
-              <Button onClick={addProduct} icon={<Plus size={14} />}>添加产品</Button>
+              <Button onClick={addProduct} disabled={productDocumentUploading} icon={<Plus size={14} />}>添加产品</Button>
               {productImportMessage && <span className="text-[11px] font-bold text-emerald-700">{productImportMessage}</span>}
             </div>
+            {productDocumentMessage && <Alert className="mt-3" type="warning" showIcon title={productDocumentMessage} />}
             <div className="mt-4 space-y-3">
               {visibleProducts.map((product, pageIndex) => {
                 const index = (productPage - 1) * pageSize + pageIndex;
@@ -127,7 +130,7 @@ export default function EnterpriseProductPanel({
                     </div>
                     <ChevronDown size={14} className="shrink-0 text-text-muted transition-transform group-open:rotate-180" />
                   </summary>
-                  <button type="button" onClick={() => removeProduct(index)} aria-label={`删除产品 ${product.name || index + 1}`} className="absolute right-3 top-3 rounded-md p-1 text-text-muted hover:bg-white hover:text-red" title="删除产品"><X size={13} /></button>
+                  <button type="button" onClick={() => removeProduct(index)} disabled={productDocumentUploading} aria-label={`删除产品 ${product.name || index + 1}`} className="absolute right-3 top-3 rounded-md p-1 text-text-muted hover:bg-white hover:text-red disabled:opacity-50" title="删除产品"><X size={13} /></button>
                   <div className="mt-4 border-t border-border pt-4">
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="产品名称">
@@ -162,9 +165,9 @@ export default function EnterpriseProductPanel({
                         <span className="text-[10px] text-text-muted">{product.documents?.length ?? 0}/{maxProductDocuments}</span>
                       </div>
                       <p className="mb-2 text-[10px] leading-4 text-text-muted">这里只保存用于证明产品事实的证书、检测报告等资料，不作为视频创作素材。</p>
-                      <label className={`flex h-8 items-center justify-center gap-1.5 rounded-md border border-dashed text-[11px] font-bold ${(product.documents?.length ?? 0) >= maxProductDocuments ? 'cursor-not-allowed bg-surface-2 text-text-muted' : 'cursor-pointer text-text-secondary hover:border-border-bright hover:text-text-primary'}`}>
+                      <label className={`flex h-8 items-center justify-center gap-1.5 rounded-md border border-dashed text-[11px] font-bold ${(product.documents?.length ?? 0) >= maxProductDocuments || productDocumentUploading ? 'cursor-not-allowed bg-surface-2 text-text-muted' : 'cursor-pointer text-text-secondary hover:border-border-bright hover:text-text-primary'}`}>
                         <Upload size={12} />上传资质凭证
-                        <input className="hidden" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" disabled={(product.documents?.length ?? 0) >= maxProductDocuments} onChange={e => { addProductDocuments(index, e.currentTarget.files); e.currentTarget.value = ''; }} />
+                        <input className="hidden" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" disabled={(product.documents?.length ?? 0) >= maxProductDocuments || productDocumentUploading} onChange={e => { void addProductDocuments(index, e.currentTarget.files); e.currentTarget.value = ''; }} />
                       </label>
                       <div className="mt-2 space-y-1">
                         {(product.documents ?? []).map((asset, assetIndex) => (

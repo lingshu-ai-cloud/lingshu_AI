@@ -13,6 +13,7 @@ import { authHeader } from '../lib/auth';
 import { completeDemoStep } from '../lib/demoProgress';
 import { prepareEnterpriseProductImport, type PendingProductImport } from './enterprise/enterpriseProductImportPreparation';
 import { confirmEnterpriseProductImportAssets } from './enterprise/enterpriseProductImportConfirmation';
+import { useEnterpriseProductDocuments } from './enterprise/useEnterpriseProductDocuments';
 import {importProductEvidenceUrl,uploadProductEvidence} from '../lib/enterpriseProductAssetUpload';
 import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
@@ -397,6 +398,9 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
       setProfile(prev => ({ ...prev, [section]: { ...(prev[section] as object), [field]: value } }));
 
   const products = normalizeProductItems(profile.products);
+  const productDocumentUpload = useEnterpriseProductDocuments({
+    products, setProfile, productImportConfirming, maxDocuments: MAX_PRODUCT_DOCUMENTS,
+  });
   const visibleProducts = products.slice((productPage - 1) * PAGE_SIZE, productPage * PAGE_SIZE);
   const faqItems = profile.faq ?? [];
   const visibleFaqs = faqItems.slice((faqPage - 1) * PAGE_SIZE, faqPage * PAGE_SIZE);
@@ -815,7 +819,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   };
 
   const importProductSheet = async (file: File | null) => {
-    if (!file) return;
+    if (!file || productDocumentUpload.isUploading()) return;
     setProductImporting(true);
     setProductImportMessage('');
     try {
@@ -831,6 +835,10 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
 
   const confirmProductImport = async () => {
     if (!pendingProductImport || productImportConfirming) return;
+    if (productDocumentUpload.isUploading()) {
+      setProductImportMessage('请等待资质凭证上传结果确认后再导入产品');
+      return;
+    }
     setProductImportConfirming(true);
     try {
       const result = await confirmEnterpriseProductImportAssets(
@@ -882,6 +890,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   };
 
   const addProduct = () => {
+    if (productDocumentUpload.isUploading()) return;
     const nextIndex = products.length;
     setProductPage(Math.max(1, Math.ceil((nextIndex + 1) / PAGE_SIZE)));
     setExpandedProductIndexes(previous => new Set(previous).add(nextIndex));
@@ -892,6 +901,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   };
 
   const removeProduct = (index: number) => {
+    if (productDocumentUpload.isUploading()) return;
     setExpandedProductIndexes(previous => new Set(
       Array.from(previous)
         .filter(itemIndex => itemIndex !== index)
@@ -901,22 +911,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
       const items = normalizeProductItems(prev.products)
         .filter((_, i) => i !== index)
         .map((item, i) => ({ ...item, name: item.name || `产品${i + 1}` }));
-      return { ...prev, products: { ...prev.products, items } };
-    });
-  };
-
-  const addProductDocuments = async (index: number, files: FileList | null) => {
-    if (!files?.length) return;
-    const picked = await Promise.all(Array.from(files).map(file => uploadProductEvidence(file).catch(() => ({
-      name: file.name,
-      type: file.type || 'application/octet-stream',
-      size: file.size,
-      updatedAt: new Date().toISOString(),
-    }))));
-    setProfile(prev => {
-      const items = normalizeProductItems(prev.products);
-      const current = items[index]?.documents ?? [];
-      items[index] = { ...items[index], documents: [...current, ...picked].slice(0, MAX_PRODUCT_DOCUMENTS) };
       return { ...prev, products: { ...prev.products, items } };
     });
   };
@@ -1077,6 +1071,8 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
             onProductFieldChange={set('products')}
             productImporting={productImporting}
             productImportMessage={productImportMessage}
+            productDocumentMessage={productDocumentUpload.message}
+            productDocumentUploading={productDocumentUpload.uploading}
             importProductSheet={importProductSheet}
             addProduct={addProduct}
             productPage={productPage}
@@ -1085,7 +1081,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
             setExpandedProductIndexes={setExpandedProductIndexes}
             removeProduct={removeProduct}
             updateProduct={updateProduct}
-            addProductDocuments={addProductDocuments}
+            addProductDocuments={productDocumentUpload.addDocuments}
             removeProductDocument={removeProductDocument}
             maxProductDocuments={MAX_PRODUCT_DOCUMENTS}
             setProductPage={setProductPage}

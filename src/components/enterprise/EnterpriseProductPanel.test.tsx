@@ -26,6 +26,8 @@ function props(overrides: Partial<ComponentProps<typeof EnterpriseProductPanel>>
     onProductFieldChange: noOp,
     productImporting: false,
     productImportMessage: '',
+    productDocumentMessage: '',
+    productDocumentUploading: false,
     importProductSheet: async () => {},
     addProduct: noOp,
     productPage: 1,
@@ -68,8 +70,22 @@ test('product deep link distinguishes a unique match from an ambiguous fallback'
 
 test('upload receipts, pagination and card expansion state remain owned by the page', () => {
   const page = readFileSync(new URL('../EnterprisePage.tsx', import.meta.url), 'utf8');
+  const documentHook = readFileSync(new URL('./useEnterpriseProductDocuments.ts', import.meta.url), 'utf8');
   assert.match(page, /const \[expandedProductIndexes, setExpandedProductIndexes\] = useState/);
   assert.match(page, /const confirmProductImport = async/);
   assert.match(page, /<EnterpriseProductPanel[\s\S]*?profileProducts=\{profile\.products\}/);
-  assert.match(page, /addProductDocuments=\{addProductDocuments\}/);
+  assert.match(page, /addProductDocuments=\{productDocumentUpload\.addDocuments\}/);
+  assert.match(page, /productDocumentUpload\.isUploading\(\)/);
+  assert.match(documentHook, /uploadEnterpriseProductDocuments\(/);
+  assert.doesNotMatch(documentHook, /uploadProductEvidence\(file\)\.catch/);
+});
+
+test('unconfirmed document upload is visible and disables competing product mutations', () => {
+  const html = renderToStaticMarkup(<EnterpriseProductPanel {...props({
+    products: [product], visibleProducts: [product],
+    productDocumentMessage: '上传结果未确认，未加入产品资料', productDocumentUploading: true,
+  })} />);
+  assert.match(html, /上传结果未确认，未加入产品资料/);
+  assert.match(html, /aria-label="删除产品 精华液 A"[^>]*disabled/);
+  assert.match(html, /type="file"[^>]*disabled/);
 });
