@@ -75,7 +75,24 @@ export async function runLinkedInCompanyPaidCollection(input: {
   settlementDelayMs?: number;
 }) {
   const { actorInput, permit, scope, companyUrl } = await assertLinkedInCompanyPaidCollection(input);
-  const rows = await runPaidApifyDataset({ actorId: input.actorId, actorInput, permit,
+  const recheckingPermit: LinkedInCompanyPaidPermit = {
+    operationId: permit.operationId, actorId: permit.actorId,
+    maxTotalChargeUsd: permit.maxTotalChargeUsd,
+    scope: permit.scope, actorInputSha256: permit.actorInputSha256,
+    assertApproved: (currentScope, digest) => permit.assertApproved(currentScope, digest),
+    inspect: request => permit.inspect(request),
+    async beforeSubmit(request) {
+      await permit.assertApproved(scope, permit.actorInputSha256);
+      await permit.beforeSubmit(request);
+    },
+    recordRun: receipt => permit.recordRun(receipt),
+    recordTerminal: receipt => permit.recordTerminal(receipt),
+    async beforeDatasetRead(request) {
+      await permit.assertApproved(scope, permit.actorInputSha256);
+      await permit.beforeDatasetRead(request);
+    },
+  };
+  const rows = await runPaidApifyDataset({ actorId: input.actorId, actorInput, permit: recheckingPermit,
     token: input.token, maxItems: scope.limit, timeoutMs: input.timeoutMs,
     settlementDelayMs: input.settlementDelayMs });
   const parsed = rows.map(row => parseLinkedInCompanyPost(row, companyUrl))

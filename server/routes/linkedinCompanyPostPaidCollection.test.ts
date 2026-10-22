@@ -118,3 +118,47 @@ test('approved offline transport records Actor run and separate dataset-read per
     assert.ok(calls.indexOf('dataset-approved') < calls.findIndex(call => call.includes('/datasets/')));
   } finally { globalThis.fetch = oldFetch; }
 });
+
+test('approval changed after admission prevents the paid POST', async () => {
+  const oldFetch = globalThis.fetch;
+  let requests = 0;
+  let checks = 0;
+  globalThis.fetch = async () => { requests++; throw Error('network_forbidden'); };
+  try {
+    await assert.rejects(runLinkedInCompanyPaidCollection({ scope, actorId, token: 'test-token',
+      permit: permit({ async assertApproved() {
+        if (++checks === 2) throw Error('approval_revoked');
+      } }),
+    }), /approval_revoked/);
+    assert.equal(checks, 2);
+    assert.equal(requests, 0);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test('approval changed after Actor completion prevents dataset read', async () => {
+  const oldFetch = globalThis.fetch;
+  let checks = 0;
+  const paths: string[] = [];
+  globalThis.fetch = async (request, init) => {
+    const path = new URL(String(request)).pathname;
+    paths.push(`${init?.method || 'GET'} ${path}`);
+    if (init?.method === 'POST') return new Response(JSON.stringify({ data: {
+      id: 'run-a', defaultDatasetId: 'dataset-a', status: 'READY',
+    } }), { status: 200 });
+    if (path.endsWith('/actor-runs/run-a')) return new Response(JSON.stringify({ data: {
+      id: 'run-a', defaultDatasetId: 'dataset-a', status: 'SUCCEEDED', usageTotalUsd: 0.2,
+      options: { maxTotalChargeUsd: 0.5, restartOnError: false },
+    } }), { status: 200 });
+    throw Error('unexpected_request');
+  };
+  try {
+    await assert.rejects(runLinkedInCompanyPaidCollection({ scope, actorId, token: 'test-token',
+      permit: permit({ async assertApproved() {
+        if (++checks === 3) throw Error('approval_revoked');
+      } }), settlementDelayMs: 0,
+    }), /approval_revoked/);
+    assert.equal(checks, 3);
+    assert.equal(paths.filter(path => path.startsWith('POST')).length, 1);
+    assert.equal(paths.some(path => path.includes('/datasets/')), false);
+  } finally { globalThis.fetch = oldFetch; }
+});

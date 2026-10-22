@@ -11,6 +11,6 @@ LinkedIn 公司帖只接受规范的公司主页 URL 和账户模式。服务端
 
 ## 当前实施范围
 
-`linkedinCompanyPostPaidCollection.ts` 已实现冻结输入、许可范围校验、受控 Apify 传输和纯来源解析；视频与图文内部采集函数仅在受信任调用者提供许可时进入这条路径，原手工 HTTP 入口仍不接收 LinkedIn。`linkedinCompanyCollectionApproval.ts` 和对应迁移新增了私有、不可更新的逐 run 批准与撤销记录；批准绑定当前发现范围版本/摘要、租户公司账号、冻结 Actor 输入及 CNY 上限。重复批准由数据库唯一索引仲裁，读取时重新检查当前范围和账号。该记录本身不是付费许可，也没有挂接普通发现 worker。当前仍缺可验证的 Apify 账号价格与汇率/非 Actor 费用凭据、跨实例唯一许可签发器和运行回执链，因此生产入口仍默认报 `linkedin_company_paid_collection_permit_required`。接口形状及模拟测试不等于真实付费门禁已经完整接线，更不授权真实 Actor 调用。
+`linkedinCompanyPostPaidCollection.ts` 已实现冻结输入、许可范围校验、受控 Apify 传输和纯来源解析；视频与图文内部采集函数仅在受信任调用者提供许可时进入这条路径，原手工 HTTP 入口仍不接收 LinkedIn。`linkedinCompanyCollectionApproval.ts` 和对应迁移新增了私有、不可更新的逐 run 批准与撤销记录；批准绑定当前发现范围版本/摘要、租户公司账号、冻结 Actor 输入及 CNY 上限。重复批准由数据库唯一索引仲裁，读取时重新检查当前范围和账号。新增 store-backed 的批准断言，受控传输在 Actor 提交前及数据集读取前各再次核验撤销与范围变化；撤销无法取消已提交的 Actor，但会阻止尚未提交的请求和后续读取。该记录本身不是付费许可，也没有挂接普通发现 worker。当前仍缺可验证的 Apify 账号价格与汇率/非 Actor 费用凭据、跨实例唯一许可签发器和运行回执链，因此生产入口仍默认报 `linkedin_company_paid_collection_permit_required`。接口形状及模拟测试不等于真实付费门禁已经完整接线，更不授权真实 Actor 调用。
 
 下一阶段必须将已落库的逐任务批准和 CNY 上限，与 Actor USD 上限、独立数据集/传输费用、账号/Token 指纹、唯一操作认领和原始运行回执绑定到耐久权威记录；在真实目标存储上只读验证跨实例唯一写入能力，并做离线断连、恢复及租户隔离测试。未满足这些条件时不得通过前端请求标志或环境变量绕开默认拒绝。

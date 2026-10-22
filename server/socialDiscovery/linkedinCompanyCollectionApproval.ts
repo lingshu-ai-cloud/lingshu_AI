@@ -165,6 +165,28 @@ export async function readCurrentLinkedInCompanyCollectionApproval(input: {
   return item;
 }
 
+/** A live, store-backed approval check for a future trusted budget issuer.
+ * This does not issue a paid permit or reserve money. */
+export function createLinkedInCompanyApprovalAssertion(input: {
+  store: DataStore;
+  approval: LinkedInCompanyCollectionApproval;
+  now?: () => number;
+}): (scope: LinkedInCompanyCollectionScope, actorInputSha256: string) => Promise<void> {
+  return async (scope, actorInputSha256) => {
+    if (actorInputSha256 !== input.approval.actorInputSha256
+      || (Object.keys(scope) as Array<keyof LinkedInCompanyCollectionScope>)
+        .some(key => scopeFromApproval(input.approval)[key] !== scope[key])) fail('permit_scope_changed');
+    const current = await readCurrentLinkedInCompanyCollectionApproval({
+      store: input.store, scope,
+      discoveryScopeId: input.approval.discoveryScopeId,
+      discoveryScopeVersion: input.approval.discoveryScopeVersion,
+      discoveryScopeHash: input.approval.discoveryScopeHash,
+      now: input.now?.(),
+    });
+    if (current.recordHash !== input.approval.recordHash) fail('permit_approval_changed');
+  };
+}
+
 export async function revokeLinkedInCompanyCollection(input: {
   store: DataStore; approval: LinkedInCompanyCollectionApproval;
   actorUserId: string; reason: string; now?: () => number;

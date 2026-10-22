@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { DataStore, ListQuery, Record_ } from '../storage/datastore.js';
 import { socialRequestHash } from '../starter198/socialContentValidation.js';
 import type { LinkedInCompanyCollectionScope } from '../routes/linkedinCompanyPostPaidCollection.js';
-import { approveLinkedInCompanyCollection, readCurrentLinkedInCompanyCollectionApproval,
+import { approveLinkedInCompanyCollection, createLinkedInCompanyApprovalAssertion, readCurrentLinkedInCompanyCollectionApproval,
   revokeLinkedInCompanyCollection, LINKEDIN_COMPANY_COLLECTION_APPROVALS,
   LINKEDIN_COMPANY_COLLECTION_REVOCATIONS } from './linkedinCompanyCollectionApproval.js';
 
@@ -107,4 +107,18 @@ test('cross-tenant actors, unapproved scope and over-budget approval cannot be s
   await assert.rejects(approveLinkedInCompanyCollection({ ...f.request,
     discoveryScopeHash: socialRequestHash(payload) }), /discovery_scope_changed/);
   assert.equal((await f.store.list(LINKEDIN_COMPANY_COLLECTION_APPROVALS)).totalItems, 0);
+});
+
+test('store-backed permit assertion rechecks scope and revocation at use time', async () => {
+  const f = fixture();
+  const approved = await approveLinkedInCompanyCollection(f.request);
+  const assertApproved = createLinkedInCompanyApprovalAssertion({ store: f.store,
+    approval: approved, now: () => now + 1 });
+  await assertApproved(scope, approved.actorInputSha256);
+  await assert.rejects(assertApproved({ ...scope, limit: 4 }, approved.actorInputSha256),
+    /permit_scope_changed/);
+  await assert.rejects(assertApproved(scope, '0'.repeat(64)), /permit_scope_changed/);
+  await revokeLinkedInCompanyCollection({ store: f.store, approval: approved,
+    actorUserId: 'owner', reason: 'withdrawn', now: () => now + 2 });
+  await assert.rejects(assertApproved(scope, approved.actorInputSha256), /revoked/);
 });
