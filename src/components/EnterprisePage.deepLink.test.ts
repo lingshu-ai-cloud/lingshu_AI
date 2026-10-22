@@ -23,14 +23,16 @@ test('application passes sanitized task context and enterprise page explains mat
   const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
   const pageSlotSource = readFileSync(new URL('../AppPageSlot.tsx', import.meta.url), 'utf8');
   const enterpriseSource = readFileSync(new URL('./EnterprisePage.tsx', import.meta.url), 'utf8');
+  const productPanelSource = readFileSync(new URL('./enterprise/EnterpriseProductPanel.tsx', import.meta.url), 'utf8');
   assert.match(appSource, /normalizeEnterpriseProductsDeepLink\(detail\)/);
   assert.match(appSource, /<AppPageSlot[^>]*enterpriseProductsDeepLink/s);
   assert.match(pageSlotSource, /<EnterprisePage productsDeepLink=\{enterpriseProductsDeepLink\}/);
   assert.match(enterpriseSource, /setKnowledgeView\('products'\)/);
   assert.match(enterpriseSource, /setProductPage\(Math\.floor\(productIndex \/ PAGE_SIZE\) \+ 1\)/);
-  assert.match(enterpriseSource, /不会把素材 ID 伪装成页内文件定位/);
-  assert.match(enterpriseSource, /未能可靠定位任务产品/);
-  assert.match(enterpriseSource, /data-content-item-id=\{productsDeepLink\.contentItemId/);
+  assert.match(enterpriseSource, /<EnterpriseProductPanel[\s\S]*?productsDeepLink=\{productsDeepLink\}/);
+  assert.match(productPanelSource, /不会把素材 ID 伪装成页内文件定位/);
+  assert.match(productPanelSource, /未能可靠定位任务产品/);
+  assert.match(productPanelSource, /data-content-item-id=\{productsDeepLink\.contentItemId/);
 });
 
 test('enterprise facts page omits deprecated social discovery fields and explanations', () => {

@@ -1,8 +1,32 @@
 import { cloneElement, isValidElement, useId, type ComponentType, type ReactNode } from 'react';
-import { Checkbox, Form, Pagination } from 'antd';
+import { Checkbox, Form, Pagination, Select } from 'antd';
+import { joinTokens, splitTokens } from './enterpriseProfileNormalization';
 
 export function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean }) {
   return <Checkbox checked={checked} disabled={disabled} onChange={event => onChange(event.target.checked)} />;
+}
+
+export function OptionSelector({ id, value, options, onChange, multiple = true, placeholder = '请选择' }: {
+  id?: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+  multiple?: boolean;
+  placeholder?: string;
+}) {
+  const tokens = splitTokens(value);
+  const customTokens = tokens.filter(item => !options.includes(item));
+  return <Select
+    id={id}
+    className="w-full"
+    mode={multiple ? 'multiple' : undefined}
+    value={multiple ? tokens : value || undefined}
+    placeholder={placeholder}
+    allowClear
+    maxTagCount="responsive"
+    onChange={next => onChange(Array.isArray(next) ? joinTokens(next) : next || '')}
+    options={[...options.map(option => ({ value: option, label: option })), ...customTokens.map(option => ({ value: option, label: `${option}（历史自定义）` }))]}
+  />;
 }
 
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {

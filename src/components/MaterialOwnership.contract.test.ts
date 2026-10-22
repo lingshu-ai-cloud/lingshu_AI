@@ -52,13 +52,15 @@ assert.deepEqual(
 );
 
 const enterpriseSource = readFileSync(fileURLToPath(new URL('./EnterprisePage.tsx', import.meta.url)), 'utf8');
-assert.match(enterpriseSource, /产品素材统一在“我的素材”管理/, '产品页必须明确告知唯一素材入口');
+const productPanelSource = readFileSync(fileURLToPath(new URL('./enterprise/EnterpriseProductPanel.tsx', import.meta.url)), 'utf8');
+assert.match(enterpriseSource, /<EnterpriseProductPanel/, '企业知识页必须接入产品资料视图');
+assert.match(productPanelSource, /产品素材统一在“我的素材”管理/, '产品页必须明确告知唯一素材入口');
 assert.match(enterpriseSource, /page: 'socialInspiration', view: 'library', \.\.\.params/, '产品页必须跳转到我的素材并携带筛选上下文');
 assert.match(enterpriseSource, /searchParams\.set\('productId', params\.productId\)[^]*?searchParams\.set\('productRef', params\.productRef\)/, '产品筛选必须写入可刷新恢复的 URL');
 assert.match(enterpriseSource, /history\.replaceState\(\{ \.\.\.window\.history\.state, productionDetail: detail \}/, '产品筛选必须同时保留在现有导航 history 状态');
-assert.match(enterpriseSource, /上传资质凭证/, '企业知识页仍需保留事实凭证上传');
-assert.doesNotMatch(enterpriseSource, /MAX_PRODUCT_ASSETS|实拍视频|产品主图|工厂实拍/, '企业知识页不得残留创作媒体编辑器');
-assert.doesNotMatch(enterpriseSource, /accept=['"](?:image|video)\/\*/, '企业知识页不得再提供图片或视频创作素材上传');
+assert.match(productPanelSource, /上传资质凭证/, '企业知识页仍需保留事实凭证上传');
+assert.doesNotMatch(enterpriseSource + productPanelSource, /MAX_PRODUCT_ASSETS|实拍视频|产品主图|工厂实拍/, '企业知识页不得残留创作媒体编辑器');
+assert.doesNotMatch(enterpriseSource + productPanelSource, /accept=['"](?:image|video)\/\*/, '企业知识页不得再提供图片或视频创作素材上传');
 
 const inspirationSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
 const studioRouteSource = readFileSync(fileURLToPath(new URL('../../server/routes/studio.ts', import.meta.url)), 'utf8');

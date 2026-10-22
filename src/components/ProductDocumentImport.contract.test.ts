@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('./EnterprisePage.tsx', import.meta.url), 'utf8');
+const productPanelSource = readFileSync(new URL('./enterprise/EnterpriseProductPanel.tsx', import.meta.url), 'utf8');
 const parserSource = readFileSync(new URL('../lib/productDocumentImport.ts', import.meta.url), 'utf8');
 const assetUploadSource = readFileSync(new URL('../lib/enterpriseProductAssetUpload.ts', import.meta.url), 'utf8');
 const confirmationSource = readFileSync(new URL('./enterprise/enterpriseProductImportConfirmation.ts', import.meta.url), 'utf8');
@@ -16,8 +17,9 @@ test('文档未归属图片在确认导入时持久化且失败可见', () => {
 });
 
 test('产品导入入口支持 PDF 与 DOCX', () => {
-  assert.match(source, /accept="\.xlsx,\.xls,\.csv,\.pdf,\.docx"/);
-  assert.doesNotMatch(source, /Word 和 PDF 产品资料尚不支持/);
+  assert.match(source, /<EnterpriseProductPanel[\s\S]*?importProductSheet=\{importProductSheet\}/);
+  assert.match(productPanelSource, /accept="\.xlsx,\.xls,\.csv,\.pdf,\.docx"/);
+  assert.doesNotMatch(source + productPanelSource, /Word 和 PDF 产品资料尚不支持/);
 });
 
 test('PDF 含图页面会渲染为可上传 File', () => {
