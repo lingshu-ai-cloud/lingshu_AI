@@ -8,7 +8,7 @@
 - 根因不是缺少 ADVERTISE 授权：沙盒主体 `/me/accounts?fields=id,name,tasks` 返回所选主页及 `ADVERTISE`。账户主体令牌无法处理该主页的未发布帖子；从已授权主页读取的 Page 令牌可以。无需新增权限、把主页加入业务组合或修改账单。
 - 适配器保留账户令牌用于 Campaign / Ad Set，Creative / Ad 使用所选主页的现有 Page 令牌。主页令牌只在内存中使用，不写日志、运行证据或公共接口；取得主页令牌失败会在创建层级资源前阻断。
 - 网站访问恢复沿用原 Campaign / Ad Set，只补缺失的 Creative / Ad；后续修复广告访问身份只更新原 Ad ID，不创建替代广告。全部状态变更有租约及持久化检查点，未知结果禁止盲重试。
-- 2026-10-22T11:29:31Z 最后读回：两条 Campaign / Ad Set 的 status、effective_status 均 PAUSED；两条 Ad 的 status 为 PAUSED、effective_status 为 IN_PROCESS，未再返回 issues_info 硬错误。配置暂停与平台异步处理是两个不同口径，不宣称广告审核或实际投放通过。
+- 2026-10-22T11:31:11Z 最后读回：两条 Campaign / Ad Set 的 status、effective_status 均 PAUSED；两条 Ad 的 status 为 PAUSED、effective_status 为 PENDING_REVIEW，未再返回 issues_info 硬错误。配置暂停与平台审核是两个不同口径，不宣称广告审核或实际投放通过。
 
 | 链路 | 本地计划 / 回执 | Campaign | Ad Set | Creative | Ad |
 | --- | --- | --- | --- | --- | --- |
@@ -83,6 +83,7 @@
 ## 代码验证
 
 - 修复起点 HEAD `25f3a083f747ed0186ef22cc9d929870e17fda7f`。本轮修改仅限 Meta 适配器、受影响测试、显式接受脚本和本验收记录；未合并或推送其他分支。
+- 代码修复提交 `9bb1e8b70cd8c1ef5af6edb4b0f034d98f57d227`；前端 5187 与后端 8890 已从该源码重启并核对版本一致。最终审核状态读回后仅补充本记录，没有再修改代码。
 - 本轮已重跑 `pnpm run test:platform-ads`（37 文件）、`pnpm run lint`、`pnpm run check:architecture`（2230 文件）、`pnpm run build`（studio 497094/500000）、`git diff --check`，均通过。其他下列测试为此前证据。
 - `pnpm run test:platform-ads`：37 个测试文件通过（隔离平台模拟，不是真实平台验收）。
 - `node scripts/test-platform-ads-ui.mjs`：通过，全部 API 模拟。
