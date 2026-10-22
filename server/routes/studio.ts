@@ -10,7 +10,8 @@ import { wavDurationFromBytes } from '../lib/wavDuration';
 import { finalizeMaterialScript } from '../lib/materialScriptFinalizer.js';
 import { createShootingTasksRouter } from './shootingTasks.js';
 import { buildCoverSvg } from './studioCoverSvg.js';
-import { minimaxLanguageBoost, minimaxPronunciationDict, minimaxSpeechText, minimaxVoiceFor, minimaxVoiceModify, normalizeTtsLanguage, normalizeTtsStyle, QWEN_TTS_VOICE_MAP, SAY_LANGUAGE_VOICE_MAP, type TtsStyleOptions } from './studioTtsStyle.js';
+import { generateLocalSayTts, generatePiperTts, generateXttsCloneTts, type LocalTtsPorts } from './studioLocalTtsAdapters.js';
+import { minimaxLanguageBoost, minimaxPronunciationDict, minimaxSpeechText, minimaxVoiceFor, minimaxVoiceModify, normalizeTtsLanguage, normalizeTtsStyle, QWEN_TTS_VOICE_MAP, type TtsStyleOptions } from './studioTtsStyle.js';
 import { createProductionCostQuotesRouter, createProductionInputRequestsRouter } from './productionGovernance.js';
 import { autoFulfillProductionInputRequestsForMaterial } from '../production/productionInputRequests.js';
 import { materialAssetV2FromRecord, normalizeMaterialAssetV2, type MaterialAssetV2Metadata } from '../../shared/contracts/materialAssetV2.js';
@@ -8418,6 +8419,12 @@ studioRouter.post('/cover', async (req, res) => {
 
 const TTS_ROOT = path.join(__dirname, '../../data/tts');
 const VOICE_SAMPLES_ROOT = path.join(__dirname, '../../data/voice-samples');
+const localTtsPorts: LocalTtsPorts = {
+  ttsDir: () => scopedStudioAssetDir(TTS_ROOT),
+  ttsUrl: file => scopedStudioAssetUrl('tts', file),
+  voiceSamplePath: voiceSamplePathFromId,
+  runFfmpeg,
+};
 
 function privateStudioAssetUrl(namespace: string, tenantId: string, file: string): string {
   return signAssetUrl(`/api/overseas/studio/private-assets/${namespace}/${path.basename(file)}`, tenantId);
@@ -8464,22 +8471,6 @@ function minimaxCredentialQuarantineFile(): string {
 
 interface AlignedWord { text: string; start: number; end: number }
 interface AlignedCue { text: string; start: number; end: number; words?: AlignedWord[] }
-
-function piperModelForLanguage(language: string): string {
-  const code = normalizeTtsLanguage(language).toUpperCase().replace(/[^A-Z0-9]/g, '_');
-  return process.env[`PIPER_MODEL_${code}`] || (normalizeTtsLanguage(process.env.PIPER_LANGUAGE) === normalizeTtsLanguage(language) ? process.env.PIPER_MODEL : '') || '';
-}
-
-function piperConfigForLanguage(language: string, modelPath: string): string {
-  const code = normalizeTtsLanguage(language).toUpperCase().replace(/[^A-Z0-9]/g, '_');
-  return process.env[`PIPER_CONFIG_${code}`] || process.env.PIPER_CONFIG || `${modelPath}.json`;
-}
-
-function xttsLanguageCode(language: string): string {
-  const code = normalizeTtsLanguage(language);
-  if (code === 'zh') return 'zh-cn';
-  return code;
-}
 
 function minimaxEndpoint(pathname: string, env: NodeJS.ProcessEnv = process.env): string {
   const base = (env.MINIMAX_BASE_URL || 'https://api.minimax.io').replace(/\/+$/, '');
@@ -8619,17 +8610,6 @@ function wavFromPcm(pcm: Buffer, sampleRate: number, channels = 1, bits = 16): B
   header.write('data', 36);
   header.writeUInt32LE(pcm.length, 40);
   return Buffer.concat([header, pcm]);
-}
-
-function execFileOk(file: string, args: string[], timeout = 45_000): Promise<boolean> {
-  return new Promise(resolve => {
-    execFile(file, args, { timeout }, err => resolve(!err));
-  });
-}
-
-function durationFromText(text: string): number {
-  const chars = String(text || '').replace(/\s+/g, '').length;
-  return Math.max(2, Math.min(60, Math.ceil(chars / 9)));
 }
 
 async function minimaxFetchJson(pathname: string, body: Record<string, unknown>, timeoutMs = 90_000): Promise<any> {
@@ -8826,99 +8806,6 @@ function minimaxVoiceNeedsReclone(error: unknown): boolean {
   return /voice[^\n]*(?:not found|does not exist|invalid|expired|deleted)|(?:not found|不存在|已删除|过期)[^\n]*voice|voice_id[^\n]*(?:invalid|不存在)/i.test(String(error instanceof Error ? error.message : error));
 }
 
-async function generatePiperTts(text: string, language: string): Promise<{ url: string; duration: number; source: string } | null> {
-  const piperBin = process.env.PIPER_BIN || process.env.PIPER_PATH || '';
-  const modelPath = piperModelForLanguage(language);
-  if (!piperBin || !modelPath) return null;
-  try { fs.mkdirSync(scopedStudioAssetDir(TTS_ROOT), { recursive: true }); } catch { /* ignore */ }
-  const file = `${randomUUID()}.wav`;
-  const outPath = path.join(scopedStudioAssetDir(TTS_ROOT), file);
-  const args = ['--model', modelPath, '--output_file', outPath];
-  const configPath = piperConfigForLanguage(language, modelPath);
-  if (configPath && fs.existsSync(configPath)) args.splice(2, 0, '--config', configPath);
-  const spoken = text.slice(0, 1500);
-  const ok = await new Promise<boolean>(resolve => {
-    const child = spawn(piperBin, args, { stdio: ['pipe', 'ignore', 'ignore'] });
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM');
-      resolve(false);
-    }, 60_000);
-    child.on('error', () => {
-      clearTimeout(timer);
-      resolve(false);
-    });
-    child.on('close', code => {
-      clearTimeout(timer);
-      resolve(code === 0 && fs.existsSync(outPath));
-    });
-    child.stdin.end(spoken);
-  });
-  return ok ? { url: scopedStudioAssetUrl('tts', file), duration: durationFromText(text), source: 'piper' } : null;
-}
-
-async function generateXttsCloneTts(text: string, voice: string, language: string): Promise<{ url: string; duration: number; source: string } | null> {
-  const samplePath = voiceSamplePathFromId(voice);
-  const xttsBin = process.env.XTTS_BIN || process.env.COQUI_TTS_BIN || '';
-  if (!samplePath || !xttsBin) return null;
-  try { fs.mkdirSync(scopedStudioAssetDir(TTS_ROOT), { recursive: true }); } catch { /* ignore */ }
-  const file = `${randomUUID()}.wav`;
-  const outPath = path.join(scopedStudioAssetDir(TTS_ROOT), file);
-  const modelName = process.env.XTTS_MODEL_NAME || 'tts_models/multilingual/multi-dataset/xtts_v2';
-  const args = [
-    '--model_name', modelName,
-    '--text', text.slice(0, 1500),
-    '--speaker_wav', samplePath,
-    '--language_idx', xttsLanguageCode(language),
-    '--out_path', outPath,
-  ];
-  const ok = await new Promise<boolean>(resolve => {
-    const child = spawn(xttsBin, args, { stdio: ['ignore', 'ignore', 'ignore'] });
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM');
-      resolve(false);
-    }, Number(process.env.XTTS_TIMEOUT_MS || 120_000));
-    child.on('error', () => {
-      clearTimeout(timer);
-      resolve(false);
-    });
-    child.on('close', code => {
-      clearTimeout(timer);
-      resolve(code === 0 && fs.existsSync(outPath));
-    });
-  });
-  return ok ? { url: scopedStudioAssetUrl('tts', file), duration: durationFromText(text), source: 'xtts_clone' } : null;
-}
-
-async function generateLocalSayTts(text: string, voice: string, language: string): Promise<{ url: string; duration: number; source: string } | null> {
-  if (process.platform !== 'darwin') return null;
-  try { fs.mkdirSync(scopedStudioAssetDir(TTS_ROOT), { recursive: true }); } catch { /* ignore */ }
-  const base = randomUUID();
-  const aiffFile = `${base}.aiff`;
-  const wavFile = `${base}.wav`;
-  const aiffPath = path.join(scopedStudioAssetDir(TTS_ROOT), aiffFile);
-  const wavPath = path.join(scopedStudioAssetDir(TTS_ROOT), wavFile);
-  // Local voices can silently produce empty audio for unsupported scripts.
-  const localLanguage = /[\u3040-\u30ff]/.test(text) && !/[A-Za-z]/.test(text) ? 'ja' : /[\u4e00-\u9fff]/.test(text) ? 'zh' : language;
-  const lang = normalizeTtsLanguage(localLanguage);
-  const candidates = SAY_LANGUAGE_VOICE_MAP[lang]?.[voice] ?? SAY_LANGUAGE_VOICE_MAP[lang]?.v1 ?? [];
-  const spoken = text.slice(0, 1500);
-
-  let made = false;
-  for (const candidate of candidates) {
-    made = await execFileOk('/usr/bin/say', ['-v', candidate, '-o', aiffPath, spoken]);
-    if (made && fs.existsSync(aiffPath)) break;
-  }
-  // Never fall back to the system's unrelated default language.
-  if (!made || !fs.existsSync(aiffPath)) return null;
-
-  const converted = await runFfmpeg(['-i', aiffPath, '-ar', '24000', '-ac', '1', '-y', wavPath]);
-  try { fs.unlinkSync(aiffPath); } catch { /* ignore */ }
-  if (converted && fs.existsSync(wavPath)) {
-    return { url: scopedStudioAssetUrl('tts', wavFile), duration: durationFromText(text), source: 'local_say' };
-  }
-  return { url: scopedStudioAssetUrl('tts', aiffFile), duration: durationFromText(text), source: 'local_say' };
-}
-
 function qwenTtsLanguageType(language: string): string {
   const map: Record<string, string> = {
     zh: 'Chinese', en: 'English', es: 'Spanish', pt: 'Portuguese',
@@ -9113,7 +9000,7 @@ async function generateTtsAudioUncached(spoken: string, voice: string, language 
       rememberRejectedMinimaxCredential(e);
       minimaxError = String(e?.message ?? e).slice(0, 240);
     }
-    const cloned = await generateXttsCloneTts(spoken, voice, language);
+    const cloned = await generateXttsCloneTts(spoken, voice, language, localTtsPorts);
     if (cloned) return { ok: true, ...cloned, error: minimaxError };
     return {
       ok: false,
@@ -9173,10 +9060,10 @@ async function generateTtsAudioUncached(spoken: string, voice: string, language 
 
   const aiError = [...new Set(aiErrors.filter(Boolean))].join('；');
   if (requireNatural) return { ok: false, source: 'natural_voice_unavailable', error: aiError || '自然人声服务暂不可用，请配置语音服务或个人声音克隆。' };
-  const piper = await generatePiperTts(spoken, language);
+  const piper = await generatePiperTts(spoken, language, localTtsPorts);
   if (piper) return { ok: true, ...piper, error: aiError };
 
-  const local = await generateLocalSayTts(spoken, voice, language);
+  const local = await generateLocalSayTts(spoken, voice, language, localTtsPorts);
   if (local) return { ok: true, ...local, error: aiError };
 
   return {

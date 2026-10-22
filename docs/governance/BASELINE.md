@@ -1,6 +1,6 @@
 # 工程基线（阶段二集成）
 
-更新时间：2026-10-22（Asia/Shanghai）
+更新时间：2026-10-23（Asia/Shanghai）
 
 ## 当前权威源码检出（2026-10-22 复核）
 
@@ -29,6 +29,11 @@
 
 - 从干净集成点 `d226181de12a8a834dff16e9edf19b4ce535ae0e` 出发，将配音风格归一化、MiniMax 停顿/音色修饰/发音词典、Qwen/MiniMax/macOS 音色与语言映射迁至 `studioTtsStyle.ts`；路由保留供应商调用、预算许可、租户文件和响应处理。移除了无调用点的旧 `SAY_VOICE_MAP`。`studio.ts` 从 11,183 降至 10,968 行，预算同步收紧；历史超限仍有 8 项，不能据此称整体拆分完成。
 - 离线语音规则 4/4、现有语音选择/付费许可回归 8/8、完整 `test:studio-media`、TypeScript、架构扫描/ratchet、191 项迁移文件只读检查、生产构建和 `git diff --check` 通过；远端状态以推送后核验为准。`AiCreateStudio` chunk 仍为 497,209/500,000 字节。未运行真实 TTS、付费供应商、生产迁移或部署。
+
+## Studio 本地语音适配职责拆分（2026-10-23）
+
+- 从干净集成点 `433e754334c3c171eca8db85d91ddf3b5bb9c49b` 出发，将 Piper、XTTS 和 macOS `say` 的本地进程执行及配置规则迁至 `studioLocalTtsAdapters.ts`；路由通过端口提供租户限定目录、语音样本查找、资产 URL 和 FFmpeg 转码。未配置本地引擎时不访问租户样本/目录或启动进程；Qwen/MiniMax/HeyGen 的原付费调用和许可代码未动。`studio.ts` 从 10,968 降至 10,855 行，预算同步收紧，仍有 8 项历史超限文件。
+- 本地无引擎离线测试 1/1、完整 `test:studio-media`、语音选择/付费许可回归 8/8、TypeScript、架构扫描/ratchet、191 项迁移文件只读检查、生产构建和 `git diff --check` 通过；`AiCreateStudio` chunk 仍为 497,209/500,000 字节。远端状态以推送后核验为准。未实际调用本地语音引擎或真实付费供应商，未执行迁移、部署。
 
 ## 图片 AIGC 当前接线复核（2026-10-22）
 
