@@ -3,10 +3,10 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-// Execute the actual component helpers in a bounded VM: a regression must
+// Execute the extracted pure voiceover rules in a bounded VM: a regression must
 // fail quickly rather than freeze the test runner just like the browser.
-const source = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
-const ast = ts.createSourceFile('studio.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const source = readFileSync(new URL('./studio/studioVoiceoverRules.ts', import.meta.url), 'utf8');
+const ast = ts.createSourceFile('studioVoiceoverRules.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const names = new Set([
   'parseCueRange', 'normalizeTimeLabel', 'looksLikeProductionInstruction',
   'hasStoryboardFieldLabels', 'looksLikeOnScreenOnlyText', 'cleanVoiceoverLine',
