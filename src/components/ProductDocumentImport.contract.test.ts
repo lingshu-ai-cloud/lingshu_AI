@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('./EnterprisePage.tsx', import.meta.url), 'utf8');
 const productPanelSource = readFileSync(new URL('./enterprise/EnterpriseProductPanel.tsx', import.meta.url), 'utf8');
+const importReviewSource = readFileSync(new URL('./enterprise/EnterpriseProductImportReviewModal.tsx', import.meta.url), 'utf8');
 const parserSource = readFileSync(new URL('../lib/productDocumentImport.ts', import.meta.url), 'utf8');
 const assetUploadSource = readFileSync(new URL('../lib/enterpriseProductAssetUpload.ts', import.meta.url), 'utf8');
 const confirmationSource = readFileSync(new URL('./enterprise/enterpriseProductImportConfirmation.ts', import.meta.url), 'utf8');
@@ -12,7 +13,8 @@ test('文档未归属图片在确认导入时持久化且失败可见', () => {
   assert.match(source, /confirmEnterpriseProductImportAssets\(/);
   assert.match(confirmationSource, /ports\.upload\(image\.file\)/);
   assert.match(confirmationSource, /图片上传失败，产品尚未导入/);
-  assert.match(source, /持久化到“企业上传素材”/);
+  assert.match(source, /<EnterpriseProductImportReviewModal/);
+  assert.match(importReviewSource, /持久化到“企业上传素材”/);
   assert.match(source, /productImportConfirming/);
 });
 
@@ -37,5 +39,12 @@ test('产品外链主图必须转存为租户资产后才能导入', () => {
   assert.match(confirmationSource, /ports\.importUrl\(transfer\.originalUrl/);
   assert.match(confirmationSource, /product\.imageUrl = asset\.url/);
   assert.match(confirmationSource, /产品外链图片转存失败，产品尚未导入/);
-  assert.match(source, /待转存/);
+  assert.match(importReviewSource, /待转存/);
+});
+
+test('确认导入期间不能移除草稿产品或关闭复核弹窗', () => {
+  assert.match(source, /onRemoveProduct=\{index => \{\s*if \(productImportConfirming\) return;/);
+  assert.match(importReviewSource, /disabled=\{confirming\} onClick=\{\(\) => onRemoveProduct\(index\)\}/);
+  assert.match(importReviewSource, /keyboard=\{!confirming\} closable=\{!confirming\}/);
+  assert.match(importReviewSource, /<Button disabled=\{confirming\} onClick=\{onClose\}>取消<\/Button>/);
 });

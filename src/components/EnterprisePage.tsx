@@ -1,11 +1,12 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { useState, useEffect, useRef } from 'react';
-import { Alert, Button, Collapse, Input, Modal, Tabs } from 'antd';
+import { Alert, Button, Collapse, Input, Tabs } from 'antd';
 import { LsGradientProgress } from './ui/LsExperiencePrimitives';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import EnterpriseNotificationSettings from './enterprise/EnterpriseNotificationSettings';
 import EnterpriseFaqPanel from './enterprise/EnterpriseFaqPanel';
 import EnterpriseProductPanel from './enterprise/EnterpriseProductPanel';
+import EnterpriseProductImportReviewModal from './enterprise/EnterpriseProductImportReviewModal';
 import EnterpriseSalesStylePanel from './enterprise/EnterpriseSalesStylePanel';
 import { useEnterpriseSalesStyle } from './enterprise/useEnterpriseSalesStyle';
 import { AUTO_REPLY_SCOPE, EnterpriseAiAutonomySection, EnterpriseHandoffSafetySection } from './enterprise/EnterpriseCustomerServiceSettings';
@@ -13,7 +14,7 @@ import { Field, Toggle, KnowledgeCard, OptionSelector } from './enterprise/Enter
 import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, Plus, Upload, X, Image, FileText, Bell, ChevronLeft, Globe2, ShieldCheck, ArrowRight, Users, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { completeDemoStep } from '../lib/demoProgress';
-import { prepareEnterpriseProductImport, type PendingProductImport } from './enterprise/enterpriseProductImportPreparation';
+import { prepareEnterpriseProductImport, removePendingImportedProduct, type PendingProductImport } from './enterprise/enterpriseProductImportPreparation';
 import { confirmEnterpriseProductImportAssets } from './enterprise/enterpriseProductImportConfirmation';
 import { useEnterpriseProductDocuments } from './enterprise/useEnterpriseProductDocuments';
 import {importProductEvidenceUrl,uploadProductEvidence} from '../lib/enterpriseProductAssetUpload';
@@ -1202,35 +1203,16 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
           )}
 
           {pendingProductImport && (
-            <Modal open title="确认产品导入结果" width={840} onCancel={closeProductImport} mask={{ closable: false }}
-              keyboard={!productImportConfirming} closable={!productImportConfirming}
-              styles={{ body: { maxHeight: '65vh', overflowY: 'auto' } }}
-              footer={<div className="flex flex-wrap items-center justify-between gap-3 text-left">
-                <span className="text-xs text-text-secondary">{pendingProductImport.skippedRows ? `${pendingProductImport.skippedRows} 行因缺少产品名称或 SKU 将被跳过` : '未发现需要跳过的空行'}</span>
-                <div className="flex gap-2"><Button disabled={productImportConfirming} onClick={closeProductImport}>取消</Button><Button type="primary" disabled={!pendingProductImport.products.length} loading={productImportConfirming} onClick={() => void confirmProductImport()}>{productImportConfirming ? '正在保存图片…' : `确认导入 ${pendingProductImport.products.length} 个产品`}</Button></div>
-              </div>}>
-              <p className="mb-4 text-sm text-text-secondary">{pendingProductImport.fileName} · {pendingProductImport.sourceLabel} · 识别 {pendingProductImport.products.length}/{pendingProductImport.totalRows} 行</p>
-                <div>
-                  <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">请核对产品名称、SKU、模型提取字段与图片归属。PDF / DOCX 的内容来自文档文本或表格提取，必须由用户复核后才会写入。</p>
-                  <div className="overflow-x-auto rounded-lg border border-border">
-                    <table className="w-full min-w-[680px] text-left text-xs">
-                      <thead className="bg-surface-2 text-text-muted"><tr><th className="px-3 py-2">图片</th><th className="px-3 py-2">产品名称</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2">品牌 / 规格</th><th className="px-3 py-2">识别卖点</th><th className="w-16 px-3 py-2">操作</th></tr></thead>
-                      <tbody className="divide-y divide-border">
-                        {pendingProductImport.products.map((product, index) => { const transfer = pendingProductImport.remoteImageTransfers[index]; return <tr key={`${product.sku || product.name}-${index}`}>
-                          <td className="px-3 py-2"><div className="relative w-fit">{(pendingProductImport.assignedImages.find(image => image.productIndex === index)?.url || product.imageUrl) ? <img src={pendingProductImport.assignedImages.find(image => image.productIndex === index)?.url || product.imageUrl} alt="" className="h-12 w-12 rounded-lg border border-border object-cover" onError={event => { event.currentTarget.style.display = 'none'; }} /> : <span className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-surface-2 text-[10px] text-text-muted">无图片</span>}{transfer && <span title={transfer.error || transfer.originalUrl} className={`absolute -bottom-1 -right-2 rounded px-1 py-0.5 text-[8px] font-semibold text-white ${transfer.status === 'uploaded' ? 'bg-emerald-600' : transfer.status === 'failed' ? 'bg-red-600' : transfer.status === 'uploading' ? 'bg-slate-800' : 'bg-amber-600'}`}>{transfer.status === 'uploaded' ? '已转存' : transfer.status === 'failed' ? '转存失败' : transfer.status === 'uploading' ? '转存中' : '待转存'}</span>}</div>{transfer?.error && <p className="mt-2 max-w-32 text-[9px] leading-4 text-red-600">{transfer.error}</p>}</td>
-                          <td className="px-3 py-2 font-bold text-text-primary">{product.name}</td>
-                          <td className="px-3 py-2 text-text-secondary">{product.sku || '—'}</td>
-                          <td className="px-3 py-2 text-text-secondary">{[product.brand, product.color, product.size].filter(Boolean).join(' · ') || '—'}</td>
-                          <td className="max-w-56 px-3 py-2 text-text-secondary"><span className="line-clamp-2">{product.highlights || '—'}</span></td>
-                          <td className="px-3 py-2"><button type="button" onClick={() => setPendingProductImport(current => { if (!current) return null; const remoteImageTransfers = Object.fromEntries(Object.entries(current.remoteImageTransfers).flatMap(([key, value]) => { const itemIndex = Number(key); return itemIndex === index ? [] : [[itemIndex > index ? itemIndex - 1 : itemIndex, value]]; })); const assignedImages = current.assignedImages.flatMap(image => image.productIndex === index ? [] : [{ ...image, productIndex: image.productIndex > index ? image.productIndex - 1 : image.productIndex }]); return { ...current, products: current.products.filter((_, itemIndex) => itemIndex !== index), remoteImageTransfers, assignedImages }; })} className="text-[11px] font-bold text-red-600 hover:text-red-800">移除</button></td>
-                        </tr>;})}
-                      </tbody>
-                    </table>
-                  </div>
-                  {pendingProductImport.assignedImages.length > 0 && <p className="mt-3 text-xs text-emerald-700">已识别并待绑定 {pendingProductImport.assignedImages.length} 张 PDF 产品照片，请核对商品名称后确认导入。</p>}
-                  {pendingProductImport.unassignedImages.length > 0 && <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3"><p className="text-xs font-semibold text-sky-900">未归属图片（{pendingProductImport.unassignedImages.length}）</p><p className="mt-1 text-[11px] leading-5 text-sky-800">文档没有提供可验证的图片与产品对应关系，因此不会静默绑定。确认导入时会把这些图片持久化到“企业上传素材”，随后可手动关联产品。</p><div className="mt-3 flex flex-wrap gap-2">{pendingProductImport.unassignedImages.map(image => <figure key={image.name} className="w-24"><div className="relative"><img src={image.url} alt={image.name} className="h-20 w-24 rounded-lg border border-sky-200 bg-white object-cover"/>{image.status && image.status !== 'pending' && <span className={`absolute bottom-1 right-1 rounded px-1.5 py-0.5 text-[9px] font-semibold ${image.status === 'uploaded' ? 'bg-emerald-600 text-white' : image.status === 'failed' ? 'bg-red-600 text-white' : 'bg-slate-900 text-white'}`}>{image.status === 'uploaded' ? '已保存' : image.status === 'failed' ? '失败' : '上传中'}</span>}</div><figcaption className="mt-1 truncate text-[9px] text-sky-800" title={image.error || image.name}>{image.error || image.name}</figcaption></figure>)}</div></div>}
-                </div>
-            </Modal>
+            <EnterpriseProductImportReviewModal
+              pending={pendingProductImport}
+              confirming={productImportConfirming}
+              onClose={closeProductImport}
+              onConfirm={confirmProductImport}
+              onRemoveProduct={index => {
+                if (productImportConfirming) return;
+                setPendingProductImport(current => current ? removePendingImportedProduct(current, index) : null);
+              }}
+            />
           )}
 
           <div className="h-4" />

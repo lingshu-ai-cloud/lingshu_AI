@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { prepareEnterpriseProductImport, remoteProductImageTransfers } from './enterpriseProductImportPreparation.js';
+import { prepareEnterpriseProductImport, remoteProductImageTransfers, removePendingImportedProduct, type PendingProductImport } from './enterpriseProductImportPreparation.js';
 
 const concat = (...parts: Uint8Array[]) => {
   const result = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
@@ -46,4 +46,32 @@ test('DOCX 表格进入同一产品确认草稿，不直接提交企业资料', 
   assert.equal(pending.sheetName, '文档正文');
   assert.deepEqual(pending.remoteImageTransfers, {});
   assert.match(message, /请确认字段与图片归属后导入/);
+});
+
+test('移除确认草稿中的产品时，图片归属与远端主图索引一起重排', () => {
+  const file = new File(['image'], 'product.png', { type: 'image/png' });
+  const pending: PendingProductImport = {
+    fileName: 'products.pdf', sheetName: '文档正文', sourceLabel: '文档提取', totalRows: 3, skippedRows: 0,
+    products: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+    assignedImages: [
+      { productIndex: 0, name: 'a.png', url: 'blob:a', file },
+      { productIndex: 1, name: 'b.png', url: 'blob:b', file },
+      { productIndex: 2, name: 'c.png', url: 'blob:c', file },
+    ],
+    unassignedImages: [{ name: 'unknown.png', url: 'blob:unknown', file }],
+    remoteImageTransfers: {
+      0: { status: 'uploaded', originalUrl: 'https://example.invalid/a.png' },
+      1: { status: 'pending', originalUrl: 'https://example.invalid/b.png' },
+      2: { status: 'failed', originalUrl: 'https://example.invalid/c.png', error: 'transfer failed' },
+    },
+  };
+  const next = removePendingImportedProduct(pending, 1);
+  assert.deepEqual(next.products.map(item => item.name), ['A', 'C']);
+  assert.deepEqual(next.assignedImages.map(item => [item.name, item.productIndex]), [['a.png', 0], ['c.png', 1]]);
+  assert.deepEqual(Object.keys(next.remoteImageTransfers), ['0', '1']);
+  assert.equal(next.remoteImageTransfers[1]?.originalUrl, 'https://example.invalid/c.png');
+  assert.equal(next.remoteImageTransfers[1]?.status, 'failed');
+  assert.equal(next.unassignedImages, pending.unassignedImages);
+  assert.equal(pending.products.length, 3);
+  assert.equal(removePendingImportedProduct(pending, 3), pending);
 });

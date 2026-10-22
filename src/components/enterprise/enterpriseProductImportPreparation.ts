@@ -14,6 +14,18 @@ export interface PendingProductImport {
   remoteImageTransfers: Record<number, { status: 'pending' | 'uploading' | 'uploaded' | 'failed'; error?: string; originalUrl: string }>;
 }
 
+export function removePendingImportedProduct(current: PendingProductImport, index: number): PendingProductImport {
+  if (index < 0 || index >= current.products.length) return current;
+  const remoteImageTransfers = Object.fromEntries(Object.entries(current.remoteImageTransfers).flatMap(([key, value]) => {
+    const itemIndex = Number(key);
+    return itemIndex === index ? [] : [[itemIndex > index ? itemIndex - 1 : itemIndex, value]];
+  }));
+  const assignedImages = current.assignedImages.flatMap(image => image.productIndex === index
+    ? []
+    : [{ ...image, productIndex: image.productIndex > index ? image.productIndex - 1 : image.productIndex }]);
+  return { ...current, products: current.products.filter((_, itemIndex) => itemIndex !== index), remoteImageTransfers, assignedImages };
+}
+
 export function remoteProductImageTransfers(products: ProductItem[]): PendingProductImport['remoteImageTransfers'] {
   return Object.fromEntries(products.flatMap((item, index) => item.imageUrl && !item.imageUrl.startsWith('/api/overseas/enterprise/assets/')
     ? [[index, { status: 'pending' as const, originalUrl: item.imageUrl }]] : []));
