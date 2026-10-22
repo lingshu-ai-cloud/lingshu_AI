@@ -5,7 +5,7 @@
 ## 灵感素材列表投影边界拆分（2026-10-23）
 
 - 代码提交 `77bd4d35160fc67ab8e4f2dc6875f4f96a09770b` 将“我的素材”的完整过滤、用户上传优先排序、产品集合可见性、镜头功能选项和普通素材分页迁至 `inspirationMaterialGalleryProjection.ts`。页面保留请求、筛选状态、详情和动作，产品集合只在第一页展示。`InspirationDashboard.tsx` 从 2,342 降至 2,296 行，历史预算同步收紧；全仓仍有 6 个历史超限文件，不能称整体拆分完成。
-- 新投影直测 3/3，页面/产品合同聚焦 10/10、`test:material-import` 18/18、`test:video-source-boundaries` 131/131、`test:social-content-frontend`、`pnpm run lint`、架构扫描/ratchet（2,382 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建及 `git diff --check` 均通过。`AiCreateStudio` chunk 为 496,106/500,000 字节，仍有大 chunk 提示。未执行 LinkedIn 付费采集测试、真实供应商调用、目标库迁移、浏览器交互或部署；本地/远端 SHA 与工作区状态以推送后核验为准。
+- 新投影直测 3/3，页面/产品合同聚焦 10/10、`test:material-import` 18/18、`test:video-source-boundaries` 131/131、`test:social-content-frontend`、`pnpm run lint`、架构扫描/ratchet（2,382 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建及 `git diff --check` 均通过。视频来源整组包含既有 LinkedIn 离线许可测试，但按用户决定未执行真实付费采集或许可签发验收。`AiCreateStudio` chunk 为 496,106/500,000 字节，仍有大 chunk 提示；未调用真实供应商、执行目标库迁移、浏览器交互或部署。本地/远端 SHA 与工作区状态以推送后核验为准。
 
 ## 灵感原对标只读解析边界拆分（2026-10-23）
 
