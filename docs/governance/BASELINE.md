@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工首次引导展示边界拆分（2026-10-23）
+
+- 代码提交 `17fb32dee5b30290a1f29f51f37f6304b35f1596` 将企业与品牌、产品表、经营阶段、出镜方式四步展示和共用弹窗框架迁至 `DigitalEmployeeOnboardingSteps.tsx`；页面仍持有企业资料与产品导入、阶段保存、推荐计划和数字人授权判断。`DigitalEmployeePage.tsx` 从 3,101 降至 2,883 行，预算同步收紧；全仓仍有 6 个历史超限文件。
+- 页面源码契约改查新展示边界及原页面回调接线；同时修正上一批助手决策读取迁出后周目标重建契约仍只扫描旧路由文件的问题。`test:digital-employees` 整组、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,375 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 496,106/500,000 字节。弹窗使用客户端 Portal，未把空白的服务端静态渲染当成 UI 验收；未做真实浏览器交互、付费供应商调用、目标库迁移或部署。本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## Facebook 图文采集投影拆分（2026-10-23）
 
 - 代码提交 `029927c6979c1f83e0d0fc92613aaac6887b094b` 将 Facebook 帖子图片/视频识别、图片证据和公开指标投影迁至既有 `videoCrawlerImageProjection.ts`，采集入口与供应商调用顺序未动。`videos.ts` 从 8,878 降至 8,815 行，预算同步收紧；全仓仍有 6 个历史超限文件。
