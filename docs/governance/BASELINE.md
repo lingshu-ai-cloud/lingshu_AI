@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## LinkedIn 原始付费响应流式上限（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `24d266aa` 将要求原始回执的 Apify HTTP 响应改为读取阶段 8 MiB 字节上限，与 LinkedIn 只写一次回执存储共用常量；超限时中止请求，已提交的 Actor 保持 `submitted_unknown`，禁止自动重发。这限制应用读取/存储的正文，不证明供应商传输费用上限，也不开放真实付费入口。`test:video-source-boundaries` 纳入 LinkedIn 批准、传输和回执合同。
+- 相关付费传输/回执定向测试 18/18、扩展来源边界测试 65/65、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,331 个生产 TypeScript 文件）、192 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。缺少可信账号报价/汇率、非 Actor 费用预约、跨实例唯一许可签发及目标共享卷验证，LinkedIn 采集仍默认关闭；没有真实付费请求、目标库迁移或部署。后续须基于真实账号证据补齐完整费用上界和唯一签发，再离线验证断连/恢复与租户隔离；最终本地/远端 SHA 及工作区状态以推送后 Git 核对为准。
+
 ## Instagram/TikTok 图片帖投影拆分与 LinkedIn 门禁复核（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `f9983810` 将 Instagram/TikTok Apify 图片帖的来源、图片和互动数据纯投影迁至 `server/routes/videoCrawlerImageProjection.ts`，保留原有平台/视频排除规则；`videos.ts` 仍负责 Actor 调用、付费准入和持久化，从 9,720 降至 9,647 行，历史预算同步收紧。全仓仍有 7 个超限文件，结构治理未完成。
