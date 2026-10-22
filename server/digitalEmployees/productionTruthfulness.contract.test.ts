@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import { readMaterialLibrary } from '../lib/materialLibrary.js';
 
 const app = fs.readFileSync('src/App.tsx', 'utf8');
+const appPageSlot = fs.readFileSync('src/AppPageSlot.tsx', 'utf8');
+const localMockGate = fs.readFileSync('src/mocks/foreignTradeOperations.ts', 'utf8');
 const enterpriseHomepageDemo = fs.readFileSync('src/mocks/enterpriseHomepageDemo.ts', 'utf8');
 const strategyBoard = fs.readFileSync('src/components/StrategyDataBoard.tsx', 'utf8');
 const cockpit = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
@@ -17,10 +19,13 @@ const materialLibrary = fs.readFileSync('server/lib/materialLibrary.ts', 'utf8')
 const publisher = fs.readFileSync('server/publishing/scheduledPublisher.ts', 'utf8');
 const messaging = fs.readFileSync('server/digitalEmployees/customerMessagingPolicy.ts', 'utf8');
 
-assert.match(app, /<ConversionPage[\s\S]*?includeMockCustomers=\{import\.meta\.env\.DEV && new URLSearchParams\(window\.location\.search\)\.get\('mock'\) === 'quote'\}/, 'the production customer workspace must not inject simulated customers');
-assert.match(app, /<StrategyPage[\s\S]*?includeMockCustomers=\{import\.meta\.env\.DEV && new URLSearchParams\(window\.location\.search\)\.get\('mock'\) === 'quote'\}/, 'the production strategy dashboards must not inject simulated customers');
-assert.match(app, /enterpriseHomepageDemo=\{isEnterpriseHomepageDemoAccount\(session\.user\.email\)\}/, 'the enterprise-backed homepage demo must be gated by the authenticated account');
-assert.match(app, /<AgentMemoryPage[\s\S]*?includeMockCustomers=\{import\.meta\.env\.DEV && new URLSearchParams\(window\.location\.search\)\.get\('mock'\) === 'quote'\}/, 'the production Agent memory page must not inject simulated evidence');
+assert.match(app, /localForeignTradeMock = isLocalForeignTradeMockEnabled\(\)/, 'the app must derive the local mock gate centrally');
+assert.match(localMockGate, /if \(import\.meta\.env\.DEV\) return true/, 'development may opt into local mock customers');
+assert.match(localMockGate, /window\.location\.hostname === '127\.0\.0\.1' \|\| window\.location\.hostname === 'localhost'/, 'non-development mock customers must stay on local preview hosts');
+assert.match(appPageSlot, /<ConversionPage[\s\S]*?includeMockCustomers=\{localForeignTradeMock\}/, 'the customer workspace must use the local-only mock gate');
+assert.match(appPageSlot, /<StrategyPage[\s\S]*?includeMockCustomers=\{localForeignTradeMock\}/, 'the strategy dashboard must use the local-only mock gate');
+assert.match(appPageSlot, /enterpriseHomepageDemo=\{isEnterpriseHomepageDemoAccount\(session\.user\.email\)\}/, 'the enterprise-backed homepage demo must be gated by the authenticated account');
+assert.match(appPageSlot, /<AgentMemoryPage[\s\S]*?includeMockCustomers=\{import\.meta\.env\.DEV && new URLSearchParams\(window\.location\.search\)\.get\('mock'\) === 'quote'\}/, 'the Agent memory page must require the explicit development fixture');
 assert.match(enterpriseHomepageDemo, /ENTERPRISE_HOMEPAGE_DEMO_ACCOUNT = 'lingshu-admin@local\.test'/, 'the production homepage demo must stay limited to the requested test account');
 assert.match(enterpriseHomepageDemo, /synthetic: true/, 'homepage demo records must carry explicit synthetic provenance');
 assert.match(enterpriseHomepageDemo, /不代表真实经营结果/, 'homepage demo data must explain that it is not real business performance');

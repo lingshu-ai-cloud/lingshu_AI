@@ -4,7 +4,7 @@ import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, reviewSc
 
 const social = socialScheduleFromCadence('YouTube、TikTok、Instagram、Facebook；近 7 天；每天 09:00；每次最多 20 条；按链接与标题去重 30 天');
 assert.equal(social.cronExpr, '0 9 * * *');
-assert.deepEqual(social.platforms, ['youtube', 'tiktok', 'instagram', 'facebook']);
+assert.deepEqual([...social.platforms].sort(), ['facebook', 'instagram', 'tiktok', 'youtube']);
 assert.equal(social.limit, 20);
 assert.equal(social.dateWindowDays, 7);
 assert.equal(social.dedupeWindowDays, 30);

@@ -15,6 +15,7 @@ import { DigitalEmployeeApiError } from '../lib/digitalEmployeeApi.js';
 import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
+const todayFocusSource = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeTodayFocusPanel.tsx', 'utf8');
 const weeklyPlanConfirmationSource = fs.readFileSync('src/components/WeeklyPlanConfirmationCard.tsx', 'utf8');
 const weeklyGoalPanelSource = fs.readFileSync('src/components/smartBusiness/WeeklyGoalPanel.tsx', 'utf8');
 const smartBusinessSource = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
@@ -59,6 +60,9 @@ const appSource = fs.readFileSync('src/App.tsx', 'utf8');
 const appPageSlotSource = fs.readFileSync('src/AppPageSlot.tsx', 'utf8');
 const layoutSource = fs.readFileSync('src/components/Layout.tsx', 'utf8');
 const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
+const assistantPanelSource = fs.readFileSync('src/components/assistant/AssistantConversationPanel.tsx', 'utf8');
+const assistantBubblesSource = fs.readFileSync('src/components/assistant/AssistantConversationBubbles.tsx', 'utf8');
+const assistantSendSource = fs.readFileSync('src/components/assistant/useAssistantSend.ts', 'utf8');
 const assistantRuntimeSource = fs.readFileSync('src/components/assistant/globalAssistantRuntime.ts', 'utf8');
 const assistantRoutingSource = assistantSource + assistantRuntimeSource;
 const assistantStoreSource = fs.readFileSync('src/stores/assistantStore.ts', 'utf8');
@@ -252,12 +256,12 @@ assert.doesNotMatch(smartBusinessSource, /数字员工协作状态|四位数字�
 assert.doesNotMatch(pageSource, /aria-label="开启或关闭智能经营"|智能经营已开启|已停止新计划/, 'the redundant Smart Operations switch must not remain beside the weekly task control');
 
 assert.match(assistantRuntimeSource, /(?:export )?const PRIMARY_ASSISTANT_THREAD: OrbitAgentId = 'business'/, '灵小枢必须保持一个统一的主对话线程');
-assert.match(assistantSource, /const activeAgentLabel = '灵小枢'/, '唯一主入口必须使用灵小枢身份');
-assert.match(assistantSource, /const threadAgent = PRIMARY_ASSISTANT_THREAD/, '页面专业 Agent 只能作为内部路由上下文，不能拆成多个对话入口');
+assert.match(assistantPanelSource, /activeAgentLabel="灵小枢"/, '唯一主入口必须使用灵小枢身份');
+assert.match(assistantSource, /const agentId = PRIMARY_ASSISTANT_THREAD/, '页面专业 Agent 只能作为内部路由上下文，不能拆成多个对话入口');
 assert.doesNotMatch(assistantSource, /const SKILL_AGENTS|策略助手|唤醒助手|统筹 Agent/, '灵小枢不应恢复旧助手、放射式 Agent 入口或重复的统筹 Agent');
 assert.match(assistantStoreSource, /\['business', 'director', 'content', 'customer'\]/, '灵小枢应只维护四个现有子 Agent 的独立会话');
 assert.match(assistantSource, /const currentPageAgent = useMemo\(\(\) => orbitIdForPage\(page\)/, '灵小枢必须根据当前工作区选择内部专业 Agent 上下文');
-assert.match(assistantSource, /<AssistantDecisionCenter[\s\S]{0,420}page=\{page\}[\s\S]{0,700}variant="summary"/, '灵小枢默认对话必须展示当前页面真实待办的概要气泡');
+assert.match(assistantBubblesSource, /<AssistantDecisionCenter[\s\S]{0,420}page=\{page\}[\s\S]{0,700}variant="summary"/, '灵小枢默认对话必须展示当前页面真实待办的概要气泡');
 assert.match(assistantSource, /openAgent\(currentPageAgent, 'chat'\)/, '点击灵小枢应直接进入单列对话，不恢复 Agent 选择器或强制打开详情');
 for (const question of ['查看当前进度', '查看数字员工排期', '查看需要我处理的任务']) {
   assert.match(assistantContextSource, new RegExp(question), `生产中的灵小枢上下文必须提供推荐问题：${question}`);
@@ -271,8 +275,8 @@ assert.match(assistantRoutingSource, /page === 'socialInspiration'[\s\S]{0,160}r
 assert.match(assistantRoutingSource, /page === 'conversion'[\s\S]{0,220}return 'customer'/, '客户页面应高亮客服 Agent');
 assert.match(assistantSource, /const openAgent[\s\S]{0,160}const agentId = PRIMARY_ASSISTANT_THREAD/, '所有页面入口保持统一主线程');
 assert.match(assistantSource, /send\(kickoff\.text, orbitIdForAgent\(kickoff\.agent, currentPageAgent\)\)/, '专业工作流启动仍应进入对应 Agent');
-assert.match(assistantSource, /strategyRequest \? '' : await loadLiveIntegrationFacts\(\)/, '经营回答不能重新注入客户端账号事实');
-assert.match(assistantSource, /if \(!currentScope\(\)\) return/, '跨身份异步响应必须被丢弃');
+assert.match(assistantSendSource, /strategyRequest \? '' : await loadLiveIntegrationFacts\(\)/, '经营回答不能重新注入客户端账号事实');
+assert.match(assistantSendSource, /if \(!currentScope\(\)\) return/, '跨身份异步响应必须被丢弃');
 
 assert.match(pageSource, /输出内容语言/);
 assert.match(pageSource, /需要输出的语言/);
@@ -549,12 +553,12 @@ assert.match(connectedAgentCalendarSource, /mainTasks=\{\[\.\.\.accountBindingTa
 assert.match(matrixScheduleSource, /projectAccountBindingCalendar\(visibleTasks, accountConnections\)/, 'account selection must scope projected binding work to visible tasks');
 assert.doesNotMatch(initialPlanSaveSource, /productionApi\.defaults\(\)/, 'skipping presenter setup may still save the initial plan; the hard gate belongs immediately before production start');
 
-for (const label of ['\u8fd0\u884c\u4e2d', '\u9700\u8981\u6211\u51b3\u5b9a', '\u4eca\u65e5\u5b8c\u6210', '\u672a\u6765 24 \u5c0f\u65f6', '\u6570\u636e\u7f3a\u53e3']) {
-  assert.match(pageSource, new RegExp(label), `Today Overview must include ${label}`);
+assert.match(pageSource, /<TodayFocusPanel/, 'the current week view must mount the focus panel');
+for (const label of ['本周进度', '需要你处理']) {
+  assert.match(todayFocusSource, new RegExp(label), `the focus panel must include ${label}`);
 }
-assert.match(pageSource, /businessSnapshot/, 'today and weekly views must use the server business snapshot');
-assert.match(pageSource, /status === ["']available["'][\s\S]{0,500}metric\?\.value/, 'business metrics may show numbers only when their source is available');
-assert.match(pageSource, /\u5feb\u7167\u7f3a\u5931\uff0c\u4e0d\u80fd\u5224\u5b9a\u4e3a\u96f6\u7f3a\u53e3/, 'missing snapshots must not be presented as zero');
+assert.match(todayFocusSource, /attentionItems\.slice\(0, 3\)/, 'attention items must stay bounded');
+assert.match(pageSource, /businessSnapshot\?\.readiness/, 'readiness must use the server business snapshot');
 
 assert.match(liveSceneSource, /\u5185\u5bb9\u751f\u4ea7\u73b0\u573a/, 'the shared component must expose the content production scene');
 assert.match(pageSource, /displayedReadiness[\s\S]{0,3000}profileConfirmed[\s\S]{0,1200}knowledgeProducts\.length/, 'onboarding readiness must immediately reflect enterprise and product facts saved on the current page');
@@ -583,8 +587,9 @@ assert.match(pageSource, /\u771f\u5b9e\u53d1\u9001\u56de\u6267/, 'the batch pane
 assert.match(pageSource, /\u53d1\u9001\u5df2\u5230\u671f\u5ba2\u6237/, 'manual-only mode must expose an explicit due-item dispatch action');
 assert.match(pageSource, /digitalEmployeeApi\.dispatchFollowupBatch/, 'the manual dispatch action must call the worker route');
 
-assert.match(pageSource, /function ConversionFunnelChart/, 'overview must render a dedicated funnel chart');
-assert.match(pageSource, /尚无可用数据，接入后显示真实数量与阶段比例/, 'the conversion visualization must explain missing data instead of fabricating a funnel');
+assert.match(pageSource, /<BusinessHealthOverview summaryOnly data=\{data\}/, 'the home overview must mount its real business-health summary');
+assert.match(pageSource, /<SmartBusinessDashboard data=\{data\}/, 'the command center must mount its real task-oriented dashboard');
+assert.doesNotMatch(pageSource, /function (?:LegacyTodaySnapshotPanel|BusinessMetricCard|DataMetricCard|ConversionFunnelChart)/, 'unmounted legacy snapshot and funnel scaffolding must not return');
 assert.doesNotMatch(pageSource, /Agent \u7ecf\u8425\u8d21\u732e/, 'overview must remove the redundant Agent contribution action area');
 for (const label of ['本期值得行动', '全部洞察', '判断依据', '建议下一步', '执行与交付记录']) {
   assert.ok(reviewSource.includes(label), `review must expose ${label}`);
