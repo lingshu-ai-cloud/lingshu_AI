@@ -16,11 +16,11 @@ import { studioPreviewRenderBlockers } from '../lib/studioPreviewReadiness';
 import { presenterApi } from '../lib/presenterApi';
 import { digitalHumanDecisionIssues, enterpriseMaterialIssue } from '../../shared/contracts/smartStoryboardAdmission';
 import ShotSourceDecisionPanel from './studio/ShotSourceDecisionPanel';
-import ShotMaterialLibraryDialog from './studio/ShotMaterialLibraryDialog';
+const ShotMaterialLibraryDialog = lazy(() => import('./studio/ShotMaterialLibraryDialog'));
 import StudioPreviewStage, { studioPreviewRatio } from './studio/StudioPreviewStage';
 import { recognizePresenterShot, isSalesPresenterLabel, salesPresenterRecognition, confirmedSalesPresenterRoute, mergeAutomatedPresenterReviewEvidence } from '../../shared/contracts/presenterShotRecognition';
 import ReplicationWorkbenchHeader from './socialContent/ReplicationWorkbenchHeader';
-import AgentTaskDemoWorkbench from './socialContent/AgentTaskDemoWorkbench';
+const AgentTaskDemoWorkbench = lazy(() => import('./socialContent/AgentTaskDemoWorkbench'));
 import { referenceSpeechLines as groupReferenceSpeechLines } from './socialContent/referenceSpeechLines';
 import { socialContentApi } from '../lib/socialContentApi';
 import { referenceProductTerms as detectSpokenProductTerms, replaceReferenceIdentities } from '../lib/referenceIdentityMapping';
@@ -61,7 +61,6 @@ import { matchStoryboardEnvironmentImage, retainStoryboardReferenceImages } from
 import { storyboardFactoryReferenceRequired } from '../../shared/storyboardFactoryReference';
 import { inferStoryboardTopic, STORYBOARD_TOPIC_LABELS, type StoryboardTopic } from '../lib/storyboardTopic';
 import { matchStoryboardNamedPersonImage, storyboardNamedPersonConsentReady, storyboardNamedPersonRequired } from '../lib/storyboardNamedPersonReference';
-import ShootingTaskDialog from './ShootingTaskDialog';
 const ShotProductionPanel = lazy(() => import('./ShotProductionPanel'));
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import DigitalHumanProductionOverview from './studio/DigitalHumanProductionOverview';
@@ -90,7 +89,8 @@ import {
   type StudioStoryboardItem,
 } from './studio/StudioWorkbenchFrame';
 import { groupSpeechShots } from './socialContent/speechShotGroups';
-import StudioBatchReviewDialog, { type StudioBatchReviewIssue } from './studio/StudioBatchReviewDialog';
+import type { StudioBatchReviewIssue } from './studio/StudioBatchReviewDialog';
+const StudioBatchReviewDialog = lazy(() => import('./studio/StudioBatchReviewDialog'));
 import { canEnterStoryboardRenderStep, evaluateStoryboardRenderReadiness } from '../lib/storyboardRenderReadiness';
 import type { FreeCreationShotType } from '../../shared/contracts/freeCreationProject';
 import { currentRenderOutput } from '../lib/studioRenderVersion';
@@ -12391,7 +12391,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         narration: parsed.voice || parsed.subtitle, visual: parsed.visual || parsed.fallback, mediaUrl: material?.url };
     }));
 
-  if (agentTaskDemoEntry && socialContentTaskId && agentTaskViewMode === 'demo') return <AgentTaskDemoWorkbench
+  if (agentTaskDemoEntry && socialContentTaskId && agentTaskViewMode === 'demo') return <Suspense fallback={<div role="status" className="p-6 text-sm text-text-secondary">正在打开任务演示…</div>}><AgentTaskDemoWorkbench
     activeStep={agentTaskDemoStep}
     title={projectTitle}
     shots={agentDemoShots}
@@ -12411,7 +12411,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         setCanvasView('creation');
       }
     }}
-  />;
+  /></Suspense>;
 
   if (freeThreeStep && step === 'mode') return <div className="flex h-full min-h-0 flex-col bg-white">
     <ReplicationWorkbenchHeader
@@ -13201,7 +13201,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         </div>
       </StudioWorkbenchFrame>
 
-      {threeStepWorkflow && step === 'material' && batchReviewOpen && <StudioBatchReviewDialog
+      {threeStepWorkflow && step === 'material' && batchReviewOpen && <Suspense fallback={<div role="status" className="p-6 text-sm text-text-secondary">正在打开分镜审核…</div>}><StudioBatchReviewDialog
         issues={batchReviewIssues}
         frames={batchReviewFrames}
         totalShots={storyboardSlots.length}
@@ -13324,9 +13324,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           finally { setBatchReviewBusy(false); }
         })()}
         onClose={() => setBatchReviewOpen(false)}
-      />}
+      /></Suspense>}
 
-      {shotLibrarySlotId && <ShotMaterialLibraryDialog
+      {shotLibrarySlotId && <Suspense fallback={<div role="status" className="p-6 text-sm text-text-secondary">正在打开素材库…</div>}><ShotMaterialLibraryDialog
         items={materials.filter(clip => {
           const targetSlot = storyboardSlots.find(slot => slot.id === shotLibrarySlotId);
           const presenterConfirmed = targetSlot && salesPresenterRecognition(presenterEvidenceFor(targetSlot)) === 'confirmed';
@@ -13352,7 +13352,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             if (allSales) storyboardSlots.filter(slot => salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed' && !productionFor(slot).locked).forEach(slot => assignWorkbenchMaterial(clip, slot.id)); else assignWorkbenchMaterial(clip, targetSlotId); setShotLibrarySlotId('');
           }).catch(error => setShotLibraryError(error instanceof Error ? error.message : '上传失败')).finally(() => setShotLibraryBusy(false));
         }}
-      />}
+      /></Suspense>}
       {productionEditorSlot && (
         <Suspense fallback={<div role="status" className="p-6 text-sm text-text-secondary">正在打开镜头制作…</div>}>
         <ShotProductionPanel

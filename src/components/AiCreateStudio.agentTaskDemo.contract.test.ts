@@ -20,7 +20,7 @@ assert.match(
 );
 assert.match(
   studioSource,
-  /agentTaskDemoEntry && socialContentTaskId && agentTaskViewMode === 'demo'\) return <AgentTaskDemoWorkbench/,
+  /agentTaskDemoEntry && socialContentTaskId && agentTaskViewMode === 'demo'\) return <Suspense[\s\S]{0,180}<AgentTaskDemoWorkbench/,
   'Agent 任务上下文在演示模式下必须直接展示已有生产结果',
 );
 assert.match(
