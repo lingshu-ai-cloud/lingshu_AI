@@ -39,6 +39,7 @@
 - `src/lib/studioApi.ts`、`src/lib/socialImageApi.ts`：前端 API 适配层。
 - `shared/contracts/`：跨端任务、内容与交付合同；字段变更需检查旧任务兼容性。
 - `server/routes/`：HTTP 鉴权、输入规范化、租户上下文和响应编排；业务算法逐步下沉到领域模块。
+- `server/routes/studioMaterialLibraryProjection.ts`：在路由完成租户库存与企业产品读取后，统一投影产品归属、用途/来源可见性、生成素材过滤、分类 facets、排序与分页；`studio.ts` 保留租户读取、鉴权响应、素材 URL 签名、使用证据聚合和产品场景准备，不把 `purpose=all` 的内部素材混入普通图库。
 - `server/digitalEmployees/taskEvidenceProjection.ts`：数字员工任务的执行元数据、依赖与业务引用范围、工作流归属、项目完成/渲染证据的纯规则；路由仅在租户范围内读写记录并调用这些规则，不能用历史草稿或可变引用覆盖托管项目的索引血缘。
 - `server/digitalEmployees/taskCorrectionSafety.ts`：任务纠偏的传递性下游范围和已发送/已发布回执判定；路由注入租户限定的存储及跟进发送回执读取，缺少可证明安全的外部动作仍保守拦截。拆分不改变外部发送、发布和重试许可。
 - `server/digitalEmployees/taskCorrectionSupersession.ts`：任务纠偏后按影响范围使生产 job、冻结内容批次、托管 Studio 项目、客户分群、跟进草稿及审批失效；路由持有运行锁并注入存储/队列/跟进项目读取。已发送或已送达的跟进项目不被回写为草稿，旧业务回执拦截仍先于失效操作执行。

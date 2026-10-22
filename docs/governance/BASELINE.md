@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 素材库列表投影拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `354e0e39af324432e13fbf61ee34e32cc1d77020` 将素材库产品归属、普通/内部素材可见性、生成素材过滤、facets、排序及分页迁至纯投影 `studioMaterialLibraryProjection.ts`。`studio.ts` 仍负责租户读取、签名 URL、使用证据与 HTTP 响应，从 9,502 降至 9,458 行，架构预算同步收紧；全仓仍有 6 个历史超限文件。
+- 新投影直测 4/4，覆盖产品隔离、内部素材恢复、非法筛选、同 ID 库存覆盖及 facets 计算；`test:material-import` 15/15、`test:studio-media` 整组、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,362 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过。`AiCreateStudio` chunk 为 496,002/500,000 字节。未做浏览器交互、真实供应商调用、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## Studio 已有草稿弹窗与旧预览清理（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `cf6eaad6c0f688ed85bf3007e699e85977ef250e` 将实际挂载的同源草稿选择弹窗迁至按需加载的 `ExistingSourceDraftDialog.tsx`，页面仍持有草稿恢复和新建清理动作；删除未挂载的 `ProductInfoPreview` 与仅供它使用的行投影。`AiCreateStudio.tsx` 从 12,896 降至 12,793 行，预算同步收紧；主 chunk 从 497,209 降至 496,002/500,000 字节，全仓仍有 6 个历史超限文件。
