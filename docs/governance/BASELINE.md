@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 参考时间线完整性规则拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `27b8c281` 将参考逐镜文本及结构化镜头时间线的纯完整性检查迁至 `studioReferenceTimelineQuality.ts`；仅识别行首物理镜头范围，维持片头、空档、重叠和缺少真实片段的原拒绝规则。`studio.ts` 保留生成流程及响应编排，从 9,458 降至 9,412 行，预算同步收紧；全仓仍有 6 个历史超限文件。
+- 新规则直测 3/3、`test:studio-script` 整组、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,363 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过；`AiCreateStudio` chunk 为 496,002/500,000 字节。未做浏览器交互、真实供应商调用、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## Studio 素材库列表投影拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `354e0e39af324432e13fbf61ee34e32cc1d77020` 将素材库产品归属、普通/内部素材可见性、生成素材过滤、facets、排序及分页迁至纯投影 `studioMaterialLibraryProjection.ts`。`studio.ts` 仍负责租户读取、签名 URL、使用证据与 HTTP 响应，从 9,502 降至 9,458 行，架构预算同步收紧；全仓仍有 6 个历史超限文件。
