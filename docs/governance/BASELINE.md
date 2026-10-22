@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵小枢退出历史超限清单（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `405a24af` 将单列对话面板渲染、外部决策详情生命周期和浮层焦点/收起控制分别迁至 `AssistantConversationPanel.tsx`、`useAssistantDecisionDialog.ts` 与 `useAssistantPanelControls.ts`。主文件 `GlobalAssistant.tsx` 从 1,124 降至 798 行，撤销其历史超限豁免；全仓超限清单由 7 项降为 6 项。身份范围、线程保存、签名动作和原有付费门禁仍由既有链路控制，未改动 Qwen→Gemini 降级。
+- `test:assistant`、`test:assistant-production` 34/34、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,344 个生产 TypeScript 文件）、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。此为源码和离线测试验收，未做真实浏览器交互、付费供应商调用、目标库迁移或部署；最终本地/远端 SHA 与工作区状态以推送后 Git 核对为准。
+
 ## 灵小枢任务动作拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `4b1c758f` 将快捷生产操作的确认、返工、启动、原任务回执，以及签名任务卡按钮和暂停/继续动作分别迁至 `useAssistantQuickExecution.tsx` 和 `useAssistantTaskCardActions.ts`。浮层仍持有身份范围栅栏、任务状态和展示，未开放新的付费入口。`GlobalAssistant.tsx` 从 1,266 降至 1,124 行，历史预算同步收紧；全仓仍有 7 个超限文件，结构治理尚未完成。

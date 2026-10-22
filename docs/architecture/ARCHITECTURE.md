@@ -7,6 +7,8 @@
 - `src/components/socialContent/`：工作台与用户交互；不得自行绕过服务端租户鉴权或供应商成本控制。
 - `src/components/ConversionPage.tsx` 与 `src/components/customers/`：页面持有会话状态和三栏视图；客户定位/加载、草稿翻译副作用与渠道发送适配分别落在客户子模块，真实发送仍经过现有服务端出站接口和回执边界。
 - `src/components/assistant/AssistantConversationBubbles.tsx`：只承载对话滚动区内已准备好的决策摘要、欢迎语、消息、加载态、任务卡及周计划入口展示；滚动、草稿、身份栅栏与持久化仍由 `GlobalAssistant.tsx` 持有，发送由 `useAssistantSend.ts` 编排。
+- `src/components/assistant/AssistantConversationPanel.tsx`：承载既有单列对话面板、快捷入口、周动作与输入区的渲染及展示回调；`GlobalAssistant.tsx` 连接当前线程、身份范围、消息保存与业务动作，不在展示组件中重建任务或付费主链。
+- `src/components/assistant/useAssistantDecisionDialog.ts` 与 `useAssistantPanelControls.ts`：分别持有外部决策详情的状态、一次性结果反馈和关闭焦点恢复，以及浮层收起、返回对话、Escape 与视口监听；外部详情关闭不得重置对话，导航不得抢回旧页焦点。
 - `src/components/assistant/AssistantLauncher.tsx`：只展示完整入口、贴边恢复入口、待办数量和手动收起按钮；收起偏好、焦点交接和打开对话动作仍由 `GlobalAssistant.tsx` 控制。
 - `src/components/assistant/useAssistantPageSignals.ts`：按可见页面过滤业务上下文事件，并在助手关闭时按当前周目标低频读取权威待办数量；事件、定时器和请求中止在 hook 内成对清理，浮层保留页面与身份范围的状态所有权。
 - `src/components/assistant/useAssistantSend.ts`：编排单轮消息发送、当前身份范围栅栏、明确生产请求与签名动作分流、附件持久上传、周计划确认分流以及模型流式答复；浮层继续拥有对话与草稿状态、身份栅栏实例和持久化生命周期，hook 不绕过现有付费或生产门禁。
