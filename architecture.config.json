@@ -30,7 +30,6 @@
     "src/components/socialContent/SocialCreationWorkbench.tsx": 1008,
     "src/components/TrafficPage.tsx": 1750,
     "src/components/WorkspaceManagementPages.tsx": 1008,
-    "src/components/YouTubeIntegration.tsx": 1199,
     "src/lib/studioApi.ts": 1316
   }
 }

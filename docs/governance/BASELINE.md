@@ -306,3 +306,8 @@
 
 - 用户明确选择归档 8 个 exact-Qwen/weekly-exact/carry 候选工作树。逐一复核 `git status --porcelain` 均为空，`git cherry` 对集成分支均无未覆盖的正向补丁；各树唯一的忽略项是可重建的 `node_modules/`。这些目录不是当前任务可由 Codex 托管归档的工作树，因此使用 `git worktree remove` 退出注册并清理检出目录；全部命名分支和提交仍保留，可用 `git worktree add` 恢复源码检出，但 `node_modules/` 需重新安装。这不是 Codex 的工作树快照归档。
 - 五个含未提交内容的来源工作树未动，其他干净工作树也未动。详见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。
+
+## 频道总览与连接配置页面拆分（2026-10-22）
+
+- 从 `YouTubeIntegration.tsx` 抽出频道总览的数据读取、视频/评论展示及完整页面到 `ChannelOverview.tsx`；原入口继续重导出 `ChannelOverview`、`YouTubeContent` 和默认页面，YouTube/社媒连接面板仍留在原模块。原文件由 1199 行降至 789 行，新模块 430 行，撤销超限豁免，剩余 25 项。
+- TypeScript、架构扫描/ratchet、生产构建和 191 项迁移仓库只读检查通过；对原模块五个页面导出做了运行时加载检查。构建仍有三个大 chunk 提示；未执行真实 OAuth、迁移或部署。
