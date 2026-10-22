@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { storyboardFactoryReferenceRequired } from '../../shared/storyboardFactoryReference.js';
+import { kickoffClipSnapshot, materialToClip, normalizeClipSnapshot, projectMatchesKickoff } from './studio/studioSourceMaterial.js';
+import { detectScriptLanguageCode, enterpriseLanguageCodes, filterRecordByLanguage, languageTextToCode, normalizeScriptTimestamps } from './studio/studioLanguageRules.js';
 import {
   assessMaterialMatch,
   automaticStoryboardTrim,
@@ -129,6 +131,20 @@ assert.equal(isProductionEligibleClip({ ...fillingClip, id: 'owned', url: '/medi
 assert.equal(isAutomaticViralMaterialCandidate({ ...fillingClip, id: 'avatar-output', sourceType: 'digital_human', usage: 'editable' }, kickoff), false, '普通爆款 B-roll 一键匹配不能复用历史数字人视频');
 assert.equal(isAutomaticViralMaterialCandidate({ ...fillingClip, id: 'owned-factory', sourceType: 'tenant_upload', usage: 'editable' }, kickoff), true, '企业上传的工厂实拍可以参与爆款 B-roll 匹配');
 assert.equal(detectSourceSpeechLanguageCode('Are you too smart with 慧妆 foundation? Let us show you the factory.'), 'en');
+assert.equal(detectScriptLanguageCode('[0-2s] 工厂介绍'), 'zh');
+assert.equal(detectScriptLanguageCode('[0-2s] Visit our factory'), 'en');
+assert.equal(normalizeScriptTimestamps('[0.00–2.50 秒] Visit our factory'), '[0-2.5s] Visit our factory');
+assert.deepEqual(enterpriseLanguageCodes('英语、中文、English、未知'), ['en', 'zh']);
+assert.equal(languageTextToCode('西班牙语、英语'), 'es');
+assert.deepEqual(filterRecordByLanguage({ zh: '中文', en: 'English' }, ['en', 'missing']), { en: 'English' });
+const sourceKickoff = { video: { videoUrl: '/api/overseas/videos/reference/media-url?token=old', platform: 'youtube', title: '原片' } } as any;
+assert.equal(projectMatchesKickoff({ spec: { videoKickoff: sourceKickoff } } as any, { video: { videoUrl: '/api/overseas/videos/reference/media-url?token=new' } } as any), true, '同源短期签名变化仍识别为同一草稿');
+assert.equal(projectMatchesKickoff({ spec: { videoKickoff: sourceKickoff } } as any, { video: { videoUrl: '/other/video', platform: 'youtube', title: '原片' } } as any), false, '来源身份冲突时不能仅凭标题复用旧草稿');
+const historical = kickoffClipSnapshot(sourceKickoff);
+assert.equal(historical?.sourceType, 'historical-kickoff');
+assert.equal(historical && isProductionEligibleClip(historical, sourceKickoff), false, '恢复原片快照仍不能进入企业素材池');
+assert.equal(normalizeClipSnapshot({ id: 'missing-media', name: '历史素材' }), null, '没有可访问媒体的旧快照不得恢复');
+assert.equal(materialToClip({ ...fillingClip, scope: undefined, transcriptSourceHash: 'source-hash' } as any).scope, 'own');
 const speechPlan = buildReferenceSpeechPlan({ referenceAnalysis: { narrationSourceStatus: 'asr_aligned', details: [
   { shotId: 'replication-a', time: '0-2s', shot: '工厂人物', camera: '', visual: '人物口播', speechLines: [{ lineId: 'line-1', referenceText: 'Original brand.', draftText: 'Enterprise brand.', sourceStartSeconds: 0.2, sourceEndSeconds: 2.4, narrationOwnerShotId: 'replication-a', visualShotIds: ['replication-a', 'replication-b'] }] },
   { shotId: 'replication-b', time: '2-4s', shot: '产品展示', camera: '', visual: '产品展示', speechLines: [{ lineId: 'line-1', referenceText: 'Original brand.', draftText: 'Enterprise brand.', sourceStartSeconds: 0.2, sourceEndSeconds: 2.4, narrationOwnerShotId: 'replication-a', visualShotIds: ['replication-a', 'replication-b'] }] },
