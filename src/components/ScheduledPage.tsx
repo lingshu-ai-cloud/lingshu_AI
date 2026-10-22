@@ -7,10 +7,12 @@ import { Button, Drawer, Modal, Segmented } from 'antd';
 import LsPageHeader from './ui/LsPageHeader';
 import { motion, AnimatePresence } from 'motion/react';
 import { Activity, AlertTriangle, BarChart3, Building2, ChevronDown, CircleDollarSign, Clock, Download, DownloadCloud, ExternalLink, Globe2, Loader, Play, Plus, RefreshCw, Search, Trash2, TrendingUp, X, CheckCircle } from 'lucide-react';
-import type { AgentAction, AgentType } from '../App';
+import type { AgentAction } from '../App';
 import { completeDemoStep, readDemoProgress } from '../lib/demoProgress';
 import { authHeader } from '../lib/auth';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
+import { suggestedActions, type NextAction } from './scheduledTaskActions';
+import { taskWorkspace } from './scheduledTaskWorkspaces';
 import {
   AGENT_GROUPS, CRAWLER_LIMIT_MAX, CRAWLER_LIMIT_MIN,
   CRON_PRESETS, TASK_TEMPLATES, TEMPLATE_GROUPS, WEEKDAYS,
@@ -193,12 +195,6 @@ interface BusinessDynamicsPayload {
 }
 
 type SocialTaskTab = 'crawler' | 'analysis';
-interface NextAction {
-  label: string;
-  agent: AgentType;
-  agentLabel: string;
-  prompt: string;
-}
 
 export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) {
   const [discoveryScope, setDiscoveryScope] = useState<SocialCrawlStrategy | null>(null);
@@ -761,261 +757,10 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
     }
   };
 
-  const suggestedActions = (task: ScheduledTask, output: string): NextAction[] => {
-    const context = output ? `\n\n定时任务摘要：\n${output}` : '';
-    if (task.taskType === 'holiday_push') {
-      return [
-        {
-          label: '整理节日前 7 天主推 SKU 与库存水位',
-          agent: 'strategy',
-          agentLabel: '首页',
-          prompt: `根据节日推品提醒，按市场和节日优先级整理未来 7 天需要主推的 SKU、库存水位、备货风险和负责人动作。${context}`,
-        },
-        {
-          label: '生成社媒预热脚本和短视频内容方向',
-          agent: 'traffic',
-          agentLabel: '我的社媒',
-          prompt: `基于节日推品提醒，生成可直接使用的社媒预热脚本、短视频钩子和多语言内容方向，重点适配企业中心主要市场。${context}`,
-        },
-        {
-          label: '生成私域触达话术并安排近 90 天询盘跟进',
-          agent: 'conversion',
-          agentLabel: '我的客户',
-          prompt: `基于节日推品提醒，设计私域触达话术，并筛选近 90 天相关品类询盘客户，输出跟进优先级和报价/邀约话术。${context}`,
-        },
-      ];
-    }
-    if (task.taskType === 'trend_report') {
-      return [
-        {
-          label: '把高频话题转成 3 条 TikTok 脚本方向',
-          agent: 'traffic',
-          agentLabel: '我的社媒',
-          prompt: `把爆款日报中的高频话题转成 3 条 TikTok 脚本方向，包含钩子、镜头结构和口播重点。${context}`,
-        },
-        {
-          label: '挑选 2 个产品卖点做 A/B 内容测试',
-          agent: 'traffic',
-          agentLabel: '我的社媒',
-          prompt: `基于爆款日报，挑选 2 个产品卖点设计 A/B 内容测试方案，输出标题、素材形式和判断指标。${context}`,
-        },
-        {
-          label: '将适配市场和语言写回企业中心学习记录',
-          agent: 'strategy',
-          agentLabel: '首页',
-          prompt: `基于爆款日报，提炼适配市场、主要语言和有效内容角度，整理成可写回企业中心的 Agent 学习记录。${context}`,
-        },
-      ];
-    }
-    if (task.taskType === 'video_keyword_crawl') {
-      return [
-        {
-          label: '查看新入库视频并筛选可复用素材',
-          agent: 'traffic',
-          agentLabel: '我的社媒',
-          prompt: `根据视频采集结果，筛选新入库视频里最值得复用的素材方向，并说明筛选标准。${context}`,
-        },
-        {
-          label: '选择高互动视频生成克隆脚本',
-          agent: 'traffic',
-          agentLabel: '我的社媒',
-          prompt: `从视频采集结果中挑选高互动视频方向，生成 3 条去重后的克隆脚本。${context}`,
-        },
-        {
-          label: '复盘失败下载链接并补充关键词',
-          agent: 'strategy',
-          agentLabel: '首页',
-          prompt: `复盘视频采集任务中下载失败或结果不足的问题，补充下一轮关键词和平台采集策略。${context}`,
-        },
-      ];
-    }
-    if (task.taskType === 'exchange_rate') {
-      return [
-        {
-          label: '生成多币种询盘报价话术',
-          agent: 'conversion',
-          agentLabel: '我的客户',
-          prompt: `根据汇率日报，生成面向不同市场客户的多币种报价话术，并标注报价有效期。${context}`,
-        },
-        {
-          label: '更新报价风险和利润提醒',
-          agent: 'strategy',
-          agentLabel: '首页',
-          prompt: `根据汇率日报，判断当前报价风险、利润保护线和需要用户确认的报价策略。${context}`,
-        },
-        {
-          label: '整理老客补货报价提醒',
-          agent: 'retention',
-          agentLabel: '我的客户',
-          prompt: `根据汇率日报，为老客补货场景生成报价提醒和复购触达建议。${context}`,
-        },
-      ];
-    }
-    if (task.taskType === 'market_intelligence') {
-      return [
-        {
-          label: '按市场拆解报价和选品动作',
-          agent: 'strategy',
-          agentLabel: '首页',
-          prompt: `根据主要市场行业周报，按市场拆解未来 7 天的报价、选品、合规和销售动作，并标注依据来源。${context}`,
-        },
-        {
-          label: '把行业动态转成内容方向',
-          agent: 'traffic',
-          agentLabel: '我的社媒',
-          prompt: `根据主要市场行业周报，把可用事实转成 3 个社媒选题和短视频内容方向，避免把未经证实的信息写成企业卖点。${context}`,
-        },
-        {
-          label: '生成重点客户跟进理由',
-          agent: 'conversion',
-          agentLabel: '我的客户',
-          prompt: `根据主要市场行业周报，生成不同市场客户的跟进理由、询盘问题和报价注意事项。${context}`,
-        },
-      ];
-    }
-    if (task.taskType === 'weekly_review') {
-      return [
-        {
-          label: '拆解下周社媒内容任务',
-          agent: 'traffic',
-          agentLabel: '我的社媒',
-          prompt: `根据每周经营复盘，拆解下周社媒内容任务，输出选题、脚本方向和优先级。${context}`,
-        },
-        {
-          label: '生成询盘转化跟进动作',
-          agent: 'conversion',
-          agentLabel: '我的客户',
-          prompt: `根据每周经营复盘，生成询盘转化跟进动作、报价优化点和高意向客户处理顺序。${context}`,
-        },
-        {
-          label: '生成老客复购唤醒动作',
-          agent: 'retention',
-          agentLabel: '我的客户',
-          prompt: `根据每周经营复盘，生成老客复购唤醒任务、客户分层和触达节奏。${context}`,
-        },
-      ];
-    }
-    if (task.taskType === 'crm_wakeup') {
-      return [
-        {
-          label: '生成老客唤醒分层和触达节奏',
-          agent: 'retention',
-          agentLabel: '我的客户',
-          prompt: `根据沉默客户唤醒任务，生成客户分层、触达节奏和复购推荐逻辑。${context}`,
-        },
-        {
-          label: '生成 WhatsApp 跟进话术',
-          agent: 'conversion',
-          agentLabel: '我的客户',
-          prompt: `根据沉默客户唤醒任务，生成可直接发送的 WhatsApp 跟进话术，并区分高意向/普通老客。${context}`,
-        },
-        {
-          label: '生成复购内容素材方向',
-          agent: 'traffic',
-          agentLabel: '我的社媒',
-          prompt: `根据沉默客户唤醒任务，生成适合老客复购的内容素材方向和短视频脚本钩子。${context}`,
-        },
-      ];
-    }
-    return [
-      {
-        label: '交给首页拆解后续任务',
-        agent: 'strategy',
-        agentLabel: '首页',
-        prompt: `请根据这次定时任务结果，拆解可执行的后续 Agent 任务。${context}`,
-      },
-    ];
-  };
-
   const goToAgent = (action: NextAction) => {
     setResultTaskId(null);
     onAction?.(action.agent, action.prompt);
     window.setTimeout(() => completeDemoStep('automation_workflow'), 600);
-  };
-
-  const taskWorkspace = (task: ScheduledTask) => {
-    switch (task.taskType) {
-      case 'video_keyword_crawl':
-        return {
-          title: '视频采集工作台',
-          cards: [
-            { label: '采集平台', value: task.config.platforms || 'youtube', desc: '按平台拉取关键词视频' },
-            { label: '发现范围', value: task.config.keywordEvidence || task.config.keywords || task.config.keyword || '根据企业产品、市场和场景自动生成', desc: '关键词只是发现范围的执行投影' },
-            { label: '时间窗口', value: `${task.config.dateWindowDays || '7'} 天`, desc: '只采集近期内容' },
-          ],
-          actions: ['刷新采集看板', '查看排队状态', '生成脚本方向'],
-        };
-      case 'trend_report':
-        return {
-          title: '爆款日报工作台',
-          cards: [
-            { label: '报告范围', value: 'TikTok', desc: '聚合热门品类、话题和内容角度' },
-            { label: '输出频率', value: task.cronLabel, desc: '定时更新趋势简报' },
-            { label: '后续动作', value: '内容矩阵', desc: '转成选题、脚本和投放建议' },
-          ],
-          actions: ['提炼 3 条脚本', '生成话题标签', '写回企业学习记录'],
-        };
-      case 'holiday_push':
-        return {
-          title: '节日推品工作台',
-          cards: [
-            { label: '提醒窗口', value: '节前 7 天', desc: '提前规划备货和触达' },
-            { label: '推品对象', value: '重点 SKU', desc: '结合库存、季节和历史询盘' },
-            { label: '触达方式', value: '社媒/私域', desc: '生成预热内容和跟进话术' },
-          ],
-          actions: ['生成节日推品清单', '生成预热脚本', '生成客户触达话术'],
-        };
-      case 'exchange_rate':
-        return {
-          title: '汇率报价工作台',
-          cards: [
-            { label: '基础币种', value: 'USD', desc: '统一用于报价换算' },
-            { label: '覆盖币种', value: '按主要市场', desc: '由企业中心目标市场自动匹配' },
-            { label: '报价规则', value: '人工确认', desc: '结合价格区间、MOQ 和毛利线' },
-          ],
-          actions: ['生成多币种报价', '复制汇率摘要', '生成询盘报价话术'],
-        };
-      case 'market_intelligence':
-        return {
-          title: '主要市场行业情报工作台',
-          cards: [
-            { label: '内部依据', value: '企业中心', desc: '行业、产品、主要市场与报价规则' },
-            { label: '外部依据', value: '公开检索', desc: '需求、合规、渠道和竞争动态' },
-            { label: '更新周期', value: '每周', desc: '保留来源并生成行动建议' },
-          ],
-          actions: ['查看公开来源', '拆解市场动作', '生成客户跟进理由'],
-        };
-      case 'weekly_review':
-        return {
-          title: '经营复盘工作台',
-          cards: [
-            { label: '复盘维度', value: '流量/询盘/转化', desc: '聚合关键经营指标' },
-            { label: '输出周期', value: '每周', desc: '形成固定经营节奏' },
-            { label: '行动沉淀', value: '下周任务', desc: '把复盘转为可执行动作' },
-          ],
-          actions: ['生成老板版摘要', '生成运营任务清单', '拆给各 Agent 执行'],
-        };
-      case 'crm_wakeup':
-        return {
-          title: '老客唤醒工作台',
-          cards: [
-            { label: '客户范围', value: '60 天沉默', desc: '筛选未复购或未回复客户' },
-            { label: '触达渠道', value: 'WhatsApp', desc: '生成轻量跟进话术' },
-            { label: '推荐依据', value: '历史采购', desc: '按客户偏好匹配新品' },
-          ],
-          actions: ['生成唤醒文案', '生成推品理由', '标记高潜客户'],
-        };
-      default:
-        return {
-          title: '任务工作台',
-          cards: [
-            { label: '任务类型', value: task.taskType, desc: '当前自动化任务' },
-            { label: '执行频率', value: task.cronLabel, desc: '按计划自动运行' },
-            { label: '状态', value: task.enabled ? '已启用' : '已停用', desc: '可随时调整' },
-          ],
-          actions: ['查看结果', '复制产出', '安排下一步'],
-        };
-    }
   };
 
   const resultWorkspace = resultTask ? taskWorkspace(resultTask) : null;
