@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 视频可见性与分析终态规则拆分（2026-10-23）
+
+- 代码提交 `5ec2b97a463a874cdefb09c0e4181f7b898485d6` 将公开视频/图文来源资格、完成/暂停可见性与内容类型投影迁至 `videoRecordVisibility.ts`，将完整 Gemini 分析后的成功终态补丁迁至 `videoAnalysisSuccessPatch.ts`；`videos.ts` 仍负责租户读取、写入与执行编排，从 9,012 降至 8,878 行，预算同步收紧。原 `isDisplayableTestTenantVideo` 导出继续转发，未改变现有 AIGC 或付费调用。全仓仍有 6 个历史超限文件。
+- 新规则直测 4/4、原暂停可见性回归、`test:video-source-boundaries` 126/126、`test:production-workflows`、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,367 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 496,002/500,000 字节。未做真实爬取/付费供应商调用、浏览器交互、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 公开视频投影与证据脱敏拆分（2026-10-23）
 
 - 代码提交 `dfee5e43d922a7a60cb42f41cec995d03f66a42d` 将公开视频响应投影、持久队列编号及关键词匹配迁至 `videoPublicRecordProjection.ts`，`videos.ts` 保留租户数据读取与 HTTP 编排，从 9,111 降至 9,012 行，预算同步收紧；全仓仍有 6 个历史超限文件。直测发现原有脱敏仅解析 JSON 字符串，逐镜证据以对象存储时私有 `clipObjectKey`/`firstFrameObjectKey` 会漏出；新投影对两种形态均清除这些键，保留公开进度和其他证据字段。
