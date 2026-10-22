@@ -8,7 +8,7 @@
   "oversizedFileBudgets": {
     "server/routes/digitalEmployees.ts": 5645,
     "server/routes/studio.ts": 9296,
-    "server/routes/videos.ts": 9012,
+    "server/routes/videos.ts": 8878,
     "src/components/AiCreateStudio.tsx": 12793,
     "src/components/DigitalEmployeePage.tsx": 3101,
     "src/components/InspirationDashboard.tsx": 2474

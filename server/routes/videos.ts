@@ -3,6 +3,9 @@ import { apifyFacebookPostToCrawledVideo, apifyFacebookUploadedAt, apifyInstagra
 import { apifyInstagramItemToImagePost, apifyTikTokItemToImagePost } from './videoCrawlerImageProjection.js';
 import { metadataFallbackAnalysis } from './videoCrawlerMetadataFallback.js';
 import { analysisQueuePositions, publicVideoRecord, recordMatchesKeyword } from './videoPublicRecordProjection.js';
+import { compareCrawledAtDesc, isDisplayableTestTenantVideo, isPublicImageRecord, isPublicTestTenantVideo, isValidImagePostRecord, isVisibleVideoPipelineRecord, recordContentFormat, type ContentFormat } from './videoRecordVisibility.js';
+export { isDisplayableTestTenantVideo } from './videoRecordVisibility.js';
+import { videoLevelSuccessPatch, videoSuccessVisibilityPatch } from './videoAnalysisSuccessPatch.js';
 import { tiktokKeywordSources, verifiedKeywordSeedItems, verifiedSeedUrls } from './videoCrawlerSeedCatalog.js';
 import { groupExactObservationWindows, qwenFrameSeconds, selectFramesForPhysicalCuts, shiftedTimelineLabel, splitExactGeminiShotsAtSceneCuts } from './videoAnalysisTimelineProjection.js';
 export { groupExactObservationWindows, selectFramesForPhysicalCuts, splitExactGeminiShotsAtSceneCuts } from './videoAnalysisTimelineProjection.js';
@@ -87,7 +90,7 @@ import { resolvePublicVideoSource, validatePublicVideoSourceUrl, type ValidatedP
 import { fetchCloudMaterial, getCloudMaterialRecord } from '../lib/cloudMaterials.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAuthority.js';
-import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, exactVideoClassificationQualityError, exactVideoReviewReasons, hasCompleteVideoGeminiAnalysis, hasCompletedExactVideoEvidence, isAutoSeededVideo, isVideoLevelAnalysis, parseAnalysisTimeRange, serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
+import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, exactVideoClassificationQualityError, exactVideoReviewReasons, hasCompletedExactVideoEvidence, isAutoSeededVideo, isVideoLevelAnalysis, parseAnalysisTimeRange, serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 import { benchmarkAnalysisForRecord } from '../lib/benchmarkAnalysis.js';
 import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
 import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot, reconcileStoredOpeningHookMotionEvidence } from './hookMotionEvidence.js';
@@ -262,7 +265,6 @@ async function streamCrawlerCosObject(res: Response, key: string, range?: string
   return true;
 }
 
-type ContentFormat = 'video' | 'image';
 
 interface Material {
   id: string;
@@ -292,18 +294,6 @@ interface Material {
   createdAt: string;
 }
 
-function isVisibleVideoPipelineRecord(record: Record<string, unknown>): boolean {
-  const analysis = videoAnalysisOf(record);
-  if (analysis.usage === 'reference_only' && typeof analysis.contentSha256 === 'string') return true;
-  if (hasCompletedExactVideoEvidence(analysis)) return true;
-  return Boolean(analysis.requestedAnalysisMode)
-    || Boolean(analysis.materialId && (
-      analysis.analysisError
-      || analysis.videoLevelFailureStatus
-      || ['queued', 'analyzing', 'waiting_for_video', 'analysis_retryable', 'video_failed'].includes(String(analysis.geminiStatus || ''))
-    ));
-}
-
 function isTestTenantRecord(tenant: Record<string, unknown> | null): boolean {
   if (isDemoMode()) return true;
   const plan = String(tenant?.subscriptionPlan || '').toLowerCase();
@@ -318,130 +308,6 @@ async function isTestTenantId(tenantId: string): Promise<boolean> {
   return isTestTenantRecord(tenant);
 }
 
-
-function isPublicTestTenantVideo(record: Record<string, unknown>): boolean {
-  const analysis = videoAnalysisOf(record);
-  if (analysis.userVisible === false) return false;
-  return isVideoLevelAnalysis(analysis);
-}
-
-export function isDisplayableTestTenantVideo(record: Record<string, unknown>): boolean {
-  const analysis = videoAnalysisOf(record);
-  if (analysis.usage === 'reference_only' && typeof analysis.contentSha256 === 'string') return true;
-  if (analysis.contentFormat === 'image' || String(record.status || '') === 'failed') return false;
-  if (hasCompletedExactVideoEvidence(analysis)) return analysis.userVisible !== false;
-  if (analysis.adminOnlyVideoFailure || analysis.userVisible === true) {
-    return analysis.userVisible === true && isPublicTestTenantVideo(record);
-  }
-  const downloadStatus = String(analysis.downloadStatus || '');
-  const videoFetchStatus = String(analysis.videoFetchStatus || '');
-  const geminiStatus = String(analysis.geminiStatus || '');
-  const terminalFailures = new Set([
-    'failed', 'download_failed', 'manual_required', 'metadata_only',
-    'unavailable', 'url_failed', 'ops_failed', 'video_failed', 'metadata_fallback',
-  ]);
-  if ([downloadStatus, videoFetchStatus, geminiStatus].some(status => terminalFailures.has(status))) return false;
-  const sourceUrl = String(record.sourceUrl || '').trim();
-  const platform = (record.platform || inferPlatformFromUrl(sourceUrl)) as Platform;
-  const thumbnailUrl = String(record.thumbnailUrl || '').trim();
-  const pendingStatuses = new Set([
-    'queued', 'downloading', 'download_retrying', 'ops_queued',
-    'ops_processing', 'analyzing', 'waiting_for_video',
-  ]);
-  const paused = Boolean(analysis.analysisPausedAt)
-    || [downloadStatus, videoFetchStatus, geminiStatus].some(status => status === 'paused');
-  return isPlatformUrl(sourceUrl, platform)
-    && Boolean(String(record.title || '').trim())
-    && hasRealThumbnail({ thumbnailUrl } as CrawledVideo)
-    && (paused || [downloadStatus, videoFetchStatus, geminiStatus].some(status => pendingStatuses.has(status)));
-}
-
-function compareCrawledAtDesc(a: Record<string, unknown>, b: Record<string, unknown>): number {
-  const aTime = Date.parse(String(a.crawledAt || ''));
-  const bTime = Date.parse(String(b.crawledAt || ''));
-  return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
-}
-
-function recordContentFormat(record: Record<string, unknown>): ContentFormat {
-  if (record.contentFormat === 'image' || record.contentFormat === 'video') return record.contentFormat;
-  const analysis = videoAnalysisOf(record);
-  return analysis.contentFormat === 'image' ? 'image' : 'video';
-}
-
-function isPublicImageRecord(record: Record<string, unknown>): boolean {
-  const analysis = videoAnalysisOf(record);
-  return analysis.contentFormat === 'image'
-    && analysis.userVisible !== false
-    && isValidImagePostRecord(record);
-}
-
-function isValidImagePostRecord(record: Record<string, unknown>): boolean {
-  const sourceUrl = String(record.sourceUrl || '').trim();
-  const thumbnailUrl = String(record.thumbnailUrl || '').trim();
-  const analysis = videoAnalysisOf(record);
-  const hasCollectedImage = Array.isArray(analysis.imageUrls)
-    && analysis.imageUrls.some(url => typeof url === 'string' && url.trim());
-  // A failed visual-analysis attempt must not hide a successfully collected
-  // post. The first collected image remains a valid preview and gives the user
-  // an entry point to inspect the failure and retry analysis.
-  if (!sourceUrl || (!thumbnailUrl && !hasCollectedImage)) return false;
-  if (/\/(?:search|explore\/tags)\b/i.test(sourceUrl)) return false;
-  const platform = (record.platform || inferPlatformFromUrl(sourceUrl)) as Platform;
-  if (platform === 'instagram') return /\/p\//i.test(sourceUrl);
-  if (platform === 'facebook') return !/\/(?:watch|reel|videos)\b/i.test(sourceUrl);
-  if (platform === 'linkedin') return /\/posts\//i.test(sourceUrl) || /activity[:-]\d+/i.test(sourceUrl);
-  return true;
-}
-
-function videoSuccessVisibilityPatch(): Record<string, unknown> {
-  return {
-    userVisible: true,
-    adminOnlyVideoFailure: undefined,
-    videoLevelFailureStatus: undefined,
-    manualRequiredReason: undefined,
-  };
-}
-
-function assertCompleteVideoGeminiAnalysis(gemini: VideoAiAnalysis, sourceLabel: string): void {
-  if (hasCompleteVideoGeminiAnalysis(gemini)) return;
-  throw new Error(`${sourceLabel}_incomplete_gemini_video_analysis`);
-}
-
-function videoLevelSuccessPatch(input: {
-  analysis: VideoAiAnalysis;
-  source: string;
-  videoFetchStatus: string;
-  extra?: Record<string, unknown>;
-}): Record<string, unknown> {
-  assertCompleteVideoGeminiAnalysis(input.analysis, input.source);
-  const exact = input.extra?.analysisMode === 'exact';
-  const sceneCuts = (input.analysis as VideoAiAnalysis & { detectedSceneCuts?: number[] }).detectedSceneCuts || [];
-  const openingFrame = (input.analysis as VideoAiAnalysis & { openingFrameObservation?: { scene: string; confidence: number } | null }).openingFrameObservation;
-  const hookReviewReasons = (input.analysis as VideoAiAnalysis & { hookReviewReasons?: string[] }).hookReviewReasons || [];
-  const reviewReasons = exact ? [...exactVideoReviewReasons(input.analysis, 0, sceneCuts, openingFrame), ...hookReviewReasons] : [];
-  const completedAt = new Date().toISOString();
-  return {
-    gemini: input.analysis,
-    analysisSource: input.source,
-    analysisQuality: reviewReasons.length ? 'video_review_required' : 'video',
-    analysisReviewReasons: reviewReasons,
-    analysisMode: 'strategy',
-    downloadStatus: 'analyzed',
-    videoFetchStatus: input.videoFetchStatus,
-    geminiStatus: reviewReasons.length ? 'needs_review' : 'analyzed',
-    // A successful retry is terminal. Do not leave a stale timeout from an
-    // earlier run on an otherwise healthy, user-visible record.
-    analysisError: undefined,
-    downloadError: undefined,
-    analysisQueueState: 'completed',
-    analysisStage: 'completed',
-    analysisStageUpdatedAt: completedAt,
-    analysisCompletedAt: completedAt,
-    ...videoSuccessVisibilityPatch(),
-    analyzedAt: completedAt,
-    ...(input.extra ?? {}),
-  };
-}
 
 const analysisQueuePositionCache = new Map<string, { expiresAt: number; positions: Map<string, number> }>();
 
