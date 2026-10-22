@@ -11,6 +11,7 @@ import EnterpriseAdditionalSettings from './enterprise/EnterpriseAdditionalSetti
 import EnterpriseBizRulesPanel from './enterprise/EnterpriseBizRulesPanel';
 import EnterpriseSalesStylePanel from './enterprise/EnterpriseSalesStylePanel';
 import { useEnterpriseSalesStyle } from './enterprise/useEnterpriseSalesStyle';
+import { useEnterpriseFaq } from './enterprise/useEnterpriseFaq';
 import { AUTO_REPLY_SCOPE, EnterpriseAiAutonomySection, EnterpriseHandoffSafetySection } from './enterprise/EnterpriseCustomerServiceSettings';
 import { Field, Toggle, KnowledgeCard, OptionSelector } from './enterprise/EnterpriseFormControls';
 import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, Plus, X, Image, Bell, ChevronLeft, Globe2, ShieldCheck, ArrowRight, Users, type LucideIcon } from 'lucide-react';
@@ -174,25 +175,23 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   const [productImportMessage, setProductImportMessage] = useState('');
   const [pendingProductImport, setPendingProductImport] = useState<PendingProductImport | null>(null);
   const [productImportConfirming, setProductImportConfirming] = useState(false);
-  const [faqPreview, setFaqPreview] = useState<FaqItem[]>([]);
-  const [faqStructuring, setFaqStructuring] = useState(false);
-  const [faqPacks, setFaqPacks] = useState<FaqPack[]>([]);
-  const [recommendedPackIndustry, setRecommendedPackIndustry] = useState('general');
-  const [faqPacksOpen, setFaqPacksOpen] = useState(false);
-  const [openPackId, setOpenPackId] = useState('');
-  const [selectedPackQuestions, setSelectedPackQuestions] = useState<Record<string, string[]>>({});
-  const [packImporting, setPackImporting] = useState('');
   const [knowledgeView, setKnowledgeView] = useState<KnowledgeView>(advisorInitialEnterpriseView);
   const [enterpriseArea, setEnterpriseArea] = useState<EnterpriseArea>(() => enterpriseAreaForView(advisorInitialEnterpriseView()));
   const [languageSettingsHighlight, setLanguageSettingsHighlight] = useState(false);
   const [productPage, setProductPage] = useState(1);
   const [expandedProductIndexes, setExpandedProductIndexes] = useState<Set<number>>(() => new Set([0]));
   const [productsDeepLinkResolution, setProductsDeepLinkResolution] = useState<EnterpriseProductsDeepLinkResolution | null>(null);
-  const [faqPage, setFaqPage] = useState(1);
   const [notificationsHighlight, setNotificationsHighlight] = useState(false);
   const [bizRulesHighlight, setBizRulesHighlight] = useState(false);
   const [handoffKeywordInput, setHandoffKeywordInput] = useState('');
   const salesStyle = useEnterpriseSalesStyle({ setProfile, defaultStyle: DEFAULT.salesStyleProfile! });
+  const {
+    faqPreview, setFaqPreview, faqStructuring, faqPacks, recommendedPackIndustry,
+    faqPacksOpen, setFaqPacksOpen, openPackId, setOpenPackId, packImporting,
+    faqPage, setFaqPage, faqItems, visibleFaqs, acceptLoadedPacks,
+    addFaq, updateFaq, removeFaq, structureLegacyFaq, importFaqPreview,
+    selectedQuestionsForPack, togglePackQuestion, importFaqPack,
+  } = useEnterpriseFaq({ profile, setProfile, setSaveError, pageSize: PAGE_SIZE });
   const persistedProfileRef = useRef('');
   const productStatusAbortRef = useRef<AbortController | null>(null);
   const hasUnsavedChanges = profileLoaded && !loading && persistedProfileRef.current !== profileSnapshot(profile);
@@ -297,10 +296,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
         setProfileLoaded(true);
         setSaveError('');
         setApiStatus(productApiStatus);
-        const packs = Array.isArray(packData.packs) ? packData.packs : [];
-        setFaqPacks(packs);
-        setRecommendedPackIndustry(packData.recommendedIndustry || 'general');
-        setOpenPackId(packs.find(pack => pack.industry === packData.recommendedIndustry)?.id || packs[0]?.id || '');
+        acceptLoadedPacks(packData);
       })
       .catch(error => {
         if (!active) return;
@@ -403,8 +399,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     products, setProfile, productImportConfirming, maxDocuments: MAX_PRODUCT_DOCUMENTS,
   });
   const visibleProducts = products.slice((productPage - 1) * PAGE_SIZE, productPage * PAGE_SIZE);
-  const faqItems = profile.faq ?? [];
-  const visibleFaqs = faqItems.slice((faqPage - 1) * PAGE_SIZE, faqPage * PAGE_SIZE);
   const assetStats = productAssetStats(products);
   const completions = sectionCompletion(profile);
   const profileCompleteness = enterpriseProfileCompleteness(profile);
@@ -452,7 +446,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   }, [loading, productsDeepLink, profileLoaded]);
 
   useEffect(() => { setProductPage(page => Math.min(page, Math.max(1, Math.ceil(products.length / PAGE_SIZE)))); }, [products.length]);
-  useEffect(() => { setFaqPage(page => Math.min(page, Math.max(1, Math.ceil(faqItems.length / PAGE_SIZE)))); }, [faqItems.length]);
 
   const deepLinkedProduct = productsDeepLinkResolution?.productIndex !== null
     && productsDeepLinkResolution?.productIndex !== undefined
@@ -532,84 +525,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     setProfile(prev => ({ ...prev, bizRules: { ...(prev.bizRules ?? DEFAULT.bizRules!), [field]: value } }));
   };
 
-  const addFaq = () => {
-    setFaqPage(Math.max(1, Math.ceil((faqItems.length + 1) / PAGE_SIZE)));
-    setProfile(prev => ({ ...prev, faq: [...(prev.faq ?? []), { id: crypto.randomUUID(), question: '', answer: '', approvedForAuto: false }] }));
-  };
-
-  const updateFaq = (id: string, patch: Partial<FaqItem>) => {
-    setProfile(prev => ({ ...prev, faq: (prev.faq ?? []).map(item => item.id === id ? { ...item, ...patch } : item) }));
-  };
-
-  const removeFaq = (id: string) => {
-    setProfile(prev => ({ ...prev, faq: (prev.faq ?? []).filter(item => item.id !== id) }));
-  };
-
-  const structureLegacyFaq = async () => {
-    const source = profile.customers?.commonQuestions?.trim();
-    if (!source) return;
-    setFaqStructuring(true);
-    try {
-      const result = await fetch('/api/overseas/enterprise/faq/structure', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify({ text: source }),
-      }).then(r => r.json());
-      setFaqPreview(Array.isArray(result.items) ? result.items : []);
-    } finally {
-      setFaqStructuring(false);
-    }
-  };
-
-  const importFaqPreview = () => {
-    setFaqPage(Math.max(1, Math.ceil((faqItems.length + faqPreview.length) / PAGE_SIZE)));
-    setProfile(prev => ({ ...prev, faq: [...(prev.faq ?? []), ...faqPreview] }));
-    setFaqPreview([]);
-  };
-
-  const reloadFaqPacks = async () => {
-    const data = await fetch('/api/overseas/enterprise/faq/packs', { headers: authHeader() }).then(r => r.json()).catch(() => ({ packs: [], recommendedIndustry: 'general' }));
-    const packs = Array.isArray(data.packs) ? data.packs : [];
-    setFaqPacks(packs);
-    setRecommendedPackIndustry(data.recommendedIndustry || 'general');
-  };
-
-  const selectedQuestionsForPack = (pack: FaqPack) => selectedPackQuestions[pack.id] ?? pack.items.filter(item => item.ready && !item.exists).map(item => item.q);
-
-  const togglePackQuestion = (pack: FaqPack, question: string) => {
-    setSelectedPackQuestions(prev => {
-      const current = selectedQuestionsForPack(pack);
-      const next = current.includes(question) ? current.filter(item => item !== question) : [...current, question];
-      return { ...prev, [pack.id]: next };
-    });
-  };
-
-  const importFaqPack = async (pack: FaqPack) => {
-    setPackImporting(pack.id);
-    setSaveError('');
-    try {
-      const response = await fetch('/api/overseas/enterprise/faq/packs/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify({
-          industry: pack.industry,
-          scenario: pack.scenario,
-          questions: selectedQuestionsForPack(pack),
-        }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || result.error || '知识包导入失败');
-      if (result.profile?.faq) {
-        setFaqPage(Math.max(1, Math.ceil(result.profile.faq.length / PAGE_SIZE)));
-        setProfile(prev => ({ ...prev, faq: result.profile.faq }));
-      }
-      await reloadFaqPacks();
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : '知识包导入失败');
-    } finally {
-      setPackImporting('');
-    }
-  };
 
   useEffect(() => {
     if (localStorage.getItem('lingshu:enterprise:highlight-autonomy') !== 'auto') return;

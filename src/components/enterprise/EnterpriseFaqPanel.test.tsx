@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import EnterpriseFaqPanel from './EnterpriseFaqPanel';
+import { faqPackQuestions, toggleFaqPackSelection } from './useEnterpriseFaq';
 import type { FaqItem, FaqPack, Profile } from './enterpriseProfileTypes';
 
 const noOp = () => {};
@@ -86,10 +87,31 @@ test('pack selection remains disabled for incomplete or existing questions', () 
   assert.equal((html.match(/type="checkbox"[^>]*disabled/g) ?? []).length, 2);
 });
 
-test('FAQ controller state stays in the parent across tab changes', () => {
+test('FAQ controller state stays mounted above the conditional tab view', () => {
   const page = readFileSync(new URL('../EnterprisePage.tsx', import.meta.url), 'utf8');
-  assert.match(page, /const \[faqPreview, setFaqPreview\] = useState/);
-  assert.match(page, /const \[selectedPackQuestions, setSelectedPackQuestions\] = useState/);
+  const controller = readFileSync(new URL('./useEnterpriseFaq.ts', import.meta.url), 'utf8');
+  assert.match(page, /useEnterpriseFaq\(\{ profile, setProfile, setSaveError, pageSize: PAGE_SIZE \}\)/);
+  assert.ok(page.indexOf('useEnterpriseFaq(') < page.indexOf("knowledgeView === 'faq'"));
+  assert.match(controller, /const \[faqPreview, setFaqPreview\] = useState/);
+  assert.match(controller, /const \[selectedPackQuestions, setSelectedPackQuestions\] = useState/);
   assert.match(page, /knowledgeView === 'faq' && <EnterpriseFaqPanel/);
-  assert.match(page, /setFaqPage\(page => Math\.min/);
+  assert.match(controller, /setFaqPage\(page => Math\.min/);
+  assert.match(page, /acceptLoadedPacks\(packData\)/);
+});
+
+test('pack selection starts with only ready questions and handles consecutive edits', () => {
+  const pack: FaqPack = {
+    id: 'pack-1', industry: 'general', industryLabel: '通用', scenario: 'presales', scenarioLabel: '售前',
+    count: 3, preview: [], items: [
+      { q: '交期？', a: '待确认', vars: [], missingVars: [], ready: true },
+      { q: '付款？', a: '待确认', vars: [], missingVars: [], ready: true },
+      { q: '已存在？', a: '重复', vars: [], missingVars: [], ready: true, exists: true },
+    ],
+  };
+  const first = toggleFaqPackSelection({}, pack, '交期？');
+  const second = toggleFaqPackSelection(first, pack, '付款？');
+  assert.deepEqual(faqPackQuestions({}, pack), ['交期？', '付款？']);
+  assert.deepEqual(faqPackQuestions(first, pack), ['付款？']);
+  assert.deepEqual(faqPackQuestions(second, pack), []);
+  assert.deepEqual(first['pack-1'], ['付款？']);
 });

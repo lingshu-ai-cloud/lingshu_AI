@@ -9,6 +9,11 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 9 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## 企业资料 FAQ 控制器边界（2026-10-22）
+
+- 以集成分支 `9eeaacdaeccd8ce53f7c30e81d36eb16474d0d6d` 为干净起点，将 FAQ 草稿、分页、知识包选择、旧问答结构化与知识包导入请求统一迁入 `useEnterpriseFaq.ts`。hook 在父页面无条件挂载，切换页签保留未完成的编辑状态；资料主状态与首次加载仍由父页面持有，加载完成后将知识包目录交给 hook。连续勾选问题改用前一状态计算，避免同一事件批次覆盖选择。
+- `EnterprisePage.tsx` 从 1,135 行降至 1,050 行，历史预算同步收紧；仍有 9 个历史超限文件。FAQ 渲染、状态接线和知识包选择 5/5、完整 `test:customer-service` 链、TypeScript、架构扫描/ratchet、生产构建、191 项迁移只读检查及 `git diff --check` 通过；`AiCreateStudio` 主 chunk 为 497103/500000 字节。客服隔离测试中的本地 PocketBase `ECONNREFUSED` 不代表真实服务验收；本批未调用真实客服服务、付费供应商、生产迁移或部署。
+
 ## 企业资料更多设置与报价规则视图边界（2026-10-22）
 
 - 以集成分支 `afe4359e190c026f445ee204cb79720019b137aa` 为干净起点，将低频的经营策略、品牌与语气、Agent 学习记录、订单 CSV 导入展示移入 `EnterpriseAdditionalSettings.tsx`；将报价与业务规则、产品资质文书共用展示移入 `EnterpriseBizRulesPanel.tsx`。原 Collapse 收纳、询价转人工和内部价格不自动发送的说明保持；父页面继续持有字段变更、订单导入请求与企业资料保存。
