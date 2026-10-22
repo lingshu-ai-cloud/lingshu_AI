@@ -8,6 +8,7 @@ import {
   type LinkedInCompanyPaidPermit,
 } from './linkedinCompanyPostPaidCollection.js';
 import { APIFY_PAID_RAW_RECEIPT_MAX_BYTES } from './apifyPaidTikTokTransport.js';
+import { apifyTokenFingerprint, APIFY_PREPAID_TOKEN_FINGERPRINT_SCHEME } from '../socialDiscovery/apifyTokenFingerprint.js';
 
 const scope: LinkedInCompanyCollectionScope = {
   tenantId: 'tenant-a', runId: 'discovery-run-a',
@@ -21,6 +22,7 @@ function permit(overrides: Partial<LinkedInCompanyPaidPermit> = {}): LinkedInCom
   return {
     operationId: 'linkedin-company:discovery-run-a', actorId, maxTotalChargeUsd: 0.5,
     scope, actorInputSha256: hash(frozenLinkedInCompanyActorInput(scope)),
+    tokenFingerprint: apifyTokenFingerprint('test-token', APIFY_PREPAID_TOKEN_FINGERPRINT_SCHEME),
     async assertApproved() {},
     async inspect() { return { status: 'reserved' }; },
     async beforeSubmit() {}, async recordRun() {}, async recordTerminal() {},
@@ -58,6 +60,8 @@ test('missing, mismatched and unapproved permits make zero provider requests', a
       permit: permit({ scope: { ...scope, tenantId: 'tenant-b' } }) }), /scope_mismatch/);
     await assert.rejects(runLinkedInCompanyPaidCollection({ ...base,
       permit: permit({ actorInputSha256: '0'.repeat(64) }) }), /scope_mismatch/);
+    await assert.rejects(runLinkedInCompanyPaidCollection({ ...base,
+      permit: permit({ tokenFingerprint: '0'.repeat(64) }) }), /token_changed/);
     await assert.rejects(runLinkedInCompanyPaidCollection({ ...base,
       permit: permit({ async assertApproved() { throw Error('approval_revoked'); } }) }), /approval_revoked/);
     assert.equal(requests, 0);

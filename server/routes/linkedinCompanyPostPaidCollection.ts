@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { runPaidApifyDataset, type PaidApifyDatasetPermit } from './apifyPaidTikTokTransport.js';
 import { parseLinkedInCompanyPost } from './linkedinCompanyPost.js';
+import { apifyTokenFingerprint, APIFY_PREPAID_TOKEN_FINGERPRINT_SCHEME } from '../socialDiscovery/apifyTokenFingerprint.js';
 
 export interface LinkedInCompanyCollectionScope {
   tenantId: string;
@@ -15,6 +16,7 @@ export interface LinkedInCompanyCollectionScope {
 export interface LinkedInCompanyPaidPermit extends PaidApifyDatasetPermit {
   scope: LinkedInCompanyCollectionScope;
   actorInputSha256: string;
+  tokenFingerprint: string;
   assertApproved(scope: LinkedInCompanyCollectionScope, actorInputSha256: string): Promise<void>;
   persistRawReceipt: NonNullable<PaidApifyDatasetPermit['persistRawReceipt']>;
 }
@@ -77,10 +79,13 @@ export async function runLinkedInCompanyPaidCollection(input: {
   settlementDelayMs?: number;
 }) {
   const { actorInput, permit, scope, companyUrl } = await assertLinkedInCompanyPaidCollection(input);
+  if (apifyTokenFingerprint(input.token, APIFY_PREPAID_TOKEN_FINGERPRINT_SCHEME)
+    !== permit.tokenFingerprint) throw Error('linkedin_company_paid_collection_token_changed');
   const recheckingPermit: LinkedInCompanyPaidPermit = {
     operationId: permit.operationId, actorId: permit.actorId,
     maxTotalChargeUsd: permit.maxTotalChargeUsd,
     scope: permit.scope, actorInputSha256: permit.actorInputSha256,
+    tokenFingerprint: permit.tokenFingerprint,
     assertApproved: (currentScope, digest) => permit.assertApproved(currentScope, digest),
     inspect: request => permit.inspect(request),
     async beforeSubmit(request) {

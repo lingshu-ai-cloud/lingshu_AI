@@ -23,7 +23,7 @@ export interface LinkedInCompanyCostEvidence {
 }
 
 export interface LinkedInCompanyQuotePorts {
-  /** Must derive these from server-owned credential configuration, never request JSON. */
+  /** Server-owned credential only; fingerprint uses sha256-json-string-v1, never request JSON. */
   readAccountBinding(): Promise<{ accountRef: string; tokenFingerprint: string }>;
   readCostEvidence(binding: { accountRef: string; tokenFingerprint: string }, actorId: string): Promise<LinkedInCompanyCostEvidence | null>;
   /** Must validate the account tariff, exchange-rate ceiling and all non-Actor charges against durable source evidence. */
