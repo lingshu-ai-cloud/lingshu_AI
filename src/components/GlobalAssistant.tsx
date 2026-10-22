@@ -12,12 +12,9 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowLeft,
   ArrowDown,
-  ArrowRight,
   Bot,
-  CalendarRange,
   ChevronLeft,
   ChevronRight,
-  Loader2,
   X,
 } from 'lucide-react';
 import type { AgentAction, AgentType, Message, Page } from '../App';
@@ -41,8 +38,8 @@ import {
   type OrbitAgentId,
   useAssistantStore,
 } from '../stores/assistantStore';
-import AgentReply from './AgentReply';
 import AssistantComposer, { assistantAttachmentKind } from './assistant/AssistantComposer';
+import AssistantConversationBubbles from './assistant/AssistantConversationBubbles';
 import AssistantFloatingReminders from './assistant/AssistantFloatingReminders';
 import { actionCardToTaskCard, actionResponseCardId, focusedNaturalLanguageActionId, focusedNaturalLanguageActionInput, isWeeklyPlanKickoffRequest, notificationReasonFromResponse, responseWithoutCrossObjectActions } from './assistant/assistantActionProjection';
 import AssistantQuickEntries from './assistant/AssistantQuickEntries';
@@ -52,15 +49,14 @@ import { useAssistantThreadSaveQueue } from './assistant/useAssistantThreadSaveQ
 import { assistantProductionIntent, resolveAssistantEnterpriseProduct } from './assistant/assistantProductionIntake';
 import { assistantFileIntent, assistantFileMarker } from '../../shared/assistantFileIntent';
 import { createAssistantFile } from '../lib/assistantFilesApi';
-import { assistantWantsDetailedReply } from '../../shared/assistantReadableReply';
 import { AssistantStreamCompletion, appendAssistantStreamFailure } from '../lib/assistantStreamCompletion';
 import type { AssistantQuickExecution } from '../lib/assistantQuickEntries';
 import AssistantWeeklyActions from './assistant/AssistantWeeklyActions';
-import AssistantDecisionCenter, {
+import {
   assistantDecisionExecutionFeedback,
   type AssistantDecisionActionResult,
 } from './assistant/AssistantDecisionCenter';
-import AssistantDecisionDialog, { taskStatusLabel, type AssistantDecisionDialog as AssistantDecisionDialogState } from './assistant/AssistantDecisionDialog';
+import AssistantDecisionDialog, { type AssistantDecisionDialog as AssistantDecisionDialogState } from './assistant/AssistantDecisionDialog';
 import type { AssistantDecisionDeepLink, AssistantDecisionFeed } from '../../shared/contracts/assistantDecisionCenter';
 import { assistantDecisionApi } from '../lib/assistantDecisionApi';
 import {
@@ -89,7 +85,6 @@ import {
   PRIMARY_ASSISTANT_THREAD,
   WORKFLOW_MUTATION_ACTIONS,
   agentForOrbit,
-  assistantBubbleStyle,
   assistantBusinessObjectContext,
   assistantPersistenceCanRun,
   compactText,
@@ -2095,130 +2090,31 @@ export default function GlobalAssistant({
                     );
                   }}
                 >
-                  <div className="space-y-4">
-                    <div
-                      key={`decision-feed-${decisionFeedRevision}`}
-                      className="ls-assistant-summary-bubble-enter pl-9"
-                      data-assistant-bubble="decision-summary"
-                      data-assistant-summary="decision-feed"
-                      style={assistantBubbleStyle(0)}
-                    >
-                      <AssistantDecisionCenter
-                        page={page}
-                        goalId={pageContext.goalId}
-                        productionContext={productionDecisionContext}
-                        key={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:summary:${decisionFeedRevision}`}
-                        active={mode === 'chat' && panelView === 'chat'}
-                        onOpenChat={returnToConversation}
-                        onOpenDetail={trigger => openDecisionDialog({ kind: 'feed' }, trigger)}
-                        onFeedChange={handleDecisionFeedChange}
-                        variant="summary"
-                      />
-                    </div>
-
-                    {welcomeBubbleVisible && !activeThread.messages.length && (
-                      <div
-                        data-assistant-bubble="welcome"
-                        className="ls-assistant-bubble-enter flex items-start gap-2"
-                        style={assistantBubbleStyle(0)}
-                      >
-                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>
-                        <div className="ls-messenger-bubble ls-messenger-bubble--inbound">
-                          <p className="font-semibold text-text-primary">我是{activeAgentLabel}</p>
-                          <p className="mt-1 text-text-secondary">我会结合当前页面上下文继续帮你处理。</p>
-                        </div>
-                      </div>
-                    )}
-
-                    {activeThread.messages.map((msg, index) => (
-                      <div
-                        key={`${msg.role}-${index}`}
-                        data-assistant-bubble={msg.role}
-                        className={`ls-assistant-bubble-enter flex gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}
-                        style={assistantBubbleStyle(index + (welcomeBubbleVisible ? 1 : 0))}
-                      >
-                        {msg.role === 'assistant' && <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>}
-                        <div className={msg.role === 'user'
-                          ? 'ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-line'
-                          : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
-                          {msg.role === 'assistant'
-                            ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} detailExpanded={assistantWantsDetailedReply(activeThread.messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')} onSuggest={suggestion => void send(suggestion, currentPageAgent)} /> : <span className="opacity-40">...</span>)
-                            : msg.content}
-                        </div>
-                      </div>
-                    ))}
-
-                    {contentIntake.node}
-
-                    {loading && (
-                      <div
-                        data-assistant-bubble="loading"
-                        className="ls-assistant-bubble-enter flex gap-2"
-                        style={assistantBubbleStyle(activeThread.messages.length + (welcomeBubbleVisible ? 1 : 0))}
-                      >
-                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Loader2 size={13} className="motion-safe:animate-spin" /></div>
-                        <div className="ls-messenger-bubble ls-messenger-bubble--inbound text-text-muted">思考中...</div>
-                      </div>
-                    )}
-
-                    {focusedTaskCard && (
-                      <div
-                        key={`task-${focusedTaskCard.taskId}`}
-                        className="ls-assistant-summary-bubble-enter flex items-start gap-2"
-                        data-assistant-bubble="task-summary"
-                        data-assistant-summary="task-card"
-                        style={assistantBubbleStyle(activeThread.messages.length + (welcomeBubbleVisible ? 2 : 1))}
-                      >
-                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>
-                        <button
-                          type="button"
-                          className="assistant-decision-summary min-w-0 flex-1"
-                          onClick={event => {
-                            focusTaskCard(activeAgent, focusedTaskCard.taskId);
-                            openDecisionDialog(
-                              { kind: 'task', taskId: focusedTaskCard.taskId },
-                              event.currentTarget,
-                            );
-                          }}
-                          aria-label={`查看任务详情：${focusedTaskCard.title}`}
-                        >
-                          <span className="assistant-decision-summary__icon" aria-hidden="true"><Bot size={18} /></span>
-                          <span className="assistant-decision-summary__content">
-                            <span className="assistant-decision-summary__eyebrow">
-                              <span>{focusedTaskCard.status === 'approval' || focusedTaskCard.status === 'needs_input' ? '待你决定' : '灵小枢已整理'}</span>
-                              <span>{taskStatusLabel(focusedTaskCard)}</span>
-                            </span>
-                            <strong>{focusedTaskCard.title}</strong>
-                            <span className="assistant-decision-summary__description">{focusedTaskCard.conclusion}</span>
-                          </span>
-                          <ArrowRight className="assistant-decision-summary__arrow" size={18} aria-hidden="true" />
-                        </button>
-                      </div>
-                    )}
-
-                    {weeklyPlanKickoffAvailable && (
-                      <div
-                        className="ls-assistant-summary-bubble-enter flex items-start gap-2"
-                        data-assistant-bubble="weekly-plan-kickoff"
-                        style={assistantBubbleStyle(activeThread.messages.length + (welcomeBubbleVisible ? 3 : 2))}
-                      >
-                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>
-                        <div className="ls-messenger-bubble ls-messenger-bubble--inbound min-w-0 flex-1">
-                          <p className="font-semibold text-text-primary">先制定本周计划</p>
-                          <p className="mt-1 text-text-secondary">我会先整理本周目标、平台、产量、预算和排期给你预览。你确认后，数字员工才会开始生产。</p>
-                          <Button
-                            type="primary"
-                            className="mt-3"
-                            icon={<CalendarRange size={14} />}
-                            onClick={openWeeklyPlanFromAssistant}
-                          >
-                            制定周计划
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-
-                  </div>
+                  <AssistantConversationBubbles
+                    page={page}
+                    goalId={pageContext.goalId}
+                    productionContext={productionDecisionContext}
+                    decisionFeedRevision={decisionFeedRevision}
+                    decisionFeedKey={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:summary:${decisionFeedRevision}`}
+                    decisionFeedActive={mode === 'chat' && panelView === 'chat'}
+                    onOpenChat={returnToConversation}
+                    onOpenFeedDetail={trigger => openDecisionDialog({ kind: 'feed' }, trigger)}
+                    onFeedChange={handleDecisionFeedChange}
+                    welcomeBubbleVisible={welcomeBubbleVisible}
+                    activeAgentLabel={activeAgentLabel}
+                    messages={activeThread.messages}
+                    onAction={onAction}
+                    onSuggest={suggestion => void send(suggestion, currentPageAgent)}
+                    contentIntakeNode={contentIntake.node}
+                    loading={loading}
+                    focusedTaskCard={focusedTaskCard}
+                    onOpenTaskDetail={(trigger, taskId) => {
+                      focusTaskCard(activeAgent, taskId);
+                      openDecisionDialog({ kind: 'task', taskId }, trigger);
+                    }}
+                    weeklyPlanKickoffAvailable={weeklyPlanKickoffAvailable}
+                    onOpenWeeklyPlan={openWeeklyPlanFromAssistant}
+                  />
                 </div>
 
                 {!activeThread.isFollowingLatest && (

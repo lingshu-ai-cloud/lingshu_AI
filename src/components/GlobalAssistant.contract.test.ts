@@ -4,6 +4,7 @@ import fs from 'node:fs';
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const decisionDialogSource = fs.readFileSync(new URL('./assistant/AssistantDecisionDialog.tsx', import.meta.url), 'utf8');
 const floatingRemindersSource = fs.readFileSync(new URL('./assistant/AssistantFloatingReminders.tsx', import.meta.url), 'utf8');
+const conversationBubblesSource = fs.readFileSync(new URL('./assistant/AssistantConversationBubbles.tsx', import.meta.url), 'utf8');
 const runtimeSource = fs.readFileSync(new URL('./assistant/globalAssistantRuntime.ts', import.meta.url), 'utf8');
 const saveQueueSource = fs.readFileSync(new URL('./assistant/useAssistantThreadSaveQueue.ts', import.meta.url), 'utf8');
 const actionProjectionSource = fs.readFileSync(new URL('./assistant/assistantActionProjection.ts', import.meta.url), 'utf8');
@@ -87,19 +88,23 @@ const taskSummarySource = sourceSection(
   'data-assistant-bubble="task-summary"',
   'data-assistant-bubble="weekly-plan-kickoff"',
   '普通任务概要气泡',
+  conversationBubblesSource,
 );
-assert.match(taskSummarySource, /onClick=\{[\s\S]*openDecisionDialog\(/, '普通任务概要必须打开统一外部决策弹窗');
+assert.match(taskSummarySource, /onClick=\{event => onOpenTaskDetail\(/, '普通任务概要必须交给外部决策弹窗回调');
+assert.match(source, /onOpenTaskDetail=\{[\s\S]*openDecisionDialog\(\{ kind: 'task', taskId \}, trigger\)/, '普通任务概要必须打开统一外部决策弹窗');
 assert.doesNotMatch(taskSummarySource, /setPanelView\('decision'\)/, '普通任务详情不得再渲染在助手内部');
 const decisionFeedSummarySource = sourceSection(
   'data-assistant-summary="decision-feed"',
   'variant="summary"',
   '权威待办概要气泡',
+  conversationBubblesSource,
 );
-assert.match(decisionFeedSummarySource, /onOpenDetail=\{[\s\S]*openDecisionDialog\(/, '权威待办概要必须打开统一外部决策弹窗');
+assert.match(decisionFeedSummarySource, /onOpenDetail=\{onOpenFeedDetail\}/, '权威待办概要必须通过外部详情回调打开');
+assert.match(source, /onOpenFeedDetail=\{trigger => openDecisionDialog\(\{ kind: 'feed' \}, trigger\)\}/, '权威待办概要必须打开统一外部决策弹窗');
 assert.doesNotMatch(decisionFeedSummarySource, /setPanelView\('approvals'\)/, '权威待办详情不得再渲染在助手内部');
-assert.match(decisionFeedSummarySource, /goalId=\{pageContext\.goalId\}/, '权威待办概要必须读取当前数字员工周目标，而不是默认最新目标');
+assert.match(source, /<AssistantConversationBubbles[\s\S]*goalId=\{pageContext\.goalId\}/, '权威待办概要必须读取当前数字员工周目标，而不是默认最新目标');
 assert.ok(
-  source.indexOf('data-assistant-summary="decision-feed"') < source.indexOf('{activeThread.messages.map'),
+  conversationBubblesSource.indexOf('data-assistant-summary="decision-feed"') < conversationBubblesSource.indexOf('{messages.map'),
   '权威待办概要必须固定在历史对话消息之前',
 );
 assert.match(source, /ASSISTANT_ACTION_TIMEOUT_MS = 12_000[\s\S]*signal: controller\.signal/, '操作路由必须有客户端超时，不能永久保持思考中');
@@ -185,7 +190,7 @@ assert.match(source, /assistantBusinessObjectContext\(context\)/, '问答请求�
 assert.match(source, /liveContext\?\.sourcePage === normalizedPage/, '切换页面后不得继续使用上一页的任务上下文');
 assert.match(source, /workflowStage === 'unplanned'/, '灵小枢必须识别尚未制定周计划的真实空白状态');
 assert.match(floatingRemindersSource, /data-lingshu-weekly-plan-prompt="true"[\s\S]{0,900}先制定本周计划[\s\S]{0,500}制定周计划/, '关闭态灵小枢必须主动说明先预览计划再生产');
-assert.match(source, /data-assistant-bubble="weekly-plan-kickoff"[\s\S]{0,900}确认后，数字员工才会开始生产[\s\S]{0,500}制定周计划/, '打开灵小枢后必须提供同一条计划制定入口');
+assert.match(conversationBubblesSource, /data-assistant-bubble="weekly-plan-kickoff"[\s\S]{0,900}确认后，数字员工才会开始生产[\s\S]{0,500}制定周计划/, '打开灵小枢后必须提供同一条计划制定入口');
 assert.match(source, /openWeeklyPlanFromAssistant[\s\S]{0,300}lingshu:open-weekly-plan[\s\S]{0,120}source: 'assistant'/, '灵小枢计划按钮必须派发明确来源的页面动作');
 assert.doesNotMatch(source, /productionSuggestions|data-assistant-surface="production-suggestions"|aria-label="生产快捷问题"/, '不得在页面快捷入口上方重复渲染生产快捷问题');
 const pageQuickEntrySource = sourceSection(
@@ -252,19 +257,21 @@ assert.match(revealWelcomeSource, /setWelcomeBubbleVisible\(!alreadySeen\)/, '�
 assert.match(source, /if \(!assistantThreadHydrated \|\| mode !== 'chat' \|\| panelView !== 'chat'\) return;[\s\S]{0,120}revealConversationWelcomeOnce\(\)/, '必须等待持久化线程恢复完成后再判断是否显示欢迎语');
 const welcomeBubbleSource = sourceSection(
   'data-assistant-bubble="welcome"',
-  '{activeThread.messages.map',
+  '{messages.map',
   '欢迎语气泡',
+  conversationBubblesSource,
 );
 assert.match(welcomeBubbleSource, /ls-assistant-bubble-enter/, '欢迎语必须作为普通可滚动气泡进入消息流');
-assert.match(source, /welcomeBubbleVisible && !activeThread\.messages\.length/, '线程恢复出任意消息后必须立即隐藏欢迎语');
+assert.match(conversationBubblesSource, /welcomeBubbleVisible && !messages\.length/, '线程恢复出任意消息后必须立即隐藏欢迎语');
+assert.match(source, /messages=\{activeThread\.messages\}/, '气泡必须使用当前已恢复的对话线程');
 assert.doesNotMatch(welcomeBubbleSource, /\b(?:sticky|fixed|absolute)\b/, '欢迎语不得置顶、固定或脱离消息滚动流');
 
 assert.match(runtimeSource, /function assistantBubbleStyle\(index: number\)[\s\S]*Math\.min\(Math\.max\(0, index\), 6\)[\s\S]*--assistant-bubble-delay': `\$\{boundedIndex \* 15\}ms`/, '气泡进入顺序必须使用 15ms 间隔并在第 6 项封顶');
 for (const bubble of ['welcome', 'loading', 'task-summary', 'weekly-plan-kickoff', 'decision-summary']) {
-  assert.match(source, new RegExp(`data-assistant-bubble=["']${bubble}["']`), `${bubble} 必须具有稳定的气泡语义标记`);
+  assert.match(conversationBubblesSource, new RegExp(`data-assistant-bubble=["']${bubble}["']`), `${bubble} 必须具有稳定的气泡语义标记`);
 }
-assert.match(source, /data-assistant-bubble=\{msg\.role\}[\s\S]{0,180}ls-assistant-bubble-enter|ls-assistant-bubble-enter[\s\S]{0,180}data-assistant-bubble=\{msg\.role\}/, '用户与助手消息必须使用统一气泡进入动效');
-assert.match(source, /data-assistant-bubble="(?:task-summary|decision-summary)"[\s\S]{0,220}style=\{assistantBubbleStyle/, '概要气泡必须加入同一顺序索引');
+assert.match(conversationBubblesSource, /data-assistant-bubble=\{msg\.role\}[\s\S]{0,180}ls-assistant-bubble-enter|ls-assistant-bubble-enter[\s\S]{0,180}data-assistant-bubble=\{msg\.role\}/, '用户与助手消息必须使用统一气泡进入动效');
+assert.match(conversationBubblesSource, /data-assistant-bubble="(?:task-summary|decision-summary)"[\s\S]{0,220}style=\{assistantBubbleStyle/, '概要气泡必须加入同一顺序索引');
 assert.match(assistantStylesSource, /\.ls-assistant-bubble-enter\s*\{[\s\S]{0,220}animation:\s*ls-assistant-bubble-enter var\(--ls-motion-(?:fast|enter)\) var\(--ls-ease-enter\) both;[\s\S]{0,120}animation-delay:\s*var\(--assistant-bubble-delay, 0ms\)/, '普通气泡必须复用共享进入时长、缓动与有界顺序延迟');
 assert.match(assistantStylesSource, /\.ls-assistant-summary-bubble-enter:has\([\s\S]{0,260}animation:\s*ls-assistant-bubble-enter var\(--ls-motion-(?:fast|enter)\) var\(--ls-ease-enter\) both;[\s\S]{0,140}animation-delay:\s*var\(--assistant-bubble-delay, 0ms\)/, '概要气泡外层必须复用同一进入动效和顺序延迟');
 assert.match(assistantStylesSource, /\[data-assistant-bubble\] \.assistant-decision-summary\s*\{[\s\S]{0,80}animation:\s*none/, '概要卡位于气泡内时必须禁用自身动画，避免双重位移');
@@ -477,7 +484,8 @@ assert.ok(routinePerformanceIgnored, '常规后台性能事件不得触发灵小
 
 assert.match(decisionDialogSource, /dialogTaskCard\.secondaryActions\.map/, '外部决策弹窗必须渲染交互选择卡操作');
 assert.match(decisionDialogSource, /dialogTaskCard\.workspace\.href/, '外部弹窗中的完整结果必须可以进入工作区');
-assert.match(source, /data-assistant-summary="task-card"[\s\S]{0,1100}openDecisionDialog\([\s\S]{0,120}kind: 'task'/, '任务结果必须先以概要气泡呈现，用户点击后才打开外部详情');
+assert.match(conversationBubblesSource, /data-assistant-summary="task-card"[\s\S]{0,1100}onOpenTaskDetail\(/, '任务结果必须先以概要气泡呈现');
+assert.match(source, /onOpenTaskDetail=\{[\s\S]*openDecisionDialog\(\{ kind: 'task', taskId \}, trigger\)/, '任务结果点击后才打开外部详情');
 assert.match(source, /<AssistantComposer/, '灵小枢必须使用统一输入组件');
 assert.match(source, /onSuggest=\{suggestion => void send\(suggestion, currentPageAgent\)\}/, '快捷回复卡片必须点击后直接进入当前灵小枢对话');
 assert.match(composerSource, /rows=\{1\}/, '输入框必须默认只占一行');
