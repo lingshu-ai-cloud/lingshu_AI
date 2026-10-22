@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Drawer } from 'antd';
+import { Alert, Button, Collapse, Drawer, Select } from 'antd';
 import {
   ArrowRight,
   ArrowUpRight,
   BarChart3,
   Bot,
-  Check,
   ChevronRight,
   CircleHelp,
   Clock3,
@@ -32,6 +31,7 @@ import AdManagedWorkspace from './AdManagedWorkspace';
 import { PlatformAdsManagedPreview, PlatformAdsPerformancePreview } from './PlatformAdsPreviewSections';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { createForeignTradeMockAdTasks, isForeignTradeMockId, isLocalForeignTradeMockEnabled } from '../mocks/foreignTradeOperations';
+import LsPageHeader from './ui/LsPageHeader';
 
 const channels = [
   {
@@ -122,7 +122,6 @@ export default function PlatformAdsPage({
     configuration: { ...emptyAdPlanConfiguration },
   });
   const formCapability = getAdPlanCapability(form);
-  const isOverviewPage = page === "adsOverview" || page === "adsCreatives";
   const isPerformancePage = page === 'adsOverview';
   const isCreativePage = page === 'adsCreatives';
   useEffect(() => {
@@ -236,45 +235,25 @@ export default function PlatformAdsPage({
   return (
     <div className="ads-workspace">
       <main className="ads-main">
-        {isLocalForeignTradeMockEnabled() && <div className="ads-notice" role="status"><Check size={16}/><span><strong>本地模拟 · 外贸工厂投放</strong>　展示中东、欧洲和拉美市场的跨平台计划与近 7 天效果，不会触发真实广告操作。</span></div>}
-        <div className="ads-page-purpose">
-          <strong>{page === 'adsPlans' ? '计划创编' : page === 'adsCreatives' ? '素材管理' : '投放数据'}</strong>
-          <p>{page === 'adsPlans' ? '配置目标、素材与预算，审阅方案并追踪 Meta 平台执行回执。' : page === 'adsCreatives' ? '管理素材版本、广告绑定和效果证据，推动下一轮内容迭代。' : '按平台原始口径查看花费、效果、覆盖范围和数据新鲜度。'}</p>
-          <details>
-            <summary>查看各平台已实现能力与限制</summary>
-            <p className="ads-muted">以下为当前产品实现范围；连接账户或保存配置不代表可实际投递，真实账户验收尚未完成。</p>
-            <div className="ads-table-wrap"><table><thead><tr><th>平台</th><th>创建目标 / 币种</th><th>管理与动作</th><th>素材要求</th></tr></thead><tbody>
-              {PLATFORM_AD_CAPABILITIES.map(item => <tr key={item.provider}><td><PlatformLogoGroup value={item.name}/><span className="sr-only">{item.name}</span></td><td>{item.goals.join('、')}<small>{item.currencies.join(' / ')}</small></td><td>{item.management}<small>{item.actions}</small></td><td>{item.material}</td></tr>)}
-            </tbody></table></div>
-          </details>
-        </div>
-        <div className={isOverviewPage ? "ads-overview-toolbar" : "ads-page-toolbar"}>
-          <div className="ads-actions">
-            <button
-              className="ads-button"
-              onClick={() => { setReturnToCreate(false); setDialog("accounts"); }}
-            >
-              <Link2 size={15} />
-              连接广告账户
-            </button>
-            <><button className="ads-button primary" onClick={openCreate}>
-              <Plus size={16} />
-              手动创建投放
-            </button>
-            <button className="ads-button" onClick={() => { openCreate(); setEntry('ai_assisted'); }}><Sparkles size={16} />AI 辅助创编</button>
-            <button className="ads-button" onClick={() => { openCreate(); setEntry('ai_managed'); }}><Bot size={16} />AI 托管创编</button></>
-            <button className="ads-button" onClick={() => setManagedOpen(true)}><Bot size={16} />AI 投手</button>
-          </div>
-        </div>
-        {notice && (
-          <div className="ads-notice" role="status">
-            <Check size={16} />
-            {notice}
-            <button aria-label="关闭提示" onClick={() => setNotice("")}>
-              <X size={16} />
-            </button>
-          </div>
-        )}
+        {isLocalForeignTradeMockEnabled() && <Alert className="mb-4" type="info" showIcon title="本地模拟 · 外贸工厂投放" description="展示中东、欧洲和拉美市场的跨平台计划与近 7 天效果，不会触发真实广告操作。" />}
+        <LsPageHeader
+          title={page === 'adsPlans' ? '计划创编' : page === 'adsCreatives' ? '素材管理' : '投放数据'}
+          description={page === 'adsPlans' ? '配置目标、素材与预算，审阅方案并追踪 Meta 平台执行回执。' : page === 'adsCreatives' ? '管理素材版本、广告绑定和效果证据，推动下一轮内容迭代。' : '按平台原始口径查看花费、效果、覆盖范围和数据新鲜度。'}
+          extra={<>
+            <Button icon={<Link2 size={15} />} onClick={() => { setReturnToCreate(false); setDialog("accounts"); }}>连接广告账户</Button>
+            <Button type="primary" icon={<Plus size={16} />} onClick={openCreate}>手动创建投放</Button>
+            <Button icon={<Sparkles size={16} />} onClick={() => { openCreate(); setEntry('ai_assisted'); }}>AI 辅助创编</Button>
+            <Button icon={<Bot size={16} />} onClick={() => { openCreate(); setEntry('ai_managed'); }}>AI 托管创编</Button>
+            <Button icon={<Bot size={16} />} onClick={() => setManagedOpen(true)}>AI 投手</Button>
+          </>}
+        >
+          <Collapse className="ads-capability-collapse" ghost items={[{
+            key: 'capabilities',
+            label: '查看各平台已实现能力与限制',
+            children: <><p className="ads-muted">以下为当前产品实现范围；连接账户或保存配置不代表可实际投递，真实账户验收尚未完成。</p><div className="ads-table-wrap"><table><thead><tr><th>平台</th><th>创建目标 / 币种</th><th>管理与动作</th><th>素材要求</th></tr></thead><tbody>{PLATFORM_AD_CAPABILITIES.map(item => <tr key={item.provider}><td><PlatformLogoGroup value={item.name}/><span className="sr-only">{item.name}</span></td><td>{item.goals.join('、')}<small>{item.currencies.join(' / ')}</small></td><td>{item.management}<small>{item.actions}</small></td><td>{item.material}</td></tr>)}</tbody></table></div></>,
+          }]} />
+        </LsPageHeader>
+        {notice && <Alert className="mb-4" type={notice.includes('失败') ? 'error' : 'success'} showIcon title={notice} closable onClose={() => setNotice('')} />}
 
         {isPerformancePage && !previewMode && <AdPerformanceOverview tasks={drafts} loading={loadingTasks} onOpen={id => { const task = drafts.find(item => item.id === id); if (task) { setSelectedDraft(task); onNavigate('adsPlans'); } }} />}
         {isPerformancePage && previewMode && <PlatformAdsPerformancePreview channels={channels} onOpenAccounts={() => setDialog('accounts')} onOpenManaged={() => setManagedOpen(true)} />}
@@ -382,15 +361,12 @@ export default function PlatformAdsPage({
                     按广告平台分别创建计划；Facebook 与 Instagram 可共用一份 Meta 计划。
                   </p>
                 </div>
-                <select
+                <Select
                   aria-label="筛选渠道"
                   value={selected}
-                  onChange={(e) => setSelected(e.target.value)}
-                >
-                  {["全部渠道", ...channels.map((c) => c.name)].map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
+                  onChange={setSelected}
+                  options={["全部渠道", ...channels.map((c) => c.name)].map(value => ({ value, label: value }))}
+                />
               </div>
               {loadingTasks ? (
                 <div className="ads-empty" role="status"><Clock3 size={30} /><h3>正在加载投放草稿</h3></div>

@@ -4,8 +4,8 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #f7f9f7;
-  color: #193d32;
+  background: var(--color-surface, #f8faf7);
+  color: var(--color-text-primary, #1f2937);
   font-size: 14px;
 }
 .ads-topbar {
@@ -49,10 +49,21 @@
 }
 .ads-main {
   overflow: auto;
-  padding: 30px 34px 20px;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 24px 24px 32px;
   flex: 1;
   min-height: 0;
 }
+.ads-capability-collapse {
+  margin-top: 4px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  background: var(--color-surface, #fff);
+}
+.ads-capability-collapse .ant-collapse-header { padding: 10px 12px !important; font-size: 12px; font-weight: 600; }
+.ads-capability-collapse .ant-collapse-content-box { padding: 0 12px 12px !important; }
 .ads-heading {
   display: flex;
   justify-content: space-between;
@@ -1307,6 +1318,31 @@
 .ads-page-purpose > p { margin: 8px 0 12px; color: var(--text-secondary, #61766f); }
 .ads-page-purpose summary { cursor: pointer; font-size: 13px; }
 .ads-page-purpose details[open] { padding: 14px; border: 1px solid #dce7e1; border-radius: 12px; }
+
+/* Advertising pages follow the same workspace surface, card and typography
+   tokens as the rest of the product. Domain-specific layouts remain local. */
+.ads-workspace { background: var(--ls-surface-secondary, #f8faf7); color: var(--ls-text-primary, #1f2937); }
+.ads-card,
+.ads-task-title,
+.ads-context-banner,
+.ads-autonomy-path { border-color: var(--ls-border-secondary, #e5e7eb); border-radius: var(--ls-radius-lg, 8px); background: var(--ls-surface-primary, #fff); box-shadow: none; }
+.ads-section-title h2,
+.ads-task-title h2,
+.ads-creative-actions strong,
+.ads-next-actions strong { color: var(--ls-text-primary, #1f2937); }
+.ads-muted,
+.ads-section-title p,
+.ads-task-title p,
+.ads-workspace td small,
+.ads-creative-actions small,
+.ads-next-actions small { color: var(--ls-text-tertiary, #6b7280); }
+.ads-workspace th { color: var(--ls-text-tertiary, #6b7280); background: var(--ls-surface-secondary, #f8faf7); }
+.ads-workspace th,
+.ads-workspace td { border-bottom-color: var(--ls-border-secondary, #e5e7eb); }
+.ads-pill { border-color: var(--ls-border-secondary, #e5e7eb); border-radius: var(--ls-radius-sm, 6px); }
+.ads-pill.neutral { color: var(--ls-text-tertiary, #6b7280); background: var(--ls-surface-secondary, #f8faf7); }
+.ads-text-button { color: var(--ls-color-primary, #1677ff); }
+.ads-footer { color: var(--ls-text-tertiary, #6b7280); }
 .ads-capability-hint { margin: 12px 0 18px; padding: 12px 14px; background: #f1f6f3; border-radius: 10px; font-size: 13px; }
 .ads-capability-hint p { margin: 6px 0 0; line-height: 1.6; }
 

@@ -163,7 +163,7 @@ try {
 
   for (const [name, label] of [['adsOverview', '投放数据'], ['adsPlans', '计划创编'], ['adsCreatives', '素材管理']]) {
     await open(`page=${name}`);
-    await page.locator('.ads-page-purpose > strong').filter({ hasText: label }).waitFor();
+    await page.locator('h1').filter({ hasText: label }).waitFor({ state: 'attached' });
     if (name === 'adsOverview') {
       await page.getByText('含历史快照 · 非实时', { exact: true }).waitFor();
       await page.getByText('所选周期暂无已保存指标。', { exact: true }).waitFor();
