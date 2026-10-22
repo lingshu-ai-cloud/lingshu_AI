@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵小枢右侧提示气泡职责拆分（2026-10-23）
+
+- 代码提交 `4f6fcf3f` 将右下入口旁的等待、短消息、周计划、功能引导与企业资料提示展示迁至 `src/components/assistant/AssistantFloatingReminders.tsx`；浮层保留状态、身份/页面上下文和动作回调。提示优先级、收起态/对话打开态不显示横向提示及现有动效参数保留。`GlobalAssistant.tsx` 从 2,496 降至 2,374 行，架构预算同步收紧；历史超限文件仍为 7 个。
+- 新组件渲染测试 2/2、`test:assistant`、TypeScript、架构扫描及相对上一基线 ratchet、192 项迁移仓库只读检查、生产构建和 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未执行浏览器交互专项、真实供应商、目标库迁移或部署；离线测试不替代真实 UI 验收。最终本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 数字员工纠偏业务状态失效职责拆分（2026-10-23）
 
 - 代码提交 `311ad3d6` 将纠偏后的生产 job 取消、冻结内容批次与托管 Studio 项目失效、客户分群与跟进草稿/审批失效迁至 `server/digitalEmployees/taskCorrectionSupersession.ts`；路由仍持有运行锁并注入原有存储、job 控制和跟进项目读取。`digitalEmployees.ts` 从 5,708 降至 5,645 行，历史预算同步收紧；剩余历史超限文件仍为 7 个。
