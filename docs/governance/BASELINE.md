@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 爬虫运维失败与代理规则拆分（2026-10-23）
+
+- 代码提交 `dfc13e57` 将视频爬虫的重试退避和失败分类移入 `videoCrawlerOpsTaskState.ts`，代理轮换和日志凭据脱敏移入 `videoCrawlerRuntimeConfig.ts`；实际下载、失败持久化、租户范围和供应商调用仍由 `videos.ts` 控制。路由从 8,549 降至 8,514 行，历史预算同步收紧；全仓仍有 6 个历史超限文件。
+- 定向运行配置与恢复测试 3/3、`test:production-workflows`、`test:video-source-boundaries` 137/137、`pnpm run lint`、架构扫描/ratchet（2,386 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建及 `git diff --check` 均通过。Studio 主 chunk 为 480,933/485,000 字节，仍有大 chunk 提示。LinkedIn 测试仅为离线门禁桩，按用户要求未进行真实付费采集或许可签发验收；本批也未执行其他真实供应商调用、目标库迁移、浏览器交互或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## 视频管线统计投影拆分（2026-10-23）
 
 - 代码提交 `00596d3e` 将抓取、下载、分析、精修队列的只读统计组装迁至 `videoPipelineStatsProjection.ts`；`videos.ts` 继续持有租户限定分页读取、测试租户可见性、爬虫运维快照和供应商配置读取。路由从 8,690 降至 8,549 行，历史预算同步收紧；全仓仍有 6 个历史超限文件。

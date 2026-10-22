@@ -51,7 +51,7 @@
 - `server/digitalEmployees/taskEvidenceProjection.ts`：数字员工任务的执行元数据、依赖与业务引用范围、工作流归属、项目完成/渲染证据的纯规则；路由仅在租户范围内读写记录并调用这些规则，不能用历史草稿或可变引用覆盖托管项目的索引血缘。
 - `server/digitalEmployees/taskCorrectionSafety.ts`：任务纠偏的传递性下游范围和已发送/已发布回执判定；路由注入租户限定的存储及跟进发送回执读取，缺少可证明安全的外部动作仍保守拦截。拆分不改变外部发送、发布和重试许可。
 - `server/digitalEmployees/taskCorrectionSupersession.ts`：任务纠偏后按影响范围使生产 job、冻结内容批次、托管 Studio 项目、客户分群、跟进草稿及审批失效；路由持有运行锁并注入存储/队列/跟进项目读取。已发送或已送达的跟进项目不被回写为草稿，旧业务回执拦截仍先于失效操作执行。
-- `server/routes/videoCrawlerOpsTaskState.ts`：视频来源爬虫任务的纯状态规则，包括中断恢复、显式重试、耗尽终止和待处理优先级；`videos.ts` 保留原导出并负责持久化、租户可见性与执行编排。
+- `server/routes/videoCrawlerOpsTaskState.ts`：视频来源爬虫任务的纯状态规则，包括中断恢复、显式重试、耗尽终止、待处理优先级、重试退避与失败分类；`videos.ts` 保留原导出并负责持久化、租户可见性与执行编排。
 - `server/routes/videoAnalysisRecovery.ts`：视频级失败保留已有证据、显式重试清空旧终态、供应商错误脱敏及用户恢复提示的纯规则；`videos.ts` 保留旧导出并负责租户数据读写、队列与 HTTP 响应。该拆分不改变供应商调用或付费许可。
 - `server/routes/videoCrawlerProviderProjection.ts`：TikTok、Instagram、Facebook 的 Apify 视频行转候选、媒体封面 URL、标题与指标的纯投影；原路由继续负责 Actor 请求、付费门禁、账号范围、队列和持久化，图片帖投影可复用这些基础规则。
 - `server/routes/videoCrawlerPublicProjection.ts`：公开视频检索日期/查询、候选元数据、URL 去重、缩略图和失败类别的纯投影；`videos.ts` 保留网络请求、付费准入、租户边界和持久化，并继续转发既有公开函数。
@@ -61,7 +61,7 @@
 - `server/routes/videoCrawlerMetadataFallback.ts`：仅在真实视频分析未完成时，根据标题、标签、公开热度与时长生成原有策划提示；不读取媒体、不调用供应商，也不产出已观察到的逐镜证据。`videos.ts` 继续决定何时使用兜底、何时恢复真实分析，并负责租户数据与付费边界。
 - `server/routes/videoAnalysisTimelineProjection.ts`：精确视频分析的纯时间线规则，包括物理剪辑点选帧、观察窗口合并、跨镜头语义片段切分及局部时间标签平移；`videos.ts` 保留原有公开导出，并继续负责帧提取、模型请求、分析状态和回执。
 - `server/routes/videoDownloaderArgs.ts`：按显式传入的代理、浏览器、User-Agent 与 Node 可执行路径纯组装 yt-dlp 参数和平台 Referer；`videos.ts` 负责读取运行环境、执行下载及旧公开函数转发，不让伪搜索 URL 中的中文关键词进入 HTTP Referer。
-- `server/routes/videoCrawlerRuntimeConfig.ts`：本地爬虫代理、子进程环境、Cookie 文件和浏览器候选的运行配置；路由仅持有当前尝试的代理选择并执行下载。逗号分隔的浏览器配置按实际候选拆分，单浏览器参数只取首项，不能把整串作为 yt-dlp 浏览器名。
+- `server/routes/videoCrawlerRuntimeConfig.ts`：本地爬虫代理轮换与日志脱敏、子进程环境、Cookie 文件和浏览器候选的运行配置；路由仅执行已选尝试的下载。逗号分隔的浏览器配置按实际候选拆分，单浏览器参数只取首项，不能把整串作为 yt-dlp 浏览器名。
 - `server/routes/videoCrawlerNormalization.ts`：视频来源及供应商元数据归一化、Apify 候选窗口等纯规则；`videoCrawlerSourceUrls.ts` 负责规范来源 URL 与平台账号/帖子链接，`apifyTikTokInput.ts` 负责纯 Actor 输入组装；`videos.ts` 保留既有兼容导出。LinkedIn 公司帖的冻结输入、许可范围校验与受控传输在 `linkedinCompanyPostPaidCollection.ts`；内部视频/图文入口缺少受信任许可时仍明确报 `linkedin_company_paid_collection_permit_required`，手工 HTTP 不开放。当前没有生产许可签发器，不能将模拟许可或离线解析视为付费采集已开放；见 [`2026-10-23-linkedin-company-paid-collection.md`](./adr/2026-10-23-linkedin-company-paid-collection.md)。
 - `server/socialDiscovery/linkedinCompanyReceiptStore.ts`：LinkedIn Actor POST、run GET 和 dataset GET 的原始 HTTP 响应以批准/任务/Actor/请求/Token 指纹绑定的只写一次文件保存；受控传输在解析和账本终态更新前等待持久回执。存储模块本身不是许可或预算签发器，缺少部署共享卷、可信报价和数据集读取许可时仍不开放真实采集。
 - `server/socialDiscovery/linkedinCompanyCollectionQuote.ts`：以逐 run 批准、服务端账号/Token 指纹和受信任费用证据计算 Actor 与全部非 Actor 费用的人民币最坏情况报价，并复核来源未变。离线报价不预约资金、不认领操作或签发付费许可；真实账号费率、汇率和非 Actor 费用凭据仍未接入生产权威。
