@@ -6,6 +6,10 @@ import { requireAdWriteAccess } from '../platformAds/access.js';
 import { PlatformAdCreativeError, bindPlatformAdCreative, listPlatformAdCreatives, listPlatformAdCreativeSources } from '../platformAds/creatives.js';
 import { PlatformAdTaskLockError } from '../platformAds/taskLock.js';
 import { SocialContentWorkflowError } from '../starter198/socialContentValidation.js';
+import { Readable } from 'node:stream';
+import { listAdCreativeLibrary, getAdCreativeReport, getAdCreativePreview } from '../platformAds/creativeLibrary.js';
+import { attachExistingAdCreative } from '../platformAds/creativeMapping.js';
+import { openPlatformAdCreativeMedia } from '../platformAds/creatives.js';
 export const platformAdCreativesRouter = Router();
 platformAdCreativesRouter.use(requireAuth, requireAdWriteAccess);
 function failure(res: import('express').Response, error: unknown) {
@@ -20,6 +24,26 @@ function failure(res: import('express').Response, error: unknown) {
   }
   res.status(status).json({ error: message });
 }
+platformAdCreativesRouter.get('/creative-library', async (req, res) => {
+  try { res.json(await listAdCreativeLibrary((res.locals as AuthLocals).tenantId, req.query)); } catch (error) { failure(res, error); }
+});
+platformAdCreativesRouter.get('/creative-library/:executionId/report', async (req, res) => {
+  try { res.json(await getAdCreativeReport((res.locals as AuthLocals).tenantId, req.params.executionId)); } catch (error) { failure(res, error); }
+});
+platformAdCreativesRouter.get('/creatives/:id/platform-preview', async (req, res) => {
+  try { res.json(await getAdCreativePreview((res.locals as AuthLocals).tenantId, req.params.id)); } catch (error) { failure(res, error); }
+});
+platformAdCreativesRouter.get('/creatives/:id/media', async (req, res) => {
+  try {
+    const { creative, body } = await openPlatformAdCreativeMedia((res.locals as AuthLocals).tenantId, req.params.id);
+    res.setHeader('Content-Type', creative.mimeType); res.setHeader('Content-Length', creative.size);
+    res.setHeader('Cache-Control', 'private, no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
+    const stream = Readable.from(body); stream.on('error', () => res.destroy()); stream.pipe(res);
+  } catch (error) { failure(res, error); }
+});
+platformAdCreativesRouter.post('/tasks/:taskId/creatives/attach-existing', async (req, res) => {
+  try { const { tenantId, userId } = res.locals as AuthLocals; res.json(await attachExistingAdCreative(tenantId, userId, req.params.taskId, req.body || {})); } catch (error) { failure(res, error); }
+});
 platformAdCreativesRouter.get('/creative-sources', async (req, res) => {
   try { res.json(await listPlatformAdCreativeSources((res.locals as AuthLocals).tenantId, req.query)); } catch (error) { failure(res, error); }
 });

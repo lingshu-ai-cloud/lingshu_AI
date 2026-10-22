@@ -27,6 +27,7 @@ import { getAdPlanCapability, PLATFORM_AD_CAPABILITIES, PLATFORM_AD_GOALS } from
 import type { AdConnection } from './AdAccountConnections';
 import { AdAccountConnections, AdTaskControls, AdTaskMetrics } from './PlatformAdsOperations';
 import AdPerformanceOverview from './AdPerformanceOverview';
+import AdCreativeLibrary from './AdCreativeLibrary';
 import AdManagedWorkspace from './AdManagedWorkspace';
 import { PlatformAdsManagedPreview, PlatformAdsPerformancePreview } from './PlatformAdsPreviewSections';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
@@ -70,11 +71,6 @@ type Draft = AdManagement & Pick<PlatformAdTask, 'currency' | 'status' | 'versio
   createdAt?: string;
 };
 const taskToDraft = (task: PlatformAdTask): Draft => ({ ...task, currency: task.currency || 'USD', budget: String(task.budget) });
-const mockCreativePerformance: Record<string, { spend: string; inquiries: number; cpl: string; hook: string; advice: string }> = {
-  'mock-ft-ad-saudi-packaging': { spend: 'USD 1,280', inquiries: 6, cpl: 'USD 213', hook: '工厂现场 + “6 条线如何回本”阿语首屏', advice: '首屏停留最好；保留 ROI 钩子，补一版当地安装与培训镜头。' },
-  'mock-ft-ad-germany-battery': { spend: 'USD 1,041', inquiries: 4, cpl: 'USD 260', hook: '55 分钟换型降至 12 分钟的前后对比', advice: '工程师受众点击稳定；下一版强化 OPC UA 与 CE 文件边界。' },
-  'mock-ft-ad-mexico-medical': { spend: 'USD 800', inquiries: 2, cpl: 'USD 400', hook: '西语工程师演示 FAT 数据追溯字段', advice: '有效询盘率高但量小；复制西语口播，测试质量经理受众。' },
-};
 const withLocalMockAdTasks = (tasks: PlatformAdTask[]) => {
   if (!isLocalForeignTradeMockEnabled()) return tasks;
   const ids = new Set(tasks.map(task => task.id));
@@ -435,67 +431,7 @@ export default function PlatformAdsPage({
           ))}
 
         {isCreativePage && (
-          <>
-            <div className="ads-context-banner">
-              <Layers3 size={22} />
-              <div>
-                <strong>把投放结果，带回内容创作</strong>
-                <p>关联素材版本与广告计划，发现值得继续测试的创意。</p>
-              </div>
-            </div>
-            <div className="ads-creative-actions">
-              <button
-                className="ads-card"
-                onClick={() => onNavigate("adsPlans")}
-              >
-                <BarChart3 size={21} />
-                <span>
-                  <strong>继续放量</strong>
-                  <small>回到投放计划调整视频预算</small>
-                </span>
-                <ArrowRight size={15} />
-              </button>
-              <button className="ads-card" onClick={openCreate}>
-                <Plus size={21} />
-                <span>
-                  <strong>创建素材测试</strong>
-                  <small>用新渠道、受众或版本验证表现</small>
-                </span>
-                <ArrowRight size={15} />
-              </button>
-              <button
-                className="ads-card"
-                onClick={() => onNavigate("smartAssets")}
-              >
-                <Sparkles size={21} />
-                <span>
-                  <strong>生成视频改版</strong>
-                  <small>带着诊断结果回到内容创作</small>
-                </span>
-                <ArrowRight size={15} />
-              </button>
-            </div>
-            {isLocalForeignTradeMockEnabled() && drafts.some(draft => isForeignTradeMockId(draft.id)) ? <section className="ads-card">
-              <div className="ads-section-title"><div><h2>外贸素材表现</h2><p className="ads-muted">近 7 天本地模拟数据，与整体表现中的中东、欧洲和拉美投放计划对应。</p></div></div>
-              <div className="ads-table-wrap"><table><thead><tr><th>素材 / 开头钩子</th><th>渠道 / 市场</th><th>花费</th><th>有效询盘</th><th>单条成本</th><th>Agent 建议</th></tr></thead><tbody>
-                {drafts.filter(draft => isForeignTradeMockId(draft.id)).map(draft => { const metric = mockCreativePerformance[draft.id]; return <tr key={draft.id}><td><strong>{draft.video}</strong><small>{metric?.hook}</small></td><td><span className="inline-flex items-center gap-1.5">{draft.channels.map(name => <span key={name} title={name}><PlatformLogoGroup value={name} size={18}/></span>)}</span><small>{draft.market}</small></td><td>{metric?.spend}</td><td>{metric?.inquiries}</td><td>{metric?.cpl}</td><td>{metric?.advice}</td></tr>; })}
-              </tbody></table></div>
-            </section> : <section className="ads-card ads-empty">
-              <Layers3 size={40} />
-              <h3>还没有关联投放的素材</h3>
-              <p>
-                广告素材及效果接口尚未接入。接入后，这里将按渠道展示素材表现，
-                <br />
-                并支持将优化建议转为内容改版任务。
-              </p>
-              <button
-                className="ads-button"
-                onClick={() => onNavigate("smartAssets")}
-              >
-                前往内容创作 <ArrowRight size={15} />
-              </button>
-            </section>}
-          </>
+          <AdCreativeLibrary onOpenTask={id => { const task = drafts.find(item => item.id === id); if (task) setSelectedDraft(task); onNavigate('adsPlans'); }} />
         )}
 
         <Drawer title="AI 投手" placement="right" size={720} open={managedOpen} onClose={() => setManagedOpen(false)} destroyOnHidden={false}>

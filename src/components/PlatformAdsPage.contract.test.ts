@@ -24,3 +24,17 @@ test('the advertising unit exposes three workspaces and keeps AI management in a
   assert.match(source, /if \(page !== 'adsManaged'\) return;[\s\S]*setManagedOpen\(true\);[\s\S]*onNavigate\('adsPlans'\)/);
   assert.doesNotMatch(source, /aria-label="投放总览视图"/);
 });
+
+test('material first-level page uses the real library rather than simulated performance or a placeholder', () => {
+  assert.match(source, /isCreativePage && \([\s\S]*<AdCreativeLibrary onOpenTask=/);
+  assert.doesNotMatch(source, /mockCreativePerformance|广告素材及效果接口尚未接入/);
+  const library = readFileSync(new URL('./AdCreativeLibrary.tsx', import.meta.url), 'utf8');
+  assert.match(library, /LsMasonryGallery/);
+  assert.match(library, /LsProgressiveMedia/);
+  assert.match(library, /LsMediaStateFrame/);
+  assert.match(library, /\/creative-library\?page=/);
+  assert.match(library, /\/creative-library\/\$\{id\}\/report/);
+  assert.match(library, /value == null \? '—'/);
+  assert.match(library, /URL\.revokeObjectURL/);
+  assert.doesNotMatch(library, /campaignId\}\/insights|spend \|\| 0|token=/);
+});

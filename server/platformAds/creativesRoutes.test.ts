@@ -20,12 +20,22 @@ const auth = (role = 'admin') => ({ Authorization: `Bearer ${issueLocalIdentityT
 try {
   assert.equal((await fetch(base + '/creative-sources')).status, 401);
   assert.equal((await fetch(base + '/creative-sources', { headers: auth() })).status, 200);
+  for (const route of ['/creative-library', '/creative-library/missing/report', '/creatives/missing/platform-preview', '/creatives/missing/media']) {
+    assert.equal((await fetch(base + route)).status, 401);
+  }
+  assert.equal((await fetch(base + '/creative-library', { headers: auth() })).status, 200);
   assert.equal((await fetch(base + '/tasks/missing/creatives', { headers: auth() })).status, 404);
-  for (const route of ['/tasks/missing/creatives', '/tasks/missing/creatives/missing/upload', '/tasks/missing/creatives/missing/reconcile']) {
+  for (const route of ['/tasks/missing/creatives', '/tasks/missing/creatives/missing/upload', '/tasks/missing/creatives/missing/reconcile', '/tasks/missing/creatives/attach-existing']) {
     assert.equal((await fetch(base + route, { method: 'POST', headers: auth('customer_service'), body: '{}' })).status, 403);
   }
   await store.create('platform_ad_tasks', { id: 'foreign-task', tenant_id: 'tenant-b', name: 'private' });
   await store.create('platform_ad_creatives', { id: 'foreign-creative', tenant_id: 'tenant-b', taskId: 'foreign-task', fileRef: 'private-reference' });
+  await store.create('platform_ad_executions', { id: 'foreign-execution', tenant_id: 'tenant-b', taskId: 'foreign-task', status: 'VERIFIED' });
+  for (const route of ['/creatives/foreign-creative/media', '/creatives/foreign-creative/platform-preview', '/creative-library/foreign-execution/report']) {
+    const response = await fetch(base + route, { headers: auth() });
+    assert.equal(response.status, 404);
+    assert.ok(!(await response.text()).includes('private-reference'));
+  }
   for (const action of ['upload', 'reconcile']) {
     const response = await fetch(base + `/tasks/foreign-task/creatives/foreign-creative/${action}`, { method: 'POST', headers: auth(), body: '{}' });
     assert.equal(response.status, 404, 'foreign creative upload/reconcile must not disclose or mutate another tenant');
