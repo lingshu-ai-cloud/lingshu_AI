@@ -3,6 +3,10 @@
 盘点日期：2026-10-22（Asia/Shanghai）
 来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。仅移除了两个目标路径已不存在的失效注册记录；未改写有效工作树、分支或运行数据。
 
+## 后续处置更新（2026-10-22）
+
+下文其余章节保留处置前的 19 树历史盘点。用户随后明确选择归档 8 个干净且补丁等价的来源树。再次核验各树无已跟踪/未跟踪改动、相对集成分支 `git cherry` 无正向独有补丁，忽略项仅为可重建的 `node_modules/`。由于这些不是当前任务的 Codex 托管工作树，无法生成 Codex 归档快照；已用 `git worktree remove` 移除 `exact-qwen-no-redirect`、`exact-request-ceiling`、`exact-request-ledger-v2`、`phase3c-v2-carry-seam`、`weekly-budget-carry`、`weekly-exact-head-store`、`weekly-exact-v2-carry`、`weekly-exact-v2-settlement` 的检出目录和注册记录。分支及提交全部保留，可重新检出；依赖目录需重装。现余 11 个有效工作树；5 个含未提交内容的来源树完全未动。
+
 ## 图片 AIGC 来源树复核（2026-10-22）
 
 - 集成分支当前 HEAD `0e5a3dc2664340c72fdd0b465bc915d8eb97cbd2` 与同名远端一致、工作区干净；来源树仍在 `95b0bcc16820e06fcc16ac75e040a6592abdc692`，其提交已是集成历史的祖先。

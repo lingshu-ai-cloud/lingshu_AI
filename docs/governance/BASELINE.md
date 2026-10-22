@@ -11,7 +11,7 @@
 - 阶段一治理提交：`69813195277028455b6cc0a0c675de01d66217d5`
 - 上一稳定基线：`xixi数字员工架构待清理` / `2d6c5a62d516c6eb5fc83d7dc19c17080aa31d98`
 - 本地集成工作树：`/Users/julia1/.codex/worktrees/xixi1021-full-integration`
-- 工作树最新盘点：[`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)（19 个有效注册项；5 个有未提交内容、8 个干净但有独有提交、其余有效路径干净且为集成 HEAD 祖先）。
+- 工作树最新盘点：[`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)（原 19 个有效注册项；其中 8 个补丁等价的干净来源树已退出工作树注册，现余 11 个；5 个有未提交内容的来源树保留）。
 - 阶段 0 核验时工作区干净；图片 AIGC 工作树 `mobile-dual-edition-20261012` 有未提交改动，明确不属于本基线。
 
 ## 阶段一范围
@@ -301,3 +301,8 @@
 
 - 将视频告警/灵感列表的汇总与缓存辅助移入 `adminAlertSupport.ts`，将试用账号、升级正式客户及支持访问会话路由移入 `adminAccountRoutes.ts`，在原位置注册以保持中间件和路由顺序。`admin.ts` 由 1415 行降至 727 行；两个新模块分别为 382/307 行，撤销超限豁免，剩余 26 项。
 - 密码不可恢复性合同改为核对新路由文件及其挂载点，仍断言响应不含明文/可逆密码；管理员认证、支持访问、交付入口和密码安全四组专项通过。TypeScript、架构扫描/ratchet、生产构建与 191 项迁移仓库只读检查通过。构建的三个大 chunk 提示仍在；未执行真实支持会话、迁移或部署。
+
+## 补丁等价的干净来源工作树收口（2026-10-22）
+
+- 用户明确选择归档 8 个 exact-Qwen/weekly-exact/carry 候选工作树。逐一复核 `git status --porcelain` 均为空，`git cherry` 对集成分支均无未覆盖的正向补丁；各树唯一的忽略项是可重建的 `node_modules/`。这些目录不是当前任务可由 Codex 托管归档的工作树，因此使用 `git worktree remove` 退出注册并清理检出目录；全部命名分支和提交仍保留，可用 `git worktree add` 恢复源码检出，但 `node_modules/` 需重新安装。这不是 Codex 的工作树快照归档。
+- 五个含未提交内容的来源工作树未动，其他干净工作树也未动。详见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。
