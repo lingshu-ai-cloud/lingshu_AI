@@ -5,13 +5,14 @@ const monitorSource = fs.readFileSync("src/components/AgentMonitorPage.tsx", "ut
 const viewportSource = fs.readFileSync("src/components/AgentBrowserViewport.tsx", "utf8");
 const browserSource = fs.readFileSync("server/digitalEmployees/browserSessions.ts", "utf8");
 const cockpitSource = fs.readFileSync("src/components/DigitalEmployeePage.tsx", "utf8") + fs.readFileSync("src/components/DeliveryBoard.tsx", "utf8");
-const appSource = fs.readFileSync("src/App.tsx", "utf8");
+const modulesSource = fs.readFileSync("src/appPageModules.tsx", "utf8");
+const slotSource = fs.readFileSync("src/AppPageSlot.tsx", "utf8");
 const layoutSource = fs.readFileSync("src/components/Layout.tsx", "utf8");
 const libSource = fs.readFileSync("src/lib/digitalEmployees.ts", "utf8");
 
-assert.match(appSource, /const loadAgentMonitorPage = \(\) => import\(['"]\.\/components\/AgentMonitorPage['"]\)/, "the monitor wall must retain a dedicated dynamic import loader");
-assert.match(appSource, /const AgentMonitorPage = lazy\(loadAgentMonitorPage\)/, "the monitor wall must be a separately loaded page");
-assert.match(appSource, /page === ['"]agentMonitor['"][\s\S]{0,400}<AgentMonitorPage/, "the application must route to the independent monitor page");
+assert.match(modulesSource, /const loadAgentMonitorPage = \(\) => import\(['"]\.\/components\/AgentMonitorPage['"]\)/, "the monitor wall must retain a dedicated dynamic import loader");
+assert.match(modulesSource, /const AgentMonitorPage = lazy\(loadAgentMonitorPage\)/, "the monitor wall must be a separately loaded page");
+assert.match(slotSource, /page === ['"]agentMonitor['"][\s\S]{0,220}<AgentMonitorPage/, "the application page slot must route to the independent monitor page");
 assert.match(layoutSource, /page !== ['"]agentMonitor['"] && <motion\.aside/, "the independent monitor page must remove the ordinary sidebar");
 assert.match(cockpitSource, /打开监控大屏/, "the execution center must expose the monitor wall entry");
 assert.match(monitorSource, /digitalEmployeeApi\.overview\(\)/, "the monitor wall must use the real overview endpoint");

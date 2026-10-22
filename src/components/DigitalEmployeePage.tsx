@@ -19,6 +19,7 @@ import { TodayFocusPanel } from './smartBusiness/DigitalEmployeeTodayFocusPanel'
 import { BatchFollowupTruthPanel, type OpenBusinessLink } from './smartBusiness/BatchFollowupTruthPanel';
 import DeliveryBoard from "./DeliveryBoard";
 import ProductionTaskScene from "./ProductionTaskScene";
+import DiscoveryTaskFailureNotice from "./DiscoveryTaskFailureNotice";
 import AgentDecisionCard, { type AgentDecisionKind } from "./AgentDecisionCard";
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
 import { type SmartOperationsAccount } from "./SmartOperationsAccountRail";
@@ -234,10 +235,6 @@ function Badge({ status, label }: { status: string; label?: string }) {
     </span>
   );
 }
-
-
-
-
 
 function outputSummary(task: WorkflowTask): string {
   if (task.output.dataStatus === "not_required") return String(task.output.summary || "本轮无需执行");
@@ -1918,6 +1915,7 @@ export default function DigitalEmployeePage({
                   <div id="task-production-scene" className="relative scroll-mt-6">
                     {selectedTask ? <div className="space-y-3">
                       <section className="rounded-lg border border-slate-200 bg-white p-4" aria-label="数字员工任务轨迹"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-semibold tracking-[.14em] text-emerald-700">任务轨迹</p><h3 className="mt-1 text-sm font-semibold text-slate-950">{selectedTask.title}</h3></div><Button htmlType="button" onClick={() => dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(selectedTask, selectedPlanTask, data.run!.id))} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-[10px] font-semibold text-white">下钻业务页面 <ArrowRight size={12}/></Button></div><dl className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{[{label:"当前节点",value:humanizeValue(selectedTask.status)},{label:"来源",value:selectedTaskSource},{label:"结果",value:selectedTaskResult},{label:"下一步",value:selectedTaskNext}].map(item=><div key={item.label} className="rounded-lg bg-slate-50 px-3 py-3"><dt className="text-[9px] font-bold text-slate-400">{item.label}</dt><dd className="mt-1 line-clamp-2 text-[11px] font-bold leading-5 text-slate-800">{item.value}</dd></div>)}</dl></section>
+                      <DiscoveryTaskFailureNotice task={selectedTask} />
                       <ProductionTaskScene runId={data.run.id} taskId={selectedTask.id} embedded onOpenProduction={() => dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(selectedTask, selectedPlanTask, data.run!.id))} />
                     </div> : <div className="rounded-lg border border-dashed border-slate-200 bg-white p-12 text-center text-sm text-slate-400">请选择上方 Agent 查看生产进度</div>}
                   </div>
