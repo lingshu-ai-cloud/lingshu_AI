@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵小枢页面信号职责拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `adb0a2bf` 将页面上下文事件的来源过滤、关闭态按当前周目标读取权威待办数量的低频轮询与监听清理迁至 `src/components/assistant/useAssistantPageSignals.ts`。浮层保留状态和身份范围所有权，`GlobalAssistant.tsx` 从 1,622 降至 1,557 行，历史预算同步收紧。契约测试还更新了此前迁出动作请求后遗留的旧超时断言，改为核验实际请求适配层，并移除未使用常量。全仓仍有 7 个历史超限文件，结构治理尚未收口。
+- `test:assistant`、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,333 个生产 TypeScript 文件）、192 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未执行真实付费供应商、目标库迁移、浏览器端验收或部署。LinkedIn 付费采集及额外 AIGC 降级仍未满足完整门禁，不因本次拆分开放；最终本地/远端 SHA 和工作区状态以推送后 Git 核对为准。
+
 ## GPT 图片证据原始回执限流（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `bf59f368` 将付费响应的流式字节上限抽为 `server/lib/boundedProviderResponse.ts`：GPT 图片证据适配器在读取时最多接收 1 MiB 原始正文，Apify 原始回执路径继续采用 8 MiB 上限。GPT 响应超限后同一逐记录许可保持结果不明，跨上下文实例不能重发；不将原分支无许可的自动 GPT 降级接入路由，保留用户指定的现有 Qwen→Gemini 行为。
