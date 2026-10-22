@@ -4,7 +4,7 @@ import fs from 'node:fs';
 const source = fs.readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
 const cardsSource = fs.readFileSync(new URL('./InspirationVideoCards.tsx', import.meta.url), 'utf8');
 const progressSource = fs.readFileSync(new URL('./inspiration/VideoAnalysisProgressPanel.tsx', import.meta.url), 'utf8');
-const watchModal = source.slice(source.indexOf('function WatchModal'), source.indexOf('interface DirectorReviewHandoff'));
+const watchModal = source.slice(source.indexOf('function WatchModal'), source.indexOf("export { splitDirectorReviewedShot"));
 
 assert.match(watchModal, /zIndex=\{2200\}/, 'the original-content preview must render above the Ant detail drawer');
 assert.match(watchModal, /video\.videoUrl && !useEmbedPlayer/);
