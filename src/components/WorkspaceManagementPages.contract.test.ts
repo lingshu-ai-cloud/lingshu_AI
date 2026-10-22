@@ -4,15 +4,18 @@ import vm from 'node:vm';
 import ts from 'typescript';
 
 const source = fs.readFileSync('src/components/WorkspaceManagementPages.tsx', 'utf8');
+const organizationSource = fs.readFileSync('src/components/OrganizationPermissionsPage.tsx', 'utf8');
 const file = ts.createSourceFile('WorkspaceManagementPages.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const organizationFile = ts.createSourceFile('OrganizationPermissionsPage.tsx', organizationSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const handlers = new Map<string, string>();
-function visit(node: ts.Node) {
+function visit(node: ts.Node, owner: ts.SourceFile) {
   if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && ts.isArrowFunction(node.initializer)) {
-    handlers.set(node.name.text, node.initializer.getText(file));
+    handlers.set(node.name.text, node.initializer.getText(owner));
   }
-  ts.forEachChild(node, visit);
+  ts.forEachChild(node, child => visit(child, owner));
 }
-visit(file);
+visit(file, file);
+visit(organizationFile, organizationFile);
 
 // Exercise the actual async UI handlers with in-memory collaborators. These are
 // not browser focus/visual tests and deliberately never call a live API.
@@ -25,19 +28,20 @@ function handler(name: string, bindings: Record<string, unknown>) {
   return context.run as (...args: any[]) => Promise<unknown> | void;
 }
 
-assert.doesNotMatch(source, /<PageShell hideHeader/, 'all three workspaces must use the shared page title');
-assert.doesNotMatch(source, /<button\b|<select\b|<textarea\b|<input\b|useModalFocus|window\.confirm/, 'controls and overlays must use the themed Ant behavior');
-assert.match(source, /<Table<EmployeeAccount>/);
-assert.match(source, /<Popconfirm title="移除成员？"/);
+assert.match(source, /export \{ OrganizationPermissionsPage \} from '\.\/OrganizationPermissionsPage'/, 'workspace entry must retain the organization page export');
+assert.doesNotMatch(source + organizationSource, /<PageShell hideHeader/, 'all three workspaces must use the shared page title');
+assert.doesNotMatch(source + organizationSource, /<button\b|<select\b|<textarea\b|<input\b|useModalFocus|window\.confirm/, 'controls and overlays must use the themed Ant behavior');
+assert.match(organizationSource, /<Table<EmployeeAccount>/);
+assert.match(organizationSource, /<Popconfirm title="移除成员？"/);
 assert.match(source, /<Drawer open size=\{760\}/);
 assert.match(source, /<Drawer open size=\{640\}/);
 assert.match(source, /form="agent-memory-editor-form"/);
-assert.match(source, /form="organization-member-form"/);
+assert.match(organizationSource, /form="organization-member-form"/);
 assert.match(source, /beforeUpload=\{file => \{ restoreMemoryBackup\(file\); return false; \}\}/, 'choosing a backup must not auto-upload or skip confirmation');
 assert.match(source, /includeMockCustomers && import\.meta\.env\.DEV && !hasContentOpsData/);
 assert.match(source, /createMockCustomers\(mockCustomerScope\)/);
 assert.match(source, /策略记忆|审计记录/);
-assert.doesNotMatch(source, /hover:-translate|shadow-sm|rounded-2xl/);
+assert.doesNotMatch(source + organizationSource, /hover:-translate|shadow-sm|rounded-2xl/);
 
 const member = { id: 'member-1', name: '运营', email: 'operator@example.test', role: 'social_operator', isCurrent: false };
 function memberHarness(canManage = true, reject = false) {
