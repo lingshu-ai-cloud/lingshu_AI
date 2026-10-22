@@ -21,7 +21,8 @@ for (const patch of [
 assert.equal(presenterApprovalMatches({ ...binding, jobId: '' }, [approved]), false);
 assert.equal(presenterApprovalForProject(binding.tenantId, binding.projectId, spec, { ...blocked, heygenApproved: true }, []), false, 'snapshot true cannot forge or preserve missing durable approval');
 const source = fs.readFileSync(new URL('./contentProduction.ts', import.meta.url), 'utf8');
-assert.match(source, /if \(usesDigitalPresenter\(brief\)\) automation\.heygenApproved = presenterApprovalForProject/);
-assert.match(source, /!approvalChanged && !contentProjectRetryable/);
+const executionSource = fs.readFileSync(new URL('./contentProductionExecution.ts', import.meta.url), 'utf8');
+assert.match(executionSource, /if \(usesDigitalPresenter\(brief\)\) automation\.heygenApproved = presenterApprovalForProject/);
+assert.match(executionSource, /!approvalChanged && !contentProjectRetryable/);
 assert.match(source, /retryable: contentProjectRetryable\(projectAutomation\(project\)\)[\s\S]{0,300}\|\| presenterApprovalResumesQuality/);
 console.log('Presenter approval recovery passed (in-memory records only; no provider or live writes).');
