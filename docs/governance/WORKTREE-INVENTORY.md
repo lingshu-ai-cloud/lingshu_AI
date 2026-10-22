@@ -5,7 +5,7 @@
 
 ## 当前复核（2026-10-22，独立集成检出）
 
-- 当前共有 **9 个**有效注册工作树。`/Users/julia1/.codex/worktrees/xixi1021-governance-baseline` 是 `xixi1021程永罗沟通前大整合` 的独立干净检出；盘点起点本地/远端同为 `1270cfabfb83d51ad88d70f55f1b16e5a98cb7ba`，没有 Git 改动或被忽略文件。本次文档提交后以 `git rev-parse HEAD` 与 `git ls-remote` 重新确认分支指针。
+- 当前共有 **9 个**有效注册工作树。`/Users/julia1/.codex/worktrees/xixi1021-governance-baseline` 是 `xixi1021程永罗沟通前大整合` 的独立集成检出；2026-10-22 本批修改前本地/远端同为 `18e233c831655c0ec2b3b1365a9f76309dbc28ce`，Git 工作区干净。提交后须重新执行 `git rev-parse HEAD`、`git status --porcelain` 与 `git ls-remote`，不能把盘点起点当作最新指针。
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 已由另一任务切到 `feature/platform-ads-meta-workspace-20261022`，盘点时 `849cf0819c2fc2038f3e8cc076afdda1efc7a44d`、Git 工作区干净，但有被忽略的业务/运行数据；**不再是集成检出**，不归档或混入基线。
 - 五个有未提交内容的来源树仍是 `local-preview-1002`、`local-integrated-flow`、`local-unified-20261010`、`mobile-dual-edition-20261012`、`total-merge-langgraph`，各含源码或运行数据，全部保留。`safe-all-modules-ui-20261009` 和 `colleague-handoff-20261019` 虽 Git 状态干净，仍有大量被忽略的业务/运行数据，保留不归档。此前移除的 11 个干净树未重新注册。
 - 图片 AIGC 来源 HEAD `95b0bcc16820e06fcc16ac75e040a6592abdc692` 及用户列出的 `6e2d2e4ffde42e8240750c950763b0b5dd2859ea` 都是集成分支祖先。来源树未提交的产品代码仍集中在周任务日历改视频进度表及相关测试/演示，不是新的图片 AIGC 管线补丁；来源树的 `AGENTS.md`、文档、分析与视频运行产物也未动。本盘点仅确认已提交 AIGC 源码的祖先关系，**不**宣称来源树已清空或多输出真实供应商链路已验收。

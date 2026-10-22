@@ -4,8 +4,8 @@
 
 ## 当前权威源码检出（2026-10-22 复核）
 
-- 集成分支：`xixi1021程永罗沟通前大整合`；独立本地检出：`/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`。本次文档修改前，本地与远端同为 `1270cfabfb83d51ad88d70f55f1b16e5a98cb7ba`，工作区干净。文档提交会推进该指针，交接时须再以 `git rev-parse HEAD`、`git status --porcelain` 和 `git ls-remote` 核对，不能沿用本行盘点起点作为提交后的 HEAD。
-- 最近独立代码验收点为 `be8a7d1ff9abb8efcbbd7487eaa473d25122e7c7`：其干净检出中 TypeScript、架构扫描、生产构建、191 项迁移清单只读检查和客服回复聚焦测试通过；历史超限文件仍为 10 项。`AiCreateStudio` 主 chunk 为 497090/500000 字节。运行数据、真实供应商 Ready 和发布状态均未由此验收。
+- 集成分支：`xixi1021程永罗沟通前大整合`；独立本地检出：`/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`。此文档不把会随提交变化的 SHA 写成永久“当前 HEAD”；交接时必须以 `git rev-parse HEAD`、`git status --porcelain` 和 `git ls-remote` 核对本地、远端和工作区状态。
+- 最近图片准入代码验收点为 `eae873e78d4894bb001e210362a881c008447d77`，验证范围见下节。之前客服回复结构治理验收点为 `be8a7d1ff9abb8efcbbd7487eaa473d25122e7c7`。历史超限文件仍为 10 项；运行数据、真实供应商 Ready 和发布状态均未由这些代码验收。
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 9 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
@@ -13,6 +13,7 @@
 
 - 代码提交 `eae873e7` 将隔离的真实 HTTP 路由测试加入 `test:social-image-pipeline`：GIF 任务在供应商前返回 `social_image_gif_delivery_not_ready`，未冻结的轮播单元返回 `social_image_frozen_plan_invalid`。测试使用临时本地数据目录并在结束时清理，不发起供应商请求。
 - 图片管线 44 项领域测试、新 HTTP 测试、现有路由源码合同、TypeScript、架构扫描与 ratchet 测试、生产构建、191 项迁移清单只读检查和 `git diff --check` 通过；主 Studio chunk 为 497103/500000 字节。此验收只证明拒绝路径，**不证明**轮播付费生成的 HTTP 全流程、GIF 合成交付、浏览器交互或真实供应商就绪；这些仍待完成。
+- AIGC 来源 `95b0bcc` 已是集成祖先，但来源版本的 `/fb-poster/render` 在一次 HTTP 请求中循环发起多个图片供应商调用，再统一回写一个任务；中断时无法逐单元恢复。当前基线改为冻结计划和逐单元认领，轮播服务端已部分接线，GIF 仍明确关闭。恢复 GIF 不能直接拷回来源旧循环；需按冻结单元分别生成、回执恢复，再从已持久化底图合成固定图层与最终 GIF，并独立验证交付身份。
 
 ## WhatsApp 历史与入站处理边界退出超限清单（2026-10-22）
 
