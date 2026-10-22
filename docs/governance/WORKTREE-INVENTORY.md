@@ -3,6 +3,12 @@
 最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。本次只读复核未改写工作树、分支或运行数据；历史移除记录见下文。
 
+## 2026-10-23 集成点 `f0fce7f7` 再盘点
+
+- 在集成树干净、HEAD 为 `f0fce7f72c7c2e32858bae586eb8662a48a1d0bb` 时逐一复核 11 个注册树。6 个非集成树有未提交项：`local-preview-1002` 53、`local-integrated-flow` 91、`local-unified-20261010` 6、`mobile-dual-edition-20261012` 28、`客服` 1、`total-merge-langgraph` 20；均保留原位。计数为 Git porcelain 条目，不代表文件数。
+- 4 个干净非集成树中，`safe-all-modules-ui-20261009` 与 `colleague-handoff-20261019` 无正向独有补丁但有被忽略的业务媒体/账本；广告树 `xixi1021-full-integration` 有 14 个正向独有补丁及被忽略的广告审计/账号数据；`1022图片生成模块` 有 1 个正向独有补丁。没有“干净、无独有补丁、仅有可重建缓存”的无损归档候选，未清理任何树。
+- 新图片提交 `23b1bb93` 的 Qwen 图层蓝图、蒙版/图层确定性能力已在集成实现中；剩余路由把 Qwen 失败或低置信复核改为自动 GPT，替换现有 Qwen→Gemini 行为且未具生产付费许可。遵守用户要求暂留旧行为，不整笔 cherry-pick。工作树盘点与补丁复核不等于真实供应商、目标共享卷或浏览器验收；本节只记录复核点，不表示当前永久 HEAD。
+
 ## 2026-10-23 集成点 `ad4bf42e` 图片来源与归档复核
 
 - 只读检查时集成树 `xixi1021-governance-baseline` 为 `ad4bf42ea4636b93f17662c5c0bf5e0e35a93b38`，工作区干净；该点位不是永久 HEAD。共 11 个有效注册工作树。6 个非集成树仍有未提交项：`local-preview-1002` 53、`local-integrated-flow` 91、`local-unified-20261010` 6、`mobile-dual-edition-20261012` 28、`客服` 1、`total-merge-langgraph` 20；计数是 `git status --porcelain` 条目，未触碰这些树。

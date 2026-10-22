@@ -2,6 +2,12 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 视频爬虫运行配置拆分与工作树复核（2026-10-23）
+
+- 代码提交 `6934ca1a` 将代理池、子进程环境、Cookie 文件及浏览器候选选择迁至 `server/routes/videoCrawlerRuntimeConfig.ts`；`videos.ts` 继续负责当前尝试代理和实际下载，从 9,495 降至 9,424 行并收紧预算。修正原有逗号分隔浏览器配置会把整串送作单个 yt-dlp 浏览器名的问题。全仓仍有 7 个历史超限文件，架构债务未清零。
+- 运行配置/下载参数直测 5/5、原视频恢复测试、`test:production-workflows`、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,338 个生产 TypeScript 文件）、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。没有真实下载、付费供应商、目标库迁移、浏览器验收或部署。
+- 当前 11 个工作树的只读复核见 `docs/governance/WORKTREE-INVENTORY.md`：6 个非集成树仍有未提交项；4 个干净非集成树分别有独有补丁或被忽略的业务/账本数据，没有符合无损归档条件的新候选。图片 `23b1bb93` 的剩余自动 GPT 路由仍与用户要求暂留的 Qwen→Gemini 行为冲突，且无生产可用许可，不整笔合入。最终本地/远端 SHA 和工作区状态以推送后 Git 核对为准。
+
 ## Studio 口播语种规则拆分（2026-10-23）
 
 - 代码提交 `6e75a959` 将目标语种文字系统判定、逐句修复切分和配音句子边界迁至纯规则模块 `server/routes/studioVoiceoverLanguageRules.ts`。`studio.ts` 继续转发既有公开函数，并保留模型翻译、TTS 供应商、文件、付费许可与回执编排；路由从 9,568 降至 9,502 行，历史预算同步收紧。全仓仍有 7 个历史超限文件，结构治理未完成。
