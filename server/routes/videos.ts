@@ -22,6 +22,8 @@ import { buildApifyTikTokInput } from './apifyTikTokInput.js';
 export { buildApifyTikTokInput } from './apifyTikTokInput.js';
 import { buildVideoDownloaderArgs } from './videoDownloaderArgs.js';
 export { platformReferer } from './videoDownloaderArgs.js';
+import { browserUserAgent, cookieBrowsers, cookieFiles, cookiesBrowser, crawlerExecutionEnv,
+  crawlerProxyPool, crawlerProxyUrl, usesServerCookiesForCrawl } from './videoCrawlerRuntimeConfig.js';
 import { assertConfiguredLinkedInCompanyPaidCollection, runConfiguredLinkedInCompanyPaidCollection, type LinkedInCompanyPaidPermit } from './linkedinCompanyPostPaidCollection.js';
 import {frozenWeeklyAccountFiveVideoActorInput} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
 import {readVerifiedWeeklyOriginalDatasetReplay,type VerifiedWeeklyOriginalDatasetReplay} from '../socialDiscovery/weeklyAccountCollectionDatasetContinuation.js';
@@ -8393,52 +8395,11 @@ async function fetchFacebookHtml(url: string): Promise<string> {
 }
 
 function proxyUrl(): string {
-  return runtimeCrawlerProxy || process.env.CRAWLER_PROXY || firstCrawlerProxyFromPool();
+  return crawlerProxyUrl(runtimeCrawlerProxy);
 }
 
 function crawlerExecEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  delete env.NODE_USE_ENV_PROXY;
-  if (runtimeCrawlerProxy) {
-    env.CRAWLER_PROXY = runtimeCrawlerProxy;
-    env.HTTPS_PROXY = runtimeCrawlerProxy;
-    env.HTTP_PROXY = runtimeCrawlerProxy;
-    env.https_proxy = runtimeCrawlerProxy;
-    env.http_proxy = runtimeCrawlerProxy;
-  }
-  return env;
-}
-
-function cookiesBrowser(): string {
-  return process.env.YT_DLP_COOKIES_BROWSER || 'safari';
-}
-
-function cookieBrowsers(): string[] {
-  const configured = process.env.YT_DLP_COOKIES_BROWSER?.split(',').map(s => s.trim()).filter(Boolean) ?? [];
-  const candidates = [...new Set([...configured, cookiesBrowser(), 'safari', 'chrome', 'brave', 'edge', 'firefox'])];
-  return candidates.filter(browserCookiesLikelyAvailable);
-}
-
-function cookieFiles(): string[] {
-  return (process.env.YT_DLP_COOKIE_FILES || process.env.YT_DLP_COOKIES_FILE || '')
-    .split(',')
-    .map(file => file.trim())
-    .filter(file => file && fs.existsSync(file));
-}
-
-function usesServerCookiesForCrawl(platform: Platform): boolean {
-  return platform === 'youtube' || platform === 'tiktok';
-}
-
-function crawlerProxyPool(): string[] {
-  return (process.env.CRAWLER_PROXY_POOL || '')
-    .split(',')
-    .map(proxy => proxy.trim())
-    .filter(Boolean);
-}
-
-function firstCrawlerProxyFromPool(): string {
-  return crawlerProxyPool()[0] || '';
+  return crawlerExecutionEnv(runtimeCrawlerProxy);
 }
 
 export function buildYtDlpArgs(extra: string[], url: string, withCookies: boolean): string[] {
@@ -8446,11 +8407,6 @@ export function buildYtDlpArgs(extra: string[], url: string, withCookies: boolea
     userAgent: browserUserAgent(), proxy: proxyUrl(), cookiesBrowser: cookiesBrowser(),
     nodeExecutable: process.execPath, youtubeEjsEnabled: process.env.YT_DLP_YOUTUBE_EJS_ENABLED !== '0',
   });
-}
-
-function browserUserAgent(): string {
-  return process.env.CRAWLER_USER_AGENT
-    || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 }
 
 async function execYtDlpWithCookieFallback(extra: string[], url: string, timeout: number, maxBuffer: number, budget = new DownloadBudget(timeout)): Promise<string> {
@@ -8490,33 +8446,6 @@ async function execYtDlpWithCookieFallback(extra: string[], url: string, timeout
   }
   throw budget.error('yt-dlp cookie fallback failed');
 }
-
-function browserCookiesLikelyAvailable(browser: string): boolean {
-  const home = process.env.HOME || '';
-  if (!home) return true;
-  const support = path.join(home, 'Library', 'Application Support');
-  const normalized = browser.toLowerCase();
-  if (normalized === 'safari') {
-    return fs.existsSync(path.join(home, 'Library', 'Cookies', 'Cookies.binarycookies'));
-  }
-  const roots: Record<string, string> = {
-    chrome: path.join(support, 'Google', 'Chrome'),
-    brave: path.join(support, 'BraveSoftware', 'Brave-Browser'),
-    edge: path.join(support, 'Microsoft Edge'),
-    firefox: path.join(support, 'Firefox', 'Profiles'),
-  };
-  const root = roots[normalized];
-  if (root) {
-    try {
-      return fs.readdirSync(root, { withFileTypes: true }).some(entry => entry.isDirectory() && (
-        fs.existsSync(path.join(root, entry.name, normalized === 'firefox' ? 'cookies.sqlite' : 'Cookies'))
-        || fs.existsSync(path.join(root, entry.name, 'Network', 'Cookies'))
-      ));
-    } catch { return false; }
-  }
-  return true;
-}
-
 
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10);
