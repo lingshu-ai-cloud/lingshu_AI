@@ -177,13 +177,21 @@ export interface SocialImageQualityCheck {
 
 export interface SocialImageOutputNode {
   id: string;
-  role: 'single' | 'carousel_page' | 'gif_plate' | 'gif_output';
+  role: 'single' | 'carousel_page' | 'gif_plate' | 'gif_frame' | 'gif_output';
   label: string;
   state: 'pending' | 'generating' | 'quality_checking' | 'repair_required' | 'blocked' | 'approved' | 'superseded';
   mediaUrl?: string;
   materialId?: string;
   version: number;
   qualityChecks: SocialImageQualityCheck[];
+  sourceJobId?: string;
+}
+
+export interface SocialImageGifDelivery {
+  planVersion: number;
+  sourceHash: string;
+  frameOutputIds: string[];
+  finalOutputId: string;
 }
 
 export interface SocialImageCreationTask {
@@ -219,6 +227,7 @@ export interface SocialImageCreationTask {
   enterpriseAssets: SocialImageEnterpriseAssetBinding[];
   generationJobs: SocialImageGenerationJob[];
   renderPlan?: SocialImageFrozenRenderPlan;
+  gifDelivery?: SocialImageGifDelivery;
   repairInstructions: SocialImageRepairInstruction[];
   outputs: SocialImageOutputNode[];
   fieldsToConfirm: string[];
@@ -248,11 +257,22 @@ function socialImageMultiOutputComplete(task: SocialImageCreationTask, outputs: 
   if (!plan || plan.units.length !== task.deliverySpec.outputCount) return false;
   const unitsReady = plan.units.every(unit => {
     const job = task.generationJobs.find(item => item.id === unit.jobId && item.planVersion === plan.version && item.unitIndex === unit.index);
-    const output = outputs.find(item => item.role === unit.role && item.label === unit.label && item.materialId && item.state === 'approved');
+    const output = outputs.find(item => item.role === unit.role && item.label === unit.label && item.materialId
+      && (task.imageType === 'gif_poster' ? item.state !== 'superseded' : item.state === 'approved'));
     return Boolean(job && output && job.outputNodeIds.includes(output.id));
   });
   if (!unitsReady) return false;
-  return task.imageType !== 'gif_poster' || outputs.some(output => output.role === 'gif_output' && output.materialId && output.state === 'approved');
+  if (task.imageType !== 'gif_poster') return true;
+  const delivery = task.gifDelivery;
+  return Boolean(delivery && delivery.planVersion === plan.version && delivery.sourceHash === plan.sourceHash
+    && delivery.frameOutputIds.length === plan.units.length
+    && plan.units.every(unit => outputs.some(output => output.id === delivery.frameOutputIds[unit.index]
+      && output.role === 'gif_frame' && output.sourceJobId === unit.jobId && output.materialId && output.state === 'approved'))
+    && outputs.some(output => output.id === delivery.finalOutputId && output.role === 'gif_output' && output.materialId && output.state === 'approved'));
+}
+
+function deliverableOutputs(task: SocialImageCreationTask, outputs: SocialImageOutputNode[]): SocialImageOutputNode[] {
+  return task.imageType === 'gif_poster' ? outputs.filter(output => output.role !== 'gif_plate') : outputs;
 }
 
 export function socialImageTaskIssues(task: SocialImageCreationTask): string[] {
@@ -272,9 +292,10 @@ export function socialImageTaskIssues(task: SocialImageCreationTask): string[] {
   if (task.schemaVersion === 'social-image-creation.v2' && identityBindings.some(asset => !asset.assetId || !asset.source.startsWith('enterprise_'))) issues.push('产品或 Logo 必须绑定企业知识库资产');
   const currentOutputs = socialImageCurrentOutputs(task);
   if (task.status === 'approved' && !socialImageMultiOutputComplete(task, currentOutputs)) issues.push('多图单元或最终动图未全部完成审阅');
-  const hardChecks = currentOutputs.flatMap(output => output.qualityChecks).filter(check => check.severity === 'hard');
+  const deliverables = deliverableOutputs(task, currentOutputs);
+  const hardChecks = deliverables.flatMap(output => output.qualityChecks).filter(check => check.severity === 'hard');
   const failedHard = hardChecks.some(check => check.verdict !== 'pass' && check.verdict !== 'not_applicable');
-  const missingHard = currentOutputs.length > 0 && currentOutputs.some(output => SOCIAL_IMAGE_HARD_CHECKS.some(key => !output.qualityChecks.some(check => check.key === key && check.severity === 'hard')));
+  const missingHard = deliverables.length > 0 && deliverables.some(output => SOCIAL_IMAGE_HARD_CHECKS.some(key => !output.qualityChecks.some(check => check.key === key && check.severity === 'hard')));
   if (failedHard && task.publishable) issues.push('硬质量门未全部通过');
   if (missingHard && task.publishable) issues.push('硬质量门结果不完整');
   return issues;
@@ -282,10 +303,11 @@ export function socialImageTaskIssues(task: SocialImageCreationTask): string[] {
 
 export function socialImageTaskCanPublish(task: SocialImageCreationTask): boolean {
   const currentOutputs = socialImageCurrentOutputs(task);
-  const hardChecksPassed = currentOutputs.length > 0 && currentOutputs.every(output => SOCIAL_IMAGE_HARD_CHECKS.every(key => output.qualityChecks.some(check => check.key === key && check.severity === 'hard' && (check.verdict === 'pass' || check.verdict === 'not_applicable'))));
+  const deliverables = deliverableOutputs(task, currentOutputs);
+  const hardChecksPassed = deliverables.length > 0 && deliverables.every(output => SOCIAL_IMAGE_HARD_CHECKS.every(key => output.qualityChecks.some(check => check.key === key && check.severity === 'hard' && (check.verdict === 'pass' || check.verdict === 'not_applicable'))));
   return task.status === 'approved' && task.contentBrief.factuality !== 'mock' && task.fieldsToConfirm.length === 0 && socialImageTaskIssues({ ...task, publishable: false }).length === 0
     && currentOutputs.length > 0
     && socialImageMultiOutputComplete(task, currentOutputs)
-    && currentOutputs.every(output => output.state === 'approved') && hardChecksPassed;
+    && deliverables.every(output => output.state === 'approved') && hardChecksPassed;
 }
 import type { SocialImageLayerGraph } from './socialImageLayerGraph';

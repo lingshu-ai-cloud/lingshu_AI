@@ -83,6 +83,7 @@ export function socialImagePlannedRenderInput(task: SocialImageCreationTask, job
 /** Freeze carousel/GIF units and receipt identities before any paid call. */
 export async function persistSocialImageMultiUnitPlan(input: {
   store: DataStore; tenantId: string; taskId: string; expectedVersion: number;
+  productHashes?: Record<string, string>;
 }): Promise<SocialImageCreationTask> {
   await requireSocialImageAtomicStore(input.store);
   const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
@@ -90,8 +91,19 @@ export async function persistSocialImageMultiUnitPlan(input: {
   if (task.imageType !== 'carousel' && task.imageType !== 'gif_poster') {
     throw new SocialImagePaidJobError('social_image_multi_plan_type_required');
   }
+  if (task.imageType === 'gif_poster' && input.productHashes
+    && (task.contentBrief.productRefs.length < 1 || task.contentBrief.productRefs.length > 2)) {
+    throw new SocialImagePaidJobError('social_image_gif_product_count_invalid');
+  }
   if (!task.renderBrief?.headline) throw new SocialImagePaidJobError('social_image_render_brief_required');
-  const sourceHash = socialImagePlanSourceHash(task);
+  const frozenAssets = input.productHashes ? task.enterpriseAssets.map(asset => asset.role === 'product'
+    && task.contentBrief.productRefs.includes(asset.assetId)
+    ? { ...asset, contentHash: input.productHashes![asset.assetId] } : asset) : task.enterpriseAssets;
+  if (input.productHashes && task.contentBrief.productRefs.some(id => !/^[a-f0-9]{64}$/.test(input.productHashes?.[id] || '')
+    || !frozenAssets.some(asset => asset.role === 'product' && asset.assetId === id && asset.contentHash === input.productHashes?.[id]))) {
+    throw new SocialImagePaidJobError('social_image_product_asset_unavailable');
+  }
+  const sourceHash = socialImagePlanSourceHash({ ...task, enterpriseAssets: frozenAssets });
   if (task.renderPlan?.sourceHash === sourceHash && task.renderPlan.units.every(unit => task.generationJobs.some(job => (
     job.id === unit.jobId && job.idempotencyKey === unit.idempotencyKey && job.plannedInputHash === unit.plannedInputHash
   )))) return task;
@@ -120,6 +132,11 @@ export async function persistSocialImageMultiUnitPlan(input: {
   }));
   const saved = await updateSocialImageTask(input.store, input.tenantId, task.id, task.version, {
     status: 'planned', step: 'generate', renderPlan, generationJobs: [...task.generationJobs, ...jobs],
+    enterpriseAssets: frozenAssets,
+    gifDelivery: undefined,
+    outputs: task.outputs.map(output => task.gifDelivery
+      && [...task.gifDelivery.frameOutputIds, task.gifDelivery.finalOutputId].includes(output.id)
+      ? { ...output, state: 'superseded' as const } : output),
   });
   if (saved.kind !== 'updated') throw new SocialImagePaidJobError('social_image_plan_write_conflict');
   return saved.task;
@@ -154,10 +171,15 @@ export async function abandonSocialImageMultiUnitPlan(input: {
       || !job.outputNodeIds.length || !job.outputNodeIds.every(id => task.outputs.some(output => output.id === id && output.materialId && output.mediaUrl)))))) {
     throw new SocialImagePaidJobError('social_image_plan_outcome_unresolved');
   }
-  const retiredIds = new Set(planJobs.flatMap(job => job?.outputNodeIds || []));
+  const retiredIds = new Set([
+    ...planJobs.flatMap(job => job?.outputNodeIds || []),
+    ...(task.gifDelivery?.planVersion === plan.version
+      ? [...task.gifDelivery.frameOutputIds, task.gifDelivery.finalOutputId] : []),
+  ]);
   const now = new Date().toISOString();
   const next: SocialImageCreationTask = {
-    ...task, version: task.version + 1, renderPlan: undefined, status: 'planned', step: 'inputs', publishable: false, updatedAt: now,
+    ...task, version: task.version + 1, renderPlan: undefined, gifDelivery: undefined,
+    status: 'planned', step: 'inputs', publishable: false, updatedAt: now,
     generationJobs: task.generationJobs.map(job => planJobs.some(current => current?.id === job.id) && job.status === 'queued'
       ? { ...job, status: 'failed', error: 'plan_abandoned_before_submission', updatedAt: now } : job),
     outputs: task.outputs.map(output => retiredIds.has(output.id) ? { ...output, state: 'superseded' } : output),

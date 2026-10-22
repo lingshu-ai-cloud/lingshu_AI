@@ -53,6 +53,14 @@ test('HTTP admission blocks unsafe multi-output renders and forged client delive
       const result = await response.json() as { code?: string };
       assert.equal(response.status, 409, JSON.stringify(result));
       assert.equal(result.code, expectedCode);
+      if (imageType === 'gif_poster') {
+        const finalize = await fetch(`http://127.0.0.1:${address.port}/social-images/tasks/${task.id}/finalize-gif`, {
+          method: 'POST', headers, body: JSON.stringify({ expectedVersion: task.version }),
+        });
+        const finalization = await finalize.json() as { code?: string };
+        assert.equal(finalize.status, 409, JSON.stringify(finalization));
+        assert.equal(finalization.code, 'social_image_frozen_plan_invalid');
+      }
     }
 
     const reviewTask = await createSocialImageTask(store, tenantId, { title: 'Output admission' });
@@ -74,6 +82,15 @@ test('HTTP admission blocks unsafe multi-output renders and forged client delive
     const rejection = await forged.json() as { code?: string };
     assert.equal(forged.status, 409, JSON.stringify(rejection));
     assert.equal(rejection.code, 'social_image_outputs_server_owned');
+
+    const forgedDelivery = await fetch(patchUrl, {
+      method: 'PATCH', headers,
+      body: JSON.stringify({ expectedVersion: ready.task.version, patch: {
+        gifDelivery: { planVersion: 1, sourceHash: 'forged', frameOutputIds: [], finalOutputId: 'forged' },
+      } }),
+    });
+    assert.equal(forgedDelivery.status, 403);
+    assert.equal((await forgedDelivery.json() as { code?: string }).code, 'social_image_gif_delivery_server_owned');
 
     const repair = await fetch(patchUrl, {
       method: 'PATCH', headers,
