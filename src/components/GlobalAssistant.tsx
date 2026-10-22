@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { App as AntApp, Button, Input } from 'antd';
+import { App as AntApp, Button } from 'antd';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowLeft,
@@ -22,7 +22,6 @@ import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import {
   assistantRunControl,
   shouldNotifyAssistant,
-  type AssistantTaskCard,
   type AgentThreadState,
   type OrbitAgentId,
   useAssistantStore,
@@ -41,6 +40,8 @@ import type { UploadedAssistantAttachment } from './assistant/assistantChatPromp
 import { useAssistantFeatureGuides } from './assistant/useAssistantFeatureGuides';
 import { useAssistantNotifications } from './assistant/useAssistantNotifications';
 import { useAssistantSend } from './assistant/useAssistantSend';
+import { useAssistantQuickExecution } from './assistant/useAssistantQuickExecution';
+import { useAssistantTaskCardActions } from './assistant/useAssistantTaskCardActions';
 import { useAssistantDecisionCount, useAssistantPageContextSignal } from './assistant/useAssistantPageSignals';
 import type { AssistantQuickExecution } from '../lib/assistantQuickEntries';
 import AssistantWeeklyActions from './assistant/AssistantWeeklyActions';
@@ -632,132 +633,17 @@ export default function GlobalAssistant({
     setAttachmentUploading, setPendingAttachments, openWeeklyPlanFromAssistant,
   });
 
-  const runQuickExecution = useCallback(async function executeEntry(entry: AssistantQuickExecution, confirmations = 0, executionRequestId = `quick-${requestId()}`, fence = persistenceFenceRef.current) {
-    if (loading || fileGenerating || pipelineInFlightRef.current) return;
-    const currentScope = () => fence.active && persistenceFenceRef.current === fence;
-    if (entry.id === 'business-create-week-plan') { openWeeklyPlanFromAssistant(); return; }
-    const openTask = (taskId: string) => {
-      setMode('breathing');
-      window.dispatchEvent(new CustomEvent('lingshu:navigate', {
-        detail: { page: 'smartAssets', socialContentTaskId: taskId, socialContentPage: 'smartAssets', directStudio: true },
-      }));
-    };
-    const recordReceipt = (content: string, taskId?: string, status?: string) => {
-      const messages = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages;
-      setMessages(PRIMARY_ASSISTANT_THREAD, [...messages, { role: 'assistant', content }]);
-      if (taskId) {
-        upsertTaskCard(PRIMARY_ASSISTANT_THREAD, { taskId: `social-content:${taskId}`, title: '内容周任务', conclusion: content,
-          status: status === 'producing' ? 'running' : ['completed', 'delivered', 'published'].includes(status || '') ? 'completed' : status === 'paused' ? 'paused' : 'needs_input', notificationReason: 'routine',
-          primaryAction: { id: `open-${taskId}`, label: '查看生产任务', href: `/?page=smartAssets&socialContentTaskId=${encodeURIComponent(taskId)}` } });
-      }
-      persistThread(PRIMARY_ASSISTANT_THREAD);
-      window.dispatchEvent(new CustomEvent(WEEKLY_WORK_UPDATED_EVENT));
-      void onSessionRefresh?.();
-      setPipelineRefresh(value => value + 1);
-    };
-    if (entry.operation === 'create') {
-      contentIntake.start();
-      return;
-    }
-    if (!entry.taskId || !entry.expectedVersion) return;
-    if (entry.operation === 'open') { openTask(entry.taskId); return; }
-    if (entry.operation === 'revise' && entry.artifactId) {
-      if (pipelineModalOpenRef.current) return;
-      pipelineModalOpenRef.current = true;
-      let note = '';
-      modal.confirm({ title: '修改当前交付物',
-        content: <label className="block">修改要求<Input.TextArea rows={4} onChange={event => { note = event.target.value; }} /></label>,
-        okText: '提交返工', cancelText: '取消',
-        afterClose: () => { pipelineModalOpenRef.current = false; },
-        onOk: async () => {
-          if (!note.trim()) { void uiMessage.error('请填写具体修改要求。'); throw new Error('请填写具体修改要求。'); }
-          if (!currentScope() || pipelineInFlightRef.current) return;
-          pipelineInFlightRef.current = true;
-          try {
-            const response = await socialContentApi.reviseAssistantAction(entry.taskId!, entry.artifactId!, entry.expectedVersion!, note.trim(), executionRequestId);
-            if (!currentScope()) return;
-            recordReceipt(response.receipt.blockedReason === 'weekly_revision_scope_confirmation_required'
-              ? '修改要求已记录到原周任务，请在生产页面确认返工范围与预算后继续。'
-              : '修改要求已提交原周任务，返工交付物将回收到该任务。', response.receipt.taskId, response.receipt.status);
-            openTask(response.receipt.taskId);
-          } catch (error) { if (currentScope()) { recordReceipt(error instanceof Error ? error.message : '修改未提交，请重试。'); void uiMessage.error(error instanceof Error ? error.message : '修改未提交，请重试。'); } throw error; }
-          finally { pipelineInFlightRef.current = false; }
-        },
-      });
-      return;
-    }
-    if (!confirmations) {
-      if (pipelineModalOpenRef.current) return;
-      pipelineModalOpenRef.current = true;
-      modal.confirm({ title: entry.label, content: '推进当前任务的生产流程，保留原周任务和已有交付物。',
-        afterClose: () => { pipelineModalOpenRef.current = false; },
-        okText: '确认执行', cancelText: '取消', onOk: () => executeEntry(entry, 1, executionRequestId, fence) });
-      return;
-    }
-    if (!currentScope()) return;
-    pipelineInFlightRef.current = true;
-    setLoading(true);
-    try {
-      const response = await socialContentApi.startAssistantAction(entry.taskId, entry.expectedVersion, executionRequestId);
-      if (!currentScope()) return;
-      recordReceipt(`「${response.task.brief.title}」：${response.receipt.blockedReason ? '暂未进入生产，请在任务中查看原因。' : '已读取真实生产状态，结果回收到原周任务。'}`, response.receipt.taskId, response.receipt.status);
-      openTask(response.receipt.taskId);
-    } catch (error) {
-      if (currentScope()) recordReceipt(error instanceof Error ? error.message : '生产未启动，请重试。');
-    } finally { pipelineInFlightRef.current = false; if (currentScope()) { setLoading(false); setPipelineRefresh(value => value + 1); } }
-  }, [fileGenerating, contentIntake, loading, modal, uiMessage, onSessionRefresh, openWeeklyPlanFromAssistant, persistThread, setMessages, upsertTaskCard]);
+  const runQuickExecution = useAssistantQuickExecution({
+    loading, fileGenerating, pipelineInFlightRef, pipelineModalOpenRef, persistenceFenceRef,
+    openWeeklyPlanFromAssistant, contentIntake, modal, uiMessage, setMessages, upsertTaskCard,
+    setMode, setLoading, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
+  });
 
-  const handleTaskCardAction = useCallback(async (
-    card: AssistantTaskCard,
-    action: NonNullable<AssistantTaskCard['primaryAction']>,
-  ) => {
-    if (action.disabled) return;
-    window.dispatchEvent(new CustomEvent('lingshu-assistant-action', {
-      detail: { agentId: activeAgent, taskId: card.taskId, actionId: action.id },
-    }));
-    if (action.actionId) {
-      const parameters = action.parameters;
-      const request: AssistantActionRequest = {
-        source: 'button',
-        requestId: requestId(),
-        actionId: action.actionId,
-        page,
-        target: action.target,
-        ...(parameters ? { parameters } : {}),
-      };
-      setLoading(true);
-      const response = await executeAssistantAction(activeAgent, request);
-      setLoading(false);
-      if (response) {
-        presentActionResponse(activeAgent, request, response);
-        persistThread(activeAgent);
-        onSessionRefresh?.();
-        closeDecisionDialog();
-      }
-      return;
-    }
-    if (action.prompt) {
-      setPanelView('chat');
-      closeDecisionDialog();
-      void send(action.prompt, currentPageAgent);
-      return;
-    }
-    if (action.href) {
-      closeDecisionDialogForNavigation();
-      const destination = new URL(action.href, window.location.href);
-      const productionTaskId = destination.searchParams.get('socialContentTaskId');
-      if (destination.origin === window.location.origin && destination.pathname === '/'
-        && destination.searchParams.get('page') === 'smartAssets'
-        && productionTaskId && /^[a-z0-9:_-]{1,200}$/i.test(productionTaskId)) {
-        setMode('breathing');
-        window.dispatchEvent(new CustomEvent('lingshu:navigate', {
-          detail: { page: 'smartAssets', socialContentTaskId: productionTaskId, socialContentPage: 'smartAssets', directStudio: true },
-        }));
-        return;
-      }
-      window.location.assign(action.href);
-    }
-  }, [activeAgent, closeDecisionDialog, closeDecisionDialogForNavigation, currentPageAgent, executeAssistantAction, onSessionRefresh, page, persistThread, presentActionResponse, send]);
+  const { handleTaskCardAction, toggleTaskPaused } = useAssistantTaskCardActions({
+    activeAgent, currentPageAgent, page, focusedRunControl, loading, abortRef,
+    setLoading, setPanelView, setMode, send, presentActionResponse, persistThread,
+    closeDecisionDialog, closeDecisionDialogForNavigation, onSessionRefresh, requestId,
+  });
 
   const assistantThreadHydrated = useAssistantThreadHydration({
     page, stablePersistenceScope, persistThread, hydrateThread,
@@ -957,34 +843,6 @@ export default function GlobalAssistant({
       else scroller.scrollTop = scroller.scrollHeight;
     });
   }, [activeAgent]);
-
-  const toggleTaskPaused = useCallback(async () => {
-    if (!focusedRunControl || loading) return;
-    const paused = focusedRunControl.actionId === 'pause_task';
-    const request: AssistantActionRequest = {
-      source: 'button',
-      requestId: requestId(),
-      actionId: focusedRunControl.actionId,
-      page,
-      target: focusedRunControl.target,
-    };
-    setLoading(true);
-    const response = await executeAssistantAction(activeAgent, request);
-    setLoading(false);
-    if (!response) return;
-    presentActionResponse(activeAgent, request, response);
-    const accepted = response.status === 'accepted' || response.status === 'completed';
-    if (!accepted) {
-      persistThread(activeAgent);
-      return;
-    }
-    if (paused) abortRef.current?.abort();
-    window.dispatchEvent(new CustomEvent('lingshu-assistant-task-control', {
-      detail: { agentId: activeAgent, taskId: focusedRunControl.target.objectId, paused },
-    }));
-    persistThread(activeAgent);
-    onSessionRefresh?.();
-  }, [activeAgent, executeAssistantAction, focusedRunControl, loading, onSessionRefresh, page, persistThread, presentActionResponse]);
 
   const handleLauncherClick = () => {
     if (mode === 'chat') {

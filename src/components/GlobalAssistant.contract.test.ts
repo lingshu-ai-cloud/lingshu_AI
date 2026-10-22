@@ -3,6 +3,8 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const sendHookSource = fs.readFileSync(new URL('./assistant/useAssistantSend.ts', import.meta.url), 'utf8');
+const quickExecutionHookSource = fs.readFileSync(new URL('./assistant/useAssistantQuickExecution.tsx', import.meta.url), 'utf8');
+const taskCardActionsHookSource = fs.readFileSync(new URL('./assistant/useAssistantTaskCardActions.ts', import.meta.url), 'utf8');
 const chatStreamSource = fs.readFileSync(new URL('../lib/assistantChatStream.ts', import.meta.url), 'utf8');
 const actionRequestSource = fs.readFileSync(new URL('../lib/assistantActionRequest.ts', import.meta.url), 'utf8');
 const decisionDialogSource = fs.readFileSync(new URL('./assistant/AssistantDecisionDialog.tsx', import.meta.url), 'utf8');
@@ -302,7 +304,7 @@ assert.match(source, /关闭窗口（任务继续）/, '关闭窗口必须与暂
 assert.match(decisionDialogSource, /暂停当前任务/, '必须提供独立的暂停操作');
 assert.match(source, /assistantRunControl\(dialogTaskCard\)/, '外部任务详情的暂停按钮只能由可执行运行任务的后端目标决定');
 assert.doesNotMatch(source, /objectId:\s*dialogTaskCard\.taskId/, '不得把展示卡片编号猜成可执行运行编号');
-assert.match(source, /const accepted = response\.status === 'accepted' \|\| response\.status === 'completed'/, '只有后端确认后才能改变本地暂停状态');
+assert.match(taskCardActionsHookSource, /const accepted = response\.status === 'accepted' \|\| response\.status === 'completed'/, '只有后端确认后才能改变本地暂停状态');
 assert.match(source, /persistThread\(activeAgent\)/, '关闭前必须保留任务、对话和草稿');
 
 const sendSource = sendHookSource;
@@ -385,7 +387,7 @@ assert.match(integrationFactsSource, /if \(connectedSocialAccounts\.length\)[^\n
 assert.match(integrationFactsSource, /if \(connectedYoutubeAccounts\.length\)[^\n]+已接入 YouTube 账号/, 'YouTube 账号数量只能来自已接通账号');
 assert.doesNotMatch(integrationFactsSource, /if \(socialAccounts\.length\)|if \(youtubeAccounts\.length\)|\[\.\.\.socialAccounts, \.\.\.youtubeAccounts\]/, '未接通账号不得混入数量或曝光统计');
 
-const taskCardActionSource = sourceSection('const handleTaskCardAction', '\n  useEffect(() => {', '任务卡按钮操作');
+const taskCardActionSource = sourceSection('const handleTaskCardAction', 'const toggleTaskPaused', '任务卡按钮操作', taskCardActionsHookSource);
 assert.match(taskCardActionSource, /const parameters = action\.parameters/, '按钮操作必须读取后端签发的 action.parameters');
 assert.match(taskCardActionSource, /\.\.\.\(parameters \? \{ parameters \} : \{\}\)/, '按钮操作必须把同一 parameters 对象原样转发到请求');
 
@@ -433,14 +435,15 @@ assert.match(source, /ASSISTANT_CLOSED_CONVERSATION_TTL_MS = 5 \* 60 \* 1000/, '
 assert.match(source, /assistantClosedRef\.current = \{ page, at: Date\.now\(\) \}/, '关闭会话时必须记录当前页面和关闭时间');
 
 const quickExecutionSource = sourceSection(
-  'const runQuickExecution = useCallback',
-  'const handleTaskCardAction',
+  'return useCallback(async function executeEntry',
+  '\n}',
   '快捷执行入口',
+  quickExecutionHookSource,
 );
 assert.match(quickExecutionSource, /if \(!confirmations\)/, '生产任务启动前必须确认');
 assert.match(quickExecutionSource, /startAssistantAction\(entry\.taskId, entry\.expectedVersion, executionRequestId\)/, '确认完成后必须向真实任务提交对象版本和幂等键');
 assert.match(quickExecutionSource, /upsertTaskCard\(PRIMARY_ASSISTANT_THREAD/, '真实执行回执必须投影为任务卡片');
-assert.match(source, /destination\.origin === window\.location\.origin[\s\S]*socialContentTaskId: productionTaskId, socialContentPage: 'smartAssets', directStudio: true/, '生产回执链接必须原子恢复指定任务而非刷新成空制作页');
+assert.match(taskCardActionsHookSource, /destination\.origin === window\.location\.origin[\s\S]*socialContentTaskId: productionTaskId, socialContentPage: 'smartAssets', directStudio: true/, '生产回执链接必须原子恢复指定任务而非刷新成空制作页');
 assert.match(source, /<AssistantQuickEntries[\s\S]*onQuestion=\{entry => void send\(entry\.prompt, currentPageAgent\)\}[\s\S]*onExecute=\{entry => void runQuickExecution\(entry\)\}/, '输入框上方必须同时接通页面问答与快捷执行');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*threadBeforeRequest/, '旧线程快照不得覆盖请求期间产生的本地输入');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*hydratedThread/, '过期重签结果不得覆盖请求期间产生的新卡片或焦点');
