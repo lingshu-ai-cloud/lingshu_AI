@@ -30,6 +30,7 @@
 - `src/components/EnterprisePage.tsx` 与 `src/components/enterprise/`：页面持有可编辑企业资料和导航；资料默认值/快照、服务端读写校验、FAQ/销售风格控制器及业务视图由企业资料模块负责。保存成功必须以服务端读回和产品身份校验为依据。
 - `src/components/DigitalEmployeePage.tsx` 与 `src/components/smartBusiness/WeeklyGoalPanel.tsx`：数字员工页负责新周目标的提交、冲突恢复与运行导航；独立周目标面板持有草稿、预设方案、平台配额重算、视频计划校验和排期确认，不直接调用生产 API。`DigitalEmployeeFormField.tsx` 是页面与周目标面板共用的表单字段样式。
 - `src/components/smartBusiness/digitalEmployeeConfigRules.ts`：数字员工首次配置的安全默认值、旧发布节奏配额换算、配置补全及发布/跟进人工审批校验；页面仍持有引导交互、企业资料读取、用户确认和现有保存接口，不在规则模块中执行真实发布或消息发送。
+- `src/components/smartBusiness/onboardingProductImport.ts`：首次引导产品资料的文件类型/大小校验、PDF/DOCX/TXT/表格解析、明确归属的图片上传、未归属页留在素材库、按稳定产品 ID 合并及现有鉴权企业档案写入。页面只保留选择、忙碌与结果反馈；未核验图片不得自动绑定产品。
 - 数字员工首页实际挂载 `BusinessHealthOverview`、`SmartBusinessDashboard` 和 `DigitalEmployeeTodayFocusPanel`；旧的未挂载“今日经营快照”、指标卡与转化图表脚手架已移除。源码契约测试必须检查实际挂载路径，不以死函数存在证明界面已交付。
 - 选中数字员工任务的当前生产详情由 `ProductionTaskScene` 挂载，并用 `buildTaskDeepLink` 进入业务工作台；历史 `ProductionScene`、事件流、截图、纠偏与跳过/人工完成按钮链从未挂载，已移除。页面的 `SmartBusinessDashboard` 仍提供原任务重试入口；`skipTask`/`completeTask` 的服务端 API 存在不等于当前页面有相应按钮，后续需求须在真实入口单独设计和验收。
 - `src/components/smartBusiness/DigitalEmployeeTodayFocusPanel.tsx`：首页“本周进度/需要你处理”的可达视图，依据真实任务、待审批项与计划状态展示至多三项关注动作。页面继续提供执行导航和状态文案；旧的 `TodayNextAction`、`BusinessLoopMap`、`ResourcePreflightPanel`、`NextActionBanner` 和 `DraftPlanPreview` 从未挂载，已移除，不能用其文案证明界面已交付。资产就绪跳转仍由实际挂载的 `OnboardingPanel` 使用。

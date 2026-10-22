@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工引导产品导入拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `27eba5a8e51c8adb65eece8d0198bf0258221efb` 将产品文件格式/大小校验、文档解析、图片证据上传、稳定产品 ID 合并及现有鉴权企业档案写入迁至 `onboardingProductImport.ts`；页面保留文件选择、忙碌态与错误/成功反馈。未归属文档图片仍只保存在企业素材库，不凭位置自动绑定产品。`DigitalEmployeePage.tsx` 从 3,181 降至 3,101 行，预算同步收紧；全仓仍有 6 个历史超限文件。
+- 新模块直测 3/3，含无效文件前置拒绝、稳定 ID 和 TXT 鉴权 PATCH；页面源码合同改查新模块与调用接线，`test:digital-employees` 整组、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,360 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未做浏览器交互、真实供应商调用、目标库迁移或部署；本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 数字员工配置安全规则拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `f87f3aeb6dc1c2a4c1c408e58e48d9ceb47839c5` 将首次配置默认值、旧发布节奏配额换算、配置补全与发布/跟进人工审批校验迁至 `digitalEmployeeConfigRules.ts`；页面保留引导、资料读取与既有保存链。`DigitalEmployeePage.tsx` 从 3,319 降至 3,181 行，历史预算同步收紧；全仓仍有 6 个历史超限文件。
