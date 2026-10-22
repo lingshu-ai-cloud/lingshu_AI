@@ -11,8 +11,6 @@ import { buildBenchmarkAnalysis, type BenchmarkAnalysis } from '../../shared/ben
 import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { lsMotion } from '../lib/designTokens';
-import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import {
   Search, Play, Sparkles, FileText, Layout as LayoutIcon,
   Clock, Globe, ChevronDown, X, Loader2,
@@ -21,9 +19,8 @@ import {
   Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2, Music2,
   SlidersHorizontal, Package, Star, Eye,
 } from 'lucide-react';
-import { studioApi, type Material, type VideoGenerationVersion } from '../lib/studioApi';
+import { studioApi, type Material } from '../lib/studioApi';
 import { matchMaterialsToFrames, shortenText } from './inspiration/inspirationFrameMatching';
-import { AnalysisPanel } from './inspiration/InspirationAnalysisPanel';
 import {
   initialMaterialLibraryEntry, initialMaterialTaxonomyFilters,
   materialDirectorUi, materialMatchesProductFilter, materialMatchesLibraryFilters, isFavoriteMaterial,
@@ -40,8 +37,8 @@ export {
   materialMatchesProductFilter, materialAssetBadge, materialMatchesOrientation,
   materialMatchesLibraryFilters, type MaterialLibraryEntryContext,
 } from './inspiration/inspirationMaterialLibrary';
-import { directorReviewAction, exactAnalysisQuality, getAnalysis, inspirationCreationAvailability, isDisplayableForFormat, referenceHighlights } from './inspiration/inspirationAnalysisProjection';
-export { directorReviewAction, inspirationCreationShotPreflight, inspirationCreationAvailability, isDisplayableVideoAnalysis, pipelineState } from './inspiration/inspirationAnalysisProjection';
+import { directorReviewAction, exactAnalysisQuality, getAnalysis, inspirationCreationAvailability, isDisplayableForFormat } from './inspiration/inspirationAnalysisProjection';
+export { directorReviewAction, inspirationCreationShotPreflight, inspirationCreationAvailability, isDisplayableVideoAnalysis } from './inspiration/inspirationAnalysisProjection';
 import { ACTIVE_PLATFORMS, PLATFORM_META, getPlatformMeta, heatValue, inspirationScoresForVideo, median, metadataPanelFallback, recordsToVideos, reliablePublicViews, specialRecommendationForVideo, supplyItemsToVideos, timeValue, type CrawlerRecord } from './inspiration/inspirationVideoProjection';
 export { getPlatformMeta, inspirationScoresForVideo, candidateDimensionLabels, latestDiscoveryOrigin, discoverySupplyLabel, discoveryOriginTitle } from './inspiration/inspirationVideoProjection';
 import type { MaterialLibraryFacets } from '../lib/studioDigitalHuman';
@@ -49,9 +46,7 @@ import { authHeader, getToken, AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
 import { readWeeklyReferenceReviewNavigation } from '../lib/weeklyReferenceReviewNavigationApi';
 import CompetitorAccountsModal from './CompetitorAccountsModal';
 import type { Page } from '../App';
-import { completeDemoStep, readDemoProgress } from '../lib/demoProgress';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
-import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { updateScriptGapTask, type ScriptGapTask } from '../lib/scriptGapQueue';
 import { canProcessVideo, displayDuration, resultEmptyState } from '../lib/inspirationDataQuality';
@@ -63,9 +58,8 @@ import { useSocialProgram } from '../contexts/SocialProgramContext';
 import { VideoCard, VideoListItem } from './InspirationVideoCards';
 import { showActionFeedback, showActionSuccess } from '../lib/actionFeedback';
 import { resolveInspirationPlaybackUrl } from '../lib/inspirationVideoPlayback';
-import type { AccountSpecialRecommendation, ContentFormat, GeminiVideoAnalysis, Platform, ScriptAnalysis, ScriptDetail15s, ScriptResultProvenance, ShootingNeed, TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes';
+import type { AccountSpecialRecommendation, ContentFormat, GeminiVideoAnalysis, Platform, ScriptAnalysis, ScriptDetail15s, ShootingNeed, TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes';
 import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
-import { openScriptLibrary } from '../lib/contentActionNavigation';
 import { crawlInspirationImages, type InspirationImageCrawlPlatform } from '../lib/inspirationImageCrawl';
 import type { SocialBusinessModel, SocialDiscoveryScoreDecision, SocialDiscoverySupplyItem } from '../../shared/contracts/socialContentWorkflow';
 import { MATERIAL_THEME_LABELS, materialPrimaryThemeOf, materialSourceCategoryOf } from '../../shared/materialTaxonomy';
@@ -90,8 +84,8 @@ import {
 import { generatedMaterialOriginLabel, type MaterialAssetTab } from '../lib/materialAssetOwnership';
 export { generatedMaterialOriginLabel, materialAssetTabOf, type MaterialAssetTab } from '../lib/materialAssetOwnership';
 // ── Types ─────────────────────────────────────────────────────────────────────
-type ScriptType = 'voiceover' | 'storyboard';
 type SortMode = 'heat' | 'crawlTime';
+type ScriptType = 'voiceover' | 'storyboard';
 type InspirationInnerView = 'inspiration' | 'accounts' | 'library' | 'shooting';
 type CrawlTimeRange = 'all' | 'today' | '7d' | '30d';
 type DiscoveryDecisionFilter = 'all' | SocialDiscoveryScoreDecision;
@@ -321,11 +315,6 @@ function initialInspirationReferenceTarget(): InspirationReferenceTarget | null 
   return parseInspirationReferenceTarget(window.history.state?.productionDetail);
 }
 
-const isDemoTrafficStep = () => {
-  const progress = readDemoProgress();
-  return Boolean(progress.strategy && !progress.traffic);
-};
-
 
 const PLATFORM_FILTERS: { id: Platform; label: string }[] = [
   { id: 'all',       label: '全部平台' },
@@ -336,27 +325,7 @@ const PLATFORM_FILTERS: { id: Platform; label: string }[] = [
   { id: 'linkedin',  label: 'LinkedIn' },
 ];
 
-const LANGUAGES = [
-  { code: 'en', label: 'English' }, { code: 'zh', label: '中文' },
-  { code: 'id', label: 'Bahasa Indonesia' },
-  { code: 'es', label: 'Español' }, { code: 'ar', label: 'العربية' },
-  { code: 'fr', label: 'Français' }, { code: 'de', label: 'Deutsch' },
-  { code: 'pt', label: 'Português' }, { code: 'ru', label: 'Русский' },
-  { code: 'ja', label: '日本語' },   { code: 'ko', label: '한국어' },
-];
 
-
-function summarizeProductInfo(input: string): string {
-  const text = input.trim();
-  if (!text) return '未选择主推品，请先从企业中心产品中选择或补充产品信息。';
-  return text.length > 500 ? `${text.slice(0, 500)}...` : text;
-}
-
-function getPrimaryProductLabel(productInfo: string): string {
-  const match = productInfo.match(/主推品[:：]\s*([^\n]+)/);
-  if (match?.[1]) return match[1].trim();
-  return productInfo.trim().split('\n')[0]?.replace(/^[-*\s]+/, '').trim() || '当前主推品';
-}
 
 // Frame matching and replication feasibility are evaluated by the pure inspiration module.
 
@@ -416,134 +385,6 @@ function shootingCreationDate(value?: string): string {
   const timestamp = Date.parse(value || '');
   return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '待补录';
 }
-
-function referenceAnalysisText(video: TrendVideo, analysis: ScriptAnalysis | null): string {
-  if (!analysis) {
-    return [
-      `参考视频标题仅用于判断开头钩子类型，不得在新脚本中复述：${shortenText(video.title, 80)}`,
-      `平台：${video.platform}`,
-      video.tags.length ? `标签：${video.tags.join('、')}` : '',
-      video.views ? `热度：${video.views}` : '',
-      '没有可用的视频级分析，只能按标题、平台和产品信息生成保守脚本。',
-    ].filter(Boolean).join('\n');
-  }
-  const structure = analysis.structure.map(item => `${item.time} ${item.label}: ${item.desc}`).join('\n');
-  const details = analysis.scriptDetails15s.map(item => `${item.time} ${item.shot}/${item.camera}: ${item.visual}；原字幕/口播：${item.subtitle}`).join('\n');
-  const firstTen = analysis.firstTenSeconds.map(item => `${item.dimension}: ${item.detail}`).join('\n');
-  return [
-    `参考视频标题仅用于判断开头钩子类型，不得在新脚本中复述：${shortenText(video.title, 80)}`,
-    `平台：${video.platform}`,
-    `视频类型：${analysis.videoType}`,
-    `信息节奏：${analysis.infoSpeed}`,
-    `情绪：${analysis.emotion}`,
-    `前 10 秒拆解：\n${firstTen}`,
-    `粗略结构：\n${structure}`,
-    `全片导演分镜：\n${details}`,
-    `改编提示：${analysis.adaptTip}`,
-  ].filter(Boolean).join('\n\n');
-}
-
-
-function makeFallbackScript(_video: TrendVideo, _analysis: ScriptAnalysis | null, productInfo: string, languageLabel?: string, langCode = 'zh', type: ScriptType = 'voiceover'): string {
-  const product = getPrimaryProductLabel(productInfo) || '【待从企业中心选择产品】';
-  const label = languageLabel || (langCode === 'zh' ? '中文' : langCode);
-  if (type === 'storyboard') {
-    return `【本地草稿模板｜未调用 AI｜未经质量校验｜不可发布】
-【分镜脚本｜${product}｜${label}】
-
-Scene 1 (0-3s)
-Shot: close-up | Camera: static
-Visual: 待人工匹配企业自有素材；只描述素材中能直接观察到的画面。
-Voiceover: 【待根据企业中心已确认事实填写】
-Subtitle: 【待确认】
-
-Scene 2 (3-8s)
-Shot: medium | Camera: push
-Visual: 待人工填写；不得补造产品功能、使用效果或商业能力。
-Voiceover: 【待根据企业中心已确认事实填写】
-Subtitle: 【待确认】
-
-Scene 3 (8-12s)
-Shot: close-up | Camera: pan
-Visual: 待人工填写可验证证据；没有资料的字段保持空白。
-Voiceover: 【待根据企业中心已确认事实填写】
-Subtitle: 【待确认】
-
-Scene 4 (12-15s)
-Shot: wide | Camera: static
-Visual: 待人工填写中性收束画面；行动提示须由用户确认。
-Voiceover: 【待确认行动提示】
-Subtitle: 【待确认】`;
-  }
-  return `【本地草稿模板｜未调用 AI｜未经质量校验｜不可发布】
-【口播脚本｜${product}｜${label}】
-
-[Hook · 0-3s]
-【待根据企业中心已确认的产品事实填写开场】
-
-[Body · 3-12s]
-【待填写可由企业资料或自有素材证明的产品信息】
-【不得填写未确认的认证、价格、起订量、交期、出口或履约承诺】
-
-[CTA · 12-15s]
-【待用户确认行动提示】`;
-}
-
-function scriptTypeLabel(type: ScriptType): string {
-  return type === 'voiceover' ? '口播短视频脚本' : '分镜短视频脚本';
-}
-
-function splitProfileList(value?: string): string[] {
-  return String(value || '')
-    .split(/[\n,，;；、/]+/)
-    .map(item => item.trim())
-    .filter(Boolean);
-}
-
-interface EnterpriseProfileForScript {
-  company?: { name?: string; industry?: string; mainMarkets?: string; description?: string };
-  products?: { categories?: string; priceRange?: string; moq?: string; certifications?: string; highlights?: string };
-  brand?: { tone?: string; style?: string; usp?: string; preferredLanguages?: string };
-  strategy?: { focusProducts?: string; focusMarkets?: string; currentGoal?: string; pricingStrategy?: string };
-  knowledge?: string;
-}
-
-interface ProductOption { id: string; label: string; info: string }
-
-function buildProductOptions(profile: EnterpriseProfileForScript): ProductOption[] {
-  const focusProducts = splitProfileList(profile.strategy?.focusProducts);
-  const categories = splitProfileList(profile.products?.categories);
-  const names = Array.from(new Set([...focusProducts, ...categories]));
-  const baseLines = [
-    profile.products?.categories ? `产品类目：${profile.products.categories}` : '',
-    profile.products?.priceRange ? `价格区间：${profile.products.priceRange}` : '',
-    profile.products?.moq ? `起订量：${profile.products.moq}` : '',
-    profile.products?.certifications ? `认证资质：${profile.products.certifications}` : '',
-    profile.products?.highlights ? `核心优势：${profile.products.highlights}` : '',
-    profile.brand?.usp ? `品牌 USP：${profile.brand.usp}` : '',
-    profile.brand?.tone ? `品牌语气：${profile.brand.tone}` : '',
-    profile.strategy?.focusMarkets || profile.company?.mainMarkets ? `目标市场：${profile.strategy?.focusMarkets || profile.company?.mainMarkets}` : '',
-    profile.strategy?.currentGoal ? `当前目标：${profile.strategy.currentGoal}` : '',
-    profile.company?.description ? `公司背景：${profile.company.description}` : '',
-  ].filter(Boolean);
-
-  const options = names.map((name, index) => ({
-    id: `product-${index}`,
-    label: name,
-    info: [`主推品：${name}`, ...baseLines].join('\n'),
-  }));
-
-  if (baseLines.length) {
-    options.unshift({
-      id: 'enterprise-products',
-      label: '企业产品组合',
-      info: ['主推品：企业产品组合', ...baseLines].join('\n'),
-    });
-  }
-
-  return options;
-}
-
 
 // ── Fallback thumbnail ────────────────────────────────────────────────────────
 export function VideoThumbnail({ platform, title }: { platform: Exclude<Platform, 'all'>; title: string }) {
@@ -861,636 +702,6 @@ function MaterialLibraryCardMedia({
 }
 
 // ── Script Panel ──────────────────────────────────────────────────────────────
-interface ScriptPanelProps {
-  video: TrendVideo;
-  activePanelTab: 'analysis' | 'generate';
-  onClose: () => void;
-  onRetry?: () => void;
-  onExactAnalysis?: () => void;
-  actionNotice?: string;
-  onFavorite?: () => void;
-  favoriting?: boolean;
-  specialRecommendation?: AccountSpecialRecommendation | null;
-  onNavigate?: (p: Page) => void;
-  onEnterWorkflow?: (payload: {
-    source?: string;
-    script?: string;
-    video: TrendVideo;
-    scriptType?: ScriptType;
-    language?: string;
-    productInfo?: string;
-    materialRole?: 'hook';
-    generatedVideo?: GeneratedVideo;
-    referenceAnalysis?: {
-      title?: string;
-      visualStyle?: string;
-      coreEmotion?: string;
-      benchmarkAnalysis?: BenchmarkAnalysis;
-      details?: { time: string; shot: string; camera: string; visual: string; subtitle?: string; audio?: string; note?: string }[];
-    };
-  }) => void;
-}
-
-interface GeneratedVideo {
-  id: string;
-  title: string;
-  url?: string;
-  poster?: string;
-  duration: number;
-  createdAt: string;
-  source?: string;
-  material?: Material;
-  error?: string;
-}
-
-function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis, actionNotice, onFavorite, favoriting, specialRecommendation, onNavigate, onEnterWorkflow }: ScriptPanelProps) {
-  const reducedMotion = usePrefersReducedMotion();
-  const panelRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
-  const [activeTab, setActiveTab] = useState<'analysis' | 'generate'>(activePanelTab);
-  const [scriptType, setScriptType] = useState<ScriptType>('voiceover');
-  const [language, setLanguage] = useState('zh');
-  const [productInfo, setProductInfo] = useState('');
-  const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
-  const [selectedProductId, setSelectedProductId] = useState('');
-  const [generating, setGenerating] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
-  const [resultProvenance, setResultProvenance] = useState<ScriptResultProvenance | null>(null);
-  const [resultQualityStatus, setResultQualityStatus] = useState<string>('');
-  const [resultNotice, setResultNotice] = useState('');
-  const [copied, setCopied] = useState(false);
-  const [showLangDropdown, setShowLangDropdown] = useState(false);
-  const languageDropdownRef = useRef<HTMLDivElement>(null);
-  const [voiceLanguageConfirmed, setVoiceLanguageConfirmed] = useState(false);
-  const [videoGenerating, setVideoGenerating] = useState(false);
-  const [videoResult, setVideoResult] = useState<GeneratedVideo | null>(null);
-  const [videoVersions, setVideoVersions] = useState<VideoGenerationVersion[]>([]);
-  const [videoError, setVideoError] = useState('');
-  const [refinementSyncError, setRefinementSyncError] = useState('');
-  useDismissibleLayer(showLangDropdown, languageDropdownRef, () => setShowLangDropdown(false));
-  const [expanded, setExpanded] = useState(false);
-  const [seedanceVideoLocked, setSeedanceVideoLocked] = useState(true);
-  const [productInfoOpen, setProductInfoOpen] = useState(false);
-
-  const loadEnterpriseProducts = () => {
-    fetch('/api/overseas/enterprise/profile', { headers: authHeader() })
-      .then(r => r.ok ? r.json() : null)
-      .then((profile: EnterpriseProfileForScript | null) => {
-        if (!profile) return;
-        const options = buildProductOptions(profile);
-        setProductOptions(options);
-        if (options[0]) {
-          setSelectedProductId(current => current || options[0]!.id);
-          setProductInfo(current => current.trim() ? current : options[0]!.info);
-        }
-      })
-      .catch(() => {});
-  };
-
-  useEffect(() => {
-    loadEnterpriseProducts();
-    fetch('/api/overseas/health')
-      .then(r => r.ok ? r.json() : null)
-      .then((health: { featureLocks?: { seedanceVideo?: boolean } } | null) => {
-        setSeedanceVideoLocked(health?.featureLocks?.seedanceVideo !== false);
-      })
-      .catch(() => setSeedanceVideoLocked(true));
-  }, []);
-
-  useEffect(() => {
-    loadEnterpriseProducts();
-  }, [video.id]);
-
-  useEffect(() => {
-    if (activePanelTab) setActiveTab('analysis');
-  }, [activePanelTab, video.id]);
-
-  useEffect(() => {
-    setResult(null);
-    setResultProvenance(null);
-    setResultQualityStatus('');
-    setResultNotice('');
-    setCopied(false);
-    setShowLangDropdown(false);
-    setVideoResult(null);
-    setVideoError('');
-    setProductInfoOpen(false);
-    void studioApi.listVideoVersions(`inspiration:${video.id}:full`).then(versions => {
-      setVideoVersions(versions);
-      const item = versions.find(version => version.isSelected) || versions[0];
-      if (item) setVideoResult({ id: item.materialId || item.id, title: item.title, url: item.url, poster: item.poster, duration: item.duration, createdAt: item.createdAt, source: item.source });
-    });
-  }, [video.id]);
-
-  useEffect(() => {
-    setVoiceLanguageConfirmed(false);
-  }, [language, scriptType, video.id]);
-
-  useEffect(() => {
-    if (!isDemoTrafficStep()) return;
-    setVoiceLanguageConfirmed(true);
-  }, [video.id]);
-
-  const handleSelectProduct = (id: string) => {
-    setSelectedProductId(id);
-    const option = productOptions.find(item => item.id === id);
-    if (option) setProductInfo(option.info);
-  };
-
-  const handleGenerate = async () => {
-    const shouldAdvanceDemo = isDemoTrafficStep();
-    setGenerating(true);
-    setResult(null);
-    setResultProvenance(null);
-    setResultQualityStatus('');
-    setResultNotice('');
-    setVideoResult(null);
-    setVideoError('');
-    const realAnalysis = getAnalysis(video);
-    const analyzedDuration = (realAnalysis?.scriptDetails15s || []).reduce((max, item) => {
-      const values = String(item.time || '').match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
-      return Math.max(max, values[1] ?? values[0] ?? 0);
-    }, 0);
-    const fullVideoDuration = Math.max(1, Math.ceil(video.duration || analyzedDuration || 15));
-    const languageLabel = LANGUAGES.find(l => l.code === language)?.label;
-    const fallbackScript = makeFallbackScript(video, realAnalysis, productInfo, languageLabel, language, scriptType);
-    try {
-      const response = await studioApi.script(
-        {
-          materials: [
-            `参考视频标题仅用于提炼节奏，不得复述：${shortenText(video.title, 80)}`,
-            `平台：${video.platform}`,
-            video.views ? `热度：${video.views}` : '',
-            video.tags.length ? `标签仅用于判断受众，不得原样输出：${video.tags.slice(0, 8).join('、')}` : '',
-          ].filter(Boolean),
-          productInfo,
-          language,
-          platform: video.platform,
-          duration: fullVideoDuration,
-          scriptType,
-          referenceTitle: video.title,
-          referenceAnalysis: referenceAnalysisText(video, realAnalysis),
-          referenceHighlights: referenceHighlights(video, realAnalysis),
-          tone: '真实、可拍、B2B询盘导向，避免空泛营销话术',
-        },
-        fallbackScript,
-      );
-      const responseScript = String(response.script || '').trim();
-      const rejectedDraft = response.source === 'ai_rejected' && responseScript;
-      if (rejectedDraft) {
-        setResult(responseScript);
-        setResultProvenance('ai_rejected');
-        setResultQualityStatus('rejected');
-        setResultNotice(response.error || response.validationIssues?.join('；') || 'AI 草稿未通过事实或质量校验，仅供修改，不可进入视频生成或交付。');
-        return;
-      }
-      if (response.ok === false || response.source !== 'ai' || !responseScript) {
-        setResult(fallbackScript);
-        setResultProvenance('template');
-        setResultQualityStatus('fallback');
-        setResultNotice(response.error || 'AI 生成失败。以下仅为本地空白草稿模板，未调用模型、未经质检，不可进入视频生成或交付。');
-        return;
-      }
-      setResult(responseScript);
-      setResultProvenance('ai');
-      setResultQualityStatus(response.qualityStatus || 'warning');
-      setResultNotice(response.qualityStatus === 'passed'
-        ? 'AI 脚本已通过当前质量校验。'
-        : 'AI 脚本已生成，但尚未获得“质量通过”结论；请先人工复核。');
-      if (shouldAdvanceDemo) {
-        completeDemoStep('traffic');
-        window.setTimeout(() => onNavigate?.('conversion'), 700);
-      }
-    } catch (error) {
-      setResult(fallbackScript);
-      setResultProvenance('template');
-      setResultQualityStatus('fallback');
-      setResultNotice(`${error instanceof Error ? error.message : 'AI 生成失败'}。以下仅为本地空白草稿模板，未调用模型、未经质检，不可进入视频生成或交付。`);
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const handleCopy = () => {
-    if (result) { void navigator.clipboard.writeText(result); setCopied(true); setTimeout(() => setCopied(false), 2000); }
-  };
-
-  const generateSeedanceVideo = async () => {
-    if (!result) return;
-    if (resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)) {
-      setVideoError('当前内容是本地模板或未通过校验的草稿，不能进入视频生成。请先成功生成并通过 AI 质量检查。');
-      return;
-    }
-    if (seedanceVideoLocked) return;
-    setVideoGenerating(true);
-    setVideoError('');
-    try {
-      const duration = Math.max(4, Math.min(15, Math.round(video.duration || 8)));
-      const output = await studioApi.seedanceVideo({
-        script: result,
-        productInfo,
-        language,
-        ratio: '9:16',
-        duration,
-        resolution: '720p',
-        title: `Seedance 视频 · ${video.title}`,
-        generationGroupKey: `inspiration:${video.id}:full`,
-        generationContext: { entry: 'inspiration-full', videoId: video.id, scriptType, language },
-        parentVersionId: videoVersions.find(item => item.isSelected)?.id,
-      });
-      if (!output.ok || !output.url) {
-        throw new Error(output.error || 'Seedance 未返回可预览的视频地址');
-      }
-      setVideoResult({
-        id: output.material?.id || output.id || `seedance-video-${video.id}-${Date.now()}`,
-        title: output.material?.name || output.title || `Seedance 视频 · ${video.title}`,
-        url: output.material?.url || output.url,
-        poster: output.material?.poster || output.poster || video.aiAnalysis?.materialPoster || video.thumbnail,
-        duration: output.duration || duration,
-        createdAt: output.createdAt || new Date().toISOString(),
-        source: output.source,
-        material: output.material,
-        error: output.error,
-      });
-      if (output.version) setVideoVersions(current => [output.version!, ...current.map(item => ({ ...item, isSelected: false }))]);
-    } catch (err: any) {
-      setVideoError(String(err?.message || err || 'Seedance 视频生成失败'));
-    } finally {
-      setVideoGenerating(false);
-    }
-  };
-
-  const enterWorkflow = () => {
-    if (!result || !videoResult || resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)) return;
-    onEnterWorkflow?.({ source: 'seedance_video', script: result, video, scriptType, language, productInfo, generatedVideo: videoResult });
-  };
-
-  const benchmarkForStudio = (confirmedAnalysis: ScriptAnalysis) => buildBenchmarkAnalysis({
-    analysis: {
-      ...(video.aiAnalysis || {}),
-      gemini: {
-        ...(video.aiAnalysis?.gemini || {}),
-        scriptDetails15s: confirmedAnalysis.scriptDetails15s,
-      },
-    },
-    videoId: video.recordId || video.id,
-    duration: video.duration,
-  });
-
-  const enterQuickCutFromAnalysis = (confirmedAnalysis?: ScriptAnalysis) => {
-    const realAnalysis = confirmedAnalysis || getAnalysis(video);
-    setRefinementSyncError('');
-    onEnterWorkflow?.({
-      source: video.contentFormat === 'image' ? 'inspiration_image_post' : 'inspiration_analysis',
-      video,
-      scriptType: 'storyboard',
-      language,
-      productInfo,
-      referenceAnalysis: realAnalysis ? {
-        title: video.title,
-        visualStyle: realAnalysis.scriptSummary15s.visualStyle,
-        coreEmotion: realAnalysis.scriptSummary15s.coreEmotion,
-        benchmarkAnalysis: benchmarkForStudio(realAnalysis),
-        details: realAnalysis.scriptDetails15s,
-      } : undefined,
-    });
-    onClose();
-
-    // Navigation must not wait for the optional scheduler sync. A slow or failed
-    // sync used to make the primary CTA appear broken even though the editor
-    // payload was already ready.
-    if (video.contentFormat !== 'image' && video.recordId) {
-      void (async () => {
-        try {
-          const response = await fetch(`/api/overseas/videos/${video.recordId}/refinement-sync`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeader() },
-            body: JSON.stringify({ source: 'inspiration_analysis' }),
-          });
-          const payload = await response.json().catch(() => ({})) as { error?: string };
-          if (!response.ok) throw new Error(payload.error || '精修视频同步失败');
-        } catch (error) {
-          console.warn('精修视频同步失败，已继续进入内容创作。', error);
-        }
-      })();
-    }
-  };
-
-  const enterPersonReplacement = (confirmedAnalysis?: ScriptAnalysis) => {
-    const realAnalysis = confirmedAnalysis || getAnalysis(video);
-    onEnterWorkflow?.({
-      source: 'inspiration_person_replace',
-      video,
-      scriptType: 'storyboard',
-      language,
-      productInfo,
-      referenceAnalysis: realAnalysis ? {
-        title: video.title,
-        visualStyle: realAnalysis.scriptSummary15s.visualStyle,
-        coreEmotion: realAnalysis.scriptSummary15s.coreEmotion,
-        benchmarkAnalysis: benchmarkForStudio(realAnalysis),
-        details: realAnalysis.scriptDetails15s,
-      } : undefined,
-    });
-    onClose();
-  };
-
-  const selectedLang = LANGUAGES.find(l => l.code === language);
-
-  return (
-    <motion.div
-      ref={panelRef}
-      tabIndex={-1}
-      role="dialog"
-      aria-modal="true"
-      aria-label={video.contentFormat === 'image' ? '竞品图文拆解' : '爆款视频拆解'}
-      initial={{ opacity: 0, x: 32 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 32 }}
-      transition={reducedMotion ? { duration: 0 } : {
-        ...lsMotion.spring.standard,
-        opacity: { duration: lsMotion.duration.enter / 1000, ease: lsMotion.ease.enter },
-      }}
-      className={`fixed top-0 z-50 flex h-full max-w-full flex-col border-l border-border bg-surface ${
-        expanded ? 'left-0 right-0 w-auto shadow-xl' : 'right-0 w-[420px] shadow-lg'
-      }`}>
-
-      {/* Header */}
-      <div className="flex items-start justify-between px-4 py-3.5 border-b border-border flex-shrink-0">
-        <div className="flex-1 min-w-0 pr-3">
-          <p className="text-[10px] font-mono text-text-muted uppercase tracking-widest mb-1">{video.contentFormat === 'image' ? '竞品图文参考' : 'AI 脚本助手'}</p>
-          <h3 className="text-sm font-semibold text-text-primary leading-snug line-clamp-2">{video.title}</h3>
-        </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {video.sourceUrl && (
-            <button onClick={onFavorite} disabled={favoriting}
-              className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors disabled:opacity-60"
-              title="收藏到爆款素材">
-              {favoriting ? <Loader2 size={15} className="animate-spin" /> : <Bookmark size={15} />}
-            </button>
-          )}
-          <button onClick={() => setExpanded(v => !v)}
-            className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors"
-            title={expanded ? '还原侧栏' : '放大为主操作界面'}>
-            {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-          </button>
-          <button type="button" data-modal-initial-focus onClick={onClose} aria-label="关闭爆款详情" title="关闭" className="rounded-md p-1.5 text-text-muted transition-colors hover:bg-surface-2 hover:text-text-primary">
-            <X size={15} />
-          </button>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex items-center gap-0.5 px-4 py-2 border-b border-border flex-shrink-0">
-        {([
-          { id: 'analysis' as const, icon: <BarChart2 size={12} />, label: video.contentFormat === 'image' ? '竞品图文拆解' : '脚本分析' },
-        ]).map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-semibold transition-colors ${
-              activeTab === tab.id ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'
-            }`}>
-            {tab.icon}{tab.label}
-          </button>
-        ))}
-      </div>
-
-      <AnimatePresence mode="wait">
-        {activeTab === 'analysis' ? (
-          <motion.div key="analysis" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="flex flex-col flex-1 min-h-0 overflow-hidden">
-            <AnalysisPanel key={video.id} video={video} onGenerateScript={enterQuickCutFromAnalysis} onPersonReplace={enterPersonReplacement} onRetry={onRetry} onExactAnalysis={onExactAnalysis} actionNotice={refinementSyncError || actionNotice} specialRecommendation={specialRecommendation} />
-          </motion.div>
-        ) : (
-          <motion.div key="generate" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="flex flex-col flex-1 min-h-0 overflow-hidden">
-
-            {/* Language selection */}
-            <div className="px-4 py-3 border-b border-border flex-shrink-0 space-y-2.5">
-              <p className="text-[11px] font-semibold text-text-primary">语言选择</p>
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-surface-2 border border-border">
-                  {([
-                    { type: 'voiceover' as ScriptType, icon: <FileText size={12} />, label: '口播' },
-                    { type: 'storyboard' as ScriptType, icon: <LayoutIcon size={12} />, label: '分镜' },
-                  ] as const).map(({ type, icon, label }) => (
-                    <button key={type} onClick={() => setScriptType(type)}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                        scriptType === type ? 'bg-surface text-text-primary shadow-none' : 'text-text-muted hover:text-text-secondary'
-                      }`}>
-                      {icon}<span>{label}</span>
-                    </button>
-                  ))}
-                </div>
-                <div ref={languageDropdownRef} className="relative flex-1">
-                  <button onClick={() => setShowLangDropdown(v => !v)}
-                    className="w-full flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-surface text-xs text-text-secondary hover:border-border-bright transition-colors">
-                    <Globe size={11} className="text-text-muted flex-shrink-0" />
-                    <span className="flex-1 text-left">{selectedLang?.label}</span>
-                    <ChevronDown size={11} className={`text-text-muted transition-transform ${showLangDropdown ? 'rotate-180' : ''}`} />
-                  </button>
-                  <AnimatePresence>
-                    {showLangDropdown && (
-                      <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }}
-                        className="absolute top-full left-0 right-0 mt-1 rounded-lg border border-border bg-surface z-10 overflow-hidden shadow-lg">
-                        <div className="p-1 max-h-44 overflow-y-auto">
-                          {LANGUAGES.map(lang => (
-                            <button key={lang.code} onClick={() => { setLanguage(lang.code); setShowLangDropdown(false); }}
-                              className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs hover:bg-surface-2 transition-colors">
-                              <span className={language === lang.code ? 'text-accent font-semibold' : 'text-text-primary'}>{lang.label}</span>
-                              {language === lang.code && <Check size={11} className="text-accent" />}
-                            </button>
-                          ))}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </div>
-              <label className="flex items-start gap-2 text-xs text-text-secondary leading-relaxed cursor-pointer">
-                <input type="checkbox" checked={voiceLanguageConfirmed} onChange={e => setVoiceLanguageConfirmed(e.target.checked)}
-                  className="mt-0.5 accent-blue-600" />
-                <span>
-                  确认口播台词以<span className="font-semibold text-accent"> {selectedLang?.label || '所选语言'} </span>输出
-                </span>
-              </label>
-            </div>
-
-            {/* Product selection */}
-            <div className="px-4 py-3 border-b border-border flex-shrink-0 bg-surface-2/40">
-              <div className="overflow-hidden rounded-lg border border-border bg-surface transition-colors focus-within:border-accent">
-                <div className="px-3 pt-3 pb-2 border-b border-border/70">
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-semibold text-text-primary truncate">产品选择：{getPrimaryProductLabel(productInfo)}</p>
-                      <p className="text-[10px] text-text-muted">选择企业中心里的自己的产品信息</p>
-                    </div>
-                    <button onClick={() => setProductInfoOpen(v => !v)}
-                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold text-text-muted hover:text-text-primary hover:bg-surface-2 transition-colors flex-shrink-0">
-                      {productInfoOpen ? '收起' : '展开'}
-                      <ChevronDown size={11} className={`transition-transform ${productInfoOpen ? 'rotate-180' : ''}`} />
-                    </button>
-                  </div>
-                  {productOptions.length > 0 && (
-                    <select value={selectedProductId} onChange={e => handleSelectProduct(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-xs font-semibold text-text-primary outline-none focus:border-accent">
-                      {productOptions.map(option => (
-                        <option key={option.id} value={option.id}>{option.label}</option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-                <AnimatePresence initial={false}>
-                  {productInfoOpen && (
-                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-                      className="overflow-hidden">
-                      <textarea value={productInfo} readOnly
-                        placeholder="请先在企业中心维护并确认产品资料"
-                        rows={4}
-                        className="w-full resize-none bg-transparent px-4 py-3 text-sm text-text-primary outline-none placeholder:text-text-muted" />
-                      <p className="px-4 pb-3 text-[10px] leading-relaxed text-text-muted">此处只读，商业事实仅来自企业中心。需要修改时请先回企业中心更新资料。</p>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            </div>
-
-            {/* Script output */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[11px] font-semibold text-text-primary">脚本输出区</p>
-                  <p className="text-[10px] text-text-muted mt-0.5">{scriptType === 'voiceover' ? '口播脚本' : '分镜脚本'} · {selectedLang?.label}</p>
-                </div>
-                <button
-                  data-demo-target="traffic_script_generate"
-                  onClick={() => void handleGenerate()}
-                  disabled={generating || !voiceLanguageConfirmed || !selectedProductId || !productInfo.trim()}
-                  title={!selectedProductId || !productInfo.trim() ? '请先在企业中心维护并选择产品' : voiceLanguageConfirmed ? '生成脚本' : '请先确认口播输出语言'}
-                  className="flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-xs font-semibold text-white transition-colors hover:bg-accent-dim disabled:opacity-50">
-                  {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                  生成脚本
-                </button>
-              </div>
-              {!result && !generating && (
-                <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border bg-surface-2/50 text-center">
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center bg-surface-2 border border-border">
-                    <Sparkles size={18} className="text-text-muted" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-text-primary">基于 "{video.title}" 的脚本结构</p>
-                    <p className="text-xs text-text-muted mt-0.5">选择企业中心主推品，生成口播或分镜脚本</p>
-                  </div>
-                </div>
-              )}
-              {generating && (
-                <div className="flex gap-3">
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 bg-accent">
-                    <Loader2 size={12} className="text-white animate-spin" />
-                  </div>
-                  <div className="rounded-lg rounded-tl-sm border border-border bg-surface-2 px-4 py-3">
-                    <span role="status" className="ls-type-body-small text-text-secondary">正在生成脚本…</span>
-                  </div>
-                </div>
-              )}
-              {result && (
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex gap-3">
-                  <div className={`mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full ${resultProvenance === 'ai' ? 'bg-accent' : 'bg-amber-500'}`}>
-                    <Sparkles size={12} className="text-white" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className={`mb-2 rounded-lg border px-3 py-2 text-[10px] font-semibold leading-relaxed ${resultProvenance === 'ai' && resultQualityStatus === 'passed' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : resultProvenance === 'ai' ? 'border-sky-200 bg-sky-50 text-sky-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
-                      <p className="font-semibold">{resultProvenance === 'ai'
-                        ? resultQualityStatus === 'passed' ? 'AI 生成 · 质量校验通过' : 'AI 草稿 · 待人工复核'
-                        : resultProvenance === 'ai_rejected' ? 'AI 草稿 · 质量校验未通过' : '本地草稿模板 · 未调用 AI'}</p>
-                      {resultNotice && <p className="mt-1">{resultNotice}</p>}
-                    </div>
-                    <div className="rounded-lg rounded-tl-sm border border-border bg-surface-2 px-4 py-3">
-                      <p className="text-xs text-text-secondary leading-relaxed whitespace-pre-line font-mono">{result}</p>
-                    </div>
-                    <div className="flex items-center gap-4 mt-1.5 px-1">
-                      <button onClick={handleCopy} className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors">
-                        {copied ? <><Check size={11} className="text-green" /><span className="text-green">已复制</span></> : <><Copy size={11} /><span>复制</span></>}
-                      </button>
-                      <button type="button" onClick={() => openScriptLibrary({ tab: 'inspiration', contentId: video.id, query: video.title || '', openDetail: true })} className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors">
-                        <ArrowRight size={11} /><span>保存到脚本库</span>
-                      </button>
-                    </div>
-
-                    {getAnalysis(video) && (
-                      <div className="mt-3 space-y-3">
-                        {!videoResult ? (
-                          <>
-                            {seedanceVideoLocked ? (
-                              <div className="overflow-hidden rounded-lg border border-border bg-surface">
-                                <div className="flex gap-3 p-3">
-                                  <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-surface-2 border border-border">
-                                    <Lock size={15} className="text-text-muted" />
-                                  </div>
-                                  <div className="min-w-0 flex-1">
-                                    <p className="text-xs font-semibold text-text-primary">Seedance 视频生成 · 接口待启用</p>
-                                    <p className="mt-1 text-[11px] text-text-muted leading-relaxed">
-                                      当前环境未启用 Seedance 真实生成。启用后会先生成并展示输出视频，确认效果后再进入剪辑流程。
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-                            ) : (
-                              <button onClick={() => void generateSeedanceVideo()} disabled={videoGenerating || resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)}
-                                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white transition-all active:scale-95 disabled:opacity-70"
-                                style={{ background: 'var(--color-accent)' }}>
-                                {videoGenerating ? <Loader2 size={13} className="animate-spin" /> : <Film size={13} />}
-                                {videoGenerating ? 'Seedance 生成视频中…' : '基于脚本用 Seedance 生成视频'}
-                              </button>
-                            )}
-                            {videoError && (
-                              <p className="text-[11px] text-red-500 leading-relaxed">{videoError}</p>
-                            )}
-                          </>
-                        ) : (
-                          <div className="overflow-hidden rounded-lg border border-border bg-surface">
-                            <div className="flex gap-3 p-3">
-                              <div className="relative w-24 aspect-[9/16] flex-shrink-0 overflow-hidden rounded-lg bg-black">
-                                {videoResult.url ? (
-                                  <video src={videoResult.url} poster={videoResult.poster} controls playsInline className="absolute inset-0 h-full w-full object-cover" />
-                                ) : (
-                                  <img src={videoResult.poster} alt="" className="absolute inset-0 h-full w-full object-cover" />
-                                )}
-                                <span className="absolute left-1.5 top-1.5 rounded bg-black/55 px-1.5 py-0.5 text-[9px] font-bold text-white">Seedance</span>
-                              </div>
-                              <div className="min-w-0 flex-1 py-0.5">
-                                <p className="text-xs font-semibold text-text-primary line-clamp-2">Seedance 输出视频</p>
-                                {videoVersions.length > 0 && <div className="mt-2 flex flex-wrap gap-1">
-                                  {videoVersions.map(item => <button key={item.id} type="button" onClick={async () => {
-                                    await studioApi.selectVideoVersion(item.id);
-                                    setVideoVersions(current => current.map(v => ({ ...v, isSelected: v.id === item.id })));
-                                    setVideoResult({ id: item.materialId || item.id, title: item.title, url: item.url, poster: item.poster, duration: item.duration, createdAt: item.createdAt, source: item.source });
-                                  }} className={`rounded-md border px-2 py-1 text-[10px] font-bold ${item.isSelected ? 'border-accent bg-accent/10 text-accent' : 'border-border text-text-muted'}`}>V{item.versionNumber}</button>)}
-                                </div>}
-                                <div className="mt-3 flex flex-wrap gap-2">
-                                  <button onClick={() => void generateSeedanceVideo()} disabled={videoGenerating || resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-border text-[11px] font-semibold text-text-secondary hover:text-text-primary disabled:opacity-60">
-                                    {videoGenerating ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />} 重新生成
-                                  </button>
-                                  <button onClick={enterWorkflow} disabled={resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-white"
-                                    style={{ background: 'var(--color-accent)' }}>
-                                    <ArrowRight size={11} /> 进入剪辑流程
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
-  );
-}
-
 // ── Video Card (grid) ─────────────────────────────────────────────────────────
 
 export function parseExactAnalysisResponse(raw: string, status: number): { error?: string; status?: string; reused?: boolean; id?: string } {
@@ -2013,6 +1224,18 @@ export function DirectorVideoDetailPanel({
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
+interface GeneratedVideo {
+  id: string;
+  title: string;
+  url?: string;
+  poster?: string;
+  duration: number;
+  createdAt: string;
+  source?: string;
+  material?: Material;
+  error?: string;
+}
+
 interface InspirationDashboardProps {
   onScriptPanelOpen?: () => void;
   onScriptPanelClose?: () => void;
