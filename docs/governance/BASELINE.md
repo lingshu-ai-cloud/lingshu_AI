@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## LinkedIn 公司帖原始付费回执硬门禁（2026-10-23）
+
+- 代码提交 `169ad3cdae06f5c6d8f9093815a851fb072e9fb7` 为受控 LinkedIn Apify 许可增加必需的原始响应持久化回调，共用传输在 Actor POST、run GET 与 dataset GET 响应到达后先交给回调，成功后才解析或更新账本状态。新增 `server/socialDiscovery/linkedinCompanyReceiptStore.ts`，以批准记录、租户/run、Actor、请求与 Token 指纹绑定 write-once 原始状态码/正文，缺共享根、冲突和篡改均拒绝。现有 TikTok 许可不被这次接口增量强制改动；LinkedIn POST 已发出但回执失败时保持结果不明且禁自动重提。
+- Apify 传输与 LinkedIn 受控路径/回执存储离线测试 17/17，LinkedIn 来源与批准测试 11/11；TypeScript、架构扫描及相对上一基线 ratchet、192 项迁移仓库只读检查、生产构建和 `git diff --check` 通过。`AiCreateStudio` chunk 为 497,209/500,000 字节。尚未建立可信账号报价与汇率、独立 dataset/传输费用预算、跨实例唯一许可签发器，也未验证目标部署共享卷；因此真实付费入口继续关闭。未发起真实 Actor、目标库迁移或部署；最终本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## Studio 产品脚本与素材证据规则整组拆分（2026-10-23）
 
 - 代码提交 `ade1ea53a2ab6188fe68670c0381313bef69dbb2` 将产品/目标买家/合作路线的保守口播计划、完整 CTA、锁定分镜序列化、素材真实性与时间线检查整组迁至 `server/routes/studioProductScriptRules.ts`（551 行）；旧 `studio.ts` 导出继续转发，路由保留租户状态、模型生成、资料读取和修复编排。主路由从 10,063 降至 9,568 行，历史预算同步收紧；超限文件仍为 7 个，不代表结构治理完成。
