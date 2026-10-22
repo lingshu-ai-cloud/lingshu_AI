@@ -6,6 +6,7 @@ const source = fs.readFileSync(path.resolve('server/routes/digitalEmployees.ts')
 const planningSource = fs.readFileSync(path.resolve('server/routes/digitalEmployeeContentPlanning.ts'), 'utf8');
 const productionSource = fs.readFileSync(path.resolve('server/digitalEmployees/contentProduction.ts'), 'utf8');
 const executionSource = fs.readFileSync(path.resolve('server/digitalEmployees/contentProductionExecution.ts'), 'utf8');
+const supersessionSource = fs.readFileSync(path.resolve('server/digitalEmployees/taskCorrectionSupersession.ts'), 'utf8');
 const start = source.indexOf("digitalEmployeesRouter.post('/tasks/:taskId/director-decision'");
 const end = source.indexOf("digitalEmployeesRouter.post('/tasks/:taskId/retry'", start);
 assert.notEqual(start, -1, 'director decision endpoint must exist');
@@ -17,8 +18,9 @@ assert.match(route, /content_mode_routing/, 'direction changes must restart from
 assert.match(route, /appendAudit/, 'direction decisions must be written to the audit log');
 assert.match(route, /applyToSimilar/, 'the explicit weekly-similar scope must be supported');
 assert.match(route, /plan:\s*original/, 'a failed task-control application must restore the prior plan');
-assert.match(source, /affectedKeys\.has\('content_mode_routing'\)[\s\S]*?contentBatchPlans[\s\S]*?status: 'superseded'/, 'routing corrections must supersede the frozen content batch');
-assert.match(source, /supersededReason: '编导方向调整后原内容订单失效'/, 'projects created from the old order must retain an explicit superseded reason');
+assert.match(source, /supersedeTaskCorrectionBusinessState/, 'task control must call business-state supersession');
+assert.match(supersessionSource, /affectedKeys\.has\('content_mode_routing'\)[\s\S]*?contentBatchPlans[\s\S]*?status: 'superseded'/, 'routing corrections must supersede the frozen content batch');
+assert.match(supersessionSource, /supersededReason: '编导方向调整后原内容订单失效'/, 'projects created from the old order must retain an explicit superseded reason');
 assert.match(productionSource, /projectAutomation\(record\)\.stage !== 'superseded'/, 'the content agent must exclude superseded projects from its active production set');
 assert.match(planningSource, /const scriptableOrders = constrainedOrders\.filter[\s\S]*?generateDirectorScriptContracts[\s\S]*?orders: scriptableOrders/, 'routing must generate and freeze director scripts only for orders whose real inputs are ready');
 assert.match(planningSource, /orders: constrainedOrders\.map[\s\S]*?directedById\.get\(order\.id\)/, 'routing must retain blocked sibling orders while attaching scripts to ready orders');

@@ -451,11 +451,13 @@ const routeSource = fs.readFileSync(path.join(root, 'server/routes/digitalEmploy
 const productionSource = fs.readFileSync(path.join(root, 'server/digitalEmployees/contentProduction.ts'), 'utf8');
 const executorSource = fs.readFileSync(path.join(root, 'server/digitalEmployees/contentProductionExecution.ts'), 'utf8');
 const scriptSource = fs.readFileSync(path.join(root, 'server/digitalEmployees/contentProductionScripts.ts'), 'utf8');
+const supersessionSource = fs.readFileSync(path.join(root, 'server/digitalEmployees/taskCorrectionSupersession.ts'), 'utf8');
 assert.match(routeSource, /advanceAutomatedContentProduction\(/, 'runtime reconciliation must actively invoke content production');
 assert.match(routeSource, /studioProjectRendered/, 'production must wait for a rendered artifact rather than any draft project');
 assert.match(routeSource, /automation\.quality/, 'quality gate must require the persisted automated quality result');
 assert.match(routeSource, /contentKnowledgeGaps/, 'an all-inputs-missing run must persist a typed knowledge gap on the workflow task');
-assert.match(routeSource, /supersedeAffectedBusinessState[\s\S]*?resumeContentProjectForTaskControl/, 'task retry/replan must clear the matching automated Studio project backoff');
+assert.match(routeSource, /supersedeTaskCorrectionBusinessState/, 'task retry/replan must invoke business-state supersession');
+assert.match(supersessionSource, /resumeContentProjectForTaskControl/, 'task retry/replan must clear the matching automated Studio project backoff');
 assert.match(routeSource, /applyTaskControl\([\s\S]*?await advanceRun\(tenantId, result\.runId\)/, 'the retry endpoint must reconcile the run immediately after clearing project backoff');
 assert.match(productionSource, /managedBy:\s*'digital_employee'/, 'created Studio projects must remain traceable to the digital employee');
 assert.match(scriptSource, /产品事实与视觉素材证据严格分离/, 'generation must explicitly separate structured product facts from visible material evidence');
