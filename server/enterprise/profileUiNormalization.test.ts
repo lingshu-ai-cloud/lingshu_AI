@@ -5,6 +5,7 @@ import {
   profileSnapshot,
   sectionCompletion,
 } from '../../src/components/EnterprisePage';
+import { productAssetStats } from '../../src/components/enterprise/enterpriseProfileCompleteness';
 
 function profile(overrides: Record<string, unknown> = {}) {
   return {
@@ -63,6 +64,11 @@ const editableProduct = normalizeEnterpriseProfile(profile({
 assert.equal(editableProduct?.name, '', '编辑中的空白产品必须保留，不可在归一化时删除');
 assert.equal(editableProduct?.factoryImages?.[0]?.name, 'clip.mp4', '旧产品视频应继续回填工厂素材');
 assert.equal(editableProduct?.certificateImages?.[0]?.name, 'spec.pdf', '旧产品文档应继续回填证书素材');
+assert.deepEqual(productAssetStats([{
+  name: '测试产品', imageUrl: '/asset/image',
+  images: [{ name: 'image.jpg', type: 'image/jpeg', size: 1, updatedAt: '2026-10-22', url: '/asset/image' }],
+  documents: [{ name: 'spec.pdf', type: 'application/pdf', size: 1, updatedAt: '2026-10-22' }],
+}]), { creative: 1, documents: 1 }, '主图与图片列表中的同一素材不得重复计数');
 
 assert.equal(sectionCompletion(normalized).products, true, '产品事实完整时即可标记完成，不得再强制要求产品图或视频');
 assert.equal(sectionCompletion(normalized).materials, true, '创作素材已迁移到“我的素材”，不得阻塞企业知识完成度');
