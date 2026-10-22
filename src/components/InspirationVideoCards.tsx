@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Clock, Eye, Images, Loader2, Play, Sparkles, Star } from 'lucide-react';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import type { TrendVideo } from '../lib/inspirationTypes';
-import { AuthenticatedVideo, ThumbnailImage, VideoThumbnail, candidateDimensionLabels, discoveryOriginTitle, discoverySupplyLabel, getPlatformMeta, inspirationScoresForVideo } from './InspirationDashboard';
+import { AuthenticatedVideo, ThumbnailImage, VideoThumbnail } from './inspiration/InspirationMedia';
+import { candidateDimensionLabels, discoveryOriginTitle, discoverySupplyLabel, getPlatformMeta, inspirationScoresForVideo } from './inspiration/inspirationVideoProjection';
 import { LsMediaStateFrame } from './ui/LsExperiencePrimitives';
 
 interface VideoCardProps {

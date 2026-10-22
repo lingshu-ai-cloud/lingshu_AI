@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
 const cardsSource = fs.readFileSync(new URL('./InspirationVideoCards.tsx', import.meta.url), 'utf8');
+const mediaSource = fs.readFileSync(new URL('./inspiration/InspirationMedia.tsx', import.meta.url), 'utf8');
 const progressSource = fs.readFileSync(new URL('./inspiration/VideoAnalysisProgressPanel.tsx', import.meta.url), 'utf8');
 const watchModal = source.slice(source.indexOf('function WatchModal'), source.indexOf("export { splitDirectorReviewedShot"));
 
@@ -19,6 +20,6 @@ assert.match(source, /function MaterialCardMedia[\s\S]*?<LsMediaStateFrame[\s\S]
 assert.match(source, /videoFallback[\s\S]*?<AuthenticatedVideo/, '素材封面不可用时必须主动回退到视频首帧');
 assert.match(source, /materialPreviewImageSources[\s\S]*?material\.segments[\s\S]*?material\.url/, '素材封面必须依次尝试主封面、片段封面和图片原文件');
 assert.match(source, /MaterialCardMedia[\s\S]*?onRefresh[\s\S]*?await onRefresh\?\.\(\)[\s\S]*?正在刷新/, '素材封面重试必须先刷新短期地址，再重载媒体');
-assert.match(source, /fetch\(src, \{ headers: authHeader\(\), cache: 'no-store'/, '受保护封面重试不得继续命中浏览器中的失败缓存');
+assert.match(mediaSource, /fetch\(src, \{ headers: authHeader\(\), cache: 'no-store'/, '受保护封面重试不得继续命中浏览器中的失败缓存');
 
 console.log('Inspiration preview stacking and fallback contract passed');
