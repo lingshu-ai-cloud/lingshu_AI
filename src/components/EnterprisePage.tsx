@@ -1,6 +1,6 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
-import { useState, useEffect, useRef } from 'react';
-import { Alert, Button, Input, Tabs } from 'antd';
+import { useState, useEffect } from 'react';
+import { Alert, Button, Tabs } from 'antd';
 import { LsGradientProgress } from './ui/LsExperiencePrimitives';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import EnterpriseNotificationSettings from './enterprise/EnterpriseNotificationSettings';
@@ -9,12 +9,14 @@ import EnterpriseProductPanel from './enterprise/EnterpriseProductPanel';
 import EnterpriseProductImportReviewModal from './enterprise/EnterpriseProductImportReviewModal';
 import EnterpriseAdditionalSettings from './enterprise/EnterpriseAdditionalSettings';
 import EnterpriseBizRulesPanel from './enterprise/EnterpriseBizRulesPanel';
+import EnterpriseCompanyFactsPanel from './enterprise/EnterpriseCompanyFactsPanel';
 import EnterpriseSalesStylePanel from './enterprise/EnterpriseSalesStylePanel';
 import { useEnterpriseSalesStyle } from './enterprise/useEnterpriseSalesStyle';
 import { useEnterpriseFaq } from './enterprise/useEnterpriseFaq';
+import { useEnterpriseProfileLifecycle } from './enterprise/useEnterpriseProfileLifecycle';
+import { DEFAULT } from './enterprise/enterpriseProfileState';
 import { AUTO_REPLY_SCOPE, EnterpriseAiAutonomySection, EnterpriseHandoffSafetySection } from './enterprise/EnterpriseCustomerServiceSettings';
-import { Field, Toggle, KnowledgeCard, OptionSelector } from './enterprise/EnterpriseFormControls';
-import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, Plus, X, Image, Bell, ChevronLeft, Globe2, ShieldCheck, ArrowRight, Users, type LucideIcon } from 'lucide-react';
+import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, MessageSquare, Plus, X, Image, Bell, ChevronLeft, Globe2, ShieldCheck, ArrowRight, Users, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { completeDemoStep } from '../lib/demoProgress';
 import { prepareEnterpriseProductImport, removePendingImportedProduct, type PendingProductImport } from './enterprise/enterpriseProductImportPreparation';
@@ -22,14 +24,15 @@ import { confirmEnterpriseProductImportAssets } from './enterprise/enterprisePro
 import { useEnterpriseProductDocuments } from './enterprise/useEnterpriseProductDocuments';
 import {importProductEvidenceUrl,uploadProductEvidence} from '../lib/enterpriseProductAssetUpload';
 import SupportAccessControl from './SupportAccessControl';
-import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
+import EnterpriseProductImportCard from './EnterpriseProductImportCard';
 import type { AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import {readWeeklyEnterpriseFactTarget} from '../lib/weeklyEnterpriseFactNavigation';
-import type { ProductItem, AutonomyLevel, BizRules, FaqItem, FaqPack, NotificationSettings, CooperationRoute, SocialStrategy, Profile } from './enterprise/enterpriseProfileTypes';
-import { CATEGORY_OPTIONS, COMPANY_TYPE_OPTIONS, LANGUAGE_OPTIONS, MARKET_OPTIONS, emptyProduct, normalizeEnterpriseProfile, normalizeProductItems } from './enterprise/enterpriseProfileNormalization';
+import type { ProductItem, AutonomyLevel, BizRules, FaqItem, NotificationSettings, Profile } from './enterprise/enterpriseProfileTypes';
+import { emptyProduct, normalizeProductItems } from './enterprise/enterpriseProfileNormalization';
 import { enterpriseProfileCompleteness, productAssetStats, productCreativeMaterialCount, sectionCompletion, type EnterpriseCompletenessTodo } from './enterprise/enterpriseProfileCompleteness';
 export { normalizeEnterpriseProfile } from './enterprise/enterpriseProfileNormalization';
 export { enterpriseProfileCompleteness, sectionCompletion } from './enterprise/enterpriseProfileCompleteness';
+export { profileSnapshot } from './enterprise/enterpriseProfileState';
 
 
 export interface EnterpriseProductsDeepLink {
@@ -57,36 +60,6 @@ export function resolveEnterpriseProductsDeepLink(
 }
 
 
-const DEFAULT: Profile = {
-  company: { name: '', industry: '', companyType: '', mainMarkets: '', primaryLanguages: '', socialPlatformExperience: '', founded: '', description: '' },
-  socialStrategy: { enabledRoutes: [], routeStrategies: {}, manuallyEditedFields: [] },
-  products: {
-    categories: '',
-    priceRange: '',
-    moq: '',
-    certifications: '',
-    highlights: '',
-    items: [],
-  },
-  brand: { name: '', tone: '', style: '', taboos: '', usp: '', preferredLanguages: '' },
-  strategy: { currentGoal: '', focusProducts: '', focusMarkets: '', excludedMarkets: '', pricingStrategy: '', minMargin: '', agentAutonomy: '', aiAutonomy: 'draft' },
-  customers: { targetProfiles: '', highValueSignals: '', lowQualitySignals: '', commonQuestions: '', followupStyle: '' },
-  operations: { leadTime: '', customization: '', logistics: '', paymentTerms: '', riskNotes: '' },
-  agentLearning: { provenAngles: '', weakAngles: '', pendingAssumptions: '', userCorrections: '' },
-  bizRules: { quoteMode: 'human_only', priceRange: '', bargainPolicy: 'no', bargainFloor: '', moq: '', samplePolicy: '', paymentTerms: '', leadTime: '' },
-  faq: [],
-  notifications: { receivers: [], workHours: { start: '09:00', end: '22:00' }, quietOutsideHours: true, nightMode: { enabled: false, autoCategories: 'approved' }, lastTestAt: '' },
-  handoffRules: { keywords: ['人工', '老板', 'manager', 'complaint', 'refund'], missStreakToDraft: 2, negativeSentiment: true },
-  customerService: { enabled: false, enabledAt: '', disabledAt: '', partialAutoReplyEnabled: false, partialAutoReplyDecision: 'pending', partialAutoReplyDecisionAt: '' },
-  salesStyleProfile: { learnedFromCount: 0, sample_pairs: [] },
-  knowledge: '',
-};
-
-const AGENTS = [
-  { icon: Compass, label: '首页', color: '#4f46e5' },
-  { icon: Zap, label: '我的社媒', color: '#d97706' },
-  { icon: MessageSquare, label: '我的客户', color: '#0891b2' },
-];
 
 const PAGE_SIZE = 5;
 const SERVICE_INTAKE_AUTO_OPEN_KEY = 'lingshu:enterprise:service-intake-auto-opened';
@@ -134,20 +107,7 @@ const KNOWLEDGE_VIEW_ICONS: Record<KnowledgeView, LucideIcon> = {
   presenters: Users,
   presenterRouting: Users,
 };
-export function profileSnapshot(profile: Profile): string {
-  const stable = JSON.parse(JSON.stringify(profile)) as Profile;
-  const enabledRoutes = Array.from(new Set(stable.socialStrategy?.enabledRoutes ?? [])).sort() as CooperationRoute[];
-  const routeStrategies = Object.fromEntries(
-    enabledRoutes
-      .filter(route => Boolean(stable.socialStrategy?.routeStrategies?.[route]))
-      .map(route => [route, stable.socialStrategy!.routeStrategies[route]]),
-  ) as SocialStrategy['routeStrategies'];
-  stable.socialStrategy = { ...(stable.socialStrategy ?? DEFAULT.socialStrategy!), enabledRoutes, routeStrategies };
-  return JSON.stringify(stable);
-}
 
-
-const inputCls = 'w-full';
 
 const MAX_PRODUCT_DOCUMENTS = 3;
 
@@ -162,12 +122,8 @@ export function productMaterialLibraryParams(product: Pick<ProductItem, 'id' | '
 export default function EnterprisePage({ productsDeepLink = null }: { productsDeepLink?: EnterpriseProductsDeepLink | null }) {
   const weeklyFactTarget=readWeeklyEnterpriseFactTarget();
   const [profile, setProfile] = useState<Profile>(DEFAULT);
-  const [saving, setSaving] = useState(false);
   const [, setSaved] = useState(false);
   const [saveError, setSaveError] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [profileLoaded, setProfileLoaded] = useState(false);
-  const [apiStatus, setApiStatus] = useState<ProductApiStatus>({ count: 0 });
   const [orderImporting, setOrderImporting] = useState(false);
   const [orderImportMessage, setOrderImportMessage] = useState('');
   const [autonomyHighlight, setAutonomyHighlight] = useState(false);
@@ -192,9 +148,9 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     addFaq, updateFaq, removeFaq, structureLegacyFaq, importFaqPreview,
     selectedQuestionsForPack, togglePackQuestion, importFaqPack,
   } = useEnterpriseFaq({ profile, setProfile, setSaveError, pageSize: PAGE_SIZE });
-  const persistedProfileRef = useRef('');
-  const productStatusAbortRef = useRef<AbortController | null>(null);
-  const hasUnsavedChanges = profileLoaded && !loading && persistedProfileRef.current !== profileSnapshot(profile);
+  const { saving, loading, profileLoaded, apiStatus, hasUnsavedChanges, handleSave } = useEnterpriseProfileLifecycle({
+    profile, setProfile, saveError, setSaveError, setSaved, acceptLoadedPacks,
+  });
 
   useEffect(() => {
     if (window.sessionStorage.getItem('lingshu:enterprise-focus') !== 'language-settings') return;
@@ -214,148 +170,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
 
   useEffect(()=>{if(!weeklyFactTarget)return;setEnterpriseArea('facts');setKnowledgeView('company');window.setTimeout(()=>document.getElementById('weekly-enterprise-fact-target')?.scrollIntoView({behavior:'smooth',block:'start'}),100);},[weeklyFactTarget?.exceptionId,weeklyFactTarget?.consumerInputHash]);
 
-  useEffect(() => {
-    let active = true;
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 15_000);
-    const requestInit = { headers: authHeader(), signal: controller.signal };
-    Promise.all([
-      fetch('/api/overseas/enterprise/profile', requestInit).then(r => r.ok ? r.json() : Promise.reject(new Error(`企业资料加载失败（${r.status}）`))),
-      fetch('/api/overseas/enterprise/product-api/status', requestInit).then(r => r.json()).catch(() => ({ count: 0 })),
-      fetch('/api/overseas/enterprise/faq/packs', requestInit).then(r => r.json()).catch(() => ({ packs: [], recommendedIndustry: 'general' })),
-    ])
-      .then(([data, productApiStatus, packData]: [Partial<Profile>, ProductApiStatus, { packs?: FaqPack[]; recommendedIndustry?: string }]) => {
-        if (!active) return;
-        const rawNext: Profile = {
-          ...DEFAULT,
-          ...data,
-          company: { ...DEFAULT.company, ...data.company },
-          socialStrategy: {
-            ...DEFAULT.socialStrategy!,
-            ...data.socialStrategy,
-            routeStrategies: { ...DEFAULT.socialStrategy!.routeStrategies, ...data.socialStrategy?.routeStrategies },
-          },
-          products: { ...DEFAULT.products, ...data.products, items: normalizeProductItems({ ...DEFAULT.products, ...data.products }) },
-          brand: { ...DEFAULT.brand, ...data.brand },
-          strategy: { ...DEFAULT.strategy, ...data.strategy },
-          customers: { ...DEFAULT.customers, ...data.customers },
-          operations: { ...DEFAULT.operations, ...data.operations },
-          agentLearning: { ...DEFAULT.agentLearning, ...data.agentLearning },
-          bizRules: {
-            ...DEFAULT.bizRules,
-            ...data.bizRules,
-            quoteMode: data.bizRules?.quoteMode ?? DEFAULT.bizRules!.quoteMode,
-            bargainPolicy: data.bizRules?.bargainPolicy ?? DEFAULT.bizRules!.bargainPolicy,
-            priceRange: data.bizRules?.priceRange || data.products?.priceRange || '',
-            moq: data.bizRules?.moq || data.products?.moq || '',
-            samplePolicy: data.bizRules?.samplePolicy ?? '',
-            paymentTerms: data.bizRules?.paymentTerms || data.operations?.paymentTerms || '',
-            leadTime: data.bizRules?.leadTime || data.operations?.leadTime || '',
-          },
-          faq: Array.isArray(data.faq) ? data.faq : [],
-          notifications: {
-            ...DEFAULT.notifications!,
-            ...data.notifications,
-            workHours: { ...DEFAULT.notifications!.workHours, ...data.notifications?.workHours },
-            nightMode: {
-              enabled: Boolean(data.notifications?.nightMode?.enabled),
-              autoCategories: 'approved',
-            },
-            receivers: Array.isArray(data.notifications?.receivers) ? data.notifications!.receivers : [],
-          },
-          handoffRules: {
-            ...DEFAULT.handoffRules!,
-            ...data.handoffRules,
-            keywords: Array.isArray(data.handoffRules?.keywords) && data.handoffRules.keywords.length
-              ? data.handoffRules.keywords
-              : DEFAULT.handoffRules!.keywords,
-            missStreakToDraft: [1, 2, 3].includes(Number(data.handoffRules?.missStreakToDraft))
-              ? data.handoffRules!.missStreakToDraft
-              : DEFAULT.handoffRules!.missStreakToDraft,
-            negativeSentiment: data.handoffRules?.negativeSentiment !== false,
-          },
-          customerService: {
-            ...DEFAULT.customerService!,
-            ...data.customerService,
-            enabled: data.customerService?.enabled === true,
-            partialAutoReplyEnabled: data.customerService?.partialAutoReplyEnabled === true,
-            partialAutoReplyDecision: data.customerService?.partialAutoReplyDecision === 'enabled' || data.customerService?.partialAutoReplyDecision === 'declined'
-              ? data.customerService.partialAutoReplyDecision
-              : 'pending',
-          },
-          salesStyleProfile: {
-            ...DEFAULT.salesStyleProfile!,
-            ...data.salesStyleProfile,
-            sample_pairs: Array.isArray(data.salesStyleProfile?.sample_pairs) ? data.salesStyleProfile.sample_pairs : [],
-          },
-          knowledge: data.knowledge ?? '',
-        };
-        const next = normalizeEnterpriseProfile(rawNext);
-        persistedProfileRef.current = profileSnapshot(next);
-        setProfile(next);
-        setProfileLoaded(true);
-        setSaveError('');
-        setApiStatus(productApiStatus);
-        acceptLoadedPacks(packData);
-      })
-      .catch(error => {
-        if (!active) return;
-        setProfileLoaded(false);
-        setSaveError(error instanceof Error && error.name === 'AbortError'
-          ? '企业资料加载超时，请刷新后重试'
-          : error instanceof Error ? error.message : '企业资料加载失败，请刷新后重试');
-      })
-      .finally(() => {
-        window.clearTimeout(timeout);
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-      window.clearTimeout(timeout);
-      controller.abort();
-    };
-  }, []);
 
-  useEffect(() => {
-    if (!profileLoaded) return;
-    let disposed = false;
-    let inFlight = false;
-    const poll = async () => {
-      if (disposed || inFlight || document.visibilityState !== 'visible') return;
-      inFlight = true;
-      const controller = new AbortController();
-      productStatusAbortRef.current = controller;
-      const timeout = window.setTimeout(() => controller.abort(), 12_000);
-      try {
-        const response = await fetch('/api/overseas/enterprise/product-api/status', {
-          headers: authHeader(),
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error(`产品接口状态查询失败（${response.status}）`);
-        const status = await response.json() as ProductApiStatus;
-        if (!disposed) setApiStatus(status);
-      } catch {
-        // Keep the last successful status; the next bounded poll can recover.
-      } finally {
-        window.clearTimeout(timeout);
-        if (productStatusAbortRef.current === controller) productStatusAbortRef.current = null;
-        inFlight = false;
-      }
-    };
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') void poll();
-      else productStatusAbortRef.current?.abort();
-    };
-    const timer = window.setInterval(() => void poll(), 5000);
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-      productStatusAbortRef.current?.abort();
-      productStatusAbortRef.current = null;
-    };
-  }, [profileLoaded]);
 
   useEffect(() => {
     if (loading) return;
@@ -601,55 +416,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     }));
   };
 
-  const handleSave = async () => {
-    if (!profileLoaded) {
-      setSaveError('企业资料尚未成功加载，请刷新后重试');
-      return;
-    }
-    setSaving(true);
-    setSaved(false);
-    setSaveError('');
-    try {
-      const profileToSave = normalizeEnterpriseProfile(profile);
-      const response = await fetch('/api/overseas/enterprise/profile', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-enterprise-save-source': 'enterprise_center',
-          ...(profile.factVersion?.contentHash ? { 'If-Match': `"${profile.factVersion.contentHash}"` } : {}),
-          ...authHeader(),
-        },
-        body: JSON.stringify(profileToSave),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || result.error || `保存失败（${response.status}）`);
-
-      const verifyResponse = await fetch('/api/overseas/enterprise/profile', { headers: authHeader() });
-      const verified = await verifyResponse.json().catch(() => ({})) as Partial<Profile> & { message?: string; error?: string };
-      if (!verifyResponse.ok) throw new Error(verified.message || verified.error || '保存后校验失败');
-      const expectedProducts = normalizeProductItems(profileToSave.products);
-      const verifiedProducts = normalizeProductItems({ ...DEFAULT.products, ...verified.products });
-      const verifiedProductNames = new Set(verifiedProducts.map(item => item.name.trim()));
-      if (expectedProducts.length !== verifiedProducts.length || expectedProducts.some(item => !verifiedProductNames.has(item.name.trim()))) {
-        throw new Error('产品资料保存后校验失败，请重试');
-      }
-      const confirmedProfile = normalizeEnterpriseProfile(verified as Profile);
-      persistedProfileRef.current = profileSnapshot(confirmedProfile);
-      setProfile(confirmedProfile);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : '保存失败，请稍后重试');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  useEffect(() => {
-    if (loading || saving || !hasUnsavedChanges || saveError) return;
-    const timer = window.setTimeout(() => { void handleSave(); }, 900);
-    return () => window.clearTimeout(timer);
-  }, [profile, loading, saving, hasUnsavedChanges, saveError]);
 
   const importOrderCsv = async (file: File | null) => {
     if (!file) return;
@@ -812,34 +578,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     }, 100);
   };
 
-  const marketSection = (
-    <KnowledgeCard id="enterprise-language-settings" highlight={languageSettingsHighlight} icon={Globe2} title="目标市场与语言" purpose="决定 AI 说什么语言、按哪个时区建议联系时间" completed={completions.market}>
-      <div className="space-y-4">
-        <Field label="主要市场">
-          <OptionSelector value={profile.company.mainMarkets} options={MARKET_OPTIONS} onChange={value => set('company')('mainMarkets', value)} placeholder="选择目标市场" />
-        </Field>
-        <Field label="主要语言">
-          <OptionSelector value={profile.company.primaryLanguages ?? ''} options={LANGUAGE_OPTIONS} onChange={value => set('company')('primaryLanguages', value)} placeholder="选择主要语言" />
-        </Field>
-      </div>
-    </KnowledgeCard>
-  );
-
-  const companySection = (
-    <KnowledgeCard icon={Building2} title="企业基本资料" purpose="供内容、客服和数字员工识别企业身份" completed={completions.company} stat={completions.company ? '基础资料已填写' : '请填写名称、行业和企业类型'}>
-      <div className="grid grid-cols-2 gap-4">
-        <Field label="公司名称">
-          <Input className={inputCls} value={profile.company.name} onChange={e => set('company')('name', e.target.value)} placeholder="示例贸易有限公司" />
-        </Field>
-        <Field label="行业类目">
-          <OptionSelector value={profile.company.industry} options={CATEGORY_OPTIONS} onChange={value => set('company')('industry', value)} placeholder="选择行业类目" />
-        </Field>
-        <Field label="企业类型">
-          <OptionSelector value={profile.company.companyType ?? ''} options={COMPANY_TYPE_OPTIONS} multiple={false} onChange={value => set('company')('companyType', value)} placeholder="选择企业类型" />
-        </Field>
-      </div>
-    </KnowledgeCard>
-  );
 
   if (loading) {
     return (
@@ -906,7 +644,15 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
             </div>
           </div>}
 
-          {knowledgeView === 'company' && <>{marketSection}{companySection}</>}
+          {knowledgeView === 'company' && (
+            <EnterpriseCompanyFactsPanel
+              company={profile.company}
+              marketCompleted={completions.market}
+              companyCompleted={completions.company}
+              highlighted={languageSettingsHighlight}
+              onFieldChange={set('company')}
+            />
+          )}
           {knowledgeView === 'presenters' && <EnterprisePresenters />}
 
           {knowledgeView === 'products' && <EnterpriseProductPanel

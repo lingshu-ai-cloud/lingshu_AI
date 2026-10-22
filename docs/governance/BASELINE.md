@@ -9,6 +9,11 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 9 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## 企业资料页面退出历史超限清单（2026-10-22）
+
+- 以集成分支 `021bbf21d12d101ea702d49223f09ecb08c2d3fe` 为干净起点，将服务端资料默认值合并、资料快照和读回校验分别落在 `enterpriseProfileState.ts` 与 `enterpriseProfilePersistence.ts`；加载、产品接口状态轮询、自动保存与保存后状态归入 `useEnterpriseProfileLifecycle.ts`。父页面继续持有可编辑资料和页签导航；公司与市场表单移入 `EnterpriseCompanyFactsPanel.tsx`。保存仍使用原 POST、`If-Match` 版本头和 GET 读回，产品数量/名称不符不得显示成功。
+- `EnterprisePage.tsx` 从 1,050 行降至 796 行，撤销该页历史超限预算；全仓历史超限文件由 9 项降至 8 项，**不代表其他 8 项已完成拆分**。资料状态、公司表单与模拟保存回归 8/8、产品导入 35/35、完整 `test:customer-service` 链、TypeScript、架构扫描/ratchet、生产构建、191 项迁移只读检查及 `git diff --check` 通过；`AiCreateStudio` 主 chunk 为 497103/500000 字节。客服隔离测试中的 PocketBase `ECONNREFUSED` 不代表远端成功；真实账号资料加载/保存、产品接口状态、外部供应商、生产迁移和部署未在本批执行。
+
 ## 企业资料 FAQ 控制器边界（2026-10-22）
 
 - 以集成分支 `9eeaacdaeccd8ce53f7c30e81d36eb16474d0d6d` 为干净起点，将 FAQ 草稿、分页、知识包选择、旧问答结构化与知识包导入请求统一迁入 `useEnterpriseFaq.ts`。hook 在父页面无条件挂载，切换页签保留未完成的编辑状态；资料主状态与首次加载仍由父页面持有，加载完成后将知识包目录交给 hook。连续勾选问题改用前一状态计算，避免同一事件批次覆盖选择。

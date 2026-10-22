@@ -90,13 +90,15 @@ test('pack selection remains disabled for incomplete or existing questions', () 
 test('FAQ controller state stays mounted above the conditional tab view', () => {
   const page = readFileSync(new URL('../EnterprisePage.tsx', import.meta.url), 'utf8');
   const controller = readFileSync(new URL('./useEnterpriseFaq.ts', import.meta.url), 'utf8');
+  const lifecycle = readFileSync(new URL('./useEnterpriseProfileLifecycle.ts', import.meta.url), 'utf8');
   assert.match(page, /useEnterpriseFaq\(\{ profile, setProfile, setSaveError, pageSize: PAGE_SIZE \}\)/);
   assert.ok(page.indexOf('useEnterpriseFaq(') < page.indexOf("knowledgeView === 'faq'"));
   assert.match(controller, /const \[faqPreview, setFaqPreview\] = useState/);
   assert.match(controller, /const \[selectedPackQuestions, setSelectedPackQuestions\] = useState/);
   assert.match(page, /knowledgeView === 'faq' && <EnterpriseFaqPanel/);
   assert.match(controller, /setFaqPage\(page => Math\.min/);
-  assert.match(page, /acceptLoadedPacks\(packData\)/);
+  assert.match(page, /setSaved, acceptLoadedPacks/);
+  assert.match(lifecycle, /acceptLoadedPacks\(packData\)/);
 });
 
 test('pack selection starts with only ready questions and handles consecutive edits', () => {

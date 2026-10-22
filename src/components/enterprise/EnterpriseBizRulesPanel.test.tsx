@@ -24,7 +24,9 @@ test('quotation boundary and shared product documents remain explicit', () => {
 
 test('page owns business-rule mutation and persistence', () => {
   const page = readFileSync(new URL('../EnterprisePage.tsx', import.meta.url), 'utf8');
+  const lifecycle = readFileSync(new URL('./useEnterpriseProfileLifecycle.ts', import.meta.url), 'utf8');
   assert.match(page, /const setBizRule = \(field: keyof BizRules, value: string\)/);
   assert.match(page, /<EnterpriseBizRulesPanel[\s\S]*?bizRules=\{profile\.bizRules\}[\s\S]*?onChange=\{setBizRule\}/);
-  assert.match(page, /const handleSave = async/);
+  assert.match(page, /useEnterpriseProfileLifecycle\(/);
+  assert.match(lifecycle, /const handleSave = async/);
 });
