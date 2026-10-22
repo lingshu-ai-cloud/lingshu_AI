@@ -12,6 +12,7 @@ const saveQueueSource = fs.readFileSync(new URL('./assistant/useAssistantThreadS
 const actionProjectionSource = fs.readFileSync(new URL('./assistant/assistantActionProjection.ts', import.meta.url), 'utf8');
 const productionIntakeSource = fs.readFileSync(new URL('./assistant/assistantProductionIntake.ts', import.meta.url), 'utf8');
 const featureGuidesSource = fs.readFileSync(new URL('./assistant/useAssistantFeatureGuides.ts', import.meta.url), 'utf8');
+const notificationsSource = fs.readFileSync(new URL('./assistant/useAssistantNotifications.ts', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const appModulesSource = fs.readFileSync(new URL('../appPageModules.tsx', import.meta.url), 'utf8');
 const appShellChromeSource = fs.readFileSync(new URL('./AppShellChrome.tsx', import.meta.url), 'utf8');
@@ -170,7 +171,7 @@ assert.match(source, /assistantTool === 'knowledge-intake' \? 560 : 420/, '灵�
 
 const closedDecisionCountSource = sourceSection(
   "if (mode === 'chat' || suppressForRightSidebar) return;",
-  "window.addEventListener('lingshu-assistant-card'",
+  'const detail = (event as CustomEvent<{ text?: string;',
   '灵小枢关闭时的待办数量刷新',
 );
 assert.match(closedDecisionCountSource, /assistantDecisionApi\.feed\(\{[\s\S]{0,180}goalId: pageContext\.goalId/, '关闭助手时仍必须按当前周目标轻量读取真实待办数量');
@@ -472,10 +473,10 @@ const mutationActionsSource = sourceSection('const WORKFLOW_MUTATION_ACTIONS', '
 assert.doesNotMatch(mutationActionsSource, /'view_status'/, 'view_status 不得被归类为 workflow mutation，避免状态回读递归');
 assert.doesNotMatch(presentResponseSource, /actionCardToTaskCard\(statusResponse\.card, statusResponse, stableTaskId\)/, '新对象状态绝不能回填原 mutation 卡');
 
-const cardEventEnd = source.indexOf("window.addEventListener('lingshu-assistant-card'");
-const cardEventStart = source.lastIndexOf('useEffect(() => {', cardEventEnd);
+const cardEventEnd = notificationsSource.indexOf("window.addEventListener('lingshu-assistant-card'");
+const cardEventStart = notificationsSource.lastIndexOf('useEffect(() => {', cardEventEnd);
 assert.ok(cardEventStart >= 0 && cardEventEnd > cardEventStart, '无法定位任务卡事件处理');
-const cardEventSource = source.slice(cardEventStart, cardEventEnd);
+const cardEventSource = notificationsSource.slice(cardEventStart, cardEventEnd);
 const cardNotifyIndex = cardEventSource.indexOf('shouldNotifyAssistant(');
 const cardFocusIndex = cardEventSource.indexOf('focusTaskCard(');
 const cardDecisionIndex = cardEventSource.indexOf("setPanelView('decision')");
@@ -486,9 +487,10 @@ assert.ok(
   '常规后台卡片不得抢焦点、切换界面或打断用户',
 );
 
-assert.match(source, /shouldNotifyAssistant\(detail\.reason \?\? 'routine'\)/, '一次性语音气泡也必须遵守通知策略');
-const routinePerformanceIgnored = /if \(!shouldNotifyAssistant\(reason\)\)[\s\S]{0,160}(?:return|setPerformance\(null\))/.test(source);
+assert.match(notificationsSource, /shouldNotifyAssistant\(detail\.reason \?\? 'routine'\)/, '一次性语音气泡也必须遵守通知策略');
+const routinePerformanceIgnored = /if \(!shouldNotifyAssistant\(reason\)\)[\s\S]{0,160}(?:return|setPerformance\(null\))/.test(notificationsSource);
 assert.ok(routinePerformanceIgnored, '常规后台性能事件不得触发灵小枢提示');
+assert.match(source, /useAssistantNotifications\(\{[\s\S]*mode, setMode, primaryEntry, compactMode, focusTaskCard, setUnreadCount, upsertTaskCard/, '浮层必须将通知事件生命周期交给独立 hook');
 
 assert.match(decisionDialogSource, /dialogTaskCard\.secondaryActions\.map/, '外部决策弹窗必须渲染交互选择卡操作');
 assert.match(decisionDialogSource, /dialogTaskCard\.workspace\.href/, '外部弹窗中的完整结果必须可以进入工作区');
