@@ -21,7 +21,7 @@ import {
 import {assertWeeklyProductionMaterialAdmission} from './socialWeeklyProductionMaterialGate.js';
 import {freezeWeeklyPreSupplyHandoff,pauseWeeklyPreSupplyStage,readWeeklyPreSupplyHandoff} from './socialWeeklyPreSupplyHandoff.js';
 import { persistSocialProductionWorkspace } from './socialContentProductionWorkspace.js';
-import {persistInitialSocialSceneCache,initialSceneCacheInputFingerprint,initialSceneSourceHashes,type InitialSceneQualityReport} from './socialContentInitialSceneCache.js';
+import {persistInitialSocialSceneCache,initialSceneCacheInputFingerprint,initialSceneSourceHashes} from './socialContentInitialSceneCache.js';
 import {buildSocialProductionHandoff} from './socialContentProductionHandoff.js';
 import { createProductionBudgetRuntimeReaders } from './socialContentProductionBudgetRuntimeReaders.js';
 import { createSocialContentMaterialPaidContext, type SocialMaterialPaidRuntimePorts } from './socialContentMaterialPaidContext.js';
@@ -30,6 +30,7 @@ import {prepareSocialProductionMaterialRouting} from './socialContentProductionM
 import {prepareSocialContentProductionDirector} from './socialContentProductionDirectorPreparation.js';
 import {admitSocialContentProduction} from './socialContentProductionAdmission.js';
 import {prepareSocialContentFinalDelivery} from './socialContentProductionFinalDelivery.js';
+import {inspectSocialContentProductionTechnicalQuality} from './socialContentProductionTechnicalQuality.js';
 import {currentPresenterFirstFrameAssetProvenanceHash,ensureStrictPresenterFirstFrames} from './socialContentPresenterFirstFrameRuntime.js';
 import { createProductionBudgetRouteReaders } from './socialContentProductionBudgetRoutes.js';
 import { createSocialContentPaidRuntimePorts } from './socialContentPaidRuntimePorts.js';
@@ -144,7 +145,7 @@ export interface SocialContentAutoProductionRuntime {
 }
 type ProductionTaskDetail = NonNullable<Awaited<ReturnType<typeof readSocialTaskDetail>>>;
 export type SocialGraphApprovedContext = Pick<ProductionTaskDetail, 'version' | 'agentWorkflow' | 'assetSupplyPlan'> & { revisionPlanHash?: string; footageRevisionPlanHash?: string };
-import { executeSocialRenderStage, executeSocialQualityStage, rebindSocialGraphRenderSources, type SocialProductionGraphPhase } from './socialContentProductionStages.js';
+import { executeSocialRenderStage, rebindSocialGraphRenderSources, type SocialProductionGraphPhase } from './socialContentProductionStages.js';
 import {freezeSocialRenderFrameContract} from './socialRenderFrameContract.js';
 async function readCurrentConfirmedPresenterFirstFrame(store:NonNullable<Starter198Repository['dataStore']>,input:{scope:{tenantId:string;taskId:string;runId:string;planHash:string};groupId:string;presenterGroupContractHash:string;presenterAssetId:string}){
   const rows=await store.list<any>('social_presenter_first_frame_approvals',{where:{tenant_id:input.scope.tenantId,task_id:input.scope.taskId,run_id:input.scope.runId,plan_hash:input.scope.planHash,group_id:input.groupId},perPage:2});
@@ -1103,42 +1104,11 @@ export async function runSocialContentAutoProduction(input: {
     manifest: compositeManifest, outputDirectory: outputDir, render: input.runtime?.renderComposite ?? composite,
     checkpointEnabled: Boolean(input.graphPhase) });
   if (input.graphPhase === 'render') return;
-  await writeExecutionStage({
-    ...input,
-    stage: 'quality_check',
-    message: '内容 Agent 正在检查成片画面、音轨和字幕。',
-  });
-  const { quality, sceneQuality, audio, measuredDurationSeconds } = await executeSocialQualityStage({ outputPath: result.outputPath,
-    duration, scenes: timeline.map(clip => ({ start: clip.targetStart, end: clip.targetEnd })), expectedUniqueScenes: contentHandoff.scenes.length,
-    inspectVisuals: input.runtime?.inspectVisuals ?? inspectRenderedVisuals,
-    inspectScenes: input.runtime?.inspectScenes ?? inspectRenderedScenes,
-    runFfmpeg: input.runtime?.runFfmpeg ?? runVisualFfmpeg, checkpointEnabled: Boolean(input.graphPhase), verifyDuration: preserveReferenceTimeline,
-    expectedBgm: { ...bgmQualitySource, volume: contentHandoff.bgmSelection.volume } });
-  const finalFidelityFailures = socialProductionReferenceFidelityFailures(agentWorkflow, contentHandoff, {
-    referenceAnalysis: detail.referenceVideoAnalysis, renderedDurationSeconds: measuredDurationSeconds ?? duration,
-    renderedTimeline: timeline.map(clip => ({ sceneId: clip.sceneId, startSeconds: clip.targetStart, endSeconds: clip.targetEnd })),
-  });
-  const technicalFailures=[...quality.failures,...sceneQuality.issues.map(issue=>issue.reason),...(!audio.ok?['成片音轨无法解码']:[]), ...finalFidelityFailures];
-  const technicalApproved=quality.passed&&sceneQuality.passed&&audio.ok&&(!audio.bgm||audio.bgm.passed)&&!finalFidelityFailures.length;
-  const {probeSocialSceneMedia}=await import('./socialSceneMediaHardProbe.js');
-  const mediaHardProbe=await probeSocialSceneMedia({filePath:result.outputPath,manifest:compositeManifest as unknown as Record<string,unknown>,frozenVoiceCues:voice.cues,subtitleRenderEvidence:result.receipt.subtitleRenderEvidence,frameRenderEvidence:result.receipt.frameRenderEvidence,
-    ...(result.receipt.captionBaselineSidecar&&result.receipt.subtitleAssSidecar?{captionMaskSources:{baselinePath:result.receipt.captionBaselineSidecar.path,baselineSha256:result.receipt.captionBaselineSidecar.sha256,assPath:result.receipt.subtitleAssSidecar.path,assSha256:result.receipt.subtitleAssSidecar.sha256}}:{})});
-  const technicalQualityReport:InitialSceneQualityReport={schemaVersion:'initial-scene-quality.v1',visual:quality,scenes:sceneQuality,audio:{ok:audio.ok&&(!audio.bgm||audio.bgm.passed),error:!audio.ok?'成片音轨无法解码':audio.bgm?.failure??null,...(audio.bgm?{bgm:audio.bgm}:{})},mediaHardProbe};
-  const technicalQualityInputHash = socialRequestHash({
-    outputSha256: result.receipt.sha256,
-    manifestHash: socialRequestHash(compositeManifest),
-    policyVersion: 'social-technical-quality.v2',
-  });
-  await recordCurrentContentExecutionCheckpoint({
-    stage: 'social.graph_technical_quality', version: '1', inputHash: technicalQualityInputHash,
-    payload: {
-      outputSha256: result.receipt.sha256,
-      approved: technicalApproved,
-      failureCount: technicalFailures.length,
-      failures: technicalFailures.slice(0, 100),
-      reportHash: socialRequestHash(technicalQualityReport),
-      checkedScenes: sceneQuality.checkedScenes,
-    },
+  const { quality, sceneQuality, audio, measuredDurationSeconds, technicalFailures,
+    technicalApproved, technicalQualityReport } = await inspectSocialContentProductionTechnicalQuality({
+    execution: input, detail, agentWorkflow, contentHandoff, renderResult: result,
+    manifest: compositeManifest as unknown as Record<string, unknown>, duration, timeline,
+    preserveReferenceTimeline, bgmQualitySource, frozenVoiceCues: voice.cues,
   });
   if (input.graphPhase === 'technical_quality') return;
   const finalDelivery = await prepareSocialContentFinalDelivery({
