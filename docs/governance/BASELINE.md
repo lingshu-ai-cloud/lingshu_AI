@@ -11,6 +11,7 @@
 
 ## 图片多输出 HTTP 准入回归（2026-10-22）
 
+- 结构批次 `83a28213` 将 Studio 路由内的生成图片素材写入、租户路径、对象存储和素材库登记抽为 `generatedImageMaterial.ts`，供单图与后续非付费 GIF 合成复用；PNG/GIF 使用临时隔离素材目录验证了字节、哈希、租户归属与记录一致性。`studio.ts` 由 11361 降至 11292 行并下调历史预算；这只是持久化职责边界，**尚未**把逐单元 GIF 底图与最终成片接通。图片专项 45 项、Studio 工作流与媒体回归、TypeScript、架构扫描与 ratchet、生产构建、191 项迁移只读检查通过；未调用真实供应商或部署。
 - 安全补丁 `add581a2`：通用图片任务 PATCH 不再接受浏览器新增成片、伪造 `approved` 状态或改写质检/素材证据；仅允许现有输出保持原样或降为 `repair_required`，维持工作台的显式精修入口。真实 HTTP 回归覆盖伪造拒绝和合法降级。图片专项、TypeScript、架构扫描与 ratchet、生产构建、191 项迁移只读检查通过；未调用真实供应商或部署。
 - 代码提交 `eae873e7` 将隔离的真实 HTTP 路由测试加入 `test:social-image-pipeline`：GIF 任务在供应商前返回 `social_image_gif_delivery_not_ready`，未冻结的轮播单元返回 `social_image_frozen_plan_invalid`。测试使用临时本地数据目录并在结束时清理，不发起供应商请求。
 - 图片管线 44 项领域测试、新 HTTP 测试、现有路由源码合同、TypeScript、架构扫描与 ratchet 测试、生产构建、191 项迁移清单只读检查和 `git diff --check` 通过；主 Studio chunk 为 497103/500000 字节。此验收只证明拒绝路径，**不证明**轮播付费生成的 HTTP 全流程、GIF 合成交付、浏览器交互或真实供应商就绪；这些仍待完成。
