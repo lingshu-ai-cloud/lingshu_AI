@@ -7,6 +7,7 @@ import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, C
 import { authHeader } from '../lib/auth';
 import { completeDemoStep } from '../lib/demoProgress';
 import { prepareEnterpriseProductImport, type PendingProductImport } from './enterprise/enterpriseProductImportPreparation';
+import { confirmEnterpriseProductImportAssets } from './enterprise/enterpriseProductImportConfirmation';
 import {importProductEvidenceUrl,uploadProductEvidence} from '../lib/enterpriseProductAssetUpload';
 import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
@@ -1012,71 +1013,19 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   const confirmProductImport = async () => {
     if (!pendingProductImport || productImportConfirming) return;
     setProductImportConfirming(true);
-    const transferredProducts = pendingProductImport.products.map(product => ({ ...product, images: [...(product.images || [])] }));
-    const assignedImages = [...pendingProductImport.assignedImages];
     try {
-      for (const [imageIndex, image] of assignedImages.entries()) {
-        const product = transferredProducts[image.productIndex];
-        if (!product) continue;
-        const asset = image.uploadedUrl ? { name: image.name, type: image.file.type, size: image.file.size, updatedAt: new Date().toISOString(), url: image.uploadedUrl } : await uploadProductEvidence(image.file);
-        if (!asset.url) throw new Error('PDF 产品图片上传后缺少可用地址');
-        assignedImages[imageIndex] = { ...image, uploadedUrl: asset.url };
-        setPendingProductImport(current => current ? { ...current, assignedImages: [...assignedImages] } : null);
-        product.images = [...product.images, asset];
-        if (!product.imageUrl) product.imageUrl = asset.url;
+      const result = await confirmEnterpriseProductImportAssets(
+        pendingProductImport,
+        { upload: uploadProductEvidence, importUrl: importProductEvidenceUrl },
+        setPendingProductImport,
+      );
+      if (result.status === 'blocked') {
+        setPendingProductImport(result.pending);
+        setProductImportMessage(result.message);
+        return;
       }
-    } catch (error) {
-      setPendingProductImport(current => current ? { ...current, assignedImages } : null);
-      setProductImportMessage(error instanceof Error ? error.message : 'PDF 产品图片上传失败');
-      setProductImportConfirming(false);
-      return;
-    }
-    const transferStates = { ...pendingProductImport.remoteImageTransfers };
-    setPendingProductImport(current => current ? { ...current, remoteImageTransfers: Object.fromEntries(Object.entries(current.remoteImageTransfers).map(([index, transfer]) => [index, transfer.status === 'uploaded' ? transfer : { ...transfer, status: 'uploading', error: undefined }])) } : null);
-    await Promise.all(Object.entries(transferStates).map(async ([indexText, transfer]) => {
-      if (transfer.status === 'uploaded') return;
-      const index = Number(indexText);
-      try {
-        const asset = await importProductEvidenceUrl(transfer.originalUrl, `${transferredProducts[index]?.name || '产品'}-主图`);
-        const product = transferredProducts[index];
-        if (product) {
-          product.imageUrl = asset.url;
-          product.images = [{ ...asset }, ...(product.images || []).filter(image => image.url !== transfer.originalUrl)];
-        }
-        transferStates[index] = { ...transfer, status: 'uploaded', error: undefined };
-      } catch (error) {
-        transferStates[index] = { ...transfer, status: 'failed', error: error instanceof Error ? error.message : '外链图片转存失败' };
-      }
-    }));
-    const failedTransfers = Object.values(transferStates).filter(transfer => transfer.status === 'failed');
-    if (failedTransfers.length) {
-      setPendingProductImport(current => current ? { ...current, products: transferredProducts, remoteImageTransfers: transferStates } : null);
-      setProductImportMessage(`${failedTransfers.length} 张产品外链图片转存失败，产品尚未导入。请检查图片地址后重试。`);
-      setProductImportConfirming(false);
-      return;
-    }
-    setPendingProductImport(current => current ? { ...current, products: transferredProducts, remoteImageTransfers: transferStates } : null);
-    const images = pendingProductImport.unassignedImages;
-    const nextImages = images.map(image => image.status === 'uploaded' ? image : { ...image, status: 'uploading' as const, error: undefined });
-    setPendingProductImport(current => current ? { ...current, unassignedImages: nextImages } : null);
-    const settled = await Promise.all(nextImages.map(async image => {
-      if (image.status === 'uploaded') return image;
-      try {
-        await uploadProductEvidence(image.file);
-        return { ...image, status: 'uploaded' as const, error: undefined };
-      } catch (error) {
-        return { ...image, status: 'failed' as const, error: error instanceof Error ? error.message : '图片上传失败' };
-      }
-    }));
-    const failed = settled.filter(image => image.status === 'failed');
-    if (failed.length) {
-      setPendingProductImport(current => current ? { ...current, products: transferredProducts, remoteImageTransfers: transferStates, unassignedImages: settled } : null);
-      setProductImportMessage(`${failed.length} 张未归属图片上传失败，产品尚未导入。请重试或取消导入。`);
-      setProductImportConfirming(false);
-      return;
-    }
-    const incoming = transferredProducts;
-    setProfile(prev => {
+      const incoming = result.pending.products;
+      setProfile(prev => {
         const existing = normalizeProductItems(prev.products);
         const next = [...existing];
         for (const item of incoming) {
@@ -1088,11 +1037,15 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
         setProductPage(Math.max(1, Math.ceil(next.length / PAGE_SIZE)));
         return { ...prev, products: { ...prev.products, items: next } };
       });
-    setProductImportMessage(`已导入 ${incoming.length} 个产品${pendingProductImport.skippedRows > 0 ? `，跳过 ${pendingProductImport.skippedRows} 行` : ''}，点击右上角保存后生效`);
-    pendingProductImport.unassignedImages.forEach(image => URL.revokeObjectURL(image.url));
-    pendingProductImport.assignedImages.forEach(image => URL.revokeObjectURL(image.url));
-    setPendingProductImport(null);
-    setProductImportConfirming(false);
+      setProductImportMessage(`已导入 ${incoming.length} 个产品${result.pending.skippedRows > 0 ? `，跳过 ${result.pending.skippedRows} 行` : ''}，点击右上角保存后生效`);
+      result.pending.unassignedImages.forEach(image => URL.revokeObjectURL(image.url));
+      result.pending.assignedImages.forEach(image => URL.revokeObjectURL(image.url));
+      setPendingProductImport(null);
+    } catch (error) {
+      setProductImportMessage(error instanceof Error ? error.message : '产品导入确认失败，请核对已上传资产');
+    } finally {
+      setProductImportConfirming(false);
+    }
   };
 
   const closeProductImport = () => {
