@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵感页待拍清单视图拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `0f32f8777f6189a731e146f134c44d112b106d85` 将实际挂载的待拍清单、排序/筛选和可选实拍入口迁至 `InspirationShootingPanel.tsx`；页面继续拥有视频/素材读取、上传状态与任务回写。`InspirationDashboard.tsx` 从 2,550 降至 2,474 行，架构预算同步收紧；全仓仍有 6 个历史超限文件。
+- 新组件 SSR 直测 1/1，`test:video-source-boundaries` 119/119、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,358 个生产 TypeScript 文件）、`test:architecture-ratchet`、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。尚未做浏览器交互、真实供应商调用、目标库迁移或部署；LinkedIn 公司帖真实付费入口仍受未具备的费率/共享卷等前提关闭，本地/远端 SHA 与工作区状态以推送后核对为准。
+
 ## 灵感页产品库存与周参考目标拆分（2026-10-23）
 
 - 代码提交 `c7142ba99a50d20c6dbce81d1b68074b8fcff733` 将按产品 ID 读取完整素材、批量逐页汇总及周参考目标解析/匹配分别迁至 `inspirationProductMaterialInventory.ts` 和 `inspirationReferenceTarget.ts`；页面保留请求时机、状态与导航。`InspirationDashboard.tsx` 从 2,677 降至 2,550 行，预算同步收紧；全仓仍有 6 个历史超限文件。
