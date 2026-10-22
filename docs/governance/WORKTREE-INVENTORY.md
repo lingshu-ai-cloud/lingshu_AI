@@ -3,6 +3,13 @@
 盘点日期：2026-10-22（Asia/Shanghai）
 来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。仅移除了两个目标路径已不存在的失效注册记录；未改写有效工作树、分支或运行数据。
 
+## 2026-10-22 后续只读复核
+
+- 仍为 9 个有效注册工作树。集成检出保持 `xixi1021程永罗沟通前大整合`，本轮起点本地/远端同为 `cec714abad4b3115f44530e2af8550adf3d4d1ab` 且工作区干净；提交后须再次以 Git 命令核对新 HEAD。
+- 原 `xixi1021-full-integration` 现位于独立广告分支 `feature/platform-ads-meta-workspace-20261022`，HEAD 已前进至 `38e780e5`，`server/platformAds/README.md`、`oauth.test.ts`、`oauth.ts` 有未提交改动，并含被忽略的业务/运行数据。与先前“干净”快照不同，**不得归档、重置或并入本轮基线**。
+- 其余有未提交项的来源树仍为 `local-preview-1002`（53 项）、`local-integrated-flow`（91 项）、`local-unified-20261010`（6 项）、`mobile-dual-edition-20261012`（28 项）、`total-merge-langgraph`（20 项）；数量只反映当前 `git status --porcelain` 条目，不代表可删除。`safe-all-modules-ui-20261009` 与 `colleague-handoff-20261019` 的 Git 状态虽干净，仍有被忽略的业务/运行数据，继续保留。没有新增符合“干净、补丁等价且仅含可重建忽略项”的归档候选。
+- 图片 AIGC 来源树仍在 `95b0bcc1`；此前已确认其已提交图片管线是集成祖先。此轮仅复核工作树状态，没有触碰来源树的未提交视频/日历代码、分析文件或业务数据，也没有进行真实供应商调用。
+
 ## 当前复核（2026-10-22，独立集成检出）
 
 - 当前共有 **9 个**有效注册工作树。`/Users/julia1/.codex/worktrees/xixi1021-governance-baseline` 是 `xixi1021程永罗沟通前大整合` 的独立集成检出；2026-10-22 本批修改前本地/远端同为 `18e233c831655c0ec2b3b1365a9f76309dbc28ce`，Git 工作区干净。提交后须重新执行 `git rev-parse HEAD`、`git status --porcelain` 与 `git ls-remote`，不能把盘点起点当作最新指针。
