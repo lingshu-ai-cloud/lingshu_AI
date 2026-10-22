@@ -84,7 +84,7 @@ export default function AdPerformanceOverview({ tasks, loading, onOpen }: { task
   ];
   return <div className="ad-performance">
     <section className="ads-card ad-summary">
-      <div className="ads-section-title"><div><p className="ads-muted">PERFORMANCE PULSE</p><h2>花费有依据，增长看全程</h2></div><button className="ads-button" disabled={busy || loading} onClick={() => setRefresh(r => r + 1)}>刷新数据</button></div>
+      <div className="ads-section-title"><div><h2>投放效果概览</h2><p className="ads-muted">花费、平台结果与经营转化分别按可核验口径展示。</p></div><button className="ads-button" disabled={busy || loading} onClick={() => setRefresh(r => r + 1)}>刷新数据</button></div>
       <div className="ad-toolbar"><label>统计周期<select value={period} onChange={e => { setPeriod(e.target.value); if (e.target.value !== 'custom') { setSince(day(1 - Number(e.target.value))); setUntil(day()); } }}><option value="1">今天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="custom">自定义</option></select></label>{period === 'custom' && <><label>开始日期<input type="date" value={since} max={until} onChange={e => setSince(e.target.value)} /></label><label>结束日期<input type="date" value={until} min={since} max={day()} onChange={e => setUntil(e.target.value)} /></label></>}<label>币种<select value={chosen} onChange={e => setCurrency(e.target.value)}>{(currencies.length ? currencies : ['CNY']).map(c => <option key={c}>{c}</option>)}</select></label></div>
       {!dates.length && <p role="alert">请选择有效日期范围（最多 366 天）。</p>}
       <div className="ad-coverage" role="status" aria-live="polite">

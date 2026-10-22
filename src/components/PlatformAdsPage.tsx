@@ -371,7 +371,7 @@ export default function PlatformAdsPage({
               {loadingTasks ? (
                 <div className="ads-empty" role="status"><Clock3 size={30} /><h3>正在加载投放草稿</h3></div>
               ) : filtered.length ? (
-                <div className="ads-table-wrap">
+                <div className="ads-table-wrap ads-task-table-wrap">
                   <table>
                     <thead>
                       <tr>
@@ -387,20 +387,20 @@ export default function PlatformAdsPage({
                     <tbody>
                       {filtered.map((d) => (
                         <tr key={d.id}>
-                          <td>
+                          <td data-label="营销任务">
                             <strong>{d.name}</strong>
                             <small>
                               {d.video} · {d.goal}
                             </small>
                           </td>
-                          <td><span className="inline-flex items-center gap-1.5">{d.channels.map(name => <span key={name} title={name}><PlatformLogoGroup value={name} size={18}/></span>)}</span></td>
-                          <td>{d.market}</td>
-                          <td>{d.creationSource === 'platform_import' && Number(d.budget) === 0 ? '平台总预算未同步' : `${d.currency} ${Number(d.budget).toLocaleString()}`}</td>
-                          <td>
+                          <td data-label="渠道"><span className="inline-flex items-center gap-1.5">{d.channels.map(name => <span key={name} title={name}><PlatformLogoGroup value={name} size={18}/></span>)}</span></td>
+                          <td data-label="目标市场">{d.market}</td>
+                          <td data-label="预算上限">{d.creationSource === 'platform_import' && Number(d.budget) === 0 ? '平台总预算未同步' : `${d.currency} ${Number(d.budget).toLocaleString()}`}</td>
+                          <td data-label="状态">
                             <span className="ads-pill neutral">方案已保存</span>
                           </td>
-                          <td>{creationSourceLabels[d.creationSource || 'manual']}<small>{managementModeLabels[d.managementMode || 'manual']}</small></td>
-                          <td>
+                          <td data-label="创建来源 / 管理方式">{creationSourceLabels[d.creationSource || 'manual']}<small>{managementModeLabels[d.managementMode || 'manual']}</small></td>
+                          <td data-label="操作">
                             <button
                               className="ads-text-button"
                               onClick={() => setSelectedDraft(d)}
@@ -524,7 +524,6 @@ export default function PlatformAdsPage({
           >
             <div className="ads-modal-heading">
               <div>
-                <span className="ads-eyebrow">PLATFORM ADS</span>
                 <h2>
                   {dialog === "accounts" ? "连接广告账户" : selectedDraft ? "编辑投放计划" : entry === 'manual' ? "手动创建投放计划" : entry === 'ai_assisted' ? 'AI 辅助创编' : 'AI 托管创编'}
                 </h2>
