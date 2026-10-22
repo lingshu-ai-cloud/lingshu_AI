@@ -13,6 +13,7 @@ import {
   type SocialImageCreationPath,
   type SocialImageCreationTask,
   type SocialImageQualityCheckKey,
+  type SocialImageReferenceLayerBlueprint,
   type SocialImageRepairInstruction,
 } from '../../../shared/contracts/socialImageCreation';
 
@@ -79,13 +80,14 @@ function ReviewImage({ src, alt }: { src: string; alt: string }) {
 }
 
 export default function SocialImageWorkbench({
-  creationPath, referenceTitle, referenceThumbnail, referenceMediaUrl, referenceCaption, initialTask, onShowCreations,
+  creationPath, referenceTitle, referenceThumbnail, referenceMediaUrl, referenceCaption, referenceLayerBlueprints, initialTask, onShowCreations,
 }: {
   creationPath: SocialImageCreationPath;
   referenceTitle?: string;
   referenceThumbnail?: string;
   referenceMediaUrl?: string;
   referenceCaption?: string;
+  referenceLayerBlueprints?: SocialImageReferenceLayerBlueprint[];
   initialTask?: SocialImageCreationTask;
   onShowCreations: () => void;
 }) {
@@ -214,7 +216,7 @@ export default function SocialImageWorkbench({
       targetAction: '联系销售或申请样品', referenceUrls: [benchmarkImage, referenceTitle].filter(Boolean), enterpriseAssets,
       ...(creationPath === 'viral_replication' ? { referenceSnapshot: {
         sourceUrl: referenceTitle, title: referenceTitle, caption: referenceCaption, imageUrls: benchmarkImage ? [benchmarkImage] : [], collectedAt: new Date().toISOString(),
-      } } : {}),
+      }, referenceLayerBlueprints } : {}),
     });
     setTask(created.task);
     return created.task;

@@ -21,6 +21,14 @@ export interface SocialImageLayer {
   styleToken?: string;
   protectedAnchors?: SocialImageProtectedAnchor[];
   evidenceRefs?: string[];
+  mask?: {
+    shape: 'rectangle' | 'rounded_rectangle' | 'ellipse' | 'polygon' | 'linear_gradient';
+    color?: string;
+    cornerRadius?: number;
+    feather?: number;
+    angle?: number;
+    points?: Array<{ x: number; y: number }>;
+  };
 }
 
 export interface SocialImageLayerGraph {

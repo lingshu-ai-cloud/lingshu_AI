@@ -21,6 +21,33 @@ export interface SocialImageReferenceSnapshot {
   fingerprint: string;
 }
 
+export type SocialImageReferenceLayerRole = 'background' | 'mask' | 'product' | 'text' | 'logo' | 'decoration';
+export type SocialImageReferenceMaskShape = 'rectangle' | 'rounded_rectangle' | 'ellipse' | 'polygon' | 'linear_gradient';
+
+export interface SocialImageReferenceLayerBlueprint {
+  imageIndex: number;
+  layers: Array<{
+    id: string;
+    role: SocialImageReferenceLayerRole;
+    zIndex: number;
+    bounds: { x: number; y: number; width: number; height: number };
+    confidence: number;
+  }>;
+  masks: Array<{
+    id: string;
+    shape: SocialImageReferenceMaskShape;
+    bounds: { x: number; y: number; width: number; height: number };
+    opacity: number;
+    color?: string;
+    cornerRadius?: number;
+    feather?: number;
+    angle?: number;
+    points?: Array<{ x: number; y: number }>;
+    zIndex: number;
+    confidence: number;
+  }>;
+}
+
 export interface SocialImageReplicationRecipe {
   contentArchetype: string;
   imageCopyRelation: SocialImageCreativeRecipe['imageTextRelation'];
@@ -38,6 +65,7 @@ export interface SocialImageReplicationRecipe {
   }>;
   protectedSubjects: string[];
   overlayZones: string[];
+  referenceLayerBlueprints?: SocialImageReferenceLayerBlueprint[];
   motionMechanism?: SocialImageDeliverySpec['motion'] extends infer T ? T extends { mechanism: infer M } ? M : never : never;
 }
 

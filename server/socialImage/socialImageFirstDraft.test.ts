@@ -29,6 +29,20 @@ test('first draft without owned assets may not invent or borrow identity', () =>
   assert.match(prompt, /sole authority for visible wording/);
 });
 
+test('first draft carries measured masks and back-to-front layer order into production', () => {
+  const prompt = buildSocialImageFirstDraftPrompt({ imagePrompt: 'Rebuild.', poster: { headline: 'New copy' }, ratio: '4:5', hasBenchmark: true, ownedReferenceCount: 1,
+    replicationRecipe: { contentArchetype: 'poster', imageCopyRelation: 'image_contextualizes_copy', preserve: [], replace: [], palette: [], layoutRegions: [], protectedSubjects: [], overlayZones: [],
+      referenceLayerBlueprints: [{ imageIndex: 1, layers: [
+        { id: 'background', role: 'background', zIndex: 0, bounds: { x: 0, y: 0, width: 1, height: 1 }, confidence: 1 },
+        { id: 'glass', role: 'mask', zIndex: 2, bounds: { x: .05, y: .1, width: .4, height: .5 }, confidence: .9 },
+        { id: 'copy', role: 'text', zIndex: 4, bounds: { x: .08, y: .12, width: .3, height: .3 }, confidence: .9 },
+      ], masks: [{ id: 'glass', shape: 'rounded_rectangle', bounds: { x: .05, y: .1, width: .4, height: .5 }, opacity: .62, zIndex: 2, confidence: .9 }] }],
+    },
+  });
+  assert.match(prompt, /Measured back-to-front layer order: background:background@z0 > mask:glass@z2 > text:copy@z4/);
+  assert.match(prompt, /rounded_rectangle\/box=\[0.05,0.1,0.4,0.5\]\/opacity=0.62\/z=2/);
+});
+
 test('carousel units have stable cover, value, proof, and conversion roles', () => {
   const poster = { headline: 'Hero', subheadline: 'Support', sellingPoints: ['Value one', 'Value two'], trustBadges: ['Proof one'], process: ['Step one'], cta: 'Contact us', bottomBar: ['MOQ confirmed'] };
   assert.equal(socialImageUnitPoster(poster, 'carousel', 0, 4).pageRole, 'cover');

@@ -40,6 +40,26 @@ function copyOverlaySvg(width: number, height: number, poster: PosterCopy, recip
   </svg>`);
 }
 
+function referenceMaskSvg(width: number, height: number, mask: NonNullable<SocialImageReplicationRecipe['referenceLayerBlueprints']>[number]['masks'][number]): Buffer {
+  const color = mask.color || '#07121f';
+  const blur = Math.round(Math.max(0, Math.min(1, mask.feather || 0)) * Math.min(width, height) * .08);
+  const filter = blur ? `<filter id="soft"><feGaussianBlur stdDeviation="${blur}"/></filter>` : '';
+  const filterRef = blur ? ' filter="url(#soft)"' : '';
+  let shape = '';
+  if (mask.shape === 'ellipse') shape = `<ellipse cx="${width / 2}" cy="${height / 2}" rx="${width / 2}" ry="${height / 2}" fill="${color}" fill-opacity="${mask.opacity}"${filterRef}/>`;
+  else if (mask.shape === 'polygon' && mask.points?.length) {
+    const points = mask.points.map(point => `${Math.round(((point.x - mask.bounds.x) / mask.bounds.width) * width)},${Math.round(((point.y - mask.bounds.y) / mask.bounds.height) * height)}`).join(' ');
+    shape = `<polygon points="${points}" fill="${color}" fill-opacity="${mask.opacity}"${filterRef}/>`;
+  } else if (mask.shape === 'linear_gradient') {
+    const radians = ((mask.angle || 0) * Math.PI) / 180, dx = Math.cos(radians), dy = Math.sin(radians);
+    shape = `<defs><linearGradient id="fade" x1="${50 - dx * 50}%" y1="${50 - dy * 50}%" x2="${50 + dx * 50}%" y2="${50 + dy * 50}%"><stop stop-color="${color}" stop-opacity="${mask.opacity}"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#fade)"${filterRef}/>`;
+  } else {
+    const radius = mask.shape === 'rounded_rectangle' ? Math.round(Math.min(width, height) * Math.max(0, Math.min(1, mask.cornerRadius ?? .12))) : 0;
+    shape = `<rect width="100%" height="100%" rx="${radius}" fill="${color}" fill-opacity="${mask.opacity}"${filterRef}/>`;
+  }
+  return Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">${filter}${shape}</svg>`);
+}
+
 /** Keeps identity and UI pixel-identical across GIF frames. */
 export async function composeFixedSocialLayers(input: {
   background: Buffer;
@@ -53,7 +73,14 @@ export async function composeFixedSocialLayers(input: {
   const stage = region(input.recipe, 'product-stage', { x: .08, y: .36, width: .84, height: .50 });
   const productCount = Math.max(1, input.products.length);
   const slotWidth = stage.width * width / productCount;
-  const composites: Array<{ input: Buffer; left: number; top: number }> = [];
+  const blueprint = input.recipe?.referenceLayerBlueprints?.[0];
+  const zFor = (role: 'mask' | 'product' | 'text', fallback: number) => blueprint?.layers.find(layer => layer.role === role)?.zIndex ?? fallback;
+  const composites: Array<{ input: Buffer; left: number; top: number; zIndex: number }> = [];
+  for (const mask of blueprint?.masks || []) {
+    const maskWidth = Math.max(1, Math.round(mask.bounds.width * width));
+    const maskHeight = Math.max(1, Math.round(mask.bounds.height * height));
+    composites.push({ input: referenceMaskSvg(maskWidth, maskHeight, mask), left: Math.round(mask.bounds.x * width), top: Math.round(mask.bounds.y * height), zIndex: mask.zIndex });
+  }
   for (let index = 0; index < input.products.length; index += 1) {
     const transparent = await connectedBorderToAlpha(input.products[index]!);
     const productWidth = Math.round(Math.min(slotWidth * 1.18, stage.width * width * .7));
@@ -65,9 +92,10 @@ export async function composeFixedSocialLayers(input: {
       input: rendered,
       left: Math.round(stage.x * width + slotWidth * index + (slotWidth - productWidth) / 2),
       top: Math.round(stage.y * height),
+      zIndex: zFor('product', 30),
     });
   }
-  composites.push({ input: copyOverlaySvg(width, height, input.poster, input.recipe), left: 0, top: 0 });
+  composites.push({ input: copyOverlaySvg(width, height, input.poster, input.recipe), left: 0, top: 0, zIndex: zFor('text', 40) });
   return sharp(input.background).rotate().resize(width, height, { fit: 'cover', position: 'attention' })
-    .composite(composites).png({ compressionLevel: 9 }).toBuffer();
+    .composite(composites.sort((a, b) => a.zIndex - b.zIndex).map(({ zIndex: _zIndex, ...item }) => item)).png({ compressionLevel: 9 }).toBuffer();
 }

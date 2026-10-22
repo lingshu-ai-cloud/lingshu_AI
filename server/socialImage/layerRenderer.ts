@@ -92,6 +92,31 @@ function fullCanvasSvg(graph: SocialImageLayerGraph): Buffer {
   </svg>`);
 }
 
+function maskLayerSvg(layer: SocialImageLayer, width: number, height: number): Buffer {
+  const mask = layer.mask;
+  if (!mask) return Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" rx="32" fill="#070707" fill-opacity="${layer.opacity ?? .72}" stroke="#d3aa59" stroke-opacity=".34"/></svg>`);
+  const color = mask.color || '#070707';
+  const opacity = layer.opacity ?? .72;
+  const blur = Math.round(Math.max(0, Math.min(1, mask.feather || 0)) * Math.min(width, height) * .08);
+  const filter = blur ? `<filter id="soft"><feGaussianBlur stdDeviation="${blur}"/></filter>` : '';
+  const filterRef = blur ? ' filter="url(#soft)"' : '';
+  let shape = '';
+  if (mask.shape === 'ellipse') shape = `<ellipse cx="${width / 2}" cy="${height / 2}" rx="${width / 2}" ry="${height / 2}" fill="${color}" fill-opacity="${opacity}"${filterRef}/>`;
+  else if (mask.shape === 'polygon' && mask.points?.length) {
+    const points = mask.points.map(point => `${Math.round(((point.x - layer.rect.x) / layer.rect.width) * width)},${Math.round(((point.y - layer.rect.y) / layer.rect.height) * height)}`).join(' ');
+    shape = `<polygon points="${points}" fill="${color}" fill-opacity="${opacity}"${filterRef}/>`;
+  } else if (mask.shape === 'linear_gradient') {
+    const radians = ((mask.angle || 0) * Math.PI) / 180;
+    const x = Math.cos(radians), y = Math.sin(radians);
+    const x1 = 50 - x * 50, y1 = 50 - y * 50, x2 = 50 + x * 50, y2 = 50 + y * 50;
+    shape = `<defs><linearGradient id="mask-gradient" x1="${x1}%" y1="${y1}%" x2="${x2}%" y2="${y2}%"><stop stop-color="${color}" stop-opacity="${opacity}"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#mask-gradient)"${filterRef}/>`;
+  } else {
+    const radius = mask.shape === 'rounded_rectangle' ? Math.round(Math.min(width, height) * Math.max(0, Math.min(1, mask.cornerRadius ?? .12))) : 0;
+    shape = `<rect width="100%" height="100%" rx="${radius}" fill="${color}" fill-opacity="${opacity}"${filterRef}/>`;
+  }
+  return Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">${filter}${shape}</svg>`);
+}
+
 export async function renderSocialImageLayerGraph(input: {
   graph: SocialImageLayerGraph;
   assets: Map<string, Buffer>;
@@ -104,7 +129,7 @@ export async function renderSocialImageLayerGraph(input: {
     if (layer.kind === 'background' || layer.kind === 'decoration') continue;
     const rect = pixelRect(layer, graph);
     if (layer.kind === 'overlay') {
-      const overlay = Buffer.from(`<svg width="${rect.width}" height="${rect.height}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" rx="32" fill="#070707" fill-opacity="${layer.opacity ?? .72}" stroke="#d3aa59" stroke-opacity=".34"/></svg>`);
+      const overlay = maskLayerSvg(layer, rect.width, rect.height);
       composites.push({ input: overlay, left: rect.left, top: rect.top });
     } else if (layer.kind === 'text' || layer.kind === 'cta') {
       composites.push({ input: textLayerSvg(layer, rect.width, rect.height), left: rect.left, top: rect.top });

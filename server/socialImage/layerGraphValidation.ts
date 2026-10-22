@@ -25,7 +25,7 @@ export function socialImageLayerGraphIssues(graph: SocialImageLayerGraph): strin
     for (const layer of foreground) {
       if (layer.zIndex <= product.zIndex) continue;
       const overlap = socialImageRectOverlapRatio(product.rect, layer.rect);
-      if (overlap > 0.12) issues.push(`前景图层 ${layer.id} 与产品 ${product.id} 重叠 ${(overlap * 100).toFixed(1)}%，超过 12%`);
+      if (overlap > 0.12 && !layer.mask) issues.push(`前景图层 ${layer.id} 与产品 ${product.id} 重叠 ${(overlap * 100).toFixed(1)}%，超过 12%`);
     }
   }
   return [...new Set(issues)];

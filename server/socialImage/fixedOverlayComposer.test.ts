@@ -13,3 +13,15 @@ test('fixed GIF compositor preserves exact canvas and produces a visible product
   assert.equal(metadata.height, 400);
   assert.ok(result.length > background.length);
 });
+
+test('fixed compositor applies extracted mask opacity in the extracted layer order', async () => {
+  const background = await sharp({ create: { width: 100, height: 100, channels: 3, background: '#0000ff' } }).png().toBuffer();
+  const result = await composeFixedSocialLayers({ background, products: [], poster: {}, width: 100, height: 100, recipe: {
+    contentArchetype: 'poster', imageCopyRelation: 'image_contextualizes_copy', preserve: [], replace: [], palette: [], layoutRegions: [],
+    protectedSubjects: [], overlayZones: [], referenceLayerBlueprints: [{ imageIndex: 1,
+      layers: [{ id: 'bg', role: 'background', zIndex: 0, bounds: { x: 0, y: 0, width: 1, height: 1 }, confidence: 1 }, { id: 'mask', role: 'mask', zIndex: 2, bounds: { x: 0, y: 0, width: 1, height: 1 }, confidence: 1 }],
+      masks: [{ id: 'red', shape: 'rectangle', bounds: { x: 0, y: 0, width: 1, height: 1 }, opacity: .5, color: '#ff0000', zIndex: 2, confidence: 1 }] }],
+  } });
+  const { data } = await sharp(result).raw().toBuffer({ resolveWithObject: true });
+  assert.ok(data[0]! > 100 && data[2]! > 100, 'half-opacity red mask must blend over blue background');
+});

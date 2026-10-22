@@ -40,8 +40,10 @@ import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { attachFile, fetchFile } from '../storage/files.js';
 import { objectStorageEnabled, objectStorageDownload, objectStorageGetObject, objectStorageHead, objectStorageUpload } from '../storage/objectStorage.js';
-import { analyzeImagePostEvidenceWithGemini, analyzeVideo, analyzeYouTubeUrl } from '../agents/gemini.js';
-import { analyzeImagePostEvidenceWithQwen, analyzeVideoFramesWithQwen, analyzeVideoTimelineDetailsWithQwen, inspectVideoOpeningFrameWithQwen, repairVideoShotClassificationsWithQwen, transcribeAudioWithQwen, type ImagePostEvidenceAnalysis, type QwenTimelinePlan } from '../agents/qwen.js';
+import { analyzeVideo, analyzeYouTubeUrl } from '../agents/gemini.js';
+import { analyzeImagePostEvidenceWithQwen, analyzeVideoFramesWithQwen, analyzeVideoTimelineDetailsWithQwen, inspectVideoOpeningFrameWithQwen, QWEN_IMAGE_EVIDENCE_MODEL, repairVideoShotClassificationsWithQwen, transcribeAudioWithQwen, type ImagePostEvidenceAnalysis, type QwenTimelinePlan } from '../agents/qwen.js';
+import { imageEvidenceReviewReasons } from '../agents/qwenContracts.js';
+import { OPENAI_IMAGE_EVIDENCE_MODEL, reviewImagePostEvidenceWithOpenAI } from '../agents/openaiImageEvidence.js';
 import { inspectOpeningHookMotionWithGemini } from '../agents/geminiHookMotion.js';
 import type { Platform, VideoAiAnalysis, VideoStatus } from '../types/index.js';
 import type { SocialDiscoveryMode } from '../../shared/contracts/socialContentWorkflow.js';
@@ -6758,7 +6760,7 @@ function mimeFromImagePath(filePath: string): string {
   return 'image/jpeg';
 }
 
-async function analyzeImagePostBestEffort(item: CrawledImagePost, keyword: string, _fallback?: VideoAiAnalysis): Promise<{ status: 'analyzed' | 'failed'; analysis?: ImagePostEvidenceAnalysis; error?: string; provider?: 'qwen' | 'gemini' }> {
+async function analyzeImagePostBestEffort(item: CrawledImagePost, keyword: string, _fallback?: VideoAiAnalysis): Promise<{ status: 'analyzed' | 'failed'; analysis?: ImagePostEvidenceAnalysis; error?: string; provider?: 'qwen' | 'openai' }> {
   const urls = [...new Set((item.imageUrls?.length ? item.imageUrls : [item.thumbnailUrl]).filter(Boolean))].slice(0, 10);
   const images = (await Promise.all(urls.map(async (url, index) => {
     const image = await fetchImageForAnalysis(url);
@@ -6772,26 +6774,19 @@ async function analyzeImagePostBestEffort(item: CrawledImagePost, keyword: strin
     platform: item.platform,
     tags: [...new Set([...item.tags, ...tagsFromKeyword(keyword, item.platform)])],
   };
+  let primary: ImagePostEvidenceAnalysis | undefined;
+  let qwenError = '';
+  try { primary = await analyzeImagePostEvidenceWithQwen(input); }
+  catch (error) { qwenError = error instanceof Error ? error.message : String(error); }
+  const reviewReasons = primary ? imageEvidenceReviewReasons(primary, images.length) : ['qwen_provider_failure'];
+  if (primary && !reviewReasons.length) return { status: 'analyzed', provider: 'qwen', analysis: { ...primary, routing: { primaryProvider: 'qwen', finalProvider: 'qwen', primaryModel: QWEN_IMAGE_EVIDENCE_MODEL(), reviewReasons: [], reviewed: false } } };
   try {
-    const analysis = await analyzeImagePostEvidenceWithQwen(input);
-    return { status: 'analyzed', analysis, provider: 'qwen' };
-  } catch (qwenError) {
-    console.warn('[videos] Qwen image post analysis failed, trying Gemini:', qwenError instanceof Error ? qwenError.message : qwenError);
-    try {
-      const analysis = await analyzeImagePostEvidenceWithGemini({
-      images,
-      title: item.title,
-      caption: item.caption,
-      platform: item.platform,
-      tags: [...new Set([...item.tags, ...tagsFromKeyword(keyword, item.platform)])],
-      });
-      return { status: 'analyzed', analysis, provider: 'gemini' };
-    } catch (geminiError) {
-      console.warn('[videos] Gemini image post analysis failed:', geminiError instanceof Error ? geminiError.message : geminiError);
-      const qwenMessage = qwenError instanceof Error ? qwenError.message : String(qwenError);
-      const geminiMessage = geminiError instanceof Error ? geminiError.message : String(geminiError);
-      return { status: 'failed', error: `Qwen: ${qwenMessage}; Gemini: ${geminiMessage}`.slice(0, 900) };
-    }
+    const reviewed = await reviewImagePostEvidenceWithOpenAI({ ...input, primary, reviewReasons });
+    return { status: 'analyzed', provider: 'openai', analysis: { ...reviewed, routing: { primaryProvider: 'qwen', finalProvider: 'openai', primaryModel: QWEN_IMAGE_EVIDENCE_MODEL(), reviewModel: OPENAI_IMAGE_EVIDENCE_MODEL(), reviewReasons, reviewed: true } } };
+  } catch (reviewError) {
+    const reviewMessage = reviewError instanceof Error ? reviewError.message : String(reviewError);
+    console.warn('[videos] required GPT image evidence review failed:', reviewMessage);
+    return { status: 'failed', error: `Qwen: ${qwenError || `review required (${reviewReasons.join(', ')})`}; GPT review: ${reviewMessage}`.slice(0, 900) };
   }
 }
 

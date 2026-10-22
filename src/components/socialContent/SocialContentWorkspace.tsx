@@ -20,6 +20,7 @@ import SocialTaskOverview from './SocialTaskOverview';
 import SocialManagedExecutionNotice from './SocialManagedExecutionNotice';
 import { useSocialContentWorkspace } from './useSocialContentWorkspace';
 import type { SocialImageProductionMode } from '../../lib/socialImageProductionMode';
+import type { SocialImageReferenceLayerBlueprint } from '../../../shared/contracts/socialImageCreation';
 
 export interface SocialContentSourceContext {
   originLabel: string;
@@ -28,6 +29,7 @@ export interface SocialContentSourceContext {
   referenceMediaUrl?: string;
   referenceContentType?: 'video' | 'image';
   referenceCaption?: string;
+  referenceLayerBlueprints?: SocialImageReferenceLayerBlueprint[];
   aspectRatio?: string;
   referenceShots?: Array<{ time: string; dialogue?: string; subtitle?: string; visual?: string; firstFrameRef?: string; firstFrameSeconds?: number }>;
 }

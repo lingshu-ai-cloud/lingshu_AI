@@ -118,8 +118,7 @@ function MaterialUsageMark({ material }: { material: Material }) {
     <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border pt-2 text-[11px] font-semibold text-text-secondary" aria-label="素材使用记录">
       <span>已使用 {summary.totalUses} 次</span>
       {summary.hookUses > 0 ? <span className="inline-flex items-center gap-1 text-accent"><Zap size={11} aria-hidden="true" />前三秒 {summary.hookUses} 次</span> : null}
-    </div>
-  );
+    </div>);
 }
 
 function MaterialUsagePanel({ material }: { material: Material }) {
@@ -1751,7 +1750,6 @@ function ImageBreakdownContent({ video, activeTab }: { video: TrendVideo; analys
       <p className="mx-auto mt-1.5 max-w-[280px] text-[10px] leading-relaxed text-text-muted">{desc}</p>
     </div>
   );
-
   const EvidenceCard = ({ label, value }: { label: string; value: string }) => (
     <div className="rounded-md border border-border bg-surface p-3">
       <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-semibold text-text-primary">{label}</p><span className="rounded-full bg-surface-2 px-2 py-0.5 text-[9px] text-text-muted">来自 AI 原始结果</span></div>
@@ -1778,6 +1776,7 @@ function ImageBreakdownContent({ video, activeTab }: { video: TrendVideo; analys
     <div className="space-y-3">
       <div><p className="text-[11px] font-semibold text-text-primary">逐图视觉事实</p><p className="mt-1 text-[10px] text-text-muted">主体、场景、构图、颜色和实际可读文字</p></div>
       {!isAnalyzed ? <EmptyEvidence title="尚未返回逐图拆解" desc="当前没有可验证的图片视觉结果。"/> : evidence!.observedFacts.map(fact => { const flow = evidence!.carouselFlow.find(item => item.imageIndex === fact.imageIndex); return <div key={fact.imageIndex} className="rounded-lg border border-border bg-white p-3"><div className="flex items-center justify-between"><p className="text-[11px] font-semibold text-text-primary">第 {fact.imageIndex} 张</p><span className="rounded-full bg-violet-50 px-2 py-0.5 text-[9px] font-bold text-violet-700">{roleLabel[flow?.role || 'unknown']}</span></div><p className="mt-2 text-[10px] text-text-secondary">主体：{fact.subjects.join('、') || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">场景：{fact.scene || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">构图：{fact.composition || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">颜色：{fact.colors.join('、') || '未确认'}</p>{fact.visibleText.length > 0 && <p className="mt-1 rounded-lg bg-surface-2 p-2 text-[10px] text-text-secondary">OCR：{fact.visibleText.join(' / ')}</p>}{flow?.evidence && <p className="mt-2 text-[9px] text-text-muted">轮播作用依据：{flow.evidence}</p>}</div>; })}
+      {isAnalyzed && Boolean(evidence?.layerBlueprints?.length) && <section className="space-y-2 rounded-lg border border-border bg-surface-2 p-3" aria-label="遮罩与图层生产蓝图"><p className="text-[11px] font-semibold text-text-primary">遮罩与图层生产蓝图</p>{evidence!.layerBlueprints!.map(blueprint => <div key={blueprint.imageIndex} className="rounded-lg bg-white p-2.5"><p className="text-[10px] font-semibold text-text-secondary">第 {blueprint.imageIndex} 张 · 由后到前</p><p className="mt-1 text-[10px] leading-5 text-text-secondary">{blueprint.layers.slice().sort((a, b) => a.zIndex - b.zIndex).map(layer => layer.role).join(' → ') || '未识别层级'}</p>{blueprint.masks.map(mask => <p key={mask.id} className="mt-1 text-[9px] leading-5 text-text-muted">遮罩 {mask.shape} · 透明度 {Math.round(mask.opacity * 100)}% · 层级 {mask.zIndex}</p>)}</div>)}</section>}
     </div>
   );
 
@@ -4782,6 +4781,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             referenceThumbnail: video.thumbnail,
             referenceMediaUrl: video.thumbnail,
             referenceContentType: 'image', referenceCaption: video.aiAnalysis?.caption || '',
+            referenceLayerBlueprints: video.aiAnalysis?.imageEvidence?.layerBlueprints || [],
           },
         },
       } }));
