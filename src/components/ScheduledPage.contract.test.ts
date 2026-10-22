@@ -63,6 +63,7 @@ assert.match(source, /setActiveGroup\('social'\)[\s\S]{0,120}setSocialTaskTab\('
 assert.match(source, /addEventListener\('lingshu:navigate'/, 'an already-mounted scheduler must also accept a workflow handoff');
 assert.match(templateSource, /const CRAWLER_LIMIT_MAX\s*=\s*50;/, 'the UI crawler limit must match the server limit');
 assert.match(source, /from '\.\/scheduledTaskTemplates'/, 'the scheduler must use the shared template and limit rules');
+assert.match(source, /<ScheduledBusinessDynamicsWorkspace[\s\S]{0,420}renderAutomationTemplates=\{renderAutomationTemplates\}/, 'the conversion workspace must receive the existing task templates and refresh boundary');
 assert.doesNotMatch(source, /最多爬取\s*10\s*条/, 'the obsolete 10-item limit must not remain visible');
 assert.match(
   source,
