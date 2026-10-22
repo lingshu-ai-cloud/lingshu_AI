@@ -14,6 +14,7 @@ const productionIntakeSource = fs.readFileSync(new URL('./assistant/assistantPro
 const featureGuidesSource = fs.readFileSync(new URL('./assistant/useAssistantFeatureGuides.ts', import.meta.url), 'utf8');
 const notificationsSource = fs.readFileSync(new URL('./assistant/useAssistantNotifications.ts', import.meta.url), 'utf8');
 const hydrationHookSource = fs.readFileSync(new URL('./assistant/useAssistantThreadHydration.ts', import.meta.url), 'utf8');
+const chatPromptSource = fs.readFileSync(new URL('./assistant/assistantChatPrompt.ts', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const appModulesSource = fs.readFileSync(new URL('../appPageModules.tsx', import.meta.url), 'utf8');
 const appShellChromeSource = fs.readFileSync(new URL('./AppShellChrome.tsx', import.meta.url), 'utf8');
@@ -196,7 +197,7 @@ for (const reference of ['goalId', 'planId', 'runId', 'taskId', 'contentId', 'vi
   assert.match(liveContextSource, new RegExp(`${reference}: contextIdentifier\\(detail\\.${reference}`), `页面上下文必须安全绑定 ${reference}`);
 }
 assert.match(liveContextSource, /workflowStage: detail\.workflowStage/, '灵小枢必须接收当前周计划阶段，不能只依赖已有待办');
-assert.match(source, /assistantBusinessObjectContext\(context\)/, '问答请求必须携带当前选中的业务对象边界');
+assert.match(chatPromptSource, /assistantBusinessObjectContext\(context\)/, '问答请求必须携带当前选中的业务对象边界');
 assert.match(source, /liveContext\?\.sourcePage === normalizedPage/, '切换页面后不得继续使用上一页的任务上下文');
 assert.match(source, /workflowStage === 'unplanned'/, '灵小枢必须识别尚未制定周计划的真实空白状态');
 assert.match(floatingRemindersSource, /data-lingshu-weekly-plan-prompt="true"[\s\S]{0,900}先制定本周计划[\s\S]{0,500}制定周计划/, '关闭态灵小枢必须主动说明先预览计划再生产');
@@ -325,9 +326,10 @@ assert.match(
   '明确的自然语言确定性操作必须把动作意图传给操作请求错误处理',
 );
 assert.match(sendSource, /selectAssistantConversationContext\(mergeConsecutiveAssistant\(thread\.messages\)\)/, '长对话必须按完整轮次和预算选择上下文');
-assert.match(sendSource, /renderAssistantConversationBoundary\(conversationContext\)/, '被裁剪的较早对话必须向模型声明范围边界');
+assert.match(chatPromptSource, /renderAssistantConversationBoundary\(conversationContext\)/, '被裁剪的较早对话必须向模型声明范围边界');
 assert.match(sendSource, /strategyRequest \? '' : await loadLiveIntegrationFacts\(\)/, '经营主对话必须使用服务端核验事实而不是客户端汇总作为权威依据');
-assert.match(sendSource, /content: strategyRequest \? visibleText : \[/, '经营主对话不得把前端导航提示和策略规则重复塞入千问上下文');
+assert.match(chatPromptSource, /content: strategyRequest \? visibleText : \[/, '经营主对话不得把前端导航提示和策略规则重复塞入千问上下文');
+assert.match(sendSource, /buildAssistantChatMessages\(\{[\s\S]*historyForApi, conversationContext, strategyRequest, visibleText, context/, '发送主流程必须使用独立的问答上下文组装模块');
 assert.match(sendSource, /userQuestion: visibleText[\s\S]{0,700}retainedUserInstructions/, '经营主对话必须把当前问题、当前业务对象与有界历史约束交给服务端组装上下文');
 assert.match(sendSource, /requestFence\.active[\s\S]{0,100}persistenceFenceRef\.current === requestFence/, '租户或用户范围切换后旧请求的异步响应必须被丢弃');
 assert.match(actionProjectionSource, /function isWeeklyPlanKickoffRequest[\s\S]{0,500}开始\|启动\|制定\|生成\|创建[\s\S]{0,220}生产\|制作\|周计划\|计划\|周任务/, '空白周计划必须识别用户对灵小枢发出的明确开工或制定计划请求');
@@ -530,6 +532,6 @@ assert.match(attachmentSendSource, /setAttachmentError/, '上传失败必须保�
 assert.doesNotMatch(attachmentSendSource, /URL\.createObjectURL|data:/, '不得把本地 blob 或 data URL 伪装成持久化附件');
 assert.match(sendSource, /const actionResponse = signedFocusedMutationActionId\s*\?\s*await executeAssistantAction/, '普通对话必须绕过确定性操作路由并直接进入模型');
 assert.match(sendSource, /const signedFocusedMutationActionId = focusedActionInput \? focusedMutationActionId : undefined/, '只有绑定服务端任务卡与版本的明确操作才可进入确定性操作路由');
-assert.match(sendSource, /附件事实边界/, '对话模型必须获知附件只完成持久化、尚未证明已读取内容');
+assert.match(chatPromptSource, /附件事实边界/, '对话模型必须获知附件只完成持久化、尚未证明已读取内容');
 
 console.log('global assistant contract tests passed');
