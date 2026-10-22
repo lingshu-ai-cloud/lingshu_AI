@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 主 chunk 分组与预算收紧（2026-10-23）
+
+- 代码提交 `484d92d2bbddd7b470c0837f9883c6d44ea72ef6` 将 Studio 已静态依赖的纯规则及小型展示支撑模块纳入现有 `studio-support` 构建分组，保持模块执行顺序，不改工作台 UI、供应商请求或运行时功能边界。`AiCreateStudio` 主 chunk 从 496,205 降至 480,933 字节（减少 15,272），构建门禁从 500,000 收紧至 485,000 字节；支撑 chunk 约 81 KiB，不能把主 chunk 下降解释为总传输量等量下降。全仓仍有 6 个历史超限文件。
+- `test:studio-media`、`test:studio-script`、`test:studio-workflow`、`pnpm run lint`、架构扫描/ratchet（2,384 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建和 `git diff --check` 均通过。构建分组产物中的 Studio 主 chunk 引用了新的 `studio-support` chunk；未做登录后浏览器交互、真实供应商调用、付费采集、目标库迁移或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## Studio 原片素材身份与语言规则边界拆分（2026-10-23）
 
 - 代码提交 `5462818251f0ca9bc522e62431aa99d70a5d869b` 将原片身份比对、企业素材准入、历史素材快照和素材片段类型迁至 `studioSourceMaterial.ts`，将语种目录、脚本/口播语种判定与时间码归一化迁至 `studioLanguageRules.ts`。工作台保留项目、素材与请求编排，旧公开导出继续转发；原片和仅供分析素材仍不可进入企业成片素材池。`AiCreateStudio.tsx` 从 12,355 降至 12,086 行，历史预算同步收紧；全仓仍有 6 个历史超限文件。

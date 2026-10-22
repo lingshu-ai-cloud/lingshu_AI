@@ -100,3 +100,4 @@
 ## 架构治理
 
 机器门禁由仓库根目录 `architecture.config.json` 和 `scripts/check-architecture.mjs` 执行。普通生产 TypeScript 文件上限 800 行；历史超限文件使用精确预算，只允许持平或下降。每个治理批次最多拆分 1–2 个热点文件，并单独记录行为验收。
+Studio 的静态支撑模块由 `vite.config.ts` 中的 `studio-support` 分组拆出主控制器 chunk，保持执行顺序；`scripts/check-studio-chunk.mjs` 只约束 `AiCreateStudio` 主 chunk 上限 485,000 字节。拆包不改变模块调用时机，也不代表首屏总传输量或工作台源码结构债务已解决。
