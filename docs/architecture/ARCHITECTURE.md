@@ -11,7 +11,7 @@
 - `shared/contracts/`：跨端任务、内容与交付合同；字段变更需检查旧任务兼容性。
 - `server/routes/`：HTTP 鉴权、输入规范化、租户上下文和响应编排；业务算法逐步下沉到领域模块。
 - `server/socialImage/`：图片任务、参考画布、首版策划、图层合成、修订和质量判定。
-- `server/starter198/socialContentProductionExecution.ts`：社媒自动生产 worker 的阶段编排；素材路线重绑定与动态主持人背景锁由 `socialContentProductionRouting.ts` 负责，非渲染代拍清单投影由 `socialContentShootingPlan.ts` 负责。两者不提交供应商请求，原 worker 导出维持兼容。
+- `server/starter198/socialContentProductionExecution.ts`：社媒自动生产 worker 的阶段编排；素材路线重绑定与动态主持人背景锁由 `socialContentProductionRouting.ts` 负责，非渲染代拍清单投影由 `socialContentShootingPlan.ts` 负责。`socialContentProductionScriptBaseline.ts` 负责已冻结脚本快照校验、兼容重建和原任务持久化；不能在恢复时悄悄采用更新的企业事实或模板。原 worker 导出维持兼容。
 - `server/lib/translationCues.ts`：时间戳配音翻译的纯文本解析、cue 完整性校验和响应形态归一化；Express 超时/连接生命周期保留在路由 adapter。
 - `server/lib/imageGen.ts`、`server/agents/qwen.ts`：供应商适配；调用由服务端显式选择并受预算/回执边界约束。
 
