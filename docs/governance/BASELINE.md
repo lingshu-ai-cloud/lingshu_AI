@@ -2,6 +2,12 @@
 
 更新时间：2026-10-22（Asia/Shanghai）
 
+## 最新结构治理：工作台 API 边界（2026-10-22）
+
+- `studioApi.ts` 的公开类型合同与 POST 请求传输分别移入 `studioApiContracts.ts` 和 `studioApiTransport.ts`，原导出路径继续兼容。主文件从 1,316 行降至 735 行，移除其超限豁免；剩余超限项 20 个。
+- 本批仅重排模块，不改变请求重试、失败回退、项目保存或供应商调用规则。工作台 API 专项 10/10、TypeScript 全量检查、生产构建、架构扫描/ratchet 与 191 项迁移只读检查通过。构建仍提示 `AiCreateStudio` 约 881 kB 的大 chunk。
+- 本地和远端权威提交在本批提交、普通推送并核对 SHA 后确定；其他仍有未提交内容的工作树不属于本基线。
+
 ## 当前集成基线
 
 - 仓库：`lingshu-ai-cloud/lingshu_AI`

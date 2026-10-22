@@ -25,7 +25,6 @@
     "src/components/ScheduledPage.tsx": 2276,
     "src/components/SmartBusinessDashboard.tsx": 1540,
     "src/components/socialContent/SocialCreationWorkbench.tsx": 1008,
-    "src/components/TrafficPage.tsx": 1750,
-    "src/lib/studioApi.ts": 1316
+    "src/components/TrafficPage.tsx": 1750
   }
 }
