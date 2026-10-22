@@ -7,6 +7,7 @@ import {classifyDiscoverySourceFailure} from '../socialDiscovery/sourceFailure.j
 import {createImagePostEvidenceAnalyzer, type CrawledImagePost} from '../socialDiscovery/imagePostEvidenceAnalysis.js';
 import {importNewImagePost} from '../socialDiscovery/imagePostImport.js';
 import {refreshExistingImagePost} from '../socialDiscovery/imagePostRefresh.js';
+import {reanalyzeStoredImagePost} from '../socialDiscovery/imagePostReanalysis.js';
 import { runPaidApifyTikTokDataset, type PaidApifyTikTokPermit } from './apifyPaidTikTokTransport.js';
 import {frozenWeeklyAccountFiveVideoActorInput} from '../socialDiscovery/weeklyAccountCollectionBudget.js';
 import {readVerifiedWeeklyOriginalDatasetReplay,type VerifiedWeeklyOriginalDatasetReplay} from '../socialDiscovery/weeklyAccountCollectionDatasetContinuation.js';
@@ -2507,32 +2508,22 @@ videosRouter.post('/:id/reanalyze-image', async (req, res) => {
   const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
   if (!record || recordContentFormat(record) !== 'image') { res.status(404).json({ error: 'Image post not found' }); return; }
   if (record.tenantId !== tenantId && !await requireAdminUser(req)) { res.status(404).json({ error: 'Image post not found' }); return; }
-  const current = videoAnalysisOf(record);
-  const tags = parseJsonRecord<string[]>(record.tags, []);
-  const item: CrawledImagePost = {
-    platform: String(record.platform || 'instagram') as Platform,
-    title: String(record.title || ''),
-    sourceUrl: String(record.sourceUrl || ''),
-    thumbnailUrl: String(record.thumbnailUrl || ''),
-    caption: String(current.caption || record.title || ''),
-    imageUrls: Array.isArray(current.imageUrls) ? current.imageUrls.map(String) : [String(record.thumbnailUrl || '')],
-    views: String(current.views || ''),
-    tags,
-    uploadedAt: String(current.uploadedAt || ''),
-    author: String(current.author || ''),
-  };
-  const output = await analyzeImagePostBestEffort(item, String(current.keyword || ''));
-  const next = {
-    ...current,
-    imageEvidence: output.analysis,
-    imageAnalysisStatus: output.status,
-    imageAnalysisError: output.error,
-    analysisSource: output.status === 'analyzed' ? `${output.provider || 'qwen'}-image-evidence-v2` : 'image-metadata',
-    analysisQuality: output.status === 'analyzed' ? 'image' : 'metadata',
-    analyzedAt: new Date().toISOString(),
-  };
-  await store.update(COL, req.params.id, { aiAnalysis: serializeImagePostAnalysis(next), status: output.status === 'analyzed' ? 'analyzed' : 'failed' });
-  res.status(output.status === 'analyzed' ? 200 : 502).json({ ok: output.status === 'analyzed', analysis: output.analysis, error: output.error });
+  try {
+    const output = await reanalyzeStoredImagePost({
+      store, collection: COL, tenantId: String(record.tenantId), record, analyze: analyzeImagePostBestEffort,
+    });
+    res.status(output.status === 'analyzed' ? 200 : 502).json({ ok: output.status === 'analyzed', analysis: output.analysis, error: output.error });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'image_post_analysis_unknown';
+    console.error('[videos] image post reanalysis did not complete:', code);
+    const publicCode = [
+      'image_post_analysis_attempt_persistence_failed', 'image_post_analysis_result_persistence_failed',
+      'image_post_analysis_superseded', 'image_post_analysis_source_changed',
+      'image_post_record_disappeared_after_analysis',
+    ].includes(code) ? code : 'image_post_analysis_unknown';
+    res.status(['image_post_analysis_superseded', 'image_post_analysis_source_changed'].includes(publicCode) ? 409 : 503)
+      .json({ ok: false, error: publicCode });
+  }
 });
 
 // ─── GET /videos/:id ──────────────────────────────────────────────────────────
