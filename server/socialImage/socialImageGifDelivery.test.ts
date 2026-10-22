@@ -104,6 +104,9 @@ test('durable GIF plates compose fixed frames and one idempotent delivery withou
   assert.equal(repeated.version, delivered.version);
   assert.equal(persisted.size, 5);
   assert.equal((await readSocialImageTask(store, 'tenant-b', created.id)), null);
+  const rewrittenInput = await updateSocialImageTask(store, 'tenant-a', created.id, delivered.version,
+    { contentBrief: { ...delivered.contentBrief, coreClaim: 'Changed after paid delivery' } });
+  assert.equal(rewrittenInput.kind, 'invalid');
 
   const passed = delivered.outputs.map(output => output.role === 'gif_plate' ? output : {
     ...output, state: 'approved' as const,

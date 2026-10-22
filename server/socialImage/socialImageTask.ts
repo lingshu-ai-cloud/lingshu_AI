@@ -151,11 +151,12 @@ export async function updateSocialImageTask(store: DataStore, tenantId: string, 
   const current = row?.tenant_id === tenantId && row.spec?.socialImageTask ? { ...row.spec.socialImageTask, id: row.id } : null;
   if (!current) return { kind: 'missing' as const };
   if (current.version !== expectedVersion) return { kind: 'conflict' as const, task: current };
-  if (current.generationJobs?.some(job => ['queued', 'running', 'outcome_unknown'].includes(job.status) && !job.outputNodeIds.length)
-    && ['imageType', 'creationPath', 'contentBrief', 'creativeRecipe', 'imageTextContract', 'renderBrief', 'deliverySpec',
-      'materialIds', 'referenceUrls', 'referenceSnapshot', 'replicationRecipe', 'enterpriseAssets', 'layerGraph', 'renderPlan']
-      .some(field => Object.prototype.hasOwnProperty.call(patch, field))) {
-    return { kind: 'invalid' as const, issues: ['图片付费单元未完成，生成输入不可修改'], task: current };
+  const paidInputPatch = ['imageType', 'creationPath', 'contentBrief', 'creativeRecipe', 'imageTextContract', 'renderBrief', 'deliverySpec',
+    'materialIds', 'referenceUrls', 'referenceSnapshot', 'replicationRecipe', 'enterpriseAssets', 'layerGraph', 'renderPlan']
+    .some(field => Object.prototype.hasOwnProperty.call(patch, field));
+  if (paidInputPatch && (current.renderPlan || current.generationJobs?.some(job =>
+    ['queued', 'running', 'outcome_unknown'].includes(job.status) && !job.outputNodeIds.length))) {
+    return { kind: 'invalid' as const, issues: ['图片付费输入已冻结；先显式撤销计划并核对已有回执'], task: current };
   }
   const now = new Date().toISOString();
   const next: SocialImageCreationTask = {

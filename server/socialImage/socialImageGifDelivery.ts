@@ -15,7 +15,8 @@ const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex
 function currentDelivery(task: SocialImageCreationTask): boolean {
   const plan = task.renderPlan;
   const delivery = task.gifDelivery;
-  return Boolean(plan && delivery && delivery.planVersion === plan.version && delivery.sourceHash === plan.sourceHash
+  return Boolean(plan && delivery && plan.sourceHash === socialImagePlanSourceHash(task)
+    && delivery.planVersion === plan.version && delivery.sourceHash === plan.sourceHash
     && delivery.frameOutputIds.length === plan.units.length
     && plan.units.every(unit => task.outputs.some(output => output.id === delivery.frameOutputIds[unit.index]
       && output.role === 'gif_frame' && output.sourceJobId === unit.jobId

@@ -264,8 +264,8 @@ socialImageRouter.patch('/tasks/:id', async (req, res) => {
     if (['imageType', 'creationPath', 'deliverySpec', 'contentBrief', 'creativeRecipe', 'enterpriseAssets', 'materialIds', 'referenceUrls', 'referenceSnapshot', 'replicationRecipe', 'renderBrief', 'imageTextContract', 'layerGraph']
       .some(field => Object.prototype.hasOwnProperty.call(patch, field))) {
       const current = await readSocialImageTask(store, tenantId, req.params.id);
-      if (current?.generationJobs.some(job => ['queued', 'running', 'outcome_unknown'].includes(job.status) && !job.outputNodeIds.length)) {
-        res.status(409).json({ ok: false, code: 'social_image_paid_inputs_frozen', error: '图片生成单元未完成或待核对，不能修改本次付费输入' });
+      if (current?.renderPlan || current?.generationJobs.some(job => ['queued', 'running', 'outcome_unknown'].includes(job.status) && !job.outputNodeIds.length)) {
+        res.status(409).json({ ok: false, code: 'social_image_paid_inputs_frozen', error: '图片付费输入已冻结；先显式撤销计划并核对已有回执' });
         return;
       }
     }
