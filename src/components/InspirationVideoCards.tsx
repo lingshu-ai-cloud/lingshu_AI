@@ -87,15 +87,10 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
   return (
     <article
       className={`group flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface transition-colors duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] hover:border-border-bright ${isSelected ? 'border-accent ring-1 ring-accent/20' : ''}`}>
-      <div role="button" tabIndex={0} onClick={onWatch}
-        onKeyDown={e => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onWatch();
-          }
-        }}
-        className="relative overflow-hidden w-full aspect-[9/16] text-left block"
-        style={{ background: 'var(--color-surface-2)' }}>        <LsMediaStateFrame state={mediaState} percent={analysisProgress?.percent} label={isImagePost && mediaState === 'processing' ? '分析中' : isImagePost && mediaState === 'error' ? '分析失败，可查看详情后重试' : analysisProgress?.stageLabel} className="absolute inset-0">
+      <div
+        className="relative block w-full overflow-hidden text-left"
+        style={{ background: 'var(--color-surface-2)', aspectRatio: mediaAspectRatio }}>
+        <LsMediaStateFrame state={mediaState} percent={analysisProgress?.percent} label={isImagePost && mediaState === 'processing' ? '分析中' : isImagePost && mediaState === 'error' ? '分析失败，可查看详情后重试' : analysisProgress?.stageLabel} className="absolute inset-0">
           <VideoThumbnail platform={video.platform} title={video.title} />
           {video.thumbnail && (
             <ThumbnailImage src={video.thumbnail} platform={video.platform} title={video.title} className="absolute inset-0 h-full w-full object-cover" onNaturalAspectRatio={ratio => {
