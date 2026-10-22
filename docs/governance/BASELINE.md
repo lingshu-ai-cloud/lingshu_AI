@@ -9,6 +9,11 @@
 - 原 `/Users/julia1/.codex/worktrees/xixi1021-full-integration` 现为独立广告功能分支 `feature/platform-ads-meta-workspace-20261022`，不再是本分支检出。当前 11 树分类和图片 AIGC 来源见 [`WORKTREE-INVENTORY.md`](./WORKTREE-INVENTORY.md)。其他未提交来源与被忽略业务数据仍保留；未做真实付费供应商调用、生产迁移或部署。
 - 下方“阶段二集成基线”保留的是当时的合并节点，不是当前 HEAD 或当前本地路径。仍待解决的产品/架构差异按各批记录分别判断，不能以门禁通过或历史文档标题推定全部完成。800 行是普通文件复杂度门禁；历史例外按职责边界治理并只降不增，不为压线机械切分。
 
+## 图文延迟分析的前端待核对状态（2026-10-22）
+
+- 代码提交 `70b3842faaeb794bddf8539d1e23a9a99c262172` 在灵感卡片、详情和创作准入中区分 `queued`、`processing`、`unknown`；持有这些状态的记录不再显示重分析入口或旧证据的“已完成”标签，结果不明提示先核对任务与费用。详情状态文案投影迁入 `inspirationAnalysisProjection.ts`，队列文案与禁重提判断在 `imagePostAnalysisPresentation.ts`；`InspirationDashboard.tsx` 从 3,173 降至 3,163 行，历史预算同步收紧，仍有 8 个历史超限文件。
+- 图片来源及前端合同回归 33/33、TypeScript、架构扫描/ratchet、生产构建与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。没有真实账号浏览器验收，也没有真实供应商或部署操作。前端停用重试只是对服务端拒绝的可见投影，不替代持久化付费许可、人工核对入口或原始供应商回执。
+
 ## 延迟图文分析持久队列与媒体职责边界（2026-10-22）
 
 - 代码提交 `8231df79a368c26cb0011b2cd075f73a0541920d` 将缩略图/COS 图片来源持久化迁至 `imagePostMediaPersistence.ts`，将原进程内延迟分析改为 `imagePostAnalysisQueue.ts` 的持久排队与后台领取。采集结果和来源哈希先写入记录，租约能力无法证明时不调用模型；已开始但未写回的尝试不自动重放，异常保持待核对状态。来源变化时不写回旧结果；同记录的刷新和显式重分析会拒绝排队中、处理中或结果不明的任务。`videos.ts` 从 10,270 降至 10,255 行并收紧预算，仍有 8 个历史超限文件。
