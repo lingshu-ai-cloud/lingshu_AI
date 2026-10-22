@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## GPT 图片证据原始回执限流（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `bf59f368` 将付费响应的流式字节上限抽为 `server/lib/boundedProviderResponse.ts`：GPT 图片证据适配器在读取时最多接收 1 MiB 原始正文，Apify 原始回执路径继续采用 8 MiB 上限。GPT 响应超限后同一逐记录许可保持结果不明，跨上下文实例不能重发；不将原分支无许可的自动 GPT 降级接入路由，保留用户指定的现有 Qwen→Gemini 行为。
+- 来源及付费边界脚本 73/73、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,332 个生产 TypeScript 文件）、192 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。现有 GPT 适配器仍缺独立的图片记录人工批准、可信多模态计量/账号报价接线和目标共享卷证明，爬取/重分析路由未调用它；旧 Gemini 自动降级亦非完整逐记录付费治理。没有真实付费请求、目标库迁移、浏览器验收或部署。下一步先建立上述记录级批准与请求冻结/恢复链，再处理原分支剩余差异；最终本地/远端 SHA 和工作区状态以推送后 Git 核对为准。
+
 ## LinkedIn 原始付费响应流式上限（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `24d266aa` 将要求原始回执的 Apify HTTP 响应改为读取阶段 8 MiB 字节上限，与 LinkedIn 只写一次回执存储共用常量；超限时中止请求，已提交的 Actor 保持 `submitted_unknown`，禁止自动重发。这限制应用读取/存储的正文，不证明供应商传输费用上限，也不开放真实付费入口。`test:video-source-boundaries` 纳入 LinkedIn 批准、传输和回执合同。
