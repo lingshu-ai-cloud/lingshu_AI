@@ -102,6 +102,7 @@ import { secureStudioRenderManifest, studioRenderAssetPath, studioRenderManifest
 import { studioBgmMediaPath, studioBgmObjectKey } from '../lib/studioBgmAccess.js';
 import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
 import { generatePosterImage, ImageProviderRejectedError, imageExt, normalizeImageGenerationQuality, type ReferenceImage } from '../lib/imageGen.js';
+import { createGeneratedImageMaterial } from '../lib/generatedImageMaterial.js';
 import { claimSocialImagePaidJob, completeSocialImagePaidJob, markSocialImagePaidJobNotSubmitted, recordSocialImagePaidJobFailure, socialImageOwnedMaterialUrl, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
 import { claimSocialImagePlannedUnit, socialImagePlannedRenderInput } from '../socialImage/socialImageDurablePlan.js';
 import { readSocialImageTask } from '../socialImage/socialImageTask.js';
@@ -510,76 +511,6 @@ async function createGeneratedVideoMaterial(input: {
   const list = loadMaterials().filter(item => item.id !== material.id);
   list.push(material);
   persistMaterials(list);
-  return material;
-}
-
-async function createGeneratedImageMaterial(input: {
-  title: string;
-  bytes: Buffer;
-  mimeType: string;
-  source?: string;
-  tenantId: string;
-  sourceType?: string;
-  productId?: string;
-  productName?: string;
-  provenance?: Record<string, unknown>;
-}): Promise<Material> {
-  const outputDir = tenantAssetDir(MEDIA_DIR, input.tenantId);
-  fs.mkdirSync(outputDir, { recursive: true });
-  const id = randomUUID();
-  const ext = imageExt(input.mimeType);
-  const filename = `${id}.${ext}`;
-  const filePath = path.join(outputDir, filename);
-  fs.writeFileSync(filePath, input.bytes);
-  const contentSha256 = createHash('sha256').update(input.bytes).digest('hex');
-  const metadata = await sharp(input.bytes).metadata().catch(() => null);
-  const rightsEvidenceRef = `generated:${input.source || 'image-model'}:${contentSha256}`;
-  const material: Material = {
-    id,
-    name: input.title || 'AI 图文海报',
-    folder: 'product',
-    type: 'image',
-    duration: 0,
-    size: humanSize(input.bytes.length),
-    file: tenantAssetRelativePath(input.tenantId, filename),
-    url: generatedMediaUrl(input.tenantId, filename),
-    poster: generatedMediaUrl(input.tenantId, filename),
-    scope: 'own',
-    tenantId: input.tenantId,
-    sourceType: input.sourceType || 'ai_generated_image',
-    sourceProvider: input.source || 'image-model',
-    contentSha256,
-    width: metadata?.width,
-    height: metadata?.height,
-    ...(metadata?.width && metadata.height ? { aspectRatio: metadata.width / metadata.height } : {}),
-    ...(input.productId ? { productId: input.productId } : {}),
-    ...(input.productName ? { productName: input.productName } : {}),
-    rightsStatus: 'authorized',
-    rightsEvidenceRef,
-    licenseEvidence: rightsEvidenceRef,
-    commercialUseApproved: true,
-    derivativesApproved: true,
-    rawLibraryUseApproved: true,
-    provenance: {
-      schemaVersion: 'generated-image-lineage.v1',
-      generatedAt: new Date().toISOString(),
-      provider: input.source || 'image-model',
-      ...(input.provenance || {}),
-    },
-    createdAt: new Date().toISOString(),
-  };
-  if (objectStorageEnabled()) {
-    material.objectKey = materialAssetObjectKey(input.tenantId, filename);
-    material.posterObjectKey = material.objectKey;
-    await objectStorageUpload({ key: material.objectKey, body: input.bytes, contentType: input.mimeType });
-    material.url = '';
-    material.poster = undefined;
-    fs.rmSync(filePath, { force: true });
-  }
-  const list = loadMaterials().filter(item => item.id !== material.id);
-  list.push(material);
-  persistMaterials(list);
-  console.log(`[studio] generated poster image material ${material.id} via ${input.source || 'image-model'}`);
   return material;
 }
 
