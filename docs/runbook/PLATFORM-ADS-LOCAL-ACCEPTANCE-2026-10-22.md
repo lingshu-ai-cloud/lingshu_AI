@@ -2,6 +2,21 @@
 
 时间：2026-10-22，Asia/Shanghai。功能分支：`feature/platform-ads-meta-workspace-20261022`。
 
+## 当前结论（后续修复覆盖早期阻塞判断）
+
+- 沙盒网站访问、ThruPlay 两条链路已创建完整 Campaign–Ad Set–Creative–Ad 并从 Meta 读回，两个产品回执均 VERIFIED。
+- 根因不是缺少 ADVERTISE 授权：沙盒主体 `/me/accounts?fields=id,name,tasks` 返回所选主页及 `ADVERTISE`。账户主体令牌无法处理该主页的未发布帖子；从已授权主页读取的 Page 令牌可以。无需新增权限、把主页加入业务组合或修改账单。
+- 适配器保留账户令牌用于 Campaign / Ad Set，Creative / Ad 使用所选主页的现有 Page 令牌。主页令牌只在内存中使用，不写日志、运行证据或公共接口；取得主页令牌失败会在创建层级资源前阻断。
+- 网站访问恢复沿用原 Campaign / Ad Set，只补缺失的 Creative / Ad；后续修复广告访问身份只更新原 Ad ID，不创建替代广告。全部状态变更有租约及持久化检查点，未知结果禁止盲重试。
+- 2026-10-22T11:29:31Z 最后读回：两条 Campaign / Ad Set 的 status、effective_status 均 PAUSED；两条 Ad 的 status 为 PAUSED、effective_status 为 IN_PROCESS，未再返回 issues_info 硬错误。配置暂停与平台异步处理是两个不同口径，不宣称广告审核或实际投放通过。
+
+| 链路 | 本地计划 / 回执 | Campaign | Ad Set | Creative | Ad |
+| --- | --- | --- | --- | --- | --- |
+| 网站访问 | giln3kkz95vbzll / o8lfx4eqm6rdzc8 | 120330001417553916 | 120330001417554616 | 1697432008701811 | 120330001417556516 |
+| ThruPlay | nop5swob5wcwnv7 / k3oqazyd73ovlil | 120330001417556916 | 120330001417557816 | 1109795838074237 | 120330001417559616 |
+
+两条链路均 CNY 500 系列限额、CNY 50 日预算；网站访问为 OUTCOME_TRAFFIC / LINK_CLICKS / WEBSITE，观看为 OUTCOME_ENGAGEMENT / THRUPLAY / ON_VIDEO，均按 IMPRESSIONS 计费。读回核对账户归属、层级关联、主页、视频、落地页及预算单位；只限沙盒暂停创建验收。
+
 ## 隔离运行环境
 
 - 前端 `127.0.0.1:5187`，后端 `127.0.0.1:8890`，独立 PocketBase `127.0.0.1:8891`。
@@ -25,7 +40,27 @@
 - Creative：`1420014263002517`，读回主页、视频、LEARN_MORE 和落地页关联与提交一致。
 - Ad 创建被 Meta 拒绝：错误 100 / 1359188，要求账户添加有效支付方式。没有 Ad ID，回执保留 UNKNOWN（部分资源已创建），不可声称完整创建成功。
 - 账户结构同步读回：Campaign 1、Ad Set 1、Ad 0。
-- 备用沙盒账户 `1640686001100669` 不接受上述普通用户令牌（权限错误 200）；Meta 界面提供专用长期沙盒令牌生成入口，该入口尚未执行。新增长期访问需要用户单独确认。
+- 备用沙盒账户 `1640686001100669` 不接受上述普通用户令牌（权限错误 200）；用户确认后已生成专用长期沙盒令牌，通过产品连接接口加密保存，连接 `yxk6qrpsfiodjxb`。平台确认 CNY / Asia/Shanghai / account_status 1。
+
+## 沙盒验收与当前恢复点
+
+- 与真实账户分别保存 `tmp/platform-ads-live/sandbox-run.json`，请求使用 `_sandbox` 后缀；接受脚本只允许本次授权的两个账户。
+- 独立素材绑定 `6ea7e378c2725b2`，平台视频 `1580768800024852`，真实上传并转码为 ready，缩略图可读。
+- 计划 `giln3kkz95vbzll`，回执 `o8lfx4eqm6rdzc8`，请求 `meta_live_traffic_create_20261022_sandbox`。
+- Campaign `120330001417553916`、Ad Set `120330001417554616` 已持久化且读回 status 均为 PAUSED；OUTCOME_TRAFFIC / LINK_CLICKS / IMPRESSIONS / WEBSITE，限额 50000 分、日预算 5000 分。
+- Creative 创建被 Meta 拒绝：10 / 1341012，缺少主页访问权限；无 Creative / Ad ID，保留 UNKNOWN，不重提创建。
+- 用户确认重新关联后，已在官方“更新沙盒广告账户”窗口对同一主页提交“关联”和“更新”；随后尝试移除旧关联并保存以重建关联，但刷新后平台仍显示同一主页 ID，并未呈现无关联状态，不能声称平台完成了底层权限重置。主页未删除，令牌未撤销，账单未修改。
+- 沙盒令牌读取 `me` 返回主体 `122104327749469294`（Sandbox Ad Account Owner），并非真实账户的 Lucy Chang。`me/permissions` 包含 granted 的 ads_management、pages_read_engagement、pages_manage_metadata、pages_read_user_content、pages_manage_ads 和 public_profile。
+- 沙盒主页 `id,name` 只返回 id；`promote_pages` 返回空列表。但真实账户的同一接口也返回空列表，因此空列表本身不是“没有主页广告权限”的充分判据，不能据此新增产品硬门禁。
+- 2026-10-22T11:10:32Z，使用官方 SDK 支持的 `execution_options=["validate_only"]` 重新验证原素材参数，不创建任何资源：沙盒仍返回 10 / 1341012。2026-10-22T11:12:12Z，真实账户的同类已保存参数返回 `{ "success": true }`，只能证明素材参数验证通过，不能视为 Ad 创建或支付条件通过。
+- 2026-10-22T11:11:59Z，沙盒 Campaign / Ad Set 再次读回 status 和 effective_status 均 PAUSED；无 Creative / Ad ID。未重提创建，未尝试 ThruPlay 新建。
+- 只读检查应用关联业务组合 `3124707611058974`（Robert）的主页资产页显示“未添加任何公共主页”。业务组合共享访问申请仅查看流程并已取消，没有添加主页、转移主页所有权或申请新权限。该业务组合现状是排查线索，不足以断言迁移主页一定解决沙盒问题。
+- 上述阶段的权限阻塞判断由顶部“当前结论”修正。后续发现账户身份和主页身份不能混用，没有通过扩大资产权限绕过。
+- `diagnose` 为只读诊断；`readback` 新增账户及 Campaign–Ad Set–Ad–Creative 关联校验，VERIFIED 回执必须拥有四层完整资源。
+- `validate-creative` 只对已保存的素材输入调用 Meta 官方仅验证模式，结果单独保存，不修改 UNKNOWN 创建回执、不新建 Campaign / Ad Set / Creative / Ad。
+- `validate-page-creative` 使用所选主页身份做同样的仅验证；`recover-traffic` 仅接受文档中指定的原沙盒回执和资源 ID，任何恢复检查点存在但 ID 不完整时阻断。
+- 初次补齐后广告异步返回 WITH_ISSUES / 2446289。对同一 Creative 做 Ad 仅验证：账户身份返回 200 / 3858756（操作者无法访问帖子），主页身份返回 success。`repair-ad-page-identity` 只对文档中的两个原 Ad 做同 Creative、PAUSED 更新，回执记录 pageIdentityRepair；没有重建任何已有资源。
+- 接受脚本增加跨命令本地操作锁，禁止多个操作覆盖同一运行状态；readback 遇到 Meta HARD_ERROR 明确失败，不能仅凭资源 ID 判验收通过。
 
 ## 本次修正
 
@@ -43,10 +78,12 @@
 
 `scripts/run-platform-ads-meta-live.ts` 是显式操作脚本，会发起真实平台调用。只允许隔离数据库和 paused_only 模式；分阶段保存到 `tmp/platform-ads-live/run.json`，不得把运行文件、令牌或数据库提交到 Git。不要在已有 UNKNOWN 回执时新建请求或重复创建。
 
-当前未完成：Ad 创建、完整四层关联核验、ThruPlay 目标完整创建、完整真实端到端验收。下一步需解决支付方式前置条件，或经确认获取现有沙盒的专用长期令牌后，在沙盒重新验收；保留现有暂停资源作为真实账户证据。
+已完成沙盒两种已支持目标的暂停创建与四层读回。未完成真实账户 Ad 创建（支付方式阻断，按要求未修改）、实际花费/归因验收、广告审核、应用 OAuth 回调接入及生产发布；不能据此宣布真实付费投放或上线就绪。
 
 ## 代码验证
 
+- 修复起点 HEAD `25f3a083f747ed0186ef22cc9d929870e17fda7f`。本轮修改仅限 Meta 适配器、受影响测试、显式接受脚本和本验收记录；未合并或推送其他分支。
+- 本轮已重跑 `pnpm run test:platform-ads`（37 文件）、`pnpm run lint`、`pnpm run check:architecture`（2230 文件）、`pnpm run build`（studio 497094/500000）、`git diff --check`，均通过。其他下列测试为此前证据。
 - `pnpm run test:platform-ads`：37 个测试文件通过（隔离平台模拟，不是真实平台验收）。
 - `node scripts/test-platform-ads-ui.mjs`：通过，全部 API 模拟。
 - `pnpm exec tsx server/platformAds/currencyExecution.test.ts`、`pnpm exec tsx server/platformAds/creatives.test.ts`：预算最小值和失败后素材复用新增回归通过。

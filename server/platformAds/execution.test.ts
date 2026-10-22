@@ -21,6 +21,7 @@ try {
   let writes = 0;
   globalThis.fetch = (async (url: any, init: any) => {
     if (!String(url).startsWith('https://graph.facebook.com/')) return originalFetch(url, init);
+    if (new URL(String(url)).searchParams.get('fields') === 'id,access_token') return Response.json({ id: '1', access_token: 'test-page-token' });
     if (init.method === 'POST') return Response.json({ id: String(100 + ++writes) });
     return Response.json({ id: '101', status: 'PAUSED', account_id: '1', daily_budget: '500' });
   }) as typeof fetch;

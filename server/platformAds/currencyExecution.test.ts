@@ -24,6 +24,7 @@ try {
   globalThis.fetch = (async (url: any, init: any) => {
     if (!String(url).startsWith('https://graph.facebook.com/') && !String(url).startsWith('https://business-api.tiktok.com/') && !String(url).startsWith('https://googleads.googleapis.com/')) return originalFetch(url, init);
     calls++;
+    if (new URL(String(url)).searchParams.get('fields') === 'id,access_token') return Response.json({ id: '1', access_token: 'test-page-token' });
     if (init.method === 'POST') { const params = new URLSearchParams(init.body); posts.push(params); if (params.has('daily_budget')) actualBudget = params.get('daily_budget')!; return Response.json({ id: String(100 + posts.length) }); }
     return Response.json({ id: '101', status: 'PAUSED', account_id: '1', daily_budget: actualBudget, min_campaign_group_spend_cap: minimumCap, min_daily_budget: minimumDaily });
   }) as typeof fetch;

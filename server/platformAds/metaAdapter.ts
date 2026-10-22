@@ -43,6 +43,13 @@ export class MetaAdsAdapter {
     return data;
   }
   account(id: string) { return this.request(`act_${metaAccountId(id)}`, { fields: 'id,account_id,name,business_name,currency,account_status,timezone_id,timezone_name,timezone_offset_hours_utc,min_campaign_group_spend_cap,min_daily_budget' }); }
+  /** Resolve only the selected Page's existing grant. Never persist or expose it. */
+  async pageCreativeAdapter(pageId: string) {
+    if (!/^\d+$/.test(pageId)) throw new AdProviderError('主页 ID 无效', 'INVALID_INPUT');
+    const page = await this.request(pageId, { fields: 'id,access_token' });
+    if (String(page.id) !== pageId || typeof page.access_token !== 'string' || !page.access_token) throw new AdProviderError('未取得所选主页的广告素材访问令牌，请核对主页授权', 'PAGE_AUTH_REQUIRED');
+    return new MetaAdsAdapter(page.access_token, this.transport, this.beforeProviderWrite);
+  }
   campaigns(id: string) { return this.request(`act_${metaAccountId(id)}/campaigns`, { fields: 'id,name,status,effective_status,objective,daily_budget,lifetime_budget', limit: 100 }); }
   async assertOwnership(accountId: string, objectId: string) {
     const object = await this.request(objectId, { fields: 'account_id' });
@@ -62,8 +69,11 @@ export class MetaAdsAdapter {
   }
   async createPausedVideoTraffic(accountId: string, name: string, input: MetaVideoInput, totalBudget: number, onCreated: (kind: string, id: string) => Promise<void>, videoViews = false, channels = ['Facebook', 'Instagram'], schedule: { startsAt?: string; endsAt?: string } = {}) {
     const account = `act_${metaAccountId(accountId)}`;
+    // Account token manages the delivery hierarchy; unpublished Page stories
+    // use the selected Page identity. Resolve before creating any resources.
+    const creativeAdapter = await this.pageCreativeAdapter(input.pageId);
     const create = async (kind: string, edge: string, params: Record<string, unknown>) => {
-      const result = await this.request(`${account}/${edge}`, params, 'POST');
+      const result = await (kind === 'creativeId' || kind === 'adId' ? creativeAdapter : this).request(`${account}/${edge}`, params, 'POST');
       if (!/^\d+$/.test(String(result.id || ''))) throw new AdProviderError('平台创建结果缺少资源 ID', 'INVALID_RESPONSE', true);
       await onCreated(kind, String(result.id));
       return String(result.id);

@@ -37,6 +37,7 @@ try {
     const target = String(url);
     if (target.startsWith('http://127.0.0.1:1/')) return originalFetch(url, init);
     assert.ok(target.startsWith('https://graph.facebook.com/v25.0/'), `unexpected network: ${target}`);
+    if (new URL(target).searchParams.get('fields') === 'id,access_token') return Response.json({ id: '1', access_token: 'test-page-token' });
     if (target.endsWith('/advideos')) { uploads++; assert.ok(init?.body instanceof FormData); return Response.json({ id: '500' }); }
     if (init?.method === 'POST') {
       const receipts = await store.list<any>('platform_ad_executions', { where: { tenant_id: 'tenant', taskId: task.id } });

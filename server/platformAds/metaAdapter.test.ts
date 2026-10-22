@@ -4,6 +4,7 @@ process.env.META_ADS_API_VERSION = 'v25.0';
 const calls: Array<{ url: string; init?: RequestInit }> = [];
 const mock = (async (url: string | URL | Request, init?: RequestInit) => {
   calls.push({ url: String(url), init });
+  if (new URL(String(url)).searchParams.get('fields') === 'id,access_token') return Response.json({ id: '1', access_token: 'page-only-secret' });
   if (init?.method === 'GET') return Response.json({ account_id: '1' });
   return Response.json({ id: String(100 + calls.length) });
 }) as typeof fetch;
@@ -17,10 +18,18 @@ assert.throws(() => validateMetaVideoInput({ ...input, dailyBudget: 101 }, 100))
 const ids: string[] = [];
 await adapter.createPausedVideoTraffic('1', 'Test', input, 100, async (_kind, id) => { ids.push(id); });
 assert.equal(ids.length, 4);
-const campaign = new URLSearchParams(calls[1].init?.body as URLSearchParams);
+const writes = calls.filter(call => call.init?.method === 'POST');
+const campaign = new URLSearchParams(writes[0].init?.body as URLSearchParams);
 assert.equal(campaign.get('status'), 'PAUSED');
 assert.equal(campaign.get('spend_cap'), '10000');
-for (const index of [1, 2, 4]) assert.equal(new URLSearchParams(calls[index].init?.body as URLSearchParams).get('status'), 'PAUSED');
+for (const index of [0, 1, 3]) assert.equal(new URLSearchParams(writes[index].init?.body as URLSearchParams).get('status'), 'PAUSED');
+for (const call of writes) assert.equal((call.init?.headers as Record<string, string>).Authorization, /\/(adcreatives|ads)$/.test(call.url) ? 'Bearer page-only-secret' : 'Bearer secret-not-in-url');
+let unauthorizedWrites = 0;
+const noPageGrant = new MetaAdsAdapter('account-token', (async (_url, init) => { if (init?.method === 'POST') unauthorizedWrites++; return Response.json({ id: '1' }); }) as typeof fetch);
+await assert.rejects(noPageGrant.createPausedVideoTraffic('1', 'No grant', input, 100, async () => {}), /主页.*令牌/);
+assert.equal(unauthorizedWrites, 0, 'missing Page grant must block before creating any hierarchy');
+const wrongPage = new MetaAdsAdapter('account-token', (async () => Response.json({ id: '999', access_token: 'wrong-page-token' })) as typeof fetch);
+await assert.rejects(wrongPage.pageCreativeAdapter('1'), /主页.*令牌/);
 const uncertain = new MetaAdsAdapter('token', (async () => { throw new Error('token'); }) as typeof fetch);
 await assert.rejects(() => uncertain.request('123', { status: 'ACTIVE' }, 'POST'), (e: unknown) => e instanceof AdProviderError && e.uncertain && !e.message.includes('token'));
 const denied = new MetaAdsAdapter('secret-token', (async () => Response.json({ error: { code: 10, error_subcode: 1341012, message: 'secret-token' } }, { status: 403 })) as typeof fetch);

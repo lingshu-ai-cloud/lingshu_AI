@@ -26,6 +26,7 @@ try {
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     const parsed = new URL(String(url));
     if (parsed.hostname !== 'graph.facebook.com') return originalFetch(url, init);
+    if (parsed.searchParams.get('fields') === 'id,access_token') return Response.json({ id: parsed.pathname.split('/').pop(), access_token: 'test-page-token' });
     let result: unknown;
     const id = parsed.pathname.split('/').pop()!;
     if (init?.method === 'POST') {
