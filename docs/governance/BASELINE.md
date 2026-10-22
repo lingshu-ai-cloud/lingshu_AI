@@ -2,6 +2,12 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 素材卡与使用履历拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `432977c8` 将素材卡媒体/操作层和素材使用履历分别迁至 `MaterialLibraryCardMedia.tsx`、`MaterialUsageHistory.tsx`；原逻辑正文按 83 行与 99 行逐行核对一致，素材列表请求与详情选择仍在页面。`InspirationDashboard.tsx` 从 3,011 降至 2,828 行并同步收紧历史预算；全仓仍有 6 个超限文件。
+- 修正旧契约测试在前批次详情迁出后仍读取页面源码的问题，并将全部 9 个 `InspirationDashboard` 测试文件纳入固定来源回归。页面契约组 16/16、`test:video-source-boundaries` 99/99、`test:production-workflows`、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,350 个生产 TypeScript 文件）、193 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。架构检查首次因导入多一行而比拟定预算高 1 行，按实测行数修正为 2,828 后复跑通过。
+- 这是源码与离线回归验收，未做浏览器视口/无障碍验收、真实付费供应商调用、目标库迁移或部署；工作树与远端一致性以推送后 Git 核对为准。
+
 ## 编导视频详情职责拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `027646f2` 将编导视频详情 Drawer 原样迁至 `src/components/inspiration/DirectorVideoDetailPanel.tsx`，页面仍拥有选中对象、任务动作和身份边界，并转发原公开组件导出。原组件正文与新组件的 151 行逐行核对一致；`InspirationDashboard.tsx` 从 3,163 降至 3,011 行并收紧预算。全仓仍有 6 个历史超限文件，架构债务尚未清零。
