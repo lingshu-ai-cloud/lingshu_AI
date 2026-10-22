@@ -44,6 +44,7 @@
 - `server/routes/studioProductSceneUpload.ts`：产品场景上传意图与企业产品身份校验、完整视频探针结果封装、错误到 HTTP 状态映射和复用授权元数据；`studio.ts` 仍持有上传请求生命周期、租户素材写入与对象存储。非视频、缺失或未知槽位在读取企业资料前拒绝，上传探针不可用不生成复用授权。
 - `server/routes/studioMaterialAnalysisSegments.ts`：将素材逐镜分析结果投影为片段的纯规则，供云端素材写回和自动生产共用；`studio.ts` 保留原公开导出、供应商选择、租户素材读写及 HTTP 编排。
 - `server/routes/studioTtsStyle.ts`：配音风格输入归一化、MiniMax 确定性停顿与发音词典、Qwen/MiniMax/macOS 音色及语言映射纯规则；`studio.ts` 保留语音文件、供应商请求、付费许可与回执编排，不因音色选择绕开现有付费门禁。
+- `server/routes/studioVoiceoverLanguageRules.ts`：口播文本的目标语种文字系统判定、逐句修复输入切分和配音句子边界纯规则；`studio.ts` 保留旧公开导出、模型译文校验与 TTS 供应商/文件编排，语种不符时仍按原合同停止生成。
 - `server/routes/studioLocalTtsAdapters.ts`：Piper、XTTS 与本机 `say` 的可选本地语音执行；从路由显式注入租户目录、样本查找、签名资产 URL 和转码接口。无可用引擎时不触碰租户文件；付费 Qwen/MiniMax/HeyGen 路径仍留在原有许可和回执边界内。
 - `server/socialDiscovery/imagePostEvidenceAnalysis.ts`：公开图片下载和现有 Qwen 主分析/Gemini 旧降级。`imagePostMediaPersistence.ts`：图文缩略图与 COS 图片来源持久化。`imagePostImport.ts` 与 `imagePostRefresh.ts`：新增和既有图文先持久化来源及状态。`imagePostReanalysis.ts`：显式重分析先记录尝试，写回时校验同一尝试和来源快照。`imagePostAnalysisQueue.ts`：延迟分析先把输入和来源哈希存入记录，再由后台 worker 在可证明的数据库唯一租约下领取；已开始但未写回的尝试不自动重发。`imagePostLeaseCapability.ts` 只为此路径只读核验远端 PocketBase 租约索引，不放宽其他付费 worker。`videos.ts` 保留 HTTP 鉴权、爬取入口和图片 URL 规范化。上述路径仍未具备统一的逐记录付费批准、供应商原始回执与人工核对流程。
 - `server/socialImage/`：图片任务、参考画布、首版策划、图层合成、修订和质量判定。参考图层蓝图在任务创建/更新和合成入口均规范化；蒙版层级不能绕过产品遮挡上限。

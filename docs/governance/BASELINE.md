@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 口播语种规则拆分（2026-10-23）
+
+- 代码提交 `6e75a959` 将目标语种文字系统判定、逐句修复切分和配音句子边界迁至纯规则模块 `server/routes/studioVoiceoverLanguageRules.ts`。`studio.ts` 继续转发既有公开函数，并保留模型翻译、TTS 供应商、文件、付费许可与回执编排；路由从 9,568 降至 9,502 行，历史预算同步收紧。全仓仍有 7 个历史超限文件，结构治理未完成。
+- 新规则直测 3/3、`test:studio-script`、`test:studio-workflow`、`pnpm run lint`、`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture`（2,337 个生产 TypeScript 文件）、193 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过；`AiCreateStudio` chunk 为 497,209/500,000 字节。未执行真实模型、TTS 或其他付费请求，未进行目标库迁移、浏览器验收或部署；最终本地/远端 SHA 和工作区状态以推送后 Git 核对为准。
+
 ## 视频下载器参数规则拆分（2026-10-23）
 
 - 代码提交 `43f3082e` 将 yt-dlp 参数和平台 Referer 纯规则迁至 `server/routes/videoDownloaderArgs.ts`，旧 `videos.ts` 公开导出继续兼容，运行环境、下载执行与 Cookie 回退仍由路由控制。`videos.ts` 从 9,522 降至 9,495 行，架构预算同步收紧；全仓仍有 7 个历史超限文件，结构治理并未完成。
