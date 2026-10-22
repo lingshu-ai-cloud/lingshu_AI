@@ -16,6 +16,7 @@ import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
 const weeklyPlanConfirmationSource = fs.readFileSync('src/components/WeeklyPlanConfirmationCard.tsx', 'utf8');
+const weeklyGoalPanelSource = fs.readFileSync('src/components/smartBusiness/WeeklyGoalPanel.tsx', 'utf8');
 const smartBusinessSource = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
 const businessDataReviewSource = fs.readFileSync('src/components/smartBusiness/BusinessDataReview.tsx', 'utf8');
 const businessDataReviewModelSource = fs.readFileSync('src/components/smartBusiness/BusinessDataReview.model.ts', 'utf8');
@@ -203,7 +204,7 @@ assert.throws(
 
 assert.match(pageSource, /制定本周目标/, 'Smart Operations must retain the editor for a genuinely new weekly goal');
 assert.match(pageSource, /allocateWeeklyPublishingTargets\(selectedPublishingTargets, platformPublishCounts\)/, 'Agent settings must persist structured per-account shares of the platform quota');
-assert.match(pageSource, /const configuredTargetPlatforms = weeklyPublishingPlatforms\(config\.publishingTargets, config\.socialCadence\)/, 'weekly planning must prefer the user-selected publishing platforms over the four-platform profile');
+assert.match(weeklyGoalPanelSource, /const configuredTargetPlatforms = weeklyPublishingPlatforms\(config\.publishingTargets, config\.socialCadence\)/, 'weekly planning must prefer the user-selected publishing platforms over the four-platform profile');
 assert.match(pageSource, /weeklyPublishingTotal/, 'the displayed weekly total and the saved cadence must share one computed source');
 assert.match(weeklyPlanCalendarSource, /本周发布日历/, 'weekly planning must use the compact publishing calendar');
 for (const deprecated of ['生成免费任务总纲', '免费的周任务总纲', '步骤 1 · 免费', '步骤 2 · Agent 预分析']) {
@@ -479,17 +480,17 @@ for (const color of ['#7c3aed', '#2563eb', '#0f9f82', '#d97706']) {
 assert.match(executionStatusSource, /agent-live-card--running/, 'running Agent cards must expose an animation hook');
 assert.match(executionStatusSource, /tasks\.filter\(task => \['succeeded', 'completed'\]\.includes\(task\.status\)\)\.length/, 'Agent progress must come from persisted task completion rather than fabricated percentages');
 assert.match(pageSource + presentationPolicySource, /synchronizeThemeContentWorkflows[\s\S]{0,500}contentCreationWorkflows/, 'saving the unified switch must retain the legacy workflow ids');
-assert.match(pageSource, /<VideoPlanEditor[^>]{0,300}themeWorkflow/, 'Digital Employee weekly planning must enable the theme workflow explicitly');
+assert.match(weeklyGoalPanelSource, /<VideoPlanEditor[^>]{0,300}themeWorkflow/, 'Digital Employee weekly planning must enable the theme workflow explicitly');
 for (const persona of ['B2B 从零起步', 'B2B 已有基础', '品牌影响', 'DTC 直接销售']) {
   assert.match(taskPackagePresetSource, new RegExp(persona), `weekly task packages must include ${persona}`);
 }
 assert.match(weeklyPlanConfirmationSource, /确认周计划/);
 assert.match(weeklyPlanConfirmationSource, /灵小枢已生成本周默认方案/, 'weekly planning should start from a default proposal');
 assert.match(weeklyPlanConfirmationSource, /调整本周设置/);
-assert.match(pageSource, /系统生成的目标设置（需要时可修改）/);
+assert.match(weeklyGoalPanelSource, /系统生成的目标设置（需要时可修改）/);
 assert.doesNotMatch(pageSource, /更多目标设置（可选）/);
-assert.match(pageSource, /本周最想解决什么/);
-assert.match(pageSource, /查看并调整具体视频计划（可选）/);
+assert.match(weeklyGoalPanelSource, /本周最想解决什么/);
+assert.match(weeklyGoalPanelSource, /查看并调整具体视频计划（可选）/);
 assert.match(videoPlanEditorSource, /数字员工制作路径[\s\S]{0,500}爆款复刻[\s\S]{0,500}历史任务/, 'Agent video plans must show clone-only routing while keeping legacy routes readable');
 assert.doesNotMatch(videoPlanEditorSource, /脚本来源\s*<select/, 'Agent video plans must not expose free-creation route selection');
 assert.match(videoPlanEditorSource, /themeWorkflow \? '内容参考' : '爆款参考'/, 'legacy clone plans must use a neutral reference label in theme workflow mode');
