@@ -13,6 +13,7 @@ import {
 
 const componentSource = readFileSync(new URL('./ProductMaterialGroup.tsx', import.meta.url), 'utf8');
 const dashboardSource = readFileSync(new URL('../InspirationDashboard.tsx', import.meta.url), 'utf8');
+const inventorySource = readFileSync(new URL('../inspiration/inspirationProductMaterialInventory.ts', import.meta.url), 'utf8');
 
 const products = [
   { id: 'product-1', name: '云朵泡沫卸妆蜜' },
@@ -78,9 +79,10 @@ test('我的素材只渲染一个产品集合卡，详情从右侧展开完整�
   assert.match(dashboardSource, /id: `product-\$\{product\.id\}`/);
   assert.match(dashboardSource, /pagedUngroupedFilteredMaterials/);
   assert.match(dashboardSource, /excludeProductAssociated: true/, '主墙接口必须在分页前排除已归组产品素材');
-  assert.match(dashboardSource, /fetchCompleteProductMaterialInventory[\s\S]*?productId: product\.id[\s\S]*?pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE/, '产品摘要与侧边详情必须按稳定产品 ID 精确读取完整素材');
+  assert.match(dashboardSource, /import \{ MATERIAL_LIBRARY_FETCH_PAGE_SIZE, fetchCompleteProductMaterialInventory, fetchProductMaterialSummaries/, '页面必须调用迁出的完整库存读取');
+  assert.match(inventorySource, /fetchCompleteProductMaterialInventory[\s\S]*?productId: product\.id[\s\S]*?pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE/, '产品摘要与侧边详情必须按稳定产品 ID 精确读取完整素材');
   assert.match(dashboardSource, /fetchProductMaterialSummaries\(materialProducts\)/, '主墙产品摘要必须批量读取，不得按产品 N\+1 请求');
-  assert.match(dashboardSource, /for \(let page = 2; page <= pageCount; page \+= 1\)/, '批量摘要应受控地逐页读取，避免并发风暴');
+  assert.match(inventorySource, /for \(let page = 2; page <= pageCount; page \+= 1\)/, '批量摘要应受控地逐页读取，避免并发风暴');
   assert.match(dashboardSource, /materialMatchesLibraryFilters\(material, productFilters\)/, '产品卡必须使用真实详情素材响应筛选');
   assert.match(componentSource, /<Drawer[\s\S]*?placement="right"/);
   assert.match(componentSource, /产品素材集合/);
