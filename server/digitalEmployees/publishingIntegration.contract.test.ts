@@ -1,7 +1,8 @@
+import { readDigitalEmployeeApplicationSources } from '../../tests/fixtures/digitalEmployeeApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const route = fs.readFileSync(new URL('../routes/digitalEmployees.ts', import.meta.url), 'utf8');
+const route = readDigitalEmployeeApplicationSources();
 const approvalDecision = fs.readFileSync(new URL('./approvalDecision.ts', import.meta.url), 'utf8');
 const execution = fs.readFileSync(new URL('./publishingExecution.ts', import.meta.url), 'utf8');
 const publishing = fs.readFileSync(new URL('../routes/publishing.ts', import.meta.url), 'utf8');
@@ -9,7 +10,7 @@ const publisher = fs.readFileSync(new URL('../publishing/scheduledPublisher.ts',
 const page = fs.readFileSync(new URL('../../src/components/DigitalEmployeePage.tsx', import.meta.url), 'utf8');
 const onboardingPanel = fs.readFileSync(new URL('../../src/components/smartBusiness/DigitalEmployeeOnboardingPanel.tsx', import.meta.url), 'utf8');
 
-assert.match(route, /get\('\/publishing-accounts'[\s\S]*listConnectedPublishingAccounts\(tenantId\)/, 'account choices must come from tenant-scoped connected records');
+assert.match(route, /get\('\/publishing-accounts'[\s\S]*listConnectedPublishingAccounts\(tenantId, enterprise\.company\.name\)/, 'account choices must come from tenant-scoped connected records');
 assert.match(route, /bindPublishingTargets\(tenantId, submittedConfig\.publishingTargets\)/, 'onboarding must not trust browser-provided account metadata');
 assert.match(route, /packageAccountsValid = packageAccountIds\.length > 0 && packageAccountIds\.every\(accountId => connectedIds\.has\(accountId\)\)/, 'runtime publishing preflight must validate every frozen account against current tenant connections');
 assert.match(route, /key: 'selected_publishing_accounts',[\s\S]{0,160}ready: packageAccountsValid/, 'runtime publishing preflight must expose disconnected selected accounts without preventing independent tasks from starting');

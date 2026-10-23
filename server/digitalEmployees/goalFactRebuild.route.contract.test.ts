@@ -1,14 +1,14 @@
+import { readDigitalEmployeeApplicationSources, digitalEmployeeRouteBlock, digitalEmployeeFunction } from '../../tests/fixtures/digitalEmployeeApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const source = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const source = readDigitalEmployeeApplicationSources();
 const overviewReaderSource = fs.readFileSync('server/routes/digitalEmployeeOverviewReader.ts', 'utf8');
 const assistantFeedSource = fs.readFileSync('server/digitalEmployees/assistantDecisionFeedService.ts', 'utf8');
 const routeStart = "digitalEmployeesRouter.post('/goals/:goalId/rebuild-from-latest-facts'";
 const begin = source.indexOf(routeStart);
 assert.notEqual(begin, -1, 'missing latest-enterprise-facts goal rebuild route');
-const next = source.indexOf('\ndigitalEmployeesRouter.', begin + routeStart.length);
-const route = source.slice(begin, next === -1 ? source.length : next);
+const route = digitalEmployeeRouteBlock(source, routeStart);
 
 assert.match(route, /req\.body\?\.requestId/, 'fact rebuilds must require a caller idempotency key');
 assert.match(route, /req\.body\?\.expectedGoalVersion/, 'fact rebuilds must be bound to the draft version the caller observed');
@@ -55,11 +55,8 @@ for (const response of staleFactResponses) {
     'every enterprise_facts_changed response must include the complete source goal and plan recovery token',
   );
 }
-const approvalStart = source.indexOf('export async function approveGoalForReview');
-const approvalEnd = source.indexOf("digitalEmployeesRouter.post('/goals/:goalId/approve'", approvalStart);
-assert.notEqual(approvalStart, -1);
-assert.notEqual(approvalEnd, -1);
-assert.match(source.slice(approvalStart, approvalEnd), /weeklyGoalFactRebuildTargetCommitted/, 'a partially written replacement must not be activated before its source is durably cancelled');
+const activation = digitalEmployeeFunction(source, 'approveGoalForReview');
+assert.match(activation, /weeklyGoalFactRebuildTargetCommitted/, 'a partially written replacement must not be activated before its source is durably cancelled');
 assert.match(source, /async function committedDigitalEmployeeOperatingGoals[\s\S]*weeklyGoalFactRebuildTargetCommitted/, 'overview and assistant goal selection must isolate uncommitted replacement targets');
 assert.match(source, /committedGoals: committedDigitalEmployeeOperatingGoals/, 'overview reader must receive the committed-goal boundary');
 assert.match(overviewReaderSource, /const operatingGoals = await committedDigitalEmployeeOperatingGoals\(tenantId, goalResult\.items\)/, 'overview must not select an uncommitted replacement as the current plan');
@@ -67,15 +64,15 @@ assert.match(source, /createAssistantDecisionFeedForRequest\(\{[\s\S]*?committed
 assert.match(assistantFeedSource, /const goals = await committedGoals\(tenantId, goalResult\.items\)/, 'assistant feeds must not expose uncommitted replacement targets');
 assert.match(source, /store\.compareAndSwap\?\.\(COLLECTION\.plans, existingPlan\.id[\s\S]*status: 'approved'/, 'approval must win the exact source-plan CAS before activating a goal');
 assert.ok(
-  source.slice(approvalStart, approvalEnd).indexOf("store.compareAndSwap?.(COLLECTION.plans")
-    < source.slice(approvalStart, approvalEnd).indexOf("store.compareAndSwap?.(COLLECTION.goals"),
+  activation.indexOf("store.compareAndSwap?.(COLLECTION.plans")
+    < activation.indexOf("store.compareAndSwap?.(COLLECTION.goals"),
   'approval must claim the plan before changing goal status or creating a run',
 );
 
 const packageDetailsStart = source.indexOf("digitalEmployeesRouter.post('/goals/:goalId/package/details'");
 const packageSaveStart = source.indexOf("digitalEmployeesRouter.put('/goals/:goalId/package'");
-assert.match(source.slice(packageDetailsStart, packageSaveStart), /compareAndSwap\(COLLECTION\.plans/, 'detail generation must exact-CAS every draft plan write');
-assert.match(source.slice(packageSaveStart, begin), /compareAndSwap\(COLLECTION\.plans/, 'package saves must exact-CAS the observed draft plan');
+assert.match(digitalEmployeeRouteBlock(source, "digitalEmployeesRouter.post('/goals/:goalId/package/details'"), /compareAndSwap\(COLLECTION\.plans/, 'detail generation must exact-CAS every draft plan write');
+assert.match(digitalEmployeeRouteBlock(source, "digitalEmployeesRouter.put('/goals/:goalId/package'"), /compareAndSwap\(COLLECTION\.plans/, 'package saves must exact-CAS the observed draft plan');
 assert.match(source, /hasWeeklyGoalFactRebuildPlanFence/, 'draft writers must reject a durable rebuild fence');
 
 console.log('latest enterprise facts goal rebuild route contract tests passed');

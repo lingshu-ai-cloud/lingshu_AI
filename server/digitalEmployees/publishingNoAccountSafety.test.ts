@@ -1,3 +1,4 @@
+import { readDigitalEmployeeApplicationSources } from '../../tests/fixtures/digitalEmployeeApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { isScheduledPostDue } from '../publishing/scheduledPublisher.js';
@@ -71,7 +72,7 @@ const emptyPackage = buildPublishingApprovalPackage({
 });
 assert.equal(emptyPackage.items.length, 0, 'no account means no approvable publishing subject and no calendar materialization input');
 
-const route = fs.readFileSync(new URL('../routes/digitalEmployees.ts', import.meta.url), 'utf8');
+const route = readDigitalEmployeeApplicationSources();
 const page = fs.readFileSync(new URL('../../src/components/DigitalEmployeePage.tsx', import.meta.url), 'utf8');
 const onboardingPanel = fs.readFileSync(new URL('../../src/components/smartBusiness/DigitalEmployeeOnboardingPanel.tsx', import.meta.url), 'utf8');
 assert.match(route, /selected_publishing_accounts[\s\S]*ready:\s*packageAccountsValid/, 'content approval preflight must stop when the frozen package has no valid connected account');

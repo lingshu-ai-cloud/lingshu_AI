@@ -1,3 +1,4 @@
+import { readDigitalEmployeeApplicationSources, digitalEmployeeRouteBlock, digitalEmployeeFunction } from '../../tests/fixtures/digitalEmployeeApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
@@ -5,7 +6,7 @@ import {
   isDigitalEmployeeOperatingGoal,
 } from './overviewGoalScope.js';
 
-const mainSource = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const mainSource = readDigitalEmployeeApplicationSources();
 const interventionApplication = fs.readFileSync('server/digitalEmployees/taskInterventionApplication.ts', 'utf8');
 const interventionRoutes = fs.readFileSync('server/routes/digitalEmployeeTaskInterventionRoutes.ts', 'utf8');
 const weeklyReviewApplication = fs.readFileSync('server/digitalEmployees/weeklyReviewApplication.ts', 'utf8');
@@ -27,10 +28,7 @@ const approvalApplication = fs.readFileSync('server/digitalEmployees/approvalDec
 const cancellationApplication = fs.readFileSync('server/digitalEmployees/runCancellation.ts', 'utf8');
 
 function routeBlock(start: string): string {
-  const begin = source.indexOf(start);
-  assert.notEqual(begin, -1, `missing route: ${start}`);
-  const next = source.indexOf('\ndigitalEmployeesRouter.', begin + start.length);
-  return source.slice(begin, next === -1 ? source.length : next);
+  return digitalEmployeeRouteBlock(source, start);
 }
 
 assert.match(source, /digitalEmployeesRouter\.use\(requireAuth\)/, 'every Digital Employee endpoint must require an authenticated tenant');
@@ -40,7 +38,7 @@ assert.match(followupReadSource, /getFollowupBatch\(tenantId, req\.params\.batch
 assert.match(followupReadSource, /getTenantFollowupDispatchStatus\(tenantId\)/, 'worker status must be scoped to the authenticated tenant');
 assert.match(source, /buildBusinessSnapshot/, 'overview must aggregate the real content and customer business snapshot');
 assert.match(overviewReaderSource, /businessSnapshot/, 'overview must expose businessSnapshot as a top-level field');
-assert.match(source, /VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLES/, 'overview must use the canonical four-expert read model');
+assert.match(overviewProjectionSource, /VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLES/, 'overview must use the canonical four-expert read model');
 assert.match(overviewReaderSource, /agents:\s*projectDirectorAnalysisStatus\(publicAgentStatuses\(normalizedTasks\)/, 'overview must return a fixed four-expert Agent summary enriched with Director analysis');
 assert.match(overviewReaderSource, /agents:\s*projectDirectorAnalysisStatus\(publicAgentStatuses\(\[\]\)/, 'overview without a goal must still return four idle expert roles enriched with Director analysis');
 assert.match(overviewReaderSource, /agent_role: visibleAgentRole\(task\.agent_role, task\.task_key\)/, 'persisted workflow tasks must be normalized at the read boundary');
@@ -119,7 +117,7 @@ assert.match(publicationScheduleRoute, /weekly_publication\.rescheduled/, 'manua
 
 const goalApprovalRoute = routeBlock("digitalEmployeesRouter.post('/goals/:goalId/approve'");
 assert.match(goalApprovalRoute, /approveGoalForReview/, 'manual approval must call the same validated activation as review scheduling');
-const approveGoal = source.slice(source.indexOf('async function ensureReviewRunTasks'), source.indexOf("digitalEmployeesRouter.post('/goals/:goalId/approve'"));
+const approveGoal = digitalEmployeeFunction(source, 'ensureReviewRunTasks') + digitalEmployeeFunction(source, 'approveGoalForReview');
 assert.match(approveGoal, /presenterProductionGate/, 'weekly approval must enforce the presenter appearance gate on the server');
 assert.match(approveGoal, /error: 'presenter_required'/, 'weekly approval must return a stable presenter-required error');
 for (const [stored, planned] of [

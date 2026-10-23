@@ -1,8 +1,9 @@
+import { readDigitalEmployeeApplicationSources } from '../../tests/fixtures/digitalEmployeeApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const route = readFileSync(new URL('../routes/digitalEmployees.ts', import.meta.url), 'utf8')
+const route = readDigitalEmployeeApplicationSources()
   + readFileSync(new URL('./taskBusinessObservation.ts', import.meta.url), 'utf8');
 const evidence = readFileSync(new URL('../routes/digitalEmployeeContentEvidence.ts', import.meta.url), 'utf8');
 const batchPlan = readFileSync(new URL('./contentBatchPlan.ts', import.meta.url), 'utf8');

@@ -1,3 +1,4 @@
+import { readDigitalEmployeeApplicationSources } from '../../tests/fixtures/digitalEmployeeApplicationSources.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isDeepStrictEqual } from 'node:util';
@@ -30,7 +31,7 @@ test('growth history accounts are the only request scope admitted',()=>{
 });
 
 test('initial-preparation route passes only history scope from the request',()=>{
- const source=readFileSync(new URL('../routes/digitalEmployees.ts',import.meta.url),'utf8');
+ const source=readDigitalEmployeeApplicationSources();
  const start=source.indexOf("digitalEmployeesRouter.post('/goals/:goalId/initial-preparation'");
  const end=source.indexOf("digitalEmployeesRouter.post('/onboarding/complete'",start);
  const route=source.slice(start,end);

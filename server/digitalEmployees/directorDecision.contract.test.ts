@@ -1,8 +1,9 @@
+import { readDigitalEmployeeApplicationSources } from '../../tests/fixtures/digitalEmployeeApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const source = fs.readFileSync(path.resolve('server/routes/digitalEmployees.ts'), 'utf8');
+const source = readDigitalEmployeeApplicationSources();
 const interventionApplication = fs.readFileSync('server/digitalEmployees/taskInterventionApplication.ts', 'utf8');
 const interventionRoutes = fs.readFileSync('server/routes/digitalEmployeeTaskInterventionRoutes.ts', 'utf8');
 const planningSource = fs.readFileSync(path.resolve('server/routes/digitalEmployeeContentPlanning.ts'), 'utf8');

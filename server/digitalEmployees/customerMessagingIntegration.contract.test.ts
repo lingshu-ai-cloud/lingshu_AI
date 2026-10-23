@@ -1,9 +1,10 @@
+import { readDigitalEmployeeApplicationSources } from '../../tests/fixtures/digitalEmployeeApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const inbound = fs.readFileSync('server/whatsapp/historyInbound.ts', 'utf8');
 const worker = fs.readFileSync('server/digitalEmployees/followupDispatchWorker.ts', 'utf8');
-const routes = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const routes = readDigitalEmployeeApplicationSources();
 const enterpriseRoutes = fs.readFileSync('server/routes/enterprise.ts', 'utf8');
 const customerRoutes = fs.readFileSync('server/routes/customerSuggestions.ts', 'utf8');
 

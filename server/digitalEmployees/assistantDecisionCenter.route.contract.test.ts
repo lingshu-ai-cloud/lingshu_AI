@@ -1,7 +1,8 @@
+import { readDigitalEmployeeApplicationSources } from '../../tests/fixtures/digitalEmployeeApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const routeSource = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const routeSource = readDigitalEmployeeApplicationSources();
 const domainSource = fs.readFileSync('server/digitalEmployees/assistantDecisionCenter.ts', 'utf8');
 const feedSource = fs.readFileSync('server/digitalEmployees/assistantDecisionFeedService.ts', 'utf8');
 

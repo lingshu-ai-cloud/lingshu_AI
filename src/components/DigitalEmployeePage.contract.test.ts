@@ -1,3 +1,4 @@
+import { readDigitalEmployeeApplicationSources } from '../../tests/fixtures/digitalEmployeeApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
@@ -84,7 +85,7 @@ const revisionSource = fs.readFileSync('src/components/ProductionRevisionPanel.t
 const videoPlanEditorSource = fs.readFileSync('src/components/VideoPlanEditor.tsx', 'utf8');
 const taskPackagePresetSource = fs.readFileSync('src/lib/weeklyTaskPackagePresets.ts', 'utf8');
 const executionStatusSource = fs.readFileSync('src/components/AgentExecutionStatus.tsx', 'utf8');
-const digitalEmployeeRouteSource = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const digitalEmployeeRouteSource = readDigitalEmployeeApplicationSources();
 const enterpriseRouteSource = fs.readFileSync('server/routes/enterprise.ts', 'utf8');
 const enterpriseProfileContractsSource = fs.readFileSync('server/routes/enterpriseProfileContracts.ts', 'utf8');
 const enterpriseProfileStoreSource = fs.readFileSync('server/routes/enterpriseProfileStore.ts', 'utf8');

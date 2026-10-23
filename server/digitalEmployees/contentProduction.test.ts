@@ -1,3 +1,4 @@
+import { readDigitalEmployeeApplicationSources } from '../../tests/fixtures/digitalEmployeeApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -447,7 +448,7 @@ try {
 }
 
 const root = process.cwd();
-const routeSource = fs.readFileSync(path.join(root, 'server/routes/digitalEmployees.ts'), 'utf8')
+const routeSource = readDigitalEmployeeApplicationSources()
   + fs.readFileSync(path.join(root, 'server/digitalEmployees/taskInterventionApplication.ts'), 'utf8')
   + fs.readFileSync(path.join(root, 'server/digitalEmployees/taskBusinessPreparation.ts'), 'utf8')
   + fs.readFileSync(path.join(root, 'server/digitalEmployees/taskBusinessObservation.ts'), 'utf8');
