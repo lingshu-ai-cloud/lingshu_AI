@@ -130,18 +130,17 @@ const mutationActionSource = pageSource.slice(
   pageSource.indexOf('const act'),
   pageSource.indexOf('const goal =', pageSource.indexOf('const act')),
 );
-const weeklyStartFailureSource = pageSource.slice(
-  pageSource.indexOf('const reportWeeklyStartFailure'),
-  pageSource.indexOf('const confirmWeeklyPlan'),
+const weeklyLaunchSource = fs.readFileSync('src/components/digitalEmployeeWeeklyLaunch.ts', 'utf8');
+assert.match(pageSource, /createDigitalEmployeeWeeklyLaunch\(\{[\s\S]{0,240}recoverEnterpriseFactsChanged/, 'the page must pass its existing recovery and state callbacks to weekly launch');
+const weeklyStartFailureSource = weeklyLaunchSource.slice(
+  weeklyLaunchSource.indexOf('const reportWeeklyStartFailure'),
+  weeklyLaunchSource.indexOf('const publishWeeklyWorkUpdate'),
 );
-const weeklyWorkUpdateSource = pageSource.slice(
-  pageSource.indexOf('const publishWeeklyWorkUpdate'),
-  pageSource.indexOf('const confirmWeeklyPlan'),
+const weeklyWorkUpdateSource = weeklyLaunchSource.slice(
+  weeklyLaunchSource.indexOf('const publishWeeklyWorkUpdate'),
+  weeklyLaunchSource.indexOf('const presentConfirmedWeeklyExecution'),
 );
-const confirmWeeklyPlanSource = pageSource.slice(
-  pageSource.indexOf('const confirmWeeklyPlan'),
-  pageSource.indexOf('const returnToLatest'),
-);
+const confirmWeeklyPlanSource = weeklyLaunchSource.slice(weeklyLaunchSource.indexOf('const confirmWeeklyPlan'));
 const controlWeeklyWorkSource = pageSource.slice(
   pageSource.indexOf('const controlWeeklyWork'),
   pageSource.indexOf('const weeklyControlLabel', pageSource.indexOf('const controlWeeklyWork')),
@@ -379,19 +378,19 @@ const confirmedExecutionSource = weeklyStartValidationSource.slice(
   weeklyStartValidationSource.indexOf('function confirmedWeeklyExecution'),
   weeklyStartValidationSource.indexOf('function weeklyStartResultNeedsReconciliation'),
 );
-assert.match(pageSource, /import \{ confirmedWeeklyExecution, weeklyStartConflictFromError, weeklyStartResultNeedsReconciliation, type WeeklyStartConflict \} from '\.\.\/lib\/weeklyStartValidation'/, 'weekly launch must use the shared evidence checks rather than a page-local duplicate');
+assert.match(weeklyLaunchSource, /import \{[\s\S]{0,140}confirmedWeeklyExecution,[\s\S]{0,100}weeklyStartConflictFromError,[\s\S]{0,100}weeklyStartResultNeedsReconciliation/, 'weekly launch must use the shared evidence checks rather than a page-local duplicate');
 assert.match(weeklyStartConflictAlertSource, /周任务未启动：已有另一轮任务正在执行[\s\S]{0,500}系统不会自动取消或重复启动任何运行/, 'the extracted conflict alert must retain the persisted run and no-duplicate-start explanation');
 assert.match(confirmedExecutionSource, /run\.goal_id !== goalId/, 'the page must verify the returned run belongs to the requested goal');
 assert.match(confirmedExecutionSource, /Date\.parse\(run\.started_at\)/, 'the page must require a persisted start time before treating launch as confirmed');
 assert.match(confirmedExecutionSource, /task\.run_id === run\.id[\s\S]{0,100}tasks\.length > 0/, 'the page must require tasks scoped to the returned run before treating launch as confirmed');
-assert.match(pageSource, /const presentConfirmedWeeklyExecution[\s\S]{0,360}setData\(next\)[\s\S]{0,120}publishWeeklyWorkUpdate\(next\)/, 'a real start receipt, including an immediate terminal result, must replace stale page state and refresh assistant decisions');
-assert.match(pageSource, /const presentConfirmedWeeklyExecution[\s\S]{0,600}weeklyWorkStatus\(next\)[\s\S]{0,700}showActionFeedback\([\s\S]{0,260}tone: feedbackTone/, 'launch feedback must use the authoritative queued, running, blocked, paused or terminal state instead of always showing a green success');
-assert.match(pageSource, /setWorkspaceView\(launchedStatus\?\.phase === ["']running["'] \|\| launchedStatus\?\.phase === ["']queued["'] \? ["']matrix["'] : ["']live["']\)/, 'confirmed queued/running work must enter the persisted schedule while blocked or terminal work opens its status view');
-assert.match(pageSource, /周任务未启动/, 'a failed start must have a visible, explicit failure title');
-assert.match(weeklyStartFailureSource, /setError\(message\)[\s\S]{0,240}showActionFeedback\([\s\S]{0,160}title: ["']周任务未启动["'][\s\S]{0,120}description: message[\s\S]{0,120}tone: ["']error["']/, 'a failed start must remain visible and use the same concrete reason in its error feedback');
+assert.match(weeklyLaunchSource, /const presentConfirmedWeeklyExecution[\s\S]{0,360}setData\(next\)[\s\S]{0,120}publishWeeklyWorkUpdate\(next\)/, 'a real start receipt, including an immediate terminal result, must replace stale page state and refresh assistant decisions');
+assert.match(weeklyLaunchSource, /const presentConfirmedWeeklyExecution[\s\S]{0,600}weeklyWorkStatus\(next\)[\s\S]{0,700}feedback\([\s\S]{0,260}tone: feedbackTone/, 'launch feedback must use the authoritative queued, running, blocked, paused or terminal state instead of always showing a green success');
+assert.match(weeklyLaunchSource, /setWorkspaceView\(launchedStatus\?\.phase === ["']running["'] \|\| launchedStatus\?\.phase === ["']queued["'] \? ["']matrix["'] : ["']live["']\)/, 'confirmed queued/running work must enter the persisted schedule while blocked or terminal work opens its status view');
+assert.match(weeklyLaunchSource, /周任务未启动/, 'a failed start must have a visible, explicit failure title');
+assert.match(weeklyStartFailureSource, /setError\(message\)[\s\S]{0,240}feedback\([\s\S]{0,160}title: ["']周任务未启动["'][\s\S]{0,120}description: message[\s\S]{0,120}tone: ["']error["']/, 'a failed start must remain visible and use the same concrete reason in its error feedback');
 assert.match(confirmWeeklyPlanSource, /catch \(actionError\)[\s\S]{0,2200}reportWeeklyStartFailure\(actionError instanceof Error \? actionError\.message/, 'a definitive API launch failure without a structured conflict must preserve the concrete server reason instead of reporting success');
 assert.match(confirmWeeklyPlanSource, /weeklyStartConflictFromError\(actionError\)[\s\S]{0,500}setWeeklyStartConflict\(conflict\)[\s\S]{0,500}本轮计划没有被重复启动/, 'active_goal_exists must retain the other persisted goal/run as a visible blocker without cancelling or starting either run');
-assert.match(confirmWeeklyPlanSource, /launchRequestSent && weeklyStartResultNeedsReconciliation\(actionError\)[\s\S]{0,300}digitalEmployeeApi\.overview\(goal\.id\)[\s\S]{0,220}presentConfirmedWeeklyExecution\(reconciled, goal\.id\)[\s\S]{0,500}启动结果待确认/, 'an uncertain launch response must perform one read-only reconciliation and never repeat the start mutation');
+assert.match(confirmWeeklyPlanSource, /launchRequestSent && weeklyStartResultNeedsReconciliation\(actionError\)[\s\S]{0,300}api\.overview\(goal\.id\)[\s\S]{0,220}presentConfirmedWeeklyExecution\(reconciled, goal\.id\)[\s\S]{0,500}启动结果待确认/, 'an uncertain launch response must perform one read-only reconciliation and never repeat the start mutation');
 assert.match(pageSource, /<WeeklyStartConflictAlert[\s\S]{0,220}openConflictingRun/, 'the persistent active-run conflict must provide a direct view-run action');
 assert.doesNotMatch(pageSource, /WeeklyWorkStatusAlert|currentWeeklyWorkStatus|weeklyStatusSlot/, 'the entire persistent home run-status banner must be removed for every runtime state');
 assert.match(weeklyWorkStatusSource, /制作准备已完成，尚未开始生产/, 'generated details without a persisted run must never be labelled as production');
@@ -401,7 +400,8 @@ assert.match(weeklyWorkStatusSource, /run\.status === 'waiting_external'[\s\S]{0
 assert.match(weeklyWorkStatusSource, /else if \(run\.status === 'running'\) phase = 'running';[\s\S]{0,80}else phase = 'unknown'/, 'an unrecognized run status must remain unknown rather than defaulting to running');
 assert.doesNotMatch(weeklyWorkStatusSource, /COMPLETED_TASK_STATUSES = new Set\([^\n]*(?:cancelled|skipped)/, 'cancelled or skipped tasks must not inflate the completed-output count');
 assert.match(weeklyWorkEventsSource, /WEEKLY_WORK_UPDATED_EVENT = 'lingshu:weekly-work-updated'/, 'the page and assistant must share one weekly-work refresh event');
-assert.match(weeklyWorkUpdateSource, /notifyWeeklyWorkUpdated\([\s\S]{0,420}source: ["']page["'][\s\S]{0,520}runId: run\.id[\s\S]{0,220}taskCount: tasks\.length/, 'a confirmed start must publish the normalized persisted execution receipt for assistant refresh');
+assert.match(weeklyLaunchSource, /context\.notify \|\| notifyWeeklyWorkUpdated/, 'weekly launch must publish through the canonical weekly-work event by default');
+assert.match(weeklyWorkUpdateSource, /notify\([\s\S]{0,420}source: ["']page["'][\s\S]{0,520}runId: run\.id[\s\S]{0,220}taskCount: tasks\.length/, 'a confirmed start must publish the normalized persisted execution receipt for assistant refresh');
 assert.match(weeklyWorkUpdateSource, /run && run\.goal_id === updatedGoal\.id/, 'an execution event must never relabel a run belonging to another goal');
 assert.match(pageSource, /detail\.source !== ["']assistant["'][\s\S]{0,420}addEventListener\(WEEKLY_WORK_UPDATED_EVENT, refreshFromAssistant\)/, 'assistant-originated weekly-work updates must reload the visible goal from the authoritative overview');
 assert.doesNotMatch(weeklyCommandCenterSource, /status\?: ReactNode|aria-label="本周生产状态"/, 'the command center must not retain the deleted persistent run-state banner or its empty wrapper');
@@ -431,7 +431,7 @@ assert.match(smartBusinessFeatureSource, /function inspirationReferenceForPlan[\
 assert.match(publishingCalendarSource, /detailsTitle="内容制作进度"[\s\S]{0,600}WeeklyContentProgressPanel/, 'the Digital Employee publishing calendar must open read-only content progress in the shared drawer');
 assert.match(publishingCalendarSource, /onOpenReference[\s\S]{0,350}inspirationReferenceNavigationDetail/, 'the drawer must retain the exact persisted inspiration reference as a secondary action');
 assert.doesNotMatch(confirmWeeklyPlanSource, /approvalBlocked|missingProducts|missingReferences|generatePackageDetails|readiness\.canStart/, 'launch must not duplicate production preparation or publishing readiness gates in the UI');
-assert.match(confirmWeeklyPlanSource, /approveGoal\(goal\.id, data\.plan\.businessPackage\.revision\)/, 'launch must submit the exact plan revision to authoritative server validation');
+assert.match(confirmWeeklyPlanSource, /api\.approveGoal\(goal\.id, data\.plan\.businessPackage\.revision\)/, 'launch must submit the exact plan revision to authoritative server validation');
 assert.match(digitalEmployeeApiSource, /approveGoal:[\s\S]{0,900}AbortSignal\.timeout\(12_000\)/, 'weekly launch must stop indefinite loading and hand unknown results to read-only reconciliation');
 assert.match(inspirationSource, /receiveReference[\s\S]{0,2200}resolveInspirationReference\([\s\S]{0,900}setSelectedVideo\(resolved\.video\)/, 'Inspiration Center must resolve and open the requested viral-video detail');
 assert.match(inspirationReferenceResolverSource, /videoMatchesReference\(video, target\)[\s\S]{0,1500}recordsToVideos[\s\S]{0,1500}videoMatchesReference\(video, target\)/, 'reference resolver must match inventory and read-only search candidates against the requested reference');
@@ -680,7 +680,7 @@ assert.match(digitalEmployeeNavigationSource, /CustomEvent\(["']lingshu:navigate
 assert.match(appSource, /setSmartAssetsView\(detail\.view === ["']publish["'] \? ["']publish["'] : ["']create["']\)/, 'the application shell must honor create versus publish deep links');
 
 assert.match(onboardingPanelSource, /allowGeneratedVisuals:\s*false/, 'generated visuals must default to fail-closed');
-assert.match(pageSource, /setWorkspaceView\(launchedStatus\?\.phase === ["']running["'] \|\| launchedStatus\?\.phase === ["']queued["'] \? ["']matrix["'] : ["']live["']\)[\s\S]{0,220}setSelectedTaskId/, 'approving a plan must route from the real launch state while preserving task focus');
+assert.match(weeklyLaunchSource, /setWorkspaceView\(launchedStatus\?\.phase === ["']running["'] \|\| launchedStatus\?\.phase === ["']queued["'] \? ["']matrix["'] : ["']live["']\)[\s\S]{0,220}setSelectedTaskId/, 'approving a plan must route from the real launch state while preserving task focus');
 assert.match(onboardingPanelSource, /scrollIntoView\([\s\S]{0,120}behavior:\s*getScrollBehavior\(\)/, 'first-run transitions must focus the next required panel while respecting reduced-motion preferences');
 assert.match(onboardingPanelSource, /digitalEmployeeOnboarding:\s*\{\s*profileConfirmedAt:/, 'the first-step confirmation must be persisted instead of living only in component memory');
 assert.match(onboardingPanelSource, /setProductConfirmed\(true\)/, 'confirming the product table must advance to the social-stage step');
@@ -764,7 +764,7 @@ assert.match(enterpriseRouteSource, /mergeEnterpriseProductIdentity\(next\[index
   'server-side product API upserts must retain the existing stable product id');
 assert.match(enterpriseProfileStoreSource, /return \{[\s\S]{0,200}\bcompany,[\s\S]{0,100}\bbrand,/, 'normalized brand must be returned and preserved by recursive profile merge');
 assert.match(pageSource, /weeklyPlanOpen && \(!goal \|\| newGoal\) && !activeRun/, 'an active run must suppress the new-goal editor instead of exposing a duplicate plan flow');
-assert.match(pageSource, /const presentConfirmedWeeklyExecution[\s\S]{0,500}setWeeklyPlanOpen\(false\)[\s\S]{0,120}setNewGoal\(false\)/, 'a successful direct start must close and reset any new-goal editor state');
+assert.match(weeklyLaunchSource, /const presentConfirmedWeeklyExecution[\s\S]{0,500}setWeeklyPlanOpen\(false\)[\s\S]{0,120}setNewGoal\(false\)/, 'a successful direct start must close and reset any new-goal editor state');
 assert.match(pageSource, /weeklyPlanOpen && \(!goal \|\| newGoal\) && !activeRun/, 'an active run must hide the next-goal editor');
 assert.doesNotMatch(confirmWeeklyPlanSource, /firstMissingReadiness|approvalBlocked/, 'readiness gaps must be resolved in their production stage, not as a blanket launch gate');
 assert.match(packageSource, /issues.length > 0/, 'invalid packages must block launch and explain missing dependencies');
