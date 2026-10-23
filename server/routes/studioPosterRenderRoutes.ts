@@ -18,6 +18,7 @@ import { auditCommercialClaims, confirmationFields, hasConfirmedEnterpriseFacts,
 import { type AuthLocals } from '../middleware/auth.js';
 import type { PosterReferenceDescriptor } from '../studio/contracts.js';
 import type { StudioApplicationPorts } from '../studio/applicationPorts.js';
+import { conformSocialImageToCanvas, socialImageCanvasForAspectRatio, type SocialImageAspectRatio } from '../socialImage/referenceCanvas.js';
 
 export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts, 'studioRouter' | 'enterpriseCtx' | 'storyboardUrlImage' | 'storyboardEnterpriseImage' | 'resolveReferenceImages'>) {
   const studioRouter = deps.studioRouter;
@@ -203,11 +204,13 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
           }
         }
         paidRequestMayHaveStarted = true;
-        const generated = await generatePosterImage({ prompt, ratio: String(ratio || '1:1'), references, provider: 'openai', quality: normalizeImageGenerationQuality(rawImageQuality), idempotencyKey: String(idempotencyKey || '').trim() || undefined });
+        const requestedRatio = ['1:1', '4:5', '9:16', '16:9'].includes(String(ratio)) ? String(ratio) as SocialImageAspectRatio : '1:1';
+        const generated = await generatePosterImage({ prompt, ratio: requestedRatio, references, provider: 'openai', quality: normalizeImageGenerationQuality(rawImageQuality), idempotencyKey: String(idempotencyKey || '').trim() || undefined });
+        const normalizedBytes = await conformSocialImageToCanvas(generated.bytes, socialImageCanvasForAspectRatio(requestedRatio));
         const material = await createGeneratedImageMaterial({
           title: `AI 图文海报 · ${headline}`.slice(0, 120),
-          bytes: generated.bytes,
-          mimeType: generated.mimeType,
+          bytes: normalizedBytes,
+          mimeType: 'image/png',
           source: generated.source,
           tenantId,
           sourceType: 'ai_generated_marketing_image',

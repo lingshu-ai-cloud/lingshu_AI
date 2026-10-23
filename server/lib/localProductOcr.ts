@@ -37,7 +37,9 @@ export function localProductOcrReadiness() {
   }
 }
 
-async function recognizeWithBundledTesseract(bytes: Buffer): Promise<string> {
+type LocalOcrWord = { text?: string; confidence?: number; bbox?: { x0: number; y0: number; x1: number; y1: number } };
+
+async function recognizeDataWithBundledTesseract(bytes: Buffer): Promise<{ text?: string; words?: LocalOcrWord[]; blocks?: Array<{ paragraphs?: Array<{ lines?: Array<{ words?: LocalOcrWord[] }> }> }> }> {
   const worker = await createWorker(['chi_sim', 'eng'], OEM.LSTM_ONLY, { langPath: localLanguageDirectory(), gzip: true, cacheMethod: 'none' });
   try {
     await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
@@ -45,11 +47,11 @@ async function recognizeWithBundledTesseract(bytes: Buffer): Promise<string> {
     const result = await Promise.race([worker.recognize(bytes), new Promise<never>((_, reject) => {
       timeout = setTimeout(() => reject(new Error('LOCAL_OCR_TIMEOUT')), LOCAL_PRODUCT_OCR_LIMITS.timeoutMs);
     })]).finally(() => { if (timeout) clearTimeout(timeout); });
-    return result.data.text;
+    return result.data as unknown as { text?: string; words?: LocalOcrWord[]; blocks?: Array<{ paragraphs?: Array<{ lines?: Array<{ words?: LocalOcrWord[] }> }> }> };
   } finally { await worker.terminate(); }
 }
 
-export async function recognizeProductImageLocally(input: { bytes: Buffer; mimeType: string }, options: { recognize?: (bytes: Buffer) => Promise<string> } = {}) {
+async function normalizedOcrInput(input: { bytes: Buffer; mimeType: string }) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(input.mimeType)) throw new Error('OCR_IMAGE_TYPE_UNSUPPORTED');
   if (!input.bytes.length || input.bytes.length > LOCAL_PRODUCT_OCR_LIMITS.maxEncodedBytes) throw new Error('OCR_IMAGE_SIZE_LIMIT');
   const metadata = await sharp(input.bytes, { limitInputPixels: LOCAL_PRODUCT_OCR_LIMITS.maxPixels }).metadata();
@@ -58,6 +60,29 @@ export async function recognizeProductImageLocally(input: { bytes: Buffer; mimeT
   if (!readiness.ready) throw Object.assign(new Error(readiness.detail), { code: readiness.code });
   const normalized = await sharp(input.bytes, { limitInputPixels: LOCAL_PRODUCT_OCR_LIMITS.maxPixels }).rotate()
     .resize({ width: 2400, height: 2400, fit: 'inside', withoutEnlargement: true }).grayscale().normalize().png().toBuffer();
-  const text = await (options.recognize || recognizeWithBundledTesseract)(normalized);
+  const normalizedMetadata = await sharp(normalized).metadata();
+  return { normalized, width: normalizedMetadata.width || 1, height: normalizedMetadata.height || 1 };
+}
+
+export async function recognizeProductImageLocally(input: { bytes: Buffer; mimeType: string }, options: { recognize?: (bytes: Buffer) => Promise<string> } = {}) {
+  const { normalized } = await normalizedOcrInput(input);
+  const text = options.recognize ? await options.recognize(normalized)
+    : String((await recognizeDataWithBundledTesseract(normalized)).text || '');
   return text.replace(/\u0000/g, '').slice(0, LOCAL_PRODUCT_OCR_LIMITS.maxOutputChars).trim();
+}
+
+export async function recognizeProductImageTokensLocally(input: { bytes: Buffer; mimeType: string }) {
+  const { normalized, width, height } = await normalizedOcrInput(input);
+  const data = await recognizeDataWithBundledTesseract(normalized);
+  const words = data.words || (data.blocks || []).flatMap(block => (block.paragraphs || [])
+    .flatMap(paragraph => (paragraph.lines || []).flatMap(line => line.words || [])));
+  return words.flatMap(word => {
+    const box = word.bbox, text = String(word.text || '').replace(/\u0000/g, '').trim();
+    if (!box || !text) return [];
+    const x = Math.max(0, Math.min(1, box.x0 / width)), y = Math.max(0, Math.min(1, box.y0 / height));
+    const right = Math.max(x, Math.min(1, box.x1 / width)), bottom = Math.max(y, Math.min(1, box.y1 / height));
+    if (right <= x || bottom <= y) return [];
+    return [{ text: text.slice(0, 500), bbox: { x, y, width: right - x, height: bottom - y },
+      confidence: Math.max(0, Math.min(1, Number(word.confidence || 0) / 100)) }];
+  }).slice(0, 80);
 }

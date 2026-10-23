@@ -198,7 +198,7 @@ export interface SocialImageDeliverySpec {
 }
 
 export type SocialImageQualityCheckKey =
-  | 'product_identity' | 'packaging_visibility' | 'subject_visibility' | 'label_ocr'
+  | 'file_decode' | 'pixel_dimensions' | 'product_identity' | 'packaging_visibility' | 'subject_visibility' | 'label_ocr'
   | 'fact_consistency' | 'copy_visual_consistency' | 'brand_consistency'
   | 'text_overflow' | 'safe_zone' | 'reference_structure_similarity' | 'motion_mechanism_similarity';
 
@@ -287,7 +287,7 @@ export interface SocialImageCreationTask {
 }
 
 export const SOCIAL_IMAGE_HARD_CHECKS: SocialImageQualityCheckKey[] = [
-  'product_identity', 'packaging_visibility', 'subject_visibility', 'label_ocr',
+  'file_decode', 'pixel_dimensions', 'product_identity', 'packaging_visibility', 'subject_visibility', 'label_ocr',
   'fact_consistency', 'copy_visual_consistency', 'brand_consistency', 'text_overflow', 'safe_zone',
 ];
 

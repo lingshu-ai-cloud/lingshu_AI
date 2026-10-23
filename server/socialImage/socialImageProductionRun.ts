@@ -83,6 +83,19 @@ export interface CreateBoundSocialImageRunInput {
   imageType?: SocialImageCreationTask['imageType'];
 }
 
+function sameBoundRunScope(
+  task: SocialImageCreationTask,
+  contentTaskId: string,
+  deliverableKey: string,
+  imageType: SocialImageCreationTask['imageType'],
+): boolean {
+  const binding = task.productionRuntime?.binding;
+  return Boolean(binding
+    && binding.contentTaskId === contentTaskId
+    && binding.deliverableKey === deliverableKey
+    && task.imageType === imageType);
+}
+
 const GENERIC_NODE_OUTPUTS = new Set<SocialImageProductionNodeId>([
   'business_context', 'asset_manifest', 'reference_snapshot', 'element_inventory', 'hook_factors',
   'adaptation', 'director_brief', 'execution_plan', 'render_spec',
@@ -112,6 +125,31 @@ export async function recordSocialImageNodeOutput<N extends keyof SocialImageNod
   if (input.nodeId === 'hook_factors' && input.status === 'completed') {
     const issues = socialImageHookFactorIssues(input.value as SocialImageHookFactorSpec);
     if (issues.length) throw new SocialImageProductionRunError(issues.join(','), 422);
+  }
+  if (input.nodeId === 'asset_manifest' && input.status === 'completed') {
+    const manifest = input.value as SocialImageNodeValueMap['asset_manifest'];
+    const requiredAssetIds = new Set(task.enterpriseAssets.filter(asset => asset.required).map(asset => asset.assetId));
+    const observedAssetIds = new Set((manifest.assets || []).filter(asset => asset.required).map(asset => asset.assetId));
+    if (!requiredAssetIds.size || [...requiredAssetIds].some(assetId => !observedAssetIds.has(assetId))
+      || !Array.isArray(manifest.requiredEvidence) || [...requiredAssetIds].some(assetId => !manifest.requiredEvidence.includes(assetId))
+      || !Array.isArray(manifest.assets) || manifest.assets.some(asset => asset.required
+      && (!asset.readable || !/^[a-f0-9]{64}$/.test(asset.contentHash)
+        || !asset.dimensions?.width || !asset.dimensions?.height || asset.rights !== 'cleared'))) {
+      throw new SocialImageProductionRunError('social_image_required_asset_evidence_invalid', 422);
+    }
+  }
+  if (input.nodeId === 'element_inventory' && input.status === 'completed') {
+    const inventory = input.value as SocialImageNodeValueMap['element_inventory'];
+    const validBox = (box: { x: number; y: number; width: number; height: number }) => [box.x, box.y, box.width, box.height].every(Number.isFinite)
+      && box.x >= 0 && box.y >= 0 && box.width > 0 && box.height > 0 && box.x + box.width <= 1.001 && box.y + box.height <= 1.001;
+    const regionIds = new Set((inventory.regions || []).map(region => region.regionId));
+    if (!inventory.regions?.length || inventory.regions.some(region => !validBox(region.bbox)
+      || !region.evidenceRef?.id || !/^[a-f0-9]{64}$/.test(region.evidenceRef.contentHash))
+      || inventory.ocrBlocks?.some(block => !validBox(block.bbox) || !block.text.trim()
+        || !Number.isFinite(block.confidence) || block.confidence < 0 || block.confidence > 1)
+      || !inventory.saliencyOrder?.length || inventory.saliencyOrder.some(regionId => !regionIds.has(regionId))) {
+      throw new SocialImageProductionRunError('social_image_element_inventory_evidence_invalid', 422);
+    }
   }
   if (input.nodeId === 'adaptation' && input.status === 'completed') {
     const hookSpec = task.hookFactorSpec;
@@ -151,8 +189,19 @@ export async function recordSocialImageNodeOutput<N extends keyof SocialImageNod
     status: 'stale' as const, createdAt: now, updatedAt: now,
     blockingReasons: [...new Set([...output.blockingReasons, `upstream_changed:${input.nodeId}`])] }));
   const nextRuntime = { ...runtime, nodeOutputs: [...runtime.nodeOutputs, envelope, ...staleOutputs] };
+  const candidateGenerationIndex = runtime.nodes.findIndex(node => node.nodeId === 'candidate_generation');
+  const invalidatesCandidates = candidateGenerationIndex >= 0 && nodeIndex < candidateGenerationIndex;
+  const invalidationPatch: Partial<SocialImageCreationTask> = invalidatesCandidates ? {
+    outputs: task.outputs.map(output => output.state === 'superseded' ? output : { ...output, state: 'superseded' as const }),
+    repairInstructions: task.repairInstructions.map(instruction => ['pending', 'running'].includes(instruction.status)
+      ? { ...instruction, status: 'failed' as const } : instruction),
+    directorReviewDecision: undefined,
+    approvedArtifact: undefined,
+    status: 'planned',
+    step: 'plan',
+  } : {};
   const result = await updateSocialImageTask(input.store, input.tenantId, task.id, task.version, {
-    ...(input.taskPatch || {}), productionRuntime: nextRuntime,
+    ...(input.taskPatch || {}), ...invalidationPatch, productionRuntime: nextRuntime,
   });
   if (result.kind !== 'updated') throw new SocialImageProductionRunError(result.kind === 'conflict'
     ? 'social_image_version_conflict' : result.kind === 'invalid' ? result.issues.join(',') : 'social_image_node_output_persist_failed', result.kind === 'conflict' ? 409 : 422);
@@ -174,14 +223,16 @@ export async function createOrResumeBoundSocialImageRun(
     throw new SocialImageProductionRunError('social_image_content_task_version_conflict', 409);
   }
   const productionRunId = `img${hash({ tenantId, contentTaskId, deliverableKey }).slice(0, 12)}`;
-  const requestValue = {
-    contentTaskId, deliverableKey, entrySource: input.entrySource,
-    imageType: input.imageType || 'product_poster',
-  };
+  const requestedImageType = input.imageType || 'product_poster';
+  // Entry source is presentation provenance, not run identity. The same
+  // ContentTask must resume when an assistant-created task is later opened in
+  // the workspace (or vice versa).
+  const requestValue = { contentTaskId, deliverableKey, imageType: requestedImageType };
   const requestHash = hash(requestValue);
   const existing = await readSocialImageTask(store, tenantId, productionRunId);
   if (existing) {
-    if (existing.productionRuntime?.binding?.requestHash !== requestHash) {
+    if (existing.productionRuntime?.binding?.requestHash !== requestHash
+      && !sameBoundRunScope(existing, contentTaskId, deliverableKey, requestedImageType)) {
       throw new SocialImageProductionRunError('social_image_run_scope_conflict', 409);
     }
     const task = existing.productionRuntime?.binding?.contentTaskVersion === contentTask.version ? existing
@@ -194,7 +245,7 @@ export async function createOrResumeBoundSocialImageRun(
   const creationMode = brief.creationMode === 'viral_replication' ? 'viral_replication' : 'free_creation';
   const payload = defaultSocialImageTask({
     title: brief.title,
-    imageType: input.imageType || 'product_poster',
+    imageType: requestedImageType,
     creationPath: creationMode === 'viral_replication' ? 'viral_replication' : 'material_processing',
     coreClaim: brief.objective,
     audience: brief.audience ? [brief.audience] : [],
@@ -245,7 +296,8 @@ export async function createOrResumeBoundSocialImageRun(
   });
   if (!stored) {
     const raced = await readSocialImageTask(store, tenantId, productionRunId);
-    if (raced?.productionRuntime?.binding?.requestHash === requestHash) return { task: raced, resumed: true };
+    if (raced && (raced.productionRuntime?.binding?.requestHash === requestHash
+      || sameBoundRunScope(raced, contentTaskId, deliverableKey, requestedImageType))) return { task: raced, resumed: true };
     throw new SocialImageProductionRunError('social_image_run_create_conflict', 409);
   }
   return { task: payload, resumed: false };
@@ -274,19 +326,29 @@ export async function refreshSocialImageContentTaskBinding(input: {
   const runtime = task.productionRuntime!;
   const sourceRef: SocialImageVersionedRef = { objectType: 'social_content_task', id: contentTask.taskId,
     version: contentTask.version, contentHash: hash(contentTask.brief) };
-  const latestVersions = new Map<SocialImageProductionNodeId, number>();
-  for (const output of runtime.nodeOutputs) latestVersions.set(output.nodeId, Math.max(latestVersions.get(output.nodeId) || 0, output.version));
-  // Only formal planning outputs receive synthetic stale envelopes here. The
-  // execution/review nodes are projected from jobs, candidate bytes and
-  // decisions, so stale envelopes there could never be superseded by their
-  // real durable writers.
-  const downstream = runtime.nodes.filter(node => GENERIC_NODE_OUTPUTS.has(node.nodeId));
-  const staleOutputs: Array<SocialImageNodeEnvelope<unknown>> = downstream.map(node => ({
+  const latestOutputs = new Map<SocialImageProductionNodeId, SocialImageNodeEnvelope<unknown>>();
+  for (const output of runtime.nodeOutputs) {
+    const latest = latestOutputs.get(output.nodeId);
+    if (!latest || output.version > latest.version) latestOutputs.set(output.nodeId, output);
+  }
+  // Only outputs that actually exist can become stale. Synthesizing stale
+  // envelopes for derived/skipped nodes made free-creation runs stop forever
+  // at reference analysis even though that branch is intentionally skipped.
+  const productChanged = task.contentBrief.productRefs[0] !== (contentTask.brief.productId || undefined);
+  const refreshAffectedNodes = new Set<SocialImageProductionNodeId>([
+    'business_context', 'hook_factors', 'adaptation', 'director_brief', 'execution_plan', 'render_spec',
+    ...(productChanged ? ['asset_manifest' as const] : []),
+  ]);
+  const staleTargets = [...latestOutputs.values()].filter(output => GENERIC_NODE_OUTPUTS.has(output.nodeId)
+    && refreshAffectedNodes.has(output.nodeId)
+    && output.status !== 'stale'
+    && !(task.creationPath === 'material_processing' && ['hook_factors', 'adaptation'].includes(output.nodeId)));
+  const staleOutputs: Array<SocialImageNodeEnvelope<unknown>> = staleTargets.map(output => ({
     schemaVersion: 'social-image-node-envelope.v1', id: randomUUID(), tenantId: input.tenantId,
-    contentTaskId: binding.contentTaskId, productionRunId: task.id, nodeId: node.nodeId,
-    version: (latestVersions.get(node.nodeId) || 0) + 1, status: 'stale', inputRefs: [sourceRef],
+    contentTaskId: binding.contentTaskId, productionRunId: task.id, nodeId: output.nodeId,
+    version: output.version + 1, status: 'stale', inputRefs: [sourceRef],
     createdBy: { kind: 'system', id: 'content_task_binding_refresh' }, createdAt: now, updatedAt: now,
-    contentHash: hash({ nodeId: node.nodeId, contentTask: sourceRef }), evidenceRefs: [sourceRef], warnings: [],
+    contentHash: hash({ nodeId: output.nodeId, contentTask: sourceRef }), evidenceRefs: [sourceRef], warnings: [],
     blockingReasons: ['social_image_content_task_changed'], value: { reason: 'content_task_changed' },
   }));
   const nextRuntime = { ...runtime, binding: { ...binding, contentTaskVersion: contentTask.version, boundAt: now },
@@ -294,7 +356,18 @@ export async function refreshSocialImageContentTaskBinding(input: {
   const brief = contentTask.brief;
   const result = await updateSocialImageTask(input.store, input.tenantId, task.id, task.version, {
     productionRuntime: nextRuntime, status: 'draft', step: 'inputs', directorReviewDecision: undefined,
+    approvedArtifact: undefined,
     outputs: task.outputs.map(output => output.state === 'superseded' ? output : { ...output, state: 'superseded' as const }),
+    repairInstructions: task.repairInstructions.map(instruction => ['pending', 'running'].includes(instruction.status)
+      ? { ...instruction, status: 'failed' as const } : instruction),
+    renderBrief: undefined,
+    layerGraph: undefined,
+    renderPlan: undefined,
+    gifDelivery: undefined,
+    adaptationSpec: undefined,
+    ...(task.creationPath === 'viral_replication' ? { hookFactorSpec: undefined } : {}),
+    imageTextContract: { ...task.imageTextContract, headline: '', supportingText: '', caption: '', hashtags: [], cta: undefined,
+      requiredFacts: [], prohibitedInferences: [], visualMustShow: [], visualMustNotImply: [] },
     contentBrief: { ...task.contentBrief, coreClaim: brief.objective, productRefs: brief.productId ? [brief.productId] : [],
       productNames: brief.productRef ? [brief.productRef] : [], audience: brief.audience ? [brief.audience] : [] },
     deliverySpec: { ...task.deliverySpec, platform: platform(brief.platforms[0]), aspectRatio: aspectRatio(brief.aspectRatio),
@@ -355,6 +428,67 @@ export async function recordSocialImageDirectorReview(input: {
   });
   if (result.kind !== 'updated') throw new SocialImageProductionRunError(result.kind === 'conflict' ? 'social_image_version_conflict' : 'social_image_review_persist_failed', result.kind === 'conflict' ? 409 : 422);
   return result.task;
+}
+
+/**
+ * Project an independent director decision from the persisted quality evidence.
+ * The browser supplies only candidate identity; it cannot submit or forge the
+ * review verdict. No provider is called here, so unresolved visual evidence
+ * remains fail-closed instead of being converted into a pass.
+ */
+export async function runSocialImageDirectorReview(input: {
+  store: DataStore;
+  tenantId: string;
+  taskId: string;
+  expectedVersion: number;
+  candidateId: string;
+  candidateVersion: number;
+  now?: string;
+}): Promise<SocialImageCreationTask> {
+  const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
+  if (!task) throw new SocialImageProductionRunError('social_image_task_missing', 404);
+  if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
+  const snapshot = projectSocialImageProductionSnapshot(task);
+  if (snapshot.currentNode !== 'director_review' || snapshot.currentStatus !== 'needs_review') {
+    throw new SocialImageProductionRunError('social_image_director_review_not_ready', 422);
+  }
+  const output = socialImageCurrentOutputs(task).find(candidate => candidate.id === input.candidateId
+    && candidate.version === input.candidateVersion && candidate.state !== 'superseded');
+  if (!output) throw new SocialImageProductionRunError('social_image_review_candidate_stale', 409);
+  if (!output.contentHash || !/^[a-f0-9]{64}$/.test(output.contentHash)) {
+    throw new SocialImageProductionRunError('social_image_candidate_hash_required', 422);
+  }
+  const hardChecks = SOCIAL_IMAGE_HARD_CHECKS.map(key => output.qualityChecks.find(check => check.key === key
+    && check.severity === 'hard'));
+  if (hardChecks.some(check => !check || !['pass', 'not_applicable'].includes(check.verdict))) {
+    throw new SocialImageProductionRunError('social_image_hard_quality_gate_incomplete', 422);
+  }
+  const referenceCheck = output.qualityChecks.find(check => check.key === 'reference_structure_similarity');
+  const referenceReady = task.creationPath !== 'viral_replication'
+    || Boolean(referenceCheck && ['pass', 'not_applicable'].includes(referenceCheck.verdict));
+  const candidateRef: SocialImageVersionedRef = { objectType: 'social-image-candidate', id: output.id,
+    version: output.version, contentHash: output.contentHash };
+  const factorResults = (task.hookFactorSpec?.factors || []).map(factor => ({
+    factorId: factor.factorId,
+    verdict: referenceReady ? 'pass' as const : 'uncertain' as const,
+    evidenceRefs: [...factor.evidenceRefs, candidateRef],
+  }));
+  const failedCriteria = referenceReady ? [] : ['reference_structure_similarity'];
+  const decision: SocialImageDirectorReviewDecision = {
+    schemaVersion: 'social-image-director-review.v1',
+    decision: referenceReady ? 'accept_for_user_review' : 'repair',
+    candidateId: output.id,
+    candidateVersion: output.version,
+    passedCriteria: hardChecks.flatMap(check => check ? [check.key] : []),
+    failedCriteria,
+    factorResults,
+    problemRegions: referenceReady ? [] : (referenceCheck?.region ? [JSON.stringify(referenceCheck.region)] : []),
+    reasonCodes: referenceReady ? ['independent_quality_evidence_passed'] : ['reference_evidence_incomplete'],
+    repairInstructions: referenceReady ? [] : [referenceCheck?.repairSuggestion || '补齐参考结构像素证据后重新审查'],
+    reviewConfidence: Math.min(.99, ...hardChecks.map(check => check?.score ?? .8)),
+    reviewedAt: input.now || new Date().toISOString(),
+  };
+  return recordSocialImageDirectorReview({ ...input, decision });
 }
 
 export async function decideSocialImageCandidate(input: {

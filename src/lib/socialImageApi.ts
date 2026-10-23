@@ -32,10 +32,20 @@ export const socialImageApi = {
   getProduction: (id: string, afterSequence = 0) => request<{ ok: true; snapshot: SocialImageProductionSnapshot; events: SocialImageProductionEvent[] }>(
     `/tasks/${encodeURIComponent(id)}/production?afterSequence=${encodeURIComponent(String(afterSequence))}`,
   ),
+  prepareEvidence: (task: SocialImageCreationTask) => request<{ ok: true; task: SocialImageCreationTask; snapshot: SocialImageProductionSnapshot }>(
+    `/tasks/${encodeURIComponent(task.id)}/evidence/prepare`, {
+      method: 'POST', body: JSON.stringify({ expectedVersion: task.version }),
+    },
+  ),
   refreshContentTask: (task: SocialImageCreationTask, expectedContentTaskVersion: string) => request<{
     ok: true; task: SocialImageCreationTask; snapshot: SocialImageProductionSnapshot;
   }>(`/tasks/${encodeURIComponent(task.id)}/refresh-content-task`, {
     method: 'POST', body: JSON.stringify({ expectedVersion: task.version, expectedContentTaskVersion }),
+  }),
+  runDirectorReview: (task: SocialImageCreationTask, candidateId: string, candidateVersion: number) => request<{
+    ok: true; task: SocialImageCreationTask; snapshot: SocialImageProductionSnapshot;
+  }>(`/tasks/${encodeURIComponent(task.id)}/director-review`, {
+    method: 'POST', body: JSON.stringify({ expectedVersion: task.version, candidateId, candidateVersion }),
   }),
   decideCandidate: (task: SocialImageCreationTask, input: {
     candidateId: string;

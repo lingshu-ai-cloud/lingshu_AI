@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datastore.js';
 import { SOCIAL_WORK_PACKAGE_KINDS } from '../../shared/contracts/socialContentWorkflow.js';
-import { SOCIAL_IMAGE_HARD_CHECKS } from '../../shared/contracts/socialImageCreation.js';
+import { SOCIAL_IMAGE_HARD_CHECKS, type SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
 import { socialImageHookFactorIssues, type SocialImageHookFactorSpec } from '../../shared/contracts/socialImageProduction.js';
 import { defaultBrief } from '../starter198/socialContentTaskSupport.js';
 import { STARTER_COLLECTIONS } from '../starter198/repository.js';
@@ -13,6 +13,7 @@ import {
   decideSocialImageCandidate,
   recordSocialImageNodeOutput,
   recordSocialImageDirectorReview,
+  runSocialImageDirectorReview,
 } from './socialImageProductionRun.js';
 import { projectSocialImageProductionSnapshot } from './socialImageProductionRuntime.js';
 import { compileLuxuryProductHero } from './templates/luxuryProductHero.js';
@@ -64,6 +65,16 @@ async function fixture() {
   return { store, now };
 }
 
+async function recordReadyAssetManifest(store: DataStore, task: SocialImageCreationTask, now: string) {
+  return recordSocialImageNodeOutput({ store, tenantId: 'tenant-a', taskId: task.id, expectedVersion: task.version,
+    nodeId: 'asset_manifest', status: 'completed', value: { enterpriseFactSnapshotRef: null, assets: [{
+      assetId: 'product-a', version: 1, contentHash: 'e'.repeat(64), role: 'product', required: true, readable: true,
+      dimensions: { width: 800, height: 1000 }, rights: 'cleared', observedSubjects: [], ocr: ['产品 A'], confidence: 1,
+    }], requiredEvidence: ['product-a'], missingCapabilities: [], prohibitedClaims: [] },
+    inputRefs: [], evidenceRefs: [{ objectType: 'enterprise-image-asset', id: 'product-a', version: 1, contentHash: 'e'.repeat(64) }],
+    createdBy: { kind: 'worker', id: 'fixture_asset_probe' }, now });
+}
+
 test('ContentTask binding is deterministic, resumable and rejects changed scope', async () => {
   const { store, now } = await fixture();
   const input = { contentTaskId: 'content-a', expectedContentTaskVersion: '7', idempotencyKey: 'assistant-message-001',
@@ -77,9 +88,15 @@ test('ContentTask binding is deterministic, resumable and rejects changed scope'
   const replay = await createOrResumeBoundSocialImageRun(store, 'tenant-a', input, now);
   assert.equal(replay.resumed, true);
   assert.equal(replay.task.id, first.task.id);
+  const workspaceReplay = await createOrResumeBoundSocialImageRun(store, 'tenant-a', {
+    ...input, idempotencyKey: 'workspace-open-001', entrySource: 'workspace',
+  }, now);
+  assert.equal(workspaceReplay.resumed, true, 'entry source is provenance and must not fork the ContentTask child run');
+  assert.equal(workspaceReplay.task.id, first.task.id);
   await assert.rejects(createOrResumeBoundSocialImageRun(store, 'tenant-a', { ...input, imageType: 'brand_news' }, now),
     /social_image_run_scope_conflict/);
-  const staged = await updateSocialImageTask(store, 'tenant-a', first.task.id, replay.task.version, { outputs: [{
+  const assetReady = await recordReadyAssetManifest(store, workspaceReplay.task, now);
+  const staged = await updateSocialImageTask(store, 'tenant-a', first.task.id, assetReady.version, { outputs: [{
     id: 'candidate-before-content-change', role: 'single', label: '旧业务输入候选', state: 'quality_checking', version: 1,
     qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'uncertain', severity: 'hard', note: '旧候选' })),
   }] });
@@ -91,7 +108,13 @@ test('ContentTask binding is deterministic, resumable and rejects changed scope'
   assert.equal(refreshed.task.productionRuntime?.binding?.contentTaskVersion, '8');
   assert.equal(refreshed.task.contentBrief.coreClaim, '更新后的统一业务主张');
   assert.equal(refreshed.task.outputs[0]?.state, 'superseded');
-  assert.equal(projectSocialImageProductionSnapshot(refreshed.task).currentStatus, 'stale');
+  const refreshedSnapshot = projectSocialImageProductionSnapshot(refreshed.task);
+  assert.equal(refreshedSnapshot.currentNode, 'director_brief');
+  assert.equal(refreshedSnapshot.currentStatus, 'waiting');
+  assert.equal(refreshed.task.productionRuntime?.nodes.find(node => node.nodeId === 'reference_snapshot')?.status, 'skipped');
+  assert.equal(refreshed.task.productionRuntime?.nodes.find(node => node.nodeId === 'element_inventory')?.status, 'skipped');
+  assert.ok(!refreshed.task.productionRuntime?.nodeOutputs.some(output =>
+    ['reference_snapshot', 'element_inventory', 'hook_factors', 'adaptation'].includes(output.nodeId) && output.status === 'stale'));
   await assert.rejects(createOrResumeBoundSocialImageRun(store, 'tenant-b', input, now), /social_image_content_task_not_found/);
 });
 
@@ -100,12 +123,17 @@ test('V3 approval requires independent review, exact bytes and explicit user evi
   const created = (await createOrResumeBoundSocialImageRun(store, 'tenant-a', {
     contentTaskId: 'content-a', expectedContentTaskVersion: '7', idempotencyKey: 'assistant-message-002', entrySource: 'assistant',
   }, now)).task;
+  await assert.rejects(recordSocialImageNodeOutput({ store, tenantId: 'tenant-a', taskId: created.id, expectedVersion: created.version,
+    nodeId: 'asset_manifest', status: 'completed', value: { enterpriseFactSnapshotRef: null, assets: [], requiredEvidence: [],
+      missingCapabilities: [], prohibitedClaims: [] }, inputRefs: [], createdBy: { kind: 'worker', id: 'invalid_probe' }, now }),
+  /social_image_required_asset_evidence_invalid/);
+  const assetReady = await recordReadyAssetManifest(store, created, now);
   const output = { id: 'candidate-a', role: 'single' as const, label: '主视觉', state: 'quality_checking' as const,
-    mediaUrl: '/api/overseas/social-images/renders/candidate.png', version: 1,
+    mediaUrl: '/api/overseas/social-images/renders/candidate.png', version: 1, contentHash: 'a'.repeat(64),
     qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'pass' as const, severity: 'hard' as const,
       checker: 'deterministic' as const, note: 'fixture pass' })),
   };
-  const ready = await updateSocialImageTask(store, 'tenant-a', created.id, created.version, {
+  const ready = await updateSocialImageTask(store, 'tenant-a', created.id, assetReady.version, {
     outputs: [output], status: 'review_required', step: 'review',
     renderBrief: { headline: '低敏产品方案', subheadline: '面向品牌采购', originBadge: '', trustBadges: [], sellingPoints: [],
       process: [], categories: [], bottomBar: [], cta: '了解产品' },
@@ -115,13 +143,16 @@ test('V3 approval requires independent review, exact bytes and explicit user evi
   });
   assert.equal(ready.kind, 'updated');
   if (ready.kind !== 'updated') return;
+  assert.deepEqual(projectSocialImageProductionSnapshot(ready.task).previews, [{
+    candidateId: output.id, candidateVersion: output.version, contentHash: output.contentHash,
+    state: output.state, mediaUrl: output.mediaUrl,
+  }]);
+  assert.equal(ready.task.productionRuntime?.events.at(-1)?.artifactRefs?.[0]?.contentHash, output.contentHash);
   const forged = await updateSocialImageTask(store, 'tenant-a', created.id, ready.task.version, { status: 'approved' });
   assert.equal(forged.kind, 'invalid');
-  const reviewed = await recordSocialImageDirectorReview({ store, tenantId: 'tenant-a', taskId: created.id,
-    expectedVersion: ready.task.version, decision: { schemaVersion: 'social-image-director-review.v1',
-      decision: 'accept_for_user_review', candidateId: output.id, candidateVersion: output.version,
-      passedCriteria: ['核心主张清晰'], failedCriteria: [], factorResults: [], problemRegions: [], reasonCodes: [],
-      repairInstructions: [], reviewConfidence: .92, reviewedAt: now } });
+  const reviewed = await runSocialImageDirectorReview({ store, tenantId: 'tenant-a', taskId: created.id,
+    expectedVersion: ready.task.version, candidateId: output.id, candidateVersion: output.version, now });
+  assert.equal(reviewed.directorReviewDecision?.decision, 'accept_for_user_review');
   const contentHash = 'a'.repeat(64);
   const accepted = await decideSocialImageCandidate({ store, tenantId: 'tenant-a', userId: 'user-a', taskId: created.id,
     expectedVersion: reviewed.version, candidateId: output.id, candidateVersion: output.version,
@@ -172,13 +203,14 @@ test('formal node outputs survive restart and stale their downstream evidence', 
   const created = (await createOrResumeBoundSocialImageRun(store, 'tenant-a', {
     contentTaskId: 'content-a', expectedContentTaskVersion: '7', idempotencyKey: 'assistant-message-003', entrySource: 'assistant',
   }, now)).task;
+  const assetReady = await recordReadyAssetManifest(store, created, now);
   const directorValue = (headline: string) => ({ objective: '产品认知', singleCoreClaim: headline, headline, supportingText: '',
     caption: '', cta: '', requiredFacts: [], prohibitedInferences: [], visualMustShow: ['产品 A'], visualMustNotImply: [],
     compositionIntent: '产品居中', imageTextRelation: 'image_contextualizes_copy', visualProof: 'product_hero',
     brandAndOriginalityRules: [], acceptanceCriteria: [{ criterionId: 'product', observableTarget: '产品清晰', validator: 'human_review' }],
     factorSpecRef: null, adaptationSpecRef: null });
   const director = await recordSocialImageNodeOutput({ store, tenantId: 'tenant-a', taskId: created.id,
-    expectedVersion: created.version, nodeId: 'director_brief', status: 'completed',
+    expectedVersion: assetReady.version, nodeId: 'director_brief', status: 'completed',
     value: directorValue('第一版主张'), inputRefs: [], createdBy: { kind: 'agent', id: 'image_director' },
     taskPatch: { step: 'plan', renderBrief: { headline: '第一版主张', subheadline: '', originBadge: '', trustBadges: [],
       sellingPoints: [], process: [], categories: [], bottomBar: [], cta: '' },
@@ -192,13 +224,29 @@ test('formal node outputs survive restart and stale their downstream evidence', 
     inputRefs: [{ objectType: 'social-image-node-envelope.v1', id: director.productionRuntime!.nodeOutputs.at(-1)!.id,
       version: 1, contentHash: director.productionRuntime!.nodeOutputs.at(-1)!.contentHash }],
     createdBy: { kind: 'agent', id: 'content_agent' }, now });
+  const candidate = { id: 'candidate-before-director-change', role: 'single' as const, label: '旧方案候选',
+    state: 'quality_checking' as const, version: 1, contentHash: 'd'.repeat(64),
+    qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'pass' as const, severity: 'hard' as const,
+      checker: 'deterministic' as const, note: 'fixture pass' })) };
+  const withCandidate = await updateSocialImageTask(store, 'tenant-a', created.id, planned.version, {
+    outputs: [candidate], status: 'review_required', step: 'review',
+  });
+  assert.equal(withCandidate.kind, 'updated');
+  if (withCandidate.kind !== 'updated') return;
+  const withReview = await recordSocialImageDirectorReview({ store, tenantId: 'tenant-a', taskId: created.id,
+    expectedVersion: withCandidate.task.version, decision: { schemaVersion: 'social-image-director-review.v1',
+      decision: 'accept_for_user_review', candidateId: candidate.id, candidateVersion: candidate.version,
+      passedCriteria: ['旧方案'], failedCriteria: [], factorResults: [], problemRegions: [], reasonCodes: [],
+      repairInstructions: [], reviewConfidence: .9, reviewedAt: now } });
   const revised = await recordSocialImageNodeOutput({ store, tenantId: 'tenant-a', taskId: created.id,
-    expectedVersion: planned.version, nodeId: 'director_brief', status: 'completed', value: directorValue('第二版主张'),
+    expectedVersion: withReview.version, nodeId: 'director_brief', status: 'completed', value: directorValue('第二版主张'),
     inputRefs: [], createdBy: { kind: 'agent', id: 'image_director' },
     taskPatch: { step: 'plan', renderBrief: { headline: '第二版主张', subheadline: '', originBadge: '', trustBadges: [],
       sellingPoints: [], process: [], categories: [], bottomBar: [], cta: '' },
     imageTextContract: { ...planned.imageTextContract, headline: '第二版主张' } }, now });
   assert.equal(revised.productionRuntime?.nodeOutputs.filter(output => output.nodeId === 'execution_plan').at(-1)?.status, 'stale');
+  assert.equal(revised.outputs[0]?.state, 'superseded', 'an upstream plan revision must retire the old candidate');
+  assert.equal(revised.directorReviewDecision, undefined, 'an upstream plan revision must retire the old director decision');
   assert.equal(projectSocialImageProductionSnapshot(revised).currentNode, 'execution_plan');
   assert.equal(projectSocialImageProductionSnapshot(revised).currentStatus, 'stale');
   const restarted = new MemoryStore();

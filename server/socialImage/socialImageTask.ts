@@ -248,7 +248,7 @@ export async function updateSocialImageTask(store: DataStore, tenantId: string, 
     approvalDecisions: patch.approvalDecisions || current.approvalDecisions || [],
     repairPlans: patch.repairPlans || current.repairPlans || [],
     deliveryPackages: patch.deliveryPackages || current.deliveryPackages || [],
-    layerGraph: patch.layerGraph || current.layerGraph,
+    layerGraph: Object.prototype.hasOwnProperty.call(patch, 'layerGraph') ? patch.layerGraph : current.layerGraph,
     updatedAt: now, publishable: false,
   };
   if (patch.referenceSnapshot) {

@@ -29,6 +29,12 @@ function hardChecksPassed(output: SocialImageOutputNode): boolean {
     && check.severity === 'hard' && (check.verdict === 'pass' || check.verdict === 'not_applicable')));
 }
 
+function currentArtifactRefs(task: SocialImageCreationTask) {
+  return socialImageCurrentOutputs(task).filter(output => output.state !== 'superseded' && output.contentHash)
+    .map(output => ({ objectType: 'social-image-candidate', id: output.id, version: output.version,
+      contentHash: output.contentHash! }));
+}
+
 function derivedNodeStates(task: SocialImageCreationTask): SocialImageProductionNodeState[] {
   const states = Object.fromEntries(SOCIAL_IMAGE_PRODUCTION_NODES.map(node => [node, waiting(node)])) as Record<SocialImageProductionNodeId, SocialImageProductionNodeState>;
   if (task.productionRuntime?.binding) states.task_binding = completed('task_binding');
@@ -44,13 +50,15 @@ function derivedNodeStates(task: SocialImageCreationTask): SocialImageProduction
   };
 
   const requiredAssets = task.enterpriseAssets.filter(asset => asset.required);
-  if (requiredAssets.length && requiredAssets.every(asset => asset.assetId && asset.source.startsWith('enterprise_'))) {
+  if (task.schemaVersion !== 'social-image-creation.v3' && requiredAssets.length
+    && requiredAssets.every(asset => asset.assetId && asset.source.startsWith('enterprise_'))) {
     states.asset_manifest = completed('asset_manifest');
   }
   if (task.creationPath === 'material_processing') states.reference_snapshot = { ...waiting('reference_snapshot'), status: 'skipped' };
-  else if (task.referenceSnapshot?.fingerprint && task.referenceSnapshot.imageUrls.length) states.reference_snapshot = completed('reference_snapshot');
+  else if (task.schemaVersion !== 'social-image-creation.v3' && task.referenceSnapshot?.fingerprint
+    && task.referenceSnapshot.imageUrls.length) states.reference_snapshot = completed('reference_snapshot');
   if (task.creationPath === 'material_processing') states.element_inventory = { ...waiting('element_inventory'), status: 'skipped' };
-  else if (task.replicationRecipe?.referenceLayerBlueprints?.length) states.element_inventory = completed('element_inventory');
+  else if (task.schemaVersion !== 'social-image-creation.v3' && task.replicationRecipe?.referenceLayerBlueprints?.length) states.element_inventory = completed('element_inventory');
   if (task.creationPath === 'material_processing') {
     states.hook_factors = { ...waiting('hook_factors'), status: 'skipped' };
     states.adaptation = { ...waiting('adaptation'), status: 'skipped' };
@@ -121,6 +129,7 @@ function event(input: {
     occurredAt: input.occurredAt,
     taskVersion: input.task.version,
     blockingReasons: input.node.blockingReasons,
+    artifactRefs: currentArtifactRefs(input.task),
   };
 }
 
@@ -153,7 +162,8 @@ export function evolveSocialImageProductionRuntime(
   const current = activeNode(nodes);
   const before = activeNode(normalizedRuntime.nodes.length ? normalizedRuntime.nodes : derivedNodeStates(previous));
   if (before.nodeId === current.nodeId && before.status === current.status
-    && JSON.stringify(before.blockingReasons) === JSON.stringify(current.blockingReasons)) {
+    && JSON.stringify(before.blockingReasons) === JSON.stringify(current.blockingReasons)
+    && JSON.stringify(currentArtifactRefs(previous)) === JSON.stringify(currentArtifactRefs(candidate))) {
     return { ...normalizedRuntime, currentNode: current.nodeId, nodes };
   }
   const base = { ...normalizedRuntime, currentNode: current.nodeId, nodes };
@@ -169,6 +179,12 @@ export function projectSocialImageProductionSnapshot(task: SocialImageCreationTa
   const plan = task.renderPlan;
   const completedJobs = plan?.units.filter(unit => task.generationJobs.some(job => job.id === unit.jobId && job.status === 'completed')).length || 0;
   const providerUnknown = task.generationJobs.some(job => job.status === 'outcome_unknown');
+  const previews = socialImageCurrentOutputs(task).filter(output => output.state !== 'superseded').map(output => ({
+    candidateId: output.id, candidateVersion: output.version, contentHash: output.contentHash || null,
+    state: output.state as Exclude<SocialImageOutputNode['state'], 'superseded'>,
+    ...(output.mediaUrl ? { mediaUrl: output.mediaUrl } : {}),
+    ...(output.materialId ? { materialId: output.materialId } : {}),
+  }));
   return {
     schemaVersion: 'social-image-production-snapshot.v1',
     contentTaskId: task.productionRuntime?.binding?.contentTaskId || null,
@@ -182,6 +198,7 @@ export function projectSocialImageProductionSnapshot(task: SocialImageCreationTa
     waitingFor: providerUnknown ? 'provider_reconciliation' : current.status === 'needs_review' ? 'user' : current.status === 'running' ? 'system' : null,
     canApprove: current.nodeId === 'user_approval' && current.status === 'needs_review',
     blockingReasons: current.blockingReasons,
+    previews,
     latestEventSequence: task.productionRuntime?.events.at(-1)?.sequence || 0,
     updatedAt: task.updatedAt,
   };

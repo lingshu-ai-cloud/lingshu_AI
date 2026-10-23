@@ -93,6 +93,8 @@ export interface SocialImageProductionEvent {
   occurredAt: string;
   taskVersion: number;
   blockingReasons: string[];
+  /** Current candidate references available when this event was emitted. */
+  artifactRefs?: SocialImageVersionedRef[];
 }
 
 export interface SocialImageProductionRuntime {
@@ -119,6 +121,14 @@ export interface SocialImageProductionSnapshot {
   waitingFor: 'system' | 'user' | 'provider_reconciliation' | null;
   canApprove: boolean;
   blockingReasons: string[];
+  previews: Array<{
+    candidateId: string;
+    candidateVersion: number;
+    contentHash: string | null;
+    state: 'pending' | 'generating' | 'quality_checking' | 'repair_required' | 'blocked' | 'approved';
+    mediaUrl?: string;
+    materialId?: string;
+  }>;
   latestEventSequence: number;
   updatedAt: string;
 }
