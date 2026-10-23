@@ -67,10 +67,11 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
     setPreview(null);
     window.requestAnimationFrame(() => previewTriggerRef.current?.focus());
   };
-  const openFullVideoDetails = (video: TrendVideo) => {
+  const openInspirationReference = (video: TrendVideo, startViralReplication = false) => {
     setPreview(null);
     window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
       page: 'socialInspiration',
+      startViralReplication,
       inspirationReference: { referenceId: video.recordId || video.id.replace(/^crawl-/, ''), sourceUrl: video.sourceUrl, title: video.title, platform: video.platform, thumbnailUrl: video.thumbnail, duration: video.duration },
     } }));
   };
@@ -135,11 +136,11 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
         {videosLoading && !videos.length ? <div className="flex min-h-40 items-center justify-center"><Spin description="正在读取爆款视频"/></div>
           : videos.length ? <LsMasonryGallery layout="masonry" columns={{ xs: 2, sm: 2, md: 3, lg: 4 }} items={videos.map((video, index) => ({ id: video.id, content:
             <div data-home-media><VideoCard video={video} index={index} isSelected={false} onWatch={() => openPreview(video)}
-              onSelect={() => openPreview(video)} onCreate={() => onNavigate?.('socialInspiration')} createLabel="到爆款库创作"/></div> }))}/>
+              onSelect={() => openPreview(video)} onCreate={() => openInspirationReference(video, true)} createLabel="爆款裂变"/></div> }))}/>
             : !videosLoading && !videosError && <p className="creator-home__empty">当前租户暂无可展示的爆款视频。</p>}
       </section>}
     </div>
     {preview && <InspirationWatchDialog key={preview.id} video={preview} videos={videos} onClose={closePreview}
-      onOpenDetails={openFullVideoDetails}/>}
+      onOpenDetails={video => openInspirationReference(video)}/>}
   </div>;
 }

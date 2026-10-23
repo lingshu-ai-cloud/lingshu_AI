@@ -20,6 +20,10 @@ assert.match(home, /onScroll=\{updateActiveSection\}/);
 assert.doesNotMatch(home, /onWheel=|onTouchEnd=|tryEnterLibrary/, '首页与爆款库应为连续滚动，不得在滚轮阈值处跳路由');
 assert.match(home, /<div data-home-media><VideoCard/);
 assert.match(home, /inspirationReference: \{ referenceId: video\.recordId/);
+assert.match(home, /startViralReplication,/, '首页爆款卡须携带生产意图，而非只跳转爆款库');
+assert.match(home, /createLabel="爆款裂变"/, '首页爆款卡主操作须明确为爆款裂变');
+assert.doesNotMatch(home, /到爆款库创作/, '首页不得保留旧的中转按钮文案');
+assert.match(inspiration, /requestedReference\?\.startViralReplication[\s\S]{0,700}startInspirationCreation\(selectedVideo\)/, '首页生产意图必须进入既有爆款裂变生产函数');
 assert.match(library, /<LsMasonryGallery layout="masonry" items=\{shown\.map/);
 assert.match(library, /<Modal open=\{Boolean\(previewItem\)\}/);
 assert.doesNotMatch(home, /fetch\('\/api\/overseas\/assistant-threads|createAssistantAction/, '首页不得创建平行会话/任务入口');
@@ -36,6 +40,7 @@ assert.match(creatorStyles, /\.creator-mode-switch \.ant-segmented-item-label \{
 assert.match(creatorStyles, /width: min\(470px, 100%\); height: 56px/, '双模式切换须对齐参考图比例');
 assert.match(creatorStyles, /width: min\(100%, 1416px\)/, '主内容宽度须与参考图一致');
 assert.match(card, /ls-viral-card group/);
+assert.match(card, /absolute right-2 top-2 z-40[\s\S]{0,900}取消收藏[\s\S]{0,900}删除/, '收藏和删除须位于媒体卡右上角的悬停操作区');
 assert.doesNotMatch(card, /absolute top-2 right-2 z-20|absolute top-2 left-2 z-20/, '卡片默认态不显示顶部文字徽标');
 assert.doesNotMatch(inspiration, /absolute right-12 top-2 z-30 flex gap-1/, '爆款库管理按钮应在悬停浮层内，不能常驻画面顶部');
 

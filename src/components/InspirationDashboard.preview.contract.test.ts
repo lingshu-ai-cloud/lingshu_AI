@@ -10,6 +10,10 @@ assert.match(watchModal, /zIndex=\{2200\}/, 'the original-content preview must r
 assert.match(watchModal, /current\.videoUrl && !useEmbed/);
 assert.match(watchModal, /embedUrl \?/);
 assert.match(watchModal, />原站打开</);
+assert.match(watchModal, /<AnimatePresence[^>]*mode="popLayout">[\s\S]*?key=\{current\.id\}[\s\S]*?filter: 'blur\(5px\)'/, '上下换片须使用方向感、淡入和轻微模糊过渡');
+assert.match(watchModal, /usePrefersReducedMotion\(\)/, '换片动效必须尊重减少动效偏好');
+assert.doesNotMatch(watchModal, />分析状态<|>入库时间<|>证据来源</, '简要预览不得展示分析状态、入库时间和证据来源');
+assert.ok(watchModal.indexOf('>内容结构<') < watchModal.indexOf('>开场钩子<'), '内容结构摘要必须位于开场钩子上方');
 assert.doesNotMatch(source, /DiscoveryScopePanel|当前发现范围|导入对标视频并分析|inspiration-creation-account/, '灵感首页不得重复展示范围、创作账号和导入说明卡');
 assert.match(source, /<Tabs className="min-w-0 flex-1"[^]*?<AntUpload className="shrink-0 pt-1"[^]*?>导入 MP4 并分析</, '导入动作必须收进 Tabs 右侧工具栏');
 assert.match(cardsSource, /apiUrl=\{video\.videoUrl\}[^]*?loadOnMount[^]*?previewFrame[^]*?preload="auto"/, '爆款视频卡必须主动加载首帧，不能依赖悬停');

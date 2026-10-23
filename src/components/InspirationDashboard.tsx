@@ -252,7 +252,7 @@ type InspirationReferenceTarget = {
   title: string;
   platform: string;
   thumbnailUrl: string;
-  duration: number;
+  duration: number; startViralReplication: boolean;
   benchmarkAnalysis?: VideoAnalysisPayload['benchmarkAnalysis'];
 };
 
@@ -306,7 +306,7 @@ function parseInspirationReferenceTarget(input: unknown): InspirationReferenceTa
     ? reference.benchmarkAnalysis as VideoAnalysisPayload['benchmarkAnalysis']
     : undefined;
   return referenceId || sourceUrl || title
-    ? { referenceId, sourceUrl, title, platform, thumbnailUrl, duration, benchmarkAnalysis }
+    ? { referenceId, sourceUrl, title, platform, thumbnailUrl, duration, startViralReplication: detail.startViralReplication === true, benchmarkAnalysis }
     : null;
 }
 
@@ -3538,7 +3538,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     void loadExactReferenceReview(target,{token:getToken,verify:t=>readWeeklyReferenceReviewNavigation({tenantId:t.tenantId,programId:t.programId,packageId:t.packageId,packageVersion:t.packageVersion,executionTaskId:t.executionTaskId},t.recordId,t.contentTaskId),fetch:window.fetch.bind(window)}).then(({record,handoff})=>{const video=recordsToVideos([record as unknown as CrawlerRecord])[0];if(!video||video.recordId!==target.recordId)throw Error('原参考记录无法打开审核');if(active)setExactReview({recordId:target.recordId,handoff:handoff as unknown as DirectorReviewHandoff,video});}).catch(error=>{if(active)setExactReviewError(exactReferenceReviewErrorMessage(error));});return()=>{active=false;};
   },[exactReferenceDetail,exactReviewToken]);
   const [requestedReference, setRequestedReference] = useState<InspirationReferenceTarget | null>(initialInspirationReferenceTarget);
-  const openedReferenceTargetRef = useRef('');
+  const openedReferenceTargetRef = useRef(''); const autoStartedReferenceRef = useRef('');
   const [watchVideo, setWatchVideo] = useState<TrendVideo | null>(null);
   const watchTriggerRef = useRef<HTMLElement | null>(null);
   const [sortMode, setSortMode] = useState<SortMode>('crawlTime');
@@ -3681,7 +3681,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   }, []);
   useEffect(() => {
     if (hasExactReferenceReview(exactReferenceDetail) || !requestedReference || !videosLoaded) return;
-    const requestKey = [requestedReference.referenceId, requestedReference.sourceUrl, requestedReference.title].join('|');
+    const requestKey = [requestedReference.referenceId, requestedReference.sourceUrl, requestedReference.title, requestedReference.startViralReplication].join('|');
     if (!requestKey || openedReferenceTargetRef.current === requestKey) return;
     openedReferenceTargetRef.current = requestKey;
     let cancelled = false;
@@ -5048,7 +5048,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     void enterInspirationWorkflow(video);
   };
 
-
+  useEffect(() => {if(!requestedReference?.startViralReplication||!selectedVideo||!videoMatchesReference(selectedVideo,requestedReference))return;const launchKey=[requestedReference.referenceId,requestedReference.sourceUrl,selectedVideo.id].join('|');if(!launchKey||autoStartedReferenceRef.current===launchKey)return;autoStartedReferenceRef.current=launchKey;setRequestedReference(null);setSelectedVideo(null);startInspirationCreation(selectedVideo);},[requestedReference,selectedVideo?.id]); // existing production entry owns readiness, resume and account context
   const openManageDialog = (target: ({ kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material }) & { action?: 'edit' | 'delete' }) => {
     if (!target.item.canManage) return;
     setManageTarget({ ...target, action: target.action || 'edit' });

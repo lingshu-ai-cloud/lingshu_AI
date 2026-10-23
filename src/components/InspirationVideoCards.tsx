@@ -138,6 +138,14 @@ export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEd
             {isImagePost ? <Images size={16} /> : <Play size={16} fill="currentColor" />}
           </span>
         </button>
+        {(onDeleteManage || (!isImagePost && onFavoriteMaterial)) && <div className="ls-touch-media-reveal absolute right-2 top-2 z-40 flex gap-1.5 opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+          {!isImagePost && onFavoriteMaterial && <Button size="small" shape="circle"
+            icon={favoritingMaterial ? <Loader2 size={13} className="animate-spin"/> : <Star size={13} fill={isFavoriteMaterial ? 'currentColor' : 'none'}/>} onClick={onFavoriteMaterial} disabled={favoritingMaterial}
+            title={isFavoriteMaterial ? '取消收藏' : '收藏'} aria-label={isFavoriteMaterial ? `取消收藏 ${video.title}` : `收藏 ${video.title}`}
+            className="!border-white/25 !bg-black/65 !text-white hover:!bg-black/80" />}
+          {onDeleteManage && <Button size="small" shape="circle" danger icon={<Trash2 size={13}/>} onClick={onDeleteManage}
+            title="删除" aria-label={`删除 ${video.title}`} className="!border-white/25 !bg-black/65 !text-white hover:!bg-red-600" />}
+        </div>}
         <div className="ls-touch-media-reveal absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/85 via-black/55 to-transparent px-3 pb-3 pt-10 text-white opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
           <p className="mb-1 inline-flex items-center gap-1.5 text-xs text-white/80"><SocialPlatformIcon platform={video.platform} size={13} />{meta.label}<span aria-hidden="true">·</span>{isImagePost ? '图文' : `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')}`}</p>
           {mediaState !== 'ready' && <p role="status" className="mb-1 text-xs text-white/80">{mediaState === 'error' ? '分析失败' : analysisProgress?.stageLabel || '分析中'}</p>}
@@ -147,8 +155,6 @@ export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEd
             <Button size="small" onClick={onSelect} icon={<Eye size={13}/>}>查看详情</Button>
             <Button size="small" type="primary" onClick={onCreate} loading={creating} disabled={createDisabled} title={createDisabled ? createDisabledReason : undefined}>{createLabel || '用于创作'}</Button>
             {onEditManage && <Button size="small" onClick={onEditManage} icon={<Pencil size={13}/>} aria-label="编辑素材" />}
-            {onDeleteManage && <Button size="small" onClick={onDeleteManage} icon={<Trash2 size={13}/>} aria-label="删除素材" />}
-            {!isImagePost && onFavoriteMaterial && <Button size="small" icon={favoritingMaterial ? <Loader2 size={13} className="animate-spin"/> : <Star size={13} fill={isFavoriteMaterial ? 'currentColor' : 'none'}/>} onClick={onFavoriteMaterial} disabled={favoritingMaterial} aria-label={isFavoriteMaterial ? `取消收藏 ${video.title}` : `收藏 ${video.title}`}/>}
           </div>
         </div>
       </div>

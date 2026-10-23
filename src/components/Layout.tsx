@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { Menu, Segmented } from 'antd';
+import { Menu } from 'antd';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronRight, LogOut, ShieldCheck, PanelLeftClose, PanelLeftOpen, Settings,
@@ -21,7 +21,7 @@ import { lsMotion } from '../lib/designTokens';
 import { getScrollBehavior, usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import { PLATFORM_ADS_SURFACE_ENABLED } from '../config/productSurfaceFlags';
 import PointsManagementDrawer from './PointsManagementDrawer';
-import { CREATION_MODE_LABELS, CreationModeContext, CreationModeControlContext, readCreationMode, writeCreationMode, type CreationMode } from '../lib/creationMode';
+import { CreationModeContext, CreationModeControlContext, readCreationMode, writeCreationMode, type CreationMode } from '../lib/creationMode';
 import { accountProductNavigation, modeSwitchDestination, primaryProductNavigation, type PrimaryProductPage } from '../productNavigation';
 
 const PRODUCT_NAV_ICONS: Record<PrimaryProductPage, ReactNode> = {
@@ -280,27 +280,6 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
             forceStart={Boolean(activeSession?.demo?.guideTrigger)}
           />
         )}
-
-        {!homeSurface && <div className={`${sidebarCollapsed ? 'px-2' : 'px-3'} pb-3 pt-2`}>
-          {sidebarCollapsed ? (
-            <button
-              type="button"
-              className="flex h-9 w-full items-center justify-center rounded-lg border border-border bg-white text-xs font-semibold text-text-primary"
-              onClick={() => switchCreationMode(creationMode === 'free' ? 'employee' : 'free')}
-              aria-label={`当前为${CREATION_MODE_LABELS[creationMode]}，切换到${CREATION_MODE_LABELS[creationMode === 'free' ? 'employee' : 'free']}`}
-              title={CREATION_MODE_LABELS[creationMode]}
-            >{creationMode === 'free' ? '自' : '数'}</button>
-          ) : (
-            <Segmented
-              aria-label="创作模式"
-              block
-              size="small"
-              value={creationMode}
-              options={[{ label: '自由创作', value: 'free' }, { label: '数字员工', value: 'employee' }]}
-              onChange={value => switchCreationMode(value as CreationMode)}
-            />
-          )}
-        </div>}
 
         {/* Home nav */}
         <nav aria-label="主导航" className={`${sidebarCollapsed ? 'px-2' : 'px-3'} pb-1`}>
