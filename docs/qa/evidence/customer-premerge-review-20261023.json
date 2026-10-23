@@ -1,0 +1,265 @@
+{
+  "date": "2026-10-23",
+  "scope": "read-only source comparison and disposable file projections; not an actual merge or release",
+  "refs": {
+    "baseline": "81ad476ee9e716c177dd9928fac52023e7e37874",
+    "customer": "18e8046b242f02cab8d429f300a872c087b263be",
+    "image": "23b1bb93f18d0780b2cc668d7e3057531ab17789",
+    "ads": "1026906d5dd81c718f9f3e2e87fae6e00a5fed21"
+  },
+  "initialBaseline": "2b6a5338fa753c43a226b6f1732e741ddcc44664",
+  "intermediateBaselineSnapshots": [
+    "a8b53951d85ec253a7f941bd3e05507c795fd41c"
+  ],
+  "finalObservedWorktrees": {
+    "customer": {
+      "path": "/Users/julia1/Documents/ChatGPT/客服",
+      "head": "18e8046b242f02cab8d429f300a872c087b263be",
+      "status": [
+        "?? docs/qa/customer-premerge-review-2026-10-23.md",
+        "?? docs/qa/evidence/customer-premerge-ad-schema-20261023.log",
+        "?? docs/qa/evidence/customer-premerge-review-20261023.json"
+      ]
+    },
+    "baseline": {
+      "path": "/Users/julia1/.codex/worktrees/xixi1021-governance-baseline",
+      "head": "81ad476ee9e716c177dd9928fac52023e7e37874",
+      "status": [
+        " M architecture.config.json",
+        " M server/routes/digitalEmployees.ts",
+        "?? server/digitalEmployees/taskInterventionApplication.ts",
+        "?? server/routes/digitalEmployeeTaskInterventionRoutes.ts"
+      ]
+    },
+    "image": {
+      "path": "/Users/julia1/Documents/ChatGPT/1022图片生成模块",
+      "head": "23b1bb93f18d0780b2cc668d7e3057531ab17789",
+      "status": []
+    },
+    "ads": {
+      "path": "/Users/julia1/.codex/worktrees/xixi1021-full-integration",
+      "head": "bd678120243af06f24881a847f528a0919319f99",
+      "status": [
+        "M server/platformAds/creatives.ts",
+        " M server/platformAds/tasks.ts",
+        " M server/routes/platformAdCreatives.ts",
+        " M shared/platformAdCreatives.ts",
+        " M src/components/AdCreativePanel.tsx",
+        " M src/components/AdHistoryMedia.tsx",
+        " M src/components/AdSourceCatalog.tsx",
+        " M src/components/PlatformAdsPage.tsx",
+        " M src/lib/platformAdsDomain.ts",
+        "?? server/platformAds/creativeSelection.ts",
+        "?? src/components/AdMaterialPicker.tsx"
+      ]
+    }
+  },
+  "remoteHeads": [
+    "81ad476ee9e716c177dd9928fac52023e7e37874\trefs/heads/xixi1021程永罗沟通前大整合",
+    "23b1bb93f18d0780b2cc668d7e3057531ab17789\trefs/heads/xixi图片生成+GPT降级分析",
+    "18e8046b242f02cab8d429f300a872c087b263be\trefs/heads/xixi智能客服隔离测试"
+  ],
+  "mergeTree": {
+    "baseline+customer": {
+      "exitCode": 1,
+      "temporaryTreeObject": "7b3862305bd776f61a2b42191cd2d0f97eafb672",
+      "conflictFiles": [
+        "package.json",
+        "scripts/pb-migration-checksums.json"
+      ],
+      "conflictCount": 2,
+      "rawOutput": "7b3862305bd776f61a2b42191cd2d0f97eafb672\npackage.json\nscripts/pb-migration-checksums.json\n\nAuto-merging package.json\nCONFLICT (content): Merge conflict in package.json\nAuto-merging scripts/pb-migration-checksums.json\nCONFLICT (content): Merge conflict in scripts/pb-migration-checksums.json\n"
+    },
+    "baseline+image": {
+      "exitCode": 1,
+      "temporaryTreeObject": "2ceee526eb0637b7c1d956fcd4799389bdbff89a",
+      "conflictFiles": [
+        "architecture.config.json",
+        "server/agents/openaiImageEvidence.test.ts",
+        "server/agents/openaiImageEvidence.ts",
+        "server/agents/qwenContracts.ts",
+        "server/routes/videos.ts",
+        "server/socialImage/fixedOverlayComposer.test.ts",
+        "server/socialImage/fixedOverlayComposer.ts",
+        "server/socialImage/layerRenderer.test.ts",
+        "server/socialImage/layerRenderer.ts",
+        "server/socialImage/socialImageTask.test.ts",
+        "server/socialImage/socialImageTask.ts",
+        "src/components/InspirationDashboard.tsx"
+      ],
+      "conflictCount": 12,
+      "rawOutput": "2ceee526eb0637b7c1d956fcd4799389bdbff89a\narchitecture.config.json\nserver/agents/openaiImageEvidence.test.ts\nserver/agents/openaiImageEvidence.ts\nserver/agents/qwenContracts.ts\nserver/routes/videos.ts\nserver/socialImage/fixedOverlayComposer.test.ts\nserver/socialImage/fixedOverlayComposer.ts\nserver/socialImage/layerRenderer.test.ts\nserver/socialImage/layerRenderer.ts\nserver/socialImage/socialImageTask.test.ts\nserver/socialImage/socialImageTask.ts\nsrc/components/InspirationDashboard.tsx\n\nAuto-merging architecture.config.json\nCONFLICT (content): Merge conflict in architecture.config.json\nAuto-merging server/agents/openaiImageEvidence.test.ts\nCONFLICT (add/add): Merge conflict in server/agents/openaiImageEvidence.test.ts\nAuto-merging server/agents/openaiImageEvidence.ts\nCONFLICT (add/add): Merge conflict in server/agents/openaiImageEvidence.ts\nAuto-merging server/agents/qwen.ts\nAuto-merging server/agents/qwenContracts.ts\nCONFLICT (content): Merge conflict in server/agents/qwenContracts.ts\nAuto-merging server/routes/videos.ts\nCONFLICT (content): Merge conflict in server/routes/videos.ts\nAuto-merging server/socialImage/fixedOverlayComposer.test.ts\nCONFLICT (content): Merge conflict in server/socialImage/fixedOverlayComposer.test.ts\nAuto-merging server/socialImage/fixedOverlayComposer.ts\nCONFLICT (content): Merge conflict in server/socialImage/fixedOverlayComposer.ts\nAuto-merging server/socialImage/layerGraphValidation.ts\nAuto-merging server/socialImage/layerRenderer.test.ts\nCONFLICT (content): Merge conflict in server/socialImage/layerRenderer.test.ts\nAuto-merging server/socialImage/layerRenderer.ts\nCONFLICT (content): Merge conflict in server/socialImage/layerRenderer.ts\nAuto-merging server/socialImage/socialImageTask.test.ts\nCONFLICT (content): Merge conflict in server/socialImage/socialImageTask.test.ts\nAuto-merging server/socialImage/socialImageTask.ts\nCONFLICT (content): Merge conflict in server/socialImage/socialImageTask.ts\nAuto-merging src/components/InspirationDashboard.tsx\nCONFLICT (content): Merge conflict in src/components/InspirationDashboard.tsx\nAuto-merging src/lib/inspirationTypes.ts\n"
+    },
+    "baseline+ads": {
+      "exitCode": 0,
+      "temporaryTreeObject": "4ca98f2e8238d86becb0b04e356fbcdf1aed33d0",
+      "conflictFiles": [],
+      "conflictCount": 0,
+      "rawOutput": "4ca98f2e8238d86becb0b04e356fbcdf1aed33d0\n\nAuto-merging docs/governance/BASELINE.md\nAuto-merging package.json\n"
+    },
+    "customer+image": {
+      "exitCode": 1,
+      "temporaryTreeObject": "8f1147537bf9d27d103ca9b31032855f6f1d5943",
+      "conflictFiles": [
+        "architecture.config.json"
+      ],
+      "conflictCount": 1,
+      "rawOutput": "8f1147537bf9d27d103ca9b31032855f6f1d5943\narchitecture.config.json\n\nAuto-merging architecture.config.json\nCONFLICT (content): Merge conflict in architecture.config.json\n"
+    },
+    "customer+ads": {
+      "exitCode": 0,
+      "temporaryTreeObject": "67c0ccb056cc86205292eff7593f89a570064606",
+      "conflictFiles": [],
+      "conflictCount": 0,
+      "rawOutput": "67c0ccb056cc86205292eff7593f89a570064606\n\nAuto-merging docs/governance/BASELINE.md\nAuto-merging package.json\n"
+    },
+    "image+ads": {
+      "exitCode": 0,
+      "temporaryTreeObject": "f47545c3c4790f4038956c1c4defe673bb1e4f8d",
+      "conflictFiles": [],
+      "conflictCount": 0,
+      "rawOutput": "f47545c3c4790f4038956c1c4defe673bb1e4f8d\n\nAuto-merging docs/governance/BASELINE.md\nAuto-merging package.json\n"
+    }
+  },
+  "customerProjection": {
+    "resolutionPolicy": "baseline scripts preserved, only added customer test script; append-only checksum manifest union",
+    "exitCodes": {
+      "latest-customer-tests": 0,
+      "latest-customer-types": 0,
+      "latest-customer-architecture": 0,
+      "latest-customer-migrations": 0,
+      "latest-customer-build": 0,
+      "latest-customer-chunk": 0
+    },
+    "tests": {
+      "tests": 120,
+      "pass": 120,
+      "fail": 0,
+      "skipped": 0
+    },
+    "architectureOutput": "Architecture guard passed for 2436 production TypeScript files.\n5 legacy oversized files are frozen at or below their recorded budgets; new files are capped at 800 lines.\nArchitecture budget ratchet checked against 81ad476ee9e716c177dd9928fac52023e7e37874.\n",
+    "chunkOutput": "AiCreateStudio chunk budget passed: 480957/485000 bytes.\n",
+    "migrationReport": {
+      "status": "passed",
+      "scope": "read_only_repository_preflight",
+      "head": "81ad476ee9e716c177dd9928fac52023e7e37874",
+      "baselineRef": "HEAD",
+      "baselineCommit": "81ad476ee9e716c177dd9928fac52023e7e37874",
+      "checkedMigrations": 194,
+      "blockers": [],
+      "limitations": [
+        "This check proves repository file integrity against the reviewed manifest; it does not prove which migrations have been deployed.",
+        "No PocketBase process, database, deployment workflow, or remote host was accessed or changed.",
+        "Before release, separately rehearse fresh installation and upgrade from a backup of the exact target schema with the real PocketBase version.",
+        "This check does not establish schema compatibility, data preservation, deployment authorization, or full release readiness."
+      ]
+    }
+  },
+  "adsProjection": {
+    "resolutionPolicy": "git merge-tree clean textual projection; no migration repair applied",
+    "exitCodes": {
+      "latest-ads-tests": 0,
+      "latest-ads-types": 0,
+      "latest-ads-architecture": 0,
+      "latest-ads-migrations": 2
+    },
+    "testFilesPassed": 41,
+    "architectureOutput": "Architecture guard passed for 2439 production TypeScript files.\n5 legacy oversized files are frozen at or below their recorded budgets; new files are capped at 800 lines.\nArchitecture budget ratchet checked against 81ad476ee9e716c177dd9928fac52023e7e37874.\n",
+    "migrationReport": {
+      "status": "blocked",
+      "scope": "read_only_repository_preflight",
+      "head": "81ad476ee9e716c177dd9928fac52023e7e37874",
+      "baselineRef": "HEAD",
+      "baselineCommit": "81ad476ee9e716c177dd9928fac52023e7e37874",
+      "checkedMigrations": 193,
+      "blockers": [
+        {
+          "code": "unregistered_migration",
+          "path": "pb_migrations/1792627200_platform_ad_account_context.js",
+          "message": "Every tracked or on-disk PocketBase migration must be registered in the checksum manifest."
+        },
+        {
+          "code": "unregistered_migration",
+          "path": "pb_migrations/1792627201_platform_ad_resources.js",
+          "message": "Every tracked or on-disk PocketBase migration must be registered in the checksum manifest."
+        },
+        {
+          "code": "checksum_mismatch",
+          "path": "pb_migrations/1790035200_create_platform_ad_schema.js",
+          "expectedSha256": "a001716f642e20ffe5caf66bf50db2df212319f431ed9c6a8f396c8dc1abc6da",
+          "currentSha256": "d579f2efc21ebc095bcf885fe885689969791b1bae42f2f42234dee54763d64b",
+          "message": "Migration bytes differ from the reviewed checksum manifest; add a new forward-only migration instead of editing this file."
+        }
+      ],
+      "limitations": [
+        "This check proves repository file integrity against the reviewed manifest; it does not prove which migrations have been deployed.",
+        "No PocketBase process, database, deployment workflow, or remote host was accessed or changed.",
+        "Before release, separately rehearse fresh installation and upgrade from a backup of the exact target schema with the real PocketBase version.",
+        "This check does not establish schema compatibility, data preservation, deployment authorization, or full release readiness."
+      ]
+    }
+  },
+  "temporaryPocketBase": {
+    "version": "0.39.5",
+    "scenario": "baseline immutable advertising schema followed by ads 1792627200 and 1792627201",
+    "results": {
+      "ads-schema-base": {
+        "exitCode": 0,
+        "output": "Applied 1790035200_create_platform_ad_schema.js\n"
+      },
+      "ads-schema-forward": {
+        "exitCode": 0,
+        "output": "Applied 1792627200_platform_ad_account_context.js\nApplied 1792627201_platform_ad_resources.js\n"
+      },
+      "ads-schema-field-probe": {
+        "exitCode": 0,
+        "output": "2026/10/23 11:15:07 AD_CONTEXT_MISSING=[\"businessName\",\"accountStatus\",\"timezoneId\",\"timezoneName\",\"timezoneOffsetHoursUtc\",\"resourceSyncRunId\",\"resourceSyncedAt\"]\nError: failed to apply migration 1999999999_probe_ad_context.js: Error: ad_context_forward_missing_fields:businessName,accountStatus,timezoneId,timezoneName,timezoneOffsetHoursUtc,resourceSyncRunId,resourceSyncedAt at /Users/julia1/Documents/ChatGPT/客服/pb.js:1:353(47)\n"
+      },
+      "semanticStatus": "failed: all seven connection context fields missing after forward migrations; probe CLI exit 0 despite failure log"
+    }
+  },
+  "logsSha256": {
+    "latest-customer-tests.log": "6ee320ae1ec25b1eada3f0ca5a4d8980f03a91e3efadf13248a5ccabccb3f2d6",
+    "latest-customer-types.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "latest-customer-architecture.log": "2bc8d56b7046e4137156072f52913aeff385ae08fd37e11196306a298f836f1a",
+    "latest-customer-migrations.log": "e59d947265dcb6f86c6e90cf8a59f9b8dc11d4637347dfbc1ab66ac40fd24994",
+    "latest-customer-build.log": "88d11d5abcd9645814f97c309bab6a03135112c3b80b5423dc4e60f807237141",
+    "latest-customer-chunk.log": "1910e02e46529fab5317c1c47df9728c90aba7e7b4508a5f631498fd6526dcca",
+    "latest-ads-tests.log": "0013575e1a8799d6364d40716184d9b3942bcf4dabc8ef76b4c269fa505b4e06",
+    "latest-ads-types.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "latest-ads-architecture.log": "826027dfe13a9ed16c93db173572852c1abddc815ea2bfdb1e8fa5c74e6b83d2",
+    "latest-ads-migrations.log": "eab6648aca4a587b651135f4c70b3c63916413b4f2f6881ba5a985f02ae9082f"
+  },
+  "effects": {
+    "existingBranchUpdates": 0,
+    "realMergeCommitsCreated": 0,
+    "existingWorktreeSourceEditsByThisReview": 0,
+    "productionDatabaseAccess": false,
+    "realProviderCalls": 0,
+    "realCustomerMessagesOrAdsCreated": 0,
+    "deployment": false,
+    "push": false,
+    "reportFilesWrittenToCustomerWorktree": 3
+  },
+  "limitations": [
+    "Uncommitted source work was not imported; source owners may continue changing their worktrees.",
+    "No resolved image merge candidate or full three-module candidate was tested.",
+    "This check does not prove target database upgrade or real provider readiness.",
+    "Projection head in migration reports is the pinned baseline; projected working files include the explicitly described candidate deltas.",
+    "At final observation, baseline HEAD remained pinned but another task had new uncommitted digital employee intervention-route extraction; excluded from candidate validation."
+  ],
+  "commands": {
+    "mergeTree": "git merge-tree --write-tree --name-only --messages <fixedBaselineSha> <fixedSourceSha> (disposable bare repo only)",
+    "customerRegression": "node --import ./scripts/customer-isolated-test-guard.mjs node_modules/tsx/dist/cli.mjs --test --test-concurrency=1 server/customerService/customerPipeline.integration.test.ts server/digitalEmployees/customerMessagingIntegration.contract.test.ts server/digitalEmployees/followupSafety.test.ts server/digitalEmployees/followupBatchFreeze.integration.test.ts server/digitalEmployees/weeklyNativeFollowupDispatch.test.ts server/digitalEmployees/weeklyCustomerNoData.execution.test.ts server/digitalEmployees/followupDispatchWorker.test.ts server/runtime/socialWeeklyCustomerBridge.test.ts server/messenger/authorizedCustomerRead.test.ts server/whatsapp/authorizedCustomerRead.test.ts server/messenger/contextTags.test.ts server/routes/wecomCustomerService.test.ts server/customerService/customerManualTakeover.test.ts server/socialPrograms/customerRelationshipEvidence.test.ts server/digitalEmployees/customerReentry.test.ts src/components/customers/customerReplyPreparation.test.ts server/digitalEmployees/taskCorrectionSafety.test.ts server/digitalEmployees/taskCorrectionSupersession.test.ts server/digitalEmployees/customerTaskApprovalContinuation.test.ts server/digitalEmployees/customerChannelSendRequests.test.ts server/digitalEmployees/weeklyNativeScheduledDispatch.test.ts server/digitalEmployees/followupNativeScheduledScan.test.ts server/digitalEmployees/route.contract.test.ts",
+    "typescript": "node node_modules/typescript/bin/tsc --noEmit",
+    "architecture": "ARCHITECTURE_BASE_REF=81ad476ee9e716c177dd9928fac52023e7e37874 node scripts/check-architecture.mjs",
+    "migrations": "node node_modules/tsx/dist/cli.mjs scripts/check-digital-employee-migrations.ts",
+    "build": [
+      "node node_modules/vite/bin/vite.js build",
+      "node scripts/check-studio-chunk.mjs"
+    ],
+    "adsTests": "NODE_OPTIONS=<customer isolated network guard preload> node scripts/test-platform-ads.mjs",
+    "temporaryMigration": "pocketbase migrate up --dir <disposable-db> --migrationsDir <disposable-migrations>"
+  },
+  "temporaryProjectionsCleanedUp": true
+}
