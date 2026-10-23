@@ -14,7 +14,11 @@ import {
 import { DigitalEmployeeApiError } from '../lib/digitalEmployeeApi.js';
 import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
-const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
+const pageShellSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
+const configuredWorkspaceSource = fs.readFileSync('src/components/ConfiguredDigitalEmployeeWorkspace.tsx', 'utf8');
+const pageSource = pageShellSource + '\n' + configuredWorkspaceSource;
+assert.match(pageShellSource, /if \(data\?\.config\) return <ConfiguredDigitalEmployeeWorkspace/, 'configured tenants must mount the extracted workspace');
+assert.match(pageShellSource, /ConfiguredDigitalEmployeeWorkspace, statusLabel/, 'assistant context and configured workspace must share one task status vocabulary');
 const weeklyStartValidationSource = fs.readFileSync('src/lib/weeklyStartValidation.ts', 'utf8');
 const weeklyStartConflictAlertSource = fs.readFileSync('src/components/WeeklyStartConflictAlert.tsx', 'utf8');
 const onboardingPanelSource = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeOnboardingPanel.tsx', 'utf8');
