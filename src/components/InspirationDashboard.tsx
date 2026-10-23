@@ -7,6 +7,7 @@ import { WatchModal, sourceEmbedUrl } from './inspiration/InspirationWatchModal'
 import { buildShootingNeeds } from './inspiration/inspirationShootingNeeds';
 import { InspirationShootingPanel } from './inspiration/InspirationShootingPanel';
 import InspirationImageCrawlDialog from './inspiration/InspirationImageCrawlDialog';
+import { createInspirationReferenceImporter } from './inspiration/inspirationReferenceImport';
 import InspirationVideoResults from './inspiration/InspirationVideoResults';
 import { MATERIAL_LIBRARY_FETCH_PAGE_SIZE, fetchCompleteProductMaterialInventory, fetchProductMaterialSummaries, type ProductMaterialSummary } from './inspiration/inspirationProductMaterialInventory';
 import { initialInspirationReferenceTarget, parseInspirationReferenceTarget, type InspirationReferenceTarget } from './inspiration/inspirationReferenceTarget';
@@ -702,69 +703,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     }
   };
 
-  const importReferenceVideo = async (file: File | undefined) => {
-    if (!file) return;
-    if (file.type !== 'video/mp4' && !/\.mp4$/i.test(file.name)) {
-      setMaterialMessage('对标视频请使用 MP4 文件');
-      return;
-    }
-    if (file.size > 32 * 1024 * 1024) {
-      setMaterialMessage('对标视频不能超过 32 MB');
-      return;
-    }
-    setImportingReference(true);
-    setMaterialMessage(`正在导入对标视频：${file.name}`);
-    try {
-      const params = new URLSearchParams({ title: file.name.replace(/\.mp4$/i, ''), platform: 'tiktok' });
-      const response = await fetch(`/api/overseas/videos/import-reference-file?${params}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'video/mp4', ...authHeader() },
-        body: file,
-      });
-      const result = await response.json().catch(() => ({})) as { id?: string; error?: string; deduplicated?: boolean; analysisQueued?: boolean };
-      if (!response.ok || !result.id) throw new Error(result.error || `导入失败（HTTP ${response.status}）`);
-      const recordId = result.id;
-      const readRecord = async (open = false) => {
-        const latestResponse = await fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}`, { headers: authHeader() });
-        if (!latestResponse.ok) throw new Error('对标视频记录读取失败');
-        const record = await latestResponse.json() as CrawlerRecord;
-        const video = recordsToVideos([record])[0];
-        if (!video) throw new Error('对标视频记录格式异常');
-        setCrawledVideos(items => [video, ...items.filter(item => item.id !== video.id)]);
-        setSelectedVideo(current => open || current?.id === video.id ? video : current);
-        return video;
-      };
-      await readRecord(true);
-      setMaterialMessage(result.deduplicated
-        ? result.analysisQueued
-          ? '已找到相同对标视频，并已重新提交全片逐镜分析。'
-          : '已找到相同对标视频，正在打开分析记录。'
-        : '对标视频已入库，正在进行全片逐镜分析。');
-      void refreshInventory();
-      void (async () => {
-        for (let attempt = 0; attempt < 120; attempt += 1) {
-          await new Promise(resolve => window.setTimeout(resolve, 3000));
-          try {
-            const latest = await readRecord();
-            const status = latest.aiAnalysis?.geminiStatus;
-            if (status === 'analyzed' || status === 'needs_review' || status === 'analysis_retryable' || status === 'video_failed' || latest.status === 'failed') {
-              setMaterialMessage(status === 'analyzed' ? '逐镜分析完成，请检查编导交接结果。' : '逐镜分析需要复核，请查看记录中的具体原因。');
-              void refreshVideos(1, true);
-              return;
-            }
-          } catch {
-            // A brief backend reload must not discard a queued import.
-          }
-        }
-        setMaterialMessage('分析仍在后台运行，请稍后刷新灵感大屏查看结果。');
-      })();
-    } catch (error) {
-      setMaterialMessage(error instanceof Error ? error.message : '对标视频导入失败');
-    } finally {
-      setImportingReference(false);
-      if (referenceUploadInputRef.current) referenceUploadInputRef.current.value = '';
-    }
-  };
+  const importReferenceVideo = createInspirationReferenceImporter({
+    setImportingReference, setMaterialMessage, setCrawledVideos, setSelectedVideo,
+    referenceUploadInputRef, refreshInventory, refreshVideos,
+  });
 
   useEffect(() => {
     setVideosLoaded(false);
