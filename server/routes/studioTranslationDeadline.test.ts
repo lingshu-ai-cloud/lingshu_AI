@@ -37,6 +37,14 @@ const apiAddress = apiServer.address();
 assert.ok(apiAddress && typeof apiAddress !== 'string');
 
 try {
+  const namesResponse = await fetch(`http://127.0.0.1:${apiAddress.port}/studio/speech-names`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ names: [], language: 'en' }),
+  });
+  assert.equal(namesResponse.status, 200);
+  assert.deepEqual(await namesResponse.json(), { ok: true, names: {} });
+
   const startedAt = Date.now();
   const response = await fetch(`http://127.0.0.1:${apiAddress.port}/studio/translate/batch`, {
     method: 'POST',
