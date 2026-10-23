@@ -1,3 +1,4 @@
+import {validProductionBudgetMaximum,validOriginalProductionBudget} from '../../shared/contracts/productionBudgetPolicy.js';
 import {readHeyGenPublishedTariff} from '../lib/heygenPublishedPricing.js';
 import {heyGenRuntimeRouteEvidence,readTrustedHeyGenRuntimeBinding,type TrustedHeyGenRuntimeBinding} from './socialContentHeyGenRuntimeBinding.js';
 import {readSeedreamPublishedTariff} from '../lib/seedreamPublishedPricing.js';
@@ -29,7 +30,7 @@ import { createSocialContentVerifiedTariffReader } from '../lib/socialContentVer
 import { SocialContentTaskBudget, type SocialTaskBudgetScope } from '../lib/socialContentTaskBudget.js';
 import {resolveSocialContentCostLineage} from './socialContentCostLineage.js';
 import {automaticallyConfirmPresenterFirstFrameApproval,readConfirmedPresenterFirstFrameApproval} from './socialContentPresenterFirstFrameApproval.js';
-import {isInternalBudgetExemptTenant} from '../lib/tenantBudgetExemption.js';
+import {productionBudgetDuration,productionBudgetLimitCny,productionBudgetExceeded,productionBudgetDecisionError} from '../../shared/contracts/productionBudgetPolicy.js';
 import {currentPresenterFirstFrameAssetProvenanceHash} from './socialContentPresenterFirstFrameRuntime.js';
 import {carryForwardWeeklyCandidateExactProductionCost} from '../runtime/weeklyCandidateExactProductionEscrowPorts.js';
 export interface ProductionBudgetReadPorts {
@@ -85,8 +86,8 @@ export interface ProductionBudgetPreflightInput {
 const STAGE = 'social.whole_film_budget';
 const error = (gap: string): never => { throw Error(`user_input_required:whole_film_budget_preflight:${gap}`); };
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
-export function formalPaidRouteExceedsInternalBudget(tenantId: string, amountCny: number, maximumCny: number) {
-    return !isInternalBudgetExemptTenant(tenantId) && (amountCny > maximumCny || amountCny > 10);
+export function formalPaidRouteExceedsInternalBudget(_tenantId: string, amountCny: number, maximumCny: number, durationSeconds = 30) {
+    return productionBudgetExceeded(amountCny,Math.min(productionBudgetLimitCny(durationSeconds),maximumCny));
 }
 async function readOrAutomaticallyConfirmPresenterFirstFrame(store:NonNullable<Starter198Repository['dataStore']>,scope:SocialTaskBudgetScope,group:FrozenPresenterGroup){const approvals=await store.list<any>('social_presenter_first_frame_approvals',{where:{tenant_id:scope.tenantId,task_id:scope.taskId,run_id:scope.runId,plan_hash:scope.planHash,group_id:group.groupId},perPage:2});if(approvals.totalItems!==1||approvals.items.length!==1)return null;const approval=approvals.items[0]?.payload;if(!approval?.qa?.passed||approval.presenterGroupContractHash!==group.contractHash||approval.presenter?.assetId!==group.presenterAssetId||approval.recordHash!==approvals.items[0]?.record_hash)return null;const expectedAssetProvenanceHash=await currentPresenterFirstFrameAssetProvenanceHash(store,{tenantId:scope.tenantId,approval});if(!expectedAssetProvenanceHash)return null;const query={scope,groupId:group.groupId,presenterGroupContractHash:group.contractHash,presenterAssetId:group.presenterAssetId,expectedAssetProvenanceHash};const existing=await readConfirmedPresenterFirstFrameApproval(store,query);if(existing)return existing;await automaticallyConfirmPresenterFirstFrameApproval(store,{scope,groupId:group.groupId,expectedRecordHash:approval.recordHash});return readConfirmedPresenterFirstFrameApproval(store,query);}
 const paidBaselineContractHash = (baseline: StoredSocialScriptBaseline) => socialRequestHash({
@@ -144,10 +145,8 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     const row = await requireSocialTask(input), brief = socialObject(socialJson(row.brief));
     if(input.repository.dataStore)await assertSocialContentOrderActive(input.repository.dataStore,input.tenantId,input.taskId);
     const footageRevision=socialObject(brief?._productFootageRevision);
-    // Historical frozen jobs retain their existing admission and recovery contracts.
-    if (!['type-aware.v1', 'type-aware.v2'].includes(String(brief?.materialRoutingPolicyVersion))&&!brief?._productionRevision&&!brief?._weeklyCreativeRepairProof&&!brief?._weeklyAuthority
-        &&!(footageRevision&&input.runId!==socialText(footageRevision.sourceRunId)))
-        return { status: 'legacy' as const };
+    // An unmarked historical task is not a free-production permission. It must
+    // recover its frozen reservation or pass the same complete plan preflight.
     const store = input.repository.dataStore;
     if (!store)
         return error('canonical_store_missing');
@@ -174,7 +173,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         ||socialRequestHash(plan)!==freeze.planHash||admission?.paidPlanFreezeHash!==freeze.recordHash
         ||admission?.canonicalPlanHash!==socialRequestHash(plan)||scope.tenantId!==input.tenantId
         ||scope.taskId!==input.taskId||scope.runId!==input.runId||scope.planHash!==plan.revisedPlanHash
-        ||scope.budgetTaskId!==undefined||plan.maximumCny!==10
+        ||scope.budgetTaskId!==undefined||!validProductionBudgetMaximum(plan.maximumCny,plan.productionDurationSeconds)
         ||adapter?.schemaVersion!=='social-product-footage-revision-production-budget.v1')
         return error('product_footage_revision_paid_plan_adapter_invalid');
       const requirements=Array.isArray(adapter.requirements)?adapter.requirements as PaidStageRequirement[]:[];
@@ -196,7 +195,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         quote:async()=>error('product_footage_revision_never_quotes'),assertCurrent:async()=>{},verifyRejection:async()=>false});
       const status=ledger.status(scope);
       const entries=status?.entries.filter(entry=>entry.runId===scope.runId&&entry.planHash===scope.planHash&&entry.status!=='rejected')??[];
-      if(!status||status.limitCny!==10||status.authorizedLimitCny!==10||status.hasCorrectionAuthorization
+      if(!status||!validOriginalProductionBudget(status)||status.hasCorrectionAuthorization
         ||entries.length!==operations.length||operations.some(operation=>{const entry=entries.find(row=>row.operationId===operation.operationId),quote=quotes[operation.operationId];return !entry||entry.fingerprint!==operation.fingerprint
           ||!quote||quote.quoteRef!==entry.quoteRef||Math.round(quote.upperBoundCny*1e6)!==entry.reservedMicros
           ||!Number.isFinite(Date.parse(quote.validUntil));}))
@@ -231,6 +230,8 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     const approved = input.graphApprovedContext?.agentWorkflow || detail.agentWorkflow, review = approved.executionPlanReview, plan = approved.executionPlan;
     if (!review.approved || review.executionPlanId !== plan.executionPlanId || review.executionPlanVersion !== plan.version || review.directorBriefId !== approved.directorBrief.directorBriefId || review.directorBriefVersion !== approved.directorBrief.version)
         return error('approved_review_changed');
+    const productionDurationSeconds=productionBudgetDuration({...brief,scenes:approved.directorBrief.scenes});
+    const policyMaximumCny=productionBudgetLimitCny(productionDurationSeconds);
     const baselineHash = socialRequestHash(input.baseline);
     if (socialRequestHash(socialJson(row.script_baseline)) !== baselineHash)
         return error('baseline_authority_changed');
@@ -275,7 +276,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     const exactCostWeeklyAuthority=socialObject(brief?._weeklyAuthority);
     if(exactCostWeeklyAuthority&&costLineage.kind==='original'){
       const preproductionBudget=new SocialContentTaskBudget(input.ports?.ledgerRoot,{
-        authorization:async()=>({maximumCny:Number(brief?.perItemBudgetCny),authorizationRef:`weekly-production:${socialRequestHash(exactCostWeeklyAuthority)}`}),
+        authorization:async()=>({productionDurationSeconds,maximumCny:policyMaximumCny,authorizationRef:`weekly-production:${socialRequestHash(exactCostWeeklyAuthority)}`}),
         quote:async()=>{throw Error('weekly_preproduction_carry_never_quotes');},assertCurrent,verifyRejection:async()=>false,
       });
       const carryMode=input.quoteOnly?'read':'carry';
@@ -321,6 +322,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         const status = ledger.status(scope);
         if (!status || !Array.isArray(payload.operationIds) || payload.operationIds.some(id => !status.entries.some(e => e.operationId === id && e.runId === scope.runId && e.planHash === scope.planHash)))
             return error('existing_reservation_corrupt');
+        if(productionBudgetExceeded(status.retainedCny,Math.min(policyMaximumCny,status.limitCny)))return error('production_budget_decision_required:recovery_total_exceeded');
         const frozenPlan = payload.plan as SocialApprovedBudgetPlan | undefined;
         const requirements = frozenRequirements;
         const routeBindings = socialObject(payload.routeBindings) as Record<string, BoundPaidRoute> | null;
@@ -440,7 +442,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         return error('selected_voice_runtime_route_missing');
     // Repair allowance bounds incremental work, not a new whole-film ceiling.
     // The original lower ceiling and every retained charge remain authoritative.
-    const amount = costLineage.kind==='creative_repair'?costLineage.originalMaximumCny??ledgerProbe?.limitCny??NaN:Number(brief?.perItemBudgetCny), retry = Number(brief?.retryReserveCny || 0);
+    const amount = Math.min(policyMaximumCny,costLineage.kind==='creative_repair'?costLineage.originalMaximumCny??ledgerProbe?.limitCny??NaN:policyMaximumCny), retry = Number(brief?.retryReserveCny || 0);
     if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(retry) || retry < 0)
         return error('task_budget_missing');
     const priorPlan = socialObject(priorPayload?.plan);
@@ -475,7 +477,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         automaticWeeklyG5=true;
       }
     }
-    const snapshot: FrozenPaidProduction = { scope, baselineHash, recordHash: '', approval: { approved: true, reviewRef: review.reviewId, sourceHash: '', planHash }, authorization: { ref: `task-budget:${socialRequestHash({ tenantId: input.tenantId, taskId: input.taskId, createdBy: row.created_by, budget: amount, retry })}`, maximumCny: Math.min(15, amount) }, maximumRetries: authorizedRetryShots.length ? 1 : 0, directedRetryShotIds: authorizedRetryShots,
+    const snapshot: FrozenPaidProduction = { scope, baselineHash, recordHash: '', approval: { approved: true, reviewRef: review.reviewId, sourceHash: '', planHash }, authorization: { ref: `task-budget:${socialRequestHash({ tenantId: input.tenantId, taskId: input.taskId, createdBy: row.created_by, budget: amount, retry })}`, productionDurationSeconds, maximumCny: amount }, maximumRetries: authorizedRetryShots.length ? 1 : 0, directedRetryShotIds: authorizedRetryShots,
         scenes:frozenScenes, presenterGroups, shots: input.supplyPlan.shots, assets: assetInputs, voice, finalReview: automaticWeeklyG5?'paid_capacity':'local' };
     if(costLineage.maximumAdditionalCostCny!==null)snapshot.authorization.maximumExecutionCny=costLineage.maximumAdditionalCostCny;
     snapshot.approval.sourceHash = paidProductionApprovalHash(snapshot);
@@ -487,7 +489,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
       if(!req.shotId)return null;const shot=input.supplyPlan!.shots.find(s=>s.shotId===req.shotId);
       if(!shot?.materialRouting||!shot.productSceneReplication)return null;
       await assertCurrent();
-      const value=await readProductReplacementRequestBounds({tenantId:input.tenantId,taskId:input.taskId,shotId:req.shotId,idempotencyKey:`budget-read:${planHash}:${req.shotId}`,spec:shot.productSceneReplication,materialRouting:shot.materialRouting,referenceImages:[],outputDirectory:os.tmpdir(),maximumCostCny:Math.min(15,amount)}, {
+      const value=await readProductReplacementRequestBounds({tenantId:input.tenantId,taskId:input.taskId,shotId:req.shotId,idempotencyKey:`budget-read:${planHash}:${req.shotId}`,spec:shot.productSceneReplication,materialRouting:shot.materialRouting,referenceImages:[],outputDirectory:os.tmpdir(),maximumCostCny:amount}, {
         dataStore:store,
         materials:input.repository.materialLibrary,
         assertCurrent,
@@ -556,7 +558,8 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     if (!planned.plan)
         return error(planned.gaps.join('|'));
     if (!planned.plan.paidOperations.length) {
-        if (input.quoteOnly) return {status: 'quoted' as const, scope, items: [], maximumCny: Math.min(15, amount, ledgerProbe?.limitCny ?? 15), retainedCny: ledgerProbe?.retainedCny || 0, wholeTaskUpperBoundCny: ledgerProbe?.retainedCny || 0};
+        if(!input.quoteOnly&&productionBudgetExceeded(ledgerProbe?.retainedCny??0,Math.min(amount,ledgerProbe?.limitCny??amount)))return error('production_budget_decision_required:local_repair_total_exceeded');
+        if (input.quoteOnly) return {status: 'quoted' as const, scope, items: [], maximumCny: Math.min(amount, ledgerProbe?.limitCny ?? amount), retainedCny: ledgerProbe?.retainedCny || 0, wholeTaskUpperBoundCny: ledgerProbe?.retainedCny || 0};
         return { status: 'local' as const, scope };
     }
     const reader = createSocialContentVerifiedTariffReader(store, input.tenantId);
@@ -584,29 +587,22 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
       upperBoundCny: quote.upperBoundCny,
       quoteRef: quote.quoteRef,
     }); });
-    const previewUpperBoundCny = previewItems.reduce((sum, item) => sum + item.upperBoundCny, 0);
     const retained = ledgerProbe?.retainedCny || 0;
     const existingOperationIds = new Set((ledgerProbe?.entries || []).filter(entry => entry.status !== 'rejected').map(entry => entry.operationId));
     const wholeTaskUpperBoundCny = retained + previewItems.filter(item => !existingOperationIds.has(item.operationId)).reduce((sum, item) => sum + item.upperBoundCny, 0);
-    const childRetained=(ledgerProbe?.entries||[]).filter(entry=>entry.executionTaskId===input.taskId&&entry.status!=='rejected').reduce((sum,entry)=>sum+entry.reservedMicros/1e6,0);
-    const internalBudgetExempt=isInternalBudgetExemptTenant(input.tenantId);
-    const revisionCeiling=internalBudgetExempt||costLineage.maximumAdditionalCostCny===null?Infinity:retained+costLineage.maximumAdditionalCostCny-childRetained;
+    const childRetained=(ledgerProbe?.entries||[]).filter(entry=>entry.executionTaskId===input.taskId&&entry.status!=='rejected'&&!entry.preproductionBinding).reduce((sum,entry)=>sum+entry.reservedMicros/1e6,0);
+
+    const revisionCeiling=costLineage.maximumAdditionalCostCny===null?Infinity:retained+costLineage.maximumAdditionalCostCny-childRetained;
     if (input.quoteOnly) return { status: 'quoted' as const, scope, items: previewItems,
-      maximumCny: internalBudgetExempt
-        ? Math.max(planned.plan.maximumCny,ledgerProbe?.limitCny??0,wholeTaskUpperBoundCny)
-        : Math.min(15, planned.plan.maximumCny, ledgerProbe?.limitCny ?? 15,revisionCeiling),
+      maximumCny: Math.min(amount, planned.plan.maximumCny, ledgerProbe?.limitCny ?? amount,revisionCeiling),
       retainedCny: retained, wholeTaskUpperBoundCny };
-    if(!internalBudgetExempt&&wholeTaskUpperBoundCny>revisionCeiling)return error('revision_incremental_allowance_exceeded');
-    if (formalPaidRouteExceedsInternalBudget(input.tenantId, wholeTaskUpperBoundCny, planned.plan.maximumCny)) {
-      const stageTotals = Object.entries(previewItems.reduce<Record<string, number>>((totals, item) => {
-        totals[item.stage] = (totals[item.stage] || 0) + item.upperBoundCny;
-        return totals;
-      }, {})).sort(([left], [right]) => left.localeCompare(right));
-      return error(`formal_paid_route_budget_exceeded:${previewUpperBoundCny.toFixed(6)}:${JSON.stringify(stageTotals)}`);
+    if(productionBudgetExceeded(wholeTaskUpperBoundCny,revisionCeiling===Infinity?Number.MAX_SAFE_INTEGER:revisionCeiling))return error('revision_incremental_allowance_exceeded');
+    if (formalPaidRouteExceedsInternalBudget(input.tenantId, wholeTaskUpperBoundCny, Math.min(planned.plan.maximumCny,ledgerProbe?.limitCny??amount),productionDurationSeconds)) {
+      return error('formal_paid_route_budget_exceeded:'+productionBudgetDecisionError({maximumCny:Math.min(amount,ledgerProbe?.limitCny??amount),retainedCny:retained,plannedAdditionalCny:wholeTaskUpperBoundCny-retained,totalCny:wholeTaskUpperBoundCny}).message);
     }
     const reserved = await authority.prepareAndReserve(scope);
     const formalPaidRouteUpperBoundCny=Object.values(reserved.quotes).reduce((sum,quote)=>sum+quote.upperBoundCny,0);
-    if(formalPaidRouteExceedsInternalBudget(input.tenantId, formalPaidRouteUpperBoundCny, planned.plan.maximumCny))
+    if(formalPaidRouteExceedsInternalBudget(input.tenantId, reserved.status.retainedCny, Math.min(planned.plan.maximumCny,reserved.status.limitCny),productionDurationSeconds))
       return error(`formal_paid_route_budget_exceeded:${formalPaidRouteUpperBoundCny.toFixed(6)}`);
     await recordCurrentContentExecutionCheckpoint({ stage: STAGE, version: '1', inputHash: planHash, payload: { scopeHash: paidProductionHash(scope), baselineHash,
       paidBaselineContractHash: paidBaselineContractHash(input.baseline), presenterVoiceBinding:voice.presenterBinding || null, operationIds: reserved.operations.map(o => o.operationId), requirements: planned.requirements, routeBindings, quotes: reserved.quotes, formalPaidRouteUpperBoundCny, wholeTaskRetainedCny:reserved.status.retainedCny, plan: planned.plan } });

@@ -48,7 +48,7 @@ async function prepared(t:TestContext,{receipt=true,priorCost=0}={}){
  return{...f,root,budgetRoot,scope,taskRow,budget,handle,candidate,settled,call:(extra={})=>carryForwardWeeklyCandidateExactProductionCost({store:f.store,escrowRoot:root,scope,taskRow,budget,mode:'carry',...extra})};
 }
 
-test('settled exact cost lands in the original ten-yuan ledger before source escrow is marked and replays idempotently',async t=>{const f=await prepared(t);const value=await f.call();assert.equal(value?.retainedUpperBoundCny,2);assert.equal(f.budget.status(f.scope)?.retainedCny,2);assert.equal(f.budget.status(f.scope)?.entries[0]?.status,'completed');assert.equal((await f.handle.status()).entries[f.candidate.operationId]?.state,'carried_forward');assert.deepEqual(await f.call(),value);assert.equal(f.budget.status(f.scope)?.entries.length,1);});
+test('settled exact cost lands in the original ten-yuan ledger before source escrow is marked and replays idempotently',async t=>{const f=await prepared(t);const value=await f.call();assert.equal(value?.retainedUpperBoundCny,2);assert.equal(f.budget.status(f.scope)?.retainedCny,0);assert.equal(f.budget.status(f.scope)?.entries[0]?.status,'completed');assert.equal((await f.handle.status()).entries[f.candidate.operationId]?.state,'carried_forward');assert.deepEqual(await f.call(),value);assert.equal(f.budget.status(f.scope)?.entries.length,1);});
 
 test('restart between target fsync and source marker reuses one target charge then completes the marker',async t=>{const f=await prepared(t);await assert.rejects(f.call({afterTargetWrite:async()=>{throw Error('simulated-crash')}}),/simulated-crash/);assert.equal(f.budget.status(f.scope)?.entries.length,1);assert.equal((await f.handle.status()).entries[f.candidate.operationId]?.state,'reserved');await f.call();assert.equal(f.budget.status(f.scope)?.entries.length,1);assert.equal((await f.handle.status()).entries[f.candidate.operationId]?.state,'carried_forward');});
 
@@ -56,7 +56,7 @@ test('concurrent workers cannot double charge and a losing worker safely replays
 
 test('missing or drifting settlement evidence never writes either side',async t=>{const missing=await prepared(t,{receipt:false});await assert.rejects(missing.call(),/settled_receipt_invalid/);assert.equal(missing.budget.status(missing.scope),null);assert.equal((await missing.handle.status()).entries[missing.candidate.operationId]?.state,'reserved');const changed=await prepared(t);const row=await changed.store.getById<any>(WEEKLY_CANDIDATE_EXACT_ANALYSIS_RECEIPTS,changed.candidate.operationId);await changed.store.update(WEEKLY_CANDIDATE_EXACT_ANALYSIS_RECEIPTS,changed.candidate.operationId,{payload:{...row!.payload,recordedUpperBoundCny:3}});await assert.rejects(changed.call(),/settled_receipt_invalid/);assert.equal(changed.budget.status(changed.scope),null);assert.equal((await changed.handle.status()).entries[changed.candidate.operationId]?.state,'reserved');});
 
-test('preproduction plus existing production spend cannot exceed the original ten yuan',async t=>{const f=await prepared(t,{priorCost:9});await assert.rejects(f.call(),/social_task_budget_exceeded/);assert.equal(f.budget.status(f.scope)?.retainedCny,9);assert.equal(f.budget.status(f.scope)?.entries.length,1);assert.equal((await f.handle.status()).entries[f.candidate.operationId]?.state,'reserved');});
+test('settled collection stays separate from already retained production spend',async t=>{const f=await prepared(t,{priorCost:9});await f.call();assert.equal(f.budget.status(f.scope)?.retainedCny,9);assert.equal(f.budget.status(f.scope)?.acquisitionCny,2);assert.equal(f.budget.status(f.scope)?.entries.length,2);assert.equal((await f.handle.status()).entries[f.candidate.operationId]?.state,'carried_forward');});
 
 test('quote-only verification is pure read and projects the settled upper bound',async t=>{const f=await prepared(t);const before=fs.readdirSync(f.root,{recursive:true}).map(String).sort();const value=await carryForwardWeeklyCandidateExactProductionCost({store:f.store,escrowRoot:f.root,scope:f.scope,taskRow:f.taskRow,budget:f.budget,mode:'read'});assert.equal(value?.retainedUpperBoundCny,2);assert.equal(f.budget.status(f.scope),null);assert.equal((await f.handle.status()).entries[f.candidate.operationId]?.state,'reserved');assert.deepEqual(fs.readdirSync(f.root,{recursive:true}).map(String).sort(),before);});
 
@@ -137,8 +137,8 @@ test('v2 quote is byte-pure, missing audit is null, wrong key and over-budget fa
   mode:'read',integrityKey:f.integrityKey,headAnchor:f.headAnchor,auditReader:{readOriginalAuditRequest:async()=>null}}),null);
  await assert.rejects(carryForwardWeeklyCandidateExactProductionCostV2({store:f.store,exactRoot:f.root,scope:f.scope,taskRow:f.taskRow,budget:f.budget,
   mode:'carry',integrityKey:'wrong-key',headAnchor:f.headAnchor,auditReader:f.auditReader}),/integrity_key_invalid/);
- const over=await preparedV2(t,{priorCost:10});await assert.rejects(over.call(),/social_task_budget_exceeded/);
- assert.equal(over.handle.readOnlyStatus().entries[over.candidate.operationId]?.state,'reserved');
+ const over=await preparedV2(t,{priorCost:10});await over.call();assert.equal(over.budget.status(over.scope)?.retainedCny,10);
+ assert.equal(over.handle.readOnlyStatus().entries[over.candidate.operationId]?.state,'carried_forward');
 });
 
 test('v2 concurrent carry is single-charge and mapping or marker drift fails closed',async t=>{

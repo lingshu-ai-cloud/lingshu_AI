@@ -1,3 +1,5 @@
+import { assertSocialPresenterRouteAvailable } from './socialContentPresenterRouteAdmission.js';
+import { completeSocialCacheFinalization } from './socialContentCacheFinalization.js';
 import type { runSocialContentAutoProduction } from './socialContentProductionExecution.js';
 import { assertStoredWeeklyProductionCoverage } from '../runtime/weeklyProductionCoverageAdmission.js';
 import { objectStorageEnabled } from '../storage/objectStorage.js';
@@ -94,6 +96,10 @@ export async function admitSocialContentProduction(input: Input) {
       && socialObject(artifact.content?.productionWorkspaceSource)?.runId === input.runId);
   }
   if (!revisionParent && existing) {
+    if (admissionAuthority && existing.content?.initialSceneCacheInput && detail.referenceVideoAnalysis) {
+      await completeSocialCacheFinalization({ repository: input.repository, tenantId: input.tenantId,
+        taskId: input.taskId, runId: input.runId, artifactId: existing.artifactId });
+    }
     if (!input.graphPhase) {
       if (productionApproach === 'shooting_plan') {
         await finishShootingPlanExecution({ ...input, backendFilePort: input.runtime?.backendFilePort }, existing.artifactId);
@@ -113,6 +119,8 @@ export async function admitSocialContentProduction(input: Input) {
       || '内容执行方案尚未通过编导逐镜审核';
     throw new Error(`user_input_required:${required}`);
   }
+  if (productionApproach !== 'shooting_plan' && detail.assetSupplyPlan) assertSocialPresenterRouteAvailable({
+    ...detail.assetSupplyPlan, shots: detail.assetSupplyPlan.shots.filter(shot => shot.digitalHumanPlan?.method !== 'reenact') });
   let presenterExecutions: ReturnType<typeof selectPresenterExecutions> = [];
   if (detail.brief.creationMode === 'viral_replication') {
     if (agentWorkflow.directorBrief.scenes.some(scene => scene.productionRouting?.needsPreciseLipSync
@@ -161,6 +169,9 @@ export async function admitSocialContentProduction(input: Input) {
       }
     }
   }
+  if (productionApproach !== 'shooting_plan') assertSocialPresenterRouteAvailable(detail.assetSupplyPlan,
+    new Set(presenterExecutions.filter(item => item.executionStatus === 'ready' && item.providerId === 'seedance'
+      && item.decision.measurements.lipSyncRequired === false).map(item => item.sceneId)));
   await writeExecutionStage({ ...input, stage: 'execution_plan_approved',
     message: '内容 Agent 已提交逐镜执行方案，编导 Agent 自动审核通过，开始锁定并执行。',
     extra: { agentWorkflowSchema: agentWorkflow.schemaVersion,

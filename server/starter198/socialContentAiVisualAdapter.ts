@@ -13,7 +13,6 @@ import type {
   SocialAssetSupplyAdapterResult,
   SocialAssetSupplyProviderAdapter,
 } from './socialContentAssetSupplyExecution.js';
-import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 
 export interface SocialAiVisualGeneratedMedia {
   type: 'image' | 'video';
@@ -53,7 +52,7 @@ export interface SocialAiVisualAdapterOptions {
 
 export function aiVisualExceedsInternalBudget(tenantId: string, amountCny: number, maximumCostCny: number): boolean {
   if (!Number.isFinite(amountCny) || amountCny < 0 || !Number.isFinite(maximumCostCny) || maximumCostCny < 0) return true;
-  return !isInternalBudgetExemptTenant(tenantId) && amountCny > maximumCostCny;
+  return amountCny > maximumCostCny;
 }
 
 function compact(value: unknown, max = 240): string {

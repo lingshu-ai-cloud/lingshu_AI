@@ -17,7 +17,7 @@ const sha = (x: Buffer | string) => createHash('sha256').update(x).digest('hex')
 test('product replacement per-shot amount gate is exempt only for Aurelia', () => {
  const configured=process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
  try{process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS='local_tenant_customer_aurelia_beauty';
-  assert.equal(productReplacementExceedsInternalBudget('local_tenant_customer_aurelia_beauty',12,10),false);
+  assert.equal(productReplacementExceedsInternalBudget('local_tenant_customer_aurelia_beauty',12,10),true);
   assert.equal(productReplacementExceedsInternalBudget('tenant',12,10),true);
  }finally{if(configured===undefined)delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS=configured;}
 });
@@ -192,7 +192,7 @@ test('environment ports integrate actual extraction, exact budget grants, provid
     if (result.status !== 'completed') throw Error('unexpected');
     const budgetDirectory = path.join(path.dirname(f.context.budgetRoot!), 'social-content-task-budget');
     const ledger = JSON.parse(fs.readFileSync(path.join(budgetDirectory, fs.readdirSync(budgetDirectory).find(n => n.endsWith('.json'))!), 'utf8'));
-    assert.equal(ledger.limitMicros, 10000000);
+    assert.equal(ledger.limitMicros, 15000000);
     assert.equal(Object.values(ledger.entries).reduce((total: number, e: any) => total + e.reservedMicros, 0), 4800000, 'both QA stages count against the whole-film ceiling');
     assert.equal(result.duration, 3); assert.equal(result.actualCostCny, null); assert.equal(result.estimatedCostCny, 4.8);
     const evidence = result.quality.evidenceRefs.filter(ref => ref.endsWith('.json'));

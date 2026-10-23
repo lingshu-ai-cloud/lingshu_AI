@@ -84,16 +84,16 @@ test('four platform nodes consume one real frozen original script without restar
 });
 test('adopted per-video template refuses an existing over-cap production instead of restarting it',async()=>{
  const f=await fixture();const {adoptWeeklyAutomationTemplate}=await import('../socialPrograms/weeklyAutomationTemplate.js');
- await adoptWeeklyAutomationTemplate(f.store,f.task,'owner');f.set({brief:{...f.brief,productRef:null,audience:null,aspectRatio:null,cadence:null,dueAt:null,brandNotes:null,callToAction:'Contact us',perItemBudgetCny:10.01}});
- const result=await f.adapter.execute(f.task);assert.equal(result.status,'blocked');assert.equal(result.status==='blocked'?result.code:'','weekly_existing_production_budget_exceeds_template');
- if(result.status==='blocked')assert.match(result.message,/10元.*增加预算或采用降级方案/);
+ await adoptWeeklyAutomationTemplate(f.store,f.task,'owner');f.set({brief:{...f.brief,productRef:null,audience:null,aspectRatio:null,cadence:null,dueAt:null,brandNotes:null,callToAction:'Contact us',perItemBudgetCny:15.01}});
+ const result=await f.adapter.execute(f.task);assert.equal(result.status,'blocked');assert.equal(result.status==='blocked'?result.code:'','weekly_existing_production_budget_exceeds_policy');
+ if(result.status==='blocked')assert.match(result.message,/每30秒15元.*降级或停止/);
  assert.equal(f.starts(),0);
 });
-test('adopted per-video template admits the exact ten-yuan boundary without another budget confirmation',async()=>{
+test('adopted per-video template admits the exact fifteen-yuan boundary without another budget confirmation',async()=>{
  const f=await fixture();const {adoptWeeklyAutomationTemplate}=await import('../socialPrograms/weeklyAutomationTemplate.js');
- await adoptWeeklyAutomationTemplate(f.store,f.task,'owner');f.set({brief:{...f.brief,perItemBudgetCny:10} as any});
+ await adoptWeeklyAutomationTemplate(f.store,f.task,'owner');f.set({brief:{...f.brief,perItemBudgetCny:15} as any});
  const result=await f.adapter.execute(f.task);
- assert.notEqual(result.status==='blocked'?result.code:'','weekly_existing_production_budget_exceeds_template');
+ assert.notEqual(result.status==='blocked'?result.code:'','weekly_existing_production_budget_exceeds_policy');
 });
 test('legacy generic readiness cannot prove frozen material admission even with a running identity',async()=>{
   const f=await fixture();f.task.schedule.stepKind='material_readiness';

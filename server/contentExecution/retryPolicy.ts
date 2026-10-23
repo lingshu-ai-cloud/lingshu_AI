@@ -1,3 +1,4 @@
+import {isProductionBudgetBlock,PRODUCTION_BUDGET_DECISION_MESSAGE} from '../../shared/contracts/productionBudgetPolicy.js';
 export type ContentExecutionFailureClass =
   | 'network_timeout'
   | 'insufficient_balance'
@@ -45,6 +46,10 @@ export function classifyContentExecutionFailure(error: unknown, input: {
       publicReason: input.attempt >= reconciliationAttempts ? '供应商任务需要人工确认' : '供应商已受理，正在对账',
     };
   }
+  if(isProductionBudgetBlock(raw))return {
+    failureClass:'input_required',disposition:'block',retryDelayMs:null,maxAttempts:1,
+    publicReason:PRODUCTION_BUDGET_DECISION_MESSAGE,
+  };
   if (/insufficient[_\s-]*(?:balance|credit)|余额不足|quota[_\s-]*(?:exceeded|insufficient)|monthly_budget_exceeded|budget_denied|budget_unavailable|预算不足/i.test(lower)) {
     return {
       failureClass: 'insufficient_balance', disposition: 'block', retryDelayMs: null,

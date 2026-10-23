@@ -1,3 +1,4 @@
+import { createSocialSceneReworkService } from './socialContentSceneReworkService.js';
 import {readGraphContextSnapshot,compactGraphContextSnapshot} from './socialContentGraphContextSnapshots.js';
 import {readBoundPresenterVoice} from './socialContentBoundPresenterVoice.js';
 import {SocialContentTaskBudget} from '../lib/socialContentTaskBudget.js';
@@ -196,7 +197,14 @@ async function productionArtifact(repository: Starter198Repository, job: Content
       && !['superseded', 'changes_requested', 'rejected'].includes(String(row.status));
   });
   if (candidates.length !== 1) throw new Error('user_input_required:graph_production_artifact_not_unique');
-  return candidates[0]!;
+  const artifact = candidates[0]!;
+  const content = socialObject(socialJson(artifact.content));
+  if (job.taskType === 'social_content_weekly' && content?.initialSceneCacheInput) {
+    try { await createSocialSceneReworkService(repository).readCache({ tenantId: job.tenantId,
+      taskId: job.taskId, runId: job.runId, parentArtifactId: socialText(artifact.artifact_id) }); }
+    catch { throw Error('user_input_required:weekly_scene_cache_finalization_required'); }
+  }
+  return artifact;
 }
 
 function artifactEvidence(row: StarterRecord) {

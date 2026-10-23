@@ -21,7 +21,6 @@ import type {
 } from './socialContentDigitalPresenterAdapter.js';
 import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
 import { recordCurrentContentProviderReceipt, ContentExecutionStoppedError } from '../contentExecution/context.js';
-import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 
 type PresenterRecord = Record<string, unknown> & {
   id?: string; name?: string; authorized?: boolean; assetVersion?: number;
@@ -32,9 +31,9 @@ type PresenterRecord = Record<string, unknown> & {
 };
 
 export function socialPresenterReservationExceedsInternalBudget(
-  tenantId: string, reservationCny: number, maximumCostCny: number,
+  _tenantId: string, reservationCny: number, maximumCostCny: number,
 ): boolean {
-  return !isInternalBudgetExemptTenant(tenantId) && reservationCny > maximumCostCny;
+  return reservationCny > maximumCostCny;
 }
 
 export interface SocialHeyGenPresenterAudit {

@@ -1,3 +1,4 @@
+import {productionBudgetExceeded,productionBudgetDecisionError} from '../../shared/contracts/productionBudgetPolicy.js';
 import {createHash} from 'node:crypto';
 import type {SocialAssetSupplyPlan, SocialAssetSupplyShotPlan} from '../../shared/contracts/socialContentReplication.js';
 import {hasVerifiedSameClassSocialLocalMatch} from '../../shared/socialContentMaterialRouting.js';
@@ -56,7 +57,7 @@ function generationShot(original:SocialAssetSupplyShotPlan,reason:string):Social
 export async function applyPresenterFirstBudgetRouting(input:{plan:SocialAssetSupplyPlan;workflow:Workflow;maximumCny:number;
   quote:(plan:SocialAssetSupplyPlan)=>Promise<SocialWholeFilmRouteQuote>}):Promise<SocialAssetSupplyPlan>{
   if(!Number.isFinite(input.maximumCny)||input.maximumCny<=0)fail('maximum_missing');
-  const maximum=Math.min(15,input.maximumCny),original=structuredClone(input.plan),plan=structuredClone(input.plan);
+  const maximum=input.maximumCny,original=structuredClone(input.plan),plan=structuredClone(input.plan);
   const scenes=new Map(input.workflow.directorBrief.scenes.map(scene=>[scene.sceneId,scene]));
   if(scenes.size!==original.shots.length||new Set(original.shots.map(s=>s.shotId)).size!==original.shots.length)fail('scene_mapping_invalid');
   const upgrades:string[]=[];
@@ -87,13 +88,13 @@ export async function applyPresenterFirstBudgetRouting(input:{plan:SocialAssetSu
     return {...q,maximumCny:Math.min(maximum,q.maximumCny)};
   };
   let quote=await readQuote(plan);
-  if(quote.wholeTaskUpperBoundCny>quote.maximumCny+1e-6)fail(`mandatory_plan_exceeds_budget:${quote.wholeTaskUpperBoundCny}:${quote.maximumCny}`);
+  if(productionBudgetExceeded(quote.wholeTaskUpperBoundCny,quote.maximumCny))fail(`mandatory_plan_exceeds_budget:${quote.wholeTaskUpperBoundCny}:${quote.maximumCny}:`+productionBudgetDecisionError({maximumCny:quote.maximumCny,retainedCny:quote.retainedCny??0,plannedAdditionalCny:quote.wholeTaskUpperBoundCny-(quote.retainedCny??0),totalCny:quote.wholeTaskUpperBoundCny}).message);
   for(const shotId of upgrades){
     const candidate=structuredClone(plan),index=candidate.shots.findIndex(shot=>shot.shotId===shotId);
     candidate.shots[index]=generationShot(original.shots.find(shot=>shot.shotId===shotId)!,'关键产品镜头，在真人和整片必要费用后的真实余量内升级。');
     try{
       const proposed=await readQuote(candidate);
-      if(proposed.wholeTaskUpperBoundCny>proposed.maximumCny+1e-6){
+      if(productionBudgetExceeded(proposed.wholeTaskUpperBoundCny,proposed.maximumCny)){
         plan.shots[index]!.materialRouting!.productGenerationDecision!.reason='关键产品生成整片报价超过剩余额度，保留同SKU本地素材。';
         continue;
       }

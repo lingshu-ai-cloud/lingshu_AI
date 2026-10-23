@@ -1,3 +1,4 @@
+import {validProductionBudgetMaximum,validOriginalProductionBudget} from '../../shared/contracts/productionBudgetPolicy.js';
 import { SocialContentTaskBudget, type SocialTaskBudgetScope } from '../lib/socialContentTaskBudget.js';
 import { socialPaidIntentOperation,
   type SocialApprovedBudgetPlan } from '../lib/socialContentTaskBudgetAuthority.js';
@@ -118,7 +119,7 @@ export async function admitSocialProductFootageRevisionWorker(input: {
       if (socialRequestHash(canonical) !== socialRequestHash(frozenPlan)
         || canonical.scope.tenantId !== scope.tenantId || canonical.scope.taskId !== scope.taskId
         || canonical.scope.runId !== scope.runId || canonical.scope.planHash !== scope.planHash
-        || canonical.scope.budgetTaskId !== undefined || canonical.maximumCny !== 10
+        || canonical.scope.budgetTaskId !== undefined || !validProductionBudgetMaximum(canonical.maximumCny,canonical.productionDurationSeconds)
         || canonical.authorizationRef !== `footage-revision:${authority.guard.recordHash}`
         || canonical.revisionGuardHash !== authority.guard.recordHash
         || canonical.revisedPlanHash !== scope.planHash
@@ -139,8 +140,8 @@ export async function admitSocialProductFootageRevisionWorker(input: {
         quote: async () => fail('read_only'), assertCurrent: async () => fail('read_only'),
         verifyRejection: async () => false });
       const budget = ledger.status(scope);
-      if (!budget || budget.limitCny !== 10 || budget.authorizedLimitCny !== 10
-        || budget.hasCorrectionAuthorization || budget.retainedCny > 10
+      if (!budget || !validOriginalProductionBudget(budget)
+        || budget.hasCorrectionAuthorization || budget.retainedCny>budget.limitCny
         || budget.entries.some(entry => (entry.executionTaskId ?? scope.taskId) !== scope.taskId))
         return fail('ten_yuan_ledger_invalid');
       const entries = budget.entries.filter(entry => entry.runId === scope.runId && entry.status !== 'rejected');

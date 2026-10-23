@@ -1,3 +1,4 @@
+import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   SOCIAL_ASSET_AVAILABILITIES,
@@ -254,7 +255,7 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     cadence: optionalText(source.cadence, 'social_content_cadence_invalid', 200),
     requestedOutputCount: mode === 'instant' ? 1 : requestedOutputCount,
     weeklyBudgetCny: optionalNumber(source.weeklyBudgetCny, 'social_content_weekly_budget_invalid', 10_000_000),
-    perItemBudgetCny: Math.min(15, optionalNumber(source.perItemBudgetCny, 'social_content_item_budget_invalid', 1_000_000) ?? 15),
+    perItemBudgetCny: productionBudgetLimitCny(productionBudgetDuration({targetDurationSeconds})),
     targetDurationSeconds,
     retryReserveCny: optionalNumber(source.retryReserveCny, 'social_content_retry_reserve_invalid', 10_000_000),
     planningMode: planningMode as CreateSocialContentTaskInput['planningMode'],

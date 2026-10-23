@@ -125,3 +125,12 @@ test('corrected execution context requires exact grant, parent plan and persiste
  assert.equal(matchesAuthorizedCorrectionContext(job,context,'f'.repeat(64),grantHash),false);
  assert.equal(matchesAuthorizedCorrectionContext(job,{...context,version:'3'},parent.inputHash,grantHash),false);
 });
+
+
+test('a weekly artifact paused at review cannot bypass missing cache finalization',async()=>{
+ const row={origin:'agent',artifact_kind:'short_video',status:'review_required',artifact_id:'artifact',
+   content:{productionWorkspaceSource:{runId:'run'},initialSceneCacheInput:{schemaVersion:'initial-scene-cache-input.v1'}}};
+ const repository={list:async(collection:string)=>({items:collection===STARTER_COLLECTIONS.socialContentArtifacts?[row]:[],totalItems:collection===STARTER_COLLECTIONS.socialContentArtifacts?1:0}),
+   dataStore:{list:async()=>({items:[],totalItems:0,totalPages:0,page:1,perPage:2})}} as any;
+ await assert.rejects(loadSocialProductionGraphApproval(repository,{tenantId:'t',taskId:'content',runId:'run',taskType:'social_content_weekly',checkpoints:{}} as any),/weekly_scene_cache_finalization_required/);
+});

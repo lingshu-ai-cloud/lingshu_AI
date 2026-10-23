@@ -1,3 +1,4 @@
+import {PRODUCTION_BUDGET_POLICY} from '../../shared/contracts/productionBudgetPolicy.js';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import type {WeeklyOperatingPackage,WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
 import {WEEKLY_AUTOMATION_TEMPLATE} from '../../shared/weeklyAutomationTemplate.js';
@@ -19,11 +20,11 @@ import {createWeeklyExecutionPipelineService} from './weeklyExecutionPipeline.js
 import type {WeeklyAutomaticExecutionScope} from './weeklyAutomaticScheduleFlow.js';
 
 export const WEEKLY_BUDGET_POLICY_MIGRATIONS='social_weekly_budget_policy_migrations';
-const POLICY='weekly-per-film-10.v1' as const;
+const POLICY=PRODUCTION_BUDGET_POLICY;
 type Scope=WeeklyAutomaticExecutionScope;
 export interface WeeklyBudgetPolicyMigrationReceipt {
  schemaVersion:'weekly-budget-policy-migration.v1';migrationId:string;source:Scope;sourceWeekStart:string;
- sourcePackageHash:string;sourceTaskHash:string;weeklyBudgetCny:number;perItemBudgetCny:number;policy:typeof POLICY;
+ sourcePackageHash:string;sourceTaskHash:string;weeklyBudgetCny:number;perItemBudgetCny:number;policy:typeof POLICY|'weekly-per-film-10.v1';
  state:'planned'|'revised'|'schedule_blocked'|'activating_independent'|'independent_active'|'scheduled';revisedVersion:number|null;targetVersion:number|null;
  createdAt:string;updatedAt:string;activationGraphHash?:string;recordHash:string;
 }
@@ -43,7 +44,7 @@ const seal=(value:Omit<WeeklyBudgetPolicyMigrationReceipt,'recordHash'>|WeeklyBu
 };
 function checked(row:Record_):WeeklyBudgetPolicyMigrationReceipt{
  const r=row.payload as WeeklyBudgetPolicyMigrationReceipt;
- if(!r||r.schemaVersion!=='weekly-budget-policy-migration.v1'||r.policy!==POLICY||r.migrationId!==row.id||r.recordHash!==seal(r).recordHash||r.recordHash!==row.record_hash||r.source.tenantId!==row.tenant_id||r.source.programId!==row.program_id||r.source.packageId!==row.package_id||r.source.packageVersion!==row.package_version)fail('weekly_budget_migration_receipt_corrupt');
+ if(!r||r.schemaVersion!=='weekly-budget-policy-migration.v1'||![POLICY,'weekly-per-film-10.v1'].includes(r.policy)||r.migrationId!==row.id||r.recordHash!==seal(r).recordHash||r.recordHash!==row.record_hash||r.source.tenantId!==row.tenant_id||r.source.programId!==row.program_id||r.source.packageId!==row.package_id||r.source.packageVersion!==row.package_version)fail('weekly_budget_migration_receipt_corrupt');
  return r;
 }
 async function rows(store:DataStore,collection:string,where:Record<string,string|number>){
@@ -191,7 +192,7 @@ export async function activateWeeklyBudgetIndependentPreproduction(store:DataSto
   })();
   if(!admitted)fail('weekly_budget_migration_independent_admission_missing');
   const adoption=await readWeeklyAutomationTemplate(store,revisedScope);
-  if(!adoption||adoption.userApproval!==null||adoption.template.perFinishedVideoMaxCny!==receipt.perItemBudgetCny||adoption.template.outboundAuthorization!==false)fail('weekly_budget_migration_template_adoption_missing');
+  if(!adoption||adoption.userApproval!==null||adoption.template.perFinishedVideoMaxCny<receipt.perItemBudgetCny||adoption.template.outboundAuthorization!==false)fail('weekly_budget_migration_template_adoption_missing');
   // Diagnostic only. The producer rechecks and reserves under the durable quota
   // lease before every paid crawl; zero quota must never be promoted to a new
   // grant merely because this independent branch is activated. Same-day

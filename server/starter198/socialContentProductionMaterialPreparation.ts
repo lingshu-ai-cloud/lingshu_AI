@@ -1,7 +1,8 @@
+import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
+import { assertSocialPresenterRouteAvailable } from './socialContentPresenterRouteAdmission.js';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type {SocialAssetSupplyPlan} from '../../shared/contracts/socialContentWorkflow.js';
-import {isInternalBudgetExemptTenant} from '../lib/tenantBudgetExemption.js';
 import {applyPresenterFirstBudgetDegradation} from './socialContentBudgetDegradation.js';
 import {assetSupplyPlanWithExecutionSelections,assertCompleteTypeAwareExecutionPlan} from './socialContentExecutionPlan.js';
 import {assetSupplyPlanWithDynamicPresenterBackgroundLocks,typeAwareRequiredMaterialIds,rebindDivergentLocalRoutesFromApprovedContext} from './socialContentProductionRouting.js';
@@ -38,9 +39,8 @@ export async function prepareSocialProductionMaterialRouting(input:{
 	    ? assetSupplyPlanWithExecutionSelections(detail.assetSupplyPlan, agentWorkflow)
 	    : null;
 	  let reviewedSupplyPlan = selectedSupplyPlan && detail.brief.materialRoutingPolicyVersion==='type-aware.v1'
-	    && !isInternalBudgetExemptTenant(input.tenantId)
 	    ? applyPresenterFirstBudgetDegradation({plan:selectedSupplyPlan,workflow:agentWorkflow,
-	      maximumCny:Math.min(10,Number(detail.brief.perItemBudgetCny)||10)})
+	      maximumCny:productionBudgetLimitCny(productionBudgetDuration({...detail.brief,scenes:agentWorkflow.directorBrief.scenes}))})
 	    : selectedSupplyPlan;
     if(reviewedSupplyPlan){
       reviewedSupplyPlan={...reviewedSupplyPlan,shots:reviewedSupplyPlan.shots.map(shot=>{
@@ -57,6 +57,7 @@ export async function prepareSocialProductionMaterialRouting(input:{
         referenceReuse:detail.brief.referenceReuse,referenceAnalysis:detail.referenceVideoAnalysis,
         scenes:agentWorkflow.directorBrief.scenes});
     }
+  if (productionApproach !== 'shooting_plan') assertSocialPresenterRouteAvailable(reviewedSupplyPlan);
 	  const rawAssets = await (input.runtime?.loadProductionAssets ?? taskProductionAssets)({
 	    tenantId: input.tenantId,
 	    sources: detail.sources,

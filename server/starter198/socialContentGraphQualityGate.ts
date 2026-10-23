@@ -26,6 +26,29 @@ export function socialReplicationHardQualityFailures(rawEvaluation: unknown): st
   return failures;
 }
 
+export function hasSocialMeasuredMediaHardFailure(rawProbe: unknown): boolean {
+  const probe = object(rawProbe);
+  if (probe.version === 'scene-media-hard-probe.v1') {
+    const probedScenes = Array.isArray(probe.scenes) ? probe.scenes.map(object) : [];
+    if (probe.formatPassed === false || probe.container === 'unknown'
+      || (typeof probe.videoCodec === 'string' && probe.videoCodec !== 'h264')
+      || (typeof probe.audioCodec === 'string' && probe.audioCodec !== 'aac')
+      || object(probe.captionTimeline).status === 'invalid'
+      || object(probe.captionSpeechAlignment).status === 'mismatch'
+      || object(probe.fullFrozenAudioIdentity).status === 'failed'
+      || hasKnownFinalSensitiveFrameFailure(probe.finalSensitiveFrameAudit, probe.mediaSha256)
+      || object(probe.sensitiveFrozenSpeechEvidence).status === 'hit'
+      || hasKnownCaptionMaskFailure(probe.captionMaskAudit)
+      || hasKnownFinalMediaCoverageFailure(probe.finalPrivacyCoverage)
+      || probedScenes.some(scene => scene.durationPassed === false
+        || scene.audioWindowDecoded === false
+        || object(scene.audioIdentity).status === 'failed'
+        || object(scene.sensitiveScreenEvidence).status === 'hit'))
+      return true;
+  }
+  return false;
+}
+
 /** A rendered file is not an internally accepted film. This is the boundary
  * between the recoverable quality node and the final human-review interrupt. */
 export function socialContentGraphQualityFailures(rawContent: unknown): string[] {
@@ -63,24 +86,7 @@ export function socialContentGraphQualityFailures(rawContent: unknown): string[]
   // A later aggregate review cannot erase a defect measured on the frozen film.
   // An unknown probe is not a positive G4 finding; it remains governed by the
   // independent scene/quality admissions rather than being treated as a pass here.
-  if (probe.version === 'scene-media-hard-probe.v1') {
-    const probedScenes = Array.isArray(probe.scenes) ? probe.scenes.map(object) : [];
-    if (probe.formatPassed === false || probe.container === 'unknown'
-      || (typeof probe.videoCodec === 'string' && probe.videoCodec !== 'h264')
-      || (typeof probe.audioCodec === 'string' && probe.audioCodec !== 'aac')
-      || object(probe.captionTimeline).status === 'invalid'
-      || object(probe.captionSpeechAlignment).status === 'mismatch'
-      || object(probe.fullFrozenAudioIdentity).status === 'failed'
-      || hasKnownFinalSensitiveFrameFailure(probe.finalSensitiveFrameAudit, probe.mediaSha256)
-      || object(probe.sensitiveFrozenSpeechEvidence).status === 'hit'
-      || hasKnownCaptionMaskFailure(probe.captionMaskAudit)
-      || hasKnownFinalMediaCoverageFailure(probe.finalPrivacyCoverage)
-      || probedScenes.some(scene => scene.durationPassed === false
-        || scene.audioWindowDecoded === false
-        || object(scene.audioIdentity).status === 'failed'
-        || object(scene.sensitiveScreenEvidence).status === 'hit'))
-      failures.push('measured_media_hard_failure');
-  }
+  if (hasSocialMeasuredMediaHardFailure(probe)) failures.push('measured_media_hard_failure');
   if (creative.approved !== true || !emptyFailures(creative.failedCriteria)) failures.push('creative_quality_unverified');
   failures.push(...socialReplicationHardQualityFailures(content.replicationEvaluation));
   if (review.automatedChecksPassed !== true || review.technicalChecksPassed !== true

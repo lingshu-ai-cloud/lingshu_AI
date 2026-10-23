@@ -1,3 +1,4 @@
+import {validProductionBudgetMaximum,validOriginalProductionBudget} from '../../shared/contracts/productionBudgetPolicy.js';
 import { SocialContentTaskBudget, type SocialTaskBudgetScope } from '../lib/socialContentTaskBudget.js';
 import { socialPaidIntentOperation, type SocialApprovedBudgetPlan } from '../lib/socialContentTaskBudgetAuthority.js';
 import type { SocialTaskBudgetQuote } from '../lib/socialContentTaskBudget.js';
@@ -47,7 +48,7 @@ export async function readSocialProductFootageRevisionPaidPreflight(input: {
   const evidenceHash = socialObject(revision?.revision)?.recordHash;
   if (!plan || plan.scope?.tenantId !== scope.tenantId || plan.scope?.taskId !== scope.taskId
     || plan.scope?.runId !== scope.runId || plan.scope?.planHash !== scope.planHash
-    || plan.scope?.budgetTaskId !== undefined || plan.maximumCny !== 10
+    || plan.scope?.budgetTaskId !== undefined || !validProductionBudgetMaximum(plan.maximumCny,plan.productionDurationSeconds)
     || plan.authorizationRef !== `footage-revision:${frozen.guard.recordHash}`
     || plan.revisionGuardHash !== frozen.guard.recordHash
     || plan.revisedPlanHash !== frozen.guard.revisedPlanHash
@@ -59,8 +60,8 @@ export async function readSocialProductFootageRevisionPaidPreflight(input: {
     authorization: async () => fail('read_only'), quote: async () => fail('read_only'),
     assertCurrent: async () => fail('read_only'), verifyRejection: async () => false });
   const status = ledger.status(scope);
-  if (!status || status.authorizedLimitCny !== 10 || status.limitCny !== 10
-    || status.hasCorrectionAuthorization || status.retainedCny > 10
+  if (!status || !validOriginalProductionBudget(status)
+    || status.hasCorrectionAuthorization || status.retainedCny>status.limitCny
     || status.entries.some(entry => (entry.executionTaskId ?? scope.taskId) !== scope.taskId))
     return fail('original_ten_yuan_ledger_changed');
   const revised = status.entries.filter(entry => entry.runId === scope.runId && entry.status !== 'rejected');

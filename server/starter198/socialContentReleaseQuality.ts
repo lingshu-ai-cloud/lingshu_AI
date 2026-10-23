@@ -1,5 +1,6 @@
+import { hasSocialMeasuredMediaHardFailure } from './socialContentGraphQualityGate.js';
 import type { SocialContentTaskBrief } from '../../shared/contracts/socialContentWorkflow.js';
-import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
+import {PRODUCTION_BUDGET_POLICY,productionBudgetDuration,productionBudgetLimitCny,productionBudgetExceeded} from '../../shared/contracts/productionBudgetPolicy.js';
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
   ? value as Record<string, unknown> : {};
@@ -19,16 +20,37 @@ export function inspectSocialContentReleaseQuality(input: SocialContentReleaseQu
   approved: boolean; applicable: boolean; failures: string[];
 } {
   const content = object(input.content);
-  const applicable = content.workflowSchema === 'social-content.auto-production.v3'
-    && input.brief.referenceMode === 'single_source_fidelity';
+  const applicable = content.workflowSchema === 'social-content.auto-production.v3';
   if (!applicable) return { approved: true, applicable: false, failures: [] };
   const failures: string[] = [];
   const result = object(content.productionResult), technical = object(result.technicalReview);
   const creative = object(result.creativeReview), render = object(content.render);
-  if (technical.approved === false || nonempty(technical.failures)
-    || render.qualityPassed === false || render.audioDecoded === false || render.completed === false) failures.push('technical_failed');
-  if (nonempty(creative.failedCriteria)) failures.push('creative_failed');
-  if (!Object.keys(technical).length || !Object.keys(creative).length) failures.push('quality_evidence_missing');
+  if (technical.approved !== true || nonempty(technical.failures)
+    || render.qualityPassed !== true || render.audioDecoded !== true || render.completed !== true) failures.push('technical_failed');
+  if (creative.approved !== true || nonempty(creative.failedCriteria)) failures.push('creative_failed');
+  if (!Array.isArray(technical.failures) || !Array.isArray(creative.failedCriteria)) failures.push('quality_evidence_missing');
+  if (hasSocialMeasuredMediaHardFailure(object(content.technicalQualityReport).mediaHardProbe)) failures.push('measured_media_hard_failure');
+  if (object(content.delivery).status === 'requires_revision'
+    || object(content.delivery).status === 'concept_preview') failures.push('delivery_not_ready');
+  const cost=object(content.costSummary),evidence=object(cost.productionBudget);
+  const limit=productionBudgetLimitCny(productionBudgetDuration(input.brief));
+  const estimated=cost.estimatedBeforeGenerationCny;
+  const recorded=[cost.recordedProviderCostCny,cost.recordedProviderEstimatedCostCny].filter(amount);
+  const invalidRecorded=[cost.recordedProviderCostCny,cost.recordedProviderEstimatedCostCny].some(value=>value!=null&&!amount(value));
+  if(!amount(estimated)||!recorded.length||invalidRecorded||cost.currency!=='CNY')failures.push('budget_evidence_missing');
+  else if([estimated,...recorded].some(value=>productionBudgetExceeded(value,limit)))failures.push('budget_exceeded');
+  if(cost.productionBudget!=null){
+    if(evidence.policyVersion!==PRODUCTION_BUDGET_POLICY||!amount(evidence.retainedCny)
+      ||!amount(evidence.maximumCny)||evidence.maximumCny<=0||!amount(evidence.acquisitionCny)
+      ||!amount(evidence.durationSeconds)||evidence.durationSeconds<=0)failures.push('budget_evidence_missing');
+    else if(productionBudgetExceeded(evidence.maximumCny,Math.min(limit,productionBudgetLimitCny(Number(evidence.durationSeconds))))
+      ||productionBudgetExceeded(evidence.retainedCny,Math.min(limit,evidence.maximumCny)))failures.push('budget_exceeded');
+  }
+  // Basic media acceptance is independent of how a film was conceived. Only
+  // reference-specific evidence belongs to the single-source fidelity branch.
+  if (input.brief.referenceMode !== 'single_source_fidelity') {
+    return { approved: failures.length === 0, applicable: true, failures };
+  }
   const replication = object(content.replicationEvaluation);
   if (!['passed', 'review_required'].includes(String(replication.status))
     || !['passed', 'review_required'].includes(String(object(replication.viralFactorFidelity).status)))
@@ -46,15 +68,6 @@ export function inspectSocialContentReleaseQuality(input: SocialContentReleaseQu
   if (dimensions.some(key => object(replication[key]).status === 'failed')
     || object(replication.directorDecision).status === 'changes_required'
     || nonempty(object(replication.directorDecision).failedCriteria)) failures.push('replication_failed');
-  const cost = object(content.costSummary), limit = input.brief.perItemBudgetCny;
-  const internalBudgetExempt = isInternalBudgetExemptTenant(input.tenantId);
-  const estimated = cost.estimatedBeforeGenerationCny;
-  const recorded = [cost.recordedProviderCostCny, cost.recordedProviderEstimatedCostCny].filter(amount);
-  const invalidRecorded = [cost.recordedProviderCostCny, cost.recordedProviderEstimatedCostCny]
-    .some(value => value != null && !amount(value));
-  if ((!internalBudgetExempt && !amount(limit)) || !amount(estimated) || !recorded.length || invalidRecorded || cost.currency !== 'CNY') failures.push('budget_evidence_missing');
-  else if (!internalBudgetExempt && amount(limit)
-    && [estimated, ...recorded].some(value => value > limit + 1e-6)) failures.push('budget_exceeded');
   if (input.mode === 'managed' && (technical.approved !== true || creative.approved !== true
     || render.completed !== true || render.qualityPassed !== true || render.audioDecoded !== true
     || replication.status !== 'passed'

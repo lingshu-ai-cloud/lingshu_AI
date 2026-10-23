@@ -8,6 +8,7 @@ const input = {
   origin: 'agent', kind: 'short_video', resourceRef: 'socialfile:verified',
   content: {
     workflowSchema: 'social-content.auto-production.v3',
+    costSummary:{currency:'CNY',estimatedBeforeGenerationCny:0,recordedProviderCostCny:0,settlementStatus:'settled'},
     productionResult: {
       artifactResourceRef: 'socialfile:verified', executionPlanReviewId: 'plan-review-v1', creativeReviewId: 'creative-v1',
       technicalReview: { approved: true, checkedScenes: 4, failures: [] },
@@ -17,6 +18,7 @@ const input = {
   },
 };
 assert.equal(socialManagedArtifactReview(input).approved, true);
+assert.equal(socialManagedArtifactReview({...input,content:{...input.content,costSummary:undefined}}).approved,false,'missing production cost evidence cannot auto-approve');
 assert.equal(socialManagedArtifactReview({ ...input, brief: { ...input.brief, managementMode: 'advanced' } }).approved, false);
 assert.equal(socialManagedArtifactReview({ ...input, brief: {} as SocialContentTaskBrief }).approved, false);
 assert.equal(socialManagedArtifactReview({ ...input, trustedAgentOrigin: false }).approved, false);

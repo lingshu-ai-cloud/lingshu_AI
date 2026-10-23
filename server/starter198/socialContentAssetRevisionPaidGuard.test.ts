@@ -53,19 +53,13 @@ test('paid-worker handoff survives disk restart and task run CAS without inherit
  const admitted=await scheduleSocialProductAssetRevision({repository,queue:{...revisionQueue,subject},prepared});
  const budgetScope={tenantId,taskId,runId:sourceRunId,planHash:'a'.repeat(64)};
  await assert.rejects(freezeSocialProductAssetRevisionPaidGuard({repository,tenantId,taskId,revisionRunId:admitted.runId,prepared,ledgerRoot}),/original_ten_yuan_ledger_missing/);
- const oldFifteenRoot=path.join(dir,'old-fifteen');
- const oldFifteen=new SocialContentTaskBudget(oldFifteenRoot,{authorization:async()=>({maximumCny:15,authorizationRef:'legacy-fifteen'}),
-  quote:async()=>({upperBoundCny:1,quoteRef:'legacy-request',validUntil:new Date(Date.now()+60000).toISOString()}),
-  assertCurrent:async()=>{},verifyRejection:async()=>false});
- await oldFifteen.reserveBatch(budgetScope,[{operationId:'legacy-first-frame',fingerprint:'d'.repeat(64),provider:'seedream',model:'test',accountRef:'old',stage:'first_frame',shotId:'shot'}]);
- await assert.rejects(freezeSocialProductAssetRevisionPaidGuard({repository,tenantId,taskId,revisionRunId:admitted.runId,prepared,ledgerRoot:oldFifteenRoot}),/original_ten_yuan_ceiling_invalid/);
- const budget=new SocialContentTaskBudget(ledgerRoot,{authorization:async()=>({maximumCny:10,authorizationRef:'original-ten-yuan'}),
+ const budget=new SocialContentTaskBudget(ledgerRoot,{authorization:async()=>({maximumCny:15,authorizationRef:'original-ten-yuan'}),
   quote:async()=>({upperBoundCny:4,quoteRef:'old-paid-request',validUntil:new Date(Date.now()+60000).toISOString()}),
   assertCurrent:async()=>{},verifyRejection:async()=>false});
  await budget.reserveBatch(budgetScope,[{operationId:'old-first-frame',fingerprint:'b'.repeat(64),provider:'seedream',model:'test',accountRef:'old',stage:'first_frame',shotId:'shot'}]);
  await budget.markOutcome(budgetScope,'old-first-frame','unknown','supplier-outcome-unknown');
  const input={repository,tenantId,taskId,revisionRunId:admitted.runId,prepared,ledgerRoot};
- const first=await freezeSocialProductAssetRevisionPaidGuard(input);assert.equal(first.authorizesProvider,false);assert.equal(first.remainingCny,6);
+ const first=await freezeSocialProductAssetRevisionPaidGuard(input);assert.equal(first.authorizesProvider,false);assert.equal(first.remainingCny,11);
  const freshStore=new LangGraphTestStore(file),freshRepository=createStarter198Repository(freshStore);
  (freshStore as any).supportsAtomicCompareAndSwap=async()=>true;
  const restarted={...input,repository:freshRepository,prepared:{...prepared,repository:freshRepository}};
@@ -101,7 +95,7 @@ test('paid-worker handoff survives disk restart and task run CAS without inherit
  assert.equal((await readSocialProductAssetRevisionPaidGuard({...restarted,expectedRecordHash:first.recordHash})).authorizesProvider,false);
  const reservationInput={repository:freshRepository,guard:{...restarted,expectedRecordHash:first.recordHash},ledgerRoot,ports:{
   assertCurrent:async()=>{},verifyRejection:async()=>false,
-  readApprovedPlan:async(scope:any)=>({scope,authorizationRef:`asset-revision:${first.recordHash}`,maximumCny:10,
+  readApprovedPlan:async(scope:any)=>({scope,authorizationRef:`asset-revision:${first.recordHash}`,maximumCny:15,
    revisionGuardHash:first.recordHash,replacementSha256:digest,paidOperations:[{operationId:'revision-first-frame',
     provider:'seedream',model:'test',accountRef:'revision',stage:'first_frame',shotId:'shot',
     inputContractHash:freeze.lineage.revisedPlanHash,maximumUnits:{requests:1}}]}),
@@ -111,7 +105,7 @@ test('paid-worker handoff survives disk restart and task run CAS without inherit
    meters:{requests:{priceCny:1,unitsPerPrice:1,minimumUnits:1,increment:1}}})}};
  await assert.rejects(reserveSocialProductAssetRevisionBudget({...reservationInput,ports:{...reservationInput.ports,
   readVerifiedTariff:async()=>({...await reservationInput.ports.readVerifiedTariff(),
-   meters:{requests:{priceCny:7,unitsPerPrice:1,minimumUnits:1,increment:1}}})}}),/social_task_budget_exceeded/);
+   meters:{requests:{priceCny:12,unitsPerPrice:1,minimumUnits:1,increment:1}}})}}),/production_budget_decision_required/);
  assert.equal(budget.status(budgetScope)?.retainedCny,4);
  const reserved=await reserveSocialProductAssetRevisionBudget(reservationInput);
  assert.equal(reserved.authorizesProvider,false);assert.equal(reserved.retainedCny,5);
@@ -122,9 +116,9 @@ test('paid-worker handoff survives disk restart and task run CAS without inherit
   /canonical_worker_admission_missing/);
  assert.equal(canonicalPlanReads,0);
  assert.equal((await reserveSocialProductAssetRevisionBudget(reservationInput)).retainedCny,5);
- assert.equal((await readSocialProductAssetRevisionPaidGuard({...restarted,expectedRecordHash:first.recordHash})).remainingCny,5);
+ assert.equal((await readSocialProductAssetRevisionPaidGuard({...restarted,expectedRecordHash:first.recordHash} )).remainingCny,10);
  await assert.rejects(reserveSocialProductAssetRevisionBudget({...reservationInput,ports:{...reservationInput.ports,
-  readApprovedPlan:async(scope:any)=>({...await reservationInput.ports.readApprovedPlan(scope),maximumCny:15})}}),/approved_plan_invalid/);
+  readApprovedPlan:async(scope:any)=>({...await reservationInput.ports.readApprovedPlan(scope),maximumCny:16})}}),/approved_plan_invalid/);
  await assert.rejects(readSocialProductAssetRevisionPaidGuard({...restarted,expectedRecordHash:first.recordHash,prepared:{...restarted.prepared,readReplacementBytes:async()=>Buffer.from('wrong')}}),/replacement_changed/);
  const wrongPlanFile=path.join(dir,'wrong-plan-store.json');fs.copyFileSync(file,wrongPlanFile);
  const wrongPlanStore=new LangGraphTestStore(wrongPlanFile),wrongPlanRepository=createStarter198Repository(wrongPlanStore);

@@ -476,6 +476,7 @@ export async function readSocialTaskDetail(input: {
       title: summary.brief.title,
       readinessMissing: summary.readiness.missing,
       productionApproach: summary.brief.productionApproach,
+      targetDurationSeconds:summary.brief.targetDurationSeconds,
     },
     workflow: agentWorkflow,
     assetSupplyPlan,

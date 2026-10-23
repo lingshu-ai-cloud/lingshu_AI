@@ -369,7 +369,7 @@ export interface WeeklyAgentPlanningState {
     discoveryAuthority: { rootJobId: string; currentJobId: string; runId: string };
     recordHash: string;
   };
-  automaticTemplateAdoption?: {source:'automatic_template';templateVersion:'weekly-automation.v3';adoptedAt:string;actorUserId:string;userApproval:null;selectedSlotIds:string[];analysisEvidenceHash:string;detailedScheduleHash:string;recordHash:string;authorizesPublishing:false;authorizesContentAcceptance:false;authorizesCustomerMessages:false};
+  automaticTemplateAdoption?: {source:'automatic_template';templateVersion:'weekly-automation.v3'|'weekly-automation.v4';adoptedAt:string;actorUserId:string;userApproval:null;selectedSlotIds:string[];analysisEvidenceHash:string;detailedScheduleHash:string;recordHash:string;authorizesPublishing:false;authorizesContentAcceptance:false;authorizesCustomerMessages:false};
   referenceSourcePolicy?: WeeklyReferenceSourcePolicy | null;
   planningId: string;
   version: number;

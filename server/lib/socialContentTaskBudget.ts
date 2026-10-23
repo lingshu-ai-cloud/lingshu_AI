@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { withPaidOperationLock } from './paidOperationLock.js';
-import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
+import {productionBudgetLimitCny,productionBudgetDecisionError} from '../../shared/contracts/productionBudgetPolicy.js';
 export interface SocialTaskBudgetScope {
     tenantId: string;
     taskId: string;
@@ -29,6 +29,7 @@ export interface SocialTaskBudgetQuote {
     validUntil: string;
 }
 export interface SocialTaskBudgetAuthorization {
+    productionDurationSeconds?:number;
     maximumCny: number;
     maximumExecutionCny?:number;
     authorizationRef: string;
@@ -96,6 +97,7 @@ export interface SocialTaskPreproductionBudgetBinding {
     recordHash: string;
 }
 interface Ledger {
+    productionDurationSeconds?:number;
     schemaVersion: 1;
     tenantId: string;
     taskId: string;
@@ -119,7 +121,7 @@ function scopeCheck(s: SocialTaskBudgetScope) { if (![s.tenantId, s.taskId, s.ru
     fail('scope_invalid'); }
 function operationCheck(o: SocialTaskBudgetOperation) { if (![o.operationId, o.provider, o.model, o.accountRef, o.stage].every(text) || !/^[a-f0-9]{64}$/.test(o.fingerprint) || (o.shotId !== null && !text(o.shotId)))
     fail('operation_invalid'); }
-function used(l: Ledger) { const n = Object.values(l.entries).reduce((v, e) => v + (e.status === 'rejected' ? 0 : e.reservedMicros), 0); if (!Number.isSafeInteger(n))
+function used(l: Ledger) { const n = Object.values(l.entries).reduce((v, e) => v + (e.status === 'rejected' || e.preproductionBinding ? 0 : e.reservedMicros), 0); if (!Number.isSafeInteger(n))
     fail('ledger_corrupt'); return n; }
 /** A task, including replacement runs and retries, owns ONE ceiling. All paid stages
  * must reserve here before provider submission. Unknown billing retains the upper
@@ -138,9 +140,11 @@ export class SocialContentTaskBudget {
         catch {
             return fail('ledger_corrupt');
         }
-        if (l.schemaVersion !== 1 || l.tenantId !== s.tenantId || l.taskId !== (s.budgetTaskId??s.taskId) || !Number.isSafeInteger(l.limitMicros) || l.limitMicros <= 0 || l.limitMicros > 20e6 || !Array.isArray(l.authorizationRefs) || !l.authorizationRefs.every(text) || !l.entries || typeof l.entries !== 'object' || Array.isArray(l.entries))
+        if (l.schemaVersion !== 1 || l.tenantId !== s.tenantId || l.taskId !== (s.budgetTaskId??s.taskId) || !Number.isSafeInteger(l.limitMicros) || l.limitMicros <= 0 || !Array.isArray(l.authorizationRefs) || !l.authorizationRefs.every(text) || !l.entries || typeof l.entries !== 'object' || Array.isArray(l.entries))
             fail('ledger_corrupt');
-        if (l.correctionAuthorization || l.limitMicros > 15e6) {
+        if(l.productionDurationSeconds!==undefined&&(!Number.isFinite(l.productionDurationSeconds)||l.productionDurationSeconds<=0))fail('ledger_corrupt');
+        if(!l.correctionAuthorization&&l.limitMicros>productionBudgetLimitCny(l.productionDurationSeconds)*1e6)fail('ledger_corrupt');
+        if (l.correctionAuthorization) {
             const grant = l.correctionAuthorization;
             if (!grant) fail('ledger_corrupt');
             const { recordHash, ...body } = grant;
@@ -213,7 +217,19 @@ export class SocialContentTaskBudget {
         if (fs.existsSync(temp))
             fs.unlinkSync(temp);
     } }
-    status(scope: SocialTaskBudgetScope) { scopeCheck(scope); const l = this.read(scope); if (!l) return null; const retainedMicros=used(l), correction=l.correctionAuthorization, correctionMatches=correction?.runId===scope.runId&&correction.planHash===scope.planHash; const limitMicros=correctionMatches?l.limitMicros:Math.min(l.limitMicros,correction?10e6:15e6); return { limitCny: limitMicros / 1e6, authorizedLimitCny:l.limitMicros / 1e6, hasCorrectionAuthorization:Boolean(correction), retainedCny: retainedMicros / 1e6, remainingCny: Math.max(0, limitMicros - retainedMicros) / 1e6, correctionAuthorization: correctionMatches ? structuredClone(correction) : null, entries: structuredClone(Object.values(l.entries)) }; }
+    status(scope: SocialTaskBudgetScope) {
+        scopeCheck(scope); const l=this.read(scope); if(!l)return null;
+        const retainedMicros=used(l),correction=l.correctionAuthorization;
+        const correctionMatches=correction?.runId===scope.runId&&correction.planHash===scope.planHash;
+        const limitMicros=Math.min(l.limitMicros,productionBudgetLimitCny(l.productionDurationSeconds)*1e6,
+            correction&&!correctionMatches?correction.previousMaximumCny*1e6:Infinity);
+        const acquisitionCny=Object.values(l.entries).filter(e=>e.preproductionBinding).reduce((sum,e)=>sum+e.reservedMicros,0)/1e6;
+        return {limitCny:limitMicros/1e6,authorizedLimitCny:l.limitMicros/1e6,
+            productionDurationSeconds:l.productionDurationSeconds,acquisitionCny,
+            hasCorrectionAuthorization:Boolean(correction),retainedCny:retainedMicros/1e6,
+            remainingCny:Math.max(0,limitMicros-retainedMicros)/1e6,
+            correctionAuthorization:correctionMatches?structuredClone(correction):null,entries:structuredClone(Object.values(l.entries))};
+    }
     /** Read-only identity for a fully checkpointed original reservation. The
      * ledger alone cannot reconstruct a crashed, uncheckpointed paid plan. */
     attestOriginalReservation(scope: SocialTaskBudgetScope, authorizationRef: string, operations: SocialTaskBudgetOperation[]): string | null {
@@ -295,8 +311,8 @@ export class SocialContentTaskBudget {
             const a = await this.ports.authorization(scope);
             if (!text(a.authorizationRef))
                 fail('authorization_missing');
-            const baseCap = Math.min(15e6, micros(a.maximumCny));
-            const l = this.read(scope) || { schemaVersion: 1 as const, tenantId: scope.tenantId, taskId: scope.budgetTaskId??scope.taskId, limitMicros: baseCap, authorizationRefs: [], entries: {} };
+            const baseCap = Math.min(productionBudgetLimitCny(a.productionDurationSeconds)*1e6, micros(a.maximumCny));
+            const l = this.read(scope) || { schemaVersion: 1 as const, tenantId: scope.tenantId, taskId: scope.budgetTaskId??scope.taskId, limitMicros: baseCap, productionDurationSeconds:a.productionDurationSeconds, authorizationRefs: [], entries: {} };
             if(a.maximumExecutionCny!==undefined){
               if(!Number.isFinite(a.maximumExecutionCny)||a.maximumExecutionCny<0)return fail('execution_allowance_invalid');
               const ceiling=Math.round(a.maximumExecutionCny*1e6);if(!Number.isSafeInteger(ceiling))return fail('execution_allowance_invalid');
@@ -306,10 +322,11 @@ export class SocialContentTaskBudget {
             const correction = l.correctionAuthorization;
             const correctionMatches = correction?.tenantId === scope.tenantId && correction.taskId === scope.taskId
                 && correction.runId === scope.runId && correction.planHash === scope.planHash;
-            const cap = correctionMatches ? l.limitMicros : baseCap;
+            const cap = Math.min(l.limitMicros,correctionMatches?l.limitMicros:baseCap,productionBudgetLimitCny(l.productionDurationSeconds)*1e6);
             if (!correctionMatches) l.limitMicros = Math.min(l.limitMicros, baseCap);
             if (!l.authorizationRefs.includes(a.authorizationRef))
                 l.authorizationRefs.push(a.authorizationRef);
+            const retainedBefore=used(l);
             for (const o of operations) {
                 const id = hash(o.operationId), prior = l.entries[id];
                 if (prior) {
@@ -324,8 +341,8 @@ export class SocialContentTaskBudget {
                     fail('quote_missing_or_expired');
                 l.entries[id] = { ...o, executionTaskId:scope.taskId, authorizationRef:a.authorizationRef, runId: scope.runId, planHash: scope.planHash, quoteRef: q.quoteRef, reservedMicros: micros(q.upperBoundCny), status: 'reserved', receiptRef: null };
             }
-            if (!isInternalBudgetExemptTenant(scope.tenantId) && used(l) > l.limitMicros)
-                fail('exceeded');
+            if (used(l) > cap)
+                throw productionBudgetDecisionError({maximumCny:cap/1e6,retainedCny:retainedBefore/1e6,plannedAdditionalCny:(used(l)-retainedBefore)/1e6,totalCny:used(l)/1e6});
             const executionLimit=l.executionLimitMicros?.[hash(scope.taskId)];
             if(executionLimit!==undefined&&Object.values(l.entries).filter(e=>(e.executionTaskId??l.taskId)===scope.taskId&&e.status!=='rejected').reduce((sum,e)=>sum+e.reservedMicros,0)>executionLimit)fail('execution_allowance_exceeded');
             await this.ports.assertCurrent(scope);
@@ -350,10 +367,10 @@ export class SocialContentTaskBudget {
         return withPaidOperationLock(path.join(this.root, '.locks'), JSON.stringify([scope.tenantId, scope.taskId]), async () => {
             await this.ports.assertCurrent(scope);
             const authorization=await this.ports.authorization(scope);
-            if(!text(authorization.authorizationRef)||micros(authorization.maximumCny)!==10_000_000)fail('preproduction_authorization_invalid');
+            if(!text(authorization.authorizationRef)||micros(authorization.maximumCny)>productionBudgetLimitCny(authorization.productionDurationSeconds)*1e6)fail('preproduction_authorization_invalid');
             if(!await verify(scope,operation,binding))fail('preproduction_evidence_invalid');
-            const ledger=this.read(scope)||{schemaVersion:1 as const,tenantId:scope.tenantId,taskId:scope.taskId,limitMicros:10_000_000,authorizationRefs:[],entries:{}};
-            if(ledger.taskId!==scope.taskId||ledger.limitMicros!==10_000_000||ledger.correctionAuthorization)fail('preproduction_original_budget_required');
+            const ledger=this.read(scope)||{schemaVersion:1 as const,tenantId:scope.tenantId,taskId:scope.taskId,limitMicros:micros(authorization.maximumCny),productionDurationSeconds:authorization.productionDurationSeconds,authorizationRefs:[],entries:{}};
+            if(ledger.taskId!==scope.taskId||ledger.limitMicros>micros(authorization.maximumCny)||ledger.correctionAuthorization)fail('preproduction_original_budget_required');
             const id=hash(operation.operationId),sealed={...binding,recordHash:hash(JSON.stringify(binding))},prior=ledger.entries[id];
             const contentLedgerRef=`social-task-budget:${hash(JSON.stringify({scope,operation,binding:sealed}))}`;
             if(prior){

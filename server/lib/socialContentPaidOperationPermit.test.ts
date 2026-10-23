@@ -32,7 +32,7 @@ test('concurrent submit claims allow one winner and ledger failure cannot reopen
  const g=await setup();try{const broken=createSocialContentPaidOperationPermit({...g.config,ledger:{status:g.ledger.status.bind(g.ledger),markOutcome:async()=>{throw Error('ledger_write_failed');}}});await assert.rejects(broken.beforeSubmit(request),/ledger_write_failed/);await assert.rejects(createSocialContentPaidOperationPermit(g.config).beforeSubmit(request),/receipt_recovery_required/);assert.equal(g.ledger.status(scope)!.retainedCny,1);}finally{fs.rmSync(g.root,{recursive:true,force:true});}});
 test('corrupt stored fingerprint or submission cannot become a recovery receipt',async()=>{for(const field of ['fingerprint','submissionHash','actualUnits']){const f=await setup();try{const p=createSocialContentPaidOperationPermit(f.config);await p.beforeSubmit(request);const filename=fs.readdirSync(f.config.root).find(n=>n.endsWith('.json'))!;const file=path.join(f.config.root,filename);const row=JSON.parse(fs.readFileSync(file,'utf8'));row[field]=field==='actualUnits'?{characters:0,providerSeconds:0}:'bad';fs.writeFileSync(file,JSON.stringify(row));await assert.rejects(p.markOutcome(op.operationId,'completed','provider-real'),/claim_corrupt/);}finally{fs.rmSync(f.root,{recursive:true,force:true});}}});
 test('provider submission requires every formal paid route to remain reserved under the whole-film cap',async()=>{const f=await setup();try{const missing={...op,operationId:'planned-video',fingerprint:'e'.repeat(64),stage:'video',shotId:'S02'},missingIntent={...missing,inputContractHash:'f'.repeat(64),maximumUnits:{providerSeconds:3}};const permit=createSocialContentPaidOperationPermit({...f.config,operations:[op,missing],intents:[intent,missingIntent]});await assert.rejects(permit.beforeSubmit(request),/whole_plan_reservation_missing/);assert.equal(f.ledger.status(scope)!.entries[0]!.status,'reserved');}finally{fs.rmSync(f.root,{recursive:true,force:true});}});
-test('whole-plan permit skips only the exact exempt tenant amount ceiling and retains usage and scope checks',async()=>{
+test('whole-plan permit rejects over-budget submissions for ordinary and formerly exempt tenants',async()=>{
  const configured=process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS,root=fs.mkdtempSync(path.join(os.tmpdir(),'paid-permit-exempt-'));
  process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS='local_tenant_customer_aurelia_beauty';
  const secondOp={...op,operationId:'planned-video',fingerprint:'e'.repeat(64),stage:'video',shotId:'S02'};
@@ -42,9 +42,8 @@ test('whole-plan permit skips only the exact exempt tenant amount ceiling and re
  const make=(tenantId:string,claimRoot:string)=>createSocialContentPaidOperationPermit({scope:{...scope,tenantId},operations:[op,secondOp],intents:[intent,secondIntent],ledger,root:claimRoot,assertCurrent:async()=>{}});
  try{
   const exempt=make('local_tenant_customer_aurelia_beauty',path.join(root,'exempt'));
-  await assert.rejects(exempt.beforeSubmit({...request,actualUnits:{characters:101,providerSeconds:5}}),/usage_exceeds_bound/);
-  await exempt.beforeSubmit(request);
-  await assert.rejects(make('another-tenant',path.join(root,'ordinary')).beforeSubmit(request),/whole_plan_budget_invalid/);
+  await assert.rejects(exempt.beforeSubmit(request),/production_budget_decision_required/);
+  await assert.rejects(make('another-tenant',path.join(root,'ordinary')).beforeSubmit(request),/production_budget_decision_required/);
  }finally{fs.rmSync(root,{recursive:true,force:true});if(configured===undefined)delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS=configured;}
 });
 test('permit accepts an exact scope-bound 16.5 correction ledger and still rejects an unrelated scope',async()=>{const f=await setup();try{

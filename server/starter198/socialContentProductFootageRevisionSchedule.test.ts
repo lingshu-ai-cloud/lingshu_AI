@@ -264,7 +264,7 @@ test('reviewed same-SKU revision registers the original quota slot and blocked n
     assertCurrent: async () => {}, verifyRejection: async () => false });
   const { socialPaidIntentOperation } = await import('../lib/socialContentTaskBudgetAuthority.js');
   const actualOperations = canonical.paidOperations.map(intent => socialPaidIntentOperation(newBudgetScope, intent));
-  await assert.rejects(overspend.reserveBatch(newBudgetScope, [actualOperations[0]!]), /social_task_budget_exceeded/);
+  await assert.rejects(overspend.reserveBatch(newBudgetScope, [actualOperations[0]!]), /production_budget_decision_required/);
   const affordable = new SocialContentTaskBudget(ledgerRoot, {
     authorization: async () => ({ maximumCny: 10, authorizationRef: 'original-ten-yuan' }),
     quote: async () => ({ upperBoundCny: 1, quoteRef: 'new-first-frame',

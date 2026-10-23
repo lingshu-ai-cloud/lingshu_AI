@@ -82,16 +82,15 @@ test('concurrent workers cannot collectively reserve over ceiling', async () => 
 finally {
     f.clean();
 } });
-test('only the exact internally exempt tenant may retain quotes above the nominal task ceiling', async () => {
+test('all tenants retain the same whole-film ceiling', async () => {
     const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
     process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
     const exempt = fixture(6), ordinary = fixture(6);
     const exemptScope = { ...scope, tenantId: 'local_tenant_customer_aurelia_beauty' };
     const ordinaryScope = { ...scope, tenantId: 'another-tenant' };
     try {
-        const status = await exempt.budget.reserveBatch(exemptScope, [op('a'), op('b')]);
-        assert.equal(status.limitCny, 10);
-        assert.equal(status.retainedCny, 12);
+        await assert.rejects(exempt.budget.reserveBatch(exemptScope,[op('a'),op('b')]),/production_budget_decision_required/);
+        assert.equal(exempt.budget.status(exemptScope),null);
         await assert.rejects(ordinary.budget.reserveBatch(ordinaryScope, [op('a'), op('b')]), /exceeded/);
         assert.equal(ordinary.budget.status(ordinaryScope), null);
     } finally {
@@ -118,15 +117,15 @@ test('server correction grant extends only the exact existing run and plan while
         presenterApprovalBindings:['presenter-mother-1','presenter-mother-2','presenter-mother-3'].map((groupId,index)=>({groupId,approvalRecordHash:String(index+1).repeat(64)})) as any,
         authorizedBy:'trusted-server-operator',authorizationRef:'correction:current-task:approved',issuedAt:new Date().toISOString()});
     const extended=await f.budget.authorizeCorrection(scope,grant);
-    assert.equal(extended.limitCny,16.5);assert.equal(extended.remainingCny,6.75);
+    assert.equal(extended.limitCny,15);assert.equal(extended.authorizedLimitCny,16.5);assert.equal(extended.remainingCny,5.25);
     const unrelatedPlan=f.budget.status({...scope,planHash:'0'.repeat(64)})!;
     assert.equal(unrelatedPlan.limitCny,10);
     assert.equal(unrelatedPlan.correctionAuthorization,null);
     assert.equal(unrelatedPlan.authorizedLimitCny,16.5);
     assert.equal(unrelatedPlan.hasCorrectionAuthorization,true);
-    assert.equal((await f.budget.authorizeCorrection(scope,grant)).limitCny,16.5);
-    await f.budget.reserveBatch(scope,[op('corrective-presenter-1'),op('corrective-presenter-2')]);
-    assert.equal(f.budget.status(scope)!.retainedCny,16.25);
+    assert.equal((await f.budget.authorizeCorrection(scope,grant)).limitCny,15);
+    await assert.rejects(f.budget.reserveBatch(scope,[op('corrective-presenter-1'),op('corrective-presenter-2')]),/production_budget_decision_required/);
+    assert.equal(f.budget.status(scope)!.retainedCny,9.75);
     await assert.rejects(f.budget.reserveBatch({...scope,runId:'other-run',planHash:'c'.repeat(64)},[op('other-run-op')]),/exceeded/);
     const fresh=fixture(1,100);try{await fresh.budget.reserveBatch(scope,[op('fresh')]);assert.equal(fresh.budget.status(scope)!.limitCny,15);}finally{fresh.clean();}
 } finally { f.clean(); } });
@@ -143,7 +142,7 @@ test('combined voice correction safely supersedes the existing first-frame grant
  await f.budget.reserveBatch(scope,[op('original')]);const groups=['presenter-mother-1','presenter-mother-2','presenter-mother-3'] as [string,string,string],bindings=groups.map((groupId,index)=>({groupId,approvalRecordHash:String(index+1).repeat(64)})) as any;
  const first=sealSocialTaskCorrectionBudgetAuthorization({schemaVersion:1,...scope,previousMaximumCny:10,maximumCny:16.5,reason:'provider_correction',correctionCause:'approved_first_frame_not_consumed',affectedPresenterGroupIds:groups,presenterApprovalBindings:bindings,authorizedBy:'server',authorizationRef:'first-frame-grant',issuedAt:new Date().toISOString()});await f.budget.authorizeCorrection(scope,first);
  const combined=sealSocialTaskCorrectionBudgetAuthorization({schemaVersion:1,...scope,previousMaximumCny:10,maximumCny:20,reason:'provider_correction',correctionCause:'approved_first_frame_not_consumed_and_bound_voice_mismatch',affectedPresenterGroupIds:groups,presenterApprovalBindings:bindings,selectedVoiceId:'bb17551-bound-voice',selectedVoiceFingerprint:'f'.repeat(64),supersedes:{recordHash:first.recordHash,authorizationRef:first.authorizationRef},authorizedBy:'server',authorizationRef:'combined-grant',issuedAt:new Date().toISOString()});
- const status=await f.budget.authorizeCorrection(scope,combined);assert.equal(status.limitCny,20);assert.equal(status.correctionAuthorization?.recordHash,combined.recordHash);assert.equal((await f.budget.authorizeCorrection(scope,combined)).limitCny,20);
+ const status=await f.budget.authorizeCorrection(scope,combined);assert.equal(status.limitCny,15);assert.equal(status.authorizedLimitCny,20);assert.equal(status.correctionAuthorization?.recordHash,combined.recordHash);assert.equal((await f.budget.authorizeCorrection(scope,combined)).limitCny,15);
  await assert.rejects(f.budget.authorizeCorrection(scope,sealSocialTaskCorrectionBudgetAuthorization({...combined,authorizationRef:'forged',supersedes:{...combined.supersedes!,recordHash:'0'.repeat(64)}})),/invalid|conflict/);
 }finally{f.clean();}});
 test('same run and plan safely append retry operations while preserving completed receipts and ceiling', async () => { const f = fixture(2, 10); try {

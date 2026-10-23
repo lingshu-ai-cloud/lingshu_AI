@@ -5,7 +5,7 @@ import {verifyWanPublishedTariff,type WanPublishedPricingEvidence} from './wanPu
 import {isVerifiedPublishedTariff,type LocalPublishedPricingEvidence,type MaaSPublishedPricingEvidence,type PublishedPricingEvidence} from './socialContentPublishedTariffs.js';
 import { createHash } from 'node:crypto';
 import { SocialContentTaskBudget, type SocialTaskBudgetScope, type SocialTaskBudgetOperation, type SocialTaskBudgetQuote } from './socialContentTaskBudget.js';
-import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
+import {productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
 /** Server-frozen maximum input usage. Token stages must bound both prompt and
  * response; retry attempts appear as distinct operations in this complete plan. */
 export interface SocialPaidOperationIntent {
@@ -23,6 +23,7 @@ export interface SocialApprovedBudgetPlan {
     scope: SocialTaskBudgetScope;
     authorizationRef: string;
     maximumCny: number;
+    productionDurationSeconds?:number;
     maximumExecutionCny?:number;
     /** Includes every paid stage (images, QA, presenter, voice, analysis, retries).
      * This is produced by the trusted planner, never passed from an HTTP body. */
@@ -160,7 +161,7 @@ export function createSocialContentTaskBudgetAuthority(input: {
         const ledger = new SocialContentTaskBudget(input.ledgerRoot, {
             assertCurrent: async candidate => { if (!sameScope(candidate, scope)) fail('scope_changed'); await ports.assertCurrent(candidate); },
             authorization: async () => { const current = await ports.readApprovedPlan(scope); if (digest(current) !== digest(prepared.plan))
-                fail('plan_changed'); return { maximumCny: Math.min(15, current.maximumCny), maximumExecutionCny:current.maximumExecutionCny,authorizationRef: current.authorizationRef }; },
+                fail('plan_changed'); return { productionDurationSeconds:current.productionDurationSeconds, maximumCny: Math.min(productionBudgetLimitCny(current.productionDurationSeconds), current.maximumCny), maximumExecutionCny:current.maximumExecutionCny,authorizationRef: current.authorizationRef }; },
             quote: async (_s, operation) => { const intent = prepared.operations.find(o => o.operationId === operation.operationId); if (!intent || digest(intent) !== digest(operation))
                 fail('operation_changed'); return prepared.quotes.get(operation.operationId)!; },
             verifyRejection: ports.verifyRejection,
@@ -188,12 +189,8 @@ export function createSocialContentTaskBudgetAuthority(input: {
         });
         const status = ledger.status(scope);
         if (!status) fail('recovery_budget_missing');
-        const enforceInternalAmountLimit = !isInternalBudgetExemptTenant(scope.tenantId);
-        if (enforceInternalAmountLimit && (status.retainedCny > status.limitCny
-            || (status.limitCny > Math.min(15, plan.maximumCny)
-                && (!status.correctionAuthorization
-                    || status.correctionAuthorization.runId !== scope.runId
-                    || status.correctionAuthorization.planHash !== scope.planHash)))) fail('recovery_budget_missing');
+        // Read/receipt recovery grants no new POST. Preserve historical accepted
+        // or unknown billing even when the current film cap now blocks new work.
         const entries = operationIds.map(id => {
             const operation = operations.find(candidate => candidate.operationId === id);
             const entry = status.entries.find(candidate => candidate.operationId === id);
