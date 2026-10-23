@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 语音生成及缓存证明边界拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `3613a89af267d57c003acd660320c570c349267a` 将原生语音提供方选择、本地回退、音频缓存/原任务回执证明、比例字幕和能力投影迁至 `server/routes/studioTtsGeneration.ts`；Studio 路由仍负责冻结语音计划、调用时机、请求和质检。`studio.ts` 从 8,244 降至 8,026 行并收紧历史预算；全仓仍有 6 个历史超限文件。
+- 新模块离线直测 1/1、语音付费路径定向测试 6/6、完整 Studio 媒体回归、`pnpm run lint`、相对上一 HEAD 的架构扫描/ratchet（2,395 个生产 TypeScript 文件）、193 项迁移仓库只读检查、`pnpm run build` 和 `git diff --check` 通过。Studio 主 chunk 为 480,933/485,000 字节，仍有大 chunk 提示。未调用真实付费供应商、执行目标库迁移、浏览器验收或部署；远端 SHA 与工作区状态待推送后核验。
+
 ## Studio 语音供应商适配边界拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `691f6271a66717639e9a9cff2ee3b952d2fcfd60` 将 Qwen/MiniMax 语音供应商实现、克隆音色缓存、凭据隔离及脚本可朗读文本提取迁至 `server/routes/studioTtsProviderRuntime.ts`，由 `studio.ts` 注入原租户目录、URL 和 FFmpeg 能力。保留原 `submitStudioVoicePaidRequest` 入口、冻结许可和供应商回执路径；`studio.ts` 从 8,692 降至 8,244 行，历史预算同步收紧。全仓仍有 6 个历史超限文件。
