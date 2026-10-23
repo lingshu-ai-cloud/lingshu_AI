@@ -1,0 +1,90 @@
+== assistant ==
+✔ schedule adjustment grants one durable confirmation claim and treats a concurrent confirm as a conflict (2.893625ms)
+✔ a concurrent confirm cannot succeed while the claim owner fails and rolls back; a later retry can claim again (1.50975ms)
+ℹ fail 0
+✔ starter assistant command bus exposes deterministic workspace and returns only provider-backed search results (1.410709ms)
+✔ view status does not invoke the real-search backend (1.781ms)
+✔ view status reports pending decisions and keeps run control as the second secondary action (1.222ms)
+✔ view status maps an active run to accepted and a terminal run to completed (0.40125ms)
+✔ view status only requests approval when the current role has an executable decision (0.318416ms)
+✔ view status exposes blocked, error and unknown runs as failures (0.667709ms)
+✔ a mutation response never attaches the next decision actions to the completed decision card (2.785709ms)
+✔ mutation response actions match the complete target type and id (0.1395ms)
+✔ assistant start commands persist only an explicit business goal (0.327958ms)
+✔ assistant decisions keep their concrete option/value/parameters in the Starter command (0.209667ms)
+✔ starter assistant command bus refuses execution without an authenticated organization role (0.173583ms)
+✔ assistant schedule commands use one signed change-set and return a visual same-card receipt (0.341625ms)
+ℹ fail 0
+✔ assistant action endpoint is authenticated, tenant-scoped and mounted on the existing thread router (45.806292ms)
+✔ default action routing visibly rejects unsupported tenant writes from language and buttons (12.1995ms)
+✔ assistant thread state persists bounded task cards and rejects malformed or oversized state (27.938417ms)
+✔ assistant threads isolate users inside one tenant and reject stale full-snapshot writes (11.332667ms)
+✔ assistant thread writes report storage failures instead of returning phantom success (3.746792ms)
+✔ assistant thread writes fail closed when a backend has no atomic compare-and-swap (2.199416ms)
+✔ assistant action endpoint preserves known client and service HTTP failures (9.076375ms)
+ℹ fail 0
+
+== quality ==
+assistant decision request guard tests passed
+✔ src/lib/assistantDecisionRequestGuard.test.ts (286.570833ms)
+ℹ tests 28
+ℹ suites 0
+ℹ pass 28
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2466.492333
+
+== targeted ==
+✔ the real Motion engine starts animating again after initial reduced mode is disabled (3.592291ms)
+✔ a running opacity transition and spring settle at their targets without remounting (0.898625ms)
+ℹ tests 23
+ℹ suites 0
+ℹ pass 23
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3455.537041
+
+== architecture ==
+$ node scripts/check-architecture.mjs
+Architecture guard passed for 2691 production TypeScript files.
+1 legacy oversized files are frozen at or below their recorded budgets; new files are capped at 800 lines.
+Architecture budget ratchet checked against 89b175109149d4551aeb3ce590fe9c42c46bf23c.
+
+== migrations ==
+$ tsx scripts/check-digital-employee-migrations.ts
+{
+  "status": "passed",
+  "scope": "read_only_repository_preflight",
+  "head": "d4281ec6b337fad6f07906a398c12d2a37553495",
+  "baselineRef": "HEAD",
+  "baselineCommit": "d4281ec6b337fad6f07906a398c12d2a37553495",
+  "checkedMigrations": 198,
+  "blockers": [],
+  "limitations": [
+    "This check proves repository file integrity against the reviewed manifest; it does not prove which migrations have been deployed.",
+    "No PocketBase process, database, deployment workflow, or remote host was accessed or changed.",
+    "Before release, separately rehearse fresh installation and upgrade from a backup of the exact target schema with the real PocketBase version.",
+    "This check does not establish schema compatibility, data preservation, deployment authorization, or full release readiness."
+  ]
+}
+
+== build ==
+dist/assets/SmartBusinessDashboard-CItjf4tf.js                       409.80 kB │ gzip: 113.02 kB
+dist/assets/xlsx-B4_wrGCo.js                                         492.98 kB │ gzip: 161.00 kB
+dist/assets/useAssistantHomeAnchor-tcRHIfXS.js                       669.25 kB │ gzip: 208.82 kB
+
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 1.73s
+AiCreateStudio chunk budget passed: 368867/485000 bytes.
+Studio view chunk import boundary passed.
+
+== lint ==
+$ tsc --noEmit
