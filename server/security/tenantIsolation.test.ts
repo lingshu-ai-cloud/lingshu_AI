@@ -39,7 +39,9 @@ const channelStatus = read('server/routes/channels.ts');
 assert.match(channelStatus, /where: \{ tenantId, status: 'connected' \}/, 'connected channel lookups must remain tenant scoped');
 
 const oauth = read('server/routes/whatsappOAuth.ts');
-assert.match(oauth, /if \(!requestedTenantId \|\| requestedTenantId === tenantId\) return tenantId;\s*return null;/, 'all sessions including support sessions must reject a different tenant');
+assert.match(oauth, /whatsappOAuthRouter\.use\(requireAuth, enforceSupportSessionReadOnly\)/, 'WhatsApp OAuth must authenticate and enforce support-session read-only restrictions');
+assert.match(oauth, /if \(requested && requested !== tenantId\) \{ res\.status\(403\)\.json\(\{ error: 'tenant_not_allowed' \}\); return; \}/, 'all sessions including support sessions must reject a caller-selected foreign tenant before processing');
+assert.match(oauth, /parsed\.tenantId !== tenantId \|\| parsed\.userId !== userId/, 'OAuth exchanges must bind nonce tenant and user to the authenticated session');
 
 const oauthUi = read('src/components/YouTubeIntegration.tsx');
 assert.match(oauthUi, /const popup = prepareOAuthPopup\('youtube-oauth'[\s\S]*?await fetch\('\/api\/overseas\/youtube\/oauth\/start'/, 'YouTube must open its OAuth window before awaiting the start request');

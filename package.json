@@ -134,7 +134,7 @@
     "test:gap-v1-release": "node --import tsx server/starter198/socialWeeklyPackageCompatibility.test.ts && node --import tsx scripts/social-operating-release.integration.ts && tsx scripts/external-video-approval.integration.ts",
     "test:gap-v1-t9": "tsx server/socialOperating/socialDiscoveryLineageMigration.test.ts && pnpm run test:gap-v1-release",
     "test:creative-transformation": "tsx server/lib/creativeTransformation.test.ts",
-    "test:tenant-isolation": "tsx server/security/tenantIsolation.test.ts",
+    "test:tenant-isolation": "tsx server/security/tenantIsolation.test.ts && node --import ./scripts/customer-isolated-test-guard.mjs --import tsx --test server/whatsapp/platformOnboarding.test.ts",
     "test:onboarding-reset": "tsx server/security/onboardingReset.test.ts",
     "test:customer-service-activation": "tsx server/security/customerServiceActivation.test.ts",
     "test:external-customer-service-demo": "tsx server/security/externalCustomerServiceDemo.test.ts",

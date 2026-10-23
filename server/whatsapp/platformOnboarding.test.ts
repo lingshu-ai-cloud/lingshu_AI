@@ -100,6 +100,9 @@ test('one platform app: independent tenant signup, replay/role gates, signed bat
     const status = await request('GET', '/api/oauth/whatsapp/config');
     assert.equal(status.body.configured, true); assert.equal(status.body.connected, false);
     assert.ok(!JSON.stringify(status.body).includes('shared-secret'));
+    assert.equal((await request('GET', '/api/oauth/whatsapp/config?tenantId=b')).status, 403);
+    assert.equal((await request('POST', '/api/oauth/whatsapp/session', { tenantId: 'b' })).status, 403);
+    assert.equal(providerCalls.length, 0, 'foreign caller-selected tenants must be rejected before any provider request');
     assert.equal((await request('POST', '/api/oauth/whatsapp/session', {}, 'a', 'customer_service')).status, 403);
     const stateA = await session();
     assert.equal((await connect(stateA, 'b')).status, 403); assert.equal(providerCalls.length, 0);
