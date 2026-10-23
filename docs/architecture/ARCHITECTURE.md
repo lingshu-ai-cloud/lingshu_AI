@@ -58,6 +58,7 @@
 - `server/digitalEmployees/taskCorrectionSafety.ts`：任务纠偏的传递性下游范围和已发送/已发布回执判定；路由注入租户限定的存储及跟进发送回执读取，缺少可证明安全的外部动作仍保守拦截。拆分不改变外部发送、发布和重试许可。
 - `server/digitalEmployees/taskCorrectionSupersession.ts`：任务纠偏后按影响范围使生产 job、冻结内容批次、托管 Studio 项目、客户分群、跟进草稿及审批失效；路由持有运行锁并注入存储/队列/跟进项目读取。已发送或已送达的跟进项目不被回写为草稿，旧业务回执拦截仍先于失效操作执行。
 - `server/routes/videoCrawlerOpsTaskState.ts`：视频来源爬虫任务的纯状态规则，包括中断恢复、显式重试、耗尽终止、待处理优先级、重试退避与失败分类；`videos.ts` 保留原导出并负责持久化、租户可见性与执行编排。
+- `server/routes/videoThumbnailPersistence.ts`：视频来源封面的签名过期判定、限时图片读取、公开来源封面解析，以及按原顺序写入 COS 或记录文件的稳定地址回退。`videos.ts` 注入原 COS 上传校验和数据存储能力，仍负责租户鉴权、记录可见性、爬取修复与付费入口；缩略图模块不运行 Actor 或启动分析。
 - `server/routes/videoAnalysisRecovery.ts`：视频级失败保留已有证据、显式重试清空旧终态、供应商错误脱敏及用户恢复提示的纯规则；`videos.ts` 保留旧导出并负责租户数据读写、队列与 HTTP 响应。该拆分不改变供应商调用或付费许可。
 - `server/routes/videoCrawlerProviderProjection.ts`：TikTok、Instagram、Facebook 的 Apify 视频行转候选、媒体封面 URL、标题与指标的纯投影；原路由继续负责 Actor 请求、付费门禁、账号范围、队列和持久化，图片帖投影可复用这些基础规则。
 - `server/routes/videoCrawlerPublicProjection.ts`：公开视频检索日期/查询、候选元数据、URL 去重、缩略图和失败类别的纯投影；`videos.ts` 保留网络请求、付费准入、租户边界和持久化，并继续转发既有公开函数。
