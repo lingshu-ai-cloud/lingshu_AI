@@ -4,9 +4,11 @@
 
 ## 边界
 
-- `studioDeliveryWorkspace.ts` 统一验收保存/撤销/恢复、重新质检、人工清单读取/退出和审核/发布待办提交及七组状态；交付门禁从本工作区的验收路径/质量记录推导。页面只提供选定路径、原保存及共享版本回调，HTTP 合同未变。原保存入口补充项目范围保护与本地提交身份回调。详见 [成片验收与人工交付 ADR](adr/2026-10-23-studio-delivery-workspace-boundary.md)。本批后仅剩固定收口审计。
+- 原五个大文件的本轮结构治理与固定三批收口已完成，见 [最终审计](../governance/STUDIO-CLOSURE-AUDIT.md)。四个入口为 654/538/281/187 行；`AiCreateStudio.tsx` 为 7,031 行，保留共享状态、跨域脚本、逐镜批/句级事务及页面装配，不为 800 行机械拆分。177 个新增生产模块实际接入，各自所属入口无反向静态初始化；已有跨域兼容/延迟调用及 377/122 字段端口耦合仍明确保留。结构收口不等于完整生产或发布通过：两条既有认证 SSR 合同仍失败，且未做登录后完整浏览器/真实供应商验收。
 
-- 工作台最后阶段固定为普通数字人任务会话、成片验收/人工交付和依赖/回归收口审计三批。共享项目/镜头状态、跨领域脚本协调、句级/逐镜批事务及页面装配保持完整；其他可拆点不自动纳入。完成条件见 [有限收口清单](../governance/STUDIO-CLOSURE-CHECKLIST.md)。
+- `studioDeliveryWorkspace.ts` 统一验收保存/撤销/恢复、重新质检、人工清单读取/退出和审核/发布待办提交及七组状态；交付门禁从本工作区的验收路径/质量记录推导。页面只提供选定路径、原保存及共享版本回调，HTTP 合同未变。原保存入口补充项目范围保护与本地提交身份回调。详见 [成片验收与人工交付 ADR](adr/2026-10-23-studio-delivery-workspace-boundary.md)。固定收口审计已完成。
+
+- 工作台最后阶段固定的普通数字人任务会话、成片验收/人工交付和依赖/回归收口审计三批均已完成。共享项目/镜头状态、跨领域脚本协调、句级/逐镜批事务及页面装配保持完整；其他可拆点不自动纳入。完成条件见 [有限收口清单](../governance/STUDIO-CLOSURE-CHECKLIST.md)。
 - `studioProductionSession.ts` 拥有普通数字人任务的保存/提交、请求身份与未结束任务门禁、刷新/取消/费用回执/采用回执、项目查询和自动恢复，复用同一组记录与 Ref。页面通过延迟 CAS 草稿桥和同步共享镜头写回连接；新增项目范围检查阻止旧保存、采用、详情回包污染当前项目。详见 [任务会话 ADR](adr/2026-10-23-studio-production-session-boundary.md)。
 
 - `studioPosterWorkspace.ts` 统一拥有图文结果状态、证据/产品/素材准入、海报与内容包文案/图片生成、部分失败、手动修改失效、人工复核和交付资格。页面保留项目共享设置、库存与选中列表，并传递明确快照及必要回调；没有新增 getter 桥，未拆散生成和复核流程。详见 [图文工作区所有权 ADR](adr/2026-10-23-studio-poster-workspace-ownership.md)。
@@ -15,7 +17,7 @@
 
 - 工作台治理以职责归属、依赖减少和独立验证为准：同一请求的提交、轮询、取消、失败恢复、结果写回和相关副作用保持完整边界。共享项目/镜头状态、跨工作区协调与页面装配可留在 `AiCreateStudio.tsx`；800 是参考规模，主文件超过 800 行可以接受。仅增加 getter/端口/转发而不降低耦合的迁移应重划边界。详见 [素材所有权与完成标准 ADR](adr/2026-10-23-studio-material-ownership-and-completion-policy.md)。
 - `studioMaterialInventory.ts` 拥有同一库存的读取、上传授权/忙碌状态、预览、文件输入及恢复去重 Ref、地址恢复与尺寸探测；页面只提供八个输入/回调并复用同一库存。`studioMaterialAssignmentPlan.ts` 纯规划已确认/锁定镜头、路线、人物连续性、装配变体和片段证据，不请求供应商或调用 setter。视觉分析请求与计划写回仍由页面同一个异步匹配动作协调，不拆散请求生命周期。
-- `AiCreateStudio.tsx` 的前端合同、目录/字体、分镜/素材/脚本规则和六个完整视图区位于 `src/components/studio/`。项目状态、入口/导航恢复、快照/回填、CAS 保存/冲突、作品动作及自动保存归属项目生命周期模块。语言草稿、翻译/TTS、上传/试听、字幕审阅和配乐进一步归属声音工作区模块；两组边界复用同一组状态和唯一 Ref，所有 Hook 保持原调用位置。素材库存及渲染会话已进一步归到各自领域；页面仍拥有共享项目/镜头状态、分镜/生产与跨领域页面编排，完整拆分尚未结束。视图不新建状态，可选面板共享同一组 Lazy 实例；媒体预览直接使用底层合同，原公开导出兼容。详见 [工作台合同与视图区 ADR](adr/2026-10-23-studio-workspace-contracts-and-views.md)、[项目生命周期 ADR](adr/2026-10-23-studio-project-lifecycle-boundary.md) 和 [声音工作区 ADR](adr/2026-10-23-studio-voice-workspace-boundary.md)。
+- `AiCreateStudio.tsx` 的前端合同、目录/字体、分镜/素材/脚本规则和六个完整视图区位于 `src/components/studio/`。项目状态、入口/导航恢复、快照/回填、CAS 保存/冲突、作品动作及自动保存归属项目生命周期模块。语言草稿、翻译/TTS、上传/试听、字幕审阅和配乐进一步归属声音工作区模块；两组边界复用同一组状态和唯一 Ref，所有 Hook 保持原调用位置。素材库存及渲染会话已进一步归到各自领域；页面仍拥有共享项目/镜头状态、分镜/生产与跨领域页面编排，本轮有限结构治理已收口。视图不新建状态，可选面板共享同一组 Lazy 实例；媒体预览直接使用底层合同，原公开导出兼容。详见 [工作台合同与视图区 ADR](adr/2026-10-23-studio-workspace-contracts-and-views.md)、[项目生命周期 ADR](adr/2026-10-23-studio-project-lifecycle-boundary.md) 和 [声音工作区 ADR](adr/2026-10-23-studio-voice-workspace-boundary.md)。
 - `server/routes/studio.ts`：统一认证、租户上下文中间件、原顺序挂载与旧公开入口委托。`server/studio/application.ts` 装配生成/渲染、素材、数字人、项目证据及既有语音能力；脚本策略、提示词与质量规则独立为纯模块。共享上下文、渲染状态、数字人恢复计时器和创建队列、语音缓存各保留同一所有者。相关 Worker 直接依赖素材分析、作品策略与审批失效能力，避免反向初始化主入口。详见 [Studio 应用边界 ADR](adr/2026-10-23-studio-application-boundaries.md)。下列既有 Studio 规则与适配器由对应应用/HTTP 模块复用。
 - `server/routes/videos.ts`：视频统一鉴权、原顺序 HTTP 注册和旧公开入口委托。`server/videos/application.ts` 装配采集/发现、供应商、下载、来源/素材分析、维护与 Worker；领域状态与计时器各有唯一所有者，HTTP 回调按业务领域分组。类型端口连接同一实例，数据/锁目录保持原位置。身份读取从重型周复盘扫描中分离，消除经生产流程绕回主入口的依赖。详见 [视频应用边界 ADR](adr/2026-10-23-video-application-boundaries.md)；下列既有纯规则/适配器继续被这些领域服务复用。
 - `server/routes/digitalEmployees.ts`：统一鉴权/支持会话只读门禁、应用单实例装配、原顺序路由挂载和旧公开入口委托。运行状态机在 `runCoordinator.ts`，审批准备在 `taskApprovalPreparation.ts`，周目标开工在 `goalActivationApplication.ts`，事实重建、经营包、初始化、事件/浏览器和各领域工作区分属对应应用/路由模块。`applicationPorts.ts` 通过 type-only 合同与最小端口集连接它们；共享启动队列、运行锁、计时器和事件流保持单一所有权。领域记录在 `server/digitalEmployees/records.ts`，旧路由记录入口兼容转发。完整依赖与验证见 [数字员工应用装配 ADR](adr/2026-10-23-digital-employee-application-assembly.md)。
