@@ -20,11 +20,13 @@ test('pending, handed-off, cancelled and dependency-ready tasks are preserved', 
 });
 
 test('runtime applies invalidation before terminal-task early return and cancels durable production jobs', () => {
-  const source = fs.readFileSync(new URL('../routes/digitalEmployees.ts', import.meta.url), 'utf8');
+  const source = fs.readFileSync(new URL('../routes/digitalEmployees.ts', import.meta.url), 'utf8')
+    + fs.readFileSync(new URL('./taskInterventionApplication.ts', import.meta.url), 'utf8');
   const invalidation = source.indexOf('mustInvalidateContentDownstream(task.task_key');
   const terminalReturn = source.indexOf("['succeeded', 'skipped', 'cancelled', 'handed_off'].includes(task.status)", invalidation);
   assert.ok(invalidation >= 0 && terminalReturn > invalidation);
-  assert.match(source, /content_execution_jobs[\s\S]*?action: 'cancel'/);
+  const supersession = fs.readFileSync(new URL('./taskCorrectionSupersession.ts', import.meta.url), 'utf8');
+  assert.match(supersession, /content_execution_jobs[\s\S]*?action: 'cancel'/);
   assert.match(source, /viral_analysis_exact_coverage_required/);
   assert.match(source, /task\.task_key === 'viral_analysis'[\s\S]*?\['skip', 'manual_complete'\]/);
 });

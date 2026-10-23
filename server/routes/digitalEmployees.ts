@@ -1,3 +1,5 @@
+import { createTaskInterventionApplication } from '../digitalEmployees/taskInterventionApplication.js';
+import { registerTaskInterventionRoutes } from './digitalEmployeeTaskInterventionRoutes.js';
 import { advanceInitialPreparation, initialPreparationSources, initialPreparationSourcesFromPersisted, initialPreparationJobKey, persistInitialPreparationState, replaceInitialPreparationPlan, type InitialPreparation } from '../digitalEmployees/initialPreparation.js';
 import { createCrawlWorkerJob } from './crawlWorker.js';
 import {createCustomerTaskNavigationRouter} from './customerTaskNavigation.js';
@@ -38,11 +40,6 @@ import { recommendPackage, normalizePackage, repairCollapsedWeeklyVideoProductio
 import { TASK_TEMPLATES, type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { fillMatrixVideos } from '../../src/lib/weeklyMatrix.js';
 import { presenterProductionGate, type ProductionDefaults } from '../../src/lib/shotProduction.js';
-import { applyDirectorDecision, DIRECTOR_DECISION_LABELS, DIRECTOR_REASON_LABELS, type DirectorDecision, type DirectorDecisionReason } from '../../src/lib/directorDecision.js';
-import {
-  directorDecisionInvalidatesWeeklyAuthorization,
-  taskCorrectionInvalidatesWeeklyAuthorization,
-} from '../digitalEmployees/weeklyAuthorizationInvalidation.js';
 import { weeklyAuthorizationRecoveryDecision } from '../digitalEmployees/weeklyAuthorizationRecovery.js';
 import { missingPublishingOAuthConfiguration, publishingAccountConnectionMessage, publishingOAuthConfigurationMessage, type PublishingOAuthPlatform, type PublishingReadinessSnapshot } from '../digitalEmployees/publishingOAuthReadiness.js';
 import { readTenantPublishingReadiness } from '../digitalEmployees/publishingRuntimeReadiness.js';
@@ -58,7 +55,6 @@ import {
   controlContentExecutionJob,
   pauseContentExecutionJobsForRun,
   resumeContentExecutionJobsForRun,
-  type ContentExecutionControlAction,
 } from '../contentExecution/durableQueue.js';
 import { buildTaskDeepLink, type WorkflowTask } from '../../src/lib/digitalEmployees.js';
 import { Router, type Request, type Response } from 'express';
@@ -99,7 +95,7 @@ import {
 import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPreflightBlockedReason, getTenantFollowupDispatchStatus, onFollowupWorkerEvent, preflightFollowupBatchDispatch } from '../digitalEmployees/followupDispatchWorker.js';
 import { bindPublishingTargets, listConnectedPublishingAccounts, localPublishingAccountMocksEnabled, publishingTargetPlatforms } from '../digitalEmployees/publishingTargets.js';
 import { digitalEmployeeOperatingGoals, isDigitalEmployeeOperatingGoal } from '../digitalEmployees/overviewGoalScope.js';
-import { evaluatePlannedReferenceReuse, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, viralCoverageBypassAllowed } from '../digitalEmployees/viralAnalysisCoverage.js';
+import { evaluatePlannedReferenceReuse, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds } from '../digitalEmployees/viralAnalysisCoverage.js';
 import { mustInvalidateContentDownstream } from '../digitalEmployees/dependencyInvalidation.js';
 import { canonicalScheduledCollectionRecords, evaluateScheduledDiscoveryRuns, mustReobserveSucceededCollection, scheduledCollectionFailureCanRetry, shouldRunScheduledCollection, type DiscoveryRunRecord } from '../digitalEmployees/scheduledCollectionProof.js';
 import {
@@ -134,7 +130,7 @@ import { createDigitalEmployeeOverviewReader } from './digitalEmployeeOverviewRe
 import { contentRoutingEvidence } from './digitalEmployeeContentEvidence.js';
 import { configSnapshotForPlan, goalInput, publicConfig, publicConfigurationMetadata, publicEventPayload } from '../digitalEmployees/overviewProjection.js';
 import { availableTaskActions, runReviewSummary } from './digitalEmployeeReviewSummary.js';
-import { downstreamTasks, irreversibleEffects, postHasPublishedReceipt } from '../digitalEmployees/taskCorrectionSafety.js';
+import { downstreamTasks, postHasPublishedReceipt } from '../digitalEmployees/taskCorrectionSafety.js';
 import { supersedeAffectedBusinessState as supersedeTaskCorrectionBusinessState } from '../digitalEmployees/taskCorrectionSupersession.js';
 import { contentProjectTaskScope, destinationLabel, exactVideoAnalysis, hasSucceededApprovalAncestor, recordBelongsToTask, scopedProof, scopedValues, studioProjectCompleted, studioProjectRendered, taskExecutionMetadata, taskScope } from '../digitalEmployees/taskEvidenceProjection.js';
 export { runReviewSummary } from './digitalEmployeeReviewSummary.js';
@@ -165,7 +161,7 @@ import {
   type WorkflowTaskStatus,
 } from '../digitalEmployees/domain.js';
 export const digitalEmployeesRouter = Router();
-import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, withLocalQueue, type ApprovalRecord, type ConfigRecord, type ContentBatchPlanRecord, type CorrectionRecord, type EventRecord, type GoalRecord, type HandoffRecord, type PlanRecord, type RunRecord, type StoredRecord, type TaskRecord } from './digitalEmployeeRecords.js';
+import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, withLocalQueue, type ApprovalRecord, type ConfigRecord, type ContentBatchPlanRecord, type EventRecord, type GoalRecord, type HandoffRecord, type PlanRecord, type RunRecord, type StoredRecord, type TaskRecord } from './digitalEmployeeRecords.js';
 digitalEmployeesRouter.use(requireAuth);
 digitalEmployeesRouter.use(enforceSupportSessionReadOnly);
 digitalEmployeesRouter.get('/publishing-accounts', async (_req, res) => {
@@ -4482,251 +4478,12 @@ async function decideDigitalEmployeeApproval(req: Request, res: Response): Promi
   }
 }
 digitalEmployeesRouter.post('/approvals/:approvalId/decide', decideDigitalEmployeeApproval);
-type TaskControlAction = 'retry' | 'skip' | 'manual_complete' | 'replan';
-class TaskControlError extends Error {
-  constructor(public status: number, message: string, public details: Record<string, unknown> = {}) {
-    super(message);
-  }
-}
-async function applyTaskControl(input: {
-  tenantId: string;
-  userId: string;
-  taskId: string;
-  action: TaskControlAction;
-  scope: 'one_off' | 'rule_candidate';
-  instruction: string;
-  rerunDownstream: boolean;
-  output?: Record<string, unknown>;
-  businessRefs?: Array<Record<string, unknown>>;
-  enabledWorkflows?: DigitalEmployeeConfig['enabledWorkflows'];
-  expectedTaskVersion?: string;
-}): Promise<{ runId: string; goalId: string }> {
-  const initialTask = await tenantRecord<TaskRecord>(COLLECTION.tasks, input.taskId, input.tenantId);
-  if (!initialTask) throw new TaskControlError(404, 'task_not_found');
-  return withDigitalEmployeeRunLock(input.tenantId, initialTask.run_id, async () => {
-    const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, input.taskId, input.tenantId);
-    if (!task) throw new TaskControlError(404, 'task_not_found');
-    if (input.expectedTaskVersion !== undefined
-      && String(task.task_version ?? task.updated_at ?? '').trim() !== input.expectedTaskVersion) {
-      throw new TaskControlError(409, 'task_version_conflict');
-    }
-    const [run, goal, plan, configRecord, allTasks] = await Promise.all([
-      tenantRecord<RunRecord>(COLLECTION.runs, task.run_id, input.tenantId),
-      tenantRecord<GoalRecord>(COLLECTION.goals, task.goal_id, input.tenantId),
-      tenantRecord<PlanRecord>(COLLECTION.plans, task.plan_id, input.tenantId),
-      configForTenant(input.tenantId),
-      store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: input.tenantId, run_id: task.run_id }, sort: 'sequence', perPage: 100 }),
-    ]);
-    const tenantConfig = publicConfig(configRecord);
-    if (!run || !goal || !plan || !tenantConfig) throw new TaskControlError(409, 'correction_context_missing');
-    const config = executionConfigForPlan(plan, tenantConfig);
-    const validatedInputRefs: Array<Record<string, unknown>> = [];
-    for (const ref of input.businessRefs || []) {
-      const validated = await canonicalEvidenceRef(input.tenantId, ref);
-      if (!validated) throw new TaskControlError(400, 'evidence_reference_invalid', { message: '证据必须引用当前租户内已存在的业务记录。' });
-      validatedInputRefs.push(validated);
-    }
-    if (run.status === 'cancelled') throw new TaskControlError(409, 'run_cancelled', { message: '已取消的运行不能再纠偏。' });
-    const resumePausedRun = run.status === 'paused' && ['retry', 'replan'].includes(input.action);
-    if (run.status === 'paused' && !resumePausedRun) throw new TaskControlError(409, 'run_controlled_by_human', { message: '请先恢复运行。' });
-    if (allTasks.items.some(item => item.id === task.id && item.status === 'handed_off')) {
-      throw new TaskControlError(409, 'task_handed_off', { message: '请先将人工接管任务交还数字员工。' });
-    }
-    if (input.action === 'manual_complete' && task.execution_mode === 'approval') {
-      throw new TaskControlError(409, 'approval_decision_required', { message: '审批节点必须通过正式审批接口决策，不能用人工完成绕过。' });
-    }
-    if (task.task_key === 'viral_analysis' && ['skip', 'manual_complete'].includes(input.action)) {
-      const snapshot = await buildBusinessSnapshot(input.tenantId, { startsAt: goal.starts_at, endsAt: goal.ends_at });
-      const coverage = await observeTaskProof(input.tenantId, run, task, snapshot, allTasks.items);
-      if (!viralCoverageBypassAllowed(task.task_key, input.action, coverage.ready)) {
-        throw new TaskControlError(409, 'viral_analysis_exact_coverage_required', {
-          message: '本周复刻独立制作视频的精确分析尚未覆盖完整，不能跳过或人工完成该节点。',
-          proof: coverage.proof,
-        });
-      }
-    }
-    const downstream = downstreamTasks(allTasks.items, task, input.rerunDownstream);
-    const replanConfig = input.action === 'replan' && input.enabledWorkflows ? { ...config, enabledWorkflows: input.enabledWorkflows } : config;
-    const savedPackage = plan ? jsonObject<{ businessPackage?: WeeklyPackage }>(plan.plan, {}).businessPackage : undefined;
-    const replanDraft = input.action === 'replan' ? savedPackage ? compilePackage(savedPackage, goalInput(goal), replanConfig) : buildWeeklyPlan(goalInput(goal), replanConfig) : null;
-    const replannedKeys = new Set(replanDraft?.tasks.map(item => item.key) || []);
-    const affected = input.action === 'replan'
-      ? [...new Map([...downstream, ...allTasks.items.filter(item => !replannedKeys.has(item.task_key))].map(item => [item.id, item])).values()]
-      : downstream;
-    if (affected.some(item => item.status === 'handed_off')) {
-      throw new TaskControlError(409, 'task_handed_off', { message: '受影响任务中存在人工接管节点，请先交还数字员工。' });
-    }
-    const irreversibleGuardTasks = input.action === 'manual_complete' ? affected.filter(item => item.id !== task.id) : affected;
-    const irreversible = await irreversibleEffects({ store, tenantId: input.tenantId, run,
-      affected: irreversibleGuardTasks, followupRunHasExternalReceipt });
-    if (irreversible.length) {
-      throw new TaskControlError(409, 'irreversible_external_effect', {
-        message: '受影响节点已有真实发布或发送回执，不能回滚或自动重跑。',
-        effects: irreversible,
-      });
-    }
-    let verifiedExternal: Awaited<ReturnType<typeof observeTaskProof>> | null = null;
-    if (input.action === 'manual_complete' && ['platform_publish', 'followup_dispatch'].includes(task.task_key)) {
-      const snapshot = await buildBusinessSnapshot(input.tenantId, { startsAt: goal.starts_at, endsAt: goal.ends_at });
-      verifiedExternal = await observeTaskProof(input.tenantId, run, task, snapshot, allTasks.items);
-      if (!verifiedExternal.ready) {
-        throw new TaskControlError(409, 'external_receipt_required', { message: '发布/发送节点只能依据当前 run 的真实平台回执完成。', proof: verifiedExternal.proof });
-      }
-    }
-    const previousCorrection = await first<CorrectionRecord>(COLLECTION.corrections, { tenant_id: input.tenantId, task_id: task.id }, '-version');
-    const version = Number(previousCorrection?.version || task.correction_version || 0) + 1;
-    const now = new Date().toISOString();
-    const beforeState = {
-      runStatus: run.status,
-      tasks: affected.map(item => ({
-        id: item.id,
-        taskKey: item.task_key,
-        status: item.status,
-        taskVersion: Number(item.task_version || 1),
-        correctionVersion: Number(item.correction_version || 0),
-        output: jsonObject(item.output, {}),
-        businessRefs: jsonObject(item.business_refs, []),
-      })),
-    };
-    if (savedPackage && plan && taskCorrectionInvalidatesWeeklyAuthorization(input.action)) {
-      const priorBody = jsonObject<Record<string, unknown>>(plan.plan, {});
-      await store.update(COLLECTION.plans, plan.id, { plan: { ...priorBody, packageApprovedBy: '', packageGrantInvalidatedAt: now } });
-      await invalidatePublishingAuthorizationForRun(input.tenantId, run.id);
-      await appendAuthorizationRequiredEvent({
-        tenantId: input.tenantId,
-        runId: run.id,
-        taskId: task.id,
-        reason: 'package_adjusted',
-        changedFields: input.action === 'replan' ? ['enabledWorkflows', 'weeklyPackage'] : ['taskExecution'],
-      });
-    }
-    const correction = await requiredCreate<CorrectionRecord>(COLLECTION.corrections, {
-      tenant_id: input.tenantId,
-      goal_id: run.goal_id,
-      run_id: run.id,
-      task_id: task.id,
-      version,
-      scope: input.scope,
-      instruction: input.instruction,
-      rerun_downstream: input.rerunDownstream,
-      before_state: beforeState,
-      after_state: { action: input.action, runStatus: 'running', correctionVersion: version, appliedToCurrentRun: true, longTermRuleActivated: false },
-      affected_task_ids: affected.map(item => item.id),
-      business_refs: affected.flatMap(item => jsonObject<unknown[]>(item.business_refs, [])),
-      status: 'applying',
-      created_by: input.userId,
-      created_at: now,
-    });
-    const resetTask = async (item: TaskRecord, isCurrent: boolean) => {
-      await store.update(COLLECTION.tasks, item.id, {
-        status: 'pending',
-        output: isCurrent
-          ? { ...jsonObject<Record<string, unknown>>(item.output, {}), executionFailure: undefined, waitState: undefined, correctionInput: { id: correction.id, version, scope: input.scope, instruction: input.instruction, action: input.action }, rerunRequestedAt: now }
-          : { rerunRequestedByCorrection: correction.id, correctionVersion: version, rerunRequestedAt: now },
-        blocked_reason: '',
-        owner_id: packageTaskForKey(savedPackage, item.task_key)?.ownerId || '',
-        business_refs: (packageTaskForKey(savedPackage, item.task_key)?.sourceProjectIds || []).map(id => ({ type: 'studio_project', id })),
-        task_version: Number(item.task_version || 1) + 1,
-        correction_version: isCurrent ? version : Number(item.correction_version || 0),
-        updated_at: now,
-      });
-    };
-    if (input.action === 'replan') {
-      const effectiveConfig = replanConfig;
-      const replanned = replanDraft!;
-      const plannedByKey = new Map(replanned.tasks.map(item => [item.key, item]));
-      const resetIds = new Set(downstream.map(item => item.id));
-      const removedOrReset = allTasks.items.filter(item => !plannedByKey.has(item.task_key) || resetIds.has(item.id));
-      await supersedeAffectedBusinessState(input.tenantId, run, removedOrReset, now);
-      for (const existing of allTasks.items) {
-        const planned = plannedByKey.get(existing.task_key);
-        if (!planned) {
-          await store.update(COLLECTION.tasks, existing.id, {
-            status: 'skipped',
-            output: { previousStatus: existing.status, previousOutput: jsonObject(existing.output, {}), completionMode: 'replanned_out', correctionId: correction.id, replannedAt: now },
-            blocked_reason: '已从当前周计划移除', owner_id: '', correction_version: existing.id === task.id ? version : Number(existing.correction_version || 0), updated_at: now,
-          });
-          continue;
-        }
-        const shouldReset = resetIds.has(existing.id);
-        await store.update(COLLECTION.tasks, existing.id, {
-          title: planned.title, description: planned.description, agent_role: planned.agentRole, kind: planned.kind,
-          sequence: planned.sequence, priority: planned.priority, requires_approval: planned.requiresApproval, depends_on: planned.dependsOn,
-          business_domain: planned.businessDomain, capability_key: planned.capabilityKey, destination: planned.destination,
-          destination_view: planned.destinationView || '', status_source: planned.statusSource, execution_mode: planned.executionMode, external_effect: planned.externalEffect,
-          ...(shouldReset ? {
-            status: 'pending', output: { replannedByCorrection: correction.id, correctionVersion: version, replannedAt: now }, blocked_reason: '', owner_id: '', business_refs: [], task_version: Number(existing.task_version || 1) + 1,
-          } : {}),
-          correction_version: existing.id === task.id ? version : Number(existing.correction_version || 0), updated_at: now,
-        });
-        plannedByKey.delete(existing.task_key);
-      }
-      const newTaskIds: string[] = [];
-      for (const planned of plannedByKey.values()) {
-        const created = await requiredCreate<TaskRecord>(COLLECTION.tasks, {
-          tenant_id: input.tenantId, goal_id: goal.id, plan_id: plan.id, run_id: run.id,
-          task_key: planned.key, title: planned.title, description: planned.description, agent_role: planned.agentRole, kind: planned.kind,
-          status: 'pending', sequence: planned.sequence, priority: planned.priority, requires_approval: planned.requiresApproval, depends_on: planned.dependsOn,
-          output: { replannedByCorrection: correction.id, replannedAt: now }, blocked_reason: '', owner_id: packageTaskForKey(savedPackage, planned.key)?.ownerId || '',
-          business_domain: planned.businessDomain, capability_key: planned.capabilityKey, destination: planned.destination, destination_view: planned.destinationView || '',
-          status_source: planned.statusSource, execution_mode: planned.executionMode, external_effect: planned.externalEffect, business_refs: [], task_version: 1, correction_version: 0,
-          created_at: now, updated_at: now,
-        });
-        newTaskIds.push(created.id);
-      }
-      await store.update(COLLECTION.plans, plan.id, { status: 'approved', plan: { ...replanned, configSnapshot: effectiveConfig, replannedAt: now, correctionId: correction.id } });
-      await store.update(COLLECTION.corrections, correction.id, {
-        affected_task_ids: [...affected.map(item => item.id), ...newTaskIds],
-        after_state: { action: input.action, runStatus: 'running', correctionVersion: version, planTaskKeys: replanned.tasks.map(item => item.key), enabledWorkflows: effectiveConfig.enabledWorkflows, newTaskIds, longTermRuleActivated: false },
-      });
-    } else if (input.action === 'retry') {
-      await supersedeAffectedBusinessState(input.tenantId, run, affected, now);
-      for (const item of affected) await resetTask(item, item.id === task.id);
-    } else {
-      const downstreamOnly = downstream.filter(item => item.id !== task.id);
-      await supersedeAffectedBusinessState(input.tenantId, run, input.action === 'skip' ? affected : downstreamOnly, now);
-      for (const item of downstreamOnly) await resetTask(item, false);
-      if (input.action === 'skip') {
-        await store.update(COLLECTION.tasks, task.id, {
-          status: 'skipped',
-          output: { previousOutput: jsonObject(task.output, {}), completionMode: 'skipped_by_human', note: input.instruction, correctionId: correction.id, completedAt: now },
-          blocked_reason: '', owner_id: input.userId, correction_version: version, updated_at: now,
-        });
-      } else {
-        const businessRefs = verifiedExternal?.businessRefs || (validatedInputRefs.length ? validatedInputRefs : jsonObject<Array<Record<string, unknown>>>(task.business_refs, []));
-        const output = verifiedExternal
-          ? { ...buildTaskOutput(task.task_key, goalInput(goal), config), ...input.output, completionMode: 'human_verified_receipt', note: input.instruction, proof: verifiedExternal.proof, businessRefs, completedAt: now }
-          : { ...jsonObject<Record<string, unknown>>(task.output, {}), ...input.output, completionMode: 'manual', note: input.instruction, businessRefs, completedAt: now };
-        await store.update(COLLECTION.tasks, task.id, {
-          status: 'succeeded', output, business_refs: businessRefs, blocked_reason: '', owner_id: input.userId, correction_version: version, updated_at: now,
-        });
-      }
-    }
-    if (resumePausedRun) {
-      await resumeContentExecutionJobsForRun({
-        dataStore: store,
-        tenantId: input.tenantId,
-        runId: run.id,
-        origin: 'workflow_run_pause',
-        now: new Date(now),
-      });
-    }
-    await Promise.all([
-      store.update(COLLECTION.corrections, correction.id, { status: input.scope === 'rule_candidate' ? 'rule_candidate_pending_review' : 'applied_once' }),
-      store.update(COLLECTION.runs, run.id, { status: 'running', current_controller: 'agent', pause_reason: '', completed_at: '' }),
-      store.update(COLLECTION.goals, run.goal_id, { status: 'active', updated_at: now }),
-    ]);
-    const review = await first<StoredRecord & { tenant_id: string }>(COLLECTION.reviews, { tenant_id: input.tenantId, run_id: run.id });
-    if (review) await store.update(COLLECTION.reviews, review.id, { status: 'stale_after_correction' });
-    await appendEvent({
-      tenantId: input.tenantId, runId: run.id, taskId: task.id, type: `task.${input.action}`, level: 'warning',
-      summary: `${task.title} 已执行${({ retry: '重试', skip: '跳过', manual_complete: '人工完成', replan: '重新规划' } as Record<TaskControlAction, string>)[input.action]}`,
-      payload: { correctionId: correction.id, version, action: input.action, scope: input.scope, rerunDownstream: input.rerunDownstream, affectedTaskIds: affected.map(item => item.id), longTermRuleActivated: false },
-    });
-    await appendAudit({ tenantId: input.tenantId, userId: input.userId, action: `workflow_task.${input.action}`, targetType: 'workflow_task', targetId: task.id, metadata: { correctionId: correction.id, runId: run.id, version, scope: input.scope, rerunDownstream: input.rerunDownstream, affectedTaskIds: affected.map(item => item.id) } });
-    return { runId: run.id, goalId: run.goal_id };
-  });
-}
+const taskInterventionApplication = createTaskInterventionApplication({
+  store, tenantRecord, first, requiredCreate, configForTenant, executionConfigForPlan,
+  buildBusinessSnapshot, getWhatsAppCustomers, observeTaskProof, advanceRun,
+  appendEvent, appendAudit, appendAuthorizationRequiredEvent, supersedeAffectedBusinessState,
+});
+const { applyTaskControl } = taskInterventionApplication;
 /** Shared retry authority for alternate authenticated surfaces such as the mobile workbench. */
 export async function retryDigitalEmployeeTask(input: {
   tenantId: string;
@@ -4749,197 +4506,13 @@ export async function retryDigitalEmployeeTask(input: {
   queueDigitalEmployeeRunAdvance(input.tenantId, result.runId);
   return result;
 }
-async function handleTaskControl(req: Request, res: Response, forcedAction?: TaskControlAction): Promise<void> {
-  const { tenantId, userId } = res.locals as AuthLocals;
-  const action = forcedAction || String(req.body?.action || 'retry') as TaskControlAction;
-  if (!['retry', 'skip', 'manual_complete', 'replan'].includes(action)) {
-    res.status(400).json({ error: 'invalid_correction_action', allowed: ['retry', 'skip', 'manual_complete', 'replan'] });
-    return;
-  }
-  const scope = forcedAction ? 'one_off' : String(req.body?.scope || '') as 'one_off' | 'rule_candidate';
-  if (!['one_off', 'rule_candidate'].includes(scope)) {
-    res.status(400).json({ error: 'invalid_correction_scope', allowed: ['one_off', 'rule_candidate'] });
-    return;
-  }
-  const providedNote = String(req.body?.instruction || req.body?.note || '').trim().slice(0, 5000);
-  if (!providedNote && (!forcedAction || ['skip', 'manual_complete'].includes(forcedAction))) {
-    res.status(400).json({ error: forcedAction ? 'task_control_note_required' : 'correction_instruction_required' });
-    return;
-  }
-  const allowedWorkflows = new Set<DigitalEmployeeConfig['enabledWorkflows'][number]>(['scheduled_social', 'viral_clone', 'product_content', 'material_content', 'content_publish', 'customer_segmentation', 'batch_followup']);
-  const rawWorkflows = req.body?.enabledWorkflows;
-  if (rawWorkflows !== undefined && (!Array.isArray(rawWorkflows) || rawWorkflows.some(item => !allowedWorkflows.has(String(item) as DigitalEmployeeConfig['enabledWorkflows'][number])))) {
-    res.status(400).json({ error: 'invalid_enabled_workflows' });
-    return;
-  }
-  const instruction = providedNote || (action === 'retry' ? '重试当前任务并重置下游' : '根据当前配置重新规划');
-  try {
-    const result = await applyTaskControl({
-      tenantId, userId, taskId: req.params.taskId, action, scope, instruction,
-      rerunDownstream: req.body?.rerunDownstream !== false,
-      output: jsonObject<Record<string, unknown>>(req.body?.output, {}),
-      businessRefs: Array.isArray(req.body?.businessRefs) ? req.body.businessRefs : undefined,
-      enabledWorkflows: Array.isArray(rawWorkflows) ? rawWorkflows as DigitalEmployeeConfig['enabledWorkflows'] : undefined,
-    });
-    queueDigitalEmployeeRunAdvance(tenantId, result.runId);
-    res.json(await buildOverview(tenantId, result.goalId));
-  } catch (error) {
-    if (error instanceof TaskControlError) {
-      res.status(error.status).json({ error: error.message, ...error.details });
-      return;
-    }
-    res.status(500).json({ error: error instanceof Error ? error.message : 'task_control_failed' });
-  }
-}
-digitalEmployeesRouter.post('/tasks/:taskId/corrections', async (req, res) => handleTaskControl(req, res));
-digitalEmployeesRouter.post('/tasks/:taskId/director-decision', async (req, res) => {
-  const { tenantId, userId } = res.locals as AuthLocals;
-  const decision = String(req.body?.decision || '') as DirectorDecision;
-  const reason = String(req.body?.reason || '') as DirectorDecisionReason;
-  const contentId = String(req.body?.contentId || '').trim().slice(0, 120);
-  if (!['continue', 'adjust', 'abandon'].includes(decision)) { res.status(400).json({ error: 'invalid_director_decision' }); return; }
-  if (!contentId) { res.status(400).json({ error: 'director_content_required' }); return; }
-  if (decision !== 'continue' && !(reason in DIRECTOR_REASON_LABELS)) { res.status(400).json({ error: 'director_reason_required' }); return; }
-  const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, req.params.taskId, tenantId);
-  if (!task) { res.status(404).json({ error: 'task_not_found' }); return; }
-  const plan = await tenantRecord<PlanRecord>(COLLECTION.plans, task.plan_id, tenantId);
-  if (!plan) { res.status(409).json({ error: 'correction_context_missing' }); return; }
-  const original = jsonObject<Record<string, unknown>>(plan.plan, {});
-  const pack = original.businessPackage as WeeklyPackage | undefined;
-  if (!pack) { res.status(409).json({ error: 'weekly_package_missing' }); return; }
-  let taskControlApplied = false;
-  try {
-    const now = new Date().toISOString();
-    const applied = applyDirectorDecision({ pack, contentId, decision, ...(decision !== 'continue' ? { reason } : {}), applyToSimilar: req.body?.applyToSimilar === true, now });
-    const invalidatesAuthorization = directorDecisionInvalidatesWeeklyAuthorization(decision);
-    await store.update(COLLECTION.plans, plan.id, { plan: {
-      ...original,
-      businessPackage: applied.pack,
-      ...(invalidatesAuthorization ? { packageApprovedBy: '', packageGrantInvalidatedAt: now } : {}),
-    } });
-    if (decision === 'continue') {
-      await appendEvent({ tenantId, runId: task.run_id, taskId: task.id, type: 'director.continue', level: 'info', summary: `${task.title}：人工选择继续当前内容方向`, payload: { contentId, affectedContentIds: applied.affectedContentIds } });
-      await appendAudit({ tenantId, userId, action: 'director_direction.continue', targetType: 'workflow_task', targetId: task.id, metadata: { runId: task.run_id, contentId, affectedContentIds: applied.affectedContentIds } });
-      await advanceRun(tenantId, task.run_id);
-      res.json(await buildOverview(tenantId, task.goal_id));
-      return;
-    }
-    const instruction = `${DIRECTOR_DECISION_LABELS[decision]}当前内容方向；原因：${DIRECTOR_REASON_LABELS[reason]}。${req.body?.applyToSimilar === true ? '同时调整本周同类内容。' : '仅作用于当前内容。'}`;
-    const runTasks = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: task.run_id }, sort: 'sequence', perPage: 100 });
-    const routingTask = runTasks.items.find(item => item.task_key === 'content_mode_routing');
-    if (!routingTask) throw new Error('director_routing_task_missing');
-    const result = await applyTaskControl({ tenantId, userId, taskId: routingTask.id, action: 'retry', scope: 'one_off', instruction, rerunDownstream: true });
-    taskControlApplied = true;
-    await invalidatePublishingAuthorizationForRun(tenantId, task.run_id);
-    await appendAuthorizationRequiredEvent({ tenantId, runId: task.run_id, taskId: task.id, reason: 'package_adjusted', changedFields: ['directorDecision'] });
-    await appendAudit({ tenantId, userId, action: `director_direction.${decision}`, targetType: 'weekly_content', targetId: contentId, metadata: { runId: task.run_id, taskId: task.id, routingTaskId: routingTask.id, reason, applyToSimilar: req.body?.applyToSimilar === true, affectedContentIds: applied.affectedContentIds, replacementContentId: applied.replacementContentId } });
-    await advanceRun(tenantId, result.runId);
-    res.json(await buildOverview(tenantId, result.goalId));
-  } catch (error) {
-    if (!taskControlApplied) await store.update(COLLECTION.plans, plan.id, { plan: original }).catch(() => undefined);
-    const message = error instanceof Error ? error.message : 'director_decision_failed';
-    res.status(message === 'director_content_not_found' ? 404 : 409).json({ error: message });
-  }
-});
+registerTaskInterventionRoutes(digitalEmployeesRouter, {
+  application: taskInterventionApplication, queueDigitalEmployeeRunAdvance, buildOverview,
+  registerProductionBudgetRoute: () => {
 registerProductionBudgetReforecastRoute(digitalEmployeesRouter, {
   tenantRecord, publicConfig, configForTenant, executionConfigForPlan,
   ensureFrozenEnterpriseProfileForRun, goalInput, appendEvent, appendAudit, buildOverview,});
-digitalEmployeesRouter.post('/tasks/:taskId/retry', async (req, res) => handleTaskControl(req, res, 'retry'));
-digitalEmployeesRouter.post('/tasks/:taskId/skip', async (req, res) => handleTaskControl(req, res, 'skip'));
-digitalEmployeesRouter.post('/tasks/:taskId/complete', async (req, res) => handleTaskControl(req, res, 'manual_complete'));
-digitalEmployeesRouter.post('/execution-jobs/:jobId/:action', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const action = String(req.params.action || '') as ContentExecutionControlAction;
-  if (!['pause', 'cancel', 'resume', 'retry'].includes(action)) {
-    res.status(400).json({ error: 'content_execution_control_invalid' });
-    return;
-  }
-  try {
-    await controlContentExecutionJob({
-      dataStore: store, tenantId, jobId: String(req.params.jobId || ''), action,
-    });
-    res.json(await buildOverview(tenantId));
-  } catch (error) {
-    const code = error instanceof Error ? error.message : 'content_execution_job_control_failed';
-    const status = code === 'content_execution_job_not_found' ? 404
-      : code.includes('not_') || code.endsWith('_invalid') ? 409 : 500;
-    res.status(status).json({ error: code });
-  }
-});
-async function canonicalEvidenceRef(tenantId: string, raw: Record<string, unknown>): Promise<Record<string, unknown> | null> {
-  const type = String(raw.type || '').trim();
-  const id = String(raw.id || raw.recordId || '').trim();
-  if (!type || !id) return null;
-  const collectionByType: Record<string, { collection: string; tenantField: 'tenant_id' | 'tenantId' }> = {
-    studio_project: { collection: 'studio_projects', tenantField: 'tenant_id' },
-    trend_video: { collection: 'trend_videos', tenantField: 'tenantId' },
-    post: { collection: 'posts', tenantField: 'tenant_id' },
-    customer_segment: { collection: COLLECTION.segments, tenantField: 'tenant_id' },
-    followup_batch: { collection: COLLECTION.followupBatches, tenantField: 'tenant_id' },
-  };
-  const mapping = collectionByType[type];
-  if (mapping) {
-    const record = await store.getById<StoredRecord>(mapping.collection, id).catch(() => null);
-    if (!record || String(record[mapping.tenantField] || '') !== tenantId) return null;
-    return { ...raw, type, id: record.id };
-  }
-  if (type === 'scheduled_task') {
-    const records = await store.list<StoredRecord>('scheduled_tasks', { where: { tenant_id: tenantId }, perPage: 500 });
-    const record = records.items.find(item => item.id === id || String(item.task_id || '') === id);
-    return record ? { ...raw, type, id: String(record.task_id || record.id), recordId: record.id } : null;
-  }
-  if (type === 'customer') {
-    const customer = (await getWhatsAppCustomers(tenantId)).find(item => String(item.id || '') === id);
-    return customer ? { ...raw, type, id } : null;
-  }
-  return null;
-}
-digitalEmployeesRouter.post('/tasks/:taskId/evidence', async (req, res) => {
-  const { tenantId, userId } = res.locals as AuthLocals;
-  const initialTask = await tenantRecord<TaskRecord>(COLLECTION.tasks, req.params.taskId, tenantId);
-  if (!initialTask) { res.status(404).json({ error: 'task_not_found' }); return; }
-  await withDigitalEmployeeRunLock(tenantId, initialTask.run_id, async () => {
-  const rawRefs = Array.isArray(req.body?.businessRefs) ? req.body.businessRefs.slice(0, 50) as Array<Record<string, unknown>> : [];
-  if (!rawRefs.length) { res.status(400).json({ error: 'business_refs_required' }); return; }
-  const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, req.params.taskId, tenantId);
-  if (!task) { res.status(404).json({ error: 'task_not_found' }); return; }
-  const canonical: Array<Record<string, unknown>> = [];
-  for (let index = 0; index < rawRefs.length; index += 1) {
-    const validated = await canonicalEvidenceRef(tenantId, rawRefs[index]);
-    if (!validated) {
-      res.status(400).json({ error: 'evidence_reference_invalid', message: '证据必须引用当前租户内已存在的业务记录。', index, type: rawRefs[index]?.type || '', id: rawRefs[index]?.id || '' });
-      return;
-    }
-    canonical.push(validated);
-  }
-  const run = await tenantRecord<RunRecord>(COLLECTION.runs, task.run_id, tenantId);
-  if (!run) { res.status(409).json({ error: 'evidence_context_missing' }); return; }
-  const now = new Date().toISOString();
-  const [runTasks, pendingApprovals] = await Promise.all([
-    store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, sort: 'sequence', perPage: 100 }),
-    store.list<ApprovalRecord>(COLLECTION.approvals, { where: { tenant_id: tenantId, run_id: run.id, status: 'pending' }, perPage: 100 }),
-  ]);
-  const downstreamIds = new Set(downstreamTasks(runTasks.items, task, true).map(item => item.id));
-  for (const approval of pendingApprovals.items.filter(item => downstreamIds.has(item.task_id))) {
-    await store.update(COLLECTION.approvals, approval.id, { status: 'superseded', decision_note: '上游业务证据变更，需重新预检与审批', decided_at: now });
-    if (approval.task_id !== task.id) {
-      const approvalTask = runTasks.items.find(item => item.id === approval.task_id);
-      if (approvalTask) await store.update(COLLECTION.tasks, approvalTask.id, { status: 'pending', blocked_reason: '', task_version: Number(approvalTask.task_version || 1) + 1, updated_at: now });
-    }
-  }
-  const existing = jsonObject<Array<Record<string, unknown>>>(task.business_refs, []);
-  const merged = [...new Map([...existing, ...canonical].map(ref => [`${String(ref.type || '')}:${String(ref.id || '')}`, ref])).values()];
-  const shouldResetTask = ['waiting_external', 'waiting_approval', 'waiting_human', 'pending'].includes(task.status);
-  const shouldReconcile = !['succeeded', 'failed', 'cancelled', 'paused'].includes(run.status);
-  await Promise.all([
-    store.update(COLLECTION.tasks, task.id, { business_refs: merged, ...(shouldResetTask ? { status: 'pending', blocked_reason: '' } : {}), task_version: Number(task.task_version || 1) + 1, updated_at: now }),
-    shouldReconcile ? store.update(COLLECTION.runs, run.id, { status: 'running', current_controller: 'agent', pause_reason: '', completed_at: '' }) : Promise.resolve(false),
-  ]);
-  await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.evidence_attached', level: 'info', summary: `${task.title} 已关联 ${canonical.length} 条租户内业务证据`, payload: { businessRefs: canonical } });
-  await appendAudit({ tenantId, userId, action: 'workflow_task.evidence_attached', targetType: 'workflow_task', targetId: task.id, metadata: { runId: run.id, businessRefs: canonical } });
-  if (shouldReconcile) await advanceRun(tenantId, run.id);
-  res.json(await buildOverview(tenantId, run.goal_id));
-  });
+  },
 });
 digitalEmployeesRouter.post('/tasks/:taskId/handoff', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;

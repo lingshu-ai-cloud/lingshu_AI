@@ -5,7 +5,10 @@ import {
   isDigitalEmployeeOperatingGoal,
 } from './overviewGoalScope.js';
 
-const source = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const mainSource = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const interventionApplication = fs.readFileSync('server/digitalEmployees/taskInterventionApplication.ts', 'utf8');
+const interventionRoutes = fs.readFileSync('server/routes/digitalEmployeeTaskInterventionRoutes.ts', 'utf8');
+const source = [mainSource, interventionApplication, interventionRoutes].join('\n');
 const followupReadSource = fs.readFileSync('server/routes/digitalEmployeeFollowupReadRoutes.ts', 'utf8');
 const overviewReaderSource = fs.readFileSync('server/routes/digitalEmployeeOverviewReader.ts', 'utf8');
 const overviewProjectionSource = fs.readFileSync('server/digitalEmployees/overviewProjection.ts', 'utf8');
@@ -200,11 +203,10 @@ const assistantHandoff = source.slice(source.indexOf('async function takeOverWor
 assert.match(assistantHandoff, /pauseContentExecutionJobsForRun[\s\S]*workflow_handoff/, 'Lingxiaoshu human takeover must use the same durable production stop as the page control');
 assert.match(assistantHandoff, /planWorkflowHandoffAdmission/, 'Lingxiaoshu takeover must share the one-active-handoff-per-run policy');
 
-const correctionStart = source.indexOf('async function applyTaskControl');
-const correctionEnd = source.indexOf("\ndigitalEmployeesRouter.post('/tasks/:taskId/handoff'", correctionStart);
-assert.notEqual(correctionStart, -1, 'missing task-control implementation');
-assert.notEqual(correctionEnd, -1, 'missing task-control route boundary');
-const correctionRoute = source.slice(correctionStart, correctionEnd);
+assert.match(mainSource, /registerTaskInterventionRoutes\(digitalEmployeesRouter/, 'intervention endpoints must stay on the authenticated parent router');
+assert.ok(mainSource.indexOf('digitalEmployeesRouter.use(enforceSupportSessionReadOnly)') < mainSource.indexOf('registerTaskInterventionRoutes(digitalEmployeesRouter'), 'parent write guards must precede all intervention routes');
+assert.doesNotMatch(interventionApplication, /from 'express'|req\.body|res\.json/, 'application rules must not depend on HTTP');
+const correctionRoute = interventionApplication + interventionRoutes;
 assert.match(correctionRoute, /tenantRecord<TaskRecord>/, 'corrections must only address a task in the current tenant');
 assert.match(correctionRoute, /req\.body\?\.instruction|req\.body\.instruction/, 'correction contract must accept instruction');
 assert.match(correctionRoute, /req\.body\?\.scope|req\.body\.scope/, 'correction contract must accept scope');
