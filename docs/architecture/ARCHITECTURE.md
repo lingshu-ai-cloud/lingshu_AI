@@ -19,6 +19,7 @@
 - `src/components/InspirationDashboard.tsx` 与 `src/components/inspiration/inspirationFrameMatching.ts`：灵感页负责展示、交互和素材读取，逐镜素材评分、硬条件、可复制性与替代路线由纯匹配模块负责；图片证据面板由 `ImageEvidenceSummaryPanel.tsx` 承载，展示轮播节奏、可复用模块和图层蓝图。`imagePostAnalysisPresentation.ts` 与 `inspirationAnalysisProjection.ts` 投影图文排队、处理中、结果不明的可见状态和禁重提边界。未核验的产品主体或真实性证据不得靠软评分提升为可复用片段。
 - `src/components/inspiration/InspirationImageCrawlDialog.tsx`：只展示关键词补充采集的现有平台、关键词、数量和忙碌/错误状态；`InspirationDashboard.tsx` 继续持有请求、状态、错误清理与采集结果刷新，不在弹窗中建立独立付费或持久化链路。
 - `src/components/inspiration/inspirationReferenceImport.ts`：本地 MP4 对标导入的文件校验、现有鉴权入库接口、持久记录读回及有界只读轮询。页面注入列表状态和刷新能力；账号授权变化后旧请求不得读取或写回新会话。本模块不新建分析或付费旁路，逐镜处理仍由现有服务端任务负责。
+- `src/components/inspiration/inspirationExactAnalysisApi.ts`：全片精确分析的现有鉴权提交、记录读取、暂停与响应解析；页面保留分析准入、排队/终态展示、轮询上限和状态所有权。该模块只调用原有端点，不新增付费许可或自动重试。
 - `src/components/inspiration/InspirationVideoResults.tsx`：承载灵感结果的首次加载、真实空态、卡片/列表及服务端分页展示，共用卡片操作准入。页面继续提供已筛选记录、来源/收藏状态、分页页码和选择/创作/预览/收藏/管理回调；展示组件不读取租户数据或执行供应商请求。
 - `src/components/inspiration/InspirationWatchModal.tsx`：原视频预览弹窗独立承担鉴权视频、原站嵌入回退、加载/失败/重试与高于详情 Drawer 的层级；灵感页仍拥有选中视频和打开/关闭动作。`inspirationShootingNeeds.ts` 从已有分析及素材匹配结果汇总拍摄缺口和优先级；`InspirationShootingPanel.tsx` 持有待拍清单的排序、筛选与可选拍摄入口展示，页面继续拥有视频/素材读取、上传状态和任务回写，不把元数据兜底冒充真实镜头证据。
 - `src/components/inspiration/inspirationProductMaterialInventory.ts`：按稳定产品 ID 读取完整素材库存、去重并受控逐页汇总；页面仍决定何时读取、筛选和打开详情，不能把未返回或属于其他产品的素材补成已就绪。`inspirationReferenceTarget.ts`：解析周任务导航中的参考目标，并按记录、URL 或标题匹配已取得的灵感记录；明确的精确参考审核仍走独立审核链，不降级为模糊匹配。

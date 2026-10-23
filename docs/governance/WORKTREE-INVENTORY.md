@@ -3,6 +3,12 @@
 最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。本次只读复核未改写工作树、分支或运行数据；历史移除记录见下文。
 
+## 2026-10-23 集成点 `3b200a4d` 复核
+
+- 复核时集成树干净，本地 HEAD 为 `3b200a4d58306ad25670cef792e21b045535e495`；此 SHA 是本批改动前起点。仍有 11 个注册工作树。6 个非集成树含未提交项，计数分别为 `local-preview-1002` 53、`local-integrated-flow` 91、`local-unified-20261010` 6、`mobile-dual-edition-20261012` 28、`客服` 1、`total-merge-langgraph` 20，均原位保留。
+- 4 个干净非集成树无新增安全归档候选：`safe-all-modules-ui-20261009` 与 `colleague-handoff-20261019` 含被忽略业务数据，独立广告树已前进至 `4ef6f137` 且仍有独有补丁/运行数据，新图片树 `23b1bb93` 的正向独有提交仍未整笔合并。原图片树 `95b0bcc1` 是集成祖先，但有未提交源码/产物，未改动或归档。
+- 新图片提交的图层蓝图和确定性合成能力在集成代码已有覆盖；其中自动 GPT 复核路由与用户要求保留的 Qwen→Gemini 降级冲突，不能直接 cherry-pick。LinkedIn 付费采集按用户最新决定暂不测试。本批未归档、重置、移动或更改任何非集成工作树。
+
 ## 2026-10-23 集成点 `6d5fb43a` 图片差异与工作树复核
 
 - 复核时集成树 `xixi1021-governance-baseline` 为 `6d5fb43a77e0daff91da93f94f5ec56570d917b9`、Git 工作区干净；该点位不是永久 HEAD。共 11 个注册工作树。6 个非集成树有未提交项：`local-preview-1002` 53、`local-integrated-flow` 91、`local-unified-20261010` 6、`mobile-dual-edition-20261012` 28、`客服` 1、`total-merge-langgraph` 20，全部保留。

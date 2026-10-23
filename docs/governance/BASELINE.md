@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵感页全片精确分析 HTTP 边界拆分（2026-10-23）
+
+- 代码提交 `f48abb19` 将精确分析提交、持久记录读取、暂停与响应解析迁至 `inspirationExactAnalysisApi.ts`；页面保留准入、状态、轮询上限与展示，旧页面解析导出兼容。`InspirationDashboard.tsx` 从 2,238 降至 2,208 行并收紧历史预算；全仓仍有 5 个超限文件，结构拆分尚未完成。
+- 新模块离线模拟请求与原页面解析共 4/4、`test:video-source-boundaries` 148/148、`test:tenant-isolation`、TypeScript、架构扫描/ratchet（2,409 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建和 `git diff --check` 通过。Studio 主 chunk 为 480,909/485,000 字节，构建仍有大 chunk 提示。未测试 LinkedIn 真实付费采集、调用其他真实供应商、执行目标库迁移、浏览器验收或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## 灵感页本地对标视频导入边界拆分（2026-10-23）
 
 - 代码提交 `2840e649` 将 MP4 校验、现有鉴权入库、记录读回和有界分析状态轮询迁至 `inspirationReferenceImport.ts`，页面保留列表/选中状态和刷新回调。授权切换后旧请求不再读取或写回新会话；未新增供应商请求、分析重提或付费旁路。`InspirationDashboard.tsx` 从 2,296 降至 2,238 行并收紧历史预算；全仓仍有 5 个超限文件。
