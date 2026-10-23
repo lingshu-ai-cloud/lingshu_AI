@@ -1,7 +1,13 @@
 # Git 工作树状态盘点
 
-最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
+最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
+
+## 2026-10-24 指定基线前端整合
+
+- 原开发树 `/Users/jiejie/.codex/worktrees/f82f/lingshu-AI` 在 `codex/jimeng-creator-ui-20261023` 的 `64bb6481` 仍保留其未提交内容；未复制其中的 `AGENTS.md`、架构预算改动或已弃用的蓝色吉祥物素材，亦未重置、清理或归档。
+- 新建隔离树 `/Users/jiejie/.codex/worktrees/frontend-onto-1d73/lingshu-AI`，分支 `codex/frontend-onto-1d73`，精确从 `1d73fda38f9a6f01adcbb794b691222550c569db` 起步，仅整合前端、前端契约、UI/架构说明和构建分包规则；源码提交 `58e1212c67a8def14c3ad630c663023c6830ad2f`。本机主集成树 `/Users/jiejie/Documents/lingshu-AI` 原为干净的 `1d73fda`，已快进到该源码提交。治理文档随后单独提交，本地最终 SHA 以提交后的 Git 核验为准；未推送或部署。
+- 本次没有动其他历史工作树或运行/预览数据，尤其没有处置 `mobile-dual-edition-20261012`。隔离树暂保留为可恢复的候选工作区；旧 5188 预览仍可能来自原开发树，不能据其状态推断本机新基线已在运行。
 
 ## 2026-10-23 本机集成工作树切换
 

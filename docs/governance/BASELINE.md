@@ -1,6 +1,13 @@
 # 工程基线（阶段二集成）
 
-更新时间：2026-10-23（Asia/Shanghai）
+更新时间：2026-10-24（Asia/Shanghai）
+
+## 指定 `1d73fda` 基线的前端整合（2026-10-24）
+
+- 用户指定的精确起点为 `1d73fda38f9a6f01adcbb794b691222550c569db`；本机集成工作树 `/Users/jiejie/Documents/lingshu-AI` 在分支 `xixi改五个大文件结构治理` 上确认干净且 HEAD 正是该提交后，才将隔离分支 `codex/frontend-onto-1d73` 的前端源码提交 `58e1212c67a8def14c3ad630c663023c6830ad2f` 以 `git merge --ff-only` 快进合入。原开发树 `/Users/jiejie/.codex/worktrees/f82f/lingshu-AI` 的脏改动与 `mobile-dual-edition-20261012` 均未重置、清理或混入；本记录的治理文档提交在源码提交之后。
+- 按现有拆分边界整合内容创作首页、自由创作/数字员工模式、爆款库连续滚动与瀑布流、分栏滑动预览、经营总览三页签、智能客服暗色可读性、自动/手动日夜模式及方框选片引导。主导航只保留用户指定的五个入口，移除智能体记忆、组织与权限、员工管理的前端入口与死代码；原投流能力仍由既有 `PLATFORM_ADS_SURFACE_ENABLED=false` 门禁保持“待接通”，没有绕过后端准入。旧预览组件与不再使用的内容运营 UI 模块已删除，普通生产 TypeScript 文件均未超过 800 行；原先接近上限的 `App.tsx`、`ConversionPage.tsx`、`GlobalAssistant.tsx` 均较起点缩短。后端运行代码、供应商契约和队列未改；`server/digitalEmployees/productionTruthfulness.contract.test.ts` 仅更新已删除前端入口的断言。
+- 实际通过：前端定向组 **39/39**、`test:conversion-boundaries` **13/13**、`test:assistant`、`test:assistant-production` **34/34**、`test:production-entry` **27/27**、`test:video-source-boundaries` **168/168**、`test:social-content-frontend`、`test:digital-employees`、`test:studio-workspace` **131/131**、`test:frontend-security`；`NODE_OPTIONS=--max-old-space-size=8192 pnpm run lint`、以 `1d73fda` 为基准的 `check:architecture`（2,608 个生产 TS、1 个冻结历史超限）、`test:architecture-ratchet`、`check:digital-employee-migrations`（193 项仓库只读）、`pnpm run build` 与 `git diff --check`。Studio 主 chunk **368,939/485,000** 字节且视图静态导入边界通过。隔离浏览器夹具在 1440/390 像素下检查五个主入口共 **10/10**，交互式核验首页模式、方框引导、连续滚动、换片、经营总览、客服和日夜切换；页面级错误与横向溢出均为零。夹具拦截全部 API 写入和外部请求。
+- 限制：初跑 `test:production-entry` 的两条旧源码断言尚未适配已拆分的基线组件，核对当前真实路径后修正并重跑至 27/27；旧 UI 验收脚本也曾按旧侧栏宽度/本地存储路由误报，更新判据后 10/10。未运行全仓 `quality`/`verify`；没有使用真实美妆账号做本次登录后验收、真实视频供应商/付费/发布 E2E 或目标数据库迁移。旧 5188 预览进程不自动等于本源码基线。未推送远端、未部署；源码基线、预览进程和供应商 Ready 状态必须分别核对。下一步是在新基线预览中由用户复核视觉与真实租户数据，再按单独授权处理投流接通或发布。
 
 ## 本地集成基线切换与人物认证 UI 收口（2026-10-23）
 
