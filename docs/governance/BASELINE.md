@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工客户跟进只读端点拆分（2026-10-23）
+
+- 将批次详情、Worker 状态和人工发送预检迁至 `digitalEmployeeFollowupReadRoutes.ts`，在原数字员工鉴权与支持会话只读门禁之后、人工发送路由之前挂载。租户身份仍从认证上下文读取；实际发送和回执链未改动。`digitalEmployees.ts` 从 5,282 降至 5,259 行，历史预算同步收紧；全仓仍有 5 个超限文件，结构治理未完成。
+- 数字员工路由合同、完整 `test:digital-employees`、租户隔离、TypeScript、架构扫描与 ratchet（2,416 个生产 TypeScript 文件）、193 项迁移清单只读检查、生产构建及 `git diff --check` 通过。Studio 主 chunk 为 480,957/485,000 字节；未测试 LinkedIn 真实付费采集，未调用其他真实供应商、执行目标库迁移、浏览器验收或部署。提交与远端 SHA 以推送后核验为准。
+
 ## 干净来源工作树可恢复归档（2026-10-23）
 
 - 按用户确认的归档选择，将无独有补丁、Git 状态干净的 `safe-all-modules-ui-20261009` 与 `colleague-handoff-20261019` 完整检出先备份为私有压缩包并校验，再移除工作树注册和原检出。归档包包含原被忽略业务/媒体数据；两条命名分支和 HEAD 提交保留。精确清单、SHA-256 与恢复步骤见 `WORKTREE-INVENTORY.md` 引用的归档文件。

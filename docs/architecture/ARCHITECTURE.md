@@ -4,6 +4,7 @@
 
 ## 边界
 
+- `server/routes/digitalEmployeeFollowupReadRoutes.ts`：数字员工客户跟进批次详情、Worker 状态和人工发送预检的只读 HTTP 端点。由 `digitalEmployees.ts` 在统一鉴权及支持会话只读门禁之后、实际发送端点之前挂载；租户身份只取已认证的 `res.locals`，预检不发起供应商发送。
 - `server/routes/studioTranslationCore.ts` 与 `studioTranslationRoutes.ts`：前者保留语言名称和模型 JSON 解析的共用规则；后者注册企业名称发音翻译、单语及批量翻译端点，持有原 Qwen 模型调用、请求总时限、供应商时限、客户端断连中止与部分结果返回。`studio.ts` 在原鉴权和订阅门禁之后按原顺序挂载，后续 Studio 路由不重建翻译付费或重试旁路。
 - `server/routes/studioVariationBatchRoutes.ts` 与 `studioPublishLinkRoutes.ts`：分别持有 Studio 裂变批次的租户限定本地文件状态与认领/重试，以及终态发布回执链接、指标和素材用量引用。`studio.ts` 在原鉴权、订阅门禁及项目路由之后挂载；发布链接仍须先核验当前租户项目和已验证生成记录，裂变批次路由不会自动调用供应商或发布。
 
