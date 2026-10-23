@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Collapse, DatePicker, Input, Pagination, Select, Space, Table, Tag, Tooltip } from 'antd';
+import { Alert, Button, Collapse, DatePicker, Input, Pagination, Select, Space, Table, Tabs, Tag, Tooltip } from 'antd';
+import AdAccountHistory from './AdAccountHistory';
 import { RefreshCw, Download } from 'lucide-react';
 import dayjs from 'dayjs';
 import { platformAdsRequest } from '../lib/platformAds';
@@ -18,7 +19,14 @@ const defaultColumns: MetaMetricKey[] = ['spend', 'impressions', 'clicks', 'link
 const errorText = (e: unknown) => e instanceof Error ? e.message : '读取失败，请稍后刷新';
 const fieldRef = (key: MetaMetricKey) => { const def = META_PERFORMANCE_FIELDS[key]; return def.field + ('actionType' in def ? `[${def.actionType}]` : ''); };
 const resource = (i: AdCreativeLibraryItem, level: MetaReportLevel) => i.execution?.[level === 'campaign' ? 'campaignId' : level === 'adset' ? 'adsetId' : 'adId'] || '';
-export default function AdPerformanceOverview({ loading, onOpen, initialTaskId }: { tasks: Task[]; loading: boolean; onOpen: (id: string) => void; initialTaskId?: string }) {
+type Props = { tasks: Task[]; loading: boolean; onOpen: (id: string) => void; initialTaskId?: string };
+export default function AdPerformanceOverview(props: Props) {
+  return <Tabs defaultActiveKey={props.initialTaskId ? 'local' : 'history'} items={[
+    { key: 'history', label: '账户真实历史', children: <AdAccountHistory/> },
+    { key: 'local', label: '本地计划回执', children: <TaskPerformanceOverview {...props}/> },
+  ]}/>;
+}
+function TaskPerformanceOverview({ loading, onOpen, initialTaskId }: Props) {
   const [taskFilter, setTaskFilter] = useState(initialTaskId || '');
   const [catalog, setDirectory] = useState<AdCreativeLibraryPage | null>(null), [page, setPage] = useState(1), [catalogRefresh, setCatalogRefresh] = useState(0), [catalogBusy, setCatalogBusy] = useState(false);
   const directory = catalog?.page === page ? catalog : null;

@@ -41,6 +41,10 @@ try {
   assert.equal((await fetch(base + '/creative-lifecycle?origin=studio&projectId=missing', { headers: auth() })).status, 404);
   assert.equal((await fetch(base + '/creative-lifecycle?origin=studio&projectId=missing&sha256=spoof', { headers: auth() })).status, 400);
   assert.equal((await fetch(base + '/performance/missing')).status, 401);
+  assert.equal((await fetch(base + '/connections/missing/history')).status, 401);
+  assert.equal((await fetch(base + '/connections/missing/history?accountId=123', { headers: auth() })).status, 400);
+  await store.create('platform_ad_connections', { id: 'foreign-connection', tenant_id: 'tenant-b', provider: 'meta', accountId: '123', tokenCipher: 'private' });
+  assert.equal((await fetch(base + '/connections/foreign-connection/history', { headers: auth() })).status, 404);
   assert.equal((await fetch(base + '/performance/missing?level=account', { headers: auth() })).status, 400);
   assert.equal((await fetch(base + '/tasks/missing/creatives', { headers: auth() })).status, 404);
   for (const route of ['/tasks/missing/creatives', '/tasks/missing/creatives/missing/upload', '/tasks/missing/creatives/missing/reconcile', '/tasks/missing/creatives/attach-existing']) {

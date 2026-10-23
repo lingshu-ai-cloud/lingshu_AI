@@ -2,6 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { metaPerformanceSummary, metaDateRange, metaAccountDate, type MetaPerformanceReport } from '../../shared/metaPerformance';
+test('account history is default and payment is a read-only official handoff, not an app charge', () => {
+  const overview = readFileSync(new URL('./AdPerformanceOverview.tsx', import.meta.url), 'utf8');
+  const history = readFileSync(new URL('./AdAccountHistory.tsx', import.meta.url), 'utf8');
+  assert.match(overview, /props.initialTaskId \? 'local' : 'history'/);
+  assert.match(history, /platformAdsRequest<MetaAccountHistory>/);
+  assert.match(history, /未返回的指标显示“暂无数据”/);
+  assert.match(history, /不生成充值订单/);
+  assert.doesNotMatch(history, /method:\s*['"]POST|mockFunnel|localStorage/);
+});
 test('real data page sends date/scope queries and uses unified Ant and Chart.js components', () => {
   const source = readFileSync(new URL('./AdPerformanceOverview.tsx', import.meta.url), 'utf8');
   for (const pattern of [/LsMetricStrip/, /LsDataChart/, /DatePicker.RangePicker/, /<Table</, /\/performance\/\$\{id\}\?\$\{query\}/, /useUnifiedAttributionSetting|action_report_time=impression/, /空报告/, /采集时间/, /URL.revokeObjectURL/]) assert.match(source, pattern);
