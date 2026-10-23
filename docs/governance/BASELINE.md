@@ -2,6 +2,16 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 周复盘与下一周期完整职责拆分（2026-10-23）
+
+- 起点：集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `c79e583dcf912ed412183e5f8586ff2d7a305d06`，工作区干净，旧主会话 idle。源码提交 `5ad6bcc26962d587a15c04c621bd37ef42b9c3d7` 迁出完整的复盘聚合/保存、手动刷新、定时去重、复盘待办分配及托管周期续接。
+- `weeklyReviewApplication.ts`（309 行）统一持有上述应用用例；`weeklyReviewProjection.ts`（59 行）持有任务动作与复盘摘要纯投影，旧 `digitalEmployeeReviewSummary.ts` 保留兼容转发；`digitalEmployeeWeeklyReviewRoutes.ts`（54 行）只做生成/待办 HTTP 协议适配并复用既有 `ReviewTodoService`。后台导出的 `generateScheduledRunReview`、`continueManagedOperatingCycle`、`allocateReviewTodos` 继续转发到同一应用实例，正常执行收尾也使用同一 `completeReview`。
+- `digitalEmployees.ts` 从 4,832 降至 **4,561 行**，预算同步收紧。五个迁移函数与起点逐段归一化比较，逻辑正文全部一致。共享启动队列、定时复盘持久标记、托管续接数据库租约、计划 CAS、部分写入恢复及激活前再次核对授权均保持原顺序；没有新增供应商调用。详见 [周复盘与下一周期 ADR](../architecture/adr/2026-10-23-weekly-review-application.md)。全仓仍有 5 个历史超限文件：数字员工 4,561、Studio 路由 7,221、视频路由 7,823、Studio 页面 12,000、灵感页 2,014，不能按 ratchet 通过宣称结构治理完成。
+- 新增应用行为 6 项、真实本地 HTTP 适配 3 项；连同现有路由/时间表合同、托管续接和复盘待办集成共 **13/13** 通过。覆盖复盘刷新不重复建记录、不把活跃运行改为完成、跨租户拒绝、同一时段并发去重、写入失败不留成功标记、不可续接时释放租约、认证身份/修订号传递及 HTTP 错误状态。新增 9 项已纳入 `test:digital-employees`。
+- 扩大验证发现原 `reviewTodos.integration.test.ts` 在当前启动前置条件下缺少数字人配置，并让知识待办用例意外继承制作任务；已在隔离导出的未修改 `c79e583d` 基线上复现同一数字人前置失败。修正离线夹具：提供显式授权数字人，并将知识待办来源包限定为其复盘工作，继续验证具体知识任务、启动、任务写入中断恢复及不重复建运行。生产启动、预算、资料和真实供应商门禁未修改；制作与托管授权预检继续由完整托管集成组验证。
+- 实际通过：上述定向组、`pnpm run lint`、`ARCHITECTURE_BASE_REF=c79e583d pnpm run check:architecture`（2,423 个生产 TypeScript 文件）、`pnpm run test:architecture-ratchet`、`pnpm run check:digital-employee-migrations`（193 项仓库只读完整性）、完整 `pnpm run test:digital-employees`、`pnpm run test:review-todos`、`pnpm run test:social-managed`、`node --import tsx --test server/security/supportSessionReadOnly.test.ts`、`pnpm run test:tenant-isolation`、`pnpm run build`。提交前复核整个代码差异的 `git diff --check` / `git show --check`；新投影继承的尾部空行已清除。构建无大 chunk 警告，Studio 主 chunk 480,957/485,000 字节，仍接近预算。
+- 未执行真实供应商、LinkedIn 付费采集、目标库迁移、登录后浏览器验收、发布或部署；其他工作树及项目 `sources/` 未改动。普通分支推送不会触发部署的工作流边界已重新核对。源码与文档分开提交；最终文档 SHA、远端一致性及干净状态以推送后核验为准。
+
 ## 数字员工任务纠偏完整职责拆分（2026-10-23）
 
 - 起点：分支 `xixi1021程永罗沟通前大整合` 的本地/远端均为 `81ad476ee9e716c177dd9928fac52023e7e37874`，集成树干净，旧主会话 idle。源码提交 `a7b3844753d28b2938edfc131f26fecf4c59d9eb` 将重试、跳过、人工完成、重规划、编导继续/调整/放弃、业务证据校验与补充整组迁出主路由。
