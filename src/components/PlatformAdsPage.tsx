@@ -231,13 +231,13 @@ export default function PlatformAdsPage({
   );
 
   return (
-    <div className="ads-workspace">
+    <div className={`ads-workspace${isCreativePage ? ' ads-creative-workspace' : ''}`}>
       <main className="ads-main">
         {isLocalForeignTradeMockEnabled() && <Alert className="mb-4" type="info" showIcon title="本地模拟 · 外贸工厂投放" description="展示中东、欧洲和拉美市场的跨平台计划与近 7 天效果，不会触发真实广告操作。" />}
         <LsPageHeader
           title={page === 'adsPlans' ? '计划创编' : page === 'adsCreatives' ? '素材管理' : '投放数据'}
           description={page === 'adsPlans' ? '配置目标、素材与预算，审阅方案并追踪 Meta 平台执行回执。' : page === 'adsCreatives' ? '管理素材版本、广告绑定和效果证据，推动下一轮内容迭代。' : '按平台原始口径查看花费、效果、覆盖范围和数据新鲜度。'}
-          extra={<>
+          extra={!isCreativePage && <>
             <Button icon={<Link2 size={15} />} onClick={() => { setReturnToCreate(false); setDialog("accounts"); }}>连接广告账户</Button>
             <Button type="primary" icon={<Plus size={16} />} onClick={openCreate}>手动创建投放</Button>
             <Button icon={<Sparkles size={16} />} onClick={() => { openCreate(); setEntry('ai_assisted'); }}>AI 辅助创编</Button>
@@ -245,11 +245,11 @@ export default function PlatformAdsPage({
             <Button icon={<Bot size={16} />} onClick={() => setManagedOpen(true)}>AI 投手</Button>
           </>}
         >
-          <Collapse className="ads-capability-collapse" ghost items={[{
+          {!isCreativePage && <Collapse className="ads-capability-collapse" ghost items={[{
             key: 'capabilities',
             label: '查看各平台已实现能力与限制',
             children: <><p className="ads-muted">以下为当前产品实现范围；连接账户或保存配置不代表可实际投递，真实账户验收尚未完成。</p><div className="ads-table-wrap"><table><thead><tr><th>平台</th><th>创建目标 / 币种</th><th>管理与动作</th><th>素材要求</th></tr></thead><tbody>{PLATFORM_AD_CAPABILITIES.map(item => <tr key={item.provider}><td><PlatformLogoGroup value={item.name}/><span className="sr-only">{item.name}</span></td><td>{item.goals.join('、')}<small>{item.currencies.join(' / ')}</small></td><td>{item.management}<small>{item.actions}</small></td><td>{item.material}</td></tr>)}</tbody></table></div></>,
-          }]} />
+          }]} />}
         </LsPageHeader>
         {notice && <Alert className="mb-4" type={notice.includes('失败') ? 'error' : 'success'} showIcon title={notice} closable onClose={() => setNotice('')} />}
 
@@ -439,12 +439,12 @@ export default function PlatformAdsPage({
         <Drawer title="AI 投手" placement="right" size={720} open={managedOpen} onClose={() => setManagedOpen(false)} destroyOnHidden={false}>
           {managedOpen && (!previewMode ? <AdManagedWorkspace selectedTaskId={selectedDraft?.id} tasks={managedTasks} loading={loadingTasks} onUpdate={replaceTask} onPlans={() => { setManagedOpen(false); onNavigate('adsPlans'); }} /> : <PlatformAdsManagedPreview mode={mode} onModeChange={setMode} />)}
         </Drawer>
-        <footer className="ads-footer">
+        {!isCreativePage && <footer className="ads-footer">
           <ShieldCheck size={13} />{" "}
           {previewMode
             ? "当前为独立界面预览，没有真实观看、消耗或自动执行；草稿只保留在当前页面会话。"
             : "计划创建来源与管理方式独立；真实平台状态、消耗及执行结果以服务回执为准。"}
-        </footer>
+        </footer>}
       </main>
 
       {dialog && (

@@ -6,6 +6,25 @@ import type { AdSourceFileEvidence } from '../../shared/adSourceLifecycle.js';
 
 export type HistoryFileRoots = { objectRoot?: string; mediaRoot?: string; materialsFile?: string };
 type FileInput = { id: string; root?: string; key: string; prefix: string; sha256?: string; size?: number };
+/** Preview only exact, bounded original bytes; never fall back to another file or URL. */
+export async function readVerifiedHistoryVideo(input: FileInput): Promise<Buffer> {
+  const evidence = await fingerprintHistoryFile(input);
+  if (evidence.state !== 'verified' || !input.root) throw new Error('original unavailable');
+  const root = await fs.realpath(input.root), file = await fs.realpath(path.resolve(root, input.key));
+  if (!file.startsWith(`${path.resolve(root, input.prefix)}${path.sep}`)) throw new Error('outside source');
+  const handle = await fs.open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size !== evidence.actualSize || stat.size > 110 * 1024 * 1024) throw new Error('changed file');
+    const chunks: Buffer[] = []; let size = 0;
+    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+      size += chunk.length; if (size > stat.size || size > 110 * 1024 * 1024) throw new Error('changed file'); chunks.push(chunk);
+    }
+    const bytes = Buffer.concat(chunks);
+    if (bytes.length !== stat.size || createHash('sha256').update(bytes).digest('hex') !== input.sha256) throw new Error('changed file');
+    return bytes;
+  } finally { await handle.close(); }
+}
 export async function fingerprintHistoryFile(input: FileInput): Promise<AdSourceFileEvidence> {
   const result: AdSourceFileEvidence = { id: input.id, state: 'unavailable', expectedSha256: /^[a-f0-9]{64}$/.test(input.sha256 || '') ? input.sha256! : null, actualSha256: null,
     expectedSize: Number.isSafeInteger(input.size) && Number(input.size) > 0 ? input.size! : null, actualSize: null, note: '未配置原企业文件只读根目录或文件记录无效。' };

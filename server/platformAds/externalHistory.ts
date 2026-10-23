@@ -9,7 +9,7 @@ import type { AdConnection } from './connections.js';
 import type { AdExecution } from './execution.js';
 import type { PlatformAdTask } from './tasks.js';
 import { socialArtifactMediaFamily } from '../starter198/socialArtifactMedia.js';
-import { fingerprintHistoryFile, readHistoryImageMaterials, type HistoryFileRoots } from './externalHistoryFiles.js';
+import { fingerprintHistoryFile, readHistoryImageMaterials, readVerifiedHistoryVideo, type HistoryFileRoots } from './externalHistoryFiles.js';
 
 type Row = Record<string, unknown>;
 type Grant = AdHistorySource & HistoryFileRoots & { viewerTenantId: string; directory: string; socialFileRoot?: string };
@@ -107,6 +107,21 @@ export async function listExternalHistory(tenantId: string, sourceId: string, pa
   const items: AdSourceEntry[] = [];
   for (const project of projects.slice((page - 1) * perPage, page * perPage)) items.push(await projectEntry(grant, project, source.revision));
   return { items, page, perPage, totalItems: projects.length, totalPages: Math.ceil(projects.length / perPage) };
+}
+export async function openExternalHistoryVideo(tenantId: string, sourceId: string, projectId: string): Promise<Buffer> {
+  const grant = await grantFor(tenantId, sourceId), projects = await collection(grant, 'studio_projects');
+  const matches = projects.rows.filter(p => p.id === projectId);
+  if (matches.length !== 1) throw new PlatformAdCreativeError('未找到来源素材', 404);
+  const source = await projectEntry(grant, matches[0], projects.revision);
+  if (!source.verifiedSource) throw new PlatformAdCreativeError('尚无可预览的已确认成片', 409);
+  const files = await collection(grant, 'starter_social_content_files'), artifacts = await collection(grant, 'starter_social_content_artifacts');
+  const artifact = artifacts.rows.find(r => r.task_id === source.sourceTaskId && r.artifact_id === source.artifactId);
+  const file = files.rows.find(r => r.task_id === source.sourceTaskId && `socialfile:${r.file_id}` === artifact?.resource_ref && r.content_sha256 === source.sha256);
+  if (!file || file.mime_type !== 'video/mp4') throw new PlatformAdCreativeError('原始成片暂不能预览', 409);
+  try {
+    return await readVerifiedHistoryVideo({ id: text(file.file_id), root: file.storage_kind === 'object' ? grant.objectRoot : file.storage_kind === 'local' ? grant.socialFileRoot : undefined,
+      key: text(file.storage_key), prefix: file.storage_kind === 'object' ? `social-content-sources/tenants/${Buffer.from(grant.tenantId).toString('base64url')}/` : `${grant.tenantId}/`, sha256: source.sha256, size: Number(file.byte_size) });
+  } catch { throw new PlatformAdCreativeError('原始文件缺失、版本变化或暂不可读，请到来源企业核对', 409); }
 }
 export async function externalHistoryLifecycle(tenantId: string, sourceId: string, projectId: string): Promise<AdSourceLifecycle> {
   const grant = await grantFor(tenantId, sourceId), projects = await collection(grant, 'studio_projects');

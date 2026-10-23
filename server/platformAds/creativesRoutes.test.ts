@@ -22,6 +22,9 @@ const auth = (role = 'admin') => ({ Authorization: `Bearer ${issueLocalIdentityT
 try {
   assert.equal((await fetch(base + '/creative-sources')).status, 401);
   assert.equal((await fetch(base + '/creative-history-sources')).status, 401);
+  assert.equal((await fetch(base + '/creative-history/media?origin=studio&sourceId=ungranted&projectId=missing')).status, 401);
+  assert.equal((await fetch(base + '/creative-history/media?origin=studio&sourceId=ungranted&projectId=missing', { headers: auth() })).status, 404);
+  assert.equal((await fetch(base + '/creative-history/media?origin=studio&sourceId=ungranted&projectId=missing&path=private', { headers: auth() })).status, 400);
   assert.equal((await fetch(base + '/creative-history-sources', { headers: auth() })).status, 200);
   assert.equal((await fetch(base + '/creative-history?origin=studio&sourceId=ungranted', { headers: auth() })).status, 404);
   assert.equal((await fetch(base + '/creative-sources', { headers: auth() })).status, 200);

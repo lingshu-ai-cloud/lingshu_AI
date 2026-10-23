@@ -181,3 +181,11 @@
 - `pnpm exec tsx server/platformAds/currencyExecution.test.ts`、`pnpm exec tsx server/platformAds/creatives.test.ts`：预算最小值和失败后素材复用新增回归通过。
 - `pnpm run lint`（TypeScript）、`pnpm run check:architecture`、`pnpm run build`、`git diff --check`：通过。
 - 没有执行生产部署、生产迁移、分支合并或推送。
+# 素材管理产品优化检查点（2026-10-23）
+
+- 在 `feature/platform-ads-meta-workspace-20261022`、5187 / 8890 / 8891 开发，起点 `1026906d5dd81c718f9f3e2e87fae6e00a5fed21`；没有合并、推送、迁移或修改基线。
+- 素材页默认打开创作素材，两套授权企业分组展示、独立搜索分页；宽屏并列、窄屏纵向排列。投放素材保留账户隔离。原始标识、指纹和统计说明折叠至详情。
+- 新增鉴权只读原视频预览：只接受授权来源和项目身份，核对项目血缘、租户目录、文件 SHA/大小，限制读取上限且返回前再核对字节；不使用 URL、名称或其他企业的封面补位。浏览器从真实视频提取首帧，不自动播放或上传。
+- 文件缺失、成片待核对、未关联广告、平台暂无数据、读取失败分别展示；空报告不补零，利润 ROI / CRM 询盘不冒充 Meta 指标。
+- `verify-external-history-readonly.mjs`：源集合未变，13 / 22 条项目分别读取；3 条成片血缘对应 2 个真实视频，5 个图片输出文件缺失；两套来源均无已确认广告关联，不借用沙盒资源。
+- 已通过 41 个投流测试文件、定向路由/原文件预览授权与指纹测试、TypeScript、架构检查、Vite 构建、Studio chunk 预算；这是本地产品验证，不是上线或供应商全链路验收。

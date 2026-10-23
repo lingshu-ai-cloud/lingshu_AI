@@ -26,12 +26,16 @@ write(sourceA, 'starter_social_content_artifacts', [{ id: 'artifact-record', ten
 write(sourceA, 'starter_social_content_files', [{ id: 'file-record', tenant_id: 'tenant-a', task_id: 'task', file_id: 'file', usage: 'artifact_media', content_sha256: sha256, mime_type: 'video/mp4', byte_size: 100, storage_kind: 'object', storage_key: storageKey }]);
 const originalFetch = globalThis.fetch;
 try {
-  const { listExternalHistorySources, listExternalHistory, externalHistoryLifecycle } = await import('./externalHistory.js');
+  const { listExternalHistorySources, listExternalHistory, externalHistoryLifecycle, openExternalHistoryVideo } = await import('./externalHistory.js');
   const { parseAdSourceIdentity, listAdSourceCatalog } = await import('./creativeHistory.js');
   const { store } = await import('../storage/index.js');
   const { encryptSecret } = await import('../lib/tenantPlatformApps.js');
   const { preserveAdLifecycleReports } = await import('../../shared/adSourceLifecycle.js');
   assert.equal((await listExternalHistorySources('viewer')).length, 2);
+  assert.deepEqual(await openExternalHistoryVideo('viewer', 'a', 'project'), mediaBytes);
+  await assert.rejects(openExternalHistoryVideo('foreign-viewer', 'a', 'project'), /未授权/);
+  await assert.rejects(openExternalHistoryVideo('viewer', 'a', 'foreign'), /未找到/);
+  await assert.rejects(openExternalHistoryVideo('viewer', 'b', 'project'), /尚无/);
   assert.deepEqual(await listExternalHistorySources('foreign-viewer'), []);
   await assert.rejects(listExternalHistory('foreign-viewer', 'a', 1, 20), /未授权/);
   await assert.rejects(listExternalHistory('viewer', 'unknown', 1, 20), /未授权/);
@@ -78,6 +82,7 @@ try {
   assert.deepEqual(signatures(), before); assert.ok(!JSON.stringify(linked).includes('source-token'));
   const requestCount = requests;
   fs.writeFileSync(path.join(objectRoot, storageKey), Buffer.alloc(100, 'b'));
+  await assert.rejects(openExternalHistoryVideo('viewer', 'a', 'project'), /版本变化/);
   const corruptMedia = await externalHistoryLifecycle('viewer', 'a', 'project');
   assert.equal(corruptMedia.fileEvidence?.[0].state, 'mismatch'); assert.equal(corruptMedia.ads[0].report, null);
   assert.equal(preserveAdLifecycleReports(linked, corruptMedia).ads[0].report, null, 'UI cannot resurrect old reports after original bytes changed');

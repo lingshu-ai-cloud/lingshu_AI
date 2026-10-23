@@ -60,3 +60,28 @@ test('history and advertising share a source lifecycle component without guessin
   assert.match(readFileSync(new URL('./adCreativeLibrary.css', import.meta.url), 'utf8'), /grid-template-columns: minmax\(0, 1fr\)/);
   assert.doesNotMatch(lifecycle, /\.purchaseValue\s*\/|crmInquiries\s*\|\|\s*0/);
 });
+test('creative workbench separates enterprise sources, recoverable covers and missing performance', () => {
+  const library = readFileSync(new URL('./AdCreativeLibrary.tsx', import.meta.url), 'utf8');
+  const catalog = readFileSync(new URL('./AdSourceCatalog.tsx', import.meta.url), 'utf8');
+  const lifecycle = readFileSync(new URL('./AdSourceLifecycle.tsx', import.meta.url), 'utf8');
+  assert.match(library, /label: '投放素材'.*label: '创作素材'/);
+  assert.match(library, /setPreview\(null\); setError\(''\); setLoaded\(false\)/);
+  assert.match(library, /Cover key=\{binding\?\.id \|\| item.key\}/);
+  assert.match(library, /preview && !error/);
+  assert.doesNotMatch(library, /defaultActiveKey=\{\['sources'\]\}/);
+  assert.match(catalog, /snapshot\?\.key === key/);
+  assert.match(catalog, /企业分别展示，不合并统计/);
+  assert.match(catalog, /useState\('all'\)/);
+  assert.match(catalog, /visible\.map\(source/);
+  assert.match(catalog, /AdHistoryMedia key=/);
+  assert.match(lifecycle, /原始文件缺失/);
+  assert.match(lifecycle, /等待平台数据回传/);
+  assert.match(lifecycle, /来源、版本与统计口径/);
+  const historyMedia = readFileSync(new URL('./AdHistoryMedia.tsx', import.meta.url), 'utf8');
+  assert.match(historyMedia, /data\.fileEvidence\.every\(f => f.state === 'verified'\)/);
+  assert.match(historyMedia, /URL\.revokeObjectURL/);
+  assert.match(historyMedia, /原始文件缺失/);
+  assert.match(historyMedia, /平台暂无数据/);
+  assert.match(historyMedia, /未关联广告（本系统）/);
+  assert.doesNotMatch(historyMedia, /spend \|\| 0|token=|thumbnailUrl/);
+});

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Collapse, Descriptions, Drawer, Empty, Input, Pagination, Select, Space, Table, Tag } from 'antd';
+import { Alert, Button, Collapse, Descriptions, Drawer, Empty, Input, Pagination, Select, Space, Table, Tabs, Tag } from 'antd';
 import AdSourceCatalog from './AdSourceCatalog';
 import AdSourceLifecycle from './AdSourceLifecycle';
 import { metaAccountDate } from '../../shared/metaPerformance';
@@ -20,15 +20,16 @@ function Cover({ bindingId, name, onPreview }: { bindingId?: string; name: strin
   const [preview, setPreview] = useState<AdCreativePreview | null>(null);
   const [error, setError] = useState(''), [loaded, setLoaded] = useState(false), [refresh, setRefresh] = useState(0);
   useEffect(() => {
+    setPreview(null); setError(''); setLoaded(false);
     if (!bindingId) return;
-    const controller = new AbortController(); setError(''); setLoaded(false);
+    const controller = new AbortController();
     platformAdsRequest<AdCreativePreview>(`/creatives/${bindingId}/platform-preview`, { signal: controller.signal }).then(value => { if (!controller.signal.aborted) setPreview(value); })
       .catch(e => { if (!controller.signal.aborted) setError(message(e)); });
     return () => controller.abort();
   }, [bindingId, refresh]);
   return <div className="ads-library-cover" style={{ aspectRatio: preview?.width && preview.height ? `${preview.width} / ${preview.height}` : '1 / 1' }}>
-    <LsMediaStateFrame state={loaded ? 'ready' : error || !bindingId ? 'error' : 'loading'} label={error || (!bindingId ? '尚未建立本地素材映射' : '读取平台封面')}>
-      {preview && <LsProgressiveMedia src={preview.thumbnailUrl} alt={`${name} · Meta 真实封面`} preview={false} width="100%" height="100%" style={{ objectFit: 'contain' }} onLoad={() => setLoaded(true)} onError={() => setError('封面已失效，请重试')} />}
+    <LsMediaStateFrame state={loaded ? 'ready' : error || !bindingId ? 'error' : 'loading'} label={error ? '封面暂不可用，可进入详情查看源视频' : (!bindingId ? '待确认素材关联' : '加载封面')}>
+      {preview && !error && <LsProgressiveMedia key={`${bindingId}:${refresh}`} src={preview.thumbnailUrl} alt={`${name} · Meta 真实封面`} preview={false} width="100%" height="100%" style={{ objectFit: 'contain' }} onLoad={() => setLoaded(true)} onError={() => { setLoaded(false); setError('封面已失效，请重试'); }} />}
     </LsMediaStateFrame>
     <div className="ads-library-cover-actions"><Button size="small" icon={<Play size={14}/>} onClick={onPreview}>查看素材</Button>{error && bindingId && <Button size="small" onClick={() => setRefresh(v => v + 1)}>重试封面</Button>}{preview?.duration != null && <Tag>{number(preview.duration)} 秒</Tag>}</div>
   </div>;
@@ -54,6 +55,7 @@ function VideoPreview({ bindingId }: { bindingId: string }) {
 }
 
 export default function AdCreativeLibrary({ onOpenTask, initialTaskId }: { onOpenTask: (id: string) => void; initialTaskId?: string }) {
+  const [view, setView] = useState(initialTaskId ? 'ads' : 'history');
   const [catalog, setData] = useState<AdCreativeLibraryPage | null>(null), [page, setPage] = useState(1), [refresh, setRefresh] = useState(0);
   const data = catalog?.page === page ? catalog : null;
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
@@ -105,9 +107,9 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId }: { onOpe
   }
   const accounts = [...new Map((data?.items || []).map(i => [i.connection.id, i.connection])).values()];
   return <section aria-label="真实投放素材库" className="ads-library">
-    <Collapse defaultActiveKey={['sources']} items={[{ key: 'sources', label: '我的历史素材 / 社媒成片 · 直接数据源', children: <AdSourceCatalog/> }]}/>
-    <h3>已关联投放素材</h3>
-    <div className="ads-library-toolbar"><Input.Search aria-label="搜索本页素材" placeholder="搜索本页素材、计划或视频 ID" allowClear value={search} onChange={e => setSearch(e.target.value)} />
+    <Tabs activeKey={view} onChange={setView} items={[{ key: 'ads', label: '投放素材' }, { key: 'history', label: '创作素材' }]} />
+    {view === 'history' ? <AdSourceCatalog/> : <>
+    <div className="ads-library-toolbar"><Input.Search aria-label="搜索本页素材" placeholder="搜索本页素材或计划" allowClear value={search} onChange={e => setSearch(e.target.value)} />
       <Select aria-label="本页素材账户" value={account} onChange={setAccount} options={[{ value: 'all', label: '本页全部账户' }, ...accounts.map(a => ({ value: a.id, label: `${a.name} · ${a.currency}` }))]} />
       <Button icon={<RefreshCw size={15}/>} loading={loading} onClick={() => setRefresh(v => v + 1)}>刷新素材</Button>
     </div>
@@ -118,24 +120,26 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId }: { onOpe
       {data && <LsMasonryGallery layout="masonry" columns={{ xs: 1, sm: 2, lg: 3, xl: 4 }} emptyText="当前计划范围没有匹配的素材；请先在计划中绑定已保存成片。" items={groups.map(group => {
         const item = group.representative, binding = item.binding;
         return { id: group.key, content: <article className="ads-library-card">
-          <Cover bindingId={binding?.platformVideoId ? binding.id : undefined} name={binding?.name || item.task.name} onPreview={() => setSelected(group.key)} />
-          <div className="ads-library-card-body"><h2>{binding?.name || '待核对的既有平台素材'}</h2><Space wrap><SocialPlatformIcon platform={item.connection.provider === 'meta' ? 'facebook' : 'tiktok'} size={18}/><Tag>{item.connection.name}</Tag><Tag>{binding ? statusLabels[binding.status] || binding.status : '待补本地映射'}</Tag></Space>
-            <p>{binding ? `${(binding.size / 1024 / 1024).toFixed(2)} MiB · ${binding.sha256.slice(0, 12)}` : `平台 Creative ${item.execution?.creativeId}`}</p>
-            <p>平台视频：{binding?.platformVideoId || '进入详情核对'}<br/>{new Set(group.items.filter(i => i.execution).map(i => i.execution!.adId)).size} 条已核验广告 · {group.items.length} 个计划关联</p>
-            <Button onClick={() => setSelected(group.key)}>查看素材与真实表现</Button>
+          <Cover key={binding?.id || item.key} bindingId={binding?.platformVideoId ? binding.id : undefined} name={binding?.name || item.task.name} onPreview={() => setSelected(group.key)} />
+          <div className="ads-library-card-body"><h2>{binding?.name || item.task.name}</h2><Space wrap><SocialPlatformIcon platform={item.connection.provider === 'meta' ? 'facebook' : 'tiktok'} size={18}/><span>{item.connection.name}</span><Tag>{binding ? statusLabels[binding.status] || binding.status : '待确认关联'}</Tag></Space>
+            <p>{new Set(group.items.filter(i => i.execution).map(i => i.execution!.adId)).size} 条关联广告 · {new Set(group.items.map(i => i.task.id)).size} 个计划</p>
+            <Button block onClick={() => setSelected(group.key)}>查看详情与表现</Button>
           </div></article> };
       })} />}
     </LsLoadingState>
-    {catalog && <div className="ads-library-pagination"><span>{data ? '按计划分页，当前页内按账户、素材指纹和平台视频去重' : '当前页目录未返回，可刷新或返回其他页。'}</span><Pagination current={page} pageSize={20} total={catalog.totalItems} showSizeChanger={false} onChange={v => { setPage(v); setSelected(null); }} /></div>}
+    {catalog && <div className="ads-library-pagination"><span>{data ? `本页匹配 ${groups.length} 项 · 账户分别展示` : '当前页目录未返回，可刷新或返回其他页。'}</span><Pagination current={page} pageSize={20} total={catalog.totalItems} showTotal={total => `${total} 条计划记录`} showSizeChanger={false} onChange={v => { setPage(v); setSelected(null); }} /></div>}
+    </>}
     <Drawer title="素材与广告表现" open={!!opened} onClose={() => setSelected(null)} size={840} destroyOnHidden>
       {opened && <>
-        {opened.representative.binding && <><VideoPreview bindingId={opened.representative.binding.id}/><Descriptions size="small" column={1} items={[
+        {opened.representative.binding && <><VideoPreview key={opened.representative.binding.id} bindingId={opened.representative.binding.id}/><Collapse items={[{ key: 'evidence', label: '文件与平台标识', children: <Descriptions size="small" column={1} items={[
           { key: 'name', label: '源文件', children: opened.representative.binding.name },
           { key: 'hash', label: '版本 SHA-256', children: <span className="ads-library-id">{opened.representative.binding.sha256}</span> },
           { key: 'video', label: 'Meta 视频', children: opened.representative.binding.platformVideoId || '未上传' },
-        ]}/></>}
+        ]}/> }]}/></>}
         <Space className="ads-library-detail-heading"><h3>计划关联与广告级报告</h3><Button loading={reading} onClick={() => setReportRefresh(v => v + 1)}>刷新平台报告</Button></Space>
-        <Alert type="info" showIcon title="与投放数据共用广告级、最近 7 个账户日期报告；按展示时间回报，采用广告组归因设置。全部点击不等于链接点击，单次成本使用 Meta 原值；空数据不补零。报告缓存 60 秒、封面 5 分钟，以采集时间为准；刷新不启用广告。" />
+        {activeReports.some(r => !r.daily.length) && <Alert type="info" showIcon title="等待平台数据回传" description="已有广告关联，Meta 尚未返回该窗口的表现数据；指标显示 —，不当作零消耗。"/>}
+        {Object.keys(reportErrors).length > 0 && <Alert type="warning" showIcon title="部分广告表现暂未更新" description="请稍后重试；已有报告保留原采集时间，不用其他广告数据补齐。"/>}
+        <Collapse items={[{ key: 'definitions', label: '统计口径与更新说明', children: <p>与投放数据共用广告级、最近 7 个账户日期报告；按展示时间回报，采用广告组归因设置。全部点击不等于链接点击，单次成本使用 Meta 原值；空数据不补零。报告缓存 60 秒、封面 5 分钟，以采集时间为准；刷新不启用广告。利润 ROI 与 CRM 有效询盘尚未接通，不等于 Meta ROAS 或线索。</p> }]}/>
         {opened.representative.binding && <Collapse items={[{ key: 'lifecycle', label: '查看同源素材全投放周期 / Meta 线索与 ROAS', children: <AdSourceLifecycle origin="social" sourceTaskId={opened.representative.binding.sourceTaskId} artifactId={opened.representative.binding.artifactId}/> }]}/>}
         <Table<AdCreativeLibraryItem> tableLayout="fixed" rowKey="key" pagination={false} dataSource={opened.items} scroll={{ x: 780 }} columns={[
           { title: '计划 / 映射', key: 'task', width: 210, render: (_, i) => <><Button className="ads-library-task-link" type="link" onClick={() => onOpenTask(i.task.id)}>{i.task.name}</Button><p>{i.mapping === 'creation_binding' ? '创建时绑定' : i.mapping === 'verified_existing' ? '投放后核对映射（不改原回执）' : i.mapping === 'platform_only' ? '仅平台记录，未关联本地源文件' : '本地成片，尚无核验广告'}</p><span className="ads-library-id">{i.execution?.adId || '—'}</span></> },
