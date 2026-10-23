@@ -67,6 +67,7 @@ assert.match(studioUi, /catch \(error\) \{ setRenderDownloadMessage\(\(error as 
 assert.match(studioUi, /threeStepWorkflow && step === 'preview'\) \{ void downloadMp4\(\); return; \}/, 'the live export action must use the current download path');
 
 const studioBackend = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
+const bgmRoute = readFileSync(new URL('./studioBgmRoutes.ts', import.meta.url), 'utf8');
 const localRenderRoute = studioBackend.slice(studioBackend.indexOf("studioRouter.post('/render/local'"), studioBackend.indexOf("// POST /studio/render/open-output"));
 assert.match(localRenderRoute, /verifyRenderToken\(req\.body\?\.token\)/, 'local export must verify a server-issued token');
 assert.match(localRenderRoute, /studioRenderManifestHash\(manifest\)/, 'local export must bind token to the exact manifest');
@@ -76,7 +77,9 @@ assert.match(studioBackend, /track && tenantId \? studioBgmMediaPath\(track, ten
 assert.match(readFileSync(new URL('./studioRenderManifestProjection.ts', import.meta.url), 'utf8'),
   /bgm: \{ id: spec\.bgm \?\? null, url: absoluteAssetUrl\(base, bgmUrl\) \}/,
   'render manifest must resolve the selected tenant-scoped BGM stream URL');
-assert.match(studioBackend, /studioRouter\.get\('\/bgm\/media\/:id'[\s\S]*?objectStorageGetObject\(key, req\.headers\.range\)/, 'cloud BGM must stream from storage through the authenticated route');
+assert.ok(studioBackend.indexOf('studioRouter.use(requireAuth)') < studioBackend.indexOf("studioRouter.use('/bgm', createStudioBgmRouter())"), 'BGM routes must mount under Studio authentication');
+assert.ok(studioBackend.indexOf('studioTenantContext.run((res.locals as AuthLocals).tenantId, next)') < studioBackend.indexOf("studioRouter.use('/bgm', createStudioBgmRouter())"), 'BGM routes must inherit Studio tenant context');
+assert.match(bgmRoute, /router\.get\('\/media\/:id'[\s\S]*?objectStorageGetObject\(key, req\.headers\.range\)/, 'cloud BGM must stream from storage through the authenticated route');
 const openOutputRoute = studioBackend.slice(studioBackend.indexOf("studioRouter.post('/render/open-output'"), studioBackend.indexOf('/* ── 素材库', studioBackend.indexOf("studioRouter.post('/render/open-output'")));
 assert.match(openOutputRoute, /safeStudioRenderOutputPath\(/, 'opening a render folder must enforce the tenant output boundary');
 const avatarImport = readFileSync(new URL('../lib/studioAvatarProduction.ts', import.meta.url), 'utf8');
