@@ -20,26 +20,16 @@ test('unsupported and oversized files fail before any upload or profile write', 
   await assert.rejects(importOnboardingProducts(oversized, []), /文件不能超过 50MB/);
 });
 
-test('TXT import writes through the existing authenticated enterprise profile endpoint', async () => {
+test('TXT import remains a draft and does not write confirmed enterprise facts', async () => {
   const originalFetch = globalThis.fetch;
-  const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
-  let request: { url: string; init?: RequestInit } | undefined;
-  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => 'test-token' } });
-  globalThis.fetch = async (url, init) => {
-    request = { url: String(url), init };
-    return new Response('{}', { status: 200 });
-  };
+  let requests = 0;
+  globalThis.fetch = async () => { requests += 1; return new Response('{}', { status: 200 }); };
   try {
     const result = await importOnboardingProducts(new File(['产品名称：玻璃瓶\nSKU：A-1'], 'products.txt'), []);
     assert.equal(result.importedCount, 1);
-    assert.equal(request?.url, '/api/overseas/enterprise/profile');
-    assert.equal(request?.init?.method, 'PATCH');
-    assert.equal((request?.init?.headers as Record<string, string>).Authorization, 'Bearer test-token');
-    const body = JSON.parse(String(request?.init?.body)) as { products: { items: Array<{ name: string }> } };
-    assert.equal(body.products.items[0].name, '玻璃瓶');
+    assert.equal(result.products[0].name, '玻璃瓶');
+    assert.equal(requests, 0);
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalStorage) Object.defineProperty(globalThis, 'localStorage', originalStorage);
-    else Reflect.deleteProperty(globalThis, 'localStorage');
   }
 });

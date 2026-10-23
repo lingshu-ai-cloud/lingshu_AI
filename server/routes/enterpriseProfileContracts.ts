@@ -131,10 +131,14 @@ export interface EnterpriseProfile {
     profileConfirmedAt?: string;
     productSelectionConfirmedAt?: string;
     continuedWithoutProducts?: boolean;
+    confirmationId?: string;
+    confirmationDigest?: string;
+    completedAt?: string;
   };
   company: {
     name: string;
     industry: string;
+    primaryBusiness?: string;
     companyType?: string;
     mainMarkets: string;
     primaryLanguages?: string;
@@ -150,6 +154,8 @@ export interface EnterpriseProfile {
     contentStage?: 'b2b_launch' | 'b2b_growth' | 'd2c_brand';
     /** PRD-aligned generation preset derived from contentStage. */
     weeklyTaskPackagePreset?: 'b2b_starting' | 'b2b_growing' | 'dtc_sales';
+    /** User-confirmed primary channel(s) from the minimal enterprise baseline. */
+    primaryPlatforms?: string[];
   };
   products: {
     categories: string;

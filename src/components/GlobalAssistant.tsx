@@ -504,10 +504,11 @@ export default function GlobalAssistant({
     setMode, setLoading, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
   });
 
-  const { handleTaskCardAction, toggleTaskPaused } = useAssistantTaskCardActions({
+  const { handleTaskCardAction, toggleTaskPaused, handleContentArtifactDecision,
+    handleContentDeliveryCreate, handleContentDeliveryDownload } = useAssistantTaskCardActions({
     activeAgent, currentPageAgent, page, focusedRunControl, loading, abortRef,
     setLoading, setPanelView, setMode, send, presentActionResponse, persistThread,
-    closeDecisionDialog, closeDecisionDialogForNavigation, onSessionRefresh, requestId,
+    closeDecisionDialog, closeDecisionDialogForNavigation, onSessionRefresh, requestId, upsertTaskCard,
   });
 
   const assistantThreadHydrated = useAssistantThreadHydration({
@@ -770,6 +771,9 @@ export default function GlobalAssistant({
         handleDecisionActionResult={handleDecisionActionResult}
         toggleTaskPaused={toggleTaskPaused}
         handleTaskCardAction={handleTaskCardAction}
+        handleContentArtifactDecision={handleContentArtifactDecision}
+        handleContentDeliveryCreate={handleContentDeliveryCreate}
+        handleContentDeliveryDownload={handleContentDeliveryDownload}
       />
 
       {!inlineHome && <AssistantLauncher

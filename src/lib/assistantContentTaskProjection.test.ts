@@ -22,7 +22,8 @@ test('adapts the shared task card without changing its authority fields', () => 
   assert.equal(result.contentTask?.cardVersion, '4');
   assert.equal(result.contentTask?.recoveryCursor.value, 'one@4');
   assert.match(result.details?.join('\n') || '', /已确定/);
-  assert.match(result.primaryAction?.href || '', /socialContentTaskId=one/);
+  assert.equal(result.primaryAction?.href, undefined, 'the main action stays in the current conversation');
+  assert.match(result.primaryAction?.prompt || '', /继续当前内容任务 one/);
 });
 
 test('shows only server-confirmed cost semantics', () => {

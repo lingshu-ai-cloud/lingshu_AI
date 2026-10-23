@@ -1,4 +1,3 @@
-import { authHeader } from '../../lib/auth';
 import { uploadProductEvidence } from '../../lib/enterpriseProductAssetUpload';
 import { parseProductDocument, productsFromLabeledText, type DocumentProductDraft } from '../../lib/productDocumentImport';
 import { readProductDiscoveryFile } from '../../lib/productDiscoveryFile';
@@ -78,19 +77,15 @@ export async function importOnboardingProducts(file: File, existingProducts: Onb
       product.images.push({ ...asset, url: asset.url });
       if (!product.imageUrl) product.imageUrl = asset.url;
     }
-    // Unassigned pages remain assets, never an invented product-image match.
-    for (let offset = 0; offset < unassignedImages.length; offset += 4) {
-      await Promise.all(unassignedImages.slice(offset, offset + 4).map(image => uploadProductEvidence(image.file)));
-    }
-    const next = mergeOnboardingProducts(existingProducts, decoded);
-    const response = await fetch('/api/overseas/enterprise/profile', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'x-enterprise-save-source': 'diagnosis', ...authHeader() },
-      body: JSON.stringify({ products: { items: next } }),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.message || '产品资料写入企业知识库失败');
-    return { products: next, importedCount: decoded.length, assignedImageCount: assignedImages.length, unassignedImageCount: unassignedImages.length, sourceLabel };
+    // No product identity means there is nowhere durable to bind these bytes.
+    // Do not upload orphan evidence or claim that it survived the import.
+    return {
+      products: mergeOnboardingProducts(existingProducts, decoded),
+      importedCount: decoded.length,
+      assignedImageCount: assignedImages.length,
+      unassignedImageCount: unassignedImages.length,
+      sourceLabel,
+    };
   } finally {
     temporaryUrls.forEach(url => URL.revokeObjectURL(url));
   }

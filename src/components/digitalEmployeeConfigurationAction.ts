@@ -12,6 +12,7 @@ import {
   type WeeklyGoal,
 } from '../lib/digitalEmployees';
 import { EMPTY_GOAL } from './smartBusiness/WeeklyGoalPanel';
+import type { EnterpriseOnboardingConfirmation } from '../../shared/contracts/enterpriseOnboarding';
 
 type ConfigurationApi = Pick<typeof digitalEmployeeApi,
   'completeOnboarding' | 'initialPreparation' | 'overview' | 'createGoal' | 'savePackage' | 'startInitialPreparation'>;
@@ -35,6 +36,7 @@ export type OnboardingConfigurationInput = DigitalEmployeeConfig & {
   minimalOnboarding?: true;
   brandName?: string;
   initialPlan?: InitialOperatingPlan;
+  onboardingConfirmation?: EnterpriseOnboardingConfirmation;
 };
 
 export function createDigitalEmployeeConfigurationAction(context: ConfigurationActionContext) {

@@ -24,8 +24,11 @@ export function useAssistantContentTaskCard(input: {
     let active = true;
     let inFlight = false;
     let readUnavailable = false;
-    let lastCursor = useAssistantStore.getState().threads[input.agentId]
-      .taskCards[input.focusedTaskId!]?.contentTask?.recoveryCursor.value ?? '';
+    // Task cursor can stay unchanged when an artifact version or delivery
+    // receipt changes. Compare the bounded authoritative projection, not just
+    // its aggregate cursor, so another window sees review-state updates.
+    let lastProjection = JSON.stringify(useAssistantStore.getState().threads[input.agentId]
+      .taskCards[input.focusedTaskId!]?.contentTask ?? null);
     const refresh = async (event?: Event) => {
       const requested = (event as CustomEvent<{ taskId?: string }> | undefined)?.detail?.taskId;
       if ((requested && requested !== contentTaskId) || inFlight) return;
@@ -34,8 +37,9 @@ export function useAssistantContentTaskCard(input: {
         const task = await socialContentApi.getTask(contentTaskId);
         if (!active) return;
         const card = projectContentProductionTaskCard(task);
-        if (card.recoveryCursor.value === lastCursor && !readUnavailable) return;
-        lastCursor = card.recoveryCursor.value;
+        const projection = JSON.stringify(card);
+        if (projection === lastProjection && !readUnavailable) return;
+        lastProjection = projection;
         readUnavailable = false;
         input.upsertTaskCard(input.agentId, contentTaskCardToAssistantCard(card));
         input.persistThread(input.agentId);

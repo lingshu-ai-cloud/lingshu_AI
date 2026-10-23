@@ -53,6 +53,32 @@ test('keeps approval, delivery and publication semantics distinct', () => {
   if (delivered.progress.mode === 'units') assert.equal(delivered.progress.completed, 1);
 });
 
+test('cancelled content remains cancelled rather than completed', () => {
+  const cancelled = projectContentProductionTaskCard(task({ status: 'cancelled', readiness: { complete: true, missing: [] } }));
+  assert.equal(cancelled.overallState, 'cancelled');
+  assert.equal(cancelled.currentNode.id, 'cancelled');
+  assert.equal(cancelled.nextAction, 'none');
+});
+
+test('projects exact artifact versions and server delivery receipts for same-conversation actions', () => {
+  const detail = {
+    ...task({ status: 'asset_review', readiness: { complete: true, missing: [] }, artifactCount: 2, approvedArtifactCount: 1, deliveryPackageCount: 1 }),
+    artifacts: [
+      { artifactId: 'candidate-a', taskId: 'content-1', kind: 'poster', platform: 'linkedin', language: 'en', version: '3', status: 'review_required', origin: 'agent', resourceRef: 'socialfile:candidate-a', content: {}, parentArtifactId: 'candidate-old', createdAt: '2026-10-24T01:00:00.000Z', updatedAt: '2026-10-24T01:05:00.000Z' },
+      { artifactId: 'candidate-b', taskId: 'content-1', kind: 'poster', platform: 'linkedin', language: 'en', version: '2', status: 'approved', origin: 'agent', resourceRef: 'socialfile:candidate-b', content: {}, parentArtifactId: null, createdAt: '2026-10-24T01:00:00.000Z', updatedAt: '2026-10-24T01:04:00.000Z' },
+    ],
+    deliveryPackages: [{ packageId: 'delivery-a', taskId: 'content-1', version: '1', status: 'ready', artifactIds: ['candidate-b'], packageHash: 'a'.repeat(64), downloadHref: '/api/overseas/starter-198/social-content/delivery-packages/delivery-a/download', createdAt: '2026-10-24T01:05:00.000Z', updatedAt: '2026-10-24T01:05:00.000Z' }],
+    sources: [], publications: [], metricSubmissions: [],
+  } as unknown as SocialContentTaskDetail;
+  const card = projectContentProductionTaskCard(detail);
+  assert.deepEqual(card.artifacts?.map(item => [item.artifactId, item.version, item.status]), [
+    ['candidate-a', '3', 'review_required'], ['candidate-b', '2', 'approved'],
+  ]);
+  assert.equal(card.artifacts?.[0]?.previewAvailable, true);
+  assert.equal(card.deliveryReceipts?.[0]?.packageId, 'delivery-a');
+  assert.match(card.deliveryReceipts?.[0]?.downloadHref || '', /delivery-a\/download/);
+});
+
 test('uses the canonical production read model for node, blockers, cost, progress and recovery', () => {
   const production: ProductionReadModelV1 = {
     schemaVersion: 'production-read-model.v1', authority: 'canonical_task',

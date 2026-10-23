@@ -20,6 +20,30 @@ export type ContentTaskCardProgress =
   | { mode: 'none' }
   | { mode: 'units'; completed: number; total: number };
 
+export type ContentTaskArtifactCard = {
+  artifactId: string;
+  version: string;
+  status: 'draft' | 'review_required' | 'approved' | 'changes_requested' | 'superseded';
+  kind: string;
+  platform: string | null;
+  language: string | null;
+  parentArtifactId: string | null;
+  /** True means the server returned a resource binding; the authenticated media
+   * endpoint still decides whether bytes can actually be previewed. */
+  previewAvailable: boolean;
+  updatedAt: string;
+};
+
+export type ContentTaskDeliveryReceipt = {
+  packageId: string;
+  version: string;
+  status: 'preparing' | 'ready' | 'confirmed' | 'superseded';
+  artifactIds: string[];
+  /** Only a server-returned authenticated download route is projected. */
+  downloadHref: string | null;
+  updatedAt: string;
+};
+
 /**
  * Customer-safe, endpoint-neutral projection of one authoritative ContentTask.
  * Web and miniapp may lay this out differently, but must not reinterpret task
@@ -46,6 +70,10 @@ export type ContentProductionTaskCard = {
   /** Server-confirmed run cost. Null means no authoritative quote or receipt is available. */
   cost: ProductionCostSummaryV1 | null;
   completedSummary: string[];
+  /** Optional only for historic persisted cards. Fresh detail projections
+   * always include exact artifact and delivery identities. */
+  artifacts?: ContentTaskArtifactCard[];
+  deliveryReceipts?: ContentTaskDeliveryReceipt[];
   nextAction: 'supply_input' | 'review' | 'view' | 'download' | 'none';
   lastConfirmedAt: string;
   /** Client read health; unavailable preserves the last server-confirmed business state. */
@@ -92,11 +120,11 @@ function state(task: SocialContentTaskSummary | SocialContentTaskDetail): Conten
   if (task.status === 'cancelled' || task.status === 'cancelling') return 'cancelled';
   if (task.status === 'delivered' || task.status === 'reviewed') return 'completed';
   if (task.status === 'plan_review' || task.status === 'asset_review') return 'needs_approval';
+  if (task.status === 'paused') return 'paused';
   const runtime = production(task)?.aggregate;
   if (runtime?.status === 'needs_input') return 'needs_input';
   if (runtime?.status === 'paused') return 'paused';
   if (runtime?.status === 'failed' || runtime?.status === 'blocked') return 'failed';
-  if (task.status === 'paused') return 'paused';
   if (task.status === 'attention') return 'failed';
   if (!task.readiness.complete || task.status === 'needs_input') return 'needs_input';
   return 'processing';
@@ -194,6 +222,29 @@ export function projectContentProductionTaskCard(task: SocialContentTaskSummary 
   ].filter(Boolean);
   const runtimeCounts = runtime?.aggregate.counts;
   const lastConfirmedAt = latestConfirmedAt(task.updatedAt, runtime);
+  const artifacts: ContentTaskArtifactCard[] = 'artifacts' in task
+    ? task.artifacts.map(artifact => ({
+      artifactId: artifact.artifactId,
+      version: artifact.version,
+      status: artifact.status,
+      kind: artifact.kind,
+      platform: artifact.platform,
+      language: artifact.language,
+      parentArtifactId: artifact.parentArtifactId,
+      previewAvailable: Boolean(artifact.resourceRef),
+      updatedAt: artifact.updatedAt,
+    }))
+    : [];
+  const deliveryReceipts: ContentTaskDeliveryReceipt[] = 'deliveryPackages' in task
+    ? task.deliveryPackages.map(receipt => ({
+      packageId: receipt.packageId,
+      version: receipt.version,
+      status: receipt.status,
+      artifactIds: receipt.artifactIds,
+      downloadHref: receipt.downloadHref,
+      updatedAt: receipt.updatedAt,
+    }))
+    : [];
   return {
     schemaVersion: 'content-production-task-card.v1',
     id: `content-task-card:${task.taskId}`,
@@ -215,7 +266,7 @@ export function projectContentProductionTaskCard(task: SocialContentTaskSummary 
       ? { mode: 'units', completed: runtimeCounts.completed, total: runtimeCounts.total }
       : requested ? { mode: 'units', completed, total: requested } : { mode: 'none' },
     cost: runtime?.aggregate.cost ?? null,
-    completedSummary,
+    completedSummary, artifacts, deliveryReceipts,
     nextAction,
     lastConfirmedAt,
     readState: 'confirmed',
