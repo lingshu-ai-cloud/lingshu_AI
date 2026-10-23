@@ -6,6 +6,7 @@ import {
 } from './overviewGoalScope.js';
 
 const source = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const followupReadSource = fs.readFileSync('server/routes/digitalEmployeeFollowupReadRoutes.ts', 'utf8');
 const overviewReaderSource = fs.readFileSync('server/routes/digitalEmployeeOverviewReader.ts', 'utf8');
 const overviewProjectionSource = fs.readFileSync('server/digitalEmployees/overviewProjection.ts', 'utf8');
 const productionBudgetRouteSource = fs.readFileSync('server/routes/digitalEmployeeProductionBudgetRoute.ts', 'utf8');
@@ -21,6 +22,10 @@ function routeBlock(start: string): string {
 }
 
 assert.match(source, /digitalEmployeesRouter\.use\(requireAuth\)/, 'every Digital Employee endpoint must require an authenticated tenant');
+assert.match(source, /digitalEmployeesRouter\.use\(enforceSupportSessionReadOnly\)/, 'support sessions must remain read-only');
+assert.match(source, /digitalEmployeesRouter\.use\(createDigitalEmployeeFollowupReadRouter\(\)\)/, 'follow-up read endpoints must remain mounted behind the parent gates');
+assert.match(followupReadSource, /getFollowupBatch\(tenantId, req\.params\.batchId\)/, 'batch reads must be scoped to the authenticated tenant');
+assert.match(followupReadSource, /getTenantFollowupDispatchStatus\(tenantId\)/, 'worker status must be scoped to the authenticated tenant');
 assert.match(source, /buildBusinessSnapshot/, 'overview must aggregate the real content and customer business snapshot');
 assert.match(overviewReaderSource, /businessSnapshot/, 'overview must expose businessSnapshot as a top-level field');
 assert.match(source, /VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLES/, 'overview must use the canonical four-expert read model');
@@ -256,7 +261,7 @@ const dispatchRoute = routeBlock("digitalEmployeesRouter.post('/followup-batches
 assert.match(dispatchRoute, /dispatchFollowupBatch/, 'an approved follow-up batch must enter the real dispatch worker');
 assert.match(dispatchRoute, /status\(202\)/, 'manual dispatch must return an accepted worker result instead of fake delivery');
 assert.doesNotMatch(dispatchRoute, /bulk_worker_not_connected/, 'the connected worker route must no longer be a permanent 409 stub');
-const dispatchPreflightRoute = routeBlock("digitalEmployeesRouter.get('/followup-batches/:batchId/dispatch-preflight'");
+const dispatchPreflightRoute = followupReadSource.slice(followupReadSource.indexOf("router.get('/followup-batches/:batchId/dispatch-preflight'"));
 assert.match(dispatchPreflightRoute, /preflightFollowupBatchDispatch/, 'operators need a read-only dispatch preflight before any real provider call');
 assert.match(source, /dispatchPreflight/, 'follow-up task output must expose structured read-only preflight facts to the UI');
 assert.match(source, /followupDispatchPreflightBlockedReason/, 'follow-up task blockers must be derived from the real dispatch preflight');

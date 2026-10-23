@@ -1,6 +1,7 @@
 import { advanceInitialPreparation, initialPreparationSources, initialPreparationSourcesFromPersisted, initialPreparationJobKey, persistInitialPreparationState, replaceInitialPreparationPlan, type InitialPreparation } from '../digitalEmployees/initialPreparation.js';
 import { createCrawlWorkerJob } from './crawlWorker.js';
 import {createCustomerTaskNavigationRouter} from './customerTaskNavigation.js';
+import { createDigitalEmployeeFollowupReadRouter } from './digitalEmployeeFollowupReadRoutes.js';
 import { requiresContentHumanAcceptance } from '../digitalEmployees/contentProductionAcceptancePolicy.js';
 import { nextManagedCycleWindow, prepareManagedCyclePackage } from '../digitalEmployees/managedOperatingCycle.js';
 import {
@@ -4259,31 +4260,7 @@ export async function configureWorkflowFollowupTemplate(
     return result;
   });
 }
-digitalEmployeesRouter.get('/followup-batches/:batchId', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const batch = await getFollowupBatch(tenantId, req.params.batchId);
-  if (!batch) { res.status(404).json({ error: 'followup_batch_not_found' }); return; }
-  const items = await getFollowupBatchItems(tenantId, batch.id);
-  res.json({
-    batch: { ...batch, delivery_policy: jsonObject(batch.delivery_policy, {}), safety_summary: jsonObject(batch.safety_summary, {}), counts: jsonObject(batch.counts, {}) },
-    items: items.map(item => ({ ...item, provider_receipt: jsonObject(item.provider_receipt, {}) })),
-    bulkWorkerStatus: await getTenantFollowupDispatchStatus(tenantId),
-    messagesSent: items.filter(item => ['sent', 'delivered', 'read', 'partial_sent'].includes(item.status) && Boolean(item.provider_message_id)).length,
-  });
-});
-digitalEmployeesRouter.get('/followup-worker/status', async (_req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  res.json(await getTenantFollowupDispatchStatus(tenantId));
-});
-digitalEmployeesRouter.get('/followup-batches/:batchId/dispatch-preflight', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  try {
-    res.json(await preflightFollowupBatchDispatch(tenantId, req.params.batchId, { mode: 'manual' }));
-  } catch (error) {
-    const code = error instanceof Error ? error.message : 'followup_dispatch_preflight_failed';
-    res.status(code === 'followup_batch_not_found' ? 404 : 502).json({ error: code });
-  }
-});
+digitalEmployeesRouter.use(createDigitalEmployeeFollowupReadRouter());
 digitalEmployeesRouter.post('/followup-batches/:batchId/dispatch', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   const batch = await getFollowupBatch(tenantId, req.params.batchId);
