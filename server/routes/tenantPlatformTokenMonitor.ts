@@ -1,3 +1,4 @@
+import { verifyWhatsAppTenantConnection } from '../whatsapp/connectionHealth.js';
 import axios from 'axios';
 import cron, { type ScheduledTask } from 'node-cron';
 import {
@@ -59,6 +60,12 @@ export async function checkTenantPlatformTokens(): Promise<void> {
   });
   const apps = await listTenantPlatformApps();
   for (const app of apps) {
+    if (app.platform === 'meta' && app.token_type === 'business_integration' && ['active', 'error'].includes(app.status || '')) {
+      await verifyWhatsAppTenantConnection(app.tenant_id).catch(() => {
+        console.warn('[whatsapp-token-monitor] verification unavailable', { tenantId: app.tenant_id });
+      });
+      continue;
+    }
     if (app.platform !== 'meta' || app.token_type !== 'user_60d') continue;
     if (daysUntil(app.token_expires_at) >= 14) continue;
 

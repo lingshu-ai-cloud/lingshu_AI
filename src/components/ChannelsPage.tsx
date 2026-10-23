@@ -1,3 +1,4 @@
+import WhatsAppConnectionPanel from './WhatsAppConnectionPanel';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { SocialConnectionPanel, YouTubeConnectionPanel } from './YouTubeIntegration';
 import UserSocialAppCredentials from './UserSocialAppCredentials';
@@ -25,6 +26,7 @@ export default function ChannelsPage() {
         {panel('tiktok',<SocialConnectionPanel platform="tiktok" />)}
         {panel('linkedin',<SocialConnectionPanel platform="linkedin" />)}
         {panel('messenger',<MessengerConnectionPanel />)}
+        {panel('whatsapp',<WhatsAppConnectionPanel />)}
       </div>
       </div>
     </main>
