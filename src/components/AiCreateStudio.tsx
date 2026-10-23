@@ -1,3 +1,4 @@
+import { useStudioProductionRecords, useStudioProductionRefreshState, useStudioProductionRequestIdentity, createStudioProductionSession, useStudioProductionProjectRead, useStudioProductionJobRecovery } from './studio/studioProductionSession';
 import { useStudioPosterWorkspace } from './studio/studioPosterWorkspace';
 import { useStudioRenderSession, useStudioRenderRecovery } from './studio/studioRenderSession';
 import { useStudioMaterialInventory, useStudioMaterialInventoryLoad, useStudioMaterialInventoryDimensions } from './studio/studioMaterialInventory';
@@ -61,7 +62,7 @@ import { type VideoCreationPlan } from '../lib/videoCreationPlan';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { Film, Send, ChevronLeft, ChevronRight, Plus, FolderOpen, ChevronDown } from 'lucide-react';
-import { studioApi, type VariationBatch, type Material, type CoverStyle, type SubCue, type VideoGenerationVersion, type StudioScriptResult, type DigitalHumanCapabilities, type DigitalHumanJob, type HeyGenAvatarOption, type StudioManualHandoff } from '../lib/studioApi';
+import { studioApi, type StudioProject, type VariationBatch, type Material, type CoverStyle, type SubCue, type VideoGenerationVersion, type StudioScriptResult, type DigitalHumanCapabilities, type DigitalHumanJob, type HeyGenAvatarOption, type StudioManualHandoff } from '../lib/studioApi';
 import { isMeasuredVoiceAlignment, matchVoiceCuesToShots, productionVoiceCues, retimeVisualShotsToVoiceover } from '../lib/voiceoverAlignment';
 import { arrangeShotsWithinNarration, shotsMissingSourceCues, sourceCaptionCacheMatchesContent, generatedShotCaptionCues, sourceCuesForShot, sourceCuesWithoutVoiceover } from '../lib/narrationTimeline';
 import { createPresetEffectPlan } from '../../shared/contracts/effectPlan';
@@ -81,7 +82,7 @@ import { matchStoryboardEnvironmentImage, retainStoryboardReferenceImages } from
 import { inferStoryboardTopic, STORYBOARD_TOPIC_LABELS } from '../lib/storyboardTopic';
 import { matchStoryboardNamedPersonImage, storyboardNamedPersonConsentReady, storyboardNamedPersonRequired } from '../lib/storyboardNamedPersonReference';
 
-import { avatarCandidateReady, automaticAvatarRefreshes, EMPTY_DEFAULTS, normalizeMaterialAudio, newShotProduction, patchShot, presenterProductionGate, shotFingerprint, shotBlockers, type ShotProduction, type ProductionDefaults, type AvatarJob, type AppearancePreference } from '../lib/shotProduction';
+import { avatarCandidateReady, EMPTY_DEFAULTS, normalizeMaterialAudio, newShotProduction, patchShot, presenterProductionGate, shotFingerprint, shotBlockers, type ShotProduction, type ProductionDefaults, type AvatarJob, type AppearancePreference } from '../lib/shotProduction';
 import { productionApi } from '../lib/productionApi';
 import { adaptStudioBatchRoutesToProductionReadView, canonicalProductionMatchesStudio, productionCommandAllowed, productionIdentityLabel, productionRouteLabel, productionShotForSlot, productionStatusLabel, productionStatusTone, type ProductionReadView, type StudioAigcBudgetPreview } from '../lib/productionReadModel';
 import { publishAssistantProductionContext, type AssistantProductionContext } from '../lib/assistantProductionDecision';
@@ -94,7 +95,7 @@ import type { StudioBatchReviewIssue } from './studio/StudioBatchReviewDialog';
 import { canEnterStoryboardRenderStep, evaluateStoryboardRenderReadiness } from '../lib/storyboardRenderReadiness';
 import { currentRenderOutput } from '../lib/studioRenderVersion';
 import { authenticatedVideoBlobUrl } from './studio/studioAuthenticatedMedia';
-import { newDigitalHumanRequirements, type DigitalHumanExecutionRecord, type DigitalHumanPlanRecord } from '../lib/digitalHumanPlan';
+import { newDigitalHumanRequirements } from '../lib/digitalHumanPlan';
 
 import { CoverFace } from './StudioMediaPreviews';
 
@@ -863,16 +864,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [productionDefaults, setProductionDefaults] = useState<ProductionDefaults>(EMPTY_DEFAULTS);
   const [appearancePreference, setAppearancePreference] = useState<AppearancePreference | ''>('');
   const [productionEditorId, setProductionEditorId] = useState('');
-  const [productionJobs, setProductionJobs] = useState<AvatarJob[]>([]);
-  const [productionPlans, setProductionPlans] = useState<DigitalHumanPlanRecord[]>([]);
-  const [productionExecutions, setProductionExecutions] = useState<DigitalHumanExecutionRecord[]>([]);
+  const productionRecords = useStudioProductionRecords();
+  const { productionJobs, setProductionJobs, productionPlans, setProductionPlans,
+    productionExecutions, setProductionExecutions } = productionRecords;
   const [serverShotRoutes, setServerShotRoutes] = useState<{ projectId: string; routes: Record<string, 'presenter' | 'motion' | 'material'> }>({ projectId: '', routes: {} });
   const [canonicalProductionView, setCanonicalProductionView] = useState<ProductionReadView | null>(null);
   const [studioProductionView, setStudioProductionView] = useState<ProductionReadView | null>(null);
   const [productionSentenceResults, setProductionSentenceResults] = useState<Record<string, import('../lib/digitalHumanPlan').SentenceReplicationResult>>({});
   const [socialDigitalHumanPlans, setSocialDigitalHumanPlans] = useState<StudioSocialTaskSeed['digitalHumanShotPlans']>([]);
-  const productionRefreshInFlight = useRef(new Set<string>());
-  const [productionRefreshingIds, setProductionRefreshingIds] = useState<string[]>([]);
+  const productionRefreshState = useStudioProductionRefreshState();
+  const { productionRefreshingIds } = productionRefreshState;
   const renderSession = useStudioRenderSession();
   const {
     renderProductionSignatures, rendering,
@@ -893,7 +894,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [aigcBudgetPreview, setAigcBudgetPreview] = useState<StudioAigcBudgetPreview | null>(null);
   const [batchShotResults, setBatchShotResults] = useState<Array<{ shotId: string; slotId: string; state: 'submitted' | 'matched' | 'needs_material' | 'blocked'; jobId?: string; reason: string }>>([]);
   const batchShotRequestRef = useRef<{ signature: string; batchId: string } | null>(null);
-  const productionRequestIds = useRef(new Map<string, string>());
+  const productionRequestIds = useStudioProductionRequestIdentity();
   const {
     projectRevisionRef, projectRevisionProjectIdRef, projectSaveConflictRef,
   } = useStudioProjectRevisionState();
@@ -1751,13 +1752,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     void studioApi.digitalHumanCapabilities().then(digitalCapability => { if (live) setDigitalHumanCapabilities(digitalCapability); }).catch(error => { if (live) setProductionError(String(error)); });
     return () => { live = false; };
   }, []);
-  useEffect(() => {
-    if (!projectId) { setProductionJobs([]); setProductionPlans([]); setProductionExecutions([]); return; }
-    let live = true;
-    const refresh = () => void Promise.all([productionApi.jobs(projectId), productionApi.plans(projectId), productionApi.executions(projectId)]).then(([jobs, plans, executions]) => { if (live) { setProductionJobs(jobs); setProductionPlans(plans); setProductionExecutions(executions); } }).catch(error => { if (live) setProductionError(String(error)); });
-    refresh(); window.addEventListener('focus', refresh);
-    return () => { live = false; window.removeEventListener('focus', refresh); };
-  }, [projectId]);
+  useStudioProductionProjectRead(productionRecords, projectId, setProductionError);
   useEffect(() => {
     if (!projectId) { setServerShotRoutes({ projectId: '', routes: {} }); setStudioProductionView(null); setAigcBudgetPreview(null); return; }
     let live = true;
@@ -4237,81 +4232,49 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
   const commitProjectTitle = projectPersistence.commitProjectTitle;
 
-  const refreshProductionJob = async (id: string) => {
-    if (productionRefreshInFlight.current.has(id)) return;
-    const requestedProject = currentProjectRef.current;
-    productionRefreshInFlight.current.add(id);
-    setProductionRefreshingIds(current => [...current, id]);
-    setProductionError('');
-    try {
-      const job = await productionApi.refresh(id);
-      if (job.projectId !== currentProjectRef.current) return;
-      setProductionJobs(current => [job, ...current.filter(item => item.id !== job.id)]);
-      setProductionExecutions(await productionApi.executions(job.projectId));
-      if (job.status === 'completed' && job.materialId) {
-        const refreshedMaterials = await refreshMaterials();
-        if (job.projectId !== currentProjectRef.current) return;
-        const key = `${job.assemblyId}:${job.shotId}`;
-        const candidateId = `job-${job.id}`;
-        setShotProductions(current => {
-          const shot = current[key];
-          if (!shot) return current;
-          const candidates = shot.candidates.some(item => item.jobId === job.id) ? shot.candidates
-            : [...shot.candidates, { id: candidateId, materialId: job.materialId!, source: 'avatar' as const, fingerprint: job.fingerprint, jobId: job.id, createdAt: job.updatedAt }];
-          return { ...current, [key]: { ...shot, candidates, adoptedId: candidateId } };
-        });
-        const timelineSlot = shootingSlots.find(item => item.id === job.shotId);
-        if (timelineSlot) {
-          setStoryboardAssignments(current => ({...current,[timelineSlot.slotId]:job.materialId!}));
-          const clip = refreshedMaterials.find(item => item.id === job.materialId) || materialById.get(job.materialId);
-          const storyboardSlot = storyboardSlots.find(item => item.id === timelineSlot.slotId);
-          if (clip?.type === 'video' && storyboardSlot) setClipEdits(current => ({ ...current,
-            [slotClipEditKey(timelineSlot.slotId, clip.id)]: digitalHumanFullLengthEdit(clip, storyboardSlot) }));
-        }
-        setDigitalHumanNotice('数字人素材已生成并自动回填当前分镜。');
+  const productionSession = createStudioProductionSession({
+    records: productionRecords, refresh: productionRefreshState, requestIds: productionRequestIds,
+    feedback: { setProductionBusy, setProductionError, setDigitalHumanNotice },
+  });
+  const createProductionDraft = () => {
+    let expectedProjectId = projectId;
+    return {
+      autosaveInFlightRef,
+      isCurrent: () => currentProjectRef.current === expectedProjectId,
+      save: () => saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() }),
+      onSaved: (project: StudioProject) => {
+        if (currentProjectRef.current !== expectedProjectId) return;
+        expectedProjectId = project.id; currentProjectRef.current = project.id;
+        projectRevisionRef.current = project.updatedAt; setProjectId(project.id);
+      },
+    };
+  };
+  const productionRefreshContext = {
+    currentProjectRef, refreshMaterials,
+    onCompleted: (job: AvatarJob & { materialId: string }, refreshedMaterials: Clip[]) => {
+      const key = `${job.assemblyId}:${job.shotId}`;
+      const candidateId = `job-${job.id}`;
+      setShotProductions(current => {
+        const shot = current[key];
+        if (!shot) return current;
+        const candidates = shot.candidates.some(item => item.jobId === job.id) ? shot.candidates
+          : [...shot.candidates, { id: candidateId, materialId: job.materialId!, source: 'avatar' as const, fingerprint: job.fingerprint, jobId: job.id, createdAt: job.updatedAt }];
+        return { ...current, [key]: { ...shot, candidates, adoptedId: candidateId } };
+      });
+      const timelineSlot = shootingSlots.find(item => item.id === job.shotId);
+      if (timelineSlot) {
+        setStoryboardAssignments(current => ({...current,[timelineSlot.slotId]:job.materialId!}));
+        const clip = refreshedMaterials.find(item => item.id === job.materialId) || materialById.get(job.materialId);
+        const storyboardSlot = storyboardSlots.find(item => item.id === timelineSlot.slotId);
+        if (clip?.type === 'video' && storyboardSlot) setClipEdits(current => ({ ...current,
+          [slotClipEditKey(timelineSlot.slotId, clip.id)]: digitalHumanFullLengthEdit(clip, storyboardSlot) }));
       }
-    } catch (error) { if (currentProjectRef.current === requestedProject) setProductionError(error instanceof Error ? error.message : '任务刷新失败'); }
-    finally {
-      productionRefreshInFlight.current.delete(id);
-      setProductionRefreshingIds(current => current.filter(item => item !== id));
-    }
+    },
   };
-  const refreshReferenceProduction = async (id: string) => {
-    if (productionRefreshInFlight.current.has(id)) return;
-    const requestedProject = currentProjectRef.current;
-    productionRefreshInFlight.current.add(id); setProductionRefreshingIds(current => [...current, id]); setProductionError('');
-    try {
-      const execution = await productionApi.refreshReference(id);
-      if (execution.projectId !== currentProjectRef.current) return;
-      setProductionExecutions(current => [execution, ...current.filter(item => item.id !== execution.id)]);
-      if (execution.state === 'completed' && execution.materialId) await refreshMaterials();
-    } catch (error) { if (currentProjectRef.current === requestedProject) setProductionError(error instanceof Error ? error.message : '参考人物任务刷新失败'); }
-    finally { productionRefreshInFlight.current.delete(id); setProductionRefreshingIds(current => current.filter(item => item !== id)); }
-  };
-  const cancelReferenceProduction = async (id: string) => {
-    if (productionRefreshInFlight.current.has(id)) return;
-    const requestedProject = currentProjectRef.current;
-    productionRefreshInFlight.current.add(id); setProductionRefreshingIds(current => [...current, id]); setProductionError('');
-    try {
-      const execution = await productionApi.cancelReference(id);
-      if (execution.projectId !== currentProjectRef.current) return;
-      setProductionExecutions(current => [execution, ...current.filter(item => item.id !== execution.id)]);
-      setDigitalHumanNotice('供应商已确认取消当前分镜任务；历史执行记录已保留。');
-    } catch (error) { if (currentProjectRef.current === requestedProject) setProductionError(error instanceof Error ? error.message : '参考人物任务取消失败'); }
-    finally { productionRefreshInFlight.current.delete(id); setProductionRefreshingIds(current => current.filter(item => item !== id)); }
-  };
-  const reconcileProductionCost = async (id: string) => {
-    if (productionRefreshInFlight.current.has(id)) return;
-    const requestedProject = currentProjectRef.current;
-    productionRefreshInFlight.current.add(id); setProductionRefreshingIds(current => [...current, id]); setProductionError('');
-    try {
-      const execution = await productionApi.reconcileSupplierCost(id);
-      if (execution.projectId !== currentProjectRef.current) return;
-      setProductionExecutions(current => [execution, ...current.filter(item => item.id !== execution.id)]);
-      setDigitalHumanNotice(`供应商账单已核对：实际费用 ¥${(execution.actualCostCny || 0).toFixed(2)}，依据 ${execution.costSourceRef || '供应商用量记录'}。`);
-    } catch (error) { if (currentProjectRef.current === requestedProject) setProductionError(error instanceof Error ? error.message : '供应商账单核对失败'); }
-    finally { productionRefreshInFlight.current.delete(id); setProductionRefreshingIds(current => current.filter(item => item !== id)); }
-  };
+  const refreshProductionJob = (id: string) => productionSession.refreshProductionJob(id, productionRefreshContext);
+  const refreshReferenceProduction = (id: string) => productionSession.refreshReferenceProduction(id, productionRefreshContext);
+  const cancelReferenceProduction = (id: string) => productionSession.cancelReferenceProduction(id, productionRefreshContext);
+  const reconcileProductionCost = (id: string) => productionSession.reconcileProductionCost(id, productionRefreshContext);
   const productionJobAdoptionSyncKey = JSON.stringify({
     projectId,
     jobs: productionJobs.map(job => [job.id, job.projectId, job.status, job.materialId, job.updatedAt, job.assemblyId, job.shotId]),
@@ -4322,34 +4285,33 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       return [job.materialId, clip?.duration || 0];
     }),
   });
-  useEffect(() => {
-    setShotProductions(current => {
-      let next = current;
-      for (const job of productionJobs) {
-        if (job.projectId !== projectId || job.status !== 'completed' || !job.materialId) continue;
-        const key = `${job.assemblyId}:${job.shotId}`;
-        const shot = next[key];
-        if (!shot) continue;
-        const activeCandidate=shot.candidates.find(item=>item.id===shot.adoptedId);
-        if(activeCandidate&&activeCandidate.createdAt.localeCompare(job.updatedAt)>0)continue;
-        const candidateId=`job-${job.id}`;
-        if (shot.adoptedId === candidateId && activeCandidate?.materialId === job.materialId) continue;
-        const candidates=shot.candidates.some(item=>item.jobId===job.id)?shot.candidates:[...shot.candidates,{id:candidateId,materialId:job.materialId,source:'avatar' as const,fingerprint:job.fingerprint,jobId:job.id,createdAt:job.updatedAt}];
-        next = { ...next, [key]: { ...shot, candidates, adoptedId:candidateId } };
-        const timelineSlot=shootingSlots.find(item=>item.id===job.shotId); if(timelineSlot){
-          setStoryboardAssignments(current=>({...current,[timelineSlot.slotId]:job.materialId!}));
-          const clip=materialById.get(job.materialId), storyboardSlot=storyboardSlots.find(item=>item.id===timelineSlot.slotId);
-          if(clip&&storyboardSlot)setClipEdits(current=>({...current,[slotClipEditKey(timelineSlot.slotId,clip.id)]:{
-              ...defaultEditForSlot(clip,storyboardSlot),trimStart:0,trimEnd:clip.duration,speed:1,targetDuration:clip.duration,targetDurationEdited:true}}));
+  useStudioProductionJobRecovery(productionSession, productionJobAdoptionSyncKey, {
+    projectId, refreshContext: productionRefreshContext,
+    onSynchronize: () => {
+      setShotProductions(current => {
+        let next = current;
+        for (const job of productionJobs) {
+          if (job.projectId !== projectId || job.status !== 'completed' || !job.materialId) continue;
+          const key = `${job.assemblyId}:${job.shotId}`;
+          const shot = next[key];
+          if (!shot) continue;
+          const activeCandidate=shot.candidates.find(item=>item.id===shot.adoptedId);
+          if(activeCandidate&&activeCandidate.createdAt.localeCompare(job.updatedAt)>0)continue;
+          const candidateId=`job-${job.id}`;
+          if (shot.adoptedId === candidateId && activeCandidate?.materialId === job.materialId) continue;
+          const candidates=shot.candidates.some(item=>item.jobId===job.id)?shot.candidates:[...shot.candidates,{id:candidateId,materialId:job.materialId,source:'avatar' as const,fingerprint:job.fingerprint,jobId:job.id,createdAt:job.updatedAt}];
+          next = { ...next, [key]: { ...shot, candidates, adoptedId:candidateId } };
+          const timelineSlot=shootingSlots.find(item=>item.id===job.shotId); if(timelineSlot){
+            setStoryboardAssignments(current=>({...current,[timelineSlot.slotId]:job.materialId!}));
+            const clip=materialById.get(job.materialId), storyboardSlot=storyboardSlots.find(item=>item.id===timelineSlot.slotId);
+            if(clip&&storyboardSlot)setClipEdits(current=>({...current,[slotClipEditKey(timelineSlot.slotId,clip.id)]:{
+                ...defaultEditForSlot(clip,storyboardSlot),trimStart:0,trimEnd:clip.duration,speed:1,targetDuration:clip.duration,targetDurationEdited:true}}));
+          }
         }
-      }
-      return next;
-    });
-    const pending = automaticAvatarRefreshes(productionJobs, projectId || '');
-    if (!pending.length) return;
-    const timer = window.setTimeout(() => { void Promise.all(pending.map(job => refreshProductionJob(job.id))); }, 10000);
-    return () => window.clearTimeout(timer);
-  }, [productionJobAdoptionSyncKey]); // eslint-disable-line react-hooks/exhaustive-deps
+        return next;
+      });
+    },
+  });
   const productionExecutionAdoptionSyncKey = JSON.stringify({
     projectId,
     executions: productionExecutions.map(execution => [execution.id, execution.projectId, execution.provider, execution.state, execution.materialId, execution.updatedAt, execution.assemblyId, execution.shotId]),
@@ -4402,40 +4364,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const presenter = productionDefaults.presenters.find(item => item.id === shot.presenterId);
     if (!presenter) { setProductionError('请先绑定已授权的人物和声音资产'); return; }
     if (savingProj || autosaveInFlightRef.current || sourceDraftCheckPending || existingSourceDraftPrompt) { setProductionError('草稿仍在恢复或保存，请稍后重试'); return; }
-    setProductionBusy(true); setProductionError(''); autosaveInFlightRef.current = true;
-    try {
-      const fingerprint = productionFingerprint(slot, shot);
-      const saved = await saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
-      if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，未发起生成');
-      projectRevisionRef.current = saved.project.updatedAt;
-      setProjectId(saved.project.id);
-      const savedProductionPlan = await productionApi.savePlan({ projectId: saved.project.id, assemblyId: activeAssemblyId,
-        shotId: shootingSlots.find(item => item.slotId === slot.id)!.id, fingerprint: productionFingerprint(slot, shot) });
-      if (!savedProductionPlan.executable) throw new Error(savedProductionPlan.reasons.join('；') || '当前分镜制作方案不可执行');
-      setProductionPlans(current => [savedProductionPlan, ...current.filter(item => item.id !== savedProductionPlan.id)]);
-      const existingJobs = await productionApi.jobs(saved.project.id); const existingExecutions = await productionApi.executions(saved.project.id);
-      const unresolved = existingJobs.find(job => job.assemblyId === activeAssemblyId && job.shotId === shootingSlots.find(item => item.slotId === slot.id)?.id
-        && job.fingerprint === productionFingerprint(slot, shot) && ['submitting', 'pending', 'uncertain'].includes(job.status));
-      const unresolvedExecution = existingExecutions.find(item => item.assemblyId === activeAssemblyId && item.shotId === shootingSlots.find(candidate => candidate.slotId === slot.id)?.id
-        && item.fingerprint === productionFingerprint(slot, shot) && ['submitting', 'pending', 'uncertain'].includes(item.state));
-      if (unresolved || unresolvedExecution) { setProductionJobs(existingJobs); setProductionExecutions(existingExecutions); throw new Error('该镜头已有未结束任务，请先刷新原任务，不重复提交计费。'); }
-      const requestKey = `${saved.project.id}:${productionKey(slot.id)}:${productionFingerprint(slot, shot)}`;
-      const requestId = productionRequestIds.current.get(requestKey) || crypto.randomUUID();
-      productionRequestIds.current.set(requestKey, requestId);
-      if (savedProductionPlan.provider !== 'heygen') {
-        const execution = await productionApi.submitReference({ projectId: saved.project.id, assemblyId: activeAssemblyId, shotId: shootingSlots.find(item => item.slotId === slot.id)!.id,
-          fingerprint: productionFingerprint(slot, shot), requestId, confirmed: true });
-        productionRequestIds.current.delete(requestKey);
-        setProductionExecutions(current => [execution, ...current.filter(item => item.id !== execution.id)]);
-        return;
-      }
-      const job = await productionApi.submit({ projectId: saved.project.id, assemblyId: activeAssemblyId, shotId: shootingSlots.find(item => item.slotId === slot.id)!.id,
-        shot, presenter, ratio, fingerprint: productionFingerprint(slot, shot), requestId, confirmed: true });
-      productionRequestIds.current.delete(requestKey);
-      setProductionExecutions(await productionApi.executions(saved.project.id));
-      setProductionJobs(current => [job, ...current.filter(item => item.id !== job.id)]);
-    } catch (error) { setProductionError(error instanceof Error ? error.message : '提交失败'); }
-    finally { autosaveInFlightRef.current = false; setProductionBusy(false); }
+    return productionSession.generateProductionAvatar({
+      draft: createProductionDraft(),
+      prepareIdentity: () => ({ fingerprint: productionFingerprint(slot, shot),
+        persistedShot: shootingSlots.find(item => item.slotId === slot.id), activeAssemblyId, shotKey: productionKey(slot.id) }),
+      shot, presenter, ratio,
+    });
   };
 
   const saveProductionPlan = async () => {
@@ -4444,16 +4378,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const shot = productionFor(slot); const persistedShot = shootingSlots.find(item => item.slotId === slot.id);
     if (!persistedShot) { setProductionError('当前分镜尚未建立制作时间段，请先保存分镜脚本'); return; }
     if (savingProj || autosaveInFlightRef.current || sourceDraftCheckPending || existingSourceDraftPrompt) { setProductionError('草稿仍在恢复或保存，请稍后重试'); return; }
-    setProductionBusy(true); setProductionError(''); autosaveInFlightRef.current = true;
-    try {
-      const saved = await saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
-      if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，制作方案未保存');
-      projectRevisionRef.current = saved.project.updatedAt; setProjectId(saved.project.id);
-      const record = await productionApi.savePlan({ projectId: saved.project.id, assemblyId: activeAssemblyId, shotId: persistedShot.id, fingerprint: productionFingerprint(slot, shot) });
-      setProductionPlans(current => [record, ...current.filter(item => item.id !== record.id && !(item.assemblyId === record.assemblyId && item.shotId === record.shotId && item.fingerprint === record.fingerprint))]);
-      setDigitalHumanNotice(record.state === 'ready' ? '当前分镜制作方案已保存，可以生成候选。' : `当前分镜制作方案已保存：${record.reasons.join('；') || '等待后续能力接入'}`);
-    } catch (error) { setProductionError(error instanceof Error ? error.message : '制作方案保存失败'); }
-    finally { autosaveInFlightRef.current = false; setProductionBusy(false); }
+    return productionSession.saveProductionPlan({
+      draft: createProductionDraft(),
+      prepareIdentity: () => ({ fingerprint: productionFingerprint(slot, shot),
+        persistedShot: shootingSlots.find(item => item.slotId === slot.id), activeAssemblyId, shotKey: productionKey(slot.id) }),
+    });
   };
 
   const prepareProductionSentenceFrames = async (targetPhoto = false, maxCostCny?: number) => {
@@ -4619,16 +4548,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const clip = materialById.get(candidate.materialId); if (!clip) { setProductionError('候选素材未就绪，请刷新任务或素材库'); return; }
     if (candidate.source === 'avatar') {
       if (!acceptedExecution || savingProj || autosaveInFlightRef.current) { setProductionError('草稿正在保存或执行记录尚未就绪，请稍后再采用'); return; }
-      setProductionBusy(true); setProductionError(''); autosaveInFlightRef.current = true;
-      try {
-        const saved = await saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
-        if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，候选尚未填入分镜');
-        projectRevisionRef.current = saved.project.updatedAt; setProjectId(saved.project.id);
-        const adoptedExecution = await productionApi.adoptExecution(acceptedExecution.id, { candidateId, materialId: candidate.materialId });
-        setProductionExecutions(current => [adoptedExecution, ...current.filter(item => item.id !== adoptedExecution.id)]);
-      } catch (error) {
-        setProductionError(error instanceof Error ? error.message : '候选填入分镜失败'); return;
-      } finally { autosaveInFlightRef.current = false; setProductionBusy(false); }
+      if (!await productionSession.adoptExecution({ draft: createProductionDraft(),
+        executionId: acceptedExecution.id, candidateId, materialId: candidate.materialId })) return;
     }
     setShotProductions(current => ({ ...current, [productionKey(slot.id)]: { ...shot, adoptedId: candidateId } }));
     setStoryboardAssignments(current => ({ ...current, [slot.id]: clip.id }));

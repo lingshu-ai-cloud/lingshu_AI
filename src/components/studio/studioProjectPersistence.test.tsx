@@ -161,3 +161,17 @@ test('action factories defer port reads until invocation, retaining the originat
   await actions.saveStudioProjectVersioned({ id: 'draft-1', title: 'a', status: 'draft', spec: {} });
   assert.ok(reads > 0);
 });
+
+test('a completed save from the old project cannot replace the new editor revision or raise an old conflict', async t => {
+  for (const recovery of [false, true]) {
+    const { input, actions, warnings } = fixture();
+    let finish!: (value: Awaited<ReturnType<typeof studioApi.saveProject>>) => void;
+    t.mock.method(studioApi, 'saveProject', () => new Promise(resolve => { finish = resolve; }));
+    const pending = actions.saveStudioProjectVersioned({ id: 'draft-1', title: 'Old', status: 'draft', spec: {} });
+    input.currentProjectRef.current = 'draft-2'; input.projectRevisionRef.current = 'revision-2'; input.projectRevisionProjectIdRef.current = 'draft-2';
+    finish({ ok: !recovery, project: project({ id: 'draft-1', updatedAt: 'old-result' }), ...(recovery ? { recovery: 'reload_required' as const } : {}) });
+    await pending;
+    assert.equal(input.projectRevisionRef.current, 'revision-2'); assert.equal(input.projectRevisionProjectIdRef.current, 'draft-2');
+    assert.equal(warnings.length, 0); assert.equal(input.projectSaveConflictRef.current, null);
+  }
+});

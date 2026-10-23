@@ -330,7 +330,9 @@ assert.match(
 );
 assert.match(studioSource, /数字人素材已生成并自动回填当前分镜/);
 assert.match(studioSource, /已完成.*目标人物视频，并自动回填当前分镜/);
-assert.match(studioSource, /const refreshProductionJob[\s\S]{0,2400}digitalHumanFullLengthEdit\(clip, storyboardSlot\)/, 'a manually refreshed completed avatar job must immediately synchronize its full-length edit');
+assert.match(studioSource, /const productionRefreshContext[\s\S]{0,2400}digitalHumanFullLengthEdit\(clip, storyboardSlot\)/, 'completed avatar writeback must synchronize its full-length edit');
+assert.match(studioSource, /const refreshProductionJob = \(id: string\) => productionSession\.refreshProductionJob\(id, productionRefreshContext\)/, 'manual refresh must use the live page completion callback');
+assert.match(studioSource, /await refreshMaterials\(\)[\s\S]{0,200}job\.projectId !== currentProjectRef\.current[\s\S]{0,200}context\.onCompleted\(/, 'the completion callback must run only after material recovery and the project guard');
 assert.match(studioSource, /const runProductionSentenceReplication[\s\S]{0,3000}digitalHumanFullLengthEdit\(clip, slot\)/, 'sentence-video auto-fill must immediately synchronize its full-length edit');
 assert.match(studioSource, /useEffect\(\(\) => \{[\s\S]{0,1000}adoptedDigitalHumanCandidate\(slot, materialId\)[\s\S]{0,800}digitalHumanFullLengthEdit\(clip, slot\)/, 'restored and asynchronously loaded avatar assignments must normalize historical clip edits');
 assert.match(studioSource, /const targetDuration = adoptedVideo \? clip!\.duration/, 'an adopted digital-human storyboard slot must follow the material duration');

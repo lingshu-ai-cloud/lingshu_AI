@@ -72,9 +72,10 @@ export function createStudioProjectPersistence(ports: Pick<StudioProjectLifecycl
 
   const saveStudioProjectVersioned = async (input: Parameters<typeof studioApi.saveProject>[0]) => {
     const {
-      projectRevisionProjectIdRef, projectRevisionRef,
+      projectRevisionProjectIdRef, projectRevisionRef, currentProjectRef,
     } = ports;
 
+    const expectedProjectId = currentProjectRef.current;
     const targetProjectId = input.id;
     const result = await studioApi.saveProject({
       ...input,
@@ -83,6 +84,7 @@ export function createStudioProjectPersistence(ports: Pick<StudioProjectLifecycl
         ? { baseUpdatedAt: projectRevisionRef.current }
         : {}),
     });
+    if (currentProjectRef.current !== expectedProjectId) return result;
     if (result.ok && result.project?.id) {
       projectRevisionRef.current = result.project.updatedAt;
       projectRevisionProjectIdRef.current = result.project.id;
