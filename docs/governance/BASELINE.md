@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工周计划真实启动边界拆分（2026-10-23）
+
+- 代码提交 `a08ff55d` 将准确版本批准、真实运行回执校验、助手状态通知、已有运行冲突和结果不明时的一次只读核对迁至 `digitalEmployeeWeeklyLaunch.ts`；页面继续负责呈现和注入原有冲突恢复，不在未知结果时重复批准。`DigitalEmployeePage.tsx` 从 1,097 降至 993 行并收紧预算；全仓仍有 6 个历史超限文件。
+- 新启动模块离线直测 5/5、页面合同、完整 `test:digital-employees`、`test:tenant-isolation`、TypeScript、架构扫描/ratchet（2,406 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建和 `git diff --check` 通过。Studio 主 chunk 为 480,909/485,000 字节，构建仍有大 chunk 提示。按用户决定未测试 LinkedIn 真实付费采集；本批未执行其他真实付费请求、目标库迁移、浏览器交互或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## 数字员工企业资料冲突恢复边界拆分（2026-10-23）
 
 - 代码提交 `36e24c02` 将结构化 `enterprise_facts_changed` 识别、完整来源证据校验、同一授权范围内并发重建合并、专用幂等重建限次重试及换号写回栅栏迁至 `digitalEmployeeFactRecovery.ts`；页面继续注入原有状态和回执展示，不自动重放旧保存、批准或启动动作。`DigitalEmployeePage.tsx` 从 1,173 降至 1,097 行并收紧历史预算；全仓仍有 6 个超限文件。
