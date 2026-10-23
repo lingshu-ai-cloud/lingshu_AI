@@ -91,11 +91,14 @@ test('plan material picking uses the same catalog, locks selection until verifie
   const binding = readFileSync(new URL('./AdCreativePanel.tsx', import.meta.url), 'utf8');
   assert.match(picker, /<AdSourceCatalog/);
   assert.match(source, /configuration: \{ \.\.\.current.configuration, materialSource \}/);
-  assert.match(media, /disabled=\{!!blockedReason \|\| !selection \|\| !cover \|\| previewError\}/);
+  assert.match(media, /disabled=\{!!blockedReason \|\| !selection\}/);
   assert.match(media, /未开放跨企业投放复用/);
   assert.match(binding, /expectedSha256: selected.sha256/);
   assert.match(binding, /task.configuration.materialSource/);
   assert.match(source, /open: dialog !== null && !materialPickerOpen/);
   assert.match(source, /e.key === "Escape" && !materialPickerOpen && e.currentTarget.contains/);
   assert.doesNotMatch(binding, /<option.*sha256/);
+  assert.match(media, /内部内容：/); assert.match(media, /Meta 广告：/); assert.match(media, /使用范围：/);
+  const selectionService = readFileSync(new URL('../../server/platformAds/creativeSelection.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(selectionService, /artifact.status !== 'approved'/);
 });

@@ -11,4 +11,9 @@ export interface PlatformAdCreativeSource {
 }
 export interface AdMaterialSelection extends PlatformAdCreativeSource {
   origin: 'social'; sourceTenantId: string; sourceTenantName: string;
+  contentStatus?: string;
+}
+export function adContentStatusLabel(status?: string): string {
+  if (!status) return '未返回';
+  return ({ draft: '尚未确认', review_required: '待内容确认', approved: '已确认', superseded: '有更新版本', rejected: '内容未通过', failed: '内容处理失败' } as Record<string, string>)[status] || status;
 }

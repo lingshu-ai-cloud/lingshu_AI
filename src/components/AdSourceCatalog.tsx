@@ -40,7 +40,7 @@ function DatasetCatalog({ initialDataset, onSelect, blockedReason }: { initialDa
     {error && <Alert type="error" showIcon title={error} description={data ? '保留同页来源快照，请重试。' : '当前来源未返回，不使用其他数据集冒充。'}/>}
     <Table<AdSourceEntry> tableLayout="fixed" rowKey="key" loading={busy && !data} dataSource={(data?.items || []).filter(r => r.name.toLowerCase().includes(search.trim().toLowerCase()))} locale={{ emptyText: search ? '本页没有匹配的素材，请调整搜索或翻页。' : '当前来源暂无素材，可切换来源查看。' }} pagination={false} scroll={{ x: 480 }} columns={[
       { title: '预览 / 投放状态', width: 160, render: (_, r) => <AdHistoryMedia key={`${r.key}:${r.sourceRevision || ''}`} source={r} refresh={refresh} onSelect={onSelect} blockedReason={blockedReason}/> },
-      { title: '素材 / 创作项目', dataIndex: 'name', render: (_, r) => <div className="ads-source-name"><span>{r.name}</span><Space wrap><Tag>{r.sourceTenantName || '当前企业'}</Tag><Tag>{r.sourceMediaStatus === 'superseded' ? '有更新版本' : r.sourceMediaStatus === 'review_required' ? '待内容审阅' : r.verifiedSource ? '已有成片记录' : '待确认成片'}</Tag></Space></div> },
+      { title: '素材 / 创作项目', dataIndex: 'name', render: (_, r) => <div className="ads-source-name"><span>{r.name}</span><Tag>{r.sourceTenantName || '当前企业'}</Tag></div> },
       { title: '操作', width: 88, render: (_, r) => <Button type="link" onClick={() => setSelected(r)}>查看详情</Button> },
     ]}/>
     {snapshot && <div className="ads-library-pagination"><Pagination current={page} pageSize={5} total={snapshot.key.startsWith(`${dataset}:`) ? snapshot.value.totalItems : 0} showTotal={total => `${total} 条 · 企业分别展示，不合并统计`} showSizeChanger={false} onChange={v => { setPage(v); setSelected(null); }}/></div>}

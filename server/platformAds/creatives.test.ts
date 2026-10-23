@@ -31,9 +31,14 @@ try {
   await assert.rejects(validateDraftAdMaterial('tenant-a', { ...selection, sourceTenantId: 'foreign' }), /来源企业/);
   await assert.rejects(validateDraftAdMaterial('tenant-a', { ...selection, sha256: '0'.repeat(64) }), /版本/);
   await store.update('starter_social_content_artifacts', 'artifactrecord1', { status: 'review_required' });
-  assert.deepEqual((await readSelectableAdMaterial('tenant-a', { origin: 'social', sourceTaskId: 'source-a', artifactId: 'artifact-a' }, true)).bytes, data, 'review-only media can preview but cannot be selected');
-  await assert.rejects(readSelectableAdMaterial('tenant-a', { origin: 'social', sourceTaskId: 'source-a', artifactId: 'artifact-a' }), /审阅/);
-  await assert.rejects(createPlatformAdTask('tenant-a', 'user-a', { name: 'Blocked selection', video: 'Video', goal: '提升有效视频观看', market: '美国', budget: 500, channels: ['Facebook'], configuration: { materialSource: selection } }), /审阅/);
+  for (const status of ['draft', 'review_required', 'approved', 'superseded']) {
+    await store.update('starter_social_content_artifacts', 'artifactrecord1', { status });
+    const choice = await readSelectableAdMaterial('tenant-a', { origin: 'social', sourceTaskId: 'source-a', artifactId: 'artifact-a' });
+    assert.deepEqual(choice.bytes, data); assert.equal(choice.selection.contentStatus, status, 'content status describes the version, not selection eligibility');
+    const selectedDraft = await createPlatformAdTask('tenant-a', 'user-a', { name: 'Available selection', video: 'Video', goal: '提升有效视频观看', market: '美国', budget: 500, channels: ['Facebook'], configuration: { materialSource: { ...selection, contentStatus: 'forged' } } });
+    assert.equal(selectedDraft.configuration.materialSource?.contentStatus, status, 'save reads actual status without granting approval');
+    assert.equal((await store.getById<Record<string, unknown>>('starter_social_content_artifacts', 'artifactrecord1'))?.status, status, 'selection and saving never change review state');
+  }
   await store.update('starter_social_content_artifacts', 'artifactrecord1', { status: 'approved' });
   fs.writeFileSync(path.join(mediaDir, `${sha256}.mp4`), Buffer.alloc(data.length, 'x'));
   await assert.rejects(readSelectableAdMaterial('tenant-a', { origin: 'social', sourceTaskId: 'source-a', artifactId: 'artifact-a' }), /版本|integrity/);
