@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
+import { restoreStudioProjectComposition } from './studioProjectComposition';
 
 const supportFiles = [
   new URL('../../src/components/studio/studioWorkspaceConfig.ts', import.meta.url),
@@ -53,7 +54,7 @@ export function readAiStudioApplicationSources(): string {
       ? '() => {\n' + body.map(item => item.getText(parsed)).join('\n') + '\n}'
       : (returned as ts.ReturnStatement).expression!.getText(parsed).slice(1, -1) });
   }
-  let source = readFileSync(new URL('../../src/components/AiCreateStudio.tsx', import.meta.url), 'utf8');
+  let source = restoreStudioProjectComposition(readFileSync(new URL('../../src/components/AiCreateStudio.tsx', import.meta.url), 'utf8'));
   const parsed = ts.createSourceFile('AiCreateStudio.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const edits: Array<{ start: number; end: number; text: string }> = [];
   function visit(node: ts.Node) {
