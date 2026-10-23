@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工首次配置动作边界拆分（2026-10-23）
+
+- 代码提交 `f9a02cb2` 将首次配置保存、同指纹计划续跑、任务包确认和首次准备幂等请求从 `DigitalEmployeePage.tsx` 迁至 `digitalEmployeeConfigurationAction.ts`，页面保留现有状态与冲突恢复注入；另移除未挂载目标的滚动和无调用方的旧目标提交函数。页面从 1,292 降至 1,173 行并收紧预算；全仓仍有 6 个历史超限文件，不能称为架构债务全部完成。
+- 新动作离线直测 2/2（已存在准备时不重复创建；计划指纹冲突时不覆盖）、页面合同、完整 `test:digital-employees`、`test:tenant-isolation`、TypeScript、架构扫描/ratchet（2,404 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建及 `git diff --check` 通过。Studio 主 chunk 为 480,909/485,000 字节，构建仍有大 chunk 提示。按用户决定暂不测试 LinkedIn 真实付费采集；本批未执行其他真实付费请求、目标库迁移、浏览器交互或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## 视频封面持久化边界拆分（2026-10-23）
 
 - 代码提交 `bbd03a84` 将签名封面过期判定、限时图片读取、公开封面来源与 COS／记录文件回退迁至 `server/routes/videoThumbnailPersistence.ts`；`videos.ts` 保留租户鉴权、COS 上传校验、爬取修复和付费入口，旧公开 `recordThumbnailUrl` 导出继续转发。主路由从 7,970 降至 7,823 行并收紧预算；全仓仍有 6 个历史超限文件。

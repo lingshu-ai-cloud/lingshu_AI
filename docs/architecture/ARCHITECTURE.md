@@ -38,6 +38,7 @@
 - `src/components/inspiration/inspirationMaterialLibrary.ts`：素材库入口参数、企业通用/产品归属、可见标签与语义、分类徽标、产品/方向/图库筛选；权威媒体比例计算在 `src/lib/materialAspectRatio.ts`，规则模块不反向依赖 React 组件。页面保留素材加载、用户操作和展示，原页面导出继续转发。
 - `src/components/EnterprisePage.tsx` 与 `src/components/enterprise/`：页面持有可编辑企业资料和导航；资料默认值/快照、服务端读写校验、FAQ/销售风格控制器及业务视图由企业资料模块负责。保存成功必须以服务端读回和产品身份校验为依据。
 - `src/components/DigitalEmployeePage.tsx` 与 `src/components/smartBusiness/WeeklyGoalPanel.tsx`：数字员工页负责新周目标的提交、冲突恢复与运行导航；独立周目标面板持有草稿、预设方案、平台配额重算、视频计划校验和排期确认，不直接调用生产 API。`DigitalEmployeeFormField.tsx` 是页面与周目标面板共用的表单字段样式。
+- `src/components/digitalEmployeeConfigurationAction.ts`：首次配置保存、同指纹计划续跑、任务包确认与首次准备请求的幂等编排；页面注入现有 API、冲突恢复及界面状态回调。此模块不直接发起供应商调用，已存在不同指纹计划时保持可见失败，不覆盖原计划。
 - `src/components/smartBusiness/digitalEmployeeConfigRules.ts`：数字员工首次配置的安全默认值、旧发布节奏配额换算、配置补全及发布/跟进人工审批校验；页面仍持有引导交互、企业资料读取、用户确认和现有保存接口，不在规则模块中执行真实发布或消息发送。
 - `src/components/smartBusiness/onboardingProductImport.ts`：首次引导产品资料的文件类型/大小校验、PDF/DOCX/TXT/表格解析、明确归属的图片上传、未归属页留在素材库、按稳定产品 ID 合并及现有鉴权企业档案写入。页面只保留选择、忙碌与结果反馈；未核验图片不得自动绑定产品。
 - 数字员工首页实际挂载 `BusinessHealthOverview`、`SmartBusinessDashboard`、`WeeklyCommandCenter` 和首次配置 `OnboardingPanel`。`DigitalEmployeeTodayFocusPanel`、`BatchFollowupTruthPanel`、`DeliveryBoard`、`WeeklyPackagePanel` 与 `ProductionProgressPanel` 仍有独立源码或合同，但未在页面或其他生产入口挂载；不能把这些模块的存在计作可见功能。源码契约测试须核对当前挂载路径。
