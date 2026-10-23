@@ -9,19 +9,23 @@ const root = process.cwd();
 const read = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
 
 const enterprise = read('server/routes/enterprise.ts');
+const enterpriseKnowledge = read('server/routes/enterpriseKnowledge.ts');
+const enterpriseAssets = read('server/routes/enterpriseAssetRoutes.ts');
 assert.match(enterprise, /enterpriseRouter\.use\(requireAuth\)/, 'enterprise routes must require authentication');
 assert.match(enterprise, /readTenantProfile\(tenantId\)/, 'enterprise profile reads must be tenant scoped');
 assert.match(enterprise, /writeTenantProfile\(tenantId, profile, userId\)/, 'enterprise profile writes must be tenant scoped');
 assert.match(enterprise, /enterpriseRouter\.patch\('\/profile'[\s\S]*?readTenantProfile\(tenantId\)[\s\S]*?mergeEnterpriseProfile/, 'diagnosis autosave must merge into the authenticated tenant profile');
-assert.match(enterprise, /dataGovernance\?\.aiAccessEnabled === false/, 'AI context must honor enterprise data authorization');
+assert.match(enterprise, /context: buildEnterpriseContext\(profile\)/, 'enterprise facts must use the guarded AI context builder');
+assert.match(enterpriseKnowledge, /dataGovernance\?\.aiAccessEnabled === false/, 'AI context must honor enterprise data authorization');
 assert.doesNotMatch(
   enterprise.slice(enterprise.indexOf("enterpriseRouter.get('/profile'"), enterprise.indexOf('export const productApiRouter')),
   /req\.query\.tenantId|x-tenant-id/,
   'authenticated enterprise UI routes must not accept a caller-selected tenant id',
 );
-assert.match(enterprise, /enterpriseAssetObjectKey\(tenantId, storedName\)/, 'enterprise asset uploads must include the authenticated tenant in their object key');
-assert.match(enterprise, /enterpriseAssetObjectKey\(tenantId, file\)/, 'enterprise asset reads must derive the object key from the authenticated tenant');
-assert.match(enterprise, /Compatibility path while the resumable migration/, 'enterprise assets must retain a local fallback during migration');
+assert.match(enterprise, /registerEnterpriseAssetRoutes\(enterpriseRouter\)/, 'enterprise routes must mount the tenant-scoped asset adapter');
+assert.match(enterpriseAssets, /enterpriseAssetObjectKey\(tenantId, storedName\)/, 'enterprise asset uploads must include the authenticated tenant in their object key');
+assert.match(enterpriseAssets, /enterpriseAssetObjectKey\(tenantId, file\)/, 'enterprise asset reads must derive the object key from the authenticated tenant');
+assert.match(enterpriseAssets, /Compatibility path while the resumable migration/, 'enterprise assets must retain a local fallback during migration');
 
 const customers = read('server/routes/customerSuggestions.ts');
 assert.match(customers, /customerSuggestionsRouter\.use\(requireAuth\)/, 'customer routes must require authentication');
@@ -44,23 +48,39 @@ for (const brand of ['youtube', 'tiktok', 'instagram', 'facebook', 'whatsapp']) 
   assert.match(socialPlatformIcon, new RegExp(`brand === '${brand}'`), `${brand} must have a real brand logo`);
 }
 const assistantUi = read('src/components/GlobalAssistant.tsx');
-assert.match(assistantUi, /ENTERPRISE_GUIDE_MEMORY_ID[\s\S]*?enterpriseGuideSeen/, 'enterprise center must remember its single proactive assistant guide');
-assert.match(assistantUi, /要补资料？点我/, 'enterprise center must leave a concise click-to-open reminder after the proactive guide');
-assert.match(assistantUi, /const closeAssistant = useCallback\(\(\) => \{[\s\S]*?setAssistantTool\(null\)[\s\S]*?setPanelView\('chat'\)[\s\S]*?setMode\('breathing'\)/, 'assistant panels must fully close instead of leaving a hidden intake tool active');
+const assistantGuides = read('src/components/assistant/useAssistantFeatureGuides.ts');
+const assistantReminders = read('src/components/assistant/AssistantFloatingReminders.tsx');
+const assistantControls = read('src/components/assistant/useAssistantPanelControls.ts');
+const assistantLauncher = read('src/components/assistant/AssistantLauncher.tsx');
+const assistantBubbles = read('src/components/assistant/AssistantConversationBubbles.tsx');
+const assistantNotifications = read('src/components/assistant/useAssistantNotifications.ts');
+assert.match(assistantUi, /useAssistantFeatureGuides\(/, 'assistant must mount the enterprise guide lifecycle');
+assert.match(assistantGuides, /ENTERPRISE_GUIDE_MEMORY_ID[\s\S]*?enterpriseGuideSeen/, 'enterprise center must remember its single proactive assistant guide');
+assert.match(assistantUi, /<AssistantFloatingReminders[\s\S]*?enterpriseGuideSeen=\{enterpriseGuideSeen\}/, 'assistant must pass remembered guide state to reminders');
+assert.match(assistantReminders, /要补资料？点我/, 'enterprise center must leave a concise click-to-open reminder after the proactive guide');
+assert.match(assistantUi, /useAssistantPanelControls\(/, 'assistant must mount panel close controls');
+assert.match(assistantControls, /const closeAssistant = useCallback\(\(\) => \{[\s\S]*?setAssistantTool\(null\)[\s\S]*?setPanelView\('chat'\)[\s\S]*?setMode\('breathing'\)/, 'assistant panels must fully close instead of leaving a hidden intake tool active');
 const assistantRootTag = assistantUi.match(/data-global-assistant="root"[\s\S]{0,500}>/)?.[0] ?? '';
 for (const className of ['fixed', 'right-4', 'z-[75]', 'bottom-[calc(env(safe-area-inset-bottom)+1rem)]']) {
   assert.ok(assistantRootTag.includes(className), `the assistant launcher root must retain ${className}`);
 }
 assert.doesNotMatch(assistantUi, /page === 'conversion'[\s\S]{0,180}bottom-\[calc\(env\(safe-area-inset-bottom\)\+8rem\)\]/, 'the conversation page must not move the global launcher away from its shared safe-area position');
-assert.match(assistantUi, /const handleLauncherClick[\s\S]{0,500}openCurrentPageAgent\(\)/, 'the assistant launcher must open the current-page panel directly');
+assert.match(assistantControls, /const handleLauncherClick[\s\S]{0,500}openCurrentPageAgent\(\)/, 'the assistant launcher must open the current-page panel directly');
 assert.match(assistantUi, /openAgent\(currentPageAgent, 'chat'\)/, 'the confirmed unified assistant opens the current-page conversation without an agent selector');
-assert.match(assistantUi, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, 'the assistant decision feed must be scoped to the current page');
-assert.match(assistantUi, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, 'the launcher must expose its direct open/close conversation behavior');
+assert.match(assistantUi, /<AssistantConversationPanel[\s\S]*?page=\{page\}/, 'assistant must pass current page to the conversation panel');
+assert.match(assistantBubbles, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, 'the assistant decision feed must be scoped to the current page');
+assert.match(assistantUi, /<AssistantLauncher[\s\S]*?chatOpen=\{mode === 'chat'\}/, 'assistant must pass open state to the launcher');
+assert.match(assistantLauncher, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{chatOpen \? '收起灵小枢对话' : '询问灵小枢'\}/, 'the launcher must expose its direct open/close conversation behavior');
 assert.doesNotMatch(assistantUi, /ASSISTANT_AUTO_RETRACT_MS|ASSISTANT_POSITION_KEY|assistantPosition|handlePointerDown/, 'the assistant must not restore the obsolete draggable or timer-driven auto-retract launcher');
-assert.match(assistantUi, /lingshu-assistant-performance/, 'content generation must be able to wake the assistant for a waiting-time performance');
+assert.match(assistantUi, /useAssistantNotifications\(/, 'assistant must mount generation notifications');
+assert.match(assistantNotifications, /lingshu-assistant-performance/, 'content generation must be able to wake the assistant for a waiting-time performance');
 const enterpriseUi = read('src/components/EnterprisePage.tsx');
-assert.match(enterpriseUi, /function OptionSelector[\s\S]*?<Select[\s\S]*?mode=\{multiple \? 'multiple' : undefined\}[\s\S]*?allowClear[\s\S]*?options=/, 'enterprise selectable fields must use the shared accessible Ant single-select or multi-select control');
-assert.doesNotMatch(enterpriseUi.slice(enterpriseUi.indexOf('function OptionSelector'), enterpriseUi.indexOf('function PaginationControls')), /<Chip/, 'enterprise option selectors must not fall back to chip-only selection');
+const enterpriseControls = read('src/components/enterprise/EnterpriseFormControls.tsx');
+const enterpriseProductPanel = read('src/components/enterprise/EnterpriseProductPanel.tsx');
+assert.match(enterpriseUi, /<EnterpriseProductPanel/, 'enterprise page must mount its product form');
+assert.match(enterpriseProductPanel, /OptionSelector/, 'enterprise product form must use shared selectable controls');
+assert.match(enterpriseControls, /function OptionSelector[\s\S]*?<Select[\s\S]*?mode=\{multiple \? 'multiple' : undefined\}[\s\S]*?allowClear[\s\S]*?options=/, 'enterprise selectable fields must use the shared accessible Ant single-select or multi-select control');
+assert.doesNotMatch(enterpriseControls.slice(enterpriseControls.indexOf('function OptionSelector'), enterpriseControls.indexOf('function PaginationControls')), /<Chip/, 'enterprise option selectors must not fall back to chip-only selection');
 const globalStyles = read('src/index.css');
 for (const styleClass of ['.ui-field', '.ui-select', '.ui-chart-panel', '.ui-floating-panel']) {
   assert.match(globalStyles, new RegExp(styleClass.replace('.', '\\.')), `${styleClass} must remain part of the shared UI system`);
@@ -202,7 +222,9 @@ const styleMemory = read('server/knowledge/styleMemory.ts');
 assert.match(styleMemory, /await readTenantEnterpriseProfile\(tenantId\)/, 'style distillation must read the tenant profile');
 assert.match(styleMemory, /await updateTenantEnterpriseProfile\(tenantId,/, 'style distillation must update the tenant profile');
 assert.doesNotMatch(styleMemory, /readEnterpriseProfile|updateEnterpriseProfile/, 'style learning must not use the global profile file');
-assert.match(read('server/whatsapp/historyImport.ts'), /await readTenantEnterpriseProfile\(tenantId\)/, 'WhatsApp autonomy must use the inbound message tenant profile');
+const whatsappInbound = read('server/whatsapp/historyInbound.ts');
+assert.match(read('server/whatsapp/historyImport.ts'), /handleInboundMessage\(tenantId,/, 'verified WhatsApp ingress must pass the tenant into inbound handling');
+assert.match(whatsappInbound, /await readTenantEnterpriseProfile\(tenantId\)/, 'WhatsApp autonomy must use the inbound message tenant profile');
 
 const assetAccess = read('server/lib/assetAccess.ts');
 assert.match(assetAccess, /segments\[0\] === 'tenants' && segments\[1\] === viewerTenantId/, 'private assets must enforce tenant path ownership');
@@ -210,15 +232,23 @@ const materialAssets = read('server/storage/materialAssets.ts');
 assert.match(materialAssets, /MATERIAL_ASSET_PREFIX = 'materials\/tenants'/, 'private COS materials must use a tenant prefix');
 assert.match(materialAssets, /materialAssetTenantKey\(tenantId\)/, 'material object keys must derive their tenant segment from authenticated tenant data');
 const studio = read('server/routes/studio.ts');
+const studioMaterialProjection = read('server/routes/studioMaterialProjection.ts');
 assert.match(studio, /saveMaterialUploadToDatabase\(\{[\s\S]*?tenantId, name, folder/, 'material uploads must pass the authenticated tenant into database persistence');
 const cloudMaterials = read('server/lib/cloudMaterials.ts');
 assert.match(cloudMaterials, /tenantId: input\.tenantId/, 'PocketBase material records must derive tenant ownership from the authenticated upload input');
 assert.match(cloudMaterials, /materialTenantId\(record\) !== input\.tenantId/, 'PocketBase material writes must verify the returned tenant before exposing the record');
-assert.match(studio, /material\.objectKey[\s\S]*?privateStudioAssetUrl\('materials', tenantId/, 'private COS material reads must use the signed application route');
+assert.match(studio, /materialResponse\(/, 'Studio routes must use the protected material response projection');
+assert.match(studioMaterialProjection, /material\.objectKey[\s\S]*?privateStudioAssetUrl\('materials', tenantId/, 'private COS material reads must use the signed application route');
 assert.match(studio, /get\('\/private-assets\/:namespace\/:file'[\s\S]*?objectStorageGetObject\(tenantPrivateObjectKey\(namespace, tenantId, req\.params\.file\)/, 'the private asset route must bind object reads to the authenticated tenant');
 assert.match(studio, /item\.id === req\.params\.id && item\.tenantId === tenantId/, 'material mutations must enforce tenant ownership');
-assert.match(studio, /where: \{ tenant_id: tenantId \}/, 'studio projects must be queried by authenticated tenant');
-assert.match(studio, /existing\.tenant_id !== tenantId/, 'studio project mutations must enforce tenant ownership');
+const studioProjectRead = read('server/routes/studioProjectReadRoutes.ts');
+const studioProjectSave = read('server/routes/studioProjectSaveRoutes.ts');
+const studioProjectReview = read('server/routes/studioProjectReviewRoutes.ts');
+assert.match(studio, /createStudioProjectReadRouter\(loadMaterials, store\)/, 'Studio must mount tenant-scoped project reads');
+assert.match(studioProjectRead, /where: \{ tenant_id: tenantId \}/, 'studio projects must be queried by authenticated tenant');
+assert.match(studio, /createStudioProjectSaveRouter\(/, 'Studio must mount guarded project writes');
+assert.match(studioProjectSave, /existing\?\.tenant_id === tenantId/, 'studio project saves must enforce tenant ownership');
+assert.match(studioProjectReview, /existing\.tenant_id !== tenantId/, 'studio project review mutations must enforce tenant ownership');
 assert.match(studio, /item\.tenantId === tenantId/, 'variation batches must be tenant filtered');
 assert.match(studio, /tenantPrivateObjectKey\(namespace, tenantId, file\)/, 'studio private objects must use tenant-prefixed storage');
 assert.match(studio, /persistPrivateStudioAsset\('tts', tenantId/, 'TTS objects must use private storage');
