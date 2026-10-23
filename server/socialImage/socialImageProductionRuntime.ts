@@ -11,8 +11,9 @@ import {
   type SocialImageProductionSnapshot,
 } from '../../shared/contracts/socialImageProduction.js';
 import {
-  SOCIAL_IMAGE_HARD_CHECKS,
   socialImageCurrentOutputs,
+  socialImageOutputHardChecksPassed,
+  socialImageReviewOutputs,
   type SocialImageCreationTask,
   type SocialImageOutputNode,
 } from '../../shared/contracts/socialImageCreation.js';
@@ -23,11 +24,6 @@ const completed = (nodeId: SocialImageProductionNodeId): SocialImageProductionNo
 const waiting = (nodeId: SocialImageProductionNodeId): SocialImageProductionNodeState => ({
   nodeId, status: 'waiting', attempt: 0, blockingReasons: [],
 });
-
-function hardChecksPassed(output: SocialImageOutputNode): boolean {
-  return SOCIAL_IMAGE_HARD_CHECKS.every(key => output.qualityChecks.some(check => check.key === key
-    && check.severity === 'hard' && (check.verdict === 'pass' || check.verdict === 'not_applicable')));
-}
 
 function currentArtifactRefs(task: SocialImageCreationTask) {
   return socialImageCurrentOutputs(task).filter(output => output.state !== 'superseded' && output.contentHash)
@@ -42,8 +38,9 @@ function derivedNodeStates(task: SocialImageCreationTask): SocialImageProduction
 
   const businessReady = Boolean(task.contentBrief.coreClaim.trim() && task.contentBrief.productRefs.length
     && task.deliverySpec.language.trim() && task.deliverySpec.aspectRatio);
-  states.business_context = businessReady ? completed('business_context') : {
+  states.business_context = task.schemaVersion !== 'social-image-creation.v3' && businessReady ? completed('business_context') : {
     ...waiting('business_context'), status: 'needs_review', blockingReasons: [
+      ...(task.schemaVersion === 'social-image-creation.v3' && businessReady ? ['social_image_business_context_output_required'] : []),
       ...(!task.contentBrief.coreClaim.trim() ? ['social_image_core_claim_missing'] : []),
       ...(!task.contentBrief.productRefs.length ? ['social_image_product_missing'] : []),
     ],
@@ -66,9 +63,13 @@ function derivedNodeStates(task: SocialImageCreationTask): SocialImageProduction
     if (task.hookFactorSpec && socialImageHookFactorIssues(task.hookFactorSpec).length === 0) states.hook_factors = completed('hook_factors');
     if (task.adaptationSpec) states.adaptation = completed('adaptation');
   }
-  if (task.renderBrief && task.imageTextContract.headline.trim()) states.director_brief = completed('director_brief');
-  if (task.layerGraph || task.renderPlan) states.execution_plan = completed('execution_plan');
-  if (task.layerGraph || task.renderPlan) states.render_spec = completed('render_spec');
+  // V3 readiness is proved only by persisted node envelopes. Mutable task
+  // fields may render a draft but cannot masquerade as completed production.
+  if (task.schemaVersion !== 'social-image-creation.v3') {
+    if (task.renderBrief && task.imageTextContract.headline.trim()) states.director_brief = completed('director_brief');
+    if (task.layerGraph || task.renderPlan) states.execution_plan = completed('execution_plan');
+    if (task.layerGraph || task.renderPlan) states.render_spec = completed('render_spec');
+  }
 
   const currentOutputs = socialImageCurrentOutputs(task).filter(output => output.state !== 'superseded');
   const unresolvedJob = task.generationJobs.find(job => job.status === 'outcome_unknown');
@@ -78,11 +79,23 @@ function derivedNodeStates(task: SocialImageCreationTask): SocialImageProduction
   else if (runningJob || task.status === 'generating') states.candidate_generation = { ...waiting('candidate_generation'), status: 'running', attempt: runningJob?.attempt || 1, blockingReasons: [] };
   else if (currentOutputs.length) states.candidate_generation = completed('candidate_generation');
 
-  const qualityReady = currentOutputs.length > 0 && currentOutputs.every(hardChecksPassed);
+  // GIF plates are intermediate paid background evidence; only composed
+  // frames and the encoded GIF are customer deliverables. A partial set is
+  // never quality-ready, even when its first page happens to pass.
+  const reviewOutputs = socialImageReviewOutputs(task);
+  const qualityReady = reviewOutputs.length > 0 && reviewOutputs.every(output =>
+    ['quality_checking', 'approved'].includes(output.state) && socialImageOutputHardChecksPassed(output));
   if (qualityReady) states.quality_check = completed('quality_check');
   else if (currentOutputs.length) states.quality_check = { ...waiting('quality_check'), status: 'needs_review', attempt: 1,
     blockingReasons: ['social_image_hard_quality_gate_incomplete'] };
-  if (task.directorReviewDecision?.decision === 'accept_for_user_review') states.director_review = completed('director_review');
+  const currentRefs = reviewOutputs.map(output => `${output.id}:${output.version}:${output.contentHash}`);
+  const reviewedRefs = task.directorReviewDecision?.candidateRefs?.map(ref => `${ref.id}:${ref.version}:${ref.contentHash}`);
+  const directorCurrent = task.directorReviewDecision?.decision === 'accept_for_user_review'
+    && (task.imageType !== 'carousel' && task.imageType !== 'gif_poster'
+      ? reviewOutputs[0]?.id === task.directorReviewDecision.candidateId
+        && reviewOutputs[0]?.version === task.directorReviewDecision.candidateVersion
+      : currentRefs.length > 0 && JSON.stringify(currentRefs) === JSON.stringify(reviewedRefs));
+  if (directorCurrent) states.director_review = completed('director_review');
   else if (qualityReady) states.director_review = { ...waiting('director_review'), status: 'needs_review', blockingReasons: ['social_image_director_review_required'] };
 
   const activeRepairs = task.repairInstructions.filter(item => item.status !== 'completed');
@@ -90,7 +103,7 @@ function derivedNodeStates(task: SocialImageCreationTask): SocialImageProduction
     attempt: Math.max(1, activeRepairs.length), blockingReasons: activeRepairs.filter(item => item.status === 'failed').map(() => 'social_image_repair_failed') }
     : { ...waiting('repair'), status: 'skipped' };
   if (task.approvedArtifact) states.user_approval = completed('user_approval');
-  else if (qualityReady && task.directorReviewDecision?.decision === 'accept_for_user_review') {
+  else if (qualityReady && directorCurrent) {
     states.user_approval = { ...waiting('user_approval'), status: 'needs_review', blockingReasons: ['social_image_explicit_user_approval_required'] };
   }
   if (task.deliveryPackages?.length) states.delivery = completed('delivery');

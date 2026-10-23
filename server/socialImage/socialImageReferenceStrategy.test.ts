@@ -99,7 +99,7 @@ test('two visibly different references drive distinct focal, copy and palette la
   /social_image_reference_structure_unsupported/);
 });
 
-async function boundViralTask() {
+async function boundViralTask(imageType: 'product_poster' | 'carousel' = 'product_poster') {
   const store = new MemoryStore();
   await store.create(STARTER_COLLECTIONS.socialContentTasks, {
     id: 'content-row', tenant_id: 'tenant-a', task_id: 'content-a', status: 'plan_review', version: '7',
@@ -114,23 +114,23 @@ async function boundViralTask() {
   });
   const created = (await createOrResumeBoundSocialImageRun(store, 'tenant-a', {
     contentTaskId: 'content-a', expectedContentTaskVersion: '7', idempotencyKey: 'reference-offline-001',
-    entrySource: 'assistant',
+    entrySource: 'assistant', imageType,
   }, now)).task;
   return { store, task: created };
 }
 
-test('V3 offline reference evidence flows through strategy, frozen plan and per-factor director review', async () => {
+async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'product_poster') {
   const referenceBytes = await referenceImage('top_left', '#123358');
   const inventory = await inventoryFor(referenceBytes, 'top_left');
   const productBytes = await sharp({ create: { width: 180, height: 260, channels: 3, background: '#ffffff' } }).png().toBuffer();
-  const { store, task: created } = await boundViralTask();
+  const { store, task: created } = await boundViralTask(imageType);
   assert.equal(created.creationPath, 'viral_replication');
   const setReference = await updateSocialImageTask(store, 'tenant-a', created.id, created.version, {
     referenceSnapshot: { sourceRecordId: 'reference-top_left', imageUrls: ['/tenant-owned/reference.png'],
       collectedAt: now, fingerprint: digest(referenceBytes) },
   });
   assert.equal(setReference.kind, 'updated');
-  if (setReference.kind !== 'updated') return;
+  if (setReference.kind !== 'updated') throw new Error('reference_fixture_update_failed');
   let task = await recordSocialImageBusinessContext({ store, tenantId: 'tenant-a', taskId: created.id,
     expectedVersion: setReference.task.version, now });
   const asset = await inspectSocialImageAsset({ assetId: 'product-a', role: 'product', required: true,
@@ -168,6 +168,11 @@ test('V3 offline reference evidence flows through strategy, frozen plan and per-
   const planned = await compileSocialImageReferencePlan({ store, tenantId: 'tenant-a', taskId: task.id,
     expectedVersion: task.version, productName: '产品 A', now });
   task = planned.task;
+  return { store, task, planned, productBytes, referenceBytes };
+}
+
+test('V3 offline reference evidence flows through strategy, frozen plan and per-factor director review', async () => {
+  const { store, task, planned, productBytes, referenceBytes } = await preparedViralTask();
   assert.equal(projectSocialImageProductionSnapshot(task).currentNode, 'candidate_generation');
   assert.equal(socialImageFrozenGraphMatches(task), true);
   assert.equal((task.productionRuntime?.nodeOutputs.filter(node => node.nodeId === 'render_spec').at(-1)?.value as { inputHash: string }).inputHash,
@@ -205,4 +210,56 @@ test('V3 offline reference evidence flows through strategy, frozen plan and per-
         .map(result => ({ ...result, verdict: 'pass' as const })) } }), /social_image_hook_candidate_evidence_incomplete/);
   const restored = await readSocialImageTask(store, 'tenant-a', task.id);
   assert.equal(restored?.directorReviewDecision?.decision, 'repair');
+});
+
+test('V3 viral carousel repairs the whole set when one page lacks factor evidence and rejects forged acceptance', async () => {
+  const { store, task } = await preparedViralTask('carousel');
+  assert.equal(task.deliverySpec.outputCount, 4);
+  const units = Array.from({ length: 4 }, (_, index) => ({
+    jobId: `viral-page-job-${index}`, index, count: 4, label: `复刻第 ${index + 1} 页`,
+    role: 'carousel_page' as const, poster: { headline: `第 ${index + 1} 页` },
+    idempotencyKey: `viral-page-${index}`, plannedInputHash: `${index + 1}`.repeat(64),
+  }));
+  const jobs = units.map(unit => ({ id: unit.jobId, idempotencyKey: unit.idempotencyKey, planVersion: 1,
+    unitIndex: unit.index, plannedInputHash: unit.plannedInputHash, status: 'completed' as const,
+    outputNodeIds: [`viral-page-${unit.index}`], attempt: 1, createdAt: now, updatedAt: now }));
+  const outputs = units.map(unit => {
+    const contentHash = `${unit.index + 1}`.repeat(64);
+    return { id: `viral-page-${unit.index}`, role: 'carousel_page' as const, label: unit.label,
+      state: 'quality_checking' as const, version: 1, materialId: `material-${unit.index}`,
+      mediaUrl: `/api/overseas/social-images/renders/viral-page-${unit.index}`,
+      sourceJobId: unit.jobId, contentHash,
+      qualityChecks: [
+        ...SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'pass' as const, severity: 'hard' as const,
+          checker: 'deterministic' as const, note: '离线像素验证通过' })),
+        { key: 'reference_structure_similarity' as const, verdict: 'uncertain' as const, severity: 'soft' as const,
+          checker: 'deterministic' as const, note: '参考结构仍需逐因素审查' },
+        ...(task.hookFactorSpec?.factors || []).map(factor => ({ key: `hook_factor:${factor.factorId}` as const,
+          verdict: unit.index === 2 && factor === task.hookFactorSpec?.factors[0] ? 'uncertain' as const : 'pass' as const,
+          severity: 'soft' as const, checker: 'deterministic' as const, note: '离线候选区域证据',
+          evidence: [`candidate-sha256:${contentHash}`,
+            ...factor.evidenceRefs.map(ref => `reference-region-sha256:${ref.contentHash}`)],
+        })),
+      ],
+    };
+  });
+  const staged = await updateSocialImageTask(store, 'tenant-a', task.id, task.version, {
+    renderPlan: { version: 1, sourceHash: 'f'.repeat(64), createdAt: now, units },
+    generationJobs: jobs, outputs, status: 'review_required', step: 'review',
+  });
+  assert.equal(staged.kind, 'updated');
+  if (staged.kind !== 'updated') throw new Error('viral_carousel_fixture_update_failed');
+  assert.equal(projectSocialImageProductionSnapshot(staged.task).currentNode, 'director_review');
+  const reviewed = await runSocialImageDirectorReview({ store, tenantId: 'tenant-a', taskId: task.id,
+    expectedVersion: staged.task.version, candidateId: outputs[0]!.id, candidateVersion: 1, now });
+  assert.equal(reviewed.directorReviewDecision?.decision, 'repair');
+  assert.equal(reviewed.directorReviewDecision?.candidateRefs?.length, 4);
+  assert.ok(reviewed.directorReviewDecision?.failedCriteria.includes(`hook_factor:${task.hookFactorSpec!.factors[0]!.factorId}`));
+  assert.equal(reviewed.directorReviewDecision?.factorResults.find(result =>
+    result.factorId === task.hookFactorSpec!.factors[0]!.factorId)?.verdict, 'uncertain');
+  await assert.rejects(recordSocialImageDirectorReview({ store, tenantId: 'tenant-a', taskId: task.id,
+    expectedVersion: reviewed.version, decision: { ...reviewed.directorReviewDecision!,
+      decision: 'accept_for_user_review', factorResults: reviewed.directorReviewDecision!.factorResults
+        .map(result => ({ ...result, verdict: 'pass' as const })) } }), /social_image_hook_candidate_evidence_incomplete/);
+  assert.equal((await readSocialImageTask(store, 'tenant-a', task.id))?.directorReviewDecision?.decision, 'repair');
 });

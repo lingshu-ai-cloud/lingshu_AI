@@ -78,6 +78,61 @@ export async function socialImageCandidatePixelChecks(input: {
   }
 }
 
+/** Validate the encoded animation, not only Sharp's default first-page view. */
+export async function socialImageGifAnimationCheck(input: {
+  bytes: Buffer;
+  aspectRatio: SocialImageCreationTask['deliverySpec']['aspectRatio'];
+  expectedFrames: number;
+  expectedFrameBytes?: Buffer[];
+}): Promise<SocialImageQualityCheck> {
+  const candidateHash = createHash('sha256').update(input.bytes).digest('hex');
+  const evidence = [`candidate-sha256:${candidateHash}`];
+  try {
+    const metadata = await sharp(input.bytes, { animated: true, limitInputPixels: 40_000_000 }).metadata();
+    const expected = socialImageCanvasForAspectRatio(input.aspectRatio);
+    const pages = Number(metadata.pages || 0);
+    if (metadata.format !== 'gif' || pages !== input.expectedFrames || pages < 2
+      || metadata.width !== expected.width || metadata.pageHeight !== expected.height) {
+      return { key: 'motion_mechanism_similarity', verdict: 'fail', severity: 'hard', checker: 'deterministic',
+        note: `GIF 实际帧数或尺寸不符：${pages} 帧，${metadata.width || 0}×${metadata.pageHeight || 0}`,
+        evidence, repairSuggestion: '使用已质检的合成帧重新编码动图' };
+    }
+    if (input.expectedFrameBytes && input.expectedFrameBytes.length !== pages) {
+      return { key: 'motion_mechanism_similarity', verdict: 'fail', severity: 'hard', checker: 'deterministic',
+        note: 'GIF 合成帧证据不完整，无法证明编码成片与已质检画面一致', evidence };
+    }
+    const decodedFrames = await Promise.all(Array.from({ length: pages }, (_, index) =>
+      sharp(input.bytes, { page: index, pages: 1, limitInputPixels: 40_000_000 })
+        .resize(64, 64, { fit: 'fill' }).removeAlpha().raw().toBuffer()));
+    const frameHashes = decodedFrames.map(bytes => createHash('sha256').update(bytes).digest('hex'));
+    const expectedFrames = await Promise.all((input.expectedFrameBytes || []).map(bytes =>
+      sharp(bytes, { limitInputPixels: 40_000_000 }).resize(64, 64, { fit: 'fill' }).removeAlpha().raw().toBuffer()));
+    const averageDifference = (left: Buffer, right: Buffer) => {
+      if (left.length !== right.length) return Infinity;
+      let difference = 0;
+      for (let pixel = 0; pixel < left.length; pixel += 1) difference += Math.abs(left[pixel]! - right[pixel]!);
+      return difference / left.length;
+    };
+    const matched = expectedFrames.every((expectedFrame, index) => {
+      const actualFrame = decodedFrames[index];
+      return Boolean(actualFrame && averageDifference(expectedFrame, actualFrame) <= 40); // GIF palette quantization is lossy.
+    });
+    const actualMotion = decodedFrames.some((frame, index) => index > 0 && averageDifference(frame, decodedFrames[index - 1]!) > 5);
+    const expectedMotion = expectedFrames.length === 0 || expectedFrames.some((frame, index) =>
+      index > 0 && averageDifference(frame, expectedFrames[index - 1]!) > 5);
+    const passed = actualMotion && expectedMotion && matched;
+    return { key: 'motion_mechanism_similarity', verdict: passed ? 'pass' : 'fail',
+      severity: 'hard', checker: 'deterministic',
+      note: passed ? 'GIF 全部编码帧与合成画面一致，且真实形成切换动效'
+        : !matched ? 'GIF 编码帧与已质检合成画面不一致' : 'GIF 所有画面相同，未形成切换动效',
+      evidence: [...evidence, `actual-frames:${pages}`, ...frameHashes.map(value => `frame-sha256:${value}`),
+        ...(input.expectedFrameBytes?.map(bytes => `composed-frame-sha256:${createHash('sha256').update(bytes).digest('hex')}`) || [])] };
+  } catch {
+    return { key: 'motion_mechanism_similarity', verdict: 'fail', severity: 'hard', checker: 'deterministic',
+      note: 'GIF 动图字节不可完整解码', evidence, repairSuggestion: '重新编码并复检全部帧' };
+  }
+}
+
 export async function socialImageCandidateOcrCheck(input: {
   bytes: Buffer;
   mimeType: string;
