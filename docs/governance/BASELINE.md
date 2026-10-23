@@ -2,6 +2,15 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工任务纠偏完整职责拆分（2026-10-23）
+
+- 起点：分支 `xixi1021程永罗沟通前大整合` 的本地/远端均为 `81ad476ee9e716c177dd9928fac52023e7e37874`，集成树干净，旧主会话 idle。源码提交 `a7b3844753d28b2938edfc131f26fecf4c59d9eb` 将重试、跳过、人工完成、重规划、编导继续/调整/放弃、业务证据校验与补充整组迁出主路由。
+- `server/digitalEmployees/taskInterventionApplication.ts`（434 行）持有共享应用用例，保留 run 锁、任务版本、审批限制、精确分析覆盖、真实回执、纠偏审计与下游失效边界；`server/routes/digitalEmployeeTaskInterventionRoutes.ts`（112 行）只处理 HTTP 参数/响应并调用既有服务。主路由保留鉴权、依赖装配、移动端兼容重试导出和正常运行协调；助手决策、Web、移动端仍共用一个 `applyTaskControl`。正常运行和纠偏均注入原 `taskCorrectionSupersession` 实现，没有第二套失效流程。
+- 最终精确计数：`digitalEmployees.ts` 由 5,259 降至 **4,832 行**，预算同步收紧。这是完整职责组的迁移，仍不代表该主路由整体拆分完成。其他四项历史预算未变：Studio 路由 7,221、视频路由 7,823、Studio 页面 12,000、灵感页面 2,014；全仓仍有 5 个超限文件。应用服务与兼容表面决策见 [`2026-10-23-digital-employee-task-intervention.md`](../architecture/adr/2026-10-23-digital-employee-task-intervention.md)。
+- 定向验证：新应用服务 11 项、真实本地 HTTP 适配 4 项行为测试全部通过；加原路由、编导合同与依赖失效回归共 20/20。覆盖跨租户和旧版本无写入、带回执禁止重跑、审批节点不可人工绕过、精确分析未覆盖不可跳过、重规划替换旧图、长期规则候选不自动启用、证据去重及下游审批失效、编导继续保留授权及调整失败回滚。核心纠偏函数与证据解析器还与起点源码逐行归一化比较，逻辑正文一致。新测试已纳入 `test:digital-employees`。
+- 实际检查全部通过：`pnpm run lint`、`ARCHITECTURE_BASE_REF=81ad476e pnpm run check:architecture`（2,420 个生产 TypeScript 文件）、`pnpm run test:architecture-ratchet`、`pnpm run check:digital-employee-migrations`（193 项仓库只读完整性）、完整 `pnpm run test:digital-employees`、`pnpm run test:tenant-isolation`、`pnpm run build`、`git diff --check`。本次构建无大 chunk 警告，Studio 主 chunk 480,957/485,000 字节；未据此声称加载性能债务解决。
+- 未执行真实供应商、LinkedIn 付费采集、目标数据库迁移、登录后浏览器验收、发布或部署；来源工作树未改动。已重新核对工作流：普通分支推送不自动部署。源码与文档分开提交；最终文档 SHA、本地/远端一致性和干净状态以推送后核验为准。剩余任务继续按执行协调、周计划审批、供应商管线及页面控制职责治理，不放宽预算。
+
 ## 承接核验与灵感素材库存生命周期拆分（2026-10-23）
 
 - 用户确认停止旧会话后承接；起点集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地与 `git ls-remote origin` 均为 `a8b53951d85ec253a7f941bd3e05507c795fd41c`。保留旧会话停止前留下的两份 AIGC 审计文档增量，并用当前源码和离线回归重新核验。未改动其他工作树。

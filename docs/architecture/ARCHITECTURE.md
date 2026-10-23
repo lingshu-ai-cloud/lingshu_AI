@@ -121,6 +121,8 @@
 
 ## 依赖方向
 
+数字员工任务纠偏的共享应用入口位于 `server/digitalEmployees/taskInterventionApplication.ts`，HTTP 适配位于 `server/routes/digitalEmployeeTaskInterventionRoutes.ts`。重试、跳过、人工完成、重规划、编导决策和业务证据补充共用 run 锁、审计与原下游失效服务；主路由只装配这些依赖并保留助手/移动端兼容入口。应用模块不读取 HTTP 请求、不依赖 Express，也不拥有新的供应商执行或付费许可路径。详见 [任务纠偏职责 ADR](./adr/2026-10-23-digital-employee-task-intervention.md)。
+
 共享合同不得依赖 React、Express 或供应商 SDK。领域模块不得依赖页面组件。路由只做边界校验和编排；新的复杂逻辑应先落独立领域模块，并保持租户身份从认证上下文向下传递。
 
 ## 架构治理
