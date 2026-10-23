@@ -6,7 +6,8 @@ import sharp from 'sharp';
 import type { AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { readSocialImageTask, socialImageClientOutputPatchIssue, updateSocialImageTask } from '../socialImage/socialImageTask.js';
-import { socialImageOwnedMaterialUrl, socialImageQueuedJobIssue, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
+import { admitSocialImageV3QueuedJob, socialImageOwnedMaterialUrl, socialImageQueuedJobIssue, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
+import { socialImageV3PaidPrerequisiteIssue } from '../socialImage/socialImagePaidPrerequisites.js';
 import { recoverSocialImagePaidMaterial } from '../socialImage/socialImageMaterialRecovery.js';
 import { abandonSocialImageMultiUnitPlan, persistSocialImageMultiUnitPlan } from '../socialImage/socialImageDurablePlan.js';
 import { finalizeSocialImageGif } from '../socialImage/socialImageGifDelivery.js';
@@ -33,7 +34,8 @@ import {
   SocialImageProductionRunError,
 } from '../socialImage/socialImageProductionRun.js';
 import { projectSocialImageProductionSnapshot } from '../socialImage/socialImageProductionRuntime.js';
-import { analyzeSocialImageReference, inspectSocialImageAsset, socialImageAssetManifest } from '../socialImage/socialImageEvidenceWorker.js';
+import { analyzeSocialImageReference, inspectSocialImageAsset, socialImageAssetAuthorization, socialImageAssetManifest } from '../socialImage/socialImageEvidenceWorker.js';
+import { readSocialImageReferenceBytes } from '../socialImage/socialImageReferenceBytes.js';
 import { localProductOcrReadiness, recognizeProductImageLocally, recognizeProductImageTokensLocally } from '../lib/localProductOcr.js';
 
 export const socialImageRouter = Router();
@@ -81,31 +83,6 @@ async function outputImageBytes(tenantId: string, output: { mediaUrl?: string; m
   if (!match) return null;
   const file = path.join(renderRoot(tenantId), path.basename(match[1]!));
   return fs.existsSync(file) ? { bytes: fs.readFileSync(file), mimeType: 'image/png' } : null;
-}
-
-async function referenceImageBytes(tenantId: string, raw: string): Promise<{ bytes: Buffer; mimeType: string } | null> {
-  let route = '';
-  try { route = new URL(raw, 'http://local.invalid').pathname; } catch { return null; }
-  const rendered = route.match(/^\/api\/overseas\/social-images\/renders\/([a-zA-Z0-9._-]+\.png)$/);
-  if (rendered) return outputImageBytes(tenantId, { mediaUrl: route });
-  const enterprise = route.match(/^\/api\/overseas\/enterprise\/assets\/([\w.-]+)$/);
-  if (enterprise) {
-    const filename = path.basename(enterprise[1]!);
-    const local = path.resolve(process.cwd(), 'data', 'enterprise-assets', enterpriseAssetTenantKey(tenantId), filename);
-    if (local.startsWith(path.resolve(process.cwd(), 'data', 'enterprise-assets')) && fs.existsSync(local)) return { bytes: fs.readFileSync(local), mimeType: /\.png$/i.test(filename) ? 'image/png' : /\.webp$/i.test(filename) ? 'image/webp' : 'image/jpeg' };
-    if (objectStorageEnabled()) {
-      const object = await objectStorageDownload(enterpriseAssetObjectKey(tenantId, filename));
-      if (object?.buf?.length) return { bytes: object.buf, mimeType: object.contentType || 'image/jpeg' };
-    }
-  }
-  const library = await readMaterialLibrary(tenantId).catch(() => null);
-  const privateName = route.match(/^\/api\/overseas\/studio\/private-assets\/materials\/([\w.-]+)$/)?.[1];
-  const material = library?.items.find(item => item.type === 'image' && String(item.tenantId || item.tenant_id || '') === tenantId && (
-    [item.url, item.poster].some(url => {
-      try { return url && new URL(String(url), 'http://local.invalid').pathname === route; } catch { return false; }
-    }) || (privateName && [item.objectKey, item.posterObjectKey].some(key => key && path.basename(String(key)) === privateName))
-  ));
-  return material ? readTenantMaterialBytes(material as any, tenantId).catch(() => null) : null;
 }
 
 socialImageRouter.get('/renders/:filename', (req, res) => {
@@ -211,39 +188,54 @@ socialImageRouter.post('/tasks/:id/evidence/prepare', async (req, res) => {
     const inspected = [] as Awaited<ReturnType<typeof inspectSocialImageAsset>>[];
     for (const asset of task.enterpriseAssets) {
       let loaded: { bytes: Buffer; mimeType: string } | null = null;
+      let authorityRecord: Record<string, unknown> | null = null;
       if (asset.role === 'product' && asset.source === 'enterprise_knowledge_base') {
         const product = await enterpriseProductAsset(tenantId, asset.assetId);
         if (product) {
           const format = (await sharp(product.bytes).metadata().catch(() => ({ format: undefined }))).format;
           loaded = { bytes: product.bytes, mimeType: format === 'png' ? 'image/png' : format === 'webp' ? 'image/webp' : 'image/jpeg' };
+          const contentHash = createHash('sha256').update(product.bytes).digest('hex');
+          authorityRecord = library.items.find(item => item.type === 'image' && item.sourceType === 'enterprise_product_table'
+            && String(item.productId || '') === asset.assetId && String(item.contentSha256 || '') === contentHash) || null;
         }
       } else {
         const material = library.items.find(item => item.id === asset.assetId && item.type === 'image');
-        if (material) loaded = await readTenantMaterialBytes(material as any, tenantId).catch(() => null);
+        if (material) {
+          authorityRecord = material;
+          loaded = await readTenantMaterialBytes(material as any, tenantId).catch(() => null);
+        }
       }
       inspected.push(await inspectSocialImageAsset({ assetId: asset.assetId, role: asset.role, required: asset.required,
         bytes: loaded?.bytes || null, mimeType: loaded?.mimeType || 'application/octet-stream',
-        expectedContentHash: asset.contentHash, ocr }));
+        expectedContentHash: asset.contentHash || String(authorityRecord?.contentSha256 || ''),
+        authorization: socialImageAssetAuthorization(authorityRecord, tenantId), ocr }));
     }
     const manifest = socialImageAssetManifest({ assets: inspected, ocrAvailable: ocrReadiness.ready,
       prohibitedClaims: task.contentBrief.prohibitedClaims });
     const unreadable = manifest.assets.filter(asset => asset.required && !asset.readable).map(asset => asset.assetId);
+    const unauthorized = manifest.assets.filter(asset => asset.required && asset.readable && asset.rights !== 'cleared').map(asset => asset.assetId);
     task = await recordSocialImageNodeOutput({ store, tenantId, taskId: task.id, expectedVersion: task.version,
-      nodeId: 'asset_manifest', status: unreadable.length ? 'blocked' : 'completed', value: manifest, inputRefs: [],
+      nodeId: 'asset_manifest', status: unreadable.length || unauthorized.length ? 'blocked' : 'completed', value: manifest, inputRefs: [],
       evidenceRefs: manifest.assets.filter(asset => asset.readable).map(asset => ({ objectType: 'enterprise-image-asset',
         id: asset.assetId, version: asset.version, contentHash: asset.contentHash })),
       createdBy: { kind: 'worker', id: 'social_image_asset_probe' },
-      blockingReasons: unreadable.map(id => `social_image_required_asset_unreadable:${id}`),
+      blockingReasons: [...unreadable.map(id => `social_image_required_asset_unreadable:${id}`),
+        ...unauthorized.map(id => `social_image_required_asset_rights_unverified:${id}`)],
       warnings: ocrReadiness.ready ? [] : [ocrReadiness.code] });
     if (unreadable.length) {
       res.status(422).json({ ok: false, code: 'social_image_required_asset_unreadable',
         error: `强制企业图片不可读取：${unreadable.join('、')}`, task, snapshot: projectSocialImageProductionSnapshot(task) }); return;
     }
+    if (unauthorized.length) {
+      res.status(422).json({ ok: false, code: 'social_image_required_asset_rights_unverified',
+        error: `强制企业图片缺少可核验的商用与衍生授权：${unauthorized.join('、')}`, task,
+        snapshot: projectSocialImageProductionSnapshot(task) }); return;
+    }
     if (task.creationPath === 'material_processing') {
       res.json({ ok: true, task, snapshot: projectSocialImageProductionSnapshot(task), manifest }); return;
     }
     const referenceUrl = task.referenceSnapshot?.imageUrls[0] || task.referenceUrls[0] || task.referenceSnapshot?.sourceUrl || '';
-    const reference = referenceUrl ? await referenceImageBytes(tenantId, referenceUrl) : null;
+    const reference = referenceUrl ? await readSocialImageReferenceBytes(tenantId, referenceUrl) : null;
     let inventory: Awaited<ReturnType<typeof analyzeSocialImageReference>> | null = null;
     if (reference) {
       try { inventory = await analyzeSocialImageReference({ bytes: reference.bytes, mimeType: reference.mimeType,
@@ -383,6 +375,8 @@ socialImageRouter.post('/tasks/:id/plan-units', async (req, res) => {
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) { res.status(400).json({ ok: false, error: '缺少有效任务版本' }); return; }
     const current = await readSocialImageTask(store, tenantId, req.params.id);
     if (!current) { res.status(404).json({ ok: false, code: 'social_image_task_missing', error: '图片任务不存在' }); return; }
+    const gate = socialImageV3PaidPrerequisiteIssue(current, 'queue');
+    if (gate) { res.status(422).json({ ok: false, code: gate, error: '图片证据和编导方案尚未完成，不会冻结付费计划' }); return; }
     const productHashes: Record<string, string> = {};
     for (const id of current.contentBrief.productRefs) {
       const product = await enterpriseProductAsset(tenantId, id);
@@ -471,6 +465,12 @@ socialImageRouter.patch('/tasks/:id', async (req, res) => {
       if (current.version !== expectedVersion) { res.status(409).json({ ok: false, error: '任务已被更新，请刷新后继续', task: current }); return; }
       const issue = socialImageQueuedJobIssue(current, patch.generationJobs);
       if (issue) { res.status(409).json({ ok: false, code: issue, error: '已有图片生成请求待完成或待核对，不能改写付费任务记录' }); return; }
+      try { Object.assign(patch, await admitSocialImageV3QueuedJob(store, current, patch)); }
+      catch (error) {
+        const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_job_admission_failed';
+        res.status(code === 'social_image_atomic_store_required' ? 503 : 422).json({ ok: false, code,
+          error: '图片证据或生成规格未通过付费准入' }); return;
+      }
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'outputs')) {
       const current = await readSocialImageTask(store, tenantId, req.params.id);

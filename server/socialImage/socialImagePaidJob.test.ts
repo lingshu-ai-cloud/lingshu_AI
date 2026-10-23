@@ -66,6 +66,8 @@ test('uncertain outcome stays blocked but an existing material can be attached w
   await claimSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', idempotencyKey: 'operation-1', inputHash: hash });
   await markSocialImagePaidJobUnknown({ store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', inputHash: hash, error: 'transport uncertain' });
   assert.equal((await readSocialImageTask(store, 'tenant-a', taskId))?.generationJobs[0]?.status, 'outcome_unknown');
+  await assert.rejects(claimSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId, jobId: 'unit-1',
+    idempotencyKey: 'operation-1', inputHash: hash }), /already_started/);
   const output = { id: 'output-1', role: 'carousel_page' as const, label: '轮播第 1 张', state: 'quality_checking' as const, mediaUrl: '/tenant-a/image.png', materialId: 'material-1', version: 1, qualityChecks: [] };
   const ready = await completeSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId, jobId: 'unit-1', inputHash: hash, output, provider: 'openai' });
   assert.equal(ready.outputs[0]?.materialId, 'material-1');
@@ -159,6 +161,10 @@ test('generic task writes cannot erase an unresolved paid job or forge its outco
     createdAt: '2026-10-22T00:00:00Z', updatedAt: '2026-10-22T00:00:00Z',
   }]), 'social_image_prior_paid_job_unresolved');
   assert.equal(socialImageQueuedJobIssue(queued, [{ ...queued.generationJobs[0]!, status: 'completed' }, ...queued.generationJobs]), 'social_image_job_history_immutable');
+  const idle = { ...queued, generationJobs: [] };
+  assert.equal(socialImageQueuedJobIssue(idle, [{ id: 'forged', idempotencyKey: 'forged', status: 'queued',
+    outputNodeIds: [], attempt: 0, providerReceipt: 'forged-receipt', createdAt: 'now', updatedAt: 'now',
+  }]), 'social_image_new_job_invalid');
 });
 
 test('definitive pre-submission quota denial releases a unit without marking provider outcome unknown', async () => {

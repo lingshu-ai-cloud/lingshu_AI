@@ -14,6 +14,26 @@ export type SocialImageOcrBlock = {
 
 export type SocialImageOcrPort = (input: { bytes: Buffer; mimeType: string }) => Promise<SocialImageOcrBlock[]>;
 
+export interface SocialImageAssetAuthorization {
+  rightsStatus: 'authorized' | 'owned' | 'restricted' | 'unknown';
+  rightsEvidenceRef: string;
+  commercialUseApproved: boolean;
+  derivativesApproved: boolean;
+}
+
+/** Authorization is read from the tenant's persisted inventory, not the image or task patch. */
+export function socialImageAssetAuthorization(record: Record<string, unknown> | null, tenantId: string): SocialImageAssetAuthorization | null {
+  if (!record || String(record.tenantId || record.tenant_id || '') !== tenantId || record.scope === 'shared') return null;
+  const rightsStatus = String(record.rightsStatus || 'unknown');
+  const rightsEvidenceRef = String(record.rightsEvidenceRef || record.licenseEvidence || '').trim();
+  if (!['authorized', 'owned'].includes(rightsStatus) || !rightsEvidenceRef
+    || /^(?:unknown|unverified|pending)(?:$|:)/i.test(rightsEvidenceRef)
+    || record.commercialUseApproved !== true || record.derivativesApproved !== true
+    || (record.modelInputAllowed !== true && record.rawLibraryUseApproved !== true)) return null;
+  return { rightsStatus: rightsStatus as 'authorized' | 'owned', rightsEvidenceRef,
+    commercialUseApproved: true, derivativesApproved: true };
+}
+
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 const rounded = (value: number) => Number(value.toFixed(4));
 
@@ -32,6 +52,7 @@ export async function inspectSocialImageAsset(input: {
   mimeType: string;
   version?: string | number;
   expectedContentHash?: string;
+  authorization?: SocialImageAssetAuthorization | null;
   ocr?: SocialImageOcrPort;
 }): Promise<SocialImageAssetManifest['assets'][number]> {
   if (!input.bytes?.length) return {
@@ -43,6 +64,9 @@ export async function inspectSocialImageAsset(input: {
     const contentHash = sha256(input.bytes);
     const expectedHash = String(input.expectedContentHash || '').trim().toLowerCase();
     const hashMatches = !expectedHash || expectedHash === contentHash;
+    const authorized = input.authorization && ['authorized', 'owned'].includes(input.authorization.rightsStatus)
+      && input.authorization.commercialUseApproved === true && input.authorization.derivativesApproved === true
+      && Boolean(input.authorization.rightsEvidenceRef.trim());
     let ocr: string[] = [];
     if (input.ocr) {
       try { ocr = (await input.ocr({ bytes: input.bytes, mimeType: input.mimeType })).map(block => block.text.trim()).filter(Boolean); }
@@ -51,7 +75,9 @@ export async function inspectSocialImageAsset(input: {
     return {
       assetId: input.assetId, version: input.version || 1, contentHash, role: input.role,
       required: input.required, readable: hashMatches, dimensions: { width: decoded.width, height: decoded.height },
-      rights: hashMatches ? 'cleared' : 'unknown', observedSubjects: [], ocr: [...new Set(ocr)].slice(0, 40),
+      rights: hashMatches && authorized ? 'cleared' : input.authorization?.rightsStatus === 'restricted' ? 'restricted' : 'unknown',
+      ...(hashMatches && authorized ? { rightsEvidenceRef: input.authorization!.rightsEvidenceRef } : {}),
+      observedSubjects: [], ocr: [...new Set(ocr)].slice(0, 40),
       confidence: hashMatches ? 1 : 0,
     };
   } catch {

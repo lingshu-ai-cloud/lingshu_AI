@@ -11,9 +11,10 @@ export async function verifyFrozenGifProductAssets(
   products: NonNullable<EnterpriseProfile['products']['items']>,
   productIdentity: (product: NonNullable<EnterpriseProfile['products']['items']>[number], index: number) => string,
   readImage: (url: string) => Promise<Buffer | null>,
-): Promise<void> {
+): Promise<Record<string, string>> {
   if (task.imageType !== 'gif_poster' || !task.renderPlan || task.contentBrief.productRefs.length < 1
     || task.contentBrief.productRefs.length > 2) throw new SocialImagePaidJobError('social_image_gif_product_identity_changed');
+  const hashes: Record<string, string> = {};
   for (const productId of task.contentBrief.productRefs) {
     const product = products.find((item, index) => productIdentity(item, index) === productId);
     const imageUrl = String(product?.images?.[0]?.url || product?.imageUrl || '');
@@ -23,7 +24,9 @@ export async function verifyFrozenGifProductAssets(
     if (!binding?.contentHash || binding.contentHash !== actualHash) {
       throw new SocialImagePaidJobError('social_image_gif_product_identity_changed');
     }
+    hashes[productId] = actualHash;
   }
+  return hashes;
 }
 
 export function buildStudioSocialImagePaidPrompt(input: {

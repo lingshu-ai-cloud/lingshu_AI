@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import sharp from 'sharp';
-import { analyzeSocialImageReference, inspectSocialImageAsset, socialImageAssetManifest } from './socialImageEvidenceWorker.js';
+import { analyzeSocialImageReference, inspectSocialImageAsset, socialImageAssetAuthorization,
+  socialImageAssetManifest } from './socialImageEvidenceWorker.js';
 
 test('required asset inspection is based on decodable bytes and preserves OCR observations', async () => {
   const bytes = await sharp({ create: { width: 240, height: 300, channels: 4, background: '#ddeeff' } }).png().toBuffer();
@@ -10,7 +11,23 @@ test('required asset inspection is based on decodable bytes and preserves OCR ob
   assert.equal(inspected.readable, true);
   assert.deepEqual(inspected.dimensions, { width: 240, height: 300 });
   assert.match(inspected.contentHash, /^[a-f0-9]{64}$/);
+  assert.equal(inspected.rights, 'unknown', 'readable bytes and a matching hash do not confer commercial rights');
   assert.deepEqual(inspected.ocr, ['PRODUCT A']);
+  const authorizedRecord = { id: 'product-a', tenantId: 'tenant-a', scope: 'own', rightsStatus: 'authorized',
+    rightsEvidenceRef: 'license:product-a', commercialUseApproved: true, derivativesApproved: true,
+    rawLibraryUseApproved: true };
+  assert.equal(socialImageAssetAuthorization({ ...authorizedRecord, tenantId: 'tenant-b' }, 'tenant-a'), null);
+  assert.equal(socialImageAssetAuthorization({ ...authorizedRecord, derivativesApproved: false }, 'tenant-a'), null);
+  assert.equal(socialImageAssetAuthorization({ ...authorizedRecord, rawLibraryUseApproved: false }, 'tenant-a'), null);
+  const authorized = await inspectSocialImageAsset({ assetId: 'product-a', role: 'product', required: true,
+    bytes, mimeType: 'image/png', expectedContentHash: inspected.contentHash,
+    authorization: socialImageAssetAuthorization(authorizedRecord, 'tenant-a') });
+  assert.equal(authorized.rights, 'cleared');
+  assert.equal(authorized.rightsEvidenceRef, 'license:product-a');
+  const unauthorizedChanged = await inspectSocialImageAsset({ assetId: 'product-a', role: 'product', required: true,
+    bytes, mimeType: 'image/png', expectedContentHash: '0'.repeat(64),
+    authorization: socialImageAssetAuthorization(authorizedRecord, 'tenant-a') });
+  assert.equal(unauthorizedChanged.rights, 'unknown');
   const staleBinding = await inspectSocialImageAsset({ assetId: 'product-stale', role: 'product', required: true,
     bytes, mimeType: 'image/png', expectedContentHash: '0'.repeat(64) });
   assert.equal(staleBinding.readable, false, 'a stale binding hash must not silently accept different bytes');

@@ -17,6 +17,7 @@ import {
 } from './socialImageProductionRun.js';
 import { projectSocialImageProductionSnapshot } from './socialImageProductionRuntime.js';
 import { compileLuxuryProductHero } from './templates/luxuryProductHero.js';
+import { socialImageV3ResolvedAssetIssue } from './socialImagePaidPrerequisites.js';
 
 class MemoryStore implements DataStore {
   private sequence = 0;
@@ -69,11 +70,27 @@ async function recordReadyAssetManifest(store: DataStore, task: SocialImageCreat
   return recordSocialImageNodeOutput({ store, tenantId: 'tenant-a', taskId: task.id, expectedVersion: task.version,
     nodeId: 'asset_manifest', status: 'completed', value: { enterpriseFactSnapshotRef: null, assets: [{
       assetId: 'product-a', version: 1, contentHash: 'e'.repeat(64), role: 'product', required: true, readable: true,
-      dimensions: { width: 800, height: 1000 }, rights: 'cleared', observedSubjects: [], ocr: ['产品 A'], confidence: 1,
+      dimensions: { width: 800, height: 1000 }, rights: 'cleared', rightsEvidenceRef: 'license:product-a',
+      observedSubjects: [], ocr: ['产品 A'], confidence: 1,
     }], requiredEvidence: ['product-a'], missingCapabilities: [], prohibitedClaims: [] },
     inputRefs: [], evidenceRefs: [{ objectType: 'enterprise-image-asset', id: 'product-a', version: 1, contentHash: 'e'.repeat(64) }],
     createdBy: { kind: 'worker', id: 'fixture_asset_probe' }, now });
 }
+
+test('V3 paid asset admission compares current product bytes to the inspected manifest', async () => {
+  const { store, now } = await fixture();
+  const created = (await createOrResumeBoundSocialImageRun(store, 'tenant-a', {
+    contentTaskId: 'content-a', expectedContentTaskVersion: '7', idempotencyKey: 'asset-hash-check',
+    entrySource: 'assistant', imageType: 'product_poster',
+  }, now)).task;
+  const inspected = await recordReadyAssetManifest(store, created, now);
+  assert.equal(socialImageV3ResolvedAssetIssue(inspected, {
+    productHashes: { 'product-a': 'e'.repeat(64) }, materialHashes: {}, referenceHash: null,
+  }), null);
+  assert.equal(socialImageV3ResolvedAssetIssue(inspected, {
+    productHashes: { 'product-a': 'f'.repeat(64) }, materialHashes: {}, referenceHash: null,
+  }), 'social_image_required_asset_bytes_changed');
+});
 
 test('ContentTask binding is deterministic, resumable and rejects changed scope', async () => {
   const { store, now } = await fixture();
