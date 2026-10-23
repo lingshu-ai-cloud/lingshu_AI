@@ -1,3 +1,4 @@
+import {validProductionBudgetMaximum} from '../../shared/contracts/productionBudgetPolicy.js';
 import { createHash } from 'node:crypto';
 import { CONTENT_CREATION_QUOTA_COLLECTION, createContentCreationQuotaService,
   type QuotaScope } from '../socialPrograms/contentCreationQuota.js';
@@ -39,7 +40,7 @@ export async function schedulePreparedSocialProductFootageRevision(input: {
       const originalQueue = socialObject(original?.queueRequest);
       const originalSubject = socialObject(originalQueue?.subject);
       if (!marker || !binding || !original || !originalQueue || !originalSubject
-        || brief?.perItemBudgetCny !== 10
+        || !validProductionBudgetMaximum(brief?.perItemBudgetCny,typeof brief?.targetDurationSeconds==='number'?brief.targetDurationSeconds:undefined)
         || binding.schemaVersion !== 'social-content-order.v1'
         || binding.contentId !== taskId || binding.budgetTaskId !== taskId
         || !socialText(binding.programId) || !socialText(binding.originWeek)

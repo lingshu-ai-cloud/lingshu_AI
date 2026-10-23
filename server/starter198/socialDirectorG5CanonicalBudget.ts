@@ -1,3 +1,4 @@
+import {validProductionBudgetMaximum,validOriginalProductionBudget,assertRetainedProductionBudget} from '../../shared/contracts/productionBudgetPolicy.js';
 import path from 'node:path';
 import type {Starter198Repository} from './repository.js';
 import type {SocialDirectorG5Scope} from '../../shared/contracts/socialDirectorG5Review.js';
@@ -16,7 +17,7 @@ export function verifyDirectorG5OriginalFilmBudget(input:{
 }):SocialTaskBudgetScope{
   const {reviewScope,checkpoint,status}=input;
   const payload=checkpoint?.payload as Record<string,unknown>|undefined;
-  const plan=payload?.plan as {scope?:SocialTaskBudgetScope;paidOperations?:Array<{operationId:string}>}|undefined;
+  const plan=payload?.plan as {maximumCny?:number;scope?:SocialTaskBudgetScope;paidOperations?:Array<{operationId:string}>}|undefined;
   const scope=plan?.scope,operationIds=payload?.operationIds;
   if(!checkpoint||!payload||!scope||scope.tenantId!==reviewScope.tenantId
     ||scope.taskId!==reviewScope.taskId||scope.runId!==reviewScope.runId
@@ -26,7 +27,7 @@ export function verifyDirectorG5OriginalFilmBudget(input:{
     ||!Array.isArray(operationIds)||!Array.isArray(plan.paidOperations)
     ||plan.paidOperations.length===0||plan.paidOperations.some(op=>!operationIds.includes(op.operationId)))
     throw Error('director_g5_original_film_checkpoint_required');
-  if(!status||status.limitCny!==10||status.authorizedLimitCny!==10||status.hasCorrectionAuthorization
+  if(!status||!validOriginalProductionBudget(status)||status.hasCorrectionAuthorization
     ||plan.paidOperations.some(op=>status.entries.filter(entry=>entry.operationId===op.operationId
       &&(entry.executionTaskId??input.budgetTaskId)===scope.taskId
       &&entry.runId===scope.runId&&entry.planHash===scope.planHash&&entry.status!=='rejected').length!==1))
@@ -45,8 +46,8 @@ export function verifyDirectorG5RepairChildBudget(input:{
   status:ReturnType<SocialContentTaskBudget['status']>;
 }):SocialTaskBudgetScope{
   const {reviewScope,rootTaskId,rootRunId,childCheckpoint,rootCheckpoint,status}=input;
-  if(rootTaskId===reviewScope.taskId||input.originalMaximumCny!==10
-    ||!input.maximumAdditionalCostCny||input.maximumAdditionalCostCny>10)
+  if(rootTaskId===reviewScope.taskId||!validProductionBudgetMaximum(input.originalMaximumCny,status?.productionDurationSeconds)
+    ||!input.maximumAdditionalCostCny||input.maximumAdditionalCostCny>input.originalMaximumCny!)
     throw Error('director_g5_repair_budget_lineage_invalid');
   const child=verifyDirectorG5OriginalFilmBudget({reviewScope,budgetTaskId:rootTaskId,checkpoint:childCheckpoint,status});
   const root=verifyDirectorG5OriginalFilmBudget({reviewScope:{...reviewScope,taskId:rootTaskId,runId:rootRunId},
@@ -123,7 +124,8 @@ export async function reserveDirectorG5CanonicalBudget(input:{
     quote:async()=>{throw Error('director_g5_original_ledger_required');},
     verifyRejection:async()=>false});
   const existing=original.status(scope);
-  if(!existing||existing.limitCny!==10||existing.authorizedLimitCny!==10||existing.hasCorrectionAuthorization)
+  assertRetainedProductionBudget(existing);
+  if(!existing||!validOriginalProductionBudget(existing)||existing.hasCorrectionAuthorization)
     throw Error('director_g5_original_ten_yuan_ledger_required');
   const operation=socialPaidIntentOperation(scope,intent);
   const prior=existing.entries.filter(entry=>entry.operationId===operation.operationId);
@@ -150,11 +152,11 @@ export async function reserveDirectorG5CanonicalBudget(input:{
   // capacity; only a new G5 reservation needs a current verified tariff.
   const quote=prior.length?null:quoteSocialPaidOperationTariff(intent,await input.readVerifiedTariff(intent));
   const ledger=new SocialContentTaskBudget(input.ledgerRoot,{assertCurrent:input.assertCurrent,
-    authorization:async()=>({maximumCny:10,authorizationRef:'director-g5-existing-film-ledger'}),
+    authorization:async()=>({productionDurationSeconds:existing.productionDurationSeconds,maximumCny:existing.limitCny,authorizationRef:'director-g5-existing-film-ledger'}),
     quote:async(_scope,candidate)=>{if(candidate.operationId!==operation.operationId||!quote)throw Error('director_g5_operation_changed');return quote;},
     verifyRejection:async()=>false});
   const status=await ledger.reserveBatch(scope,[operation]);
-  if(status.limitCny!==10||status.retainedCny>10||status.entries.filter(entry=>entry.operationId===operation.operationId).length!==1)
+  if(!validOriginalProductionBudget(status)||status.retainedCny>status.limitCny||status.entries.filter(entry=>entry.operationId===operation.operationId).length!==1)
     throw Error('director_g5_canonical_reservation_invalid');
   return {scope,operation,intent,quote,status,permit:createSocialContentPaidOperationPermit({scope,operations:[operation],intents:[intent],ledger,
     root:path.join(input.ledgerRoot||process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR||'data/social-content-task-budget','.permits'),assertCurrent:input.assertCurrent})};

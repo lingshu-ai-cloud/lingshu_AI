@@ -94,10 +94,10 @@ const studio = {
 const quote: ProductionCostQuote = {
   id: 'quote-1', schemaVersion: 'production-cost-quote.v1', quoteKey: 'quote-key-1',
   taskId: 'task-1', runId: 'run-1', currency: 'CNY', pricingVersion: 'pricing-v1', status: 'quoted',
-  expectedCostCny: 12, upperBoundCostCny: 20, budgetLimitCny: 25,
+  expectedCostCny: 12, upperBoundCostCny: 14, budgetLimitCny: 25,
   lines: [{
     lineKey: 'generation', label: '生产', quantity: 1, unit: 'task', expectedUnitCostCny: 12,
-    upperBoundUnitCostCny: 20, expectedCostCny: 12, upperBoundCostCny: 20,
+    upperBoundUnitCostCny: 14, expectedCostCny: 12, upperBoundCostCny: 14,
     pricingSource: 'execution-plan', explanation: '按执行计划计价', reused: false,
   }],
   reservationId: null, actualCostCny: null, actualLines: [],
@@ -125,7 +125,7 @@ const ready = buildSocialContentProductionReadModel({
       sourceRefs: ['customer_real_asset', 'customer_product_image_animation'].includes(strategy)
         ? [`material-${index + 1}`] : [],
       ...(strategy === 'authorized_digital_presenter'
-        ? { digitalHumanPlan: { presenterAssetIds: ['presenter-1'] } } : {}),
+        ? { digitalHumanPlan: { presenterAssetIds: ['presenter-1'], method: 'reenact', silentMotion: true } } : {}),
     })),
   } as never,
   studio,
@@ -146,7 +146,7 @@ assert.equal(ready.shots[5]?.identityGuarantee.product, 'qa_gated');
 assert.equal(ready.shots[0]?.route.fallbacks[0]?.executable, false,
   'a named fallback without a current-stack candidate must not be advertised as executable');
 assert.equal(ready.aggregate.cost.expectedCny, 12);
-assert.equal(ready.aggregate.cost.upperBoundCny, 20);
+assert.equal(ready.aggregate.cost.upperBoundCny, 14);
 assert.equal(ready.aggregate.cost.currency, 'CNY');
 assert.equal(ready.aggregate.cost.reusable, false);
 assert.equal(ready.aggregate.cost.basis, 'execution_plan');
@@ -168,7 +168,7 @@ const staleRunQuote = buildSocialContentProductionReadModel({
       sourceRefs: ['customer_real_asset', 'customer_product_image_animation'].includes(strategy)
         ? [`material-${index + 1}`] : [],
       ...(strategy === 'authorized_digital_presenter'
-        ? { digitalHumanPlan: { presenterAssetIds: ['presenter-1'] } } : {}),
+        ? { digitalHumanPlan: { presenterAssetIds: ['presenter-1'], method: 'reenact', silentMotion: true } } : {}),
     })),
   } as never,
   studio: { ...studio, project: { ...studio.project, sourceTaskVersions: ['version-8'] } },
@@ -354,3 +354,29 @@ assert.deepEqual(await readCanonicalSocialStudioProject({ tenantId: 'tenant-a', 
 });
 
 console.log('social content production read model tests passed');
+
+const speechWorkflow = workflowFixture();
+const speechView = buildSocialContentProductionReadModel({
+  task: { taskId: 'task', version: '1', status: 'plan_review', runId: null, updatedAt: '2026-10-23T00:00:00Z', title: '人物口播', productionApproach: 'ai_enhanced' },
+  workflow: speechWorkflow, studio,
+});
+assert.equal(speechView.shots[1]?.route.recommended.executable, false);
+assert.ok(speechView.shots[1]?.blockers.some(b => b.code === 'presenter_speech_route_unavailable' && b.message.includes('重新确认')));
+assert.equal(speechView.shots[1]?.allowedCommands.includes('generate'), false);
+
+assert.equal(speechView.aggregate.executable,false);
+assert.equal(speechView.aggregate.allowedCommands.includes('generate'),false);
+
+for(const productionStage of [
+  {stage:'budget_decision_required',message:'请决策'},
+  {stage:'waiting_for_user_input',message:'input_required:请处理:user_input_required:whole_film_budget_routing:mandatory_plan_exceeds_budget:16:15'},
+]){
+ const blocked=buildSocialContentProductionReadModel({task:{taskId:'task-1',version:'version-7',status:'attention',runId:'run-1',updatedAt:'2026-10-23',title:'预算阻塞'},workflow:workflowFixture(),studio,productionStage});
+ assert.equal(blocked.aggregate.status,'blocked');assert.equal(blocked.aggregate.executable,false);
+ assert.ok(blocked.aggregate.inputs.items.some(input=>input.kind==='budget_confirmation'&&input.status==='pending_confirmation'));
+ assert.ok(blocked.aggregate.allowedCommands.includes('confirm_budget'));
+ assert.ok(!blocked.aggregate.allowedCommands.some(command=>['generate','retry','use_fallback','approve_output'].includes(command)));
+ assert.ok(blocked.aggregate.blockers.some(blocker=>blocker.code.includes('production_budget_decision_required')));
+}
+const overrun=buildSocialContentProductionReadModel({task:{taskId:'task-1',version:'version-7',status:'asset_review',runId:'run-1',updatedAt:'2026-10-23',title:'修订费用超限'},workflow:workflowFixture(),studio,costQuote:{...quote,status:'overrun'}});
+assert.equal(overrun.aggregate.status,'blocked');assert.ok(overrun.aggregate.allowedCommands.includes('confirm_budget'));

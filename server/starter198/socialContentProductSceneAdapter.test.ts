@@ -101,7 +101,7 @@ await assert.rejects(() => cameraFailed.execute(context), /camera_trajectory_fai
   } });
   try {
     await assert.rejects(() => overBudget.execute(context), /product_scene_cost_exceeds_shot_budget/);
-    assert.ok(await overBudget.execute({ ...context, tenantId: 'local_tenant_customer_aurelia_beauty' }));
+    await assert.rejects(overBudget.execute({ ...context, tenantId: 'local_tenant_customer_aurelia_beauty' }),/product_scene_cost_exceeds_shot_budget/);
   } finally {
     if (configured === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
     else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = configured;

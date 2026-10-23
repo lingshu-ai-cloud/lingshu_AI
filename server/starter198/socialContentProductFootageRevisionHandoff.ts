@@ -1,3 +1,4 @@
+import {validOriginalProductionBudget,assertRetainedProductionBudget} from '../../shared/contracts/productionBudgetPolicy.js';
 import { SocialContentTaskBudget } from '../lib/socialContentTaskBudget.js';
 import path from 'node:path';
 import { CONTENT_CREATION_QUOTA_COLLECTION } from '../socialPrograms/contentCreationQuota.js';
@@ -31,18 +32,19 @@ function readOriginalLedger(input: { tenantId: string; taskId: string; sourceRun
   const status = ledger.status({ tenantId: input.tenantId, taskId: input.taskId,
     runId: input.sourceRunId, planHash: '0'.repeat(64) });
   if (!status) return fail('original_ten_yuan_ledger_missing');
-  if (status.limitCny !== 10 || status.authorizedLimitCny !== 10
-    || status.hasCorrectionAuthorization || status.retainedCny > 10) return fail('original_ten_yuan_ceiling_invalid');
+  assertRetainedProductionBudget(status);
+  if (!validOriginalProductionBudget(status)
+    || status.hasCorrectionAuthorization || status.retainedCny>status.limitCny) return fail('original_ten_yuan_ceiling_invalid');
   if (status.entries.some(entry => (entry.executionTaskId ?? input.taskId) !== input.taskId))
     return fail('ledger_foreign_entry');
   const sourceEntries = status.entries.filter(entry => entry.runId !== input.revisionRunId);
   const revisionEntries = status.entries.filter(entry => entry.runId === input.revisionRunId);
-  const retainedMicros = sourceEntries.filter(entry => entry.status !== 'rejected')
+  const retainedMicros = sourceEntries.filter(entry => entry.status !== 'rejected' && !entry.preproductionBinding)
     .reduce((sum, entry) => sum + entry.reservedMicros, 0);
-  const totalRetainedMicros = status.entries.filter(entry => entry.status !== 'rejected')
+  const totalRetainedMicros = status.entries.filter(entry => entry.status !== 'rejected' && !entry.preproductionBinding)
     .reduce((sum, entry) => sum + entry.reservedMicros, 0);
   if (!Number.isSafeInteger(retainedMicros) || !Number.isSafeInteger(totalRetainedMicros)
-    || totalRetainedMicros > 10e6) return fail('ledger_corrupt');
+    || totalRetainedMicros > status.limitCny*1e6) return fail('ledger_corrupt');
   return { retainedMicros, ledgerHash: socialRequestHash({ limitCny: status.authorizedLimitCny,
     entries: sourceEntries }), revisionEntries, totalRetainedMicros };
 }
@@ -222,7 +224,7 @@ export async function readSocialProductFootageRevisionHandoffGuard(input: {
   if (budget.ledgerHash !== guard.ledgerHash || budget.retainedMicros !== guard.retainedMicros)
     return fail('ledger_changed');
   if (budget.revisionEntries.some(entry => entry.planHash !== guard.revisedPlanHash
-    || !newRun && entry.status !== 'rejected')) return fail('revision_ledger_changed');
+    || !newRun && entry.status !== 'rejected' && !entry.preproductionBinding)) return fail('revision_ledger_changed');
   const approvals = await readOldApprovals({ ...input, revisedPlanHash: guard.revisedPlanHash });
   if (socialRequestHash(approvals) !== socialRequestHash(guard.oldApprovalHashes)) return fail('old_approvals_changed');
   const sourcePlan = marker.sourcePlan as SocialAssetSupplyPlan;

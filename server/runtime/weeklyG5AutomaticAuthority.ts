@@ -1,3 +1,4 @@
+import {productionBudgetDuration,productionBudgetLimitCny,productionBudgetExceeded} from '../../shared/contracts/productionBudgetPolicy.js';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import type {SocialDirectorG5Scope} from '../../shared/contracts/socialDirectorG5Review.js';
 import type {WeeklyExecutionTask,WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';
@@ -39,7 +40,7 @@ export async function readWeeklyG5AutomaticAuthority(store:DataStore,scope:Socia
  const packageRows=await store.list<Record_>('social_weekly_operating_packages',{where:{tenant_id:scope.tenantId,program_id:task.programId,package_id:task.packageId,version:task.packageVersion},perPage:2});
  need(packageRows.totalItems===1&&packageRows.items.length===1,'package_required');
  const pkg=packageRows.items[0]!.payload as WeeklyOperatingPackage;
- need(pkg?.status==='active'&&pkg.programId===task.programId&&pkg.packageId===task.packageId&&pkg.version===task.packageVersion&&pkg.socialContentPackage.perItemBudgetCny===10,'package_changed');
+ need(pkg?.status==='active'&&pkg.programId===task.programId&&pkg.packageId===task.packageId&&pkg.version===task.packageVersion&&Number.isFinite(pkg.socialContentPackage.perItemBudgetCny)&&pkg.socialContentPackage.perItemBudgetCny!>0,'package_changed');
  const original=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:scope.tenantId,task_id:scope.taskId},perPage:2});
  need(original.totalItems===1&&original.items.length===1,'content_task_required');
  const content=original.items[0]!,brief=object(content.brief),weekly=object(brief._weeklyAuthority),week=object(weekly.weeklyPackage),publication=object(weekly.publicationTask);

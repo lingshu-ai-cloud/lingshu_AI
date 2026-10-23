@@ -1,3 +1,4 @@
+import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
 import type {
   SocialAgentWorkflowStage,
   SocialAssetSupplyPlan,
@@ -293,7 +294,7 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
     status: directorBrief.status === 'ready' && scenes.length === directorBrief.scenes.length ? 'review_required' : 'blocked',
     reviewRound: 1,
     maxReviewRounds: 3,
-    budgetLimitCny: positiveNumber(input.brief.perItemBudgetCny),
+    budgetLimitCny: productionBudgetLimitCny(productionBudgetDuration({...input.brief,scenes:directorBrief.scenes})),
     deadlineAt: input.brief.dueAt,
     accountPresenterLock: directorBrief.accountPresenterLock
       ? structuredClone(directorBrief.accountPresenterLock)

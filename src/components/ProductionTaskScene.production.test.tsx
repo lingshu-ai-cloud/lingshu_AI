@@ -52,3 +52,11 @@ test('canonical production progress uses server phases without invented duration
   for (const label of ['规划与分镜', '素材与授权', '逐镜制作', '已完成', '需处理', '没有服务端证据时不显示预计耗时']) assert.match(html, new RegExp(label));
   assert.doesNotMatch(html, /约 \d+|预计：/);
 });
+
+test('over-budget task displays a blocker and awaits the user without a generate or retry control',()=>{
+ const message='当前额度 ¥15.00，已占用 ¥14.00，本次新增报价 ¥2.00，累计 ¥16.00。含重试和修订，不含采集；请用户最终决策。';
+ const blocked:ProductionReadView={...view,aggregate:{...view.aggregate,status:'blocked',executable:false,inputs:{required:['生产预算待决策'],missing:['生产预算待决策'],items:[{id:'budget',kind:'budget_confirmation',label:'生产预算待决策',required:true,status:'pending_confirmation',reason:message,source:'canonical_task'}]},blockers:[{code:'production_budget_decision_required',message,recoverable:true,inputId:'budget'}],allowedCommands:['confirm_budget','open_project']}};
+ const html=renderToStaticMarkup(<ProductionAggregateSummary view={blocked} onOpenProduction={()=>{}}/>);
+ for(const text of ['已阻塞','当前额度 ¥15.00','已占用 ¥14.00','新增报价 ¥2.00','累计 ¥16.00','不含采集','最终决策'])assert.ok(html.includes(text),text);
+ assert.doesNotMatch(html,/开始生成|自动重试/);
+});

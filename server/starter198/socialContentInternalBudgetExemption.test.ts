@@ -9,33 +9,33 @@ import { sceneReworkExceedsOriginalInternalBudget } from './socialContentSceneRe
 import { socialDirectorG5AmountWithinInternalBudget } from './socialDirectorG5ReviewService.js';
 import { g5FixtureScope, prepareDirectorG5Fixture } from './socialDirectorG5ReviewService.fixture.js';
 
-test('agent workflow reports real external cost but skips budget-exceeded only for the exact exempt tenant', async () => {
+test('agent workflow reports real external cost but enforces the same production cap for every tenant', async () => {
   const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
   try {
     process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
     const plan = { budgetLimitCny: 10, scenes: [{ sceneId: 'scene-1', recommendedCandidateIds: ['candidate-1'],
       candidates: [{ candidateId: 'candidate-1', sourceStrategy: 'licensed_stock_asset',
         dataTransfer: 'external_processor', estimatedCostCny: 12 }] }] };
-    const director = { scenes: [{ sceneId: 'scene-1', visualTopic: { subject: 'product' } }] };
+    const director = { scenes: [{ sceneId: 'scene-1',duration:{startSeconds:0,endSeconds:20}, visualTopic: { subject: 'product' } }] };
     const ordinary = socialExecutionBudgetStatus(plan as never, director as never, 'another-tenant');
     const exempt = socialExecutionBudgetStatus(plan as never, director as never, 'local_tenant_customer_aurelia_beauty');
     assert.deepEqual(ordinary, { estimatedCostCny: 12, budgetLimitCny: 10, exceeded: true });
-    assert.deepEqual(exempt, { estimatedCostCny: 12, budgetLimitCny: 10, exceeded: false });
+    assert.deepEqual(exempt, { estimatedCostCny: 12, budgetLimitCny: 10, exceeded: true });
     assert.equal(socialExecutionBudgetStatus(plan as never, director as never,
       'local_tenant_customer_aurelia_beauty-suffix').exceeded, true);
     assert.equal(socialPresenterReservationExceedsInternalBudget(
-      'local_tenant_customer_aurelia_beauty', 3, 2), false);
+      'local_tenant_customer_aurelia_beauty', 3, 2), true);
     assert.equal(socialPresenterReservationExceedsInternalBudget('another-tenant', 3, 2), true);
     assert.equal(wholeTrackReservationExceedsInternalBudget(
-      'local_tenant_customer_aurelia_beauty', 3, 2), false);
+      'local_tenant_customer_aurelia_beauty', 3, 2), true);
     assert.equal(wholeTrackReservationExceedsInternalBudget('another-tenant', 3, 2), true);
-    assert.equal(aiVisualExceedsInternalBudget('local_tenant_customer_aurelia_beauty', 3, 2), false);
+    assert.equal(aiVisualExceedsInternalBudget('local_tenant_customer_aurelia_beauty', 3, 2), true);
     assert.equal(aiVisualExceedsInternalBudget('another-tenant', 3, 2), true);
     assert.equal(sceneReworkExceedsOriginalInternalBudget(
-      'local_tenant_customer_aurelia_beauty', 12, 10), false);
+      'local_tenant_customer_aurelia_beauty', 12, 10), true);
     assert.equal(sceneReworkExceedsOriginalInternalBudget('another-tenant', 12, 10), true);
     assert.equal(socialDirectorG5AmountWithinInternalBudget(
-      'local_tenant_customer_aurelia_beauty', 12, 10), true);
+      'local_tenant_customer_aurelia_beauty', 12, 10), false);
     assert.equal(socialDirectorG5AmountWithinInternalBudget('another-tenant', 12, 10), false);
     assert.equal(socialDirectorG5AmountWithinInternalBudget(
       'local_tenant_customer_aurelia_beauty', Number.NaN, 10), false);
@@ -93,8 +93,8 @@ test('G5 server context declares the exact tenant exemption and binds it into co
 
     process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = g5FixtureScope.tenantId;
     const exempt = await fixture.g5.context(g5FixtureScope, 'owner');
-    assert.equal(exempt.agent.internalBudgetExempt, true);
-    assert.notEqual(exempt.contextHash, ordinary.contextHash);
+    assert.equal(exempt.agent.internalBudgetExempt, false);
+    assert.equal(exempt.contextHash, ordinary.contextHash);
     assert.equal(exempt.sourceHash, ordinary.sourceHash);
   } finally {
     await fixture.cleanup();

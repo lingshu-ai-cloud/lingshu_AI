@@ -293,7 +293,7 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
     assert.deepEqual(row.script_baseline, baseline, 'normal create baseline is preserved verbatim');
     assert.ok(admitted.assetSupplyPlan.shots.every(shot => shot.selectedMaterialSegment
       && shot.selectedMaterialSegment.endSeconds > shot.selectedMaterialSegment.startSeconds));
-    assert.equal(admitted.brief.perItemBudgetCny, 10);
+    assert.equal(admitted.brief.perItemBudgetCny, 15);
     assert.equal(admitted.agentWorkflow?.executionPlan.estimatedTotalCostCny, 0);
     assert.equal(store.rows.get(STARTER_COLLECTIONS.runs)!.length, 1);
   } finally {fs.rmSync(root, {recursive: true, force: true});}

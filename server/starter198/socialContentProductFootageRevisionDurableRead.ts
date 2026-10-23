@@ -1,3 +1,4 @@
+import {validProductionBudgetMaximum} from '../../shared/contracts/productionBudgetPolicy.js';
 import type { SocialAssetSupplyPlan } from '../../shared/contracts/socialContentWorkflow.js';
 import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import type { MaterialRecord } from '../lib/materialLibrary.js';
@@ -53,7 +54,7 @@ export function createDurableProductFootageRevisionReaders(input: {
         || budget.inputHash !== scope.planHash || scope.tenantId !== tenantId
         || payload.scopeHash !== paidProductionHash(scope)
         || scope.taskId !== taskId || scope.runId !== sourceRunId
-        || scope.budgetTaskId !== undefined || frozen.maximumCny !== 10
+        || scope.budgetTaskId !== undefined || !validProductionBudgetMaximum(frozen.maximumCny,frozen.productionDurationSeconds)
         || !Array.isArray(frozen.paidOperations) || !frozen.paidOperations.length
         || !Array.isArray(payload.operationIds)
         || payload.operationIds.length !== frozen.paidOperations.length

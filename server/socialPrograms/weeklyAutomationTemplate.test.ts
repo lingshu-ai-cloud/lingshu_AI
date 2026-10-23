@@ -7,7 +7,7 @@ test('template adoption is scoped, idempotent, auditable and never an outbound a
  const {store,task}=await prepareWeeklyEnterpriseFactFixture(t),scope={tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion};
  assert.equal(await readWeeklyAutomationTemplate(store,scope),null);
  const a=await adoptWeeklyAutomationTemplate(store,scope,'owner'),b=await adoptWeeklyAutomationTemplate(store,scope,'owner');
- assert.equal(a.adoptedAt,b.adoptedAt);assert.equal(a.template.perFinishedVideoMaxCny,10);assert.equal(a.template.dailyCollectionLimit,10);assert.equal(a.template.outboundAuthorization,false);
+ assert.equal(a.adoptedAt,b.adoptedAt);assert.equal(a.template.perFinishedVideoMaxCny,15);assert.equal(a.template.dailyCollectionLimit,10);assert.equal(a.template.outboundAuthorization,false);
  assert.equal(a.template.productionConcurrency,3);assert.equal(a.template.originalVideosPerWeek,5);assert.equal(a.template.ordinaryTaskStart,'06:00');assert.equal(a.template.residentEnd,'next_day_00:00');assert.equal(a.userApproval,null);
  assert.equal((await store.list(WEEKLY_TEMPLATE_ADOPTIONS)).totalItems,1);
  assert.equal(await readWeeklyAutomationTemplate(store,{...scope,packageVersion:2}),null);

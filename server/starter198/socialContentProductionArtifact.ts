@@ -1,3 +1,4 @@
+import {readSocialProductionBudgetEvidence} from './socialContentProductionBudgetEvidence.js';
 import { assertCurrentContentExecutionActive } from '../contentExecution/context.js';
 import { voiceLearningReadiness } from '../videoProduction/voiceQualityLearning.js';
 import type { admitSocialContentProduction } from './socialContentProductionAdmission.js';
@@ -70,6 +71,7 @@ export async function createSocialContentProductionArtifact(scope: {
     providerCostSummary, deliverableStatus, finalQualityAccepted, finalGeneratedMaterial,
     productionResult } = scope.delivery;
   const { technicalQualityReport, technicalApproved, quality, sceneQuality, audio } = scope.technical;
+  const productionBudget=await readSocialProductionBudgetEvidence({execution:input,brief:detail.brief,scenes:agentWorkflow.directorBrief.scenes});
   let initialSceneSourceEvidence:Awaited<ReturnType<typeof initialSceneSourceHashes>>|null=null;
   if(assetSupplyExecution){try{initialSceneSourceEvidence=await initialSceneSourceHashes({assets,execution:assetSupplyExecution,voicePath:voice.localPath,bgmUrl:bgm.url||null});}catch{/* Actual output remains reviewable; missing source bytes cannot create a cache. */}}
   await assertCurrentContentExecutionActive();
@@ -133,6 +135,7 @@ export async function createSocialContentProductionArtifact(scope: {
         productionResult,
         ...(replicationEvaluation ? { replicationEvaluation } : {}),
         costSummary: {
+          ...(productionBudget?{productionBudget}:{}),
           currency: 'CNY',
           estimatedBeforeGenerationCny: plannedCostCny,
           // Compatibility total: actual charges plus estimates whose provider

@@ -1,3 +1,4 @@
+import {PRODUCTION_BUDGET_POLICY,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import type {WeeklyAgentPlanningState,WeeklyExecutionTask,WeeklyOperatingPackage,VersionedSocialRef} from '../../shared/contracts/socialProgram.js';
 import {naturalWeek} from '../../shared/naturalWeek.js';
@@ -53,7 +54,7 @@ export async function readWeeklyOriginalRunStartProof(input:Input):Promise<Origi
  const intent=intentRow?.payload as WeeklyAutomaticProductionIntent|undefined;
  if(!intent||intentRow?.tenant_id!==task.tenantId||intentRow.content_hash!==socialRequestHash(intent)
   ||intent.intentId!==intentId||socialRequestHash(intent.scope)!==socialRequestHash(scope)
-  ||intent.source!=='automatic_template'||intent.templateVersion!=='weekly-automation.v3'||intent.userApproval!==null
+  ||intent.source!=='automatic_template'||intent.templateVersion!==adoption.templateVersion||intent.userApproval!==null
   ||intent.authorizesPublishing!==false||intent.authorizesContentAcceptance!==false||intent.authorizesCustomerMessages!==false
   ||intent.planningAdoptionHash!==adoption.recordHash||intent.dispatchHash!==socialRequestHash(planning.dispatch)
   ||socialRequestHash(intent.selectedPublicationTaskIds)!==socialRequestHash(planning.dispatch.scheduleItems.map(item=>item.publicationTaskId))
@@ -61,9 +62,9 @@ export async function readWeeklyOriginalRunStartProof(input:Input):Promise<Origi
  const capacityRow=await store.getById<Record_>(WEEKLY_PRODUCTION_SCOPE_CAPACITIES,intent.capacityProofId);
  const capacity=capacityRow?.payload as ProductionScopeCapacity|undefined;
  if(!capacity||capacityRow?.tenant_id!==task.tenantId||capacityRow.content_hash!==scheduleHash(capacity)
-  ||capacity.proofId!==intent.capacityProofId||capacity.source!=='automatic_template'||capacity.budgetPolicyVersion!=='weekly-per-film-10.v1'
+  ||capacity.proofId!==intent.capacityProofId||capacity.source!=='automatic_template'||![PRODUCTION_BUDGET_POLICY,'weekly-per-film-10.v1'].includes(capacity.budgetPolicyVersion)
   ||capacity.userApproval!==null||capacity.authorizesPublishing!==false||capacity.authorizesAcceptance!==false||capacity.authorizesCustomerMessages!==false
-  ||capacity.perFilmIncludingRevisionsMaxCny!==10||capacity.planningAdoptionHash!==adoption.recordHash
+  ||capacity.perFilmIncludingRevisionsMaxCny!==(capacity.budgetPolicyVersion==='weekly-per-film-10.v1'?10:productionBudgetLimitCny())||capacity.planningAdoptionHash!==adoption.recordHash
   ||capacity.detailedScheduleHash!==scheduleHash(planning.detailedSchedule)
   ||scheduleHash(capacity.selectedSlotIds)!==scheduleHash(adoption.selectedSlotIds)
   ||scheduleHash(capacity.planningRef)!==scheduleHash(planning.detailedSchedule?.ref)

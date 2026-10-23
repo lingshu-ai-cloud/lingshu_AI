@@ -1,3 +1,5 @@
+import {isProductionBudgetBlock,productionBudgetDecisionMessage,productionBudgetDuration,productionBudgetLimitCny,productionBudgetExceeded} from '../../shared/contracts/productionBudgetPolicy.js';
+import { presenterProductionRoute } from '../../shared/contracts/presenterProductionRoute.js';
 import type { DataStore } from '../storage/datastore.js';
 import type {
   ProductionAllowedCommand,
@@ -602,6 +604,7 @@ export function buildSocialContentProductionReadModel(input: {
     title: string;
     readinessMissing?: string[];
     productionApproach?: string | null;
+    targetDurationSeconds?:number|null;
   };
   workflow: SocialContentAgentWorkflow | null;
   assetSupplyPlan?: SocialAssetSupplyPlan | null;
@@ -619,6 +622,15 @@ export function buildSocialContentProductionReadModel(input: {
     runId: input.task.runId,
   });
   const stage = text(input.productionStage?.stage, 120);
+  const pricedScenes=workflow?.directorBrief.scenes;
+  const quoteDuration=productionBudgetDuration({targetDurationSeconds:input.task.targetDurationSeconds,
+    scenes:pricedScenes?.every(scene=>scene.duration&&Number.isFinite(scene.duration.startSeconds)
+      &&scene.duration.endSeconds>scene.duration.startSeconds)?pricedScenes:undefined});
+  const budgetBlocked=stage==='budget_decision_required'||isProductionBudgetBlock(input.productionStage?.message??'')
+    ||costQuote?.status==='overrun'||Boolean(costQuote&&[costQuote.upperBoundCostCny,costQuote.actualCostCny]
+      .some(amount=>amount!=null&&productionBudgetExceeded(amount,
+        Math.min(costQuote.budgetLimitCny,productionBudgetLimitCny(quoteDuration)))));
+  const budgetReason=stage==='budget_decision_required'&&input.productionStage?.message?input.productionStage.message:productionBudgetDecisionMessage(input.productionStage?.message??'');
   const approach = text(input.task.productionApproach, 80) || workflow?.executionPlan.selectedApproach || null;
   const directorById = new Map(workflow?.directorBrief.scenes.map(scene => [scene.sceneId, scene]) ?? []);
   const supplyById = new Map(input.assetSupplyPlan?.shots.map(shot => [shot.shotId, shot]) ?? []);
@@ -626,7 +638,7 @@ export function buildSocialContentProductionReadModel(input: {
   const reviewById = new Map(workflow?.executionPlanReview.sceneResults.map(scene => [scene.sceneId, scene]) ?? []);
   const slotIds = input.studio.project?.slotIds ?? [];
   const receipts = input.receipts ?? [];
-  const external = input.inputRequests ?? [];
+  const external:ProductionReadInputRequest[] = [...(input.inputRequests ?? []),...(budgetBlocked?[{...inputItem({id:'task:production-budget',kind:'budget_confirmation',label:'生产预算待决策',required:true,status:'pending_confirmation',reason:budgetReason,source:'canonical_task'}),shotId:null}]:[])];
   const shots = (workflow?.executionPlan.scenes ?? []).map((scene, index): ProductionShotReadModelV1 => {
     const result = resultById.get(scene.sceneId);
     const selectedStrategy = result?.sourceStrategy ?? scene.selectedSourceStrategy;
@@ -635,7 +647,13 @@ export function buildSocialContentProductionReadModel(input: {
     const supplyShot = supplyById.get(scene.sceneId) ?? input.assetSupplyPlan?.shots[index];
     const shotInput = shotInputs({ scene, directorScene, supplyShot, workflow: workflow!, approach,
       external: external.filter(item => !item.shotId || item.shotId === scene.sceneId) });
+    const presenterRoute = presenterProductionRoute({ sourceStrategy: selectedStrategy,
+      method: supplyShot?.digitalHumanPlan?.method,
+      silentMotion: (supplyShot?.digitalHumanPlan as { silentMotion?: boolean } | undefined)?.silentMotion });
+    const routeUnavailable = !result && approach !== 'shooting_plan' && !presenterRoute.executable;
     const blockers = uniqueBlockers([
+      ...(budgetBlocked ? [{code:'production_budget_decision_required',message:budgetReason,recoverable:true,inputId:'task:production-budget'}] : []),
+      ...(routeUnavailable ? [{ code: presenterRoute.code!, message: `${presenterRoute.message} ${presenterRoute.nextActions.join('；')}`, recoverable: true, inputId: null }] : []),
       ...shotInput.items.map(blockerForInput).filter((item): item is ProductionBlocker => Boolean(item)),
       ...(review?.approved === false ? review.failedCriteria.map((message, blockerIndex) => ({
         code: `execution_review_${review.reasonCodes[blockerIndex] ?? blockerIndex + 1}`,
@@ -646,12 +664,13 @@ export function buildSocialContentProductionReadModel(input: {
       }] : []),
     ]);
     const candidate = selectedCandidate(scene);
-    const routeGateOpen = approach !== 'shooting_plan'
+    const routeGateOpen = !budgetBlocked && !routeUnavailable && approach !== 'shooting_plan'
       && scene.feasibility !== 'blocked_for_facts_or_rights'
       && shotInput.missing.length === 0
       && review?.approved !== false;
     const routeExecutable = Boolean(candidate) && routeGateOpen;
     const recommended = routeRef(scene.selectedSourceStrategy, routeExecutable, scene.feasibilityReason, approach);
+    if (presenterRoute.kind === 'silent_motion') recommended.label = '人物动作生成';
     const selected = result ? routeRef(selectedStrategy, true, '已由生产结果确认采用', approach) : null;
     const fallbackStrategies = unique([
       ...(scene.fallbackSourceStrategy ? [scene.fallbackSourceStrategy] : []),
@@ -680,7 +699,7 @@ export function buildSocialContentProductionReadModel(input: {
       cost: shotCost(scene, recommended.kind),
       blockers,
     };
-    return { ...base, allowedCommands: commandsForShot({ shot: base, taskStatus: input.task.status }) };
+    return { ...base, allowedCommands: commandsForShot({ shot: base, taskStatus: input.task.status }).filter(command=>!budgetBlocked||!['generate','retry','use_fallback','approve_output'].includes(command)) };
   });
   const projectBlockers: ProductionBlocker[] = [
     ...(input.studio.duplicateCount > 0 ? [{ code: 'studio_project_conflict',
@@ -713,7 +732,9 @@ export function buildSocialContentProductionReadModel(input: {
     ? 'needs_input' : shotDerivedStatus;
   const executable = shots.length > 0 && shots.every(shot => shot.executable)
     && aggregateInputs.missing.length === 0 && !projectBlockers.some(item => item.code !== 'studio_projection_unavailable');
+  const routeBlocked = shots.some(shot => shot.blockers.some(blocker => blocker.code === 'presenter_speech_route_unavailable'));
   const allowedCommands = unique([
+    ...(budgetBlocked ? ['confirm_budget' as const] : []),
     ...(input.studio.project ? ['open_project' as const] : []),
     ...shots.flatMap(shot => shot.allowedCommands),
     ...(aggregateInputs.items.some(item => item.kind === 'account_authorization'
@@ -721,7 +742,7 @@ export function buildSocialContentProductionReadModel(input: {
     ...(aggregateInputs.items.some(item => item.kind === 'production_choice'
       && item.status !== 'provided' && item.status !== 'not_applicable') ? ['confirm_production_choice' as const] : []),
   ]);
-  const aggregateStatusValue = projectBlockers.some(item => item.code === 'studio_project_conflict' || item.code === 'studio_project_stale')
+  const aggregateStatusValue = budgetBlocked ? 'blocked' : projectBlockers.some(item => item.code === 'studio_project_conflict' || item.code === 'studio_project_stale')
     && !['running', 'rendering', 'quality_review', 'review_ready', 'completed'].includes(status) ? 'blocked' : status;
   return {
     schemaVersion: PRODUCTION_READ_MODEL_SCHEMA,
@@ -742,7 +763,7 @@ export function buildSocialContentProductionReadModel(input: {
       blockers: aggregateBlockers,
       counts: statusCounts(shots),
       phases: phases(aggregateStatusValue, shots),
-      allowedCommands,
+      allowedCommands: routeBlocked || budgetBlocked ? allowedCommands.filter(command => command !== 'generate' && (!budgetBlocked || !['retry','use_fallback','approve_output'].includes(command))) : allowedCommands,
     },
     shots,
     updatedAt: text(input.productionStage?.updatedAt, 80) || input.task.updatedAt,

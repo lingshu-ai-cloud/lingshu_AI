@@ -13,8 +13,8 @@ function fixture(){
 test('automatic capacity reserves film ceiling once across platform projections, starts overdue work now and never approves',()=>{
  const {pkg,tasks}=fixture(),now='2026-10-16T07:00:00Z';
  const capacity=automaticWeeklyCapacity(pkg,tasks,now);
- assert.equal(capacity.remainingBudgetCny,50);
- assert.equal(Object.values(capacity.constraints).reduce((n,c)=>n+c.remainingCostCny,0),10);
+ assert.equal(capacity.remainingBudgetCny,75);
+ assert.equal(Object.values(capacity.constraints).reduce((n,c)=>n+c.remainingCostCny,0),15);
  assert(Object.values(capacity.constraints).every(c=>Date.parse(c.availableAt)===Date.parse(now)));
  assert.equal(capacity.resources['template:content_agent'].concurrency,3);
  assert.equal(capacity.resources['template:content_agent'].workingWindows.length,3);

@@ -1,3 +1,4 @@
+import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
 import { createHash } from 'node:crypto';
 import type { SocialTaskBudgetScope, SocialTaskCorrectionBudgetAuthorization } from '../lib/socialContentTaskBudget.js';
 import type { SocialApprovedBudgetPlan, SocialPaidOperationIntent } from '../lib/socialContentTaskBudgetAuthority.js';
@@ -13,6 +14,7 @@ export interface FrozenPaidProduction {
         planHash: string;
     };
     authorization: {
+        productionDurationSeconds?:number;
         ref: string;
         maximumCny: number;
         maximumExecutionCny?:number;
@@ -371,7 +373,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 gap('frozen_production_changed');
             if (gaps.length)
                 return { plan: null, requirements, gaps };
-            return { plan: { scope, authorizationRef: input.authorization.ref, maximumCny: Math.min(15, input.authorization.maximumCny), maximumExecutionCny:input.authorization.maximumExecutionCny,paidOperations: operations,
+            return { plan: { scope, authorizationRef: input.authorization.ref, productionDurationSeconds:input.authorization.productionDurationSeconds??productionBudgetDuration({scenes:input.scenes.map(scene=>({duration:{startSeconds:0,endSeconds:scene.durationSeconds}}))}), maximumCny: Math.min(productionBudgetLimitCny(input.authorization.productionDurationSeconds??productionBudgetDuration({scenes:input.scenes.map(scene=>({duration:{startSeconds:0,endSeconds:scene.durationSeconds}}))})), input.authorization.maximumCny), maximumExecutionCny:input.authorization.maximumExecutionCny,paidOperations: operations,
                 ...(presenterGroups.length ? {presenterGroups: structuredClone(presenterGroups)} : {}) }, requirements, gaps };
         } };
 }

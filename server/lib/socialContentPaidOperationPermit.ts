@@ -4,7 +4,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {withPaidOperationLock} from './paidOperationLock.js';
 import type {SocialContentTaskBudget,SocialTaskBudgetScope,SocialTaskBudgetOperation} from './socialContentTaskBudget.js';
 import type {SocialPaidOperationIntent} from './socialContentTaskBudgetAuthority.js';
-import {isInternalBudgetExemptTenant} from './tenantBudgetExemption.js';
+import {productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
 const hash=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const fail=(reason:string):never=>{throw Error(`social_paid_permit_${reason}`);};
 export type PaidOperationSubmission = Omit<SocialPaidOperationIntent,'maximumUnits'> & {actualUnits:Record<string,number>};
@@ -26,16 +26,10 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
  const assertWholePlanReserved=()=>{
 	  const current=input.ledger.status(scope);
 	  if(!current)throw Error('social_paid_permit_whole_plan_budget_invalid');
-	  const correction=current.correctionAuthorization;
-  const validCorrection=Boolean(correction&&correction.tenantId===scope.tenantId&&correction.taskId===scope.taskId
-   &&correction.runId===scope.runId&&correction.planHash===scope.planHash&&correction.reason==='provider_correction'
-   &&['approved_first_frame_not_consumed','approved_first_frame_not_consumed_and_bound_voice_mismatch'].includes(correction.correctionCause)&&correction.affectedPresenterGroupIds.length===3
-	   &&correction.maximumCny===current.limitCny&&correction.maximumCny<=(correction.correctionCause==='approved_first_frame_not_consumed'?16.5:20));
-  const maximum=validCorrection?correction!.maximumCny:15;
+  const maximum=productionBudgetLimitCny(current.productionDurationSeconds);
 	  if(!Number.isFinite(current.limitCny)||current.limitCny<=0
 	   ||!Number.isFinite(current.retainedCny)||current.retainedCny<0)fail('whole_plan_budget_invalid');
-  if(!isInternalBudgetExemptTenant(scope.tenantId)
-	   &&(current.limitCny>maximum||current.retainedCny>current.limitCny||current.retainedCny>maximum))fail('whole_plan_budget_invalid');
+  if(current.limitCny>maximum||current.retainedCny>current.limitCny||current.retainedCny>maximum)throw Error('user_input_required:production_budget_decision_required:permit_total_exceeded');
   for(const op of operations){
    const entries=current.entries.filter(e=>e.operationId===op.operationId);
    if(entries.length!==1)fail('whole_plan_reservation_missing');

@@ -1,3 +1,4 @@
+import {validOriginalProductionBudget,assertRetainedProductionBudget} from '../../shared/contracts/productionBudgetPolicy.js';
 import {createHash} from 'node:crypto';
 import sharp from 'sharp';
 import {SocialContentTaskBudget} from '../lib/socialContentTaskBudget.js';
@@ -21,17 +22,17 @@ const readBudget=(tenantId:string,taskId:string,sourceRunId:string,revisionRunId
   assertCurrent:async()=>fail('read_only'),verifyRejection:async()=>false});
  const status=ledger.status({tenantId,taskId,runId:sourceRunId,planHash:'0'.repeat(64)});
  if(!status)return fail('original_ten_yuan_ledger_missing');
- if(!Number.isSafeInteger(Math.round(status.retainedCny*1e6))||status.limitCny!==10
-  ||status.authorizedLimitCny!==10||status.retainedCny>10||status.hasCorrectionAuthorization)
+ assertRetainedProductionBudget(status);
+ if(!Number.isSafeInteger(Math.round(status.retainedCny*1e6))||!validOriginalProductionBudget(status)||status.retainedCny>status.limitCny||status.hasCorrectionAuthorization)
   return fail('original_ten_yuan_ceiling_invalid');
  const entries=status.entries;
- if(entries.some(entry=>entry.status!=='rejected'&&(entry.executionTaskId??taskId)!==taskId))return fail('foreign_ledger_entry');
+ if(entries.some(entry=>entry.status!=='rejected'&&!entry.preproductionBinding&&(entry.executionTaskId??taskId)!==taskId))return fail('foreign_ledger_entry');
  const revisionEntries=entries.filter(entry=>entry.runId===revisionRunId);
  const sourceEntries=entries.filter(entry=>entry.runId!==revisionRunId);
- const sourceRetainedMicros=sourceEntries.filter(entry=>entry.status!=='rejected').reduce((sum,entry)=>sum+entry.reservedMicros,0);
- const retainedMicros=entries.filter(entry=>entry.status!=='rejected').reduce((sum,entry)=>sum+entry.reservedMicros,0);
- if(retainedMicros>10e6)return fail('original_ten_yuan_ceiling_exhausted');
- return {ledgerHash:socialRequestHash({limitCny:status.authorizedLimitCny,entries:sourceEntries}),sourceRetainedMicros,retainedMicros,revisionEntries};
+ const sourceRetainedMicros=sourceEntries.filter(entry=>entry.status!=='rejected'&&!entry.preproductionBinding).reduce((sum,entry)=>sum+entry.reservedMicros,0);
+ const retainedMicros=entries.filter(entry=>entry.status!=='rejected'&&!entry.preproductionBinding).reduce((sum,entry)=>sum+entry.reservedMicros,0);
+ if(retainedMicros>status.limitCny*1e6)return fail('original_ten_yuan_ceiling_exhausted');
+ return {limitCny:status.limitCny,ledgerHash:socialRequestHash({limitCny:status.authorizedLimitCny,entries:sourceEntries}),sourceRetainedMicros,retainedMicros,revisionEntries};
 };
 async function readApprovals(repository:Starter198Repository,tenantId:string,taskId:string,sourceRunId:string,failedAssetId:string,productId:string){
  const store=repository.dataStore;if(!store)return fail('store_required');
@@ -84,7 +85,7 @@ export async function freezeSocialProductAssetRevisionPaidGuard(input:{repositor
   {tenant_id:tenantId,status:run.status,starter_context:run.starter_context},
   {starter_context:{...context,paidGuard:guard}}))return fail('freeze_conflict');
  await readSocialProductAssetRevisionPaidGuard({...input,expectedRecordHash:guard.recordHash});
- return {recordHash:guard.recordHash,retainedCny:budget.retainedMicros/1e6,remainingCny:(10e6-budget.retainedMicros)/1e6,
+ return {recordHash:guard.recordHash,retainedCny:budget.retainedMicros/1e6,remainingCny:budget.limitCny-budget.retainedMicros/1e6,
   authorizesProvider:false as const,authorizesProduction:false as const};
 }
 
@@ -146,6 +147,6 @@ export async function readSocialProductAssetRevisionPaidGuard(input:{repository:
     ||selected.referenceImageIds.includes(String(marker.failedAssetId)))return fail('new_approval_invalid');
   }
  }
- return {guard,retainedCny:budget.retainedMicros/1e6,remainingCny:(10e6-budget.retainedMicros)/1e6,
+ return {guard,retainedCny:budget.retainedMicros/1e6,remainingCny:budget.limitCny-budget.retainedMicros/1e6,
   authorizesProvider:false as const,authorizesProduction:false as const};
 }

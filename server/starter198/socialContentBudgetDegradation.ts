@@ -26,7 +26,7 @@ export function applyPresenterFirstBudgetDegradation(input: {
   workflow: NonNullable<SocialContentTaskDetail['agentWorkflow']>;
   maximumCny: number;
 }): SocialAssetSupplyPlan {
-  const maximumCny = Math.max(0, Math.min(10, Number(input.maximumCny) || 0));
+  const maximumCny = Math.max(0, Number(input.maximumCny) || 0);
   const scenes = new Map(input.workflow.executionPlan.scenes.map(scene => [scene.sceneId, scene]));
   const durationByScene=new Map(input.workflow.directorBrief.scenes.map(scene=>[scene.sceneId,
     Math.max(0.001,scene.duration.endSeconds-scene.duration.startSeconds)]));

@@ -1,3 +1,4 @@
+import {productionBudgetDuration,productionBudgetLimitCny,productionBudgetExceeded} from '../../shared/contracts/productionBudgetPolicy.js';
 import {readWeeklyProductionStartAttempt} from './weeklyProductionStartAttempt.js';
 import {readWeeklyAutomationTemplate} from '../socialPrograms/weeklyAutomationTemplate.js';
 import {assessWeeklyOwnedProductIdentity,type WeeklyOwnedProductIdentityPorts} from './weeklyOwnedProductIdentityDemand.js';
@@ -217,7 +218,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         return blocked('weekly_production_product_selection_unavailable','当前发布任务的选品回执或企业产品事实无法核验；未创建内容任务或启动付费生产。');
       }
     }
-    const perItemBudgetCny=adopted?Math.min(Number.isFinite(pkg.socialContentPackage.perItemBudgetCny)&&pkg.socialContentPackage.perItemBudgetCny!==null?pkg.socialContentPackage.perItemBudgetCny:adopted.template.perFinishedVideoMaxCny,adopted.template.perFinishedVideoMaxCny):pkg.socialContentPackage.perItemBudgetCny;
+    const perItemBudgetCny=productionBudgetLimitCny();
     if (!publication.businessProposition || !callToAction || !publication.factRefs.length || !item.topic) {
       return blocked('weekly_production_inputs_required', '经营主张、事实凭据、行动指引及排期主题必须完整。');
     }
@@ -233,7 +234,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     if (existing.totalItems > 1) return blocked('weekly_production_binding_ambiguous', '内容生产任务绑定不唯一。');
     let detail: SocialContentTaskDetail | null = existing.items[0]
       ? await read({ repository, tenantId: task.tenantId, taskId: String(existing.items[0].task_id) }) : null;
-    if(adopted&&detail&&Number(detail.brief.perItemBudgetCny)>adopted.template.perFinishedVideoMaxCny)return blocked('weekly_existing_production_budget_exceeds_template',`原生产任务预算高于${adopted.template.perFinishedVideoMaxCny}元，需在真实生产页面选择增加预算或采用降级方案；不会重建任务掩盖费用。`);
+    if(detail&&Number(detail.brief.perItemBudgetCny)>productionBudgetLimitCny(productionBudgetDuration(detail.brief)))return blocked('weekly_existing_production_budget_exceeds_policy','原生产预算超过每30秒15元的生产上限，需由用户决定降级或停止；不会重建任务掩盖费用。');
     let scriptEvidence: VersionedSocialRef | null = null;
     let storyboardEvidence: VersionedSocialRef | null = null;
     let automaticMaterialEvidence:VersionedSocialRef|null=null;

@@ -1,3 +1,4 @@
+import {isProductionBudgetBlock,productionBudgetDecisionMessage} from '../../shared/contracts/productionBudgetPolicy.js';
 import { withStarter198RunMutationLease } from './runMutationLease.js';
 import { assertCurrentContentExecutionActive } from '../contentExecution/context.js';
 import { createHash } from 'node:crypto';
@@ -249,7 +250,7 @@ export async function writeExecutionStage(input: {
     graph: previousGraph,
     graphId: `starter198:${input.runId}`,
     runtimeOrigin: 'starter198',
-    activeNode: blocked && ['waiting_for_user_input', 'automatic_recovery_exhausted'].includes(input.stage)
+    activeNode: blocked && ['waiting_for_user_input', 'automatic_recovery_exhausted','budget_decision_required'].includes(input.stage)
       ? previousGraph?.activeNode ?? 'brief' : productionNodeForRuntimeStage('starter198', input.stage),
     status: terminal ? 'completed' : blocked ? 'blocked' : 'running',
     blocker: blocked ? input.message : null,
@@ -367,13 +368,14 @@ export async function failExecution(input: {
   const failureClass = classifiedBlock?.[1] ?? '';
   const publicReason = classifiedBlock?.[2]?.trim() ?? '';
   const rootMessage = (classifiedBlock?.[3] ?? rawMessage).trim();
+  const budgetBlocked=isProductionBudgetBlock(rootMessage);
   const graphQualityFailed = rootMessage.startsWith('social_graph_quality_failed:');
   // A failed QA candidate is intentionally saved for repair, but is not a
   // completed reviewable artifact. Other completed artifacts retain the old
   // protection against late worker failures rewriting their state.
-  if (completedArtifact && !pendingRevision && !graphQualityFailed) return;
+  if (completedArtifact && !pendingRevision && !graphQualityFailed && !rootMessage.includes('scene_cache') && !budgetBlocked) return;
   const needsMaterial = rootMessage.startsWith('production_input_required:');
-  const needsUserInput = rootMessage.startsWith('user_input_required:');
+  const needsUserInput = budgetBlocked || rootMessage.startsWith('user_input_required:');
   const directorRevisionFailed = rootMessage.startsWith('director_revision_required:');
   const needsAttention = Boolean(failureClass) || needsMaterial || needsUserInput || directorRevisionFailed;
   const failureDetail = rootMessage.replace(/^(?:production_input_required|user_input_required|director_revision_required):/, '').trim();  const message = publicReason && !failureDetail.startsWith(publicReason)
@@ -381,9 +383,9 @@ export async function failExecution(input: {
     : failureDetail || publicReason || '任务需要处理后才能继续';
   await writeExecutionStage({
     ...input,
-    stage: needsAttention ? 'waiting_for_user_input' : 'automatic_recovery_exhausted',
+    stage: budgetBlocked ? 'budget_decision_required' : needsAttention ? 'waiting_for_user_input' : 'automatic_recovery_exhausted',
     status: 'waiting_external',
-    message: needsAttention
+    message: budgetBlocked ? productionBudgetDecisionMessage(rootMessage) : needsAttention
       ? message
       : `系统已保留导演方案和现有结果，稍后可继续自动处理：${message}`,
     extra: {
@@ -401,7 +403,7 @@ export async function failExecution(input: {
   }).catch(() => undefined);
   const record = await requireSocialTask(input).catch(() => null);
   if (record && (socialText(record.status) === 'producing'
-    || graphQualityFailed && socialText(record.status) === 'asset_review')) {
+    || (graphQualityFailed || budgetBlocked) && socialText(record.status) === 'asset_review')) {
     await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, record.id, {
       // Both governed user decisions and exhausted production-input fallbacks
       // are durable blockers. Reporting either as an automatically resumable

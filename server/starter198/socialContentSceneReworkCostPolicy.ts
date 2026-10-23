@@ -4,7 +4,6 @@ import type { SocialSceneReworkIntent } from './socialContentSceneRework.js';
 import type { StoredSocialSceneCache } from './socialContentSceneReworkService.js';
 import { createSocialSceneReworkService } from './socialContentSceneReworkService.js';
 import { socialJson, socialObject, socialRequestHash } from './socialContentValidation.js';
-import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 
 export const SCENE_REWORK_COST_POLICIES = 'starter_social_scene_rework_cost_policies';
 export const LOCAL_SCENE_REWORK_STRATEGIES = new Set([
@@ -33,9 +32,9 @@ export interface SceneReworkQuoteEvidence {
 type VerifiedActual = StoredSocialSceneCache & { intent: SocialSceneReworkIntent };
 const fail = (code: string): never => { throw new Error(code); };
 export function sceneReworkExceedsOriginalInternalBudget(
-  tenantId: string, amountCny: number, maximumOriginalBudgetCny: number,
+  _tenantId: string, amountCny: number, maximumOriginalBudgetCny: number,
 ): boolean {
-  return !isInternalBudgetExemptTenant(tenantId) && amountCny > maximumOriginalBudgetCny;
+  return amountCny > maximumOriginalBudgetCny;
 }
 
 /** Calculate a quote only from cache, plan, receipts and handoff verified by the server. */

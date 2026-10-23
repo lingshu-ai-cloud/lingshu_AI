@@ -49,12 +49,16 @@ test('product budget bounds are bound to the reviewed supply plan', () => {
   assert.ok(v2Branch>0&&v1Else>v2Branch&&legacyRoot>v1Else&&v1Call>legacyRoot,'legacy env/root is read only inside the v1 fallback branch');
 });
 
-test('formal paid route amount admission is exempt only for the exact configured tenant', () => {
+test('formal quote and admission use the same production ceiling for every tenant', () => {
   const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
   try {
     process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
-    assert.equal(formalPaidRouteExceedsInternalBudget('local_tenant_customer_aurelia_beauty', 12, 10), false);
+    assert.equal(formalPaidRouteExceedsInternalBudget('local_tenant_customer_aurelia_beauty', 12, 10), true);
     assert.equal(formalPaidRouteExceedsInternalBudget('another-tenant', 12, 10), true);
+    assert.equal(formalPaidRouteExceedsInternalBudget('another-tenant',12,15),false);
+    assert.equal(formalPaidRouteExceedsInternalBudget('another-tenant',15,15),false);
+    assert.equal(formalPaidRouteExceedsInternalBudget('another-tenant',15.000001,15),true);
+    assert.equal(formalPaidRouteExceedsInternalBudget('another-tenant',30,30,60),false);
     assert.equal(formalPaidRouteExceedsInternalBudget('local_tenant_customer_aurelia_beauty-suffix', 12, 10), true);
   } finally {
     if (configured === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
@@ -110,8 +114,7 @@ async function installSettledWeeklyExactCost(f:Awaited<ReturnType<typeof fixture
  return{handle,operationId};
 }
 test('historical admission remains read only and does not suddenly provision a new budget', async () => { const f = await fixture(); try {
-    const result = await prepareSocialContentProductionBudget({ ...f, assets: [] });
-    assert.equal(result.status, 'legacy');
+    await assert.rejects(prepareSocialContentProductionBudget({ ...f, assets: [] }),/user_input_required:whole_film_budget_preflight:/);
     assert.equal(fs.existsSync(path.join(f.root, 'task-budget')), false);
 }
 finally {
@@ -242,18 +245,21 @@ test('default presenter route prices static review work before preparation and r
     preparePresenterFirstFrameReviews:async()=>{throw Error('readonly_quote_must_not_generate');},readConfirmedPresenterFirstFrame:async()=>{throw Error('readonly_quote_must_not_confirm');}}});
   assert.equal(quoted.status,'quoted');assert.ok(quoted.status==='quoted');
   assert.ok(quoted.items.length>0&&quoted.items.every(item=>item.quoteRef));
-  assert.ok(quoted.wholeTaskUpperBoundCny>0);assert.equal(quoted.maximumCny,10);
+  assert.ok(quoted.wholeTaskUpperBoundCny>0);assert.equal(quoted.maximumCny,6);
   assert.equal(fs.existsSync(quoteRoot),false);
   const quoteJob=await f.store.getById<any>('content_execution_jobs',f.job.id);
   assert.equal(Boolean(quoteJob?.checkpoints?.['social.whole_film_budget']),false);
+  await assert.rejects(prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{...readers,ledgerRoot:path.join(f.root,'over-budget'),readTariff:staticTariff,preparePresenterFirstFrameReviews:async()=>{throw Error('over_budget_must_not_prepare');}}}),/formal_paid_route_budget_exceeded/);
+  assert.ok(quoted.wholeTaskUpperBoundCny>quoted.maximumCny);
+  const affordableTariff=async(intent:any)=>intent.stage==='presenter_video'?{provider:intent.provider,model:intent.model,accountRef:intent.accountRef,stage:intent.stage,currency:'CNY' as const,verifiedAccountPrice:true,pricingBasis:'negotiated_verified_account' as const,evidenceRef:'controlled-negotiated-presenter',checkedAt:new Date(Date.now()-1000).toISOString(),validUntil:new Date(Date.now()+3600000).toISOString(),meters:{providerSeconds:{priceCny:.1,unitsPerPrice:1,minimumUnits:0,increment:1}}}:staticTariff(intent);
   await assert.rejects(prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{...readers,ledgerRoot:path.join(f.root,'unapproved-task-budget'),
     preparePresenterFirstFrameReviews:async({groups})=>{admissionOrder.push(`prepare:${groups.length}`);},
     readConfirmedPresenterFirstFrame:async()=>{admissionOrder.push('confirm');return null;},
-    readTariff:async intent=>{admissionOrder.push('tariff');return staticTariff(intent);},
+    readTariff:async intent=>{admissionOrder.push('tariff');return affordableTariff(intent);},
   }}),/presenter_first_frame_confirmation_missing/);
   assert.ok(admissionOrder.indexOf('tariff')>=0&&admissionOrder.indexOf('tariff')<admissionOrder.indexOf('prepare:1'));
   assert.deepEqual(admissionOrder.slice(-2),['prepare:1','confirm']);
-  const result=await prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{...readers,ledgerRoot:path.join(f.root,'task-budget'),readTariff:staticTariff,preparePresenterFirstFrameReviews:async()=>{},readConfirmedPresenterFirstFrame:async()=>({approval:{},decision:{}} as never)}});
+  const result=await prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{...readers,ledgerRoot:path.join(f.root,'task-budget'),readTariff:affordableTariff,preparePresenterFirstFrameReviews:async()=>{},readConfirmedPresenterFirstFrame:async()=>({approval:{},decision:{}} as never)}});
   assert.equal(result.status,'reserved');assert.ok(result.status==='reserved');
   const frozenPlan={scope:result.scope,authorizationRef:'frozen-task-budget',maximumCny:10,paidOperations:result.reserved.intents};
   const frozenCheckpoint={version:'1',inputHash:result.scope.planHash,updatedAt:new Date().toISOString(),payload:{scopeHash:paidProductionHash(result.scope),baselineHash:socialRequestHash(f.baseline),operationIds:result.reserved.operations.map(operation=>operation.operationId),requirements:result.requirements,routeBindings:result.routeBindings,quotes:result.reserved.quotes,plan:frozenPlan}};
@@ -264,7 +270,7 @@ test('default presenter route prices static review work before preparation and r
   assert.equal(presenterRequirements.length,1);assert.ok(presenterRequirements.every(r=>r.sourceRef===null));
   assert.deepEqual(presenterRequirements[0]!.presenterGroupShotIds,supplyPlan.shots.map(shot=>shot.shotId));assert.equal(presenterRequirements[0]!.shotId,null);assert.equal(presenterRequirements[0]!.presenterAssetId,'enterprise-person');
   for(const requirement of presenterRequirements){const boundRoute:{provider:string;model:string;routeEvidenceRef:string}|undefined=result.routeBindings[requirement.key];assert.ok(boundRoute);assert.equal(boundRoute.provider,'heygen');assert.equal(boundRoute.model,'avatar_iv');assert.match(boundRoute.routeEvidenceRef,/^heygen-approved-person:/);}
-  const quotes=Object.values(result.reserved.quotes);const ivQuotes=quotes.filter(q=>q.nativePricing?.currency==='USD');assert.equal(ivQuotes.length,1);assert.ok(ivQuotes.every(q=>q.nativePricing?.usdPerMinute===4.83));assert.ok(quotes.reduce((n,q)=>n+q.upperBoundCny,0)<=10);
+  const quotes=Object.values(result.reserved.quotes);assert.ok(quotes.reduce((n,q)=>n+q.upperBoundCny,0)<=6);
   assert.ok(gets.some(u=>u.endsWith('/avatars/looks/original-look')));
   assert.ok(gets.some(u=>u.endsWith('/users/me')));
   assert.ok(gets.some(u=>u.includes('10060327')));

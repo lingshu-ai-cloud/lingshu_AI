@@ -50,7 +50,8 @@ store.rows.set('studio_production_defaults', [{ id: 'defaults', tenant_id: 'tena
 }] } }]);
 let creates = 0;
 let reserves = 0;
-const ports = createSocialHeyGenBridgePorts({ store,
+const approvedFramePort={resolve:async(input:any)=>({imageAssetId:'offline-approved-image',sha256:input.approvedFirstFrame.sha256,approvalRecordHash:input.approvedFirstFrame.approvalRecordHash}),verify:async(input:any,value:any)=>value.sha256===input.approvedFirstFrame.sha256&&value.approvalRecordHash===input.approvedFirstFrame.approvalRecordHash};
+const ports = createSocialHeyGenBridgePorts({ store,approvedFirstFrame:approvedFramePort,
   client: {
     async create(_input, requestId) { creates += 1; assert.match(requestId, /^social-presenter:/); return 'provider-task-a'; },
     async status() { return { status: 'completed' as const, url: 'https://files.heygen.ai/output.mp4', duration: 3 }; },
@@ -68,7 +69,7 @@ assert.deepEqual(ports.capabilities, {
 });
 const adapter = createSocialDigitalPresenterAdapter(ports);
 const context: any = { tenantId: 'tenant-a', taskId: 'task-a', outputDirectory: tmp,
-  shot: { shotId: 'shot-a', sourceStrategy: 'authorized_digital_presenter', sourceRefs: ['presenter-a'],
+  shot: { approvedFirstFrame:{approvalRecordId:'offline-approved-frame',approvalRecordHash:'a'.repeat(64),presenterGroupContractHash:'b'.repeat(64),sha256:'c'.repeat(64),url:'https://fixture.invalid/approved.png',localPath:path.join(tmp,'approved.png')}, shotId: 'shot-a', sourceStrategy: 'authorized_digital_presenter', sourceRefs: ['presenter-a'],
     digitalHumanPlan: { method: 'talking', presenterAssetIds: ['presenter-a'], executionState: 'ready_for_capability_check' } },
   baselineScene: { narration: '已确认口播' }, availableAssets: [] };
 const result = await adapter.execute(context);
@@ -137,7 +138,7 @@ assertPresenterSpeechAudio(guardRequest,{...audio,durationSeconds:5.4857,adopted
 assert.throws(()=>assertPresenterSpeechAudio(guardRequest,{...audio,durationSeconds:5.7,adoptedSpeech:true,frozenHookDurationSeconds:5.6}),/duration_invalid/);
 assert.throws(()=>assertPresenterSpeechAudio(guardRequest,{...audio,durationSeconds:5.4857,adoptedSpeech:true,frozenHookDurationSeconds:6}),/duration_invalid/);
 let audioCreates = 0, audioReserves = 0, resolves = 0, verified = true, incoming: any;
-const audioPorts = createSocialHeyGenBridgePorts({ store,
+const audioPorts = createSocialHeyGenBridgePorts({ store,approvedFirstFrame:approvedFramePort,
   speechAudio: { resolve: async () => { resolves++; return structuredClone(audio); }, verify: async (_request, candidate) => verified && candidate.taskVersion === 'revision-2' },
   client: { create: async input => { audioCreates++; incoming = input; return 'audio-driven-task'; }, status: async () => ({ status: 'completed', url: 'https://files.heygen.ai/audio.mp4', duration: 3.6 }) },
   budget: { status: () => ({ allowed: true, reservationCny: 1, remainingCny: 10, reason: '' }), reserve: async () => { audioReserves++; } },

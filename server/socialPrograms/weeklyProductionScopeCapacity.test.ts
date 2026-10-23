@@ -103,3 +103,14 @@ test('durable proof permits later dispatch version but refuses changed inputs, q
  rows[0].max_running=2;assert.equal(await read(),null);rows[0].max_running=3;
  a.tasks[5].tenantId='other';assert.equal(await read(),null);
 });
+
+test('v4 reserves the unique 15-yuan production ceiling despite an old package default and never raises the weekly authorization',()=>{
+ const input=fixture(),{recordHash,...adoption}=input.planning.automaticTemplateAdoption!;
+ const current={...adoption,templateVersion:'weekly-automation.v4' as const};
+ input.planning.automaticTemplateAdoption={...current,recordHash:scheduleHash(current)};
+ const proof=buildWeeklyProductionScopeCapacity(input);
+ assert.equal(proof.perFilmIncludingRevisionsMaxCny,15);assert.equal(proof.reservedBudgetCny,15);
+ assert.equal(proof.templateVersion,'weekly-automation.v4');
+ input.pkg.socialContentPackage.weeklyBudgetCny=14;
+ assert.throws(()=>buildWeeklyProductionScopeCapacity(input),{code:'weekly_production_scope_budget_insufficient'});
+});

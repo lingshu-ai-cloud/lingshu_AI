@@ -1,3 +1,4 @@
+import {validProductionBudgetMaximum,validOriginalProductionBudget} from '../../shared/contracts/productionBudgetPolicy.js';
 import {createSocialContentTaskBudgetAuthority,type SocialApprovedBudgetPlan,type SocialTaskBudgetAuthorityPorts} from '../lib/socialContentTaskBudgetAuthority.js';
 import type {SocialTaskBudgetScope} from '../lib/socialContentTaskBudget.js';
 import type {Starter198Repository} from './repository.js';
@@ -39,7 +40,7 @@ export async function reserveSocialProductAssetRevisionBudget(input:{repository:
   const plan=await input.ports.readApprovedPlan(candidate);
   if(plan.scope.tenantId!==scope.tenantId||plan.scope.taskId!==scope.taskId
    ||plan.scope.runId!==scope.runId||plan.scope.planHash!==scope.planHash
-   ||plan.scope.budgetTaskId!==undefined||plan.maximumCny!==10
+   ||plan.scope.budgetTaskId!==undefined||!validProductionBudgetMaximum(plan.maximumCny,plan.productionDurationSeconds)
    ||plan.authorizationRef!==`asset-revision:${frozen.guard.recordHash}`
    ||plan.revisionGuardHash!==frozen.guard.recordHash
    ||plan.replacementSha256!==frozen.guard.replacementSha256)return fail('approved_plan_invalid');
@@ -52,8 +53,8 @@ export async function reserveSocialProductAssetRevisionBudget(input:{repository:
  }});
  const reserved=await authority.prepareAndReserve(scope);
  const checked=await readSocialProductAssetRevisionPaidGuard(guard);
- if(checked.guard.recordHash!==frozen.guard.recordHash||reserved.status.authorizedLimitCny!==10
-  ||reserved.status.hasCorrectionAuthorization||reserved.status.retainedCny>10)return fail('reservation_changed');
+ if(checked.guard.recordHash!==frozen.guard.recordHash||!validOriginalProductionBudget(reserved.status)
+  ||reserved.status.hasCorrectionAuthorization||reserved.status.retainedCny>reserved.status.limitCny)return fail('reservation_changed');
  return {scope,operationIds:reserved.operations.map(operation=>operation.operationId),
   retainedCny:reserved.status.retainedCny,remainingCny:reserved.status.remainingCny,
   authorizesProvider:false,authorizesProduction:false};

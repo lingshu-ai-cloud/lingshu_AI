@@ -1,5 +1,5 @@
 import type { SocialContentExecutionPlan, SocialDirectorBrief } from '../../shared/contracts/socialContentWorkflow.js';
-import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
+import {productionBudgetDuration,productionBudgetLimitCny,productionBudgetExceeded} from '../../shared/contracts/productionBudgetPolicy.js';
 
 export function socialExecutionExternalCost(plan: SocialContentExecutionPlan, directorBrief: SocialDirectorBrief): number {
   const briefByScene = new Map(directorBrief.scenes.map(scene => [scene.sceneId, scene]));
@@ -28,14 +28,12 @@ export function socialExecutionExternalCost(plan: SocialContentExecutionPlan, di
 export function socialExecutionBudgetStatus(
   plan: SocialContentExecutionPlan,
   directorBrief: SocialDirectorBrief,
-  tenantId?: string,
+  _tenantId?: string,
 ): { estimatedCostCny: number; budgetLimitCny: number | null; exceeded: boolean } {
   const estimatedCostCny = socialExecutionExternalCost(plan, directorBrief);
   return {
     estimatedCostCny,
-    budgetLimitCny: plan.budgetLimitCny,
-    exceeded: !isInternalBudgetExemptTenant(tenantId)
-      && plan.budgetLimitCny !== null
-      && estimatedCostCny > plan.budgetLimitCny,
+    budgetLimitCny: productionBudgetLimitCny(productionBudgetDuration({scenes:directorBrief.scenes})),
+    exceeded: productionBudgetExceeded(estimatedCostCny,productionBudgetLimitCny(productionBudgetDuration({scenes:directorBrief.scenes}))),
   };
 }

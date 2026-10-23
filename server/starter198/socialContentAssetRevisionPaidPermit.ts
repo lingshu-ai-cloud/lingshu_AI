@@ -1,3 +1,4 @@
+import {validProductionBudgetMaximum,validOriginalProductionBudget} from '../../shared/contracts/productionBudgetPolicy.js';
 import {readContentExecutionJob} from '../contentExecution/durableQueue.js';
 import {SocialContentTaskBudget,type SocialTaskBudgetScope} from '../lib/socialContentTaskBudget.js';
 import {socialPaidIntentOperation,type SocialApprovedBudgetPlan} from '../lib/socialContentTaskBudgetAuthority.js';
@@ -50,8 +51,8 @@ export async function createSocialProductAssetRevisionPaidPermit(input:{reposito
   const ledger=new SocialContentTaskBudget(input.ledgerRoot,{authorization:async()=>fail('read_only'),
    quote:async()=>fail('read_only'),assertCurrent:async()=>fail('read_only'),verifyRejection:async()=>false});
   const status=ledger.status(scope);
-  if(!status||status.authorizedLimitCny!==10||status.limitCny!==10||status.hasCorrectionAuthorization
-   ||status.retainedCny>10)return fail('ten_yuan_ledger_invalid');
+  if(!status||!validOriginalProductionBudget(status)||status.hasCorrectionAuthorization
+   ||status.retainedCny>status.limitCny)return fail('ten_yuan_ledger_invalid');
   if(canonicalPlanHash&&socialRequestHash(await input.readCanonicalPlan(scope))!==canonicalPlanHash)
    return fail('canonical_plan_changed');
  };
@@ -60,7 +61,7 @@ export async function createSocialProductAssetRevisionPaidPermit(input:{reposito
  const plan=await input.readCanonicalPlan(scope);
  if(plan.scope.tenantId!==scope.tenantId||plan.scope.taskId!==scope.taskId
   ||plan.scope.runId!==scope.runId||plan.scope.planHash!==scope.planHash||plan.scope.budgetTaskId!==undefined
-  ||plan.maximumCny!==10||plan.authorizationRef!==`asset-revision:${frozen.guard.recordHash}`
+  ||!validProductionBudgetMaximum(plan.maximumCny,plan.productionDurationSeconds)||plan.authorizationRef!==`asset-revision:${frozen.guard.recordHash}`
   ||plan.revisionGuardHash!==frozen.guard.recordHash||plan.replacementSha256!==frozen.guard.replacementSha256
   ||!Array.isArray(plan.paidOperations)||!plan.paidOperations.length)return fail('canonical_plan_invalid');
  canonicalPlanHash=socialRequestHash(plan);

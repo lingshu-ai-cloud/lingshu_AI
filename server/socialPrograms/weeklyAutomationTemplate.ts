@@ -5,10 +5,10 @@ import type {ExecutionPackageScope} from './weeklyExecutionGate.js';
 import {SocialProgramError} from './service.js';
 import {socialRequestHash} from '../starter198/socialContentValidation.js';
 export const WEEKLY_TEMPLATE_ADOPTIONS='social_weekly_template_adoptions';
-const legacyId=(s:ExecutionPackageScope,version=WEEKLY_AUTOMATION_TEMPLATE.version)=>createHash('sha256').update(JSON.stringify([s.tenantId,s.programId,s.packageId,s.packageVersion,version])).digest('hex');
+const legacyId=(s:ExecutionPackageScope,version:string=WEEKLY_AUTOMATION_TEMPLATE.version)=>createHash('sha256').update(JSON.stringify([s.tenantId,s.programId,s.packageId,s.packageVersion,version])).digest('hex');
 // Existing local receipts used the full digest. New records use the same
 // deterministic identity narrowed to PocketBase's 15-character primary key.
-const id=(s:ExecutionPackageScope,version=WEEKLY_AUTOMATION_TEMPLATE.version)=>legacyId(s,version).slice(0,15);
+const id=(s:ExecutionPackageScope,version:string=WEEKLY_AUTOMATION_TEMPLATE.version)=>legacyId(s,version).slice(0,15);
 // Keep the accepted v3 contract immutable. A later default-template change
 // must not retroactively invalidate this historical adoption or its CTA.
 const ACCEPTED_TEMPLATE_V3=Object.freeze({
@@ -22,12 +22,12 @@ const ACCEPTED_TEMPLATE_V3=Object.freeze({
  ordinaryTaskStart:'06:00',residentStart:'00:00',residentEnd:'next_day_00:00',
  timeZone:'Asia/Shanghai',outboundAuthorization:false,
 });
-const acceptedTemplate=(version:string)=>version===ACCEPTED_TEMPLATE_V3.version?ACCEPTED_TEMPLATE_V3:null;
+const acceptedTemplate=(version:string)=>version===WEEKLY_AUTOMATION_TEMPLATE.version?WEEKLY_AUTOMATION_TEMPLATE:version===ACCEPTED_TEMPLATE_V3.version?ACCEPTED_TEMPLATE_V3:null;
 export async function readWeeklyAutomationTemplate(store:DataStore,s:ExecutionPackageScope){
  const matches=await store.list<Record_>(WEEKLY_TEMPLATE_ADOPTIONS,{where:{tenant_id:s.tenantId,program_id:s.programId,package_id:s.packageId,package_version:s.packageVersion},perPage:2});
  if(matches.totalItems>1)throw new SocialProgramError('weekly_template_adoption_invalid',409,'同一周包版本存在多个模板采用记录。');
  const row=matches.items[0];if(!row)return null;
- const p=row.payload as {scope:ExecutionPackageScope;template:typeof WEEKLY_AUTOMATION_TEMPLATE;adoptedAt:string;source:string;actorUserId:string;userApproval:null};
+ const p=row.payload as {scope:ExecutionPackageScope;template:Omit<typeof WEEKLY_AUTOMATION_TEMPLATE,'version'>&{version:'weekly-automation.v3'|'weekly-automation.v4'};adoptedAt:string;source:string;actorUserId:string;userApproval:null};
  const scope={tenantId:s.tenantId,programId:s.programId,packageId:s.packageId,packageVersion:s.packageVersion};
  if(!p||![id(s,p.template?.version),legacyId(s,p.template?.version)].includes(row.id)||row.tenant_id!==s.tenantId||row.program_id!==s.programId||row.package_id!==s.packageId||row.package_version!==s.packageVersion||socialRequestHash(p.scope)!==socialRequestHash(scope)||!acceptedTemplate(p.template?.version)||socialRequestHash(p.template)!==socialRequestHash(acceptedTemplate(p.template.version))||p.source!=='automatic_template'||typeof p.actorUserId!=='string'||!p.actorUserId.trim()||p.userApproval!==null||!Number.isFinite(Date.parse(p.adoptedAt)))throw new SocialProgramError('weekly_template_adoption_invalid',409,'默认模板留痕无效，未继续执行。');
  return p;

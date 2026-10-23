@@ -86,7 +86,7 @@ test('ordinary original quality adapter settles after week only from full same-r
  assert.deepEqual(f.writes,[]);
 });
 test('formal automatic-week source reveals its first unmet same-run production gate without borrowing old media or paying',async t=>{
- const f=await prepareWeeklyNonPresenterPlanningFixture(t,{confirmedTemplate:true,deferAutomaticPlanning:true,formalActivation:true,ownedReferenceBytes:true,primaryStructure:true,targetCta:'Contact sales',metricTargets:['播放目标1000','点赞目标20','评论目标5','分享目标5'],successCriteria:['实际制作一条待审核视频']});
+ const f=await prepareWeeklyNonPresenterPlanningFixture(t,{weeklyBudgetCny:15,confirmedTemplate:true,deferAutomaticPlanning:true,formalActivation:true,ownedReferenceBytes:true,primaryStructure:true,targetCta:'Contact sales',metricTargets:['播放目标1000','点赞目标20','评论目标5','分享目标5'],successCriteria:['实际制作一条待审核视频']});
  const scope={tenantId:'t',programId:'p',packageId:f.pkg.packageId,packageVersion:f.pkg.version};
  const tasks=await materializeWeeklyExecutionTasks(f.f.store,'t',f.pkg);
  await f.f.store.create(WEEKLY_INDEPENDENT_ADMISSIONS,{id:independentAdmissionId(scope),tenant_id:'t',program_id:'p',package_id:f.pkg.packageId,package_version:f.pkg.version,payload:{...scope,actorUserId:'owner',admittedAt:new Date().toISOString(),mode:'independent_branches',authorizePublishing:false,authorizeMessaging:false}});

@@ -20,7 +20,7 @@ import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js'
 import {weeklyContinuationInputHash} from './weeklyExecutionContinuations.js';
 type Scope={tenantId:string;programId:string;packageId:string;packageVersion:number};
 export const WEEKLY_AUTOMATIC_PRODUCTION_INTENTS='social_weekly_automatic_production_intents';
-export interface WeeklyAutomaticProductionIntent {intentId:string;scope:Scope;source:'automatic_template';templateVersion:'weekly-automation.v3';adoptedAt:string;userApproval:null;actorUserId:string;planningAdoptionHash:string;productionAuthorityProofId:string;capacityProofId:string;dispatchHash:string;selectedPublicationTaskIds:string[];authorizesPublishing:false;authorizesContentAcceptance:false;authorizesCustomerMessages:false;}
+export interface WeeklyAutomaticProductionIntent {intentId:string;scope:Scope;source:'automatic_template';templateVersion:'weekly-automation.v3'|'weekly-automation.v4';adoptedAt:string;userApproval:null;actorUserId:string;planningAdoptionHash:string;productionAuthorityProofId:string;capacityProofId:string;dispatchHash:string;selectedPublicationTaskIds:string[];authorizesPublishing:false;authorizesContentAcceptance:false;authorizesCustomerMessages:false;}
 function fail(code:string):never{throw new SocialProgramError(code,409,code);}
 /** Finish a previously persisted intent as well as a fresh one. The proof
  * reader checks every frozen assignment and the complete current task graph;
@@ -28,7 +28,7 @@ function fail(code:string):never{throw new SocialProgramError(code,409,code);}
 export async function completeWeeklyAutomaticProductionPreparation(store:DataStore,a:{scope:Scope;pkg:WeeklyOperatingPackage;planning:Awaited<ReturnType<ReturnType<typeof createWeeklyPlanningAuthority>['get']>>;intent:WeeklyAutomaticProductionIntent;now:string}){
  const {scope:s,pkg,planning,intent,now}=a;
  return withExecutionPackageGate(store,s,async assert=>{
- if(planning.status!=='dispatched'||!planning.dispatch||socialRequestHash(intent.scope)!==socialRequestHash(s)||intent.dispatchHash!==socialRequestHash(planning.dispatch)||intent.source!=='automatic_template'||intent.templateVersion!=='weekly-automation.v3'||intent.userApproval!==null||intent.authorizesPublishing!==false||intent.authorizesContentAcceptance!==false||intent.authorizesCustomerMessages!==false||socialRequestHash(intent.selectedPublicationTaskIds)!==socialRequestHash(planning.dispatch.scheduleItems.map(item=>item.publicationTaskId)))return false;
+ if(planning.status!=='dispatched'||!planning.dispatch||socialRequestHash(intent.scope)!==socialRequestHash(s)||intent.dispatchHash!==socialRequestHash(planning.dispatch)||intent.source!=='automatic_template'||intent.templateVersion!==planning.automaticTemplateAdoption?.templateVersion||intent.userApproval!==null||intent.authorizesPublishing!==false||intent.authorizesContentAcceptance!==false||intent.authorizesCustomerMessages!==false||socialRequestHash(intent.selectedPublicationTaskIds)!==socialRequestHash(planning.dispatch.scheduleItems.map(item=>item.publicationTaskId)))return false;
  const tasks=await listWeeklyExecutionTasks(store,s.tenantId,s.programId,s.packageId,s.packageVersion);
  // A dispatch may list a platform adaptation first. Read the frozen proof's
  // own first assignment as an index; the reader below verifies its full hash,
@@ -75,7 +75,7 @@ export async function readWeeklyAutomaticProductionCapacity(store:DataStore,a:{i
 export async function prepareWeeklyAutomaticProductionPlanning(store:DataStore,s:Scope,now=new Date().toISOString()){
  return withExecutionPackageGate(store,s,async assert=>{
   const admission=await readIndependentAdmission(store,s),template=await readWeeklyAutomationTemplate(store,s);
-  if(!admission||template?.template.version!=='weekly-automation.v3')return {status:'not_ready' as const,code:'weekly_automatic_production_opt_in_required'};
+  if(!admission||!template)return {status:'not_ready' as const,code:'weekly_automatic_production_opt_in_required'};
   const row=await latestPackageRow(store,s.tenantId,s.programId,s.packageId);
   if(!row||row.payload.version!==s.packageVersion||!['draft','active'].includes(row.payload.status)||await executionPackageFrozen(store,s))return {status:'not_ready' as const,code:'weekly_automatic_production_scope_stale'};
   const pkg=row.payload,planner=createWeeklyPlanningAuthority(store);let plan=await planner.get(s.tenantId,s.programId,s.packageId,s.packageVersion);
@@ -110,7 +110,7 @@ export async function prepareWeeklyAutomaticProductionPlanning(store:DataStore,s
   const actual=await listWeeklyExecutionTasks(store,s.tenantId,s.programId,s.packageId,s.packageVersion),capacity=buildWeeklyProductionScopeCapacity({pkg,tasks:actual,planning:plan,selectedSlotIds:selection,now,limits,verifiedCompletedTaskIds});
   await persistWeeklyProductionPlanningAuthority(store,production);await persistWeeklyProductionScopeCapacity(store,capacity);
   const adoption=verifiedWeeklyPlanningTemplateAdoption(plan)!;
-  const intentId=socialRequestHash([s,adoption.recordHash]),intent:WeeklyAutomaticProductionIntent={intentId,scope:s,source:'automatic_template',templateVersion:'weekly-automation.v3',adoptedAt:now,userApproval:null,actorUserId:admission.actorUserId,planningAdoptionHash:adoption.recordHash,productionAuthorityProofId:production.proofId,capacityProofId:capacity.proofId,dispatchHash:socialRequestHash(plan.dispatch),selectedPublicationTaskIds:plan.dispatch!.scheduleItems.map(i=>i.publicationTaskId),authorizesPublishing:false,authorizesContentAcceptance:false,authorizesCustomerMessages:false};
+  const intentId=socialRequestHash([s,adoption.recordHash]),intent:WeeklyAutomaticProductionIntent={intentId,scope:s,source:'automatic_template',templateVersion:adoption.templateVersion,adoptedAt:now,userApproval:null,actorUserId:admission.actorUserId,planningAdoptionHash:adoption.recordHash,productionAuthorityProofId:production.proofId,capacityProofId:capacity.proofId,dispatchHash:socialRequestHash(plan.dispatch),selectedPublicationTaskIds:plan.dispatch!.scheduleItems.map(i=>i.publicationTaskId),authorizesPublishing:false,authorizesContentAcceptance:false,authorizesCustomerMessages:false};
   const old=await store.getById<Record_>(WEEKLY_AUTOMATIC_PRODUCTION_INTENTS,intentId);
   if(old){if(old.content_hash!==socialRequestHash(old.payload)||old.content_hash!==socialRequestHash(intent))fail('weekly_automatic_production_intent_invalid');}
   else if(!await store.create(WEEKLY_AUTOMATIC_PRODUCTION_INTENTS,{id:intentId,tenant_id:s.tenantId,program_id:s.programId,package_id:s.packageId,package_version:s.packageVersion,payload:intent,content_hash:socialRequestHash(intent)}))fail('weekly_automatic_production_intent_write_failed');

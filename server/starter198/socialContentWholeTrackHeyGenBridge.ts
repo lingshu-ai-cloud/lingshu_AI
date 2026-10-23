@@ -15,11 +15,10 @@ import type {SocialPaidOperationIntent} from '../lib/socialContentTaskBudgetAuth
 import type {createSocialContentPaidOperationPermit} from '../lib/socialContentPaidOperationPermit.js';
 import type {DigitalPresenterExecutionRequest} from './socialContentDigitalPresenterAdapter.js';
 import type {WholeTrackPresenterSpeech} from './socialContentWholeTrackPresenterAudio.js';
-import {isInternalBudgetExemptTenant} from '../lib/tenantBudgetExemption.js';
 
 const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
 export function wholeTrackReservationExceedsInternalBudget(tenantId:string,reservationCny:number,maximumCostCny:number){
- return !isInternalBudgetExemptTenant(tenantId)&&reservationCny>maximumCostCny;
+ return reservationCny>maximumCostCny;
 }
 export interface WholeTrackHeyGenFunding {
  scope:SocialTaskBudgetScope;requirements:PaidStageRequirement[];routeBindings:Record<string,BoundPaidRoute>;

@@ -1,3 +1,4 @@
+import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
 import {executeWanImageVideo,type WanImageVideoCheckpoint} from '../lib/wanImageVideo.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,7 +11,6 @@ import {firstFrameInputFingerprint, type FirstFrameReference} from '../lib/first
 import {generateSeedanceConceptVideo} from '../lib/generativeVideoGateway.js';
 import {withPaidOperationLock} from '../lib/paidOperationLock.js';
 import {MvpBudgetAdmission, type MvpBudgetRecord} from '../lib/mvpBudgetAdmission.js';
-import {isInternalBudgetExemptTenant} from '../lib/tenantBudgetExemption.js';
 import {readProductRecoveryFunding} from './socialContentProductRecoveryFunding.js';
 import {SocialContentTaskBudget} from '../lib/socialContentTaskBudget.js';
 import {runVisualFfmpeg} from '../lib/renderVisualQuality.js';
@@ -29,8 +29,8 @@ type Row = Record<string, any>;
 const json = (x: unknown): any => typeof x === 'string' ? JSON.parse(x) : x;
 const sha = (x: Buffer | string) => createHash('sha256').update(x).digest('hex');
 const compactProviderReceipt = (provider: string, fingerprint: string) => `${provider}:${fingerprint}`;
-export function productReplacementExceedsInternalBudget(tenantId: string, amountCny: number, maximumCostCny: number) {
-  return !isInternalBudgetExemptTenant(tenantId) && amountCny > maximumCostCny;
+export function productReplacementExceedsInternalBudget(_tenantId: string, amountCny: number, maximumCostCny: number) {
+  return amountCny > maximumCostCny;
 }
 export function adaptSingletonProductFirstFrameQuality(quality: any, spec: Input['spec']) {
   const report = quality?.firstFrameQuality;
@@ -197,9 +197,9 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
   const taskBudget = new SocialContentTaskBudget(path.join(path.dirname(budgetRoot), 'social-content-task-budget'), {
     assertCurrent: async () => assertCurrent(),
     authorization: async () => {
-      const limit = Number(brief.perItemBudgetCny);
+      const duration=productionBudgetDuration(brief),limit=productionBudgetLimitCny(duration);
       if (!Number.isFinite(limit) || limit <= 0) throw Error('product_whole_film_budget_missing');
-      return {maximumCny: Math.min(brief.materialRoutingPolicyVersion === 'type-aware.v2' ? 15 : 10, limit), authorizationRef: 'canonical-task-budget:' + taskIdentity};
+      return {productionDurationSeconds:duration, maximumCny:limit, authorizationRef: 'canonical-task-budget:' + taskIdentity};
     },
     quote: async (_scope, op) => {
       const q = quote(op.fingerprint, op.provider, op.model);

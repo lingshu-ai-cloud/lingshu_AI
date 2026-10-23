@@ -110,7 +110,7 @@ test('accepted receipt recovery retains original funding without a fresh tariff 
         assert.equal(f.paidCalls, 0);
     } finally { f.clean(); }
 });
-test('exact exempt tenant can recover accepted receipts above the nominal limit without weakening receipt checks', async () => {
+test('formerly exempt tenant cannot reserve over the authorized production ceiling', async () => {
     const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
     process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
     const f = fixture();
@@ -121,13 +121,7 @@ test('exact exempt tenant can recover accepted receipts above the nominal limit 
         f.ports.readVerifiedTariff = async i => ({ ...i, currency: 'CNY', verifiedAccountPrice: true,
             evidenceRef: 'verified-expensive-tariff', checkedAt: '2026-01-01', validUntil: '2099-01-01',
             meters: { providerSeconds: { priceCny: 1.5, unitsPerPrice: 1, minimumUnits: 4, increment: 1 } } });
-        const reserved = await f.service.prepareAndReserve(exemptScope);
-        assert.equal(reserved.status.limitCny, 10);
-        assert.equal(reserved.status.retainedCny, 12);
-        await reserved.ledger.markOutcome(exemptScope, 'video-a', 'accepted', 'provider-task:accepted');
-        const recovered = await f.service.recoverAccepted(exemptScope, ['video-a']);
-        assert.equal(recovered.entries[0]!.receiptRef, 'provider-task:accepted');
-        await assert.rejects(f.service.recoverAccepted(exemptScope, ['video-b']), /recovery_receipt_missing_or_changed/);
+        await assert.rejects(f.service.prepareAndReserve(exemptScope),/production_budget_decision_required/);
     } finally {
         f.clean();
         if (configured === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
