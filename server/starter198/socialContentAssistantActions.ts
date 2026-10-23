@@ -1,4 +1,5 @@
 import type { SocialContentTaskSummary } from '../../shared/contracts/socialContentWorkflow.js';
+import { projectContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard.js';
 
 /** Actions are bound to one selected, tenant-owned record, never a guessed latest task. */
 export function socialContentAssistantAction(task: SocialContentTaskSummary, orchestratorAvailable: boolean) {
@@ -18,6 +19,7 @@ export function socialContentAssistantAction(task: SocialContentTaskSummary, orc
 export function socialContentAssistantReceipt(task: SocialContentTaskSummary, blockedReason?: string, packageBound = false) {
   return {
     taskId: task.taskId, runId: task.runId, status: task.status,
+    card: projectContentProductionTaskCard(task),
     href: `/?page=smartAssets&view=create&socialContentTaskId=${encodeURIComponent(task.taskId)}`,
     ...(!packageBound ? {weeklyTaskId: `social-content:${task.taskId}`} : {}),
     calendarTarget: {productionTaskId: task.taskId},

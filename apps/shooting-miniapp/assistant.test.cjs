@@ -33,6 +33,14 @@ test('restores server conversation; query never executes a suggested action', as
   assert.equal(calls.some(call => call.path.endsWith('/actions')), false)
   controller.dispose()
 })
+test('restores the same authoritative content task card used by the web assistant', async () => {
+  const currentContentTask = { availability:'available', card:{ contentTaskId:'content-1', cardVersion:'7', overallState:'needs_input', title:'单条海报', currentNode:{label:'核对生产条件',userFacingSummary:'任务已建立'}, knownItems:[], defaultedItems:[], blockingItems:[{key:'material',label:'待补充',value:'产品图片'}], progress:{mode:'none'}, nextAction:'supply_input', lastConfirmedAt:'2026-10-24T00:00:00Z' } }
+  const { controller } = fixture(path => path.endsWith('/context') ? { quickQuestions:[], currentContentTask } : undefined)
+  await controller.restore('tenant:user')
+  assert.equal(controller.getState().contentTask.card.contentTaskId, 'content-1')
+  assert.equal(controller.getState().contentTask.card.cardVersion, '7')
+  controller.dispose()
+})
 test('requires visible preview; uncertain submission reuses idempotency key', async () => {
   let attempts = 0
   const { controller, calls } = fixture(path => { if (path.endsWith('/actions') && ++attempts === 1) throw new Error('断网') })
@@ -82,6 +90,8 @@ test('operator assistant keeps suggested questions collapsed on the empty conver
   assert.match(markup, /bindtap="toggleSuggestions"/)
   assert.match(script, /showSuggestions: false/)
   assert.match(styles, /\.voice-prompt\{[^}]*box-shadow:/)
+  assert.match(markup, /wx:if="{{contentTask}}" class="content-task-card"/)
+  assert.match(script, /contentTaskView\(state\.contentTask\)/)
 })
 
 test('operator assistant opens in voice mode with the dispatch prompt above two-tab navigation', () => {

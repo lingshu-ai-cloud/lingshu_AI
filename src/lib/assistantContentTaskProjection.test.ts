@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import type { ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard.js';
+import { contentTaskCardToAssistantCard } from './assistantContentTaskProjection.js';
+
+const card: ContentProductionTaskCard = {
+  schemaVersion: 'content-production-task-card.v1', id: 'content-task-card:one', contentTaskId: 'one',
+  cardVersion: '4', recoveryCursor: { kind: 'task_version', value: 'one@4', runId: 'run-one' },
+  title: '单条海报', outputType: 'image', overallState: 'needs_input',
+  currentNode: { id: 'preflight', label: '核对生产条件', userFacingSummary: '任务已建立，补齐必要信息后继续。' },
+  knownItems: [{ key: 'product', label: '产品', value: '产品 A' }],
+  defaultedItems: [{ key: 'count', label: '数量', value: '单条内容' }],
+  blockingItems: [{ key: 'material', label: '待补充', value: '产品图片' }],
+  progress: { mode: 'none' }, completedSummary: [], nextAction: 'supply_input',
+  lastConfirmedAt: '2026-10-24T02:00:00.000Z',
+};
+
+test('adapts the shared task card without changing its authority fields', () => {
+  const result = contentTaskCardToAssistantCard(card);
+  assert.equal(result.taskId, 'social-content:one');
+  assert.equal(result.status, 'needs_input');
+  assert.equal(result.contentTask?.cardVersion, '4');
+  assert.equal(result.contentTask?.recoveryCursor.value, 'one@4');
+  assert.match(result.details?.join('\n') || '', /已确定/);
+  assert.match(result.primaryAction?.href || '', /socialContentTaskId=one/);
+});

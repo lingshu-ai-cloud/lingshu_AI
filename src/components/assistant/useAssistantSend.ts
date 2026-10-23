@@ -35,11 +35,9 @@ type AssistantSendInput = {
   replyStreaming: boolean;
   contentIntake: ReturnType<typeof useContentTaskIntake>;
   uiMessage: AppServices['message'];
-  modal: AppServices['modal'];
   persistenceFenceRef: { current: { scopeKey: string; active: boolean } };
   stablePersistenceScope: AssistantJournalScope;
   pendingMapFileRef: { current: boolean };
-  pipelineModalOpenRef: { current: boolean };
   abortRef: { current: AbortController | null };
   openAgent: (agent: OrbitAgentId, view: 'chat') => void;
   presentActionResponse: (agent: OrbitAgentId, request: AssistantActionRequest, response: AssistantActionResponse) => void;
@@ -47,13 +45,11 @@ type AssistantSendInput = {
   setDraftInput: StoreActions['setDraftInput'];
   setFollowingLatest: StoreActions['setFollowingLatest'];
   upsertTaskCard: StoreActions['upsertTaskCard'];
+  focusTaskCard: StoreActions['focusTaskCard'];
+  hydrateThread: StoreActions['hydrateThread'];
   setLoading: Dispatch<SetStateAction<boolean>>;
   setFileGenerating: Dispatch<SetStateAction<boolean>>;
   setReplyStreaming: Dispatch<SetStateAction<boolean>>;
-  setAssistantTool: (value: null) => void;
-  setPanelView: (view: 'chat') => void;
-  setWelcomeBubbleVisible: Dispatch<SetStateAction<boolean>>;
-  setMode: (mode: 'breathing') => void;
   setPipelineRefresh: Dispatch<SetStateAction<number>>;
   persistThread: (agent: OrbitAgentId) => void;
   onSessionRefresh?: () => void;
@@ -80,11 +76,11 @@ const API_PATH: Record<AgentType, string> = {
 /** Sends one scoped assistant turn; the parent still owns identity and conversation state. */
 export function useAssistantSend(input: AssistantSendInput) {
   const { page, pageContext, currentPageAgent, enterpriseContext, loading, fileGenerating,
-    replyStreaming, contentIntake, uiMessage, modal, persistenceFenceRef, stablePersistenceScope,
-    pendingMapFileRef, pipelineModalOpenRef, abortRef, openAgent, presentActionResponse,
-    setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, setLoading,
-    setFileGenerating, setReplyStreaming, setAssistantTool, setPanelView, setWelcomeBubbleVisible,
-    setMode, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
+    replyStreaming, contentIntake, uiMessage, persistenceFenceRef, stablePersistenceScope,
+    pendingMapFileRef, abortRef, openAgent, presentActionResponse,
+    setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, focusTaskCard, hydrateThread, setLoading,
+    setFileGenerating, setReplyStreaming,
+    setPipelineRefresh, persistThread, onSessionRefresh, requestId,
     activeAgent, draftInput, pendingAttachments, attachmentUploading, weeklyPlanKickoffAvailable,
     uploadedAttachmentCacheRef, setAttachmentError, setAttachmentUploading, setPendingAttachments,
     openWeeklyPlanFromAssistant } = input;
@@ -152,17 +148,10 @@ export function useAssistantSend(input: AssistantSendInput) {
     }
     if (productionIntent) {
       await runAssistantProductionRequest({
-        productionIntent, threadAgent, currentScope, pipelineModalOpenRef,
-        modal, uiMessage, setLoading, upsertTaskCard, setMessages, persistThread,
+        productionIntent, threadAgent, expectedThreadVersion: thread.version, currentScope,
+        setLoading, upsertTaskCard, focusTaskCard, hydrateThread, setMessages, persistThread,
         onSessionRefresh,
         refreshPipeline: () => setPipelineRefresh(value => value + 1),
-        closeForNavigation: () => {
-          setAssistantTool(null);
-          setPanelView('chat');
-          setWelcomeBubbleVisible(false);
-          setMode('breathing');
-        },
-        requestId,
       });
       return;
     }
@@ -305,7 +294,7 @@ export function useAssistantSend(input: AssistantSendInput) {
         onSessionRefresh?.();
       }
     }
-  }, [replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, loading, modal, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard, stablePersistenceScope]);
+  }, [replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, focusTaskCard, hydrateThread, loading, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard, stablePersistenceScope]);
 
   const sendComposerMessage = useCallback(async () => {
     if (loading || attachmentUploading) return;

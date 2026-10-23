@@ -13,6 +13,10 @@ import {
   Starter198RepositoryError,
   starter198Repository,
 } from '../starter198/repository.js';
+import { createSocialContentTask } from '../starter198/socialContentTasks.js';
+import { parseCreateSocialTask } from '../starter198/socialContentValidation.js';
+import { projectContentProductionTaskCard, type ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard.js';
+import type { SocialContentTaskSummary } from '../../shared/contracts/socialContentTaskContract.js';
 import {
   isAssistantActionId,
   type AssistantActionId,
@@ -117,6 +121,9 @@ export type AssistantThreadsRouterDependencies = {
   dataStore?: DataStore;
   authMiddleware?: RequestHandler;
   actionService?: AssistantActionService;
+  createInstantContentTask?: (input: {
+    tenantId: string; userId: string; idempotencyKey: string; value: ReturnType<typeof parseCreateSocialTask>;
+  }) => Promise<SocialContentTaskSummary>;
 };
 
 function actionHttpStatus(status: string): number {
@@ -467,6 +474,29 @@ function threadWithDefaults(thread: AssistantThread): AssistantThread {
   };
 }
 
+function contentTaskThreadCard(card: ContentProductionTaskCard): AssistantThreadTaskCard {
+  const status = card.overallState === 'needs_input' ? 'needs_input'
+    : card.overallState === 'needs_approval' ? 'approval'
+      : card.overallState === 'processing' ? 'running'
+        : card.overallState === 'paused' ? 'paused'
+          : card.overallState === 'failed' ? 'failed' : 'completed';
+  const details = [
+    ...card.blockingItems.map(item => `${item.label}：${item.value}`),
+    ...card.knownItems.map(item => `已确定 · ${item.label}：${item.value}`),
+    ...card.defaultedItems.map(item => `采用默认 · ${item.label}：${item.value}`),
+  ].slice(0, 3);
+  return {
+    taskId: `social-content:${card.contentTaskId}`, title: card.title,
+    conclusion: card.currentNode.userFacingSummary, details, status,
+    notificationReason: card.overallState === 'needs_input' ? 'missing_input'
+      : card.overallState === 'needs_approval' ? 'approval_required'
+        : card.overallState === 'failed' ? 'failed' : 'routine',
+    primaryAction: { id: `open-${card.contentTaskId}`, label: card.nextAction === 'review' ? '查看并验收' : '查看任务详情',
+      href: `/?page=smartAssets&view=create&socialContentTaskId=${encodeURIComponent(card.contentTaskId)}` },
+    secondaryActions: [], updatedAt: Date.parse(card.lastConfirmedAt) || Date.now(),
+  };
+}
+
 export function createAssistantThreadsRouter(
   dependencies: AssistantThreadsRouterDependencies = {},
 ): Router {
@@ -476,6 +506,9 @@ export function createAssistantThreadsRouter(
     commandBus: createStarter198AssistantCommandBus(),
     supportsExecution: supportsDefaultAssistantExecution,
   });
+  const createInstantContentTask = dependencies.createInstantContentTask ?? (value => createSocialContentTask({
+    repository: starter198Repository, ...value, entry: 'assistant', value: { ...value.value, mode: 'instant', dueAt: null },
+  }));
   const writeTails = new Map<string, Promise<void>>();
   const withWriteLock = async <T>(key: string, work: () => Promise<T>): Promise<T> => {
     const previous = writeTails.get(key) ?? Promise.resolve();
@@ -642,6 +675,64 @@ export function createAssistantThreadsRouter(
         return;
       }
       res.json(threadWithDefaults(created));
+    });
+  });
+
+  router.post('/:agentId/content-tasks', async (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    const identity = res.locals as AuthLocals;
+    let agentId: string;
+    try { agentId = safeAgentId(req.params.agentId); }
+    catch (error) { const failure = error as AssistantActionError; res.status(failure.status).json({ error: failure.code, message: failure.publicMessage }); return; }
+    const source = object(req.body);
+    if (!source || Object.keys(source).some(key => !['expectedThreadVersion', 'idempotencyKey', 'message', 'task'].includes(key))) {
+      res.status(400).json({ error: 'assistant_content_task_input_invalid', message: '单条内容任务请求无效。' }); return;
+    }
+    const expectedVersion = Number(source.expectedThreadVersion);
+    const idempotencyKey = typeof source.idempotencyKey === 'string' ? source.idempotencyKey.trim() : '';
+    let message: string;
+    let taskInput: ReturnType<typeof parseCreateSocialTask>;
+    try {
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0 || !/^[a-z0-9:_-]{8,200}$/i.test(idempotencyKey)) {
+        throw new AssistantActionError('assistant_content_task_input_invalid', 400, '单条内容任务请求无效。');
+      }
+      message = boundedText(source.message, MAX_MESSAGE_BYTES, 'assistant_content_task_input_invalid', '创作需求', true).trim();
+      taskInput = parseCreateSocialTask(source.task);
+      if (taskInput.mode && taskInput.mode !== 'instant') throw new AssistantActionError('assistant_content_task_mode_invalid', 400, '这里只能建立单条即时内容任务。');
+    } catch (error) {
+      const failure = error instanceof AssistantActionError ? error : new AssistantActionError('assistant_content_task_input_invalid', 400, '单条内容任务请求无效。');
+      res.status(failure.status).json({ error: failure.code, message: failure.publicMessage }); return;
+    }
+    const owner = { tenantId: identity.tenantId, userId: identity.userId, agentId };
+    const lockKey = `${identity.tenantId}\0${identity.userId}\0${agentId}`;
+    await withWriteLock(lockKey, async () => {
+      try {
+        const existing = await dataStore.list<AssistantThread>('assistant_threads', { where: owner, perPage: 1 });
+        const current = existing.items.find(isDesktopThread);
+        const prior = current ? threadWithDefaults(current) : null;
+        if (expectedVersion !== (prior?.version ?? 0)) {
+          res.status(409).json({ error: 'assistant_thread_version_conflict', message: '会话已在其他位置更新，请刷新后重试。', current: prior }); return;
+        }
+        const task = await createInstantContentTask({ tenantId: identity.tenantId, userId: identity.userId, idempotencyKey, value: { ...taskInput, mode: 'instant', dueAt: null } });
+        const card = projectContentProductionTaskCard(task);
+        const taskCard = contentTaskThreadCard(card);
+        const assistantMessage = `已建立单条内容任务「${card.title}」。${card.blockingItems.length ? `待补充：${card.blockingItems.map(item => item.value).join('、')}。` : card.currentNode.userFacingSummary}`;
+        const payload = parseThreadPayload({
+          messages: [...(prior?.messages ?? []), { role: 'user', content: message }, { role: 'assistant', content: assistantMessage }],
+          draftInput: '', scrollPosition: prior?.scrollPosition ?? 0, unreadCount: 0, isFollowingLatest: true,
+          paused: prior?.paused ?? false, taskCards: { ...(prior?.taskCards ?? {}), [taskCard.taskId]: taskCard }, focusedTaskId: taskCard.taskId,
+        }, identity, agentId, current);
+        let saved: AssistantThread | null = null;
+        if (current?.id) {
+          const updated = Boolean(dataStore.compareAndSwap) && await dataStore.compareAndSwap!('assistant_threads', current.id, { ...owner, version: expectedVersion }, payload);
+          if (updated) saved = { ...current, ...payload };
+        } else saved = await dataStore.create<AssistantThread>('assistant_threads', payload);
+        if (!saved) { res.status(503).json({ error: 'assistant_content_task_binding_pending', message: '任务已安全保存，会话绑定尚未确认；请使用同一请求重试。', contentTaskId: task.taskId }); return; }
+        res.status(201).json({ thread: threadWithDefaults(saved), task, receipt: { taskId: task.taskId, status: task.status, card } });
+      } catch (error) {
+        const failure = error instanceof AssistantActionError ? error : new AssistantActionError('assistant_content_task_unavailable', 503, '单条内容任务暂时无法建立。');
+        res.status(failure.status).json({ error: failure.code, message: failure.publicMessage });
+      }
     });
   });
 

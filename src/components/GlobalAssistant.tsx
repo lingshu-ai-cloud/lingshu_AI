@@ -37,6 +37,7 @@ import { useAssistantPanelControls } from './assistant/useAssistantPanelControls
 import { useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode } from './assistant/useAssistantHomeAnchor';
 import { useAssistantLauncherRetraction } from './assistant/useAssistantLauncherRetraction';
 import { useAssistantDecisionCount, useAssistantPageContextSignal } from './assistant/useAssistantPageSignals';
+import { useAssistantContentTaskCard } from './assistant/useAssistantContentTaskCard';
 import type { AssistantQuickExecution } from '../lib/assistantQuickEntries';
 import AssistantDecisionDialog from './assistant/AssistantDecisionDialog';
 import {
@@ -268,6 +269,8 @@ export default function GlobalAssistant({
     stablePersistenceScope, persistenceFenceRef, assistantThreadSaveQueuesRef,
     hydrateThread, setPersistenceMetadata,
   });
+  useAssistantContentTaskCard({ active: mode === 'chat', focusedTaskId: activeThread.focusedTaskId,
+    agentId: activeAgent, scopeKey: persistenceScopeKey, upsertTaskCard, persistThread });
   const {
     decisionDialog, setDecisionDialog, decisionFeedRevision, setDecisionFeedRevision,
     decisionTotal, setDecisionTotal, decisionDialogRestoreFocusRef,
@@ -484,11 +487,10 @@ export default function GlobalAssistant({
 
   const { send, sendComposerMessage } = useAssistantSend({
     page, pageContext, currentPageAgent, enterpriseContext, loading, fileGenerating, replyStreaming,
-    contentIntake, uiMessage, modal, persistenceFenceRef, stablePersistenceScope,
-    pendingMapFileRef, pipelineModalOpenRef, abortRef, openAgent, presentActionResponse,
-    setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, setLoading,
-    setFileGenerating, setReplyStreaming, setAssistantTool, setPanelView, setWelcomeBubbleVisible,
-    setMode, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
+    contentIntake, uiMessage, persistenceFenceRef, stablePersistenceScope,
+    pendingMapFileRef, abortRef, openAgent, presentActionResponse,
+    setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, focusTaskCard, hydrateThread, setLoading,
+    setFileGenerating, setReplyStreaming, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
     activeAgent, draftInput: activeThread.draftInput, pendingAttachments, attachmentUploading,
     weeklyPlanKickoffAvailable, uploadedAttachmentCacheRef, setAttachmentError,
     setAttachmentUploading, setPendingAttachments, openWeeklyPlanFromAssistant,

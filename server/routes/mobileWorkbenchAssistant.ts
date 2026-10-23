@@ -12,6 +12,9 @@ import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { mobileWorkbenchActionCapabilityAllowed } from './mobileWorkbenchActions.js';
 import type { MobileWorkbenchActionInput } from './mobileWorkbenchActions.js';
 import { readLocalCustomerConversations, summarizeLocalCustomerConversations } from '../customerService/localConversations.js';
+import { projectContentProductionTaskCard, type ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard.js';
+import { STARTER_COLLECTIONS, type StarterRecord } from '../starter198/repository.js';
+import { socialTaskSummary } from '../starter198/socialContentRecords.js';
 
 export type MobileAssistantTopic = 'weekly_progress' | 'agent_status' | 'published_videos' | 'qualified_inquiries' | 'exposure';
 export interface MobileAssistantOptions {
@@ -19,14 +22,39 @@ export interface MobileAssistantOptions {
   grounding?: typeof buildChatGrounding;
   authorizeAction?: (identity: AuthLocals, action: MobileWorkbenchActionInput, subject: Record_) => Promise<boolean>;
 }
+export type MobileCurrentContentTask = {
+  availability: 'available' | 'empty' | 'unavailable';
+  card: ContentProductionTaskCard | null;
+};
 const TOPICS: MobileAssistantTopic[] = ['weekly_progress', 'agent_status', 'published_videos', 'qualified_inquiries', 'exposure'];
 const labels: Record<MobileAssistantTopic, string> = {
   weekly_progress: '这周任务推进到哪了？', agent_status: 'Agent 现在分别在做什么？',
   published_videos: '这周有哪些视频已经发出？', qualified_inquiries: '这周有哪些有效询盘？', exposure: '这周视频获得多少曝光？',
 };
+export async function readMobileCurrentContentTask(store: DataStore, tenantId: string): Promise<MobileCurrentContentTask> {
+  try {
+    const rows = await store.list<StarterRecord>(STARTER_COLLECTIONS.socialContentTasks, {
+      where: { tenant_id: tenantId }, page: 1, perPage: 50, sort: '-updated_at',
+    });
+    const instantRows = rows.items.filter(row => row.tenant_id === tenantId && String(row.task_mode || 'weekly') === 'instant');
+    if (!instantRows.length) return { availability: 'empty', card: null };
+    const summaries = instantRows.flatMap(row => {
+      try { return [socialTaskSummary(row)]; } catch { return []; }
+    });
+    if (!summaries.length) return { availability: 'unavailable', card: null };
+    const terminal = new Set(['delivered', 'reviewed', 'cancelled']);
+    const task = summaries.find(item => !terminal.has(item.status)) ?? summaries[0]!;
+    return { availability: 'available', card: projectContentProductionTaskCard(task) };
+  } catch {
+    return { availability: 'unavailable', card: null };
+  }
+}
 export async function buildMobileAssistantContext(store: DataStore, tenantId: string, now = new Date(), weekStart?: unknown) {
-  const overview = await buildMobileWorkbenchOverview(store, tenantId, mobileWorkbenchWeekRange(now, weekStart));
-  return { ...overview, quickQuestions: TOPICS.map(topic => ({ topic, label: topic === 'agent_status' && overview.agents.items.some(a => a.currentTask) ? '看看 Agent 当前在途任务' : topic === 'qualified_inquiries' && overview.metrics.qualifiedInquiries.value ? `查看本周 ${overview.metrics.qualifiedInquiries.value} 条有效询盘` : labels[topic] })), executionPolicy: 'preview_then_confirm' };
+  const [overview, currentContentTask] = await Promise.all([
+    buildMobileWorkbenchOverview(store, tenantId, mobileWorkbenchWeekRange(now, weekStart)),
+    readMobileCurrentContentTask(store, tenantId),
+  ]);
+  return { ...overview, currentContentTask, quickQuestions: TOPICS.map(topic => ({ topic, label: topic === 'agent_status' && overview.agents.items.some(a => a.currentTask) ? '看看 Agent 当前在途任务' : topic === 'qualified_inquiries' && overview.metrics.qualifiedInquiries.value ? `查看本周 ${overview.metrics.qualifiedInquiries.value} 条有效询盘` : labels[topic] })), executionPolicy: 'preview_then_confirm' };
 }
 export function answerMobileAssistant(context: Awaited<ReturnType<typeof buildMobileAssistantContext>>, topic: MobileAssistantTopic) {
   const m = context.metrics;

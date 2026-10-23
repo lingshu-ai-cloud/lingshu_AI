@@ -4,7 +4,9 @@ import test from 'node:test';
 import express from 'express';
 import { AssistantActionError, type AssistantActionService } from '../assistant/actionRouting.js';
 import { Starter198RepositoryError, starter198Repository } from '../starter198/repository.js';
+import { defaultBrief } from '../starter198/socialContentTaskSupport.js';
 import type { DataStore, ListQuery } from '../storage/datastore.js';
+import type { SocialContentTaskSummary } from '../../shared/contracts/socialContentTaskContract.js';
 
 const previousEnvironment = {
   NODE_ENV: process.env.NODE_ENV,
@@ -52,6 +54,93 @@ function memoryStore(seed: Row[] = []): DataStore {
     },
   };
 }
+
+function instantTask(taskId = 'content-one'): SocialContentTaskSummary {
+  const timestamp = '2026-10-24T08:00:00.000Z';
+  return {
+    taskId, brief: defaultBrief({
+      title: '青柠精华短视频', objective: '制作一条产品短视频', productId: 'product-one',
+      productRef: '青柠精华', platforms: ['tiktok'], formats: ['video'], mode: 'instant',
+    }),
+    status: 'draft', version: '1', packageSelection: [], readiness: { complete: false, missing: ['material'] },
+    runId: null, sourceCount: 0, knowledgeSourceCount: 0, materialSourceCount: 0, artifactCount: 0,
+    approvedArtifactCount: 0, deliveryPackageCount: 0, publicationCount: 0, metricSubmissionCount: 0,
+    createdAt: timestamp, updatedAt: timestamp, mode: 'instant', weeklyPlanId: null,
+  };
+}
+
+const instantTaskRequest = {
+  expectedThreadVersion: 0,
+  idempotencyKey: 'assistant-content:0:12345678',
+  message: '请为青柠精华制作一条短视频',
+  task: {
+    title: '青柠精华短视频', objective: '制作一条产品短视频', productId: 'product-one', productRef: '青柠精华',
+    platforms: ['tiktok'], formats: ['video'], requestedOutputCount: 1, planningMode: 'auto_adjust',
+    restrictions: [], dueAt: null, creationMode: 'material_processing', assetAvailability: 'none',
+    managementMode: 'one_click_managed', productionMode: 'social_ready', productionApproach: 'ai_enhanced', mode: 'instant',
+  },
+};
+
+test('content task endpoint binds one server task, message and authoritative card without starting paid production', async () => {
+  const calls: string[] = [];
+  const app = express(); app.use(express.json());
+  app.use('/api/overseas/assistant-threads', createAssistantThreadsRouter({
+    dataStore: memoryStore(),
+    createInstantContentTask: async input => { calls.push(input.idempotencyKey); return instantTask(); },
+    authMiddleware: (_req, res, next) => { res.locals.tenantId = 'tenant-a'; res.locals.userId = 'user-a'; next(); },
+  }));
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/overseas/assistant-threads`;
+  try {
+    const response = await fetch(`${base}/business/content-tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(instantTaskRequest) });
+    assert.equal(response.status, 201);
+    const body = await response.json();
+    assert.deepEqual(calls, [instantTaskRequest.idempotencyKey]);
+    assert.equal(body.task.taskId, 'content-one');
+    assert.equal(body.task.runId, null, 'creating the task must not start a paid run');
+    assert.equal(body.receipt.card.contentTaskId, 'content-one');
+    assert.equal(body.receipt.card.cardVersion, '1');
+    assert.equal(body.thread.focusedTaskId, 'social-content:content-one');
+    assert.deepEqual(body.thread.messages.map((item: { role: string }) => item.role), ['user', 'assistant']);
+    const replay = await fetch(`${base}/business/content-tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(instantTaskRequest) });
+    assert.equal(replay.status, 409, 'a stale thread version cannot append a duplicate conversation binding');
+    assert.equal(calls.length, 1, 'version conflict must be checked before task creation');
+  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});
+
+test('a lost conversation bind retries the same idempotent task and appends the message once', async () => {
+  const baseStore = memoryStore();
+  let failCreate = true;
+  const storeWithLostCreate: DataStore = {
+    ...baseStore,
+    async create<T>(collection, data) {
+      if (collection === 'assistant_threads' && failCreate) { failCreate = false; return null; }
+      return baseStore.create<T>(collection, data);
+    },
+  };
+  const taskIds: string[] = [];
+  const app = express(); app.use(express.json());
+  app.use('/api/overseas/assistant-threads', createAssistantThreadsRouter({
+    dataStore: storeWithLostCreate,
+    createInstantContentTask: async input => { taskIds.push(`${input.idempotencyKey}:content-one`); return instantTask(); },
+    authMiddleware: (_req, res, next) => { res.locals.tenantId = 'tenant-a'; res.locals.userId = 'user-a'; next(); },
+  }));
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/overseas/assistant-threads/business/content-tasks`;
+  try {
+    const first = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(instantTaskRequest) });
+    assert.equal(first.status, 503);
+    assert.equal((await first.json()).error, 'assistant_content_task_binding_pending');
+    const retry = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(instantTaskRequest) });
+    assert.equal(retry.status, 201);
+    const result = await retry.json();
+    assert.deepEqual(taskIds, [
+      `${instantTaskRequest.idempotencyKey}:content-one`, `${instantTaskRequest.idempotencyKey}:content-one`,
+    ]);
+    assert.equal(result.task.taskId, 'content-one');
+    assert.equal(result.thread.messages.length, 2);
+  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});
 
 test('assistant action endpoint is authenticated, tenant-scoped and mounted on the existing thread router', async () => {
   const contexts: Array<{ tenantId: string; userId: string }> = [];

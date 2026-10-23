@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Message } from '../App';
 import type { AssistantActionId, AssistantActionTarget, AssistantCardItem } from '../../shared/contracts/assistantActions';
+import type { ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard';
 
 export type OrbitAgentId = 'business' | 'director' | 'content' | 'customer';
 
@@ -30,6 +31,8 @@ export interface AssistantTaskCard {
   primaryAction?: AssistantCardAction;
   secondaryActions: AssistantCardAction[];
   workspace?: { label: string; href: string };
+  /** Authoritative business projection for an instant ContentTask. */
+  contentTask?: ContentProductionTaskCard;
   updatedAt: number;
 }
 

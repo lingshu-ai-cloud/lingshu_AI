@@ -9,7 +9,7 @@ function createAssistantController(options) {
   const cancel = options.cancel || clearTimeout
   const contextMode = options.contextMode === 'customer_service' ? 'customer_service' : 'operator'
   let epoch = 0, timer = null, scope = '', disposed = false
-  let state = { sessionId: '', messages: [], suggestions: [], preview: null, receipts: [], loading: false, sending: false, confirming: false, error: '', input: '', recording: false, transcribing: false }
+  let state = { sessionId: '', messages: [], suggestions: [], contentTask: null, preview: null, receipts: [], loading: false, sending: false, confirming: false, error: '', input: '', recording: false, transcribing: false }
   const update = patch => { state = { ...state, ...patch }; emit({ ...state }) }
   const key = () => 'mobile-assistant-pending:' + scope
   const makeKey = () => 'assistant-' + Date.now() + '-' + Math.random().toString(36).slice(2)
@@ -22,29 +22,32 @@ function createAssistantController(options) {
     stop()
     const ticket = epoch
     try {
-      const receipts = await Promise.all(state.receipts.map(async receipt => terminal(receipt) ? receipt : (await request('mobile-workbench/actions/' + encodeURIComponent(receipt.id))).receipt))
+      const [context, receipts] = await Promise.all([
+        request('mobile-workbench/assistant/context'),
+        Promise.all(state.receipts.map(async receipt => terminal(receipt) ? receipt : (await request('mobile-workbench/actions/' + encodeURIComponent(receipt.id))).receipt))
+      ])
       if (!live(ticket)) return
-      update({ receipts })
+      update({ receipts, suggestions: context.quickQuestions || state.suggestions, contentTask: context.currentContentTask || null })
       pending.receiptIds = receipts.filter(receipt => !terminal(receipt)).map(receipt => receipt.id); save()
     } catch (error) { if (live(ticket)) update({ error: error.message || '执行状态暂时无法更新，稍后重试。' }) }
-    if (live(ticket) && state.receipts.some(receipt => !terminal(receipt))) timer = schedule(poll, 3000)
+    if (live(ticket) && (state.receipts.some(receipt => !terminal(receipt)) || state.contentTask?.card?.overallState === 'processing')) timer = schedule(poll, 5000)
   }
   async function restore(nextScope) {
     stop(); epoch++; disposed = false; scope = String(nextScope || '')
     if (!scope) throw new Error('助手需要已登录的企业账号')
     pending = storage.get(key()) || {}
     const ticket = epoch
-    update({ sessionId: '', messages: [], suggestions: [], receipts: [], preview: null, loading: true, sending: false, confirming: false, error: '', answer: '', evidence: [], actions: [], links: [], input: '' })
+    update({ sessionId: '', messages: [], suggestions: [], contentTask: null, receipts: [], preview: null, loading: true, sending: false, confirming: false, error: '', answer: '', evidence: [], actions: [], links: [], input: '' })
     try {
       const sessionPath = 'mobile-workbench/assistant/sessions?contextMode=' + encodeURIComponent(contextMode)
       const [context, sessions] = await Promise.all([request('mobile-workbench/assistant/context'), request(sessionPath)])
       let session = (sessions.sessions || [])[0]
       if (!session) session = (await request('mobile-workbench/assistant/sessions', 'POST', { contextMode })).session
       const history = await request('mobile-workbench/assistant/sessions/' + encodeURIComponent(session.id) + '/messages')
-      const result = { sessionId: session.id, messages: history.messages, suggestions: context.quickQuestions, receipts: history.receipts || [] }
+      const result = { sessionId: session.id, messages: history.messages, suggestions: context.quickQuestions, contentTask: context.currentContentTask || null, receipts: history.receipts || [] }
       if (!live(ticket)) return
       const receipts = result.receipts || []
-      update({ sessionId: result.sessionId, messages: result.messages || [], suggestions: result.suggestions || [], receipts })
+      update({ sessionId: result.sessionId, messages: result.messages || [], suggestions: result.suggestions || [], contentTask: result.contentTask, receipts })
       // Session is authoritative, but locally accepted receipts survive a lost response.
       const missing = (pending.receiptIds || []).filter(id => !receipts.some(receipt => receipt.id === id))
       for (const id of missing) {

@@ -1,8 +1,18 @@
 const api = require('../../../lib/api')
 const assistant = require('../../../lib/assistant')
 
+function contentTaskView(value) {
+  const wrapper = value && typeof value === 'object' ? value : null
+  const card = wrapper && wrapper.availability === 'available' ? wrapper.card : null
+  if (!card) return null
+  const states = { needs_input:'待我处理', needs_approval:'待我处理', processing:'灵小枢处理中', paused:'已暂停', failed:'需要处理', completed:'已完成', cancelled:'已取消' }
+  const actions = { supply_input:'去补充', review:'去验收', view:'查看详情', download:'查看交付', none:'查看记录' }
+  const progress = card.progress?.mode === 'units' ? `${card.progress.completed}/${card.progress.total}` : ''
+  return { ...card, stateLabel:states[card.overallState] || '状态待核实', actionLabel:actions[card.nextAction] || '查看详情', progress }
+}
+
 Page({
-  data: { loading: true, sending: false, recording: false, transcribing: false, inputMode: 'voice', error: '', messages: [], suggestions: [], showSuggestions: false, input: '', anchor: '', preview: null, receipts: [], actions: [], confirming: false, statusBarHeight: 24, headerHeight: 48, contentTop: 72, serviceMode: false, agentTitle: '编导 Agent', agentNote: '内容编导助手', welcomeTitle: '今天想推进什么？', welcomeNote: '可以询问真实任务、询盘与执行状态', showSessions: false, sessionsLoading: false, sessions: [], historySession: null, historyMessages: [] },
+  data: { loading: true, sending: false, recording: false, transcribing: false, inputMode: 'voice', error: '', messages: [], suggestions: [], showSuggestions: false, input: '', anchor: '', contentTask: null, preview: null, receipts: [], actions: [], confirming: false, statusBarHeight: 24, headerHeight: 48, contentTop: 72, serviceMode: false, agentTitle: '编导 Agent', agentNote: '内容编导助手', welcomeTitle: '今天想推进什么？', welcomeNote: '可以询问真实任务、询盘与执行状态', showSessions: false, sessionsLoading: false, sessions: [], historySession: null, historyMessages: [] },
   async onLoad(options = {}) {
     const serviceMode = options.edition === 'service'
     if (serviceMode) this.setData({ serviceMode, agentTitle: '客服 Agent', agentNote: '询盘转化助手', welcomeTitle: '今天要回复谁？', welcomeNote: '可以查询真实询盘、生成回复和安排跟进' })
@@ -33,7 +43,7 @@ Page({
       onChange: state => {
         const labels = { accepted:'已接收', queued:'排队中', running:'执行中', waiting_user:'等待你处理', succeeded:'操作已完成', failed:'操作失败', cancelled:'已取消' }
         const messages = (state.messages || []).map(message => ({ ...message, content: message.text || message.content || '' }))
-        this.setData({ messages, suggestions:(state.suggestions || []).map(item => typeof item === 'string' ? item : item.label), loading:state.loading, sending:state.sending, input:state.input || '', preview:state.preview, receipts:(state.receipts || []).map(item => ({...item,statusLabel:labels[item.status] || '状态待核实'})), actions:state.actions || [], confirming:state.confirming, anchor:messages.length ? messages[messages.length - 1].id : '', ...(state.error ? {error:state.error} : {}) })
+        this.setData({ messages, suggestions:(state.suggestions || []).map(item => typeof item === 'string' ? item : item.label), contentTask:contentTaskView(state.contentTask), loading:state.loading, sending:state.sending, input:state.input || '', preview:state.preview, receipts:(state.receipts || []).map(item => ({...item,statusLabel:labels[item.status] || '状态待核实'})), actions:state.actions || [], confirming:state.confirming, anchor:messages.length ? messages[messages.length - 1].id : '', ...(state.error ? {error:state.error} : {}) })
       }
     })
   },
@@ -67,6 +77,12 @@ Page({
   },
   ask(e) { this.setData({ input: e.currentTarget.dataset.text, showSuggestions: false }); this.send() },
   async send() { const value = this.data.input.trim(); if (!value || this.data.sending) return; try { await this.controller.send(value) } catch (error) { this.setData({ error:error.message, input:value }) } },
+  openContentTask() {
+    const card = this.data.contentTask
+    if (!card) return
+    const path = card.nextAction === 'review' ? '/packages/operator/review/index' : card.nextAction === 'supply_input' ? '/packages/operator/shooting/index' : '/pages/workbench/index'
+    wx.navigateTo({ url: `${path}?contentTaskId=${encodeURIComponent(card.contentTaskId)}` })
+  },
   async ensureRecordPermission() {
     const setting = await new Promise(resolve => wx.getSetting ? wx.getSetting({ success: resolve, fail: () => resolve({authSetting:{}}) }) : resolve({authSetting:{}}))
     if (setting.authSetting?.['scope.record'] === false) return this.recoverRecordPermission()
