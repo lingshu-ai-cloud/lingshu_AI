@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 租户隔离源码合同随模块迁移收口（2026-10-23）
+
+- 代码提交 `e05228ab3ababb1bd7113334e57c7f3ea200cc92` 将 `test:tenant-isolation` 中仍扫描旧文件位置的断言对齐到实际模块，并同时检查路由/页面挂载：企业 AI 授权、资产对象键和本地回退、助手引导与关闭、企业表单、WhatsApp 入站、Studio 素材签名与项目读写仍被同一安全合同覆盖。未改变业务栅栏或真实外部行为；上一批记录的该测试失败现已消除。
+- `test:tenant-isolation`、完整 `test:assistant`、`test:enterprise-profile-lifecycle`、`pnpm run lint`、架构扫描/ratchet、193 项迁移仓库只读检查、生产构建与 `git diff --check` 通过。Studio 主 chunk 为 480,933/485,000 字节，仍有大 chunk 提示；历史超限文件仍有 6 个。未调用真实供应商、执行目标库迁移、登录后浏览器验收或部署；远端 SHA 与工作区状态待推送后核验。
+
 ## Studio 素材响应与企业产品投影拆分（2026-10-23）
 
 - 代码提交 `bf831569ed426855fc3462313941cf58e84bc2b2` 将已读取素材的租户签名播放地址、私有对象键清除、能力清单及企业产品表素材身份投影迁至 `server/routes/studioMaterialProjection.ts`；租户读取、鉴权和持久化仍在 `studio.ts`。`studio.ts` 从 7,789 降至 7,627 行并收紧历史预算；全仓仍有 6 个历史超限文件。
