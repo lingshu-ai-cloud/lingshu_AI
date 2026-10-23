@@ -83,13 +83,13 @@ import {
   type ImageDeliverable,
   type ImageProductionStrategy,
 } from '../../shared/imageCreativePlanning.js';
-import { auditShotEvidence } from '../lib/shotEvidenceAudit.js';
 import { validateSpeechCues } from '../../src/lib/narrationAlignment.js';
 import { safeStudioRenderOutputPath, studioRenderMediaRouter } from '../lib/studioRenderMedia.js';
 import { createStudioAsrRouter } from '../lib/studioAsrRouter.js';
 import type { AvatarMediaCheck } from '../lib/avatarMediaCheck.js';
 import { createStudioAvatarProductionRouter } from '../lib/studioAvatarProduction.js';
-import { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
+import { studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
+import { createStudioProjectReadRouter, projectFromRecord, type StudioProject } from './studioProjectReadRoutes.js';
 import { freeCreationCompletionIssues, normalizeFreeCreationProjectSpec } from '../../shared/contracts/freeCreationProject.js';
 import { STUDIO_MANUAL_HANDOFF_ACTIONS, isManualStudioProject, studioProjectRenderPaths } from '../../shared/contracts/studioManualHandoff.js';
 import { compareAndSwapStudioProject, studioProjectRevisionConflict } from '../lib/studioProjectRevision.js';
@@ -262,9 +262,8 @@ import {
   type StudioMaterialUsageProject,
 } from '../lib/materialUsageTracking.js';
 import { EMPTY_MATERIAL_USAGE_SUMMARY, type MaterialUsageSummary } from '../../shared/contracts/materialUsageTracking.js';
-import { bindSocialProjectSpec, digitalEmployeeProjectBelongs, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
-import { assertFrozenStudioProjectWrite, frozenStudioProjectSpec } from '../starter198/socialContentStudioFrozenBridge.js';
-import { readFrozenStudioOperationalEvidence } from '../starter198/socialContentStudioOperationalEvidence.js';
+import { bindSocialProjectSpec, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
+import { assertFrozenStudioProjectWrite } from '../starter198/socialContentStudioFrozenBridge.js';
 import { dedupeStoryboardProductNameSubtitles, enforceProductNameInScript, ensureSelectedProductNamesInScript, hasRepetitiveStoryboard, hasUnnaturalVoiceover, jaccardSimilarity, normalizeProductIdentity, normalizeScriptTimestamps, productFactCandidates, selectedProductNames, stripScriptAnalysisSummary } from '../lib/studioScriptNormalization.js';
 import { compactBriefCategory, productBrief } from '../lib/studioProductBrief.js';
 export { ensureSelectedProductNamesInScript } from '../lib/studioScriptNormalization.js';
@@ -8195,30 +8194,6 @@ studioRouter.use('/bgm', createStudioBgmRouter());
    对应前端「我的草稿 / 我的作品」。save 既可新建也可更新（带 id 即更新）。
 ─────────────────────────────────────────────────────────────────────────── */
 
-interface StudioProject {
-  id: string;
-  title: string;
-  status: 'draft' | 'ready_for_approval' | 'published' | 'template';
-  spec: Record<string, unknown>;
-  thumbSeed?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-type StoredStudioProject = StudioProject & { tenant_id: string };
-
-function projectFromRecord(record: any, tenantId: string): StudioProject {
-  return {
-    id: String(record.id),
-    title: String(record.title || '未命名草稿'),
-    status: record.status || 'draft',
-    spec: { ...refreshStudioProjectAssetUrls(frozenStudioProjectSpec(record.spec || {}), tenantId), _baseUpdatedAt: String(record.updated_at || record.updated || '') },
-    thumbSeed: record.thumb_seed || undefined,
-    createdAt: String(record.created_at || record.created || ''),
-    updatedAt: String(record.updated_at || record.updated || ''),
-  };
-}
-
 export function unpublishableGenerationReasons(spec: Record<string, unknown>): string[] {
   const reasons: string[] = [];
   const inspect = (label: string, value: unknown) => {
@@ -8271,15 +8246,7 @@ export function unpublishableGenerationReasons(spec: Record<string, unknown>): s
   return Array.from(new Set(reasons));
 }
 
-// GET /studio/projects → 列表（更新时间倒序）
-studioRouter.get('/projects', async (_req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const result = await store.list<StoredStudioProject>('studio_projects', { where: { tenant_id: tenantId }, sort: '-updated_at', perPage: 500 });
-  const taskId = socialProjectTaskId(res.locals);
-  res.json(result.items
-    .filter(project => socialProjectBelongs(project, taskId))
-    .map(project => projectFromRecord(project, tenantId)));
-});
+studioRouter.use('/projects', createStudioProjectReadRouter(loadMaterials, store));
 
 /** Trusted worker adoption uses the same current-input and KB checks as Studio. */
 export async function automationStoryboardAssignmentIssues(tenantId: string, projectId: string, spec: Record<string, unknown>, materials = loadMaterials()): Promise<string[]> {
@@ -8680,34 +8647,6 @@ studioRouter.post('/projects', async (req, res) => {
   res.status(201).json({ ok: true, project: projectFromRecord(created, tenantId) });
 });
 
-// GET /studio/projects/:id/evidence → verify that shot assignments remain grounded in owned material ranges.
-studioRouter.get('/projects/:id/evidence', async (req, res) => {
-  try {
-    const tenantId = res.locals.tenantId as string;
-    const project = await store.getById<any>('studio_projects', req.params.id);
-    if (!project || project.tenant_id !== tenantId || !socialProjectBelongs(project, socialProjectTaskId(res.locals))) { res.status(404).json({ error: '草稿不存在' }); return; }
-    const gaps = auditShotEvidence(project.spec || {}, loadMaterials(), tenantId);
-    res.setHeader('Cache-Control', 'private, no-store');
-    res.json({ ok: true, projectId: project.id, revision: project.updated_at, gaps, status: gaps.length ? 'needs_review' : 'range_checked', note: '范围和动作文本校验，不代表视觉或产品功效已验证；未读取到的云端素材需人工核对。' });
-  } catch { res.status(503).json({ error: '素材依据检查失败，请稍后重试' }); }
-});
-
-// GET /studio/projects/:id → 单个（用于再编辑）
-studioRouter.get('/projects/:id', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const p = await store.getById<any>('studio_projects', req.params.id);
-  const workflowRunId = String(req.query.workflowRunId || '').trim();
-  const workflowTaskId = String(req.query.workflowTaskId || '').trim();
-  const belongs = p && (socialProjectBelongs(p, socialProjectTaskId(res.locals))
-    || digitalEmployeeProjectBelongs(p, workflowRunId, workflowTaskId));
-  if (!p || p.tenant_id !== tenantId || !belongs) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
-  const projected=projectFromRecord(p,tenantId);
-  const contract=projected.spec.resolvedStudioContract as Record<string,unknown>|undefined;
-  if(contract){const readonlyContract=structuredClone(contract);projected.spec.resolvedStudioContract=readonlyContract;try{readonlyContract.operationalEvidence=await readFrozenStudioOperationalEvidence({dataStore:store,tenantId,projectId:String(p.id),spec:p.spec});}
-    catch(error){const reason=error instanceof Error&&/^(?:studio|speech|mvp|content)_[a-z_]+$/.test(error.message)?error.message:'canonical_evidence_unavailable';readonlyContract.operationalEvidence={schemaVersion:'social-studio-operational.v1',status:'unavailable',reason,artifactCompleted:false,humanApproved:false};}}
-  res.json(projected);
-});
-
 // Re-run the final project gate after any manual script, storyboard, material,
 // subtitle, voice or render change. The signed record is bound to the complete
 // current input fingerprint; later edits make it stale without trusting UI state.
@@ -8759,18 +8698,6 @@ studioRouter.post('/projects/:id/requality', async (req, res) => {
 
 // These records are created only by an explicit user action after reviewing a
 // completed manual render. Saving or exporting a project never creates one.
-studioRouter.get('/projects/:id/manual-handoffs', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const project = await store.getById<any>('studio_projects', req.params.id);
-  if (!project || project.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
-  const result = await store.list<any>('studio_manual_handoffs', {
-    where: { tenant_id: tenantId, project_id: req.params.id }, sort: '-created_at', perPage: 100,
-  });
-  res.setHeader('Cache-Control', 'private, no-store');
-  res.json({ ok: true, handoffs: result.items.map(item => ({ id: item.id, action: item.action,
-    status: item.status, renderPath: item.render_path, createdAt: item.created_at, createdBy: item.created_by })) });
-});
-
 studioRouter.post('/projects/:id/manual-handoffs', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   const project = await store.getById<any>('studio_projects', req.params.id);
