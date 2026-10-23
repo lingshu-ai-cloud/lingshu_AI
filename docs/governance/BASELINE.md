@@ -2,6 +2,15 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵感工作区完整拆分与五文件治理目标调整（2026-10-23）
+
+- 用户确认目标：完成原五个大文件的职责拆分，充分考虑外部依赖；800 行只作规模提示，不机械切片。现有架构门禁不放宽，完成依据为明确职责、依赖方向、入口兼容和行为回归。后续顺序与调用方盘点记入 [灵感工作区及剩余治理 ADR](../architecture/adr/2026-10-23-inspiration-workspace-boundaries.md)。整个五文件治理目标仍在进行。
+- 起点：集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `2e889cf4a18204b0c12d8ea42fd7f86bc66e813e`，工作区干净。源码提交 `88273c4263852dea14acc5f143304a9c7afcec59` 将发现库存/轮询、分析动作、创作交接、素材工作区、编辑/删除和素材画廊按完整职责迁出；页面保留共享选中状态、导航核验与装配。新模块通过明确类型端口连接，不从页面反向导入实现；原具名导出、主应用/流量页懒加载和开发审核入口兼容。
+- 灵感页 **2,014→654 行**，移除该历史超限预算；迁出的五个 Hook 分别为 428、252、235、510、127 行，素材画廊 262 行，共享合同 73 行。规模变化来自职责划分。28 个迁移函数正文和画廊 JSX 的 token 对照保持一致。当前剩余四项为数字员工 4,113、Studio 路由 7,221、视频路由 7,823、Studio 页面 12,000；不能用架构门禁通过替代后续完整治理。
+- 新增 7 项隔离端口行为测试并纳入视频来源领域组，覆盖分析完成/失败/暂停、无记录拒绝、图文状态同步/失败不重提、上传归属先写后刷新与通知。更新分页、素材所有权/产品集合、图文分析、预览、创作交接和二进制上传的旧源码位置合同，保留原断言语义。
+- 实际通过：`pnpm run lint`、`ARCHITECTURE_BASE_REF=2e889cf4 pnpm run check:architecture`（2,432 个生产 TypeScript 文件）、`pnpm run test:architecture-ratchet`、`pnpm run check:digital-employee-migrations`（193 项只读完整性）、`pnpm run test:video-source-boundaries`（157/157）、`pnpm run test:social-content-frontend`、`pnpm run test:social-managed`、`pnpm run test:tenant-isolation`、`node --import tsx --test server/security/supportSessionReadOnly.test.ts`，以及上传/素材对话/数字员工页面/新行为的额外 11 项组合。最终 `pnpm run build` 通过，无大 chunk 警告，Studio chunk 480,957/485,000 字节；源码暂存后 `git diff --cached --check` 通过。
+- 本批同时只读扫描了原五文件在 `src/`、`server/`、`shared/` 的静态、转导出和字符串动态导入；后续必须继续保留 Worker 初始化、运行协调、移动重试、生产/分析 Legacy Ports、语音付费上下文、Studio 类型与 `fontCss` 调用契约。未执行真实供应商、LinkedIn 付费采集、目标库迁移、登录后浏览器验收、发布或部署。其他工作树和 `sources/` 未改动；普通分支推送不触发部署的边界已复核。源码与文档分开提交；最终文档 SHA 和本地/远端一致性以推送后 Git 核验为准。
+
 ## 业务资源准备与回执观察完整职责拆分（2026-10-23）
 
 - 起点：集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `5877764ca774446dfc86c48fad05a14a61cc3d49`，工作区干净，旧主会话 idle。源码提交 `5fe36cf0bc305c3ee9f40063adc3a8c7c30c9696` 将采集、内容生产/质量、发布、客户归因、分层、跟进草稿与发送回执的准备/观察职责整组迁出。

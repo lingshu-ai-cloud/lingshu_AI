@@ -4,7 +4,7 @@
 
 ## 边界
 
-- `src/components/inspiration/InspirationMaterialDialogs.tsx`：仅展示素材上传归属与编辑/删除确认弹窗，沿用产品规范中的 Ant Modal/Input/Select 和现有 Token。`InspirationDashboard.tsx` 仍持有租户身份、上传文件选择、保存/删除请求、忙碌状态和结果刷新；弹窗不能直接调用 API 或自行变更素材归属。
+- `src/components/inspiration/InspirationMaterialDialogs.tsx`：仅展示素材上传归属与编辑/删除确认弹窗，沿用产品规范中的 Ant Modal/Input/Select 和现有 Token。`useInspirationMaterials.ts` 持有上传、素材库存、产品归属、预览与详情状态；`useInspirationItemManagement.ts` 持有编辑/删除状态和请求，页面连接文件选择与确认回调。弹窗不能直接调用 API 或自行变更素材归属。
 - `server/routes/digitalEmployeeFollowupReadRoutes.ts`：数字员工客户跟进批次详情、Worker 状态和人工发送预检的只读 HTTP 端点。由 `digitalEmployees.ts` 在统一鉴权及支持会话只读门禁之后、实际发送端点之前挂载；租户身份只取已认证的 `res.locals`，预检不发起供应商发送。
 - `server/routes/studioTranslationCore.ts` 与 `studioTranslationRoutes.ts`：前者保留语言名称和模型 JSON 解析的共用规则；后者注册企业名称发音翻译、单语及批量翻译端点，持有原 Qwen 模型调用、请求总时限、供应商时限、客户端断连中止与部分结果返回。`studio.ts` 在原鉴权和订阅门禁之后按原顺序挂载，后续 Studio 路由不重建翻译付费或重试旁路。
 - `server/routes/studioVariationBatchRoutes.ts` 与 `studioPublishLinkRoutes.ts`：分别持有 Studio 裂变批次的租户限定本地文件状态与认领/重试，以及终态发布回执链接、指标和素材用量引用。`studio.ts` 在原鉴权、订阅门禁及项目路由之后挂载；发布链接仍须先核验当前租户项目和已验证生成记录，裂变批次路由不会自动调用供应商或发布。
@@ -21,8 +21,8 @@
 - `src/components/assistant/assistantProductionRequest.tsx`：明确的内容生产指令在企业中心产品身份核验后，要求用户确认交付截止时间，再通过现有周任务 API 创建并按真实回执生成任务卡及任务深链；登录/租户作用域栅栏由浮层传入，不在对话文本里冒充脚本生成成功，也不绕过既有生产付费门禁。
 - `src/lib/assistantActionRequest.ts`：确定性助手动作请求的鉴权 HTTP 适配与错误卡映射；409 冲突、422 缺输入、超时结果待确认和无效响应都保持可见，不将请求故障伪装成可回退通用聊天的 `not_handled`。浮层仍负责仅从当前后端签名动作构造变更请求与呈现结果。
 - `src/components/GlobalAssistant.tsx` 与 `src/components/assistant/`：浮层负责对话、任务入口和请求编排；`assistantChatPrompt.ts` 纯组装当前页面、企业、附件和有界历史的问答上下文，策略主路由只传用户原文并由服务端做权威经营事实注入，不把导航提示升级为已核验事实；`src/lib/assistantChatStream.ts` 负责模型首响应/流式空闲超时、SSE 完整性和文件内容完成后生成，浮层保留身份栅栏、消息状态和错误提示；`useAssistantFeatureGuides.ts` 持有功能引导的本地记忆、冷却、企业页一次性提示、指针/焦点触发与计时器清理，浮层只接入展示和点击动作；`useAssistantNotifications.ts` 持有后台任务卡、等待状态、短消息及首次入口提示事件，按通知策略保持日常进度静默，浮层保留用户主动动作结果的展示决定；`useAssistantThreadHydration.ts` 在限定租户/用户范围内恢复线程展示状态、合并本地输入与服务端 CAS 版本，并对旧聚焦卡重新读取权威状态/签名动作，不把旧消息正文带进新会话；`AssistantFloatingReminders.tsx` 只展示右侧提示气泡，入口收起、已打开对话时不显示，等待/短消息/周计划/功能引导优先级由组件投影，状态与回调仍由浮层持有；`AssistantCustomerTodoView.tsx` 仅承载已有客户待办的展示，浮层保留选择客户事件与返回对话回调；`AssistantDecisionDialog.tsx` 承载对话面板之外共用的 Ant 决策详情弹窗，仅接收页面的当前周目标、权威卡和动作回调，关闭/导航焦点栅栏仍由浮层控制；`useAssistantThreadSaveQueue.ts` 负责已限定身份范围内的串行 CAS 保存、冲突合并与退避，浮层仍拥有身份栅栏和生命周期触发；`assistantProductionIntake.ts` 负责明确生产请求识别及从企业中心核验已确认产品，不得仅凭对话文本虚构产品身份；`assistantActionProjection.ts` 负责聚焦卡自然语言动作、后端签名目标与参数、响应卡身份和跨对象动作过滤。页面只调用这些规则，不自行推断业务对象或放行跨对象操作。
-- `src/components/InspirationDashboard.tsx` 与 `src/components/inspiration/inspirationFrameMatching.ts`：灵感页负责展示、交互和素材读取，逐镜素材评分、硬条件、可复制性与替代路线由纯匹配模块负责；图片证据面板由 `ImageEvidenceSummaryPanel.tsx` 承载，展示轮播节奏、可复用模块和图层蓝图。`imagePostAnalysisPresentation.ts` 与 `inspirationAnalysisProjection.ts` 投影图文排队、处理中、结果不明的可见状态和禁重提边界。未核验的产品主体或真实性证据不得靠软评分提升为可复用片段。
-- `src/components/inspiration/InspirationImageCrawlDialog.tsx`：只展示关键词补充采集的现有平台、关键词、数量和忙碌/错误状态；`InspirationDashboard.tsx` 继续持有请求、状态、错误清理与采集结果刷新，不在弹窗中建立独立付费或持久化链路。
+- `src/components/InspirationDashboard.tsx`：持有跨区选中状态、精确审核导航核验、播放与反馈，并装配发现、分析、创作交接、素材和编辑/删除 Hook。发现库存和轮询归 `useInspirationDiscoveryInventory.ts`，分析动作归 `useInspirationAnalysis.ts`，创作交接与复刻任务归 `useInspirationCreation.ts`，素材画廊归只展示的 `InspirationMaterialGallery.tsx`。共享页面/筛选合同独立于页面实现；保留原具名导出和上层调用路径。完整边界与原五文件依赖盘点见 [灵感工作区 ADR](adr/2026-10-23-inspiration-workspace-boundaries.md)。逐镜素材评分、硬条件、可复制性与替代路线仍由 `inspirationFrameMatching.ts` 负责；图片证据面板仍由 `ImageEvidenceSummaryPanel.tsx` 承载。`imagePostAnalysisPresentation.ts` 与 `inspirationAnalysisProjection.ts` 继续投影排队、处理中、结果不明和禁重提边界。
+- `src/components/inspiration/InspirationImageCrawlDialog.tsx`：只展示关键词补充采集的现有平台、关键词、数量和忙碌/错误状态；`useInspirationDiscoveryInventory.ts` 持有请求、状态、错误清理与采集结果刷新，不在弹窗中建立独立付费或持久化链路。
 - `src/components/inspiration/inspirationImageCrawlAction.ts`：关键词补充采集沿用现有服务端端点，编排成功记录投影、图文筛选切换及两份库存刷新；页面注入状态。请求返回前若账号授权已变，旧结果不得写入当前账号视图；无数据和忙碌状态保持可见，不重提供应商请求。
 - `src/components/inspiration/inspirationReferenceImport.ts`：本地 MP4 对标导入的文件校验、现有鉴权入库接口、持久记录读回及有界只读轮询。页面注入列表状态和刷新能力；账号授权变化后旧请求不得读取或写回新会话。本模块不新建分析或付费旁路，逐镜处理仍由现有服务端任务负责。
 - `src/components/inspiration/inspirationExactAnalysisApi.ts`：全片精确分析的现有鉴权提交、记录读取、暂停与响应解析；页面保留分析准入、排队/终态展示、轮询上限和状态所有权。该模块只调用原有端点，不新增付费许可或自动重试。
@@ -131,7 +131,7 @@
 
 ## 架构治理
 
-灵感素材库存的 React 生命周期由 `src/components/inspiration/useInspirationMaterialInventory.ts` 持有：普通素材分页读取、产品详情请求与关闭失效、产品摘要批量刷新共用既有库存读取模块。页面通过该 Hook 读取状态并在既有写入成功后同步库存；Hook 不触发素材写入或模型请求。
+灵感素材库存的 React 生命周期由 `src/components/inspiration/useInspirationMaterialInventory.ts` 持有：普通素材分页读取、产品详情请求与关闭失效、产品摘要批量刷新共用既有库存读取模块。`useInspirationMaterials.ts` 组合该 Hook，并在其持有的上传/收藏/主题写入成功后同步同一库存；只读库存 Hook 本身不触发素材写入或模型请求。页面与画廊、预览及产品详情继续共享一个素材模型。
 
 机器门禁由仓库根目录 `architecture.config.json` 和 `scripts/check-architecture.mjs` 执行。普通生产 TypeScript 文件上限 800 行；历史超限文件使用精确预算，只允许持平或下降。每个治理批次最多拆分 1–2 个热点文件，并单独记录行为验收。
 Studio 的静态支撑模块由 `vite.config.ts` 中的 `studio-support` 分组拆出主控制器 chunk，保持执行顺序；`scripts/check-studio-chunk.mjs` 只约束 `AiCreateStudio` 主 chunk 上限 485,000 字节。拆包不改变模块调用时机，也不代表首屏总传输量或工作台源码结构债务已解决。
