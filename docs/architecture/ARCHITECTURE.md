@@ -121,6 +121,8 @@
 
 ## 依赖方向
 
+数字员工业务资源准备与证据观察分别由 `taskBusinessPreparation.ts` 和 `taskBusinessObservation.ts` 持有。准备侧通过主路由注入的既有调度、浏览器、内容生产、分层/草稿及冻结资料端口执行；观察侧核对租户、运行、任务血缘及真实回执，并复用既有跟进状态恢复/预检。正常协调、审批和纠偏共用该观察器，主路由不再实现逐领域的准备和证明算法。两者不依赖 Express 或整个主路由，调度器和外部能力仅以类型/端口依赖接入。见 [业务准备与观察 ADR](./adr/2026-10-23-task-business-runtime.md)。
+
 周复盘到下一周期的共享应用入口位于 `server/digitalEmployees/weeklyReviewApplication.ts`：复盘生成、定时去重、待办分配和托管续接共用既有存储、启动队列、批准及授权核验端口。摘要投影在 `weeklyReviewProjection.ts`，旧路由摘要导出保留兼容转发；HTTP 参数与响应在 `digitalEmployeeWeeklyReviewRoutes.ts`，主路由和后台导出只做装配/兼容。服务不依赖 Express 或整个主路由，不新增生产或付费执行路径。见 [周复盘与下一周期 ADR](./adr/2026-10-23-weekly-review-application.md)。
 
 数字员工任务纠偏的共享应用入口位于 `server/digitalEmployees/taskInterventionApplication.ts`，HTTP 适配位于 `server/routes/digitalEmployeeTaskInterventionRoutes.ts`。重试、跳过、人工完成、重规划、编导决策和业务证据补充共用 run 锁、审计与原下游失效服务；主路由只装配这些依赖并保留助手/移动端兼容入口。应用模块不读取 HTTP 请求、不依赖 Express，也不拥有新的供应商执行或付费许可路径。详见 [任务纠偏职责 ADR](./adr/2026-10-23-digital-employee-task-intervention.md)。

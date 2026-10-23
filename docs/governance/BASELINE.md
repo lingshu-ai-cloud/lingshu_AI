@@ -2,6 +2,16 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 业务资源准备与回执观察完整职责拆分（2026-10-23）
+
+- 起点：集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `5877764ca774446dfc86c48fad05a14a61cc3d49`，工作区干净，旧主会话 idle。源码提交 `5fe36cf0bc305c3ee9f40063adc3a8c7c30c9696` 将采集、内容生产/质量、发布、客户归因、分层、跟进草稿与发送回执的准备/观察职责整组迁出。
+- `taskBusinessObservation.ts`（245 行）持有租户/运行/任务限定的完成证据判定，复用原跟进恢复与预检端口；它并非承诺零写入的纯查询模块。`taskBusinessPreparation.ts`（323 行）持有资源准备编排，通过明确类型端口复用原调度器、内容生产、客户分层、跟进草稿、冻结企业事实和浏览器执行能力。主路由只装配这两个服务，正常协调、审批预检与纠偏继续共用同一观察入口；没有新增供应商或发送通道。
+- `digitalEmployees.ts` 从 4,561 降至 **4,113 行**，预算同步收紧。`observeTaskProof`、`prepareObserveBusinessResource`、`prepareObserveBusinessResourceDirect` 三个函数与起点源码归一化比较，逻辑正文全部一致。浏览器模式下先持久化采集配置、再进入原点击回调；动态执行适配器、冻结资料、原采集重试策略、知识缺口与逐账号回执判断均保留。完整边界见 [业务准备与观察 ADR](../architecture/adr/2026-10-23-task-business-runtime.md)。全仓仍有 5 个历史超限文件：数字员工 4,113、Studio 路由 7,221、视频路由 7,823、Studio 页面 12,000、灵感页 2,014，结构治理仍未完成。
+- 新增 14 项独立行为测试，通过显式假端口验证：租户汇总不能替代当前任务采集证据、托管内容必须有当前血缘与成片证明、发布需要全部目标账号回执、客户归因与分层范围、只恢复最新有效跟进批次、模拟适配器优先级、未批准采集不点击、配置/点击/执行顺序、已执行采集不自动重提、失败不追加重试、冻结事实与订单传递、知识缺口保留、跟进草稿不发送、空客户不建分群。加原路由、跨周参考和采集重观察合同共 **17/17** 通过，新增测试已纳入 `test:digital-employees`。
+- 扩大定向检查发现旧 `scheduledCollectionReconcile.contract.test.ts` 仍要求 `task.status === 'waiting_external'` 字面形式；只读核对起点已有 `waiting_external`、`waiting_human`、`waiting_approval` 三状态处理。合同更新为检查现行三状态回退，运行逻辑未改。
+- 实际全部通过：上述定向组、`pnpm run lint`、`ARCHITECTURE_BASE_REF=5877764c pnpm run check:architecture`（2,425 个生产 TypeScript 文件）、`pnpm run test:architecture-ratchet`、`pnpm run check:digital-employee-migrations`（193 项仓库只读完整性）、完整 `pnpm run test:digital-employees`、`pnpm run test:production-workflows`、`pnpm run test:execution-gaps`、`pnpm run test:tenant-isolation`、`node --import tsx --test server/security/supportSessionReadOnly.test.ts`、`pnpm run build`，以及暂存后 `git diff --cached --check`。构建无大 chunk 警告，Studio 主 chunk 480,957/485,000 字节，仍接近预算。
+- 未执行真实供应商、LinkedIn 付费采集、目标库迁移、登录后浏览器验收、发布或部署；其他工作树及 `sources/` 未改动。普通分支推送不触发部署的工作流边界已复核。源码和文档分开提交；最终文档 SHA、远端一致性和干净状态以推送后 Git 核验为准。
+
 ## 周复盘与下一周期完整职责拆分（2026-10-23）
 
 - 起点：集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `c79e583dcf912ed412183e5f8586ff2d7a305d06`，工作区干净，旧主会话 idle。源码提交 `5ad6bcc26962d587a15c04c621bd37ef42b9c3d7` 迁出完整的复盘聚合/保存、手动刷新、定时去重、复盘待办分配及托管周期续接。
