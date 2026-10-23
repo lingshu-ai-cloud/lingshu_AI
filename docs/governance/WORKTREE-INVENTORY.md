@@ -3,6 +3,13 @@
 最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。本次只读复核未改写工作树、分支或运行数据；历史移除记录见下文。
 
+## 2026-10-23 集成点 `6d5fb43a` 图片差异与工作树复核
+
+- 复核时集成树 `xixi1021-governance-baseline` 为 `6d5fb43a77e0daff91da93f94f5ec56570d917b9`、Git 工作区干净；该点位不是永久 HEAD。共 11 个注册工作树。6 个非集成树有未提交项：`local-preview-1002` 53、`local-integrated-flow` 91、`local-unified-20261010` 6、`mobile-dual-edition-20261012` 28、`客服` 1、`total-merge-langgraph` 20，全部保留。
+- 4 个非集成树虽干净，仍无新无损归档候选：`safe-all-modules-ui-20261009` 有被忽略的 `data/materials.json`、`data/publishing-uploads/` 等业务数据；`colleague-handoff-20261019` 有被忽略的媒体/运行数据；独立广告树 `xixi1021-full-integration` 当前 `20441982` 有 14 个正向独有补丁及忽略的账号/审计数据；`1022图片生成模块` 的 `23b1bb93` 仍有 1 个非等价独有提交（忽略项仅依赖缓存）。前两树相对集成点无正向独有补丁，但不能据此删除其业务数据。本批未归档、重置、移动任何树。
+- 原图片管线提交 `6e2d2e4f` 与来源 HEAD `95b0bcc1` 均为集成祖先。逐文件对照 `23b1bb93` 后，图层蓝图、蒙版渲染、轮播/GIF 传递及前端图文证据在集成源码中存在，集成实现另有归一化与产品遮挡保护；有意未接线的是其自动 GPT 复核路由，因为用户要求暂留 Qwen→Gemini 现有行为，且真实逐记录付费许可尚未开放。保留该独有来源提交，不把“已选择性合入”误称为整笔合并。
+- `test:social-image-pipeline` 及图文分析/GPT 付费边界聚焦测试 19/19 通过，均为离线验证。按用户决定未测试 LinkedIn 付费采集，也未执行真实供应商、目标库迁移、浏览器验收或部署。
+
 ## 2026-10-23 集成点 `f55296b8` 只读复核
 
 - Git 仍登记 11 个工作树。集成树 `xixi1021-governance-baseline` 在本次复核时本地/远端同为 `f55296b80766864e4555325027adc637945777ef`，Git 工作区干净；此 SHA 是复核点，不是永久最新指针。
