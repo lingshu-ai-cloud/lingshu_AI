@@ -144,7 +144,7 @@ const weeklyWorkUpdateSource = pageSource.slice(
 );
 const confirmWeeklyPlanSource = pageSource.slice(
   pageSource.indexOf('const confirmWeeklyPlan'),
-  pageSource.indexOf('const goLive'),
+  pageSource.indexOf('const returnToLatest'),
 );
 const controlWeeklyWorkSource = pageSource.slice(
   pageSource.indexOf('const controlWeeklyWork'),

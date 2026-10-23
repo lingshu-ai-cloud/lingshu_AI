@@ -7,16 +7,13 @@ import { initialOperatingPlanFingerprint, initialPlanVideoPlans, initialPlanMatr
 import { productionApi } from "../lib/productionApi";
 import { presenterProductionGate, type PresenterProductionGate } from "../lib/shotProduction";
 import { Alert, Button, Modal, Tabs } from 'antd';
-import { taskNeedsAttention } from '../lib/taskExecutionState';
 import { consumeBusinessPageContext, saveBusinessPageContext } from '../lib/businessPageNavigation';
-import { defaultMatrixPlan } from '../lib/weeklyMatrix';
 import { EMPTY_CONFIG } from './smartBusiness/digitalEmployeeConfigRules';
 import { OnboardingPanel } from './smartBusiness/DigitalEmployeeOnboardingPanel';
-import { GoalPanel, EMPTY_GOAL, contentPlatformLabel, type GoalDraft, type BusinessLine, type ContentPlatform } from './smartBusiness/WeeklyGoalPanel';
+import { GoalPanel, EMPTY_GOAL, type GoalDraft, type BusinessLine, type ContentPlatform } from './smartBusiness/WeeklyGoalPanel';
 import { type OpenBusinessLink } from './smartBusiness/BatchFollowupTruthPanel';
 import WeeklyStartConflictAlert from './WeeklyStartConflictAlert';
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
-import { type SmartOperationsAccount } from "./SmartOperationsAccountRail";
 import PlanHistoryDialog from "./PlanHistoryDialog";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { SmartBusinessDashboard, WeeklyCommandCenter, WeeklyPlanDetailsDrawer, BusinessInterpretation, WeeklyReviewPanel, deferredWorkspaceFallback } from './digitalEmployeeDeferredViews';
@@ -101,27 +98,6 @@ function taskBusinessLine(task: WorkflowTask): BusinessLine {
   return "full_funnel";
 }
 
-type OverviewPeriod = "week" | "lastWeek" | "month" | "lastMonth";
-
-function overviewRange(period: OverviewPeriod) {
-  const now = new Date();
-  const end = new Date(now);
-  const start = new Date(now);
-  const weekday = (now.getDay() + 6) % 7;
-  if (period === "week" || period === "lastWeek") {
-    start.setDate(now.getDate() - weekday - (period === "lastWeek" ? 7 : 0));
-    end.setDate(start.getDate() + 6);
-    if (period === "week") end.setTime(now.getTime());
-  } else {
-    const offset = period === "lastMonth" ? -1 : 0;
-    start.setFullYear(now.getFullYear(), now.getMonth() + offset, 1);
-    end.setFullYear(now.getFullYear(), now.getMonth() + offset + 1, 0);
-    if (period === "month") end.setTime(now.getTime());
-  }
-  const date = (value: Date) => value.toLocaleDateString("en-CA");
-  return { startsAt: date(start), endsAt: date(end) };
-}
-
 const readinessDestination: Record<
   BusinessReadinessItem["key"],
   { page: BusinessDestination; view?: "create" | "publish" }
@@ -164,15 +140,12 @@ export default function DigitalEmployeePage({
   const [weeklyPresenterLoading, setWeeklyPresenterLoading] = useState(false);
   const [weeklyPresenterGate, setWeeklyPresenterGate] = useState<PresenterProductionGate>(() => presenterProductionGate(null));
   const [newGoal, setNewGoal] = useState(false);
-  const [approvalNote, setApprovalNote] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [selectedContentItemId, setSelectedContentItemId] = useState("");
   const [weeklyStudioContentId, setWeeklyStudioContentId] = useState("");
   useEffect(() => setWeeklyStudioContentId(""), [data?.goal?.id, data?.plan?.id, data?.run?.id]);
   const [selectedAccountId, setSelectedAccountId] = useState("");
-  const [deliveryFocus, setDeliveryFocus] = useState<{ id: string; request: number }>();
   const [viewGoalId, setViewGoalId] = useState("");
-  const [showHistory, setShowHistory] = useState(false);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("today");
   const [businessLine, setBusinessLine] = useState<BusinessLine>("full_funnel");
   const [contentPlatform, setContentPlatform] = useState<ContentPlatform>("all");
@@ -201,10 +174,8 @@ export default function DigitalEmployeePage({
   const goalPanelRef = useRef<HTMLDivElement>(null);
   const overviewRequestVersionRef = useRef(0);
   const enterpriseFactsRecoveryRef = useRef(new Map<string, Promise<void>>());
-  const [productionPeriod, setProductionPeriod] = useState<OverviewPeriod>("week");
   const productionRangeLoadingRef = useRef(false);
-  const productionRangeRef = useRef<ReturnType<typeof overviewRange> | undefined>(undefined);
-  const presentedData = data;
+  const productionRangeRef = useRef<{ startsAt: string; endsAt: string } | undefined>(undefined);
   const initialLoadRef = useRef<Promise<DigitalEmployeeOverview | undefined> | null>(null);
   const handledWeeklyPlanNavigation = useRef<number | null>(null);
 
@@ -307,7 +278,6 @@ export default function DigitalEmployeePage({
       if (restoring || !returnContext || !next?.tasks.some(task => task.id === returnContext.taskId && task.run_id === returnContext.runId)) return;
       setWorkspaceView(returnContext.deliveryId ? "overview" : "live");
       setSelectedTaskId(returnContext.taskId);
-      if (returnContext.deliveryId) setDeliveryFocus({ id: returnContext.deliveryId, request: Date.now() });
       setNavigationNotice(returnContext.deliveryId ? "已回到生产与交付，原交付记录已恢复。" : "已回到原任务的生产现场，运行与任务位置已恢复。");
     });
     return () => { active = false; };
@@ -335,7 +305,6 @@ export default function DigitalEmployeePage({
         setViewGoalId("");
         setNewGoal(false);
         setPlanHistoryOpen(false);
-        setShowHistory(false);
         setSelectedContentItemId("");
         setWorkspaceView("today");
         setWeeklyPlanOpen(false);
@@ -483,7 +452,6 @@ export default function DigitalEmployeePage({
         setViewGoalId("");
         setNewGoal(false);
         setPlanHistoryOpen(false);
-        setShowHistory(false);
         setSelectedContentItemId("");
         setWorkspaceView("today");
         setWeeklyPlanOpen(false);
@@ -573,10 +541,6 @@ export default function DigitalEmployeePage({
       : data.review?.status === "generated"
         ? "本周期待复盘"
         : "常态经营中";
-  const cycleLabel = goal
-      ? `${goal.startsAt} 至 ${goal.endsAt}`
-      : "尚未制定周期目标";
-
   useEffect(() => {
     if (!activeRun) return;
     if (newGoal) setNewGoal(false);
@@ -673,7 +637,7 @@ export default function DigitalEmployeePage({
     workspaceView,
   ]);
 
-  const requestOverviewRange = (nextRange: ReturnType<typeof overviewRange>, period?: OverviewPeriod) => {
+  const requestOverviewRange = (nextRange: { startsAt: string; endsAt: string }) => {
     const version = ++overviewRequestVersionRef.current;
     productionRangeLoadingRef.current = true;
     setBusy("overview-range");
@@ -682,7 +646,6 @@ export default function DigitalEmployeePage({
       .then(next => {
         if (version !== overviewRequestVersionRef.current) return;
         productionRangeRef.current = nextRange;
-        if (period) setProductionPeriod(period);
         setData(next);
       })
       .catch(rangeError => {
@@ -695,7 +658,6 @@ export default function DigitalEmployeePage({
       });
   };
 
-  const changeOverviewPeriod = (period: OverviewPeriod) => requestOverviewRange(overviewRange(period), period);
   const changeOverviewDateRange = (range: { startsAt: string; endsAt: string }) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(range.startsAt) || !/^\d{4}-\d{2}-\d{2}$/.test(range.endsAt) || range.startsAt > range.endsAt) return;
     requestOverviewRange(range);
@@ -1008,47 +970,6 @@ export default function DigitalEmployeePage({
     }
   };
 
-  const goLive = async (taskId?: string, deliveryId?: string) => {
-    let nextData = data;
-    let targetTask = taskId ? nextData?.tasks.find((task) => task.id === taskId) : undefined;
-    // Opening a blocked Agent task is also an explicit retry from the product UI.
-    // Reconcile first so newly available configuration can prepare the canonical
-    // business resource before the user reaches its workbench.
-    if (targetTask && data?.run?.id && ['waiting_external', 'pending'].includes(targetTask.status)) {
-      try {
-        nextData = await digitalEmployeeApi.reconcileRun(data.run.id);
-        setData(nextData);
-        targetTask = nextData.tasks.find((task) => task.id === taskId);
-      } catch (reconcileError) {
-        setError(reconcileError instanceof Error ? reconcileError.message : 'Agent 任务重试失败');
-      }
-    }
-    if (targetTask && !deliveryId && !['content_production', 'content_quality_gate'].includes(targetTask.task_key)) {
-      const planTask = nextData?.plan?.tasks.find((task) => task.key === targetTask!.task_key);
-      dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(targetTask, planTask, nextData?.run?.id || targetTask.run_id));
-      return;
-    }
-    setDeliveryFocus(deliveryId ? { id: deliveryId, request: Date.now() } : undefined);
-    if (taskId) setSelectedTaskId(taskId);
-    else if (
-      data?.tasks.find(
-        (task) => taskNeedsAttention(task),
-      )
-    )
-      setSelectedTaskId(
-        data.tasks.find(
-          (task) => taskNeedsAttention(task),
-        )!.id,
-      );
-    setWorkspaceView(deliveryId ? "overview" : "live");
-  };
-
-  const openGoal = async (goalId: string) => {
-    setViewGoalId(goalId);
-    setSelectedTaskId("");
-    setShowHistory(false);
-    await load(goalId);
-  };
   const returnToLatest = async () => {
     setViewGoalId("");
     setSelectedTaskId("");
@@ -1085,43 +1006,6 @@ export default function DigitalEmployeePage({
     const openPublishingAccountSetup = () => window.dispatchEvent(new CustomEvent("lingshu:navigate", {
       detail: { page: "accountManagement", businessRef: { taskKey: "publishing_account_setup" } },
     }));
-    const currentMatrix = data.plan?.businessPackage?.matrixPlan || [];
-    const plannedAccountTaskCounts = currentVideoPlans.reduce<Record<string, number>>((counts, plan) => {
-      const accountId = plan.matrix?.accountId;
-      if (accountId) counts[accountId] = (counts[accountId] || 0) + 1;
-      return counts;
-    }, {});
-    const queuedAccountTaskCounts = (data.contentQueue?.items || []).reduce<Record<string, number>>((counts, item) => {
-      if (item.accountId) counts[item.accountId] = (counts[item.accountId] || 0) + 1;
-      return counts;
-    }, {});
-    const accountTaskCounts = Object.keys({ ...plannedAccountTaskCounts, ...queuedAccountTaskCounts }).reduce<Record<string, number>>((counts, accountId) => {
-      counts[accountId] = Math.max(plannedAccountTaskCounts[accountId] || 0, queuedAccountTaskCounts[accountId] || 0);
-      return counts;
-    }, {});
-    const matrixPlatforms = goal?.contentPlatforms?.length
-      ? goal.contentPlatforms
-      : data.config.publishingTargets.length
-        ? [...new Set(data.config.publishingTargets.map(target => target.platform))]
-        : (["youtube", "tiktok", "instagram", "facebook"] as const).slice();
-    const accountMatrixForRail = currentMatrix.length
-      ? currentMatrix
-      : defaultMatrixPlan(data.config, [...matrixPlatforms], goal?.objective || "验证本周内容方向并获得有效询盘");
-    const matrixRoleLabels: Record<string, string> = {
-      brand_capability: "品牌能力号",
-      buyer_advisor: "买家顾问号",
-      brand_combined: "品牌综合账号",
-    };
-    const publishingTargets = data.config.publishingTargets;
-    const smartOperationsAccounts: SmartOperationsAccount[] = accountMatrixForRail.map(row => {
-      const connected = publishingTargets.find(target => target.accountId === row.accountId && target.platform === row.platform);
-      return {
-        platform: row.platform,
-        accountId: row.accountId,
-        accountLabel: connected?.accountLabel || `${contentPlatformLabel[row.platform]} · ${matrixRoleLabels[row.accountRole || "brand_combined"]}`,
-        connected: Boolean(connected),
-      };
-    });
     const openConflictingRun = async () => {
       const conflict = weeklyStartConflict;
       if (!conflict) return;
@@ -1131,7 +1015,6 @@ export default function DigitalEmployeePage({
       }
       setViewGoalId(conflict.goalId);
       setSelectedTaskId("");
-      setShowHistory(false);
       const next = await load(conflict.goalId);
       if (!next) return;
       setSelectedTaskId(next.tasks.find((task) => ["running", "waiting_external", "waiting_approval", "waiting_human", "failed"].includes(task.status))?.id || next.tasks[0]?.id || "");
