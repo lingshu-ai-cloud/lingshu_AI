@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 草稿保存写入边界拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `91d9a1b48720292da0e388b462b7b1b44a09ec17` 将草稿新建、更新和版本 CAS 路由迁至 `server/routes/studioProjectSaveRoutes.ts`，仍在 Studio 鉴权和租户上下文后挂载。原有生产合同、冻结计划、素材候选、知识库图片版本、生成真实性、托管项目只读、海报素材使用及发布审批失效门禁保留；`studio.ts` 从 8,856 降至 8,692 行并收紧历史预算。全仓仍有 6 个历史超限文件，不能把此次拆分称为架构债务全部清零。
+- 新模块 HTTP 直测 1/1 覆盖冲突合同、服务端冻结计划所有权、过期修订、CAS 竞争及新建成功；完整 `test:studio-workflow`、`pnpm run lint`、相对上一 HEAD 的架构扫描/ratchet（2,393 个生产 TypeScript 文件）、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 均通过。Studio 主 chunk 为 480,933/485,000 字节，仍有大 chunk 提示。未执行真实供应商调用、目标库迁移、浏览器验收或部署；LinkedIn 真实付费采集按用户决定暂不测试。远端 SHA 与工作区状态待推送后核验。
+
 ## Studio 项目审阅写入边界拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `21de742e095ed57ea10089512c6490cc243039cf` 将重新质检、人工交接创建和删除迁至 `server/routes/studioProjectReviewRoutes.ts`，在原 Studio 鉴权和租户上下文后挂载；草稿保存仍留在 `studio.ts`。保持任务归属、质检输入指纹与版本 CAS、人工验收、可信生产快照只读等原有门禁。`studio.ts` 从 8,960 降至 8,856 行，历史预算同步收紧；全仓仍有 6 个历史超限文件，结构治理尚未完成。
