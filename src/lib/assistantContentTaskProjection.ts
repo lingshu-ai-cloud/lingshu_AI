@@ -1,5 +1,5 @@
 import type { ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard';
-import type { AssistantTaskCardInput } from '../stores/assistantStore';
+import type { AssistantTaskCard, AssistantTaskCardInput } from '../stores/assistantStore';
 
 const stateMap: Record<ContentProductionTaskCard['overallState'], AssistantTaskCardInput['status']> = {
   needs_input: 'needs_input',
@@ -39,6 +39,16 @@ export function unavailableContentTaskCard(card: ContentProductionTaskCard): Con
       label: '状态连接中断',
       userFacingSummary: `暂时无法读取最新状态；当前展示的是 ${card.lastConfirmedAt} 的最后确认结果，正在自动恢复。`,
     },
+  };
+}
+
+export function unavailableAssistantContentTaskCard(card: AssistantTaskCard): AssistantTaskCardInput {
+  if (card.contentTask) return contentTaskCardToAssistantCard(unavailableContentTaskCard(card.contentTask));
+  const confirmedAt = Number.isFinite(card.updatedAt) ? new Date(card.updatedAt).toISOString() : '未知时间';
+  return {
+    ...card,
+    conclusion: `暂时无法读取最新状态；当前展示的是 ${confirmedAt} 的最后确认结果，正在自动恢复。`,
+    details: [`状态读取失败；最后确认：${confirmedAt}`, ...card.details].slice(0, 3),
   };
 }
 

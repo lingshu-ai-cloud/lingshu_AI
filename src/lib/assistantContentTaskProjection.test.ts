@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard.js';
-import { contentTaskCardToAssistantCard, unavailableContentTaskCard } from './assistantContentTaskProjection.js';
+import { contentTaskCardToAssistantCard, unavailableAssistantContentTaskCard, unavailableContentTaskCard } from './assistantContentTaskProjection.js';
 
 const card: ContentProductionTaskCard = {
   schemaVersion: 'content-production-task-card.v1', id: 'content-task-card:one', contentTaskId: 'one',
@@ -38,6 +38,21 @@ test('read failure preserves the business state and exposes the last confirmed t
   const result = contentTaskCardToAssistantCard(unavailable);
   assert.equal(unavailable.overallState, 'needs_input');
   assert.equal(unavailable.readState, 'unavailable');
+  assert.match(result.conclusion, /暂时无法读取最新状态/);
+  assert.match(result.details?.[0] || '', /2026-10-24T02:00:00.000Z/);
+});
+
+test('a restored card without the rich projection still reports disconnected state truthfully', () => {
+  const restored = contentTaskCardToAssistantCard(card);
+  const result = unavailableAssistantContentTaskCard({
+    ...restored,
+    details: restored.details ?? [],
+    items: restored.items ?? [],
+    secondaryActions: restored.secondaryActions ?? [],
+    contentTask: undefined,
+    updatedAt: Date.parse(card.lastConfirmedAt),
+  });
+  assert.equal(result.status, 'needs_input');
   assert.match(result.conclusion, /暂时无法读取最新状态/);
   assert.match(result.details?.[0] || '', /2026-10-24T02:00:00.000Z/);
 });

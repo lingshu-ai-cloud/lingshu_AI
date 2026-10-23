@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { projectContentProductionTaskCard } from '../../../shared/contracts/assistantContentTaskCard';
-import { contentTaskCardToAssistantCard, unavailableContentTaskCard } from '../../lib/assistantContentTaskProjection';
+import { contentTaskCardToAssistantCard, unavailableAssistantContentTaskCard } from '../../lib/assistantContentTaskProjection';
 import { socialContentApi } from '../../lib/socialContentApi';
 import { SOCIAL_CONTENT_TASK_REFRESH_EVENT } from '../../lib/socialContentTaskRefresh';
 import { useAssistantStore, type OrbitAgentId } from '../../stores/assistantStore';
@@ -44,10 +44,10 @@ export function useAssistantContentTaskCard(input: {
         // never evidence that the task failed or disappeared.
         if (!active || readUnavailable) return;
         const previous = useAssistantStore.getState().threads[input.agentId]
-          .taskCards[input.focusedTaskId!]?.contentTask;
+          .taskCards[input.focusedTaskId!];
         if (!previous) return;
         readUnavailable = true;
-        input.upsertTaskCard(input.agentId, contentTaskCardToAssistantCard(unavailableContentTaskCard(previous)));
+        input.upsertTaskCard(input.agentId, unavailableAssistantContentTaskCard(previous));
         input.persistThread(input.agentId);
       } finally {
         inFlight = false;
