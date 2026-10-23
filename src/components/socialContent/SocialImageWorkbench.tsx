@@ -446,10 +446,7 @@ export default function SocialImageWorkbench({
           ...(activeTask.repairInstructions || []).filter(item => item.status === 'pending').map(item => `Targeted repair (${item.targetLayer}): ${item.instruction}`),
         ].join(' '),
       };
-      let rendered = await studioApi.fbPosterRender(renderRequest, { signal: controller.signal });
-      if (!rendered.ok && /产品.*(?:主图|资产|图片).*(?:不可读取|可读取)|(?:主图|资产|图片).*不可读取|PRODUCT_REFERENCE|ENTERPRISE_PRODUCT_IMAGE/i.test(String(rendered.error || ''))) {
-        rendered = await studioApi.fbPosterRender({ ...renderRequest, productIds: [] }, { signal: controller.signal });
-      }
+      const rendered = await studioApi.fbPosterRender(renderRequest, { signal: controller.signal });
       if (!rendered.ok || !rendered.url || !rendered.task) throw new Error(rendered.code === 'social_image_atomic_store_required'
         ? '当前数据存储尚未具备图片付费作业的原子认领能力，系统未调用图片供应商。请由管理员完成存储能力核验后再生成。'
         : rendered.error || '图片生成结果未写入耐久任务');

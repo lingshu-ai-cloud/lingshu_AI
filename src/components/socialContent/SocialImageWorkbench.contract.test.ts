@@ -29,8 +29,7 @@ assert.match(source, /imageType === 'carousel' \? carouselPages\.map/, 'carousel
 assert.match(source, /socialImageApi\.abandonPlan\(current\)/, 'a rejected carousel plan needs an explicit safe return to inputs');
 assert.match(source, /可能再次产生费用/, 'abandoning already generated pages must disclose potential repeat charges');
 assert.match(socialImageRoute, /abandonSocialImageMultiUnitPlan\(/, 'plan retirement must be server-owned and atomic');
-assert.match(source, /产品\.\*\(\?:主图\|资产\|图片\).*可读取/, 'an unreadable knowledge-base product image must fall back instead of blocking first draft');
-assert.match(source, /\{ \.\.\.renderRequest, productIds: \[\] \}/, 'asset fallback must retain the user-selected enterprise materials');
+assert.doesNotMatch(source, /\{ \.\.\.renderRequest, productIds: \[\] \}/, 'an unreadable product image must never be retried without the selected product identity');
 assert.match(source, /referenceImageUrls:/, 'viral replication must send the benchmark image to rendering');
 assert.match(source, /productIds,/, 'rendering must resolve product identity from the enterprise knowledge base');
 assert.match(source, /idempotencyKey/, 'paid image generation must have a stable operation key');
