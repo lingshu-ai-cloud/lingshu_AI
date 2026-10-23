@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 裂变批次与发布链接路由拆分（2026-10-23）
+
+- 代码提交 `dfd0b61c` 将租户限定裂变批次状态、认领与失败项重试迁至 `studioVariationBatchRoutes.ts`；将终态发布回执链接、指标投影及素材用量读取迁至 `studioPublishLinkRoutes.ts`，旧 `terminalPublishedPlatformPostId` 公开导出保持兼容。`studio.ts` 在原门禁之后按原顺序注册，主路由从 7,333 降至 7,221 行并收紧历史预算；全仓仍有 5 个超限文件。
+- 两组临时文件 HTTP 回归及原生成真实性共 3/3、完整 `test:studio-workflow`、租户隔离、TypeScript、架构扫描/ratchet（2,415 个生产 TypeScript 文件）、193 项迁移清单只读检查、生产构建和 `git diff --check` 通过。Studio 主 chunk 为 480,957/485,000 字节，构建仍有大 chunk 提示。未发起真实供应商、发布、LinkedIn 付费采集、目标库迁移、浏览器验收或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## Studio 翻译端点整组拆分（2026-10-23）
 
 - 代码提交 `41fd9bfc` 将企业名称发音翻译、单语/批量翻译及请求断连/超时处理迁至 `studioTranslationRoutes.ts`，共用语言名称和模型 JSON 解析迁至 `studioTranslationCore.ts`。原 `studio.ts` 仍在鉴权和订阅门禁之后按原顺序挂载端点；Qwen、语种/时间戳校验、有限修复和部分结果规则保持原路径。主路由从 7,627 降至 7,333 行并收紧历史预算；全仓仍有 5 个超限文件。

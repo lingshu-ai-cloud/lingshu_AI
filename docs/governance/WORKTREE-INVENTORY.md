@@ -3,6 +3,11 @@
 最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。本次只读复核未改写工作树、分支或运行数据；历史移除记录见下文。
 
+## 2026-10-23 集成点 `20fe685f` 再盘点
+
+- 复核起点的集成树为 `20fe685fa87c33680e3cc079fac62dcd07e0272a`、工作区干净；盘点时本批治理代码尚未提交，此 SHA 不是永久最新指针。Git 仍登记 11 个工作树；6 个非集成树有未提交项：`local-preview-1002` 53、`local-integrated-flow` 91、`local-unified-20261010` 6、`mobile-dual-edition-20261012` 28、`客服` 1、`total-merge-langgraph` 20，均未改动。
+- 干净的独立广告树已前进至 `1026906d`，相对集成点仍有 16 个正向独有补丁；新图片树 `23b1bb93` 仍有正向独有提交。原图片来源 `95b0bcc1` 仍是集成祖先但有未提交内容。另两个干净树此前查明含被忽略业务数据。没有新证明可无损归档的工作树，本批未归档、重置或移动任何非集成树。
+
 ## 2026-10-23 集成点 `3b200a4d` 复核
 
 - 复核时集成树干净，本地 HEAD 为 `3b200a4d58306ad25670cef792e21b045535e495`；此 SHA 是本批改动前起点。仍有 11 个注册工作树。6 个非集成树含未提交项，计数分别为 `local-preview-1002` 53、`local-integrated-flow` 91、`local-unified-20261010` 6、`mobile-dual-edition-20261012` 28、`客服` 1、`total-merge-langgraph` 20，均原位保留。
