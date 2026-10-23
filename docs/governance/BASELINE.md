@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 租户配乐曲库边界拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `7ffe958a` 将 BGM 官方曲目、上传索引、租户可见性、推荐排序、自动化音频读取和签名有效期迁至 `server/routes/studioBgmCatalog.ts`；Studio HTTP 鉴权、媒体流、上传与删除仍留在原路由。数字员工与兼容适配层改为直接引用曲库。`studio.ts` 从 9,296 降至 9,130 行，架构预算同步收紧；全仓仍有 6 个历史超限文件。
+- 新曲库直测 3/3、`studioMediaAccess`、生成真实性定向测试、Studio 媒体/工作流整组、产品生产路由及数字员工内容生产测试、`pnpm run lint`、架构扫描/ratchet（2,389 个生产 TypeScript 文件）、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 均通过。Studio 主 chunk 为 480,933/485,000 字节，仍有大 chunk 提示；未做真实供应商调用、目标库迁移、登录后浏览器交互或部署。LinkedIn 真实付费采集按用户决定暂不测试；远端 SHA 和工作区状态以推送后复核为准。
+
 ## 数字员工首页公开投影边界拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `ec37bae7ca385d6e7d972fa8e55c196b963ddb1b` 将配置、周目标、计划、四专家状态及事件脱敏投影迁至 `server/digitalEmployees/overviewProjection.ts`；`digitalEmployees.ts` 仍负责租户范围内的读取、鉴权、写入及 SSE 发送。路由从 5,558 降至 5,469 行，架构预算同步收紧；全仓仍有 6 个历史超限文件，结构治理未完成。
