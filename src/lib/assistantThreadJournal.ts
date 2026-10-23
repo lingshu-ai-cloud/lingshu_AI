@@ -188,7 +188,7 @@ export function sanitizeAssistantThreadForJournal(thread: AgentThreadState): Age
   const pendingContentTaskBinding = pending
     && /^assistant-content-intent:[0-9a-f]{8}$/u.test(pending.intentFingerprint)
     && /^assistant-content:[0-9]+:[0-9a-f]{8}$/u.test(pending.idempotencyKey)
-    && /^[A-Za-z0-9._:@-]{1,240}$/u.test(pending.contentTaskId)
+    && (pending.contentTaskId === null || /^[A-Za-z0-9._:@-]{1,240}$/u.test(pending.contentTaskId))
     && Number.isFinite(Date.parse(pending.createdAt))
     ? { ...pending }
     : null;

@@ -50,7 +50,8 @@ export type AssistantRunControl = {
 export type PendingContentTaskBinding = {
   intentFingerprint: string;
   idempotencyKey: string;
-  contentTaskId: string;
+  /** Null means the POST outcome is unknown and must be reconciled by key. */
+  contentTaskId: string | null;
   createdAt: string;
 };
 
