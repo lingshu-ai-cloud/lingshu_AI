@@ -1,0 +1,8 @@
+{
+  "checks": [
+    "ads: 25 frozen source files unchanged",
+    "miniapp: 43 frozen source items unchanged including symlink target",
+    "migrations: all 193 original bytes retained, 197 total",
+    "four governed entry files byte-identical to baseline"
+  ]
+}

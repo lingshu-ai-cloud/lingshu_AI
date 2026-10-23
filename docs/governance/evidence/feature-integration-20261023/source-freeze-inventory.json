@@ -1,0 +1,44 @@
+[
+  {
+    "path": "/Users/julia1/.codex/worktrees/xixi1021-governance-baseline",
+    "head": "641d0b9ec944730c387ef185012fcf2d44cf8939",
+    "branch": "xixi1021程永罗沟通前大整合",
+    "statusEntries": 0
+  },
+  {
+    "path": "/Users/julia1/.codex/worktrees/xixi1021-full-integration",
+    "head": "9579eb3bd14d4d9780c19e569e810cefed253105",
+    "branch": "feature/platform-ads-meta-workspace-20261022",
+    "statusEntries": 25
+  },
+  {
+    "path": "/Users/julia1/Documents/ChatGPT/客服",
+    "head": "f764fa4503a394611e06df1abe39d8977e1aaa65",
+    "branch": "xixi智能客服隔离测试",
+    "statusEntries": 0
+  },
+  {
+    "path": "/Users/julia1/Documents/ChatGPT/1023WhatsApp",
+    "head": "d78d432551bdc58153642650d05e37154017b9d3",
+    "branch": "feature/whatsapp-setup-flow",
+    "statusEntries": 0
+  },
+  {
+    "path": "/Users/julia1/Documents/ChatGPT/1023视频生成管线/lingshu-video-p1",
+    "head": "71df3157f2beb639a8af23ce41176035b33c7b21",
+    "branch": "codex/video-production-p1-20261023",
+    "statusEntries": 0
+  },
+  {
+    "path": "/Users/julia1/Documents/ChatGPT/1023灵枢小程序",
+    "head": "f9cff15fcc4552747697b722ba0d418bdf659e72",
+    "branch": "feature/lingshu-miniapp-20261023",
+    "statusEntries": 43
+  },
+  {
+    "path": "/Users/julia1/Documents/ChatGPT/1022图片生成模块",
+    "head": "c7f7c0fc8073d825c0fa37db1374fe2c06049938",
+    "branch": "xixi图片生成+GPT降级分析",
+    "statusEntries": 0
+  }
+]

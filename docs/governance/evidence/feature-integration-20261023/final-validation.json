@@ -1,0 +1,75 @@
+{
+  "date": "2026-10-23 Asia/Shanghai",
+  "verifiedSourceAndTests": "2e431ef5a8ac96670675464f65a0622445d18b80",
+  "branch": "xixi功能大合并20261023",
+  "worktree": "/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023",
+  "initialBaseline": "641d0b9ec944730c387ef185012fcf2d44cf8939",
+  "additionalTestedBaseline": "1d73fda38f9a6f01adcbb794b691222550c569db",
+  "adsSnapshot": {
+    "branch": "xixi改大合并（投流）",
+    "sha": "b6e4b3e86647679842a7af43d3b18c5af24a4770"
+  },
+  "finalGateExitCodes": {
+    "test:digital-employees": 0,
+    "test:platform-ads": 0,
+    "test:customer-pipeline": 0,
+    "test:security-boundaries": 0,
+    "test:tenant-isolation": 0,
+    "test:studio-release": 0,
+    "check:architecture": 0,
+    "test:architecture-ratchet": 0,
+    "check:digital-employee-migrations": 0,
+    "test:migration-guard": 0
+  },
+  "production": "212/212 passed; original 2 failures fixed by tested upstream baseline",
+  "architecture": {
+    "productionTsFiles": 2677,
+    "defaultCap": 800,
+    "frozenStudioLines": 7030,
+    "originalStudioLines": 7031,
+    "baseRef": "641d0b9"
+  },
+  "migrations": {
+    "originalHashesRetained": 193,
+    "total": 197,
+    "targetDatabaseAccessed": false
+  },
+  "build": {
+    "studioBytes": 368854,
+    "maximumBytes": 485000,
+    "viewsImportBoundary": "passed"
+  },
+  "additionalBatchChecks": {
+    "ads": "47 test files + mock browser + relay",
+    "customer": "80/80 + full customer-service chain",
+    "whatsapp": "12/12 + domain27/27, overlapping; final HTTP foreign query/body tenant rejection",
+    "video": "budget90/90; P1 33/33; production-workflows/social-managed/assistant-production passed",
+    "miniapp": "targeted20; short-scenes2; shooting17; mobile143/61 overlapping; video-source169",
+    "image": "55/55 + HTTP1/1 + route/contracts + Qwen/Gemini3/3"
+  },
+  "firstFailuresAndCorrections": [
+    {
+      "suite": "test:digital-employees",
+      "error": "customer_aggregate_incomplete",
+      "correction": "old in-memory fixture now retains supplied deterministic IDs; no production validation changed"
+    },
+    {
+      "suite": "test:tenant-isolation",
+      "error": "static assertion referenced removed requestedTenantId resolver",
+      "correction": "checks current auth/support/tenant/state boundary and includes mock HTTP foreign-tenant rejection; no production guard relaxed"
+    }
+  ],
+  "deliberatelyNotIntegrated": [
+    "23b1bb93 automatic GPT image evidence routing; keep Qwen→Gemini",
+    "miniapp local API config, dependency symlink, obsolete budget and preview adapter",
+    "B2B directory without an identifiable feature branch"
+  ],
+  "limitations": [
+    "No deployment/release, real OAuth/messages/ads, paid supplier invocation or target migration",
+    "No complete logged-in browser or real provider acceptance",
+    "Miniapp original real video and simulator not re-run here; model descriptions require human review",
+    "Default PocketBase WhatsApp onboarding still rejects when atomic lease/CAS proof is absent",
+    "No full repository quality/verify or CI run claimed"
+  ],
+  "privateLogs": "/Users/julia1/.codex/integration-evidence/20261023"
+}

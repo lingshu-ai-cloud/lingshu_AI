@@ -2,6 +2,18 @@
 
 日期：2026-10-23（Asia/Shanghai）。只在独立树 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`、分支 `xixi功能大合并20261023` 集成。治理树、各来源草稿和项目镜像 sources/ 不由集成会话改写。未部署、发布、调用真实付费供应商、真实 OAuth、发消息/广告或执行目标库迁移。
 
+## 最终结果
+
+六批范围与用户追加的吴小姐测试版本已依次集成；来源有意保留的自动GPT路线及本地配置等排除项均明列，未静默省略功能草稿。最终验证源码/测试为 `2e431ef5a8ac96670675464f65a0622445d18b80`；本记录单独提交。当前开发/验收树为上面的独立树，原治理树641d0b9与xixi架构清理c3355ee5保持原状。投流固定快照 `xixi改大合并（投流）` 保持b6e4b3e8。
+
+最终实际通过：完整studio-release（production **212/212**）、完整digital-employees、47文件platform-ads、80项customer-pipeline、安全边界、租户隔离（含实际模拟HTTP拒绝外租户）、架构/ratchet、197项迁移只读和migration-guard。架构2,677个生产TS，普通上限800，主工作台冻结7,030行；构建368,854/485,000字节，视图静态依赖边界通过。[最终机器记录](evidence/feature-integration-20261023/final-validation.json)。没有全仓quality/verify或CI执行声明。
+
+最终交叉首轮发现两份旧测试适配不符：customerCreationMock覆盖传入固定ID触发customer_aggregate_incomplete，按Postgres/PocketBase实际create合同保留ID后原业务断言全过；tenantIsolation仍定位旧requestedTenantId函数，现检查当前鉴权/支持会话只读/外租户拒绝/状态租户用户绑定，且将实际HTTP query/body外租户403、零供应商调用加入总门禁。修正为45d85f07与2e431ef5，未改生产完整性或安全逻辑。此前通过的门禁不重复冒充首次全绿；首次失败和后续结果如实记录。
+
+[最终来源完整性](evidence/feature-integration-20261023/final-source-integrity.json)：投流25项、小程序43项冻结内容未变；193份原迁移原字节保留；四个已治理入口逐字不变。来源会话自行提交的WhatsApp/视频/图片分支当前干净，集成会话未替来源草稿提交/清理。[来源冻结盘点](evidence/feature-integration-20261023/source-freeze-inventory.json)。
+
+仍未完成：真实供应商/费用/目标库/多企业OAuth/消息广告验收、完整登录后浏览器、小程序原视频与模拟器复验及自动描述准确率。两项短镜头缺陷只按本文本地媒体验证范围确认修复；默认PocketBase原子能力缺口仍阻止WhatsApp接入Ready。未部署、发布或执行真实外部写入。
+
 ## 起点与失败基线
 
 重新核验治理树干净，origin 为 `https://github.com/lingshu-ai-cloud/lingshu_AI.git`，本地/远端同为 `641d0b9ec944730c387ef185012fcf2d44cf8939`。既有 `xixi架构清理` 仍固定 `c3355ee573cf9644355e38ff46f63c2c71aa37d8`，未更新。新目录/分支创建前均不存在。

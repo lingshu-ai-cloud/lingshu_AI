@@ -1,0 +1,11 @@
+{
+  "suite": "test:digital-employees",
+  "observedFailure": "customer_aggregate_incomplete",
+  "location": "server/customerService/aggregateRecovery.ts:57",
+  "cause": "legacy test fixture overwrote provided deterministic record IDs; production PostgreSQL and PocketBase/local adapters retain supplied IDs",
+  "fix": "customerCreationMock.test.ts keeps payload.id via object spread after generated fallback id",
+  "productionChanges": "none",
+  "businessAssertions": "tenant/run isolation, opt-out, 24h template gate, durable child completeness and idempotency retained",
+  "focusedRerun": "passed with zero network/real storage",
+  "fullRerun": "test:digital-employees passed"
+}
