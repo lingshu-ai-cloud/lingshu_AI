@@ -91,16 +91,18 @@ assert.match(outbox, /get\('\/:id\/suggestions'[\s\S]*?conversation_suggestions_
 const ui = read('src/components/ConversionPage.tsx');
 const railUi = read('src/components/customers/ConversionCustomerRail.tsx');
 const replyUi = read('src/components/customers/customerReplyPreparation.ts');
+const draftEffects = read('src/components/customers/useConversionDraftEffects.ts');
+assert.match(ui, /useConversionDraftEffects\(\{/, 'the workbench must mount its automatic-draft lifecycle');
 assert.match(ui, /<CustomerInfoRail/, 'the customer workbench must mount its customer rail');
 assert.match(railUi, /aria-label="智能客服总开关"/, 'the customer workbench must expose a clear master switch');
 assert.match(ui, /requestDraft\(selected, instruction, undefined, intent, true\)/, 'manual AI drafts must remain available even when automatic customer service is off');
 assert.match(replyUi, /manualRequest = false[\s\S]*?manualRequest,/, 'draft requests must preserve their explicit manual-request marker');
-assert.match(ui, /if \(!customerServiceStatus\?\.enabled\) return;/, 'the automatic draft effect must stop quietly without erasing a manually generated draft');
-assert.doesNotMatch(ui, /if \(!customerServiceStatus\?\.enabled\) \{\s*setDraftSuggestion\(null\)/, 'disabled automatic service must not clear manual AI output');
+assert.match(draftEffects, /if \(!customerServiceStatus\?\.enabled\) return;/, 'the automatic draft effect must stop quietly without erasing a manually generated draft');
+assert.doesNotMatch(draftEffects, /if \(!customerServiceStatus\?\.enabled\) \{\s*setDraftSuggestion\(null\)/, 'disabled automatic service must not clear manual AI output');
 assert.match(ui, /建议模式已经用了 3 天[\s\S]*?继续只看建议[\s\S]*?开放部分直接回复/, 'the three-day permission choice must be explicit');
 assert.match(ui, /partialAutoReplyActive = Boolean\(customerServiceStatus\?\.autoReplyReady && autonomyLevel === 'auto'\)/, 'the UI must respect a later return to draft-only mode');
 assert.doesNotMatch(ui, /if \(selected\.isMock\) return;/, 'administrator mock conversations must generate drafts through the same endpoint');
-assert.match(ui, /setDraftSuggestion\(null\);[\s\S]*?setLastDraftKey\(''\);[\s\S]*?setInput\(''\);/, 'reselecting a customer must allow the latest buyer message to generate a fresh draft');
+assert.match(draftEffects, /setDraftSuggestion\(null\);[\s\S]*?setLastDraftKey\(''\);[\s\S]*?setInput\(''\);/, 'reselecting a customer must allow the latest buyer message to generate a fresh draft');
 
 const mockCustomers = read('src/mocks/customerProfiles.ts');
 assert.match(mockCustomers, /id: 'mock-lead-suzhou-vision'[\s\S]*?message\('lead-1', 'buyer'/, 'the reply lab must open with a realistic buyer message');

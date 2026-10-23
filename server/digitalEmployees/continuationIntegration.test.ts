@@ -27,7 +27,7 @@ store.list = (async (collection: string, query: any = {}) => {
   return { items: structuredClone(filtered.slice((page - 1) * perPage, page * perPage)), totalItems: filtered.length, totalPages: Math.ceil(filtered.length / perPage), page, perPage };
 }) as typeof store.list;
 store.getById = (async (collection: string, id: string) => structuredClone((rows[collection] || []).find(row => row.id === id) || null)) as typeof store.getById;
-store.create = (async (collection: string, body: any) => { const record = { ...body, id: `test-${collection}-${(rows[collection] || []).length}` }; (rows[collection] ||= []).push(record); return structuredClone(record); }) as typeof store.create;
+store.create = (async (collection: string, body: any) => { const record = { id: `test-${collection}-${(rows[collection] || []).length}`, ...body }; (rows[collection] ||= []).push(record); return structuredClone(record); }) as typeof store.create;
 store.update = (async (collection: string, id: string, patch: any) => { if (collection === 'workflow_tasks' && id === failTask) return false; const record = (rows[collection] || []).find(row => row.id === id); if (!record) return false; Object.assign(record, structuredClone(patch)); return true; }) as typeof store.update;
 store.compareAndSwap = async (collection, id, expected, patch) => {
   const record = (rows[collection] || []).find(row => row.id === id);

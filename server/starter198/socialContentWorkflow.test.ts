@@ -1367,112 +1367,27 @@ try {
     '内容制作不再因用户未手工补填事实而阻塞；企业中心信息由系统自动读取');
 
   const zeroInputTaskId = zeroInputTask.body.task.taskId as string;
-  const fakeVoicePath = path.join(temporaryRoot, 'zero-input-worker-voice.wav');
-  fs.writeFileSync(fakeVoicePath, Buffer.from('RIFF0000WAVEfmt '));
-  await runSocialContentAutoProduction({
-    repository,
-    now: new Date('2026-09-14T08:00:00.000Z'),
-    tenantId: tenant,
-    userId: 'operator-user',
-    taskId: zeroInputTaskId,
-    runId: zeroInputStarted.body.task.runId,
-    assetSupplyAdapters: [{
-      adapterId: 'unsafe-test-digital-presenter',
-      sourceStrategies: ['authorized_digital_presenter'],
-      async execute(context) {
-        return {
-          asset: {
-            id: `unsafe-${context.shot.shotId}`, name: '不应进入成片的伪证据', type: 'image',
-            sourceId: `unsafe-${context.shot.shotId}`, url: 'unsafe-test-only.png', duration: 2.8,
-            visualObservations: ['伪装成客户现场的合成画面'], segments: [], selectionOrigin: 'system_graphic',
-          },
-          sourceStrategy: 'authorized_digital_presenter', providerId: 'unsafe-test-digital-presenter',
-          sourceRef: null, synthetic: true, representation: 'customer_evidence',
-          authorizationRef: null, disclosure: null,
-        };
-      },
-    }],
-    runtime: {
-      selectDirectorBgm: async input => ({
-        primary: {
-          trackId: 'test-authorized-bgm', name: '测试授权配乐', mood: input.directorMood,
-          authorization: {
-            status: 'authorized', basis: 'lingshu_builtin_library',
-            license: '测试内置曲库授权', evidence: 'test:authorized-bgm',
-          },
-        },
-        fallbacks: [], fallbackPolicy: 'ordered_preapproved_tracks_only', volume: input.volume,
-      }),
-      synthesizeVoice: async input => {
-        const duration = Math.min(8, Math.max(2, Number(input.targetDuration) || 8));
-        return {
-          ok: true, source: 'test_voice_provider', localPath: fakeVoicePath,
-          duration, text: input.text, cues: [{ start: 0, end: duration, text: input.text }],
-        };
-      },
-      resolveBgm: async () => ({ id: 'test-authorized-bgm', url: 'test-authorized-bgm.mp3' }),
-      renderComposite: async (_manifest, _onProgress, outputDir) => {
-        assert.ok(outputDir);
-        const outputPath = path.join(outputDir!, 'zero-input-worker.mp4');
-        fs.writeFileSync(outputPath, Buffer.concat([
-          Buffer.from([0, 0, 0, 24]), Buffer.from('ftypisom'), Buffer.alloc(64, 1),
-        ]));
-        return { ok: true, outputPath };
-      },
-      inspectVisuals: async () => ({
-        passed: true,
-        failures: [],
-        metrics: {
-          sampleCount: 4, contentFrameCount: 4, nonBackgroundFrameRatio: 1,
-          meanBrightness: 100, meanLumaDeviation: 20, meanEdgeRatio: 0.1,
-          meanFrameDifference: 20, maxFrameDifference: 30, motionDetected: true,
-          estimatedDistinctFrames: 4, nearDuplicateFrameRatio: 0, sharpFrameRatio: 1,
-        },
-        evidenceFrames: [],
-      }),
-      inspectScenes: async input => ({ passed: true, issues: [], checkedScenes: input.scenes.length }),
-      runFfmpeg: async args => {
-        if (!args.some(value => value.includes('volumedetect'))) {
-          return { ok: true, stdout: Buffer.alloc(0), stderr: '' };
-        }
-        const normalized = args.some(value => value.includes('loudnorm='));
-        const source = args.includes('test-authorized-bgm.mp3');
-        const mean = normalized ? -32.5 : source ? -47.9 : -19.1;
-        const max = normalized ? -20.6 : source ? -36 : -3.1;
-        return { ok: true, stdout: Buffer.alloc(0), stderr: `mean_volume: ${mean} dB\nmax_volume: ${max} dB` };
-      },
-      createCover: async input => {
-        const coverPath = path.join(input.outputDirectory, 'cover.jpg');
-        fs.writeFileSync(coverPath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
-        return coverPath;
-      },
-      archiveGeneratedMedia: async (input: Parameters<NonNullable<SocialContentAutoProductionRuntime['archiveGeneratedMedia']>>[0]) => ({ id: `archived-${input.lineage.sourceShotId}` }) as any,
-      backendFilePort,
-    },
-  });
-  const zeroInputCompleted = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTaskId}`);
-  assert.equal(zeroInputCompleted.status, 200, zeroInputCompleted.raw);
-  assert.equal(zeroInputCompleted.body.task.status, 'delivered',
-    `managed production automatically accepts verified media and builds the delivery package\n${zeroInputCompleted.raw}`);
-  assert.equal(zeroInputCompleted.body.task.deliveryPackages.length, 1);
-  assert.equal(zeroInputCompleted.body.task.publications.length, 0, 'creation does not imply external publishing authorization');
-  const zeroArtifact = zeroInputCompleted.body.task.artifacts.find((artifact: any) => artifact.origin === 'agent');
-  assert.ok(zeroArtifact, 'the worker persists the verified artifact');
-  assert.equal(zeroArtifact.status, 'approved');
-  assert.equal(zeroArtifact.content.review.state, 'automatically_approved');
-  const zeroExecution = zeroArtifact.content.assetSupplyExecution;
-  assert.equal(zeroExecution.creationMode, 'material_processing');
-  assert.equal(zeroExecution.productionRoute, 'zero_asset_generation');
-  assert.equal(zeroExecution.shots.length, zeroArtifact.content.scriptBaseline.scenes.length);
-  assert.equal(zeroExecution.shots.every((shot: any) => shot.sourceStrategy && shot.truthBoundary), true,
-    'every rendered shot retains its actual source strategy and truth boundary');
-  assert.equal(zeroExecution.shots.every((shot: any) => shot.provenance.representation === 'non_evidentiary_visual'), true,
-    'zero-material generated visuals are never represented as customer factory, case or effect evidence');
-  assert.equal(zeroExecution.shots.some((shot: any) => shot.attempts.some((attempt: any) => (
-    attempt.sourceStrategy === 'authorized_digital_presenter'
-  ))), false, 'without an authorized enterprise presenter asset the agent must not call a digital-human provider');
-  assert.equal(zeroExecution.shots.every((shot: any) => shot.sourceStrategy !== 'authorized_digital_presenter'), true,
-    'zero-input production uses a traceable non-evidentiary route instead of inventing a presenter');
+  // The route's observed scheduler does not create a canonical content job.
+  // A direct worker call must not turn this legacy fixture into paid production.
+  // The real queue -> budget -> render -> review -> delivery path is exercised
+  // by weeklyM1ContinuousProduction.integration.test.ts with actual local media.
+  let unauthorizedProductionCalls = 0;
+  const forbiddenProduction = async (): Promise<never> => {
+    unauthorizedProductionCalls++;
+    throw Error('production must not start without a canonical job');
+  };
+  await assert.rejects(runSocialContentAutoProduction({
+    repository, now: new Date('2026-09-14T08:00:00.000Z'), tenantId: tenant,
+    userId: 'operator-user', taskId: zeroInputTaskId, runId: zeroInputStarted.body.task.runId,
+    runtime: { synthesizeVoice: forbiddenProduction, renderComposite: forbiddenProduction,
+      productionBudgetReadPorts: { readTariff: forbiddenProduction } },
+  }), /user_input_required:whole_film_budget_preflight:canonical_job_missing/);
+  const zeroInputBlocked = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTaskId}`);
+  assert.equal(zeroInputBlocked.status, 200, zeroInputBlocked.raw);
+  assert.equal(zeroInputBlocked.body.task.deliveryPackages.length, 0);
+  assert.equal(zeroInputBlocked.body.task.artifacts.length, 0);
+  assert.equal(zeroInputBlocked.body.task.publications.length, 0);
+  assert.equal(unauthorizedProductionCalls, 0, 'missing canonical admission must block tariff, voice and rendering');
 
   const viralReferenceTask = await request('/api/overseas/starter-198/social-content/tasks', {
     idempotencyKey: 'social-viral-reference-create-001',

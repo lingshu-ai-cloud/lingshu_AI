@@ -13,12 +13,17 @@ function routeBlock(start: string): string {
   return routeSource.slice(begin, next === -1 ? routeSource.length : next);
 }
 
-const authIndex = routeSource.indexOf('digitalEmployeesRouter.use(requireAuth)');
-const tenantReadOnlyIndex = routeSource.indexOf('digitalEmployeesRouter.use(enforceSupportSessionReadOnly)');
+const routerEntry = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const authIndex = routerEntry.indexOf('digitalEmployeesRouter.use(requireAuth)');
+const tenantReadOnlyIndex = routerEntry.indexOf('digitalEmployeesRouter.use(enforceSupportSessionReadOnly)');
 const getIndex = routeSource.indexOf("digitalEmployeesRouter.get('/assistant/decision-center'");
 const postIndex = routeSource.indexOf("digitalEmployeesRouter.post('/assistant/decision-center/:decisionId/actions'");
 assert.ok(authIndex >= 0 && tenantReadOnlyIndex > authIndex, 'decision routes must inherit auth and support-session write protection');
-assert.ok(getIndex > tenantReadOnlyIndex && postIndex > tenantReadOnlyIndex, 'GET and POST must be registered after router security middleware');
+assert.ok(getIndex >= 0 && postIndex >= 0, 'the mounted assistant application must define GET and POST routes');
+assert.match(routerEntry, /const assistantApplication = createDigitalEmployeeAssistantDecisionRoutes\(\{[\s\S]*?get digitalEmployeesRouter\(\) \{ return digitalEmployeesRouter; \}/, 'the assistant application must receive the same protected router');
+const getRegistration = routerEntry.indexOf('assistantApplication.registerGetAssistantDecisionCenter()');
+const postRegistration = routerEntry.indexOf('assistantApplication.registerPostAssistantDecisionCenterDecisionIdActions()');
+assert.ok(getRegistration > tenantReadOnlyIndex && postRegistration > tenantReadOnlyIndex, 'GET and POST must actually be registered after router security middleware');
 
 assert.match(routeSource, /createAssistantDecisionFeedForRequest\(\{[\s\S]*?committedGoals:[\s\S]*?first,[\s\S]*?tenantRecord,/, 'route must wire the tenant-scoped feed read ports');
 const feedLoaderStart = feedSource.indexOf('async function buildDigitalEmployeeAssistantFeed');

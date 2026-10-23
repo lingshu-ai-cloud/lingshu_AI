@@ -239,8 +239,15 @@ assert.equal(shouldBypassStarter198Probe({
   supportAccess: { requestId: 'support-1', adminEmail: 'support@example.com', tenantName: 'Customer' },
 }), true, 'an explicit read-only support session keeps its internal observation surface');
 
-const appSource = fs.readFileSync('src/App.tsx', 'utf8');
-const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
+const appRootSource = fs.readFileSync('src/App.tsx', 'utf8');
+assert.match(appRootSource, /<AppShellChrome[\s\S]*?starterMode=\{starterMode\}/, 'the root must mount the tested shell with its actual starter policy');
+assert.match(appRootSource, /<AppPageSlot \{\.\.\.\{[\s\S]*?page, session, starterMode,[\s\S]*?mountedPages,/, 'the root must mount the tested product pages with shared session and page state');
+const appSource = [appRootSource, fs.readFileSync('src/AppPageSlot.tsx', 'utf8'), fs.readFileSync('src/components/AppShellChrome.tsx', 'utf8')].join('\n');
+const assistantRootSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
+const assistantPanelSource = fs.readFileSync('src/components/assistant/AssistantConversationPanel.tsx', 'utf8');
+assert.match(assistantRootSource, /<AssistantConversationPanel[\s\S]{0,100}page=\{page\}/, 'the assistant root must pass the current page to its actual conversation panel');
+assert.match(assistantPanelSource, /<AssistantConversationBubbles[\s\S]{0,100}page=\{page\}/, 'the conversation panel must pass the same page to its decision summary');
+const assistantSource = fs.readFileSync('src/components/assistant/AssistantConversationBubbles.tsx', 'utf8');
 const appSessionSource = fs.readFileSync('src/appSession.ts', 'utf8');
 const authRouteSource = fs.readFileSync('server/routes/auth.ts', 'utf8');
 const layoutSource = fs.readFileSync('src/components/Layout.tsx', 'utf8');
