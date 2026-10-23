@@ -66,7 +66,7 @@
 - `server/routes/videoCrawlerImageProjection.ts`：Instagram、TikTok 与 Facebook 的 Apify 图片帖纯投影，保留来源 URL、图片、互动数据与视频排除规则；`videos.ts` 继续负责 Actor 调用、付费准入、账号范围、队列和持久化。
 - `server/routes/videoCrawlerSeedCatalog.ts`：按平台及关键词选择历史静态公开 URL 和兜底候选的纯目录；`videos.ts` 保留实时检索、下载、资格筛选和失败处理。目录项不是当前可访问性或素材授权证明，不得直接升级为已验证媒体。
 - `server/routes/videoCrawlerMetadataFallback.ts`：仅在真实视频分析未完成时，根据标题、标签、公开热度与时长生成原有策划提示；不读取媒体、不调用供应商，也不产出已观察到的逐镜证据。`videos.ts` 继续决定何时使用兜底、何时恢复真实分析，并负责租户数据与付费边界。
-- `server/routes/videoAnalysisTimelineProjection.ts`：精确视频分析的纯时间线规则，包括物理剪辑点选帧、观察窗口合并、跨镜头语义片段切分及局部时间标签平移；`videos.ts` 保留原有公开导出，并继续负责帧提取、模型请求、分析状态和回执。
+- `server/routes/videoAnalysisTimelineProjection.ts`：精确视频分析的纯时间线规则，包括物理剪辑点选帧、观察窗口合并、跨镜头语义片段切分及局部时间标签平移；`videoFrameExtraction.ts` 负责本地 FFmpeg 的 Qwen 分析抽帧、开场动作帧与物理剪辑点检测，`videos.ts` 保留旧公开取帧导出，并继续负责模型请求、分析状态和回执。抽帧不会自行触发供应商调用。
 - `server/routes/videoDownloaderArgs.ts`：按显式传入的代理、浏览器、User-Agent 与 Node 可执行路径纯组装 yt-dlp 参数和平台 Referer；`videos.ts` 负责读取运行环境、执行下载及旧公开函数转发，不让伪搜索 URL 中的中文关键词进入 HTTP Referer。
 - `server/routes/videoCrawlerRuntimeConfig.ts`：本地爬虫代理轮换与日志脱敏、子进程环境、Cookie 文件和浏览器候选的运行配置；路由仅执行已选尝试的下载。逗号分隔的浏览器配置按实际候选拆分，单浏览器参数只取首项，不能把整串作为 yt-dlp 浏览器名。
 - `server/routes/videoCrawlerNormalization.ts`：视频来源及供应商元数据归一化、Apify 候选窗口等纯规则；`videoCrawlerSourceUrls.ts` 负责规范来源 URL 与平台账号/帖子链接，`apifyTikTokInput.ts` 负责纯 Actor 输入组装；`videos.ts` 保留既有兼容导出。LinkedIn 公司帖的冻结输入、许可范围校验与受控传输在 `linkedinCompanyPostPaidCollection.ts`；内部视频/图文入口缺少受信任许可时仍明确报 `linkedin_company_paid_collection_permit_required`，手工 HTTP 不开放。当前没有生产许可签发器，不能将模拟许可或离线解析视为付费采集已开放；见 [`2026-10-23-linkedin-company-paid-collection.md`](./adr/2026-10-23-linkedin-company-paid-collection.md)。

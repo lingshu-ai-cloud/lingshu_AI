@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 视频分析本地取帧边界拆分（2026-10-23）
+
+- 代码提交 `e74c0e78eb7a0ee90ee6056612c6f82e6edc40ee` 将 Qwen 分析抽帧、开场动作帧及物理剪辑点检测迁至 `server/routes/videoFrameExtraction.ts`；`videos.ts` 保留原公开取帧导出、媒体持久化、模型请求、分析状态和回执。路由从 8,104 降至 7,970 行并收紧预算；全仓仍有 6 个历史超限文件，架构债务尚未完成。
+- 真实 6 秒本地测试视频的取帧/时间标签/密集采样回归与时间线纯规则共 3/3、`test:tenant-isolation`、`pnpm run lint`、架构扫描/ratchet（2,400 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建和 `git diff --check` 通过。测试初版 2 秒视频显示既有策略采样可能返回空帧；本批仅做等价迁移，尚未修复这个短视频边界。Studio 主 chunk 为 480,933/485,000 字节，构建仍有大 chunk 提示。未测试 LinkedIn 真实付费采集，也未做其他真实付费请求、目标库迁移、浏览器交互或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## 公开视频/图文只读 HTTP 端点拆分（2026-10-23）
 
 - 代码提交 `a1fe466f3aa812fb6a526911deaed356b55fd47b` 将 `/inventory-summary` 与公开视频/图文列表响应编排迁至 `server/routes/videoListingRoutes.ts`，仍在 `videos.ts` 的鉴权之后按原顺序注册；图片账号公开互动基线迁至已有 `videoTenantListing.ts`。租户身份、队列位置及媒体签名继续由原路由提供，不增设读取或付费旁路。`videos.ts` 从 8,201 降至 8,104 行并收紧历史预算；全仓仍有 6 个历史超限文件。
