@@ -8,7 +8,11 @@ import {
 const mainSource = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
 const interventionApplication = fs.readFileSync('server/digitalEmployees/taskInterventionApplication.ts', 'utf8');
 const interventionRoutes = fs.readFileSync('server/routes/digitalEmployeeTaskInterventionRoutes.ts', 'utf8');
-const source = [mainSource, interventionApplication, interventionRoutes].join('\n');
+const weeklyReviewApplication = fs.readFileSync('server/digitalEmployees/weeklyReviewApplication.ts', 'utf8');
+const weeklyReviewRoutes = fs.readFileSync('server/routes/digitalEmployeeWeeklyReviewRoutes.ts', 'utf8');
+const source = [mainSource, interventionApplication, interventionRoutes, weeklyReviewApplication, weeklyReviewRoutes].join('\n');
+assert.doesNotMatch(weeklyReviewApplication, /from 'express'|req\.body|res\.json/, 'weekly review application must remain independent from HTTP');
+assert.ok(mainSource.indexOf('digitalEmployeesRouter.use(enforceSupportSessionReadOnly)') < mainSource.indexOf('registerWeeklyReviewGenerationRoutes(digitalEmployeesRouter'), 'review writes must remain behind support session guards');
 const followupReadSource = fs.readFileSync('server/routes/digitalEmployeeFollowupReadRoutes.ts', 'utf8');
 const overviewReaderSource = fs.readFileSync('server/routes/digitalEmployeeOverviewReader.ts', 'utf8');
 const overviewProjectionSource = fs.readFileSync('server/digitalEmployees/overviewProjection.ts', 'utf8');

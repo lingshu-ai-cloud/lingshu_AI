@@ -37,7 +37,7 @@ assert.match(runtime, /cycleRunning/, 'overlapping worker ticks must be suppress
 assert.match(runtime, /tenantRecord/, 'runtime lookups must verify tenant ownership');
 assert.match(runtime, /try\s*\{[\s\S]*?for \(const run|for \(const run[\s\S]*?try\s*\{/, 'one broken run must not stop other tenants');
 
-const routes = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const routes = fs.readFileSync('server/digitalEmployees/weeklyReviewApplication.ts', 'utf8');
 assert.match(routes, /review\.scheduled/, 'scheduled reviews need a persisted idempotency marker');
 assert.match(routes, /scheduleSlot/, 'scheduled-review idempotency must be scoped to its due slot');
 
