@@ -50,7 +50,8 @@
 - `server/digitalEmployees/overviewProjection.ts`：数字员工首页的配置、周目标、计划、四专家状态和公开事件载荷投影；兼容旧角色与旧周目标，并递归剔除私有推理字段。`digitalEmployees.ts` 继续负责租户鉴权与读取、写入、运行状态和 SSE 发送，投影不执行外部请求或持久化。
 - `server/routes/studioMaterialLibraryProjection.ts`：在路由完成租户库存与企业产品读取后，统一投影产品归属、用途/来源可见性、生成素材过滤、分类 facets、排序与分页；`studio.ts` 保留租户读取、鉴权响应、素材 URL 签名、使用证据聚合和产品场景准备，不把 `purpose=all` 的内部素材混入普通图库。
 - `server/routes/studioBgmCatalog.ts`：BGM 官方曲目与上传索引、租户可见性、推荐排序、签名地址有效期及自动化配乐读取；`studioBgmRoutes.ts` 承载媒体流、列表、上传和删除 HTTP 处理，并在 `studio.ts` 的鉴权及租户上下文中间件之后挂载。数字员工和兼容适配层直接引用曲库能力，不为查配乐而依赖整个 Studio 路由。
-- `server/routes/studioProjectReadRoutes.ts`：Studio 草稿列表、单项目、分镜依据及人工交接的租户限定只读 HTTP 边界，并统一投影冻结计划和短期私有素材地址；在 `studio.ts` 鉴权后挂载。保存、质检签发、交接创建及删除继续留在原写入路径，读取失败不得冒充已完成核验。
+- `server/routes/studioProjectReadRoutes.ts`：Studio 草稿列表、单项目、分镜依据及人工交接的租户限定只读 HTTP 边界，并统一投影冻结计划和短期私有素材地址；在 `studio.ts` 鉴权后挂载。读取失败不得冒充已完成核验。
+- `server/routes/studioProjectReviewRoutes.ts`：重新质检签发、人工交接创建和项目删除的受鉴权写入 HTTP 边界；在 Studio 统一鉴权和租户上下文后挂载，维持任务归属、版本 CAS、正式成片人工验收及可信生产快照只读门禁。草稿保存及素材使用回写仍由 `studio.ts` 编排。
 - `server/digitalEmployees/taskEvidenceProjection.ts`：数字员工任务的执行元数据、依赖与业务引用范围、工作流归属、项目完成/渲染证据的纯规则；路由仅在租户范围内读写记录并调用这些规则，不能用历史草稿或可变引用覆盖托管项目的索引血缘。
 - `server/digitalEmployees/taskCorrectionSafety.ts`：任务纠偏的传递性下游范围和已发送/已发布回执判定；路由注入租户限定的存储及跟进发送回执读取，缺少可证明安全的外部动作仍保守拦截。拆分不改变外部发送、发布和重试许可。
 - `server/digitalEmployees/taskCorrectionSupersession.ts`：任务纠偏后按影响范围使生产 job、冻结内容批次、托管 Studio 项目、客户分群、跟进草稿及审批失效；路由持有运行锁并注入存储/队列/跟进项目读取。已发送或已送达的跟进项目不被回写为草稿，旧业务回执拦截仍先于失效操作执行。
