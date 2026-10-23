@@ -36,3 +36,21 @@ test('local video frame extraction preserves source-clock labels and presenter d
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('strategy sampling falls back to an observed first frame for a short clip', { skip: !ffmpegStatic }, async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-short-video-frames-'));
+  const videoPath = path.join(tempDir, 'short.mp4');
+  try {
+    await promisify(execFile)(ffmpegStatic!, [
+      '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=duration=2:size=320x240:rate=12',
+      '-c:v', 'mpeg4', '-q:v', '5', '-y', videoPath,
+    ], { timeout: 30_000 });
+    const frames = await extractQwenAnalysisFrames(videoPath, 8, 2, 'strategy');
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0]?.timeLabel, '0.00s');
+    assert.equal(frames[0]?.mimeType, 'image/jpeg');
+    assert.ok(Buffer.from(frames[0]!.base64, 'base64').length > 100);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});

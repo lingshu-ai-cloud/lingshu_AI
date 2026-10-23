@@ -97,6 +97,15 @@ export async function extractQwenAnalysisFrames(filePath: string, maxFrames = 30
     const rows = [...denseRows, ...midpointRows, ...supplementalRows.slice(0, Math.max(0, maxFrames - denseRows.length - midpointRows.length))]
       .sort((a, b) => a.time - b.time)
       .slice(0, maxFrames);
+    // FFmpeg's fps=1/5 sampler can emit no output for a clip shorter than its
+    // first sampling interval. Preserve at least one observed source frame.
+    if (!rows.length) {
+      const file = 'first-frame.jpg';
+      await execFileAsync(ffmpegBin, ['-hide_banner', '-loglevel', 'error', '-ss', '0', '-i', filePath,
+        '-frames:v', '1', '-vf', 'scale=384:-1', '-q:v', '4', path.join(frameDir, file)], { timeout: 15_000 });
+      if (!fs.existsSync(path.join(frameDir, file))) throw new Error('video_frame_extraction_empty');
+      rows.push({ file, time: 0, dense: false });
+    }
     return rows.map(row => ({ base64: fs.readFileSync(path.join(frameDir, row.file)).toString('base64'), mimeType: 'image/jpeg', timeLabel: `${row.time.toFixed(2)}s` }));
   } finally {
     try {
