@@ -1,13 +1,11 @@
 import type { Page } from '../pageRegistry';
 
 /**
- * TEMPORARY PRODUCT-SURFACE BACKUP MARKER — 2026-10-08
- *
- * The Platform Ads implementation, routes and data are intentionally retained.
- * Set this flag back to `true` to restore the three sidebar tabs (投放总览、
- * 投放计划、AI 托管) and their child creative route without rebuilding them.
+ * The advertising implementation is exposed as the 投放管理 unit. Its three
+ * primary pages are 计划创编、投放数据、素材管理; legacy managed links remain
+ * routable so they can open the shared AI operator drawer.
  */
-export const PLATFORM_ADS_SURFACE_ENABLED = false;
+export const PLATFORM_ADS_SURFACE_ENABLED = true;
 
 export const PLATFORM_ADS_PAGE_IDS: readonly Page[] = [
   'adsOverview',

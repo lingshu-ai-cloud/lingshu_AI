@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type { PlatformAdCreative, PlatformAdCreativeSource } from '../../shared/platformAdCreatives.js';
 import { store } from '../storage/index.js';
 import { createStarter198Repository, STARTER_COLLECTIONS } from '../starter198/repository.js';
@@ -7,20 +8,24 @@ import { resolveSocialArtifactMedia, openSocialArtifactMedia, socialArtifactMedi
 import { getPlatformAdTask, PLATFORM_AD_TASKS_COLLECTION } from './tasks.js';
 import { withPlatformAdTaskLock } from './taskLock.js';
 import { AD_CONNECTIONS, type AdConnection } from './connections.js';
+import { findStoredReusableMetaVideo } from './creativeReuse.js';
+import { getConnectionCredential } from './connections.js';
+import { MetaVideoUploadAdapter } from './metaVideoUpload.js';
 
 export const AD_CREATIVES_COLLECTION = 'platform_ad_creatives';
 export type StoredPlatformAdCreative = PlatformAdCreative & { tenant_id: string; fileRef: string; attemptId?: string; uploadError?: string; uploadStartedAt?: string; uploadReceipt?: Record<string, unknown> };
 export class PlatformAdCreativeError extends Error { constructor(message: string, public status = 400) { super(message); } }
 export function publicPlatformAdCreative(c: StoredPlatformAdCreative): PlatformAdCreative {
   const { id, taskId, taskVersion, sourceTaskId, artifactId, sha256, mimeType, size, name, connectionId, provider, platformVideoId, status, createdAt, updatedAt } = c;
-  return { id, taskId, taskVersion, sourceTaskId, artifactId, sha256, mimeType, size, name, connectionId, provider, platformVideoId, status, createdAt, updatedAt };
+  return { id, taskId, taskVersion, sourceTaskId, artifactId, sha256, mimeType, size, name, connectionId, provider, platformVideoId, status, createdAt, updatedAt,
+    ...(status === 'ready' && typeof c.uploadReceipt?.reuseVerifiedAt === 'string' ? { videoReuse: { verifiedAt: c.uploadReceipt.reuseVerifiedAt } } : {}) };
 }
 const repository = createStarter198Repository();
 function identity(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,200}$/.test(value)) throw new PlatformAdCreativeError('素材标识无效');
   return value;
 }
-async function source(tenantId: string, sourceTaskId: string, artifactId: string) {
+export async function resolveAdCreativeSource(tenantId: string, sourceTaskId: string, artifactId: string) {
   const artifact = socialArtifact(await findSocialRecord({ repository, tenantId, collection: STARTER_COLLECTIONS.socialContentArtifacts,
     where: { task_id: sourceTaskId, artifact_id: artifactId }, notFoundCode: 'social_artifact_not_found' }));
   if (socialArtifactMediaFamily(artifact.kind, artifact.content) !== 'video') throw new PlatformAdCreativeError('请选择已保存的视频成片');
@@ -28,6 +33,7 @@ async function source(tenantId: string, sourceTaskId: string, artifactId: string
   if (!resolved || !resolved.file.mimeType.startsWith('video/')) throw new PlatformAdCreativeError('视频文件尚未持久化');
   return resolved.file;
 }
+const source = resolveAdCreativeSource;
 export async function listPlatformAdCreativeSources(tenantId: string, query: { page?: unknown; perPage?: unknown; sourceTaskId?: unknown } = {}) {
   const page = Math.max(1, Math.min(100000, Math.floor(Number(query.page) || 1)));
   const perPage = Math.max(1, Math.min(50, Math.floor(Number(query.perPage) || 20)));
@@ -72,11 +78,15 @@ export async function bindPlatformAdCreative(tenantId: string, taskId: string, i
     if (input.expectedVersion !== task.version) throw new PlatformAdCreativeError('计划已更新，请刷新后重试', 409);
     if (task.status !== 'draft' || task.managementMode !== 'manual' || task.creationSource === 'platform_import') throw new PlatformAdCreativeError('仅人工草稿可绑定素材', 409);
     for (const collection of ['platform_ad_executions', 'platform_ad_launches']) {
-      const executions = await store.list<{ status: string }>(collection, { where: { tenant_id: tenantId, taskId }, perPage: 1 });
-      if (executions.items.length || executions.totalItems) throw new PlatformAdCreativeError('计划已有平台执行记录，不能换绑素材', 409);
+      const executions = await store.list<{ status: string }>(collection, { where: { tenant_id: tenantId, taskId }, perPage: 200 });
+      const blocked = collection === 'platform_ad_executions'
+        ? executions.totalPages > 1 || executions.items.some(item => item.status !== 'FAILED')
+        : executions.items.length > 0 || executions.totalItems > 0;
+      if (blocked) throw new PlatformAdCreativeError('计划已有平台执行记录，不能换绑素材', 409);
     }
     if (input.fileRef !== undefined || input.url !== undefined || input.path !== undefined) throw new PlatformAdCreativeError('仅接受已保存的社媒素材标识');
     const sourceTaskId = identity(input.sourceTaskId), artifactId = identity(input.artifactId), connectionId = identity(input.connectionId);
+    if (task.configuration.accountConnectionId && task.configuration.accountConnectionId !== connectionId) throw new PlatformAdCreativeError('素材账户与草稿账户不一致，请先修改草稿账户', 409);
     const connection = await store.getById<AdConnection>(AD_CONNECTIONS, connectionId);
     if (!connection || connection.tenant_id !== tenantId) throw new PlatformAdCreativeError('未找到广告账户', 404);
     if (!['meta', 'tiktok'].includes(connection.provider) || connection.status !== 'connected') throw new PlatformAdCreativeError('广告账户当前不可用');
@@ -85,21 +95,46 @@ export async function bindPlatformAdCreative(tenantId: string, taskId: string, i
     if (input.platformVideoId !== undefined) throw new PlatformAdCreativeError('平台视频标识只能由验证上传流程写入');
     const platformVideoId = '';
     const file = await source(tenantId, sourceTaskId, artifactId);
+    const { readSelectableAdMaterial } = await import('./creativeSelection.js');
+    const checked = await readSelectableAdMaterial(tenantId, { origin: 'social', sourceTaskId, artifactId });
+    if (checked.selection.sha256 !== file.sha256 || input.expectedSha256 !== undefined && input.expectedSha256 !== file.sha256) throw new PlatformAdCreativeError('所选素材版本已变化，请重新选择', 409);
     const id = createHash('sha256').update(JSON.stringify([tenantId, taskId, connectionId])).digest('hex').slice(0, 15);
     const existing = await getPlatformAdCreative(tenantId, id);
     if (existing && ['uploading', 'unknown', 'processing'].includes(existing.status)) throw new PlatformAdCreativeError('素材上传待核对，不能换绑', 409);
     const now = new Date().toISOString(), taskVersion = task.version + 1;
     const record: StoredPlatformAdCreative = { id, tenant_id: tenantId, taskId, taskVersion, sourceTaskId, artifactId, fileRef: file.fileRef, sha256: file.sha256, mimeType: file.mimeType, size: file.size, name: file.name, connectionId, provider: connection.provider as 'meta' | 'tiktok', platformVideoId, status: 'pending', createdAt: existing?.createdAt || now, updatedAt: now, attemptId: '', uploadError: '', uploadStartedAt: '', uploadReceipt: {} };
+    // A budget-only draft edit does not invalidate the same account's verified
+    // video bytes. Rebind the current plan version without uploading again.
+    const uploaded = existing?.uploadReceipt;
+    if (existing?.status === 'ready' && existing.sourceTaskId === sourceTaskId && existing.artifactId === artifactId
+      && existing.connectionId === connectionId && existing.fileRef === file.fileRef && existing.sha256 === file.sha256
+      && uploaded?.status === 'ready' && uploaded.sha256 === file.sha256 && uploaded.accountId === connection.accountId
+      && /^\d+$/.test(existing.platformVideoId) && uploaded.videoId === existing.platformVideoId) {
+      Object.assign(record, { status: 'ready', platformVideoId: existing.platformVideoId, uploadReceipt: uploaded, attemptId: existing.attemptId || '' });
+    }
+    if (connection.provider === 'meta' && record.status !== 'ready') {
+      const reuse = await findStoredReusableMetaVideo({ tenantId, connection, sourceTaskId, artifactId, file,
+        readStatus: async videoId => {
+          const credential = await getConnectionCredential(tenantId, connectionId);
+          if (credential.connection.accountId !== connection.accountId || credential.connection.status !== 'connected') throw new Error('account changed');
+          return new MetaVideoUploadAdapter(credential.accessToken).status(videoId);
+        } });
+      if (reuse) Object.assign(record, { status: 'ready', platformVideoId: reuse.platformVideoId, uploadReceipt: reuse.uploadReceipt });
+    }
     // Invalidate prior approvals before changing a binding; a partial failure is safe and requires a refresh.
     await guard.beforeEffect();
-    if (!await store.update(PLATFORM_AD_TASKS_COLLECTION, taskId, { version: taskVersion, authorization: null, proposal: null, updatedAt: now })) throw new PlatformAdCreativeError('计划版本保存失败', 503);
+    if (!await store.update(PLATFORM_AD_TASKS_COLLECTION, taskId, { version: taskVersion, configuration: { ...task.configuration, materialSource: checked.selection }, video: checked.selection.name.slice(0, 120), authorization: null, proposal: null, updatedAt: now })) throw new PlatformAdCreativeError('计划版本保存失败', 503);
     await guard.beforeEffect();
     if (!(existing ? await store.update(AD_CREATIVES_COLLECTION, id, { ...record }) : await store.create(AD_CREATIVES_COLLECTION, { ...record }))) throw new PlatformAdCreativeError('素材绑定保存失败，请刷新重试', 503);
     const persisted = await getPlatformAdCreative(tenantId, id);
     const persistedTask = await getPlatformAdTask(tenantId, taskId);
     const requiredFields = ['taskId', 'taskVersion', 'sourceTaskId', 'artifactId', 'fileRef', 'sha256', 'mimeType', 'size', 'name', 'connectionId', 'provider', 'platformVideoId', 'status'] as const;
-    if (!persisted || requiredFields.some(field => persisted[field] !== record[field]) || persistedTask?.version !== taskVersion
-      || persistedTask.authorization !== null || persistedTask.proposal !== null) {
+    if (!persisted || requiredFields.some(field => persisted[field] !== record[field]) || !isDeepStrictEqual(persisted.uploadReceipt, record.uploadReceipt) || persistedTask?.version !== taskVersion
+      || persistedTask.authorization !== null || persistedTask.proposal !== null
+      || persistedTask.configuration.materialSource?.sha256 !== checked.selection.sha256
+      || persistedTask.configuration.materialSource?.sourceTenantId !== tenantId
+      || persistedTask.configuration.materialSource?.sourceTaskId !== sourceTaskId
+      || persistedTask.configuration.materialSource?.artifactId !== artifactId) {
       throw new PlatformAdCreativeError('素材绑定读回校验失败，请检查存储结构后刷新重试', 503);
     }
     return { creative: publicPlatformAdCreative(persisted), taskVersion };

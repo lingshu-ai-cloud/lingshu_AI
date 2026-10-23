@@ -9,6 +9,7 @@ const tests = [
   'src/lib/adOverview.test.ts',
   'src/lib/adManagedSummary.test.ts',
   'src/components/AdPerformanceOverview.test.tsx',
+  'src/components/AdMetaConnectionGuide.test.tsx',
   'src/components/PlatformAdsPage.contract.test.ts',
 ];
 for (const test of tests) {

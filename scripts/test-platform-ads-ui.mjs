@@ -44,8 +44,8 @@ try {
   page.setDefaultTimeout(15000);
   const origin = `http://127.0.0.1:${vite.httpServer.address().port}`;
   const errors = [], unexpected = [], writes = [], creativeWrites = [], preflightWrites = [];
-  let activeTask = structuredClone(base), bindings = [], metricSyncs = 0;
-  const creativeSource = { sourceTaskId: 'source-task', artifactId: 'artifact-video', name: 'P1测试成片.mp4', mimeType: 'video/mp4', size: 1024, sha256: 'a'.repeat(64) };
+  let activeTask = structuredClone(base), bindings = [], metricSyncs = 0, performanceReads = 0;
+  const creativeSource = { sourceTaskId: 'source-task', artifactId: 'artifact-video', name: 'P1测试成片.mp4', mimeType: 'video/mp4', size: 1024, sha256: 'a'.repeat(64), origin: 'social', sourceTenantId: 'fixture-tenant', sourceTenantName: '当前企业', contentStatus: 'approved' };
   page.on('pageerror', error => errors.push(error.message));
   await context.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url());
@@ -88,6 +88,20 @@ try {
       { id: 'expired-meta', provider: 'meta', accountId: '1', name: '已失效账户', currency: 'USD', status: 'expired' },
       { id: 'active-meta', provider: 'meta', accountId: '2', name: '正常账户', currency: 'USD', status: 'connected' },
     ], capabilities: [], releasePolicy: new URL(page.url()).searchParams.get('case') === 'manualMeta' ? { mode: 'paused_only', allowedActions: ['create', 'pause'], executionProviders: ['meta'], reason: '仅浏览器模拟上传与预检' } : { mode: 'disabled', allowedActions: [], executionProviders: [], reason: '测试只读条件' } });
+    if (path === '/creatives/bound-creative/platform-preview') return respond({ videoId: '999111', thumbnailUrl: 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E', width: 320, height: 240, duration: 1, videoStatus: 'ready', checkedAt: new Date().toISOString() });
+    if (path === '/connections/active-meta/meta-setup') return respond({ account: { id: '2', name: '正常账户', currency: 'USD', timezone: 'UTC', status: 1, minSpendCap: null, minDailyBudget: null }, pages: [], hasMorePages: false });
+    if (path === '/account-directory') return respond({ items: [], warnings: [] });
+    if (path === '/creative-history-sources') return respond({ items: [] });
+    if (path === '/creative-history') return respond({ items: [{ ...creativeSource, key: 'social:source-task:artifact-video', verifiedSource: true, status: 'completed', createdAt: '', note: '' }], page: 1, perPage: 5, totalPages: 1, totalItems: 1 });
+    if (path === '/creative-selection') return respond(creativeSource);
+    if (path === '/creative-selection/media') return route.fulfill({ status: 200, contentType: 'video/mp4', body: Buffer.alloc(0) });
+    if (path === '/creative-lifecycle') return respond({ source: creativeSource, ads: [], bindingCount: 0, truncated: false, checkedAt: '', roi: null, crmInquiries: null, scopeNote: '' });
+    if (path === '/creative-library') return respond({ items: [{ key: 'local-fixture', task: base, connection: { id: 'active-meta', provider: 'meta', accountId: '2', name: '正常账户', currency: 'USD' }, binding: null, execution: { id: 'fixture-execution', campaignId: '123', adsetId: '124', adId: '125', creativeId: '126' }, mapping: 'verified_existing' }], page: 1, perPage: 20, totalPages: 1, totalItems: 1, truncated: false });
+    if (path === '/performance/fixture-execution') {
+      performanceReads++;
+      const date = new Date().toISOString().slice(0, 10), totals = { spend: 12, impressions: 100, clicks: 5, linkClicks: 3, thruPlays: null, cpm: 120, ctr: 5 };
+      return respond({ source: 'provider', level: url.searchParams.get('level'), resourceId: '123', executionId: 'fixture-execution', accountId: '2', accountName: '正常账户', currency: 'USD', reportTimezone: 'UTC', configuredStatus: 'PAUSED', effectiveStatus: 'PAUSED', adEffectiveStatus: 'PAUSED', issues: [], attributionSpec: [], window: { since: date, until: date }, reportedAt: new Date().toISOString(), actionReportTime: 'impression', useUnifiedAttributionSetting: true, totals, daily: [{ date, ...totals }] });
+    }
     if (path === '/creative-sources') return respond({ items: [creativeSource], page: 1, perPage: 20, totalPages: 1, totalItems: 1 });
     if (path === '/tasks/fixture/creatives') return respond({ items: bindings });
     if (path === '/tasks/fixture') return respond({ task: activeTask });
@@ -132,21 +146,24 @@ try {
 
   await open('case=manualMeta');
   await page.getByRole('button', { name: '选择 / 管理成片', exact: true }).click();
-  const sourceSelect = page.locator('.ads-creative-panel select').nth(0);
-  await sourceSelect.locator('option').filter({ hasText: 'P1测试成片.mp4' }).waitFor({ state: 'attached' });
-  await sourceSelect.selectOption(JSON.stringify(['source-task', 'artifact-video']));
-  await page.locator('.ads-creative-panel select').nth(1).selectOption('active-meta');
+  await page.getByRole('button', { name: '从素材管理选择', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: '选择投放素材' });
+  await picker.getByText('P1测试成片.mp4', { exact: true }).waitFor();
+  await picker.getByRole('button', { name: '选择素材', exact: true }).click();
+  await picker.waitFor({ state: 'hidden' });
+  await page.locator('.ads-creative-panel select').selectOption('active-meta');
   await page.getByRole('button', { name: '绑定此成片版本', exact: true }).click();
-  await page.getByRole('heading', { name: 'P1测试成片.mp4 · 待上传 / 待验证', exact: true }).waitFor();
+  await page.getByText('本地绑定 · 未上传', { exact: true }).waitFor();
   assert.equal(activeTask.version, 2, 'binding updates the fixture task returned by GET');
   await page.getByRole('button', { name: '上传到 Meta', exact: true }).click();
-  await page.getByRole('heading', { name: 'P1测试成片.mp4 · 平台处理中', exact: true }).waitFor();
+  await page.getByText('平台处理中', { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: '上传到 Meta', exact: true }).isDisabled(), true, 'processing cannot upload again');
   assert.equal(await page.getByRole('button', { name: '用于本次人工创建', exact: true }).isDisabled(), true);
   await page.getByRole('button', { name: '核对视频状态', exact: true }).click();
-  await page.getByRole('heading', { name: 'P1测试成片.mp4 · 平台视频已就绪', exact: true }).waitFor();
+  await page.getByText('平台视频已就绪', { exact: true }).waitFor();
   await page.getByRole('button', { name: '用于本次人工创建', exact: true }).click();
   const videoId = page.getByLabel('Meta 已上传视频 ID', { exact: true });
+  await page.waitForFunction(() => [...document.querySelectorAll('input')].some(input => input.value === '999111'));
   assert.equal(await videoId.inputValue(), '999111');
   assert.equal(await videoId.evaluate(input => input.readOnly), true);
   assert.equal(await page.getByLabel('广告账户', { exact: true }).inputValue(), 'active-meta');
@@ -161,28 +178,30 @@ try {
   await page.getByLabel('Facebook 主页 ID', { exact: true }).fill('124');
   await page.getByText('配置已变化，请重新检查。', { exact: true }).waitFor();
 
-  for (const [name, label] of [['adsOverview', '投放总览'], ['adsPlans', '投放计划'], ['adsManaged', 'AI 托管']]) {
+  for (const [name, label] of [['adsOverview', '投放数据'], ['adsPlans', '计划创编'], ['adsCreatives', '素材管理']]) {
     await open(`page=${name}`);
-    await page.locator('.ads-page-purpose > strong').filter({ hasText: label }).waitFor();
+    await page.locator('h1').filter({ hasText: label }).waitFor({ state: 'attached' });
     if (name === 'adsOverview') {
-      await page.getByText('含历史快照 · 非实时', { exact: true }).waitFor();
-      await page.getByText('所选周期暂无已保存指标。', { exact: true }).waitFor();
-      assert.equal(metricSyncs, 0, 'history reads must not sync automatically');
-      await page.getByRole('button', { name: '同步并保存近 7 天', exact: true }).click();
-      await page.getByText('账户时区未知', { exact: true }).waitFor();
-      assert.equal(metricSyncs, 1);
-      assert.equal(await page.getByRole('region', { name: '投放绩效历史表' }).locator('tbody tr').count(), 1);
+      await page.getByRole('tab', { name: '本地计划回执', exact: true }).click();
+      await page.getByText('Meta 平台汇总', { exact: true }).waitFor();
+      assert.ok(performanceReads > 0, 'native performance must be read from the scoped execution');
+      const before = performanceReads;
+      await page.getByRole('button', { name: '刷新数据', exact: true }).click();
+      await page.waitForFunction(() => !document.querySelector('.ant-btn-loading'));
+      assert.ok(performanceReads > before, 'explicit refresh re-reads the native report');
+      assert.equal(metricSyncs, 0, 'native report must not use the legacy snapshot mutation');
+      assert.equal(await page.locator('.meta-performance tbody tr.ant-table-row').count(), 1);
       if (process.env.PLATFORM_ADS_TEST_SCREENSHOT) await page.screenshot({ path: process.env.PLATFORM_ADS_TEST_SCREENSHOT, fullPage: true });
     }
     if (name === 'adsPlans') await page.getByText('投放测试计划', { exact: true }).waitFor();
-    if (name === 'adsManaged') {
-      await page.getByText('历史观察证据', { exact: true }).waitFor();
-      await page.getByText('最近检查已完成', { exact: true }).waitFor();
-      await page.getByText('日预算：观察 → 拟议', { exact: true }).waitFor();
-      await page.getByText('missing-execution（当前返回记录中未找到）', { exact: true }).waitFor();
-      await page.getByText('此记录未保存结构化决策证据，无法还原预算前后、规则版本和 CPC 样本。请查看下方原始记录。', { exact: true }).waitFor();
-    }
   }
+  await open('page=adsManaged');
+  await page.getByRole('dialog', { name: 'AI 投手' }).waitFor();
+  await page.getByText('历史观察证据', { exact: true }).waitFor();
+  await page.getByText('最近检查已完成', { exact: true }).waitFor();
+  await page.getByText('日预算：观察 → 拟议', { exact: true }).waitFor();
+  await page.getByText('missing-execution（当前返回记录中未找到）', { exact: true }).waitFor();
+  await page.getByText('此记录未保存结构化决策证据，无法还原预算前后、规则版本和 CPC 样本。请查看下方原始记录。', { exact: true }).waitFor();
   for (const [worker, label] of [['stale', '运行证据已过期'], ['unknown', '运行状态未知']]) {
     await open(`page=adsManaged&worker=${worker}`);
     await page.getByText(label, { exact: true }).waitFor();
@@ -190,5 +209,5 @@ try {
   assert.equal(writes.length, 2, 'page reads must never submit platform mutations');
   assert.deepEqual(unexpected, [], 'all API and external network requests must be explicitly mocked');
   assert.deepEqual(errors, []);
-  console.log('Platform ads UI passed: disabled TikTok modes, manual takeover, expired account removal, preserved rule history three live-page fixtures, Meta creative bind/upload/reconcile/use and local preflight without execution; P2 history explicit sync, worker completed/stale/unknown and decision evidence; all APIs mocked.');
+  console.log('Platform ads UI passed: disabled TikTok modes, manual takeover, expired account removal, preserved rule history three live-page fixtures, Meta creative bind/upload/reconcile/use and local preflight without execution; native report explicit read, worker completed/stale/unknown and decision evidence; all APIs mocked.');
 } finally { await browser?.close(); await vite?.close(); }

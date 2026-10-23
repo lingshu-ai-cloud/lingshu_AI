@@ -1,4 +1,6 @@
 import { store } from '../storage/index.js';
+import { validateDraftAdMaterial } from './creativeSelection.js';
+import { PlatformAdCreativeError } from './creatives.js';
 import { withPlatformAdTaskLock } from './taskLock.js';
 export { withPlatformAdTaskLock } from './taskLock.js';
 import { emptyAdPlanConfiguration, type AdManagement, type AdPlanConfiguration, type AdAuthorization, type AdProposal, type AdSourceContext, type AdManagementMode, type AdCurrency } from '../../src/lib/platformAdsDomain.js';
@@ -30,6 +32,10 @@ type StoredTask = PlatformAdTask & { tenant_id: string; created_by: string };
 
 export class PlatformAdTaskValidationError extends Error {}
 export class PlatformAdTaskConflictError extends PlatformAdTaskValidationError {}
+async function checkedDraftMaterial(tenantId: string, input: unknown) {
+  try { return await validateDraftAdMaterial(tenantId, input); }
+  catch (error) { throw new PlatformAdTaskConflictError(error instanceof PlatformAdCreativeError ? error.message : '所选素材暂不可用，请重新选择或清除选择。'); }
+}
 
 const text = (value: unknown, max: number) => String(value ?? '').trim().slice(0, max);
 export function adCurrency(value: unknown): AdCurrency {
@@ -48,7 +54,9 @@ function configuration(input: unknown, budget: number): AdPlanConfiguration {
   if (startsAt && endsAt && Date.parse(endsAt) <= Date.parse(startsAt)) throw new PlatformAdTaskValidationError('结束时间须晚于开始时间');
   const dailyBudget = raw.dailyBudget == null || raw.dailyBudget === '' ? null : Number(raw.dailyBudget);
   if (dailyBudget !== null && (!Number.isFinite(dailyBudget) || dailyBudget < 1 || dailyBudget > budget)) throw new PlatformAdTaskValidationError('日预算须大于等于 1 且不超过总预算');
-  return { startsAt, endsAt, dailyBudget, audience: text(raw.audience, 2000), placements: text(raw.placements, 1000) };
+  const accountConnectionId = raw.accountConnectionId === undefined ? undefined : text(raw.accountConnectionId, 100);
+  if (accountConnectionId && !/^[a-zA-Z0-9_-]{1,100}$/.test(accountConnectionId)) throw new PlatformAdTaskValidationError('草稿账户标识无效');
+  return { startsAt, endsAt, dailyBudget, audience: text(raw.audience, 2000), placements: text(raw.placements, 1000), ...(accountConnectionId === undefined ? {} : { accountConnectionId }) };
 }
 
 export function validatePlatformAdTask(input: Record<string, unknown>): Omit<PlatformAdTask, 'id' | 'status' | 'createdAt' | 'updatedAt' | 'version' | 'authorization' | 'proposal' | 'sourceContext' | 'managementHistory'> {
@@ -99,8 +107,19 @@ export async function getPlatformAdTask(tenantId: string, id: string): Promise<P
   return record?.tenant_id === tenantId ? publicTask(record) : null;
 }
 
+async function checkedDraftAccount(tenantId: string, task: { currency: string; channels: string[]; configuration: AdPlanConfiguration }) {
+  const id = task.configuration.accountConnectionId;
+  if (!id) return;
+  const account = await store.getById<{ tenant_id: string; provider: string; currency: string; status: string }>('platform_ad_connections', id);
+  if (!account || account.tenant_id !== tenantId || account.status !== 'connected') throw new PlatformAdTaskValidationError('草稿账户不可用或不属于当前企业，请重新选择');
+  if (account.currency !== task.currency || account.provider !== 'meta' || !task.channels.every(c => ['Facebook', 'Instagram'].includes(c))) throw new PlatformAdTaskValidationError('草稿账户与计划币种或渠道不一致');
+}
 export async function createPlatformAdTask(tenantId: string, userId: string, input: Record<string, unknown>, trusted?: { proposal?: AdProposal; creationSource?: 'ai_assisted' | 'ai_managed'; sourceContext?: AdSourceContext }): Promise<PlatformAdTask> {
   const valid = validatePlatformAdTask(input);
+  await checkedDraftAccount(tenantId, valid);
+  const materialSource = await checkedDraftMaterial(tenantId, (input.configuration as Record<string, unknown> | undefined)?.materialSource);
+  if (materialSource !== undefined) valid.configuration.materialSource = materialSource;
+  if (materialSource) valid.video = materialSource.name.slice(0, 120);
   const now = new Date().toISOString();
   const created = await store.create<StoredTask>(PLATFORM_AD_TASKS_COLLECTION, { ...valid, creationSource: trusted?.creationSource || 'manual', proposal: trusted?.proposal || null, sourceContext: trusted?.sourceContext || null, version: 1, authorization: null, managementHistory: [], tenant_id: tenantId, created_by: userId, status: 'draft', createdAt: now, updatedAt: now });
   if (!created) throw new Error('投放草稿保存失败');
@@ -123,6 +142,12 @@ async function updateTaskUnlocked(tenantId: string, id: string, input: Record<st
   const valid = validatePlatformAdTask({ ...input, currency: existingCurrency });
   valid.creationSource = existing.creationSource || 'manual';
   if (input.configuration === undefined) valid.configuration = configuration(existing.configuration, valid.budget);
+  if ((input.configuration as Record<string, unknown> | undefined)?.accountConnectionId === undefined && existing.configuration?.accountConnectionId) valid.configuration.accountConnectionId = existing.configuration.accountConnectionId;
+  await checkedDraftAccount(tenantId, valid);
+  const requestedSource = (input.configuration as Record<string, unknown> | undefined)?.materialSource;
+  const materialSource = await checkedDraftMaterial(tenantId, requestedSource === undefined ? existing.configuration?.materialSource : requestedSource);
+  if (materialSource !== undefined) valid.configuration.materialSource = materialSource;
+  if (materialSource) valid.video = materialSource.name.slice(0, 120);
   const updatedAt = new Date().toISOString();
   const version = Number(existing.version || 1) + 1;
   // Any draft edit changes the premises of an AI proposal. Drop it rather than

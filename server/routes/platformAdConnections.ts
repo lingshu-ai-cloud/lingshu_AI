@@ -3,36 +3,55 @@ import { adReleasePolicy } from '../platformAds/releasePolicy.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { connectAccount, getConnectionCredential, listConnections } from '../platformAds/connections.js';
 import { AdProviderError, MetaAdsAdapter } from '../platformAds/metaAdapter.js';
-import { beginMetaOAuth, finishMetaOAuth, oauthAccounts, selectOAuthAccount, metaOAuthConfigured } from '../platformAds/oauth.js';
+import { beginMetaOAuth, finishMetaOAuth, oauthAccounts, oauthPages, selectOAuthAccount, metaOAuthConfigured, metaOAuthReadiness, cancelMetaOAuth } from '../platformAds/oauth.js';
 import { requireAdWriteAccess } from '../platformAds/access.js';
 import { GoogleAdsAdapter, TikTokAdsAdapter } from '../platformAds/otherAdapters.js';
+import { listPlatformAdResources, syncPlatformAdResources } from '../platformAds/resources.js';
+import type { PlatformAdResourceLevel } from '../../shared/platformAdResources.js';
+import { useGrantedAccount } from '../platformAds/accountDirectory.js';
 export const platformAdConnectionsRouter = Router();
+platformAdConnectionsRouter.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 platformAdConnectionsRouter.get('/oauth/meta/callback', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
   try {
+    if (req.query.error) {
+      await cancelMetaOAuth(String(req.query.state || ''));
+      res.type('text/plain').send('你已取消 Meta 授权，未连接新账户、未创建广告。请返回灵枢重新开始。'); return;
+    }
     await finishMetaOAuth(String(req.query.state || ''), String(req.query.code || ''));
     res.type('text/plain').send('Meta 广告授权已完成。请返回灵枢页面选择广告账户。');
   } catch (error) { failure(res, error); }
 });
 platformAdConnectionsRouter.use(requireAuth);
 platformAdConnectionsRouter.use(requireAdWriteAccess);
+platformAdConnectionsRouter.post('/connections/:id/use-granted-account', async (req, res) => {
+  try { res.json({ connection: await useGrantedAccount((res.locals as AuthLocals).tenantId, req.params.id, String(req.body.accountId || '')) }); }
+  catch (error) { failure(res, error); }
+});
 platformAdConnectionsRouter.post('/oauth/meta/start', async (_req, res) => {
   try { const { tenantId, userId } = res.locals as AuthLocals; res.json(await beginMetaOAuth(tenantId, userId)); } catch (error) { failure(res, error); }
 });
 platformAdConnectionsRouter.get('/oauth/meta/:id/accounts', async (req, res) => {
   try { const { tenantId, userId } = res.locals as AuthLocals; res.json(await oauthAccounts(tenantId, userId, req.params.id)); } catch (error) { failure(res, error); }
 });
+platformAdConnectionsRouter.get('/oauth/meta/:id/pages', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try { const { tenantId, userId } = res.locals as AuthLocals; res.json({ items: await oauthPages(tenantId, userId, req.params.id, String(req.query.accountId || '')) }); } catch (error) { failure(res, error); }
+});
 platformAdConnectionsRouter.post('/oauth/meta/:id/connect', async (req, res) => {
-  try { const { tenantId, userId } = res.locals as AuthLocals; res.json({ connection: await selectOAuthAccount(tenantId, userId, req.params.id, String(req.body.accountId || '')) }); } catch (error) { failure(res, error); }
+  try { const { tenantId, userId } = res.locals as AuthLocals; res.json({ connection: await selectOAuthAccount(tenantId, userId, req.params.id, String(req.body.accountId || ''), String(req.body.pageId || '')) }); } catch (error) { failure(res, error); }
 });
 function failure(res: import('express').Response, error: unknown) {
   const known = error instanceof AdProviderError;
-  res.status(known && error.code === 'NOT_FOUND' ? 404 : known && error.code === 'INVALID_INPUT' ? 400 : 503).json({ error: known ? error.message : '广告账户服务暂不可用', code: known ? error.code : 'SERVICE_ERROR' });
+  const status = known && error.code === 'NOT_FOUND' ? 404
+    : known && error.code === 'INVALID_INPUT' ? 400
+      : known && ['NOT_SUPPORTED', 'ACCOUNT_CONTEXT_REQUIRED', 'AUTH_REQUIRED'].includes(error.code) ? 409 : 503;
+  res.status(status).json({ error: known ? error.message : '广告账户服务暂不可用', code: known ? error.code : 'SERVICE_ERROR' });
 }
 platformAdConnectionsRouter.get('/connections', async (_req, res) => {
   try { res.json({ items: await listConnections((res.locals as AuthLocals).tenantId), releasePolicy: adReleasePolicy(), capabilities: [
-    { provider: 'meta', configured: Boolean(process.env.META_ADS_API_VERSION), oauthConfigured: metaOAuthConfigured(), reason: process.env.META_ADS_API_VERSION ? '支持授权连接及开发者令牌验证' : '尚未配置 API 版本' },
+    { provider: 'meta', configured: Boolean(process.env.META_ADS_API_VERSION), oauthConfigured: metaOAuthConfigured(), oauthReadiness: metaOAuthReadiness(), reason: process.env.META_ADS_API_VERSION ? '支持授权连接及开发者令牌验证' : '尚未配置 API 版本' },
     { provider: 'tiktok', configured: true, reason: '支持令牌连接、视频观看广告人工创建与启停；自动和审批尚未开放' }, { provider: 'google', configured: Boolean(process.env.GOOGLE_ADS_API_VERSION), reason: '支持 Cloud OAuth 令牌连接、Demand Gen 人工创建与启停；自动和审批尚未开放' },
   ] }); } catch (error) { failure(res, error); }
 });
@@ -53,5 +72,15 @@ platformAdConnectionsRouter.post('/connections/:id/verify', async (req, res) => 
   try {
     const { connection, accessToken } = await getConnectionCredential((res.locals as AuthLocals).tenantId, req.params.id);
     res.json({ connection: await connectAccount(connection.tenant_id, { provider: connection.provider, accountId: connection.accountId, accessToken }) });
+  } catch (error) { failure(res, error); }
+});
+platformAdConnectionsRouter.post('/connections/:id/resources/sync', async (req, res) => {
+  try { res.json(await syncPlatformAdResources((res.locals as AuthLocals).tenantId, req.params.id)); }
+  catch (error) { failure(res, error); }
+});
+platformAdConnectionsRouter.get('/connections/:id/resources', async (req, res) => {
+  try {
+    const level = String(req.query.level || '') as PlatformAdResourceLevel;
+    res.json(await listPlatformAdResources((res.locals as AuthLocals).tenantId, req.params.id, level));
   } catch (error) { failure(res, error); }
 });

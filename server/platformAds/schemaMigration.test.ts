@@ -134,8 +134,22 @@ vm.runInNewContext(fs.readFileSync(new URL('../../pb_migrations/1790640002_platf
   migrate: (up: MigrationCallback, down: MigrationCallback) => { evidenceForward = up; evidenceBackward = down; },
 });
 assert.ok(evidenceForward && evidenceBackward);
-forward = app => { baseForward(app); creativeForward!(app); evidenceForward!(app); };
-backward = app => { evidenceBackward!(app); creativeBackward!(app); baseBackward(app); };
+const additiveMigrations = [
+  '1792627200_platform_ad_account_context.js',
+  '1792627201_platform_ad_resources.js',
+  '1792713600_platform_ad_default_page.js',
+].map(name => {
+  let up: MigrationCallback | undefined, down: MigrationCallback | undefined;
+  vm.runInNewContext(fs.readFileSync(new URL(`../../pb_migrations/${name}`, import.meta.url), 'utf8'), {
+    Collection: FakeCollection, Field: FakeField,
+    migrate: (forward: MigrationCallback, backward: MigrationCallback) => { up = forward; down = backward; },
+  });
+  assert.ok(up && down, `${name} must register both migration callbacks`);
+  return { up: up!, down: down! };
+});
+const legacyForward = (app: FakeApp) => { baseForward(app); creativeForward!(app); evidenceForward!(app); };
+forward = app => { legacyForward(app); for (const migration of additiveMigrations) migration.up(app); };
+backward = app => { for (const migration of [...additiveMigrations].reverse()) migration.down(app); evidenceBackward!(app); creativeBackward!(app); baseBackward(app); };
 
 const expectedNames = Object.keys(AD_SCHEMA_REQUIREMENTS).sort();
 const runtimeSchemas = new Map<string, CollectionDefinition>();
@@ -223,6 +237,21 @@ assertSchemaParity(fresh);
 assert.equal(JSON.stringify([...fresh.collections].map(([name, collection]) => [name, normalizedFields(collection.fields.items)])), firstApplication, 'forward migration must be idempotent');
 backward(fresh);
 assert.equal(fresh.collections.size, 0, 'rollback must remove every collection created by the migration');
+
+// Upgrade the immutable legacy schema without replaying its migration.
+const upgraded = new FakeApp();
+legacyForward(upgraded);
+assert.throws(() => upgraded.findCollectionByNameOrId('platform_ad_ads'));
+assert.throws(() => upgraded.findCollectionByNameOrId('platform_ad_connections').fields.getByName('defaultPage'));
+for (const migration of additiveMigrations) migration.up(upgraded);
+assertSchemaParity(upgraded);
+for (const migration of additiveMigrations) migration.up(upgraded);
+assertSchemaParity(upgraded);
+// Rolling back only the appended migrations preserves all legacy collections.
+for (const migration of [...additiveMigrations].reverse()) migration.down(upgraded);
+assert.ok(upgraded.findCollectionByNameOrId('platform_ad_connections'));
+assert.ok(upgraded.findCollectionByNameOrId('platform_ad_tasks'));
+assert.throws(() => upgraded.findCollectionByNameOrId('platform_ad_ads'));
 
 const adopted = new FakeApp();
 adopted.save(new FakeCollection({

@@ -1,5 +1,6 @@
 import { authHeader } from './auth';
 import type { AdManagement, AdAuthorization, AdProposal, AdSourceContext } from './platformAdsDomain';
+import type { PlatformAdResource, PlatformAdResourceLevel, PlatformAdResourceSyncResult } from '../../shared/platformAdResources';
 export type { AdAuthorization } from './platformAdsDomain';
 
 export type PlatformAdTask = AdManagement & {
@@ -34,4 +35,6 @@ export const platformAdsApi = {
     (await request<{ task: PlatformAdTask }>('/tasks/ai-plan', { method: 'POST', body: JSON.stringify(input) })).task,
   setManagement: async (id: string, input: { expectedVersion: number; managementMode: AdManagement['managementMode']; authorization?: AdAuthorization }) =>
     (await request<{ task: PlatformAdTask }>(`/tasks/${encodeURIComponent(id)}/management`, { method: 'POST', body: JSON.stringify(input) })).task,
+  syncResources: async (connectionId: string) => request<PlatformAdResourceSyncResult>(`/connections/${encodeURIComponent(connectionId)}/resources/sync`, { method: 'POST' }),
+  listResources: async (connectionId: string, level: PlatformAdResourceLevel) => request<{ items: PlatformAdResource[]; hasMore: boolean; accountTimezone: string; currency: string }>(`/connections/${encodeURIComponent(connectionId)}/resources?level=${encodeURIComponent(level)}`),
 };

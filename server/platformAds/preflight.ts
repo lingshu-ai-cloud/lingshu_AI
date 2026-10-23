@@ -19,6 +19,7 @@ export async function preflightAdAction(tenantId: string, taskId: string, input:
   if (connectionId && (!connection || connection.tenant_id !== tenantId)) throw new AdProviderError('未找到广告账户连接', 'NOT_FOUND');
   const checks: AdPreflightCheck[] = [];
   const check = (id: string, label: string, ok: boolean, good: string, bad: string) => checks.push({ id, label, status: ok ? 'pass' : 'blocked', message: ok ? good : bad });
+  if (action === 'create' && task.configuration.accountConnectionId) check('draft_account', '草稿账户一致性', task.configuration.accountConnectionId === connectionId, '执行账户与保存的草稿账户一致', '执行账户与草稿账户不同，请重新选择或修改草稿');
   const warning = (id: string, label: string, message: string) => checks.push({ id, label, status: 'warning', message });
   check('source', '计划来源', task.creationSource !== 'platform_import', '本地计划可进入执行检查', '导入计划仅支持查看，尚未建立可执行资源绑定');
   check('version', '计划版本', Number(input.expectedVersion) === task.version, '计划版本一致', '计划已变化，请刷新后重新预检');

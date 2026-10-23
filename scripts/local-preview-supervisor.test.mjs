@@ -24,6 +24,9 @@ assert.match(source, /stableLocalAuthSecret/, '本地预览必须持久化独立
 assert.match(source, /LOCAL_DEMO_TOKEN_SECRET: localAuthSecret/, '本地预览后端必须复用机器本地的稳定签名密钥');
 assert.match(source, /LOCAL_DEMO_TOKEN_TTL_SECONDS: '86400'/, '本地预览登录应保持完整一天，不能在工作过程中提前失效');
 assert.match(source, /VITE_LINGSHU_LOCAL_PREVIEW: '1'/, '本地预览前端必须显式启用仅回环地址可用的会话引导');
+assert.match(source, /LINGSHU_PREVIEW_FRONTEND_PORT/, '功能分支必须能够使用独立前端端口，不能占用基线预览');
+assert.match(source, /Local preview services must use distinct ports/, '同一预览内的前后端端口必须拒绝重复配置');
+assert.match(source, /VITE_LINGSHU_LOCAL_PREVIEW_ORIGIN: frontendOrigin/, '自定义功能分支端口必须继续支持安全的本地登录恢复');
 assert.match(source, /LINGSHU_PREVIEW_AUTH_EMAIL: localPreviewAuthEmail/, '本地预览后端必须只选择显式的本地测试身份');
 assert.match(source, /loadLocalPreviewProviderEnvironment\(\{ runtimeRoot \}\)/, '共享 provider 配置必须显式选择并验证相同 Git 主工作区');
 assert.match(source, /providerEnvironmentForService\(service.name, providerConfiguration\)/, '共享 provider 凭据只能注入后端，不能注入 Vite');

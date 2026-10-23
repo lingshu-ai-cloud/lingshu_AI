@@ -6,10 +6,12 @@ import { AD_CREATIVES_COLLECTION, getPlatformAdCreative, openPlatformAdCreativeM
 import { assertAdReleaseAction } from './releasePolicy.js';
 import { AdProviderError } from './metaAdapter.js';
 import { collectVerifiedVideo, MAX_META_VIDEO_BYTES, MetaVideoUploadAdapter } from './metaVideoUpload.js';
+import { findStoredReusableMetaVideo } from './creativeReuse.js';
 
 export function createCreativeUploadService(deps = {
   store, getPlatformAdTask, withPlatformAdTaskLock, getConnectionCredential,
   getPlatformAdCreative, openPlatformAdCreativeMedia,
+  reuseVideo: findStoredReusableMetaVideo,
   adapter: (token: string, beforeWrite: () => Promise<void>) => new MetaVideoUploadAdapter(token, fetch, beforeWrite),
 }) {
   async function run(tenantId: string, taskId: string, creativeId: string, input: Record<string, unknown>, reconcile: boolean) {
@@ -52,12 +54,17 @@ export function createCreativeUploadService(deps = {
       if (task.status !== 'draft' || task.creationSource === 'platform_import') throw new AdProviderError('仅草稿计划可上传新素材', 'INVALID_STATE');
       if (task.currency !== connection.currency || !task.channels.length || task.channels.some(channel => !['Facebook', 'Instagram'].includes(channel))) throw new AdProviderError('计划渠道或币种与账户不匹配', 'ACCOUNT_MISMATCH');
       for (const collection of ['platform_ad_executions', 'platform_ad_launches']) {
-        if ((await deps.store.list(collection, { where: { tenant_id: tenantId, taskId }, perPage: 1 })).items.length) throw new AdProviderError('已有执行或启动记录，请建立独立计划', 'INVALID_STATE');
+        const records = await deps.store.list<{ status: string }>(collection, { where: { tenant_id: tenantId, taskId }, perPage: 200 });
+        if (collection === 'platform_ad_executions' ? records.totalPages > 1 || records.items.some(item => item.status !== 'FAILED') : records.items.length > 0 || records.totalItems > 0) throw new AdProviderError('已有执行或启动记录，请建立独立计划', 'INVALID_STATE');
       }
       if (creative.mimeType !== 'video/mp4') throw new AdProviderError('首版 Meta 上传仅支持 MP4 成片', 'INVALID_MEDIA');
       if (!Number.isSafeInteger(creative.size) || creative.size < 1 || creative.size > MAX_META_VIDEO_BYTES) throw new AdProviderError('素材最大 64 MiB', 'INVALID_MEDIA');
       const media = await deps.openPlatformAdCreativeMedia(tenantId, creativeId);
       const bytes = await collectVerifiedVideo(media.body, creative.size, creative.sha256);
+      if (deps.reuseVideo) {
+        const reuse = await deps.reuseVideo({ tenantId, connection, sourceTaskId: creative.sourceTaskId, artifactId: creative.artifactId, file: creative, readStatus: videoId => adapter.status(videoId) });
+        if (reuse) return save({ status: 'ready', platformVideoId: reuse.platformVideoId, uploadReceipt: reuse.uploadReceipt });
+      }
       const receipt = { requestId, accountId: connection.accountId, sha256: creative.sha256, status: 'uploading', at: new Date().toISOString() };
       await save({ status: 'uploading', attemptId: requestId, uploadReceipt: receipt });
       let videoId: string;

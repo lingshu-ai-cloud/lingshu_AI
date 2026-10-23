@@ -7,6 +7,7 @@ import { buildBenchmarkAnalysis, recordOf, MATERIAL_TYPE_LABELS, type BenchmarkA
 import CreationHistoryCover from './CreationHistoryCover';
 import BenchmarkAnalysisSections from '../inspiration/BenchmarkAnalysisSections';
 import { useModalFocus } from '../../hooks/useModalFocus';
+import AdSourceLifecycle from '../AdSourceLifecycle';
 
 function preview(project: StudioProject) {
   const outputs = project.spec.languageRenderOutputs;
@@ -43,6 +44,7 @@ function Detail({ project, authoritative, onClose, onOpen }: { project: StudioPr
     <div ref={ref} role="dialog" aria-modal="true" aria-labelledby="creation-material-title" className="flex h-full w-full max-w-3xl flex-col bg-white shadow-xl">
       <header className="flex items-center justify-between border-b p-5"><div><div className="flex flex-wrap items-center gap-2"><h2 id="creation-material-title" className="font-semibold">{project.title}</h2><span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-semibold text-emerald-800">{creationModeLabel(project)}</span></div><p className="mt-1 text-xs text-text-muted">创作于 {date(project.createdAt)}</p></div><button aria-label="关闭素材详情" onClick={onClose}><X size={20} /></button></header>
       <div className="flex-1 space-y-4 overflow-y-auto p-5">
+        <AdSourceLifecycle origin="studio" projectId={project.id}/>
         {url && <video controls playsInline src={url} className="max-h-80 w-full rounded-lg bg-black" />}
         <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-xs leading-6"><h3 className="font-bold text-emerald-900">钩子内容</h3><p className="font-semibold">继承的原片钩子</p><p>画面：{hook?.visual || '尚无原片钩子分析'}</p><p>口播：{hook?.dialogue || hook?.onScreenText || '未记录'}</p><p>作用：{hook?.purpose || '未记录'}</p><p className="mt-3 font-semibold">{data.hook.source}</p><p>画面：{data.hook.visual || '未记录'}</p><p>口播：{data.hook.dialogue || '未记录'}</p></section>
         <p className="text-xs text-text-muted">以下为草稿保留的对标视频结构与分析。</p>
