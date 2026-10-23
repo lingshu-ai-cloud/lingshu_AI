@@ -1,3 +1,4 @@
+import { creationReplySchema, creationSelectionSchema } from '../../shared/contracts/contentCreationDialogue';
 import type { Message } from '../appSession';
 import type {
   AgentThreadState,
@@ -108,7 +109,9 @@ function sanitizeValue(value: unknown, depth = 0): unknown {
 }
 
 function sanitizeMessage(value: Message): Message {
+  const creation = creationReplySchema.safeParse(sanitizeValue(value.creation));
   return {
+    ...(creation.success ? { creation: creation.data } : {}),
     role: value.role === 'assistant' ? 'assistant' : 'user',
     content: redactSensitiveText(String(value.content || ''), MESSAGE_MAX_CHARS),
     ...(Array.isArray(value.sources) ? {
@@ -187,6 +190,7 @@ export function sanitizeAssistantThreadForJournal(thread: AgentThreadState): Age
   return {
     version: Number.isSafeInteger(thread.version) && thread.version >= 0 ? thread.version : 0,
     updatedAt: typeof thread.updatedAt === 'string' ? thread.updatedAt.slice(0, 100) : '',
+    creationDraft: creationSelectionSchema.safeParse(sanitizeValue(thread.creationDraft)).success ? creationSelectionSchema.parse(sanitizeValue(thread.creationDraft)) : null,
     messages: (thread.messages || []).slice(-JOURNAL_MAX_MESSAGES).map(sanitizeMessage),
     draftInput: redactSensitiveText(String(thread.draftInput || ''), 4_000),
     scrollPosition: Number.isFinite(thread.scrollPosition) ? Math.max(0, thread.scrollPosition) : 0,

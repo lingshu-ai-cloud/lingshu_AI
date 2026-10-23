@@ -201,3 +201,40 @@ html[data-lingshu-appearance='light'] .ls-assistant-home-root .ls-assistant-comp
   .creator-home__conversation { transition: none; }
   .ls-assistant-home-root[data-home-creation-mode] { animation: none; }
 }
+
+/* Free creation uses the existing assistant surface and shared motion/theme tokens. */
+.creator-home--free .creator-home__assistant-anchor:has(.ls-assistant-composer__reference-tile):focus-within { height: min(600px, 76dvh); transition: height var(--ls-motion-standard) var(--ls-ease-standard); }
+.ls-assistant-home-root .ls-assistant-composer__reference-tile { position: absolute; left: 20px; top: 16px; width: 105px; min-height: 105px; padding: 10px; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface-2); color: var(--color-text-primary); font-size: 12px; overflow-wrap: anywhere; }
+.ls-assistant-composer__reference-tile strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ls-assistant-composer__reference-tile button { align-self: flex-end; min-height: 24px; min-width: 24px; }
+.creation-dialogue-choices { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; padding-top: 16px; color: var(--color-text-primary); }
+.creation-dialogue-choices > .ant-alert, .creation-dialogue-choices > p, .creation-dialogue-choices > label { flex-basis: 100%; }
+.creation-dialogue-strip { display: flex; flex-basis: 100%; min-width: 0; gap: 12px; overflow-x: auto; padding: 4px 0 12px; }
+.creation-dialogue-shot, .creation-dialogue-narration { flex: 0 0 clamp(180px, 26%, 280px); min-width: 0; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface-2); padding: 12px; }
+.creation-dialogue-shot[data-selected='true'], .creation-dialogue-narration[data-selected='true'], .creation-dialogue-flow article[data-selected='true'] { border-color: var(--color-accent); box-shadow: inset 0 0 0 1px var(--color-accent); }
+.creation-dialogue-shot button { width: 100%; text-align: left; padding-top: 12px; }
+.creation-dialogue-shot strong { display: block; }
+.creation-dialogue-shot p { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 8px 0; }
+.creation-dialogue-narration p { margin: 12px 0; }
+.creation-dialogue-flow { display: flex; flex-direction: column; gap: 16px; }
+.creation-dialogue-flow article { border: 1px solid var(--color-border); border-radius: 8px; padding: 16px; }
+.creation-dialogue-flow video { display: block; width: 100%; max-height: 45dvh; margin: 12px 0; object-fit: contain; }
+.creation-dialogue-choices button:focus-visible, .ls-assistant-composer__reference-tile button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .creator-home--free .creator-home__assistant-anchor:has(.ls-assistant-composer__reference-tile):focus-within { transition: none; } }
+@media (max-width: 767px) { .ls-assistant-home-root .ls-assistant-composer__reference-tile { left: 12px; top: 12px; width: 72px; font-size: 12px; } .creation-dialogue-shot, .creation-dialogue-narration { flex-basis: 82%; } }
+
+.ls-assistant-composer__reference-tile img { width: 100%; height: 44px; object-fit: contain; }
+.ls-assistant-home-root .ls-assistant-composer__surface:has(.ls-assistant-composer__reference-tile) { min-height: 174px; }
+.ls-assistant-home-root .ls-assistant-composer__surface:has(.ls-assistant-composer__reference-tile) .ls-assistant-composer__tools { padding-left: 112px; }
+.ls-assistant-home-root .ls-assistant-composer__reference-tile { width: 100px; max-height: 142px; line-height: 16px; }
+.ls-assistant-composer__reference-tile > span:last-of-type { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 767px) {
+  .ls-assistant-home-root .ls-assistant-composer__surface:has(.ls-assistant-composer__reference-tile) .ls-assistant-composer__tools { padding-left: 84px; gap: 4px; }
+  .ls-assistant-home-root .ls-assistant-composer__reference-tile { width: 72px; padding: 6px; }
+  .ls-assistant-home-root .ls-assistant-composer__surface:has(.ls-assistant-composer__reference-tile) .ls-assistant-composer__mode { font-size: 12px; }
+}
+.ls-assistant-composer__reference-tile button { position: absolute; top: -8px; right: -12px; display: flex; min-height: 44px; min-width: 44px; align-items: center; justify-content: center; }
+.creation-dialogue-shot .ant-checkbox-wrapper, .creation-dialogue-flow .ant-checkbox-wrapper { min-height: 44px; align-items: center; }
+@media (min-width: 768px) { .creation-dialogue-narration { flex-basis: calc((100% - 24px) / 3); } }
+@media (min-width: 768px) and (max-width: 1279px) { .creation-dialogue-drawer { width: min(520px, 60vw) !important; } }
+@media (max-width: 767px) { .creation-dialogue-drawer { width: 100vw !important; max-width: 100vw !important; } .creation-dialogue-choices .ant-btn { min-height: 44px; } }

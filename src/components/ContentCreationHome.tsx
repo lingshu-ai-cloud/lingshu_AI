@@ -1,3 +1,4 @@
+import { useAssistantStore } from '../stores/assistantStore';
 import { Alert, Button, Segmented, Spin } from 'antd';
 import { ArrowRight, CalendarDays, Clapperboard, Lightbulb, RefreshCw, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -59,6 +60,12 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
     return () => { active = false; };
   }, [mode, videoRevision]);
 
+  const selectReference = (video: TrendVideo) => {
+    useAssistantStore.getState().hydrateThread('business', { creationDraft: { referenceId: video.recordId || video.id.replace(/^crawl-/, ''), referenceLabel: video.title.slice(0, 200), ...(/^(https?:\/\/|\/api\/)/.test(video.thumbnail || '') ? { referenceThumbnail: video.thumbnail } : {}), productIds: [], shotIds: [] } });
+    setPreview(null);
+    document.getElementById('content-creation-assistant-anchor')?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    window.dispatchEvent(new CustomEvent('lingshu:assistant-home-reference'));
+  };
   const openPreview = (video: TrendVideo) => {
     previewTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setPreview(video);
@@ -67,11 +74,10 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
     setPreview(null);
     window.requestAnimationFrame(() => previewTriggerRef.current?.focus());
   };
-  const openInspirationReference = (video: TrendVideo, startViralReplication = false) => {
+  const openInspirationReference = (video: TrendVideo) => {
     setPreview(null);
     window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
       page: 'socialInspiration',
-      startViralReplication,
       inspirationReference: { referenceId: video.recordId || video.id.replace(/^crawl-/, ''), sourceUrl: video.sourceUrl, title: video.title, platform: video.platform, thumbnailUrl: video.thumbnail, duration: video.duration },
     } }));
   };
@@ -136,7 +142,7 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
         {videosLoading && !videos.length ? <div className="flex min-h-40 items-center justify-center"><Spin description="正在读取爆款视频"/></div>
           : videos.length ? <LsMasonryGallery layout="masonry" columns={{ xs: 2, sm: 2, md: 3, lg: 4 }} items={videos.map((video, index) => ({ id: video.id, content:
             <div data-home-media><VideoCard video={video} index={index} isSelected={false} onWatch={() => openPreview(video)}
-              onSelect={() => openPreview(video)} onCreate={() => openInspirationReference(video, true)} createLabel="爆款裂变"/></div> }))}/>
+              onSelect={() => openPreview(video)} onCreate={() => selectReference(video)} createLabel="去创作"/></div> }))}/>
             : !videosLoading && !videosError && <p className="creator-home__empty">当前租户暂无可展示的爆款视频。</p>}
       </section>}
     </div>

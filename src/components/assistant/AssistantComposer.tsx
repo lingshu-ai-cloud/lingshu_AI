@@ -1,6 +1,11 @@
+import { AuthenticatedImage } from '../inspiration/InspirationMedia';
+import { useAssistantStore } from '../../stores/assistantStore';
+import { useCreationMode } from '../../lib/creationMode';
 import {
   forwardRef,
   useRef,
+  useState,
+  useEffect,
   type ChangeEvent,
   type KeyboardEvent,
 } from 'react';
@@ -91,6 +96,15 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
   onValidationError,
   onSubmit,
 }, forwardedRef) {
+  const selection = useAssistantStore(state => state.threads.business.creationDraft);
+  const creationMode = useCreationMode();
+  const freeHome = variant === 'home' && creationMode === 'free';
+  const [engaged, setEngaged] = useState(false);
+  useEffect(() => {
+    const focusReference = () => { setEngaged(false); };
+    window.addEventListener('lingshu:assistant-home-reference', focusReference);
+    return () => window.removeEventListener('lingshu:assistant-home-reference', focusReference);
+  }, []);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectFiles = (event: ChangeEvent<HTMLInputElement>) => {
@@ -109,7 +123,11 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
   return (
     <div data-assistant-composer="true" data-variant={variant} className="ls-assistant-composer shrink-0">
       <div data-assistant-composer-surface="true" className="ls-assistant-composer__surface">
-        {variant === 'home' && <button type="button" className="ls-assistant-composer__add-tile" onClick={() => fileInputRef.current?.click()} disabled={disabled || uploading || files.length >= ASSISTANT_ATTACHMENT_LIMIT} aria-label="添加图片、视频或音频参考"><Plus size={26} aria-hidden="true"/></button>}
+        {freeHome && selection ? <div className="ls-assistant-composer__reference-tile">
+          <span>爆款参考</span>{selection.referenceThumbnail && <AuthenticatedImage src={selection.referenceThumbnail} alt="参考视频封面" className="w-full h-11 object-contain"/>}<strong>{selection.referenceLabel || selection.referenceId}</strong>
+          <span title={selection.referenceId}>来源：{selection.referenceId}</span>
+          <button type="button" title="取消参考视频" aria-label="取消参考视频" onClick={() => useAssistantStore.getState().hydrateThread('business', { creationDraft: null })}><X size={14}/></button>
+        </div> : variant === 'home' && <button type="button" className="ls-assistant-composer__add-tile" onClick={() => fileInputRef.current?.click()} disabled={disabled || uploading || files.length >= ASSISTANT_ATTACHMENT_LIMIT} aria-label="添加图片、视频或音频参考"><Plus size={26} aria-hidden="true"/></button>}
         {files.length > 0 && (
           <div data-assistant-attachments="pending" className="flex flex-wrap gap-1.5 border-b border-border/70 px-2.5 py-2">
             {files.map(file => {
@@ -138,12 +156,13 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
         <textarea
           ref={forwardedRef}
           value={draft}
+          onFocus={() => { if (freeHome && selection) setEngaged(true); }}
           onChange={event => onDraftChange(event.target.value)}
           onKeyDown={submitOnEnter}
           rows={1}
           maxLength={4000}
           aria-label="给灵小枢发送消息"
-          placeholder={variant === 'home' ? '输入想法、脚本或上传参考，和灵小枢一起创作' : '告诉灵小枢你想完成什么...'}
+          placeholder={freeHome && selection && engaged ? '给灵小枢派活' : variant === 'home' ? '输入想法、脚本或上传参考，和灵小枢一起创作' : '告诉灵小枢你想完成什么...'}
           className="ls-assistant-composer__input max-h-[88px] min-h-10 w-full resize-none overflow-y-auto bg-transparent px-3 pt-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted"
         />
         <div className="flex items-center justify-between gap-2 px-2 pb-2">

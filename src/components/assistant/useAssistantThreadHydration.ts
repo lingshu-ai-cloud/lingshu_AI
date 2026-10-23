@@ -67,6 +67,7 @@ export function useAssistantThreadHydration(input: {
           version: Number.isSafeInteger(Number(item.version)) ? Number(item.version) : 0,
           updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : '',
           messages: Array.isArray(item.messages) ? item.messages : [],
+          creationDraft: item.creationDraft ?? null,
           draftInput: typeof item.draftInput === 'string' ? item.draftInput : '',
           scrollPosition: Number(item.scrollPosition ?? 0),
           unreadCount: Number(item.unreadCount ?? 0),

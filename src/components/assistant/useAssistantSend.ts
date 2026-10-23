@@ -1,3 +1,6 @@
+import { requestCreationReply } from './contentCreationRequest';
+import type { CreationTurn } from '../../../shared/contracts/contentCreationDialogue';
+import { useCreationMode } from '../../lib/creationMode';
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { App as AntApp } from 'antd';
 import type { AgentType, Message, Page } from '../../App';
@@ -88,14 +91,44 @@ export function useAssistantSend(input: AssistantSendInput) {
     activeAgent, draftInput, pendingAttachments, attachmentUploading, weeklyPlanKickoffAvailable,
     uploadedAttachmentCacheRef, setAttachmentError, setAttachmentUploading, setPendingAttachments,
     openWeeklyPlanFromAssistant } = input;
+  const creationMode = useCreationMode();
   const send = useCallback(async (
     text: string,
     routeAgent = currentPageAgent,
     forcedContext?: AssistantContext,
     uploadedAttachments: UploadedAssistantAttachment[] = [],
+    creationAction?: CreationTurn['action'],
   ) => {
     const userText = text.trim();
     if ((!userText && !uploadedAttachments.length) || loading || fileGenerating || replyStreaming) return;
+    const creationDraft = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].creationDraft;
+    if (page === 'strategy' && creationMode === 'free' && creationDraft && !uploadedAttachments.length && (creationAction || !creationDraft.evidenceVersion || !useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages.some(message => message.creation?.selection.referenceId === creationDraft.referenceId))) {
+      const requestFence = persistenceFenceRef.current;
+      const token = getToken();
+      const controller = new AbortController();
+      const selection = creationDraft;
+      const current = () => requestFence.active && persistenceFenceRef.current === requestFence
+        && sameAssistantRequestIdentity(token, getToken(), stablePersistenceScope)
+        && useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].creationDraft === selection;
+      if (!current()) return;
+      abortRef.current?.abort(); abortRef.current = controller;
+      const store = useAssistantStore.getState();
+      store.setMessages(PRIMARY_ASSISTANT_THREAD, [...store.threads[PRIMARY_ASSISTANT_THREAD].messages, { role: 'user', content: userText }]);
+      setLoading(true); openAgent(routeAgent, 'chat');
+      try {
+        const applied = await requestCreationReply({ turn: { action: creationAction || 'start', selection, instruction: userText }, controller, isCurrent: current, persist: () => persistThread(PRIMARY_ASSISTANT_THREAD) });
+        if (applied && !controller.signal.aborted && sameAssistantRequestIdentity(token, getToken(), stablePersistenceScope)) setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
+      } catch (error) {
+        if (current() && !controller.signal.aborted) {
+          const thread = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
+          setMessages(PRIMARY_ASSISTANT_THREAD, [...thread.messages, { role: 'assistant', content: error instanceof Error ? error.message : '推荐失败，请重试。' }]);
+        }
+      } finally {
+        if (abortRef.current === controller) { setLoading(false); abortRef.current = null; }
+        if (requestFence.active && persistenceFenceRef.current === requestFence) persistThread(PRIMARY_ASSISTANT_THREAD);
+      }
+      return;
+    }
     if (contentIntake.active) {
       if (uploadedAttachments.length) { void uiMessage.warning('请先完成或取消当前任务问答，再发送附件。'); return; }
       contentIntake.answer(userText);
@@ -144,7 +177,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       setLoading(false); persistThread(threadAgent); return;
     }
     pendingMapFileRef.current = false;
-    const productionIntent = uploadedAttachments.length || fileIntent ? null : assistantProductionIntent(visibleText);
+    const productionIntent = (page === 'strategy' && creationMode === 'free' && creationDraft) || uploadedAttachments.length || fileIntent ? null : assistantProductionIntent(visibleText);
     if (productionIntent && ['smartAssets', 'socialInspiration'].includes(page)) {
       setLoading(false);
       contentIntake.start(productionIntent.objective, productionIntent);
@@ -256,6 +289,7 @@ export function useAssistantSend(input: AssistantSendInput) {
           deepThinking: false,
           ...(strategyRequest ? {
             userQuestion: visibleText,
+            ...(page === 'strategy' && creationMode === 'free' && creationDraft ? { creationSelection: creationDraft } : {}),
             pageContext: {
               label: context.label,
               summary: compactText(context.summary, 2000),
@@ -305,7 +339,7 @@ export function useAssistantSend(input: AssistantSendInput) {
         onSessionRefresh?.();
       }
     }
-  }, [replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, loading, modal, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard, stablePersistenceScope]);
+  }, [creationMode, replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, loading, modal, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard, stablePersistenceScope]);
 
   const sendComposerMessage = useCallback(async () => {
     if (loading || attachmentUploading) return;

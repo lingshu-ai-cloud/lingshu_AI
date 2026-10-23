@@ -1,3 +1,5 @@
+import { creationReplySchema, creationSelectionSchema } from '../../shared/contracts/contentCreationDialogue.js';
+import type { CreationSelection } from '../../shared/contracts/contentCreationDialogue.js';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { store } from '../storage/index.js';
 import type { DataStore } from '../storage/datastore.js';
@@ -96,6 +98,7 @@ type AssistantThreadTaskCard = {
 };
 
 type AssistantThread = {
+  creationDraft?: CreationSelection | null;
   source?: string;
   id: string;
   tenantId: string;
@@ -341,7 +344,9 @@ function parseMessages(value: unknown): unknown[] {
         };
       });
     }
-    return { role: source.role, content, ...(sources ? { sources } : {}) };
+    const creation = source.creation === undefined ? undefined : creationReplySchema.safeParse(source.creation);
+    if (creation && !creation.success) return threadInputError('assistant_creation_invalid', '创作消息格式无效。');
+    return { role: source.role, content, ...(sources ? { sources } : {}), ...(creation?.success ? { creation: creation.data } : {}) };
   });
 }
 
@@ -390,7 +395,11 @@ function parseThreadPayload(
       return threadInputError('assistant_thread_focused_task_invalid', '焦点任务不存在。');
     }
   }
+  const creationValue = source.creationDraft === undefined ? prior?.creationDraft ?? null : source.creationDraft;
+  const creation = creationValue == null ? null : creationSelectionSchema.safeParse(creationValue);
+  if (creation && !creation.success) return threadInputError('assistant_creation_invalid', '创作选择格式无效。');
   const payload = {
+    creationDraft: creation?.success ? creation.data : null,
     tenantId: identity.tenantId,
     userId: identity.userId,
     source: 'desktop',
@@ -453,6 +462,7 @@ function threadWithDefaults(thread: AssistantThread): AssistantThread {
     tenantId: typeof thread.tenantId === 'string' ? thread.tenantId : '',
     userId: typeof thread.userId === 'string' ? thread.userId : '',
     source: 'desktop',
+    creationDraft: creationSelectionSchema.safeParse(thread.creationDraft).success ? creationSelectionSchema.parse(thread.creationDraft) : null,
     agentId: typeof thread.agentId === 'string' ? thread.agentId : '',
     version: Number.isSafeInteger(thread.version) && thread.version > 0 ? thread.version : 0,
     messages,

@@ -88,7 +88,7 @@ export default function AssistantConversationBubbles(props: Props) {
       {contentIntakeNode}
 
       {loading && (
-        <div data-assistant-bubble="loading" className="ls-assistant-bubble-enter flex gap-2"
+        <div role="status" aria-live="polite" data-assistant-bubble="loading" className="ls-assistant-bubble-enter flex gap-2"
           style={assistantBubbleStyle(messages.length + (welcomeBubbleVisible ? 1 : 0))}>
           <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Loader2 size={13} className="motion-safe:animate-spin" /></div>
           <div className="ls-messenger-bubble ls-messenger-bubble--inbound text-text-muted">思考中...</div>

@@ -1,3 +1,5 @@
+import ContentCreationChoices from './ContentCreationChoices';
+import { useCreationMode } from '../../lib/creationMode';
 import { type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ArrowDown, ArrowLeft, X } from 'lucide-react';
@@ -89,6 +91,8 @@ export default function AssistantConversationPanel(props: Props) {
     setAssistantTool, setScrollPosition, setFollowingLatest, focusTaskCard, setMessages,
     setDraftInput, setDecisionFeedRevision, setMode, setWeeklyActionBusy,
     setPendingAttachments, setAttachmentError, persistThread } = props;
+  const creationMode = useCreationMode();
+  const creationReply = [...activeThread.messages].reverse().find(message => message.creation)?.creation;
   const activeContext = contextForOrbit(currentPageAgent, pageContext);
   const focusedCardCandidate = activeThread.focusedTaskId
     ? activeThread.taskCards[activeThread.focusedTaskId] ?? null
@@ -189,6 +193,8 @@ export default function AssistantConversationPanel(props: Props) {
                 weeklyPlanKickoffAvailable={weeklyPlanKickoffAvailable}
                 onOpenWeeklyPlan={openWeeklyPlanFromAssistant}
               />
+              {inlineHome && creationMode === 'free' && creationReply && <ContentCreationChoices reply={creationReply} busy={loading || replyStreaming}
+                send={send} onNavigateEvidence={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'socialInspiration', inspirationReference: { referenceId: creationReply.selection.referenceId, title: creationReply.referenceTitle } } }))}/>}
             </div>
 
             {!activeThread.isFollowingLatest && (
