@@ -4,6 +4,7 @@ import { productionApi } from '../lib/productionApi';
 import PresenterManager from './enterprise/PresenterManager';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import ArkPresenterEnrollmentPanel from './studio/ArkPresenterEnrollmentPanel';
+import { arkPresenterEnrollmentMaterials } from './studio/arkPresenterEnrollmentMaterials';
 import PresenterVoiceBinding from './studio/PresenterVoiceBinding';
 import { useEffect, useRef, useState } from 'react';
 import { parseShotCommand, presenterCapabilities, shotFingerprint, shotBlockers, type ShotProduction, type ProductionDefaults, type AvatarJob, type PresenterAsset } from '../lib/shotProduction';
@@ -132,8 +133,7 @@ export default function ShotProductionPanel(props: {
   const [showAssetSettings, setShowAssetSettings] = useState(false);
   const [showPresenterSetup,setShowPresenterSetup]=useState(false);const [presenterSetupBusy,setPresenterSetupBusy]=useState(false);const [presenterSetupError,setPresenterSetupError]=useState('');
   const [presenterSetup,setPresenterSetup]=useState({name:'',file:null as File|null,subjectAdultConfirmed:false});
-  const arkPortraitOptions=(selectedPresenter?.referenceMaterialIds||[]).map(id=>props.materials.find(material=>material.id===id)).filter((material):material is Asset=>Boolean(material&&material.type==='image'));
-  const arkVideoOptions=(selectedPresenter?.referenceMaterialIds||[]).map(id=>props.materials.find(material=>material.id===id)).filter((material):material is Asset=>Boolean(material&&material.type==='video'));
+  const arkEnrollmentMaterials = arkPresenterEnrollmentMaterials(selectedPresenter, props.materials);
   const saveInlinePresenter=async()=>{const file=presenterSetup.file;if(!props.onCreatePresenter||!file)return;setPresenterSetupBusy(true);setPresenterSetupError('');try{const presenter=await props.onCreatePresenter({presenterId:selectedPresenter?.id,name:selectedPresenter?.name||presenterSetup.name,file,subjectAdultConfirmed:presenterSetup.subjectAdultConfirmed,arkProcessingAuthorized:false,heygenProcessingAuthorized:presenterMode === 'photo_talking'});props.onChange({presenterId:presenter.id,digitalHuman:{...(shot.digitalHuman||newDigitalHumanRequirements()),presenterSelected:true,contentConfirmed:false,targetFramesConfirmed:false}});setShowPresenterSetup(false);setPresenterSetup({name:'',file:null,subjectAdultConfirmed:false});}catch(error){setPresenterSetupError(error instanceof Error?error.message:'人物保存失败');}finally{setPresenterSetupBusy(false);}};
   const seedancePortraitReady = shot.digitalHuman?.method !== 'reenact' || presenterMode === 'photo_talking' || Boolean(selectedPresenter?.authorized && selectedPresenter.authorizationConfirmation?.arkProcessingAuthorized && selectedPresenter.arkCertification?.status === 'active' && selectedPresenter.arkCertification.assetType === 'image' && selectedPresenter.arkCertification.materialId);
   const maxAttempts = props.maxAttemptsPerShot || 3;
@@ -337,7 +337,7 @@ export default function ShotProductionPanel(props: {
             <button type="button" disabled={presenterSetupBusy||(!selectedPresenter&&!presenterSetup.name.trim())||!presenterSetup.file||!presenterSetup.subjectAdultConfirmed} onClick={()=>void saveInlinePresenter()} className="rounded bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-40">{presenterSetupBusy?'正在上传并回填…':selectedPresenter?'保存到当前人物并用于分镜':'保存人物并用于当前分镜'}</button>
           </section>}
           {selectedPresenter && <p className="text-[10px] text-text-muted">人物资产 V{selectedPresenter.assetVersion || 1} · {presenterCapabilities(selectedPresenter).map(item => ({ talking: '支持口播', reference_image: '有参考图', reference_video: '有参考视频', person_replacement: '支持人物替换' }[item])).join(' / ') || '资料待补充'}</p>}
-          {shot.digitalHuman?.method === 'reenact' && presenterMode !== 'photo_talking' && props.onEnrollArkPresenter && !seedancePortraitReady && <ArkPresenterEnrollmentPanel presenterId={selectedPresenter?.id || ''} photos={arkPortraitOptions} videos={arkVideoOptions} onStart={input=>props.onEnrollArkPresenter!({...input,presenterId:selectedPresenter?.id || ''})} onStarted={presenterId=>props.onChange({presenterId,digitalHuman:{...(shot.digitalHuman||newDigitalHumanRequirements()),presenterSelected:true,contentConfirmed:false}})} onReady={props.onPresenterAssetsChanged || (async()=>{})} />}
+          {shot.digitalHuman?.method === 'reenact' && presenterMode !== 'photo_talking' && props.onEnrollArkPresenter && !seedancePortraitReady && <ArkPresenterEnrollmentPanel presenterId={selectedPresenter?.id || ''} {...arkEnrollmentMaterials} onStart={input=>props.onEnrollArkPresenter!({...input,presenterId:selectedPresenter?.id || ''})} onStarted={presenterId=>props.onChange({presenterId,digitalHuman:{...(shot.digitalHuman||newDigitalHumanRequirements()),presenterSelected:true,contentConfirmed:false}})} onReady={props.onPresenterAssetsChanged || (async()=>{})} />}
           <label className="flex gap-2 text-xs"><input type="checkbox" checked={shot.transparent} onChange={e => props.onChange({ transparent: e.target.checked })} />生成透明人物层（须人物支持；用于抠像画中画或独立背景）</label>
         </>}
         {isPeopleShot && <><h3 className="text-sm font-black">{isEnterprisePresenter ? '3. 确认台词' : '2. 口播与表达'}</h3>

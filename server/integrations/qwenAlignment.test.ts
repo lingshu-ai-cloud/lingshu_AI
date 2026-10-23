@@ -81,20 +81,20 @@ test('file transcription downloads an official signed result and bounds its size
 test('paid alignment fences unknown POST across workspace cleanup and never resubmits',async()=>{
  const {withStudioVoicePaidContext}=await import('../lib/studioVoicePaidOperation.js');
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'paid-alignment-durable-'));const workspace=path.join(root,'workspace');fs.mkdirSync(workspace);
- const priorFetch=globalThis.fetch;let posts=0;globalThis.fetch=(async()=>{posts++;throw Error('controlled ambiguous transport');}) as typeof fetch;
+ const priorFetch=globalThis.fetch;const priorKey=process.env.DASHSCOPE_API_KEY;process.env.DASHSCOPE_API_KEY='test-key';let posts=0;globalThis.fetch=(async()=>{posts++;throw Error('controlled ambiguous transport');}) as typeof fetch;
  const context:any={primaryProvider:'qwen',forRequest:async()=>({intent:{operationId:'alignment-once',provider:'qwen',model:'qwen3-asr-flash-filetrans',stage:'voice_alignment',accountRef:'fixture',shotId:null,inputContractHash:'a'.repeat(64),maximumUnits:{audioSeconds:300}},assertProviderBinding:async()=>{},measureUsage:async()=>({audioSeconds:2}),persistProviderReceipt:async()=>{throw Error('no accepted receipt');},permit:{beforeSubmit:async()=>{},assertRecovery:async()=>{},markOutcome:async()=>{}}})};
  try {
   const run=()=>withStudioVoicePaidContext(context,()=>alignQwenFile('https://controlled.test/audio.wav','Hello world.',2,path.join(workspace,'cache.json'),{audioSha256:'b'.repeat(64),durableRoot:path.join(root,'stable')}));
   await assert.rejects(run(),/controlled ambiguous transport/);fs.rmSync(workspace,{recursive:true});
   await assert.rejects(run(),/submission_unknown_no_repost/);assert.equal(posts,1);
   await assert.rejects(withStudioVoicePaidContext(context,()=>alignQwenFile('https://controlled.test/audio.wav','Changed speech.',2,'unused',{audioSha256:'b'.repeat(64),durableRoot:path.join(root,'stable')})),/original_scope_changed/);
- }finally {globalThis.fetch=priorFetch;fs.rmSync(root,{recursive:true,force:true});}
+ }finally {globalThis.fetch=priorFetch;if(priorKey===undefined)delete process.env.DASHSCOPE_API_KEY;else process.env.DASHSCOPE_API_KEY=priorKey;fs.rmSync(root,{recursive:true,force:true});}
 });
 
 test('accepted alignment original receipt recovers task ID after crash without another POST',async()=>{
  const {withStudioVoicePaidContext}=await import('../lib/studioVoicePaidOperation.js');
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'alignment-accepted-recovery-'));
- const originalFetch=global.fetch;let posts=0,queries=0,crash=true;
+ const originalFetch=global.fetch;const priorKey=process.env.DASHSCOPE_API_KEY;process.env.DASHSCOPE_API_KEY='test-key';let posts=0,queries=0,crash=true;
  const acceptedReceipt=path.join(root,'original-accepted.json');let recovery:any;
  const intent={operationId:'accepted-alignment-once',provider:'qwen',model:'qwen3-asr-flash-filetrans',stage:'voice_alignment',accountRef:'controlled',shotId:null,inputContractHash:'a'.repeat(64),maximumUnits:{audioSeconds:300}};
  const context:any={primaryProvider:'qwen',forRequest:async(request:any)=>({intent,assertProviderBinding:async()=>{},measureUsage:async()=>({audioSeconds:2}),
@@ -113,5 +113,5 @@ test('accepted alignment original receipt recovers task ID after crash without a
   assert.equal(posts,1);assert.equal(queries,1);
   assert.deepEqual(await run(),[{start:.1,end:1.5,text:'Hello world.'}]);
   assert.equal(posts,1);assert.equal(queries,1);
- }finally{global.fetch=originalFetch;fs.rmSync(root,{recursive:true,force:true});}
+ }finally{global.fetch=originalFetch;if(priorKey===undefined)delete process.env.DASHSCOPE_API_KEY;else process.env.DASHSCOPE_API_KEY=priorKey;fs.rmSync(root,{recursive:true,force:true});}
 });

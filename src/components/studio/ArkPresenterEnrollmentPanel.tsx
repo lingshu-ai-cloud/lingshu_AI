@@ -12,6 +12,8 @@ export default function ArkPresenterEnrollmentPanel(props: {
   initialPhotoMaterialId?: string;
   initialVideoMaterialId?: string;
   authorizationConfirmed?: boolean;
+  /** Server-preloaded capability, when available; the client still refreshes it. */
+  initialCapability?: ArkEnrollmentCapability;
   onStart: (input: { name: string; photo?: File; video?: File; photoMaterialId?: string; videoMaterialId?: string; requestId: string }) => Promise<Enrollment>;
   onReady: () => Promise<void>;
 }) {
@@ -22,7 +24,7 @@ export default function ArkPresenterEnrollmentPanel(props: {
   const [photoMaterialId, setPhotoMaterialId] = useState(props.initialPhotoMaterialId || ''); const [videoMaterialId, setVideoMaterialId] = useState(props.initialVideoMaterialId || '');
   const [consent, setConsent] = useState(props.authorizationConfirmed === true); const [busy, setBusy] = useState(false);
   const [name, setName] = useState('');
-  const [capability, setCapability] = useState<ArkEnrollmentCapability>();
+  const [capability, setCapability] = useState<ArkEnrollmentCapability | undefined>(props.initialCapability);
   const [error, setError] = useState(''); const [enrollment, setEnrollment] = useState<Enrollment>();
   const [verifyConfirmOpen, setVerifyConfirmOpen] = useState(false);
   useEffect(() => { let live = true; productionApi.arkEnrollmentCapabilities().then(value => { if (live) setCapability(value); }).catch(cause => { if (live) setCapability({ ready: false, reason: cause instanceof Error ? cause.message : '认证服务暂时不可用', missing: [] }); }); return () => { live = false; }; }, []);
