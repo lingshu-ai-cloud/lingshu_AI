@@ -1,7 +1,13 @@
 # Git 工作树状态盘点
 
 最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
-来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。最新两棵工作树的归档处置如下；其余只读复核与历史移除记录见后续章节。
+来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
+
+## 2026-10-23 视频生产 P1 独立写入交接
+
+- 主会话推进前端素材边界时，发现“定位灵枢AI基线代码”会话开始修改同一集成树。经用户明确授权协调，该会话创建 `/Users/julia1/Documents/ChatGPT/1023视频生成管线/lingshu-video-p1`，分支 `codex/video-production-p1-20261023`，起点 `ddeb731026eb515e2e482cc5470b89a043acb5e5`，完整迁出自己的后端工作后继续在新位置执行。此分支未合入本批前端源码 `befdda33b396963723f146ac823c3df0780e0256`。
+- 已核对迁出 6 个已跟踪文件：`socialContentInitialSceneCache.ts`、`socialContentProductionAdmission.ts`、`socialContentProductionExecution.ts`、`socialContentProductionReadModel.ts`、`socialContentProductionRuntimeSupport.ts`、`socialContentReleaseQuality.ts`；3 个新增文件：`socialContentCacheFinalization.ts`、`socialContentPresenterRouteAdmission.ts`、`shared/contracts/presenterProductionRoute.ts`。前八个文件位于 `server/starter198/`。这是交接时快照，后续 P1 工作可继续增加差异，不能据此清理该树。
+- 集成树 `server/`、`shared/` 差异已清空，前端及其测试/包脚本/架构预算差异完整保留。没有跨任务 reset、stash、clean 或混合提交。隔离后再次通过类型、架构/迁移只读、工作台及构建检查。此次仅核验隔离，不是其他工作树的全量再盘点；原图片 AIGC 等来源树维持原位。
 
 ## 2026-10-23 新会话承接再盘点（源码点 `630c4126`）
 
