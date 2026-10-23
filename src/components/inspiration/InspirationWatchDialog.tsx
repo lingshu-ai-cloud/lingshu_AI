@@ -1,12 +1,17 @@
 import { Button, Modal } from 'antd';
 import { ChevronDown, ChevronUp, Loader2, Play } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useRef, useState, type KeyboardEvent, type TouchEvent, type WheelEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type WheelEvent } from 'react';
 import type { TrendVideo } from '../../lib/inspirationTypes';
+import { lsMotion } from '../../lib/designTokens';
 import { sourceEmbedUrl } from '../../lib/inspirationVideoPlayback';
 import { usePrefersReducedMotion } from '../../lib/usePrefersReducedMotion';
 import { AuthenticatedVideo } from '../InspirationDashboard';
 import { SocialPlatformIcon } from '../SocialPlatformIcon';
+
+const SWIPE_HINT_STORAGE_KEY = 'lingshu.inspiration-watch.swipe-hint.v1';
+const SWIPE_DISTANCE_THRESHOLD = 72;
+const SWIPE_VELOCITY_THRESHOLD = 560;
 
 function evidenceText(value: unknown): string {
   const text = typeof value === 'string' ? value.trim()
@@ -25,6 +30,17 @@ function briefContentStructure(video: TrendVideo): string[] {
     .map(evidenceText).filter(Boolean).join(' · ')).filter(Boolean).slice(0, 4);
 }
 
+function AdjacentVideoPreview({ video, position }: { video: TrendVideo; position: -1 | 1 }) {
+  return <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden bg-black"
+    style={{ transform: `translateY(${position * 100}%)` }}>
+    {video.thumbnail ? <img src={video.thumbnail} alt="" className="h-full w-full object-contain opacity-80"/>
+      : <div className="flex h-full w-full items-center justify-center bg-neutral-950 text-white/50"><Play size={32}/></div>}
+    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-5 pb-6 pt-16 text-white">
+      <p className="line-clamp-2 text-sm font-semibold">{video.title}</p>
+    </div>
+  </div>;
+}
+
 export default function InspirationWatchDialog({ video, videos, onClose, onOpenDetails }: {
   video: TrendVideo;
   videos: TrendVideo[];
@@ -39,17 +55,30 @@ export default function InspirationWatchDialog({ video, videos, onClose, onOpenD
   const [useEmbed, setUseEmbed] = useState(false);
   const [boundary, setBoundary] = useState('');
   const [transitionDirection, setTransitionDirection] = useState<-1 | 1>(1);
+  const [showSwipeHint, setShowSwipeHint] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try { return window.localStorage.getItem(SWIPE_HINT_STORAGE_KEY) !== 'seen'; } catch { return true; }
+  });
   const reduceMotion = usePrefersReducedMotion();
   const lastSwipeAt = useRef(0);
-  const touchY = useRef<number | null>(null);
   const detailsRef = useRef<HTMLElement>(null);
   const current = ordered[Math.min(index, ordered.length - 1)] || video;
+  const previous = ordered[index - 1];
+  const next = ordered[index + 1];
   const embedUrl = sourceEmbedUrl(current);
   const hooks = (current.aiAnalysis?.gemini?.hooks || []).map(evidenceText).filter(Boolean);
   const sellingPoints = (current.aiAnalysis?.gemini?.sellingPoints || []).map(evidenceText).filter(Boolean);
   const contentStructure = briefContentStructure(current);
 
+  useEffect(() => {
+    if (!showSwipeHint) return;
+    try { window.localStorage.setItem(SWIPE_HINT_STORAGE_KEY, 'seen'); } catch { /* local storage may be unavailable */ }
+    const timer = window.setTimeout(() => setShowSwipeHint(false), 3600);
+    return () => window.clearTimeout(timer);
+  }, [showSwipeHint]);
+
   const changeVideo = (direction: -1 | 1) => {
+    setShowSwipeHint(false);
     const next = index + direction;
     if (next < 0 || next >= ordered.length) {
       setBoundary(direction > 0 ? '已到当前筛选结果末尾，可返回列表翻页' : '已到当前筛选结果第一条');
@@ -65,6 +94,7 @@ export default function InspirationWatchDialog({ video, videos, onClose, onOpenD
     window.requestAnimationFrame(() => detailsRef.current?.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' }));
   };
   const swipe = (delta: number) => {
+    setShowSwipeHint(false);
     if (Math.abs(delta) < 55 || Date.now() - lastSwipeAt.current < 450) return;
     lastSwipeAt.current = Date.now();
     changeVideo(delta > 0 ? 1 : -1);
@@ -72,10 +102,14 @@ export default function InspirationWatchDialog({ video, videos, onClose, onOpenD
   const onWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) swipe(event.deltaY);
   };
-  const onTouchStart = (event: TouchEvent<HTMLDivElement>) => { touchY.current = event.touches[0]?.clientY ?? null; };
-  const onTouchEnd = (event: TouchEvent<HTMLDivElement>) => {
-    if (touchY.current !== null) swipe(touchY.current - (event.changedTouches[0]?.clientY ?? touchY.current));
-    touchY.current = null;
+  const completeDrag = (offsetY: number, velocityY: number) => {
+    const direction = offsetY < 0 ? 1 : -1;
+    const crossedDistance = Math.abs(offsetY) >= SWIPE_DISTANCE_THRESHOLD;
+    const crossedVelocity = Math.abs(velocityY) >= SWIPE_VELOCITY_THRESHOLD;
+    if (!crossedDistance && !crossedVelocity) return;
+    if (Date.now() - lastSwipeAt.current < 450) return;
+    lastSwipeAt.current = Date.now();
+    changeVideo(direction);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if ((event.key !== 'ArrowDown' && event.key !== 'ArrowUp') || (event.target as HTMLElement).closest('[data-preview-details],button,input,textarea,a')) return;
@@ -89,31 +123,46 @@ export default function InspirationWatchDialog({ video, videos, onClose, onOpenD
     transition={{ duration: reduceMotion ? 0 : .18 }}>{current.title}</motion.span></AnimatePresence>} className="ls-inspiration-watch-dialog" width={1180} zIndex={2200} footer={null} onCancel={onClose}
     style={{ maxWidth: 'calc(100vw - 16px)' }} styles={{ body: { padding: 0 } }} destroyOnHidden>
     <div className="grid max-h-[calc(100dvh-100px)] overflow-y-auto md:grid-cols-[minmax(0,1fr)_320px] md:overflow-hidden">
-      <div className="relative flex min-h-[320px] flex-col bg-black" tabIndex={0} onKeyDown={onKeyDown} onWheel={onWheel} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
-        aria-label="视频预览，向下滑动或按方向键切换">
+      <div className="relative flex min-h-[320px] flex-col bg-black" tabIndex={0} onKeyDown={onKeyDown} onWheel={onWheel}
+        aria-label="视频预览，向上滑动、滚轮或按方向键切换">
         <div className="relative min-h-0 flex-1 overflow-hidden">
           <AnimatePresence initial={false} custom={transitionDirection} mode="popLayout">
             <motion.div key={current.id} custom={transitionDirection}
-              initial={reduceMotion ? false : { opacity: 0, y: transitionDirection * 34, scale: .985, filter: 'blur(5px)' }}
+              drag={!reduceMotion && ordered.length > 1 ? 'y' : false}
+              dragConstraints={{ top: 0, bottom: 0 }} dragElastic={0.92} dragMomentum={false}
+              onDragStart={() => setShowSwipeHint(false)}
+              onDragEnd={(_, info) => completeDrag(info.offset.y, info.velocity.y)}
+              initial={reduceMotion ? false : { opacity: 0, y: `${transitionDirection * 100}%`, scale: .985, filter: 'blur(5px)' }}
               animate={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
-              exit={reduceMotion ? undefined : { opacity: 0, y: transitionDirection * -26, scale: .99, filter: 'blur(3px)' }}
-              transition={{ duration: reduceMotion ? 0 : .32, ease: [.22, 1, .36, 1] }}
-              className="absolute inset-0 flex items-center justify-center">
-              {current.videoUrl && !useEmbed ? <AuthenticatedVideo key={`${current.id}:${attempt}`} apiUrl={current.videoUrl} poster={current.thumbnail}
-                controls autoPlay className="max-h-[68dvh] w-full bg-black object-contain" onReady={() => { setLoading(false); setError(''); }}
-                onLoadingChange={setLoading} onError={message => { setLoading(false); if (embedUrl) setUseEmbed(true); else setError(message || '视频预览失败'); }} />
-                : embedUrl ? <iframe key={current.id} src={embedUrl} title={`${current.title} 站内播放器`}
-                  allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
-                  className="aspect-video w-full border-0 bg-black" />
-                  : <div className="flex min-h-64 flex-col items-center justify-center gap-3 px-6 text-center text-white/70"><Play size={28}/><p>当前没有可播放的媒体，可从来源查看原视频。</p></div>}
-              {loading && current.videoUrl && !useEmbed && !error && <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 text-white"><Loader2 size={20} className="animate-spin"/><span className="ml-2">正在准备视频…</span></div>}
-              {error && <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85 px-6 text-center text-white"><p>{error}</p><Button onClick={retry}>重新获取播放地址</Button></div>}
+              exit={reduceMotion ? undefined : { opacity: 0, y: `${transitionDirection * -100}%`, scale: .99, filter: 'blur(3px)' }}
+              transition={{ duration: reduceMotion ? 0 : lsMotion.duration.standard / 1000, ease: lsMotion.ease.standard }}
+              className="absolute inset-0 cursor-grab touch-none active:cursor-grabbing">
+              {previous && <AdjacentVideoPreview video={previous} position={-1}/>}
+              <div className="absolute inset-0 flex items-center justify-center bg-black">
+                {current.videoUrl && !useEmbed ? <AuthenticatedVideo key={`${current.id}:${attempt}`} apiUrl={current.videoUrl} poster={current.thumbnail}
+                  controls autoPlay className="max-h-[68dvh] w-full bg-black object-contain" onReady={() => { setLoading(false); setError(''); }}
+                  onLoadingChange={setLoading} onError={message => { setLoading(false); if (embedUrl) setUseEmbed(true); else setError(message || '视频预览失败'); }} />
+                  : embedUrl ? <iframe key={current.id} src={embedUrl} title={`${current.title} 站内播放器`}
+                    allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
+                    className="aspect-video w-full border-0 bg-black" />
+                    : <div className="flex min-h-64 flex-col items-center justify-center gap-3 px-6 text-center text-white/70"><Play size={28}/><p>当前没有可播放的媒体，可从来源查看原视频。</p></div>}
+                {loading && current.videoUrl && !useEmbed && !error && <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 text-white"><Loader2 size={20} className="animate-spin"/><span className="ml-2">正在准备视频…</span></div>}
+                {error && <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85 px-6 text-center text-white"><p>{error}</p><Button onClick={retry}>重新获取播放地址</Button></div>}
+              </div>
+              {next && <AdjacentVideoPreview video={next} position={1}/>}
             </motion.div>
           </AnimatePresence>
+          <AnimatePresence>{showSwipeHint && ordered.length > 1 ? <motion.div data-swipe-hint className="pointer-events-none absolute inset-x-0 bottom-8 z-20 flex justify-center px-4"
+            initial={reduceMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            transition={{ duration: reduceMotion ? 0 : lsMotion.duration.enter / 1000, ease: lsMotion.ease.enter }}>
+            <div className="flex items-center gap-2 rounded-full border border-white/15 bg-black/75 px-4 py-2.5 text-sm font-medium text-white shadow-lg backdrop-blur">
+              <ChevronUp size={18} aria-hidden="true"/><span>向上滑动切换视频</span>
+            </div>
+          </motion.div> : null}</AnimatePresence>
         </div>
         <div className="flex items-center justify-between gap-3 border-t border-white/15 px-4 py-2 text-xs text-white/80">
           <span>{index + 1} / {ordered.length}</span>
-          <span role="status" aria-live="polite">{boundary || '在画面上滑动切换，详情区可独立滚动'}</span>
+          <span role="status" aria-live="polite">{boundary || '向上滑动查看下一条，详情区可独立滚动'}</span>
           <div className="flex gap-1"><Button size="small" icon={<ChevronUp size={14}/>} onClick={() => changeVideo(-1)} aria-label="上一条视频"/><Button size="small" icon={<ChevronDown size={14}/>} onClick={() => changeVideo(1)} aria-label="下一条视频"/></div>
         </div>
       </div>
