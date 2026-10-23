@@ -4,7 +4,7 @@
 
 ## 边界
 
-- `AiCreateStudio.tsx` 的前端合同、目录/字体、分镜/素材/脚本规则和六个完整视图区位于 `src/components/studio/`。项目状态、入口/导航恢复、快照/回填、CAS 保存/冲突、作品动作及自动保存进一步归属项目生命周期模块，通过只读类型端口复用唯一状态与 Ref，所有 Hook 保持原调用位置。页面仍拥有其他领域状态和生产/渲染编排，完整拆分尚未结束。视图通过各自明确类型输入复用同一模型/动作，不新建状态；可选面板共享 `studioLazyPanels.ts` 中的同一 Lazy 实例。媒体预览直接使用字体与底层类型合同，原公开导出兼容。详见 [工作台合同与视图区 ADR](adr/2026-10-23-studio-workspace-contracts-and-views.md) 和 [项目生命周期 ADR](adr/2026-10-23-studio-project-lifecycle-boundary.md)。
+- `AiCreateStudio.tsx` 的前端合同、目录/字体、分镜/素材/脚本规则和六个完整视图区位于 `src/components/studio/`。项目状态、入口/导航恢复、快照/回填、CAS 保存/冲突、作品动作及自动保存归属项目生命周期模块。语言草稿、翻译/TTS、上传/试听、字幕审阅和配乐进一步归属声音工作区模块；两组边界复用同一组状态和唯一 Ref，所有 Hook 保持原调用位置。页面仍拥有素材、分镜/生产、渲染和页面编排，完整拆分尚未结束。视图不新建状态，可选面板共享同一组 Lazy 实例；媒体预览直接使用底层合同，原公开导出兼容。详见 [工作台合同与视图区 ADR](adr/2026-10-23-studio-workspace-contracts-and-views.md)、[项目生命周期 ADR](adr/2026-10-23-studio-project-lifecycle-boundary.md) 和 [声音工作区 ADR](adr/2026-10-23-studio-voice-workspace-boundary.md)。
 - `server/routes/studio.ts`：统一认证、租户上下文中间件、原顺序挂载与旧公开入口委托。`server/studio/application.ts` 装配生成/渲染、素材、数字人、项目证据及既有语音能力；脚本策略、提示词与质量规则独立为纯模块。共享上下文、渲染状态、数字人恢复计时器和创建队列、语音缓存各保留同一所有者。相关 Worker 直接依赖素材分析、作品策略与审批失效能力，避免反向初始化主入口。详见 [Studio 应用边界 ADR](adr/2026-10-23-studio-application-boundaries.md)。下列既有 Studio 规则与适配器由对应应用/HTTP 模块复用。
 - `server/routes/videos.ts`：视频统一鉴权、原顺序 HTTP 注册和旧公开入口委托。`server/videos/application.ts` 装配采集/发现、供应商、下载、来源/素材分析、维护与 Worker；领域状态与计时器各有唯一所有者，HTTP 回调按业务领域分组。类型端口连接同一实例，数据/锁目录保持原位置。身份读取从重型周复盘扫描中分离，消除经生产流程绕回主入口的依赖。详见 [视频应用边界 ADR](adr/2026-10-23-video-application-boundaries.md)；下列既有纯规则/适配器继续被这些领域服务复用。
 - `server/routes/digitalEmployees.ts`：统一鉴权/支持会话只读门禁、应用单实例装配、原顺序路由挂载和旧公开入口委托。运行状态机在 `runCoordinator.ts`，审批准备在 `taskApprovalPreparation.ts`，周目标开工在 `goalActivationApplication.ts`，事实重建、经营包、初始化、事件/浏览器和各领域工作区分属对应应用/路由模块。`applicationPorts.ts` 通过 type-only 合同与最小端口集连接它们；共享启动队列、运行锁、计时器和事件流保持单一所有权。领域记录在 `server/digitalEmployees/records.ts`，旧路由记录入口兼容转发。完整依赖与验证见 [数字员工应用装配 ADR](adr/2026-10-23-digital-employee-application-assembly.md)。
@@ -39,8 +39,8 @@
 - `src/components/inspiration/DirectorVideoDetailPanel.tsx`：编导视频详情 Drawer 持有分析进度、图文证据、逐镜 Tab 与交接状态的展示及受租户鉴权的交接读取；灵感页继续持有选中对象、重分析/取消/收藏/创建动作与页面级身份边界，旧公开导出转发新组件。该职责迁移不放宽图文结果不明或逐镜证据未完成时的创作准入。
 - `src/components/inspiration/inspirationVideoProjection.ts`：爬虫/发现记录投影为前端视频、元数据兜底、发现评分、来源标签及账号基线推荐；页面保留请求、鉴权、排序编排和展示，旧的页面导出继续转发以兼容消费者。
 - `src/components/inspiration/InspirationMedia.tsx`：灵感缩略图、鉴权图片和视频的加载/播放边界；平台卡直接依赖该媒体模块与发现投影，避免反向导入整页。签名 HTTPS 图片直载，受保护媒体经鉴权取回；视频解析有超时、代际失效与一次媒体重试。页面保留旧公开导出以兼容消费者。
-- `src/components/studio/studioVoiceoverRules.ts`：工作台的纯口播规则，包括时间码解析、分镜台词抽取、字幕/音效区分、完整时间线覆盖与译文逐句对齐；`AiCreateStudio.tsx` 保留草稿状态、供应商请求和原公开函数转发，不把模型译文在规则校验失败时冒充已覆盖原片。
-- `src/components/studio/studioSubtitleCues.ts`：按已确认口播时间范围选句、生成/归一化字幕 cue、限制最终渲染时长并输出 SRT/VTT 文本；桌面下载动作只处理本地 Blob。`AiCreateStudio.tsx` 继续持有语言版本、配音结果和预览/导出的触发时机，并转发旧公开口播范围导出；分镜画面是否有人物的判断仍留在工作台原路径，不由字幕逻辑推断。
+- `src/components/studio/studioVoiceoverRules.ts`：工作台的纯口播规则，包括时间码解析、分镜台词抽取、字幕/音效区分、完整时间线覆盖与译文逐句对齐；声音工作区模块持有翻译/TTS 状态与请求，`AiCreateStudio.tsx` 保留原公开函数转发，不把模型译文在规则校验失败时冒充已覆盖原片。
+- `src/components/studio/studioSubtitleCues.ts`：按已确认口播时间范围选句、生成/归一化字幕 cue、限制最终渲染时长并输出 SRT/VTT 文本；桌面下载动作只处理本地 Blob。声音工作区模块持有语言版本、配音结果和字幕审阅，页面仍决定整体渲染/导出的触发时机并转发旧公开口播范围导出；分镜画面是否有人物的判断仍由既有生产逻辑提供，不由字幕逻辑推断。
 - `src/components/studio/studioReferenceSpeechPlan.ts` 与 `studioVideoKickoff.ts`：基于冻结原片视觉切点、来源 ASR 行和明确产品/品牌映射构造复刻口播，人工删改不得丢失保留镜头；缺原片 ASR 时仅生成企业自有字幕或无口播方案，不伪造原片台词。前者负责纯规则，后者保存工作台原参考输入类型；页面仍决定何时展示、确认或持久化，并转发旧公开导出。
 - `src/components/studio/studioTimelineFitting.ts`：定义稳定分镜槽位类型，按真实配音时长或已采纳数字人成片时长扩展分镜时间线，不压缩已批准的较长画面；页面继续持有素材选择、语言版本、制作请求和原公开时间线导出。
 - `src/components/studio/studioSourceMaterial.ts`：定义 Studio 素材片段合同、产品素材转换、历史快照恢复及冻结原片身份隔离。短期签名 URL 比对忽略查询串；历史原片快照和仅供分析素材不能进入企业成片素材池，来源身份不一致时不能只凭标题复用旧草稿。页面仍持有项目读取、素材状态和请求动作，旧公开类型与准入函数从页面转发。
