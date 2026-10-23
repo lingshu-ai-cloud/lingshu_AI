@@ -673,7 +673,7 @@ export function BusinessInterpretation({ data, onViewReview }: { data: DigitalEm
   );
   const settledCost = weeklyItems.reduce((sum, item) => sum + Number(item.settledCostCny || 0), 0);
   const summary = data.review?.status === 'generated' ? data.review.summary : null;
-  return <section aria-label="经营解读" className="col-span-full mx-5 mb-5 mt-2 rounded-xl bg-neutral-50 px-5 py-4">
+  return <section aria-label="经营解读" className="col-span-full mx-5 mb-5 mt-2 border-t border-border px-1 pt-4">
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex flex-wrap items-center gap-3"><h2 className="flex items-center gap-2 text-base font-semibold text-text-primary"><TrendingUp size={18}/>经营解读</h2><span className="text-xs text-text-muted">{summary ? '基于本周经营复盘' : '基于当前周计划与执行记录'}</span></div>
       <div className="flex items-center gap-2"><Button type="text" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>{expanded ? '收起' : '展开'}</Button></div>

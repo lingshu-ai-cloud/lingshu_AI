@@ -1,12 +1,6 @@
 import { isLegacyUnboundOperationNotice, isUnboundOperationError } from '../lib/assistantOperationNotice';
 import { sameAssistantRequestIdentity, withAssistantIdleTimeout } from '../lib/assistantRequestLifecycle';
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { App as AntApp, Badge, Button, Input, Modal } from 'antd';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -26,6 +20,7 @@ import {
 import type { AgentAction, AgentType, Message, Page } from '../App';
 import { authHeader, getToken } from '../lib/auth';
 import { lsMotion } from '../lib/designTokens';
+import { useCreationMode } from '../lib/creationMode';
 import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import { renderAssistantConversationBoundary, selectAssistantConversationContext } from '../lib/assistantConversationContext';
 import {
@@ -535,6 +530,7 @@ export default function GlobalAssistant({
     height: typeof window === 'undefined' ? 900 : window.innerHeight,
   }));
   const inlineHome = page === 'strategy';
+  const creationMode = useCreationMode();
   const inlineHomeBounds = useAssistantHomeAnchor(inlineHome);
   useAssistantHomeMode(inlineHome, setMode);
   const featureGuideTimerRef = useRef<number | null>(null);
@@ -2383,6 +2379,7 @@ export default function GlobalAssistant({
       data-global-assistant="root"
       data-inline-home={inlineHomeBounds ? 'true' : undefined}
       data-home-empty={inlineHome && !activeThread.messages.length && !loading ? 'true' : undefined}
+      data-home-creation-mode={inlineHomeBounds ? creationMode : undefined}
       className={`fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'} ${inlineHomeBounds ? 'ls-assistant-home-root' : ''}`}
       style={inlineHomeBounds ? { top: inlineHomeBounds.top, left: inlineHomeBounds.left, width: inlineHomeBounds.width, height: inlineHomeBounds.height, right: 'auto', bottom: 'auto' } : undefined}
     >
@@ -2557,7 +2554,7 @@ export default function GlobalAssistant({
             }}
           >
             {inlineHome && <div className="sr-only"><h2 id="global-assistant-panel-title">灵小枢创作对话</h2><p id="global-assistant-panel-description">描述创作需求，或添加图片、视频和音频参考。</p></div>}
-            {!inlineHome && <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50 px-4">
+            {!inlineHome && <header className="ls-assistant-panel__header flex h-12 shrink-0 items-center justify-between border-b border-border bg-surface px-4">
               <div className="flex min-w-0 items-center gap-2">
                 <button
                   type="button"

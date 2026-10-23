@@ -12,6 +12,7 @@ const homeAnchor = fs.readFileSync(new URL('./assistant/useAssistantHomeAnchor.t
 
 assert.match(home, /id="content-creation-assistant-anchor"/);
 assert.match(assistant, /useAssistantHomeAnchor\(inlineHome\)/);
+assert.match(assistant, /data-home-creation-mode=\{inlineHomeBounds \? creationMode : undefined\}/, '首页助手须感知创作模式并执行缩放过渡');
 assert.match(homeAnchor, /resizeObserver\.observe\(layout\)/, '切换数字员工画布后须重新测量输入框位置');
 assert.match(home, /fetchViralFeed\(controller\.signal\)/);
 assert.match(home, /id="creator-home-library"/);
@@ -26,6 +27,12 @@ assert.match(assistant, /data-home-empty=/);
 assert.match(assistant, /variant=\{inlineHome \? 'home' : 'default'\}/);
 assert.match(layout, /Math\.round\(viewportWidth \* 0\.173\)/, '左侧栏按参考图桌面比例布局');
 assert.match(creatorStyles, /\.creator-home__assistant-anchor \{ height: 230px/, '桌面创作布局须保留截图主输入区高度');
+assert.match(home, /className={`creator-home creator-home--\$\{mode\}/, '创作首页根节点须暴露模式状态供过渡使用');
+assert.match(home, /className="creator-home__canvas-stage"/, '数字员工区域须常驻过渡容器，避免条件挂载硬切');
+assert.doesNotMatch(home, /mode === 'employee' && <section className="creator-home__canvas"/, '数字员工画布不得以条件挂载造成硬切');
+assert.match(creatorStyles, /\.creator-home__canvas-stage \{[^}]*grid-template-rows: 0fr/, '数字员工画布须以可插值高度平滑收起');
+assert.match(creatorStyles, /\.creator-home--employee \.creator-home__assistant-anchor:not\(\.creator-home__assistant-anchor--active\) \{ height: 136px/, '切换到数字员工时主输入区须平滑缩小');
+assert.match(creatorStyles, /\.creator-mode-switch \.ant-segmented-item-label \{[^}]*border-radius: 999px !important/, '分段按钮标签须与外层胶囊使用同一圆角');
 assert.match(creatorStyles, /width: min\(470px, 100%\); height: 56px/, '双模式切换须对齐参考图比例');
 assert.match(creatorStyles, /width: min\(100%, 1416px\)/, '主内容宽度须与参考图一致');
 assert.match(card, /ls-viral-card group/);

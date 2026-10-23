@@ -87,7 +87,7 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
 
   const suggest = (prompt: string) => window.dispatchEvent(new CustomEvent('lingshu:assistant-home-prompt', { detail: prompt }));
 
-  return <div ref={scrollRef} className="creator-home h-full overflow-y-auto" onScroll={updateActiveSection}>
+  return <div ref={scrollRef} className={`creator-home creator-home--${mode} h-full overflow-y-auto`} onScroll={updateActiveSection}>
     <div className="creator-home__inner">
       <header className="creator-home__hero text-center">
         <h2>{mode === 'free' ? '你好，今天想要创作什么？' : '今天想让数字员工完成什么？'}</h2>
@@ -96,26 +96,28 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
           onChange={value => switchMode?.(value as CreationMode)} />
       </header>
 
-      {mode === 'employee' && <section className="creator-home__canvas" aria-label="数字员工周任务">
-        {overviewError && <Alert type="warning" showIcon title={overviewError} className="mb-3"/>}
-        <div className="creator-home__canvas-grid">
-          <button type="button" onClick={() => onNavigate?.('digitalEmployees')}
-            className="creator-home__canvas-card">
-            <CalendarDays size={28}/><strong>{overviewError ? '查看周任务' : overview?.goal ? '继续当前周任务' : '新建周任务'}</strong>
-            <span>{overviewLoading ? '读取任务中…' : overviewError ? '到经营总览核验' : overview?.goal ? `当前状态：${overview.run?.status || '待启动'}` : '制定并预览计划'}</span>
-          </button>
-          <button type="button" onClick={() => onNavigate?.('digitalEmployees')}
-            className="creator-home__canvas-card">
-            <Clapperboard size={28}/><strong>内容工程</strong><span>查看真实生产进度</span>
-          </button>
-          <button type="button" onClick={() => onNavigate?.('digitalEmployees')} className="creator-home__canvas-card">
-            <Lightbulb size={28}/><strong>经营总览</strong><span>指标、排期与诊断</span>
-          </button>
-          <button type="button" onClick={() => onNavigate?.('smartAssets')} className="creator-home__canvas-card">
-            <Sparkles size={28}/><strong>内容制作</strong><span>进入创作工作台</span>
-          </button>
-        </div>
-      </section>}
+      <div className="creator-home__canvas-stage" aria-hidden={mode !== 'employee'}>
+        <section className="creator-home__canvas" aria-label="数字员工周任务">
+          {overviewError && <Alert type="warning" showIcon title={overviewError} className="mb-3"/>}
+          <div className="creator-home__canvas-grid">
+            <button type="button" tabIndex={mode === 'employee' ? 0 : -1} onClick={() => onNavigate?.('digitalEmployees')}
+              className="creator-home__canvas-card">
+              <CalendarDays size={28}/><strong>{overviewError ? '查看周任务' : overview?.goal ? '继续当前周任务' : '新建周任务'}</strong>
+              <span>{overviewLoading ? '读取任务中…' : overviewError ? '到经营总览核验' : overview?.goal ? `当前状态：${overview.run?.status || '待启动'}` : '制定并预览计划'}</span>
+            </button>
+            <button type="button" tabIndex={mode === 'employee' ? 0 : -1} onClick={() => onNavigate?.('digitalEmployees')}
+              className="creator-home__canvas-card">
+              <Clapperboard size={28}/><strong>内容工程</strong><span>查看真实生产进度</span>
+            </button>
+            <button type="button" tabIndex={mode === 'employee' ? 0 : -1} onClick={() => onNavigate?.('digitalEmployees')} className="creator-home__canvas-card">
+              <Lightbulb size={28}/><strong>经营总览</strong><span>指标、排期与诊断</span>
+            </button>
+            <button type="button" tabIndex={mode === 'employee' ? 0 : -1} onClick={() => onNavigate?.('smartAssets')} className="creator-home__canvas-card">
+              <Sparkles size={28}/><strong>内容制作</strong><span>进入创作工作台</span>
+            </button>
+          </div>
+        </section>
+      </div>
 
       <section className="creator-home__conversation" aria-label="灵小枢对话">
         <div id="content-creation-assistant-anchor" className="creator-home__assistant-anchor"/>

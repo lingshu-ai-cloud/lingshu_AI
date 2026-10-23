@@ -139,6 +139,8 @@ assert.match(externalDecisionDialogSource, /onActionResult=\{handleDecisionActio
 assert.match(externalDecisionDialogSource, /href=\{dialogTaskCard\.workspace\.href\}[\s\S]{0,120}onClick=\{\(\) => closeDecisionDialogForNavigation\(\)\}/, '普通任务工作区链接也必须在导航前关闭外部弹窗');
 assert.match(appSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
 assert.match(source, /width: inlineHomeBounds\?\.width \?\? assistantPanelWidth,\s*maxWidth: inlineHomeBounds \? '100%' : 'calc\(100vw - 32px\)'/, '灵小枢首页面板使用首页锚点宽度，其他页面仍受视口宽度约束');
+assert.match(source, /ls-assistant-panel__header[^"]*bg-surface/, '灵小枢抽屉标题栏必须使用主题表面，夜间模式不得出现浅色渐变白条');
+assert.doesNotMatch(source, /bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50/, '灵小枢标题栏不得保留只适用于浅色模式的背景');
 assert.match(source, /assistantTool === 'knowledge-intake' \? 560 : 420/, '灵小枢对话面板必须保持 420px 基准宽度，外部详情不得挤压对话宽度');
 
 const closedDecisionCountSource = sourceSection(
