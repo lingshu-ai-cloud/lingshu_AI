@@ -10,6 +10,7 @@ import { analysisQueuePositions, publicVideoRecord, recordMatchesKeyword } from 
 import { isPublicTestTenantVideo, isVisibleVideoPipelineRecord, recordContentFormat, type ContentFormat } from './videoRecordVisibility.js';
 export { isDisplayableTestTenantVideo } from './videoRecordVisibility.js';
 import { createVideoTenantListing } from './videoTenantListing.js';
+import { registerVideoListingRoutes } from './videoListingRoutes.js';
 export { matchesVideoSearch, matchesCrawlRange } from './videoTenantListing.js';
 import { videoLevelSuccessPatch, videoSuccessVisibilityPatch } from './videoAnalysisSuccessPatch.js';
 import { tiktokKeywordSources, verifiedKeywordSeedItems, verifiedSeedUrls } from './videoCrawlerSeedCatalog.js';
@@ -1833,116 +1834,18 @@ videosRouter.post('/ingest', async (req, res) => {
   res.status(201).json({ id: record.id, status: 'pending' });
 });
 
-const { listPublicVideosForTenant, tenantInventoryTotal, clearTenantVisibleListCache } = createVideoTenantListing({
+const videoTenantListing = createVideoTenantListing({
   store,
   collection: COL,
   isTestTenantId,
 });
+const { clearTenantVisibleListCache } = videoTenantListing;
 
-function publicMetricNumber(value: unknown): number {
-  const text = String(value ?? '').trim().toLowerCase().replace(/,/g, '');
-  const match = text.match(/([\d.]+)\s*([kmb万亿]?)/);
-  if (!match) return 0;
-  const scale = match[2] === 'k' ? 1_000 : match[2] === 'm' ? 1_000_000 : match[2] === 'b' ? 1_000_000_000 : match[2] === '万' ? 10_000 : match[2] === '亿' ? 100_000_000 : 1;
-  return Number(match[1] || 0) * scale;
-}
 
-function withImagePublicBaselines(items: Record<string, unknown>[], baselineUniverse: Record<string, unknown>[] = items): Record<string, unknown>[] {
-  const toRow = (record: Record<string, unknown>) => {
-    const analysis = videoAnalysisOf(record);
-    const metrics = (analysis.publicMetrics && typeof analysis.publicMetrics === 'object' ? analysis.publicMetrics : {}) as Record<string, unknown>;
-    const engagement = publicMetricNumber(metrics.likes) + publicMetricNumber(metrics.comments) + publicMetricNumber(metrics.shares);
-    return { record, analysis, author: String(analysis.author || '').trim().toLowerCase(), engagement };
-  };
-  const rows = items.map(toRow);
-  const universeRows = baselineUniverse.map(toRow);
-  const groups = new Map<string, number[]>();
-  for (const row of universeRows) {
-    if (!row.author || row.engagement <= 0) continue;
-    const recent = groups.get(row.author) || [];
-    if (recent.length < 20) groups.set(row.author, [...recent, row.engagement]);
-  }
-  return rows.map(row => {
-    const values = (groups.get(row.author) || []).sort((a, b) => a - b);
-    const middle = values.length ? values[Math.floor(values.length / 2)]! : 0;
-    const relative = middle > 0 ? Number((row.engagement / middle).toFixed(2)) : null;
-    return publicVideoRecord({
-      ...row.record,
-      aiAnalysis: JSON.stringify({
-        ...row.analysis,
-        publicBaseline: {
-          sampleSize: values.length,
-          medianWeightedEngagement: middle || null,
-          currentWeightedEngagement: row.engagement || null,
-          relativeMultiple: relative,
-          status: values.length >= 5 ? 'usable' : 'insufficient_sample',
-          method: '同账号最近最多 20 条的公开互动总和（点赞+评论+分享）中位数',
-        },
-      }),
-    });
-  });
-}
-
-// ─── GET /videos ──────────────────────────────────────────────────────────────
-// Query: page, perPage, platform, status, contentFormat(video|image)
-
-videosRouter.get('/inventory-summary', async (_req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const rawContentFormat = String(_req.query.contentFormat || 'video');
-  const contentFormat: ContentFormat = rawContentFormat === 'image' ? 'image' : 'video';
-  const [totalItems, visible] = await Promise.all([
-    tenantInventoryTotal(tenantId, contentFormat),
-    listPublicVideosForTenant({ tenantId, contentFormat, page: 1, perPage: 1, crawlRange: 'all' }),
-  ]);
-  res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-  res.json({ contentFormat, totalItems, visibleItems: visible.totalItems });
-});
-
-videosRouter.get('/', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const { page = '1', perPage = '20', platform, status, search, crawlRange = 'all', contentFormat: rawContentFormat = 'video' } = req.query as Record<string, string>;
-  const pageNumber = Math.max(1, Number(page) || 1);
-  const perPageNumber = Math.min(100, Math.max(1, Number(perPage) || 20));
-  const contentFormat: ContentFormat = rawContentFormat === 'image' ? 'image' : 'video';
-
-  // Inventory KPI: every crawled record owned by this tenant. This deliberately
-  // ignores page/search/status/admin aggregation; the inspiration list below may
-  // hide failed or processing records, but they still belong to the crawl total.
-  const [inventoryTotalItems, result, queuePositions] = await Promise.all([
-    tenantInventoryTotal(tenantId, contentFormat),
-    listPublicVideosForTenant({
-      tenantId,
-      platform,
-      status,
-      contentFormat,
-      search,
-      crawlRange,
-      page: pageNumber,
-      perPage: perPageNumber,
-    }),
-    contentFormat === 'video' ? tenantAnalysisQueuePositions(tenantId) : Promise.resolve(new Map<string, number>()),
-  ]);
-
-  // Keep list requests read-only and fast. Repair/download/analysis work belongs
-  // to crawl jobs or explicit user actions; launching it from GET made every page
-  // refresh multiply expensive background work.
-
-  if (contentFormat === 'image') {
-    // listPublicVideosForTenant has already scanned and filtered the image records.
-    // A second full collection scan here doubled list latency as the inspiration
-    // library grew. The first page contains the latest requested page of records, which is also the
-    // product definition of the public recent-account baseline.
-    res.json({ ...result, inventoryTotalItems, items: withImagePublicBaselines(result.items).map(item => withSignedThumbnail({ ...item, canManage: String(item.tenantId || '') === tenantId }, tenantId)) });
-    return;
-  }
-  res.json({
-    ...result,
-    inventoryTotalItems,
-    items: result.items.map(item => {
-      const withProgress = publicVideoRecord(item, { queuePosition: queuePositions.get(String(item.id || '')) || null });
-      return withSignedThumbnail({ ...withProgress, canManage: String(item.tenantId || '') === tenantId }, tenantId);
-    }),
-  });
+registerVideoListingRoutes(videosRouter, {
+  listing: videoTenantListing,
+  tenantAnalysisQueuePositions,
+  withSignedThumbnail,
 });
 
 videosRouter.post('/:id/reanalyze-image', async (req, res) => {

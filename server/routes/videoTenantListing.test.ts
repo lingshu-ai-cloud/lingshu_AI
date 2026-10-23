@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { DataStore, ListQuery } from '../storage/datastore.js';
-import { createVideoTenantListing, matchesCrawlRange, matchesVideoSearch } from './videoTenantListing.js';
+import { createVideoTenantListing, matchesCrawlRange, matchesVideoSearch, withImagePublicBaselines } from './videoTenantListing.js';
 
 function listingStore(records: Record<string, unknown>[]): DataStore {
   return {
@@ -75,4 +75,17 @@ test('test-tenant visibility cache can be invalidated after a source write', asy
   assert.equal((await listing.listPublicVideosForTenant(input)).totalItems, 1);
   listing.clearTenantVisibleListCache();
   assert.deepEqual((await listing.listPublicVideosForTenant(input)).items.map(item => item.id), ['second', 'first']);
+});
+
+test('image account baseline uses recent public engagement without creating a usable sample too early', () => {
+  const items = [
+    { id: 'a', aiAnalysis: { contentFormat: 'image', author: 'Factory', publicMetrics: { likes: '2k', comments: '10', shares: '5' } } },
+    { id: 'b', aiAnalysis: { contentFormat: 'image', author: 'Factory', publicMetrics: { likes: '1k' } } },
+  ];
+  const projected = withImagePublicBaselines(items);
+  const first = JSON.parse(String(projected[0]?.aiAnalysis));
+  assert.equal(first.publicBaseline.sampleSize, 2);
+  assert.equal(first.publicBaseline.medianWeightedEngagement, 2015);
+  assert.equal(first.publicBaseline.status, 'insufficient_sample');
+  assert.equal(first.publicBaseline.relativeMultiple, 1);
 });

@@ -1,5 +1,5 @@
 import type { DataStore } from '../storage/datastore.js';
-import { isAutoSeededVideo } from '../lib/videoAnalysisCodec.js';
+import { isAutoSeededVideo, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 import { publicVideoRecord } from './videoPublicRecordProjection.js';
 import { compareCrawledAtDesc, isDisplayableTestTenantVideo, isPublicImageRecord, isValidImagePostRecord, recordContentFormat, type ContentFormat } from './videoRecordVisibility.js';
 
@@ -29,6 +29,50 @@ export function matchesCrawlRange(record: Record<string, unknown>, range?: strin
   }
   const days = range === '7d' ? 7 : range === '30d' ? 30 : 0;
   return days > 0 ? crawledAt >= Date.now() - days * 24 * 60 * 60 * 1000 : true;
+}
+
+function publicMetricNumber(value: unknown): number {
+  const text = String(value ?? '').trim().toLowerCase().replace(/,/g, '');
+  const match = text.match(/([\d.]+)\s*([kmb万亿]?)/);
+  if (!match) return 0;
+  const scale = match[2] === 'k' ? 1_000 : match[2] === 'm' ? 1_000_000 : match[2] === 'b' ? 1_000_000_000 : match[2] === '万' ? 10_000 : match[2] === '亿' ? 100_000_000 : 1;
+  return Number(match[1] || 0) * scale;
+}
+
+export function withImagePublicBaselines(items: Record<string, unknown>[], baselineUniverse: Record<string, unknown>[] = items): Record<string, unknown>[] {
+  const toRow = (record: Record<string, unknown>) => {
+    const analysis = videoAnalysisOf(record);
+    const metrics = (analysis.publicMetrics && typeof analysis.publicMetrics === 'object' ? analysis.publicMetrics : {}) as Record<string, unknown>;
+    const engagement = publicMetricNumber(metrics.likes) + publicMetricNumber(metrics.comments) + publicMetricNumber(metrics.shares);
+    return { record, analysis, author: String(analysis.author || '').trim().toLowerCase(), engagement };
+  };
+  const rows = items.map(toRow);
+  const universeRows = baselineUniverse.map(toRow);
+  const groups = new Map<string, number[]>();
+  for (const row of universeRows) {
+    if (!row.author || row.engagement <= 0) continue;
+    const recent = groups.get(row.author) || [];
+    if (recent.length < 20) groups.set(row.author, [...recent, row.engagement]);
+  }
+  return rows.map(row => {
+    const values = (groups.get(row.author) || []).sort((a, b) => a - b);
+    const middle = values.length ? values[Math.floor(values.length / 2)]! : 0;
+    const relative = middle > 0 ? Number((row.engagement / middle).toFixed(2)) : null;
+    return publicVideoRecord({
+      ...row.record,
+      aiAnalysis: JSON.stringify({
+        ...row.analysis,
+        publicBaseline: {
+          sampleSize: values.length,
+          medianWeightedEngagement: middle || null,
+          currentWeightedEngagement: row.engagement || null,
+          relativeMultiple: relative,
+          status: values.length >= 5 ? 'usable' : 'insufficient_sample',
+          method: '同账号最近最多 20 条的公开互动总和（点赞+评论+分享）中位数',
+        },
+      }),
+    });
+  });
 }
 
 export function createVideoTenantListing(input: {
