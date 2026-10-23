@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const routeSource = readDigitalEmployeeApplicationSources();
+const mainRouteSource = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
 const domainSource = fs.readFileSync('server/digitalEmployees/assistantDecisionCenter.ts', 'utf8');
 const feedSource = fs.readFileSync('server/digitalEmployees/assistantDecisionFeedService.ts', 'utf8');
 
@@ -13,12 +14,12 @@ function routeBlock(start: string): string {
   return routeSource.slice(begin, next === -1 ? routeSource.length : next);
 }
 
-const authIndex = routeSource.indexOf('digitalEmployeesRouter.use(requireAuth)');
-const tenantReadOnlyIndex = routeSource.indexOf('digitalEmployeesRouter.use(enforceSupportSessionReadOnly)');
-const getIndex = routeSource.indexOf("digitalEmployeesRouter.get('/assistant/decision-center'");
-const postIndex = routeSource.indexOf("digitalEmployeesRouter.post('/assistant/decision-center/:decisionId/actions'");
+const authIndex = mainRouteSource.indexOf('digitalEmployeesRouter.use(requireAuth)');
+const tenantReadOnlyIndex = mainRouteSource.indexOf('digitalEmployeesRouter.use(enforceSupportSessionReadOnly)');
+const getIndex = mainRouteSource.indexOf('assistantApplication.registerGetAssistantDecisionCenter()');
+const postIndex = mainRouteSource.indexOf('assistantApplication.registerPostAssistantDecisionCenterDecisionIdActions()');
 assert.ok(authIndex >= 0 && tenantReadOnlyIndex > authIndex, 'decision routes must inherit auth and support-session write protection');
-assert.ok(getIndex > tenantReadOnlyIndex && postIndex > tenantReadOnlyIndex, 'GET and POST must be registered after router security middleware');
+assert.ok(getIndex > tenantReadOnlyIndex && postIndex > getIndex, 'GET and POST must be registered after router security middleware');
 
 assert.match(routeSource, /createAssistantDecisionFeedForRequest\(\{[\s\S]*?committedGoals:[\s\S]*?first,[\s\S]*?tenantRecord,/, 'route must wire the tenant-scoped feed read ports');
 const feedLoaderStart = feedSource.indexOf('async function buildDigitalEmployeeAssistantFeed');
