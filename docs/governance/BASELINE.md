@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵感素材弹窗展示边界拆分（2026-10-23）
+
+- 将素材上传归属与编辑/删除确认的既有 Ant 弹窗渲染迁至 `InspirationMaterialDialogs.tsx`，页面保留租户身份、状态、文件选择、API 写入和刷新动作；顺手移除未使用的焦点处理变量。`InspirationDashboard.tsx` 从 2,178 降至 2,138 行并收紧预算。全仓仍有 5 个历史超限文件，不能视为拆分完成。
+- 弹窗边界合同 2/2、`test:video-source-boundaries` 148/148、租户隔离、TypeScript、架构扫描/ratchet（2,417 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建和 `git diff --check` 通过。Studio 主 chunk 为 480,957/485,000 字节，构建仍有大 chunk 提示。未做登录后浏览器验收、LinkedIn 真实付费采集、其他真实供应商、目标库迁移或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## 数字员工客户跟进只读端点拆分（2026-10-23）
 
 - 将批次详情、Worker 状态和人工发送预检迁至 `digitalEmployeeFollowupReadRoutes.ts`，在原数字员工鉴权与支持会话只读门禁之后、人工发送路由之前挂载。租户身份仍从认证上下文读取；实际发送和回执链未改动。`digitalEmployees.ts` 从 5,282 降至 5,259 行，历史预算同步收紧；全仓仍有 5 个超限文件，结构治理未完成。
