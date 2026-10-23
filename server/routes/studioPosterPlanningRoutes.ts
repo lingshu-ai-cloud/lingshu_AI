@@ -5,6 +5,13 @@ import { consumeDemoQuota } from '../lib/demo.js';
 import { normalizePosterBrief } from '../socialImage/studioPosterHelpers.js';
 import { keywordPromptContext, mergePlannedHashtags, researchSocialImageKeywords } from '../lib/keywordIntelligence.js';
 import { auditCommercialClaims, confirmationFields, confirmedEnterpriseContextForProduct, hasConfirmedEnterpriseFacts, sanitizePosterCommercialClaims, unconfirmedEnterpriseProductFields, userFacingPosterText } from '../lib/studioGenerationTruthfulness.js';
+import { store } from '../storage/index.js';
+import { type AuthLocals } from '../middleware/auth.js';
+import { readSocialImageTask } from '../socialImage/socialImageTask.js';
+import { socialImageV3PaidPrerequisiteIssue } from '../socialImage/socialImagePaidPrerequisites.js';
+import { recordSocialImageV3DirectorBrief, socialImageV3TrustedPlanningRequest,
+  type SocialImageFormalPlannerResult } from '../socialImage/socialImageFormalPlan.js';
+import { SocialImageProductionRunError } from '../socialImage/socialImageProductionRun.js';
 
 import type { StudioApplicationPorts } from '../studio/applicationPorts.js';
 
@@ -14,6 +21,34 @@ export function createStudioPosterPlanningRoutes(deps: Pick<StudioApplicationPor
 
   function registerPostFbPoster() {
     studioRouter.post('/fb-poster', async (req, res) => {
+      const { tenantId } = res.locals as AuthLocals;
+      const imageTaskId = String(req.body?.imageTaskId || '').trim();
+      const boundTask = imageTaskId ? await readSocialImageTask(store, tenantId, imageTaskId) : null;
+      if (imageTaskId && (!boundTask || boundTask.schemaVersion !== 'social-image-creation.v3'
+        || Number(req.body?.expectedImageTaskVersion) !== boundTask.version)) {
+        res.status(409).json({ ok: false, code: 'social_image_planning_task_version_conflict',
+          error: '图片任务不存在、不是当前生产版本，或已被更新' }); return;
+      }
+      if (boundTask) {
+        const issue = socialImageV3PaidPrerequisiteIssue(boundTask, 'queue');
+        if (!['social_image_director_brief_required', 'social_image_director_brief_stale'].includes(issue || '')) {
+          res.status(422).json({ ok: false, code: issue || 'social_image_director_brief_already_completed',
+            error: '图片上游证据尚未就绪，不能发起编导策划' }); return;
+        }
+      }
+      const respond = async (result: Record<string, unknown> & SocialImageFormalPlannerResult) => {
+        if (!boundTask) { res.json(result); return; }
+        try {
+          const imageTask = await recordSocialImageV3DirectorBrief({ store, tenantId, taskId: boundTask.id,
+            expectedVersion: boundTask.version, result });
+          res.setHeader('Cache-Control', 'private, no-store');
+          res.json({ ...result, imageTask });
+        } catch (error) {
+          const failure = error instanceof SocialImageProductionRunError ? error
+            : new SocialImageProductionRunError('social_image_director_brief_persist_failed', 503);
+          res.status(failure.status).json({ ok: false, code: failure.code, error: failure.code });
+        }
+      };
       if (!await consumeDemoQuota(req, res, 'generation')) return;
       const {
         deliverableType: rawDeliverableType = 'social_poster',
@@ -27,7 +62,7 @@ export function createStudioPosterPlanningRoutes(deps: Pick<StudioApplicationPor
         materials = [],
         referenceNotes = '', referenceCaption = '', brandName = '', categoryTerms = [], targetMarket = '',
         confirmedFields = {},
-      } = req.body ?? {};
+      } = boundTask ? socialImageV3TrustedPlanningRequest(boundTask) : req.body ?? {};
       const deliverableType: ImageDeliverable = IMAGE_DELIVERABLES.includes(rawDeliverableType)
         ? rawDeliverableType : 'social_poster';
       const productionStrategy: ImageProductionStrategy = IMAGE_PRODUCTION_STRATEGIES.includes(rawProductionStrategy) ? rawProductionStrategy : 'reference_generate';
@@ -185,7 +220,7 @@ Schema:
               };
             }
             const publishable = fieldsToConfirm.length === 0;
-            res.json({
+            await respond({
               ok: true,
               source: 'ai',
               provenance: 'ai',
@@ -211,7 +246,7 @@ Schema:
       console.warn('[studio] fb-poster generation failed:', failures.join(' | '));
       const selectedProductName = String(productInfo).match(/^\s*产品名称[：:]\s*([^\r\n]+)/m)?.[1]?.trim().slice(0, 120)
         || (language === 'zh' ? '企业产品' : 'Enterprise product');
-      res.json({
+      await respond({
         ok: true,
         source: 'ai',
         provenance: 'deterministic_fallback',

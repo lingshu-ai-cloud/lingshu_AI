@@ -37,8 +37,12 @@ import { projectSocialImageProductionSnapshot } from '../socialImage/socialImage
 import { analyzeSocialImageReference, inspectSocialImageAsset, socialImageAssetAuthorization, socialImageAssetManifest } from '../socialImage/socialImageEvidenceWorker.js';
 import { readSocialImageReferenceBytes } from '../socialImage/socialImageReferenceBytes.js';
 import { localProductOcrReadiness, recognizeProductImageLocally, recognizeProductImageTokensLocally } from '../lib/localProductOcr.js';
+import { ensureSocialImageBusinessContext } from '../socialImage/socialImageFormalBusinessContext.js';
+import { compileSocialImageV3PaidPlan } from '../socialImage/socialImageFormalPlan.js';
+import { registerSocialImageFormalPlanRoutes } from './socialImageFormalPlanRoutes.js';
 
 export const socialImageRouter = Router();
+registerSocialImageFormalPlanRoutes(socialImageRouter, store);
 
 const renderRoot = (tenantId: string) => path.resolve(process.cwd(), 'data', 'social-image-renders', enterpriseAssetTenantKey(tenantId));
 
@@ -182,6 +186,7 @@ socialImageRouter.post('/tasks/:id/evidence/prepare', async (req, res) => {
     if (task.schemaVersion !== 'social-image-creation.v3' || !task.productionRuntime?.binding) {
       res.status(409).json({ ok: false, code: 'social_image_content_task_binding_missing', error: '历史图片项目不自动升级生产运行' }); return;
     }
+    task = await ensureSocialImageBusinessContext({ store, tenantId, taskId: task.id, expectedVersion: task.version });
     const library = await readMaterialLibrary(tenantId);
     const ocrReadiness = localProductOcrReadiness();
     const ocr = ocrReadiness.ready ? recognizeProductImageTokensLocally : undefined;
@@ -383,12 +388,16 @@ socialImageRouter.post('/tasks/:id/plan-units', async (req, res) => {
       if (!product?.bytes.length) throw new SocialImagePaidJobError('social_image_product_asset_unavailable');
       productHashes[id] = createHash('sha256').update(product.bytes).digest('hex');
     }
-    const task = await persistSocialImageMultiUnitPlan({ store, tenantId, taskId: req.params.id, expectedVersion, productHashes });
+    let task = await persistSocialImageMultiUnitPlan({ store, tenantId, taskId: req.params.id, expectedVersion, productHashes });
+    if (task.schemaVersion === 'social-image-creation.v3') task = await compileSocialImageV3PaidPlan({ store, tenantId,
+      taskId: task.id, expectedVersion: task.version });
     res.setHeader('Cache-Control', 'private, no-store');
     res.json({ ok: true, task, paidExecutionEnabled: task.imageType === 'carousel' || task.imageType === 'gif_poster' });
   } catch (error) {
-    const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_plan_failed';
-    const status = code === 'social_image_task_missing' ? 404 : code === 'social_image_atomic_store_required' ? 503 : 409;
+    const code = error instanceof SocialImagePaidJobError || error instanceof SocialImageProductionRunError
+      ? error.code : 'social_image_plan_failed';
+    const status = error instanceof SocialImageProductionRunError ? error.status
+      : code === 'social_image_task_missing' ? 404 : code === 'social_image_atomic_store_required' ? 503 : 409;
     res.status(status).json({ ok: false, code, error: '多图单元计划无法安全持久化；未调用图片供应商' });
   }
 });
@@ -423,7 +432,7 @@ socialImageRouter.post('/tasks/:id/finalize-gif', async (req, res) => {
       store, tenantId, taskId: req.params.id, expectedVersion,
       readPlate: async output => (await outputImageBytes(tenantId, output))?.bytes || null,
       readProduct: async productId => (await enterpriseProductAsset(tenantId, productId))?.bytes || null,
-      readBenchmark: async url => (await referenceImageBytes(tenantId, url))?.bytes || null,
+      readBenchmark: async url => (await readSocialImageReferenceBytes(tenantId, url))?.bytes || null,
       persist: async asset => {
         const material = await createGeneratedImageMaterial({
           title: asset.kind === 'gif' ? 'AI GIF 海报 · 成片' : `AI GIF 海报 · 合成画面 ${Number(asset.index || 0) + 1}`,
@@ -693,7 +702,7 @@ socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
       return { ...item, mimeType: format === 'png' ? 'image/png' : format === 'webp' ? 'image/webp' : 'image/jpeg' };
     }));
     const reference = (await Promise.all([...(task.referenceSnapshot?.imageUrls || []), ...task.referenceUrls]
-      .slice(0, 4).map(url => referenceImageBytes(tenantId, url)))).find(Boolean) || undefined;
+      .slice(0, 4).map(url => readSocialImageReferenceBytes(tenantId, url)))).find(Boolean) || undefined;
     const outputs = await Promise.all(task.outputs.map(async output => {
       if (output.state === 'superseded') return output;
       // GIF plates are paid background evidence, not customer-visible frames.

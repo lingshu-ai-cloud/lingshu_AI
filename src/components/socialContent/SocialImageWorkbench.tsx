@@ -371,6 +371,7 @@ function SocialImageWorkbenchSession({
 
   async function requestPlan(activeTask: SocialImageCreationTask, confirmedFacts: Record<string, string>): Promise<PlannedRun | null> {
     const result = await studioApi.fbPoster({
+      imageTaskId: activeTask.id, expectedImageTaskVersion: activeTask.version,
       mode: creationPath === 'viral_replication' ? 'clone' : 'product',
       productInfo: selectedProducts.map(item => `产品名称：${item.name}`).join('\n'),
       platform, ratio, posterStyle: posterStyleForType(imageType), language,
@@ -381,24 +382,15 @@ function SocialImageWorkbenchSession({
       targetMarket: audience,
       confirmedFields: confirmedFacts,
     });
-    if (!result.ok || !result.poster) throw new Error(result.error || '图文策划生成失败');
-    const pendingFields = actionableConfirmationFields([...fieldsToConfirm, ...(result.fieldsToConfirm || [])]);
+    if (!result.ok || !result.poster || !result.imageTask) throw new Error(result.error || '图文策划未写入正式任务');
+    const saved = result.imageTask;
+    const pendingFields = actionableConfirmationFields(saved.fieldsToConfirm);
+    const directorReady = saved.productionRuntime?.nodes.find(node => node.nodeId === 'director_brief')?.status === 'completed';
     setPoster(result.poster); setCaption(result.caption); setHashtags(result.hashtags || []); setFieldsToConfirm(pendingFields);
-    const saved = await socialImageApi.updateTask(activeTask, {
-      status: 'planned', step: 'generate', fieldsToConfirm: pendingFields,
-      renderBrief: result.poster,
-      imageTextContract: {
-        ...activeTask.imageTextContract, headline: result.poster.headline, supportingText: result.poster.subheadline,
-        caption: result.caption, hashtags: result.hashtags || [], cta: result.poster.cta,
-        requiredFacts: [resolvedCoreClaim], prohibitedInferences: activeTask.contentBrief.prohibitedClaims,
-        visualMustShow: selectedProducts.map(item => item.name), visualMustNotImply: factuality === 'mock' ? ['真实已发生的合作或发布'] : [],
-      },
-    });
-    setTask(saved.task); setStep('generate');
-    setNotice(pendingFields.length
-      ? '已自动移除未经确认的商业声明，正在生成可审阅首版；相关风险将在审阅交付中提示。'
-      : '图文策划已完成，正在直接生成首版图片…');
-    return { task: saved.task, poster: result.poster, caption: result.caption };
+    setTask(saved); setStep(directorReady ? 'generate' : 'plan');
+    setNotice(!directorReady ? '图文策划尚未通过正式编导审阅；请补充待确认事实或重新策划，不会提交付费图片请求。'
+      : '正式编导方案已保存，正在编译执行计划并生成首版…');
+    return directorReady ? { task: saved, poster: result.poster, caption: result.caption } : null;
   }
 
   const generatePlan = async () => {
@@ -547,9 +539,14 @@ function SocialImageWorkbenchSession({
     }, 195_000);
     setBusy(true); setError(''); setNotice('任务已入队，正在生成图片并写入企业素材库；通常需要 1–3 分钟。');
     const jobId = crypto.randomUUID();
-    const idempotencyKey = `${sourceTask.id}:${jobId}:v${sourceTask.version}`;
     let activeTask = sourceTask;
     try {
+      activeTask = (await socialImageApi.compilePaidPlan(activeTask)).task;
+      const renderSpec = activeTask.productionRuntime?.nodeOutputs.filter(node => node.nodeId === 'render_spec').at(-1)?.value;
+      const idempotencyKey = renderSpec && typeof renderSpec === 'object' && 'idempotencyKey' in renderSpec ? String(renderSpec.idempotencyKey) : '';
+      if (!idempotencyKey || activeTask.generationJobs.some(job => job.idempotencyKey === idempotencyKey)) {
+        throw new Error('正式渲染规格未就绪或已使用；请重新确认策划后再提交付费请求。');
+      }
       const queued = await socialImageApi.updateTask(activeTask, {
         status: 'generating', step: 'generate', generationJobs: [...(activeTask.generationJobs || []), {
           id: jobId, idempotencyKey, status: 'queued', outputNodeIds: [], attempt: 0,

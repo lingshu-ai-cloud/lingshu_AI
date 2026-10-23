@@ -37,6 +37,11 @@ export const socialImageApi = {
       method: 'POST', body: JSON.stringify({ expectedVersion: task.version }),
     },
   ),
+  compilePaidPlan: (task: SocialImageCreationTask) => request<{ ok: true; task: SocialImageCreationTask; snapshot: SocialImageProductionSnapshot }>(
+    `/tasks/${encodeURIComponent(task.id)}/compile-paid-plan`, {
+      method: 'POST', body: JSON.stringify({ expectedVersion: task.version }),
+    },
+  ),
   refreshContentTask: (task: SocialImageCreationTask, expectedContentTaskVersion: string) => request<{
     ok: true; task: SocialImageCreationTask; snapshot: SocialImageProductionSnapshot;
   }>(`/tasks/${encodeURIComponent(task.id)}/refresh-content-task`, {

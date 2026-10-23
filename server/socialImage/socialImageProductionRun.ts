@@ -115,7 +115,7 @@ export async function recordSocialImageNodeOutput<N extends keyof SocialImageNod
   warnings?: string[];
   blockingReasons?: string[];
   taskPatch?: Partial<Pick<SocialImageCreationTask, 'hookFactorSpec' | 'adaptationSpec' | 'renderBrief' | 'imageTextContract'
-    | 'layerGraph' | 'step' | 'status'>>;
+    | 'layerGraph' | 'fieldsToConfirm' | 'step' | 'status'>>;
   now?: string;
 }): Promise<SocialImageCreationTask> {
   if (!GENERIC_NODE_OUTPUTS.has(input.nodeId)) throw new SocialImageProductionRunError('social_image_node_writer_invalid', 400);
@@ -167,7 +167,9 @@ export async function recordSocialImageNodeOutput<N extends keyof SocialImageNod
   const nodeHistory = runtime.nodeOutputs.filter(output => output.nodeId === input.nodeId);
   const current = nodeHistory.sort((left, right) => right.version - left.version)[0];
   const contentHash = hash({ value: input.value, inputRefs: input.inputRefs, evidenceRefs: input.evidenceRefs || [] });
-  if (current?.contentHash === contentHash && current.status === input.status) return task;
+  const taskPatchChanged = Object.entries(input.taskPatch || {}).some(([key, value]) =>
+    JSON.stringify(task[key as keyof SocialImageCreationTask]) !== JSON.stringify(value));
+  if (current?.contentHash === contentHash && current.status === input.status && !taskPatchChanged) return task;
   const now = input.now || new Date().toISOString();
   const envelope: SocialImageNodeEnvelope<unknown> = {
     schemaVersion: 'social-image-node-envelope.v1',
@@ -194,15 +196,16 @@ export async function recordSocialImageNodeOutput<N extends keyof SocialImageNod
   const invalidatesCandidates = candidateGenerationIndex >= 0 && nodeIndex < candidateGenerationIndex;
   const invalidationPatch: Partial<SocialImageCreationTask> = invalidatesCandidates ? {
     outputs: task.outputs.map(output => output.state === 'superseded' ? output : { ...output, state: 'superseded' as const }),
-    repairInstructions: task.repairInstructions.map(instruction => ['pending', 'running'].includes(instruction.status)
-      ? { ...instruction, status: 'failed' as const } : instruction),
+    repairInstructions: input.nodeId === 'render_spec' ? task.repairInstructions
+      : task.repairInstructions.map(instruction => ['pending', 'running'].includes(instruction.status)
+        ? { ...instruction, status: 'failed' as const } : instruction),
     directorReviewDecision: undefined,
     approvedArtifact: undefined,
     status: 'planned',
     step: 'plan',
   } : {};
   const result = await updateSocialImageTask(input.store, input.tenantId, task.id, task.version, {
-    ...(input.taskPatch || {}), ...invalidationPatch, productionRuntime: nextRuntime,
+    ...invalidationPatch, ...(input.taskPatch || {}), productionRuntime: nextRuntime,
   });
   if (result.kind !== 'updated') throw new SocialImageProductionRunError(result.kind === 'conflict'
     ? 'social_image_version_conflict' : result.kind === 'invalid' ? result.issues.join(',') : 'social_image_node_output_persist_failed', result.kind === 'conflict' ? 409 : 422);

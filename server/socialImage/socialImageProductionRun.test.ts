@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
+import sharp from 'sharp';
 import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datastore.js';
 import { SOCIAL_WORK_PACKAGE_KINDS } from '../../shared/contracts/socialContentWorkflow.js';
 import { SOCIAL_IMAGE_HARD_CHECKS, type SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
 import { socialImageHookFactorIssues, type SocialImageHookFactorSpec } from '../../shared/contracts/socialImageProduction.js';
 import { defaultBrief } from '../starter198/socialContentTaskSupport.js';
 import { STARTER_COLLECTIONS } from '../starter198/repository.js';
-import { readSocialImageTask, updateSocialImageTask } from './socialImageTask.js';
+import { readSocialImageTask, SOCIAL_IMAGE_TASKS_COLLECTION, updateSocialImageTask } from './socialImageTask.js';
 import {
   createOrResumeBoundSocialImageRun,
   createSocialImageDeliveryPackage,
@@ -18,10 +20,18 @@ import {
 import { projectSocialImageProductionSnapshot } from './socialImageProductionRuntime.js';
 import { compileLuxuryProductHero } from './templates/luxuryProductHero.js';
 import { socialImageV3ResolvedAssetIssue } from './socialImagePaidPrerequisites.js';
+import { socialImageV3PaidPrerequisiteIssue, socialImageV3SingleRenderInput } from './socialImagePaidPrerequisites.js';
+import { ensureSocialImageBusinessContext } from './socialImageFormalBusinessContext.js';
+import { compileSocialImageV3PaidPlan, recordSocialImageV3DirectorBrief } from './socialImageFormalPlan.js';
+import { inspectSocialImageAsset, socialImageAssetAuthorization, socialImageAssetManifest } from './socialImageEvidenceWorker.js';
+import { admitSocialImageV3QueuedJob, claimSocialImagePaidJob, completeSocialImagePaidJob } from './socialImagePaidJob.js';
+import { claimSocialImagePlannedUnit, persistSocialImageMultiUnitPlan, socialImagePlannedRenderInput } from './socialImageDurablePlan.js';
+import { normalizePosterBrief } from './studioPosterHelpers.js';
 
 class MemoryStore implements DataStore {
   private sequence = 0;
   readonly rows = new Map<string, Record_[]>();
+  supportsAtomicCompareAndSwapFor = async () => true;
   async getById<T = Record_>(collection: string, id: string): Promise<T | null> {
     return (this.rows.get(collection) || []).find(item => item.id === id) as T || null;
   }
@@ -38,6 +48,14 @@ class MemoryStore implements DataStore {
     const index = rows.findIndex(item => item.id === id);
     if (index < 0) return false;
     rows[index] = { ...rows[index], ...structuredClone(data) };
+    return true;
+  }
+  async compareAndSwap(collection: string, id: string, expected: Record<string, unknown>, data: Record<string, unknown>): Promise<boolean> {
+    const rows = this.rows.get(collection) || [];
+    const index = rows.findIndex(item => item.id === id);
+    const current = rows[index];
+    if (!current || Object.entries(expected).some(([key, value]) => JSON.stringify(current[key]) !== JSON.stringify(value))) return false;
+    rows[index] = { ...current, ...structuredClone(data) };
     return true;
   }
   async delete(): Promise<boolean> { return false; }
@@ -90,6 +108,192 @@ test('V3 paid asset admission compares current product bytes to the inspected ma
   assert.equal(socialImageV3ResolvedAssetIssue(inspected, {
     productHashes: { 'product-a': 'f'.repeat(64) }, materialHashes: {}, referenceHash: null,
   }), 'social_image_required_asset_bytes_changed');
+});
+
+async function authorizedFormalRun(imageType: 'product_poster' | 'carousel' = 'product_poster') {
+  const { store, now } = await fixture();
+  let task = (await createOrResumeBoundSocialImageRun(store, 'tenant-a', {
+    contentTaskId: 'content-a', expectedContentTaskVersion: '7', idempotencyKey: `formal-${imageType}`,
+    entrySource: 'workspace', imageType,
+  }, now)).task;
+  if (imageType === 'carousel') {
+    const changed = await updateSocialImageTask(store, 'tenant-a', task.id, task.version, {
+      deliverySpec: { ...task.deliverySpec, outputCount: 4, format: 'carousel' },
+    });
+    assert.equal(changed.kind, 'updated');
+    if (changed.kind !== 'updated') throw new Error('fixture_delivery_update_failed');
+    task = changed.task;
+  }
+  task = await ensureSocialImageBusinessContext({ store, tenantId: 'tenant-a', taskId: task.id, expectedVersion: task.version });
+  const bytes = await sharp({ create: { width: 40, height: 50, channels: 4, background: '#f0d8c0' } }).png().toBuffer();
+  const imageHash = createHash('sha256').update(bytes).digest('hex');
+  const authorized = socialImageAssetAuthorization({ tenantId: 'tenant-a', scope: 'own', rightsStatus: 'owned',
+    rightsEvidenceRef: 'license:product-a', commercialUseApproved: true, derivativesApproved: true,
+    modelInputAllowed: true }, 'tenant-a');
+  assert.ok(authorized);
+  const asset = await inspectSocialImageAsset({ assetId: 'product-a', role: 'product', required: true,
+    bytes, mimeType: 'image/png', expectedContentHash: imageHash, authorization: authorized });
+  assert.equal(asset.rights, 'cleared');
+  task = await recordSocialImageNodeOutput({ store, tenantId: 'tenant-a', taskId: task.id, expectedVersion: task.version,
+    nodeId: 'asset_manifest', status: 'completed', value: socialImageAssetManifest({ assets: [asset], ocrAvailable: false }),
+    inputRefs: [], evidenceRefs: [{ objectType: 'enterprise-image-asset', id: 'product-a', version: 1, contentHash: imageHash }],
+    createdBy: { kind: 'worker', id: 'authorized_asset_probe' }, now });
+  return { store, task, imageHash };
+}
+
+async function serverDirector(store: MemoryStore, task: SocialImageCreationTask, provenance = 'ai') {
+  return recordSocialImageV3DirectorBrief({ store, tenantId: 'tenant-a', taskId: task.id, expectedVersion: task.version,
+    result: { poster: normalizePosterBrief({ headline: '低敏产品方案', subheadline: '面向品牌采购', cta: '了解产品' }),
+      caption: '基于企业产品资料的产品展示', hashtags: ['#产品'], fieldsToConfirm: [], provenance } });
+}
+
+test('authorized V3 single image reaches queue and atomic claim through server-produced formal nodes', async () => {
+  const { store, task: evidenced } = await authorizedFormalRun();
+  const planned = await serverDirector(store, evidenced);
+  assert.equal(socialImageV3PaidPrerequisiteIssue(planned, 'queue'), null);
+  const compiled = await compileSocialImageV3PaidPlan({ store, tenantId: 'tenant-a', taskId: planned.id,
+    expectedVersion: planned.version });
+  assert.equal(socialImageV3PaidPrerequisiteIssue(compiled, 'execute'), null);
+  assert.equal(compiled.layerGraph, undefined, 'formal single-image plan does not require a fake layer graph');
+  const renderSpec = compiled.productionRuntime!.nodeOutputs.filter(item => item.nodeId === 'render_spec').at(-1)!.value as { idempotencyKey: string };
+  const now = new Date().toISOString();
+  const patch = await admitSocialImageV3QueuedJob(store, compiled, { status: 'generating', step: 'generate', generationJobs: [
+    ...compiled.generationJobs, { id: 'single-1', idempotencyKey: renderSpec.idempotencyKey,
+      status: 'queued', outputNodeIds: [], attempt: 0, createdAt: now, updatedAt: now },
+  ] });
+  const queued = await updateSocialImageTask(store, 'tenant-a', compiled.id, compiled.version, patch);
+  assert.equal(queued.kind, 'updated');
+  if (queued.kind !== 'updated') return;
+  assert.equal(socialImageV3SingleRenderInput(queued.task, 'single-1')?.idempotencyKey, renderSpec.idempotencyKey);
+  const claimed = await claimSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId: compiled.id, jobId: 'single-1',
+    idempotencyKey: renderSpec.idempotencyKey, inputHash: 'a'.repeat(64) });
+  assert.equal(claimed.generationJobs.at(-1)?.status, 'running');
+});
+
+test('single-image targeted repair gets a new formal render-spec and receipt key without erasing the prior output', async () => {
+  const { store, task: evidenced } = await authorizedFormalRun();
+  const director = await serverDirector(store, evidenced);
+  const firstPlan = await compileSocialImageV3PaidPlan({ store, tenantId: 'tenant-a', taskId: director.id,
+    expectedVersion: director.version });
+  const firstKey = (firstPlan.productionRuntime!.nodeOutputs.filter(item => item.nodeId === 'render_spec').at(-1)!.value as
+    { idempotencyKey: string }).idempotencyKey;
+  const now = new Date().toISOString();
+  const firstPatch = await admitSocialImageV3QueuedJob(store, firstPlan, { status: 'generating', step: 'generate',
+    generationJobs: [{ id: 'original-job', idempotencyKey: firstKey, status: 'queued', outputNodeIds: [], attempt: 0,
+      createdAt: now, updatedAt: now }] });
+  const firstQueue = await updateSocialImageTask(store, 'tenant-a', firstPlan.id, firstPlan.version, firstPatch);
+  if (firstQueue.kind !== 'updated') throw new Error('fixture_queue_failed');
+  await claimSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId: firstPlan.id, jobId: 'original-job',
+    idempotencyKey: firstKey, inputHash: 'c'.repeat(64) });
+  const completed = await completeSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId: firstPlan.id,
+    jobId: 'original-job', inputHash: 'c'.repeat(64), provider: 'mock', output: {
+      id: 'original-output', role: 'single', label: '首版', state: 'quality_checking', version: 1,
+      materialId: 'material-original', mediaUrl: '/media/original.png', qualityChecks: [],
+    } });
+  const repair = await updateSocialImageTask(store, 'tenant-a', completed.id, completed.version, {
+    status: 'planned', step: 'generate', repairInstructions: [{ id: 'repair-1', outputNodeId: 'original-output',
+      failedChecks: ['safe_zone'], targetLayer: 'background', instruction: '产品不要遮挡标题', status: 'pending', fromVersion: 1 }],
+    outputs: completed.outputs.map(output => ({ ...output, state: 'repair_required' as const })),
+  });
+  if (repair.kind !== 'updated') throw new Error('fixture_repair_failed');
+  assert.equal(socialImageV3PaidPrerequisiteIssue(repair.task, 'execute'), 'social_image_render_spec_stale');
+  const revised = await compileSocialImageV3PaidPlan({ store, tenantId: 'tenant-a', taskId: completed.id,
+    expectedVersion: repair.task.version });
+  const nextKey = (revised.productionRuntime!.nodeOutputs.filter(item => item.nodeId === 'render_spec').at(-1)!.value as
+    { idempotencyKey: string }).idempotencyKey;
+  assert.notEqual(nextKey, firstKey);
+  assert.equal(revised.generationJobs[0]?.idempotencyKey, firstKey);
+  const nextPatch = await admitSocialImageV3QueuedJob(store, revised, { status: 'generating', step: 'generate',
+    generationJobs: [...revised.generationJobs, { id: 'repair-job', idempotencyKey: nextKey,
+      status: 'queued', outputNodeIds: [], attempt: 0, createdAt: now, updatedAt: now }] });
+  const nextQueue = await updateSocialImageTask(store, 'tenant-a', revised.id, revised.version, nextPatch);
+  if (nextQueue.kind !== 'updated') throw new Error('fixture_repair_queue_failed');
+  assert.match(socialImageV3SingleRenderInput(nextQueue.task, 'repair-job')?.imagePrompt || '', /Targeted repair/);
+  const claimed = await claimSocialImagePaidJob({ store, tenantId: 'tenant-a', taskId: revised.id,
+    jobId: 'repair-job', idempotencyKey: nextKey, inputHash: 'd'.repeat(64) });
+  assert.equal(claimed.generationJobs[0]?.outputNodeIds[0], 'original-output');
+  assert.equal(claimed.generationJobs[1]?.status, 'running');
+});
+
+test('authorized V3 carousel freezes all units, writes the formal plan, and claims only its first unit', async () => {
+  const { store, task: evidenced, imageHash } = await authorizedFormalRun('carousel');
+  const planned = await serverDirector(store, evidenced);
+  await assert.rejects(persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: planned.id,
+    expectedVersion: planned.version, productHashes: { 'product-a': 'd'.repeat(64) } }), /required_asset_bytes_changed/);
+  assert.equal((await readSocialImageTask(store, 'tenant-a', planned.id))?.renderPlan, undefined,
+    'changed product bytes must not leave queued paid units or a frozen plan behind');
+  const frozen = await persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: planned.id,
+    expectedVersion: planned.version, productHashes: { 'product-a': imageHash } });
+  assert.equal(frozen.renderPlan?.units.length, 4);
+  const replay = await persistSocialImageMultiUnitPlan({ store, tenantId: 'tenant-a', taskId: planned.id,
+    expectedVersion: planned.version, productHashes: { 'product-a': imageHash } });
+  assert.equal(replay.version, frozen.version, 'identical stale retry returns the same frozen plan without a second write');
+  const compiled = await compileSocialImageV3PaidPlan({ store, tenantId: 'tenant-a', taskId: frozen.id,
+    expectedVersion: frozen.version });
+  assert.equal(socialImageV3PaidPrerequisiteIssue(compiled, 'execute'), null);
+  const first = compiled.renderPlan!.units[0]!;
+  const request = socialImagePlannedRenderInput(compiled, first.jobId);
+  assert.equal(request.idempotencyKey, first.idempotencyKey);
+  const claimed = await claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: compiled.id,
+    jobId: first.jobId, idempotencyKey: first.idempotencyKey, plannedInputHash: first.plannedInputHash,
+    renderRequestHash: 'b'.repeat(64) });
+  assert.equal(claimed.generationJobs.find(job => job.id === first.jobId)?.status, 'running');
+  await assert.rejects(claimSocialImagePlannedUnit({ store, tenantId: 'tenant-a', taskId: compiled.id,
+    jobId: compiled.renderPlan!.units[1]!.jobId, idempotencyKey: compiled.renderPlan!.units[1]!.idempotencyKey,
+    plannedInputHash: compiled.renderPlan!.units[1]!.plannedInputHash, renderRequestHash: 'c'.repeat(64) }), /prior_paid_job_unresolved/);
+});
+
+test('missing evidence, fallback planner, stale inputs and stale versions never reach V3 paid claim', async () => {
+  const { store, task: evidenced } = await authorizedFormalRun();
+  await assert.rejects(compileSocialImageV3PaidPlan({ store, tenantId: 'tenant-a', taskId: evidenced.id,
+    expectedVersion: evidenced.version }), /director_brief_required/);
+  const fallback = await serverDirector(store, evidenced, 'deterministic_fallback');
+  assert.equal(fallback.productionRuntime?.nodes.find(node => node.nodeId === 'director_brief')?.status, 'needs_review');
+  await assert.rejects(compileSocialImageV3PaidPlan({ store, tenantId: 'tenant-a', taskId: fallback.id,
+    expectedVersion: fallback.version }), /director_brief_required/);
+  const director = await serverDirector(store, fallback);
+  const compiled = await compileSocialImageV3PaidPlan({ store, tenantId: 'tenant-a', taskId: director.id,
+    expectedVersion: director.version });
+  await assert.rejects(compileSocialImageV3PaidPlan({ store, tenantId: 'tenant-a', taskId: compiled.id,
+    expectedVersion: director.version }), /version_conflict/);
+  const changed = await updateSocialImageTask(store, 'tenant-a', compiled.id, compiled.version, {
+    imageTextContract: { ...compiled.imageTextContract, headline: '被改动的标题' },
+  });
+  assert.equal(changed.kind, 'updated');
+  if (changed.kind === 'updated') {
+    assert.equal(socialImageV3PaidPrerequisiteIssue(changed.task, 'execute'), 'social_image_director_brief_stale');
+    const replanned = await serverDirector(store, changed.task);
+    assert.equal(socialImageV3PaidPrerequisiteIssue(replanned, 'queue'), null,
+      'the stale plan must be replaceable through the server planner before any paid work');
+  }
+});
+
+test('an unlicensed product image and a legacy task cannot acquire a formal paid plan', async () => {
+  const { store, now } = await fixture();
+  const created = (await createOrResumeBoundSocialImageRun(store, 'tenant-a', {
+    contentTaskId: 'content-a', expectedContentTaskVersion: '7', idempotencyKey: 'formal-unlicensed',
+    entrySource: 'workspace', imageType: 'product_poster',
+  }, now)).task;
+  const business = await ensureSocialImageBusinessContext({ store, tenantId: 'tenant-a', taskId: created.id,
+    expectedVersion: created.version });
+  const bytes = await sharp({ create: { width: 40, height: 50, channels: 4, background: '#eeeeee' } }).png().toBuffer();
+  const asset = await inspectSocialImageAsset({ assetId: 'product-a', role: 'product', required: true,
+    bytes, mimeType: 'image/png', authorization: socialImageAssetAuthorization({ tenantId: 'tenant-a',
+      rightsStatus: 'unknown', rightsEvidenceRef: 'pending', commercialUseApproved: true,
+      derivativesApproved: true, modelInputAllowed: true }, 'tenant-a') });
+  assert.notEqual(asset.rights, 'cleared');
+  await assert.rejects(recordSocialImageNodeOutput({ store, tenantId: 'tenant-a', taskId: business.id,
+    expectedVersion: business.version, nodeId: 'asset_manifest', status: 'completed',
+    value: socialImageAssetManifest({ assets: [asset], ocrAvailable: false }), inputRefs: [],
+    createdBy: { kind: 'worker', id: 'unauthorized_asset_probe' } }), /required_asset_evidence_invalid/);
+  await assert.rejects(compileSocialImageV3PaidPlan({ store, tenantId: 'tenant-a', taskId: business.id,
+    expectedVersion: business.version }), /asset_manifest_required/);
+  const legacyRow = await store.getById<Record_>(SOCIAL_IMAGE_TASKS_COLLECTION, business.id);
+  if (!legacyRow) throw new Error('fixture_task_missing');
+  await store.update(SOCIAL_IMAGE_TASKS_COLLECTION, business.id, { spec: { ...(legacyRow.spec as Record<string, unknown>),
+    socialImageTask: { ...business, schemaVersion: 'social-image-creation.v2' } } });
+  await assert.rejects(compileSocialImageV3PaidPlan({ store, tenantId: 'tenant-a', taskId: business.id,
+    expectedVersion: business.version }), /v3_run_required/);
 });
 
 test('ContentTask binding is deterministic, resumable and rejects changed scope', async () => {

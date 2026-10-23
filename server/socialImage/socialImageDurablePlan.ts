@@ -110,6 +110,14 @@ export async function persistSocialImageMultiUnitPlan(input: {
     || !frozenAssets.some(asset => asset.role === 'product' && asset.assetId === id && asset.contentHash === input.productHashes?.[id]))) {
     throw new SocialImagePaidJobError('social_image_product_asset_unavailable');
   }
+  if (task.schemaVersion === 'social-image-creation.v3' && input.productHashes) {
+    const manifest = task.productionRuntime?.nodeOutputs.filter(output => output.nodeId === 'asset_manifest').at(-1)?.value as
+      { assets?: Array<{ assetId: string; contentHash: string; role: string }> } | undefined;
+    if (task.contentBrief.productRefs.some(id => manifest?.assets?.find(asset => asset.assetId === id
+      && asset.role === 'product')?.contentHash !== input.productHashes?.[id])) {
+      throw new SocialImagePaidJobError('social_image_required_asset_bytes_changed');
+    }
+  }
   const sourceHash = socialImagePlanSourceHash({ ...task, enterpriseAssets: frozenAssets });
   if (task.renderPlan?.sourceHash === sourceHash && task.renderPlan.units.every(unit => task.generationJobs.some(job => (
     job.id === unit.jobId && job.idempotencyKey === unit.idempotencyKey && job.plannedInputHash === unit.plannedInputHash
