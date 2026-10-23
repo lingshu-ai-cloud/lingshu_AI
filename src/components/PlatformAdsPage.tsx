@@ -453,7 +453,7 @@ export default function PlatformAdsPage({
         <div
           className="ads-overlay"
           onKeyDown={(e) => {
-            if (e.key === "Escape") { e.stopPropagation(); closeDialog(); }
+            if (e.key === "Escape" && !materialPickerOpen && e.currentTarget.contains(e.target as Node)) { e.stopPropagation(); closeDialog(); }
           }}
         >
           <div

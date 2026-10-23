@@ -95,5 +95,7 @@ test('plan material picking uses the same catalog, locks selection until verifie
   assert.match(media, /未开放跨企业投放复用/);
   assert.match(binding, /expectedSha256: selected.sha256/);
   assert.match(binding, /task.configuration.materialSource/);
+  assert.match(source, /open: dialog !== null && !materialPickerOpen/);
+  assert.match(source, /e.key === "Escape" && !materialPickerOpen && e.currentTarget.contains/);
   assert.doesNotMatch(binding, /<option.*sha256/);
 });
