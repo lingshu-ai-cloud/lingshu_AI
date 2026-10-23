@@ -6,15 +6,26 @@ import type { MetaAccountHistory } from '../../shared/metaAccountHistory';
 import { LsMetricStrip } from './ui/LsExperiencePrimitives';
 
 type Connection = { id: string; provider: string; name: string; accountId: string; currency: string };
+type HistoryAccount = Connection & { connectionId: string };
 const format = (v: number | null | undefined) => v == null ? '暂无数据' : v.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
 export default function AdAccountHistory() {
-  const [connections, setConnections] = useState<Connection[]>([]), [selected, setSelected] = useState('');
+  const [connections, setConnections] = useState<HistoryAccount[]>([]), [selected, setSelected] = useState('');
   const [reports, setReports] = useState<Record<string, MetaAccountHistory>>({}), [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false), [listBusy, setListBusy] = useState(true), [refresh, setRefresh] = useState(0), [billing, setBilling] = useState(false), [listError, setListError] = useState('');
   useEffect(() => {
     const abort = new AbortController(); setListError(''); setListBusy(true);
-    platformAdsRequest<{ items: Connection[] }>('/connections', { signal: abort.signal }).then(v => {
-      if (!abort.signal.aborted) setConnections(v.items.filter(c => c.provider === 'meta'));
+    platformAdsRequest<{ items: Connection[] }>('/connections', { signal: abort.signal }).then(async v => {
+      const found: HistoryAccount[] = [], failures: string[] = [];
+      for (const c of v.items.filter(c => c.provider === 'meta')) {
+        try {
+          const grant = await platformAdsRequest<{ items: Array<{ accountId: string; name: string; currency: string }> }>(`/connections/${encodeURIComponent(c.id)}/history-accounts`, { signal: abort.signal });
+          found.push(...grant.items.map(a => ({ ...c, ...a, id: `${c.id}:${a.accountId}`, connectionId: c.id })));
+        } catch {
+          if (abort.signal.aborted) return;
+          failures.push(c.name); found.push({ ...c, connectionId: c.id });
+        }
+      }
+      if (!abort.signal.aborted) { setConnections([...new Map(found.map(c => [c.accountId, c])).values()]); if (failures.length) setListError(`${failures.join('、')} 的授权清单未完整返回；暂仅展示已知账户，不能据此判断其他账户无消耗。`); }
     }).catch(e => { if (!abort.signal.aborted) setListError(e instanceof Error ? e.message : '账户读取失败'); })
       .finally(() => { if (!abort.signal.aborted) setListBusy(false); });
     return () => abort.abort();
@@ -23,7 +34,7 @@ export default function AdAccountHistory() {
   useEffect(() => {
     if (!connection) return;
     const abort = new AbortController(), id = connection.id; setBusy(true);
-    platformAdsRequest<MetaAccountHistory>(`/connections/${encodeURIComponent(id)}/history`, { signal: abort.signal }).then(v => {
+    platformAdsRequest<MetaAccountHistory>(`/connections/${encodeURIComponent(connection.connectionId)}/history/${encodeURIComponent(connection.accountId)}`, { signal: abort.signal }).then(v => {
       if (!abort.signal.aborted) { setReports(old => ({ ...old, [id]: v })); setErrors(old => ({ ...old, [id]: '' })); }
     }).catch(e => { if (!abort.signal.aborted) setErrors(old => ({ ...old, [id]: e instanceof Error ? e.message : '历史数据读取失败' })); })
       .finally(() => { if (!abort.signal.aborted) setBusy(false); });
@@ -51,7 +62,7 @@ export default function AdAccountHistory() {
       {report.complete && !report.items.length && <Alert type="info" showIcon title="当前账户未查到有真实消耗的历史广告"
         description={report.hasAccountSpend === false ? 'Meta 返回账户累计花费为 0；平台可用历史中没有花费大于 0 的广告。这不是数据回调故障，也不是充值后就会自动产生效果。' : 'Meta 可用历史未返回花费大于 0 的广告；不代表账户从未投放，也不以其他账户或沙盒数据补齐。'}/>}
       <LsMetricStrip items={[{ key: 'spend', label: `历史广告花费 (${report.currency})`, value: format(sum('spend')) }, { key: 'impressions', label: '历史广告展示', value: format(sum('impressions')) },
-        { key: 'leads', label: 'Meta 线索 / 消息会话', value: report.items.length ? '查看广告明细' : '暂无数据' }, { key: 'roas', label: 'Meta 购买 ROAS', value: report.items.length ? '查看广告明细' : '暂无数据' }]}/>
+        { key: 'leads', label: 'Meta 线索 / 消息会话', value: report.items.some(i => i.metrics.leads != null || i.metrics.messagingConversations != null) ? '查看广告明细' : '暂无数据' }, { key: 'roas', label: 'Meta 购买 ROAS', value: report.items.some(i => i.metrics.purchaseRoas != null) ? '查看广告明细' : '暂无数据' }]}/>
       <Table<MetaAccountHistory['items'][number]> rowKey="adId" size="small" dataSource={report.items} scroll={{ x: 1000 }} pagination={{ pageSize: 10, showSizeChanger: false }} locale={{ emptyText: <Empty description="没有可展示的真实消耗记录；展示、询盘和 ROAS 不补零、不使用沙盒数据。"/> }} columns={[
         { title: '广告 / 广告系列', key: 'name', width: 240, render: (_, i) => <><p>{i.adName}</p><p>{i.campaignName}</p></> },
         { title: '数据窗口', key: 'window', width: 190, render: (_, i) => `${i.since} — ${i.until}` },

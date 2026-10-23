@@ -7,6 +7,9 @@ test('account history is default and payment is a read-only official handoff, no
   const history = readFileSync(new URL('./AdAccountHistory.tsx', import.meta.url), 'utf8');
   assert.match(overview, /props.initialTaskId \? 'local' : 'history'/);
   assert.match(history, /platformAdsRequest<MetaAccountHistory>/);
+  assert.match(history, /history-accounts/);
+  assert.match(history, /connection.connectionId/);
+  assert.doesNotMatch(history, /1368550458638225|120248796256110142/);
   assert.match(history, /未返回的指标显示“暂无数据”/);
   assert.match(history, /不生成充值订单/);
   assert.doesNotMatch(history, /method:\s*['"]POST|mockFunnel|localStorage/);

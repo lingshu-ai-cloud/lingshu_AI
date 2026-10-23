@@ -39,5 +39,27 @@ const denied = await readMetaAccountHistory('123', reader([{ data: [row] }], { b
 assert.equal(denied.billing.prepay, null); assert.ok(denied.billing.error); assert.equal(denied.items.length, 1);
 // Missing connection fails before any provider request; tenant authority is resolved by existing credential guard.
 await assert.rejects(getMetaAccountHistory('other-tenant', 'missing'), /未找到/);
+const { store } = await import('../storage/index.js');
+const { encryptSecret } = await import('../lib/tenantPlatformApps.js');
+process.env.META_ADS_API_VERSION = 'v25.0';
+await store.create('platform_ad_connections', { id: 'grant-owner', tenant_id: 'tenant-a', provider: 'meta', accountId: '123', tokenCipher: encryptSecret('test-only-history-token') });
+const before = await store.getById('platform_ad_connections', 'grant-owner'), originalFetch = globalThis.fetch;
+const providerPaths: string[] = [];
+globalThis.fetch = async (input, init) => {
+  const url = new URL(String(input)); if (url.hostname !== 'graph.facebook.com') return originalFetch(input, init);
+  assert.equal(init?.method, 'GET'); providerPaths.push(url.pathname);
+  if (url.pathname.endsWith('/me/adaccounts')) return Response.json({ data: [{ id: 'act_456', name: 'Granted history', currency: 'CNY' }] });
+  if (url.pathname.endsWith('/act_456/insights')) return Response.json({ data: [{ ...row, account_id: '456' }] });
+  if (url.pathname.endsWith('/act_456')) return Response.json({ ...account, id: 'act_456', is_prepay_account: true });
+  throw new Error('Unexpected provider path');
+};
+try {
+  const discovered = await getMetaAccountHistory('tenant-a', 'grant-owner', '456');
+  assert.equal(discovered.accountId, '456'); assert.equal(discovered.items[0].metrics.spend, 12.3);
+  await assert.rejects(getMetaAccountHistory('tenant-a', 'grant-owner', '999'), /授权范围/);
+  await assert.rejects(getMetaAccountHistory('tenant-b', 'grant-owner', '456'), /未找到/);
+  assert.ok(!providerPaths.some(p => p.includes('999')));
+  assert.deepEqual(await store.getById('platform_ad_connections', 'grant-owner'), before, 'discovery must not persist or mutate connections');
+} finally { globalThis.fetch = originalFetch; }
 rmSync(temp, { recursive: true, force: true });
 console.log('account history read-only, ownership, native metrics, pagination and billing tests passed');

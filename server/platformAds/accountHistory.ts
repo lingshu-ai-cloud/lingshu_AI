@@ -4,6 +4,7 @@ import { getConnectionCredential } from './connections.js';
 import { AdProviderError, MetaAdsAdapter } from './metaAdapter.js';
 import { normalizeMetaPerformance } from './metaPerformance.js';
 import { creativeReadCache } from './creativeReadCache.js';
+import { getHistoryAccounts } from './historyAccounts.js';
 
 type Reader = Pick<MetaAdsAdapter, 'request'>;
 const cached = creativeReadCache<MetaAccountHistory>(60_000);
@@ -44,10 +45,11 @@ export async function readMetaAccountHistory(accountId: string, adapter: Reader)
     reportedAt: new Date().toISOString(), scope: 'maximum', complete, hasAccountSpend: amount === null ? null : amount > 0n,
     billing: { prepay, settingsUrl: 'https://business.facebook.com/billing_hub/payment_settings', ...(billingError ? { error: billingError } : {}) }, items };
 }
-export async function getMetaAccountHistory(tenantId: string, connectionId: string) {
-  return cached(tenantId, connectionId, async () => {
+export async function getMetaAccountHistory(tenantId: string, connectionId: string, requestedAccountId?: string) {
+  return cached(tenantId, `${connectionId}:${requestedAccountId || 'connected'}`, async () => {
     const { connection, accessToken } = await getConnectionCredential(tenantId, connectionId);
     if (connection.provider !== 'meta') throw new AdProviderError('仅支持 Meta 账户历史报告', 'NOT_SUPPORTED');
-    return readMetaAccountHistory(connection.accountId, new MetaAdsAdapter(accessToken));
+    if (requestedAccountId && (!/^\d+$/.test(requestedAccountId) || requestedAccountId !== connection.accountId && !(await getHistoryAccounts(tenantId, connectionId)).some(a => a.accountId === requestedAccountId))) throw new AdProviderError('账户不在当前授权范围内', 'NOT_FOUND');
+    return readMetaAccountHistory(requestedAccountId || connection.accountId, new MetaAdsAdapter(accessToken));
   });
 }

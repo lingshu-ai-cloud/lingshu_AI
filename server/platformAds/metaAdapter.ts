@@ -14,7 +14,7 @@ export class MetaAdsAdapter {
     private beforeProviderWrite?: () => Promise<void>,
   ) {}
   async request(path: string, params: Record<string, unknown> = {}, method: 'GET' | 'POST' = 'GET'): Promise<any> {
-    if (path !== 'me/accounts' && !/^(?:act_)?\d+(?:\/[a-z_]+)?$/.test(path)) throw new AdProviderError('广告资源路径无效', 'INVALID_INPUT');
+    if (!['me/accounts', 'me/adaccounts'].includes(path) && !/^(?:act_)?\d+(?:\/[a-z_]+)?$/.test(path)) throw new AdProviderError('广告资源路径无效', 'INVALID_INPUT');
     const version = process.env.META_ADS_API_VERSION;
     if (!version || !/^v\d+\.0$/.test(version)) throw new AdProviderError('请配置 META_ADS_API_VERSION', 'NOT_CONFIGURED');
     const url = new URL(`https://graph.facebook.com/${version}/${path}`);
