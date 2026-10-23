@@ -85,3 +85,15 @@ test('creative workbench separates enterprise sources, recoverable covers and mi
   assert.match(historyMedia, /未关联广告（本系统）/);
   assert.doesNotMatch(historyMedia, /spend \|\| 0|token=|thumbnailUrl/);
 });
+test('plan material picking uses the same catalog, locks selection until verified and retains draft identity', () => {
+  const picker = readFileSync(new URL('./AdMaterialPicker.tsx', import.meta.url), 'utf8');
+  const media = readFileSync(new URL('./AdHistoryMedia.tsx', import.meta.url), 'utf8');
+  const binding = readFileSync(new URL('./AdCreativePanel.tsx', import.meta.url), 'utf8');
+  assert.match(picker, /<AdSourceCatalog/);
+  assert.match(source, /configuration: \{ \.\.\.current.configuration, materialSource \}/);
+  assert.match(media, /disabled=\{!!blockedReason \|\| !selection \|\| !cover \|\| previewError\}/);
+  assert.match(media, /未开放跨企业投放复用/);
+  assert.match(binding, /expectedSha256: selected.sha256/);
+  assert.match(binding, /task.configuration.materialSource/);
+  assert.doesNotMatch(binding, /<option.*sha256/);
+});

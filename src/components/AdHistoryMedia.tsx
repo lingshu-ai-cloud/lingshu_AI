@@ -4,13 +4,15 @@ import type { AdSourceEntry, AdSourceLifecycle } from '../../shared/adSourceLife
 import { platformAdsRequest } from '../lib/platformAds';
 import { authHeader } from '../lib/auth';
 import { LsMediaStateFrame, LsProgressiveMedia } from './ui/LsExperiencePrimitives';
+import type { AdMaterialSelection } from '../../shared/platformAdCreatives';
 
 export function historyQuery(source: AdSourceEntry) {
   return new URLSearchParams({ origin: source.origin, ...(source.sourceId ? { sourceId: source.sourceId } : {}),
     ...(source.origin === 'studio' ? { projectId: source.projectId || '' } : { sourceTaskId: source.sourceTaskId || '', artifactId: source.artifactId || '' }) }).toString();
 }
 /** Identity-keyed by the parent. No thumbnail or metrics are reused across source records. */
-export default function AdHistoryMedia({ source, refresh }: { source: AdSourceEntry; refresh: number }) {
+export default function AdHistoryMedia({ source, refresh, onSelect, blockedReason }: { source: AdSourceEntry; refresh: number; onSelect?: (selection: AdMaterialSelection) => void; blockedReason?: string }) {
+  const [selection, setSelection] = useState<AdMaterialSelection | null>(null), [selectionError, setSelectionError] = useState('');
   const [data, setData] = useState<AdSourceLifecycle | null>(null), [failed, setFailed] = useState(false);
   const [url, setUrl] = useState(''), [cover, setCover] = useState(''), [previewError, setPreviewError] = useState(false), [retry, setRetry] = useState(0);
   const query = historyQuery(source);
@@ -20,15 +22,21 @@ export default function AdHistoryMedia({ source, refresh }: { source: AdSourceEn
       .catch(() => { if (!c.signal.aborted) setFailed(true); });
     return () => c.abort();
   }, [query, refresh]);
-  const available = !!source.sourceId && source.verifiedSource && !!data?.fileEvidence?.length && data.fileEvidence.every(f => f.state === 'verified');
+  const available = source.verifiedSource && (!!source.sourceId ? !!data?.fileEvidence?.length && data.fileEvidence.every(f => f.state === 'verified') : true);
   useEffect(() => {
-    const c = new AbortController(); let blobUrl = ''; setUrl(''); setCover(''); setPreviewError(false);
+    const c = new AbortController(); let blobUrl = ''; setUrl(''); setCover(''); setPreviewError(false); setSelection(null); setSelectionError('');
     if (available) void (async () => {
-      const r = await fetch(`/api/overseas/platform-ads/creative-history/media?${query}`, { headers: authHeader(), signal: c.signal });
+      if (!source.sourceId) {
+        try {
+          const choice = await platformAdsRequest<AdMaterialSelection>(`/creative-selection?${query}`, { signal: c.signal });
+          if (c.signal.aborted) return; setSelection(choice);
+        } catch (e) { if (c.signal.aborted) return; setSelectionError(e instanceof Error ? e.message : '素材暂不能选择'); }
+      }
+      const r = await fetch(`/api/overseas/platform-ads/${source.sourceId ? 'creative-history' : 'creative-selection'}/media?${query}`, { headers: authHeader(), signal: c.signal });
       if (!r.ok || !r.headers.get('content-type')?.startsWith('video/mp4')) throw new Error('preview unavailable');
       const blob = await r.blob(); if (c.signal.aborted) return;
       blobUrl = URL.createObjectURL(blob); setUrl(blobUrl);
-    })().catch(() => { if (!c.signal.aborted) setPreviewError(true); });
+    })().catch(e => { if (!c.signal.aborted) { setPreviewError(true); setSelectionError(e instanceof Error ? e.message : '素材暂不可用'); } });
     return () => { c.abort(); if (blobUrl) URL.revokeObjectURL(blobUrl); };
   }, [query, available, refresh, retry]);
   const missing = data?.fileEvidence?.some(f => f.state === 'missing');
@@ -50,6 +58,7 @@ export default function AdHistoryMedia({ source, refresh }: { source: AdSourceEn
     </div>
     <Space direction="vertical" size={4}><Tag color={missing ? 'warning' : undefined}>{missing ? '文件缺失' : cover ? '可预览' : previewError ? '封面暂不可用' : data ? '成片待核对' : '核对中'}</Tag><Tag>{adLabel}</Tag>
       {previewError && <Button size="small" onClick={() => setRetry(n => n + 1)}>重试封面</Button>}
+      {onSelect && <><Button size="small" type="primary" disabled={!!blockedReason || !selection || !cover || previewError} onClick={() => { if (selection && cover && !previewError && !blockedReason) onSelect(selection); }}>选择素材</Button><span className="ads-library-meta">{blockedReason || (missing ? '请先找回原文件' : source.sourceId ? '外部企业只读素材，未开放跨企业投放复用' : selectionError || (!source.verifiedSource ? '尚无可用成片，不能选择' : !cover ? '预览核对通过后可选' : '当前企业 · 仅保存选择，不上传'))}</span></>}
     </Space>
   </div>;
 }

@@ -4,7 +4,9 @@ import type { AdSourceCatalog as Catalog, AdSourceEntry, AdHistorySource } from 
 import { platformAdsRequest } from '../lib/platformAds';
 import AdSourceLifecycle from './AdSourceLifecycle';
 import AdHistoryMedia from './AdHistoryMedia';
-export default function AdSourceCatalog() {
+import type { AdMaterialSelection } from '../../shared/platformAdCreatives';
+type SelectionProps = { onSelect?: (selection: AdMaterialSelection) => void; blockedReason?: string };
+export default function AdSourceCatalog({ onSelect, blockedReason }: SelectionProps = {}) {
   const [sources, setSources] = useState<AdHistorySource[]>([]), [failed, setFailed] = useState(false), [loading, setLoading] = useState(true), [refresh, setRefresh] = useState(0), [filter, setFilter] = useState('all');
   useEffect(() => {
     const c = new AbortController(); setFailed(false); setLoading(true);
@@ -15,12 +17,13 @@ export default function AdSourceCatalog() {
   return <section className={`ads-history-groups${visible.length > 1 ? ' is-multi' : ''}`} aria-label="企业创作素材">
     <div className="ads-library-toolbar"><Select aria-label="企业素材范围" value={filter} onChange={setFilter} options={[{ value: 'all', label: '全部已接入企业（分别展示）' }, ...sources.map(s => ({ value: s.id, label: s.tenantName })), { value: 'studio', label: '当前企业 · 我的历史素材' }, { value: 'social', label: '当前企业 · 社媒成片' }]}/><Button onClick={() => setRefresh(n => n + 1)}>刷新全部</Button></div>
     {failed && <Alert type="warning" showIcon title="企业素材来源暂未更新" description="请重试刷新，不会自动切换到其他企业。"/>}
-    {visible.map(source => <section key={source.id} className="ads-history-group"><Space wrap><h3>{source.tenantName}</h3><Tag>{source.label}</Tag></Space><DatasetCatalog key={`${source.id}:${refresh}`} initialDataset={`external:${source.id}`}/></section>)}
-    {['studio', 'social'].includes(filter) && <DatasetCatalog key={`${filter}:${refresh}`} initialDataset={filter}/>}
+    {onSelect && filter === 'all' && <section className="ads-history-group"><h3>当前企业 · 成片素材</h3><DatasetCatalog key={`selectable:${refresh}`} initialDataset="social" onSelect={onSelect} blockedReason={blockedReason}/></section>}
+    {visible.map(source => <section key={source.id} className="ads-history-group"><Space wrap><h3>{source.tenantName}</h3><Tag>{source.label}</Tag></Space><DatasetCatalog key={`${source.id}:${refresh}`} initialDataset={`external:${source.id}`} onSelect={onSelect} blockedReason={blockedReason}/></section>)}
+    {['studio', 'social'].includes(filter) && <DatasetCatalog key={`${filter}:${refresh}`} initialDataset={filter} onSelect={onSelect} blockedReason={blockedReason}/>}
     {!loading && !failed && !sources.length && filter === 'all' && <Alert type="info" showIcon title="暂无已接入的外部企业来源" description="可选择当前企业查看已有素材。"/>}
   </section>;
 }
-function DatasetCatalog({ initialDataset }: { initialDataset: string }) {
+function DatasetCatalog({ initialDataset, onSelect, blockedReason }: { initialDataset: string } & SelectionProps) {
   const [search, setSearch] = useState('');
   const dataset = initialDataset;
   const [page, setPage] = useState(1), [refresh, setRefresh] = useState(0), [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -36,7 +39,7 @@ function DatasetCatalog({ initialDataset }: { initialDataset: string }) {
     <div className="ads-library-toolbar"><Input.Search aria-label="搜索本页创作素材" placeholder="搜索本企业当前页素材" allowClear value={search} onChange={e => setSearch(e.target.value)}/><Button loading={busy} onClick={() => setRefresh(n => n + 1)}>刷新素材</Button></div>
     {error && <Alert type="error" showIcon title={error} description={data ? '保留同页来源快照，请重试。' : '当前来源未返回，不使用其他数据集冒充。'}/>}
     <Table<AdSourceEntry> tableLayout="fixed" rowKey="key" loading={busy && !data} dataSource={(data?.items || []).filter(r => r.name.toLowerCase().includes(search.trim().toLowerCase()))} locale={{ emptyText: search ? '本页没有匹配的素材，请调整搜索或翻页。' : '当前来源暂无素材，可切换来源查看。' }} pagination={false} scroll={{ x: 480 }} columns={[
-      { title: '预览 / 投放状态', width: 160, render: (_, r) => <AdHistoryMedia key={`${r.key}:${r.sourceRevision || ''}`} source={r} refresh={refresh}/> },
+      { title: '预览 / 投放状态', width: 160, render: (_, r) => <AdHistoryMedia key={`${r.key}:${r.sourceRevision || ''}`} source={r} refresh={refresh} onSelect={onSelect} blockedReason={blockedReason}/> },
       { title: '素材 / 创作项目', dataIndex: 'name', render: (_, r) => <div className="ads-source-name"><span>{r.name}</span><Space wrap><Tag>{r.sourceTenantName || '当前企业'}</Tag><Tag>{r.sourceMediaStatus === 'superseded' ? '有更新版本' : r.sourceMediaStatus === 'review_required' ? '待内容审阅' : r.verifiedSource ? '已有成片记录' : '待确认成片'}</Tag></Space></div> },
       { title: '操作', width: 88, render: (_, r) => <Button type="link" onClick={() => setSelected(r)}>查看详情</Button> },
     ]}/>

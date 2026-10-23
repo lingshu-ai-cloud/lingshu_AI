@@ -9,3 +9,6 @@ export interface PlatformAdCreative {
 export interface PlatformAdCreativeSource {
   sourceTaskId: string; artifactId: string; name: string; mimeType: string; size: number; sha256: string;
 }
+export interface AdMaterialSelection extends PlatformAdCreativeSource {
+  origin: 'social'; sourceTenantId: string; sourceTenantName: string;
+}

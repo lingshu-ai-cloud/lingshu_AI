@@ -13,10 +13,17 @@ import { openPlatformAdCreativeMedia } from '../platformAds/creatives.js';
 import { getMetaSetup, getMetaPlanAudit } from '../platformAds/metaPlanAudit.js';
 import { getAdSourceLifecycle, listAdSourceCatalog, parseAdSourceIdentity } from '../platformAds/creativeHistory.js';
 import { listExternalHistorySources, openExternalHistoryVideo } from '../platformAds/externalHistory.js';
+import { readSelectableAdMaterial } from '../platformAds/creativeSelection.js';
 export const platformAdCreativesRouter = Router();
 platformAdCreativesRouter.use(requireAuth, requireAdWriteAccess);
 platformAdCreativesRouter.get('/creative-history-sources', async (req, res) => {
   try { res.setHeader('Cache-Control', 'private, no-store'); res.json({ items: await listExternalHistorySources((res.locals as AuthLocals).tenantId) }); } catch (error) { failure(res, error); }
+});
+platformAdCreativesRouter.get('/creative-selection', async (req, res) => {
+  try { const { selection } = await readSelectableAdMaterial((res.locals as AuthLocals).tenantId, req.query); res.setHeader('Cache-Control', 'private, no-store'); res.json(selection); } catch (error) { failure(res, error); }
+});
+platformAdCreativesRouter.get('/creative-selection/media', async (req, res) => {
+  try { const { bytes } = await readSelectableAdMaterial((res.locals as AuthLocals).tenantId, req.query, true); res.setHeader('Cache-Control', 'private, no-store'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.type('video/mp4').send(bytes); } catch (error) { failure(res, error); }
 });
 platformAdCreativesRouter.get('/creative-history', async (req, res) => {
   try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await listAdSourceCatalog((res.locals as AuthLocals).tenantId, req.query)); } catch (error) { failure(res, error); }

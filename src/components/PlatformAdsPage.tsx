@@ -28,6 +28,7 @@ import type { AdConnection } from './AdAccountConnections';
 import { AdAccountConnections, AdTaskControls, AdTaskMetrics } from './PlatformAdsOperations';
 import AdPerformanceOverview from './AdPerformanceOverview';
 import AdCreativeLibrary from './AdCreativeLibrary';
+import AdMaterialPicker from './AdMaterialPicker';
 import MetaPlanAuditPanel from './MetaPlanAuditPanel';
 import AdManagedWorkspace from './AdManagedWorkspace';
 import { PlatformAdsManagedPreview, PlatformAdsPerformancePreview } from './PlatformAdsPreviewSections';
@@ -94,8 +95,9 @@ export default function PlatformAdsPage({
     if (dialog === 'accounts' && returnToCreate) { setReturnToCreate(false); setDialog('create'); }
     else setDialog(null);
   };
+  const [materialPickerOpen, setMaterialPickerOpen] = useState(false);
   const modalRef = useModalFocus<HTMLDivElement>({
-    open: dialog !== null,
+    open: dialog !== null && !materialPickerOpen,
     onClose: closeDialog,
   });
   const [step, setStep] = useState(0);
@@ -522,17 +524,20 @@ export default function PlatformAdsPage({
                 </div>
                 {step === 0 && (
                   <div className="ads-form-fields">
+                    {!previewMode && <AdMaterialPicker onOpenChange={setMaterialPickerOpen} value={form.configuration.materialSource} disabled={saving} blockedReason={form.channels.every(c => ['Facebook', 'Instagram'].includes(c)) ? undefined : '当前选择器用于 Meta 视频计划，请先选择 Facebook / Instagram 渠道。'} onChange={materialSource => setForm(current => ({ ...current, video: materialSource?.name.slice(0, 120) || '', configuration: { ...current.configuration, materialSource } }))}/>}
                     <label>
                       投放视频
                       <input
                         required
                         maxLength={120}
                         value={form.video}
+                        readOnly={!!form.configuration.materialSource}
                         onChange={(e) =>
                           setForm({ ...form, video: e.target.value })
                         }
                         placeholder="输入视频名称或素材编号"
                       />
+                      {!form.configuration.materialSource && <small>手填名称仅用于规划，不代表已绑定可投放文件；可从素材管理选择已有成片。</small>}
                     </label>
                     <label>
                       视频投流任务名称

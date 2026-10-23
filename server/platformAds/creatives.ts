@@ -89,6 +89,9 @@ export async function bindPlatformAdCreative(tenantId: string, taskId: string, i
     if (input.platformVideoId !== undefined) throw new PlatformAdCreativeError('平台视频标识只能由验证上传流程写入');
     const platformVideoId = '';
     const file = await source(tenantId, sourceTaskId, artifactId);
+    const { readSelectableAdMaterial } = await import('./creativeSelection.js');
+    const checked = await readSelectableAdMaterial(tenantId, { origin: 'social', sourceTaskId, artifactId });
+    if (checked.selection.sha256 !== file.sha256 || input.expectedSha256 !== undefined && input.expectedSha256 !== file.sha256) throw new PlatformAdCreativeError('所选素材版本已变化，请重新选择', 409);
     const id = createHash('sha256').update(JSON.stringify([tenantId, taskId, connectionId])).digest('hex').slice(0, 15);
     const existing = await getPlatformAdCreative(tenantId, id);
     if (existing && ['uploading', 'unknown', 'processing'].includes(existing.status)) throw new PlatformAdCreativeError('素材上传待核对，不能换绑', 409);
