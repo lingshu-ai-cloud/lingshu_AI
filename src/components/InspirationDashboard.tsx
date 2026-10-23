@@ -7,6 +7,7 @@ import { WatchModal, sourceEmbedUrl } from './inspiration/InspirationWatchModal'
 import { buildShootingNeeds } from './inspiration/inspirationShootingNeeds';
 import { InspirationShootingPanel } from './inspiration/InspirationShootingPanel';
 import InspirationImageCrawlDialog from './inspiration/InspirationImageCrawlDialog';
+import { MaterialManageDialog, MaterialUploadDialog } from './inspiration/InspirationMaterialDialogs';
 import { runInspirationImageCrawl } from './inspiration/inspirationImageCrawlAction';
 import { createInspirationReferenceImporter } from './inspiration/inspirationReferenceImport';
 import { submitExactAnalysis, readExactAnalysisRecord, pauseExactAnalysis } from './inspiration/inspirationExactAnalysisApi';
@@ -82,11 +83,10 @@ import MaterialTaxonomyFilters, { type MaterialSourceFilter, type MaterialThemeF
 import {
   ProductMaterialDetailDrawer,
   ProductMaterialGroupCard,
-  neutralProductSceneLabel,
   type ProductMaterialGroupProduct,
   type ProductScenePreparationSlotView,
 } from './material-library/ProductMaterialGroup';
-import { PRODUCT_SCENE_KINDS, type ProductSceneKind } from '../../shared/contracts/productScenePreparation';
+import type { ProductSceneKind } from '../../shared/contracts/productScenePreparation';
 import {
   STUDIO_MATERIAL_FILE_ACCEPT,
   STUDIO_MATERIAL_VIDEO_ACCEPT,
@@ -280,11 +280,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     } catch (error) { setMaterialMessage(error instanceof Error ? error.message : '主题标签保存失败'); }
     finally { setUpdatingMaterialTheme(false); }
   };
-  const manageDialogRef = useModalFocus<HTMLDivElement>({
-    open: Boolean(manageTarget),
-    onClose: () => { if (!manageBusy) setManageTarget(null); },
-    closeOnEscape: () => !manageBusy,
-  });
   const [materialSearch, setMaterialSearch] = useState('');
   const [materialAssetTab, setMaterialAssetTab] = useState<MaterialAssetTab>('all');
   const [materialIndustry, setMaterialIndustry] = useState<MaterialIndustryFilter>('all');
@@ -2112,66 +2107,31 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       <AnimatePresence>
         {watchVideo && <WatchModal key={watchVideo.id} video={watchVideo} onClose={() => setWatchVideo(null)} />}
       </AnimatePresence>
-      <Modal
+      <MaterialUploadDialog
         open={materialUploadDialogOpen}
-        title={uploadProductSceneKind
-          ? `补充${neutralProductSceneLabel(Math.max(0, PRODUCT_SCENE_KINDS.indexOf(uploadProductSceneKind)))}`
-          : '上传素材'}
-        width={480}
-        okText="选择文件"
-        cancelText="取消"
-        okButtonProps={{ disabled: Boolean(uploadProductSceneKind && !uploadProductId) }}
+        productId={uploadProductId}
+        productSceneKind={uploadProductSceneKind}
+        linkedProductId={materialProductId}
+        linkedProductRef={materialProductRef}
+        products={materialProducts}
+        onProductChange={setUploadProductId}
         onCancel={() => { setMaterialUploadDialogOpen(false); setUploadProductSceneKind(null); }}
-        onOk={() => {
-          setMaterialUploadDialogOpen(false);
-          uploadInputRef.current?.click();
-        }}
-      >
-        <label className="block text-xs font-semibold text-text-secondary">
-          素材归属（可选）<span className="sr-only">可关联产品，也可作为企业通用素材上传</span>
-          <Select
-            aria-label="本次上传素材归属"
-            className="mt-2 w-full"
-            value={uploadProductId || undefined}
-            placeholder={uploadProductSceneKind ? '请选择对应产品' : '企业通用素材（不绑定产品）'}
-            disabled={Boolean(uploadProductSceneKind)}
-            onChange={setUploadProductId}
-            options={[
-              { value: '', label: '企业通用素材（不绑定产品）' },
-              ...(materialProductId && materialProductRef && !materialProducts.some(item => item.id === materialProductId)
-                ? [{ value: materialProductId, label: materialProductRef }]
-                : []),
-              ...materialProducts.map(item => ({ value: item.id, label: item.name })),
-            ]}
-          />
-        </label>
-        <p className="mt-3 text-xs leading-5 text-text-muted">工厂、展会、办公、人物动作和通用转场等素材可直接作为企业通用素材；只有需要锁定具体商品身份时才关联产品。</p>
-        {uploadProductSceneKind && (
-          <div role="status" className="mt-4 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-text-secondary">
-            该素材会归入当前产品的
-            <strong className="mx-1 text-text-primary">{neutralProductSceneLabel(Math.max(0, PRODUCT_SCENE_KINDS.indexOf(uploadProductSceneKind)))}</strong>
-            。请选择视频文件。
-          </div>
-        )}
-      </Modal>
-      {manageTarget && (
-        <Modal open title={`${manageTarget.action === 'delete' ? '删除' : '编辑'}${manageTarget.kind === 'video' ? '爆款视频' : '素材'}`}
-          width={480} onCancel={() => setManageTarget(null)} mask={{ closable: false }} keyboard={!manageBusy} closable={!manageBusy}
-          confirmLoading={manageBusy} okText={manageTarget.action === 'delete' ? '确认删除' : '保存'} cancelText="取消"
-          okButtonProps={{ danger: manageTarget.action === 'delete', disabled: manageTarget.action === 'edit' && !manageName.trim() }}
-          cancelButtonProps={{ disabled: manageBusy }} onOk={() => void (manageTarget.action === 'delete' ? deleteManagedItem() : saveManagedItem())}>
-            {manageTarget.action === 'edit' ? <>
-              <label className="mt-4 block text-xs font-bold text-text-secondary">名称</label>
-              <Input value={manageName} onChange={event => setManageName(event.target.value)} maxLength={160} className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
-              <label className="mt-3 block text-xs font-bold text-text-secondary">标签</label>
-              <Input value={manageTags} onChange={event => setManageTags(event.target.value)} placeholder="用逗号分隔" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
-              {manageTarget.kind === 'material' && <label className="mt-3 block text-xs font-bold text-text-secondary">关联产品
-                <Select aria-label="素材关联产品" value={manageProductId || MATERIAL_PRODUCT_COMMON} onChange={value => setManageProductId(value === MATERIAL_PRODUCT_COMMON ? '' : value)} className="mt-1 w-full" options={[{ value: MATERIAL_PRODUCT_COMMON, label: '不指定（系统自动匹配）' }, ...materialProducts.map(item => ({ value: item.id, label: item.name }))]} /><span className="mt-1 block font-normal text-text-muted">可选。未指定时系统会按口播与画面语义自动匹配，也可作为企业通用素材使用。</span>
-              </label>}
-              <p className="mt-3 text-xs text-text-muted">仅当前租户自己采集或本地上传的素材可修改；共享素材保持只读。</p>
-            </> : <p className="mt-4 border-l-2 border-red bg-red/5 p-3 text-sm text-red">确认删除“{manageName}”？删除后无法恢复。</p>}
-        </Modal>
-      )}
+        onChooseFile={() => { setMaterialUploadDialogOpen(false); uploadInputRef.current?.click(); }}
+      />
+      <MaterialManageDialog
+        target={manageTarget}
+        name={manageName}
+        tags={manageTags}
+        productId={manageProductId}
+        products={materialProducts}
+        busy={manageBusy}
+        commonProductValue={MATERIAL_PRODUCT_COMMON}
+        onNameChange={setManageName}
+        onTagsChange={setManageTags}
+        onProductChange={setManageProductId}
+        onCancel={() => setManageTarget(null)}
+        onConfirm={() => void (manageTarget?.action === 'delete' ? deleteManagedItem() : saveManagedItem())}
+      />
 
     </main>
   );
