@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
+import type { SocialImageLayerGraph } from '../../shared/contracts/socialImageLayerGraph.js';
 import type { SocialImageNodeEnvelope, SocialImageProductionNodeId, SocialImageNodeValueMap } from '../../shared/contracts/socialImageProduction.js';
 
 const HASH = /^[a-f0-9]{64}$/;
@@ -155,14 +156,14 @@ export function socialImageV3SingleRenderInput(task: SocialImageCreationTask, jo
 }
 
 /** Recomputable frozen specification identity; actual provider bytes are additionally hashed at claim. */
-export function socialImageV3RenderSpecInputHash(task: SocialImageCreationTask): string {
+export function socialImageV3RenderSpecInputHash(task: SocialImageCreationTask, graph: SocialImageLayerGraph | undefined = task.layerGraph): string {
   const value = {
     taskId: task.id, contentTaskVersion: task.productionRuntime?.binding?.contentTaskVersion,
     imageType: task.imageType, creationPath: task.creationPath, contentBrief: task.contentBrief,
     renderBrief: task.renderBrief, imageTextContract: task.imageTextContract,
     deliverySpec: task.deliverySpec, enterpriseAssets: task.enterpriseAssets,
     materialIds: task.materialIds, referenceSnapshot: task.referenceSnapshot,
-    layerGraph: task.layerGraph, renderPlan: task.renderPlan,
+    layerGraph: graph, renderPlan: task.renderPlan,
     evidenceHash: socialImageV3PaidEvidenceHash(task, false),
     executionPlanHash: latestOutput(task, 'execution_plan')?.contentHash || null,
   };

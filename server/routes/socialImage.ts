@@ -28,6 +28,7 @@ import {
   createOrResumeBoundSocialImageRun,
   createSocialImageDeliveryPackage,
   decideSocialImageCandidate,
+  recordSocialImageBusinessContext,
   recordSocialImageNodeOutput,
   refreshSocialImageContentTaskBinding,
   runSocialImageDirectorReview,
@@ -36,6 +37,8 @@ import {
 import { projectSocialImageProductionSnapshot } from '../socialImage/socialImageProductionRuntime.js';
 import { analyzeSocialImageReference, inspectSocialImageAsset, socialImageAssetAuthorization, socialImageAssetManifest } from '../socialImage/socialImageEvidenceWorker.js';
 import { readSocialImageReferenceBytes } from '../socialImage/socialImageReferenceBytes.js';
+import { compileSocialImageReferencePlan, inspectSocialImageCandidateFactors,
+  prepareSocialImageReferenceStrategy, socialImageFrozenGraphMatches, socialImageFrozenSourceIssue } from '../socialImage/socialImageReferenceStrategy.js';
 import { localProductOcrReadiness, recognizeProductImageLocally, recognizeProductImageTokensLocally } from '../lib/localProductOcr.js';
 
 export const socialImageRouter = Router();
@@ -182,6 +185,7 @@ socialImageRouter.post('/tasks/:id/evidence/prepare', async (req, res) => {
     if (task.schemaVersion !== 'social-image-creation.v3' || !task.productionRuntime?.binding) {
       res.status(409).json({ ok: false, code: 'social_image_content_task_binding_missing', error: '历史图片项目不自动升级生产运行' }); return;
     }
+    task = await recordSocialImageBusinessContext({ store, tenantId, taskId: task.id, expectedVersion: task.version });
     const library = await readMaterialLibrary(tenantId);
     const ocrReadiness = localProductOcrReadiness();
     const ocr = ocrReadiness.ready ? recognizeProductImageTokensLocally : undefined;
@@ -272,6 +276,7 @@ socialImageRouter.post('/tasks/:id/evidence/prepare', async (req, res) => {
       evidenceRefs: inventory.regions.map(region => region.evidenceRef),
       createdBy: { kind: 'worker', id: 'social_image_reference_pixel_analyzer' },
       warnings: ocrReadiness.ready ? [] : [ocrReadiness.code] });
+    task = await prepareSocialImageReferenceStrategy({ store, tenantId, taskId: task.id, expectedVersion: task.version });
     res.json({ ok: true, task, snapshot: projectSocialImageProductionSnapshot(task), manifest, inventory });
   } catch (error) {
     const failure = error instanceof SocialImageProductionRunError ? error : new SocialImageProductionRunError('social_image_evidence_prepare_failed', 503);
@@ -509,6 +514,11 @@ socialImageRouter.post('/tasks/:id/compile-layered', async (req, res) => {
     if (!product) { res.status(422).json({ ok: false, error: '企业产品主图不可读取，未进入渲染' }); return; }
     // Logo is optional during first-draft creation. It can be added later from
     // the unified review surface once a resolvable enterprise asset exists.
+    if (task.schemaVersion === 'social-image-creation.v3' && task.creationPath === 'viral_replication') {
+      const planned = await compileSocialImageReferencePlan({ store, tenantId, taskId: task.id,
+        expectedVersion: task.version, productName: product.name });
+      res.json({ ok: true, task: planned.task, layerGraph: planned.graph }); return;
+    }
     const layerGraph = compileLuxuryProductHero({ task, productId, productName: product.name });
     assertSocialImageLayerGraph(layerGraph);
     const updated = await updateSocialImageTask(store, tenantId, task.id, task.version, { layerGraph, status: 'planned', step: 'generate' });
@@ -634,6 +644,10 @@ socialImageRouter.post('/tasks/:id/render-layered', async (req, res) => {
     if (!task) { res.status(404).json({ ok: false, error: '图片任务不存在' }); return; }
     if (Number(req.body?.expectedVersion) !== task.version) { res.status(409).json({ ok: false, error: '任务已被更新，请刷新后继续', task }); return; }
     if (!task.layerGraph) { res.status(422).json({ ok: false, error: '任务尚未生成分层合同' }); return; }
+    if (task.schemaVersion === 'social-image-creation.v3' && task.creationPath === 'viral_replication'
+      && !socialImageFrozenGraphMatches(task)) {
+      res.status(422).json({ ok: false, code: 'social_image_reference_plan_stale', error: '参考版式证据或冻结规格已失效，请重新规划' }); return;
+    }
     // Unresolved optional layers are omitted from the first draft instead of
     // stopping production. The user can add them later from unified review.
     const renderGraph = {
@@ -646,6 +660,12 @@ socialImageRouter.post('/tasks/:id/render-layered', async (req, res) => {
       const product = layer.sourceAssetId ? await enterpriseProductAsset(tenantId, layer.sourceAssetId) : null;
       if (!product || !layer.sourceAssetId) { res.status(422).json({ ok: false, error: `企业产品资产不可读取：${layer.id}` }); return; }
       assets.set(layer.sourceAssetId, product.bytes);
+    }
+    if (task.schemaVersion === 'social-image-creation.v3' && task.creationPath === 'viral_replication') {
+      const referenceUrl = task.referenceSnapshot?.imageUrls[0] || task.referenceUrls[0] || task.referenceSnapshot?.sourceUrl || '';
+      const reference = referenceUrl ? await referenceImageBytes(tenantId, referenceUrl) : null;
+      const sourceIssue = socialImageFrozenSourceIssue({ task, productBytes: assets, referenceBytes: reference?.bytes || null });
+      if (sourceIssue) { res.status(422).json({ ok: false, code: sourceIssue, error: sourceIssue }); return; }
     }
     const rendered = await renderSocialImageLayerGraph({ graph: renderGraph, assets });
     const digest = createHash('sha256').update(rendered.bytes).digest('hex');
@@ -723,6 +743,8 @@ socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
         } });
       } catch { /* provider failure stays uncertain; never fabricate a pass */ }
       const qualityChecks = mergeSocialImageVisualChecks(deterministicForOutput, visual);
+      qualityChecks.push(...await inspectSocialImageCandidateFactors({ task, bytes: generated.bytes,
+        mimeType: generated.mimeType, ocr: localProductOcrReadiness().ready ? recognizeProductImageTokensLocally : undefined }));
       const failed = qualityChecks.filter(check => check.severity === 'hard' && !['pass', 'not_applicable'].includes(check.verdict));
       return { ...output, contentHash: createHash('sha256').update(generated.bytes).digest('hex'),
         state: failed.length ? 'repair_required' as const : 'quality_checking' as const, qualityChecks };

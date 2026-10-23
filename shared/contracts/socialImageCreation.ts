@@ -200,7 +200,8 @@ export interface SocialImageDeliverySpec {
 export type SocialImageQualityCheckKey =
   | 'file_decode' | 'pixel_dimensions' | 'product_identity' | 'packaging_visibility' | 'subject_visibility' | 'label_ocr'
   | 'fact_consistency' | 'copy_visual_consistency' | 'brand_consistency'
-  | 'text_overflow' | 'safe_zone' | 'reference_structure_similarity' | 'motion_mechanism_similarity';
+  | 'text_overflow' | 'safe_zone' | 'reference_structure_similarity' | 'motion_mechanism_similarity'
+  | `hook_factor:${string}`;
 
 export interface SocialImageQualityCheck {
   key: SocialImageQualityCheckKey;

@@ -83,6 +83,35 @@ export interface CreateBoundSocialImageRunInput {
   imageType?: SocialImageCreationTask['imageType'];
 }
 
+/** Bind the formal business node to the canonical ContentTask revision before any asset or reference work. */
+export async function recordSocialImageBusinessContext(input: {
+  store: DataStore; tenantId: string; taskId: string; expectedVersion: number; now?: string;
+}): Promise<SocialImageCreationTask> {
+  const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
+  if (!task) throw new SocialImageProductionRunError('social_image_task_missing', 404);
+  if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
+  const binding = task.productionRuntime?.binding;
+  if (!binding) throw new SocialImageProductionRunError('social_image_content_task_binding_missing', 409);
+  const contentTask = await canonicalContentTask(input.store, input.tenantId, binding.contentTaskId);
+  const brief = contentTask.brief;
+  if (binding.contentTaskVersion !== contentTask.version || task.contentBrief.coreClaim !== brief.objective
+    || task.contentBrief.productRefs[0] !== brief.productId) {
+    throw new SocialImageProductionRunError('social_image_content_task_binding_stale', 409);
+  }
+  const sourceRef: SocialImageVersionedRef = { objectType: 'social_content_task', id: contentTask.taskId,
+    version: contentTask.version, contentHash: hash(brief) };
+  return recordSocialImageNodeOutput({ ...input, nodeId: 'business_context', status: 'completed',
+    value: { objective: brief.objective, topicType: task.contentBrief.topicType,
+      deliverableType: task.imageType === 'carousel' ? 'carousel_cover' : 'product_hero',
+      productRefs: [...task.contentBrief.productRefs], enterpriseFactSnapshotRef: null,
+      audience: [...task.contentBrief.audience], ownedAccountId: null, accountDraftId: null,
+      platforms: [task.deliverySpec.platform], targetAction: task.contentBrief.targetAction || null,
+      successMetrics: [], deliverySpec: { platform: task.deliverySpec.platform, aspectRatio: task.deliverySpec.aspectRatio,
+        language: task.deliverySpec.language, outputCount: task.deliverySpec.outputCount, format: task.deliverySpec.format },
+      budgetAndDeadline: { maximumCostCny: null, dueAt: null }, fieldsToConfirm: [...task.fieldsToConfirm] },
+    inputRefs: [sourceRef], evidenceRefs: [sourceRef], createdBy: { kind: 'system', id: 'content_task_business_binding' } });
+}
+
 function sameBoundRunScope(
   task: SocialImageCreationTask,
   contentTaskId: string,
@@ -388,12 +417,34 @@ export async function recordSocialImageHookStrategy(input: {
   hookFactorSpec: SocialImageHookFactorSpec;
   adaptationSpec: SocialImageAdaptationSpec;
 }) {
+  const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
+  if (!task) throw new SocialImageProductionRunError('social_image_task_missing', 404);
+  if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
+  const inventoryNode = task.productionRuntime?.nodeOutputs.filter(output => output.nodeId === 'element_inventory')
+    .sort((a, b) => b.version - a.version)[0];
+  const referenceNode = task.productionRuntime?.nodeOutputs.filter(output => output.nodeId === 'reference_snapshot')
+    .sort((a, b) => b.version - a.version)[0];
+  if (inventoryNode?.status !== 'completed' || referenceNode?.status !== 'completed') {
+    throw new SocialImageProductionRunError('social_image_reference_evidence_incomplete', 422);
+  }
+  const inventory = inventoryNode.value as SocialImageNodeValueMap['element_inventory'];
+  const observedRegions = new Map(inventory.regions.map(region => [region.regionId, region.evidenceRef.contentHash]));
+  for (const factor of input.hookFactorSpec.factors) {
+    if (!factor.regionRefs.length || factor.regionRefs.some(regionId => !observedRegions.has(regionId))
+      || factor.evidenceRefs.some(ref => ![...observedRegions].some(([id, contentHash]) => ref.id === id && ref.contentHash === contentHash))
+      || factor.regionRefs.some(regionId => !factor.evidenceRefs.some(ref => ref.id === regionId
+        && ref.contentHash === observedRegions.get(regionId)))) {
+      throw new SocialImageProductionRunError('social_image_hook_evidence_not_in_inventory', 422);
+    }
+  }
   const issues = socialImageHookFactorIssues(input.hookFactorSpec);
   issues.push(...socialImageAdaptationIssues(input.adaptationSpec, input.hookFactorSpec));
   if (issues.length) throw new SocialImageProductionRunError(issues.join(','), 422);
   const hooked = await recordSocialImageNodeOutput({
     ...input, nodeId: 'hook_factors', status: 'completed', value: input.hookFactorSpec,
-    inputRefs: [], evidenceRefs: input.hookFactorSpec.factors.flatMap(factor => factor.evidenceRefs),
+    inputRefs: [{ objectType: inventoryNode.schemaVersion, id: inventoryNode.id,
+      version: inventoryNode.version, contentHash: inventoryNode.contentHash }],
+    evidenceRefs: input.hookFactorSpec.factors.flatMap(factor => factor.evidenceRefs),
     createdBy: { kind: 'agent', id: 'image_director' }, taskPatch: { hookFactorSpec: input.hookFactorSpec, step: 'plan' },
   });
   const hookEnvelope = hooked.productionRuntime!.nodeOutputs.filter(output => output.nodeId === 'hook_factors').at(-1)!;
@@ -421,6 +472,19 @@ export async function recordSocialImageDirectorReview(input: {
     && check.severity === 'hard' && (check.verdict === 'pass' || check.verdict === 'not_applicable')));
   if (input.decision.decision === 'accept_for_user_review' && !qualityPassed) {
     throw new SocialImageProductionRunError('social_image_hard_quality_gate_incomplete', 422);
+  }
+  if (input.decision.decision === 'accept_for_user_review' && task.creationPath === 'viral_replication') {
+    const factors = task.hookFactorSpec?.factors || [];
+    const factorChecksPassed = Boolean(output.contentHash && factors.length && factors.every(factor => {
+      const result = input.decision.factorResults.find(item => item.factorId === factor.factorId);
+      return result?.verdict === 'pass' && output.qualityChecks.some(check => check.key === `hook_factor:${factor.factorId}`
+        && check.verdict === 'pass' && check.evidence?.includes(`candidate-sha256:${output.contentHash}`)
+        && factor.evidenceRefs.every(ref => check.evidence?.includes(`reference-region-sha256:${ref.contentHash}`)));
+    }));
+    if (!factorChecksPassed || output.qualityChecks.some(check => check.key === 'reference_structure_similarity'
+      && check.verdict === 'fail')) {
+      throw new SocialImageProductionRunError('social_image_hook_candidate_evidence_incomplete', 422);
+    }
   }
   const result = await updateSocialImageTask(input.store, input.tenantId, input.taskId, input.expectedVersion, {
     directorReviewDecision: input.decision,
@@ -466,26 +530,38 @@ export async function runSocialImageDirectorReview(input: {
   }
   const referenceCheck = output.qualityChecks.find(check => check.key === 'reference_structure_similarity');
   const referenceReady = task.creationPath !== 'viral_replication'
-    || Boolean(referenceCheck && ['pass', 'not_applicable'].includes(referenceCheck.verdict));
+    || Boolean(referenceCheck && referenceCheck.verdict !== 'fail');
   const candidateRef: SocialImageVersionedRef = { objectType: 'social-image-candidate', id: output.id,
     version: output.version, contentHash: output.contentHash };
-  const factorResults = (task.hookFactorSpec?.factors || []).map(factor => ({
-    factorId: factor.factorId,
-    verdict: referenceReady ? 'pass' as const : 'uncertain' as const,
-    evidenceRefs: [...factor.evidenceRefs, candidateRef],
-  }));
-  const failedCriteria = referenceReady ? [] : ['reference_structure_similarity'];
+  const factorResults = (task.hookFactorSpec?.factors || []).map(factor => {
+    const check = output.qualityChecks.find(item => item.key === `hook_factor:${factor.factorId}`
+      && item.evidence?.includes(`candidate-sha256:${output.contentHash}`)
+      && factor.evidenceRefs.every(ref => item.evidence?.includes(`reference-region-sha256:${ref.contentHash}`)));
+    return { factorId: factor.factorId,
+      verdict: check?.verdict === 'pass' ? 'pass' as const : check?.verdict === 'fail' ? 'fail' as const : 'uncertain' as const,
+      evidenceRefs: check ? [...factor.evidenceRefs, candidateRef] : factor.evidenceRefs };
+  });
+  const factorReady = task.creationPath !== 'viral_replication' || Boolean(task.hookFactorSpec?.factors.length
+    && factorResults.every(result => result.verdict === 'pass'));
+  const failedCriteria = [
+    ...(!referenceReady ? ['reference_structure_similarity'] : []),
+    ...factorResults.filter(result => result.verdict !== 'pass').map(result => `hook_factor:${result.factorId}`),
+  ];
+  const canAccept = referenceReady && factorReady;
   const decision: SocialImageDirectorReviewDecision = {
     schemaVersion: 'social-image-director-review.v1',
-    decision: referenceReady ? 'accept_for_user_review' : 'repair',
+    decision: canAccept ? 'accept_for_user_review' : 'repair',
     candidateId: output.id,
     candidateVersion: output.version,
     passedCriteria: hardChecks.flatMap(check => check ? [check.key] : []),
     failedCriteria,
     factorResults,
-    problemRegions: referenceReady ? [] : (referenceCheck?.region ? [JSON.stringify(referenceCheck.region)] : []),
-    reasonCodes: referenceReady ? ['independent_quality_evidence_passed'] : ['reference_evidence_incomplete'],
-    repairInstructions: referenceReady ? [] : [referenceCheck?.repairSuggestion || '补齐参考结构像素证据后重新审查'],
+    problemRegions: canAccept ? [] : [
+      ...(referenceCheck?.region ? [JSON.stringify(referenceCheck.region)] : []),
+      ...output.qualityChecks.filter(check => failedCriteria.includes(check.key) && check.region).map(check => JSON.stringify(check.region)),
+    ],
+    reasonCodes: canAccept ? ['independent_quality_evidence_passed'] : ['reference_factor_evidence_incomplete'],
+    repairInstructions: canAccept ? [] : ['补齐每个爆点因素的候选像素证据后重新审查'],
     reviewConfidence: Math.min(.99, ...hardChecks.map(check => check?.score ?? .8)),
     reviewedAt: input.now || new Date().toISOString(),
   };
