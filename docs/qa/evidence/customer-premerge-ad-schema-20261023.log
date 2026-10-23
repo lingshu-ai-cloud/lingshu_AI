@@ -1,0 +1,14 @@
+Disposable PocketBase 0.39.5 advertising upgrade rehearsal; no existing database used.
+
+[ads-schema-base] processExit=0
+Applied 1790035200_create_platform_ad_schema.js
+
+[ads-schema-forward] processExit=0
+Applied 1792627200_platform_ad_account_context.js
+Applied 1792627201_platform_ad_resources.js
+
+[ads-schema-field-probe] processExit=0
+2026/10/23 11:15:07 AD_CONTEXT_MISSING=["businessName","accountStatus","timezoneId","timezoneName","timezoneOffsetHoursUtc","resourceSyncRunId","resourceSyncedAt"]
+Error: failed to apply migration 1999999999_probe_ad_context.js: Error: ad_context_forward_missing_fields:businessName,accountStatus,timezoneId,timezoneName,timezoneOffsetHoursUtc,resourceSyncRunId,resourceSyncedAt at /Users/julia1/Documents/ChatGPT/客服/pb.js:1:353(47)
+
+SEMANTIC RESULT: FAILED. Migration Applied and process exit 0 do not prove expected fields exist.
