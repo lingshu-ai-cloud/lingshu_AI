@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 素材响应与企业产品投影拆分（2026-10-23）
+
+- 代码提交 `bf831569ed426855fc3462313941cf58e84bc2b2` 将已读取素材的租户签名播放地址、私有对象键清除、能力清单及企业产品表素材身份投影迁至 `server/routes/studioMaterialProjection.ts`；租户读取、鉴权和持久化仍在 `studio.ts`。`studio.ts` 从 7,789 降至 7,627 行并收紧历史预算；全仓仍有 6 个历史超限文件。
+- 新模块离线直测 2/2、`test:material-import`、`test:studio-media`、`test:studio-workflow`、Studio 媒体访问检查、`pnpm run lint`、架构扫描/ratchet、193 项迁移仓库只读检查、生产构建及 `git diff --check` 通过；Studio 主 chunk 为 480,933/485,000 字节，仍有大 chunk 提示。扩展运行的 `test:tenant-isolation` 未通过：既有源码断言仍在 `enterprise.ts` 查找已迁往 `enterpriseKnowledge.ts` 的授权判断，继续修正后又发现资产路由和助手展示的旧文件位置断言；该组不可计入本批通过数，需单独审计全部合同。未调用真实供应商、执行目标库迁移、浏览器验收或部署；远端 SHA 与工作区状态待推送后核验。
+
 ## Studio 自动化配音计划与合成边界拆分（2026-10-23）
 
 - 代码提交 `cf766af5b9ac36a141c5ff57b91226ce61c7b89d` 将数字员工自动化使用的冻结语音计划、配音合成、音频质检与租户文件证明迁至 `server/routes/studioVoiceAutomation.ts`；原公开导出保持，私有音频对齐及收据校验仍在 `studio.ts`。三段无调用方的旧口播自动改写/拟合函数已移除。`studio.ts` 从 8,026 降至 7,789 行并收紧历史预算；全仓仍有 6 个历史超限文件，结构治理尚未收口。
