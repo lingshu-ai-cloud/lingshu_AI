@@ -2,6 +2,15 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 图文制作与人工复核工作区（2026-10-23）
+
+- 起点：干净集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `910ff71f60ed9343e47737729084b76ab4dec928`。源码 `e712b13be73620a7eaedd3eb94315052f9b7061e` 已推送。`studioPosterWorkspace.ts` 拥有八组结果状态、证据准入、素材规划、两条文案/图片生成路线、部分失败、手动修改失效、人工复核及交付资格。页面通过明确产品/输出快照、已有库存索引和必要回调连接，无新增 getter，不复制共享状态。主页面 **7,394→7,155 行**，新模块 **320 行**，预算按实际收紧；未把高耦合的逐镜批事务机械拆开。详见 [图文工作区 ADR](../architecture/adr/2026-10-23-studio-poster-workspace-ownership.md)。
+- 新增真实方法行为 **14/14**，禁止真实网络；`test:studio-workspace` **89/89**，另有构建依赖 **4/4**。三个业务函数完整正文、两条资格表达式和八组状态初始化按实际源码归一化对照一致；状态在原注册位置按原顺序初始化，新模块独立加载及无回导主页面依赖检查通过。45 个导出及普通/任务入口初始 SSR HTML（24,562/25,765 字符）一致，不能据此保证全链路零回归。
+- 实际通过 `pnpm run lint`、`ARCHITECTURE_BASE_REF=910ff71f pnpm run check:architecture`（2,600 个生产 TS）、`test:architecture-ratchet`、`check:digital-employee-migrations`（193 项清单，只读）、`git diff --check`；`test:studio-workflow` 13 项、`test:shooting-workflow` 11 项、`test:storyboard-aigc` 66 项、`test:studio-media`、`test:social-image-pipeline`（主组 55 项及路由/合同组）和 `pnpm run build` 均通过。主页面 chunk **363,113/485,000 字节**，视图 chunk 静态导入边界通过；不宣称性能改善。
+- 再次执行 `pnpm run test:production`：211 项中 209 项通过，仍是上批已在未修改起点复现的两条人物认证 UI 断言失败。`ShotProductionPanel`、认证模块及其测试未改，没有删除或放宽断言。本批没有重跑完整 `test:studio-release`，不能将完整生产或 release 门禁登记为通过。
+- 保护既有功能优先于整理代码；未完成登录后完整浏览器、项目切换/自动保存/重复生成/迟到回执的专项操作或真实供应商验收。正文、类型、局部行为及 SSR 对照仅证明对应范围，没有新增跨项目并发保证。**原五个大文件已完成四个，最后页面仍在治理**；下一批继续按完整职责评估脚本、分镜生产、候选采用及质检交付，800 不是机械目标。
+- 源码与文档分开提交、推送，普通集成分支无自动部署触发。未部署、真实付费调用或迁移目标库，其他来源工作树和 `sources/` 未改；视频 P1 独立树没有合入。本批最终文档 SHA、本地/远端一致性和干净状态以推送后 Git 核验为准。
+
 ## 渲染会话生命周期所有权（2026-10-23）
 
 - 起点：干净集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `f333957adb5b2c5404d43b9d4b0a72268bc8060e`。源码提交 `f52c28c69f5d688b1663539e7cebcdf6559a7745` 已推送。`studioRenderSession.ts` 集中拥有十组状态、两个内部 Ref、封面请求、三条渲染执行路径、进度释放、语言版本历史和项目恢复。页面保留跨领域参数组装、就绪检查、导航与版本选择；无新增 getter 桥。主页面 **7,526→7,394 行**，新模块 **225 行**，预算按实际收紧；此批价值是完整生命周期归属，不以净降行数衡量。详见 [渲染会话所有权 ADR](../architecture/adr/2026-10-23-studio-render-session-ownership.md)。

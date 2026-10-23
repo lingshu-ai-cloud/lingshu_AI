@@ -4,6 +4,8 @@
 
 ## 边界
 
+- `studioPosterWorkspace.ts` 统一拥有图文结果状态、证据/产品/素材准入、海报与内容包文案/图片生成、部分失败、手动修改失效、人工复核和交付资格。页面保留项目共享设置、库存与选中列表，并传递明确快照及必要回调；没有新增 getter 桥，未拆散生成和复核流程。详见 [图文工作区所有权 ADR](adr/2026-10-23-studio-poster-workspace-ownership.md)。
+
 - `studioRenderSession.ts` 拥有渲染状态、内部请求代次/预览缓存、封面请求、桌面/持久任务/旧网页三条执行路径、进度清理、语言版本记录和项目恢复。页面保留跨领域 `RenderSpec` 同步组装、就绪检查、导航和版本选择；没有新增 getter 字典。详见 [渲染会话所有权 ADR](adr/2026-10-23-studio-render-session-ownership.md)。
 
 - 工作台治理以职责归属、依赖减少和独立验证为准：同一请求的提交、轮询、取消、失败恢复、结果写回和相关副作用保持完整边界。共享项目/镜头状态、跨工作区协调与页面装配可留在 `AiCreateStudio.tsx`；800 是参考规模，主文件超过 800 行可以接受。仅增加 getter/端口/转发而不降低耦合的迁移应重划边界。详见 [素材所有权与完成标准 ADR](adr/2026-10-23-studio-material-ownership-and-completion-policy.md)。
