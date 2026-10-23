@@ -3,6 +3,11 @@
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-24 灵小枢与图片串行集成
+
+- 本机主集成树 `/Users/jiejie/Documents/lingshu-AI` 从干净 `a046ba86` 快进到源码点 `7fb3bc05`，分支仍为 `xixi改五个大文件结构治理`；治理文档提交后的 HEAD 以 Git 核验。隔离树 `/Users/jiejie/.codex/worktrees/serial-feature-integration-20261024/lingshu-AI`，分支 `codex/serial-feature-integration-20261024`，在合并与定向修复后为干净 `7fb3bc05`，暂留作可恢复的合并证据。
+- 独立灵小枢树 `/Users/jiejie/.codex/worktrees/lingxiaoshu-dual-end/lingshu-AI` 在 `codex/lingxiaoshu-dual-end` 提交并确认为干净 `41a0f1f5`；其增量已串行合入上述隔离树。图片开发所依据的其他来源树保留原位；本次没有归档、重置、清理任何来源树，尤其未触碰 `mobile-dual-edition-20261012` 的未提交内容。旧预览与目标数据库状态仍须单独核对，不能从源码快进推断。
+
 ## 2026-10-24 指定基线前端整合
 
 - 原开发树 `/Users/jiejie/.codex/worktrees/f82f/lingshu-AI` 在 `codex/jimeng-creator-ui-20261023` 的 `64bb6481` 仍保留其未提交内容；未复制其中的 `AGENTS.md`、架构预算改动或已弃用的蓝色吉祥物素材，亦未重置、清理或归档。

@@ -2,6 +2,14 @@
 
 更新时间：2026-10-24（Asia/Shanghai）
 
+## 灵小枢与单条图片生产的串行本地集成（2026-10-24）
+
+- 本机集成树 `/Users/jiejie/Documents/lingshu-AI` 在分支 `xixi改五个大文件结构治理` 上，先确认干净且 HEAD 为上一基线 `a046ba86e1b28ba29a6d4fd45f975ebf17138f77`。隔离树 `codex/serial-feature-integration-20261024` 从该 SHA 起步，先合入图片分支至 `fcec7412ff08593c78d4a918f54ed6c2eef83183`，再合入干净的灵小枢分支 `41a0f1f51959a11b55434868d036d1048917831b`，得到 `d460257b724f60589c746c015e031ed641b334c3`；三项合并后合同/夹具修正与共享任务 ADR 形成源码检查点 `7fb3bc05bf96ef0e8b12d301f31fc908188d9f56`。主集成树已由 `a046ba86` 以 `git merge --ff-only` 快进到该检查点；本文档提交后的最终 HEAD 另以 Git 核验。两条来源分支及原 `f82f`、`mobile-dual-edition-20261012` 工作树均未重置、清理或覆盖；未推送、部署。
+- 本次把单条自由创作的 `ContentTask` 作为灵小枢任务卡与图片子运行的共享根；图片端增加持久节点/版本、真实参考图像素与素材证据、精确候选审核、付费前置和结果不明停止门禁。灵小枢端增加同对话任务详情、跨端权威投影、首次企业建档的持久草稿/精确版本确认、租户唯一性和部分失败恢复；小程序保留当前只读任务续接。两份新 PocketBase 迁移文件仅随源码合入，**没有**在目标库执行。跨阶段边界见 [共享任务 ADR](../architecture/adr/2026-10-24-assistant-image-development-contract.md)。
+- 本地实际通过：图片流水线主测试 **77/77**、HTTP 集成 **1/1**、多输出/工作台合同及治理 **2/2**，另两项图片安全测试 **6/6**；`test:assistant` 的 Node 组 **81/81** 及四个独立脚本、`test:assistant-production` **34/34**、建档定向 **9/9**、完整 `test:digital-employees`、`test:production` **214/214**、`test:production-entry` **27/27**、`test:production-orchestration` **62/62**、`test:assistant-quality` **22 通过/1 项按环境跳过**、`test:shared-contracts`、`test:frontend-security`。`NODE_OPTIONS=--max-old-space-size=8192 pnpm run lint`、以 `a046ba86` 为参照的 `check:architecture`（2,632 个生产 TS、1 个冻结历史超限）、`test:architecture-ratchet`、`check:digital-employee-migrations`（195 项仓库只读）、`pnpm run build` 和 `git diff --check` 通过；Studio 主 chunk **368,939/485,000** 字节。图片 HTTP 测试的本地数据权威上下文和两条旧源码合同在合并后修正，未放宽生产原子性或鉴权门禁。
+- 完整 `pnpm run quality` **未通过**：首次停在旧决策路由源码顺序断言，已按真实父路由注册顺序修正并使 `test:production-orchestration` 通过；第二次通过此前阶段后，停在 `test:gap-v1-release` 的 `scripts/external-video-approval.integration.ts:13`，因为本机未设置真实 PocketBase 测试可执行文件 `PB_BIN`。不能把后续单独通过的领域测试写成完整 `quality` 或 `verify` 通过。没有在新源码检查点上做登录后浏览器、真实供应商/付费、目标库迁移或发布验收；旧 5188 预览进程不自动代表此源码。
+- **这是可继续开发的本地源码基线，不是两份 PRD 的全量完成。** 图片仍缺 16 节点自动编排、真实独立 Agent/完整语义质检、部分多候选统一审核和发布指标回流；灵小枢仍缺真实 AI 建档候选与置信度、原始未归属文档证据持久化、完整不可变任务上下文/付费冻结及小程序端产物预览、采用、退回、下载。后续由两条功能会话从此精确基线继续，分别提交干净、可验证的增量，再按顺序在隔离树合并；真实外部动作另行取得授权。安全恢复点为 `a046ba86` 和本次源码检查点 `7fb3bc05`。
+
 ## 指定 `1d73fda` 基线的前端整合（2026-10-24）
 
 - 用户指定的精确起点为 `1d73fda38f9a6f01adcbb794b691222550c569db`；本机集成工作树 `/Users/jiejie/Documents/lingshu-AI` 在分支 `xixi改五个大文件结构治理` 上确认干净且 HEAD 正是该提交后，才将隔离分支 `codex/frontend-onto-1d73` 的前端源码提交 `58e1212c67a8def14c3ad630c663023c6830ad2f` 以 `git merge --ff-only` 快进合入。原开发树 `/Users/jiejie/.codex/worktrees/f82f/lingshu-AI` 的脏改动与 `mobile-dual-edition-20261012` 均未重置、清理或混入；本记录的治理文档提交在源码提交之后。
