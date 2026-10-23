@@ -57,7 +57,7 @@ function DraftSuggestionBar({
     onChangeDraft(next.filter(Boolean).join('\n\n'));
   };
   return (
-    <section data-draft-suggestion className="ml-auto w-fit min-w-[260px] max-w-[90%] rounded-2xl rounded-br-md border border-accent/25 bg-white shadow-sm sm:max-w-[78%]">
+    <section data-draft-suggestion className="ml-auto w-fit min-w-[260px] max-w-[90%] rounded-2xl rounded-br-md border border-accent/25 bg-surface shadow-sm sm:max-w-[78%]">
       <header className="flex items-center justify-between gap-2 px-3 py-2">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs font-semibold text-text-primary">
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-glow text-accent"><Bot size={14} /></span>
@@ -309,7 +309,7 @@ export function ChatThread({
                   {!isBuyer && (event.audit?.editedByHuman || event.audit?.memoryApplied?.length) && (
                     <div className="mt-2 flex flex-wrap justify-end gap-1.5">
                       {event.audit.editedByHuman && (
-                        <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold text-white/90" title={event.audit.originalDraft ? `AI 初稿：${event.audit.originalDraft}` : undefined}>AI 草稿 · 人工改过</span>
+                        <span className="rounded-full bg-surface/15 px-2 py-0.5 text-[10px] font-bold text-white/90" title={event.audit.originalDraft ? `AI 初稿：${event.audit.originalDraft}` : undefined}>AI 草稿 · 人工改过</span>
                       )}
                       {event.audit.memoryApplied?.length ? (
                         <span className="rounded-full bg-emerald-100/25 px-2 py-0.5 text-[10px] font-bold text-white/90" title={event.audit.memoryApplied.join('；')}>已用学习记忆</span>
@@ -321,10 +321,10 @@ export function ChatThread({
                       <span className="font-bold">{'\u4e2d\u6587\u7ffb\u8bd1\uff1a'}</span>{translation}
                     </div>
                   )}
-                  {event.autoSent && <div className="mt-2 flex justify-end"><span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold text-white/85">{'AI \u81ea\u52a8\u56de\u590d'}</span></div>}
+                  {event.autoSent && <div className="mt-2 flex justify-end"><span className="rounded-full bg-surface/15 px-2 py-0.5 text-[10px] font-bold text-white/85">{'AI \u81ea\u52a8\u56de\u590d'}</span></div>}
                   {!isBuyer && event.sendStatus && (
                     <div className="mt-2 flex justify-end">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${event.sendStatus === 'failed' ? 'bg-red-100 text-red-700' : 'bg-white/15 text-white/85'}`}>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${event.sendStatus === 'failed' ? 'bg-red-100 text-red-700' : 'bg-surface/15 text-white/85'}`}>
                         {event.sendStatus === 'queued' ? '发送中' : event.sendStatus === 'sent' ? '已发送' : event.sendStatus === 'delivered' ? '已送达' : event.sendStatus === 'failed' ? '发送失败' : event.sendStatus === 'unknown' ? '发送结果待确认' : '草稿'}
                       </span>
                     </div>
@@ -352,7 +352,7 @@ export function ChatThread({
           )}
           <div data-testid="conversation-composer" className="relative rounded-lg border border-border bg-surface-2 px-3 py-2.5 focus-within:border-accent">
             {previewOpen && (
-              <div className="mb-3 rounded-lg border border-border bg-white px-3 py-2 text-xs leading-relaxed text-text-secondary">
+              <div className="mb-3 rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-relaxed text-text-secondary">
                 <span className="font-semibold text-text-primary">目标语言译文（{customer.language}）：</span>
                 {translationLoading ? '翻译中…' : translatedInput || '请输入中文内容后查看译文'}
               </div>
@@ -372,7 +372,7 @@ export function ChatThread({
                   }}
                   disabled={!input.trim()}
                   aria-label={previewOpen ? '隐藏目标语言译文' : '显示目标语言译文'}
-                  className="!h-auto min-h-9 !whitespace-normal flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-bold text-text-muted hover:bg-white hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                  className="!h-auto min-h-9 !whitespace-normal flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-bold text-text-muted hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
                   title={previewOpen ? '隐藏目标语言译文' : '显示目标语言译文'}
                 >
                   <Languages size={15} />

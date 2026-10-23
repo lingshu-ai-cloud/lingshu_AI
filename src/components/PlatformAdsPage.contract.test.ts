@@ -19,6 +19,12 @@ test('creation labels capability without changing persisted goal values or remov
 });
 
 test('the advertising unit exposes three workspaces and keeps AI management in a drawer', () => {
+  assert.match(source, /<Tabs[^>]*aria-label="投放管理功能区"/);
+  const layout = readFileSync(new URL('./Layout.tsx', import.meta.url), 'utf8');
+  assert.match(layout, /const creatorSurface = [^;]*PLATFORM_ADS_PAGE_IDS\.includes\(page\)/, '广告子工作区必须沿用主页面的外观外壳');
+  for (const page of ['adsPlans', 'adsOverview', 'adsCreatives']) {
+    assert.ok(source.includes(`key: '${page}'`), `${page} must remain directly reachable in the advertising unit`);
+  }
   assert.match(source, /page === 'adsPlans' \? '计划创编' : page === 'adsCreatives' \? '素材管理' : '投放数据'/);
   assert.match(source, /<Drawer title="AI 投手"/);
   assert.match(source, /if \(page !== 'adsManaged'\) return;[\s\S]*setManagedOpen\(true\);[\s\S]*onNavigate\('adsPlans'\)/);

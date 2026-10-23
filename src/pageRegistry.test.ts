@@ -78,3 +78,7 @@ for (const retired of ['orders', 'scheduled'] as const) {
 }
 const app = fs.readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
 assert.doesNotMatch(app, /OrderManagementPage|ScheduledPage/, 'retired pages must not be loaded or rendered');
+
+for (const page of ['adsPlans', 'adsCreatives'] as const) {
+  assert.equal(PAGE_REGISTRY[page].navParent, 'adsOverview', '投流子页仍应归属平台投流主导航');
+}

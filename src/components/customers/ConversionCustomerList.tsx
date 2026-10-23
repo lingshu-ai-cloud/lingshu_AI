@@ -146,7 +146,7 @@ export function CompactCustomerList({
       >
         <div className="flex items-start gap-2.5">
           <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 text-xs font-semibold text-text-secondary">
-            <span className="absolute -left-0.5 -top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white transition-opacity" style={{ backgroundColor: hasUnread ? '#dc2626' : statusColor, opacity: hasUnread ? 1 : 0 }} />
+            <span className="absolute -left-0.5 -top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface transition-opacity" style={{ backgroundColor: hasUnread ? '#dc2626' : statusColor, opacity: hasUnread ? 1 : 0 }} />
             {customer.avatar}
           </div>
           <div className="min-w-0 flex-1">
@@ -167,7 +167,7 @@ export function CompactCustomerList({
       </button>
     );
   };
-  return <aside data-testid="conversation-list" className="flex h-full w-full shrink-0 flex-col bg-white lg:w-52 xl:w-56 2xl:w-60">
+  return <aside data-testid="conversation-list" className="flex h-full w-full shrink-0 flex-col bg-surface lg:w-52 xl:w-56 2xl:w-60">
     <div className="border-b border-border px-3 pt-2">
       <div className="flex items-center gap-2">
         <Input className="min-w-0 flex-1" allowClear value={query} onChange={event => setQuery(event.target.value)} prefix={<Search size={15}/>} placeholder="搜索客户或消息" aria-label="搜索客户或消息" />

@@ -19,7 +19,7 @@ import DuotoneGlyph from './ui/DuotoneGlyph';
 import LsPageTransition from './ui/LsPageTransition';
 import { lsMotion } from '../lib/designTokens';
 import { getScrollBehavior, usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
-import { PLATFORM_ADS_SURFACE_ENABLED } from '../config/productSurfaceFlags';
+import { PLATFORM_ADS_PAGE_IDS, PLATFORM_ADS_SURFACE_ENABLED } from '../config/productSurfaceFlags';
 import PointsManagementDrawer from './PointsManagementDrawer';
 import { CreationModeContext, CreationModeControlContext, readCreationMode, writeCreationMode, type CreationMode } from '../lib/creationMode';
 import { accountProductNavigation, modeSwitchDestination, primaryProductNavigation, type PrimaryProductPage } from '../productNavigation';
@@ -118,7 +118,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   ));
   const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(false);
   const homeSurface = page === 'strategy';
-  const creatorSurface = page === 'strategy' || page === 'socialInspiration' || page === 'digitalEmployees' || page === 'adsOverview' || page === 'conversion';
+  const creatorSurface = page === 'strategy' || page === 'socialInspiration' || page === 'digitalEmployees' || PLATFORM_ADS_PAGE_IDS.includes(page) || page === 'conversion';
   const sidebarCollapsed = mobileViewport ? !mobileSidebarExpanded : creatorSurface ? creatorSidebarCollapsed : desktopSidebarCollapsed;
   const sidebarWidth = sidebarCollapsed ? (mobileViewport ? 56 : 60) : creatorSurface ? Math.min(354, Math.max(246, Math.round(viewportWidth * 0.173))) : 176;
   const activeSession = session;

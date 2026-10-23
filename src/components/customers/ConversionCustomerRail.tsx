@@ -263,7 +263,7 @@ function CustomerIntentActionPanel({
             {agentProduction.busy || isPrimaryLoading ? '草稿生成中…' : agentProduction.action?.label || primaryLabel[suggestion.suggestionType]}
           </Button>
           {secondaryLabel[suggestion.suggestionType] && (
-            <Button htmlType="button" onClick={secondaryAction} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
+            <Button htmlType="button" onClick={secondaryAction} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-border bg-surface px-3 py-1.5 text-[11px] font-bold text-text-secondary hover:bg-surface-2">
               {secondaryLabel[suggestion.suggestionType]}
             </Button>
           )}
@@ -278,19 +278,19 @@ function CustomerIntentActionPanel({
       {evidenceOpen && (
         <div className="mt-2 border-l-2 border-border-bright bg-surface-2 px-3 py-3 text-[11px] leading-5">
           {suggestion.suggestionType === 'handoff' && (
-            <div className="mb-2 whitespace-pre-line rounded-lg bg-white px-3 py-2 text-text-secondary">
+            <div className="mb-2 whitespace-pre-line rounded-lg bg-surface px-3 py-2 text-text-secondary">
               {handoffSummary || '正在整理交接摘要...'}
             </div>
           )}
           <div className="space-y-1.5">
             {evidenceItems.map(item => (
-              <p key={item} className="flex gap-2 text-text-secondary"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-slate-400" />{item.replace(/\s[+-]\d+$/, '')}</p>
+              <p key={item} className="flex gap-2 text-text-secondary"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-text-muted" />{item.replace(/\s[+-]\d+$/, '')}</p>
             ))}
           </div>
         </div>
       )}
       {customer.handlingMode === 'ai_auto' && suggestion.suggestionType === 'none' && (
-        <Button htmlType="button" onClick={() => switchMode('human_needed', '已转为你亲自接手')} className="!h-auto min-h-9 !whitespace-normal mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-50">
+        <Button htmlType="button" onClick={() => switchMode('human_needed', '已转为你亲自接手')} className="!h-auto min-h-9 !whitespace-normal mt-3 rounded-lg border border-border bg-surface px-3 py-2 text-[11px] font-bold text-text-primary hover:bg-surface-2">
           转我接手
         </Button>
       )}
@@ -347,7 +347,7 @@ function RulesDisclosure({
                 localStorage.setItem('lingshu:enterprise:highlight-notifications', 'true');
                 window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } }));
               }}
-              className="!h-auto min-h-9 !whitespace-normal !justify-start mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-[10px] font-semibold leading-4 text-slate-600 hover:bg-slate-50"
+              className="!h-auto min-h-9 !whitespace-normal !justify-start mb-2 w-full rounded-lg border border-border bg-surface px-3 py-2 text-left text-[10px] font-semibold leading-4 text-text-secondary hover:bg-surface-2"
             >
               设置重要消息提醒接收方式
             </Button>
@@ -426,7 +426,7 @@ function CustomerInsightDisclosure({ customer }: { customer: CustomerProfile }) 
               <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-text-secondary">{scenario?.goal || customer.nextStep}</p>
             </div>
           </div>
-          <div className="grid grid-cols-3 divide-x divide-border rounded-lg border border-border bg-white py-2 text-center">
+          <div className="grid grid-cols-3 divide-x divide-border rounded-lg border border-border bg-surface py-2 text-center">
             <span><strong className="block text-sm text-text-primary">{aiHandledCount}</strong><small className="text-[9px] text-text-muted">AI 参与</small></span>
             <span><strong className="block text-sm text-text-primary">{humanEditCount}</strong><small className="text-[9px] text-text-muted">人工优化</small></span>
             <span><strong className="block text-sm text-text-primary">{memoryRecords.length}</strong><small className="text-[9px] text-text-muted">学习记录</small></span>
@@ -481,7 +481,7 @@ export function CustomerInfoRail({
 }) {
   if (!customer) {
     return (
-      <aside className="flex h-full w-full lg:w-64 shrink-0 items-center justify-center border-l border-border bg-slate-50 px-6 text-center xl:w-[272px] 2xl:w-72">
+      <aside className="flex h-full w-full lg:w-64 shrink-0 items-center justify-center border-l border-border bg-surface-2 px-6 text-center xl:w-[272px] 2xl:w-72">
         <p className="text-xs font-bold text-text-muted">未选择客户</p>
       </aside>
     );
@@ -490,7 +490,7 @@ export function CustomerInfoRail({
   return (
     <aside data-testid="customer-info-rail" className="min-h-0 w-full shrink-0 self-stretch overflow-y-auto overscroll-contain border-l border-border bg-surface-2 [scrollbar-gutter:stable] lg:w-72 xl:w-[320px] 2xl:w-[336px]">
       <div className="border-b border-border p-3">
-        <div className="rounded-2xl bg-white px-3 py-5 shadow-sm">
+        <div className="rounded-2xl bg-surface px-3 py-5 shadow-sm">
           <div className="flex flex-col items-center text-center">
             <Avatar size={72} style={{ background: '#E8C7EC', color: '#6F3E7A', fontSize: 28 }}>{customer.avatar || customer.name.slice(0, 1)}</Avatar>
             <h2 className="mt-3 line-clamp-2 text-lg font-semibold leading-6 text-text-primary" title={customerDisplayName(customer)}>{customerDisplayName(customer)}</h2>
