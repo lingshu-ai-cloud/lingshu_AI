@@ -1,7 +1,13 @@
 # Git 工作树状态盘点
 
 最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
-来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。本次只读复核未改写工作树、分支或运行数据；历史移除记录见下文。
+来源：`git worktree list --porcelain`、逐个 `git status --porcelain` 和祖先关系检查。最新两棵工作树的归档处置如下；其余只读复核与历史移除记录见后续章节。
+
+## 2026-10-23 两棵干净来源树的可恢复归档
+
+- 依用户选择，重新确认 `safe-all-modules-ui-20261009` 与 `colleague-handoff-20261019` 的 Git 状态均干净、相对集成点无正向独有补丁，且没有以原路径运行的进程。两树被忽略的数据不能随检出直接丢弃，因此先对各自除 `.git` 工作树指针外的**完整目录**创建私有压缩包，`gzip -t` 通过，并核对前者的 `data/materials.json`/`data/publishing-uploads/`、后者的 `data/bgm/shared/`/`data/content-execution-render/` 确实在包内。
+- 归档清单与恢复说明分别在 `/Users/julia1/.codex/worktree-archives/2026-10-23/safe-all-modules-ui-20261009-40dba2c0.md` 和 `/Users/julia1/.codex/worktree-archives/2026-10-23/colleague-handoff-20261019-2d6c5a62.md`；压缩包同目录、权限 `0600`、SHA-256 写在清单中。核验后以 `git worktree remove --force` 仅移除两棵已备份检出。命名分支 `1009大合并` (`40dba2c0`) 与 `xixi数字员工架构待清理` (`2d6c5a62`) 仍保留，可重建后解包恢复被忽略的业务数据。未删除分支或提交。
+- 现在 Git 注册 **9 棵**工作树：集成树、6 棵有未提交内容的来源树，以及独立广告树和 `1022图片生成模块` 两棵有独有提交的干净树。后 8 棵均原位保留。本次归档不会使其他工作树自动变干净，也不代表新图片提交已整笔合入。
 
 ## 2026-10-23 集成点 `20fe685f` 再盘点
 
