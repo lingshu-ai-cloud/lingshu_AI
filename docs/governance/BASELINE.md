@@ -2,6 +2,15 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 渲染会话生命周期所有权（2026-10-23）
+
+- 起点：干净集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `f333957adb5b2c5404d43b9d4b0a72268bc8060e`。源码提交 `f52c28c69f5d688b1663539e7cebcdf6559a7745` 已推送。`studioRenderSession.ts` 集中拥有十组状态、两个内部 Ref、封面请求、三条渲染执行路径、进度释放、语言版本历史和项目恢复。页面保留跨领域参数组装、就绪检查、导航与版本选择；无新增 getter 桥。主页面 **7,526→7,394 行**，新模块 **225 行**，预算按实际收紧；此批价值是完整生命周期归属，不以净降行数衡量。详见 [渲染会话所有权 ADR](../architecture/adr/2026-10-23-studio-render-session-ownership.md)。
+- 新增实际行为 **14/14**：三条执行路径、授权选择、持久轮询、过期结果保护、桌面进度与订阅释放、输出签名、失败及版本历史、恢复退出、封面到参数验证顺序。测试禁止真实网络；工作台 **75/75**，另有构建导入 **4/4**。原完整参数组装正文和选定版本渲染调用参数经 TypeScript 打印归一化对照一致；新模块独立加载成功，无运行时回导页面路径。45 个导出及普通/任务入口初始 SSR HTML（24,562/25,765 字符）逐字一致；不能据此保证全链路零回归。
+- 实际通过 `pnpm run lint`、`ARCHITECTURE_BASE_REF=f333957a pnpm run check:architecture`（2,599 个生产 TS）、`pnpm run test:architecture-ratchet`、`pnpm run check:digital-employee-migrations`（193 项，只读）及 `git diff --check`。`test:studio-workflow` 13 项、`test:shooting-workflow` 11 项、`test:storyboard-aigc` 66 项均通过。`test:studio-media`、release 中后续的渲染/字幕/配额锁/媒体安全/存储定向测试（48 项）、外部预检离线合同、媒体访问合同、桌面字幕测试及 `pnpm run build` 分别继续通过。主页面 chunk **360,963/485,000 字节**，真实视图 chunk 静态导入边界通过，不宣称性能改善。
+- **完整 `pnpm run test:studio-release` 未通过。** 它在 `test:production` 的 211 项中有 2 项既有人物认证 UI 断言失败（209 项通过）：`ShotProductionPanel.test.tsx` 中已有照片复用及新人物认证入口均期待旧的“人物替换认证（可选）”内容。隔离的未修改 `f333957a` 源码中复现同样失败；面板、认证模块和这两项测试均未修改，没有降低业务要求或把其跳过后改报整套通过。另一个旧路径断言 `ShootingTaskDialog` 同样在基线复现，已改查共享懒加载定义、编辑视图真实导入及实际 JSX 挂载，保留原面板挂载验证。
+- 状态集中后 Hook 注册顺序有所调整，初始值不变，恢复 Effect 仍在原注册点。未完成登录后完整浏览器操作或真实供应商验收；跨项目切换的全部在途请求隔离、自动保存最新状态读取及挂载后初始化/懒加载/重试恢复仍需专项验收。保护已有功能优先于缩短文件；不能从正文、类型、局部行为或初始 SSR 对照推导零回归。
+- **原五个大文件已完成四个，最后的页面治理仍在继续。** 保留共享项目/镜头状态和跨领域协调，下一批继续评估分镜生产、质检及交付的必要边界；800 不是机械目标。视频 P1 仍在已交接的独立树，本批未合入其后端改动；其他来源树和 `sources/` 未动。未部署、真实付费调用或迁移目标库。普通集成分支推送已复核不触发部署，源码与文档分开提交、推送；最终文档 SHA、远端一致性及干净状态以推送后核验为准。
+
 ## 素材库存所有权与证据规划（2026-10-23）
 
 - 起点：干净集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `ddeb731026eb515e2e482cc5470b89a043acb5e5`。源码提交 `befdda33b396963723f146ac823c3df0780e0256` 将库存、上传/权限、输入/恢复 Ref 和读取/恢复/尺寸副作用归到同一库存模块；跨镜头证据约束迁为纯规划函数，匹配请求、失败反馈和结果写回仍留在同一个页面动作内。本批没有新增 getter 桥，脚本、产品、共享项目/镜头状态及页面协调保留。详见 [素材所有权与完成标准 ADR](../architecture/adr/2026-10-23-studio-material-ownership-and-completion-policy.md)。
