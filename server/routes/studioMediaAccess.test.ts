@@ -46,8 +46,6 @@ assert.match(cloudMedia, /playbackUrlCache/, 'cloud media playback URLs must be 
 assert.match(cloudMedia, /playbackUrlRequests/, 'concurrent range requests must share one PocketBase token lookup');
 assert.match(cloudMedia, /upstream\.status === 401 \|\| upstream\.status === 403/, 'expired PocketBase file tokens must refresh once');
 
-console.log('studio media access checks passed');
-
 const oldRenderUrl = '/api/overseas/publishing/local-videos/studio-example.mp4?assetToken=expired';
 const savedOutput = studioProjectSpecForStorage({ languageRenderOutputs: { zh: { previewUrl: oldRenderUrl } } });
 const stableRender = (savedOutput.languageRenderOutputs as any).zh.previewUrl;
@@ -90,9 +88,17 @@ assert.ok(avatarImport.indexOf('await checkAvatarMedia(') < avatarImport.indexOf
 assert.match(avatarImport, /width: checked.width, height: checked.height/);
 assert.doesNotMatch(avatarImport, /width: Math.round\(720/);
 
-const refreshJobs = studioUi.slice(studioUi.indexOf('const refreshProductionJob = async'), studioUi.indexOf('const generateProductionAvatar = async'));
+const productionSession = readFileSync(new URL('../../src/components/studio/studioProductionSession.ts', import.meta.url), 'utf8');
+const studioPage = readFileSync(new URL('../../src/components/AiCreateStudio.tsx', import.meta.url), 'utf8');
+const refreshJobs = productionSession.slice(productionSession.indexOf('const refreshProductionJob = async'), productionSession.indexOf('const generateProductionAvatar = async'));
 assert.match(refreshJobs, /productionRefreshInFlight\.current\.has\(id\)/, 'repeated refreshes must share one in-flight request');
-assert.match(refreshJobs, /automaticAvatarRefreshes\(productionJobs, projectId/);
 assert.match(refreshJobs, /finally[\s\S]*productionRefreshInFlight\.current\.delete\(id\)/, 'failed refreshes must release the UI request guard');
+const recoverJobs = productionSession.slice(productionSession.indexOf('const recoverJobs ='), productionSession.indexOf('return { refreshProductionJob'));
+assert.match(recoverJobs, /automaticAvatarRefreshes\(productionJobs, projectId/, 'automatic recovery must use the current project jobs');
+assert.match(recoverJobs, /pending\.map\(job => refreshProductionJob\(job\.id, request\.refreshContext\)\)/, 'recovery must use the same guarded refresh action');
+assert.match(recoverJobs, /return \(\) => window\.clearTimeout\(timer\)/, 'automatic recovery must dispose its timer');
+assert.match(productionSession, /useEffect\(\(\) => session\.recoverJobs\(request\), \[signature\]\)/, 'the recovery hook must register the session cleanup');
+assert.match(studioPage, /useStudioProductionJobRecovery\(productionSession, productionJobAdoptionSyncKey, \{/, 'the mounted page must use the same production session');
 const adoptBlock = studioUi.slice(studioUi.indexOf('const adoptProductionCandidate ='), studioUi.indexOf('const createBoundShootingTask ='));
 assert.match(adoptBlock, /avatarCandidateReady\(candidate, productionJobs\.filter/);
+console.log('studio media access checks passed');
