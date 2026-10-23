@@ -1,3 +1,4 @@
+import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
@@ -11,7 +12,7 @@ assert.match(source, /voiceoverMode === 'unselected'[\s\S]*请先选择声音策
 assert.match(source, /appliedCreateRequestRef\.current = studioCreateRequest\.requestId;[\s\S]{0,250}setScriptStageTab\('theme'\);[\s\S]{0,120}setVoiceoverMode\('unselected'\);/, 'a fresh creation request must clear the previous script and voice strategy');
 
 const apiSource = readFileSync(new URL('../../src/lib/studioApi.ts', import.meta.url), 'utf8');
-const routeSource = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
+const routeSource = readStudioApplicationSources();
 const scriptRoute = routeSource.slice(routeSource.indexOf("studioRouter.post('/script'"), routeSource.indexOf("studioRouter.post('/covers'"));
 const materialsReadRoute = routeSource.slice(routeSource.indexOf("studioRouter.get('/materials'"), routeSource.indexOf("studioRouter.get('/materials/pb/"));
 assert.match(apiSource, /post<StudioScriptResult>\('script', b,/, 'script requests must preserve the selected backend');

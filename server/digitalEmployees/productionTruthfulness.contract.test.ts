@@ -1,3 +1,4 @@
+import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { readMaterialLibrary } from '../lib/materialLibrary.js';
@@ -14,7 +15,7 @@ const production = fs.readFileSync('server/digitalEmployees/contentProduction.ts
 const productionExecution = fs.readFileSync('server/digitalEmployees/contentProductionExecution.ts', 'utf8');
 const productionAssets = fs.readFileSync('server/digitalEmployees/contentProductionAssets.ts', 'utf8');
 const productionPlanning = fs.readFileSync('server/digitalEmployees/contentProductionPlanning.ts', 'utf8');
-const studio = fs.readFileSync('server/routes/studio.ts', 'utf8');
+const studio = readStudioApplicationSources();
 const materialLibrary = fs.readFileSync('server/lib/materialLibrary.ts', 'utf8');
 const publisher = fs.readFileSync('server/publishing/scheduledPublisher.ts', 'utf8');
 const messaging = fs.readFileSync('server/digitalEmployees/customerMessagingPolicy.ts', 'utf8');

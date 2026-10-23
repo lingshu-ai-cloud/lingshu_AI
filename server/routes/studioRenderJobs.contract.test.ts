@@ -1,7 +1,8 @@
+import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const route = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
+const route = readStudioApplicationSources();
 const ui = readFileSync(new URL('../../src/components/AiCreateStudio.tsx', import.meta.url), 'utf8');
 
 assert.match(route, /studioRouter\.post\('\/render\/jobs'/, 'persistent render creation route exists');

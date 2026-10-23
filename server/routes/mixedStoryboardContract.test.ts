@@ -1,3 +1,4 @@
+import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { mixedStoryboardIssues, mixedStoryboardRules } from './mixedStoryboardContract.js';
@@ -15,7 +16,7 @@ assert.match(mixedStoryboardIssues(avatar + '\n' + clip.replace('展示元件', 
 assert.match(mixedStoryboardIssues(avatar + '\n' + clip.replace('展示元件', '同一块电路板'), 'heygen', materials).join(), /同一物件/);
 assert.deepEqual(mixedStoryboardIssues(clip, 'material', materials), []);
 assert.match(mixedStoryboardRules('heygen', materials), /不是成片时间轴/);
-const source = fs.readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
+const source = readStudioApplicationSources();
 assert.match(source, /const scriptSystemPrompt = `\$\{presentationRule\}\\n\$\{mixedRules\}/);
 assert.match(source, /const mixedIssues = mixedStoryboardIssues\(script, presentationMode, normalizedMaterialInfos\)/);
 const materialHardIssuesStart = source.indexOf('const materialHardIssues = Array.from(new Set([');

@@ -1,7 +1,8 @@
+import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const source = fs.readFileSync('server/routes/studio.ts', 'utf8');
+const source = readStudioApplicationSources();
 const route = source.split("studioRouter.post('/fb-poster/render'")[1]?.split("// POST /studio/caption")[0] || '';
 
 assert.match(route, /imageTask\.imageType === 'carousel' \|\| imageTask\.imageType === 'gif_poster'/,

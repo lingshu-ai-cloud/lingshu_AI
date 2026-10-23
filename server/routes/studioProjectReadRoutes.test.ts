@@ -6,7 +6,7 @@ import type { DataStore } from '../storage/datastore.js';
 import { createStudioProjectReadRouter, projectFromRecord } from './studioProjectReadRoutes.js';
 
 const studioRouteSource = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
-const projectReadMount = studioRouteSource.indexOf("studioRouter.use('/projects', createStudioProjectReadRouter(loadMaterials, store))");
+const projectReadMount = studioRouteSource.indexOf('application.projectRoutesApplication.registerStudioProjectReadRouter()');
 assert.ok(projectReadMount > studioRouteSource.indexOf('studioRouter.use(requireAuth)'), 'project reads must remain under Studio authentication');
 assert.ok(projectReadMount > studioRouteSource.indexOf('studioTenantContext.run((res.locals as AuthLocals).tenantId, next)'), 'project reads must inherit tenant context');
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
-import { isTrustedSocialOutputWorkspace } from '../starter198/socialContentProductionWorkspace.js';
+import { isTrustedSocialOutputWorkspace } from '../starter198/socialContentWorkspacePolicy.js';
 import { socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
 import { STUDIO_MANUAL_HANDOFF_ACTIONS, isManualStudioProject, studioProjectRenderPaths } from '../../shared/contracts/studioManualHandoff.js';
 import { compareAndSwapStudioProject } from '../lib/studioProjectRevision.js';

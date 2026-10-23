@@ -1,4 +1,4 @@
-import { productIdentity } from '../digitalEmployees/contentProduction.js';
+import { productIdentity } from '../digitalEmployees/contentProductionPlanning.js';
 import { ProductSceneUploadProbeError, probeProductSceneUploadVideo } from '../lib/productSceneUploadProbe.js';
 import { readTenantEnterpriseProfile } from './enterprise.js';
 import { PRODUCT_SCENE_KINDS, type ProductSceneKind } from '../../shared/contracts/productScenePreparation.js';

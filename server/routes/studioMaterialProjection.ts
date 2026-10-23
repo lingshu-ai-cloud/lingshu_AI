@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { signAssetUrl, signPathAssetUrl, sharedAssetRelativePath, tenantAssetRelativePath } from '../lib/assetAccess.js';
-import { productIdentity } from '../digitalEmployees/contentProduction.js';
+import { productIdentity } from '../digitalEmployees/contentProductionPlanning.js';
 import { enterpriseAssetStableId } from '../digitalEmployees/contentBatchPlan.js';
 import { productSceneMaterialProvenanceOf } from './studioProductSceneProvenance.js';
 import { materialAssetV2FromRecord, type MaterialAssetV2Metadata } from '../../shared/contracts/materialAssetV2.js';

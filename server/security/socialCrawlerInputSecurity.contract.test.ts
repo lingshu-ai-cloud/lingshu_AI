@@ -1,9 +1,10 @@
+import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import { readVideoApplicationSources } from '../../tests/fixtures/videoApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const videos = readVideoApplicationSources();
-const studio = fs.readFileSync(new URL('../routes/studio.ts', import.meta.url), 'utf8');
+const studio = readStudioApplicationSources();
 const qwen = fs.readFileSync(new URL('../agents/qwen.ts', import.meta.url), 'utf8');
 const gemini = fs.readFileSync(new URL('../agents/gemini.ts', import.meta.url), 'utf8');
 

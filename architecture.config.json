@@ -6,7 +6,6 @@
   "defaultMaxLines": 800,
   "excludeNameFragments": [".test.", ".d.ts"],
   "oversizedFileBudgets": {
-    "server/routes/studio.ts": 7221,
     "src/components/AiCreateStudio.tsx": 12000
   }
 }

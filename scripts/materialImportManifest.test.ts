@@ -1,3 +1,4 @@
+import { readStudioApplicationSources } from '../tests/fixtures/studioApplicationSources.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -182,7 +183,7 @@ test('PocketBase migration, repair schema and HTTP boundary agree on 100 MiB', (
   assert.equal(POCKETBASE_MATERIAL_MAX_BYTES, 104857600);
   const migration = fs.readFileSync(path.join(root, 'pb_migrations/1790294403_add_material_provenance.js'), 'utf8');
   const setup = fs.readFileSync(path.join(root, 'scripts/setup-pb.ts'), 'utf8');
-  const server = fs.readFileSync(path.join(root, 'server/routes/studio.ts'), 'utf8');
+  const server = readStudioApplicationSources();
   for (const field of ['sourceUrl', 'licenseEvidence', 'sourceProvider', 'sourceCreator', 'licenseName', 'licenseUrl', 'licenseEvidenceTextSha256', 'manifestSha256', 'provenance']) {
     assert.match(migration, new RegExp(`name: \\"${field}\\"`), `migration field ${field}`);
     assert.match(setup, new RegExp(`name: '${field}'`), `repair schema field ${field}`);

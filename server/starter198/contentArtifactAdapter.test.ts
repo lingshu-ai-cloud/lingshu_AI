@@ -321,7 +321,7 @@ assert.match(productionSource, /contentProjectLineageFields\(\{ tenantId: input\
   'trusted project creation must persist indexed lineage beside the spec');
 assert.match(productionSource, /notifyStarterReviewableContentProjects/,
   'the trusted production loop must invoke the internal starter wakeup hook');
-const studioSource = await readFile(fileURLToPath(new URL('../routes/studio.ts', import.meta.url)), 'utf8');
+const studioSource = await readFile(fileURLToPath(new URL('../routes/studioProjectSaveRoutes.ts', import.meta.url)), 'utf8');
 assert.match(studioSource, /if \(automation\.managedBy === 'digital_employee'\)/,
   'customer create and update requests must reject an attempted managed project identity');
 assert.doesNotMatch(studioSource, /if \(!id && spec\?\.automation\?\.managedBy === 'digital_employee'\)/,

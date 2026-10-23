@@ -1,3 +1,4 @@
+import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import { readVideoApplicationSources } from '../../tests/fixtures/videoApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -215,7 +216,7 @@ for (const route of ['agentChat', 'strategy', 'draftReply', 'studio']) {
 assert.doesNotMatch(read('server/routes/draftReply.ts'), /body\.tenantId/, 'draft replies must not accept a caller-selected tenant id');
 assert.match(read('server/routes/agentChat.ts'), /readTenantEnterpriseProfile\(tenantId\)/, 'agent chat must use tenant enterprise context');
 assert.match(read('server/routes/strategy.ts'), /readTenantEnterpriseProfile\(tenantId\)/, 'strategy chat must use tenant enterprise context');
-assert.match(read('server/routes/studio.ts'), /buildEnterpriseContext\(await readTenantEnterpriseProfile\(tenantId\)\)/, 'social generation must use tenant enterprise context');
+assert.match(readStudioApplicationSources(), /buildEnterpriseContext\(await readTenantEnterpriseProfile\(tenantId\)\)/, 'social generation must use tenant enterprise context');
 assert.match(read('server/knowledge/retrieve.ts'), /await readTenantEnterpriseProfile\(tenantId\)/, 'knowledge retrieval must use the authenticated tenant profile');
 const strategyRetrieval = read('server/knowledge/strategyRetrieve.ts');
 assert.match(strategyRetrieval, /where: \{ tenant_id: tenantId, status: 'active' \}/, 'strategy memory retrieval must be tenant scoped');
@@ -232,7 +233,7 @@ assert.match(assetAccess, /segments\[0\] === 'tenants' && segments\[1\] === view
 const materialAssets = read('server/storage/materialAssets.ts');
 assert.match(materialAssets, /MATERIAL_ASSET_PREFIX = 'materials\/tenants'/, 'private COS materials must use a tenant prefix');
 assert.match(materialAssets, /materialAssetTenantKey\(tenantId\)/, 'material object keys must derive their tenant segment from authenticated tenant data');
-const studio = read('server/routes/studio.ts');
+const studio = readStudioApplicationSources();
 const studioMaterialProjection = read('server/routes/studioMaterialProjection.ts');
 assert.match(studio, /saveMaterialUploadToDatabase\(\{[\s\S]*?tenantId, name, folder/, 'material uploads must pass the authenticated tenant into database persistence');
 const cloudMaterials = read('server/lib/cloudMaterials.ts');

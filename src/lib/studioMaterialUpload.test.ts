@@ -1,10 +1,11 @@
+import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const studioApiSource = readFileSync(new URL('./studioApi.ts', import.meta.url), 'utf8');
 const inspirationSource = readFileSync(new URL('../components/inspiration/useInspirationMaterials.ts', import.meta.url), 'utf8');
 const studioSource = readFileSync(new URL('../components/AiCreateStudio.tsx', import.meta.url), 'utf8');
-const serverSource = readFileSync(new URL('../../server/routes/studio.ts', import.meta.url), 'utf8');
+const serverSource = readStudioApplicationSources();
 
 assert.match(studioApiSource, /uploadMaterialFile:[\s\S]*body: file/, '本地素材必须直接发送 File，不能先转 base64');
 assert.match(studioApiSource, /100 \* 1024 \* 1024/, '前端素材上限必须与 PocketBase 的 100 MiB 一致');

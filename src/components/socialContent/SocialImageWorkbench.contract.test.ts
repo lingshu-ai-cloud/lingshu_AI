@@ -1,9 +1,10 @@
+import { readStudioApplicationSources } from '../../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./SocialImageWorkbench.tsx', import.meta.url), 'utf8');
 const planning = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', import.meta.url), 'utf8');
-const studioRoute = fs.readFileSync(new URL('../../../server/routes/studio.ts', import.meta.url), 'utf8');
+const studioRoute = readStudioApplicationSources();
 const socialImageRoute = fs.readFileSync(new URL('../../../server/routes/socialImage.ts', import.meta.url), 'utf8');
 
 assert.match(planning, /productionMode === 'video'/);

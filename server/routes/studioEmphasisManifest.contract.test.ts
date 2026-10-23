@@ -1,8 +1,9 @@
+import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 
-const source = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
+const source = readStudioApplicationSources();
 const renderContract = readFileSync(new URL('./studioRenderManifestProjection.ts', import.meta.url), 'utf8');
 
 test('render authorization always builds one canonical emphasis plan into the signed manifest', () => {

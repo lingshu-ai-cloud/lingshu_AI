@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
-import { isTrustedSocialOutputWorkspace, socialOutputWorkspaceClientWriteBlocked } from '../starter198/socialContentProductionWorkspace.js';
+import { isTrustedSocialOutputWorkspace, socialOutputWorkspaceClientWriteBlocked } from '../starter198/socialContentWorkspacePolicy.js';
 import { bindSocialProjectSpec, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
 import { assertFrozenStudioProjectWrite } from '../starter198/socialContentStudioFrozenBridge.js';
 import { normalizeFreeCreationProjectSpec, freeCreationCompletionIssues } from '../../shared/contracts/freeCreationProject.js';
@@ -8,7 +8,7 @@ import { reconcileStudioProductionSpec, studioProductionSnapshotIssues } from '.
 import { studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
 import { storyboardAigcAssignmentIssues } from '../lib/storyboardAigcAssignment.js';
 import { compareAndSwapStudioProject, studioProjectRevisionConflict } from '../lib/studioProjectRevision.js';
-import { invalidatePublishingApprovalForProject } from '../digitalEmployees/publishingExecution.js';
+import { invalidatePublishingApprovalForProject } from '../digitalEmployees/publishingApprovalInvalidation.js';
 import type { AuthLocals } from '../middleware/auth.js';
 import type { DataStore } from '../storage/datastore.js';
 import { projectFromRecord, type StudioProject } from './studioProjectReadRoutes.js';

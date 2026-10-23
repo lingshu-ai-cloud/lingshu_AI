@@ -1,3 +1,4 @@
+import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
@@ -66,7 +67,7 @@ assert.match(studioUi, /if \(!response\.ok\) throw Error\('文件不可下载，
 assert.match(studioUi, /catch \(error\) \{ setRenderDownloadMessage\(\(error as Error\)\.message\); \}/, 'failed downloads must surface the actual error');
 assert.match(studioUi, /threeStepWorkflow && step === 'preview'\) \{ void downloadMp4\(\); return; \}/, 'the live export action must use the current download path');
 
-const studioBackend = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
+const studioBackend = readStudioApplicationSources();
 const bgmRoute = readFileSync(new URL('./studioBgmRoutes.ts', import.meta.url), 'utf8');
 const localRenderRoute = studioBackend.slice(studioBackend.indexOf("studioRouter.post('/render/local'"), studioBackend.indexOf("// POST /studio/render/open-output"));
 assert.match(localRenderRoute, /verifyRenderToken\(req\.body\?\.token\)/, 'local export must verify a server-issued token');

@@ -1,4 +1,4 @@
-import { productIdentity } from '../digitalEmployees/contentProduction.js';
+import { productIdentity } from '../digitalEmployees/contentProductionPlanning.js';
 import { isReferenceOnlyMaterial, isWorkflowInternalMaterial } from '../lib/materialPolicy.js';
 import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
 import { productSceneMaterialProvenanceOf } from './studioProductSceneProvenance.js';

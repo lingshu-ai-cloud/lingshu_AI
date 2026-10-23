@@ -6,7 +6,7 @@ import type { DataStore } from '../storage/datastore.js';
 import { createStudioProjectSaveRouter } from './studioProjectSaveRoutes.js';
 
 const studioRouteSource = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
-const saveMount = studioRouteSource.indexOf("studioRouter.use('/projects', createStudioProjectSaveRouter({");
+const saveMount = studioRouteSource.indexOf('application.projectRoutesApplication.registerStudioProjectSaveRouter()');
 assert.ok(saveMount > studioRouteSource.indexOf('studioRouter.use(requireAuth)'), 'project saves must remain authenticated');
 assert.ok(saveMount > studioRouteSource.indexOf('studioTenantContext.run((res.locals as AuthLocals).tenantId, next)'), 'project saves must inherit tenant context');
 

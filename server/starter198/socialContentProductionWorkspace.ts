@@ -1,3 +1,5 @@
+import { SOCIAL_OUTPUT_WORKSPACE_MANAGER, isTrustedSocialOutputWorkspace, socialOutputWorkspaceClientWriteBlocked } from './socialContentWorkspacePolicy.js';
+export { SOCIAL_OUTPUT_WORKSPACE_MANAGER, isTrustedSocialOutputWorkspace, socialOutputWorkspaceClientWriteBlocked } from './socialContentWorkspacePolicy.js';
 import path from 'node:path';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
@@ -6,12 +8,11 @@ import {socialJson,socialObject,socialRequestHash,socialText} from './socialCont
 import {storeTransientSocialContentFile,registerSocialContentFile,requireOwnedSocialFileRef,socialContentFileDownloadUrl,type SocialContentBackendFilePort} from './socialContentFiles.js';
 import type {StoredSocialScriptBaseline} from './socialContentScriptBaseline.js';
 import {buildSocialMaterialUsageManifest} from '../lib/materialUsageTracking.js';
-export const SOCIAL_OUTPUT_WORKSPACE_MANAGER='social_content_output';
+
 import type {SocialProductionWorkspaceBinding} from '../../shared/contracts/socialSceneRework.js';
 export type {SocialProductionWorkspaceBinding} from '../../shared/contracts/socialSceneRework.js';
 const fail=(code:string):never=>{throw Error(code);};
-export function isTrustedSocialOutputWorkspace(project:unknown):boolean {const row=socialObject(project),spec=socialObject(socialJson(row?.spec));return socialObject(spec?.automation)?.managedBy===SOCIAL_OUTPUT_WORKSPACE_MANAGER;}
-export function socialOutputWorkspaceClientWriteBlocked(spec:unknown):boolean{const value=socialObject(socialJson(spec));return socialObject(value?.automation)?.managedBy===SOCIAL_OUTPUT_WORKSPACE_MANAGER||!!value?.socialProductionWorkspace;}
+
 interface Scope {repository:Starter198Repository;tenantId:string;taskId:string;runId:string;artifactId:string}
 async function artifact(scope:Scope){const rows=await scope.repository.list('starter_social_content_artifacts',scope.tenantId,{where:{task_id:scope.taskId,artifact_id:scope.artifactId},perPage:2});if(rows.totalItems!==1||rows.items.length!==1)fail('social_workspace_artifact_missing');const row=rows.items[0]!,content=socialObject(socialJson(row.content));if(!content||row.content_hash!==socialRequestHash({resourceRef:row.resource_ref,content}))return fail('social_workspace_artifact_hash_invalid');return row;}
 function reviewableArtifact(content:Record<string,unknown>){const delivery=socialObject(content.delivery),review=socialObject(content.review),source=socialObject(content.productionWorkspaceSource);if(source?.creationMode!=='viral_replication')return true;return delivery?.status==='publish_candidate'&&review?.deliverableStatus==='publish_candidate'&&review?.automatedChecksPassed===true;}

@@ -1,9 +1,10 @@
+import { readStudioApplicationSources, studioApplicationFunction, studioRouteBlock } from '../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-const source = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
-const route = (name: string) => source.split(`studioRouter.post('${name}', async (req, res) => {`)[1]!.split("studioRouter.post('")[0]!;
+const source = readStudioApplicationSources();
+const route = (name: string) => studioRouteBlock(source, `studioRouter.post('${name}',`);
 test('all storyboard routes recover old native receipts before any new budget or demo quota admission', () => {
   for (const [name, marker, fallback] of [
     ['/storyboard-first-frame', 'if (await replyExistingFrame(existingFrameOperation)) return;', 'await replyExistingFrame(admission.entry); return;'],
@@ -28,12 +29,12 @@ test('all storyboard routes recover old native receipts before any new budget or
     < seedance.indexOf('frozenFrameObject = firstFrame'), 'seedance: an uncertain paid receipt is retained even if local input bytes are unavailable');
 });
 test('saved output recovery checks current bindings and bytes, with legacy source-plan image support', () => {
-  const helper = source.split('async function storyboardReplayVideoResponse(')[1]!.split('// POST /studio/storyboard-first-frame')[0]!;
+  const helper = studioApplicationFunction(source, 'storyboardReplayVideoResponse');
   for (const evidence of ['p.projectId !== input.projectId', 'p.shotId !== input.shotId', 'p.firstFrameMaterialId !== input.firstFrame.id',
     'p.firstFrameFingerprint !== input.firstFrameFingerprint', 'p.resolution !== input.resolution', 'p.providerModel !== input.model',
     'storyboardKbAssignmentIssuesForSpec(', 'validateReplicationVideo(', 'storyboardReplayFrameBytesCurrent(']) assert.ok(helper.includes(evidence), evidence);
   assert.ok(!helper.includes('automationStoryboardAssignmentIssues('), 'receipt recovery must allow a draft to reach QA without granting assignment admission');
-  const context = source.split('export async function studioAigcBudgetContext(')[1]!.split('async function storyboardKbAssignmentIssuesForSpec')[0]!;
+  const context = studioApplicationFunction(source, 'studioAigcBudgetContext');
   assert.ok(context.includes('Object.entries(spec.storyboardSourcePlans || {})'));
   assert.ok(context.includes('p.shotId !== state.slotId'));
   assert.ok(context.includes('asset.id !== sourceUrl'));

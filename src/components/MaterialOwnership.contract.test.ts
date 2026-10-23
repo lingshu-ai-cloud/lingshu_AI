@@ -1,3 +1,4 @@
+import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -71,7 +72,7 @@ const inventoryHookSource = readFileSync(new URL('./inspiration/useInspirationMa
 const materialDialogsSource = readFileSync(new URL('./inspiration/InspirationMaterialDialogs.tsx', import.meta.url), 'utf8');
 const materialDetailSource = readFileSync(fileURLToPath(new URL('./inspiration/InspirationMaterialDetailDrawer.tsx', import.meta.url)), 'utf8');
 const materialCardMediaSource = readFileSync(fileURLToPath(new URL('./inspiration/MaterialLibraryCardMedia.tsx', import.meta.url)), 'utf8');
-const studioRouteSource = readFileSync(fileURLToPath(new URL('../../server/routes/studio.ts', import.meta.url)), 'utf8');
+const studioRouteSource = readStudioApplicationSources();
 const studioMaterialResponseSource = readFileSync(new URL('../../server/routes/studioMaterialProjection.ts', import.meta.url), 'utf8');
 const studioMaterialProjectionSource = readFileSync(fileURLToPath(new URL('../../server/routes/studioMaterialLibraryProjection.ts', import.meta.url)), 'utf8');
 const materialLibrarySource = readFileSync(new URL('./inspiration/inspirationMaterialLibrary.ts', import.meta.url), 'utf8');
