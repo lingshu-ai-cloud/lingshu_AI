@@ -1,3 +1,12 @@
+import { createStudioVoiceTranslationActions } from './studio/studioVoiceTranslationActions.js';
+import { createStudioVoiceSynthesisActions } from './studio/studioVoiceSynthesisActions.js';
+import { createStudioVoicePlaybackActions, useStudioActiveVoiceAudio, useStudioVoicePlaybackProgress, useStudioVoicePlaybackStop } from './studio/studioVoicePlayback.js';
+import { createStudioSubtitleActions, useStudioSubtitlePreviewModel, useStudioSubtitleReviewModel, useStudioBilingualSubtitles, useStudioSubtitlePreviewBounds } from './studio/useStudioSubtitleReview.js';
+import { createStudioSoundtrackActions, useStudioSoundtrackState, useStudioSoundtrackCatalog, useStudioSoundtrackStep, useStudioSoundtrackFavorites, useStudioSoundtrackStop } from './studio/studioVoiceSoundtrack.js';
+import { useStudioVoiceChoiceState, useStudioVoiceDraftState, useStudioVoicePreviewState, useStudioVoiceControlsState, useStudioVoiceAudioState, useStudioVoiceSettingsState, useStudioVoiceSynthesisState, useStudioSubtitleStyleState, useStudioSubtitleState } from './studio/useStudioVoiceState.js';
+import { useStudioVoiceSourceModel, useStudioVoiceDraftFreshness, createStudioVoiceReadiness, createStudioVoiceWorkflowSource } from './studio/useStudioVoiceModel.js';
+import { useStudioVoiceTranslationCleanup, useStudioVoiceCatalog, useStudioReferenceVoiceStyle, useStudioReferenceVoicePresence } from './studio/useStudioVoiceLifecycle.js';
+import type { StudioVoiceLifecyclePorts } from './studio/studioVoiceLifecyclePorts.js';
 import { createStudioProjectSnapshot } from './studio/studioProjectSnapshot.js';
 import { createStudioProjectRestoration } from './studio/studioProjectRestoration.js';
 import { createStudioProjectPersistence } from './studio/studioProjectPersistence.js';
@@ -26,7 +35,7 @@ import { localFlowRenderRecovery, localFlowRenderInputIdentity } from '../lib/lo
 import { App as AntApp, Button } from 'antd';
 import { canOpenWorkbenchRenderSettings, workbenchExportBlockReason } from '../lib/replicationWorkbenchNavigation';
 import { digitalHumanQualityState } from '../lib/digitalHumanQuality';
-import { applyCaptionTextEdits, sourceCaptionEditKey, subtitleReviewCues } from '../lib/subtitleReview';
+import { applyCaptionTextEdits } from '../lib/subtitleReview';
 import { studioPreviewRenderBlockers } from '../lib/studioPreviewReadiness';
 
 import { digitalHumanDecisionIssues, enterpriseMaterialIssue } from '../../shared/contracts/smartStoryboardAdmission';
@@ -37,7 +46,7 @@ import ReplicationWorkbenchHeader from './socialContent/ReplicationWorkbenchHead
 import { socialContentApi } from '../lib/socialContentApi';
 import { referenceProductTerms as detectSpokenProductTerms } from '../lib/referenceIdentityMapping';
 import { enterpriseBuyerText, validateStudioTimeline, pendingClaimLocations } from '../lib/studioValidation';
-import { mediaType, fileToDataUrl } from '../lib/studioFileInputs';
+import { mediaType } from '../lib/studioFileInputs';
 import { isUnverifiedLegacyCoverTitle, type StudioWorkflowContext } from '../lib/studioProjectContext';
 import { materialShotPlan } from '../lib/materialShotPlan';
 import { validProductPlacement } from '../lib/storyboardPlacement';
@@ -48,10 +57,10 @@ import { type VideoCreationPlan } from '../lib/videoCreationPlan';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { Film, Send, ChevronLeft, ChevronRight, Plus, FolderOpen, ChevronDown } from 'lucide-react';
-import { studioApi, getDesktopRender, type VariationBatch, type Material, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type VideoGenerationVersion, type StudioScriptResult, type DigitalHumanCapabilities, type DigitalHumanJob, type HeyGenAvatarOption, type StudioManualHandoff } from '../lib/studioApi';
+import { studioApi, getDesktopRender, type VariationBatch, type Material, type CoverStyle, type SubCue, type FbPosterResult, type LeadContentPackageResult, type VideoGenerationVersion, type StudioScriptResult, type DigitalHumanCapabilities, type DigitalHumanJob, type HeyGenAvatarOption, type StudioManualHandoff } from '../lib/studioApi';
 import { isMeasuredVoiceAlignment, matchVoiceCuesToShots, productionVoiceCues, retimeVisualShotsToVoiceover } from '../lib/voiceoverAlignment';
-import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForUnfixedShots, shotsMissingSourceCues, sourceCaptionCacheMatchesContent, generatedShotCaptionCues, sourceCuesForShot, sourceCuesWithoutVoiceover, voiceoverMatchesNarrationSources } from '../lib/narrationTimeline';
-import { createPresetEffectPlan, type EffectIntensity, type EffectPresetId } from '../../shared/contracts/effectPlan';
+import { arrangeShotsWithinNarration, shotsMissingSourceCues, sourceCaptionCacheMatchesContent, generatedShotCaptionCues, sourceCuesForShot, sourceCuesWithoutVoiceover } from '../lib/narrationTimeline';
+import { createPresetEffectPlan } from '../../shared/contracts/effectPlan';
 import type { Page } from '../App';
 import type { SocialContentCreateRequest } from './socialContent/SocialContentWorkspace';
 import SocialContentOrderOperations from './socialContent/SocialContentOrderOperations';
@@ -80,13 +89,13 @@ import { groupSpeechShots } from './socialContent/speechShotGroups';
 import type { StudioBatchReviewIssue } from './studio/StudioBatchReviewDialog';
 import { canEnterStoryboardRenderStep, evaluateStoryboardRenderReadiness } from '../lib/storyboardRenderReadiness';
 import { currentRenderOutput } from '../lib/studioRenderVersion';
-import { authenticatedVideoBlobUrl, playAudioWithAuthenticatedFallback, withStudioTimeout } from './studio/studioAuthenticatedMedia';
+import { authenticatedVideoBlobUrl } from './studio/studioAuthenticatedMedia';
 import { newDigitalHumanRequirements, type DigitalHumanExecutionRecord, type DigitalHumanPlanRecord } from '../lib/digitalHumanPlan';
 
 import { CoverFace } from './StudioMediaPreviews';
 
-import { parseCueRange, compactComparable, stripVoiceoverTimestamps, isNonSpeechSfx, formatVoiceoverWithTimestamps, voiceoverDraftCoversSource, selectCompleteVoiceoverSource } from './studio/studioVoiceoverRules';
-import { buildCues, confirmedNarrationForTimeRange, parsePronunciationRules, renderSafeCues } from './studio/studioSubtitleCues';
+import { parseCueRange, compactComparable, stripVoiceoverTimestamps, isNonSpeechSfx } from './studio/studioVoiceoverRules';
+import { buildCues, confirmedNarrationForTimeRange, renderSafeCues } from './studio/studioSubtitleCues';
 import { buildReferenceSpeechPlan, confirmReferenceSpeechEdits } from './studio/studioReferenceSpeechPlan';
 import { fitStoryboardSlotsToDuration, fitTimelineToVoiceoverCues, followAdoptedDigitalHumanSlotDurations, type StoryboardSlot } from './studio/studioTimelineFitting';
 import type { VideoKickoff } from './studio/studioVideoKickoff';
@@ -114,32 +123,162 @@ import { normalizeExplicitPresenterMode, applyManagedPresenterProduction } from 
 export { applyManagedPresenterProduction } from './studio/studioManagedPresenter.js';
 import { safeStudioStepId } from './studio/studioProjectNavigation.js';
 export { loadedStudioProjectTitle, loadedStudioContinuationStep, safeStudioStepId } from './studio/studioProjectNavigation.js';
-import { probeMedia, probeAudioDuration, probeClipAspect } from './studio/studioMediaProbes.js';
-import { STEPS, VIDEO_STAGES, POSTER_STAGES, DEFAULT_VIDEO_CONVERSION_GOAL, VIDEO_THEMES, POSTER_STEPS, BGMS, TTS_PRESETS, DEFAULT_TTS_SETTINGS, POSTER_STYLES, RATIOS, POSTER_RATIOS } from './studio/studioWorkspaceCatalog.js';
+import { probeMedia, probeClipAspect } from './studio/studioMediaProbes.js';
+import { STEPS, VIDEO_STAGES, POSTER_STAGES, DEFAULT_VIDEO_CONVERSION_GOAL, VIDEO_THEMES, POSTER_STEPS, POSTER_STYLES, RATIOS, POSTER_RATIOS } from './studio/studioWorkspaceCatalog.js';
 import { inferVideoThemeFromMaterial, mergeClipLists, renderCombinationKey, materialVersionKey, clipSourceMode, automaticStoryboardTrim, resolveWorkbenchSeekTime } from './studio/studioMaterialPresentation.js';
 export { automaticStoryboardTrim, resolveWorkbenchSeekTime } from './studio/studioMaterialPresentation.js';
 import { referencePersonShotForDetail, parseStoryboardSlots } from './studio/studioStoryboardParsing.js';
 export { referencePersonShotForDetail, visualShotRoute, parseStoryboardSlots, studioSpecHasCompiledStoryboard } from './studio/studioStoryboardParsing.js';
-import { SUBTITLE_FONTS } from './studio/studioFontCatalog.js';
+
 export { fontCss } from './studio/studioFontCatalog.js';
 import { validateStudioScriptGenerationInput, studioAgentSourceLabel } from './studio/studioScriptAdmission.js';
 export { validateStudioScriptGenerationInput, studioAgentSourceLabel } from './studio/studioScriptAdmission.js';
 import { referenceVoiceProfile } from './studio/studioReferenceVoiceProfile.js';
 import { scriptQualityFailure, announceRejectedStoryboard, qualityFields, qualitySuccessNotice, manualScriptDraft } from './studio/studioScriptQualityPresentation.js';
 export { scriptQualityFailure } from './studio/studioScriptQualityPresentation.js';
-import { withTimeout, publicVoiceFailureReason } from './studio/studioAsyncSupport.js';
+import { withTimeout } from './studio/studioAsyncSupport.js';
 import { formatSelectedProductInfo, selectedProductLabel, productOptionCategory, buildAiProductOptions } from './studio/studioProductSelection.js';
 import { cloneReferenceAnalysisText, cloneReferenceHighlights, ensureDistinctCloneStoryboard } from './studio/studioCloneReference.js';
 import { materialRoleLabel, buildMaterialInfosForScript } from './studio/studioMaterialScriptEvidence.js';
 import { stableScriptVersion, sanitizeStoryboardScript } from './studio/studioScriptSanitization.js';
 export { sanitizeStoryboardScript } from './studio/studioScriptSanitization.js';
-import { resolveTranslatedVoiceover, VOICE_TRANSLATION_BATCH_TIMEOUT_MS, VOICE_TRANSLATION_SINGLE_TIMEOUT_MS, runVoiceTranslationWithTimeout } from './studio/studioVoiceTranslation.js';
-import type { StepId, VideoThemeId, PresenterMode, CoverVersionConfig, ClipEdit, StoryboardSourceMode, VariationStrategy, StoryboardSourcePlan, StoryboardAssembly, StudioPublishPlatform, StudioPublishItem, StudioPublishPayload, ProjectQualityRecord, LanguageRenderOutput, LanguageRenderGeneration, Bgm, LanguageTtsSettings, EnterpriseProfileLite, ReferenceVoiceStrength, ProductOption, ModeScriptOutput } from './studio/studioWorkspaceContracts.js';
+
+import type { StepId, VideoThemeId, PresenterMode, CoverVersionConfig, ClipEdit, StoryboardSourceMode, VariationStrategy, StoryboardSourcePlan, StoryboardAssembly, StudioPublishPlatform, StudioPublishItem, StudioPublishPayload, ProjectQualityRecord, LanguageRenderOutput, LanguageRenderGeneration, EnterpriseProfileLite, ProductOption, ModeScriptOutput } from './studio/studioWorkspaceContracts.js';
 export type { StudioScriptGenerationValidation } from './studio/studioWorkspaceContracts.js';
 
 /* ── 缩略图与不可预览状态 ──────────────────────────────────────────────── */
 export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunchContentStudio, onReturnToContentPlanning, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope, socialContentTaskId: incomingSocialTaskId, studioCreateRequest: incomingCreateRequest }: { onNavigate?: (p: Page) => void; onOpenCreationHome?: (openChooser?: boolean) => void; onLaunchContentStudio?: (request: SocialContentCreateRequest) => void; onReturnToContentPlanning?: (request: SocialContentCreateRequest) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string; socialContentTaskId?: string | null; studioCreateRequest?: SocialContentCreateRequest | null } = {}) {
   const { message, notification } = AntApp.useApp();
+
+  const voicePorts: StudioVoiceLifecyclePorts = {
+    get activeVoiceLang() { return activeVoiceLang; },
+    get voiceDraftRunRef() { return voiceDraftRunRef; },
+    get voiceDraftAbortRef() { return voiceDraftAbortRef; },
+    get scriptView() { return scriptView; },
+    get voiceoverLines() { return voiceoverLines; },
+    get script() { return script; },
+    get setVoiceoverLines() { return setVoiceoverLines; },
+    get setVoiceDraftLoading() { return setVoiceDraftLoading; },
+    get setVoiceDraftFailedLangs() { return setVoiceDraftFailedLangs; },
+    get setVoiceDraftPendingLangs() { return setVoiceDraftPendingLangs; },
+    get setVoiceDraftNotice() { return setVoiceDraftNotice; },
+    get voiceLangs() { return voiceLangs; },
+    get setVoiceLangs() { return setVoiceLangs; },
+    get voiceoverAudios() { return voiceoverAudios; },
+    get setVoiceoverStaleLangs() { return setVoiceoverStaleLangs; },
+    get voiceDrafts() { return voiceDrafts; },
+    get setVoiceDrafts() { return setVoiceDrafts; },
+    get setActiveVoiceLang() { return setActiveVoiceLang; },
+    get setLang() { return setLang; },
+    get setScriptView() { return setScriptView; },
+    get setVoiceDraftStaleLangs() { return setVoiceDraftStaleLangs; },
+    get studioSpecEpochRef() { return studioSpecEpochRef; },
+    get workflowSourceLanguage() { return workflowSourceLanguage; },
+    get voiceDraftLoading() { return voiceDraftLoading; },
+    get setVoiceoverAudios() { return setVoiceoverAudios; },
+    get setAlignedCuesByLang() { return setAlignedCuesByLang; },
+    get setTtsLanguageSettings() { return setTtsLanguageSettings; },
+    get setTtsFailuresByLang() { return setTtsFailuresByLang; },
+    get setRenderOutputPath() { return setRenderOutputPath; },
+    get setRenderOutputPreviewUrl() { return setRenderOutputPreviewUrl; },
+    get setLanguageRenderOutputs() { return setLanguageRenderOutputs; },
+    get setLanguageRenderVersions() { return setLanguageRenderVersions; },
+    get setVoiceoverMode() { return setVoiceoverMode; },
+    get setVoiceoverUrl() { return setVoiceoverUrl; },
+    get setVoiceoverDur() { return setVoiceoverDur; },
+    get setUploadedVoiceName() { return setUploadedVoiceName; },
+    get setTtsNotice() { return setTtsNotice; },
+    get setTtsPlaying() { return setTtsPlaying; },
+    get ttsAudioRef() { return ttsAudioRef; },
+    get setTtsLoading() { return setTtsLoading; },
+    get setTtsLoadingScope() { return setTtsLoadingScope; },
+    get setStoryboardVideoVersions() { return setStoryboardVideoVersions; },
+    get setProductVideoVersions() { return setProductVideoVersions; },
+    get setSubtitlesOn() { return setSubtitlesOn; },
+    get setSubMode() { return setSubMode; },
+    get activeSpokenScript() { return activeSpokenScript; },
+    get lang() { return lang; },
+    get setVoice() { return setVoice; },
+    get setCustomVoiceId() { return setCustomVoiceId; },
+    get setCustomVoiceName() { return setCustomVoiceName; },
+    get setCustomVoiceUrl() { return setCustomVoiceUrl; },
+    get setCustomVoices() { return setCustomVoices; },
+    get setVoiceCandidates() { return setVoiceCandidates; },
+    get setAudioCapabilities() { return setAudioCapabilities; },
+    get ttsRequestRef() { return ttsRequestRef; },
+    get extractVoiceoverText() { return extractVoiceoverText; },
+    get setTtsActiveLangs() { return setTtsActiveLangs; },
+    get alignedCuesByLang() { return alignedCuesByLang; },
+    get storyboardSlots() { return storyboardSlots; },
+    get hasAvatarSourceVoice() { return hasAvatarSourceVoice; },
+    get storyboardTimelineEnd() { return storyboardTimelineEnd; },
+    get ttsLanguageSettings() { return ttsLanguageSettings; },
+    get mode() { return mode; },
+    get useReferenceVoiceStyle() { return useReferenceVoiceStyle; },
+    get referenceVoice() { return referenceVoice; },
+    get duration() { return duration; },
+    get threeStepWorkflow() { return threeStepWorkflow; },
+    get presentationMode() { return presentationMode; },
+    get voice() { return voice; },
+    get voiceVol() { return voiceVol; },
+    get setSubtitleGenerating() { return setSubtitleGenerating; },
+    get setSubtitleNotice() { return setSubtitleNotice; },
+    get voiceoverDur() { return voiceoverDur; },
+    get totalDur() { return totalDur; },
+    get setBgms() { return setBgms; },
+    get audioRef() { return audioRef; },
+    get playingBgm() { return playingBgm; },
+    get setPlayingBgm() { return setPlayingBgm; },
+    get setFavoriteBgms() { return setFavoriteBgms; },
+    get setBgmUploading() { return setBgmUploading; },
+    get setBgmNotice() { return setBgmNotice; },
+    get setBgm() { return setBgm; },
+    get setAssemblyBgms() { return setAssemblyBgms; },
+    get activeAssemblyId() { return activeAssemblyId; },
+    get setMaterialVersionBgms() { return setMaterialVersionBgms; },
+    get setRendered() { return setRendered; },
+    get voiceoverMode() { return voiceoverMode; },
+    get voiceoverStaleLangs() { return voiceoverStaleLangs; },
+    get voiceoverUrl() { return voiceoverUrl; },
+    get masterSourceLanguage() { return masterSourceLanguage; },
+    get activeVoiceDuration() { return activeVoiceDuration; },
+    get subtitleStyle() { return subtitleStyle; },
+    get masterSourceVoiceover() { return masterSourceVoiceover; },
+    get voiceDraftFailedLangs() { return voiceDraftFailedLangs; },
+    get voiceDraftStaleLangs() { return voiceDraftStaleLangs; },
+    get voiceDraftPendingLangs() { return voiceDraftPendingLangs; },
+    get materialById() { return materialById; },
+    get storyboardAssignments() { return storyboardAssignments; },
+    get editForSlot() { return editForSlot; },
+    get sourceCuesForMaterial() { return sourceCuesForMaterial; },
+    get digitalHumanJob() { return digitalHumanJob; },
+    get sourceCaptionTextEdits() { return sourceCaptionTextEdits; },
+    get activeVoiceoverUrl() { return activeVoiceoverUrl; },
+    get setSourceCaptionTextEdits() { return setSourceCaptionTextEdits; },
+    get invalidateMusicRender() { return invalidateMusicRender; },
+    get setUseReferenceVoiceStyle() { return setUseReferenceVoiceStyle; },
+    get setTtsPreset() { return setTtsPreset; },
+    get setTtsEmotion() { return setTtsEmotion; },
+    get setTtsEmotionIntensity() { return setTtsEmotionIntensity; },
+    get setTtsSpeed() { return setTtsSpeed; },
+    get videoKickoff() { return videoKickoff; },
+    get step() { return step; },
+    get subtitlesOn() { return subtitlesOn; },
+    get subMode() { return subMode; },
+    get cues() { return cues; },
+    get setCueZh() { return setCueZh; },
+    get subPreviewIdx() { return subPreviewIdx; },
+    get setSubPreviewIdx() { return setSubPreviewIdx; },
+    get setTtsCurrentTime() { return setTtsCurrentTime; },
+    get setVoicePreviewIdx() { return setVoicePreviewIdx; },
+    get refreshBgm() { return refreshBgm; },
+    get favoriteBgms() { return favoriteBgms; },
+  };
+  const voiceTranslation = createStudioVoiceTranslationActions(voicePorts);
+  const voiceSynthesis = createStudioVoiceSynthesisActions(voicePorts);
+  const voicePlayback = createStudioVoicePlaybackActions(voicePorts);
+  const voiceSubtitles = createStudioSubtitleActions(voicePorts);
+  const voiceSoundtrack = createStudioSoundtrackActions(voicePorts);
 
   const projectPorts: StudioProjectLifecyclePorts = {
     get mode() { return mode; },
@@ -759,8 +898,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
   const [script, setScript] = useState('');
   const [scriptType, setScriptType] = useState<'voiceover' | 'storyboard'>('voiceover');
-  const [voice, setVoice] = useState('v1');
-  const [voiceCandidates, setVoiceCandidates] = useState<string[]>(['v1']);
+  const {
+    voice, setVoice, voiceCandidates,
+    setVoiceCandidates,
+  } = useStudioVoiceChoiceState();
   const [scriptLoading, setScriptLoading] = useState(false);
   const appliedInitialProductionScriptRef = useRef(false);
   useEffect(() => {
@@ -770,123 +911,92 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setVoiceoverLines(extractVoiceoverText(initialProductionScript));
     setStepIdx(0);
   }, [initialProductionScript]);
-  const [voiceoverLines, setVoiceoverLines] = useState('');
-  const [voiceLangs, setVoiceLangs] = useState<string[]>([]);
-  const [enterpriseVoiceLangs, setEnterpriseVoiceLangs] = useState<string[]>([]);
-  const [activeVoiceLang, setActiveVoiceLang] = useState('zh');
-  const enterpriseScriptLanguage = voiceLangs[0] || enterpriseVoiceLangs[0] || '';
-  const [voiceDrafts, setVoiceDrafts] = useState<Record<string, string>>({});
-  const [voiceDraftStaleLangs, setVoiceDraftStaleLangs] = useState<string[]>([]);
-  const [voiceDraftPendingLangs, setVoiceDraftPendingLangs] = useState<string[]>([]);
-  const [voiceDraftFailedLangs, setVoiceDraftFailedLangs] = useState<string[]>([]);
-  const [voiceDraftLoading, setVoiceDraftLoading] = useState(false);
-  const voiceDraftRunRef = useRef(0);
-  const [voiceDraftNotice, setVoiceDraftNotice] = useState('');
-  const voiceDraftAbortRef = useRef<AbortController | null>(null);
+  const {
+    voiceoverLines, setVoiceoverLines, voiceLangs,
+    setVoiceLangs, enterpriseVoiceLangs, setEnterpriseVoiceLangs,
+    activeVoiceLang, setActiveVoiceLang, enterpriseScriptLanguage,
+    voiceDrafts, setVoiceDrafts, voiceDraftStaleLangs,
+    setVoiceDraftStaleLangs, voiceDraftPendingLangs, setVoiceDraftPendingLangs,
+    voiceDraftFailedLangs, setVoiceDraftFailedLangs, voiceDraftLoading,
+    setVoiceDraftLoading, voiceDraftRunRef, voiceDraftNotice,
+    setVoiceDraftNotice, voiceDraftAbortRef,
+  } = useStudioVoiceDraftState();
   const studioSpecEpochRef = useRef(0);
   const scriptTaskRequestRef = useRef(0);
-  const [voicePreviewIdx, setVoicePreviewIdx] = useState<number | null>(null);
+  const {
+    voicePreviewIdx, setVoicePreviewIdx,
+  } = useStudioVoicePreviewState();
   const [scriptView, setScriptView] = useState<'timestamp' | 'voiceover'>('timestamp');
   const [scriptPreviewTab, setScriptPreviewTab] = useState('script');
   const [scriptStageTab, setScriptStageTab] = useState<'theme' | 'script' | 'voiceover' | 'audio' | 'subtitle' | 'bgm'>('theme');
-  const [showLanguagePicker, setShowLanguagePicker] = useState(false);
-  const [showVoiceAdvanced, setShowVoiceAdvanced] = useState(false);
-  const [showSubtitleAdvanced, setShowSubtitleAdvanced] = useState(false);
-  const [subtitleGenerating, setSubtitleGenerating] = useState(false);
-  const [subtitleNotice, setSubtitleNotice] = useState('');
+  const {
+    showLanguagePicker, setShowLanguagePicker, showVoiceAdvanced,
+    setShowVoiceAdvanced, showSubtitleAdvanced, setShowSubtitleAdvanced,
+    subtitleGenerating, setSubtitleGenerating, subtitleNotice,
+    setSubtitleNotice,
+  } = useStudioVoiceControlsState();
   const [avatarCaptionBusy, setAvatarCaptionBusy] = useState(false);
   const [lastGeneratedSetupSignature, setLastGeneratedSetupSignature] = useState('');
   const autoGen = useRef(false); // 标记是否已由入口生成脚本，避免覆盖用户编辑
 
-  useEffect(() => () => voiceDraftAbortRef.current?.abort(), []);
+  useStudioVoiceTranslationCleanup(voicePorts);
 
   // 配音 TTS
-  const [voiceoverUrl, setVoiceoverUrl] = useState<string | null>(null);
-  const [voiceoverDur, setVoiceoverDur] = useState(0);
-  const [voiceoverAudios, setVoiceoverAudios] = useState<Record<string, { url: string; duration: number; cues?: SubCue[]; text?: string; alignmentSource?: string; customVoiceStatus?: 'activated' }>>({});
-  const [voiceoverStaleLangs, setVoiceoverStaleLangs] = useState<string[]>([]);
-  const [alignedCuesByLang, setAlignedCuesByLang] = useState<Record<string, SubCue[]>>({});
-  const [sourceCaptionTextEdits, setSourceCaptionTextEdits] = useState<Record<string, string>>({});
-  const [ttsLanguageSettings, setTtsLanguageSettings] = useState<Record<string, LanguageTtsSettings>>({});
-  const activeTtsSettings = ttsLanguageSettings[activeVoiceLang] || DEFAULT_TTS_SETTINGS;
-  const patchActiveTtsSettings = (patch: Partial<LanguageTtsSettings>) => {
-    setTtsLanguageSettings(current => ({
-      ...current,
-      [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), ...patch },
-    }));
-  };
-  const ttsPreset = activeTtsSettings.preset;
-  const ttsEmotion = activeTtsSettings.emotion;
-  const ttsEmotionIntensity = activeTtsSettings.emotionIntensity;
-  const ttsSpeed = activeTtsSettings.speed;
-  const ttsPauseStyle = activeTtsSettings.pauseStyle;
-  const ttsPronunciationText = activeTtsSettings.pronunciationText;
-  const setTtsPreset = (value: TtsStyleOptions['preset']) => patchActiveTtsSettings({ preset: value });
-  const setTtsEmotion = (value: string) => patchActiveTtsSettings({ emotion: value });
-  const setTtsEmotionIntensity = (value: number) => patchActiveTtsSettings({ emotionIntensity: value });
-  const setTtsSpeed = (value: number) => patchActiveTtsSettings({ speed: value });
-  const setTtsPauseStyle = (value: LanguageTtsSettings['pauseStyle']) => patchActiveTtsSettings({ pauseStyle: value });
-  const setTtsPronunciationText = (value: string) => patchActiveTtsSettings({ pronunciationText: value });
-  const [referenceVoiceStrength, setReferenceVoiceStrength] = useState<ReferenceVoiceStrength>('balanced');
-  const [useReferenceVoiceStyle, setUseReferenceVoiceStyle] = useState(true);
-  const [audioCapabilities, setAudioCapabilities] = useState<StudioAudioCapabilities | null>(null);
-  const [minimaxDiagnostic, setMinimaxDiagnostic] = useState('');
-  const [minimaxDiagnosing, setMinimaxDiagnosing] = useState(false);
-  const [voiceoverMode, setVoiceoverMode] = useState<'unselected' | 'none' | 'ai' | 'upload'>('unselected');
-  const [uploadedVoiceName, setUploadedVoiceName] = useState('');
-  const [customVoiceId, setCustomVoiceId] = useState('');
-  const [customVoiceName, setCustomVoiceName] = useState('');
-  const [customVoiceUrl, setCustomVoiceUrl] = useState('');
-  const [customVoices, setCustomVoices] = useState<Array<{ voiceId: string; name: string; url: string; duration: number; createdAt: string }>>([]);
-  const [ttsLoading, setTtsLoading] = useState(false);
-  const [ttsLoadingScope, setTtsLoadingScope] = useState<'all' | 'single' | 'upload' | null>(null);
-  const [ttsActiveLangs, setTtsActiveLangs] = useState<string[]>([]);
-  const [ttsFailuresByLang, setTtsFailuresByLang] = useState<Record<string, string>>({});
-  const ttsRequestRef = useRef(0);
-  const batchTtsLoading = ttsLoading && ttsLoadingScope === 'all';
-  const singleTtsLoading = ttsLoading && ttsLoadingScope === 'single';
-  const [ttsNotice, setTtsNotice] = useState('');
-  const [ttsPlaying, setTtsPlaying] = useState(false);
-  const [ttsCurrentTime, setTtsCurrentTime] = useState(0);
-  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
-  const voiceoverInputRef = useRef<HTMLInputElement>(null);
-  const voiceSampleInputRef = useRef<HTMLInputElement>(null);
+  const {
+    voiceoverUrl, setVoiceoverUrl, voiceoverDur,
+    setVoiceoverDur, voiceoverAudios, setVoiceoverAudios,
+    voiceoverStaleLangs, setVoiceoverStaleLangs, alignedCuesByLang,
+    setAlignedCuesByLang, sourceCaptionTextEdits, setSourceCaptionTextEdits,
+  } = useStudioVoiceAudioState();
+  const {
+    ttsLanguageSettings, setTtsLanguageSettings, activeTtsSettings,
+    patchActiveTtsSettings, ttsPreset, ttsEmotion,
+    ttsEmotionIntensity, ttsSpeed, ttsPauseStyle,
+    ttsPronunciationText, setTtsPreset, setTtsEmotion,
+    setTtsEmotionIntensity, setTtsSpeed, setTtsPauseStyle,
+    setTtsPronunciationText, referenceVoiceStrength, setReferenceVoiceStrength,
+    useReferenceVoiceStyle, setUseReferenceVoiceStyle, audioCapabilities,
+    setAudioCapabilities, minimaxDiagnostic, setMinimaxDiagnostic,
+    minimaxDiagnosing, setMinimaxDiagnosing,
+  } = useStudioVoiceSettingsState(voicePorts);
+  const {
+    voiceoverMode, setVoiceoverMode, uploadedVoiceName,
+    setUploadedVoiceName, customVoiceId, setCustomVoiceId,
+    customVoiceName, setCustomVoiceName, customVoiceUrl,
+    setCustomVoiceUrl, customVoices, setCustomVoices,
+    ttsLoading, setTtsLoading, ttsLoadingScope,
+    setTtsLoadingScope, ttsActiveLangs, setTtsActiveLangs,
+    ttsFailuresByLang, setTtsFailuresByLang, ttsRequestRef,
+    batchTtsLoading, singleTtsLoading, ttsNotice,
+    setTtsNotice, ttsPlaying, setTtsPlaying,
+    ttsCurrentTime, setTtsCurrentTime, ttsAudioRef,
+    voiceoverInputRef, voiceSampleInputRef,
+  } = useStudioVoiceSynthesisState();
 
-  const [bgm, setBgm] = useState('');   // 无内置曲库，默认不选
-  const [bgmCandidates, setBgmCandidates] = useState<string[]>([]);
-  const [platformBgms, setPlatformBgms] = useState<Record<string, string>>({});
-  const [assemblyBgms, setAssemblyBgms] = useState<Record<string, string>>({});
-  const [materialVersionBgms, setMaterialVersionBgms] = useState<Record<string, string>>({});
-  const [bgmMatchMode, setBgmMatchMode] = useState<'smart' | 'unified'>('smart');
-  const [bgmLibraryOpen, setBgmLibraryOpen] = useState(false);
-  const bgmLibraryRef = useRef<HTMLDivElement>(null);
-  useDismissibleLayer(bgmLibraryOpen, bgmLibraryRef, () => setBgmLibraryOpen(false));
-  const [soundCandidatesPerContent, setSoundCandidatesPerContent] = useState<1 | 2>(1);
-  const [bgmVol, setBgmVol] = useState(35);
-  const [voiceVol, setVoiceVol] = useState(100);
-  const [effectPreset, setEffectPreset] = useState<EffectPresetId>('natural');
-  const [effectIntensity, setEffectIntensity] = useState<EffectIntensity>(0);
-  const [disabledEffectSceneIds, setDisabledEffectSceneIds] = useState<string[]>([]);
-  const [bgms, setBgms] = useState<Bgm[]>(BGMS);
-  const [playingBgm, setPlayingBgm] = useState<string | null>(null);
-  const [bgmUploading, setBgmUploading] = useState(false);
-  const [bgmNotice, setBgmNotice] = useState('');
-  const [bgmTab, setBgmTab] = useState<'library' | 'favorites'>('library');
-  const [favoriteBgms, setFavoriteBgms] = useState<string[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('ow_favorite_bgms') || '[]') as string[];
-    } catch {
-      return [];
-    }
-  });
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const bgmInputRef = useRef<HTMLInputElement>(null);
+  const {
+    bgm, setBgm, bgmCandidates,
+    setBgmCandidates, platformBgms, setPlatformBgms,
+    assemblyBgms, setAssemblyBgms, materialVersionBgms,
+    setMaterialVersionBgms, bgmMatchMode, setBgmMatchMode,
+    bgmLibraryOpen, setBgmLibraryOpen, bgmLibraryRef,
+    soundCandidatesPerContent, setSoundCandidatesPerContent, bgmVol,
+    setBgmVol, voiceVol, setVoiceVol,
+    effectPreset, setEffectPreset, effectIntensity,
+    setEffectIntensity, disabledEffectSceneIds, setDisabledEffectSceneIds,
+    bgms, setBgms, playingBgm,
+    setPlayingBgm, bgmUploading, setBgmUploading,
+    bgmNotice, setBgmNotice, bgmTab,
+    setBgmTab, favoriteBgms, setFavoriteBgms,
+    audioRef, bgmInputRef,
+  } = useStudioSoundtrackState();
 
   const [cover, setCover] = useState(''); // 某素材 id（用其帧画面作封面底图）
   const [coverTitle, setCoverTitle] = useState('');
   const [coverTitleZh, setCoverTitleZh] = useState('');   // 标题中文翻译（供确认）
   const [coverStyle, setCoverStyle] = useState<CoverStyle>({ color: '#ffffff', size: 'M', position: 'bottom', align: 'left', font: 'sans', weight: 'bold', artPreset: 'clean' });
-  const [subtitleStyle, setSubtitleStyle] = useState({ font: 'sans' as CoverStyle['font'], color: '#ffffff', fontScale: 1, bottomRatio: 0.20, outlineColor: '#111827', outlineWidth: 3, lineWidth: 18 });
+  const {
+    subtitleStyle, setSubtitleStyle,
+  } = useStudioSubtitleStyleState();
   const [coverLoading, setCoverLoading] = useState(false);
   const [coverCanvaOpening, setCoverCanvaOpening] = useState(false);
   const [coverUrl, setCoverUrl] = useState<string | null>(null); // 生成的封面 SVG 文件地址（发布缩略图）
@@ -1145,10 +1255,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const workbenchAdvanceLockRef = useRef(false);
 
   // 字幕（A 层：脚本兜底对齐 + 沿用封面样式；桌面端 ffmpeg 烧录）
-  const [subtitlesOn, setSubtitlesOn] = useState(true);
-  const [subMode, setSubMode] = useState<'target' | 'bilingual'>('target');
-  const [subPreviewIdx, setSubPreviewIdx] = useState(0); // 预览叠层当前展示的 cue
-  const [cueZh, setCueZh] = useState<string[]>([]);       // 双语字幕的中文译文（与 cues 对齐）
+  const {
+    subtitlesOn, setSubtitlesOn, subMode,
+    setSubMode, subPreviewIdx, setSubPreviewIdx,
+    cueZh, setCueZh,
+  } = useStudioSubtitleState();       // 双语字幕的中文译文（与 cues 对齐）
   const [clipEdits, setClipEdits] = useState<Record<string, ClipEdit>>({});
 
   // 草稿 / 作品
@@ -1320,25 +1431,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
   useStudioProjectOverlaySignal(projectPorts);
 
-  useEffect(() => {
-    void studioApi.audioCapabilities().then(setAudioCapabilities);
-    void studioApi.listVoiceSamples().then(items => {
-      setCustomVoices(items);
-      if (items.length) setVoiceCandidates(current => [...new Set([...current, ...items.map(item => item.voiceId)])]);
-    });
-  }, []);
-  useEffect(() => {
-    if (mode === 'clone' || !useReferenceVoiceStyle) return;
-    const fallback = TTS_PRESETS.find(item => item.id === 'authentic_review')!;
-    setUseReferenceVoiceStyle(false);
-    setTtsPreset(fallback.id);
-    setTtsEmotion(fallback.emotion);
-    setTtsEmotionIntensity(fallback.intensity);
-    setTtsSpeed(fallback.speed);
-    setVoiceoverUrl(null);
-    setVoiceoverAudios({});
-    setAlignedCuesByLang({});
-  }, [mode, useReferenceVoiceStyle]);
+  useStudioVoiceCatalog(voicePorts);
+  useStudioReferenceVoiceStyle(voicePorts);
 
   const materialById = useMemo(() => new Map(materials.map(item => [item.id, item])), [materials]);
   const selectedClips = useMemo(() => selected.map(id => materialById.get(id)).filter(Boolean) as Clip[], [selected, materialById]);
@@ -2274,11 +2368,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   useEffect(() => {
     if (mode === 'clone') setMigrationMode(migrationRecommendation.mode);
   }, [migrationRecommendation, mode]);
-  useEffect(() => {
-    if (mode !== 'clone' || !videoKickoff?.referenceAnalysis?.details?.length) return;
-    const referenceHasVoice = videoKickoff.referenceAnalysis.details.some(item => !isNonSpeechSfx(item.dialogue || ''));
-    setVoiceoverMode(referenceHasVoice ? 'ai' : 'none');
-  }, [mode, videoKickoff]);
+  useStudioReferenceVoicePresence(voicePorts);
   useEffect(() => {
     if (mode !== 'clone' || !videoKickoff?.referenceAnalysis?.details?.length || !activeProductInfo.trim() || !activeProductLabel) return;
     // Catalog hydration and automatic migration recommendations are not product edits.
@@ -2370,55 +2460,18 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   }, [activeMaterialVersionKey, cover, coverTitle, coverStyle, coverUrl]);
   // 成片预览只采用带可访问地址的真实视频片段。
   const previewable = useMemo(() => selectedClips.filter(c => c.url && c.type === 'video'), [selectedClips]);
-  const masterSourceVoiceover = useMemo(
-    () => selectCompleteVoiceoverSource(script, voiceoverLines),
-    [script, voiceoverLines],
-  );
-  const masterSourceLanguage = detectScriptLanguageCode(masterSourceVoiceover || script);
-  const activeSpokenScript = voiceDrafts[activeVoiceLang] || masterSourceVoiceover || script;
-  const activeVoiceoverAudio = voiceoverMode === 'ai' && !voiceoverStaleLangs.includes(activeVoiceLang)
-    ? voiceoverAudios[activeVoiceLang]
-    : undefined;
-  const activeVoiceoverUrl = voiceoverMode === 'none'
-    ? ''
-    : voiceoverMode === 'ai'
-      ? activeVoiceoverAudio?.url || ''
-      : voiceoverUrl || '';
-  const activeVoiceDuration = voiceoverMode === 'none'
-    ? 0
-    : voiceoverMode === 'ai'
-      ? activeVoiceoverAudio?.duration || 0
-      : voiceoverDur;
-  const voiceoverForLanguage = (code: string) => {
-    if (voiceoverMode === 'none') return { url: '', duration: 0, cues: alignedCuesByLang[code] || [] };
-    if (voiceoverMode === 'ai') {
-      if (voiceoverStaleLangs.includes(code)) return { url: '', duration: 0, cues: [] };
-      const audio = voiceoverAudios[code];
-      return {
-        url: audio?.url || '',
-        duration: audio?.duration || 0,
-        cues: alignedCuesByLang[code] || audio?.cues || [],
-      };
-    }
-    const isActiveUpload = code === activeVoiceLang;
-    return {
-      url: isActiveUpload ? voiceoverUrl || '' : '',
-      duration: isActiveUpload ? voiceoverDur : 0,
-      cues: alignedCuesByLang[code] || [],
-    };
-  };
-  const masterScriptSnapshot = useRef(script);
-  useEffect(() => {
-    if (masterScriptSnapshot.current !== script && Object.keys(voiceDrafts).length) {
-      setVoiceDraftStaleLangs(current => [...new Set([...current, ...voiceLangs.filter(code => code !== masterSourceLanguage)])]);
-    }
-    masterScriptSnapshot.current = script;
-  }, [masterSourceLanguage, script, voiceDrafts, voiceLangs]);
+  const {
+    masterSourceVoiceover, masterSourceLanguage, activeSpokenScript,
+    activeVoiceoverAudio, activeVoiceoverUrl, activeVoiceDuration,
+    voiceoverForLanguage,
+  } = useStudioVoiceSourceModel(voicePorts);
+  const {
+    masterScriptSnapshot,
+  } = useStudioVoiceDraftFreshness(voicePorts);
   // 字幕 cue：当前语种口播台词 + TTS 时长（无配音则用素材总时长）
-  const cues = useMemo(() => alignedCuesByLang[activeVoiceLang]?.length
-    ? alignedCuesByLang[activeVoiceLang]
-    : buildCues(activeSpokenScript, activeVoiceDuration || totalDur), [activeSpokenScript, activeVoiceDuration, activeVoiceLang, alignedCuesByLang, totalDur]);
-  const subtitlePreviewStyle = { color: subtitleStyle.color, fontFamily: SUBTITLE_FONTS.find(item => item.id === subtitleStyle.font)?.css || SUBTITLE_FONTS[0]!.css, fontSize: `${Math.round(12 * subtitleStyle.fontScale)}px`, WebkitTextStroke: `${subtitleStyle.outlineWidth / 3}px ${subtitleStyle.outlineColor}`, textShadow: `0 1px 3px ${subtitleStyle.outlineColor}` };
+  const {
+    cues, subtitlePreviewStyle,
+  } = useStudioSubtitlePreviewModel(voicePorts);
 
   const isStoryboardSlotReviewComplete = (slot: StoryboardSlot) => Boolean(
     storyboardAssignments[slot.id] && materialById.has(storyboardAssignments[slot.id]),
@@ -2435,18 +2488,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     return assessment.level === 'review' && !sourcePlanFor(slot).confirmed;
   }).length;
   const hasTimestampScript = Boolean(script.trim());
-  const hasRequestedVoiceDrafts = voiceLangs.length > 0 && voiceLangs.every(code => Boolean((voiceDrafts[code] || voiceoverAudios[code]?.text)?.trim())
-    && (voiceoverDraftCoversSource(masterSourceVoiceover, voiceDrafts[code] || voiceoverAudios[code]?.text || '')
-      || (Boolean(voiceoverAudios[code]?.url) && !voiceoverStaleLangs.includes(code)))
-    && !voiceDraftFailedLangs.includes(code)
-    && !voiceDraftStaleLangs.includes(code)
-    && !voiceDraftPendingLangs.includes(code));
-  const hasRequestedVoiceovers = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceoverAudios[code]?.url) && !voiceoverStaleLangs.includes(code));
-  const hasRequestedSubtitles = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(alignedCuesByLang[code]?.length));
-  const hasReadyVoiceStrategy = voiceoverMode === 'none'
-    || (voiceoverMode === 'upload' && Boolean(voiceoverUrl))
-    || (voiceoverMode === 'ai' && hasRequestedVoiceovers);
-  const hasAnyVoiceover = Object.entries(voiceoverAudios).some(([code, audio]) => Boolean(audio?.url) && !voiceoverStaleLangs.includes(code));
+  const {
+    hasRequestedVoiceDrafts, hasRequestedVoiceovers, hasRequestedSubtitles,
+    hasReadyVoiceStrategy, hasAnyVoiceover,
+  } = createStudioVoiceReadiness(voicePorts);
   const activeScriptQualityItem = modeScripts.find(item => item.id === activeModeScriptId);
   const activeScriptQualityStatus = activeScriptQualityItem?.qualityStatus;
   // A quality verdict belongs to the exact script snapshot that was checked.
@@ -2840,97 +2885,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       };
     });
   }, [clipEdits, materialById, selectedClips, storyboardAssignments, storyboardSlots, presentationMode, presentationSources, digitalHumanJob, shotProductions]);
-  const narrationMeasuredCues = productionVoiceCues(
-    alignedCuesByLang[activeVoiceLang] || voiceoverAudios[activeVoiceLang]?.cues,
-    voiceoverAudios[activeVoiceLang]?.alignmentSource,
-    voiceoverAudios[activeVoiceLang]?.duration || 0,
-  );
-  const voiceoverMatchesCurrentShotSources = (code: string) => {
-    const audio = voiceoverAudios[code];
-    if (!audio?.url) return true;
-    const lines = stripVoiceoverTimestamps(code === activeVoiceLang ? activeSpokenScript : voiceDrafts[code] || '')
-      .split(/\n+/).map(line => line.trim()).filter(Boolean);
-    const referenceLines = code === masterSourceLanguage ? undefined
-      : stripVoiceoverTimestamps(masterSourceVoiceover).split(/\n+/).map(line => line.trim()).filter(Boolean);
-    const sourceText = audio.text || audio.cues?.map(cue => cue.text).join(' ') || '';
-    return voiceoverMatchesNarrationSources(storyboardSlots.map(slot => ({
-      narration: storyboardSlotScript(slot.detail).voice, targetDuration: slot.end - slot.start,
-      lockedSourceVoice: hasAvatarSourceVoice(slot),
-    })), lines, sourceText, referenceLines);
-  };
-  const activeVoiceoverSourceMismatch = voiceoverMode === 'ai' && Boolean(voiceoverAudios[activeVoiceLang]?.url)
-    && !voiceoverMatchesCurrentShotSources(activeVoiceLang);
-  useEffect(() => {
-    if (activeVoiceoverSourceMismatch) setVoiceoverStaleLangs(current => current.includes(activeVoiceLang)
-      ? current : [...current, activeVoiceLang]);
-  }, [activeVoiceoverSourceMismatch, activeVoiceLang]);
-  const narrationArrangementPreview = (() => {
-    const audio = voiceoverAudios[activeVoiceLang];
-    const measured = narrationMeasuredCues;
-    if (voiceoverMode !== 'ai' || !measured.length || !storyboardSlots.length || presentationMode !== 'material') return null;
-    if (activeVoiceoverSourceMismatch) return { result: null, error: '数字人原声分镜归属已变化，现有配音仍包含旧台词，请重新生成非数字人口播' };
-    try {
-      return { result: arrangeShotsWithinNarration(storyboardSlots.map(slot => {
-          const clip = materialById.get(storyboardAssignments[slot.id] || '');
-          const edit = clip ? editForSlot(clip, slot) : undefined;
-          const lockedSourceVoice = hasAvatarSourceVoice(slot);
-          return { targetDuration: edit?.targetDuration || slot.end - slot.start,
-            targetStart: slot.start, targetEnd: slot.end,
-            trimStart: lockedSourceVoice ? 0 : edit?.trimStart || 0,
-            trimEnd: lockedSourceVoice ? clip?.duration || slot.end - slot.start : edit?.trimEnd || slot.end - slot.start,
-            narration: storyboardSlotScript(slot.detail).voice,
-            lockedSourceVoice,
-            lockedDuration: lockedSourceVoice ? clip?.duration || slot.end - slot.start : undefined,
-            sourceCues: lockedSourceVoice ? sourceCuesForMaterial(clip, slot) : undefined };
-        }), stripVoiceoverTimestamps(activeSpokenScript).split(/\n+/).map(line => line.trim()).filter(Boolean),
-          measured, audio!.duration, audio!.alignmentSource || '',
-          activeVoiceLang === masterSourceLanguage ? undefined : stripVoiceoverTimestamps(masterSourceVoiceover).split(/\n+/).map(line => line.trim()).filter(Boolean)), error: '' };
-    } catch (error) {
-      return { result: null, error: error instanceof Error ? error.message : '口播与分镜尚未对齐' };
-    }
-  })();
-  const subtitleReviewAiCues = alignedCuesByLang[activeVoiceLang] || voiceoverAudios[activeVoiceLang]?.cues || [];
-  const subtitleReviewTimeline = narrationArrangementPreview?.result?.timeline || storyboardSlots.map(slot => {
-    const clip = materialById.get(storyboardAssignments[slot.id] || '');
-    const lockedSourceVoice = hasAvatarSourceVoice(slot);
-    return { targetDuration: lockedSourceVoice ? clip?.duration || slot.end - slot.start
-        : clip ? editForSlot(clip, slot).targetDuration || slot.end - slot.start : slot.end - slot.start,
-      lockedSourceVoice, sourceCues: lockedSourceVoice ? sourceCuesForMaterial(clip, slot) : undefined };
-  });
-  const subtitleReviewBaseRows = presentationMode !== 'material' && digitalHumanJob?.subtitleCues?.length
-    ? applyCaptionTextEdits(digitalHumanJob.subtitleCues, digitalHumanJob.id, digitalHumanJob.outputMaterialId, sourceCaptionTextEdits).map((cue, cueIndex) => ({ ...cue, source: 'job' as const, cueIndex, shotIndex: undefined }))
-    : narrationArrangementPreview?.result || voiceoverMode === 'none'
-      ? narrationArrangementPreview?.result
-        ? narrationArrangementPreview.result.cues.map((cue, cueIndex) => {
-          const source = subtitleReviewCues(subtitleReviewTimeline, []).find(row => Math.abs(row.start - cue.start) < .002 && Math.abs(row.end - cue.end) < .002 && row.text === cue.text);
-          return source || { ...cue, source: 'ai' as const, cueIndex, shotIndex: undefined };
-        }) : subtitleReviewCues(subtitleReviewTimeline, [])
-      : [...subtitleReviewCues(subtitleReviewTimeline, []), ...subtitleReviewAiCues.map((cue, cueIndex) => ({ ...cue, source: 'ai' as const, cueIndex, shotIndex: undefined }))];
-  const subtitleReviewRows = subtitleReviewBaseRows.map(row => {
-    const editKey = row.source === 'ai'
-      ? sourceCaptionEditKey(`voice:${activeVoiceLang}:${activeVoiceoverUrl || ''}`, undefined, row) : '';
-    return { ...row, editKey, text: editKey ? sourceCaptionTextEdits[editKey] ?? row.text : row.text };
-  });
-  const editReviewedSubtitle = (row: (typeof subtitleReviewRows)[number], text: string) => {
-    if (row.source === 'job') {
-      const cue = digitalHumanJob?.subtitleCues?.[row.cueIndex];
-      if (!digitalHumanJob || !cue) return;
-      setSourceCaptionTextEdits(current => ({ ...current, [sourceCaptionEditKey(digitalHumanJob.id, digitalHumanJob.outputMaterialId, cue)]: text }));
-    } else if (row.source === 'source' && row.shotIndex !== undefined) {
-      const slot = storyboardSlots[row.shotIndex];
-      const clip = slot ? materialById.get(storyboardAssignments[slot.id] || '') : undefined;
-      if (!clip) return;
-      const raw = digitalHumanJob?.outputMaterialId === clip.id && digitalHumanJob.subtitleCues?.length
-        ? digitalHumanJob.subtitleCues : clip.transcriptCues;
-      const cue = sourceCuesForShot(raw, clip.duration)[row.cueIndex];
-      if (!cue) return;
-      setSourceCaptionTextEdits(current => ({ ...current, [sourceCaptionEditKey(clip.id, clip.contentSha256, cue)]: text }));
-    } else {
-      setSourceCaptionTextEdits(current => ({ ...current, [row.editKey]: text }));
-    }
-    invalidateMusicRender();
-  };
-  const narrationAudioHasMeasuredCues = Boolean(narrationMeasuredCues.length);
+  const {
+    narrationMeasuredCues, voiceoverMatchesCurrentShotSources, activeVoiceoverSourceMismatch,
+    narrationArrangementPreview, subtitleReviewAiCues, subtitleReviewTimeline,
+    subtitleReviewBaseRows, subtitleReviewRows, editReviewedSubtitle,
+    narrationAudioHasMeasuredCues,
+  } = useStudioSubtitleReviewModel(voicePorts);
   const timelineForAssembly = (assembly: StoryboardAssembly) => {
     let timelineCursor = 0;
     const rows = storyboardSlots.map(slot => {
@@ -4240,164 +4200,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     void generateTimestampScriptsForMode();
   }, [activeProductInfo, activeProductLabel, mode, modeActionLoading, pendingRealCloneGeneration, videoKickoff]);
 
-  const extractVoiceoverText = (value: string) => {
-    return formatVoiceoverWithTimestamps(value);
-  };
+  const extractVoiceoverText = voiceTranslation.extractVoiceoverText;
 
-  const generateVoiceDrafts = async () => {
-    const runId = ++voiceDraftRunRef.current;
-    voiceDraftAbortRef.current?.abort();
-    const controller = new AbortController();
-    voiceDraftAbortRef.current = controller;
-    const isCurrentRequest = () => voiceDraftAbortRef.current === controller;
-    const sourceText = scriptView === 'voiceover' ? (voiceoverLines || script) : script;
-    const base = selectCompleteVoiceoverSource(script, sourceText);
-    setVoiceoverLines(base);
-    setVoiceDraftLoading(true);
-    setVoiceDraftFailedLangs([]);
-    setVoiceDraftPendingLangs([]);
-    setVoiceDraftNotice(`正在提取口播，并生成 ${voiceLangs.length || 1} 个语种文案...`);
-    try {
-      if (!base.trim()) {
-        setVoiceDraftNotice('当前脚本里没有可提取的口播台词，请先生成时间戳脚本或手动填写口播台词。');
-        return;
-      }
-      const sourceLanguage = detectScriptLanguageCode(base);
-      const langs = [sourceLanguage, ...voiceLangs.filter(code => code !== sourceLanguage)];
-      setVoiceLangs(langs);
-      const existingAudioCodes = langs.filter(code => Boolean(voiceoverAudios[code]?.url));
-      if (existingAudioCodes.length) setVoiceoverStaleLangs(current => [...new Set([...current, ...existingAudioCodes])]);
-      const immediate: Record<string, string> = { ...voiceDrafts, [sourceLanguage]: normalizeScriptTimestamps(base) };
-      setVoiceDrafts(immediate);
-      setActiveVoiceLang(sourceLanguage);
-      setLang(sourceLanguage);
-      setScriptView('voiceover');
+  const generateVoiceDrafts = voiceTranslation.generateVoiceDrafts;
 
-      const improved: Record<string, string> = { ...immediate };
-      const targets = langs.filter(code => code !== sourceLanguage);
-      setVoiceDraftPendingLangs(targets);
-      setVoiceDraftNotice(targets.length
-        ? `已识别${langZh(sourceLanguage) || sourceLanguage}口播，正在批量翻译 ${targets.length} 个语种；可切换到其他栏目，任务会继续在后台运行。`
-        : '');
-      const failedLangs = new Set<string>();
-      const failureReasons = new Map<string, string>();
-      let translateError = '';
-      if (targets.length) {
-        const translated = await runVoiceTranslationWithTimeout(
-          signal => studioApi.translateBatch(
-            { text: normalizeScriptTimestamps(base), targets, source: sourceLanguage },
-            { signal },
-          ),
-          controller.signal,
-          VOICE_TRANSLATION_BATCH_TIMEOUT_MS,
-        ).catch((err: any) => ({ ok: false, translations: {} as Record<string, string>, error: err?.message || '请求失败' }));
-        if (controller.signal.aborted) throw new DOMException('翻译已取消', 'AbortError');
-        translateError = translated.error || '';
-        const unresolved: string[] = [];
-        for (const code of targets) {
-          const raw = translated.translations?.[code] || '';
-          const normalized = raw.trim()
-            ? resolveTranslatedVoiceover(base, raw, code)
-            : '';
-          if (normalized.trim()) {
-            improved[code] = normalized;
-            setVoiceDrafts(current => ({ ...current, [code]: normalized }));
-          } else {
-            unresolved.push(code);
-          }
-        }
-        setVoiceDraftPendingLangs(unresolved);
-        if (unresolved.length) {
-          setVoiceDraftNotice(`批量翻译已返回 ${targets.length - unresolved.length}/${targets.length} 个语种，正在并行重试其余 ${unresolved.length} 个...`);
-          await Promise.all(unresolved.map(async code => {
-            let normalized = '';
-            let failureReason = translateError || '模型未返回有效译文';
-            try {
-              const single = await runVoiceTranslationWithTimeout(
-                signal => studioApi.translate(
-                  { text: normalizeScriptTimestamps(base), target: code, source: sourceLanguage },
-                  { signal },
-                ),
-                controller.signal,
-                VOICE_TRANSLATION_SINGLE_TIMEOUT_MS,
-              );
-              const raw = single.ok ? single.text : '';
-              normalized = raw.trim() ? resolveTranslatedVoiceover(base, raw, code) : '';
-              failureReason = single.error || failureReason;
-            } catch (err: any) {
-              failureReason = err?.message || failureReason;
-            }
-            if (controller.signal.aborted || !isCurrentRequest()) return;
-            if (normalized.trim()) {
-              improved[code] = normalized;
-              setVoiceDrafts(current => ({ ...current, [code]: normalized }));
-            } else {
-              failedLangs.add(code);
-              failureReasons.set(code, failureReason);
-              setVoiceDraftFailedLangs(current => [...new Set([...current, code])]);
-            }
-            setVoiceDraftPendingLangs(current => current.filter(item => item !== code));
-          }));
-        }
-      }
-      if (controller.signal.aborted) throw new DOMException('翻译已取消', 'AbortError');
-      if (!isCurrentRequest()) return;
-      const failed = [...failedLangs];
-      const firstFailureReason = failed.map(code => failureReasons.get(code)).find(Boolean) || translateError;
-      setVoiceDrafts(improved);
-      setVoiceDraftPendingLangs([]);
-      setVoiceDraftFailedLangs(failed);
-      setVoiceDraftNotice(failed.length
-        ? `已生成 ${langs.length - failed.length}/${langs.length} 个语种；${failed.map(code => LANGS.find(item => item.code === code)?.label || code).join('、')} 翻译失败：${firstFailureReason || '模型未返回有效译文'}。可再次点击重试。`
-        : '');
-      setVoiceDraftStaleLangs(failed);
-    } catch (err: any) {
-      if (isCurrentRequest()) {
-        setVoiceDraftPendingLangs([]);
-        setVoiceDraftNotice(controller.signal.aborted
-          ? '已取消翻译；已完成的语种已保留，未完成语种可重新翻译。'
-          : (err?.message || '多语种字幕生成失败，请稍后重试。'));
-      }
-    } finally {
-      if (isCurrentRequest()) {
-        voiceDraftAbortRef.current = null;
-        setVoiceDraftLoading(false);
-      }
-    }
-  };
-
-  const retryVoiceDraft = async (code: string) => {
-    const specEpoch = studioSpecEpochRef.current;
-    const isCurrentSpec = () => studioSpecEpochRef.current === specEpoch;
-    const sourceText = scriptView === 'voiceover' ? (voiceoverLines || script) : script;
-    const base = extractVoiceoverText(sourceText);
-    if (!base.trim()) {
-      setVoiceDraftNotice('当前脚本没有可翻译的口播文案。');
-      return;
-    }
-    const sourceLanguage = detectScriptLanguageCode(base);
-    if (voiceoverAudios[code]?.url) setVoiceoverStaleLangs(current => [...new Set([...current, code])]);
-    setVoiceDraftPendingLangs(current => [...new Set([...current, code])]);
-    setVoiceDraftFailedLangs(current => current.filter(item => item !== code));
-    try {
-      const normalized = code === sourceLanguage
-        ? normalizeScriptTimestamps(base)
-        : await studioApi.translate({ text: normalizeScriptTimestamps(base), target: code, source: sourceLanguage })
-          .then(result => result.ok && result.text.trim() ? resolveTranslatedVoiceover(base, result.text, code) : Promise.reject(new Error(result.error || '模型未返回有效译文')));
-      if (!isCurrentSpec()) return;
-      if (!normalized.trim()) throw new Error('模型未返回有效译文');
-      setVoiceDrafts(current => ({ ...current, [code]: normalized }));
-      setVoiceDraftStaleLangs(current => current.filter(item => item !== code));
-      setVoiceDraftNotice(`${LANGS.find(item => item.code === code)?.label || code}文案已更新，其他已完成语言保持不变。`);
-    } catch (error: unknown) {
-      if (!isCurrentSpec()) return;
-      const reason = error instanceof Error ? error.message : '翻译失败';
-      setVoiceDraftFailedLangs(current => [...new Set([...current, code])]);
-      setVoiceDraftNotice(`${LANGS.find(item => item.code === code)?.label || code}翻译失败：${reason}`);
-    } finally {
-      if (isCurrentSpec()) setVoiceDraftPendingLangs(current => current.filter(item => item !== code));
-    }
-  };
+  const retryVoiceDraft = voiceTranslation.retryVoiceDraft;
 
   const regenCovers = async () => {
     setCoverLoading(true);
@@ -4471,21 +4278,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   }, [coverTitle, lang, step]);
 
   // 双语字幕：进入预览且开启双语时，翻译各 cue（目标语言为中文则无需翻译）
-  useEffect(() => {
-    if (step !== 'preview' || !subtitlesOn || subMode !== 'bilingual' || lang === 'zh' || cues.length === 0) {
-      setCueZh([]); return;
-    }
-    let cancelled = false;
-    (async () => {
-      const zh = await Promise.all(cues.map(c => studioApi.translate({ text: c.text, target: 'zh' }).then(r => (r.ok ? r.text : ''))));
-      if (!cancelled) setCueZh(zh);
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, subtitlesOn, subMode, lang, cues]);
+  useStudioBilingualSubtitles(voicePorts);
 
   // cue 数量变化时，把预览高亮夹回有效范围
-  useEffect(() => { if (subPreviewIdx >= cues.length) setSubPreviewIdx(0); }, [cues.length, subPreviewIdx]);
+  useStudioSubtitlePreviewBounds(voicePorts);
 
   const downloadMp4 = async (filePath?: string | null) => {
     if (rendering) return;
@@ -4938,456 +4734,34 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   };
 
   /* ── BGM 曲库 ────────────────────────────────────────────────────────── */
-  const refreshBgm = async () => {
-    const list = await studioApi.listBgm();
-    setBgms(list as Bgm[]);
-  };
-  useEffect(() => { void refreshBgm(); }, []);
-  useEffect(() => {
-    if (step === 'bgm') void refreshBgm();
-  }, [step]);
-  useEffect(() => {
-    try {
-      localStorage.setItem('ow_favorite_bgms', JSON.stringify(favoriteBgms));
-    } catch {
-      // Embedded browsers can disable localStorage; favorites simply become session-only.
-    }
-  }, [favoriteBgms]);
+  const refreshBgm = voiceSoundtrack.refreshBgm;
+  useStudioSoundtrackCatalog(voicePorts);
+  useStudioSoundtrackStep(voicePorts);
+  useStudioSoundtrackFavorites(voicePorts);
 
   // 离开配乐步骤时停止试听
-  useEffect(() => {
-    if (step !== 'bgm' && audioRef.current) {
-      audioRef.current.pause();
-      setPlayingBgm(null);
-    }
-  }, [step]);
+  useStudioSoundtrackStop(voicePorts);
 
-  const togglePlay = (track: Bgm) => {
-    if (!track.url) return;
-    const el = audioRef.current;
-    if (!el) return;
-    if (playingBgm === track.id) {
-      el.pause();
-      setPlayingBgm(null);
-      return;
-    }
-    el.src = track.url;
-    void el.play().then(() => setPlayingBgm(track.id)).catch(() => setPlayingBgm(null));
-  };
+  const togglePlay = voiceSoundtrack.togglePlay;
 
-  const toggleFavoriteBgm = (id: string) => {
-    setFavoriteBgms(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
-  };
+  const toggleFavoriteBgm = voiceSoundtrack.toggleFavoriteBgm;
 
-  const handleBgmUpload = async (files: FileList | null) => {
-    if (!files?.length) return;
-    setBgmUploading(true);
-    setBgmNotice('正在上传音乐…');
-    const f = files[0];
-    try {
-      const dataBase64 = await fileToDataUrl(f);
-      const { track } = await studioApi.uploadBgm({ name: f.name, dataBase64, mimeType: f.type });
-      await refreshBgm();
-      if (track?.id) {
-        setBgm(track.id);
-        setAssemblyBgms(current => ({ ...current, [activeAssemblyId]: track.id }));
-        setMaterialVersionBgms(current => ({ ...current, [materialVersionKey(activeAssemblyId, activeVoiceLang)]: track.id }));
-        setBgmNotice(`已上传并选中「${track.name || f.name}」`);
-      } else {
-        setBgmNotice('音乐已上传，但未返回可用曲目，请刷新后重试。');
-      }
-    } catch (error: any) {
-      setBgmNotice(error?.message || '音乐上传失败，请检查文件格式后重试。');
-    } finally {
-      setBgmUploading(false);
-    }
-  };
+  const handleBgmUpload = voiceSoundtrack.handleBgmUpload;
 
   /* ── 配音 TTS ────────────────────────────────────────────────────────── */
-  const clearVoiceover = () => {
-    setVoiceoverMode('none');
-    setVoiceoverUrl(null);
-    setVoiceoverDur(0);
-    setVoiceoverAudios({});
-    setAlignedCuesByLang({});
-    setUploadedVoiceName('');
-    setTtsNotice('');
-    setTtsPlaying(false);
-    if (ttsAudioRef.current) ttsAudioRef.current.pause();
-  };
+  const clearVoiceover = voiceSynthesis.clearVoiceover;
 
-  const handleVoiceoverUpload = async (files: FileList | null) => {
-    const f = files?.[0];
-    if (!f) return;
-    setTtsLoading(true);
-    setTtsLoadingScope('upload');
-    try {
-      const [dataBase64, duration] = await Promise.all([fileToDataUrl(f), probeAudioDuration(f)]);
-      const r = await studioApi.uploadVoiceover({ name: f.name, dataBase64, mimeType: f.type, duration });
-      if (!r.ok || !r.url) throw new Error(r.error || '口播音频上传失败');
-      setVoiceoverMode('upload');
-      setVoiceoverUrl(r.url);
-      setVoiceoverDur(r.duration || duration);
-      setVoiceoverAudios({ [activeVoiceLang || 'zh']: { url: r.url, duration: r.duration || duration } });
-      setVoiceoverStaleLangs(current => current.filter(code => code !== (activeVoiceLang || 'zh')));
-      setRenderOutputPath(null);
-      setRenderOutputPreviewUrl(null);
-      setLanguageRenderOutputs({});
-      setLanguageRenderVersions({});
-      setStoryboardVideoVersions({});
-      setProductVideoVersions([]);
-      setUploadedVoiceName(f.name);
-      setSubtitlesOn(true);
-      setSubMode('target');
-      const audioDuration = r.duration || duration;
-      const transcriptHint = stripVoiceoverTimestamps(activeSpokenScript);
-      if (audioDuration > 0) {
-        setTtsNotice('口播已上传，正在识别语音并生成字幕时间轴…');
-        const transcription = await studioApi.transcribeVoiceover({
-          url: r.url,
-          duration: audioDuration,
-          language: activeVoiceLang || lang,
-          transcriptHint,
-        });
-        if (transcription.ok && transcription.matches !== false && transcription.text && transcription.cues?.length) {
-          const code = activeVoiceLang || 'zh';
-          setVoiceoverLines(transcription.text);
-          setVoiceDrafts(current => ({ ...current, [code]: transcription.text }));
-          setAlignedCuesByLang(current => ({ ...current, [code]: transcription.cues }));
-          setVoiceoverAudios({ [code]: { url: r.url, duration: audioDuration, cues: transcription.cues, text: transcription.text, alignmentSource: transcription.source } });
-          setTtsNotice(transcription.source === 'audio_ai' || transcription.source === 'qwen_asr'
-            ? '已根据上传音频自动识别口播，并生成逐句/逐词字幕时间轴。'
-            : '已生成字幕时间轴；当前使用脚本比例对齐，建议播放后人工确认。');
-        } else {
-          setTtsNotice(`音频已上传，${transcription.matches === false ? '识别内容与当前台词不一致，未覆盖文案。' : transcription.error || '请点击千问转写/刷新，确认提交或读取已有任务。'}`);
-        }
-      }
-    } catch (err: any) {
-      alert(err?.message || '口播音频上传失败，请稍后重试。');
-    } finally {
-      setTtsLoading(false);
-      setTtsLoadingScope(null);
-    }
-  };
+  const handleVoiceoverUpload = voiceSynthesis.handleVoiceoverUpload;
 
-  const handleVoiceSampleUpload = async (files: FileList | null) => {
-    const f = files?.[0];
-    if (!f) return;
-    setTtsLoading(true);
-    setTtsLoadingScope('upload');
-    try {
-      const [dataBase64, duration] = await Promise.all([fileToDataUrl(f), probeAudioDuration(f)]);
-      const r = await studioApi.uploadVoiceSample({ name: f.name, dataBase64, mimeType: f.type, duration });
-      if (!r.ok || !r.voiceId) throw new Error(r.error || '真人音色录入失败');
-      setVoice(r.voiceId);
-      setCustomVoiceId(r.voiceId);
-      setCustomVoiceName(r.name || f.name);
-      setCustomVoiceUrl(r.url || '');
-      setCustomVoices(current => [{ voiceId: r.voiceId!, name: r.name || f.name, url: r.url || '', duration: r.duration || duration, createdAt: new Date().toISOString() }, ...current.filter(item => item.voiceId !== r.voiceId)]);
-      setVoiceCandidates(current => current.includes(r.voiceId!) ? current : [...current, r.voiceId!]);
-      setVoiceoverMode('ai');
-      setVoiceoverUrl(null);
-      setVoiceoverAudios({});
-      setAudioCapabilities(current => current ? {
-        ...current,
-        customVoice: { ...current.customVoice, synthesis: Boolean(r.synthesisReady), message: r.warning || (r.synthesisReady ? `真人音色合成可用（${r.engine === 'xtts' ? 'XTTS/Coqui' : 'MiniMax'}）` : current.customVoice.message) },
-      } : current);
-      setTtsNotice(r.synthesisReady
-        ? `已录入真人音色，可通过 ${r.engine === 'xtts' ? 'XTTS/Coqui' : 'MiniMax'} 生成配音。`
-        : `声音样本已保存，但暂不能合成：${r.warning || '服务器未配置真人音色克隆引擎。'}`);
-    } catch (err: any) {
-      alert(err?.message || '真人音色录入失败，请检查音频文件后重试。');
-    } finally {
-      setTtsLoading(false);
-      setTtsLoadingScope(null);
-    }
-  };
+  const handleVoiceSampleUpload = voiceSynthesis.handleVoiceSampleUpload;
 
-  const genTts = async (onlyLanguage?: string) => {
-    const requestId = ++ttsRequestRef.current;
-    const isCurrentTtsRequest = () => ttsRequestRef.current === requestId;
-    setTtsLoading(true);
-    setTtsLoadingScope(onlyLanguage ? 'single' : 'all');
-    const completeSourceVoiceover = selectCompleteVoiceoverSource(script, voiceoverLines);
-    const detectedSourceLanguage = detectScriptLanguageCode(completeSourceVoiceover || extractVoiceoverText(script));
-    const requestedLangs = onlyLanguage ? [onlyLanguage] : (voiceLangs.length ? voiceLangs : [detectedSourceLanguage]);
-    const failureReasonsByLang: Record<string, string> = {};
-    setTtsActiveLangs(requestedLangs);
-    setTtsFailuresByLang(current => Object.fromEntries(Object.entries(current).filter(([code]) => !requestedLangs.includes(code))));
-    setTtsNotice(`正在生成 ${requestedLangs.length} 个语种配音...`);
-    const existingRequestedAudioCodes = requestedLangs.filter(code => Boolean(voiceoverAudios[code]?.url));
-    if (existingRequestedAudioCodes.length) setVoiceoverStaleLangs(current => [...new Set([...current, ...existingRequestedAudioCodes])]);
-    if (!onlyLanguage) {
-      setVoiceoverUrl(null);
-      setAlignedCuesByLang({});
-    }
-    try {
-      const langs = requestedLangs;
-      const base = completeSourceVoiceover || extractVoiceoverText(script) || script;
-      const sourceLanguage = detectScriptLanguageCode(base);
-      const drafts: Record<string, string> = { ...voiceDrafts, [sourceLanguage]: base };
-      const missingTranslationLangs: string[] = [];
-      const targetsToTranslate: string[] = [];
-      for (const code of langs) {
-        if (code === sourceLanguage) {
-          drafts[sourceLanguage] = base;
-        } else if (drafts[code]?.trim() && voiceoverDraftCoversSource(base, drafts[code])) {
-          continue;
-        } else {
-          delete drafts[code];
-          targetsToTranslate.push(code);
-        }
-      }
-      if (targetsToTranslate.length) {
-        const translated = await studioApi.translateBatch({ text: normalizeScriptTimestamps(base), targets: targetsToTranslate, source: sourceLanguage })
-          .catch((err: any) => ({ ok: false, translations: {} as Record<string, string>, error: err?.message || '请求失败' }));
-        for (const code of targetsToTranslate) {
-          let raw = translated.translations?.[code] || '';
-          let normalized = raw.trim()
-            ? resolveTranslatedVoiceover(base, raw, code)
-            : '';
-          if (!normalized.trim()) {
-            const single = await withStudioTimeout(studioApi.translate({ text: normalizeScriptTimestamps(base), target: code, source: sourceLanguage }))
-              .catch(() => ({ ok: false, text: '' }));
-            if (!isCurrentTtsRequest()) return;
-            raw = single.ok ? single.text : '';
-            normalized = raw.trim() ? resolveTranslatedVoiceover(base, raw, code) : '';
-          }
-          if (normalized.trim()) drafts[code] = normalized;
-          else missingTranslationLangs.push(`${code}:${translated.error || '模型未返回有效译文'}`);
-        }
-      }
-      if (!isCurrentTtsRequest()) return;
-      setVoiceoverLines(base);
-      setVoiceDrafts(drafts);
-
-      const audios: Record<string, { url: string; duration: number; cues?: SubCue[]; text?: string; alignmentSource?: string; customVoiceStatus?: 'activated' }> = { ...voiceoverAudios };
-      const aligned: Record<string, SubCue[]> = onlyLanguage ? { ...alignedCuesByLang } : {};
-      const generatedCodes = new Set<string>();
-      const failures: string[] = [];
-      const availableLangs = langs.filter(code => drafts[code]?.trim());
-      const sourceReferenceLines = stripVoiceoverTimestamps(base).split(/\n+/).map(line => line.trim()).filter(Boolean);
-      const voiceLockedShots = storyboardSlots.map(slot => ({
-        narration: storyboardSlotScript(slot.detail).voice,
-        targetDuration: Math.max(0.5, slot.end - slot.start),
-        lockedSourceVoice: hasAvatarSourceVoice(slot),
-      }));
-      const hasVoiceLockedShots = voiceLockedShots.some(shot => shot.lockedSourceVoice);
-      const unfixedTargetDuration = hasVoiceLockedShots
-        ? durationForUnfixedNarration(voiceLockedShots, sourceReferenceLines)
-        : storyboardTimelineEnd;
-      const ttsJobs = availableLangs.map(code => {
-        const draftLines = stripVoiceoverTimestamps(drafts[code]).split(/\n+/).map(line => line.trim()).filter(Boolean);
-        const sentenceLines = hasVoiceLockedShots
-          ? narrationForUnfixedShots(voiceLockedShots, draftLines, code === sourceLanguage ? undefined : sourceReferenceLines)
-          : draftLines;
-        const text = hasVoiceLockedShots ? sentenceLines.join('\n') : drafts[code];
-        if (!text.trim()) throw new Error('当前分镜全部使用数字人原声，无需生成额外配音');
-        const settings = ttsLanguageSettings[code] || DEFAULT_TTS_SETTINGS;
-        const inheritReferenceRhythm = mode === 'clone' && useReferenceVoiceStyle && referenceVoice.available;
-        const style: Partial<TtsStyleOptions> = {
-          preset: settings.preset,
-          emotion: inheritReferenceRhythm
-            ? `${referenceVoice.emotion}；沿用对标口播的信息密度、能量推进和自然停顿，不复制原声音身份`
-            : settings.emotion,
-          emotionIntensity: inheritReferenceRhythm ? 78 : settings.emotionIntensity,
-          speed: inheritReferenceRhythm ? referenceVoice.baseSpeed : settings.speed,
-          targetDuration: (mode === 'material' || mode === 'clone') && unfixedTargetDuration > 0 ? unfixedTargetDuration : duration,
-          pauseStyle: inheritReferenceRhythm ? 'natural' : settings.pauseStyle,
-          pronunciations: parsePronunciationRules(settings.pronunciationText),
-        };
-        return { code, text, sentenceLines, measuredSentenceTiming: threeStepWorkflow && presentationMode === 'material', voiceId: settings.voiceId || voice, style };
-      });
-      const acceptTtsResult = (code: string, r: Awaited<ReturnType<typeof studioApi.tts>>) => {
-        if (r.ok && r.url) {
-          audios[code] = { url: r.url, duration: r.duration ?? 0, cues: r.cues, text: r.text, alignmentSource: r.alignmentSource, customVoiceStatus: r.customVoiceStatus };
-          generatedCodes.add(code);
-          if (r.cues?.length && isMeasuredVoiceAlignment(r.alignmentSource)) aligned[code] = r.cues;
-          if (r.text?.trim() && !hasVoiceLockedShots) {
-            // TTS providers return plain spoken text without storyboard
-            // timestamps. Keep/rebuild the cue timeline here; replacing the
-            // draft with plain text makes the completed audio fail the next
-            // step's coverage gate after autosave or reload.
-            drafts[code] = resolveTranslatedVoiceover(completeSourceVoiceover, r.text, code)
-              || drafts[code]
-              || r.text;
-          }
-        } else {
-          const label = LANGS.find(item => item.code === code)?.label || code;
-          const reason = publicVoiceFailureReason(r.error || (r.source === 'local' ? '后端连接失败或额度不可用' : '未返回音频'));
-          failureReasonsByLang[code] = reason;
-          failures.push(`${label}：${reason}`);
-        }
-      };
-      if (onlyLanguage) {
-        await Promise.all(ttsJobs.map(async job => {
-          const result = await studioApi.tts({ text: stripVoiceoverTimestamps(job.text), sentenceLines: job.sentenceLines,
-            measuredSentenceTiming: job.measuredSentenceTiming, voice: job.voiceId, language: job.code, style: job.style });
-          acceptTtsResult(job.code, result);
-        }));
-      } else {
-        const groups = new Map<string, typeof ttsJobs>();
-        for (const job of ttsJobs) {
-          const key = JSON.stringify({ voice: job.voiceId, style: job.style });
-          groups.set(key, [...(groups.get(key) || []), job]);
-        }
-        for (const jobs of groups.values()) {
-          if (!isCurrentTtsRequest()) return;
-          const batch = await studioApi.ttsBatch({
-            voice: jobs[0]!.voiceId,
-            style: jobs[0]!.style,
-            items: jobs.map(job => ({ code: job.code, language: job.code, text: stripVoiceoverTimestamps(job.text),
-              sentenceLines: job.sentenceLines, measuredSentenceTiming: job.measuredSentenceTiming })),
-          });
-          for (const job of jobs) acceptTtsResult(job.code, batch.audios[job.code] || { ok: false, source: 'batch', error: batch.error || '批量配音未返回音频' });
-        }
-      }
-      if (!isCurrentTtsRequest()) return;
-      await Promise.all(Object.entries(audios).filter(([code]) => availableLangs.includes(code)).map(async ([code, audio]) => {
-        const text = audio.text || ttsJobs.find(job => job.code === code)?.text || '';
-        if (isMeasuredVoiceAlignment(audio.alignmentSource) && audio.cues?.length) {
-          aligned[code] = audio.cues;
-          return;
-        }
-        if (!text || !audio.url || !audio.duration) return;
-        const result = await studioApi.alignTts({ text, url: audio.url, duration: audio.duration });
-        if (result.ok && result.cues?.length && isMeasuredVoiceAlignment(result.source)) {
-          audio.cues = result.cues;
-          audio.alignmentSource = result.source;
-          aligned[code] = result.cues;
-        } else {
-          audio.alignmentSource = 'pending_alignment';
-          delete aligned[code];
-        }
-      }));
-      if (!isCurrentTtsRequest()) return;
-      const activeCode = langs.includes(activeVoiceLang) ? activeVoiceLang : langs[0] || 'zh';
-      const activeAudio = generatedCodes.has(activeCode)
-        ? audios[activeCode]
-        : [...generatedCodes].map(code => audios[code]).find(Boolean);
-      if (!activeAudio) {
-        throw new Error(failures[0] || '没有生成可用配音，请检查 TTS Key 或试用额度。');
-      }
-      setVoiceoverMode('ai');
-      setVoiceoverAudios(audios);
-      setRenderOutputPath(null);
-      setRenderOutputPreviewUrl(null);
-      setLanguageRenderOutputs({});
-      setLanguageRenderVersions({});
-      setStoryboardVideoVersions({});
-      setProductVideoVersions([]);
-      setVoiceDrafts({ ...drafts });
-      setVoiceDraftStaleLangs(current => current.filter(code => !availableLangs.includes(code)));
-      setVoiceoverStaleLangs(current => current.filter(code => !generatedCodes.has(code)));
-      setActiveVoiceLang(activeCode);
-      setLang(activeCode);
-      setVoiceoverUrl(activeAudio.url);
-      setVoiceoverDur(activeAudio.duration);
-      setUploadedVoiceName('');
-      setSubtitlesOn(true);
-      setSubMode('target');
-      missingTranslationLangs.forEach(item => {
-        const separatorIndex = item.indexOf(':');
-        const code = separatorIndex >= 0 ? item.slice(0, separatorIndex) : item;
-        const reason = separatorIndex >= 0 ? item.slice(separatorIndex + 1) : '翻译失败';
-        failureReasonsByLang[code] = `翻译失败，未生成配音（${reason || '未知原因'}）`;
-      });
-      if (Object.keys(failureReasonsByLang).length) {
-        setTtsFailuresByLang(current => ({ ...current, ...failureReasonsByLang }));
-      }
-      setTtsNotice(failures.length || missingTranslationLangs.length
-        ? `本次已生成 ${availableLangs.length - failures.length}/${langs.length} 个语种配音；${[...failures, ...missingTranslationLangs.map(item => {
-          const [code, reason] = item.split(':');
-          return `${LANGS.find(langItem => langItem.code === code)?.label || code}：翻译失败，未生成配音（${reason || '未知原因'}）`;
-        })].join('；')}`
-        : voice.startsWith('custom:') && Object.values(audios).some(item => item.customVoiceStatus === 'activated')
-          ? `已生成 ${langs.length} 个语种配音，真人音色已通过正式 TTS 激活并保存。下一步可一键生成字幕。`
-          : `已生成 ${langs.length} 个语种配音。下一步可一键生成字幕。`);
-    } catch (err: any) {
-      if (!isCurrentTtsRequest()) return;
-      const reason = err?.message || '配音生成失败，请稍后重试。';
-      setTtsFailuresByLang(current => ({
-        ...current,
-        ...Object.fromEntries(requestedLangs.map(code => [code, failureReasonsByLang[code] || reason])),
-      }));
-      setTtsNotice(reason);
-    } finally {
-      if (isCurrentTtsRequest()) {
-        setTtsLoading(false);
-        setTtsLoadingScope(null);
-        setTtsActiveLangs([]);
-      }
-    }
-  };
-  const generateSubtitleDrafts = async () => {
-    setSubtitleGenerating(true);
-    setSubtitleNotice('正在按每个语言的真实口播时长生成字幕文案…');
-    try {
-      const next: Record<string, SubCue[]> = { ...alignedCuesByLang };
-      const failed: string[] = [];
-      for (const code of voiceLangs) {
-        const text = voiceDrafts[code]?.trim();
-        if (!text) {
-          failed.push(LANGS.find(item => item.code === code)?.label || code);
-          continue;
-        }
-        const audio = voiceoverAudios[code];
-        const generated = audio?.cues?.length
-          ? audio.cues
-          : buildCues(text, audio?.duration || voiceoverDur || totalDur || duration);
-        if (generated.length) next[code] = generated;
-        else failed.push(LANGS.find(item => item.code === code)?.label || code);
-      }
-      setAlignedCuesByLang(next);
-      setSubtitlesOn(true);
-      setSubtitleNotice(failed.length
-        ? `其余语言字幕已生成；${failed.join('、')}缺少可用文案，请先补全文案。`
-        : `已生成 ${voiceLangs.length} 个语言的字幕文案，可直接逐条调整。`);
-    } finally {
-      setSubtitleGenerating(false);
-    }
-  };
-  useEffect(() => {
-    const audio = voiceoverAudios[activeVoiceLang];
-    if (!audio || voiceoverMode !== 'ai') return;
-    setVoiceoverUrl(audio.url);
-    setVoiceoverDur(audio.duration);
-  }, [activeVoiceLang, voiceoverAudios, voiceoverMode]);
-  useEffect(() => {
-    const el = ttsAudioRef.current;
-    if (!el) return;
-    const update = () => {
-      setTtsCurrentTime(el.currentTime);
-      if (!cues.length) return;
-      const current = cues.findIndex(cue => el.currentTime >= cue.start && el.currentTime < cue.end);
-      if (current >= 0) setSubPreviewIdx(current);
-    };
-    el.addEventListener('timeupdate', update);
-    return () => el.removeEventListener('timeupdate', update);
-  }, [cues]);
-  const playTtsForLang = (code: string) => {
-    const audio = voiceoverAudios[code];
-    if (!audio?.url) return;
-    setVoiceoverMode('ai');
-    setActiveVoiceLang(code);
-    setLang(code);
-    setVoiceoverUrl(audio.url);
-    setVoiceoverDur(audio.duration);
-    const el = ttsAudioRef.current;
-    if (!el) return;
-    void playAudioWithAuthenticatedFallback(el, audio.url, ttsLanguageSettings[code]?.volume ?? voiceVol / 100)
-      .then(() => setTtsPlaying(true))
-      .catch((error: unknown) => {
-        setTtsPlaying(false);
-        const message = error instanceof Error ? error.message : String(error || '浏览器未能加载音频');
-        setTtsNotice(`配音播放失败：${message}。请重新生成配音后再试。`);
-      });
-  };
+  const genTts = voiceSynthesis.genTts;
+  const generateSubtitleDrafts = voiceSubtitles.generateSubtitleDrafts;
+  useStudioActiveVoiceAudio(voicePorts);
+  useStudioVoicePlaybackProgress(voicePorts);
+  const playTtsForLang = voicePlayback.playTtsForLang;
   // 离开脚本步时停止试听
-  useEffect(() => {
-    if (step !== 'script' && ttsAudioRef.current) { ttsAudioRef.current.pause(); setTtsPlaying(false); }
-    if (step !== 'script') setVoicePreviewIdx(null);
-  }, [step]);
+  useStudioVoicePlaybackStop(voicePorts);
 
   /* ── 草稿 / 作品 ─────────────────────────────────────────────────────── */
   const { collectSpec } = createStudioProjectSnapshot(projectPorts);
@@ -7563,49 +6937,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               : step === 'script' ? '完成脚本与声音设置'
                 : step === 'material' && activeWorkbenchSlot ? `${activeSlotTime || '当前分镜'} · ${activeMaterialAssessment ? '素材已匹配' : '待匹配'}`
                   : activeStages[stageIdx]?.hint;
-  const workflowSourceLanguage = detectScriptLanguageCode(voiceoverLines || extractVoiceoverText(script)) || voiceLangs[0] || 'zh';
-  const removeTranslationLanguage = (code: string) => {
-    if (!code || code === workflowSourceLanguage) return;
-    if (voiceDraftLoading) {
-      voiceDraftAbortRef.current?.abort();
-      voiceDraftAbortRef.current = null;
-      setVoiceDraftLoading(false);
-      setVoiceDraftPendingLangs([]);
-      setVoiceDraftNotice('已按新的语种选择停止上一次翻译；已完成的文案已保留。');
-    }
-    setVoiceLangs(current => [workflowSourceLanguage, ...current.filter(item => item !== workflowSourceLanguage && item !== code)]);
-    setVoiceDrafts(current => { const next = { ...current }; delete next[code]; return next; });
-    setVoiceDraftStaleLangs(current => current.filter(item => item !== code));
-    setVoiceDraftPendingLangs(current => current.filter(item => item !== code));
-    setVoiceDraftFailedLangs(current => current.filter(item => item !== code));
-    setVoiceoverAudios(current => { const next = { ...current }; delete next[code]; return next; });
-    setVoiceoverStaleLangs(current => current.filter(item => item !== code));
-    setAlignedCuesByLang(current => { const next = { ...current }; delete next[code]; return next; });
-    setTtsLanguageSettings(current => { const next = { ...current }; delete next[code]; return next; });
-    setTtsFailuresByLang(current => { const next = { ...current }; delete next[code]; return next; });
-    // Render combinations encode language in their key. Clearing generated
-    // outputs is safer than publishing a version for a language the user has
-    // explicitly removed.
-    setRenderOutputPath(null);
-    setRenderOutputPreviewUrl(null);
-    setLanguageRenderOutputs({});
-    setLanguageRenderVersions({});
-    if (activeVoiceLang === code) {
-      setActiveVoiceLang(workflowSourceLanguage);
-      setLang(workflowSourceLanguage);
-    }
-  };
-  const toggleTranslationLanguage = (code: string) => {
-    if (code === workflowSourceLanguage) return;
-    if (voiceLangs.includes(code)) {
-      removeTranslationLanguage(code);
-      return;
-    }
-    setVoiceLangs(current => {
-      const sourceFirst = [workflowSourceLanguage, ...current.filter(item => item !== workflowSourceLanguage)];
-      return [...sourceFirst, code];
-    });
-  };
+  const {
+    workflowSourceLanguage,
+  } = createStudioVoiceWorkflowSource(voicePorts);
+  const removeTranslationLanguage = voiceTranslation.removeTranslationLanguage;
+  const toggleTranslationLanguage = voiceTranslation.toggleTranslationLanguage;
   const languageSwitcher = renderStudioLanguageSwitcher({
     voiceLangs, activeVoiceLang, voiceDraftFailedLangs,
     ttsFailuresByLang, workflowSourceLanguage, setActiveVoiceLang,
@@ -7613,16 +6949,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     showLanguagePicker, toggleTranslationLanguage,
   });
 
-  const invalidateMusicRender = () => {
-    setRendered(false); setRenderOutputPath(null); setRenderOutputPreviewUrl(null);
-    setLanguageRenderOutputs({});
-  };
-  const applyWorkbenchBgm = (trackId: string) => {
-    invalidateMusicRender();
-    setBgm(trackId);
-    setAssemblyBgms(current => ({ ...current, [activeAssemblyId]: trackId }));
-    setMaterialVersionBgms(current => ({ ...current, [materialVersionKey(activeAssemblyId, activeVoiceLang)]: trackId }));
-  };
+  const invalidateMusicRender = voiceSoundtrack.invalidateMusicRender;
+  const applyWorkbenchBgm = voiceSoundtrack.applyWorkbenchBgm;
   const workbenchProductionPanel = renderStudioProductionPanel({
     threeStepWorkflow, step, scriptStageTab,
     bgmLibraryRef, bgmInputRef, handleBgmUpload,
