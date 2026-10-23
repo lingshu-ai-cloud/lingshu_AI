@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工页面不可达旧视图清理（2026-10-23）
+
+- 代码提交 `f1253f49f04e202beec43ef3479bfbfad13f77ee` 删除已有配置时被更早 `return` 截断的重复工作台视图与其专属派生状态、辅助展示和导入。首次配置的引导及当前挂载的 `BusinessHealthOverview`、`SmartBusinessDashboard`、周控制台和生产详情入口保持原路径；源码合同改为断言真实挂载关系。`DigitalEmployeePage.tsx` 从 2,033 降至 1,409 行，架构预算同步收紧；全仓仍有 6 个历史超限文件，结构拆分未完成。
+- 完整 `test:digital-employees` 离线领域组、`test:tenant-isolation`、TypeScript、架构扫描/ratchet（2,401 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建和 `git diff --check` 通过。Studio 主 chunk 为 480,909/485,000 字节，构建仍有大 chunk 提示。源码还保留若干未挂载的独立组件，不能当作可见功能。按用户决定暂不测试 LinkedIn 真实付费采集；未执行其他真实付费请求、目标库迁移、浏览器交互或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## 数字员工总览只读编排边界拆分（2026-10-23）
 
 - 代码提交 `a3bc89e3bb03e0c6d341b41f9e425663b2cdb18f` 将数字员工总览的租户限定读取、已提交周目标选择、内容队列/运行态/编导分析和发布准备的响应组装迁至 `server/routes/digitalEmployeeOverviewReader.ts`；原路由继续负责鉴权、可信租户身份、配置/目标读能力注入、状态写入与 SSE。`digitalEmployees.ts` 从 5,469 降至 5,355 行，历史预算同步收紧；全仓仍有 6 个历史超限文件。

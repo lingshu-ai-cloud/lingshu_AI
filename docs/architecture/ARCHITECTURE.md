@@ -40,10 +40,9 @@
 - `src/components/DigitalEmployeePage.tsx` 与 `src/components/smartBusiness/WeeklyGoalPanel.tsx`：数字员工页负责新周目标的提交、冲突恢复与运行导航；独立周目标面板持有草稿、预设方案、平台配额重算、视频计划校验和排期确认，不直接调用生产 API。`DigitalEmployeeFormField.tsx` 是页面与周目标面板共用的表单字段样式。
 - `src/components/smartBusiness/digitalEmployeeConfigRules.ts`：数字员工首次配置的安全默认值、旧发布节奏配额换算、配置补全及发布/跟进人工审批校验；页面仍持有引导交互、企业资料读取、用户确认和现有保存接口，不在规则模块中执行真实发布或消息发送。
 - `src/components/smartBusiness/onboardingProductImport.ts`：首次引导产品资料的文件类型/大小校验、PDF/DOCX/TXT/表格解析、明确归属的图片上传、未归属页留在素材库、按稳定产品 ID 合并及现有鉴权企业档案写入。页面只保留选择、忙碌与结果反馈；未核验图片不得自动绑定产品。
-- 数字员工首页实际挂载 `BusinessHealthOverview`、`SmartBusinessDashboard` 和 `DigitalEmployeeTodayFocusPanel`；旧的未挂载“今日经营快照”、指标卡与转化图表脚手架已移除。源码契约测试必须检查实际挂载路径，不以死函数存在证明界面已交付。
-- 选中数字员工任务的当前生产详情由 `ProductionTaskScene` 挂载，并用 `buildTaskDeepLink` 进入业务工作台；历史 `ProductionScene`、事件流、截图、纠偏与跳过/人工完成按钮链从未挂载，已移除。页面的 `SmartBusinessDashboard` 仍提供原任务重试入口；`skipTask`/`completeTask` 的服务端 API 存在不等于当前页面有相应按钮，后续需求须在真实入口单独设计和验收。
-- `src/components/smartBusiness/DigitalEmployeeTodayFocusPanel.tsx`：首页“本周进度/需要你处理”的可达视图，依据真实任务、待审批项与计划状态展示至多三项关注动作。页面继续提供执行导航和状态文案；旧的 `TodayNextAction`、`BusinessLoopMap`、`ResourcePreflightPanel`、`NextActionBanner` 和 `DraftPlanPreview` 从未挂载，已移除，不能用其文案证明界面已交付。资产就绪跳转仍由实际挂载的 `OnboardingPanel` 使用。
-- `src/components/smartBusiness/BatchFollowupTruthPanel.tsx`：承载客户转化工作区内逐客草稿、整批人工批准、真实发送预检/回执及手动派发按钮的展示。仅以服务端任务输出中的租户/渠道授权事实启用按钮；页面仍持有已登录身份、批次派发 API、忙碌状态和业务跳转，组件不自行发送消息。
+- 数字员工首页实际挂载 `BusinessHealthOverview`、`SmartBusinessDashboard`、`WeeklyCommandCenter` 和首次配置 `OnboardingPanel`。`DigitalEmployeeTodayFocusPanel`、`BatchFollowupTruthPanel`、`DeliveryBoard`、`WeeklyPackagePanel` 与 `ProductionProgressPanel` 仍有独立源码或合同，但未在页面或其他生产入口挂载；不能把这些模块的存在计作可见功能。源码契约测试须核对当前挂载路径。
+- 选中数字员工内容项的生产详情由 `SmartBusinessDashboard` 挂载 `ProductionTaskScene`，页面通过 `buildTaskDeepLink` 进入业务工作台；历史 `ProductionScene`、事件流、截图、纠偏与跳过/人工完成按钮链从未挂载，已移除。当前 dashboard 提供任务重试入口；`skipTask`/`completeTask` 的服务端 API 存在不等于当前页面有相应按钮，后续需求须在真实入口单独设计和验收。
+- `DigitalEmployeePage.tsx` 在已有配置时先返回当前经营视图；首次配置时才进入文件末尾的引导视图。此前末尾重复的已配置工作台分支在控制流上不可达，已删除。删除不恢复上述未挂载模块，也不改变现有交互。
 - `src/lib/studioApi.ts`、`src/lib/socialImageApi.ts`：前端 API 适配层。
 - `shared/contracts/`：跨端任务、内容与交付合同；字段变更需检查旧任务兼容性。
 - `server/routes/`：HTTP 鉴权、输入规范化、租户上下文和响应编排；业务算法逐步下沉到领域模块。
