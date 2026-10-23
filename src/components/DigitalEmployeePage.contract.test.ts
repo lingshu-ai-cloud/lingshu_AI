@@ -124,10 +124,8 @@ const dashboardRoutesSource = smartBusinessSource.slice(smartBusinessSource.inde
 const workspaceTabsSource = pageSource.slice(pageSource.indexOf('const views: Array<'), pageSource.indexOf('const currentVideoPlans', pageSource.indexOf('const views: Array<')));
 const initialPlanSaveSource = fs.readFileSync('src/components/digitalEmployeeConfigurationAction.ts', 'utf8');
 assert.match(pageSource, /createDigitalEmployeeConfigurationAction\(\{[\s\S]{0,240}recoverEnterpriseFactsChanged/, 'the page must wire the existing recovery and state callbacks into the configuration action');
-const enterpriseFactsRecoverySource = pageSource.slice(
-  pageSource.indexOf('const recoverEnterpriseFactsChanged'),
-  pageSource.indexOf('const act', pageSource.indexOf('const recoverEnterpriseFactsChanged')),
-);
+const enterpriseFactsRecoverySource = fs.readFileSync('src/components/digitalEmployeeFactRecovery.ts', 'utf8');
+assert.match(pageSource, /createDigitalEmployeeFactRecovery\(\{[\s\S]{0,240}setWeeklyPlanOpen/, 'the page must wire its existing state and in-flight registry into fact recovery');
 const mutationActionSource = pageSource.slice(
   pageSource.indexOf('const act'),
   pageSource.indexOf('const goal =', pageSource.indexOf('const act')),
@@ -702,9 +700,9 @@ for (const field of ['requestId', 'expectedGoalVersion', 'sourcePlanId', 'expect
 }
 assert.match(digitalEmployeeApiSource, /function rebuildGoalFromLatestFacts[\s\S]{0,300}input: EnterpriseFactsRebuildInput[\s\S]{0,800}rebuildGoalRequests\.get\(key\)[\s\S]{0,500}rebuild-from-latest-facts[\s\S]{0,200}JSON\.stringify\(input\)/, 'fact rebuilds must deduplicate identical guarded requests and send the full source-plan protocol to the dedicated endpoint');
 assert.match(enterpriseFactsRecoverySource, /instanceof DigitalEmployeeApiError[\s\S]{0,180}actionError\.code !== ENTERPRISE_FACTS_CHANGED_ERROR_CODE/, 'only the structured enterprise_facts_changed code may trigger automatic recovery');
-assert.match(enterpriseFactsRecoverySource, /enterpriseFactsRebuildInput\(staleGoal, actionError\.details\)[\s\S]{0,900}enterpriseFactsRecoveryRef\.current\.get\(recoveryKey\)/, 'the page must require conflict-provided source-plan evidence and coalesce only an identical guarded rebuild');
+assert.match(enterpriseFactsRecoverySource, /enterpriseFactsRebuildInput\(staleGoal, actionError\.details\)[\s\S]{0,900}context\.pending\.get\(recoveryKey\)/, 'fact recovery must require conflict-provided source-plan evidence and coalesce only an identical guarded rebuild');
 assert.match(enterpriseFactsRecoverySource, /catch \{[\s\S]{0,80}return false/, 'missing or malformed source-plan evidence must fall back without attempting automatic rebuild');
-assert.match(enterpriseFactsRecoverySource, /digitalEmployeeApi\.rebuildGoalFromLatestFacts\(staleGoal\.id, rebuildInput\)/, 'automatic recovery must use the dedicated latest-facts rebuild operation');
+assert.match(enterpriseFactsRecoverySource, /context\.rebuildGoal \|\| digitalEmployeeApi\.rebuildGoalFromLatestFacts[\s\S]{0,2200}rebuildGoal\(staleGoal\.id, rebuildInput\)/, 'automatic recovery must use the dedicated latest-facts rebuild operation');
 assert.match(enterpriseFactsRecoverySource, /let rebuildAttempt = 0[\s\S]{0,700}rebuildAttempt >= 1[\s\S]{0,500}rebuildAttempt \+= 1/, 'a second enterprise fact change may retry the idempotent rebuild once, but recovery must remain bounded');
 assert.match(enterpriseFactsRecoverySource, /setData\(rebuilt\)[\s\S]{0,700}计划已按最新企业资料重建[\s\S]{0,300}新版周计划已回到智能经营[\s\S]{0,200}重新核对计划并确认开始生产/, 'successful recovery must replace the overview and require a fresh review without replaying the stale launch');
 assert.doesNotMatch(enterpriseFactsRecoverySource, /digitalEmployeeApi\.(?:savePackage|approveGoal|startInitialPreparation|generatePackageDetails|recommendPackage)/, 'recovery must never replay the stale save, approval, launch, or generation action');

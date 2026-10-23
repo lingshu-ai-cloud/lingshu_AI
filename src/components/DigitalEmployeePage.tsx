@@ -11,6 +11,7 @@ import { EMPTY_CONFIG } from './smartBusiness/digitalEmployeeConfigRules';
 import { OnboardingPanel } from './smartBusiness/DigitalEmployeeOnboardingPanel';
 import { GoalPanel, type GoalDraft, type BusinessLine, type ContentPlatform } from './smartBusiness/WeeklyGoalPanel';
 import { createDigitalEmployeeConfigurationAction } from './digitalEmployeeConfigurationAction';
+import { createDigitalEmployeeFactRecovery } from './digitalEmployeeFactRecovery';
 import { type OpenBusinessLink } from './smartBusiness/BatchFollowupTruthPanel';
 import WeeklyStartConflictAlert from './WeeklyStartConflictAlert';
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
@@ -29,7 +30,6 @@ import {
 } from "lucide-react";
 import { authHeader, AUTH_TOKEN_CHANGED_EVENT } from "../lib/auth";
 import { showActionFeedback, showActionSuccess } from "../lib/actionFeedback";
-import { DigitalEmployeeApiError } from "../lib/digitalEmployeeApi";
 import { confirmedWeeklyExecution, weeklyStartConflictFromError, weeklyStartResultNeedsReconciliation, type WeeklyStartConflict } from '../lib/weeklyStartValidation';
 import {
   WEEKLY_WORK_UPDATED_EVENT,
@@ -42,15 +42,12 @@ import {
   consumeDigitalEmployeeReturnContext,
   digitalEmployeeApi,
   dispatchDigitalEmployeeDeepLink,
-  ENTERPRISE_FACTS_CHANGED_ERROR_CODE,
-  enterpriseFactsRebuildInput,
   streamRunEvents,
   type BusinessDestination,
   type BusinessReadinessItem,
   type DigitalEmployeeConfig,
   type DigitalEmployeeDeepLink,
   type DigitalEmployeeOverview,
-  type WeeklyGoal,
   type WorkflowTask,
 } from "../lib/digitalEmployees";
 
@@ -394,85 +391,12 @@ export default function DigitalEmployeePage({
     return () => window.clearInterval(timer);
   }, [data?.run?.id, data?.run?.status, viewGoalId, workspaceView]);
 
-  const recoverEnterpriseFactsChanged = async (
-    actionError: unknown,
-    staleGoal: Pick<WeeklyGoal, "id" | "version"> | null | undefined,
-  ): Promise<boolean> => {
-    if (
-      !(actionError instanceof DigitalEmployeeApiError)
-      || actionError.code !== ENTERPRISE_FACTS_CHANGED_ERROR_CODE
-      || !staleGoal
-    ) return false;
-
-    let rebuildInput: ReturnType<typeof enterpriseFactsRebuildInput>;
-    try {
-      rebuildInput = enterpriseFactsRebuildInput(staleGoal, actionError.details);
-    } catch {
-      return false;
-    }
-    const authorization = authHeader().Authorization;
-    const recoveryKey = [
-      authorization || "",
-      staleGoal.id,
-      rebuildInput.expectedGoalVersion,
-      rebuildInput.sourcePlanId,
-      rebuildInput.expectedFactsVersion,
-      rebuildInput.expectedSourcePlanDigest,
-    ].join("\u0000");
-    const pending = enterpriseFactsRecoveryRef.current.get(recoveryKey);
-    if (pending) {
-      await pending;
-      return true;
-    }
-    const recovery = (async () => {
-      try {
-        let rebuildAttempt = 0;
-        let rebuilt: DigitalEmployeeOverview;
-        while (true) {
-          try {
-            rebuilt = await digitalEmployeeApi.rebuildGoalFromLatestFacts(staleGoal.id, rebuildInput);
-            break;
-          } catch (rebuildError) {
-            if (
-              rebuildAttempt >= 1
-              || !(rebuildError instanceof DigitalEmployeeApiError)
-              || rebuildError.code !== ENTERPRISE_FACTS_CHANGED_ERROR_CODE
-            ) throw rebuildError;
-            // Enterprise facts changed again while the replacement was being
-            // assembled. Retry this dedicated, idempotent rebuild once; never
-            // replay the original save, approval, or launch action.
-            rebuildAttempt += 1;
-          }
-        }
-        if (authorization !== authHeader().Authorization) return;
-        overviewRequestVersionRef.current += 1;
-        setData(rebuilt);
-        setError("");
-        setViewGoalId("");
-        setNewGoal(false);
-        setPlanHistoryOpen(false);
-        setSelectedContentItemId("");
-        setWorkspaceView("today");
-        setWeeklyPlanOpen(false);
-        showActionSuccess(
-          "计划已按最新企业资料重建",
-          "新版周计划已回到智能经营。请重新核对计划并确认开始生产；原保存、批准或启动操作没有自动重试。",
-        );
-      } catch (rebuildError) {
-        if (authorization !== authHeader().Authorization) return;
-        setError(rebuildError instanceof Error ? `计划自动重建失败：${rebuildError.message}` : "计划自动重建失败，请刷新后重试");
-      }
-    })();
-    enterpriseFactsRecoveryRef.current.set(recoveryKey, recovery);
-    try {
-      await recovery;
-    } finally {
-      if (enterpriseFactsRecoveryRef.current.get(recoveryKey) === recovery) {
-        enterpriseFactsRecoveryRef.current.delete(recoveryKey);
-      }
-    }
-    return true;
-  };
+  const recoverEnterpriseFactsChanged = createDigitalEmployeeFactRecovery({
+    pending: enterpriseFactsRecoveryRef.current,
+    overviewRequestVersionRef,
+    setData, setError, setViewGoalId, setNewGoal, setPlanHistoryOpen,
+    setSelectedContentItemId, setWorkspaceView, setWeeklyPlanOpen,
+  });
 
   const act = async (
     key: string,
