@@ -330,12 +330,12 @@ assert.match(productionIntakeSource, /function assistantProductionIntent[\s\S]*h
 assert.match(sendHookSource, /import \{ assistantProductionIntent \} from '\.\/assistantProductionIntake'/, '助手必须调用企业产品准入模块');
 assert.match(sendSource, /assistantProductionIntent\(visibleText\)[\s\S]*await runAssistantProductionRequest\(/, '生产指令必须交给真实任务执行链路');
 assert.match(productionRequestSource, /resolveProduct\(productionIntent\.productQuery\)/, '生产指令必须解析真实企业产品');
-assert.match(productionRequestSource, /createTask\(\{[\s\S]*dueAt: confirmedDueAt/, '生产任务必须带明确的交付截止时间并调用后端入口');
-assert.match(productionRequestSource, /upsertTaskCard\(threadAgent,[\s\S]*taskId: `social-content:\$\{productionTask\.taskId\}`/, '自然语言生产回执也必须保留真实任务入口');
+assert.match(productionRequestSource, /createAtVersion[\s\S]*dueAt: null[\s\S]*mode: 'instant'/, '单条生产指令必须通过原子入口建立即时 ContentTask，不伪造周任务截止时间');
+assert.match(productionRequestSource, /contentTaskCardToAssistantCard\(authoritativeCard\)[\s\S]*focusTaskCard\(threadAgent, assistantCard\.taskId\)/, '自然语言生产回执必须聚焦服务端权威任务卡');
 assert.doesNotMatch(productionRequestSource, /agentTaskDemo: true/, '真实执行不得进入演示页面');
 assert.match(productionRequestSource, /productId: productionProduct\.id[\s\S]*productRef: productionProduct\.label/, '周任务必须绑定企业中心的真实产品身份');
-assert.match(sendSource, /closeForNavigation:[\s\S]*setAssistantTool\(null\)[\s\S]*setMode\('breathing'\)/, '进入生产页前必须收起灵小枢对话窗口');
-assert.match(productionRequestSource, /page: 'smartAssets'[\s\S]*socialContentTaskId: productionTask\.taskId/, '任务创建后必须定位到该任务的生产页面');
+assert.match(sendSource, /assistantAtomicMutationRef\.current = true[\s\S]*await runAssistantProductionRequest[\s\S]*assistantAtomicMutationRef\.current = false/, '原子建任务期间必须暂停后台会话保存，避免抢占 CAS 版本');
+assert.doesNotMatch(productionRequestSource, /lingshu:navigate|window\.location|page: 'smartAssets'/, '任务建立后应留在同一权威任务卡，不得强制跳离对话');
 assert.ok(sendSource.indexOf('await runAssistantProductionRequest') < sendSource.indexOf('await streamAssistantReply'), '生产任务分流必须发生在千问文本生成请求之前');
 assert.match(sendSource, /endpoint: API_PATH\[agentForOrbit\(routeAgent\)\]/, 'business 主线程聚合不得丢失当前页面的内部能力路由');
 assert.doesNotMatch(sendSource, /setPaused\(targetAgent,\s*false\)/, '发送普通消息不得擅自把任务恢复为运行中');

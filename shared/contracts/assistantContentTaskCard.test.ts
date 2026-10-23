@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { SocialContentTaskSummary } from './socialContentTaskContract.js';
+import type { ProductionReadModelV1 } from './productionReadModel.js';
+import type { SocialContentTaskDetail, SocialContentTaskSummary } from './socialContentTaskContract.js';
 import { projectContentProductionTaskCard } from './assistantContentTaskCard.js';
 
 function task(patch: Partial<SocialContentTaskSummary> = {}): SocialContentTaskSummary {
@@ -50,4 +51,31 @@ test('keeps approval, delivery and publication semantics distinct', () => {
   assert.match(delivered.currentNode.userFacingSummary, /不代表已发布/);
   assert.equal(delivered.progress.mode, 'units');
   if (delivered.progress.mode === 'units') assert.equal(delivered.progress.completed, 1);
+});
+
+test('uses the canonical production read model for node, blockers, cost, progress and recovery', () => {
+  const production: ProductionReadModelV1 = {
+    schemaVersion: 'production-read-model.v1', authority: 'canonical_task',
+    project: { kind: 'social_content', id: 'content-1', version: '7', title: '青柠精华短视频', taskStatus: 'producing', runId: 'run-1', studioProjectId: null, studioProjectVersion: null, studioProjectStatus: null, studioProjectConflict: false },
+    aggregate: {
+      stage: 'production', status: 'running', executable: true,
+      identityGuarantee: { overall: 'qa_gated', product: 'qa_gated', presenter: 'not_required', requiresQa: true, basis: ['verified_product'] },
+      inputs: { required: [], missing: [], items: [] },
+      cost: { currency: 'CNY', expectedCny: 6, upperBoundCny: 8, actualCny: null, unsettledCny: null, status: 'estimated', reusable: false, basis: 'execution_plan' },
+      blockers: [{ code: 'provider_reconciliation', message: '外部回执仍在核对，请勿重复提交', recoverable: true, inputId: null }],
+      counts: { total: 3, ready: 0, running: 2, needsInput: 0, blocked: 0, review: 0, completed: 1 },
+      phases: [], allowedCommands: ['open_project'],
+    },
+    shots: [], updatedAt: '2026-10-24T01:06:00.000Z',
+  };
+  const card = projectContentProductionTaskCard({
+    ...task({ status: 'producing', readiness: { complete: true, missing: [] }, runId: 'run-1' }), production,
+  } as unknown as SocialContentTaskDetail);
+  assert.equal(card.overallState, 'processing');
+  assert.equal(card.currentNode.id, 'production_run');
+  assert.deepEqual(card.progress, { mode: 'units', completed: 1, total: 3 });
+  assert.equal(card.blockingItems[0]?.value, '外部回执仍在核对，请勿重复提交');
+  assert.equal(card.cost?.upperBoundCny, 8);
+  assert.deepEqual(card.recoveryCursor, { kind: 'task_projection', value: 'content-1@7#2026-10-24T01:06:00.000Z', runId: 'run-1' });
+  assert.equal(card.lastConfirmedAt, '2026-10-24T01:06:00.000Z');
 });

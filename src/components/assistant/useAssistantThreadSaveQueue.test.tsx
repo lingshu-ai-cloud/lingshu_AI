@@ -34,6 +34,7 @@ test('assistant save queue serializes updates and carries the latest CAS version
     useAssistantStore.getState().hydrateThread('business', emptyAssistantThread());
     const scope = { tenantId: 'tenant-a', userId: 'user-a' };
     const fenceRef = { current: { scopeKey: 'tenant-a\u0000user-a', active: true } };
+    const pauseRef = { current: false };
     const queuesRef = { current: new Map<OrbitAgentId, AssistantThreadSaveQueue>() };
     let persistThread: ReturnType<typeof useAssistantThreadSaveQueue> | undefined;
     renderToStaticMarkup(createElement(() => {
@@ -41,6 +42,7 @@ test('assistant save queue serializes updates and carries the latest CAS version
         stablePersistenceScope: scope,
         persistenceFenceRef: fenceRef,
         assistantThreadSaveQueuesRef: queuesRef,
+        persistencePauseRef: pauseRef,
         hydrateThread: useAssistantStore.getState().hydrateThread,
         setPersistenceMetadata: useAssistantStore.getState().setPersistenceMetadata,
       });
@@ -48,6 +50,10 @@ test('assistant save queue serializes updates and carries the latest CAS version
     }));
     assert.ok(persistThread);
     useAssistantStore.getState().setMessages('business', [{ role: 'user', content: 'first' }]);
+    pauseRef.current = true;
+    persistThread('business');
+    assert.equal(requests.length, 0, 'an atomic business mutation must exclude background thread saves');
+    pauseRef.current = false;
     persistThread('business');
     useAssistantStore.getState().setMessages('business', [{ role: 'user', content: 'latest' }]);
     persistThread('business');

@@ -25,12 +25,14 @@ export function useAssistantThreadSaveQueue({
   stablePersistenceScope,
   persistenceFenceRef,
   assistantThreadSaveQueuesRef,
+  persistencePauseRef,
   hydrateThread,
   setPersistenceMetadata,
 }: {
   stablePersistenceScope: AssistantJournalScope;
   persistenceFenceRef: { current: ScopeFence };
   assistantThreadSaveQueuesRef: { current: Map<OrbitAgentId, AssistantThreadSaveQueue> };
+  persistencePauseRef?: { current: boolean };
   hydrateThread: (agentId: OrbitAgentId, patch: Partial<AgentThreadState>) => void;
   setPersistenceMetadata: (agentId: OrbitAgentId, version: number, updatedAt: string) => void;
 }) {
@@ -38,6 +40,7 @@ export function useAssistantThreadSaveQueue({
     agentId: OrbitAgentId,
     reason: AssistantPersistenceReason = 'change',
   ) => {
+    if (persistencePauseRef?.current) return;
     const fence = persistenceFenceRef.current;
     const fenceIsCurrent = () => fence.active && persistenceFenceRef.current === fence;
     if (!fenceIsCurrent()) return;
@@ -153,6 +156,6 @@ export function useAssistantThreadSaveQueue({
         }
       }
     })();
-  }, [assistantThreadSaveQueuesRef, hydrateThread, persistenceFenceRef, setPersistenceMetadata, stablePersistenceScope]);
+  }, [assistantThreadSaveQueuesRef, hydrateThread, persistenceFenceRef, persistencePauseRef, setPersistenceMetadata, stablePersistenceScope]);
   return persistThread;
 }

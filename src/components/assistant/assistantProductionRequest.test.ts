@@ -4,6 +4,7 @@ import type { AssistantTaskCardInput } from '../../stores/assistantStore';
 import { assistantProductionIntent } from './assistantProductionIntake';
 import { runAssistantProductionRequest } from './assistantProductionRequest';
 import type { ContentProductionTaskCard } from '../../../shared/contracts/assistantContentTaskCard';
+import { AssistantContentTaskApiError } from '../../lib/assistantContentTaskApi';
 
 const parsedIntent = assistantProductionIntent('请制作一条 20 秒 TikTok 竖版短视频，推广「青柠精华」');
 if (!parsedIntent) throw new Error('测试生产指令未被识别');
@@ -21,7 +22,7 @@ function fixture() {
     title: '短视频任务', outputType: 'video', overallState: 'processing',
     currentNode: { id: 'production', label: '内容生产中', userFacingSummary: '正在按已确认输入推进，进度以服务端回执为准。' },
     knownItems: [{ key: 'product', label: '产品', value: '青柠精华' }], defaultedItems: [], blockingItems: [],
-    progress: { mode: 'units', completed: 0, total: 1 }, completedSummary: [], nextAction: 'view',
+    progress: { mode: 'units', completed: 0, total: 1 }, cost: null, completedSummary: [], nextAction: 'view',
     lastConfirmedAt: '2026-10-24T00:00:00.000Z',
   };
   const input: Parameters<typeof runAssistantProductionRequest>[0] = {
@@ -76,4 +77,19 @@ test('scope change after product read prevents confirmation and creation', async
   input.currentScope = () => false;
   await runAssistantProductionRequest(input);
   assert.deepEqual(calls, []);
+});
+
+test('a real thread version race hydrates once and retries the same intention against the new version', async () => {
+  const { input, calls } = fixture();
+  const success = input.createTask!;
+  const versions: number[] = [];
+  input.createTask = async request => {
+    versions.push(request.expectedThreadVersion);
+    if (versions.length === 1) throw new AssistantContentTaskApiError('会话已更新', 409, 'assistant_thread_version_conflict', { version: 9 });
+    return success(request);
+  };
+  await runAssistantProductionRequest(input);
+  assert.deepEqual(versions, [3, 9]);
+  assert.equal(calls.includes('hydrate:9'), true);
+  assert.equal(calls.some(call => call.includes(':9:assistant-content:9:')), true);
 });

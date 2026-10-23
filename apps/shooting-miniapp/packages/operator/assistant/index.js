@@ -8,7 +8,13 @@ function contentTaskView(value) {
   const states = { needs_input:'待我处理', needs_approval:'待我处理', processing:'灵小枢处理中', paused:'已暂停', failed:'需要处理', completed:'已完成', cancelled:'已取消' }
   const actions = { supply_input:'去补充', review:'去验收', view:'查看详情', download:'查看交付', none:'查看记录' }
   const progress = card.progress?.mode === 'units' ? `${card.progress.completed}/${card.progress.total}` : ''
-  return { ...card, stateLabel:states[card.overallState] || '状态待核实', actionLabel:actions[card.nextAction] || '查看详情', progress }
+  const cost = card.cost
+  const costLabel = !cost ? '' : cost.status === 'unknown' ? '费用暂时无法核实'
+    : cost.actualCny !== null && cost.actualCny !== undefined ? `已结算 ¥${Number(cost.actualCny).toFixed(2)}`
+      : cost.upperBoundCny !== null && cost.upperBoundCny !== undefined ? `费用上限 ¥${Number(cost.upperBoundCny).toFixed(2)}（待结算）`
+        : cost.expectedCny !== null && cost.expectedCny !== undefined ? `预计费用 ¥${Number(cost.expectedCny).toFixed(2)}（待结算）`
+          : cost.status === 'free' ? '费用 ¥0.00' : ''
+  return { ...card, blockingItems:(card.blockingItems || []).slice(0,3), knownItems:(card.knownItems || []).slice(0,3), stateLabel:states[card.overallState] || '状态待核实', actionLabel:actions[card.nextAction] || '查看详情', progress, costLabel }
 }
 
 Page({
@@ -80,8 +86,7 @@ Page({
   openContentTask() {
     const card = this.data.contentTask
     if (!card) return
-    const path = card.nextAction === 'review' ? '/packages/operator/review/index' : card.nextAction === 'supply_input' ? '/packages/operator/shooting/index' : '/pages/workbench/index'
-    wx.navigateTo({ url: `${path}?contentTaskId=${encodeURIComponent(card.contentTaskId)}` })
+    wx.navigateTo({ url: `/packages/operator/content-task/index?taskId=${encodeURIComponent(card.contentTaskId)}` })
   },
   async ensureRecordPermission() {
     const setting = await new Promise(resolve => wx.getSetting ? wx.getSetting({ success: resolve, fail: () => resolve({authSetting:{}}) }) : resolve({authSetting:{}}))

@@ -7,6 +7,7 @@ import { resolveAssistantEnterpriseProduct, type AssistantProductionIntent } fro
 
 export async function runAssistantProductionRequest(input: {
   productionIntent: AssistantProductionIntent;
+  requestMessage?: string;
   threadAgent: OrbitAgentId;
   expectedThreadVersion: number;
   currentScope: () => boolean;
@@ -23,7 +24,7 @@ export async function runAssistantProductionRequest(input: {
   createTask?: typeof createAtomicAssistantContentTask;
 }) {
   const {
-    productionIntent, threadAgent, expectedThreadVersion, currentScope,
+    productionIntent, requestMessage = productionIntent.objective, threadAgent, expectedThreadVersion, currentScope,
     setLoading, upsertTaskCard, focusTaskCard, hydrateThread, setMessages, persistThread,
     onSessionRefresh, refreshPipeline,
     resolveProduct = resolveAssistantEnterpriseProduct,
@@ -32,11 +33,10 @@ export async function runAssistantProductionRequest(input: {
   try {
     const productionProduct = await resolveProduct(productionIntent.productQuery);
     if (!currentScope()) return;
-    const productionResponse = await createTask({
-      agentId: threadAgent,
-      expectedThreadVersion,
-      idempotencyKey: assistantContentTaskIdempotencyKey(expectedThreadVersion, productionIntent.objective),
-      message: productionIntent.objective,
+    const createAtVersion = (version: number) => createTask({
+      agentId: threadAgent, expectedThreadVersion: version,
+      idempotencyKey: assistantContentTaskIdempotencyKey(version, productionIntent.objective),
+      message: requestMessage,
       task: {
         title: productionIntent.title, objective: productionIntent.objective,
         productId: productionProduct.id, productRef: productionProduct.label,
@@ -50,6 +50,16 @@ export async function runAssistantProductionRequest(input: {
         productionMode: 'social_ready', productionApproach: 'ai_enhanced', mode: 'instant',
       },
     });
+    let productionResponse: Awaited<ReturnType<typeof createTask>>;
+    try {
+      productionResponse = await createAtVersion(expectedThreadVersion);
+    } catch (error) {
+      const conflict = error instanceof AssistantContentTaskApiError && error.status === 409 ? error : null;
+      const refreshedVersion = Number(conflict?.current?.version);
+      if (!Number.isSafeInteger(refreshedVersion) || refreshedVersion < 0 || !conflict?.current || !currentScope()) throw error;
+      hydrateThread(threadAgent, conflict.current);
+      productionResponse = await createAtVersion(refreshedVersion);
+    }
     const productionTask = productionResponse.task;
     if (!currentScope()) return;
     const authoritativeCard = productionResponse.receipt.card;
@@ -69,8 +79,11 @@ export async function runAssistantProductionRequest(input: {
       return;
     }
     const message = error instanceof Error ? error.message : '内容任务创建失败，请稍后重试。';
+    const currentMessages = useAssistantStore.getState().threads[threadAgent].messages;
+    const visibleMessages = currentMessages.at(-1)?.role === 'user' && currentMessages.at(-1)?.content === requestMessage
+      ? currentMessages : [...currentMessages, { role: 'user' as const, content: requestMessage }];
     setMessages(threadAgent, [
-      ...useAssistantStore.getState().threads[threadAgent].messages,
+      ...visibleMessages,
       { role: 'assistant', content: `单条内容任务尚未建立：${message}` },
     ]);
     persistThread(threadAgent);

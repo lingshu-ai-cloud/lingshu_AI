@@ -19,12 +19,25 @@ const actionLabels: Record<ContentProductionTaskCard['nextAction'], string> = {
   none: '查看任务记录',
 };
 
+function costDetail(card: ContentProductionTaskCard): string | null {
+  const cost = card.cost;
+  if (!cost) return null;
+  if (cost.status === 'unknown') return '费用：暂时无法核实';
+  if (cost.actualCny !== null) return `已结算费用：¥${cost.actualCny.toFixed(2)}`;
+  if (cost.upperBoundCny !== null) return `费用上限：¥${cost.upperBoundCny.toFixed(2)}（待结算）`;
+  if (cost.expectedCny !== null) return `预计费用：¥${cost.expectedCny.toFixed(2)}（待结算）`;
+  if (cost.status === 'free') return '费用：¥0.00';
+  return null;
+}
+
 export function contentTaskCardToAssistantCard(card: ContentProductionTaskCard): AssistantTaskCardInput {
+  const confirmedCost = costDetail(card);
   const details = [
     ...card.blockingItems.map(item => `${item.label}：${item.value}`),
     ...card.knownItems.map(item => `已确定 · ${item.label}：${item.value}`),
     ...card.defaultedItems.map(item => `采用默认 · ${item.label}：${item.value}`),
     ...card.completedSummary,
+    ...(confirmedCost ? [confirmedCost] : []),
     `最近确认：${card.lastConfirmedAt}`,
   ];
   const notificationReason = card.overallState === 'needs_input'

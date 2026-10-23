@@ -28,7 +28,8 @@ test('mobile context projects the latest instant ContentTask with its server ver
  assert.equal(projection.availability,'available');
  assert.equal(projection.card?.contentTaskId,'content-1');
  assert.equal(projection.card?.cardVersion,'7');
- assert.equal(projection.card?.recoveryCursor.value,'content-1@7');
+ assert.equal(projection.card?.recoveryCursor.kind,'task_projection');
+ assert.equal(projection.card?.recoveryCursor.value,'content-1@7#2026-10-24T01:00:00Z');
  assert.equal(projection.card?.outputType,'image');
 });
 test('preview is scoped versioned and never executes',async()=>{

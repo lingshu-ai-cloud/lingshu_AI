@@ -14,7 +14,8 @@ import {
   starter198Repository,
 } from '../starter198/repository.js';
 import { createSocialContentTask } from '../starter198/socialContentTasks.js';
-import { parseCreateSocialTask } from '../starter198/socialContentValidation.js';
+import { SocialContentWorkflowError, parseCreateSocialTask } from '../starter198/socialContentValidation.js';
+import { authorizeDefaultSocialContentRequest } from '../starter198/socialContentAuthorization.js';
 import { projectContentProductionTaskCard, type ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard.js';
 import type { SocialContentTaskSummary } from '../../shared/contracts/socialContentTaskContract.js';
 import {
@@ -124,6 +125,7 @@ export type AssistantThreadsRouterDependencies = {
   createInstantContentTask?: (input: {
     tenantId: string; userId: string; idempotencyKey: string; value: ReturnType<typeof parseCreateSocialTask>;
   }) => Promise<SocialContentTaskSummary>;
+  authorizeContentTaskCreation?: (request: Request, identity: AuthLocals) => Promise<void>;
 };
 
 function actionHttpStatus(status: string): number {
@@ -474,6 +476,16 @@ function threadWithDefaults(thread: AssistantThread): AssistantThread {
   };
 }
 
+function assertContentTaskThreadCapacity(prior: AssistantThread | null, message: string): void {
+  if ((prior?.messages.length ?? 0) > MAX_MESSAGES - 2 || Object.keys(prior?.taskCards ?? {}).length >= MAX_TASK_CARDS) {
+    throw new AssistantActionError('assistant_content_task_thread_full', 413, '当前会话已满，请新建会话后再建立内容任务。');
+  }
+  const snapshotBytes = byteLength(JSON.stringify(prior ?? {}));
+  if (snapshotBytes + byteLength(message) + MAX_MESSAGE_BYTES + MAX_CARD_BYTES + 2_048 > MAX_THREAD_BYTES) {
+    throw new AssistantActionError('assistant_content_task_thread_full', 413, '当前会话空间不足，请新建会话后再建立内容任务。');
+  }
+}
+
 function contentTaskThreadCard(card: ContentProductionTaskCard): AssistantThreadTaskCard {
   const status = card.overallState === 'needs_input' ? 'needs_input'
     : card.overallState === 'needs_approval' ? 'approval'
@@ -509,6 +521,8 @@ export function createAssistantThreadsRouter(
   const createInstantContentTask = dependencies.createInstantContentTask ?? (value => createSocialContentTask({
     repository: starter198Repository, ...value, entry: 'assistant', value: { ...value.value, mode: 'instant', dueAt: null },
   }));
+  const authorizeContentTaskCreation = dependencies.authorizeContentTaskCreation
+    ?? (async (request, identity) => { await authorizeDefaultSocialContentRequest(request, identity, 'write'); });
   const writeTails = new Map<string, Promise<void>>();
   const withWriteLock = async <T>(key: string, work: () => Promise<T>): Promise<T> => {
     const previous = writeTails.get(key) ?? Promise.resolve();
@@ -684,6 +698,15 @@ export function createAssistantThreadsRouter(
     let agentId: string;
     try { agentId = safeAgentId(req.params.agentId); }
     catch (error) { const failure = error as AssistantActionError; res.status(failure.status).json({ error: failure.code, message: failure.publicMessage }); return; }
+    try { await authorizeContentTaskCreation(req, identity); }
+    catch (error) {
+      const failure = error instanceof SocialContentWorkflowError
+        ? { status: error.status, code: error.code, message: error.code }
+        : error instanceof Starter198RepositoryError
+          ? { status: error.code === 'starter_198_not_provisioned' ? 403 : 503, code: error.code === 'starter_198_not_provisioned' ? 'profile_not_enabled' : error.code, message: error.code }
+          : { status: 503, code: 'assistant_content_task_authorization_unavailable', message: '暂时无法核实内容任务权限。' };
+      res.status(failure.status).json({ error: failure.code, message: failure.message }); return;
+    }
     const source = object(req.body);
     if (!source || Object.keys(source).some(key => !['expectedThreadVersion', 'idempotencyKey', 'message', 'task'].includes(key))) {
       res.status(400).json({ error: 'assistant_content_task_input_invalid', message: '单条内容任务请求无效。' }); return;
@@ -713,6 +736,7 @@ export function createAssistantThreadsRouter(
         if (expectedVersion !== (prior?.version ?? 0)) {
           res.status(409).json({ error: 'assistant_thread_version_conflict', message: '会话已在其他位置更新，请刷新后重试。', current: prior }); return;
         }
+        assertContentTaskThreadCapacity(prior, message);
         const task = await createInstantContentTask({ tenantId: identity.tenantId, userId: identity.userId, idempotencyKey, value: { ...taskInput, mode: 'instant', dueAt: null } });
         const card = projectContentProductionTaskCard(task);
         const taskCard = contentTaskThreadCard(card);

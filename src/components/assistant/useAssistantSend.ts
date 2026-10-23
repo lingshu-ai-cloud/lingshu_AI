@@ -37,6 +37,7 @@ type AssistantSendInput = {
   uiMessage: AppServices['message'];
   persistenceFenceRef: { current: { scopeKey: string; active: boolean } };
   stablePersistenceScope: AssistantJournalScope;
+  assistantAtomicMutationRef: { current: boolean };
   pendingMapFileRef: { current: boolean };
   abortRef: { current: AbortController | null };
   openAgent: (agent: OrbitAgentId, view: 'chat') => void;
@@ -77,7 +78,7 @@ const API_PATH: Record<AgentType, string> = {
 export function useAssistantSend(input: AssistantSendInput) {
   const { page, pageContext, currentPageAgent, enterpriseContext, loading, fileGenerating,
     replyStreaming, contentIntake, uiMessage, persistenceFenceRef, stablePersistenceScope,
-    pendingMapFileRef, abortRef, openAgent, presentActionResponse,
+    assistantAtomicMutationRef, pendingMapFileRef, abortRef, openAgent, presentActionResponse,
     setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, focusTaskCard, hydrateThread, setLoading,
     setFileGenerating, setReplyStreaming,
     setPipelineRefresh, persistThread, onSessionRefresh, requestId,
@@ -126,36 +127,46 @@ export function useAssistantSend(input: AssistantSendInput) {
     const conversationContext = selectAssistantConversationContext(mergeConsecutiveAssistant(thread.messages));
     const historyForApi = conversationContext.messages;
     const nextVisible = [...mergeConsecutiveAssistant(thread.messages), { role: 'user' as const, content: visibleMessage }];
+
+    const clarifiedDiagram = pendingMapFileRef.current && /(?:业务|路线图|思维导图|流程图|战略)/u.test(visibleText);
+    const fileIntent = assistantFileIntent(visibleText) || (clarifiedDiagram ? { format: 'jpg' as const, diagram: true, needsMapScope: false } : null);
+    const productionIntent = uploadedAttachments.length || fileIntent ? null : assistantProductionIntent(visibleText);
+    if (productionIntent && !['smartAssets', 'socialInspiration'].includes(page)) {
+      assistantAtomicMutationRef.current = true;
+      setLoading(true);
+      openAgent(routeAgent, 'chat');
+      try {
+        await runAssistantProductionRequest({
+          productionIntent, requestMessage: visibleMessage, threadAgent, expectedThreadVersion: thread.version, currentScope,
+          setLoading, upsertTaskCard, focusTaskCard, hydrateThread, setMessages, persistThread,
+          onSessionRefresh,
+          refreshPipeline: () => setPipelineRefresh(value => value + 1),
+        });
+      } finally {
+        assistantAtomicMutationRef.current = false;
+      }
+      if (currentScope()) {
+        setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true); persistThread(threadAgent);
+      }
+      return;
+    }
     setMessages(threadAgent, nextVisible);
     setDraftInput(threadAgent, '');
     setFollowingLatest(threadAgent, true);
     setLoading(true);
     openAgent(routeAgent, 'chat');
 
-    const clarifiedDiagram = pendingMapFileRef.current && /(?:业务|路线图|思维导图|流程图|战略)/u.test(visibleText);
-    const fileIntent = assistantFileIntent(visibleText) || (clarifiedDiagram ? { format: 'jpg' as const, diagram: true, needsMapScope: false } : null);
     if (fileIntent?.needsMapScope) {
       pendingMapFileRef.current = true;
       setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: '你需要的是业务路线图，还是地理地图？业务路线图可以导出 JPG；地理地图还需要明确地区、标注内容和可靠地图来源，不能用文字示意图冒充真实地图。' }]);
       setLoading(false); persistThread(threadAgent); return;
     }
     pendingMapFileRef.current = false;
-    const productionIntent = uploadedAttachments.length || fileIntent ? null : assistantProductionIntent(visibleText);
     if (productionIntent && ['smartAssets', 'socialInspiration'].includes(page)) {
       setLoading(false);
       contentIntake.start(productionIntent.objective, productionIntent);
       return;
     }
-    if (productionIntent) {
-      await runAssistantProductionRequest({
-        productionIntent, threadAgent, expectedThreadVersion: thread.version, currentScope,
-        setLoading, upsertTaskCard, focusTaskCard, hydrateThread, setMessages, persistThread,
-        onSessionRefresh,
-        refreshPipeline: () => setPipelineRefresh(value => value + 1),
-      });
-      return;
-    }
-
     const focusedCard = thread.focusedTaskId ? thread.taskCards[thread.focusedTaskId] ?? null : null;
     // Attachments deliberately bypass the deterministic action router. The
     // router accepts only server-signed business object/version inputs; a
@@ -294,7 +305,7 @@ export function useAssistantSend(input: AssistantSendInput) {
         onSessionRefresh?.();
       }
     }
-  }, [replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, focusTaskCard, hydrateThread, loading, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard, stablePersistenceScope]);
+  }, [assistantAtomicMutationRef, replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, focusTaskCard, hydrateThread, loading, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard, stablePersistenceScope]);
 
   const sendComposerMessage = useCallback(async () => {
     if (loading || attachmentUploading) return;

@@ -12,6 +12,7 @@
       <text class="content-task-node">{{contentTask.currentNode.label}} · {{contentTask.currentNode.userFacingSummary}}</text>
       <view wx:if="{{contentTask.blockingItems.length}}" class="content-task-list"><text wx:for="{{contentTask.blockingItems}}" wx:key="key">{{item.label}}：{{item.value}}</text></view>
       <view wx:elif="{{contentTask.knownItems.length}}" class="content-task-list muted"><text wx:for="{{contentTask.knownItems}}" wx:key="key">已确定 · {{item.label}}：{{item.value}}</text></view>
+      <text wx:if="{{contentTask.costLabel}}" class="content-task-time">{{contentTask.costLabel}}</text>
       <text class="content-task-time">最近确认 {{contentTask.lastConfirmedAt}}</text>
       <button class="content-task-action" bindtap="openContentTask">{{contentTask.actionLabel}}</button>
     </view>

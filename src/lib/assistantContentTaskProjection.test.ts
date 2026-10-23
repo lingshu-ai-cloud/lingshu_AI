@@ -11,7 +11,7 @@ const card: ContentProductionTaskCard = {
   knownItems: [{ key: 'product', label: '产品', value: '产品 A' }],
   defaultedItems: [{ key: 'count', label: '数量', value: '单条内容' }],
   blockingItems: [{ key: 'material', label: '待补充', value: '产品图片' }],
-  progress: { mode: 'none' }, completedSummary: [], nextAction: 'supply_input',
+  progress: { mode: 'none' }, cost: null, completedSummary: [], nextAction: 'supply_input',
   lastConfirmedAt: '2026-10-24T02:00:00.000Z',
 };
 
@@ -23,4 +23,12 @@ test('adapts the shared task card without changing its authority fields', () => 
   assert.equal(result.contentTask?.recoveryCursor.value, 'one@4');
   assert.match(result.details?.join('\n') || '', /已确定/);
   assert.match(result.primaryAction?.href || '', /socialContentTaskId=one/);
+});
+
+test('shows only server-confirmed cost semantics', () => {
+  const result = contentTaskCardToAssistantCard({ ...card, cost: {
+    currency: 'CNY', expectedCny: 5, upperBoundCny: 8, actualCny: null,
+    unsettledCny: null, status: 'estimated', reusable: false, basis: 'execution_plan',
+  }, blockingItems: [] });
+  assert.match(result.details?.join('\n') || '', /费用上限：¥8\.00（待结算）/);
 });

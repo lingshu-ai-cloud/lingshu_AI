@@ -1,0 +1,14 @@
+<view class="task-page">
+  <view wx:if="{{loading && !card}}" class="loading">正在读取服务端任务状态…</view>
+  <view wx:if="{{error}}" class="error"><text>{{error}}</text><button class="secondary" bindtap="refresh">重新读取</button></view>
+  <view wx:if="{{card}}" class="task-content">
+    <view class="task-head"><text class="status {{card.overallState}}">{{card.stateLabel}}</text><text class="time">最近确认 {{card.lastConfirmedAt}}</text></view>
+    <text class="title">{{card.title}}</text>
+    <view class="section current"><text class="section-label">当前节点</text><text class="section-title">{{card.currentNode.label}}</text><text class="body">{{card.currentNode.userFacingSummary}}</text></view>
+    <view class="facts"><view><text class="metric-value">{{card.progressLabel}}</text><text class="metric-label">真实单位进度</text></view><view><text class="metric-value cost">{{card.costLabel}}</text><text class="metric-label">费用回执</text></view></view>
+    <view wx:if="{{card.blockingItems.length}}" class="section"><text class="section-title">现在需要处理</text><view wx:for="{{card.blockingItems}}" wx:key="key" class="row warning"><text>{{item.label}}</text><text>{{item.value}}</text></view></view>
+    <view wx:if="{{card.knownItems.length}}" class="section"><text class="section-title">本次任务输入</text><view wx:for="{{card.knownItems}}" wx:key="key" class="row"><text>{{item.label}}</text><text>{{item.value}}</text></view></view>
+    <view wx:if="{{card.completedSummary.length}}" class="section"><text class="section-title">已有结果</text><text wx:for="{{card.completedSummary}}" wx:key="*this" class="body">{{item}}</text></view>
+    <button class="secondary refresh" loading="{{loading}}" bindtap="refresh">刷新真实状态</button>
+  </view>
+</view>

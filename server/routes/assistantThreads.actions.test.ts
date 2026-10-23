@@ -5,6 +5,7 @@ import express from 'express';
 import { AssistantActionError, type AssistantActionService } from '../assistant/actionRouting.js';
 import { Starter198RepositoryError, starter198Repository } from '../starter198/repository.js';
 import { defaultBrief } from '../starter198/socialContentTaskSupport.js';
+import { SocialContentWorkflowError } from '../starter198/socialContentValidation.js';
 import type { DataStore, ListQuery } from '../storage/datastore.js';
 import type { SocialContentTaskSummary } from '../../shared/contracts/socialContentTaskContract.js';
 
@@ -86,6 +87,7 @@ test('content task endpoint binds one server task, message and authoritative car
   const app = express(); app.use(express.json());
   app.use('/api/overseas/assistant-threads', createAssistantThreadsRouter({
     dataStore: memoryStore(),
+    authorizeContentTaskCreation: async () => {},
     createInstantContentTask: async input => { calls.push(input.idempotencyKey); return instantTask(); },
     authMiddleware: (_req, res, next) => { res.locals.tenantId = 'tenant-a'; res.locals.userId = 'user-a'; next(); },
   }));
@@ -113,7 +115,7 @@ test('a lost conversation bind retries the same idempotent task and appends the 
   let failCreate = true;
   const storeWithLostCreate: DataStore = {
     ...baseStore,
-    async create<T>(collection, data) {
+    async create<T>(collection: string, data: Record<string, unknown>) {
       if (collection === 'assistant_threads' && failCreate) { failCreate = false; return null; }
       return baseStore.create<T>(collection, data);
     },
@@ -122,6 +124,7 @@ test('a lost conversation bind retries the same idempotent task and appends the 
   const app = express(); app.use(express.json());
   app.use('/api/overseas/assistant-threads', createAssistantThreadsRouter({
     dataStore: storeWithLostCreate,
+    authorizeContentTaskCreation: async () => {},
     createInstantContentTask: async input => { taskIds.push(`${input.idempotencyKey}:content-one`); return instantTask(); },
     authMiddleware: (_req, res, next) => { res.locals.tenantId = 'tenant-a'; res.locals.userId = 'user-a'; next(); },
   }));
@@ -139,6 +142,55 @@ test('a lost conversation bind retries the same idempotent task and appends the 
     ]);
     assert.equal(result.task.taskId, 'content-one');
     assert.equal(result.thread.messages.length, 2);
+  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});
+
+test('content task endpoint rejects a caller without the canonical social-content write authority', async () => {
+  let creates = 0;
+  const app = express(); app.use(express.json());
+  app.use('/api/overseas/assistant-threads', createAssistantThreadsRouter({
+    dataStore: memoryStore(),
+    authorizeContentTaskCreation: async () => { throw new SocialContentWorkflowError('social_content_write_forbidden', 403); },
+    createInstantContentTask: async () => { creates += 1; return instantTask(); },
+    authMiddleware: (_req, res, next) => { res.locals.tenantId = 'tenant-a'; res.locals.userId = 'viewer-a'; next(); },
+  }));
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/overseas/assistant-threads/business/content-tasks`;
+  try {
+    const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(instantTaskRequest) });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, 'social_content_write_forbidden');
+    assert.equal(creates, 0);
+  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});
+
+test('content task endpoint reserves conversation capacity before creating a business task', async () => {
+  const fullCard = (index: number) => ({
+    taskId: `old:${index}`, title: `旧任务 ${index}`, conclusion: '旧任务状态', details: [], status: 'completed',
+    notificationReason: 'routine', secondaryActions: [], updatedAt: index + 1,
+  });
+  const dataStore = memoryStore([
+    { id: 'message-full', tenantId: 'tenant-a', userId: 'user-a', agentId: 'business', source: 'desktop', version: 1,
+      messages: Array.from({ length: 119 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', content: `消息 ${index}` })), taskCards: {} },
+    { id: 'card-full', tenantId: 'tenant-a', userId: 'user-a', agentId: 'content', source: 'desktop', version: 1,
+      messages: [], taskCards: Object.fromEntries(Array.from({ length: 50 }, (_, index) => [`old:${index}`, fullCard(index)])) },
+  ]);
+  let creates = 0;
+  const app = express(); app.use(express.json());
+  app.use('/api/overseas/assistant-threads', createAssistantThreadsRouter({
+    dataStore, authorizeContentTaskCreation: async () => {},
+    createInstantContentTask: async () => { creates += 1; return instantTask(); },
+    authMiddleware: (_req, res, next) => { res.locals.tenantId = 'tenant-a'; res.locals.userId = 'user-a'; next(); },
+  }));
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/overseas/assistant-threads`;
+  try {
+    for (const agent of ['business', 'content']) {
+      const response = await fetch(`${base}/${agent}/content-tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...instantTaskRequest, expectedThreadVersion: 1 }) });
+      assert.equal(response.status, 413);
+      assert.equal((await response.json()).error, 'assistant_content_task_thread_full');
+    }
+    assert.equal(creates, 0, 'capacity must be rejected before the canonical ContentTask write');
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
 

@@ -92,6 +92,11 @@ test('operator assistant keeps suggested questions collapsed on the empty conver
   assert.match(styles, /\.voice-prompt\{[^}]*box-shadow:/)
   assert.match(markup, /wx:if="{{contentTask}}" class="content-task-card"/)
   assert.match(script, /contentTaskView\(state\.contentTask\)/)
+  assert.match(script, /packages\/operator\/content-task\/index\?taskId=/)
+  assert.doesNotMatch(script, /contentTaskId=.*packages\/operator\/(?:shooting|review)/)
+  const detail = fs.readFileSync(__dirname + '/packages/operator/content-task/index.js', 'utf8')
+  assert.match(detail, /mobile-workbench\/assistant\/content-tasks\//)
+  assert.match(detail, /result\.card\.contentTaskId !== this\.taskId/)
 })
 
 test('operator assistant opens in voice mode with the dispatch prompt above two-tab navigation', () => {

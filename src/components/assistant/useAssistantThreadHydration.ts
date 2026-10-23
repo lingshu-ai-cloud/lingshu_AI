@@ -14,6 +14,10 @@ import {
   withoutPersistedConversation,
 } from './globalAssistantRuntime';
 
+export function hydratedFocusNeedsWorkspaceStatus(focusedTaskId: string | null): boolean {
+  return Boolean(focusedTaskId && !focusedTaskId.startsWith('social-content:'));
+}
+
 /** Recovers presentation state, then re-signs any focused action from the authoritative workspace. */
 export function useAssistantThreadHydration(input: {
   page: Page;
@@ -90,7 +94,7 @@ export function useAssistantThreadHydration(input: {
         // the authoritative workspace after hydration and place its freshly
         // signed actions on a dedicated current-status card. Never bind an
         // arbitrary current decision to the ID of a possibly stale old card.
-        if (!persistedFocusedTaskId) return;
+        if (!hydratedFocusNeedsWorkspaceStatus(persistedFocusedTaskId)) return;
         const request: AssistantActionRequest = {
           source: 'button',
           requestId: requestId(),

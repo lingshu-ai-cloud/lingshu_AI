@@ -16,7 +16,7 @@ function assistantApi(override=()=>undefined) {
   return {assistantContract:true,clearToken:()=>{},request:async(path,method,body)=>{
     const result=await override(path,method,body);if(result!==undefined)return result;
     if(path.endsWith('/context'))return {quickQuestions:[{topic:'weekly',label:'本周进度'}]};
-    if(path.endsWith('/sessions'))return {sessions:[{id:'session-1'}]};
+    if(path.includes('/sessions?contextMode='))return {sessions:[{id:'session-1'}]};
     if(path.endsWith('/messages'))return {messages:[{id:'a',role:'assistant',text:'本周数据已核实'}]};
     if(path.endsWith('/query'))return {text:'本周数据已核实',evidence:[{source:'tasks',generatedAt:'2026-10-10T10:00:00Z'}],links:[{type:'matter',id:'task:1'}],actions:[{label:'重试',action:{kind:'retry_task',targetId:'1'}}]};
     if(path.endsWith('/preview'))return {previewId:'preview-1',target:{title:'重试任务'},requiresConfirmation:true,confirmation:{body:{kind:'retry_task',targetId:'1',expectedVersion:'v1',payload:{}}}};

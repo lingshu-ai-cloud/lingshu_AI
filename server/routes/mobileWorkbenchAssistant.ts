@@ -13,8 +13,8 @@ import { mobileWorkbenchActionCapabilityAllowed } from './mobileWorkbenchActions
 import type { MobileWorkbenchActionInput } from './mobileWorkbenchActions.js';
 import { readLocalCustomerConversations, summarizeLocalCustomerConversations } from '../customerService/localConversations.js';
 import { projectContentProductionTaskCard, type ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard.js';
-import { STARTER_COLLECTIONS, type StarterRecord } from '../starter198/repository.js';
-import { socialTaskSummary } from '../starter198/socialContentRecords.js';
+import { createStarter198Repository, STARTER_COLLECTIONS, type StarterRecord } from '../starter198/repository.js';
+import { readSocialTaskDetail, socialTaskSummary } from '../starter198/socialContentRecords.js';
 
 export type MobileAssistantTopic = 'weekly_progress' | 'agent_status' | 'published_videos' | 'qualified_inquiries' | 'exposure';
 export interface MobileAssistantOptions {
@@ -44,7 +44,10 @@ export async function readMobileCurrentContentTask(store: DataStore, tenantId: s
     if (!summaries.length) return { availability: 'unavailable', card: null };
     const terminal = new Set(['delivered', 'reviewed', 'cancelled']);
     const task = summaries.find(item => !terminal.has(item.status)) ?? summaries[0]!;
-    return { availability: 'available', card: projectContentProductionTaskCard(task) };
+    const detail = await readSocialTaskDetail({
+      repository: createStarter198Repository(store), tenantId, taskId: task.taskId,
+    }).catch(() => null);
+    return { availability: 'available', card: projectContentProductionTaskCard(detail ?? task) };
   } catch {
     return { availability: 'unavailable', card: null };
   }
@@ -130,6 +133,14 @@ export function createMobileWorkbenchAssistantRouter(store: DataStore, options: 
   router.get('/assistant/context', async (req, res) => {
     try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await buildMobileAssistantContext(store, (res.locals as AuthLocals).tenantId, options.now?.(), req.query.weekStart)); }
     catch { res.status(503).json({ error: 'assistant_context_unavailable' }); }
+  });
+  router.get('/assistant/content-tasks/:taskId', async (req, res) => {
+    const taskId = String(req.params.taskId || '').trim();
+    if (!/^[A-Za-z0-9._:@-]{1,240}$/.test(taskId)) { res.status(400).json({ error: 'content_task_id_invalid' }); return; }
+    const identity = res.locals as AuthLocals;
+    const task = await readSocialTaskDetail({ repository: createStarter198Repository(store), tenantId: identity.tenantId, taskId }).catch(() => null);
+    if (!task) { res.status(404).json({ error: 'content_task_not_found' }); return; }
+    res.json({ card: projectContentProductionTaskCard(task) });
   });
   router.post('/assistant/query', async (req, res) => {
     if (req.body && !req.body.clientMessageId && req.body.idempotencyKey) req.body.clientMessageId = req.body.idempotencyKey;

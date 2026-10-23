@@ -143,6 +143,7 @@ export default function GlobalAssistant({
   const conversationPageRef = useRef(page);
   const assistantClosedRef = useRef<{ page: Page; at: number } | null>(null);
   const assistantThreadSaveQueuesRef = useRef(new Map<OrbitAgentId, AssistantThreadSaveQueue>());
+  const assistantAtomicMutationRef = useRef(false);
   const uploadedAttachmentCacheRef = useRef(new WeakMap<File, UploadedAssistantAttachment>());
   const welcomeBubbleScopeRef = useRef('');
   const stablePersistenceScope = useMemo<AssistantJournalScope>(() => ({
@@ -267,7 +268,7 @@ export default function GlobalAssistant({
 
   const persistThread = useAssistantThreadSaveQueue({
     stablePersistenceScope, persistenceFenceRef, assistantThreadSaveQueuesRef,
-    hydrateThread, setPersistenceMetadata,
+    persistencePauseRef: assistantAtomicMutationRef, hydrateThread, setPersistenceMetadata,
   });
   useAssistantContentTaskCard({ active: mode === 'chat', focusedTaskId: activeThread.focusedTaskId,
     agentId: activeAgent, scopeKey: persistenceScopeKey, upsertTaskCard, persistThread });
@@ -487,7 +488,7 @@ export default function GlobalAssistant({
 
   const { send, sendComposerMessage } = useAssistantSend({
     page, pageContext, currentPageAgent, enterpriseContext, loading, fileGenerating, replyStreaming,
-    contentIntake, uiMessage, persistenceFenceRef, stablePersistenceScope,
+    contentIntake, uiMessage, persistenceFenceRef, stablePersistenceScope, assistantAtomicMutationRef,
     pendingMapFileRef, abortRef, openAgent, presentActionResponse,
     setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, focusTaskCard, hydrateThread, setLoading,
     setFileGenerating, setReplyStreaming, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
