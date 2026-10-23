@@ -59,13 +59,13 @@ async function maybeRecordStyleMemory(req: any, tenantId: string, customerId: st
 customerSuggestionsRouter.get('/', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const source = String(req.query.source || '');
-  if (source && source !== 'messenger' && source !== 'instagram') {
+  if (source && source !== 'messenger' && source !== 'instagram' && source !== 'whatsapp') {
     res.json({ items: [], source });
     return;
   }
-  const liveItems = source === 'messenger' ? (await readAuthorizedMessengerCustomers(tenantId))
+  const liveItems = source === 'whatsapp' ? await readAuthorizedWhatsAppCustomers(tenantId) : source === 'messenger' ? (await readAuthorizedMessengerCustomers(tenantId))
     : source === 'instagram' ? getInstagramCustomers(tenantId)
-      : [...(await readAuthorizedMessengerCustomers(tenantId)), ...getInstagramCustomers(tenantId)].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+      : [...(await readAuthorizedWhatsAppCustomers(tenantId)), ...(await readAuthorizedMessengerCustomers(tenantId)), ...getInstagramCustomers(tenantId)].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
   const localItems = source ? [] : readLocalCustomerConversations(tenantId).filter(local => !liveItems.some(live => live.id === local.id));
   const items = source ? liveItems : [...liveItems, ...localItems, ...readHistoricalCustomers(tenantId)]
     .sort((a, b) => Number(b.lastActiveAt || 0) - Number(a.lastActiveAt || 0));
@@ -114,6 +114,7 @@ customerSuggestionsRouter.post('/knowledge-misses/recompute', async (_req, res) 
 
 async function manualCustomerChannel(tenantId:string,id:string){return (await readAuthorizedWhatsAppCustomers(tenantId)).some(c=>c.id===id)?'whatsapp' as const:customerChannel(tenantId,id);}
 customerSuggestionsRouter.use('/:id/manual-active',createCustomerManualTakeoverRouter({service:manualTakeoverService,resolveChannel:manualCustomerChannel}));
+customerSuggestionsRouter.use('/:id', (req,res,next)=>{if(String(req.params.id).startsWith('wa_')&&/outbox/.test(req.path)){res.status(422).json({error:'customer_channel_operation_unsupported',channel:'whatsapp',capability:'/api/overseas/customer-batches/capabilities',message:'WhatsApp 请使用已有周跟进派发及模板审批入口。'});return;}next();});
 
 customerSuggestionsRouter.patch('/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;

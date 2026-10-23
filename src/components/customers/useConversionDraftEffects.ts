@@ -83,7 +83,7 @@ export function useConversionDraftEffects({
       if (cancelled) return;
       setDraftSuggestion(result.draft);
       setDraftMeta(result);
-      savePendingDraft(selected, result.draft);
+      if (result.draft) savePendingDraft(selected, result.draft);
     });
     return () => { cancelled = true; };
     // lastDraftKey is intentionally a guard, not a dependency: adding it here

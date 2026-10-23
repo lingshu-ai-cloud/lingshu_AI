@@ -195,6 +195,7 @@
     "1792195224_create_customer_points_ledger.js": "7c72335c86c03712171340b61dac2a23da14a82d479f5a3c3f3d555ecaf74ddc",
     "1792627200_platform_ad_account_context.js": "d4978ef363e79d263803bd7f82d3d730478f4394940eb042bb142d63e7e9391b",
     "1792627201_platform_ad_resources.js": "30b9f872d3761487442db7e5d9b1c8164fd1683352a5b6487033e91d7b50ad95",
+    "1792670400_create_customer_reply_requests.js": "47b2fbe423045eb9801ea6cdebf9a71f4ecf02a13b681ba686eee579b91c5aa3",
     "1792686176_create_linkedin_company_collection_approvals.js": "59a6f5c789e11663e8a1fc566329fa3399d0d95e3d10e804161a16b573c60a4b",
     "1792686177_create_image_evidence_review_approvals.js": "6212f25fb5439b486e06743749d54113760764da55db729a13167fe954e0f2a5",
     "1792713600_platform_ad_default_page.js": "e60683ba3295b53e8217484c226acf35aa977c885b02519b3d374db615d2ea1f"

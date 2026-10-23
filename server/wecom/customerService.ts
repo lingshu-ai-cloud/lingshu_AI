@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { verifyWeComSignature, decryptWeComPayload } from '../integrations/wecom.js';
 import type { DataStore, ListResult, Record_ } from '../storage/datastore.js';
 import { store as defaultStore } from '../storage/index.js';
 import {
@@ -431,6 +432,13 @@ export function createWeComCustomerService(input: {
     createError: (code, status) => new WeComCustomerServiceError(code, status),
   });
 
+  async function verifyCallbackChallenge(args:{tenantId:string;signature:string;timestamp:string;nonce:string;encryptedEcho:string}):Promise<string>{
+    if(!/^\d+$/.test(args.timestamp)||Math.abs(now()-Number(args.timestamp)*1000)>600_000)throw new WeComCustomerServiceError('wecom_callback_timestamp_invalid',403);
+    const connection=await requireConnection(args.tenantId);
+    if(!verifyWeComSignature({token:connection.callbackToken,timestamp:args.timestamp,nonce:args.nonce,encrypted:args.encryptedEcho,signature:args.signature}))throw new WeComCustomerServiceError('wecom_callback_signature_invalid',403);
+    return decryptWeComPayload({encodingAesKey:connection.encodingAesKey,encryptedEcho:args.encryptedEcho,corpId:connection.corpId}).message;
+  }
+
   /** Compatibility helper for callers that explicitly want synchronous processing. */
   async function receiveCallback(args: WeComCallbackInput): Promise<{
     duplicate: boolean;
@@ -654,6 +662,7 @@ export function createWeComCustomerService(input: {
   return {
     connectionStatus,
     receiveCallback,
+    verifyCallbackChallenge,
     ingestCallback: callbackActions.ingestCallback,
     processCallback: callbackActions.processCallback,
     recoverCallbacks: callbackActions.recoverCallbacks,

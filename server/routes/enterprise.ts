@@ -148,12 +148,14 @@ enterpriseRouter.use('/product-footage', createEnterpriseProductFootageImportRou
 
 async function customerServiceRuntimeStatus(tenantId: string, profile: EnterpriseProfile) {
   const status = customerServiceStatus(profile);
+  const inboundAutoReplyConnected = false;
   const messagingAuthorization = await readCustomerMessagingAuthorization(tenantId);
   const messengerAuthorization = await readCustomerMessagingAuthorization(tenantId, 'messenger');
   const instagramAuthorization = await readCustomerMessagingAuthorization(tenantId, 'instagram');
   return {
     ...status,
-    autoReplyReady: status.autoReplyReady && messagingAuthorization.inboundAutoSendAllowed,
+    ingressMode: 'persist_and_qualify_only', inboundAutoReplyConnected, canAutoSend: false, shouldAskPartialAutoReply: false,
+    autoReplyReady: status.autoReplyReady && messagingAuthorization.inboundAutoSendAllowed && inboundAutoReplyConnected,
     messagingAuthorization,
     messengerAuthorization,
     instagramAuthorization,

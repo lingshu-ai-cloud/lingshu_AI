@@ -15,7 +15,7 @@ test('real batch generator hashes the frozen persisted schedules and survives re
   store.list=(async(collection:string,query:any={})=>{const found=(records[collection]??[]).filter(row=>Object.entries(query.where??{}).every(([key,value])=>row[key]===value));const items=collection==='followup_batch_items'?[...found].reverse():found;return {items:structuredClone(items),totalItems:items.length,totalPages:1,page:1,perPage:1000};}) as typeof store.list;
   store.getById=(async(collection:string,id:string)=>structuredClone(records[collection]?.find(row=>row.id===id)??null)) as typeof store.getById;
   store.create=(async(collection:string,data:any)=>{const row={id:`generated-${++sequence}`,...structuredClone(data)};(records[collection]??=[]).push(row);return structuredClone(row);}) as typeof store.create;
-  store.update=(async()=>{throw Error('new batch must not mutate or send customer messages');}) as typeof store.update;
+  store.update=(async(collection:string,id:string,patch:any)=>{assert.equal(collection,'followup_batches');assert.deepEqual(patch,{status:'draft'});const row=records[collection]?.find(v=>v.id===id);assert.ok(row);Object.assign(row,patch);return true;}) as typeof store.update;
   try {
     const generated = await createFollowupBatch({tenantId:tenant,goalId:'goal',runId:'run',taskId:'draft-task',segmentId:'segment',userId:'owner',draftOverrides:{a:'Hello, what specifications do you need?',b:'Hello, which product would you like to discuss?'}},()=>['a','b'].map(id=>({id,timeZone:'UTC',waNumber:`1555000000${id}`,language:'en',lastInboundAt:new Date().toISOString(),intentScore:50})));
     const policy=generated.batch.delivery_policy as any;

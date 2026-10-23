@@ -590,7 +590,7 @@ export function buildTaskOutput(
   if (taskKey === 'publishing_calendar') return { capability: 'publishing.calendar', statusSource: 'posts.stats.status=scheduled', destination: 'smartAssets/publish', scheduledIsPublished: false };
   if (taskKey === 'platform_publish') return { capability: 'publishing.delivery', statusSource: 'posts.platform_post_id + publishResults', destination: 'smartAssets/publish', externalPublishPerformed: false };
   if (taskKey === 'customer_attribution') return { capability: 'customer.attribution', statusSource: 'whatsapp_customers.sourcePostId', destination: 'conversion', attributionStatus: 'waiting_business_data' };
-  if (taskKey === 'customer_segmentation') return { capability: 'customer.segment_snapshot', criteria: ['stage', 'intentScore', 'bant', 'source', 'silentDays', 'risk'], destination: 'conversion', snapshotCreated: false };
+  if (taskKey === 'customer_segmentation') return { capability: 'customer.segment_snapshot', discovery: '/api/overseas/customer-batches/capabilities', preview: '/api/overseas/customer-batches/runs/:runId/preview', criteria: ['stage', 'intentScore', 'bant', 'source', 'silentDays', 'risk'], destination: 'conversion', snapshotCreated: false };
   if (taskKey === 'followup_batch_draft') return { capability: 'customer.followup_drafts', cadence: config.followupCadence, safetyMode: 'per_customer_draft', destination: 'conversion', messagesSent: 0 };
   if (taskKey === 'followup_batch_approval') return { capability: 'customer.followup_approval', destination: 'conversion', messagesSent: 0, approvalRequired: config.approvalPolicy.batchFollowup, commercialCommitmentsRequireIndividualReview: true };
   if (taskKey === 'followup_dispatch') {

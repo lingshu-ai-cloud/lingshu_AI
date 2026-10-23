@@ -1,3 +1,4 @@
+import CustomerBatchPanel from './customers/CustomerBatchPanel';
 import {assertCustomerWorkspaceIdentity} from '../lib/customerWorkspaceIdentity';
 import {readCustomerTaskApprovalContext,type CustomerTaskApprovalContext} from '../lib/customerTaskApprovalApi';
 import FollowupTemplateEditor, { needsFollowupTemplate } from './FollowupTemplateEditor';
@@ -105,6 +106,7 @@ export default function CustomerWorkflowPanel({ handoff, customers }: { handoff:
     {error && <p role="alert" className="border-l-2 border-red bg-surface-2 px-3 py-2 text-sm text-red">{error}</p>}
     {!workspace && !error && <p className="text-sm text-text-muted">正在加载本轮客户任务…</p>}
 
+    {taskKey === 'customer_segmentation' && !workspace?.readOnly && <CustomerBatchPanel key={identity} runId={handoff.runId} onSaved={load} />}
     {taskKey==='followup_batch_approval'&&approval&&<div className="space-y-2 rounded border p-3"><h4>原批次正式审批 · v{approval.batchVersion} · {approval.status}</h4><p>{approval.actionSummary}</p><p>批准保留原发送授权与安全复核，不代表消息已发送。</p><label><input type="checkbox" checked={approvalObserved} disabled={busy||approvalUnknown||!approval.canDecide} onChange={e=>setApprovalObserved(e.target.checked)}/>我已逐条核对本批次客户、内容及阻断原因</label>{(['approved','rejected'] as const).map(decision=><button key={decision} type="button" disabled={busy||approvalUnknown||!approval.canDecide||!approvalObserved||workspace?.readOnly} onClick={()=>{setApprovalOriginalHash(approval.requestHash);setApprovalReadBackHash(null);setApprovalUnknown(true);void act(async()=>{await request(`approvals/${approval.approvalId}/decide`,{decision,note,expectedSubjectVersion:String(approval.batchVersion),expectedContentHash:approval.contentHash,expectedRequestHash:approval.requestHash});});}}>{decision==='approved'?'明确批准原批次':'明确拒绝原批次'}</button>)}{approvalUnknown&&<><button type="button" disabled={busy} onClick={()=>void act(load)}>只读查询原审批结果</button>{approval.status==='pending'&&approval.canDecide&&approvalOriginalHash===approval.requestHash&&approvalReadBackHash===approval.requestHash&&<button type="button" disabled={busy} onClick={()=>{setApprovalUnknown(false);setApprovalObserved(false);}}>原请求仍待审批，重新逐条核对</button>}{approvalOriginalHash!==approval.requestHash&&<p>原审批请求已变化；保留原提交记录，不直接重发决定。</p>}</>}</div>}
     {segmentMode ? <>
       <div>

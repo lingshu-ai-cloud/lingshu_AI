@@ -150,7 +150,7 @@ async function readMessengerAnalysisCustomer(tenantId:string,id:string):Promise<
  const admitted=(await readAuthorizedMessengerCustomers(tenantId)).find(customer=>customer.id===id);if(!admitted)return null;
  const metadata=getMessengerCustomers(tenantId).find(customer=>customer.id===id);if(!metadata)return null;
  const fields=['tags','contextTagEvidence','contextTagsAttempts','contextTagsRetryAt','contextTagsBuyerFingerprint','contextTagsAnalysisVersion','language'];
- return {...Object.fromEntries(fields.filter(field=>field in metadata).map(field=>[field,metadata[field]])),...admitted};
+ return {...admitted,...Object.fromEntries(fields.filter(field=>field in metadata).map(field=>[field,metadata[field]]))};
 }
 
 export function analyzeMessengerCustomerTags(tenantId: string, id: string, classify = classifyContextTags): Promise<MessengerCustomer | null> {
