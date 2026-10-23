@@ -9,9 +9,10 @@ import type { AdConnection } from './connections.js';
 import type { AdExecution } from './execution.js';
 import type { PlatformAdTask } from './tasks.js';
 import { socialArtifactMediaFamily } from '../starter198/socialArtifactMedia.js';
+import { fingerprintHistoryFile, readHistoryImageMaterials, type HistoryFileRoots } from './externalHistoryFiles.js';
 
 type Row = Record<string, unknown>;
-type Grant = AdHistorySource & { viewerTenantId: string; directory: string };
+type Grant = AdHistorySource & HistoryFileRoots & { viewerTenantId: string; directory: string; socialFileRoot?: string };
 const object = (v: unknown): Row => {
   if (typeof v === 'string') { try { v = JSON.parse(v); } catch { return {}; } }
   return v && typeof v === 'object' && !Array.isArray(v) ? v as Row : {};
@@ -33,7 +34,8 @@ async function grants(): Promise<Grant[]> {
     return value.map(raw => {
       const r = object(raw);
       if (!validId(r.id) || !validId(r.viewerTenantId) || !validId(r.tenantId)
-        || !text(r.tenantName) || !text(r.label) || !path.isAbsolute(text(r.directory))) throw fault();
+        || !text(r.tenantName) || !text(r.label) || !path.isAbsolute(text(r.directory))
+        || ['objectRoot', 'mediaRoot', 'materialsFile', 'socialFileRoot'].some(k => r[k] !== undefined && !path.isAbsolute(text(r[k])))) throw fault();
       const key = `${r.viewerTenantId}:${r.id}`;
       if (keys.has(key)) throw fault(); keys.add(key);
       return r as unknown as Grant;
@@ -111,14 +113,30 @@ export async function externalHistoryLifecycle(tenantId: string, sourceId: strin
   const matches = projects.rows.filter(p => p.id === projectId);
   if (matches.length !== 1) throw new PlatformAdCreativeError('未找到该来源企业的历史素材', 404);
   const source = await projectEntry(grant, matches[0], projects.revision);
+  const fileEvidence: NonNullable<AdSourceLifecycle['fileEvidence']> = [];
+  if (source.verifiedSource) {
+    const files = await collection(grant, 'starter_social_content_files'), artifacts = await collection(grant, 'starter_social_content_artifacts');
+    const artifact = artifacts.rows.find(r => r.task_id === source.sourceTaskId && r.artifact_id === source.artifactId);
+    const file = files.rows.find(r => r.task_id === source.sourceTaskId && `socialfile:${r.file_id}` === artifact?.resource_ref && r.content_sha256 === source.sha256);
+    if (!file) throw fault();
+    fileEvidence.push(await fingerprintHistoryFile({ id: text(file.file_id), root: file.storage_kind === 'object' ? grant.objectRoot : file.storage_kind === 'local' ? grant.socialFileRoot : undefined,
+      key: text(file.storage_key), prefix: file.storage_kind === 'object' ? `social-content-sources/tenants/${Buffer.from(grant.tenantId).toString('base64url')}/` : `${grant.tenantId}/`, sha256: source.sha256, size: Number(file.byte_size) }));
+  } else {
+    const image = object(object(matches[0].spec).socialImageTask);
+    if (image.id === matches[0].id && Array.isArray(image.outputs) && image.outputs.length) fileEvidence.push(...await readHistoryImageMaterials(grant, grant.tenantId, image.outputs.slice(0, 20)));
+  }
+  if (source.verifiedSource) source.note = '原企业项目、任务、成片版本与文件记录一致；原始字节核验结果如下，广告上传证据仍需独立核验，不据此判定已投放。';
+  source.note += fileEvidence.length ? ` 原始文件只读核验：${fileEvidence.map(f => `${f.id}：${f.note} 当前 SHA-256=${f.actualSha256 || '未取得'}；字节数=${f.actualSize ?? '未取得'}`).join('；')}` : ' 当前项目没有可核验的持久化输出文件引用，不从草稿或预览推断原文件。';
   const bindings = await collection(grant, 'platform_ad_creatives', true);
+  const sourceConnections = await collection(grant, 'platform_ad_connections', true), sourceReceipts = await collection(grant, 'platform_ad_executions', true);
   const candidates = source.verifiedSource ? bindings.rows.filter(r => r.sourceTaskId === source.sourceTaskId && r.artifactId === source.artifactId && r.sha256 === source.sha256) : [];
   // The destination's sandbox resources are a different tenant/store. Even an ID/SHA collision is NOT provenance.
   // Source bindings without accessible, verified provider receipts cannot be presented as live Meta data.
-  const result: AdSourceLifecycle = { source, checkedAt: '', truncated: false, bindingCount: candidates.length, ads: [], roi: null, crmInquiries: null,
+  const result: AdSourceLifecycle = { source, checkedAt: '', truncated: Array.isArray(object(object(matches[0].spec).socialImageTask).outputs) && (object(object(matches[0].spec).socialImageTask).outputs as unknown[]).length > 20, bindingCount: candidates.length, ads: [], roi: null, crmInquiries: null, fileEvidence,
     scopeNote: `来源企业：${grant.tenantName}（${grant.tenantId}）。${!bindings.available ? '原历史来源没有投放绑定集合，投放覆盖范围尚未建立。' : '仅读取原企业同一成片版本的已核验创建回执；没有完整回执的绑定不代表已投放。'} 不跨企业检索或借用沙盒广告；这不代表全平台从未投放。没有真实回执时消耗、购买 ROAS、Meta lead/消息会话均未知；利润 ROI 和 CRM 有效询盘另需业务归因，不填零、不混算。` };
+  result.scopeNote += ` 原企业广告账户：${sourceConnections.available ? `记录 ${sourceConnections.rows.filter(r => r.provider === 'meta').length} 个 Meta 连接（尚不代表授权有效）` : '连接集合缺失'}；创建回执：${sourceReceipts.available ? `${sourceReceipts.rows.filter(r => r.action === 'create' && r.status === 'VERIFIED').length} 条已核验记录` : '回执集合缺失'}。社媒主页连接不是广告账户或广告回执。`;
   if (candidates.length) {
-    const receipts = await collection(grant, 'platform_ad_executions'), connections = await collection(grant, 'platform_ad_connections'), tasks = await collection(grant, 'platform_ad_tasks');
+    const receipts = sourceReceipts, connections = sourceConnections, tasks = await collection(grant, 'platform_ad_tasks');
     const seen = new Set<string>();
     for (const b of candidates) for (const r of receipts.rows) {
       const ids = object(r.result), upload = object(b.uploadReceipt);
@@ -132,7 +150,7 @@ export async function externalHistoryLifecycle(tenantId: string, sourceId: strin
       if (result.ads.length >= 20) { result.truncated = true; continue; }
       const entry: AdSourceLifecycle['ads'][number] = { executionId: text(r.id), taskId: text(b.taskId), taskName: text(task.name), accountId: text(connection.accountId), adId: text(ids.adId), mapping: ids.creativeBindingId === b.id ? '原企业创建时绑定' : '原企业投放后核对映射', report: null, error: '' };
       try {
-        if (b.status !== 'ready' || upload.status !== 'ready' || upload.sha256 !== source.sha256 || upload.accountId !== connection.accountId || upload.videoId !== b.platformVideoId) throw fault();
+        if (!fileEvidence.length || fileEvidence.some(f => f.state !== 'verified') || b.status !== 'ready' || upload.status !== 'ready' || upload.sha256 !== source.sha256 || upload.accountId !== connection.accountId || upload.videoId !== b.platformVideoId) throw fault();
         const report = await getMetaPerformanceReport(grant.tenantId, entry.executionId, { level: 'ad', preset: 'maximum' }, {
           cacheKey: JSON.stringify([tenantId, grant.id, projects.revision, bindings.revision, receipts.revision, connections.revision, tasks.revision]),
           read: () => readExecutedCreativeRecords(grant.tenantId, r as unknown as AdExecution, task as unknown as PlatformAdTask, connection as unknown as AdConnection),
