@@ -61,6 +61,9 @@ import { userBgms, withRecommendedBgmNames } from './studioBgmCatalog.js';
 import { createStudioBgmRouter } from './studioBgmRoutes.js';
 import { extractJSON, langName } from './studioTranslationCore.js';
 import { registerStudioTranslationRoutes } from './studioTranslationRoutes.js';
+import { registerStudioVariationBatchRoutes } from './studioVariationBatchRoutes.js';
+import { loadStudioPublishLinks, registerStudioPublishLinkRoutes } from './studioPublishLinkRoutes.js';
+export { terminalPublishedPlatformPostId } from './studioPublishLinkRoutes.js';
 export { automationBgmAudio, automationBgmCatalog } from './studioBgmCatalog.js';
 import { buildStudioRenderManifest, type RenderManifest, type RenderSpec } from './studioRenderManifestProjection.js';
 import { analysisDetailsTimelineQuality, referenceTimelineQuality } from './studioReferenceTimelineQuality.js';
@@ -274,17 +277,6 @@ import {
    视频生成必须真实调用外部模型；失败时返回明确错误，不生成本地假预览。
 ─────────────────────────────────────────────────────────────────────────── */
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PUBLISH_LINKS_FILE = path.join(__dirname, '../../data/studio-publish-links.json');
-
-function loadStudioPublishLinks(tenantId: string): StudioMaterialPublishLink[] {
-  try {
-    const rows = JSON.parse(fs.readFileSync(PUBLISH_LINKS_FILE, 'utf8')) as Array<StudioMaterialPublishLink & { tenantId?: string }>;
-    return Array.isArray(rows) ? rows.filter(item => item.tenantId === tenantId) : [];
-  } catch {
-    return [];
-  }
-}
-
 function recordValue(value: unknown): Record<string, any> {
   if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
   if (typeof value === 'string') {
@@ -7126,64 +7118,7 @@ studioRouter.use('/projects', createStudioProjectSaveRouter({
 
 studioRouter.use('/projects', createStudioProjectReviewRouter(store));
 
-/* ── 爆款裂变批量队列：持久化组合、执行状态与人工审核结果 ─────────────── */
-const BATCHES_FILE = path.join(__dirname, '../../data/studio-variation-batches.json');
-type BatchItemStatus = 'pending' | 'running' | 'quality_check' | 'review' | 'approved' | 'rejected' | 'failed';
-interface VariationBatchItem { id: string; variables: Record<string, string>; status: BatchItemStatus; outputProjectId?: string; qualityScore?: number; note?: string; updatedAt: string }
-interface VariationBatch { id: string; tenantId: string; title: string; templateProjectId?: string; status: 'queued' | 'running' | 'review' | 'completed' | 'paused'; estimatedCostCny: number; plan?: Record<string, unknown>; createdAt: string; updatedAt: string; items: VariationBatchItem[] }
-function loadVariationBatches(): VariationBatch[] { try { return JSON.parse(fs.readFileSync(BATCHES_FILE, 'utf8')) as VariationBatch[]; } catch { return []; } }
-function persistVariationBatches(list: VariationBatch[]): void { fs.mkdirSync(path.dirname(BATCHES_FILE), { recursive: true }); fs.writeFileSync(BATCHES_FILE, JSON.stringify(list, null, 2), 'utf8'); }
-
-studioRouter.get('/variation-batches', (_req, res) => { const { tenantId } = res.locals as AuthLocals; res.json(loadVariationBatches().filter(item => item.tenantId === tenantId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))); });
-studioRouter.post('/variation-batches', (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const body = req.body ?? {};
-  const dimensions = body.dimensions && typeof body.dimensions === 'object' ? body.dimensions as Record<string, unknown> : {};
-  const values = (key: string) => Array.isArray(dimensions[key]) && (dimensions[key] as unknown[]).length ? (dimensions[key] as unknown[]).map(String) : ['默认'];
-  const products = values('product'); const people = values('person'); const scenes = values('scene'); const languages = values('language'); const hooks = values('hook');
-  const limit = Math.max(1, Math.min(200, Number(body.maxItems) || 20));
-  const now = new Date().toISOString(); const items: VariationBatchItem[] = [];
-  outer: for (const product of products) for (const person of people) for (const scene of scenes) for (const language of languages) for (const hook of hooks) {
-    items.push({ id: randomUUID(), variables: { product, person, scene, language, hook }, status: 'pending', updatedAt: now });
-    if (items.length >= limit) break outer;
-  }
-  const duration = Math.max(1, Number(body.duration) || 20);
-  const batch: VariationBatch = { id: randomUUID(), tenantId, title: String(body.title || '未命名裂变批次'), templateProjectId: body.templateProjectId ? String(body.templateProjectId) : undefined, status: 'queued', estimatedCostCny: Math.ceil(items.length * duration * 1.5 * 100) / 100, plan: body.plan && typeof body.plan === 'object' ? body.plan as Record<string, unknown> : { duration, maxItems: limit, dimensions }, createdAt: now, updatedAt: now, items };
-  const list = loadVariationBatches(); list.push(batch); persistVariationBatches(list); res.status(201).json({ ok: true, batch });
-});
-studioRouter.patch('/variation-batches/:batchId', (req, res) => {
-  const { tenantId } = res.locals as AuthLocals; const list = loadVariationBatches(); const batch = list.find(item => item.id === req.params.batchId && item.tenantId === tenantId);
-  if (!batch) { res.status(404).json({ ok: false, error: 'Batch not found' }); return; }
-  if (['queued', 'running', 'review', 'completed', 'paused'].includes(String(req.body?.status))) batch.status = req.body.status;
-  batch.updatedAt = new Date().toISOString(); persistVariationBatches(list); res.json({ ok: true, batch });
-});
-studioRouter.patch('/variation-batches/:batchId/items/:itemId', (req, res) => {
-  const { tenantId } = res.locals as AuthLocals; const list = loadVariationBatches(); const batch = list.find(entry => entry.id === req.params.batchId && entry.tenantId === tenantId); const item = batch?.items.find(entry => entry.id === req.params.itemId);
-  if (!batch || !item) { res.status(404).json({ ok: false, error: 'Batch item not found' }); return; }
-  const allowed: BatchItemStatus[] = ['pending', 'running', 'quality_check', 'review', 'approved', 'rejected', 'failed'];
-  if (allowed.includes(req.body?.status)) item.status = req.body.status;
-  if (req.body?.outputProjectId) item.outputProjectId = String(req.body.outputProjectId);
-  if (Number.isFinite(Number(req.body?.qualityScore))) item.qualityScore = Number(req.body.qualityScore);
-  if (typeof req.body?.note === 'string') item.note = req.body.note;
-  item.updatedAt = new Date().toISOString(); batch.updatedAt = item.updatedAt;
-  if (batch.items.every(entry => entry.status === 'approved' || entry.status === 'rejected')) batch.status = 'completed'; else if (batch.items.some(entry => entry.status === 'review')) batch.status = 'review';
-  persistVariationBatches(list); res.json({ ok: true, batch, item });
-});
-studioRouter.post('/variation-batches/:batchId/claim-next', (req, res) => {
-  const { tenantId } = res.locals as AuthLocals; const list = loadVariationBatches(); const batch = list.find(entry => entry.id === req.params.batchId && entry.tenantId === tenantId);
-  if (!batch) { res.status(404).json({ ok: false, error: 'Batch not found' }); return; }
-  if (batch.status === 'paused' || batch.status === 'completed') { res.json({ ok: true, item: null, batch }); return; }
-  const staleBefore = Date.now() - 30 * 60 * 1000;
-  const item = batch.items.find(entry => entry.status === 'pending' || (entry.status === 'running' && new Date(entry.updatedAt).getTime() < staleBefore));
-  if (!item) { batch.status = batch.items.some(entry => entry.status === 'review') ? 'review' : batch.status; persistVariationBatches(list); res.json({ ok: true, item: null, batch }); return; }
-  item.status = 'running'; item.updatedAt = new Date().toISOString(); batch.status = 'running'; batch.updatedAt = item.updatedAt; persistVariationBatches(list); res.json({ ok: true, item, batch });
-});
-studioRouter.post('/variation-batches/:batchId/retry-failed', (req, res) => {
-  const { tenantId } = res.locals as AuthLocals; const list = loadVariationBatches(); const batch = list.find(entry => entry.id === req.params.batchId && entry.tenantId === tenantId);
-  if (!batch) { res.status(404).json({ ok: false, error: 'Batch not found' }); return; }
-  let count = 0; const now = new Date().toISOString(); batch.items.forEach(item => { if (item.status === 'failed' || item.status === 'rejected') { item.status = 'pending'; item.updatedAt = now; count += 1; } });
-  if (count) batch.status = 'queued'; batch.updatedAt = now; persistVariationBatches(list); res.json({ ok: true, retried: count, batch });
-});
+registerStudioVariationBatchRoutes(studioRouter);
 
 studioRouter.get('/publish-records', (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -7211,54 +7146,7 @@ studioRouter.post('/publish-recommendations', (req, res) => {
     }));
   res.json({ recommendations });
 });
-studioRouter.get('/publish-links', (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  try { res.json((JSON.parse(fs.readFileSync(PUBLISH_LINKS_FILE, 'utf8')) as any[]).filter(item => item.tenantId === tenantId)); } catch { res.json([]); }
-});
-export function terminalPublishedPlatformPostId(value: unknown): string {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
-  const result = value as Record<string, unknown>;
-  if (result.ok !== true || result.deliveryStatus !== 'published') return '';
-  return String(result.platformPostId || '').trim();
-}
-studioRouter.post('/publish-links', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const projectId = String(req.body?.projectId || '').trim();
-  if (!projectId) { res.status(400).json({ ok: false, error: 'projectId required' }); return; }
-  if (!terminalPublishedPlatformPostId(req.body?.publishResult)) {
-    res.status(409).json({ ok: false, error: 'publishResult must contain a terminal published platform receipt' });
-    return;
-  }
-  let project: Record<string, unknown> | null;
-  try { project = await store.getById<Record<string, unknown>>('studio_projects', projectId); }
-  catch { res.status(503).json({ ok: false, error: '无法验证 Studio 生成记录，请稍后重试' }); return; }
-  if (!project || String(project.tenant_id || '') !== tenantId) {
-    res.status(404).json({ ok: false, error: '当前企业的 Studio 项目不存在' });
-    return;
-  }
-  const generation = verifiedStudioGenerationFromSpec(project.spec, req.body);
-  if (!generation.ok) {
-    res.status(409).json({ ok: false, error: generation.code, message: generation.message });
-    return;
-  }
-  let list: Record<string, unknown>[] = []; try { list = JSON.parse(fs.readFileSync(PUBLISH_LINKS_FILE, 'utf8')) as Record<string, unknown>[]; } catch { /* empty */ }
-  const link = { id: randomUUID(), tenantId, projectId, batchId: req.body?.batchId ? String(req.body.batchId) : undefined, variantId: req.body?.variantId ? String(req.body.variantId) : undefined, accountId: String(req.body?.accountId || ''), platform: String(req.body?.platform || ''), title: String(req.body?.title || ''), publishResult: req.body.publishResult, publishedAt: new Date().toISOString() };
-  list.push(link); fs.mkdirSync(path.dirname(PUBLISH_LINKS_FILE), { recursive: true }); fs.writeFileSync(PUBLISH_LINKS_FILE, JSON.stringify(list, null, 2), 'utf8'); res.status(201).json({ ok: true, link });
-});
-studioRouter.patch('/publish-links/:id/metrics', (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  let list: Record<string, any>[] = []; try { list = JSON.parse(fs.readFileSync(PUBLISH_LINKS_FILE, 'utf8')) as Record<string, any>[]; } catch { /* empty */ }
-  const link = list.find(item => item.id === req.params.id && item.tenantId === tenantId); if (!link) { res.status(404).json({ ok: false, error: 'Publish link not found' }); return; }
-  link.metrics = { views: Number(req.body?.views) || 0, likes: Number(req.body?.likes) || 0, comments: Number(req.body?.comments) || 0, shares: Number(req.body?.shares) || 0, leads: Number(req.body?.leads) || 0, updatedAt: new Date().toISOString() };
-  fs.writeFileSync(PUBLISH_LINKS_FILE, JSON.stringify(list, null, 2), 'utf8'); res.json({ ok: true, link });
-});
-studioRouter.get('/publish-performance', (_req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  let list: Record<string, any>[] = []; try { list = JSON.parse(fs.readFileSync(PUBLISH_LINKS_FILE, 'utf8')) as Record<string, any>[]; } catch { /* empty */ }
-  const grouped: Record<string, any> = {};
-  for (const link of list.filter(item => item.tenantId === tenantId)) { const key = String(link.projectId || 'unknown'); const row = grouped[key] ||= { projectId: key, posts: 0, views: 0, likes: 0, comments: 0, shares: 0, leads: 0 }; row.posts += 1; for (const metric of ['views', 'likes', 'comments', 'shares', 'leads']) row[metric] += Number(link.metrics?.[metric]) || 0; }
-  res.json(Object.values(grouped).map((row: any) => ({ ...row, engagementRate: row.views ? Math.round(((row.likes + row.comments + row.shares) / row.views) * 10000) / 100 : 0 })).sort((a: any, b: any) => b.views - a.views));
-});
+registerStudioPublishLinkRoutes(studioRouter);
 
 /* ── 本地降级生成 ──────────────────────────────────────────────────────── */
 
