@@ -191,6 +191,9 @@ export interface SocialImageDirectorReviewDecision {
   decision: 'accept_for_user_review' | 'repair' | 'regenerate' | 'block';
   candidateId: string;
   candidateVersion: number;
+  /** Ordered, frozen outputs reviewed together for a carousel or GIF. */
+  candidateRefs?: SocialImageVersionedRef[];
+  candidateSetHash?: string;
   passedCriteria: string[];
   failedCriteria: string[];
   factorResults: Array<{ factorId: string; verdict: 'pass' | 'fail' | 'uncertain'; evidenceRefs: SocialImageVersionedRef[] }>;
@@ -208,6 +211,7 @@ export interface SocialImageApprovalDecision {
   candidateId: string;
   candidateVersion: number;
   candidateContentHash: string;
+  candidateRefs?: SocialImageVersionedRef[];
   decidedBy: string;
   decidedAt: string;
   source: 'explicit_user_action';
@@ -224,6 +228,8 @@ export interface SocialImageApprovedArtifact {
   candidateId: string;
   candidateVersion: number;
   contentHash: string;
+  candidateRefs?: SocialImageVersionedRef[];
+  mediaItems?: Array<{ candidateId: string; role: string; label: string; mediaUrl?: string; materialId?: string }>;
   mediaUrl?: string;
   materialId?: string;
   approvalDecisionId: string;
@@ -262,6 +268,7 @@ export interface SocialImageDeliveryPackage {
     language: string;
     mediaUrl?: string;
     materialId?: string;
+    mediaItems?: Array<{ candidateId: string; role: string; label: string; mediaUrl?: string; materialId?: string }>;
     caption: string;
   };
   packageHash: string;

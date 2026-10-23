@@ -11,7 +11,7 @@ import { recoverSocialImagePaidMaterial } from '../socialImage/socialImageMateri
 import { abandonSocialImageMultiUnitPlan, persistSocialImageMultiUnitPlan } from '../socialImage/socialImageDurablePlan.js';
 import { finalizeSocialImageGif } from '../socialImage/socialImageGifDelivery.js';
 import { createGeneratedImageMaterial } from '../lib/generatedImageMaterial.js';
-import { mergeSocialImageVisualChecks, socialImageCandidateOcrCheck, socialImageCandidatePixelChecks,
+import { mergeSocialImageVisualChecks, socialImageCandidateOcrCheck, socialImageCandidatePixelChecks, socialImageGifAnimationCheck,
   socialImageDeterministicChecks } from '../socialImage/socialImageQuality.js';
 import { qualityCheckSocialImageWithQwen } from '../agents/qwen.js';
 import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
@@ -33,6 +33,7 @@ import {
   SocialImageProductionRunError,
 } from '../socialImage/socialImageProductionRun.js';
 import { projectSocialImageProductionSnapshot } from '../socialImage/socialImageProductionRuntime.js';
+import { resolveSocialImageReviewSet } from '../socialImage/socialImageReviewSet.js';
 import { analyzeSocialImageReference, inspectSocialImageAsset, socialImageAssetManifest } from '../socialImage/socialImageEvidenceWorker.js';
 import { localProductOcrReadiness, recognizeProductImageLocally, recognizeProductImageTokensLocally } from '../lib/localProductOcr.js';
 
@@ -315,17 +316,25 @@ socialImageRouter.post('/tasks/:id/decision', async (req, res) => {
     const candidateVersion = Number(req.body?.candidateVersion);
     const output = socialImageCurrentOutputs(task).find(item => item.id === candidateId && item.version === candidateVersion);
     if (!output) { res.status(409).json({ ok: false, code: 'social_image_approval_candidate_stale', error: '候选版本已变化，请刷新后验收' }); return; }
-    const media = await outputImageBytes(tenantId, output);
-    if (!media?.bytes.length) { res.status(422).json({ ok: false, code: 'social_image_candidate_bytes_unavailable', error: '候选图片不可读取，不能验收' }); return; }
-    const actualContentHash = createHash('sha256').update(media.bytes).digest('hex');
     const decision = String(req.body?.decision || '');
     if (!['approved', 'rejected'].includes(decision)) { res.status(400).json({ ok: false, code: 'social_image_decision_invalid', error: '验收决定无效' }); return; }
+    const reviewSet = resolveSocialImageReviewSet(task, candidateId, candidateVersion);
+    if (decision === 'approved' && !reviewSet) { res.status(409).json({ ok: false, code: 'social_image_review_set_incomplete', error: '交付物尚未全部完成，请刷新后审阅' }); return; }
+    if (decision === 'approved' && reviewSet) {
+      for (const candidate of reviewSet.outputs) {
+        const media = await outputImageBytes(tenantId, candidate);
+        if (!media?.bytes.length) { res.status(422).json({ ok: false, code: 'social_image_candidate_bytes_unavailable', error: '候选图片不可读取，不能验收' }); return; }
+        if (createHash('sha256').update(media.bytes).digest('hex') !== candidate.contentHash) {
+          res.status(409).json({ ok: false, code: 'social_image_candidate_hash_conflict', error: '交付物字节已变化，请重新质检' }); return;
+        }
+      }
+    }
     const result = await decideSocialImageCandidate({
       store, tenantId, userId, taskId: task.id,
       expectedVersion: Number(req.body?.expectedVersion),
       candidateId, candidateVersion,
       expectedContentHash: String(req.body?.expectedContentHash || '').toLowerCase(),
-      actualContentHash,
+      actualContentHash: reviewSet?.contentHash || String(output.contentHash || req.body?.expectedContentHash || ''),
       decision: decision as 'approved' | 'rejected',
       note: String(req.body?.note || ''),
     });
@@ -708,12 +717,19 @@ socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
           qualityChecks: deterministic.map(check => localChecks.get(check.key) || check) };
       }
       const pixelChecks = await socialImageCandidatePixelChecks({ bytes: generated.bytes, aspectRatio: task.deliverySpec.aspectRatio });
+      const expectedFrameBytes = output.role === 'gif_output' ? await Promise.all((task.gifDelivery?.frameOutputIds || [])
+        .map(async id => (await outputImageBytes(tenantId, task.outputs.find(candidate => candidate.id === id) || {}))?.bytes || null)) : [];
+      const animationCheck = output.role === 'gif_output'
+        ? [await socialImageGifAnimationCheck({ bytes: generated.bytes, aspectRatio: task.deliverySpec.aspectRatio,
+          expectedFrames: task.renderPlan?.units.length || 0,
+          expectedFrameBytes: expectedFrameBytes.every(Boolean) ? expectedFrameBytes as Buffer[] : [] })] : [];
       const ocrCheck = await socialImageCandidateOcrCheck({ bytes: generated.bytes, mimeType: generated.mimeType,
         expectedTexts: [String(plannedUnit?.poster.headline || task.imageTextContract.headline),
           String(plannedUnit?.poster.subheadline || task.imageTextContract.supportingText || ''), task.imageTextContract.cta || ''],
         recognize: recognizeProductImageLocally });
-      const localChecks = new Map([...pixelChecks, ocrCheck].map(check => [check.key, check]));
-      const deterministicForOutput = deterministic.map(check => localChecks.get(check.key) || check);
+      const localChecks = new Map([...pixelChecks, ocrCheck, ...animationCheck].map(check => [check.key, check]));
+      const deterministicForOutput = deterministic.filter(check => output.role === 'gif_output'
+        || check.key !== 'motion_mechanism_similarity').map(check => localChecks.get(check.key) || check);
       let visual = [] as Awaited<ReturnType<typeof qualityCheckSocialImageWithQwen>>;
       try {
         visual = await qualityCheckSocialImageWithQwen({ generated, products, reference, expected: {
