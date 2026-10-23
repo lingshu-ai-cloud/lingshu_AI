@@ -1,3 +1,4 @@
+import { WHATSAPP_PLATFORM_SECRET_REF, WHATSAPP_PLATFORM_WEBHOOK_PATH, whatsappPlatformConfig } from '../whatsapp/platformConfig.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,7 +14,7 @@ import { sendFeishuCard, sendFeishuText } from '../integrations/feishu.js';
 import { sendWeComMarkdown } from '../integrations/wecom.js';
 
 export type TenantPlatform = 'meta' | 'instagram' | 'google' | 'tiktok' | 'linkedin' | 'wecom';
-export type TenantTokenType = 'user_60d' | 'system_user_permanent';
+export type TenantTokenType = 'user_60d' | 'system_user_permanent' | 'business_integration';
 export type TenantPlatformStatus =
   | 'pending'
   | 'configuring'
@@ -123,6 +124,7 @@ export function encryptSecret(value: string): string {
 export function decryptSecret(value?: string): string {
   const raw = text(value);
   if (!raw) return '';
+  if (raw === WHATSAPP_PLATFORM_SECRET_REF) return whatsappPlatformConfig().appSecret;
   if (!raw.startsWith('v1:')) return raw;
   try {
     const [, ivRaw, tagRaw, dataRaw] = raw.split(':');
@@ -176,8 +178,14 @@ export async function getTenantPlatformApp(tenantId: string, platform: TenantPla
 }
 
 export async function listTenantPlatformApps(): Promise<TenantPlatformAppRecord[]> {
-  const result = await store.list<TenantPlatformAppRecord>(COL, { perPage: 200, sort: 'tenant_id' });
-  return result.items;
+  const apps: TenantPlatformAppRecord[] = [];
+  for (let page = 1; page <= 10000; page++) {
+    const result = await store.list<TenantPlatformAppRecord>(COL, { page, perPage: 200, sort: 'id' });
+    apps.push(...result.items);
+    if (apps.length === result.totalItems) return apps;
+    if (!result.items.length || apps.length > result.totalItems) break;
+  }
+  throw new Error('tenant_platform_app_scan_incomplete');
 }
 
 export async function deleteTenantPlatformApp(tenantId: string, platform: TenantPlatform): Promise<boolean> {
@@ -224,7 +232,7 @@ export function publicTenantPlatformApp(req: Request, app: TenantPlatformAppReco
     webhookVerifyTokenLength: text(app.webhook_verify_token).length,
     wecomEncodingAesKeySet: Boolean(wecomEncodingAesKey),
     wecomEncodingAesKeyLength: wecomEncodingAesKey.length,
-    webhookUrl: app.platform === 'meta' || app.platform === 'instagram' || app.platform === 'wecom' ? tenantWebhookUrl(req, app.tenant_id, app.platform) : '',
+    webhookUrl: app.app_secret === WHATSAPP_PLATFORM_SECRET_REF ? `${getPublicOrigin(req)}${WHATSAPP_PLATFORM_WEBHOOK_PATH}` : app.platform === 'meta' || app.platform === 'instagram' || app.platform === 'wecom' ? tenantWebhookUrl(req, app.tenant_id, app.platform) : '',
     oauthRedirectUri: app.platform === 'google'
       ? `${getPublicOrigin(req)}/api/overseas/youtube/oauth/callback`
       : app.platform === 'instagram'

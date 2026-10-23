@@ -1,3 +1,4 @@
+import { WHATSAPP_PLATFORM_SECRET_REF } from '../whatsapp/platformConfig.js';
 import { Router } from 'express';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import {
@@ -74,6 +75,11 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
     { platform: 'tiktok' as const, appId: appId(req.body?.tiktokClientKey, existing[3]?.app_id), appSecret: text(req.body?.tiktokClientSecret) },
     { platform: 'linkedin' as const, appId: appId(req.body?.linkedinClientId, existing[4]?.app_id), appSecret: text(req.body?.linkedinClientSecret) },
   ];
+  const managedMeta = existing[1]?.app_secret === WHATSAPP_PLATFORM_SECRET_REF;
+  if (managedMeta && (entries[1]!.appId !== existing[1]!.app_id || entries[1]!.appSecret || entries[1]!.webhookVerifyToken)) {
+    res.status(409).json({ error: 'whatsapp_platform_credentials_managed', message: 'WhatsApp 平台应用由管理员统一配置，请使用 WhatsApp 接入面板管理企业授权。' });
+    return;
+  }
   // Validate every pair before starting any write so one invalid application
   // cannot leave the other two partially updated.
   for (const [index, entry] of entries.entries()) {
@@ -83,7 +89,7 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
       return;
     }
   }
-  await Promise.all(entries.filter((entry, index) => existing[index] || entry.appId || entry.appSecret || ('webhookVerifyToken' in entry && entry.webhookVerifyToken)).map(entry => upsertTenantPlatformApp({
+  await Promise.all(entries.filter((entry, index) => !(entry.platform === 'meta' && managedMeta) && (existing[index] || entry.appId || entry.appSecret || ('webhookVerifyToken' in entry && entry.webhookVerifyToken))).map(entry => upsertTenantPlatformApp({
     tenantId,
     ...entry,
   })));
@@ -101,8 +107,12 @@ platformIntegrationsRouter.delete('/oauth-config/:platform', requireAuth, async 
 
   try {
     const typedPlatform = platform as 'google' | 'meta' | 'instagram' | 'tiktok' | 'linkedin';
-    const disconnectedAccounts = await disconnectTenantPlatformAccounts(tenantId, typedPlatform);
     const existing = await getTenantPlatformApp(tenantId, typedPlatform);
+    if (existing?.app_secret === WHATSAPP_PLATFORM_SECRET_REF) {
+      res.status(409).json({ error: 'whatsapp_platform_binding_managed', message: '请由企业管理员在 WhatsApp 接入面板停止接入。' });
+      return;
+    }
+    const disconnectedAccounts = await disconnectTenantPlatformAccounts(tenantId, typedPlatform);
     const configDeleted = await deleteTenantPlatformApp(tenantId, typedPlatform);
     if (existing && !configDeleted) throw new Error('tenant_platform_app_delete_failed');
     res.setHeader('Cache-Control', 'no-store');
