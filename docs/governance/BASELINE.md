@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵感页关键词图文采集动作拆分（2026-10-23）
+
+- 代码提交 `e8678af2` 将现有关键词图文采集的请求、记录投影和库存刷新编排迁至 `inspirationImageCrawlAction.ts`；页面仍持有筛选与弹窗状态，授权切换后旧采集响应不写入新账号视图。`InspirationDashboard.tsx` 从 2,208 降至 2,178 行并收紧历史预算；全仓仍有 5 个超限文件。
+- 新动作及原页面合同 5/5、`test:video-source-boundaries` 148/148、租户隔离、TypeScript、架构扫描/ratchet（2,411 个生产 TypeScript 文件）、193 项迁移清单只读检查、生产构建与 `git diff --check` 通过。Studio 主 chunk 为 480,957/485,000 字节，构建仍有大 chunk 提示。未执行真实采集供应商、LinkedIn 付费采集测试、目标库迁移、浏览器验收或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## Studio 对标证据准入与迁移规则拆分（2026-10-23）
 
 - 代码提交 `dddbec98` 将规范化对标证据准入、旧逐镜时间线完整性和跨品类迁移建议迁至 `studioReferenceAdmission.ts`，保留页面公开导出与现有生成门禁；`AiCreateStudio.tsx` 从 12,086 降至 12,000 行并收紧历史预算。全仓仍有 5 个超限文件，这批并不代表架构拆分完成。
