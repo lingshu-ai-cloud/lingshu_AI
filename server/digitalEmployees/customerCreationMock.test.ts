@@ -35,7 +35,7 @@ store.list = (async (collection: string, options: any = {}) => {
 }) as typeof store.list;
 store.getById = (async (collection: string, id: string) => (rows[collection] || []).find(row => row.id === id) || null) as typeof store.getById;
 store.create = (async (collection: string, payload: any) => {
-  const row = { ...payload, id: `mock_${collection}_${++nextId}` };
+  const row = { id: `mock_${collection}_${++nextId}`, ...payload };
   (rows[collection] ||= []).push(row); return row;
 }) as typeof store.create;
 store.update = (async (collection: string, id: string, payload: any) => {
