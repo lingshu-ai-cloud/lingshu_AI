@@ -448,7 +448,9 @@ try {
 
 const root = process.cwd();
 const routeSource = fs.readFileSync(path.join(root, 'server/routes/digitalEmployees.ts'), 'utf8')
-  + fs.readFileSync(path.join(root, 'server/digitalEmployees/taskInterventionApplication.ts'), 'utf8');
+  + fs.readFileSync(path.join(root, 'server/digitalEmployees/taskInterventionApplication.ts'), 'utf8')
+  + fs.readFileSync(path.join(root, 'server/digitalEmployees/taskBusinessPreparation.ts'), 'utf8')
+  + fs.readFileSync(path.join(root, 'server/digitalEmployees/taskBusinessObservation.ts'), 'utf8');
 const productionSource = fs.readFileSync(path.join(root, 'server/digitalEmployees/contentProduction.ts'), 'utf8');
 const executorSource = fs.readFileSync(path.join(root, 'server/digitalEmployees/contentProductionExecution.ts'), 'utf8');
 const scriptSource = fs.readFileSync(path.join(root, 'server/digitalEmployees/contentProductionScripts.ts'), 'utf8');

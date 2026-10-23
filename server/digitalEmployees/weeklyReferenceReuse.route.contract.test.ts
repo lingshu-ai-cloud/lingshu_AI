@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const route = readFileSync(new URL('../routes/digitalEmployees.ts', import.meta.url), 'utf8');
+const route = readFileSync(new URL('../routes/digitalEmployees.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('./taskBusinessObservation.ts', import.meta.url), 'utf8');
 const evidence = readFileSync(new URL('../routes/digitalEmployeeContentEvidence.ts', import.meta.url), 'utf8');
 const batchPlan = readFileSync(new URL('./contentBatchPlan.ts', import.meta.url), 'utf8');
 const recommendationStart = route.indexOf('async function recommendPackageWithTenantEvidence');

@@ -10,7 +10,12 @@ const interventionApplication = fs.readFileSync('server/digitalEmployees/taskInt
 const interventionRoutes = fs.readFileSync('server/routes/digitalEmployeeTaskInterventionRoutes.ts', 'utf8');
 const weeklyReviewApplication = fs.readFileSync('server/digitalEmployees/weeklyReviewApplication.ts', 'utf8');
 const weeklyReviewRoutes = fs.readFileSync('server/routes/digitalEmployeeWeeklyReviewRoutes.ts', 'utf8');
-const source = [mainSource, interventionApplication, interventionRoutes, weeklyReviewApplication, weeklyReviewRoutes].join('\n');
+const businessObservation = fs.readFileSync('server/digitalEmployees/taskBusinessObservation.ts', 'utf8');
+const businessPreparation = fs.readFileSync('server/digitalEmployees/taskBusinessPreparation.ts', 'utf8');
+const source = [mainSource, interventionApplication, interventionRoutes, weeklyReviewApplication, weeklyReviewRoutes, businessObservation, businessPreparation].join('\n');
+assert.match(mainSource, /createTaskBusinessObservation\(\{/, 'reconciliation must wire the shared evidence observer');
+assert.match(mainSource, /createTaskBusinessPreparation\(\{/, 'reconciliation must wire the shared resource preparation service');
+assert.doesNotMatch(businessObservation + businessPreparation, /from 'express'|req\.body|res\.json/, 'business runtime services must remain independent from HTTP');
 assert.doesNotMatch(weeklyReviewApplication, /from 'express'|req\.body|res\.json/, 'weekly review application must remain independent from HTTP');
 assert.ok(mainSource.indexOf('digitalEmployeesRouter.use(enforceSupportSessionReadOnly)') < mainSource.indexOf('registerWeeklyReviewGenerationRoutes(digitalEmployeesRouter'), 'review writes must remain behind support session guards');
 const followupReadSource = fs.readFileSync('server/routes/digitalEmployeeFollowupReadRoutes.ts', 'utf8');
