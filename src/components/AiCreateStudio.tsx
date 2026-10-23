@@ -1,3 +1,4 @@
+import { useStudioRenderSession, useStudioRenderRecovery } from './studio/studioRenderSession';
 import { useStudioMaterialInventory, useStudioMaterialInventoryLoad, useStudioMaterialInventoryDimensions } from './studio/studioMaterialInventory';
 import { planStudioMaterialAssignments } from './studio/studioMaterialAssignmentPlan';
 import { createStudioVoiceTranslationActions } from './studio/studioVoiceTranslationActions.js';
@@ -59,7 +60,7 @@ import { type VideoCreationPlan } from '../lib/videoCreationPlan';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { Film, Send, ChevronLeft, ChevronRight, Plus, FolderOpen, ChevronDown } from 'lucide-react';
-import { studioApi, getDesktopRender, type VariationBatch, type Material, type CoverStyle, type SubCue, type FbPosterResult, type LeadContentPackageResult, type VideoGenerationVersion, type StudioScriptResult, type DigitalHumanCapabilities, type DigitalHumanJob, type HeyGenAvatarOption, type StudioManualHandoff } from '../lib/studioApi';
+import { studioApi, type VariationBatch, type Material, type CoverStyle, type SubCue, type FbPosterResult, type LeadContentPackageResult, type VideoGenerationVersion, type StudioScriptResult, type DigitalHumanCapabilities, type DigitalHumanJob, type HeyGenAvatarOption, type StudioManualHandoff } from '../lib/studioApi';
 import { isMeasuredVoiceAlignment, matchVoiceCuesToShots, productionVoiceCues, retimeVisualShotsToVoiceover } from '../lib/voiceoverAlignment';
 import { arrangeShotsWithinNarration, shotsMissingSourceCues, sourceCaptionCacheMatchesContent, generatedShotCaptionCues, sourceCuesForShot, sourceCuesWithoutVoiceover } from '../lib/narrationTimeline';
 import { createPresetEffectPlan } from '../../shared/contracts/effectPlan';
@@ -145,7 +146,7 @@ import { materialRoleLabel, buildMaterialInfosForScript } from './studio/studioM
 import { stableScriptVersion, sanitizeStoryboardScript } from './studio/studioScriptSanitization.js';
 export { sanitizeStoryboardScript } from './studio/studioScriptSanitization.js';
 
-import type { StepId, VideoThemeId, PresenterMode, CoverVersionConfig, ClipEdit, StoryboardSourceMode, VariationStrategy, StoryboardSourcePlan, StoryboardAssembly, StudioPublishPlatform, StudioPublishItem, StudioPublishPayload, ProjectQualityRecord, LanguageRenderOutput, LanguageRenderGeneration, EnterpriseProfileLite, ProductOption, ModeScriptOutput } from './studio/studioWorkspaceContracts.js';
+import type { StepId, VideoThemeId, PresenterMode, CoverVersionConfig, ClipEdit, StoryboardSourceMode, VariationStrategy, StoryboardSourcePlan, StoryboardAssembly, StudioPublishPlatform, StudioPublishItem, StudioPublishPayload, ProjectQualityRecord, EnterpriseProfileLite, ProductOption, ModeScriptOutput } from './studio/studioWorkspaceContracts.js';
 export type { StudioScriptGenerationValidation } from './studio/studioWorkspaceContracts.js';
 
 /* ── 缩略图与不可预览状态 ──────────────────────────────────────────────── */
@@ -871,7 +872,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [socialDigitalHumanPlans, setSocialDigitalHumanPlans] = useState<StudioSocialTaskSeed['digitalHumanShotPlans']>([]);
   const productionRefreshInFlight = useRef(new Set<string>());
   const [productionRefreshingIds, setProductionRefreshingIds] = useState<string[]>([]);
-  const [renderProductionSignatures, setRenderProductionSignatures] = useState<Record<string, string>>({});
+  const renderSession = useStudioRenderSession();
+  const {
+    renderProductionSignatures, rendering,
+    rendered, setRendered, renderPct,
+    renderOutputPath, setRenderOutputPath, renderOutputPreviewUrl, setRenderOutputPreviewUrl,
+    languageRenderOutputs, setLanguageRenderOutputs, languageRenderVersions, setLanguageRenderVersions,
+    activeRenderCombinationKey, batchRenderingLangs,
+  } = renderSession;
   const [productionBusy, setProductionBusy] = useState(false);
   const [batchShotBusy, setBatchShotBusy] = useState(false);
   const [batchReviewOpen, setBatchReviewOpen] = useState(false);
@@ -1014,11 +1022,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [customFonts, setCustomFonts] = useState<{ family: string; label: string }[]>([]); // 官方导入的字体模版
   const fontInputRef = useRef<HTMLInputElement>(null);
 
-  const [rendering, setRendering] = useState(false);
-  const [rendered, setRendered] = useState(false);
-  const [renderPct, setRenderPct] = useState(0);
-  const [renderOutputPath, setRenderOutputPath] = useState<string | null>(null); // 桌面端合成产物路径
-  const [renderOutputPreviewUrl, setRenderOutputPreviewUrl] = useState<string | null>(null);
   const [renderDownloadMessage, setRenderDownloadMessage] = useState('');
   const [reviewedRenderPath, setReviewedRenderPath] = useState('');
   const [projectQualityRecord, setProjectQualityRecord] = useState<ProjectQualityRecord | null>(null);
@@ -1027,15 +1030,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [manualHandoffs, setManualHandoffs] = useState<StudioManualHandoff[]>([]);
   const [manualHandoffBusy, setManualHandoffBusy] = useState<StudioManualHandoff['action'] | ''>('');
   const [manualHandoffNotice, setManualHandoffNotice] = useState('');
-  const [languageRenderOutputs, setLanguageRenderOutputs] = useState<Record<string, LanguageRenderOutput>>({});
   const [localFlowRecoveryEpoch, setLocalFlowRecoveryEpoch] = useState(0);
   const localFlowTestRef = useRef<Record<string, any> | null>(null);
   const localFlowRecoveryRef = useRef<{ spec: Record<string, any>; projectId: string } | null>(null);
-  const [languageRenderVersions, setLanguageRenderVersions] = useState<Record<string, LanguageRenderGeneration[]>>({});
-  const [activeRenderCombinationKey, setActiveRenderCombinationKey] = useState('');
-  const [batchRenderingLangs, setBatchRenderingLangs] = useState(false);
-  const renderToken = useRef(0); // 取消过期的渲染循环（重复点「重新合成」时）
-  const renderPreviewUrlsRef = useRef<Record<string, string>>({});
 
   const [account, setAccount] = useState<string | null>('a1');
   const [caption, setCaption] = useState('');
@@ -1346,37 +1343,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   } = useStudioProjectLibraryState(projectPorts);
   const [videoKickoff, setVideoKickoff] = useState<VideoKickoff | null>(null);
   const freeThreeStep = mode === 'material' && contentMode === 'video' && videoKickoff?.source === 'material_library' && videoKickoff.initialGeneration?.ok === true && Boolean(videoKickoff.script?.trim());
-  useEffect(() => {
-    if (!freeThreeStep || !projectId || getDesktopRender()?.available) return;
-    let disposed = false;
-    let timer = 0;
-    const refresh = async () => {
-      const result = await studioApi.latestRenderJob(projectId);
-      if (disposed || !result.ok || !result.job) return;
-      const job = result.job;
-      if (job.status === 'queued' || job.status === 'processing') {
-        setRendering(true); setRendered(false); setRenderPct(Math.max(5, Math.min(99, job.progress || 15)));
-        setLanguageRenderOutputs(current => ({ ...current, [job.outputKey]: { status: 'rendering' } }));
-        timer = window.setTimeout(refresh, 1800);
-        return;
-      }
-      setRendering(false);
-      if (job.status === 'completed' && job.outputPath) {
-        setRendered(true); setRenderPct(100); setRenderOutputPath(job.outputPath);
-        setRenderOutputPreviewUrl(job.previewUrl || null);
-        renderPreviewUrlsRef.current[job.outputPath] = job.previewUrl || '';
-        setRenderProductionSignatures(current => ({ ...current, [job.outputPath!]: job.inputSignature }));
-        setLanguageRenderOutputs(current => ({ ...current, [job.outputKey]: {
-            status: 'done', path: job.outputPath, previewUrl: job.previewUrl, inputSignature: job.inputSignature } }));
-      } else if (job.status === 'failed') {
-        setRendered(false);
-        setLanguageRenderOutputs(current => ({ ...current, [job.outputKey]: { status: 'failed', error: job.error || '生成失败' } }));
-        setModeNotice(`成片渲染中断：${job.error || '请重试当前版本'}`);
-      }
-    };
-    void refresh();
-    return () => { disposed = true; if (timer) window.clearTimeout(timer); };
-  }, [freeThreeStep, projectId]);
+  useStudioRenderRecovery(renderSession, { enabled: freeThreeStep, projectId, onNotice: setModeNotice });
   const salesReviewAttempted = useRef(new Set<string>());
   const salesReviewResults = useRef(new Map<string, any[]>());
   const [salesReviewMessage, setSalesReviewMessage] = useState('');
@@ -2991,264 +2958,176 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       undefined, { sourceMaterialVerified: hasAvatarSourceVoice(slot) }).map(message => `${slot.title}：${message}`));
     if (blockers.length) { const message = '部分分镜尚未具备成片条件，请完成对应分镜的配置后再渲染。'; setModeNotice(message); throw new Error(message); }
     setStepIdx(STEPS.findIndex(s => s.id === 'preview'));
-    setRendered(false);
-    setRendering(true);
-    setRenderPct(0);
-    if (!renderOverride?.outputOnly) {
-      setRenderOutputPath(null);
-      setRenderOutputPreviewUrl(null);
-    }
-    const token = ++renderToken.current;
-    try {
-
-      // 生成发布封面 SVG：只在有真实图片帧时生成，避免退回纯色/渐变封面。
-      const canGenerateCoverSvg = Boolean(coverFrameUrl && (capturedCoverFrameUrl || coverClip?.poster || coverClip?.type === 'image'));
-      const cv = canGenerateCoverSvg
-        ? await studioApi.cover({ title: coverTitle, ratio, accent: '#16a34a', bgImageUrl: coverFrameUrl, ...coverStyle })
-        : { ok: false as const, url: null };
-      if (renderToken.current !== token) return;
-      const cUrl = cv.ok ? (cv.url ?? null) : null;
-      setCoverUrl(cUrl);
-
-      const outputLanguage = renderOverride?.language || lang;
-      const defaultVoiceover = voiceoverForLanguage(outputLanguage);
-      const outputVoiceoverUrl = renderOverride?.voiceoverUrl ?? defaultVoiceover.url;
-      const outputVoiceoverDur = renderOverride?.voiceoverDur ?? defaultVoiceover.duration;
-      const outputScript = scriptOverride ?? (voiceDrafts[outputLanguage] || activeSpokenScript);
-      const requestedTimeline = renderOverride?.timeline ?? renderTimeline;
-      const measuredOutputCues = productionVoiceCues(renderOverride?.cues ?? alignedCuesByLang[outputLanguage] ?? voiceoverAudios[outputLanguage]?.cues,
-        voiceoverAudios[outputLanguage]?.alignmentSource, outputVoiceoverDur);
-      if (voiceoverMode === 'ai' && !voiceoverMatchesCurrentShotSources(outputLanguage))
-        throw new Error('数字人原声分镜归属已变化，请重新生成非数字人口播后再导出');
-      if (voiceoverMode === 'ai' && presentationMode === 'material' && outputVoiceoverUrl && !measuredOutputCues.length) {
-        throw new Error('当前配音缺少实测时间码，请先完成音频字幕对齐后再渲染成片');
-      }
-      const narrationLines = stripVoiceoverTimestamps(outputScript).split(/\n+/).map(line => line.trim()).filter(Boolean);
-      const arrangedNarration = voiceoverMode !== 'none' && measuredOutputCues.length
-        && requestedTimeline.length === storyboardSlots.length && presentationMode === 'material'
-        ? arrangeShotsWithinNarration(requestedTimeline.map((item, index) => {
-          const production = 'production' in item ? item.production as ShotProduction : productionFor(storyboardSlots[index]!);
-          const lockedSourceVoice = hasAvatarSourceVoice(storyboardSlots[index]!);
-          const sourceClip = materialById.get(storyboardAssignments[storyboardSlots[index]!.id] || '');
-          const lockedDuration = lockedSourceVoice ? sourceClip?.duration || item.targetDuration : undefined;
-          return {
-            ...item,
-            production: lockedSourceVoice ? production : { ...production, sound: 'voiceover' as const },
-            narration: storyboardSlotScript(storyboardSlots[index]!.detail).voice,
-            lockedSourceVoice,
-            lockedDuration,
-            sourceCues: lockedSourceVoice ? sourceCuesForMaterial(sourceClip, storyboardSlots[index]) : undefined,
-            trimStart: lockedSourceVoice ? 0 : item.trimStart,
-            trimEnd: lockedSourceVoice ? lockedDuration || item.trimEnd : item.trimEnd,
-          };
-        }), narrationLines, measuredOutputCues, outputVoiceoverDur,
-          voiceoverAudios[outputLanguage]?.alignmentSource || '',
-          outputLanguage === masterSourceLanguage ? undefined : stripVoiceoverTimestamps(masterSourceVoiceover).split(/\n+/).map(line => line.trim()).filter(Boolean))
-        : null;
-      if (subtitlesOn && presentationMode === 'material') {
-        const missing = arrangedNarration ? shotsMissingSourceCues(arrangedNarration.timeline)
-          : missingAvatarSourceCues.map(item => item.index + 1);
-        if (missing.length) throw new Error(`分镜 ${missing.join('、')} 的数字人原声缺少当前素材的有效字幕时间码；请补齐原声字幕后再开启字幕导出`);
-      }
-      if (arrangedNarration?.warnings.length) setModeNotice(`口播段落已校准；${arrangedNarration.warnings.join('；')}`);
-      let outputTimeline: (typeof requestedTimeline)[number][] = voiceoverMode === 'none'
-        ? requestedTimeline
-        : arrangedNarration?.timeline || fitTimelineToVoiceoverCues<(typeof requestedTimeline)[number]>(requestedTimeline, outputVoiceoverDur, measuredOutputCues);
-      if (arrangedNarration) outputTimeline = outputTimeline.map((item, index) => {
-        const aligned = arrangedNarration.timeline[index] as { voiceAligned?: boolean; voiceStart?: number; voiceEnd?: number } | undefined;
-        if (!aligned?.voiceAligned || aligned.voiceStart !== 0 || aligned.voiceEnd !== 0
-          || !('production' in item) || !item.production) return item;
-        return { ...item, production: { ...item.production, sound: 'silent' as const } };
-      });
-      const usesAdoptedShotAvatar = storyboardSlots.some(slot => {
-        const production = productionFor(slot);
-        return production.source === 'avatar' && production.candidates.some(item => item.id === production.adoptedId && item.source === 'avatar');
-      });
-      if (presentationMode !== 'material' && !usesAdoptedShotAvatar) {
-        if (!digitalHumanJob?.outputUrl || !['review', 'completed'].includes(digitalHumanJob.status)) throw new Error('请先生成所选数字人视频，不能自动切换为素材成片');
-        if (!outputVoiceoverUrl || new URL(digitalHumanJob.voiceoverUrl, location.origin).pathname !== new URL(outputVoiceoverUrl, location.origin).pathname) throw new Error('本语言配音与数字人视频不一致，请按当前配音重新生成数字人');
-        const choices = storyboardSlots.map((slot, index) => presentationMode === 'avatar' ? 'avatar' : presentationSources[slot.id] || (index === 0 ? 'avatar' : 'material'));
-        if (presentationMode === 'heygen' && (!choices.includes('avatar') || !choices.includes('material'))) throw new Error('混剪必须同时包含数字人和素材镜头，请调整分镜来源');
-        if (presentationMode === 'heygen' && outputTimeline.length !== storyboardSlots.length) throw new Error('混剪仍有镜头缺少素材，请逐镜补齐');
-        if (!digitalHumanJob.subtitleCues?.length) throw new Error('当前数字人缺少对应音频字幕，请重新获取字幕后合成');
-        const weights = storyboardSlots.map(slot => Math.max(.5, slot.end - slot.start));
-        const total = weights.reduce((sum, value) => sum + value, 0);
-        let cursor = 0;
-        outputTimeline = storyboardSlots.map((slot, index) => {
-          const targetStart = cursor, targetDuration = outputVoiceoverDur * weights[index] / total; cursor += targetDuration;
-          if (choices[index] === 'avatar') return { production: productionFor(slot), clipId: digitalHumanJob.outputMaterialId || digitalHumanJob.id, name: 'HeyGen 数字人', type: 'video' as const, url: digitalHumanJob.outputUrl!, poster: undefined, trimStart: targetStart, trimEnd: cursor, speed: 1, cropMode: 'contain' as 'cover' | 'contain', focusX: .5, focusY: .5, targetStart, targetEnd: cursor, targetDuration };
-          const original = outputTimeline[index];
-          if (!original?.url || original.clipId === digitalHumanJob.outputMaterialId) throw new Error(`第 ${index + 1} 镜缺少指定素材，不能使用数字人顶替`);
-          return { ...original, production: productionFor(slot), targetStart, targetEnd: cursor, targetDuration };
-        });
-      }
-      const validOutputStoryboard = storyboardSlots.length > 0
-        && outputTimeline.length === storyboardSlots.length
-        && outputTimeline.every(item => Boolean(item.url && item.type !== 'audio' && item.targetDuration > 0));
-      if (!String(outputScript || '').trim() || !validOutputStoryboard) {
-        throw new Error('生成成片需要有效脚本，并为全部分镜匹配有效视频或图片素材。');
-      }
-      const timelineDuration = outputTimeline.reduce((sum, item) => sum + (item.targetDuration || 0), 0);
-      const sourceOnlyCaptions = voiceoverMode === 'none' && presentationMode === 'material'
-        && storyboardSlots.some(hasAvatarSourceVoice);
-      const sourceOnlyCues = sourceOnlyCaptions ? sourceCuesWithoutVoiceover(outputTimeline.map((item, index) => {
-        const slot = storyboardSlots[index];
-        const clip = slot ? materialById.get(storyboardAssignments[slot.id] || '') : undefined;
-        return { targetStart: item.targetStart, targetDuration: item.targetDuration,
-          lockedSourceVoice: Boolean(slot && hasAvatarSourceVoice(slot)),
-          lockedDuration: clip?.duration, sourceCues: sourceCuesForMaterial(clip, slot) };
-      })) : [];
-      const rawOutputCues = arrangedNarration ? arrangedNarration.cues : sourceOnlyCaptions ? sourceOnlyCues : presentationMode !== 'material' && digitalHumanJob?.subtitleCues?.length ? applyCaptionTextEdits(digitalHumanJob.subtitleCues, digitalHumanJob.id, digitalHumanJob.outputMaterialId, sourceCaptionTextEdits) : renderOverride?.cues?.length
-        ? renderOverride.cues
-        : defaultVoiceover.cues.length
-          ? defaultVoiceover.cues
-          : buildCues(outputScript, outputVoiceoverDur || timelineDuration || totalDur);
-      const reviewedOutputCues = applyCaptionTextEdits(rawOutputCues, `voice:${outputLanguage}:${outputVoiceoverUrl || ''}`, undefined, sourceCaptionTextEdits);
-      const maxOutputCueDuration = Math.min(
-        timelineDuration || duration,
-        arrangedNarration || sourceOnlyCaptions ? timelineDuration || duration : outputVoiceoverDur > 0 ? outputVoiceoverDur : timelineDuration || duration,
-      );
-      // The arranged cues already have measured positions. Do not push a short
-      // source-video cue forward to satisfy the generic 0.25 s caption minimum.
-      const outputCues = arrangedNarration || sourceOnlyCaptions
-        ? reviewedOutputCues.filter(cue => cue.text?.trim() && Number.isFinite(cue.start) && Number.isFinite(cue.end)
-          && cue.start >= 0 && cue.end > cue.start && cue.end <= maxOutputCueDuration + 0.05)
-        : renderSafeCues(reviewedOutputCues, maxOutputCueDuration);
-      const effectTimeline = outputTimeline.map((item, index) => ({
-        sceneId: 'sceneId' in item && typeof item.sceneId === 'string'
-          ? item.sceneId
-          : ('clipId' in item ? String(item.clipId || index) : String(index)),
-        clipId: 'clipId' in item ? String(item.clipId || '') : undefined,
-        targetDuration: item.targetDuration,
-      }));
-      const disabledEffects = new Set(disabledEffectSceneIds);
-      const presetEffectPlan = createPresetEffectPlan(effectPreset, effectIntensity, effectTimeline, 198);
-      const effectPlan = {
-        ...presetEffectPlan,
-        audioEvents: effectSoundsOn ? presetEffectPlan.audioEvents : [],
-        scenes: presetEffectPlan.scenes.map(scene => disabledEffects.has(scene.sceneId)
-          ? { ...scene, enabled: false, transitionOut: { type: 'cut' as const, duration: 0 }, overlays: [] }
-          : scene),
-      };
-      const spec = {
-        materials: outputTimeline.length ? outputTimeline.map(item => item.name) : matNames,
-        timeline: outputTimeline,
-        script: outputScript,
-        voice,
-        bgm: renderOverride?.bgmId ?? bgm,
-        bgmVol,
-        voiceVol,
-        coverId: cover,
-        coverTitle,
-        coverUrl: cUrl ?? undefined,
-        ratio,
-        sourceProjectId: projectId || undefined,
-        duration: timelineDuration || duration,
-        platform,
-        language: outputLanguage,
-        voiceoverUrl: voiceoverMode === 'none' ? undefined : outputVoiceoverUrl ?? undefined,
-        effectPlan,
-        subtitles: subtitlesOn ? {
-          mode: subMode,
-          style: { ...subtitleStyle, autoEmphasis: false, productNames: selectedProductOptions.length ? selectedProductOptions.map(option => option.label) : activeProductLabel ? [activeProductLabel] : [] },
-          cues: [...(subMode === 'bilingual' && outputLanguage === activeVoiceLang && cueZh.length === outputCues.length
-            ? outputCues.map((c, i) => ({ ...c, zh: cueZh[i] }))
-            : outputCues), ...outputTimeline.flatMap(item => {
-              if (!('production' in item) || typeof item.targetStart !== 'number' || typeof item.targetEnd !== 'number') return [];
-              const production = item.production as ShotProduction;
-              const text = 'screenCaption' in item ? String(item.screenCaption || '').trim() : '';
-              const normalize = (value: string) => value.replace(/[\p{P}\s]/gu, '');
-              if (outputLanguage !== lang || !text || /^(无|none)$/i.test(text)
-                || normalize(text) === normalize(production.narration)) return [];
-              return [{ text, start: item.targetStart, end: item.targetEnd, kind: 'screen' as const }];
-            })],
-        } : { mode: 'off' as const, style: {}, cues: [] },
-      };
-
-      // Electron 保留短期授权 + 本机桥；浏览器自由创作直接建立持久任务，避免重复扣减额度。
-      const desktop = getDesktopRender();
-      const auth = desktop?.available || !freeThreeStep ? await studioApi.render(spec) : null;
-
-      // 2) 桌面客户端：用本机原生 ffmpeg 真实合成出片
-      if (desktop?.available && !renderOverride?.serverPreviewRequired) {
-        const unsub = desktop.onProgress(p => {
-          if (renderToken.current === token) setRenderPct(Math.min(99, Math.round(p)));
-        });
-        try {
-          const out = await desktop.render(auth!.manifest);
-          if (renderToken.current !== token) return;
-          if (out.ok) {
-            if (out.outputPath) setRenderProductionSignatures(current => ({ ...current, [out.outputPath!]: productionSignature }));
-            if (!renderOverride?.outputOnly) setRenderOutputPath(out.outputPath ?? null);
-            setRendering(false);
-            setRendered(true);
-            setRenderPct(100);
-            return out.outputPath ?? null;
-          } else {
-            setRendering(false);
-            setRendered(false);
-            throw new Error(out.error || '桌面端合成失败');
-          }
-        } finally {
-          unsub();
+    return renderSession.render({
+      outputOnly: renderOverride?.outputOnly,
+      serverPreviewRequired: renderOverride?.serverPreviewRequired,
+      outputKey: renderOverride?.outputKey,
+      inputSignature: renderOverride?.inputSignature,
+      freeThreeStep, productionSignature,
+      resolveProjectId: () => currentProjectRef.current || projectId,
+      defaultOutputKey: outputLanguage => renderCombinationKey(activeAssemblyId, outputLanguage, renderOverride?.bgmId ?? bgm),
+      cover: coverFrameUrl && (capturedCoverFrameUrl || coverClip?.poster || coverClip?.type === 'image')
+        ? { title: coverTitle, ratio, accent: '#16a34a', bgImageUrl: coverFrameUrl, ...coverStyle } : null,
+      onCover: setCoverUrl,
+      onNotice: setModeNotice,
+      prepareSpec: cUrl => {
+        const outputLanguage = renderOverride?.language || lang;
+        const defaultVoiceover = voiceoverForLanguage(outputLanguage);
+        const outputVoiceoverUrl = renderOverride?.voiceoverUrl ?? defaultVoiceover.url;
+        const outputVoiceoverDur = renderOverride?.voiceoverDur ?? defaultVoiceover.duration;
+        const outputScript = scriptOverride ?? (voiceDrafts[outputLanguage] || activeSpokenScript);
+        const requestedTimeline = renderOverride?.timeline ?? renderTimeline;
+        const measuredOutputCues = productionVoiceCues(renderOverride?.cues ?? alignedCuesByLang[outputLanguage] ?? voiceoverAudios[outputLanguage]?.cues,
+          voiceoverAudios[outputLanguage]?.alignmentSource, outputVoiceoverDur);
+        if (voiceoverMode === 'ai' && !voiceoverMatchesCurrentShotSources(outputLanguage))
+          throw new Error('数字人原声分镜归属已变化，请重新生成非数字人口播后再导出');
+        if (voiceoverMode === 'ai' && presentationMode === 'material' && outputVoiceoverUrl && !measuredOutputCues.length) {
+          throw new Error('当前配音缺少实测时间码，请先完成音频字幕对齐后再渲染成片');
         }
-        return;
-      }
-
-      // 3) 浏览器自由创作使用服务端持久任务：刷新、断网或服务重启后可从项目恢复。
-      if (freeThreeStep) {
-        const persistedProjectId = currentProjectRef.current || projectId;
-        if (!persistedProjectId) throw new Error('请先保存自由创作草稿，再开始成片渲染');
-        const outputKey = renderOverride?.outputKey || renderCombinationKey(activeAssemblyId, outputLanguage, renderOverride?.bgmId ?? bgm);
-        const inputSignature = renderOverride?.inputSignature || productionSignature;
-        const created = await studioApi.createRenderJob({ projectId: persistedProjectId, outputKey, inputSignature, spec });
-        if (!created.ok || !created.job) throw new Error(created.error || '渲染任务创建失败');
-        let job = created.job;
-        while (job.status === 'queued' || job.status === 'processing') {
-          if (renderToken.current !== token) return null;
-          setRenderPct(Math.max(5, Math.min(99, job.progress || 15)));
-          await new Promise(resolve => window.setTimeout(resolve, 1200));
-          const latest = await studioApi.latestRenderJob(persistedProjectId);
-          if (!latest.ok || !latest.job) throw new Error(latest.error || '渲染任务状态暂时不可用');
-          job = latest.job;
+        const narrationLines = stripVoiceoverTimestamps(outputScript).split(/\n+/).map(line => line.trim()).filter(Boolean);
+        const arrangedNarration = voiceoverMode !== 'none' && measuredOutputCues.length
+          && requestedTimeline.length === storyboardSlots.length && presentationMode === 'material'
+          ? arrangeShotsWithinNarration(requestedTimeline.map((item, index) => {
+            const production = 'production' in item ? item.production as ShotProduction : productionFor(storyboardSlots[index]!);
+            const lockedSourceVoice = hasAvatarSourceVoice(storyboardSlots[index]!);
+            const sourceClip = materialById.get(storyboardAssignments[storyboardSlots[index]!.id] || '');
+            const lockedDuration = lockedSourceVoice ? sourceClip?.duration || item.targetDuration : undefined;
+            return {
+              ...item,
+              production: lockedSourceVoice ? production : { ...production, sound: 'voiceover' as const },
+              narration: storyboardSlotScript(storyboardSlots[index]!.detail).voice,
+              lockedSourceVoice,
+              lockedDuration,
+              sourceCues: lockedSourceVoice ? sourceCuesForMaterial(sourceClip, storyboardSlots[index]) : undefined,
+              trimStart: lockedSourceVoice ? 0 : item.trimStart,
+              trimEnd: lockedSourceVoice ? lockedDuration || item.trimEnd : item.trimEnd,
+            };
+          }), narrationLines, measuredOutputCues, outputVoiceoverDur,
+            voiceoverAudios[outputLanguage]?.alignmentSource || '',
+            outputLanguage === masterSourceLanguage ? undefined : stripVoiceoverTimestamps(masterSourceVoiceover).split(/\n+/).map(line => line.trim()).filter(Boolean))
+          : null;
+        if (subtitlesOn && presentationMode === 'material') {
+          const missing = arrangedNarration ? shotsMissingSourceCues(arrangedNarration.timeline)
+            : missingAvatarSourceCues.map(item => item.index + 1);
+          if (missing.length) throw new Error(`分镜 ${missing.join('、')} 的数字人原声缺少当前素材的有效字幕时间码；请补齐原声字幕后再开启字幕导出`);
         }
-        if (job.status !== 'completed' || !job.outputPath) throw new Error(job.error || '本地 MP4 导出失败');
-        const localOut = { ok: true, outputPath: job.outputPath, previewUrl: job.previewUrl };
-        if (renderToken.current !== token) return null;
-        if (localOut.outputPath) setRenderProductionSignatures(current => ({ ...current, [localOut.outputPath!]: inputSignature }));
-        if (localOut.outputPath && localOut.previewUrl) renderPreviewUrlsRef.current[localOut.outputPath] = localOut.previewUrl;
-        if (!renderOverride?.outputOnly) { setRenderOutputPath(localOut.outputPath); setRenderOutputPreviewUrl(localOut.previewUrl || null); }
-        setRendering(false); setRendered(true); setRenderPct(100);
-        return localOut.outputPath;
-      }
-
-      // 4) 其他网页工作流继续使用原有同步本机渲染，避免影响爆款复刻。
-      setRenderPct(20);
-      const progressTimer = window.setInterval(() => {
-        if (renderToken.current !== token) return;
-        setRenderPct(current => Math.min(90, current + (current < 60 ? 6 : 2)));
-      }, 1200);
-      const localOut = await studioApi.renderLocal(auth!.manifest, auth!.token).finally(() => window.clearInterval(progressTimer));
-      if (renderToken.current !== token) return;
-      if (!localOut.ok) throw new Error(localOut.error || '本地 MP4 导出失败');
-      if (localOut.outputPath) setRenderProductionSignatures(current => ({ ...current, [localOut.outputPath!]: productionSignature }));
-      if (localOut.outputPath && localOut.previewUrl) renderPreviewUrlsRef.current[localOut.outputPath] = localOut.previewUrl;
-      if (!renderOverride?.outputOnly) {
-        setRenderOutputPath(localOut.outputPath ?? null);
-        setRenderOutputPreviewUrl(localOut.previewUrl ?? null);
-      }
-      setRendering(false);
-      setRendered(true);
-      setRenderPct(100);
-      return localOut.outputPath ?? null;
-    } catch (err: any) {
-      if (renderToken.current === token) {
-        setRendering(false);
-        setRendered(false);
-        setModeNotice('成片渲染失败，请重试。');
-      }
-      throw err;
-    }
+        if (arrangedNarration?.warnings.length) setModeNotice(`口播段落已校准；${arrangedNarration.warnings.join('；')}`);
+        let outputTimeline: (typeof requestedTimeline)[number][] = voiceoverMode === 'none'
+          ? requestedTimeline
+          : arrangedNarration?.timeline || fitTimelineToVoiceoverCues<(typeof requestedTimeline)[number]>(requestedTimeline, outputVoiceoverDur, measuredOutputCues);
+        if (arrangedNarration) outputTimeline = outputTimeline.map((item, index) => {
+          const aligned = arrangedNarration.timeline[index] as { voiceAligned?: boolean; voiceStart?: number; voiceEnd?: number } | undefined;
+          if (!aligned?.voiceAligned || aligned.voiceStart !== 0 || aligned.voiceEnd !== 0
+            || !('production' in item) || !item.production) return item;
+          return { ...item, production: { ...item.production, sound: 'silent' as const } };
+        });
+        const usesAdoptedShotAvatar = storyboardSlots.some(slot => {
+          const production = productionFor(slot);
+          return production.source === 'avatar' && production.candidates.some(item => item.id === production.adoptedId && item.source === 'avatar');
+        });
+        if (presentationMode !== 'material' && !usesAdoptedShotAvatar) {
+          if (!digitalHumanJob?.outputUrl || !['review', 'completed'].includes(digitalHumanJob.status)) throw new Error('请先生成所选数字人视频，不能自动切换为素材成片');
+          if (!outputVoiceoverUrl || new URL(digitalHumanJob.voiceoverUrl, location.origin).pathname !== new URL(outputVoiceoverUrl, location.origin).pathname) throw new Error('本语言配音与数字人视频不一致，请按当前配音重新生成数字人');
+          const choices = storyboardSlots.map((slot, index) => presentationMode === 'avatar' ? 'avatar' : presentationSources[slot.id] || (index === 0 ? 'avatar' : 'material'));
+          if (presentationMode === 'heygen' && (!choices.includes('avatar') || !choices.includes('material'))) throw new Error('混剪必须同时包含数字人和素材镜头，请调整分镜来源');
+          if (presentationMode === 'heygen' && outputTimeline.length !== storyboardSlots.length) throw new Error('混剪仍有镜头缺少素材，请逐镜补齐');
+          if (!digitalHumanJob.subtitleCues?.length) throw new Error('当前数字人缺少对应音频字幕，请重新获取字幕后合成');
+          const weights = storyboardSlots.map(slot => Math.max(.5, slot.end - slot.start));
+          const total = weights.reduce((sum, value) => sum + value, 0);
+          let cursor = 0;
+          outputTimeline = storyboardSlots.map((slot, index) => {
+            const targetStart = cursor, targetDuration = outputVoiceoverDur * weights[index] / total; cursor += targetDuration;
+            if (choices[index] === 'avatar') return { production: productionFor(slot), clipId: digitalHumanJob.outputMaterialId || digitalHumanJob.id, name: 'HeyGen 数字人', type: 'video' as const, url: digitalHumanJob.outputUrl!, poster: undefined, trimStart: targetStart, trimEnd: cursor, speed: 1, cropMode: 'contain' as 'cover' | 'contain', focusX: .5, focusY: .5, targetStart, targetEnd: cursor, targetDuration };
+            const original = outputTimeline[index];
+            if (!original?.url || original.clipId === digitalHumanJob.outputMaterialId) throw new Error(`第 ${index + 1} 镜缺少指定素材，不能使用数字人顶替`);
+            return { ...original, production: productionFor(slot), targetStart, targetEnd: cursor, targetDuration };
+          });
+        }
+        const validOutputStoryboard = storyboardSlots.length > 0
+          && outputTimeline.length === storyboardSlots.length
+          && outputTimeline.every(item => Boolean(item.url && item.type !== 'audio' && item.targetDuration > 0));
+        if (!String(outputScript || '').trim() || !validOutputStoryboard) {
+          throw new Error('生成成片需要有效脚本，并为全部分镜匹配有效视频或图片素材。');
+        }
+        const timelineDuration = outputTimeline.reduce((sum, item) => sum + (item.targetDuration || 0), 0);
+        const sourceOnlyCaptions = voiceoverMode === 'none' && presentationMode === 'material'
+          && storyboardSlots.some(hasAvatarSourceVoice);
+        const sourceOnlyCues = sourceOnlyCaptions ? sourceCuesWithoutVoiceover(outputTimeline.map((item, index) => {
+          const slot = storyboardSlots[index];
+          const clip = slot ? materialById.get(storyboardAssignments[slot.id] || '') : undefined;
+          return { targetStart: item.targetStart, targetDuration: item.targetDuration,
+            lockedSourceVoice: Boolean(slot && hasAvatarSourceVoice(slot)),
+            lockedDuration: clip?.duration, sourceCues: sourceCuesForMaterial(clip, slot) };
+        })) : [];
+        const rawOutputCues = arrangedNarration ? arrangedNarration.cues : sourceOnlyCaptions ? sourceOnlyCues : presentationMode !== 'material' && digitalHumanJob?.subtitleCues?.length ? applyCaptionTextEdits(digitalHumanJob.subtitleCues, digitalHumanJob.id, digitalHumanJob.outputMaterialId, sourceCaptionTextEdits) : renderOverride?.cues?.length
+          ? renderOverride.cues
+          : defaultVoiceover.cues.length
+            ? defaultVoiceover.cues
+            : buildCues(outputScript, outputVoiceoverDur || timelineDuration || totalDur);
+        const reviewedOutputCues = applyCaptionTextEdits(rawOutputCues, `voice:${outputLanguage}:${outputVoiceoverUrl || ''}`, undefined, sourceCaptionTextEdits);
+        const maxOutputCueDuration = Math.min(
+          timelineDuration || duration,
+          arrangedNarration || sourceOnlyCaptions ? timelineDuration || duration : outputVoiceoverDur > 0 ? outputVoiceoverDur : timelineDuration || duration,
+        );
+        // The arranged cues already have measured positions. Do not push a short
+        // source-video cue forward to satisfy the generic 0.25 s caption minimum.
+        const outputCues = arrangedNarration || sourceOnlyCaptions
+          ? reviewedOutputCues.filter(cue => cue.text?.trim() && Number.isFinite(cue.start) && Number.isFinite(cue.end)
+            && cue.start >= 0 && cue.end > cue.start && cue.end <= maxOutputCueDuration + 0.05)
+          : renderSafeCues(reviewedOutputCues, maxOutputCueDuration);
+        const effectTimeline = outputTimeline.map((item, index) => ({
+          sceneId: 'sceneId' in item && typeof item.sceneId === 'string'
+            ? item.sceneId
+            : ('clipId' in item ? String(item.clipId || index) : String(index)),
+          clipId: 'clipId' in item ? String(item.clipId || '') : undefined,
+          targetDuration: item.targetDuration,
+        }));
+        const disabledEffects = new Set(disabledEffectSceneIds);
+        const presetEffectPlan = createPresetEffectPlan(effectPreset, effectIntensity, effectTimeline, 198);
+        const effectPlan = {
+          ...presetEffectPlan,
+          audioEvents: effectSoundsOn ? presetEffectPlan.audioEvents : [],
+          scenes: presetEffectPlan.scenes.map(scene => disabledEffects.has(scene.sceneId)
+            ? { ...scene, enabled: false, transitionOut: { type: 'cut' as const, duration: 0 }, overlays: [] }
+            : scene),
+        };
+        const spec = {
+          materials: outputTimeline.length ? outputTimeline.map(item => item.name) : matNames,
+          timeline: outputTimeline,
+          script: outputScript,
+          voice,
+          bgm: renderOverride?.bgmId ?? bgm,
+          bgmVol,
+          voiceVol,
+          coverId: cover,
+          coverTitle,
+          coverUrl: cUrl ?? undefined,
+          ratio,
+          sourceProjectId: projectId || undefined,
+          duration: timelineDuration || duration,
+          platform,
+          language: outputLanguage,
+          voiceoverUrl: voiceoverMode === 'none' ? undefined : outputVoiceoverUrl ?? undefined,
+          effectPlan,
+          subtitles: subtitlesOn ? {
+            mode: subMode,
+            style: { ...subtitleStyle, autoEmphasis: false, productNames: selectedProductOptions.length ? selectedProductOptions.map(option => option.label) : activeProductLabel ? [activeProductLabel] : [] },
+            cues: [...(subMode === 'bilingual' && outputLanguage === activeVoiceLang && cueZh.length === outputCues.length
+              ? outputCues.map((c, i) => ({ ...c, zh: cueZh[i] }))
+              : outputCues), ...outputTimeline.flatMap(item => {
+                if (!('production' in item) || typeof item.targetStart !== 'number' || typeof item.targetEnd !== 'number') return [];
+                const production = item.production as ShotProduction;
+                const text = 'screenCaption' in item ? String(item.screenCaption || '').trim() : '';
+                const normalize = (value: string) => value.replace(/[\p{P}\s]/gu, '');
+                if (outputLanguage !== lang || !text || /^(无|none)$/i.test(text)
+                  || normalize(text) === normalize(production.narration)) return [];
+                return [{ text, start: item.targetStart, end: item.targetEnd, kind: 'screen' as const }];
+              })],
+          } : { mode: 'off' as const, style: {}, cues: [] },
+        };
+        return { spec, outputLanguage };
+      },
+    });
   };
 
   const next = () => {
@@ -3329,33 +3208,22 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       setModeNotice('当前分镜方案没有可渲染的语言版本，请先完成该方案的素材和配音。');
       return;
     }
-    setBatchRenderingLangs(true);
-    setActiveRenderCombinationKey(combination.key);
-    setLanguageRenderOutputs(prev => ({ ...prev, [combination.key]: { status: 'rendering' } }));
-    try {
-      const { key, code, bgmId } = combination;
-      const audio = voiceoverForLanguage(code);
-      const outputPath = await goPreview(combination.script, {
-        language: code,
-        voiceoverUrl: audio.url,
-        voiceoverDur: audio.duration,
-        cues: alignedCuesByLang[code] || audio.cues,
-        outputOnly: true,
-        timeline: combination.timeline as typeof renderTimeline,
-        bgmId, serverPreviewRequired, outputKey: key, inputSignature: combination.inputSignature,
-      });
-      if (!outputPath) throw new Error('成片渲染未返回文件，请重试当前版本');
-      const previewUrl = outputPath ? renderPreviewUrlsRef.current[outputPath] : undefined;
-      setLanguageRenderOutputs(prev => ({ ...prev, [key]: { status: 'done', path: outputPath, previewUrl, inputSignature: combination.inputSignature } }));
-      setLanguageRenderVersions(prev => ({ ...prev, [key]: [{ id: `${key}-${Date.now()}`, versionNumber: (prev[key]?.[0]?.versionNumber || 0) + 1, status: 'done', path: outputPath, previewUrl, inputSignature: combination.inputSignature, createdAt: new Date().toISOString() }, ...(prev[key] || [])] }));
-    } catch (err: any) {
-      setModeNotice(err?.message || '成片渲染失败，请重试。');
-      const key = combination.key;
-      setLanguageRenderOutputs(prev => ({ ...prev, [key]: { status: 'failed', error: err?.message || '生成失败' } }));
-      setLanguageRenderVersions(prev => ({ ...prev, [key]: [{ id: `${key}-${Date.now()}`, versionNumber: (prev[key]?.[0]?.versionNumber || 0) + 1, status: 'failed', error: err?.message || '生成失败', createdAt: new Date().toISOString() }, ...(prev[key] || [])] }));
-    } finally {
-      setBatchRenderingLangs(false);
-    }
+    await renderSession.renderVersion({
+      key: combination.key, inputSignature: combination.inputSignature, onNotice: setModeNotice,
+      render: () => {
+        const { key, code, bgmId } = combination;
+        const audio = voiceoverForLanguage(code);
+        return goPreview(combination.script, {
+          language: code,
+          voiceoverUrl: audio.url,
+          voiceoverDur: audio.duration,
+          cues: alignedCuesByLang[code] || audio.cues,
+          outputOnly: true,
+          timeline: combination.timeline as typeof renderTimeline,
+          bgmId, serverPreviewRequired, outputKey: key, inputSignature: combination.inputSignature,
+        });
+      },
+    });
   };
   const prev = () => {
     if (mode === 'clone' && contentMode === 'video' && (step === 'material' || step === 'script')) {

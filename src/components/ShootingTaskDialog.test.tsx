@@ -20,7 +20,11 @@ test('the live workbench mounts the storyboard list and reviewed digital candida
   const source = readAiStudioApplicationSources();
   const productionPanel = readFileSync(new URL('./ShotProductionPanel.tsx', import.meta.url), 'utf8');
   assert.match(source, /<StudioStoryboardList items=\{items\} selectedId=\{activeWorkbenchSlot\?\.id\}/);
-  assert.match(source, /const ShotProductionPanel = lazy\(\(\) => import\('\.\/ShotProductionPanel'\)\)/);
+  const lazyPanels = readFileSync(new URL('./studio/studioLazyPanels.ts', import.meta.url), 'utf8');
+  const editor = readFileSync(new URL('./studio/StudioProductionEditorView.tsx', import.meta.url), 'utf8');
+  assert.match(lazyPanels, /export const ShotProductionPanel = lazy\(\(\) => import\('\.\.\/ShotProductionPanel'\)\)/);
+  assert.match(editor, /import \{ ShotProductionPanel \} from '\.\/studioLazyPanels\.js'/);
+  assert.match(source, /<ShotProductionPanel\b/);
   assert.match(productionPanel, /aria-label="数字人候选片段"/);
   assert.match(productionPanel, /提交结果未知时只核对原任务，不自动再次生成/);
 });
