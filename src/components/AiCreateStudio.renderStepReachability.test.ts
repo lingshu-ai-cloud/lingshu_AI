@@ -1,8 +1,9 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const source = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
+const source = readAiStudioApplicationSources();
 
 test('legacy step renderer contains only steps reachable from its sole call site', () => {
   const start = source.indexOf('const renderStep = () => {');

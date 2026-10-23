@@ -6,7 +6,7 @@ import { useModalFocus } from '../../hooks/useModalFocus';
 import { productionSummary } from '../../lib/shotProduction';
 import { studioApi, type StudioProject, type VariationBatch } from '../../lib/studioApi';
 import type { StudioWorkflowContext } from '../../lib/studioProjectContext';
-import type { Clip } from '../AiCreateStudio';
+import type { Clip } from './studioSourceMaterial.js';
 import { ProjectFirstFrameThumb } from '../StudioMediaPreviews';
 const ContentLibrary = lazy(() => import('../ContentLibrary'));
 const STUDIO_ACCENT = 'var(--color-accent)';

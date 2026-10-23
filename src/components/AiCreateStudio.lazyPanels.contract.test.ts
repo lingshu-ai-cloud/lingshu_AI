@@ -1,15 +1,17 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const source = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
+const source = readAiStudioApplicationSources();
+const lazySource = readFileSync(new URL('./studio/studioLazyPanels.ts', import.meta.url), 'utf8');
 
 for (const [name, path] of [
-  ['AgentTaskDemoWorkbench', './socialContent/AgentTaskDemoWorkbench'],
-  ['StudioBatchReviewDialog', './studio/StudioBatchReviewDialog'],
-  ['ShotMaterialLibraryDialog', './studio/ShotMaterialLibraryDialog'],
+  ['AgentTaskDemoWorkbench', '../socialContent/AgentTaskDemoWorkbench'],
+  ['StudioBatchReviewDialog', './StudioBatchReviewDialog'],
+  ['ShotMaterialLibraryDialog', './ShotMaterialLibraryDialog'],
 ] as const) {
   assert.ok(
-    source.includes(`const ${name} = lazy(() => import('${path}'))`),
+    lazySource.includes(`const ${name} = lazy(() => import('${path}'))`),
     `${name} must remain outside the initial workbench chunk`,
   );
   assert.match(
@@ -19,9 +21,9 @@ for (const [name, path] of [
   );
 }
 
-assert.match(source, /const BenchmarkVideoPreview = lazy\(\(\) => import\('\.\/studio\/StudioPreviewPanels'\)/);
-assert.match(source, /const LeadContentPackagePreview = lazy\(\(\) => import\('\.\/studio\/StudioPreviewPanels'\)/);
-assert.match(source, /const StudioReviewIssueActions = lazy\(\(\) => import\('\.\/studio\/StudioReviewIssueActions'\)\)/);
+assert.match(lazySource, /const BenchmarkVideoPreview = lazy\(\(\) => import\('\.\/StudioPreviewPanels'\)/);
+assert.match(lazySource, /const LeadContentPackagePreview = lazy\(\(\) => import\('\.\/StudioPreviewPanels'\)/);
+assert.match(lazySource, /const StudioReviewIssueActions = lazy\(\(\) => import\('\.\/StudioReviewIssueActions'\)\)/);
 assert.match(source, /<Suspense[^\n]+<BenchmarkVideoPreview/);
 assert.match(source, /<Suspense[^\n]+<LeadContentPackagePreview/);
 assert.match(source, /<Suspense[^\n]+<StudioReviewIssueActions/);

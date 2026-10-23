@@ -1,3 +1,4 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
@@ -164,7 +165,7 @@ assert.deepEqual(
   '企业资料未支持的真实口播声明仍应被拦截',
 );
 
-const studioSource = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
+const studioSource = readAiStudioApplicationSources();
 const assistantNotificationSource = readFileSync(new URL('./assistant/useAssistantNotifications.ts', import.meta.url), 'utf8');
 const assistantReminderSource = readFileSync(new URL('./assistant/AssistantFloatingReminders.tsx', import.meta.url), 'utf8');
 const shotMaterialLibrarySource = readFileSync(new URL('./studio/ShotMaterialLibraryDialog.tsx', import.meta.url), 'utf8');

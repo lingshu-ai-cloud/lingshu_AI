@@ -1,3 +1,4 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -8,7 +9,7 @@ import { detectScriptLanguageCode } from './studio/studioLanguageRules.js';
 // Execute the restoration and invalidation code together to catch the React
 // effect marking restored translations stale after the batched state update.
 const transpile = (code: string) => ts.transpile(code, { target: ts.ScriptTarget.ES2022 });
-const source = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
+const source = readAiStudioApplicationSources();
 const restore = source.slice(source.indexOf('    const restoredScript ='), source.indexOf('    if (s.scriptType)'));
 const staleRestore = source.match(/    setVoiceDraftStaleLangs\(Array\.isArray\(s\.voiceDraftStaleLangs\)[^\n]+/)![0];
 const effect = source.slice(source.indexOf('    if (masterScriptSnapshot.current !== script'), source.indexOf('  }, [masterSourceLanguage, script, voiceDrafts, voiceLangs]'));

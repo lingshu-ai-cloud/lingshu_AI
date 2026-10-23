@@ -1,10 +1,11 @@
+import { readAiStudioApplicationSources } from '../../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 const dashboard = readFileSync(new URL('../SmartBusinessDashboard.tsx', import.meta.url), 'utf8');
 const page = readFileSync(new URL('../DigitalEmployeePage.tsx', import.meta.url), 'utf8');
-const studio = readFileSync(new URL('../AiCreateStudio.tsx', import.meta.url), 'utf8');
+const studio = readAiStudioApplicationSources();
 const entry = readFileSync(new URL('./WeeklyProductionStudioEntry.tsx', import.meta.url), 'utf8');
 const projectsOverlay = readFileSync(new URL('../studio/StudioProjectsOverlay.tsx', import.meta.url), 'utf8');
 

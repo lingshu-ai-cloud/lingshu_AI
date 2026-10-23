@@ -1,7 +1,8 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const source = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
+const source = readAiStudioApplicationSources();
 
 assert.doesNotMatch(source, /const POSTER_MODES/, '图片工作流不得恢复为素材、复刻、产品三种旧模式');
 assert.match(source, /const IMAGE_DELIVERABLE_OPTIONS/, '图片工作流必须让用户选择成品类型');

@@ -1,3 +1,4 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -16,7 +17,7 @@ test('shooting dialog explains voiceover and safe refill, and exposes save failu
 });
 
 test('the live workbench mounts the storyboard list and reviewed digital candidates', () => {
-  const source = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
+  const source = readAiStudioApplicationSources();
   const productionPanel = readFileSync(new URL('./ShotProductionPanel.tsx', import.meta.url), 'utf8');
   assert.match(source, /<StudioStoryboardList items=\{items\} selectedId=\{activeWorkbenchSlot\?\.id\}/);
   assert.match(source, /const ShotProductionPanel = lazy\(\(\) => import\('\.\/ShotProductionPanel'\)\)/);

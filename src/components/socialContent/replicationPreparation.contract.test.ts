@@ -1,7 +1,8 @@
+import { readAiStudioApplicationSources } from '../../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const source = fs.readFileSync(new URL('../AiCreateStudio.tsx', import.meta.url), 'utf8');
+const source = readAiStudioApplicationSources();
 const handler = source.slice(source.indexOf('const generateSetupScriptAndContinue ='), source.indexOf('const runBatchShotJobs ='));
 const taskSync = handler.indexOf('await socialContentApi.getTask');
 const applyScript = handler.indexOf('applyTimestampScript(preparedScript)');

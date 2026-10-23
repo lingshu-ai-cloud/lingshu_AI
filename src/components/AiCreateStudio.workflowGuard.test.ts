@@ -1,3 +1,4 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -76,7 +77,7 @@ const rejectionIssues = Array.from({ length: 6 }, (_, index) => `可操作问题
 const rejection = scriptQualityFailure({ script: '', qualityStatus: 'rejected', validationIssues: rejectionIssues }, '失败');
 for (const issue of rejectionIssues) assert.ok(rejection?.includes(issue), '质量阻断不得截断待处理问题');
 
-const studioSource = readFileSync(fileURLToPath(new URL('./AiCreateStudio.tsx', import.meta.url)), 'utf8');
+const studioSource = readAiStudioApplicationSources();
 const referenceAdmissionSource = readFileSync(fileURLToPath(new URL('./studio/studioReferenceAdmission.ts', import.meta.url)), 'utf8');
 const workbenchSource = readFileSync(fileURLToPath(new URL('./studio/StudioWorkbenchFrame.tsx', import.meta.url)), 'utf8');
 const contentLibrarySource = readFileSync(fileURLToPath(new URL('./ContentLibrary.tsx', import.meta.url)), 'utf8');

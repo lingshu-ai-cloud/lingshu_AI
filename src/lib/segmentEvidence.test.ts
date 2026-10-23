@@ -1,3 +1,4 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { matchEvidenceSegment, usableEvidenceSegment } from './segmentEvidence';
@@ -22,7 +23,7 @@ assert.equal(usableEvidenceSegment({ ...segment, start: -1 }, 28), false);
 assert.equal(usableEvidenceSegment({ ...segment, confidence: 0.1 }, 28), false);
 assert.equal(matchEvidenceSegment({ ...clip, type: 'image' }, slot), null);
 assert.equal(matchEvidenceSegment({ ...clip, segments: [{ ...segment, action: '没有工具在面部涂抹凝胶' }] }, slot), null);
-const ui = readFileSync(new URL('../components/AiCreateStudio.tsx', import.meta.url), 'utf8');
+const ui = readAiStudioApplicationSources();
 assert.match(ui, /if \(productionFor\(slot\)\.locked \|\| storyboardSourcePlans\[slot.id\]\?\.mode === 'ai' \|\| storyboardSourcePlans\[slot.id\]\?\.mode === 'hybrid'\) return false;/, 'automatic matching must skip locked and explicit AI source plans');
 assert.match(ui, /materialInfos: buildMaterialInfosForScript/);
 assert.match(ui, /editForSlot\(activeWorkbenchClip, slot\)\.trimStart\.toFixed\(1\)[^\n]+plan.matchReason \|\| activeMaterialAssessment\?\.reason/, 'workbench must display the actual selected segment interval and match evidence');

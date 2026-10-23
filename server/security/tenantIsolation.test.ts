@@ -1,3 +1,4 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import { readVideoApplicationSources } from '../../tests/fixtures/videoApplicationSources.js';
 import assert from 'node:assert/strict';
@@ -143,7 +144,7 @@ assert.equal(eventDates2026['2026-eid-al-fitr'], '2026-03-20', '2026 Eid al-Fitr
 assert.equal(eventDates2026['2026-diwali'], '2026-11-08', '2026 Diwali must use its real calendar date');
 assert.equal(eventDates2026['2026-black-friday'], '2026-11-27', 'Black Friday must be derived from Thanksgiving');
 assert.equal(eventDates2026['2026-cyber-monday'], '2026-11-30', 'Cyber Monday must be derived from Thanksgiving');
-const studioUi = read('src/components/AiCreateStudio.tsx');
+const studioUi = readAiStudioApplicationSources();
 assert.match(studioUi, /buildPublishPayload[\s\S]*?sourceProjectId: projectId \|\| undefined[\s\S]*?platform: platform as[\s\S]*?goPublishCurrentWork[\s\S]*?buildPublishPayload\(\)/, 'AI materials must carry their project and platform format into one-click publishing');
 const socialSetupGuide = read('docs/客户社媒账号配置与授权操作指南.md');
 assert.doesNotMatch(socialSetupGuide, /https:\/\/lingshu\.site\/api\//, 'production OAuth guidance must use the canonical app subdomain');

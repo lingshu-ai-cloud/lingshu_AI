@@ -1,3 +1,4 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
@@ -235,7 +236,7 @@ assert.deepEqual(parseDigitalEmployeeWorkflowContext(JSON.stringify({ page: 'sma
   runId: '', taskId: '', taskKey: 'content_production', preview: true,
 }, 'a draft plan preview must retain its task identity without pretending that a run already exists');
 
-const studioSource = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
+const studioSource = readAiStudioApplicationSources();
 const shotProductionSource = readFileSync(new URL('./ShotProductionPanel.tsx', import.meta.url), 'utf8');
 assert.match(
   studioSource,

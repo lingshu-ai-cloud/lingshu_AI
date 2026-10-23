@@ -1,10 +1,11 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const route = readStudioApplicationSources();
 const reviewRoute = readFileSync(new URL('./studioProjectReviewRoutes.ts', import.meta.url), 'utf8');
-const ui = readFileSync(new URL('../../src/components/AiCreateStudio.tsx', import.meta.url), 'utf8');
+const ui = readAiStudioApplicationSources();
 
 assert.match(route, /studioRouter\.use\(requireAuth\)/, 'Studio routes require authentication');
 assert.match(route, /studioRouter\.use\('\/projects', createStudioProjectReviewRouter\(store\)\)/, 'review routes remain mounted in Studio');

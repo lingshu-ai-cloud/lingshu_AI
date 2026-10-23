@@ -1,10 +1,11 @@
+import { readAiStudioApplicationSources } from './fixtures/aiStudioApplicationSources.js';
 import { readStudioApplicationSources, studioApplicationFunction, studioRouteBlock } from './fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const server = readStudioApplicationSources();
 const script = studioRouteBlock(server, "studioRouter.post('/script',");
 const prompt = studioApplicationFunction(server, 'buildStudioScriptPrompt');
-const ui = readFileSync(new URL('../src/components/AiCreateStudio.tsx', import.meta.url), 'utf8');
+const ui = readAiStudioApplicationSources();
 assert.match(script, /generationMode !== 'clone' && provider === 'gemini' \? 'gemini' : 'qwen'/);
 assert.match(script, /untrustedPromptData\(\s*'material_observations',\s*structuredMaterials/);
 assert.match(prompt, /可用素材的片段观察[\s\S]*?\$\{materialObservationEvidence\}/);

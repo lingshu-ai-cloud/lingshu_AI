@@ -1,8 +1,9 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const studioSource = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
-const digitalEmployeeSource = readFileSync(new URL('./DigitalEmployeePage.tsx', import.meta.url), 'utf8');
+const studioSource = readAiStudioApplicationSources();
+const productionEntrySource = readFileSync(new URL('./smartBusiness/ConnectedAgentCalendar.tsx', import.meta.url), 'utf8');
 const demoWorkbenchSource = readFileSync(
   new URL('./socialContent/AgentTaskDemoWorkbench.tsx', import.meta.url),
   'utf8',
@@ -14,10 +15,12 @@ assert.match(
   '从 Agent 任务进入内容制作时必须默认使用演示模式',
 );
 assert.match(
-  digitalEmployeeSource,
+  productionEntrySource,
   /page:\s*["']smartAssets["'][\s\S]{0,300}agentTaskDemo:\s*true/,
   '从 Agent 任务详情打开制作工作台时必须显式标记演示入口',
 );
+assert.match(productionEntrySource, /agentTaskDemo:\s*true[\s\S]{0,100}socialContentTaskId:\s*card\.productionTaskId/,
+  '演示入口必须继续绑定该真实生产任务');
 assert.match(
   studioSource,
   /agentTaskDemoEntry && socialContentTaskId && agentTaskViewMode === 'demo'\) return <Suspense[\s\S]{0,180}<AgentTaskDemoWorkbench/,

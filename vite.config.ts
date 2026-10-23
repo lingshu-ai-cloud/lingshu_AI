@@ -43,8 +43,14 @@ export default defineConfig(({ mode }) => {
           strictExecutionOrder: true,
           codeSplitting: {
             groups: [{
+              name: 'studio-workbench-views',
+              test: /[\\/](?:StudioStepView|StudioLanguageSwitcherView|StudioProductionPanelView|StudioPropertyPanelView|StudioShotLibraryView|StudioProductionEditorView)\.tsx$/,
+              includeDependenciesRecursively: false,
+            }, {
               name: 'studio-support',
-              test: /[\\/](?:StudioWorkbenchFrame|StudioMediaPreviews|StudioPreviewStage|ShotSourceDecisionPanel|DigitalHumanProductionOverview|StudioOperationalEvidencePanel|studioSourceMaterial|studioLanguageRules|useStudioSocialTaskHydration|narrationTimeline|effectPlan|socialContentManualBridge|digitalHumanPlan|socialContentArtifactMedia|studioAuthenticatedMedia|frozenStudioProject|studioAutosave|storyboardRenderReadiness|personShotClustering|studioValidation)\.(?:ts|tsx)$/,
+              // Views and the controller share these bindings. Keeping them out
+              // of the page chunk prevents a generated views → page import.
+              test: /[\\/](?:StudioWorkbenchFrame|StudioMediaPreviews|StudioPreviewStage|ShotSourceDecisionPanel|DigitalHumanProductionOverview|StudioOperationalEvidencePanel|studioSourceMaterial|studioLanguageRules|useStudioSocialTaskHydration|narrationTimeline|effectPlan|socialContentManualBridge|digitalHumanPlan|socialContentArtifactMedia|studioAuthenticatedMedia|frozenStudioProject|studioAutosave|storyboardRenderReadiness|personShotClustering|studioValidation|studioWorkspaceConfig|studioManagedPresenter|studioProjectNavigation|studioMediaProbes|studioWorkspaceCatalog|studioMaterialPresentation|studioStoryboardParsing|studioFontCatalog|studioScriptAdmission|studioReferenceVoiceProfile|studioScriptQualityPresentation|studioAsyncSupport|studioProductSelection|studioCloneReference|studioMaterialScriptEvidence|studioScriptSanitization|studioVoiceTranslation|studioLazyPanels|StudioFormPrimitives|studioFileInputs|studioSubtitleCues|studioStoryboardMaterialMatching|studioSocialShotIdentity|shotKeyframes|segmentEvidence|studioSocialTaskRead|voiceoverAlignment|studioVoiceoverRules|narrationAlignment)\.(?:ts|tsx)$|[\\/]lucide-react[\\/]dist[\\/]esm[\\/]icons[\\/](?:mic|heart|ellipsis|layout-panel-left)\.m?js$/,
               includeDependenciesRecursively: false,
             }],
           },

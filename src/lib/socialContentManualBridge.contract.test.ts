@@ -1,10 +1,11 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const pageSlot = readFileSync(new URL('../AppPageSlot.tsx', import.meta.url), 'utf8');
 const traffic = readFileSync(new URL('../components/TrafficWorkspacePage.tsx', import.meta.url), 'utf8');
-const studio = readFileSync(new URL('../components/AiCreateStudio.tsx', import.meta.url), 'utf8');
+const studio = readAiStudioApplicationSources();
 const navigationHook = readFileSync(new URL('../components/socialContent/useSocialContentNavigation.ts', import.meta.url), 'utf8');
 const submissionHook = readFileSync(new URL('../components/socialContent/useStudioSocialArtifactSubmission.ts', import.meta.url), 'utf8');
 const boundary = readFileSync(new URL('../../server/starter198/legacyBoundary.ts', import.meta.url), 'utf8');

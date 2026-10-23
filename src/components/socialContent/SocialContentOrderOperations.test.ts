@@ -1,3 +1,4 @@
+import { readAiStudioApplicationSources } from '../../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -7,7 +8,7 @@ test('operations are mounted on actual task and weekly production workspaces wit
   const workspace = readFileSync(new URL('./SocialContentWorkspace.tsx', import.meta.url), 'utf8');
   assert.match(workspace, /taskId=\{weeklyTarget.contentTaskId\}/);
   assert.match(workspace, /taskId=\{task.taskId\}/);
-  const studio = readFileSync(new URL('../AiCreateStudio.tsx', import.meta.url), 'utf8');
+  const studio = readAiStudioApplicationSources();
   assert.match(studio, /<SocialContentOrderOperations key=\{socialContentTaskId\} taskId=\{socialContentTaskId\}/);
   const traffic = readFileSync(new URL('../TrafficWorkspacePage.tsx', import.meta.url), 'utf8');
   assert.match(traffic, /<SocialContentOrderOperations key=\{weeklyTarget.contentTaskId\} taskId=\{weeklyTarget.contentTaskId\}/);

@@ -1,6 +1,7 @@
 import type { MaterialSegment } from '../../lib/studioApi';
 import { matchEvidenceSegment, usableEvidenceSegment } from '../../lib/segmentEvidence';
-import type { Clip, StoryboardSlot } from '../AiCreateStudio';
+import type { Clip } from './studioSourceMaterial.js';
+import type { StoryboardSlot } from './studioTimelineFitting.js';
 
 export const ratioNumber = (value: string) => {
   const [w, h] = String(value || '9:16').split(':').map(Number);

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon, Music } from 'lucide-react';
 import type { CoverStyle, StudioProject } from '../lib/studioApi';
-import type { Clip } from './AiCreateStudio';
-import { fontCss } from './AiCreateStudio';
+import type { Clip } from './studio/studioSourceMaterial.js';
+import { fontCss } from './studio/studioFontCatalog.js';
 
 export function Thumb({ seed: _seed, label, ratio = 'aspect-video', src }: { seed: string; label?: string; ratio?: string; src?: string }) {
   const fallbackSrc = src;

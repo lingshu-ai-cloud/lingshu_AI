@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { VideoKickoff } from '../AiCreateStudio';
+import type { VideoKickoff } from '../studio/studioVideoKickoff.js';
 import type {
   SocialAccountPresenterLock,
   SocialContentTaskDetail,

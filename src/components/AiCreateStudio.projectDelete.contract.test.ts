@@ -1,8 +1,9 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const source = fs.readFileSync(path.resolve('src/components/AiCreateStudio.tsx'), 'utf8');
+const source = readAiStudioApplicationSources();
 const overlaySource = fs.readFileSync(path.resolve('src/components/studio/StudioProjectsOverlay.tsx'), 'utf8');
 const historySource = fs.readFileSync(path.resolve('src/components/socialContent/SocialContentHistoryHome.tsx'), 'utf8');
 const apiSource = fs.readFileSync(path.resolve('src/lib/studioApi.ts'), 'utf8');

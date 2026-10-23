@@ -1,3 +1,4 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
@@ -62,7 +63,7 @@ assert.equal(applyManagedPresenterProduction(rawPhoto, managedTwin, {
   sourceChoice: 'material',
 }).source, rawPhoto.source, '用户明确选择企业素材时不得被托管数字人覆盖');
 
-const studioSource = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
+const studioSource = readAiStudioApplicationSources();
 assert.match(
   studioSource.slice(studioSource.indexOf('  const collectSpec ='), studioSource.indexOf('  const applySpec =')),
   /for \(const slot of storyboardSlots\)[\s\S]{0,180}savedShotProductions\[productionKey\(slot\.id\)\] = productionFor\(slot\)/,

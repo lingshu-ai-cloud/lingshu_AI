@@ -1,9 +1,10 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const route = readStudioApplicationSources();
-const ui = readFileSync(new URL('../../src/components/AiCreateStudio.tsx', import.meta.url), 'utf8');
+const ui = readAiStudioApplicationSources();
 
 assert.match(route, /studioRouter\.post\('\/render\/jobs'/, 'persistent render creation route exists');
 assert.match(route, /tenant_id: tenantId, project_id: projectId, idempotency_key: idempotencyKey/, 'idempotency lookup is project and tenant scoped');

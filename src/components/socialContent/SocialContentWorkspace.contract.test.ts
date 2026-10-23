@@ -1,3 +1,4 @@
+import { readAiStudioApplicationSources } from '../../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
@@ -10,7 +11,7 @@ const replicationAnalysis = fs.readFileSync(new URL('./SocialReplicationAnalysis
 const commandPanel = fs.readFileSync(new URL('./SocialTaskCommandPanel.tsx', import.meta.url), 'utf8');
 const actions = fs.readFileSync(new URL('./SocialTaskActionDialogs.tsx', import.meta.url), 'utf8');
 const starterWorkspace = fs.readFileSync(new URL('../starter/StarterWorkspacePage.tsx', import.meta.url), 'utf8');
-const studio = fs.readFileSync(new URL('../AiCreateStudio.tsx', import.meta.url), 'utf8');
+const studio = readAiStudioApplicationSources();
 const creationWorkbench = fs.readFileSync(new URL('./SocialCreationWorkbench.tsx', import.meta.url), 'utf8');
 const preview = fs.readFileSync(new URL('./SocialArtifactPreviewDialog.tsx', import.meta.url), 'utf8');
 const presentation = fs.readFileSync(new URL('./socialContentUi.ts', import.meta.url), 'utf8');

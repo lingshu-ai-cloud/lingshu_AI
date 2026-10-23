@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ExternalLink, Film, Image as ImageIcon, Play, Volume2, VolumeX, X } from 'lucide-react';
 import type { LeadContentPackageResult } from '../../lib/studioApi';
 import { authHeader } from '../../lib/auth';
-import type { VideoKickoff } from '../AiCreateStudio';
+import type { VideoKickoff } from './studioVideoKickoff.js';
 import { playVideoWithAuthenticatedFallback } from './studioAuthenticatedMedia';
 import { localReferenceMediaUrl } from './studioReferenceMedia';
 

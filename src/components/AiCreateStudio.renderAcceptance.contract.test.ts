@@ -1,8 +1,9 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const studio = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
+const studio = readAiStudioApplicationSources();
 
 test('render acceptance is saved in the tenant-scoped Studio project and restored after refresh', () => {
   assert.match(studio, /renderAcceptance:\s*reviewedRenderPath/);

@@ -1,3 +1,4 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import { readStudioApplicationSources } from '../../tests/fixtures/studioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -34,7 +35,7 @@ for (const url of [refreshed.voiceoverUrl, (refreshed.voiceoverAudios as any).zh
 }
 assert.equal(refreshed.unrelated, source.unrelated, 'public URLs must remain unchanged');
 
-const studioUi = readFileSync(new URL('../../src/components/AiCreateStudio.tsx', import.meta.url), 'utf8');
+const studioUi = readAiStudioApplicationSources();
 const studioMediaPreviews = readFileSync(new URL('../../src/components/StudioMediaPreviews.tsx', import.meta.url), 'utf8');
 assert.match(studioUi, /const workbenchFormalPreviewUrl =/, 'formal preview must have an explicit current output source');
 assert.match(studioUi, /<video[\s\S]{0,200}key=\{workbenchFormalPreviewUrl\}[\s\S]{0,100}src=\{workbenchFormalPreviewUrl\}/, 'the mounted player must use that output source');

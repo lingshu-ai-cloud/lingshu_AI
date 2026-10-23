@@ -1,7 +1,8 @@
+import { readAiStudioApplicationSources } from '../../tests/fixtures/aiStudioApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const source = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
+const source = readAiStudioApplicationSources();
 
 assert.match(source, /const projectRevisionRef = useRef<string \| undefined>\(undefined\)/,
   'the editor keeps its server revision outside the hot-reloaded API module');
