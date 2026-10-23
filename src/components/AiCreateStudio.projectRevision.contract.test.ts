@@ -20,8 +20,12 @@ assert.match(source, /\.\.\.\(!input\.baseUpdatedAt && targetProjectId[\s\S]{0,2
   'a caller-provided fresh CAS revision must take precedence over the component fallback revision');
 assert.match(source, /const current = await studioApi\.getProject\(id,[\s\S]{0,500}baseUpdatedAt: current\.updatedAt/,
   'title saves for managed or frozen projects must preserve the fresh revision returned by their GET');
-assert.match(source, /const result = await studioApi\.requalityProject\(projectId\)[\s\S]{0,350}adoptEditorProjectRevision\(result\.project\)/,
-  'a newly signed quality record must advance the component revision');
+assert.match(source, /const result = await studioApi\.requalityProject\(projectId\)[\s\S]{0,400}input\.onProject\(result\.project\)/,
+  'a newly signed quality record must invoke the project revision callback');
+assert.match(source, /onProject: project => \{\s*adoptEditorProjectRevision\(project\);\s*setProjects\(/,
+  'the live page callback must advance both the editor revision and project list');
+assert.match(source, /deliveryWorkspace\.requalityCurrentProject\(createDeliveryContext\(\)\)/,
+  'the quality action must use the current page revision callback');
 assert.match(source, /const project = list\.find\(item => item\.id === targetProjectId\)[\s\S]{0,180}adoptEditorProjectRevision\(project\)/,
   'publish-return hydration must advance the component revision before the next autosave');
 const reloadRequiredBranch = source.slice(source.indexOf("saved.recovery === 'reload_required'"), source.indexOf("if (!saved.ok)", source.indexOf("saved.recovery === 'reload_required'")));

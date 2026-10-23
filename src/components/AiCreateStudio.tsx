@@ -1,3 +1,4 @@
+import { useStudioDeliveryWorkspace, studioDeliveryStatus, useStudioManualHandoffRead, type StudioDeliveryContext } from './studio/studioDeliveryWorkspace';
 import { useStudioProductionRecords, useStudioProductionRefreshState, useStudioProductionRequestIdentity, createStudioProductionSession, useStudioProductionProjectRead, useStudioProductionJobRecovery } from './studio/studioProductionSession';
 import { useStudioPosterWorkspace } from './studio/studioPosterWorkspace';
 import { useStudioRenderSession, useStudioRenderRecovery } from './studio/studioRenderSession';
@@ -148,7 +149,7 @@ import { buildMaterialInfosForScript } from './studio/studioMaterialScriptEviden
 import { stableScriptVersion, sanitizeStoryboardScript } from './studio/studioScriptSanitization.js';
 export { sanitizeStoryboardScript } from './studio/studioScriptSanitization.js';
 
-import type { StepId, VideoThemeId, PresenterMode, CoverVersionConfig, ClipEdit, StoryboardSourceMode, VariationStrategy, StoryboardSourcePlan, StoryboardAssembly, StudioPublishPlatform, StudioPublishItem, StudioPublishPayload, ProjectQualityRecord, EnterpriseProfileLite, ProductOption, ModeScriptOutput } from './studio/studioWorkspaceContracts.js';
+import type { StepId, VideoThemeId, PresenterMode, CoverVersionConfig, ClipEdit, StoryboardSourceMode, VariationStrategy, StoryboardSourcePlan, StoryboardAssembly, StudioPublishPlatform, StudioPublishItem, StudioPublishPayload, EnterpriseProfileLite, ProductOption, ModeScriptOutput } from './studio/studioWorkspaceContracts.js';
 export type { StudioScriptGenerationValidation } from './studio/studioWorkspaceContracts.js';
 
 /* ── 缩略图与不可预览状态 ──────────────────────────────────────────────── */
@@ -1025,13 +1026,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const fontInputRef = useRef<HTMLInputElement>(null);
 
   const [renderDownloadMessage, setRenderDownloadMessage] = useState('');
-  const [reviewedRenderPath, setReviewedRenderPath] = useState('');
-  const [projectQualityRecord, setProjectQualityRecord] = useState<ProjectQualityRecord | null>(null);
-  const [projectQualityBusy, setProjectQualityBusy] = useState(false);
-  const [projectQualityNotice, setProjectQualityNotice] = useState('');
-  const [manualHandoffs, setManualHandoffs] = useState<StudioManualHandoff[]>([]);
-  const [manualHandoffBusy, setManualHandoffBusy] = useState<StudioManualHandoff['action'] | ''>('');
-  const [manualHandoffNotice, setManualHandoffNotice] = useState('');
+  const deliveryWorkspace = useStudioDeliveryWorkspace();
+  const {
+    reviewedRenderPath, setReviewedRenderPath, projectQualityRecord, setProjectQualityRecord,
+    projectQualityBusy, setProjectQualityBusy, projectQualityNotice, setProjectQualityNotice,
+    manualHandoffs, setManualHandoffs, manualHandoffBusy, setManualHandoffBusy,
+    manualHandoffNotice, setManualHandoffNotice,
+  } = deliveryWorkspace;
   const [localFlowRecoveryEpoch, setLocalFlowRecoveryEpoch] = useState(0);
   const localFlowTestRef = useRef<Record<string, any> | null>(null);
   const localFlowRecoveryRef = useRef<{ spec: Record<string, any>; projectId: string } | null>(null);
@@ -5387,76 +5388,30 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     : languageRenderOutputs[activeRenderCombinationKey]?.path
     || Object.values(languageRenderOutputs).find(output => output.status === 'done' && output.path)?.path
     || renderOutputPath || '';
-  const currentRenderReviewed = Boolean(currentReviewedOutputPath && reviewedRenderPath === currentReviewedOutputPath);
-  const currentProjectQualityRecord = currentRenderReviewed && projectQualityRecord?.renderPath === currentReviewedOutputPath
-    ? projectQualityRecord : null;
-  const updateRenderAcceptance = async (accepted: boolean) => {
-    const previous = reviewedRenderPath;
-    const nextPath = accepted ? currentReviewedOutputPath : '';
-    if (accepted && !nextPath) return;
-    setReviewedRenderPath(nextPath);
-    setProjectQualityRecord(null);
-    setProjectQualityNotice('');
-    try {
-      const saved = await saveProject('draft', {
-        specOverrides: {
-          renderAcceptance: accepted ? {
-            accepted: true,
-            renderPath: nextPath,
-            creationMode: mode === 'clone' ? 'viral_replication' : 'free_creation',
-            acceptedAt: new Date().toISOString(),
-          } : null,
-          projectQualityRecords: [],
-          activeProjectQualityRecordId: '',
-        },
-      });
-      if (!saved) throw new Error('验收结果保存失败');
-      setModeNotice(accepted ? '成片验收结果已保存，可在“我的创作 → 历史素材”中查看。' : '已撤销当前成片验收。');
-    } catch (error) {
-      setReviewedRenderPath(previous);
-      setModeNotice(error instanceof Error ? error.message : '验收结果保存失败，请重试。');
-    }
+  const { currentRenderReviewed, currentProjectQualityRecord } = studioDeliveryStatus(deliveryWorkspace, currentReviewedOutputPath);
+  const createDeliveryContext = (): StudioDeliveryContext => {
+    let expectedProjectId = projectId;
+    return {
+      projectId, currentReviewedOutputPath,
+      creationMode: mode === 'clone' ? 'viral_replication' : 'free_creation',
+      isCurrent: () => currentProjectRef.current === expectedProjectId,
+      saveDraft: specOverrides => saveProject('draft', {
+        ...(specOverrides ? { specOverrides } : {}),
+        onSavedProject: id => { expectedProjectId = id; },
+      }),
+      onNotice: setModeNotice,
+      onProject: project => {
+        adoptEditorProjectRevision(project);
+        setProjects(current => [project, ...current.filter(item => item.id !== project.id)]);
+      },
+    };
   };
-  const requalityCurrentProject = async () => {
-    if (!projectId || !currentRenderReviewed || projectQualityBusy) return;
-    setProjectQualityBusy(true); setProjectQualityNotice('');
-    try {
-      if (!await saveProject('draft')) throw new Error('当前修改尚未保存，请重试');
-      const result = await studioApi.requalityProject(projectId);
-      if (!result.ok || !result.record) throw new Error(result.issues?.join('；') || result.error || '重新质检未通过');
-      setProjectQualityRecord(result.record);
-      if (result.project) {
-        adoptEditorProjectRevision(result.project);
-        setProjects(current => [result.project!, ...current.filter(item => item.id !== result.project!.id)]);
-      }
-      setProjectQualityNotice(result.replayed ? '当前版本已通过质检，签发记录仍然有效。' : '重新质检通过，已为当前输入签发新的生成记录。');
-    } catch (error) { setProjectQualityRecord(null); setProjectQualityNotice(error instanceof Error ? error.message : '重新质检未通过'); }
-    finally { setProjectQualityBusy(false); }
-  };
-  useEffect(() => {
-    if (!projectId || !freeThreeStep) { setManualHandoffs([]); return; }
-    let disposed = false;
-    void studioApi.listManualHandoffs(projectId).then(result => {
-      if (!disposed && result.ok) setManualHandoffs(result.handoffs);
-    });
-    return () => { disposed = true; };
-  }, [projectId, freeThreeStep]);
-  const submitManualHandoff = async (action: StudioManualHandoff['action']) => {
-    if (!projectId || !currentRenderReviewed || !currentReviewedOutputPath || !currentProjectQualityRecord || manualHandoffBusy) return;
-    setManualHandoffBusy(action); setManualHandoffNotice('');
-    try {
-      if (!await saveProject('draft')) throw new Error('项目尚未保存，请重试');
-      const result = await studioApi.createManualHandoff(projectId, {
-        action, renderPath: currentReviewedOutputPath, reviewed: true,
-      });
-      if (!result.ok || !result.handoff) throw new Error(result.error || '协作请求未能提交');
-      setManualHandoffs(current => [result.handoff!, ...current.filter(item => item.id !== result.handoff!.id)]);
-      setManualHandoffNotice(action === 'team_review'
-        ? '已提交团队审核；当前作品仍保持人工自由创作，不会自动进入数字员工。'
-        : '已加入发布计划待办；需由团队继续确认日期、账号和发布授权。');
-    } catch (error) { setManualHandoffNotice(error instanceof Error ? error.message : '协作请求未能提交'); }
-    finally { setManualHandoffBusy(''); }
-  };
+  const updateRenderAcceptance = (accepted: boolean) => deliveryWorkspace.updateRenderAcceptance(accepted, createDeliveryContext());
+  const requalityCurrentProject = () => deliveryWorkspace.requalityCurrentProject(createDeliveryContext());
+  useStudioManualHandoffRead(deliveryWorkspace, {
+    projectId, enabled: freeThreeStep, isCurrent: () => currentProjectRef.current === projectId,
+  });
+  const submitManualHandoff = (action: StudioManualHandoff['action']) => deliveryWorkspace.submitManualHandoff(action, createDeliveryContext());
   const socialVideoMediaReady = isSocialArtifactMediaSourceEligible({ source: workbenchFormalPreviewUrl, contentMode: 'video' });
   const socialVideoArtifactReady = (currentProjectQualityRecord?.publishable === true || activeScriptGenerationIsVerified)
     && Boolean(projectId)

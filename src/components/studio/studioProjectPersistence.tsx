@@ -150,7 +150,7 @@ export function createStudioProjectPersistence(ports: Pick<StudioProjectLifecycl
 
   const saveProject = async (
     status: 'draft' | 'ready_for_approval' | 'published' | 'template' = 'draft',
-    options: { silent?: boolean; allowDuringModeAction?: boolean; specOverrides?: Record<string, unknown> } = {},
+    options: { silent?: boolean; allowDuringModeAction?: boolean; specOverrides?: Record<string, unknown>; onSavedProject?: (id: string) => void } = {},
   ) => {
     const {
       projectDeleteInFlightRef, setModeNotice, frozenStudioSpecRef,
@@ -172,6 +172,8 @@ export function createStudioProjectPersistence(ports: Pick<StudioProjectLifecycl
       autosaveSnapshotRef,
     } = ports;
 
+    let expectedProjectId = currentProjectRef.current;
+    const isCurrent = () => currentProjectRef.current === expectedProjectId;
     const silent = options.silent === true;
     if (projectDeleteInFlightRef.current) {
       if (!silent) setModeNotice('正在删除创作，请稍候。');
@@ -260,6 +262,7 @@ export function createStudioProjectPersistence(ports: Pick<StudioProjectLifecycl
           ? { baseUpdatedAt: projectRevisionRef.current }
           : {}),
       });
+      if (!isCurrent()) return false;
       const { project } = saved;
       if (!saved.ok && saved.recovery === 'reload_required' && project?.id) {
         showProjectSaveConflict(project, nextSpec);
@@ -274,17 +277,20 @@ export function createStudioProjectPersistence(ports: Pick<StudioProjectLifecycl
         applySpec(project.spec);
         setModeNotice('后台最新生产结果已与本页修改安全合并，当前页面已更新。');
         window.setTimeout(() => {
+          if (!isCurrent()) return;
           projectHydrationPendingRef.current = false;
           setProjectHydrationRevision(value => value + 1);
         }, 0);
       }
       if (project?.id && status !== 'template') {
         lastSavedAutosaveFingerprintRef.current = studioAutosaveFingerprint(project.id, projectTitle, nextSpec);
-        currentProjectRef.current = project.id;
+        currentProjectRef.current = project.id; expectedProjectId = project.id;
         setProjectId(project.id);
+        options.onSavedProject?.(project.id);
         setProjects(current => [project, ...current.filter(item => item.id !== project.id)]);
         if (socialDigitalHumanPlans.length) {
           const syncedPlans = await productionApi.syncAgentPlans(project.id);
+          if (!isCurrent()) return false;
           setProductionPlans(current => [...syncedPlans, ...current.filter(item => !syncedPlans.some(synced => synced.id === item.id))]);
         }
         if (!workflowContext && new URLSearchParams(location.search).get('page') === 'smartAssets') {
@@ -298,10 +304,11 @@ export function createStudioProjectPersistence(ports: Pick<StudioProjectLifecycl
       if (!silent) {
         completeDemoStep('traffic');
         setSavedTick(true);
-        setTimeout(() => setSavedTick(false), 1800);
+        setTimeout(() => { if (isCurrent()) setSavedTick(false); }, 1800);
       }
       return true;
     } catch (error) {
+      if (!isCurrent()) return false;
       setAutosaveError(error instanceof Error ? error.message : '草稿保存失败，请检查网络后重试。');
       setAutosaveStatus('error');
       if (!silent) throw error;

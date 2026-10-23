@@ -4,6 +4,7 @@ import { restoreStudioProjectComposition } from './studioProjectComposition';
 import { restoreStudioVoiceComposition } from './studioVoiceComposition';
 
 const supportFiles = [
+  new URL('../../src/components/studio/studioDeliveryWorkspace.ts', import.meta.url),
   new URL('../../src/components/studio/studioProductionSession.ts', import.meta.url),
   new URL('../../src/components/studio/studioPosterWorkspace.ts', import.meta.url),
   new URL('../../src/components/studio/studioRenderSession.ts', import.meta.url),

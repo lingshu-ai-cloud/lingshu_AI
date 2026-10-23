@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { studioApi, type StudioProject } from '../../lib/studioApi';
+import { productionApi } from '../../lib/productionApi';
 import { createStudioProjectPersistence } from './studioProjectPersistence';
 import { createStudioProjectWorkspaceActions } from './studioProjectWorkspaceActions';
 import type { StudioProjectLifecyclePorts } from './studioProjectLifecyclePorts';
@@ -174,4 +175,61 @@ test('a completed save from the old project cannot replace the new editor revisi
     assert.equal(input.projectRevisionRef.current, 'revision-2'); assert.equal(input.projectRevisionProjectIdRef.current, 'draft-2');
     assert.equal(warnings.length, 0); assert.equal(input.projectSaveConflictRef.current, null);
   }
+});
+
+for (const outcome of ['success', 'conflict', 'failure'] as const) test(`full draft save ignores ${outcome} feedback from a project left while saving`, async t => {
+  const updates: string[] = [];
+  const { input, actions, warnings, errors } = fixture({
+    workflowContext: { runId: 'run', taskId: 'task', taskKey: 'production' },
+    setProjectId: id => { updates.push('project:' + id); }, setProjects: () => { updates.push('projects'); },
+    setAutosaveStatus: status => { updates.push('status:' + status); },
+  });
+  let finish!: (result: Awaited<ReturnType<typeof studioApi.saveProject>>) => void;
+  let fail!: (error: Error) => void;
+  t.mock.method(studioApi, 'saveProject', () => new Promise((resolve, reject) => { finish = resolve; fail = reject; }));
+  const queued: string[] = [];
+  input.autosaveSnapshotRef.current = async () => { queued.push('old snapshot'); };
+  const pending = actions.saveProject('draft', { silent: true });
+  input.currentProjectRef.current = 'draft-2'; input.projectRevisionRef.current = 'revision-2'; input.projectRevisionProjectIdRef.current = 'draft-2';
+  updates.length = 0; errors.length = 0;
+  input.autosavePendingRef.current = true;
+  input.autosaveSnapshotRef.current = async () => { queued.push('new snapshot'); };
+  if (outcome === 'failure') fail(Error('old draft failed'));
+  else finish({ ok: outcome === 'success', project: project({ updatedAt: 'old-result' }), ...(outcome === 'conflict' ? { recovery: 'reload_required' as const } : {}) });
+  assert.equal(await pending, false);
+  assert.equal(input.currentProjectRef.current, 'draft-2'); assert.equal(input.projectRevisionRef.current, 'revision-2');
+  assert.deepEqual(updates, []); assert.deepEqual(errors, []); assert.deepEqual(warnings, []);
+  await new Promise<void>(resolve => setImmediate(resolve)); assert.deepEqual(queued, ['new snapshot']);
+});
+
+
+test('a new project save reports its own committed identity without serializing the client callback', async t => {
+  const { input, actions } = fixture({ projectId: null, currentProjectRef: ref<string | null>(null),
+    workflowContext: { runId: 'run', taskId: 'task', taskKey: 'production' } });
+  const writes: Parameters<typeof studioApi.saveProject>[0][] = [], committed: string[] = [];
+  t.mock.method(studioApi, 'saveProject', async (write: Parameters<typeof studioApi.saveProject>[0]) => {
+    writes.push(write); return { ok: true, project: project({ id: 'created', updatedAt: 'created-revision', spec: write.spec }) };
+  });
+  const overrides = { renderAcceptance: { accepted: true, renderPath: '/final.mp4' }, projectQualityRecords: [] };
+  assert.equal(await actions.saveProject('draft', { silent: true, specOverrides: overrides,
+    onSavedProject: id => { committed.push(id); assert.equal(input.currentProjectRef.current, id); } }), true);
+  assert.deepEqual(committed, ['created']); assert.equal(input.currentProjectRef.current, 'created');
+  assert.deepEqual(writes[0]?.spec.renderAcceptance, overrides.renderAcceptance);
+  assert.equal('onSavedProject' in writes[0]!, false); assert.equal(input.projectRevisionRef.current, 'created-revision');
+});
+
+test('a delayed plan synchronization after save cannot publish old project plans or saved feedback', async t => {
+  const updates: string[] = [];
+  // Persistence only reads array presence here; plan construction is not under test.
+  const marker = [{}] as unknown as StudioProjectLifecyclePorts['socialDigitalHumanPlans'];
+  const { input, actions } = fixture({ socialDigitalHumanPlans: marker,
+    workflowContext: { runId: 'run', taskId: 'task', taskKey: 'production' },
+    setProductionPlans: () => { updates.push('plans'); }, setAutosaveStatus: status => { updates.push('status:' + status); } });
+  t.mock.method(studioApi, 'saveProject', async () => ({ ok: true, project: project() }));
+  let finish!: (plans: Awaited<ReturnType<typeof productionApi.syncAgentPlans>>) => void;
+  t.mock.method(productionApi, 'syncAgentPlans', () => new Promise(resolve => { finish = resolve; }));
+  const pending = actions.saveProject('draft', { silent: true });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  input.currentProjectRef.current = 'draft-2'; updates.length = 0; finish([]);
+  assert.equal(await pending, false); assert.deepEqual(updates, []);
 });

@@ -379,5 +379,5 @@ export interface StudioProjectLifecyclePorts {
   readonly setExistingSourceDraftPrompt: React.Dispatch<React.SetStateAction<import("./studioWorkspaceContracts").ExistingSourceDraftPrompt | null>>;
   readonly setActiveFolder: React.Dispatch<React.SetStateAction<string>>;
   readonly setProductOptions: React.Dispatch<React.SetStateAction<import("./studioWorkspaceContracts").ProductOption[]>>;
-  readonly saveProject: (status?: "draft" | "ready_for_approval" | "published" | "template", options?: { silent?: boolean | undefined; allowDuringModeAction?: boolean | undefined; specOverrides?: Record<string, unknown> | undefined; }) => Promise<boolean>;
+  readonly saveProject: (status?: "draft" | "ready_for_approval" | "published" | "template", options?: { silent?: boolean | undefined; allowDuringModeAction?: boolean | undefined; specOverrides?: Record<string, unknown> | undefined; onSavedProject?: (id: string) => void; }) => Promise<boolean>;
 }
