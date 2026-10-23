@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 灵感页本地对标视频导入边界拆分（2026-10-23）
+
+- 代码提交 `2840e649` 将 MP4 校验、现有鉴权入库、记录读回和有界分析状态轮询迁至 `inspirationReferenceImport.ts`，页面保留列表/选中状态和刷新回调。授权切换后旧请求不再读取或写回新会话；未新增供应商请求、分析重提或付费旁路。`InspirationDashboard.tsx` 从 2,296 降至 2,238 行并收紧历史预算；全仓仍有 5 个超限文件。
+- 新模块模拟请求直测 3/3、`test:video-source-boundaries` 148/148、`test:tenant-isolation`、TypeScript、架构扫描/ratchet（2,408 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建与 `git diff --check` 通过。Studio 主 chunk 为 480,909/485,000 字节，构建仍有大 chunk 提示。按用户决定未测试 LinkedIn 真实付费采集；本批未上传真实 MP4、调用真实供应商、执行目标库迁移、浏览器验收或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## 数字员工已配置工作台结构拆分（2026-10-23）
 
 - 代码提交 `b24d0942` 将已有配置时的经营总览、周计划控制、生产入口、视图切换与相关弹窗迁至 `ConfiguredDigitalEmployeeWorkspace.tsx`；页面仍持有授权与异步请求栅栏、数据状态及现有动作，任务状态文案继续共用。`DigitalEmployeePage.tsx` 从 993 降至 686 行，新组件 386 行；页面不再需要历史超限预算，全仓超限文件由 6 个降至 5 个。
