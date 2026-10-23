@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
+const actionSource = readFileSync(new URL('./inspiration/inspirationImageCrawlAction.ts', import.meta.url), 'utf8');
 const dialogSource = readFileSync(new URL('./inspiration/InspirationImageCrawlDialog.tsx', import.meta.url), 'utf8');
 const resultsSource = readFileSync(new URL('./inspiration/InspirationVideoResults.tsx', import.meta.url), 'utf8');
 
@@ -14,9 +15,10 @@ test('viral library prioritizes benchmark accounts and keeps keyword image posts
   assert.match(dialogSource, /图文会同时保留图片、轮播顺序和原帖配文/);
   assert.match(dialogSource, /closable=\{!busy\}/);
   assert.match(dialogSource, /onCancel=\{\(\) => \{ if \(!busy\) onClose\(\); \}\}/);
-  assert.match(source, /crawlInspirationImages\(\{/);
-  assert.match(source, /setContentFormat\('image'\)/);
-  assert.match(source, /refreshVideos\(1, false, \{\s*contentFormat: 'image'/);
+  assert.match(source, /runInspirationImageCrawl\(\{/);
+  assert.match(actionSource, /crawlInspirationImages/);
+  assert.match(actionSource, /context\.setContentFormat\('image'\)/);
+  assert.match(actionSource, /context\.refreshVideos\(1, false, \{/);
   assert.match(source, /<InspirationVideoResults[\s\S]*?videos=\{filtered\}/);
   assert.match(resultsSource, /<LsMasonryGallery layout="masonry" items=\{videos\.map/);
 });

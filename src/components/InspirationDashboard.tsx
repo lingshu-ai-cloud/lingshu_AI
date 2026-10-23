@@ -7,6 +7,7 @@ import { WatchModal, sourceEmbedUrl } from './inspiration/InspirationWatchModal'
 import { buildShootingNeeds } from './inspiration/inspirationShootingNeeds';
 import { InspirationShootingPanel } from './inspiration/InspirationShootingPanel';
 import InspirationImageCrawlDialog from './inspiration/InspirationImageCrawlDialog';
+import { runInspirationImageCrawl } from './inspiration/inspirationImageCrawlAction';
 import { createInspirationReferenceImporter } from './inspiration/inspirationReferenceImport';
 import { submitExactAnalysis, readExactAnalysisRecord, pauseExactAnalysis } from './inspiration/inspirationExactAnalysisApi';
 export { parseExactAnalysisResponse } from './inspiration/inspirationExactAnalysisApi';
@@ -74,7 +75,7 @@ import { useSocialProgram } from '../contexts/SocialProgramContext';
 import { showActionFeedback, showActionSuccess } from '../lib/actionFeedback';
 import type { AccountSpecialRecommendation, ContentFormat, GeminiVideoAnalysis, Platform, ScriptAnalysis, TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes';
 import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
-import { crawlInspirationImages, type InspirationImageCrawlPlatform } from '../lib/inspirationImageCrawl';
+import type { InspirationImageCrawlPlatform } from '../lib/inspirationImageCrawl';
 import type { SocialBusinessModel, SocialDiscoveryScoreDecision, SocialDiscoverySupplyItem } from '../../shared/contracts/socialContentWorkflow';
 import { MATERIAL_THEME_LABELS } from '../../shared/materialTaxonomy';
 import MaterialTaxonomyFilters, { type MaterialSourceFilter, type MaterialThemeFilter } from './material-library/MaterialTaxonomyFilters';
@@ -650,43 +651,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   };
 
   const runImageCrawl = async () => {
-    if (imageCrawlBusy) return;
-    setImageCrawlBusy(true);
-    setImageCrawlError('');
-    try {
-      const result = await crawlInspirationImages({
-        platform: imageCrawlPlatform,
-        keyword: imageCrawlKeyword,
-        limit: imageCrawlLimit,
-      }, { headers: authHeader() });
-      if (!result.items.length) {
-        setImageCrawlError(result.message || '未找到可入库图片，请换一个关键词或平台');
-        return;
-      }
-      const crawled = recordsToVideos(result.items as CrawlerRecord[]);
-      setContentFormat('image');
-      setPlatform(imageCrawlPlatform);
-      setCrawlTimeRange('all');
-      setSearch('');
-      searchRef.current = '';
-      setSortMode('crawlTime');
-      setLastCrawlVideoIds(crawled.map(item => item.id));
-      setImageCrawlOpen(false);
-      setMaterialMessage(result.message || `图片采集完成，共返回 ${result.items.length} 条`);
-      await Promise.all([
-        refreshInventory('image'),
-        refreshVideos(1, false, {
-          contentFormat: 'image',
-          crawlTimeRange: 'all',
-          platform: imageCrawlPlatform,
-          search: '',
-        }),
-      ]);
-    } catch (error) {
-      setImageCrawlError(error instanceof Error ? error.message : '图片采集失败');
-    } finally {
-      setImageCrawlBusy(false);
-    }
+    await runInspirationImageCrawl({
+      busy: imageCrawlBusy, platform: imageCrawlPlatform, keyword: imageCrawlKeyword, limit: imageCrawlLimit,
+      setBusy: setImageCrawlBusy, setError: setImageCrawlError, setContentFormat, setPlatform,
+      setCrawlTimeRange, setSearch, searchRef, setSortMode, setLastCrawlVideoIds,
+      setOpen: setImageCrawlOpen, setMaterialMessage, refreshInventory, refreshVideos,
+    });
   };
 
   const importReferenceVideo = createInspirationReferenceImporter({
