@@ -1,9 +1,6 @@
 import type { SocialImageCreationTask } from '../../../shared/contracts/socialImageCreation.js';
 import type { SocialImageLayerGraph } from '../../../shared/contracts/socialImageLayerGraph.js';
-
-const canvasFor = (ratio: string) => ratio === '1:1' ? { width: 1200, height: 1200 }
-  : ratio === '9:16' ? { width: 1080, height: 1920 }
-    : { width: 1200, height: 1500 };
+import { socialImageCanvasForAspectRatio } from '../referenceCanvas.js';
 
 export function compileLuxuryProductHero(input: {
   task: SocialImageCreationTask;
@@ -13,7 +10,8 @@ export function compileLuxuryProductHero(input: {
   now?: string;
 }): SocialImageLayerGraph {
   const { task } = input;
-  const canvas = canvasFor(task.deliverySpec.aspectRatio);
+  const { width, height } = socialImageCanvasForAspectRatio(task.deliverySpec.aspectRatio);
+  const canvas = { width, height };
   const headline = task.imageTextContract.headline || task.renderBrief?.headline || input.productName;
   const supporting = task.imageTextContract.supportingText || task.renderBrief?.subheadline || task.contentBrief.coreClaim;
   const cta = task.imageTextContract.cta || task.renderBrief?.cta || task.contentBrief.targetAction || '';

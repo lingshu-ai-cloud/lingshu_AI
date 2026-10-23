@@ -9,6 +9,7 @@ import {
   type SocialImageCreationPath,
   type SocialImageReferenceLayerBlueprint,
 } from '../../shared/contracts/socialImageCreation.js';
+import { evolveSocialImageProductionRuntime } from './socialImageProductionRuntime.js';
 
 // Reuse the canonical Studio project collection so PocketBase and Postgres
 // deployments persist image drafts without a second migration-only task silo.
@@ -165,6 +166,15 @@ export async function readSocialImageTask(store: DataStore, tenantId: string, id
     enterpriseAssets: payload.enterpriseAssets || [],
     generationJobs: payload.generationJobs || [],
     repairInstructions: payload.repairInstructions || [],
+    approvalDecisions: payload.approvalDecisions || [],
+    repairPlans: payload.repairPlans || [],
+    deliveryPackages: payload.deliveryPackages || [],
+    productionRuntime: payload.productionRuntime ? {
+      ...payload.productionRuntime,
+      events: payload.productionRuntime.events || [],
+      nodes: payload.productionRuntime.nodes || [],
+      nodeOutputs: payload.productionRuntime.nodeOutputs || [],
+    } : undefined,
     layerGraph: payload.layerGraph,
   };
 }
@@ -194,6 +204,26 @@ export async function updateSocialImageTask(store: DataStore, tenantId: string, 
   const current = row?.tenant_id === tenantId && row.spec?.socialImageTask ? { ...row.spec.socialImageTask, id: row.id } : null;
   if (!current) return { kind: 'missing' as const };
   if (current.version !== expectedVersion) return { kind: 'conflict' as const, task: current };
+  if (current.status === 'approved') {
+    const keys = Object.keys(patch).filter(key => key !== 'productionRuntime');
+    if (keys.some(key => key !== 'deliveryPackages')) {
+      return { kind: 'invalid' as const, issues: ['已批准图片为不可变成品；修改须创建新候选版本'], task: current };
+    }
+  }
+  if (patch.approvalDecisions) {
+    const existing = current.approvalDecisions || [];
+    const prefix = patch.approvalDecisions.slice(0, existing.length);
+    if (patch.approvalDecisions.length !== existing.length + 1 || JSON.stringify(prefix) !== JSON.stringify(existing)) {
+      return { kind: 'invalid' as const, issues: ['图片验收凭证只能由服务端追加'], task: current };
+    }
+  }
+  if (patch.status === 'approved' && current.schemaVersion === 'social-image-creation.v3') {
+    const approval = patch.approvalDecisions?.at(-1);
+    if (!approval || approval.decision !== 'approved' || approval.source !== 'explicit_user_action'
+      || !patch.approvedArtifact || patch.approvedArtifact.approvalDecisionId !== approval.decisionId) {
+      return { kind: 'invalid' as const, issues: ['批准必须来自显式用户验收接口'], task: current };
+    }
+  }
   const paidInputPatch = ['imageType', 'creationPath', 'contentBrief', 'creativeRecipe', 'imageTextContract', 'renderBrief', 'deliverySpec',
     'materialIds', 'referenceUrls', 'referenceSnapshot', 'replicationRecipe', 'enterpriseAssets', 'layerGraph', 'renderPlan']
     .some(field => Object.prototype.hasOwnProperty.call(patch, field));
@@ -203,7 +233,7 @@ export async function updateSocialImageTask(store: DataStore, tenantId: string, 
   }
   const now = new Date().toISOString();
   const next: SocialImageCreationTask = {
-    ...current, ...patch, id: current.id, version: current.version + 1, schemaVersion: 'social-image-creation.v2', contentMode: 'image',
+    ...current, ...patch, id: current.id, version: current.version + 1, schemaVersion: current.schemaVersion, contentMode: 'image',
     contentBrief: { ...current.contentBrief, ...(patch.contentBrief || {}) },
     creativeRecipe: { ...current.creativeRecipe, ...(patch.creativeRecipe || {}) },
     imageTextContract: { ...current.imageTextContract, ...(patch.imageTextContract || {}) },
@@ -215,10 +245,29 @@ export async function updateSocialImageTask(store: DataStore, tenantId: string, 
     enterpriseAssets: patch.enterpriseAssets || current.enterpriseAssets || [],
     generationJobs: patch.generationJobs || current.generationJobs || [],
     repairInstructions: patch.repairInstructions || current.repairInstructions || [],
-    layerGraph: patch.layerGraph || current.layerGraph,
+    approvalDecisions: patch.approvalDecisions || current.approvalDecisions || [],
+    repairPlans: patch.repairPlans || current.repairPlans || [],
+    deliveryPackages: patch.deliveryPackages || current.deliveryPackages || [],
+    layerGraph: Object.prototype.hasOwnProperty.call(patch, 'layerGraph') ? patch.layerGraph : current.layerGraph,
     updatedAt: now, publishable: false,
   };
-  if (patch.status === 'approved') next.publishable = socialImageTaskCanPublish({ ...next, publishable: false, status: 'approved' });
+  if (patch.referenceSnapshot) {
+    const raw = patch.referenceSnapshot as unknown as Record<string, unknown>;
+    const imageUrls = stringArray(raw.imageUrls, 10);
+    const frozen = {
+      sourceRecordId: text(raw.sourceRecordId, 200) || undefined,
+      sourceUrl: text(raw.sourceUrl, 2000) || undefined,
+      platform: text(raw.platform, 80) || undefined,
+      accountName: text(raw.accountName, 200) || undefined,
+      title: text(raw.title, 500) || undefined,
+      caption: text(raw.caption, 5000) || undefined,
+      imageUrls,
+      collectedAt: text(raw.collectedAt, 80) || now,
+    };
+    next.referenceSnapshot = { ...frozen, fingerprint: createHash('sha256').update(JSON.stringify(frozen)).digest('hex') };
+  }
+  next.productionRuntime = evolveSocialImageProductionRuntime(current, next, now);
+  if (next.status === 'approved') next.publishable = socialImageTaskCanPublish({ ...next, publishable: false, status: 'approved' });
   const issues = socialImageTaskIssues(next);
   if (issues.length && patch.status === 'approved') return { kind: 'invalid' as const, issues, task: next };
   const update = {

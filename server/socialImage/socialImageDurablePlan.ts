@@ -54,7 +54,7 @@ export function socialImagePlannedRenderInput(task: SocialImageCreationTask, job
   }
   const ratio = task.deliverySpec.aspectRatio;
   const quality = task.deliverySpec.imageGeneration?.quality || 'low';
-  if (!['1:1', '4:5', '9:16'].includes(ratio) || !['low', 'medium', 'high'].includes(quality)) {
+  if (!['1:1', '4:5', '9:16', '16:9'].includes(ratio) || !['low', 'medium', 'high'].includes(quality)) {
     throw new SocialImagePaidJobError('social_image_planned_unit_render_config_invalid');
   }
   return {

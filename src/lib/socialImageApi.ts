@@ -1,6 +1,7 @@
 import { authHeader } from './auth';
 import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation';
 import type { SocialImageLayerGraph } from '../../shared/contracts/socialImageLayerGraph';
+import type { SocialImageDeliveryPackage, SocialImageProductionEvent, SocialImageProductionSnapshot } from '../../shared/contracts/socialImageProduction';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/overseas/social-images${path}`, {
@@ -14,9 +15,54 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const socialImageApi = {
-  createTask: (input: Record<string, unknown>) => request<{ ok: true; task: SocialImageCreationTask }>('/tasks', { method: 'POST', body: JSON.stringify(input) }),
-  createFromReference: (input: Record<string, unknown>) => request<{ ok: true; task: SocialImageCreationTask }>('/tasks/from-reference', { method: 'POST', body: JSON.stringify(input) }),
+  createOrResumeRun: (contentTaskId: string, input: {
+    expectedContentTaskVersion: string;
+    idempotencyKey: string;
+    deliverableKey?: string;
+    entrySource: 'assistant' | 'workspace' | 'weekly_package';
+    imageType?: SocialImageCreationTask['imageType'];
+  }) => request<{ ok: true; task: SocialImageCreationTask; resumed: boolean; snapshot: SocialImageProductionSnapshot }>(
+    `/content-tasks/${encodeURIComponent(contentTaskId)}/runs`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': input.idempotencyKey },
+      body: JSON.stringify({ ...input, idempotencyKey: undefined }),
+    },
+  ),
   getTask: (id: string) => request<{ ok: true; task: SocialImageCreationTask }>(`/tasks/${encodeURIComponent(id)}`),
+  getProduction: (id: string, afterSequence = 0) => request<{ ok: true; snapshot: SocialImageProductionSnapshot; events: SocialImageProductionEvent[] }>(
+    `/tasks/${encodeURIComponent(id)}/production?afterSequence=${encodeURIComponent(String(afterSequence))}`,
+  ),
+  prepareEvidence: (task: SocialImageCreationTask) => request<{ ok: true; task: SocialImageCreationTask; snapshot: SocialImageProductionSnapshot }>(
+    `/tasks/${encodeURIComponent(task.id)}/evidence/prepare`, {
+      method: 'POST', body: JSON.stringify({ expectedVersion: task.version }),
+    },
+  ),
+  refreshContentTask: (task: SocialImageCreationTask, expectedContentTaskVersion: string) => request<{
+    ok: true; task: SocialImageCreationTask; snapshot: SocialImageProductionSnapshot;
+  }>(`/tasks/${encodeURIComponent(task.id)}/refresh-content-task`, {
+    method: 'POST', body: JSON.stringify({ expectedVersion: task.version, expectedContentTaskVersion }),
+  }),
+  runDirectorReview: (task: SocialImageCreationTask, candidateId: string, candidateVersion: number) => request<{
+    ok: true; task: SocialImageCreationTask; snapshot: SocialImageProductionSnapshot;
+  }>(`/tasks/${encodeURIComponent(task.id)}/director-review`, {
+    method: 'POST', body: JSON.stringify({ expectedVersion: task.version, candidateId, candidateVersion }),
+  }),
+  decideCandidate: (task: SocialImageCreationTask, input: {
+    candidateId: string;
+    candidateVersion: number;
+    expectedContentHash: string;
+    decision: 'approved' | 'rejected';
+    note?: string;
+  }) => request<{ ok: true; task: SocialImageCreationTask; snapshot: SocialImageProductionSnapshot }>(
+    `/tasks/${encodeURIComponent(task.id)}/decision`, {
+      method: 'POST', body: JSON.stringify({ expectedVersion: task.version, ...input }),
+    },
+  ),
+  createDeliveryPackage: (task: SocialImageCreationTask) => request<{
+    ok: true; task: SocialImageCreationTask; deliveryPackage: SocialImageDeliveryPackage; snapshot: SocialImageProductionSnapshot;
+  }>(`/tasks/${encodeURIComponent(task.id)}/delivery-packages`, {
+    method: 'POST', body: JSON.stringify({ expectedVersion: task.version }),
+  }),
   reconcileMaterial: (taskId: string, jobId: string) => request<{ ok: true; recovered: true; task: SocialImageCreationTask; materialId: string; url: string }>(`/tasks/${encodeURIComponent(taskId)}/jobs/${encodeURIComponent(jobId)}/reconcile-material`, { method: 'POST' }),
   planUnits: (task: SocialImageCreationTask) => request<{ ok: true; task: SocialImageCreationTask; paidExecutionEnabled: boolean }>(`/tasks/${encodeURIComponent(task.id)}/plan-units`, {
     method: 'POST', body: JSON.stringify({ expectedVersion: task.version }),

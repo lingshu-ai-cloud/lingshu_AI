@@ -1,9 +1,12 @@
+import { createHash } from 'node:crypto';
+import sharp from 'sharp';
 import {
   SOCIAL_IMAGE_HARD_CHECKS,
   type SocialImageCreationTask,
   type SocialImageQualityCheck,
   type SocialImageQualityCheckKey,
 } from '../../shared/contracts/socialImageCreation.js';
+import { socialImageCanvasForAspectRatio } from './referenceCanvas.js';
 
 const uncertain = (key: SocialImageQualityCheckKey, note: string, repairSuggestion?: string): SocialImageQualityCheck => ({
   key, verdict: 'uncertain', severity: 'hard', note, checker: 'deterministic', repairSuggestion,
@@ -21,14 +24,16 @@ export function socialImageDeterministicChecks(task: SocialImageCreationTask): S
   const referenceReady = task.creationPath !== 'viral_replication' || Boolean(task.referenceSnapshot?.imageUrls.length && task.replicationRecipe);
 
   const byKey: Partial<Record<SocialImageQualityCheckKey, SocialImageQualityCheck>> = {
+    file_decode: uncertain('file_decode', '等待读取候选图片实际字节'),
+    pixel_dimensions: uncertain('pixel_dimensions', '等待读取候选图片实际像素尺寸'),
     product_identity: productsBound
-      ? { key: 'product_identity', verdict: 'pass', severity: 'hard', note: '产品 ID 已绑定企业知识库', checker: 'deterministic', evidence: [...productIds] }
+      ? { key: 'product_identity', verdict: 'uncertain', severity: 'hard', note: '产品 ID 已绑定；等待候选像素与企业产品原图比较', checker: 'deterministic', evidence: [...productIds] }
       : { key: 'product_identity', verdict: 'fail', severity: 'hard', note: '存在未绑定企业知识库的产品', checker: 'deterministic', repairSuggestion: '重新选择企业知识库产品资产' },
     fact_consistency: factReady
-      ? { key: 'fact_consistency', verdict: 'pass', severity: 'hard', note: '事实状态与待确认字段通过预检', checker: 'deterministic' }
+      ? { key: 'fact_consistency', verdict: 'uncertain', severity: 'hard', note: '事实来源已验证；等待候选像素中的表达比较', checker: 'deterministic' }
       : { key: 'fact_consistency', verdict: 'fail', severity: 'hard', note: '事实未验证或仍有待确认字段', checker: 'deterministic', repairSuggestion: '补充企业事实证据后重新策划' },
     text_overflow: text.length <= 280
-      ? { key: 'text_overflow', verdict: 'pass', severity: 'hard', note: '确定性文字长度预检通过；仍需渲染后测量', checker: 'deterministic', score: 1 }
+      ? { key: 'text_overflow', verdict: 'uncertain', severity: 'hard', note: '文字长度预检通过；等待候选像素中的裁切检查', checker: 'deterministic' }
       : { key: 'text_overflow', verdict: 'fail', severity: 'hard', note: '海报可见文字超过预设容量', checker: 'deterministic', repairSuggestion: '缩短标题、辅助文字或 CTA' },
     reference_structure_similarity: referenceReady
       ? { key: 'reference_structure_similarity', verdict: 'uncertain', severity: 'soft', note: '参考快照与复刻配方齐全，等待多模态比较', checker: 'deterministic' }
@@ -44,6 +49,61 @@ export function socialImageDeterministicChecks(task: SocialImageCreationTask): S
     .map(key => byKey[key] || uncertain(key, pixelNotes[key] || '等待视觉质检'));
 }
 
+export async function socialImageCandidatePixelChecks(input: {
+  bytes: Buffer;
+  aspectRatio: SocialImageCreationTask['deliverySpec']['aspectRatio'];
+}): Promise<SocialImageQualityCheck[]> {
+  const contentHash = createHash('sha256').update(input.bytes).digest('hex');
+  try {
+    const decoded = await sharp(input.bytes, { limitInputPixels: 40_000_000 }).rotate().toBuffer({ resolveWithObject: true });
+    const width = Number(decoded.info.width || 0), height = Number(decoded.info.height || 0);
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) throw new Error('decode');
+    const expected = socialImageCanvasForAspectRatio(input.aspectRatio);
+    const dimensionPass = width === expected.width && height === expected.height;
+    return [
+      { key: 'file_decode', verdict: 'pass', severity: 'hard', checker: 'deterministic', note: `候选图片可解码：${width}×${height}`,
+        evidence: [`candidate-sha256:${contentHash}`] },
+      { key: 'pixel_dimensions', verdict: dimensionPass ? 'pass' : 'fail', severity: 'hard', checker: 'deterministic',
+        note: dimensionPass ? `实际像素与 ${input.aspectRatio} 交付规格一致` : `实际像素 ${width}×${height}，要求 ${expected.width}×${expected.height}`,
+        evidence: [`candidate-sha256:${contentHash}`, `actual:${width}x${height}`, `expected:${expected.width}x${expected.height}`],
+        ...(dimensionPass ? {} : { repairSuggestion: `将候选规范化为 ${expected.width}×${expected.height}` }) },
+    ];
+  } catch {
+    return [
+      { key: 'file_decode', verdict: 'fail', severity: 'hard', checker: 'deterministic', note: '候选图片实际字节不可解码',
+        evidence: [`candidate-sha256:${contentHash}`], repairSuggestion: '重新生成或恢复可读取的候选文件' },
+      { key: 'pixel_dimensions', verdict: 'uncertain', severity: 'hard', checker: 'deterministic', note: '文件不可解码，无法验证像素尺寸',
+        evidence: [`candidate-sha256:${contentHash}`] },
+    ];
+  }
+}
+
+export async function socialImageCandidateOcrCheck(input: {
+  bytes: Buffer;
+  mimeType: string;
+  expectedTexts: string[];
+  recognize: (input: { bytes: Buffer; mimeType: string }) => Promise<string>;
+}): Promise<SocialImageQualityCheck> {
+  const expected = input.expectedTexts.map(value => value.trim()).filter(Boolean);
+  if (!expected.length) return { key: 'label_ocr', verdict: 'not_applicable', severity: 'hard', checker: 'deterministic',
+    note: '该候选没有要求显示的文字' };
+  const candidateHash = createHash('sha256').update(input.bytes).digest('hex');
+  try {
+    const observed = await input.recognize({ bytes: input.bytes, mimeType: input.mimeType });
+    const normalize = (value: string) => value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+    const normalizedObserved = normalize(observed);
+    const missing = expected.filter(value => !normalizedObserved.includes(normalize(value)));
+    const evidence = [`candidate-sha256:${candidateHash}`, `ocr-sha256:${createHash('sha256').update(observed).digest('hex')}`];
+    return missing.length ? { key: 'label_ocr', verdict: observed.trim() ? 'fail' : 'uncertain', severity: 'hard', checker: 'deterministic',
+      note: observed.trim() ? `OCR 未完整识别要求文字：${missing.join('、')}` : 'OCR 未识别到可验证文字', evidence,
+      repairSuggestion: '使用确定性文字图层重新渲染，并再次执行 OCR' }
+      : { key: 'label_ocr', verdict: 'pass', severity: 'hard', checker: 'deterministic', note: '候选实际像素 OCR 与要求文字一致', evidence };
+  } catch {
+    return { key: 'label_ocr', verdict: 'uncertain', severity: 'hard', checker: 'deterministic',
+      note: '本地 OCR 不可用，不能证明图片文字正确', evidence: [`candidate-sha256:${candidateHash}`] };
+  }
+}
+
 /** Deterministic failures are authoritative; visual evidence may resolve only
  * uncertain checks, and missing model rows never become passes. */
 export function mergeSocialImageVisualChecks(
@@ -52,7 +112,7 @@ export function mergeSocialImageVisualChecks(
 ): SocialImageQualityCheck[] {
   const visualByKey = new Map(visual.map(check => [check.key, check]));
   return deterministic.map(check => {
-    if (check.verdict === 'fail' || check.verdict === 'pass') return check;
+    if (check.verdict === 'fail' || check.verdict === 'pass' || check.verdict === 'not_applicable') return check;
     const observed = visualByKey.get(check.key);
     if (!observed || observed.checker !== 'multimodal') return check;
     return { ...observed, severity: check.severity };
