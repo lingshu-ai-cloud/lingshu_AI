@@ -1,4 +1,4 @@
-import StrategyDataBoard from './StrategyDataBoard';
+import ContentCreationHome from './ContentCreationHome';
 import { PAGE_REGISTRY } from '../pageRegistry';
 import type { AgentAction, ConversationContext, KickoffSignal, Page, RestoreSignal } from '../App';
 
@@ -16,17 +16,11 @@ interface Props {
   enterpriseHomepageDemo?: boolean;
 }
 
-export default function StrategyPage({ onAction, onNavigate, includeMockCustomers = false, mockCustomerScope = 'admin', enterpriseHomepageDemo = false }: Props) {
+export default function StrategyPage({ onNavigate }: Props) {
   return (
     <div className="home-dashboard h-full min-h-0 overflow-hidden">
       <h1 className="sr-only">{PAGE_REGISTRY.strategy.canonicalTitle}</h1>
-      <StrategyDataBoard
-        onAction={onAction}
-        onNavigate={onNavigate}
-        includeMockCustomers={includeMockCustomers}
-        mockCustomerScope={mockCustomerScope}
-        enterpriseHomepageDemo={enterpriseHomepageDemo}
-      />
+      <ContentCreationHome onNavigate={onNavigate}/>
     </div>
   );
 }

@@ -100,12 +100,6 @@ function DraftSuggestionBar({
             <p className="mt-1 whitespace-pre-line">{'\u6700\u7ec8\u53d1\u9001\u6548\u679c\uff1a'}{templatePlan.rendered}</p>
           </div>
         )}
-        {!priceRulesReady && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-dim px-3 py-2 text-xs text-amber">
-            <span>报价知识尚未完善，价格相关内容需人工确认。</span>
-            <Button htmlType="button" size="small" onClick={() => { localStorage.setItem('lingshu:enterprise:highlight-biz-rules', 'true'); window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } })); }} className="whitespace-nowrap font-semibold">去完善规则</Button>
-          </div>
-        )}
         <footer className="flex flex-wrap items-center justify-end gap-1.5 border-t border-border pt-2">
           <Button size="small" htmlType="button" onClick={onSave} disabled={savingDraft || !draft.trim()} className="whitespace-nowrap font-semibold">{savingDraft ? '保存中…' : '保存修改'}</Button>
           <Button size="small" type="primary" htmlType="button" onClick={onSend} disabled={!templateApproved || !channelReady} className="whitespace-nowrap font-semibold">
@@ -283,7 +277,6 @@ export function ChatThread({
           <Tooltip title="客户与会话详情"><Button shape="circle" aria-label="客户与会话详情" icon={<Info size={16}/>} /></Tooltip>
         </div>
       </header>
-      {customer.isMock && <p className="shrink-0 border-b border-violet-100 bg-violet-50 px-4 py-1.5 text-[11px] text-violet-700">只在演示沙盘里推进，不会发送到真实平台。</p>}
       <div className="min-h-0 flex-1 overflow-y-auto bg-ink px-3 py-5 sm:px-6">
         <div className="mx-auto max-w-3xl space-y-4">
           {customer.timeline.map(event => {
@@ -312,7 +305,7 @@ export function ChatThread({
                     {!isBuyer && <p className="text-xs font-bold text-white">{event.title}</p>}
                     <span className={`text-[10px] ${isBuyer ? 'text-text-muted' : 'text-white/75'}`}>{event.time}</span>
                   </div>
-                  <p className={`mt-1 whitespace-pre-line text-sm leading-relaxed ${isBuyer ? 'text-text-secondary' : 'text-white'}`}>{event.body}</p>
+                  <p className={`mt-1 whitespace-pre-line text-sm leading-relaxed ${isBuyer ? 'text-text-primary' : 'text-white'}`}>{event.body}</p>
                   {!isBuyer && (event.audit?.editedByHuman || event.audit?.memoryApplied?.length) && (
                     <div className="mt-2 flex flex-wrap justify-end gap-1.5">
                       {event.audit.editedByHuman && (
@@ -324,7 +317,7 @@ export function ChatThread({
                     </div>
                   )}
                   {translation && (
-                    <div className={`mt-2 border-t pt-2 text-xs leading-relaxed ${isBuyer ? 'border-border text-text-muted' : 'border-white/20 text-white/80'}`}>
+                    <div className={`mt-2 border-t pt-2 text-xs leading-relaxed ${isBuyer ? 'border-border-bright text-text-secondary' : 'border-white/20 text-white/80'}`}>
                       <span className="font-bold">{'\u4e2d\u6587\u7ffb\u8bd1\uff1a'}</span>{translation}
                     </div>
                   )}

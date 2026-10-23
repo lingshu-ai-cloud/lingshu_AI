@@ -19,8 +19,12 @@ import type { useAssistantQuickExecution } from './useAssistantQuickExecution';
 import type { useAssistantSend } from './useAssistantSend';
 import type { useContentTaskIntake } from './useContentTaskIntake';
 
+import type { AssistantHomeBounds } from './useAssistantHomeAnchor';
+
 type StoreActions = ReturnType<typeof useAssistantStore.getState>;
 type Props = {
+  inlineHome?: boolean;
+  inlineHomeBounds?: AssistantHomeBounds | null;
   page: Page;
   pageContext: AssistantContext;
   currentPageAgent: OrbitAgentId;
@@ -74,7 +78,7 @@ type Props = {
 
 /** The existing single-column assistant surface, without its data lifecycle. */
 export default function AssistantConversationPanel(props: Props) {
-  const { page, pageContext, currentPageAgent, activeAgent, activeThread, mode, panelView,
+  const { inlineHome, inlineHomeBounds, page, pageContext, currentPageAgent, activeAgent, activeThread, mode, panelView,
     assistantTool, viewport, reduceMotion, productionDecisionContext, decisionFeedRevision,
     persistenceScopeKey, welcomeBubbleVisible, loading, fileGenerating, replyStreaming,
     attachmentUploading, attachmentError, pendingAttachments, weeklyActionBusy,
@@ -104,7 +108,7 @@ export default function AssistantConversationPanel(props: Props) {
   const spatialTransition = reduceMotion ? { duration: 0 } : { ...lsMotion.spring.standard, opacity: fadeTransition };
 
   return <AnimatePresence>
-    {(mode === 'chat' || assistantTool === 'knowledge-intake') && (
+    {(mode === 'chat' || assistantTool === 'knowledge-intake' || inlineHomeBounds) && (
       <motion.section
         data-global-assistant="panel"
         id="global-assistant-panel"
@@ -114,13 +118,14 @@ export default function AssistantConversationPanel(props: Props) {
         aria-describedby="global-assistant-panel-description"
         tabIndex={-1}
         initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }}
-        animate={mode === 'chat' ? { opacity: 1, y: 0 } : { opacity: 0, y: reduceMotion ? 0 : 8 }}
+        animate={mode === 'chat' || inlineHomeBounds ? { opacity: 1, y: 0 } : { opacity: 0, y: reduceMotion ? 0 : 8 }}
         exit={{ y: reduceMotion ? 0 : 8, opacity: 0, transition: { ...spatialTransition, opacity: fadeExit.transition } }}
         transition={spatialTransition}
-        className={`absolute bottom-14 right-0 z-10 flex max-h-[calc(100dvh-env(safe-area-inset-bottom)-96px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
-        style={{ height: assistantPanelHeight, width: assistantPanelWidth, maxWidth: 'calc(100vw - 32px)' }}
+        className={`absolute bottom-14 right-0 z-10 flex max-h-[calc(100dvh-env(safe-area-inset-bottom)-96px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' || inlineHomeBounds ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
+        style={{ height: inlineHomeBounds?.height ?? assistantPanelHeight, width: inlineHomeBounds?.width ?? assistantPanelWidth, maxWidth: inlineHomeBounds ? '100%' : 'calc(100vw - 32px)' }}
       >
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50 px-4">
+        {inlineHome && <div className="sr-only"><h2 id="global-assistant-panel-title">灵小枢创作对话</h2><p id="global-assistant-panel-description">描述创作需求，或添加图片、视频和音频参考。</p></div>}
+        {!inlineHome && <header className="ls-assistant-panel__header flex h-12 shrink-0 items-center justify-between border-b border-border bg-surface px-4">
           <div className="flex min-w-0 items-center gap-2">
             <button type="button" onClick={() => {
               if (assistantTool === 'knowledge-intake') { setAssistantTool(null); returnToConversation(); }
@@ -142,7 +147,7 @@ export default function AssistantConversationPanel(props: Props) {
               <X size={15} />
             </button>
           </div>
-        </header>
+        </header>}
 
         {assistantTool === 'knowledge-intake' ? (
           <div className="min-h-0 flex-1 overflow-y-auto bg-surface-2 p-3">
@@ -165,7 +170,7 @@ export default function AssistantConversationPanel(props: Props) {
                 setScrollPosition(activeAgent, scroller.scrollTop);
                 setFollowingLatest(activeAgent, scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 24);
               }}>
-              <AssistantConversationBubbles
+              <AssistantConversationBubbles inlineHome={inlineHome}
                 page={page} goalId={pageContext.goalId} productionContext={productionDecisionContext}
                 decisionFeedRevision={decisionFeedRevision}
                 decisionFeedKey={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:summary:${decisionFeedRevision}`}
@@ -199,7 +204,7 @@ export default function AssistantConversationPanel(props: Props) {
               </div>
             )}
 
-            {!contentIntake.active && <AssistantQuickEntries
+            {!inlineHome && !contentIntake.active && <AssistantQuickEntries
               page={page}
               executions={[
                 ...(page === 'digitalEmployees' ? [{ id: 'business-create-week-plan', kind: 'execute' as const,
@@ -213,7 +218,7 @@ export default function AssistantConversationPanel(props: Props) {
               onExecute={entry => void runQuickExecution(entry)}
             />}
 
-            <AssistantWeeklyActions page={page} scopeKey={persistenceScopeKey}
+            {!inlineHome && <AssistantWeeklyActions page={page} scopeKey={persistenceScopeKey}
               disabled={loading || attachmentUploading} onBusyChange={setWeeklyActionBusy}
               onReceipt={receipt => {
                 const thread = useAssistantStore.getState().threads[activeAgent];
@@ -231,8 +236,8 @@ export default function AssistantConversationPanel(props: Props) {
                   window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: navigation }));
                 }
               }}
-            />
-            <AssistantComposer ref={assistantInputRef} draft={activeThread.draftInput} files={pendingAttachments}
+            />}
+            <AssistantComposer variant={inlineHome ? 'home' : 'default'} ref={assistantInputRef} draft={activeThread.draftInput} files={pendingAttachments}
               disabled={loading || replyStreaming || fileGenerating || contentIntake.busy || weeklyActionBusy}
               uploading={attachmentUploading} error={attachmentError}
               onDraftChange={value => setDraftInput(activeAgent, value)}

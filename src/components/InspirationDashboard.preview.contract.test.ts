@@ -3,16 +3,23 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8')
   + fs.readFileSync(new URL('./inspiration/InspirationMaterialGallery.tsx', import.meta.url), 'utf8');
-const watchModal = fs.readFileSync(new URL('./inspiration/InspirationWatchModal.tsx', import.meta.url), 'utf8');
+const watchModal = fs.readFileSync(new URL('./inspiration/InspirationWatchDialog.tsx', import.meta.url), 'utf8');
 const materialMediaSource = fs.readFileSync(new URL('./inspiration/MaterialLibraryCardMedia.tsx', import.meta.url), 'utf8');
 const cardsSource = fs.readFileSync(new URL('./InspirationVideoCards.tsx', import.meta.url), 'utf8');
 const mediaSource = fs.readFileSync(new URL('./inspiration/InspirationMedia.tsx', import.meta.url), 'utf8');
 const progressSource = fs.readFileSync(new URL('./inspiration/VideoAnalysisProgressPanel.tsx', import.meta.url), 'utf8');
-assert.match(source, /import \{ WatchModal, sourceEmbedUrl \} from '.\/inspiration\/InspirationWatchModal'/);
+assert.match(source, /import InspirationWatchDialog from '.\/inspiration\/InspirationWatchDialog'/);
 assert.match(watchModal, /zIndex=\{2200\}/, 'the original-content preview must render above the Ant detail drawer');
-assert.match(watchModal, /video\.videoUrl && !useEmbedPlayer/);
+assert.match(watchModal, /current\.videoUrl && !useEmbed/);
 assert.match(watchModal, /embedUrl \?/);
 assert.match(watchModal, />原站打开</);
+assert.match(watchModal, /<AnimatePresence[^>]*mode="popLayout">[\s\S]*?key=\{current\.id\}[\s\S]*?filter: 'blur\(5px\)'/, '上下换片须使用方向感、淡入和轻微模糊过渡');
+assert.match(watchModal, /drag=\{!reduceMotion && ordered\.length > 1 \? 'y' : false\}[\s\S]*?onDragEnd=\{\(_, info\) => completeDrag\(info\.offset\.y, info\.velocity\.y\)\}/, '视频预览须跟随纵向拖拽并在松手后判定换片');
+assert.match(watchModal, /AdjacentVideoPreview[\s\S]*?position=\{-1\}[\s\S]*?AdjacentVideoPreview[\s\S]*?position=\{1\}/, '拖拽中须同时露出相邻视频预览');
+assert.match(watchModal, /SWIPE_HINT_STORAGE_KEY[\s\S]*?data-swipe-hint[\s\S]*?向上滑动切换视频/, '首次进入须展示一次向上滑动引导');
+assert.match(watchModal, /usePrefersReducedMotion\(\)/, '换片动效必须尊重减少动效偏好');
+assert.doesNotMatch(watchModal, />分析状态<|>入库时间<|>证据来源</, '简要预览不得展示分析状态、入库时间和证据来源');
+assert.ok(watchModal.indexOf('>内容结构<') < watchModal.indexOf('>开场钩子<'), '内容结构摘要必须位于开场钩子上方');
 assert.doesNotMatch(source, /DiscoveryScopePanel|当前发现范围|导入对标视频并分析|inspiration-creation-account/, '灵感首页不得重复展示范围、创作账号和导入说明卡');
 assert.match(source, /<Tabs className="min-w-0 flex-1"[^]*?<AntUpload className="shrink-0 pt-1"[^]*?>导入 MP4 并分析</, '导入动作必须收进 Tabs 右侧工具栏');
 assert.match(cardsSource, /apiUrl=\{video\.videoUrl\}[^]*?loadOnMount[^]*?previewFrame[^]*?preload="auto"/, '爆款视频卡必须主动加载首帧，不能依赖悬停');

@@ -17,9 +17,10 @@ for (const page of PAGE_IDS) {
 }
 
 for (const [page, title] of Object.entries({
-  strategy: '首页',
-  digitalEmployees: '智能经营',
-  conversion: '我的会话',
+  strategy: '内容创作',
+  digitalEmployees: '经营总览',
+  conversion: '客户会话',
+  adsOverview: '平台投流',
   orders: '订单',
   enterprise: '企业知识库',
   scheduled: '定时任务',
@@ -35,7 +36,7 @@ assert.deepEqual(PRIMARY_SOCIAL_NAV_PAGES, [
   'traffic',
 ]);
 assert.deepEqual(PRIMARY_SOCIAL_NAV_PAGES.map(page => PAGE_REGISTRY[page].navLabel), [
-  '灵感中心',
+  '灵感爆款',
   '内容制作',
   '发布与渠道',
 ]);
@@ -60,7 +61,7 @@ assert.equal(PLATFORM_ADS_SURFACE_ENABLED, true, 'the 投放管理 product unit 
 assert.deepEqual(PLATFORM_ADS_PAGE_IDS, ['adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged']);
 assert.deepEqual(['adsPlans', 'adsOverview', 'adsCreatives'].map(page => PAGE_REGISTRY[page as 'adsPlans' | 'adsOverview' | 'adsCreatives'].navLabel), [
   '计划创编',
-  '投放数据',
+  '平台投流',
   '素材管理',
 ]);
 assert.equal(PAGE_REGISTRY.adsManaged.navParent, 'adsPlans', 'legacy AI managed links must resolve under the plan workspace');

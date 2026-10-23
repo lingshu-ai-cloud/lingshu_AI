@@ -305,10 +305,10 @@ assert.match(appSource,
   'ordinary tenant administrators must be redirected from platform-only pages');
 assert.doesNotMatch(`${appSource}\n${appSessionSource}\n${layoutSource}\n${pageRegistrySource}`, /contentFormulaAdmin|爆款公式库/,
   'the formula product surface must be removed rather than hidden behind an admin role');
-for (const navigationLabel of ['首页', '灵感中心', '内容制作', '发布与渠道', '内容监控', '渠道连接', '智能客服', '我的会话', '订单', '企业知识库', '定时任务', '集成中心', '组织与权限']) {
+for (const navigationLabel of ['内容创作', '灵感爆款', '经营总览', '内容制作', '发布与渠道', '内容监控', '渠道连接', '智能客服', '我的会话', '订单', '企业知识库', '定时任务', '集成中心', '组织与权限']) {
   assert.match(pageRegistrySource, new RegExp(navigationLabel), `starter navigation must register the ${navigationLabel} page`);
 }
-assert.match(layoutSource, /PRIMARY_SOCIAL_NAV_PAGES\.map/, 'organic-content navigation must come from the shared page registry');
+assert.match(layoutSource, /primaryProductNavigation\(creationMode, allowedPages/, 'starter navigation must follow the shared mode and role model');
 assert.doesNotMatch(layoutSource, /投流与发布|ContentCreationNav/, 'starter navigation must not restore the old umbrella page');
 assert.doesNotMatch(layoutSource, /Agent 生产现场（只读）/, 'starter navigation must not collapse the original product into four simplified read-only pages');
 assert.match(workflowContextSource, /筛选可用灵感/);

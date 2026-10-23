@@ -2,6 +2,7 @@ import type { TrendVideo, VideoAnalysisPayload } from '../../lib/inspirationType
 import { hasExactReferenceReview } from '../../lib/exactReferenceReview';
 
 export type InspirationReferenceTarget = {
+  startViralReplication?: boolean;
   referenceId: string;
   sourceUrl: string;
   title: string;
@@ -61,7 +62,7 @@ export function parseInspirationReferenceTarget(input: unknown): InspirationRefe
     ? reference.benchmarkAnalysis as VideoAnalysisPayload['benchmarkAnalysis']
     : undefined;
   return referenceId || sourceUrl || title
-    ? { referenceId, sourceUrl, title, platform, thumbnailUrl, duration, benchmarkAnalysis }
+    ? { referenceId, sourceUrl, title, platform, thumbnailUrl, duration, benchmarkAnalysis, startViralReplication: detail.startViralReplication === true }
     : null;
 }
 

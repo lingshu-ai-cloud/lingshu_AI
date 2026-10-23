@@ -1,10 +1,9 @@
 import { Pagination } from 'antd';
-import { Pencil, Trash2 } from 'lucide-react';
 import type { ContentFormat, TrendVideo } from '../../lib/inspirationTypes';
 import { resultEmptyState } from '../../lib/inspirationDataQuality';
 import { LsLoadingState, LsMasonryGallery } from '../ui/LsExperiencePrimitives';
 import InspirationEmptyState from '../InspirationEmptyState';
-import { VideoCard, VideoListItem } from '../InspirationVideoCards';
+import { VideoCard } from '../InspirationVideoCards';
 import { inspirationCreationAvailability } from './inspirationAnalysisProjection';
 
 interface InspirationVideoResultsProps {
@@ -12,7 +11,6 @@ interface InspirationVideoResultsProps {
   visibleVideoCount: number;
   loaded: boolean;
   loading: boolean;
-  viewMode: 'grid' | 'list';
   search: string;
   platformFiltered: boolean;
   contentFormat: ContentFormat;
@@ -38,7 +36,7 @@ interface InspirationVideoResultsProps {
 }
 
 export default function InspirationVideoResults({
-  videos, visibleVideoCount, loaded, loading, viewMode, search, platformFiltered,
+  videos, visibleVideoCount, loaded, loading, search, platformFiltered,
   contentFormat, localMaterialCount, launchingReferences, replicationTasks,
   creationAccountId, favoritingMaterialIds, favoritedVideoIds, favoriteSourceUrls,
   showPagination, page, totalPages, pageSize, onReset, onOpenLibrary,
@@ -52,6 +50,8 @@ export default function InspirationVideoResults({
     createDisabled: video.contentFormat === 'image' && !inspirationCreationAvailability(video).ready,
     createDisabledReason: inspirationCreationAvailability(video).reason,
     onWatch: () => onWatch(video),
+    onEditManage: video.canManage ? () => onManage(video, 'edit') : undefined,
+    onDeleteManage: video.canManage ? () => onManage(video, 'delete') : undefined,
     onFavoriteMaterial: () => onFavorite(video),
     favoritingMaterial: favoritingMaterialIds.includes(video.id),
     isFavoriteMaterial: favoritedVideoIds.includes(video.id) || favoriteSourceUrls.has(String(video.sourceUrl || '').trim()),
@@ -65,21 +65,13 @@ export default function InspirationVideoResults({
         </LsLoadingState>
       ) : videos.length === 0 ? (
         <InspirationEmptyState state={resultEmptyState(visibleVideoCount, search, platformFiltered)} contentFormat={contentFormat} search={search} localMaterialCount={localMaterialCount} onReset={onReset} onOpenLibrary={onOpenLibrary} />
-      ) : viewMode === 'grid' ? (
+      ) : (
         <LsMasonryGallery layout="masonry" items={videos.map((video, index) => ({
           id: video.id,
           content: <div className="relative h-full">
             <VideoCard video={video} index={index} isSelected={false} {...cardActions(video)} />
-            {video.canManage && <div className="absolute right-12 top-2 z-30 flex gap-1">
-              <button type="button" title="编辑素材" aria-label="编辑素材" onClick={() => onManage(video, 'edit')} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow transition hover:text-accent"><Pencil size={14} /></button>
-              <button type="button" title="删除素材" aria-label="删除素材" onClick={() => onManage(video, 'delete')} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow transition hover:text-red-600"><Trash2 size={14} /></button>
-            </div>}
           </div>,
         }))} />
-      ) : (
-        <div className="card overflow-hidden divide-y divide-border">
-          {videos.map(video => <VideoListItem key={video.id} video={video} isSelected={false} {...cardActions(video)} />)}
-        </div>
       )}
       {loaded && showPagination && totalPages > 1 && (
         <nav className="flex justify-center py-4" aria-label="灵感发现分页">

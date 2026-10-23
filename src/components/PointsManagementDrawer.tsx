@@ -82,7 +82,7 @@ function UsageCard({ item, configured }: { item: SectionUsage; configured: boole
     ? Math.min(100, Math.round(item.usedPoints / item.totalPoints * 100))
     : 0;
 
-  return <article className="min-w-0 rounded-lg border border-border bg-white p-4">
+  return <article className="min-w-0 rounded-lg border border-border bg-surface p-4">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="flex min-w-0 items-center gap-2 text-text-primary">
         <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary-soft text-primary">
@@ -140,7 +140,7 @@ function PlanAndUsage({
   const cycleEndsAt = displayDate(summary?.plan?.cycleEndsAt) || expiresAt;
 
   return <div className="space-y-6">
-    <section aria-labelledby="points-plan-title" className="overflow-hidden rounded-lg border border-border bg-white">
+    <section aria-labelledby="points-plan-title" className="overflow-hidden rounded-lg border border-border bg-surface">
       <div className="flex flex-col gap-4 border-b border-border bg-surface-2 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <p className="text-xs font-medium text-text-secondary">当前套餐</p>
@@ -160,17 +160,17 @@ function PlanAndUsage({
         </div>
       </div>
       <dl className="grid gap-px bg-border sm:grid-cols-3">
-        <div className="bg-white px-5 py-4">
+        <div className="bg-surface px-5 py-4">
           <dt className="text-xs text-text-muted">套餐状态</dt>
           <dd className="mt-1 text-sm font-semibold text-text-primary">{statusView.label}</dd>
         </div>
-        <div className="bg-white px-5 py-4">
+        <div className="bg-surface px-5 py-4">
           <dt className="text-xs text-text-muted">本月套餐积分</dt>
           <dd className="mt-1 text-sm text-text-primary">
             {summary?.configured ? <PointsAmount value={usedPoints} suffix={`/ ${totalPoints.toLocaleString('zh-CN')} 积分`}/> : '—'}
           </dd>
         </div>
-        <div className="bg-white px-5 py-4">
+        <div className="bg-surface px-5 py-4">
           <dt className="text-xs text-text-muted">加油包积分</dt>
           <dd className="mt-1 text-sm text-text-primary">
             {summary?.configured ? <PointsAmount value={summary.addon.remainingPoints} suffix="可用积分"/> : '—'}
@@ -179,7 +179,7 @@ function PlanAndUsage({
       </dl>
     </section>
 
-    {loading ? <Skeleton active paragraph={{ rows: 3 }}/> : error ? <Alert type="error" showIcon message="积分账户暂时无法读取" description={error} action={<Button size="small" onClick={onReload}>重试</Button>}/> : !summary?.configured ? <Alert type="info" showIcon message="积分账户尚未配置" description="当前不会从供应商人民币账单推算用户余额。请由套餐配置为企业建立月度积分额度后再展示真实用量。"/> : null}
+    {loading ? <Skeleton active paragraph={{ rows: 3 }}/> : error ? <Alert type="error" showIcon message="积分账户暂时无法读取" description={error} action={<Button size="small" onClick={onReload}>重试</Button>}/> : null}
 
     <section aria-labelledby="points-usage-title">
       <div className="border-b border-border pb-3">

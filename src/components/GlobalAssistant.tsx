@@ -1,12 +1,8 @@
 import { isUnboundOperationError } from '../lib/assistantOperationNotice';
 import { executeAssistantAction } from '../lib/assistantActionRequest';
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useCreationMode } from '../lib/creationMode';
 import { App as AntApp } from 'antd';
 import type { AgentAction, AgentType, Message, Page } from '../App';
 import { authHeader, getToken } from '../lib/auth';
@@ -45,10 +41,7 @@ import { socialContentApi } from '../lib/socialContentApi';
 import { readSocialContentNavigationTaskId, SOCIAL_CONTENT_NAVIGATION_EVENT } from '../lib/socialContentContext';
 import { SOCIAL_CONTENT_TASK_REFRESH_EVENT } from '../lib/socialContentTaskRefresh';
 import type { AssistantJournalScope } from '../lib/assistantThreadJournal';
-import type {
-  AssistantActionRequest,
-  AssistantActionResponse,
-} from '../../shared/contracts/assistantActions';
+import type { AssistantActionRequest, AssistantActionResponse } from '../../shared/contracts/assistantActions';
 import {
   CURRENT_STATUS_TASK_ID,
   DEFAULT_CONTEXT,
@@ -59,12 +52,11 @@ import {
   orbitIdForAgent,
   orbitIdForPage,
   pageKey,
-  type AssistantContext,
-  type AssistantThreadSaveQueue,
+  type AssistantContext, type AssistantThreadSaveQueue,
 } from './assistant/globalAssistantRuntime';
+import { useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode } from './assistant/useAssistantHomeAnchor';
 
 type AssistantTool = 'knowledge-intake';
-
 const ASSISTANT_CONVERSATION_WELCOME_SEEN_KEY = 'lingshu-assistant-conversation-welcome-seen-v1';
 const ASSISTANT_LAUNCHER_RETRACTED_KEY = 'lingshu-assistant-launcher-retracted-v1';
 
@@ -134,6 +126,9 @@ export default function GlobalAssistant({
     width: typeof window === 'undefined' ? 1440 : window.innerWidth,
     height: typeof window === 'undefined' ? 900 : window.innerHeight,
   }));
+  const inlineHome = page === 'strategy';
+  const creationMode = useCreationMode();
+  const inlineHomeBounds = useAssistantHomeAnchor(inlineHome);
   const messageScrollRef = useRef<HTMLDivElement>(null);
   const assistantInputRef = useRef<HTMLTextAreaElement>(null);
   const launcherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
@@ -263,6 +258,7 @@ export default function GlobalAssistant({
     }));
   }, []);
   const activeThread = threads[activeAgent];
+  useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef);
   const todoItems = pageContext.todoItems ?? [];
   const activeTodoItems = todoItems.filter(item => !item.completed);
   const pendingCount = todoItems.length ? activeTodoItems.length : Math.max(0, Number(pageContext.pendingCount ?? 0));
@@ -700,19 +696,23 @@ export default function GlobalAssistant({
     return () => window.clearTimeout(timer);
   }, [activeAgent, activeThread.draftInput, activeThread.focusedTaskId, activeThread.isFollowingLatest, activeThread.messages, activeThread.paused, activeThread.scrollPosition, activeThread.taskCards, activeThread.unreadCount, mode, persistThread]);
 
-  const { closeAssistant, returnToConversation, handleLauncherClick } = useAssistantPanelControls({
+  useAssistantHomeMode(inlineHome, setMode);
+  const { closeAssistant, returnToConversation, handleLauncherClick } = useAssistantPanelControls({ inlineHome,
     activeAgent, page, mode, assistantTool, decisionDialog, launcherRetracted,
     assistantClosedRef, launcherButtonRef, edgeLauncherButtonRef, messageScrollRef,
     persistThread, setAssistantTool, setPanelView, setDecisionDialog,
     setWelcomeBubbleVisible, setMode, setViewport, openCurrentPageAgent,
   });
 
-  if (suppressForRightSidebar) return null;
-
-  return (
+  const inlineHomeAnchor = inlineHomeBounds ? document.getElementById('content-creation-assistant-anchor') : null;
+  if (suppressForRightSidebar || (inlineHome && !inlineHomeAnchor)) return null;
+  const assistantRoot = (
     <div
       data-global-assistant="root"
-      className={`fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'}`}
+      data-inline-home={inlineHomeBounds ? 'true' : undefined}
+      data-home-empty={inlineHome && !activeThread.messages.length && !loading ? 'true' : undefined}
+      data-home-creation-mode={inlineHomeBounds ? creationMode : undefined}
+      className={inlineHomeAnchor ? 'ls-assistant-home-root absolute inset-0 z-[75]' : `fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'}`}
     >
       <AssistantFloatingReminders
         page={page}
@@ -742,6 +742,7 @@ export default function GlobalAssistant({
 
       <AssistantConversationPanel
         page={page} pageContext={pageContext} currentPageAgent={currentPageAgent}
+        inlineHome={inlineHome} inlineHomeBounds={inlineHomeBounds}
         activeAgent={activeAgent} activeThread={activeThread} mode={mode} panelView={panelView}
         assistantTool={assistantTool} viewport={viewport} reduceMotion={reduceMotion}
         productionDecisionContext={productionDecisionContext} decisionFeedRevision={decisionFeedRevision}
@@ -783,7 +784,7 @@ export default function GlobalAssistant({
         handleTaskCardAction={handleTaskCardAction}
       />
 
-      <AssistantLauncher
+      {!inlineHome && <AssistantLauncher
         retracted={launcherRetracted}
         chatOpen={mode === 'chat'}
         badgeCount={decisionTotal ?? pendingCount}
@@ -792,7 +793,8 @@ export default function GlobalAssistant({
         onLauncherClick={handleLauncherClick}
         onRetract={retractLauncher}
         onRestore={restoreLauncher}
-      />
+      />}
     </div>
   );
+  return inlineHomeAnchor ? createPortal(assistantRoot, inlineHomeAnchor) : assistantRoot;
 }

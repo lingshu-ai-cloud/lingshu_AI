@@ -61,7 +61,7 @@ test('an active rerun labels old evidence as a previous result and keeps every t
   const benchmark = buildBenchmarkAnalysis({ analysis: benchmarkVideoFixture(), videoId: 'previous-result', duration: 9 });
   const html = renderToStaticMarkup(<InspirationVideoAnalysisTabs benchmark={benchmark} pending detailedReady={false}
     detailedReason="正在生成当前导演级结果" onAnalyze={() => {}} onReanalyze={() => {}} />);
-  assert.ok(html.includes('下方仅展示上次分析结果'));
+  assert.ok(!html.includes('下方仅展示上次分析结果'));
   assert.equal(html.match(/aria-controls=/g)?.length, 3);
   assert.equal(html.match(/role="tabpanel"/g)?.length, 3);
   for (const panel of ['structure-panel', 'storyboard-panel', 'viral-panel']) assert.ok(html.includes(panel), panel);

@@ -1,3 +1,27 @@
+import type { TrendVideo } from './inspirationTypes';
+
+export function sourceEmbedUrl(video: TrendVideo): string {
+  const source = String(video.sourceUrl || '').trim();
+  if (!source) return '';
+  try {
+    const url = new URL(source);
+    if (video.platform === 'youtube') {
+      const id = url.hostname.includes('youtu.be')
+        ? url.pathname.split('/').filter(Boolean)[0]
+        : url.searchParams.get('v') || url.pathname.match(/\/(?:shorts|embed)\/([^/?#]+)/)?.[1];
+      return id ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&rel=0` : '';
+    }
+    if (video.platform === 'tiktok') {
+      const id = url.pathname.match(/\/video\/(\d+)/)?.[1];
+      return id ? `https://www.tiktok.com/player/v1/${id}?autoplay=1` : '';
+    }
+    if (video.platform === 'instagram' && /\/(?:reel|p|tv)\//i.test(url.pathname)) {
+      return `${source.replace(/[?#].*$/, '').replace(/\/$/, '')}/embed/`;
+    }
+  } catch { /* malformed URLs fall back to the original-site action */ }
+  return '';
+}
+
 export type PlaybackUrlFetch = (
   input: RequestInfo | URL,
   init?: RequestInit,

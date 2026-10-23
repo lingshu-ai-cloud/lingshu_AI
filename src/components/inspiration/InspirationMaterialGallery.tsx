@@ -210,7 +210,7 @@ export default function InspirationMaterialGallery({ materials, favoritingMateri
                           <span className="ls-type-body-small text-text-muted">共 {ordinaryFilteredTotal} 条 · 当前第 {materialPage} 页</span>
                         </div>
                         <LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map(material => ({ id: material.id, content:
-                          <article className="group flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-none transition hover:border-border-bright">
+                          <article className="group relative overflow-hidden rounded-lg border border-border bg-surface shadow-none transition hover:border-border-bright focus-within:border-accent">
                             <MaterialLibraryCardMedia
                               material={material}
                               favoriting={favoritingMaterialIds.includes(material.id)}
@@ -220,12 +220,12 @@ export default function InspirationMaterialGallery({ materials, favoritingMateri
                               onFavorite={() => void toggleMaterialFavorite(material)}
                               onPlay={() => setPreviewMaterial(material)}
                             />
-                            <div className="flex flex-1 flex-col p-3">
+                            <div className="ls-touch-media-reveal absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/90 via-black/65 to-transparent px-3 pb-3 pt-10 text-white opacity-0 transition-opacity duration-[var(--ls-motion-fast)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
                               <p className="line-clamp-2 text-sm font-bold leading-snug text-text-primary">{material.name}</p>
                               <p className="mt-1 line-clamp-1 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
                               {generatedMaterialOriginLabel(material) && <p className="mt-1 line-clamp-1 text-[11px] font-medium leading-5 text-text-muted" title={generatedMaterialOriginLabel(material)}>{generatedMaterialOriginLabel(material)}</p>}
                               <MaterialUsageMark material={material} />
-                              <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
+                              <div className="mt-2 grid grid-cols-2 gap-2">
                                 <button type="button" onClick={() => setDetailMaterial(material)} className="inline-flex h-9 min-w-0 flex-nowrap items-center justify-center gap-0.5 rounded-lg border border-border bg-white px-1.5 text-[11px] font-bold text-text-secondary transition hover:border-accent hover:text-accent">
                                   <Eye size={12} className="shrink-0" /><span className="whitespace-nowrap">查看详情</span>
                                 </button>

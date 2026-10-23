@@ -12,6 +12,7 @@ import { taskStatusLabel } from './AssistantDecisionDialog';
 import { assistantBubbleStyle } from './globalAssistantRuntime';
 
 interface Props {
+  inlineHome?: boolean;
   page: Page;
   goalId?: string;
   productionContext: AssistantProductionContext | null;
@@ -36,14 +37,14 @@ interface Props {
 
 /** The conversation's visual sequence; all mutations remain in the parent. */
 export default function AssistantConversationBubbles(props: Props) {
-  const { page, goalId, productionContext, decisionFeedRevision, decisionFeedKey,
+  const { inlineHome, page, goalId, productionContext, decisionFeedRevision, decisionFeedKey,
     decisionFeedActive, onOpenChat, onOpenFeedDetail, onFeedChange,
     welcomeBubbleVisible, activeAgentLabel, messages, onAction, onSuggest,
     contentIntakeNode, loading, focusedTaskCard, onOpenTaskDetail,
     weeklyPlanKickoffAvailable, onOpenWeeklyPlan } = props;
   return (
     <div className="space-y-4">
-      <div key={`decision-feed-${decisionFeedRevision}`}
+      {!inlineHome && <div key={`decision-feed-${decisionFeedRevision}`}
         className="ls-assistant-summary-bubble-enter pl-9"
         data-assistant-bubble="decision-summary" data-assistant-summary="decision-feed"
         style={assistantBubbleStyle(0)}>
@@ -53,9 +54,9 @@ export default function AssistantConversationBubbles(props: Props) {
           onOpenChat={onOpenChat} onOpenDetail={onOpenFeedDetail}
           onFeedChange={onFeedChange} variant="summary"
         />
-      </div>
+      </div>}
 
-      {welcomeBubbleVisible && !messages.length && (
+      {welcomeBubbleVisible && !inlineHome && !messages.length && (
         <div data-assistant-bubble="welcome"
           className="ls-assistant-bubble-enter flex items-start gap-2"
           style={assistantBubbleStyle(0)}>
@@ -117,7 +118,7 @@ export default function AssistantConversationBubbles(props: Props) {
         </div>
       )}
 
-      {weeklyPlanKickoffAvailable && (
+      {weeklyPlanKickoffAvailable && !inlineHome && (
         <div className="ls-assistant-summary-bubble-enter flex items-start gap-2"
           data-assistant-bubble="weekly-plan-kickoff"
           style={assistantBubbleStyle(messages.length + (welcomeBubbleVisible ? 3 : 2))}>

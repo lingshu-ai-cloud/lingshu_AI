@@ -296,40 +296,11 @@ assert.match(revisionSource, /当前待验收成片/, 'the revision workspace mu
 assert.match(revisionSource, /<video[^>]+aria-label="当前待验收成片"/, 'the revision workspace must render the actual final video');
 assert.match(revisionSource, /成片通过，确认当前版本/, 'the revision workspace must allow the user to complete the human quality decision');
 
-for (const label of ['经营总览', '数字员工', '数据复盘']) {
-  assert.match(pageSource, new RegExp(label), `Digital Employee workspace must expose the ${label} view`);
-}
-assert.match(pageSource, /<GoalPanel config=\{data\.config\}[\s\S]{0,120}businessLine=\{businessLine\} contentPlatform=\{contentPlatform\}/, 'the weekly goal editor must retain business-line and platform context');
-assert.match(smartBusinessSource, /data\.tasks/, 'the active dashboard must use persisted tasks');
-assert.match(insightSource, /knowledgeCandidates/, 'review must retain reviewable knowledge candidates');
-assert.match(libSource, /contentPlatforms:[\s\S]{0,100}facebook[\s\S]{0,100}youtube/, 'weekly goals must persist the selected content-platform scope');
-assert.doesNotMatch(pageSource, /aria-label="经营视角切换"[\s\S]{0,200}fixed bottom-5/, 'business-line switching must not cover dashboard content');
-for (const label of ['生产与交付', '爆款裂变成片', '数字人成片', '待审核作品', '发布执行', '客户跟进执行']) {
-  assert.match(productionSource, new RegExp(label), `production view must expose ${label}`);
-}
-for (const period of ['本周', '上周', '本月', '上月']) {
-  assert.match(productionSource, new RegExp(period), `production view must support ${period}`);
-}
-assert.doesNotMatch(productionSource, /流量转化漏斗|平台贡献/, 'production must not duplicate the home results dashboard');
-for (const oldView of ['TodayNextAction', 'BusinessLoopMap', 'ResourcePreflightPanel', 'NextActionBanner', 'DraftPlanPreview']) {
-  assert.doesNotMatch(pageSource, new RegExp(`(?:function|<)${oldView}\\b`), `the unmounted ${oldView} view must not be mistaken for a delivered workspace`);
-}
-assert.match(pageSource, /Agent 设置/, 'Agent settings must remain available as a secondary management entry');
-assert.doesNotMatch(pageSource + onboardingPanelSource + onboardingStepsSource, /通用设置|本 Agent 审批红线|总体审批红线/, 'Agent settings must hide general settings and every per-Agent approval-redline panel');
-assert.match(onboardingPanelSource, /useState<"business" \| "director" \| "content" \| "customer">\("business"\)/, 'Agent settings must enter the business Agent settings directly');
-assert.match(onboardingPanelSource, /仅生成内容时的每周草稿数/, 'business Agent settings must keep a draft-only fallback when no publishing platform is selected');
-assert.match(onboardingPanelSource, /本周总计/, 'business Agent settings must expose the exact sum of the selected platform quotas');
-assert.match(onboardingPanelSource, /默认向所有已连接账号和平台发布/, 'business Agent settings must default to every connected account and platform');
-assert.match(onboardingPanelSource, /每周发布/, 'business Agent settings must expose per-platform publishing counts');
-assert.match(onboardingPanelSource, /建议平台[\s\S]{0,500}建议来源[\s\S]{0,500}建议关键词/, 'director settings must collect platform, source and keyword recommendations');
-assert.match(onboardingPanelSource, /实际搜索范围以已批准的灵感范围为准/, 'director recommendations must defer to the approved discovery scope');
-assert.match(onboardingPanelSource, /输出内容语言/, 'content Agent settings must retain only its output-language requirement');
-assert.doesNotMatch(appSource, /SocialOperatingSummary/, 'Smart Business must not render the redundant social-operation background bar');
-assert.match(appPageSlotSource, /page === 'traffic'[\s\S]{0,1200}initialView="publish"[\s\S]{0,300}visibleModes=\{\['publish'\]\}[\s\S]{0,200}showModeTabs=\{false\}/, 'publishing must not keep the redundant publish/account top-level tabs');
-assert.doesNotMatch(matrixViewSource, /<AccountActivity|<AccountHealthPanel/, 'the matrix must retain account configuration, not duplicate health and pure numeric data');
-for (const label of ['经营总览', '数字员工', '数据复盘']) assert.match(workspaceTabsSource, new RegExp(label), `Smart Business must expose ${label}`);
-assert.equal((workspaceTabsSource.match(/^\s*\{ id:/gm) || []).length, 3, 'Smart Business must expose exactly three main tabs');
-assert.doesNotMatch(workspaceTabsSource, /内容队列/, 'the removed content queue must not remain a navigation tab');
+const businessTabsSource = fs.readFileSync(new URL('./smartBusiness/BusinessOverviewTabs.tsx', import.meta.url), 'utf8');
+for (const label of ['发布日历', '投流速览', '询盘诊断']) assert.match(businessTabsSource, new RegExp(label), `business overview must expose ${label}`);
+assert.equal((businessTabsSource.match(/key: '(?:calendar|ads|inquiries)'/g) || []).length, 3);
+assert.match(configuredWorkspaceSource, /workspaceView === "today" && <BusinessOverviewTabs/);
+assert.doesNotMatch(configuredWorkspaceSource, /aria-label="智能经营视图"/, 'the old navigation must not duplicate the new overview tabs');
 assert.doesNotMatch(smartBusinessSource, /function QueueView|view === "queue"/, 'the removed content queue must not retain a render branch');
 assert.doesNotMatch(smartBusinessSource, /本周统一数据口径|One weekly plan/i, 'the three views must not repeat the weekly-plan summary already shown in the command center');
 for (const label of ['参考估算', '真实回传']) assert.match(smartBusinessSource, new RegExp(label), `missing performance data must keep its source label: ${label}`);
@@ -417,7 +388,7 @@ assert.match(pageSource, /\{error && <Alert type="error" showIcon title=\{error\
 assert.doesNotMatch(pageSource, /\{error && <Alert className="mt-5"/, 'the page must not duplicate launch errors below the large calendar');
 for (const label of ['执行失败', '已取消', '已暂停', '等待业务结果', '自动恢复中', '待处理', '准备中', '已完成', '执行中']) assert.match(pageSource, new RegExp(label), `the command header must expose the persisted run state: ${label}`);
 assert.doesNotMatch(pageSource, /按发布时间查看内容，检查产品与参考依据后确认排期。|确定各平台账号的产量、总产量和预计成本。/, 'the weekly-plan page title must not repeat an explanatory subtitle');
-assert.match(pageSource, /<Tabs[^>]+aria-label="智能经营视图"/, 'Smart Operations must use accessible shared Ant tabs');
+assert.match(businessTabsSource, /<Tabs[^>]+aria-label="经营总览页内视图"/, 'Smart Operations must use accessible shared Ant tabs');
 const outlineFlowSource = pageSource.slice(pageSource.indexOf('const createWeeklyOutline'), pageSource.indexOf('const generateCurrentPlanDetails'));
 assert.match(outlineFlowSource, /digitalEmployeeApi\.createGoal/, 'weekly goal creation must persist before product confirmation');
 assert.match(confirmWeeklyPlanSource, /launchRequestSent = true;[\s\S]{0,200}approveGoal/, 'one click must directly request a real run, with preparation left to its pipeline');
@@ -794,7 +765,7 @@ assert.match(batchFollowupSource, /dispatch\?\.blocked_reason/, 'the follow-up t
 assert.match(batchFollowupSource, /manualFollowupSendAllowed/, 'the manual send CTA must be gated by the tenant/provider authorization facts');
 assert.match(batchFollowupSource, /真实发送未就绪/, 'the UI must state that real sending is unavailable instead of implying it only waits for time or receipt');
 assert.doesNotMatch(pageSource, /sticky top-2 z-40/, 'workspace navigation must scroll with the page instead of covering operating data');
-assert.match(assistantSource, /data-global-assistant="root"[\s\S]{0,240}fixed[\s\S]{0,160}bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, 'the assistant must retain a fixed entry that clears the device safe area');
+assert.match(assistantSource, /data-global-assistant="root"[\s\S]{0,600}fixed[\s\S]{0,160}bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, 'the assistant must retain a fixed entry that clears the device safe area');
 assert.match(assistantSource, /launcherRetracted && mode === 'breathing' \? 'right-0 md:right-0' : 'right-4 md:right-5'/, 'the expanded assistant entry must keep its bottom-right page inset');
 
 const fingerprintConfig: DigitalEmployeeConfig = {

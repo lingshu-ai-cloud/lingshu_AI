@@ -111,7 +111,7 @@ assert.match(materialCardSource, /function MaterialLibraryCardMedia[^]*?useState
 const gallerySource = readFileSync(new URL('./inspiration/inspirationMaterialGalleryProjection.ts', import.meta.url), 'utf8');
 assert.match(componentSource, /projectMaterialGallery\(\{[\s\S]*?materials: localMaterials,[\s\S]*?summaries: productMaterialSummaries/, '素材列表必须投影当前素材和产品集合');
 assert.match(gallerySource, /const productMaterials = Object\.values\(summaries\)\.flatMap\(summary => summary\.materials\)[^]*?\[\.\.\.materials, \.\.\.productMaterials\]/, '镜头功能筛选项必须合并产品集合素材');
-assert.match(materialGridSource, /<MaterialLibraryCardMedia[^]*?flex flex-1 flex-col p-3[^]*?mt-auto grid grid-cols-2 gap-2 pt-3/, '素材卡必须使用真实比例媒体组件，并把按钮固定在信息区底部');
+assert.match(materialGridSource, /<MaterialLibraryCardMedia[^]*?ls-touch-media-reveal absolute inset-x-0 bottom-0[^]*?mt-2 grid grid-cols-2 gap-2/, '素材卡必须使用真实比例媒体组件，并把动作放在可聚焦的媒体浮层内');
 assert.doesNotMatch(materialGridSource, /min-h-52/, '素材卡信息区不得以固定最小高度在按钮下方制造大片空白');
 assert.match(componentSource, /grid-cols-\[minmax\(240px,2fr\)_[^]*?<Input allowClear[^]*?aria-label="搜索爆款灵感"[^]*?<Select value=\{platform\}/, '搜索框必须位于灵感发现主筛选最左侧');
 const inspirationMoreFilters = componentSource.slice(componentSource.indexOf('id="inspiration-more-filters"'), componentSource.indexOf("innerView === 'inspiration' && videosError"));
@@ -120,7 +120,7 @@ assert.doesNotMatch(videoCardSource, /video\.tags\.slice\(0, 2\)/, '爆款卡片
 for (const placeholderTag of ['来源待归类', '相关性待确认', '趋势未知', '迁移性待确认']) {
   assert.match(videoCardSource, new RegExp(`HIDDEN_DISCOVERY_TAGS[^]*?${placeholderTag}`), `卡片必须隐藏无结论状态：${placeholderTag}`);
 }
-assert.match(videoCardSource, /hasVisibleSignals[^]*?Object\.values\(visibleSignals\)\.some\(Boolean\)/, '没有有效分析结论时不得保留空 Tag 容器');
+assert.doesNotMatch(videoCardSource.slice(videoCardSource.indexOf('export function VideoCard'), videoCardSource.indexOf('export function VideoListItem')), /<Tag|\{hasVisibleSignals &&/, '媒体卡不得保留独立的空分析 Tag 容器');
 assert.match(detailSource, /aria-label="内容标签"[^]*?video\.tags\.map/, '爆款 hashtag 必须集中展示在详情顶部');
 assert.match(componentSource, /startInspirationCreation[^]*?requestExactFullAnalysis/, '未完成详细分析的视频点击复刻时必须自动补齐分析');
 assert.match(detailSource, /detailCreationReady =[^;]*exactQuality\.ready && !pending/, '详情复刻入口不能依赖可失败的交接状态读取');
