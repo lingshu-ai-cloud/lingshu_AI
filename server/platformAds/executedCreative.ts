@@ -1,7 +1,8 @@
 import { store } from '../storage/index.js';
 import { AD_EXECUTIONS, type AdExecution } from './execution.js';
 import { getPlatformAdTask } from './tasks.js';
-import { getConnectionCredential } from './connections.js';
+import { getConnectionCredential, type AdConnection } from './connections.js';
+import { decryptSecret } from '../lib/tenantPlatformApps.js';
 import { PlatformAdCreativeError } from './creatives.js';
 import { MetaAdsAdapter } from './metaAdapter.js';
 import { readMetaVideoPlan } from './metaPlanReadback.js';
@@ -14,6 +15,14 @@ export async function readExecutedCreative(tenantId: string, executionId: string
   const task = await getPlatformAdTask(tenantId, receipt.taskId);
   if (!task) throw new PlatformAdCreativeError('未找到投放计划', 404);
   const { connection, accessToken } = await getConnectionCredential(tenantId, receipt.connectionId);
+  return readExecutedCreativeRecords(tenantId, receipt, task, connection, accessToken);
+}
+/** Trusted read-only source adapters reuse the same provider ownership checks, not destination resources. */
+export async function readExecutedCreativeRecords(tenantId: string, receipt: AdExecution, task: NonNullable<Awaited<ReturnType<typeof getPlatformAdTask>>>, connection: AdConnection, token?: string) {
+  if (receipt.tenant_id !== tenantId || connection.tenant_id !== tenantId || receipt.taskId !== task.id || receipt.connectionId !== connection.id
+    || receipt.action !== 'create' || receipt.status !== 'VERIFIED') throw new PlatformAdCreativeError('历史广告回执归属或状态不一致', 409);
+  const accessToken = token ?? decryptSecret(connection.tokenCipher);
+  if (!accessToken) throw new PlatformAdCreativeError('历史来源广告账户授权不可读，不能借用其他企业账户', 409);
   if (connection.provider !== 'meta' || connection.currency !== task.currency) throw new PlatformAdCreativeError('当前仅支持同币种 Meta 广告素材核对', 409);
   const ids = (receipt.result || {}) as Record<string, string>;
   if (!['campaignId', 'adsetId', 'creativeId', 'adId'].every(k => /^\d+$/.test(ids[k] || ''))) throw new PlatformAdCreativeError('缺少完整广告资源标识', 409);

@@ -187,6 +187,8 @@ try {
   const previousLifecycle = { ...socialLifecycle, ads: [{ ...socialLifecycle.ads[0], report: historyReport }] };
   assert.equal(preserveAdLifecycleReports(previousLifecycle, failedLifecycle).ads[0].report, historyReport);
   assert.ok(preserveAdLifecycleReports(previousLifecycle, failedLifecycle).ads[0].error);
+  assert.equal(preserveAdLifecycleReports(previousLifecycle, { ...failedLifecycle, source: { ...failedLifecycle.source, sourceTenantId: 'another-source-tenant' } }).ads[0].report, null);
+  assert.equal(preserveAdLifecycleReports(previousLifecycle, { ...failedLifecycle, source: { ...failedLifecycle.source, sourceRevision: 'changed-source-snapshot' } }).ads[0].report, null);
   assert.equal(preserveAdLifecycleReports(previousLifecycle, { ...failedLifecycle, source: { ...failedLifecycle.source, sha256: 'changed' } }).ads[0].report, null);
   assert.equal(preserveAdLifecycleReports(previousLifecycle, { ...failedLifecycle, ads: [{ ...failedLifecycle.ads[0], accountId: 'other' }] }).ads[0].report, null);
   console.log('Meta performance: all 3 resource levels, account timezone, actual attribution, native ratios, bounded range, cached reads and empty totals passed.');

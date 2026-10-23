@@ -51,7 +51,9 @@ test('history and advertising share a source lifecycle component without guessin
   const history = readFileSync(new URL('./socialContent/CreationMaterialHistory.tsx', import.meta.url), 'utf8');
   const home = readFileSync(new URL('./socialContent/SocialContentHistoryHome.tsx', import.meta.url), 'utf8');
   for (const text of [material, history, home]) assert.match(text, /AdSourceLifecycle/);
-  assert.match(material, /AdSourceCatalog/); assert.match(catalog, /origin=\$\{origin\}/);
+  assert.match(material, /AdSourceCatalog/); assert.match(catalog, /new URLSearchParams\(\{ origin/);
+  assert.match(catalog, /creative-history-sources/); assert.match(catalog, /sourceTenantName/);
+  assert.match(catalog, /sourceId: selected.sourceId/); assert.match(catalog, /\$\{dataset\}:\$\{page\}/);
   assert.match(lifecycle, /snapshot\?\.query === query/); assert.match(lifecycle, /非 ROI/);
   assert.match(lifecycle, /不是 0/); assert.match(lifecycle, /窗口未返回/);
   assert.match(lifecycle, /onHeaderCell/); assert.match(lifecycle, /whiteSpace: 'normal'/);

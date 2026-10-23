@@ -12,8 +12,12 @@ import { attachExistingAdCreative } from '../platformAds/creativeMapping.js';
 import { openPlatformAdCreativeMedia } from '../platformAds/creatives.js';
 import { getMetaSetup, getMetaPlanAudit } from '../platformAds/metaPlanAudit.js';
 import { getAdSourceLifecycle, listAdSourceCatalog, parseAdSourceIdentity } from '../platformAds/creativeHistory.js';
+import { listExternalHistorySources } from '../platformAds/externalHistory.js';
 export const platformAdCreativesRouter = Router();
 platformAdCreativesRouter.use(requireAuth, requireAdWriteAccess);
+platformAdCreativesRouter.get('/creative-history-sources', async (req, res) => {
+  try { res.setHeader('Cache-Control', 'private, no-store'); res.json({ items: await listExternalHistorySources((res.locals as AuthLocals).tenantId) }); } catch (error) { failure(res, error); }
+});
 platformAdCreativesRouter.get('/creative-history', async (req, res) => {
   try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await listAdSourceCatalog((res.locals as AuthLocals).tenantId, req.query)); } catch (error) { failure(res, error); }
 });

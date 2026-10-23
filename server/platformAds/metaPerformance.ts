@@ -21,12 +21,12 @@ export function parseMetaPerformanceQuery(input: Record<string, unknown>) {
   if (preset === 'custom' ? !metaDateRange(String(input.since || ''), String(input.until || '')).length : input.since !== undefined || input.until !== undefined) throw new PlatformAdCreativeError('请选择有效日期，最多 93 天；预设周期不能混用自定义日期');
   return { level: level as MetaReportLevel, preset: String(preset), since: input.since as string | undefined, until: input.until as string | undefined };
 }
-export async function getMetaPerformanceReport(tenantId: string, executionId: string, input: Record<string, unknown>) {
+export async function getMetaPerformanceReport(tenantId: string, executionId: string, input: Record<string, unknown>, source?: { cacheKey: string; read: () => ReturnType<typeof readExecutedCreative> }) {
   const query = parseMetaPerformanceQuery(input);
   // Minute bucket prevents a preset from crossing an account date boundary in cache.
-  return cached(tenantId, JSON.stringify([executionId, query, Math.floor(Date.now() / 60_000)]), async () => {
-    const ctx = await readExecutedCreative(tenantId, executionId);
-    const account = await accounts(tenantId, ctx.connection.id, async () => {
+  return cached(tenantId, JSON.stringify([source?.cacheKey || 'current', executionId, query, Math.floor(Date.now() / 60_000)]), async () => {
+    const ctx = await (source ? source.read() : readExecutedCreative(tenantId, executionId));
+    const account = await accounts(tenantId, JSON.stringify([source?.cacheKey || 'current', ctx.connection.id]), async () => {
       const a = await ctx.adapter.request(`act_${ctx.connection.accountId}`, { fields: 'id,name,currency,timezone_name' });
       if (String(a.id).replace(/^act_/, '') !== ctx.connection.accountId || a.currency !== ctx.connection.currency || !a.timezone_name) throw new PlatformAdCreativeError('账户币种或时区已变化，请先核对账户', 409);
       return { id: ctx.connection.accountId, name: String(a.name || ctx.connection.name), currency: String(a.currency), timezone_name: String(a.timezone_name) };

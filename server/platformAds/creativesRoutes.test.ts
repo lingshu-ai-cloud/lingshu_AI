@@ -21,6 +21,9 @@ const base = `http://127.0.0.1:${(server.address() as { port: number }).port}/ad
 const auth = (role = 'admin') => ({ Authorization: `Bearer ${issueLocalIdentityTokenForTest({ userId: 'test-user', tenantId: 'tenant-a', role })}`, 'Content-Type': 'application/json' });
 try {
   assert.equal((await fetch(base + '/creative-sources')).status, 401);
+  assert.equal((await fetch(base + '/creative-history-sources')).status, 401);
+  assert.equal((await fetch(base + '/creative-history-sources', { headers: auth() })).status, 200);
+  assert.equal((await fetch(base + '/creative-history?origin=studio&sourceId=ungranted', { headers: auth() })).status, 404);
   assert.equal((await fetch(base + '/creative-sources', { headers: auth() })).status, 200);
   for (const route of ['/creative-history?origin=studio', '/creative-lifecycle?origin=studio&projectId=missing', '/creative-library', '/creative-library/missing/report', '/creatives/missing/platform-preview', '/creatives/missing/media', '/connections/missing/meta-setup', '/tasks/missing/meta-audit']) {
     assert.equal((await fetch(base + route)).status, 401);

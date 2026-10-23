@@ -6,10 +6,12 @@ import { listAllAdExecutions } from './execution.js';
 import { getConnection } from './connections.js';
 import { getMetaPerformanceReport } from './metaPerformance.js';
 import { AdProviderError } from './metaAdapter.js';
+import { externalHistoryLifecycle, listExternalHistory } from './externalHistory.js';
 type Project = { id: string; tenant_id: string; title: string; status: string; spec: unknown; created_at: string };
 const obj = (v: unknown): Record<string, any> => { if (typeof v === 'string') { try { v = JSON.parse(v); } catch { return {}; } } return v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, any> : {}; };
 const id = (v: unknown) => { if (typeof v !== 'string' || !/^[\w-]{1,200}$/.test(v)) throw new PlatformAdCreativeError('来源标识无效'); return v; };
 export function parseAdSourceIdentity(query: Record<string, unknown>): AdSourceIdentity {
+  if (query.origin === 'studio' && query.sourceId !== undefined && Object.keys(query).every(k => ['origin', 'sourceId', 'projectId'].includes(k))) return { origin: 'studio', sourceId: id(query.sourceId), projectId: id(query.projectId) };
   if (query.origin === 'studio' && Object.keys(query).every(k => ['origin', 'projectId'].includes(k))) return { origin: 'studio', projectId: id(query.projectId) };
   if (query.origin === 'social' && Object.keys(query).every(k => ['origin', 'sourceTaskId', 'artifactId'].includes(k))) return { origin: 'social', sourceTaskId: id(query.sourceTaskId), artifactId: id(query.artifactId) };
   throw new PlatformAdCreativeError('来源查询无效');
@@ -28,8 +30,12 @@ async function projectSource(tenantId: string, p: Project): Promise<AdSourceEntr
   return { ...base, sourceTaskId: source.sourceTaskId, artifactId: source.artifactId, sha256: source.sha256, verifiedSource: true, note: '已核验 Studio → 社媒成片 → 投放绑定；数据只读同一版本' };
 }
 export async function listAdSourceCatalog(tenantId: string, query: Record<string, unknown>): Promise<AdSourceCatalog> {
-  if (Object.keys(query).some(k => !['origin', 'page', 'perPage'].includes(k)) || !['studio', 'social'].includes(String(query.origin))) throw new PlatformAdCreativeError('来源目录查询无效');
+  if (Object.keys(query).some(k => !['origin', 'page', 'perPage', 'sourceId'].includes(k)) || !['studio', 'social'].includes(String(query.origin))) throw new PlatformAdCreativeError('来源目录查询无效');
   const page = Math.min(100000, Math.max(1, Math.floor(Number(query.page) || 1))), perPage = Math.min(50, Math.max(1, Math.floor(Number(query.perPage) || 20)));
+  if (query.sourceId !== undefined) {
+    if (query.origin !== 'studio') throw new PlatformAdCreativeError('外部历史来源仅支持项目目录');
+    return listExternalHistory(tenantId, id(query.sourceId), page, perPage);
+  }
   if (query.origin === 'social') {
     const result = await listPlatformAdCreativeSources(tenantId, { page, perPage });
     return { ...result, items: result.items.map(s => ({ ...s, origin: 'social', key: `social:${s.sourceTaskId}:${s.artifactId}`, status: '已保存视频版本', createdAt: '', verifiedSource: true, note: '已保存社媒成片；按源任务、版本与 SHA 关联' })) };
@@ -45,6 +51,10 @@ export async function listAdSourceCatalog(tenantId: string, query: Record<string
   return { items, page, perPage, totalItems: result.totalItems, totalPages: result.totalPages };
 }
 export async function getAdSourceLifecycle(tenantId: string, identity: AdSourceIdentity): Promise<AdSourceLifecycle> {
+  if (identity.sourceId !== undefined) {
+    if (identity.origin !== 'studio') throw new PlatformAdCreativeError('来源查询无效');
+    return externalHistoryLifecycle(tenantId, id(identity.sourceId), id(identity.projectId));
+  }
   let source: AdSourceEntry;
   if (identity.origin === 'studio') {
     const p = await store.getById<Project>('studio_projects', id(identity.projectId));
