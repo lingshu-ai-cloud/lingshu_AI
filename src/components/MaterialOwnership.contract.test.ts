@@ -63,13 +63,17 @@ assert.doesNotMatch(enterpriseSource + productPanelSource, /MAX_PRODUCT_ASSETS|�
 assert.doesNotMatch(enterpriseSource + productPanelSource, /accept=['"](?:image|video)\/\*/, '企业知识页不得再提供图片或视频创作素材上传');
 
 const inspirationSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
+const inventoryHookSource = readFileSync(new URL('./inspiration/useInspirationMaterialInventory.ts', import.meta.url), 'utf8');
+const materialDialogsSource = readFileSync(new URL('./inspiration/InspirationMaterialDialogs.tsx', import.meta.url), 'utf8');
 const materialDetailSource = readFileSync(fileURLToPath(new URL('./inspiration/InspirationMaterialDetailDrawer.tsx', import.meta.url)), 'utf8');
 const materialCardMediaSource = readFileSync(fileURLToPath(new URL('./inspiration/MaterialLibraryCardMedia.tsx', import.meta.url)), 'utf8');
 const studioRouteSource = readFileSync(fileURLToPath(new URL('../../server/routes/studio.ts', import.meta.url)), 'utf8');
+const studioMaterialResponseSource = readFileSync(new URL('../../server/routes/studioMaterialProjection.ts', import.meta.url), 'utf8');
 const studioMaterialProjectionSource = readFileSync(fileURLToPath(new URL('../../server/routes/studioMaterialLibraryProjection.ts', import.meta.url)), 'utf8');
 const materialLibrarySource = readFileSync(new URL('./inspiration/inspirationMaterialLibrary.ts', import.meta.url), 'utf8');
 assert.doesNotMatch(inspirationSource, /本次上传必须关联产品|选择关联产品（必选）/, '企业通用素材上传不得被具体产品强绑定阻塞');
-assert.match(inspirationSource, /aria-label="本次上传素材归属"/, '紧凑上传入口仍必须有清晰的无障碍名称');
+assert.match(inspirationSource, /<MaterialUploadDialog/, '页面必须挂载上传归属弹窗');
+assert.match(materialDialogsSource, /aria-label="本次上传素材归属"/, '紧凑上传入口仍必须有清晰的无障碍名称');
 assert.match(inspirationSource, /innerView === 'library' && <Button[\s\S]{0,400}>上传素材<\/Button>/, '我的素材上传按钮必须位于页签工具栏右侧');
 assert.doesNotMatch(inspirationSource, /id="material-upload-product"/, '我的素材主页面不得继续展示独立的上传产品选择行');
 assert.match(inspirationSource, /aria-label="我的素材筛选"[^]*?MaterialTaxonomyFilters[^]*?aria-label="内容形式"[^]*?aria-controls="material-more-filters"/, '我的素材主工具栏应只保留来源、主题和内容形式三个筛选');
@@ -83,7 +87,7 @@ assert.match(inspirationSource, /productId: uploadProductId,[^]*?enterpriseCommo
 assert.match(materialLibrarySource, /material\.productId === filter\.productId/, '产品 ID 存在时必须按 ID 精确筛选');
 assert.match(inspirationSource, /from '\.\/inspiration\/inspirationMaterialLibrary'/, '页面必须接入素材筛选规则模块');
 assert.doesNotMatch(inspirationSource, /manageTarget\.kind === 'material' && manageProductId === null/, '旧素材未关联产品不得成为保存卡点');
-assert.match(inspirationSource, /企业通用素材（不绑定产品）/, '通用场景、人物和环境素材必须允许不绑定具体产品');
+assert.match(materialDialogsSource, /企业通用素材（不绑定产品）/, '通用场景、人物和环境素材必须允许不绑定具体产品');
 assert.doesNotMatch(inspirationSource, /请先选择素材对应的产品；产品素材必须与产品表中的产品一一绑定。/, '未选择产品不得成为通用素材上传卡点');
 const taxonomySource = readFileSync(new URL('./material-library/MaterialTaxonomyFilters.tsx', import.meta.url), 'utf8');
 assert.match(inspirationSource, /<MaterialTaxonomyFilters/, 'material library must use the current source/theme taxonomy');
@@ -94,11 +98,11 @@ assert.doesNotMatch(inspirationSource, /系统已按创作主题整理素材|项
 assert.doesNotMatch(inspirationSource, /任务中上传的图片、视频和音频也会归入这里/, '上传入口不得再使用大段说明文字');
 assert.match(inspirationSource, /<MaterialLibraryCardMedia/, '我的素材卡必须使用当前媒体边界');
 assert.match(materialCardMediaSource, /<span className="text-xs font-bold">音频素材<\/span>/, '音频素材必须用专属占位画面识别，不得继续误标为图片');
-assert.match(inspirationSource, /studioApi\.listMaterialLibrary\('library'/, '我的素材必须只读取用户可管理的正式素材，不得混入工作流中间产物');
-assert.doesNotMatch(inspirationSource, /studioApi\.listMaterialLibrary\('all'/, '我的素材不得绕过服务端的正式素材边界');
+assert.match(inventoryHookSource, /studioApi\.listMaterialLibrary\('library'/, '我的素材必须只读取用户可管理的正式素材，不得混入工作流中间产物');
+assert.doesNotMatch(inspirationSource + inventoryHookSource, /studioApi\.listMaterialLibrary\('all'/, '我的素材不得绕过服务端的正式素材边界');
 assert.match(studioRouteSource, /projectStudioMaterialLibrary\(\{/, '素材列表路由必须使用受控投影');
 assert.match(studioMaterialProjectionSource, /purpose !== 'all'[\s\S]{0,300}!isWorkflowInternalMaterial/, '我的素材接口必须在分页和计数前排除人物认证原始资料与工作流中间产物');
-assert.match(studioRouteSource, /const storedFileUrl = material\.file[\s\S]{0,500}tenantAssetRelativePath\(tenantId, material\.file\)[\s\S]{0,300}const sourceUrl = material\.url \|\| storedFileUrl/, '本地已入库素材缺少显式 URL 时必须恢复为受保护媒体地址，不能显示封面加载失败');
+assert.match(studioMaterialResponseSource, /const storedFileUrl = material\.file[\s\S]{0,500}tenantAssetRelativePath\(tenantId, material\.file\)[\s\S]{0,300}const sourceUrl = material\.url \|\| storedFileUrl/, '本地已入库素材缺少显式 URL 时必须恢复为受保护媒体地址，不能显示封面加载失败');
 assert.doesNotMatch(inspirationSource, /enterMaterialSmartGeneration[\s\S]*?material\.usage === 'reference_only'/, '所有进入素材库的视觉素材都必须可以进入创作链路');
 assert.doesNotMatch(inspirationSource, /pinnedMaterialVideos/, '素材库内容不得反向混入爆款视频列表');
 assert.doesNotMatch(inspirationSource, /<MaterialAnalysisStatus material=\{material\}/, '我的素材卡片不得展示内部分析进度和区间标注');
@@ -115,8 +119,8 @@ assert.match(inspirationSource, /enterMaterialSmartGeneration\(material\)[\s\S]{
 assert.match(inspirationSource, /\{ key: 'library'[\s\S]{0,220}\{ key: 'accounts'/, '对标账号必须排列在我的素材之后');
 assert.match(inspirationSource, /<MaterialLibraryCardMedia[\s\S]{0,500}onFavorite=\{\(\) => void toggleMaterialFavorite\(material\)\}/, '素材卡收藏操作必须使用页面持久化回调');
 assert.match(materialCardMediaSource, /aria-label=\{`\$\{isFavoriteMaterial\(material\) \? '取消收藏' : '收藏'\} \$\{material\.name\}`\}/, '素材卡必须提供可访问的收藏按钮');
-assert.match(studioRouteSource, /function enterpriseProductMaterials[\s\S]{0,5000}sourceType: 'enterprise_product_table'/, '产品表图片必须自动投影到正式素材接口并保留来源');
-assert.match(studioRouteSource, /enterpriseAssetStableId/, '产品表素材必须使用稳定 ID，保证周计划和制作工程引用同一条素材');
+assert.match(studioMaterialResponseSource, /function enterpriseProductMaterials[\s\S]{0,5000}sourceType: 'enterprise_product_table'/, '产品表图片必须自动投影到正式素材接口并保留来源');
+assert.match(studioMaterialResponseSource, /enterpriseAssetStableId/, '产品表素材必须使用稳定 ID，保证周计划和制作工程引用同一条素材');
 assert.match(studioRouteSource, /enterpriseProductMaterials\(tenantId, enterpriseProfile\)[\s\S]{0,500}inventory\.items/, '素材接口必须合并产品表素材与用户素材，而不是仅在前端伪造分类');
 
 console.log('material ownership frontend contracts passed');
