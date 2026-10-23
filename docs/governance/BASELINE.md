@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 翻译端点整组拆分（2026-10-23）
+
+- 代码提交 `41fd9bfc` 将企业名称发音翻译、单语/批量翻译及请求断连/超时处理迁至 `studioTranslationRoutes.ts`，共用语言名称和模型 JSON 解析迁至 `studioTranslationCore.ts`。原 `studio.ts` 仍在鉴权和订阅门禁之后按原顺序挂载端点；Qwen、语种/时间戳校验、有限修复和部分结果规则保持原路径。主路由从 7,627 降至 7,333 行并收紧历史预算；全仓仍有 5 个超限文件。
+- 翻译核心 2/2、HTTP 空名称/批量超时/客户端断连、完整 `test:studio-workflow`、租户隔离、TypeScript、架构扫描/ratchet（2,413 个生产 TypeScript 文件）、193 项迁移清单只读检查、生产构建与 `git diff --check` 通过。Studio 主 chunk 为 480,957/485,000 字节，构建仍有大 chunk 提示。真实 Qwen、LinkedIn 付费采集、目标库迁移、浏览器验收与部署未执行。远端 SHA 与工作区状态以推送后核验为准。
+
 ## 灵感页关键词图文采集动作拆分（2026-10-23）
 
 - 代码提交 `e8678af2` 将现有关键词图文采集的请求、记录投影和库存刷新编排迁至 `inspirationImageCrawlAction.ts`；页面仍持有筛选与弹窗状态，授权切换后旧采集响应不写入新账号视图。`InspirationDashboard.tsx` 从 2,208 降至 2,178 行并收紧历史预算；全仓仍有 5 个超限文件。

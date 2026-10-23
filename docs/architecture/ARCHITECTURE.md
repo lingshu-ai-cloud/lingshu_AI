@@ -4,6 +4,8 @@
 
 ## 边界
 
+- `server/routes/studioTranslationCore.ts` 与 `studioTranslationRoutes.ts`：前者保留语言名称和模型 JSON 解析的共用规则；后者注册企业名称发音翻译、单语及批量翻译端点，持有原 Qwen 模型调用、请求总时限、供应商时限、客户端断连中止与部分结果返回。`studio.ts` 在原鉴权和订阅门禁之后按原顺序挂载，后续 Studio 路由不重建翻译付费或重试旁路。
+
 - `src/components/socialContent/`：工作台与用户交互；不得自行绕过服务端租户鉴权或供应商成本控制。
 - `src/components/ConversionPage.tsx` 与 `src/components/customers/`：页面持有会话状态和三栏视图；客户定位/加载、草稿翻译副作用与渠道发送适配分别落在客户子模块，真实发送仍经过现有服务端出站接口和回执边界。
 - `src/components/assistant/AssistantConversationBubbles.tsx`：只承载对话滚动区内已准备好的决策摘要、欢迎语、消息、加载态、任务卡及周计划入口展示；滚动、草稿、身份栅栏与持久化仍由 `GlobalAssistant.tsx` 持有，发送由 `useAssistantSend.ts` 编排。
