@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 
-const source = readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
+const source = readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8')
+  + readFileSync(new URL('./inspiration/useInspirationDiscoveryInventory.ts', import.meta.url), 'utf8');
 const actionSource = readFileSync(new URL('./inspiration/inspirationImageCrawlAction.ts', import.meta.url), 'utf8');
 const dialogSource = readFileSync(new URL('./inspiration/InspirationImageCrawlDialog.tsx', import.meta.url), 'utf8');
 const resultsSource = readFileSync(new URL('./inspiration/InspirationVideoResults.tsx', import.meta.url), 'utf8');

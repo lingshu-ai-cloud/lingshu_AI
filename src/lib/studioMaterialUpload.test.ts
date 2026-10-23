@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const studioApiSource = readFileSync(new URL('./studioApi.ts', import.meta.url), 'utf8');
-const inspirationSource = readFileSync(new URL('../components/InspirationDashboard.tsx', import.meta.url), 'utf8');
+const inspirationSource = readFileSync(new URL('../components/inspiration/useInspirationMaterials.ts', import.meta.url), 'utf8');
 const studioSource = readFileSync(new URL('../components/AiCreateStudio.tsx', import.meta.url), 'utf8');
 const serverSource = readFileSync(new URL('../../server/routes/studio.ts', import.meta.url), 'utf8');
 

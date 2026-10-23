@@ -68,7 +68,12 @@ assert.equal(isDisplayableVideoAnalysis({
 }, 'analyzed'), true, '精准分析失败的手动对标视频必须留在爆款库供查看和重试');
 assert.equal(isDisplayableVideoAnalysis({ geminiStatus: 'video_failed' }, 'analyzed'), false, '普通采集视频仍遵守失败隐藏规则');
 
-const componentSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
+const componentSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8')
+  + readFileSync(new URL('./inspiration/useInspirationCreation.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('./inspiration/useInspirationMaterials.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('./inspiration/useInspirationDiscoveryInventory.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('./inspiration/inspirationDashboardContracts.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('./inspiration/InspirationMaterialGallery.tsx', import.meta.url), 'utf8');
 const materialCardSource = readFileSync(fileURLToPath(new URL('./inspiration/MaterialLibraryCardMedia.tsx', import.meta.url)), 'utf8');
 const detailSource = readFileSync(fileURLToPath(new URL('./inspiration/DirectorVideoDetailPanel.tsx', import.meta.url)), 'utf8');
 const videoCardSource = readFileSync(fileURLToPath(new URL('./InspirationVideoCards.tsx', import.meta.url)), 'utf8');
@@ -101,7 +106,7 @@ assert.match(videoCardSource, /<button[\s\S]*?aria-label=\{`\$\{isImagePost \? '
 assert.match(videoCardSource, /videoAspectRatioLockedRef\.current = true;[^]*?setMediaAspectRatio\(metadata\.width \/ metadata\.height\)/, '爆款视频元数据必须锁定真实视频比例');
 assert.match(videoCardSource, /onNaturalAspectRatio=\{ratio => \{[^]*?!videoAspectRatioLockedRef\.current[^]*?setMediaAspectRatio\(ratio\)/, '缩略图后到时不得覆盖已锁定的视频比例');
 const materialGridSource = componentSource.slice(componentSource.indexOf('<LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map'), componentSource.indexOf('aria-label="普通素材分页"'));
-assert.match(componentSource, /import \{ MaterialLibraryCardMedia \} from '.\/inspiration\/MaterialLibraryCardMedia'/);
+assert.match(componentSource, /import \{ MaterialLibraryCardMedia \} from '.\/MaterialLibraryCardMedia'/);
 assert.match(materialCardSource, /function MaterialLibraryCardMedia[^]*?useState\(\(\) => materialIntrinsicAspectRatio\(material\)\)[^]*?source === 'image' && materialHasAuthoritativeAspectRatio\(material\)[^]*?setAspectRatio\(ratio\)/, '素材卡必须先用视频权威比例，封面只能在缺少视频比例时兜底');
 const gallerySource = readFileSync(new URL('./inspiration/inspirationMaterialGalleryProjection.ts', import.meta.url), 'utf8');
 assert.match(componentSource, /projectMaterialGallery\(\{[\s\S]*?materials: localMaterials,[\s\S]*?summaries: productMaterialSummaries/, '素材列表必须投影当前素材和产品集合');

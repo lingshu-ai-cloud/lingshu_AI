@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const source = readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
+const source = readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8')
+  + readFileSync(new URL('./inspiration/inspirationDashboardContracts.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('./inspiration/useInspirationMaterials.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('./inspiration/InspirationMaterialGallery.tsx', import.meta.url), 'utf8');
 const inventorySource = readFileSync(new URL('./inspiration/inspirationProductMaterialInventory.ts', import.meta.url), 'utf8');
 const inventoryHookSource = readFileSync(new URL('./inspiration/useInspirationMaterialInventory.ts', import.meta.url), 'utf8');
 const gallerySource = readFileSync(new URL('./inspiration/inspirationMaterialGalleryProjection.ts', import.meta.url), 'utf8');
-const libraryStart = source.indexOf("{innerView === 'library'");
-const libraryEnd = source.indexOf("{previewMaterial?.type === 'video'", libraryStart);
-const librarySource = source.slice(libraryStart, libraryEnd);
+const librarySource = readFileSync(new URL('./inspiration/InspirationMaterialGallery.tsx', import.meta.url), 'utf8');
 const materialGridIndex = librarySource.indexOf('<LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map');
 const paginationIndex = librarySource.indexOf('aria-label="普通素材分页"');
 

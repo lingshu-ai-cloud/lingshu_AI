@@ -82,5 +82,5 @@ for(const bad of [{...readyVideo,canManage:false},{...readyVideo,recordId:undefi
  {...readyVideo,aiAnalysis:{...readyVideo.aiAnalysis,analysisRunId:''}},
  {...readyVideo,aiAnalysis:{...readyVideo.aiAnalysis,contentSha256:''}}])
  assert.throws(()=>cachedProductInspirationCandidate(bad as import('./inspirationTypes').TrendVideo),/不会自动重新采集/);
-const sourceText=(await import('node:fs')).readFileSync(new URL('../components/InspirationDashboard.tsx',import.meta.url),'utf8');
+const sourceText=(await import('node:fs')).readFileSync(new URL('../components/inspiration/useInspirationCreation.ts',import.meta.url),'utf8');
 assert.match(sourceText,/resumeOrCreateInspirationTask\(cachedProductInspirationCandidate\(video,/,'normal page action uses the tested cache adapter');

@@ -62,7 +62,11 @@ assert.match(productPanelSource, /上传资质凭证/, '企业知识页仍需保
 assert.doesNotMatch(enterpriseSource + productPanelSource, /MAX_PRODUCT_ASSETS|实拍视频|产品主图|工厂实拍/, '企业知识页不得残留创作媒体编辑器');
 assert.doesNotMatch(enterpriseSource + productPanelSource, /accept=['"](?:image|video)\/\*/, '企业知识页不得再提供图片或视频创作素材上传');
 
-const inspirationSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
+const inspirationSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8')
+  + readFileSync(new URL('./inspiration/useInspirationMaterials.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('./inspiration/useInspirationItemManagement.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('./inspiration/useInspirationCreation.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('./inspiration/InspirationMaterialGallery.tsx', import.meta.url), 'utf8');
 const inventoryHookSource = readFileSync(new URL('./inspiration/useInspirationMaterialInventory.ts', import.meta.url), 'utf8');
 const materialDialogsSource = readFileSync(new URL('./inspiration/InspirationMaterialDialogs.tsx', import.meta.url), 'utf8');
 const materialDetailSource = readFileSync(fileURLToPath(new URL('./inspiration/InspirationMaterialDetailDrawer.tsx', import.meta.url)), 'utf8');

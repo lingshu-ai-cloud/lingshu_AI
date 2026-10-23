@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const source = fs.readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8')
+  + fs.readFileSync(new URL('./inspiration/InspirationMaterialGallery.tsx', import.meta.url), 'utf8');
 const watchModal = fs.readFileSync(new URL('./inspiration/InspirationWatchModal.tsx', import.meta.url), 'utf8');
 const materialMediaSource = fs.readFileSync(new URL('./inspiration/MaterialLibraryCardMedia.tsx', import.meta.url), 'utf8');
 const cardsSource = fs.readFileSync(new URL('./InspirationVideoCards.tsx', import.meta.url), 'utf8');
@@ -17,7 +18,7 @@ assert.match(source, /<Tabs className="min-w-0 flex-1"[^]*?<AntUpload className=
 assert.match(cardsSource, /apiUrl=\{video\.videoUrl\}[^]*?loadOnMount[^]*?previewFrame[^]*?preload="auto"/, '爆款视频卡必须主动加载首帧，不能依赖悬停');
 assert.match(cardsSource, /analysisPaused[^]*?mediaState = !analysisPaused/, '暂停分析不得用状态遮罩盖住现有封面');
 assert.match(progressSource, /isInterrupted[^]*?>继续分析</, '暂停或取消后必须提供继续分析入口');
-assert.match(source, /import \{ MaterialLibraryCardMedia \} from '.\/inspiration\/MaterialLibraryCardMedia'/);
+assert.match(source, /import \{ MaterialLibraryCardMedia \} from '.\/MaterialLibraryCardMedia'/);
 assert.match(materialMediaSource, /function MaterialCardMedia[\s\S]*?<LsMediaStateFrame[\s\S]*?重新加载/, '素材卡必须使用统一媒体状态并提供失败重试');
 assert.match(materialMediaSource, /videoFallback[\s\S]*?<AuthenticatedVideo/, '素材封面不可用时必须主动回退到视频首帧');
 assert.match(materialMediaSource, /materialPreviewImageSources[\s\S]*?material\.segments[\s\S]*?material\.url/, '素材封面必须依次尝试主封面、片段封面和图片原文件');

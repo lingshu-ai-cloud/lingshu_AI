@@ -5,7 +5,9 @@ import { benchmarkVideoFixture } from '../../tests/fixtures/benchmarkVideo.js';
 import type { TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes.js';
 import { inspirationCreationAvailability, inspirationCreationShotPreflight } from './InspirationDashboard.js';
 
-const source = readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
+const source = readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8')
+  + readFileSync(new URL('./inspiration/useInspirationAnalysis.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('./inspiration/useInspirationCreation.ts', import.meta.url), 'utf8');
 const detailSource = readFileSync(new URL('./inspiration/DirectorVideoDetailPanel.tsx', import.meta.url), 'utf8');
 const analysisProjectionSource = readFileSync(new URL('./inspiration/inspirationAnalysisProjection.ts', import.meta.url), 'utf8');
 const analysisTabsSource = readFileSync(new URL('./inspiration/InspirationVideoAnalysisTabs.tsx', import.meta.url), 'utf8');

@@ -12,7 +12,9 @@ import {
 } from './ProductMaterialGroup.js';
 
 const componentSource = readFileSync(new URL('./ProductMaterialGroup.tsx', import.meta.url), 'utf8');
-const dashboardSource = readFileSync(new URL('../InspirationDashboard.tsx', import.meta.url), 'utf8');
+const dashboardSource = readFileSync(new URL('../InspirationDashboard.tsx', import.meta.url), 'utf8')
+  + readFileSync(new URL('../inspiration/useInspirationMaterials.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('../inspiration/InspirationMaterialGallery.tsx', import.meta.url), 'utf8');
 const inventorySource = readFileSync(new URL('../inspiration/inspirationProductMaterialInventory.ts', import.meta.url), 'utf8');
 const inventoryHookSource = readFileSync(new URL('../inspiration/useInspirationMaterialInventory.ts', import.meta.url), 'utf8');
 
