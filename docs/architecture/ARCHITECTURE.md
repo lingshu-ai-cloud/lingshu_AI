@@ -83,7 +83,8 @@
 - `server/routes/studioRenderManifestProjection.ts`：从路由提供的租户素材名称→URL 与已选配乐 URL 投影冻结渲染清单，保留逐镜显式 URL 优先、特效及强调计划标准化和签名清单字段；`studio.ts` 仍负责租户素材/配乐读取、清单安全校验、令牌、配额与本机导出。
 - `server/routes/studioTtsStyle.ts`：配音风格输入归一化、MiniMax 确定性停顿与发音词典、Qwen/MiniMax/macOS 音色及语言映射纯规则；`studio.ts` 保留语音计划、请求时机、租户文件及付费许可与回执编排，不因音色选择绕开现有付费门禁。
 - `server/routes/studioTtsProviderRuntime.ts`：封装 Qwen/MiniMax 的语音请求、克隆音色缓存、凭据拒绝隔离及脚本可朗读文本提取；`studio.ts` 注入租户隔离目录、签名 URL 和 FFmpeg 适配。供应商请求仍经现有逐请求付费许可与回执门禁，迁移代码不得引入无许可的自动重试。
-- `server/routes/studioTtsGeneration.ts`：编排语音供应商选择、本地回退、音频缓存与权威回执证明、字幕比例时间线及能力投影；由 Studio 注入租户目录、供应商适配与本地语音端口。`studio.ts` 继续负责冻结语音计划、调用时机、请求参数、语音质检和 HTTP 响应，结果不明不得被新请求覆盖。
+- `server/routes/studioTtsGeneration.ts`：编排语音供应商选择、本地回退、音频缓存与权威回执证明、字幕比例时间线及能力投影；由 Studio 注入租户目录、供应商适配与本地语音端口。结果不明不得被新请求覆盖。
+- `server/routes/studioVoiceAutomation.ts`：在原租户上下文和逐请求付费许可内，提供数字员工自动化的冻结语音计划、配音合成、音频质检和租户文件证明；`studio.ts` 注入供应商/生成适配、私有资产存储和 FFmpeg，保留请求时机、HTTP 响应及私有音频对齐收据校验。旧公开导出不变。
 - `server/routes/studioVoiceoverLanguageRules.ts`：口播文本的目标语种文字系统判定、逐句修复输入切分和配音句子边界纯规则；`studio.ts` 保留旧公开导出、模型译文校验与 TTS 供应商/文件编排，语种不符时仍按原合同停止生成。
 - `server/routes/studioLocalTtsAdapters.ts`：Piper、XTTS 与本机 `say` 的可选本地语音执行；从路由显式注入租户目录、样本查找、签名资产 URL 和转码接口。无可用引擎时不触碰租户文件；付费 Qwen/MiniMax/HeyGen 路径仍留在原有许可和回执边界内。
 - `server/socialDiscovery/imagePostEvidenceAnalysis.ts`：公开图片下载和现有 Qwen 主分析/Gemini 旧降级。`imagePostMediaPersistence.ts`：图文缩略图与 COS 图片来源持久化。`imagePostImport.ts` 与 `imagePostRefresh.ts`：新增和既有图文先持久化来源及状态。`imagePostReanalysis.ts`：显式重分析先记录尝试，写回时校验同一尝试和来源快照。`imagePostAnalysisQueue.ts`：延迟分析先把输入和来源哈希存入记录，再由后台 worker 在可证明的数据库唯一租约下领取；已开始但未写回的尝试不自动重发。`imagePostLeaseCapability.ts` 只为此路径只读核验远端 PocketBase 租约索引，不放宽其他付费 worker。`videos.ts` 保留 HTTP 鉴权、爬取入口和图片 URL 规范化。上述路径仍未具备统一的逐记录付费批准、供应商原始回执与人工核对流程。
