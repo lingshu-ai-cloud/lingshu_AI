@@ -4,6 +4,7 @@
 
 ## 边界
 
+- `server/routes/studio.ts`：统一认证、租户上下文中间件、原顺序挂载与旧公开入口委托。`server/studio/application.ts` 装配生成/渲染、素材、数字人、项目证据及既有语音能力；脚本策略、提示词与质量规则独立为纯模块。共享上下文、渲染状态、数字人恢复计时器和创建队列、语音缓存各保留同一所有者。相关 Worker 直接依赖素材分析、作品策略与审批失效能力，避免反向初始化主入口。详见 [Studio 应用边界 ADR](adr/2026-10-23-studio-application-boundaries.md)。下列既有 Studio 规则与适配器由对应应用/HTTP 模块复用。
 - `server/routes/videos.ts`：视频统一鉴权、原顺序 HTTP 注册和旧公开入口委托。`server/videos/application.ts` 装配采集/发现、供应商、下载、来源/素材分析、维护与 Worker；领域状态与计时器各有唯一所有者，HTTP 回调按业务领域分组。类型端口连接同一实例，数据/锁目录保持原位置。身份读取从重型周复盘扫描中分离，消除经生产流程绕回主入口的依赖。详见 [视频应用边界 ADR](adr/2026-10-23-video-application-boundaries.md)；下列既有纯规则/适配器继续被这些领域服务复用。
 - `server/routes/digitalEmployees.ts`：统一鉴权/支持会话只读门禁、应用单实例装配、原顺序路由挂载和旧公开入口委托。运行状态机在 `runCoordinator.ts`，审批准备在 `taskApprovalPreparation.ts`，周目标开工在 `goalActivationApplication.ts`，事实重建、经营包、初始化、事件/浏览器和各领域工作区分属对应应用/路由模块。`applicationPorts.ts` 通过 type-only 合同与最小端口集连接它们；共享启动队列、运行锁、计时器和事件流保持单一所有权。领域记录在 `server/digitalEmployees/records.ts`，旧路由记录入口兼容转发。完整依赖与验证见 [数字员工应用装配 ADR](adr/2026-10-23-digital-employee-application-assembly.md)。
 - `src/components/inspiration/InspirationMaterialDialogs.tsx`：仅展示素材上传归属与编辑/删除确认弹窗，沿用产品规范中的 Ant Modal/Input/Select 和现有 Token。`useInspirationMaterials.ts` 持有上传、素材库存、产品归属、预览与详情状态；`useInspirationItemManagement.ts` 持有编辑/删除状态和请求，页面连接文件选择与确认回调。弹窗不能直接调用 API 或自行变更素材归属。
@@ -63,12 +64,12 @@
 - `server/routes/`：HTTP 鉴权、输入规范化、租户上下文和响应编排；业务算法逐步下沉到领域模块。
 - `server/digitalEmployees/overviewProjection.ts`：数字员工首页的配置、周目标、计划、四专家状态和公开事件载荷投影；兼容旧角色与旧周目标，并递归剔除私有推理字段。`server/routes/digitalEmployeeOverviewReader.ts` 以装配层注入的可信租户读取、已提交目标筛选、配置与发布准备判定组装首页只读响应。鉴权与读取能力注入留在主装配层，运行状态归运行协调器，SSE 持久事件与发送归 `workflowEvents.ts` 和浏览器/流接口。投影与总览读取不启动生产或调用供应商。
 - `server/routes/digitalEmployeeContentEvidence.ts`：在调用方已确定的租户范围内读取企业产品、精确参考分析和素材库，并纯投影产品身份、素材归属、参考物理身份与准入证据。聚焦产品只改变排序，不隐藏其余已确认产品；共享、合成或未绑定素材不得伪作产品素材。素材库不可用时明确失败，路由仍负责鉴权、周任务编排和后续生产许可。
-- `server/routes/studioMaterialLibraryProjection.ts`：在路由完成租户库存与企业产品读取后，统一投影产品归属、用途/来源可见性、生成素材过滤、分类 facets、排序与分页；`studio.ts` 保留租户读取、鉴权响应、使用证据聚合和产品场景准备，不把 `purpose=all` 的内部素材混入普通图库。
+- `server/routes/studioMaterialLibraryProjection.ts`：在路由完成租户库存与企业产品读取后，统一投影产品归属、用途/来源可见性、生成素材过滤、分类 facets、排序与分页；`studioMaterialReadRoutes.ts` 持有租户读取、响应、使用证据聚合和产品场景准备，不把 `purpose=all` 的内部素材混入普通图库。
 - `server/routes/studioMaterialProjection.ts`：将已读取素材投影为租户签名的播放/封面地址、能力清单和安全公开字段，并从已确认企业产品表投影稳定身份的产品素材；路由仍负责权限、租户库存读取和持久化，不能把投影函数当成跨租户记录准入。
 - `server/routes/studioBgmCatalog.ts`：BGM 官方曲目与上传索引、租户可见性、推荐排序、签名地址有效期及自动化配乐读取；`studioBgmRoutes.ts` 承载媒体流、列表、上传和删除 HTTP 处理，并在 `studio.ts` 的鉴权及租户上下文中间件之后挂载。数字员工和兼容适配层直接引用曲库能力，不为查配乐而依赖整个 Studio 路由。
 - `server/routes/studioProjectReadRoutes.ts`：Studio 草稿列表、单项目、分镜依据及人工交接的租户限定只读 HTTP 边界，并统一投影冻结计划和短期私有素材地址；在 `studio.ts` 鉴权后挂载。读取失败不得冒充已完成核验。
 - `server/routes/studioProjectReviewRoutes.ts`：重新质检签发、人工交接创建和项目删除的受鉴权写入 HTTP 边界；在 Studio 统一鉴权和租户上下文后挂载，维持任务归属、版本 CAS、正式成片人工验收及可信生产快照只读门禁。
-- `server/routes/studioProjectSaveRoutes.ts`：草稿新建与更新的受鉴权 HTTP 边界，保留生产快照一致性、冻结计划、素材候选及知识库版本检查、草稿修订 CAS 与发布审批失效。`studio.ts` 注入当前素材读取、知识库验收、海报素材使用回写和生成真实性规则；路由不得自行绕过这些门禁或调用供应商。
+- `server/routes/studioProjectSaveRoutes.ts`：草稿新建与更新的受鉴权 HTTP 边界，保留生产快照一致性、冻结计划、素材候选及知识库版本检查、草稿修订 CAS 与发布审批失效。Studio 单实例装配注入当前素材读取、知识库验收、海报素材使用回写和生成真实性规则；路由不得自行绕过这些门禁或调用供应商。
 - `server/digitalEmployees/taskEvidenceProjection.ts`：数字员工任务的执行元数据、依赖与业务引用范围、工作流归属、项目完成/渲染证据的纯规则；路由仅在租户范围内读写记录并调用这些规则，不能用历史草稿或可变引用覆盖托管项目的索引血缘。
 - `server/digitalEmployees/taskCorrectionSafety.ts`：任务纠偏的传递性下游范围和已发送/已发布回执判定；路由注入租户限定的存储及跟进发送回执读取，缺少可证明安全的外部动作仍保守拦截。拆分不改变外部发送、发布和重试许可。
 - `server/digitalEmployees/taskCorrectionSupersession.ts`：任务纠偏后按影响范围使生产 job、冻结内容批次、托管 Studio 项目、客户分群、跟进草稿及审批失效；路由持有运行锁并注入存储/队列/跟进项目读取。已发送或已送达的跟进项目不被回写为草稿，旧业务回执拦截仍先于失效操作执行。
@@ -89,20 +90,20 @@
 - `server/socialDiscovery/linkedinCompanyReceiptStore.ts`：LinkedIn Actor POST、run GET 和 dataset GET 的原始 HTTP 响应以批准/任务/Actor/请求/Token 指纹绑定的只写一次文件保存；受控传输在解析和账本终态更新前等待持久回执。存储模块本身不是许可或预算签发器，缺少部署共享卷、可信报价和数据集读取许可时仍不开放真实采集。
 - `server/socialDiscovery/linkedinCompanyCollectionQuote.ts`：以逐 run 批准、服务端账号/Token 指纹和受信任费用证据计算 Actor 与全部非 Actor 费用的人民币最坏情况报价，并复核来源未变。离线报价不预约资金、不认领操作或签发付费许可；真实账号费率、汇率和非 Actor 费用凭据仍未接入生产权威。
 - `server/socialDiscovery/linkedinCompanyCollectionPermit.ts`：接收服务端可信报价端口，重验逐 run 批准与费用证据，在共享目录持久预约最坏费用并唯一认领 Actor POST 和数据集 GET；运行、结算和数据集完成状态只接受绑定原始响应的回执。当前无生产可信报价适配、目标共享卷证明或普通发现 worker 签发接线，因此真实 LinkedIn 付费采集仍默认关闭。
-- `server/routes/studioCoverSvg.ts`：封面图的尺寸、换行、图层和 SVG 文本转义纯渲染；`studio.ts` 保留鉴权、租户限定的帧读取、文件保存和对象存储，不把客户端传入的路径直接交给渲染模块读取。
-- `server/routes/studioStoryboardSpeechRules.ts`：分镜口播时长估计与语义压缩、CTA 语义、字幕同步、字段规范化与重复/不一致检查纯规则；`studio.ts` 保留模型生成、租户素材读取、修复编排与旧公开导出，不让脚本文字后处理接触供应商或持久化。
-- `server/routes/studioProductScriptRules.ts`：产品与目标买家/合作路线的保守口播计划、完整 CTA、锁定分镜、素材证据与时间线检查的纯规则；依赖前述口播规则与已有产品事实/质量合同，`studio.ts` 保留模型生成、资料读取、租户状态及原公开导出，不将没有来源的素材画面或商业数字补写成事实。
-- `server/routes/studioProductSceneProvenance.ts`：产品预制素材的稳定槽位绑定、上传校验凭证解析、关联产品变更和检索标签纯规则；`studio.ts` 保留租户产品查询、上传媒体探针、素材持久化及原公开导出，不因投影拆分放宽上传或复用授权。
-- `server/routes/studioProductSceneProjection.ts`：产品场景来源图、素材可制作性、空槽位与素材/产品范围的只读投影；`studio.ts` 仍负责租户鉴权、签名媒体 URL、素材写回与 HTTP 响应，不把投影结果当作持久化素材或供应商验收。
-- `server/routes/studioProductSceneUpload.ts`：产品场景上传意图与企业产品身份校验、完整视频探针结果封装、错误到 HTTP 状态映射和复用授权元数据；`studio.ts` 仍持有上传请求生命周期、租户素材写入与对象存储。非视频、缺失或未知槽位在读取企业资料前拒绝，上传探针不可用不生成复用授权。
-- `server/routes/studioMaterialAnalysisSegments.ts`：将素材逐镜分析结果投影为片段的纯规则，供云端素材写回和自动生产共用；`studio.ts` 保留原公开导出、供应商选择、租户素材读写及 HTTP 编排。
-- `server/routes/studioReferenceTimelineQuality.ts`：参考逐镜文本和结构化镜头时间线的纯完整性规则；只识别行首物理镜头范围，检查片头、空档、重叠与真实片段缺失，`studio.ts` 保留生成流程与失败响应编排。
-- `server/routes/studioRenderManifestProjection.ts`：从路由提供的租户素材名称→URL 与已选配乐 URL 投影冻结渲染清单，保留逐镜显式 URL 优先、特效及强调计划标准化和签名清单字段；`studio.ts` 仍负责租户素材/配乐读取、清单安全校验、令牌、配额与本机导出。
-- `server/routes/studioTtsStyle.ts`：配音风格输入归一化、MiniMax 确定性停顿与发音词典、Qwen/MiniMax/macOS 音色及语言映射纯规则；`studio.ts` 保留语音计划、请求时机、租户文件及付费许可与回执编排，不因音色选择绕开现有付费门禁。
-- `server/routes/studioTtsProviderRuntime.ts`：封装 Qwen/MiniMax 的语音请求、克隆音色缓存、凭据拒绝隔离及脚本可朗读文本提取；`studio.ts` 注入租户隔离目录、签名 URL 和 FFmpeg 适配。供应商请求仍经现有逐请求付费许可与回执门禁，迁移代码不得引入无许可的自动重试。
+- `server/routes/studioCoverSvg.ts`：封面图的尺寸、换行、图层和 SVG 文本转义纯渲染；主入口保留鉴权，`studioCoverRenderingRoutes.ts` 持有租户限定的帧读取、文件保存和对象存储，不把客户端传入的路径直接交给渲染模块读取。
+- `server/routes/studioStoryboardSpeechRules.ts`：分镜口播时长估计与语义压缩、CTA 语义、字幕同步、字段规范化与重复/不一致检查纯规则；`studioScriptRoutes.ts` 持有模型生成、租户素材读取和修复编排，主入口保留旧公开导出，不让脚本文字后处理接触供应商或持久化。
+- `server/routes/studioProductScriptRules.ts`：产品与目标买家/合作路线的保守口播计划、完整 CTA、锁定分镜、素材证据与时间线检查的纯规则；依赖前述口播规则与已有产品事实/质量合同，脚本应用/HTTP 模块持有模型生成、资料读取及租户状态，主入口保留原公开导出，不将没有来源的素材画面或商业数字补写成事实。
+- `server/routes/studioProductSceneProvenance.ts`：产品预制素材的稳定槽位绑定、上传校验凭证解析、关联产品变更和检索标签纯规则；素材上传/变更应用持有租户产品查询、媒体探针及持久化，主入口保留原公开导出，不因投影拆分放宽上传或复用授权。
+- `server/routes/studioProductSceneProjection.ts`：产品场景来源图、素材可制作性、空槽位与素材/产品范围的只读投影；主入口保留租户鉴权，素材应用/HTTP 模块持有签名媒体 URL、素材写回与响应，不把投影结果当作持久化素材或供应商验收。
+- `server/routes/studioProductSceneUpload.ts`：产品场景上传意图与企业产品身份校验、完整视频探针结果封装、错误到 HTTP 状态映射和复用授权元数据；`studioMaterialUploadRoutes.ts` 和 `materialUploadApplication.ts` 持有上传请求生命周期、租户素材写入与对象存储。非视频、缺失或未知槽位在读取企业资料前拒绝，上传探针不可用不生成复用授权。
+- `server/routes/studioMaterialAnalysisSegments.ts`：将素材逐镜分析结果投影为片段的纯规则，供云端素材写回和自动生产共用；主入口保留原公开导出，素材分析实现/HTTP 模块持有供应商选择、租户素材读写及编排。
+- `server/routes/studioReferenceTimelineQuality.ts`：参考逐镜文本和结构化镜头时间线的纯完整性规则；只识别行首物理镜头范围，检查片头、空档、重叠与真实片段缺失，脚本/素材分析应用与 HTTP 模块保留生成流程及失败响应编排。
+- `server/routes/studioRenderManifestProjection.ts`：从路由提供的租户素材名称→URL 与已选配乐 URL 投影冻结渲染清单，保留逐镜显式 URL 优先、特效及强调计划标准化和签名清单字段；渲染清单应用和准入/本机/持久渲染适配持有租户素材与配乐读取、清单安全校验、令牌、配额及导出。
+- `server/routes/studioTtsStyle.ts`：配音风格输入归一化、MiniMax 确定性停顿与发音词典、Qwen/MiniMax/macOS 音色及语言映射纯规则；语音应用和 HTTP 适配保留语音计划、请求时机、租户文件及付费许可与回执编排，不因音色选择绕开现有付费门禁。
+- `server/routes/studioTtsProviderRuntime.ts`：封装 Qwen/MiniMax 的语音请求、克隆音色缓存、凭据拒绝隔离及脚本可朗读文本提取；Studio 单实例装配注入租户隔离目录、签名 URL 和 FFmpeg 适配。供应商请求仍经现有逐请求付费许可与回执门禁，迁移代码不得引入无许可的自动重试。
 - `server/routes/studioTtsGeneration.ts`：编排语音供应商选择、本地回退、音频缓存与权威回执证明、字幕比例时间线及能力投影；由 Studio 注入租户目录、供应商适配与本地语音端口。结果不明不得被新请求覆盖。
-- `server/routes/studioVoiceAutomation.ts`：在原租户上下文和逐请求付费许可内，提供数字员工自动化的冻结语音计划、配音合成、音频质检和租户文件证明；`studio.ts` 注入供应商/生成适配、私有资产存储和 FFmpeg，保留请求时机、HTTP 响应及私有音频对齐收据校验。旧公开导出不变。
-- `server/routes/studioVoiceoverLanguageRules.ts`：口播文本的目标语种文字系统判定、逐句修复输入切分和配音句子边界纯规则；`studio.ts` 保留旧公开导出、模型译文校验与 TTS 供应商/文件编排，语种不符时仍按原合同停止生成。
+- `server/routes/studioVoiceAutomation.ts`：在原租户上下文和逐请求付费许可内，提供数字员工自动化的冻结语音计划、配音合成、音频质检和租户文件证明；Studio 单实例装配注入供应商/生成适配、私有资产存储和 FFmpeg；语音 HTTP 与音频对齐应用保留请求时机、响应及私有音频对齐收据校验。旧公开导出不变。
+- `server/routes/studioVoiceoverLanguageRules.ts`：口播文本的目标语种文字系统判定、逐句修复输入切分和配音句子边界纯规则；主入口保留旧公开导出，语音应用/HTTP 模块持有模型译文校验与 TTS 供应商/文件编排，语种不符时仍按原合同停止生成。
 - `server/routes/studioLocalTtsAdapters.ts`：Piper、XTTS 与本机 `say` 的可选本地语音执行；从路由显式注入租户目录、样本查找、签名资产 URL 和转码接口。无可用引擎时不触碰租户文件；付费 Qwen/MiniMax/HeyGen 路径仍留在原有许可和回执边界内。
 - `server/socialDiscovery/imagePostEvidenceAnalysis.ts`：公开图片下载和现有 Qwen 主分析/Gemini 旧降级。`imagePostMediaPersistence.ts`：图文缩略图与 COS 图片来源持久化。`imagePostImport.ts` 与 `imagePostRefresh.ts`：新增和既有图文先持久化来源及状态。`imagePostReanalysis.ts`：显式重分析先记录尝试，写回时校验同一尝试和来源快照。`imagePostAnalysisQueue.ts`：延迟分析先把输入和来源哈希存入记录，再由后台 worker 在可证明的数据库唯一租约下领取；已开始但未写回的尝试不自动重发。`imagePostLeaseCapability.ts` 只为此路径只读核验远端 PocketBase 租约索引，不放宽其他付费 worker。视频应用及 HTTP 适配层（旧 `videos.ts` 仅鉴权、挂载和兼容委托） 保留 HTTP 鉴权、爬取入口和图片 URL 规范化。上述路径仍未具备统一的逐记录付费批准、供应商原始回执与人工核对流程。
 - `server/routes/videoPublicRecordProjection.ts`：公开视频响应中的进度投影、私有逐镜对象键清除、已受理后台任务排队编号和关键词匹配纯规则；`videoTenantListing.ts` 在路由传入的可信租户身份下执行视频/图文分页、搜索、测试租户可见性、账号公开互动基线及库存统计，并向原路由暴露写入后缓存失效入口。`videoListingRoutes.ts` 注册列表与库存两个只读端点，使用路由传入的排队位置和签名缩略图能力；视频应用及 HTTP 适配层（旧 `videos.ts` 仅鉴权、挂载和兼容委托） 保留上层 HTTP 鉴权、租户身份取得、写入及挂载顺序。对象与 JSON 字符串两种持久证据形态都必须在响应前清除私有对象键。
@@ -122,6 +123,8 @@
 确定性失败不可被模型复核覆盖；多模态服务不可用时状态保持不确定，不得推断通过。多输出轮播/GIF 使用冻结计划、逐单元原子认领和持久化回执；结果不明时停止后续付费提交，只能核对已有素材。GIF 的产品与文字在背景底图持久化后由固定图层合成，最终动图单独登记与质检。工作台接线及本地合同测试不等于真实供应商、浏览器交互或发布验收。
 
 ## 依赖方向
+
+Studio 的具体领域模块不依赖整个主入口。产品身份选择直接引用已有 planning 函数；只读托管作品判断位于 `socialContentWorkspacePolicy.ts`；素材视频分析在 `materialVideoAnalysis.ts`；项目保存导致的审批失效在 `publishingApprovalInvalidation.ts`。旧入口保留转发/转导出。租户上下文由同一 AsyncLocalStorage 向下传递，不能在语音、渲染或素材服务内另建租户权威；原请求恢复必须在新花费准入之前执行。
 
 视频领域实现不反向依赖 `videos.ts`；原公开入口只转发到同一装配实例。身份能力直接依赖 `weeklyReviewActor.ts`，旧周复盘入口保留同一函数转导出，不因只读身份查询初始化内容生产/素材分析链。下载槽位、活动/持久分析租约、Worker 和图文队列不能在新模块各建一份；租户、原运行、付费许可和未知结果边界沿用原能力。
 

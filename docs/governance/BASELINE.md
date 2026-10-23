@@ -2,6 +2,15 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 服务完整职责拆分（2026-10-23）
+
+- 起点：集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `21a64ab5658d99bc71f5b0c9919b43c16e7b78ce`，工作区干净。源码提交 `ac047449c10dfac3c35b07a91ba7c6179dc71e0f` 将生成、分镜原请求恢复/QA、渲染、数字人、素材、语音及项目证据按完整职责迁出。`studio.ts` **7,221→187 行**，单实例装配 301 行，最大新用例 628 行；移除服务历史预算，未新增豁免。脚本的策略、模式提示词和质量规则各为纯模块，未为行数拆散状态机。详见 [Studio 应用边界 ADR](../architecture/adr/2026-10-23-studio-application-boundaries.md)。
+- 完整依赖图审计处理四类间接循环：产品身份直接依赖既有 planning 函数；社媒作品只读策略迁至独立模块；Worker 直接复用原素材视频分析；项目保存直接调用完整发布审批失效能力。旧入口兼容转导出/委托，同一租户上下文、语音缓存、活动渲染集合、数字人恢复计时器和创建队列保持唯一所有权；数据/媒体路径归一化后与原位置相同。**53 个新生产模块逐个独立加载通过，零反向主入口路径**。
+- 实际加载起点源码与新模块，**94 项 Router/中间件栈及顺序、69 个运行时导出完全一致**。AST 对照确认 **85 个原函数正文一致**；用三个纯脚本模块中的实际迁移语句还原后，**81 个路由表达式一致**。共享策略/仓储/审批失效的额外 7 个迁移语句一致；模型、冻结事实、付费与未知结果门禁未变。
+- 新增 **10 项行为测试**纳入 Studio 工作流，覆盖租户隔离、原请求处理中/不明/冲突/恢复失败/成功复用、跨租户预算证据先拒绝及当前脚本与商业字段交付门禁。新边界/合同组合 **19/19**，原生语音付费、HeyGen、素材分析、审批失效、社媒作品工作区和项目 CAS 调用方组合 **21/21**。两份旧复刻合同在未修改起点上同样失败，修正为核验当前提示词/事实修复、素材证据和最终准入，未改变生产行为；其他源码位置合同改查实际组成模块或 AST。
+- 实际通过：`pnpm run lint`、`ARCHITECTURE_BASE_REF=21a64ab5 pnpm run check:architecture`（2,546 个生产 TS、剩 1 个历史预算）、`test:architecture-ratchet`、`check:digital-employee-migrations`（193 项仓库只读完整性）、完整 `test:studio-script`、`test:studio-workflow`、`test:studio-media`、`test:storyboard-aigc`（66/66）、`test:production-workflows`、`test:execution-gaps`、`test:digital-employees`、`test:tenant-isolation`、`test:material-import`（18/18）、`test:social-image-pipeline`、支持会话只读及爬虫安全，生产构建与源码暂存空白检查。前端生产代码未改，Studio chunk 480,957/485,000 字节。
+- 原五项已完成四项，仍待完整拆分 **`AiCreateStudio.tsx` 12,000 行**；整个目标继续有效。未执行真实供应商/付费、目标库迁移、登录后浏览器验收、发布或部署。其他工作树及 `sources/` 未动，普通分支推送不触发部署的工作流边界已复核。源码与文档分开提交；最终文档 SHA、本地/远端一致性和干净状态以推送后 Git 核验为准。
+
 ## 视频应用与执行管线完整拆分（2026-10-23）
 
 - 起点：集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `f9cff15fcc4552747697b722ba0d418bdf659e72`，工作区干净。源码提交 `5d43242f` 按完整职责迁移采集/发现、供应商、下载、来源与素材分析、维护/Worker 及 HTTP 用例。`videos.ts` **7,823→281 行**，共享装配 296 行，最大新领域实现 627 行；移除视频预算，没有新增豁免。详见 [视频应用 ADR](../architecture/adr/2026-10-23-video-application-boundaries.md)。
