@@ -8,6 +8,7 @@ const reviewActions = fs.readFileSync(new URL('./SocialImageReviewActions.tsx', 
 const planning = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', import.meta.url), 'utf8');
 const studioRoute = readStudioApplicationSources();
 const socialImageRoute = fs.readFileSync(new URL('../../../server/routes/socialImage.ts', import.meta.url), 'utf8');
+const formalPlanRoute = fs.readFileSync(new URL('../../../server/routes/socialImageFormalPlanRoutes.ts', import.meta.url), 'utf8');
 
 assert.match(planning, /productionMode === 'video'/);
 assert.match(planning, /productionMode === 'image'/);
@@ -44,7 +45,8 @@ assert.match(reviewActions, /task\?\.imageType === 'carousel' \? carouselPages\.
 assert.match(reviewActions, /adopted && output\?\.mediaUrl/, 'carousel pages must not be offered as unmarked final downloads before full adoption');
 assert.match(source, /socialImageApi\.abandonPlan\(current\)/, 'a rejected carousel plan needs an explicit safe return to inputs');
 assert.match(source, /可能再次产生费用/, 'abandoning already generated pages must disclose potential repeat charges');
-assert.match(socialImageRoute, /abandonSocialImageMultiUnitPlan\(/, 'plan retirement must be server-owned and atomic');
+assert.match(socialImageRoute, /registerSocialImageFormalPlanRoutes\(/, 'the authenticated image router must register formal plan endpoints');
+assert.match(formalPlanRoute, /abandonSocialImageMultiUnitPlan\(/, 'plan retirement must be server-owned and atomic');
 assert.match(source, /socialImageApi\.prepareEvidence\(saved\.task\)/, 'required assets and reference pixels must be inspected before planning or paid generation');
 assert.match(socialImageRoute, /\/tasks\/:id\/evidence\/prepare/, 'the evidence gate must be a tenant-authenticated server route');
 const assetNodeIndex = socialImageRoute.indexOf("nodeId: 'asset_manifest'");

@@ -194,6 +194,8 @@ export interface SocialImageDirectorReviewDecision {
   /** Ordered, frozen outputs reviewed together for a carousel or GIF. */
   candidateRefs?: SocialImageVersionedRef[];
   candidateSetHash?: string;
+  /** Hash of the candidate quality checks and factor evidence at review time. */
+  qualityEvidenceHash?: string;
   passedCriteria: string[];
   failedCriteria: string[];
   factorResults: Array<{ factorId: string; verdict: 'pass' | 'fail' | 'uncertain'; evidenceRefs: SocialImageVersionedRef[] }>;

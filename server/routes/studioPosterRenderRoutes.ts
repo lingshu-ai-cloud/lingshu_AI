@@ -19,7 +19,7 @@ import { type AuthLocals } from '../middleware/auth.js';
 import type { PosterReferenceDescriptor } from '../studio/contracts.js';
 import type { StudioApplicationPorts } from '../studio/applicationPorts.js';
 import { conformSocialImageToCanvas, socialImageCanvasForAspectRatio, type SocialImageAspectRatio } from '../socialImage/referenceCanvas.js';
-import { socialImageV3PaidPrerequisiteIssue, socialImageV3RenderSpecInputHash,
+import { socialImageFrozenCommercialIssue, socialImageV3PaidPrerequisiteIssue, socialImageV3RenderSpecInputHash,
   socialImageV3ReferencePermitted, socialImageV3ResolvedAssetIssue,
   socialImageV3SingleRenderInput } from '../socialImage/socialImagePaidPrerequisites.js';
 import { readSocialImageReferenceBytes } from '../socialImage/socialImageReferenceBytes.js';
@@ -114,14 +114,23 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
       }).filter(Boolean).join('\n');
       const commercialEvidence = [enterprise, taskConfirmedFacts ? `本次任务由用户确认的商业事实：\n${taskConfirmedFacts}` : ''].filter(Boolean).join('\n');
       const commercialAudit = auditCommercialClaims(userFacingPosterText({ poster: normalizedPoster, imagePrompt }), commercialEvidence);
+      if (v3ImageTask) {
+        const issue = socialImageFrozenCommercialIssue({ ...commercialAudit,
+          headline: normalizedPoster.headline, imagePrompt: String(imagePrompt || '') });
+        if (issue) {
+          res.status(409).json({ ok: false, code: issue,
+            error: '已冻结的图片文案与企业事实不一致；请重新策划并冻结输入，未调用图片供应商' });
+          return;
+        }
+      }
       // Generation is allowed to continue with a conservative draft. Unverified
       // claims remain visible review warnings and block publishing, not creation.
-      const safeDraft = commercialAudit.issues.length || commercialAudit.fieldsToConfirm.length
+      const safeDraft = !v3ImageTask && (commercialAudit.issues.length || commercialAudit.fieldsToConfirm.length)
         ? sanitizePosterCommercialClaims({ poster: normalizedPoster, imagePrompt: String(imagePrompt || '') }, commercialEvidence)
         : { poster: normalizedPoster, imagePrompt: String(imagePrompt || '') };
       const safePoster = normalizePosterBrief(safeDraft.poster || {});
-      if (!safePoster.headline) safePoster.headline = 'Product overview';
-      const safeImagePrompt = String(safeDraft.imagePrompt || 'Create a neutral product presentation background.').trim();
+      if (!v3ImageTask && !safePoster.headline) safePoster.headline = 'Product overview';
+      const safeImagePrompt = v3ImageTask ? String(imagePrompt) : String(safeDraft.imagePrompt || 'Create a neutral product presentation background.').trim();
       const headline = safePoster.headline;
       const benchmarkReferences: ReferenceImage[] = [];
       let v3ReferenceHash: string | null = null;

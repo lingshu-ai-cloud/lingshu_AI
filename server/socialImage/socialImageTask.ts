@@ -251,6 +251,12 @@ export async function updateSocialImageTask(store: DataStore, tenantId: string, 
     layerGraph: Object.prototype.hasOwnProperty.call(patch, 'layerGraph') ? patch.layerGraph : current.layerGraph,
     updatedAt: now, publishable: false,
   };
+  // Every output write can represent a new preflight report, even when the
+  // candidate id/version and its pixels are unchanged. A previous director
+  // verdict must not be reused across that new evidence generation.
+  if (current.schemaVersion === 'social-image-creation.v3' && patch.outputs && patch.status !== 'approved') {
+    next.directorReviewDecision = undefined;
+  }
   if (patch.referenceSnapshot) {
     const raw = patch.referenceSnapshot as unknown as Record<string, unknown>;
     const imageUrls = stringArray(raw.imageUrls, 10);

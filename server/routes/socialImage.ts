@@ -7,17 +7,15 @@ import type { AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { readSocialImageTask, socialImageClientOutputPatchIssue, updateSocialImageTask } from '../socialImage/socialImageTask.js';
 import { admitSocialImageV3QueuedJob, socialImageOwnedMaterialUrl, socialImageQueuedJobIssue, SocialImagePaidJobError } from '../socialImage/socialImagePaidJob.js';
-import { socialImageV3PaidPrerequisiteIssue } from '../socialImage/socialImagePaidPrerequisites.js';
 import { recoverSocialImagePaidMaterial } from '../socialImage/socialImageMaterialRecovery.js';
-import { abandonSocialImageMultiUnitPlan, persistSocialImageMultiUnitPlan } from '../socialImage/socialImageDurablePlan.js';
 import { finalizeSocialImageGif } from '../socialImage/socialImageGifDelivery.js';
 import { createGeneratedImageMaterial } from '../lib/generatedImageMaterial.js';
 import { mergeSocialImageVisualChecks, socialImageCandidateOcrCheck, socialImageCandidatePixelChecks, socialImageGifAnimationCheck,
   socialImageDeterministicChecks } from '../socialImage/socialImageQuality.js';
-import { qualityCheckSocialImageWithQwen } from '../agents/qwen.js';
+import { consumeDemoQuota } from '../lib/demo.js';
 import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
 import { readMaterialLibrary } from '../lib/materialLibrary.js';
-import { SOCIAL_IMAGE_HARD_CHECKS, socialImageCurrentOutputs, type SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
+import { SOCIAL_IMAGE_HARD_CHECKS, socialImageCurrentOutputs, type SocialImageCreationTask, type SocialImageQualityCheck } from '../../shared/contracts/socialImageCreation.js';
 import { compileLuxuryProductHero } from '../socialImage/templates/luxuryProductHero.js';
 import { assertSocialImageLayerGraph } from '../socialImage/layerGraphValidation.js';
 import { renderSocialImageLayerGraph } from '../socialImage/layerRenderer.js';
@@ -41,8 +39,12 @@ import { compileSocialImageReferencePlan, inspectSocialImageCandidateFactors,
   prepareSocialImageReferenceStrategy, socialImageFrozenGraphMatches, socialImageFrozenSourceIssue } from '../socialImage/socialImageReferenceStrategy.js';
 import { resolveSocialImageReviewSet } from '../socialImage/socialImageReviewSet.js';
 import { localProductOcrReadiness, recognizeProductImageLocally, recognizeProductImageTokensLocally } from '../lib/localProductOcr.js';
+import { registerSocialImageFormalPlanRoutes } from './socialImageFormalPlanRoutes.js';
+import { runSocialImageVisualPreflight, SocialImageQualityPreflightError } from '../socialImage/socialImageQualityPreflight.js';
 
 export const socialImageRouter = Router();
+registerSocialImageFormalPlanRoutes(socialImageRouter, store,
+  async (tenantId, productId) => (await enterpriseProductAsset(tenantId, productId))?.bytes || null);
 
 const renderRoot = (tenantId: string) => path.resolve(process.cwd(), 'data', 'social-image-renders', enterpriseAssetTenantKey(tenantId));
 
@@ -381,50 +383,6 @@ socialImageRouter.post('/tasks/:id/jobs/:jobId/reconcile-material', async (req, 
   }
 });
 
-/** Persist bounded multi-output units before any paid call. */
-socialImageRouter.post('/tasks/:id/plan-units', async (req, res) => {
-  try {
-    const { tenantId } = res.locals as AuthLocals;
-    const expectedVersion = Number(req.body?.expectedVersion);
-    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) { res.status(400).json({ ok: false, error: '缺少有效任务版本' }); return; }
-    const current = await readSocialImageTask(store, tenantId, req.params.id);
-    if (!current) { res.status(404).json({ ok: false, code: 'social_image_task_missing', error: '图片任务不存在' }); return; }
-    const gate = socialImageV3PaidPrerequisiteIssue(current, 'queue');
-    if (gate) { res.status(422).json({ ok: false, code: gate, error: '图片证据和编导方案尚未完成，不会冻结付费计划' }); return; }
-    const productHashes: Record<string, string> = {};
-    for (const id of current.contentBrief.productRefs) {
-      const product = await enterpriseProductAsset(tenantId, id);
-      if (!product?.bytes.length) throw new SocialImagePaidJobError('social_image_product_asset_unavailable');
-      productHashes[id] = createHash('sha256').update(product.bytes).digest('hex');
-    }
-    const task = await persistSocialImageMultiUnitPlan({ store, tenantId, taskId: req.params.id, expectedVersion, productHashes });
-    res.setHeader('Cache-Control', 'private, no-store');
-    res.json({ ok: true, task, paidExecutionEnabled: task.imageType === 'carousel' || task.imageType === 'gif_poster' });
-  } catch (error) {
-    const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_plan_failed';
-    const status = code === 'social_image_task_missing' ? 404 : code === 'social_image_atomic_store_required' ? 503 : 409;
-    res.status(status).json({ ok: false, code, error: '多图单元计划无法安全持久化；未调用图片供应商' });
-  }
-});
-
-/** Explicitly retire only known, non-running units; never infer a provider outcome. */
-socialImageRouter.post('/tasks/:id/abandon-plan', async (req, res) => {
-  try {
-    const { tenantId } = res.locals as AuthLocals;
-    const expectedVersion = Number(req.body?.expectedVersion);
-    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
-      res.status(400).json({ ok: false, error: '缺少有效任务版本' }); return;
-    }
-    const task = await abandonSocialImageMultiUnitPlan({ store, tenantId, taskId: req.params.id, expectedVersion });
-    res.setHeader('Cache-Control', 'private, no-store');
-    res.json({ ok: true, task });
-  } catch (error) {
-    const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_plan_abandon_failed';
-    const status = code === 'social_image_task_missing' ? 404 : code === 'social_image_atomic_store_required' ? 503 : 409;
-    res.status(status).json({ ok: false, code, error: '当前轮播/GIF 计划存在未确认的付费结果或版本冲突，未废弃计划' });
-  }
-});
-
 /** Compose persisted paid background plates into reviewable frames and one GIF; no provider call. */
 socialImageRouter.post('/tasks/:id/finalize-gif', async (req, res) => {
   try {
@@ -479,7 +437,7 @@ socialImageRouter.patch('/tasks/:id', async (req, res) => {
       if (current.version !== expectedVersion) { res.status(409).json({ ok: false, error: '任务已被更新，请刷新后继续', task: current }); return; }
       const issue = socialImageQueuedJobIssue(current, patch.generationJobs);
       if (issue) { res.status(409).json({ ok: false, code: issue, error: '已有图片生成请求待完成或待核对，不能改写付费任务记录' }); return; }
-      try { Object.assign(patch, await admitSocialImageV3QueuedJob(store, current, patch)); }
+      try { Object.assign(patch, await admitSocialImageV3QueuedJob(store, tenantId, current, patch)); }
       catch (error) {
         const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_job_admission_failed';
         res.status(code === 'social_image_atomic_store_required' ? 503 : 422).json({ ok: false, code,
@@ -710,10 +668,12 @@ socialImageRouter.post('/tasks/:id/render-layered', async (req, res) => {
 socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
   try {
     const { tenantId } = res.locals as AuthLocals;
-    const task = await readSocialImageTask(store, tenantId, req.params.id);
-    if (!task) { res.status(404).json({ ok: false, error: '图片任务不存在' }); return; }
+    const found = await readSocialImageTask(store, tenantId, req.params.id);
+    if (!found) { res.status(404).json({ ok: false, error: '图片任务不存在' }); return; }
+    let task: SocialImageCreationTask = found;
     const expectedVersion = Number(req.body?.expectedVersion);
     if (expectedVersion !== task.version) { res.status(409).json({ ok: false, error: '任务已被更新，请刷新后继续', task }); return; }
+    if (task.status === 'approved') { res.status(409).json({ ok: false, code: 'social_image_approved_immutable' }); return; }
     const deterministic = socialImageDeterministicChecks(task);
     const productAssets = (await Promise.all(task.contentBrief.productRefs.map(id => enterpriseProductAsset(tenantId, id))))
       .filter((item): item is { name: string; bytes: Buffer } => Boolean(item));
@@ -723,6 +683,22 @@ socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
     }));
     const reference = (await Promise.all([...(task.referenceSnapshot?.imageUrls || []), ...task.referenceUrls]
       .slice(0, 4).map(url => readSocialImageReferenceBytes(tenantId, url)))).find(Boolean) || undefined;
+    const visualByOutput = new Map<string, SocialImageQualityCheck[]>();
+    for (const output of task.outputs) {
+      if (output.state === 'superseded' || (task.imageType === 'gif_poster' && output.role === 'gif_plate')) continue;
+      const generated = await outputImageBytes(tenantId, output);
+      if (!generated) continue;
+      const plannedUnit = task.renderPlan?.units.find(unit => (unit.role === output.role || output.role === 'gif_frame') && unit.label === output.label);
+      const result = await runSocialImageVisualPreflight({ store, tenantId, taskId: task.id, outputId: output.id,
+        visualInput: { generated, products, reference, expected: {
+          headline: String(plannedUnit?.poster.headline || task.imageTextContract.headline),
+          supportingText: String(plannedUnit?.poster.subheadline || task.imageTextContract.supportingText),
+          cta: task.imageTextContract.cta, facts: task.imageTextContract.requiredFacts, format: task.deliverySpec.format,
+        } }, allowPaidCall: () => consumeDemoQuota(req, res, 'generation') });
+      if (!result) return;
+      task = result.task;
+      visualByOutput.set(output.id, result.visual);
+    }
     const outputs = await Promise.all(task.outputs.map(async output => {
       if (output.state === 'superseded') return output;
       // GIF plates are paid background evidence, not customer-visible frames.
@@ -750,15 +726,7 @@ socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
       const localChecks = new Map([...pixelChecks, ocrCheck, ...animationCheck].map(check => [check.key, check]));
       const deterministicForOutput = deterministic.filter(check => output.role === 'gif_output'
         || check.key !== 'motion_mechanism_similarity').map(check => localChecks.get(check.key) || check);
-      let visual = [] as Awaited<ReturnType<typeof qualityCheckSocialImageWithQwen>>;
-      try {
-        visual = await qualityCheckSocialImageWithQwen({ generated, products, reference, expected: {
-          headline: String(plannedUnit?.poster.headline || task.imageTextContract.headline),
-          supportingText: String(plannedUnit?.poster.subheadline || task.imageTextContract.supportingText),
-          cta: task.imageTextContract.cta, facts: task.imageTextContract.requiredFacts, format: task.deliverySpec.format,
-        } });
-      } catch { /* provider failure stays uncertain; never fabricate a pass */ }
-      const qualityChecks = mergeSocialImageVisualChecks(deterministicForOutput, visual);
+      const qualityChecks = mergeSocialImageVisualChecks(deterministicForOutput, visualByOutput.get(output.id) || []);
       qualityChecks.push(...await inspectSocialImageCandidateFactors({ task, bytes: generated.bytes,
         mimeType: generated.mimeType, ocr: localProductOcrReadiness().ready ? recognizeProductImageTokensLocally : undefined }));
       const failed = qualityChecks.filter(check => check.severity === 'hard' && !['pass', 'not_applicable'].includes(check.verdict));
@@ -790,6 +758,8 @@ socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
     }
     res.json({ ok: true, task: reviewedTask, checks: outputs.flatMap(output => output.qualityChecks) });
   } catch (error) {
-    res.status(503).json({ ok: false, error: error instanceof Error ? error.message : '自动预检失败' });
+    const failure = error instanceof SocialImageQualityPreflightError ? error : null;
+    res.status(failure?.status || 503).json({ ok: false, code: failure?.code || 'social_image_quality_preflight_failed',
+      error: error instanceof Error ? error.message : '自动预检失败' });
   }
 });

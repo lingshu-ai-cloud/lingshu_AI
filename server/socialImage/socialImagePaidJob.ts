@@ -7,6 +7,7 @@ import type { SocialImageCreationTask, SocialImageOutputNode } from '../../share
 import { SOCIAL_IMAGE_TASKS_COLLECTION } from './socialImageTask.js';
 import { evolveSocialImageProductionRuntime } from './socialImageProductionRuntime.js';
 import { socialImageV3PaidEvidenceHash, socialImageV3PaidPrerequisiteIssue } from './socialImagePaidPrerequisites.js';
+import { assertSocialImageCurrentContentTask, SocialImageProductionRunError } from './socialImageProductionRun.js';
 
 type StoredTask = { id: string; tenant_id: string; spec: { socialImageTask?: SocialImageCreationTask } };
 
@@ -26,11 +27,13 @@ export function socialImageQueuedJobIssue(task: SocialImageCreationTask, propose
 }
 
 /** Reject mixed input+queue patches and stamp V3 jobs with a server-derived evidence generation. */
-export async function admitSocialImageV3QueuedJob(store: DataStore, task: SocialImageCreationTask,
+export async function admitSocialImageV3QueuedJob(store: DataStore, tenantId: string, task: SocialImageCreationTask,
   patch: Partial<SocialImageCreationTask>): Promise<Partial<SocialImageCreationTask>> {
   if (task.schemaVersion !== 'social-image-creation.v3') return patch;
   const issue = socialImageV3PaidPrerequisiteIssue(task, 'execute');
   if (issue) throw new SocialImagePaidJobError(issue);
+  try { await assertSocialImageCurrentContentTask(store, tenantId, task); }
+  catch (error) { throw new SocialImagePaidJobError(error instanceof SocialImageProductionRunError ? error.code : 'social_image_content_task_read_failed'); }
   if (Object.keys(patch).some(field => !['generationJobs', 'status', 'step'].includes(field))
     || patch.status !== 'generating' || patch.step !== 'generate' || !patch.generationJobs?.length) {
     throw new SocialImagePaidJobError('social_image_job_patch_scope_invalid');
@@ -103,6 +106,8 @@ export async function claimSocialImagePaidJob(input: {
     const { row, task } = await taskRow(input.store, input.tenantId, input.taskId);
     const gate = socialImageV3PaidPrerequisiteIssue(task, 'execute');
     if (gate) throw new SocialImagePaidJobError(gate);
+    try { await assertSocialImageCurrentContentTask(input.store, input.tenantId, task); }
+    catch (error) { throw new SocialImagePaidJobError(error instanceof SocialImageProductionRunError ? error.code : 'social_image_content_task_read_failed'); }
     if (task.imageType === 'carousel' || task.imageType === 'gif_poster') {
       throw new SocialImagePaidJobError('social_image_multi_output_not_ready');
     }

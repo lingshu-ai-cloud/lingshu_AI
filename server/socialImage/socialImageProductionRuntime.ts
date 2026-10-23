@@ -17,6 +17,7 @@ import {
   type SocialImageCreationTask,
   type SocialImageOutputNode,
 } from '../../shared/contracts/socialImageCreation.js';
+import { resolveSocialImageReviewSet, socialImageDirectorReviewMatchesSet } from './socialImageReviewSet.js';
 
 const completed = (nodeId: SocialImageProductionNodeId): SocialImageProductionNodeState => ({
   nodeId, status: 'completed', attempt: 1, blockingReasons: [],
@@ -88,13 +89,16 @@ function derivedNodeStates(task: SocialImageCreationTask): SocialImageProduction
   if (qualityReady) states.quality_check = completed('quality_check');
   else if (currentOutputs.length) states.quality_check = { ...waiting('quality_check'), status: 'needs_review', attempt: 1,
     blockingReasons: ['social_image_hard_quality_gate_incomplete'] };
-  const currentRefs = reviewOutputs.map(output => `${output.id}:${output.version}:${output.contentHash}`);
-  const reviewedRefs = task.directorReviewDecision?.candidateRefs?.map(ref => `${ref.id}:${ref.version}:${ref.contentHash}`);
-  const directorCurrent = task.directorReviewDecision?.decision === 'accept_for_user_review'
-    && (task.imageType !== 'carousel' && task.imageType !== 'gif_poster'
-      ? reviewOutputs[0]?.id === task.directorReviewDecision.candidateId
-        && reviewOutputs[0]?.version === task.directorReviewDecision.candidateVersion
-      : currentRefs.length > 0 && JSON.stringify(currentRefs) === JSON.stringify(reviewedRefs));
+  const decision = task.directorReviewDecision;
+  const directorCurrent = task.schemaVersion === 'social-image-creation.v3'
+    ? socialImageDirectorReviewMatchesSet(decision
+      ? resolveSocialImageReviewSet(task, decision.candidateId, decision.candidateVersion) : null, decision)
+    : decision?.decision === 'accept_for_user_review'
+      && (task.imageType !== 'carousel' && task.imageType !== 'gif_poster'
+        ? reviewOutputs[0]?.id === decision.candidateId && reviewOutputs[0]?.version === decision.candidateVersion
+        : reviewOutputs.length > 0
+          && JSON.stringify(reviewOutputs.map(output => `${output.id}:${output.version}:${output.contentHash}`))
+          === JSON.stringify(decision.candidateRefs?.map(ref => `${ref.id}:${ref.version}:${ref.contentHash}`)));
   if (directorCurrent) states.director_review = completed('director_review');
   else if (qualityReady) states.director_review = { ...waiting('director_review'), status: 'needs_review', blockingReasons: ['social_image_director_review_required'] };
 

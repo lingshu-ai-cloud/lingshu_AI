@@ -20,7 +20,8 @@ process.env.OBJECT_STORAGE_DRIVER = 'local';
 
 const { auth, store } = await import('../storage/index.js');
 const { createSocialImageTask, updateSocialImageTask } = await import('../socialImage/socialImageTask.js');
-const { createOrResumeBoundSocialImageRun, recordSocialImageNodeOutput } = await import('../socialImage/socialImageProductionRun.js');
+const { createOrResumeBoundSocialImageRun, recordSocialImageBusinessContext,
+  recordSocialImageNodeOutput } = await import('../socialImage/socialImageProductionRun.js');
 const { SOCIAL_IMAGE_HARD_CHECKS } = await import('../../shared/contracts/socialImageCreation.js');
 const { SOCIAL_WORK_PACKAGE_KINDS } = await import('../../shared/contracts/socialContentWorkflow.js');
 const { defaultBrief } = await import('../starter198/socialContentTaskSupport.js');
@@ -255,14 +256,8 @@ test('HTTP image routes reject forged evidence and finalize durable GIF plates i
       entrySource: 'workspace', imageType: 'carousel',
     }, now)).task;
     createdIds.push(bound.id);
-    const context = await recordSocialImageNodeOutput({ store, tenantId, taskId: bound.id,
-      expectedVersion: bound.version, nodeId: 'business_context', status: 'completed', value: {
-        objective: bound.contentBrief.coreClaim, topicType: bound.contentBrief.topicType, deliverableType: 'carousel_cover',
-        productRefs: bound.contentBrief.productRefs, enterpriseFactSnapshotRef: null, audience: bound.contentBrief.audience,
-        ownedAccountId: null, accountDraftId: null, platforms: [bound.deliverySpec.platform], targetAction: null,
-        successMetrics: [], deliverySpec: bound.deliverySpec, budgetAndDeadline: { maximumCostCny: null, dueAt: null },
-        fieldsToConfirm: [],
-      }, inputRefs: [], createdBy: { kind: 'worker', id: 'http_fixture' }, now });
+    const context = await recordSocialImageBusinessContext({ store, tenantId, taskId: bound.id,
+      expectedVersion: bound.version, now });
     const asset = await recordSocialImageNodeOutput({ store, tenantId, taskId: bound.id,
       expectedVersion: context.version, nodeId: 'asset_manifest', status: 'completed', value: {
         enterpriseFactSnapshotRef: null, assets: [{ assetId: 'gif-http-product', version: 1, contentHash: createHash('sha256').update(product).digest('hex'),
@@ -326,6 +321,13 @@ test('HTTP image routes reject forged evidence and finalize durable GIF plates i
         candidateVersion: 1, expectedContentHash: pages[0]!.contentHash, decision: 'approved' }) });
     assert.equal(wrongHashResponse.status, 409);
     assert.equal((await wrongHashResponse.json() as { code?: string }).code, 'social_image_candidate_hash_conflict');
+    await store.update(STARTER_COLLECTIONS.socialContentTasks, contentRow!.id, { version: '2' });
+    const staleContentResponse = await fetch(`${baseUrl}/decision`, { method: 'POST', headers,
+      body: JSON.stringify({ expectedVersion: reviewedBody.task!.version, candidateId: pages[0]!.id,
+        candidateVersion: 1, expectedContentHash: groupHash, decision: 'approved' }) });
+    assert.equal(staleContentResponse.status, 409);
+    assert.equal((await staleContentResponse.json() as { code?: string }).code, 'social_image_content_task_binding_stale');
+    await store.update(STARTER_COLLECTIONS.socialContentTasks, contentRow!.id, { version: '1' });
     const secondPageMaterial = readLocalMaterials().find(item => item.id === pages[1]!.materialId);
     assert.ok(secondPageMaterial?.objectKey);
     const originalPage = await objectStorageDownload(secondPageMaterial.objectKey);

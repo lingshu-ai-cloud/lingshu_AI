@@ -226,6 +226,14 @@ export interface SocialImageOutputNode {
   contentHash?: string;
   version: number;
   qualityChecks: SocialImageQualityCheck[];
+  /** Durable one-shot receipt for the paid visual preflight of exact candidate and reference bytes. */
+  qualityPreflight?: {
+    inputHash: string;
+    status: 'claimed' | 'completed' | 'outcome_unknown';
+    claimedAt: string;
+    completedAt?: string;
+    visualChecks?: SocialImageQualityCheck[];
+  };
   sourceJobId?: string;
 }
 

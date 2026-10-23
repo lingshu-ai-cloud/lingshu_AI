@@ -5,13 +5,14 @@ import {
   type SocialImageCreationTask,
   type SocialImageOutputNode,
 } from '../../shared/contracts/socialImageCreation.js';
-import type { SocialImageVersionedRef } from '../../shared/contracts/socialImageProduction.js';
+import type { SocialImageDirectorReviewDecision, SocialImageVersionedRef } from '../../shared/contracts/socialImageProduction.js';
 
 export interface SocialImageReviewSet {
   outputs: SocialImageOutputNode[];
   anchor: SocialImageOutputNode;
   refs: SocialImageVersionedRef[];
   contentHash: string;
+  qualityEvidenceHash: string;
   qualityPassed: boolean;
 }
 
@@ -35,7 +36,11 @@ export function resolveSocialImageReviewSet(
     ? createHash('sha256').update(JSON.stringify({ productionRunId: task.id,
       planVersion: task.renderPlan?.version, candidates: refs })).digest('hex')
     : anchor.contentHash!;
-  return { outputs, anchor, refs, contentHash, qualityPassed: outputs.every(output =>
+  const qualityEvidenceHash = createHash('sha256').update(JSON.stringify({ refs,
+    checks: outputs.map(output => output.qualityChecks),
+    preflight: outputs.map(output => output.qualityPreflight || null),
+    hookFactorSpec: task.hookFactorSpec || null, adaptationSpec: task.adaptationSpec || null })).digest('hex');
+  return { outputs, anchor, refs, contentHash, qualityEvidenceHash, qualityPassed: outputs.every(output =>
     ['quality_checking', 'approved'].includes(output.state) && socialImageOutputHardChecksPassed(output)) };
 }
 
@@ -48,4 +53,17 @@ export function socialImageReviewRefsMatch(
     return candidate?.objectType === ref.objectType && candidate.id === ref.id
       && candidate.version === ref.version && candidate.contentHash === ref.contentHash;
   }));
+}
+
+/** Both single images and multi-output sets require the exact reviewed bytes
+ * and independent QA evidence, not just a stable candidate id/version. */
+export function socialImageDirectorReviewMatchesSet(
+  reviewSet: SocialImageReviewSet | null,
+  decision: SocialImageDirectorReviewDecision | undefined,
+): boolean {
+  return Boolean(reviewSet && decision?.decision === 'accept_for_user_review'
+    && decision.candidateId === reviewSet.anchor.id && decision.candidateVersion === reviewSet.anchor.version
+    && decision.candidateSetHash === reviewSet.contentHash
+    && decision.qualityEvidenceHash === reviewSet.qualityEvidenceHash
+    && socialImageReviewRefsMatch(reviewSet.refs, decision.candidateRefs));
 }

@@ -5,6 +5,12 @@ import { requireSocialImageAtomicStore, SocialImagePaidJobError } from './social
 import { planSocialImageRenderUnits } from './socialImageRenderPlan.js';
 import { readSocialImageTask, updateSocialImageTask, SOCIAL_IMAGE_TASKS_COLLECTION } from './socialImageTask.js';
 import { socialImageV3PaidEvidenceHash, socialImageV3PaidPrerequisiteIssue, socialImageV3ReferencePermitted } from './socialImagePaidPrerequisites.js';
+import { assertSocialImageCurrentContentTask, SocialImageProductionRunError } from './socialImageProductionRun.js';
+
+async function assertCurrentBusinessTask(store: DataStore, tenantId: string, task: SocialImageCreationTask): Promise<void> {
+  try { await assertSocialImageCurrentContentTask(store, tenantId, task); }
+  catch (error) { throw new SocialImagePaidJobError(error instanceof SocialImageProductionRunError ? error.code : 'social_image_content_task_read_failed'); }
+}
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -95,6 +101,7 @@ export async function persistSocialImageMultiUnitPlan(input: {
   if (!task) throw new SocialImagePaidJobError('social_image_task_missing');
   const gate = socialImageV3PaidPrerequisiteIssue(task, 'queue');
   if (gate) throw new SocialImagePaidJobError(gate);
+  await assertCurrentBusinessTask(input.store, input.tenantId, task);
   if (task.imageType !== 'carousel' && task.imageType !== 'gif_poster') {
     throw new SocialImagePaidJobError('social_image_multi_plan_type_required');
   }
@@ -109,6 +116,14 @@ export async function persistSocialImageMultiUnitPlan(input: {
   if (input.productHashes && task.contentBrief.productRefs.some(id => !/^[a-f0-9]{64}$/.test(input.productHashes?.[id] || '')
     || !frozenAssets.some(asset => asset.role === 'product' && asset.assetId === id && asset.contentHash === input.productHashes?.[id]))) {
     throw new SocialImagePaidJobError('social_image_product_asset_unavailable');
+  }
+  if (task.schemaVersion === 'social-image-creation.v3' && input.productHashes) {
+    const manifest = task.productionRuntime?.nodeOutputs.filter(output => output.nodeId === 'asset_manifest').at(-1)?.value as
+      { assets?: Array<{ assetId: string; contentHash: string; role: string }> } | undefined;
+    if (task.contentBrief.productRefs.some(id => manifest?.assets?.find(asset => asset.assetId === id
+      && asset.role === 'product')?.contentHash !== input.productHashes?.[id])) {
+      throw new SocialImagePaidJobError('social_image_required_asset_bytes_changed');
+    }
   }
   const sourceHash = socialImagePlanSourceHash({ ...task, enterpriseAssets: frozenAssets });
   if (task.renderPlan?.sourceHash === sourceHash && task.renderPlan.units.every(unit => task.generationJobs.some(job => (
@@ -212,6 +227,7 @@ export async function claimSocialImagePlannedUnit(input: {
     if (!task) throw new SocialImagePaidJobError('social_image_task_missing');
     const gate = socialImageV3PaidPrerequisiteIssue(task, 'execute');
     if (gate) throw new SocialImagePaidJobError(gate);
+    await assertCurrentBusinessTask(input.store, input.tenantId, task);
     socialImagePlannedRenderInput(task, input.jobId);
     const plan = task.renderPlan;
     if ((task.imageType !== 'carousel' && task.imageType !== 'gif_poster') || !plan || plan.sourceHash !== socialImagePlanSourceHash(task)) {
