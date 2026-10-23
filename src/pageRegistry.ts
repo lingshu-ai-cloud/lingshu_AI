@@ -43,15 +43,15 @@ export type PageDefinition = {
 };
 
 export const PAGE_REGISTRY: Record<Page, PageDefinition> = {
-  digitalEmployees: { navLabel: '智能经营', canonicalTitle: '智能经营' },
+  digitalEmployees: { navLabel: '经营总览', canonicalTitle: '经营总览' },
   agentMonitor: { navLabel: '运行监控', canonicalTitle: '运行监控' },
-  strategy: { navLabel: '首页', canonicalTitle: '首页' },
+  strategy: { navLabel: '内容创作', canonicalTitle: '内容创作' },
   socialWorkspace: { navLabel: '经营工作台', canonicalTitle: '社媒经营工作台' },
   socialSetup: { navLabel: '项目搭建', canonicalTitle: '社媒项目搭建' },
   socialAccounts: { navLabel: '账号矩阵', canonicalTitle: '自有账号矩阵' },
   socialPlanning: { navLabel: '月周计划', canonicalTitle: '月周经营计划' },
   traffic: { navLabel: '发布与渠道', canonicalTitle: '发布与渠道' },
-  socialInspiration: { navLabel: '灵感中心', canonicalTitle: '灵感中心' },
+  socialInspiration: { navLabel: '爆款库', canonicalTitle: '爆款库' },
   scriptLibrary: { navLabel: '脚本库', canonicalTitle: '脚本库', navParent: 'smartAssets' },
   smartAssets: { navLabel: '内容制作', canonicalTitle: '内容制作' },
   socialMonitoring: { navLabel: '内容监控', canonicalTitle: '账号内容监控' },
@@ -60,7 +60,7 @@ export const PAGE_REGISTRY: Record<Page, PageDefinition> = {
   adsPlans: { navLabel: '投放计划', canonicalTitle: '投放计划' },
   adsCreatives: { navLabel: '广告素材', canonicalTitle: '广告素材', navParent: 'adsPlans' },
   adsManaged: { navLabel: 'AI 托管', canonicalTitle: 'AI 托管' },
-  conversion: { navLabel: '我的会话', canonicalTitle: '我的会话' },
+  conversion: { navLabel: '智能客服', canonicalTitle: '智能客服' },
   wecomCustomerService: { navLabel: '智能客服', canonicalTitle: '智能客服｜企业微信' },
   retention: { navLabel: '我的会话', canonicalTitle: '我的会话', navParent: 'conversion' },
   orders: { navLabel: '订单', canonicalTitle: '订单' },

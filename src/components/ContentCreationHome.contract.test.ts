@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+
+const home = fs.readFileSync(new URL('./ContentCreationHome.tsx', import.meta.url), 'utf8');
+const assistant = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
+const library = fs.readFileSync(new URL('./ContentLibrary.tsx', import.meta.url), 'utf8');
+const inspiration = fs.readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
+const layout = fs.readFileSync(new URL('./Layout.tsx', import.meta.url), 'utf8');
+const card = fs.readFileSync(new URL('./InspirationVideoCards.tsx', import.meta.url), 'utf8');
+const creatorStyles = fs.readFileSync(new URL('../styles/creator-workspace.css', import.meta.url), 'utf8');
+const homeAnchor = fs.readFileSync(new URL('./assistant/useAssistantHomeAnchor.ts', import.meta.url), 'utf8');
+
+assert.match(home, /id="content-creation-assistant-anchor"/);
+assert.match(assistant, /useAssistantHomeAnchor\(inlineHome\)/);
+assert.match(homeAnchor, /resizeObserver\.observe\(layout\)/, '切换数字员工画布后须重新测量输入框位置');
+assert.match(home, /fetchViralFeed\(controller\.signal\)/);
+assert.match(home, /id="creator-home-library"/);
+assert.match(home, /onScroll=\{updateActiveSection\}/);
+assert.doesNotMatch(home, /onWheel=|onTouchEnd=|tryEnterLibrary/, '首页与爆款库应为连续滚动，不得在滚轮阈值处跳路由');
+assert.match(home, /<div data-home-media><VideoCard/);
+assert.match(home, /inspirationReference: \{ referenceId: video\.recordId/);
+assert.match(library, /<LsMasonryGallery layout="masonry" items=\{shown\.map/);
+assert.match(library, /<Modal open=\{Boolean\(previewItem\)\}/);
+assert.doesNotMatch(home, /fetch\('\/api\/overseas\/assistant-threads|createAssistantAction/, '首页不得创建平行会话/任务入口');
+assert.match(assistant, /data-home-empty=/);
+assert.match(assistant, /variant=\{inlineHome \? 'home' : 'default'\}/);
+assert.match(layout, /Math\.round\(viewportWidth \* 0\.173\)/, '左侧栏按参考图桌面比例布局');
+assert.match(creatorStyles, /\.creator-home__assistant-anchor \{ height: 230px/, '桌面创作布局须保留截图主输入区高度');
+assert.match(creatorStyles, /width: min\(470px, 100%\); height: 56px/, '双模式切换须对齐参考图比例');
+assert.match(creatorStyles, /width: min\(100%, 1416px\)/, '主内容宽度须与参考图一致');
+assert.match(card, /ls-viral-card group/);
+assert.doesNotMatch(card, /absolute top-2 right-2 z-20|absolute top-2 left-2 z-20/, '卡片默认态不显示顶部文字徽标');
+assert.doesNotMatch(inspiration, /absolute right-12 top-2 z-30 flex gap-1/, '爆款库管理按钮应在悬停浮层内，不能常驻画面顶部');
+
+console.log('Content creation home and finished gallery contracts passed');

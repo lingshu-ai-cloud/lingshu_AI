@@ -55,7 +55,7 @@ assert.match(source, /const retractLauncher[\s\S]{0,260}edgeLauncherButtonRef\.c
 assert.match(source, /const restoreLauncher[\s\S]{0,260}launcherButtonRef\.current\?\.focus\(\)/, '恢复后焦点必须交回完整入口');
 assert.match(source, /\{!launcherRetracted && mode === 'breathing' && performance[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*speechBubble[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*weeklyPlanKickoffAvailable[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*featureGuide/, '收起态不得显示任何横向提示气泡');
 assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY/, '右下角入口不得恢复拖动、旧坐标或自动缩边交互');
-assert.match(launcherMarkup, /!bg-white[\s\S]*active:!bg-white[\s\S]*focus-visible:!bg-white/, '灵小枢入口在点击和聚焦时必须保持不透明白底');assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
+assert.match(launcherMarkup, /!bg-surface[\s\S]*active:!bg-surface[\s\S]*focus-visible:!bg-surface/, '灵小枢入口在点击和聚焦时必须保持不透明主题表面');assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
 assert.match(source, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
 assert.match(source, /max-h-\[calc\(100dvh-env\(safe-area-inset-bottom\)-96px\)\]/, '灵小枢弹窗高度必须避让移动设备底部安全区');
 assert.match(source, /role="dialog"[\s\S]{0,160}aria-modal="false"[\s\S]{0,160}aria-labelledby="global-assistant-panel-title"[\s\S]{0,160}aria-describedby="global-assistant-panel-description"/, '灵小枢必须以有名称和说明的非模态对话浮层呈现');
@@ -138,7 +138,7 @@ assert.match(externalDecisionDialogSource, /onNavigate=\{closeDecisionDialogForN
 assert.match(externalDecisionDialogSource, /onActionResult=\{handleDecisionActionResult\}/, '权威待办动作结果必须回到对话壳形成一次性结果反馈');
 assert.match(externalDecisionDialogSource, /href=\{dialogTaskCard\.workspace\.href\}[\s\S]{0,120}onClick=\{\(\) => closeDecisionDialogForNavigation\(\)\}/, '普通任务工作区链接也必须在导航前关闭外部弹窗');
 assert.match(appSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
-assert.match(source, /width: assistantPanelWidth,\s*maxWidth: 'calc\(100vw - 32px\)'/, '灵小枢面板必须用视口宽度约束，不能被零宽定位根节点压缩');
+assert.match(source, /width: inlineHomeBounds\?\.width \?\? assistantPanelWidth,\s*maxWidth: inlineHomeBounds \? '100%' : 'calc\(100vw - 32px\)'/, '灵小枢首页面板使用首页锚点宽度，其他页面仍受视口宽度约束');
 assert.match(source, /assistantTool === 'knowledge-intake' \? 560 : 420/, '灵小枢对话面板必须保持 420px 基准宽度，外部详情不得挤压对话宽度');
 
 const closedDecisionCountSource = sourceSection(
@@ -240,7 +240,7 @@ const welcomeBubbleSource = sourceSection(
   '欢迎语气泡',
 );
 assert.match(welcomeBubbleSource, /ls-assistant-bubble-enter/, '欢迎语必须作为普通可滚动气泡进入消息流');
-assert.match(source, /welcomeBubbleVisible && !activeThread\.messages\.length/, '线程恢复出任意消息后必须立即隐藏欢迎语');
+assert.match(source, /welcomeBubbleVisible && !inlineHome && !activeThread\.messages\.length/, '首页隐藏旧欢迎语，线程恢复出任意消息后也不得重现');
 assert.doesNotMatch(welcomeBubbleSource, /\b(?:sticky|fixed|absolute)\b/, '欢迎语不得置顶、固定或脱离消息滚动流');
 
 assert.match(runtimeSource, /function assistantBubbleStyle\(index: number\)[\s\S]*Math\.min\(Math\.max\(0, index\), 6\)[\s\S]*--assistant-bubble-delay': `\$\{boundedIndex \* 15\}ms`/, '气泡进入顺序必须使用 15ms 间隔并在第 6 项封顶');
@@ -273,8 +273,8 @@ assert.doesNotMatch(sendSource, /agentTaskDemo: true/, '真实执行不得进入
 assert.match(sendSource, /productId: productionProduct\.id[\s\S]*productRef: productionProduct\.label/, '周任务必须绑定企业中心的真实产品身份');
 assert.match(sendSource, /setAssistantTool\(null\)[\s\S]*setMode\('breathing'\)[\s\S]*page: 'smartAssets'/, '进入生产页前必须收起灵小枢对话窗口');
 assert.match(sendSource, /page: 'smartAssets'[\s\S]*socialContentTaskId: productionTask\.taskId/, '任务创建后必须定位到该任务的生产页面');
-assert.ok(sendSource.indexOf('socialContentApi.createAssistantAction') < sendSource.indexOf('fetch(API_PATH[agentForOrbit(routeAgent)]'), '生产任务分流必须发生在千问文本生成请求之前');
-assert.match(sendSource, /fetch\(API_PATH\[agentForOrbit\(routeAgent\)\]/, 'business 主线程聚合不得丢失当前页面的内部能力路由');
+assert.ok(sendSource.indexOf('socialContentApi.createAssistantAction') < sendSource.indexOf('fetch(ASSISTANT_API_PATH[agentForOrbit(routeAgent)]'), '生产任务分流必须发生在千问文本生成请求之前');
+assert.match(sendSource, /fetch\(ASSISTANT_API_PATH\[agentForOrbit\(routeAgent\)\]/, 'business 主线程聚合不得丢失当前页面的内部能力路由');
 assert.doesNotMatch(sendSource, /setPaused\(targetAgent,\s*false\)/, '发送普通消息不得擅自把任务恢复为运行中');
 assert.match(sendSource, /focusedNaturalLanguageActionInput\(focusedCard, focusedMutationActionId\)/, '自然语言确定性操作必须从当前卡片读取后端签发输入');
 assert.match(sendSource, /\.\.\.\(focusedActionInput \?\? \{\}\)/, '只有兼容的聚焦操作输入才可进入自然语言请求');

@@ -17,9 +17,9 @@ for (const page of PAGE_IDS) {
 }
 
 for (const [page, title] of Object.entries({
-  strategy: '首页',
-  digitalEmployees: '智能经营',
-  conversion: '我的会话',
+  strategy: '内容创作',
+  digitalEmployees: '经营总览',
+  conversion: '智能客服',
   orders: '订单',
   enterprise: '企业知识库',
   scheduled: '定时任务',
@@ -35,7 +35,7 @@ assert.deepEqual(PRIMARY_SOCIAL_NAV_PAGES, [
   'traffic',
 ]);
 assert.deepEqual(PRIMARY_SOCIAL_NAV_PAGES.map(page => PAGE_REGISTRY[page].navLabel), [
-  '灵感中心',
+  '爆款库',
   '内容制作',
   '发布与渠道',
 ]);

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag } from 'antd';
+import { Alert, Button, Form, Input, Modal, Popconfirm, Radio, Select, Space, Table, Tabs, Tag } from 'antd';
 import { Plus, Trash2 } from 'lucide-react';
 import { authApi, type EmployeeAccount, type OrganizationRole } from '../lib/auth';
+import { useAppearance } from '../lib/appearance';
 
 interface Props { open: boolean; onClose: () => void; onLogout?: () => void; canManageEmployees?: boolean }
 
 export default function AccountSettingsModal({ open, onClose, onLogout, canManageEmployees = false }: Props) {
+  const { preference, appearance, setPreference } = useAppearance();
   const [tab, setTab] = useState('password');
   const [saving, setSaving] = useState(false);
   const [changed, setChanged] = useState(false);
@@ -52,6 +54,14 @@ export default function AccountSettingsModal({ open, onClose, onLogout, canManag
   return <Modal open={open} onCancel={onClose} title="账号设置" width={720} footer={null} mask={{ closable: false }} keyboard={!saving} closable={!saving} styles={{ body: { maxHeight: '72dvh', overflowY: 'auto' } }} afterClose={() => { passwordForm.resetFields(); employeeForm.resetFields(); setError(''); setAdding(false); }}>
     {error && <Alert type="error" title={error} showIcon className="mb-4" />}
     <Tabs activeKey={tab} onChange={key => { if (!saving) { setTab(key); setError(''); } }} items={[
+      { key: 'appearance', label: '外观', children: <div className="space-y-4">
+        <p className="text-sm text-text-secondary">当前为{appearance === 'dark' ? '夜间' : '日间'}模式。自动模式按北京时间 20:00–次日 08:00 开启夜间模式。</p>
+        <Radio.Group value={preference} onChange={event => setPreference(event.target.value)} aria-label="外观模式">
+          <Radio value="auto">自动切换</Radio>
+          <Radio value="light">始终日间（关闭夜间）</Radio>
+          <Radio value="dark">始终夜间</Radio>
+        </Radio.Group>
+      </div> },
       { key: 'password', label: '修改密码', children: changed
         ? <Space orientation="vertical"><Alert type="success" showIcon title="密码修改成功" description="请使用新密码重新登录。" /><Button type="primary" onClick={onLogout}>重新登录</Button></Space>
         : <Form form={passwordForm} layout="vertical" onFinish={submitPassword} style={{ maxWidth: 440 }} disabled={saving}>

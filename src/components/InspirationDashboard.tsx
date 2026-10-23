@@ -1,6 +1,6 @@
 import InspirationVideoAnalysisTabs from './inspiration/InspirationVideoAnalysisTabs';
 import VideoAnalysisProgressPanel, { analysisProgressIsActive } from './inspiration/VideoAnalysisProgressPanel';
-import { Alert, Button, Drawer, Form, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
+import { Alert, Button, Drawer, Form, Input, Modal, Pagination, Select, Tabs, Upload as AntUpload } from 'antd';
 import LsPageHeader from './ui/LsPageHeader';
 import { LsLoadingState, LsMasonryGallery, LsMediaStateFrame, LsProgressiveMedia } from './ui/LsExperiencePrimitives';
 import { canExplicitlySubmitReferenceAsr, referenceAsrAvailabilityLabel, canRefreshExistingReferenceAsr, existingReferenceAsrRefreshBody } from '../lib/referenceAsrSubmission';
@@ -17,7 +17,7 @@ import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import {
   Search, Play, Sparkles, FileText, Layout as LayoutIcon,
   TrendingUp, Clock, Globe, ChevronDown, X, Loader2,
-  Check, Copy, ArrowRight, Zap, LayoutGrid, List,
+  Check, Copy, ArrowRight, Zap,
   Lightbulb, Flame, BarChart2, ChevronRight, Film,
   Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2, Music2,
   SlidersHorizontal, Package, ScanFace, Star, Eye,
@@ -33,16 +33,17 @@ import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { updateScriptGapTask, type ScriptGapTask } from '../lib/scriptGapQueue';
-import { canProcessVideo, displayDuration, resultEmptyState, trendFromEvidence } from '../lib/inspirationDataQuality';
-export { canProcessVideo, displayDuration, resultEmptyState, trendFromEvidence } from '../lib/inspirationDataQuality';
+import { canProcessVideo, displayDuration, isDisplayableVideoAnalysis, resultEmptyState, trendFromEvidence } from '../lib/inspirationDataQuality';
+export { canProcessVideo, displayDuration, isDisplayableVideoAnalysis, resultEmptyState, trendFromEvidence } from '../lib/inspirationDataQuality';
 import { useScriptGapTasks } from '../hooks/useScriptGapTasks';
 import InspirationEmptyState from './InspirationEmptyState';
 import { scoreSocialInspirationCandidate } from '../../shared/socialInspirationStrategy';
 import { cachedProductInspirationCandidate, resumeOrCreateInspirationTask, soleInspirationCreationAccount } from '../lib/socialInspirationTask';
 import { useSocialProgram } from '../contexts/SocialProgramContext';
-import { VideoCard, VideoListItem } from './InspirationVideoCards';
+import { VideoCard } from './InspirationVideoCards';
 import { showActionFeedback, showActionSuccess } from '../lib/actionFeedback';
 import { resolveInspirationPlaybackUrl } from '../lib/inspirationVideoPlayback';
+import InspirationWatchDialog from './inspiration/InspirationWatchDialog';
 import type { AccountSpecialRecommendation, ContentFormat, FirstTenSecondInsight, FrameMaterialMatch, GeminiVideoAnalysis, Platform, ScriptAnalysis, ScriptDetail15s, ScriptResultProvenance, ScriptSummary15s, ShootingNeed, StructureStep, TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes';
 import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
 import { openScriptLibrary } from '../lib/contentActionNavigation';
@@ -115,9 +116,9 @@ function MaterialUsageMark({ material }: { material: Material }) {
   const summary = material.usageSummary;
   if (!summary || summary.totalUses < 1) return null;
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border pt-2 text-[11px] font-semibold text-text-secondary" aria-label="素材使用记录">
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/30 pt-2 text-[11px] font-semibold text-white/85" aria-label="素材使用记录">
       <span>已使用 {summary.totalUses} 次</span>
-      {summary.hookUses > 0 ? <span className="inline-flex items-center gap-1 text-accent"><Zap size={11} aria-hidden="true" />前三秒 {summary.hookUses} 次</span> : null}
+      {summary.hookUses > 0 ? <span className="inline-flex items-center gap-1 text-white"><Zap size={11} aria-hidden="true" />前三秒 {summary.hookUses} 次</span> : null}
     </div>
   );
 }
@@ -670,26 +671,6 @@ export function inspirationCreationAvailability(video: TrendVideo): { ready: boo
       : { ready: false, reason: video.aiAnalysis?.imageAnalysisStatus === 'failed' || video.status === 'failed' ? '图文分析失败，请重新分析后再开始创作。' : '图文证据尚未完成，请等待或重新分析后再开始创作。' };
   }
   return inspirationCreationShotPreflight(video);
-}
-
-export function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, status?: TrendVideo['status']): boolean {
-  // A manually uploaded benchmark remains part of the user's library even
-  // when exact analysis fails. Hiding it made a deduplicated re-upload look
-  // lost and also removed the only UI from which the Director run could be
-  // inspected or retried.
-  if (analysis?.usage === 'reference_only'
-    && Boolean(analysis.contentSha256)
-    && analysis.userVisible !== false) return true;
-  if (status === 'failed') return analysis?.contentFormat === 'image';
-  // Collection results are useful before full-video analysis completes. The
-  // card can already show verified platform metadata and a processing state.
-  // Only terminal media/analysis failures should be removed from the feed.
-  if (!analysis) return true;
-  const geminiStatus = String(analysis.geminiStatus || '');
-  const downloadStatus = String(analysis.downloadStatus || '');
-  return downloadStatus !== 'failed'
-    && downloadStatus !== 'manual_required'
-    && geminiStatus !== 'video_failed';
 }
 
 function contentFormatOfAnalysis(analysis?: VideoAnalysisPayload): ContentFormat {
@@ -1700,7 +1681,7 @@ function MaterialLibraryCardMedia({
   useEffect(() => setAspectRatio(materialIntrinsicAspectRatio(material)), [material.aspectRatio, material.height, material.id, material.width]);
   return (
     <div className="relative bg-surface-2" style={{ aspectRatio }}>
-      <div className="absolute right-2 top-2 z-30 flex gap-1">
+      <div className="ls-touch-media-reveal absolute right-2 top-2 z-30 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
         {material.canManage && <button type="button" aria-label={`编辑 ${material.name}`} title="编辑" onClick={onEdit} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-accent"><Pencil size={14} /></button>}
         {material.canManage && <button type="button" aria-label={`删除 ${material.name}`} title="删除" onClick={onDelete} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-red-600"><Trash2 size={14} /></button>}
         <button type="button" aria-label={`${isFavoriteMaterial(material) ? '取消收藏' : '收藏'} ${material.name}`} title={isFavoriteMaterial(material) ? '取消收藏' : '收藏'} onClick={onFavorite} disabled={favoriting}
@@ -1724,7 +1705,7 @@ function MaterialLibraryCardMedia({
           aria-label={`播放 ${material.name}`}
           disabled={!material.url}
           onClick={event => { event.stopPropagation(); onPlay(); }}
-          className="absolute left-1/2 top-1/2 z-20 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/65 text-white shadow-lg transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white disabled:hidden"
+          className="ls-touch-media-reveal absolute left-1/2 top-1/2 z-20 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/65 text-white opacity-0 shadow-lg transition hover:scale-105 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus:outline-none focus:ring-2 focus:ring-white disabled:hidden max-md:opacity-100"
         >
           <Play size={19} fill="currentColor" />
         </button>
@@ -3097,103 +3078,6 @@ function timeValue(value?: string): number {
   return Number.isFinite(t) ? t : 0;
 }
 
-function sourceEmbedUrl(video: TrendVideo): string {
-  const source = String(video.sourceUrl || '').trim();
-  if (!source) return '';
-  try {
-    const url = new URL(source);
-    if (video.platform === 'youtube') {
-      const id = url.hostname.includes('youtu.be')
-        ? url.pathname.split('/').filter(Boolean)[0]
-        : url.searchParams.get('v') || url.pathname.match(/\/(?:shorts|embed)\/([^/?#]+)/)?.[1];
-      return id ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&rel=0` : '';
-    }
-    if (video.platform === 'tiktok') {
-      const id = url.pathname.match(/\/video\/(\d+)/)?.[1];
-      return id ? `https://www.tiktok.com/player/v1/${id}?autoplay=1` : '';
-    }
-    if (video.platform === 'instagram' && /\/(?:reel|p|tv)\//i.test(url.pathname)) {
-      return `${source.replace(/[?#].*$/, '').replace(/\/$/, '')}/embed/`;
-    }
-  } catch { /* malformed URLs fall back to the original-site action */ }
-  return '';
-}
-
-function WatchModal({ video, onClose }: { video: TrendVideo; onClose: () => void }) {
-  const embedUrl = sourceEmbedUrl(video);
-  const [previewAttempt, setPreviewAttempt] = useState(0);
-  const [previewLoading, setPreviewLoading] = useState(Boolean(video.videoUrl));
-  const [previewError, setPreviewError] = useState('');
-  const [useEmbedPlayer, setUseEmbedPlayer] = useState(false);
-  const retryPreview = () => {
-    setPreviewError('');
-    setPreviewLoading(Boolean(video.videoUrl));
-    setUseEmbedPlayer(false);
-    setPreviewAttempt(value => value + 1);
-  };
-  return (
-    <Modal open title={video.title} width={840} zIndex={2200} onCancel={onClose}
-      footer={<div className="flex justify-end gap-2">{video.sourceUrl && <Button onClick={() => window.open(video.sourceUrl, '_blank', 'noopener,noreferrer')}>原站打开</Button>}<Button onClick={onClose}>关闭</Button></div>}>
-      <p className="mb-3 flex items-center gap-2 text-xs text-text-secondary"><SocialPlatformIcon platform={video.platform} size={14}/>{PLATFORM_META[video.platform]?.label ?? video.platform} · 视频预览</p>
-        <div className="bg-black">
-          {video.videoUrl && !useEmbedPlayer ? (
-            <div className="relative flex min-h-64 items-center justify-center bg-black">
-              <AuthenticatedVideo
-                key={`${video.id}:${previewAttempt}`}
-                apiUrl={video.videoUrl}
-                poster={video.thumbnail}
-                controls
-                autoPlay
-                className="max-h-[72vh] w-full bg-black"
-                onReady={() => { setPreviewLoading(false); setPreviewError(''); }}
-                onLoadingChange={setPreviewLoading}
-                onError={message => {
-                  setPreviewLoading(false);
-                  if (embedUrl) {
-                    setPreviewError('');
-                    setUseEmbedPlayer(true);
-                    return;
-                  }
-                  setPreviewError(message || '视频预览失败');
-                }}
-              />
-              {previewLoading && !previewError && (
-                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/45 text-white">
-                  <span className="inline-flex items-center gap-2 rounded-lg bg-black/65 px-3 py-2 text-xs font-semibold"><Loader2 size={14} className="animate-spin" />正在准备视频…</span>
-                </div>
-              )}
-              {previewError && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 px-6 text-center text-white">
-                  <Play size={28} className="opacity-70" />
-                  <p className="mt-3 text-sm font-semibold">视频预览暂时失败</p>
-                  <p className="mt-1 max-w-md text-xs leading-relaxed text-white/65">{previewError}</p>
-                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                    <button type="button" onClick={retryPreview} className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-neutral-900">重新获取播放地址</button>
-                    {embedUrl && <button type="button" onClick={() => { setPreviewError(''); setUseEmbedPlayer(true); }} className="rounded-lg border border-white/25 bg-white/10 px-3 py-2 text-xs font-bold text-white">使用原站播放器</button>}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : embedUrl ? (
-            <iframe
-              src={embedUrl}
-              title={`${video.title} 站内播放器`}
-              allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-              allowFullScreen
-              referrerPolicy="strict-origin-when-cross-origin"
-              className="aspect-video w-full border-0 bg-black"
-            />
-          ) : (
-            <div className="aspect-video flex flex-col items-center justify-center gap-3 text-white/70">
-              <Play size={28} />
-              <p className="text-sm">当前仅支持跳转原视频；分析用临时视频不会进入素材库</p>
-            </div>
-          )}
-        </div>
-    </Modal>
-  );
-}
-
 interface DirectorReviewHandoff {
   status: 'review_only' | 'production_ready';
   directorHandoffReady?: boolean;
@@ -3656,7 +3540,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [requestedReference, setRequestedReference] = useState<InspirationReferenceTarget | null>(initialInspirationReferenceTarget);
   const openedReferenceTargetRef = useRef('');
   const [watchVideo, setWatchVideo] = useState<TrendVideo | null>(null);
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const watchTriggerRef = useRef<HTMLElement | null>(null);
   const [sortMode, setSortMode] = useState<SortMode>('crawlTime');
   const [contentFormat, setContentFormat] = useState<ContentFormat>('video');
   const [inspirationFavoriteFilter, setInspirationFavoriteFilter] = useState<FavoriteFilter>('all');
@@ -4685,14 +4569,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   };
 
   const handleWatch = (video: TrendVideo) => {
-    if (video.videoUrl || sourceEmbedUrl(video)) {
-      setWatchVideo(video);
-      return;
-    }
-    if (video.sourceUrl) {
-      window.open(video.sourceUrl, '_blank', 'noopener,noreferrer');
-      return;
-    }
+    watchTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setWatchVideo(video);
   };
 
@@ -5269,7 +5146,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setBusinessModelFilter('all');
     setMinimumDiscoveryScore(0);
     setSortMode('crawlTime');
-    setViewMode('grid');
   };
 
   const setMaterialProductSelection = (value: string) => {
@@ -5339,14 +5215,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     + Number(discoveryDecision !== 'all')
     + Number(businessModelFilter !== 'all')
     + Number(minimumDiscoveryScore > 0)
-    + Number(sortMode !== 'crawlTime')
-    + Number(viewMode !== 'grid');
+    + Number(sortMode !== 'crawlTime');
   const inspirationAdvancedFilterCount = Number(crawlTimeRange !== 'all')
     + Number(discoveryDecision !== 'all')
     + Number(businessModelFilter !== 'all')
     + Number(minimumDiscoveryScore > 0)
-    + Number(sortMode !== 'crawlTime')
-    + Number(viewMode !== 'grid');
+    + Number(sortMode !== 'crawlTime');
   const materialFilterCount = Number(materialSearch.trim().length > 0)
     + Number(materialAssetTab !== 'all')
     + Number(materialTheme !== 'all')
@@ -5383,7 +5257,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       {exactReview && <section className="m-4 rounded border p-4"><h2>原参考逐镜审核 · {exactReview.recordId}</h2><DirectorReviewWorkspace key={`${exactReview.recordId}:${exactReviewToken}`} recordId={exactReview.recordId} handoff={exactReview.handoff} onPreview={()=>handleWatch(exactReview.video)} /></section>}
       <div className="transition-all duration-300">
         <div className="px-4 py-5 sm:px-6 lg:py-6">
-          <LsPageHeader title="灵感中心" description="查看外部参考、管理产品素材，并将内容证据交接到制作流程。" />
+          <LsPageHeader title="爆款库" description="查看外部参考、管理产品素材，并将内容证据交接到制作流程。" />
           <div className="mb-4 flex min-w-0 flex-col gap-3 border-b border-border lg:flex-row lg:items-start">
             <Tabs className="min-w-0 flex-1" activeKey={innerView} onChange={key => setInnerView(key as InspirationInnerView)} aria-label="灵感中心分类"
               items={[
@@ -5395,7 +5269,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             {innerView === 'inspiration' && <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 pt-1 lg:w-auto">
               <Button type="primary" icon={<Users size={15} />} onClick={() => setInnerView('accounts')}>采集对标账号爆款</Button>
               <Button icon={<Images size={15} />} onClick={openImageCrawl}>关键词补充</Button>
-              <AntUpload accept="video/mp4,.mp4" showUploadList={false} disabled={importingReference} beforeUpload={file => { void importReferenceVideo(file); return false; }}>
+              <AntUpload className="shrink-0 pt-1" accept="video/mp4,.mp4" showUploadList={false} disabled={importingReference} beforeUpload={file => { void importReferenceVideo(file); return false; }}>
                 <Button loading={importingReference} icon={<Upload size={15} />}>导入 MP4 并分析</Button>
               </AntUpload>
             </div>}
@@ -5490,7 +5364,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   <label className="space-y-1 text-xs text-text-secondary"><span>筛选结论</span><Select className="w-full" value={discoveryDecision} onChange={value => setDiscoveryDecision(value as DiscoveryDecisionFilter)} aria-label="服务端筛选结论" options={[{ value: 'all', label: '全部评分结果' }, { value: 'accepted', label: '已入选' }, { value: 'review', label: '待复核' }, { value: 'rejected', label: '已淘汰' }]} /></label>
                   <label className="space-y-1 text-xs text-text-secondary"><span>业务类型</span><Select className="w-full" value={businessModelFilter} onChange={value => setBusinessModelFilter(value as BusinessModelFilter)} aria-label="业务类型" options={[{ value: 'all', label: '全部业务类型' }, { value: 'b2b', label: 'B2B 对标' }, { value: 'mixed', label: '混合业务' }, { value: 'd2c', label: 'DTC 卖货' }, { value: 'unknown', label: '待识别' }]} /></label>
                   <label className="space-y-1 text-xs text-text-secondary"><span>最低综合评分</span><Select className="w-full" value={minimumDiscoveryScore} onChange={setMinimumDiscoveryScore} aria-label="最低综合评分" options={[{ value: 0, label: '不限分数' }, { value: 50, label: '50 分以上' }, { value: 70, label: '70 分以上' }, { value: 85, label: '85 分以上' }]} /></label>
-                  <div className="space-y-1 text-xs text-text-secondary"><span>展示方式</span><Segmented block value={viewMode} onChange={value => setViewMode(value as 'grid' | 'list')} aria-label="大屏视图" options={[{ value: 'grid', label: '卡片', icon: <LayoutGrid size={14}/> }, { value: 'list', label: '列表', icon: <List size={14}/> }]} /></div>
                 </div>
                 <div className="flex justify-end"><Button type="text" onClick={clearInspirationFilters} disabled={inspirationFilterCount === 0} icon={<X size={13} />}>清除全部筛选</Button></div>
               </div>}
@@ -5509,7 +5382,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 </LsLoadingState>
               ) : filtered.length === 0 ? (
                 <InspirationEmptyState state={resultEmptyState(visibleVideos.length, search, platform !== 'all' || crawlTimeRange !== 'all')} contentFormat={contentFormat} search={search} localMaterialCount={localMaterials.length} onReset={resetInspirationFilters} onOpenLibrary={() => setInnerView('library')} />
-              ) : viewMode === 'grid' ? (
+              ) : (
                 <LsMasonryGallery layout="masonry" items={filtered.map((video, i) => ({ id: video.id, content:
                     <div className="relative h-full">
                       <VideoCard video={video} index={i} isSelected={false}
@@ -5520,34 +5393,14 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         createDisabled={video.contentFormat === 'image' && !inspirationCreationAvailability(video).ready}
                         createDisabledReason={inspirationCreationAvailability(video).reason}
                         onWatch={() => handleWatch(video)}
+                        onEditManage={video.canManage ? () => openManageDialog({ kind: 'video', item: video, action: 'edit' }) : undefined}
+                        onDeleteManage={video.canManage ? () => openManageDialog({ kind: 'video', item: video, action: 'delete' }) : undefined}
                         onFavoriteMaterial={() => void favoriteMaterial(video)}
                         favoritingMaterial={favoritingMaterialIds.includes(video.id)}
                         isFavoriteMaterial={favoritedVideoIds.includes(video.id) || favoriteSourceUrls.has(String(video.sourceUrl || '').trim())} />
-              {video.canManage && (
-                <div className="absolute right-12 top-2 z-30 flex gap-1">
-                  <button type="button" title="编辑素材" aria-label="编辑素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'edit' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow transition hover:text-accent"><Pencil size={14} /></button>
-                  <button type="button" title="删除素材" aria-label="删除素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'delete' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow transition hover:text-red-600"><Trash2 size={14} /></button>
-                </div>
-              )}
 
                     </div>
                 }))} />
-              ) : (
-                <div className="card overflow-hidden divide-y divide-border">
-                  {filtered.map(video => (
-                    <VideoListItem key={video.id} video={video} isSelected={false}
-                      onSelect={() => openDirectorAnalysis(video)}
-                      onCreate={() => startInspirationCreation(video)}
-                        createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.id.startsWith('material-') ? '开始创作' : '爆款裂变'}
-                        creating={launchingReferences.includes(video.id)}
-                      createDisabled={video.contentFormat === 'image' && !inspirationCreationAvailability(video).ready}
-                      createDisabledReason={inspirationCreationAvailability(video).reason}
-                      onWatch={() => handleWatch(video)}
-                      onFavoriteMaterial={() => void favoriteMaterial(video)}
-                      favoritingMaterial={favoritingMaterialIds.includes(video.id)}
-                      isFavoriteMaterial={favoritedVideoIds.includes(video.id) || favoriteSourceUrls.has(String(video.sourceUrl || '').trim())} />
-                  ))}
-                </div>
               )}
               {videosLoaded && !serverDiscoveryFilterActive && videoTotalPages > 1 && (
                 <nav className="flex justify-center py-4" aria-label="灵感发现分页">
@@ -5691,7 +5544,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                           <span className="ls-type-body-small text-text-muted">共 {ordinaryFilteredTotal} 条 · 当前第 {materialPage} 页</span>
                         </div>
                         <LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map(material => ({ id: material.id, content:
-                          <article className="group flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-none transition hover:border-border-bright">
+                          <article className="group relative overflow-hidden rounded-lg border border-border bg-surface shadow-none transition hover:border-border-bright focus-within:border-accent">
                             <MaterialLibraryCardMedia
                               material={material}
                               favoriting={favoritingMaterialIds.includes(material.id)}
@@ -5701,12 +5554,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                               onFavorite={() => void toggleMaterialFavorite(material)}
                               onPlay={() => setPreviewMaterial(material)}
                             />
-                            <div className="flex flex-1 flex-col p-3">
-                              <p className="line-clamp-2 text-sm font-bold leading-snug text-text-primary">{material.name}</p>
-                              <p className="mt-1 line-clamp-1 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
-                              {generatedMaterialOriginLabel(material) && <p className="mt-1 line-clamp-1 text-[11px] font-medium leading-5 text-text-muted" title={generatedMaterialOriginLabel(material)}>{generatedMaterialOriginLabel(material)}</p>}
-                              <MaterialUsageMark material={material} />
-                              <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
+                            <div className="ls-touch-media-reveal absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/90 via-black/65 to-transparent px-3 pb-3 pt-10 text-white opacity-0 transition-opacity duration-[var(--ls-motion-fast)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+                              <p className="line-clamp-2 text-sm font-bold leading-snug">{material.name}</p>
+                              <p className="mt-1 line-clamp-1 text-xs text-white/85" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
+                              {generatedMaterialOriginLabel(material) && <p className="mt-1 line-clamp-1 text-[11px] text-white/75" title={generatedMaterialOriginLabel(material)}>{generatedMaterialOriginLabel(material)}</p>}
+                              <MaterialUsageMark material={material}/>
+                              <div className="mt-2 grid grid-cols-2 gap-2">
                                 <button type="button" onClick={() => setDetailMaterial(material)} className="inline-flex h-9 min-w-0 flex-nowrap items-center justify-center gap-0.5 rounded-lg border border-border bg-white px-1.5 text-[11px] font-bold text-text-secondary transition hover:border-accent hover:text-accent">
                                   <Eye size={12} className="shrink-0" /><span className="whitespace-nowrap">查看详情</span>
                                 </button>
@@ -5924,7 +5777,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         )}
       </AnimatePresence>
       <AnimatePresence>
-        {watchVideo && <WatchModal key={watchVideo.id} video={watchVideo} onClose={() => setWatchVideo(null)} />}
+        {watchVideo && <InspirationWatchDialog key={watchVideo.id} video={watchVideo} videos={filtered}
+          onClose={() => { setWatchVideo(null); window.requestAnimationFrame(() => watchTriggerRef.current?.focus()); }}
+          onOpenDetails={item => { setWatchVideo(null); setSelectedVideo(item); }} />}
       </AnimatePresence>
       <Modal
         open={materialUploadDialogOpen}

@@ -184,11 +184,11 @@ export function ProductMaterialGroupCard({
   const sourceImageUrl = productSlots.find(slot => slot.sourceImageUrl)?.sourceImageUrl;
 
   return (
-    <article className="group overflow-hidden rounded-lg border border-border bg-surface transition-colors hover:border-border-bright">
+    <article className="group relative overflow-hidden rounded-lg border border-border bg-surface transition-colors hover:border-border-bright focus-within:border-accent">
       <ProductCover product={product} coverMaterial={coverMaterial} sourceImageUrl={sourceImageUrl} loading={loading} error={error} />
-      <div className="p-3">
-        <h3 className="line-clamp-2 ls-type-title-small text-text-primary">{product.name}</h3>
-        <p className="mt-1 ls-type-body-small text-text-muted">产品素材集合</p>
+      <div className="ls-touch-media-reveal absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/65 to-transparent p-3 pt-10 text-white opacity-0 transition-opacity duration-[var(--ls-motion-fast)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+        <h3 className="line-clamp-2 ls-type-title-small text-white">{product.name}</h3>
+        <p className="mt-1 ls-type-body-small text-white/80">产品素材集合</p>
         <Button className="mt-3 min-h-11 w-full" icon={<Eye size={14} />} onClick={() => onOpen(product)}>
           查看详情
         </Button>
@@ -219,7 +219,7 @@ function MaterialDetailTile({
   const mediaUrl = String(material.poster || material.url || '').trim();
   const canCreate = material.type !== 'audio' && Boolean(mediaUrl);
   return (
-    <article className="overflow-hidden rounded-lg border border-border bg-surface">
+    <article className="group relative overflow-hidden rounded-lg border border-border bg-surface focus-within:border-accent">
       <div className="relative">
         {material.type === 'audio' ? (
           <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-surface-2 text-text-muted">
@@ -238,7 +238,7 @@ function MaterialDetailTile({
                 type="button"
                 aria-label={`播放 ${material.name}`}
                 onClick={() => onPreview(material)}
-                className="absolute left-1/2 top-1/2 z-10 inline-flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/65 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                className="ls-touch-media-reveal absolute left-1/2 top-1/2 z-10 inline-flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/65 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white max-md:opacity-100"
               >
                 <Play size={18} fill="currentColor" />
               </button>
@@ -247,27 +247,20 @@ function MaterialDetailTile({
         ) : (
           <div className="flex aspect-square w-full items-center justify-center bg-surface-2 text-text-muted"><Film size={26} /></div>
         )}
-        <div className="absolute right-2 top-2 z-20 flex gap-1">
-          {material.canManage ? <Button aria-label={`编辑 ${material.name}`} title="编辑" size="small" icon={<Pencil size={13} />} onClick={() => onEdit(material)} /> : null}
-          {material.canManage ? <Button aria-label={`删除 ${material.name}`} title="删除" size="small" danger icon={<Trash2 size={13} />} onClick={() => onDelete(material)} /> : null}
-          <Button
-            aria-label={`${material.pinned ? '取消收藏' : '收藏'} ${material.name}`}
-            title={material.pinned ? '取消收藏' : '收藏'}
-            size="small"
-            loading={favoriting}
-            icon={<Star size={13} fill={material.pinned ? 'currentColor' : 'none'} />}
-            onClick={() => onToggleFavorite(material)}
-          />
-        </div>
       </div>
-      <div className="flex flex-col p-3">
-        <p className="line-clamp-2 ls-type-label-medium text-text-primary">{material.name}</p>
+      <div className="ls-touch-media-reveal absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/90 via-black/65 to-transparent p-3 pt-10 text-white opacity-0 transition-opacity duration-[var(--ls-motion-fast)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+        <p className="line-clamp-2 ls-type-label-medium text-white">{material.name}</p>
         {Number(material.usageSummary?.totalUses || 0) > 0 ? (
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border pt-2 ls-type-label-small text-text-secondary" aria-label="素材使用记录">
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/30 pt-2 ls-type-label-small text-white/85" aria-label="素材使用记录">
             <span>已用 {material.usageSummary?.totalUses} 次</span>
-            {Number(material.usageSummary?.hookUses || 0) > 0 ? <span className="text-accent">前三秒 {material.usageSummary?.hookUses} 次</span> : null}
+            {Number(material.usageSummary?.hookUses || 0) > 0 ? <span>前三秒 {material.usageSummary?.hookUses} 次</span> : null}
           </div>
         ) : null}
+        <div className="mt-2 flex flex-wrap gap-1">
+          {material.canManage ? <Button aria-label={`编辑 ${material.name}`} title="编辑" size="small" icon={<Pencil size={13} />} onClick={() => onEdit(material)} /> : null}
+          {material.canManage ? <Button aria-label={`删除 ${material.name}`} title="删除" size="small" danger icon={<Trash2 size={13} />} onClick={() => onDelete(material)} /> : null}
+          <Button aria-label={`${material.pinned ? '取消收藏' : '收藏'} ${material.name}`} title={material.pinned ? '取消收藏' : '收藏'} size="small" loading={favoriting} icon={<Star size={13} fill={material.pinned ? 'currentColor' : 'none'} />} onClick={() => onToggleFavorite(material)} />
+        </div>
         <div className="mt-3 grid grid-cols-2 gap-2">
           <Button className="min-w-0" icon={<Eye size={13} />} onClick={() => onOpenDetail(material)}>查看详情</Button>
           <Button type="primary" className="min-w-0" icon={<Sparkles size={13} />} disabled={!canCreate} onClick={() => onCreate(material)}>自由创作</Button>

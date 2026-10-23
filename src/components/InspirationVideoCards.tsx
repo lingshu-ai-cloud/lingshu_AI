@@ -1,9 +1,9 @@
-import { Button, Tag } from 'antd';
+import { Button } from 'antd';
 import { useEffect, useRef, useState } from 'react';
-import { Clock, Eye, Images, Loader2, Play, Sparkles, Star } from 'lucide-react';
+import { Eye, Images, Loader2, Pencil, Play, Star, Trash2 } from 'lucide-react';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import type { TrendVideo } from '../lib/inspirationTypes';
-import { AuthenticatedVideo, ThumbnailImage, VideoThumbnail, candidateDimensionLabels, discoveryOriginTitle, discoverySupplyLabel, getPlatformMeta, inspirationScoresForVideo } from './InspirationDashboard';
+import { AuthenticatedVideo, ThumbnailImage, VideoThumbnail, candidateDimensionLabels, discoverySupplyLabel, getPlatformMeta, inspirationScoresForVideo } from './InspirationDashboard';
 import { LsMediaStateFrame } from './ui/LsExperiencePrimitives';
 
 interface VideoCardProps {
@@ -13,6 +13,8 @@ interface VideoCardProps {
   onSelect: () => void;
   onCreate: () => void;
   onWatch: () => void;
+  onEditManage?: () => void;
+  onDeleteManage?: () => void;
   onFavoriteMaterial?: () => void;
   favoritingMaterial?: boolean;
   isFavoriteMaterial?: boolean;
@@ -22,6 +24,7 @@ interface VideoCardProps {
   createDisabledReason?: string;
 }
 
+// Retained for legacy deep links; the current collection route only renders masonry cards.
 const HIDDEN_DISCOVERY_TAGS = new Set(['来源待归类', '相关性待确认', '趋势未知', '迁移性待确认']);
 
 function visibleDiscoverySignals(video: TrendVideo) {
@@ -43,16 +46,35 @@ export function trendVideoAspectRatio(video: TrendVideo): number {
     const height = Number(match[2]);
     if (width > 0 && height > 0) return width / height;
   }
-  return 1;
+  return video.contentFormat === 'image' ? 1 : 9 / 16;
 }
 
-export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial, isFavoriteMaterial, createLabel, creating, createDisabled, createDisabledReason }: VideoCardProps) {
+function useNearViewportMedia(mediaKey: string) {
+  const cardRef = useRef<HTMLElement>(null);
+  const [enabledKey, setEnabledKey] = useState('');
+  const enabled = Boolean(mediaKey) && enabledKey === mediaKey;
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card || !mediaKey || enabled || typeof IntersectionObserver === 'undefined') return;
+    let root = card.parentElement;
+    while (root && !/(auto|scroll|overlay)/.test(window.getComputedStyle(root).overflowY)) root = root.parentElement;
+    let active = true;
+    const observer = new IntersectionObserver(entries => {
+      if (!active || !entries.some(entry => entry.isIntersecting)) return;
+      setEnabledKey(mediaKey);
+      observer.disconnect();
+    }, { root, rootMargin: '240px 0px', threshold: 0 });
+    observer.observe(card);
+    return () => { active = false; observer.disconnect(); };
+  }, [enabled, mediaKey]);
+  // Focus/pointer entry also works when IntersectionObserver is unavailable.
+  return { cardRef, enabled, enable: () => setEnabledKey(mediaKey) };
+}
+
+export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEditManage, onDeleteManage, onFavoriteMaterial, favoritingMaterial, isFavoriteMaterial, createLabel, creating, createDisabled, createDisabledReason }: VideoCardProps) {
   const meta = getPlatformMeta(video.platform);
-  const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
-  const inspirationScores = inspirationScoresForVideo(video);
-  const serverScore = video.aiAnalysis?.discoveryScore;
-  const visibleSignals = visibleDiscoverySignals(video);
   const isImagePost = video.contentFormat === 'image';
+  const media = useNearViewportMedia(video.videoUrl ? JSON.stringify([video.id, video.videoUrl]) : '');
   const [mediaReady, setMediaReady] = useState(false);
   const [mediaAspectRatio, setMediaAspectRatio] = useState(() => trendVideoAspectRatio(video));
   const videoAspectRatioLockedRef = useRef(false);
@@ -66,13 +88,6 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
   const trendLabel = isImagePost
     ? (imageAnalyzed ? '✓ 已完成拆解' : imageFailed ? '! 分析失败' : '… 待分析')
     : video.trend === 'hot' ? '🔥 热门' : video.trend === 'rising' ? '↑ 上升' : '— 平稳';
-  const trendColor = isImagePost
-    ? (imageAnalyzed ? 'text-green' : imageFailed ? 'text-red-500' : 'text-text-muted')
-    : video.trend === 'hot' ? 'text-accent' : video.trend === 'rising' ? 'text-green' : 'text-text-muted';
-  const crawledDate = video.crawledAt ? new Date(video.crawledAt) : null;
-  const crawledLabel = crawledDate && !Number.isNaN(crawledDate.getTime())
-    ? `${String(crawledDate.getMonth() + 1).padStart(2, '0')}-${String(crawledDate.getDate()).padStart(2, '0')} 入库`
-    : '';
   const analysisProgress = video.aiAnalysis?.analysisProgress;
   const analysisStage = analysisProgress?.stage;
   const analysisPaused = ['paused', 'cancelled'].includes(String(analysisStage || '')) || video.aiAnalysis?.geminiStatus === 'paused';
@@ -82,27 +97,18 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
     : analysisActive || (video.status === 'pending' && !analysisPaused)
       ? 'processing'
       : 'ready';
-  const hasVisibleSignals = Boolean(serverScore || video.aiAnalysis?.discoveryBusinessModel || Object.values(visibleSignals).some(Boolean));
-
   return (
-    <article
-      className={`group flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface transition-colors duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] hover:border-border-bright ${isSelected ? 'border-accent ring-1 ring-accent/20' : ''}`}>
-      <div role="button" tabIndex={0} onClick={onWatch}
-        onKeyDown={e => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onWatch();
-          }
-        }}
-        className="relative overflow-hidden w-full aspect-[9/16] text-left block"
-        style={{ background: 'var(--color-surface-2)' }}>        <LsMediaStateFrame state={mediaState} percent={analysisProgress?.percent} label={isImagePost && mediaState === 'processing' ? '分析中' : isImagePost && mediaState === 'error' ? '分析失败，可查看详情后重试' : analysisProgress?.stageLabel} className="absolute inset-0">
-          <VideoThumbnail platform={video.platform} title={video.title} />
+    <article ref={media.cardRef} onFocusCapture={media.enable} onPointerEnter={media.enable}
+      className={`ls-viral-card group relative overflow-hidden rounded-lg border border-border bg-surface transition-colors duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] hover:border-border-bright ${isSelected ? 'border-accent ring-1 ring-accent/20' : ''}`}>
+      <div className="relative w-full overflow-hidden bg-surface-2" style={{ aspectRatio: mediaAspectRatio > 0 ? mediaAspectRatio : 9 / 16 }}>
+        <LsMediaStateFrame state={mediaState} percent={analysisProgress?.percent} label={isImagePost && mediaState === 'processing' ? '分析中' : isImagePost && mediaState === 'error' ? '分析失败，可查看详情后重试' : analysisProgress?.stageLabel} className="absolute inset-0">
+          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#1b2937] via-[#20242d] to-[#342b43]" aria-hidden="true"><SocialPlatformIcon platform={video.platform} size={38} className="opacity-50" /></div>
           {video.thumbnail && (
             <ThumbnailImage src={video.thumbnail} platform={video.platform} title={video.title} className="absolute inset-0 h-full w-full object-cover" onNaturalAspectRatio={ratio => {
               if (!videoAspectRatioLockedRef.current) setMediaAspectRatio(ratio);
             }} />
           )}
-          {video.videoUrl ? (
+          {video.videoUrl && media.enabled ? (
             <AuthenticatedVideo
               apiUrl={video.videoUrl}
               poster={/^https?:\/\//i.test(video.thumbnail) ? video.thumbnail : undefined}
@@ -126,60 +132,23 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
           type="button"
           aria-label={`${isImagePost ? '查看图文' : '播放视频'} ${video.title}`}
           onClick={onWatch}
-          className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white"
+          className="ls-touch-media-reveal absolute inset-0 z-10 flex items-center justify-center bg-black/25 opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white"
         >
           <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-neutral-900 shadow-none" aria-hidden="true">
             {isImagePost ? <Images size={16} /> : <Play size={16} fill="currentColor" />}
           </span>
         </button>
-        <div className="pointer-events-none absolute bottom-2 left-2 z-20 px-1.5 py-0.5 rounded-md ls-type-label-small tabular-nums text-white bg-black/50">
-          {isImagePost ? '图文' : `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')}`}
-        </div>
-        <div className="pointer-events-none absolute bottom-2 right-2 z-20 max-w-[60%] truncate px-1.5 py-0.5 rounded-md ls-type-label-small text-white bg-black/55" title={crawlRule}>
-          {crawlRule}
-        </div>
-        <div className="pointer-events-none absolute top-2 left-2 z-20">
-          <span className="platform-badge inline-flex items-center gap-1 ls-type-label-small" style={{ background: 'rgba(255,255,255,.94)', color: 'var(--color-text-primary)' }}><SocialPlatformIcon platform={video.platform} size={13} />{meta.label}</span>
-          {video.id.startsWith('material-') && (
-            <span className="mt-1 block rounded-md bg-green-600 px-1.5 py-0.5 ls-type-label-small text-white shadow-none">收藏 · 片段已分析</span>
-          )}
-        </div>
-        {!isImagePost && onFavoriteMaterial && <button
-          type="button"
-          onClick={event => { event.stopPropagation(); onFavoriteMaterial?.(); }}
-          disabled={favoritingMaterial}
-          aria-label={isFavoriteMaterial ? `取消收藏 ${video.title}` : `收藏 ${video.title}`}
-          title={isFavoriteMaterial ? '取消收藏' : '收藏到我的素材'}
-          className={`absolute right-2 top-2 z-30 inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow-none transition-colors duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] ${isFavoriteMaterial ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-white/70 bg-white/95 text-text-secondary hover:text-amber-500'} disabled:cursor-wait disabled:opacity-60`}
-        >
-          {favoritingMaterial ? <Loader2 size={15} className="animate-spin" /> : <Star size={16} fill={isFavoriteMaterial ? 'currentColor' : 'none'} />}
-        </button>}
-        {crawledLabel && (
-          <div className={`pointer-events-none absolute z-20 max-w-[48%] truncate rounded-md bg-black/50 px-1.5 py-0.5 ls-type-label-small tabular-nums text-white ${video.canManage ? 'right-2 top-12' : video.sourceUrl && !isImagePost ? 'right-12 top-2' : 'right-2 top-2'}`}
-            title={`爬取入库时间：${crawledDate!.toLocaleString()}`}>
-            {crawledLabel}
-          </div>
-        )}
-      </div>
-      <div className="flex flex-col p-3">
-        <p className="mb-2 min-h-11 ls-type-title-small text-text-primary line-clamp-2" title={video.title}>{video.title}</p>
-        {!video.id.startsWith('material-') && <p className="mb-2 truncate ls-type-body-small text-text-muted">账号：{video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '未抓取'}</p>}
-        <div className="flex items-center justify-between mb-2">
-          <span className={`ls-type-label-medium ${trendColor}`}>{trendLabel}</span>
-          <span className="flex items-center gap-1 ls-type-body-small tabular-nums text-text-muted">{isImagePost ? <Images size={12} /> : <Clock size={12} />}{isImagePost ? `${video.aiAnalysis?.imageCount || video.aiAnalysis?.imageUrls?.length || 1} 张` : `${video.views} 次播放`}</span>
-        </div>
-        {!video.id.startsWith('material-') && hasVisibleSignals && <div className="flex max-h-14 flex-wrap gap-1 overflow-hidden ls-type-label-medium" title={serverScore ? serverScore.reasons.join('；') : `来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}>
-          {serverScore && <span className={`rounded-md px-2 py-1 ${serverScore.decision === 'accepted' ? 'bg-emerald-100 text-emerald-900' : serverScore.decision === 'review' ? 'bg-amber-100 text-amber-900' : 'bg-red-100 text-red-800'}`}>服务端 {serverScore.overall} 分 · {serverScore.decision === 'accepted' ? '入选' : serverScore.decision === 'review' ? '复核' : '淘汰'}</span>}
-          {video.aiAnalysis?.discoveryBusinessModel && <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">{video.aiAnalysis.discoveryBusinessModel.toUpperCase()}</span>}
-          {visibleSignals.supply && <Tag title={discoveryOriginTitle(video)}>{visibleSignals.supply}</Tag>}
-          {visibleSignals.relevance && <span className="rounded-md bg-cyan-50 px-2 py-1 text-cyan-900">{visibleSignals.relevance}</span>}
-          {visibleSignals.momentum && <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-900">{visibleSignals.momentum}</span>}
-          {visibleSignals.transferability && <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">{visibleSignals.transferability}</span>}
-        </div>}
-        <div className="mt-3 border-t border-border pt-3">
-          <div className="ls-media-card-actions">
-            <Button onClick={onSelect} icon={<Eye size={14} />}>查看详情</Button>
-            <Button type="primary" onClick={onCreate} loading={creating} disabled={createDisabled} title={createDisabled ? createDisabledReason : undefined}>{createLabel || '用于创作'}</Button>
+        <div className="ls-touch-media-reveal absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/85 via-black/55 to-transparent px-3 pb-3 pt-10 text-white opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+          <p className="mb-1 inline-flex items-center gap-1.5 text-xs text-white/80"><SocialPlatformIcon platform={video.platform} size={13} />{meta.label}<span aria-hidden="true">·</span>{isImagePost ? '图文' : `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')}`}</p>
+          {mediaState !== 'ready' && <p role="status" className="mb-1 text-xs text-white/80">{mediaState === 'error' ? '分析失败' : analysisProgress?.stageLabel || '分析中'}</p>}
+          <p className="line-clamp-2 text-sm font-semibold" title={video.title}>{video.title}</p>
+          <p className="mt-1 truncate text-xs text-white/80">{trendLabel} · {video.views} 次播放 · {video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '来源账号待获取'}</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Button size="small" onClick={onSelect} icon={<Eye size={13}/>}>查看详情</Button>
+            <Button size="small" type="primary" onClick={onCreate} loading={creating} disabled={createDisabled} title={createDisabled ? createDisabledReason : undefined}>{createLabel || '用于创作'}</Button>
+            {onEditManage && <Button size="small" onClick={onEditManage} icon={<Pencil size={13}/>} aria-label="编辑素材" />}
+            {onDeleteManage && <Button size="small" onClick={onDeleteManage} icon={<Trash2 size={13}/>} aria-label="删除素材" />}
+            {!isImagePost && onFavoriteMaterial && <Button size="small" icon={favoritingMaterial ? <Loader2 size={13} className="animate-spin"/> : <Star size={13} fill={isFavoriteMaterial ? 'currentColor' : 'none'}/>} onClick={onFavoriteMaterial} disabled={favoritingMaterial} aria-label={isFavoriteMaterial ? `取消收藏 ${video.title}` : `收藏 ${video.title}`}/>}
           </div>
         </div>
       </div>

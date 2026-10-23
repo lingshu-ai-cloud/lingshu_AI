@@ -1,10 +1,11 @@
-import { App, ConfigProvider, type ThemeConfig } from 'antd';
+import { App, ConfigProvider, theme as antTheme, type ThemeConfig } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { useInsertionEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react';
 import { MotionConfig } from 'motion/react';
 import { lsDesignTokenCss, lsFonts, lsMotion, lsTypography, lsColors, lsDimensions } from '../../lib/designTokens';
 import { usePrefersReducedMotion } from '../../lib/usePrefersReducedMotion';
 import { registerMotionPolicy, settleMotionRoot } from '../../lib/motionPolicy';
+import { useAppearance } from '../../lib/appearance';
 
 export const lingshuTheme: ThemeConfig = {
   cssVar: { key: 'lingshu' },
@@ -71,12 +72,44 @@ export const lingshuTheme: ThemeConfig = {
 
 export default function LingshuProvider({ children }: { children: ReactNode }) {
   const reducedMotion = usePrefersReducedMotion();
+  const { appearance } = useAppearance();
   const appRoot = useRef<HTMLElement>(null);
   useInsertionEffect(() => registerMotionPolicy(reducedMotion), [reducedMotion]);
   useLayoutEffect(() => {
     if (reducedMotion) settleMotionRoot(appRoot.current);
   }, [reducedMotion]);
-  const theme = useMemo(() => ({ ...lingshuTheme, token: { ...lingshuTheme.token, motion: !reducedMotion } }), [reducedMotion]);
+  useLayoutEffect(() => {
+    document.documentElement.dataset.lingshuAppearance = appearance;
+    return () => { delete document.documentElement.dataset.lingshuAppearance; };
+  }, [appearance]);
+  const theme = useMemo<ThemeConfig>(() => ({
+    ...lingshuTheme,
+    algorithm: appearance === 'dark' ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
+    token: {
+      ...lingshuTheme.token,
+      ...(appearance === 'dark' ? {
+        colorText: '#f6f6f7', colorTextSecondary: '#c6c6ca', colorTextTertiary: '#999ba2',
+        colorBgLayout: '#111214', colorBgContainer: '#202123', colorBgElevated: '#292a2d',
+        colorBorder: '#37383c', colorBorderSecondary: '#303135', colorFillSecondary: '#292a2d',
+      } : {}),
+      motion: !reducedMotion,
+    },
+    components: appearance === 'dark' ? {
+      ...lingshuTheme.components,
+      Menu: { itemBg: 'transparent', subMenuItemBg: 'transparent', itemSelectedBg: '#2b2b2d', itemSelectedColor: '#fff', itemHoverBg: '#242426', itemColor: '#c6c6ca', itemHeight: 48, itemBorderRadius: 10 },
+      Segmented: { trackBg: '#242426', itemSelectedBg: '#f8fafc', itemSelectedColor: '#171717' },
+      Table: { headerBg: '#292a2d', headerColor: '#f6f6f7', borderColor: '#37383c', rowHoverBg: '#292a2d', rowSelectedBg: '#242b3f', cellPaddingBlockMD: 12 },
+      Tabs: { inkBarColor: '#d9e9ff', itemSelectedColor: '#f6f6f7', horizontalItemGutter: 24 },
+      Layout: { bodyBg: '#111214', headerBg: '#111214', headerColor: '#f6f6f7', siderBg: '#171719', lightSiderBg: '#171719', triggerBg: '#171719', triggerColor: '#c6c6ca' },
+      Select: { ...lingshuTheme.components?.Select, optionSelectedBg: '#242b3f', optionSelectedColor: '#f6f6f7', optionActiveBg: '#292a2d' },
+      Collapse: { ...lingshuTheme.components?.Collapse, headerBg: '#202123', contentBg: '#202123', borderlessContentBg: '#202123' },
+      Pagination: { ...lingshuTheme.components?.Pagination, itemBg: '#202123', itemLinkBg: '#202123', itemActiveBg: '#242b3f', itemActiveColor: '#91baff', itemActiveColorHover: '#b7d2ff' },
+      Progress: { ...lingshuTheme.components?.Progress, remainingColor: '#37383c', circleTextColor: '#f6f6f7' },
+      Skeleton: { ...lingshuTheme.components?.Skeleton, gradientFromColor: '#292a2d', gradientToColor: '#37383c' },
+      Avatar: { ...lingshuTheme.components?.Avatar, groupBorderColor: '#202123' },
+      Tooltip: { colorBgSpotlight: '#37383c' },
+    } : lingshuTheme.components,
+  }), [appearance, reducedMotion]);
   const transition = useMemo(() => ({ type: 'tween' as const, duration: reducedMotion ? 0 : lsMotion.duration.enter / 1000, ease: lsMotion.ease.enter, skipAnimations: reducedMotion }), [reducedMotion]);
   return (
     <ConfigProvider locale={zhCN} theme={theme}>
@@ -85,7 +118,7 @@ export default function LingshuProvider({ children }: { children: ReactNode }) {
           handles live OS changes, including opacity, without remounting editors
           or leaving elements permanently static after reduced motion is disabled. */}
       <MotionConfig reducedMotion="never" transition={transition} skipAnimations={false}>
-        <App ref={appRoot} className="ls-design-system">{children}</App>
+        <App ref={appRoot} className="ls-design-system" data-appearance={appearance}>{children}</App>
       </MotionConfig>
     </ConfigProvider>
   );

@@ -4,10 +4,10 @@ import fs from 'node:fs';
 const source = fs.readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
 const cardsSource = fs.readFileSync(new URL('./InspirationVideoCards.tsx', import.meta.url), 'utf8');
 const progressSource = fs.readFileSync(new URL('./inspiration/VideoAnalysisProgressPanel.tsx', import.meta.url), 'utf8');
-const watchModal = source.slice(source.indexOf('function WatchModal'), source.indexOf('interface DirectorReviewHandoff'));
+const watchModal = fs.readFileSync(new URL('./inspiration/InspirationWatchDialog.tsx', import.meta.url), 'utf8');
 
 assert.match(watchModal, /zIndex=\{2200\}/, 'the original-content preview must render above the Ant detail drawer');
-assert.match(watchModal, /video\.videoUrl && !useEmbedPlayer/);
+assert.match(watchModal, /current\.videoUrl && !useEmbed/);
 assert.match(watchModal, /embedUrl \?/);
 assert.match(watchModal, />原站打开</);
 assert.doesNotMatch(source, /DiscoveryScopePanel|当前发现范围|导入对标视频并分析|inspiration-creation-account/, '灵感首页不得重复展示范围、创作账号和导入说明卡');

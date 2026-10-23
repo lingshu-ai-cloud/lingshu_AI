@@ -113,8 +113,9 @@ import {
   type AssistantContext,
   type AssistantPersistenceReason,
   type AssistantThreadSaveQueue,
-  type AssistantTodoItem,
 } from './assistant/globalAssistantRuntime';
+import { ASSISTANT_API_PATH, todoDotClass, todoToneClass } from './assistant/assistantAppearance';
+import { useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode } from './assistant/useAssistantHomeAnchor';
 
 type AssistantTool = 'knowledge-intake';
 
@@ -209,29 +210,6 @@ interface Props {
   onKickoffConsumed?: () => void;
   onAction?: AgentAction;
   onSessionRefresh?: () => void;
-}
-
-const API_PATH: Record<AgentType, string> = {
-  strategy: '/api/overseas/strategy/chat',
-  traffic: '/api/overseas/agents/traffic/chat',
-  conversion: '/api/overseas/agents/conversion/chat',
-  retention: '/api/overseas/agents/retention/chat',
-};
-
-function todoToneClass(tone: AssistantTodoItem['tone'], completed: boolean) {
-  if (completed) return 'border-green/20 bg-green/5 text-green';
-  if (tone === 'red') return 'border-red/20 bg-red/5 text-red';
-  if (tone === 'amber') return 'border-amber/20 bg-amber-dim text-amber';
-  if (tone === 'blue') return 'border-accent/20 bg-accent-glow text-accent';
-  return 'border-border bg-surface text-text-secondary';
-}
-
-function todoDotClass(tone: AssistantTodoItem['tone'], completed: boolean) {
-  if (completed) return 'bg-green';
-  if (tone === 'red') return 'bg-red';
-  if (tone === 'amber') return 'bg-amber';
-  if (tone === 'blue') return 'bg-accent';
-  return 'bg-border-bright';
 }
 
 function taskStatusLabel(card: AssistantTaskCard) {
@@ -556,6 +534,9 @@ export default function GlobalAssistant({
     width: typeof window === 'undefined' ? 1440 : window.innerWidth,
     height: typeof window === 'undefined' ? 900 : window.innerHeight,
   }));
+  const inlineHome = page === 'strategy';
+  const inlineHomeBounds = useAssistantHomeAnchor(inlineHome);
+  useAssistantHomeMode(inlineHome, setMode);
   const featureGuideTimerRef = useRef<number | null>(null);
   const featureGuideHoverTimerRef = useRef<number | null>(null);
   const speechTimerRef = useRef<number | null>(null);
@@ -698,6 +679,7 @@ export default function GlobalAssistant({
     }));
   }, []);
   const activeThread = threads[activeAgent];
+  useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef);
   const focusedCardCandidate = activeThread.focusedTaskId
     ? activeThread.taskCards[activeThread.focusedTaskId] ?? null
     : null;
@@ -1592,7 +1574,7 @@ export default function GlobalAssistant({
       abortRef.current?.abort();
       abortRef.current = controller;
       const resp = await withAssistantTimeout(
-        fetch(API_PATH[agentForOrbit(routeAgent)], {
+        fetch(ASSISTANT_API_PATH[agentForOrbit(routeAgent)], {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...authHeader() },
           body: JSON.stringify({
@@ -2379,12 +2361,12 @@ export default function GlobalAssistant({
   useEffect(() => {
     if (mode !== 'chat' && assistantTool !== 'knowledge-intake') return;
     const closePanel = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented || decisionDialog) return;
+      if (event.key !== 'Escape' || event.defaultPrevented || decisionDialog || inlineHome) return;
       closeAssistant();
     };
     window.addEventListener('keydown', closePanel);
     return () => window.removeEventListener('keydown', closePanel);
-  }, [assistantTool, closeAssistant, decisionDialog, mode]);
+  }, [assistantTool, closeAssistant, decisionDialog, inlineHome, mode]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -2394,12 +2376,15 @@ export default function GlobalAssistant({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  if (suppressForRightSidebar) return null;
+  if (suppressForRightSidebar || (inlineHome && !inlineHomeBounds)) return null;
 
   return (
     <div
       data-global-assistant="root"
-      className={`fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'}`}
+      data-inline-home={inlineHomeBounds ? 'true' : undefined}
+      data-home-empty={inlineHome && !activeThread.messages.length && !loading ? 'true' : undefined}
+      className={`fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'} ${inlineHomeBounds ? 'ls-assistant-home-root' : ''}`}
+      style={inlineHomeBounds ? { top: inlineHomeBounds.top, left: inlineHomeBounds.left, width: inlineHomeBounds.width, height: inlineHomeBounds.height, right: 'auto', bottom: 'auto' } : undefined}
     >
       <AnimatePresence>
         {!launcherRetracted && mode === 'breathing' && performance && shouldNotifyAssistant(performance.reason) && !performanceHidden && (
@@ -2551,7 +2536,7 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {(mode === 'chat' || assistantTool === 'knowledge-intake') && (
+        {(mode === 'chat' || assistantTool === 'knowledge-intake' || inlineHomeBounds) && (
           <motion.section
             data-global-assistant="panel"
             id="global-assistant-panel"
@@ -2561,17 +2546,18 @@ export default function GlobalAssistant({
             aria-describedby="global-assistant-panel-description"
             tabIndex={-1}
             initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }}
-            animate={mode === 'chat' ? { opacity: 1, y: 0 } : { opacity: 0, y: reduceMotion ? 0 : 8 }}
+            animate={mode === 'chat' || inlineHomeBounds ? { opacity: 1, y: 0 } : { opacity: 0, y: reduceMotion ? 0 : 8 }}
             exit={{ y: reduceMotion ? 0 : 8, opacity: 0, transition: { ...spatialTransition, opacity: fadeExit.transition } }}
             transition={spatialTransition}
-            className={`absolute bottom-14 right-0 z-10 flex max-h-[calc(100dvh-env(safe-area-inset-bottom)-96px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
+            className={`absolute bottom-14 right-0 z-10 flex max-h-[calc(100dvh-env(safe-area-inset-bottom)-96px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' || inlineHomeBounds ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
             style={{
-              height: assistantPanelHeight,
-              width: assistantPanelWidth,
-              maxWidth: 'calc(100vw - 32px)',
+              height: inlineHomeBounds?.height ?? assistantPanelHeight,
+              width: inlineHomeBounds?.width ?? assistantPanelWidth,
+              maxWidth: inlineHomeBounds ? '100%' : 'calc(100vw - 32px)',
             }}
           >
-            <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50 px-4">
+            {inlineHome && <div className="sr-only"><h2 id="global-assistant-panel-title">灵小枢创作对话</h2><p id="global-assistant-panel-description">描述创作需求，或添加图片、视频和音频参考。</p></div>}
+            {!inlineHome && <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50 px-4">
               <div className="flex min-w-0 items-center gap-2">
                 <button
                   type="button"
@@ -2582,7 +2568,7 @@ export default function GlobalAssistant({
                     } else if (panelView !== 'chat') returnToConversation();
                     else closeAssistant();
                   }}
-                  className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  className={`rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${inlineHome && panelView === 'chat' && !assistantTool ? 'hidden' : ''}`}
                   aria-label={assistantTool === 'knowledge-intake' || panelView !== 'chat' ? '返回灵小枢对话' : '收起灵小枢对话'}
                   title={assistantTool === 'knowledge-intake' || panelView !== 'chat' ? '返回灵小枢对话' : '收起灵小枢对话'}
                 >
@@ -2594,11 +2580,11 @@ export default function GlobalAssistant({
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                <button type="button" onClick={closeAssistant} className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" title="关闭窗口（任务继续）" aria-label="关闭灵枢助手窗口，任务继续运行">
+                <button type="button" onClick={closeAssistant} className={`rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${inlineHome ? 'hidden' : ''}`} title="关闭窗口（任务继续）" aria-label="关闭灵枢助手窗口，任务继续运行">
                   <X size={15} />
                 </button>
               </div>
-            </header>
+            </header>}
 
             {assistantTool === 'knowledge-intake' ? (
               <div className="min-h-0 flex-1 overflow-y-auto bg-surface-2 p-3">
@@ -2679,7 +2665,7 @@ export default function GlobalAssistant({
                   }}
                 >
                   <div className="space-y-4">
-                    <div
+                    {!inlineHome && <div
                       key={`decision-feed-${decisionFeedRevision}`}
                       className="ls-assistant-summary-bubble-enter pl-9"
                       data-assistant-bubble="decision-summary"
@@ -2697,9 +2683,9 @@ export default function GlobalAssistant({
                         onFeedChange={handleDecisionFeedChange}
                         variant="summary"
                       />
-                    </div>
+                    </div>}
 
-                    {welcomeBubbleVisible && !activeThread.messages.length && (
+                    {welcomeBubbleVisible && !inlineHome && !activeThread.messages.length && (
                       <div
                         data-assistant-bubble="welcome"
                         className="ls-assistant-bubble-enter flex items-start gap-2"
@@ -2779,7 +2765,7 @@ export default function GlobalAssistant({
                       </div>
                     )}
 
-                    {weeklyPlanKickoffAvailable && (
+                    {weeklyPlanKickoffAvailable && !inlineHome && (
                       <div
                         className="ls-assistant-summary-bubble-enter flex items-start gap-2"
                         data-assistant-bubble="weekly-plan-kickoff"
@@ -2822,7 +2808,7 @@ export default function GlobalAssistant({
                   </div>
                 )}
 
-                {!contentIntake.active && <AssistantQuickEntries
+                {!inlineHome && !contentIntake.active && <AssistantQuickEntries
                   page={page}
                   executions={[
                     ...(page === 'digitalEmployees' ? [{ id: 'business-create-week-plan', kind: 'execute' as const,
@@ -2836,7 +2822,7 @@ export default function GlobalAssistant({
                   onExecute={entry => void runQuickExecution(entry)}
                 />}
 
-                <AssistantWeeklyActions
+                {!inlineHome && <AssistantWeeklyActions
                   page={page}
                   scopeKey={persistenceScopeKey}
                   disabled={loading || attachmentUploading}
@@ -2857,8 +2843,9 @@ export default function GlobalAssistant({
                       window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: navigation }));
                     }
                   }}
-                />
+                />}
                 <AssistantComposer
+                  variant={inlineHome ? 'home' : 'default'}
                   ref={assistantInputRef}
                   draft={activeThread.draftInput}
                   files={pendingAttachments}
@@ -3026,7 +3013,7 @@ export default function GlobalAssistant({
             aria-label="展开灵小枢入口"
             onClick={restoreLauncher}
             icon={<ChevronLeft size={18} aria-hidden="true" />}
-            className="!flex !h-11 !w-11 !items-center !justify-center !rounded-l-full !rounded-r-none !border-border !border-r-transparent !bg-white !text-accent shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow active:!bg-white focus-visible:!bg-white focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2"
+            className="!flex !h-11 !w-11 !items-center !justify-center !rounded-l-full !rounded-r-none !border-border !border-r-transparent !bg-surface !text-accent shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow active:!bg-surface focus-visible:!bg-surface focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2"
             title="展开灵小枢入口"
           />
         </Badge>
@@ -3049,7 +3036,7 @@ export default function GlobalAssistant({
                   <Bot size={15} />
                 </span>
               )}
-              className="!flex !h-11 !w-11 !gap-0 !border-border !bg-white !px-2 !text-text-primary shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow active:!bg-white focus-visible:!bg-white focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2 sm:!w-auto sm:!gap-2 sm:!px-3.5"
+              className="!flex !h-11 !w-11 !gap-0 !border-border !bg-surface !px-2 !text-text-primary shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow active:!bg-surface focus-visible:!bg-surface focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2 sm:!w-auto sm:!gap-2 sm:!px-3.5"
               title={mode === 'chat' ? '收起灵小枢对话' : '询问灵小枢'}
             >
               <span className="ls-type-label-large hidden whitespace-nowrap sm:inline">询问灵小枢</span>
