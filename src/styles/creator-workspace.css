@@ -57,6 +57,11 @@ html[data-lingshu-appearance='dark'] .ls-design-system :where(*)::-webkit-scroll
 html[data-lingshu-appearance='dark'] .ls-design-system .ls-customer-list-row.is-selected {
   background: color-mix(in srgb, var(--color-accent) 13%, var(--color-surface));
 }
+html[data-lingshu-appearance='dark'] .ls-design-system .ls-messenger-bubble--inbound {
+  border: 1px solid var(--color-border-bright);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
 
 /* The creator surface is intentionally a single continuous canvas, including its media wall. */
 .creator-shell .app-sidebar { background: #171719; border-color: #242426; }

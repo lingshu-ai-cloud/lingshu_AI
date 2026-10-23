@@ -695,12 +695,6 @@ function DraftSuggestionBar({
             <p className="mt-1 whitespace-pre-line">{'\u6700\u7ec8\u53d1\u9001\u6548\u679c\uff1a'}{templatePlan.rendered}</p>
           </div>
         )}
-        {!priceRulesReady && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-dim px-3 py-2 text-xs text-amber">
-            <span>报价知识尚未完善，价格相关内容需人工确认。</span>
-            <Button htmlType="button" size="small" onClick={() => { localStorage.setItem('lingshu:enterprise:highlight-biz-rules', 'true'); window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } })); }} className="whitespace-nowrap font-semibold">去完善规则</Button>
-          </div>
-        )}
         <footer className="flex flex-wrap items-center justify-end gap-1.5 border-t border-border pt-2">
           <Button size="small" htmlType="button" onClick={onSave} disabled={savingDraft || !draft.trim()} className="whitespace-nowrap font-semibold">{savingDraft ? '保存中…' : '保存修改'}</Button>
           <Button size="small" type="primary" htmlType="button" onClick={onSend} disabled={!templateApproved || !channelReady} className="whitespace-nowrap font-semibold">
@@ -878,7 +872,6 @@ function ChatThread({
           <Tooltip title="客户与会话详情"><Button shape="circle" aria-label="客户与会话详情" icon={<Info size={16}/>} /></Tooltip>
         </div>
       </header>
-      {customer.isMock && <p className="shrink-0 border-b border-violet-100 bg-violet-50 px-4 py-1.5 text-[11px] text-violet-700">只在演示沙盘里推进，不会发送到真实平台。</p>}
       <div className="min-h-0 flex-1 overflow-y-auto bg-ink px-3 py-5 sm:px-6">
         <div className="mx-auto max-w-3xl space-y-4">
           {customer.timeline.map(event => {
@@ -907,7 +900,7 @@ function ChatThread({
                     {!isBuyer && <p className="text-xs font-bold text-white">{event.title}</p>}
                     <span className={`text-[10px] ${isBuyer ? 'text-text-muted' : 'text-white/75'}`}>{event.time}</span>
                   </div>
-                  <p className={`mt-1 whitespace-pre-line text-sm leading-relaxed ${isBuyer ? 'text-text-secondary' : 'text-white'}`}>{event.body}</p>
+                  <p className={`mt-1 whitespace-pre-line text-sm leading-relaxed ${isBuyer ? 'text-text-primary' : 'text-white'}`}>{event.body}</p>
                   {!isBuyer && (event.audit?.editedByHuman || event.audit?.memoryApplied?.length) && (
                     <div className="mt-2 flex flex-wrap justify-end gap-1.5">
                       {event.audit.editedByHuman && (
@@ -919,7 +912,7 @@ function ChatThread({
                     </div>
                   )}
                   {translation && (
-                    <div className={`mt-2 border-t pt-2 text-xs leading-relaxed ${isBuyer ? 'border-border text-text-muted' : 'border-white/20 text-white/80'}`}>
+                    <div className={`mt-2 border-t pt-2 text-xs leading-relaxed ${isBuyer ? 'border-border-bright text-text-secondary' : 'border-white/20 text-white/80'}`}>
                       <span className="font-bold">{'\u4e2d\u6587\u7ffb\u8bd1\uff1a'}</span>{translation}
                     </div>
                   )}
@@ -1347,15 +1340,16 @@ function CustomerInsightDisclosure({ customer }: { customer: CustomerProfile }) 
         htmlType="button"
         aria-expanded={open}
         onClick={() => setOpen(value => !value)}
-        className="!h-auto min-h-10 !justify-start flex w-full items-center gap-2 px-3 py-2 text-left"
+        className="!h-auto min-h-11 !justify-start flex w-full items-start gap-2 px-3 py-2.5 text-left"
       >
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent-glow text-accent">
           <BrainCircuit size={14} />
         </span>
-        <span className="min-w-0 flex-1 whitespace-nowrap text-xs font-semibold text-text-primary">AI 判断</span>
-        {scenario?.warning && <span data-testid="large-order-warning-tag" aria-label={`${scenario.warning.title}：${scenario.warning.reason}`} title={scenario.warning.reason} className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700"><AlertTriangle size={11} />大单预警</span>}
-        <span className="shrink-0 text-xs font-semibold text-accent">意向 {customer.intentScore}</span>
-        <ChevronDown size={14} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+        <span className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="flex min-w-0 items-center justify-between gap-2"><span className="whitespace-nowrap text-xs font-semibold text-text-primary">AI 判断</span><span className="shrink-0 text-xs font-semibold text-accent">意向 {customer.intentScore}</span></span>
+          {scenario?.warning && <span data-testid="large-order-warning-tag" aria-label={`${scenario.warning.title}：${scenario.warning.reason}`} title={scenario.warning.reason} className="inline-flex w-fit max-w-full items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700"><AlertTriangle size={11} className="shrink-0" />大单预警</span>}
+        </span>
+        <ChevronDown size={14} className={`mt-1 shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
       </Button>
 
       {open && (
