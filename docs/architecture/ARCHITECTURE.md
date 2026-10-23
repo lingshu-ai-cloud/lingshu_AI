@@ -47,6 +47,7 @@
 - `shared/contracts/`：跨端任务、内容与交付合同；字段变更需检查旧任务兼容性。
 - `server/routes/`：HTTP 鉴权、输入规范化、租户上下文和响应编排；业务算法逐步下沉到领域模块。
 - `server/digitalEmployees/overviewProjection.ts`：数字员工首页的配置、周目标、计划、四专家状态和公开事件载荷投影；兼容旧角色与旧周目标，并递归剔除私有推理字段。`server/routes/digitalEmployeeOverviewReader.ts` 以原路由注入的可信租户读取、已提交目标筛选、配置与发布准备判定组装首页只读响应；`digitalEmployees.ts` 继续负责租户鉴权、读取能力注入、写入、运行状态和 SSE 发送。投影与总览读取不启动生产或调用供应商。
+- `server/routes/digitalEmployeeContentEvidence.ts`：在调用方已确定的租户范围内读取企业产品、精确参考分析和素材库，并纯投影产品身份、素材归属、参考物理身份与准入证据。聚焦产品只改变排序，不隐藏其余已确认产品；共享、合成或未绑定素材不得伪作产品素材。素材库不可用时明确失败，路由仍负责鉴权、周任务编排和后续生产许可。
 - `server/routes/studioMaterialLibraryProjection.ts`：在路由完成租户库存与企业产品读取后，统一投影产品归属、用途/来源可见性、生成素材过滤、分类 facets、排序与分页；`studio.ts` 保留租户读取、鉴权响应、使用证据聚合和产品场景准备，不把 `purpose=all` 的内部素材混入普通图库。
 - `server/routes/studioMaterialProjection.ts`：将已读取素材投影为租户签名的播放/封面地址、能力清单和安全公开字段，并从已确认企业产品表投影稳定身份的产品素材；路由仍负责权限、租户库存读取和持久化，不能把投影函数当成跨租户记录准入。
 - `server/routes/studioBgmCatalog.ts`：BGM 官方曲目与上传索引、租户可见性、推荐排序、签名地址有效期及自动化配乐读取；`studioBgmRoutes.ts` 承载媒体流、列表、上传和删除 HTTP 处理，并在 `studio.ts` 的鉴权及租户上下文中间件之后挂载。数字员工和兼容适配层直接引用曲库能力，不为查配乐而依赖整个 Studio 路由。
