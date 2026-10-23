@@ -157,10 +157,12 @@ test('HTTP image routes reject forged evidence and finalize durable GIF plates i
     const product = await sharp({ create: { width: 30, height: 50, channels: 4, background: '#c52727' } }).png().toBuffer();
     const productFilename = `gif-http-product-${process.pid}.png`;
     await objectStorageUpload({ key: enterpriseAssetObjectKey(tenantId, productFilename), body: product, contentType: 'image/png' });
-    const profile = await readTenantEnterpriseProfile(tenantId);
-    await updateTenantEnterpriseProfile(tenantId, { products: { ...profile.products, items: [{ id: 'gif-http-product', name: 'Fixture product',
-      images: [{ name: productFilename, type: 'image/png', size: product.length, updatedAt: new Date().toISOString(),
-        url: `/api/overseas/enterprise/assets/${productFilename}` }] }] } }, 'test');
+    await runWithDataAuthority('local', async () => {
+      const profile = await readTenantEnterpriseProfile(tenantId);
+      await updateTenantEnterpriseProfile(tenantId, { products: { ...profile.products, items: [{ id: 'gif-http-product', name: 'Fixture product',
+        images: [{ name: productFilename, type: 'image/png', size: product.length, updatedAt: new Date().toISOString(),
+          url: `/api/overseas/enterprise/assets/${productFilename}` }] }] } }, 'test');
+    });
     const gif = await createSocialImageTask(store, tenantId, { imageType: 'gif_poster', title: 'Durable HTTP GIF' });
     createdIds.push(gif.id);
     const configured = await updateSocialImageTask(store, tenantId, gif.id, gif.version, {
