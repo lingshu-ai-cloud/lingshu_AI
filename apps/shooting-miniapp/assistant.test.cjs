@@ -97,6 +97,9 @@ test('operator assistant keeps suggested questions collapsed on the empty conver
   const detail = fs.readFileSync(__dirname + '/packages/operator/content-task/index.js', 'utf8')
   assert.match(detail, /mobile-workbench\/assistant\/content-tasks\//)
   assert.match(detail, /result\.card\.contentTaskId !== this\.taskId/)
+  assert.match(detail, /error\.status === 404/)
+  assert.match(detail, /error\.status === 503/)
+  assert.match(detail, /任务状态暂时无法读取，已保留当前页面/)
 })
 
 test('operator assistant opens in voice mode with the dispatch prompt above two-tab navigation', () => {

@@ -11,6 +11,7 @@ export async function runAssistantProductionRequest(input: {
   threadAgent: OrbitAgentId;
   expectedThreadVersion: number;
   currentScope: () => boolean;
+  waitForInFlightThreadSave?: (agentId: OrbitAgentId) => Promise<void>;
   setLoading: (loading: boolean) => void;
   upsertTaskCard: (agentId: OrbitAgentId, card: AssistantTaskCardInput) => void;
   focusTaskCard: (agentId: OrbitAgentId, taskId: string | null) => void;
@@ -25,17 +26,30 @@ export async function runAssistantProductionRequest(input: {
 }) {
   const {
     productionIntent, requestMessage = productionIntent.objective, threadAgent, expectedThreadVersion, currentScope,
+    waitForInFlightThreadSave = async () => {},
     setLoading, upsertTaskCard, focusTaskCard, hydrateThread, setMessages, persistThread,
     onSessionRefresh, refreshPipeline,
     resolveProduct = resolveAssistantEnterpriseProduct,
     createTask = createAtomicAssistantContentTask,
   } = input;
   try {
+    // The caller raises the persistence pause before entering here. Drain the
+    // PUT that may already own the thread CAS, then use its committed version
+    // for the atomic message + ContentTask mutation.
+    await waitForInFlightThreadSave(threadAgent);
+    if (!currentScope()) return;
+    const storedThreadVersion = useAssistantStore.getState().threads[threadAgent]?.version;
+    let createVersion = Number.isSafeInteger(storedThreadVersion) && storedThreadVersion >= 0
+      ? Math.max(expectedThreadVersion, storedThreadVersion)
+      : expectedThreadVersion;
+    const creationIdempotencyKey = assistantContentTaskIdempotencyKey(createVersion, productionIntent.objective);
     const productionProduct = await resolveProduct(productionIntent.productQuery);
     if (!currentScope()) return;
     const createAtVersion = (version: number) => createTask({
       agentId: threadAgent, expectedThreadVersion: version,
-      idempotencyKey: assistantContentTaskIdempotencyKey(version, productionIntent.objective),
+      // Keep the operation identity stable if a bind-pending response reveals
+      // that the task exists or a later CAS conflict requires a newer thread.
+      idempotencyKey: creationIdempotencyKey,
       message: requestMessage,
       task: {
         title: productionIntent.title, objective: productionIntent.objective,
@@ -51,14 +65,29 @@ export async function runAssistantProductionRequest(input: {
       },
     });
     let productionResponse: Awaited<ReturnType<typeof createTask>>;
-    try {
-      productionResponse = await createAtVersion(expectedThreadVersion);
-    } catch (error) {
-      const conflict = error instanceof AssistantContentTaskApiError && error.status === 409 ? error : null;
-      const refreshedVersion = Number(conflict?.current?.version);
-      if (!Number.isSafeInteger(refreshedVersion) || refreshedVersion < 0 || !conflict?.current || !currentScope()) throw error;
-      hydrateThread(threadAgent, conflict.current);
-      productionResponse = await createAtVersion(refreshedVersion);
+    let conflictRetries = 0;
+    let pendingBindingRetries = 0;
+    while (true) {
+      try {
+        productionResponse = await createAtVersion(createVersion);
+        break;
+      } catch (error) {
+        if (error instanceof AssistantContentTaskApiError
+          && error.status === 503
+          && error.code === 'assistant_content_task_binding_pending'
+          && pendingBindingRetries < 1
+          && currentScope()) {
+          pendingBindingRetries += 1;
+          continue;
+        }
+        const conflict = error instanceof AssistantContentTaskApiError && error.status === 409 ? error : null;
+        const refreshedVersion = Number(conflict?.current?.version);
+        if (!Number.isSafeInteger(refreshedVersion) || refreshedVersion < 0 || !conflict?.current
+          || conflictRetries >= 1 || !currentScope()) throw error;
+        hydrateThread(threadAgent, conflict.current);
+        createVersion = refreshedVersion;
+        conflictRetries += 1;
+      }
     }
     const productionTask = productionResponse.task;
     if (!currentScope()) return;

@@ -266,7 +266,7 @@ export default function GlobalAssistant({
     return () => window.clearTimeout(timeoutId);
   }, [loading, setFollowingLatest, setMessages]);
 
-  const persistThread = useAssistantThreadSaveQueue({
+  const { persistThread, waitForInFlightThreadSave } = useAssistantThreadSaveQueue({
     stablePersistenceScope, persistenceFenceRef, assistantThreadSaveQueuesRef,
     persistencePauseRef: assistantAtomicMutationRef, hydrateThread, setPersistenceMetadata,
   });
@@ -489,6 +489,7 @@ export default function GlobalAssistant({
   const { send, sendComposerMessage } = useAssistantSend({
     page, pageContext, currentPageAgent, enterpriseContext, loading, fileGenerating, replyStreaming,
     contentIntake, uiMessage, persistenceFenceRef, stablePersistenceScope, assistantAtomicMutationRef,
+    waitForInFlightThreadSave,
     pendingMapFileRef, abortRef, openAgent, presentActionResponse,
     setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, focusTaskCard, hydrateThread, setLoading,
     setFileGenerating, setReplyStreaming, setPipelineRefresh, persistThread, onSessionRefresh, requestId,

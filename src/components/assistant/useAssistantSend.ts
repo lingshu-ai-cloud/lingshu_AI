@@ -38,6 +38,7 @@ type AssistantSendInput = {
   persistenceFenceRef: { current: { scopeKey: string; active: boolean } };
   stablePersistenceScope: AssistantJournalScope;
   assistantAtomicMutationRef: { current: boolean };
+  waitForInFlightThreadSave: (agentId: OrbitAgentId) => Promise<void>;
   pendingMapFileRef: { current: boolean };
   abortRef: { current: AbortController | null };
   openAgent: (agent: OrbitAgentId, view: 'chat') => void;
@@ -78,7 +79,7 @@ const API_PATH: Record<AgentType, string> = {
 export function useAssistantSend(input: AssistantSendInput) {
   const { page, pageContext, currentPageAgent, enterpriseContext, loading, fileGenerating,
     replyStreaming, contentIntake, uiMessage, persistenceFenceRef, stablePersistenceScope,
-    assistantAtomicMutationRef, pendingMapFileRef, abortRef, openAgent, presentActionResponse,
+    assistantAtomicMutationRef, waitForInFlightThreadSave, pendingMapFileRef, abortRef, openAgent, presentActionResponse,
     setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, focusTaskCard, hydrateThread, setLoading,
     setFileGenerating, setReplyStreaming,
     setPipelineRefresh, persistThread, onSessionRefresh, requestId,
@@ -138,6 +139,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       try {
         await runAssistantProductionRequest({
           productionIntent, requestMessage: visibleMessage, threadAgent, expectedThreadVersion: thread.version, currentScope,
+          waitForInFlightThreadSave,
           setLoading, upsertTaskCard, focusTaskCard, hydrateThread, setMessages, persistThread,
           onSessionRefresh,
           refreshPipeline: () => setPipelineRefresh(value => value + 1),
@@ -305,7 +307,7 @@ export function useAssistantSend(input: AssistantSendInput) {
         onSessionRefresh?.();
       }
     }
-  }, [assistantAtomicMutationRef, replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, focusTaskCard, hydrateThread, loading, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard, stablePersistenceScope]);
+  }, [assistantAtomicMutationRef, waitForInFlightThreadSave, replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, focusTaskCard, hydrateThread, loading, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard, stablePersistenceScope]);
 
   const sendComposerMessage = useCallback(async () => {
     if (loading || attachmentUploading) return;

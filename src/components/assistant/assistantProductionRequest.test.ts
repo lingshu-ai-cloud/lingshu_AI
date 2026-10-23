@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { AssistantTaskCardInput } from '../../stores/assistantStore';
+import { useAssistantStore, type AssistantTaskCardInput } from '../../stores/assistantStore';
 import { assistantProductionIntent } from './assistantProductionIntake';
 import { runAssistantProductionRequest } from './assistantProductionRequest';
 import type { ContentProductionTaskCard } from '../../../shared/contracts/assistantContentTaskCard';
 import { AssistantContentTaskApiError } from '../../lib/assistantContentTaskApi';
+import { emptyAssistantThread } from './globalAssistantRuntime';
 
 const parsedIntent = assistantProductionIntent('请制作一条 20 秒 TikTok 竖版短视频，推广「青柠精华」');
 if (!parsedIntent) throw new Error('测试生产指令未被识别');
 const intent = parsedIntent;
 
 function fixture() {
+  useAssistantStore.getState().hydrateThread('business', { ...emptyAssistantThread(), version: 3, updatedAt: 'fixture' });
   const loading: boolean[] = [];
   const messages: string[] = [];
   const events: string[] = [];
@@ -79,6 +81,24 @@ test('scope change after product read prevents confirmation and creation', async
   assert.deepEqual(calls, []);
 });
 
+test('an atomic task waits for the unresolved thread PUT and uses its committed CAS version', async () => {
+  const { input } = fixture();
+  let releaseSave!: () => void;
+  const saveSettled = new Promise<void>(resolve => { releaseSave = resolve; });
+  let createVersion: number | null = null;
+  const success = input.createTask!;
+  useAssistantStore.getState().setPersistenceMetadata('business', 3, 'before-save');
+  input.waitForInFlightThreadSave = async () => saveSettled;
+  input.createTask = async request => { createVersion = request.expectedThreadVersion; return success(request); };
+  const running = runAssistantProductionRequest(input);
+  await new Promise<void>(resolve => setTimeout(resolve, 0));
+  assert.equal(createVersion, null, 'POST must not begin while the prior full-thread PUT is unresolved');
+  useAssistantStore.getState().setPersistenceMetadata('business', 4, 'after-save');
+  releaseSave();
+  await running;
+  assert.equal(createVersion, 4);
+});
+
 test('a real thread version race hydrates once and retries the same intention against the new version', async () => {
   const { input, calls } = fixture();
   const success = input.createTask!;
@@ -91,5 +111,21 @@ test('a real thread version race hydrates once and retries the same intention ag
   await runAssistantProductionRequest(input);
   assert.deepEqual(versions, [3, 9]);
   assert.equal(calls.includes('hydrate:9'), true);
-  assert.equal(calls.some(call => call.includes(':9:assistant-content:9:')), true);
+  assert.equal(calls.some(call => call.includes(':9:assistant-content:3:')), true,
+    'the business task idempotency identity must survive the thread-version retry');
+});
+
+test('a bind-pending response and later CAS conflict keep one task idempotency identity', async () => {
+  const { input } = fixture();
+  const success = input.createTask!;
+  const requests: Array<{ version: number; key: string }> = [];
+  input.createTask = async request => {
+    requests.push({ version: request.expectedThreadVersion, key: request.idempotencyKey });
+    if (requests.length === 1) throw new AssistantContentTaskApiError('绑定待确认', 503, 'assistant_content_task_binding_pending');
+    if (requests.length === 2) throw new AssistantContentTaskApiError('会话已更新', 409, 'assistant_thread_version_conflict', { version: 8 });
+    return success(request);
+  };
+  await runAssistantProductionRequest(input);
+  assert.deepEqual(requests.map(item => item.version), [3, 3, 8]);
+  assert.equal(new Set(requests.map(item => item.key)).size, 1);
 });

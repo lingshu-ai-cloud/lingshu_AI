@@ -126,6 +126,7 @@ export type AssistantThreadSaveQueue = {
   retryAttempt: number;
   retryTimer: number | null;
   abortController: AbortController | null;
+  idleWaiters: Set<() => void>;
 };
 
 export type AssistantPersistenceReason = 'change' | 'retry' | 'lifecycle';

@@ -253,8 +253,8 @@ assert.match(decisionActionResultSource, /setMessages\(PRIMARY_ASSISTANT_THREAD,
 assert.match(decisionActionResultSource, /closeDecisionDialog\(\)[\s\S]{0,120}persistThread\(PRIMARY_ASSISTANT_THREAD\)/, '结果到达后关闭已处理详情并保存对话状态');
 
 assert.match(runtimeSource, /const PRIMARY_ASSISTANT_THREAD:\s*OrbitAgentId\s*=\s*'business'/, '所有对话必须聚合到 business 主线程');
-assert.match(source, /const persistThread = useAssistantThreadSaveQueue\(\{[\s\S]*stablePersistenceScope, persistenceFenceRef, assistantThreadSaveQueuesRef,[\s\S]*hydrateThread, setPersistenceMetadata/, '浮层必须连接同一作用域、身份栅栏和保存队列');
-const persistThreadSource = sourceSection('const persistThread = useCallback', 'return persistThread;', '助手线程持久化队列', saveQueueSource);
+assert.match(source, /const \{ persistThread, waitForInFlightThreadSave \} = useAssistantThreadSaveQueue\(\{[\s\S]*stablePersistenceScope, persistenceFenceRef, assistantThreadSaveQueuesRef,[\s\S]*hydrateThread, setPersistenceMetadata/, '浮层必须连接同一作用域、身份栅栏和保存队列');
+const persistThreadSource = sourceSection('const persistThread = useCallback', 'const waitForInFlightThreadSave', '助手线程持久化队列', saveQueueSource);
 assert.match(persistThreadSource, /if \(queue\.running\) return/, '同一线程保存必须串行执行，不能并发全量覆盖');
 assert.match(persistThreadSource, /expectedVersion/, '每次线程保存必须携带服务端版本前置条件');
 assert.match(persistThreadSource, /response\.status === 409/, '版本冲突必须进入显式合并流程');
@@ -335,6 +335,8 @@ assert.match(productionRequestSource, /contentTaskCardToAssistantCard\(authorita
 assert.doesNotMatch(productionRequestSource, /agentTaskDemo: true/, '真实执行不得进入演示页面');
 assert.match(productionRequestSource, /productId: productionProduct\.id[\s\S]*productRef: productionProduct\.label/, '周任务必须绑定企业中心的真实产品身份');
 assert.match(sendSource, /assistantAtomicMutationRef\.current = true[\s\S]*await runAssistantProductionRequest[\s\S]*assistantAtomicMutationRef\.current = false/, '原子建任务期间必须暂停后台会话保存，避免抢占 CAS 版本');
+assert.match(productionRequestSource, /await waitForInFlightThreadSave\(threadAgent\)[\s\S]*createAtVersion/, '原子建任务必须等待已经发出的会话 PUT 释放 CAS 后再开始 POST');
+assert.match(productionRequestSource, /creationIdempotencyKey[\s\S]*idempotencyKey: creationIdempotencyKey/, '会话版本重试不得改变已开始业务任务的幂等身份');
 assert.doesNotMatch(productionRequestSource, /lingshu:navigate|window\.location|page: 'smartAssets'/, '任务建立后应留在同一权威任务卡，不得强制跳离对话');
 assert.ok(sendSource.indexOf('await runAssistantProductionRequest') < sendSource.indexOf('await streamAssistantReply'), '生产任务分流必须发生在千问文本生成请求之前');
 assert.match(sendSource, /endpoint: API_PATH\[agentForOrbit\(routeAgent\)\]/, 'business 主线程聚合不得丢失当前页面的内部能力路由');

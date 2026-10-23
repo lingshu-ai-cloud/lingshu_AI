@@ -15,6 +15,7 @@ import { readLocalCustomerConversations, summarizeLocalCustomerConversations } f
 import { projectContentProductionTaskCard, type ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard.js';
 import { createStarter198Repository, STARTER_COLLECTIONS, type StarterRecord } from '../starter198/repository.js';
 import { readSocialTaskDetail, socialTaskSummary } from '../starter198/socialContentRecords.js';
+import { SocialContentWorkflowError } from '../starter198/socialContentValidation.js';
 
 export type MobileAssistantTopic = 'weekly_progress' | 'agent_status' | 'published_videos' | 'qualified_inquiries' | 'exposure';
 export interface MobileAssistantOptions {
@@ -26,6 +27,11 @@ export type MobileCurrentContentTask = {
   availability: 'available' | 'empty' | 'unavailable';
   card: ContentProductionTaskCard | null;
 };
+export function mobileContentTaskReadFailure(error: unknown) {
+  return error instanceof SocialContentWorkflowError && error.status === 404
+    ? { status: 404, body: { error: 'content_task_not_found', message: '任务不存在或当前账号无权查看。' } }
+    : { status: 503, body: { error: 'content_task_read_unavailable', message: '任务状态暂时无法读取，请稍后重试。' } };
+}
 const TOPICS: MobileAssistantTopic[] = ['weekly_progress', 'agent_status', 'published_videos', 'qualified_inquiries', 'exposure'];
 const labels: Record<MobileAssistantTopic, string> = {
   weekly_progress: '这周任务推进到哪了？', agent_status: 'Agent 现在分别在做什么？',
@@ -138,9 +144,14 @@ export function createMobileWorkbenchAssistantRouter(store: DataStore, options: 
     const taskId = String(req.params.taskId || '').trim();
     if (!/^[A-Za-z0-9._:@-]{1,240}$/.test(taskId)) { res.status(400).json({ error: 'content_task_id_invalid' }); return; }
     const identity = res.locals as AuthLocals;
-    const task = await readSocialTaskDetail({ repository: createStarter198Repository(store), tenantId: identity.tenantId, taskId }).catch(() => null);
-    if (!task) { res.status(404).json({ error: 'content_task_not_found' }); return; }
-    res.json({ card: projectContentProductionTaskCard(task) });
+    try {
+      const task = await readSocialTaskDetail({ repository: createStarter198Repository(store), tenantId: identity.tenantId, taskId });
+      if (!task) { res.status(404).json({ error: 'content_task_not_found', message: '任务不存在或当前账号无权查看。' }); return; }
+      res.json({ card: projectContentProductionTaskCard(task) });
+    } catch (error) {
+      const failure = mobileContentTaskReadFailure(error);
+      res.status(failure.status).json(failure.body);
+    }
   });
   router.post('/assistant/query', async (req, res) => {
     if (req.body && !req.body.clientMessageId && req.body.idempotencyKey) req.body.clientMessageId = req.body.idempotencyKey;

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { DataStore } from '../storage/datastore.js';
-import { answerMobileAssistant, buildMobileAssistantContext, previewMobileAssistantAction, readMobileCurrentContentTask } from './mobileWorkbenchAssistant.js';
+import { answerMobileAssistant, buildMobileAssistantContext, mobileContentTaskReadFailure, previewMobileAssistantAction, readMobileCurrentContentTask } from './mobileWorkbenchAssistant.js';
 import { defaultBrief } from '../starter198/socialContentTaskSupport.js';
 import { SOCIAL_WORK_PACKAGE_KINDS } from '../../shared/contracts/socialContentWorkflow.js';
+import { SocialContentWorkflowError } from '../starter198/socialContentValidation.js';
 function store(subject?: Record<string, unknown>): DataStore {
  return { getById: async <T>() => subject as T || null, list: async <T>() => ({items:[] as T[],totalItems:0,totalPages:1,page:1,perPage:200}),create:async()=>null,update:async()=>false,delete:async()=>false };
 }
@@ -31,6 +32,13 @@ test('mobile context projects the latest instant ContentTask with its server ver
  assert.equal(projection.card?.recoveryCursor.kind,'task_projection');
  assert.equal(projection.card?.recoveryCursor.value,'content-1@7#2026-10-24T01:00:00Z');
  assert.equal(projection.card?.outputType,'image');
+});
+test('mobile task detail distinguishes absence from a temporary read failure',()=>{
+ assert.equal(mobileContentTaskReadFailure(new SocialContentWorkflowError('social_content_task_not_found',404)).status,404);
+ const unavailable=mobileContentTaskReadFailure(new Error('storage unavailable'));
+ assert.equal(unavailable.status,503);
+ assert.equal(unavailable.body.error,'content_task_read_unavailable');
+ assert.match(unavailable.body.message,/暂时无法读取/);
 });
 test('preview is scoped versioned and never executes',async()=>{
  const db=store({id:'task-a',tenant_id:'a',status:'failed',task_version:3,title:'失败任务'});

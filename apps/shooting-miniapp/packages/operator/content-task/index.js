@@ -30,7 +30,10 @@ Page({
       this.loaded = true
       this.setData({ card:present(result.card) })
     } catch (error) {
-      this.setData({ error:error.message || '任务详情暂时无法读取' })
+      const errorText = error && error.status === 404 ? '任务不存在或当前账号无权查看'
+        : error && error.status === 503 ? '任务状态暂时无法读取，已保留当前页面，请稍后重试'
+          : error && error.message || '任务详情暂时无法读取'
+      this.setData({ error:errorText })
     } finally { this.setData({ loading:false }) }
   }
 })
