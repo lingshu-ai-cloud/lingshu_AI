@@ -16,7 +16,7 @@ import { authorizeDefaultSocialContentRequest } from '../starter198/socialConten
 import { projectContentProductionTaskCard, type ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard.js';
 import type { SocialContentTaskSummary } from '../../shared/contracts/socialContentTaskContract.js';
 import { isAssistantActionId, type AssistantActionId } from '../../shared/contracts/assistantActions.js';
-import { parsePendingContentTaskBinding, type PendingContentTaskBinding } from './assistantThreadPendingBinding.js';
+import { findAssistantContentTaskId, parsePendingContentTaskBinding, type PendingContentTaskBinding } from './assistantThreadPendingBinding.js';
 
 const MAX_THREAD_BYTES = 96 * 1024;
 const MAX_MESSAGES = 120;
@@ -764,7 +764,8 @@ export function createAssistantThreadsRouter(
         res.status(201).json({ thread: threadWithDefaults(saved), task, receipt: { taskId: task.taskId, status: task.status, card } });
       } catch (error) {
         const failure = error instanceof AssistantActionError ? error : new AssistantActionError('assistant_content_task_unavailable', 503, '单条内容任务暂时无法建立。');
-        res.status(failure.status).json({ error: failure.code, message: failure.publicMessage });
+        const contentTaskId = failure.status >= 500 ? await findAssistantContentTaskId(dataStore, identity, idempotencyKey).catch(() => null) : null;
+        res.status(failure.status).json({ error: failure.code, message: failure.publicMessage, ...(contentTaskId ? { contentTaskId } : {}) });
       }
     });
   });

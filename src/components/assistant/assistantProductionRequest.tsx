@@ -34,7 +34,9 @@ export async function runAssistantProductionRequest(input: {
   } = input;
   const intentFingerprint = assistantContentTaskIntentFingerprint(productionIntent.objective);
   let creationIdempotencyKey = '';
-  let observedContentTaskId = '';
+  let observedContentTaskId: string | null = null;
+  let creationAttempted = false;
+  let operationOutcomeUncertain = false;
   let priorPendingBinding: PendingContentTaskBinding | null = null;
   try {
     // The caller raises the persistence pause before entering here. Drain the
@@ -52,28 +54,31 @@ export async function runAssistantProductionRequest(input: {
       : null;
     creationIdempotencyKey = priorPendingBinding?.idempotencyKey
       || assistantContentTaskIdempotencyKey(createVersion, productionIntent.objective);
-    observedContentTaskId = priorPendingBinding?.contentTaskId ?? '';
+    observedContentTaskId = priorPendingBinding?.contentTaskId ?? null;
     const productionProduct = await resolveProduct(productionIntent.productQuery);
     if (!currentScope()) return;
-    const createAtVersion = (version: number) => createTask({
-      agentId: threadAgent, expectedThreadVersion: version,
-      // Keep the operation identity stable if a bind-pending response reveals
-      // that the task exists or a later CAS conflict requires a newer thread.
-      idempotencyKey: creationIdempotencyKey,
-      message: requestMessage,
-      task: {
-        title: productionIntent.title, objective: productionIntent.objective,
-        productId: productionProduct.id, productRef: productionProduct.label,
-        platforms: productionIntent.platforms, formats: productionIntent.formats,
-        aspectRatio: productionIntent.aspectRatio, targetDurationSeconds: productionIntent.targetDurationSeconds,
-        requestedOutputCount: 1, planningMode: 'auto_adjust', specialRequirements: productionIntent.objective,
-        restrictions: [], dueAt: null,
-        // Existing ContentTask maps PRD free_creation to this route; `instant`
-        // remains the authoritative task mode and no parallel task is created.
-        creationMode: 'material_processing', assetAvailability: 'none', managementMode: 'one_click_managed',
-        productionMode: 'social_ready', productionApproach: 'ai_enhanced', mode: 'instant',
-      },
-    });
+    const createAtVersion = (version: number) => {
+      creationAttempted = true;
+      return createTask({
+        agentId: threadAgent, expectedThreadVersion: version,
+        // Keep the operation identity stable if a bind-pending response reveals
+        // that the task exists or a later CAS conflict requires a newer thread.
+        idempotencyKey: creationIdempotencyKey,
+        message: requestMessage,
+        task: {
+          title: productionIntent.title, objective: productionIntent.objective,
+          productId: productionProduct.id, productRef: productionProduct.label,
+          platforms: productionIntent.platforms, formats: productionIntent.formats,
+          aspectRatio: productionIntent.aspectRatio, targetDurationSeconds: productionIntent.targetDurationSeconds,
+          requestedOutputCount: 1, planningMode: 'auto_adjust', specialRequirements: productionIntent.objective,
+          restrictions: [], dueAt: null,
+          // Existing ContentTask maps PRD free_creation to this route; `instant`
+          // remains the authoritative task mode and no parallel task is created.
+          creationMode: 'material_processing', assetAvailability: 'none', managementMode: 'one_click_managed',
+          productionMode: 'social_ready', productionApproach: 'ai_enhanced', mode: 'instant',
+        },
+      });
+    };
     let productionResponse: Awaited<ReturnType<typeof createTask>>;
     let conflictRetries = 0;
     let pendingBindingRetries = 0;
@@ -82,6 +87,7 @@ export async function runAssistantProductionRequest(input: {
         productionResponse = await createAtVersion(createVersion);
         break;
       } catch (error) {
+        if (!(error instanceof AssistantContentTaskApiError) || error.status >= 500) operationOutcomeUncertain = true;
         if (error instanceof AssistantContentTaskApiError
           && error.status === 503
           && error.code === 'assistant_content_task_binding_pending'
@@ -123,12 +129,14 @@ export async function runAssistantProductionRequest(input: {
     const taskId = error instanceof AssistantContentTaskApiError
       ? error.contentTaskId || observedContentTaskId
       : observedContentTaskId;
-    if (taskId && creationIdempotencyKey) {
+    const preserveOperationIdentity = Boolean(creationIdempotencyKey
+      && (taskId || (creationAttempted && operationOutcomeUncertain)));
+    if (preserveOperationIdentity) {
       hydrateThread(threadAgent, {
         pendingContentTaskBinding: {
           intentFingerprint,
           idempotencyKey: creationIdempotencyKey,
-          contentTaskId: taskId,
+          contentTaskId: taskId || null,
           createdAt: priorPendingBinding?.createdAt || new Date().toISOString(),
         },
       });
@@ -140,7 +148,9 @@ export async function runAssistantProductionRequest(input: {
       ...visibleMessages,
       { role: 'assistant', content: taskId
         ? '单条内容任务已安全保存，但会话绑定暂时未确认。稍后再次发送相同需求会续接原任务，不会重复创建。'
-        : `单条内容任务尚未建立：${message}` },
+        : preserveOperationIdentity
+          ? '单条内容任务的提交结果暂时无法核实。已保留本次请求身份；稍后再次发送相同需求会先核对原请求，不会重复创建。'
+          : `单条内容任务尚未建立：${message}` },
     ]);
     persistThread(threadAgent);
   } finally {

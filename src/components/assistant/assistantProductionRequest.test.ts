@@ -159,3 +159,33 @@ test('a repeatedly pending binding is persisted and the next resend resumes the 
   assert.equal(new Set(keys).size, 1);
   assert.equal(useAssistantStore.getState().threads.business.pendingContentTaskBinding, null);
 });
+
+test('an uncertain server failure without a task id still reuses one operation identity on resend', async () => {
+  const { input, messages } = fixture();
+  const success = input.createTask!;
+  const hydrate = input.hydrateThread;
+  input.hydrateThread = (agentId, patch) => {
+    useAssistantStore.getState().hydrateThread(agentId, patch);
+    hydrate(agentId, patch);
+  };
+  const keys: string[] = [];
+  input.createTask = async request => {
+    keys.push(request.idempotencyKey);
+    throw new AssistantContentTaskApiError(
+      '任务结果暂时无法读取', 503, 'assistant_content_task_unavailable', undefined,
+    );
+  };
+  await runAssistantProductionRequest(input);
+  const pending = useAssistantStore.getState().threads.business.pendingContentTaskBinding;
+  assert.equal(pending?.contentTaskId, null);
+  assert.equal(pending?.idempotencyKey, keys[0]);
+  assert.match(messages.at(-1) || '', /提交结果暂时无法核实/);
+
+  input.createTask = async request => {
+    keys.push(request.idempotencyKey);
+    return success(request);
+  };
+  await runAssistantProductionRequest(input);
+  assert.equal(new Set(keys).size, 1);
+  assert.equal(useAssistantStore.getState().threads.business.pendingContentTaskBinding, null);
+});

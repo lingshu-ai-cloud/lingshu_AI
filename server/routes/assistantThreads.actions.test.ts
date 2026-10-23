@@ -145,6 +145,48 @@ test('a lost conversation bind retries the same idempotent task and appends the 
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
 
+test('a task persisted before detail failure is recovered by one idempotent resend', async () => {
+  const baseStore = memoryStore();
+  const taskRows: Row[] = [];
+  const dataStore: DataStore = {
+    ...baseStore,
+    async list<T>(collection: string, query: ListQuery = {}) {
+      if (collection !== 'starter_social_content_tasks') return baseStore.list<T>(collection, query);
+      const items = taskRows.filter(row => Object.entries(query.where ?? {}).every(([key, value]) => row[key] === value));
+      return { items: items as T[], totalItems: items.length, totalPages: 1, page: 1, perPage: query.perPage ?? 20 };
+    },
+  };
+  let firstDetailRead = true;
+  const keys: string[] = [];
+  const app = express(); app.use(express.json());
+  app.use('/api/overseas/assistant-threads', createAssistantThreadsRouter({
+    dataStore,
+    authorizeContentTaskCreation: async () => {},
+    createInstantContentTask: async input => {
+      keys.push(input.idempotencyKey);
+      if (!taskRows.length) taskRows.push({
+        id: 'task-row', tenant_id: input.tenantId, task_id: 'content-once', task_mode: 'instant',
+        created_by: input.userId, create_idempotency_key: input.idempotencyKey,
+      });
+      if (firstDetailRead) { firstDetailRead = false; throw new Error('detail read unavailable after create'); }
+      return instantTask('content-once');
+    },
+    authMiddleware: (_req, res, next) => { res.locals.tenantId = 'tenant-a'; res.locals.userId = 'user-a'; next(); },
+  }));
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/overseas/assistant-threads/business/content-tasks`;
+  try {
+    const first = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(instantTaskRequest) });
+    assert.equal(first.status, 503);
+    assert.equal((await first.json()).contentTaskId, 'content-once');
+    const retry = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(instantTaskRequest) });
+    assert.equal(retry.status, 201);
+    assert.equal((await retry.json()).task.taskId, 'content-once');
+    assert.equal(taskRows.length, 1);
+    assert.deepEqual(keys, [instantTaskRequest.idempotencyKey, instantTaskRequest.idempotencyKey]);
+  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});
+
 test('content task endpoint rejects a caller without the canonical social-content write authority', async () => {
   let creates = 0;
   const app = express(); app.use(express.json());
@@ -370,7 +412,7 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     pendingContentTaskBinding: {
       intentFingerprint: 'assistant-content-intent:12345678',
       idempotencyKey: 'assistant-content:0:12345678',
-      contentTaskId: 'content-pending',
+      contentTaskId: null,
       createdAt: '2026-10-24T08:00:00.000Z',
     },
   };
@@ -387,7 +429,7 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     assert.equal(saved.isFollowingLatest, false);
     assert.equal(saved.paused, true);
     assert.equal(saved.focusedTaskId, 'run:one');
-    assert.equal(saved.pendingContentTaskBinding.contentTaskId, 'content-pending');
+    assert.equal(saved.pendingContentTaskBinding.contentTaskId, null);
     assert.deepEqual(saved.taskCards['run:one'], {
       ...card,
       primaryAction: { id: 'confirm-plan', label: '确认并开始' },
