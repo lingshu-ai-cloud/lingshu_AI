@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ShotProductionPanel from './ShotProductionPanel.js';
+import ArkPresenterEnrollmentPanel from './studio/ArkPresenterEnrollmentPanel.js';
+import { arkPresenterEnrollmentMaterials } from './studio/arkPresenterEnrollmentMaterials.js';
 import { newShotProduction, EMPTY_DEFAULTS, shotFingerprint } from '../lib/shotProduction.js';
 
 const props = {
@@ -69,20 +71,54 @@ test('missing presenter can be completed inside the current shot and returns to 
 
 test('existing presenter can reuse its uploaded photo in the Ark enrollment flow', () => {
   const presenter = { id:'person-1',name:'销售',avatarId:'',voiceId:'',authorized:true,supportsAlpha:false,referenceMaterialIds:['portrait-1'],authorizationConfirmation:{subjectAdultConfirmed:true,arkProcessingAuthorized:true} };
-  const html = renderToStaticMarkup(<ShotProductionPanel {...props} onEnrollArkPresenter={async()=>({id:'e1',presenterId:'person-1',state:'needs_verification',verificationUrl:'',error:'',assetUri:''})} defaults={{...EMPTY_DEFAULTS,presenters:[presenter]}} materials={[{id:'portrait-1',name:'销售正脸',type:'image',url:'/photo.jpg'}]} shot={{...newShotProduction('请联系我'),source:'avatar',presenterId:'person-1',digitalHuman:{workflow:'viral_replication',method:'reenact',contentConfirmed:false,action:'挥手',scene:'工厂',preserve:'人物身份'}}} />);
+  const materials = [{id:'portrait-1',name:'销售正脸',type:'image',url:'/photo.jpg'}];
+  const html = renderToStaticMarkup(<ShotProductionPanel {...props} onEnrollArkPresenter={async()=>({id:'e1',presenterId:'person-1',state:'needs_verification',verificationUrl:'',error:'',assetUri:''})} defaults={{...EMPTY_DEFAULTS,presenters:[presenter]}} materials={materials} shot={{...newShotProduction('请联系我'),source:'avatar',presenterId:'person-1',digitalHuman:{workflow:'viral_replication',method:'reenact',contentConfirmed:false,action:'挥手',scene:'工厂',preserve:'人物身份'}}} />);
   assert.match(html,/销售正脸/);
-  assert.match(html,/人物替换认证（可选）/);
-  assert.match(html,/正在检查人物替换能力/);
+  assert.match(html,/方舟人物认证（可选增强）/);
+  assert.match(html,/正在检查方舟认证能力/);
   assert.doesNotMatch(html,/方舟图片 Asset ID/);
   assert.match(html,/人物图片尚未完成方舟 Active 认证/);
   assert.match(html,/<button[^>]*disabled=""[^>]*>生成新候选/);
+  const selection = arkPresenterEnrollmentMaterials(presenter, materials);
+  assert.equal(selection.initialPhotoMaterialId, 'portrait-1');
+  assert.equal(selection.initialVideoMaterialId, undefined);
+  assert.equal(selection.authorizationConfirmed, true);
+  const ready = renderToStaticMarkup(<ArkPresenterEnrollmentPanel presenterId={presenter.id} {...selection} initialCapability={{ready:true,reason:'',missing:[]}} onStart={async()=>({id:'e1',presenterId:'person-1',state:'needs_verification',verificationUrl:'',error:'',assetUri:''})} onReady={async()=>{}} />);
+  assert.match(ready, /人物认证视频/);
+  assert.match(ready, /value="portrait-1" selected=""/);
+  assert.doesNotMatch(ready, /我确认出镜人为成年人/);
+  assert.match(ready, /<button type="button" disabled=""[^>]*>提交人物资料并开始认证/);
 });
 
 test('new reenact presenter starts with one video, one photo and explicit Ark consent', () => {
   const html = renderToStaticMarkup(<ShotProductionPanel {...props} onEnrollArkPresenter={async()=>({id:'e1',presenterId:'person-1',state:'needs_verification',verificationUrl:'',error:'',assetUri:''})} shot={{...newShotProduction('请联系我'),source:'avatar',digitalHuman:{workflow:'viral_replication',method:'reenact',contentConfirmed:false,action:'挥手',scene:'工厂',preserve:'人物身份'}}} />);
-  assert.match(html,/人物替换认证（可选）/);
-  assert.match(html,/正在检查人物替换能力/);
+  assert.match(html,/方舟人物认证（可选增强）/);
+  assert.match(html,/正在检查方舟认证能力/);
   assert.doesNotMatch(html,/方舟图片 Asset ID/);
+  const selection = arkPresenterEnrollmentMaterials(undefined, []);
+  const ready = renderToStaticMarkup(<ArkPresenterEnrollmentPanel presenterId="" {...selection} initialCapability={{ready:true,reason:'',missing:[]}} onStart={async()=>({id:'e1',presenterId:'person-1',state:'needs_verification',verificationUrl:'',error:'',assetUri:''})} onReady={async()=>{}} />);
+  assert.match(ready,/aria-label="认证人物名称"/);
+  assert.match(ready,/aria-label="人物认证视频"/);
+  assert.match(ready,/aria-label="人物认证照片"/);
+  assert.match(ready,/我确认出镜人为成年人，已取得本人同意/);
+  assert.match(ready,/<button type="button" disabled=""[^>]*>提交人物资料并开始认证/);
+});
+
+test('saved photo and video are reused only after explicit Ark processing consent', () => {
+  const presenter = { id:'person-1',name:'销售',avatarId:'',voiceId:'',authorized:true,supportsAlpha:false,referenceMaterialIds:['portrait-1','video-1'],authorizationConfirmation:{subjectAdultConfirmed:true,arkProcessingAuthorized:false} };
+  const materials = [{id:'portrait-1',name:'销售正脸',type:'image'}, {id:'video-1',name:'销售本人视频',type:'video'}];
+  const selection = arkPresenterEnrollmentMaterials(presenter, materials);
+  const panel = (authorizationConfirmed: boolean) => renderToStaticMarkup(<ArkPresenterEnrollmentPanel presenterId={presenter.id} {...selection} authorizationConfirmed={authorizationConfirmed} initialCapability={{ready:true,reason:'',missing:[]}} onStart={async()=>({id:'e1',presenterId:'person-1',state:'needs_verification',verificationUrl:'',error:'',assetUri:''})} onReady={async()=>{}} />);
+  assert.equal(selection.authorizationConfirmed, false);
+  const unconfirmed = panel(false);
+  assert.match(unconfirmed,/已复用统一接入时上传的照片和本人视频，不需要再次录入/);
+  assert.doesNotMatch(unconfirmed,/aria-label="人物认证视频"|aria-label="人物认证照片"/);
+  assert.match(unconfirmed,/我确认出镜人为成年人，已取得本人同意/);
+  assert.match(unconfirmed,/<button type="button" disabled=""[^>]*>开始人物认证/);
+  const confirmed = panel(true);
+  assert.match(confirmed,/成年人及人物处理授权已在统一接入时确认/);
+  assert.doesNotMatch(confirmed,/我确认出镜人为成年人/);
+  assert.match(confirmed,/<button type="button" class="rounded bg-accent[^>]*>开始人物认证/);
 });
 
 test('UGC and product shots expose their own routes without enterprise digital-human controls', () => {
