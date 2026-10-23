@@ -435,7 +435,7 @@ export default function PlatformAdsPage({
           ))}
 
         {isCreativePage && (
-          <AdCreativeLibrary onOpenTask={id => { const task = drafts.find(item => item.id === id); if (task) setSelectedDraft(task); onNavigate('adsPlans'); }} initialTaskId={selectedDraft?.id} />
+          <AdCreativeLibrary onOpenTask={id => { const task = drafts.find(item => item.id === id); if (task) setSelectedDraft(task); onNavigate('adsPlans'); }} initialTaskId={selectedDraft?.id} initialTaskName={selectedDraft?.name} />
         )}
 
         <Drawer title="AI 投手" placement="right" size={720} open={managedOpen} onClose={() => setManagedOpen(false)} destroyOnHidden={false}>

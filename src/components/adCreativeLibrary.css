@@ -41,3 +41,5 @@
 .ads-history-thumbnail .ls-media-state-frame__overlay { padding: 8px; text-align: center; }
 .ads-history-thumbnail.is-neutral .ls-media-state-frame.is-error .ls-media-state-frame__overlay { background: var(--color-fill-secondary, #f5f5f5); color: var(--color-text-secondary, #52525b); }
 .ads-material-picker-drawer .ant-drawer-body > .ant-alert { margin-bottom: 16px; }
+.ads-library-local-cover .ads-history-media { display: grid; padding: 12px; }
+.ads-library-local-cover .ads-history-thumbnail { width: 100%; }

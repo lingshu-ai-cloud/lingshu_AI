@@ -99,6 +99,11 @@ test('plan material picking uses the same catalog, locks selection until verifie
   assert.match(source, /e.key === "Escape" && !materialPickerOpen && e.currentTarget.contains/);
   assert.doesNotMatch(binding, /<option.*sha256/);
   assert.match(media, /内部内容：/); assert.match(media, /Meta 广告：/); assert.match(media, /使用范围：/);
+  assert.match(media, /mediaOnly && !source.sourceId/);
+  assert.match(media, /choice.sha256 !== source.sha256/);
+  assert.match(binding, /creative.taskVersion !== task.version/);
+  const library = readFileSync(new URL('./AdCreativeLibrary.tsx', import.meta.url), 'utf8');
+  assert.match(library, /!binding.platformVideoId/); assert.match(library, /refresh=\{refresh\} mediaOnly/);
   const selectionService = readFileSync(new URL('../../server/platformAds/creativeSelection.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(selectionService, /artifact.status !== 'approved'/);
 });

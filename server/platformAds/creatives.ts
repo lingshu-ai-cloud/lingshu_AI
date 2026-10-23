@@ -108,14 +108,18 @@ export async function bindPlatformAdCreative(tenantId: string, taskId: string, i
     }
     // Invalidate prior approvals before changing a binding; a partial failure is safe and requires a refresh.
     await guard.beforeEffect();
-    if (!await store.update(PLATFORM_AD_TASKS_COLLECTION, taskId, { version: taskVersion, authorization: null, proposal: null, updatedAt: now })) throw new PlatformAdCreativeError('计划版本保存失败', 503);
+    if (!await store.update(PLATFORM_AD_TASKS_COLLECTION, taskId, { version: taskVersion, configuration: { ...task.configuration, materialSource: checked.selection }, video: checked.selection.name.slice(0, 120), authorization: null, proposal: null, updatedAt: now })) throw new PlatformAdCreativeError('计划版本保存失败', 503);
     await guard.beforeEffect();
     if (!(existing ? await store.update(AD_CREATIVES_COLLECTION, id, { ...record }) : await store.create(AD_CREATIVES_COLLECTION, { ...record }))) throw new PlatformAdCreativeError('素材绑定保存失败，请刷新重试', 503);
     const persisted = await getPlatformAdCreative(tenantId, id);
     const persistedTask = await getPlatformAdTask(tenantId, taskId);
     const requiredFields = ['taskId', 'taskVersion', 'sourceTaskId', 'artifactId', 'fileRef', 'sha256', 'mimeType', 'size', 'name', 'connectionId', 'provider', 'platformVideoId', 'status'] as const;
     if (!persisted || requiredFields.some(field => persisted[field] !== record[field]) || persistedTask?.version !== taskVersion
-      || persistedTask.authorization !== null || persistedTask.proposal !== null) {
+      || persistedTask.authorization !== null || persistedTask.proposal !== null
+      || persistedTask.configuration.materialSource?.sha256 !== checked.selection.sha256
+      || persistedTask.configuration.materialSource?.sourceTenantId !== tenantId
+      || persistedTask.configuration.materialSource?.sourceTaskId !== sourceTaskId
+      || persistedTask.configuration.materialSource?.artifactId !== artifactId) {
       throw new PlatformAdCreativeError('素材绑定读回校验失败，请检查存储结构后刷新重试', 503);
     }
     return { creative: publicPlatformAdCreative(persisted), taskVersion };

@@ -191,6 +191,13 @@ try {
   assert.equal(preserveAdLifecycleReports(previousLifecycle, { ...failedLifecycle, source: { ...failedLifecycle.source, sourceRevision: 'changed-source-snapshot' } }).ads[0].report, null);
   assert.equal(preserveAdLifecycleReports(previousLifecycle, { ...failedLifecycle, source: { ...failedLifecycle.source, sha256: 'changed' } }).ads[0].report, null);
   assert.equal(preserveAdLifecycleReports(previousLifecycle, { ...failedLifecycle, ads: [{ ...failedLifecycle.ads[0], accountId: 'other' }] }).ads[0].report, null);
+  const localPlan = await createPlatformAdTask('tenant', 'user', input);
+  const localBinding = await bindPlatformAdCreative('tenant', localPlan.id, { expectedVersion: localPlan.version, sourceTaskId: 'source', artifactId: 'artifact', connectionId: account.id });
+  assert.equal((await listAdCreativeLibrary('tenant', {})).items.find(i => i.task.id === localPlan.id)?.binding?.id, localBinding.creative.id);
+  await store.update('platform_ad_tasks', localPlan.id, { configuration: { materialSource: { sourceTenantId: 'tenant', sourceTaskId: 'source', artifactId: 'other-version', sha256 } } });
+  assert.equal((await listAdCreativeLibrary('tenant', {})).items.some(i => i.task.id === localPlan.id), false, 'old binding cannot claim a different newly selected version');
+  await store.update('platform_ad_tasks', localPlan.id, { configuration: { materialSource: null } });
+  assert.equal((await listAdCreativeLibrary('tenant', {})).items.some(i => i.task.id === localPlan.id), false, 'cleared selection is not silently revived from an old binding');
   console.log('Meta performance: all 3 resource levels, account timezone, actual attribution, native ratios, bounded range, cached reads and empty totals passed.');
   console.log('Creative library: tenant boundaries, immutable/idempotent post-execution mapping, ad-level empty/zero/positive metrics and real thumbnail readback passed (provider mocked, GET only).');
 } finally { Date.now = originalNow; globalThis.fetch = originalFetch; fs.rmSync(temp, { recursive: true, force: true }); fs.rmSync(mediaDir, { recursive: true, force: true }); }

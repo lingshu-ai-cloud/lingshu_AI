@@ -87,6 +87,12 @@ try {
   assert.equal(bound.creative.status, 'pending');
   assert.equal(bound.creative.platformVideoId, '');
   assert.equal((await getPlatformAdTask('tenant-a', task.id))?.version, 2);
+  const boundTask = await getPlatformAdTask('tenant-a', task.id);
+  assert.equal(boundTask?.configuration.materialSource?.sha256, sha256);
+  assert.equal(boundTask?.configuration.materialSource?.sourceTenantId, 'tenant-a');
+  assert.equal(boundTask?.configuration.materialSource?.artifactId, 'artifact-a');
+  assert.equal(boundTask?.configuration.materialSource?.contentStatus, 'approved');
+  assert.equal(boundTask?.video, 'Final.mp4');
   assert.ok(!('fileRef' in bound.creative));
   assert.ok(!('tenant_id' in bound.creative));
   assert.equal(await getPlatformAdCreative('tenant-b', bound.creative.id), null);

@@ -39,7 +39,13 @@ export async function listAdCreativeLibrary(tenantId: string, query: { page?: un
       if (binding) used.add(binding.id);
       await append(binding, receipt);
     }
-    for (const binding of bindings.items) if (binding.tenant_id === tenantId && !used.has(binding.id)) await append(binding, null);
+    for (const binding of bindings.items) if (binding.tenant_id === tenantId && !used.has(binding.id)) {
+      const selected = task.configuration?.materialSource;
+      if (selected === null) continue;
+      // An old local binding must not claim to be the current draft's newly selected source.
+      if (selected && (selected.sourceTenantId !== tenantId || selected.sha256 !== binding.sha256 || selected.sourceTaskId !== binding.sourceTaskId || selected.artifactId !== binding.artifactId)) continue;
+      await append(binding, null);
+    }
   }
   return { items, page, perPage, totalItems: tasks.totalItems, totalPages: tasks.totalPages, truncated };
 }
