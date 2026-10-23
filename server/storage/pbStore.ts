@@ -35,7 +35,7 @@ import { verifySupportAccessToken } from '../lib/supportAccess.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { isLocalDemoAuthorization, verifyLocalIdentity } from '../auth/localIdentity.js';
 import { bindDataAuthority, currentDataAuthority } from './dataAuthority.js';
-import { pocketBaseCasClaimSchemaVerified } from './pbCasCapability.js';
+import { pocketBaseCasClaimSchemaVerified, pocketBaseUniqueOwnerSchemaVerified } from './pbCasCapability.js';
 import {
   createLocalDataTenant,
   deleteLocalInviteTenant,
@@ -156,6 +156,20 @@ function localCreateLocked<T>(collection: string, data: Record<string, unknown>)
     String(record.tenant_id ?? '') === String(data.tenant_id ?? '')
     && String(record.lease_scope ?? '') === String(data.lease_scope ?? '')
     && String(record.subject_id ?? '') === String(data.subject_id ?? '')
+  ))) return null;
+  if (collection === 'tenant_profiles' && records.some(record => (
+    String(record.tenant_id ?? '') === String(data.tenant_id ?? '')
+  ))) return null;
+  if (collection === 'digital_employee_configs' && records.some(record => (
+    String(record.tenant_id ?? '') === String(data.tenant_id ?? '')
+  ))) return null;
+  if (collection === 'digital_employee_config_versions' && records.some(record => (
+    String(record.tenant_id ?? '') === String(data.tenant_id ?? '')
+    && Number(record.config_version) === Number(data.config_version)
+  ))) return null;
+  if (collection === 'enterprise_onboarding_drafts' && records.some(record => (
+    String(record.tenant_id ?? '') === String(data.tenant_id ?? '')
+    && String(record.user_id ?? '') === String(data.user_id ?? '')
   ))) return null;
   const record = {
     id: String(data.id || `${collection}_${randomUUID().replaceAll('-', '')}`),
@@ -483,7 +497,15 @@ export const pbStore: DataStore = {
   supportsAtomicCompareAndSwap: () => currentDataAuthority() === 'local' && localFallbacksEnabled(),
   supportsAtomicCompareAndSwapFor: async collection => {
     if (currentDataAuthority() === 'local') return localFallbacksEnabled();
-    return collection === 'studio_projects' && await pocketBaseCasClaimSchemaVerified();
+    if (![
+      'studio_projects',
+      'enterprise_onboarding_drafts',
+      'tenant_profiles',
+      'digital_employee_configs',
+      'digital_employee_config_versions',
+    ].includes(collection)) return false;
+    if (!await pocketBaseCasClaimSchemaVerified()) return false;
+    return collection === 'studio_projects' || await pocketBaseUniqueOwnerSchemaVerified(collection);
   },
   // Remote schema verification has not yet been implemented. Static migration
   // presence and disabling fallback do not prove a deployed unique index.

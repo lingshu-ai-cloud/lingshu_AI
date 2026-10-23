@@ -194,6 +194,8 @@
     "1792195223_add_linkedin_tenant_app.js": "03dcd38e5e3304eb71a65d9dec7dd97c54fb49a6e603d4afeb850a2b3148fc91",
     "1792195224_create_customer_points_ledger.js": "7c72335c86c03712171340b61dac2a23da14a82d479f5a3c3f3d555ecaf74ddc",
     "1792686176_create_linkedin_company_collection_approvals.js": "59a6f5c789e11663e8a1fc566329fa3399d0d95e3d10e804161a16b573c60a4b",
-    "1792686177_create_image_evidence_review_approvals.js": "6212f25fb5439b486e06743749d54113760764da55db729a13167fe954e0f2a5"
+    "1792686177_create_image_evidence_review_approvals.js": "6212f25fb5439b486e06743749d54113760764da55db729a13167fe954e0f2a5",
+    "1792857600_create_enterprise_onboarding_drafts.js": "8851dc4cfcc569bb28a070b77e7ad0f1800d04b2bc07c956485d27eff7b1efa2",
+    "1792857601_unique_tenant_profiles.js": "6cfcf0891b73fe92b0addf761aeb646c2dedc99d3cf9185819dae337874142a8"
   }
 }

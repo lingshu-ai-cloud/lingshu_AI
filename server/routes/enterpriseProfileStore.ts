@@ -174,6 +174,7 @@ export function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile 
   const company = {
     name: text(companyInput.name),
     industry: text(companyInput.industry),
+    ...(companyInput.primaryBusiness !== undefined ? { primaryBusiness: text(companyInput.primaryBusiness) } : {}),
     companyType: text(companyInput.companyType),
     mainMarkets: text(companyInput.mainMarkets),
     primaryLanguages: text(companyInput.primaryLanguages),
@@ -237,6 +238,9 @@ export function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile 
     profileConfirmedAt: text(onboardingInput.profileConfirmedAt),
     productSelectionConfirmedAt: text(onboardingInput.productSelectionConfirmedAt),
     continuedWithoutProducts: onboardingInput.continuedWithoutProducts === true,
+    confirmationId: text(onboardingInput.confirmationId),
+    confirmationDigest: text(onboardingInput.confirmationDigest),
+    completedAt: text(onboardingInput.completedAt),
   };
   const socialInput: NonNullable<EnterpriseProfile['socialStrategy']> = profile.socialStrategy ?? { enabledRoutes: [], routeStrategies: {} };
   const allowedRoutes = ['oem_odm', 'wholesale_distribution', 'consumer_retail'] as const;
@@ -290,7 +294,7 @@ export function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile 
     salesStyleProfile,
     dataGovernance,
     digitalEmployeeOnboarding,
-    socialStrategy: { enabledRoutes, routeStrategies, manuallyEditedFields: Array.isArray(socialInput.manuallyEditedFields) ? socialInput.manuallyEditedFields.map(text).filter(Boolean) : [], contentStage, weeklyTaskPackagePreset },
+    socialStrategy: { enabledRoutes, routeStrategies, manuallyEditedFields: Array.isArray(socialInput.manuallyEditedFields) ? socialInput.manuallyEditedFields.map(text).filter(Boolean) : [], contentStage, weeklyTaskPackagePreset, primaryPlatforms: Array.isArray(socialInput.primaryPlatforms) ? [...new Set(socialInput.primaryPlatforms.map(text).filter(Boolean))].slice(0, 5) : [] },
     ...(factVersion ? { factVersion } : {}),
   };
 }
@@ -495,8 +499,9 @@ function storedProfile(value: unknown): EnterpriseProfile | null {
 
 export async function readTenantProfile(tenantId: string): Promise<EnterpriseProfile> {
   const result = await store.list<Record<string, unknown>>('tenant_profiles', {
-    where: { tenant_id: tenantId }, page: 1, perPage: 1,
+    where: { tenant_id: tenantId }, page: 1, perPage: 2,
   });
+  if (result.totalItems > 1) throw new Error('tenant_profile_not_unique');
   const profile = storedProfile(result.items[0]?.profile);
   // GET must not manufacture a new member confirmation from changed bytes.
   // Consumers verify the preserved version (including the proven legacy JSON
@@ -508,7 +513,10 @@ export async function readTenantProfile(tenantId: string): Promise<EnterprisePro
     profile.factVersion?.confirmedBy || 'legacy_migration',
     new Date(profile.factVersion?.confirmedAt || profile.dataGovernance?.lastSavedAt || 0),
   );
-  const fallback = process.env.DEMO_MODE === 'true' ? readProfile() : normalizeProfile({} as EnterpriseProfile);
+  // A tenant without facts starts empty even in DEMO_MODE. Reusing the global
+  // fixture here would leak another company's facts and produce a different
+  // first-write base version from the empty-row CAS path below.
+  const fallback = normalizeProfile({} as EnterpriseProfile);
   return withConfirmedFactVersion(
     fallback,
     fallback,
@@ -525,8 +533,9 @@ export async function readTenantEnterpriseProfile(tenantId: string): Promise<Ent
 export async function readTenantEnterpriseProfileStrict(tenantId: string): Promise<EnterpriseProfile | null> {
   if (!tenantId.trim()) throw new Error('enterprise_context_tenant_required');
   const result = await store.list<Record<string, unknown>>('tenant_profiles', {
-    where: { tenant_id: tenantId }, page: 1, perPage: 1,
+    where: { tenant_id: tenantId }, page: 1, perPage: 2,
   });
+  if (result.totalItems > 1) throw new Error('tenant_profile_not_unique');
   const row = result.items[0];
   if (!row) return null;
   if (row.tenant_id !== tenantId) throw new Error('enterprise_context_tenant_mismatch');
@@ -541,10 +550,11 @@ export async function updateTenantEnterpriseProfile(
   tenantId: string,
   patch: Partial<EnterpriseProfile>,
   updatedBy = 'system',
+  expectedFactVersion = '',
 ): Promise<EnterpriseProfile> {
   const current = await readTenantProfile(tenantId);
   const next = mergeEnterpriseProfile(current, patch);
-  await writeTenantProfile(tenantId, next, updatedBy);
+  await writeTenantProfile(tenantId, next, updatedBy, expectedFactVersion);
   return next;
 }
 
@@ -582,8 +592,9 @@ async function writeTenantProfileUnlocked(
   expectedFactVersion = '',
 ): Promise<void> {
   const result = await store.list<Record<string, unknown>>('tenant_profiles', {
-    where: { tenant_id: tenantId }, page: 1, perPage: 1,
+    where: { tenant_id: tenantId }, page: 1, perPage: 2,
   });
+  if (result.totalItems > 1) throw new Error('tenant_profile_not_unique');
   const existing = result.items[0];
   const previous = storedProfile(existing?.profile);
   if (expectedFactVersion) {
@@ -605,10 +616,34 @@ async function writeTenantProfileUnlocked(
   delete persisted.integrations;
   const clean = withConfirmedFactVersion(persisted, previous, userId);
   profile.factVersion = clean.factVersion;
-  const ok = existing?.id
-    ? await store.update('tenant_profiles', String(existing.id), { profile: clean, updated_by: userId })
-    : Boolean(await store.create('tenant_profiles', { tenant_id: tenantId, profile: clean, updated_by: userId }));
-  if (!ok) throw new Error('tenant_profile_storage_unavailable');
+  const existingId = String(existing?.id || '');
+  const requiresAtomicVersionCheck = Boolean(expectedFactVersion && existingId);
+  if (requiresAtomicVersionCheck || !existingId) {
+    const atomic = await (store.supportsAtomicCompareAndSwapFor?.('tenant_profiles')
+      ?? store.supportsAtomicCompareAndSwap?.() ?? false);
+    if (!atomic || !store.compareAndSwap) throw new Error('enterprise_fact_atomicity_unavailable');
+  }
+  let ok: boolean;
+  try {
+    ok = existingId
+      ? requiresAtomicVersionCheck
+        ? await store.compareAndSwap!('tenant_profiles', existingId, { profile: existing!.profile }, { profile: clean, updated_by: userId })
+        : await store.update('tenant_profiles', existingId, { profile: clean, updated_by: userId })
+      : Boolean(await store.create('tenant_profiles', { tenant_id: tenantId, profile: clean, updated_by: userId }));
+  } catch (error) {
+    if (!existingId && /unique|duplicate|constraint/iu.test(error instanceof Error ? error.message : '')) {
+      const latest = await readTenantEnterpriseProfileStrict(tenantId);
+      if (latest?.factVersion) throw new EnterpriseFactVersionConflictError(latest.factVersion);
+    }
+    throw error;
+  }
+  if (!ok) {
+    if (requiresAtomicVersionCheck) {
+      const latest = await readTenantEnterpriseProfileStrict(tenantId);
+      if (latest?.factVersion) throw new EnterpriseFactVersionConflictError(latest.factVersion);
+    }
+    throw new Error('tenant_profile_storage_unavailable');
+  }
 }
 
 export function readEnterpriseProfile(): EnterpriseProfile {

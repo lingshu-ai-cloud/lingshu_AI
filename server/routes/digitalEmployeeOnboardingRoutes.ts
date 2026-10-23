@@ -16,6 +16,11 @@ import { configSnapshotForPlan, publicConfigurationMetadata } from '../digitalEm
 import { normalizeDigitalEmployeeConfig, validateDigitalEmployeeConfig } from '../digitalEmployees/domain.js';
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, withLocalQueue, type GoalRecord, type PlanRecord, type RunRecord, type StoredRecord } from '../digitalEmployees/records.js';
 import type { DigitalEmployeeApplicationPorts } from '../digitalEmployees/applicationPorts.js';
+import { applyEnterpriseOnboardingConfirmation, EnterpriseOnboardingConfirmationError, parseEnterpriseOnboardingConfirmation } from '../digitalEmployees/enterpriseOnboardingConfirmation.js';
+import { assertEnterpriseOnboardingDraftClaim, claimEnterpriseOnboardingDraft, clearEnterpriseOnboardingDraft, EnterpriseOnboardingDraftConflictError, markEnterpriseOnboardingDraftRetryable, releaseEnterpriseOnboardingDraftClaim } from './enterpriseOnboardingDraft.js';
+import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
+
+class KnownConfigurationNoWriteError extends Error {}
 
 export function createDigitalEmployeeOnboardingRoutes(deps: Pick<DigitalEmployeeApplicationPorts, 'digitalEmployeesRouter' | 'first' | 'goalApprovalQueues' | 'tenantRecord' | 'weeklyGoalFactRebuildTargetCommitted' | 'resumeInitialPreparationPlan' | 'frozenEnterpriseProfileForPlan' | 'configForTenant' | 'requiredCreate' | 'appendEvent' | 'appendAudit' | 'buildOverview'>) {
   const digitalEmployeesRouter = deps.digitalEmployeesRouter;
@@ -84,6 +89,11 @@ export function createDigitalEmployeeOnboardingRoutes(deps: Pick<DigitalEmployee
   function registerPostOnboardingComplete() {
     digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
       const { tenantId, userId } = res.locals as AuthLocals;
+      const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+      if (role !== 'admin' && role !== 'super_admin') {
+        res.status(403).json({ error: 'enterprise_onboarding_forbidden', message: '只有企业管理员可以确认企业建档与经营配置。' });
+        return;
+      }
       const onboardingInput = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
         ? req.body as Record<string, unknown>
         : {};
@@ -93,10 +103,10 @@ export function createDigitalEmployeeOnboardingRoutes(deps: Pick<DigitalEmployee
       // into Enterprise Center and cannot authorize publishing or customer sends.
       const submittedConfig = normalizeDigitalEmployeeConfig(minimalOnboarding ? {
         ...onboardingInput,
-        industry: '待在实际任务中确认',
-        primaryBusiness: '待在实际任务中确认',
+        industry: String(onboardingInput.industry || '').trim() || '待在实际任务中确认',
+        primaryBusiness: String(onboardingInput.primaryBusiness || '').trim() || '待在实际任务中确认',
         targetMarkets: String(onboardingInput.targetMarkets || '').trim() || '待在实际任务中确认',
-        customerProfile: '待在实际任务中确认',
+        customerProfile: String(onboardingInput.customerProfile || '').trim() || '待在实际任务中确认',
         focusProducts: String(onboardingInput.focusProducts || '').trim(),
         primaryGoal: 'awareness',
         approvalOwner: String(onboardingInput.approvalOwner || '').trim() || '企业管理员',
@@ -127,17 +137,38 @@ export function createDigitalEmployeeOnboardingRoutes(deps: Pick<DigitalEmployee
       if (submittedConfig.managedPublishingGrant?.enabled) {
         submittedConfig.managedPublishingGrant = { ...submittedConfig.managedPublishingGrant, grantId: randomUUID(), authorizedBy: userId, authorizedAt: now };
       } else delete submittedConfig.managedPublishingGrant;
-      const enterprise = await readTenantEnterpriseProfile(tenantId);
-      const minimalCompanyName = String(onboardingInput.companyName || enterprise.company.name || '').trim();
-      const minimalBrandName = String(onboardingInput.brandName || enterprise.brand?.name || '').trim();
-      const minimalContentStage = ['b2b_launch', 'b2b_growth', 'd2c_brand'].includes(String(enterprise.socialStrategy?.contentStage || ''))
-        ? enterprise.socialStrategy?.contentStage
+      let confirmation: ReturnType<typeof parseEnterpriseOnboardingConfirmation> | null = null;
+      let enterprise: Awaited<ReturnType<typeof readTenantEnterpriseProfile>>;
+      try {
+        confirmation = minimalOnboarding && onboardingInput.onboardingConfirmation
+          ? parseEnterpriseOnboardingConfirmation(onboardingInput.onboardingConfirmation)
+          : null;
+        enterprise = await readTenantEnterpriseProfile(tenantId);
+      } catch (error) {
+        if (error instanceof EnterpriseOnboardingConfirmationError) {
+          res.status(error.status).json({ error: error.code, message: error.message, ...error.details });
+          return;
+        }
+        res.status(503).json({ error: 'enterprise_onboarding_confirmation_unavailable', message: '企业事实暂时无法确认，请稍后重试。' });
+        return;
+      }
+      if (minimalOnboarding && !existing && !confirmation) {
+        res.status(400).json({
+          error: 'enterprise_onboarding_confirmation_required',
+          message: '首次企业建档必须提交已保存草稿的完整确认资料。',
+        });
+        return;
+      }
+      const minimalCompanyName = String(confirmation?.companyName || onboardingInput.companyName || enterprise.company.name || '').trim();
+      const minimalBrandName = String(confirmation?.brandName || onboardingInput.brandName || enterprise.brand?.name || '').trim();
+      const minimalContentStage = ['b2b_launch', 'b2b_growth', 'd2c_brand'].includes(String(confirmation?.contentStage || enterprise.socialStrategy?.contentStage || ''))
+        ? confirmation?.contentStage || enterprise.socialStrategy?.contentStage
         : undefined;
       if (minimalOnboarding) {
         const missing = [
           ...(!minimalCompanyName ? ['企业名称'] : []),
           ...(!minimalBrandName ? ['品牌名称'] : []),
-          ...(!(enterprise.products.items?.length) ? ['产品表'] : []),
+          ...(!(confirmation?.products.length || enterprise.products.items?.length) ? ['产品表'] : []),
           ...(!minimalContentStage ? ['社媒经营阶段'] : []),
         ];
         if (missing.length) { res.status(400).json({ error: 'onboarding_incomplete', missing }); return; }
@@ -193,22 +224,68 @@ export function createDigitalEmployeeOnboardingRoutes(deps: Pick<DigitalEmployee
         },
       };
       const nextVersion = Math.max(1, Number(existing?.config_version || 0) + 1);
+      const prospectiveEnterprise = confirmation ? {
+        ...enterprise,
+        company: { ...enterprise.company, name: confirmation.companyName, industry: confirmation.industry, mainMarkets: confirmation.targetMarket },
+        brand: { ...enterprise.brand, name: confirmation.brandName },
+        products: { ...enterprise.products, items: confirmation.products },
+        socialStrategy: { ...enterprise.socialStrategy, contentStage: confirmation.contentStage },
+      } : { ...enterprise, ...enterprisePatch };
       const candidate = resolveDigitalEmployeeConfiguration({
         config: submittedConfig,
-        enterpriseProfile: {
-          ...enterprise,
-          ...enterprisePatch,
-        },
+        enterpriseProfile: prospectiveEnterprise,
         configVersion: nextVersion,
         boundAt: now,
       });
       const missing = validateDigitalEmployeeConfig(candidate.config);
       if (missing.length) { res.status(400).json({ error: 'onboarding_incomplete', missing }); return; }
-      const enterpriseProfile = await updateTenantEnterpriseProfile(tenantId, enterprisePatch, userId);
+      let claimToken: string | null = null;
+      if (confirmation) {
+        try {
+          claimToken = await claimEnterpriseOnboardingDraft(store, { tenantId, userId }, confirmation);
+          if (!claimToken) {
+            res.json(await buildOverview(tenantId));
+            return;
+          }
+          enterprise = await applyEnterpriseOnboardingConfirmation({ tenantId, userId, confirmation });
+          await assertEnterpriseOnboardingDraftClaim(store, { tenantId, userId }, confirmation.confirmationId, claimToken);
+        } catch (error) {
+          if (error instanceof EnterpriseOnboardingConfirmationError && error.code === 'enterprise_fact_version_conflict') {
+            await releaseEnterpriseOnboardingDraftClaim(store, { tenantId, userId }, confirmation.confirmationId, claimToken);
+          }
+          if (error instanceof EnterpriseOnboardingDraftConflictError) {
+            res.status(409).json({ error: error.code, message: error.message }); return;
+          }
+          if (error instanceof EnterpriseOnboardingConfirmationError) {
+            res.status(error.status).json({ error: error.code, message: error.message, ...error.details }); return;
+          }
+          res.status(503).json({ error: 'enterprise_onboarding_confirmation_pending', message: '确认结果暂时无法核验；请保留原确认请求，约 10 分钟后重试，不要新建或重复修改。' });
+          return;
+        }
+      }
+      const enterpriseProfile = confirmation ? enterprise : await updateTenantEnterpriseProfile(tenantId, enterprisePatch, userId);
+      if (confirmation && existing
+        && String(existing.facts_version || '') === String(enterpriseProfile.factVersion?.id || '')) {
+        const priorVersion = await first<StoredRecord>(COLLECTION.configVersions, {
+          tenant_id: tenantId, config_version: Number(existing.config_version || 0),
+        });
+        if (priorVersion) {
+          try {
+            await clearEnterpriseOnboardingDraft(store, { tenantId, userId }, confirmation.confirmationId, claimToken);
+            res.json(await buildOverview(tenantId));
+          } catch {
+            res.status(503).json({ error: 'enterprise_onboarding_completion_pending', message: '确认已保存，但回执暂时无法核验，请保留原请求；约 10 分钟后重试。' });
+          }
+          return;
+        }
+      }
+      const persistedVersion = confirmation && existing
+        && String(existing.facts_version || '') === String(enterpriseProfile.factVersion?.id || '')
+        ? Math.max(1, Number(existing.config_version || 0)) : nextVersion;
       const resolved = resolveDigitalEmployeeConfiguration({
         config: submittedConfig,
         enterpriseProfile,
-        configVersion: nextVersion,
+        configVersion: persistedVersion,
         boundAt: now,
       });
       const payload = {
@@ -223,10 +300,28 @@ export function createDigitalEmployeeOnboardingRoutes(deps: Pick<DigitalEmployee
         updated_by: userId,
         updated_at: now,
       };
+      try {
+      if (confirmation) await assertEnterpriseOnboardingDraftClaim(store, { tenantId, userId }, confirmation.confirmationId, claimToken);
+      if (confirmation) {
+        const configAtomic = await (store.supportsAtomicCompareAndSwapFor?.(COLLECTION.config)
+          ?? store.supportsAtomicCompareAndSwap?.() ?? false);
+        const versionUnique = await (store.supportsAtomicCompareAndSwapFor?.(COLLECTION.configVersions)
+          ?? store.supportsAtomicCompareAndSwap?.() ?? false);
+        if (!configAtomic || !versionUnique || !store.compareAndSwap) throw new Error('digital_employee_config_atomicity_unavailable');
+      }
       const saved = existing
-        ? await store.update(COLLECTION.config, existing.id, payload)
+        ? confirmation
+          ? await store.compareAndSwap!(COLLECTION.config, existing.id, {
+            tenant_id: tenantId,
+            config: existing.config,
+            ...(typeof existing.config_version === 'number' ? { config_version: existing.config_version } : {}),
+            ...(typeof existing.updated_at === 'string' ? { updated_at: existing.updated_at } : {}),
+          }, payload)
+          : await store.update(COLLECTION.config, existing.id, payload)
         : Boolean(await store.create(COLLECTION.config, { ...payload, created_at: now }));
-      if (!saved) { res.status(503).json({ error: 'onboarding_storage_unavailable' }); return; }
+      if (!saved) throw !existing && confirmation
+        ? new KnownConfigurationNoWriteError('digital_employee_config_create_returned_null')
+        : new Error('onboarding_storage_unavailable');
       await requiredCreate(COLLECTION.configVersions, {
         tenant_id: tenantId,
         config_version: resolved.configVersion,
@@ -255,7 +350,28 @@ export function createDigitalEmployeeOnboardingRoutes(deps: Pick<DigitalEmployee
         });
       }
       await appendAudit({ tenantId, userId, action: 'digital_employee.onboarding.completed', targetType: 'digital_employee_config', targetId: existing?.id || tenantId, metadata: { autonomyMode: resolved.config.autonomyMode, minimalOnboarding, configVersion: resolved.configVersion, policyVersion: resolved.policyVersion, factsVersion: resolved.knowledgeBinding.factsVersion, deferredPublishingAccountIds: boundPublishing.invalidAccountIds } });
+      if (confirmation) await clearEnterpriseOnboardingDraft(store, { tenantId, userId }, confirmation.confirmationId, claimToken);
       res.json(await buildOverview(tenantId));
+      } catch (error) {
+        let safeImmediateRetry = false;
+        if (confirmation && error instanceof KnownConfigurationNoWriteError) {
+          try {
+            await markEnterpriseOnboardingDraftRetryable(store, { tenantId, userId }, confirmation.confirmationId, claimToken);
+            safeImmediateRetry = true;
+          } catch { /* Unknown claim state remains fail-closed. */ }
+        }
+        console.error('[onboarding] completion needs recovery', { errorType: error instanceof Error ? error.message : 'unknown' });
+        res.status(503).json({
+          error: confirmation
+            ? safeImmediateRetry ? 'enterprise_onboarding_completion_retryable' : 'enterprise_onboarding_completion_pending'
+            : 'onboarding_storage_unavailable',
+          message: confirmation
+            ? safeImmediateRetry
+              ? '企业事实已保存，经营配置明确未写入；请保留原确认请求并立即重试，勿重新建档。'
+              : '企业事实可能已保存，但经营配置尚未核实完成。请保留原确认请求，约 10 分钟后重试，勿重新建档。'
+            : '经营配置暂时无法保存，请核验后重试。',
+        });
+      }
     });
   }
 

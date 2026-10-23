@@ -121,6 +121,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_content_execution_limit_scope
 CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_assistant_thread_owner
   ON lingshu_records ((data ->> 'tenantId'), (data ->> 'userId'), (data ->> 'agentId'))
   WHERE collection = 'assistant_threads' AND COALESCE(data ->> 'userId', '') <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_tenant_profile_owner
+  ON lingshu_records ((data ->> 'tenant_id'))
+  WHERE collection = 'tenant_profiles';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_digital_employee_config_tenant
+  ON lingshu_records ((data ->> 'tenant_id'))
+  WHERE collection = 'digital_employee_configs';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_digital_employee_config_version
+  ON lingshu_records ((data ->> 'tenant_id'), (data ->> 'config_version'))
+  WHERE collection = 'digital_employee_config_versions';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_enterprise_onboarding_draft_owner
+  ON lingshu_records ((data ->> 'tenant_id'), (data ->> 'user_id'))
+  WHERE collection = 'enterprise_onboarding_drafts';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_social_presenter_job_request
   ON lingshu_records ((data ->> 'tenant_id'), (data ->> 'request_id'))
   WHERE collection = 'studio_social_presenter_jobs';
@@ -207,6 +219,37 @@ function sortSql(sort?: string): string {
 export class PostgresStore implements DataStore {
   supportsAtomicCompareAndSwap(): boolean {
     return true;
+  }
+
+  async supportsAtomicCompareAndSwapFor(collection: string): Promise<boolean> {
+    const indexName = collection === 'tenant_profiles'
+      ? 'idx_lingshu_tenant_profile_owner'
+      : collection === 'digital_employee_configs'
+        ? 'idx_lingshu_digital_employee_config_tenant'
+      : collection === 'digital_employee_config_versions'
+        ? 'idx_lingshu_digital_employee_config_version'
+      : collection === 'enterprise_onboarding_drafts'
+        ? 'idx_lingshu_enterprise_onboarding_draft_owner' : '';
+    if (!indexName) return true;
+    try {
+      const result = await this.db().query<{ valid: boolean; key1: string; key2: string | null; predicate: string }>(`
+        SELECT i.indisvalid AND i.indisready AND i.indimmediate AND i.indisunique AS valid,
+               pg_get_indexdef(i.indexrelid, 1, true) AS key1,
+               CASE WHEN i.indnkeyatts > 1 THEN pg_get_indexdef(i.indexrelid, 2, true) END AS key2,
+               pg_get_expr(i.indpred, i.indrelid) AS predicate
+        FROM pg_index i JOIN pg_class idx ON idx.oid = i.indexrelid
+        JOIN pg_class tab ON tab.oid = i.indrelid
+        WHERE idx.relname = $1 AND tab.oid = to_regclass('lingshu_records')
+          AND i.indnkeyatts = $2
+      `, [indexName, ['enterprise_onboarding_drafts', 'digital_employee_config_versions'].includes(collection) ? 2 : 1]);
+      if (result.rows.length !== 1 || result.rows[0]?.valid !== true) return false;
+      const canonical = (value: string | null) => (value || '').replace(/::text/g, '').replace(/[()\s]/g, '').toLowerCase();
+      const row = result.rows[0];
+      return canonical(row.key1) === "data->>'tenant_id'"
+        && (collection !== 'enterprise_onboarding_drafts' || canonical(row.key2) === "data->>'user_id'")
+        && (collection !== 'digital_employee_config_versions' || canonical(row.key2) === "data->>'config_version'")
+        && canonical(row.predicate) === `collection='${collection}'`;
+    } catch { return false; }
   }
 
   async supportsAtomicOperationLease(): Promise<boolean> {

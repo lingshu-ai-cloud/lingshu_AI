@@ -320,7 +320,6 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
           initial={data.config}
           readiness={data.businessSnapshot?.readiness || []}
           busy={Boolean(busy)}
-          allowInitialPlan={false}
           restartFromBeginning={applicationGuideEntry === "start"}
           initialStep={applicationGuideEntry}
           dismissible

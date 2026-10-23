@@ -5,6 +5,8 @@ import type { AssistantDecisionDeepLink, AssistantDecisionFeed } from '../../lib
 import type { AssistantProductionContext } from '../../lib/assistantProductionDecision';
 import type { AssistantRunControl, AssistantTaskCard } from '../../stores/assistantStore';
 import AssistantDecisionCenter, { type AssistantDecisionActionResult } from './AssistantDecisionCenter';
+import AssistantContentTaskDetail, { type ContentTaskActionResult } from './AssistantContentTaskDetail';
+import type { ContentTaskArtifactCard, ContentProductionTaskCard } from '../../../shared/contracts/assistantContentTaskCard';
 
 export type AssistantDecisionDialog =
   | { kind: 'feed' }
@@ -18,6 +20,7 @@ export function taskStatusLabel(card: AssistantTaskCard) {
   if (card.status === 'running') return '执行中';
   if (card.status === 'paused') return '已暂停';
   if (card.status === 'failed') return '需要处理';
+  if (card.status === 'cancelled') return '已取消';
   return '已完成';
 }
 
@@ -37,6 +40,9 @@ interface Props {
   handleDecisionActionResult: (result: AssistantDecisionActionResult) => void;
   toggleTaskPaused: () => Promise<void>;
   handleTaskCardAction: (card: AssistantTaskCard, action: NonNullable<AssistantTaskCard['primaryAction']>) => Promise<void>;
+  handleContentArtifactDecision: (card: ContentProductionTaskCard, artifact: ContentTaskArtifactCard, decision: 'approved' | 'changes_requested', note: string) => Promise<ContentTaskActionResult>;
+  handleContentDeliveryCreate: (card: ContentProductionTaskCard) => Promise<ContentTaskActionResult>;
+  handleContentDeliveryDownload: (href: string) => Promise<ContentTaskActionResult>;
 }
 
 export default function AssistantDecisionDialog({
@@ -44,6 +50,7 @@ export default function AssistantDecisionDialog({
   productionDecisionContext, persistenceScopeKey, loading,
   closeDecisionDialog, restoreDecisionDialogFocus, closeDecisionDialogForNavigation,
   handleDecisionDialogFeedChange, handleDecisionActionResult, toggleTaskPaused, handleTaskCardAction,
+  handleContentArtifactDecision, handleContentDeliveryCreate, handleContentDeliveryDownload,
 }: Props) {
   return (
       <Modal
@@ -137,6 +144,12 @@ export default function AssistantDecisionDialog({
                     ))}
                   </div>
                 )}
+                {dialogTaskCard.contentTask ? <AssistantContentTaskDetail
+                  card={dialogTaskCard.contentTask} busy={loading}
+                  onArtifactDecision={(artifact, decision, note) => handleContentArtifactDecision(dialogTaskCard.contentTask!, artifact, decision, note)}
+                  onCreateDelivery={() => handleContentDeliveryCreate(dialogTaskCard.contentTask!)}
+                  onDownloadDelivery={handleContentDeliveryDownload}
+                /> : null}
               </div>
 
               {(dialogTaskCard.primaryAction || dialogTaskCard.secondaryActions.length > 0 || dialogTaskCard.workspace) && (

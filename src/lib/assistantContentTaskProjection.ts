@@ -8,7 +8,7 @@ const stateMap: Record<ContentProductionTaskCard['overallState'], AssistantTaskC
   paused: 'paused',
   failed: 'failed',
   completed: 'completed',
-  cancelled: 'completed',
+  cancelled: 'cancelled',
 };
 
 const actionLabels: Record<ContentProductionTaskCard['nextAction'], string> = {
@@ -70,7 +70,6 @@ export function contentTaskCardToAssistantCard(card: ContentProductionTaskCard):
       : card.overallState === 'failed'
         ? 'failed'
         : 'routine';
-  const href = `/?page=smartAssets&view=create&socialContentTaskId=${encodeURIComponent(card.contentTaskId)}`;
   return {
     taskId: `social-content:${card.contentTaskId}`,
     title: card.title,
@@ -79,11 +78,14 @@ export function contentTaskCardToAssistantCard(card: ContentProductionTaskCard):
     status: stateMap[card.overallState],
     notificationReason,
     contentTask: card,
-    primaryAction: {
-      id: `open-content-task-${card.contentTaskId}`,
-      label: actionLabels[card.nextAction],
-      href,
-    },
+    // The current task is already open in this conversation's shared Modal.
+    // Review and download controls act on exact server versions above; do not
+    // promote a Studio deep link to the primary action.
+    ...(card.nextAction === 'supply_input' ? { primaryAction: {
+      id: `supply-content-task-${card.contentTaskId}`,
+      label: actionLabels.supply_input,
+      prompt: `请继续当前内容任务 ${card.contentTaskId}，告诉我还需要补充哪一项必要资料。`,
+    } } : {}),
     updatedAt: Number.isFinite(Date.parse(card.lastConfirmedAt)) ? Date.parse(card.lastConfirmedAt) : Date.now(),
   };
 }

@@ -19,6 +19,7 @@ import {
   withLegacyExternalEffectAllowed,
 } from '../starter198/legacyEffectGuard.js';
 import { createEnterpriseProductFootageImportRouter } from './enterpriseProductFootageImport.js';
+import { createEnterpriseOnboardingDraftRouter } from './enterpriseOnboardingDraft.js';
 export { upsertLocalEnterpriseMaterial } from './enterpriseLocalMaterial.js';
 import { DEFAULT_BIZ_RULES, DEFAULT_NOTIFICATIONS, readProfile, writeProfile, normalizeProfile, normalizeCustomerServiceSettings,
   normalizeAutonomy, normalizeBizRules, normalizeNotifications, mergeEnterpriseProfile,
@@ -144,6 +145,7 @@ export function updateEnterpriseProfile(patch: Partial<EnterpriseProfile>): Ente
 
 export const enterpriseRouter = Router();
 enterpriseRouter.use(requireAuth);
+enterpriseRouter.use('/onboarding-draft', createEnterpriseOnboardingDraftRouter(store));
 enterpriseRouter.use('/product-footage', createEnterpriseProductFootageImportRouter(store));
 
 async function customerServiceRuntimeStatus(tenantId: string, profile: EnterpriseProfile) {

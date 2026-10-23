@@ -1,0 +1,245 @@
+export const ENTERPRISE_ONBOARDING_SCHEMA_VERSION = 'enterprise-onboarding.v1' as const;
+
+export type EnterpriseOnboardingSource = 'user_provided' | 'system_detected' | 'ai_suggested';
+export type EnterpriseOnboardingStep = 1 | 2 | 3 | 4;
+export type EnterpriseOnboardingContentStage = 'b2b_launch' | 'b2b_growth' | 'd2c_brand';
+
+export const enterpriseOnboardingSourceLabel: Record<EnterpriseOnboardingSource, string> = {
+  user_provided: '用户已提供',
+  system_detected: '系统识别',
+  ai_suggested: 'AI 建议',
+};
+
+export const enterpriseOnboardingFieldKeys = [
+  'companyName', 'brandName', 'industry', 'primaryBusiness', 'companyIntro', 'brandTone',
+  'products', 'focusProducts', 'targetMarket', 'targetBuyer', 'primaryPlatform', 'language',
+  'contentStage', 'primaryCta',
+] as const;
+
+export type EnterpriseOnboardingFieldKey = typeof enterpriseOnboardingFieldKeys[number];
+
+export type EnterpriseOnboardingAsset = {
+  name: string;
+  type: string;
+  size: number;
+  updatedAt: string;
+  url?: string;
+};
+
+export type EnterpriseOnboardingProduct = {
+  id: string;
+  productId?: string;
+  sku?: string;
+  name: string;
+  category?: string;
+  description?: string;
+  highlights?: string;
+  brand?: string;
+  material?: string;
+  imageUrl?: string;
+  priceRange?: string;
+  tagPrice?: string;
+  retailPrice?: string;
+  moq?: string;
+  certifications?: string;
+  color?: string;
+  size?: string;
+  attributes?: Record<string, unknown>;
+  images?: EnterpriseOnboardingAsset[];
+  videos?: EnterpriseOnboardingAsset[];
+  documents?: EnterpriseOnboardingAsset[];
+  factoryImages?: EnterpriseOnboardingAsset[];
+  packagingImages?: EnterpriseOnboardingAsset[];
+  certificateImages?: EnterpriseOnboardingAsset[];
+  sceneImages?: EnterpriseOnboardingAsset[];
+  brandAssets?: EnterpriseOnboardingAsset[];
+};
+
+export type EnterpriseOnboardingDraft = {
+  schemaVersion: typeof ENTERPRISE_ONBOARDING_SCHEMA_VERSION;
+  revision: number;
+  currentStep: EnterpriseOnboardingStep;
+  confirmationId: string;
+  baseFactVersion: string;
+  companyName: string;
+  brandName: string;
+  industry: string;
+  primaryBusiness: string;
+  companyIntro: string;
+  brandTone: string;
+  products: EnterpriseOnboardingProduct[];
+  focusProductIds: string[];
+  targetMarket: string;
+  targetBuyer: string;
+  primaryPlatform: string;
+  language: string;
+  contentStage?: EnterpriseOnboardingContentStage;
+  primaryCta: string;
+  sources: Partial<Record<EnterpriseOnboardingFieldKey, EnterpriseOnboardingSource>>;
+  updatedAt: string;
+};
+
+export type EnterpriseOnboardingConfirmation = Omit<EnterpriseOnboardingDraft, 'revision' | 'currentStep' | 'updatedAt'> & {
+  draftRevision: number;
+};
+
+const text = (value: unknown, max = 500): string => String(value ?? '').trim().slice(0, max);
+const record = (value: unknown): Record<string, unknown> | null => (
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+);
+
+function stableProductId(input: Record<string, unknown>, index: number): string {
+  const supplied = text(input.id || input.productId || input.sku, 180);
+  if (supplied) return supplied;
+  const seed = `${text(input.name || input.title || input.productName, 240)}:${index}`;
+  let hash = 2166136261;
+  for (let offset = 0; offset < seed.length; offset += 1) {
+    hash ^= seed.charCodeAt(offset);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `onboarding-product-${(hash >>> 0).toString(36)}`;
+}
+
+function assetArray(value: unknown): EnterpriseOnboardingAsset[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.slice(0, 100).flatMap(item => {
+    const input = record(item);
+    if (!input) return [];
+    const name = text(input.name, 500);
+    const type = text(input.type, 180);
+    const updatedAt = text(input.updatedAt, 64);
+    const size = Number(input.size);
+    if (!name || !type || !updatedAt || !Number.isFinite(size) || size < 0) return [];
+    const url = text(input.url, 2_000);
+    return [{ name, type, size, updatedAt, ...(url ? { url } : {}) }];
+  });
+}
+
+export function normalizeEnterpriseOnboardingProduct(value: unknown, index = 0): EnterpriseOnboardingProduct | null {
+  const input = record(value);
+  if (!input) return null;
+  const name = text(input.name || input.title || input.productName, 240);
+  if (!name) return null;
+  const optionalText = (key: string, max = 500) => {
+    const normalized = text(input[key], max);
+    return normalized ? { [key]: normalized } : {};
+  };
+  const attributes = record(input.attributes) || undefined;
+  return {
+    id: stableProductId(input, index),
+    ...optionalText('productId', 180), ...optionalText('sku', 180), name,
+    ...optionalText('category', 240), ...optionalText('description', 2_000),
+    ...optionalText('highlights', 2_000), ...optionalText('brand', 240),
+    ...optionalText('material', 500), ...optionalText('imageUrl', 2_000),
+    ...optionalText('priceRange'), ...optionalText('tagPrice'), ...optionalText('retailPrice'),
+    ...optionalText('moq'), ...optionalText('certifications', 1_000),
+    ...optionalText('color'), ...optionalText('size'),
+    ...(attributes ? { attributes } : {}),
+    ...Object.fromEntries([
+      'images', 'videos', 'documents', 'factoryImages', 'packagingImages',
+      'certificateImages', 'sceneImages', 'brandAssets',
+    ].flatMap(key => {
+      const items = assetArray(input[key]);
+      return items ? [[key, items]] : [];
+    })),
+  };
+}
+
+function normalizeSources(value: unknown): EnterpriseOnboardingDraft['sources'] {
+  const input = record(value) || {};
+  return Object.fromEntries(enterpriseOnboardingFieldKeys.flatMap(key => {
+    const source = input[key];
+    return source === 'user_provided' || source === 'system_detected' || source === 'ai_suggested'
+      ? [[key, source]]
+      : [];
+  }));
+}
+
+function normalizeStep(value: unknown): EnterpriseOnboardingStep {
+  const step = Math.floor(Number(value));
+  return step >= 1 && step <= 4 ? step as EnterpriseOnboardingStep : 1;
+}
+
+export function normalizeEnterpriseOnboardingDraft(value: unknown): EnterpriseOnboardingDraft | null {
+  const input = record(value);
+  if (!input || input.schemaVersion !== ENTERPRISE_ONBOARDING_SCHEMA_VERSION) return null;
+  const confirmationId = text(input.confirmationId, 160);
+  if (!/^[a-zA-Z0-9:_-]{8,160}$/u.test(confirmationId)) return null;
+  const products = (Array.isArray(input.products) ? input.products : [])
+    .slice(0, 500)
+    .map(normalizeEnterpriseOnboardingProduct)
+    .filter((item): item is EnterpriseOnboardingProduct => Boolean(item));
+  const productIds = new Set(products.map(product => product.id));
+  const focusProductIds = Array.isArray(input.focusProductIds)
+    ? [...new Set(input.focusProductIds.map(item => text(item, 180)).filter(id => productIds.has(id)))].slice(0, 3)
+    : [];
+  const stage = input.contentStage;
+  const contentStage = stage === 'b2b_launch' || stage === 'b2b_growth' || stage === 'd2c_brand' ? stage : undefined;
+  return {
+    schemaVersion: ENTERPRISE_ONBOARDING_SCHEMA_VERSION,
+    revision: Math.max(0, Math.floor(Number(input.revision) || 0)),
+    currentStep: normalizeStep(input.currentStep),
+    confirmationId,
+    baseFactVersion: text(input.baseFactVersion, 180),
+    companyName: text(input.companyName, 240), brandName: text(input.brandName, 240),
+    industry: text(input.industry, 240), primaryBusiness: text(input.primaryBusiness, 1_000),
+    companyIntro: text(input.companyIntro, 2_000), brandTone: text(input.brandTone, 1_000),
+    products, focusProductIds,
+    targetMarket: text(input.targetMarket, 500), targetBuyer: text(input.targetBuyer, 500),
+    primaryPlatform: text(input.primaryPlatform, 80), language: text(input.language, 80),
+    ...(contentStage ? { contentStage } : {}), primaryCta: text(input.primaryCta, 500),
+    sources: normalizeSources(input.sources), updatedAt: text(input.updatedAt, 64),
+  };
+}
+
+export function validateEnterpriseOnboardingConfirmation(value: unknown): {
+  confirmation: EnterpriseOnboardingConfirmation | null;
+  missing: string[];
+} {
+  const input = record(value);
+  const draft = normalizeEnterpriseOnboardingDraft(input ? {
+    ...input,
+    revision: input.draftRevision,
+    currentStep: 4,
+    updatedAt: '',
+  } : null);
+  if (!draft) return { confirmation: null, missing: ['确认资料格式'] };
+  const focusProducts = draft.focusProductIds
+    .map(id => draft.products.find(product => product.id === id))
+    .filter((item): item is EnterpriseOnboardingProduct => Boolean(item));
+  const missing = [
+    !draft.baseFactVersion ? '企业事实版本' : '',
+    !draft.companyName ? '企业名称' : '', !draft.brandName ? '品牌名称' : '',
+    !draft.industry ? '行业/主营分类' : '', !draft.primaryBusiness ? '主营业务' : '',
+    !draft.companyIntro ? '公司简介' : '', !draft.brandTone ? '品牌初始语气' : '',
+    !draft.products.length ? '至少一个产品' : '',
+    focusProducts.length < 1 || focusProducts.length > 3 ? '1–3 个主推产品' : '',
+    focusProducts.some(product => !text(product.category)) ? '主推产品类目' : '',
+    focusProducts.some(product => !text(product.highlights || product.description)) ? '主推产品卖点' : '',
+    !draft.targetMarket ? '目标市场' : '', !draft.targetBuyer ? '主推买家' : '',
+    !draft.primaryPlatform ? '主平台' : '', !draft.language ? '主要语言' : '',
+    !draft.contentStage ? '社媒阶段' : '', !draft.primaryCta ? '唯一 CTA' : '',
+  ].filter(Boolean);
+  return {
+    confirmation: missing.length ? null : {
+      schemaVersion: draft.schemaVersion, confirmationId: draft.confirmationId,
+      baseFactVersion: draft.baseFactVersion, companyName: draft.companyName, brandName: draft.brandName,
+      industry: draft.industry, primaryBusiness: draft.primaryBusiness,
+      companyIntro: draft.companyIntro, brandTone: draft.brandTone,
+      products: draft.products, focusProductIds: draft.focusProductIds,
+      targetMarket: draft.targetMarket, targetBuyer: draft.targetBuyer,
+      primaryPlatform: draft.primaryPlatform, language: draft.language,
+      ...(draft.contentStage ? { contentStage: draft.contentStage } : {}), primaryCta: draft.primaryCta,
+      sources: draft.sources, draftRevision: draft.revision,
+    },
+    missing,
+  };
+}
+
+export function onboardingCompanyIntro(companyName: string, industry: string, primaryBusiness: string): string {
+  return `${companyName.trim()}专注于${industry.trim()}领域，主要提供${primaryBusiness.trim()}。`;
+}
+
+export function onboardingBrandTone(): string {
+  return '专业、清晰、可信；优先用可核验的产品事实和真实应用场景说明价值。';
+}

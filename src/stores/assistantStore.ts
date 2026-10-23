@@ -7,7 +7,7 @@ export type OrbitAgentId = 'business' | 'director' | 'content' | 'customer';
 
 export type AssistantSurface = 'floating-reminder' | 'conversation' | 'decision';
 export type AssistantNotificationReason = 'missing_input' | 'approval_required' | 'failed' | 'routine';
-export type AssistantTaskStatus = 'needs_input' | 'approval' | 'ready' | 'running' | 'paused' | 'failed' | 'completed';
+export type AssistantTaskStatus = 'needs_input' | 'approval' | 'ready' | 'running' | 'paused' | 'failed' | 'completed' | 'cancelled';
 
 export interface AssistantCardAction {
   id: string;
