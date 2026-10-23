@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard.js';
-import { contentTaskCardToAssistantCard } from './assistantContentTaskProjection.js';
+import { contentTaskCardToAssistantCard, unavailableContentTaskCard } from './assistantContentTaskProjection.js';
 
 const card: ContentProductionTaskCard = {
   schemaVersion: 'content-production-task-card.v1', id: 'content-task-card:one', contentTaskId: 'one',
@@ -31,4 +31,13 @@ test('shows only server-confirmed cost semantics', () => {
     unsettledCny: null, status: 'estimated', reusable: false, basis: 'execution_plan',
   }, blockingItems: [] });
   assert.match(result.details?.join('\n') || '', /费用上限：¥8\.00（待结算）/);
+});
+
+test('read failure preserves the business state and exposes the last confirmed time', () => {
+  const unavailable = unavailableContentTaskCard(card);
+  const result = contentTaskCardToAssistantCard(unavailable);
+  assert.equal(unavailable.overallState, 'needs_input');
+  assert.equal(unavailable.readState, 'unavailable');
+  assert.match(result.conclusion, /暂时无法读取最新状态/);
+  assert.match(result.details?.[0] || '', /2026-10-24T02:00:00.000Z/);
 });

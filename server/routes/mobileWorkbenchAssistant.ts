@@ -14,7 +14,7 @@ import type { MobileWorkbenchActionInput } from './mobileWorkbenchActions.js';
 import { readLocalCustomerConversations, summarizeLocalCustomerConversations } from '../customerService/localConversations.js';
 import { projectContentProductionTaskCard, type ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard.js';
 import { createStarter198Repository, STARTER_COLLECTIONS, type StarterRecord } from '../starter198/repository.js';
-import { readSocialTaskDetail, socialTaskSummary } from '../starter198/socialContentRecords.js';
+import { readSocialTaskDetail } from '../starter198/socialContentRecords.js';
 import { SocialContentWorkflowError } from '../starter198/socialContentValidation.js';
 
 export type MobileAssistantTopic = 'weekly_progress' | 'agent_status' | 'published_videos' | 'qualified_inquiries' | 'exposure';
@@ -37,31 +37,60 @@ const labels: Record<MobileAssistantTopic, string> = {
   weekly_progress: '这周任务推进到哪了？', agent_status: 'Agent 现在分别在做什么？',
   published_videos: '这周有哪些视频已经发出？', qualified_inquiries: '这周有哪些有效询盘？', exposure: '这周视频获得多少曝光？',
 };
-export async function readMobileCurrentContentTask(store: DataStore, tenantId: string): Promise<MobileCurrentContentTask> {
+type MobileAssistantThreadRecord = Record_ & {
+  tenantId?: string;
+  userId?: string;
+  agentId?: string;
+  source?: string;
+  focusedTaskId?: string | null;
+  taskCards?: Record<string, unknown>;
+  pendingContentTaskBinding?: { contentTaskId?: string } | null;
+};
+
+function threadContentTaskId(thread: MobileAssistantThreadRecord): string {
+  const focused = typeof thread.focusedTaskId === 'string' ? thread.focusedTaskId : '';
+  if (focused.startsWith('social-content:') && thread.taskCards && thread.taskCards[focused]) {
+    return focused.slice('social-content:'.length);
+  }
+  return typeof thread.pendingContentTaskBinding?.contentTaskId === 'string'
+    ? thread.pendingContentTaskBinding.contentTaskId.trim()
+    : '';
+}
+
+export async function readMobileCurrentContentTask(
+  store: DataStore,
+  tenantId: string,
+  userId: string,
+  readTaskDetail: typeof readSocialTaskDetail = readSocialTaskDetail,
+): Promise<MobileCurrentContentTask> {
   try {
-    const rows = await store.list<StarterRecord>(STARTER_COLLECTIONS.socialContentTasks, {
-      where: { tenant_id: tenantId }, page: 1, perPage: 50, sort: '-updated_at',
+    const threads = await store.list<MobileAssistantThreadRecord>('assistant_threads', {
+      where: { tenantId, userId, agentId: 'business' }, page: 1, perPage: 20, sort: '-updatedAt',
     });
-    const instantRows = rows.items.filter(row => row.tenant_id === tenantId && String(row.task_mode || 'weekly') === 'instant');
-    if (!instantRows.length) return { availability: 'empty', card: null };
-    const summaries = instantRows.flatMap(row => {
-      try { return [socialTaskSummary(row)]; } catch { return []; }
+    const thread = threads.items.find(item => item.tenantId === tenantId && item.userId === userId
+      && item.agentId === 'business' && (item.source === undefined || item.source === 'desktop'));
+    if (!thread) return { availability: 'empty', card: null };
+    const taskId = threadContentTaskId(thread);
+    if (!taskId) return { availability: 'empty', card: null };
+    const ownership = await store.list<StarterRecord>(STARTER_COLLECTIONS.socialContentTasks, {
+      where: { tenant_id: tenantId, task_id: taskId, created_by: userId }, page: 1, perPage: 2,
     });
-    if (!summaries.length) return { availability: 'unavailable', card: null };
-    const terminal = new Set(['delivered', 'reviewed', 'cancelled']);
-    const task = summaries.find(item => !terminal.has(item.status)) ?? summaries[0]!;
-    const detail = await readSocialTaskDetail({
-      repository: createStarter198Repository(store), tenantId, taskId: task.taskId,
-    }).catch(() => null);
-    return { availability: 'available', card: projectContentProductionTaskCard(detail ?? task) };
+    if (ownership.totalItems !== 1 || ownership.items.length !== 1
+      || ownership.items[0]?.tenant_id !== tenantId || ownership.items[0]?.task_id !== taskId
+      || ownership.items[0]?.created_by !== userId || String(ownership.items[0]?.task_mode || 'weekly') !== 'instant') {
+      return { availability: 'unavailable', card: null };
+    }
+    const detail = await readTaskDetail({ repository: createStarter198Repository(store), tenantId, taskId });
+    if (!detail || detail.mode !== 'instant') return { availability: 'unavailable', card: null };
+    return { availability: 'available', card: projectContentProductionTaskCard(detail) };
   } catch {
     return { availability: 'unavailable', card: null };
   }
 }
-export async function buildMobileAssistantContext(store: DataStore, tenantId: string, now = new Date(), weekStart?: unknown) {
+export async function buildMobileAssistantContext(store: DataStore, tenantId: string, userId: string, now = new Date(), weekStart?: unknown) {
   const [overview, currentContentTask] = await Promise.all([
     buildMobileWorkbenchOverview(store, tenantId, mobileWorkbenchWeekRange(now, weekStart)),
-    readMobileCurrentContentTask(store, tenantId),
+    readMobileCurrentContentTask(store, tenantId, userId),
   ]);
   return { ...overview, currentContentTask, quickQuestions: TOPICS.map(topic => ({ topic, label: topic === 'agent_status' && overview.agents.items.some(a => a.currentTask) ? '看看 Agent 当前在途任务' : topic === 'qualified_inquiries' && overview.metrics.qualifiedInquiries.value ? `查看本周 ${overview.metrics.qualifiedInquiries.value} 条有效询盘` : labels[topic] })), executionPolicy: 'preview_then_confirm' };
 }
@@ -137,7 +166,7 @@ export function createMobileWorkbenchAssistantRouter(store: DataStore, options: 
     } catch { res.status(503).json({ error: 'assistant_context_unavailable' }); }
   });
   router.get('/assistant/context', async (req, res) => {
-    try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await buildMobileAssistantContext(store, (res.locals as AuthLocals).tenantId, options.now?.(), req.query.weekStart)); }
+    try { const identity = res.locals as AuthLocals; res.setHeader('Cache-Control', 'private, no-store'); res.json(await buildMobileAssistantContext(store, identity.tenantId, identity.userId, options.now?.(), req.query.weekStart)); }
     catch { res.status(503).json({ error: 'assistant_context_unavailable' }); }
   });
   router.get('/assistant/content-tasks/:taskId', async (req, res) => {
@@ -178,7 +207,7 @@ export function createMobileWorkbenchAssistantRouter(store: DataStore, options: 
         const pending = customers.filter(item => item.hasUnread || item.pendingDraft);
         const details = pending.slice(0, 8).map(item => `${item.name || item.id}：${item.hasUnread ? '有待回复消息' : '已有待确认草稿'}${item.latestMessage ? `；最近消息“${String(item.latestMessage).slice(0, 80)}”` : ''}`).join('\n');
         answer={type:'query_result',text:customers.length ? `本地客服会话共 ${customers.length} 个，其中 ${pending.length} 个需要回复或确认。${details ? `\n${details}` : ''}` : '本地客服会话中暂时没有可读取的客户记录。',performedAction:false,evidence:[{source:'local_customer_conversations',route:'/customers'}],links:pending.map(item=>({type:'inquiry',id:item.id,title:String(item.name || item.id) }))};
-      } else if(TOPICS.includes(topic)) answer=answerMobileAssistant(await buildMobileAssistantContext(store,identity.tenantId,options.now?.(),req.body?.weekStart),topic);
+      } else if(TOPICS.includes(topic)) answer=answerMobileAssistant(await buildMobileAssistantContext(store,identity.tenantId,identity.userId,options.now?.(),req.body?.weekStart),topic);
       else {
         if(!await consumeDemoQuota(req,res,'aiChat')) return;
         let text='';

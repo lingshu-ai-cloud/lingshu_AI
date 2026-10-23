@@ -41,7 +41,7 @@ function fixture() {
     resolveProduct: async () => ({ id: 'product-1', label: '青柠精华', info: '' }),
     createTask: async request => {
       calls.push(`${request.task.productId}:${request.task.mode}:${String(request.task.dueAt)}:${request.expectedThreadVersion}:${request.idempotencyKey}`);
-      return { thread: { version: 4, updatedAt: '2026-10-24T00:00:00Z', messages: [], draftInput: '', scrollPosition: 0, unreadCount: 0, isFollowingLatest: true, paused: false, taskCards: {}, focusedTaskId: null }, task: { taskId: 'task-1', version: '1', brief: { title: '短视频任务' } }, receipt: {
+      return { thread: { version: 4, updatedAt: '2026-10-24T00:00:00Z', messages: [], draftInput: '', scrollPosition: 0, unreadCount: 0, isFollowingLatest: true, paused: false, taskCards: {}, focusedTaskId: null, pendingContentTaskBinding: null }, task: { taskId: 'task-1', version: '1', brief: { title: '短视频任务' } }, receipt: {
         taskId: 'task-1', status: 'producing', href: '/task-1', started: true, card,
       } } as never;
     },
@@ -128,4 +128,34 @@ test('a bind-pending response and later CAS conflict keep one task idempotency i
   await runAssistantProductionRequest(input);
   assert.deepEqual(requests.map(item => item.version), [3, 3, 8]);
   assert.equal(new Set(requests.map(item => item.key)).size, 1);
+});
+
+test('a repeatedly pending binding is persisted and the next resend resumes the same task identity', async () => {
+  const { input, messages } = fixture();
+  const success = input.createTask!;
+  const hydrate = input.hydrateThread;
+  input.hydrateThread = (agentId, patch) => {
+    useAssistantStore.getState().hydrateThread(agentId, patch);
+    hydrate(agentId, patch);
+  };
+  const keys: string[] = [];
+  input.createTask = async request => {
+    keys.push(request.idempotencyKey);
+    throw new AssistantContentTaskApiError(
+      '绑定待确认', 503, 'assistant_content_task_binding_pending', undefined, 'task-created-once',
+    );
+  };
+  await runAssistantProductionRequest(input);
+  const pending = useAssistantStore.getState().threads.business.pendingContentTaskBinding;
+  assert.equal(pending?.contentTaskId, 'task-created-once');
+  assert.equal(pending?.idempotencyKey, keys[0]);
+  assert.match(messages.at(-1) || '', /已安全保存/);
+
+  input.createTask = async request => {
+    keys.push(request.idempotencyKey);
+    return success(request);
+  };
+  await runAssistantProductionRequest(input);
+  assert.equal(new Set(keys).size, 1);
+  assert.equal(useAssistantStore.getState().threads.business.pendingContentTaskBinding, null);
 });

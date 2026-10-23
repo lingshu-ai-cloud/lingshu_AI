@@ -184,6 +184,14 @@ export function sanitizeAssistantThreadForJournal(thread: AgentThreadState): Age
       return sanitized ? [[sanitized.taskId, sanitized] as const] : [];
     });
   const taskCards = Object.fromEntries(cards);
+  const pending = thread.pendingContentTaskBinding;
+  const pendingContentTaskBinding = pending
+    && /^assistant-content-intent:[0-9a-f]{8}$/u.test(pending.intentFingerprint)
+    && /^assistant-content:[0-9]+:[0-9a-f]{8}$/u.test(pending.idempotencyKey)
+    && /^[A-Za-z0-9._:@-]{1,240}$/u.test(pending.contentTaskId)
+    && Number.isFinite(Date.parse(pending.createdAt))
+    ? { ...pending }
+    : null;
   return {
     version: Number.isSafeInteger(thread.version) && thread.version >= 0 ? thread.version : 0,
     updatedAt: typeof thread.updatedAt === 'string' ? thread.updatedAt.slice(0, 100) : '',
@@ -195,6 +203,7 @@ export function sanitizeAssistantThreadForJournal(thread: AgentThreadState): Age
     paused: Boolean(thread.paused),
     taskCards,
     focusedTaskId: thread.focusedTaskId && taskCards[thread.focusedTaskId] ? thread.focusedTaskId : null,
+    pendingContentTaskBinding,
   };
 }
 

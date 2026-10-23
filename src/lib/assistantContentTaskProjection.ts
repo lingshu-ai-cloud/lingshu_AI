@@ -30,9 +30,22 @@ function costDetail(card: ContentProductionTaskCard): string | null {
   return null;
 }
 
+export function unavailableContentTaskCard(card: ContentProductionTaskCard): ContentProductionTaskCard {
+  return {
+    ...card,
+    readState: 'unavailable',
+    currentNode: {
+      id: 'status_unavailable',
+      label: '状态连接中断',
+      userFacingSummary: `暂时无法读取最新状态；当前展示的是 ${card.lastConfirmedAt} 的最后确认结果，正在自动恢复。`,
+    },
+  };
+}
+
 export function contentTaskCardToAssistantCard(card: ContentProductionTaskCard): AssistantTaskCardInput {
   const confirmedCost = costDetail(card);
   const details = [
+    ...(card.readState === 'unavailable' ? [`状态读取失败；最后确认：${card.lastConfirmedAt}`] : []),
     ...card.blockingItems.map(item => `${item.label}：${item.value}`),
     ...card.knownItems.map(item => `已确定 · ${item.label}：${item.value}`),
     ...card.defaultedItems.map(item => `采用默认 · ${item.label}：${item.value}`),

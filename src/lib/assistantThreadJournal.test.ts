@@ -67,6 +67,12 @@ const thread: AgentThreadState = {
     },
   },
   focusedTaskId: 'plan',
+  pendingContentTaskBinding: {
+    intentFingerprint: 'assistant-content-intent:12345678',
+    idempotencyKey: 'assistant-content:7:12345678',
+    contentTaskId: 'content-pending',
+    createdAt: '2026-10-24T00:00:00.000Z',
+  },
 };
 
 const storage = new MemoryStorage();
@@ -88,6 +94,7 @@ assert.equal(reloaded.draftInput, sanitizeAssistantThreadForJournal(thread).draf
 assert.equal(reloaded.scrollPosition, thread.scrollPosition);
 assert.equal(reloaded.focusedTaskId, 'plan');
 assert.equal(reloaded.taskCards.plan.title, '确认本周计划');
+assert.equal(reloaded.pendingContentTaskBinding?.contentTaskId, 'content-pending');
 assert.equal(sameAssistantThreadJournalContent(reloaded, thread), true, 'journal equality compares the same safe representation');
 
 assert.equal(readAssistantThreadJournal(storage, { tenantId: 'tenant-b', userId: 'user-a' }, 'business'), null);

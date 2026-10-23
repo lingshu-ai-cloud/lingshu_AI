@@ -48,6 +48,8 @@ export type ContentProductionTaskCard = {
   completedSummary: string[];
   nextAction: 'supply_input' | 'review' | 'view' | 'download' | 'none';
   lastConfirmedAt: string;
+  /** Client read health; unavailable preserves the last server-confirmed business state. */
+  readState?: 'confirmed' | 'unavailable';
 };
 
 const text = (value: unknown): string => String(value ?? '').trim();
@@ -216,5 +218,6 @@ export function projectContentProductionTaskCard(task: SocialContentTaskSummary 
     completedSummary,
     nextAction,
     lastConfirmedAt,
+    readState: 'confirmed',
   };
 }

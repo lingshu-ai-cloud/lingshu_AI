@@ -9,19 +9,14 @@ import {
   type AssistantActionService,
 } from '../assistant/actionRouting.js';
 import { createStarter198AssistantCommandBus } from '../assistant/starter198CommandBus.js';
-import {
-  Starter198RepositoryError,
-  starter198Repository,
-} from '../starter198/repository.js';
+import { Starter198RepositoryError, starter198Repository } from '../starter198/repository.js';
 import { createSocialContentTask } from '../starter198/socialContentTasks.js';
 import { SocialContentWorkflowError, parseCreateSocialTask } from '../starter198/socialContentValidation.js';
 import { authorizeDefaultSocialContentRequest } from '../starter198/socialContentAuthorization.js';
 import { projectContentProductionTaskCard, type ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard.js';
 import type { SocialContentTaskSummary } from '../../shared/contracts/socialContentTaskContract.js';
-import {
-  isAssistantActionId,
-  type AssistantActionId,
-} from '../../shared/contracts/assistantActions.js';
+import { isAssistantActionId, type AssistantActionId } from '../../shared/contracts/assistantActions.js';
+import { parsePendingContentTaskBinding, type PendingContentTaskBinding } from './assistantThreadPendingBinding.js';
 
 const MAX_THREAD_BYTES = 96 * 1024;
 const MAX_MESSAGES = 120;
@@ -115,6 +110,7 @@ type AssistantThread = {
   paused: boolean;
   taskCards: Record<string, AssistantThreadTaskCard>;
   focusedTaskId: string | null;
+  pendingContentTaskBinding: PendingContentTaskBinding | null;
   updatedAt: string;
 };
 
@@ -388,6 +384,9 @@ function parseThreadPayload(
     return threadInputError('assistant_thread_pause_state_invalid', '会话暂停状态无效。');
   }
   const taskCards = source.taskCards === undefined ? prior?.taskCards ?? {} : parseTaskCards(source.taskCards);
+  const pendingContentTaskBinding = source.pendingContentTaskBinding === undefined
+    ? prior?.pendingContentTaskBinding ?? null
+    : parsePendingContentTaskBinding(source.pendingContentTaskBinding);
   let focusedTaskId: string | null = source.focusedTaskId === undefined
     ? prior?.focusedTaskId ?? null
     : null;
@@ -415,6 +414,7 @@ function parseThreadPayload(
     paused: source.paused === undefined ? prior?.paused ?? false : source.paused,
     taskCards,
     focusedTaskId,
+    pendingContentTaskBinding,
     updatedAt: new Date().toISOString(),
   };
   if (byteLength(JSON.stringify(payload)) > MAX_THREAD_BYTES) {
@@ -445,12 +445,18 @@ function threadWithDefaults(thread: AssistantThread): AssistantThread {
     ? thread.unreadCount
     : 0;
   let taskCards = safely(() => parseTaskCards(thread.taskCards), {});
+  const pendingContentTaskBinding = safely(
+    () => parsePendingContentTaskBinding(thread.pendingContentTaskBinding),
+    null,
+  );
   let focusedTaskId = typeof thread.focusedTaskId === 'string'
     && SAFE_TASK_ID.test(thread.focusedTaskId)
     && Boolean(taskCards[thread.focusedTaskId])
     ? thread.focusedTaskId
     : null;
-  const boundedSnapshotSize = () => byteLength(JSON.stringify({ messages, draftInput, taskCards, focusedTaskId }));
+  const boundedSnapshotSize = () => byteLength(JSON.stringify({
+    messages, draftInput, taskCards, focusedTaskId, pendingContentTaskBinding,
+  }));
   if (boundedSnapshotSize() > MAX_THREAD_BYTES) messages = [];
   if (boundedSnapshotSize() > MAX_THREAD_BYTES) {
     taskCards = {};
@@ -472,6 +478,7 @@ function threadWithDefaults(thread: AssistantThread): AssistantThread {
     paused: typeof thread.paused === 'boolean' ? thread.paused : false,
     taskCards,
     focusedTaskId,
+    pendingContentTaskBinding,
     updatedAt: typeof thread.updatedAt === 'string' ? thread.updatedAt : '',
   };
 }
@@ -584,6 +591,7 @@ export function createAssistantThreadsRouter(
       paused: false,
       taskCards: {},
       focusedTaskId: null,
+      pendingContentTaskBinding: null,
     });
   });
 
@@ -745,6 +753,7 @@ export function createAssistantThreadsRouter(
           messages: [...(prior?.messages ?? []), { role: 'user', content: message }, { role: 'assistant', content: assistantMessage }],
           draftInput: '', scrollPosition: prior?.scrollPosition ?? 0, unreadCount: 0, isFollowingLatest: true,
           paused: prior?.paused ?? false, taskCards: { ...(prior?.taskCards ?? {}), [taskCard.taskId]: taskCard }, focusedTaskId: taskCard.taskId,
+          pendingContentTaskBinding: null,
         }, identity, agentId, current);
         let saved: AssistantThread | null = null;
         if (current?.id) {

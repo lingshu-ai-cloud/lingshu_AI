@@ -41,6 +41,19 @@ export type AssistantRunControl = {
   target: AssistantActionTarget & { objectType: 'run'; objectId: string; expectedVersion: string };
 };
 
+/**
+ * Durable recovery identity for a ContentTask that was created successfully
+ * but could not yet be bound to the assistant thread. Keeping this on the
+ * thread makes a later resend reuse the original business operation instead
+ * of creating a duplicate task.
+ */
+export type PendingContentTaskBinding = {
+  intentFingerprint: string;
+  idempotencyKey: string;
+  contentTaskId: string;
+  createdAt: string;
+};
+
 export type AssistantTaskCardInput = Omit<AssistantTaskCard, 'details' | 'items' | 'secondaryActions' | 'updatedAt'> & {
   details?: string[];
   items?: AssistantCardItem[];
@@ -59,6 +72,7 @@ export interface AgentThreadState {
   paused: boolean;
   taskCards: Record<string, AssistantTaskCard>;
   focusedTaskId: string | null;
+  pendingContentTaskBinding: PendingContentTaskBinding | null;
 }
 
 type AssistantStore = {
@@ -194,6 +208,7 @@ const emptyThread = (): AgentThreadState => ({
   paused: false,
   taskCards: {},
   focusedTaskId: null,
+  pendingContentTaskBinding: null,
 });
 
 function normalizeHydratedThread(current: AgentThreadState, patch: Partial<AgentThreadState>): AgentThreadState {
@@ -205,6 +220,10 @@ function normalizeHydratedThread(current: AgentThreadState, patch: Partial<Agent
     focusedTaskId: typeof patch.focusedTaskId === 'string' || patch.focusedTaskId === null
       ? patch.focusedTaskId
       : current.focusedTaskId,
+    pendingContentTaskBinding: patch.pendingContentTaskBinding === null
+      || (patch.pendingContentTaskBinding && typeof patch.pendingContentTaskBinding === 'object')
+      ? patch.pendingContentTaskBinding
+      : current.pendingContentTaskBinding,
     isFollowingLatest: typeof patch.isFollowingLatest === 'boolean'
       ? patch.isFollowingLatest
       : current.isFollowingLatest,

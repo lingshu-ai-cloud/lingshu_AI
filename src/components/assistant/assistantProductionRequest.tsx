@@ -1,8 +1,8 @@
 import type { Message } from '../../App';
 import { SOCIAL_CONTENT_TASK_REFRESH_EVENT } from '../../lib/socialContentTaskRefresh';
 import { contentTaskCardToAssistantCard } from '../../lib/assistantContentTaskProjection';
-import { useAssistantStore, type AssistantTaskCardInput, type OrbitAgentId } from '../../stores/assistantStore';
-import { AssistantContentTaskApiError, assistantContentTaskIdempotencyKey, createAtomicAssistantContentTask } from '../../lib/assistantContentTaskApi';
+import { useAssistantStore, type AssistantTaskCardInput, type OrbitAgentId, type PendingContentTaskBinding } from '../../stores/assistantStore';
+import { AssistantContentTaskApiError, assistantContentTaskIdempotencyKey, assistantContentTaskIntentFingerprint, createAtomicAssistantContentTask } from '../../lib/assistantContentTaskApi';
 import { resolveAssistantEnterpriseProduct, type AssistantProductionIntent } from './assistantProductionIntake';
 
 export async function runAssistantProductionRequest(input: {
@@ -32,6 +32,10 @@ export async function runAssistantProductionRequest(input: {
     resolveProduct = resolveAssistantEnterpriseProduct,
     createTask = createAtomicAssistantContentTask,
   } = input;
+  const intentFingerprint = assistantContentTaskIntentFingerprint(productionIntent.objective);
+  let creationIdempotencyKey = '';
+  let observedContentTaskId = '';
+  let priorPendingBinding: PendingContentTaskBinding | null = null;
   try {
     // The caller raises the persistence pause before entering here. Drain the
     // PUT that may already own the thread CAS, then use its committed version
@@ -42,7 +46,13 @@ export async function runAssistantProductionRequest(input: {
     let createVersion = Number.isSafeInteger(storedThreadVersion) && storedThreadVersion >= 0
       ? Math.max(expectedThreadVersion, storedThreadVersion)
       : expectedThreadVersion;
-    const creationIdempotencyKey = assistantContentTaskIdempotencyKey(createVersion, productionIntent.objective);
+    const currentPendingBinding = useAssistantStore.getState().threads[threadAgent]?.pendingContentTaskBinding ?? null;
+    priorPendingBinding = currentPendingBinding?.intentFingerprint === intentFingerprint
+      ? currentPendingBinding
+      : null;
+    creationIdempotencyKey = priorPendingBinding?.idempotencyKey
+      || assistantContentTaskIdempotencyKey(createVersion, productionIntent.objective);
+    observedContentTaskId = priorPendingBinding?.contentTaskId ?? '';
     const productionProduct = await resolveProduct(productionIntent.productQuery);
     if (!currentScope()) return;
     const createAtVersion = (version: number) => createTask({
@@ -75,10 +85,12 @@ export async function runAssistantProductionRequest(input: {
         if (error instanceof AssistantContentTaskApiError
           && error.status === 503
           && error.code === 'assistant_content_task_binding_pending'
-          && pendingBindingRetries < 1
           && currentScope()) {
-          pendingBindingRetries += 1;
-          continue;
+          observedContentTaskId = error.contentTaskId || observedContentTaskId;
+          if (pendingBindingRetries < 1) {
+            pendingBindingRetries += 1;
+            continue;
+          }
         }
         const conflict = error instanceof AssistantContentTaskApiError && error.status === 409 ? error : null;
         const refreshedVersion = Number(conflict?.current?.version);
@@ -93,27 +105,42 @@ export async function runAssistantProductionRequest(input: {
     if (!currentScope()) return;
     const authoritativeCard = productionResponse.receipt.card;
     const assistantCard = contentTaskCardToAssistantCard(authoritativeCard);
-    hydrateThread(threadAgent, productionResponse.thread);
+    hydrateThread(threadAgent, { ...productionResponse.thread, pendingContentTaskBinding: null });
     upsertTaskCard(threadAgent, assistantCard);
     focusTaskCard(threadAgent, assistantCard.taskId);
     setLoading(false);
     onSessionRefresh?.();
-    window.dispatchEvent(new CustomEvent(SOCIAL_CONTENT_TASK_REFRESH_EVENT, { detail: { taskId: productionTask.taskId } }));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(SOCIAL_CONTENT_TASK_REFRESH_EVENT, { detail: { taskId: productionTask.taskId } }));
+    }
     refreshPipeline();
   } catch (error) {
     if (!currentScope()) return;
-    if (error instanceof AssistantContentTaskApiError && error.status === 409 && error.current) {
+    if (error instanceof AssistantContentTaskApiError && error.current) {
       hydrateThread(threadAgent, error.current);
-      onSessionRefresh?.();
-      return;
     }
     const message = error instanceof Error ? error.message : '内容任务创建失败，请稍后重试。';
+    const taskId = error instanceof AssistantContentTaskApiError
+      ? error.contentTaskId || observedContentTaskId
+      : observedContentTaskId;
+    if (taskId && creationIdempotencyKey) {
+      hydrateThread(threadAgent, {
+        pendingContentTaskBinding: {
+          intentFingerprint,
+          idempotencyKey: creationIdempotencyKey,
+          contentTaskId: taskId,
+          createdAt: priorPendingBinding?.createdAt || new Date().toISOString(),
+        },
+      });
+    }
     const currentMessages = useAssistantStore.getState().threads[threadAgent].messages;
     const visibleMessages = currentMessages.at(-1)?.role === 'user' && currentMessages.at(-1)?.content === requestMessage
       ? currentMessages : [...currentMessages, { role: 'user' as const, content: requestMessage }];
     setMessages(threadAgent, [
       ...visibleMessages,
-      { role: 'assistant', content: `单条内容任务尚未建立：${message}` },
+      { role: 'assistant', content: taskId
+        ? '单条内容任务已安全保存，但会话绑定暂时未确认。稍后再次发送相同需求会续接原任务，不会重复创建。'
+        : `单条内容任务尚未建立：${message}` },
     ]);
     persistThread(threadAgent);
   } finally {

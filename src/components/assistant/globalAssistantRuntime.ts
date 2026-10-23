@@ -146,6 +146,7 @@ export function emptyAssistantThread(): AgentThreadState {
     paused: false,
     taskCards: {},
     focusedTaskId: null,
+    pendingContentTaskBinding: null,
   };
 }
 
@@ -201,6 +202,9 @@ export function cloneAssistantThread(thread: AgentThreadState): AgentThreadState
       ...(card.primaryAction ? { primaryAction: { ...card.primaryAction } } : {}),
       ...(card.workspace ? { workspace: { ...card.workspace } } : {}),
     }])),
+    pendingContentTaskBinding: thread.pendingContentTaskBinding
+      ? { ...thread.pendingContentTaskBinding }
+      : null,
   };
 }
 
@@ -232,6 +236,7 @@ export function mergeAssistantThread(remote: AgentThreadState, local: AgentThrea
     messages: local.messages.slice(-MAX_PERSISTED_MESSAGES),
     taskCards,
     focusedTaskId,
+    pendingContentTaskBinding: local.pendingContentTaskBinding ?? remote.pendingContentTaskBinding,
   };
 }
 
@@ -253,6 +258,10 @@ export function persistedAssistantThread(value: unknown, fallback: AgentThreadSt
     focusedTaskId: typeof source.focusedTaskId === 'string' || source.focusedTaskId === null
       ? source.focusedTaskId
       : fallback.focusedTaskId,
+    pendingContentTaskBinding: source.pendingContentTaskBinding === null
+      || (source.pendingContentTaskBinding && typeof source.pendingContentTaskBinding === 'object')
+      ? source.pendingContentTaskBinding
+      : fallback.pendingContentTaskBinding,
   };
 }
 

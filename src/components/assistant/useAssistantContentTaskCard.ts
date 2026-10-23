@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { projectContentProductionTaskCard } from '../../../shared/contracts/assistantContentTaskCard';
-import { contentTaskCardToAssistantCard } from '../../lib/assistantContentTaskProjection';
+import { contentTaskCardToAssistantCard, unavailableContentTaskCard } from '../../lib/assistantContentTaskProjection';
 import { socialContentApi } from '../../lib/socialContentApi';
 import { SOCIAL_CONTENT_TASK_REFRESH_EVENT } from '../../lib/socialContentTaskRefresh';
 import { useAssistantStore, type OrbitAgentId } from '../../stores/assistantStore';
@@ -23,6 +23,7 @@ export function useAssistantContentTaskCard(input: {
     if (!input.active || !contentTaskId) return;
     let active = true;
     let inFlight = false;
+    let readUnavailable = false;
     let lastCursor = useAssistantStore.getState().threads[input.agentId]
       .taskCards[input.focusedTaskId!]?.contentTask?.recoveryCursor.value ?? '';
     const refresh = async (event?: Event) => {
@@ -33,13 +34,21 @@ export function useAssistantContentTaskCard(input: {
         const task = await socialContentApi.getTask(contentTaskId);
         if (!active) return;
         const card = projectContentProductionTaskCard(task);
-        if (card.recoveryCursor.value === lastCursor) return;
+        if (card.recoveryCursor.value === lastCursor && !readUnavailable) return;
         lastCursor = card.recoveryCursor.value;
+        readUnavailable = false;
         input.upsertTaskCard(input.agentId, contentTaskCardToAssistantCard(card));
         input.persistThread(input.agentId);
       } catch {
         // Preserve the last confirmed projection. A read failure is unknown,
         // never evidence that the task failed or disappeared.
+        if (!active || readUnavailable) return;
+        const previous = useAssistantStore.getState().threads[input.agentId]
+          .taskCards[input.focusedTaskId!]?.contentTask;
+        if (!previous) return;
+        readUnavailable = true;
+        input.upsertTaskCard(input.agentId, contentTaskCardToAssistantCard(unavailableContentTaskCard(previous)));
+        input.persistThread(input.agentId);
       } finally {
         inFlight = false;
       }

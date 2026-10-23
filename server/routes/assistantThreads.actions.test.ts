@@ -367,6 +367,12 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     paused: true,
     taskCards: { 'run:one': card },
     focusedTaskId: 'run:one',
+    pendingContentTaskBinding: {
+      intentFingerprint: 'assistant-content-intent:12345678',
+      idempotencyKey: 'assistant-content:0:12345678',
+      contentTaskId: 'content-pending',
+      createdAt: '2026-10-24T08:00:00.000Z',
+    },
   };
   try {
     const savedResponse = await fetch(`${base}/business`, {
@@ -381,6 +387,7 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     assert.equal(saved.isFollowingLatest, false);
     assert.equal(saved.paused, true);
     assert.equal(saved.focusedTaskId, 'run:one');
+    assert.equal(saved.pendingContentTaskBinding.contentTaskId, 'content-pending');
     assert.deepEqual(saved.taskCards['run:one'], {
       ...card,
       primaryAction: { id: 'confirm-plan', label: '确认并开始' },
@@ -402,6 +409,7 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     assert.equal(partialBody.paused, true);
     assert.equal(partialBody.focusedTaskId, 'run:one');
     assert.deepEqual(Object.keys(partialBody.taskCards), ['run:one']);
+    assert.equal(partialBody.pendingContentTaskBinding.idempotencyKey, 'assistant-content:0:12345678');
 
     const otherTenant = await fetch(`${base}/business`, {
       headers: { ...headers, 'x-test-tenant': 'tenant-b' },
@@ -418,6 +426,7 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     assert.equal(legacy.paused, false);
     assert.deepEqual(legacy.taskCards, {});
     assert.equal(legacy.focusedTaskId, null);
+    assert.equal(legacy.pendingContentTaskBinding, null);
 
     const malformed = await fetch(`${base}/business`, {
       method: 'PUT', headers,
@@ -425,6 +434,15 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     });
     assert.equal(malformed.status, 400);
     assert.equal((await malformed.json()).error, 'assistant_thread_pause_state_invalid');
+
+    const invalidPending = await fetch(`${base}/business`, {
+      method: 'PUT', headers,
+      body: JSON.stringify({ ...valid, expectedVersion: 2, pendingContentTaskBinding: {
+        ...valid.pendingContentTaskBinding, contentTaskId: '../other-tenant',
+      } }),
+    });
+    assert.equal(invalidPending.status, 400);
+    assert.equal((await invalidPending.json()).error, 'assistant_thread_pending_binding_invalid');
 
     const missingFocus = await fetch(`${base}/business`, {
       method: 'PUT', headers,
