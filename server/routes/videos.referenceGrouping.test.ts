@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { groupExactObservationWindows, selectFramesForPhysicalCuts, splitExactGeminiShotsAtSceneCuts } from './videos.js';
+import { groupExactObservationWindows, selectFramesForPhysicalCuts, splitExactGeminiShotsAtSceneCuts } from './videoAnalysisTimelineProjection.js';
 import type { VideoAiAnalysis } from '../types/index.js';
 
 const base: VideoAiAnalysis = {
@@ -57,3 +57,12 @@ assert.equal(geminiMontage.scriptDetails15s?.[0]?.time, '0s–4.83s');
 assert.equal(geminiMontage.scriptDetails15s?.[1]?.time, '4.83s–5.1s');
 assert.equal(geminiMontage.scriptDetails15s?.[0]?.beats?.length, 1);
 assert.equal(geminiMontage.scriptDetails15s?.[1]?.beats?.length, 1);
+
+assert.ok(geminiMontage.scriptDetails15s?.every(shot => shot.visual === '' && shot.needsReview === true),
+  'split children must not inherit the mixed parent visual before independent inspection');
+assert.ok(geminiMontage.scriptDetails15s?.every(shot => !shot.classificationEvidence && !shot.environment),
+  'parent classification, scene and evidence cannot survive a physical split');
+const crossingBeat = splitExactGeminiShotsAtSceneCuts({ ...base, scriptDetails15s: [{
+  time: '0-4s', visual: 'laboratory then product', beats: [{ time: '1-3s', action: 'mixed cross-cut description' }],
+}] }, [2]);
+assert.ok(crossingBeat.scriptDetails15s?.every(shot => !shot.beats?.length), 'cross-cut beats cannot be copied into either child');

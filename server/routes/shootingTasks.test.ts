@@ -27,7 +27,11 @@ test('shooting API: tenant isolation, validation, durable reload, append and fai
     },
   };
   const requirement = 'immutable-v1';
-  records.set('studio_projects/draft', { tenant_id: 'A', status: 'draft', spec: { activeAssemblyId: 'video-1', shootingSlots: [{ id: 'stable', requirements: requirement }] } });
+  records.set('studio_projects/draft', { tenant_id: 'A', status: 'draft', spec: {
+    activeAssemblyId: 'video-1', shootingSlots: [{ id: 'stable', slotId: 'slot-1', requirements: requirement }],
+    videoKickoff: { video: { referenceRecordId: 'benchmark' }, referenceAnalysis: { details: [{ shotId: 'slot-1', time: '12.5s–16s', visual: '工厂灌装' }] } },
+  } });
+  records.set('trend_videos/benchmark', { id: 'benchmark', tenantId: 'A' });
   records.set('studio_projects/published', { tenant_id: 'A', status: 'published', spec: {} });
   const app = express(); app.use(express.json());
   app.use((req, res, next) => { if (!req.headers['x-test-tenant']) { res.sendStatus(401); return; } res.locals.tenantId = req.headers['x-test-tenant']; next(); });
@@ -44,8 +48,32 @@ test('shooting API: tenant isolation, validation, durable reload, append and fai
     assert.equal((await call('', { ...input, requirements: 'old' })).status, 409);
     assert.equal((await call('', { ...input, sourceProjectId: undefined })).status, 400);
     assert.equal((await call('', { ...input, suggestedDurationSec: -1 })).status, 400);
-    const created = await call('', input); assert.equal(created.status, 201);
+    const created = await call('', { ...input, referenceClip: { videoId: 'forged-video', startSeconds: 0, endSeconds: 99 } }); assert.equal(created.status, 201);
     const task = await created.json(); assert.equal(task.origin, 'script_gap');
+    assert.equal(task.sourceStoryboardSlotId, 'slot-1');
+    assert.deepEqual(task.referenceClip, { schemaVersion: 'shooting-reference.v1', projectId: 'draft', shotId: 'stable', storyboardSlotId: 'slot-1',
+      videoId: 'benchmark', referenceShotId: 'slot-1', startSeconds: 12.5, endSeconds: 16, description: '工厂灌装' });
+    assert.deepEqual((await (await call()).json())[0].referenceClip, task.referenceClip);
+    assert.equal((await call(`/${task.id}/reference-preview`, {}, '')).status, 401);
+    assert.equal((await call(`/${task.id}/reference-preview`, {}, 'B')).status, 404);
+    const stalePreview = await call(`/${task.id}/reference-preview`, { start: 0, end: 999 });
+    assert.equal(stalePreview.status, 409); assert.equal((await stalePreview.json()).error, 'shooting_reference_changed');
+    assert.equal((await call('', { ...input, sourceStoryboardSlotId: 'wrong' })).status, 409);
+    records.get('trend_videos/benchmark').tenantId = 'B';
+    const foreign = await call('', input); assert.equal(foreign.status, 409);
+    assert.equal((await foreign.json()).code, 'shooting_reference_unavailable');
+    records.get('trend_videos/benchmark').tenantId = 'A';
+    records.get('studio_projects/draft').spec.videoKickoff.referenceAnalysis.details[0].shotId = 'other-shot';
+    const unresolved = await call('', input); assert.equal(unresolved.status, 409);
+    assert.equal((await unresolved.json()).code, 'shooting_reference_unresolved');
+    const spec = records.get('studio_projects/draft').spec;
+    spec.analysisResults = { reference: spec.videoKickoff.referenceAnalysis };
+    delete spec.videoKickoff.referenceAnalysis;
+    const legacyUnresolved = await call('', input); assert.equal(legacyUnresolved.status, 409);
+    assert.equal((await legacyUnresolved.json()).code, 'shooting_reference_unresolved');
+    spec.videoKickoff.referenceAnalysis = spec.analysisResults.reference;
+    delete spec.analysisResults;
+    records.get('studio_projects/draft').spec.videoKickoff.referenceAnalysis.details[0].shotId = 'slot-1';
     assert.deepEqual(await (await call('', undefined, 'B')).json(), []);
     assert.equal((await call(`/${task.id}/uploads`, { uploadedMaterialIds: ['video-1'] }, 'B')).status, 404);
     assert.equal((await call(`/${task.id}/uploads`, { uploadedMaterialIds: ['other-tenant-video'] })).status, 400);

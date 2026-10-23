@@ -83,7 +83,7 @@ Page({
   },
   navigateShot(e) {
     const id = e.currentTarget.dataset.id
-    if (id) wx.navigateTo({ url: '/packages/operator/shooting/index?taskId=' + encodeURIComponent(id) + '&autoShoot=1' })
+    if (id) wx.navigateTo({ url: '/packages/operator/shooting/index?taskId=' + encodeURIComponent(id) })
   },
   openBlocker(e) {
     const item = this.data.blockers.find(entry => String(entry.id) === String(e.currentTarget.dataset.id))

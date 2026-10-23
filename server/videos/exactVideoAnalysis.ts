@@ -87,7 +87,7 @@ export async function analyzeExactLongVideoChunks(input: {
       )];
     }
     selected = selectFramesForPhysicalCuts(selected, input.sceneCuts || [], chunk.start, chunk.end, frameLimit);
-    const localFrames = selected.map(frame => ({ ...frame, timeLabel: `${Math.max(0, qwenFrameSeconds(frame.timeLabel) - chunk.start).toFixed(2)}s` }));
+    const localFrames = selected.map(frame => ({ ...frame, timeLabel: `${Math.max(0, qwenFrameSeconds(frame.timeLabel) - chunk.start).toFixed(6)}s` }));
     const localSegments = (input.transcript?.segments || [])
       .filter(segment => segment.timingPrecision === 'phrase' && segment.end > chunk.start && segment.start < chunk.end)
       .map(segment => {
@@ -102,7 +102,7 @@ export async function analyzeExactLongVideoChunks(input: {
     const observationSeconds = Math.max(2, Math.min(5, Number(process.env.VIDEO_EXACT_OBSERVATION_SECONDS || 4)));
     const cutPoints = [0, ...(input.sceneCuts || [])
       .filter(value => value > chunk.start + 0.02 && value < chunk.end - 0.02)
-      .map(value => +(value - chunk.start).toFixed(2)), localDuration];
+      .map(value => +(value - chunk.start).toFixed(6)), localDuration];
     const windows: Array<{ start: number; end: number; reason: string }> = [];
     for (let cutIndex = 0; cutIndex < cutPoints.length - 1; cutIndex += 1) {
       const start = cutPoints[cutIndex]!;
@@ -110,8 +110,8 @@ export async function analyzeExactLongVideoChunks(input: {
       const sections = Math.max(1, Math.ceil((end - start) / observationSeconds));
       for (let section = 0; section < sections; section += 1) {
         windows.push({
-          start: +(start + (end - start) * section / sections).toFixed(2),
-          end: +(start + (end - start) * (section + 1) / sections).toFixed(2),
+          start: +(start + (end - start) * section / sections).toFixed(6),
+          end: +(start + (end - start) * (section + 1) / sections).toFixed(6),
           reason: section === 0 && cutIndex > 0 ? '检测到视觉切点' : '连续镜头观察段',
         });
       }

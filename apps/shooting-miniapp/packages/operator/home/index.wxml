@@ -24,7 +24,7 @@
 
     <view class="content-template">
       <block wx:if="{{activeMetric === 'shooting'}}">
-        <view class="section-heading"><view><text class="section-title">今日待拍队列</text><text class="section-note">点击分镜卡片，直接开始拍摄</text></view><text class="section-count">{{todayShots.length}} 项</text></view>
+        <view class="section-heading"><view><text class="section-title">今日待拍队列</text><text class="section-note">先查看对标分镜，再按要求拍摄</text></view><text class="section-count">{{todayShots.length}} 项</text></view>
         <view wx:if="{{loading && !loaded}}" class="state-card">正在同步真实工作数据…</view>
         <view wx:elif="{{!todayShots.length}}" class="state-card success"><view class="check">✓</view><view><text class="state-title">今天没有待拍镜头</text><text class="state-note">新的拍摄任务会由网页端或 Agent 排期生成</text></view></view>
         <view wx:else class="shot-list">

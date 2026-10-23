@@ -1,3 +1,4 @@
+import { reinspectSplitShotDescriptions } from '../routes/videoSplitShotDescriptions.js';
 import { splitExactGeminiShotsAtSceneCuts } from '../routes/videoAnalysisTimelineProjection.js';
 import fs from 'fs';
 import path from 'path';
@@ -6,6 +7,7 @@ import { detectVideoSceneCuts, extractOpeningHookFrames } from '../routes/videoF
 import { store } from '../storage/index.js';
 import { objectStorageEnabled } from '../storage/objectStorage.js';
 import { inspectVideoOpeningFrameWithQwen } from '../agents/qwen.js';
+import { analyzeVideo } from '../agents/gemini.js';
 import { inspectOpeningHookMotionWithGemini } from '../agents/geminiHookMotion.js';
 import type { VideoAiAnalysis } from '../types/index.js';
 import { tenantAssetDir } from '../lib/assetAccess.js';
@@ -92,7 +94,7 @@ export function createExactEvidencePersistence(deps: Pick<VideoApplicationPorts,
 
   async function enrichExactGeminiEvidence(filePath: string, analysis: VideoAiAnalysis): Promise<VideoAiAnalysis> {
     const detectedSceneCuts = await detectVideoSceneCuts(filePath);
-    let enriched = splitExactGeminiShotsAtSceneCuts(analysis, detectedSceneCuts);
+    let enriched = await reinspectSplitShotDescriptions(filePath, splitExactGeminiShotsAtSceneCuts(analysis, detectedSceneCuts), video => analyzeVideo({ videoBase64: video.toString('base64'), mimeType: 'video/mp4', analysisMode: 'exact' }));
     let hookReviewReasons: string[] = [];
     const hookIndex = firstSubstantiveOpeningShot(enriched);
     if (hookIndex >= 0) {

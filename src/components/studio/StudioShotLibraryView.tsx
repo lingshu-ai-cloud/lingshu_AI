@@ -3,7 +3,7 @@ import { salesPresenterRecognition } from '../../../shared/contracts/presenterSh
 import { fileToDataUrl } from '../../lib/studioFileInputs';
 import { Suspense } from 'react';
 import { authHeader } from '../../lib/auth';
-import { createScriptGapTask } from '../../lib/scriptGapQueue';
+import { createScriptGapTask, shootingSourceBinding } from '../../lib/scriptGapQueue';
 import { patchShot } from '../../lib/shotProduction';
 import { newDigitalHumanRequirements } from '../../lib/digitalHumanPlan';
 import { buildAiProductOptions } from './studioProductSelection.js';
@@ -138,8 +138,8 @@ export function renderStudioShotLibrary(input: StudioShotLibraryViewInputs) {
             setStoryboardSourcePlans(next); setStoryboardAssignments(assignments);
             const task = await createScriptGapTask({ title: `分镜 ${issue.shotNumber} 补拍`, productLabel: activeProductLabel || '当前产品',
               themeTitle: activeVideoTheme.title, shotBrief: bound.requirements || slot.title, suggestedDurationSec: bound.duration, ratio,
-              sourceProjectId: saved.project.id, sourceStoryboardSlotId: slot.id, sourceShotId: bound.id, sourceAssemblyId: activeAssemblyId,
-              requirements: bound.requirements, soundMode: shot.sound, expectedNarration: shot.narration });
+              ...shootingSourceBinding(saved.project, slot.id, { assemblyId: activeAssemblyId, requirements: bound.requirements }),
+              soundMode: shot.sound, expectedNarration: shot.narration });
             setShootingTasks(current => [task, ...current.filter(item => item.id !== task.id)]);
           }} /></Suspense>;
       }}

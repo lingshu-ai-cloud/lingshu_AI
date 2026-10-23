@@ -1,3 +1,4 @@
+const { shootingReferencePreview, taskReferencePreview } = require('./shootingReference')
 function validDate(value) { const time = Date.parse(String(value || '')); return Number.isFinite(time) ? new Date(time) : null }
 function taskDate(task) { return validDate(task.dueAt) || validDate(task.scheduledAt) || validDate(task.createdAt) || null }
 function dayKey(date) { return date ? [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-') : 'undated' }
@@ -24,6 +25,15 @@ function groupShootingTasks(tasks, nowValue) {
 }
 function plain(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {} }
 function finite(value) { const number = Number(value); return Number.isFinite(number) && number >= 0 ? number : null }
+const benchmarkPreview = shootingReferencePreview
+function shootingPreview(task, project) {
+  const persisted = taskReferencePreview(task)
+  if (persisted) return persisted
+  const benchmark = benchmarkPreview(task, project)
+  if (benchmark) return benchmark
+  const assigned = referencePreview(task, project)
+  return assigned ? { ...assigned, sourceLabel: '已分配参考素材', description: '' } : null
+}
 function referencePreview(task, project) {
   const spec = plain(project && project.spec)
   const slotId = String(task && (task.sourceStoryboardSlotId || task.sourceShotId) || '')
@@ -49,9 +59,9 @@ function referencePreview(task, project) {
   }
 }
 function cardPreview(task, project) {
-  const preview = referencePreview(task, project)
+  const preview = shootingPreview(task, project)
   if (!preview) return null
   const end = preview.end === null ? preview.start + 3 : Math.min(preview.end, preview.start + 3)
   return { ...preview, end, rangeText: '前三秒预览' }
 }
-module.exports = { groupShootingTasks, taskDate, referencePreview, cardPreview }
+module.exports = { groupShootingTasks, taskDate, referencePreview, benchmarkPreview, shootingPreview, taskReferencePreview, cardPreview }

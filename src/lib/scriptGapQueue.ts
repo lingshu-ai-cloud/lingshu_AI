@@ -1,5 +1,6 @@
 import { authHeader } from './auth';
 import type { ScriptGapTask } from './shootingWorkflow';
+export { shootingSourceBinding } from '../../shared/shootingReference.js';
 export type { ScriptGapTask } from './shootingWorkflow';
 
 export const SCRIPT_GAP_QUEUE_EVENT = 'lingshu:script-gap-queue-updated';
@@ -22,7 +23,9 @@ export async function updateScriptGapTask(id: string, patch: { uploadedMaterialI
   window.dispatchEvent(new Event(SCRIPT_GAP_QUEUE_EVENT));
 }
 
-export async function createScriptGapTask(input: Omit<ScriptGapTask, 'id' | 'origin' | 'createdAt' | 'uploadedMaterialIds'>): Promise<ScriptGapTask> {
+export type BoundShootingTaskInput = Omit<ScriptGapTask, 'id' | 'origin' | 'createdAt' | 'uploadedMaterialIds' | 'referenceClip'>
+  & Required<Pick<ScriptGapTask, 'sourceProjectId' | 'sourceAssemblyId' | 'sourceStoryboardSlotId' | 'sourceShotId' | 'requirements'>>;
+export async function createScriptGapTask(input: BoundShootingTaskInput): Promise<ScriptGapTask> {
   const task = await request<ScriptGapTask>('', input);
   window.dispatchEvent(new Event(SCRIPT_GAP_QUEUE_EVENT));
   return task;

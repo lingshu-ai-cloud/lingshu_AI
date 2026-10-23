@@ -24,8 +24,8 @@
         <view class="date-heading"><text>{{group.label}}</text><text class="date-text">{{group.dateText}}</text></view>
         <view wx:for="{{group.tasks}}" wx:for-item="item" wx:key="id" class="shoot-card surface {{item.done ? 'shoot-card-done' : ''}}" data-id="{{item.id}}" bindtap="selectTask">
           <view wx:if="{{!item.done && item.cardPreview}}" class="shot-media shot-preview-shell" catchtap="ignoreCardTap">
-            <video id="{{item.previewPlayerId}}" class="shot-preview" src="{{item.cardPreview.url}}" poster="{{item.cardPreview.poster}}" initial-time="{{item.cardPreview.start}}" controls="{{false}}" show-center-play-btn object-fit="cover" data-player="{{item.previewPlayerId}}" data-start="{{item.cardPreview.start}}" data-end="{{item.cardPreview.end}}" bindplay="cardPreviewPlay" bindtimeupdate="cardPreviewTimeUpdate"></video>
-            <text class="shot-preview-badge">预览 3 秒</text>
+            <video id="{{item.previewPlayerId}}" class="shot-preview" src="{{item.cardPreview.url}}" poster="{{item.cardPreview.poster}}" initial-time="{{item.cardPreview.start}}" controls="{{false}}" show-center-play-btn object-fit="contain" data-player="{{item.previewPlayerId}}" data-start="{{item.cardPreview.start}}" data-end="{{item.cardPreview.end}}" bindplay="cardPreviewPlay" bindtimeupdate="cardPreviewTimeUpdate"></video>
+            <text class="shot-preview-badge">{{item.cardPreview.sourceLabel}} · 最多 3 秒</text>
           </view>
           <view wx:else class="shot-media {{item.done ? 'shot-media-done' : ''}}">
             <text class="shot-media-label">{{item.done ? '已拍' : '分镜'}}</text>
@@ -64,6 +64,24 @@
         </view>
       </view>
       <view class="detail-columns">
+        <view class="surface reference-panel">
+          <view class="section-title">{{referencePreview ? referencePreview.sourceLabel : '对标分镜'}}</view>
+          <view wx:if="{{referenceLoading}}" class="reference-empty">正在读取对标片段…</view>
+          <view wx:elif="{{referenceError}}" class="reference-empty">
+            <view>{{referenceError}}</view>
+            <button class="secondary" bindtap="retryReference">重新加载片段</button>
+          </view>
+          <block wx:elif="{{referencePreview}}">
+            <video id="reference-preview" class="reference-video" src="{{referencePreview.url}}" poster="{{referencePreview.poster}}" initial-time="{{referencePreview.start}}" controls show-progress="{{false}}" enable-progress-gesture="{{false}}" object-fit="contain" show-center-play-btn bindplay="referencePlay" bindpause="referencePause" bindwaiting="referenceWaiting" bindended="resetReference" bindtimeupdate="referenceTimeUpdate" binderror="referencePlaybackError"></video>
+            <view class="reference-range">原视频 {{referencePreview.rangeText}}</view>
+            <view wx:if="{{referencePreview.description}}" class="detail-text">{{referencePreview.description}}</view>
+            <view class="muted">点击播放查看镜头，片段结束后可再次播放。参考构图与动作，按下方要求拍摄自己的素材。</view>
+          </block>
+          <view wx:else class="reference-empty">
+            <view class="reference-empty-title">暂无可用的对标分镜</view>
+            <view>当前任务未能匹配到可播放的参考片段，可按拍摄要求继续。</view>
+          </view>
+        </view>
         <view class="surface detail-guidance">
           <view class="section-title">画面与动作</view>
           <view class="detail-text">{{selected.shotBrief}}</view>
@@ -71,20 +89,6 @@
           <view class="section-title">声音与口播</view>
           <view class="detail-text">{{selected.soundInstructions}}</view>
           <view wx:if="{{selected.expectedNarration}}" class="narration">{{selected.expectedNarration}}</view>
-        </view>
-        <view class="surface reference-panel">
-          <view class="section-title">对标素材再现</view>
-          <block wx:if="{{referencePreview}}">
-            <video id="reference-preview" class="reference-video" src="{{referencePreview.url}}" poster="{{referencePreview.poster}}" initial-time="{{referencePreview.start}}" controls object-fit="cover" show-center-play-btn bindtimeupdate="referenceTimeUpdate"></video>
-            <view class="reference-range">参考区间 {{referencePreview.rangeText}}</view>
-            <view class="muted">按左侧要求再现镜头语言，不复制原素材中的品牌或产品。</view>
-          </block>
-          <view wx:elif="{{referenceLoading}}" class="reference-empty">正在读取对标素材…</view>
-          <view wx:else>
-            <image src="/assets/factory-benchmark-frame.jpg" mode="aspectFill" style="display:block;width:100%;height:520rpx;border-radius:16rpx;background:#111827;" />
-            <view style="margin:14rpx 0 8rpx;font-size:25rpx;font-weight:650;">工厂镜头构图参考</view>
-            <view class="muted">参考人物站位、工厂环境与竖屏构图，不复制原素材中的品牌或产品。</view>
-          </view>
         </view>
       </view>
       <view wx:if="{{selected.done}}" class="surface uploads">

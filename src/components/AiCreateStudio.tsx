@@ -73,7 +73,7 @@ import SocialContentOrderOperations from './socialContent/SocialContentOrderOper
 
 import { authHeader, AUTH_TOKEN_CHANGED_EVENT, getToken } from '../lib/auth';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
-import { createScriptGapTask, readScriptGapTasks, SCRIPT_GAP_QUEUE_EVENT, type ScriptGapTask } from '../lib/scriptGapQueue';
+import { createScriptGapTask, readScriptGapTasks, shootingSourceBinding, SCRIPT_GAP_QUEUE_EVENT, type ScriptGapTask } from '../lib/scriptGapQueue';
 import { isSocialArtifactMediaSourceEligible } from '../lib/socialContentArtifactMedia';
 import { contentCreationDemoMaterialIds, contentCreationTestBypassEnabled } from '../lib/contentCreationTestBypass';
 import { useStudioSocialArtifactSubmission } from './socialContent/useStudioSocialArtifactSubmission';
@@ -4600,9 +4600,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       const task = await createScriptGapTask({
         title: `分镜 ${storyboardSlots.findIndex(item => item.id === slot.slotId) + 1} 补拍`,
         productLabel: activeProductLabel || '当前产品', themeTitle: activeVideoTheme.title,
-        shotBrief: brief, suggestedDurationSec: slot.duration, ratio, sourceProjectId: saved.project.id,
-        sourceStoryboardSlotId: slot.slotId, sourceShotId: slot.id, sourceAssemblyId: activeAssemblyId,
-        requirements: slot.requirements, soundMode: productionFor(storyboardSlots.find(item => item.id === slot.slotId)!).sound,
+        shotBrief: brief, suggestedDurationSec: slot.duration, ratio,
+        ...shootingSourceBinding(saved.project, slot.slotId, { assemblyId: activeAssemblyId, requirements: slot.requirements }),
+        soundMode: productionFor(storyboardSlots.find(item => item.id === slot.slotId)!).sound,
         expectedNarration: productionFor(storyboardSlots.find(item => item.id === slot.slotId)!).narration,
       });
       setShootingTasks(current => [task, ...current.filter(item => item.id !== task.id)]);
@@ -6030,8 +6030,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           const task = await createScriptGapTask({ title: `分镜 ${storyboardSlots.indexOf(pending) + 1} 补拍`,
             productLabel: activeProductLabel || '当前产品', themeTitle: activeVideoTheme.title,
             shotBrief: bound.requirements || pending.title, suggestedDurationSec: bound.duration, ratio,
-            sourceProjectId: saved.project.id, sourceStoryboardSlotId: pending.id, sourceShotId: bound.id,
-            sourceAssemblyId: activeAssemblyId, requirements: bound.requirements,
+            ...shootingSourceBinding(saved.project, pending.id, { assemblyId: activeAssemblyId, requirements: bound.requirements }),
             soundMode: productionFor(pending).sound, expectedNarration: productionFor(pending).narration });
           setShootingTasks(current => [task, ...current.filter(item => item.id !== task.id)]);
         } catch { captureFailures.push(storyboardSlots.indexOf(pending) + 1); }
