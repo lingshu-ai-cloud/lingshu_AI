@@ -4,6 +4,9 @@
 
 ## 边界
 
+- 工作台最后阶段固定为普通数字人任务会话、成片验收/人工交付和依赖/回归收口审计三批。共享项目/镜头状态、跨领域脚本协调、句级/逐镜批事务及页面装配保持完整；其他可拆点不自动纳入。完成条件见 [有限收口清单](../governance/STUDIO-CLOSURE-CHECKLIST.md)。
+- `studioProductionSession.ts` 拥有普通数字人任务的保存/提交、请求身份与未结束任务门禁、刷新/取消/费用回执/采用回执、项目查询和自动恢复，复用同一组记录与 Ref。页面通过延迟 CAS 草稿桥和同步共享镜头写回连接；新增项目范围检查阻止旧保存、采用、详情回包污染当前项目。详见 [任务会话 ADR](adr/2026-10-23-studio-production-session-boundary.md)。
+
 - `studioPosterWorkspace.ts` 统一拥有图文结果状态、证据/产品/素材准入、海报与内容包文案/图片生成、部分失败、手动修改失效、人工复核和交付资格。页面保留项目共享设置、库存与选中列表，并传递明确快照及必要回调；没有新增 getter 桥，未拆散生成和复核流程。详见 [图文工作区所有权 ADR](adr/2026-10-23-studio-poster-workspace-ownership.md)。
 
 - `studioRenderSession.ts` 拥有渲染状态、内部请求代次/预览缓存、封面请求、桌面/持久任务/旧网页三条执行路径、进度清理、语言版本记录和项目恢复。页面保留跨领域 `RenderSpec` 同步组装、就绪检查、导航和版本选择；没有新增 getter 字典。详见 [渲染会话所有权 ADR](adr/2026-10-23-studio-render-session-ownership.md)。
