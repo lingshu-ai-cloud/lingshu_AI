@@ -4,6 +4,7 @@
 
 ## 边界
 
+- `AiCreateStudio.tsx` 的前端合同、目录/字体、分镜/素材/脚本规则和六个完整视图区位于 `src/components/studio/`；页面仍拥有跨工作区状态、Ref、Effect、保存与生产动作，完整拆分尚未结束。视图通过各自明确类型输入复用同一模型/动作，不新建状态；可选面板共享 `studioLazyPanels.ts` 中的同一 Lazy 实例。媒体预览直接使用字体与底层类型合同，原公开导出兼容。详见 [工作台合同与视图区 ADR](adr/2026-10-23-studio-workspace-contracts-and-views.md)。
 - `server/routes/studio.ts`：统一认证、租户上下文中间件、原顺序挂载与旧公开入口委托。`server/studio/application.ts` 装配生成/渲染、素材、数字人、项目证据及既有语音能力；脚本策略、提示词与质量规则独立为纯模块。共享上下文、渲染状态、数字人恢复计时器和创建队列、语音缓存各保留同一所有者。相关 Worker 直接依赖素材分析、作品策略与审批失效能力，避免反向初始化主入口。详见 [Studio 应用边界 ADR](adr/2026-10-23-studio-application-boundaries.md)。下列既有 Studio 规则与适配器由对应应用/HTTP 模块复用。
 - `server/routes/videos.ts`：视频统一鉴权、原顺序 HTTP 注册和旧公开入口委托。`server/videos/application.ts` 装配采集/发现、供应商、下载、来源/素材分析、维护与 Worker；领域状态与计时器各有唯一所有者，HTTP 回调按业务领域分组。类型端口连接同一实例，数据/锁目录保持原位置。身份读取从重型周复盘扫描中分离，消除经生产流程绕回主入口的依赖。详见 [视频应用边界 ADR](adr/2026-10-23-video-application-boundaries.md)；下列既有纯规则/适配器继续被这些领域服务复用。
 - `server/routes/digitalEmployees.ts`：统一鉴权/支持会话只读门禁、应用单实例装配、原顺序路由挂载和旧公开入口委托。运行状态机在 `runCoordinator.ts`，审批准备在 `taskApprovalPreparation.ts`，周目标开工在 `goalActivationApplication.ts`，事实重建、经营包、初始化、事件/浏览器和各领域工作区分属对应应用/路由模块。`applicationPorts.ts` 通过 type-only 合同与最小端口集连接它们；共享启动队列、运行锁、计时器和事件流保持单一所有权。领域记录在 `server/digitalEmployees/records.ts`，旧路由记录入口兼容转发。完整依赖与验证见 [数字员工应用装配 ADR](adr/2026-10-23-digital-employee-application-assembly.md)。
@@ -143,4 +144,4 @@ Studio 的具体领域模块不依赖整个主入口。产品身份选择直接�
 灵感素材库存的 React 生命周期由 `src/components/inspiration/useInspirationMaterialInventory.ts` 持有：普通素材分页读取、产品详情请求与关闭失效、产品摘要批量刷新共用既有库存读取模块。`useInspirationMaterials.ts` 组合该 Hook，并在其持有的上传/收藏/主题写入成功后同步同一库存；只读库存 Hook 本身不触发素材写入或模型请求。页面与画廊、预览及产品详情继续共享一个素材模型。
 
 机器门禁由仓库根目录 `architecture.config.json` 和 `scripts/check-architecture.mjs` 执行。普通生产 TypeScript 文件上限 800 行；历史超限文件使用精确预算，只允许持平或下降。每个治理批次最多拆分 1–2 个热点文件，并单独记录行为验收。
-Studio 的静态支撑模块由 `vite.config.ts` 中的 `studio-support` 分组拆出主控制器 chunk，保持执行顺序；`scripts/check-studio-chunk.mjs` 只约束 `AiCreateStudio` 主 chunk 上限 485,000 字节。拆包不改变模块调用时机，也不代表首屏总传输量或工作台源码结构债务已解决。
+Studio 的静态支撑与完整视图区分别由 `vite.config.ts` 的 `studio-support`、`studio-workbench-views` 分组缓存，保持执行顺序。共用绑定不能被打包回主控制器造成反向依赖；`scripts/check-studio-chunk.mjs` 保留主 chunk 485,000 字节上限，并验证实际视图 chunk 没有直接或间接静态导入页面。动态面板仍沿用原 Lazy/Suspense。拆包不代表首屏总传输量或工作台源码结构债务已解决，页面控制器仍须继续按完整生命周期治理。
