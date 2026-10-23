@@ -6,6 +6,7 @@
 .meta-performance-toolbar > .ant-input-search { min-width: 240px; max-width: 420px; }
 .meta-performance-toolbar > .ant-select-multiple { min-width: 280px; max-width: 420px; flex: 1; }
 .meta-performance-toolbar > .ant-picker { min-width: 260px; }
+.ads-account-directory-select { flex-shrink: 0; min-width: 0; max-width: 100%; overflow-x: auto; }
 .meta-performance-task.ant-btn { height: auto; max-width: 100%; white-space: normal; padding: 0; text-align: left; overflow-wrap: break-word; }
 .meta-performance .ant-table p { margin: 4px 0; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .meta-performance-notes p { margin: 8px 0; font-size: 12px; line-height: 18px; color: var(--ls-text-secondary); }

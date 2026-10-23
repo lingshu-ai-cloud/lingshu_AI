@@ -48,7 +48,7 @@ export default function AdAccountHistory({ plans = false }: { plans?: boolean })
         { key: 'leads', label: 'Meta 线索 / 消息会话', value: report.items.some(i => i.metrics.leads != null || i.metrics.messagingConversations != null) ? '查看广告明细' : '暂无数据' }, { key: 'roas', label: 'Meta 购买 ROAS', value: report.items.some(i => i.metrics.purchaseRoas != null) ? '查看广告明细' : '暂无数据' }]}/>
       <Table<MetaAccountHistory['items'][number]> rowKey="adId" size="small" dataSource={report.items} scroll={{ x: 1000 }} pagination={{ pageSize: 10, showSizeChanger: false }} locale={{ emptyText: <Empty description="没有可展示的真实消耗记录；展示、询盘和 ROAS 不补零、不使用沙盒数据。"/> }} columns={[
         { title: '广告 / 广告系列', key: 'name', width: 240, fixed: 'left', render: (_, i) => <><p>{i.adName}</p>{i.campaignName !== i.adName && <p>{i.campaignName}</p>}</> },
-        { title: '数据窗口', key: 'window', width: 190, render: (_, i) => `${i.since} — ${i.until}` },
+        { title: '数据窗口', key: 'window', width: 190, render: (_, i) => <><p>{i.since} —</p><p>{i.until}</p></> },
         { title: `花费 (${report.currency})`, key: 'spend', render: (_, i) => format(i.metrics.spend) },
         { title: '展示', key: 'impressions', render: (_, i) => format(i.metrics.impressions) },
         { title: 'Meta 归因线索', key: 'leads', render: (_, i) => format(i.metrics.leads) },

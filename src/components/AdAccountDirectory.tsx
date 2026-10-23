@@ -31,7 +31,7 @@ export function useAdAccountDirectory() {
 }
 export function AdDirectorySelect({ disabled = false }: { disabled?: boolean }) {
   const directory = useAdAccountDirectory();
-  return <Space wrap>
+  return <Space className="ads-account-directory-select">
     <Select aria-label="统一广告账户" style={{ minWidth: 240 }} disabled={disabled} loading={directory.loading} value={directory.selected?.key} onChange={directory.select}
       options={directory.items.filter(i => i.provider === 'meta').map(i => ({ value: i.key, label: `${i.name} · ${i.currency}` }))} placeholder="选择已授权的 Meta 账户"/>
     <Button disabled={disabled} loading={directory.loading} onClick={directory.refresh}>刷新授权账户</Button>
