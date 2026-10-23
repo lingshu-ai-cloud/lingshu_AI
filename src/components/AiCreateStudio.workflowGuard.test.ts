@@ -77,6 +77,7 @@ const rejection = scriptQualityFailure({ script: '', qualityStatus: 'rejected', 
 for (const issue of rejectionIssues) assert.ok(rejection?.includes(issue), '质量阻断不得截断待处理问题');
 
 const studioSource = readFileSync(fileURLToPath(new URL('./AiCreateStudio.tsx', import.meta.url)), 'utf8');
+const referenceAdmissionSource = readFileSync(fileURLToPath(new URL('./studio/studioReferenceAdmission.ts', import.meta.url)), 'utf8');
 const workbenchSource = readFileSync(fileURLToPath(new URL('./studio/StudioWorkbenchFrame.tsx', import.meta.url)), 'utf8');
 const contentLibrarySource = readFileSync(fileURLToPath(new URL('./ContentLibrary.tsx', import.meta.url)), 'utf8');
 const globalStyles = readFileSync(fileURLToPath(new URL('../index.css', import.meta.url)), 'utf8');
@@ -153,7 +154,8 @@ assert.match(contentLibrarySource, /const secondaryButton = ['"][^'"]*min-h-11[^
 assert.doesNotMatch(workbenchSource, /<footer className="sticky bottom-0/, '底部操作栏必须占据正常 flex 布局，不得覆盖中间内容');
 assert.match(studioSource, /index > 0 && socialViralTask && hasIncompleteReferenceAnalysis\(videoKickoff\)/, '参考视频缺少可用切点时不得进入后续制作步骤');
 assert.match(studioSource, /const generateSetupScriptAndContinue = async[^]*?if \(socialViralTask\)[^]*?hasIncompleteReferenceAnalysis\(videoKickoff\)/, '自动口播交接同样必须拦截缺少完整切点的原片');
-assert.match(studioSource, /ranges\.length !== details\.length/, '逐镜分析不能忽略缺少时间码的镜头');
+assert.match(studioSource, /from '.\/studio\/studioReferenceAdmission'/, '工作台必须复用独立的对标证据准入规则');
+assert.match(referenceAdmissionSource, /ranges\.length !== details\.length/, '逐镜分析不能忽略缺少时间码的镜头');
 assert.match(studioSource, /socialSourceShotIds\.length === slots\.length \? socialSourceShotIds : referenceShotIds/, '社媒任务应优先把正式制作 shot ID 写入 Studio 分镜身份');
 assert.match(studioSource, /resolveStudioSocialShot\(storyboardSlots, \{ shotId, shotIndex \}\)/, '社媒任务的素材绑定必须通过稳定镜头身份解析');
 assert.doesNotMatch(studioSource, /storyboardSlots\.find\(item => item\.id === shotId\) \|\| storyboardSlots\[shotIndex\]/, '现代任务不得在 shot ID 不匹配时静默回退到数组位置');
