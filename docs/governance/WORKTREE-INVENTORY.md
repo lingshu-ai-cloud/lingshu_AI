@@ -3,6 +3,11 @@
 最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-23 本机集成工作树切换
+
+- `/Users/jiejie/Documents/lingshu-AI` 从旧本地基线切换到远端 `xixi改五个大文件结构治理` 的精确 `641d0b9e`，切换后工作区干净；后续人物认证源码提交为 `a2b37ae6`，治理文档另行提交。该目录现在是本机的源码集成位置，不代表旧预览进程已切换或真实供应商状态。
+- 本机 `git worktree list --porcelain` 另列三棵停在 `62f85f8c` 的 detached 工作树，以及 `/Users/jiejie/.codex/worktrees/f82f/lingshu-AI` 的 `codex/jimeng-creator-ui-20261023`（`64bb6481`）。本次未对它们做合并、重置、清理或归档；此处只记录注册身份，不声称全面盘点其未提交或忽略文件。下方 `/Users/julia1` 路径是另一电脑的历史记录，不是本机当前路径。
+
 ## 2026-10-23 视频生产 P1 独立写入交接
 
 - 主会话推进前端素材边界时，发现“定位灵枢AI基线代码”会话开始修改同一集成树。经用户明确授权协调，该会话创建 `/Users/julia1/Documents/ChatGPT/1023视频生成管线/lingshu-video-p1`，分支 `codex/video-production-p1-20261023`，起点 `ddeb731026eb515e2e482cc5470b89a043acb5e5`，完整迁出自己的后端工作后继续在新位置执行。此分支未合入本批前端源码 `befdda33b396963723f146ac823c3df0780e0256`。

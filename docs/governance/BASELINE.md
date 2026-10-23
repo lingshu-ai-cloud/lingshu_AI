@@ -2,6 +2,14 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 本地集成基线切换与人物认证 UI 收口（2026-10-23）
+
+- 本机集成工作树为 `/Users/jiejie/Documents/lingshu-AI`，分支 `xixi改五个大文件结构治理`。从远端精确获取并切换到干净提交 `641d0b9ec944730c387ef185012fcf2d44cf8939`，而非按目录名或时间推断“最新”；此前本机 `xixi1021程永罗沟通前大整合` 的 `62f85f8c` 仍是可恢复的历史安全点。人物认证源码及测试单独提交为 `a2b37ae692d6390a4644a02e1a26f26c45efe575`；本文档提交的最终 SHA 与远端一致性须在推送后核验。
+- 对照唯一 UI 规范的首次接入两步要求和旧审计，确认原两条失败首先来自 SSR 不执行 capability Effect，旧标题断言误把 pending 当 ready；同时发现分镜入口没有传递已保存的认证照片、本人视频及既有成年人/方舟处理授权。源码改为按当前人物的引用素材预选照片和视频，只在两项声明均已确认时复用授权；缺资料或缺同意时提交仍禁用。认证能力就绪的面板状态增加可预载的测试入口，客户端仍重新读取能力。测试分别覆盖旧人物仅有照片、新人物两项上传、双素材复用与明确授权；并保留 pending 与生成门禁检查。没有仅替换旧正则。
+- 实际通过：定向人物认证 3/3、`pnpm run test:production` **212/212**、完整 `pnpm run test:studio-release`（含工作台、分镜/AIGC、production、媒体、安全、外部预检、桌面字幕与构建）；`NODE_OPTIONS=--max-old-space-size=4096 pnpm run lint`、以 `641d0b9e` 为基准的 `check:architecture`（2,603 个生产 TS、1 个冻结历史超限文件）、`test:architecture-ratchet`、`check:digital-employee-migrations`（193 项仓库只读）与 `git diff --check`。构建中 Studio chunk **368,939/485,000** 字节、视图导入边界通过。
+- release 首跑在 Qwen 对齐的两条离线模拟中因本机无 `DASHSCOPE_API_KEY`，在模拟 `fetch` 前失败；各用例现仅在自身范围设置并恢复 `test-key`，单文件 6/6 后完整 release 复跑通过。首次无 4GB 堆的本地 `lint` 因约 2GB Node 堆限制 OOM，4GB 设置下通过；不能把这两次首跑称为通过。
+- 证据限于源码、SSR 就绪状态及离线测试；尚无登录后真实点击/上传的浏览器验收、真实方舟/HeyGen 供应商 Ready 或付费结果，也未运行全仓 `quality`/`verify`。未部署、未真实付费调用、未执行目标库迁移；本机其他工作树及运行/预览数据未动，不能将源码基线等同于预览或供应商基线。
+
 ## 原五个大文件有限结构治理收口（2026-10-23）
 
 - 审计起点：干净集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端 `099e394e1244aa19fa395f38dd2a03d50fa44cce`。生产源码保持 `2804dd7207cb23fa51f06cb25e4e6ae9158b3ba1`；本批测试修正 `e46db16f5da4ffa85178338bac55e29990e0516c` 已单独提交推送，未新增生产模块。最终文档另行提交推送，SHA 与本地/远端及干净状态以推送后的核验为准。
