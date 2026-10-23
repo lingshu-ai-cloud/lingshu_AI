@@ -4,7 +4,7 @@
 
 ## 边界
 
-- `AiCreateStudio.tsx` 的前端合同、目录/字体、分镜/素材/脚本规则和六个完整视图区位于 `src/components/studio/`；页面仍拥有跨工作区状态、Ref、Effect、保存与生产动作，完整拆分尚未结束。视图通过各自明确类型输入复用同一模型/动作，不新建状态；可选面板共享 `studioLazyPanels.ts` 中的同一 Lazy 实例。媒体预览直接使用字体与底层类型合同，原公开导出兼容。详见 [工作台合同与视图区 ADR](adr/2026-10-23-studio-workspace-contracts-and-views.md)。
+- `AiCreateStudio.tsx` 的前端合同、目录/字体、分镜/素材/脚本规则和六个完整视图区位于 `src/components/studio/`。项目状态、入口/导航恢复、快照/回填、CAS 保存/冲突、作品动作及自动保存进一步归属项目生命周期模块，通过只读类型端口复用唯一状态与 Ref，所有 Hook 保持原调用位置。页面仍拥有其他领域状态和生产/渲染编排，完整拆分尚未结束。视图通过各自明确类型输入复用同一模型/动作，不新建状态；可选面板共享 `studioLazyPanels.ts` 中的同一 Lazy 实例。媒体预览直接使用字体与底层类型合同，原公开导出兼容。详见 [工作台合同与视图区 ADR](adr/2026-10-23-studio-workspace-contracts-and-views.md) 和 [项目生命周期 ADR](adr/2026-10-23-studio-project-lifecycle-boundary.md)。
 - `server/routes/studio.ts`：统一认证、租户上下文中间件、原顺序挂载与旧公开入口委托。`server/studio/application.ts` 装配生成/渲染、素材、数字人、项目证据及既有语音能力；脚本策略、提示词与质量规则独立为纯模块。共享上下文、渲染状态、数字人恢复计时器和创建队列、语音缓存各保留同一所有者。相关 Worker 直接依赖素材分析、作品策略与审批失效能力，避免反向初始化主入口。详见 [Studio 应用边界 ADR](adr/2026-10-23-studio-application-boundaries.md)。下列既有 Studio 规则与适配器由对应应用/HTTP 模块复用。
 - `server/routes/videos.ts`：视频统一鉴权、原顺序 HTTP 注册和旧公开入口委托。`server/videos/application.ts` 装配采集/发现、供应商、下载、来源/素材分析、维护与 Worker；领域状态与计时器各有唯一所有者，HTTP 回调按业务领域分组。类型端口连接同一实例，数据/锁目录保持原位置。身份读取从重型周复盘扫描中分离，消除经生产流程绕回主入口的依赖。详见 [视频应用边界 ADR](adr/2026-10-23-video-application-boundaries.md)；下列既有纯规则/适配器继续被这些领域服务复用。
 - `server/routes/digitalEmployees.ts`：统一鉴权/支持会话只读门禁、应用单实例装配、原顺序路由挂载和旧公开入口委托。运行状态机在 `runCoordinator.ts`，审批准备在 `taskApprovalPreparation.ts`，周目标开工在 `goalActivationApplication.ts`，事实重建、经营包、初始化、事件/浏览器和各领域工作区分属对应应用/路由模块。`applicationPorts.ts` 通过 type-only 合同与最小端口集连接它们；共享启动队列、运行锁、计时器和事件流保持单一所有权。领域记录在 `server/digitalEmployees/records.ts`，旧路由记录入口兼容转发。完整依赖与验证见 [数字员工应用装配 ADR](adr/2026-10-23-digital-employee-application-assembly.md)。
@@ -45,7 +45,7 @@
 - `src/components/studio/studioTimelineFitting.ts`：定义稳定分镜槽位类型，按真实配音时长或已采纳数字人成片时长扩展分镜时间线，不压缩已批准的较长画面；页面继续持有素材选择、语言版本、制作请求和原公开时间线导出。
 - `src/components/studio/studioSourceMaterial.ts`：定义 Studio 素材片段合同、产品素材转换、历史快照恢复及冻结原片身份隔离。短期签名 URL 比对忽略查询串；历史原片快照和仅供分析素材不能进入企业成片素材池，来源身份不一致时不能只凭标题复用旧草稿。页面仍持有项目读取、素材状态和请求动作，旧公开类型与准入函数从页面转发。
 - `src/components/studio/studioLanguageRules.ts`：工作台语种目录、原口播语种判定、企业语言代码解析、已有译稿按语种筛选及脚本时间码格式归一化的纯规则；页面继续决定翻译/配音请求与保存时机，旧公开口播语言函数由页面转发。
-- `src/components/studio/ExistingSourceDraftDialog.tsx`：仅在发现同源历史草稿时按需加载，展示继续编辑或新建作品集两种显式选择；`AiCreateStudio.tsx` 保留源草稿校验、冻结引用清理和项目加载动作。未挂载的旧产品预览已删除，当前产品筛选与信息读取不经该旧视图。
+- `src/components/studio/ExistingSourceDraftDialog.tsx`：仅在发现同源历史草稿时按需加载，展示继续编辑或新建作品集两种显式选择；同源草稿校验归 `useStudioProjectNavigationLifecycle.ts`，完整载入及回填归 `studioProjectRestoration.ts`，页面绑定显式选择与原状态。未挂载的旧产品预览已删除，当前产品筛选与信息读取不经该旧视图。
 - `src/components/studio/studioStoryboardMaterialMatching.ts`：分镜素材的画幅偏好、可定位片段证据、视觉语义评分及本地自动分配纯规则。`AiCreateStudio.tsx` 继续拥有任务草稿、素材请求、人工确认及原公开函数转发；时长和宽高比只能影响排序，不能替代片段真实性证据。
 - `src/components/inspiration/inspirationAnalysisProjection.ts`：分析文本清洗、精确分析准入、展示资格、粗结构与逐镜摘要构建；当前选中视频由灵感页挂载 `DirectorVideoDetailPanel` 展示。原参考的六段结构、镜头和口播人工复核归 `DirectorReviewWorkspace.tsx`，其登录身份栅栏、显式 ASR 许可和结果不明禁重提交不由页面替代。旧 `ScriptPanel`/`AnalysisPanel` 及其 Seedance 脚本侧栏没有挂载，已清理；不将策略级或不确定文本标成通过的全片证据。
 - `src/components/inspiration/inspirationMaterialLibrary.ts`：素材库入口参数、企业通用/产品归属、可见标签与语义、分类徽标、产品/方向/图库筛选；权威媒体比例计算在 `src/lib/materialAspectRatio.ts`，规则模块不反向依赖 React 组件。页面保留素材加载、用户操作和展示，原页面导出继续转发。
