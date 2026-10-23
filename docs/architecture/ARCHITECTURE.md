@@ -4,6 +4,7 @@
 
 ## 边界
 
+- `server/routes/digitalEmployees.ts`：统一鉴权/支持会话只读门禁、应用单实例装配、原顺序路由挂载和旧公开入口委托。运行状态机在 `runCoordinator.ts`，审批准备在 `taskApprovalPreparation.ts`，周目标开工在 `goalActivationApplication.ts`，事实重建、经营包、初始化、事件/浏览器和各领域工作区分属对应应用/路由模块。`applicationPorts.ts` 通过 type-only 合同与最小端口集连接它们；共享启动队列、运行锁、计时器和事件流保持单一所有权。领域记录在 `server/digitalEmployees/records.ts`，旧路由记录入口兼容转发。完整依赖与验证见 [数字员工应用装配 ADR](adr/2026-10-23-digital-employee-application-assembly.md)。
 - `src/components/inspiration/InspirationMaterialDialogs.tsx`：仅展示素材上传归属与编辑/删除确认弹窗，沿用产品规范中的 Ant Modal/Input/Select 和现有 Token。`useInspirationMaterials.ts` 持有上传、素材库存、产品归属、预览与详情状态；`useInspirationItemManagement.ts` 持有编辑/删除状态和请求，页面连接文件选择与确认回调。弹窗不能直接调用 API 或自行变更素材归属。
 - `server/routes/digitalEmployeeFollowupReadRoutes.ts`：数字员工客户跟进批次详情、Worker 状态和人工发送预检的只读 HTTP 端点。由 `digitalEmployees.ts` 在统一鉴权及支持会话只读门禁之后、实际发送端点之前挂载；租户身份只取已认证的 `res.locals`，预检不发起供应商发送。
 - `server/routes/studioTranslationCore.ts` 与 `studioTranslationRoutes.ts`：前者保留语言名称和模型 JSON 解析的共用规则；后者注册企业名称发音翻译、单语及批量翻译端点，持有原 Qwen 模型调用、请求总时限、供应商时限、客户端断连中止与部分结果返回。`studio.ts` 在原鉴权和订阅门禁之后按原顺序挂载，后续 Studio 路由不重建翻译付费或重试旁路。
@@ -59,7 +60,7 @@
 - `src/lib/studioApi.ts`、`src/lib/socialImageApi.ts`：前端 API 适配层。
 - `shared/contracts/`：跨端任务、内容与交付合同；字段变更需检查旧任务兼容性。
 - `server/routes/`：HTTP 鉴权、输入规范化、租户上下文和响应编排；业务算法逐步下沉到领域模块。
-- `server/digitalEmployees/overviewProjection.ts`：数字员工首页的配置、周目标、计划、四专家状态和公开事件载荷投影；兼容旧角色与旧周目标，并递归剔除私有推理字段。`server/routes/digitalEmployeeOverviewReader.ts` 以原路由注入的可信租户读取、已提交目标筛选、配置与发布准备判定组装首页只读响应；`digitalEmployees.ts` 继续负责租户鉴权、读取能力注入、写入、运行状态和 SSE 发送。投影与总览读取不启动生产或调用供应商。
+- `server/digitalEmployees/overviewProjection.ts`：数字员工首页的配置、周目标、计划、四专家状态和公开事件载荷投影；兼容旧角色与旧周目标，并递归剔除私有推理字段。`server/routes/digitalEmployeeOverviewReader.ts` 以装配层注入的可信租户读取、已提交目标筛选、配置与发布准备判定组装首页只读响应。鉴权与读取能力注入留在主装配层，运行状态归运行协调器，SSE 持久事件与发送归 `workflowEvents.ts` 和浏览器/流接口。投影与总览读取不启动生产或调用供应商。
 - `server/routes/digitalEmployeeContentEvidence.ts`：在调用方已确定的租户范围内读取企业产品、精确参考分析和素材库，并纯投影产品身份、素材归属、参考物理身份与准入证据。聚焦产品只改变排序，不隐藏其余已确认产品；共享、合成或未绑定素材不得伪作产品素材。素材库不可用时明确失败，路由仍负责鉴权、周任务编排和后续生产许可。
 - `server/routes/studioMaterialLibraryProjection.ts`：在路由完成租户库存与企业产品读取后，统一投影产品归属、用途/来源可见性、生成素材过滤、分类 facets、排序与分页；`studio.ts` 保留租户读取、鉴权响应、使用证据聚合和产品场景准备，不把 `purpose=all` 的内部素材混入普通图库。
 - `server/routes/studioMaterialProjection.ts`：将已读取素材投影为租户签名的播放/封面地址、能力清单和安全公开字段，并从已确认企业产品表投影稳定身份的产品素材；路由仍负责权限、租户库存读取和持久化，不能把投影函数当成跨租户记录准入。
@@ -120,6 +121,8 @@
 确定性失败不可被模型复核覆盖；多模态服务不可用时状态保持不确定，不得推断通过。多输出轮播/GIF 使用冻结计划、逐单元原子认领和持久化回执；结果不明时停止后续付费提交，只能核对已有素材。GIF 的产品与文字在背景底图持久化后由固定图层合成，最终动图单独登记与质检。工作台接线及本地合同测试不等于真实供应商、浏览器交互或发布验收。
 
 ## 依赖方向
+
+数字员工的配置/记录、开工、运行协调、审批准备、事件和初始化均通过明确端口连接；HTTP 注册工厂只在主装配层按原顺序调用。主文件不再承载领域状态机或完整 HTTP 用例。旧后台、助手、移动端入口仍委托同一实例，原 `withDigitalEmployeeRunLock` 和共享启动队列不得被新模块各自复制。原记录入口只做兼容转发，新增领域模块直接使用领域记录合同。
 
 数字员工业务资源准备与证据观察分别由 `taskBusinessPreparation.ts` 和 `taskBusinessObservation.ts` 持有。准备侧通过主路由注入的既有调度、浏览器、内容生产、分层/草稿及冻结资料端口执行；观察侧核对租户、运行、任务血缘及真实回执，并复用既有跟进状态恢复/预检。正常协调、审批和纠偏共用该观察器，主路由不再实现逐领域的准备和证明算法。两者不依赖 Express 或整个主路由，调度器和外部能力仅以类型/端口依赖接入。见 [业务准备与观察 ADR](./adr/2026-10-23-task-business-runtime.md)。
 

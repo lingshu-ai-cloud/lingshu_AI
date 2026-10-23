@@ -2,6 +2,15 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工主文件完整应用/路由拆分（2026-10-23）
+
+- 起点：集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `7f90b99da4f03cc0ddee74b95ea4437262678463`，工作区干净。源码提交 `3076f875a3126812a3424078fa9a0f549bf97423` 将剩余运行状态机、审批准备、周目标开工、事实重建、经营包、初始化、事件/浏览器和领域 HTTP 回调按完整职责迁出。
+- `digitalEmployees.ts` **4,113→538 行**，现在只做统一门禁、单实例装配、原顺序挂载和兼容入口委托；移除该历史预算。最大新领域模块为运行协调器 644 行，经营包路由 506 行。不是按行数切片：共享启动队列、运行锁、计时器、事件追加队列和客户编辑队列仍各有唯一所有者。记录合同迁入领域，旧入口转发兼容；内部端口类型不初始化实现模块。详见 [数字员工完整装配 ADR](../architecture/adr/2026-10-23-digital-employee-application-assembly.md)。
+- 分别实际加载未修改起点源码与新模块，**59 项路由/中间件栈及 13 个导出入口完全一致**。TypeScript AST 规范化对照确认 **52 个原函数正文和 46 个直接路由/中间件表达式一致**。后台运行协调、初始化 Worker、助手周动作、移动重试、跟进模板和原复盘/纠偏实例继续复用；没有新供应商、审批或发送通道。
+- 新增 9 项应用行为测试并纳入数字员工领域组，覆盖先验租户归属、暂停/取消/失败运行不启动工作、未拥有/未提交/社媒血缘目标禁止开工、事件先持久后按序广播和失败队列恢复。旧跨领域源码合同读取当前组成模块，路由/函数检查用 AST 精确选择，保留业务门禁；新测试夹具的泛型和可选 CAS 类型已修正，最终 TypeScript 通过。
+- 实际通过：`pnpm run lint`、`ARCHITECTURE_BASE_REF=7f90b99d pnpm run check:architecture`（2,453 个生产 TypeScript 文件）、`pnpm run test:architecture-ratchet`、`pnpm run check:digital-employee-migrations`（193 项仓库只读完整性）、完整 `pnpm run test:digital-employees`、`pnpm run test:review-todos`、`pnpm run test:social-managed`、`pnpm run test:production-workflows`、`pnpm run test:execution-gaps`、`pnpm run test:tenant-isolation`、`node --import tsx --test server/security/supportSessionReadOnly.test.ts`、`pnpm run build`、暂存后的 `git diff --cached --check`。构建无大 chunk 警告，Studio chunk 480,957/485,000 字节，预算仍紧。
+- 原五项已完成灵感页、数字员工两项；仍有视频路由 7,823、Studio 路由 7,221、Studio 页面 12,000 三项，完整目标继续有效。没有真实供应商/付费调用、目标库迁移、登录后浏览器验收、发布或部署；其他工作树与 `sources/` 未动。普通分支推送不触发部署的工作流边界已复核。源码与文档分开提交；最终文档 SHA、本地/远端一致性和干净状态以推送后 Git 核验为准。
+
 ## 灵感工作区完整拆分与五文件治理目标调整（2026-10-23）
 
 - 用户确认目标：完成原五个大文件的职责拆分，充分考虑外部依赖；800 行只作规模提示，不机械切片。现有架构门禁不放宽，完成依据为明确职责、依赖方向、入口兼容和行为回归。后续顺序与调用方盘点记入 [灵感工作区及剩余治理 ADR](../architecture/adr/2026-10-23-inspiration-workspace-boundaries.md)。整个五文件治理目标仍在进行。
