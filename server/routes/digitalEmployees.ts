@@ -71,21 +71,20 @@ import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
 import { readAuthorizedWhatsAppCustomers as defaultGetWhatsAppCustomers } from '../whatsapp/authorizedCustomerRead.js';
-import { currentExecutionAdapters, readExecutionMaterialLibrary } from '../digitalEmployees/executionAdapters.js';
+import { currentExecutionAdapters } from '../digitalEmployees/executionAdapters.js';
 const getWhatsAppCustomers = async (tenantId: string) => currentExecutionAdapters()?.customers?.(tenantId) ?? defaultGetWhatsAppCustomers(tenantId);
 import { ensureDigitalEmployeeSocialCollectionTask, runScheduledTaskNow, scheduledExecutionState } from './scheduler.js';
 import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile, type EnterpriseProfile } from './enterprise.js';
 import { buildBusinessSnapshot as defaultBuildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
 const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, range) => currentExecutionAdapters()?.snapshot?.(tenantId, range) ?? defaultBuildBusinessSnapshot(tenantId, range);
-import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, collectProductionAssets, generateDirectorScriptContracts, productIdentity, refreshExpandedContentOrderContract, resolveEnterpriseAssetLocation, storyboardVoiceLanguageMatches } from '../digitalEmployees/contentProduction.js';
+import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, collectProductionAssets, generateDirectorScriptContracts, refreshExpandedContentOrderContract, storyboardVoiceLanguageMatches } from '../digitalEmployees/contentProduction.js';
 import { managedReplicationFailureState, managedReplicationPlanHasExecutionGraph } from '../digitalEmployees/replicationContentProduction.js';
-import { assessStoryboardMaterialReadiness, resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
+import { assessStoryboardMaterialReadiness } from '../digitalEmployees/materialProductionReadiness.js';
 import { contentProjectLineageFields } from '../digitalEmployees/contentProjectLineage.js';
 import { readServerProductionOnboardingReadiness, referenceCoveredByProductionEvidence } from '../digitalEmployees/productionOnboardingPreflight.js';
 import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft, type ContentOrder } from '../digitalEmployees/contentBatchPlan.js';
 import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, publicationCopyForPlan, verifiedStoryboardProviderCostRange } from '../digitalEmployees/contentPlanRecommendation.js';
 import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS, buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
-import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
 import { benchmarkAnalysisForRecord } from '../lib/benchmarkAnalysis.js';
 import { summarizeContentFeedback } from '../digitalEmployees/contentReview.js';
 import { summarizeWeeklyMatrix } from '../digitalEmployees/weeklyMatrixReview.js';
@@ -100,7 +99,6 @@ import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPre
 import { bindPublishingTargets, listConnectedPublishingAccounts, localPublishingAccountMocksEnabled, publishingTargetPlatforms } from '../digitalEmployees/publishingTargets.js';
 import { digitalEmployeeOperatingGoals, isDigitalEmployeeOperatingGoal } from '../digitalEmployees/overviewGoalScope.js';
 import { evaluatePlannedReferenceReuse, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, viralCoverageBypassAllowed } from '../digitalEmployees/viralAnalysisCoverage.js';
-import { referenceContentIdentity } from '../digitalEmployees/referenceContentIdentity.js';
 import { mustInvalidateContentDownstream } from '../digitalEmployees/dependencyInvalidation.js';
 import { canonicalScheduledCollectionRecords, evaluateScheduledDiscoveryRuns, mustReobserveSucceededCollection, scheduledCollectionFailureCanRetry, shouldRunScheduledCollection, type DiscoveryRunRecord } from '../digitalEmployees/scheduledCollectionProof.js';
 import {
@@ -132,6 +130,7 @@ import { createStarter198QuoteDecisionPort } from '../starter198/quoteDecision.j
 import { registerProductionBudgetReforecastRoute } from './digitalEmployeeProductionBudgetRoute.js';
 import { createDigitalEmployeeContentPlanning } from './digitalEmployeeContentPlanning.js';
 import { createDigitalEmployeeOverviewReader } from './digitalEmployeeOverviewReader.js';
+import { contentRoutingEvidence } from './digitalEmployeeContentEvidence.js';
 import { configSnapshotForPlan, goalInput, publicConfig, publicConfigurationMetadata, publicEventPayload } from '../digitalEmployees/overviewProjection.js';
 import { availableTaskActions, runReviewSummary } from './digitalEmployeeReviewSummary.js';
 import { downstreamTasks, irreversibleEffects, postHasPublishedReceipt } from '../digitalEmployees/taskCorrectionSafety.js';
@@ -421,78 +420,6 @@ async function committedDigitalEmployeeOperatingGoals(tenantId: string, goals: G
   const operatingGoals = digitalEmployeeOperatingGoals(goals);
   const commitStates = await Promise.all(operatingGoals.map(goal => weeklyGoalFactRebuildTargetCommitted(tenantId, goal)));
   return operatingGoals.filter((_goal, index) => commitStates[index]);
-}
-function stableProductId(product: Record<string, unknown>, index: number): string {
-  return productIdentity(product as Parameters<typeof productIdentity>[0], index);
-}
-function enterpriseMaterialIds(tenantId: string, products: Array<Record<string, unknown>>, originalIndexes: number[] = []): string[] {
-  const ids: string[] = [];
-  products.forEach((product, localIndex) => {
-    const productIndex = originalIndexes[localIndex] ?? localIndex;
-    const groups = ['images', 'videos', 'factoryImages', 'packagingImages', 'sceneImages', 'brandAssets']
-      .map(group => Array.isArray(product[group]) ? product[group] as Array<Record<string, unknown>> : [])
-      .filter(group => group.length);
-    if (String(product.imageUrl || '').trim()) groups.unshift([{ type: 'image', url: product.imageUrl }]);
-    groups.flat().forEach((asset, assetIndex) => {
-      const url = String(asset.url || '').trim();
-      const location = resolveEnterpriseAssetLocation(url, tenantId);
-      if (url && (location.url || location.localPath || location.objectKey)) {
-        ids.push(enterpriseAssetStableId(productIndex, assetIndex, url));
-      }
-    });
-  });
-  return ids;
-}
-async function contentRoutingEvidence(tenantId: string, config: DigitalEmployeeConfig, frozenProfile?: EnterpriseProfile) {
-  const [profile, analyses, materials] = await Promise.all([
-    frozenProfile ? Promise.resolve(structuredClone(frozenProfile)) : readTenantEnterpriseProfile(tenantId),
-    store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 }),
-    readExecutionMaterialLibrary(tenantId),
-  ]);
-  if (materials.status === 'unavailable') throw Error('素材库暂时不可用，请稍后重试');
-  const rawProducts = Array.isArray(profile.products?.items) ? profile.products.items as Array<Record<string, unknown>> : [];
-  const focused = config.focusProducts.split(/[\n,，;；、]/).map(item => item.trim().toLowerCase()).filter(Boolean);
-  const focusedProducts = focused.length ? rawProducts.filter(product => focused.some(value => [product.name, product.sku].some(field => String(field || '').trim().toLowerCase() === value))) : [];
-  // The weekly product-selection step may bind any product already confirmed in
-  // the enterprise table. `focusProducts` only controls ordering; it must not
-  // hide the user's other products or make an explicit selection fail later.
-  const selectedProducts = [...focusedProducts, ...rawProducts.filter(product => !focusedProducts.includes(product))];
-  const productReferences = rawProducts.map((product, index) => ({
-    id: stableProductId(product, index),
-    name: String(product.name || product.sku || `产品 ${index + 1}`).trim(),
-    sku: String(product.sku || '').trim(),
-  }));
-  const materialRows = materials.items.filter(item => {
-    const url = String(item.url || item.path || item.objectKey || '').trim();
-    return Boolean(url && item.synthetic !== true && !/mock|placeholder|e2e-quality-test/i.test(url));
-  });
-  const associatedMaterialRows = materialRows.map(item => ({
-    item,
-    association: resolveMaterialProductAssociation(item, productReferences),
-  }));
-  return {
-    products: selectedProducts.map((product, index) => {
-      const originalIndex = rawProducts.indexOf(product);
-      const id = stableProductId(product, originalIndex);
-      return {
-        id,
-        name: String(product.name || product.sku || `产品 ${index + 1}`).trim(),
-        materialIds: [...enterpriseMaterialIds(tenantId, [product], [originalIndex]), ...associatedMaterialRows.filter(row => row.association?.productId === id).map(row => row.item.id)],
-      };
-    }),
-    exactAnalysisIds: analyses.items.filter(exactVideoAnalysis).map(item => item.id),
-    referenceIdentities: Object.fromEntries(analyses.items.map(item => [item.id, referenceContentIdentity(item)])),
-    referenceAnalyses: Object.fromEntries(analyses.items.map(item => [item.id,
-      benchmarkAnalysisForRecord(item, jsonObject<Record<string, unknown>>(item.aiAnalysis, {})),
-    ])),
-    referenceAdmissions: Object.fromEntries(analyses.items.map(item => [item.id,
-      productionReferenceAdmission(benchmarkAnalysisForRecord(item, jsonObject<Record<string, unknown>>(item.aiAnalysis, {}))),
-    ])),
-    materialIds: [
-      ...enterpriseMaterialIds(tenantId, selectedProducts, selectedProducts.map(product => rawProducts.indexOf(product))),
-      ...associatedMaterialRows.filter(row => selectedProducts.some(product => row.association?.productId === stableProductId(product, rawProducts.indexOf(product)))).map(row => row.item.id),
-    ],
-  };
 }
 async function recommendPackageWithTenantEvidence(
   tenantId: string,
