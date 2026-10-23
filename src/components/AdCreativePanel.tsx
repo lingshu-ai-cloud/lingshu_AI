@@ -15,8 +15,8 @@ export default function AdCreativePanel({ task, connections, onUpdate, onUse, up
 }) {
   const [items, setItems] = useState<PlatformAdCreative[]>([]);
   const [picked, setPicked] = useState<AdMaterialSelection | null>(task.configuration.materialSource || null);
-  useEffect(() => { setPicked(task.configuration.materialSource || null); setConnectionId(''); }, [task.id, task.configuration.materialSource]);
-  const [connectionId, setConnectionId] = useState('');
+  useEffect(() => { setPicked(task.configuration.materialSource || null); setConnectionId(task.configuration.accountConnectionId || ''); }, [task.id, task.configuration.materialSource, task.configuration.accountConnectionId]);
+  const [connectionId, setConnectionId] = useState(task.configuration.accountConnectionId || '');
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);

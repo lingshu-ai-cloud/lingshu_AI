@@ -1,36 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Collapse, Descriptions, Drawer, Empty, Select, Space, Spin, Table, Tag } from 'antd';
+import { Alert, Button, Collapse, Descriptions, Drawer, Empty, Space, Spin, Table, Tag } from 'antd';
 import { ExternalLink, RefreshCw } from 'lucide-react';
 import { platformAdsRequest } from '../lib/platformAds';
 import type { MetaAccountHistory } from '../../shared/metaAccountHistory';
 import { LsMetricStrip } from './ui/LsExperiencePrimitives';
+import { AdDirectorySelect, useAdAccountDirectory } from './AdAccountDirectory';
 
-type Connection = { id: string; provider: string; name: string; accountId: string; currency: string };
-type HistoryAccount = Connection & { connectionId: string };
 const format = (v: number | null | undefined) => v == null ? '暂无数据' : v.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
-export default function AdAccountHistory() {
-  const [connections, setConnections] = useState<HistoryAccount[]>([]), [selected, setSelected] = useState('');
+export default function AdAccountHistory({ plans = false }: { plans?: boolean }) {
+  const directory = useAdAccountDirectory();
   const [reports, setReports] = useState<Record<string, MetaAccountHistory>>({}), [errors, setErrors] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false), [listBusy, setListBusy] = useState(true), [refresh, setRefresh] = useState(0), [billing, setBilling] = useState(false), [listError, setListError] = useState('');
-  useEffect(() => {
-    const abort = new AbortController(); setListError(''); setListBusy(true);
-    platformAdsRequest<{ items: Connection[] }>('/connections', { signal: abort.signal }).then(async v => {
-      const found: HistoryAccount[] = [], failures: string[] = [];
-      for (const c of v.items.filter(c => c.provider === 'meta')) {
-        try {
-          const grant = await platformAdsRequest<{ items: Array<{ accountId: string; name: string; currency: string }> }>(`/connections/${encodeURIComponent(c.id)}/history-accounts`, { signal: abort.signal });
-          found.push(...grant.items.map(a => ({ ...c, ...a, id: `${c.id}:${a.accountId}`, connectionId: c.id })));
-        } catch {
-          if (abort.signal.aborted) return;
-          failures.push(c.name); found.push({ ...c, connectionId: c.id });
-        }
-      }
-      if (!abort.signal.aborted) { setConnections([...new Map(found.map(c => [c.accountId, c])).values()]); if (failures.length) setListError(`${failures.join('、')} 的授权清单未完整返回；暂仅展示已知账户，不能据此判断其他账户无消耗。`); }
-    }).catch(e => { if (!abort.signal.aborted) setListError(e instanceof Error ? e.message : '账户读取失败'); })
-      .finally(() => { if (!abort.signal.aborted) setListBusy(false); });
-    return () => abort.abort();
-  }, [refresh]);
-  const connection = connections.find(c => c.id === selected) || connections[0];
+  const [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0), [billing, setBilling] = useState(false);
+  const connection = directory.selected ? { ...directory.selected, id: directory.selected.key } : undefined;
+  const listBusy = directory.loading, listError = directory.error;
   useEffect(() => {
     if (!connection) return;
     const abort = new AbortController(), id = connection.id; setBusy(true);
@@ -39,15 +21,16 @@ export default function AdAccountHistory() {
     }).catch(e => { if (!abort.signal.aborted) setErrors(old => ({ ...old, [id]: e instanceof Error ? e.message : '历史数据读取失败' })); })
       .finally(() => { if (!abort.signal.aborted) setBusy(false); });
     return () => abort.abort();
-  }, [connection?.id, refresh]);
+  }, [connection?.id, connection?.connectionId, refresh]);
   const report = connection ? reports[connection.id] : undefined, error = connection ? errors[connection.id] : '';
   // Empty history is not a zero-valued Insights report. Never synthesize lead/ROAS totals.
   const sum = (key: 'spend' | 'impressions') => report?.complete && report.items.length && report.items.every(i => i.metrics[key] != null)
     ? report.items.reduce((n, i) => n + i.metrics[key]!, 0) : null;
   return <section className="meta-performance" aria-label="Meta 账户真实历史">
+    {plans && <h2>平台已有广告</h2>}
     <div className="meta-performance-toolbar">
-      <Select aria-label="历史广告账户" placeholder="选择已授权账户" value={connection?.id} onChange={setSelected} options={connections.map(c => ({ value: c.id, label: `${c.name} · ${c.currency}` }))}/>
-      <Tag>平台可用历史 · 有消耗广告</Tag>
+      <AdDirectorySelect/>
+      <Tag>{plans ? '平台历史广告 · 有消耗 · 只读' : '平台可用历史 · 有消耗广告'}</Tag>
       <Button icon={<RefreshCw size={15}/>} loading={busy} onClick={() => setRefresh(v => v + 1)}>刷新历史数据</Button>
       <Button disabled={!report} onClick={() => setBilling(true)}>账单与付款方式</Button>
     </div>
@@ -64,13 +47,14 @@ export default function AdAccountHistory() {
       <LsMetricStrip items={[{ key: 'spend', label: `历史广告花费 (${report.currency})`, value: format(sum('spend')) }, { key: 'impressions', label: '历史广告展示', value: format(sum('impressions')) },
         { key: 'leads', label: 'Meta 线索 / 消息会话', value: report.items.some(i => i.metrics.leads != null || i.metrics.messagingConversations != null) ? '查看广告明细' : '暂无数据' }, { key: 'roas', label: 'Meta 购买 ROAS', value: report.items.some(i => i.metrics.purchaseRoas != null) ? '查看广告明细' : '暂无数据' }]}/>
       <Table<MetaAccountHistory['items'][number]> rowKey="adId" size="small" dataSource={report.items} scroll={{ x: 1000 }} pagination={{ pageSize: 10, showSizeChanger: false }} locale={{ emptyText: <Empty description="没有可展示的真实消耗记录；展示、询盘和 ROAS 不补零、不使用沙盒数据。"/> }} columns={[
-        { title: '广告 / 广告系列', key: 'name', width: 240, render: (_, i) => <><p>{i.adName}</p><p>{i.campaignName}</p></> },
+        { title: '广告 / 广告系列', key: 'name', width: 240, fixed: 'left', render: (_, i) => <><p>{i.adName}</p>{i.campaignName !== i.adName && <p>{i.campaignName}</p>}</> },
         { title: '数据窗口', key: 'window', width: 190, render: (_, i) => `${i.since} — ${i.until}` },
         { title: `花费 (${report.currency})`, key: 'spend', render: (_, i) => format(i.metrics.spend) },
         { title: '展示', key: 'impressions', render: (_, i) => format(i.metrics.impressions) },
         { title: 'Meta 归因线索', key: 'leads', render: (_, i) => format(i.metrics.leads) },
         { title: 'Meta 新消息会话', key: 'messages', render: (_, i) => format(i.metrics.messagingConversations) },
         { title: 'Meta 购买 ROAS', key: 'roas', render: (_, i) => format(i.metrics.purchaseRoas) },
+        { title: '素材', key: 'creative', width: 150, fixed: 'right', render: (_, i) => <Button onClick={() => directory.openCreative(i.adId)}>查看广告素材</Button> },
       ]}/>
       <Collapse ghost items={[{ key: 'definitions', label: '数据范围与缺失说明', children: <div className="meta-performance-notes"><p>直接读取当前企业已授权账户的 Meta Insights，不限于在灵枢创建的计划。仅展示平台可用历史中花费大于 0 的广告，不是无限期全生命周期承诺。账户、币种和时区分别展示，不混算。</p><p>线索使用 Meta actions 的 lead；新消息会话单列，不等于已核实的有效询盘，不与线索相加。购买 ROAS 直接读取 Meta purchase_roas，不用点击推算，不等于利润 ROI。未返回的指标显示“暂无数据”，平台真实返回 0 时才显示 0。</p><p>以展示时间回报，使用广告组统一归因设置；各广告窗口分别展示。缺少 CRM 对应关系时不宣称已打通有效询盘或成交收入。仅查询，不导入计划、不挂接素材、不修改广告。</p></div> }]} />
     </>}

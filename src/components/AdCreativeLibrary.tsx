@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Collapse, Descriptions, Drawer, Empty, Input, Pagination, Select, Space, Table, Tabs, Tag } from 'antd';
 import AdSourceCatalog from './AdSourceCatalog';
+import AdPlatformCreatives from './AdPlatformCreatives';
+import { useAdAccountDirectory } from './AdAccountDirectory';
 import AdHistoryMedia from './AdHistoryMedia';
 import { adCreativeAvailabilityLabel, adContentStatusLabel } from '../../shared/platformAdCreatives';
 import AdSourceLifecycle from './AdSourceLifecycle';
@@ -57,7 +59,9 @@ function VideoPreview({ bindingId }: { bindingId: string }) {
 }
 
 export default function AdCreativeLibrary({ onOpenTask, initialTaskId, initialTaskName }: { onOpenTask: (id: string) => void; initialTaskId?: string; initialTaskName?: string }) {
-  const [view, setView] = useState(initialTaskId ? 'ads' : 'history');
+  const directory = useAdAccountDirectory();
+  const [view, setView] = useState(directory.adId ? 'platform' : initialTaskId ? 'ads' : 'history');
+  useEffect(() => { if (directory.adId) setView('platform'); }, [directory.adId]);
   const [catalog, setData] = useState<AdCreativeLibraryPage | null>(null), [page, setPage] = useState(1), [refresh, setRefresh] = useState(0);
   const data = catalog?.page === page ? catalog : null;
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
@@ -110,8 +114,8 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId, initialTa
   }
   const accounts = [...new Map((data?.items || []).map(i => [i.connection.id, i.connection])).values()];
   return <section aria-label="真实投放素材库" className="ads-library">
-    <Tabs activeKey={view} onChange={setView} items={[{ key: 'ads', label: '投放素材' }, { key: 'history', label: '创作素材' }]} />
-    {view === 'history' ? <AdSourceCatalog/> : <>
+    <Tabs activeKey={view} onChange={setView} items={[{ key: 'platform', label: '平台广告素材' }, { key: 'ads', label: '投放素材' }, { key: 'history', label: '创作素材' }]} />
+    {view === 'platform' ? <AdPlatformCreatives/> : view === 'history' ? <AdSourceCatalog/> : <>
     <div className="ads-library-toolbar"><Input.Search aria-label="搜索本页素材" placeholder="搜索本页素材或计划" allowClear value={search === initialTaskId ? initialTaskName || search : search} onChange={e => setSearch(e.target.value)} />
       <Select aria-label="本页素材账户" value={account} onChange={setAccount} options={[{ value: 'all', label: '本页全部账户' }, ...accounts.map(a => ({ value: a.id, label: `${a.name} · ${a.currency}` }))]} />
       <Button icon={<RefreshCw size={15}/>} loading={loading} onClick={() => setRefresh(v => v + 1)}>刷新素材</Button>

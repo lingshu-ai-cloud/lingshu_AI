@@ -21,9 +21,9 @@ const fieldRef = (key: MetaMetricKey) => { const def = META_PERFORMANCE_FIELDS[k
 const resource = (i: AdCreativeLibraryItem, level: MetaReportLevel) => i.execution?.[level === 'campaign' ? 'campaignId' : level === 'adset' ? 'adsetId' : 'adId'] || '';
 type Props = { tasks: Task[]; loading: boolean; onOpen: (id: string) => void; initialTaskId?: string };
 export default function AdPerformanceOverview(props: Props) {
-  return <Tabs defaultActiveKey={props.initialTaskId ? 'local' : 'history'} items={[
+  return <Tabs defaultActiveKey="history" items={[
     { key: 'history', label: '账户真实历史', children: <AdAccountHistory/> },
-    { key: 'local', label: '本地计划回执', children: <TaskPerformanceOverview {...props}/> },
+    { key: 'local', label: '本地计划回执', children: <><Alert type="info" showIcon title="此处仅展示灵枢本地计划的执行回执；平台已有广告和历史消耗请查看“账户真实历史”。"/><TaskPerformanceOverview {...props}/></> },
   ]}/>;
 }
 function TaskPerformanceOverview({ loading, onOpen, initialTaskId }: Props) {

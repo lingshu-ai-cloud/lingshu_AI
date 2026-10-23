@@ -66,7 +66,7 @@ export function AdTaskControls({ task, onUpdate, onExecution }: { task: Platform
 
 function AdExecutionControls({ task, connections, onExecution, releasePolicy, onUpdate }: { task: PlatformAdTask; onUpdate: (task: PlatformAdTask) => void; connections: Connection[]; onExecution?: () => void; releasePolicy?: ReleasePolicy }) {
   const currency = task.currency || 'USD';
-  const [connectionId, setConnectionId] = useState('');
+  const [connectionId, setConnectionId] = useState(task.configuration.accountConnectionId || '');
   const [creative, setCreative] = useState<PlatformAdCreative | null>(null);
   const [action, setAction] = useState('create');
   const [launchMode, setLaunchMode] = useState<'create_paused' | 'create_and_activate'>('create_paused');

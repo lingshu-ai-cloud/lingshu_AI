@@ -66,6 +66,7 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
     if (allReceipts.some(receipt => ['EXECUTING', 'PROVIDER_ACCEPTED', 'UNKNOWN'].includes(receipt.status))) throw new AdProviderError('存在待核对操作，请完成平台对账后再执行', 'RECONCILIATION_REQUIRED');
     if (action === 'create' && allReceipts.some(receipt => receipt.action === 'create' && receipt.status !== 'FAILED')) throw new AdProviderError('该任务已创建广告，请管理已有广告或建立独立预算任务', 'ALREADY_CREATED');
     const connectionId = String(input.connectionId || '');
+    if (action === 'create' && task.configuration.accountConnectionId && task.configuration.accountConnectionId !== connectionId) throw new AdProviderError('执行账户与草稿账户不一致', 'ACCOUNT_MISMATCH');
     const { connection, accessToken } = await getConnectionCredential(tenantId, connectionId);
     assertAdReleaseAction(connection.provider, action);
     if (input.creativeId && (connection.provider !== 'meta' || action !== 'create' || mode !== 'manual')) throw new AdProviderError('绑定成片当前仅用于 Meta 人工创建', 'NOT_SUPPORTED');

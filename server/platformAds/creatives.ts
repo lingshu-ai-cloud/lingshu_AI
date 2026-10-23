@@ -86,6 +86,7 @@ export async function bindPlatformAdCreative(tenantId: string, taskId: string, i
     }
     if (input.fileRef !== undefined || input.url !== undefined || input.path !== undefined) throw new PlatformAdCreativeError('仅接受已保存的社媒素材标识');
     const sourceTaskId = identity(input.sourceTaskId), artifactId = identity(input.artifactId), connectionId = identity(input.connectionId);
+    if (task.configuration.accountConnectionId && task.configuration.accountConnectionId !== connectionId) throw new PlatformAdCreativeError('素材账户与草稿账户不一致，请先修改草稿账户', 409);
     const connection = await store.getById<AdConnection>(AD_CONNECTIONS, connectionId);
     if (!connection || connection.tenant_id !== tenantId) throw new PlatformAdCreativeError('未找到广告账户', 404);
     if (!['meta', 'tiktok'].includes(connection.provider) || connection.status !== 'connected') throw new PlatformAdCreativeError('广告账户当前不可用');

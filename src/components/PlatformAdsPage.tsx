@@ -28,6 +28,9 @@ import type { AdConnection } from './AdAccountConnections';
 import { AdAccountConnections, AdTaskControls, AdTaskMetrics } from './PlatformAdsOperations';
 import AdPerformanceOverview from './AdPerformanceOverview';
 import AdCreativeLibrary from './AdCreativeLibrary';
+import { AdAccountDirectoryProvider } from './AdAccountDirectory';
+import AdAccountHistory from './AdAccountHistory';
+import AdPlanAccountPicker from './AdPlanAccountPicker';
 import AdMaterialPicker from './AdMaterialPicker';
 import MetaPlanAuditPanel from './MetaPlanAuditPanel';
 import AdManagedWorkspace from './AdManagedWorkspace';
@@ -80,7 +83,10 @@ const withLocalMockAdTasks = (tasks: PlatformAdTask[]) => {
 };
 const toLocalDateTime = (value: string) => { if (!value) return ''; const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); };
 
-export default function PlatformAdsPage({
+export default function PlatformAdsPage(props: { page: Page; onNavigate: (page: Page) => void; previewMode?: boolean }) {
+  return <AdAccountDirectoryProvider enabled={!props.previewMode} onOpenCreative={() => props.onNavigate('adsCreatives')}><PlatformAdsWorkspace {...props}/></AdAccountDirectoryProvider>;
+}
+function PlatformAdsWorkspace({
   page,
   onNavigate,
   previewMode = false,
@@ -256,6 +262,7 @@ export default function PlatformAdsPage({
         {notice && <Alert className="mb-4" type={notice.includes('失败') ? 'error' : 'success'} showIcon title={notice} closable onClose={() => setNotice('')} />}
 
         {isPerformancePage && !previewMode && <AdPerformanceOverview initialTaskId={selectedDraft?.id} tasks={drafts} loading={loadingTasks} onOpen={id => { const task = drafts.find(item => item.id === id); if (task) { setSelectedDraft(task); onNavigate('adsPlans'); } }} />}
+        {!isPerformancePage && !isCreativePage && !previewMode && !selectedDraft && <AdAccountHistory plans/>}
         {isPerformancePage && previewMode && <PlatformAdsPerformancePreview channels={channels} onOpenAccounts={() => setDialog('accounts')} onOpenManaged={() => setManagedOpen(true)} />}
 
         {page === "adsPlans" &&
@@ -355,7 +362,7 @@ export default function PlatformAdsPage({
               <div className="ads-section-title">
                 <div>
                   <h2>
-                    营销任务{" "}
+                    本地计划与草稿{" "}
                     <span className="ads-count">{filtered.length}</span>
                   </h2>
                   <p className="ads-muted">
@@ -524,6 +531,7 @@ export default function PlatformAdsPage({
                 </div>
                 {step === 0 && (
                   <div className="ads-form-fields">
+                    {!previewMode && <AdPlanAccountPicker currency={form.currency} value={form.configuration.accountConnectionId} onCurrencyChange={selectedDraft ? undefined : currency => setForm(current => ({ ...current, currency }))} onChange={accountConnectionId => setForm(current => ({ ...current, configuration: { ...current.configuration, accountConnectionId } }))}/>}
                     {!previewMode && <AdMaterialPicker onOpenChange={setMaterialPickerOpen} value={form.configuration.materialSource} disabled={saving} blockedReason={form.channels.every(c => ['Facebook', 'Instagram'].includes(c)) ? undefined : '当前选择器用于 Meta 视频计划，请先选择 Facebook / Instagram 渠道。'} onChange={materialSource => setForm(current => ({ ...current, video: materialSource?.name.slice(0, 120) || '', configuration: { ...current.configuration, materialSource } }))}/>}
                     <label>
                       投放视频

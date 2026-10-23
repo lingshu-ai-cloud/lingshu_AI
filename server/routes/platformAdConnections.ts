@@ -8,6 +8,7 @@ import { requireAdWriteAccess } from '../platformAds/access.js';
 import { GoogleAdsAdapter, TikTokAdsAdapter } from '../platformAds/otherAdapters.js';
 import { listPlatformAdResources, syncPlatformAdResources } from '../platformAds/resources.js';
 import type { PlatformAdResourceLevel } from '../../shared/platformAdResources.js';
+import { useGrantedAccount } from '../platformAds/accountDirectory.js';
 export const platformAdConnectionsRouter = Router();
 platformAdConnectionsRouter.get('/oauth/meta/callback', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -19,6 +20,10 @@ platformAdConnectionsRouter.get('/oauth/meta/callback', async (req, res) => {
 });
 platformAdConnectionsRouter.use(requireAuth);
 platformAdConnectionsRouter.use(requireAdWriteAccess);
+platformAdConnectionsRouter.post('/connections/:id/use-granted-account', async (req, res) => {
+  try { res.json({ connection: await useGrantedAccount((res.locals as AuthLocals).tenantId, req.params.id, String(req.body.accountId || '')) }); }
+  catch (error) { failure(res, error); }
+});
 platformAdConnectionsRouter.post('/oauth/meta/start', async (_req, res) => {
   try { const { tenantId, userId } = res.locals as AuthLocals; res.json(await beginMetaOAuth(tenantId, userId)); } catch (error) { failure(res, error); }
 });

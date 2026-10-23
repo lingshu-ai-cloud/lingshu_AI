@@ -35,6 +35,7 @@ export const adTaskStatusLabels: Record<string, string> = {
   draft: '方案已保存', paused: '已核验暂停', active: '已核验启用', error: '执行失败', unknown: '平台结果待核对',
 };
 export type AdPlanConfiguration = {
+  accountConnectionId?: string;
   materialSource?: import('../../shared/platformAdCreatives').AdMaterialSelection | null;
   startsAt: string;
   endsAt: string;
