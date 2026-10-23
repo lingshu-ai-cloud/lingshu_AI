@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-23 Asia/Shanghai",
+  "integrationBranch": "xixi功能大合并20261023",
+  "baseline": "641d0b9ec944730c387ef185012fcf2d44cf8939",
+  "adsSource": "9579eb3bd14d4d9780c19e569e810cefed253105",
+  "adsIntegratedSource": "cff5de15595d08f7ca0d8f501bd1dee56f040c5e",
+  "draftPatchSha256": "f6fbf5939f4057df55cda964508a0c8655fddcab3046ffe515a7812ab8dd88c7",
+  "draftManifestSha256": "bc2b8bef59adc90b49247771619a44290b0ef2542b0bc08d50bc42271e4fcbad",
+  "checks": {
+    "adsDomain": "47 test files passed",
+    "browser": "isolated Vite/Chrome, all APIs mocked; binding/upload/reconcile/use/preflight and native metrics passed; media decode not asserted",
+    "callbackRelay": "passed with mock upstream",
+    "lint": "passed",
+    "tenantIsolation": "passed",
+    "securityBoundaries": "passed",
+    "architecture": "2641 production TS files, ratchet against 641d0b9 passed",
+    "architectureRatchet": "passed",
+    "migrations": "196 files read-only passed; 193 preexisting byte hashes unchanged",
+    "migrationGuard": "passed",
+    "schemaParity": "fresh/adoption/upgrade/idempotence/index/readiness/rollback passed in memory",
+    "build": "passed; studio 368962/485000 bytes; static import boundary passed",
+    "productionBaseline": "211 tests, 209 passed, 2 existing presenter SSR failures"
+  },
+  "logsDirectory": "/Users/julia1/.codex/integration-evidence/20261023",
+  "limitations": [
+    "No target DB migration, real OAuth, messages, advertisements, paid supplier, deployment or release",
+    "No complete logged-in browser or real provider acceptance",
+    "production/release gates remain failed on existing presenter SSR contract"
+  ]
+}

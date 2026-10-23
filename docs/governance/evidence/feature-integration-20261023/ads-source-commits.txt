@@ -1,0 +1,27 @@
++ 790efbd70eba4c743dbc0e00f24e2bb9549b2e70 feat: isolate Meta advertising workspace
++ bdb7bbfedc83fa039ba3dd63f7306b75ebc338bd chore: reserve isolated platform ads preview ports
+- 849cf0819c2fc2038f3e8cc076afdda1efc7a44d docs: record reply boundary and justified architecture exception
++ 48ba497ba04c316f4546c4a7a996b49b5c79c437 style: align advertising pages with workspace UI
++ 38e780e5b4dead009ac083138b4d5f276c1b1671 style: align advertising workspace with global ui system
++ 25f3a083f747ed0186ef22cc9d929870e17fda7f fix: validate Meta account budgets and preserve advertising evidence
++ 9bb1e8b70cd8c1ef5af6edb4b0f034d98f57d227 fix: use granted Page identity for Meta creative and ad creation
++ 86cee777926a38c7ec4a1b27102263008700e00d docs: record final paused Meta readback and pending review
++ 1f7099042804f4fd0f5704b2b03e26cbb20dcc08 feat(ads): connect creative library to verified Meta ads and source media
++ 02024f56ec9bdc813b9594f9f4070866cb1ca8b3 fix(ads): preserve material report column layout for long plan names
++ e5a38e96086a0dd8ee69d49e0ee102585754c249 feat(ads): connect native Meta performance reports across delivery levels
++ 018d6444c0ba83f07bf15a63ecc92b5977906320 feat(platform-ads): audit Meta plans and link native data and assets
++ faae7b9c6147d83ffd3e71cbdeb46c85011ed7ef fix(platform-ads): unify Meta report semantics across workspaces
++ 6e97bae5d05b26dbde1a6c9abaa01fcd01505df4 feat(platform-ads): connect creation history to Meta source lifecycle
++ 204419822b09ec2878c0627ab01f61432b7bd35b fix(platform-ads): contain source lifecycle layout and record live evidence
++ 4ef6f137a85bf105f70364bef30660812e992911 feat(ads): connect scoped read-only enterprise history sources
++ 1026906d5dd81c718f9f3e2e87fae6e00a5fed21 fix(ads): verify original history bytes before lifecycle readback
++ bd678120243af06f24881a847f528a0919319f99 feat(ads): unify creative workspace with isolated history previews and clear lifecycle states
++ eeb056d1f64eac54dc09caf0e21345ef59cf4c72 feat(ads): connect plan material picker to verified tenant-scoped creative library
++ a6a7ee47b26f6cc919e084556a3a5c7f86bf5316 fix(ads): preserve plan editor when closing nested material picker
++ 56496a4308610725d2d096295e4868c9d67c6185 fix(ads): separate content workflow state from material selection eligibility
++ 6949340c05217272a41ead180b67271c598bf6cb fix(ads): preserve material provenance through draft binding and library readback
++ 123cd3f9668c64f81089923150f24f375eb2c17d feat(ads): reuse verified same-account Meta videos without duplicate uploads
++ c314c7d9ab53d148d26eac658ab3c24c65ecb637 feat(ads): read real account history and expose safe billing handoff
++ 4bd5e0e585dae40ee59d6bf7ad999c0fe1b529bf fix(ads): discover existing granted accounts before reading history
++ 759aab373f9d13ee3b6c4171f23c7d9011d3475f feat(ads): unify granted accounts and real ad assets across workspaces
++ 9579eb3bd14d4d9780c19e569e810cefed253105 style(ads): keep account toolbar and report dates readable

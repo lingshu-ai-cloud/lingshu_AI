@@ -3,6 +3,10 @@
 最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-23 功能大合并独立树
+
+集成会话从重新确认干净的治理 `641d0b9` 创建 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`、分支 `xixi功能大合并20261023`。原树和来源树由集成会话保持原状；来源负责人自行冻结/提交的交接见 [合并清单](FEATURE-INTEGRATION-20261023.md)。未移动、重置、清理或提交来源草稿，未更新 `xixi架构清理`。本次新树独立安装依赖，不共享来源运行数据。
+
 ## 2026-10-23 视频生产 P1 独立写入交接
 
 - 主会话推进前端素材边界时，发现“定位灵枢AI基线代码”会话开始修改同一集成树。经用户明确授权协调，该会话创建 `/Users/julia1/Documents/ChatGPT/1023视频生成管线/lingshu-video-p1`，分支 `codex/video-production-p1-20261023`，起点 `ddeb731026eb515e2e482cc5470b89a043acb5e5`，完整迁出自己的后端工作后继续在新位置执行。此分支未合入本批前端源码 `befdda33b396963723f146ac823c3df0780e0256`。
