@@ -298,6 +298,8 @@ export interface SocialImageAssetManifest {
     readable: boolean;
     dimensions: { width: number; height: number } | null;
     rights: 'cleared' | 'restricted' | 'unknown';
+    /** Server-resolved authorization evidence, never inferred from readable bytes. */
+    rightsEvidenceRef?: string;
     observedSubjects: string[];
     ocr: string[];
     confidence: number;

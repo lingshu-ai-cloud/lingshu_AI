@@ -4,6 +4,7 @@ import type { SocialImageCreationTask, SocialImageFrozenRenderPlan, SocialImageG
 import { requireSocialImageAtomicStore, SocialImagePaidJobError } from './socialImagePaidJob.js';
 import { planSocialImageRenderUnits } from './socialImageRenderPlan.js';
 import { readSocialImageTask, updateSocialImageTask, SOCIAL_IMAGE_TASKS_COLLECTION } from './socialImageTask.js';
+import { socialImageV3PaidEvidenceHash, socialImageV3PaidPrerequisiteIssue, socialImageV3ReferencePermitted } from './socialImagePaidPrerequisites.js';
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -28,6 +29,7 @@ export function socialImagePlanSourceHash(task: SocialImageCreationTask): string
     referenceUrls: task.referenceUrls, referenceSnapshot: task.referenceSnapshot,
     replicationRecipe: task.replicationRecipe, enterpriseAssets: task.enterpriseAssets,
     layerGraph: task.layerGraph,
+    ...(task.schemaVersion === 'social-image-creation.v3' ? { evidenceHash: socialImageV3PaidEvidenceHash(task, false) } : {}),
   });
 }
 
@@ -66,7 +68,8 @@ export function socialImagePlannedRenderInput(task: SocialImageCreationTask, job
     // added by the deterministic compositor, never sent to the image model.
     materialIds: task.imageType === 'gif_poster' ? [] : [...task.materialIds],
     productIds: task.imageType === 'gif_poster' ? [] : [...task.contentBrief.productRefs],
-    referenceImageUrls: task.referenceSnapshot?.imageUrls.slice(0, 1) || [],
+    referenceImageUrls: socialImageV3ReferencePermitted(task)
+      ? task.referenceSnapshot?.imageUrls.slice(0, 1) || [] : [],
     referencePlan: [],
     deliverableType: unit.index === 0 && task.imageType === 'carousel' ? 'carousel_cover' : 'social_poster',
     productionStrategy: 'reference_generate',
@@ -90,6 +93,8 @@ export async function persistSocialImageMultiUnitPlan(input: {
   await requireSocialImageAtomicStore(input.store);
   const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
   if (!task) throw new SocialImagePaidJobError('social_image_task_missing');
+  const gate = socialImageV3PaidPrerequisiteIssue(task, 'queue');
+  if (gate) throw new SocialImagePaidJobError(gate);
   if (task.imageType !== 'carousel' && task.imageType !== 'gif_poster') {
     throw new SocialImagePaidJobError('social_image_multi_plan_type_required');
   }
@@ -205,6 +210,8 @@ export async function claimSocialImagePlannedUnit(input: {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
     if (!task) throw new SocialImagePaidJobError('social_image_task_missing');
+    const gate = socialImageV3PaidPrerequisiteIssue(task, 'execute');
+    if (gate) throw new SocialImagePaidJobError(gate);
     socialImagePlannedRenderInput(task, input.jobId);
     const plan = task.renderPlan;
     if ((task.imageType !== 'carousel' && task.imageType !== 'gif_poster') || !plan || plan.sourceHash !== socialImagePlanSourceHash(task)) {

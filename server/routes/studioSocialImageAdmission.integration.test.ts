@@ -20,6 +20,10 @@ process.env.OBJECT_STORAGE_DRIVER = 'local';
 
 const { auth, store } = await import('../storage/index.js');
 const { createSocialImageTask, updateSocialImageTask } = await import('../socialImage/socialImageTask.js');
+const { createOrResumeBoundSocialImageRun } = await import('../socialImage/socialImageProductionRun.js');
+const { defaultBrief } = await import('../starter198/socialContentTaskSupport.js');
+const { STARTER_COLLECTIONS } = await import('../starter198/repository.js');
+const { SOCIAL_WORK_PACKAGE_KINDS } = await import('../../shared/contracts/socialContentWorkflow.js');
 const { claimSocialImagePlannedUnit } = await import('../socialImage/socialImageDurablePlan.js');
 const { completeSocialImagePaidJob, socialImageOwnedMaterialUrl } = await import('../socialImage/socialImagePaidJob.js');
 const { createGeneratedImageMaterial } = await import('../lib/generatedImageMaterial.js');
@@ -52,6 +56,39 @@ test('HTTP image routes reject forged evidence and finalize durable GIF plates i
   const createdIds: string[] = [];
 
   try {
+    const now = '2026-10-24T02:00:00.000Z';
+    await store.create(STARTER_COLLECTIONS.socialContentTasks, {
+      id: 'studio-image-paid-gate-content', tenant_id: tenantId, task_id: 'studio-image-paid-gate',
+      status: 'plan_review', version: '1', brief: defaultBrief({ title: '付费前置证据测试', objective: '展示产品',
+        mode: 'instant', productId: 'product-a', productRef: '产品 A', audience: '采购', platforms: ['instagram'],
+        languages: ['zh'], formats: ['social_image'], aspectRatio: '4:5', creationMode: 'material_processing' }),
+      task_mode: 'instant', theme_selection: '', script_baseline: '', director_plan: '', material_requirements: [],
+      package_selection: SOCIAL_WORK_PACKAGE_KINDS.map(kind => ({ kind, packageKey: kind, version: '1', name: kind })),
+      run_id: '', weekly_plan_id: '', source_count: 0, knowledge_source_count: 0, material_source_count: 0,
+      artifact_count: 0, approved_artifact_count: 0, delivery_package_count: 0, publication_count: 0,
+      metric_submission_count: 0, created_at: now, updated_at: now,
+    });
+    const v3 = (await createOrResumeBoundSocialImageRun(store, tenantId, {
+      contentTaskId: 'studio-image-paid-gate', expectedContentTaskVersion: '1',
+      idempotencyKey: 'studio-image-paid-gate', entrySource: 'assistant', imageType: 'product_poster',
+    }, now)).task;
+    createdIds.push(v3.id);
+    const queued = { id: 'forged-paid-unit', idempotencyKey: 'forged-paid-unit', status: 'queued' as const,
+      outputNodeIds: [], attempt: 0, createdAt: now, updatedAt: now };
+    const v3Patch = await fetch(`http://127.0.0.1:${address.port}/social-images/tasks/${v3.id}`, {
+      method: 'PATCH', headers, body: JSON.stringify({ expectedVersion: v3.version,
+        patch: { status: 'generating', step: 'generate', generationJobs: [queued] } }),
+    });
+    assert.equal(v3Patch.status, 422);
+    assert.equal((await v3Patch.json() as { code?: string }).code, 'social_image_business_context_incomplete');
+    const row = await store.getById<{ spec: Record<string, unknown> }>('studio_projects', v3.id);
+    assert.ok(row);
+    await store.update('studio_projects', v3.id, { spec: { ...row.spec, socialImageTask: { ...v3, generationJobs: [queued] } } });
+    const v3Render = await fetch(url, { method: 'POST', headers,
+      body: JSON.stringify({ imageTaskId: v3.id, imageJobId: queued.id, imagePrompt: 'bypass formal evidence' }) });
+    assert.equal(v3Render.status, 409);
+    assert.equal((await v3Render.json() as { code?: string }).code, 'social_image_business_context_incomplete');
+
     for (const [imageType, expectedCode] of [
       ['gif_poster', 'social_image_frozen_plan_invalid'],
       ['carousel', 'social_image_frozen_plan_invalid'],

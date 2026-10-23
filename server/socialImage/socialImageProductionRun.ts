@@ -134,7 +134,8 @@ export async function recordSocialImageNodeOutput<N extends keyof SocialImageNod
       || !Array.isArray(manifest.requiredEvidence) || [...requiredAssetIds].some(assetId => !manifest.requiredEvidence.includes(assetId))
       || !Array.isArray(manifest.assets) || manifest.assets.some(asset => asset.required
       && (!asset.readable || !/^[a-f0-9]{64}$/.test(asset.contentHash)
-        || !asset.dimensions?.width || !asset.dimensions?.height || asset.rights !== 'cleared'))) {
+        || !asset.dimensions?.width || !asset.dimensions?.height || asset.rights !== 'cleared'
+        || !asset.rightsEvidenceRef?.trim()))) {
       throw new SocialImageProductionRunError('social_image_required_asset_evidence_invalid', 422);
     }
   }
