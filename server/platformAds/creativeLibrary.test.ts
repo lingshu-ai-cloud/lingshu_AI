@@ -38,7 +38,7 @@ try {
   const views = await createPlatformAdTask('tenant', 'user', { ...input, goal: '提升有效视频观看' });
   const account = await store.create<any>('platform_ad_connections', { tenant_id: 'tenant', provider: 'meta', accountId: '1', status: 'connected', currency: 'USD', timezoneName: 'Asia/Shanghai', name: 'Test', tokenCipher: encryptSecret('secret-test-token') });
   const { creative } = await bindPlatformAdCreative('tenant', traffic.id, { expectedVersion: traffic.version, sourceTaskId: 'source', artifactId: 'artifact', connectionId: account.id });
-  await store.update('platform_ad_creatives', creative.id, { status: 'ready', platformVideoId: '500', uploadReceipt: { accountId: '1', videoId: '500', sha256, status: 'ready' } });
+  await store.update('platform_ad_creatives', creative.id, { status: 'ready', platformVideoId: '500', uploadReceipt: { requestId: 'original_upload', accountId: '1', videoId: '500', sha256, status: 'ready' } });
   await store.update('platform_ad_tasks', traffic.id, { status: 'paused' });
   await store.update('platform_ad_tasks', views.id, { status: 'paused' });
   const receipt = await store.create<any>('platform_ad_executions', { tenant_id: 'tenant', taskId: views.id, connectionId: account.id, action: 'create', status: 'VERIFIED', result: { campaignId: '101', adsetId: '102', creativeId: '103', adId: '104' } });
@@ -193,6 +193,9 @@ try {
   assert.equal(preserveAdLifecycleReports(previousLifecycle, { ...failedLifecycle, ads: [{ ...failedLifecycle.ads[0], accountId: 'other' }] }).ads[0].report, null);
   const localPlan = await createPlatformAdTask('tenant', 'user', input);
   const localBinding = await bindPlatformAdCreative('tenant', localPlan.id, { expectedVersion: localPlan.version, sourceTaskId: 'source', artifactId: 'artifact', connectionId: account.id });
+  assert.equal(localBinding.creative.platformVideoId, '500');
+  assert.ok(localBinding.creative.videoReuse?.verifiedAt, 'binding reuses the existing verified platform video');
+  assert.equal((await getPlatformAdCreative('tenant', localBinding.creative.id))?.uploadReceipt?.mappingExecutionId, undefined);
   assert.equal((await listAdCreativeLibrary('tenant', {})).items.find(i => i.task.id === localPlan.id)?.binding?.id, localBinding.creative.id);
   await store.update('platform_ad_tasks', localPlan.id, { configuration: { materialSource: { sourceTenantId: 'tenant', sourceTaskId: 'source', artifactId: 'other-version', sha256 } } });
   assert.equal((await listAdCreativeLibrary('tenant', {})).items.some(i => i.task.id === localPlan.id), false, 'old binding cannot claim a different newly selected version');

@@ -6,10 +6,12 @@ import { AD_CREATIVES_COLLECTION, getPlatformAdCreative, openPlatformAdCreativeM
 import { assertAdReleaseAction } from './releasePolicy.js';
 import { AdProviderError } from './metaAdapter.js';
 import { collectVerifiedVideo, MAX_META_VIDEO_BYTES, MetaVideoUploadAdapter } from './metaVideoUpload.js';
+import { findStoredReusableMetaVideo } from './creativeReuse.js';
 
 export function createCreativeUploadService(deps = {
   store, getPlatformAdTask, withPlatformAdTaskLock, getConnectionCredential,
   getPlatformAdCreative, openPlatformAdCreativeMedia,
+  reuseVideo: findStoredReusableMetaVideo,
   adapter: (token: string, beforeWrite: () => Promise<void>) => new MetaVideoUploadAdapter(token, fetch, beforeWrite),
 }) {
   async function run(tenantId: string, taskId: string, creativeId: string, input: Record<string, unknown>, reconcile: boolean) {
@@ -59,6 +61,10 @@ export function createCreativeUploadService(deps = {
       if (!Number.isSafeInteger(creative.size) || creative.size < 1 || creative.size > MAX_META_VIDEO_BYTES) throw new AdProviderError('素材最大 64 MiB', 'INVALID_MEDIA');
       const media = await deps.openPlatformAdCreativeMedia(tenantId, creativeId);
       const bytes = await collectVerifiedVideo(media.body, creative.size, creative.sha256);
+      if (deps.reuseVideo) {
+        const reuse = await deps.reuseVideo({ tenantId, connection, sourceTaskId: creative.sourceTaskId, artifactId: creative.artifactId, file: creative, readStatus: videoId => adapter.status(videoId) });
+        if (reuse) return save({ status: 'ready', platformVideoId: reuse.platformVideoId, uploadReceipt: reuse.uploadReceipt });
+      }
       const receipt = { requestId, accountId: connection.accountId, sha256: creative.sha256, status: 'uploading', at: new Date().toISOString() };
       await save({ status: 'uploading', attemptId: requestId, uploadReceipt: receipt });
       let videoId: string;

@@ -90,6 +90,7 @@ export default function AdPerformanceOverview({ loading, onOpen, initialTaskId }
     </div>
     {error && <Alert type="error" showIcon title={error} description={directory ? '目录刷新失败；保留同页上次结果，不代表平台最新状态。' : '当前页目录读取失败；未使用其他页的数据，请重试。'} />}
     {!valid && <Alert type="warning" showIcon title="请选择开始和结束日期，最多 93 天；日期按广告账户时区解释。" />}
+    {!catalogBusy && !rows.length && directory?.items.some(i => i.connection.id === selectedAccount?.id && (!taskFilter || i.task.id === taskFilter) && !i.execution && i.binding?.videoReuse) && <Alert type="info" showIcon title="已复用 Meta 视频，尚未创建广告" description="复用仅关联同企业、同账户和同版本的视频，不继承原计划的广告回执、审核状态或效果数据。当前范围尚无广告报告，指标保持 —。"/>}
     <Space wrap role="status" aria-live="polite"><Tag>Meta 平台报告</Tag><span>{busy ? '读取中 · ' : ''}{successful.length}/{rows.length} 个去重资源已返回 · {successful.filter(r => !r.totals).length} 个空报告</span>{first && <span>{first.window.since} — {first.window.until} · {first.reportTimezone} · {currency}</span>}</Space>
     {Object.keys(currentErrors).length > 0 && <Alert type="warning" showIcon title="部分平台报告刷新失败；保留同一筛选范围内最后一次成功报告，以采集时间为准，不补零。" />}
     <LsMetricStrip items={(['spend', 'impressions', 'clicks', 'linkClicks'] as const).map(key => ({ key, label: `${META_PERFORMANCE_FIELDS[key].label}${key === 'spend' && currency ? ` (${currency})` : ''}`, value: format(summary[key]) }))} />

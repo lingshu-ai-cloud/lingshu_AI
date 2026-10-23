@@ -107,3 +107,13 @@ test('plan material picking uses the same catalog, locks selection until verifie
   const selectionService = readFileSync(new URL('../../server/platformAds/creativeSelection.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(selectionService, /artifact.status !== 'approved'/);
 });
+test('reused videos share their availability label but never inherit another plan performance', () => {
+  const library = readFileSync(new URL('./AdCreativeLibrary.tsx', import.meta.url), 'utf8');
+  const binding = readFileSync(new URL('./AdCreativePanel.tsx', import.meta.url), 'utf8');
+  const data = readFileSync(new URL('./AdPerformanceOverview.tsx', import.meta.url), 'utf8');
+  assert.match(library, /adCreativeAvailabilityLabel\(binding\)/);
+  assert.match(binding, /adCreativeAvailabilityLabel\(creative\)/);
+  assert.ok(library.indexOf('if (search &&') < library.indexOf('const key = groupKey(item)'));
+  assert.match(data, /已复用 Meta 视频，尚未创建广告/);
+  assert.match(data, /不继承原计划的广告回执、审核状态或效果数据/);
+});

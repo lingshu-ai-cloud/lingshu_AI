@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Collapse, Descriptions, Drawer, Empty, Input, Pagination, Select, Space, Table, Tabs, Tag } from 'antd';
 import AdSourceCatalog from './AdSourceCatalog';
 import AdHistoryMedia from './AdHistoryMedia';
+import { adCreativeAvailabilityLabel, adContentStatusLabel } from '../../shared/platformAdCreatives';
 import AdSourceLifecycle from './AdSourceLifecycle';
 import { metaAccountDate } from '../../shared/metaPerformance';
 import { RefreshCw, Play, Link2 } from 'lucide-react';
@@ -73,10 +74,11 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId, initialTa
     const map = new Map<string, Group>();
     for (const item of data?.items || []) {
       if (account !== 'all' && item.connection.id !== account) continue;
+      if (search && !`${item.task.id} ${item.binding?.name || ''} ${item.task.name} ${item.binding?.platformVideoId || ''} ${item.connection.name}`.toLowerCase().includes(search.toLowerCase())) continue;
       const key = groupKey(item), group = map.get(key);
       if (group) group.items.push(item); else map.set(key, { key, items: [item], representative: item });
     }
-    return [...map.values()].filter(g => !search || g.items.some(i => `${i.task.id} ${i.binding?.name || ''} ${i.task.name} ${i.binding?.platformVideoId || ''} ${i.connection.name}`.toLowerCase().includes(search.toLowerCase())));
+    return [...map.values()];
   }, [data, account, search]);
   const opened = groups.find(g => g.key === selected);
   const executionKey = opened?.items.map(i => i.execution?.id || '').join(',') || '';
@@ -122,7 +124,8 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId, initialTa
         const item = group.representative, binding = item.binding;
         return { id: group.key, content: <article className="ads-library-card">
           {binding && !binding.platformVideoId ? <div className="ads-library-local-cover"><AdHistoryMedia key={`${binding.id}:${binding.sha256}`} refresh={refresh} mediaOnly source={{ origin: 'social', key: binding.id, sourceTaskId: binding.sourceTaskId, artifactId: binding.artifactId, sha256: binding.sha256, name: binding.name, status: '', createdAt: binding.createdAt, verifiedSource: true, note: '' }}/></div> : <Cover key={binding?.id || item.key} bindingId={binding?.platformVideoId ? binding.id : undefined} name={binding?.name || item.task.name} onPreview={() => setSelected(group.key)} />}
-          <div className="ads-library-card-body"><h2>{binding?.name || item.task.name}</h2><Space wrap><SocialPlatformIcon platform={item.connection.provider === 'meta' ? 'facebook' : 'tiktok'} size={18}/><span>{item.connection.name}</span><Tag>{binding ? statusLabels[binding.status] || binding.status : '待确认关联'}</Tag></Space>
+          <div className="ads-library-card-body"><h2>{binding?.name || item.task.name}</h2><Space wrap><SocialPlatformIcon platform={item.connection.provider === 'meta' ? 'facebook' : 'tiktok'} size={18}/><span>{item.connection.name}</span><Tag>{binding ? adCreativeAvailabilityLabel(binding) : '待确认关联'}</Tag></Space>
+            {item.task.materialSource && <Space wrap><Tag>{item.task.materialSource.sourceTenantName}</Tag><Tag>内部内容：{adContentStatusLabel(item.task.materialSource.contentStatus)}</Tag></Space>}
             <p>{new Set(group.items.filter(i => i.execution).map(i => i.execution!.adId)).size} 条关联广告 · {new Set(group.items.map(i => i.task.id)).size} 个计划</p>
             <Button block onClick={() => setSelected(group.key)}>查看详情与表现</Button>
           </div></article> };

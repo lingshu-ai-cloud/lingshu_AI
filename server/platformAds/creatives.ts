@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type { PlatformAdCreative, PlatformAdCreativeSource } from '../../shared/platformAdCreatives.js';
 import { store } from '../storage/index.js';
 import { createStarter198Repository, STARTER_COLLECTIONS } from '../starter198/repository.js';
@@ -7,13 +8,17 @@ import { resolveSocialArtifactMedia, openSocialArtifactMedia, socialArtifactMedi
 import { getPlatformAdTask, PLATFORM_AD_TASKS_COLLECTION } from './tasks.js';
 import { withPlatformAdTaskLock } from './taskLock.js';
 import { AD_CONNECTIONS, type AdConnection } from './connections.js';
+import { findStoredReusableMetaVideo } from './creativeReuse.js';
+import { getConnectionCredential } from './connections.js';
+import { MetaVideoUploadAdapter } from './metaVideoUpload.js';
 
 export const AD_CREATIVES_COLLECTION = 'platform_ad_creatives';
 export type StoredPlatformAdCreative = PlatformAdCreative & { tenant_id: string; fileRef: string; attemptId?: string; uploadError?: string; uploadStartedAt?: string; uploadReceipt?: Record<string, unknown> };
 export class PlatformAdCreativeError extends Error { constructor(message: string, public status = 400) { super(message); } }
 export function publicPlatformAdCreative(c: StoredPlatformAdCreative): PlatformAdCreative {
   const { id, taskId, taskVersion, sourceTaskId, artifactId, sha256, mimeType, size, name, connectionId, provider, platformVideoId, status, createdAt, updatedAt } = c;
-  return { id, taskId, taskVersion, sourceTaskId, artifactId, sha256, mimeType, size, name, connectionId, provider, platformVideoId, status, createdAt, updatedAt };
+  return { id, taskId, taskVersion, sourceTaskId, artifactId, sha256, mimeType, size, name, connectionId, provider, platformVideoId, status, createdAt, updatedAt,
+    ...(status === 'ready' && typeof c.uploadReceipt?.reuseVerifiedAt === 'string' ? { videoReuse: { verifiedAt: c.uploadReceipt.reuseVerifiedAt } } : {}) };
 }
 const repository = createStarter198Repository();
 function identity(value: unknown): string {
@@ -106,6 +111,15 @@ export async function bindPlatformAdCreative(tenantId: string, taskId: string, i
       && /^\d+$/.test(existing.platformVideoId) && uploaded.videoId === existing.platformVideoId) {
       Object.assign(record, { status: 'ready', platformVideoId: existing.platformVideoId, uploadReceipt: uploaded, attemptId: existing.attemptId || '' });
     }
+    if (connection.provider === 'meta' && record.status !== 'ready') {
+      const reuse = await findStoredReusableMetaVideo({ tenantId, connection, sourceTaskId, artifactId, file,
+        readStatus: async videoId => {
+          const credential = await getConnectionCredential(tenantId, connectionId);
+          if (credential.connection.accountId !== connection.accountId || credential.connection.status !== 'connected') throw new Error('account changed');
+          return new MetaVideoUploadAdapter(credential.accessToken).status(videoId);
+        } });
+      if (reuse) Object.assign(record, { status: 'ready', platformVideoId: reuse.platformVideoId, uploadReceipt: reuse.uploadReceipt });
+    }
     // Invalidate prior approvals before changing a binding; a partial failure is safe and requires a refresh.
     await guard.beforeEffect();
     if (!await store.update(PLATFORM_AD_TASKS_COLLECTION, taskId, { version: taskVersion, configuration: { ...task.configuration, materialSource: checked.selection }, video: checked.selection.name.slice(0, 120), authorization: null, proposal: null, updatedAt: now })) throw new PlatformAdCreativeError('计划版本保存失败', 503);
@@ -114,7 +128,7 @@ export async function bindPlatformAdCreative(tenantId: string, taskId: string, i
     const persisted = await getPlatformAdCreative(tenantId, id);
     const persistedTask = await getPlatformAdTask(tenantId, taskId);
     const requiredFields = ['taskId', 'taskVersion', 'sourceTaskId', 'artifactId', 'fileRef', 'sha256', 'mimeType', 'size', 'name', 'connectionId', 'provider', 'platformVideoId', 'status'] as const;
-    if (!persisted || requiredFields.some(field => persisted[field] !== record[field]) || persistedTask?.version !== taskVersion
+    if (!persisted || requiredFields.some(field => persisted[field] !== record[field]) || !isDeepStrictEqual(persisted.uploadReceipt, record.uploadReceipt) || persistedTask?.version !== taskVersion
       || persistedTask.authorization !== null || persistedTask.proposal !== null
       || persistedTask.configuration.materialSource?.sha256 !== checked.selection.sha256
       || persistedTask.configuration.materialSource?.sourceTenantId !== tenantId

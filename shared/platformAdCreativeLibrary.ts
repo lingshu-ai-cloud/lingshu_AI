@@ -1,7 +1,8 @@
 import type { PlatformAdCreative } from './platformAdCreatives.js';
+import type { AdMaterialSelection } from './platformAdCreatives.js';
 export interface AdCreativeLibraryItem {
   key: string;
-  task: { id: string; name: string; version: number; goal: string; status: string };
+  task: { id: string; name: string; version: number; goal: string; status: string; materialSource?: AdMaterialSelection | null };
   connection: { id: string; accountId: string; name: string; currency: string; provider: string };
   binding: PlatformAdCreative | null;
   execution: { id: string; campaignId: string; adsetId: string; creativeId: string; adId: string } | null;

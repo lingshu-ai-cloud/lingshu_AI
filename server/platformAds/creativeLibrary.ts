@@ -25,7 +25,7 @@ export async function listAdCreativeLibrary(tenantId: string, query: { page?: un
       const connection = await getConnection(tenantId, binding?.connectionId || receipt!.connectionId);
       const ids = (receipt?.result || {}) as Record<string, string>;
       items.push({ key: receipt?.id || binding!.id,
-        task: { id: task.id, name: task.name, goal: task.goal, version: task.version, status: task.status },
+        task: { id: task.id, name: task.name, goal: task.goal, version: task.version, status: task.status, materialSource: task.configuration?.materialSource },
         connection: { id: connection.id, accountId: connection.accountId, name: connection.name, currency: connection.currency, provider: connection.provider },
         binding: binding ? publicPlatformAdCreative(binding) : null,
         execution: receipt ? { id: receipt.id, campaignId: ids.campaignId, adsetId: ids.adsetId, creativeId: ids.creativeId, adId: ids.adId } : null,
