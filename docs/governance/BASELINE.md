@@ -2,6 +2,19 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 承接核验与灵感素材库存生命周期拆分（2026-10-23）
+
+- 用户确认停止旧会话后承接；起点集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地与 `git ls-remote origin` 均为 `a8b53951d85ec253a7f941bd3e05507c795fd41c`。保留旧会话停止前留下的两份 AIGC 审计文档增量，并用当前源码和离线回归重新核验。未改动其他工作树。
+- 源码提交 `630c412614d13f860e2f361d57b36a5e9b76d52e` 将普通素材全分页读取、产品详情抽屉请求/关闭失效、产品摘要批量刷新及相应状态迁至 `useInspirationMaterialInventory.ts`（154 行）；页面继续负责展示、筛选、预览和写入。`InspirationDashboard.tsx` 从 2,138 降至 2,014 行，预算同步收紧。更新调用边界合同，并修复扩大回归发现的历史合同仍在原页面/路由查找已拆出弹窗和素材投影的问题，未放宽行为要求。
+- 实际通过：新 Hook 行为 2/2（完整分页去重与旧请求晚返回）、原定向库存/弹窗/页面合同 6/6、`pnpm run lint`、`ARCHITECTURE_BASE_REF=a8b53951 pnpm run check:architecture`（2,418 个生产 TypeScript 文件）、`pnpm run test:architecture-ratchet`、`pnpm run check:digital-employee-migrations`（193 项，只读仓库完整性）、`pnpm run test:video-source-boundaries`（150/150）、`pnpm run test:social-content-frontend`、`pnpm run test:tenant-isolation`、`pnpm run test:social-image-pipeline`（主组 55/55、HTTP/合同组通过）、`pnpm run build`、`git diff --check`。本次构建日志未出现大 chunk 警告；Studio 主 chunk 仍为 480,957/485,000 字节，接近现有预算，不据此宣称加载性能债务解决。此前章节的大 chunk 提示属于当时记录。
+- `rg -n '/agent-usage-costs|agentUsageCosts|AgentUsageCosts' src server shared` 仅匹配两处测试的禁止性断言，生产代码无旧入口。仍有 5 个历史超限文件：数字员工路由 5,259、Studio 路由 7,221、视频路由 7,823、Studio 页面 12,000、灵感页面 2,014 行。整体结构拆分尚未完成，后续继续按完整职责边界治理，不得把 ratchet 通过作为完成。
+- 未执行登录后浏览器、真实供应商、LinkedIn 真实付费采集、目标库迁移、发布或部署；Qwen→Gemini 降级按用户要求保留，自动 GPT 图片复核未接入路由。推送前已核对全部仓库工作流：部署仅 `workflow_dispatch`；镜像工作流仅 PR、版本 tag 或手动；普通分支推送不自动部署。文档提交与远端最终 SHA 以提交后 Git/远端核验为准。
+
+## 图片 AIGC 来源与剩余独有提交复核（2026-10-23）
+
+- 集成点 `a8b53951` 时只读复核原图片树 `95b0bcc1` 和新图片树 `23b1bb93`：原树 28 个状态项中的已跟踪源码改动属于日历，不是新图片管线；新树的确定性图层/蒙版能力已选择性合入，自动 GPT 复核路由仍与用户要求保留的 Qwen→Gemini 行为及未完成的付费许可冲突。两树原位保留，详见 `WORKTREE-INVENTORY.md`。
+- `test:social-image-pipeline` 离线回归通过，主组 55/55；未执行真实供应商、目标库迁移、浏览器验收或部署。本节是来源审计，不是代码合并或真实链路完成证据。
+
 ## 灵感素材弹窗展示边界拆分（2026-10-23）
 
 - 将素材上传归属与编辑/删除确认的既有 Ant 弹窗渲染迁至 `InspirationMaterialDialogs.tsx`，页面保留租户身份、状态、文件选择、API 写入和刷新动作；顺手移除未使用的焦点处理变量。`InspirationDashboard.tsx` 从 2,178 降至 2,138 行并收紧预算。全仓仍有 5 个历史超限文件，不能视为拆分完成。
