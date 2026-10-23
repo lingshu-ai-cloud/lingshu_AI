@@ -38,6 +38,7 @@
 - `src/components/inspiration/inspirationMaterialLibrary.ts`：素材库入口参数、企业通用/产品归属、可见标签与语义、分类徽标、产品/方向/图库筛选；权威媒体比例计算在 `src/lib/materialAspectRatio.ts`，规则模块不反向依赖 React 组件。页面保留素材加载、用户操作和展示，原页面导出继续转发。
 - `src/components/EnterprisePage.tsx` 与 `src/components/enterprise/`：页面持有可编辑企业资料和导航；资料默认值/快照、服务端读写校验、FAQ/销售风格控制器及业务视图由企业资料模块负责。保存成功必须以服务端读回和产品身份校验为依据。
 - `src/components/DigitalEmployeePage.tsx` 与 `src/components/smartBusiness/WeeklyGoalPanel.tsx`：数字员工页负责新周目标的提交、冲突恢复与运行导航；独立周目标面板持有草稿、预设方案、平台配额重算、视频计划校验和排期确认，不直接调用生产 API。`DigitalEmployeeFormField.tsx` 是页面与周目标面板共用的表单字段样式。
+- `src/components/ConfiguredDigitalEmployeeWorkspace.tsx`：已有配置时的周计划控制、经营总览、数字员工/复盘视图、生产详情导航及引导/启动弹窗展示；页面仍拥有数据加载、身份与异步请求栅栏、状态和动作，通过显式属性接入。任务状态文案由该组件导出给页面助手上下文共用，不维护两套标签。
 - `src/components/digitalEmployeeConfigurationAction.ts`：首次配置保存、同指纹计划续跑、任务包确认与首次准备请求的幂等编排；页面注入现有 API、冲突恢复及界面状态回调。此模块不直接发起供应商调用，已存在不同指纹计划时保持可见失败，不覆盖原计划。
 - `src/components/digitalEmployeeFactRecovery.ts`：只处理结构化企业资料版本冲突；以授权身份和完整来源计划证据合并同一重建请求，允许专用幂等重建最多再试一次，账号切换后禁止旧结果写回。页面注入原有状态回写与通知，保存、批准或启动原操作不得自动重放。
 - `src/components/digitalEmployeeWeeklyLaunch.ts`：周计划批准只提交一次准确版本；只有归属、启动时间和任务清单均可确认的真实运行才能更新页面并通知助手。结果不明仅作一次只读核对，已有运行冲突保留可见回执，企业资料冲突交由专用恢复边界处理，不自动重提批准。

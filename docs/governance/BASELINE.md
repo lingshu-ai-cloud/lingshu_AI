@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 数字员工已配置工作台结构拆分（2026-10-23）
+
+- 代码提交 `b24d0942` 将已有配置时的经营总览、周计划控制、生产入口、视图切换与相关弹窗迁至 `ConfiguredDigitalEmployeeWorkspace.tsx`；页面仍持有授权与异步请求栅栏、数据状态及现有动作，任务状态文案继续共用。`DigitalEmployeePage.tsx` 从 993 降至 686 行，新组件 386 行；页面不再需要历史超限预算，全仓超限文件由 6 个降至 5 个。
+- 页面挂载合同、完整 `test:digital-employees`、`test:tenant-isolation`、TypeScript、架构扫描/ratchet（2,407 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建与 `git diff --check` 通过。Studio 主 chunk 为 480,909/485,000 字节，构建仍有大 chunk 提示。此批是源码与离线回归证据，未做登录后浏览器验收；按用户决定未测试 LinkedIn 真实付费采集，也未调用其他真实付费供应商、执行目标库迁移或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## 数字员工周计划真实启动边界拆分（2026-10-23）
 
 - 代码提交 `a08ff55d` 将准确版本批准、真实运行回执校验、助手状态通知、已有运行冲突和结果不明时的一次只读核对迁至 `digitalEmployeeWeeklyLaunch.ts`；页面继续负责呈现和注入原有冲突恢复，不在未知结果时重复批准。`DigitalEmployeePage.tsx` 从 1,097 降至 993 行并收紧预算；全仓仍有 6 个历史超限文件。
