@@ -122,10 +122,8 @@ const matrixViewSource = smartBusinessSource.slice(
 );
 const dashboardRoutesSource = smartBusinessSource.slice(smartBusinessSource.indexOf('export default function SmartBusinessDashboard'));
 const workspaceTabsSource = pageSource.slice(pageSource.indexOf('const views: Array<'), pageSource.indexOf('const currentVideoPlans', pageSource.indexOf('const views: Array<')));
-const initialPlanSaveSource = pageSource.slice(
-  pageSource.indexOf('const saveConfig'),
-  pageSource.indexOf('const saveGoal'),
-);
+const initialPlanSaveSource = fs.readFileSync('src/components/digitalEmployeeConfigurationAction.ts', 'utf8');
+assert.match(pageSource, /createDigitalEmployeeConfigurationAction\(\{[\s\S]{0,240}recoverEnterpriseFactsChanged/, 'the page must wire the existing recovery and state callbacks into the configuration action');
 const enterpriseFactsRecoverySource = pageSource.slice(
   pageSource.indexOf('const recoverEnterpriseFactsChanged'),
   pageSource.indexOf('const act', pageSource.indexOf('const recoverEnterpriseFactsChanged')),
@@ -544,11 +542,12 @@ assert.doesNotMatch(productTableOnboardingSource, /确认重点产品|按资料�
 assert.match(onboardingStepsSource, /primaryLabel=\{allowInitialPlan \? ['"]生成推荐计划['"] : ['"]完成引导并保存['"]\}/, 'the fourth onboarding step must lead into the recommended initial operating plan');
 assert.match(onboardingPanelSource, /<InitialOperatingPlanDialog[\s\S]{0,1200}onConfirm=\{plan => void completeMinimalOnboarding\(plan\)\}/, 'the recommended plan must return the confirmed plan to onboarding');
 assert.match(initialOperatingPlanSource, /validateInitialPlan\(plan\)/, 'the recommended plan dialog must validate the user-confirmed operating plan');
-for (const operation of ['digitalEmployeeApi.createGoal', 'digitalEmployeeApi.savePackage', 'digitalEmployeeApi.startInitialPreparation']) {
+assert.match(initialPlanSaveSource, /const api = context\.api \|\| digitalEmployeeApi/, 'the extracted action must use the canonical API by default');
+for (const operation of ['api.createGoal', 'api.savePackage', 'api.startInitialPreparation']) {
   assert.ok(initialPlanSaveSource.includes(operation), `the first recommended plan must persist and start through ${operation}`);
 }
 assert.doesNotMatch(initialPlanSaveSource, /setData\(created\)/, 'partial initial-plan persistence must not unmount onboarding before the full chain can finish or retry');
-assert.match(initialPlanSaveSource, /digitalEmployeeApi\.initialPreparation\(next\.goal\.id\)[\s\S]{0,500}existingPreparation\.preparation/, 'retrying onboarding must resume an already-created initial preparation instead of duplicating its goal');
+assert.match(initialPlanSaveSource, /api\.initialPreparation\(next\.goal\.id\)[\s\S]{0,500}existingPreparation\.preparation/, 'retrying onboarding must resume an already-created initial preparation instead of duplicating its goal');
 assert.match(initialPlanSaveSource, /initial-\$\{created\.goal\.id\.replace/, 'initial preparation retries must use a stable goal-derived request id');
 assert.match(initialPlanSaveSource, /initialOperatingPlanFingerprint\(plan\)[\s\S]{0,500}next\.goal\.constraints\.includes\(fingerprintConstraint\)/, 'retrying a partial first plan must refuse edits that would bind a new plan to the old goal');
 assert.match(onboardingPanelSource, /closeRecommendedPlan[\s\S]{0,300}requestAnimationFrame[\s\S]{0,200}recommendedPlanTriggerId/, 'closing the initial-plan dialog must restore focus to the remounted trigger');

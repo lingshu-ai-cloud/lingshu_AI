@@ -3,14 +3,14 @@ import { labels as sharedTaskLabels } from '../../shared/mobile-domain.mjs';
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { PAGE_REGISTRY, type Page } from "../pageRegistry";
 import { readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../lib/agentCalendarReturnContext';
-import { initialOperatingPlanFingerprint, initialPlanVideoPlans, initialPlanMatrixRows, type InitialOperatingPlan } from '../lib/initialOperatingPlan';
 import { productionApi } from "../lib/productionApi";
 import { presenterProductionGate, type PresenterProductionGate } from "../lib/shotProduction";
 import { Alert, Button, Modal, Tabs } from 'antd';
 import { consumeBusinessPageContext, saveBusinessPageContext } from '../lib/businessPageNavigation';
 import { EMPTY_CONFIG } from './smartBusiness/digitalEmployeeConfigRules';
 import { OnboardingPanel } from './smartBusiness/DigitalEmployeeOnboardingPanel';
-import { GoalPanel, EMPTY_GOAL, type GoalDraft, type BusinessLine, type ContentPlatform } from './smartBusiness/WeeklyGoalPanel';
+import { GoalPanel, type GoalDraft, type BusinessLine, type ContentPlatform } from './smartBusiness/WeeklyGoalPanel';
+import { createDigitalEmployeeConfigurationAction } from './digitalEmployeeConfigurationAction';
 import { type OpenBusinessLink } from './smartBusiness/BatchFollowupTruthPanel';
 import WeeklyStartConflictAlert from './WeeklyStartConflictAlert';
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
@@ -171,7 +171,6 @@ export default function DigitalEmployeePage({
   const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
   const [planHistoryOpen, setPlanHistoryOpen] = useState(false);
   const [weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen] = useState(false);
-  const goalPanelRef = useRef<HTMLDivElement>(null);
   const overviewRequestVersionRef = useRef(0);
   const enterpriseFactsRecoveryRef = useRef(new Map<string, Promise<void>>());
   const productionRangeLoadingRef = useRef(false);
@@ -663,14 +662,6 @@ export default function DigitalEmployeePage({
     requestOverviewRange(range);
   };
 
-  const scrollTo = (target: React.RefObject<HTMLDivElement | null>) => {
-    window.setTimeout(
-      () =>
-        target.current?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }),
-      50,
-    );
-  };
-
   const openBusiness: OpenBusinessLink = (page, view, businessRef = {}) => {
     const planTask = data?.plan?.tasks?.find(
       (item) =>
@@ -713,121 +704,11 @@ export default function DigitalEmployeePage({
     });
   };
 
-  const saveConfig = async (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string; initialPlan?: InitialOperatingPlan }) => {
-    const firstLogin = !data?.config;
-    const createInitialPlan = Boolean(config.initialPlan && firstLogin && !data?.goal && !activeRun);
-    let recoveryGoal = data?.goal;
-    setBusy(createInitialPlan ? "initial-plan" : "config");
-    setError("");
-    overviewRequestVersionRef.current += 1;
-    try {
-      const next = await digitalEmployeeApi.completeOnboarding(config);
-      recoveryGoal = next.goal || recoveryGoal;
-      if (createInitialPlan && config.initialPlan) {
-        const plan = config.initialPlan;
-        const planFingerprint = initialOperatingPlanFingerprint(plan);
-        const fingerprintConstraint = `首次计划校验：${planFingerprint}`;
-        if (!next.config) throw new Error("新手引导配置尚未保存，无法创建首次计划");
-        if (next.goal) {
-          if (!next.goal.constraints.includes(fingerprintConstraint)) {
-            throw new Error("已存在另一版首次计划，不能用当前修改覆盖。请恢复原计划后重试，或在经营页面新建计划。");
-          }
-          const existingPreparation = await digitalEmployeeApi.initialPreparation(next.goal.id);
-          if (existingPreparation.preparation) {
-            const resumed = await digitalEmployeeApi.overview(next.goal.id);
-            overviewRequestVersionRef.current += 1;
-            setData(resumed);
-            setWorkspaceView("today");
-            setNewGoal(false);
-            setWeeklyPlanOpen(false);
-            setOnboardingWelcomeOpen(false);
-            return true;
-          }
-        }
-        const videoPlans = initialPlanVideoPlans(plan, next.config);
-        const created = next.goal ? next : await digitalEmployeeApi.createGoal({
-            ...EMPTY_GOAL,
-            businessLine: "content_growth",
-            title: "首次推荐经营计划",
-            objective: `为 ${plan.products.join("、")} 制作 ${plan.count} 条面向 ${plan.market} 的视频`,
-            contentPlatforms: plan.platforms,
-            target: plan.count,
-            unit: "条",
-            scope: plan.market,
-            endsAt: plan.deliveryDate,
-            constraints: [`制作预算上限：${plan.budgetCapCny} 元`, "真实发布前绑定账号并取得授权", fingerprintConstraint],
-            videoPlans,
-          });
-        recoveryGoal = created.goal || recoveryGoal;
-        if (!created.goal) throw new Error("推荐计划创建失败");
-        const draftPackage = created.plan?.businessPackage;
-        if (!draftPackage?.directorPlan) throw new Error("推荐计划缺少可执行任务包或编导预算");
-        const saved = await digitalEmployeeApi.savePackage(created.goal.id, {
-          ...draftPackage,
-          matrixPlan: initialPlanMatrixRows(plan, next.config),
-          tasks: draftPackage.tasks.map(task => task.templateId === "production" ? { ...task, videoPlans } : task),
-          directorPlan: {
-            ...draftPackage.directorPlan,
-            originalTarget: videoPlans.length,
-            platformVersionTarget: videoPlans.length,
-            publishTarget: videoPlans.length,
-            productionBudget: plan.budgetCapCny,
-            productionBudgetMax: plan.budgetCapCny,
-            productionBudgetMin: Math.min(draftPackage.directorPlan.productionBudgetMin || 0, plan.budgetCapCny),
-          },
-        });
-        const savedRevision = saved.plan?.businessPackage?.revision;
-        if (!savedRevision) throw new Error("已确认计划版本未保存");
-        const initialRequestId = `initial-${created.goal.id.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 80)}`;
-        await digitalEmployeeApi.startInitialPreparation(created.goal.id, savedRevision, plan, initialRequestId);
-        const refreshed = await digitalEmployeeApi.overview(created.goal.id);
-        overviewRequestVersionRef.current += 1;
-        setData(refreshed);
-        setWorkspaceView("today");
-        setNewGoal(false);
-        setWeeklyPlanOpen(false);
-        setOnboardingWelcomeOpen(false);
-        return true;
-      }
-      overviewRequestVersionRef.current += 1;
-      setData(next);
-      if (firstLogin) {
-        setWorkspaceView("today");
-        setNewGoal(!next.goal);
-        setOnboardingWelcomeOpen(true);
-        window.setTimeout(() => window.dispatchEvent(new CustomEvent('lingshu-assistant-say', {
-          detail: { message: '欢迎加入灵枢！准备工作已经完成，接下来我会陪你和四位数字员工一起开始经营。', durationMs: 10_000 },
-        })), 350);
-        scrollTo(goalPanelRef);
-      } else {
-        showActionSuccess("设置已保存", "新的经营设置会从下一轮计划开始生效。");
-      }
-      return true;
-    } catch (configError) {
-      if (await recoverEnterpriseFactsChanged(configError, recoveryGoal)) {
-        if (config.minimalOnboarding) throw configError;
-        return false;
-      }
-      setError(configError instanceof Error ? configError.message : createInitialPlan ? "推荐计划制作准备失败" : "设置保存失败");
-      // The flow owns its inline error; don't replace an actionable server
-      // rejection with a boolean and a generic "try later" message.
-      if (config.minimalOnboarding) throw configError;
-      return false;
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const saveGoal = async (goalInput: GoalDraft) => {
-    const next = await act("goal", () =>
-      digitalEmployeeApi.createGoal(goalInput),
-    );
-    if (next) {
-      setNewGoal(false);
-      setWorkspaceView("live");
-      showActionSuccess("周任务已生成 👏", "四位数字员工会按确认后的计划开始推进。");
-    }
-  };
+  const saveConfig = createDigitalEmployeeConfigurationAction({
+    data, activeRun, overviewRequestVersionRef, setBusy, setError, setData,
+    setWorkspaceView, setNewGoal, setWeeklyPlanOpen, setOnboardingWelcomeOpen,
+    recoverEnterpriseFactsChanged,
+  });
 
   const createWeeklyOutline = async (goalInput: GoalDraft) => {
     setBusy("create-weekly-plan");
