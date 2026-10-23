@@ -102,8 +102,7 @@ test('reference scope comes only from plan references and typed workflow binding
 });
 
 test('overview projects analysis only into agent status, never executable workflow tasks', () => {
-  const source = readFileSync(new URL('../routes/digitalEmployees.ts', import.meta.url), 'utf8');
-  const overview = source.slice(source.indexOf('async function buildOverview('), source.indexOf('type ApprovalPreflight'));
+  const overview = readFileSync(new URL('../routes/digitalEmployeeOverviewReader.ts', import.meta.url), 'utf8');
   assert.match(overview, /projectDirectorAnalysisStatus\(publicAgentStatuses\(\[\]\), directorAnalyses\)/);
   assert.match(overview, /projectDirectorAnalysisStatus\(publicAgentStatuses\(normalizedTasks\), directorAnalyses\)/);
   assert.match(overview, /goalId: goal\.id, runId, includeUnscoped: !requestedGoalId/);

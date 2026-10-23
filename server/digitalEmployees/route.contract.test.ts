@@ -6,6 +6,7 @@ import {
 } from './overviewGoalScope.js';
 
 const source = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const overviewReaderSource = fs.readFileSync('server/routes/digitalEmployeeOverviewReader.ts', 'utf8');
 const overviewProjectionSource = fs.readFileSync('server/digitalEmployees/overviewProjection.ts', 'utf8');
 const productionBudgetRouteSource = fs.readFileSync('server/routes/digitalEmployeeProductionBudgetRoute.ts', 'utf8');
 const taskEvidenceProjectionSource = fs.readFileSync('server/digitalEmployees/taskEvidenceProjection.ts', 'utf8');
@@ -21,15 +22,15 @@ function routeBlock(start: string): string {
 
 assert.match(source, /digitalEmployeesRouter\.use\(requireAuth\)/, 'every Digital Employee endpoint must require an authenticated tenant');
 assert.match(source, /buildBusinessSnapshot/, 'overview must aggregate the real content and customer business snapshot');
-assert.match(source, /businessSnapshot/, 'overview must expose businessSnapshot as a top-level field');
+assert.match(overviewReaderSource, /businessSnapshot/, 'overview must expose businessSnapshot as a top-level field');
 assert.match(source, /VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLES/, 'overview must use the canonical four-expert read model');
-assert.match(source, /agents:\s*projectDirectorAnalysisStatus\(publicAgentStatuses\(normalizedTasks\)/, 'overview must return a fixed four-expert Agent summary enriched with Director analysis');
-assert.match(source, /agents:\s*projectDirectorAnalysisStatus\(publicAgentStatuses\(\[\]\)/, 'overview without a goal must still return four idle expert roles enriched with Director analysis');
-assert.match(source, /agent_role: visibleAgentRole\(task\.agent_role, task\.task_key\)/, 'persisted workflow tasks must be normalized at the read boundary');
+assert.match(overviewReaderSource, /agents:\s*projectDirectorAnalysisStatus\(publicAgentStatuses\(normalizedTasks\)/, 'overview must return a fixed four-expert Agent summary enriched with Director analysis');
+assert.match(overviewReaderSource, /agents:\s*projectDirectorAnalysisStatus\(publicAgentStatuses\(\[\]\)/, 'overview without a goal must still return four idle expert roles enriched with Director analysis');
+assert.match(overviewReaderSource, /agent_role: visibleAgentRole\(task\.agent_role, task\.task_key\)/, 'persisted workflow tasks must be normalized at the read boundary');
 assert.match(overviewProjectionSource, /agentRole: visibleAgentRole\(String\(task\.agentRole/, 'persisted plan tasks must be normalized at the read boundary');
-assert.match(source, /requested_by_agent: visibleAgentRole/, 'legacy approval ownership must be normalized at the read boundary');
+assert.match(overviewReaderSource, /requested_by_agent: visibleAgentRole/, 'legacy approval ownership must be normalized at the read boundary');
 assert.match(overviewProjectionSource, /team: \[\.\.\.VISIBLE_AGENT_ROLES\]/, 'legacy plan snapshots must expose the fixed four-expert team');
-assert.match(source, /committedDigitalEmployeeOperatingGoals\(tenantId, goalResult\.items\)/, 'overview must exclude non-operating and uncommitted rebuild lineage records before selecting the current weekly goal');
+assert.match(overviewReaderSource, /committedDigitalEmployeeOperatingGoals\(tenantId, goalResult\.items\)/, 'overview must exclude non-operating and uncommitted rebuild lineage records before selecting the current weekly goal');
 assert.match(source, /isDigitalEmployeeOperatingGoal\(goal\)/, 'direct overview links must reject non-operating lineage records');
 assert.match(source, /updateTenantEnterpriseProfile/, 'onboarding must synchronize missing company basics into the tenant enterprise profile');
 assert.match(source, /critical_business_change/, 'critical product, market, audience, language, platform, account, or publishing-permission changes must notify the active run');
@@ -232,7 +233,7 @@ assert.match(source, /digitalEmployeesRouter\.post\('\/tasks\/:taskId\/evidence'
 assert.match(source, /canonicalEvidenceRef/, 'attached evidence must be resolved against tenant-owned records');
 
 assert.match(source, /runReviewSummary/, 'active workflow runs must expose a live review summary');
-assert.match(source, /liveReview/, 'overview must return a live review before the run is terminal');
+assert.match(overviewReaderSource, /liveReview/, 'overview must return a live review before the run is terminal');
 assert.match(source, /recordBelongsToTask/, 'business evidence must be scoped to the workflow run and task lineage');
 assert.match(source, /const canonicalBusinessRefs = observation\.businessRefs\.length[\s\S]{0,180}task\.business_refs/, 'observe reconciliation must preserve business refs prepared earlier in the same tick');
 assert.match(source, /const taskUpdate = \{ status: waitStatus[\s\S]{0,180}business_refs: canonicalBusinessRefs/, 'waiting or input-blocked tasks must persist canonical prepared/observed business refs');
