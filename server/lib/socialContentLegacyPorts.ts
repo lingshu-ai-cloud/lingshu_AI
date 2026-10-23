@@ -14,8 +14,8 @@ export {
 
 export {
   alignStudioVoiceForAutomation,
-  automationBgmAudio,
-  automationBgmCatalog,
   resolveStudioVoiceExecutionPlan,
   synthesizeStudioVoiceForAutomation,
 } from '../routes/studio.js';
+
+export { automationBgmAudio, automationBgmCatalog } from '../routes/studioBgmCatalog.js';

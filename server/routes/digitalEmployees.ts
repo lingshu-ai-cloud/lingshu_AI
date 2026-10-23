@@ -48,7 +48,7 @@ import { readTenantPublishingReadiness } from '../digitalEmployees/publishingRun
 import { migrateLegacyPublishingPlanAccountBindings, packageGrantWasInvalidatedAfterApproval } from '../digitalEmployees/publishingPlanAccountMigration.js';
 import { getTenantAwareGoogleOAuthClient, getTenantAwareInstagramOAuthClient, getTenantAwareLinkedInOAuthClient, getTenantAwareMetaOAuthClient, getTenantAwareTikTokOAuthClient } from '../lib/oauthConfig.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
-import { automationBgmCatalog } from './studio.js';
+import { automationBgmCatalog } from './studioBgmCatalog.js';
 import { normalizeVideoPlan, spokenLanguageMatches, videoPlanErrors, type VideoCreationPlan, type VideoPreproductionPreview } from '../../shared/contracts/videoCreationPlan.js';
 import { invalidatePublishingApprovalForProject, invalidatePublishingAuthorizationForRun } from '../digitalEmployees/publishingExecution.js';
 import { contentAcceptanceHash, contentAccepted } from '../digitalEmployees/contentAcceptance.js';

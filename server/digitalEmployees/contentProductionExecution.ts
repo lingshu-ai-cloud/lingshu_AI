@@ -13,7 +13,7 @@ import { presenterApprovalForProject, presenterApprovalResumesQuality } from './
 import { finishContent } from './contentFinish.js';
 import { directContent, selectedSegments } from './contentDirection.js';
 import { chooseMusic } from './automaticMusic.js';
-import { automationBgmCatalog, automationBgmAudio } from '../routes/studio.js';
+import { automationBgmCatalog, automationBgmAudio } from '../routes/studioBgmCatalog.js';
 import { buildPresentationTimeline } from './presenterMix.js';
 import { normalizeVideoPlan, spokenLanguageMatches, usesDigitalPresenter, presentationScenes, type VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 import { reviewFinalNarration, narrationEvidenceIssues } from './narration.js';
