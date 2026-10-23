@@ -1,9 +1,10 @@
 import type {DataStore,Record_} from '../storage/datastore.js';
-import {organizationRoleOrNull} from '../lib/organizationRole.js';
+import {organizationRoleOrNull,localTenantMember} from '../lib/organizationRole.js';
 import {SocialProgramError} from './service.js';
 import {currentDataAuthority} from '../storage/dataAuthority.js';
 import {localAccountRecordsFile,readLocalAccountRecords} from '../lib/localAccountStore.js';
 export async function assertWeeklyScheduleActor(store:DataStore,scope:{tenantId:string;actorUserId:string;packageVersion:number}){
+ if(localTenantMember(scope.tenantId,scope.actorUserId)===null)throw new SocialProgramError('weekly_schedule_user_forbidden',403,'当前用户无权确认此经营排期。');
  let user=await store.getById<Record_>('users',scope.actorUserId);
  // Local-auth users live in the same persisted registry used by requireAuth,
  // not necessarily in the application users collection. Never cross authorities

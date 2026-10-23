@@ -8,7 +8,7 @@ import {readCandidateSemanticAssessment} from '../socialDiscovery/candidateSeman
 import {createExactShotMaterializationService} from '../lib/referenceExactShotMaterialization.js';
 import {verifiedWeeklyCandidateMedia} from './weeklyCandidateReassessment.js';
 import {sourceAccountFromVideoUrl,videoSourceIdentity} from '../routes/videoSourceIdentity.js';
-import {readWeeklyReviewActor} from '../socialPrograms/weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewActor.js';
 
 /** Candidate-only analytical evidence. This collection is never a production
  * reference, media licence, schedule authorization or content-creation permit. */

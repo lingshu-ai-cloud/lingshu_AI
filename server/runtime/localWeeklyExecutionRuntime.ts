@@ -3,7 +3,7 @@ import type {DataStore,Record_} from '../storage/datastore.js';
 import {store} from '../storage/index.js';
 import {currentDataAuthority,runWithDataAuthority} from '../storage/dataAuthority.js';
 import {localFallbacksEnabled} from '../lib/localFallbackPolicy.js';
-import {readWeeklyReviewActor} from '../socialPrograms/weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewActor.js';
 import {SocialProgramError} from '../socialPrograms/service.js';
 import {PACKAGES,type PackageRow} from '../socialPrograms/weeklyOperatingPackageSupport.js';
 import {executionPackageFrozen} from '../socialPrograms/weeklyExecutionGate.js';

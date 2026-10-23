@@ -1,6 +1,6 @@
 import type {DataStore,Record_} from '../storage/datastore.js';
 import {socialRequestHash} from '../starter198/socialContentValidation.js';
-import {readWeeklyReviewActor} from '../socialPrograms/weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewActor.js';
 import {planTerminalDiscoverySourceRetry} from './retryPlan.js';
 import type {SocialInspirationCollectionRun} from '../../shared/contracts/socialContentWorkflow.js';
 import {PACKAGES} from '../socialPrograms/weeklyOperatingPackageSupport.js';

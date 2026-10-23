@@ -1,3 +1,4 @@
+import { readVideoApplicationSources } from '../../tests/fixtures/videoApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { discoverySupplyLabel } from '../../src/components/InspirationDashboard';
@@ -6,10 +7,11 @@ const route = fs.readFileSync(new URL('../routes/socialDiscovery.ts', import.met
 const api = fs.readFileSync(new URL('../../src/lib/socialDiscoveryApi.ts', import.meta.url), 'utf8');
 const scheduler = fs.readFileSync(new URL('../routes/scheduler.ts', import.meta.url), 'utf8');
 const service = fs.readFileSync(new URL('./service.ts', import.meta.url), 'utf8');
-const videos = fs.readFileSync(new URL('../routes/videos.ts', import.meta.url), 'utf8');
+const videos = readVideoApplicationSources();
 const dashboard = fs.readFileSync(new URL('../../src/components/inspiration/DiscoveryScopePanel.tsx', import.meta.url), 'utf8');
 const inspirationDashboard = fs.readFileSync(new URL('../../src/components/InspirationDashboard.tsx', import.meta.url), 'utf8');
 const inspirationVideoCards = fs.readFileSync(new URL('../../src/components/InspirationVideoCards.tsx', import.meta.url), 'utf8');
+const inspirationVideoResults = fs.readFileSync(new URL('../../src/components/inspiration/InspirationVideoResults.tsx', import.meta.url), 'utf8');
 
 assert.match(route, /benchmarkAccounts:\s*benchmarkAccounts\(body\.benchmarkAccounts\)/, '用户确认的对标账号必须写入发现范围');
 assert.match(route, /\['linkedin', 'facebook', 'instagram', 'tiktok', 'youtube'\]/, 'LinkedIn 与 Facebook 必须作为默认主采集平台');
@@ -33,7 +35,8 @@ assert.match(dashboard, /'facebook'/, '发现范围必须可配置 Facebook');
 assert.match(service, /discoveryContext:\s*\{ runId, scopeId: scope\.id, scopeVersion: scope\.version, mode, queryRef: target\.ref,/, '采集必须向素材写入运行溯源');
 assert.match(service, /weeklyOriginalAccountCollection:[\s\S]*?actorInputSha256:/, '黄金五条原运行必须锁定同 run 下载输入身份');
 assert.match(videos, /discoveryOrigins:\s*discoveryOrigins\(existingAnalysis\.discoveryOrigins/, '去重素材也必须追加发现溯源');
-assert.match(inspirationDashboard, /import \{ VideoCard, VideoListItem \} from ['"]\.\/InspirationVideoCards['"]/, '灵感大屏必须组合独立的视频供给卡片');
+assert.match(inspirationDashboard, /<InspirationVideoResults/, '灵感大屏必须挂载共享供给结果视图');
+assert.match(inspirationVideoResults, /import \{ VideoCard, VideoListItem \} from ['"]\.\.\/InspirationVideoCards['"]/, '结果视图必须组合独立的视频供给卡片');
 assert.match(inspirationVideoCards, /discoverySupplyLabel\(video\)/, '素材卡必须向用户解释三类供给来源');
 for (const [mode, expected] of [['momentum', '行业起量'], ['account', '确认对标'], ['innovation', '创新参考']] as const) {
   assert.equal(discoverySupplyLabel({ aiAnalysis: { discoveryOrigins: [{ mode }] } } as never), expected, `${mode} 供给必须展示稳定且可区分的用户标签`);

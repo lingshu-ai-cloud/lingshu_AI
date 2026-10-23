@@ -2,7 +2,7 @@ import type {DataStore,Record_} from '../storage/datastore.js';
 import type {SocialCrawlStrategy,SocialDiscoveryMode} from '../../shared/contracts/socialContentWorkflow.js';
 import {socialRequestHash} from '../starter198/socialContentValidation.js';
 import {organizationRoleOrNull} from '../lib/organizationRole.js';
-import {readWeeklyReviewActor} from '../socialPrograms/weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewActor.js';
 
 const COLLECTION='social_discovery_scopes';
 type ScopeRow=Record_&{tenant_id:string;version:number;status:string;payload:SocialCrawlStrategy};

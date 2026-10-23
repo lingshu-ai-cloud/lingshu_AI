@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DataStore, Record_ } from '../storage/datastore.js';
-import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewActor.js';
 import { organizationRoleOrNull } from '../lib/organizationRole.js';
 import { socialRequestHash } from '../starter198/socialContentValidation.js';
 import { frozenLinkedInCompanyActorInput, type LinkedInCompanyCollectionScope } from '../routes/linkedinCompanyPostPaidCollection.js';

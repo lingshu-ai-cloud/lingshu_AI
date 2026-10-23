@@ -12,7 +12,7 @@ import { readWeeklyCtaContactCard, saveWeeklyCtaContact } from '../socialProgram
 import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOperatingPackages.js';
 import { listWeeklyExecutionTasks } from '../socialPrograms/executionTasks.js';
 import { auditWeeklyTasks } from '../socialPrograms/weeklyTaskAudit.js';
-import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewActor.js';
 import { SocialProgramError } from '../socialPrograms/service.js';
 import { DURABLE_OPERATION_LEASE_COLLECTION } from './durableLease.js';
 import { WEEKLY_CTA_CONTACTS } from '../socialPrograms/weeklyCtaContact.js';

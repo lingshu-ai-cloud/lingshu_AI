@@ -1,3 +1,4 @@
+import { readVideoApplicationSources } from '../../tests/fixtures/videoApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import express, { type Request } from 'express';
@@ -221,7 +222,7 @@ try {
     tenantId: 'legacy-tenant', taskId: 'task-a', page: 'smartAssets',
   })).status, 200, 'non-starter tenants must retain their existing legacy surface');
 
-  const videosSource = fs.readFileSync(new URL('../routes/videos.ts', import.meta.url), 'utf8');
+  const videosSource = readVideoApplicationSources();
   assert.match(videosSource, /scoped \? \{ id, async \} : \{ id, sourceUrl, title, platform, async \}/,
     'starter record analysis must ignore a client-supplied remote URL');
 

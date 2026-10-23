@@ -1,16 +1,15 @@
+import { readVideoApplicationSources, videoApplicationFunction } from '../../tests/fixtures/videoApplicationSources.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
 import { store } from '../storage/index.js';
 import { queueAnalyzeSource } from './videos.js';
 
-const source = fs.readFileSync(new URL('./videos.ts', import.meta.url), 'utf8');
-const start = source.indexOf('async function queueAnalyzeSource(');
-const end = source.indexOf('/** Internal service entry', start);
-const queueFunction = source.slice(start, end);
+const source = readVideoApplicationSources();
+const queueFunction = videoApplicationFunction(source, 'queueAnalyzeSource');
 
 test('source analysis persists a real crawler receipt and terminalizes enqueue failures', () => {
-  assert.ok(start >= 0 && end > start, 'queueAnalyzeSource must remain discoverable');
+  assert.match(queueFunction, /async function queueAnalyzeSource\(/, 'the shared queue implementation must remain discoverable');
   assert.match(queueFunction, /if \(!queuedRecord\) throw new Error\('source_analysis_queue_marker_persist_failed'\)/);
   assert.match(queueFunction, /opsTask\s*=\s*enqueueCrawlerOpsTask\(/);
   assert.match(queueFunction, /sourceAnalysisQueueReceiptPatch\(opsTask, acceptedAt\)/);

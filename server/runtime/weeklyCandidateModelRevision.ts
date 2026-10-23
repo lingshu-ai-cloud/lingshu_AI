@@ -3,7 +3,7 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import {socialJson,socialObject,socialRequestHash} from '../starter198/socialContentValidation.js';
-import {readWeeklyReviewActor} from '../socialPrograms/weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewActor.js';
 import {probeReferenceMediaClock} from '../lib/referenceMediaClock.js';
 import {classifyDiscoverySourceFailure} from '../socialDiscovery/sourceFailure.js';
 import {CANDIDATE_ANALYSIS_OPERATIONS,CANDIDATE_ANALYSIS_RECEIPTS} from './weeklyCandidateReassessment.js';

@@ -11,7 +11,7 @@ import {latestPackageRow,PACKAGES} from './weeklyOperatingPackageSupport.js';
 import {readWeeklyCustomerSettings,updateWeeklyCustomerSettings} from './weeklyCustomerSettings.js';
 import {readTenantEnterpriseProfile} from '../routes/enterprise.js';
 import {executionPackageFrozen,withExecutionPackageGate} from './weeklyExecutionGate.js';
-import {readWeeklyReviewActor} from './weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from './weeklyReviewActor.js';
 import {currentDataAuthority} from '../storage/dataAuthority.js';
 import {localWeeklyExecutionRuntime} from '../runtime/localWeeklyExecutionRuntime.js';
 import {createSocialOperatingOrchestrationService,weeklyAuthorityFromResolution} from '../socialOperating/orchestration.js';

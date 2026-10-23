@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import type {ExecutionPackageScope} from './weeklyExecutionGate.js';
-import {readWeeklyReviewActor} from './weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from './weeklyReviewActor.js';
 import {SocialProgramError} from './service.js';
 import {executionPackageFrozen} from './weeklyExecutionGate.js';
 

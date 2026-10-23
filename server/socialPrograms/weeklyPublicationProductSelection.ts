@@ -5,7 +5,7 @@ import type {DataStore,Record_} from '../storage/datastore.js';
 import type {EnterpriseProfile} from '../routes/enterprise.js';
 import {socialJson,socialObject,socialRequestHash} from '../starter198/socialContentValidation.js';
 import {readWeeklyExistingFactSource} from './weeklyExistingFactSource.js';
-import {readWeeklyReviewActor} from './weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from './weeklyReviewActor.js';
 import {organizationRoleOrNull} from '../lib/organizationRole.js';
 import {SocialProgramError} from './service.js';
 import {latestPackageRow} from './weeklyOperatingPackageSupport.js';

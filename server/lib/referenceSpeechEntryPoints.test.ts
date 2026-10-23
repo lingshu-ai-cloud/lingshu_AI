@@ -1,3 +1,4 @@
+import { readVideoApplicationSources, videoApplicationFunction } from '../../tests/fixtures/videoApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -5,22 +6,22 @@ import test from 'node:test';
 const source = (file: string) => fs.readFileSync(new URL(file, import.meta.url), 'utf8');
 
 test('every downloaded-video model success locks measured source speech; coarse ASR is no longer a production analysis entry', () => {
-  const videos = source('../routes/videos.ts');
-  const body = videos.slice(videos.indexOf('export async function analyzeDownloadedVideoWithFallback'), videos.indexOf('function shouldRetryGeminiWithNormalizedVideo'));
-  assert.ok(body.includes('prepareReferenceNarration('));
+  const videos = readVideoApplicationSources();
+  const body = videoApplicationFunction(videos, 'analyzeDownloadedVideoWithFallback');
+  const narration = videoApplicationFunction(videos, 'referenceNarrationForVideoAnalysis');
+  assert.ok(body.includes('referenceNarrationForVideoAnalysis('));
+  assert.ok(narration.includes('if (!exactQwenScope()) return prepare(filePath, duration, { tenantId })'));
+  assert.ok(narration.includes('scoped_visual_revision_has_no_asr_authorization'));
   assert.equal(body.includes('transcribeAudioWithQwen('), false);
   assert.equal(body.includes('coarseAsrSentences('), false);
   assert.ok((body.match(/return \{ analysis: await finishSourceAnalysis\(/g) || []).length >= 3,
     'Qwen, Gemini and normalized Gemini must all apply the source-speech lock');
   assert.ok(body.includes('const locked = lockReferenceSpeechTimeline('));
-  for (const entry of ['async function triggerVideoAnalysis', 'export async function analyzeSourceVideoJob', 'async function analyzeDownloadedMaterial', 'async function analyzeOpsVideo']) {
-    const start = videos.indexOf(entry);
-    assert.ok(start >= 0, `${entry} must remain in the shared source-analysis chain`);
-    const end = videos.indexOf('\nasync function ', start + entry.length);
-    const wrapper = videos.slice(start, end < 0 ? undefined : end);
-    if (entry.includes('analyzeSourceVideoJob')) {
-      assert.ok(videos.includes('adapters.analyze || analyzeDownloadedVideoWithFallback'));
-    } else assert.ok(wrapper.includes('analyzeDownloadedVideoWithFallback('));
+  for (const name of ['triggerVideoAnalysis', 'analyzeSourceVideoJobInner', 'analyzeDownloadedMaterial', 'analyzeOpsVideo']) {
+    const entry = videoApplicationFunction(videos, name);
+    if (name === 'analyzeSourceVideoJobInner') {
+      assert.ok(entry.includes('adapters.analyze || analyzeDownloadedVideoWithFallback'));
+    } else assert.ok(entry.includes('analyzeDownloadedVideoWithFallback('));
   }
 });
 

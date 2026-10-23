@@ -4,7 +4,7 @@ import {socialJson,socialObject,socialRequestHash} from '../starter198/socialCon
 import {submitMaterialAnalysisPaidRequest,type MaterialAnalysisPaidCall} from '../digitalEmployees/materialAnalysisPaidOperation.js';
 import {dashscopeApiKey,getQwenProviderBinding} from '../agents/qwen.js';
 import {CANDIDATE_CONTEXT_ASSESSMENTS,readCandidateContextAssessment,type CandidateContextAssessment} from './candidateContextAssessment.js';
-import {readWeeklyReviewActor} from '../socialPrograms/weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewActor.js';
 import {createHash} from 'node:crypto';
 export const CANDIDATE_SEMANTIC_OPERATIONS='social_candidate_semantic_operations';
 export const CANDIDATE_SEMANTIC_PROVIDER_RECEIPTS='social_candidate_semantic_provider_receipts';

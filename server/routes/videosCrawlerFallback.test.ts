@@ -1,3 +1,4 @@
+import { readVideoApplicationSources } from '../../tests/fixtures/videoApplicationSources.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { crawlFailureMessage, youtubeHtmlSearchUrl } from './videos.js';
@@ -12,7 +13,7 @@ assert.match(weekly.url, /search_query=face%20cleanser%20supplier/);
 assert.match(weekly.url, /sp=EgIIAw%253D%253D/);
 assert.equal(weekly.dateEvidence, 'youtube-upload-filter');
 
-const route = readFileSync(new URL('./videos.ts', import.meta.url), 'utf8');
+const route = readVideoApplicationSources();
 const publicDiscovery = readFileSync(new URL('./videoCrawlerPublicDiscovery.ts', import.meta.url), 'utf8');
 assert.match(route, /crawlYouTubePublicSearch\(\{ keyword, limit, dateFrom, dateTo, crawlFlatSearch: crawlYtDlpSearch \}\)/);
 assert.match(publicDiscovery, /YouTube yt-dlp search failed, trying HTML search/);

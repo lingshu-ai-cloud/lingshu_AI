@@ -4,7 +4,7 @@ import {socialRequestHash} from '../starter198/socialContentValidation.js';
 import {SocialProgramError} from './service.js';
 import {PACKAGES,latestPackageRow,type PackageRow} from './weeklyOperatingPackageSupport.js';
 import {readWeeklyAutomationTemplate} from './weeklyAutomationTemplate.js';
-import {readWeeklyReviewActor} from './weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from './weeklyReviewActor.js';
 import {organizationRoleOrNull} from '../lib/organizationRole.js';
 import {withExecutionPackageGate,type ExecutionPackageScope} from './weeklyExecutionGate.js';
 import {readWeeklyPublicationProductSelectionChoices} from './weeklyPublicationProductSelection.js';

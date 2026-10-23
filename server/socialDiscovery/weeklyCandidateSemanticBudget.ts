@@ -12,7 +12,7 @@ import {quoteSocialPaidOperationTariff} from '../lib/socialContentTaskBudgetAuth
 import {createSocialContentVerifiedTariffReader} from '../lib/socialContentVerifiedTariffs.js';
 import {createQwenMaaSPublishedTariffReader} from '../lib/socialContentPublishedTariffs.js';
 import {withPaidOperationLock} from '../lib/paidOperationLock.js';
-import {readWeeklyReviewActor} from '../socialPrograms/weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewActor.js';
 import {socialObject,socialJson,socialRequestHash} from '../starter198/socialContentValidation.js';
 import {verifiedWeeklyCandidateMedia} from '../runtime/weeklyCandidateReassessment.js';
 import {readWeeklyCandidateAdmissionSnapshot} from '../runtime/weeklyCandidateAdmissionSnapshot.js';

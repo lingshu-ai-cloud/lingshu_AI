@@ -2,7 +2,7 @@ import type {DataStore,Record_} from '../storage/datastore.js';
 import type {VersionedSocialRef} from '../../shared/contracts/socialProgram.js';
 import type {SocialAudienceRole} from '../../shared/contracts/socialContentWorkflow.js';
 import {socialJson,socialObject,socialRequestHash} from '../starter198/socialContentValidation.js';
-import {readWeeklyReviewActor} from '../socialPrograms/weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewActor.js';
 import {verifyEnterpriseFactContent,type EnterpriseProfile} from '../routes/enterprise.js';
 import {verifiedWeeklyCandidateMedia} from '../runtime/weeklyCandidateReassessment.js';
 import {executionPackageFrozen} from '../socialPrograms/weeklyExecutionGate.js';

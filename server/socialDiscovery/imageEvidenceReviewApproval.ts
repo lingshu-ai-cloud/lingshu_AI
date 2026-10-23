@@ -3,7 +3,7 @@ import type { DataStore, Record_ } from '../storage/datastore.js';
 import type { SocialTaskBudgetScope } from '../lib/socialContentTaskBudget.js';
 import type { SocialPaidOperationIntent } from '../lib/socialContentTaskBudgetAuthority.js';
 import { organizationRoleOrNull } from '../lib/organizationRole.js';
-import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewActor.js';
 import { imageEvidenceReviewPlanHash, type ImageEvidenceApprovedPlan } from '../agents/imageEvidencePaidContext.js';
 import { imagePostSourceHash } from './imagePostReanalysis.js';
 import { videoAnalysisOf } from '../lib/videoAnalysisCodec.js';

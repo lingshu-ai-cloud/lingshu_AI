@@ -21,7 +21,8 @@ import {getWeeklyExecutionTaskRow} from './executionTasks.js';
 test('only current issuer signature, revocation and live matching Meta account admit frozen CTA', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'weekly-cta-positive-'));
   const env = { storage: process.env.LOCAL_OBJECT_STORAGE_ROOT, driver: process.env.OBJECT_STORAGE_DRIVER,
-    key: process.env.TENANT_PLATFORM_APP_KEY };
+    key: process.env.TENANT_PLATFORM_APP_KEY, mode: process.env.NODE_ENV };
+  process.env.NODE_ENV = 'test';
   process.env.LOCAL_OBJECT_STORAGE_ROOT = root; process.env.OBJECT_STORAGE_DRIVER = 'local';
   process.env.TENANT_PLATFORM_APP_KEY = 'isolated-cta-test-key';
   try {
@@ -118,6 +119,7 @@ test('only current issuer signature, revocation and live matching Meta account a
     assert.equal(await readWeeklySamplePolicyEvidence({ store: f.store,
       scope: { ...scope, packageVersion: 2 }, authority, now }).catch(() => null), null);
   } finally {
+    if (env.mode === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = env.mode;
     if (env.storage === undefined) delete process.env.LOCAL_OBJECT_STORAGE_ROOT; else process.env.LOCAL_OBJECT_STORAGE_ROOT = env.storage;
     if (env.driver === undefined) delete process.env.OBJECT_STORAGE_DRIVER; else process.env.OBJECT_STORAGE_DRIVER = env.driver;
     if (env.key === undefined) delete process.env.TENANT_PLATFORM_APP_KEY; else process.env.TENANT_PLATFORM_APP_KEY = env.key;

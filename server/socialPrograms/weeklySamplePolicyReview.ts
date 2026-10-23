@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import { socialRequestHash } from '../starter198/socialContentValidation.js';
 import { organizationRoleOrNull } from '../lib/organizationRole.js';
-import { readWeeklyReviewActor } from './weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from './weeklyReviewActor.js';
 import { inspectWeeklySamplePolicyCandidates, type SamplePolicyScope } from './weeklySamplePolicyEvidence.js';
 import { readWeeklyCtaContact } from './weeklyCtaContact.js';
 import { withExecutionPackageGate } from './weeklyExecutionGate.js';

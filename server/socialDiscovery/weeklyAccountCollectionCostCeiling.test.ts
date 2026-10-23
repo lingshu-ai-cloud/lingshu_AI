@@ -10,6 +10,9 @@ import {persistWeeklyAccountCostCeiling,readWeeklyAccountCostCeiling,type Weekly
 
 test('independent full-cost statement is durable, exact-job bound and never a paid permit',async t=>{
  const f=await prepareWeeklyEnterpriseFactFixture(t),accountUrl='https://www.tiktok.com/@fixture_factory';
+ const packages=await f.store.list<{id:string}>('social_weekly_operating_packages',{where:{tenant_id:f.task.tenantId,program_id:f.task.programId,package_id:f.task.packageId,version:f.task.packageVersion}});
+ assert.equal(packages.totalItems,1);
+ assert.equal(await f.store.update('social_weekly_operating_packages',packages.items[0]!.id,{payload:{...f.pkg,discoveryBudgetCny:5}}),true);
  const task={...f.task,workflowKind:'readiness' as const,scope:'package' as const,accountId:null,publicationTaskId:null,inputSnapshot:{},status:'blocked' as const,ownBlockingReasons:['business_dispatch_required'],schedule:{...f.task.schedule,stepKind:'benchmark_collection' as const}};
  await f.store.create('social_weekly_execution_tasks',{tenant_id:task.tenantId,program_id:task.programId,package_id:task.packageId,package_version:task.packageVersion,task_id:task.taskId,idempotency_key:task.idempotencyKey,status:task.status,payload:task});
  const payload={approval:{status:'approved',scopeVersion:3,approvedBy:'owner'},weeklyAccountRevision:{accountUrl,targetCount:5},discoveryBrief:{discoveryModes:['account'],weeklyAccountCollectionTarget:{accountUrl,targetCount:5},modePolicies:{account:{enabled:true}}}};

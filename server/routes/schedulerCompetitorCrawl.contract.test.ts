@@ -1,3 +1,4 @@
+import { readVideoApplicationSources } from '../../tests/fixtures/videoApplicationSources.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -6,7 +7,7 @@ const schedulerSource = readFileSync(new URL('./scheduler.ts', import.meta.url),
 const crawlSource = readFileSync(new URL('./schedulerCrawlTasks.ts', import.meta.url), 'utf8');
 const start = crawlSource.indexOf('export async function executeCompetitorAccountCrawl');
 const competitorCrawl = crawlSource.slice(start);
-const videosSource = readFileSync(new URL('./videos.ts', import.meta.url), 'utf8');
+const videosSource = readVideoApplicationSources();
 const imagePostImportSource = readFileSync(new URL('../socialDiscovery/imagePostImport.ts', import.meta.url), 'utf8');
 
 test('scheduled benchmark collection imports videos and scoped image posts with captions', () => {

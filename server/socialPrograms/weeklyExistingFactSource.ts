@@ -1,6 +1,6 @@
 import type {DataStore,Record_} from '../storage/datastore.js';
 import {verifyEnterpriseFactContent,type EnterpriseProfile} from '../routes/enterprise.js';
-import {readWeeklyReviewActor} from './weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from './weeklyReviewActor.js';
 import {socialJson,socialObject} from '../starter198/socialContentValidation.js';
 import {SocialProgramError} from './service.js';
 import {organizationRoleOrNull} from '../lib/organizationRole.js';

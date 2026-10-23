@@ -1,3 +1,4 @@
+import { readVideoApplicationSources } from '../../tests/fixtures/videoApplicationSources.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -197,7 +198,7 @@ assert.match(deliveryComponents, /type Platform = 'meta' \| 'google' \| 'tiktok'
 assert.match(deliveryComponents, /label="Client Key"[\s\S]*?label="Client Secret"[\s\S]*?app\.oauthRedirectUri/, 'admin delivery UI must expose TikTok credentials and callback');
 assert.match(read('pb_migrations/1784800000_expand_tiktok_tenant_apps.js'), /\^\(meta\|google\|tiktok\|wecom\)\$/, 'PocketBase tenant platform validation must accept TikTok');
 
-const videos = read('server/routes/videos.ts');
+const videos = readVideoApplicationSources();
 assert.match(videos, /const \{ tenantId \} = res\.locals as AuthLocals/, 'video routes must resolve tenant from auth locals');
 assert.match(videos, /get\('\/ops\/queue'[\s\S]*?crawlerOpsRecordIdsForTenant\(tenantId\)[\s\S]*?filterCrawlerOpsTasksForRecordIds/, 'crawler ops queue must only expose tasks backed by current-tenant videos');
 assert.match(videos, /get\('\/ops\/stats'[\s\S]*?crawlerOpsRecordIdsForTenant\(tenantId\)[\s\S]*?crawlerOpsStats\(tenantId, visibleRecordIds\)/, 'crawler ops stats must only aggregate current-tenant tasks');

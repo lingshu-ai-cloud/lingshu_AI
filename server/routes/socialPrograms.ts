@@ -62,7 +62,7 @@ import {assertSocialSceneReworkQueueRegistered,wakeSocialSceneReworkJob} from '.
 import {readWeeklyCtaContactCard,saveWeeklyCtaContact} from '../socialPrograms/weeklyCtaContact.js';
 import {readWeeklyPublicationProductSelectionChoices,issueWeeklyPublicationProductSelections} from '../socialPrograms/weeklyPublicationProductSelection.js';
 import {assertWeeklySamplePolicyCandidateActor,readWeeklySamplePolicyCandidateContext,submitWeeklySamplePolicyCandidate,type SamplePolicyTerms} from '../socialPrograms/weeklySamplePolicyEvidence.js';
-import {readWeeklyReviewActor} from '../socialPrograms/weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewActor.js';
 import {organizationRoleOrNull} from '../lib/organizationRole.js';
 import {readWeeklyPinnableReferenceOptions} from '../socialPrograms/planningAuthority.js';
 import {readWeeklyCollectionBudgetCard,readWeeklyCollectionBudgetContext,readWeeklyCollectionRuntimeCard} from '../socialPrograms/weeklyCollectionBudgetCard.js';

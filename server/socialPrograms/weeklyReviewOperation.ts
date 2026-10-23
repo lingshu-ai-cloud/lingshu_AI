@@ -1,6 +1,7 @@
 import type {DataStore, Record_} from '../storage/datastore.js';
 import type {WeeklyExecutionTask, WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';
-import {readWeeklyReviewActor,readWeeklyReviewEvidence} from './weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from './weeklyReviewActor.js';
+import { readWeeklyReviewEvidence } from './weeklyReviewEvidence.js';
 import {withWeeklyProductionAdmissionGuard} from './weeklyCancellation.js';
 import {runWeeklyReviewForPackage} from '../socialReview/weeklyReviewWorker.js';
 import {SocialProgramError} from './service.js';

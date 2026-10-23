@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import {deterministicFingerprint} from '../socialOperating/businessGoalBuilder.js';
 import {organizationRoleOrNull} from '../lib/organizationRole.js';
-import {readWeeklyReviewActor} from '../socialPrograms/weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from '../socialPrograms/weeklyReviewActor.js';
 import type {OperatingAuthoritySnapshot,BusinessContentGoal} from '../../shared/contracts/socialOperatingDecision.js';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import type {WeeklyExecutionTask,WeeklyOperatingPackage,VersionedSocialRef,WeeklyProductionStepKind} from '../../shared/contracts/socialProgram.js';

@@ -8,7 +8,9 @@ import { registerVideoListingRoutes } from './videoListingRoutes.js';
 
 test('video and image list endpoints remain under auth and use only verified tenant scope', async () => {
   const source = readFileSync(new URL('./videos.ts', import.meta.url), 'utf8');
-  assert.ok(source.indexOf('registerVideoListingRoutes(videosRouter, {') > source.indexOf('videosRouter.use(requireAuth)'));
+  const composition = readFileSync(new URL('../videos/application.ts', import.meta.url), 'utf8');
+  assert.ok(source.indexOf('application.registerListingRoutes()') > source.indexOf('videosRouter.use(requireAuth)'));
+  assert.match(composition, /registerVideoListingRoutes\(videosRouter, \{/);
 
   const records: Record<string, unknown>[] = [
     { id: 'video-1', tenantId: 'tenant-a', contentFormat: 'video', title: 'Older target', thumbnailUrl: '/media/older.jpg', crawledAt: '2026-10-20T00:00:00Z' },

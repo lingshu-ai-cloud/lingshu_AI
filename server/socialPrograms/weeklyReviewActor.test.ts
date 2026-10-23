@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import type {DataStore} from '../storage/datastore.js';
 import {runWithDataAuthority} from '../storage/dataAuthority.js';
 import {readWeeklyReviewActor} from './weeklyReviewEvidence.js';
+import {readWeeklyReviewActor as readScopedActor} from './weeklyReviewActor.js';
 import {assertWeeklyScheduleActor} from './weeklyScheduleActor.js';
+test('legacy review identity export delegates to the same standalone lookup',()=>{
+ assert.equal(readWeeklyReviewActor,readScopedActor);
+});
 test('local review identity never falls through to a different authority user record',async()=>{
  let reads=0;
  const store={async getById(){reads++;return {id:'not-a-local-user',tenantId:'foreign',role:'admin'};}} as unknown as DataStore;

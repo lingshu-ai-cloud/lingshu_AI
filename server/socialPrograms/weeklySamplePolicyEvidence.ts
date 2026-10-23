@@ -3,7 +3,7 @@ import type { DataStore, Record_ } from '../storage/datastore.js';
 import { enterpriseAssetObjectKey } from '../storage/enterpriseAssets.js';
 import { objectStorageGetObject, objectStorageHead, objectStorageUpload } from '../storage/objectStorage.js';
 import { socialRequestHash } from '../starter198/socialContentValidation.js';
-import { readWeeklyReviewActor } from './weeklyReviewEvidence.js';
+import { readWeeklyReviewActor } from './weeklyReviewActor.js';
 import { readWeeklyPublicationProductSelection, type WeeklyPublicationProductSelection } from './weeklyPublicationProductSelection.js';
 import { latestPackageRow } from './weeklyOperatingPackageSupport.js';
 import { createSocialOperatingRepository } from '../socialOperating/repository.js';
