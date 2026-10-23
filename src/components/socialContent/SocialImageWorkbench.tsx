@@ -5,6 +5,7 @@ import LsPageHeader from '../ui/LsPageHeader';
 import { LsMediaStateFrame, LsProgressiveMedia } from '../ui/LsExperiencePrimitives';
 import { authHeader } from '../../lib/auth';
 import { socialImageApi } from '../../lib/socialImageApi';
+import { socialContentApi } from '../../lib/socialContentApi';
 import { runPlannedMultiOutput } from '../../lib/socialImageCarousel';
 import { studioApi, type FbPosterBrief, type Material } from '../../lib/studioApi';
 import {
@@ -12,6 +13,7 @@ import {
   type SocialImageContentType,
   type SocialImageCreationPath,
   type SocialImageCreationTask,
+  type SocialImageEnterpriseAssetBinding,
   type SocialImageQualityCheckKey,
   type SocialImageReferenceLayerBlueprint,
   type SocialImageRepairInstruction,
@@ -80,9 +82,12 @@ function ReviewImage({ src, alt }: { src: string; alt: string }) {
 }
 
 export default function SocialImageWorkbench({
-  creationPath, referenceTitle, referenceThumbnail, referenceMediaUrl, referenceCaption, referenceLayerBlueprints, initialTask, onShowCreations,
+  creationPath, contentTaskId, entrySource = 'workspace', referenceTitle, referenceThumbnail, referenceMediaUrl, referenceCaption,
+  referenceLayerBlueprints, initialTask, onShowCreations,
 }: {
   creationPath: SocialImageCreationPath;
+  contentTaskId?: string;
+  entrySource?: 'assistant' | 'workspace' | 'weekly_package';
   referenceTitle?: string;
   referenceThumbnail?: string;
   referenceMediaUrl?: string;
@@ -129,6 +134,8 @@ export default function SocialImageWorkbench({
   const uploadRef = useRef<HTMLInputElement>(null);
   const generationAbortRef = useRef<AbortController | null>(null);
   const generationAbortReasonRef = useRef<'manual' | 'deadline' | null>(null);
+  const contentTaskRef = useRef<Awaited<ReturnType<typeof socialContentApi.getTask>> | null>(null);
+  const runRequestKeyRef = useRef(`image-workbench-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`);
 
   useEffect(() => () => generationAbortRef.current?.abort(), []);
 
@@ -203,23 +210,69 @@ export default function SocialImageWorkbench({
   };
 
   const ensureTask = async () => {
-    if (task) return task;
     const benchmarkImage = referenceMediaUrl || referenceThumbnail || '';
-    const enterpriseAssets = [
-      ...selectedProducts.map(item => ({ assetId: item.id, role: 'product', name: item.name, source: 'enterprise_knowledge_base', required: true })),
-      ...selectedMaterials.map(item => ({ assetId: item.id, role: /logo|标志|品牌标识/i.test(item.name) ? 'logo' : 'scene', name: item.name, source: 'enterprise_material_library', contentHash: item.contentSha256, required: true })),
+    const enterpriseAssets: SocialImageEnterpriseAssetBinding[] = [
+      ...selectedProducts.map(item => ({ assetId: item.id, role: 'product' as const, name: item.name, source: 'enterprise_knowledge_base' as const, required: true })),
+      ...selectedMaterials.map(item => ({ assetId: item.id, role: /logo|标志|品牌标识/i.test(item.name) ? 'logo' as const : 'scene' as const,
+        name: item.name, source: 'enterprise_material_library' as const, contentHash: item.contentSha256, required: true })),
     ];
-    const create = creationPath === 'viral_replication' ? socialImageApi.createFromReference : socialImageApi.createTask;
-    const created = await create({
-      title, creationPath, imageType, objective: 'lead_generation', topicType: topicForType(imageType), coreClaim: resolvedCoreClaim,
-      productRefs: productIds, productNames: selectedProducts.map(item => item.name), audience: [audience], factuality,
-      targetAction: '联系销售或申请样品', referenceUrls: [benchmarkImage, referenceTitle].filter(Boolean), enterpriseAssets,
-      ...(creationPath === 'viral_replication' ? { referenceSnapshot: {
-        sourceUrl: referenceTitle, title: referenceTitle, caption: referenceCaption, imageUrls: benchmarkImage ? [benchmarkImage] : [], collectedAt: new Date().toISOString(),
-      }, referenceLayerBlueprints } : {}),
+    let content = contentTaskRef.current;
+    const boundContentTaskId = task?.productionRuntime?.binding?.contentTaskId;
+    const requestedContentTaskId = boundContentTaskId || contentTaskId;
+    if (!content && requestedContentTaskId) content = await socialContentApi.getTask(requestedContentTaskId);
+    if (!content) {
+      content = await socialContentApi.createTask({
+        title: title.trim() || '图片内容制作', objective: resolvedCoreClaim,
+        productId: productIds[0] || null, productRef: selectedProducts[0]?.name || null, audience,
+        platforms: [platform], languages: [language], formats: ['social_image'], aspectRatio: ratio,
+        requestedOutputCount: 1, callToAction: '联系销售或申请样品', creationMode: creationPath,
+        assetAvailability: selectedMaterials.length ? 'ready' : 'none', managementMode: 'one_click_managed',
+        productionMode: 'social_ready', productionApproach: 'ai_enhanced', mode: entrySource === 'weekly_package' ? 'weekly' : 'instant',
+        themeId: 'product_value', topic: title.trim() || resolvedCoreClaim,
+      }, `${runRequestKeyRef.current}:content`);
+    } else {
+      const existingContent = content;
+      const changes = {
+        title: title.trim() || '图片内容制作', objective: resolvedCoreClaim,
+        productId: productIds[0] || null, productRef: selectedProducts[0]?.name || null, audience,
+        platforms: [platform], languages: [language], formats: ['social_image'], aspectRatio: ratio,
+        requestedOutputCount: 1, callToAction: '联系销售或申请样品', creationMode: creationPath,
+        assetAvailability: selectedMaterials.length ? 'ready' as const : 'none' as const,
+      };
+      const changed = Object.entries(changes).some(([key, value]) => JSON.stringify(existingContent.brief[key as keyof typeof existingContent.brief]) !== JSON.stringify(value));
+      if (changed) content = await socialContentApi.updateTask(existingContent.taskId, { expectedVersion: existingContent.version, changes },
+        `${runRequestKeyRef.current}:content:${existingContent.version}`);
+    }
+    if (!content) throw new Error('统一内容任务创建失败');
+    contentTaskRef.current = content;
+    if (task) {
+      const binding = task.productionRuntime?.binding;
+      if (binding) {
+        if (binding.contentTaskId !== content.taskId) throw new Error('图片运行与统一内容任务不一致，请刷新后重试');
+        if (binding.contentTaskVersion === content.version) return task;
+        const refreshed = await socialImageApi.refreshContentTask(task, content.version);
+        setTask(refreshed.task);
+        return refreshed.task;
+      }
+    }
+    const created = await socialImageApi.createOrResumeRun(content.taskId, {
+      expectedContentTaskVersion: content.version,
+      idempotencyKey: `${runRequestKeyRef.current}:run`,
+      deliverableKey: 'primary-image', entrySource, imageType,
     });
-    setTask(created.task);
-    return created.task;
+    const configured = await socialImageApi.updateTask(created.task, {
+      title, creationPath, imageType, materialIds, enterpriseAssets,
+      contentBrief: { ...created.task.contentBrief, coreClaim: resolvedCoreClaim, productRefs: productIds,
+        productNames: selectedProducts.map(item => item.name), audience: [audience], factuality, topicType: topicForType(imageType) },
+      deliverySpec: { ...created.task.deliverySpec, platform, aspectRatio: ratio, language },
+      referenceUrls: [benchmarkImage].filter((value): value is string => Boolean(value)),
+      ...(creationPath === 'viral_replication' ? { referenceSnapshot: {
+        sourceUrl: referenceMediaUrl || referenceThumbnail, title: referenceTitle, caption: referenceCaption, imageUrls: benchmarkImage ? [benchmarkImage] : [],
+        collectedAt: new Date().toISOString(), fingerprint: '',
+      }, replicationRecipe: { ...created.task.replicationRecipe!, referenceLayerBlueprints } } : {}),
+    });
+    setTask(configured.task);
+    return configured.task;
   };
 
   const saveInputs = async () => {

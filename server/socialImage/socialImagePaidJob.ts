@@ -5,6 +5,7 @@ import { tenantAssetRelativePath } from '../lib/assetAccess.js';
 import { materialAssetObjectKey } from '../storage/materialAssets.js';
 import type { SocialImageCreationTask, SocialImageOutputNode } from '../../shared/contracts/socialImageCreation.js';
 import { SOCIAL_IMAGE_TASKS_COLLECTION } from './socialImageTask.js';
+import { evolveSocialImageProductionRuntime } from './socialImageProductionRuntime.js';
 
 type StoredTask = { id: string; tenant_id: string; spec: { socialImageTask?: SocialImageCreationTask } };
 
@@ -64,7 +65,10 @@ async function saveTask(store: DataStore, row: StoredTask, task: SocialImageCrea
 }
 
 function advance(task: SocialImageCreationTask, patch: Partial<SocialImageCreationTask>): SocialImageCreationTask {
-  return { ...task, ...patch, version: task.version + 1, publishable: false, updatedAt: new Date().toISOString() };
+  const now = new Date().toISOString();
+  const next = { ...task, ...patch, version: task.version + 1, publishable: false, updatedAt: now };
+  next.productionRuntime = evolveSocialImageProductionRuntime(task, next, now);
+  return next;
 }
 
 /** A paid unit is write-ahead claimed exactly once. No atomic CAS means no call. */

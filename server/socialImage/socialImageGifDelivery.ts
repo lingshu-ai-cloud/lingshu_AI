@@ -110,7 +110,7 @@ export async function finalizeSocialImageGif(input: {
     frameOutputs.push({
       id: randomUUID(), role: 'gif_frame', label: `GIF 画面 ${plate.index + 1}`,
       sourceJobId: plate.jobId, state: 'quality_checking', mediaUrl: material.mediaUrl,
-      materialId: material.materialId,
+      materialId: material.materialId, contentHash: material.contentSha256,
       version: Math.max(0, ...task.outputs.filter(item => item.role === 'gif_frame' && item.label === `GIF 画面 ${plate.index + 1}`)
         .map(item => item.version)) + 1,
       qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'uncertain', severity: 'hard', note: '等待合成帧质检' })),
@@ -123,7 +123,7 @@ export async function finalizeSocialImageGif(input: {
   }
   const finalOutput: SocialImageOutputNode = {
     id: randomUUID(), role: 'gif_output', label: 'GIF 成片', state: 'quality_checking',
-    mediaUrl: finalMaterial.mediaUrl, materialId: finalMaterial.materialId,
+    mediaUrl: finalMaterial.mediaUrl, materialId: finalMaterial.materialId, contentHash: finalMaterial.contentSha256,
     version: Math.max(0, ...task.outputs.filter(item => item.role === 'gif_output').map(item => item.version)) + 1,
     qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'uncertain', severity: 'hard', note: '等待 GIF 成片质检' })),
   };

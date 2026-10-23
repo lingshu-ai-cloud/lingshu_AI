@@ -234,7 +234,7 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
           provider: generated.source,
           output: {
             id: randomUUID(), role: plannedInput?.unit.role || 'single', label: plannedInput?.unit.label || '主视觉', state: 'quality_checking',
-            mediaUrl: socialImageOwnedMaterialUrl(material, tenantId), materialId: material.id,
+            mediaUrl: socialImageOwnedMaterialUrl(material, tenantId), materialId: material.id, contentHash: material.contentSha256,
             version: Math.max(0, ...claimedImageTask.outputs.filter(item => item.role === (plannedInput?.unit.role || 'single') && item.label === (plannedInput?.unit.label || '主视觉')).map(item => item.version)) + 1,
             qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'uncertain', severity: 'hard', note: '等待人工复核' })),
           },

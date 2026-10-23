@@ -61,7 +61,7 @@ export async function recoverSocialImagePaidMaterial(input: {
     inputHash: job.inputHash, provider: String(material.sourceProvider || 'openai'),
     output: {
       id: randomUUID(), role: unit?.role || 'single', label: unit?.label || '主视觉', state: 'quality_checking',
-      mediaUrl, materialId: material.id,
+      mediaUrl, materialId: material.id, contentHash: expectedSha,
       version: Math.max(0, ...task.outputs.filter(item => item.role === (unit?.role || 'single') && item.label === (unit?.label || '主视觉')).map(item => item.version)) + 1,
       qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'uncertain', severity: 'hard', note: '等待人工复核' })),
     },
