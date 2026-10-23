@@ -86,14 +86,6 @@ export const DEFAULT_CONTEXT: Record<string, AssistantContext> = {
     summary: '当前在企业中心，适合完善企业资料、产品画像和全局知识。',
     suggestions: ['检查企业资料缺口', '整理产品卖点', '生成客户画像字段'],
   },
-  agentMemory: {
-    agent: 'strategy', label: '智能体记忆', summary: '当前在智能体记忆，适合治理业务事实、客户偏好与行为规则。',
-    suggestions: ['检查记忆来源', '梳理客户偏好', '制定记忆治理规则'],
-  },
-  organizationPermissions: {
-    agent: 'strategy', label: '组织与权限', summary: '当前在组织与权限，适合规划成员角色和数据访问边界。',
-    suggestions: ['设计成员角色', '检查数据权限', '规划最小权限'],
-  },
   scheduled: {
     agent: 'strategy',
     label: '定时任务',

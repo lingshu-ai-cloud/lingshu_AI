@@ -1,5 +1,5 @@
-import { Alert, Upload as AntUpload, Button, Input, Modal, Segmented, Select, Tabs } from 'antd';
-import { Film, Flame, Images, LayoutGrid, Lightbulb, List, Loader2, Play, Search, SlidersHorizontal, Upload, Users, X } from 'lucide-react';
+import { Alert, Upload as AntUpload, Button, Input, Modal, Select, Tabs } from 'antd';
+import { Film, Flame, Images, Lightbulb, Loader2, Play, Search, SlidersHorizontal, Upload, Users, X } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { showActionFeedback, showActionSuccess } from '../lib/actionFeedback';
@@ -18,7 +18,7 @@ import InspirationMaterialGallery from './inspiration/InspirationMaterialGallery
 import { AuthenticatedImage, AuthenticatedVideo } from './inspiration/InspirationMedia';
 import { InspirationShootingPanel } from './inspiration/InspirationShootingPanel';
 import InspirationVideoResults from './inspiration/InspirationVideoResults';
-import { WatchModal, sourceEmbedUrl } from './inspiration/InspirationWatchModal';
+import InspirationWatchDialog from './inspiration/InspirationWatchDialog';
 import { isDisplayableForFormat } from './inspiration/inspirationAnalysisProjection';
 import { type BusinessModelFilter, type CrawlTimeRange, type DiscoveryDecisionFilter, INSPIRATION_PAGE_SIZE, type InspirationDashboardProps, type InspirationInnerView, MATERIAL_PRODUCT_COMMON, PLATFORM_FILTERS, type SortMode } from './inspiration/inspirationDashboardContracts';
 import { initialMaterialLibraryEntry, isFavoriteMaterial, resolveLinkedFavoriteMaterialId, type FavoriteFilter } from './inspiration/inspirationMaterialLibrary';
@@ -54,7 +54,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [exactReviewToken,setExactReviewToken] = useState(()=>getToken());
   const [requestedReference, setRequestedReference] = useState<InspirationReferenceTarget | null>(initialInspirationReferenceTarget);
   const openedReferenceTargetRef = useRef('');
+  const autoStartedReferenceRef = useRef('');
   const [watchVideo, setWatchVideo] = useState<TrendVideo | null>(null);
+  const watchTriggerRef = useRef<HTMLElement | null>(null);
   const [favoritingMaterialIds, setFavoritingMaterialIds] = useState<string[]>([]);
   const [favoritedVideoIds, setFavoritedVideoIds] = useState<string[]>([]);
   const [materialMessage, setMaterialMessage] = useState('');
@@ -80,8 +82,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setPlatform,
     search,
     setSearch,
-    viewMode,
-    setViewMode,
     sortMode,
     setSortMode,
     contentFormat,
@@ -156,6 +156,20 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     startInspirationCreation
   } = useInspirationCreation({ onEnterWorkflow, setMaterialMessage, setSelectedVideo, requestExactFullAnalysis });
 
+  useEffect(() => {
+    if (!requestedReference?.startViralReplication || !selectedVideo || selectedVideo.id.startsWith('weekly-reference-')) return;
+    const referenceId = requestedReference.referenceId.replace(/^crawl-/, '');
+    const exactMatch = Boolean(referenceId && (selectedVideo.recordId === referenceId || selectedVideo.id === requestedReference.referenceId))
+      || Boolean(requestedReference.sourceUrl && selectedVideo.sourceUrl === requestedReference.sourceUrl);
+    if (!exactMatch) return;
+    const launchKey = [requestedReference.referenceId, requestedReference.sourceUrl, selectedVideo.id].join('|');
+    if (!launchKey || autoStartedReferenceRef.current === launchKey) return;
+    autoStartedReferenceRef.current = launchKey;
+    setRequestedReference(null);
+    setSelectedVideo(null);
+    startInspirationCreation(selectedVideo);
+  }, [requestedReference, selectedVideo, startInspirationCreation]);
+
   const {
     manageTarget,
     setManageTarget,
@@ -203,7 +217,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       const resolved = await resolveInspirationReference({ target: requestedReference, loadedVideos: crawledVideos, headers: authHeader(), fetcher: window.fetch.bind(window) });
       if (cancelled) return;
       if (resolved.source === 'weekly-plan-snapshot') {
-        setMaterialMessage('原爆款已从灵感库删除，当前打开的是周计划保存的分析快照。');
+        setMaterialMessage(requestedReference.startViralReplication
+          ? '原爆款已从灵感库删除，不能从周计划快照直接发起爆款裂变；请先核对原视频。'
+          : '原爆款已从灵感库删除，当前打开的是周计划保存的分析快照。');
         setSelectedVideo(resolved.video);
         return;
       }
@@ -308,14 +324,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const shootingNeeds = useMemo(() => buildShootingNeeds(visibleVideos, localMaterials), [visibleVideos, localMaterials]);
 
   const handleWatch = (video: TrendVideo) => {
-    if (video.videoUrl || sourceEmbedUrl(video)) {
-      setWatchVideo(video);
-      return;
-    }
-    if (video.sourceUrl) {
-      window.open(video.sourceUrl, '_blank', 'noopener,noreferrer');
-      return;
-    }
+    watchTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setWatchVideo(video);
   };
 
@@ -494,7 +503,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   <label className="space-y-1 text-xs text-text-secondary"><span>筛选结论</span><Select className="w-full" value={discoveryDecision} onChange={value => setDiscoveryDecision(value as DiscoveryDecisionFilter)} aria-label="服务端筛选结论" options={[{ value: 'all', label: '全部评分结果' }, { value: 'accepted', label: '已入选' }, { value: 'review', label: '待复核' }, { value: 'rejected', label: '已淘汰' }]} /></label>
                   <label className="space-y-1 text-xs text-text-secondary"><span>业务类型</span><Select className="w-full" value={businessModelFilter} onChange={value => setBusinessModelFilter(value as BusinessModelFilter)} aria-label="业务类型" options={[{ value: 'all', label: '全部业务类型' }, { value: 'b2b', label: 'B2B 对标' }, { value: 'mixed', label: '混合业务' }, { value: 'd2c', label: 'DTC 卖货' }, { value: 'unknown', label: '待识别' }]} /></label>
                   <label className="space-y-1 text-xs text-text-secondary"><span>最低综合评分</span><Select className="w-full" value={minimumDiscoveryScore} onChange={setMinimumDiscoveryScore} aria-label="最低综合评分" options={[{ value: 0, label: '不限分数' }, { value: 50, label: '50 分以上' }, { value: 70, label: '70 分以上' }, { value: 85, label: '85 分以上' }]} /></label>
-                  <div className="space-y-1 text-xs text-text-secondary"><span>展示方式</span><Segmented block value={viewMode} onChange={value => setViewMode(value as 'grid' | 'list')} aria-label="大屏视图" options={[{ value: 'grid', label: '卡片', icon: <LayoutGrid size={14}/> }, { value: 'list', label: '列表', icon: <List size={14}/> }]} /></div>
                 </div>
                 <div className="flex justify-end"><Button type="text" onClick={clearInspirationFilters} disabled={inspirationFilterCount === 0} icon={<X size={13} />}>清除全部筛选</Button></div>
               </div>}
@@ -511,7 +519,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               visibleVideoCount={visibleVideos.length}
               loaded={videosLoaded}
               loading={videosLoading}
-              viewMode={viewMode}
               search={search}
               platformFiltered={platform !== 'all' || crawlTimeRange !== 'all'}
               contentFormat={contentFormat}
@@ -621,7 +628,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         )}
       </AnimatePresence>
       <AnimatePresence>
-        {watchVideo && <WatchModal key={watchVideo.id} video={watchVideo} onClose={() => setWatchVideo(null)} />}
+        {watchVideo && <InspirationWatchDialog key={watchVideo.id} video={watchVideo} videos={filtered}
+          onClose={() => { setWatchVideo(null); window.requestAnimationFrame(() => watchTriggerRef.current?.focus()); }}
+          onOpenDetails={item => { setWatchVideo(null); setSelectedVideo(item); }} />}
       </AnimatePresence>
       <MaterialUploadDialog
         open={materialUploadDialogOpen}

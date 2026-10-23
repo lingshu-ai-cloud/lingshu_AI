@@ -26,7 +26,6 @@ interface ConversionSessionEffects {
   setCustomerServiceStatus: (status: CustomerServiceStatus | null) => void;
   setCustomerServiceStatusLoadFailed: (failed: boolean) => void;
   setAutonomyLevel: (level: AutonomyLevel) => void;
-  setPriceRulesReady: (ready: boolean) => void;
   setNotificationReady: (ready: boolean) => void;
   setTemplates: (templates: MessageTemplate[]) => void;
   setDailyBriefingOpen: (open: boolean) => void;
@@ -35,7 +34,7 @@ interface ConversionSessionEffects {
 export function useConversionSessionEffects({
   customers, customersInActiveView, selectedId, deliveryHandoff, agentProductionActive, customerPendingCount,
   deepLinkConsumedRef, filterEmptySelectionRef, setSelectedId, setView, setDeliveryError, updateCustomer,
-  setCustomerServiceStatus, setCustomerServiceStatusLoadFailed, setAutonomyLevel, setPriceRulesReady,
+  setCustomerServiceStatus, setCustomerServiceStatusLoadFailed, setAutonomyLevel,
   setNotificationReady, setTemplates, setDailyBriefingOpen,
 }: ConversionSessionEffects): void {
   useEffect(() => {
@@ -148,7 +147,6 @@ export function useConversionSessionEffects({
           : 0;
         if (value === 'auto') setAutonomyLevel(approvedFaqCount >= 5 ? 'auto' : 'draft');
         else if (value === 'remind' || value === 'draft') setAutonomyLevel(value);
-        setPriceRulesReady(Boolean(data?.bizRules?.quoteMode && data?.bizRules?.samplePolicy && data?.bizRules?.paymentTerms));
         const firstProduct = Array.isArray(data?.products?.items)
           ? data.products.items.find((item: any) => String(item?.name || '').trim())
           : null;
@@ -163,7 +161,6 @@ export function useConversionSessionEffects({
     fetch('/api/overseas/enterprise/knowledge-completion', { headers: authHeader() })
       .then(resp => resp.ok ? resp.json() : null)
       .then(data => {
-        if (data?.sections?.bizRules) setPriceRulesReady(Boolean(data.sections.bizRules.completed));
         if (typeof data?.notificationsReady === 'boolean') {
           setNotificationReady(data.notificationsReady);
         }

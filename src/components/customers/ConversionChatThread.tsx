@@ -24,7 +24,6 @@ function DraftSuggestionBar({
   draft,
   isTemplate,
   templatePlan,
-  priceRulesReady,
   knowledgeMiss,
   bridgeOnly,
   onSend,
@@ -38,7 +37,6 @@ function DraftSuggestionBar({
   draft: string;
   isTemplate: boolean;
   templatePlan: TemplatePlan | null;
-  priceRulesReady: boolean;
   knowledgeMiss?: boolean;
   bridgeOnly?: boolean;
   onSend: () => void;
@@ -57,7 +55,7 @@ function DraftSuggestionBar({
     onChangeDraft(next.filter(Boolean).join('\n\n'));
   };
   return (
-    <section data-draft-suggestion className="ml-auto w-fit min-w-[260px] max-w-[90%] rounded-2xl rounded-br-md border border-accent/25 bg-white shadow-sm sm:max-w-[78%]">
+    <section data-draft-suggestion className="ml-auto w-fit min-w-[260px] max-w-[90%] rounded-2xl rounded-br-md border border-accent/25 bg-surface shadow-sm sm:max-w-[78%]">
       <header className="flex items-center justify-between gap-2 px-3 py-2">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs font-semibold text-text-primary">
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-glow text-accent"><Bot size={14} /></span>
@@ -98,12 +96,6 @@ function DraftSuggestionBar({
             <p className="font-semibold">{'AI \u5df2\u9009\u62e9\u6a21\u677f\uff1a'}{templatePlan.template.label}</p>
             <p className="mt-1">{'\u53d8\u91cf\uff1a'}{templatePlan.variables.map((item, index) => `{{${index + 1}}}=${item}`).join(' / ')}</p>
             <p className="mt-1 whitespace-pre-line">{'\u6700\u7ec8\u53d1\u9001\u6548\u679c\uff1a'}{templatePlan.rendered}</p>
-          </div>
-        )}
-        {!priceRulesReady && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-dim px-3 py-2 text-xs text-amber">
-            <span>报价知识尚未完善，价格相关内容需人工确认。</span>
-            <Button htmlType="button" size="small" onClick={() => { localStorage.setItem('lingshu:enterprise:highlight-biz-rules', 'true'); window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } })); }} className="whitespace-nowrap font-semibold">去完善规则</Button>
           </div>
         )}
         <footer className="flex flex-wrap items-center justify-end gap-1.5 border-t border-border pt-2">
@@ -160,7 +152,6 @@ export function ChatThread({
   onPreviewTranslate,
   templates,
   onManualActive,
-  priceRulesReady,
   knowledgeMiss,
   bridgeOnly,
   draftMeta,
@@ -185,7 +176,6 @@ export function ChatThread({
   onPreviewTranslate: () => Promise<void>;
   templates: MessageTemplate[];
   onManualActive: () => void;
-  priceRulesReady: boolean;
   knowledgeMiss?: boolean;
   bridgeOnly?: boolean;
   draftMeta: SalesDecisionMeta | null;
@@ -283,7 +273,6 @@ export function ChatThread({
           <Tooltip title="客户与会话详情"><Button shape="circle" aria-label="客户与会话详情" icon={<Info size={16}/>} /></Tooltip>
         </div>
       </header>
-      {customer.isMock && <p className="shrink-0 border-b border-violet-100 bg-violet-50 px-4 py-1.5 text-[11px] text-violet-700">只在演示沙盘里推进，不会发送到真实平台。</p>}
       <div className="min-h-0 flex-1 overflow-y-auto bg-ink px-3 py-5 sm:px-6">
         <div className="mx-auto max-w-3xl space-y-4">
           {customer.timeline.map(event => {
@@ -310,9 +299,9 @@ export function ChatThread({
                   {isAi && <span className="absolute -top-2 right-3 rounded-md border border-border bg-surface px-1.5 py-0.5 text-[9px] font-bold text-accent">AI</span>}
                   <div className={`flex items-center gap-4 ${isBuyer ? 'justify-end' : 'justify-between'}`}>
                     {!isBuyer && <p className="text-xs font-bold text-white">{event.title}</p>}
-                    <span className={`text-[10px] ${isBuyer ? 'text-text-muted' : 'text-white/75'}`}>{event.time}</span>
+                    <span className={`text-[10px] ${isBuyer ? 'text-text-secondary' : 'text-white/75'}`}>{event.time}</span>
                   </div>
-                  <p className={`mt-1 whitespace-pre-line text-sm leading-relaxed ${isBuyer ? 'text-text-secondary' : 'text-white'}`}>{event.body}</p>
+                  <p className={`mt-1 whitespace-pre-line text-sm leading-relaxed ${isBuyer ? 'text-text-primary' : 'text-white'}`}>{event.body}</p>
                   {!isBuyer && (event.audit?.editedByHuman || event.audit?.memoryApplied?.length) && (
                     <div className="mt-2 flex flex-wrap justify-end gap-1.5">
                       {event.audit.editedByHuman && (
@@ -324,7 +313,7 @@ export function ChatThread({
                     </div>
                   )}
                   {translation && (
-                    <div className={`mt-2 border-t pt-2 text-xs leading-relaxed ${isBuyer ? 'border-border text-text-muted' : 'border-white/20 text-white/80'}`}>
+                    <div className={`mt-2 border-t pt-2 text-xs leading-relaxed ${isBuyer ? 'border-border-bright text-text-secondary' : 'border-white/20 text-white/80'}`}>
                       <span className="font-bold">{'\u4e2d\u6587\u7ffb\u8bd1\uff1a'}</span>{translation}
                     </div>
                   )}
@@ -343,7 +332,7 @@ export function ChatThread({
           {draftSuggestion && !customer.isHistorical && (
             <>
               <SalesDecisionEvidence meta={draftMeta} />
-              <DraftSuggestionBar draft={draftSuggestion} isTemplate={false} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady && !isOutsideWindow} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
+              <DraftSuggestionBar draft={draftSuggestion} isTemplate={false} templatePlan={templatePlan} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady && !isOutsideWindow} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
             </>
           )}
         </div>
@@ -359,7 +348,7 @@ export function ChatThread({
           )}
           <div data-testid="conversation-composer" className="relative rounded-lg border border-border bg-surface-2 px-3 py-2.5 focus-within:border-accent">
             {previewOpen && (
-              <div className="mb-3 rounded-lg border border-border bg-white px-3 py-2 text-xs leading-relaxed text-text-secondary">
+              <div className="mb-3 rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-relaxed text-text-secondary">
                 <span className="font-semibold text-text-primary">目标语言译文（{customer.language}）：</span>
                 {translationLoading ? '翻译中…' : translatedInput || '请输入中文内容后查看译文'}
               </div>
@@ -379,7 +368,7 @@ export function ChatThread({
                   }}
                   disabled={!input.trim()}
                   aria-label={previewOpen ? '隐藏目标语言译文' : '显示目标语言译文'}
-                  className="!h-auto min-h-9 !whitespace-normal flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-bold text-text-muted hover:bg-white hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                  className="!h-auto min-h-9 !whitespace-normal flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-bold text-text-muted hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
                   title={previewOpen ? '隐藏目标语言译文' : '显示目标语言译文'}
                 >
                   <Languages size={15} />

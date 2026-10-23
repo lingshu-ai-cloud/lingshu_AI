@@ -16,7 +16,6 @@ const destinations = {
   traffic: 'traffic',
   conversion: 'conversion',
   enterprise: 'enterprise',
-  agentMemory: 'agentMemory',
   plugins: 'plugins',
 } as const;
 
@@ -30,14 +29,14 @@ const fixture = (page: keyof typeof destinations): AssistantPageQuickEntryConfig
   ],
 });
 
-test('first rollout has the exact eight agreed pages, each with 4-5 distinct entries and 2-3 executions', () => {
+test('quick-entry rollout excludes removed pages and preserves each active page contract', () => {
   assert.deepEqual(ASSISTANT_QUICK_ENTRY_PAGES, [
     'digitalEmployees', 'socialInspiration', 'smartAssets', 'traffic',
-    'conversion', 'enterprise', 'agentMemory', 'plugins',
+    'conversion', 'enterprise', 'plugins',
   ]);
   const configs = ASSISTANT_QUICK_ENTRY_PAGES.map(fixture);
   for (const config of configs) assert.deepEqual(validateAssistantQuickEntryConfig(config), []);
-  assert.equal(new Set(configs.flatMap(config => config.entries.map(entry => entry.id))).size, 32);
+  assert.equal(new Set(configs.flatMap(config => config.entries.map(entry => entry.id))).size, 28);
   assert.equal(new Set(configs.map(config => config.entries[0]?.label)).size, configs.length,
     'page quick entries must not be one shared generic list');
 });

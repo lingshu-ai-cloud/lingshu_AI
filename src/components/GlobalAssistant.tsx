@@ -7,10 +7,12 @@ import {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { App as AntApp } from 'antd';
 import type { AgentAction, AgentType, Message, Page } from '../App';
 import { authHeader, getToken } from '../lib/auth';
 import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
+import { useCreationMode } from '../lib/creationMode';
 import {
   assistantRunControl,
   shouldNotifyAssistant,
@@ -32,6 +34,8 @@ import { useAssistantQuickExecution } from './assistant/useAssistantQuickExecuti
 import { useAssistantTaskCardActions } from './assistant/useAssistantTaskCardActions';
 import { useAssistantDecisionDialog } from './assistant/useAssistantDecisionDialog';
 import { useAssistantPanelControls } from './assistant/useAssistantPanelControls';
+import { useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode } from './assistant/useAssistantHomeAnchor';
+import { useAssistantLauncherRetraction } from './assistant/useAssistantLauncherRetraction';
 import { useAssistantDecisionCount, useAssistantPageContextSignal } from './assistant/useAssistantPageSignals';
 import type { AssistantQuickExecution } from '../lib/assistantQuickEntries';
 import AssistantDecisionDialog from './assistant/AssistantDecisionDialog';
@@ -66,16 +70,6 @@ import {
 type AssistantTool = 'knowledge-intake';
 
 const ASSISTANT_CONVERSATION_WELCOME_SEEN_KEY = 'lingshu-assistant-conversation-welcome-seen-v1';
-const ASSISTANT_LAUNCHER_RETRACTED_KEY = 'lingshu-assistant-launcher-retracted-v1';
-
-function readLauncherRetractedPreference() {
-  if (typeof window === 'undefined') return false;
-  try {
-    return window.localStorage.getItem(ASSISTANT_LAUNCHER_RETRACTED_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
 
 const ASSISTANT_UI_WATCHDOG_TIMEOUT_MS = 25_000;
 const ASSISTANT_CLOSED_CONVERSATION_TTL_MS = 5 * 60 * 1000;
@@ -115,7 +109,10 @@ export default function GlobalAssistant({
   const { modal, message: uiMessage } = AntApp.useApp();
   const reduceMotion = usePrefersReducedMotion();
   const [mode, setMode] = useState<'breathing' | 'chat'>('breathing');
-  const [launcherRetracted, setLauncherRetracted] = useState(readLauncherRetractedPreference);
+  const inlineHome = page === 'strategy';
+  const creationMode = useCreationMode();
+  const inlineHomeBounds = useAssistantHomeAnchor(inlineHome);
+  useAssistantHomeMode(inlineHome, setMode);
   const [panelView, setPanelView] = useState<AssistantPanelView>('chat');
   const [productionDecisionContext, setProductionDecisionContext] = useState<AssistantProductionContext | null>(null);
   const activeAgent = PRIMARY_ASSISTANT_THREAD;
@@ -138,6 +135,7 @@ export default function GlobalAssistant({
   const assistantInputRef = useRef<HTMLTextAreaElement>(null);
   const launcherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
   const edgeLauncherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
+  const { launcherRetracted, retractLauncher, restoreLauncher } = useAssistantLauncherRetraction(launcherButtonRef, edgeLauncherButtonRef);
   const abortRef = useRef<AbortController | null>(null);
   const handledKickoffs = useRef(new Set<string>());
   const handledRestores = useRef(new Set<string>());
@@ -157,25 +155,6 @@ export default function GlobalAssistant({
     persistenceFenceRef.current.active = false;
     persistenceFenceRef.current = { scopeKey: persistenceScopeKey, active: true };
   }
-
-  const persistLauncherRetraction = useCallback((retracted: boolean) => {
-    setLauncherRetracted(retracted);
-    try {
-      window.localStorage.setItem(ASSISTANT_LAUNCHER_RETRACTED_KEY, String(retracted));
-    } catch {
-      // The explicit control remains usable when storage is unavailable.
-    }
-  }, []);
-
-  const retractLauncher = useCallback(() => {
-    persistLauncherRetraction(true);
-    window.requestAnimationFrame(() => edgeLauncherButtonRef.current?.focus());
-  }, [persistLauncherRetraction]);
-
-  const restoreLauncher = useCallback(() => {
-    persistLauncherRetraction(false);
-    window.requestAnimationFrame(() => launcherButtonRef.current?.focus());
-  }, [persistLauncherRetraction]);
 
   useEffect(() => {
     // React StrictMode deliberately runs effect setup -> cleanup -> setup in
@@ -263,6 +242,7 @@ export default function GlobalAssistant({
     }));
   }, []);
   const activeThread = threads[activeAgent];
+  useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef);
   const todoItems = pageContext.todoItems ?? [];
   const activeTodoItems = todoItems.filter(item => !item.completed);
   const pendingCount = todoItems.length ? activeTodoItems.length : Math.max(0, Number(pageContext.pendingCount ?? 0));
@@ -701,20 +681,24 @@ export default function GlobalAssistant({
   }, [activeAgent, activeThread.draftInput, activeThread.focusedTaskId, activeThread.isFollowingLatest, activeThread.messages, activeThread.paused, activeThread.scrollPosition, activeThread.taskCards, activeThread.unreadCount, mode, persistThread]);
 
   const { closeAssistant, returnToConversation, handleLauncherClick } = useAssistantPanelControls({
-    activeAgent, page, mode, assistantTool, decisionDialog, launcherRetracted,
+    activeAgent, page, inlineHome, mode, assistantTool, decisionDialog, launcherRetracted,
     assistantClosedRef, launcherButtonRef, edgeLauncherButtonRef, messageScrollRef,
     persistThread, setAssistantTool, setPanelView, setDecisionDialog,
     setWelcomeBubbleVisible, setMode, setViewport, openCurrentPageAgent,
   });
 
-  if (suppressForRightSidebar) return null;
+  const inlineHomeAnchor = inlineHomeBounds ? document.getElementById('content-creation-assistant-anchor') : null;
+  if (suppressForRightSidebar || (inlineHome && !inlineHomeAnchor)) return null;
 
-  return (
+  const assistantRoot = (
     <div
       data-global-assistant="root"
-      className={`fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'}`}
+      data-inline-home={inlineHomeAnchor ? 'true' : undefined}
+      data-home-empty={inlineHome && !activeThread.messages.length && !loading ? 'true' : undefined}
+      data-home-creation-mode={inlineHomeBounds ? creationMode : undefined}
+      className={inlineHomeAnchor ? 'ls-assistant-home-root absolute inset-0 z-[75]' : `fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'}`}
     >
-      <AssistantFloatingReminders
+      {!inlineHome && <AssistantFloatingReminders
         page={page}
         mode={mode}
         launcherRetracted={launcherRetracted}
@@ -738,10 +722,11 @@ export default function GlobalAssistant({
         }}
         enterpriseGuideSeen={enterpriseGuideSeen}
         onOpenCurrentPageAgent={openCurrentPageAgent}
-      />
+      />}
 
       <AssistantConversationPanel
         page={page} pageContext={pageContext} currentPageAgent={currentPageAgent}
+        inlineHome={inlineHome} inlineHomeBounds={inlineHomeBounds}
         activeAgent={activeAgent} activeThread={activeThread} mode={mode} panelView={panelView}
         assistantTool={assistantTool} viewport={viewport} reduceMotion={reduceMotion}
         productionDecisionContext={productionDecisionContext} decisionFeedRevision={decisionFeedRevision}
@@ -783,7 +768,7 @@ export default function GlobalAssistant({
         handleTaskCardAction={handleTaskCardAction}
       />
 
-      <AssistantLauncher
+      {!inlineHome && <AssistantLauncher
         retracted={launcherRetracted}
         chatOpen={mode === 'chat'}
         badgeCount={decisionTotal ?? pendingCount}
@@ -792,7 +777,8 @@ export default function GlobalAssistant({
         onLauncherClick={handleLauncherClick}
         onRetract={retractLauncher}
         onRestore={restoreLauncher}
-      />
+      />}
     </div>
   );
+  return inlineHomeAnchor ? createPortal(assistantRoot, inlineHomeAnchor) : assistantRoot;
 }

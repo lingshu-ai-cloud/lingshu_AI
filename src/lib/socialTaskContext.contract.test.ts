@@ -89,11 +89,11 @@ assert.equal(resolveSocialTaskPresentation({
   navigation: null,
 }), null, 'the task bar stays hidden when there is no current social task');
 
-const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+const shellSource = readFileSync(new URL('../components/AppShellChrome.tsx', import.meta.url), 'utf8');
 const barSource = readFileSync(new URL('../components/starter/SocialTaskContextBar.tsx', import.meta.url), 'utf8');
-assert.match(appSource, /isSocialTaskContextPage\(page\)[\s\S]*?<SocialTaskContextBar/,
+assert.match(shellSource, /isSocialTaskContextPage\(page\)[\s\S]*?<SocialTaskContextBar/,
   'the selected social workflow pages must use the task-aware bar');
-assert.match(appSource, /!isSocialTaskContextPage\(page\)[\s\S]*?<StarterWorkflowContextBar/,
+assert.match(shellSource, /!isSocialTaskContextPage\(page\)[\s\S]*?<StarterWorkflowContextBar/,
   'non-social starter pages must keep the existing context bar');
 for (const phrase of ['服务端', '底层', '写入托管', '不会绕过', '工作图', '模型 Key', '接口']) {
   assert.doesNotMatch(barSource, new RegExp(phrase), `customer task bar must not expose: ${phrase}`);

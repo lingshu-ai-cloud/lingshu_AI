@@ -2,12 +2,13 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Menu } from 'antd';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  ChevronRight, LogOut, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Settings,
+  ChevronRight, LogOut, ShieldCheck, PanelLeftClose, PanelLeftOpen, Settings,
   PanelRightOpen, Sparkles, Star, X,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
-import { PAGE_REGISTRY, PRIMARY_SOCIAL_NAV_PAGES } from '../pageRegistry';
-import { authApi, exitSupportSession, type AuthSession, type OrganizationRole } from '../lib/auth';
+import { PAGE_REGISTRY } from '../pageRegistry';
+import { isAdminSession, ROLE_PAGE_ACCESS } from '../appSession';
+import { authApi, exitSupportSession, type AuthSession } from '../lib/auth';
 import RightPanel from './RightPanel';
 import DemoGuide from './DemoGuide';
 import AccountSettingsModal from './AccountSettingsModal';
@@ -20,78 +21,15 @@ import { lsMotion } from '../lib/designTokens';
 import { getScrollBehavior, usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import { PLATFORM_ADS_SURFACE_ENABLED } from '../config/productSurfaceFlags';
 import PointsManagementDrawer from './PointsManagementDrawer';
+import { CreationModeContext, CreationModeControlContext, readCreationMode, writeCreationMode, type CreationMode } from '../lib/creationMode';
+import { accountProductNavigation, modeSwitchDestination, primaryProductNavigation, type PrimaryProductPage } from '../productNavigation';
 
-interface NavSection {
-  label: string;
-  items: { id: Page; label: string; icon: ReactNode }[];
-}
-
-const navItem = (id: Page, icon: ReactNode) => ({ id, label: PAGE_REGISTRY[id].navLabel, icon });
-
-const HOME_NAV_ITEM = navItem('digitalEmployees', <DuotoneGlyph kind="home" />);
-
-const SOCIAL_NAV_ICONS: Record<(typeof PRIMARY_SOCIAL_NAV_PAGES)[number], ReactNode> = {
+const PRODUCT_NAV_ICONS: Record<PrimaryProductPage, ReactNode> = {
+  strategy: <DuotoneGlyph kind="create" />,
   socialInspiration: <DuotoneGlyph kind="inspiration" />,
-  smartAssets: <DuotoneGlyph kind="create" />,
-  traffic: <DuotoneGlyph kind="publish" />,
-};
-
-const SOCIAL_NAV: NavSection = {
-  label: '社媒运营',
-  items: PRIMARY_SOCIAL_NAV_PAGES.map(id => navItem(id, SOCIAL_NAV_ICONS[id])),
-};
-
-const ADS_NAV: NavSection = {
-  label: '平台投放',
-  items: [
-    navItem('adsOverview', <DuotoneGlyph kind="ads" />),
-    navItem('adsPlans', <DuotoneGlyph kind="campaign" />),
-    navItem('adsManaged', <DuotoneGlyph kind="agent" />),
-  ],
-};
-
-const CUSTOMER_NAV: NavSection = {
-  label: '客户管理',
-  items: [
-    navItem('conversion', <DuotoneGlyph kind="customers" />),
-  ],
-};
-
-const AGENT_NAV: NavSection = {
-  label: '智能体管理',
-  items: [
-    navItem('enterprise', <DuotoneGlyph kind="enterprise" />),
-    navItem('agentMemory', <DuotoneGlyph kind="memory" />),
-  ],
-};
-
-const ADMIN_NAV: NavSection = {
-  label: '管理员权限',
-  items: [
-    navItem('admin', <DuotoneGlyph kind="permissions" />),
-    navItem('adminDelivery', <DuotoneGlyph kind="integration" />),
-  ],
-};
-
-const SYSTEM_NAV: NavSection = {
-  label: '系统设置',
-  items: [
-    navItem('plugins', <DuotoneGlyph kind="integration" />),
-    navItem('organizationPermissions', <DuotoneGlyph kind="permissions" />),
-  ],
-};
-
-// Platform Ads is temporarily hidden behind a reversible product-surface flag;
-// ADS_NAV remains intact as the restoration backup.
-const NAV_SECTIONS = [SOCIAL_NAV, ...(PLATFORM_ADS_SURFACE_ENABLED ? [ADS_NAV] : []), CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
-
-const STARTER_HOME_NAV_ITEM = navItem('digitalEmployees', <DuotoneGlyph kind="home" />);
-
-const ROLE_PAGE_ACCESS: Record<OrganizationRole, Set<Page>> = {
-  super_admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'socialWorkspace', 'socialSetup', 'socialAccounts', 'socialPlanning', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
-  admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'socialWorkspace', 'socialSetup', 'socialAccounts', 'socialPlanning', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
-  social_operator: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'socialWorkspace', 'socialSetup', 'socialAccounts', 'socialPlanning', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
-  customer_service: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'orders', 'scheduled']),
+  digitalEmployees: <DuotoneGlyph kind="home" />,
+  adsOverview: <DuotoneGlyph kind="ads" />,
+  conversion: <DuotoneGlyph kind="customers" />,
 };
 
 interface LayoutProps {
@@ -124,75 +62,31 @@ function NavItem({
   onClick,
   onPrefetch,
   collapsed = false,
+  disabled = false,
 }: {
   item: { id: Page; label: string; icon: ReactNode };
   active: boolean;
   onClick: () => void;
   onPrefetch?: () => void;
   collapsed?: boolean;
+  disabled?: boolean;
 }) {
   return (
-    <div onPointerEnter={onPrefetch} onFocus={onPrefetch}>
+    <div onPointerEnter={disabled ? undefined : onPrefetch} onFocus={disabled ? undefined : onPrefetch} title={disabled ? '投流尚未接通，暂不可打开' : undefined}>
       <Menu
         className="ls-nav-menu"
         mode="inline"
         inlineCollapsed={collapsed}
         selectedKeys={active ? [item.id] : []}
-        onClick={onClick}
+        onClick={disabled ? undefined : onClick}
         items={[{
           key: item.id,
+          disabled,
           icon: <span className="inline-flex items-center justify-center">{item.icon}</span>,
           title: collapsed ? item.label : '',
-          label: <span data-demo-target={item.id} aria-current={active ? 'page' : undefined}>{item.label}</span>,
+          label: <span data-demo-target={item.id} aria-current={active ? 'page' : undefined}>{item.label}{disabled && !collapsed && <span className="ml-1 text-[10px] text-text-muted">待接通</span>}</span>,
         }]}
       />
-    </div>
-  );
-}
-
-const isAdminSession = (session?: AuthSession | null) => (
-  Boolean(session && !session.supportAccess && session.platformAdmin === true)
-);
-
-const ADMIN_PAGE_GUIDES: Partial<Record<Page, Array<{ label: string; target: string }>>> = {
-  admin: [
-    { label: '试用账号', target: 'admin-trial-accounts' },
-    { label: '客户账号', target: 'admin-customer-accounts' },
-    { label: '行业账号', target: 'admin-industry-accounts' },
-  ],
-  adminDelivery: [
-    { label: '内容运维', target: 'customer-content-ops' },
-    { label: '客户部署', target: 'customer-deployment' },
-  ],
-};
-
-function AdminPageGuide({ page }: { page: Page }) {
-  const items = ADMIN_PAGE_GUIDES[page];
-  if (!items?.length) return null;
-
-  const jumpTo = (target: string) => {
-    document.getElementById(target)?.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' });
-  };
-
-  return (
-    <div className="mx-3 rounded-lg border border-border bg-white p-2 shadow-sm">
-      <div className="flex items-center gap-2 px-1.5 pb-1.5 text-[11px] font-semibold text-text-secondary">
-        <ListTree size={14} className="text-accent" />
-        功能导览
-      </div>
-      <div className="space-y-0.5">
-        {items.map(item => (
-          <button
-            key={item.target}
-            type="button"
-            onClick={() => jumpTo(item.target)}
-            className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-medium text-text-secondary transition-colors hover:bg-surface-2 hover:text-text-primary"
-          >
-            <span>{item.label}</span>
-            <ChevronRight size={13} className="text-text-muted" />
-          </button>
-        ))}
-      </div>
     </div>
   );
 }
@@ -216,27 +110,40 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('lingshu:sidebar-collapsed') === 'true'; } catch { return false; }
   });
+  const [creatorSidebarCollapsed, setCreatorSidebarCollapsed] = useState(false);
+  const [homeActiveSection, setHomeActiveSection] = useState<'strategy' | 'socialInspiration'>('strategy');
+  const [viewportWidth, setViewportWidth] = useState(() => typeof window === 'undefined' ? 1440 : window.innerWidth);
   const [mobileViewport, setMobileViewport] = useState(() => (
     typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
   ));
   const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(false);
-  const sidebarCollapsed = mobileViewport ? !mobileSidebarExpanded : desktopSidebarCollapsed;
-  const sidebarWidth = sidebarCollapsed ? (mobileViewport ? 56 : 60) : 176;
+  const homeSurface = page === 'strategy';
+  const creatorSurface = page === 'strategy' || page === 'socialInspiration' || page === 'digitalEmployees' || page === 'adsOverview' || page === 'conversion';
+  const sidebarCollapsed = mobileViewport ? !mobileSidebarExpanded : creatorSurface ? creatorSidebarCollapsed : desktopSidebarCollapsed;
+  const sidebarWidth = sidebarCollapsed ? (mobileViewport ? 56 : 60) : creatorSurface ? Math.min(354, Math.max(246, Math.round(viewportWidth * 0.173))) : 176;
   const activeSession = session;
+  const modeScope = activeSession ? `${activeSession.tenant?.id || activeSession.user.tenantId}:${activeSession.user.id}` : '';
+  const [modePreference, setModePreference] = useState<{ scope: string; mode: CreationMode }>(() => ({
+    scope: modeScope,
+    mode: readCreationMode(modeScope),
+  }));
+  const creationMode = modePreference.scope === modeScope
+    ? modePreference.mode
+    : readCreationMode(modeScope);
   const guideScope = activeSession?.demo?.guideScope || (activeSession?.demo?.expiresAt ? `${activeSession.user.id}:${activeSession.demo.expiresAt}` : activeSession?.user?.id || 'demo-guide');
   const supportAccess = activeSession?.supportAccess;
   const organizationRole = activeSession?.user.role || 'customer_service';
   const allowedPages = ROLE_PAGE_ACCESS[organizationRole];
-  const roleSections = NAV_SECTIONS
-    .map(section => ({ ...section, items: section.items.filter(item => allowedPages.has(item.id)) }))
-    .filter(section => section.items.length > 0);
-  const customerSections = starterMode
-    ? roleSections
-      .map(section => ({ ...section, items: section.items.filter(item => item.id !== 'digitalEmployees' && item.id !== 'strategy') }))
-      .filter(section => section.items.length > 0)
-    : roleSections;
-  const navSections = isAdminSession(activeSession) ? [...customerSections, ADMIN_NAV] : customerSections;
-  const homeNavItem = starterMode ? STARTER_HOME_NAV_ITEM : HOME_NAV_ITEM;
+  const primaryItems = primaryProductNavigation(creationMode, allowedPages, PLATFORM_ADS_SURFACE_ENABLED);
+  const accountPages = accountProductNavigation(allowedPages, isAdminSession(activeSession ?? null));
+
+  const switchCreationMode = (nextMode: CreationMode) => {
+    if (nextMode === creationMode) return;
+    setModePreference({ scope: modeScope, mode: nextMode });
+    writeCreationMode(modeScope, nextMode);
+    const destination = modeSwitchDestination(page, nextMode);
+    if (destination !== page) onNavigate(destination);
+  };
 
   const leaveSupportSession = () => {
     if (!exitSupportSession()) authApi.logout();
@@ -247,11 +154,20 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
     if (starterMode) setQuotaOpen(false);
   }, [starterMode]);
   useEffect(() => {
+    const onHomeSection = (event: Event) => {
+      const section = (event as CustomEvent<string>).detail;
+      if (section === 'strategy' || section === 'socialInspiration') setHomeActiveSection(section);
+    };
+    window.addEventListener('lingshu:home-section-active', onHomeSection);
+    return () => window.removeEventListener('lingshu:home-section-active', onHomeSection);
+  }, []);
+  useEffect(() => {
     if (!isInConversation) setMobileRightPanelOpen(false);
   }, [isInConversation]);
   useEffect(() => {
     const media = window.matchMedia('(max-width: 767px)');
     const syncViewport = () => {
+      setViewportWidth(window.innerWidth);
       setMobileViewport(media.matches);
       setMobileSidebarExpanded(false);
     };
@@ -299,6 +215,15 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   };
   const navigateFromSidebar = (nextPage: Page) => {
     if (mobileViewport) setMobileSidebarExpanded(false);
+    if (homeSurface && (nextPage === 'strategy' || nextPage === 'socialInspiration')) {
+      const target = nextPage === 'strategy' ? document.querySelector('.creator-home') : document.getElementById('creator-home-library');
+      if (target) {
+        if (nextPage === 'strategy') (target as HTMLElement).scrollTo({ top: 0, behavior: getScrollBehavior() });
+        else target.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' });
+        setHomeActiveSection(nextPage);
+        return;
+      }
+    }
     onNavigate(nextPage);
   };
   const openDigitalEmployeeGuide = () => {
@@ -313,11 +238,12 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   };
   const toggleSidebar = () => {
     if (mobileViewport) setMobileSidebarExpanded(value => !value);
+    else if (creatorSurface) setCreatorSidebarCollapsed(value => !value);
     else setDesktopSidebarCollapsed(value => !value);
   };
 
   return (
-    <div className="app-shell flex h-[100dvh] min-h-0 min-w-0 overflow-hidden">
+    <div className={`app-shell flex h-[100dvh] min-h-0 min-w-0 overflow-hidden ${creatorSurface ? `creator-shell ${homeSurface ? '' : 'creator-shell--section'}` : ''}`}>
 
       <ActionFeedbackHost />
 
@@ -329,7 +255,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
         className="app-sidebar relative z-40 flex flex-shrink-0 flex-col overflow-visible border-r border-border"
       >
         {/* Logo */}
-        <div className={`relative h-12 flex items-center flex-shrink-0 ${sidebarCollapsed ? 'justify-center px-2' : 'px-3 gap-2'}`}>
+        <div className={`creator-sidebar-brand relative h-12 flex items-center flex-shrink-0 ${sidebarCollapsed ? 'justify-center px-2' : 'px-3 gap-2'}`}>
           {!sidebarCollapsed && (starterMode
             ? <span aria-hidden="true" className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-accent text-xs font-bold text-white">{initial}</span>
             : <img src="/brand-logo.png?v=20260921" alt="灵枢 AI" className="w-7 h-7 object-contain flex-shrink-0" />)}
@@ -357,43 +283,26 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
 
         {/* Home nav */}
         <nav aria-label="主导航" className={`${sidebarCollapsed ? 'px-2' : 'px-3'} pb-1`}>
-          <NavItem
-            item={homeNavItem}
-            active={page === homeNavItem.id}
-            onClick={() => navigateFromSidebar(homeNavItem.id)}
-            onPrefetch={() => onPrefetchPage?.(homeNavItem.id)}
+          {primaryItems.map(item => <NavItem
+            key={item.page}
+            item={{ id: item.page, label: item.label, icon: PRODUCT_NAV_ICONS[item.page] }}
+            active={homeSurface && (item.page === 'strategy' || item.page === 'socialInspiration')
+              ? homeActiveSection === item.page
+              : page === item.page || PAGE_REGISTRY[page].navParent === item.page}
+            onClick={() => navigateFromSidebar(item.page)}
+            onPrefetch={() => onPrefetchPage?.(item.page)}
             collapsed={sidebarCollapsed}
-          />
+            disabled={item.disabled}
+          />)}
         </nav>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-          {navSections.map((section, index) => (
-            <div key={section.label}>
-              {index > 0 && <div className={`mx-4 border-t border-border ${sidebarCollapsed ? 'my-1' : 'my-1.5'}`} />}
-              <nav aria-label={section.label} className={sidebarCollapsed ? 'px-2' : 'px-3'}>
-                {!sidebarCollapsed && <p className="px-3 pb-1 pt-0.5 ls-type-body-small font-semibold text-text-muted uppercase tracking-wider">{section.label}</p>}
-                {section.items.map(item => (
-                  <NavItem
-                    key={item.id}
-                    item={item}
-                    active={page === item.id || PAGE_REGISTRY[page].navParent === item.id}
-                    onClick={() => navigateFromSidebar(item.id)}
-                    onPrefetch={() => onPrefetchPage?.(item.id)}
-                    collapsed={sidebarCollapsed}
-                  />
-                ))}
-              </nav>
-            </div>
-          ))}
-
-          {!starterMode && !sidebarCollapsed && <AdminPageGuide page={page} />}
-        </div>
+        <div className="min-h-0 flex-1" />
 
         {/* Bottom user */}
         <div ref={quotaAreaRef} className="relative px-3 py-3 border-t border-border flex-shrink-0">
           <AnimatePresence>
             {accountMenuOpen && (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute bottom-[68px] left-3 z-50 w-[260px] rounded-2xl border border-border bg-white p-3 shadow-xl">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute bottom-[68px] left-3 z-50 max-h-[calc(100dvh-100px)] w-[260px] overflow-y-auto rounded-2xl border border-border bg-surface p-3 shadow-xl">
                 <div className="flex items-center gap-3 border-b border-border px-2 pb-3">
                   <span className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold ${isJiangZheTestAccount ? 'border border-border bg-surface-2 text-transparent' : 'bg-accent text-white'}`}>{isJiangZheTestAccount ? '' : initial}</span>
                   <div className="min-w-0"><p className="truncate text-sm font-bold text-text-primary">{accountDisplayName}</p><p className="truncate ls-type-body-small text-text-muted">{activeSession?.user?.email}</p></div>
@@ -402,6 +311,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
                   {!starterMode && <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Star size={17} className="text-amber-500" fill="currentColor"/><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>}
                   <button onClick={openDigitalEmployeeGuide} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Sparkles size={17} /><span className="flex-1 text-left">新手引导</span><ChevronRight size={14} className="text-text-muted" /></button>
                   <button onClick={() => { setAccountMenuOpen(false); setMobileRightPanelOpen(false); setAccountSettingsOpen(true); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Settings size={17} /><span className="flex-1 text-left">账号设置</span><ChevronRight size={14} className="text-text-muted" /></button>
+                  {accountPages.map(accountPage => <button key={accountPage} onClick={() => { setAccountMenuOpen(false); navigateFromSidebar(accountPage); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><ShieldCheck size={17}/><span className="flex-1 text-left">{PAGE_REGISTRY[accountPage].navLabel}</span><ChevronRight size={14} className="text-text-muted"/></button>)}
                   {onLogout && <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-red-50 hover:text-red-600"><LogOut size={17} /><span className="flex-1 text-left">退出登录</span></button>}
                   <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-border px-3 pt-2 ls-type-body-small font-semibold text-text-muted">
                     <a href="/privacy" target="_blank" rel="noreferrer" className="hover:text-accent">隐私政策</a>
@@ -440,11 +350,16 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
         open={accountSettingsOpen}
         onClose={() => setAccountSettingsOpen(false)}
         onLogout={onLogout}
-        canManageEmployees={organizationRole === 'super_admin' || organizationRole === 'admin'}
       />
 
       {/* ── Main content ─────────────────────────────── */}
       <main className="app-main relative flex min-w-0 flex-1 basis-0 flex-col overflow-clip">
+        {creatorSurface && <div className="creator-topbar" aria-label="账号与积分">
+          <button type="button" className="creator-topbar__points" onClick={openQuota}><Star size={17} aria-hidden="true" />积分管理</button>
+          <button type="button" className="creator-topbar__account" onClick={() => setAccountSettingsOpen(true)} aria-label="打开账号设置">
+            <span className="creator-topbar__avatar">{initial}</span><span className="creator-topbar__name">{tenantName}</span>
+          </button>
+        </div>}
         {supportAccess && (
           <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-border bg-white px-4 text-xs">
             <div className="flex min-w-0 items-center gap-2 text-text-primary">
@@ -457,7 +372,11 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
             </button>
           </div>
         )}
-        <LsPageTransition page={page}>{children}</LsPageTransition>
+        <CreationModeContext.Provider value={creationMode}>
+          <CreationModeControlContext.Provider value={switchCreationMode}>
+            <LsPageTransition page={page}>{children}</LsPageTransition>
+          </CreationModeControlContext.Provider>
+        </CreationModeContext.Provider>
       </main>
 
       {/* ── Right panel (only in conversation mode) ── */}

@@ -246,6 +246,9 @@
 .app-shell :where(main, section, article, aside, header, footer, form, fieldset) { min-width: 0; max-width: 100%; }
 .app-shell :where(.truncate, .line-clamp-1, .line-clamp-2, .line-clamp-3) { min-width: 0; }
 .app-shell :where(table, [role='table']) { font-variant-numeric: tabular-nums; }
+.ls-assistant-home-root > :not([data-global-assistant='panel']) { display: none !important; }
+.ls-assistant-home-root > [data-global-assistant='panel'] { inset: 0 auto auto 0 !important; max-height: 100% !important; max-width: 100% !important; box-shadow: none; }
+@media (hover: none) { .ls-touch-media-reveal { opacity: 1 !important; } }
 .ls-design-system .ls-replication-draft-title.ant-input-affix-wrapper {
   font-size: var(--ls-type-title-large-size);
   line-height: var(--ls-type-title-large-line);

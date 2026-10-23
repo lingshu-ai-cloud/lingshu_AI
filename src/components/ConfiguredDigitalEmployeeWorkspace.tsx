@@ -1,9 +1,10 @@
 import BusinessHealthOverview from './smartBusiness/BusinessHealthOverview';
+import BusinessOverviewTabs from './smartBusiness/BusinessOverviewTabs';
 import { labels as sharedTaskLabels } from '../../shared/mobile-domain.mjs';
 import { getScrollBehavior } from '../lib/usePrefersReducedMotion';
 import { PAGE_REGISTRY, type Page } from '../pageRegistry';
 import type { PresenterProductionGate } from '../lib/shotProduction';
-import { Alert, Button, Modal, Tabs } from 'antd';
+import { Alert, Button, Modal } from 'antd';
 import { OnboardingPanel } from './smartBusiness/DigitalEmployeeOnboardingPanel';
 import { GoalPanel, type GoalDraft, type BusinessLine, type ContentPlatform } from './smartBusiness/WeeklyGoalPanel';
 import type { OnboardingConfigurationInput } from './digitalEmployeeConfigurationAction';
@@ -122,11 +123,6 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
         : workspaceView === "live"
           ? selectedContentItemId ? "production" : "review"
           : workspaceView === "review" ? "review" : "home";
-    const views: Array<{ id: "today" | "matrix" | "review"; label: string; caption: string }> = [
-      { id: "today", label: "经营总览", caption: "资产健康度与下一轮建议" },
-      { id: "matrix", label: "数字员工", caption: "Agent 职责与工作排期" },
-      { id: "review", label: "数据复盘", caption: "账号、询盘与投流明细" },
-    ];
     const currentVideoPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || goal?.videoPlans || [];
     const currentMasterPlans = currentVideoPlans.filter(plan => plan.productionRole !== "platform_adaptation");
     const missingReferenceMasters = currentMasterPlans.filter(plan => !plan.referenceId);
@@ -269,10 +265,10 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
     return (
       <>
       {weeklyStudioContentId && <WeeklyProductionStudioEntry data={data} contentId={weeklyStudioContentId} autoOpen onOpened={() => setWeeklyStudioContentId("")} onUnavailable={() => setWeeklyStudioContentId("")} />}
-      {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-white">
+      {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-surface">
         <div className="mx-auto w-full px-2 py-3 sm:px-3">
           <h1 className="sr-only">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
-          <div className="grid grid-cols-1 overflow-hidden rounded-2xl border border-border bg-white xl:grid-cols-[minmax(0,1.7fr)_minmax(360px,1fr)]"><div aria-label="当前周计划" className="min-w-0">
+          <div className="grid grid-cols-1 overflow-hidden rounded-2xl border border-border bg-surface xl:grid-cols-[minmax(0,1.7fr)_minmax(360px,1fr)]"><div aria-label="当前周计划" className="min-w-0">
             {goal ? <Suspense fallback={deferredWorkspaceFallback}><WeeklyCommandCenter
               data={data}
               statusLabel={currentPlanStatusLabel}
@@ -295,10 +291,10 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
                 : !activeRun && !viewGoalId && (missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
                 ? <p className="mr-auto text-xs text-text-secondary">可直接开始任务；{detailGeneration?.blockedCount || missingReferenceMasters.length || missingProductMasters.length} 条内容的待补资料将在对应制作步骤提示，不阻止其他内容推进。账号连接与发布授权在正式发布前核验。</p>
                 : undefined}
-            /></Suspense> : <><section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div className="max-w-2xl"><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有计划</p><p className="mt-1 text-xs leading-5 text-slate-500">先制定并预览周计划。计划会说明本周做什么、在哪些平台生产、产量、预计预算和工作排期；确认前不会开始生产。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>{weeklyActionFeedback && <div className="border-b border-border px-4 py-2.5">{weeklyActionFeedback}</div>}</>}
+            /></Suspense> : <><section className="overflow-hidden rounded-lg border border-border bg-surface"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div className="max-w-2xl"><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-text-primary">本周还没有计划</p><p className="mt-1 text-xs leading-5 text-text-secondary">先制定并预览周计划。计划会说明本周做什么、在哪些平台生产、产量、预计预算和工作排期；确认前不会开始生产。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>{weeklyActionFeedback && <div className="border-b border-border px-4 py-2.5">{weeklyActionFeedback}</div>}</>}
           </div>
           <aside aria-label="企业经营分" className="min-w-0 border-t border-border xl:border-l xl:border-t-0 [&_section]:rounded-none [&_section]:border-0"><BusinessHealthOverview summaryOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange}/></aside><Suspense fallback={deferredWorkspaceFallback}><BusinessInterpretation data={data} onViewReview={() => setWorkspaceView("review")}/></Suspense></div>
-          <Tabs className="mt-3" aria-label="智能经营视图" activeKey={workspaceView === "live" || workspaceView === "overview" ? "review" : workspaceView} onChange={key => {setWorkspaceView(key as WorkspaceView); setSelectedContentItemId("");}} items={views.map(view => ({key: view.id, label: view.label}))}/>
+          {workspaceView === "today" ? <Button className="mt-3" onClick={() => setWorkspaceView("matrix")}>查看员工排期</Button> : <Button className="mt-3" onClick={() => { setSelectedContentItemId(""); setWorkspaceView("today"); }}>返回经营总览</Button>}
           <div className="grid grid-cols-1 gap-4 pb-6 pt-2">
             <main className="min-w-0">
             <Suspense fallback={deferredWorkspaceFallback}>{workspaceView === "rules"
@@ -316,6 +312,7 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
                 }} />}</Suspense>
             </main>
           </div>
+          {workspaceView === "today" && <BusinessOverviewTabs data={data} onNavigate={onNavigate}/>}
         </div>
       </div>}
       {active && applicationGuideOpen && (
@@ -364,7 +361,7 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
           }}>选择或录入数字人形象</Button>}
         </div>
       </Modal>
-      {weeklyPlanOpen && (!goal || newGoal) && !activeRun && <div className="h-full overflow-y-auto bg-white">
+      {weeklyPlanOpen && (!goal || newGoal) && !activeRun && <div className="h-full overflow-y-auto bg-surface">
         <section aria-label="周计划生成" className="mx-auto w-full max-w-[1440px] p-4 sm:p-6">
           <header className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
             <h1 className="text-[28px] font-semibold">制定本周目标</h1>

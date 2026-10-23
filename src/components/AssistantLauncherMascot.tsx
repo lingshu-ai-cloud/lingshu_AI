@@ -3,7 +3,7 @@ import type { Page } from '../App';
 
 export type AssistantExpression = 'happy' | 'wink' | 'thinking' | 'excited';
 export const PAGE_EXPRESSION: Record<Page, AssistantExpression> = {
-  digitalEmployees: 'excited', agentMonitor: 'thinking', strategy: 'happy', socialWorkspace: 'thinking', socialSetup: 'thinking', socialAccounts: 'thinking', socialPlanning: 'thinking', traffic: 'excited', socialInspiration: 'excited', scriptLibrary: 'thinking', smartAssets: 'excited', socialMonitoring: 'thinking', accountManagement: 'thinking', adsOverview: 'thinking', adsPlans: 'excited', adsCreatives: 'thinking', adsManaged: 'thinking', conversion: 'thinking', wecomCustomerService: 'thinking', retention: 'happy', orders: 'wink', enterprise: 'thinking', agentMemory: 'thinking', plugins: 'excited', scheduled: 'wink', admin: 'thinking', adminDelivery: 'thinking', channels: 'excited', youtube: 'excited', organizationPermissions: 'thinking',
+  digitalEmployees: 'excited', agentMonitor: 'thinking', strategy: 'happy', socialWorkspace: 'thinking', socialSetup: 'thinking', socialAccounts: 'thinking', socialPlanning: 'thinking', traffic: 'excited', socialInspiration: 'excited', scriptLibrary: 'thinking', smartAssets: 'excited', socialMonitoring: 'thinking', accountManagement: 'thinking', adsOverview: 'thinking', adsPlans: 'excited', adsCreatives: 'thinking', adsManaged: 'thinking', conversion: 'thinking', wecomCustomerService: 'thinking', retention: 'happy', orders: 'wink', enterprise: 'thinking', plugins: 'excited', scheduled: 'wink', admin: 'thinking', adminDelivery: 'thinking', channels: 'excited', youtube: 'excited',
 };
 const CROP_LEFT: Record<AssistantExpression, number> = { happy: -26, wink: -97, thinking: -169, excited: -241 };
 

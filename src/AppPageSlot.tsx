@@ -14,7 +14,7 @@ import { PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
 import {
   PlatformAdsPage, StrategyPage, TrafficPage, ConversionPage, EnterprisePage,
   IntegrationsPage, AdminDashboard, AdminDeliveryPage, AssistantWeeklyProductionView,
-  AgentMemoryPage, OrganizationPermissionsPage, ScriptLibraryPage, DigitalEmployeePage,
+  ScriptLibraryPage, DigitalEmployeePage,
   AgentMonitorPage, StarterWorkspacePage, SocialContentPlanningPage,
   ADS_PAGES, INTEGRATION_PAGES,
 } from './appPageModules';
@@ -64,7 +64,7 @@ export default function AppPageSlot({
 }: AppPageSlotProps) {
   return (
       <div data-app-page-slot className="min-h-0 flex-1 overflow-hidden">
-        <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('digitalEmployees')}>
+        <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('strategy')}>
           <Suspense fallback={<PageLoading />}>
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
             {readAssistantWeeklyNavigation(window.location.search)
@@ -212,16 +212,7 @@ export default function AppPageSlot({
             </Activity>
           )}
           {(page === 'enterprise' || mountedPages.has('enterprise')) && <Activity mode={page === 'enterprise' ? 'visible' : 'hidden'}><EnterprisePage productsDeepLink={enterpriseProductsDeepLink} /></Activity>}
-          {(page === 'agentMemory' || mountedPages.has('agentMemory')) && (
-            <Activity mode={page === 'agentMemory' ? 'visible' : 'hidden'}>
-            <AgentMemoryPage
-              includeMockCustomers={import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === 'quote'}
-              mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
-            />
-            </Activity>
-          )}
           {(INTEGRATION_PAGES.includes(page) || INTEGRATION_PAGES.some(item => mountedPages.has(item))) && <Activity mode={INTEGRATION_PAGES.includes(page) ? 'visible' : 'hidden'}><IntegrationsPage /></Activity>}
-          {(page === 'organizationPermissions' || mountedPages.has('organizationPermissions')) && <Activity mode={page === 'organizationPermissions' ? 'visible' : 'hidden'}><OrganizationPermissionsPage /></Activity>}
           {(page === 'admin' || mountedPages.has('admin')) && <Activity mode={page === 'admin' ? 'visible' : 'hidden'}><AdminDashboard onSupportSessionStarted={handleSupportSessionStarted} /></Activity>}
           {(page === 'adminDelivery' || mountedPages.has('adminDelivery')) && <Activity mode={page === 'adminDelivery' ? 'visible' : 'hidden'}><AdminDeliveryPage /></Activity>}
           </Suspense>

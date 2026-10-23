@@ -4,8 +4,8 @@ import type { Page } from '../pageRegistry';
  * TEMPORARY PRODUCT-SURFACE BACKUP MARKER — 2026-10-08
  *
  * The Platform Ads implementation, routes and data are intentionally retained.
- * Set this flag back to `true` to restore the three sidebar tabs (投放总览、
- * 投放计划、AI 托管) and their child creative route without rebuilding them.
+ * Set this flag back to `true` to enable the primary 投流 entry and its retained
+ * internal overview, plan, creative, and managed routes without rebuilding them.
  */
 export const PLATFORM_ADS_SURFACE_ENABLED = false;
 

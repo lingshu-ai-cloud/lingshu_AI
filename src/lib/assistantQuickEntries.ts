@@ -55,10 +55,6 @@ const PAGE_QUICK_ENTRIES: Partial<Record<Page, readonly AssistantQuickEntry[]>> 
     { id: 'enterprise-gaps', kind: 'question', label: '知识库缺什么', prompt: '检查当前企业知识库覆盖情况，列出会影响经营或回答准确性的真实缺口。' },
     { id: 'enterprise-conflicts', kind: 'question', label: '哪些资料有冲突', prompt: '检查当前企业资料中的版本冲突、过期信息和来源不一致，并标明证据。' },
   ],
-  agentMemory: [
-    { id: 'memory-applied', kind: 'question', label: '哪些记忆正在生效', prompt: '说明当前智能体正在使用的已确认记忆、适用范围和来源。' },
-    { id: 'memory-conflicts', kind: 'question', label: '记忆是否有冲突', prompt: '检查当前智能体记忆中的冲突、重复和过期项，并给出证据。' },
-  ],
   plugins: [
     { id: 'plugins-health', kind: 'question', label: '哪些集成异常', prompt: '基于当前集成中心的真实连接状态，说明异常连接、影响范围和处理建议。' },
     { id: 'plugins-needed', kind: 'question', label: '还需要接什么平台', prompt: '结合当前经营目标与已有集成，建议需要补充的平台连接及其价值。' },

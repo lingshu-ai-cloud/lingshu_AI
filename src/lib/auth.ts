@@ -294,9 +294,6 @@ export const authApi = {
     await authenticatedJson('change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword, passwordConfirm }) });
   },
   employees: async (): Promise<EmployeeAccount[]> => (await authenticatedJson<{ employees: EmployeeAccount[] }>('employees')).employees,
-  addEmployee: async (input: { email: string; name: string; password: string; role: OrganizationRole }): Promise<EmployeeAccount> => (await authenticatedJson<{ employee: EmployeeAccount }>('employees', { method: 'POST', body: JSON.stringify(input) })).employee,
-  updateEmployeeRole: async (employeeId: string, role: OrganizationRole): Promise<void> => { await authenticatedJson(`employees/${encodeURIComponent(employeeId)}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }); },
-  deleteEmployee: async (employeeId: string): Promise<void> => { await authenticatedJson(`employees/${encodeURIComponent(employeeId)}`, { method: 'DELETE' }); },
   logout: () => {
     void fetch('/api/overseas/auth/logout', { method: 'POST', headers: authHeader() }).catch(() => {});
     clearToken();

@@ -240,7 +240,9 @@ assert.equal(shouldBypassStarter198Probe({
 }), true, 'an explicit read-only support session keeps its internal observation surface');
 
 const appSource = fs.readFileSync('src/App.tsx', 'utf8');
-const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
+const pageSlotSource = fs.readFileSync('src/AppPageSlot.tsx', 'utf8');
+const shellSource = fs.readFileSync('src/components/AppShellChrome.tsx', 'utf8');
+const assistantBubblesSource = fs.readFileSync('src/components/assistant/AssistantConversationBubbles.tsx', 'utf8');
 const appSessionSource = fs.readFileSync('src/appSession.ts', 'utf8');
 const authRouteSource = fs.readFileSync('server/routes/auth.ts', 'utf8');
 const layoutSource = fs.readFileSync('src/components/Layout.tsx', 'utf8');
@@ -256,15 +258,15 @@ for (const [page, component] of [
   ['socialInspiration', 'TrafficPage'],
   ['conversion', 'ConversionPage'],
 ] as const) {
-  assert.match(appSource, new RegExp(`\\{\\(page === '${page}' \\|\\| mountedPages\\.has\\('${page}'\\)\\) && \\([\\s\\S]*?<${component}`), `starter mode must keep the original ${page} product page`);
+  assert.match(pageSlotSource, new RegExp(`\\{\\(page === '${page}' \\|\\| mountedPages\\.has\\('${page}'\\)\\) && \\([\\s\\S]*?<${component}`), `starter mode must keep the original ${page} product page`);
 }
-assert.match(appSource, /\{\(page === 'smartAssets' \|\| mountedPages\.has\('smartAssets'\) \|\| smartAssetsMounted\) && \(/, 'starter mode must keep the original content studio');
+assert.match(pageSlotSource, /\{\(page === 'smartAssets' \|\| mountedPages\.has\('smartAssets'\) \|\| smartAssetsMounted\) && \(/, 'starter mode must keep the original content studio');
 assert.doesNotMatch(appSource, /StarterProductionSitePage/, 'starter pages must no longer replace the original product UI with a simplified projection');
-assert.match(appSource, /starterMode && page !== 'digitalEmployees'[\s\S]*?<StarterWorkflowContextBar/, 'restored pages must explain their position in the AI workflow');
-assert.match(appSource, /<GlobalAssistant[\s\S]{0,650}compactMode=\{starterMode \|\| isAgentProductionSession\(\)\}/, 'starter and production sessions keep a compact decision-first assistant');
-assert.match(assistantSource, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, 'the compact assistant keeps page-scoped approvals');
-assert.equal(appSource.match(/<GlobalAssistant\b/g)?.length, 1, 'the app must expose exactly one visible Lingxiaoshu entry');
-assert.match(appSource, /<GlobalAssistant[\s\S]{0,180}\bprimaryEntry\b/, 'the single Lingxiaoshu instance must be the primary entry');
+assert.match(shellSource, /starterMode && page !== 'digitalEmployees'[\s\S]*?<StarterWorkflowContextBar/, 'restored pages must explain their position in the AI workflow');
+assert.match(shellSource, /<GlobalAssistant[\s\S]{0,650}compactMode=\{starterMode \|\| isAgentProductionSession\(\)\}/, 'starter and production sessions keep a compact decision-first assistant');
+assert.match(assistantBubblesSource, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, 'the compact assistant keeps page-scoped approvals');
+assert.equal(shellSource.match(/<GlobalAssistant\b/g)?.length, 1, 'the app must expose exactly one visible Lingxiaoshu entry');
+assert.match(shellSource, /<GlobalAssistant[\s\S]{0,180}\bprimaryEntry\b/, 'the single Lingxiaoshu instance must be the primary entry');
 assert.doesNotMatch(starterPageSource, /GlobalAssistant/, 'the starter workspace must not embed a second Lingxiaoshu entry');
 assert.match(appSource, /shouldBypassStarter198Probe\(session\)/, 'the app must use the tested authoritative-probe policy');
 assert.doesNotMatch(appSource, /session\.supportAccess \|\| isAdminSession\(session\)/,
@@ -298,10 +300,10 @@ assert.match(appSource,
   'ordinary tenant administrators must be redirected from platform-only pages');
 assert.doesNotMatch(`${appSource}\n${appSessionSource}\n${layoutSource}\n${pageRegistrySource}`, /contentFormulaAdmin|爆款公式库/,
   'the formula product surface must be removed rather than hidden behind an admin role');
-for (const navigationLabel of ['首页', '灵感中心', '内容制作', '发布与渠道', '内容监控', '渠道连接', '智能客服', '我的会话', '订单', '企业知识库', '定时任务', '集成中心', '组织与权限']) {
+for (const navigationLabel of ['内容创作', '爆款库', '经营总览', '内容制作', '发布与渠道', '内容监控', '渠道连接', '智能客服', '我的会话', '订单', '企业知识库', '定时任务', '集成中心']) {
   assert.match(pageRegistrySource, new RegExp(navigationLabel), `starter navigation must register the ${navigationLabel} page`);
 }
-assert.match(layoutSource, /PRIMARY_SOCIAL_NAV_PAGES\.map/, 'organic-content navigation must come from the shared page registry');
+assert.match(layoutSource, /primaryProductNavigation\(creationMode, allowedPages/, 'starter navigation must follow the shared mode and role model');
 assert.doesNotMatch(layoutSource, /投流与发布|ContentCreationNav/, 'starter navigation must not restore the old umbrella page');
 assert.doesNotMatch(layoutSource, /Agent 生产现场（只读）/, 'starter navigation must not collapse the original product into four simplified read-only pages');
 assert.match(workflowContextSource, /筛选可用灵感/);

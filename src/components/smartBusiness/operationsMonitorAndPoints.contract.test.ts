@@ -57,7 +57,8 @@ test('user points are grouped by product function and never priced from provider
   assert.match(pointsDrawer, /购买加油包/);
   assert.match(pointsDrawer, /查看全部套餐/);
   assert.match(pointsDrawer, /真实账本/);
-  assert.match(pointsDrawer, /积分账户尚未配置/);
+  assert.doesNotMatch(pointsDrawer, /积分账户尚未配置|当前不会从供应商人民币账单推算用户余额/);
+  assert.doesNotMatch(pointsDrawer, /bg-white/);
   assert.match(pointsDrawer, /<Modal/);
   assert.match(pointsDrawer, /centered/);
   assert.doesNotMatch(pointsDrawer, /<Drawer|<Collapse|<Tabs|<Table/);

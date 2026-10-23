@@ -626,7 +626,7 @@ export default function DigitalEmployeePage({
 
   if (loading)
     return (
-      <div className="flex h-full items-center justify-center bg-white">
+      <div className="flex h-full items-center justify-center bg-surface">
         <Loader2 size={24} className="animate-spin text-accent" />
       </div>
     );
@@ -654,7 +654,7 @@ export default function DigitalEmployeePage({
         <header className="workspace-header">
           <h1 className="workspace-title mt-2">数字员工正在等待调遣</h1>
           <div className="mt-5 inline-flex items-center gap-2 border-l-2 border-accent bg-surface-2 px-3 py-2 text-xs font-semibold text-accent">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] text-text-primary">1</span>
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-surface text-[10px] text-text-primary">1</span>
             {operatingState}
           </div>
         </header>

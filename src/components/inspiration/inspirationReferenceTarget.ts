@@ -8,6 +8,7 @@ export type InspirationReferenceTarget = {
   platform: string;
   thumbnailUrl: string;
   duration: number;
+  startViralReplication?: boolean;
   benchmarkAnalysis?: VideoAnalysisPayload['benchmarkAnalysis'];
 };
 
@@ -61,7 +62,7 @@ export function parseInspirationReferenceTarget(input: unknown): InspirationRefe
     ? reference.benchmarkAnalysis as VideoAnalysisPayload['benchmarkAnalysis']
     : undefined;
   return referenceId || sourceUrl || title
-    ? { referenceId, sourceUrl, title, platform, thumbnailUrl, duration, benchmarkAnalysis }
+    ? { referenceId, sourceUrl, title, platform, thumbnailUrl, duration, startViralReplication: detail.startViralReplication === true, benchmarkAnalysis }
     : null;
 }
 

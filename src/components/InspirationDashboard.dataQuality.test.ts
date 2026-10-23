@@ -98,7 +98,7 @@ assert.doesNotMatch(componentSource, />\s*加载更多\s*</, '灵感列表不再
 assert.doesNotMatch(componentSource, /本页近 3 日新入库|当前显示 <strong/, '灵感中心不应再显示与真实结果集口径冲突的独立统计条');
 assert.match(videoResultsSource, /<LsMasonryGallery layout="masonry"/, '爆款灵感必须使用真实比例瀑布流');
 assert.match(componentSource, /<LsMasonryGallery layout="masonry"/, '我的素材必须使用真实比例瀑布流');
-assert.match(videoCardSource, /style=\{\{ background: 'var\(--color-surface-2\)', aspectRatio: mediaAspectRatio \}\}/, '爆款卡媒体区必须跟随真实媒体比例');
+assert.match(videoCardSource, /style=\{\{ background: 'var\(--color-surface-2\)', aspectRatio: mediaAspectRatio > 0 \? mediaAspectRatio : 9 \/ 16 \}\}/, '爆款卡媒体区必须优先使用真实媒体比例并保留稳定占位');
 assert.doesNotMatch(videoCardSource, /aspect-\[9\/16\]/, '爆款卡不得把横版素材强制裁成 9:16');
 assert.doesNotMatch(videoCardSource, /min-h-52/, '爆款瀑布流卡不得强制内容区等高留白');
 assert.doesNotMatch(videoCardSource, /<div role="button"/, '爆款卡媒体不得使用包含收藏按钮的伪按钮容器');
@@ -117,10 +117,10 @@ assert.match(componentSource, /grid-cols-\[minmax\(240px,2fr\)_[^]*?<Input allow
 const inspirationMoreFilters = componentSource.slice(componentSource.indexOf('id="inspiration-more-filters"'), componentSource.indexOf("innerView === 'inspiration' && videosError"));
 assert.doesNotMatch(inspirationMoreFilters, />发布平台<|aria-label="社媒平台"/, '发布平台不得重复出现在更多筛选');
 assert.doesNotMatch(videoCardSource, /video\.tags\.slice\(0, 2\)/, '爆款卡片与列表首页不得展示 hashtag');
-for (const placeholderTag of ['来源待归类', '相关性待确认', '趋势未知', '迁移性待确认']) {
-  assert.match(videoCardSource, new RegExp(`HIDDEN_DISCOVERY_TAGS[^]*?${placeholderTag}`), `卡片必须隐藏无结论状态：${placeholderTag}`);
-}
-assert.match(videoCardSource, /hasVisibleSignals[^]*?Object\.values\(visibleSignals\)\.some\(Boolean\)/, '没有有效分析结论时不得保留空 Tag 容器');
+assert.doesNotMatch(videoCardSource, /HIDDEN_DISCOVERY_TAGS|visibleSignals|<Tag\b/, '媒体墙只显示画面与操作，分析维度留给详情');
+assert.match(videoCardSource, /ls-viral-card group[\s\S]*?absolute inset-x-0 bottom-0[\s\S]*?group-hover:opacity-100[\s\S]*?查看详情[\s\S]*?爆款裂变/, '爆款卡的详情和生产操作位于媒体底部浮层');
+assert.match(videoCardSource, /absolute right-2 top-2[\s\S]*?收藏[\s\S]*?删除/, '收藏和删除必须位于右上角对象操作区');
+assert.doesNotMatch(videoResultsSource, /VideoListItem|viewMode/, '爆款集合不保留旧列表视图');
 assert.match(detailSource, /aria-label="内容标签"[^]*?video\.tags\.map/, '爆款 hashtag 必须集中展示在详情顶部');
 assert.match(componentSource, /startInspirationCreation[^]*?requestExactFullAnalysis/, '未完成详细分析的视频点击复刻时必须自动补齐分析');
 assert.match(detailSource, /detailCreationReady =[^;]*exactQuality\.ready && !pending/, '详情复刻入口不能依赖可失败的交接状态读取');

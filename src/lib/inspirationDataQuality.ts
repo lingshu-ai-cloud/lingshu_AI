@@ -1,4 +1,15 @@
+import type { TrendVideo, VideoAnalysisPayload } from './inspirationTypes';
+
 export type InspirationTrend = 'hot' | 'rising' | 'stable';
+
+export function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, status?: TrendVideo['status']): boolean {
+  if (analysis?.usage === 'reference_only' && Boolean(analysis.contentSha256) && analysis.userVisible !== false) return true;
+  if (status === 'failed') return analysis?.contentFormat === 'image';
+  if (!analysis) return true;
+  const geminiStatus = String(analysis.geminiStatus || '');
+  const downloadStatus = String(analysis.downloadStatus || '');
+  return downloadStatus !== 'failed' && downloadStatus !== 'manual_required' && geminiStatus !== 'video_failed';
+}
 
 export function trendFromEvidence(analysis: {
   publicBaseline?: ({ relativeMultiple?: number | null } & Record<string, unknown>);

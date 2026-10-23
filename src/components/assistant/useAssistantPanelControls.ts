@@ -6,6 +6,7 @@ import type { AssistantDecisionDialog } from './AssistantDecisionDialog';
 type PanelControlsInput = {
   activeAgent: OrbitAgentId;
   page: Page;
+  inlineHome: boolean;
   mode: 'breathing' | 'chat';
   assistantTool: 'knowledge-intake' | null;
   decisionDialog: AssistantDecisionDialog;
@@ -26,7 +27,7 @@ type PanelControlsInput = {
 
 /** Panel close, focus, Escape, and viewport behavior; task execution stays separate. */
 export function useAssistantPanelControls(input: PanelControlsInput) {
-  const { activeAgent, page, mode, assistantTool, decisionDialog, launcherRetracted,
+  const { activeAgent, page, inlineHome, mode, assistantTool, decisionDialog, launcherRetracted,
     assistantClosedRef, launcherButtonRef, edgeLauncherButtonRef, messageScrollRef,
     persistThread, setAssistantTool, setPanelView, setDecisionDialog,
     setWelcomeBubbleVisible, setMode, setViewport, openCurrentPageAgent } = input;
@@ -71,12 +72,12 @@ export function useAssistantPanelControls(input: PanelControlsInput) {
   useEffect(() => {
     if (mode !== 'chat' && assistantTool !== 'knowledge-intake') return;
     const closePanel = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented || decisionDialog) return;
+      if (event.key !== 'Escape' || event.defaultPrevented || decisionDialog || inlineHome) return;
       closeAssistant();
     };
     window.addEventListener('keydown', closePanel);
     return () => window.removeEventListener('keydown', closePanel);
-  }, [assistantTool, closeAssistant, decisionDialog, mode]);
+  }, [assistantTool, closeAssistant, decisionDialog, inlineHome, mode]);
 
   useEffect(() => {
     const handleResize = () => {

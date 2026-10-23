@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { Download, Film, Pin, RefreshCw, X } from 'lucide-react';
+import { Modal } from 'antd';
 import { authHeader } from '../lib/auth';
 import ContentVideoPreview from './ContentVideoPreview';
+import { LsMasonryGallery } from './ui/LsExperiencePrimitives';
+
+function finishedVideoAspectRatio(item: any): number {
+  const resolution = String(item.exportSpec?.resolution || '');
+  const match = resolution.match(/(\d+)\s*[x×:]\s*(\d+)/i);
+  return match && Number(match[1]) > 0 && Number(match[2]) > 0 ? Number(match[1]) / Number(match[2]) : 9 / 16;
+}
 
 async function request(route: string, body?: unknown) {
   const response = await fetch('/api/overseas/studio/' + route, {
@@ -48,6 +56,7 @@ export default function ContentLibrary({ exportsOnly = false, onPublish, onOpenP
   const [platform, setPlatform] = useState('');
   const [project, setProject] = useState('');
   const [currentOnly, setCurrentOnly] = useState(false);
+  const [previewItem, setPreviewItem] = useState<any | null>(null);
   useEffect(() => {
     const dialog = exportDialog.current;
     if (!dialog) return;
@@ -145,31 +154,31 @@ export default function ContentLibrary({ exportsOnly = false, onPublish, onOpenP
 
       {!shown.length && <p className="border-y border-border bg-surface py-12 text-center text-sm text-text-muted"><Film size={28} className="mx-auto mb-3 text-text-muted" />暂无符合条件的成片<span className="mt-2 block text-xs text-text-muted">完成制作后，视频会自动出现在这里。可以调整筛选条件查找其他成片。</span></p>}
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {shown.map(item => <article key={item.id} className="overflow-hidden rounded-md border border-border bg-surface">
-          <div className="flex items-start gap-2 border-b border-border px-4 py-3">
-            <input aria-label={'选择' + item.title} className="mt-1 accent-accent" type="checkbox" disabled={!item.available} checked={selected.includes(item.id)} onChange={event => setSelected(event.target.checked ? [...selected, item.id] : selected.filter(id => id !== item.id))} />
-            <div className="min-w-0">
-              <h3 className="flex min-w-0 items-center gap-1.5 text-sm font-bold text-text-primary">
-                <span className="truncate">{item.title}</span>
-                {item.pinned && <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-accent"><Pin size={12} aria-hidden="true" />置顶</span>}
-              </h3>
-              <p className="mt-1 text-[11px] text-text-muted">{item.language} · {item.platform} · v{item.version} · {item.current ? '当前版本' : '历史版本'} · {item.exportSpec?.resolution}</p>
+      <LsMasonryGallery layout="masonry" items={shown.map(item => ({ id: String(item.id), content:
+        <article className="group relative overflow-hidden rounded-lg border border-border bg-surface focus-within:border-accent" aria-label={item.title}>
+          <div className="relative w-full bg-black" style={{ aspectRatio: finishedVideoAspectRatio(item) }}>
+            {item.coverUrl ? <img src={item.coverUrl} alt={item.title} loading="lazy" className="h-full w-full object-cover"/>
+              : item.previewUrl ? <video src={item.previewUrl} preload="metadata" muted playsInline className="h-full w-full object-cover" aria-label={item.title}/>
+                : <div className="flex h-full w-full items-center justify-center bg-surface-2 text-text-muted"><Film size={28}/></div>}
+            <div className="absolute left-2 top-2 z-20 flex items-start gap-2">
+              <input aria-label={'选择' + item.title} className="mt-1 h-4 w-4 accent-accent" type="checkbox" disabled={!item.available} checked={selected.includes(item.id)} onChange={event => setSelected(event.target.checked ? [...selected, item.id] : selected.filter(id => id !== item.id))}/>
+              <span className={`rounded-md px-2 py-1 text-xs font-medium ${item.available && item.reviewStatus === 'approved' ? 'bg-white/90 text-text-primary' : 'bg-amber-50 text-amber-900'}`}>{item.reviewStatus === 'approved' ? '已批准' : '待审核'}{!item.available ? ' · 文件不可用' : ''}</span>
+            </div>
+            {item.pinned && <span className="absolute right-2 top-2 z-20 rounded-md bg-white/90 px-2 py-1 text-xs text-accent"><Pin size={12} aria-label="置顶"/></span>}
+            <div className="ls-touch-media-reveal absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/90 via-black/65 to-transparent px-3 pb-3 pt-10 text-white opacity-0 transition-opacity duration-[var(--ls-motion-fast)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+              <h3 className="line-clamp-2 text-sm font-semibold">{item.title}</h3>
+              <p className="mt-1 text-xs text-white/80">{item.language} · {item.platform} · v{item.version} · {item.current ? '当前版本' : '历史版本'} · {item.exportSpec?.resolution}</p>
+              <p className="mt-1 text-xs text-white/80">{item.published ? '已发布' : '未确认发布'}{!item.metadataComplete ? ' · 旧版字幕与文案未留存' : ''}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" className={secondaryButton} disabled={!item.previewUrl || !item.available} onClick={() => setPreviewItem(item)}>预览</button>
+                <button type="button" className={secondaryButton} disabled={!item.available} onClick={() => void download('library/download?id=' + encodeURIComponent(item.id), item.title + '.mp4').catch(error => setNotice(error.message))}>下载 MP4</button>
+                {onOpenProject && <button type="button" className={secondaryButton} onClick={() => { void Promise.resolve(onOpenProject(item.projectId)).catch(error => setNotice(error instanceof Error ? error.message : '内容项目读取失败')); }}>进入制作台</button>}
+                {onPublish && item.current && <button type="button" className={primaryButton} disabled={!item.available || Boolean(item.runId && item.reviewStatus !== 'approved')} onClick={() => void request('library/publish-draft/' + encodeURIComponent(item.id)).then(onPublish).catch(error => setNotice(error.message))}>去发布</button>}
+              </div>
             </div>
           </div>
-          {item.previewUrl && <ContentVideoPreview poster={item.coverUrl || undefined} src={item.previewUrl} className="aspect-video w-full bg-black object-contain" />}
-          <div className="px-4 py-3">
-            <p className={`border-l-2 pl-2 text-xs ${item.reviewStatus === 'approved' ? 'border-accent text-accent' : 'border-amber text-amber'}`}>{item.reviewStatus === 'approved' ? '已批准' : '待审核'} · {item.published ? '已发布' : '未确认发布'}{!item.available ? ' · 文件不可用' : ''}{!item.metadataComplete ? ' · 旧版字幕与文案未留存' : ''}</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" className={secondaryButton} disabled={!item.available} onClick={() => void download('library/download?id=' + encodeURIComponent(item.id), item.title + '.mp4').catch(error => setNotice(error.message))}>下载MP4</button>
-              {onOpenProject && <button type="button" className={secondaryButton} onClick={() => {
-                void Promise.resolve(onOpenProject(item.projectId)).catch(error => setNotice(error instanceof Error ? error.message : '内容项目读取失败'));
-              }}>进入制作台</button>}
-              {onPublish && item.current && <button type="button" className={primaryButton} disabled={!item.available || Boolean(item.runId && item.reviewStatus !== 'approved')} onClick={() => void request('library/publish-draft/' + encodeURIComponent(item.id)).then(onPublish).catch(error => setNotice(error.message))}>去发布</button>}
-            </div>
-          </div>
-        </article>)}
-      </div>
+        </article>
+      }))}/>
     </>}
 
     {exportsOnly && <section>
@@ -197,6 +206,10 @@ export default function ContentLibrary({ exportsOnly = false, onPublish, onOpenP
         </article>)}
       </div>
     </section>}
+
+    <Modal open={Boolean(previewItem)} title={previewItem?.title || '成片预览'} width={860} footer={null} onCancel={() => setPreviewItem(null)} destroyOnHidden>
+      {previewItem?.previewUrl && <ContentVideoPreview key={previewItem.id} poster={previewItem.coverUrl || undefined} src={previewItem.previewUrl} className="max-h-[70dvh] w-full bg-black object-contain"/>}
+    </Modal>
 
     <dialog
       ref={exportDialog}

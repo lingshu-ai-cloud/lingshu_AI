@@ -29,8 +29,6 @@ export function useInspirationDiscoveryInventory({ setMaterialMessage, setSelect
 
   searchRef.current = search;
 
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-
   const [sortMode, setSortMode] = useState<SortMode>('crawlTime');
 
   const [contentFormat, setContentFormat] = useState<ContentFormat>('video');
@@ -330,7 +328,6 @@ export function useInspirationDiscoveryInventory({ setMaterialMessage, setSelect
     setBusinessModelFilter('all');
     setMinimumDiscoveryScore(0);
     setSortMode('crawlTime');
-    setViewMode('grid');
   };
 
   const inspirationFilterCount = Number(search.trim().length > 0)
@@ -341,15 +338,13 @@ export function useInspirationDiscoveryInventory({ setMaterialMessage, setSelect
     + Number(discoveryDecision !== 'all')
     + Number(businessModelFilter !== 'all')
     + Number(minimumDiscoveryScore > 0)
-    + Number(sortMode !== 'crawlTime')
-    + Number(viewMode !== 'grid');
+    + Number(sortMode !== 'crawlTime');
 
   const inspirationAdvancedFilterCount = Number(crawlTimeRange !== 'all')
     + Number(discoveryDecision !== 'all')
     + Number(businessModelFilter !== 'all')
     + Number(minimumDiscoveryScore > 0)
-    + Number(sortMode !== 'crawlTime')
-    + Number(viewMode !== 'grid');
+    + Number(sortMode !== 'crawlTime');
 
   useEffect(() => {
     let cancelled = false;
@@ -368,8 +363,6 @@ export function useInspirationDiscoveryInventory({ setMaterialMessage, setSelect
     setPlatform,
     search,
     setSearch,
-    viewMode,
-    setViewMode,
     sortMode,
     setSortMode,
     contentFormat,

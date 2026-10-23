@@ -13,6 +13,8 @@ const actionRequestSource = fs.readFileSync(new URL('../lib/assistantActionReque
 const decisionDialogSource = fs.readFileSync(new URL('./assistant/AssistantDecisionDialog.tsx', import.meta.url), 'utf8');
 const floatingRemindersSource = fs.readFileSync(new URL('./assistant/AssistantFloatingReminders.tsx', import.meta.url), 'utf8');
 const launcherSource = fs.readFileSync(new URL('./assistant/AssistantLauncher.tsx', import.meta.url), 'utf8');
+const launcherRetractionSource = fs.readFileSync(new URL('./assistant/useAssistantLauncherRetraction.ts', import.meta.url), 'utf8');
+const homeAnchorSource = fs.readFileSync(new URL('./assistant/useAssistantHomeAnchor.ts', import.meta.url), 'utf8');
 const conversationBubblesSource = fs.readFileSync(new URL('./assistant/AssistantConversationBubbles.tsx', import.meta.url), 'utf8');
 const runtimeSource = fs.readFileSync(new URL('./assistant/globalAssistantRuntime.ts', import.meta.url), 'utf8');
 const saveQueueSource = fs.readFileSync(new URL('./assistant/useAssistantThreadSaveQueue.ts', import.meta.url), 'utf8');
@@ -77,9 +79,9 @@ assert.match(launcherMarkup, /var\(--ls-action-gradient\)/, '灵小枢入口图�
 assert.match(retractControlMarkup, /aria-label="收起灵小枢入口到右侧"[\s\S]*onClick=\{onRetract\}[\s\S]*!h-11 !w-11/, '必须提供独立、可键盘操作的 44px 收起控件');
 assert.match(edgeLauncherMarkup, /shape="circle"[\s\S]*data-global-assistant="edge-launcher"[\s\S]*aria-label="展开灵小枢入口"[\s\S]*onClick=\{onRestore\}[\s\S]*!h-11 !w-11[\s\S]*!rounded-l-full !rounded-r-none/, '收起后必须保留贴右边的 44px 恢复入口');
 assert.match(launcherSource, /if \(retracted && !chatOpen\)[\s\S]{0,100}<Badge count=\{badgeCount\}/, '贴边入口必须继续显示权威待办 Badge');
-assert.match(source, /ASSISTANT_LAUNCHER_RETRACTED_KEY[\s\S]*localStorage\.getItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY\)[\s\S]*localStorage\.setItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY, String\(retracted\)\)/, '用户手动收起偏好必须跨刷新保存');
-assert.match(source, /const retractLauncher[\s\S]{0,260}edgeLauncherButtonRef\.current\?\.focus\(\)/, '收起后焦点必须交给贴边恢复入口');
-assert.match(source, /const restoreLauncher[\s\S]{0,260}launcherButtonRef\.current\?\.focus\(\)/, '恢复后焦点必须交回完整入口');
+assert.match(launcherRetractionSource, /ASSISTANT_LAUNCHER_RETRACTED_KEY[\s\S]*localStorage\.getItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY\)[\s\S]*localStorage\.setItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY, String\(retracted\)\)/, '用户手动收起偏好必须跨刷新保存');
+assert.match(launcherRetractionSource, /const retractLauncher[\s\S]{0,260}edgeLauncherButtonRef\.current\?\.focus\(\)/, '收起后焦点必须交给贴边恢复入口');
+assert.match(launcherRetractionSource, /const restoreLauncher[\s\S]{0,260}launcherButtonRef\.current\?\.focus\(\)/, '恢复后焦点必须交回完整入口');
 assert.match(source, /<AssistantFloatingReminders[\s\S]*launcherRetracted=\{launcherRetracted\}/, '提示气泡必须接收当前入口收起状态');
 assert.match(floatingRemindersSource, /const canShow = !launcherRetracted && mode === 'breathing'/, '收起态不得显示任何横向提示气泡');
 assert.match(floatingRemindersSource, /canShow && hasPerformancePriority && performance[\s\S]*canShow && !hasPerformancePriority && speechBubble[\s\S]*weeklyPlanKickoffAvailable[\s\S]*featureGuide/, '等待、短消息、周计划和引导提示优先级必须保留');
@@ -182,7 +184,13 @@ assert.match(featureGuidesSource, /GUIDE_COOLDOWN_MS = 45_000[\s\S]*GUIDE_VISIBL
 assert.match(featureGuidesSource, /document\.addEventListener\('pointerover'[\s\S]*document\.removeEventListener\('pointerover'/, '功能引导的事件监听必须配对清理');
 assert.match(externalDecisionDialogSource, /href=\{dialogTaskCard\.workspace\.href\}[\s\S]{0,120}onClick=\{\(\) => closeDecisionDialogForNavigation\(\)\}/, '普通任务工作区链接也必须在导航前关闭外部弹窗');
 assert.match(appShellChromeSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
-assert.match(conversationPanelSource, /width: assistantPanelWidth,\s*maxWidth: 'calc\(100vw - 32px\)'/, '灵小枢面板必须用视口宽度约束，不能被零宽定位根节点压缩');
+assert.match(conversationPanelSource, /width: inlineHomeBounds\?\.width \?\? assistantPanelWidth,\s*maxWidth: inlineHomeBounds \? '100%' : 'calc\(100vw - 32px\)'/, '首页面板使用锚点尺寸，其余页面继续受视口宽度约束');
+assert.match(source, /inlineHomeAnchor \? createPortal\(assistantRoot, inlineHomeAnchor\) : assistantRoot/, '首页助手必须挂载在内容节点中随页面原生滚动');
+assert.match(source, /!inlineHome && <AssistantLauncher/, '首页只有创作输入区，不叠加全局浮动入口');
+assert.match(homeAnchorSource, /useAssistantHomeInteraction[\s\S]*lingshu:assistant-home-prompt/, '首页快捷建议必须写入原助手草稿');
+assert.match(conversationPanelSource, /<AssistantComposer variant=\{inlineHome \? 'home' : 'default'\}/, '首页沿用同一聊天与上传契约，仅切换输入区外观');
+assert.match(conversationPanelSource, /ls-assistant-panel__header[^"\n]*bg-surface/, '助手标题栏统一使用主题表面');
+assert.doesNotMatch(conversationPanelSource, /bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50/, '夜间模式不得保留浅色专用标题条');
 assert.match(conversationPanelSource, /assistantTool === 'knowledge-intake' \? 560 : 420/, '灵小枢对话面板必须保持 420px 基准宽度，外部详情不得挤压对话宽度');
 
 const closedDecisionCountSource = sourceSection(
@@ -293,7 +301,7 @@ const welcomeBubbleSource = sourceSection(
   conversationBubblesSource,
 );
 assert.match(welcomeBubbleSource, /ls-assistant-bubble-enter/, '欢迎语必须作为普通可滚动气泡进入消息流');
-assert.match(conversationBubblesSource, /welcomeBubbleVisible && !messages\.length/, '线程恢复出任意消息后必须立即隐藏欢迎语');
+assert.match(conversationBubblesSource, /welcomeBubbleVisible && !inlineHome && !messages\.length/, '线程恢复出任意消息后必须立即隐藏欢迎语，首页也不显示欢迎气泡');
 assert.match(conversationPanelSource, /messages=\{activeThread\.messages\}/, '气泡必须使用当前已恢复的对话线程');
 assert.doesNotMatch(welcomeBubbleSource, /\b(?:sticky|fixed|absolute)\b/, '欢迎语不得置顶、固定或脱离消息滚动流');
 

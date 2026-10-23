@@ -4,7 +4,8 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from 'react';
-import { ArrowUp, FileAudio2, FileImage, FileVideo2, Loader2, Paperclip, X } from 'lucide-react';
+import { App } from 'antd';
+import { ArrowUp, FileAudio2, FileImage, FileVideo2, Loader2, Paperclip, Plus, Sparkles, X } from 'lucide-react';
 
 export type AssistantAttachmentKind = 'image' | 'video' | 'audio';
 
@@ -67,6 +68,7 @@ function AttachmentIcon({ kind }: { kind: AssistantAttachmentKind }) {
 }
 
 interface AssistantComposerProps {
+  variant?: 'default' | 'home';
   draft: string;
   files: File[];
   disabled?: boolean;
@@ -79,6 +81,7 @@ interface AssistantComposerProps {
 }
 
 const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps>(function AssistantComposer({
+  variant = 'default',
   draft,
   files,
   disabled = false,
@@ -90,6 +93,17 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
   onSubmit,
 }, forwardedRef) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { message } = App.useApp();
+
+  const guideToViralVideo = () => {
+    const library = document.getElementById('creator-home-library');
+    if (!library) {
+      void message.info({ key: 'choose-viral-video', content: '请先切换到自由创作，再从爆款视频中选择想要复刻的视频。', duration: 4 });
+      return;
+    }
+    void message.info({ key: 'choose-viral-video', content: '请在下方爆款视频中选择想要复刻的视频，再点击「爆款裂变」。', duration: 4 });
+    library.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  };
 
   const selectFiles = (event: ChangeEvent<HTMLInputElement>) => {
     const merged = mergeAssistantAttachments(files, Array.from(event.currentTarget.files || []));
@@ -105,8 +119,9 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
   };
 
   return (
-    <div data-assistant-composer="true" className="ls-assistant-composer shrink-0">
+    <div data-assistant-composer="true" data-variant={variant} className="ls-assistant-composer shrink-0">
       <div data-assistant-composer-surface="true" className="ls-assistant-composer__surface">
+        {variant === 'home' && <button type="button" className="ls-assistant-composer__add-tile" onClick={guideToViralVideo} aria-label="选择爆款视频进行复刻" title="从爆款视频中选择复刻参考"><Plus size={26} aria-hidden="true" /></button>}
         {files.length > 0 && (
           <div data-assistant-attachments="pending" className="flex flex-wrap gap-1.5 border-b border-border/70 px-2.5 py-2">
             {files.map(file => {
@@ -140,11 +155,12 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
           rows={1}
           maxLength={4000}
           aria-label="给灵小枢发送消息"
-          placeholder="告诉灵小枢你想完成什么..."
+          placeholder={variant === 'home' ? '输入想法、脚本或上传参考，和灵小枢一起创作' : '告诉灵小枢你想完成什么...'}
           className="ls-assistant-composer__input max-h-[88px] min-h-10 w-full resize-none overflow-y-auto bg-transparent px-3 pt-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted"
         />
         <div className="flex items-center justify-between gap-2 px-2 pb-2">
-          <div className="min-w-0">
+          <div className="ls-assistant-composer__tools min-w-0">
+            {variant === 'home' && <span className="ls-assistant-composer__mode"><Sparkles size={16} aria-hidden="true"/>Agent 模式</span>}
             <input
               ref={fileInputRef}
               type="file"
@@ -163,7 +179,7 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
               title="添加图片、视频或音频；发送时才会上传到我的素材"
             >
               <Paperclip aria-hidden="true" size={14} />
-              <span>附件</span>
+              <span>{variant === 'home' ? '添加参考' : '附件'}</span>
             </button>
           </div>
           <button

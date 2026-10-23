@@ -3,19 +3,24 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8')
   + fs.readFileSync(new URL('./inspiration/InspirationMaterialGallery.tsx', import.meta.url), 'utf8');
-const watchModal = fs.readFileSync(new URL('./inspiration/InspirationWatchModal.tsx', import.meta.url), 'utf8');
+const watchModal = fs.readFileSync(new URL('./inspiration/InspirationWatchDialog.tsx', import.meta.url), 'utf8');
 const materialMediaSource = fs.readFileSync(new URL('./inspiration/MaterialLibraryCardMedia.tsx', import.meta.url), 'utf8');
 const cardsSource = fs.readFileSync(new URL('./InspirationVideoCards.tsx', import.meta.url), 'utf8');
 const mediaSource = fs.readFileSync(new URL('./inspiration/InspirationMedia.tsx', import.meta.url), 'utf8');
 const progressSource = fs.readFileSync(new URL('./inspiration/VideoAnalysisProgressPanel.tsx', import.meta.url), 'utf8');
-assert.match(source, /import \{ WatchModal, sourceEmbedUrl \} from '.\/inspiration\/InspirationWatchModal'/);
+assert.match(source, /import InspirationWatchDialog from '.\/inspiration\/InspirationWatchDialog'/);
 assert.match(watchModal, /zIndex=\{2200\}/, 'the original-content preview must render above the Ant detail drawer');
-assert.match(watchModal, /video\.videoUrl && !useEmbedPlayer/);
+assert.match(watchModal, /current\.videoUrl && !useEmbed/);
 assert.match(watchModal, /embedUrl \?/);
 assert.match(watchModal, />原站打开</);
+assert.match(watchModal, /onWheel=\{onWheel\}[\s\S]*?onDragEnd=\{\(_, info\) => completeDrag\(info\.offset\.y, info\.velocity\.y\)\}/, '滚轮与拖拽均可切换预览');
+assert.match(watchModal, /data-swipe-hint[\s\S]*?向上滑动切换视频/, '首次打开提供短暂的滑动提示');
+assert.doesNotMatch(watchModal, />分析状态<|>入库时间<|>证据来源</, '简要预览不显示内部分析元数据');
+assert.ok(watchModal.indexOf('>内容结构<') < watchModal.indexOf('>开场钩子<'), '先展示内容结构摘要，再展示开场钩子');
+assert.match(watchModal, /data-preview-details className="[^"]*bg-surface/, '视频详情随主题切换表面');
 assert.doesNotMatch(source, /DiscoveryScopePanel|当前发现范围|导入对标视频并分析|inspiration-creation-account/, '灵感首页不得重复展示范围、创作账号和导入说明卡');
 assert.match(source, /<Tabs className="min-w-0 flex-1"[^]*?<AntUpload className="shrink-0 pt-1"[^]*?>导入 MP4 并分析</, '导入动作必须收进 Tabs 右侧工具栏');
-assert.match(cardsSource, /apiUrl=\{video\.videoUrl\}[^]*?loadOnMount[^]*?previewFrame[^]*?preload="auto"/, '爆款视频卡必须主动加载首帧，不能依赖悬停');
+assert.match(cardsSource, /useNearViewportMedia\(video\.videoUrl[\s\S]*?video\.videoUrl && media\.enabled[\s\S]*?apiUrl=\{video\.videoUrl\}[\s\S]*?loadOnMount[\s\S]*?previewFrame[\s\S]*?preload="auto"/, '爆款视频卡接近视口才主动加载首帧');
 assert.match(cardsSource, /analysisPaused[^]*?mediaState = !analysisPaused/, '暂停分析不得用状态遮罩盖住现有封面');
 assert.match(progressSource, /isInterrupted[^]*?>继续分析</, '暂停或取消后必须提供继续分析入口');
 assert.match(source, /import \{ MaterialLibraryCardMedia \} from '.\/MaterialLibraryCardMedia'/);

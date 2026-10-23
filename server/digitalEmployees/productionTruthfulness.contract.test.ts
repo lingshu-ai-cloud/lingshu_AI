@@ -9,7 +9,6 @@ const localMockGate = fs.readFileSync('src/mocks/foreignTradeOperations.ts', 'ut
 const enterpriseHomepageDemo = fs.readFileSync('src/mocks/enterpriseHomepageDemo.ts', 'utf8');
 const strategyBoard = fs.readFileSync('src/components/StrategyDataBoard.tsx', 'utf8');
 const cockpit = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
-const memory = fs.readFileSync('src/components/WorkspaceManagementPages.tsx', 'utf8');
 const snapshot = fs.readFileSync('server/digitalEmployees/businessSnapshot.ts', 'utf8');
 const production = fs.readFileSync('server/digitalEmployees/contentProduction.ts', 'utf8');
 const productionExecution = fs.readFileSync('server/digitalEmployees/contentProductionExecution.ts', 'utf8');
@@ -26,12 +25,11 @@ assert.match(localMockGate, /window\.location\.hostname === '127\.0\.0\.1' \|\| 
 assert.match(appPageSlot, /<ConversionPage[\s\S]*?includeMockCustomers=\{localForeignTradeMock\}/, 'the customer workspace must use the local-only mock gate');
 assert.match(appPageSlot, /<StrategyPage[\s\S]*?includeMockCustomers=\{localForeignTradeMock\}/, 'the strategy dashboard must use the local-only mock gate');
 assert.match(appPageSlot, /enterpriseHomepageDemo=\{isEnterpriseHomepageDemoAccount\(session\.user\.email\)\}/, 'the enterprise-backed homepage demo must be gated by the authenticated account');
-assert.match(appPageSlot, /<AgentMemoryPage[\s\S]*?includeMockCustomers=\{import\.meta\.env\.DEV && new URLSearchParams\(window\.location\.search\)\.get\('mock'\) === 'quote'\}/, 'the Agent memory page must require the explicit development fixture');
+assert.doesNotMatch(appPageSlot, /<AgentMemoryPage\b/, 'the retired Agent memory frontend must remain removed');
 assert.match(enterpriseHomepageDemo, /ENTERPRISE_HOMEPAGE_DEMO_ACCOUNT = 'lingshu-admin@local\.test'/, 'the production homepage demo must stay limited to the requested test account');
 assert.match(enterpriseHomepageDemo, /synthetic: true/, 'homepage demo records must carry explicit synthetic provenance');
 assert.match(enterpriseHomepageDemo, /不代表真实经营结果/, 'homepage demo data must explain that it is not real business performance');
 assert.match(strategyBoard, /data-testid="enterprise-homepage-demo-notice"/, 'the homepage must visibly label the enterprise-backed demo');
-assert.match(memory, /includeMockCustomers && import\.meta\.env\.DEV && !hasContentOpsData/, 'memory examples may only exist behind an explicit development simulation scope');
 assert.doesNotMatch(cockpit, /frontend_preview|BUSINESS_PREVIEW|PreviewExecutionPanel|查看示例数据/, 'the production cockpit must contain no synthetic metrics or task receipts');
 
 assert.match(snapshot, /filter\(connectedAccount\)/, 'account readiness must come only from currently connected tenant records');

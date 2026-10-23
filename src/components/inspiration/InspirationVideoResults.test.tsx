@@ -6,7 +6,7 @@ import InspirationVideoResults from './InspirationVideoResults';
 
 const baseProps: ComponentProps<typeof InspirationVideoResults> = {
   videos: [], visibleVideoCount: 0, loaded: false, loading: true,
-  viewMode: 'grid', search: '', platformFiltered: false, contentFormat: 'video',
+  search: '', platformFiltered: false, contentFormat: 'video',
   localMaterialCount: 0, launchingReferences: [], replicationTasks: {},
   creationAccountId: '', favoritingMaterialIds: [], favoritedVideoIds: [],
   favoriteSourceUrls: new Set<string>(), showPagination: false,

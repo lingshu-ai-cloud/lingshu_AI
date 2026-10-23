@@ -1,5 +1,5 @@
 import type { AuthSession } from './lib/auth';
-import { resolveNavigationPage, resolvePage, type Page } from './pageRegistry';
+import { resolveNavigationPage, type Page } from './pageRegistry';
 
 export type AgentType = 'strategy' | 'traffic' | 'conversion' | 'retention';
 export interface Source { title: string; uri: string }
@@ -13,8 +13,8 @@ export type StarterAccessState = 'loading' | 'starter_198' | 'legacy' | 'unavail
 
 export const AGENT_PAGES: Page[] = ['strategy', 'traffic', 'conversion', 'retention'];
 export const ROLE_PAGE_ACCESS: Record<import('./lib/auth').OrganizationRole, Set<Page>> = {
-  super_admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'socialWorkspace', 'socialSetup', 'socialAccounts', 'socialPlanning', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
-  admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'socialWorkspace', 'socialSetup', 'socialAccounts', 'socialPlanning', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
+  super_admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'socialWorkspace', 'socialSetup', 'socialAccounts', 'socialPlanning', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'plugins', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
+  admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'socialWorkspace', 'socialSetup', 'socialAccounts', 'socialPlanning', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'plugins', 'scheduled', 'channels', 'youtube']),
   social_operator: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'socialWorkspace', 'socialSetup', 'socialAccounts', 'socialPlanning', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
   customer_service: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'scheduled']),
 };
@@ -31,12 +31,8 @@ export const loadPage = (): Page => {
     const query = new URLSearchParams(window.location.search);
     const queryPage = resolveNavigationPage(query.get('page'), query.get('view'));
     if (queryPage) return queryPage;
-    const savedValue = localStorage.getItem('ow_page');
-    const saved = resolvePage(savedValue);
-    if (saved) return saved;
-    if (savedValue) localStorage.removeItem('ow_page');
-    return 'digitalEmployees';
-  } catch { return 'digitalEmployees'; }
+    return 'strategy';
+  } catch { return 'strategy'; }
 };
 export const loadTrafficEntryView = (): 'publish' | 'accounts' => {
   try { const query = new URLSearchParams(window.location.search); return query.get('page') === 'accountManagement' || query.get('view') === 'accounts' ? 'accounts' : 'publish'; }

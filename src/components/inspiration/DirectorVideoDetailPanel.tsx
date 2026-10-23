@@ -127,7 +127,7 @@ export function DirectorVideoDetailPanel({
           {isImagePost && imageAnalysisReady && imageEvidence ? (
             <ImageEvidenceSummaryPanel evidence={imageEvidence} />
           ) : isImagePost ? (
-            <section className="mt-4 rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
+            <section className="mt-4 rounded-lg border border-dashed border-border bg-surface px-6 py-12 text-center">
               {pending && imageQueue?.state !== 'unknown' ? <Loader2 size={24} className="mx-auto animate-spin text-accent" /> : <BarChart2 size={24} className="mx-auto text-text-muted" />}
               <p className="mt-3 text-sm font-semibold text-text-primary">{statusLabel}</p>
               <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-text-muted">{imageQueue?.detail || (pending ? '可以先关闭此页；完成时间与失败状态以后台返回为准。' : '完成后会展示图文证据与轮播节奏。')}</p>
@@ -154,7 +154,7 @@ export function DirectorVideoDetailPanel({
                   retryDisabled={analyzing}
                 />}
                 {notice && <p role="status" className="border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">{notice}</p>}
-                <section aria-label="编导到内容 Agent 交接状态" className="rounded-lg border border-border bg-white p-4">
+                <section aria-label="编导到内容 Agent 交接状态" className="rounded-lg border border-border bg-surface p-4">
                   <div className="flex flex-wrap items-center gap-2 text-xs font-semibold"><span className="rounded bg-surface-2 px-2 py-1 text-green">原片入库</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${pending || !draftReady ? 'bg-amber-dim text-amber' : 'bg-surface-2 text-green'}`}>{pending ? '编导分析中' : draftReady ? '可交接内容起稿' : '编导证据不足'}</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${draftReady ? 'bg-surface-2 text-green' : 'bg-surface-2 text-text-muted'}`}>{handoffReady ? '可制作成片' : draftReady ? '可生成口播草稿' : '内容起稿未开放'}</span></div>
                   {!handoffReady && !pending && <p className="mt-2 text-[11px] leading-5 text-amber">系统将使用带估计时间码的原片口播，并继续检查镜头切片、钩子动作和企业“销售”人物资产。如需继续，编导 Agent 会按清单补证，无需人工逐句校时或逐镜勾选。</p>}
                 </section>
