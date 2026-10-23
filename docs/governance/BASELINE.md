@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 语音供应商适配边界拆分（2026-10-23）
+
+- 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `691f6271a66717639e9a9cff2ee3b952d2fcfd60` 将 Qwen/MiniMax 语音供应商实现、克隆音色缓存、凭据隔离及脚本可朗读文本提取迁至 `server/routes/studioTtsProviderRuntime.ts`，由 `studio.ts` 注入原租户目录、URL 和 FFmpeg 能力。保留原 `submitStudioVoicePaidRequest` 入口、冻结许可和供应商回执路径；`studio.ts` 从 8,692 降至 8,244 行，历史预算同步收紧。全仓仍有 6 个历史超限文件。
+- 新适配器离线直测 2/2（含无许可零网络请求）、语音付费门禁专项 10/10、完整 Studio 媒体回归、`pnpm run lint`、相对上一 HEAD 的架构扫描/ratchet（2,394 个生产 TypeScript 文件）、193 项迁移仓库只读检查、`pnpm run build` 与 `git diff --check` 通过。Studio 主 chunk 为 480,933/485,000 字节，仍有大 chunk 提示。原图片 AIGC 来源提交仍为集成祖先；新图片独有补丁的剩余自动 GPT 降级与当前要求保留的 Qwen→Gemini 行为冲突，未整笔合入。本轮未调用真实付费供应商、执行目标库迁移、浏览器验收或部署；远端 SHA 与工作区状态待推送后核验。
+
 ## Studio 草稿保存写入边界拆分（2026-10-23）
 
 - 集成分支 `xixi1021程永罗沟通前大整合` 的代码提交 `91d9a1b48720292da0e388b462b7b1b44a09ec17` 将草稿新建、更新和版本 CAS 路由迁至 `server/routes/studioProjectSaveRoutes.ts`，仍在 Studio 鉴权和租户上下文后挂载。原有生产合同、冻结计划、素材候选、知识库图片版本、生成真实性、托管项目只读、海报素材使用及发布审批失效门禁保留；`studio.ts` 从 8,856 降至 8,692 行并收紧历史预算。全仓仍有 6 个历史超限文件，不能把此次拆分称为架构债务全部清零。
