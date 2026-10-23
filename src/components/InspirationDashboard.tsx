@@ -8,6 +8,8 @@ import { buildShootingNeeds } from './inspiration/inspirationShootingNeeds';
 import { InspirationShootingPanel } from './inspiration/InspirationShootingPanel';
 import InspirationImageCrawlDialog from './inspiration/InspirationImageCrawlDialog';
 import { createInspirationReferenceImporter } from './inspiration/inspirationReferenceImport';
+import { submitExactAnalysis, readExactAnalysisRecord, pauseExactAnalysis } from './inspiration/inspirationExactAnalysisApi';
+export { parseExactAnalysisResponse } from './inspiration/inspirationExactAnalysisApi';
 import InspirationVideoResults from './inspiration/InspirationVideoResults';
 import { MATERIAL_LIBRARY_FETCH_PAGE_SIZE, fetchCompleteProductMaterialInventory, fetchProductMaterialSummaries, type ProductMaterialSummary } from './inspiration/inspirationProductMaterialInventory';
 import { initialInspirationReferenceTarget, parseInspirationReferenceTarget, type InspirationReferenceTarget } from './inspiration/inspirationReferenceTarget';
@@ -128,22 +130,6 @@ const PLATFORM_FILTERS: { id: Platform; label: string }[] = [
 
 // ── Script Panel ──────────────────────────────────────────────────────────────
 // ── Video Card (grid) ─────────────────────────────────────────────────────────
-
-export function parseExactAnalysisResponse(raw: string, status: number): { error?: string; status?: string; reused?: boolean; id?: string } {
-  try {
-    const parsed = JSON.parse(raw) as { error?: unknown; status?: unknown; reused?: unknown; id?: unknown };
-    return {
-      error: typeof parsed.error === 'string' ? parsed.error : undefined,
-      status: typeof parsed.status === 'string' ? parsed.status : undefined,
-      reused: typeof parsed.reused === 'boolean' ? parsed.reused : undefined,
-      id: typeof parsed.id === 'string' ? parsed.id : undefined,
-    };
-  } catch {
-    return { error: `全片精确分析接口返回异常（HTTP ${status}）` };
-  }
-}
-
-
 
 export { splitDirectorReviewedShot, reviseDirectorHookAction, asrCandidatesToReviewDraft } from './inspiration/DirectorReviewWorkspace';
 
@@ -1442,17 +1428,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setAnalyzingVideoIds(ids => [...ids, video.id]);
     setMaterialMessage(`正在提交全片精确分析：${video.title}`);
     try {
-      const response = await fetch(video.recordId
-        ? `/api/overseas/videos/${video.recordId}/reanalyze`
-        : '/api/overseas/videos/material-exact-analysis', {
-        method: video.recordId ? 'PATCH' : 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify(video.recordId
-          ? { analysisMode: 'exact', ...(force ? { force: true } : {}) }
-          : { materialId, title: video.title, platform: video.platform, duration: video.duration }),
-      });
-      const data = parseExactAnalysisResponse(await response.text(), response.status);
-      if (!response.ok) throw new Error(data.error || '全片精确分析提交失败');
+      const data = await submitExactAnalysis(video, force);
       if (data.status === 'analyzed') {
         const markCompleted = (item: TrendVideo): TrendVideo => ({
           ...item,
@@ -1486,9 +1462,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           for (let attempt = 0; attempt < 90; attempt += 1) {
             await new Promise(resolve => window.setTimeout(resolve, 2000));
             try {
-              const latestResponse = await fetch(`/api/overseas/videos/${recordId}`, { headers: authHeader() });
-              if (!latestResponse.ok) continue;
-              const latest = await latestResponse.json() as CrawlerRecord;
+              const latest = await readExactAnalysisRecord(recordId);
+              if (!latest) continue;
               let latestAnalysis: VideoAnalysisPayload = {};
               try { latestAnalysis = JSON.parse(latest.aiAnalysis || '{}') as VideoAnalysisPayload; } catch {}
               const applyLatest = (item: TrendVideo): TrendVideo => item.id !== video.id ? item : {
@@ -1538,12 +1513,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     if (!video.recordId) return;
     setMaterialMessage('正在停止本次精确分析…');
     try {
-      const response = await fetch(`/api/overseas/videos/${video.recordId}/analysis-pause`, {
-        method: 'POST',
-        headers: authHeader(),
-      });
-      const data = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok) throw new Error(data.error || '停止分析失败');
+      await pauseExactAnalysis(video.recordId);
       const markPaused = (item: TrendVideo): TrendVideo => item.id !== video.id ? item : {
         ...item,
         status: item.aiAnalysis?.gemini || item.aiAnalysis?.analysisQuality ? 'analyzed' : 'failed',
