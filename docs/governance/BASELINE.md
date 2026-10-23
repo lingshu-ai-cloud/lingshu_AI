@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## Studio 对标证据准入与迁移规则拆分（2026-10-23）
+
+- 代码提交 `dddbec98` 将规范化对标证据准入、旧逐镜时间线完整性和跨品类迁移建议迁至 `studioReferenceAdmission.ts`，保留页面公开导出与现有生成门禁；`AiCreateStudio.tsx` 从 12,086 降至 12,000 行并收紧历史预算。全仓仍有 5 个超限文件，这批并不代表架构拆分完成。
+- 新模块纯规则 3/3、原 Studio 页面工作流合同、Studio 工作流集成组、租户隔离、TypeScript、架构扫描/ratchet（2,410 个生产 TypeScript 文件）、193 项迁移清单只读检查、生产构建及 `git diff --check` 通过。Studio 主 chunk 为 480,957/485,000 字节，构建仍有大 chunk 提示。未调用真实付费供应商、测试 LinkedIn 付费采集、执行目标库迁移、浏览器验收或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## 灵感页全片精确分析 HTTP 边界拆分（2026-10-23）
 
 - 代码提交 `f48abb19` 将精确分析提交、持久记录读取、暂停与响应解析迁至 `inspirationExactAnalysisApi.ts`；页面保留准入、状态、轮询上限与展示，旧页面解析导出兼容。`InspirationDashboard.tsx` 从 2,238 降至 2,208 行并收紧历史预算；全仓仍有 5 个超限文件，结构拆分尚未完成。
