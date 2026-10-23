@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import sharp from 'sharp';
-import { createWorker, OEM, PSM } from 'tesseract.js';
+import { createWorker, OEM, PSM, type Worker } from 'tesseract.js';
 
 export const LOCAL_PRODUCT_OCR_LIMITS = { maxEncodedBytes: 6 * 1024 * 1024, maxPixels: 12_000_000, maxOutputChars: 80_000, timeoutMs: 45_000 } as const;
 type LanguagePackage = { code: string; gzip: boolean; langPath: string };
@@ -37,16 +37,31 @@ export function localProductOcrReadiness() {
   }
 }
 
-async function recognizeWithBundledTesseract(bytes: Buffer): Promise<string> {
+async function withBundledTesseract<T>(action: (worker: Worker) => Promise<T>): Promise<T> {
   const worker = await createWorker(['chi_sim', 'eng'], OEM.LSTM_ONLY, { langPath: localLanguageDirectory(), gzip: true, cacheMethod: 'none' });
   try {
     await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
-    let timeout: NodeJS.Timeout | undefined;
-    const result = await Promise.race([worker.recognize(bytes), new Promise<never>((_, reject) => {
-      timeout = setTimeout(() => reject(new Error('LOCAL_OCR_TIMEOUT')), LOCAL_PRODUCT_OCR_LIMITS.timeoutMs);
-    })]).finally(() => { if (timeout) clearTimeout(timeout); });
-    return result.data.text;
+    return await action(worker);
   } finally { await worker.terminate(); }
+}
+
+async function recognizeWithWorker(worker: Worker, bytes: Buffer): Promise<string> {
+  let timeout: NodeJS.Timeout | undefined;
+  const result = await Promise.race([worker.recognize(bytes), new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error('LOCAL_OCR_TIMEOUT')), LOCAL_PRODUCT_OCR_LIMITS.timeoutMs);
+  })]).finally(() => { if (timeout) clearTimeout(timeout); });
+  return result.data.text;
+}
+
+async function recognizeWithBundledTesseract(bytes: Buffer): Promise<string> {
+  return withBundledTesseract(worker => recognizeWithWorker(worker, bytes));
+}
+
+/** Reuse language initialization within one sequential audit, never across tenants or jobs. */
+export async function withLocalProductOcrSession<T>(action: (recognize: (input: { bytes: Buffer; mimeType: string }) => Promise<string>) => Promise<T>): Promise<T> {
+  return withBundledTesseract(worker => action(input => recognizeProductImageLocally(input, {
+    recognize: bytes => recognizeWithWorker(worker, bytes),
+  })));
 }
 
 export async function recognizeProductImageLocally(input: { bytes: Buffer; mimeType: string }, options: { recognize?: (bytes: Buffer) => Promise<string> } = {}) {

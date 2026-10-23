@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {createReadStream} from 'node:fs';
 import {spawn} from 'node:child_process';
 import {runVisualFfmpeg} from '../lib/renderVisualQuality.js';
-import {recognizeProductImageLocally} from '../lib/localProductOcr.js';
+import {recognizeProductImageLocally,withLocalProductOcrSession} from '../lib/localProductOcr.js';
 import ffmpegStatic from 'ffmpeg-static';
 import {inspectSensitiveScreenText} from './socialSceneSensitiveScreenAudit.js';
 
@@ -86,14 +86,15 @@ export async function auditCaptionDecodedFrames(input:{filePath:string;cues:Arra
  if(!num||!den||rows.some((row,index)=>index>0&&Number(row[2])<=Number(rows[index-1]![2]))||Number(rows.at(-1)![2])*num/den>maxDurationSeconds)return unknown(mediaSha256,'逐帧 PTS 不单调或超过有界时长',rows.length);
  try{
   const frames:CaptionDecodedFrameAudit['frames']=[],missingFrameIndexes:number[]=[];
-  const decoded=await forEachDecodedPng(input.filePath,async(bytes,index)=>{
+  const scan=async(recognize:typeof recognizeProductImageLocally)=>forEachDecodedPng(input.filePath,async(bytes,index)=>{
    if(index>=rows.length)throw Error('decoded_frame_count_exceeds_enumeration');
    const pts=Number(rows[index]![2]),seconds=pts*num/den;
    const cue=input.cues.find(c=>seconds>=c.start-0.001&&seconds<c.end-0.001);
-   const ocr=await (input.recognize??recognizeProductImageLocally)({bytes,mimeType:'image/png'});
+   const ocr=await recognize({bytes,mimeType:'image/png'});
    if(cue&&!normalize(ocr).includes(normalize(cue.text)))missingFrameIndexes.push(index);
    frames.push({index,pts,timeBase,frameSha256:createHash('sha256').update(bytes).digest('hex'),ocrSha256:createHash('sha256').update(ocr).digest('hex'),findingCodes:inspectSensitiveScreenText(ocr)});
   },region);
+  const decoded=input.recognize?await scan(input.recognize):await withLocalProductOcrSession(scan);
   if(decoded!==rows.length)return unknown(mediaSha256,'枚举与流式解码帧数不一致',rows.length,decoded,missingFrameIndexes,frames);
   if(await fileSha256(input.filePath)!==mediaSha256)return unknown(mediaSha256,'逐帧检查期间最终 MP4 字节发生变化；原观察不得用于当前成片',rows.length,frames.length,missingFrameIndexes,frames);
   if(missingFrameIndexes.length)return unknown(mediaSha256,'至少一帧未能观察到冻结字幕；OCR 不能独立判定字幕缺失',rows.length,frames.length,missingFrameIndexes,frames);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import sharp from 'sharp';
-import { LOCAL_PRODUCT_OCR_LIMITS, localProductOcrReadiness, recognizeProductImageLocally } from './localProductOcr.js';
+import { LOCAL_PRODUCT_OCR_LIMITS, localProductOcrReadiness, recognizeProductImageLocally, withLocalProductOcrSession } from './localProductOcr.js';
 
 test('local OCR readiness finds project-bundled Simplified Chinese and English data', () => {
   const ready = localProductOcrReadiness();
@@ -32,4 +32,17 @@ test('bundled OCR worker recognizes a real page without an external executable o
   const page = await sharp(Buffer.from('<svg width="1200" height="420" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="white"/><text x="40" y="150" font-family="Arial" font-size="72" fill="black">Product Name: LIGHT CREAM</text><text x="40" y="280" font-family="Arial" font-size="72" fill="black">SKU: CR-01</text></svg>')).png().toBuffer();
   const text = await recognizeProductImageLocally({ bytes: page, mimeType: 'image/png' });
   assert.match(text, /Product Name/i); assert.match(text, /CR-01/i);
+});
+
+test('one OCR session keeps image limits and reads each frame rather than reusing earlier text', async () => {
+  const page = (text: string) => sharp(Buffer.from(`<svg width="900" height="240" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="white"/><text x="30" y="150" font-family="Arial" font-size="80" fill="black">${text}</text></svg>`)).png().toBuffer();
+  const first = await page('LIGHT CREAM'), second = await page('BLUE SOAP');
+  await withLocalProductOcrSession(async recognize => {
+    await assert.rejects(recognize({ bytes: first, mimeType: 'video/mp4' }), /OCR_IMAGE_TYPE_UNSUPPORTED/);
+    await assert.rejects(recognize({ bytes: Buffer.alloc(LOCAL_PRODUCT_OCR_LIMITS.maxEncodedBytes + 1), mimeType: 'image/png' }), /OCR_IMAGE_SIZE_LIMIT/);
+    assert.match(await recognize({ bytes: first, mimeType: 'image/png' }), /LIGHT CREAM/);
+    const text = await recognize({ bytes: second, mimeType: 'image/png' });
+    assert.match(text, /BLUE SOAP/);
+    assert.doesNotMatch(text, /LIGHT CREAM/);
+  });
 });
