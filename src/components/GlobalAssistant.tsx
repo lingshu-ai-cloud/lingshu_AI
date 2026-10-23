@@ -1,6 +1,7 @@
 import { isLegacyUnboundOperationNotice, isUnboundOperationError } from '../lib/assistantOperationNotice';
 import { sameAssistantRequestIdentity, withAssistantIdleTimeout } from '../lib/assistantRequestLifecycle';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { App as AntApp, Badge, Button, Input, Modal } from 'antd';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -2371,17 +2372,15 @@ export default function GlobalAssistant({
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
-
-  if (suppressForRightSidebar || (inlineHome && !inlineHomeBounds)) return null;
-
-  return (
+  const inlineHomeAnchor = inlineHomeBounds ? document.getElementById('content-creation-assistant-anchor') : null;
+  if (suppressForRightSidebar || (inlineHome && !inlineHomeAnchor)) return null;
+  const assistantRoot = (
     <div
       data-global-assistant="root"
       data-inline-home={inlineHomeBounds ? 'true' : undefined}
       data-home-empty={inlineHome && !activeThread.messages.length && !loading ? 'true' : undefined}
       data-home-creation-mode={inlineHomeBounds ? creationMode : undefined}
-      className={`fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'} ${inlineHomeBounds ? 'ls-assistant-home-root' : ''}`}
-      style={inlineHomeBounds ? { top: inlineHomeBounds.top, left: inlineHomeBounds.left, width: inlineHomeBounds.width, height: inlineHomeBounds.height, right: 'auto', bottom: 'auto' } : undefined}
+      className={inlineHomeAnchor ? 'ls-assistant-home-root absolute inset-0 z-[75]' : `fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'}`}
     >
       <AnimatePresence>
         {!launcherRetracted && mode === 'breathing' && performance && shouldNotifyAssistant(performance.reason) && !performanceHidden && (
@@ -3056,4 +3055,5 @@ export default function GlobalAssistant({
       )}
     </div>
   );
+  return inlineHomeAnchor ? createPortal(assistantRoot, inlineHomeAnchor) : assistantRoot;
 }

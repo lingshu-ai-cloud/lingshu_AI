@@ -7,10 +7,11 @@ import { inspirationCreationAvailability, inspirationCreationShotPreflight } fro
 
 const source = readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
 const analysisTabsSource = readFileSync(new URL('./inspiration/InspirationVideoAnalysisTabs.tsx', import.meta.url), 'utf8');
+const creatorStyles = readFileSync(new URL('../styles/creator-workspace.css', import.meta.url), 'utf8');
 
 test('director detail keeps analysis evidence inside the three analysis tabs', () => {
   assert.match(source, /import InspirationVideoAnalysisTabs from '.\/inspiration\/InspirationVideoAnalysisTabs';/);
-  assert.match(source, /<Drawer open title=\{video\.title\}/);
+  assert.match(source, /<Drawer rootClassName="ls-inspiration-detail-drawer" open title=\{video\.title\}/);
   assert.match(source, /<InspirationVideoAnalysisTabs/);
   assert.match(source, /analysisActionAvailable=\{canRunExactAnalysis\}/);
   assert.match(source, /storyboardStatus=\{<>[^]*?<VideoAnalysisProgressPanel[^]*?编导到内容 Agent 交接状态[^]*?<\/>\}/, '进度与交接状态必须进入“分镜与脚本”页');
@@ -19,6 +20,10 @@ test('director detail keeps analysis evidence inside the three analysis tabs', (
   assert.match(analysisTabsSource, /return <section aria-label="视频分析详情">/, '分析 Tab 不得在 Drawer 正文内重复增加顶部空白');
   assert.doesNotMatch(analysisTabsSource, /return <section className="mt-4" aria-label="视频分析详情">/);
   assert.match(source, /<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">/, 'Drawer 正文顶部应与分析 Tab 紧邻');
+  assert.doesNotMatch(analysisTabsSource, /新的导演级分析正在进行/);
+  assert.doesNotMatch(analysisTabsSource, /bg-white|bg-\[#fbfcfa\]/, '爆款详情分析卡不得写死大片白底');
+  assert.match(source, /ls-inspiration-detail-drawer[\s\S]{0,2500}bg-surface[\s\S]{0,250}text-text-primary/, '详情抽屉头部须使用共享 Surface 与高对比文字');
+  assert.match(creatorStyles, /html\[data-lingshu-appearance='dark'\],\s*html\[data-lingshu-appearance='dark'\] \.ls-design-system/, '夜间 Token 须覆盖 Ant 门户层');
 });
 
 test('completed precision analysis hides transient progress and redundant review summaries', () => {

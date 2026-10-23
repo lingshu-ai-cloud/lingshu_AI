@@ -23,13 +23,13 @@ const contentShotTypes: Array<{ id: ProductionMaterialType; label: string; color
   { id: 'general', label: '其他通用素材', color: 'bg-slate-400' },
 ];
 const contentShotTypeById = Object.fromEntries(contentShotTypes.map(item => [item.id, item])) as Partial<Record<BenchmarkMaterialType, (typeof contentShotTypes)[number]>>;
-const card = 'rounded-lg border border-border bg-white p-4';
+const card = 'rounded-lg border border-border bg-surface p-4';
 const firstTenLabels: Array<[keyof NonNullable<GeminiVideoAnalysis['firstTenSeconds']>, string]> = [
   ['atmosphere', '氛围'], ['audioVisual', '音画'], ['camera', '运镜'], ['visuals', '画面'], ['voiceMusic', '人声与音乐'],
 ];
 
 function cleanItems(values: unknown): string[] {
-  return Array.isArray(values) ? values.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).map(value => value.trim()) : [];
+  return Array.isArray(values) ? values.filter((value): value is string => typeof value === 'string' && value.trim().length > 0 && value.trim() !== '[object Object]').map(value => value.trim()) : [];
 }
 
 function timelineShots(analysis: BenchmarkAnalysis): BenchmarkShot[] {
@@ -70,8 +70,8 @@ export function ContentStructureTab({ benchmark, gemini, pending, duration }: { 
   const unclassifiedCount = benchmark.shots.filter(shot => shot.materialType === 'unknown').length;
   return <div className="space-y-4">
     <section className={card} aria-label="开场钩子证据">
-      <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-text-primary">开场钩子</h3><span className="rounded-full bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-700">抓住注意</span></div>
-      {hooks.length ? <div className="mt-3 space-y-2">{hooks.slice(0, 3).map((hook, index) => <p key={`${hook}-${index}`} className="rounded-lg border-l-2 border-rose-400 bg-rose-50/60 px-3 py-2 text-xs leading-5 text-text-secondary">{hook}</p>)}</div>
+      <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-text-primary">开场钩子</h3><span className="rounded-full border border-red/20 bg-red/5 px-2 py-1 text-[10px] font-bold text-red">抓住注意</span></div>
+      {hooks.length ? <div className="mt-3 space-y-2">{hooks.slice(0, 3).map((hook, index) => <p key={`${hook}-${index}`} className="rounded-lg border-l-2 border-red bg-surface-2 px-3 py-2 text-xs leading-5 text-text-secondary">{hook}</p>)}</div>
         : firstShot?.visual ? <p className="mt-3 text-xs leading-5 text-text-secondary">原片首段画面：{firstShot.visual}</p>
           : <p className="mt-3 text-xs text-text-muted">{pending ? '正在提取开场画面与钩子。' : '当前分析尚无可核对的开场钩子。'}</p>}
       {firstShot?.visual && hooks.length > 0 && <p className="mt-3 text-[11px] leading-5 text-text-muted">对应原片首段（{firstShot.time || '时间待确认'}）：{firstShot.visual}</p>}
@@ -83,14 +83,14 @@ export function ContentStructureTab({ benchmark, gemini, pending, duration }: { 
         {contentShotTypes.map((type, index) => {
           const shots = benchmark.shots.filter(shot => shot.materialType === type.id);
           const timeRanges = shots.map(shot => shot.time).filter(Boolean).slice(0, 4);
-          return <li key={type.id} className="relative rounded-lg border border-border bg-[#fbfcfa] px-3 py-3 text-xs">
+          return <li key={type.id} className="relative rounded-lg border border-border bg-surface-2 px-3 py-3 text-xs">
             <div className="flex items-center gap-2"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent-glow text-[10px] font-semibold text-accent">{index + 1}</span><i className={`h-2.5 w-2.5 shrink-0 rounded-full ${type.color}`} /><strong className="min-w-0 break-words text-text-primary">{type.label}</strong><span className="ml-auto shrink-0 text-[10px] text-text-muted">{shots.length} 个镜头</span></div>
             <p className="mt-2 break-words leading-5 text-text-secondary">{shots.length ? shots.slice(0, 2).map(shot => shot.visual).filter(Boolean).join('；') || '已归类，画面描述待补齐' : pending ? '正在识别该类镜头' : '本片未识别到该类镜头'}</p>
             {timeRanges.length > 0 && <p className="mt-1 text-[10px] text-text-muted">时间：{timeRanges.join('、')}{shots.length > timeRanges.length ? '…' : ''}</p>}
           </li>;
         })}
       </ol>
-      {unclassifiedCount > 0 && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800">另有 {unclassifiedCount} 个镜头证据不足，仍标记为“待判断”，不会误计入其他通用素材。</p>}
+      {unclassifiedCount > 0 && <p className="mt-3 rounded-lg border border-amber/30 bg-amber-dim px-3 py-2 text-[11px] leading-5 text-amber">另有 {unclassifiedCount} 个镜头证据不足，仍标记为“待判断”，不会误计入其他通用素材。</p>}
       {benchmark.shots.length > 0 && !benchmark.timelineComplete && <p className="mt-3 text-[11px] leading-5 text-amber-800">时间线尚未确认覆盖整片；这些结构仅代表已有分析片段。</p>}
     </section>
   </div>;
@@ -116,12 +116,12 @@ export function ViralSynthesisTab({ benchmark, gemini, pending, adaptTip, baseRe
   return <div className="space-y-4">
     <section className={card} aria-label="爆点证据链">
       <div className="flex flex-wrap items-baseline justify-between gap-2"><h3 className="text-sm font-semibold text-text-primary">从钩子到行动的证据链</h3><span className="text-[10px] text-text-muted">画面与台词来自原片分析 · 效果原因属于推断</span></div>
-      {hooks[0] && <p className="mt-3 rounded-lg border-l-2 border-rose-400 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-900"><strong>模型识别的注意力入口：</strong>{hooks[0]}</p>}
+      {hooks[0] && <p className="mt-3 rounded-lg border-l-2 border-red bg-surface-2 px-3 py-2 text-xs leading-5 text-text-secondary"><strong className="text-text-primary">模型识别的注意力入口：</strong>{hooks[0]}</p>}
       <TimelineRail analysis={benchmark} duration={duration} />
-      {shots.length ? <ol className="mt-4 grid gap-2 md:grid-cols-3">{shots.map((shot, index) => <li key={shot.shotId} className="relative min-w-0 rounded-lg border border-border bg-[#fbfcfa] p-3 text-xs">
+      {shots.length ? <ol className="mt-4 grid gap-2 md:grid-cols-3">{shots.map((shot, index) => <li key={shot.shotId} className="relative min-w-0 rounded-lg border border-border bg-surface-2 p-3 text-xs">
         <div className="flex items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${roleColors[shot.narrativeRole]}`} /><strong className="text-text-primary">{SHOT_ROLE_LABELS[shot.narrativeRole] === '待判断' ? `第 ${shot.index} 段` : SHOT_ROLE_LABELS[shot.narrativeRole]}</strong><span className="ml-auto text-[10px] text-text-muted">{shot.time || '时间待确认'}</span></div>
         <p className="mt-2 leading-5 text-text-secondary">{shot.visual || '画面待分析'}</p>
-        {(shot.dialogue || shot.onScreenText) && <p className="mt-2 rounded-md bg-white px-2 py-1.5 leading-5 text-text-primary"><span className="font-bold">{shot.dialogue ? '口播' : '屏幕文字'}：</span>{shot.dialogue || shot.onScreenText}</p>}
+        {(shot.dialogue || shot.onScreenText) && <p className="mt-2 rounded-md bg-surface px-2 py-1.5 leading-5 text-text-primary"><span className="font-bold">{shot.dialogue ? '口播' : '屏幕文字'}：</span>{shot.dialogue || shot.onScreenText}</p>}
         {shot.effectivenessHypothesis && <p className="mt-2 leading-5 text-amber-800"><span className="font-bold">可能奏效的原因：</span>{shot.effectivenessHypothesis}</p>}
         {index < shots.length - 1 && <span aria-hidden="true" className="absolute -right-2 top-1/2 z-10 hidden rounded-full bg-accent px-1 text-white md:block">→</span>}
       </li>)}</ol> : <p className="mt-3 text-xs text-text-muted">{pending ? '正在关联画面、叙事作用与台词。' : '尚无逐镜证据，完成导演级分镜分析后展示证据链。'}</p>}
@@ -129,7 +129,7 @@ export function ViralSynthesisTab({ benchmark, gemini, pending, adaptTip, baseRe
     {hasEvidence ? <div className="grid gap-4 sm:grid-cols-2">
       <section className={card} aria-label="前十秒音画原因"><h3 className="text-sm font-semibold text-text-primary">前 10 秒如何留住观看</h3>{firstTen.length ? <dl className="mt-3 space-y-2">{firstTen.map(item => <div key={item.label} className="rounded-lg bg-surface-2 px-3 py-2 text-xs leading-5"><dt className="font-bold text-accent">{item.label}</dt><dd className="mt-1 text-text-secondary">{item.detail}</dd></div>)}</dl> : <p className="mt-3 text-xs text-text-muted">暂无前 10 秒音画证据。</p>}</section>
       <section className={card} aria-label="传播机制与可复用点"><h3 className="text-sm font-semibold text-text-primary">可复用的表达机制</h3>
-        {hypotheses.length > 0 && <ul className="mt-3 space-y-2">{hypotheses.map(shot => <li key={shot.shotId} className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900"><strong>{shot.time || `第 ${shot.index} 段`}：</strong>{shot.effectivenessHypothesis}</li>)}</ul>}
+        {hypotheses.length > 0 && <ul className="mt-3 space-y-2">{hypotheses.map(shot => <li key={shot.shotId} className="rounded-lg bg-amber-dim px-3 py-2 text-xs leading-5 text-amber"><strong>{shot.time || `第 ${shot.index} 段`}：</strong>{shot.effectivenessHypothesis}</li>)}</ul>}
         {sellingPoints.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{sellingPoints.slice(0, 6).map((point, index) => <span key={`${point}-${index}`} className="rounded-lg bg-accent-glow px-2 py-1 text-[11px] leading-5 text-accent">{point}</span>)}</div>}
         {hypotheses.length === 0 && sellingPoints.length === 0 && <p className="mt-3 text-xs text-text-muted">尚未识别可核对的表达机制。</p>}
       </section>
@@ -176,7 +176,6 @@ export default function InspirationVideoAnalysisTabs({ benchmark, gemini, pendin
     document.getElementById(`${id}-${tabs[next]!.id}-tab`)?.focus();
   };
   return <section aria-label="视频分析详情">
-    {pending && benchmark.shots.length > 0 && <p role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-900">新的导演级分析正在进行；下方仅展示上次分析结果，不能作为本次爆款复刻的当前依据。</p>}
     <div className="overflow-x-auto border-b border-border"><div role="tablist" aria-label="视频分析维度" className="flex min-w-max gap-1">
       {tabs.map(tab => <button key={tab.id} id={`${id}-${tab.id}-tab`} type="button" role="tab" aria-selected={activeTab === tab.id} aria-controls={`${id}-${tab.id}-panel`} tabIndex={activeTab === tab.id ? 0 : -1} onClick={() => setActiveTab(tab.id)} onKeyDown={event => onTabKeyDown(event, tab.id)} className={`min-h-11 whitespace-nowrap border-b-2 px-3 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${activeTab === tab.id ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'}`}>{tab.label}</button>)}
     </div></div>

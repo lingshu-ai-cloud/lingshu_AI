@@ -11,7 +11,7 @@ export function useAssistantHomeMode(active: boolean, setMode: Dispatch<SetState
   }, [active, setMode]);
 }
 
-/** Keep the existing assistant mounted while its sole conversation surface follows the home slot. */
+/** Locate the home slot once; the portal then follows its native scroll position without frame-by-frame coordinate writes. */
 export function useAssistantHomeAnchor(active: boolean): AssistantHomeBounds | null {
   const [bounds, setBounds] = useState<AssistantHomeBounds | null>(null);
   useEffect(() => {
@@ -40,13 +40,11 @@ export function useAssistantHomeAnchor(active: boolean): AssistantHomeBounds | n
     mountObserver = new MutationObserver(schedule);
     mountObserver.observe(document.body, { childList: true, subtree: true });
     schedule();
-    window.addEventListener('scroll', schedule, true);
     window.addEventListener('resize', schedule);
     return () => {
       window.cancelAnimationFrame(frame);
       mountObserver?.disconnect();
       resizeObserver?.disconnect();
-      window.removeEventListener('scroll', schedule, true);
       window.removeEventListener('resize', schedule);
     };
   }, [active]);

@@ -3407,7 +3407,7 @@ export function DirectorVideoDetailPanel({
           : '等待编导 Agent 分析';
 
   return (
-    <Drawer open title={video.title} size={800} onClose={onClose}
+    <Drawer rootClassName="ls-inspiration-detail-drawer" open title={video.title} size={800} onClose={onClose}
       extra={<Button onClick={onFavorite} loading={favoriting} aria-label={isFavorite ? `取消收藏 ${video.title}` : `收藏 ${video.title}`} icon={<Star size={16} fill={isFavorite ? 'currentColor' : 'none'} />}>{isFavorite ? '已收藏' : '收藏'}</Button>}
       footer={<div className="flex flex-wrap items-center gap-2">
         {!isImagePost && canRunExactAnalysis && (pending
@@ -3420,9 +3420,9 @@ export function DirectorVideoDetailPanel({
         {!detailCreationReady && <p className="w-full text-xs text-text-secondary">{isImagePost ? '点击“爆款裂变”会先完成图文证据分析。' : pending ? '详细分析完成后会开放复刻，当前任务不会重复提交。' : needsDirectorReview ? '逐镜分析已经完成；需先确认待复核的镜头证据，再进入制作。' : canRunExactAnalysis ? '点击“爆款裂变”会先完成详细分析，再进入制作。' : detailedAnalysisReason}</p>}
       </div>}
       styles={{ body: { padding: 0 } }}>
-      <div className="border-b border-border px-5 py-3">
-        <p className="text-sm font-medium text-text-primary">编导 Agent · {statusLabel}</p>
-        <p className="mt-1 flex items-center gap-2 text-xs text-text-secondary"><SocialPlatformIcon platform={video.platform} size={14}/>{PLATFORM_META[video.platform]?.label || video.platform} · {displayDuration(video.duration)} · {payload?.analysisSource || '待确认分析来源'}</p>
+      <div className="border-b border-border bg-surface px-5 py-3">
+        <p className="text-sm font-semibold text-text-primary">编导 Agent · {statusLabel}</p>
+        <p className="mt-1 flex items-center gap-2 text-xs font-medium text-text-secondary"><SocialPlatformIcon platform={video.platform} size={14}/>{PLATFORM_META[video.platform]?.label || video.platform} · {displayDuration(video.duration)} · {payload?.analysisSource || '待确认分析来源'}</p>
         {video.tags.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-1.5" aria-label="内容标签">
           <span className="mr-1 text-xs font-semibold text-text-secondary">内容标签</span>
           {video.tags.map(tag => <span key={tag} className="rounded-md border border-border bg-accent-glow px-2 py-1 text-xs font-semibold text-accent">#{tag}</span>)}
@@ -3432,19 +3432,19 @@ export function DirectorVideoDetailPanel({
           {isImagePost && notice && <p role="status" className="mb-4 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">{notice}</p>}
           {isImagePost && imageAnalysisReady && imageEvidence ? (
             <div className="mt-4 space-y-4">
-              <section className="rounded-lg border border-border bg-white p-4">
+              <section className="rounded-lg border border-border bg-surface p-4">
                 <h3 className="text-sm font-semibold text-text-primary">图文证据与轮播节奏</h3>
                 <div className="mt-3 space-y-2">
                   {imageEvidence.carouselFlow.map(item => <div key={`${item.imageIndex}-${item.role}`} className="rounded-lg bg-surface-2 px-3 py-2 text-xs leading-5"><strong className="text-text-primary">第 {item.imageIndex + 1} 张 · {item.role}</strong><p className="text-text-secondary">{item.evidence}</p></div>)}
                 </div>
               </section>
-              <section className="rounded-lg border border-border bg-white p-4">
+              <section className="rounded-lg border border-border bg-surface p-4">
                 <h3 className="text-sm font-semibold text-text-primary">可复用模块</h3>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">{imageEvidence.reusableModules.map(item => <div key={item.module} className="rounded-lg border border-border p-3 text-xs"><strong>{item.module}</strong><p className="mt-1 leading-5 text-text-secondary">保留：{item.preserve}</p><p className="leading-5 text-text-muted">替换：{item.replace}</p></div>)}</div>
               </section>
             </div>
           ) : isImagePost ? (
-            <section className="mt-4 rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
+            <section className="mt-4 rounded-lg border border-dashed border-border bg-surface px-6 py-12 text-center">
               {pending ? <Loader2 size={24} className="mx-auto animate-spin text-accent" /> : <BarChart2 size={24} className="mx-auto text-text-muted" />}
               <p className="mt-3 text-sm font-semibold text-text-primary">{statusLabel}</p>
               <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-text-muted">{pending ? '可以先关闭此页；完成时间与失败状态以后台返回为准。' : '完成后会展示图文证据与轮播节奏。'}</p>
@@ -3471,7 +3471,7 @@ export function DirectorVideoDetailPanel({
                   retryDisabled={analyzing}
                 />}
                 {notice && <p role="status" className="border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">{notice}</p>}
-                <section aria-label="编导到内容 Agent 交接状态" className="rounded-lg border border-border bg-white p-4">
+                <section aria-label="编导到内容 Agent 交接状态" className="rounded-lg border border-border bg-surface p-4">
                   <div className="flex flex-wrap items-center gap-2 text-xs font-semibold"><span className="rounded bg-surface-2 px-2 py-1 text-green">原片入库</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${pending || !draftReady ? 'bg-amber-dim text-amber' : 'bg-surface-2 text-green'}`}>{pending ? '编导分析中' : draftReady ? '可交接内容起稿' : '编导证据不足'}</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${draftReady ? 'bg-surface-2 text-green' : 'bg-surface-2 text-text-muted'}`}>{handoffReady ? '可制作成片' : draftReady ? '可生成口播草稿' : '内容起稿未开放'}</span></div>
                   {!handoffReady && !pending && <p className="mt-2 text-[11px] leading-5 text-amber">系统将使用带估计时间码的原片口播，并继续检查镜头切片、钩子动作和企业“销售”人物资产。如需继续，编导 Agent 会按清单补证，无需人工逐句校时或逐镜勾选。</p>}
                 </section>
