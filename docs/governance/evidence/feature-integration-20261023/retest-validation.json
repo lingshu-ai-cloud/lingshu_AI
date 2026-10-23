@@ -1,0 +1,728 @@
+{
+  "date": "2026-10-23 Asia/Shanghai",
+  "worktree": "/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023",
+  "branch": "xixi功能大合并20261023",
+  "initialCleanHead": "609e4d2091b4ecd62522dba04bb651cf68ea030f",
+  "verifiedSourceAndTests": "4377f112e2289e6452509934ed241f89db2426cc",
+  "productionFix": "b5d6f8b6d07b3bc69dd19917860779c0bc77e412",
+  "finalFullCommands": {
+    "pnpm test": 0,
+    "pnpm run test:starter-198": 0,
+    "pnpm run test:weekly-golden-journey": 0,
+    "pnpm lint (after production fix)": 0,
+    "pnpm check:architecture (base 641d0b9)": 0,
+    "pnpm test:architecture-ratchet (base 641d0b9)": 0,
+    "pnpm build": 0,
+    "pnpm build:account-hub": 0
+  },
+  "wholeQualityCommand": {
+    "lastExitCode": 1,
+    "completedByResumingFailedCheckpoints": true,
+    "finalSingleWholeCommandRerun": false,
+    "verifyRun": false,
+    "remoteCIVerified": false
+  },
+  "qualityStageCoverage": [
+    {
+      "stage": "check:vendored-dependencies",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "quality-pb-rerun.log (completed before failed local graph checkpoint)"
+      ]
+    },
+    {
+      "stage": "check:container-contract",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "quality-pb-rerun.log (completed before failed local graph checkpoint)"
+      ]
+    },
+    {
+      "stage": "test:production-ops",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "quality-pb-rerun.log (completed before failed local graph checkpoint)"
+      ]
+    },
+    {
+      "stage": "check:architecture",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "check-architecture-after-ocr.log"
+      ]
+    },
+    {
+      "stage": "test:architecture-ratchet",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-architecture-ratchet-after-ocr.log"
+      ]
+    },
+    {
+      "stage": "test:fixed-yield",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "quality-pb-rerun.log (completed before failed local graph checkpoint)"
+      ]
+    },
+    {
+      "stage": "check:digital-employee-migrations",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "quality-pb-rerun.log (completed before failed local graph checkpoint)"
+      ]
+    },
+    {
+      "stage": "test:migration-guard",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "quality-pb-rerun.log (completed before failed local graph checkpoint)"
+      ]
+    },
+    {
+      "stage": "test:production-governance",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "quality-pb-rerun.log (completed before failed local graph checkpoint)"
+      ]
+    },
+    {
+      "stage": "test:production-orchestration",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "quality-pb-rerun.log (completed before failed local graph checkpoint)"
+      ]
+    },
+    {
+      "stage": "test:gap-v1-release",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "quality-pb-rerun.log (completed before failed local graph checkpoint)"
+      ]
+    },
+    {
+      "stage": "test:four-platform-release",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "quality-pb-rerun.log (completed before failed local graph checkpoint)"
+      ]
+    },
+    {
+      "stage": "test:shared-contracts",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "quality-pb-rerun.log (completed before failed local graph checkpoint)"
+      ]
+    },
+    {
+      "stage": "test:production-runtime-gate-contract",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "quality-pb-rerun.log (completed before failed local graph checkpoint)"
+      ]
+    },
+    {
+      "stage": "test:production-runtime-gate",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "quality-pb-rerun.log (process-role + queue passed before local graph failure)",
+        "langgraph-local-focused.log (fixed local graph passed)",
+        "weekly-golden-after-ocr.log (final local graph passed)"
+      ]
+    },
+    {
+      "stage": "test:weekly-golden-journey-contract",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-weekly-golden-journey-contract-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "test:weekly-golden-journey",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "weekly-golden-after-ocr.log"
+      ]
+    },
+    {
+      "stage": "test:capacity-harness",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-capacity-harness-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "test:security-boundaries",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-security-boundaries-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "test:frontend-security",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-frontend-security-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "test:account-hub",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-account-hub-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "test:material-import",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-material-import-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "test:assistant-quality",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-assistant-quality-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "test:assistant",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-assistant-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "test:starter-198",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "starter-198-post-fix.log"
+      ]
+    },
+    {
+      "stage": "test:social-programs",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-social-programs-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "test:weekly-publishing",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-weekly-publishing-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "test:r4-social-lineage",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-r4-social-lineage-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "test:production",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-production-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "test:platform-ads",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "test-platform-ads-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "lint",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "lint-after-ocr.log"
+      ]
+    },
+    {
+      "stage": "build",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "build-quality-tail.log"
+      ]
+    },
+    {
+      "stage": "build:account-hub",
+      "finalCheckpointExitCode": 0,
+      "evidence": [
+        "build-account-hub-quality-tail.log"
+      ]
+    }
+  ],
+  "orderedAttempts": [
+    "quality 1",
+    "test 1",
+    "test:customer-pipeline 0",
+    "test:whatsapp-onboarding 0",
+    "test:video-production-budget 0",
+    "test:video-production-p1 0",
+    "test:mobile-shared 0",
+    "test:video-source-boundaries 0",
+    "test:social-image-pipeline 0",
+    "test:platform-ads 0",
+    "test:studio-release 0",
+    "quality-rerun 1",
+    "test-rerun 1",
+    "quality-pb-rerun 1",
+    "langgraph-local-focused 0",
+    "test-final 1",
+    "test:execution-gaps-resume 0",
+    "test:langgraph-resume 0",
+    "lint-final 0",
+    "ocr-frame-regression 0",
+    "ocr-session-regression 0",
+    "social-workflow-after-admission 0",
+    "lint-after-ocr 0",
+    "check:architecture-after-ocr 0",
+    "test:architecture-ratchet-after-ocr 0",
+    "weekly-golden-after-ocr 0",
+    "starter-198-post-fix 0",
+    "test-post-fix 0"
+  ],
+  "browserAttempts": [
+    "ads-browser 0",
+    "gif-browser 0",
+    "customer-browser 1",
+    "customer-browser-rerun2 0"
+  ],
+  "additionalFinalFocused": {
+    "source-analysis-focused.log": 0,
+    "starter-workspace-focused.log": 0,
+    "social-workflow-after-admission.log": 0,
+    "ocr-frame-regression.log": 0,
+    "ocr-session-regression.log": 0
+  },
+  "m1": {
+    "firstFailure": "300-second local producer boundary exceeded; fixture cleanup removed source while task was still active",
+    "fixedDurationMs": 253040.255541,
+    "unchangedProducerDeadlineMs": 300000,
+    "testCount": 42,
+    "passed": 42,
+    "approvalRecoveryFollowupPassed": 1,
+    "scope": {
+      "tenantId": "t",
+      "programId": "p",
+      "packageId": "f246d176-33ca-45d3-842c-d6b27b95795a",
+      "packageVersion": 4,
+      "contentTaskId": "socialtask_517c185d9a40a7bb77b9dbe0",
+      "runId": "e726c726062dda0",
+      "jobId": "c7a2a856f0cd358",
+      "artifactId": "socialart_3ca11768173e263eb2ab24f0"
+    },
+    "counters": {
+      "forbiddenNetworkCalls": 0,
+      "forbiddenSocketCalls": 0,
+      "schedulerAdmissions": 1,
+      "earlySupplierCalls": 0,
+      "assetSupplyCalls": 0,
+      "voiceBoundaryCalls": 1,
+      "publicationAttempts": 0,
+      "contentJobs": 1
+    },
+    "artifact": {
+      "contentHash": "1a92813c94dd9f972fe7ce5e0a83f41ea0a4a310bc7f8a7d1c3f43716c42738a",
+      "ownedFileSha256": "f205dfaa7caf6a6637c48623a2a0d14967ae4a37096da8fb34a74d050a86d74e",
+      "ownedFileSizeBytes": 126987,
+      "approvalArtifactRef": {
+        "type": "starter_social_content_artifact",
+        "id": "socialart_3ca11768173e263eb2ab24f0",
+        "version": 2
+      }
+    },
+    "deliveryAcceptance": {
+      "receiptId": "wda_b50e6af07d2251892aac4591",
+      "evidenceHash": "a7632eb4a783a697681ecb5b1121961e8976f2f92a3a055673165e68de537fe9",
+      "recordHash": "97fd56bdcfc16804acc8ff5666965d34529864de1576541b7cc2f555f1b51afd",
+      "totalActualCost": {
+        "status": "known",
+        "totalCny": 0,
+        "evidenceRefs": [
+          "starter_usage_ledger:a8c4d840-0a47-4a57-ad9f-5a4752ead06e"
+        ]
+      },
+      "authorizesPublishing": false
+    },
+    "limitations": [
+      "Provider source analysis and local video/voice supply are controlled boundaries.",
+      "G4/G5 approvals are controlled reviewer inputs and do not claim real human visual acceptance.",
+      "No external network, paid generation, real publication or real customer messaging."
+    ]
+  },
+  "entryIntegrity": {
+    "src/components/InspirationDashboard.tsx": {
+      "unchanged": true,
+      "sha256": "95d0a626604095e7f136b644d09831014d6ba7734911085da99278a469edb0b6"
+    },
+    "server/routes/digitalEmployees.ts": {
+      "unchanged": true,
+      "sha256": "c92b11ddb06d339ac323015ba73f8bd1e247bdce1f47815c9cffb887dd9d265b"
+    },
+    "server/routes/videos.ts": {
+      "unchanged": true,
+      "sha256": "d36805d6c4000cd8e4abf101ed802588df7eef78d6bc6174525abfe292d23be6"
+    },
+    "server/routes/studio.ts": {
+      "unchanged": true,
+      "sha256": "fa1c30a751eee8e96a75b58840646f9fc39d6dedb0be16cdda06c62bece552dc"
+    }
+  },
+  "pocketbase": {
+    "binary": "/Users/julia1/.local/share/lingshu/pocketbase/pocketbase",
+    "version": "0.39.5",
+    "scope": "temporary fixture databases only; no target database migration"
+  },
+  "limits": {
+    "studioChunkBytes": 368854,
+    "studioChunkBudgetBytes": 485000,
+    "productionTypeScriptFiles": 2677,
+    "migrationManifestEntries": 197,
+    "oldMigrationBytesChanged": false,
+    "architectureBudgetChanged": false,
+    "deploymentWorkflowChanged": false
+  },
+  "fixedAdsSnapshot": {
+    "branch": "xixi改大合并（投流）",
+    "sha": "b6e4b3e86647679842a7af43d3b18c5af24a4770"
+  },
+  "externalScope": {
+    "realOAuth": false,
+    "realPaidGeneration": false,
+    "realCustomerMessages": false,
+    "realAds": false,
+    "deployment": false,
+    "wholeLoggedInSiteBrowser": false,
+    "realMiniappDevice": false,
+    "sourceAnalysisFirstRunPublicApiAttempt": "initial legacy download test fell through to TikTok public API; final fixture injects existing ports and rejects unexpected network"
+  },
+  "logRoot": "/Users/julia1/.codex/integration-evidence/20261023-retest-609e4d20",
+  "logFiles": [
+    {
+      "file": "ads-browser.log",
+      "bytes": 673,
+      "sha256": "c18147d81cc6b0d86c236bfb64587ce2cbb6f4fde36204c0b1e88a4d9329b6a0"
+    },
+    {
+      "file": "build-account-hub-quality-tail.log",
+      "bytes": 1190,
+      "sha256": "0eb44cb3b866ef0db9aae75d05e5bb2ccdf386b2be32554224faf4f734e01c11"
+    },
+    {
+      "file": "build-quality-tail.log",
+      "bytes": 25237,
+      "sha256": "a9d24d82eeb6f8c82e2907ca755e3f8161819b700e1aea010a10c1f439b94ad2"
+    },
+    {
+      "file": "check-architecture-after-ocr.log",
+      "bytes": 262,
+      "sha256": "1ecf753bdec374eb32a32b4088a337a9cc0df2877a22399c195ab838979e35da"
+    },
+    {
+      "file": "continuation-focused.log",
+      "bytes": 176,
+      "sha256": "4233c197e1f288099e067cbebacca79a09fa912668600ce85a13d345290982b9"
+    },
+    {
+      "file": "customer-browser-diagnostic.log",
+      "bytes": 732,
+      "sha256": "765bbca58372fb163b09651163781e209f4b17bf047bb0e90e3067139178fd3c"
+    },
+    {
+      "file": "customer-browser-fixture.log",
+      "bytes": 73,
+      "sha256": "833f25c9de5947e19cf49892a72aaf8e21f2da81672fc0f3b0c0b59bb21030c2"
+    },
+    {
+      "file": "customer-browser-rerun.log",
+      "bytes": 501,
+      "sha256": "9b7319bc80d4d9e549fa2974f543206a2ee310b3112996c1a793d142e01afa16"
+    },
+    {
+      "file": "customer-browser-rerun2.log",
+      "bytes": 677,
+      "sha256": "20365420969351cc82d190d3715a4e7c642e15c0b17fed594aa45355b960896b"
+    },
+    {
+      "file": "customer-browser.log",
+      "bytes": 449,
+      "sha256": "5b338070013bbdac3a95620ea7d9f14979dcf477b509abfd1e9769b8369393dd"
+    },
+    {
+      "file": "gif-browser.log",
+      "bytes": 884,
+      "sha256": "6a2335f7d99f6a1e459f10899bed49797378fba7a069c86a43d439a11ebf272f"
+    },
+    {
+      "file": "langgraph-local-focused.log",
+      "bytes": 3969,
+      "sha256": "a0867a25202b74cb8f31c0dd1504fe7fa196f921b232179227a058759d7065ea"
+    },
+    {
+      "file": "lint-after-ocr.log",
+      "bytes": 15,
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "file": "lint-final.log",
+      "bytes": 15,
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "file": "lint-quality-tail.log",
+      "bytes": 15,
+      "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    {
+      "file": "ocr-frame-regression.log",
+      "bytes": 6332,
+      "sha256": "6299aefe92356fd9caa379833a50217dd5826cd333accf61bb14b201f6ee6548"
+    },
+    {
+      "file": "ocr-session-regression.log",
+      "bytes": 615,
+      "sha256": "36939cfcd4458338fe8748685ae0c7560f6c11666e630198ae124670f367767e"
+    },
+    {
+      "file": "quality-first-failure.log",
+      "bytes": 21151,
+      "sha256": "7bd44b5e36707c398e67affbd7674f49f474dc4e928e9c7f6b2e941fc3a4ef25"
+    },
+    {
+      "file": "quality-pb-rerun.log",
+      "bytes": 28163,
+      "sha256": "468e7f843c4f6492a47e0c97cf0dc6b97177b519ab3ecad048b4075810ca5f31"
+    },
+    {
+      "file": "quality-rerun.log",
+      "bytes": 21956,
+      "sha256": "6c63c6c8dd6290756ea82528ebbff5e8e02b9436120005f9255b7a47f25d281e"
+    },
+    {
+      "file": "quality.log",
+      "bytes": 21151,
+      "sha256": "7bd44b5e36707c398e67affbd7674f49f474dc4e928e9c7f6b2e941fc3a4ef25"
+    },
+    {
+      "file": "social-workflow-after-admission.log",
+      "bytes": 1639,
+      "sha256": "55c62a3ed9a9e83ff60adbea67d507d08d22131c70ab0d95933e7fcf8df346e7"
+    },
+    {
+      "file": "source-analysis-focused.log",
+      "bytes": 3797,
+      "sha256": "52cc33f98cd2b8023f853ce3180b343108f6a846fe9bb0390c9c1e476ff44816"
+    },
+    {
+      "file": "starter-198-post-fix.log",
+      "bytes": 22398,
+      "sha256": "72a92c589f893f0e42dbef38832688505ddae18f0b197229cceb4d4a0a09fe16"
+    },
+    {
+      "file": "starter-workspace-focused.log",
+      "bytes": 48,
+      "sha256": "4787cc615c8d02abfc1d68e821665df1d1d40b30ab5a5ab21fd439c49b4632a0"
+    },
+    {
+      "file": "starter198-after-workflow-01.log",
+      "bytes": 54,
+      "sha256": "7d412720b140bfe8f934a57e2dc5d824ac32b48519d368e1b01c142f1c7e9849"
+    },
+    {
+      "file": "starter198-after-workflow-02.log",
+      "bytes": 123,
+      "sha256": "94c67dc0cc16c1d9bba1725bc079061f665d6e0bcb4b293656405ff4d7e6feb0"
+    },
+    {
+      "file": "starter198-after-workflow-03.log",
+      "bytes": 165,
+      "sha256": "c6c9b517f3c729f034467421349888d13593ecd5b02164c540f012c2b919fec1"
+    },
+    {
+      "file": "starter198-after-workflow-04.log",
+      "bytes": 12460,
+      "sha256": "057ca4dd0611e585c2be2054fcb6c7f05e66c07e9572130f64cd59c91de72807"
+    },
+    {
+      "file": "starter198-after-workflow-05.log",
+      "bytes": 34,
+      "sha256": "47a7e6f2e334ef6133ae4ab1124929e73a89ccc63927ac1582512525d19d950e"
+    },
+    {
+      "file": "starter198-after-workflow-06.log",
+      "bytes": 6354,
+      "sha256": "7a0af5d970c1b804e12329e66a3506de6d051b20730303292e8524a782b3b664"
+    },
+    {
+      "file": "test-account-hub-quality-tail.log",
+      "bytes": 4217,
+      "sha256": "ffee4063af55162d1557838caef54bb132f973365a71f050f39b0d36b45593ad"
+    },
+    {
+      "file": "test-architecture-ratchet-after-ocr.log",
+      "bytes": 85,
+      "sha256": "789c2f30d18b4b0c81785b93b47180a0b2b43c550f1e679bbf8bf0bac47243e1"
+    },
+    {
+      "file": "test-assistant-quality-quality-tail.log",
+      "bytes": 2621,
+      "sha256": "30da89df000d40ccfe36e9178f2a417416e9ebca86ef1243332f919034ca516b"
+    },
+    {
+      "file": "test-assistant-quality-tail.log",
+      "bytes": 9923,
+      "sha256": "2ed6a23b0d575d7587a55787ecbab5ba6d5b91d13935c4a0ddd8320b19b50778"
+    },
+    {
+      "file": "test-capacity-harness-quality-tail.log",
+      "bytes": 149,
+      "sha256": "7b52a2a5169d1e171a60d8d7503fff4bf7904ceab54bf86cfd7573a04dbe86eb"
+    },
+    {
+      "file": "test-customer-pipeline.log",
+      "bytes": 10165,
+      "sha256": "61756a642e5fd11012c8477f4f0dc463fd70da0b1f9ed68bdd80825e220d8981"
+    },
+    {
+      "file": "test-execution-gaps-resume.log",
+      "bytes": 5713,
+      "sha256": "c615647d499df1977d504880dce866665e1355f75d414b6de925f24b8e04f7dc"
+    },
+    {
+      "file": "test-final.log",
+      "bytes": 75195,
+      "sha256": "d7107ccc6cfc84802e732ea2e0d062ef939a6ab4459f9df77fc60a0d2615cb71"
+    },
+    {
+      "file": "test-first-failure.log",
+      "bytes": 33199,
+      "sha256": "cc90363c991963e36a0043481664a58a1ab5b3bddbd4f380a6cfdf954ad5cdc5"
+    },
+    {
+      "file": "test-frontend-security-quality-tail.log",
+      "bytes": 457,
+      "sha256": "1bee98ab76d87d20431864ede7eeacb0c3ea86f52278d461676e8a6be720b7ad"
+    },
+    {
+      "file": "test-langgraph-resume.log",
+      "bytes": 3989,
+      "sha256": "e4d05108542bf14107ccc87fd3a197bd5819d116403ac9d4e69d4bb3cb78e95e"
+    },
+    {
+      "file": "test-material-import-quality-tail.log",
+      "bytes": 2426,
+      "sha256": "6ff1e12310b63036ec927b144158c420938e574fc4fa2c2208ff81dd70cbf591"
+    },
+    {
+      "file": "test-mobile-shared.log",
+      "bytes": 19300,
+      "sha256": "e9854b2bc63a778bb8eb9039bfb0ecdf03afb6bfd06ea15144bbf62582364449"
+    },
+    {
+      "file": "test-platform-ads-quality-tail.log",
+      "bytes": 15569,
+      "sha256": "9b62e1261a2020c9fd10a64aefb748bdd59e414418675bbb895392c2d68ecf6b"
+    },
+    {
+      "file": "test-platform-ads.log",
+      "bytes": 15568,
+      "sha256": "9d73eb772b7d4ba4a4c62ab0eed8fba6ff78a1d8f928b385325c81a690313ff9"
+    },
+    {
+      "file": "test-post-fix.log",
+      "bytes": 66144,
+      "sha256": "cf4d0fd993d6d38381cb94db1c1302e5c6dc9f0bb771c2686fe2d340a8fd33d0"
+    },
+    {
+      "file": "test-production-quality-tail.log",
+      "bytes": 22415,
+      "sha256": "e39446a655c0447842c55866c291a7f341591de18144cbaf0030c140909d2993"
+    },
+    {
+      "file": "test-r4-social-lineage-quality-tail.log",
+      "bytes": 5284,
+      "sha256": "f6718cb6e4aa9b201a8a5a1426690bbbd96d4ea742d074bededd734bf562f8f1"
+    },
+    {
+      "file": "test-rerun.log",
+      "bytes": 58181,
+      "sha256": "bcd4f4f26e8ea65be396192f4fcad16c55ed358f887815a53d7eb6566dbdeb18"
+    },
+    {
+      "file": "test-security-boundaries-quality-tail.log",
+      "bytes": 3544,
+      "sha256": "9edee5e1001fa7270a2b46c9a462f271c70cae10f1f579101ef3da275a0cbf90"
+    },
+    {
+      "file": "test-social-image-pipeline.log",
+      "bytes": 7847,
+      "sha256": "94e0daf2d4737f28e5171c5f6b9c97bdd1e51c4689c3dbbdafb52a8385f38018"
+    },
+    {
+      "file": "test-social-programs-quality-tail.log",
+      "bytes": 15579,
+      "sha256": "8a96fadcd04930a24cca3c8cbb1de8988b640d5f2b11734856ed20abc6b236fd"
+    },
+    {
+      "file": "test-starter-198-quality-tail.log",
+      "bytes": 16895,
+      "sha256": "0d5a6dd9e7a553a567cd83360cf9787bd7717097e4cd224d813ef550652a7bca"
+    },
+    {
+      "file": "test-studio-release.log",
+      "bytes": 87564,
+      "sha256": "264c81d959c44cc09917592ace7c36cfc325c21d2a5c20243de806668a509f77"
+    },
+    {
+      "file": "test-video-production-budget.log",
+      "bytes": 10512,
+      "sha256": "1dbd3798809f552da8ec64b7bc76ce81bef217660841645d9358537439edc204"
+    },
+    {
+      "file": "test-video-production-p1.log",
+      "bytes": 4205,
+      "sha256": "c10cf6ff2633c0a0d7e5ea5e78a9fd5441594882f30d6b6c7505369a67585d9a"
+    },
+    {
+      "file": "test-video-source-boundaries.log",
+      "bytes": 19687,
+      "sha256": "0115276c3a2cdded0d214c4e77691d5ceca4558f63ccae969bef1d5d083b19c6"
+    },
+    {
+      "file": "test-weekly-golden-journey-contract-quality-tail.log",
+      "bytes": 303,
+      "sha256": "9589fff38964c07b5546d5f3a75df5755feeff9b3d6f0c662743ab111bfb4ab3"
+    },
+    {
+      "file": "test-weekly-golden-journey-quality-tail.log",
+      "bytes": 76541,
+      "sha256": "a23cfbb90306151fae43d2a0cef094327fd7d93b1e525cd81c8a961353e8ebc9"
+    },
+    {
+      "file": "test-weekly-publishing-quality-tail.log",
+      "bytes": 4034,
+      "sha256": "fb92543f251878e3d7d506e84245ac14ed0d57b82d5bbe4445380eb66ad62528"
+    },
+    {
+      "file": "test-whatsapp-onboarding.log",
+      "bytes": 3312,
+      "sha256": "d98dad464c3df60b47dbba5e9f65b2172fb1e062bcbe20229f5525cd04ed9484"
+    },
+    {
+      "file": "test.log",
+      "bytes": 33199,
+      "sha256": "cc90363c991963e36a0043481664a58a1ab5b3bddbd4f380a6cfdf954ad5cdc5"
+    },
+    {
+      "file": "weekly-golden-after-ocr.log",
+      "bytes": 370804,
+      "sha256": "88f03bad60916dff04904a945db190a39577d8da0ef02685100e051a375f16f1"
+    }
+  ]
+}
