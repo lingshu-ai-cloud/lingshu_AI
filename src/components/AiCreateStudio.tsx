@@ -1,3 +1,5 @@
+import { useStudioMaterialInventory, useStudioMaterialInventoryLoad, useStudioMaterialInventoryDimensions } from './studio/studioMaterialInventory';
+import { planStudioMaterialAssignments } from './studio/studioMaterialAssignmentPlan';
 import { createStudioVoiceTranslationActions } from './studio/studioVoiceTranslationActions.js';
 import { createStudioVoiceSynthesisActions } from './studio/studioVoiceSynthesisActions.js';
 import { createStudioVoicePlaybackActions, useStudioActiveVoiceAudio, useStudioVoicePlaybackProgress, useStudioVoicePlaybackStop } from './studio/studioVoicePlayback.js';
@@ -46,7 +48,7 @@ import ReplicationWorkbenchHeader from './socialContent/ReplicationWorkbenchHead
 import { socialContentApi } from '../lib/socialContentApi';
 import { referenceProductTerms as detectSpokenProductTerms } from '../lib/referenceIdentityMapping';
 import { enterpriseBuyerText, validateStudioTimeline, pendingClaimLocations } from '../lib/studioValidation';
-import { mediaType } from '../lib/studioFileInputs';
+
 import { isUnverifiedLegacyCoverTitle, type StudioWorkflowContext } from '../lib/studioProjectContext';
 import { materialShotPlan } from '../lib/materialShotPlan';
 import { validProductPlacement } from '../lib/storyboardPlacement';
@@ -123,7 +125,7 @@ import { normalizeExplicitPresenterMode, applyManagedPresenterProduction } from 
 export { applyManagedPresenterProduction } from './studio/studioManagedPresenter.js';
 import { safeStudioStepId } from './studio/studioProjectNavigation.js';
 export { loadedStudioProjectTitle, loadedStudioContinuationStep, safeStudioStepId } from './studio/studioProjectNavigation.js';
-import { probeMedia, probeClipAspect } from './studio/studioMediaProbes.js';
+
 import { STEPS, VIDEO_STAGES, POSTER_STAGES, DEFAULT_VIDEO_CONVERSION_GOAL, VIDEO_THEMES, POSTER_STEPS, POSTER_STYLES, RATIOS, POSTER_RATIOS } from './studio/studioWorkspaceCatalog.js';
 import { inferVideoThemeFromMaterial, mergeClipLists, renderCombinationKey, materialVersionKey, clipSourceMode, automaticStoryboardTrim, resolveWorkbenchSeekTime } from './studio/studioMaterialPresentation.js';
 export { automaticStoryboardTrim, resolveWorkbenchSeekTime } from './studio/studioMaterialPresentation.js';
@@ -830,10 +832,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     { id: 'video-1', name: '视频1', assignments: {}, sourcePlans: {}, selected: [] },
   ]);
 
-  const [materials, setMaterials] = useState<Clip[]>([]);
-  const [previewClip, setPreviewClip] = useState<Clip | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [materialRightsConfirmed, setMaterialRightsConfirmed] = useState(false);
+  const materialInventory = useStudioMaterialInventory({
+    contentMode, activeFolder, selectedProductIds, storyboardAssignments, storyboardSourcePlans,
+    onAppendUploaded: ids => setSelected(current => [...current, ...ids]),
+    onChooseFolder: setActiveFolder,
+    onNotice: notice => setModeNotice(notice),
+  });
+  const { materials, setMaterials, previewClip, setPreviewClip, uploading,
+    materialRightsConfirmed, setMaterialRightsConfirmed } = materialInventory;
   const [heygenAvatarId, setHeygenAvatarId] = useState('');
   const [heygenAvatars, setHeygenAvatars] = useState<HeyGenAvatarOption[]>([]);
   const [heygenAvatarOrientation, setHeygenAvatarOrientation] = useState<'unknown' | 'portrait' | 'landscape' | 'square'>('unknown');
@@ -894,7 +900,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [digitalHumanConsent, setDigitalHumanConsent] = useState(false);
   const [digitalHumanCapabilities, setDigitalHumanCapabilities] = useState<DigitalHumanCapabilities | null>(null);
   const [digitalHumanJob, setDigitalHumanJob] = useState<DigitalHumanJob | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = materialInventory.fileInputRef;
 
   const [script, setScript] = useState('');
   const [scriptType, setScriptType] = useState<'voiceover' | 'storyboard'>('voiceover');
@@ -3574,8 +3580,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           if (refreshed.size) setMaterials(current => current.map(item => refreshed.get(item.id) || item));
         }
       }
-      const matchingMaterialById = new Map(allVisuals.map(item => [item.id, item]));
-      const compatiblePool = allVisuals.filter(item => isClipCompatibleWithRatio(item, ratio));
       if (!allVisuals.length) {
         setModeNotice('素材库暂无可匹配的视频或图片，请先上传素材。');
         return;
@@ -3595,124 +3599,20 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         if (preferredIds.length) return fillLocalDemoMaterials(preferredIds);
       }
 
-      const savedCurrent: StoryboardAssembly = {
-        id: activeAssemblyId,
-        name: assemblyName,
-        assignments: storyboardAssignments,
-        sourcePlans: storyboardSourcePlans,
-        selected,
-      };
-      const allPlans = storyboardAssemblies.map(item => item.id === activeAssemblyId ? savedCurrent : item);
-      const variantIndex = Math.max(0, allPlans.findIndex(item => item.id === activeAssemblyId));
-      const previousAssignments = allPlans
-        .filter(item => item.id !== activeAssemblyId)
-        .map(item => item.assignments)
-        .filter(item => Object.keys(item).length > 0);
-      // 所有视觉素材都可参与匹配；同方向优先，其他方向在渲染时居中裁切。
-      const pool = allVisuals;
-      const usesCropFallback = compatiblePool.length < Math.min(storyboardSlots.length, allVisuals.length);
-      const lockedAssignments = Object.fromEntries(Object.entries(storyboardAssignments).filter(([slotId, clipId]) => (
-        storyboardSlots.some(slot => slot.id === slotId && (() => {
-          const clip = matchingMaterialById.get(clipId);
-          return Boolean(clip && isProductionEligibleClip(clip, videoKickoff)
-            && (socialViralTask
-              ? storyboardSourcePlans[slotId]?.userSource === 'material' && storyboardSourcePlans[slotId]?.confirmed
-              : storyboardSourcePlans[slotId]?.confirmed || assessMaterialMatch(slot, clip, ratio).level === 'direct'));
-        })())
-      )));
-      const lockedClipIds = new Set(Object.values(lockedAssignments));
-      const slotsToMatch = storyboardSlots.filter(slot => {
-        if (lockedAssignments[slot.id]) return false;
-        if (productionFor(slot).locked || storyboardSourcePlans[slot.id]?.mode === 'ai' || storyboardSourcePlans[slot.id]?.mode === 'hybrid') return false;
-        if (!socialViralTask) return true;
-        const foregroundIdentity = salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed';
-        return shotRouteFor(slot) === 'material' && (!foregroundIdentity || storyboardSourcePlans[slot.id]?.userSource === 'material');
+      const materialPlan = planStudioMaterialAssignments({
+        allVisuals, videoKickoff, socialViralTask,
+        ratio, selected, hookMaterialId,
+        activeAssemblyId, assemblyName, storyboardSlots,
+        storyboardAssignments, storyboardSourcePlans, storyboardAssemblies,
+        personContinuityBySlot, productionFor, presenterEvidenceFor,
+        shotRouteFor, sourcePlanFor, slotClipEditKey,
+        defaultEditForSlot,
       });
-      if (!slotsToMatch.length) {
+      if (materialPlan.kind === 'already_assigned') {
         setModeNotice('可直接匹配的分镜已处理；正面承接口播的销售人物镜头可使用数字人制作入口。');
         return;
       }
-      const unusedPool = pool.filter(item => !lockedClipIds.has(item.id));
-      const matchPool = unusedPool.length ? unusedPool : pool;
-      const candidateAssignments = matchMaterialsToStoryboardLocally(matchPool, slotsToMatch, selected.filter(id => id !== hookMaterialId), {
-        variantIndex,
-        previousAssignments,
-        targetRatio: ratio,
-        requireSegmentEvidence: socialViralTask,
-      });
-      // Identity is a cross-shot constraint. A semantic match of three
-      // different faces cannot fill three cuts of the same source person.
-      const continuityGroups = new Map<string, StoryboardSlot[]>();
-      storyboardSlots.forEach(slot => {
-        const id = personContinuityBySlot[slot.id];
-        if (id) continuityGroups.set(id, [...(continuityGroups.get(id) || []), slot]);
-      });
-      for (const group of continuityGroups.values()) {
-        if (group.length < 2 || !group.some(slot => slotsToMatch.includes(slot))) continue;
-        const lockedIds = [...new Set(group.map(slot => lockedAssignments[slot.id]).filter(Boolean))];
-        const common = lockedIds.length > 1 ? undefined : pool.find(clip =>
-          (!lockedIds.length || clip.id === lockedIds[0])
-          && clip.type === 'video'
-          && effectiveClipDuration(clip) >= group.reduce((sum, slot) => sum + slot.end - slot.start, 0)
-          && group.every(slot => socialViralTask
-            ? Boolean(verifiedStoryboardSegment(clip, slot))
-            : assessMaterialMatch(slot, clip, ratio).level !== 'missing'));
-        group.forEach(slot => {
-          if (lockedAssignments[slot.id]) return;
-          if (common) candidateAssignments[slot.id] = common.id;
-          else delete candidateAssignments[slot.id];
-        });
-      }
-      const assessmentBySlot: Record<string, MaterialMatchAssessment> = {};
-      const matchedAssignments = Object.fromEntries(Object.entries(candidateAssignments).filter(([slotId, clipId]) => {
-        const slot = storyboardSlots.find(item => item.id === slotId);
-        const clip = matchingMaterialById.get(clipId);
-        if (!slot || !clip) return false;
-        const assessment = assessMaterialMatch(slot, clip, ratio);
-        assessmentBySlot[slotId] = assessment;
-        // Below 60 points the material is only a visual placeholder, not a
-        // trustworthy match. Leave the shot open instead of silently filling it.
-        return socialViralTask
-          ? Boolean(verifiedStoryboardSegment(clip, slot))
-          : assessment.level !== 'missing';
-      }));
-      const assignments = { ...lockedAssignments, ...matchedAssignments };
-      storyboardSlots.forEach(slot => {
-        const clip = matchingMaterialById.get(assignments[slot.id] || '');
-        if (clip && !assessmentBySlot[slot.id]) assessmentBySlot[slot.id] = assessMaterialMatch(slot, clip, ratio);
-      });
-      const orderedIds = storyboardSlots.map(slot => assignments[slot.id]).filter((id): id is string => Boolean(id));
-      const nextEdits: Record<string, ClipEdit> = {};
-      const nextPlans: Record<string, StoryboardSourcePlan> = {};
-      slotsToMatch.forEach(slot => {
-        const clipId = matchedAssignments[slot.id];
-        const clip = clipId ? matchingMaterialById.get(clipId) : undefined;
-        if (!clip) {
-          nextPlans[slot.id] = {
-            ...sourcePlanFor(slot),
-            confirmed: false,
-            matchScore: 0,
-            matchLevel: 'missing',
-            matchReason: '企业素材库中没有通过逐片段画面校验的高匹配素材',
-            matchDifference: '保留为空，等待上传、拍摄或手动指定',
-          };
-          return;
-        }
-        nextEdits[slotClipEditKey(slot.id, clip.id)] = defaultEditForSlot(clip, slot);
-        const detectedSource = clipSourceMode(clip);
-        nextPlans[slot.id] = {
-          ...sourcePlanFor(slot),
-          mode: detectedSource,
-          decided: true,
-          confirmed: false,
-          generatedClipId: detectedSource === 'ai' ? clip.id : undefined,
-          error: '',
-          matchScore: assessmentBySlot[slot.id]?.score,
-          matchReason: assessmentBySlot[slot.id]?.reason,
-          matchDifference: assessmentBySlot[slot.id]?.difference,
-          matchLevel: assessmentBySlot[slot.id]?.level,
-        };
-      });
+      const { assignments, nextPlans, nextEdits, orderedIds, matchedCount, usesCropFallback, missingCount } = materialPlan;
       setStoryboardAssignments(assignments);
       setStoryboardSourcePlans(current => ({ ...current, ...nextPlans }));
       setClipEdits(current => ({ ...current, ...nextEdits }));
@@ -3721,9 +3621,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       setScriptRecommendedMaterialIds([...new Set(orderedIds)]);
       setActiveFolder('recommend');
       setActiveStoryboardSlotId(storyboardSlots.find(slot => !assignments[slot.id])?.id || storyboardSlots[0]?.id || '');
-      const reviewCount = storyboardSlots.filter(slot => assessmentBySlot[slot.id]?.level === 'review' && assignments[slot.id]).length;
-      const missingCount = storyboardSlots.filter(slot => !assignments[slot.id]).length;
-      setModeNotice(`已为 ${Object.keys(matchedAssignments).length} 个空分镜补充企业素材；当前 ${orderedIds.length}/${storyboardSlots.length} 个分镜已匹配${missingCount ? `，${missingCount} 个分镜保持为空并等待补拍或手动选择` : ''}${usesCropFallback ? '。不同画幅会在预览中居中适配' : ''}${analysisFailures.length ? `；${analysisFailures.length} 条视频分析失败，未阻塞其他素材匹配：${analysisFailures.slice(0, 2).join('；')}` : ''}。`);
+      setModeNotice(`已为 ${matchedCount} 个空分镜补充企业素材；当前 ${orderedIds.length}/${storyboardSlots.length} 个分镜已匹配${missingCount ? `，${missingCount} 个分镜保持为空并等待补拍或手动选择` : ''}${usesCropFallback ? '。不同画幅会在预览中居中适配' : ''}${analysisFailures.length ? `；${analysisFailures.length} 条视频分析失败，未阻塞其他素材匹配：${analysisFailures.slice(0, 2).join('；')}` : ''}。`);
       // Return the same snapshot to batch submission; React state updates are
       // asynchronous and collectSpec() in this click still sees old assignments.
       return {
@@ -4598,31 +4496,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   };
 
   /* ── 素材库：只拉取真实素材 ──────────────────────── */
-  const refreshMaterials = async () => {
-    try {
-      const real = await studioApi.listMaterials('all');
-      const realClips = real.map(materialToClip);
-      const boundIds = new Set([...Object.values(storyboardAssignments), ...Object.values(storyboardSourcePlans).map(plan => plan.generatedClipId).filter(Boolean)]);
-      setMaterials(current => mergeClipLists(realClips, current.filter(item => boundIds.has(item.id) || item.sourceType === 'project-snapshot' || item.sourceType === 'historical-kickoff')));
-      return realClips;
-    } catch { return [] as Clip[]; /* retain the last inventory; MaterialLibraryStatus offers retry */ }
-  };
-  const materialSourceRefreshesRef = useRef(new Set<string>());
-  const refreshMaterialSource = async (materialId: string): Promise<Clip | undefined> => {
-    if (materialSourceRefreshesRef.current.has(materialId)) return undefined;
-    materialSourceRefreshesRef.current.add(materialId);
-    try {
-      const real = await studioApi.listMaterials();
-      const refreshed = real.find(item => item.id === materialId);
-      if (!refreshed) return undefined;
-      const next = materialToClip(refreshed);
-      setMaterials(current => current.map(item => item.id === materialId ? { ...item, url: next.url, poster: next.poster } : item));
-      return next;
-    } catch { return undefined; } finally {
-      materialSourceRefreshesRef.current.delete(materialId);
-    }
-  };
-  useEffect(() => { void refreshMaterials(); }, []);
+  const refreshMaterials = materialInventory.refreshMaterials;
+
+  const refreshMaterialSource = materialInventory.refreshMaterialSource;
+  useStudioMaterialInventoryLoad(materialInventory);
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
@@ -4678,60 +4555,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       setModeNotice(`已为 ${adopted.length} 个空镜头补位拍摄视频，并按任务声音方式处理。请预览并保存；其他候选仍在素材库。`);
     }
   }, [projectId, published, sourceDraftCheckPending, existingSourceDraftPrompt, voiceoverMode, activeAssemblyId, shootingTasks, shootingSlots, shootingAdoptions, storyboardAssignments, storyboardSourcePlans, materialById, ratio]);
-  useEffect(() => {
-    const missing = materials.filter(item => item.type !== 'audio' && !clipAspectRatio(item) && (item.url || item.poster));
-    if (!missing.length) return;
-    let cancelled = false;
-    void Promise.all(missing.map(async item => ({ id: item.id, ...(await probeClipAspect(item)) }))).then(results => {
-      if (cancelled) return;
-      const dimensions = new Map(results.filter(item => item.width > 0 && item.height > 0).map(item => [item.id, item]));
-      if (!dimensions.size) return;
-      setMaterials(current => current.map(item => {
-        const found = dimensions.get(item.id);
-        return found ? { ...item, width: found.width, height: found.height, aspectRatio: found.width / found.height } : item;
-      }));
-    });
-    return () => { cancelled = true; };
-  }, [materials]);
+  useStudioMaterialInventoryDimensions(materialInventory);
 
-  const handleUpload = async (files: FileList | null) => {
-    if (!files?.length) return;
-    if (contentMode === 'poster' && !materialRightsConfirmed) {
-      setModeNotice('请先确认你拥有这些素材的商业使用、改编和 AI 处理授权，再上传用于生图。');
-      return;
-    }
-    setUploading(true);
-    const uploadedIds: string[] = [];
-    const uploadErrors: string[] = [];
-    const targetFolder = activeFolder && !['all', 'hot', 'recommend'].includes(activeFolder) ? activeFolder : 'upload';
-    for (const f of Array.from(files)) {
-      try {
-        const media = await probeMedia(f);
-        const { material, ok, error } = await studioApi.uploadMaterialFile(f, {
-          folder: targetFolder,
-          type: mediaType(f),
-          duration: media.duration,
-          width: media.width,
-          height: media.height,
-          rightsConfirmed: contentMode === 'poster' && materialRightsConfirmed,
-          productId: contentMode === 'poster'
-            && ['product', 'packaging'].includes(targetFolder)
-            && selectedProductIds.length === 1 ? selectedProductIds[0] : undefined,
-        });
-        if (!ok || !material?.id) throw new Error(error || `「${f.name}」上传失败`);
-        if (material?.id) uploadedIds.push(material.id);
-      } catch (error) {
-        uploadErrors.push(error instanceof Error ? error.message : `「${f.name}」上传失败`);
-      }
-    }
-    await refreshMaterials();
-    if (uploadedIds.length) {
-      setSelected(s => [...s, ...uploadedIds]);  // 上传完自动选中
-      setActiveFolder(targetFolder);
-    }
-    if (uploadErrors.length) setModeNotice(uploadErrors[0]);
-    setUploading(false);
-  };
+  const handleUpload = materialInventory.handleUpload;
 
   /* ── BGM 曲库 ────────────────────────────────────────────────────────── */
   const refreshBgm = voiceSoundtrack.refreshBgm;
