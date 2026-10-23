@@ -2,6 +2,11 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 公开视频/图文只读 HTTP 端点拆分（2026-10-23）
+
+- 代码提交 `a1fe466f3aa812fb6a526911deaed356b55fd47b` 将 `/inventory-summary` 与公开视频/图文列表响应编排迁至 `server/routes/videoListingRoutes.ts`，仍在 `videos.ts` 的鉴权之后按原顺序注册；图片账号公开互动基线迁至已有 `videoTenantListing.ts`。租户身份、队列位置及媒体签名继续由原路由提供，不增设读取或付费旁路。`videos.ts` 从 8,201 降至 8,104 行并收紧历史预算；全仓仍有 6 个历史超限文件。
+- 新端点 HTTP 回归与相邻投影共 11/11、`test:tenant-isolation`、TypeScript、架构扫描/ratchet（2,399 个生产 TypeScript 文件）、193 项迁移仓库只读检查、生产构建及 `git diff --check` 通过。Studio 主 chunk 为 480,933/485,000 字节，构建仍有大 chunk 提示。按用户决定未测试 LinkedIn 真实付费采集；本批也未做其他真实付费请求、目标库迁移、浏览器交互或部署。远端 SHA 与工作区状态以推送后核验为准。
+
 ## 公开视频/图文租户列表只读边界拆分（2026-10-23）
 
 - 代码提交 `c276f70788c6d15b1427a71f3a8a8ecbfd5271be` 将视频与图片公共列表、跨页搜索、测试租户可见性缓存、旧视频库存统计迁至 `server/routes/videoTenantListing.ts`；`videos.ts` 保留 HTTP 鉴权、可信租户身份、写入后缓存失效与端点编排，旧搜索函数导出继续转发。主路由从 8,404 降至 8,201 行，架构预算同步收紧；全仓仍有 6 个历史超限文件，结构治理尚未完成。
