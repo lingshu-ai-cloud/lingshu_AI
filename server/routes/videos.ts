@@ -11,6 +11,8 @@ import { isPublicTestTenantVideo, isVisibleVideoPipelineRecord, recordContentFor
 export { isDisplayableTestTenantVideo } from './videoRecordVisibility.js';
 import { createVideoTenantListing } from './videoTenantListing.js';
 import { registerVideoListingRoutes } from './videoListingRoutes.js';
+import { createVideoThumbnailPersistence, fetchThumbnailBuffer, isExpiredSignedThumbnail, isSignedExpiringThumbnail, publicSourceThumbnail } from './videoThumbnailPersistence.js';
+export { recordThumbnailUrl } from './videoThumbnailPersistence.js';
 export { matchesVideoSearch, matchesCrawlRange } from './videoTenantListing.js';
 import { videoLevelSuccessPatch, videoSuccessVisibilityPatch } from './videoAnalysisSuccessPatch.js';
 import { tiktokKeywordSources, verifiedKeywordSeedItems, verifiedSeedUrls } from './videoCrawlerSeedCatalog.js';
@@ -19,7 +21,7 @@ export { groupExactObservationWindows, selectFramesForPhysicalCuts, splitExactGe
 import { compactVideoPipelineError, describeVideoAnalysisRecovery, publicVideoPipelineError, queuedMaterialFailureRequiresSourceFallback, queuedVideoAnalysisFailurePatch, videoAnalysisRetryQueuePatch, type VideoAnalysisRetryQueueKind } from './videoAnalysisRecovery.js';
 export { describeVideoAnalysisRecovery, queuedMaterialFailureRequiresSourceFallback, queuedVideoAnalysisFailurePatch, videoAnalysisRetryQueuePatch } from './videoAnalysisRecovery.js';
 export type { VideoAnalysisRecovery, VideoAnalysisRetryQueueKind } from './videoAnalysisRecovery.js';
-import { accountLabelFromUrl, accountListUrlCandidates, canonicalSourceUrl, looksLikeAccountUrl, looksLikeVideoUrl, normalizeAccountListUrl, stripTrackingParams, tiktokVideoId, youtubeThumbnailFromUrl } from './videoCrawlerSourceUrls.js';
+import { accountLabelFromUrl, accountListUrlCandidates, canonicalSourceUrl, looksLikeAccountUrl, looksLikeVideoUrl, normalizeAccountListUrl, stripTrackingParams, youtubeThumbnailFromUrl } from './videoCrawlerSourceUrls.js';
 export { accountLabelFromUrl, looksLikeAccountUrl } from './videoCrawlerSourceUrls.js';
 import { classifyCrawlerFailure, crawlerRetryDelayMs, filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, resetCrawlerOpsTaskForExplicitRetryState, selectPendingCrawlerOpsTasks, terminalizeExhaustedCrawlerOpsTask, type CrawlerOpsTask } from './videoCrawlerOpsTaskState.js';
 export { filterCrawlerOpsTasksForRecordIds, recoverInterruptedCrawlerOpsTask, resetCrawlerOpsTaskForExplicitRetryState, selectPendingCrawlerOpsTasks, terminalizeExhaustedCrawlerOpsTask } from './videoCrawlerOpsTaskState.js';
@@ -134,6 +136,9 @@ let activeDownloadJobs = 0;
 const MAX_DOWNLOAD_JOBS = Number(process.env.VIDEO_DOWNLOAD_CONCURRENCY || 3);
 const pendingVisibleBackfillJobs = new Set<string>();
 const pocketBaseBackfillFailures = new Map<string, number>();
+const { isMissingLocalThumbnail, cacheThumbnailLocally, storeThumbnailBuffer, persistThumbnailIfExpiring } = createVideoThumbnailPersistence({
+  collection: COL, mediaDir: MEDIA_DIR, uploadObject: uploadCrawlerCosObject, dataStore: store, attachFile,
+});
 const { fetchImageForAnalysis, analyzeImagePostBestEffort } = createImagePostEvidenceAnalyzer({
   store, collection: COL, mediaDir: MEDIA_DIR, normalizeThumbnailUrl,
 });
@@ -3502,158 +3507,6 @@ async function enqueueCrawledRecordsForAnalysis(records: unknown[]): Promise<voi
   }
 }
 
-// TikTok 等平台的缩略图是带签名的临时链接（x-expires），过期后 403，前端只能渲染兜底卡。
-// 抓到这类链接后要尽快下载落盘到 /media，把记录改成永久可用的本地地址。
-function signedThumbnailExpiry(url: string): number | null {
-  const x = /[?&]x-expires?=(\d+)/i.exec(url);
-  if (x) {
-    const ts = Number(x[1]);
-    return Number.isFinite(ts) ? ts * 1000 : null;
-  }
-  // Facebook/Instagram CDN 的过期时间放在十六进制 oe= 参数里
-  if (/\bfbcdn\.net\/|\bcdninstagram\.com\//i.test(url)) {
-    const oe = /[?&]oe=([0-9A-Fa-f]{6,12})(?:&|$)/.exec(url);
-    if (oe) {
-      const ts = parseInt(oe[1], 16);
-      return Number.isFinite(ts) ? ts * 1000 : null;
-    }
-  }
-  return null;
-}
-
-function isSignedExpiringThumbnail(url: string): boolean {
-  return /^https?:\/\//i.test(url) && signedThumbnailExpiry(url) !== null;
-}
-
-function isExpiredSignedThumbnail(url: string): boolean {
-  const exp = signedThumbnailExpiry(url);
-  return exp !== null && exp < Date.now() + 60_000;
-}
-
-function isMissingLocalThumbnail(url: string): boolean {
-  if (!url.startsWith('/media/')) return false;
-  return !fs.existsSync(path.join(MEDIA_DIR, path.basename(url)));
-}
-
-/** 封面在应用内的稳定地址：指向记录自己，不依赖任何本地目录。 */
-export function recordThumbnailUrl(recordId: string): string {
-  return `/api/overseas/videos/${recordId}/thumbnail`;
-}
-
-
-/**
- * 抓取远端封面并存进记录自己的 PocketBase file 字段。
- *
- * 之前这里只写 data/media/<id>.thumb.jpg —— 那个目录属于单个代码副本，
- * 而 PocketBase 是多个副本共用的，于是换目录跑 = 封面集体 404。
- * 现在图片跟记录绑在一起；本地文件只作为写入失败时的兜底。
- */
-async function cacheThumbnailLocally(recordId: string, url: string): Promise<string | null> {
-  const image = await fetchThumbnailBuffer(url);
-  if (!image) return null;
-  return storeThumbnailBuffer(recordId, image.buf, image.contentType);
-}
-
-async function fetchThumbnailBuffer(url: string, timeoutMs = 20_000, noRedirect = false): Promise<{ buf: Buffer; contentType: string } | null> {
-  try {
-    const resp = await fetch(url, {
-      signal: AbortSignal.timeout(timeoutMs),
-      redirect: noRedirect ? 'error' : 'follow',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/125 Safari/537.36',
-        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-      },
-    });
-    if (!resp.ok) return null;
-    const type = resp.headers.get('content-type') || '';
-    if (!type.startsWith('image/')) return null;
-    if (Number(resp.headers.get('content-length') || 0) > 5 * 1024 * 1024) return null;
-    const buf = Buffer.from(await resp.arrayBuffer());
-    if (!buf.length || buf.length > 5 * 1024 * 1024) return null;
-    return { buf, contentType: type };
-  } catch {
-    return null;
-  }
-}
-
-/** 把封面字节写进 PB 文件字段；PB 不可用时退回本地目录，保证抓取链路不被卡死。 */
-async function storeThumbnailBuffer(recordId: string, buf: Buffer, contentType: string): Promise<string | null> {
-  const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg';
-  try {
-    const key = await uploadCrawlerCosObject(recordId, 'thumbnail', buf, contentType);
-    const record = await store.getById<Record<string, unknown>>(COL, recordId);
-    const analysis = parseJsonRecord<Record<string, unknown>>(record?.aiAnalysis, {});
-    await store.update(COL, recordId, {
-      aiAnalysis: JSON.stringify({ ...analysis, thumbnailStorage: 'cos', thumbnailObjectKey: key, thumbnailExtension: ext }),
-    });
-    return recordThumbnailUrl(recordId);
-  } catch (error) {
-    console.warn('[videos] COS thumbnail persistence failed:', error instanceof Error ? error.message : error);
-    try {
-      const thumbnailFile = await attachFile(COL, recordId, 'thumbnailFile', {
-        name: `${recordId}-thumbnail.${ext}`,
-        buf,
-        contentType,
-      });
-      if (!thumbnailFile) return null;
-      const record = await store.getById<Record<string, unknown>>(COL, recordId);
-      const analysis = parseJsonRecord<Record<string, unknown>>(record?.aiAnalysis, {});
-      const { thumbnailObjectKey: _staleThumbnailObjectKey, ...restAnalysis } = analysis;
-      await store.update(COL, recordId, {
-        thumbnailFile,
-        thumbnailUrl: recordThumbnailUrl(recordId),
-        aiAnalysis: JSON.stringify({ ...restAnalysis, thumbnailStorage: 'record_file', thumbnailExtension: ext }),
-      });
-      return recordThumbnailUrl(recordId);
-    } catch (fallbackError) {
-      console.warn('[videos] record thumbnail persistence failed:', fallbackError instanceof Error ? fallbackError.message : fallbackError);
-      return null;
-    }
-  }
-}
-
-async function publicSourceThumbnail(record: Record<string, unknown>): Promise<string> {
-  const sourceUrl = String(record.sourceUrl || '').trim();
-  const platform = String(record.platform || '') as Platform;
-  if (!sourceUrl) return '';
-  if (platform === 'youtube') return youtubeThumbnailFromUrl(sourceUrl);
-  if (platform === 'instagram' && /\/(?:p|reel|tv)\//i.test(sourceUrl)) return `${sourceUrl.replace(/[?#].*$/, '').replace(/\/$/, '')}/media/?size=l`;
-  if (platform !== 'tiktok' || !tiktokVideoId(sourceUrl)) return '';
-  try {
-    const response = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(sourceUrl)}`, {
-      signal: AbortSignal.timeout(12_000),
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
-    });
-    if (response.ok) {
-      const payload = await response.json() as { thumbnail_url?: string };
-      if (/^https?:\/\//i.test(String(payload.thumbnail_url || ''))) return String(payload.thumbnail_url);
-    }
-  } catch {
-    // The public oEmbed endpoint rate-limits bursts; the public video page
-    // still carries an SSR cover preload that is safe to use as evidence.
-  }
-  try {
-    const response = await fetch(sourceUrl, {
-      signal: AbortSignal.timeout(12_000),
-      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/130 Safari/537.36', 'Accept': 'text/html' },
-    });
-    if (!response.ok) return '';
-    const html = await response.text();
-    const encoded = html.match(/<link[^>]+href=["']([^"']+)["'][^>]+data-source=["']ssr-cover-preload["']/i)?.[1]
-      || html.match(/<link[^>]+data-source=["']ssr-cover-preload["'][^>]+href=["']([^"']+)["']/i)?.[1]
-      || '';
-    const cover = decodeHtml(encoded);
-    return /^https?:\/\//i.test(cover) ? cover : '';
-  } catch {
-    return '';
-  }
-}
-
-async function persistThumbnailIfExpiring(recordId: string, url: string): Promise<void> {
-  if (!/^https?:\/\//i.test(url)) return;
-  const local = await cacheThumbnailLocally(recordId, url);
-  if (local) await store.update(COL, recordId, { thumbnailUrl: local });
-}
 
 async function recrawlImagePostThumbnail(record: Record<string, unknown>): Promise<string> {
   const platform = String(record.platform || '') as Platform;
