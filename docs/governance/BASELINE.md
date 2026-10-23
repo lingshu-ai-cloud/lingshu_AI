@@ -2,6 +2,15 @@
 
 更新时间：2026-10-23（Asia/Shanghai）
 
+## 视频应用与执行管线完整拆分（2026-10-23）
+
+- 起点：集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `f9cff15fcc4552747697b722ba0d418bdf659e72`，工作区干净。源码提交 `5d43242f` 按完整职责迁移采集/发现、供应商、下载、来源与素材分析、维护/Worker 及 HTTP 用例。`videos.ts` **7,823→281 行**，共享装配 296 行，最大新领域实现 627 行；移除视频预算，没有新增豁免。详见 [视频应用 ADR](../architecture/adr/2026-10-23-video-application-boundaries.md)。
+- 原共享实例、下载槽位、队列、计时器、运行代理、活动/持久分析租约和归一化数据目录保持唯一所有权与原位置。实际加载起点和新源码，**47 项 Router/中间件栈、58 个运行时导出完全一致**；AST 规范化确认 **184 个原视频函数正文、44 个直接路由表达式一致**。
+- 依赖审计发现采集预算/候选评估经周复盘扫描、生产/素材分析绕回视频主入口。原身份函数独立为 `weeklyReviewActor.ts`，23 个生产调用方直接引用，旧入口兼容转导出；40 个新生产模块逐个独立进程加载通过，零反向主入口路径。额外修复未修改基线上可复现的本地排期确认身份问题：本地权威明确不认识的用户在应用用户库查询前拒绝；停用用户拒绝及正式身份查询保持原规则。
+- 新增 6 项行为测试覆盖许可拒绝、同一原运行、下载槽位与危险来源；视频来源 **167/167**、深入下载/分析 **124/124**、身份/发现/周流程 **216/216** 通过。源码合同改读组成模块/AST；基线上复现的口播/灵感旧位置合同、费用预算夹具及测试模式夹具分别修正，没有放宽生产付费或 ASR 门禁。
+- 实际通过：`pnpm run lint`、`ARCHITECTURE_BASE_REF=f9cff15f pnpm run check:architecture`（2,493 个生产 TS）、`pnpm run test:architecture-ratchet`、`pnpm run check:digital-employee-migrations`（193 项只读完整性）、`test:video-source-boundaries`、完整 `test:production-workflows`、`test:execution-gaps`、`test:digital-employees`、`test:tenant-isolation`、`test:social-image-pipeline`，以及支持会话/爬虫安全、视频路由/精确分析/身份调用方组合回归、`pnpm run build` 和源码暂存空白检查。Studio chunk 480,957/485,000 字节。
+- 原五项已完成三项，仍待完整拆分 **Studio 路由 7,221 行、Studio 页面 12,000 行**。目标继续有效；不以 800 行机械切片或 ratchet 通过宣布完成。未执行真实供应商/付费、目标库迁移、登录后浏览器验收、发布或部署。其他工作树和 `sources/` 未动，普通分支推送不触发部署的工作流已复核。源码与文档分开提交，最终文档 SHA、远端一致性与干净状态以推送后 Git 核验为准。
+
 ## 数字员工主文件完整应用/路由拆分（2026-10-23）
 
 - 起点：集成树 `/Users/julia1/.codex/worktrees/xixi1021-governance-baseline`，分支 `xixi1021程永罗沟通前大整合`，本地/远端均为 `7f90b99da4f03cc0ddee74b95ea4437262678463`，工作区干净。源码提交 `3076f875a3126812a3424078fa9a0f549bf97423` 将剩余运行状态机、审批准备、周目标开工、事实重建、经营包、初始化、事件/浏览器和领域 HTTP 回调按完整职责迁出。

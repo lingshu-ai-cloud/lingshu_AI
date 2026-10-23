@@ -4,6 +4,7 @@
 
 ## 边界
 
+- `server/routes/videos.ts`：视频统一鉴权、原顺序 HTTP 注册和旧公开入口委托。`server/videos/application.ts` 装配采集/发现、供应商、下载、来源/素材分析、维护与 Worker；领域状态与计时器各有唯一所有者，HTTP 回调按业务领域分组。类型端口连接同一实例，数据/锁目录保持原位置。身份读取从重型周复盘扫描中分离，消除经生产流程绕回主入口的依赖。详见 [视频应用边界 ADR](adr/2026-10-23-video-application-boundaries.md)；下列既有纯规则/适配器继续被这些领域服务复用。
 - `server/routes/digitalEmployees.ts`：统一鉴权/支持会话只读门禁、应用单实例装配、原顺序路由挂载和旧公开入口委托。运行状态机在 `runCoordinator.ts`，审批准备在 `taskApprovalPreparation.ts`，周目标开工在 `goalActivationApplication.ts`，事实重建、经营包、初始化、事件/浏览器和各领域工作区分属对应应用/路由模块。`applicationPorts.ts` 通过 type-only 合同与最小端口集连接它们；共享启动队列、运行锁、计时器和事件流保持单一所有权。领域记录在 `server/digitalEmployees/records.ts`，旧路由记录入口兼容转发。完整依赖与验证见 [数字员工应用装配 ADR](adr/2026-10-23-digital-employee-application-assembly.md)。
 - `src/components/inspiration/InspirationMaterialDialogs.tsx`：仅展示素材上传归属与编辑/删除确认弹窗，沿用产品规范中的 Ant Modal/Input/Select 和现有 Token。`useInspirationMaterials.ts` 持有上传、素材库存、产品归属、预览与详情状态；`useInspirationItemManagement.ts` 持有编辑/删除状态和请求，页面连接文件选择与确认回调。弹窗不能直接调用 API 或自行变更素材归属。
 - `server/routes/digitalEmployeeFollowupReadRoutes.ts`：数字员工客户跟进批次详情、Worker 状态和人工发送预检的只读 HTTP 端点。由 `digitalEmployees.ts` 在统一鉴权及支持会话只读门禁之后、实际发送端点之前挂载；租户身份只取已认证的 `res.locals`，预检不发起供应商发送。
@@ -121,6 +122,8 @@
 确定性失败不可被模型复核覆盖；多模态服务不可用时状态保持不确定，不得推断通过。多输出轮播/GIF 使用冻结计划、逐单元原子认领和持久化回执；结果不明时停止后续付费提交，只能核对已有素材。GIF 的产品与文字在背景底图持久化后由固定图层合成，最终动图单独登记与质检。工作台接线及本地合同测试不等于真实供应商、浏览器交互或发布验收。
 
 ## 依赖方向
+
+视频领域实现不反向依赖 `videos.ts`；原公开入口只转发到同一装配实例。身份能力直接依赖 `weeklyReviewActor.ts`，旧周复盘入口保留同一函数转导出，不因只读身份查询初始化内容生产/素材分析链。下载槽位、活动/持久分析租约、Worker 和图文队列不能在新模块各建一份；租户、原运行、付费许可和未知结果边界沿用原能力。
 
 数字员工的配置/记录、开工、运行协调、审批准备、事件和初始化均通过明确端口连接；HTTP 注册工厂只在主装配层按原顺序调用。主文件不再承载领域状态机或完整 HTTP 用例。旧后台、助手、移动端入口仍委托同一实例，原 `withDigitalEmployeeRunLock` 和共享启动队列不得被新模块各自复制。原记录入口只做兼容转发，新增领域模块直接使用领域记录合同。
 
