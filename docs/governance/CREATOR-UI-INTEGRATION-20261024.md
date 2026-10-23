@@ -52,3 +52,34 @@
 用户已修订要求：已确认预览树和内容生成树也随安全基线变化。本次同步前两树均干净；预览为 detached `64bb6481`，内容生成为 `feature/content-generation-20261024` / `3193ead1`。来源祖先记录后可快进到本版；只在重新确认干净且可快进时执行，不覆盖独有开发成果，不改运行数据。同步后的实际 HEAD/状态在操作后另行核验。
 
 可见 workflows 仅标签 push、PR 或手动/定时事件，不匹配此次命名分支的普通 push；未发现有效 pre-push hook。未运行全仓 `pnpm test`、`quality`、`verify`，不声明远端 CI、真实账号/付费调用或上线就绪；未部署。
+
+## 2026-10-24 追加：客服与投流保持原功能区、统一主外观
+
+起点 `2b4c0a91f67b9873de82bc21e4c87bbfad8fa0bf`，源码/测试 `1dd111866635cf83ccf02cf129a3a3fc64713d0c`，本地分支仍 `xixi改tab顺序+前端整合`。本节覆盖此前审计发现的投流导航和夜间弹窗缺口；不扩大到真实供应商或上一节未通过的附件理解整链。
+
+### 变化与保留
+
+- `PlatformAdsPage.tsx` 使用既有 Ant Tabs 常驻“计划创编 / 投放数据 / 素材管理”，仍调用原 `onNavigate` 和页面 ID，保持同一个广告工作区的状态与 API。账户真实历史、本地计划回执、平台广告素材、投放素材、创作素材及原 AI 投手 Drawer 均保留。
+- `pageRegistry.ts` 将计划、素材子页挂到平台投流导航归属；`Layout.tsx` 复用既有 `PLATFORM_ADS_PAGE_IDS`，让子页面使用与主页面相同的侧栏、账号区和顶部间距，修复子页外壳不一致。
+- 客服继续保留收件箱、潜客、成交客户、沉默客户及原三栏和移动端区域切换。`ConversionPage.tsx`、`ConversionChatThread.tsx`、`ConversionCustomerList.tsx`、`ConversionCustomerRail.tsx` 的四份源码，剔除 JSX `className` 并按同一 TypeScript printer 输出后，与起点一致；这是样式以外源码未变的证据，不替代运行验收。
+- 原生创编弹窗、表单、步骤、说明、遮罩、表格悬停与素材卡片使用现有 Surface/Text/Border/Accent/Mask Token；补齐共享主题的夜间 primary/info-bg/selected/hover 别名。移除旧绿色品牌强调和白底继承浅字，保留成功、警告、错误及平台语义色。
+- `server/`、`shared/`、package/lockfile、客户加载/发送/恢复接口及投流 API 未改动；未换技术栈、未引入新组件系统或平行业务链。
+
+### 验证
+
+| 实际检查 | 结果 |
+| --- | --- |
+| 8 份定向前端测试文件（含导航归属、外观外壳、客户边界、布局） | 23/23 |
+| `pnpm run test:customer-pipeline` | 80/80 |
+| `pnpm run test:platform-ads` | 47 文件通过 |
+| `pnpm run lint` | 最终源码通过 |
+| `check:architecture`、`test:architecture-ratchet`（基准 2b4c0a91） | 通过，预算未变 |
+| `check:digital-employee-migrations` | 197 项仓库只读通过；无迁移改动 |
+| `git diff --check`、暂存区检查 | 通过 |
+| `pnpm run build` | 最后样式调整后通过；Studio 368861/485000；视图导入边界通过 |
+
+实际浏览器在本地 5202/9002 检查：三项投流路由切换、主导航持续高亮、素材内部页签保留；创编表单日间/夜间可读；客服模拟记录的原四分类、三栏、多语消息、翻译和右侧功能区日夜显示。只打开并关闭表单，没有提交草稿、生成方案、发送消息或授权；原自动外观偏好已恢复。
+
+私有证据沿用前述目录，日志前缀 `workspace-theme-`；AST 对比为 `workspace-customer-behavior-ast.json`，截图 `workspace-ads-modal-dark.png` / `workspace-ads-modal-light.png` / `workspace-ads-creatives-light.png` / `workspace-customer-dark.png` / `workspace-customer-light.png`。模拟客户不是实际客户通道验收，无广告账户时不声称真实报表、审批、投递或付费链路可用。
+
+未运行全仓 test/quality/verify；未部署。源码与文档分别提交，普通推送当前同名分支；可见 workflow 触发条件未变。两棵关联树仅在重新核对干净且可快进时同步。
