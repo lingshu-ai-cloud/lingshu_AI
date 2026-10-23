@@ -290,19 +290,17 @@ assert.match(assistantSendSource, /if \(!currentScope\(\)\) return/, '跨身份�
 
 assert.match(onboardingPanelSource, /输出内容语言/);
 assert.match(onboardingPanelSource, /需要输出的语言/);
-assert.match(pageSource, /<ProductionTaskScene[^>]+runId=\{data\.run\.id\}[^>]+taskId=\{selectedTask\.id\}/, 'Smart Operations must use the shared production scene');
+assert.match(pageSource, /<SmartBusinessDashboard data=\{data\} view=\{dashboardView\}/, 'Smart Operations must mount the active dashboard');
+assert.match(smartBusinessSource, /<ProductionTaskScene runId=\{data\.run\.id\} taskId=\{item\.taskId\} embedded\/>/, 'the active dashboard must use the shared production scene');
 assert.match(revisionSource, /当前待验收成片/, 'the revision workspace must put the final video before editing controls');
 assert.match(revisionSource, /<video[^>]+aria-label="当前待验收成片"/, 'the revision workspace must render the actual final video');
 assert.match(revisionSource, /成片通过，确认当前版本/, 'the revision workspace must allow the user to complete the human quality decision');
 
-for (const label of ['今天要做', '生产与交付', '任务执行', '复盘']) {
+for (const label of ['经营总览', '数字员工', '数据复盘']) {
   assert.match(pageSource, new RegExp(label), `Digital Employee workspace must expose the ${label} view`);
 }
-for (const label of ['全链路经营', '内容增长', '客户转化', 'Facebook', 'Instagram', 'TikTok', 'YouTube']) {
-  assert.match(pageSource, new RegExp(label), `business-line navigation must expose ${label}`);
-}
-assert.match(pageSource, /businessLine=\{businessLine\}[\s\S]{0,120}contentPlatform=\{contentPlatform\}/, 'overview and review panels must receive the shared business-line context');
-assert.match(pageSource, /<DeliveryBoard[\s\S]{0,200}tasks=\{data\.run \? visibleTasks : \[\]\}/, 'the execution center must feed business-line-filtered persisted tasks into the kanban without fabricating pre-run tasks');
+assert.match(pageSource, /<GoalPanel config=\{data\.config\}[\s\S]{0,120}businessLine=\{businessLine\} contentPlatform=\{contentPlatform\}/, 'the weekly goal editor must retain business-line and platform context');
+assert.match(smartBusinessSource, /data\.tasks/, 'the active dashboard must use persisted tasks');
 assert.match(insightSource, /knowledgeCandidates/, 'review must retain reviewable knowledge candidates');
 assert.match(libSource, /contentPlatforms:[\s\S]{0,100}facebook[\s\S]{0,100}youtube/, 'weekly goals must persist the selected content-platform scope');
 assert.doesNotMatch(pageSource, /aria-label="经营视角切换"[\s\S]{0,200}fixed bottom-5/, 'business-line switching must not cover dashboard content');
@@ -513,21 +511,19 @@ assert.match(weeklyGoalPanelSource, /查看并调整具体视频计划（可选�
 assert.match(videoPlanEditorSource, /数字员工制作路径[\s\S]{0,500}爆款复刻[\s\S]{0,500}历史任务/, 'Agent video plans must show clone-only routing while keeping legacy routes readable');
 assert.doesNotMatch(videoPlanEditorSource, /脚本来源\s*<select/, 'Agent video plans must not expose free-creation route selection');
 assert.match(videoPlanEditorSource, /themeWorkflow \? '内容参考' : '爆款参考'/, 'legacy clone plans must use a neutral reference label in theme workflow mode');
-assert.match(pageSource, /workspaceView === "overview" && <BusinessLineNav/, 'legacy business filters belong only to production; review has insight categories');
+assert.doesNotMatch(pageSource, /<BusinessLineNav/, 'unmounted legacy business filters must not return');
 assert.doesNotMatch(pageSource, /frontend_preview|BUSINESS_PREVIEW|PreviewExecutionPanel|示例数据预览中|查看示例数据/, 'the production cockpit must not contain or expose synthetic operating receipts');
 assert.doesNotMatch(pageSource, /<dt className="inline text-slate-400">(?:目标版本|计划锁定配置)/, 'the operating context strip must not expose technical record metadata');
 assert.match(libSource, /configSnapshot\?: DigitalEmployeeConfig/, 'the plan API contract must retain its immutable config snapshot');
 assert.match(pageSource, /useState<WorkspaceView>\(["']today["']\)/, 'regular login must land on Today Overview by default');
-assert.match(pageSource, /workspaceView === ["']today["'][\s\S]{0,5000}<TodayFocusPanel/, 'Today view must prioritize one next action before detailed operating data');
-assert.match(pageSource, /workspaceView === ["']overview["'][\s\S]{0,5000}<ProductionProgressPanel/, 'Business progress must keep detailed operating data in a dedicated view');
-assert.match(pageSource, /workspaceView === ["']live["'][\s\S]{0,25000}<ProductionTaskScene/, 'Live Production must render the shared production scene');
-assert.match(pageSource, /workspaceView === ["']review["'][\s\S]{0,5000}<WeeklyReviewPanel/, 'Weekly Review must have its own render branch');
+assert.match(pageSource, /workspaceView === "live"[\s\S]{0,120}selectedContentItemId \? "production" : "review"/, 'live production must route to the active dashboard production view');
+assert.match(pageSource, /workspaceView === "review" \? "review" : "home"/, 'the dashboard must route overview and review to their active views');
 assert.match(pageSource, /workspaceView === ["']rules["'][\s\S]{0,8000}(?:OnboardingPanel|approvalPolicy|\u89c4\u5219)/, 'Rules and Permissions must have its own render branch');
 
 assert.match(packageSource, /<WeeklyExecutionNodes[^>]+data=\{data\}/, 'the current task package must render persisted execution nodes');
 assert.match(pageSource, /readiness=\{data\.businessSnapshot\?\.readiness\s*\|\|\s*\[\]\}/, 'Agent settings must receive readiness from the saved business snapshot instead of inventing it');
 assert.match(packageSource, /确认范围并启动/, 'first-run goal approval must expose the package scope confirmation');
-assert.match(pageSource, /selectedTask\.status_source\s*\|\|\s*selectedPlanTask\?\.statusSource/, 'the mounted task scene must show the persisted status source when available');
+assert.match(pageSource, /statusSource: planTask\?\.statusSource/, 'task deep links must preserve the persisted plan status source');
 assert.match(onboardingPanelSource, /\/api\/overseas\/enterprise\/profile/, 'the onboarding product table must be loaded from the tenant enterprise knowledge profile');
 assert.match(firstOnboardingSource, /label="企业名称"[\s\S]*label="品牌名称"/, 'first onboarding step must ask only for enterprise and brand names');
 assert.doesNotMatch(firstOnboardingSource, /label="(?:所属行业|目标市场|核心客户|经营目标|重点产品|Agent 设置)"/, 'first onboarding step must not ask for operating assumptions');
@@ -566,7 +562,7 @@ assert.match(connectedAgentCalendarSource, /mainTasks=\{\[\.\.\.accountBindingTa
 assert.match(matrixScheduleSource, /projectAccountBindingCalendar\(visibleTasks, accountConnections\)/, 'account selection must scope projected binding work to visible tasks');
 assert.doesNotMatch(initialPlanSaveSource, /productionApi\.defaults\(\)/, 'skipping presenter setup may still save the initial plan; the hard gate belongs immediately before production start');
 
-assert.match(pageSource, /<TodayFocusPanel/, 'the current week view must mount the focus panel');
+assert.match(pageSource, /<SmartBusinessDashboard data=\{data\} view=\{dashboardView\}/, 'the current week view must mount the active dashboard');
 for (const label of ['本周进度', '需要你处理']) {
   assert.match(todayFocusSource, new RegExp(label), `the focus panel must include ${label}`);
 }
@@ -584,7 +580,7 @@ assert.doesNotMatch(liveSceneSource, /absolute inset-0|AgentBrowserViewport|Dire
 assert.doesNotMatch(liveSceneSource, /\u601d\u8003\u4f9d\u636e|chain[_ -]?of[_ -]?thought/i, 'the UI must not claim to expose private model reasoning');
 assert.match(boardSource, /function DeliveryBoard/, 'execution center must render a real task kanban');
 assert.match(boardSource, /onOpenTask\(\{ \.\.\.selected\.link!.*deliveryId: selected\.id/, 'delivery detail must open its resource-specific business page');
-assert.match(pageSource, /dispatchDigitalEmployeeDeepLink\(buildTaskDeepLink\(selectedTask, selectedPlanTask, data\.run!\.id\)\)/, 'the selected task must enter its mapped business workspace');
+assert.match(pageSource, /dispatchDigitalEmployeeDeepLink\(buildTaskDeepLink\(task, planTask, data\.run\?\.id \|\| task\.run_id\)\)/, 'the selected task must enter its mapped business workspace');
 assert.match(pageSource, /task\.business_line[\s\S]{0,200}task\.business_domain/, 'business-line classification must prefer persisted fields');
 assert.doesNotMatch(pageSource, /function taskBusinessLine[\s\S]{0,800}task_key/, 'task classification must not guess from task-key text');
 assert.match(libSource, /payload\?\.uiAction/, 'the Agent operation feed must consume persisted worker UI events');
@@ -598,7 +594,7 @@ assert.match(batchFollowupSource, /\u6279\u51c6\u7684\u662f\u9010\u5ba2\u8349\u7
 assert.match(batchFollowupSource, /\u53d1\u9001\u6267\u884c\u670d\u52a1\u5f53\u524d\u4e3a\u624b\u52a8\u89e6\u53d1\u6a21\u5f0f/, 'the batch panel must distinguish manual mode from a ready automatic worker');
 assert.match(batchFollowupSource, /\u771f\u5b9e\u53d1\u9001\u56de\u6267/, 'the batch panel must wait for provider evidence');
 assert.match(batchFollowupSource, /\u53d1\u9001\u5df2\u5230\u671f\u5ba2\u6237/, 'manual-only mode must expose an explicit due-item dispatch action');
-assert.match(pageSource, /digitalEmployeeApi\.dispatchFollowupBatch/, 'the manual dispatch action must call the worker route');
+assert.match(digitalEmployeeApiSource, /dispatchFollowupBatch:[\s\S]{0,180}followup-batches/, 'the manual dispatch action must call the worker route');
 
 assert.match(pageSource, /<BusinessHealthOverview summaryOnly data=\{data\}/, 'the home overview must mount its real business-health summary');
 assert.match(pageSource, /<SmartBusinessDashboard data=\{data\}/, 'the command center must mount its real task-oriented dashboard');
@@ -772,14 +768,14 @@ assert.match(enterpriseRouteSource, /mergeEnterpriseProductIdentity\(next\[index
 assert.match(enterpriseProfileStoreSource, /return \{[\s\S]{0,200}\bcompany,[\s\S]{0,100}\bbrand,/, 'normalized brand must be returned and preserved by recursive profile merge');
 assert.match(pageSource, /weeklyPlanOpen && \(!goal \|\| newGoal\) && !activeRun/, 'an active run must suppress the new-goal editor instead of exposing a duplicate plan flow');
 assert.match(pageSource, /const presentConfirmedWeeklyExecution[\s\S]{0,500}setWeeklyPlanOpen\(false\)[\s\S]{0,120}setNewGoal\(false\)/, 'a successful direct start must close and reset any new-goal editor state');
-assert.match(pageSource, /完成或取消当前运行后才能制定下一周目标/, 'the UI must explain why a second active goal is unavailable');
+assert.match(pageSource, /weeklyPlanOpen && \(!goal \|\| newGoal\) && !activeRun/, 'an active run must hide the next-goal editor');
 assert.doesNotMatch(confirmWeeklyPlanSource, /firstMissingReadiness|approvalBlocked/, 'readiness gaps must be resolved in their production stage, not as a blanket launch gate');
 assert.match(packageSource, /issues.length > 0/, 'invalid packages must block launch and explain missing dependencies');
-assert.match(pageSource, /<WeeklyPackagePanel/, 'the execution view must expose the editable weekly business package');
+assert.match(pageSource, /<WeeklyPlanDetailsDrawer data=\{data\} open/, 'the active weekly plan must expose persisted plan details');
 assert.match(packageSource, /每条内容发布到一个账号计一次/, 'bounded publishing must explain that the limit counts actual account-level publish actions');
 assert.doesNotMatch(pageSource, /required\.add\(["'](?:products|viral_library|customers)["']\)/, 'new tenants must not be blocked from starting merely because products, inspiration, or customers are still empty');
 
-assert.match(pageSource, /<ProductionTaskScene runId=\{data\.run\.id\} taskId=\{selectedTask\.id\} embedded/, 'the selected task must mount the current production scene');
+assert.match(smartBusinessSource, /<ProductionTaskScene runId=\{data\.run\.id\} taskId=\{item\.taskId\} embedded\/>/, 'the selected content item must mount the current production scene');
 assert.match(pageSource, /onRetryTask=\{async taskId => Boolean\(await act\(`retry:\$\{taskId\}`, \(\) => digitalEmployeeApi\.retryTask\(taskId\)\)\)\}/, 'the dashboard retry action must use the canonical task API');
 assert.doesNotMatch(pageSource, /function (?:ProductionScene|BlockedTaskActions|CorrectionPanel|EventTimeline|AgentOperationFeed)/, 'unmounted legacy production controls must not be mistaken for current UI');
 for (const endpoint of ['retryTask', 'skipTask', 'completeTask']) {
