@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Button, Form, Input, Modal, Select, Upload } from 'antd';
-import { CheckCircle2, FileSpreadsheet, Loader2 } from 'lucide-react';
+import { CheckCircle2, FileSpreadsheet, Loader2, Sparkles } from 'lucide-react';
 import {
   enterpriseOnboardingSourceLabel,
   type EnterpriseOnboardingDraft,
@@ -154,16 +154,18 @@ const platformOptions = [
   { value: 'facebook', label: 'Facebook' },
 ];
 
-export function OnboardingMarketStep({ busy, dismissible, onClose, onBack, onConfirm, contentStage,
+export function OnboardingMarketStep({ busy, aiBusy, dismissible, onClose, onBack, onConfirm, onGenerateProposal, contentStage,
   targetMarket, targetBuyer, primaryPlatform, language, primaryCta, onChange, error,
 }: {
-  busy: boolean; dismissible: boolean; onClose?: () => void; onBack: () => void; onConfirm: () => void;
+  busy: boolean; aiBusy: boolean; dismissible: boolean; onClose?: () => void; onBack: () => void; onConfirm: () => void;
+  onGenerateProposal: () => void;
   contentStage?: SocialContentStageId; targetMarket: string; targetBuyer: string; primaryPlatform: string;
   language: string; primaryCta: string; error: string;
   onChange: (field: 'targetMarket' | 'targetBuyer' | 'primaryPlatform' | 'language' | 'primaryCta' | 'contentStage', value: string) => void;
 }) {
   const incomplete = !contentStage || !targetMarket.trim() || !targetBuyer.trim() || !primaryPlatform.trim() || !language.trim() || !primaryCta.trim();
   return <OnboardingGuideFrame step={3} title="确认面向谁、在哪里沟通，以及唯一 CTA"
+    headerAction={<Button icon={<Sparkles size={16} />} loading={aiBusy} disabled={busy || !targetMarket.trim()} onClick={onGenerateProposal}>生成 AI 市场建议</Button>}
     busy={busy} dismissible={dismissible} onClose={onClose} onBack={onBack}
     primaryLabel="确认市场与内容方向" primaryDisabled={incomplete} onPrimary={onConfirm}>
     <Form className="space-y-5" layout="vertical" aria-label="市场与内容方向">
@@ -215,13 +217,18 @@ export function OnboardingConfirmationStep({ busy, dismissible, onClose, onBack,
         <div className="py-3"><div className="mb-2 flex items-center justify-between gap-3"><label className="text-xs text-text-muted" htmlFor="onboarding-brand-tone">品牌初始语气</label><SourceBadge source={source('brandTone')} /></div><Input.TextArea id="onboarding-brand-tone" rows={2} value={draft.brandTone} onChange={event => onProposalChange('brandTone', event.target.value)} /></div>
       </section>
       <section className="rounded-lg border border-border bg-surface px-4" aria-label="主推产品确认">
-        <SummaryRow label="主推产品（最多 3 个）" value={<ul className="space-y-1">{focusProducts.map(product => <li key={product.id}>{product.name} · {product.category} · {product.highlights || product.description}</li>)}</ul>} source={source('focusProducts')} />
+        <SummaryRow label="主推产品（最多 3 个）" value={<ul className="space-y-2">{focusProducts.map(product => {
+          const proposal = draft.proposalSet?.focusProducts.find(item => item.productId === product.id);
+          return <li key={product.id}><p>{product.name} · {product.category} · {product.highlights || product.description}</p>{product.description ? <p className="mt-1 text-xs font-normal text-text-secondary">{product.description}</p> : null}{proposal ? <p className="mt-1 text-xs font-normal text-text-muted">建议依据：{proposal.reason} · 置信度 {Math.round(proposal.confidence * 100)}%</p> : null}</li>;
+        })}</ul>} source={source('focusProducts')} />
+        {draft.evidenceRefs?.length ? <SummaryRow label="已留存原始证据" value={draft.evidenceRefs.map(item => item.name).join('、')} source="system_detected" /> : null}
       </section>
       <section className="rounded-lg border border-border bg-surface px-4" aria-label="市场与内容确认">
         <SummaryRow label="市场 / 买家" value={`${draft.targetMarket} · ${draft.targetBuyer}`} source={source('targetMarket')} />
         <SummaryRow label="平台 / 语言" value={`${platformOptions.find(option => option.value === draft.primaryPlatform)?.label || draft.primaryPlatform} · ${draft.language}`} source={source('primaryPlatform')} />
         <SummaryRow label="社媒阶段" value={draft.contentStage || '未确认'} source={source('contentStage')} />
         <SummaryRow label="唯一 CTA" value={draft.primaryCta} source={source('primaryCta')} />
+        {draft.proposalSet?.market.coverage.note ? <SummaryRow label="AI 建议数据覆盖" value={`${draft.proposalSet.market.coverage.note}（置信度 ${Math.round(draft.proposalSet.market.confidence * 100)}%）`} source="ai_suggested" /> : null}
         <SummaryRow label="当前企业事实版本" value={draft.baseFactVersion} source="system_detected" />
       </section>
       {error ? <p role="alert" className="rounded-lg bg-red-50 px-4 py-3 text-xs text-red-700">{error}</p> : null}

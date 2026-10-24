@@ -71,3 +71,23 @@ test('asset normalization drops malformed evidence instead of promoting it into 
   assert.equal(normalized?.products[0]?.images?.length, 1);
   assert.equal(normalized?.products[0]?.images?.[0]?.name, 'front.png');
 });
+
+test('original evidence and AI proposals retain only verifiable source identities', () => {
+  const normalized = normalizeEnterpriseOnboardingDraft({ ...completeDraft(),
+    evidenceRefs:[{ id:`onboarding-source:${'a'.repeat(64)}`, kind:'source_document', name:'products.xlsx',
+      mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size:128,
+      sha256:'a'.repeat(64), url:'/api/overseas/enterprise/assets/products.xlsx',
+      capturedAt:'2026-10-24T00:00:00.000Z', status:'uploaded' }, { id:'bad', kind:'source_document' }],
+    proposalSet:{ schemaVersion:'enterprise-onboarding-proposals.v1', inputHash:'b'.repeat(64), generatedAt:'2026-10-24T00:01:00.000Z',
+      companyIntro:{ value:'待确认简介', confidence:2, sourceRefs:['company.name'] },
+      brandTone:{ value:'待确认语气', confidence:.6, sourceRefs:['company.brandName'] },
+      focusProducts:[{ productId:'p1', category:'工业相机', highlights:'高速检测', description:'产品说明', reason:'资料完整', confidence:.8, sourceRefs:['product:p1'] },
+        { productId:'invented', category:'编造', highlights:'编造', description:'', reason:'', confidence:1, sourceRefs:[] }],
+      market:{ targetBuyer:'采购负责人', primaryPlatform:'linkedin', language:'英语', reason:'B2B 建议', confidence:.7,
+        sourceRefs:['targetMarket'], coverage:{ enterpriseIdentity:true, productProfile:true, targetMarket:true, operatingHistory:false, note:'没有经营历史' } } },
+  });
+  assert.equal(normalized?.evidenceRefs?.length, 1);
+  assert.equal(normalized?.proposalSet?.focusProducts.length, 1);
+  assert.equal(normalized?.proposalSet?.focusProducts[0]?.productId, 'p1');
+  assert.equal(normalized?.proposalSet?.companyIntro.confidence, 1);
+});

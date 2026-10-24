@@ -70,6 +70,7 @@ export interface SocialImageProductionBinding {
   requestHash: string;
   resumeToken: string;
   boundAt: string;
+  taskContextSnapshot: import('./socialContentTaskContract.js').TaskContextSnapshot;
 }
 
 export interface SocialImageProductionNodeState {

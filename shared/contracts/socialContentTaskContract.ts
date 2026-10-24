@@ -252,6 +252,34 @@ export interface SocialContentTaskBrief {
   referenceReuse?: SocialReferenceReuseBinding;
 }
 
+/** Immutable execution input. Paid or otherwise irreversible nodes bind to one
+ * exact snapshot version instead of rereading mutable enterprise knowledge. */
+export interface TaskContextSnapshot {
+  schemaVersion: 'task-context-snapshot.v1';
+  id: string;
+  tenantId: string;
+  contentTaskId: string;
+  snapshotVersion: number;
+  contentHash: string;
+  factVersionId: string;
+  productIds: string[];
+  platformIds: string[];
+  assetIds: string[];
+  presenterId?: string;
+  audience: string | null;
+  language: string;
+  contentGoal: string;
+  primaryCta: string | null;
+  constraints: string[];
+  taskLocalOverrides: Array<{ key: string; value: unknown }>;
+  referenceRef?: SocialVersionedObjectRef;
+  outputType: 'image' | 'video' | 'content';
+  deliverySpec: { platform: string; aspectRatio: string | null; language: string; outputCount: number; format: string };
+  graphVersion: string;
+  confirmedBy: string;
+  confirmedAt: string;
+}
+
 /** Public metadata only. Formula identifiers and internal prompt templates stay server-side. */
 export interface SocialScriptBaselineSummary {
   version: string;

@@ -544,7 +544,7 @@ assert.match(onboardingProductImportSource, /xlsx\?\|csv\|pdf\|docx\|txt[\s\S]{0
 assert.match(onboardingProductImportSource, /file\.size > 50 \* 1024 \* 1024[\s\S]{0,220}文件不能超过 50MB/, 'product onboarding must validate the documented file-size limit');
 assert.match(onboardingProductImportSource, /parseProductDocument\(file\)/, 'product onboarding must parse PDF and DOCX through the document importer');
 assert.doesNotMatch(onboardingProductImportSource, /for\s*\(const image of documentResult\.unassignedImages\)[\s\S]{0,250}uploadProductEvidence/, 'unassigned document images must not be uploaded without an owned product binding');
-assert.match(onboardingPanelSource, /张图片无法确定产品归属，尚未保存，请到企业知识库单独上传并关联/, 'unassigned document images must be disclosed as unsaved evidence');
+assert.match(onboardingPanelSource, /张图片暂未单独绑定产品，但仍保留在原始文件证据中/, 'unassigned document images must remain auditable through the original source evidence');
 assert.match(onboardingProductImportSource, /productsFromLabeledText\(await readProductDiscoveryFile\(file\)\)/, 'product onboarding must parse labeled TXT product fields');
 assert.match(productTableOnboardingSource, /最多选择 3 个[\s\S]{0,1000}类目[\s\S]{0,600}核心卖点/, 'product onboarding must bound focus suggestions and collect the facts required for later production');
 assert.doesNotMatch(productTableOnboardingSource, /本期暂无产品，先继续|Agent 设置/, 'product onboarding must not bypass the required product baseline or ask for Agent settings');

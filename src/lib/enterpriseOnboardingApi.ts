@@ -1,4 +1,4 @@
-import type { EnterpriseOnboardingDraft } from '../../shared/contracts/enterpriseOnboarding';
+import type { EnterpriseOnboardingDraft, EnterpriseOnboardingProposalSet } from '../../shared/contracts/enterpriseOnboarding';
 import { authHeader } from './auth';
 
 const ENDPOINT = '/api/overseas/enterprise/onboarding-draft';
@@ -55,4 +55,20 @@ export async function saveEnterpriseOnboardingDraft(
     Math.max(0, Math.floor(Number(result.revision) || 0)),
   );
   return result.draft as EnterpriseOnboardingDraft;
+}
+
+export async function generateEnterpriseOnboardingProposals(
+  draft: EnterpriseOnboardingDraft,
+): Promise<EnterpriseOnboardingProposalSet> {
+  const response = await fetch(`${ENDPOINT}/proposals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    body: JSON.stringify({ draft }),
+  });
+  const result = await body(response);
+  if (!response.ok || !result.proposalSet) throw new EnterpriseOnboardingDraftError(
+    response.status, String(result.error || 'enterprise_onboarding_proposal_unavailable'),
+    String(result.message || 'AI 建议暂时不可用；已填写内容仍可保存。'),
+  );
+  return result.proposalSet as EnterpriseOnboardingProposalSet;
 }

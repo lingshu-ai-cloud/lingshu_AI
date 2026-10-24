@@ -19,14 +19,14 @@ function assetUrl(value) {
   return url.startsWith('/') ? base() + url : url
 }
 
-function request(path, method = 'GET', data, authorized = true) {
+function request(path, method = 'GET', data, authorized = true, extraHeaders = {}) {
   const requestToken = authorized ? token() : ''
   return new Promise((resolve, reject) => {
     wx.request({
       url: base() + '/api/overseas/' + path,
       method,
       data,
-      header: { 'Content-Type': 'application/json', ...(requestToken ? { Authorization: 'Bearer ' + requestToken } : {}) },
+      header: { 'Content-Type': 'application/json', ...(requestToken ? { Authorization: 'Bearer ' + requestToken } : {}), ...extraHeaders },
       success(res) {
         if (res.statusCode === 401 && requestToken && token() === requestToken) clearToken()
         if (res.statusCode < 200 || res.statusCode >= 300) { const failure = httpFailure(res.statusCode, res.data); const message = failure.stale ? '这项待办已更新，请刷新最新内容' : failure.message; const error = new Error(message + '（HTTP ' + failure.status + '）'); Object.assign(error, failure, { message: error.message }); return reject(error) }
@@ -36,6 +36,31 @@ function request(path, method = 'GET', data, authorized = true) {
       fail(err) { reject(new Error(err.errMsg || '网络连接失败')) }
     })
   })
+}
+
+function privateDownloadUrl(path) {
+  const value = String(path || '')
+  if (value.startsWith('/api/overseas/') && !value.includes('..') && !value.includes('\\')) return base() + value
+  if (!value.startsWith('/') && !/^https?:/i.test(value) && !value.includes('..') && !value.includes('\\')) {
+    return base() + '/api/overseas/' + value
+  }
+  throw new Error('下载地址无效')
+}
+
+function downloadPrivate(path) {
+  const requestToken = token()
+  return new Promise((resolve, reject) => wx.downloadFile({
+    url: privateDownloadUrl(path),
+    header: requestToken ? { Authorization: 'Bearer ' + requestToken } : {},
+    success(res) {
+      if (res.statusCode === 401 && requestToken && token() === requestToken) clearToken()
+      if (res.statusCode < 200 || res.statusCode >= 300 || !res.tempFilePath) {
+        return reject(new Error('文件下载失败（HTTP ' + res.statusCode + '）'))
+      }
+      resolve(res.tempFilePath)
+    },
+    fail(err) { reject(new Error(err.errMsg || '文件下载失败')) }
+  }))
 }
 
 function download(path, filename) {
@@ -135,6 +160,8 @@ module.exports = {
 }
 
 module.exports.request = request
+module.exports.requestWithIdempotency = (path, method, data, idempotencyKey) => request(path, method, data, true, { 'Idempotency-Key': idempotencyKey })
+module.exports.downloadPrivate = downloadPrivate
 module.exports.chat = messages => new Promise((resolve, reject) => {
   wx.request({ url: base() + '/api/overseas/strategy/chat', method: 'POST', data: { messages, deepThinking: false }, timeout: 120000, dataType: 'text', responseType: 'text', header: { 'Content-Type':'application/json', Authorization:'Bearer '+token() },
     success(res) { if (res.statusCode === 401) clearToken(); if (res.statusCode !== 200) return reject(new Error('助手请求失败（HTTP '+res.statusCode+'）')); let answer = ''; let failure = ''; String(res.data).split('\n').forEach(line => { if (!line.startsWith('data: ') || line.includes('[DONE]')) return; try { const event = JSON.parse(line.slice(6)); if (event.text) answer += event.text; if (event.error) failure = event.error } catch (_) {} }); if (failure) reject(new Error(failure)); else if (answer) resolve(answer); else reject(new Error('助手未返回回答，请重试')) }, fail(e) { reject(new Error(e.errMsg || '助手连接失败')) }

@@ -6,6 +6,7 @@ export interface UploadedProductAsset {
   size: number;
   updatedAt: string;
   url?: string;
+  sha256?: string;
 }
 
 function fileToDataUrl(file: File): Promise<string> {

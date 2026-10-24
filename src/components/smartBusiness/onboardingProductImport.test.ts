@@ -21,15 +21,14 @@ test('unsupported and oversized files fail before any upload or profile write', 
 });
 
 test('TXT import remains a draft and does not write confirmed enterprise facts', async () => {
-  const originalFetch = globalThis.fetch;
-  let requests = 0;
-  globalThis.fetch = async () => { requests += 1; return new Response('{}', { status: 200 }); };
-  try {
-    const result = await importOnboardingProducts(new File(['产品名称：玻璃瓶\nSKU：A-1'], 'products.txt'), []);
-    assert.equal(result.importedCount, 1);
-    assert.equal(result.products[0].name, '玻璃瓶');
-    assert.equal(requests, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  let uploads = 0;
+  const result = await importOnboardingProducts(new File(['产品名称：玻璃瓶\nSKU：A-1'], 'products.txt'), [], async file => {
+    uploads += 1;
+    return { name: file.name, type: 'text/plain', size: file.size, updatedAt: '2026-10-24T00:00:00.000Z',
+      url: '/api/overseas/enterprise/assets/source.txt', sha256: 'a'.repeat(64) };
+  });
+  assert.equal(result.importedCount, 1);
+  assert.equal(result.products[0].name, '玻璃瓶');
+  assert.equal(uploads, 1);
+  assert.equal(result.sourceEvidence.sha256, 'a'.repeat(64));
 });
