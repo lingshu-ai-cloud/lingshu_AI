@@ -9,13 +9,15 @@ const all = new Set<Page>(['strategy', 'socialInspiration', 'digitalEmployees', 
 assert.deepEqual(primaryProductNavigation('free', all, false).map(item => item.label),
   ['经营总览', '灵感爆款', '内容创作', '平台投流', '客户会话']);
 assert.deepEqual(primaryProductNavigation('employee', all, false).map(item => item.label),
-  ['经营总览', '内容创作', '平台投流', '客户会话']);
+  ['经营总览', '灵感爆款', '内容创作', '平台投流', '客户会话']);
 assert.equal(primaryProductNavigation('free', all, false)[3]?.disabled, true);
 assert.equal(primaryProductNavigation('free', all, true)[3]?.disabled, false);
 assert.deepEqual(primaryProductNavigation('free', new Set<Page>(['strategy', 'conversion']), false).map(item => item.label),
   ['内容创作', '客户会话']);
-assert.equal(modeSwitchDestination('socialInspiration', 'employee'), 'strategy');
+assert.equal(modeSwitchDestination('socialInspiration', 'employee'), 'socialInspiration');
 assert.equal(modeSwitchDestination('socialInspiration', 'free'), 'socialInspiration');
+
+assert.equal(primaryProductNavigation('employee', new Set<Page>(['strategy']), false).some(item => item.page === 'socialInspiration'), false, '保留入口不绕过页面权限');
 
 const adminSession = { platformAdmin: true, user: { role: 'super_admin' } } as AuthSession;
 assert.deepEqual(accountProductNavigation(ROLE_PAGE_ACCESS.customer_service, false), []);

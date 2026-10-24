@@ -1,3 +1,4 @@
+import CreationProductionConversation from './CreationProductionConversation';
 import { useEffect, useState } from 'react';
 import { FileImage, ImagePlus, Loader2, Video } from 'lucide-react';
 import { Button } from 'antd';
@@ -48,6 +49,7 @@ function seedFromRequest(request?: SocialContentCreateRequest | null): SocialCre
     selectedProductNames: request.identityMappings?.selectedProductNames,
     productId: request.prefill?.productId,
     productName: request.prefill?.productName,
+    creationDialoguePlan: request.creationDialoguePlan,
   };
 }
 
@@ -214,6 +216,7 @@ export default function SocialContentPlanningPage({
         referenceLinks: request.referenceLinks,
       },
       sourceContext: sourceRequest?.sourceContext,
+      creationDialoguePlan: sourceRequest?.creationDialoguePlan,
       identityMappings: {
         selectedProductIds: distinctProducts.map(mapping => mapping.productId),
         selectedProductNames: distinctProducts.map(mapping => mapping.productName),
@@ -235,6 +238,8 @@ export default function SocialContentPlanningPage({
     onNavigate('socialInspiration');
   };
 
+  if (sourceRequest?.creationDialoguePlan) return <CreationProductionConversation key={sourceRequest.requestId} plan={sourceRequest.creationDialoguePlan}/>;
+
   if (taskOnly) {
     return <SocialContentWorkspace onNavigate={onNavigate} onNavigateWithTask={onNavigateWithTask} />;
   }
@@ -254,7 +259,7 @@ export default function SocialContentPlanningPage({
     <div className="h-full min-h-0 bg-ink">
       {view === 'workbench' && launch ? (
         productionMode === 'video' ? <SocialCreationWorkbench
-            key={`${launch.creationPath}:${seed?.referenceTitle || 'new'}`}
+            key={`${launch.creationPath}:${seed?.referenceTitle || 'new'}:${sourceRequest?.creationDialoguePlan ? sourceRequest.requestId : ''}`}
             mode={launch.creationPath}
             seed={sourceRequest ? { ...seed, ...seedFromRequest(sourceRequest) } : seed}
             stageProfile={stageProfile || undefined}

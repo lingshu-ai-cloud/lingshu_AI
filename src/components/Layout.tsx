@@ -1,9 +1,9 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { Menu } from 'antd';
+import { Menu, Segmented } from 'antd';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronRight, LogOut, ShieldCheck, PanelLeftClose, PanelLeftOpen, Settings,
-  PanelRightOpen, Sparkles, Star, X,
+  PanelRightOpen, Sparkles, Bot, Star, X,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
 import { PAGE_REGISTRY } from '../pageRegistry';
@@ -215,11 +215,10 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   };
   const navigateFromSidebar = (nextPage: Page) => {
     if (mobileViewport) setMobileSidebarExpanded(false);
-    if (homeSurface && (nextPage === 'strategy' || nextPage === 'socialInspiration')) {
-      const target = nextPage === 'strategy' ? document.querySelector('.creator-home') : document.getElementById('creator-home-library');
+    if (homeSurface && nextPage === 'strategy') {
+      const target = document.querySelector('.creator-home');
       if (target) {
-        if (nextPage === 'strategy') (target as HTMLElement).scrollTo({ top: 0, behavior: getScrollBehavior() });
-        else target.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' });
+        (target as HTMLElement).scrollTo({ top: 0, behavior: getScrollBehavior() });
         setHomeActiveSection(nextPage);
         return;
       }
@@ -355,7 +354,12 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
 
       {/* ── Main content ─────────────────────────────── */}
       <main className="app-main relative flex min-w-0 flex-1 basis-0 flex-col overflow-clip">
-        {creatorSurface && <div className="creator-topbar" aria-label="账号与积分">
+        {homeSurface && <div className="creator-topbar creator-topbar--mode" aria-label="创作模式切换">
+          <Segmented aria-label="内容创作模式" className="creator-mode-switch" value={creationMode}
+            options={[{ label: '自由创作', icon: <Sparkles size={16} aria-hidden="true"/>, value: 'free' }, { label: '数字员工', icon: <Bot size={16} aria-hidden="true"/>, value: 'employee' }]}
+            onChange={value => switchCreationMode(value as CreationMode)} />
+        </div>}
+        {creatorSurface && !homeSurface && <div className="creator-topbar" aria-label="账号与积分">
           <button type="button" className="creator-topbar__points" onClick={openQuota}><Star size={17} aria-hidden="true" />积分管理</button>
           <button type="button" className="creator-topbar__account" onClick={() => setAccountSettingsOpen(true)} aria-label="打开账号设置">
             <span className="creator-topbar__avatar">{initial}</span><span className="creator-topbar__name">{tenantName}</span>

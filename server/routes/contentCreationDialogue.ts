@@ -8,6 +8,18 @@ import { signAssetUrl, signPathAssetUrl } from '../lib/assetAccess.js';
 import { contentCreationTurn, CreationDialogueError, type CreationEvidencePorts } from '../assistantContext/contentCreationDialogue.js';
 
 export const creationEvidencePorts: CreationEvidencePorts = {
+  references: async tenantId => {
+    const rows: Record<string, unknown>[] = [];
+    for (let page = 1; ; page++) {
+      const result = await store.list<Record<string, unknown>>('trend_videos', { where: { tenantId }, page, perPage: 500, sort: '-crawledAt' });
+      rows.push(...result.items);
+      if (!result.items.length || page >= result.totalPages) return rows;
+    }
+  },
+  project: async (tenantId, id) => {
+    const project = await store.getById('studio_projects', id);
+    return project?.tenant_id === tenantId ? project : null;
+  },
   reference: async (tenantId, id) => {
     const record = await store.getById('trend_videos', id);
     return record?.tenantId === tenantId ? record : null;

@@ -1,8 +1,9 @@
+import GuidedCreationChoices from './GuidedCreationChoices';
 import ContentCreationChoices from './ContentCreationChoices';
 import { useCreationMode } from '../../lib/creationMode';
 import { type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ArrowDown, ArrowLeft, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, Bot, X } from 'lucide-react';
 import type { AgentAction, Page } from '../../App';
 import { isLegacyUnboundOperationNotice } from '../../lib/assistantOperationNotice';
 import { lsMotion } from '../../lib/designTokens';
@@ -92,6 +93,7 @@ export default function AssistantConversationPanel(props: Props) {
     setDraftInput, setDecisionFeedRevision, setMode, setWeeklyActionBusy,
     setPendingAttachments, setAttachmentError, persistThread } = props;
   const creationMode = useCreationMode();
+  const compactHome = Boolean(inlineHome && (activeThread.creationDraft || activeThread.messages.length || loading));
   const creationReply = [...activeThread.messages].reverse().find(message => message.creation)?.creation;
   const activeContext = contextForOrbit(currentPageAgent, pageContext);
   const focusedCardCandidate = activeThread.focusedTaskId
@@ -168,12 +170,19 @@ export default function AssistantConversationPanel(props: Props) {
             }} />
         ) : (
           <>
-            <div ref={messageScrollRef} data-assistant-surface="conversation" className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
+            <div ref={messageScrollRef} data-assistant-surface="conversation" hidden={inlineHome && !activeThread.creationDraft && !activeThread.messages.length && !loading} className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
               onScroll={event => {
                 const scroller = event.currentTarget;
                 setScrollPosition(activeAgent, scroller.scrollTop);
                 setFollowingLatest(activeAgent, scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 24);
               }}>
+              {inlineHome && activeThread.creationDraft && !activeThread.creationDraft.guided && !activeThread.messages.length && !loading && <div className="creator-conversation-intro flex items-start gap-2" data-assistant-bubble="reference-question" role="group" aria-label="灵小枢提问">
+                <div aria-hidden="true" className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13}/></div>
+                <div className="ls-messenger-bubble ls-messenger-bubble--inbound">
+                  <p className="font-semibold text-text-primary">想用这条参考视频创作什么？</p>
+                  <p className="mt-2 text-text-secondary">告诉我产品和想借鉴的内容，我们从产品、分镜到口播逐步确认。参考视频只用于结构参考，素材与授权会单独核验。</p>
+                </div>
+              </div>}
               <AssistantConversationBubbles inlineHome={inlineHome}
                 page={page} goalId={pageContext.goalId} productionContext={productionDecisionContext}
                 decisionFeedRevision={decisionFeedRevision}
@@ -193,7 +202,8 @@ export default function AssistantConversationPanel(props: Props) {
                 weeklyPlanKickoffAvailable={weeklyPlanKickoffAvailable}
                 onOpenWeeklyPlan={openWeeklyPlanFromAssistant}
               />
-              {inlineHome && creationMode === 'free' && creationReply && <ContentCreationChoices reply={creationReply} busy={loading || replyStreaming}
+              {inlineHome && creationMode === 'free' && activeThread.creationDraft?.guided && <GuidedCreationChoices key={activeThread.creationDraft.referenceId} reply={creationReply}/>}
+              {inlineHome && creationMode === 'free' && !activeThread.creationDraft?.guided && creationReply && <ContentCreationChoices reply={creationReply} busy={loading || replyStreaming}
                 send={send} onNavigateEvidence={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'socialInspiration', inspirationReference: { referenceId: creationReply.selection.referenceId, title: creationReply.referenceTitle } } }))}/>}
             </div>
 
@@ -243,7 +253,7 @@ export default function AssistantConversationPanel(props: Props) {
                 }
               }}
             />}
-            <AssistantComposer variant={inlineHome ? 'home' : 'default'} ref={assistantInputRef} draft={activeThread.draftInput} files={pendingAttachments}
+            <AssistantComposer compact={compactHome} variant={inlineHome ? 'home' : 'default'} ref={assistantInputRef} draft={activeThread.draftInput} files={pendingAttachments}
               disabled={loading || replyStreaming || fileGenerating || contentIntake.busy || weeklyActionBusy}
               uploading={attachmentUploading} error={attachmentError}
               onDraftChange={value => setDraftInput(activeAgent, value)}

@@ -258,7 +258,7 @@ export default function GlobalAssistant({
     }));
   }, []);
   const activeThread = threads[activeAgent];
-  useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef);
+  useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef, Boolean(activeThread.creationDraft));
   const todoItems = pageContext.todoItems ?? [];
   const activeTodoItems = todoItems.filter(item => !item.completed);
   const pendingCount = todoItems.length ? activeTodoItems.length : Math.max(0, Number(pageContext.pendingCount ?? 0));
@@ -668,10 +668,9 @@ export default function GlobalAssistant({
     if (previousPage === page) return;
     conversationPageRef.current = page;
 
-    // Ordinary navigation starts a fresh, page-local conversation. Saved
-    // conversations and explicit task kickoffs carry their own content across
-    // navigation and are therefore exempt from this transient reset.
+    // Scoped creation drafts retain their dialogue across evidence and studio navigation.
     if (restore || kickoff) return;
+    if (useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].creationDraft) return;
     assistantClosedRef.current = null;
     resetTransientConversation();
     focusTaskCard(PRIMARY_ASSISTANT_THREAD, null);
@@ -691,7 +690,7 @@ export default function GlobalAssistant({
   }, [assistantTool, page]);
 
   useEffect(() => {
-    if (mode !== 'chat') return;
+    if (mode !== 'chat' && !activeThread.creationDraft) return;
     const timer = window.setTimeout(() => persistThread(activeAgent), 500);
     return () => window.clearTimeout(timer);
   }, [activeAgent, activeThread.draftInput, activeThread.creationDraft, activeThread.focusedTaskId, activeThread.isFollowingLatest, activeThread.messages, activeThread.paused, activeThread.scrollPosition, activeThread.taskCards, activeThread.unreadCount, mode, persistThread]);
@@ -710,7 +709,7 @@ export default function GlobalAssistant({
     <div
       data-global-assistant="root"
       data-inline-home={inlineHomeBounds ? 'true' : undefined}
-      data-home-empty={inlineHome && !activeThread.messages.length && !loading ? 'true' : undefined}
+      data-home-empty={inlineHome && !activeThread.messages.length && !loading && !activeThread.creationDraft ? 'true' : undefined}
       data-home-creation-mode={inlineHomeBounds ? creationMode : undefined}
       className={inlineHomeAnchor ? 'ls-assistant-home-root absolute inset-0 z-[75]' : `fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'}`}
     >
