@@ -65,7 +65,8 @@ assert.match(assistantUi, /<AssistantFloatingReminders[\s\S]*?enterpriseGuideSee
 assert.match(assistantReminders, /要补资料？点我/, 'enterprise center must leave a concise click-to-open reminder after the proactive guide');
 assert.match(assistantUi, /useAssistantPanelControls\(/, 'assistant must mount panel close controls');
 assert.match(assistantControls, /const closeAssistant = useCallback\(\(\) => \{[\s\S]*?setAssistantTool\(null\)[\s\S]*?setPanelView\('chat'\)[\s\S]*?setMode\('breathing'\)/, 'assistant panels must fully close instead of leaving a hidden intake tool active');
-const assistantRootTag = assistantUi.match(/data-global-assistant="root"[\s\S]{0,500}>/)?.[0] ?? '';
+const assistantRootTag = assistantUi.match(/data-global-assistant="root"[\s\S]*?\n\s*>/)?.[0] ?? '';
+assert.match(assistantRootTag, /className=\{inlineHomeAnchor \? 'ls-assistant-home-root absolute inset-0 z-\[75\]' : `fixed/, 'only the anchored home assistant uses inline positioning; the shared launcher stays fixed');
 for (const className of ['fixed', 'right-4', 'z-[75]', 'bottom-[calc(env(safe-area-inset-bottom)+1rem)]']) {
   assert.ok(assistantRootTag.includes(className), `the assistant launcher root must retain ${className}`);
 }
