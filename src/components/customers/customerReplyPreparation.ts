@@ -1,3 +1,4 @@
+import { fetchCustomerReply } from '../../lib/customerReplyRequest';
 import { authHeader } from '../../lib/auth';
 import { isPredominantlyChineseText } from '../../lib/messageLanguage';
 import type { CustomerProfile } from '../../types/customer';
@@ -8,6 +9,9 @@ import { STAGE_LABEL } from './conversionPresentation';
 type DraftIntent = ConversationDraftIntent;
 
 export interface DraftResult {
+  schemaVersion?: number; requestId?: string; status?: string; generationSource?: string;
+  code?: string | null; retryable?: boolean; enterpriseFactVersion?: string | null;
+  verification?: {status:string;issues:string[]}; messages?:string[]; translatedMessages?:string[];
   draft: string;
   translatedDraft?: string;
   handoffRequired?: boolean;
@@ -196,7 +200,7 @@ export async function translateReplyToCustomerLanguage(customer: CustomerProfile
   } finally {
     window.clearTimeout(timeout);
   }
-  return translateChineseReplyForCustomer(customer, body);
+  throw new Error('翻译服务暂不可用，原文已保留，请稍后重试；本次未发送。');
 }
 
 export function latestBuyerText(customer: CustomerProfile): string {
@@ -217,10 +221,7 @@ export async function requestDraft(
   manualRequest = false,
 ): Promise<DraftResult> {
   try {
-    const resp = await fetch('/api/overseas/agents/conversion/draft', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeader() },
-      body: JSON.stringify({
+    const {response:resp,data,requestId} = await fetchCustomerReply({
         customerId: customer.id,
         timeline: customer.timeline.slice(-20),
         product: customer.outboundProduct,
@@ -235,16 +236,19 @@ export async function requestDraft(
         mode,
         intent,
         manualRequest,
-      }),
-    });
-    const data = await resp.json().catch(() => ({}));
+    }, manualRequest);
+    const metadata = {schemaVersion:data.schemaVersion,requestId,status:data.status,generationSource:data.generationSource,
+      decision:data.decision,verification:data.verification,enterpriseFactVersion:data.enterpriseFactVersion,
+      messages:data.messages,translatedMessages:data.translatedMessages,code:data.code,retryable:data.retryable};
+    if (resp.status===202) return {...metadata,draft:'',category:intent,handlingReason:'原草稿仍在核对中，请读取原请求结果，不要重复生成。'};
     if (resp.ok) {
       if (data?.handoffRequired) {
         const bridgeDraft = typeof data?.draft === 'string' ? data.draft.trim() : '';
         const chineseBridgeDraft = typeof data?.translatedDraft === 'string' && data.translatedDraft.trim()
           ? data.translatedDraft.trim()
-          : isPredominantlyChineseText(bridgeDraft) ? bridgeDraft : fallbackCustomerReplyZh(customer);
+          : isPredominantlyChineseText(bridgeDraft) ? bridgeDraft : bridgeDraft;
         return {
+          ...metadata,
           draft: bridgeDraft ? chineseBridgeDraft : '',
           originalDraft: bridgeDraft,
           translatedDraft: chineseBridgeDraft || undefined,
@@ -270,8 +274,9 @@ export async function requestDraft(
         const originalDraft = data.draft.trim();
         const draft = typeof data?.translatedDraft === 'string' && data.translatedDraft.trim()
           ? data.translatedDraft.trim()
-          : isPredominantlyChineseText(originalDraft) ? originalDraft : fallbackCustomerReplyZh(customer);
+          : originalDraft;
         return {
+          ...metadata,
           draft,
           originalDraft,
           translatedDraft: draft,
@@ -292,18 +297,8 @@ export async function requestDraft(
         };
       }
     }
-    if (resp.status === 409 && data?.error === 'customer_service_disabled') {
-      return {
-        draft: '',
-        originalDraft: '',
-        handlingReason: typeof data.message === 'string' ? data.message : '智能客服尚未开启',
-        category: '智能客服未开启',
-      };
-    }
-  } catch {
-    // Use local fallback when the API is unavailable in local preview.
+    return {...metadata,draft:'',status:'blocked',code:data.error||'customer_reply_unavailable',handlingReason:data.message||data.error||'草稿暂不可用，未生成替代话术。',category:intent};
+  } catch (error) {
+    return {draft:'',requestId:error&&typeof error==='object'&&'requestId'in error?String(error.requestId):undefined,status:'failed',code:'customer_reply_transport_unavailable',retryable:false,handlingReason:error instanceof Error?error.message:'草稿请求结果未确认，请读取原请求。',category:intent};
   }
-  const originalDraft = fallbackCustomerReply(customer);
-  const draft = fallbackCustomerReplyZh(customer);
-  return { draft, originalDraft, translatedDraft: draft, buyerMessage: latestBuyerText(customer), category: intent };
 }

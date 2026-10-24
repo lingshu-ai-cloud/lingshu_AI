@@ -1,3 +1,4 @@
+import CustomerReplyRecovery from './customers/CustomerReplyRecovery';
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { ChatThread } from './customers/ConversionChatThread';
 import { CustomerInfoRail } from './customers/ConversionCustomerRail';
@@ -513,6 +514,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     setDraftSuggestion(null);
     setDraftMeta(null);
     const result = await requestDraft(selected, instruction, undefined, intent, true);
+    if (!result.draft && result.status) { showToast(result.handlingReason || result.code || '草稿暂不可用'); setDraftMeta(result); return; }
     if (result.handoffRequired) {
       updateCustomer(selected.id, { handlingMode: 'human_needed', handlingReason: result.handlingReason || '该消息需要人工接手' });
       if (result.safeToSendBeforeHandoff && result.draft.trim()) {
@@ -537,6 +539,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       return;
     }
     const result = await requestDraft(selected, undefined, undefined, 'reply', true);
+    if (!result.draft && result.status) { showToast(result.handlingReason || result.code || '草稿暂不可用'); setDraftMeta(result); return; }
     if (result.handoffRequired) {
       updateCustomer(selected.id, { handlingMode: 'human_needed', handlingReason: result.handlingReason || '该消息需要人工接手' });
       if (result.safeToSendBeforeHandoff && result.draft.trim()) {
@@ -663,6 +666,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         <div className={`ls-conversation-workspace__slot ls-conversation-workspace__pane${mobilePanel === 'chat' ? ' is-active' : ''}`}>
         {pendingSendIntent&&pendingSendIntent.scope.customerId===selected?.id&&pendingSendIntent.state!=='accepted'&&<div className="border border-amber-200 bg-amber-50 p-3 text-xs">原发送结果未确认；不会自动重发。{pendingSendIntent.state==='prepared'&&<button type="button" className="ml-2 underline" onClick={()=>{if(undoSend?.eventId===pendingSendIntent.eventId){undoQueuedSend();return;}localStorage.removeItem(sendIntentStorageKey(pendingSendIntent.scope));removeTimelineEvent(pendingSendIntent.scope.customerId,pendingSendIntent.eventId);setPendingSendIntent(null);}}>取消尚未发起的请求</button>}<button type="button" className="ml-2 underline" onClick={()=>{const captured=manualHoldIdentity;void readCustomerSendRequest(pendingSendIntent).then(item=>{if(actualManualIdentity.current!==captured)return;const next=recoverSendIntent(pendingSendIntent,item);saveSendIntent(next);updateTimelineEvent(next.scope.customerId,next.eventId,{sendStatus:next.state==='accepted'?'sent':'unknown',audit:{providerMessageId:item.providerMessageId||undefined}});showToast(next.state==='accepted'?'已读取真实平台发送回执':'平台结果仍未知，请勿重复发送');}).catch(error=>{if(actualManualIdentity.current===captured)showToast(error instanceof Error?error.message:'无法读取发送状态');});}}>读取原发送状态</button></div>}
         {selected&&!selected.isMock&&!selected.isHistorical&&<div className="border border-border bg-surface-2 p-3 text-xs text-text-secondary"><strong className="text-text-primary">真人接管</strong>{manualHold?.identity===manualHoldIdentity&&<span className="ml-2">{manualHold.view.active?`负责人 ${manualHold.view.item?.ownerUserId} · 截止 ${manualHold.view.item?.expiresAt}`:'当前没有有效临时接管'}{manualHold.view.humanHandling?'；客户仍处于持久人工处理状态，到期或释放临时接管不会自动切换 AI。':''}</span>}<button type="button" className="ml-2 underline" onClick={reportManualActive} disabled={manualHoldUnknown===manualHoldIdentity}>明确接管十分钟</button><button type="button" className="ml-2 underline" onClick={()=>void refreshManualHold()}>只读刷新状态</button>{manualHold?.identity===manualHoldIdentity&&manualHold.view.active&&manualHold.view.canRelease&&<button type="button" className="ml-2 underline" disabled={manualHoldUnknown===manualHoldIdentity} onClick={()=>void releaseManualHold()}>明确释放临时接管</button>}{manualHoldError?.identity===manualHoldIdentity&&<p role="alert" className="mt-1 text-amber">{manualHoldError.message}</p>}{manualHoldUnknown===manualHoldIdentity&&<p className="mt-1 text-amber">操作结果未恢复，禁止重复操作；请先只读刷新实际持久状态。</p>}</div>}
+        {selected&&<CustomerReplyRecovery key={`${selected.id}:${draftMeta?.requestId}`} meta={draftMeta} onRecovered={result=>{setDraftMeta(result);setDraftSuggestion(result.draft);if(result.draft)savePendingDraft(selected,result.draft);}}/>}
         <ChatThread
           customer={selected}
           draftSuggestion={draftSuggestion}

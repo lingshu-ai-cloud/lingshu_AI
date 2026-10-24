@@ -33,8 +33,8 @@ assert.deepEqual(
     match: 'any',
     stages: ['quoted', 'quoted', 'won'],
     excludeStages: ['won'],
-    minIntentScore: -10,
-    maxIntentScore: 200,
+    minIntentScore: 0,
+    maxIntentScore: 100,
     includeCustomerIds: ['customer-a', 'customer-a'],
   }),
   {
@@ -134,3 +134,5 @@ try {
 }
 
 console.log('digital employee follow-up safety tests passed');
+
+assert.throws(()=>normalizeCustomerSegmentCriteria({minIntentScore:-1}),/customer_criteria_invalid/);

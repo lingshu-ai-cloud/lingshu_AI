@@ -47,3 +47,14 @@ test('explicit manual draft preserves its request marker and editable Chinese dr
     else delete (globalThis as {localStorage?: Storage}).localStorage;
   }
 });
+
+test('HTTP failure produces an explicit empty result and successful replies retain decisions and fact versions',async()=>{
+ const originalFetch=globalThis.fetch,storage=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+ Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:()=>null}});
+ try{
+  globalThis.fetch=async()=>new Response(JSON.stringify({error:'upstream_unavailable'}),{status:503});
+  const unavailable=await requestDraft(customer);assert.equal(unavailable.draft,'');assert.equal(unavailable.code,'upstream_unavailable');assert.equal(unavailable.status,'blocked');
+  globalThis.fetch=async()=>new Response(JSON.stringify({draft:'Safe original',translatedDraft:'已核对原文',decision:{execution:'human_required'},verification:{status:'safe_fallback',issues:['model_down']},enterpriseFactVersion:'facts-v3',status:'degraded',generationSource:'degraded'}),{status:200});
+  const reply=await requestDraft(customer);assert.equal(reply.enterpriseFactVersion,'facts-v3');assert.equal(reply.decision?.execution,'human_required');assert.equal(reply.verification?.status,'safe_fallback');assert.equal(reply.status,'degraded');
+ }finally{globalThis.fetch=originalFetch;if(storage)Object.defineProperty(globalThis,'localStorage',storage);else delete(globalThis as any).localStorage;}
+});
