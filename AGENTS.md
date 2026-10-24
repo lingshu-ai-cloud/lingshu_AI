@@ -2,12 +2,30 @@
 
 ## Workspace coordination and baseline ownership
 
-- The canonical integration worktree is this checkout: `mobile-dual-edition-20261012`, on branch `xixi数字员工联调v3`. Other worktrees and branches are evidence or isolated development inputs, not a newer baseline merely because their files have a later timestamp.
-- The chat titled `定位最新工作区代码` is the baseline owner. When it issues a freeze, checkpoint, file-scope assignment, or handoff request, finish only the current atomic write and comply before starting another change.
+- The canonical integration worktree, branch, exact commit SHA, phase, and owner are recorded only in `harness/CURRENT_BASELINE.md`. Do not infer a baseline from timestamps, directory names, a chat title, or a branch name. If that record is stale, ambiguous, or conflicts with the live repository, stop and report the conflict.
+- Before any write, report and verify: absolute worktree path, Git root, current branch, HEAD SHA, clean/dirty status, upstream relationship, active phase file, and file-scope ownership.
+- The integration worktree is for verification and approved merges, not ordinary feature development. Create one registered feature worktree per approved phase; do not develop directly in integration.
 - Only one chat may own real provider calls, paid-operation writes, migrations, golden-package state, or run/task/shot mutations at a time. Read-only audits and tests may run concurrently.
-- Before editing, declare the exact file set and confirm it does not overlap another active chat. Do not broaden the file set without handing the lease back to the baseline owner.
+- Before editing, declare the exact file set and confirm it does not overlap another active chat. Do not broaden the file set without approval from the integration owner.
 - Do not switch branches, create commits, push, reset, checkout, stash, or alter another worktree while shared integration work is active unless the baseline owner explicitly assigns that operation.
 - A handoff must report: files changed, live processes and external run identifiers, last passing and failing commands, persisted business state, unresolved decisions, and the exact safe resume point.
+
+## Governance sources and task order
+
+Read only the minimum sources needed for the task, in this order:
+
+1. `harness/CURRENT_BASELINE.md` — live integration identity and known blockers.
+2. Applicable `harness/build/phase-*.md` — this task's approved scope, non-goals, and acceptance gate.
+3. `docs/product/PRODUCT_BASELINE.md` — currently effective product rules.
+4. `PLANS.md` and `GOALS.md` — roadmap, outcomes, and non-goals.
+5. `docs/governance/DOCUMENT_AUTHORITY.md` — document ownership and historical-reference rules.
+
+Historical PRDs, discussion notes, handoff documents, and `混合架构点.md` are evidence and context unless explicitly promoted by `PRODUCT_BASELINE.md` or a phase file. Do not silently treat a historical document as a newer requirement.
+
+- One approved need equals one phase, one feature branch, and one registered worktree.
+- Do not create a parallel workflow, asset library, budget ledger, approval system, or execution path when an existing one can be extended.
+- Product-rule conflicts, missing external prerequisites, baseline ambiguity, and file-scope conflicts are stop conditions, not invitations to guess or broaden scope.
+- Completing code, passing a focused test, passing integration, completing a real E2E run, and being release-ready are distinct claims. State exactly which claim evidence supports.
 
 ## Baseline acceptance gate
 

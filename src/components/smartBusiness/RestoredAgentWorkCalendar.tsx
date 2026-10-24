@@ -3,7 +3,7 @@ import {agentCalendarAuthIdentity, captureAgentCalendarReturnContext, readAgentC
 import type {LsCalendarView} from '../ui/LsCalendar';
 import { flushSync } from 'react-dom';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Steps, Switch, Tag } from 'antd';
+import { Alert, Button, Drawer, Steps, Switch, Tag } from 'antd';
 import { UserRound } from 'lucide-react';
 import type { CrossWeekMaterialTarget } from '../socialProgram/crossWeekMaterialCalendar';
 import type { CustomerExecutionCalendarTarget } from '../socialProgram/customerExecutionCalendarNavigation';
@@ -26,6 +26,8 @@ import type {WeeklyTaskWorkspace} from '../../../shared/contracts/weeklyTaskWork
 import {socialProgramApi} from '../../lib/socialProgramApi';
 import { authHeader, getToken } from '../../lib/auth';
 import WeeklyTaskQuickActions from '../socialProgram/WeeklyTaskQuickActions';
+import VideoProgressTable from './VideoProgressTable';
+import {videoProgressDemoTasks} from '../../dev/videoProgressDemo';
 
 const LsCalendar = typeof document === 'undefined'
   ? function ServerCalendar({ events, label }: { events: LsCalendarEvent[]; label: string }) {
@@ -204,12 +206,14 @@ export default function RestoredAgentWorkCalendar({
   scopeKey,
   canOpenContentTask,
 }: Props) {
+  const progressDemo = import.meta.env.DEV && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('progressDemo') === '1';
   const positionKey = JSON.stringify([agentCalendarAuthIdentity(),scopeKey,startsAt,demo,'milestones-monday-v2']);
   const stateKey = `restoredAgentCalendar:${positionKey}`;
   const saved = readAgentCalendarReturnContext();
   const previous = saved?.calendar.positionKey === positionKey ? saved.states[stateKey] as {date?: string; view?: LsCalendarView} | undefined : undefined;
   const [calendarDate, setCalendarDate] = useState(previous?.date || startsAt || tasks[0]?.date || calendarDayKey(new Date()));
   const [calendarView, setCalendarView] = useState<LsCalendarView>('dayGridWeek');
+  const [progressDetailTask, setProgressDetailTask] = useState<AgentCalendarTask | null>(null);
   const viewport = useRef({date:calendarDate,view:calendarView});
   viewport.current = {date:calendarDate,view:calendarView};
   useEffect(() => registerAgentCalendarReturnState(stateKey, {
@@ -299,7 +303,8 @@ export default function RestoredAgentWorkCalendar({
     if (activeFilter === 'attention') return attentionIds.has(task.id);
     return task.agent === activeFilter || task.agent === 'human' || task.dailyTaskGroup?.tasks.some(source=>source.agent==='human');
   }), [deliverables, activeFilter, attentionIds]);
-  const independentTasks = useMemo(() => scopedDeliverables.filter(taskHasDeliverableOrWorkspace), [scopedDeliverables]);
+  const allIndependentTasks = useMemo(() => deliverables.filter(taskHasDeliverableOrWorkspace), [deliverables]);
+  const independentTasks = allIndependentTasks;
   const events = useMemo<LsCalendarEvent[]>(() => {
     const orderedTasks = orderDailyCalendarTasks(independentTasks);
     const currentTaskId = orderedTasks.find(task => task.date === todayKey && !isAlwaysOnCalendarTask(task) && hasActiveExecution(task))?.id;
@@ -337,9 +342,7 @@ export default function RestoredAgentWorkCalendar({
     };
     });
   }, [independentTasks, demo, now, timeZone, hideCompleted, todayKey, ctaAuditStatuses]);
-
-  const renderDetails = (event: LsCalendarEvent, closeDetails: () => void) => {
-    const task = event.data as AgentCalendarTask;
+  const renderDetails = (task: AgentCalendarTask, closeDetails: () => void) => {
     const overdue = false;
     const workflowNodes = task.internalNodes?.length ? task.internalNodes : [task];
     const assistantRoles = agentRoleOrder.filter(role => role !== task.agent && role !== 'human' && workflowNodes.some(node => node.agent === role));
@@ -400,14 +403,14 @@ export default function RestoredAgentWorkCalendar({
 
     return <div className="space-y-5">
       {!demo&&<WeeklyTaskQuickActions sources={executionSources} onOpen={source=>enterSource(source)} onPlanning={onOpenPlanning?()=>open(onOpenPlanning):undefined}/>}
-      <div><div className="flex flex-wrap items-center gap-2"><Tag color={event.status === 'failed' ? 'error' : event.status === 'needs_action' ? 'warning' : event.status === 'working' ? 'processing' : event.status === 'done' ? 'success' : 'default'}>{event.statusLabel || statusLabels[task.status]}</Tag>{hasCtaContactGap(ctaContactStatus)&&task.status==='planned'&&<span className="text-xs text-text-secondary">{ctaContactStatus==='unavailable'?'原任务尚待激活；联系记录读取失败，待系统恢复后重试':'原任务尚待激活；请查看 CTA 联系与样品证据缺项'}</span>}{task.minutes !== null && <span className="text-xs text-text-secondary">预计 {task.minutes} 分钟</span>}</div><h3 className="mt-2 ls-type-title-medium text-text-primary">{task.title}</h3></div>
+      <div><div className="flex flex-wrap items-center gap-2"><Tag color={task.status === 'failed' ? 'error' : task.status === 'blocked' ? 'warning' : task.status === 'active' ? 'processing' : ['completed','no_data'].includes(task.status) ? 'success' : 'default'}>{statusLabels[task.status]}</Tag>{hasCtaContactGap(ctaContactStatus)&&task.status==='planned'&&<span className="text-xs text-text-secondary">{ctaContactStatus==='unavailable'?'原任务尚待激活；联系记录读取失败，待系统恢复后重试':'原任务尚待激活；请查看 CTA 联系与样品证据缺项'}</span>}{task.minutes !== null && <span className="text-xs text-text-secondary">预计 {task.minutes} 分钟</span>}</div><h3 className="mt-2 ls-type-title-medium text-text-primary">{task.title}</h3></div>
       <section aria-label="负责 Agent" className="space-y-2"><div className="flex flex-wrap gap-2"><AgentIdentityCard role={task.agent} relation="主 Agent"/>{assistantRoles.map(role => <AgentIdentityCard key={role} role={role} relation="辅助 Agent"/>)}</div>{assistantRoles.length === 0 && <p className="text-xs text-text-secondary">当前没有记录辅助 Agent；流程只显示已分配的真实责任。</p>}</section>
       <dl className="grid gap-3 rounded-lg border border-border bg-white p-4 sm:grid-cols-3">
         <div className="min-w-0"><dt className="text-xs text-text-secondary">交付时间</dt><dd className="mt-1 break-words text-sm font-medium text-text-primary">{deliveryTime}</dd></div>
         <div className="min-w-0"><dt className="text-xs text-text-secondary">交付内容</dt><dd className="mt-1 break-words text-sm font-medium text-text-primary">{task.output}</dd></div>
         <div className="min-w-0"><dt className="text-xs text-text-secondary">交付形式</dt><dd className="mt-1 break-words text-sm font-medium text-text-primary">{deliveryFormLabel(task)}</dd></div>
       </dl>
-      <section aria-label="交付物与当前受阻原因" className="rounded-lg border border-border p-4"><h4 className="text-sm font-semibold">交付物与当前受阻原因</h4><p className="mt-2 text-sm">预期交付：{task.output}</p><p className="mt-2 text-sm">实际结果：{resultRefs.length?`已有 ${resultRefs.length} 项后端结果凭据；不等同于整个节点已交付`:'尚无后端结果凭据，未生成可核验交付物'}</p>{resultRefs.length>0&&<details className="mt-2 text-xs"><summary>查看真实结果引用</summary>{resultRefs.map(ref=><p key={JSON.stringify(ref)} className="break-all">{ref.type} · {ref.id} · v{ref.version}</p>)}</details>}<h5 className="mt-3 text-xs font-semibold">当前受阻原因</h5>{blockers.length?<ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-amber-800">{blockers.map(code=><li key={code}>{blockerLabels[code]??code}</li>)}</ul>:<p className="mt-2 text-xs text-text-secondary">后端暂无独立阻塞记录；不代表任务已启动或完成。</p>}{entryState?.id===task.id&&entryState.error&&<Alert className="mt-3" showIcon type="warning" title="真实执行入口未就绪" description={entryState.error}/>}</section>
+      <section aria-label="交付物与当前受阻原因" className="rounded-lg border border-border p-4"><h4 className="text-sm font-semibold">交付物与当前受阻原因</h4><p className="mt-2 text-sm">预期交付：{task.output}</p><p className="mt-2 text-sm">实际结果：{task.status==='active'?'正在生成，完成后将在这里写入交付物与结果凭据':resultRefs.length?`已有 ${resultRefs.length} 项后端结果凭据；不等同于整个节点已交付`:['completed','no_data'].includes(task.status)?`已完成：${task.output}`:'尚无后端结果凭据，未生成可核验交付物'}</p>{resultRefs.length>0&&<details className="mt-2 text-xs"><summary>查看真实结果引用</summary>{resultRefs.map(ref=><p key={JSON.stringify(ref)} className="break-all">{ref.type} · {ref.id} · v{ref.version}</p>)}</details>}<h5 className="mt-3 text-xs font-semibold">当前受阻原因</h5>{blockers.length?<ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-amber-800">{blockers.map(code=><li key={code}>{blockerLabels[code]??code}</li>)}</ul>:<p className="mt-2 text-xs text-text-secondary">{['blocked','failed'].includes(task.status)?'当前任务缺少可识别的结构化卡点，请进入生产现场补充或纠偏。':'当前没有后端阻塞记录。'}</p>}{entryState?.id===task.id&&entryState.error&&<Alert className="mt-3" showIcon type="warning" title="真实执行入口未就绪" description={entryState.error}/>}</section>
 {summary&&<section aria-label="常驻客服任务详情" className="rounded-lg border border-border bg-white p-4"><h4 className="text-sm font-semibold text-text-primary">渠道运行状态</h4><div className="mt-3 flex flex-wrap gap-2">{summary.channels.map(item=><Tag key={item.channel} color={item.status==='failed'?'error':item.status==='blocked'?'warning':item.status==='active'?'processing':item.status==='completed'?'success':'default'}>{channelLabel[item.channel]} · {statusLabels[item.status]}</Tag>)}</div><dl className="mt-4 grid gap-3 sm:grid-cols-3"><div><dt className="text-xs text-text-secondary">关联运行记录</dt><dd className="mt-1 text-lg font-semibold">{summary.sourceTaskCount}</dd></div><div><dt className="text-xs text-text-secondary">已完成核验</dt><dd className="mt-1 text-lg font-semibold">{summary.completedCount}</dd></div><div><dt className="text-xs text-text-secondary">需要处理</dt><dd className="mt-1 text-lg font-semibold">{summary.attentionCount}</dd></div></dl><p className="mt-3 text-xs text-text-secondary">常驻卡片是每日客服入口；真实客户会话、审批、交接和渠道回执仍以后台持久化记录为准。</p></section>}
       {summary&&<section aria-label="客服真实任务与生产线程" className="space-y-2"><h4 className="text-sm font-semibold">客服真实任务与生产线程</h4>{summary.channels.map(({channel})=><details key={channel} className="rounded-lg border border-border p-3"><summary className="cursor-pointer text-sm font-medium">{channelLabel[channel]} · {summary.sourceTasks.filter(source=>source.customerExecutionTarget?.channel===channel).length} 项真实任务</summary><div className="mt-2 space-y-2">{summary.sourceTasks.filter(source=>source.customerExecutionTarget?.channel===channel).map(source=><Button key={source.id} data-customer-execution-id={source.id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>openSource(source)}>{source.date} · {source.title} · {statusLabels[source.status]}</Button>)}</div></details>)}</section>}
       {task.dailyTaskGroup&&<details aria-label="同日合并的真实任务" className="space-y-2"><summary className="cursor-pointer text-sm font-semibold">包含 {task.dailyTaskGroup.tasks.length} 项真实生产步骤与对象</summary>{task.dailyTaskGroup.tasks.map(source=><Button key={source.id} data-daily-execution-id={source.id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>openSource(source)}>{conciseCalendarTitle(source.title)} · {statusLabels[source.status]}<span className="block text-xs text-text-secondary">{source.context}</span></Button>)}</details>}
@@ -416,27 +419,19 @@ export default function RestoredAgentWorkCalendar({
       {overdue && <Alert type="error" showIcon title={`交付已逾期 · ${taskOverdueLabel(task, now)}`}/>}
       {task.deadlineRecovery && <Alert type="warning" showIcon title={`经营 Agent 补救评估 · ${task.deadlineRecovery.status === 'blocked' ? '评估受阻' : '已评估，方案未生效'}`} description={`${task.deadlineRecovery.assessmentId} · ${calendarTimestampLabel(task.deadlineRecovery.assessedAt, task.calendarClock)}；受影响发布：${task.deadlineRecovery.affectedPublicationIds.join('、') || '无已绑定发布'}`}/>}
       {task.reason && !overdue && <Alert type="warning" showIcon title="当前卡点" description={task.reason}/>}
-      {action ? <Button type="primary" loading={entryState?.id===task.id&&entryState.busy} onClick={action.run}>{action.label}</Button> : !summary&&!task.dailyTaskGroup&&<p className="rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">{demo ? '示例任务仅用于验收日历与详情。' : '此任务尚无可打开的真实业务对象；执行状态以后台记录为准。'}</p>}
+      {action ? <section aria-label="人工支持与纠偏入口" className="space-y-2"><h4 className="text-sm font-semibold">{['blocked','failed'].includes(task.status)?'人工支持与纠偏':'任务入口'}</h4><Button type="primary" loading={entryState?.id===task.id&&entryState.busy} onClick={action.run}>{action.label}</Button></section> : !summary&&!task.dailyTaskGroup&&<p className="rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">{progressDemo?'状态预览仅展示交互样式；真实任务会在这里提供人工补充、纠偏或生产现场入口。':demo ? '示例任务仅用于验收日历与详情。' : '此任务尚无可打开的真实业务对象；执行状态以后台记录为准。'}</p>}
     </div>;
   };
 
   return <section id="agent-weekly-calendar" key={scopeKey} data-agent-calendar-position-key={positionKey} className="scroll-mt-4 bg-white" aria-label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}>
     <div className="border-b border-border px-5 py-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="ls-type-title-large text-text-primary">{demo ? 'B2B 零基础 · 首周任务日历' : 'Agent 周任务日历'}</h3>
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="按智能体筛选">
-          {([
-            ['attention', `需我处理 ${attentionCount}`],
-            ['business', '经营'],
-            ['director', '编导'],
-            ['content', '内容'],
-            ['customer', '客服'],
-            ['all', '全部'],
-          ] as const).map(([value, label]) => <Button key={value} size="small" type={activeFilter === value ? 'primary' : 'default'} aria-pressed={activeFilter === value} onClick={() => setActiveFilter(value)}>{label}</Button>)}
+        <h3 className="ls-type-title-large text-text-primary">{demo ? 'B2B 零基础 · 首周生产进度' : '视频生产进度'}</h3>
+        <div className="flex flex-wrap items-center gap-2">
           <span className="ml-1 inline-flex items-center gap-2 text-xs text-text-secondary"><Switch size="small" checked={hideCompleted} onChange={setHideCompleted}/>隐藏已完成</span>
         </div>
       </div>
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-text-secondary">{`${independentTasks.length} 张任务卡 · ${calendarDurationLabel(independentTasks)}`}</p></div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-text-secondary">每行代表一个视频作品；点击进度段查看任务详情</p></div>
       {startsAt&&<p className="mt-2 text-xs text-text-secondary">当前周视图：周一至周日 · 任务包有效期：{startsAt.slice(0,10)} 至 {new Date(Date.parse(`${startsAt.slice(0,10)}T12:00:00Z`)+6*86400000).toISOString().slice(0,10)} · 有效期外不补造任务</p>}
     </div>
     {!demo && tasks.length === 0 && <Alert className="m-4" type="info" showIcon title="尚无 Agent 执行排期" description="发布计划不会自动视为制作任务；生成执行排期后将在此显示。"/>}
@@ -445,28 +440,9 @@ export default function RestoredAgentWorkCalendar({
       const task = event.data as AgentCalendarTask;
       return <li key={event.id}>{agentCalendarTaskType(task)} · {event.title} · {event.statusLabel}{task.affectedPublicationIds?.length ? ` · 受影响发布 ${task.affectedPublicationIds.join('、')}` : ''}</li>;
     })}</ul>
-    {<Suspense fallback={<p className="p-5 text-xs text-text-secondary">正在加载日历…</p>}><LsCalendar
-        key={positionKey}
-        label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}
-        events={events}
-        initialDate={calendarDate}
-        view={calendarView}
-        initialView={calendarView}
-        dateOnly
-        taskBoard
-        showAllEvents
-        visualVariant="agent"
-        narrowView="dayGridDay"
-        detailsTitle="任务详情"
-        onDetailsClose={()=>{entryController.current?.abort();setEntryState(null);}}
-        onDatesSet={info => { const next = calendarDayKey(info.view.calendar.getDate(), timeZone); setCalendarDate(next); setCalendarView(info.view.type as LsCalendarView); }}
-        firstDay={1}
-        timeZone={timeZone}
-        timeGridHeight="clamp(680px, calc(100dvh - 120px), 800px)"
-        collapseEmptyTimeRanges
-        detailsLayout="custom"
-        renderDetails={renderDetails}
-      /></Suspense>}
+    {progressDemo&&<p role="status" className="mx-5 mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">进度状态预览 · Mock 数据，仅用于本地视觉验收，不写入数据库</p>}
+    <VideoProgressTable tasks={progressDemo?videoProgressDemoTasks:allIndependentTasks} hideCompleted={hideCompleted} onOpenTask={setProgressDetailTask}/>
+    <Drawer title="任务详情" width={560} open={Boolean(progressDetailTask)} onClose={()=>{entryController.current?.abort();setEntryState(null);setProgressDetailTask(null);}} destroyOnClose>{progressDetailTask&&renderDetails(progressDetailTask,()=>setProgressDetailTask(null))}</Drawer>
     {taskWorkspace&&<div className="fixed inset-0 z-[230] flex items-center justify-center bg-slate-950/35 p-4" onClick={()=>setTaskWorkspace(null)}><section role="dialog" aria-modal="true" aria-label="任务生产现场" className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl" onClick={event=>event.stopPropagation()}><div className="flex items-center justify-between gap-3"><div><Tag color="blue">任务生产现场</Tag><h3 className="mt-2 ls-type-title-medium">{taskWorkspace.task.title}</h3></div><Button onClick={()=>setTaskWorkspace(null)}>关闭</Button></div>{taskWorkspace.loading&&<p role="status" className="mt-5 text-sm text-text-secondary">正在核验持久化生产现场…</p>}{taskWorkspace.error&&<Alert className="mt-5" type="error" showIcon title="生产现场无法读取" description={taskWorkspace.error}/>} {taskWorkspace.item&&<div className="mt-5 space-y-4"><dl className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2"><div><dt className="text-xs text-text-secondary">现场身份</dt><dd className="break-all text-sm">{taskWorkspace.item.workspaceId}</dd></div><div><dt className="text-xs text-text-secondary">当前阶段</dt><dd className="text-sm font-semibold">{taskWorkspace.item.phase}</dd></div><div><dt className="text-xs text-text-secondary">执行任务</dt><dd className="break-all text-sm">{taskWorkspace.item.executionTaskId}</dd></div><div><dt className="text-xs text-text-secondary">负责角色</dt><dd className="text-sm">{taskWorkspace.item.responsibleActor}</dd></div></dl><section className="rounded-xl bg-surface-2 p-4"><h4 className="text-sm font-semibold">真实依赖与卡点</h4>{taskWorkspace.item.upstreamTaskIds.length?<p className="mt-2 break-all text-xs">上游：{taskWorkspace.item.upstreamTaskIds.join('、')}</p>:<p className="mt-2 text-xs">无上游依赖</p>}{taskWorkspace.item.blockingCodes.length?<ul className="mt-2 list-disc pl-5 text-sm text-amber-800">{taskWorkspace.item.blockingCodes.map(code=><li key={code}>{code}</li>)}</ul>:<p className="mt-2 text-sm text-emerald-700">当前没有后端阻塞记录</p>}</section><section className="rounded-xl border p-4"><h4 className="text-sm font-semibold">真实业务对象</h4><p className="mt-2 text-xs">内容任务：{taskWorkspace.item.contentTaskId||'尚未由上游创建'}</p><p className="mt-1 text-xs">运行：{taskWorkspace.item.runId||'尚未启动'}</p><p className="mt-1 text-xs">结果引用：{taskWorkspace.item.resultRefs.length?taskWorkspace.item.resultRefs.map(ref=>`${ref.type}:${ref.id}:v${ref.version}`).join('、'):'尚无权威结果'}</p></section>{(taskWorkspace.task.enterpriseFactExceptionId&&onOpenEnterpriseFacts||taskWorkspace.task.accountBindingTarget&&onBindAccount||taskWorkspace.task.customerExecutionTarget&&onOpenCustomerExecution||taskWorkspace.task.supplementTarget&&onOpenSupplement||hasTemplateCalendarTarget(taskWorkspace.task)&&onOpenTemplate||hasReviewCalendarTarget(taskWorkspace.task)&&onOpenReview||hasPlanningCalendarTarget(taskWorkspace.task)&&onOpenPlanning||(hasCalendarProductionBinding(taskWorkspace.task)||canOpenContentTask?.(taskWorkspace.task))&&onOpenProduction)&&<Button type="primary" onClick={()=>{const task=taskWorkspace.task;setTaskWorkspace(null);if(task.enterpriseFactExceptionId&&onOpenEnterpriseFacts)return onOpenEnterpriseFacts(task);if(task.accountBindingTarget&&onBindAccount)return onBindAccount(task);if(task.customerExecutionTarget&&onOpenCustomerExecution)return onOpenCustomerExecution(task);if(task.supplementTarget&&onOpenSupplement)return onOpenSupplement(task);if(hasTemplateCalendarTarget(task)&&onOpenTemplate)return onOpenTemplate(task);if(hasReviewCalendarTarget(task)&&onOpenReview)return onOpenReview(task);if(hasPlanningCalendarTarget(task)&&onOpenPlanning)return onOpenPlanning(task);if(onOpenProduction)return onOpenProduction(task);}}>进入对应业务执行页面</Button>}</div>}</section></div>}
   </section>;
 }
