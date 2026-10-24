@@ -89,7 +89,7 @@ for (const marker of ['CustomerInsightDisclosure', 'CustomerIntentActionPanel'])
 for (const marker of ['customer.product', 'customerFollowupStatus(customer)', 'customer.estimatedValue']) {
   assert.ok(customerRailUi.includes(marker), `profile facts must expose ${marker}`);
 }
-assert.match(customerRailUi, /<details[\s\S]{0,400}CustomerInsightDisclosure/, 'profile evidence remains available in a compact disclosure');
+assert.ok([...customerRailUi.matchAll(/<details\b[^>]*>[\s\S]*?<\/details>/g)].some(([disclosure]) => /<CustomerInsightDisclosure\b/.test(disclosure)), 'profile evidence remains inside a compact disclosure');
 assert.doesNotMatch(customerRailUi, /QuoteSkillCard|RulesDisclosure|<Collapse/, 'removed workbenches must not return to the compact profile rail');
 assert.match(chatThreadUi, /<CustomerQuoteLauncher/, 'quotation remains accessible from the chat action');
 const quoteLauncherUi = fs.readFileSync(path.join(root, 'src/components/customers/CustomerQuoteLauncher.tsx'), 'utf8');
