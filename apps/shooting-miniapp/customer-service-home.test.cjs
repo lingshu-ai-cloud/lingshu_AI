@@ -23,11 +23,10 @@ test('客服工作台从真实会话投影回复、跟进和高意向队列', ()
   assert.deepEqual(result.highIntent.map(item => item.id), ['a'])
 })
 
-test('客服工作页使用周日历并移除今日询盘组件', () => {
-  const markup = fs.readFileSync(__dirname + '/packages/customer/home/index.wxml', 'utf8')
+test('客服旧入口跳转到统一今日待办，客服数据由统一投影继续使用', () => {
   const script = fs.readFileSync(__dirname + '/packages/customer/home/index.js', 'utf8')
-  assert.match(markup, /class="week-card/)
-  assert.match(markup, /本周待回复/)
-  assert.doesNotMatch(markup, /今日询盘/)
-  assert.match(script, /model\.week\(\)/)
+  const unified = fs.readFileSync(__dirname + '/packages/operator/home/index.js', 'utf8')
+  assert.match(script, /redirectTo\(\{ url: '\/packages\/operator\/home\/index'/)
+  assert.match(unified, /customerHome\.project/)
+  assert.match(unified, /api\.customers\(\)/)
 })

@@ -95,6 +95,9 @@ test('operator shooting presents pending totals and never exposes task creation'
   assert.equal(state.pendingCount, 1)
   assert.equal(state.completedCount, 1)
   assert.equal(state.taskGroups[0].tasks.length, 2)
+  assert.equal(state.visibleTaskGroups[0].tasks.length, 2)
+  assert.deepEqual(Array.from(state.taskFilters, item => item.label), ['全部', '待拍', '已完成'])
+  assert.equal(state.tasks[0].assigneeLabel, '待分配')
   const source = fs.readFileSync(require.resolve('./packages/operator/shooting/index'), 'utf8')
   const markup = fs.readFileSync(require.resolve('./packages/operator/shooting/index.wxml'), 'utf8')
   assert.doesNotMatch(source, /createTask|create-form|api\.products/)
@@ -105,6 +108,9 @@ test('operator shooting presents pending totals and never exposes task creation'
   assert.match(markup, /工厂镜头构图参考/)
   assert.match(markup, /预览 3 秒/)
   assert.match(markup, /bindtimeupdate="cardPreviewTimeUpdate"/)
+  assert.match(markup, /class="shoot-grid"/)
+  assert.match(markup, /负责人/)
+  assert.match(markup, /bindtap="selectTaskFilter"/)
 })
 
 test('shooting cards load signed previews and stop after three seconds', async () => {

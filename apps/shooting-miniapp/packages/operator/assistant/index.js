@@ -19,17 +19,7 @@ function contentTaskView(value) {
 
 Page({
   data: { loading: true, sending: false, recording: false, transcribing: false, inputMode: 'voice', error: '', messages: [], suggestions: [], showSuggestions: false, input: '', anchor: '', contentTask: null, preview: null, receipts: [], actions: [], confirming: false, statusBarHeight: 24, headerHeight: 48, contentTop: 72, serviceMode: false, agentTitle: '编导 Agent', agentNote: '内容编导助手', welcomeTitle: '今天想推进什么？', welcomeNote: '可以询问真实任务、询盘与执行状态', showSessions: false, sessionsLoading: false, sessions: [], historySession: null, historyMessages: [] },
-  async onLoad(options = {}) {
-    const serviceMode = options.edition === 'service'
-    if (serviceMode) this.setData({ serviceMode, agentTitle: '客服 Agent', agentNote: '询盘转化助手', welcomeTitle: '今天要回复谁？', welcomeNote: '可以查询真实询盘、生成回复和安排跟进' })
-    this.configureHeader()
-    if (!api.token()) { wx.redirectTo({ url: '/pages/workbench/index' }); return }
-    try {
-      const profile = await api.me(); const user = profile.user || {}
-      this.scope = String(user.tenantId || user.tenant_id || '') + ':' + String(user.id || user.email || '') + ':' + (serviceMode ? 'service' : 'operator')
-      this.createController(); await this.controller.restore(this.scope)
-    } catch (error) { this.setData({ loading: false, error: error.message }) }
-  },
+  onLoad() { wx.redirectTo({ url: '/packages/operator/home/index?assistant=1' }) },
   configureHeader() {
     const info = wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync ? wx.getSystemInfoSync() : {}
     const statusBarHeight = Number(info.statusBarHeight) || 24

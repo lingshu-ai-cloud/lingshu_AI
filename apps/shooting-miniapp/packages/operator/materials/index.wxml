@@ -1,12 +1,5 @@
 <view class="page">
-  <view class="page-head">
-    <view>
-      <text class="eyebrow">企业素材库</text>
-      <text class="page-title">素材上传与整理</text>
-      <text class="page-note">上传后自动识别产品、场景与镜头用途</text>
-    </view>
-    <button class="primary upload-button" loading="{{busy}}" disabled="{{busy}}" bindtap="chooseMaterial">上传素材</button>
-  </view>
+  <view class="page-head"><view><text class="page-title">素材资产</text><text class="page-note">图片优先浏览企业真实素材</text></view><button class="add-button" loading="{{busy}}" disabled="{{busy}}" bindtap="chooseMaterial" aria-label="上传素材">＋</button></view>
 
   <view wx:if="{{message}}" class="notice {{messageType}}">{{message}}</view>
   <view wx:if="{{busy}}" class="progress-card">
@@ -14,14 +7,15 @@
     <view class="progress-track"><view class="progress-fill" style="width:{{progress}}%"></view></view>
   </view>
 
-  <view class="organizer">
-    <input class="search" type="text" value="{{query}}" placeholder="搜索素材、产品或标签" bindinput="search" confirm-type="search" />
-    <view class="filters" aria-label="素材类型筛选">
-      <view wx:for="{{filters}}" wx:key="key" class="filter {{filter === item.key ? 'active' : ''}}" data-filter="{{item.key}}" bindtap="selectFilter">{{item.label}} {{item.count}}</view>
-    </view>
-  </view>
+  <view class="search"><text class="search-icon">⌕</text><input type="text" value="{{query}}" placeholder="搜索素材、产品或标签" bindinput="search" confirm-type="search" /></view>
 
-  <view class="section-head"><text class="section-title">我的素材</text><text class="section-count">{{visibleMaterials.length}} 项</text></view>
+  <view class="library-tools" aria-label="素材快捷分类"><view wx:for="{{filters}}" wx:key="key" class="library-tool {{filter === item.key && !source ? 'active' : ''}}" data-filter="{{item.key}}" bindtap="selectFilter"><view class="tool-icon tool-{{item.key}}">{{item.key === 'all' ? '▦' : item.key === 'image' ? '▧' : item.key === 'video' ? '▷' : '✓'}}</view><view><text class="tool-label">{{item.label}}</text><text class="tool-count">{{item.count}} 项</text></view></view></view>
+
+  <block wx:if="{{folders.length}}"><view class="section-head"><text class="section-title">来源文件夹</text><text class="section-count">真实来源</text></view><scroll-view scroll-x class="folder-scroll" show-scrollbar="false"><view class="folder-row"><view wx:for="{{folders}}" wx:key="key" class="folder {{source === item.key ? 'active' : ''}}" data-source="{{item.key}}" bindtap="selectFolder"><image wx:if="{{item.cover}}" class="folder-cover" src="{{item.cover}}" mode="aspectFill"></image><view wx:else class="folder-cover folder-empty">{{item.type === 'image' ? '图片' : '视频'}}</view><text class="folder-name">{{item.label}}</text><text class="folder-count">{{item.count}} 项</text></view></view></scroll-view></block>
+
+  <block wx:if="{{albums.length}}"><view class="section-head"><text class="section-title">产品相册</text><text class="section-count">按产品归类</text></view><scroll-view scroll-x class="folder-scroll" show-scrollbar="false"><view class="folder-row"><view wx:for="{{albums}}" wx:key="key" class="folder" data-album="{{item.key}}" bindtap="selectAlbum"><image wx:if="{{item.cover}}" class="folder-cover album-cover" src="{{item.cover}}" mode="aspectFill"></image><view wx:else class="folder-cover folder-empty">相册</view><text class="folder-name">{{item.label}}</text><text class="folder-count">{{item.count}} 项</text></view></view></scroll-view></block>
+
+  <view class="section-head"><text class="section-title">最近素材</text><text class="section-count">{{visibleMaterials.length}} 项</text></view>
   <view wx:if="{{loading && !loaded}}" class="empty">正在读取素材库…</view>
   <view wx:elif="{{!visibleMaterials.length}}" class="empty">
     <text class="empty-title">还没有符合条件的素材</text>
@@ -32,14 +26,11 @@
       <video wx:if="{{item.type === 'video' && item.url}}" class="material-media" src="{{item.url}}" poster="{{item.poster}}" controls="{{false}}" show-center-play-btn object-fit="cover"></video>
       <image wx:elif="{{item.url}}" class="material-media" src="{{item.url}}" mode="aspectFill"></image>
       <view wx:else class="material-media material-empty">{{item.typeLabel}}</view>
-      <view class="material-body">
-        <text class="material-name">{{item.name}}</text>
-        <text wx:if="{{item.productName}}" class="material-product">{{item.productName}}</text>
-        <view class="material-tags"><text class="tag">{{item.typeLabel}}</text><text wx:for="{{item.tags}}" wx:key="*this" class="tag neutral">{{item}}</text></view>
-        <text class="analysis {{item.analysisTone}}">{{item.analysisLabel}}</text>
-      </view>
+      <view class="media-overlay"><text class="media-type">{{item.typeLabel}}</text><text class="analysis-dot {{item.analysisTone}}"></text></view>
+      <view class="material-body"><text class="material-name">{{item.name}}</text><text wx:if="{{item.productName}}" class="material-product">{{item.productName}}</text><text class="analysis {{item.analysisTone}}">{{item.analysisLabel}}</text></view>
     </view>
   </view>
   <button class="refresh" loading="{{loading}}" bindtap="refresh">刷新素材</button>
-  <operator-nav active="materials"></operator-nav>
+  <lingxiaoshu-sheet id="lingxiaoshu-sheet"></lingxiaoshu-sheet>
+  <operator-nav active="materials" bindassistant="openAssistant"></operator-nav>
 </view>

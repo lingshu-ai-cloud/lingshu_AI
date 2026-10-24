@@ -44,7 +44,6 @@
       <view class="assistant-composer {{recording ? 'recording' : ''}}"><button class="mode-button" data-mode="{{composerMode === 'text' ? 'voice' : 'text'}}" bindtap="switchComposerMode">{{composerMode === 'text' ? '🎙' : '⌨'}}</button><block wx:if="{{composerMode === 'text'}}"><textarea class="assistant-input" auto-height maxlength="4000" confirm-type="send" bindconfirm="send" placeholder="输入消息" value="{{input}}" bindinput="inputText"/><button wx:if="{{input}}" class="send-button" loading="{{sending}}" disabled="{{sending || offline}}" bindtap="send">↑</button></block><button wx:else class="hold-to-talk {{recording ? 'holding' : ''}}" disabled="{{transcribing || sending}}" bindtouchstart="holdVoiceStart" bindtouchmove="holdVoiceMove" bindtouchend="holdVoiceEnd" bindtouchcancel="cancelRecording">{{transcribing ? '正在识别…' : recording ? '松开发送' : '按住说话'}}</button></view><view wx:if="{{recording}}" class="voice-status"><text>正在聆听，松开发送</text><text class="voice-cancel">上滑可取消</text></view></block>
       <view wx:else><view wx:for="{{notifications}}" wx:key="id" class="notification" data-id="{{item.id}}" bindtap="openNotification"><view class="strong">{{item.title}}</view><view class="muted">{{item.time}}</view></view><view wx:if="{{!notifications.length}}" class="empty">当前周期暂无工作通知</view></view>
     </view>
-    <operator-nav active="todo"></operator-nav>
   </block>
   <view wx:if="{{error}}" class="error">{{error}}</view>
 </view>
