@@ -13,8 +13,8 @@
       "sourceSha256": "65acc706299b07b5d26987c70a2a7fb0b6b6e014fa7085ec9c0e1de688e34afe"
     },
     {
-      "path": "silent-profile-final-checks.log",
-      "sha256": "829b4ecc688bcfdae05c9383ec4c95f863b8c4d7883759f5df0c363c0be492dc",
+      "path": "silent-profile-final-checks.log.gz",
+      "sha256": "75800ae86b2dd8221267865cf598839f6c197f0c1b69ee82e1e25e95965f3b6f",
       "sourceSha256": "829b4ecc688bcfdae05c9383ec4c95f863b8c4d7883759f5df0c363c0be492dc"
     },
     {

@@ -316,10 +316,10 @@
       "bytes": 42367
     },
     {
-      "path": "candidate-final-checks.log",
-      "sha256": "29e8b33f541343abbf7ec7a0df6b9739fb3fcc55d78f181b826727e1c1ce5b2c",
+      "path": "candidate-final-checks.log.gz",
+      "sha256": "bd8bb2fb3f6961cfa5be9fabf7275f7c4b25178884788bfa28f5d04fa06b0254",
       "uncompressedSha256": "29e8b33f541343abbf7ec7a0df6b9739fb3fcc55d78f181b826727e1c1ce5b2c",
-      "bytes": 26611
+      "bytes": 7168
     },
     {
       "path": "candidate-all-result.json.gz",
