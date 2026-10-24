@@ -70,9 +70,9 @@ function harness(observationAvailable = true) {
   });
   return {
     scrollRoot, card, observers,
-    render(item = video, balanceMedia = false): Node {
+    render(item = video, creatorCard = false): Node {
       cursor = 0;
-      const tree = exports.VideoCard({ video: item, balanceMedia, index: 0, isSelected: false, onSelect() {}, onCreate() {}, onWatch() {} });
+      const tree = exports.VideoCard({ video: item, creatorCard, index: 0, isSelected: false, onSelect() {}, onCreate() {}, onWatch() {} });
       effects.splice(0).forEach(run => run());
       while (frames.size) { const batch = [...frames.values()]; frames.clear(); batch.forEach(run => run()); }
       return tree;
@@ -140,15 +140,36 @@ test('masonry follows recorded and loaded media geometry rather than forcing por
 });
 
 // Preview frames balance visual weight while retaining the full native image.
-test('home media frames bound extreme aspect ratios without cropping either orientation', () => {
+test('creator cards keep balanced masonry frames and fill both media orientations', () => {
   for (const [ratio, expected] of [['9:16', 4 / 5], ['16:9', 4 / 3], ['1:1', 1]] as const) {
     const page = harness();
     const item = { ...video, aiAnalysis: { gemini: { globalSettings: { aspectRatio: ratio } } } };
     const tree = page.render(item, true);
     assert.equal(descendants(tree).find(node => node.props.style?.aspectRatio)?.props.style.aspectRatio, expected);
-    assert.match(descendants(tree).find(node => node.type === 'ThumbnailImage')!.props.className, /object-contain/);
+    assert.match(descendants(tree).find(node => node.type === 'ThumbnailImage')!.props.className, /object-cover/);
     page.observers[0]!.notify([{ isIntersecting: true }]);
-    assert.match(players(page.render(item, true))[0]!.props.className, /object-contain/);
+    assert.match(players(page.render(item, true))[0]!.props.className, /object-cover/);
     page.cleanup();
   }
+});
+
+test('creator card previews follow pointer and keyboard focus while titles remain outside the image', () => {
+  const page = harness();
+  const initial = page.render(video, true);
+  assert.equal(initial.props.children[2].props.children, video.title);
+  assert.equal(initial.props.children[2].type, 'button');
+  initial.props.onPointerEnter();
+  assert.equal(players(page.render(video, true))[0]!.props.previewActive, true);
+  initial.props.onPointerLeave();
+  assert.equal(players(page.render(video, true))[0]!.props.previewActive, false);
+  initial.props.onFocusCapture();
+  const focused = page.render(video, true);
+  assert.equal(players(focused)[0]!.props.previewActive, true);
+  assert.equal(players(focused)[0]!.props.hoverPlay, false, 'overlay preview uses the card focus/pointer owner');
+  descendants(focused).find(node => node.props['aria-label'] === '用于创作 Reference')!.props.onClick();
+  assert.equal(players(page.render(video, true))[0]!.props.previewActive, false, 'selecting a reference stops the inline preview');
+  initial.props.onFocusCapture();
+  focused.props.onBlurCapture({ currentTarget: { contains: () => false }, relatedTarget: null });
+  assert.equal(players(page.render(video, true))[0]!.props.previewActive, false);
+  page.cleanup();
 });
