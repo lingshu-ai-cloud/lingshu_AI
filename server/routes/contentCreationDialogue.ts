@@ -4,6 +4,7 @@ import type { AuthLocals } from '../middleware/auth.js';
 import { readTenantEnterpriseProfileStrict } from './enterpriseProfileStore.js';
 import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import { validatePresenterReferenceMaterials } from '../lib/presenterMaterialValidation.js';
+import { signAssetUrl, signPathAssetUrl } from '../lib/assetAccess.js';
 import { contentCreationTurn, CreationDialogueError, type CreationEvidencePorts } from '../assistantContext/contentCreationDialogue.js';
 
 export const creationEvidencePorts: CreationEvidencePorts = {
@@ -32,7 +33,16 @@ export const creationEvidencePorts: CreationEvidencePorts = {
 export function registerContentCreationDialogue(router: Router, evidence: CreationEvidencePorts = creationEvidencePorts) {
   router.post('/creation-dialogue', async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store');
-    try { res.json(await contentCreationTurn((res.locals as AuthLocals).tenantId, req.body, evidence)); }
+    try {
+      const { tenantId } = res.locals as AuthLocals;
+      const reply = await contentCreationTurn(tenantId, req.body, evidence);
+      // Media elements cannot send the API bearer header. Use the existing
+      // tenant-scoped playback signatures after computing the evidence hash.
+      res.json({ ...reply, shots: reply.shots.map(shot => ({ ...shot, ...(shot.previewUrl ? {
+        previewUrl: /^\/studio-media\//.test(shot.previewUrl) ? signPathAssetUrl(shot.previewUrl, tenantId)
+          : /^\/(?:api|media)\//.test(shot.previewUrl) ? signAssetUrl(shot.previewUrl, tenantId) : shot.previewUrl,
+      } : {}) })) });
+    }
     catch (error) {
       const known = error instanceof CreationDialogueError;
       res.status(known ? error.status : 503).json({ error: known ? error.code : 'creation_evidence_unavailable', message: known ? error.message : '创作证据读取失败，请保留选择并重试。' });
