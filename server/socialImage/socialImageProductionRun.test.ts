@@ -19,6 +19,7 @@ import {
   runSocialImageDirectorReview,
 } from './socialImageProductionRun.js';
 import { projectSocialImageProductionSnapshot } from './socialImageProductionRuntime.js';
+import { continueSocialImageProduction } from './socialImageProductionContinuation.js';
 import { socialImageV3PaidPrerequisiteIssue, socialImageV3ResolvedAssetIssue,
   socialImageV3SingleRenderInput } from './socialImagePaidPrerequisites.js';
 import { compileSocialImageV3PaidPlan, recordSocialImageV3DirectorBrief } from './socialImageFormalPlan.js';
@@ -428,6 +429,10 @@ test('V3 approval requires independent review, exact bytes and explicit user evi
   const reviewed = await runSocialImageDirectorReview({ store, tenantId: 'tenant-a', taskId: created.id,
     expectedVersion: ready.task.version, candidateId: output.id, candidateVersion: output.version, now });
   assert.equal(reviewed.directorReviewDecision?.decision, 'accept_for_user_review');
+  const approvalSnapshot = projectSocialImageProductionSnapshot(reviewed);
+  assert.equal(approvalSnapshot.waitingFor, 'user');
+  assert.equal(approvalSnapshot.decisionRequest?.kind, 'review_candidates');
+  assert.deepEqual(approvalSnapshot.progress, { kind: 'known', completed: 0, total: 1 });
   const contentHash = 'a'.repeat(64);
   const accepted = await decideSocialImageCandidate({ store, tenantId: 'tenant-a', userId: 'user-a', taskId: created.id,
     expectedVersion: reviewed.version, candidateId: output.id, candidateVersion: output.version,
@@ -499,44 +504,70 @@ async function multiOutputFixture(imageType: 'carousel' | 'gif_poster') {
 }
 
 for (const imageType of ['carousel', 'gif_poster'] as const) {
-  test(`V3 ${imageType} reviews and adopts every deliverable as one immutable set`, async () => {
+  test(`V3 ${imageType} reviews one immutable set and records explicit approval for every deliverable`, async () => {
     const { store, now, task, reviewOutputs } = await multiOutputFixture(imageType);
     assert.equal(projectSocialImageProductionSnapshot(task).currentNode, 'director_review');
     const anchor = imageType === 'carousel' ? reviewOutputs[0]! : reviewOutputs.at(-1)!;
     await assert.rejects(runSocialImageDirectorReview({ store, tenantId: 'tenant-a', taskId: task.id,
       expectedVersion: task.version, candidateId: reviewOutputs[1]!.id,
       candidateVersion: reviewOutputs[1]!.version, now }), /social_image_review_candidate_stale/);
-    const reviewed = await runSocialImageDirectorReview({ store, tenantId: 'tenant-a', taskId: task.id,
-      expectedVersion: task.version, candidateId: anchor.id, candidateVersion: anchor.version, now });
+    const continuedReview = await continueSocialImageProduction({ store, tenantId: 'tenant-a', taskId: task.id,
+      expectedVersion: task.version, now });
+    assert.deepEqual(continuedReview.advancedNodes, ['director_review']);
+    const reviewed = continuedReview.task;
     assert.equal(reviewed.directorReviewDecision?.decision, 'accept_for_user_review');
     assert.deepEqual(reviewed.directorReviewDecision?.candidateRefs?.map(ref => ref.id), reviewOutputs.map(output => output.id));
     const setHash = reviewed.directorReviewDecision!.candidateSetHash!;
     await assert.rejects(decideSocialImageCandidate({ store, tenantId: 'tenant-a', userId: 'user-a', taskId: task.id,
       expectedVersion: reviewed.version, candidateId: anchor.id, candidateVersion: anchor.version,
-      expectedContentHash: anchor.contentHash!, actualContentHash: anchor.contentHash!, decision: 'approved', now }),
+      expectedContentHash: setHash, actualContentHash: setHash, decision: 'approved', now }),
     /social_image_candidate_hash_conflict/);
-    const accepted = await decideSocialImageCandidate({ store, tenantId: 'tenant-a', userId: 'user-a', taskId: task.id,
-      expectedVersion: reviewed.version, candidateId: anchor.id, candidateVersion: anchor.version,
-      expectedContentHash: setHash, actualContentHash: setHash, decision: 'approved', now });
+    let accepted: Awaited<ReturnType<typeof decideSocialImageCandidate>> | null = null;
+    let current = reviewed;
+    for (const [index, candidate] of reviewOutputs.entries()) {
+      accepted = await decideSocialImageCandidate({ store, tenantId: 'tenant-a', userId: 'user-a', taskId: task.id,
+        expectedVersion: current.version, candidateId: candidate.id, candidateVersion: candidate.version,
+        expectedContentHash: candidate.contentHash!, actualContentHash: candidate.contentHash!, decision: 'approved',
+        idempotencyKey: `approve-${imageType}-${candidate.id}`, now });
+      current = accepted.task;
+      if (index < reviewOutputs.length - 1) {
+        assert.equal(current.status, 'review_required');
+        assert.equal(current.approvedArtifact, undefined);
+        const partialSnapshot = projectSocialImageProductionSnapshot(current);
+        assert.equal(partialSnapshot.currentNode, 'user_approval');
+        assert.deepEqual(partialSnapshot.progress, { kind: 'known', completed: index + 1, total: reviewOutputs.length });
+      }
+    }
+    assert.ok(accepted);
     assert.equal(accepted.task.status, 'approved');
     assert.equal(accepted.task.publishable, true);
     assert.deepEqual(accepted.task.approvedArtifact?.mediaItems?.map(item => item.candidateId), reviewOutputs.map(output => output.id));
     assert.ok(reviewOutputs.every(output => accepted.task.outputs.find(item => item.id === output.id)?.state === 'approved'));
+    assert.ok(reviewOutputs.every(output => accepted.task.approvalDecisions?.some(decision =>
+      decision.selectedCandidateRef?.id === output.id && decision.selectedCandidateRef.contentHash === output.contentHash)));
+    const replay = await decideSocialImageCandidate({ store, tenantId: 'tenant-a', userId: 'user-a', taskId: task.id,
+      expectedVersion: reviewed.version, candidateId: reviewOutputs[0]!.id, candidateVersion: reviewOutputs[0]!.version,
+      expectedContentHash: reviewOutputs[0]!.contentHash!, actualContentHash: reviewOutputs[0]!.contentHash!, decision: 'approved',
+      idempotencyKey: `approve-${imageType}-${reviewOutputs[0]!.id}`, now });
+    assert.equal(replay.task.version, accepted.task.version, 'retrying the same explicit decision must not append another approval');
     assert.equal(socialImageTaskCanPublish({ ...accepted.task, approvedArtifact: {
       ...accepted.task.approvedArtifact!, mediaItems: accepted.task.approvedArtifact!.mediaItems!.slice(0, -1),
     } }), false, 'omitting one deliverable cannot produce a publishable package');
     if (imageType === 'gif_poster') {
       assert.ok(accepted.task.outputs.filter(output => output.role === 'gif_plate').every(output => output.state === 'quality_checking'));
     }
-    const delivered = await createSocialImageDeliveryPackage({ store, tenantId: 'tenant-a', taskId: task.id,
+    const continuedDelivery = await continueSocialImageProduction({ store, tenantId: 'tenant-a', taskId: task.id,
       expectedVersion: accepted.task.version, now });
+    assert.deepEqual(continuedDelivery.advancedNodes, ['delivery']);
+    assert.ok(continuedDelivery.deliveryPackage);
+    const delivered = { task: continuedDelivery.task, deliveryPackage: continuedDelivery.deliveryPackage! };
     const publishItems = imageType === 'gif_poster' ? [reviewOutputs.at(-1)!] : reviewOutputs;
     assert.equal(delivered.deliveryPackage.platformVariant.mediaItems?.length, publishItems.length);
     assert.deepEqual(delivered.deliveryPackage.platformVariant.mediaItems?.map(item => item.candidateId), publishItems.map(output => output.id));
   });
 }
 
-test('multi-output review remains blocked on one failed page and rejection retires whole set', async () => {
+test('multi-output review remains blocked on one failed page and rejection targets only that page', async () => {
   const { store, now, task, reviewOutputs } = await multiOutputFixture('carousel');
   const failed = await updateSocialImageTask(store, 'tenant-a', task.id, task.version, { outputs: task.outputs.map(output =>
     output.id === reviewOutputs[3]!.id ? { ...output, qualityChecks: output.qualityChecks.map(check => check.key === 'safe_zone'
@@ -553,14 +584,16 @@ test('multi-output review remains blocked on one failed page and rejection retir
     expectedVersion: repaired.task.version, candidateId: reviewOutputs[0]!.id, candidateVersion: 1, now });
   const rejected = await decideSocialImageCandidate({ store, tenantId: 'tenant-a', userId: 'user-a', taskId: task.id,
     expectedVersion: reviewed.version, candidateId: reviewOutputs[0]!.id, candidateVersion: 1,
-    expectedContentHash: reviewed.directorReviewDecision!.candidateSetHash!,
-    actualContentHash: reviewed.directorReviewDecision!.candidateSetHash!, decision: 'rejected', now });
-  assert.ok(rejected.task.outputs.filter(output => output.role === 'carousel_page').every(output => output.state === 'repair_required'));
+    expectedContentHash: reviewOutputs[0]!.contentHash!,
+    actualContentHash: reviewOutputs[0]!.contentHash!, decision: 'rejected', idempotencyKey: 'reject-carousel-page-0', now });
+  assert.equal(rejected.task.outputs.find(output => output.id === reviewOutputs[0]!.id)?.state, 'repair_required');
+  assert.ok(rejected.task.outputs.filter(output => output.role === 'carousel_page' && output.id !== reviewOutputs[0]!.id)
+    .every(output => output.state === 'quality_checking'));
   assert.equal(projectSocialImageProductionSnapshot(rejected.task).currentNode, 'quality_check');
   await assert.rejects(decideSocialImageCandidate({ store, tenantId: 'tenant-a', userId: 'user-a', taskId: task.id,
     expectedVersion: rejected.task.version, candidateId: reviewOutputs[0]!.id, candidateVersion: 1,
-    expectedContentHash: reviewed.directorReviewDecision!.candidateSetHash!,
-    actualContentHash: reviewed.directorReviewDecision!.candidateSetHash!, decision: 'approved', now }),
+    expectedContentHash: reviewOutputs[0]!.contentHash!,
+    actualContentHash: reviewOutputs[0]!.contentHash!, decision: 'approved', idempotencyKey: 'approve-rejected-carousel-page-0', now }),
   /social_image_hard_quality_gate_incomplete/);
 });
 

@@ -496,6 +496,9 @@ export async function recordSocialImageDirectorReview(input: {
   if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
   const reviewSet = resolveSocialImageReviewSet(task, input.decision.candidateId, input.decision.candidateVersion);
   if (!reviewSet) throw new SocialImageProductionRunError('social_image_review_candidate_stale', 409);
+  if (reviewSet.anchor.id !== input.decision.candidateId || reviewSet.anchor.version !== input.decision.candidateVersion) {
+    throw new SocialImageProductionRunError('social_image_review_candidate_stale', 409);
+  }
   const multi = task.imageType === 'carousel' || task.imageType === 'gif_poster';
   if ((multi && (!input.decision.candidateRefs || !input.decision.candidateSetHash))
     || (input.decision.candidateRefs && !socialImageReviewRefsMatch(reviewSet.refs, input.decision.candidateRefs))
@@ -554,6 +557,9 @@ export async function runSocialImageDirectorReview(input: {
   }
   const reviewSet = resolveSocialImageReviewSet(task, input.candidateId, input.candidateVersion);
   if (!reviewSet) throw new SocialImageProductionRunError('social_image_review_candidate_stale', 409);
+  if (reviewSet.anchor.id !== input.candidateId || reviewSet.anchor.version !== input.candidateVersion) {
+    throw new SocialImageProductionRunError('social_image_review_candidate_stale', 409);
+  }
   if (!reviewSet.qualityPassed) {
     throw new SocialImageProductionRunError('social_image_hard_quality_gate_incomplete', 422);
   }
@@ -613,11 +619,25 @@ export async function decideSocialImageCandidate(input: {
   expectedContentHash: string;
   actualContentHash: string;
   decision: 'approved' | 'rejected';
+  idempotencyKey?: string;
   note?: string;
   now?: string;
 }) {
   const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
   if (!task) throw new SocialImageProductionRunError('social_image_task_missing', 404);
+  const idempotencyKey = input.idempotencyKey?.trim() || `social-image-decision:${hash({
+    taskId: input.taskId, userId: input.userId, candidateId: input.candidateId,
+    candidateVersion: input.candidateVersion, decision: input.decision,
+  }).slice(0, 32)}`;
+  const replay = (task.approvalDecisions || []).find(item => item.idempotencyKey === idempotencyKey);
+  if (replay) {
+    if (replay.candidateId !== input.candidateId || replay.candidateVersion !== input.candidateVersion
+      || replay.decision !== input.decision || replay.decidedBy !== input.userId) {
+      throw new SocialImageProductionRunError('social_image_decision_idempotency_conflict', 409);
+    }
+    return { task, decision: replay, approvedArtifact: task.approvedArtifact?.approvalDecisionId === replay.decisionId
+      ? task.approvedArtifact : undefined };
+  }
   if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
   if (task.schemaVersion !== 'social-image-creation.v3' || !task.productionRuntime?.binding) {
     throw new SocialImageProductionRunError('social_image_content_task_binding_missing', 409);
@@ -628,8 +648,8 @@ export async function decideSocialImageCandidate(input: {
     && candidate.state !== 'superseded');
   if (!output) throw new SocialImageProductionRunError('social_image_approval_candidate_stale', 409);
   const reviewSet = resolveSocialImageReviewSet(task, output.id, output.version);
-  if (input.decision === 'approved' && (!reviewSet || input.expectedContentHash !== reviewSet.contentHash
-    || input.actualContentHash !== reviewSet.contentHash)) {
+  if (input.decision === 'approved' && (!reviewSet || input.expectedContentHash !== output.contentHash
+    || input.actualContentHash !== output.contentHash)) {
     throw new SocialImageProductionRunError('social_image_candidate_hash_conflict', 409);
   }
   if (input.decision === 'approved' && !reviewSet?.qualityPassed) {
@@ -648,17 +668,28 @@ export async function decideSocialImageCandidate(input: {
     }
   }
   const decidedAt = input.now || new Date().toISOString();
-  const selected = reviewSet?.outputs || [output];
+  const selected = [output];
   const qualitySummaryHash = hash(selected.map(candidate => ({ id: candidate.id, checks: candidate.qualityChecks })));
   const directorReviewHash = task.directorReviewDecision ? hash(task.directorReviewDecision) : undefined;
+  const selectedCandidateRef = { objectType: 'social-image-candidate', id: output.id,
+    version: output.version, contentHash: output.contentHash! };
+  const selectedIds = new Set(selected.map(candidate => candidate.id));
+  const outputs = task.outputs.map(candidate => selectedIds.has(candidate.id)
+    ? { ...candidate, state: input.decision === 'approved' ? 'approved' as const : 'repair_required' as const }
+    : candidate);
+  const reviewedAfterDecision = reviewSet ? reviewSet.outputs.map(candidate => outputs.find(item => item.id === candidate.id) || candidate) : [];
+  const completesReviewSet = input.decision === 'approved' && Boolean(reviewSet?.outputs.length)
+    && reviewedAfterDecision.every(candidate => candidate.state === 'approved');
   const decision: SocialImageApprovalDecision = {
     schemaVersion: 'social-image-approval-decision.v1',
     decisionId: randomUUID(),
+    idempotencyKey,
     decision: input.decision,
     candidateId: output.id,
     candidateVersion: output.version,
-    candidateContentHash: input.decision === 'approved' ? reviewSet!.contentHash : (reviewSet?.contentHash || input.actualContentHash),
-    ...(reviewSet ? { candidateRefs: reviewSet.refs } : {}),
+    candidateContentHash: completesReviewSet ? reviewSet!.contentHash : input.actualContentHash,
+    selectedCandidateRef,
+    ...(reviewSet ? { candidateRefs: completesReviewSet ? reviewSet.refs : [selectedCandidateRef], reviewSetHash: reviewSet.contentHash } : {}),
     decidedBy: input.userId,
     decidedAt,
     source: 'explicit_user_action',
@@ -667,11 +698,7 @@ export async function decideSocialImageCandidate(input: {
     ...(input.note?.trim() ? { note: input.note.trim().slice(0, 1000) } : {}),
   };
   const approvalDecisions = [...(task.approvalDecisions || []), decision];
-  const selectedIds = new Set(selected.map(candidate => candidate.id));
-  const outputs = task.outputs.map(candidate => selectedIds.has(candidate.id)
-    ? { ...candidate, state: input.decision === 'approved' ? 'approved' as const : 'repair_required' as const }
-    : candidate);
-  const approvedArtifact = input.decision === 'approved' ? {
+  const approvedArtifact = completesReviewSet ? {
     schemaVersion: 'approved-image-artifact.v1' as const,
     artifactId: `imgart_${hash({ taskId: task.id, outputId: output.id, contentHash: reviewSet!.contentHash }).slice(0, 24)}`,
     contentTaskId: task.productionRuntime.binding.contentTaskId,
@@ -693,12 +720,12 @@ export async function decideSocialImageCandidate(input: {
     outputs,
     approvalDecisions,
     ...(approvedArtifact ? { approvedArtifact } : {}),
-    status: input.decision === 'approved' ? 'approved' : 'review_required',
+    status: approvedArtifact ? 'approved' : 'review_required',
     step: 'review',
   });
   if (result.kind !== 'updated') throw new SocialImageProductionRunError(result.kind === 'conflict'
     ? 'social_image_version_conflict' : result.kind === 'invalid' ? result.issues.join(',') : 'social_image_approval_persist_failed', result.kind === 'conflict' ? 409 : 422);
-  if (input.decision === 'approved' && !socialImageTaskCanPublish(result.task)) {
+  if (approvedArtifact && !socialImageTaskCanPublish(result.task)) {
     throw new SocialImageProductionRunError('social_image_approval_invariant_failed', 503);
   }
   return { task: result.task, decision, approvedArtifact };

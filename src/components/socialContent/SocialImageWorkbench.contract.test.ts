@@ -9,6 +9,7 @@ const planning = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', impo
 const studioRoute = readStudioApplicationSources();
 const socialImageRoute = fs.readFileSync(new URL('../../../server/routes/socialImage.ts', import.meta.url), 'utf8');
 const formalPlanRoute = fs.readFileSync(new URL('../../../server/routes/socialImageFormalPlanRoutes.ts', import.meta.url), 'utf8');
+const continuation = fs.readFileSync(new URL('../../../server/socialImage/socialImageProductionContinuation.ts', import.meta.url), 'utf8');
 
 assert.match(planning, /productionMode === 'video'/);
 assert.match(planning, /productionMode === 'image'/);
@@ -71,7 +72,17 @@ assert.match(socialImageRoute, /social_image_paid_inputs_frozen/, 'task inputs m
 assert.match(source, /runPreflight/, 'generated images must enter deterministic quality preflight');
 assert.match(source, /socialImageApi\.runDirectorReview\(/, 'the workbench must have a real server-owned director review continuation');
 assert.match(source, /socialImageApi\.decideCandidate\(/, 'the workbench must persist explicit adopt or reject actions');
-assert.match(source, /socialImageApi\.createDeliveryPackage\(/, 'an adopted candidate must continue to a delivery package');
+assert.doesNotMatch(source, /socialImageApi\.createDeliveryPackage\(/, 'the browser must not chain delivery after the final approval');
+assert.match(source, /socialImageApi\.continueTask\(task\)/, 'a restored run must ask the server to resume deterministic review or delivery nodes');
+assert.match(socialImageRoute, /continueSocialImageProduction\(\{ store, tenantId, taskId: result\.task\.id/,
+  'the decision endpoint must continue deterministic delivery on the server');
+assert.match(continuation, /currentNode === 'director_review'[\s\S]*runSocialImageDirectorReview/,
+  'independent director review must resume from the persisted server node');
+assert.match(continuation, /currentNode === 'delivery'[\s\S]*createSocialImageDeliveryPackage/,
+  'the final item approval must lead to server-owned delivery packaging');
+assert.match(reviewActions, /aria-label="逐项验收"/);
+assert.match(reviewActions, /全部采用后才会生成整包交付/);
+assert.doesNotMatch(reviewActions, /采用整组作品/);
 assert.match(source, /repairLayered/, 'review must support natural-language layer repair');
 assert.match(reviewActions, /按描述修改对应图层/);
 assert.match(reviewActions, /按检查结果优化一版/, 'automatic checks may offer an optional targeted repair path');

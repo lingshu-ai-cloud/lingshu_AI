@@ -29,6 +29,12 @@ export const socialImageApi = {
     },
   ),
   getTask: (id: string) => request<{ ok: true; task: SocialImageCreationTask }>(`/tasks/${encodeURIComponent(id)}`),
+  continueTask: (task: SocialImageCreationTask) => request<{
+    ok: true; task: SocialImageCreationTask; snapshot: SocialImageProductionSnapshot;
+    advancedNodes: Array<'director_review' | 'delivery'>; deliveryPackage?: SocialImageDeliveryPackage;
+  }>(`/tasks/${encodeURIComponent(task.id)}/continue`, {
+    method: 'POST', body: JSON.stringify({ expectedVersion: task.version }),
+  }),
   getProduction: (id: string, afterSequence = 0) => request<{ ok: true; snapshot: SocialImageProductionSnapshot; events: SocialImageProductionEvent[] }>(
     `/tasks/${encodeURIComponent(id)}/production?afterSequence=${encodeURIComponent(String(afterSequence))}`,
   ),
@@ -57,8 +63,9 @@ export const socialImageApi = {
     candidateVersion: number;
     expectedContentHash: string;
     decision: 'approved' | 'rejected';
+    idempotencyKey: string;
     note?: string;
-  }) => request<{ ok: true; task: SocialImageCreationTask; snapshot: SocialImageProductionSnapshot }>(
+  }) => request<{ ok: true; task: SocialImageCreationTask; snapshot: SocialImageProductionSnapshot; deliveryPackage?: SocialImageDeliveryPackage }>(
     `/tasks/${encodeURIComponent(task.id)}/decision`, {
       method: 'POST', body: JSON.stringify({ expectedVersion: task.version, ...input }),
     },

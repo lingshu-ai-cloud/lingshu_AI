@@ -118,8 +118,18 @@ export interface SocialImageProductionSnapshot {
   currentStatus: SocialImageProductionNodeStatus;
   progress: { kind: 'known'; completed: number; total: number } | { kind: 'indeterminate' };
   activityKey: string;
+  nodeLabel: string;
+  userFacingSummary: string;
   waitingFor: 'system' | 'user' | 'provider_reconciliation' | null;
   canApprove: boolean;
+  decisionRequest: null | {
+    decisionId: string;
+    kind: 'supply_input' | 'confirm_generation' | 'review_candidates' | 'repair' | 'reconcile_provider';
+    label: string;
+    taskVersion: number;
+    idempotencyKey: string;
+    candidateRefs: SocialImageVersionedRef[];
+  };
   blockingReasons: string[];
   previews: Array<{
     candidateId: string;
@@ -209,11 +219,18 @@ export interface SocialImageDirectorReviewDecision {
 export interface SocialImageApprovalDecision {
   schemaVersion: 'social-image-approval-decision.v1';
   decisionId: string;
+  /** Stable identity of the explicit user action. Historic decisions may not
+   * have one, but every new decision is persisted with this key. */
+  idempotencyKey?: string;
   decision: 'approved' | 'rejected';
   candidateId: string;
   candidateVersion: number;
   candidateContentHash: string;
+  /** Exact item the user acted on. Multi-output approval is item-by-item even
+   * when the last item also closes the immutable reviewed set. */
+  selectedCandidateRef?: SocialImageVersionedRef;
   candidateRefs?: SocialImageVersionedRef[];
+  reviewSetHash?: string;
   decidedBy: string;
   decidedAt: string;
   source: 'explicit_user_action';

@@ -28,7 +28,7 @@ export function resolveSocialImageReviewSet(
   if (!outputs.length) return null;
   const multi = task.imageType === 'carousel' || task.imageType === 'gif_poster';
   const anchor = multi && task.imageType === 'gif_poster' ? outputs.at(-1)! : outputs[0]!;
-  if (anchor.id !== candidateId || anchor.version !== candidateVersion) return null;
+  if (!outputs.some(output => output.id === candidateId && output.version === candidateVersion)) return null;
   if (outputs.some(output => !/^[a-f0-9]{64}$/.test(output.contentHash || ''))) return null;
   const refs = outputs.map(output => ({ objectType: 'social-image-candidate', id: output.id,
     version: output.version, contentHash: output.contentHash! }));

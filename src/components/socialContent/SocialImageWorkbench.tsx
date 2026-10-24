@@ -19,6 +19,7 @@ import {
   type SocialImageCreationPath,
   type SocialImageCreationTask,
   type SocialImageEnterpriseAssetBinding,
+  type SocialImageOutputNode,
   type SocialImageQualityCheckKey,
   type SocialImageReferenceLayerBlueprint,
   type SocialImageRepairInstruction,
@@ -112,8 +113,27 @@ function SocialImageWorkbenchSession({
   const contentTaskRef = useRef<Awaited<ReturnType<typeof socialContentApi.getTask>> | null>(null);
   const formDirtyRef = useRef(false);
   const runRequestKeyRef = useRef(`image-workbench-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`);
+  const continuationAttemptRef = useRef('');
 
   useEffect(() => () => generationAbortRef.current?.abort(), []);
+
+  useEffect(() => {
+    if (!task || busy) return;
+    const node = task.productionRuntime?.nodes.find(item => item.nodeId === task.productionRuntime?.currentNode);
+    const shouldContinue = node?.status === 'needs_review'
+      && ((node.nodeId === 'director_review' && !task.directorReviewDecision)
+        || (node.nodeId === 'delivery' && !task.deliveryPackages?.length));
+    const attemptKey = `${task.id}:${task.version}:${node?.nodeId || 'none'}`;
+    if (!shouldContinue || continuationAttemptRef.current === attemptKey) return;
+    continuationAttemptRef.current = attemptKey;
+    let active = true;
+    void socialImageApi.continueTask(task).then(result => {
+      if (!active) return;
+      setTask(result.task); setStep('review');
+      if (result.advancedNodes.length) setNotice('已从服务端恢复图片生产进度。');
+    }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : '图片生产进度恢复失败'); });
+    return () => { active = false; };
+  }, [busy, task]);
 
   useEffect(() => {
     if (!contentTaskId || initialTask) return;
@@ -646,22 +666,25 @@ function SocialImageWorkbenchSession({
     finally { setBusy(false); }
   };
 
-  const decideReviewCandidate = async (decision: 'approved' | 'rejected') => {
-    if (!task || !reviewCandidate?.contentHash) { setError('候选文件缺少实际字节哈希，不能验收。'); return; }
-    setBusy(true); setError(''); setNotice(decision === 'approved' ? '正在冻结采用版本并生成交付包…' : '正在保存修改决定…');
+  const decideReviewCandidate = async (candidate: SocialImageOutputNode, decision: 'approved' | 'rejected') => {
+    if (!task || !candidate.contentHash) { setError('候选文件缺少实际字节哈希，不能验收。'); return; }
+    setBusy(true); setError(''); setNotice(decision === 'approved' ? '正在保存此项采用凭证…' : '正在保存此项修改决定…');
     try {
       const decided = await socialImageApi.decideCandidate(task, {
-        candidateId: reviewCandidate.id, candidateVersion: reviewCandidate.version,
-        expectedContentHash: decision === 'approved' && multiOutput
-          ? task.directorReviewDecision?.candidateSetHash || '' : reviewCandidate.contentHash, decision,
+        candidateId: candidate.id, candidateVersion: candidate.version,
+        expectedContentHash: candidate.contentHash, decision,
+        idempotencyKey: `social-image-decision:${task.id}:${candidate.id}:${candidate.version}:${decision}`,
         note: decision === 'rejected' ? repairRequest.trim() || '用户要求修改当前候选' : undefined,
       });
-      if (decision === 'approved') {
-        const delivered = await socialImageApi.createDeliveryPackage(decided.task);
-        setTask(delivered.task);
-        setNotice('当前图片版本已明确采用并生成交付包；未执行任何平台发布。');
+      if (decision === 'approved' && decided.task.status === 'approved') {
+        setTask(decided.task);
+        setNotice('所有必需图片已逐项采用并生成交付包；未执行任何平台发布。');
+      } else if (decision === 'approved') {
+        setTask(decided.task);
+        const accepted = socialImageReviewOutputs(decided.task).filter(output => output.state === 'approved').length;
+        setNotice(`已采用“${candidate.label}”（${accepted}/${socialImageReviewOutputs(decided.task).length}）；全部采用后才会生成交付包。`);
       } else {
-        setTask(decided.task); setNotice('已拒绝当前候选并保留历史版本，可填写修改要求后定点返工。');
+        setTask(decided.task); setNotice(`已退回“${candidate.label}”并保留其他已通过产物，可按该项问题定点返工。`);
       }
     } catch (reason) { setNotice(''); setError(reason instanceof Error ? reason.message : '图片验收失败'); }
     finally { setBusy(false); }
@@ -735,9 +758,10 @@ function SocialImageWorkbenchSession({
           {step === 'generate' && <><Button type="primary" block loading={busy} disabled={busy || !poster || hasUnresolvedPaidImageJob(task)} onClick={() => void generateImage()} icon={busy ? <Spin size="small" /> : <RefreshCw size={15} />}>{busy ? reconciling ? '正在核对已存素材' : `${multiOutput ? '正在生成多图单元' : '正在生成首版'} · ${generationElapsed} 秒` : multiOutput ? '继续未完成单元或收口成片' : '重试生成首版'}</Button>{busy && !reconciling ? <Button block danger className="mt-2" onClick={stopWaitingForImage}>停止等待</Button> : !busy && !(multiOutput && task?.renderPlan) ? <Button block className="mt-2" onClick={() => setStep('inputs')}>返回修改输入</Button> : null}{multiOutput && task?.renderPlan && !busy && <Button block danger className="mt-2" disabled={hasUnresolvedPaidImageJob(task)} onClick={abandonCarouselPlan}>废弃计划并重新策划</Button>}</>}
           {step === 'review' && <SocialImageReviewActions task={task} busy={busy} legacyReadOnly={legacyReadOnly}
             directorAccepted={directorAccepted} hardChecksPassed={reviewHardChecksPassed} reviewCandidate={reviewCandidate}
+            reviewOutputs={reviewOutputs}
             fieldsToConfirm={fieldsToConfirm} repairRequest={repairRequest} imageUrl={imageUrl}
             qualityNeedsRepair={qualityPasses.length < hardChecks.length} carouselPages={carouselPages}
-            onDirectorReview={() => void requestDirectorReview()} onDecision={decision => void decideReviewCandidate(decision)}
+            onDirectorReview={() => void requestDirectorReview()} onDecision={(candidate, decision) => void decideReviewCandidate(candidate, decision)}
             onLayerRepair={() => void applyNaturalLanguageRepair()} onConfirmFields={() => setConfirmationOpen(true)}
             onTargetedRepair={() => void startTargetedRepair()} onAbandonPlan={abandonCarouselPlan} />}
           {step === 'review' && imageType === 'gif_poster' && task?.gifDelivery && carouselPages.map(({ unit, output }) => output?.mediaUrl && <Button key={unit.jobId} block className="mt-2" href={output.mediaUrl} target="_blank">查看{unit.label}合成帧</Button>)}

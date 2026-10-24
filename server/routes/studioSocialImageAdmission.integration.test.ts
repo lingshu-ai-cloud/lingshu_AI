@@ -320,13 +320,13 @@ test('HTTP image routes reject forged evidence and finalize durable GIF plates i
     const groupHash = reviewedBody.task!.directorReviewDecision!.candidateSetHash!;
     const wrongHashResponse = await fetch(`${baseUrl}/decision`, { method: 'POST', headers,
       body: JSON.stringify({ expectedVersion: reviewedBody.task!.version, candidateId: pages[0]!.id,
-        candidateVersion: 1, expectedContentHash: pages[0]!.contentHash, decision: 'approved' }) });
+        candidateVersion: 1, expectedContentHash: groupHash, decision: 'approved', idempotencyKey: 'http-wrong-group-hash' }) });
     assert.equal(wrongHashResponse.status, 409);
     assert.equal((await wrongHashResponse.json() as { code?: string }).code, 'social_image_candidate_hash_conflict');
     await store.update(STARTER_COLLECTIONS.socialContentTasks, contentRow!.id, { version: '2' });
     const staleContentResponse = await fetch(`${baseUrl}/decision`, { method: 'POST', headers,
       body: JSON.stringify({ expectedVersion: reviewedBody.task!.version, candidateId: pages[0]!.id,
-        candidateVersion: 1, expectedContentHash: groupHash, decision: 'approved' }) });
+        candidateVersion: 1, expectedContentHash: pages[0]!.contentHash, decision: 'approved', idempotencyKey: 'http-stale-content-task' }) });
     assert.equal(staleContentResponse.status, 409);
     assert.equal((await staleContentResponse.json() as { code?: string }).code, 'social_image_content_task_binding_stale');
     await store.update(STARTER_COLLECTIONS.socialContentTasks, contentRow!.id, { version: '1' });
@@ -337,14 +337,19 @@ test('HTTP image routes reject forged evidence and finalize durable GIF plates i
     await objectStorageUpload({ key: secondPageMaterial.objectKey, body: Buffer.from('tampered-page'), contentType: 'image/png' });
     const tamperedResponse = await fetch(`${baseUrl}/decision`, { method: 'POST', headers,
       body: JSON.stringify({ expectedVersion: reviewedBody.task!.version, candidateId: pages[0]!.id,
-        candidateVersion: 1, expectedContentHash: groupHash, decision: 'approved' }) });
+        candidateVersion: 1, expectedContentHash: pages[0]!.contentHash, decision: 'approved', idempotencyKey: 'http-tampered-set' }) });
     assert.ok([409, 422].includes(tamperedResponse.status), 'a changed second page must block whole-set adoption');
     await objectStorageUpload({ key: secondPageMaterial.objectKey, body: originalPage.buf, contentType: 'image/png' });
-    const acceptedResponse = await fetch(`${baseUrl}/decision`, { method: 'POST', headers,
-      body: JSON.stringify({ expectedVersion: reviewedBody.task!.version, candidateId: pages[0]!.id,
-        candidateVersion: 1, expectedContentHash: groupHash, decision: 'approved' }) });
-    const acceptedBody = await acceptedResponse.json() as { task?: typeof staged.task; code?: string };
-    assert.equal(acceptedResponse.status, 200, JSON.stringify(acceptedBody));
+    let acceptedBody: { task?: typeof staged.task; code?: string } = reviewedBody;
+    for (const [index, page] of pages.entries()) {
+      const acceptedResponse = await fetch(`${baseUrl}/decision`, { method: 'POST', headers,
+        body: JSON.stringify({ expectedVersion: acceptedBody.task!.version, candidateId: page.id,
+          candidateVersion: page.version, expectedContentHash: page.contentHash, decision: 'approved',
+          idempotencyKey: `http-approve-page-${index}` }) });
+      acceptedBody = await acceptedResponse.json() as { task?: typeof staged.task; code?: string };
+      assert.equal(acceptedResponse.status, 200, JSON.stringify(acceptedBody));
+      assert.equal(acceptedBody.task?.status, index === pages.length - 1 ? 'approved' : 'review_required');
+    }
     assert.equal(acceptedBody.task?.approvedArtifact?.mediaItems?.length, 4);
     const packageResponse = await fetch(`${baseUrl}/delivery-packages`, { method: 'POST', headers,
       body: JSON.stringify({ expectedVersion: acceptedBody.task!.version }) });

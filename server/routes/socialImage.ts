@@ -41,6 +41,7 @@ import { resolveSocialImageReviewSet } from '../socialImage/socialImageReviewSet
 import { localProductOcrReadiness, recognizeProductImageLocally, recognizeProductImageTokensLocally } from '../lib/localProductOcr.js';
 import { registerSocialImageFormalPlanRoutes } from './socialImageFormalPlanRoutes.js';
 import { runSocialImageVisualPreflight, SocialImageQualityPreflightError } from '../socialImage/socialImageQualityPreflight.js';
+import { continueSocialImageProduction } from '../socialImage/socialImageProductionContinuation.js';
 
 export const socialImageRouter = Router();
 registerSocialImageFormalPlanRoutes(socialImageRouter, store,
@@ -143,6 +144,21 @@ socialImageRouter.get('/tasks/:id', async (req, res) => {
     res.json({ ok: true, task });
   } catch {
     res.status(503).json({ ok: false, error: '图片任务读取失败' });
+  }
+});
+
+/** Resume deterministic nodes only. This command never queues or invokes a paid provider. */
+socialImageRouter.post('/tasks/:id/continue', async (req, res) => {
+  try {
+    const { tenantId } = res.locals as AuthLocals;
+    const result = await continueSocialImageProduction({ store, tenantId, taskId: req.params.id,
+      expectedVersion: Number(req.body?.expectedVersion) });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ ok: true, ...result, snapshot: projectSocialImageProductionSnapshot(result.task) });
+  } catch (error) {
+    const failure = error instanceof SocialImageProductionRunError ? error
+      : new SocialImageProductionRunError('social_image_continuation_failed', 503);
+    res.status(failure.status).json({ ok: false, code: failure.code, error: failure.code });
   }
 });
 
@@ -317,9 +333,14 @@ socialImageRouter.post('/tasks/:id/decision', async (req, res) => {
     if (!output) { res.status(409).json({ ok: false, code: 'social_image_approval_candidate_stale', error: '候选版本已变化，请刷新后验收' }); return; }
     const decision = String(req.body?.decision || '');
     if (!['approved', 'rejected'].includes(decision)) { res.status(400).json({ ok: false, code: 'social_image_decision_invalid', error: '验收决定无效' }); return; }
+    const idempotencyKey = String(req.body?.idempotencyKey || req.header('Idempotency-Key') || '').trim();
+    if (!/^[a-z0-9:_-]{8,200}$/i.test(idempotencyKey)) {
+      res.status(400).json({ ok: false, code: 'social_image_decision_idempotency_key_invalid', error: '验收请求缺少有效幂等键' }); return;
+    }
+    const replay = (task.approvalDecisions || []).some(item => item.idempotencyKey === idempotencyKey);
     const reviewSet = resolveSocialImageReviewSet(task, candidateId, candidateVersion);
     if (decision === 'approved' && !reviewSet) { res.status(409).json({ ok: false, code: 'social_image_review_set_incomplete', error: '交付物尚未全部完成，请刷新后审阅' }); return; }
-    if (decision === 'approved' && reviewSet) {
+    if (decision === 'approved' && reviewSet && !replay) {
       for (const candidate of reviewSet.outputs) {
         const media = await outputImageBytes(tenantId, candidate);
         if (!media?.bytes.length) { res.status(422).json({ ok: false, code: 'social_image_candidate_bytes_unavailable', error: '候选图片不可读取，不能验收' }); return; }
@@ -333,12 +354,15 @@ socialImageRouter.post('/tasks/:id/decision', async (req, res) => {
       expectedVersion: Number(req.body?.expectedVersion),
       candidateId, candidateVersion,
       expectedContentHash: String(req.body?.expectedContentHash || '').toLowerCase(),
-      actualContentHash: reviewSet?.contentHash || String(output.contentHash || req.body?.expectedContentHash || ''),
+      actualContentHash: String(output.contentHash || req.body?.expectedContentHash || ''),
       decision: decision as 'approved' | 'rejected',
+      idempotencyKey,
       note: String(req.body?.note || ''),
     });
+    const continued = await continueSocialImageProduction({ store, tenantId, taskId: result.task.id,
+      expectedVersion: result.task.version });
     res.setHeader('Cache-Control', 'private, no-store');
-    res.json({ ok: true, ...result, snapshot: projectSocialImageProductionSnapshot(result.task) });
+    res.json({ ok: true, ...result, ...continued, snapshot: projectSocialImageProductionSnapshot(continued.task) });
   } catch (error) {
     const failure = error instanceof SocialImageProductionRunError ? error : new SocialImageProductionRunError('social_image_decision_failed', 503);
     res.status(failure.status).json({ ok: false, code: failure.code, error: failure.code });
@@ -749,14 +773,10 @@ socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
     }
     const result = await updateSocialImageTask(store, tenantId, task.id, task.version, { outputs, generationJobs, repairInstructions, status: 'review_required', step: 'review' });
     if (result.kind !== 'updated') { res.status(result.kind === 'conflict' ? 409 : 422).json({ ok: false, error: result.kind === 'invalid' ? result.issues.join('；') : '质检结果保存失败' }); return; }
-    let reviewedTask = result.task;
-    const current = socialImageCurrentOutputs(result.task).filter(output => output.state !== 'superseded');
-    const snapshot = projectSocialImageProductionSnapshot(result.task);
-    if (current.length === 1 && snapshot.currentNode === 'director_review' && snapshot.currentStatus === 'needs_review') {
-      reviewedTask = await runSocialImageDirectorReview({ store, tenantId, taskId: result.task.id,
-        expectedVersion: result.task.version, candidateId: current[0]!.id, candidateVersion: current[0]!.version });
-    }
-    res.json({ ok: true, task: reviewedTask, checks: outputs.flatMap(output => output.qualityChecks) });
+    const continued = await continueSocialImageProduction({ store, tenantId, taskId: result.task.id,
+      expectedVersion: result.task.version });
+    res.json({ ok: true, task: continued.task, snapshot: projectSocialImageProductionSnapshot(continued.task),
+      advancedNodes: continued.advancedNodes, checks: outputs.flatMap(output => output.qualityChecks) });
   } catch (error) {
     const failure = error instanceof SocialImageQualityPreflightError ? error : null;
     res.status(failure?.status || 503).json({ ok: false, code: failure?.code || 'social_image_quality_preflight_failed',

@@ -310,8 +310,8 @@ export function socialImageCurrentOutputs(task: Pick<SocialImageCreationTask, 'o
   return [...latest.values()];
 }
 
-/** The customer approves one deliverable set, never an isolated carousel page
- * or an internal GIF background plate. Order is frozen by the paid plan. */
+/** Resolve the complete ordered review set. User approval is recorded for each
+ * deliverable in this set; internal GIF background plates stay excluded. */
 export function socialImageReviewOutputs(task: SocialImageCreationTask): SocialImageOutputNode[] {
   const current = socialImageCurrentOutputs(task).filter(output => output.state !== 'superseded');
   if (task.imageType !== 'carousel' && task.imageType !== 'gif_poster') {
@@ -423,6 +423,14 @@ export function socialImageTaskIssues(task: SocialImageCreationTask): string[] {
         || reviewOutputs.some((output, index) => artifact.mediaItems?.[index]?.candidateId !== output.id
           || artifact.mediaItems?.[index]?.role !== output.role || artifact.mediaItems?.[index]?.materialId !== output.materialId
           || artifact.mediaItems?.[index]?.mediaUrl !== output.mediaUrl)) issues.push('多图成品交付素材不完整');
+      const itemApprovals = task.approvalDecisions || [];
+      if (reviewOutputs.some(output => !itemApprovals.some(decision => decision.decision === 'approved'
+        && decision.source === 'explicit_user_action'
+        && decision.selectedCandidateRef?.id === output.id
+        && decision.selectedCandidateRef.version === output.version
+        && decision.selectedCandidateRef.contentHash === output.contentHash))) {
+        issues.push('多图成品缺少逐项用户验收凭证');
+      }
     }
   }
   return issues;

@@ -255,7 +255,15 @@ export async function updateSocialImageTask(store: DataStore, tenantId: string, 
   // candidate id/version and its pixels are unchanged. A previous director
   // verdict must not be reused across that new evidence generation.
   if (current.schemaVersion === 'social-image-creation.v3' && patch.outputs && patch.status !== 'approved') {
-    next.directorReviewDecision = undefined;
+    const previousById = new Map(current.outputs.map(output => [output.id, output]));
+    const evidenceChanged = patch.outputs.some(output => {
+      const previous = previousById.get(output.id);
+      if (!previous || output.state === 'repair_required') return true;
+      const { state: _previousState, ...previousEvidence } = previous;
+      const { state: _nextState, ...nextEvidence } = output;
+      return JSON.stringify(previousEvidence) !== JSON.stringify(nextEvidence);
+    });
+    if (evidenceChanged) next.directorReviewDecision = undefined;
   }
   if (patch.referenceSnapshot) {
     const raw = patch.referenceSnapshot as unknown as Record<string, unknown>;

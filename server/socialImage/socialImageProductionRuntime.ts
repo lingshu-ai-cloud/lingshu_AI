@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   SOCIAL_IMAGE_PRODUCTION_NODES,
   socialImageHookFactorIssues,
@@ -129,6 +129,48 @@ function activeNode(states: SocialImageProductionNodeState[]): SocialImageProduc
   return states.find(state => !['completed', 'skipped'].includes(state.status)) || states.at(-1)!;
 }
 
+const userFacingNode: Record<SocialImageProductionNodeId, { label: string; summary: string }> = {
+  task_binding: { label: '建立图片任务', summary: '正在绑定统一内容任务并核对版本。' },
+  business_context: { label: '核对生产条件', summary: '正在核对产品、事实、平台和交付要求。' },
+  asset_manifest: { label: '核验企业素材', summary: '正在核验产品图片、品牌素材及其使用授权。' },
+  reference_snapshot: { label: '读取参考内容', summary: '正在读取参考内容并冻结精确版本。' },
+  element_inventory: { label: '拆解参考画面', summary: '正在识别参考画面的构图、文字、主体与显著区域。' },
+  hook_factors: { label: '筛选关键爆点', summary: '编导正在从证据中筛选最重要的 4–5 个爆点。' },
+  adaptation: { label: '制定差异化策略', summary: '正在明确保留、等价、替换与创新的边界。' },
+  director_brief: { label: '形成导演方案', summary: '正在把爆点和企业事实整理为可验收的导演方案。' },
+  execution_plan: { label: '规划制作路线', summary: '正在选择制作路线、回退方案和最小执行范围。' },
+  render_spec: { label: '冻结图片规格', summary: '正在冻结版位、图层、文字、安全区和资产哈希。' },
+  candidate_generation: { label: '生成图片候选', summary: '正在按冻结规格生成候选；进度以服务端回执为准。' },
+  quality_check: { label: '检查图片质量', summary: '正在检查文件、版式、事实、爆点和品牌一致性。' },
+  director_review: { label: '编导独立复核', summary: '编导正在依据候选证据逐项复核爆点与差异化结果。' },
+  repair: { label: '定点修复图片', summary: '只修复失败区域，已通过的图片与证据保持不变。' },
+  user_approval: { label: '验收图片候选', summary: '图片已完成检查，请逐项采用或指出需要修改的内容。' },
+  delivery: { label: '整理图片交付', summary: '正在从已采用的精确版本生成交付包，不会自动发布。' },
+};
+
+function decisionRequest(task: SocialImageCreationTask, current: SocialImageProductionNodeState) {
+  const candidateRefs = socialImageReviewOutputs(task).map(output => ({ objectType: 'social-image-candidate',
+    id: output.id, version: output.version, contentHash: output.contentHash || '' })).filter(ref => ref.contentHash);
+  const definition = current.status === 'outcome_unknown'
+    ? { kind: 'reconcile_provider' as const, label: '继续核对结果' }
+    : current.nodeId === 'business_context' && ['needs_review', 'blocked'].includes(current.status)
+      ? { kind: 'supply_input' as const, label: '补充必要信息' }
+      : ['asset_manifest', 'reference_snapshot'].includes(current.nodeId) && current.status === 'blocked'
+        ? { kind: 'supply_input' as const, label: '处理素材或授权' }
+        : current.nodeId === 'candidate_generation' && current.status === 'waiting'
+          ? { kind: 'confirm_generation' as const, label: '确认并开始' }
+          : current.nodeId === 'repair' && current.status === 'needs_review'
+            ? { kind: 'repair' as const, label: '选择修复方案' }
+            : current.nodeId === 'user_approval' && current.status === 'needs_review'
+              ? { kind: 'review_candidates' as const, label: '逐项验收' }
+              : null;
+  if (!definition) return null;
+  const idempotencyKey = `social-image-action:${createHash('sha256').update(JSON.stringify({ taskId: task.id,
+    taskVersion: task.version, nodeId: current.nodeId, kind: definition.kind, candidateRefs })).digest('hex').slice(0, 32)}`;
+  return { decisionId: `${task.id}:${task.version}:${current.nodeId}:${definition.kind}`, ...definition,
+    taskVersion: task.version, idempotencyKey, candidateRefs };
+}
+
 function event(input: {
   runtime: SocialImageProductionRuntime;
   task: SocialImageCreationTask;
@@ -196,6 +238,10 @@ export function projectSocialImageProductionSnapshot(task: SocialImageCreationTa
   const plan = task.renderPlan;
   const completedJobs = plan?.units.filter(unit => task.generationJobs.some(job => job.id === unit.jobId && job.status === 'completed')).length || 0;
   const providerUnknown = task.generationJobs.some(job => job.status === 'outcome_unknown');
+  const reviewOutputs = socialImageReviewOutputs(task);
+  const approvalProgress = current.nodeId === 'user_approval' && reviewOutputs.length
+    ? { kind: 'known' as const, completed: reviewOutputs.filter(output => output.state === 'approved').length, total: reviewOutputs.length }
+    : null;
   const previews = socialImageCurrentOutputs(task).filter(output => output.state !== 'superseded').map(output => ({
     candidateId: output.id, candidateVersion: output.version, contentHash: output.contentHash || null,
     state: output.state as Exclude<SocialImageOutputNode['state'], 'superseded'>,
@@ -210,10 +256,16 @@ export function projectSocialImageProductionSnapshot(task: SocialImageCreationTa
     businessStage,
     currentNode: current.nodeId,
     currentStatus: current.status,
-    progress: plan?.units.length ? { kind: 'known', completed: completedJobs, total: plan.units.length } : { kind: 'indeterminate' },
+    progress: approvalProgress || (plan?.units.length ? { kind: 'known', completed: completedJobs, total: plan.units.length } : { kind: 'indeterminate' }),
     activityKey: `social_image.node.${current.nodeId}.${current.status}`,
-    waitingFor: providerUnknown ? 'provider_reconciliation' : current.status === 'needs_review' ? 'user' : current.status === 'running' ? 'system' : null,
+    nodeLabel: userFacingNode[current.nodeId].label,
+    userFacingSummary: userFacingNode[current.nodeId].summary,
+    waitingFor: providerUnknown ? 'provider_reconciliation'
+      : ['quality_check', 'director_review', 'delivery'].includes(current.nodeId) && ['waiting', 'needs_review', 'running'].includes(current.status) ? 'system'
+        : current.status === 'needs_review' || current.status === 'blocked' ? 'user'
+          : current.status === 'running' ? 'system' : null,
     canApprove: current.nodeId === 'user_approval' && current.status === 'needs_review',
+    decisionRequest: decisionRequest(task, current),
     blockingReasons: current.blockingReasons,
     previews,
     latestEventSequence: task.productionRuntime?.events.at(-1)?.sequence || 0,
