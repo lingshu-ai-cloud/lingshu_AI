@@ -273,7 +273,7 @@ export default function GlobalAssistant({
       if (current.at(-1)?.role !== 'user') return;
       setMessages(PRIMARY_ASSISTANT_THREAD, [
         ...current,
-        { role: 'assistant', content: '本次连接在 25 秒内没有返回，已停止等待。模型服务已配置，但当前本地对话链路没有及时响应，请重新发送。' },
+        { role: 'assistant', content: '本次连接在 25 秒内没有返回，已停止等待。当前请求没有及时响应，输入和选择仍保留，请重试。' },
       ]);
       setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true);
     }, ASSISTANT_UI_WATCHDOG_TIMEOUT_MS);
@@ -694,7 +694,7 @@ export default function GlobalAssistant({
     if (mode !== 'chat') return;
     const timer = window.setTimeout(() => persistThread(activeAgent), 500);
     return () => window.clearTimeout(timer);
-  }, [activeAgent, activeThread.draftInput, activeThread.focusedTaskId, activeThread.isFollowingLatest, activeThread.messages, activeThread.paused, activeThread.scrollPosition, activeThread.taskCards, activeThread.unreadCount, mode, persistThread]);
+  }, [activeAgent, activeThread.draftInput, activeThread.creationDraft, activeThread.focusedTaskId, activeThread.isFollowingLatest, activeThread.messages, activeThread.paused, activeThread.scrollPosition, activeThread.taskCards, activeThread.unreadCount, mode, persistThread]);
 
   useAssistantHomeMode(inlineHome, setMode);
   const { closeAssistant, returnToConversation, handleLauncherClick } = useAssistantPanelControls({ inlineHome,

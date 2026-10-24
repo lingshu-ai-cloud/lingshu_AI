@@ -1,9 +1,10 @@
+import type { CreationReply } from '../shared/contracts/contentCreationDialogue';
 import type { AuthSession } from './lib/auth';
 import { resolveNavigationPage, resolvePage, type Page } from './pageRegistry';
 
 export type AgentType = 'strategy' | 'traffic' | 'conversion' | 'retention';
 export interface Source { title: string; uri: string }
-export interface Message { role: 'user' | 'assistant'; content: string; sources?: Source[] }
+export interface Message { role: 'user' | 'assistant'; content: string; sources?: Source[]; creation?: CreationReply }
 export interface ConversationContext { agent: AgentType; messages?: Message[] }
 export interface Conversation { id: string; agent: AgentType; title: string; messages: Message[]; updatedAt: number }
 export interface RestoreSignal { agent: AgentType; messages: Message[]; key: string }

@@ -64,9 +64,15 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
       ['请说明本周重点', '本周先核对计划。']);
     assert.equal(persisted, 1);
     assert.equal(abort.current, null);
+    const creationSelection = { referenceId: 'verified-ref', productIds: ['verified-product'], shotIds: ['verified-shot'], evidenceVersion: 'a'.repeat(64) };
+    store.hydrateThread('business', { creationDraft: creationSelection, messages: [...useAssistantStore.getState().threads.business.messages,
+      { role: 'assistant', content: '选择已保留', creation: { stage: 'shots', selection: creationSelection, referenceTitle: '参考', products: [], shots: [], narrations: [], gaps: [], presenterIds: [] } }] });
+    await send('请写一条视频脚本');
+    assert.equal(requestedUrl, '/api/overseas/strategy/chat', 'free-creation follow-up must not launch production');
+    assert.deepEqual(requestedBody.creationSelection, creationSelection, 'reference/product/shot identities reach the server validation boundary');
     fence.current.active = false;
     await send('身份已切换后的旧请求');
-    assert.equal(requests, 1, '旧实例失效后不得再向模型发送请求');
+    assert.equal(requests, 2, '旧实例失效后不得再向模型发送请求');
   } finally {
     globalThis.fetch = originalFetch;
     Object.assign(globalThis, { window: originalWindow, localStorage: originalStorage });

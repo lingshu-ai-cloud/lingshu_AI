@@ -1,6 +1,6 @@
 import { Button } from 'antd';
 import { useEffect, useRef, useState } from 'react';
-import { Eye, Images, Loader2, Pencil, Play, Star, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Eye, Images, Loader2, Pencil, Play, Star, Trash2 } from 'lucide-react';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import type { TrendVideo } from '../lib/inspirationTypes';
 import { AuthenticatedVideo, ThumbnailImage, VideoThumbnail } from './inspiration/InspirationMedia';
@@ -21,6 +21,7 @@ interface VideoCardProps {
   favoritingMaterial?: boolean;
   isFavoriteMaterial?: boolean;
   createLabel?: string;
+  creatorCard?: boolean;
   creating?: boolean;
   createDisabled?: boolean;
   createDisabledReason?: string;
@@ -48,7 +49,9 @@ export function trendVideoAspectRatio(video: TrendVideo): number {
     const height = Number(match[2]);
     if (width > 0 && height > 0) return width / height;
   }
-  return video.contentFormat === 'image' ? 1 : 9 / 16;
+  // Unknown geometry is a neutral placeholder; real thumbnail/video dimensions
+  // replace it on load, without assuming every historical video is vertical.
+  return 1;
 }
 
 function useNearViewportMedia(mediaKey: string) {
@@ -77,18 +80,27 @@ function useNearViewportMedia(mediaKey: string) {
   return { cardRef, enabled, enable: () => setEnabledKey(mediaKey) };
 }
 
-export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEditManage, onDeleteManage, onFavoriteMaterial, favoritingMaterial, isFavoriteMaterial, createLabel, creating, createDisabled, createDisabledReason }: VideoCardProps) {
+export function VideoCard({ video, creatorCard = false, isSelected, onSelect, onCreate, onWatch, onEditManage, onDeleteManage, onFavoriteMaterial, favoritingMaterial, isFavoriteMaterial, createLabel, creating, createDisabled, createDisabledReason }: VideoCardProps) {
   const meta = getPlatformMeta(video.platform);
   const isImagePost = video.contentFormat === 'image';
   const media = useNearViewportMedia(video.videoUrl ? JSON.stringify([video.id, video.videoUrl]) : '');
   const [mediaReady, setMediaReady] = useState(false);
+  const [previewError, setPreviewError] = useState('');
+  const [pointerPreview, setPointerPreview] = useState(false);
+  const [focusPreview, setFocusPreview] = useState(false);
+  const previewActive = pointerPreview || focusPreview;
   const [mediaAspectRatio, setMediaAspectRatio] = useState(() => trendVideoAspectRatio(video));
   const videoAspectRatioLockedRef = useRef(false);
   useEffect(() => {
     videoAspectRatioLockedRef.current = false;
     setMediaReady(false);
+    setPreviewError('');
     setMediaAspectRatio(trendVideoAspectRatio(video));
   }, [video.id, video.thumbnail, video.videoUrl]);
+  const frameAspectRatio = creatorCard ? Math.min(4 / 3, Math.max(4 / 5, mediaAspectRatio)) : mediaAspectRatio;
+  const mediaFitClass = 'object-cover';
+  const duration = Math.max(0, Math.floor(video.duration || 0));
+  const durationLabel = `${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, '0')}`;
   const imageQueue = imagePostAnalysisQueuePresentation(video);
   const imageAnalyzed = !imageQueue && video.aiAnalysis?.imageEvidence?.status === 'analyzed' && Boolean(video.aiAnalysis.imageEvidence.observedFacts?.length);
   const imageFailed = video.aiAnalysis?.imageAnalysisStatus === 'failed' || video.status === 'failed';
@@ -97,23 +109,26 @@ export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEd
     : video.trend === 'hot' ? '🔥 热门' : video.trend === 'rising' ? '↑ 上升' : '— 平稳';
   const analysisProgress = video.aiAnalysis?.analysisProgress;
   const analysisStage = analysisProgress?.stage;
+  const analysisNotRequested = video.aiAnalysis?.geminiStatus === 'not_requested';
   const analysisPaused = ['paused', 'cancelled'].includes(String(analysisStage || '')) || video.aiAnalysis?.geminiStatus === 'paused';
   const analysisActive = ['queued', 'downloading', 'transcoding', 'analyzing', 'extracting_evidence'].includes(String(analysisStage || ''));
   const mediaState = !analysisPaused && (imageQueue?.state === 'unknown' || imageFailed || analysisStage === 'failed')
     ? 'error'
-    : analysisActive || (video.status === 'pending' && !analysisPaused)
+    : analysisActive || (video.status === 'pending' && !analysisPaused && !analysisNotRequested)
       ? 'processing'
       : 'ready';
   return (
-    <article ref={media.cardRef} onPointerEnter={media.enable} onFocusCapture={media.enable}
-      className={`ls-viral-card group flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface transition-colors duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] hover:border-border-bright ${isSelected ? 'border-accent ring-1 ring-accent/20' : ''}`}>
+    <article ref={media.cardRef} onPointerEnter={() => { media.enable(); setPointerPreview(true); }} onPointerLeave={() => setPointerPreview(false)}
+      onFocusCapture={() => { media.enable(); setFocusPreview(true); }} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocusPreview(false); }}
+      className={`ls-viral-card group flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface transition-colors duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] hover:border-border-bright ${creatorCard ? 'creator-media-card' : ''} ${isSelected ? 'border-accent ring-1 ring-accent/20' : ''}`}
+      data-preview-active={creatorCard && previewActive ? 'true' : undefined}>
       <div
-        className="relative block w-full overflow-hidden text-left"
-        style={{ background: 'var(--color-surface-2)', aspectRatio: mediaAspectRatio }}>
+        className={`relative block w-full overflow-hidden text-left ${creatorCard ? 'rounded-lg' : ''}`}
+        style={{ background: 'var(--color-surface-2)', aspectRatio: frameAspectRatio }}>
         <LsMediaStateFrame state={mediaState} percent={analysisProgress?.percent} label={imageQueue?.label || (isImagePost && mediaState === 'processing' ? '分析中' : isImagePost && mediaState === 'error' ? '分析失败，可查看详情后重试' : analysisProgress?.stageLabel)} className="absolute inset-0">
           <VideoThumbnail platform={video.platform} title={video.title} />
           {video.thumbnail && (
-            <ThumbnailImage src={video.thumbnail} platform={video.platform} title={video.title} className="absolute inset-0 h-full w-full object-cover" onNaturalAspectRatio={ratio => {
+            <ThumbnailImage src={video.thumbnail} platform={video.platform} title={video.title} className={`absolute inset-0 h-full w-full ${mediaFitClass}`} onNaturalAspectRatio={ratio => {
               if (!videoAspectRatioLockedRef.current) setMediaAspectRatio(ratio);
             }} />
           )}
@@ -124,8 +139,9 @@ export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEd
               loadOnMount
               previewFrame
               preload="auto"
-              hoverPlay
-              className={`absolute inset-0 w-full h-full object-cover ls-media-reveal ${mediaReady ? 'opacity-100' : 'opacity-0'}`}
+              hoverPlay={!creatorCard}
+              previewActive={creatorCard ? previewActive : undefined}
+              className={`absolute inset-0 w-full h-full ${mediaFitClass} ls-media-reveal ${mediaReady ? 'opacity-100' : 'opacity-0'}`}
               onMetadata={metadata => {
                 if (metadata.width > 0 && metadata.height > 0) {
                   videoAspectRatioLockedRef.current = true;
@@ -133,7 +149,7 @@ export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEd
                 }
               }}
               onReady={() => setMediaReady(true)}
-              onError={() => setMediaReady(false)}
+              onError={message => { setMediaReady(false); setPreviewError(message || '视频暂不可用'); }}
             />
           ) : null}
         </LsMediaStateFrame>
@@ -141,12 +157,21 @@ export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEd
           type="button"
           aria-label={`${isImagePost ? '查看图文' : '播放视频'} ${video.title}`}
           onClick={onWatch}
-          className="ls-touch-media-reveal absolute inset-0 z-10 flex items-center justify-center bg-black/25 opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white"
+          className={creatorCard ? 'absolute inset-0 z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent' : 'ls-touch-media-reveal absolute inset-0 z-10 flex items-center justify-center bg-black/25 opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white'}
         >
-          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-neutral-900 shadow-none" aria-hidden="true">
+          {!creatorCard && <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-neutral-900 shadow-none" aria-hidden="true">
             {isImagePost ? <Images size={16} /> : <Play size={16} fill="currentColor" />}
-          </span>
+          </span>}
         </button>
+        {creatorCard && <div className="creator-card__tools absolute inset-x-2 top-2 z-30 flex items-start justify-between gap-1">
+          <span className="pointer-events-none inline-flex items-center gap-1 rounded bg-black/55 px-1.5 py-1 text-xs text-white" title={meta.label}>
+            <SocialPlatformIcon platform={video.platform} size={12}/><span>{isImagePost ? '图文' : durationLabel}</span>
+          </span>
+          <div className="flex shrink-0 gap-1">
+            <Button size="small" type="text" className="!bg-black/55 !text-white hover:!bg-black/75" icon={<Eye size={14}/>} aria-label={`查看详情 ${video.title}`} title="查看详情" onClick={() => { setPointerPreview(false); setFocusPreview(false); onSelect(); }}/>
+            <Button size="small" type="text" className="!bg-black/55 !text-white hover:!bg-black/75" icon={<ArrowUpRight size={14}/>} aria-label={`${createLabel || '用于创作'} ${video.title}`} title={createDisabled ? createDisabledReason : createLabel || '用于创作'} onClick={() => { setPointerPreview(false); setFocusPreview(false); onCreate(); }} loading={creating} disabled={createDisabled}/>
+          </div>
+        </div>}
         {(onDeleteManage || (!isImagePost && onFavoriteMaterial)) && <div className="ls-touch-media-reveal absolute right-2 top-2 z-40 flex gap-1.5 opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
           {!isImagePost && onFavoriteMaterial && <Button size="small" shape="circle"
             icon={favoritingMaterial ? <Loader2 size={13} className="animate-spin"/> : <Star size={13} fill={isFavoriteMaterial ? 'currentColor' : 'none'}/>} onClick={onFavoriteMaterial} disabled={favoritingMaterial}
@@ -155,7 +180,7 @@ export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEd
           {onDeleteManage && <Button size="small" shape="circle" danger icon={<Trash2 size={13}/>} onClick={onDeleteManage}
             title="删除" aria-label={`删除 ${video.title}`} className="!border-white/25 !bg-black/65 !text-white hover:!bg-red-600" />}
         </div>}
-        <div className="ls-touch-media-reveal absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/85 via-black/55 to-transparent px-3 pb-3 pt-10 text-white opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+        {!creatorCard && <div className="ls-touch-media-reveal absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black/85 via-black/55 to-transparent px-3 pb-3 pt-10 text-white opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
           <p className="mb-1 inline-flex items-center gap-1.5 text-xs text-white/80"><SocialPlatformIcon platform={video.platform} size={13} />{meta.label}<span aria-hidden="true">·</span>{isImagePost ? '图文' : `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')}`}</p>
           {mediaState !== 'ready' && <p role="status" className="mb-1 text-xs text-white/80">{mediaState === 'error' ? '分析失败' : analysisProgress?.stageLabel || '分析中'}</p>}
           <p className="line-clamp-2 text-sm font-semibold" title={video.title}>{video.title}</p>
@@ -165,8 +190,11 @@ export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEd
             <Button size="small" type="primary" onClick={onCreate} loading={creating} disabled={createDisabled} title={createDisabled ? createDisabledReason : undefined}>{createLabel || '用于创作'}</Button>
             {onEditManage && <Button size="small" onClick={onEditManage} icon={<Pencil size={13}/>} aria-label="编辑素材" />}
           </div>
-        </div>
+        </div>}
       </div>
+      {creatorCard && previewError && <span role="status" className="mt-1 text-xs text-text-muted" title={previewError}>视频暂不可用</span>}
+      {creatorCard && analysisNotRequested && <span role="status" className="mt-1 text-xs text-text-muted">历史参考 · 待全片分析</span>}
+      {creatorCard && <button type="button" className="creator-card__title line-clamp-2 w-full text-left text-xs leading-relaxed text-text-primary" title={video.title} onClick={onSelect}>{video.title}</button>}
     </article>
   );
 }

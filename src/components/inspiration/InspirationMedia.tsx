@@ -103,7 +103,7 @@ export function AuthenticatedImage({ src, alt, className, onReady, onError, onNa
     : <div className={`${className} bg-surface-2`} aria-label={alt} />;
 }
 
-export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, loadOnMount = autoPlay, hoverPlay = false, previewFrame = false, preload = previewFrame ? 'auto' : 'metadata', onReady, onError, onLoadingChange, onMetadata }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; loadOnMount?: boolean; hoverPlay?: boolean; previewFrame?: boolean; preload?: 'none' | 'metadata' | 'auto'; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void; onMetadata?: (metadata: { width: number; height: number; duration: number }) => void }) {
+export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, loadOnMount = autoPlay, hoverPlay = false, previewActive, previewFrame = false, preload = previewFrame ? 'auto' : 'metadata', onReady, onError, onLoadingChange, onMetadata }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; loadOnMount?: boolean; hoverPlay?: boolean; previewActive?: boolean; previewFrame?: boolean; preload?: 'none' | 'metadata' | 'auto'; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void; onMetadata?: (metadata: { width: number; height: number; duration: number }) => void }) {
   const [playbackUrl, setPlaybackUrl] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const requestRef = useRef<Promise<string> | null>(null);
@@ -189,7 +189,15 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
     };
   }, [apiUrl, loadOnMount]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (autoPlay && playbackUrl) void videoRef.current?.play().catch(() => {}); }, [autoPlay, playbackUrl]);
-  return <video ref={videoRef} src={playbackUrl || undefined} poster={poster} controls={controls} autoPlay={autoPlay} muted={!controls} playsInline loop={hoverPlay} preload={preload} className={className}
+  useEffect(() => {
+    if (previewActive === undefined) return;
+    let cancelled = false;
+    const video = videoRef.current;
+    if (previewActive) void load().then(url => { if (!cancelled && url) void videoRef.current?.play().catch(() => {}); });
+    else if (video) { video.pause(); if (video.readyState >= 1) video.currentTime = 0; }
+    return () => { cancelled = true; videoRef.current?.pause(); };
+  }, [previewActive, playbackUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  return <video ref={videoRef} src={playbackUrl || undefined} poster={poster} controls={controls} autoPlay={autoPlay} muted={!controls} playsInline loop={hoverPlay || previewActive === true} preload={preload} className={className}
     onLoadedMetadata={() => {
       const video = videoRef.current;
       if (video) onMetadata?.({ width: video.videoWidth, height: video.videoHeight, duration: video.duration });
@@ -197,12 +205,12 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
       // A controls-based preview is already useful once metadata is available,
       // so do not leave the loading state over visible media.
       if (controls) reportMediaReady();
-      if (!previewFrame || !video || !Number.isFinite(video.duration) || video.duration <= 0) return;
+      if (previewActive === true || !previewFrame || !video || !Number.isFinite(video.duration) || video.duration <= 0) return;
       // A tiny seek paints a reliable first frame for uploaded MP4s whose frame
       // at 0s is transparent/black and which do not yet have a poster asset.
       video.currentTime = Math.min(0.12, Math.max(0.01, video.duration / 20));
     }}
-    onLoadedData={() => { if (previewFrame) videoRef.current?.pause(); reportMediaReady(); }}
+    onLoadedData={() => { if (previewFrame && previewActive !== true) videoRef.current?.pause(); reportMediaReady(); }}
     onCanPlay={reportMediaReady}
     onPlaying={reportMediaReady}
     onError={() => {

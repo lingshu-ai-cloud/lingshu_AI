@@ -1,3 +1,5 @@
+import { CreationDialogueError } from '../assistantContext/contentCreationDialogue.js';
+import { registerContentCreationDialogue, readCreationChatGrounding } from './contentCreationDialogue.js';
 import {readAuthorizedWhatsAppCustomers} from '../whatsapp/authorizedCustomerRead.js';
 import { Router } from 'express';
 import { callLLM, callLLMChatStream, type ChatMessage } from '../agents/llm.js';
@@ -80,6 +82,7 @@ ${ASSISTANT_DETAILS_POLICY}
 
 export const strategyRouter = Router();
 strategyRouter.use(requireAuth);
+registerContentCreationDialogue(strategyRouter);
 
 type AdvisorSnapshot = {
   exposureReady: boolean;
@@ -393,6 +396,11 @@ strategyRouter.post('/chat', async (req, res) => {
     res.status(error instanceof ChatInputError ? error.status : 400).json({ error: error instanceof Error ? error.message : 'invalid_chat_messages' });
     return;
   }
+  let creationGrounding = '';
+  if (req.body?.creationSelection !== undefined) {
+    try { creationGrounding = await readCreationChatGrounding(tenantId, req.body.creationSelection); }
+    catch (error) { res.status(error instanceof CreationDialogueError ? error.status : 503).json({ error: error instanceof CreationDialogueError ? error.code : 'creation_selection_unavailable', message: error instanceof CreationDialogueError ? error.message : '创作选择读取失败，请重试。' }); return; }
+  }
   const deepThinking = req.body?.deepThinking === true;
   if (!await consumeDemoQuota(req, res, 'aiChat')) return;
 
@@ -408,7 +416,7 @@ strategyRouter.post('/chat', async (req, res) => {
     const question = typeof req.body?.userQuestion === 'string' ? req.body.userQuestion.slice(0, 4000) : messages.at(-1)!.content.slice(-4000);
     const grounding = await buildChatGrounding({ tenantId, userId }, { role, question });
     const sourceRule = requireSources ? '\n\n【联网来源硬规则】本轮涉及联网搜索/公开信息核验，必须使用联网检索结果，并通过 sources 事件返回可点击来源；如果无法取得来源，不要给出联网结论，改为说明需要重新检索。' : '';
-    const systemPrompt = `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${sourceRule}\n\n${grounding.text}\n${ASSISTANT_CONTEXT_RULES}`;
+    const systemPrompt = `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${sourceRule}\n\n${grounding.text}\n${creationGrounding}\n${ASSISTANT_CONTEXT_RULES}`;
     for await (const ev of callLLMChatStream(messages, { systemPrompt, deepThinking, requireSources })) {
       res.write(`data: ${JSON.stringify(ev)}\n\n`);
     }

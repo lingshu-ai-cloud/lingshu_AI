@@ -217,8 +217,11 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     workspace: { label: '查看排期', href: '/?page=digitalEmployees&focus=run%3Aone' },
     updatedAt: 1_796_000_000_000,
   };
+  const creationDraft = { referenceId: 'ref-one', productIds: ['product-one'], shotIds: [], evidenceVersion: 'a'.repeat(64) };
+  const creation = { stage: 'products', selection: creationDraft, referenceTitle: '参考 A', products: [{ id: 'product-one', name: '产品 A' }], shots: [], narrations: [], gaps: [], presenterIds: [] };
   const valid = {
-    messages: [{ role: 'user', content: '请规划本周内容' }, { role: 'assistant', content: '请确认计划。' }],
+    creationDraft,
+    messages: [{ role: 'user', content: '请规划本周内容' }, { role: 'assistant', content: '请确认计划。', creation }],
     draftInput: '我想先调整预算',
     scrollPosition: 288,
     unreadCount: 2,
@@ -246,6 +249,8 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     });
 
     const loaded = await fetch(`${base}/business`, { headers }).then(response => response.json());
+    assert.deepEqual(loaded.creationDraft, creationDraft);
+    assert.deepEqual(loaded.messages[1].creation, creation);
     assert.equal(loaded.draftInput, valid.draftInput);
     assert.equal(loaded.scrollPosition, 288);
     assert.equal(loaded.taskCards['run:one'].primaryAction.actionId, undefined,
@@ -258,6 +263,7 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     const partialBody = await legacyPartial.json();
     assert.equal(partialBody.draftInput, '旧客户端只更新草稿');
     assert.equal(partialBody.version, 2);
+    assert.deepEqual(partialBody.creationDraft, creationDraft, 'old-client partial updates preserve creation selection');
     assert.equal(partialBody.paused, true);
     assert.equal(partialBody.focusedTaskId, 'run:one');
     assert.deepEqual(Object.keys(partialBody.taskCards), ['run:one']);
@@ -266,6 +272,7 @@ test('assistant thread state persists bounded task cards and rejects malformed o
       headers: { ...headers, 'x-test-tenant': 'tenant-b' },
     }).then(response => response.json());
     assert.deepEqual(otherTenant.taskCards, {});
+    assert.equal(otherTenant.creationDraft ?? null, null);
     assert.equal(otherTenant.focusedTaskId, null);
 
     const legacy = await fetch(`${base}/customer`, { headers }).then(response => response.json());

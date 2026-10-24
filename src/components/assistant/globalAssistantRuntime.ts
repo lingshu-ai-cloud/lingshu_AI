@@ -143,6 +143,7 @@ export const ASSISTANT_PERSIST_KEEPALIVE_MAX_BYTES = 60 * 1024;
 
 export function emptyAssistantThread(): AgentThreadState {
   return {
+    creationDraft: null,
     version: 0,
     updatedAt: '',
     messages: [],
@@ -157,7 +158,7 @@ export function emptyAssistantThread(): AgentThreadState {
 }
 
 /**
- * Conversation text is transient by default. Persisted assistant threads may
+ * Ordinary conversation text is transient by default; an active creation draft restores its scoped dialogue. Persisted assistant threads may
  * restore operational cards and their CAS metadata, but they must not make a
  * newly opened conversation look like the previous one. Explicitly saved
  * conversations are restored through the `restore` prop instead.
@@ -165,8 +166,8 @@ export function emptyAssistantThread(): AgentThreadState {
 export function withoutPersistedConversation(thread: AgentThreadState): AgentThreadState {
   return {
     ...thread,
-    messages: [],
-    draftInput: '',
+    messages: thread.creationDraft ? thread.messages : [],
+    draftInput: thread.creationDraft ? thread.draftInput : '',
     scrollPosition: 0,
     unreadCount: 0,
     isFollowingLatest: true,
@@ -248,6 +249,7 @@ export function persistedAssistantThread(value: unknown, fallback: AgentThreadSt
   const version = Number(source.version);
   if (!Number.isSafeInteger(version) || version < 0) return null;
   return {
+    creationDraft: source.creationDraft ?? null,
     version,
     updatedAt: typeof source.updatedAt === 'string' ? source.updatedAt : '',
     messages: Array.isArray(source.messages) ? source.messages : [],
@@ -382,7 +384,7 @@ export function mergeConsecutiveAssistant(list: Message[]): Message[] {
   const merged: Message[] = [];
   for (const msg of list) {
     const last = merged[merged.length - 1];
-    if (last?.role === 'assistant' && msg.role === 'assistant') {
+    if (last?.role === 'assistant' && msg.role === 'assistant' && !last.creation && !msg.creation) {
       last.content = [last.content, msg.content].filter(Boolean).join('\n\n');
       last.sources = msg.sources ?? last.sources;
     } else {

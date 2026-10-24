@@ -1,3 +1,4 @@
+import type { CreationSelection } from '../../shared/contracts/contentCreationDialogue';
 import { create } from 'zustand';
 import type { Message } from '../App';
 import type { AssistantActionId, AssistantActionTarget, AssistantCardItem } from '../../shared/contracts/assistantActions';
@@ -46,6 +47,7 @@ export type AssistantTaskCardInput = Omit<AssistantTaskCard, 'details' | 'items'
 };
 
 export interface AgentThreadState {
+  creationDraft?: CreationSelection | null;
   version: number;
   updatedAt: string;
   messages: Message[];
@@ -181,6 +183,7 @@ export function upsertAssistantTaskCard(
 }
 
 const emptyThread = (): AgentThreadState => ({
+  creationDraft: null,
   version: 0,
   updatedAt: '',
   messages: [],

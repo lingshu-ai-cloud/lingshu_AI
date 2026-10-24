@@ -1,3 +1,4 @@
+import { creationDialogueFixture } from '../../scripts/fixtures/contentCreationDialogue.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -25,7 +26,7 @@ function close(server: http.Server | undefined): Promise<void> {
 /** Actual HTTP/auth/storage/provider transport; the local fixture is not a language-quality eval. */
 test('strategy chat grounds actual local records with tenant/user/role isolation and memory revocation', { timeout: 30_000 }, async () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-chat-grounding-'));
-  const keys = ['NODE_ENV', 'ENABLE_LOCAL_DEV_FALLBACK', 'DISABLE_LOCAL_AUTH_FALLBACK', 'LOCAL_STORE_DIR', 'LOCAL_AUTH_ACCOUNTS_FILE', 'LOCAL_TENANTS_DATA_FILE', 'LOCAL_DEMO_TOKEN_SECRET', 'DATA_BACKEND', 'DEMO_MODE', 'DASHSCOPE_BASE_URL', 'DASHSCOPE_API_KEY', 'OVERSEAS_LLM_BACKEND', 'PB_URL', 'PB_ADMIN_EMAIL', 'PB_ADMIN_PASSWORD'] as const;
+  const keys = ['NODE_ENV', 'ENABLE_LOCAL_DEV_FALLBACK', 'DISABLE_LOCAL_AUTH_FALLBACK', 'LOCAL_STORE_DIR', 'LOCAL_AUTH_ACCOUNTS_FILE', 'LOCAL_TENANTS_DATA_FILE', 'LOCAL_DEMO_TOKEN_SECRET', 'DATA_BACKEND', 'DEMO_MODE', 'DASHSCOPE_BASE_URL', 'DASHSCOPE_API_KEY', 'OVERSEAS_LLM_BACKEND', 'PB_URL', 'PB_ADMIN_EMAIL', 'PB_ADMIN_PASSWORD', 'MATERIAL_LIBRARY_FILE'] as const;
   const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   let provider: http.Server | undefined;
   let application: http.Server | undefined;
@@ -33,6 +34,9 @@ test('strategy chat grounds actual local records with tenant/user/role isolation
   const captured: Array<{ messages: Array<{ role: string; content: string }>; stream: boolean }> = [];
   let unexpectedProviderRequests = 0;
   try {
+    process.env.MATERIAL_LIBRARY_FILE = path.join(temporary, 'materials.json');
+    fs.writeFileSync(process.env.MATERIAL_LIBRARY_FILE, '[]');
+    const creationFixture = creationDialogueFixture();
     process.env.NODE_ENV = 'test';
     process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
     delete process.env.DISABLE_LOCAL_AUTH_FALLBACK;
@@ -79,8 +83,10 @@ test('strategy chat grounds actual local records with tenant/user/role isolation
     const memberToken = identity.issueLocalIdentityTokenForTest({ tenantId, userId: 'grounding-member', role: 'customer_service' });
     const foreignToken = identity.issueLocalIdentityTokenForTest({ tenantId: foreignTenantId, userId: 'foreign-admin', role: 'admin' });
     await authority.runWithDataAuthority('local', async () => {
-      assert.ok(await store.create('tenant_profiles', { tenant_id: tenantId, profile: { company: { name: '真实租户经营企业', industry: '设备', primaryLanguages: '英语' }, products: { categories: '测试设备' }, knowledge: '当前企业核验资料', dataGovernance: { aiAccessEnabled: true } } }));
+      assert.ok(await store.create('tenant_profiles', { tenant_id: tenantId, profile: { company: { name: '真实租户经营企业', industry: '设备', primaryLanguages: '英语' }, products: { categories: '测试设备', items: creationFixture.profile.products.items }, knowledge: '当前企业核验资料', dataGovernance: { aiAccessEnabled: true } } }));
       assert.ok(await store.create('tenant_profiles', { tenant_id: foreignTenantId, profile: { company: { name: 'FOREIGN_TENANT_SECRET' }, products: {}, knowledge: 'FOREIGN_KNOWLEDGE_SECRET', dataGovernance: { aiAccessEnabled: true } } }));
+      assert.ok(await store.create('trend_videos', { ...creationFixture.reference, tenantId }));
+      for (const [index, material] of creationFixture.materials.entries()) assert.ok(await store.create('materials', { ...material, id: `acceptance-material-${index}`, tenantId }));
       assert.ok(await store.create('workflow_tasks', { id: 'actual-blocked-task', tenant_id: tenantId, task_key: 'publish_content', title: '等待真实审批的内容', status: 'blocked', blocked_reason: 'ACTUAL_PENDING_APPROVAL', updated_at: '2026-10-10T01:00:00Z' }));
       assert.ok(await store.create('workflow_tasks', { id: 'foreign-task', tenant_id: foreignTenantId, task_key: 'private_task', status: 'blocked', blocked_reason: 'FOREIGN_TASK_SECRET', updated_at: '2026-10-10T01:00:00Z' }));
     });
@@ -141,6 +147,23 @@ test('strategy chat grounds actual local records with tenant/user/role isolation
     const afterRevoke = await chat(adminToken);
     assert.ok(!afterRevoke.includes('PERSONAL_SAVED_BUDGET_1000'));
     assert.ok(afterRevoke.includes('ACTUAL_PENDING_APPROVAL'));
+    const selection = { referenceId: 'fixture-video', productIds: ['fixture-product'], shotIds: [] };
+    const planning = await api(adminToken, '/creation-dialogue', { action: 'products', selection, instruction: '请创作产品视频' });
+    assert.equal(planning.status, 200, await planning.clone().text());
+    const planned = await planning.json() as import('../../shared/contracts/contentCreationDialogue.js').CreationReply;
+    assert.equal(planned.shots.length, 4);
+    const selected = { ...planned.selection, shotIds: planned.shots.map(shot => shot.id) };
+    const grounded = await api(adminToken, '/chat', { messages: [{ role: 'user', content: '根据我的选择再解释口播依据' }], creationSelection: selected });
+    assert.equal(grounded.status, 200, await grounded.clone().text()); await grounded.text();
+    const creationPrompt = captured.at(-1)!.messages.find(message => message.role === 'system')!.content;
+    assert.ok(creationPrompt.includes('服务端核验的自由创作选择'));
+    assert.ok(creationPrompt.includes('fixture-video')); assert.ok(creationPrompt.includes('fixture-product'));
+    assert.ok(creationPrompt.includes('机器正在装配杯身')); assert.ok(!creationPrompt.includes('FOREIGN_'));
+    const beforeForbidden = captured.length;
+    const forbidden = await api(foreignToken, '/chat', { messages: [{ role: 'user', content: '查看参考' }], creationSelection: selected });
+    assert.equal(forbidden.status, 404); assert.equal(captured.length, beforeForbidden, 'foreign reference never reaches the model');
+    const forged = await api(adminToken, '/chat', { messages: [{ role: 'user', content: '使用伪造分镜' }], creationSelection: { ...selected, shotIds: ['mat:forged'] } });
+    assert.equal(forged.status, 409); assert.equal(captured.length, beforeForbidden);
     assert.equal(unexpectedProviderRequests, 0, 'No PocketBase or non-chat provider endpoint may be contacted');
     assert.ok(fs.existsSync(path.join(temporary, 'store', 'assistant_decision_memories.json')));
   } finally {
