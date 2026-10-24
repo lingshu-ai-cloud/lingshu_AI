@@ -2,6 +2,13 @@
 
 更新时间：2026-10-24（Asia/Shanghai）
 
+## 会话合并结果推进当前主基线（2026-10-24）
+
+- 当前主集成树 `/Users/jiejie/Documents/lingshu-AI`、分支 `xixi改五个大文件结构治理` 在工作区干净且 HEAD 为 `3f4d32a0afc229ce0eccef6e559397b31153dac1` 时，核对功能快照 `d5d80e86c5a263c403fbc106b0f73d015fac0d8b`、无冲突合并点 `081356e0b260554c513abb43f90d78f8c738f9be` 及治理提交 `53ae71c69b27643a303170f8ed12083c5f905207` 的祖先关系后，以 `git merge --ff-only 53ae71c6` 快进吸收完整结果。来源工作树保持干净且未被重置、归档或删除；安全恢复点为 `3f4d32a0`。
+- 合入内容为灵小枢对话参考媒体与爆款复刻续接、数字员工首页三类工作卡与爆款库入口、经营总览健康度交互、成片批量生成本地待发布草稿等 34 个源码/测试文件；批量草稿不会执行真实发布。合入过程无冲突，最终树保留原合并提交的双亲历史。
+- 当前主树实际通过：受影响领域定向回归 **23/23**、`pnpm run lint`、`pnpm run check:architecture`（2,697 个生产 TypeScript 文件，1 个历史超限文件维持冻结预算）、`pnpm run check:digital-employee-migrations`（199 项仓库文件只读检查）、`pnpm run build`、`pnpm run build:account-hub`、`git diff --check`。随后以本机受控 `PB_BIN` 和 `NODE_OPTIONS=--max-old-space-size=4096` 执行完整 `pnpm run quality`，最终退出码 **0**；其中每周黄金流程 42/42、数字人/视频生产 212/212，两轮 LangGraph、本地 PocketBase/HTTP/Worker 集成、投流、安全边界、最终 TypeScript 及两项构建均通过。Studio 主 chunk 为 369,019/485,000 字节，其他大于 500 kB 的分块仍有构建提示。
+- 本次未运行 `verify`，未执行真实供应商/付费调用、OAuth、目标数据库迁移、真实发布、推送或部署，也未做登录后真实租户 E2E。源码质量通过不等于供应商 Ready 或发布就绪；已有本地预览进程仍需按其实际加载 SHA 单独核对。
+
 ## 当前会话修改封装并合入指定本地基线（2026-10-24）
 
 - 本次在工作树 `/Users/jiejie/.codex/worktrees/e08e/lingshu-AI` 核对 Git 根目录后，从用户指定且实际检出的 `3f4d32a0afc229ce0eccef6e559397b31153dac1` 开始。当前会话的 34 个源码与测试文件先封装到本地功能分支 `codex/session-workspace-updates-20261024`，提交为 `d5d80e86c5a263c403fbc106b0f73d015fac0d8b`；随后从指定提交创建本地集成分支 `codex/baseline-3f4d32a-session-merge-20261024`，经只读三方合并预检确认无冲突后，以 `--no-ff` 合并为 `081356e0b260554c513abb43f90d78f8c738f9be`。本文档作为独立治理提交追加在该合并提交之后。
