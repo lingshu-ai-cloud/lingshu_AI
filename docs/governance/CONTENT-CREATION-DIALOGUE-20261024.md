@@ -125,3 +125,13 @@ CREATION_FIXTURE_PORT=5214 node --import tsx scripts/content-creation-dialogue-p
 实际验证：9项定向回归（卡片懒加载/替换、原始与受限比例、cover、pointer/focus/参考选择停止、首页契约、媒体兼容、预览边界）、`pnpm run lint`、`pnpm run check:architecture`（2691生产文件）及`git diff --check`通过。5215完整应用继续读取真实历史副本；实屏五张卡同宽约201px，标题computed font-size=12px。真实视频悬停paused=false且currentTime推进，移出paused=true/currentTime=0；键盘Tab进入操作同样预览。实点去创作后原视频ID进入输入区，无路由跳转或生产任务。保留缺失视频的暂不可用提示。截图位于独立运行目录`history-muse-five-columns.png`，临时viewport已复位。
 
 未跑全仓quality/build或真实供应商E2E，未迁移/部署；无外部run/task ID。恢复点为前次功能提交`a258dd0c`及运行目录`before-history-restore/`，原历史来源未修改。本次是独立功能分支迭代，不推进共享集成基线。
+
+## 连续五列历史素材墙补全（2026-10-24）
+
+用户指出仅一排不足以验收瀑布流，明确要求更多本地真实历史文件。只读核对原始素材表和另一历史档案，发现7段TikTok参考、2段原授权剪辑、2段历史参考均有原视频；其余120条旧采集记录大量缺失视频，不把元数据凑作可播放素材。使用既有local DataStore及对象存储owner，在5215隔离预览中按来源URL/SHA256去重，新增11条reference-only索引：保留原时间、真实标题/平台/来源、原材料ID、原局部分析状态与片段，原文件逐字节复制，封面从原视频截取。未伪造全片分析、热度或人物授权，不调用供应商或产生队列。原记录与来源文件均不变。
+
+当前共36条参考记录，授权列表及既有筛选显示16张首页卡片。新增参考`pending + geminiStatus=not_requested`明确表示未请求全片分析；`InspirationVideoCards.tsx`将它展示为“历史参考 · 待全片分析”，不把尚未请求的任务画成运行中进度。局部素材分析不等同于新参考全片证据，现有创作校验继续保留。
+
+验证：新增11条真实视频/封面HTTP、源/目标SHA256全部一致；浏览器16张卡片保持五个固定x列，同宽约201px，卡片高度与列内y接续不同；原生滚动从0到884并继续到底部，内容高度约1985px、视口1000px，14条实际解码。截图`history-continuous-five-columns.png`。9项定向回归（媒体交互/待分析状态、首页契约、feed投影）、lint、architecture（2691生产TS）及diff检查通过。未跑全仓quality/build或目标迁移；无外部run/task ID，无生产/供应商Ready结论。
+
+运行脚本/恢复manifest/API回执位于原独立运行目录，回退文件`before-more-history/trend_videos.json`；源码恢复点为`6e6473c2`。本轮只追加恢复副本及待分析展示修正，不改变共享集成基线。原五列/12px标题、悬停交互保留。
