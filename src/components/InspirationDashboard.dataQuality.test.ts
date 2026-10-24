@@ -98,7 +98,8 @@ assert.doesNotMatch(componentSource, />\s*加载更多\s*</, '灵感列表不再
 assert.doesNotMatch(componentSource, /本页近 3 日新入库|当前显示 <strong/, '灵感中心不应再显示与真实结果集口径冲突的独立统计条');
 assert.match(videoResultsSource, /<LsMasonryGallery layout="masonry"/, '爆款灵感必须使用真实比例瀑布流');
 assert.match(componentSource, /<LsMasonryGallery layout="masonry"/, '我的素材必须使用真实比例瀑布流');
-assert.match(videoCardSource, /style=\{\{ background: 'var\(--color-surface-2\)', aspectRatio: mediaAspectRatio \}\}/, '爆款卡媒体区必须跟随真实媒体比例');
+assert.match(videoCardSource, /const frameAspectRatio = creatorCard \? Math\.min\(4 \/ 3, Math\.max\(4 \/ 5, mediaAspectRatio\)\) : mediaAspectRatio;/, '仅创作首页缩略卡限制比例，灵感库继续使用真实比例');
+assert.match(videoCardSource, /style=\{\{ background: 'var\(--color-surface-2\)', aspectRatio: frameAspectRatio \}\}/, '媒体区必须使用当前卡片模式对应的比例');
 assert.doesNotMatch(videoCardSource, /aspect-\[9\/16\]/, '爆款卡不得把横版素材强制裁成 9:16');
 assert.doesNotMatch(videoCardSource, /min-h-52/, '爆款瀑布流卡不得强制内容区等高留白');
 assert.doesNotMatch(videoCardSource, /<div role="button"/, '爆款卡媒体不得使用包含收藏按钮的伪按钮容器');

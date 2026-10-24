@@ -199,9 +199,9 @@
     "1792686176_create_linkedin_company_collection_approvals.js": "59a6f5c789e11663e8a1fc566329fa3399d0d95e3d10e804161a16b573c60a4b",
     "1792686177_create_image_evidence_review_approvals.js": "6212f25fb5439b486e06743749d54113760764da55db729a13167fe954e0f2a5",
     "1792713600_platform_ad_default_page.js": "e60683ba3295b53e8217484c226acf35aa977c885b02519b3d374db615d2ea1f",
+    "1792800000_competitor_crawl_state.js": "03782054c7767823db06e9275c33867e934f510b1e5c9f571616096b7eda2c30",
     "1792800000_extend_assistant_creation_draft.js": "fdf09cf0a3254f27d0709bfd5496984834374a80405ca083505a578db177736c",
     "1792800000_platform_ad_authorization_lifecycle.js": "5aba5e43e18bf6b72fcc0b8970bcf267b10e8ac99d4c1ce63c6151a2b1c92258",
-    "1792800001_repair_platform_ad_authorization_fields.js": "af8e71ee15d3d75419ea88cfe7bb853837d8d1f62abf66261172a13b093b68bd",
-    "1792800000_competitor_crawl_state.js": "03782054c7767823db06e9275c33867e934f510b1e5c9f571616096b7eda2c30"
+    "1792800001_repair_platform_ad_authorization_fields.js": "af8e71ee15d3d75419ea88cfe7bb853837d8d1f62abf66261172a13b093b68bd"
   }
 }

@@ -95,7 +95,7 @@ assert.equal(selectPresenterExecutions({ detail: narrationOutsideShot, heygenRea
   seedancePresenterReady: false, budgetReady: true })[0].executionStatus, 'blocked',
   'ASR outside the visual interval cannot satisfy the presenter measurement gate');
 const contact = route({ physicalProductContact: true, specificGestureCount: 1 });
-assert.equal(contact.decision.route, 'split_motion_and_speech');
+assert.equal(contact.decision.route, 'blocked');
 assert.equal(contact.providerId, null);
 assert.ok(contact.reasonCodes.includes('physical_product_contact_requires_enterprise_product_asset'));
 const productContact = detail({ physicalProductContact: true, specificGestureCount: 1,
