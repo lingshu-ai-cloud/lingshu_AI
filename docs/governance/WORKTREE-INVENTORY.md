@@ -3,6 +3,11 @@
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-24 两条 PRD 增量顺序合并
+
+- 主集成树 `/Users/jiejie/Documents/lingshu-AI` 从干净 `777f0425` 快进到源码合并提交 `8e4f0ae4`，分支仍为 `xixi改五个大文件结构治理`；治理文档提交后的最终 HEAD 以 Git 核验。新建的隔离树 `/Users/jiejie/.codex/worktrees/prd-sequential-integration-20261024/lingshu-AI` 在 detached HEAD `8e4f0ae4`，保留作可恢复的合并与测试证据；其被忽略的 `node_modules` 是本次本地安装的依赖，不当作来源代码。
+- 图片来源树 `/Users/jiejie/.codex/worktrees/image-prd-implementation/lingshu-AI` 在 `c8be8e5a`、灵小枢来源树 `/Users/jiejie/.codex/worktrees/lingxiaoshu-prd-completion/lingshu-AI` 在 `310da412`，合并前两者均干净。它们与其他旧树、尤其 `mobile-dual-edition-20261012`，均未重置、清理、归档或覆盖；本次未对旧树重新全面盘点。预览进程与运行数据不随源码快进自动切换。
+
 ## 2026-10-24 灵小枢与图片串行集成
 
 - 本机主集成树 `/Users/jiejie/Documents/lingshu-AI` 从干净 `a046ba86` 快进到源码点 `7fb3bc05`，分支仍为 `xixi改五个大文件结构治理`；治理文档提交后的 HEAD 以 Git 核验。隔离树 `/Users/jiejie/.codex/worktrees/serial-feature-integration-20261024/lingshu-AI`，分支 `codex/serial-feature-integration-20261024`，在合并与定向修复后为干净 `7fb3bc05`，暂留作可恢复的合并证据。

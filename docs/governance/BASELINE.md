@@ -2,6 +2,13 @@
 
 更新时间：2026-10-24（Asia/Shanghai）
 
+## 两条 PRD 增量的顺序本地合并（2026-10-24）
+
+- 本机主集成树 `/Users/jiejie/Documents/lingshu-AI`、分支 `xixi改五个大文件结构治理`，从干净 `777f0425c9c805b11fa67fc8483071d8f46383a6` 出发；隔离树先快进合入干净的图片分支 `codex/image-prd-implementation-20261024`（`c8be8e5a783ce606e9990fc6fc9e7349a7f6f105`），再合入干净的灵小枢分支 `codex/lingxiaoshu-prd-completion`（`310da4124922229430cc312131894d4a03dced2a`）。唯一文本冲突在图片 HTTP 审核测试，按用户确认的“冻结快照可审核原结果、付费前拒绝过期绑定”解决；同时修正自动合并会让后续新付费入口沿用过期绑定的语义风险。源码合并提交 `8e4f0ae4` 已以 `git merge --ff-only` 快进到主树；本文档提交后的最终 HEAD 另以 Git 核验。两条来源树、旧实验树和预览进程均未重置、覆盖或清理；未推送、部署、真实付费或执行目标库迁移。
+- 原结果审核仅在已有付费认领且冻结任务快照完整时允许继续，仍检验精确候选版本、持久文件哈希和逐张批准；新的付费计划、任务认领与付费质检始终严格比对当前 `ContentTask`。源文件 `server/socialImage/socialImageProductionRun.ts` 的既有哈希函数等价迁出后为 797 行，未增加 800 行架构预算。灵小枢增量包含企业建档候选、资产/文档准入和小程序任务续接；这些源码变化不等于真实供应商或双端完整验收。跨阶段规则见[共享任务 ADR](../architecture/adr/2026-10-24-assistant-image-development-contract.md)。
+- 实际通过：`pnpm run test:social-image-pipeline`（主组 79/79、HTTP 1/1、后续合同和治理）、灵小枢服务端/前端/小程序定向测试、`pnpm run test:assistant-production`（34/34）、`pnpm run test:assistant`、`pnpm run test:digital-employees`、`pnpm run test:production`（212/212 及桌面 2/2）、`pnpm run test:shared-contracts`；`pnpm run lint`、以 `777f0425` 为参照的 `pnpm run check:architecture`（2,636 个生产 TS）、`pnpm run check:digital-employee-migrations`（195 项仓库只读）、`pnpm run build`、`pnpm run build:account-hub`、`git diff --check`。上述均在隔离树的源码合并提交上执行，构建不是部署。
+- 完整 `pnpm run quality` **未通过**：前置检查推进到 `test:production-orchestration`，其中 `scripts/external-video-approval.integration.ts:13` 因本机未设置 `PB_BIN` 中断；其后环节不能视为已由 `quality` 覆盖，`verify` 未运行。没有真实供应商、付费、登录后双端 E2E、目标库迁移、部署或发布就绪证据；旧本地预览不自动代表此源码。安全恢复点为合并前 `777f0425`、两条来源 SHA 和源码检查点 `8e4f0ae4`。下一步须在有受控 PocketBase 测试二进制的环境补全 `quality`/`verify`，再独立做真实环境验收。
+
 ## 灵小枢与单条图片生产的串行本地集成（2026-10-24）
 
 - 本机集成树 `/Users/jiejie/Documents/lingshu-AI` 在分支 `xixi改五个大文件结构治理` 上，先确认干净且 HEAD 为上一基线 `a046ba86e1b28ba29a6d4fd45f975ebf17138f77`。隔离树 `codex/serial-feature-integration-20261024` 从该 SHA 起步，先合入图片分支至 `fcec7412ff08593c78d4a918f54ed6c2eef83183`，再合入干净的灵小枢分支 `41a0f1f51959a11b55434868d036d1048917831b`，得到 `d460257b724f60589c746c015e031ed641b334c3`；三项合并后合同/夹具修正与共享任务 ADR 形成源码检查点 `7fb3bc05bf96ef0e8b12d301f31fc908188d9f56`。主集成树已由 `a046ba86` 以 `git merge --ff-only` 快进到该检查点；本文档提交后的最终 HEAD 另以 Git 核验。两条来源分支及原 `f82f`、`mobile-dual-edition-20261012` 工作树均未重置、清理或覆盖；未推送、部署。
