@@ -648,6 +648,7 @@ export async function ensureDeliveryCollections(): Promise<void> {
     { name: 'createdBy', type: 'text' },
   ]);
   await ensureCollection('platform_ad_connections', [
+    { name: 'defaultPage', type: 'json' },
     { name: 'tenant_id', type: 'text', required: true },
     { name: 'provider', type: 'text', required: true },
     { name: 'accountId', type: 'text', required: true },
@@ -655,8 +656,24 @@ export async function ensureDeliveryCollections(): Promise<void> {
     { name: 'currency', type: 'text' },
     { name: 'tokenCipher', type: 'text' },
     { name: 'status', type: 'text' },
+    { name: 'businessName', type: 'text' },
+    { name: 'accountStatus', type: 'number' },
+    { name: 'timezoneId', type: 'number' },
+    { name: 'timezoneName', type: 'text' },
+    { name: 'timezoneOffsetHoursUtc', type: 'number' },
+    { name: 'resourceSyncRunId', type: 'text' },
+    { name: 'resourceSyncedAt', type: 'text' },
     { name: 'updatedAt', type: 'text' },
   ]);
+  for (const collection of ['platform_ad_campaigns', 'platform_ad_adsets', 'platform_ad_ads']) {
+    await ensureCollection(collection, [
+      ...'tenant_id provider connectionId accountId providerResourceId level parentResourceId campaignId adsetId name configuredStatus effectiveStatus currency accountTimezone syncRunId lastSyncedAt'.split(' ').map(name => ({ name, type: 'text' as const })),
+      { name: 'providerSnapshot', type: 'json' },
+    ], [
+      `CREATE UNIQUE INDEX idx_${collection}_identity ON ${collection} (tenant_id, connectionId, providerResourceId, syncRunId)`,
+      `CREATE INDEX idx_${collection}_connection ON ${collection} (tenant_id, connectionId)`,
+    ]);
+  }
   await ensureCollection('tenants', TENANTS_FIELDS);
   await ensureCollection('tenant_platform_apps', TENANT_PLATFORM_APP_FIELDS);
   await ensureCollection('posts', POSTS_FIELDS);

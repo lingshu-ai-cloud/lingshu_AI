@@ -10,22 +10,70 @@ process.env.NODE_ENV = 'test';
 process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
 process.env.TEST_ONLY_EXTERNAL_EFFECT_LEASE_FALLBACK = 'true';
 const { platformAdCreativesRouter } = await import('../routes/platformAdCreatives.js');
+const { platformAdMetricsRouter } = await import('../routes/platformAdMetrics.js');
+const { platformAdConnectionsRouter } = await import('../routes/platformAdConnections.js');
 const { issueLocalIdentityTokenForTest } = await import('../auth/localIdentity.js');
 const { store } = await import('../storage/index.js');
 const app = express(); app.use(express.json()); app.use('/ads', platformAdCreativesRouter);
+app.use('/ads', platformAdMetricsRouter);
+app.use('/ads', platformAdConnectionsRouter);
 const server = app.listen(0, '127.0.0.1');
 await new Promise<void>(resolve => server.once('listening', resolve));
 const base = `http://127.0.0.1:${(server.address() as { port: number }).port}/ads`;
 const auth = (role = 'admin') => ({ Authorization: `Bearer ${issueLocalIdentityTokenForTest({ userId: 'test-user', tenantId: 'tenant-a', role })}`, 'Content-Type': 'application/json' });
 try {
   assert.equal((await fetch(base + '/creative-sources')).status, 401);
+  assert.equal((await fetch(base + '/creative-history-sources')).status, 401);
+  for (const route of ['/creative-selection', '/creative-selection/media']) {
+    assert.equal((await fetch(base + route + '?origin=social&sourceTaskId=missing&artifactId=missing')).status, 401);
+    assert.equal((await fetch(base + route + '?origin=social&sourceTaskId=missing&artifactId=missing&path=private', { headers: auth() })).status, 400);
+    assert.equal((await fetch(base + route + '?origin=studio&sourceId=ungranted&projectId=missing', { headers: auth() })).status, 409);
+  }
+  assert.equal((await fetch(base + '/creative-history/media?origin=studio&sourceId=ungranted&projectId=missing')).status, 401);
+  assert.equal((await fetch(base + '/creative-history/media?origin=studio&sourceId=ungranted&projectId=missing', { headers: auth() })).status, 404);
+  assert.equal((await fetch(base + '/creative-history/media?origin=studio&sourceId=ungranted&projectId=missing&path=private', { headers: auth() })).status, 400);
+  assert.equal((await fetch(base + '/creative-history-sources', { headers: auth() })).status, 200);
+  assert.equal((await fetch(base + '/creative-history?origin=studio&sourceId=ungranted', { headers: auth() })).status, 404);
   assert.equal((await fetch(base + '/creative-sources', { headers: auth() })).status, 200);
+  for (const route of ['/creative-history?origin=studio', '/creative-lifecycle?origin=studio&projectId=missing', '/creative-library', '/creative-library/missing/report', '/creatives/missing/platform-preview', '/creatives/missing/media', '/connections/missing/meta-setup', '/tasks/missing/meta-audit']) {
+    assert.equal((await fetch(base + route)).status, 401);
+  }
+  assert.equal((await fetch(base + '/creative-library', { headers: auth() })).status, 200);
+  assert.equal((await fetch(base + '/creative-history?origin=studio', { headers: auth() })).status, 200);
+  assert.equal((await fetch(base + '/creative-lifecycle?origin=studio&projectId=missing', { headers: auth() })).status, 404);
+  assert.equal((await fetch(base + '/creative-lifecycle?origin=studio&projectId=missing&sha256=spoof', { headers: auth() })).status, 400);
+  assert.equal((await fetch(base + '/performance/missing')).status, 401);
+  assert.equal((await fetch(base + '/connections/missing/history')).status, 401);
+  assert.equal((await fetch(base + '/account-directory')).status, 401);
+  assert.equal((await fetch(base + '/oauth/meta/missing/pages?accountId=act_1')).status, 401);
+  assert.equal((await fetch(base + '/oauth/meta/start', { method: 'POST', headers: auth('customer_service'), body: '{}' })).status, 403);
+  const oauthForeign = await fetch(base + '/oauth/meta/missing/pages?accountId=act_1', { headers: auth() });
+  assert.equal(oauthForeign.status, 409);
+  assert.equal(oauthForeign.headers.get('cache-control'), 'no-store');
+  assert.equal((await fetch(base + '/connections/missing/use-granted-account', { method: 'POST', headers: auth('customer_service'), body: JSON.stringify({ accountId: '123' }) })).status, 403);
+  assert.equal((await fetch(base + '/connections/missing/history/123/ads/456/creative')).status, 401);
+  assert.equal((await fetch(base + '/connections/missing/history-accounts')).status, 401);
+  assert.equal((await fetch(base + '/connections/missing/history?accountId=123', { headers: auth() })).status, 400);
+  await store.create('platform_ad_connections', { id: 'foreign-connection', tenant_id: 'tenant-b', provider: 'meta', accountId: '123', tokenCipher: 'private' });
+  assert.equal((await fetch(base + '/connections/foreign-connection/history', { headers: auth() })).status, 404);
+  assert.equal((await fetch(base + '/connections/foreign-connection/history-accounts', { headers: auth() })).status, 404);
+  assert.equal((await fetch(base + '/connections/foreign-connection/history/123', { headers: auth() })).status, 404);
+  assert.equal((await fetch(base + '/connections/foreign-connection/history/123/ads/456/creative', { headers: auth() })).status, 404);
+  assert.equal((await fetch(base + '/connections/foreign-connection/use-granted-account', { method: 'POST', headers: auth(), body: JSON.stringify({ accountId: '123' }) })).status, 404);
+  assert.equal((await fetch(base + '/performance/missing?level=account', { headers: auth() })).status, 400);
   assert.equal((await fetch(base + '/tasks/missing/creatives', { headers: auth() })).status, 404);
-  for (const route of ['/tasks/missing/creatives', '/tasks/missing/creatives/missing/upload', '/tasks/missing/creatives/missing/reconcile']) {
+  for (const route of ['/tasks/missing/creatives', '/tasks/missing/creatives/missing/upload', '/tasks/missing/creatives/missing/reconcile', '/tasks/missing/creatives/attach-existing']) {
     assert.equal((await fetch(base + route, { method: 'POST', headers: auth('customer_service'), body: '{}' })).status, 403);
   }
   await store.create('platform_ad_tasks', { id: 'foreign-task', tenant_id: 'tenant-b', name: 'private' });
   await store.create('platform_ad_creatives', { id: 'foreign-creative', tenant_id: 'tenant-b', taskId: 'foreign-task', fileRef: 'private-reference' });
+  await store.create('platform_ad_executions', { id: 'foreign-execution', tenant_id: 'tenant-b', taskId: 'foreign-task', status: 'VERIFIED' });
+  assert.equal((await fetch(base + '/performance/foreign-execution', { headers: auth() })).status, 404);
+  for (const route of ['/creatives/foreign-creative/media', '/creatives/foreign-creative/platform-preview', '/creative-library/foreign-execution/report']) {
+    const response = await fetch(base + route, { headers: auth() });
+    assert.equal(response.status, 404);
+    assert.ok(!(await response.text()).includes('private-reference'));
+  }
   for (const action of ['upload', 'reconcile']) {
     const response = await fetch(base + `/tasks/foreign-task/creatives/foreign-creative/${action}`, { method: 'POST', headers: auth(), body: '{}' });
     assert.equal(response.status, 404, 'foreign creative upload/reconcile must not disclose or mutate another tenant');

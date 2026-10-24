@@ -16,7 +16,14 @@ export const AD_SCHEMA_REQUIREMENTS: Readonly<Record<string, readonly Field[]>> 
     { name: 'status', type: 'select', values: ['draft', 'paused', 'active', 'error', 'unknown'] },
     ...fields('autodate', 'created updated'),
   ],
-  platform_ad_connections: fields('text', 'tenant_id provider accountId name currency tokenCipher status updatedAt'),
+  platform_ad_connections: [
+    ...fields('json', 'defaultPage'),
+    ...fields('text', 'tenant_id provider accountId name currency tokenCipher status businessName timezoneName updatedAt resourceSyncRunId resourceSyncedAt'),
+    ...fields('number', 'accountStatus timezoneId timezoneOffsetHoursUtc'),
+  ],
+  platform_ad_campaigns: [...fields('text', 'tenant_id provider connectionId accountId providerResourceId level parentResourceId campaignId adsetId name configuredStatus effectiveStatus currency accountTimezone syncRunId lastSyncedAt'), ...fields('json', 'providerSnapshot')],
+  platform_ad_adsets: [...fields('text', 'tenant_id provider connectionId accountId providerResourceId level parentResourceId campaignId adsetId name configuredStatus effectiveStatus currency accountTimezone syncRunId lastSyncedAt'), ...fields('json', 'providerSnapshot')],
+  platform_ad_ads: [...fields('text', 'tenant_id provider connectionId accountId providerResourceId level parentResourceId campaignId adsetId name configuredStatus effectiveStatus currency accountTimezone syncRunId lastSyncedAt'), ...fields('json', 'providerSnapshot')],
   platform_ad_launches: [
     ...fields('text', 'tenant_id taskId connectionId status createdAt updatedAt error'),
     ...fields('number', 'taskVersion'), ...fields('json', 'meta receipt'),

@@ -1,13 +1,10 @@
 import type { Page } from '../pageRegistry';
 
 /**
- * TEMPORARY PRODUCT-SURFACE BACKUP MARKER — 2026-10-08
- *
- * The Platform Ads implementation, routes and data are intentionally retained.
- * Set this flag back to `true` to enable the primary 投流 entry and its retained
- * internal overview, plan, creative, and managed routes without rebuilding them.
+ * 投流作为五个一级导航之一；概览、计划与素材保持在该入口下，
+ * 旧 AI 托管深链仍可进入共用投手面板。真实投放继续受后端账号和授权门禁控制。
  */
-export const PLATFORM_ADS_SURFACE_ENABLED = false;
+export const PLATFORM_ADS_SURFACE_ENABLED = true;
 
 export const PLATFORM_ADS_PAGE_IDS: readonly Page[] = [
   'adsOverview',

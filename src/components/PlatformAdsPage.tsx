@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Alert, Button, Collapse, Drawer, Select } from 'antd';
 import {
   ArrowRight,
   ArrowUpRight,
   BarChart3,
   Bot,
-  Check,
   ChevronRight,
   CircleHelp,
   Clock3,
@@ -21,16 +21,24 @@ import {
 import type { Page } from "../App";
 import { useModalFocus } from "../hooks/useModalFocus";
 import { platformAdsApi, type PlatformAdTask } from "../lib/platformAds";
-import { emptyAdPlanConfiguration, creationSourceLabels, managementModeLabels, type AdManagement } from '../lib/platformAdsDomain';
+import { emptyAdPlanConfiguration, creationSourceLabels, managementModeLabels, adTaskStatusLabels, type AdManagement } from '../lib/platformAdsDomain';
 import "./platformAds.css";
 import { getAdPlanCapability, PLATFORM_AD_CAPABILITIES, PLATFORM_AD_GOALS } from "../../shared/platformAdCapabilities";
 import type { AdConnection } from './AdAccountConnections';
 import { AdAccountConnections, AdTaskControls, AdTaskMetrics } from './PlatformAdsOperations';
 import AdPerformanceOverview from './AdPerformanceOverview';
+import AdCreativeLibrary from './AdCreativeLibrary';
+import { AdAccountDirectoryProvider } from './AdAccountDirectory';
+import AdAccountHistory from './AdAccountHistory';
+import AdPlanAccountPicker from './AdPlanAccountPicker';
+import AdMaterialPicker from './AdMaterialPicker';
+import MetaPlanAuditPanel from './MetaPlanAuditPanel';
 import AdManagedWorkspace from './AdManagedWorkspace';
 import { PlatformAdsManagedPreview, PlatformAdsPerformancePreview } from './PlatformAdsPreviewSections';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
-import { createForeignTradeMockAdTasks, isForeignTradeMockId, isLocalForeignTradeMockEnabled } from '../mocks/foreignTradeOperations';
+import { createForeignTradeMockAdTasks, isForeignTradeMockId } from '../mocks/foreignTradeOperations';
+import { isPlatformAdsDemoEnabled as isLocalForeignTradeMockEnabled } from '../lib/platformAdsPreview';
+import LsPageHeader from './ui/LsPageHeader';
 
 const channels = [
   {
@@ -68,11 +76,6 @@ type Draft = AdManagement & Pick<PlatformAdTask, 'currency' | 'status' | 'versio
   createdAt?: string;
 };
 const taskToDraft = (task: PlatformAdTask): Draft => ({ ...task, currency: task.currency || 'USD', budget: String(task.budget) });
-const mockCreativePerformance: Record<string, { spend: string; inquiries: number; cpl: string; hook: string; advice: string }> = {
-  'mock-ft-ad-saudi-packaging': { spend: 'USD 1,280', inquiries: 6, cpl: 'USD 213', hook: '工厂现场 + “6 条线如何回本”阿语首屏', advice: '首屏停留最好；保留 ROI 钩子，补一版当地安装与培训镜头。' },
-  'mock-ft-ad-germany-battery': { spend: 'USD 1,041', inquiries: 4, cpl: 'USD 260', hook: '55 分钟换型降至 12 分钟的前后对比', advice: '工程师受众点击稳定；下一版强化 OPC UA 与 CE 文件边界。' },
-  'mock-ft-ad-mexico-medical': { spend: 'USD 800', inquiries: 2, cpl: 'USD 400', hook: '西语工程师演示 FAT 数据追溯字段', advice: '有效询盘率高但量小；复制西语口播，测试质量经理受众。' },
-};
 const withLocalMockAdTasks = (tasks: PlatformAdTask[]) => {
   if (!isLocalForeignTradeMockEnabled()) return tasks;
   const ids = new Set(tasks.map(task => task.id));
@@ -80,7 +83,10 @@ const withLocalMockAdTasks = (tasks: PlatformAdTask[]) => {
 };
 const toLocalDateTime = (value: string) => { if (!value) return ''; const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); };
 
-export default function PlatformAdsPage({
+export default function PlatformAdsPage(props: { page: Page; onNavigate: (page: Page) => void; previewMode?: boolean }) {
+  return <AdAccountDirectoryProvider enabled={!props.previewMode} onOpenCreative={() => props.onNavigate('adsCreatives')}><PlatformAdsWorkspace {...props}/></AdAccountDirectoryProvider>;
+}
+function PlatformAdsWorkspace({
   page,
   onNavigate,
   previewMode = false,
@@ -95,17 +101,16 @@ export default function PlatformAdsPage({
     if (dialog === 'accounts' && returnToCreate) { setReturnToCreate(false); setDialog('create'); }
     else setDialog(null);
   };
+  const [materialPickerOpen, setMaterialPickerOpen] = useState(false);
   const modalRef = useModalFocus<HTMLDivElement>({
-    open: dialog !== null,
+    open: dialog !== null && !materialPickerOpen,
     onClose: closeDialog,
   });
   const [step, setStep] = useState(0);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [overviewTab, setOverviewTab] = useState<"performance" | "creatives">(
-    page === "adsCreatives" ? "creatives" : "performance",
-  );
+  const [managedOpen, setManagedOpen] = useState(page === 'adsManaged');
   const [selectedDraft, setSelectedDraft] = useState<Draft | null>(null);
   const [executionLockedIds, setExecutionLockedIds] = useState<Set<string>>(() => new Set());
   const [selected, setSelected] = useState("全部渠道");
@@ -123,13 +128,15 @@ export default function PlatformAdsPage({
     configuration: { ...emptyAdPlanConfiguration },
   });
   const formCapability = getAdPlanCapability(form);
-  const isOverviewPage = page === "adsOverview" || page === "adsCreatives";
+  const isPerformancePage = page === 'adsOverview';
+  const isCreativePage = page === 'adsCreatives';
   useEffect(() => {
-    if (page === "adsCreatives") setOverviewTab("creatives");
-  }, [page]);
+    if (page !== 'adsManaged') return;
+    setManagedOpen(true);
+    onNavigate('adsPlans');
+  }, [page, onNavigate]);
   const openCreativeTab = () => {
-    setOverviewTab("creatives");
-    onNavigate("adsOverview");
+    onNavigate("adsCreatives");
   };
   useEffect(() => {
     if (previewMode) { setLoadingTasks(false); return; }
@@ -159,7 +166,9 @@ export default function PlatformAdsPage({
     window.addEventListener('lingshu:navigate', consume);
     return () => window.removeEventListener('lingshu:navigate', consume);
   }, [drafts]);
-  const managedTasks = useMemo(() => drafts.map(task => ({ ...task, budget: Number(task.budget), createdAt: task.createdAt || '', updatedAt: '' })), [drafts]);
+  const managedTasks = useMemo(() => drafts
+    .filter(task => !isForeignTradeMockId(task.id))
+    .map(task => ({ ...task, budget: Number(task.budget), createdAt: task.createdAt || '', updatedAt: '' })), [drafts]);
   const replaceTask = (task: PlatformAdTask) => {
     setDrafts(items => items.map(item => item.id === task.id ? taskToDraft(task) : item));
     setSelectedDraft(current => current?.id === task.id ? taskToDraft(task) : current);
@@ -182,6 +191,9 @@ export default function PlatformAdsPage({
   };
   const continueAfterConnection = (connection: AdConnection) => {
     if (returnToCreate) {
+      const samePlatform = connection.provider === 'meta' ? form.channels.some(c => c === 'Facebook' || c === 'Instagram') : connection.provider === 'tiktok' ? form.channels.includes('TikTok') : form.channels.includes('YouTube');
+      if (connection.currency === form.currency && samePlatform) setForm(current => ({ ...current, configuration: { ...current.configuration, accountConnectionId: connection.id } }));
+      else setNotice('账户已连接，但与当前草稿币种或平台不同；请在草稿中确认账户、渠道与预算，不会自动换算或覆盖。');
       setReturnToCreate(false);
       setDialog('create');
       return;
@@ -192,6 +204,7 @@ export default function PlatformAdsPage({
       channels: connection.provider === 'google' ? ['YouTube'] : connection.provider === 'tiktok' ? ['TikTok'] : ['Facebook', 'Instagram'],
       goal: connection.provider === 'google' ? '获取线索或转化' : '提升有效视频观看',
       ...(connection.currency === 'USD' || connection.currency === 'CNY' ? { currency: connection.currency } : {}),
+      configuration: { ...current.configuration, accountConnectionId: connection.id },
     }));
   };
   const next = async (event: FormEvent) => {
@@ -230,70 +243,31 @@ export default function PlatformAdsPage({
   );
 
   return (
-    <div className="ads-workspace">
+    <div className={`ads-workspace${isCreativePage ? ' ads-creative-workspace' : ''}`}>
       <main className="ads-main">
-        {isLocalForeignTradeMockEnabled() && <div className="ads-notice" role="status"><Check size={16}/><span><strong>本地模拟 · 外贸工厂投放</strong>　展示中东、欧洲和拉美市场的跨平台计划与近 7 天效果，不会触发真实广告操作。</span></div>}
-        <div className="ads-page-purpose">
-          <strong>{page === 'adsManaged' ? 'AI 托管' : page === 'adsPlans' ? '投放计划' : '投放总览'}</strong>
-          <p>{page === 'adsManaged' ? '查看 Agent 建议、审批与授权边界，追踪执行依据和异常。' : page === 'adsPlans' ? '配置目标、素材与预算，审阅方案并追踪平台执行回执。' : '查看花费、效果与数据覆盖，定位需要处理的投放计划。'}</p>
-          <details>
-            <summary>查看各平台已实现能力与限制</summary>
-            <p className="ads-muted">以下为当前产品实现范围；连接账户或保存配置不代表可实际投递，真实账户验收尚未完成。</p>
-            <div className="ads-table-wrap"><table><thead><tr><th>平台</th><th>创建目标 / 币种</th><th>管理与动作</th><th>素材要求</th></tr></thead><tbody>
-              {PLATFORM_AD_CAPABILITIES.map(item => <tr key={item.provider}><td><PlatformLogoGroup value={item.name}/><span className="sr-only">{item.name}</span></td><td>{item.goals.join('、')}<small>{item.currencies.join(' / ')}</small></td><td>{item.management}<small>{item.actions}</small></td><td>{item.material}</td></tr>)}
-            </tbody></table></div>
-          </details>
-        </div>
-        <div className={isOverviewPage ? "ads-overview-toolbar" : "ads-page-toolbar"}>
-          {isOverviewPage && (
-            <nav className="ads-overview-tabs" aria-label="投放总览视图">
-              <button
-                type="button"
-                className={overviewTab === "performance" ? "active" : ""}
-                aria-current={overviewTab === "performance" ? "page" : undefined}
-                onClick={() => setOverviewTab("performance")}
-              >
-                <BarChart3 size={16} />整体表现
-              </button>
-              <button
-                type="button"
-                className={overviewTab === "creatives" ? "active" : ""}
-                aria-current={overviewTab === "creatives" ? "page" : undefined}
-                onClick={() => setOverviewTab("creatives")}
-              >
-                <Layers3 size={16} />素材效果
-              </button>
-            </nav>
-          )}
-          <div className="ads-actions">
-            <button
-              className="ads-button"
-              onClick={() => { setReturnToCreate(false); setDialog("accounts"); }}
-            >
-              <Link2 size={15} />
-              连接广告账户
-            </button>
-            {page !== 'adsManaged' && <><button className="ads-button primary" onClick={openCreate}>
-              <Plus size={16} />
-              手动创建投放
-            </button>
-            <button className="ads-button" onClick={() => { openCreate(); setEntry('ai_assisted'); }}><Sparkles size={16} />AI 辅助创编</button>
-            <button className="ads-button" onClick={() => { openCreate(); setEntry('ai_managed'); }}><Bot size={16} />AI 托管创编</button></>}
-            {page === 'adsManaged' && <button className="ads-button" onClick={() => onNavigate('adsPlans')}>管理投放计划</button>}
-          </div>
-        </div>
-        {notice && (
-          <div className="ads-notice" role="status">
-            <Check size={16} />
-            {notice}
-            <button aria-label="关闭提示" onClick={() => setNotice("")}>
-              <X size={16} />
-            </button>
-          </div>
-        )}
+        {isLocalForeignTradeMockEnabled() && <Alert className="mb-4" type="info" showIcon title="本地模拟 · 外贸工厂投放" description="展示中东、欧洲和拉美市场的跨平台计划与近 7 天效果，不会触发真实广告操作。" />}
+        <LsPageHeader
+          title={page === 'adsPlans' ? '计划创编' : page === 'adsCreatives' ? '素材管理' : '投放数据'}
+          description={page === 'adsPlans' ? '配置目标、素材与预算，审阅方案并追踪 Meta 平台执行回执。' : page === 'adsCreatives' ? '管理素材版本、广告绑定和效果证据，推动下一轮内容迭代。' : '按平台原始口径查看花费、效果、覆盖范围和数据新鲜度。'}
+          extra={!isCreativePage && <>
+            <Button icon={<Link2 size={15} />} onClick={() => { setReturnToCreate(false); setDialog("accounts"); }}>连接广告账户</Button>
+            <Button type="primary" icon={<Plus size={16} />} onClick={openCreate}>手动创建投放</Button>
+            <Button icon={<Sparkles size={16} />} onClick={() => { openCreate(); setEntry('ai_assisted'); }}>AI 辅助创编</Button>
+            <Button icon={<Bot size={16} />} onClick={() => { openCreate(); setEntry('ai_managed'); }}>AI 托管创编</Button>
+            <Button icon={<Bot size={16} />} onClick={() => setManagedOpen(true)}>AI 投手</Button>
+          </>}
+        >
+          {!isCreativePage && <Collapse className="ads-capability-collapse" ghost items={[{
+            key: 'capabilities',
+            label: '查看各平台已实现能力与限制',
+            children: <><p className="ads-muted">以下为当前产品实现范围；连接账户或保存配置不代表可实际投递，真实账户验收尚未完成。</p><div className="ads-table-wrap"><table><thead><tr><th>平台</th><th>创建目标 / 币种</th><th>管理与动作</th><th>素材要求</th></tr></thead><tbody>{PLATFORM_AD_CAPABILITIES.map(item => <tr key={item.provider}><td><PlatformLogoGroup value={item.name}/><span className="sr-only">{item.name}</span></td><td>{item.goals.join('、')}<small>{item.currencies.join(' / ')}</small></td><td>{item.management}<small>{item.actions}</small></td><td>{item.material}</td></tr>)}</tbody></table></div></>,
+          }]} />}
+        </LsPageHeader>
+        {notice && <Alert className="mb-4" type={notice.includes('失败') ? 'error' : 'success'} showIcon title={notice} closable onClose={() => setNotice('')} />}
 
-        {isOverviewPage && overviewTab === 'performance' && !previewMode && <AdPerformanceOverview tasks={drafts} loading={loadingTasks} onOpen={id => { const task = drafts.find(item => item.id === id); if (task) { setSelectedDraft(task); onNavigate('adsPlans'); } }} />}
-        {isOverviewPage && overviewTab === "performance" && previewMode && <PlatformAdsPerformancePreview channels={channels} onOpenAccounts={() => setDialog('accounts')} onOpenManaged={() => onNavigate('adsManaged')} />}
+        {isPerformancePage && !previewMode && <AdPerformanceOverview initialTaskId={selectedDraft?.id} tasks={drafts} loading={loadingTasks} onOpen={id => { const task = drafts.find(item => item.id === id); if (task) { setSelectedDraft(task); onNavigate('adsPlans'); } }} />}
+        {!isPerformancePage && !isCreativePage && !previewMode && !selectedDraft && <AdAccountHistory plans/>}
+        {isPerformancePage && previewMode && <PlatformAdsPerformancePreview channels={channels} onOpenAccounts={() => setDialog('accounts')} onOpenManaged={() => setManagedOpen(true)} />}
 
         {page === "adsPlans" &&
           (selectedDraft ? (
@@ -306,7 +280,7 @@ export default function PlatformAdsPage({
               </button>
               <div className="ads-task-title">
                 <div>
-                  <span className="ads-pill neutral">方案已保存 · 平台状态见执行回执</span>
+                  <span className="ads-pill neutral">{adTaskStatusLabels[selectedDraft.status] || '状态待核对'} · 平台状态见执行回执</span>
                   <h2>{selectedDraft.name}</h2>
                   <p>
                     {selectedDraft.video} · {selectedDraft.goal} ·{" "}
@@ -342,6 +316,7 @@ export default function PlatformAdsPage({
                   </div>
                 ))}
               </div>
+              {!previewMode && selectedDraft.channels.every(c => ['Facebook', 'Instagram'].includes(c)) && <MetaPlanAuditPanel taskId={selectedDraft.id} version={selectedDraft.version || 1} onData={() => onNavigate('adsOverview')} onCreatives={() => onNavigate('adsCreatives')}/>}
               {!previewMode && <AdTaskControls key={selectedDraft.id} task={{ ...selectedDraft, budget: Number(selectedDraft.budget), createdAt: selectedDraft.createdAt || '', updatedAt: '' }} onUpdate={replaceTask} onExecution={() => setExecutionLockedIds(ids => new Set(ids).add(selectedDraft.id))} />}
               <button className="ads-text-button" onClick={() => onNavigate('digitalEmployees')}>返回智能经营</button>
               <div className="ads-overview-grid">
@@ -375,7 +350,7 @@ export default function PlatformAdsPage({
                     </span>
                     <ChevronRight size={15} />
                   </button>
-                  <button onClick={() => onNavigate("adsManaged")}>
+                  <button onClick={() => setManagedOpen(true)}>
                     <Bot size={17} />
                     <span>
                       <strong>了解 AI 建议</strong>
@@ -391,27 +366,24 @@ export default function PlatformAdsPage({
               <div className="ads-section-title">
                 <div>
                   <h2>
-                    营销任务{" "}
+                    本地计划与草稿{" "}
                     <span className="ads-count">{filtered.length}</span>
                   </h2>
                   <p className="ads-muted">
                     按广告平台分别创建计划；Facebook 与 Instagram 可共用一份 Meta 计划。
                   </p>
                 </div>
-                <select
+                <Select
                   aria-label="筛选渠道"
                   value={selected}
-                  onChange={(e) => setSelected(e.target.value)}
-                >
-                  {["全部渠道", ...channels.map((c) => c.name)].map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
+                  onChange={setSelected}
+                  options={["全部渠道", ...channels.map((c) => c.name)].map(value => ({ value, label: value }))}
+                />
               </div>
               {loadingTasks ? (
                 <div className="ads-empty" role="status"><Clock3 size={30} /><h3>正在加载投放草稿</h3></div>
               ) : filtered.length ? (
-                <div className="ads-table-wrap">
+                <div className="ads-table-wrap ads-task-table-wrap">
                   <table>
                     <thead>
                       <tr>
@@ -427,20 +399,20 @@ export default function PlatformAdsPage({
                     <tbody>
                       {filtered.map((d) => (
                         <tr key={d.id}>
-                          <td>
+                          <td data-label="营销任务">
                             <strong>{d.name}</strong>
                             <small>
                               {d.video} · {d.goal}
                             </small>
                           </td>
-                          <td><span className="inline-flex items-center gap-1.5">{d.channels.map(name => <span key={name} title={name}><PlatformLogoGroup value={name} size={18}/></span>)}</span></td>
-                          <td>{d.market}</td>
-                          <td>{d.creationSource === 'platform_import' && Number(d.budget) === 0 ? '平台总预算未同步' : `${d.currency} ${Number(d.budget).toLocaleString()}`}</td>
-                          <td>
-                            <span className="ads-pill neutral">方案已保存</span>
+                          <td data-label="渠道"><span className="inline-flex items-center gap-1.5">{d.channels.map(name => <span key={name} title={name}><PlatformLogoGroup value={name} size={18}/></span>)}</span></td>
+                          <td data-label="目标市场">{d.market}</td>
+                          <td data-label="预算上限">{d.creationSource === 'platform_import' && Number(d.budget) === 0 ? '平台总预算未同步' : `${d.currency} ${Number(d.budget).toLocaleString()}`}</td>
+                          <td data-label="状态">
+                            <span className="ads-pill neutral">{adTaskStatusLabels[d.status] || '状态待核对'}</span>
                           </td>
-                          <td>{creationSourceLabels[d.creationSource || 'manual']}<small>{managementModeLabels[d.managementMode || 'manual']}</small></td>
-                          <td>
+                          <td data-label="创建来源 / 管理方式">{creationSourceLabels[d.creationSource || 'manual']}<small>{managementModeLabels[d.managementMode || 'manual']}</small></td>
+                          <td data-label="操作">
                             <button
                               className="ads-text-button"
                               onClick={() => setSelectedDraft(d)}
@@ -473,85 +445,26 @@ export default function PlatformAdsPage({
             </section>
           ))}
 
-        {isOverviewPage && overviewTab === "creatives" && (
-          <>
-            <div className="ads-context-banner">
-              <Layers3 size={22} />
-              <div>
-                <strong>把投放结果，带回内容创作</strong>
-                <p>关联素材版本与广告计划，发现值得继续测试的创意。</p>
-              </div>
-            </div>
-            <div className="ads-creative-actions">
-              <button
-                className="ads-card"
-                onClick={() => onNavigate("adsPlans")}
-              >
-                <BarChart3 size={21} />
-                <span>
-                  <strong>继续放量</strong>
-                  <small>回到投放计划调整视频预算</small>
-                </span>
-                <ArrowRight size={15} />
-              </button>
-              <button className="ads-card" onClick={openCreate}>
-                <Plus size={21} />
-                <span>
-                  <strong>创建素材测试</strong>
-                  <small>用新渠道、受众或版本验证表现</small>
-                </span>
-                <ArrowRight size={15} />
-              </button>
-              <button
-                className="ads-card"
-                onClick={() => onNavigate("smartAssets")}
-              >
-                <Sparkles size={21} />
-                <span>
-                  <strong>生成视频改版</strong>
-                  <small>带着诊断结果回到内容创作</small>
-                </span>
-                <ArrowRight size={15} />
-              </button>
-            </div>
-            {isLocalForeignTradeMockEnabled() && drafts.some(draft => isForeignTradeMockId(draft.id)) ? <section className="ads-card">
-              <div className="ads-section-title"><div><h2>外贸素材表现</h2><p className="ads-muted">近 7 天本地模拟数据，与整体表现中的中东、欧洲和拉美投放计划对应。</p></div></div>
-              <div className="ads-table-wrap"><table><thead><tr><th>素材 / 开头钩子</th><th>渠道 / 市场</th><th>花费</th><th>有效询盘</th><th>单条成本</th><th>Agent 建议</th></tr></thead><tbody>
-                {drafts.filter(draft => isForeignTradeMockId(draft.id)).map(draft => { const metric = mockCreativePerformance[draft.id]; return <tr key={draft.id}><td><strong>{draft.video}</strong><small>{metric?.hook}</small></td><td><span className="inline-flex items-center gap-1.5">{draft.channels.map(name => <span key={name} title={name}><PlatformLogoGroup value={name} size={18}/></span>)}</span><small>{draft.market}</small></td><td>{metric?.spend}</td><td>{metric?.inquiries}</td><td>{metric?.cpl}</td><td>{metric?.advice}</td></tr>; })}
-              </tbody></table></div>
-            </section> : <section className="ads-card ads-empty">
-              <Layers3 size={40} />
-              <h3>还没有关联投放的素材</h3>
-              <p>
-                广告素材及效果接口尚未接入。接入后，这里将按渠道展示素材表现，
-                <br />
-                并支持将优化建议转为内容改版任务。
-              </p>
-              <button
-                className="ads-button"
-                onClick={() => onNavigate("smartAssets")}
-              >
-                前往内容创作 <ArrowRight size={15} />
-              </button>
-            </section>}
-          </>
+        {isCreativePage && (
+          <AdCreativeLibrary onOpenTask={id => { const task = drafts.find(item => item.id === id); if (task) setSelectedDraft(task); onNavigate('adsPlans'); }} initialTaskId={selectedDraft?.id} initialTaskName={selectedDraft?.name} />
         )}
 
-        {page === 'adsManaged' && !previewMode && <AdManagedWorkspace selectedTaskId={selectedDraft?.id} tasks={managedTasks} loading={loadingTasks} onUpdate={replaceTask} onPlans={() => onNavigate('adsPlans')} />}
-        {page === "adsManaged" && previewMode && <PlatformAdsManagedPreview mode={mode} onModeChange={setMode} />}
-        <footer className="ads-footer">
+        <Drawer title="AI 投手" placement="right" size={720} open={managedOpen} onClose={() => setManagedOpen(false)} destroyOnHidden={false}>
+          {managedOpen && (!previewMode ? <AdManagedWorkspace selectedTaskId={selectedDraft?.id} tasks={managedTasks} loading={loadingTasks} onUpdate={replaceTask} onPlans={() => { setManagedOpen(false); onNavigate('adsPlans'); }} /> : <PlatformAdsManagedPreview mode={mode} onModeChange={setMode} />)}
+        </Drawer>
+        {!isCreativePage && <footer className="ads-footer">
           <ShieldCheck size={13} />{" "}
           {previewMode
             ? "当前为独立界面预览，没有真实观看、消耗或自动执行；草稿只保留在当前页面会话。"
             : "计划创建来源与管理方式独立；真实平台状态、消耗及执行结果以服务回执为准。"}
-        </footer>
+        </footer>}
       </main>
 
       {dialog && (
         <div
           className="ads-overlay"
           onKeyDown={(e) => {
-            if (e.key === "Escape") { e.stopPropagation(); closeDialog(); }
+            if (e.key === "Escape" && !materialPickerOpen && e.currentTarget.contains(e.target as Node)) { e.stopPropagation(); closeDialog(); }
           }}
         >
           <div
@@ -563,7 +476,6 @@ export default function PlatformAdsPage({
           >
             <div className="ads-modal-heading">
               <div>
-                <span className="ads-eyebrow">PLATFORM ADS</span>
                 <h2>
                   {dialog === "accounts" ? "连接广告账户" : selectedDraft ? "编辑投放计划" : entry === 'manual' ? "手动创建投放计划" : entry === 'ai_assisted' ? 'AI 辅助创编' : 'AI 托管创编'}
                 </h2>
@@ -623,17 +535,21 @@ export default function PlatformAdsPage({
                 </div>
                 {step === 0 && (
                   <div className="ads-form-fields">
+                    {!previewMode && <AdPlanAccountPicker currency={form.currency} value={form.configuration.accountConnectionId} onCurrencyChange={selectedDraft ? undefined : currency => setForm(current => ({ ...current, currency }))} onChange={accountConnectionId => setForm(current => ({ ...current, configuration: { ...current.configuration, accountConnectionId } }))}/>}
+                    {!previewMode && <AdMaterialPicker onOpenChange={setMaterialPickerOpen} value={form.configuration.materialSource} disabled={saving} blockedReason={form.channels.every(c => ['Facebook', 'Instagram'].includes(c)) ? undefined : '当前选择器用于 Meta 视频计划，请先选择 Facebook / Instagram 渠道。'} onChange={materialSource => setForm(current => ({ ...current, video: materialSource?.name.slice(0, 120) || '', configuration: { ...current.configuration, materialSource } }))}/>}
                     <label>
                       投放视频
                       <input
                         required
                         maxLength={120}
                         value={form.video}
+                        readOnly={!!form.configuration.materialSource}
                         onChange={(e) =>
                           setForm({ ...form, video: e.target.value })
                         }
                         placeholder="输入视频名称或素材编号"
                       />
+                      {!form.configuration.materialSource && <small>手填名称仅用于规划，不代表已绑定可投放文件；可从素材管理选择已有成片。</small>}
                     </label>
                     <label>
                       视频投流任务名称

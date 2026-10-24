@@ -19,10 +19,17 @@ try {
   const task = await createPlatformAdTask('t1', 'u1', { name: 'Test', video: 'video', market: 'US', budget: 100, goal: '提升网站访问', channels: ['Facebook'] });
   const connection = await store.create<any>('platform_ad_connections', { tenant_id: 't1', provider: 'meta', accountId: '1', status: 'connected', currency: 'USD', tokenCipher: encryptSecret('secret') });
   let writes = 0;
+  let corrupt = false;
+  const saved: Record<string, any> = {};
   globalThis.fetch = (async (url: any, init: any) => {
     if (!String(url).startsWith('https://graph.facebook.com/')) return originalFetch(url, init);
-    if (init.method === 'POST') return Response.json({ id: String(100 + ++writes) });
-    return Response.json({ id: '101', status: 'PAUSED', account_id: '1', daily_budget: '500' });
+    if (new URL(String(url)).searchParams.get('fields') === 'id,access_token') return Response.json({ id: '1', access_token: 'test-page-token' });
+    if (init.method === 'POST') { const id = String(100 + ++writes); saved[id] = Object.fromEntries(new URLSearchParams(init.body)); return Response.json({ id }); }
+    const id = new URL(String(url)).pathname.split('/').pop()!;
+    const data = { ...saved[id] }; for (const k of ['creative', 'object_story_spec', 'targeting']) if (data[k]) data[k] = JSON.parse(data[k]);
+    if (data.creative?.creative_id) data.creative = { id: data.creative.creative_id };
+    if (corrupt && data.object_story_spec?.video_data) data.object_story_spec.video_data.video_id = '999';
+    return Response.json({ ...data, id, status: 'PAUSED', account_id: '1', currency: 'USD', account_status: 1, daily_budget: '500' });
   }) as typeof fetch;
   const staleTask = await createPlatformAdTask('t1', 'u1', { name: 'Stale AI plan', video: 'video', market: 'US', budget: 100, goal: '提升网站访问', channels: ['Facebook'] }, {
     creationSource: 'ai_assisted',
@@ -58,6 +65,20 @@ try {
   await store.create(AD_EXECUTIONS, { tenant_id: 't1', taskId: task2.id, requestId: 'uncertain_1', status: 'UNKNOWN', action: 'create' });
   await assert.rejects(executeAdAction('t1', task2.id, input), /核对/);
   assert.equal(writes, 4);
+  const old = await createPlatformAdTask('t1', 'u1', { name: 'Old pending', video: 'video', market: 'US', budget: 100, goal: '提升网站访问', channels: ['Facebook'] });
+  await store.create(AD_EXECUTIONS, { tenant_id: 't1', taskId: old.id, requestId: 'old_unknown', status: 'UNKNOWN', action: 'create', createdAt: '2020-01-01' });
+  for (let i = 0; i < 201; i++) await store.create(AD_EXECUTIONS, { tenant_id: 't1', taskId: old.id, requestId: `recent_${i}`, status: 'FAILED', action: 'create', createdAt: '2026-10-22' });
+  await assert.rejects(executeAdAction('t1', old.id, { ...input, requestId: 'must_not_duplicate', expectedVersion: old.version }), /核对/);
+  assert.equal(writes, 4, 'older unresolved receipts beyond page 1 cannot be hidden');
+  const invalid = await createPlatformAdTask('t1', 'u1', { name: 'Invalid future order', video: 'video', market: 'US', budget: 100, goal: '提升网站访问', channels: ['Facebook'] });
+  await store.update('platform_ad_tasks', invalid.id, { configuration: { ...invalid.configuration, startsAt: new Date(Date.now() + 172800000).toISOString(), endsAt: new Date(Date.now() + 86400000).toISOString() } });
+  await assert.rejects(executeAdAction('t1', invalid.id, { ...input, requestId: 'invalid_schedule', expectedVersion: invalid.version }), /结束时间必须/);
+  const drift = await createPlatformAdTask('t1', 'u1', { name: 'Mismatch', video: 'video', market: 'US', budget: 100, goal: '提升网站访问', channels: ['Facebook'] });
+  corrupt = true;
+  const uncertain = await executeAdAction('t1', drift.id, { ...input, requestId: 'mismatch_readback', expectedVersion: drift.version });
+  assert.equal(uncertain.status, 'UNKNOWN'); assert.equal(writes, 8);
+  await assert.rejects(executeAdAction('t1', drift.id, { ...input, requestId: 'never_recreate_drift', expectedVersion: drift.version }), /核对/);
+  assert.equal(writes, 8, 'mismatched four-level readback keeps resources, never recreates'); corrupt = false;
   const tikTask = await createPlatformAdTask('t1', 'u1', { name: 'TikTok', video: 'post', market: 'US', budget: 200, goal: '提升有效视频观看', channels: ['TikTok'], configuration: { startsAt: new Date(Date.now() + 86400000).toISOString(), endsAt: new Date(Date.now() + 172800000).toISOString() } });
   const tikConnection = await store.create<any>('platform_ad_connections', { tenant_id: 't1', provider: 'tiktok', accountId: '10', status: 'connected', currency: 'USD', tokenCipher: encryptSecret('secret') });
   let tikWrites = 0;

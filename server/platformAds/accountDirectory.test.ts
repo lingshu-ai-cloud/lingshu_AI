@@ -1,0 +1,60 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+const temp = mkdtempSync(path.join(tmpdir(), 'ads-directory-'));
+Object.assign(process.env, { LOCAL_STORE_DIR: temp, PB_URL: 'http://127.0.0.1:1', NODE_ENV: 'test', ENABLE_LOCAL_DEV_FALLBACK: 'true', TEST_ONLY_EXTERNAL_EFFECT_LEASE_FALLBACK: 'true', META_ADS_API_VERSION: 'v25.0' });
+const { store } = await import('../storage/index.js');
+const { encryptSecret } = await import('../lib/tenantPlatformApps.js');
+const { getAccountDirectory, useGrantedAccount, readGrantedAdapter } = await import('./accountDirectory.js');
+const { readAccountAdAsset } = await import('./accountAdAsset.js');
+const { createPlatformAdTask, updatePlatformAdTask } = await import('./tasks.js');
+const { bindPlatformAdCreative } = await import('./creatives.js');
+const { preflightAdAction } = await import('./preflight.js');
+const { executeAdAction } = await import('./execution.js');
+const originalFetch = globalThis.fetch;
+await store.create('platform_ad_connections', { id: 'owner', tenant_id: 'tenant-a', provider: 'meta', accountId: '123', currency: 'CNY', name: 'Existing', status: 'connected', tokenCipher: encryptSecret('directory-test-only-token') });
+await store.create('platform_ad_connections', { id: 'foreign', tenant_id: 'tenant-b', provider: 'meta', accountId: '999', currency: 'CNY', status: 'connected' });
+globalThis.fetch = async (input, init) => {
+  const url = new URL(String(input));
+  if (url.hostname !== 'graph.facebook.com') return originalFetch(input, init);
+  assert.equal(init?.method, 'GET', 'no provider writes during discovery or local account selection');
+  if (url.pathname.endsWith('/me/adaccounts')) return Response.json({ data: [{ id: 'act_456', name: 'Discovered', currency: 'CNY' }, { id: 'act_123', name: 'Existing', currency: 'CNY' }] });
+  if (url.pathname.endsWith('/act_456')) return Response.json({ id: 'act_456', account_status: 1, name: 'Discovered', currency: 'CNY', timezone_name: 'Asia/Shanghai' });
+  throw new Error('unexpected graph request');
+};
+try {
+  const before = await store.list('platform_ad_connections');
+  const directory = await getAccountDirectory('tenant-a');
+  assert.equal(directory.items.length, 2); assert.equal(directory.items[0].accountId, '456');
+  assert.equal(directory.items[0].localConnectionId, undefined); assert.equal(directory.items[1].localConnectionId, 'owner');
+  assert.deepEqual(await store.list('platform_ad_connections'), before, 'GET discovery does not persist accounts');
+  await assert.rejects(readGrantedAdapter('tenant-b', 'owner', '456'), /未找到/);
+  await assert.rejects(readGrantedAdapter('tenant-a', 'owner', '999'), /授权范围/);
+  const selected = await useGrantedAccount('tenant-a', 'owner', '456');
+  assert.equal(selected.accountId, '456'); assert.equal((await useGrantedAccount('tenant-a', 'owner', '456')).id, selected.id);
+  const input = { name: 'Draft', video: 'Owned source', goal: '提升网站访问', market: 'US', budget: 100, currency: 'CNY', channels: ['Facebook'], configuration: { accountConnectionId: selected.id } };
+  const draft = await createPlatformAdTask('tenant-a', 'user', input);
+  assert.equal(draft.configuration.accountConnectionId, selected.id);
+  const edited = await updatePlatformAdTask('tenant-a', draft.id, { ...input, expectedVersion: draft.version, configuration: { audience: 'edited by legacy client' } });
+  assert.equal(edited?.configuration.accountConnectionId, selected.id);
+  const version = edited!.version;
+  const preflight = await preflightAdAction('tenant-a', draft.id, { expectedVersion: version, connectionId: 'owner', action: 'create' });
+  assert.equal(preflight.checks.find(c => c.id === 'draft_account')?.status, 'blocked');
+  await assert.rejects(bindPlatformAdCreative('tenant-a', draft.id, { expectedVersion: version, connectionId: 'owner', sourceTaskId: 'source', artifactId: 'version' }), /素材账户与草稿账户不一致/);
+  await assert.rejects(executeAdAction('tenant-a', draft.id, { expectedVersion: version, connectionId: 'owner', action: 'create', requestId: 'directory_account_mismatch_001' }), /执行账户与草稿账户不一致/);
+  const cleared = await updatePlatformAdTask('tenant-a', draft.id, { ...input, expectedVersion: version, configuration: { accountConnectionId: '' } });
+  assert.equal(cleared?.configuration.accountConnectionId, '');
+  await assert.rejects(createPlatformAdTask('tenant-a', 'user', { ...input, configuration: { accountConnectionId: 'foreign' } }), /当前企业/);
+  await assert.rejects(createPlatformAdTask('tenant-a', 'user', { ...input, currency: 'USD' }), /币种/);
+  const calls: string[] = [];
+  const reader = { request: async (id: string, _params = {}, method = 'GET') => { assert.equal(method, 'GET'); calls.push(id); return id === '789'
+    ? { id: '789', account_id: '456', name: 'Real ad', status: 'PAUSED', effective_status: 'PAUSED', creative: { id: '101' } }
+    : { id: '101', account_id: '456', name: 'Real creative', thumbnail_url: 'https://example.com/cover.png', object_story_spec: { page_id: '222', video_data: { video_id: '333' } }, asset_feed_spec: { videos: [{ video_id: '444' }] } }; } };
+  const asset = await readAccountAdAsset('456', '789', reader);
+  assert.deepEqual(asset.videoIds, ['333', '444']); assert.equal(asset.localSource, 'unverified'); assert.equal(asset.creativeId, '101');
+  await assert.rejects(readAccountAdAsset('999', '789', reader), /归属/);
+  const safe = await readAccountAdAsset('456', '789', { request: async (id: string) => id === '789' ? { id: '789', account_id: '456', creative: { id: '101' } } : { id: '101', account_id: '456', thumbnail_url: 'https://example.com/?access_token=secret' } });
+  assert.equal(safe.thumbnailUrl, ''); assert.deepEqual(safe.videoIds, []);
+  console.log('unified directory, tenant/grant ownership, local draft account persistence and native creative tests passed');
+} finally { globalThis.fetch = originalFetch; rmSync(temp, { recursive: true, force: true }); }

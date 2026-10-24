@@ -16,6 +16,7 @@ import {
 import { studioApi, type StudioProject } from '../../lib/studioApi';
 import CreationMaterialHistory from './CreationMaterialHistory';
 import CreationHistoryCover from './CreationHistoryCover';
+import AdSourceLifecycle from '../AdSourceLifecycle';
 import { dedupeSocialOutputHistoryProjects, socialOutputOwnedReviewMedia } from '../../lib/socialOutputHistoryProjects';
 import { loadOwnedReviewMedia } from '../../lib/socialReviewOwnedMedia';
 import type { SocialImageCreationTask } from '../../../shared/contracts/socialImageCreation';
@@ -46,6 +47,7 @@ function CompletedVideoPreview({ project, onClose }: { project: StudioProject; o
 
   return (
     <Drawer open title={project.title} size={840} onClose={onClose}>
+      <AdSourceLifecycle origin="studio" projectId={project.id}/>
       <p className="mb-4 text-sm text-text-secondary">{projectCategory(project) === 'viral_replication' ? '爆款复刻模式' : '自由创作模式'} · {statusLabel(project, directUrl)}</p>
         <div className="min-h-0 flex-1 overflow-y-auto bg-black p-3 sm:p-5">
           {error ? <p role="alert" className="p-8 text-center text-sm text-white">{error}</p> : url ? project.spec.contentMode === 'image'

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { availableProductPage } from './config/productSurfaceFlags.js';
+import { availableProductPage, PLATFORM_ADS_PAGE_IDS, PLATFORM_ADS_SURFACE_ENABLED } from './config/productSurfaceFlags.js';
 import {
   PAGE_IDS,
   PAGE_REGISTRY,
@@ -60,6 +60,13 @@ assert.equal(resolveNavigationPage('not-a-page', 'create'), null);
 assert.equal(PAGE_REGISTRY.scriptLibrary.navParent, 'smartAssets');
 assert.equal(PAGE_REGISTRY.channels.navParent, 'plugins');
 assert.equal(PAGE_REGISTRY.accountManagement.navParent, 'socialMonitoring');
+assert.equal(PLATFORM_ADS_SURFACE_ENABLED, true, 'the 投流 product entry must be visible');
+assert.deepEqual(PLATFORM_ADS_PAGE_IDS, ['adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged']);
+assert.deepEqual(['adsOverview', 'adsPlans', 'adsCreatives'].map(page => PAGE_REGISTRY[page as 'adsPlans' | 'adsOverview' | 'adsCreatives'].navLabel), ['投流', '计划创编', '素材管理']);
+assert.equal(PAGE_REGISTRY.adsPlans.navParent, 'adsOverview');
+assert.equal(PAGE_REGISTRY.adsCreatives.navParent, 'adsOverview');
+assert.equal(PAGE_REGISTRY.adsManaged.navParent, 'adsPlans', 'legacy AI managed links must resolve under the plan workspace');
+assert.equal(availableProductPage('adsOverview'), 'adsOverview');
 
 console.log('Page registry tests passed');
 

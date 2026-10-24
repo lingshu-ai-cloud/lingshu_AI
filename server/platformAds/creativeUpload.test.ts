@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { createCreativeUploadService } from './creativeUpload.js';
 import { AdProviderError } from './metaAdapter.js';
 const bytes = new Uint8Array([1, 2, 3]);
-function setup(options: { networkFailure?: boolean; receiptFailure?: boolean; dropReceipt?: boolean } = {}) {
+function setup(options: { networkFailure?: boolean; receiptFailure?: boolean; dropReceipt?: boolean; reuseExisting?: boolean } = {}) {
   let uploads = 0, reads = 0, updates = 0, opens = 0;
   let creative: any = { id: 'c', tenant_id: 't', taskId: 'task', taskVersion: 1, provider: 'meta', connectionId: 'conn', size: 3, mimeType: 'video/mp4', sha256: createHash('sha256').update(bytes).digest('hex'), uploadReceipt: {}, status: 'pending' };
   const deps: any = {
@@ -16,9 +16,20 @@ function setup(options: { networkFailure?: boolean; receiptFailure?: boolean; dr
     store: { list: async () => ({ items: [] }), update: async (_collection: string, _id: string, patch: any) => { updates++; if (options.receiptFailure && updates === 2) return null; creative = { ...creative, ...patch }; if (options.dropReceipt) creative.uploadReceipt = {}; return creative; } },
     adapter: () => ({ upload: async () => { uploads++; if (options.networkFailure) throw new AdProviderError('unknown', 'NETWORK_ERROR', true); return '999'; }, status: async () => { reads++; return 'ready'; } }),
   };
+  if (options.reuseExisting) deps.reuseVideo = async (input: any) => {
+    await input.readStatus('999');
+    return { platformVideoId: '999', uploadReceipt: { requestId: 'original_upload', status: 'ready', accountId: '123', sha256: creative.sha256, videoId: '999', reusedFromCreativeId: 'donor', reuseVerifiedAt: new Date().toISOString() } };
+  };
   return { service: createCreativeUploadService(deps), counters: () => ({ uploads, reads, opens }), creative: () => creative };
 }
 const input = { requestId: 'request_001', expectedVersion: 1 };
+test('legacy pending binding reuses an existing video before any upload POST', async () => {
+  const s = setup({ reuseExisting: true });
+  assert.equal((await s.service.upload('t', 'task', 'c', input)).status, 'ready');
+  assert.equal(s.counters().uploads, 0); assert.equal(s.counters().reads, 1);
+  await s.service.upload('t', 'task', 'c', input);
+  assert.equal(s.counters().uploads, 0);
+});
 test('upload is durable, idempotent and ready only after readback', async () => {
   const s = setup();
   assert.equal((await s.service.upload('t', 'task', 'c', input)).status, 'processing');

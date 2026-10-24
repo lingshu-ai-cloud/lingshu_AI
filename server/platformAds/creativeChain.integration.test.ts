@@ -33,10 +33,12 @@ try {
   const account = await store.create<any>('platform_ad_connections', { tenant_id: 'tenant', provider: 'meta', accountId: '1', status: 'connected', currency: 'USD', tokenCipher: encryptSecret('test-token') });
   const { creative, taskVersion } = await bindPlatformAdCreative('tenant', task.id, { expectedVersion: task.version, sourceTaskId: 'source', artifactId: 'artifact', connectionId: account.id });
   let uploads = 0, adWrites = 0;
+  const saved: Record<string, any> = {};
   globalThis.fetch = (async (url: any, init?: RequestInit) => {
     const target = String(url);
     if (target.startsWith('http://127.0.0.1:1/')) return originalFetch(url, init);
     assert.ok(target.startsWith('https://graph.facebook.com/v25.0/'), `unexpected network: ${target}`);
+    if (new URL(target).searchParams.get('fields') === 'id,access_token') return Response.json({ id: '1', access_token: 'test-page-token' });
     if (target.endsWith('/advideos')) { uploads++; assert.ok(init?.body instanceof FormData); return Response.json({ id: '500' }); }
     if (init?.method === 'POST') {
       const receipts = await store.list<any>('platform_ad_executions', { where: { tenant_id: 'tenant', taskId: task.id } });
@@ -46,10 +48,13 @@ try {
         const params = init.body as URLSearchParams;
         assert.equal(JSON.parse(params.get('object_story_spec')!).video_data.video_id, '500');
       }
-      return Response.json({ id: String(100 + ++adWrites) });
+      const id = String(100 + ++adWrites); saved[id] = Object.fromEntries(init.body as URLSearchParams); return Response.json({ id });
     }
     if (target.includes('/500?')) return Response.json({ id: '500', status: { video_status: 'ready' } });
-    return Response.json({ id: target.includes('/102?') ? '102' : '101', status: 'PAUSED', account_id: '1', daily_budget: '500' });
+    const id = new URL(target).pathname.split('/').pop()!;
+    const data = { ...saved[id] }; for (const k of ['creative', 'object_story_spec', 'targeting']) if (data[k]) data[k] = JSON.parse(data[k]);
+    if (data.creative?.creative_id) data.creative = { id: data.creative.creative_id };
+    return Response.json({ ...data, id, status: 'PAUSED', account_id: '1', currency: 'USD', account_status: 1, daily_budget: '500' });
   }) as typeof fetch;
   const uploadInput = { expectedVersion: taskVersion, requestId: 'upload_chain_1' };
   assert.equal((await uploadPlatformAdCreative('tenant', task.id, creative.id, uploadInput)).status, 'processing');

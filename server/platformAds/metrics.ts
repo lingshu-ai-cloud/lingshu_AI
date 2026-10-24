@@ -69,7 +69,7 @@ export async function getAdTaskMetrics(tenantId: string, taskId: string) {
     const aggregated = aggregateAdMetrics(response.data, task.goal);
     const resourceKey = `${connection.accountId}:${item.resourceId}`;
     if (resources.some(resource => `${resource.accountId}:${resource.campaignId}` === resourceKey)) continue;
-    resources.push({ provider: 'meta', accountId: connection.accountId, campaignId: item.resourceId, currency: task.currency, metricDefinition: task.goal === '提升有效视频观看' ? 'meta:thruplay' : task.goal === '提升网站访问' ? 'meta:inline_link_clicks' : 'meta:unmapped', metricLabel: aggregated.metricLabel, reportTimezone: '', daily: aggregated.daily });
+    resources.push({ provider: 'meta', accountId: connection.accountId, campaignId: item.resourceId, currency: task.currency, metricDefinition: task.goal === '提升有效视频观看' ? 'meta:thruplay' : task.goal === '提升网站访问' ? 'meta:inline_link_clicks' : 'meta:unmapped', metricLabel: aggregated.metricLabel, reportTimezone: connection.timezoneName || '', daily: aggregated.daily });
     rows.push(...response.data);
   }
   return { provider: 'meta', currency: task.currency, reportedAt: new Date().toISOString(), window: { since, until },
