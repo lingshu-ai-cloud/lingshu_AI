@@ -4,7 +4,7 @@ const agentSchedule = require('./agentSchedule')
 function organization(profile = {}, overview = {}) {
   const user = profile.user || {}
   const workspace = overview.workspace || {}
-  return workspace.name || workspace.title || user.organizationName || user.tenantName || '灵枢工作台'
+  return workspace.name || workspace.title || user.organizationName || user.tenantName || '灵枢AI'
 }
 
 function platformLabel(value) {

@@ -4,7 +4,7 @@ const operatorHome = require('../../../lib/operator-home')
 
 Page({
   data: {
-    loading: true, error: '', organization: '灵枢工作台', edition: '运营版',
+    loading: true, error: '', organization: '灵枢AI', edition: '运营版',
     statusBarHeight: 44,
     week: model.week(), selectedDay: model.day(new Date().toISOString()), days: [], calendarExpanded: false,
     counts: { pendingProduction: '—', producedFilms: '—', pendingAcceptance: '—', acceptedFilms: '—', pendingShots: '—', completedShots: '—' },
