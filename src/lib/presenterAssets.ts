@@ -1,6 +1,10 @@
 export interface PresenterLook {
   id: string; name: string; groupId?: string; voiceId?: string;
   imageUrl?: string; videoUrl?: string;
+  gender?: string;
+  ethnicity?: string;
+  tags?: string[];
+  favorite?: boolean;
   orientation: 'unknown' | 'portrait' | 'landscape' | 'square';
   status: string;
 }
@@ -10,6 +14,7 @@ export interface PresenterCreation {
   id: string; name: string; type: 'photo' | 'digital_twin'; voiceId?: string;
   status: 'submitting' | 'processing' | 'pending_consent' | 'completed' | 'failed' | 'uncertain';
   look?: PresenterLook; groupId?: string; error?: string; consentUrl?: string;
+  consentStatus?: string;
   consentRequestedAt?: string;
   createdAt: string; updatedAt: string;
 }
