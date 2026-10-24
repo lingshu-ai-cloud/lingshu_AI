@@ -1,9 +1,11 @@
 const api = require('../../lib/api')
+const { shootingTaskPresentation } = require('../../lib/shootingWorkflow')
+const { materialSourceCategoryOf, materialThemeTagsOf, MATERIAL_SOURCE_LABELS, MATERIAL_THEME_LABELS } = require('../../lib/materialTaxonomy')
 const emptyDraft = () => ({ title: '', shotBrief: '', productIds: [], themeTitle: '', duration: '5', ratioIndex: 0 })
 
 Page({
-  data: { products: [], productsLoading: false, productsError: '', productsOpen: false, selectedProductText: '', draft: emptyDraft(), ratios: ['9:16', '16:9', '1:1', '4:5'], creating: false, loggedIn: false, loading: false, email: '', password: '', userName: '', tasks: [], visibleTasks: [], selected: null, filter: 'pending', busy: false, progress: 0, message: '', pendingMaterialId: '' },
-  onLoad(options) { this.initialTaskId = options && options.taskId; if (api.token()) this.restore() },
+  data: { products: [], productsLoading: false, productsError: '', productsOpen: false, selectedProductText: '', draft: emptyDraft(), ratios: ['9:16', '16:9', '1:1', '4:5'], creating: false, loggedIn: false, loading: false, email: '', password: '', userName: '', tasks: [], visibleTasks: [], selected: null, filter: 'pending', busy: false, progress: 0, message: '', uploadedMaterialSummary: '', pendingMaterialId: '' },
+  onLoad(options) { this.initialTaskId = options && options.taskId; this.initialAutoShoot = Boolean(this.initialTaskId && options.autoShoot === '1'); if (api.token()) this.restore() },
   onShow() { if (this.data.loggedIn && !this.data.busy) this.refresh() },
   inputEmail(e) { this.setData({ email: e.detail.value }) },
   inputPassword(e) { this.setData({ password: e.detail.value }) },
@@ -27,12 +29,26 @@ Page({
       else this.setData({ message: e.message })
     }
   },
-  signOut() { if (this.data.creating) return; api.clearToken(); this.setData({ products: [], productsOpen: false, productsError: '', selectedProductText: '', draft: emptyDraft(), filter: 'pending', message: '', loggedIn: false, tasks: [], visibleTasks: [], selected: null, userName: '' }) },
-  setFilter(e) {
+  canLeaveTask() {
+    if (this.data.busy || this.data.creating) return false
+    if (this.data.pendingMaterialId) { this.setData({ message: '视频已入库但尚未关联，请先重试关联后再离开' }); return false }
+    return true
+  },
+  signOut() {
     if (this.data.busy || this.data.creating) return
+    const finish = () => {
+      api.clearToken()
+      this.setData({ products: [], productsOpen: false, productsError: '', selectedProductText: '', draft: emptyDraft(), filter: 'pending', message: '', uploadedMaterialSummary: '', pendingMaterialId: '', progress: 0, loggedIn: false, tasks: [], visibleTasks: [], selected: null, userName: '' })
+    }
+    if (this.data.pendingMaterialId) {
+      wx.showModal({ title: '退出账号？', content: '视频已入库但尚未关联任务，可在网页素材库找回。确认退出仅清除本机待关联状态，不会删除素材。', confirmText: '确认退出', success: result => { if (result.confirm && !this.data.busy && !this.data.creating) finish() } })
+    } else finish()
+  },
+  setFilter(e) {
+    if (!this.canLeaveTask()) return
     const filter = e.currentTarget.dataset.filter
     if (filter === 'create') this.loadProducts()
-    this.setData({ filter, selected: null, message: '', pendingMaterialId: '', visibleTasks: this.data.tasks.filter(task => filter === 'all' || (filter === 'pending' && !task.done) || (filter === 'done' && task.done)) })
+    this.setData({ filter, selected: null, message: '', uploadedMaterialSummary: '', pendingMaterialId: '', visibleTasks: this.data.tasks.filter(task => filter === 'all' || (filter === 'pending' && !task.done) || (filter === 'done' && task.done)) })
   },
   async loadProducts() {
     if (this.data.productsLoading) return
@@ -79,13 +95,14 @@ Page({
     finally { this.setData({ creating: false }) }
   },
   displayTask(task) {
-    return { ...task, done: !!(task.uploadedMaterialIds && task.uploadedMaterialIds.length), durationText: task.suggestedDurationSec ? task.suggestedDurationSec + ' 秒' : '不限', soundText: task.soundMode === 'source' ? '保留原声' : task.soundMode === 'silent' ? '无声画面' : '可后期配音' }
+    return { ...task, ...shootingTaskPresentation(task) }
   },
   selectTask(e) {
+    if (!this.canLeaveTask()) return
     const task = this.data.tasks.find(item => item.id === e.currentTarget.dataset.id)
-    if (task) this.setData({ selected: task, message: '', pendingMaterialId: '' })
+    if (task) this.setData({ selected: task, message: '', uploadedMaterialSummary: '', pendingMaterialId: '' })
   },
-  back() { if (!this.data.busy) this.setData({ selected: null, message: '', pendingMaterialId: '' }) },
+  back() { if (this.canLeaveTask()) this.setData({ selected: null, message: '', uploadedMaterialSummary: '', pendingMaterialId: '' }) },
   async refresh() {
     this.setData({ loading: true })
     try {
@@ -93,15 +110,23 @@ Page({
       const displayTasks = tasks.map(task => this.displayTask(task))
       const filter = this.data.filter
       this.setData({ tasks: displayTasks, visibleTasks: displayTasks.filter(task => filter === 'all' || (filter === 'pending' && !task.done) || (filter === 'done' && task.done)) })
-      if (this.initialTaskId) { this.setData({ selected: displayTasks.find(task => task.id === this.initialTaskId) || null }); this.initialTaskId = '' }
-      if (this.data.selected) this.setData({ selected: this.data.tasks.find(task => task.id === this.data.selected.id) || null })
+      if (this.initialTaskId) {
+        const selected = displayTasks.find(task => String(task.id) === String(this.initialTaskId)) || null
+        const autoShoot = this.initialAutoShoot
+        this.initialTaskId = ''
+        this.initialAutoShoot = false
+        this.setData({ selected })
+        if (selected && autoShoot) this.shoot()
+        else if (!selected) this.setData({ message: '没有找到对应的待拍任务，请刷新后重试' })
+      }
+      if (this.data.selected) this.setData({ selected: this.data.tasks.find(task => task.id === this.data.selected.id) || (this.data.pendingMaterialId ? this.data.selected : null) })
     } catch (e) { this.setData({ message: e.message }) }
     finally { this.setData({ loading: false }) }
   },
   shoot() { this.choose(['camera']) },
   chooseExisting() { this.choose(['album']) },
   choose(sourceType) {
-    if (this.data.busy) return
+    if (!this.canLeaveTask()) return
     wx.chooseMedia({ count: 1, mediaType: ['video'], sourceType, maxDuration: 600,
       success: res => { const file = res.tempFiles && res.tempFiles[0]; if (file) this.submit(file) },
       fail: err => { if (!/cancel/i.test(err.errMsg || '')) this.setData({ message: err.errMsg || '无法选择视频' }) }
@@ -109,13 +134,15 @@ Page({
   },
   async submit(file) {
     const task = this.data.selected
-    if (!task || this.data.busy) return
+    if (!task || this.data.busy || this.data.pendingMaterialId) return
     const maxBytes = 30 * 1024 * 1024
     if (!file.size || file.size > maxBytes) { this.setData({ message: '首版支持不超过 30 MB 的视频；请缩短拍摄时长或用网页端上传' }); return }
-    this.setData({ busy: true, progress: 0, message: '', pendingMaterialId: '' })
+    this.setData({ busy: true, progress: 0, message: '', uploadedMaterialSummary: '', pendingMaterialId: '' })
     try {
       const material = await api.uploadVideo({ ...file, name: 'shoot-' + task.id + '.mp4', mimeType: 'video/mp4' }, progress => this.setData({ progress }))
-      this.setData({ pendingMaterialId: material.id, message: '视频已入库，正在关联拍摄任务…' })
+      const sourceText = MATERIAL_SOURCE_LABELS[materialSourceCategoryOf(material)]
+      const themeText = materialThemeTagsOf(material).map(theme => MATERIAL_THEME_LABELS[theme]).join('、')
+      this.setData({ uploadedMaterialSummary: sourceText + (themeText ? ' · ' + themeText : ''), pendingMaterialId: material.id, message: '视频已入库（' + sourceText + (themeText ? ' · ' + themeText : '') + '），正在关联拍摄任务…' })
       await api.attach(task.id, material.id)
       this.setData({ pendingMaterialId: '', message: '上传成功，已关联拍摄任务' })
       await this.refresh()

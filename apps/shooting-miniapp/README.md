@@ -67,7 +67,16 @@ pnpm run test:mobile-shared   # 共享行为、原生包依赖与相关网页测
 | `shared/design/tokens.json` | `src/lib/designTokens.generated.ts` → `designTokens.ts`、主题 Provider 和共享样式 | `styles/tokens.wxss` → 页面和 `styles/components.wxss` |
 | `shared/mobile-domain.mjs` / `.d.mts` | 数字员工页任务状态、上海日期与排期角色文案 | `lib/generated/mobile-domain.js` → workbench、agentSchedule |
 | `shared/request-policy.cjs` / `.d.cts` | 生成 `shared/request-policy.mjs` / `.d.mts` → 助手审批 API、账号请求锁 | 生成 `lib/request-policy.js` → API 错误解析、助手回执终态 |
+| `shared/action-form.cjs` / `.d.cts` | 生成 ESM → 审批意见、分镜选择与费用输入校验 | 生成 `lib/action-form.js` → 行动表单字段与 payload |
+| `shared/weekly-work-status.mjs` / `.d.mts` | `src/lib/weeklyWorkStatus.ts` 薄适配 → 周运行状态 | `lib/generated/weekly-work-status.js` → 单项任务状态与详情卡点 |
+| `shared/materialTaxonomy.ts`、`shared/shootingWorkflow.ts` | 网页直接消费；拍摄工作流保留原路径兼容导出 | TypeScript 生成 `lib/materialTaxonomy.js`、`lib/shootingWorkflow.js` → 拍摄详情和上传素材说明 |
 
 生成器分别为 `scripts/generate-design-tokens.mjs`、`scripts/sync-mobile-domain.mjs`、`scripts/generate-miniapp-request-policy.mjs`，总入口为 `scripts/sync-mobile-shared.mjs`；均支持 `--check`。共享模块不依赖 React、DOM 或微信 API，小程序运行时不引用包外源代码。
 
 网页和小程序继续使用各自现有接口、网络和设备适配器。两端已共用错误解析；版本命令和账号请求锁目前由网页消费，回执终态目前由小程序消费，它们均由同一平台无关策略源提供。审批对象版本、明确确认、幂等重试与真实执行回执保留；发布日历的海外冻结时区不改成上海时区。当前共享状态文案和请求基础，不将完整网页工作台或自由对话动作执行器移入小程序。
+
+第二批生成器为 `generate-miniapp-action-form.mjs`、`generate-miniapp-work-status.mjs`、`generate-miniapp-material-shooting.mjs`，已接入同一生成与检查入口。素材和拍摄模块由仓库既有 TypeScript 编译器生成独立原生模块，不增加运行时依赖。
+
+- 表单基础统一字段标识、必填、字数、数值上下限、HTTPS链接和选择ID归一化，空费用不会被当成0；完整分镜资格、费用授权、版本与确认继续由原业务流程和服务端处理。
+- 运行状态统一准备、等待、受阻和终态规则。小程序只有跨运行任务投影时只展示单项状态；不会由这些任务计算虚构的周运行或完成量。详情收到最新 workspace 后清除旧状态、阻塞说明、下一步及结果。
+- 拍摄详情共用声音要求、稳定绑定元数据提示和素材分类。手机上传成功表示素材与任务关联，不表示原草稿镜头已经回填；网页仍核对草稿版本、拍摄要求和已有画面，避免自动覆盖。

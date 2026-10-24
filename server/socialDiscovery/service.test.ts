@@ -93,3 +93,31 @@ test('account discovery reads the current account library and forwards the saved
   assert.match(calls[0]?.dateFrom ?? '', /^\d{4}-\d{2}-\d{2}$/);
   assert.match(calls[0]?.dateTo ?? '', /^\d{4}-\d{2}-\d{2}$/);
 });
+
+test('failed sources preserve every platform and query root cause instead of only the final error', async () => {
+  const dataStore = new MemoryStore();
+  dataStore.rows.set('social_discovery_scopes', [{
+    id: 'scope-errors', tenant_id: 'tenant-1', keyword_set_id: 'keywords-errors', version: 1, status: 'active',
+    payload: {
+      market: 'US', language: 'en', approval: { status: 'approved', scopeVersion: 1 }, keywords: [],
+      discoveryBrief: {
+        discoveryBriefId: 'brief-errors', keywordSetId: 'keywords-errors', keywordSetVersion: 1, productRef: 'product', market: 'US', audience: 'buyer',
+        discoverySeedIds: [], trackedSceneIds: [], competitorAccounts: [], discoveryModes: ['momentum'], platforms: ['tiktok', 'instagram'],
+        lookbackDays: 7, resultLimit: 4, budgetLimitCny: null, productionGap: null, createdBy: 'director_agent',
+        modePolicies: { momentum: { enabled: true, sourceRefs: ['face cleanser supplier', 'clay mask'], platforms: ['tiktok', 'instagram'], resultLimit: 4, refreshIntervalMinutes: 60, budgetLimitCny: null } },
+      },
+    },
+  }]);
+  const result = await executeApprovedDiscoveryRun({ tenantId: 'tenant-1', triggerType: 'manual' }, {
+    dataStore,
+    async crawl(input) { throw new Error(`${input.platform} rejected ${input.keyword}`); },
+    candidateEvidenceAdapter: { async toEvidenceWorkItems() { return []; } },
+    async runCandidateEvidence() { return { accepted: [], suggestions: [], failed: [] }; },
+  });
+  assert.equal(result.run?.status, 'failed');
+  assert.ok((result.run?.failureDetails?.length || 0) >= 2);
+  assert.match(result.run?.error || '', /tiktok\/face cleanser supplier: tiktok rejected face cleanser supplier/);
+  assert.match(result.run?.error || '', /tiktok\/clay mask: tiktok rejected clay mask/);
+  const persisted = dataStore.rows.get('social_discovery_runs')?.[0] as any;
+  assert.deepEqual(persisted.failureDetails, result.run?.failureDetails);
+});

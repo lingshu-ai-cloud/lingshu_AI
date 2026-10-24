@@ -3,8 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildReplicationWorkbenchSpec, trustedReferenceDuration } from './replicationWorkbenchPlan.js';
 const reference = { id:'reference-1', tenantId:'tenant-1', duration:8, modelInputAuthorized:true, modelInputAuthorizationEvidence:'enterprise-owned-reference AUTH-1', aiAnalysis:{analysisMode:'exact',analysisQuality:'video',gemini:{scriptDetails15s:[
-  {time:'0-4s',materialType:'talking_head',narrativeRole:'hook',classificationEvidence:'visible presenter',visual:'人物面向镜头口播',dialogue:'Original competitor claim'},
-  {time:'4-8s',materialType:'product',narrativeRole:'product_intro',classificationEvidence:'product closeup',visual:'产品近景'},
+  {time:'0-4s',materialType:'talking_head',narrativeRole:'hook',classificationEvidence:'visible presenter',visual:'人物面向镜头口播',dialogue:'Original competitor claim',environment:'门店背景',shot:'中景',camera:'平视固定',composition:'人物居中，产品位于右侧'},
+  {time:'4-8s',materialType:'product',narrativeRole:'product_intro',classificationEvidence:'product closeup',visual:'产品近景',environment:'产品台',shot:'特写',camera:'固定',composition:'产品居中'},
 ]}}};
 const spec={script:'[0-4s]\n台词：Our own verified product.\n[4-8s]\n台词：Discover more.',automation:{route:'clone',orderId:'order-1'},contentOrder:{id:'order-1'}};
 const input={tenantId:'tenant-1',projectId:'project-1',reference,spec,presenterId:'presenter-1',productIds:['product-1']};
@@ -18,8 +18,21 @@ test('business order initializes stable real shot workbench without catalog assi
   const person=result.shotProductions[`video-1:${result.shootingSlots[0].id}`];
   assert.equal(person.digitalHuman.reference.cues[0].targetText,'Our own verified product.');
   assert.equal(person.digitalHuman.reference.cues[0].originalText,'Original competitor claim');
+  assert.equal(person.digitalHuman.reference.cues[0].referenceShotId,'reference-1:shot-1');
+  assert.equal(person.digitalHuman.reference.cues[0].referenceFirstFrameUrl,'/api/overseas/videos/reference-1/shot/1/first-frame');
+  assert.equal(result.automatedReplicationShots[0].referenceComposition.background,'门店背景');
   assert.equal(result.automatedReplicationShots[1].firstFrameRequest.sourceFirstFrameUrl,'/api/overseas/videos/reference-1/shot/2/first-frame');
   assert.equal(buildReplicationWorkbenchSpec({...input,spec:result}),result);
+});
+test('person shots fail closed when the matched reference background or framing is absent',()=>{
+  const missingBackground=structuredClone(reference);missingBackground.aiAnalysis.gemini.scriptDetails15s[0]!.environment='';
+  const backgroundResult=buildReplicationWorkbenchSpec({...input,reference:missingBackground}) as any;
+  assert.equal(backgroundResult.automatedReplicationShots[0].blockerCode,'reference_composition_missing');
+  assert.match(backgroundResult.automatedReplicationShots[0].blocker,/背景分析/);
+  const missingFraming=structuredClone(reference);missingFraming.aiAnalysis.gemini.scriptDetails15s[0]!.shot='';
+  const framingResult=buildReplicationWorkbenchSpec({...input,reference:missingFraming}) as any;
+  assert.equal(framingResult.automatedReplicationShots[0].blockerCode,'reference_composition_missing');
+  assert.match(framingResult.automatedReplicationShots[0].blocker,/景别分析/);
 });
 test('tenant mismatch and incomplete reference fail while an unauthorized person shot is isolated',()=>{
   assert.throws(()=>buildReplicationWorkbenchSpec({...input,tenantId:'other'}),/当前企业/);

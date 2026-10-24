@@ -21,9 +21,12 @@ const stableHash = (value: string) => { let hash = 2166136261; for (let index=0;
 export function compositionFingerprint(cue: DigitalHumanReferenceCue): string {
   if (cue.personShot === false) return '';
   const explicit = normalized(cue.compositionClusterId);
-  const value = explicit ? { explicit } : cue.composition ? {
+  const referenceShotId = normalized(cue.referenceShotId || cue.composition?.referenceShotId);
+  const sourceComposition = normalized(cue.composition?.sourceComposition);
+  const value = explicit ? { explicit, ...(referenceShotId ? { referenceShotId } : {}) } : cue.composition ? {
+    ...(referenceShotId ? { referenceShotId } : {}),
     presenterKey: normalized(cue.composition.presenterKey), shotSize: normalized(cue.composition.shotSize), cameraAngle: normalized(cue.composition.cameraAngle),
-    background: normalized(cue.composition.background), actionIntent: normalized(cue.composition.actionIntent),
+    background: normalized(cue.composition.background), actionIntent: normalized(cue.composition.actionIntent), ...(sourceComposition ? { sourceComposition } : {}),
   } : null;
   if (!value || Object.values(value).some(item => !item)) return '';
   return JSON.stringify(value);

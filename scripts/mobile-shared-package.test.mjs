@@ -59,8 +59,12 @@ test('native business modules load without browser, React or Node runtime depend
     vm.runInNewContext(fs.readFileSync(file, 'utf8'), context, { filename: file });
     return module.exports;
   }
-  for (const name of ['workbench', 'agentSchedule', 'starter', 'assistant', 'api']) {
-    const module = load(path.join(miniapp, 'lib', name));
-    assert.ok(Object.keys(module).length, `${name} has no exports`);
+  const entries = [
+    ...files(path.join(miniapp, 'lib')).filter(file => file.endsWith('.js')),
+    path.join(miniapp, 'pages/action/model.js'),
+  ];
+  for (const file of entries) {
+    const module = load(file);
+    assert.ok(Object.keys(module).length, `${file} has no exports`);
   }
 });

@@ -5,10 +5,16 @@ import { formatScheduledDiscoveryResult } from './scheduledResult.js';
 const failed = formatScheduledDiscoveryResult({ run: {
   runId: 'run-failed', status: 'failed', stopReason: 'source_failed', error: 'TikTok keyword search returned no usable videos',
   modeStats: { momentum: { accepted: 0 } }, platformStats: { tiktok: { failed: 5 }, youtube: { failed: 2 } },
+  failureDetails: [
+    { mode: 'momentum', platform: 'tiktok', queryRef: 'face cleanser supplier', error: 'TikTok rejected query' },
+    { mode: 'momentum', platform: 'youtube', queryRef: 'clay mask', error: 'YouTube quota exceeded' },
+  ],
 } });
 assert.equal(scheduledExecutionState(failed), 'failed');
 assert.match(failed, /发现采集受阻（tiktok、youtube）/);
 assert.match(failed, /有效内容：0 条/);
+assert.match(failed, /tiktok\/face cleanser supplier: TikTok rejected query/);
+assert.match(failed, /youtube\/clay mask: YouTube quota exceeded/);
 
 const empty = formatScheduledDiscoveryResult({ run: {
   runId: 'run-empty', status: 'stopped', stopReason: 'no_valid_results', modeStats: { momentum: { accepted: 0 } },

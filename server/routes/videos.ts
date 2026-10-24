@@ -5632,9 +5632,11 @@ async function crawlTikTokWithApifyFallback(keyword: string, limit: number, date
   }
 
   const items: CrawledVideo[] = [];
+  const failures: string[] = [];
   try {
     items.push(...await crawlPublicSearch('tiktok', input, limit, dateFrom, dateTo));
   } catch (e) {
+    failures.push(e instanceof Error ? e.message : String(e));
     console.warn('[videos] TikTok local crawl failed, trying Apify:', e instanceof Error ? e.message : e);
   }
 
@@ -5652,11 +5654,12 @@ async function crawlTikTokWithApifyFallback(keyword: string, limit: number, date
         if (items.length >= limit) break;
       }
     } catch (e) {
+      failures.push(e instanceof Error ? e.message : String(e));
       console.warn('[videos] TikTok Apify fallback failed:', e instanceof Error ? e.message : e);
     }
   }
 
-  if (items.length === 0) throw new Error('TikTok keyword search returned no usable videos');
+  if (items.length === 0) throw new Error(crawlFailureMessage('TikTok', failures, 'keyword search returned no usable videos'));
   return sortByHeat(items).slice(0, limit);
 }
 
@@ -5732,7 +5735,7 @@ async function crawlTikTokApify(keyword: string, limit: number, dateFrom = '', d
   }
 }
 
-function buildApifyTikTokInput(keyword: string, limit: number, dateFrom = '', dateTo = ''): Record<string, unknown> {
+export function buildApifyTikTokInput(keyword: string, limit: number, dateFrom = '', dateTo = ''): Record<string, unknown> {
   const raw = keyword.trim();
   const account = tiktokUsername(raw);
   const videoId = tiktokVideoId(raw);
@@ -5751,12 +5754,17 @@ function buildApifyTikTokInput(keyword: string, limit: number, dateFrom = '', da
     input.postURLs = [raw];
   } else if (account) {
     input.profiles = [account];
-  } else {
+  } else if (/^#[\p{L}\p{N}_-]+$/u.test(raw) || (/^[\p{L}\p{N}_-]+$/u.test(raw) && !/^(?:https?:|@)/i.test(raw))) {
     input.hashtags = [cleanKeyword];
+  } else {
+    input.searchQueries = [raw];
+    input.searchSection = '/video';
   }
   if (hasDateRange(dateFrom, dateTo)) {
-    input.oldestPostDate = dateFrom || undefined;
+    input.oldestPostDateUnified = dateFrom || undefined;
     input.newestPostDate = dateTo || undefined;
+    const windowDays = Math.abs(Date.parse(`${dateTo}T00:00:00Z`) - Date.parse(`${dateFrom}T00:00:00Z`)) / 86_400_000;
+    if (Number.isFinite(windowDays) && windowDays <= 7) input.videoSearchDateFilter = 'PAST_WEEK';
   }
   return input;
 }
@@ -5837,12 +5845,14 @@ async function crawlInstagramWithApifyFallback(keyword: string, limit: number, d
   const input = keyword.trim();
   const directUrl = isPlatformUrl(input, 'instagram');
   const items: CrawledVideo[] = [];
+  const failures: string[] = [];
 
   if (directUrl) {
     // 直链优先走 yt-dlp（配置了 cookie 文件即可，免 Apify 费用）；成功即返回，不再叠加 Apify。
     try {
       return [await crawlYtDlpMetadata('instagram', input, keyword)];
     } catch (e) {
+      failures.push(e instanceof Error ? e.message : String(e));
       console.warn('[videos] Instagram yt-dlp metadata failed, trying Apify:', e instanceof Error ? e.message : e);
     }
   }
@@ -5861,12 +5871,13 @@ async function crawlInstagramWithApifyFallback(keyword: string, limit: number, d
         if (items.length >= limit) break;
       }
     } catch (e) {
+      failures.push(e instanceof Error ? e.message : String(e));
       console.warn('[videos] Instagram Apify fallback failed:', e instanceof Error ? e.message : e);
     }
   }
 
   if (items.length === 0) {
-    throw new Error('Instagram 抓取无可用视频：请配置 YT_DLP_COOKIE_FILES 登录态 cookie，或开启 Apify 兜底（APIFY_TOKEN / APIFY_INSTAGRAM_CRAWL_FALLBACK_ENABLED）');
+    throw new Error(crawlFailureMessage('Instagram', failures, '抓取无可用视频'));
   }
   return directUrl ? items.slice(0, limit) : sortByHeat(items).slice(0, limit);
 }
@@ -7832,8 +7843,23 @@ async function normalizeVideoForGemini(filePath: string): Promise<string> {
   return ok && fs.existsSync(outPath) && fs.statSync(outPath).size > 0 ? outPath : '';
 }
 
+export function crawlFailureMessage(platform: string, failures: string[], fallback: string): string {
+  const causes = [...new Set(failures.map(value => value.trim()).filter(Boolean))];
+  return causes.length ? `${platform} crawl failed: ${causes.join('；')}` : `${platform} ${fallback}`;
+}
+
+export function youtubeHtmlSearchUrl(keyword: string, dateFrom = '', dateTo = ''): { url: string; dateEvidence: string } {
+  const uploadDateFilter = youtubeUploadDateFilterParam(dateFrom, dateTo);
+  const sp = uploadDateFilter || 'EgIYAQ%253D%253D';
+  return {
+    url: `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}&sp=${sp}`,
+    dateEvidence: uploadDateFilter ? 'youtube-upload-filter' : 'youtube-shorts-filter',
+  };
+}
+
 async function crawlYouTubeSearch(keyword: string, limit: number, dateFrom = '', dateTo = ''): Promise<CrawledVideo[]> {
   const shortsUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}&sp=EgIYAQ%253D%253D`;
+  let ytDlpFailure = '';
   try {
     const items = await crawlYtDlpSearch('youtube', shortsUrl, keyword, Math.max(limit * 3, limit), '', '', true);
     return items
@@ -7841,16 +7867,17 @@ async function crawlYouTubeSearch(keyword: string, limit: number, dateFrom = '',
       .filter(item => isDiscoveryVideoEligible(item))
       .slice(0, limit);
   } catch (e) {
-    throw new Error(`YouTube Shorts search failed: ${e instanceof Error ? e.message : String(e)}`);
+    ytDlpFailure = e instanceof Error ? e.message : String(e);
+    console.warn('[videos] YouTube yt-dlp search failed, trying HTML search:', ytDlpFailure);
   }
-  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}&sp=EgIQAQ%253D%253D`;
+  const { url, dateEvidence } = youtubeHtmlSearchUrl(keyword, dateFrom, dateTo);
   const r = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36',
       'Accept-Language': 'en-US,en;q=0.9',
     },
   });
-  if (!r.ok) throw new Error(`YouTube search failed: HTTP ${r.status}`);
+  if (!r.ok) throw new Error(crawlFailureMessage('YouTube', [ytDlpFailure, `HTML search HTTP ${r.status}`], 'search returned no videos'));
 
   const html = await r.text();
   const data = extractYtInitialData(html);
@@ -7880,12 +7907,13 @@ async function crawlYouTubeSearch(keyword: string, limit: number, dateFrom = '',
       views,
       tags: keyword.split(/\s+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean).slice(0, 5),
       uploadedAt: undefined,
+      dateEvidence,
       youtubeShort: true,
     });
     if (out.length >= limit) break;
   }
 
-  if (out.length === 0) throw new Error('No YouTube videos parsed from search results');
+  if (out.length === 0) throw new Error(crawlFailureMessage('YouTube', [ytDlpFailure, 'No videos parsed from HTML search results'], 'search returned no videos'));
   return out;
 }
 
@@ -7914,7 +7942,9 @@ function youtubeUploadDateFilterParam(dateFrom = '', dateTo = ''): string {
   if (!from && !to) return '';
   const end = to ? dateFromCompact(to) : new Date();
   const start = from ? dateFromCompact(from) : new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1);
+  // Discovery passes dateFrom as `now - lookbackDays`; count elapsed days,
+  // otherwise a seven-day lookback is misclassified as an eight-day/month filter.
+  const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)));
   if (days <= 1) return 'EgIIAg%253D%253D'; // today
   if (days <= 7) return 'EgIIAw%253D%253D'; // this week
   if (days <= 31) return 'EgIIBA%253D%253D'; // this month

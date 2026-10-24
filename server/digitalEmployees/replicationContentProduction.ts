@@ -18,7 +18,7 @@ export function managedReplicationFailureState(error: unknown): { blocker: strin
   if (/物理镜头边界|镜头边界不完整/.test(raw)) {
     return { blocker: '爆款分析缺少物理镜头边界，需补全分析后继续生产', retryPolicy: 'input_required' };
   }
-  if (/已确认的镜头类型|逐镜可见事实|精确参考分析|参考结构|缺少可执行素材|素材.*(?:缺少|不存在|未授权)|冻结内容订单.*额度|产品资料|口播.*(?:依据|事实)|人物.*(?:授权|不可用)/i.test(raw)) {
+  if (/已确认的镜头类型|逐镜可见事实|精确参考分析|参考结构|对标分镜|背景分析|景别分析|构图分析|机位或运镜分析|缺少可执行素材|素材.*(?:缺少|不存在|未授权)|冻结内容订单.*额度|产品资料|口播.*(?:依据|事实)|人物.*(?:授权|不可用)/i.test(raw)) {
     return { blocker: raw, retryPolicy: 'input_required' };
   }
   return { blocker: raw, retryPolicy: 'service_retry' };

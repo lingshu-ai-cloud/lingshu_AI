@@ -1,13 +1,17 @@
 import { createHash } from 'node:crypto';
 import { benchmarkTimeRange, buildBenchmarkAnalysis, recordOf } from '../../shared/benchmarkAnalysis.js';
 import { newShotProduction } from '../../src/lib/shotProduction.js';
+import { referencePresenterCompositionIssue, type ReferencePresenterComposition } from './referencePresenterComposite.js';
 
 export interface AutomatedReplicationShot {
   shotId: string; slotId: string; kind: 'person' | 'nonperson' | 'blocked'; start: number; end: number;
   required: true; productionState: 'ready' | 'blocked'; intendedKind?: 'person' | 'nonperson';
-  blockerCode?: 'physical_boundary_unconfirmed' | 'material_type_unconfirmed' | 'visual_evidence_missing' | 'presenter_authorization_required' | 'target_narration_missing' | 'reference_model_input_authorization_required';
+  blockerCode?: 'physical_boundary_unconfirmed' | 'material_type_unconfirmed' | 'visual_evidence_missing' | 'presenter_authorization_required' | 'target_narration_missing' | 'reference_model_input_authorization_required' | 'reference_composition_missing';
   blocker?: string;
   fingerprintContext?: string;
+  referenceShotId?: string;
+  referenceFirstFrameUrl?: string;
+  referenceComposition?: ReferencePresenterComposition;
   firstFrameRequest?: Record<string, unknown>;
 }
 export interface ReplicationWorkbenchInput {
@@ -99,6 +103,16 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
     const shotId = `replication-${hash([input.projectId, referenceId, shot.index]).slice(0, 24)}`;
     const fingerprintContext = `automated-replication-shot:${hash({ referenceId, shot })}`;
     const raw = rawDetails[shot.index - 1]!;
+    const referenceShotId = String(raw.shotId || raw.id || `${referenceId}:shot-${shot.index}`);
+    const referenceFirstFrameUrl = `/api/overseas/videos/${encodeURIComponent(referenceId)}/shot/${shot.index}/first-frame`;
+    const referenceComposition: ReferencePresenterComposition = {
+      referenceShotId,
+      referenceFirstFrameUrl,
+      background: String(shot.environment || '').trim(),
+      framing: String(shot.framing || '').trim(),
+      camera: String(shot.camera || '').trim(),
+      composition: String(raw.composition || shot.visual || '').trim(),
+    };
     const role = String(raw.observedPresenterRole || '');
     const foregroundPerson = /女性|男性|女人|男人|女士|男士|主播|主持人|presenter/i.test(shot.visual)
       && !/背景.{0,8}(女性|男性|人物)|工人背影|人群|路人/.test(shot.visual);
@@ -125,12 +139,14 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
               ? { code: 'target_narration_missing' as const, message: `第 ${shot.index} 镜缺少企业目标台词，禁止直接复用原片商业口播` }
               : person && !referenceModelInputAuthorized
                 ? { code: 'reference_model_input_authorization_required' as const, message: `第 ${shot.index} 镜缺少原片首帧作为模型输入的授权依据` }
+              : person && referencePresenterCompositionIssue(referenceComposition)
+                ? { code: 'reference_composition_missing' as const, message: `第 ${shot.index} 镜${referencePresenterCompositionIssue(referenceComposition)}` }
               : null;
     slots.push({ id: shotId, slotId, detail, duration: end - start, requirements: JSON.stringify({ detail, start, end, ratio, productIds,
       ...(evidenceBlocker ? { blockerCode: evidenceBlocker.code } : {}) }),
       observedPresenterRole: person ? 'sales_presenter' : 'none', salesPresenterConfirmed: false,
       ...(evidenceBlocker ? { locked: true, blocker: evidenceBlocker.message } : {}) });
-    const sourceFirstFrameUrl = `/api/overseas/videos/${encodeURIComponent(referenceId)}/shot/${shot.index}/first-frame`;
+    const sourceFirstFrameUrl = referenceFirstFrameUrl;
     details.push({ ...shot, shotId: slotId, firstFrameRef: sourceFirstFrameUrl, observedPresenterRole: person ? 'sales_presenter' : 'none',
       ...(evidenceBlocker ? { productionBlocker: evidenceBlocker } : {}) });
     if (evidenceBlocker) {
@@ -149,8 +165,10 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
           derivativeAuthorized: false, modelInputAuthorized: true, modelInputAuthorizationEvidence: referenceModelInputAuthorizationEvidence,
           cues: [{ id: `${shotId}:cue`, start, end, originalText: shot.dialogue, targetText,
             shotIds: [slotId], personShot: true, classificationSource: 'analysis', sourceFirstFrame: {time: start},
+            referenceShotId, referenceFirstFrameUrl,
             generationDurationSeconds: Math.max(4, end - start), outputDurationSeconds: end - start,
-            composition: { presenterKey: input.presenterId!, shotSize: shot.framing, cameraAngle: shot.camera, background: shot.environment, actionIntent: shot.visual } }] } };
+            composition: { presenterKey: input.presenterId!, shotSize: shot.framing, cameraAngle: shot.camera, background: shot.environment,
+              actionIntent: shot.visual, referenceShotId, sourceComposition: referenceComposition.composition } }] } };
     }
     productions[`${assemblyId}:${shotId}`] = production;
     const sceneType = shot.materialType === 'product' ? 'product'
@@ -160,6 +178,7 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
     sourcePlans[slotId] = { mode: person ? 'digital_human' : 'ai', sceneType, productIds,
       confirmed: false, decided: true, videoResolution: '480p', videoResolutionPinned: true };
     automatedShots.push({ shotId, slotId, kind: person ? 'person' : 'nonperson', start, end, required: true, productionState: 'ready', fingerprintContext,
+      ...(person ? { referenceShotId, referenceFirstFrameUrl, referenceComposition } : {}),
       ...(!person ? { firstFrameRequest: { projectId: input.projectId, shotId, requestId: `auto-frame-${hash([input.projectId, revision, shot.index]).slice(0, 32)}`,
         mode: 'replication', sceneType, shotDescription: detail,
         startSeconds: start, endSeconds: end, ratio, productIds, sourceFirstFrameUrl } } : {}) });

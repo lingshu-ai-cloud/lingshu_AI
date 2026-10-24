@@ -64,6 +64,7 @@ test('missing shot boundaries are an analysis input gap, not a retryable provide
     retryPolicy: 'input_required',
   });
   assert.equal(managedReplicationFailureState(new Error('爆款分析缺少已确认的镜头类型，需补全分析后继续生产')).retryPolicy, 'input_required');
+  assert.equal(managedReplicationFailureState(new Error('第 1 镜真人口播对标分镜缺少背景分析')).retryPolicy, 'input_required');
   assert.equal(managedReplicationFailureState(new Error('provider timeout')).retryPolicy, 'service_retry');
 });
 test('an edit during final assembly cannot be overwritten by an older successful render', async () => {

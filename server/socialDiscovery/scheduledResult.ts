@@ -8,6 +8,7 @@ interface ScheduledDiscoveryResult {
     error?: string | null;
     modeStats?: Record<string, { accepted?: number }>;
     platformStats?: Record<string, { failed?: number }>;
+    failureDetails?: Array<{ mode: string; platform: string; queryRef: string; error: string }>;
   };
 }
 
@@ -23,7 +24,8 @@ export function formatScheduledDiscoveryResult(result: ScheduledDiscoveryResult)
     || String(run.stopReason || '').toLowerCase() === 'source_failed';
   if (failed || accepted === 0) {
     const platforms = failedPlatforms.length ? `（${failedPlatforms.join('、')}）` : '';
-    const reason = String(run.error || '').trim() || (run.stopReason === 'no_valid_results' ? '本轮没有通过质量门的可用内容' : '平台来源未返回可用内容');
+    const failures = [...new Set((run.failureDetails || []).map(item => `${item.platform}/${item.queryRef}: ${item.error}`))];
+    const reason = failures.join('；') || String(run.error || '').trim() || (run.stopReason === 'no_valid_results' ? '本轮没有通过质量门的可用内容' : '平台来源未返回可用内容');
     return `执行状态：执行失败\n发现采集受阻${platforms}：${reason}\n有效内容：${accepted} 条\n采集运行：${run.runId || 'unknown_run'}`;
   }
   if (String(run.status || '').toLowerCase() === 'partial') {
