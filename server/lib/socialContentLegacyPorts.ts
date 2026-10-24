@@ -19,3 +19,6 @@ export {
 } from '../routes/studio.js';
 
 export { automationBgmAudio, automationBgmCatalog } from '../routes/studioBgmCatalog.js';
+
+// Shared read-only creation evidence remains owned by the existing strategy adapter.
+export { creationEvidencePorts } from '../routes/contentCreationDialogue.js';

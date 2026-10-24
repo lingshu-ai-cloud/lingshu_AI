@@ -1,3 +1,4 @@
+import { creationReplySchema } from '../../shared/contracts/contentCreationDialogue.js';
 import {parseSocialReferenceReuse} from './socialContentValidation.js';
 import { parseSocialReplicationContext } from './socialContentValidation.js';
 import {
@@ -231,6 +232,7 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     throw new SocialContentWorkflowError('social_material_routing_policy_invalid', 503);
   }
   return {
+    ...(record.creationDialoguePlan ? { creationDialoguePlan: creationReplySchema.parse(record.creationDialoguePlan) } : {}),
     title,
     objective,
     ...(record.referenceReuse != null ? {referenceReuse: parseSocialReferenceReuse(record.referenceReuse)} : {}),

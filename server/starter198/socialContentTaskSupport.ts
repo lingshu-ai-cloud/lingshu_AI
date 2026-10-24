@@ -1,3 +1,5 @@
+import { guidedEnterpriseContext } from '../assistantContext/guidedCreationKnowledge.js';
+import { applyGuidedCreationStructure } from './guidedCreationStructure.js';
 import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
 import {publicationProductionDeadline} from '../socialPrograms/publicationDeadlines.js';
 import { planNewSocialMaterialRoutes } from './socialContentMaterialRoutePlanning.js';
@@ -213,6 +215,7 @@ export async function sourceCreatedByOperation(input: {
 export function defaultBrief(value: CreateSocialContentTaskInput) {
   const themeDriven = Boolean(value.mode || value.themeId || value.customTopic || value.topic || value.weeklyPlanId);
   return {
+    ...(value.creationDialoguePlan ? { creationDialoguePlan: value.creationDialoguePlan } : {}),
     ...(value.materialRoutingPolicyVersion ? { materialRoutingPolicyVersion: value.materialRoutingPolicyVersion } : {}),
     ...(value.referenceReuse ? {referenceReuse: value.referenceReuse} : {}),
     title: value.title,
@@ -264,7 +267,7 @@ export async function groundedScriptBaseline(input: {
 }): Promise<StoredSocialScriptBaseline> {
   const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
   const verifiedContext = verifiedSocialScriptContext(profile, input.brief.productId || input.brief.productRef);
-  const inspiration = input.theme.themeId
+  const inspiration = !input.brief.creationDialoguePlan && input.theme.themeId
     ? await resolveSocialInspirationScript({ tenantId: input.tenantId, themeId: input.theme.themeId, verifiedContext })
     : null;
   return freezeSocialScriptBaseline({
@@ -296,8 +299,11 @@ export async function refreshSocialTaskReferenceOutputs(input: {
   const detail = await readSocialTaskDetail(input);
   if (!detail) throw new SocialContentWorkflowError('social_content_task_not_found', 404);
   const references = detail.sources.filter(source => source.status === 'active' && source.kind === 'reference_link');
+  // A guided task is created before attaching its explicitly selected cache source.
+  // Never substitute a recommended source during that transient draft.
+  if (summary.brief.creationDialoguePlan && !references.length) return task;
   const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
-  const verifiedContext = verifiedSocialScriptContext(profile, summary.brief.productId || summary.brief.productRef);
+  const verifiedContext = summary.brief.creationDialoguePlan ? guidedEnterpriseContext(profile!, summary.brief.creationDialoguePlan.selection.productIds) : verifiedSocialScriptContext(profile, summary.brief.productId || summary.brief.productRef);
   const planning = {
     targetDurationSeconds: summary.brief.targetDurationSeconds ?? null,
     budgetCny: productionBudgetLimitCny(productionBudgetDuration(summary.brief)),
@@ -334,6 +340,7 @@ export async function refreshSocialTaskReferenceOutputs(input: {
       replicationScript: { ...resolved.replicationScript, status: 'confirmed' },
     };
   }
+  if (resolved && summary.brief.creationDialoguePlan) resolved = applyGuidedCreationStructure(resolved, summary.brief.creationDialoguePlan);
   if (resolved) resolved = await planNewSocialMaterialRoutes({ repository: input.repository,
     tenantId: input.tenantId, task, resolved });
   const previous = parseStoredSocialScriptBaseline(task.script_baseline);

@@ -163,13 +163,13 @@ export function VideoCard({ video, creatorCard = false, isSelected, onSelect, on
             {isImagePost ? <Images size={16} /> : <Play size={16} fill="currentColor" />}
           </span>}
         </button>
-        {creatorCard && <div className="creator-card__tools absolute inset-x-2 top-2 z-30 flex items-start justify-between gap-1">
+        {creatorCard && <div className="creator-card__tools absolute inset-x-2 inset-y-2 z-30 flex items-start justify-between gap-1">
           <span className="pointer-events-none inline-flex items-center gap-1 rounded bg-black/55 px-1.5 py-1 text-xs text-white" title={meta.label}>
             <SocialPlatformIcon platform={video.platform} size={12}/><span>{isImagePost ? '图文' : durationLabel}</span>
           </span>
           <div className="flex shrink-0 gap-1">
             <Button size="small" type="text" className="!bg-black/55 !text-white hover:!bg-black/75" icon={<Eye size={14}/>} aria-label={`查看详情 ${video.title}`} title="查看详情" onClick={() => { setPointerPreview(false); setFocusPreview(false); onSelect(); }}/>
-            <Button size="small" type="text" className="!bg-black/55 !text-white hover:!bg-black/75" icon={<ArrowUpRight size={14}/>} aria-label={`${createLabel || '用于创作'} ${video.title}`} title={createDisabled ? createDisabledReason : createLabel || '用于创作'} onClick={() => { setPointerPreview(false); setFocusPreview(false); onCreate(); }} loading={creating} disabled={createDisabled}/>
+            <Button size="small" type="text" className="creator-card__create !bg-black/55 !text-white hover:!bg-black/75" icon={<ArrowUpRight size={14}/>} aria-label={`${createLabel || '用于创作'} ${video.title}`} title={createDisabled ? createDisabledReason : createLabel || '用于创作'} onClick={() => { setPointerPreview(false); setFocusPreview(false); onCreate(); }} loading={creating} disabled={createDisabled}>{createLabel || '用于创作'}</Button>
           </div>
         </div>}
         {(onDeleteManage || (!isImagePost && onFavoriteMaterial)) && <div className="ls-touch-media-reveal absolute right-2 top-2 z-40 flex gap-1.5 opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">

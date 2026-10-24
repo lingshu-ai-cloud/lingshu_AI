@@ -38,6 +38,16 @@ export function isWorkflowInternalMaterial(material: MaterialPolicyInput): boole
   return WORKFLOW_INTERNAL_SOURCE_TYPES.has(String(material.sourceType || '').trim().toLowerCase());
 }
 
+export function hasReferenceMaterialOrigin(material: MaterialPolicyInput): boolean {
+  if (/^(?:youtube|facebook|instagram|tiktok)(?:[_-]reference)?$/i.test(String(material.sourceType || ''))
+    || /^(?:trend|viral)[_-]reference$/i.test(String(material.sourceType || ''))) return true;
+  if (/youtube\.com|youtu\.be|facebook\.com|instagram\.com|tiktok\.com/i.test(String(material.sourceUrl || ''))) return true;
+  if (material.folder === 'hot' && /爆款[·・](?:YouTube|Facebook|Instagram|TikTok)/i.test(String(material.name || ''))) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Legacy crawled videos predate explicit usage metadata. Keep them available for
  * competitor analysis, but never expose them as downloadable editing assets.
@@ -48,12 +58,7 @@ export function materialUsage(material: MaterialPolicyInput): MaterialUsage {
   if (material.usage === 'editable' && material.commercialUseApproved === true
     && material.derivativesApproved === true && material.rawLibraryUseApproved === true
     && material.mayUseInProduction === true) return 'editable';
-  if (/^(?:youtube|facebook|instagram|tiktok)(?:[_-]reference)?$/i.test(String(material.sourceType || ''))
-    || /^(?:trend|viral)[_-]reference$/i.test(String(material.sourceType || ''))) return 'reference_only';
-  if (/youtube\.com|youtu\.be|facebook\.com|instagram\.com|tiktok\.com/i.test(String(material.sourceUrl || ''))) return 'reference_only';
-  if (material.folder === 'hot' && /爆款[·・](?:YouTube|Facebook|Instagram|TikTok)/i.test(String(material.name || ''))) {
-    return 'reference_only';
-  }
+  if (hasReferenceMaterialOrigin(material)) return 'reference_only';
   return 'editable';
 }
 

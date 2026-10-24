@@ -33,8 +33,8 @@ assert.match(layout, /matchMedia\('\(max-width: 767px\)'\)[\s\S]+addEventListene
 
 assert.doesNotMatch(layout, /投流与发布|CONTENT_NAV_ITEMS|ContentCreationNav/,
   'the old social umbrella navigation must be removed');
-assert.doesNotMatch(layout, /aria-label="创作模式"|CREATION_MODE_LABELS|\bSegmented\b/,
-  'the sidebar must not duplicate the creator mode switch from the content creation home');
+assert.doesNotMatch(layout.slice(layout.indexOf('<motion.aside'), layout.indexOf('</motion.aside>')), /aria-label="创作模式"|CREATION_MODE_LABELS|\bSegmented\b/,
+  'the sidebar must not duplicate the creator mode switch in the main topbar');
 assert.doesNotMatch(starter, /AgentUsageCard|四个 Agent|Token|成本预算/,
   'ordinary starter users must not see internal agent usage or cost accounting');
 for (const label of ['业务进度', '待处理', '结果']) assert.match(starter, new RegExp(label));

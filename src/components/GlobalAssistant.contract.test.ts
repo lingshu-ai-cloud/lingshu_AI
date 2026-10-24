@@ -420,6 +420,7 @@ const pageConversationResetSource = sourceSection(
   '跨页面会话重置',
 );
 assert.match(pageConversationResetSource, /if \(restore \|\| kickoff\) return/, '主动恢复的会话或任务跳转不得被页面切换清空');
+assert.match(pageConversationResetSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\.creationDraft\) return/, '带创作草稿的证据补齐与工作台导航不得清空方案对话');
 assert.match(pageConversationResetSource, /resetTransientConversation\(\)/, '切换到其他页面时必须清空临时会话');
 assert.match(pageConversationResetSource, /focusTaskCard\(PRIMARY_ASSISTANT_THREAD, null\)/, '切换页面时不得把上一页待决定任务卡带到新页面');
 

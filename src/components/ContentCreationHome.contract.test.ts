@@ -41,8 +41,8 @@ assert.match(home, /className="creator-home__canvas-stage"/, '数字员工区域
 assert.doesNotMatch(home, /mode === 'employee' && <section className="creator-home__canvas"/, '数字员工画布不得以条件挂载造成硬切');
 assert.match(creatorStyles, /\.creator-home__canvas-stage \{[^}]*grid-template-rows: 0fr/, '数字员工画布须以可插值高度平滑收起');
 assert.match(creatorStyles, /\.creator-home--employee \.creator-home__assistant-anchor:not\(\.creator-home__assistant-anchor--active\) \{ height: 136px/, '切换到数字员工时主输入区须平滑缩小');
-assert.match(creatorStyles, /\.creator-mode-switch \.ant-segmented-item-label \{[^}]*border-radius: 999px !important/, '分段按钮标签须与外层胶囊使用同一圆角');
-assert.match(creatorStyles, /width: min\(470px, 100%\); height: 56px/, '双模式切换须对齐参考图比例');
+assert.match(creatorStyles, /\.creator-mode-switch \.ant-segmented-item-label \{[^}]*border-radius: 3px !important/, '分段按钮标签须跟随小圆角外观');
+assert.match(creatorStyles, /width: min\(240px, 100%\); height: 44px/, '右上角双模式切换须保持紧凑尺寸');
 assert.match(creatorStyles, /width: min\(100%, 1416px\)/, '主内容宽度须与参考图一致');
 assert.match(card, /ls-viral-card group/);
 assert.match(card, /absolute right-2 top-2 z-40[\s\S]{0,900}取消收藏[\s\S]{0,900}删除/, '收藏和删除须位于媒体卡右上角的悬停操作区');

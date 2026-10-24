@@ -1,3 +1,4 @@
+import CreationDialoguePlanPanel from './CreationDialoguePlanPanel';
 import { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 export { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 import StudioPreviewStage from '../studio/StudioPreviewStage';
@@ -30,6 +31,7 @@ import { shotStart } from './socialCreationWorkbenchTime';
 import { useSocialCreationWorkbenchController } from './useSocialCreationWorkbenchController';
 
 export interface SocialCreationWorkbenchSeed {
+  creationDialoguePlan?: import('../../../shared/contracts/contentCreationDialogue').CreationReply;
   continueTaskId?: string;
   continueProjectId?: string;
   presenterAssetId?: string;
@@ -122,6 +124,7 @@ export default function SocialCreationWorkbench({
         actions={<><Button htmlType="button" onClick={onShowCreations} className="whitespace-nowrap font-semibold">我的创作</Button><Button type="primary" htmlType="button" onClick={onOpenChooser} className="whitespace-nowrap font-semibold">切换制作方式</Button></>}
       />
 
+      {seed?.creationDialoguePlan && <CreationDialoguePlanPanel value={seed.creationDialoguePlan} narrationText={freeScriptText} onNarrationChange={setFreeScriptText}/>}
       <Modal
         open={!isReplication && hookChooserOpen}
         centered

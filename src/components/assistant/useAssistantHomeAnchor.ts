@@ -53,13 +53,13 @@ export function useAssistantHomeAnchor(active: boolean): AssistantHomeBounds | n
 
 /** Home suggestions edit the existing assistant draft; the home panel grows only for active threads. */
 export function useAssistantHomeInteraction(active: boolean, messageCount: number, loading: boolean, agent: OrbitAgentId,
-  setDraftInput: (agent: OrbitAgentId, value: string) => void, inputRef: RefObject<HTMLTextAreaElement | null>) {
+  setDraftInput: (agent: OrbitAgentId, value: string) => void, inputRef: RefObject<HTMLTextAreaElement | null>, hasReference = false) {
   useEffect(() => {
     if (!active) return;
     const anchor = document.getElementById('content-creation-assistant-anchor');
-    anchor?.classList.toggle('creator-home__assistant-anchor--active', messageCount > 0 || loading);
+    anchor?.classList.toggle('creator-home__assistant-anchor--active', messageCount > 0 || loading || hasReference);
     return () => anchor?.classList.remove('creator-home__assistant-anchor--active');
-  }, [active, loading, messageCount]);
+  }, [active, loading, messageCount, hasReference]);
   useEffect(() => {
     if (!active) return;
     const onPrompt = (event: Event) => {
@@ -68,7 +68,13 @@ export function useAssistantHomeInteraction(active: boolean, messageCount: numbe
       setDraftInput(agent, prompt);
       window.requestAnimationFrame(() => inputRef.current?.focus());
     };
+    const onReference = () => window.requestAnimationFrame(() => {
+      const anchor = document.getElementById('content-creation-assistant-anchor');
+      anchor?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+      inputRef.current?.focus({ preventScroll: true });
+    });
+    window.addEventListener('lingshu:assistant-home-reference', onReference);
     window.addEventListener('lingshu:assistant-home-prompt', onPrompt);
-    return () => window.removeEventListener('lingshu:assistant-home-prompt', onPrompt);
+    return () => { window.removeEventListener('lingshu:assistant-home-prompt', onPrompt); window.removeEventListener('lingshu:assistant-home-reference', onReference); };
   }, [active, agent, inputRef, setDraftInput]);
 }

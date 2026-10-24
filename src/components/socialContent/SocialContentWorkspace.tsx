@@ -35,6 +35,7 @@ export interface SocialContentSourceContext {
 }
 
 export interface SocialContentCreateRequest {
+  creationDialoguePlan?: import('../../../shared/contracts/contentCreationDialogue').CreationReply;
   requestId: number;
   themeId: SocialContentThemeId | '';
   mode?: 'instant' | 'weekly';

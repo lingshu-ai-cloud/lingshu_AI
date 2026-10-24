@@ -46,7 +46,7 @@ export function useSocialCreationWorkbenchController({
   const [submitting, setSubmitting] = useState(false);
   const [generatingSpeech, setGeneratingSpeech] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
-  const [freeScriptText, setFreeScriptText] = useState('');
+  const [freeScriptText, setFreeScriptText] = useState(seed?.creationDialoguePlan?.narrations.find(row => row.id === seed.creationDialoguePlan?.selection.narrationId)?.text || '');
   const [freeGeneration, setFreeGeneration] = useState<StudioScriptResult | null>(null);
   const [freeHookMaterial, setFreeHookMaterial] = useState<Material | null>(null);
   const [aiHookCandidate, setAiHookCandidate] = useState<Material | null>(null);
@@ -61,7 +61,7 @@ export function useSocialCreationWorkbenchController({
   const submissionRequestIdRef = useRef(Date.now());
   const [freeLines, setFreeLines] = useState<FreeCreationLine[]>([]);
   const [hookMode, setHookMode] = useState<'none' | 'upload' | 'library' | 'ai'>('none');
-  const [hookChooserOpen, setHookChooserOpen] = useState(mode !== 'viral_replication');
+  const [hookChooserOpen, setHookChooserOpen] = useState(mode !== 'viral_replication' && !seed?.creationDialoguePlan);
   const [libraryHooks, setLibraryHooks] = useState<Material[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [draftProjectId, setDraftProjectId] = useState('');
@@ -81,7 +81,7 @@ export function useSocialCreationWorkbenchController({
   const [tone, setTone] = useState('专业、自然');
   const [callToAction, setCallToAction] = useState('');
   const [prohibitedClaims, setProhibitedClaims] = useState('');
-  const [briefNotes, setBriefNotes] = useState('');
+  const [briefNotes, setBriefNotes] = useState(seed?.creationDialoguePlan?.gaps.join('；') || '');
   const [activeLine, setActiveLine] = useState(0);
   const [expandedSpeechLines, setExpandedSpeechLines] = useState<Set<number>>(() => new Set());
   const [requestedSeek, setRequestedSeek] = useState(0);
@@ -132,8 +132,8 @@ export function useSocialCreationWorkbenchController({
   }, [seed?.confirmedSpeech]);
   const uploadRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (!isReplication) setHookChooserOpen(true);
-  }, [isReplication]);
+    if (!isReplication && !seed?.creationDialoguePlan) setHookChooserOpen(true);
+  }, [isReplication, seed?.creationDialoguePlan]);
   useEffect(() => {
     const nextTitle = seed?.draftTitle?.trim();
     if (!nextTitle || draftTitleEditedRef.current) return;
