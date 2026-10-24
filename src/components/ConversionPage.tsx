@@ -4,6 +4,7 @@ import CustomerReplyRecovery from './customers/CustomerReplyRecovery';
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { ChatThread } from './customers/ConversionChatThread';
 import { CustomerInfoRail } from './customers/ConversionCustomerRail';
+import CustomerServiceSwitch from './customers/CustomerServiceSwitch';
 import { CompactCustomerList, VIEW_META, filterCustomers, type CustomerView } from './customers/ConversionCustomerList';
 import { isWaitingForHumanQuote, latestBuyerText, requestDraft, translateReplyToCustomerLanguage, type DraftResult, type MessageTemplate, type StyleMemoryPayload, type TemplatePlan } from './customers/customerReplyPreparation';
 import { Alert, App, Button, Input, Modal } from "antd";
@@ -656,6 +657,10 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       <div data-testid="conversation-workspace-main" className="ls-conversation-workspace min-h-0 flex-1">
         <div className={`ls-conversation-workspace__slot ls-conversation-workspace__pane${mobilePanel === 'list' ? ' is-active' : ''}`}>
         <CompactCustomerList
+          headerActions={<CustomerServiceSwitch enabled={Boolean(customerServiceStatus?.enabled)}
+            unavailable={!customerServiceStatus || customerServiceStatusLoadFailed} saving={customerServiceSaving}
+            summary={`${customerServiceLabel}。${customerServiceSummary}`}
+            onChange={enabled => void changeCustomerServiceEnabled(enabled)} />}
           view={view}
           selectedId={selectedId}
           customers={customers}

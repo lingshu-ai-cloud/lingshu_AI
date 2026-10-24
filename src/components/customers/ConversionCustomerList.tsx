@@ -1,5 +1,5 @@
 import { Button, Checkbox, Empty, Input, Popover, Select, Tabs, Tag } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Filter, Search } from 'lucide-react';
 import { sortCustomersByLatestMessage } from '../../lib/customerRecency';
 import { sortCustomersByPriority } from '../../lib/customerPriority';
@@ -81,6 +81,7 @@ function FilterSelect({ label, value, onChange, options, renderLabel }: {
 }
 
 export function CompactCustomerList({
+  headerActions,
   view,
   selectedId,
   customers,
@@ -88,6 +89,7 @@ export function CompactCustomerList({
   onViewChange,
   onVisibleSelectionChange,
 }: {
+  headerActions?: ReactNode;
   view: CustomerView;
   selectedId: string | null;
   customers: CustomerProfile[];
@@ -169,6 +171,7 @@ export function CompactCustomerList({
   };
   return <aside data-testid="conversation-list" className="flex h-full w-full shrink-0 flex-col bg-surface lg:w-52 xl:w-56 2xl:w-60">
     <div className="border-b border-border px-3 pt-2">
+      {headerActions}
       <div className="flex items-center gap-2">
         <Input className="min-w-0 flex-1" allowClear value={query} onChange={event => setQuery(event.target.value)} prefix={<Search size={15}/>} placeholder="搜索客户或消息" aria-label="搜索客户或消息" />
         <Popover trigger="click" placement="bottomLeft" open={filterOpen} onOpenChange={setFilterOpen} title="筛选客户" content={<div className="w-72 max-w-[calc(100vw-48px)]">
