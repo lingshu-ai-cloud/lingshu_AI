@@ -60,6 +60,7 @@ function CompletedVideoPreview({ project, onClose }: { project: StudioProject; o
 }
 
 function projectCategory(project: StudioProject): Exclude<CreationFilter, 'all'> {
+  if (project.spec.creationDialogueOrigin === true) return 'free_creation';
   const imageTask = project.spec.socialImageTask as SocialImageCreationTask | undefined;
   const mode = String(imageTask?.creationPath || project.spec.creationPath || project.spec.mode || project.spec.creationMode || '').toLowerCase();
   return mode === 'clone' || mode === 'viral_replication' || /爆款|复刻|裂变/.test(project.title)

@@ -8,6 +8,18 @@ import { signAssetUrl, signPathAssetUrl } from '../lib/assetAccess.js';
 import { contentCreationTurn, CreationDialogueError, type CreationEvidencePorts } from '../assistantContext/contentCreationDialogue.js';
 
 export const creationEvidencePorts: CreationEvidencePorts = {
+  references: async tenantId => {
+    const rows: Record<string, unknown>[] = [];
+    for (let page = 1; ; page++) {
+      const result = await store.list<Record<string, unknown>>('trend_videos', { where: { tenantId }, page, perPage: 500, sort: '-crawledAt' });
+      rows.push(...result.items);
+      if (!result.items.length || page >= result.totalPages) return rows;
+    }
+  },
+  project: async (tenantId, id) => {
+    const project = await store.getById('studio_projects', id);
+    return project?.tenant_id === tenantId ? project : null;
+  },
   reference: async (tenantId, id) => {
     const record = await store.getById('trend_videos', id);
     return record?.tenantId === tenantId ? record : null;
@@ -36,12 +48,13 @@ export function registerContentCreationDialogue(router: Router, evidence: Creati
     try {
       const { tenantId } = res.locals as AuthLocals;
       const reply = await contentCreationTurn(tenantId, req.body, evidence);
+      const playback = (url: string) => /^\/studio-media\//.test(url) ? signPathAssetUrl(url, tenantId)
+        : /^\/(?:api|media)\//.test(url) ? signAssetUrl(url, tenantId) : url;
       // Media elements cannot send the API bearer header. Use the existing
       // tenant-scoped playback signatures after computing the evidence hash.
-      res.json({ ...reply, shots: reply.shots.map(shot => ({ ...shot, ...(shot.previewUrl ? {
-        previewUrl: /^\/studio-media\//.test(shot.previewUrl) ? signPathAssetUrl(shot.previewUrl, tenantId)
-          : /^\/(?:api|media)\//.test(shot.previewUrl) ? signAssetUrl(shot.previewUrl, tenantId) : shot.previewUrl,
-      } : {}) })) });
+      res.json({ ...reply,
+        ...(reply.guided ? { guided: { ...reply.guided, candidates: reply.guided.candidates.map(candidate => ({ ...candidate, ...(candidate.previewUrl ? { previewUrl: playback(candidate.previewUrl) } : {}) })) } } : {}),
+        shots: reply.shots.map(shot => ({ ...shot, ...(shot.previewUrl ? { previewUrl: playback(shot.previewUrl) } : {}) })) });
     }
     catch (error) {
       const known = error instanceof CreationDialogueError;
@@ -55,7 +68,7 @@ export async function readCreationChatGrounding(tenantId: string, selection: unk
   const selected = creationSelectionSchema.safeParse(selection);
   if (!selected.success) throw new CreationDialogueError('creation_input_invalid', 400, '创作选择格式无效。');
   const current = await contentCreationTurn(tenantId, {
-    action: selected.data.avatar !== undefined && selected.data.narrationId ? 'avatar' : selected.data.shotIds.length ? 'shots' : selected.data.productIds.length ? 'products' : 'start',
+    action: selected.data.guided ? selected.data.guided.productionMode && selected.data.guided.presenterMode ? 'guided_review' : selected.data.guided.structureId ? 'guided_structure' : selected.data.productIds.length ? 'guided_products' : 'start' : selected.data.avatar !== undefined && selected.data.narrationId ? 'avatar' : selected.data.shotIds.length ? 'shots' : selected.data.productIds.length ? 'products' : 'start',
     selection: selected.data, instruction: '核验当前会话参考、产品与分镜',
   }, creationEvidencePorts);
   if (selected.data.productIds.length && selected.data.evidenceVersion !== current.selection.evidenceVersion) throw new CreationDialogueError('creation_evidence_stale', 409, '创作证据已变化，请刷新产品和分镜推荐。');

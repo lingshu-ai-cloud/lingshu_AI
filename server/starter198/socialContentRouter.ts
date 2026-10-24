@@ -1,3 +1,4 @@
+import { createGuidedCreationRouter } from './guidedCreationRouter.js';
 import {createWeeklyOwnedProductIdentityRouter} from './weeklyOwnedProductIdentityRouter.js';
 import {createSocialContentOrderOperationsRouter} from './socialContentOrderOperationsRouter.js';
 import {createWeeklyOwnedProductIdentityUI} from './weeklyOwnedProductIdentityUI.js';
@@ -212,6 +213,7 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
       handler(req, res).catch(error => sendFailure(res, error));
     };
   }
+  router.use(createGuidedCreationRouter({ repository, authorize, asyncRoute, now, orchestratorQueue: dependencies.orchestratorQueue }));
   router.use(createSocialContentReplicationScriptRouter({ repository, authorize, asyncRoute, now }));
   router.use(createSocialContentAssistantActionsRouter({ repository,
     orchestratorQueue: dependencies.orchestratorQueue, weeklyRepairCases, authorize, asyncRoute, now }));

@@ -89,27 +89,27 @@ function safeUri(value: unknown): string | undefined {
   return scrubSensitiveUri(raw) ?? redactSensitiveText(raw, 2_000);
 }
 
-function sanitizeValue(value: unknown, depth = 0): unknown {
-  if (depth > 5) return undefined;
+function sanitizeValue(value: unknown, depth = 0, maxDepth = 5, maxItems = 30, maxChars = 4_000): unknown {
+  if (depth > maxDepth) return undefined;
   if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
   if (typeof value === 'string') {
     if (/^(?:https?:\/\/|\/(?:api|files|media|uploads)\/|\/?\?)/i.test(value.trim())) return safeUri(value);
-    return redactSensitiveText(value, 4_000);
+    return redactSensitiveText(value, maxChars);
   }
-  if (Array.isArray(value)) return value.slice(0, 30).map(item => sanitizeValue(item, depth + 1)).filter(item => item !== undefined);
+  if (Array.isArray(value)) return value.slice(0, maxItems).map(item => sanitizeValue(item, depth + 1, maxDepth, maxItems, maxChars)).filter(item => item !== undefined);
   if (!value || typeof value !== 'object') return undefined;
   const source = value as Record<string, unknown>;
   const result: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(source).slice(0, 50)) {
     if (isSecretKey(key) || child instanceof ArrayBuffer || ArrayBuffer.isView(child)) continue;
-    const sanitized = sanitizeValue(child, depth + 1);
+    const sanitized = sanitizeValue(child, depth + 1, maxDepth, maxItems, maxChars);
     if (sanitized !== undefined) result[key] = sanitized;
   }
   return result;
 }
 
 function sanitizeMessage(value: Message): Message {
-  const creation = creationReplySchema.safeParse(sanitizeValue(value.creation));
+  const creation = creationReplySchema.safeParse(sanitizeValue(value.creation, 0, 10, 256, 12_000));
   return {
     ...(creation.success ? { creation: creation.data } : {}),
     role: value.role === 'assistant' ? 'assistant' : 'user',
@@ -190,7 +190,7 @@ export function sanitizeAssistantThreadForJournal(thread: AgentThreadState): Age
   return {
     version: Number.isSafeInteger(thread.version) && thread.version >= 0 ? thread.version : 0,
     updatedAt: typeof thread.updatedAt === 'string' ? thread.updatedAt.slice(0, 100) : '',
-    creationDraft: creationSelectionSchema.safeParse(sanitizeValue(thread.creationDraft)).success ? creationSelectionSchema.parse(sanitizeValue(thread.creationDraft)) : null,
+    creationDraft: creationSelectionSchema.safeParse(sanitizeValue(thread.creationDraft, 0, 10, 256, 12_000)).success ? creationSelectionSchema.parse(sanitizeValue(thread.creationDraft, 0, 10, 256, 12_000)) : null,
     messages: (thread.messages || []).slice(-JOURNAL_MAX_MESSAGES).map(sanitizeMessage),
     draftInput: redactSensitiveText(String(thread.draftInput || ''), 4_000),
     scrollPosition: Number.isFinite(thread.scrollPosition) ? Math.max(0, thread.scrollPosition) : 0,

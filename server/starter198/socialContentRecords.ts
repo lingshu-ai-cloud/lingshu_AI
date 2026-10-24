@@ -1,3 +1,4 @@
+import { guidedMaterialRoutingRequests, guidedProductIdentityGroups } from './guidedCreationRouting.js';
 import {applySocialContentRevisionSupply} from './socialContentRevisionProjection.js';
 import {readHandoffProductFootageRevisionSupply} from './socialContentProductFootageRevisionProjection.js';
 import {auditWeeklyMaterialInventory} from './weeklyMaterialInventory.js';
@@ -200,6 +201,10 @@ export async function readSocialTaskDetail(input: {
     themeId: summary.theme?.themeId ?? null,
     linkedRecordIds,
   });
+  if (summary.brief.creationDialoguePlan) {
+    const additional = summary.brief.creationDialoguePlan.selection.productIds.filter(id => id !== selectedTaskProductId).flatMap(selectedProductId => buildSocialWorkflowMaterialCandidates({ records: materialInventory.items, reviewedFootageOverlays, tenantId: input.tenantId, voiceoverRows, selectedProductId, themeId: summary.theme?.themeId ?? null, linkedRecordIds }).candidates);
+    candidateSet.candidates = [...candidateSet.candidates, ...additional].filter((candidate, index, rows) => rows.findIndex(row => row.segmentCandidateId === candidate.segmentCandidateId) === index);
+  }
   const materialCandidates: SocialWorkflowMaterialClipCandidate[] = candidateSet.candidates.map(candidate => ({
     ...candidate,
     ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || summary.brief.materialRoutingPolicyVersion === 'type-aware.v2') ? {
@@ -292,7 +297,7 @@ export async function readSocialTaskDetail(input: {
     productionApproach: summary.brief.productionApproach ?? 'ai_enhanced',
     planVersion: summary.version,
     inventory: { customerVideoIds, productImageIds,
-      productIdentityGroups: productImageIds.length ? [{
+      productIdentityGroups: summary.brief.creationDialoguePlan ? guidedProductIdentityGroups(summary.brief.creationDialoguePlan, materialCandidates, { productRef: primaryProductRef, imageIds: productImageIds }) : productImageIds.length ? [{
         productRef: primaryProductRef, imageIds: productImageIds,
       }] : [],
       presenterAssetIds: presenterInventory.assetIds,
@@ -308,7 +313,7 @@ export async function readSocialTaskDetail(input: {
     accountPresenterLock: presenterInventory.accountPresenterLock,
     presenterSelectionConfirmed: Boolean(summary.brief.presenterAssetId && presenterInventory.assetIds.length === 1),
     referenceShots: referenceVideoAnalysis?.shots,
-    shots: materialRoutingRequests({ policyVersion: summary.brief.materialRoutingPolicyVersion,
+    shots: (summary.brief.creationDialoguePlan && replicationScript?.shots.length ? (request: Parameters<typeof materialRoutingRequests>[0]) => guidedMaterialRoutingRequests(summary.brief.creationDialoguePlan!, request) : materialRoutingRequests)({ policyVersion: summary.brief.materialRoutingPolicyVersion,
       tenantId: input.tenantId, candidates: materialCandidates, rejectedSegments: candidateSet.rejectedSegments,
       reviewedMaterialBindings,
       referenceShots: referenceVideoAnalysis?.shots,
@@ -318,6 +323,7 @@ export async function readSocialTaskDetail(input: {
       requestedDescription: shot.visualInstruction,
       truthSensitiveSubject: shot.materialPlan.truthBoundary.subject,
       referenceShotId: shot.referenceShotId,
+      ...(summary.brief.creationDialoguePlan ? { plannedDurationSeconds: shot.endSeconds - shot.startSeconds, visualContract: shot.materialPlan.visualContract } : {}),
       ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || summary.brief.materialRoutingPolicyVersion === 'type-aware.v2') && shot.materialPlan.materialRouting ? {
         plannedDurationSeconds: shot.endSeconds - shot.startSeconds,
         ...(shot.materialPlan.visualContract ? { visualContract: structuredClone(shot.materialPlan.visualContract) } : {}),

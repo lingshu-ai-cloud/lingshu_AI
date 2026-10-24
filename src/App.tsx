@@ -539,7 +539,7 @@ export default function App() {
         setSmartAssetsCreateRequest(detail.contentCreationRequest || null);
         setSmartAssetsStudioOpen(detail.studioPanel === 'projects'
           || detail.directStudio === true
-          || Boolean(detail.contentCreationRequest && detail.contentCreationRequest.creationPath !== 'viral_replication'));
+          || Boolean(detail.contentCreationRequest && detail.contentCreationRequest.creationPath !== 'viral_replication' && !detail.contentCreationRequest.creationDialoguePlan));
         if (detail.studioPanel === 'projects') setOpenProjectsSignal(current => current + 1);
         const runId = String(detail.workflowRunId || '').trim();
         const taskId = String(detail.workflowTaskId || '').trim();
@@ -757,10 +757,10 @@ export default function App() {
     : null;
   // 这个判断不能依赖当前是否正显示 smartAssets；否则切去别页时会在隐藏状态下
   // 把“我的创作”和制作工作台互换并卸载，回来后就丢失最后操作位置。
-  const showSocialContentPlanning = page === 'smartAssets'
-    && smartAssetsView === 'create'
+  const showSocialContentPlanning = smartAssetsView === 'create'
     && !smartAssetsStudioOpen
     && (Boolean(smartAssetsContentTaskId && !smartAssetsWorkflowContext && !smartAssetsCreateRequest)
+      || Boolean(smartAssetsCreateRequest?.creationDialoguePlan)
       || smartAssetsCreateRequest?.creationPath === 'viral_replication'
       || (!smartAssetsContentTaskId && !smartAssetsWorkflowContext && !smartAssetsCreateRequest));
 

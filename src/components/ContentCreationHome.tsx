@@ -1,9 +1,9 @@
 import { useAssistantStore } from '../stores/assistantStore';
-import { Alert, Button, Segmented, Spin } from 'antd';
+import { Alert, Button, Spin } from 'antd';
 import { ArrowRight, CalendarDays, Clapperboard, Lightbulb, RefreshCw, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Page } from '../pageRegistry';
-import { useCreationMode, useCreationModeControl, type CreationMode } from '../lib/creationMode';
+import { useCreationMode } from '../lib/creationMode';
 import { fetchViralFeed } from '../lib/viralVideoFeed';
 import { digitalEmployeeApi } from '../lib/digitalEmployeeApi';
 import { AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
@@ -15,7 +15,6 @@ import InspirationWatchDialog from './inspiration/InspirationWatchDialog';
 
 export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page: Page) => void }) {
   const mode = useCreationMode();
-  const switchMode = useCreationModeControl();
   const [videos, setVideos] = useState<TrendVideo[]>([]);
   const [videosLoading, setVideosLoading] = useState(false);
   const [videosError, setVideosError] = useState('');
@@ -61,9 +60,8 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
   }, [mode, videoRevision]);
 
   const selectReference = (video: TrendVideo) => {
-    useAssistantStore.getState().hydrateThread('business', { creationDraft: { referenceId: video.recordId || video.id.replace(/^crawl-/, ''), referenceLabel: video.title.slice(0, 200), ...(/^(https?:\/\/|\/api\/)/.test(video.thumbnail || '') ? { referenceThumbnail: video.thumbnail } : {}), productIds: [], shotIds: [] } });
+    useAssistantStore.getState().hydrateThread('business', { creationDraft: { referenceId: video.recordId || video.id.replace(/^crawl-/, ''), referenceLabel: video.title.slice(0, 200), ...(/^(https?:\/\/|\/api\/)/.test(video.thumbnail || '') ? { referenceThumbnail: video.thumbnail } : {}), productIds: [], shotIds: [], guided: { languages: [], customNodes: [], assignments: [] } } });
     setPreview(null);
-    document.getElementById('content-creation-assistant-anchor')?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
     window.dispatchEvent(new CustomEvent('lingshu:assistant-home-reference'));
   };
   const openPreview = (video: TrendVideo) => {
@@ -98,9 +96,6 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
     <div className="creator-home__inner">
       <header className="creator-home__hero text-center">
         <h2>{mode === 'free' ? '你好，今天想要创作什么？' : '今天想让数字员工完成什么？'}</h2>
-        <Segmented aria-label="内容创作模式" className="creator-mode-switch" size="large" value={mode}
-          options={[{ label: '自由创作', value: 'free' }, { label: '数字员工', value: 'employee' }]}
-          onChange={value => switchMode?.(value as CreationMode)} />
       </header>
 
       <div className="creator-home__canvas-stage" aria-hidden={mode !== 'employee'}>
@@ -137,7 +132,7 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
 
       {mode === 'free' && <section ref={libraryRef} id="creator-home-library" className="creator-home__library" aria-label="灵感爆款连续内容">
         <div className="creator-home__library-heading"><h2>爆款视频</h2>
-          <Button onClick={() => onNavigate?.('socialInspiration')} icon={<ArrowRight size={15}/>}>完整灵感爆款</Button></div>
+          <Button type="primary" onClick={() => onNavigate?.('socialInspiration')} icon={<ArrowRight size={16} aria-hidden="true"/>}>完整灵感爆款</Button></div>
         {videosError && <Alert type="warning" showIcon title={videosError} action={<Button size="small" icon={<RefreshCw size={13}/>} onClick={() => setVideoRevision(value => value + 1)}>重试</Button>} className="mb-3"/>}
         {videosLoading && !videos.length ? <div className="flex min-h-40 items-center justify-center"><Spin description="正在读取爆款视频"/></div>
           : videos.length ? <LsMasonryGallery layout="masonry" columns={{ xs: 2, sm: 2, md: 3, lg: 5 }} items={videos.map((video, index) => ({ id: video.id, content:

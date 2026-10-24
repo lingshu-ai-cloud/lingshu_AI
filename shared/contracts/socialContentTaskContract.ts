@@ -1,3 +1,4 @@
+import type { CreationReply } from './contentCreationDialogue';
 import type { SocialMvpHandoffRead } from './socialMvpHandoff.js';
 import {
   SOCIAL_CONTENT_TASK_STATUSES,
@@ -199,6 +200,8 @@ export interface SocialReferenceReuseBinding {
 }
 
 export interface SocialContentTaskBrief {
+  /** Server-validated free-creation dialogue snapshot, not accepted by generic task writes. */
+  creationDialoguePlan?: CreationReply;
   title: string;
   objective: string;
   /** Stable Enterprise Center product identity. */
@@ -544,6 +547,7 @@ export interface SocialContentWorkspace {
 }
 
 export interface CreateSocialContentTaskInput {
+  creationDialoguePlan?: CreationReply;
   title: string;
   objective: string;
   productId?: string | null;

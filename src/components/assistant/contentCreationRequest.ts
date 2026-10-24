@@ -9,6 +9,7 @@ export async function requestCreationReply(input: {
   isCurrent: () => boolean;
   controller: AbortController;
   persist: () => void;
+  replaceCurrent?: boolean;
 }) {
   const response = await fetch('/api/overseas/strategy/creation-dialogue', {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() },
@@ -23,6 +24,7 @@ export async function requestCreationReply(input: {
   store.hydrateThread(PRIMARY_ASSISTANT_THREAD, { creationDraft: reply.selection });
   // Preserve every visible question/answer while retaining only the current choice snapshot.
   const transcript = thread.messages.map(({ creation: _previousChoices, ...message }) => message);
+  if (input.replaceCurrent && transcript.at(-1)?.role === 'assistant') transcript.pop();
   store.setMessages(PRIMARY_ASSISTANT_THREAD, [...transcript, { role: 'assistant', content: CREATION_QUESTIONS[reply.stage], creation: reply }]);
   input.persist();
   return true;

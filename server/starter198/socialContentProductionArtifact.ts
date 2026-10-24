@@ -98,7 +98,7 @@ export async function createSocialContentProductionArtifact(scope: {
       resourceRef: file.fileRef,
       content: {
         workflowSchema: AUTO_SCHEMA,
-        productionWorkspaceSource: {type:'actual_social_render',creationMode:detail.brief.creationMode||'material_processing',runId:input.runId,...(input.graphCorrectionHash?{correctionHash:input.graphCorrectionHash}:{}),baselineHash:socialRequestHash(activeBaseline),manifestHash:socialRequestHash(compositeManifest),outputSha256:file.sha256},
+        productionWorkspaceSource: {type:'actual_social_render',...(detail.brief.creationDialoguePlan?{creationDialogueOrigin:true}:{}),creationMode:detail.brief.creationMode||'material_processing',runId:input.runId,...(input.graphCorrectionHash?{correctionHash:input.graphCorrectionHash}:{}),baselineHash:socialRequestHash(activeBaseline),manifestHash:socialRequestHash(compositeManifest),outputSha256:file.sha256},
         technicalQualityReport,
         initialSceneSourceHashes:initialSceneSourceEvidence,
         ...(executedSupplyPlan&&assetSupplyExecution?{initialSceneCacheInput:initialSceneCacheInputFingerprint({plan:executedSupplyPlan,baseline:activeBaseline,execution:assetSupplyExecution,manifest:compositeManifest as unknown as Record<string,unknown>,productionSceneIds:contentHandoff.scenes.map(scene=>socialProductionExecutionSceneForFinal(agentWorkflow,scene.sceneId)!.sceneId)})}:{}),

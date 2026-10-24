@@ -1,3 +1,4 @@
+import CreationProductionHandoff from './CreationProductionHandoff';
 import ContentCreationShotPreview from './ContentCreationShotPreview';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Checkbox, Drawer, Empty, Select, Tag } from 'antd';
@@ -72,10 +73,11 @@ export default function ContentCreationChoices({ reply, busy, send, onNavigateEv
       <Button disabled={busy} onClick={() => { change({ avatar: true }); submit('avatar', '是，加入数字人视频'); }}>是，加入数字人</Button>
       <Button disabled={busy} onClick={() => { change({ avatar: false }); submit('avatar', '否，使用所选素材'); }}>否，使用素材</Button>
     </>}
-    {stage === 'review' && <>
+    {(stage === 'review' || stage.startsWith('production_')) && <>
       <p>产品：{selectedNames}；分镜：{reply.plannedShots?.length || selection.shotIds.length} 个；口播：{reply.narrations.find(row => row.id === selection.narrationId)?.title || '待选择'}。</p>
       <p>{reply.avatarPlacement === 'first' ? '沿用首镜数字人口播形式，不重复新增第二镜。' : reply.avatarPlacement === 'second' ? '第二镜拟采用数字人口播形式，等待人物与素材核验。' : reply.avatarPlacement === 'pending' ? '首镜人物形式待核验，数字人镜头位置尚未确定。' : '保留所选素材，不加入数字人。'}</p>
       <p>方案已保留在本会话；尚未生成视频或提交生产任务。</p>
+      <CreationProductionHandoff disabled={busy}/>
       <Button disabled={busy} onClick={() => setReturnStage('shots')}>重新选择分镜</Button>
       <Button disabled={busy} onClick={() => setReturnStage('avatar')}>修改数字人选择</Button>
     </>}
