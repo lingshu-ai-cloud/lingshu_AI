@@ -34,6 +34,7 @@ assert.match(invalid.error || '', /不是可上传/);
 const source = fs.readFileSync(new URL('./AssistantComposer.tsx', import.meta.url), 'utf8');
 assert.match(source, /className="ls-assistant-composer__add-tile"[^>]*onClick=\{guideToViralVideo\}/, '首页方框入口用于选择爆款复刻参考');
 assert.match(source, /aria-label="选择爆款视频进行复刻"/, '方框入口提供可读名称');
+assert.match(source, /className="ls-assistant-composer__editing"[\s\S]{0,300}ls-assistant-composer__add-tile[\s\S]{0,500}<textarea/, '爆款入口和文本输入必须使用独立网格列，避免方框覆盖占位文案');
 assert.match(source, /document\.getElementById\('creator-home-library'\)/, '入口定位同页爆款视频区');
 assert.match(source, /message\.info\(\{ key: 'choose-viral-video'/, '入口点击给出明确引导');
 assert.match(source, /prefers-reduced-motion: reduce/, '减少动态效果时禁用平滑滚动');

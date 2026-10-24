@@ -63,6 +63,7 @@ export function WeeklyCommandCenter({
   className?: string;
 }) {
   const display = buildSmartBusinessDisplayModel(data);
+  const hasWeeklyPlan = Boolean(data.goal);
   const contentQueue = data.contentQueue?.items || [];
   const operatingContext = data.plan?.businessPackage?.operatingContext;
   const packageBudget = weeklyVideoBudget(data);
@@ -109,6 +110,7 @@ export function WeeklyCommandCenter({
             <WeeklyRangeVisual startsAt={data.goal.startsAt} endsAt={data.goal.endsAt} />
           )}
         </div>
+        {!hasWeeklyPlan && <p className="mt-2 text-sm text-text-secondary">通过灵小枢先确认本周经营目标、平台、内容数量、预算与工作排期。</p>}
       </div>
       {actions && <div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{actions}</div>}
     </div>
@@ -117,11 +119,11 @@ export function WeeklyCommandCenter({
       {[
         { id: "waiting_review", label: "待验收成片", value: `${display.totals.waitingReviewCount} 条` },
         { id: "planned_videos", label: "本周计划视频", value: `${plannedOutputCount} 条` },
-        { id: "planned_duration", label: "本周视频总时长", value: plannedDurationSeconds > 0 ? `${plannedDurationSeconds} 秒` : "待确认" },
-        { id: "budget_range", label: "本周成本范围", value: budgetMax > 0 ? `¥${budgetMin.toFixed(0)}–${budgetMax.toFixed(0)}` : "待核算" },
-        { id: "estimated_cost", label: "预计制作成本", value: estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : "待核算" },
-        { id: "settled_cost", label: "已结算成本", value: settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : "暂无结算" },
-      ].map(item => <button key={item.id} type="button" aria-label={`查看${item.label}`} onClick={() => onMetricClick?.(item.id as WeeklyCommandMetricId)} disabled={!onMetricClick} className="group relative min-w-0 rounded-lg bg-white text-left outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-default disabled:hover:bg-white"><Statistic title={item.label} value={item.value} styles={{ title: { fontSize: 16, lineHeight: "24px", fontWeight: 400, color: "var(--color-text-secondary)", marginBottom: 12 }, content: { color: "var(--color-text-primary)", fontSize: 28, fontWeight: 600, lineHeight: "36px" } }}/><ArrowRight aria-hidden size={16} className="absolute right-3 top-3 text-text-muted transition-colors group-hover:text-accent" /></button>)}
+        { id: "planned_duration", label: "本周视频总时长", value: plannedDurationSeconds > 0 ? `${plannedDurationSeconds} 秒` : hasWeeklyPlan ? "待确认" : "0 秒" },
+        { id: "budget_range", label: "本周成本范围", value: budgetMax > 0 ? `¥${budgetMin.toFixed(0)}–${budgetMax.toFixed(0)}` : hasWeeklyPlan ? "待核算" : "¥0–0" },
+        { id: "estimated_cost", label: "预计制作成本", value: estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : hasWeeklyPlan ? "待核算" : "¥0.00" },
+        { id: "settled_cost", label: "已结算成本", value: settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : hasWeeklyPlan ? "暂无结算" : "¥0.00" },
+      ].map(item => <button key={item.id} type="button" aria-label={`查看${item.label}`} onClick={() => onMetricClick?.(item.id as WeeklyCommandMetricId)} disabled={!onMetricClick} className="group relative min-w-0 rounded-lg bg-white text-left outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-default disabled:hover:bg-white"><Statistic title={item.label} value={item.value} styles={{ title: { fontSize: 16, lineHeight: "24px", fontWeight: 400, color: "var(--color-text-secondary)", marginBottom: 12 }, content: { color: "var(--color-text-primary)", fontSize: 28, fontWeight: 600, lineHeight: "36px" } }}/>{onMetricClick && <ArrowRight aria-hidden size={16} className="absolute right-3 top-3 text-text-muted transition-colors group-hover:text-accent" />}</button>)}
     </div>
     {notice && <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-3">{notice}</div>}
   </section>;

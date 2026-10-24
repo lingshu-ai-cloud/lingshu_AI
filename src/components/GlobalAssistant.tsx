@@ -543,13 +543,9 @@ export default function GlobalAssistant({
 
   useAssistantPageContextSignal(page, setLiveContext);
 
-  useEffect(() => {
-    setWeeklyPlanPromptDismissed(false);
-  }, [normalizedPage, pageContext.workflowStage]);
-
+  useEffect(() => { setWeeklyPlanPromptDismissed(false); }, [normalizedPage, pageContext.workflowStage]);
   useAssistantDecisionCount({ mode, page, goalId: pageContext.goalId,
     persistenceScopeKey, suppressForRightSidebar, setDecisionTotal });
-
   const { performance, performanceHidden, setPerformanceHidden, performanceMessage,
     speechBubble, setSpeechBubble } = useAssistantNotifications({
     mode, setMode, primaryEntry, compactMode, focusTaskCard, setUnreadCount, upsertTaskCard,
@@ -557,33 +553,45 @@ export default function GlobalAssistant({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ text?: string; assistantText?: string; context?: Partial<AssistantContext>; tool?: AssistantTool; referenceMedia?: AssistantReferenceMedia }>).detail;
+      const detail = (event as CustomEvent<{ text?: string; assistantText?: string; scriptedReply?: string; context?: Partial<AssistantContext>; tool?: AssistantTool; referenceMedia?: AssistantReferenceMedia }>).detail;
       let targetContext = pageContext;
       if (detail?.context?.agent && detail.context.label && detail.context.summary) {
         targetContext = {
-          agent: detail.context.agent,
-          label: detail.context.label,
-          summary: detail.context.summary,
+          agent: detail.context.agent, label: detail.context.label, summary: detail.context.summary,
           suggestions: detail.context.suggestions?.length ? detail.context.suggestions : pageContext.suggestions,
           pendingCount: typeof detail.context.pendingCount === 'number' ? detail.context.pendingCount : pageContext.pendingCount,
           todoItems: Array.isArray(detail.context.todoItems) ? detail.context.todoItems : pageContext.todoItems,
+          sourcePage: detail.context.sourcePage || normalizedPage, goalId: detail.context.goalId,
+          planId: detail.context.planId, runId: detail.context.runId, taskId: detail.context.taskId,
+          contentId: detail.context.contentId, viewKey: detail.context.viewKey,
+          workflowStage: detail.context.workflowStage,
         };
         setLiveContext(targetContext);
       }
       const routeAgent = orbitIdForAgent(targetContext.agent, currentPageAgent);
       openAgent(routeAgent, 'chat');
       if (detail?.tool === 'knowledge-intake') setAssistantTool('knowledge-intake');
+      const scriptedReply = detail?.scriptedReply?.trim();
+      const text = detail?.text?.trim();
+      if (scriptedReply && text) {
+        abortRef.current?.abort(); abortRef.current = null;
+        setLoading(false);
+        setMessages(PRIMARY_ASSISTANT_THREAD, [{ role: 'user', content: text }, { role: 'assistant', content: scriptedReply }]);
+        setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true);
+        setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
+        window.setTimeout(() => persistThread(PRIMARY_ASSISTANT_THREAD), 0);
+        return;
+      }
       const assistantText = detail?.assistantText?.trim();
       if (assistantText) {
         const current = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages;
         setMessages(PRIMARY_ASSISTANT_THREAD, [...current, { role: 'assistant', content: assistantText }]);
       }
-      const text = detail?.text?.trim();
       if (text) window.setTimeout(() => void send(text, routeAgent, targetContext, [], detail?.referenceMedia), 0);
     };
     window.addEventListener('lingshu-assistant-open', handler);
     return () => window.removeEventListener('lingshu-assistant-open', handler);
-  }, [currentPageAgent, openAgent, pageContext, send]);
+  }, [currentPageAgent, normalizedPage, openAgent, pageContext, persistThread, send, setDraftInput, setFollowingLatest, setMessages]);
 
   useEffect(() => {
     const handler = (event: Event) => {

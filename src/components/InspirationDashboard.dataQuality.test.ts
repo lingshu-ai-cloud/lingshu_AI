@@ -102,7 +102,7 @@ assert.match(videoCardSource, /style=\{\{ background: 'var\(--color-surface-2\)'
 assert.doesNotMatch(videoCardSource, /aspect-\[9\/16\]/, '爆款卡不得把横版素材强制裁成 9:16');
 assert.doesNotMatch(videoCardSource, /min-h-52/, '爆款瀑布流卡不得强制内容区等高留白');
 assert.doesNotMatch(videoCardSource, /<div role="button"/, '爆款卡媒体不得使用包含收藏按钮的伪按钮容器');
-assert.match(videoCardSource, /<button[\s\S]*?aria-label=\{`\$\{isImagePost \? '查看图文' : '播放视频'\} \$\{video\.title\}`\}[\s\S]*?onClick=\{onWatch\}/, '媒体预览应使用独立真实 button');
+assert.match(videoCardSource, /<button[\s\S]*?aria-label=\{`\$\{isImagePost \? '查看图文' : '播放视频'\} \$\{video\.title\}`\}[\s\S]*?onPointerUp=\{event => \{[\s\S]*?onWatch\(\)[\s\S]*?onClick=\{event => \{[\s\S]*?event\.detail === 0[\s\S]*?onWatch\(\)/, '媒体预览应使用同时支持指针与键盘的真实 button');
 assert.match(videoCardSource, /videoAspectRatioLockedRef\.current = true;[^]*?setMediaAspectRatio\(metadata\.width \/ metadata\.height\)/, '爆款视频元数据必须锁定真实视频比例');
 assert.match(videoCardSource, /onNaturalAspectRatio=\{ratio => \{[^]*?!videoAspectRatioLockedRef\.current[^]*?setMediaAspectRatio\(ratio\)/, '缩略图后到时不得覆盖已锁定的视频比例');
 const materialGridSource = componentSource.slice(componentSource.indexOf('<LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map'), componentSource.indexOf('aria-label="普通素材分页"'));

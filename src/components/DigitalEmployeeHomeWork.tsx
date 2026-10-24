@@ -7,7 +7,7 @@ import { ThumbnailImage, VideoThumbnail } from './inspiration/InspirationMedia';
 type WorkKind = 'content' | 'traffic' | 'customer';
 export type DigitalEmployeeHomeWorkItem = {
   id: string; kind: WorkKind; label: string; title: string; activity: string; status: string;
-  thumbnailUrl: string; platform: PublishingPlatform; page: Page;
+  thumbnailUrl?: string; platform?: PublishingPlatform; page: Page;
 };
 
 const activeStatus = /^(?:planned|pending|queued|active|running|producing|waiting_review|waiting_external|waiting_approval|waiting_human|blocked)$/i;
@@ -55,18 +55,18 @@ function statusLabel(status: string): string {
   return labels[status] || status || '状态待核验';
 }
 
-function emptyWork(kind: WorkKind, label: string, page: Page, index: number, platform: PublishingPlatform, thumbnailUrl: string): DigitalEmployeeHomeWorkItem {
+function emptyWork(kind: WorkKind, label: string, page: Page, index: number): DigitalEmployeeHomeWorkItem {
   const activity = kind === 'traffic' ? '暂无进行中的投流任务' : kind === 'customer' ? '暂无进行中的客服任务' : '暂无进行中的内容任务';
-  return { id: `${kind}-empty-${index}`, kind, label, title: '暂无可核验任务', activity, status: '暂无进行中', thumbnailUrl, platform, page };
+  return { id: `${kind}-empty-${index}`, kind, label, title: '暂无可核验任务', activity, status: '暂无进行中', page };
 }
 
-function taskWork(kind: WorkKind, label: string, page: Page, task: WorkflowTask, index: number, platform: PublishingPlatform, thumbnailUrl: string): DigitalEmployeeHomeWorkItem {
-  return { id: `${kind}-${task.id || index}`, kind, label, title: task.title || task.description || '未命名任务', activity: task.description || task.title || `当前${label}任务`, status: statusLabel(task.status), thumbnailUrl, platform, page };
+function taskWork(kind: WorkKind, label: string, page: Page, task: WorkflowTask, index: number): DigitalEmployeeHomeWorkItem {
+  return { id: `${kind}-${task.id || index}`, kind, label, title: task.title || task.description || '未命名任务', activity: task.description || task.blocked_reason || task.title || `当前${label}任务`, status: statusLabel(task.status), page };
 }
 
-function padColumn(items: DigitalEmployeeHomeWorkItem[], kind: WorkKind, label: string, page: Page, platform: PublishingPlatform, thumbnailUrl: string) {
+function padColumn(items: DigitalEmployeeHomeWorkItem[], kind: WorkKind, label: string, page: Page) {
   const next = items.slice(0, 3);
-  while (next.length < 3) next.push(emptyWork(kind, label, page, next.length, platform, thumbnailUrl));
+  while (next.length < 3) next.push(emptyWork(kind, label, page, next.length));
   return next;
 }
 
@@ -81,10 +81,10 @@ export function projectDigitalEmployeeHomeWork(data: DigitalEmployeeOverview): D
     const plan = planForItem(allPlans, item, index);
     return { id: `content-${item.id || index}`, kind: 'content', label: '内容创作', title: item.title || plan?.publication?.title || plan?.theme || item.productName || plan?.productName || '未命名内容', activity: item.stage || item.reason || '内容任务已进入队列', status: statusLabel(item.status), thumbnailUrl: previewUrl(item, plan), platform: item.platform || plan?.platform || anchorPlatform, page: 'smartAssets' };
   });
-  for (const [index, task] of matchingTasks(data.tasks, contentSignal).slice(0, 3 - content.length).entries()) content.push(taskWork('content', '内容创作', 'smartAssets', task, index, anchorPlatform, anchorThumbnail));
-  const traffic = matchingTasks(data.tasks, trafficSignal).map((task, index) => taskWork('traffic', '智能投流', 'adsOverview', task, index, anchorPlatform, anchorThumbnail));
-  const customer = matchingTasks(data.tasks, customerSignal).map((task, index) => taskWork('customer', '智能客服', 'conversion', task, index, anchorPlatform, anchorThumbnail));
-  return [...padColumn(content, 'content', '内容创作', 'smartAssets', anchorPlatform, anchorThumbnail), ...padColumn(traffic, 'traffic', '智能投流', 'adsOverview', anchorPlatform, anchorThumbnail), ...padColumn(customer, 'customer', '智能客服', 'conversion', anchorPlatform, anchorThumbnail)];
+  for (const [index, task] of matchingTasks(data.tasks, contentSignal).slice(0, 3 - content.length).entries()) content.push({ ...taskWork('content', '内容创作', 'smartAssets', task, index), platform: anchorPlatform, thumbnailUrl: anchorThumbnail });
+  const traffic = matchingTasks(data.tasks, trafficSignal).map((task, index) => taskWork('traffic', '智能投流', 'adsOverview', task, index));
+  const customer = matchingTasks(data.tasks, customerSignal).map((task, index) => taskWork('customer', '智能客服', 'conversion', task, index));
+  return [...padColumn(content, 'content', '内容创作', 'smartAssets'), ...padColumn(traffic, 'traffic', '智能投流', 'adsOverview'), ...padColumn(customer, 'customer', '智能客服', 'conversion')];
 }
 
 const workIcons = { content: Sparkles, traffic: Megaphone, customer: Headphones } satisfies Record<WorkKind, typeof Sparkles>;
@@ -98,9 +98,9 @@ export default function DigitalEmployeeHomeWork({ data, onNavigate }: { data: Di
     {columns.map(column => {
       const Icon = workIcons[column.kind];
       const entries = items.filter(item => item.kind === column.kind);
-      const visible = entries.length ? entries : [0, 1, 2].map(index => emptyWork(column.kind, column.label, column.page, index, 'tiktok', ''));
+      const visible = entries.length ? entries : [0, 1, 2].map(index => emptyWork(column.kind, column.label, column.page, index));
       return <div className="creator-home__work-column" key={column.kind}><div className="creator-home__work-label"><Icon size={17}/><strong>{column.label}</strong><span>{entries.filter(item => item.status !== '暂无进行中').length} 项</span></div><div className="creator-home__work-list">
-        {visible.map(item => <button type="button" key={item.id} onClick={() => onNavigate?.(item.page)} className="creator-home__work-entry"><span className="creator-home__work-body"><span className="creator-home__work-preview"><VideoThumbnail platform={item.platform} title={item.title}/>{item.thumbnailUrl && <ThumbnailImage src={item.thumbnailUrl} platform={item.platform} title={item.title} className="absolute inset-0 h-full w-full object-cover"/>}</span><span className="creator-home__work-copy"><span className="creator-home__work-status">{item.status}</span><strong>{item.title}</strong><span>{item.activity}</span></span></span><span className="creator-home__work-action">进入{column.label}<ArrowRight size={14}/></span></button>)}
+        {visible.map(item => <button type="button" key={item.id} data-work-kind={item.kind} onClick={() => onNavigate?.(item.page)} className="creator-home__work-entry"><span className="creator-home__work-body"><span className={`creator-home__work-preview${item.kind === 'content' ? '' : ' creator-home__work-preview--task'}`}>{item.kind === 'content' ? <><VideoThumbnail platform={item.platform || 'tiktok'} title={item.title}/>{item.thumbnailUrl && <ThumbnailImage src={item.thumbnailUrl} platform={item.platform || 'tiktok'} title={item.title} className="absolute inset-0 h-full w-full object-cover"/>}</> : <><Icon size={24} aria-hidden="true"/><span>{item.kind === 'traffic' ? '投放任务' : '客户承接'}</span></>}</span><span className="creator-home__work-copy"><span className="creator-home__work-status">{item.status}</span><strong>{item.title}</strong><span>{item.activity}</span></span></span><span className="creator-home__work-action">进入{column.label}<ArrowRight size={14}/></span></button>)}
       </div></div>;
     })}
   </div></section>;

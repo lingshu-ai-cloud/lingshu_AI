@@ -63,6 +63,9 @@ for (const label of ['待验收成片', '本周计划视频', '本周视频总�
   assert.match(commandCenter, new RegExp(`aria-label=\\{\`查看\\$\\{item\\.label\\}\`\\}`), `“${label}”所在指标必须提供可访问的详情入口`);
 }
 assert.match(commandCenter, /onMetricClick\?\.\(item\.id as WeeklyCommandMetricId\)/, '六项周计划指标必须把对应指标身份交给页面导航');
+assert.match(commandCenter, /const hasWeeklyPlan = Boolean\(data\.goal\)/, '无周计划时必须使用明确的空数据口径');
+for (const emptyValue of ['0 秒', '¥0–0', '¥0.00']) assert.match(commandCenter, new RegExp(emptyValue), `无周计划时必须显示可读的空数据“${emptyValue}”`);
+assert.match(commandCenter, /\{onMetricClick && <ArrowRight/, '无周计划的只读空指标不得显示虚假的详情箭头');
 for (const label of ['计划视频', '爆款视频缩略图', '内容结构', '数字人形象', '预计制作成本', '发布计划', '投流计划']) {
   assert.match(planDetails, new RegExp(label), `详细周计划必须用可视化卡片展示“${label}”`);
 }

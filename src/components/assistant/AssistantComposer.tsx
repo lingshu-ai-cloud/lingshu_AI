@@ -121,7 +121,6 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
   return (
     <div data-assistant-composer="true" data-variant={variant} className="ls-assistant-composer shrink-0">
       <div data-assistant-composer-surface="true" className="ls-assistant-composer__surface">
-        {variant === 'home' && <button type="button" className="ls-assistant-composer__add-tile" onClick={guideToViralVideo} aria-label="选择爆款视频进行复刻" title="从爆款视频中选择复刻参考"><Plus size={26} aria-hidden="true" /></button>}
         {files.length > 0 && (
           <div data-assistant-attachments="pending" className="flex flex-wrap gap-1.5 border-b border-border/70 px-2.5 py-2">
             {files.map(file => {
@@ -147,17 +146,20 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
             <span className="self-center text-[9px] text-text-muted">待随消息上传</span>
           </div>
         )}
-        <textarea
-          ref={forwardedRef}
-          value={draft}
-          onChange={event => onDraftChange(event.target.value)}
-          onKeyDown={submitOnEnter}
-          rows={1}
-          maxLength={4000}
-          aria-label="给灵小枢发送消息"
-          placeholder={variant === 'home' ? '输入想法、脚本或上传参考，和灵小枢一起创作' : '告诉灵小枢你想完成什么...'}
-          className="ls-assistant-composer__input max-h-[88px] min-h-10 w-full resize-none overflow-y-auto bg-transparent px-3 pt-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted"
-        />
+        <div className="ls-assistant-composer__editing">
+          {variant === 'home' && <button type="button" className="ls-assistant-composer__add-tile" onClick={guideToViralVideo} aria-label="选择爆款视频进行复刻" title="从爆款视频中选择复刻参考"><Plus size={26} aria-hidden="true" /></button>}
+          <textarea
+            ref={forwardedRef}
+            value={draft}
+            onChange={event => onDraftChange(event.target.value)}
+            onKeyDown={submitOnEnter}
+            rows={1}
+            maxLength={4000}
+            aria-label="给灵小枢发送消息"
+            placeholder={variant === 'home' ? '输入想法、脚本或上传参考，和灵小枢一起创作' : '告诉灵小枢你想完成什么...'}
+            className="ls-assistant-composer__input max-h-[88px] min-h-10 w-full resize-none overflow-y-auto bg-transparent px-3 pt-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted"
+          />
+        </div>
         <div className="flex items-center justify-between gap-2 px-2 pb-2">
           <div className="ls-assistant-composer__tools min-w-0">
             {variant === 'home' && <span className="ls-assistant-composer__mode"><Sparkles size={16} aria-hidden="true"/>Agent 模式</span>}

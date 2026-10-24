@@ -5,11 +5,11 @@ export type PrimaryProductPage = 'strategy' | 'socialInspiration' | 'digitalEmpl
 export type PrimaryProductItem = { page: PrimaryProductPage; label: string; disabled: boolean };
 
 const PRIMARY_PAGES: readonly { page: PrimaryProductPage; label: string }[] = [
-  { page: 'strategy', label: '内容创作' },
-  { page: 'socialInspiration', label: '爆款库' },
-  { page: 'digitalEmployees', label: '经营总览' },
-  { page: 'adsOverview', label: '投流' },
+  { page: 'strategy', label: 'hi，灵小枢' },
+  { page: 'socialInspiration', label: '内容创作' },
+  { page: 'adsOverview', label: '智能投流' },
   { page: 'conversion', label: '智能客服' },
+  { page: 'digitalEmployees', label: '经营总览' },
 ];
 
 export function primaryProductNavigation(
@@ -23,7 +23,8 @@ export function primaryProductNavigation(
 }
 
 export function modeSwitchDestination(page: Page, mode: CreationMode): Page {
-  return mode === 'employee' && page === 'socialInspiration' ? 'strategy' : page;
+  void mode;
+  return page;
 }
 
 /** Secondary settings stay reachable without becoming extra primary tabs. */

@@ -235,7 +235,7 @@ function HomeView({ data, onNavigate, selectedAccountId = "", overviewRangeBusy 
   </div>;
 }
 
-function WeeklyPublishingCalendar({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefresh?: () => void }) {
+export function WeeklyPublishingCalendar({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefresh?: () => void }) {
   const display = buildSmartBusinessDisplayModel(data);
   const calendarStatus: Record<ContentQueueItem["status"], LsCalendarEvent["status"]> = {
     planned: "planned",
@@ -273,7 +273,7 @@ function WeeklyPublishingCalendar({ data, onRefresh }: { data: DigitalEmployeeOv
     data: item,
   })).filter(event => Boolean(event.start));
 
-  return <section aria-label="发布日历" className="overflow-hidden rounded-lg border border-border bg-white">
+  return <section aria-label="发布日历" className="overflow-hidden rounded-lg border border-border bg-surface">
     <div className="border-b border-border px-5 py-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="ls-type-title-large text-text-primary">发布日历</h3>
@@ -351,8 +351,8 @@ const matrixScheduleStages = [
 ] as const;
 
 
-function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onOpenContent, onOpenAgentSettings }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void; onOpenAgentSettings?: () => void; onOpenProductionProgress?: (taskId: string, contentItemId: string, projectId?: string) => void; onRetryTask?: (taskId: string) => Promise<boolean> }) {
-  return <DigitalEmployeeWorkspace data={data} calendarTasks={calendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh} onOpenContent={onOpenContent} onOpenAgentSettings={onOpenAgentSettings} publishingCalendar={<WeeklyPublishingCalendar data={data} onRefresh={onRefresh}/>}/>;
+function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onNavigate, onOpenContent, onOpenAgentSettings }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void; onOpenAgentSettings?: () => void; onOpenProductionProgress?: (taskId: string, contentItemId: string, projectId?: string) => void; onRetryTask?: (taskId: string) => Promise<boolean> }) {
+  return <DigitalEmployeeWorkspace data={data} calendarTasks={calendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh} onNavigate={onNavigate} onOpenContent={onOpenContent} onOpenAgentSettings={onOpenAgentSettings} publishingCalendar={<WeeklyPublishingCalendar data={data} onRefresh={onRefresh}/>}/>;
 }
 
 

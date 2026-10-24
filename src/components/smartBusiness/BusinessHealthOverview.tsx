@@ -219,7 +219,6 @@ export default function BusinessHealthOverview({ data, selectedAccountId = '', o
           <p className="mt-2 text-xs text-text-secondary">{businessHealthStatus(dimension.score, dimension.criteria.filter(item => item.score !== null).length, dimension.criteria.length)} · {dimension.criteria.filter(item => item.score !== null).length}/{dimension.criteria.length} 项已评估</p>
         </div>; })}
       </div>
-      {!summaryOnly && <div className="border-t border-border px-3"><Collapse ghost items={[{ key: 'method', label: '评分口径与数据覆盖', children: <HealthCriteriaVisualization dimensions={model.dimensions} selectedAccountId={selectedAccountId} generatedAt={model.generatedAt} accountLoadedAt={sources.performance?.loadedAt}/> }]}/></div>}
     </section>}
 
     {(accountOnly || (!summaryOnly && !detailsOnly)) && <section className="overflow-hidden rounded-lg border border-border bg-white" aria-labelledby="account-growth-title">
@@ -228,6 +227,5 @@ export default function BusinessHealthOverview({ data, selectedAccountId = '', o
         <div className="border-t border-border px-3"><Collapse ghost items={model.accountHealth.map(account => ({ key: `${account.platform}:${account.accountId}`, label: <div className="min-w-0 space-y-3 pr-1"><div className="flex flex-wrap items-center justify-between gap-2"><span className="flex min-w-0 items-center gap-2"><SocialPlatformIcon platform={account.platform} size={18}/><strong className="text-sm font-medium text-text-primary">{account.accountLabel}</strong></span><span className="flex items-center gap-2"><strong className="text-sm tabular-nums text-text-primary">{scoreLabel(account.currentScore)}</strong><Tag>{account.scoreCoverage}/{account.dimensions.length} 项已评估</Tag></span></div><div className="grid items-center gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">{account.currentScore === null ? <span className="text-xs text-text-muted">等待可核验的账号数据</span> : <LsGradientProgress percent={account.currentScore} showInfo={false} aria-label={`${account.accountLabel} 当前 ${scoreLabel(account.currentScore)}`}/>}<span className="text-xs text-text-muted">{account.milestones.filter(item => item.complete).length}/{account.milestones.length} 个阶段目标已达成</span></div></div>, children: <AccountJourney account={account}/> }))}/></div>
       </>}
     </section>}
-    {detailsOnly && !accountOnly && <section className="rounded-lg border border-border px-3"><Collapse ghost items={[{ key: 'method', label: '评分口径与数据覆盖', children: <HealthCriteriaVisualization dimensions={model.dimensions} selectedAccountId={selectedAccountId} generatedAt={model.generatedAt} accountLoadedAt={sources.performance?.loadedAt}/> }]}/></section>}
   </div>;
 }

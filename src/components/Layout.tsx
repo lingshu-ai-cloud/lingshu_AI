@@ -18,11 +18,11 @@ import ActionFeedbackHost from './ui/ActionFeedbackHost';
 import DuotoneGlyph from './ui/DuotoneGlyph';
 import LsPageTransition from './ui/LsPageTransition';
 import { lsMotion } from '../lib/designTokens';
-import { getScrollBehavior, usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
+import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import { PLATFORM_ADS_PAGE_IDS, PLATFORM_ADS_SURFACE_ENABLED } from '../config/productSurfaceFlags';
 import PointsManagementDrawer from './PointsManagementDrawer';
-import { CreationModeContext, CreationModeControlContext, readCreationMode, writeCreationMode, type CreationMode } from '../lib/creationMode';
-import { accountProductNavigation, modeSwitchDestination, primaryProductNavigation, type PrimaryProductPage } from '../productNavigation';
+import { CreationModeContext, type CreationMode } from '../lib/creationMode';
+import { accountProductNavigation, primaryProductNavigation, type PrimaryProductPage } from '../productNavigation';
 
 const PRODUCT_NAV_ICONS: Record<PrimaryProductPage, ReactNode> = {
   strategy: <DuotoneGlyph kind="create" />,
@@ -111,7 +111,6 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
     try { return localStorage.getItem('lingshu:sidebar-collapsed') === 'true'; } catch { return false; }
   });
   const [creatorSidebarCollapsed, setCreatorSidebarCollapsed] = useState(false);
-  const [homeActiveSection, setHomeActiveSection] = useState<'strategy' | 'socialInspiration'>('strategy');
   const [viewportWidth, setViewportWidth] = useState(() => typeof window === 'undefined' ? 1440 : window.innerWidth);
   const [mobileViewport, setMobileViewport] = useState(() => (
     typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
@@ -122,28 +121,13 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   const sidebarCollapsed = mobileViewport ? !mobileSidebarExpanded : creatorSurface ? creatorSidebarCollapsed : desktopSidebarCollapsed;
   const sidebarWidth = sidebarCollapsed ? (mobileViewport ? 56 : 60) : creatorSurface ? Math.min(354, Math.max(246, Math.round(viewportWidth * 0.173))) : 176;
   const activeSession = session;
-  const modeScope = activeSession ? `${activeSession.tenant?.id || activeSession.user.tenantId}:${activeSession.user.id}` : '';
-  const [modePreference, setModePreference] = useState<{ scope: string; mode: CreationMode }>(() => ({
-    scope: modeScope,
-    mode: readCreationMode(modeScope),
-  }));
-  const creationMode = modePreference.scope === modeScope
-    ? modePreference.mode
-    : readCreationMode(modeScope);
+  const creationMode: CreationMode = 'employee';
   const guideScope = activeSession?.demo?.guideScope || (activeSession?.demo?.expiresAt ? `${activeSession.user.id}:${activeSession.demo.expiresAt}` : activeSession?.user?.id || 'demo-guide');
   const supportAccess = activeSession?.supportAccess;
   const organizationRole = activeSession?.user.role || 'customer_service';
   const allowedPages = ROLE_PAGE_ACCESS[organizationRole];
   const primaryItems = primaryProductNavigation(creationMode, allowedPages, PLATFORM_ADS_SURFACE_ENABLED);
   const accountPages = accountProductNavigation(allowedPages, isAdminSession(activeSession ?? null));
-
-  const switchCreationMode = (nextMode: CreationMode) => {
-    if (nextMode === creationMode) return;
-    setModePreference({ scope: modeScope, mode: nextMode });
-    writeCreationMode(modeScope, nextMode);
-    const destination = modeSwitchDestination(page, nextMode);
-    if (destination !== page) onNavigate(destination);
-  };
 
   const leaveSupportSession = () => {
     if (!exitSupportSession()) authApi.logout();
@@ -153,14 +137,6 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   useEffect(() => {
     if (starterMode) setQuotaOpen(false);
   }, [starterMode]);
-  useEffect(() => {
-    const onHomeSection = (event: Event) => {
-      const section = (event as CustomEvent<string>).detail;
-      if (section === 'strategy' || section === 'socialInspiration') setHomeActiveSection(section);
-    };
-    window.addEventListener('lingshu:home-section-active', onHomeSection);
-    return () => window.removeEventListener('lingshu:home-section-active', onHomeSection);
-  }, []);
   useEffect(() => {
     if (!isInConversation) setMobileRightPanelOpen(false);
   }, [isInConversation]);
@@ -215,15 +191,6 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   };
   const navigateFromSidebar = (nextPage: Page) => {
     if (mobileViewport) setMobileSidebarExpanded(false);
-    if (homeSurface && (nextPage === 'strategy' || nextPage === 'socialInspiration')) {
-      const target = nextPage === 'strategy' ? document.querySelector('.creator-home') : document.getElementById('creator-home-library');
-      if (target) {
-        if (nextPage === 'strategy') (target as HTMLElement).scrollTo({ top: 0, behavior: getScrollBehavior() });
-        else target.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' });
-        setHomeActiveSection(nextPage);
-        return;
-      }
-    }
     onNavigate(nextPage);
   };
   const openDigitalEmployeeGuide = () => {
@@ -283,12 +250,22 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
 
         {/* Home nav */}
         <nav aria-label="主导航" className={`${sidebarCollapsed ? 'px-2' : 'px-3'} pb-1`}>
-          {primaryItems.map(item => <NavItem
+          {primaryItems.filter(item => item.page !== 'digitalEmployees').map(item => <NavItem
             key={item.page}
             item={{ id: item.page, label: item.label, icon: PRODUCT_NAV_ICONS[item.page] }}
-            active={homeSurface && (item.page === 'strategy' || item.page === 'socialInspiration')
-              ? homeActiveSection === item.page
-              : isPageInNavigationBranch(page, item.page)}
+            active={isPageInNavigationBranch(page, item.page)}
+            onClick={() => navigateFromSidebar(item.page)}
+            onPrefetch={() => onPrefetchPage?.(item.page)}
+            collapsed={sidebarCollapsed}
+            disabled={item.disabled}
+          />)}
+        </nav>
+
+        <nav aria-label="经营导航" className={`${sidebarCollapsed ? 'mx-2 px-0' : 'mx-3 px-0'} mt-3 border-t border-border pt-3`}>
+          {primaryItems.filter(item => item.page === 'digitalEmployees').map(item => <NavItem
+            key={item.page}
+            item={{ id: item.page, label: item.label, icon: PRODUCT_NAV_ICONS[item.page] }}
+            active={isPageInNavigationBranch(page, item.page)}
             onClick={() => navigateFromSidebar(item.page)}
             onPrefetch={() => onPrefetchPage?.(item.page)}
             collapsed={sidebarCollapsed}
@@ -373,9 +350,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
           </div>
         )}
         <CreationModeContext.Provider value={creationMode}>
-          <CreationModeControlContext.Provider value={switchCreationMode}>
-            <LsPageTransition page={page}>{children}</LsPageTransition>
-          </CreationModeControlContext.Provider>
+          <LsPageTransition page={page}>{children}</LsPageTransition>
         </CreationModeContext.Provider>
       </main>
 

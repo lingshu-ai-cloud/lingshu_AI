@@ -6,10 +6,12 @@ const workspace = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeW
 const matrix = fs.readFileSync('src/components/smartBusiness/MatrixPublicationSchedule.tsx', 'utf8');
 const connected = fs.readFileSync('src/components/smartBusiness/ConnectedAgentCalendar.tsx', 'utf8');
 
-assert.match(dashboard, /function MatrixView\(\{[^}]*onOpenContent[^}]*\}[\s\S]{0,900}<DigitalEmployeeWorkspace[^>]*onOpenContent=\{onOpenContent\}/,
-  'Smart Business must not drop the task navigation callback before the Agent calendar');
-assert.match(workspace, /<RestoredAgentWorkCalendar[^>]*onOpenProduction=\{onOpenContent \? task => onOpenContent\(task\.id, task\.productionTaskId\)/,
-  'the restored calendar must forward real task identity into production navigation');
+assert.match(dashboard, /function MatrixView\(\{[^}]*onNavigate[^}]*\}[\s\S]{0,900}<DigitalEmployeeWorkspace[^>]*onNavigate=\{onNavigate\}/,
+  'Smart Business must forward product navigation into the three-column current-work surface');
+assert.match(workspace, /<DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\}/,
+  'the business overview must replace the former Agent calendar with the current-work projection');
+assert.doesNotMatch(workspace, /<RestoredAgentWorkCalendar|<ConnectedAgentCalendar/,
+  'the former Agent work calendar must not remain duplicated in the business overview');
 assert.match(matrix, /<AgentWeeklyCalendar[^>]*onOpenProduction=\{onOpenContent\?task=>onOpenContent\(task\.id,task\.productionTaskId\)/,
   'the matrix Agent board must keep clicks enabled for real tasks, not only demo tasks');
 assert.doesNotMatch(matrix, /onOpenProduction=\{calendarDemo&&onOpenContent/,

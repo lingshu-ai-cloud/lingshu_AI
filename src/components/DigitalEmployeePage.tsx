@@ -6,7 +6,6 @@ import { presenterProductionGate, type PresenterProductionGate } from "../lib/sh
 import { Button } from 'antd';
 import { consumeBusinessPageContext, saveBusinessPageContext } from '../lib/businessPageNavigation';
 import { EMPTY_CONFIG } from './smartBusiness/digitalEmployeeConfigRules';
-import { OnboardingPanel } from './smartBusiness/DigitalEmployeeOnboardingPanel';
 import { type GoalDraft, type BusinessLine, type ContentPlatform } from './smartBusiness/WeeklyGoalPanel';
 import { createDigitalEmployeeConfigurationAction } from './digitalEmployeeConfigurationAction';
 import { createDigitalEmployeeFactRecovery } from './digitalEmployeeFactRecovery';
@@ -14,12 +13,7 @@ import { createDigitalEmployeeWeeklyLaunch } from './digitalEmployeeWeeklyLaunch
 import { ConfiguredDigitalEmployeeWorkspace, statusLabel, type WorkspaceView } from './ConfiguredDigitalEmployeeWorkspace';
 import { type OpenBusinessLink } from './smartBusiness/BatchFollowupTruthPanel';
 import { useEffect, useRef, useState } from "react";
-import {
-  AlertTriangle,
-  ChevronLeft,
-  Loader2,
-  XCircle,
-} from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { authHeader, AUTH_TOKEN_CHANGED_EVENT } from "../lib/auth";
 import { showActionSuccess } from "../lib/actionFeedback";
 import { type WeeklyStartConflict } from '../lib/weeklyStartValidation';
@@ -107,11 +101,9 @@ export default function DigitalEmployeePage({
     restore: restoreCalendarWorkspace,
   }), []);
 
-  const [navigationNotice, setNavigationNotice] = useState("");
   const presenterConsentReturnRequested = Boolean(new URLSearchParams(window.location.search).get('presenterConsentReturn')?.trim());
   const [applicationGuideOpen, setApplicationGuideOpen] = useState(presenterConsentReturnRequested);
   const [applicationGuideEntry, setApplicationGuideEntry] = useState<"start" | "presenter">(presenterConsentReturnRequested ? "presenter" : "start");
-  const [firstGuideOpen, setFirstGuideOpen] = useState(true);
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
   const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
   const [planHistoryOpen, setPlanHistoryOpen] = useState(false);
@@ -222,7 +214,7 @@ export default function DigitalEmployeePage({
       if (restoring || !returnContext || !next?.tasks.some(task => task.id === returnContext.taskId && task.run_id === returnContext.runId)) return;
       setWorkspaceView(returnContext.deliveryId ? "overview" : "live");
       setSelectedTaskId(returnContext.taskId);
-      setNavigationNotice(returnContext.deliveryId ? "已回到生产与交付，原交付记录已恢复。" : "已回到原任务的生产现场，运行与任务位置已恢复。");
+      showActionSuccess("已恢复原任务位置", returnContext.deliveryId ? "已回到生产与交付，原交付记录已恢复。" : "已回到原任务的生产现场，运行与任务位置已恢复。");
     });
     return () => { active = false; };
   }, []);
@@ -407,11 +399,6 @@ export default function DigitalEmployeePage({
         : goal
           ? 'planned'
           : 'unplanned';
-  const operatingState = !data?.config
-      ? "首次配置中"
-      : data.review?.status === "generated"
-        ? "本周期待复盘"
-        : "常态经营中";
   useEffect(() => {
     if (!activeRun) return;
     if (newGoal) setNewGoal(false);
@@ -632,8 +619,14 @@ export default function DigitalEmployeePage({
       </div>
     );
 
-  if (data?.config) return <ConfiguredDigitalEmployeeWorkspace {...{
-    active, data, busy, error, activeRun, canCreateNextGoal, viewGoalId, workspaceView,
+  const overviewData: DigitalEmployeeOverview = data || {
+    config: null, goals: [], goal: null, plan: null, run: null, tasks: [],
+    events: [], approvals: [], handoffs: [], review: null, agents: [], businessSnapshot: null,
+  };
+  const configuredData: DigitalEmployeeOverview = overviewData.config ? overviewData : { ...overviewData, config: EMPTY_CONFIG };
+  return <>
+    <ConfiguredDigitalEmployeeWorkspace {...{
+    active, data: configuredData, busy, error, activeRun, canCreateNextGoal, viewGoalId, workspaceView,
     businessLine, contentPlatform, selectedAccountId, selectedContentItemId,
     weeklyStudioContentId, weeklyStartConflict, weeklyPlanOpen, newGoal,
     planHistoryOpen, weeklyPlanDetailsOpen, applicationGuideOpen,
@@ -647,47 +640,6 @@ export default function DigitalEmployeePage({
     presentConfirmedWeeklyExecution, publishWeeklyWorkUpdate,
     changeOverviewDateRange, openReadiness, saveConfig, createWeeklyOutline,
     generateCurrentPlanDetails, confirmWeeklyPlan,
-  }} />;
-
-  return (
-    <div className="workspace-canvas digital-employee-page">
-      <div className="workspace-frame">
-        <header className="workspace-header">
-          <h1 className="workspace-title mt-2">数字员工正在等待调遣</h1>
-          <div className="mt-5 inline-flex items-center gap-2 border-l-2 border-accent bg-surface-2 px-3 py-2 text-xs font-semibold text-accent">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-surface text-[10px] text-text-primary">1</span>
-            {operatingState}
-          </div>
-        </header>
-        {navigationNotice && (
-          <div role="status" className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs font-semibold text-blue-800">
-            <span className="flex items-center gap-2"><ChevronLeft size={15} />{navigationNotice}</span>
-            <Button className="!h-auto min-h-9 !whitespace-normal" htmlType="button" onClick={() => setNavigationNotice("")} aria-label="关闭返回提示">
-              <XCircle size={16} />
-            </Button>
-          </div>
-        )}
-        {error && (
-          <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            <span className="flex items-center gap-2"><AlertTriangle size={16} />{error}</span>
-            <Button className="!h-auto min-h-9 !whitespace-normal" onClick={() => setError("")}><XCircle size={17} /></Button>
-          </div>
-        )}
-        {firstGuideOpen ? <OnboardingPanel
-          initial={EMPTY_CONFIG}
-          readiness={data?.businessSnapshot?.readiness || []}
-          busy={Boolean(busy)}
-          dismissible
-          onClose={() => setFirstGuideOpen(false)}
-          onOpenReadiness={openReadiness}
-          onNavigate={(page) => openBusiness(page)}
-          onSave={saveConfig}
-        /> : <section aria-label="数字员工尚未配置" className="mt-6 rounded-xl border border-border bg-surface p-6">
-          <h2 className="text-lg font-semibold text-text-primary">新手引导已跳过</h2>
-          <p className="mt-2 text-sm text-text-secondary">当前进度已保存为草稿。数字员工尚未完成配置，不会自动开始任务；可以随时继续引导。</p>
-          <Button type="primary" className="mt-4" onClick={() => setFirstGuideOpen(true)}>继续新手引导</Button>
-        </section>}
-      </div>
-    </div>
-  );
+    }} />
+    </>;
 }
