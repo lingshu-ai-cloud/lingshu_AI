@@ -82,6 +82,10 @@ test('local-authenticated product-scene upload persists, lists, streams and dedu
     poster: { key: posterKey, contentType: 'image/jpeg' },
   }));
   assert.match(String(created.id), /^pb-materials_/);
+  const { ownsShootingVideo } = await import('../studio/shootingMaterialOwnership.js');
+  assert.equal(await runWithDataAuthority('local', () => ownsShootingVideo(String(created.id), tenantId, () => [])), true,
+    'a persisted upload must be attachable without a legacy material mirror');
+  assert.equal(await runWithDataAuthority('local', () => ownsShootingVideo(String(created.id), 'foreign-tenant', () => [])), false);
   assert.equal(created.productId, 'product-a');
   assert.equal(created.duration, 8.25, 'local persistence must not reintroduce the old scene-duration limit');
 

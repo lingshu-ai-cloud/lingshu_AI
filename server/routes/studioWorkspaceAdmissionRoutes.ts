@@ -4,7 +4,7 @@ import { createStudioAvatarProductionRouter } from '../lib/studioAvatarProductio
 import { callLLM } from '../agents/llm.js';
 import { store } from '../storage/index.js';
 import { getTenantSubscription, isEntitled, isSubscriptionEnforced } from '../middleware/subscription.js';
-import { isReferenceOnlyMaterial } from '../lib/materialPolicy.js';
+import { ownsShootingVideo } from '../studio/shootingMaterialOwnership.js';
 import { type AuthLocals } from '../middleware/auth.js';
 
 import type { StudioApplicationPorts } from '../studio/applicationPorts.js';
@@ -90,7 +90,7 @@ export function createStudioWorkspaceAdmissionRoutes(deps: Pick<StudioApplicatio
 
   function registerShootingTasksRouter() {
     studioRouter.use('/shooting-tasks', createShootingTasksRouter(store, async (id, tenantId) => {
-      return loadMaterials().some(item => item.id === id && item.tenantId === tenantId && item.type === 'video' && !isReferenceOnlyMaterial(item));
+      return ownsShootingVideo(id, tenantId, loadMaterials);
     }));
   }
 
