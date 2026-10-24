@@ -21,6 +21,7 @@ interface VideoCardProps {
   favoritingMaterial?: boolean;
   isFavoriteMaterial?: boolean;
   createLabel?: string;
+  balanceMedia?: boolean;
   creating?: boolean;
   createDisabled?: boolean;
   createDisabledReason?: string;
@@ -48,7 +49,9 @@ export function trendVideoAspectRatio(video: TrendVideo): number {
     const height = Number(match[2]);
     if (width > 0 && height > 0) return width / height;
   }
-  return video.contentFormat === 'image' ? 1 : 9 / 16;
+  // Unknown geometry is a neutral placeholder; real thumbnail/video dimensions
+  // replace it on load, without assuming every historical video is vertical.
+  return 1;
 }
 
 function useNearViewportMedia(mediaKey: string) {
@@ -77,7 +80,7 @@ function useNearViewportMedia(mediaKey: string) {
   return { cardRef, enabled, enable: () => setEnabledKey(mediaKey) };
 }
 
-export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEditManage, onDeleteManage, onFavoriteMaterial, favoritingMaterial, isFavoriteMaterial, createLabel, creating, createDisabled, createDisabledReason }: VideoCardProps) {
+export function VideoCard({ video, balanceMedia = false, isSelected, onSelect, onCreate, onWatch, onEditManage, onDeleteManage, onFavoriteMaterial, favoritingMaterial, isFavoriteMaterial, createLabel, creating, createDisabled, createDisabledReason }: VideoCardProps) {
   const meta = getPlatformMeta(video.platform);
   const isImagePost = video.contentFormat === 'image';
   const media = useNearViewportMedia(video.videoUrl ? JSON.stringify([video.id, video.videoUrl]) : '');
@@ -89,6 +92,8 @@ export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEd
     setMediaReady(false);
     setMediaAspectRatio(trendVideoAspectRatio(video));
   }, [video.id, video.thumbnail, video.videoUrl]);
+  const frameAspectRatio = balanceMedia ? Math.min(4 / 3, Math.max(4 / 5, mediaAspectRatio)) : mediaAspectRatio;
+  const mediaFitClass = balanceMedia ? 'object-contain bg-surface-2' : 'object-cover';
   const imageQueue = imagePostAnalysisQueuePresentation(video);
   const imageAnalyzed = !imageQueue && video.aiAnalysis?.imageEvidence?.status === 'analyzed' && Boolean(video.aiAnalysis.imageEvidence.observedFacts?.length);
   const imageFailed = video.aiAnalysis?.imageAnalysisStatus === 'failed' || video.status === 'failed';
@@ -109,11 +114,11 @@ export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEd
       className={`ls-viral-card group flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface transition-colors duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] hover:border-border-bright ${isSelected ? 'border-accent ring-1 ring-accent/20' : ''}`}>
       <div
         className="relative block w-full overflow-hidden text-left"
-        style={{ background: 'var(--color-surface-2)', aspectRatio: mediaAspectRatio }}>
+        style={{ background: 'var(--color-surface-2)', aspectRatio: frameAspectRatio }}>
         <LsMediaStateFrame state={mediaState} percent={analysisProgress?.percent} label={imageQueue?.label || (isImagePost && mediaState === 'processing' ? '分析中' : isImagePost && mediaState === 'error' ? '分析失败，可查看详情后重试' : analysisProgress?.stageLabel)} className="absolute inset-0">
           <VideoThumbnail platform={video.platform} title={video.title} />
           {video.thumbnail && (
-            <ThumbnailImage src={video.thumbnail} platform={video.platform} title={video.title} className="absolute inset-0 h-full w-full object-cover" onNaturalAspectRatio={ratio => {
+            <ThumbnailImage src={video.thumbnail} platform={video.platform} title={video.title} className={`absolute inset-0 h-full w-full ${mediaFitClass}`} onNaturalAspectRatio={ratio => {
               if (!videoAspectRatioLockedRef.current) setMediaAspectRatio(ratio);
             }} />
           )}
@@ -125,7 +130,7 @@ export function VideoCard({ video, isSelected, onSelect, onCreate, onWatch, onEd
               previewFrame
               preload="auto"
               hoverPlay
-              className={`absolute inset-0 w-full h-full object-cover ls-media-reveal ${mediaReady ? 'opacity-100' : 'opacity-0'}`}
+              className={`absolute inset-0 w-full h-full ${mediaFitClass} ls-media-reveal ${mediaReady ? 'opacity-100' : 'opacity-0'}`}
               onMetadata={metadata => {
                 if (metadata.width > 0 && metadata.height > 0) {
                   videoAspectRatioLockedRef.current = true;

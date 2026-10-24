@@ -15,13 +15,16 @@ export function publicVideoRecord<T extends Record<string, unknown>>(
   record: T,
   progressOptions: { queuePosition?: number | null; nowMs?: number } = {},
 ): T {
+  const analysis = videoAnalysisOf(record);
+  const storedThumbnail = record.id && (analysis.thumbnailObjectKey || record.thumbnailFile)
+    ? `/api/overseas/videos/${encodeURIComponent(String(record.id))}/thumbnail` : '';
   const stableYouTubeThumbnail = record.platform === 'youtube'
     ? youtubeThumbnailFromUrl(String(record.sourceUrl || ''))
     : '';
-  const publicRecord = stableYouTubeThumbnail
-    ? { ...record, thumbnailUrl: stableYouTubeThumbnail } as T
+  const thumbnailUrl = storedThumbnail || stableYouTubeThumbnail;
+  const publicRecord = thumbnailUrl
+    ? { ...record, thumbnailUrl } as T
     : record;
-  const analysis = videoAnalysisOf(record);
   if (!Object.keys(analysis).length) return publicRecord;
   const scrubbed: Record<string, unknown> = {
     ...analysis,

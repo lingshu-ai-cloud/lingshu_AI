@@ -70,9 +70,9 @@ function harness(observationAvailable = true) {
   });
   return {
     scrollRoot, card, observers,
-    render(item = video): Node {
+    render(item = video, balanceMedia = false): Node {
       cursor = 0;
-      const tree = exports.VideoCard({ video: item, index: 0, isSelected: false, onSelect() {}, onCreate() {}, onWatch() {} });
+      const tree = exports.VideoCard({ video: item, balanceMedia, index: 0, isSelected: false, onSelect() {}, onCreate() {}, onWatch() {} });
       effects.splice(0).forEach(run => run());
       while (frames.size) { const batch = [...frames.values()]; frames.clear(); batch.forEach(run => run()); }
       return tree;
@@ -123,4 +123,32 @@ test('replacing a card does not preload its new URL or accept a stale observer c
   page.observers.at(-1)!.notify([{ isIntersecting: true }]);
   assert.equal(players(page.render(replacement))[0].props.apiUrl, '/media/v2');
   page.cleanup();
+});
+
+test('masonry follows recorded and loaded media geometry rather than forcing portrait cards', () => {
+  const square = harness();
+  assert.equal(descendants(square.render()).find(node => node.props.style?.aspectRatio)?.props.style.aspectRatio, 1);
+  square.cleanup();
+  const wide = harness();
+  const wideVideo = { ...video, aiAnalysis: { gemini: { globalSettings: { aspectRatio: '16:9' } } } };
+  assert.equal(descendants(wide.render(wideVideo)).find(node => node.props.style?.aspectRatio)?.props.style.aspectRatio, 16 / 9);
+  wide.observers[0]!.notify([{ isIntersecting: true }]);
+  const active = wide.render(wideVideo);
+  players(active)[0]!.props.onMetadata({ width: 1080, height: 1920, duration: 30 });
+  assert.equal(descendants(wide.render(wideVideo)).find(node => node.props.style?.aspectRatio)?.props.style.aspectRatio, 9 / 16);
+  wide.cleanup();
+});
+
+// Preview frames balance visual weight while retaining the full native image.
+test('home media frames bound extreme aspect ratios without cropping either orientation', () => {
+  for (const [ratio, expected] of [['9:16', 4 / 5], ['16:9', 4 / 3], ['1:1', 1]] as const) {
+    const page = harness();
+    const item = { ...video, aiAnalysis: { gemini: { globalSettings: { aspectRatio: ratio } } } };
+    const tree = page.render(item, true);
+    assert.equal(descendants(tree).find(node => node.props.style?.aspectRatio)?.props.style.aspectRatio, expected);
+    assert.match(descendants(tree).find(node => node.type === 'ThumbnailImage')!.props.className, /object-contain/);
+    page.observers[0]!.notify([{ isIntersecting: true }]);
+    assert.match(players(page.render(item, true))[0]!.props.className, /object-contain/);
+    page.cleanup();
+  }
 });

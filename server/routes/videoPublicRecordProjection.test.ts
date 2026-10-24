@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { analysisQueuePositions, publicVideoRecord, recordMatchesKeyword } from './videoPublicRecordProjection.js';
 
+test('stored historical thumbnails use the authenticated media owner before remote YouTube fallback', () => {
+  const source = { id: 'historical-video', thumbnailUrl: '', platform: 'youtube', sourceUrl: 'https://www.youtube.com/watch?v=abcdefghijk', aiAnalysis: JSON.stringify({ thumbnailObjectKey: 'tenant/thumb.jpg' }) };
+  assert.equal(publicVideoRecord(source).thumbnailUrl, '/api/overseas/videos/historical-video/thumbnail');
+  assert.match(String(publicVideoRecord({ ...source, aiAnalysis: '{}' }).thumbnailUrl), /^https:\/\//);
+});
+
 test('public video projection preserves visible progress but strips private evidence keys', () => {
   const source = { id: 'video-a', platform: 'tiktok', sourceUrl: 'https://www.tiktok.com/@a/video/123',
     aiAnalysis: { analysisQueueKind: 'material', analysisQueueState: 'queued', analysisRunId: 'run-a',

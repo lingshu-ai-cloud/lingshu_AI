@@ -140,8 +140,8 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
           <Button onClick={() => onNavigate?.('socialInspiration')} icon={<ArrowRight size={15}/>}>完整灵感爆款</Button></div>
         {videosError && <Alert type="warning" showIcon title={videosError} action={<Button size="small" icon={<RefreshCw size={13}/>} onClick={() => setVideoRevision(value => value + 1)}>重试</Button>} className="mb-3"/>}
         {videosLoading && !videos.length ? <div className="flex min-h-40 items-center justify-center"><Spin description="正在读取爆款视频"/></div>
-          : videos.length ? <LsMasonryGallery layout="masonry" columns={{ xs: 2, sm: 2, md: 3, lg: 4 }} items={videos.map((video, index) => ({ id: video.id, content:
-            <div data-home-media><VideoCard video={video} index={index} isSelected={false} onWatch={() => openPreview(video)}
+          : videos.length ? <LsMasonryGallery layout="masonry" columns={{ xs: 2, sm: 2, md: 3, lg: 6 }} items={videos.map((video, index) => ({ id: video.id, content:
+            <div data-home-media><VideoCard video={video} balanceMedia index={index} isSelected={false} onWatch={() => openPreview(video)}
               onSelect={() => openPreview(video)} onCreate={() => selectReference(video)} createLabel="去创作"/></div> }))}/>
             : !videosLoading && !videosError && <p className="creator-home__empty">当前租户暂无可展示的爆款视频。</p>}
       </section>}
