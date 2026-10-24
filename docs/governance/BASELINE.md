@@ -2,6 +2,13 @@
 
 更新时间：2026-10-24（Asia/Shanghai）
 
+## 本会话前端基线的完整质量补验（2026-10-24）
+
+- 本机集成树 `/Users/jiejie/Documents/lingshu-AI`、分支 `xixi改五个大文件结构治理` 从干净的 `36a41617c366c0b9c77d17e7806f46a95fbe21b0` 出发；源码修复提交为 `f5beb62397b812a5e29f0e282f3446e8406242e1`，本文档另行提交。安全恢复点为 `36a41617`。未操作其他工作树，未推送或部署。
+- 本机受控 PocketBase 二进制位于 `/Users/jiejie/.local/share/lingshu/pocketbase/pocketbase`（0.39.5），以 `PB_BIN` 显式传给检查；不再依赖失效的 `/tmp` 默认路径。`content-production.v2` 的 LangGraph 回归改为核验七个真实生产节点及冻结检查点，不再要求旧版合并的 `quality` 节点；每周企业资料测试夹具补齐 `tenant_profiles` 原子 CAS 契约；M1 测试使用禁外网的受控 Qwen 凭证，逐帧字幕/敏感文字审计复用单次 Tesseract worker、保持逐帧覆盖和遇不确定结果阻断。灵感视频卡恢复三类发现供给来源的常显标识，契约测试按现行瀑布流卡片结构核验真实渲染。
+- 实际通过：`pnpm run test:social-programs`、本地 OCR 定向测试、每周黄金流程 **42/42**、两轮 LangGraph 本地媒体流程、`pnpm run lint`（`tsc --noEmit`）、`pnpm run check:architecture`（2,693 个生产 TypeScript 文件）、`pnpm run check:digital-employee-migrations`（199 项仓库文件只读检查）、`git diff --check`。随后使用本机 `PB_BIN`、Node PATH 与 `NODE_OPTIONS=--max-old-space-size=4096` 执行完整 `pnpm run quality`，最终退出码 **0**；其中含真实本地 PocketBase/HTTP/Worker 集成、数字人/视频生产 **212/212**、主前端及账号中心构建。`quality` 未运行 `verify`，不能据此宣称后者通过。
+- 验证期间 8 GB 主机内存空闲约 24%–28%，单个 `tsc --noEmit` 约四分钟完成，未再发生并行 TypeScript 内存竞争；验证后观测空闲约 53%。本次没有真实付费供应商调用、OAuth 授权、目标数据库迁移、登录后真实租户端到端验收或部署。源码质量补验通过不等于运行数据、供应商 Ready 或发布就绪；旧预览进程仍需独立核对所载 SHA。
+
 ## 本会话前端开发基线：夜间模式与可跳过新手引导（2026-10-24）
 
 - 本机集成树 `/Users/jiejie/Documents/lingshu-AI`、分支 `xixi改五个大文件结构治理` 从 `d24ee8cabbacb360a3b25a4fcf42cc1ae8d3afcb` 出发，将当前会话的前端工作区改动封装为源码提交 `7ff43ba0d4e8216860ea3ea32500d432743c223d`。包含先前未提交的数字员工新手引导“跳过并保存草稿／可继续”改动、夜间共享画布与信息条、灵小枢入口、日历、投流托管、脚本库、表单及旧浅色工具类的深色适配。旧助手契约中“强制白底”的断言已按明确的夜间产品要求改为检查共享主题表面、点击／聚焦状态及贴边入口。源码与本文档分开提交；最终文档提交 SHA 以 Git 核验。本次未新增或执行迁移，也未改动其他工作树。
