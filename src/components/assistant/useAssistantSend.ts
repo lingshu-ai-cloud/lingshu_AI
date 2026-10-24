@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { App as AntApp } from 'antd';
-import type { AgentType, Message, Page } from '../../App';
+import type { AgentType, AssistantReferenceMedia, Message, Page } from '../../App';
 import { authHeader, getToken } from '../../lib/auth';
 import { sameAssistantRequestIdentity } from '../../lib/assistantRequestLifecycle';
 import { executeAssistantAction } from '../../lib/assistantActionRequest';
@@ -91,6 +91,7 @@ export function useAssistantSend(input: AssistantSendInput) {
     routeAgent = currentPageAgent,
     forcedContext?: AssistantContext,
     uploadedAttachments: UploadedAssistantAttachment[] = [],
+    referenceMedia?: AssistantReferenceMedia,
   ) => {
     const userText = text.trim();
     if ((!userText && !uploadedAttachments.length) || loading || fileGenerating || replyStreaming) return;
@@ -127,7 +128,11 @@ export function useAssistantSend(input: AssistantSendInput) {
     const enterpriseBrief = compactText(enterpriseContext);
     const conversationContext = selectAssistantConversationContext(mergeConsecutiveAssistant(thread.messages));
     const historyForApi = conversationContext.messages;
-    const nextVisible = [...mergeConsecutiveAssistant(thread.messages), { role: 'user' as const, content: visibleMessage }];
+    const nextVisible = [...mergeConsecutiveAssistant(thread.messages), {
+      role: 'user' as const,
+      content: visibleMessage,
+      ...(referenceMedia ? { referenceMedia } : {}),
+    }];
 
     const clarifiedDiagram = pendingMapFileRef.current && /(?:业务|路线图|思维导图|流程图|战略)/u.test(visibleText);
     const fileIntent = assistantFileIntent(visibleText) || (clarifiedDiagram ? { format: 'jpg' as const, diagram: true, needsMapScope: false } : null);

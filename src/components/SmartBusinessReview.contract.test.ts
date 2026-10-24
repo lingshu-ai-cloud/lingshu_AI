@@ -5,11 +5,13 @@ const dashboard = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', '
 const healthOverview = fs.readFileSync('src/components/smartBusiness/BusinessHealthOverview.tsx', 'utf8');
 const recommendations = fs.readFileSync('src/components/NextRoundRecommendationsSection.tsx', 'utf8');
 const recommendationModel = fs.readFileSync('src/lib/nextRoundRecommendations.ts', 'utf8');
+const tabs = fs.readFileSync('src/components/smartBusiness/BusinessOverviewTabs.tsx', 'utf8');
 
 const home = dashboard.slice(dashboard.indexOf('function HomeView'), dashboard.indexOf('const matrixRoleLabel'));
 const routes = dashboard.slice(dashboard.indexOf('export default function SmartBusinessDashboard'));
-assert.match(home, /<BusinessHealthOverview[^]*<NextRoundRecommendationsSection/, 'the overview must finish with actionable next-round recommendations after asset health');
-assert.match(home, /summary=\{data\.review\?\.status === "generated" \? data\.review\.summary : undefined\}/, 'next-round recommendations must use persisted generated review evidence, not a synthetic report');
+assert.doesNotMatch(home, /<NextRoundRecommendationsSection/, 'the overview body must not duplicate next-round recommendations');
+assert.match(tabs, /<CalendarPlanner[^]*<NextRoundRecommendationsSection/, 'the publishing calendar must finish with actionable next-round recommendations');
+assert.match(tabs, /summary=\{overviewData\.review\?\.status === 'generated' \? overviewData\.review\.summary : undefined\}/, 'next-round recommendations must use persisted generated review evidence, not a synthetic report');
 assert.match(routes, /view === "review"\) return <BusinessDataReview/, 'data review must have its own data-detail component');
 assert.doesNotMatch(routes, /<NextRoundRecommendationsSection/, 'review routing must not duplicate recommendations outside the overview');
 assert.doesNotMatch(dashboard, /目标、账号与预算怎样调整/, 'the old generic next-round copy must be removed');

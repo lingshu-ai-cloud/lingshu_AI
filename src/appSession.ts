@@ -3,7 +3,17 @@ import { resolveNavigationPage, type Page } from './pageRegistry';
 
 export type AgentType = 'strategy' | 'traffic' | 'conversion' | 'retention';
 export interface Source { title: string; uri: string }
-export interface Message { role: 'user' | 'assistant'; content: string; sources?: Source[] }
+export interface AssistantReferenceMedia {
+  kind: 'video';
+  title: string;
+  platform: 'tiktok' | 'instagram' | 'youtube' | 'facebook' | 'linkedin';
+  referenceId?: string;
+  thumbnailUrl?: string;
+  mediaUrl?: string;
+  sourceUrl?: string;
+  duration?: number;
+}
+export interface Message { role: 'user' | 'assistant'; content: string; sources?: Source[]; referenceMedia?: AssistantReferenceMedia }
 export interface ConversationContext { agent: AgentType; messages?: Message[] }
 export interface Conversation { id: string; agent: AgentType; title: string; messages: Message[]; updatedAt: number }
 export interface RestoreSignal { agent: AgentType; messages: Message[]; key: string }

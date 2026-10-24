@@ -41,14 +41,13 @@ import { loadConnectedSocialPerformance, type ConnectedSocialPerformance } from 
 import { authHeader } from "../lib/auth";
 import ProductionTaskScene from "./ProductionTaskScene";
 import DigitalEmployeeWorkspace from "./smartBusiness/DigitalEmployeeWorkspace";
-import NextRoundRecommendationsSection from "./NextRoundRecommendationsSection";
 import BusinessHealthOverview, { type BusinessHealthOverviewRange } from "./smartBusiness/BusinessHealthOverview";
 import BusinessDataReview from "./smartBusiness/BusinessDataReview";
 import { LsCalendar, calendarDayKey, type LsCalendarEvent } from "./ui/LsCalendar";
 import { calendarWeekday, thumbnailUrlWithSourceFallback } from "../lib/calendarModel";
 import WeeklyContentProgressPanel from "./smartBusiness/WeeklyContentProgressPanel";
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
-import { applySmartBusinessShowcaseData, isSmartBusinessOverviewPreviewEnabled, isSmartBusinessShowcaseEnabled, isSmartBusinessWeeklyPlanPreviewEnabled, smartBusinessShowcaseAds, smartBusinessShowcaseNextRoundRecommendations, smartBusinessShowcaseWeeklyVideos, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS } from "../dev/smartBusinessShowcaseData";
+import { isSmartBusinessShowcaseEnabled, isSmartBusinessWeeklyPlanPreviewEnabled, smartBusinessShowcaseAds, smartBusinessShowcaseWeeklyVideos, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS } from "../dev/smartBusinessShowcaseData";
 import { TaskPreviewCards } from "./smartBusiness/TaskPreviewCards";
 import { buildSmartBusinessDisplayModel, engagingContentTitle, inspirationReferenceNavigationDetail, platformLabels, platformOptions, weeklyVideoBudget, type DisplayMetricSource, type Platform, type SmartBusinessDisplayModel, type UnifiedPlanContent } from './smartBusiness/smartBusinessDisplayModel';
 export type SmartBusinessView = "home" | "matrix" | "production" | "review";
@@ -231,12 +230,8 @@ function PlanDataSourceBadge({ source }: { source: DisplayMetricSource }) {
 }
 
 function HomeView({ data, onNavigate, selectedAccountId = "", overviewRangeBusy = false, onOverviewRangeChange }: { data: DigitalEmployeeOverview; onNavigate?: (page: Page) => void; selectedAccountId?: string; overviewRangeBusy?: boolean; onOverviewRangeChange?: (range: BusinessHealthOverviewRange) => void }) {
-  const useOverviewPreview = isSmartBusinessOverviewPreviewEnabled();
-  const overviewData = useOverviewPreview ? applySmartBusinessShowcaseData(data, true) : data;
-  const previewRecommendations = smartBusinessShowcaseNextRoundRecommendations(overviewData, useOverviewPreview || isSmartBusinessShowcaseEnabled());
   return <div className="space-y-6">
-    <BusinessHealthOverview detailsOnly data={overviewData} selectedAccountId={selectedAccountId} overviewRangeBusy={overviewRangeBusy} onOverviewRangeChange={onOverviewRangeChange} onNavigate={onNavigate}/>
-    <NextRoundRecommendationsSection summary={overviewData.review?.status === "generated" ? overviewData.review.summary : undefined} recommendations={previewRecommendations || undefined} industryTrends={previewRecommendations?.industryTrends || overviewData.industryTrends} onOpen={page => onNavigate?.(page as Page)}/>
+    <BusinessHealthOverview detailsOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={overviewRangeBusy} onOverviewRangeChange={onOverviewRangeChange} onNavigate={onNavigate}/>
   </div>;
 }
 

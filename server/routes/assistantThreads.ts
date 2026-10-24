@@ -17,7 +17,7 @@ import { projectContentProductionTaskCard, type ContentProductionTaskCard } from
 import type { SocialContentTaskSummary } from '../../shared/contracts/socialContentTaskContract.js';
 import { isAssistantActionId, type AssistantActionId } from '../../shared/contracts/assistantActions.js';
 import { findAssistantContentTaskId, parsePendingContentTaskBinding, type PendingContentTaskBinding } from './assistantThreadPendingBinding.js';
-
+import { parseAssistantReferenceMedia } from './assistantThreadReferenceMedia.js';
 const MAX_THREAD_BYTES = 96 * 1024;
 const MAX_MESSAGES = 120;
 const MAX_MESSAGE_BYTES = 8 * 1024;
@@ -346,7 +346,8 @@ function parseMessages(value: unknown): unknown[] {
         };
       });
     }
-    return { role: source.role, content, ...(sources ? { sources } : {}) };
+    const referenceMedia = parseAssistantReferenceMedia(source.referenceMedia);
+    return { role: source.role, content, ...(sources ? { sources } : {}), ...(referenceMedia ? { referenceMedia } : {}) };
   });
 }
 

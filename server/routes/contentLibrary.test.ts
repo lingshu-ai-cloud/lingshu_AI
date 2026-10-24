@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { contentLibraryOutputOrder, projectOutputs } from './contentLibrary.js';
+import { contentLibraryOutputOrder, productionPublicationCopy, projectOutputs } from './contentLibrary.js';
 
 test('completed videos expose persisted pin state and pinned output stays first', () => {
   const pinned = projectOutputs({
@@ -14,4 +14,24 @@ test('completed videos expose persisted pin state and pinned output stays first'
 
   assert.equal(pinned.pinned, true);
   assert.deepEqual([recent, pinned].sort(contentLibraryOutputOrder).map(item => item.id), ['pinned:current', 'recent:current']);
+});
+
+test('publish draft prefers production task publication copy and normalizes tags', () => {
+  assert.deepEqual(productionPublicationCopy({
+    caption: '旧文案',
+    hashtags: ['legacy'],
+    contentOrder: {
+      videoPlan: {
+        publication: {
+          title: '生产标题',
+          caption: '生产任务文案',
+          tags: ['#OEM', 'B2B', 'OEM'],
+        },
+      },
+    },
+  }), {
+    title: '生产标题',
+    description: '生产任务文案',
+    tags: ['OEM', 'B2B'],
+  });
 });

@@ -193,6 +193,7 @@ export function cloneAssistantThread(thread: AgentThreadState): AgentThreadState
     messages: thread.messages.map(message => ({
       ...message,
       ...(message.sources ? { sources: message.sources.map(source => ({ ...source })) } : {}),
+      ...(message.referenceMedia ? { referenceMedia: { ...message.referenceMedia } } : {}),
     })),
     taskCards: Object.fromEntries(Object.entries(thread.taskCards).map(([id, card]) => [id, {
       ...card,

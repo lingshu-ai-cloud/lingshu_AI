@@ -40,6 +40,22 @@ export function projectOutputs(project: Row) {
   for (const [index, revision] of (spec.revisionHistory || []).entries()) add('revision-' + index, revision.renderOutputPath, spec.lang || 'en', revision.version || 1, false, revision.snapshot);
   return outputs;
 }
+export function productionPublicationCopy(specValue: unknown) {
+  const spec = object(specValue);
+  const publication = object(object(object(spec.contentOrder).videoPlan).publication);
+  const rawTags = Array.isArray(publication.tags)
+    ? publication.tags
+    : Array.isArray(spec.hashtags)
+      ? spec.hashtags
+      : [];
+  return {
+    title: String(publication.title || '').trim(),
+    description: String(publication.caption || spec.caption || '').trim(),
+    tags: [...new Set(rawTags
+      .map((tag: unknown) => String(tag || '').replace(/^#+/, '').trim())
+      .filter(Boolean))].slice(0, 20),
+  };
+}
 async function library(tenant: string) {
  const outputs = (await projects(tenant)).flatMap(projectOutputs);
  const posts: any[] = [];
@@ -106,13 +122,55 @@ contentLibraryRouter.get('/library', async (_req, res) => {
     res.json({ items: outputs.map(({ file, spec, cover, ...row }) => ({ ...row, available: Boolean(safeContentFile(tenant, file)), previewUrl: safeContentFile(tenant, file) ? signAssetUrl('/api/overseas/publishing/local-videos/' + encodeURIComponent(path.basename(file)), tenant) : '', coverUrl: safeContentFile(tenant, cover) ? signAssetUrl('/api/overseas/studio/library/cover/' + encodeURIComponent(row.id), tenant) : '', exportSpec: spec.exportSpec || { ratio: spec.ratio || '9:16', resolution: '1080p', fps: 30 } })) });
   } catch { res.status(500).json({ error: '读取成片库失败' }); }
 });
+contentLibraryRouter.get('/library/publish-drafts', async (_req, res) => {
+  try {
+    const tenant = res.locals.tenantId;
+    const items: Row[] = [];
+    const skipped: Row[] = [];
+    for (const row of (await library(tenant)).filter(item => item.current)) {
+      if (!safeContentFile(tenant, row.file)) {
+        skipped.push({ id: row.id, title: row.title, reason: '成片文件不可用' });
+        continue;
+      }
+      if (row.runId && row.reviewStatus !== 'approved') {
+        skipped.push({ id: row.id, title: row.title, reason: '数字员工成片尚未审核通过' });
+        continue;
+      }
+      const generation = publishableStudioGenerationFromSpec(row.spec);
+      if (!generation) {
+        skipped.push({ id: row.id, title: row.title, reason: '缺少已通过的 AI 质量记录' });
+        continue;
+      }
+      const publication = productionPublicationCopy(row.spec);
+      items.push({
+        id: row.id,
+        videoPath: row.file,
+        title: publication.title || row.title,
+        description: publication.description,
+        tags: publication.tags,
+        ratio: row.spec.ratio || '9:16',
+        platform: row.platform || 'youtube',
+        sourceProjectId: row.projectId,
+        workflowRunId: row.runId || undefined,
+        workflowTaskId: row.taskId || undefined,
+        workflowTaskKey: row.runId ? 'content_production' : undefined,
+        language: row.language,
+        ...generation,
+      });
+    }
+    res.json({ items, skipped });
+  } catch {
+    res.status(500).json({ error: '读取待发布成片失败' });
+  }
+});
 contentLibraryRouter.get('/library/publish-draft/:id', async (req, res) => {
   const row = (await library(res.locals.tenantId)).find(item => item.id === req.params.id);
   if (!row || !row.current || !safeContentFile(res.locals.tenantId, row.file)) { res.status(404).json({ error: '当前成片不可用' }); return; }
   if (row.runId && row.reviewStatus !== 'approved') { res.status(409).json({ error: '数字员工成片需先在交付看板审核通过' }); return; }
   const generation = publishableStudioGenerationFromSpec(row.spec);
   if (!generation) { res.status(409).json({ error: '当前脚本缺少与正文一致且已通过的 AI 质量记录，请返回内容创作重新审核' }); return; }
-  res.json({ videoPath: row.file, title: row.title, description: row.spec.caption || '', ratio: row.spec.ratio || '9:16', platform: row.platform || 'youtube', sourceProjectId: row.projectId, workflowRunId: row.runId || undefined, workflowTaskId: row.taskId || undefined, workflowTaskKey: row.runId ? 'content_production' : undefined, language: row.language, ...generation });
+  const publication = productionPublicationCopy(row.spec);
+  res.json({ videoPath: row.file, title: publication.title || row.title, description: publication.description, tags: publication.tags, ratio: row.spec.ratio || '9:16', platform: row.platform || 'youtube', sourceProjectId: row.projectId, workflowRunId: row.runId || undefined, workflowTaskId: row.taskId || undefined, workflowTaskKey: row.runId ? 'content_production' : undefined, language: row.language, ...generation });
 });
 contentLibraryRouter.get('/library/cover/:projectId', async (req, res) => {
   const tenant = res.locals.tenantId;

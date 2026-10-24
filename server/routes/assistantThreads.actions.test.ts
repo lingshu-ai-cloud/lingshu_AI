@@ -401,7 +401,10 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     updatedAt: 1_796_000_000_000,
   };
   const valid = {
-    messages: [{ role: 'user', content: '请规划本周内容' }, { role: 'assistant', content: '请确认计划。' }],
+    messages: [{ role: 'user', content: '请复刻这条视频', referenceMedia: {
+      kind: 'video', title: '爆款参考视频', platform: 'tiktok', referenceId: 'video-1', duration: 18,
+      thumbnailUrl: '/api/overseas/videos/video-1/thumbnail', sourceUrl: 'https://video.example.test/watch/1',
+    } }, { role: 'assistant', content: '请确认产品、目标与平台。' }],
     draftInput: '我想先调整预算',
     scrollPosition: 288,
     unreadCount: 2,
@@ -428,6 +431,7 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     assert.equal(saved.version, 1);
     assert.equal(saved.isFollowingLatest, false);
     assert.equal(saved.paused, true);
+    assert.deepEqual(saved.messages[0].referenceMedia, valid.messages[0].referenceMedia);
     assert.equal(saved.focusedTaskId, 'run:one');
     assert.equal(saved.pendingContentTaskBinding.contentTaskId, null);
     assert.deepEqual(saved.taskCards['run:one'], {
@@ -476,6 +480,17 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     });
     assert.equal(malformed.status, 400);
     assert.equal((await malformed.json()).error, 'assistant_thread_pause_state_invalid');
+
+    const invalidReferenceMedia = await fetch(`${base}/business`, {
+      method: 'PUT', headers,
+      body: JSON.stringify({ ...valid, expectedVersion: 2, messages: [{
+        role: 'user', content: '不安全的视频引用', referenceMedia: {
+          kind: 'video', title: '外部引用', platform: 'unknown', sourceUrl: 'javascript:alert(1)',
+        },
+      }] }),
+    });
+    assert.equal(invalidReferenceMedia.status, 400);
+    assert.equal((await invalidReferenceMedia.json()).error, 'assistant_thread_message_invalid');
 
     const invalidPending = await fetch(`${base}/business`, {
       method: 'PUT', headers,

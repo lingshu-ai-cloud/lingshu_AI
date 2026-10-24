@@ -11,7 +11,7 @@ import type { OnboardingConfigurationInput } from './digitalEmployeeConfiguratio
 import WeeklyStartConflictAlert from './WeeklyStartConflictAlert';
 import WeeklyProductionStudioEntry from './smartBusiness/WeeklyProductionStudioEntry';
 import PlanHistoryDialog from './PlanHistoryDialog';
-import { Suspense, type Dispatch, type SetStateAction } from 'react';
+import { Suspense, useState, type Dispatch, type SetStateAction } from 'react';
 import { SmartBusinessDashboard, WeeklyCommandCenter, WeeklyPlanDetailsDrawer, BusinessInterpretation, deferredWorkspaceFallback } from './digitalEmployeeDeferredViews';
 import { CalendarRange, ChevronLeft, History, Pause, Play } from 'lucide-react';
 import { digitalEmployeeApi, buildTaskDeepLink, dispatchDigitalEmployeeDeepLink, type BusinessReadinessItem, type DigitalEmployeeOverview } from '../lib/digitalEmployees';
@@ -98,6 +98,7 @@ export interface ConfiguredDigitalEmployeeWorkspaceProps {
 }
 
 export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmployeeWorkspaceProps) {
+  const [healthDialogOpen, setHealthDialogOpen] = useState(false);
   const {
     active, data, busy, error, activeRun, canCreateNextGoal, viewGoalId, workspaceView,
     businessLine, contentPlatform, selectedAccountId, selectedContentItemId,
@@ -293,7 +294,7 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
                 : undefined}
             /></Suspense> : <><section className="overflow-hidden rounded-lg border border-border bg-surface"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div className="max-w-2xl"><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-text-primary">本周还没有计划</p><p className="mt-1 text-xs leading-5 text-text-secondary">先制定并预览周计划。计划会说明本周做什么、在哪些平台生产、产量、预计预算和工作排期；确认前不会开始生产。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>{weeklyActionFeedback && <div className="border-b border-border px-4 py-2.5">{weeklyActionFeedback}</div>}</>}
           </div>
-          <aside aria-label="企业经营分" className="min-w-0 border-t border-border xl:border-l xl:border-t-0 [&_section]:rounded-none [&_section]:border-0"><BusinessHealthOverview summaryOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange}/></aside><Suspense fallback={deferredWorkspaceFallback}><BusinessInterpretation data={data} onViewReview={() => setWorkspaceView("review")}/></Suspense></div>
+          <aside aria-label="企业经营分" className="min-w-0 border-t border-border xl:border-l xl:border-t-0 [&_section]:rounded-none [&_section]:border-0"><BusinessHealthOverview summaryOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange} onOpenAccountHealth={() => setHealthDialogOpen(true)}/></aside><Suspense fallback={deferredWorkspaceFallback}><BusinessInterpretation data={data} onViewReview={() => setWorkspaceView("review")}/></Suspense></div>
           {workspaceView === "today" ? <Button className="mt-3" onClick={() => setWorkspaceView("matrix")}>查看员工排期</Button> : <Button className="mt-3" onClick={() => { setSelectedContentItemId(""); setWorkspaceView("today"); }}>返回经营总览</Button>}
           <div className="grid grid-cols-1 gap-4 pb-6 pt-2">
             <main className="min-w-0">
@@ -315,6 +316,9 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
           {workspaceView === "today" && <BusinessOverviewTabs data={data} onNavigate={onNavigate}/>}
         </div>
       </div>}
+      <Modal open={healthDialogOpen} title="账号健康与阶段目标" width={960} footer={null} destroyOnHidden onCancel={() => setHealthDialogOpen(false)}>
+        <BusinessHealthOverview accountOnly data={data} selectedAccountId={selectedAccountId} onNavigate={onNavigate}/>
+      </Modal>
       {active && applicationGuideOpen && (
         <OnboardingPanel
           initial={data.config}

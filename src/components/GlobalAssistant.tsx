@@ -9,7 +9,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { App as AntApp } from 'antd';
-import type { AgentAction, AgentType, Message, Page } from '../App';
+import type { AgentAction, AgentType, AssistantReferenceMedia, Message, Page } from '../App';
 import { authHeader, getToken } from '../lib/auth';
 import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import { useCreationMode } from '../lib/creationMode';
@@ -557,7 +557,7 @@ export default function GlobalAssistant({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ text?: string; assistantText?: string; context?: Partial<AssistantContext>; tool?: AssistantTool }>).detail;
+      const detail = (event as CustomEvent<{ text?: string; assistantText?: string; context?: Partial<AssistantContext>; tool?: AssistantTool; referenceMedia?: AssistantReferenceMedia }>).detail;
       let targetContext = pageContext;
       if (detail?.context?.agent && detail.context.label && detail.context.summary) {
         targetContext = {
@@ -579,7 +579,7 @@ export default function GlobalAssistant({
         setMessages(PRIMARY_ASSISTANT_THREAD, [...current, { role: 'assistant', content: assistantText }]);
       }
       const text = detail?.text?.trim();
-      if (text) window.setTimeout(() => void send(text, routeAgent, targetContext), 0);
+      if (text) window.setTimeout(() => void send(text, routeAgent, targetContext, [], detail?.referenceMedia), 0);
     };
     window.addEventListener('lingshu-assistant-open', handler);
     return () => window.removeEventListener('lingshu-assistant-open', handler);

@@ -93,11 +93,12 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-export function CalendarPlanner({ onCreate, onOpenPost, pendingItems = [], onOpenPending, onSchedulePending, refreshKey = 0 }: {
+export function CalendarPlanner({ onCreate, onOpenPost, pendingItems = [], onOpenPending, onCreatePending, onSchedulePending, refreshKey = 0 }: {
   onCreate?: (date: Date) => void;
   onOpenPost?: (post: CalendarPost) => void;
   pendingItems?: PendingPublishContent[];
   onOpenPending?: (id: string) => void;
+  onCreatePending?: () => void;
   onSchedulePending?: (id: string, scheduledAt: Date) => Promise<number>;
   refreshKey?: number;
 }) {
@@ -331,7 +332,7 @@ export function CalendarPlanner({ onCreate, onOpenPost, pendingItems = [], onOpe
       <details className="mt-3 border-t border-border pt-3"><summary className="cursor-pointer text-sm text-text-secondary">本月电商节庆 · {marketingEvents.length} 项</summary><ul className="mt-3 space-y-3">{marketingEvents.map(event => <li key={event.id} className="border-b border-border pb-3 text-sm"><div className="flex flex-wrap items-center gap-2"><strong className="font-semibold text-text-primary">{event.name}</strong><span className="text-text-secondary">{event.date}</span></div><p className="mt-1 text-text-secondary">{event.note}</p><p className="mt-1 text-xs text-text-muted">来源：{event.source}</p></li>)}</ul></details>
     </section>
     {pendingItems.length > 0 && canEditSchedule && !demoMode && <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-white p-4"><label className="min-w-56 flex-1 text-xs text-text-secondary">为待发布内容选择日期<Select className="mt-1 w-full" aria-label="待排期内容" placeholder="选择内容" value={pendingId} onChange={setPendingId} options={pendingItems.map(item => ({ value: item.id, label: item.title }))}/></label><Input type="date" aria-label="待发布内容的排期日期" style={{ width: 180 }} value={selectedKey} onChange={event => { if (event.target.value) setSelectedDate(calendarInstant(event.target.value)); }}/><Button disabled={!pendingId} onClick={() => pendingId && void schedulePendingOnDay(pendingId, selectedKey)}>安排到所选日期</Button></div>}
-    <ContentQueuePanel selectedPlatform={selectedPlatform} selectedMarket={selectedMarket} marketLabel={enterpriseMarketLabel} marketTimeZone={market.timeZone} utcOffset={utcOffset} posts={demoMode ? [] : items} pendingItems={pendingItems} onOpenPending={onOpenPending} canEdit={canEditSchedule && !demoMode} onArrangePending={canEditSchedule && !demoMode ? arrangePendingContent : undefined}/>
+    <ContentQueuePanel selectedPlatform={selectedPlatform} selectedMarket={selectedMarket} marketLabel={enterpriseMarketLabel} marketTimeZone={market.timeZone} utcOffset={utcOffset} posts={demoMode ? [] : items} pendingItems={pendingItems} onOpenPending={onOpenPending} onCreatePending={onCreatePending} canEdit={canEditSchedule && !demoMode && Boolean(onSchedulePending)} onArrangePending={canEditSchedule && !demoMode && onSchedulePending ? arrangePendingContent : undefined}/>
     <Modal title="选择具体发布时间" open={Boolean(pendingTimeSelection)} onCancel={() => { if (!pendingTimeSaving) setPendingTimeSelection(null); }} onOk={() => void confirmPendingTime()} confirmLoading={pendingTimeSaving} okText="确认时间" cancelText="取消" destroyOnHidden>
       {pendingTimeSelection && <div className="space-y-4"><p>{pendingTimeSelection.title}</p><p className="text-sm text-text-secondary">{pendingTimeSelection.day} · 北京时间（Asia/Shanghai）</p><label className="block text-sm text-text-secondary">发布时间<Input autoFocus type="time" value={pendingTimeSelection.time} onChange={event => setPendingTimeSelection(previous => previous ? { ...previous, time: event.target.value } : previous)}/></label><p className="text-xs text-text-secondary">定点内容遵循已锁定时间；时间待定内容需要选择未来时间。</p></div>}
     </Modal>

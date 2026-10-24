@@ -35,7 +35,7 @@ import { DesignPrototype, SocialContentPreview, SmartBusinessPreview, ADS_PAGES,
 export { normalizeEnterpriseProductsDeepLink } from './appPageModules';
 
 export type { Page } from './pageRegistry';
-export type { AgentAction, AgentType, Conversation, ConversationContext, KickoffSignal, Message, RestoreSignal, Source } from './appSession';
+export type { AgentAction, AgentType, AssistantReferenceMedia, Conversation, ConversationContext, KickoffSignal, Message, RestoreSignal, Source } from './appSession';
 
 export default function App() {
   const publicPath = window.location.pathname.replace(/\/+$/, '') || '/';
