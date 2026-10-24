@@ -1,6 +1,6 @@
 <view class="page">
   <view wx:if="{{!loggedIn}}" class="login panel">
-    <view class="brand">灵枢</view><view class="title">随时掌握工作的进展</view><view class="muted">使用现有企业账号登录</view>
+    <view class="ls-brand"><image class="ls-brand-logo" src="/assets/brand-logo.png" mode="aspectFit" aria-hidden="true"/><text>灵枢AI</text></view><view class="title">随时掌握工作的进展</view><view class="muted">使用现有企业账号登录</view>
     <input class="login-input" placeholder="邮箱或账号" value="{{email}}" bindinput="inputEmail"/><input class="login-input" placeholder="密码" password value="{{password}}" bindinput="inputPassword"/>
     <button class="primary" loading="{{loading}}" bindtap="signIn">进入工作台</button>
   </view>

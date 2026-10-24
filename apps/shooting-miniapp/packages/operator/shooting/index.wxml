@@ -1,7 +1,8 @@
 <view class="page">
   <view wx:if="{{!loggedIn}}" class="login surface">
+    <view class="ls-brand"><image class="ls-brand-logo" src="/assets/brand-logo.png" mode="aspectFit" aria-hidden="true"/><text>灵枢AI</text></view>
     <view class="eyebrow">运营工作台</view>
-    <view class="page-title">登录灵枢</view>
+    <view class="page-title">登录灵枢AI</view>
     <view class="muted">使用与网页端相同的账号</view>
     <input class="field" type="text" placeholder="邮箱或账号" value="{{email}}" bindinput="inputEmail" />
     <input class="field" type="password" password placeholder="密码" value="{{password}}" bindinput="inputPassword" />

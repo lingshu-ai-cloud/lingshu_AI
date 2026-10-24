@@ -4,7 +4,7 @@ const model = require('../../../lib/workbench')
 
 Page({
   data: {
-    organization: '灵枢工作台', edition: '客服版', statusBarHeight: 44,
+    organization: '灵枢AI', edition: '客服版', statusBarHeight: 44,
     activeMetric: 'reply', loading: true, loaded: false, error: '',
     week: model.week(), selectedDay: model.day(new Date().toISOString()), days: [], calendarExpanded: false,
     counts: { pendingReply: '—', replied: '—', pendingFollowup: '—', followedUp: '—', highIntent: '—', converted: '—' },
