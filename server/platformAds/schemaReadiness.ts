@@ -17,6 +17,7 @@ export const AD_SCHEMA_REQUIREMENTS: Readonly<Record<string, readonly Field[]>> 
     ...fields('autodate', 'created updated'),
   ],
   platform_ad_connections: [
+    ...fields('json', 'defaultPage'),
     ...fields('text', 'tenant_id provider accountId name currency tokenCipher status businessName timezoneName updatedAt resourceSyncRunId resourceSyncedAt'),
     ...fields('number', 'accountStatus timezoneId timezoneOffsetHoursUtc'),
   ],

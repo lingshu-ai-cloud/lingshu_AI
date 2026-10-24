@@ -1,7 +1,7 @@
 import type { MetaPlanAudit, MetaSetup } from '../../shared/metaPlanAudit.js';
 import { getPlatformAdTask } from './tasks.js';
 import { listAllAdExecutions } from './execution.js';
-import { getConnectionCredential } from './connections.js';
+import { getConnection, getConnectionCredential } from './connections.js';
 import { MetaAdsAdapter } from './metaAdapter.js';
 import { readExecutedCreative } from './creativeLibrary.js';
 import { AD_CREATIVES_COLLECTION, PlatformAdCreativeError, validatePlatformAdCreativeSource, type StoredPlatformAdCreative } from './creatives.js';
@@ -10,14 +10,15 @@ import { creativeReadCache } from './creativeReadCache.js';
 const audits = creativeReadCache<MetaPlanAudit>(60_000), setups = creativeReadCache<MetaSetup>(60_000);
 const amount = (v: unknown) => v != null && v !== '' && Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) / 100 : null;
 export async function getMetaSetup(tenantId: string, connectionId: string): Promise<MetaSetup> {
-  return setups(tenantId, connectionId, async () => {
+  const current = await getConnection(tenantId, connectionId);
+  return setups(tenantId, `${connectionId}:${current.defaultPage?.verifiedAt || ''}`, async () => {
     const { connection, accessToken } = await getConnectionCredential(tenantId, connectionId);
     if (connection.provider !== 'meta') throw new PlatformAdCreativeError('仅支持 Meta 账户', 409);
     const adapter = new MetaAdsAdapter(accessToken), a = await adapter.account(connection.accountId);
     if (String(a.account_id || a.id).replace(/^act_/, '') !== connection.accountId || a.currency !== connection.currency) throw new PlatformAdCreativeError('Meta 账户或币种已变化，请核对连接', 409);
     const response = await adapter.request('me/accounts', { fields: 'id,name,tasks', limit: 100 });
     if (!Array.isArray(response.data)) throw new PlatformAdCreativeError('主页列表读取不完整', 503);
-    return { account: { id: connection.accountId, name: String(a.name || connection.name), currency: String(a.currency), timezone: String(a.timezone_name || ''), status: Number(a.account_status), minSpendCap: amount(a.min_campaign_group_spend_cap), minDailyBudget: amount(a.min_daily_budget) }, pages: response.data.filter((p: any) => /^\d+$/.test(String(p.id))).map((p: any) => ({ id: String(p.id), name: String(p.name || p.id), tasks: Array.isArray(p.tasks) ? p.tasks.map(String) : [] })), hasMorePages: !!response.paging?.next };
+    return { defaultPage: connection.defaultPage || null, account: { id: connection.accountId, name: String(a.name || connection.name), currency: String(a.currency), timezone: String(a.timezone_name || ''), status: Number(a.account_status), minSpendCap: amount(a.min_campaign_group_spend_cap), minDailyBudget: amount(a.min_daily_budget) }, pages: response.data.filter((p: any) => /^\d+$/.test(String(p.id))).map((p: any) => ({ id: String(p.id), name: String(p.name || p.id), tasks: Array.isArray(p.tasks) ? p.tasks.map(String) : [] })), hasMorePages: !!response.paging?.next };
   });
 }
 export async function getMetaPlanAudit(tenantId: string, taskId: string): Promise<MetaPlanAudit> {

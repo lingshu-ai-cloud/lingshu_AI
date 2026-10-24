@@ -5,6 +5,9 @@ import { platformAdsRequest } from '../lib/platformAds';
 export function MetaPageSelect({ connectionId, value, onChange }: { connectionId: string; value: string; onChange: (id: string) => void }) {
   const [setup, setSetup] = useState<MetaSetup | null>(null), [error, setError] = useState('');
   useEffect(() => { const c = new AbortController(); setSetup(null); setError(''); if (connectionId) platformAdsRequest<MetaSetup>(`/connections/${connectionId}/meta-setup`, { signal: c.signal }).then(v => { if (!c.signal.aborted) setSetup(v); }).catch(e => { if (!c.signal.aborted) setError(e.message); }); return () => c.abort(); }, [connectionId]);
+  useEffect(() => {
+    if (!value && setup?.defaultPage && setup.pages.some(p => p.id === setup.defaultPage?.id && p.tasks.some(t => ['ADVERTISE', 'MANAGE'].includes(t)))) onChange(setup.defaultPage.id);
+  }, [setup, value, onChange]);
   return <div><label>Facebook 主页</label><Select aria-label="已授权 Facebook 主页" style={{ width: '100%' }} value={setup?.pages.some(p => p.id === value) ? value : undefined} placeholder="读取所选授权主体的主页" disabled={!connectionId} onChange={onChange} options={setup?.pages.map(p => ({ value: p.id, label: `${p.name} · ${p.id}` })) || []}/><Input aria-label="Facebook 主页 ID" value={value} onChange={e => onChange(e.target.value)} placeholder="主页 ID（列表未覆盖时可明确填写）" />
     {setup && <p className="ads-muted">{setup.account.currency} · {setup.account.timezone || '时区未返回'} · 账户状态 {setup.account.status} · 最低系列限额 {setup.account.minSpendCap ?? '未返回'} / 最低日预算 {setup.account.minDailyBudget ?? '未返回'}。主页可读不等于有创建广告权限，执行时仍核验。</p>}{setup?.hasMorePages && <Alert type="warning" title="主页列表未覆盖全部记录，不会自动选择其他主页。"/>}{error && <Alert type="warning" title={error} description="可明确填写主页 ID，真实执行仍核验其授权。"/>}</div>;
 }

@@ -134,8 +134,14 @@ vm.runInNewContext(fs.readFileSync(new URL('../../pb_migrations/1790640002_platf
   migrate: (up: MigrationCallback, down: MigrationCallback) => { evidenceForward = up; evidenceBackward = down; },
 });
 assert.ok(evidenceForward && evidenceBackward);
-forward = app => { baseForward(app); creativeForward!(app); evidenceForward!(app); };
-backward = app => { evidenceBackward!(app); creativeBackward!(app); baseBackward(app); };
+let pageForward: MigrationCallback | undefined, pageBackward: MigrationCallback | undefined;
+vm.runInNewContext(fs.readFileSync(new URL('../../pb_migrations/1792713600_platform_ad_default_page.js', import.meta.url), 'utf8'), {
+  Field: FakeField,
+  migrate: (up: MigrationCallback, down: MigrationCallback) => { pageForward = up; pageBackward = down; },
+});
+assert.ok(pageForward && pageBackward);
+forward = app => { baseForward(app); creativeForward!(app); evidenceForward!(app); pageForward!(app); };
+backward = app => { pageBackward!(app); evidenceBackward!(app); creativeBackward!(app); baseBackward(app); };
 
 const expectedNames = Object.keys(AD_SCHEMA_REQUIREMENTS).sort();
 const runtimeSchemas = new Map<string, CollectionDefinition>();

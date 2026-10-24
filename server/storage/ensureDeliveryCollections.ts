@@ -633,6 +633,7 @@ export async function ensureDeliveryCollections(): Promise<void> {
     { name: 'createdBy', type: 'text' },
   ]);
   await ensureCollection('platform_ad_connections', [
+    { name: 'defaultPage', type: 'json' },
     { name: 'tenant_id', type: 'text', required: true },
     { name: 'provider', type: 'text', required: true },
     { name: 'accountId', type: 'text', required: true },

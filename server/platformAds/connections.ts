@@ -8,6 +8,7 @@ export type AdConnection = {
   tokenCipher: string; status: string; updatedAt: string; businessName?: string; accountStatus?: number;
   timezoneId?: number; timezoneName?: string; timezoneOffsetHoursUtc?: number;
   resourceSyncRunId?: string; resourceSyncedAt?: string;
+  defaultPage?: { id: string; name: string; verifiedAt: string };
 };
 export function publicConnection(record: AdConnection) {
   return {
@@ -18,6 +19,7 @@ export function publicConnection(record: AdConnection) {
     timezoneName: record.timezoneName || '',
     timezoneOffsetHoursUtc: Number.isFinite(record.timezoneOffsetHoursUtc) ? record.timezoneOffsetHoursUtc : null,
     resourceSyncedAt: record.resourceSyncedAt || '',
+    defaultPage: record.defaultPage || null,
   };
 }
 export async function listConnections(tenantId: string) {

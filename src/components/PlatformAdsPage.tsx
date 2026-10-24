@@ -191,6 +191,9 @@ function PlatformAdsWorkspace({
   };
   const continueAfterConnection = (connection: AdConnection) => {
     if (returnToCreate) {
+      const samePlatform = connection.provider === 'meta' ? form.channels.some(c => c === 'Facebook' || c === 'Instagram') : connection.provider === 'tiktok' ? form.channels.includes('TikTok') : form.channels.includes('YouTube');
+      if (connection.currency === form.currency && samePlatform) setForm(current => ({ ...current, configuration: { ...current.configuration, accountConnectionId: connection.id } }));
+      else setNotice('账户已连接，但与当前草稿币种或平台不同；请在草稿中确认账户、渠道与预算，不会自动换算或覆盖。');
       setReturnToCreate(false);
       setDialog('create');
       return;
@@ -201,6 +204,7 @@ function PlatformAdsWorkspace({
       channels: connection.provider === 'google' ? ['YouTube'] : connection.provider === 'tiktok' ? ['TikTok'] : ['Facebook', 'Instagram'],
       goal: connection.provider === 'google' ? '获取线索或转化' : '提升有效视频观看',
       ...(connection.currency === 'USD' || connection.currency === 'CNY' ? { currency: connection.currency } : {}),
+      configuration: { ...current.configuration, accountConnectionId: connection.id },
     }));
   };
   const next = async (event: FormEvent) => {

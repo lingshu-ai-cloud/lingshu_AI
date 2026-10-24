@@ -10,6 +10,7 @@ export interface MetaPlanAuditEntry {
 }
 export interface MetaPlanAudit { taskId: string; taskVersion: number; checkedAt: string; entries: MetaPlanAuditEntry[]; truncated: boolean; pendingCount: number }
 export interface MetaSetup {
+  defaultPage?: { id: string; name: string; verifiedAt: string } | null;
   account: { id: string; name: string; currency: string; timezone: string; status: number; minSpendCap: number | null; minDailyBudget: number | null };
   pages: Array<{ id: string; name: string; tasks: string[] }>; hasMorePages: boolean;
 }

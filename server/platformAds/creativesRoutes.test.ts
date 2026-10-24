@@ -45,6 +45,11 @@ try {
   assert.equal((await fetch(base + '/performance/missing')).status, 401);
   assert.equal((await fetch(base + '/connections/missing/history')).status, 401);
   assert.equal((await fetch(base + '/account-directory')).status, 401);
+  assert.equal((await fetch(base + '/oauth/meta/missing/pages?accountId=act_1')).status, 401);
+  assert.equal((await fetch(base + '/oauth/meta/start', { method: 'POST', headers: auth('customer_service'), body: '{}' })).status, 403);
+  const oauthForeign = await fetch(base + '/oauth/meta/missing/pages?accountId=act_1', { headers: auth() });
+  assert.equal(oauthForeign.status, 409);
+  assert.equal(oauthForeign.headers.get('cache-control'), 'no-store');
   assert.equal((await fetch(base + '/connections/missing/use-granted-account', { method: 'POST', headers: auth('customer_service'), body: JSON.stringify({ accountId: '123' }) })).status, 403);
   assert.equal((await fetch(base + '/connections/missing/history/123/ads/456/creative')).status, 401);
   assert.equal((await fetch(base + '/connections/missing/history-accounts')).status, 401);
