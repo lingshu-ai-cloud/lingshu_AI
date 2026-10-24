@@ -193,6 +193,8 @@
 | `build` | 通过 | `gate-build-audit.log` |
 | `build:account-hub` | 通过 | `gate-build-account-hub-audit.log` |
 
+- 推送后的整段 `git diff --check 974a665d HEAD` 发现旧来源 `studioWorkbenchMode.ts` 末尾多余空行，已清理并复核整段差异通过；仅空白变化，沿用上文测试证据，未重复执行测试。
+
 ## 操作边界
 
 - 目标数据库未执行迁移；本地测试仅创建、升级、备份恢复临时测试库。四份新增迁移并存，201 项清单核验通过，原 197 份字节保留。
