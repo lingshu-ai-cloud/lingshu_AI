@@ -23,6 +23,16 @@ test('business order initializes stable real shot workbench without catalog assi
   assert.equal(result.automatedReplicationShots[1].firstFrameRequest.sourceFirstFrameUrl,'/api/overseas/videos/reference-1/shot/2/first-frame');
   assert.equal(buildReplicationWorkbenchSpec({...input,spec:result}),result);
 });
+test('person shots fail closed when the matched reference background or framing is absent',()=>{
+  const missingBackground=structuredClone(reference);missingBackground.aiAnalysis.gemini.scriptDetails15s[0]!.environment='';
+  const backgroundResult=buildReplicationWorkbenchSpec({...input,reference:missingBackground}) as any;
+  assert.equal(backgroundResult.automatedReplicationShots[0].blockerCode,'reference_composition_missing');
+  assert.match(backgroundResult.automatedReplicationShots[0].blocker,/背景分析/);
+  const missingFraming=structuredClone(reference);missingFraming.aiAnalysis.gemini.scriptDetails15s[0]!.shot='';
+  const framingResult=buildReplicationWorkbenchSpec({...input,reference:missingFraming}) as any;
+  assert.equal(framingResult.automatedReplicationShots[0].blockerCode,'reference_composition_missing');
+  assert.match(framingResult.automatedReplicationShots[0].blocker,/景别分析/);
+});
 test('tenant mismatch and incomplete reference fail while an unauthorized person shot is isolated',()=>{
   assert.throws(()=>buildReplicationWorkbenchSpec({...input,tenantId:'other'}),/当前企业/);
   assert.throws(()=>buildReplicationWorkbenchSpec({...input,reference:{...reference,duration:12}}),/时间线不完整/);

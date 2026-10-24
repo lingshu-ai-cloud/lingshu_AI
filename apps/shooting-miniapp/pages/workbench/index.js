@@ -2,6 +2,13 @@ const api = require('../../lib/api');
 const model = require('../../lib/workbench');
 const mobileAssistant = require('../../lib/assistant');
 const agentSchedule = require('../../lib/agentSchedule');
+const shootingTaskId = item => {
+    if (!item) return '';
+    if (item.shootingId) return String(item.shootingId);
+    const matterId = String(item.matterId || item.id || '');
+    const match = matterId.match(/^shoot:(.+)$/);
+    return match ? match[1] : '';
+};
 Page({
     data: { loggedIn: false, email: '', password: '', userName: '', tab: 'work', loading: false, error: '', week: model.week(), selectedDay: model.day(new Date().toISOString()), overview: {}, tasks: [], agents: [], agentScheduleGroups: [], agentScheduleItems: [], expandedAgentRole: '', posts: [], calendarItems: [], matters: [], snoozed: [], activeMatter: null, cardX: 0, swipeDirection: '', swipeReady: false, swipeLabel: '', metrics: [], dayPosts: [], sheet: null, sheetItems: [], detail: null, processing: false, assistantMode: 'chat', composerMode: 'text', messages: [], input: '', sending: false, recording: false, transcribing: false, offline: false, suggestions: ['本周最需要我决定的 3 件事是什么？', '哪些任务会影响本周发布目标？', '哪条内容卡在素材、制作或验收？', '今天有哪些高意向询盘要跟进？', '4 个 Agent 现在分别在做什么？'], notifications: [], assistantPreview: null, assistantReceipts: [], assistantLinks: [], assistantActions: [], assistantLoading: false, assistantConfirming: false, chatAnchor: '' },
     onLoad(options = {}) { this.initialTab = ['todo','assistant'].includes(options.tab) ? options.tab : 'work'; this.setData({tab:this.initialTab}); this.networkListener = r => this.setData({ offline: !r.isConnected }); if (wx.onNetworkStatusChange) wx.onNetworkStatusChange(this.networkListener); if (wx.getNetworkType) wx.getNetworkType({success:r=>this.setData({offline:r.networkType === 'none'})}); if (api.token())
@@ -89,6 +96,7 @@ Page({
             const matters = allMatters.filter(i => Number(this.snoozes[i.id]) <= Date.now() || !this.snoozes[i.id]);
             const showMetric = entry => entry?.availability === 'available' && typeof entry.value === 'number' ? String(entry.value) : '—';
             const metrics = [
+                { key: 'matters', label: '待处理事项', value: String(matters.length), note: '当前账号已同步的可操作事项' },
                 { key: 'tasks', label: '本周任务', value: showMetric(overview.metrics?.tasks), note: overview.metrics?.tasks?.note },
                 { key: 'completed', label: '已完成', value: showMetric(overview.metrics?.completed), note: overview.metrics?.completed?.note },
                 { key: 'videos', label: '已发布视频', value: showMetric(overview.metrics?.publishedVideos), note: overview.metrics?.publishedVideos?.note },
@@ -129,7 +137,8 @@ Page({
         return; const t = e.touches[0]; this.gesture.dx = t.clientX - this.gesture.x; this.gesture.dy = t.clientY - this.gesture.y; if (Math.abs(this.gesture.dx) > Math.abs(this.gesture.dy) * 1.4) {
         const direction = this.gesture.dx > 0 ? 'process' : 'later';
         const ready = Math.abs(this.gesture.dx) >= 85;
-        this.setData({ cardX: Math.max(-140, Math.min(140, this.gesture.dx)), swipeDirection: direction, swipeReady: ready, swipeLabel: direction === 'process' ? (ready ? '松手，立即处理' : '继续右滑，立即处理') : (ready ? '松手，稍后提醒' : '继续左滑，稍后提醒') });
+        const shootsNow = direction === 'process' && Boolean(shootingTaskId(this.data.activeMatter));
+        this.setData({ cardX: Math.max(-140, Math.min(140, this.gesture.dx)), swipeDirection: direction, swipeReady: ready, swipeLabel: direction === 'process' ? (shootsNow ? (ready ? '松手，打开相机' : '继续右滑，开始拍摄') : (ready ? '松手，立即处理' : '继续右滑，立即处理')) : (ready ? '松手，稍后提醒' : '继续左滑，稍后提醒') });
     } },
     touchEnd() { const g = this.gesture; this.gesture = null; this.setData({ cardX: 0, swipeDirection: '', swipeReady: false, swipeLabel: '' }); if (!g)
         return; const action = model.swipe(g.dx, g.dy);
@@ -176,7 +185,8 @@ Page({
     showSnoozed() { this.setData({ sheet: '稍后处理', sheetItems: this.data.snoozed.map(i => ({ ...i, subtitle: i.snoozeLabel || i.reason, kind: 'matter' })) }); },
     viewMatter() { if (Date.now() - (this.lastGestureAt || 0) < 400) return; this.processMatter(); },
     processMatter() { const item = this.data.activeMatter; if (!item)
-        return; if (item.type === 'command') { this.setData({detail:{...item.starterItem,title:item.title,reason:item.reason,starter:true,actions:item.actions},sheet:null}); return; }
+        return; const taskId = shootingTaskId(item); if (taskId) { this.openShootingTask(taskId, true); return; }
+        if (item.type === 'command') { this.setData({detail:{...item.starterItem,title:item.title,reason:item.reason,starter:true,actions:item.actions},sheet:null}); return; }
         const matterId = item.matterId || item.id;
         if (matterId && /^(approval|task|shoot|external|conversation|connection):/.test(matterId)) {
             wx.navigateTo({ url: '/pages/action/index?matterId=' + encodeURIComponent(matterId) });
@@ -216,7 +226,10 @@ Page({
     openNotification(e) { const event = this.data.notifications.find(i => i.id === e.currentTarget.dataset.id); if (event?.task_id)
         this.openTask({ currentTarget: { dataset: { id: event.task_id } } }); },
     openShooting() { wx.navigateTo({ url: '/pages/index/index' }); },
-    async openMetric(e) { const key = e.currentTarget.dataset.key; if (key === 'tasks' || key === 'completed')
+    openShootingTask(taskId, autoShoot) { wx.navigateTo({ url: '/pages/index/index?taskId=' + encodeURIComponent(taskId) + (autoShoot ? '&autoShoot=1' : '') }); },
+    async openMetric(e) { const key = e.currentTarget.dataset.key;
+        if (key === 'matters') { this.setData({ tab: 'todo', todoView: 'card', activeMatter: this.data.matters[0] || null, sheet: null, detail: null, error: '', cardX: 0, swipeDirection: '', swipeReady: false, swipeLabel: '' }); return; }
+        if (key === 'tasks' || key === 'completed')
         this.setData({ sheet: key === 'completed' ? '本周已完成' : '本周任务', sheetItems: this.data.tasks.filter(t => key !== 'completed' || t.status === 'succeeded').map(t => ({ ...t, kind: 'task', subtitle: t.statusLabel + ' · ' + t.agentLabel })) }); if (key === 'videos')
         this.setData({ sheet: '本周视频发布记录', sheetItems: this.data.posts.filter(p => p.publishReceipt === 'verified').map(p => ({ ...p, kind: 'post', subtitle: p.platform + ' · ' + p.statusLabel })) }); if (key === 'exposure') {
         const metric = this.data.overview.metrics?.exposure;
@@ -383,6 +396,7 @@ Page({
     },
     reloadAssistant() { this.initializeAssistant(); },
     switchAssistant(e) { this.setData({ assistantMode: e.currentTarget.dataset.mode }); },
+    toggleAssistantNotifications() { this.setData({ assistantMode: this.data.assistantMode === 'notifications' ? 'chat' : 'notifications' }); },
     inputText(e) { this.setData({input:e.detail.value}); if(this.assistantController)this.assistantController.setInput(e.detail.value); },
     askSuggestion(e) { this.setData({input:e.currentTarget.dataset.text}); this.send(); },
     async send() {
