@@ -3,6 +3,14 @@
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-25 前端 2.0 安全集成
+
+- 权威树仍为 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`，分支 `xixi联合功能模块后端改`；从 `dfc9b0c8` 快进接入已验证双亲合并 `78ba96c87366108aa3035d75dd5d60d323e19492` 及本轮治理记录。
+- 新增独立候选树 `/Users/julia1/.codex/worktrees/frontend-v2-safe-integration-20261025`，分支 `integration/frontend-v2-20261025`；源码与治理提交保留用于复核。仅共享已安装依赖的软链，未复制原预览或业务数据库。
+- 权威树原有 `server/index.ts` 未提交资源 404 修复保留，文件/补丁哈希均核对；不将它混入合并，也不宣称权威树干净。恢复分支 `backup/pre-frontend-v2-20261025-dfc9b0c8` 固定原基线。
+- 本次测试产生的候选树未跟踪 finalization 缓存移至本机证据目录保留；测试 Vite 进程已结束。没有清理、归档、重置或切换其他来源工作树，没有更新预览数据、推送或部署。
+- 本轮没有重新全量盘点其他工作树；以下旧计数仍仅为历史记录。验证与用户确认见 [前端 2.0 合并记录](FRONTEND-V2-INTEGRATION-20261025.md)。
+
 ## 2026-10-24 联合功能基线推进
 
 - 本轮原盘点 23 棵工作树，新增独立候选树后共 24 棵。没有清理、归档、重置或删除来源工作树及业务数据。

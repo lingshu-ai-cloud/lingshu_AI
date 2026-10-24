@@ -1,5 +1,7 @@
 # 前端 2.0 本地安全合并（2026-10-25）
 
+源码合并提交：`78ba96c87366108aa3035d75dd5d60d323e19492`。本轮治理检查点不改变已验证生产源码。
+
 ## 来源与恢复
 
 - 目标基线：`xixi联合功能模块后端改`，起点 `dfc9b0c8af85175485cf39370eed92c4be3daedd`；已通过显式 fetch refspec 核对同名远端提交。
@@ -39,7 +41,7 @@
 - 迁移：`pnpm run check:digital-employee-migrations`、`pnpm run test:migration-guard`；203 项 repository-only 检查，不接触目标数据库。
 - 主站和账号中心生产构建通过；最终 Studio chunk 为 371887/485000 字节，保留共享懒加载边界。构建有非阻断的其他 chunk 体积提示。
 - quality 的 33 个阶段逐项通过。最初 `test:starter-198` 因旧“爆款库”标签断言失败，按用户确认的新导航修复后完整复跑该阶段通过；不声明单条 `pnpm run quality` 或 `pnpm run verify` 一次绿色。
-- 完整测试使用 `PB_BIN=/Users/julia1/.local/share/lingshu/pocketbase/pocketbase pnpm test`，最终单次退出状态见 `full-test-verified.log`；之前因客服资料和被删除管理页面的旧/新冲突断言早停的日志保留。
+- 完整测试使用 `PB_BIN=/Users/julia1/.local/share/lingshu/pocketbase/pocketbase pnpm test`，最终单次退出 0，见 `full-test-verified.log`；之前因客服资料和被删除管理页面的旧/新冲突断言早停的日志保留。
 - 小程序 136/136；客服隔离管线 93/93；WhatsApp 接入 12/12；企业引导、会话持久化、OCR、图片预检与安全定向组 40/40；管理功能恢复及图片逐张验收定向组 28/28；新版前端定向组 23/23。组间可能重叠，不相加为总数。
 - `pnpm run test:social-image-pipeline` 包含新增生产运行、不可变审核集、预检幂等、安全回归和真实本地 GIF/HTTP 准入测试；全部通过。供应商由测试替身提供，不构成真实付费链路验收。
 - 隔离浏览器首轮四页 × 桌面/手机宽度 8/8；恢复管理页及重复入口修复后的三页 × 两种宽度 6/6。检查无页面崩溃、横向溢出或列表重叠。首页截图已目视核对，管理页旧链接可进入原页面。接口请求均被本地测试替身拦截；非读取请求拒绝，外部网络阻断。
