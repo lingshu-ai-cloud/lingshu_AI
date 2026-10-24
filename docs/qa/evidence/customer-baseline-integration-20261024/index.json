@@ -1,0 +1,139 @@
+{
+  "baselineBranch": "xixi投流客服整合补齐基线v1",
+  "previousBaseline": "89b175109149d4551aeb3ce590fe9c42c46bf23c",
+  "validatedCommit": "6b5c30224fb31115d35f584e33271cd3ebee3653",
+  "sourceBranch": "feature/customer-service-20261024",
+  "merge": "fast-forward",
+  "evidence": [
+    {
+      "path": "baseline-customer-integration-tests.log.gz",
+      "sha256": "c325f62d9e2aa13a8e066a88060101d0140dc4461505c9c29702b2c03203b824",
+      "uncompressedSha256": "aa9cd5b373501ea379d3dd139047759eb0060191a59aeb55f642ed34d540fb93"
+    },
+    {
+      "path": "baseline-customer-integration-checks.log.gz",
+      "sha256": "fb72dc54fd1a13e869b7a3ed4b6452631b9b8f62bf5a64b95dca5cb3030e75a3",
+      "uncompressedSha256": "c75c3afa3f2e99d37ca5521c1ceb103cfddcdfdee888d9c0265cd41fcc4cc869"
+    },
+    {
+      "path": "baseline-customer-integration-tests-first-failure.log.gz",
+      "sha256": "1c71648c7f6129a17b194c355c06dde9068435ec6d0cc8d9bddeecb70989b3ca",
+      "uncompressedSha256": "297289c36b1b92f8688ebc3be7d4b5165545dc95eb8fedfe754c58a0825f22d8"
+    },
+    {
+      "path": "baseline-customer-integration-first-failure-result.json.gz",
+      "sha256": "1d4c8c91bf25dd097af4c91422e2e5b44871003219e0eb1ce680f8e0c2fd92c9",
+      "uncompressedSha256": "6a2bbad1a32fea29c81cf048c769c82ebdc4bcf62835ec5fcb22b5f73cd3b20d"
+    },
+    {
+      "path": "candidate-all-result.json.gz",
+      "sha256": "73e40e1da9f5df9b4fbf909d4e151a0655fbcd26a58b074a7cc7b4d1c4cf63d1",
+      "uncompressedSha256": "9b5c7d8ae869a0b5ca08f8e9c9bca5cd5c44c0fd12a4bbeb34659f194b24662a"
+    },
+    {
+      "path": "candidate-checks-result.json.gz",
+      "sha256": "47458105b7d488afaa366042a9d6756b4d917613e1172b019e9861d66674c233",
+      "uncompressedSha256": "6ec60906f9cc1526d8f6b76471332cee33686e8cbe314cd3bab1ff0edbcc4360"
+    }
+  ],
+  "checks": {
+    "functional": {
+      "passed": true,
+      "stable": true,
+      "sourcePaths": 5262,
+      "results": [
+        {
+          "name": "isolation-bootstrap",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "isolation",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "pipeline",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "service",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "whatsapp",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "features",
+          "status": 0,
+          "signal": null,
+          "error": null
+        }
+      ]
+    },
+    "static": {
+      "passed": true,
+      "stable": true,
+      "sourcePaths": 5262,
+      "results": [
+        {
+          "name": "lint",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "check:architecture",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "test:architecture-ratchet",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "check:digital-employee-migrations",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "test:migration-guard",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "build",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "diff-check",
+          "status": 0,
+          "signal": null,
+          "error": null
+        }
+      ]
+    }
+  },
+  "limits": [
+    "no push or deployment",
+    "no real provider or channel calls",
+    "runtime data not copied",
+    "no full repository quality/verify or remote CI"
+  ]
+}
