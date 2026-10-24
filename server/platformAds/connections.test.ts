@@ -8,6 +8,7 @@ process.env.LOCAL_STORE_DIR = dir;
 process.env.PB_URL = 'http://127.0.0.1:1';
 process.env.NODE_ENV = 'test';
 process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
+process.env.TEST_ONLY_EXTERNAL_EFFECT_LEASE_FALLBACK = 'true';
 process.env.DATA_BACKEND = 'pocketbase';
 process.env.META_ADS_API_VERSION = 'v25.0';
 const originalFetch = globalThis.fetch;
@@ -39,6 +40,15 @@ try {
   assert.equal(listed[0].timezoneName, 'America/Los_Angeles');
   assert.equal('tokenCipher' in listed[0], false, 'public connection responses must not expose encrypted credentials');
   assert.equal((await listConnections('tenant-b')).length, 0, 'account context must remain tenant isolated');
+  const { store } = await import('../storage/index.js');
+  await store.update('platform_ad_connections', connection.id, { defaultPage: { id: '10', name: 'Existing brand', verifiedAt: new Date().toISOString() }, authorization: { status: 'revoked', reasonCode: 'AUTH_REVOKED' } });
+  await store.create('platform_ad_tasks', { id: 'history-task', tenant_id: 'tenant-a', connectionId: connection.id, name: 'Preserve me' });
+  const reconnected = await connectAccount('tenant-a', { provider: 'meta', accountId: '123', accessToken: 'replacement-test-token' });
+  assert.equal(reconnected.id, connection.id, 'reauthorization updates the original connection');
+  assert.equal(reconnected.defaultPage?.name, 'Existing brand');
+  assert.equal((await listConnections('tenant-a')).length, 1);
+  assert.ok(await store.getById('platform_ad_tasks', 'history-task'), 'reauthorization preserves historical business records');
+  assert.equal(reconnected.authorization.status, 'unknown', 'a replacement credential cannot inherit stale health evidence');
   console.log('platform ad connection account-context tests passed');
 } finally {
   globalThis.fetch = originalFetch;

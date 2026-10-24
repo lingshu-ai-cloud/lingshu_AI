@@ -1,10 +1,24 @@
-import type { Router } from 'express';
+import type { RequestHandler, Router } from 'express';
 import type { AuthLocals } from '../middleware/auth.js';
 import { publicVideoRecord } from './videoPublicRecordProjection.js';
 import { type ContentFormat } from './videoRecordVisibility.js';
 import { createVideoTenantListing, withImagePublicBaselines } from './videoTenantListing.js';
 
 type TenantListing = ReturnType<typeof createVideoTenantListing>;
+
+// Express 4 does not consume rejected async handlers. A failed strict store
+// read must return an unavailable response instead of terminating the server.
+function listingRead(handler: (req: Parameters<RequestHandler>[0], res: Parameters<RequestHandler>[1]) => Promise<void>): RequestHandler {
+  return (req, res) => {
+    void handler(req, res).catch(() => {
+      console.warn('[videos] VIDEO_LIST_UNAVAILABLE', { tenantId: String(res.locals.tenantId || '') });
+      if (res.headersSent) { res.end(); return; }
+      res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+      res.setHeader('Retry-After', '5');
+      res.status(503).json({ error: '素材列表暂时无法读取，请稍后重试', code: 'VIDEO_LIST_UNAVAILABLE', retryable: true });
+    });
+  };
+}
 
 export function registerVideoListingRoutes(router: Router, input: {
   listing: TenantListing;
@@ -17,7 +31,7 @@ export function registerVideoListingRoutes(router: Router, input: {
 // ─── GET /videos ──────────────────────────────────────────────────────────────
 // Query: page, perPage, platform, status, contentFormat(video|image)
 
-router.get('/inventory-summary', async (_req, res) => {
+router.get('/inventory-summary', listingRead(async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const rawContentFormat = String(_req.query.contentFormat || 'video');
   const contentFormat: ContentFormat = rawContentFormat === 'image' ? 'image' : 'video';
@@ -27,9 +41,9 @@ router.get('/inventory-summary', async (_req, res) => {
   ]);
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
   res.json({ contentFormat, totalItems, visibleItems: visible.totalItems });
-});
+}));
 
-router.get('/', async (req, res) => {
+router.get('/', listingRead(async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const { page = '1', perPage = '20', platform, status, search, crawlRange = 'all', contentFormat: rawContentFormat = 'video' } = req.query as Record<string, string>;
   const pageNumber = Math.max(1, Number(page) || 1);
@@ -74,5 +88,5 @@ router.get('/', async (req, res) => {
       return withSignedThumbnail({ ...withProgress, canManage: String(item.tenantId || '') === tenantId }, tenantId);
     }),
   });
-});
+}));
 }

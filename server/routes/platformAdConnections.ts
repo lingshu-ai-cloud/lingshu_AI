@@ -1,14 +1,16 @@
-import { Router } from 'express';
+import { PlatformAdTaskLockError } from '../platformAds/taskLock.js';
+import { Router, urlencoded } from 'express';
 import { adReleasePolicy } from '../platformAds/releasePolicy.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
-import { connectAccount, getConnectionCredential, listConnections } from '../platformAds/connections.js';
+import { connectAccount, getConnectionCredential, listConnections, checkConnectionAuthorization } from '../platformAds/connections.js';
 import { AdProviderError, MetaAdsAdapter } from '../platformAds/metaAdapter.js';
-import { beginMetaOAuth, finishMetaOAuth, oauthAccounts, oauthPages, selectOAuthAccount, metaOAuthConfigured, metaOAuthReadiness, cancelMetaOAuth } from '../platformAds/oauth.js';
+import { beginMetaOAuth, finishMetaOAuth, oauthAccounts, oauthPages, selectOAuthAccount, metaOAuthConfigured, metaOAuthReadiness, cancelMetaOAuth, currentMetaOAuth, cancelOwnedMetaOAuth } from '../platformAds/oauth.js';
 import { requireAdWriteAccess } from '../platformAds/access.js';
 import { GoogleAdsAdapter, TikTokAdsAdapter } from '../platformAds/otherAdapters.js';
 import { listPlatformAdResources, syncPlatformAdResources } from '../platformAds/resources.js';
 import type { PlatformAdResourceLevel } from '../../shared/platformAdResources.js';
 import { useGrantedAccount } from '../platformAds/accountDirectory.js';
+import { handleMetaPrivacyRequest, metaDeletionRequestStatus } from '../platformAds/oauthPrivacy.js';
 export const platformAdConnectionsRouter = Router();
 platformAdConnectionsRouter.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 platformAdConnectionsRouter.get('/oauth/meta/callback', async (req, res) => {
@@ -23,6 +25,19 @@ platformAdConnectionsRouter.get('/oauth/meta/callback', async (req, res) => {
     res.type('text/plain').send('Meta 广告授权已完成。请返回灵枢页面选择广告账户。');
   } catch (error) { failure(res, error); }
 });
+for (const [path, deletion] of [['deauthorize', false], ['data-deletion', true]] as const) {
+  platformAdConnectionsRouter.post(`/oauth/meta/${path}`, urlencoded({ extended: false, limit: '16kb', parameterLimit: 5 }), async (req, res) => {
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    try {
+      const result = await handleMetaPrivacyRequest(req.body?.signed_request, deletion);
+      res.json(deletion ? result : { status: 'revoked' });
+    } catch (error) { failure(res, error); }
+  });
+}
+platformAdConnectionsRouter.get('/oauth/meta/data-deletion/status/:code', async (req, res) => {
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  try { res.json(await metaDeletionRequestStatus(req.params.code)); } catch (error) { failure(res, error); }
+});
 platformAdConnectionsRouter.use(requireAuth);
 platformAdConnectionsRouter.use(requireAdWriteAccess);
 platformAdConnectionsRouter.post('/connections/:id/use-granted-account', async (req, res) => {
@@ -31,6 +46,12 @@ platformAdConnectionsRouter.post('/connections/:id/use-granted-account', async (
 });
 platformAdConnectionsRouter.post('/oauth/meta/start', async (_req, res) => {
   try { const { tenantId, userId } = res.locals as AuthLocals; res.json(await beginMetaOAuth(tenantId, userId)); } catch (error) { failure(res, error); }
+});
+platformAdConnectionsRouter.get('/oauth/meta/current', async (_req, res) => {
+  try { const { tenantId, userId } = res.locals as AuthLocals; res.json(await currentMetaOAuth(tenantId, userId)); } catch (error) { failure(res, error); }
+});
+platformAdConnectionsRouter.post('/oauth/meta/:id/cancel', async (req, res) => {
+  try { const { tenantId, userId } = res.locals as AuthLocals; res.json(await cancelOwnedMetaOAuth(tenantId, userId, req.params.id)); } catch (error) { failure(res, error); }
 });
 platformAdConnectionsRouter.get('/oauth/meta/:id/accounts', async (req, res) => {
   try { const { tenantId, userId } = res.locals as AuthLocals; res.json(await oauthAccounts(tenantId, userId, req.params.id)); } catch (error) { failure(res, error); }
@@ -43,10 +64,11 @@ platformAdConnectionsRouter.post('/oauth/meta/:id/connect', async (req, res) => 
   try { const { tenantId, userId } = res.locals as AuthLocals; res.json({ connection: await selectOAuthAccount(tenantId, userId, req.params.id, String(req.body.accountId || ''), String(req.body.pageId || '')) }); } catch (error) { failure(res, error); }
 });
 function failure(res: import('express').Response, error: unknown) {
+  if (error instanceof PlatformAdTaskLockError) { res.status(error.statusCode).json({ error: error.message, code: error.code }); return; }
   const known = error instanceof AdProviderError;
   const status = known && error.code === 'NOT_FOUND' ? 404
     : known && error.code === 'INVALID_INPUT' ? 400
-      : known && ['NOT_SUPPORTED', 'ACCOUNT_CONTEXT_REQUIRED', 'AUTH_REQUIRED'].includes(error.code) ? 409 : 503;
+      : known && ['NOT_SUPPORTED', 'ACCOUNT_CONTEXT_REQUIRED', 'AUTH_REQUIRED', 'AUTH_EXPIRED', 'AUTH_REVOKED', 'AUTH_MISSING_PERMISSIONS', 'AUTH_APP_MISMATCH', 'AUTH_METADATA_INVALID', 'AUTH_CHECK_STALE', 'USER_REVOKED', 'DATA_DELETION_REQUESTED'].includes(error.code) ? 409 : 503;
   res.status(status).json({ error: known ? error.message : '广告账户服务暂不可用', code: known ? error.code : 'SERVICE_ERROR' });
 }
 platformAdConnectionsRouter.get('/connections', async (_req, res) => {
@@ -68,10 +90,14 @@ platformAdConnectionsRouter.get('/connections/:id/campaigns', async (req, res) =
     res.json({ items, hasMore: Boolean(data.paging?.next || data.nextPageToken || data.page_info?.total_page > 1) });
   } catch (error) { failure(res, error); }
 });
+platformAdConnectionsRouter.post('/connections/:id/authorization/check', async (req, res) => {
+  try { res.json({ connection: await checkConnectionAuthorization((res.locals as AuthLocals).tenantId, req.params.id) }); }
+  catch (error) { failure(res, error); }
+});
 platformAdConnectionsRouter.post('/connections/:id/verify', async (req, res) => {
   try {
     const { connection, accessToken } = await getConnectionCredential((res.locals as AuthLocals).tenantId, req.params.id);
-    res.json({ connection: await connectAccount(connection.tenant_id, { provider: connection.provider, accountId: connection.accountId, accessToken }) });
+    res.json({ connection: await connectAccount(connection.tenant_id, { provider: connection.provider, accountId: connection.accountId, accessToken }, connection.authorization) });
   } catch (error) { failure(res, error); }
 });
 platformAdConnectionsRouter.post('/connections/:id/resources/sync', async (req, res) => {

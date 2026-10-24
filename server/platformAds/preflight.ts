@@ -9,6 +9,7 @@ import { getPlatformAdCreative } from './creatives.js';
 import { adReleasePolicy } from './releasePolicy.js';
 import type { AdPreflightCheck, AdPreflightResult } from '../../shared/platformAdPreflight.js';
 import { platformAdProposalFactIssue, platformAdProposalFactState } from './factVersion.js';
+import { authorizationAt, META_REQUIRED_AD_SCOPES } from './authorizationLifecycle.js';
 
 /** Read-only snapshot. Execution must independently revalidate under its task lease. */
 export async function preflightAdAction(tenantId: string, taskId: string, input: Record<string, unknown>): Promise<AdPreflightResult> {
@@ -51,6 +52,15 @@ export async function preflightAdAction(tenantId: string, taskId: string, input:
   check('connection', '账户本地状态', !!connection && connection.status === 'connected' && !!connection.tokenCipher, '已保存连接和凭据；尚未在线验证', '请选择已连接且已保存凭据的广告账户');
   if (connection) {
     const provider = connection.provider, policy = adReleasePolicy();
+    if (provider === 'meta') {
+      const authorization = authorizationAt(connection.authorization);
+      const missingScopes = Array.isArray(authorization.grantedScopes) && META_REQUIRED_AD_SCOPES.some(scope => !authorization.grantedScopes!.includes(scope));
+      const issue = authorization.reasonCode === 'AUTH_METADATA_INVALID' ? '保存的 Meta 授权信息无效，请重新授权' : authorization.status === 'revoked' ? 'Meta 授权已撤销，请重新授权' : authorization.status === 'expired' ? 'Meta 授权或数据访问权限已到期，请重新授权' : authorization.status === 'missing_permissions' || missingScopes ? 'Meta 授权缺少所需广告或主页权限，请重新授权' : '';
+      if (issue) check('connection_authorization', 'Meta 本地授权状态', false, '', issue);
+      else if (authorization.status === 'unknown') warning('connection_authorization', 'Meta 本地授权状态', '尚未保存有效的 Meta 授权检查结果；执行时仍须重新校验');
+      else if (authorization.status === 'expiring') warning('connection_authorization', 'Meta 本地授权状态', '保存的 Meta 授权将在 7 天内到期，请及时重新授权；尚未在线验证');
+      else check('connection_authorization', 'Meta 本地授权状态', true, '保存的 Meta 授权状态有效；尚未在线验证', '');
+    }
     if (input.creativeId !== undefined && input.creativeId !== '') check('creative_binding_scope', '绑定素材执行范围', typeof input.creativeId === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(input.creativeId) && provider === 'meta' && action === 'create' && task.managementMode === 'manual', '绑定素材用于 Meta 人工创建', '绑定标识无效，或不属于 Meta 人工创建流程');
     check('release', '执行开放范围', policy.executionProviders.includes(provider) && policy.allowedActions.includes(action), '动作在当前发布策略开放范围内', policy.reason);
     check('provider', '平台动作能力', provider === 'meta' || (['tiktok', 'google'].includes(provider) && ['create', 'activate', 'pause', 'resume'].includes(action)), '平台支持此人工动作', '平台不支持此动作');

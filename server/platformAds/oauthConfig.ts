@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import { AdProviderError } from './metaAdapter.js';
 export const META_AD_CALLBACK_PATH = '/api/overseas/platform-ads/oauth/meta/callback';
 const text = (name: string) => process.env[name]?.trim() || '';
+export const isTemporaryMetaOAuthHost = (host: string) => /(?:^|\.)(?:trycloudflare\.com|ngrok(?:-free)?\.(?:app|io)|loca\.lt|localtunnel\.me)$/.test(host);
 export function metaOAuthMissingConfiguration() {
   const keys = ['META_ADS_APP_ID', 'META_ADS_APP_SECRET', 'META_ADS_REDIRECT_URI', 'META_ADS_API_VERSION'];
   if ((text('META_ADS_LOGIN_MODE') || 'business') === 'business') keys.push('META_ADS_LOGIN_CONFIG_ID');
@@ -20,7 +21,7 @@ export function getMetaAdOAuthConfig() {
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(redirect.hostname);
   if (redirect.username || redirect.password || redirect.hash || redirect.search || redirect.pathname !== META_AD_CALLBACK_PATH || !(redirect.protocol === 'https:' || redirect.protocol === 'http:' && local)) throw new AdProviderError('Meta 回调须使用固定回调路径与 HTTPS；仅开发允许本机 HTTP', 'NOT_CONFIGURED');
   if (process.env.NODE_ENV === 'production' || environment === 'production') {
-    if (redirect.protocol !== 'https:' || local || isIP(redirect.hostname.replace(/^\[|\]$/g, '')) || !redirect.hostname.includes('.') || redirect.hostname.endsWith('.localhost') || redirect.hostname.endsWith('.local') || environment !== 'production') throw new AdProviderError('生产 Meta 授权必须使用 production 环境和正式 HTTPS 域名，不能指向本机或 IP', 'NOT_CONFIGURED');
+    if (redirect.protocol !== 'https:' || local || isIP(redirect.hostname.replace(/^\[|\]$/g, '')) || !redirect.hostname.includes('.') || redirect.hostname.endsWith('.localhost') || redirect.hostname.endsWith('.local') || isTemporaryMetaOAuthHost(redirect.hostname) || environment !== 'production') throw new AdProviderError('生产 Meta 授权必须使用 production 环境和固定 HTTPS 域名，不能指向本机、IP 或临时隧道', 'NOT_CONFIGURED');
   }
   // Public settings only: never incorporate or persist App Secret in session metadata.
   const context = createHash('sha256').update(JSON.stringify([appId, redirectUri, version, mode, loginConfigId, environment])).digest('hex');

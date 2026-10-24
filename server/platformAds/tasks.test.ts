@@ -85,7 +85,18 @@ try {
   assert.equal(cnyManaged?.currency, 'CNY');
   const { metaCurrencyOffsets } = await import('../../src/lib/platformAdsDomain.js');
   assert.equal(Math.round(123.45 * metaCurrencyOffsets.CNY), 12345, 'Meta CNY is denominated in hundredths');
-  console.log('platform ads task persistence tests passed');
+  // Old plans must remain reachable from the three-page workspace after page one fills up.
+  for (let i = 0; i < 203; i++) await store.create('platform_ad_tasks', {
+    ...input, id: `paged-plan-${i}`, tenant_id: 'tenant-paged', status: 'draft', version: 1,
+    createdAt: new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString(),
+  });
+  await store.create('platform_ad_tasks', { ...input, id: 'foreign-paged-plan', tenant_id: 'tenant-foreign' });
+  const allPlans = await listPlatformAdTasks('tenant-paged');
+  assert.equal(allPlans.length, 203);
+  assert.equal(new Set(allPlans.map(t => t.id)).size, 203);
+  assert.ok(allPlans.some(t => t.id === 'paged-plan-0'), 'oldest plan remains selectable and deep-linkable');
+  assert.ok(!allPlans.some(t => t.id === 'foreign-paged-plan'));
+  console.log('platform ads task persistence and multi-page plan reachability tests passed');
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });
 }

@@ -32,6 +32,7 @@ try {
   globalThis.fetch = (async (url: any, init: any) => {
     if (!String(url).startsWith('https://graph.facebook.com/')) return originalFetch(url, init);
     effects.push(`${init?.method || 'GET'} ${new URL(String(url)).pathname}`);
+    if (String(url).includes('/debug_token')) return Response.json({data:{is_valid:true,app_id:'123',user_id:'789',scopes:['ads_read','ads_management','pages_show_list','pages_read_engagement','pages_manage_ads'],expires_at:Math.floor(Date.now()/1000)+86400}});
     if (String(url).includes('oauth/access_token')) { exchanges++; return Response.json({ access_token: 'top-secret' }); }
     const pathname = new URL(String(url)).pathname;
     if (pathname.endsWith('/me/accounts')) return Response.json({ data: [{ id: '10', name: 'Brand', tasks: ['ADVERTISE'], access_token: 'page-secret' }, { id: '20', name: 'Unrelated', tasks: ['ADVERTISE'] }, { id: '30', name: 'Read only', tasks: ['ANALYZE'] }] });
@@ -65,6 +66,41 @@ try {
   assert.equal((await store.list('platform_ad_connections')).items.length, 1);
   assert.equal((await store.getById<any>('platform_ad_connections', connection.id))?.defaultPage.name, 'Brand');
   assert.ok(!JSON.stringify(connection).includes('top-secret') && !JSON.stringify(connection).includes('page-secret'));
+  const { cancelOwnedMetaOAuth } = await import('./oauthSessions.js');
+  const normalFetch = globalThis.fetch;
+  let markSelectionStarted!: () => void, releaseSelection!: () => void;
+  const selectionStarted = new Promise<void>(resolve => { markSelectionStarted = resolve; });
+  const selectionRelease = new Promise<void>(resolve => { releaseSelection = resolve; });
+  globalThis.fetch = (async (input: any, init: any) => {
+    if (new URL(String(input)).pathname.endsWith('/10')) { markSelectionStarted(); await selectionRelease; }
+    return normalFetch(input, init);
+  }) as typeof fetch;
+  const selecting = selectOAuthAccount('t1','u1',first.sessionId,'act_1','10');
+  await selectionStarted;
+  await assert.rejects(cancelOwnedMetaOAuth('t1','u1',first.sessionId), (error: any) => error.code === 'platform_ad_task_busy', 'cancel cannot claim success while selection owns the session');
+  releaseSelection();
+  assert.equal((await selecting).id, connection.id);
+  globalThis.fetch = normalFetch;
+  assert.equal((await selectOAuthAccount('t1','u1',first.sessionId,'act_1','10')).id, connection.id, 'retry remains idempotent');
+  await cancelOwnedMetaOAuth('t1','u1',first.sessionId);
+  await assert.rejects(selectOAuthAccount('t1','u1',first.sessionId,'act_1','10'), /已授权/, 'successful cancellation prevents subsequent selection');
+  // Separate sessions/direct binding attempts for one account share the durable account lease.
+  const { connectAccount } = await import('./connections.js');
+  let markAccountStarted!: () => void, releaseAccount!: () => void;
+  const accountStarted = new Promise<void>(resolve => { markAccountStarted = resolve; });
+  const accountRelease = new Promise<void>(resolve => { releaseAccount = resolve; });
+  globalThis.fetch = (async (input: any, init: any) => {
+    if (new URL(String(input)).pathname.endsWith('/act_99')) { markAccountStarted(); await accountRelease; return Response.json({id:'act_99',name:'Shared',currency:'USD',account_status:1}); }
+    return normalFetch(input,init);
+  }) as typeof fetch;
+  const binding = connectAccount('t1',{provider:'meta',accountId:'99',accessToken:'test'});
+  await accountStarted;
+  await assert.rejects(connectAccount('t1',{provider:'meta',accountId:'99',accessToken:'test'}), (error: any) => error.code === 'platform_ad_task_busy');
+  releaseAccount();
+  const bound = await binding;
+  assert.equal((await connectAccount('t1',{provider:'meta',accountId:'99',accessToken:'test'})).id,bound.id);
+  assert.equal((await store.list('platform_ad_connections',{where:{tenant_id:'t1',provider:'meta',accountId:'99'}})).totalItems,1);
+  globalThis.fetch = normalFetch;
   assert.ok(effects.every(e => e.startsWith('GET ') || e.endsWith('/oauth/access_token')), 'only token exchange is POST; no Meta asset writes');
   const cancelled = await beginMetaOAuth('t1', 'u1');
   await cancelMetaOAuth(new URL(cancelled.url).searchParams.get('state')!);

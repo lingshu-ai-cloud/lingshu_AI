@@ -26,6 +26,11 @@ try {
     process.env.META_ADS_REDIRECT_URI = address; assert.throws(getMetaAdOAuthConfig, /回调|生产/);
   }
   process.env.META_ADS_REDIRECT_URI = `https://app.example.com${META_AD_CALLBACK_PATH}`;
+  for (const host of ['dev.trycloudflare.com', 'dev.ngrok-free.app', 'dev.ngrok.io', 'dev.loca.lt']) {
+    process.env.META_ADS_REDIRECT_URI = `https://${host}${META_AD_CALLBACK_PATH}`;
+    assert.throws(getMetaAdOAuthConfig, /固定 HTTPS|临时隧道/);
+  }
+  process.env.META_ADS_REDIRECT_URI = `https://app.example.com${META_AD_CALLBACK_PATH}`;
   assert.equal(getMetaAdOAuthConfig().environment, 'production');
   process.env.META_ADS_OAUTH_ENVIRONMENT = 'development';
   assert.throws(getMetaAdOAuthConfig, /production/);

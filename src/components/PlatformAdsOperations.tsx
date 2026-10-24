@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { MetaPageSelect } from './MetaPlanAuditPanel';
 import { Alert, Select } from 'antd';
 import AdCreativePanel from './AdCreativePanel';
+import AdExecutionReceipts from './AdExecutionReceipts';
 import type { PlatformAdCreative } from '../../shared/platformAdCreatives';
 import type { AdPreflightResult as PreflightReport } from '../../shared/platformAdPreflight';
 import { getAdPlanCapability } from '../../shared/platformAdCapabilities';
@@ -76,7 +77,11 @@ function AdExecutionControls({ task, connections, onExecution, releasePolicy, on
   const [preflight, setPreflight] = useState<{ fingerprint: string; report: PreflightReport } | null>(null);
   const [records, setRecords] = useState<Array<Record<string, unknown>>>([]);
   const request = useRef<{ fingerprint: string; id: string } | null>(null);
-  const creationBlocked = action === 'create' && (task.status !== 'draft' || records.some(r => r.action === 'create' && r.status !== 'FAILED'));
+  const [receiptLoading, setReceiptLoading] = useState(true), [receiptError, setReceiptError] = useState('');
+  const [historyErrors, setHistoryErrors] = useState<Record<string, string>>({});
+  const historyRun = useRef(0);
+  useEffect(() => () => { historyRun.current++; }, [task.id]);
+  const creationBlocked = action === 'create' && (receiptLoading || !!receiptError || task.status !== 'draft' || records.some(r => r.action === 'create' && r.status !== 'FAILED'));
   const [approvals, setApprovals] = useState<Array<Record<string, unknown>>>([]);
   const [launches, setLaunches] = useState<Array<Record<string, unknown>>>([]);
   const [meta, setMeta] = useState({ pageId: '', videoId: '', imageUrl: '', linkUrl: '', message: '', countries: 'US', dailyBudget: task.configuration.dailyBudget || 10 });
@@ -87,7 +92,22 @@ function AdExecutionControls({ task, connections, onExecution, releasePolicy, on
   const currencyMismatch = !!connectionId && connections.find(item => item.id === connectionId)?.currency !== currency;
   const releaseBlocked = creationBlocked || !!releasePolicy && (!releasePolicy.allowedActions.includes(action) || !releasePolicy.executionProviders.includes(connections.find(c => c.id === connectionId)?.provider || '') || (task.managementMode === 'managed' && action === 'create' && launchMode === 'create_and_activate' && !releasePolicy.allowedActions.includes('activate')));
   const [google, setGoogle] = useState({ targetCpa: 10, videoAssetId: '', logoAssetId: '', finalUrl: '', businessName: '', headline: '', longHeadline: '', description: '', locationIds: '' });
-  const refresh = async () => { const [executionResult, approvalResult, launchResult] = await Promise.all([platformAdsRequest<{ items: typeof records }>(`/tasks/${encodeURIComponent(task.id)}/executions`), platformAdsRequest<{ items: typeof approvals }>(`/tasks/${encodeURIComponent(task.id)}/approvals`), platformAdsRequest<{ items: typeof launches }>(`/tasks/${encodeURIComponent(task.id)}/launch`)]); setRecords(executionResult.items); if (executionResult.items.some(item => item.status !== 'FAILED')) onExecution?.(); setApprovals(approvalResult.items); setLaunches(launchResult.items); };
+  const refresh = async () => {
+    const run = ++historyRun.current;
+    setReceiptLoading(true); setReceiptError(''); setHistoryErrors({});
+    const reads = [
+      platformAdsRequest<{ items: typeof records }>(`/tasks/${encodeURIComponent(task.id)}/executions`).then(result => {
+        if (run !== historyRun.current) return;
+        setRecords(result.items); if (result.items.some(item => item.status !== 'FAILED')) onExecution?.();
+      }).catch(e => { if (run === historyRun.current) { setReceiptError(message(e)); throw e; } })
+        .finally(() => { if (run === historyRun.current) setReceiptLoading(false); }),
+      platformAdsRequest<{ items: typeof approvals }>(`/tasks/${encodeURIComponent(task.id)}/approvals`).then(result => { if (run === historyRun.current) setApprovals(result.items); })
+        .catch(e => { if (run === historyRun.current) setHistoryErrors(old => ({ ...old, approvals: message(e) })); }),
+      platformAdsRequest<{ items: typeof launches }>(`/tasks/${encodeURIComponent(task.id)}/launch`).then(result => { if (run === historyRun.current) setLaunches(result.items); })
+        .catch(e => { if (run === historyRun.current) setHistoryErrors(old => ({ ...old, launches: message(e) })); }),
+    ];
+    await reads[0];
+  };
   useEffect(() => { refresh().catch(e => setFeedback(message(e))); }, [task.id]);
   const executionInput = { expectedVersion: task.version || 1, ...(creative && task.managementMode === 'manual' && action === 'create' && !isTikTok && !isGoogle && creative.connectionId === connectionId ? { creativeId: creative.id } : {}), connectionId, action, resourceId, ...(task.managementMode === 'managed' && action === 'create' ? { launchMode } : {}), dailyBudget: meta.dailyBudget, ...(isGoogle ? { google: { ...google, locationIds: google.locationIds.split(',').map(item => item.trim()).filter(Boolean) } } : isTikTok ? { tiktok: { ...tiktok, locationIds: tiktok.locationIds.split(',').map(item => item.trim()).filter(Boolean) } } : { meta: { ...meta, countries: meta.countries.split(',').map(c => c.trim().toUpperCase()).filter(Boolean) } }) };
   const fingerprint = JSON.stringify({ taskId: task.id, ...executionInput });
@@ -117,7 +137,7 @@ function AdExecutionControls({ task, connections, onExecution, releasePolicy, on
   };
   return <div className="ads-execution"><h3>真实平台执行</h3><p className="ads-muted">Meta 支持网站引流与视频观看；TikTok 支持已有授权帖子的视频观看；Google 支持使用现有资产的 Demand Gen 转化人工计划。后两者需单一对应渠道与未来起止排期，暂不开放自动托管或审批。创建后广告均暂停，启动会产生真实消耗。任务版本：{task.version || 1}</p>
     <AdCreativePanel task={task} connections={connections} onUpdate={onUpdate} uploadAllowed={!!releasePolicy?.allowedActions.includes('create') && !!releasePolicy?.executionProviders.includes('meta')} onUse={item => { setCreative(item); setConnectionId(item.connectionId); setAction('create'); setMeta(value => ({ ...value, pageId: connectionId === item.connectionId ? value.pageId : '', imageUrl: '', videoId: item.platformVideoId })); setPreflight(null); void platformAdsRequest<{ thumbnailUrl: string }>(`/creatives/${item.id}/platform-preview`).then(p => setMeta(value => value.videoId === item.platformVideoId ? { ...value, imageUrl: p.thumbnailUrl } : value)).catch(e => setFeedback(message(e))); }} />
-    {creationBlocked && <p role="status">此计划已有平台动作或不是草稿，新建已禁用；请查看上方真实资源核对和下方原回执，不重复创建。</p>}
+    {creationBlocked && <p role="status">{receiptLoading ? '正在读取原回执，新建暂不可用。' : receiptError ? '原回执读取失败，暂不能确认执行历史；请刷新记录后继续。' : '此计划已有平台动作或不是草稿，新建已禁用；请查看真实资源核对和原回执。'}</p>}
     {creative && <p role="status" className="ads-muted">已选成片：{creative.name} · 当前企业。仅关联本次 Meta 人工创建。<button type="button" className="ads-text-button" onClick={() => { setCreative(null); setMeta(value => ({ ...value, videoId: '', imageUrl: '' })); }}>清除已选成片</button></p>}
     {task.managementMode === 'manual' && <section className="ads-preflight" aria-label="投放前检查">
       <div className="ads-section-title"><h3>投放前检查</h3><button type="button" className="ads-button" disabled={busy} onClick={() => void checkBeforeSubmit()}>{busy ? '处理中…' : '检查当前配置'}</button></div>
@@ -128,7 +148,7 @@ function AdExecutionControls({ task, connections, onExecution, releasePolicy, on
       <label>广告账户<select aria-label="广告账户" required value={connectionId} onChange={e => { setConnectionId(e.target.value); setCreative(null); setMeta(value => ({ ...value, pageId: '', videoId: '', imageUrl: '', linkUrl: '' })); }}><option value="">选择已连接账户</option>{connections.filter(c => ['meta', 'tiktok', 'google'].includes(c.provider)).map(c => <option key={c.id} value={c.id} disabled={c.currency !== currency || c.status !== 'connected'}>{c.name} · {c.provider} · {c.currency} · {c.status}{c.currency !== currency ? '（币种不匹配）' : ''}</option>)}</select></label>
       <label>操作<select aria-label="操作" value={action} onChange={e => setAction(e.target.value)}><option value="create">创建完整广告（暂停）</option><option value="activate">启动真实广告</option><option value="pause">暂停广告</option><option value="resume">恢复广告</option><option value="adjust_budget">调整日预算</option></select></label>
       {task.managementMode === 'managed' && action === 'create' && <label>托管创建方式<select value={launchMode} onChange={e => setLaunchMode(e.target.value as typeof launchMode)}><option value="create_paused">创建并保持暂停（不自动启用）</option><option value="create_and_activate">创建后自动启用（可能产生真实消耗）</option></select></label>}
-      {creationBlocked ? <Alert type="info" showIcon title="已有平台动作，不再填写新建参数；请使用真实资源核对及原回执。"/> : action === 'create' && isGoogle ? <>
+      {creationBlocked ? <Alert type="info" showIcon title={receiptLoading || receiptError ? '请先确认执行历史后再填写新建参数。' : '已有平台动作，不再填写新建参数；请使用真实资源核对及原回执。'}/> : action === 'create' && isGoogle ? <>
         <p className="ads-muted">目标选择“获取线索或转化”，渠道仅选 YouTube。资产 ID 必须为 Google Ads 已有资产，不是 YouTube 视频 ID。</p>
         {([['videoAssetId', 'Google 视频资产 ID', 200], ['logoAssetId', 'Google Logo 资产 ID', 200], ['businessName', '品牌名称', 25], ['headline', '短标题', 40], ['longHeadline', '长标题', 90], ['description', '广告描述', 90], ['locationIds', 'Google 地域 ID（逗号分隔）', 500]] as const).map(([key, label, maxLength]) => <label key={key}>{label}<input required maxLength={maxLength} value={google[key]} onChange={e => setGoogle({ ...google, [key]: e.target.value })} /></label>)}
         <label>Google 落地页 HTTPS 地址<input required type="url" pattern="https://.*" value={google.finalUrl} onChange={e => setGoogle({ ...google, finalUrl: e.target.value })} /></label>
@@ -154,8 +174,9 @@ function AdExecutionControls({ task, connections, onExecution, releasePolicy, on
     {launches.length > 0 && <section><h3>自动启动状态</h3>{launches.map((launch, index) => <p key={String(launch.id || index)}>{launch.launchMode === 'create_paused' ? '仅创建暂停广告' : '创建后自动启用'} · {statusLabel(launch.status)} · {String(launch.reason || launch.error || '')}{['UNKNOWN', 'CREATING', 'ACTIVATING'].includes(String(launch.status)) && <button className="ads-text-button" disabled={busy} onClick={async () => { setBusy(true); try { await platformAdsRequest(`/tasks/${encodeURIComponent(task.id)}/launch/${encodeURIComponent(String(launch.id))}/reconcile`, { method: 'POST' }); await refresh(); } catch (e) { setFeedback(message(e)); } finally { setBusy(false); } }}>核验平台结果</button>}</p>)}</section>}
     <h3>动作审批</h3>{approvals.length ? approvals.map(approval => <div key={String(approval.id)} className="ads-proposal"><p>{String(approval.action)} · {statusLabel(approval.status)} · {String(approval.resourceId || '')}</p><details><summary>查看动作参数与影响范围</summary><pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(approval, null, 2)}</pre></details>{approval.status === 'PENDING' && <div className="ads-actions">{(['approve', 'reject'] as const).map(decision => <button className="ads-button" key={decision} disabled={busy} onClick={async () => { setBusy(true); try { await platformAdsRequest(`/tasks/${encodeURIComponent(task.id)}/approvals/${encodeURIComponent(String(approval.id))}/decision`, { method: 'POST', body: JSON.stringify({ decision }) }); await refresh(); } catch (e) { setFeedback(message(e)); } finally { setBusy(false); } }}>{decision === 'approve' ? '批准并执行' : '拒绝'}</button>)}</div>}</div>) : <p className="ads-muted">暂无待审批动作。</p>}
     {approvals.filter(item => ['UNKNOWN', 'APPROVING'].includes(String(item.status))).map(item => <button key={String(item.id)} className="ads-button" disabled={busy} onClick={async () => { setBusy(true); try { await platformAdsRequest(`/tasks/${encodeURIComponent(task.id)}/approvals/${encodeURIComponent(String(item.id))}/reconcile`, { method: 'POST' }); await refresh(); } catch (e) { setFeedback(message(e)); } finally { setBusy(false); } }}>核验审批 {String(item.id)} 的平台结果</button>)}
-    <div className="ads-section-title"><h3>执行记录与平台回执</h3><button className="ads-button" disabled={busy} onClick={() => refresh().catch(e => setFeedback(message(e)))}>刷新记录</button></div>
-    {records.length ? records.map((record, i) => <details key={String(record.id || i)}><summary>{String(record.action || '操作')} · {statusLabel(record.status)} · {String(record.createdAt || '')}</summary><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(record, null, 2)}</pre></details>) : <p className="ads-muted">尚无执行记录。平台请求失败或结果不确定时不会显示为投放成功。</p>}
+    {receiptError && <Alert type="error" showIcon title={`执行回执读取失败：${receiptError}`} description={records.length ? '保留上次回执，新建仍被阻止；请重试刷新。' : '尚未确认执行历史，不代表没有执行记录。'}/>}
+    {Object.entries(historyErrors).map(([key, error]) => <Alert key={key} type="warning" showIcon title={`${key === 'approvals' ? '审批' : '托管启动'}记录读取失败：${error}`} description="执行回执仍独立展示；该区域已有内容以原记录为准。"/>)}
+    {(receiptLoading || receiptError) && !records.length ? <div><p role="status">{receiptLoading ? '正在读取执行回执…' : '执行历史尚未确认，请重试。'}</p><button className="ads-button" disabled={receiptLoading} onClick={() => void refresh().catch(e => setFeedback(message(e)))}>重新读取执行回执</button></div> : <AdExecutionReceipts key={task.id} taskId={task.id} records={records} onRefresh={async () => { await refresh(); onUpdate(await platformAdsApi.getTask(task.id)); }} />}
   </div>;
 }
 

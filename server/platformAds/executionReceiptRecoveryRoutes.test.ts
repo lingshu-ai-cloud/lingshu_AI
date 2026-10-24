@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+import express from 'express';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ad-receipt-recovery-http-'));
+Object.assign(process.env,{LOCAL_STORE_DIR:dir,PB_URL:'http://127.0.0.1:1',NODE_ENV:'test',ENABLE_LOCAL_DEV_FALLBACK:'true',TEST_ONLY_EXTERNAL_EFFECT_LEASE_FALLBACK:'true',META_ADS_API_VERSION:'v26.0'});
+const {platformAdExecutionRouter}=await import('../routes/platformAdExecution.js');
+const {store}=await import('../storage/index.js');
+const {encryptSecret}=await import('../lib/tenantPlatformApps.js');
+const {issueLocalIdentityTokenForTest}=await import('../auth/localIdentity.js');
+const app=express();app.use(express.json());app.use('/ads',platformAdExecutionRouter);
+const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));
+const base=`http://127.0.0.1:${(server.address() as {port:number}).port}/ads`;
+const headers=(tenant='owner',role='admin')=>({Authorization:`Bearer ${issueLocalIdentityTokenForTest({userId:tenant,tenantId:tenant,role})}`});
+const nativeFetch=globalThis.fetch;let providerRequests=0;
+globalThis.fetch=(async(input:any,init:any)=>{if(String(input).startsWith('https://graph.facebook.com/')){providerRequests++;throw new Error('this fixture must never contact Meta');}return nativeFetch(input,init);}) as typeof fetch;
+try{
+  await store.create('platform_ad_tasks',{id:'plan',tenant_id:'owner',name:'Historical receipts',version:1});
+  await store.create('platform_ad_connections',{id:'connection',tenant_id:'owner',provider:'meta',accountId:'1',currency:'USD',tokenCipher:encryptSecret('fixture-token')});
+  const old=await store.create<any>('platform_ad_executions',{tenant_id:'owner',taskId:'plan',connectionId:'connection',requestId:'old-unknown',action:'create',status:'UNKNOWN',createdAt:'2020-01-01',result:{campaignId:'1',adsetId:'2',creativeId:'3',adId:'4'}});
+  for(let i=0;i<201;i++)await store.create('platform_ad_executions',{tenant_id:'owner',taskId:'plan',connectionId:'connection',requestId:`new-failed-${i}`,action:'create',status:'FAILED',createdAt:'2026-10-24'});
+  assert.equal((await fetch(base+'/tasks/plan/executions')).status,401);
+  const response=await fetch(base+'/tasks/plan/executions',{headers:headers()});assert.equal(response.status,200);
+  const listing=await response.json() as {items:Array<{id:string;status:string}>};
+  assert.equal(listing.items.length,202);assert.ok(listing.items.some(receipt=>receipt.id===old.id&&receipt.status==='UNKNOWN'),'original HTTP items contract exposes a reconcilable older receipt');
+  assert.deepEqual((await (await fetch(base+'/tasks/plan/executions',{headers:headers('foreign')})).json() as {items:unknown[]}).items,[]);
+  const endpoint=base+`/tasks/plan/executions/${old.id}/reconcile`;
+  assert.equal((await fetch(endpoint,{method:'POST',headers:headers('foreign')})).status,404);
+  assert.equal((await fetch(endpoint,{method:'POST',headers:headers('owner','customer_service')})).status,403);
+  const missingEvidence=await fetch(endpoint,{method:'POST',headers:headers()});assert.equal(missingEvidence.status,409);
+  assert.equal((await missingEvidence.json() as {code:string}).code,'RECONCILIATION_REQUIRED');
+  assert.equal((await store.getById<any>('platform_ad_executions',old.id)).status,'UNKNOWN');
+  assert.equal(providerRequests,0,'listing and rejecting a legacy receipt with missing execution intent require no Meta calls');
+  console.log('HTTP receipt recovery passed: >200 historical rows visible, tenant/role isolation, missing intent remains UNKNOWN, zero provider calls');
+}finally{globalThis.fetch=nativeFetch;server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));fs.rmSync(dir,{recursive:true,force:true});}

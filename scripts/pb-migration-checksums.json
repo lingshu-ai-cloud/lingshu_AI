@@ -198,6 +198,8 @@
     "1792670400_create_customer_reply_requests.js": "47b2fbe423045eb9801ea6cdebf9a71f4ecf02a13b681ba686eee579b91c5aa3",
     "1792686176_create_linkedin_company_collection_approvals.js": "59a6f5c789e11663e8a1fc566329fa3399d0d95e3d10e804161a16b573c60a4b",
     "1792686177_create_image_evidence_review_approvals.js": "6212f25fb5439b486e06743749d54113760764da55db729a13167fe954e0f2a5",
-    "1792713600_platform_ad_default_page.js": "e60683ba3295b53e8217484c226acf35aa977c885b02519b3d374db615d2ea1f"
+    "1792713600_platform_ad_default_page.js": "e60683ba3295b53e8217484c226acf35aa977c885b02519b3d374db615d2ea1f",
+    "1792800000_platform_ad_authorization_lifecycle.js": "5aba5e43e18bf6b72fcc0b8970bcf267b10e8ac99d4c1ce63c6151a2b1c92258",
+    "1792800001_repair_platform_ad_authorization_fields.js": "af8e71ee15d3d75419ea88cfe7bb853837d8d1f62abf66261172a13b093b68bd"
   }
 }

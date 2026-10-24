@@ -5,7 +5,7 @@ import { metaPerformanceSummary, metaDateRange, metaAccountDate, type MetaPerfor
 test('account history is default and payment is a read-only official handoff, not an app charge', () => {
   const overview = readFileSync(new URL('./AdPerformanceOverview.tsx', import.meta.url), 'utf8');
   const history = readFileSync(new URL('./AdAccountHistory.tsx', import.meta.url), 'utf8');
-  assert.match(overview, /defaultActiveKey="history"/);
+  assert.match(overview, /props.initialTaskId \? 'local' : 'history'/);
   assert.match(history, /platformAdsRequest<MetaAccountHistory>/);
   assert.match(history, /useAdAccountDirectory/);
   assert.match(history, /connection.connectionId/);
@@ -43,7 +43,7 @@ test('directory pages and invalid report ranges cannot display another scope as 
   const data = readFileSync(new URL('./AdPerformanceOverview.tsx', import.meta.url), 'utf8');
   const library = readFileSync(new URL('./AdCreativeLibrary.tsx', import.meta.url), 'utf8');
   for (const source of [data, library]) {
-    assert.match(source, /catalog\?\.page === page \? catalog : null/);
+    assert.match(source, /catalog\?\.page === page(?: && catalog\.requestTaskId === initialTaskId)? \? catalog : null/);
     assert.match(source, /total=\{catalog.totalItems\}/);
     assert.match(source, /当前页目录未返回，可刷新或返回其他页/);
   }

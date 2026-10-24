@@ -51,10 +51,9 @@ class FakeFields {
     return this.items.length;
   }
 
-  getByName(name: string): FakeField {
-    const field = this.items.find(item => item.name === name);
-    if (!field) throw new Error(`field not found: ${name}`);
-    return field;
+  getByName(name: string): FakeField | null {
+    // Real PocketBase FieldsList returns null, not an exception, for absence.
+    return this.items.find(item => item.name === name) ?? null;
   }
 
   addAt(index: number, field: FakeField): void {
@@ -138,6 +137,8 @@ const additiveMigrations = [
   '1792627200_platform_ad_account_context.js',
   '1792627201_platform_ad_resources.js',
   '1792713600_platform_ad_default_page.js',
+  '1792800000_platform_ad_authorization_lifecycle.js',
+  '1792800001_repair_platform_ad_authorization_fields.js',
 ].map(name => {
   let up: MigrationCallback | undefined, down: MigrationCallback | undefined;
   vm.runInNewContext(fs.readFileSync(new URL(`../../pb_migrations/${name}`, import.meta.url), 'utf8'), {
@@ -242,11 +243,28 @@ assert.equal(fresh.collections.size, 0, 'rollback must remove every collection c
 const upgraded = new FakeApp();
 legacyForward(upgraded);
 assert.throws(() => upgraded.findCollectionByNameOrId('platform_ad_ads'));
-assert.throws(() => upgraded.findCollectionByNameOrId('platform_ad_connections').fields.getByName('defaultPage'));
+assert.equal(upgraded.findCollectionByNameOrId('platform_ad_connections').fields.getByName('defaultPage'), null);
+// Preserve applied migration bytes and demonstrate the real-PB failure mode:
+// before the append-only repair, field-only migrations silently omit metadata.
+for (const migration of additiveMigrations.slice(0, -1)) migration.up(upgraded);
+assert.equal(upgraded.findCollectionByNameOrId('platform_ad_connections').fields.getByName('authorization'), null);
+assert.equal(upgraded.findCollectionByNameOrId('platform_ad_oauth_states').fields.getByName('context'), null);
+assert.ok(inspectAdCollectionSchema('platform_ad_connections', { fields: upgraded.findCollectionByNameOrId('platform_ad_connections').fields.items }).some(issue => issue.field === 'authorization'));
 for (const migration of additiveMigrations) migration.up(upgraded);
 assertSchemaParity(upgraded);
 for (const migration of additiveMigrations) migration.up(upgraded);
 assertSchemaParity(upgraded);
+// Native Go-backed PocketBase fields expose type() rather than a type value.
+for (const name of ['platform_ad_connections', 'platform_ad_oauth_states']) {
+  const fields = upgraded.findCollectionByNameOrId(name).fields;
+  const originalLookup = fields.getByName.bind(fields);
+  fields.getByName = fieldName => {
+    const field = originalLookup(fieldName);
+    return field ? new Proxy(field, { get: (target, key) => key === 'type' ? () => target.type : Reflect.get(target, key) }) : null;
+  };
+  try { additiveMigrations.at(-1)!.up(upgraded); }
+  finally { fields.getByName = originalLookup; }
+}
 // Rolling back only the appended migrations preserves all legacy collections.
 for (const migration of [...additiveMigrations].reverse()) migration.down(upgraded);
 assert.ok(upgraded.findCollectionByNameOrId('platform_ad_connections'));
@@ -263,7 +281,7 @@ adopted.save(new FakeCollection({
 }));
 forward(adopted);
 assertSchemaParity(adopted);
-assert.equal(adopted.findCollectionByNameOrId('platform_ad_connections').fields.getByName('tenant_id').required, true, 'adopted runtime collections must normalize required fields');
+assert.equal(adopted.findCollectionByNameOrId('platform_ad_connections').fields.getByName('tenant_id')?.required, true, 'adopted runtime collections must normalize required fields');
 
 const uniqueMigrationPath = new URL('../../pb_migrations/1790208001_unique_platform_ad_execution_requests.js', import.meta.url);
 const uniqueMigrationSource = fs.readFileSync(uniqueMigrationPath, 'utf8');

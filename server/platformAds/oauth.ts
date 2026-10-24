@@ -7,11 +7,13 @@ import { connectAccount, AD_CONNECTIONS } from './connections.js';
 import { authorizedPages, readAuthorizationEdge } from './metaAuthorization.js';
 import { MetaAdsAdapter } from './metaAdapter.js';
 import { getMetaAdOAuthConfig as config, metaOAuthMissingConfiguration, metaOAuthStateHash } from './oauthConfig.js';
-export const AD_OAUTH_STATES = 'platform_ad_oauth_states';
+import { AD_OAUTH_STATES, type OAuthState, clearOAuthState, ownedOAuthState } from './oauthSessions.js';
+import { assertMetaAuthorizationNotRevoked } from './oauthPrivacy.js';
+import { inspectMetaAuthorization, assertAuthorizationUsable } from './authorizationLifecycle.js';
+export { AD_OAUTH_STATES, currentMetaOAuth, cancelOwnedMetaOAuth } from './oauthSessions.js';
 // Ads permissions do not grant access to the Page identity used by creatives.
 // Match the permissions offered by Meta's Marketing API authorization tool.
 export const META_AD_OAUTH_SCOPES = ['ads_read', 'ads_management', 'pages_show_list', 'pages_read_engagement', 'pages_manage_ads'] as const;
-type OAuthState = { id: string; tenant_id: string; userId: string; stateHash: string; expiresAt: string; status: string; tokenCipher?: string; accounts?: Array<{ id: string; name: string; currency: string; accountStatus: number | null; timezoneName: string }> };
 export function metaOAuthConfigured() { try { config(); return true; } catch { return false; } }
 export function metaOAuthReadiness() {
   const missing = metaOAuthMissingConfiguration();
@@ -20,7 +22,7 @@ export function metaOAuthReadiness() {
 export async function beginMetaOAuth(tenantId: string, userId: string) {
   const cfg = config();
   const state = randomBytes(32).toString('base64url');
-  const record = await store.create<OAuthState>(AD_OAUTH_STATES, { tenant_id: tenantId, userId, stateHash: metaOAuthStateHash(state), expiresAt: new Date(Date.now() + 10 * 60000).toISOString(), status: 'pending' });
+  const record = await store.create<OAuthState>(AD_OAUTH_STATES, { tenant_id: tenantId, userId, context: cfg.context, appId: cfg.appId, stateHash: metaOAuthStateHash(state), expiresAt: new Date(Date.now() + 10 * 60000).toISOString(), status: 'pending' });
   if (!record) throw new AdProviderError('无法创建授权会话', 'STORAGE_ERROR');
   const url = new URL(`https://www.facebook.com/${cfg.version}/dialog/oauth`);
   url.search = new URLSearchParams({ client_id: cfg.appId, redirect_uri: cfg.redirectUri, state, response_type: 'code', ...(cfg.mode === 'business' ? { config_id: cfg.loginConfigId } : { scope: META_AD_OAUTH_SCOPES.join(',') }) }).toString();
@@ -33,26 +35,33 @@ export async function finishMetaOAuth(state: string, code: string) {
   if (!record) throw new AdProviderError('授权会话无效', 'AUTH_REQUIRED');
   return withPlatformAdTaskLock(record.tenant_id, `oauth-${record.id}`, async () => {
     const fresh = await store.getById<OAuthState>(AD_OAUTH_STATES, record.id);
-    if (!fresh || fresh.status !== 'pending' || Date.parse(fresh.expiresAt) <= Date.now()) throw new AdProviderError('授权会话已使用或过期', 'AUTH_REQUIRED');
+    if (fresh && Date.parse(fresh.expiresAt) <= Date.now()) await clearOAuthState(fresh, 'expired');
+    if (!fresh || fresh.context !== config().context || fresh.status !== 'pending' || Date.parse(fresh.expiresAt) <= Date.now()) throw new AdProviderError('授权会话已使用或过期', 'AUTH_REQUIRED');
     if (!await store.update(AD_OAUTH_STATES, fresh.id, { status: 'exchanging' })) throw new AdProviderError('无法消费授权会话', 'STORAGE_ERROR');
     const cfg = config();
     try {
       const response = await fetch(`https://graph.facebook.com/${cfg.version}/oauth/access_token`, { method: 'POST', body: new URLSearchParams({ client_id: cfg.appId, client_secret: cfg.appSecret, redirect_uri: cfg.redirectUri, code }), signal: AbortSignal.timeout(30000) });
       const token = await response.json() as any;
       if (!response.ok || !token.access_token) throw new AdProviderError('Meta 授权交换失败，请重新连接', 'AUTH_REQUIRED');
+      const authorization = await inspectMetaAuthorization(String(token.access_token));
+      assertAuthorizationUsable(authorization);
+      await assertMetaAuthorizationNotRevoked(authorization);
       const items = await readAuthorizationEdge(new MetaAdsAdapter(String(token.access_token)), 'me/adaccounts', 'id,name,currency,account_status,timezone_name');
       const accounts = items.filter(item => /^(act_)?\d+$/.test(String(item.id))).map(item => ({ id: String(item.id), name: String(item.name || item.id), currency: String(item.currency || ''), accountStatus: item.account_status != null && Number.isSafeInteger(Number(item.account_status)) ? Number(item.account_status) : null, timezoneName: String(item.timezone_name || '') }));
-      if (!await store.update(AD_OAUTH_STATES, fresh.id, { status: 'ready', tokenCipher: encryptSecret(String(token.access_token)), accounts })) throw new AdProviderError('无法保存授权结果', 'STORAGE_ERROR');
+      assertAuthorizationUsable(authorization);
+      await assertMetaAuthorizationNotRevoked({ ...authorization, checkedAt: new Date(Date.parse(fresh.expiresAt) - 10 * 60000).toISOString() });
+      const beforeSave = await store.getById<OAuthState>(AD_OAUTH_STATES, fresh.id);
+      if (beforeSave?.status !== 'exchanging') throw new AdProviderError('授权会话已撤销，请重新连接', 'AUTH_REQUIRED');
+      if (!await store.update(AD_OAUTH_STATES, fresh.id, { status: 'ready', authorization, providerUserId: authorization.providerUserId, tokenCipher: encryptSecret(String(token.access_token)), accounts })) throw new AdProviderError('无法保存授权结果', 'STORAGE_ERROR');
       return fresh.id;
     } catch (error) {
-      await store.update(AD_OAUTH_STATES, fresh.id, { status: 'failed' });
+      await clearOAuthState(fresh, 'failed');
       throw error instanceof AdProviderError ? error : new AdProviderError('Meta 授权暂时失败，请重新连接', 'AUTH_REQUIRED');
     }
   });
 }
 export async function oauthAccounts(tenantId: string, userId: string, id: string) {
-  const record = await store.getById<OAuthState>(AD_OAUTH_STATES, id);
-  if (!record || record.tenant_id !== tenantId || record.userId !== userId || Date.parse(record.expiresAt) <= Date.now()) throw new AdProviderError('授权会话无效或过期', 'AUTH_REQUIRED');
+  const record = await ownedOAuthState(tenantId, userId, id);
   return { status: record.status, accounts: record.accounts || [] };
 }
 export async function oauthPages(tenantId: string, userId: string, id: string, accountId: string) {
@@ -62,16 +71,18 @@ export async function oauthPages(tenantId: string, userId: string, id: string, a
   return authorizedPages(decryptSecret(record?.tokenCipher), accountId);
 }
 export async function selectOAuthAccount(tenantId: string, userId: string, id: string, accountId: string, pageId: string) {
-  return withPlatformAdTaskLock(tenantId, `oauth-connect-${id}`, async () => {
+  return withPlatformAdTaskLock(tenantId, `oauth-${id}`, async () => {
     if (!/^\d+$/.test(pageId)) throw new AdProviderError('请选择已授权的 Facebook 主页', 'INVALID_INPUT');
     const pages = await oauthPages(tenantId, userId, id, accountId);
     const page = pages.find(p => p.id === pageId);
     if (!page) throw new AdProviderError('所选主页不在该账户可投放且本人获授权的范围内，请重新选择', 'PAGE_AUTH_REQUIRED');
     await oauthAccounts(tenantId, userId, id);
-    const record = await store.getById<OAuthState>(AD_OAUTH_STATES, id);
+    const record = await ownedOAuthState(tenantId, userId, id);
+    if (record.status !== 'ready') throw new AdProviderError('授权会话已撤销，请重新连接', 'AUTH_REQUIRED');
+    await assertMetaAuthorizationNotRevoked(record?.authorization || {});
     const accessToken = decryptSecret(record?.tokenCipher);
     await new MetaAdsAdapter(accessToken).pageCreativeAdapter(pageId);
-    const connection = await connectAccount(tenantId, { provider: 'meta', accountId, accessToken });
+    const connection = await connectAccount(tenantId, { provider: 'meta', accountId, accessToken }, record?.authorization);
     const defaultPage = { id: page.id, name: page.name, verifiedAt: new Date().toISOString() };
     if (!await store.update(AD_CONNECTIONS, connection.id, { defaultPage })) throw new AdProviderError('账户已连接，但主页选择保存失败；请重新确认，不要重复创建资源', 'STORAGE_ERROR');
     return { ...connection, defaultPage };
@@ -84,6 +95,6 @@ export async function cancelMetaOAuth(state: string) {
   if (!record) throw new AdProviderError('授权会话无效', 'AUTH_REQUIRED');
   await withPlatformAdTaskLock(record.tenant_id, `oauth-${record.id}`, async () => {
     const fresh = await store.getById<OAuthState>(AD_OAUTH_STATES, record.id);
-    if (fresh?.status === 'pending' && Date.parse(fresh.expiresAt) > Date.now()) await store.update(AD_OAUTH_STATES, fresh.id, { status: 'cancelled' });
+    if (fresh?.status === 'pending') await clearOAuthState(fresh, 'cancelled');
   });
 }

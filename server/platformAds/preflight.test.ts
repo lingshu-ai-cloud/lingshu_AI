@@ -27,6 +27,29 @@ try {
   assert.equal(result.canSubmit, true); assert.equal(result.scope, 'local');
   assert.equal(result.checks.find(c => c.id === 'local_only')?.status, 'warning');
   assert.ok(!JSON.stringify(result).includes(connection.tokenCipher));
+  assert.equal(result.checks.find(c => c.id === 'connection_authorization')?.status, 'warning', 'legacy grants remain compatible without pretending online validation');
+  const healthCheck = async () => (await preflightAdAction('a', 'task', input)).checks.find(c => c.id === 'connection_authorization');
+  connection.authorization = { status: 'healthy', reasonCode: 'AUTH_VALID', expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(), grantedScopes: ['ads_read', 'ads_management', 'pages_show_list', 'pages_read_engagement', 'pages_manage_ads'] };
+  assert.equal((await healthCheck())?.status, 'pass');
+  assert.equal((await preflightAdAction('a', 'task', input)).canSubmit, true);
+  connection.authorization.expiresAt = new Date(Date.now() + 2 * 86400000).toISOString();
+  assert.equal((await healthCheck())?.status, 'warning', 'upcoming expiry prompts renewal without prematurely blocking');
+  for (const authorization of [
+    { status: 'healthy', reasonCode: 'AUTH_VALID', expiresAt: '2000-01-01T00:00:00Z' },
+    { status: 'healthy', reasonCode: 'AUTH_VALID', dataAccessExpiresAt: '2000-01-01T00:00:00Z' },
+    { status: 'revoked', reasonCode: 'USER_REVOKED' },
+    { status: 'missing_permissions', reasonCode: 'AUTH_MISSING_PERMISSIONS' },
+    { status: 'healthy', reasonCode: 'AUTH_VALID', grantedScopes: ['ads_read'] },
+    { status: 'healthy', reasonCode: 'AUTH_VALID', expiresAt: 'invalid' },
+  ]) {
+    connection.authorization = authorization;
+    await blocked('connection_authorization');
+    assert.equal((await preflightAdAction('a', 'task', input)).canSubmit, false, 'persisted invalid grants cannot pass a local submit check');
+    assert.match((await healthCheck())?.message || '', /重新授权/);
+  }
+  connection.authorization = { status: 'revoked', reasonCode: 'USER_REVOKED' };
+  for (const action of ['activate', 'pause', 'resume', 'adjust_budget']) await blocked('connection_authorization', { action, resourceId: '123', dailyBudget: 10 });
+  connection.authorization = undefined;
   const canonicalFacts = await readTenantEnterpriseFacts('a');
   task.proposal = { enterpriseFactVersion: 'enterprise-facts-stale' };
   await blocked('enterprise_fact_version');

@@ -10,12 +10,14 @@ process.env.NODE_ENV = 'test';
 process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
 process.env.TEST_ONLY_EXTERNAL_EFFECT_LEASE_FALLBACK = 'true';
 const { platformAdCreativesRouter } = await import('../routes/platformAdCreatives.js');
+const { platformAdExecutionRouter } = await import('../routes/platformAdExecution.js');
 const { platformAdMetricsRouter } = await import('../routes/platformAdMetrics.js');
 const { platformAdConnectionsRouter } = await import('../routes/platformAdConnections.js');
 const { issueLocalIdentityTokenForTest } = await import('../auth/localIdentity.js');
 const { store } = await import('../storage/index.js');
 const app = express(); app.use(express.json()); app.use('/ads', platformAdCreativesRouter);
 app.use('/ads', platformAdMetricsRouter);
+app.use('/ads', platformAdExecutionRouter);
 app.use('/ads', platformAdConnectionsRouter);
 const server = app.listen(0, '127.0.0.1');
 await new Promise<void>(resolve => server.once('listening', resolve));
@@ -68,6 +70,14 @@ try {
   await store.create('platform_ad_tasks', { id: 'foreign-task', tenant_id: 'tenant-b', name: 'private' });
   await store.create('platform_ad_creatives', { id: 'foreign-creative', tenant_id: 'tenant-b', taskId: 'foreign-task', fileRef: 'private-reference' });
   await store.create('platform_ad_executions', { id: 'foreign-execution', tenant_id: 'tenant-b', taskId: 'foreign-task', status: 'VERIFIED' });
+  const recoveryPath = '/tasks/foreign-task/executions/foreign-execution/reconcile';
+  assert.equal((await fetch(base + recoveryPath, { method: 'POST' })).status, 401);
+  assert.equal((await fetch(base + recoveryPath, { method: 'POST', headers: auth('customer_service'), body: '{}' })).status, 403);
+  const foreignRecovery = await fetch(base + recoveryPath, { method: 'POST', headers: auth(), body: '{}' });
+  assert.equal(foreignRecovery.status, 404);
+  assert.equal((await foreignRecovery.json()).code, 'NOT_FOUND');
+  assert.equal((await store.getById<any>('platform_ad_executions', 'foreign-execution'))?.status, 'VERIFIED');
+
   assert.equal((await fetch(base + '/performance/foreign-execution', { headers: auth() })).status, 404);
   for (const route of ['/creatives/foreign-creative/media', '/creatives/foreign-creative/platform-preview', '/creative-library/foreign-execution/report']) {
     const response = await fetch(base + route, { headers: auth() });

@@ -34,3 +34,14 @@ await fixture(true, async base => {
   assert.ok(!calls.at(-1).url.includes('private-description'));
 });
 console.log('Callback relay default-deny, exact path, GET-only, query validation and credential isolation passed (mock upstream only).');
+for (const upstreamPort of [0, 65536, -1, 8990.1, '8990']) assert.throws(() => createAdCallbackRelay({ upstreamPort }), /port/);
+const currentPreview = createAdCallbackRelay({ enabled: true, upstreamPort: 8990, transport });
+await new Promise(resolve => currentPreview.listen(0, '127.0.0.1', resolve));
+try {
+  const base = `http://127.0.0.1:${currentPreview.address().port}`;
+  assert.equal((await fetch(base + callbackPath + params)).status, 200);
+  assert.equal(new URL(calls.at(-1).url).origin, 'http://127.0.0.1:8990');
+  assert.equal(new URL(calls.at(-1).url).pathname, callbackPath);
+  assert.equal((await fetch(base + '/api/overseas/auth/login')).status, 404);
+} finally { await new Promise(resolve => currentPreview.close(resolve)); }
+console.log('Current preview port is supported without exposing arbitrary hosts or API paths.');

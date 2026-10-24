@@ -396,3 +396,182 @@
 5. **正式运行资格验收**：固定生产 HTTPS 与隐私/数据删除入口真正可达后，由真实外部企业管理员（非本应用管理员/开发者/测试员）完成授权；至少两家独立企业验证账户/主页选择、保存重登、越权拒绝、历史报表与素材对应、解绑/撤权。仅现有资产只读，不创建/激活广告，不操作账单。正式部署另行授权。
 
 本轮仅追加验收记录，`git diff --check` 为文档变更检查；没有以单元测试代替审核批准或生产验收。当前结论仍为“开发与受控内测，未达到多企业正式上线资格”。
+
+
+### 当前投流预览恢复与客户授权缺口（2026-10-24）
+
+- 本轮工作树 `/Users/julia1/Documents/ChatGPT/1024真实投流测试`，分支 `feature/platform-ads-chain-20261024`，HEAD `89b175109149d4551aeb3ce590fe9c42c46bf23c`；保留已有未提交修复。本节只记录该功能预览，不推进或重判 governance 中的共享集成基线。
+- 从原 Meta 应用 `2204714410308727` 的官方后台复用 App ID、现有 App Secret、Business Login 配置 `1667534818305334`，仅保存到忽略的本地私有 `.env.local`（0600）。没有新建应用、重置密钥、把凭据写入源码或新增权限。一次工具输出意外包含密钥，已告知用户；需由用户在官方后台轮换，再同步本地配置。本文不记录密钥值。
+- 用户当次确认后，尝试追加 `http://localhost:5197/api/overseas/platform-ads/oauth/meta/callback` 并保存。刷新后该地址没有保留，URI 检查明确显示无效；旧 HTTPS 隧道回调仍在。无法据此认定本机 HTTP 回调受支持。严格模式及强制 HTTPS 未改，没有重开临时公网隧道或公开服务。
+- 仅重启本地 8990 后端加载已恢复配置，8991 数据库、5197 前端不更换；连接接口返回 3 个连接，OAuth 缺项缩小为 `META_ADS_REDIRECT_URI`，仍为未就绪。Chrome 刷新后登录有效，4 个计划和原有平台历史可见。未发起 OAuth 授权交换、绑定写入、广告创建/启用、预算或账单操作。
+- 与 `tmp/platform-ads-chain/backup-before-workflow-fix/data.db` 只读逐行比较，users 1、tenants 1、connections 3、tasks 4、creatives 4、executions 4 均相同。安全恢复点为该备份和 `.env.local.before-meta-reconnect`；不得覆盖恢复后的运行数据。
+- 实际运行 `node node_modules/tsx/dist/cli.mjs server/platformAds/oauthConfig.test.ts`、`node node_modules/tsx/dist/cli.mjs server/platformAds/oauth.test.ts` 均通过（使用缓存 Node PATH；离线桩，不是 Meta E2E）。本轮没有生产代码变更，不重述上一轮 lint/架构/构建为本轮新证据。
+
+产品验收仍需补齐，以下为缺口而非已实现能力：
+
+1. 灵枢登录独立于 Meta 授权。授权过期/撤销后继续允许登录和查看历史，仅阻止需要该权限的投流动作；保留账户、计划、素材及回执关联，重新授权更新原连接。
+2. 使用平台维护的固定正式 HTTPS 回调和服务端私有密钥，用户只在 Meta 官方页面登录、选账户和主页。开发电脑、随机隧道及人工粘贴令牌不作为客户常规入口；正式域名与部署另行授权。
+3. 补齐令牌有效期、数据访问期、已授权限及健康状态；按 Meta 对该令牌类型实际支持的机制续期，无法续期时提供一次重新授权。当前 `oauth.ts` 仅交换 code 并加密保存，广告连接没有上述生命周期字段，不能声称永久有效。
+4. 补齐取消授权/撤权、数据删除、到期提示和管理员诊断。用户只看明确原因及下一步，例如“授权已失效，重新授权”“缺少主页权限”“平台连接暂不可用”；不能把平台配置错误归咎于用户密码。
+5. 后端已有租户/用户/配置绑定的短期 OAuth 会话、抗重放及同账户更新逻辑；前端授权进度目前仅进程内 Map，刷新恢复及中断继续仍需实现。验收应覆盖刷新、关弹窗、取消、回调超时、跨租户拒绝、重授权不重复建连接。
+6. 本轮 Meta 用例页仍显示 Marketing API 有限访问权限，各广告权限为准备测试；这不证明外部企业访问资格。须完成真实主体与所需审核，并由非应用角色的外部企业管理员只读验收，才能认定面向客户可用。
+
+本轮结论：原配置部分恢复、账号和业务数据保留；有效回调与真实绑定闭环仍阻塞，未执行真实投放或部署。
+
+
+### 授权恢复实现与本地真实 schema 验证（2026-10-24）
+
+本节取代上一节的“代码缺口”状态，仍不代表正式 Meta 绑定或上线通过。工作树与分支不变，HEAD 仍为 `89b175109149d4551aeb3ce590fe9c42c46bf23c`，源码未提交；保留之前计划定位/人工回执修复。未更新共享集成基线。
+
+#### 已实现的代码与边界
+
+- `server/platformAds/authorizationLifecycle.ts`、`connections.ts`：保存实际令牌/数据访问有效期、权限及健康；七天内到期派生提示；明确过期、撤权、缺权限或损坏元数据阻断凭证使用。旧无元数据连接显示待检查并保留兼容，不假定有效。健康检查仅 GET，失败不覆盖旧证据，迟到检查不能覆盖新凭证。重连按企业/平台/账户使用持久锁更新同一连接 ID。
+- `oauth.ts`、`oauthSessions.ts`：服务端按当前用户/企业/配置恢复授权，恢复不暴露 token/state/URL；取消、交换、保存共用 session 锁。取消及过期清理临时令牌，前端迟到回包不复活。保守使用 Meta 实际有效期，不对未知类型的 Business Login 令牌执行自动长效交换；重新授权是当前续期方式。
+- `oauthPrivacy.ts`、`platformAdConnections.ts`：HMAC 签名撤权/删除回调、事件时间校验、重复请求幂等、跨应用/身份隔离，持久撤权屏障先于凭证清理。旧撤权事件不覆盖新授权；待核实删除请求持续阻断再授权。删除回执真实为 pending，不假称业务数据已经删除；需负责人核实处理并留证，尚无自助完成业务数据删除功能。
+- `authorizationMonitor.ts`、既有 `runtime/backgroundJobs.ts`：仅 background job 角色进行本地过期会话清理；只有 `PLATFORM_ADS_AUTH_HEALTH_ENABLED=true` 才启用只读 Meta 健康扫描，每小时唤醒、每连接至少间隔一天。当前本地仍为 web，扫描关闭；没有后台真实 Meta 调用或外部通知。
+- `AdMetaConnectionGuide.tsx`、`AdAccountConnections.tsx`、`AdAuthorizationHealth.tsx`：刷新恢复、换登录人隔离、明确授权状态/检查/重新授权入口。灵枢登录和历史读取独立，保留用户要求删除的大段提示区域为空，不恢复旧解释框。
+- `oauthDeploymentReadiness.ts`、`scripts/check-platform-ads-readiness.ts`：统一校验现有 OAuth 契约和配置缺项；正式固定 HTTPS 候选与供应商注册、可达、外部企业资格、真实绑定分别记录，不能因环境变量齐全而声称 productionReady。
+- 设计决定见 `docs/architecture/adr/2026-10-24-meta-ads-authorization-recovery.md`。本轮测试由投流 runner 自动发现 server 测试，并显式加入前端健康状态测试。
+
+#### 两份本地增量迁移与验证
+
+用户当次明确允许只迁移当前本地预览。先保留一致性备份 `tmp/platform-ads-chain/backup-before-auth-lifecycle`（data.db 与私有运行配置，0600），在 `auth-migration-rehearsal` 复制库验证，再短暂停止本地 8990/8991、使用仅包含本轮迁移的 `auth-migration-only` 目录运行 `pocketbase migrate up --automigrate=false`；前端 5197 保留，随后恢复同数据目录的本地服务。没有操作生产或历史来源数据库。
+
+1. `1792800000_platform_ad_authorization_lifecycle.js` 增加隐私请求表。真实 PocketBase 检查发现其 try/catch 判断缺字段不兼容：`getByName` 返回 null，部分字段未添加。保留已应用文件字节及校验和，不改写历史。
+2. 追加 `1792800001_repair_platform_ad_authorization_fields.js`：按真实 null 判断补缺，使用 Go Field 的 `type()` 校验现存字段。也修复同语义导致的既有 account context/defaultPage 漏字段，只添加缺失字段、类型不符拒绝，不覆盖现存值。先在副本验证失败检查点，再修正尚未成功应用的新修复文件并验证通过；最终副本和本地均应用成功。
+3. 修正内存测试使其真实模拟 null 与 Go type()；不能再用错误模拟掩盖升级问题。真实本地 REST schema 审计最终 `ready=true`、17 个投流集合、issues=[]、mutated=false；证据 `tmp/platform-ads-chain/auth-lifecycle-live-schema.json`。
+4. 两份增量已追加到 checksum manifest，全部 199 份迁移只读清单通过；未修改旧 197 份迁移。修复 down 保留被收养字段，不用破坏性回退恢复数据。
+5. 原列逐行对比备份：users 1、tenants 1、connections 3、tasks 4、creatives 4、executions 4、OAuth states 0 均相同。新增隐私表 0 行；账号/业务关联和私有令牌原值保持。Chrome 已登录且原计划、历史报表与授权弹窗可见，旧授权状态真实显示待检查。
+
+实际验证：`pnpm run test:platform-ads` 53 文件通过；最终 `pnpm run lint` 通过；`ARCHITECTURE_BASE_REF=89b17510 pnpm run check:architecture` 通过（2692 production TS，未增加预算）；`pnpm run check:digital-employee-migrations` 199 份通过；`pnpm run test:migration-guard` 通过；`pnpm run build` 通过（Studio 368850/485000）；修复后的 `schemaMigration.test.ts` 单独通过；`git diff --check` 通过。各日志在 `tmp/platform-ads-chain/auth-lifecycle-*.log`。未跑整仓 quality/verify，未声明真实 Meta E2E。真实 run/task 标识：无，本轮无新投放。
+
+#### lingshu.site 正式接入准备（未执行）
+
+用户确认该域名已运行在服务器上，可复用现有服务器。当前机器对首页和 OAuth 回调的 HTTPS 只读访问均 SSL connection timeout；这仅表明当前网络无法验证可达，不证明服务器故障，也不作为关闭 TLS 或改公网保护的理由。没有修改 DNS、服务器或 Meta 配置。
+
+待获正式部署授权后，使用仓库 AGENTS 的现有 Ubuntu 交互 SSH → GitHub HTTPS `git pull --ff-only` → `bash deploy/update.sh` 唯一路径；先验证服务器 origin、分支、干净与差异。不得把当前未提交功能代码视作已部署版本，也不能将本地 OAuth state 发送到不共享会话库的线上后端。
+
+正式服务器私有配置候选（App Secret 与加密 key 不写文档、不复制给用户）：`META_ADS_APP_ID=2204714410308727`、`META_ADS_LOGIN_MODE=business`、`META_ADS_LOGIN_CONFIG_ID=1667534818305334`、`META_ADS_REDIRECT_URI=https://lingshu.site/api/overseas/platform-ads/oauth/meta/callback`、`META_ADS_OAUTH_ENVIRONMENT=production`，API 版本使用原配置并单独验证支持范围。生产 env、存储与密钥必须持久、安全并与本地隔离。先修复当前密钥曾在工具输出泄露的问题，由用户在官方后台轮换后同步私有运行配置。
+
+服务器版本、HTTPS 路由与配置就绪后，才在原 Meta 应用申请保存以下精确地址，并保留严格匹配与 HTTPS：
+
+- 登录回调：`https://lingshu.site/api/overseas/platform-ads/oauth/meta/callback`
+- 取消授权：`https://lingshu.site/api/overseas/platform-ads/oauth/meta/deauthorize`
+- 删除请求：`https://lingshu.site/api/overseas/platform-ads/oauth/meta/data-deletion`
+
+浏览器保存安全配置和附带条款须当次确认；密钥轮换由用户操作。没有提交公司验证、技术提供方或权限审核；负责人须确认真实主体、隐私/删除政策及实际处理能力。五项权限审核材料按实际功能演示：ads_read读取历史、ads_management管理用户确认的广告账户、pages_show_list选主页、pages_read_engagement核对主页、pages_manage_ads使用获授权主页身份；不得扩大不需要的权限。
+
+完成审核与配置后，至少两家非应用角色外部企业只读验收授权、选账户/主页、保存重登、刷新继续、越权拒绝、重新授权同 ID、撤权及隐私请求状态；不创建、启用广告，不改预算或账单。当前结论：代码及本地恢复验证通过；固定线上回调接入、Meta 外部客户资格、真实绑定及删除业务处理仍未验收。
+
+最后补充：生产 OAuth 配置现明确拒绝本机、IP 和已知临时隧道域名；oauthConfig 与 oauthDeploymentReadiness 定向回归通过。它不能代替正式域名所有权、TLS、路由和 Meta 注册的外部验证。
+
+
+### 本地产品化优先、线上暂停（2026-10-24，用户追加要求）
+
+用户明确先完成本地产品化，暂不部署。本轮没有修改线上服务器、DNS、Meta 配置或审核状态；只读核对仍看到原临时隧道回调，正式回调未登记。共享基线和 HEAD 不变，仍为当前功能分支未提交改动。
+
+新增 `oauthCustomerJourney.test.ts`：真实本地 HTTP、严格禁止意外外部网络、隔离临时持久库，模拟 Graph 回应；从新客户授权开始，经 callback、服务子进程重启后恢复 ready 会话、选账户/主页、连接、fresh 应用登录身份、同 ID 重授权、再次子进程重启读回、跨用户/企业拒绝、expiry/revoke 门禁，核对历史逐行不变。供应商模拟仅两次令牌交换，没有广告/素材上传/预算/启用请求；不是 Meta 真实 E2E。补齐临时授权检查故障保留证据并返回503、已失效业务状态返回409的区分。
+
+前端本轮收口：配置缺失用一行可访问状态说明原因和下一步；重授权锁定原广告账户，未返回原账户则禁止继续；检查失败明确保留上次检查时间及结果；所有旧账号的迟到成功响应（OAuth、手动连接、验证、计划、健康、同步、资源、导入）不得写回新账号 UI。新增 `AdAccountConnections.recovery.test.tsx` 并注册投流 runner，原 guide 测试增加原账户筛选。
+
+实际浏览 Chrome 时发现现有本地 `trend_videos` 缺 `updated` 字段，灵感列表队列查询按该字段排序返回400；Express 4 的未捕获 async 拒绝退出共享后端，导致投流断线。仅在 `videoListingRoutes.ts` 为两个 GET 加显式错误边界，返回可重试503 / VIDEO_LIST_UNAVAILABLE、Retry-After、no-store，不伪造空列表或改 schema/数据。新 `videoListingFailure.test.ts` 验证同进程依赖故障后健康仍200，恢复后原记录返回；原列表鉴权回归也通过。当前本地实际顺序请求 `/videos?contentFormat=video` 为503，再请求 `/platform-ads/connections` 为200且3连接，后端未退出。灵感领域缺字段仍是已知限制，本轮不把它算作该领域完全可用。
+
+定向新客户旅程、两个前端恢复文件、两个视频路由测试均通过；TypeScript、架构（仍2692 production TS）、构建通过，Studio 368850/485000。投流全量最终结果见 `tmp/platform-ads-chain/local-productization-tests.log`；本轮真实账号/连接/计划/素材/回执原列再次与安全备份一致（1/3/4/4/4）。新 Chrome 本地投流标签独立于用户正在浏览的灵感页，原登录保留，截图 `tmp/platform-ads-chain/local-productization-chrome.png`。
+
+交付仍分开判断：本地产品逻辑/异常恢复验证、外部 Meta 真实授权、正式站点上线。当前预览因有效回调缺失继续明确显示不可开始真实授权；不能把模拟供应商测试写成新用户已真实绑定。正式部署及生产迁移目前没有授权，不执行。
+
+
+### HTTPS 开发回调接入继续（2026-10-24，登录待恢复）
+
+用户经侧会话明确转告主会话：允许在 Chrome 继续腾讯云开发回调接入及本地真实 Meta 绑定验收；不授权业务部署/生产迁移/投放或收费资源。安全敏感配置保存需当次确认；开发子域名尚未创建。
+
+Chrome 实际检查：腾讯云 OrcaTerm 显示登录失败、0 会话；新控制台页跳回官方登录页。已请求用户正常登录，没有抓取浏览器凭据、变更权限、创建 DNS/证书/隧道或修改服务器。
+
+原精确路径回调网关新增仅可配置的本机上游端口，默认8890保留，当前以 `--upstream-port=8990` 启动在127.0.0.1:8892，仍未加启用转发标志。既有隔离测试及当前端口测试通过；真实本机探测根路径、数据库/API登录路径均404，回调503（转发未启用）。没有有效state/code进入业务后端，没有 Meta 调用。下一步需腾讯云登录后只读核对实际实例、域名控制权和现有HTTPS入口，再准备可审阅的窄范围通道配置并确认保存。
+
+
+### 开发 DNS 已保存，网关仅暂存校验（2026-10-24）
+
+用户完成腾讯云登录，并当次明确授权保存开发 DNS：`ads-auth-dev.lingshu.site` A → `43.163.109.159`，TTL600。Chrome 已显示添加成功及正常记录；未改其他记录。只读发现根域名所指实例已过期待回收，运行中的现有 preview 实例为上述 IP，不续费或修改业务部署。
+
+已通过 Chrome OrcaTerm 在运行实例的 `/tmp/lingshu-ads-dev-proposal` 暂存公开配置并使用现有 Caddy v2.11.4 执行 validate，结果0 / Valid configuration；未应用 Caddy、SSHD、systemd、用户或隧道配置。服务器主机公钥指纹通过当前已登录终端与本机 keyscan 一致核验；没有登录私钥传出本机。
+
+待批准配置见 `scripts/platform-ads-dev-callback/`：独立开发域名的唯一 GET OAuth 回调；Caddy 查询凭证日志脱敏；私网桥接172.18.0.1:18893；只允许127.0.0.1:18892反向转发且无 Shell 的独立SSH用户及8小时临时公钥。拟使用现有 Caddy 免费自动证书、原位保留现有 Caddyfile 路由并平滑重载，不重建业务容器。启用前仍须当次确认。
+
+实际回归：`python3 -B scripts/platform-ads-dev-callback/bridge_test.py`、`node --test scripts/platform-ads-oauth-relay.test.mjs`、`git diff --check`通过；均为模拟上游/配置校验，尚无真实 Meta 授权。DNS 成功不表示 HTTPS、隧道或绑定完成。本地转发仍关闭，未部署业务、迁移生产或真实投放。
+
+
+### 开发网关已获授权并启用（2026-10-24）
+
+用户当次允许启用准确范围的开发回调网关、免费 HTTPS、私网桥接及8小时受限隧道。服务器备份 `/var/backups/lingshu-ads-dev-20261024T070912Z` 保存原 Caddyfile、应用/worker/PB/Caddy 容器 ID 和启动时间；应用后逐字相同。新建独立 `ads-dev-tunnel` 用户、受限 Match 配置、独立桥接 systemd 服务并平滑重载 Caddy/SSH；没有业务部署或数据库写入。
+
+首个失败检查点：SSH 公钥选项包含不接受的端口0，单用户临时 DEBUG3 日志明确 `bad key options: invalid permission port`。只修正为合法端口1，并恢复日志级别；SSHD `PermitOpen none` 仍禁止全部本地转发，`AllowTcpForwarding remote` / `PermitListen 127.0.0.1:18892` / `MaxSessions 0` / nologin 保留。修正后同一密钥成功保持隧道；没有关闭腾讯云安全防护。临时密钥到期时间为2026-10-24 22:38:32（北京时间）；私钥仅本地0600。
+
+本机精确路径 relay 已显式启用，上游8990；私有 `.env.local` 已备份并增加开发HTTPS回调，只重启本地后端，数据库和前端不动。公开 HTTPS 正常校验证书，根路径、数据库及登录API均404，缺参数回调400；虚构 code/不存在state通过完整通道到达本地并409/AUTH_REQUIRED，没有触发真实Meta请求。公开响应不回显凭证；检查现有 Caddy 容器日志未出现虚构探测code。证据 `tmp/platform-ads-chain/dev-callback-proposal/transport-check.json`，服务active。
+
+原 Meta 应用设置页仅填入精确开发回调，旧回调、严格模式和HTTPS保留；尚未点击保存，等待该安全敏感动作的单独当次确认。真实 Meta 绑定与外部客户资格仍未验收。
+
+### Chrome 真实 Meta 绑定验收（2026-10-24）
+
+已获当次许可后点击原应用“保存更改”，Meta 显示“更改已保存”：精确开发回调新增成功，旧回调和强制HTTPS/严格模式均保留。开发与生产回调长期分离，生产候选 `https://lingshu.site/api/overseas/platform-ads/oauth/meta/callback` 本轮不登记、不启用；不在授权进行中切换配置，不将本地会话交给生产存储。
+
+真实 Chrome 流程：沿用 Lucy Chang 先前权限设置，Meta 返回两个广告账户；选择原 `1368550458638225` 与主页 `1323567870837055`，确认保存成功。连接沿用 `vhc0wqyvrizbke4`，总数3。取消临时会话不删除原连接，再发起第二次真实授权、在流程中刷新 Chrome、从服务端恢复 ready 会话，再选同一账户/主页保存，仍同一连接ID且授权healthy。最近会话证据：`gfrq86bakbvze4d` cancelled、`4i6g50ofacqaam3` ready；不记录code/state/token。原账号重新调用登录接口取得新应用登录令牌后能读回同一连接与主页；没有退出或覆盖 Chrome 的现有账号。实际到期信息为数据访问期限2027-01-22，不能宣称永久令牌。
+
+数据保留：与迁移前一致备份逐列比较，原用户1、计划4、素材4、执行回执4全部原列一致；连接ID/广告账户关系全部一致，目标连接只按授权更新加密凭证、授权元数据及主页。证据 `dev-callback-proposal/final-data-preservation.json`、`fresh-login-verification.json`、`real-meta-reauthorized.png`。没有素材上传、创建/启用广告、预算/账单写入或业务部署。
+
+公开证书通过默认SSL信任链和域名校验，实际颁发方 Let's Encrypt YE1，SAN为开发域名，见 `https-certificate.json`。服务器已登记 `lingshu-ads-dev-expiry.timer`，2026-10-24 22:38:32（北京时间）停止独立桥接并终止该专用用户进程，避免仅公钥到期却留下已连接隧道；不影响业务服务。此后已有绑定仍在，但新开发授权须重新获得受限通道时段授权。
+
+实际验证：`python3 -B scripts/platform-ads-dev-callback/bridge_test.py`、`node --test scripts/platform-ads-oauth-relay.test.mjs`、`pnpm run lint`、`ARCHITECTURE_BASE_REF=89b17510 pnpm run check:architecture`、`git diff --check`通过。这里只确认指定现有应用角色/账号的本地真实授权，不是普通外部客户审核通过，不是整个投流真实E2E或发布就绪。源码 HEAD 保持 `89b175109149d4551aeb3ce590fe9c42c46bf23c`，当前改动未提交。
+
+已知体验缺口：两次授权回调在到达本地并成功换取账户后，Chrome 弹窗均显示 `ERR_BLOCKED_BY_CLIENT`，本地依靠服务端轮询继续成功，未绕过浏览器防护。浏览器工具拒绝访问 `chrome://extensions/`；已请用户在 Chrome 手动确认拦截来源，没有通过其他接口绕过工具限制。该问题须继续定位，不能据主流程成功写成整个浏览器体验无缺口。普通非应用角色外部企业权限资格及生产部署仍未验收。
+
+安全恢复点：本机私有环境备份 `tmp/platform-ads-chain/dev-callback-proposal/env-before-https`；云端 `/var/backups/lingshu-ads-dev-20261024T070912Z`。如需收回本轮入口，先停止独立桥接/专用隧道；回滚现有 Caddyfile 必须先核对之后无他人改动，按原inode写回备份并验证/平滑重载，只操作本轮独立配置。不得盲目恢复数据库、删除连接或重建业务容器。DNS、Meta旧回调、生产站点保持原状。
+
+### 旧回调重访提示修复（2026-10-24 15:38，北京时间）
+
+用户截图中的英文由开发 bridge 返回。将 Chrome 可见回调的state按原配置context指纹匹配（不持久化明文state/code），确认对应 `4i6g50ofacqaam3`，其有效期截至15:29:01；此前真实连接与重授权已成功，重访时会话expired，原连接 `vhc0wqyvrizbke4` 仍connected。当前三个层级（本地后端、relay、公开HTTPS）的虚构未知state探测均409，通道不是不可达。此前把 Chrome `ERR_BLOCKED_BY_CLIENT` 当作主要待排原因并要求用户查扩展，证据不充分；本轮优先修复已证实的旧回调重访和网关反馈问题，没有修改浏览器防护。
+
+改动范围：`scripts/platform-ads-dev-callback/bridge.py`、`bridge_test.py`、新增 `result_page.py`、`Caddyfile.fragment`。同一个精确GET回调路径处理完后303到只含静态result的地址，清除code/state；刷新静态结果不调用上游、不再交换授权码。成功仅提示“回调已处理、返回继续或检查连接”，不冒充账户绑定成功；过期保持409、通道不可达保持503，取消、无效、限流和故障分别反馈。结果页面沿用产品规范的Result终态语义、白底/中性色、渐变主操作，独立传输页不加载业务应用/远程依赖/脚本，仅准许固定CSS内容哈希；返回地址固定本地5197，禁止任意next/returnUrl。
+
+只更新已批准开发网关：原文件哈希并发检查、Caddy候选validate通过后原inode写入、平滑重载Caddy与重启独立bridge；应用/worker/PB/Caddy容器ID和启动时间均未变。安全备份 `/var/backups/lingshu-ads-dev-20261024T070912Z/result-fix-073626`。SSH、DNS、Meta白名单、22:38到期关闭时段和业务数据未改。Chrome实际刷新原旧回调后显示中文“此授权链接已使用或过期”，地址无code/state，再次刷新稳定；点击“返回本地灵枢”恢复原登录，原账户执行只读Meta授权检查仍healthy，检查时间15:37:34。
+
+证据：`tmp/platform-ads-chain/dev-callback-proposal/result-fixed-chrome.png`、`result-fix-returned-preview.png`、`result-fix-http.json`。本轮不新增真实OAuth、不上传/创建/启用广告、不修改预算账单。当前功能分支HEAD仍89b175109149d4551aeb3ce590fe9c42c46bf23c，保留既有未提交改动。共享BASELINE文档另指向集成工作树及02f5a112等提交，本轮不据此推断当前分支已同步，不作基线推进/合并判断。
+
+本次结果页修复实际检查：`python3 -B scripts/platform-ads-dev-callback/bridge_test.py`、`node --test scripts/platform-ads-oauth-relay.test.mjs`、`pnpm run lint`、`ARCHITECTURE_BASE_REF=89b17510 pnpm run check:architecture`、`git diff --check`均通过。结果页用模拟上游覆盖重访409、断线503、取消、静态刷新零上游请求、凭证/重定向参数隔离；公开实际GET验证同状态语义，非回调API仍404。未重新运行全量quality/verify或真实投放验收。
+
+### 投流三页闭环修复与重启验收（2026-10-24）
+
+工作位置 `/Users/julia1/Documents/ChatGPT/1024真实投流测试`，功能分支 `feature/platform-ads-chain-20261024`，HEAD `89b175109149d4551aeb3ce590fe9c42c46bf23c`；全部原脏改动保留，未提交/合并/推送，未据共享BASELINE中的另一集成树推断本分支已同步。
+
+本轮修复：
+
+- 素材页按taskId精确查目录，换计划清除旧筛选及详情；旧计划不再被第一页20条限制隐藏。
+- 执行回执独立于审批/托管记录加载；辅助接口失败或挂起仍能看回执，执行历史读取失败时禁止把未知当无历史并重新创建。
+- 预检使用本地授权元数据阻断过期/撤权/缺权限/损坏信息，保留legacy兼容提示；无供应商调用或令牌解密。
+- 创建前在既有result JSON保存createSnapshot；人工对账依据原快照严格核对视频、Page、链接、预算、目标、地域、版位、排期。旧回执缺证据继续待核对，不新增迁移或回填假证据。
+- 计划与回执全页读取，避免第201条后历史/UNKNOWN消失；完整回执目录不再误报截断。
+- adsTaskId显式导航、当前身份重新鉴权恢复及迟到响应隔离；加载失败显示错误与重试，保留已有快照，不在开发模式吞错或显示“第一份计划”。
+
+改动领域文件：`server/platformAds/{execution,preflight,tasks,creativeLibrary}.ts`及测试，新增`executionReceiptRecoveryRoutes.test.ts`；前端`AdCreativeLibrary.tsx`、`PlatformAdsOperations.tsx`、`PlatformAdsPage.tsx`，新增`src/lib/useAdPlanNavigation.ts`与行为测试，既有`AdWorkflowRecovery.test.tsx`、页面合同测试及投流runner更新。执行快照保存在既有JSON，无本轮迁移。
+
+实际命令均退出0：`node scripts/test-platform-ads.mjs`（57文件）、`pnpm run lint`、`ARCHITECTURE_BASE_REF=89b17510 pnpm run check:architecture`（2693 production TS及ratchet通过）、`pnpm run build`（Studio368850/485000及导入边界通过）。日志在`tmp/platform-ads-chain/three-page-audit/{tests,lint,architecture,build}.log`。构建含通用大chunk提示，不是失败；未声明整个仓库quality/verify或供应商写入验收。
+
+已只重启本地后端加载上述源码，PID由62827变为84174；PB39127与Vite26936未变。重启前只读一致备份`three-page-audit/before-restart.db`。重启后原1用户、3连接、4计划、4素材、4执行回执逐列一致，见`after-restart-data.json`；原账号fresh登录和四计划的素材/回执/定向目录均200，见`restarted-api.json`。
+
+运行接口验证：四绑定源视频均200且字节17790、SHA256相同；当前企业成片creative-selection返回200且精确SHA已核对。各计划preflight仅本地读取，已有创建/UNKNOWN均阻断重复创建。旧UNKNOWN执行核对409/RECONCILIATION_REQUIRED，原因是资源不完整，原状态保留且没有重新创建。见`runtime-check.json`。未调用上传/execute/AI生成/启用/预算/账单接口，未部署任何业务或改生产。
+
+Chrome旧连接连续超时；原生窗口读取曾受其他网页焦点变化影响。只针对localhost:5197恢复控制，未操作其他站点、禁用防护或访问受限制扩展设置。当前连接实例重新绑定后，子Agent已建立独立验收标签1401422346并读取原账号、四计划，继续实际三页流程。浏览器最终结果随后补记；本段不把接口/模拟测试当作Chrome完整验收。
+
+#### Chrome 最终三页验收与选材显示补齐
+
+Chrome 已恢复，验收标签1401422346保留原账号登录。实际从当前企业选择原MP4、选择原CNY广告账户、三步确认并保存唯一新草稿 `cymhxg2kqoqdr7y`（“本地闭环验收·不投放·20261024”，draft/version1）。没有创建绑定或上传。原1用户、3广告连接、4计划、4素材、4执行回执逐列不变，仅增加此草稿，见 `tmp/platform-ads-chain/three-page-audit/final-data-preservation.json`。
+
+实际发现并修复：新草稿保存了materialSource但尚未绑定，素材页此前显示空白。现将当前身份恢复的计划选择传入素材目录，复用原源视频组件，显示“已选素材 · 尚未绑定/上传”、原名称及返回原计划入口；不生成假binding、平台videoId或表现数据。换计划清除旧源预览；9项AdWorkflowRecovery行为测试包含选择可见、换计划隔离、缺选择原空态及无上传/绑定/虚构报告请求。
+
+Chrome最终结果：计划创编、投放数据、素材管理三个页面分别刷新后均保留 `adsTaskId=cymhxg2kqoqdr7y`；计划详情正确，投放数据默认本地计划回执并保留计划范围，无广告指标保持未投放语义。素材显示“文件可用 · 可预览”，只读源视频实际加载6秒、720×1280、readyState4且无error。旧计划 `y951p1yaw2mxipp` 的UNKNOWN回执和“核对这条回执”入口可见；浏览器没有点击执行、上传或广告管理保存。最终Chrome停留 `http://localhost:5197/?page=adsCreatives&adsTaskId=cymhxg2kqoqdr7y`。
+
+证据：`tmp/platform-ads-chain/acceptance-ui-evidence.json`；截图 `acceptance-draft-saved.png`、`acceptance-plan-refresh.png`、`acceptance-data-refresh-final.png`、`acceptance-selected-material-refresh-fixed.png`、`acceptance-selected-source-video.png`、`acceptance-unknown-receipt-final.png`、`acceptance-local-final.png`（均位于tmp/platform-ads-chain）。
+
+仍未跑通/本轮未执行：旧UNKNOWN部分资源缺失，不能安全核对成成功，需要原平台人工资源证据；新草稿没有上传、平台广告资源或真实投放回执，不能据此确认真实投放E2E；非应用角色新客户的Meta权限审核/真实绑定仍未验收；生产回调和部署未执行。历史现有角色真实绑定成功与本轮本地三页验收分别记录，不代表发布就绪。开发回调受限通道原定22:38:32到期，不能作为长期生产入口。安全恢复点为只读一致备份 `three-page-audit/before-restart.db`，无需恢复数据库，保留现有数据。
+
+最终选材修复后重新执行：`node scripts/test-platform-ads.mjs` 全部57文件退出0（含9项工作流恢复行为测试）；`pnpm run lint`、`ARCHITECTURE_BASE_REF=89b17510 pnpm run check:architecture`、`pnpm run build` 均退出0，`git diff --check`通过。完整回归曾发现旧源码合同断言不兼容新增requestTaskId隔离条件，已更新断言，6项定向通过后重新跑完整57文件通过。最终日志覆盖到 `three-page-audit/{tests,lint,architecture,build}.log`。没有运行全仓quality/verify，也没有把本地模拟测试当作真实投放验收。HEAD仍89b175109149d4551aeb3ce590fe9c42c46bf23c，源码修复未提交。
