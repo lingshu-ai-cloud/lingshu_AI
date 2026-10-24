@@ -83,5 +83,51 @@
 .ls-calendar-details > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; }
 .ls-calendar-details dt { color: #71717a; }
 .ls-calendar-details dd { margin: 0; color: #171717; overflow-wrap: anywhere; }
+
+/* Agent planning keeps FullCalendar's native time grid and interaction model,
+   while using the lighter, denser visual language of a modern work calendar. */
+.ls-calendar-agent-view { padding: 12px 16px 16px; }
+.ls-calendar-agent-view .ls-calendar-toolbar { min-height: 44px; }
+.ls-calendar-agent-view .ls-calendar-toolbar h3 { font-size: 18px; font-weight: 650; letter-spacing: -.01em; }
+.ls-calendar-agent-view .ls-calendar-meta { margin: 8px 0 12px; }
+.ls-calendar-agent-view .ls-calendar-surface { border: 1px solid var(--color-border, #e4e4e7); border-radius: 8px; background: #fff; }
+.ls-calendar-agent-view .fc-scrollgrid { border: 0; }
+.ls-calendar-agent-view .fc-col-header-cell { background: #fff; }
+.ls-calendar-agent-view .fc-col-header-cell-cushion { padding: 10px 6px; color: #52525b; font-size: 12px; font-weight: 600; }
+.ls-calendar-agent-view .fc-timegrid-slot { height: 52px; border-color: #eeeeef; }
+.ls-calendar-agent-view .fc-timegrid-slot-minor { border-top-style: solid; }
+.ls-calendar-agent-view .fc-timegrid-slot-label-cushion { padding-right: 8px; font-size: 11px; }
+.ls-calendar-agent-view .fc-timegrid-col { border-color: #eeeeef; }
+.ls-calendar-agent-view .fc-timegrid-now-indicator-line { border-color: #ef4444; border-width: 2px 0 0; }
+.ls-calendar-agent-view .fc-timegrid-now-indicator-arrow { border-left-color: #ef4444; }
+.ls-calendar-agent-view .ls-calendar-event { border: 0; border-inline-start: 3px solid #8b5cf6; border-radius: 4px; background: #f3e8ff; box-shadow: inset 0 0 0 1px rgb(139 92 246 / 10%); }
+.ls-calendar-agent-view .ls-calendar-event-working { border-inline-start-color: #3b82f6; background: #e0f2fe; box-shadow: inset 0 0 0 1px rgb(59 130 246 / 11%); }
+.ls-calendar-agent-view .ls-calendar-event-needs_action { border-inline-start-color: #f59e0b; background: #fef3c7; box-shadow: inset 0 0 0 1px rgb(245 158 11 / 12%); }
+.ls-calendar-agent-view .ls-calendar-event-failed { border-inline-start-color: #ef4444; background: #fee2e2; box-shadow: inset 0 0 0 1px rgb(239 68 68 / 11%); }
+.ls-calendar-agent-view .ls-calendar-event-done { border-inline-start-color: #10b981; background: #d1fae5; box-shadow: inset 0 0 0 1px rgb(16 185 129 / 11%); }
+.ls-calendar-agent-view .ls-calendar-event-queued { border-inline-start-color: #64748b; background: #f1f5f9; box-shadow: inset 0 0 0 1px rgb(100 116 139 / 10%); }
+.ls-calendar-agent-view .ls-calendar-event:hover { filter: saturate(.92) brightness(.985); }
+.ls-calendar-agent-view .ls-calendar-event-content-timed { padding: 3px 5px; }
+.ls-calendar-agent-view .ls-calendar-event-meta { color: #52525b; font-size: 10px; font-weight: 600; }
+.ls-calendar-agent-view .ls-calendar-event-copy strong { color: #18181b; font-size: 11px; line-height: 15px; }
+.ls-calendar-agent-view .ls-calendar-event-time { color: #52525b; font-size: 10px; line-height: 14px; }
+.ls-calendar-agent-view .ls-calendar-thumb { display: none; }
+.ls-calendar-agent-view .fc-button:focus-visible,
+.ls-calendar-agent-view button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+
 @media (max-width: 639px) { .ls-calendar { padding: 12px; } .ls-calendar-toolbar h3 { flex-basis: 100%; margin: 4px 0; } }
+@media (max-width: 639px) {
+  .ls-calendar-agent-view { padding: 8px 0 12px; }
+  .ls-calendar-agent-view .ls-calendar-toolbar,
+  .ls-calendar-agent-view .ls-calendar-meta { padding-inline: 12px; }
+  .ls-calendar-agent-view .ls-calendar-toolbar { gap: 6px; }
+  .ls-calendar-agent-view .ls-calendar-toolbar h3 { order: -1; flex-basis: 100%; margin: 0 0 2px; font-size: 20px; }
+  .ls-calendar-agent-view .ls-calendar-toolbar .ant-segmented { width: 100%; }
+  .ls-calendar-agent-view .ls-calendar-toolbar .ant-segmented-group { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .ls-calendar-agent-view .ls-calendar-surface { border-inline: 0; border-radius: 0; }
+  .ls-calendar-agent-view .fc-timegrid-slot { height: 56px; }
+  .ls-calendar-agent-view .fc-timegrid-axis { width: 42px; }
+  .ls-calendar-agent-view .fc-col-header-cell-cushion { padding-block: 9px; }
+  .ls-calendar-agent-view .ls-calendar-event-copy strong { font-size: 12px; line-height: 16px; }
+}
 @media print { .ls-calendar-toolbar, .ls-calendar-meta { display: none; } }

@@ -380,13 +380,14 @@ export default function AgentWeeklyCalendar({
         label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}
         events={events}
         initialDate={calendarDate}
-        date={calendarDate}
         view={calendarView}
         initialView={calendarView}
         onDatesSet={info => { const next = info.view.currentStart.toISOString().slice(0,10); setCalendarDate(next); setCalendarView(info.view.type as LsCalendarView); }}
         firstDay={1}
         timeZone={timeZone}
         timeGridHeight={760}
+        visualVariant="agent"
+        narrowView="timeGridDay"
         renderDetails={renderDetails}
       /></Suspense>}
   </section>;

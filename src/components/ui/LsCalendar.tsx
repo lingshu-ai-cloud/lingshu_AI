@@ -27,6 +27,8 @@ type Props = {
   view?: LsCalendarView;
   firstDay?: number;
   eventCardMode?: 'compact' | 'media';
+  visualVariant?: 'default' | 'agent';
+  narrowView?: LsCalendarView;
   date?: string;
   timeZone?: string;
   loading?: boolean;
@@ -114,13 +116,13 @@ function CalendarThumbnail({ src, title, large = false, card = false }: { src?: 
 }
 
 /** Standard plugins only: all calendar pages share the same events, timezone and accessible detail path. */
-export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, 65dvh, 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onExternalDrop, onMoveEvent, renderDetails }: Props) {
+export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', visualVariant = 'default', narrowView = 'listWeek', date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, 65dvh, 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onExternalDrop, onMoveEvent, renderDetails }: Props) {
   const calendarRef = useRef<CalendarRef>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const eventsRef = useRef(events);
   eventsRef.current = events;
   const { modal, message } = App.useApp();
-  const [view, setView] = useState<LsCalendarView>(() => typeof window !== 'undefined' && window.innerWidth < 640 ? 'listWeek' : initialView);
+  const [view, setView] = useState<LsCalendarView>(() => typeof window !== 'undefined' && window.innerWidth < 640 ? narrowView : initialView);
   const [title, setTitle] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = events.find(event => event.id === selectedId);
@@ -149,14 +151,18 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
       if (entry.contentRect.width <= 0) return;
       const narrow = entry.contentRect.width < 640;
       if (narrow && !previousWidth.current) {
-        calendarRef.current?.getApi().changeView('listWeek');
-        setView('listWeek');
+        calendarRef.current?.getApi().changeView(narrowView);
+        setView(narrowView);
+      } else if (!narrow && previousWidth.current) {
+        const restored = controlledView || initialView;
+        calendarRef.current?.getApi().changeView(restored);
+        setView(restored);
       }
       previousWidth.current = narrow;
     });
     observer.observe(hostRef.current);
     return () => observer.disconnect();
-  }, []);
+  }, [controlledView, initialView, narrowView]);
   const inputs = useMemo<EventInput[]>(() => [...events]
     .sort((left, right) => {
       const leftInstant = new Date(left.start).getTime();
@@ -188,7 +194,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     }
     await moveRef.current(event, next.toISOString());
   };
-  return <div className={`ls-calendar${eventCardMode === 'media' ? ' ls-calendar-media-cards' : ''}`} ref={hostRef} aria-label={label}>
+  return <div className={`ls-calendar${eventCardMode === 'media' ? ' ls-calendar-media-cards' : ''}${visualVariant === 'agent' ? ' ls-calendar-agent-view' : ''}`} ref={hostRef} aria-label={label}>
     <div className="ls-calendar-toolbar">
       {primaryAction}
       <Button onClick={() => calendarRef.current?.getApi().today()}>今天</Button>
@@ -216,7 +222,11 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
         dayCellClass={info => [info.isToday ? 'ls-calendar-today' : '', [0, 6].includes(info.dow) ? 'ls-calendar-weekend' : ''].join(' ')}
         dayCellDidMount={info => { info.el.dataset.calendarDate = calendarDayKey(info.date, timeZone); }}
         dayLaneDidMount={info => { info.el.dataset.calendarDate = calendarDayKey(info.date, timeZone); }}
-        eventClass={info => `ls-calendar-event ls-calendar-event-${(info.event.extendedProps.item as LsCalendarEvent).status}`}
+        eventClass={info => {
+          const item = info.event.extendedProps.item as LsCalendarEvent;
+          const agent = typeof (item.data as {agent?: unknown} | undefined)?.agent === 'string' ? (item.data as {agent: string}).agent : '';
+          return `ls-calendar-event ls-calendar-event-${item.status}${agent ? ` ls-calendar-agent-${agent}` : ''}`;
+        }}
         eventContent={info => {
           const item = info.event.extendedProps.item as LsCalendarEvent;
           if (info.view.type.startsWith('timeGrid') && info.event.allDay) {

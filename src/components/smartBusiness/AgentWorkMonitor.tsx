@@ -64,7 +64,7 @@ function assignment(item: ContentQueueItem, step: ContentQueueStep, now: number)
 }
 
 function matchesAgent(step: ContentQueueStep, name: string): boolean {
-  return step.responsibleAgent.includes(name);
+  return typeof step.responsibleAgent === 'string' && step.responsibleAgent.includes(name);
 }
 
 type AgentWorkMonitorSources = {
