@@ -113,7 +113,7 @@ export function createShootingTasksRouter(store: DataStore, ownsVideo: (id: stri
       for (const id of ids) {
         if (!await ownsVideo(id, tenantId)) { res.status(400).json({ error: '仅可关联本企业上传的视频素材' }); return; }
       }
-      const payload = { ...record.payload, uploadedMaterialIds: [...new Set([...record.payload.uploadedMaterialIds, ...ids])] };
+      const payload = { ...record.payload, uploadedMaterialIds: [...new Set([...(Array.isArray(record.payload.uploadedMaterialIds) ? record.payload.uploadedMaterialIds : []), ...ids])] };
       if (!await store.update('studio_shooting_tasks', record.id, { payload })) throw new Error('storage unavailable');
       res.json({ ...payload, id: record.id });
     });

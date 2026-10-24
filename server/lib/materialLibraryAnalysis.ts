@@ -8,7 +8,7 @@ import { getOwnedCloudMaterialRecord, updateCloudMaterial } from './cloudMateria
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import type { AssetCandidate } from '../digitalEmployees/contentProduction.js';
 import { buildMaterialScriptAnalysis, reusableMaterialScriptAnalysis, type MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
-import { materialThemeTagsOf } from '../../shared/materialTaxonomy.js';
+import { materialThemeTagsOf, preserveUserMaterialTheme } from '../../shared/materialTaxonomy.js';
 import { materialAssetV2FromRecord } from '../../shared/contracts/materialAssetV2.js';
 import { inferMaterialAssetV2, materialDirectorSummary } from '../../shared/imageCreativePlanning.js';
 import { buildMaterialCapabilityManifest } from '../../shared/contracts/materialCapabilityManifest.js';
@@ -91,6 +91,7 @@ async function ownedMaterial(tenantId: string, id: string): Promise<MaterialReco
   return record;
 }
 async function patch(tenantId: string, id: string, changes: Record<string, unknown>) {
+  if (changes.classificationSource === 'model') changes = preserveUserMaterialTheme(await ownedMaterial(tenantId, id), changes);
   let ok: boolean;
   if (id.startsWith('pb-') && changes.scriptAnalysis) {
     const cloudId = id.slice(3);

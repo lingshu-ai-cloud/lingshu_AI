@@ -1,27 +1,10 @@
 import { Button, Input, Modal, Popconfirm, Select } from 'antd';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Loader2, Trash2, Download, Users, ExternalLink, AlertCircle } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 
-type AccountPlatform = 'linkedin' | 'facebook' | 'youtube' | 'tiktok' | 'instagram';
-type CrawlContentMode = 'video' | 'image' | 'mixed';
-
-interface CompetitorAccount {
-  id: string;
-  platform: AccountPlatform;
-  accountUrl: string;
-  accountName: string;
-  handle: string;
-  avatarUrl: string;
-  note: string;
-  lastCrawledAt: string;
-  lastCrawlCount: number;
-  lastCrawlMode?: CrawlContentMode;
-  crawlStatus?: 'running' | 'completed' | 'failed';
-  crawlError?: string;
-  createdAt: string;
-}
+import { readCompetitorAccounts, type AccountPlatform, type CrawlContentMode, type CompetitorAccount } from '../lib/competitorAccountsApi';
 
 const PLATFORM_META: Record<AccountPlatform, { label: string }> = {
   linkedin: { label: 'LinkedIn' },
@@ -87,18 +70,24 @@ export default function CompetitorAccountsModal({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
+  const accountRequestRef = useRef(0);
+  const accountReadsInFlight = useRef(0);
   const loadAccounts = useCallback(async (quiet = false) => {
+    if (quiet && accountReadsInFlight.current) return;
+    const requestId = ++accountRequestRef.current;
+    accountReadsInFlight.current += 1;
     if (!quiet) setLoading(true);
     try {
-      const r = await fetch('/api/overseas/competitor-accounts', { headers: authHeader() });
-      const data = await r.json().catch(() => ({})) as { items?: CompetitorAccount[] };
-      const items = data.items || [];
+      const items = await readCompetitorAccounts();
+      if (requestId !== accountRequestRef.current) return;
       setAccounts(items);
       onCountChange?.(items.length);
-    } catch {
-      setAccounts([]);
+      setError('');
+    } catch (error) {
+      if (requestId === accountRequestRef.current) setError(error instanceof Error ? error.message : '对标账号读取失败');
     } finally {
-      if (!quiet) setLoading(false);
+      accountReadsInFlight.current -= 1;
+      if (requestId === accountRequestRef.current) setLoading(false);
     }
   }, [onCountChange]);
 
@@ -110,10 +99,12 @@ export default function CompetitorAccountsModal({
     }
   }, [open, loadAccounts]);
 
+  useEffect(() => () => { accountRequestRef.current += 1; }, []);
+
   const hasRunningAccount = accounts.some(account => account.crawlStatus === 'running');
   useEffect(() => {
     if (!open || !hasRunningAccount) return;
-    const timer = window.setInterval(() => void loadAccounts(true), 4000);
+    const timer = window.setInterval(() => { if (document.visibilityState !== 'hidden') void loadAccounts(true); }, 4000);
     return () => window.clearInterval(timer);
   }, [open, hasRunningAccount, loadAccounts]);
 
@@ -134,6 +125,7 @@ export default function CompetitorAccountsModal({
       setUrl('');
       setNotice(data.duplicated ? '该账号已在库中' : '已加入对标账号库');
       await loadAccounts();
+      window.dispatchEvent(new Event('lingshu:competitor-accounts-updated'));
     } catch {
       setError('添加失败，请稍后重试');
     } finally {
@@ -166,16 +158,21 @@ export default function CompetitorAccountsModal({
 
   const deleteAccount = async (account: CompetitorAccount) => {
     setDeletingId(account.id);
+    setError('');
     try {
       const r = await fetch(`/api/overseas/competitor-accounts/${account.id}`, {
         method: 'DELETE',
         headers: authHeader(),
       });
-      if (r.ok) setAccounts(prev => {
-        const next = prev.filter(a => a.id !== account.id);
-        onCountChange?.(next.length);
-        return next;
-      });
+      if (!r.ok) throw new Error(await readError(r, '删除对标账号失败'));
+      accountRequestRef.current += 1;
+      setLoading(false);
+      const next = accounts.filter(item => item.id !== account.id);
+      setAccounts(next);
+      onCountChange?.(next.length);
+      window.dispatchEvent(new Event('lingshu:competitor-accounts-updated'));
+    } catch (error) {
+      setError(error instanceof Error ? error.message : '删除对标账号失败');
     } finally {
       setDeletingId('');
     }
@@ -220,7 +217,7 @@ export default function CompetitorAccountsModal({
               </div>
               {error && (
                 <p role="alert" className="mt-2 flex items-center gap-1.5 border-l-2 border-red bg-red/5 px-2 py-1.5 text-xs font-semibold text-red">
-                  <AlertCircle size={13} /> {error}
+                  <AlertCircle size={13} /> {error}<Button size="small" type="link" onClick={() => void loadAccounts()}>重新读取</Button>
                 </p>
               )}
               {!error && notice && (
@@ -238,7 +235,7 @@ export default function CompetitorAccountsModal({
                 <div className="flex h-40 flex-col items-center justify-center gap-2 text-center">
                   <Users size={26} className="text-text-muted" />
                   <p className="text-sm font-semibold text-text-primary">还没有对标账号</p>
-                  <p className="text-xs text-text-muted">在上方粘贴一个 YouTube / TikTok / Instagram / Facebook 主页链接开始</p>
+                  <p className="text-xs text-text-muted">在上方粘贴一个 LinkedIn / YouTube / TikTok / Instagram / Facebook 主页链接开始</p>
                 </div>
               ) : (
                 <ul className="divide-y divide-border border-y border-border">
@@ -269,7 +266,7 @@ export default function CompetitorAccountsModal({
                           {account.crawlStatus === 'failed' && <p className="mt-1 truncate text-xs font-semibold text-red" title={account.crawlError}>采集失败 · {account.crawlError || '请稍后重试'}</p>}
                         </div>
                         <div className="flex w-full items-center gap-2 pl-12 sm:w-auto sm:pl-0">
-                        <Button onClick={() => void crawlAccount(account)} loading={crawling} disabled={Boolean(crawlingId) && !crawling} icon={<Download size={13} />} title={`以${crawlModeLabel(crawlMode)}采集主页高表现作品，每种最多 ${crawlCount} 条`}>采集爆款</Button>
+                        <Button onClick={() => void crawlAccount(account)} loading={crawling} disabled={account.crawlStatus === 'running' || (Boolean(crawlingId) && !crawling)} icon={<Download size={13} />} title={`以${crawlModeLabel(crawlMode)}采集主页高表现作品，每种最多 ${crawlCount} 条`}>采集爆款</Button>
                         <Popconfirm title="移除这个对标账号？" description="已采集的灵感内容会保留。" onConfirm={() => deleteAccount(account)} okText="移除" cancelText="取消"><Button danger loading={deletingId === account.id} icon={<Trash2 size={13} />} aria-label={`移除对标账号 ${account.accountName}`} /></Popconfirm>
                         </div>
                       </li>

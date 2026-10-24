@@ -55,3 +55,24 @@ test('gallery applies product scope and exposes functions from complete product 
     return labels[a].localeCompare(labels[b], 'zh-CN');
   }));
 });
+
+
+test('material totals count unique assets across ordinary inventory and product summaries, never product cards', () => {
+  const a = makeMaterial('a', { productId: product.id, pinned: true });
+  const b = makeMaterial('b', { productId: product.id });
+  const ordinary = makeMaterial('common');
+  const input = {
+    materials: [a, b, ordinary], products: [product, { id: 'empty', name: '空产品' }],
+    summaries: { [product.id]: { materials: [a, b], slots: [], loading: false, error: '' } },
+    productFilter: { enabled: false, productId: '', productRef: '' }, page: 1, pageSize: 20,
+  };
+  const all = projectMaterialGallery({ ...input, filters: allFilters });
+  assert.equal(all.materialTotal, 3);
+  assert.equal(all.visibleMaterialTotal, 3);
+  assert.equal(all.visibleProductGroups.length, 2, 'empty product cards do not inflate asset totals');
+  assert.equal(all.visibleMaterialGalleryCount, 3, 'cards and assets are independent counts');
+  const favorites = projectMaterialGallery({ ...input, filters: { ...allFilters, favorite: 'favorite' } });
+  assert.equal(favorites.visibleMaterialTotal, 1);
+  assert.equal(favorites.materialTotal, 3, 'filtering must not change the global library/shooting count');
+  assert.equal(favorites.ordinaryFilteredTotal, 0);
+});

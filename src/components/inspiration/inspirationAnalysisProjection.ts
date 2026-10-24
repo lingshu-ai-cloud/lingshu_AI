@@ -153,7 +153,8 @@ export function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, stat
 }
 
 
-export function isDisplayableForFormat(video: TrendVideo, contentFormat: ContentFormat): boolean {
+export function isDisplayableForFormat(video: TrendVideo, contentFormat: ContentFormat | 'all'): boolean {
+  if (contentFormat === 'all') return isDisplayableForFormat(video, video.contentFormat || 'video');
   const sourceUrl = video.sourceUrl || '';
   if (contentFormat === 'image') return video.contentFormat === 'image'
     && Boolean(video.thumbnail)

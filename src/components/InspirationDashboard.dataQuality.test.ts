@@ -90,9 +90,9 @@ assert.match(materialCardSource, /aria-label={`编辑 \${material\.name}`}[^]*?a
 assert.match(componentSource, /INSPIRATION_PAGE_SIZE = 100/, '灵感列表必须一次读取当前租户的全部常规库存，避免分页后前端过滤造成假缺失');
 assert.match(componentSource, /inventory-summary[^]*?setTenantVideoTotalItems/, '首屏必须独立优先读取真实库存量');
 assert.match(componentSource, /setTenantVideoTotalItems\(Math\.max\(0, Number\(result\.totalItems \?\? 0\)\)\)/, '列表加载后 Tab 数量必须使用服务端完整可见结果数，不能用当前页长度覆盖');
-assert.match(componentSource, /<InspirationVideoResults[^]*?loaded=\{videosLoaded\}[^]*?loading=\{videosLoading\}/, '页面必须向结果视图传入真实加载状态');
-assert.match(videoResultsSource, /!loaded && loading \?[^]*?正在读取真实视频库存/, '首次列表请求完成前必须显示加载动画，不能先显示空状态');
-assert.match(componentSource, /<InspirationVideoResults[^]*?pageSize=\{INSPIRATION_PAGE_SIZE\}[^]*?onPageChange=\{page => void refreshVideos\(page\)\}/, '页面必须维持固定页大小的服务端分页');
+assert.match(componentSource, /<InspirationVideoResults[^]*?loaded=\{videosLoaded && \(!\(serverDiscoveryFilterActive \|\| businessModelFilter !== \'all\'\) \|\| !discoverySupplyLoading\)\}[^]*?loading=\{videosLoading \|\| \(\(serverDiscoveryFilterActive \|\| businessModelFilter !== \'all\'\) && discoverySupplyLoading\)\}/, '页面必须向结果视图传入真实加载状态');
+assert.match(videoResultsSource, /!loaded && loading \?[^]*?正在读取灵感库存/, '首次列表请求完成前必须显示加载动画，不能先显示空状态');
+assert.match(componentSource, /<InspirationVideoResults[^]*?pageSize=\{INSPIRATION_PAGE_SIZE\}[^]*?onPageChange=\{page => localPagination \? setDiscoveryPage\(page\) : void refreshVideos\(page\)\}/, '普通库存与完整筛选结果必须按各自数据源分页');
 assert.match(videoResultsSource, /<Pagination current=\{page\}[^]*?pageSize=\{pageSize\}[^]*?showSizeChanger=\{false\}[^]*?onChange=\{onPageChange\}/, '结果视图必须展示服务端分页');
 assert.doesNotMatch(componentSource, />\s*加载更多\s*</, '灵感列表不再使用追加式“加载更多”');
 assert.doesNotMatch(componentSource, /本页近 3 日新入库|当前显示 <strong/, '灵感中心不应再显示与真实结果集口径冲突的独立统计条');

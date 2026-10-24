@@ -9,6 +9,7 @@ export function MaterialUploadDialog(props: {
   open: boolean;
   productId: string;
   productSceneKind: ProductSceneKind | null;
+  videoOnly?: boolean;
   linkedProductId: string;
   linkedProductRef: string;
   products: ProductOption[];
@@ -37,8 +38,8 @@ export function MaterialUploadDialog(props: {
         ]} />
     </label>
     <p className="mt-3 text-xs leading-5 text-text-muted">工厂、展会、办公、人物动作和通用转场等素材可直接作为企业通用素材；只有需要锁定具体商品身份时才关联产品。</p>
-    {props.productSceneKind && <div role="status" className="mt-4 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-text-secondary">
-      该素材会归入当前产品的<strong className="mx-1 text-text-primary">{sceneLabel}</strong>。请选择视频文件。
+    {(props.productSceneKind || props.videoOnly) && <div role="status" className="mt-4 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-sm text-text-secondary">
+      {props.productSceneKind ? <>该素材会归入当前产品的<strong className="mx-1 text-text-primary">{sceneLabel}</strong>。</> : '所选视频会关联到原待拍任务。'}请选择视频文件。
     </div>}
   </Modal>;
 }

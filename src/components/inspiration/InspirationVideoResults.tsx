@@ -13,7 +13,7 @@ interface InspirationVideoResultsProps {
   loading: boolean;
   search: string;
   platformFiltered: boolean;
-  contentFormat: ContentFormat;
+  contentFormat: ContentFormat | 'all';
   localMaterialCount: number;
   launchingReferences: string[];
   replicationTasks: Record<string, string>;
@@ -24,6 +24,7 @@ interface InspirationVideoResultsProps {
   showPagination: boolean;
   page: number;
   totalPages: number;
+  totalItems?: number;
   pageSize: number;
   onReset: () => void;
   onOpenLibrary: () => void;
@@ -39,7 +40,7 @@ export default function InspirationVideoResults({
   videos, visibleVideoCount, loaded, loading, search, platformFiltered,
   contentFormat, localMaterialCount, launchingReferences, replicationTasks,
   creationAccountId, favoritingMaterialIds, favoritedVideoIds, favoriteSourceUrls,
-  showPagination, page, totalPages, pageSize, onReset, onOpenLibrary,
+  showPagination, page, totalPages, totalItems, pageSize, onReset, onOpenLibrary,
   onSelect, onCreate, onWatch, onFavorite, onManage, onPageChange,
 }: InspirationVideoResultsProps) {
   const cardActions = (video: TrendVideo) => ({
@@ -60,7 +61,7 @@ export default function InspirationVideoResults({
   return (
     <>
       {!loaded && loading ? (
-        <LsLoadingState loading mode="spin" label="正在读取真实视频库存" description="正在同步全部可展示灵感" className="min-h-[360px] rounded-lg border border-border bg-surface">
+        <LsLoadingState loading mode="spin" label="正在读取灵感库存" description="正在同步全部可展示灵感" className="min-h-[360px] rounded-lg border border-border bg-surface">
           <span />
         </LsLoadingState>
       ) : videos.length === 0 ? (
@@ -75,9 +76,9 @@ export default function InspirationVideoResults({
       )}
       {loaded && showPagination && totalPages > 1 && (
         <nav className="flex justify-center py-4" aria-label="灵感发现分页">
-          <Pagination current={page} total={totalPages * pageSize} pageSize={pageSize}
+          <Pagination current={page} total={totalItems ?? totalPages * pageSize} pageSize={pageSize}
             showSizeChanger={false} disabled={loading} onChange={onPageChange}
-            showTotal={() => `第 ${page} / ${totalPages} 页`} />
+            showTotal={() => `${totalItems === undefined ? '' : `共 ${totalItems} 条 · `}第 ${page} / ${totalPages} 页`} />
         </nav>
       )}
     </>

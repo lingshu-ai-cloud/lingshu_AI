@@ -9,6 +9,7 @@ async function request<T>(path = '', body?: unknown): Promise<T> {
   const response = await fetch(`/api/overseas/studio/shooting-tasks${path}`, {
     method: body === undefined ? 'GET' : 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeader() },
+    ...(body === undefined ? { cache: 'no-store', signal: AbortSignal.timeout(15000) } : {}),
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const result = await response.json();
@@ -16,7 +17,11 @@ async function request<T>(path = '', body?: unknown): Promise<T> {
   return result as T;
 }
 
-export function readScriptGapTasks(): Promise<ScriptGapTask[]> { return request(); }
+export async function readScriptGapTasks(): Promise<ScriptGapTask[]> {
+  const result = await request<ScriptGapTask[]>();
+  if (!Array.isArray(result) || result.some(task => !task || typeof task.id !== 'string' || typeof task.title !== 'string')) throw new Error('待拍任务返回格式不正确，请重试');
+  return result.map(task => ({ ...task, uploadedMaterialIds: Array.isArray(task.uploadedMaterialIds) ? task.uploadedMaterialIds.filter(id => typeof id === 'string' && id) : [] }));
+}
 
 export async function updateScriptGapTask(id: string, patch: { uploadedMaterialIds: string[] }): Promise<void> {
   await request(`/${encodeURIComponent(id)}/uploads`, patch);

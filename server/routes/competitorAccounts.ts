@@ -1,3 +1,4 @@
+import { competitorAccountCrawlState, readAllCompetitorAccountPages, type CompetitorCrawlJob } from '../lib/competitorAccountState.js';
 import { Router } from 'express';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
@@ -31,6 +32,11 @@ interface AccountRecord {
   lastCrawlCount?: number;
   lastCrawlMode?: CompetitorCrawlMode;
   createdAt?: string;
+  crawlStatus?: 'running' | 'completed' | 'failed';
+  crawlError?: string;
+  crawlStartedAt?: string;
+  crawlCompletedAt?: string;
+  crawlJobId?: string;
 }
 
 export type CompetitorCrawlMode = 'video' | 'image' | 'mixed';
@@ -78,7 +84,7 @@ export function combineCompetitorCrawlResults(
   };
 }
 
-function toClient(record: AccountRecord) {
+function toClient(record: AccountRecord, job?: CompetitorCrawlJob) {
   return {
     id: record.id,
     platform: record.platform,
@@ -91,19 +97,26 @@ function toClient(record: AccountRecord) {
     lastCrawlCount: Number(record.lastCrawlCount || 0),
     lastCrawlMode: normalizeCompetitorCrawlMode(record.lastCrawlMode),
     createdAt: record.createdAt || '',
+    ...competitorAccountCrawlState(record, job),
   };
 }
 
 // ─── GET /competitor-accounts ────────────────────────────────────────────────
 competitorAccountsRouter.get('/', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const result = await store.list<AccountRecord>(COL, {
-    where: { tenantId },
-    sort: '-createdAt',
-    page: 1,
-    perPage: 200,
-  });
-  res.json({ items: result.items.map(toClient) });
+  try {
+    const accounts = await readAllCompetitorAccountPages(page => store.list<AccountRecord>(COL, {
+      where: { tenantId }, sort: '-createdAt', page, perPage: 200,
+    }));
+    const jobs = new Map<string, CompetitorCrawlJob>();
+    for (const account of accounts) {
+      if (!account.crawlJobId) continue;
+      const job = await store.getById<CompetitorCrawlJob>('crawl_jobs', account.crawlJobId);
+      if (job?.tenantId === tenantId) jobs.set(job.id, job);
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ items: accounts.map(account => toClient(account, jobs.get(account.crawlJobId || ''))) });
+  } catch { res.status(503).json({ error: '对标账号读取失败，请稍后重试' }); }
 });
 
 // ─── POST /competitor-accounts ───────────────────────────────────────────────
@@ -190,10 +203,14 @@ competitorAccountsRouter.post('/:id/crawl', async (req, res) => {
   const dateTo = new Date().toISOString().slice(0, 10);
   const dateFrom = new Date(Date.now() - lookbackDays * 86_400_000).toISOString().slice(0, 10);
 
+  const previousJob = record.crawlJobId ? await store.getById<CompetitorCrawlJob>('crawl_jobs', record.crawlJobId) : undefined;
+  if (competitorAccountCrawlState(record, previousJob?.tenantId === tenantId ? previousJob : undefined).crawlStatus === 'running') { res.status(409).json({ error: '该账号正在采集，请等待当前任务完成' }); return; }
+
   if (contentMode === 'image') {
     await store.update(COL, record.id, {
       lastCrawlMode: contentMode,
       crawlStatus: 'running',
+      crawlJobId: '',
       crawlStartedAt: new Date().toISOString(),
       crawlError: '',
     });
@@ -253,6 +270,7 @@ competitorAccountsRouter.post('/:id/crawl', async (req, res) => {
         res.status(500).json({ error: '本地采集任务创建失败' });
         return;
       }
+      await store.update(COL, record.id, { lastCrawlMode: contentMode, crawlJobId: job.id, crawlStatus: 'running', crawlStartedAt: job.createdAt, crawlError: '' });
       res.status(202).json({
         queued: true,
         jobId: job.id,
@@ -309,6 +327,7 @@ competitorAccountsRouter.post('/:id/crawl', async (req, res) => {
       lastCrawledAt: new Date().toISOString(),
       lastCrawlCount: result.imported,
       lastCrawlMode: contentMode,
+      crawlJobId: '', crawlStatus: 'completed', crawlError: '',
     });
     res.json(result);
   } catch (e) {

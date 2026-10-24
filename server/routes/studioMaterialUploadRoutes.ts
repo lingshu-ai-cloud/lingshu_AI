@@ -1,3 +1,4 @@
+import { tenantUploadUsesReservedOrigin } from '../lib/industryMaterialAccess.js';
 import { materialResponse, type Material } from './studioMaterialProjection.js';
 import { productSceneUploadErrorResponse, resolveMaterialUploadProductBinding, resolveProductSceneUploadIntent, verifyProductSceneUpload, type MaterialUploadProductBinding, type ProductSceneUploadIntent, type VerifiedProductSceneUpload } from './studioProductSceneUpload.js';
 import { requestMaterialAnalysis } from '../lib/materialLibraryAnalysis.js';
@@ -20,6 +21,7 @@ export function createStudioMaterialUploadRoutes(deps: Pick<StudioApplicationPor
   function registerPostMaterialsFile() {
     studioRouter.post('/materials/file', async (req, res) => {
       const { tenantId } = res.locals as AuthLocals;
+      if (tenantUploadUsesReservedOrigin(req.query as Record<string, unknown>)) { res.status(403).json({ ok: false, error: '官方行业素材与系统生成来源不能通过用户上传设置' }); return; }
       const name = String(req.query.name || '').trim();
       const folder = String(req.query.folder || 'upload').trim() || 'upload';
       const type = String(req.query.type || '');

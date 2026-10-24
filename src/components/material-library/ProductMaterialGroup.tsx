@@ -347,6 +347,7 @@ function completeProductSlots(
 
 export function ProductMaterialDetailDrawer({
   product,
+  filterActive = false,
   materials,
   slots,
   loading,
@@ -363,6 +364,7 @@ export function ProductMaterialDetailDrawer({
   onUploadSlot,
 }: {
   product: ProductMaterialGroupProduct | null;
+  filterActive?: boolean;
   materials: ReadonlyArray<Material>;
   slots: ReadonlyArray<ProductScenePreparationSlotView>;
   loading: boolean;
@@ -378,7 +380,7 @@ export function ProductMaterialDetailDrawer({
   isMaterialFavoriting: (material: Material) => boolean;
   onUploadSlot: (slot: ProductScenePreparationSlotView) => void;
 }) {
-  const productSlots = useMemo(() => product ? completeProductSlots(product, slots) : [], [product, slots]);
+  const productSlots = useMemo(() => product ? (filterActive ? [...slots] : completeProductSlots(product, slots)) : [], [product, slots, filterActive]);
   const sceneMaterialIds = useMemo(() => new Set(productSlots.map(slot => slot.materialId).filter(Boolean)), [productSlots]);
   const regularMaterials = materials.filter(material => !material.productSceneType && !sceneMaterialIds.has(material.id));
   const items = [

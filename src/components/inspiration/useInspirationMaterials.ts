@@ -1,3 +1,4 @@
+import { type MaterialLibraryLeaf, type MaterialLibraryGroup, type MaterialLibraryCategory } from '../../../shared/materialLibraryKinds';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProductSceneKind } from '../../../shared/contracts/productScenePreparation';
 import { MATERIAL_THEME_LABELS } from '../../../shared/materialTaxonomy';
@@ -9,7 +10,7 @@ import { updateScriptGapTask } from '../../lib/scriptGapQueue';
 import { studioApi, type Material } from '../../lib/studioApi';
 import { studioMaterialFileKind } from '../../lib/studioMaterialFile';
 import { type MaterialSourceFilter, type MaterialThemeFilter } from '../material-library/MaterialTaxonomyFilters';
-import { projectMaterialGallery } from './inspirationMaterialGalleryProjection';
+import { projectMaterialGallery, projectProductMaterialView } from './inspirationMaterialGalleryProjection';
 import { initialMaterialTaxonomyFilters, isFavoriteMaterial, materialOwnershipTags, type FavoriteFilter, type MaterialApplicabilityFilter, type MaterialGalleryFilterSnapshot, type MaterialIndustryFilter, type MaterialLibraryEntryContext, type MaterialOrientationFilter, type MaterialTypeFilter } from './inspirationMaterialLibrary';
 import { fetchCompleteProductMaterialInventory } from './inspirationProductMaterialInventory';
 import { useInspirationMaterialInventory } from './useInspirationMaterialInventory';
@@ -28,7 +29,7 @@ interface Dependencies {
 export function useInspirationMaterials({ materialEntry, innerView, setMaterialMessage, setInnerView, favoritingMaterialIds, setFavoritingMaterialIds }: Dependencies) {
   const [materialProducts, setMaterialProducts] = useState<Array<{id:string;name:string}>>([]);
 
-  const [materialProductFilterEnabled, setMaterialProductFilterEnabled] = useState(() => Boolean(materialEntry.productId || materialEntry.productRef));
+  const [materialProductFilterEnabled, setMaterialProductFilterEnabled] = useState(() => Boolean(materialEntry.productScope === 'common' || materialEntry.productId || materialEntry.productRef));
 
   const [materialProductId, setMaterialProductId] = useState(materialEntry.productId);
 
@@ -71,7 +72,11 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
 
   const [initialTaxonomyFilters] = useState(initialMaterialTaxonomyFilters);
 
-  const [materialSource, setMaterialSource] = useState<MaterialSourceFilter>(initialTaxonomyFilters.source);
+  const [materialSource, setMaterialSource] = useState<MaterialSourceFilter>('all');
+
+  const [materialCategories, setMaterialCategories] = useState<MaterialLibraryLeaf[]>(initialTaxonomyFilters.categories);
+  const [materialGroup, setMaterialGroup] = useState<MaterialLibraryGroup>(initialTaxonomyFilters.group);
+  const [materialCategory, setMaterialCategory] = useState<MaterialLibraryCategory>(initialTaxonomyFilters.category);
 
   const [materialTheme, setMaterialTheme] = useState<MaterialThemeFilter>(initialTaxonomyFilters.theme);
 
@@ -79,7 +84,6 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
 
   const [materialFavoriteFilter, setMaterialFavoriteFilter] = useState<FavoriteFilter>('all');
 
-  const [materialFiltersOpen, setMaterialFiltersOpen] = useState(false);
 
   const {
     localMaterials, setLocalMaterials, materialsLoading, materialPage, setMaterialPage, materialFacets,
@@ -106,28 +110,39 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
     finally { setUpdatingMaterialTheme(false); }
   };
 
+  useEffect(() => {
+    if (detailMaterial) {
+      const fresh = localMaterials.find(item => item.id === detailMaterial.id);
+      if (fresh && fresh !== detailMaterial) setDetailMaterial(fresh);
+    }
+  }, [localMaterials]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
 
   const [materialUploadDialogOpen, setMaterialUploadDialogOpen] = useState(false);
 
-  const { scriptGapTasks, shootingTaskError: _shootingTaskError } = useScriptGapTasks();
+  const { scriptGapTasks, shootingTaskError, shootingTasksLoading, refreshScriptGapTasks } = useScriptGapTasks(innerView === 'shooting');
 
   const [uploadingScriptGapId, setUploadingScriptGapId] = useState('');
+  const [shootingUploadRetry, setShootingUploadRetry] = useState<{ taskId: string; materialIds: string[] } | null>(null);
 
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const taskId = new URLSearchParams(window.location.search).get('task');
     if (taskId) document.getElementById(`shooting-task-${taskId}`)?.scrollIntoView({ block: 'center' });
-  }, [scriptGapTasks]);
+  }, [scriptGapTasks, innerView]);
 
   useEffect(() => {
     if (innerView !== 'library') return;
     const url = new URL(window.location.href);
-    materialSource === 'all' ? url.searchParams.delete('source') : url.searchParams.set('source', materialSource);
+    url.searchParams.delete('source');
+    url.searchParams.delete('materialGroup');
+    url.searchParams.delete('materialCategory');
+    materialCategories.length ? url.searchParams.set('materialCategories', materialCategories.join(',')) : url.searchParams.delete('materialCategories');
     materialTheme === 'all' ? url.searchParams.delete('theme') : url.searchParams.set('theme', materialTheme);
     window.history.replaceState(window.history.state, '', url);
-  }, [innerView, materialSource, materialTheme]);
+  }, [innerView, materialSource, materialTheme, materialGroup, materialCategory, materialCategories]);
 
   useEffect(() => {
     previewMaterialAutoRetryRef.current = 0;
@@ -187,25 +202,34 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
     setPreviewMaterialError(message || '视频文件加载或解码失败，请重新获取播放地址。');
   };
 
-  useEffect(() => {
-    let active = true;
-    void studioApi.materialProducts().then(result => {
-      if (!active) return;
+  const [materialProductsError, setMaterialProductsError] = useState('');
+  const productsRequestRef = useRef(0);
+  const productsEntryResolved = useRef(false);
+  const refreshMaterialProducts = async () => {
+    const requestId = ++productsRequestRef.current;
+    try {
+      const result = await studioApi.materialProducts();
+      if (requestId !== productsRequestRef.current) return;
       setMaterialProducts(result.items);
-      if (!materialEntry.productRef) return;
-      const matched = materialEntry.productId
-        ? result.items.find(item => item.id === materialEntry.productId)
-        : result.items.find(item => item.name === materialEntry.productRef);
-      if (!matched) return;
-      setMaterialProductFilterEnabled(true);
-      setMaterialProductId(matched.id);
-      setMaterialProductRef(matched.name);
-      setUploadProductId(current => current || matched.id);
-    }).catch(() => undefined);
-    return () => { active = false; };
-  }, [materialEntry.productId, materialEntry.productRef]);
+      if (!productsEntryResolved.current && materialEntry.productRef) {
+        const matched = result.items.find(item => materialEntry.productId ? item.id === materialEntry.productId : item.name === materialEntry.productRef);
+        if (matched) { setMaterialProductId(matched.id); setMaterialProductRef(matched.name); setUploadProductId(current => current || matched.id); }
+      }
+      productsEntryResolved.current = true;
+      setMaterialProductsError('');
+    } catch (error) {
+      if (requestId === productsRequestRef.current) setMaterialProductsError(error instanceof Error ? error.message : '产品资料读取失败');
+    }
+  };
+  useEffect(() => {
+    void refreshMaterialProducts();
+    const onFocus = () => { if (document.visibilityState !== 'hidden') void refreshMaterialProducts(); };
+    window.addEventListener('focus', onFocus);
+    return () => { productsRequestRef.current += 1; window.removeEventListener('focus', onFocus); };
+  }, [innerView]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeMaterialFilters = useMemo<MaterialGalleryFilterSnapshot>(() => ({
+    categories: materialCategories, group: materialGroup, category: materialCategory,
     query: materialSearch,
     assetTab: materialAssetTab,
     type: materialType,
@@ -216,7 +240,15 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
     source: materialSource,
     theme: materialTheme,
     favorite: materialFavoriteFilter,
-  }), [materialSearch, materialAssetTab, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialFavoriteFilter]);
+  }), [materialCategories, materialGroup, materialCategory, materialSearch, materialAssetTab, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialFavoriteFilter]);
+
+  const hasMaterialFilters = Boolean(materialSearch.trim() || materialCategories.length || materialType !== 'all' || materialTheme !== 'all');
+  const detailView = projectProductMaterialView({ materials: productDetailMaterials, slots: productDetailSlots, loading: productDetailLoading, error: productDetailError }, activeMaterialFilters, productDetailProduct?.name || '');
+  const filteredProductDetailMaterials = detailView.materials;
+  const filteredProductDetailSlots = detailView.slots;
+  const filteredProductMaterialSummaries = Object.fromEntries(Object.entries(productMaterialSummaries).map(([id, summary]) => [id,
+    projectProductMaterialView(summary, activeMaterialFilters, materialProducts.find(product => product.id === id)?.name || ''),
+  ]));
 
   const {
     materialFunctionOptions,
@@ -226,6 +258,7 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
     visibleProductGroupsForPage,
     visibleMaterialTotal,
     visibleMaterialGalleryCount,
+    materialTotal,
   } = useMemo(() => projectMaterialGallery({
     materials: localMaterials,
     products: materialProducts,
@@ -243,19 +276,22 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
 
   useEffect(() => {
     setMaterialPage(1);
-  }, [materialSearch, materialAssetTab, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialFavoriteFilter, materialProductFilterEnabled, materialProductId, materialProductRef]);
+  }, [materialCategories, materialGroup, materialCategory, materialSearch, materialAssetTab, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialFavoriteFilter, materialProductFilterEnabled, materialProductId, materialProductRef]);
 
   const handleUploadMaterials = async (files: FileList | null) => {
     if (!files?.length) return;
+    const selectedFiles = Array.from(files);
     setUploadingMaterial(true);
     setMaterialMessage('');
     try {
-      if (uploadProductSceneKind && files.length !== 1) {
+      if (uploadProductSceneKind && selectedFiles.length !== 1) {
         throw new Error('每个预制场景一次上传一个视频');
       }
+      if (uploadingScriptGapId) {
+        if (selectedFiles.length > 20 || selectedFiles.some(file => studioMaterialFileKind(file) !== 'video')) throw new Error('分镜待拍任务一次仅支持上传最多 20 个视频，请选择视频素材');
+      }
       const uploadedAnalyzable: Material[] = [];
-      const uploadedIds: string[] = [];
-      for (const file of Array.from(files)) {
+      for (const file of selectedFiles) {
         const type = studioMaterialFileKind(file);
         if (!type) {
           throw new Error(`「${file.name}」的文件格式无法识别，请使用受支持的视频、图片或音频格式`);
@@ -270,7 +306,6 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
           ...(uploadProductSceneKind ? { productId: uploadProductId, productSceneType: uploadProductSceneKind } : {}),
         });
         if (!result.ok || !result.material?.id) throw new Error(result.error || `「${file.name}」上传失败，请检查素材服务后重试`);
-        uploadedIds.push(result.material.id);
         if (type === 'video' || type === 'image') uploadedAnalyzable.push(result.material);
         // Product-scene uploads are verified and bound to the selected product
         // and slot by the upload endpoint itself. Do not turn that successful
@@ -283,20 +318,30 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
           enterpriseCommon: !uploadProductId,
         });
         if (!linked.ok) throw new Error(`「${file.name}」已上传，但素材归属保存失败，请在素材卡片中编辑后重试`);
+        if (uploadingScriptGapId) {
+          try { await updateScriptGapTask(uploadingScriptGapId, { uploadedMaterialIds: [result.material.id] }); }
+          catch (error) {
+            setShootingUploadRetry({ taskId: uploadingScriptGapId, materialIds: [result.material.id] });
+            throw new Error(`视频已入库，但待拍任务关联失败；可在待拍任务中重试关联，无需重复上传。${error instanceof Error ? error.message : ''}`);
+          }
+        }
       }
+      setMaterialGroup('all');
+      setMaterialCategory('all');
+      setMaterialCategories([uploadProductId ? 'product' : 'enterprise']);
       const ownershipLabel = uploadProductId ? '指定产品素材' : '企业通用素材';
-      setMaterialMessage(uploadedAnalyzable.length ? `已作为${ownershipLabel}上传，编导 Agent 正在识别 ${uploadedAnalyzable.length} 个图片/视频素材…` : `已上传 ${files.length} 个${ownershipLabel}`);
+      setMaterialMessage(uploadedAnalyzable.length ? `已作为${ownershipLabel}上传，编导 Agent 正在识别 ${uploadedAnalyzable.length} 个图片/视频素材…` : `已上传 ${selectedFiles.length} 个${ownershipLabel}`);
       await refreshMaterials();
       setProductSummaryRefreshVersion(version => version + 1);
       if (productDetailProduct) await loadProductMaterialDetail(productDetailProduct);
-      window.dispatchEvent(new Event('lingshu:materials-updated'));
-      if (uploadingScriptGapId && uploadedIds.length) await updateScriptGapTask(uploadingScriptGapId, { uploadedMaterialIds: uploadedIds });
+      window.dispatchEvent(new CustomEvent('lingshu:materials-updated', { detail: { origin: 'inspiration-library' } }));
       setMaterialMessage(uploadedAnalyzable.length
-        ? `已上传 ${files.length} 个${ownershipLabel}，图片/视频已进入编导分析队列，可在素材详情查看用途`
-        : `已上传 ${files.length} 个${ownershipLabel}`);
+        ? `已上传 ${selectedFiles.length} 个${ownershipLabel}，图片/视频已进入编导分析队列，可在素材详情查看用途`
+        : `已上传 ${selectedFiles.length} 个${ownershipLabel}`);
       setUploadProductSceneKind(null);
       setTimeout(() => setMaterialMessage(''), 2800);
     } catch (e) {
+      await refreshMaterials();
       setMaterialMessage(e instanceof Error ? e.message : '素材上传失败');
     } finally {
       setUploadingMaterial(false);
@@ -309,7 +354,24 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
     setInnerView('library');
     setUploadingScriptGapId(scriptGapId);
     setUploadProductSceneKind(null);
+    if (scriptGapId) setUploadProductId('');
     setMaterialUploadDialogOpen(true);
+  };
+
+  const prepareShootingCapture = (scriptGapId: string) => {
+    setUploadingScriptGapId(scriptGapId);
+    setUploadProductSceneKind(null);
+    setUploadProductId('');
+  };
+  const retryShootingUpload = async () => {
+    if (!shootingUploadRetry || uploadingMaterial) return;
+    setUploadingMaterial(true);
+    try {
+      await updateScriptGapTask(shootingUploadRetry.taskId, { uploadedMaterialIds: shootingUploadRetry.materialIds });
+      setShootingUploadRetry(null);
+      setMaterialMessage('已关联到原待拍任务，可返回分镜核对');
+    } catch (error) { setMaterialMessage(error instanceof Error ? error.message : '任务关联失败，请重试'); }
+    finally { setUploadingMaterial(false); }
   };
 
   const toggleMaterialFavorite = async (material: Material) => {
@@ -332,9 +394,9 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
         { ...summary, materials: summary.materials.map(applyPinned) },
       ])));
       setMaterialMessage(nextPinned ? `已收藏素材：${material.name}` : `已取消收藏：${material.name}`);
-      showActionSuccess(nextPinned ? '收藏成功' : '已取消收藏', nextPinned ? '可通过“仅看收藏”快速筛选。' : material.name);
+      showActionSuccess(nextPinned ? '收藏成功' : '已取消收藏', material.name);
       setTimeout(() => setMaterialMessage(''), 3500);
-      window.dispatchEvent(new Event('lingshu:materials-updated'));
+      window.dispatchEvent(new CustomEvent('lingshu:materials-updated', { detail: { origin: 'inspiration-library' } }));
     } catch (error) {
       const message = error instanceof Error ? error.message : '收藏状态保存失败';
       setMaterialMessage(message);
@@ -346,6 +408,7 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
 
   const setMaterialProductSelection = (value: string) => {
     const url = new URL(window.location.href);
+    url.searchParams.delete('productScope');
     if (value === MATERIAL_PRODUCT_ALL) {
       setMaterialProductFilterEnabled(false);
       setMaterialProductId('');
@@ -356,8 +419,9 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
       setMaterialProductFilterEnabled(true);
       setMaterialProductId('');
       setMaterialProductRef('');
-      url.searchParams.set('productId', '');
-      url.searchParams.set('productRef', '');
+      url.searchParams.set('productScope', 'common');
+      url.searchParams.delete('productId');
+      url.searchParams.delete('productRef');
     } else if (value === MATERIAL_PRODUCT_LINKED_REF) {
       setMaterialProductFilterEnabled(true);
       setMaterialProductId('');
@@ -391,6 +455,9 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
 
   const clearMaterialFilters = () => {
     setMaterialSearch('');
+    setMaterialGroup('all');
+    setMaterialCategory('all');
+    setMaterialCategories([]);
     setMaterialAssetTab('all');
     setMaterialSource('all');
     setMaterialTheme('all');
@@ -404,6 +471,7 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
   };
 
   const materialFilterCount = Number(materialSearch.trim().length > 0)
+    + Number(materialCategories.length > 0)
     + Number(materialAssetTab !== 'all')
     + Number(materialTheme !== 'all')
     + Number(materialSource !== 'all')
@@ -415,15 +483,10 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
     + Number(materialOrientation !== 'all')
     + Number(materialProductFilterEnabled);
 
-  const materialAdvancedFilterCount = Number(materialIndustry !== 'all')
-    + Number(materialFavoriteFilter !== 'all')
-    + Number(materialFunction !== 'all')
-    + Number(materialApplicability !== 'all')
-    + Number(materialOrientation !== 'all')
-    + Number(materialProductFilterEnabled);
-
   return {
     materialProducts,
+    materialProductsError, refreshMaterialProducts,
+    filteredProductDetailMaterials, filteredProductDetailSlots, filteredProductMaterialSummaries, hasMaterialFilters,
     setMaterialProducts,
     materialProductFilterEnabled,
     materialProductId,
@@ -443,6 +506,8 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
     detailMaterial,
     setDetailMaterial,
     updatingMaterialTheme,
+    materialCategories, setMaterialCategories,
+    materialGroup, setMaterialGroup, materialCategory, setMaterialCategory,
     materialSearch,
     setMaterialSearch,
     materialAssetTab,
@@ -463,8 +528,6 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
     setMaterialType,
     materialFavoriteFilter,
     setMaterialFavoriteFilter,
-    materialFiltersOpen,
-    setMaterialFiltersOpen,
     localMaterials,
     setLocalMaterials,
     materialsLoading,
@@ -486,7 +549,9 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
     uploadingMaterial,
     materialUploadDialogOpen,
     setMaterialUploadDialogOpen,
-    scriptGapTasks,
+    uploadingScriptGapId,
+    scriptGapTasks, shootingTaskError, shootingTasksLoading, refreshScriptGapTasks,
+    shootingUploadRetry, retryShootingUpload, prepareShootingCapture,
     setUploadingScriptGapId,
     uploadInputRef,
     refreshMaterialPreviewUrl,
@@ -498,13 +563,13 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
     visibleProductGroupsForPage,
     visibleMaterialTotal,
     visibleMaterialGalleryCount,
+    materialTotal,
     handleUploadMaterials,
     requestMaterialUpload,
     toggleMaterialFavorite,
     setMaterialProductSelection,
     materialProductFilterValue,
     clearMaterialFilters,
-    materialFilterCount,
-    materialAdvancedFilterCount
+    materialFilterCount
   };
 }

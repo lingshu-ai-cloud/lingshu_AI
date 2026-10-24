@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { studioApi, type Material } from '../../lib/studioApi';
 import type { MaterialLibraryFacets } from '../../lib/studioDigitalHuman';
-import type { ProductMaterialGroupProduct, ProductScenePreparationSlotView } from '../material-library/ProductMaterialGroup';
+import { materialMatchesProduct, type ProductMaterialGroupProduct, type ProductScenePreparationSlotView } from '../material-library/ProductMaterialGroup';
 import type { MaterialSourceFilter, MaterialThemeFilter } from '../material-library/MaterialTaxonomyFilters';
-import { MATERIAL_LIBRARY_FETCH_PAGE_SIZE, fetchCompleteProductMaterialInventory, fetchProductMaterialSummaries, type ProductMaterialSummary } from './inspirationProductMaterialInventory';
+import { MATERIAL_LIBRARY_FETCH_PAGE_SIZE, fetchCompleteProductMaterialInventory, type ProductMaterialSummary } from './inspirationProductMaterialInventory';
 
 // Own the library inventory and exact-product reads together so refreshes,
 // drawer cancellation and summary invalidation use the same request fences.
@@ -22,47 +22,48 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
   const productDetailRequestRef = useRef(0);
   const [productMaterialSummaries, setProductMaterialSummaries] = useState<Record<string, ProductMaterialSummary>>({});
   const [productSummaryRefreshVersion, setProductSummaryRefreshVersion] = useState(0);
-  const productSummaryRequestRef = useRef(0);
+  const [inventorySlots, setInventorySlots] = useState<ProductScenePreparationSlotView[]>([]);
+  const [inventoryError, setInventoryError] = useState('');
+  const inFlightRef = useRef(0);
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [materialPage, setMaterialPage] = useState(1);
   const [materialFacets, setMaterialFacets] = useState<MaterialLibraryFacets | null>(null);
   const materialLibraryRequestRef = useRef(0);
 
-  const refreshMaterials = async (page = materialPage): Promise<Material[]> => {
+  const refreshMaterials = async (page?: number): Promise<Material[]> => {
     const requestId = ++materialLibraryRequestRef.current;
+    inFlightRef.current += 1;
     if (!localMaterials.length) setMaterialsLoading(true);
     try {
-      const filters = {
-        excludeProductAssociated: true,
-        ...(materialSource !== 'all' ? { sourceCategory: materialSource } : {}),
-        ...(materialTheme !== 'all' ? { theme: materialTheme } : {}),
-      } as const;
       const inventory = await studioApi.listMaterialLibrary('library', {
-        ...filters,
         page: 1,
         pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE,
       });
       const pageCount = Math.max(1, Math.ceil(Number(inventory.total ?? inventory.items.length) / MATERIAL_LIBRARY_FETCH_PAGE_SIZE));
       const additionalPages = pageCount > 1
-        ? await Promise.all(Array.from({ length: pageCount - 1 }, (_, index) => studioApi.listMaterialLibrary('library', {
-          ...filters,
-          page: index + 2,
-          pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE,
-        })))
+        ? await (async () => {
+          const pages = [];
+          for (let next = 2; next <= pageCount; next += 1) pages.push(await studioApi.listMaterialLibrary('library', { page: next, pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE }));
+          return pages;
+        })()
         : [];
       const materials = [...new Map([inventory, ...additionalPages]
         .flatMap(result => result.items)
         .map(material => [material.id, material])).values()];
       if (requestId !== materialLibraryRequestRef.current) return localMaterials;
       setLocalMaterials(materials);
+      setInventorySlots(inventory.productSceneSlots || []);
+      setInventoryError('');
       setMaterialFacets(inventory.facets || null);
-      setMaterialPage(page);
+      if (page !== undefined) setMaterialPage(page);
       return materials;
-    } catch {
+    } catch (error) {
+      if (requestId === materialLibraryRequestRef.current) setInventoryError(error instanceof Error ? error.message : '素材读取失败');
       // Keep last successful items; callers can still decide whether the stale
       // signed media URL is usable.
       return localMaterials;
     } finally {
+      inFlightRef.current -= 1;
       if (requestId === materialLibraryRequestRef.current) setMaterialsLoading(false);
     }
   };
@@ -103,46 +104,47 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
     setProductDetailLoading(false);
   };
 
-  useEffect(() => { void refreshMaterials(1); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const refreshRef = useRef(refreshMaterials);
+  refreshRef.current = refreshMaterials;
+  const initialRead = useRef(false);
   useEffect(() => {
-    if (innerView !== 'library') return;
-    const timer = window.setTimeout(() => void refreshMaterials(1), 250);
-    return () => window.clearTimeout(timer);
-  }, [innerView, materialSource, materialTheme]); // eslint-disable-line react-hooks/exhaustive-deps
-  const materialProductIdsKey = materialProducts.map(product => product.id).join('|');
+    if (!initialRead.current || (innerView === 'library' || innerView === 'shooting')) {
+      initialRead.current = true;
+      if (!inFlightRef.current) void refreshRef.current(1);
+    }
+  }, [innerView]);
+
   useEffect(() => {
-    if (innerView !== 'library' || !materialProducts.length) return;
-    const requestId = ++productSummaryRequestRef.current;
-    setProductMaterialSummaries(current => Object.fromEntries(materialProducts.map(product => {
-      const previous = current[product.id];
-      return [product.id, {
-        materials: previous?.materials || [],
-        slots: previous?.slots || [],
-        loading: true,
-        error: '',
-      } satisfies ProductMaterialSummary];
-    })));
-    void fetchProductMaterialSummaries(materialProducts).then(inventories => {
-      if (requestId !== productSummaryRequestRef.current) return;
-      setProductMaterialSummaries(Object.fromEntries(materialProducts.map(product => [product.id, {
-        ...(inventories[product.id] || { materials: [], slots: [] }),
-        loading: false,
-        error: '',
-      } satisfies ProductMaterialSummary])));
-    }).catch(error => {
-      if (requestId !== productSummaryRequestRef.current) return;
-      setProductMaterialSummaries(current => Object.fromEntries(materialProducts.map(product => {
-        const previous = current[product.id];
-        return [product.id, {
-          materials: previous?.materials || [],
-          slots: previous?.slots || [],
-          loading: false,
-          error: error instanceof Error ? error.message : '产品素材暂时无法读取',
-        } satisfies ProductMaterialSummary];
-      })));
-    });
-    return () => { productSummaryRequestRef.current += 1; };
-  }, [innerView, materialProductIdsKey, productSummaryRefreshVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (innerView !== 'library' && innerView !== 'shooting') return;
+    const refresh = (event?: Event) => {
+      if ((event as CustomEvent | undefined)?.detail?.origin === 'inspiration-library') return;
+      if (document.visibilityState !== 'hidden' && !inFlightRef.current) void refreshRef.current();
+    };
+    window.addEventListener('lingshu:materials-updated', refresh);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    const pending = localMaterials.some(item => ['pending', 'analyzing'].includes(String(item.segmentAnalysisStatus)));
+    const timer = window.setInterval(refresh, pending ? 3000 : 15000);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('lingshu:materials-updated', refresh);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [innerView, localMaterials.some(item => ['pending', 'analyzing'].includes(String(item.segmentAnalysisStatus)))]);
+
+  useEffect(() => {
+    setProductMaterialSummaries(Object.fromEntries(materialProducts.map(product => [product.id, {
+      materials: localMaterials.filter(material => materialMatchesProduct(material, product)),
+      slots: inventorySlots.filter(slot => slot.productId === product.id),
+      loading: materialsLoading,
+      error: inventoryError,
+    }])));
+    if (productDetailProduct) {
+      setProductDetailMaterials(localMaterials.filter(material => materialMatchesProduct(material, productDetailProduct)));
+      setProductDetailSlots(inventorySlots.filter(slot => slot.productId === productDetailProduct.id));
+    }
+  }, [localMaterials, materialProducts, inventorySlots, materialsLoading, inventoryError, productSummaryRefreshVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     localMaterials, setLocalMaterials, materialsLoading, materialPage, setMaterialPage, materialFacets,
