@@ -456,7 +456,8 @@ assert.doesNotMatch(weeklyPlanControlsSource, /删除旧任务/, 'active weekly 
 assert.doesNotMatch(smartBusinessSource, /后台并发与异常中心|Background operations/, 'the overview must not expose the deleted background-operations panel');
 assert.match(planHistorySource, /按周查看[\s\S]{0,200}按月查看/, 'plan history must support weekly and monthly views');
 assert.match(planHistorySource, /completion[\s\S]{0,350}completed/, 'plan history completion must come from persisted task statuses');
-assert.match(homeSource, /<BusinessHealthOverview[^]*<NextRoundRecommendationsSection/, 'next-round recommendations must appear at the bottom of the health overview');
+assert.doesNotMatch(homeSource, /<NextRoundRecommendationsSection/, 'next-round recommendations must leave the overview body');
+assert.match(workspaceTabsSource, /<CalendarPlanner[^]*<NextRoundRecommendationsSection/, 'next-round recommendations must appear at the bottom of the publishing calendar tab');
 assert.match(matrixScheduleSource, /AgentWorkMonitor/, 'Agent progress must come from the retained task board');
 assert.doesNotMatch(homeSource, /Agent 工作轨道/, 'the overview must remove the duplicated Agent work-track section');
 assert.doesNotMatch(smartBusinessSource, /本地模拟 · \{foreignTradeBusinessMock\.factory\}/, 'the local-preview banner must not occupy dashboard space');

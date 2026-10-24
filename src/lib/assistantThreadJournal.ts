@@ -88,6 +88,11 @@ function safeUri(value: unknown): string | undefined {
   return scrubSensitiveUri(raw) ?? redactSensitiveText(raw, 2_000);
 }
 
+function safeReferenceMediaUri(value: unknown): string | undefined {
+  const uri = safeUri(value);
+  return uri && /^(?:https?:\/\/|\/(?:api|files|media|uploads)\/)/i.test(uri) ? uri : undefined;
+}
+
 function sanitizeValue(value: unknown, depth = 0): unknown {
   if (depth > 5) return undefined;
   if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
@@ -108,6 +113,19 @@ function sanitizeValue(value: unknown, depth = 0): unknown {
 }
 
 function sanitizeMessage(value: Message): Message {
+  const media = value.referenceMedia;
+  const referenceMedia = media?.kind === 'video' && media.title?.trim() && ['tiktok', 'instagram', 'youtube', 'facebook', 'linkedin'].includes(media.platform)
+    ? {
+        kind: 'video' as const,
+        title: redactSensitiveText(media.title, 500),
+        platform: media.platform,
+        ...(media.referenceId ? { referenceId: cleanId(media.referenceId) } : {}),
+        ...(safeReferenceMediaUri(media.thumbnailUrl) ? { thumbnailUrl: safeReferenceMediaUri(media.thumbnailUrl) } : {}),
+        ...(safeReferenceMediaUri(media.mediaUrl) ? { mediaUrl: safeReferenceMediaUri(media.mediaUrl) } : {}),
+        ...(safeReferenceMediaUri(media.sourceUrl) ? { sourceUrl: safeReferenceMediaUri(media.sourceUrl) } : {}),
+        ...(Number.isFinite(media.duration) && Number(media.duration) >= 0 ? { duration: Math.min(86_400, Number(media.duration)) } : {}),
+      }
+    : undefined;
   return {
     role: value.role === 'assistant' ? 'assistant' : 'user',
     content: redactSensitiveText(String(value.content || ''), MESSAGE_MAX_CHARS),
@@ -117,6 +135,7 @@ function sanitizeMessage(value: Message): Message {
         return uri ? [{ title: redactSensitiveText(String(source?.title || ''), 500), uri }] : [];
       }),
     } : {}),
+    ...(referenceMedia ? { referenceMedia } : {}),
   };
 }
 

@@ -4,21 +4,21 @@ import type { CreationMode } from './lib/creationMode';
 export type PrimaryProductPage = 'strategy' | 'socialInspiration' | 'digitalEmployees' | 'adsOverview' | 'conversion';
 export type PrimaryProductItem = { page: PrimaryProductPage; label: string; disabled: boolean };
 
-const PRIMARY_PAGES: readonly { page: PrimaryProductPage; label: string; freeOnly?: boolean }[] = [
+const PRIMARY_PAGES: readonly { page: PrimaryProductPage; label: string }[] = [
   { page: 'strategy', label: '内容创作' },
-  { page: 'socialInspiration', label: '爆款库', freeOnly: true },
+  { page: 'socialInspiration', label: '爆款库' },
   { page: 'digitalEmployees', label: '经营总览' },
   { page: 'adsOverview', label: '投流' },
   { page: 'conversion', label: '智能客服' },
 ];
 
 export function primaryProductNavigation(
-  mode: CreationMode,
+  _mode: CreationMode,
   allowedPages: ReadonlySet<Page>,
   adsEnabled: boolean,
 ): PrimaryProductItem[] {
   return PRIMARY_PAGES
-    .filter(item => (!item.freeOnly || mode === 'free') && allowedPages.has(item.page))
+    .filter(item => allowedPages.has(item.page))
     .map(item => ({ page: item.page, label: item.label, disabled: item.page === 'adsOverview' && !adsEnabled }));
 }
 

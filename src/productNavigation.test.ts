@@ -9,7 +9,7 @@ const all = new Set<Page>(['strategy', 'socialInspiration', 'digitalEmployees', 
 assert.deepEqual(primaryProductNavigation('free', all, false).map(item => item.label),
   ['内容创作', '爆款库', '经营总览', '投流', '智能客服']);
 assert.deepEqual(primaryProductNavigation('employee', all, false).map(item => item.label),
-  ['内容创作', '经营总览', '投流', '智能客服']);
+  ['内容创作', '爆款库', '经营总览', '投流', '智能客服']);
 assert.equal(primaryProductNavigation('free', all, false)[3]?.disabled, true);
 assert.equal(primaryProductNavigation('free', all, true)[3]?.disabled, false);
 assert.deepEqual(primaryProductNavigation('free', new Set<Page>(['strategy', 'conversion']), false).map(item => item.label),

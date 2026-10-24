@@ -470,6 +470,7 @@ export function readStoredPublishDraft(storageScope?: string): PublishDraft | nu
 }
 
 export const PUBLISH_QUEUE_STORAGE_KEY = 'ow_publish_queue';
+export const PUBLISH_QUEUE_UPDATED_EVENT = 'lingshu:publish-queue-updated';
 
 export function readStoredPublishQueue(storageScope?: string): PublishQueueItem[] {
   try {
