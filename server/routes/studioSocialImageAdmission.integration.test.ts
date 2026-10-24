@@ -20,7 +20,7 @@ process.env.OBJECT_STORAGE_DRIVER = 'local';
 
 const { auth, store } = await import('../storage/index.js');
 const { createSocialImageTask, updateSocialImageTask } = await import('../socialImage/socialImageTask.js');
-const { createOrResumeBoundSocialImageRun, recordSocialImageBusinessContext,
+const { assertSocialImageCurrentContentTask, createOrResumeBoundSocialImageRun, recordSocialImageBusinessContext,
   recordSocialImageNodeOutput } = await import('../socialImage/socialImageProductionRun.js');
 const { SOCIAL_IMAGE_HARD_CHECKS } = await import('../../shared/contracts/socialImageCreation.js');
 const { SOCIAL_WORK_PACKAGE_KINDS } = await import('../../shared/contracts/socialContentWorkflow.js');
@@ -60,6 +60,11 @@ test('HTTP image routes reject forged evidence and finalize durable GIF plates i
 
   try {
     const now = '2026-10-24T02:00:00.000Z';
+    await store.create('tenant_profiles', {
+      id: 'studio-image-paid-gate-profile', tenant_id: tenantId,
+      profile: { factVersion: { id: 'enterprise-facts-v1', revision: 1, contentHash: 'f'.repeat(64),
+        confirmedAt: now, confirmedBy: 'studio-social-image-admission-test' } },
+    });
     await store.create(STARTER_COLLECTIONS.socialContentTasks, {
       id: 'studio-image-paid-gate-content', tenant_id: tenantId, task_id: 'studio-image-paid-gate',
       status: 'plan_review', version: '1', brief: defaultBrief({ title: '付费前置证据测试', objective: '展示产品',
@@ -323,13 +328,6 @@ test('HTTP image routes reject forged evidence and finalize durable GIF plates i
         candidateVersion: 1, expectedContentHash: groupHash, decision: 'approved', idempotencyKey: 'http-wrong-group-hash' }) });
     assert.equal(wrongHashResponse.status, 409);
     assert.equal((await wrongHashResponse.json() as { code?: string }).code, 'social_image_candidate_hash_conflict');
-    await store.update(STARTER_COLLECTIONS.socialContentTasks, contentRow!.id, { version: '2' });
-    const staleContentResponse = await fetch(`${baseUrl}/decision`, { method: 'POST', headers,
-      body: JSON.stringify({ expectedVersion: reviewedBody.task!.version, candidateId: pages[0]!.id,
-        candidateVersion: 1, expectedContentHash: pages[0]!.contentHash, decision: 'approved', idempotencyKey: 'http-stale-content-task' }) });
-    assert.equal(staleContentResponse.status, 409);
-    assert.equal((await staleContentResponse.json() as { code?: string }).code, 'social_image_content_task_binding_stale');
-    await store.update(STARTER_COLLECTIONS.socialContentTasks, contentRow!.id, { version: '1' });
     const secondPageMaterial = readLocalMaterials().find(item => item.id === pages[1]!.materialId);
     assert.ok(secondPageMaterial?.objectKey);
     const originalPage = await objectStorageDownload(secondPageMaterial.objectKey);
@@ -340,6 +338,12 @@ test('HTTP image routes reject forged evidence and finalize durable GIF plates i
         candidateVersion: 1, expectedContentHash: pages[0]!.contentHash, decision: 'approved', idempotencyKey: 'http-tampered-set' }) });
     assert.ok([409, 422].includes(tamperedResponse.status), 'a changed second page must block whole-set adoption');
     await objectStorageUpload({ key: secondPageMaterial.objectKey, body: originalPage.buf, contentType: 'image/png' });
+    await store.update(STARTER_COLLECTIONS.socialContentTasks, contentRow!.id, { version: '2' });
+    await assert.rejects(
+      () => assertSocialImageCurrentContentTask(store, tenantId, staged.task),
+      /social_image_content_task_binding_stale/,
+      'a new paid call must not use a stale ContentTask binding',
+    );
     let acceptedBody: { task?: typeof staged.task; code?: string } = reviewedBody;
     for (const [index, page] of pages.entries()) {
       const acceptedResponse = await fetch(`${baseUrl}/decision`, { method: 'POST', headers,

@@ -24,6 +24,55 @@ export type EnterpriseOnboardingAsset = {
   size: number;
   updatedAt: string;
   url?: string;
+  sha256?: string;
+};
+
+export type EnterpriseOnboardingEvidenceRef = {
+  id: string;
+  kind: 'source_document';
+  name: string;
+  mimeType: string;
+  size: number;
+  sha256: string;
+  url: string;
+  capturedAt: string;
+  status: 'uploaded';
+};
+
+export type EnterpriseOnboardingDataCoverage = {
+  enterpriseIdentity: boolean;
+  productProfile: boolean;
+  targetMarket: boolean;
+  operatingHistory: boolean;
+  note: string;
+};
+
+export type EnterpriseOnboardingFocusProductProposal = {
+  productId: string;
+  category: string;
+  highlights: string;
+  description: string;
+  reason: string;
+  confidence: number;
+  sourceRefs: string[];
+};
+
+export type EnterpriseOnboardingProposalSet = {
+  schemaVersion: 'enterprise-onboarding-proposals.v1';
+  inputHash: string;
+  generatedAt: string;
+  companyIntro: { value: string; confidence: number; sourceRefs: string[] };
+  brandTone: { value: string; confidence: number; sourceRefs: string[] };
+  focusProducts: EnterpriseOnboardingFocusProductProposal[];
+  market: {
+    targetBuyer: string;
+    primaryPlatform: string;
+    language: string;
+    reason: string;
+    confidence: number;
+    sourceRefs: string[];
+    coverage: EnterpriseOnboardingDataCoverage;
+  };
 };
 
 export type EnterpriseOnboardingProduct = {
@@ -75,6 +124,8 @@ export type EnterpriseOnboardingDraft = {
   language: string;
   contentStage?: EnterpriseOnboardingContentStage;
   primaryCta: string;
+  evidenceRefs?: EnterpriseOnboardingEvidenceRef[];
+  proposalSet?: EnterpriseOnboardingProposalSet;
   sources: Partial<Record<EnterpriseOnboardingFieldKey, EnterpriseOnboardingSource>>;
   updatedAt: string;
 };
@@ -111,8 +162,62 @@ function assetArray(value: unknown): EnterpriseOnboardingAsset[] | undefined {
     const size = Number(input.size);
     if (!name || !type || !updatedAt || !Number.isFinite(size) || size < 0) return [];
     const url = text(input.url, 2_000);
-    return [{ name, type, size, updatedAt, ...(url ? { url } : {}) }];
+    const sha256 = text(input.sha256, 64).toLowerCase();
+    return [{ name, type, size, updatedAt, ...(url ? { url } : {}), ...(/^[a-f0-9]{64}$/.test(sha256) ? { sha256 } : {}) }];
   });
+}
+
+function normalizeEvidenceRefs(value: unknown): EnterpriseOnboardingEvidenceRef[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const refs = value.slice(0, 20).flatMap(item => {
+    const input = record(item);
+    if (!input || input.kind !== 'source_document' || input.status !== 'uploaded') return [];
+    const sha256 = text(input.sha256, 64).toLowerCase();
+    const id = text(input.id, 160); const name = text(input.name, 500);
+    const mimeType = text(input.mimeType, 180); const url = text(input.url, 2_000);
+    const capturedAt = text(input.capturedAt, 64); const size = Number(input.size);
+    if (!id || !name || !mimeType || !url.startsWith('/api/overseas/enterprise/assets/')
+      || !capturedAt || !Number.isFinite(size) || size < 1 || !/^[a-f0-9]{64}$/.test(sha256)) return [];
+    return [{ id, kind: 'source_document' as const, name, mimeType, size, sha256, url, capturedAt, status: 'uploaded' as const }];
+  });
+  return refs.length ? refs : undefined;
+}
+
+function confidence(value: unknown): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : 0;
+}
+
+function stringList(value: unknown, maxItems = 20): string[] {
+  return Array.isArray(value) ? [...new Set(value.map(item => text(item, 240)).filter(Boolean))].slice(0, maxItems) : [];
+}
+
+function normalizeProposalSet(value: unknown, productIds: Set<string>): EnterpriseOnboardingProposalSet | undefined {
+  const input = record(value); const company = record(input?.companyIntro); const tone = record(input?.brandTone);
+  const market = record(input?.market); const coverage = record(market?.coverage);
+  const inputHash = text(input?.inputHash, 64).toLowerCase();
+  if (input?.schemaVersion !== 'enterprise-onboarding-proposals.v1' || !/^[a-f0-9]{64}$/.test(inputHash)
+    || !company || !tone || !market || !coverage) return undefined;
+  const focusProducts = (Array.isArray(input.focusProducts) ? input.focusProducts : []).slice(0, 3).flatMap(item => {
+    const proposal = record(item); const productId = text(proposal?.productId, 180);
+    if (!proposal || !productIds.has(productId)) return [];
+    return [{ productId, category: text(proposal.category, 240), highlights: text(proposal.highlights, 2_000),
+      description: text(proposal.description, 2_000), reason: text(proposal.reason, 1_000),
+      confidence: confidence(proposal.confidence), sourceRefs: stringList(proposal.sourceRefs) }];
+  });
+  return {
+    schemaVersion: 'enterprise-onboarding-proposals.v1', inputHash, generatedAt: text(input.generatedAt, 64),
+    companyIntro: { value: text(company.value, 2_000), confidence: confidence(company.confidence), sourceRefs: stringList(company.sourceRefs) },
+    brandTone: { value: text(tone.value, 1_000), confidence: confidence(tone.confidence), sourceRefs: stringList(tone.sourceRefs) },
+    focusProducts,
+    market: { targetBuyer: text(market.targetBuyer, 500), primaryPlatform: text(market.primaryPlatform, 80),
+      language: text(market.language, 80), reason: text(market.reason, 1_000), confidence: confidence(market.confidence),
+      sourceRefs: stringList(market.sourceRefs), coverage: {
+        enterpriseIdentity: coverage.enterpriseIdentity === true, productProfile: coverage.productProfile === true,
+        targetMarket: coverage.targetMarket === true, operatingHistory: coverage.operatingHistory === true,
+        note: text(coverage.note, 1_000),
+      } },
+  };
 }
 
 export function normalizeEnterpriseOnboardingProduct(value: unknown, index = 0): EnterpriseOnboardingProduct | null {
@@ -175,6 +280,8 @@ export function normalizeEnterpriseOnboardingDraft(value: unknown): EnterpriseOn
     : [];
   const stage = input.contentStage;
   const contentStage = stage === 'b2b_launch' || stage === 'b2b_growth' || stage === 'd2c_brand' ? stage : undefined;
+  const evidenceRefs = normalizeEvidenceRefs(input.evidenceRefs);
+  const proposalSet = normalizeProposalSet(input.proposalSet, productIds);
   return {
     schemaVersion: ENTERPRISE_ONBOARDING_SCHEMA_VERSION,
     revision: Math.max(0, Math.floor(Number(input.revision) || 0)),
@@ -188,6 +295,7 @@ export function normalizeEnterpriseOnboardingDraft(value: unknown): EnterpriseOn
     targetMarket: text(input.targetMarket, 500), targetBuyer: text(input.targetBuyer, 500),
     primaryPlatform: text(input.primaryPlatform, 80), language: text(input.language, 80),
     ...(contentStage ? { contentStage } : {}), primaryCta: text(input.primaryCta, 500),
+    ...(evidenceRefs ? { evidenceRefs } : {}), ...(proposalSet ? { proposalSet } : {}),
     sources: normalizeSources(input.sources), updatedAt: text(input.updatedAt, 64),
   };
 }
@@ -230,6 +338,8 @@ export function validateEnterpriseOnboardingConfirmation(value: unknown): {
       targetMarket: draft.targetMarket, targetBuyer: draft.targetBuyer,
       primaryPlatform: draft.primaryPlatform, language: draft.language,
       ...(draft.contentStage ? { contentStage: draft.contentStage } : {}), primaryCta: draft.primaryCta,
+      ...(draft.evidenceRefs ? { evidenceRefs: draft.evidenceRefs } : {}),
+      ...(draft.proposalSet ? { proposalSet: draft.proposalSet } : {}),
       sources: draft.sources, draftRevision: draft.revision,
     },
     missing,

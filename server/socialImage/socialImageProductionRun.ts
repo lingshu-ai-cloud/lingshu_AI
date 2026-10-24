@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import {
   SOCIAL_IMAGE_HARD_CHECKS,
@@ -27,25 +27,14 @@ import { STARTER_COLLECTIONS, type StarterRecord } from '../starter198/repositor
 import { defaultSocialImageTask, readSocialImageTask, SOCIAL_IMAGE_TASKS_COLLECTION, updateSocialImageTask } from './socialImageTask.js';
 import { initializeSocialImageProductionRuntime, projectSocialImageProductionSnapshot } from './socialImageProductionRuntime.js';
 import { resolveSocialImageReviewSet, socialImageDirectorReviewMatchesSet, socialImageReviewRefsMatch } from './socialImageReviewSet.js';
+import { createSocialImageTaskContextSnapshot, taskContextSnapshotIssue } from './taskContextSnapshot.js';
+import { socialImageProductionHash as hash } from './socialImageProductionHash.js';
 
 export class SocialImageProductionRunError extends Error {
   constructor(readonly code: string, readonly status = 409) {
     super(code);
     this.name = 'SocialImageProductionRunError';
   }
-}
-
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-    .filter(([, item]) => item !== undefined)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, item]) => [key, canonical(item)]));
-}
-
-function hash(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 }
 
 function boundedIdentity(value: unknown, code: string, maximum = 120): string {
@@ -72,23 +61,44 @@ async function canonicalContentTask(store: DataStore, tenantId: string, contentT
   if (rows.totalItems > 1 || rows.items.length > 1) throw new SocialImageProductionRunError('social_image_content_task_integrity_violation', 503);
   const row = rows.items[0];
   if (!row) throw new SocialImageProductionRunError('social_image_content_task_not_found', 404);
-  return socialTaskSummary(row);
+  return { ...socialTaskSummary(row), createdBy: String(row.created_by || 'system:legacy-task-owner') };
 }
 
-/** Re-read the canonical task at every paid admission point; the image snapshot alone cannot detect later edits. */
+async function canonicalEnterpriseFactVersionId(store: DataStore, tenantId: string): Promise<string> {
+  const rows = await store.list<StarterRecord>('tenant_profiles', { where: { tenant_id: tenantId }, perPage: 2 });
+  if (rows.totalItems !== 1 || rows.items.length !== 1 || rows.items[0]?.tenant_id !== tenantId) {
+    throw new SocialImageProductionRunError('social_image_enterprise_fact_version_missing', 409);
+  }
+  const profile = rows.items[0].profile;
+  const factVersion = profile && typeof profile === 'object' && !Array.isArray(profile)
+    ? (profile as Record<string, unknown>).factVersion : null;
+  const id = factVersion && typeof factVersion === 'object' && !Array.isArray(factVersion)
+    ? String((factVersion as Record<string, unknown>).id || '').trim() : '';
+  if (!id) throw new SocialImageProductionRunError('social_image_enterprise_fact_version_missing', 409);
+  return id;
+}
+
+/** Paid admission requires a current binding; review may use a verified frozen snapshot after payment began. */
 export async function assertSocialImageCurrentContentTask(
   store: DataStore, tenantId: string, task: SocialImageCreationTask,
+  purpose: 'paid_admission' | 'review_original_output' = 'paid_admission',
 ): Promise<void> {
   if (task.schemaVersion !== 'social-image-creation.v3') return;
   const binding = task.productionRuntime?.binding;
   if (!binding || binding.productionRunId !== task.id) {
     throw new SocialImageProductionRunError('social_image_content_task_binding_missing', 409);
   }
+  const snapshotIssue = taskContextSnapshotIssue(binding.taskContextSnapshot, {
+    tenantId, contentTaskId: binding.contentTaskId, contentTaskVersion: binding.contentTaskVersion,
+    productionRunId: binding.productionRunId,
+  });
+  if (snapshotIssue) throw new SocialImageProductionRunError(snapshotIssue, 409);
   const current = await canonicalContentTask(store, tenantId, binding.contentTaskId);
   const business = task.productionRuntime?.nodeOutputs.filter(output => output.nodeId === 'business_context').at(-1);
   const source = business?.inputRefs.find(ref => ref.objectType === 'social_content_task' && ref.id === binding.contentTaskId);
-  if (current.version !== binding.contentTaskVersion || !source
-    || String(source.version) !== current.version || source.contentHash !== hash(current.brief)) {
+  const paidStarted = task.generationJobs.some(job => job.attempt > 0 || Boolean(job.inputHash));
+  if ((purpose === 'paid_admission' || !paidStarted) && (current.version !== binding.contentTaskVersion || !source
+    || String(source.version) !== current.version || source.contentHash !== hash(current.brief))) {
     throw new SocialImageProductionRunError('social_image_content_task_binding_stale', 409);
   }
 }
@@ -339,6 +349,8 @@ export async function createOrResumeBoundSocialImageRun(
     requestHash,
     resumeToken: hash({ tenantId, contentTaskId, productionRunId, requestHash }).slice(0, 40),
     boundAt: now,
+    taskContextSnapshot: createSocialImageTaskContextSnapshot({ tenantId, contentTask,
+      task: payload, factVersionId: await canonicalEnterpriseFactVersionId(store, tenantId), now }),
   };
   payload.productionRuntime = initializeSocialImageProductionRuntime(payload, binding, now);
   const stored = await store.create<StarterRecord>(SOCIAL_IMAGE_TASKS_COLLECTION, {
@@ -368,7 +380,7 @@ export async function refreshSocialImageContentTaskBinding(input: {
   taskId: string;
   expectedVersion: number;
   expectedContentTaskVersion: string;
-  contentTask?: ReturnType<typeof socialTaskSummary>;
+  contentTask?: Awaited<ReturnType<typeof canonicalContentTask>>;
   now?: string;
 }): Promise<SocialImageCreationTask> {
   const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
@@ -410,7 +422,9 @@ export async function refreshSocialImageContentTaskBinding(input: {
     contentHash: hash({ nodeId: output.nodeId, contentTask: sourceRef }), evidenceRefs: [sourceRef], warnings: [],
     blockingReasons: ['social_image_content_task_changed'], value: { reason: 'content_task_changed' },
   }));
-  const nextRuntime = { ...runtime, binding: { ...binding, contentTaskVersion: contentTask.version, boundAt: now },
+  const nextRuntime = { ...runtime, binding: { ...binding, contentTaskVersion: contentTask.version, boundAt: now,
+    taskContextSnapshot: createSocialImageTaskContextSnapshot({ tenantId: input.tenantId, contentTask,
+      task, factVersionId: await canonicalEnterpriseFactVersionId(input.store, input.tenantId), now }) },
     nodeOutputs: [...runtime.nodeOutputs, ...staleOutputs] };
   const brief = contentTask.brief;
   const result = await updateSocialImageTask(input.store, input.tenantId, task.id, task.version, {
@@ -642,7 +656,9 @@ export async function decideSocialImageCandidate(input: {
   if (task.schemaVersion !== 'social-image-creation.v3' || !task.productionRuntime?.binding) {
     throw new SocialImageProductionRunError('social_image_content_task_binding_missing', 409);
   }
-  if (input.decision === 'approved') await assertSocialImageCurrentContentTask(input.store, input.tenantId, task);
+  if (input.decision === 'approved') await assertSocialImageCurrentContentTask(
+    input.store, input.tenantId, task, 'review_original_output',
+  );
   const current = socialImageCurrentOutputs(task);
   const output = current.find(candidate => candidate.id === input.candidateId && candidate.version === input.candidateVersion
     && candidate.state !== 'superseded');

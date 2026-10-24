@@ -3,6 +3,7 @@ import type { SocialImageCreationTask } from '../../shared/contracts/socialImage
 import type { SocialImageLayerGraph } from '../../shared/contracts/socialImageLayerGraph.js';
 import type { SocialImageNodeEnvelope, SocialImageProductionNodeId, SocialImageNodeValueMap } from '../../shared/contracts/socialImageProduction.js';
 import { socialImageCanvasForAspectRatio } from './referenceCanvas.js';
+import { taskContextSnapshotIssue } from './taskContextSnapshot.js';
 
 const HASH = /^[a-f0-9]{64}$/;
 const PREPARATION_NODES = ['asset_manifest', 'reference_snapshot', 'element_inventory', 'hook_factors', 'adaptation'] as const;
@@ -53,6 +54,11 @@ export function socialImageV3PaidPrerequisiteIssue(task: SocialImageCreationTask
   if (task.schemaVersion !== 'social-image-creation.v3') return null;
   const runtime = task.productionRuntime;
   if (!runtime?.binding || runtime.binding.productionRunId !== task.id) return 'social_image_content_task_binding_missing';
+  const snapshotIssue = taskContextSnapshotIssue(runtime.binding.taskContextSnapshot, {
+    tenantId: runtime.binding.taskContextSnapshot?.tenantId || '', contentTaskId: runtime.binding.contentTaskId,
+    contentTaskVersion: runtime.binding.contentTaskVersion, productionRunId: runtime.binding.productionRunId,
+  });
+  if (snapshotIssue) return snapshotIssue;
   // The canonical ContentTask has one authoritative productId. Do not let a
   // second image-only product acquire formal evidence or a paid render slot.
   if (task.contentBrief.productRefs.length > 1) return 'social_image_single_product_required';
@@ -176,7 +182,10 @@ export function socialImageV3PaidEvidenceHash(task: SocialImageCreationTask, inc
     const output = latestOutput(task, nodeId);
     return output ? { nodeId, id: output.id, version: output.version, status: output.status, contentHash: output.contentHash } : null;
   });
+  const snapshot = task.productionRuntime?.binding?.taskContextSnapshot;
   return createHash('sha256').update(JSON.stringify({ binding: task.productionRuntime?.binding?.contentTaskVersion,
+    taskContextSnapshot: snapshot ? { id: snapshot.id, snapshotVersion: snapshot.snapshotVersion,
+      contentHash: snapshot.contentHash, factVersionId: snapshot.factVersionId } : null,
     outputRefs, requiredAssets: task.enterpriseAssets, materialIds: task.materialIds,
     productRefs: task.contentBrief.productRefs })).digest('hex');
 }

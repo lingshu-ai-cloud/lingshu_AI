@@ -10,6 +10,7 @@ import { defaultBrief } from '../starter198/socialContentTaskSupport.js';
 import { STARTER_COLLECTIONS } from '../starter198/repository.js';
 import { readSocialImageTask, SOCIAL_IMAGE_TASKS_COLLECTION, updateSocialImageTask } from './socialImageTask.js';
 import {
+  assertSocialImageCurrentContentTask,
   createOrResumeBoundSocialImageRun,
   createSocialImageDeliveryPackage,
   decideSocialImageCandidate,
@@ -81,6 +82,8 @@ async function fixture() {
     artifact_count: 0, approved_artifact_count: 0, delivery_package_count: 0, publication_count: 0,
     metric_submission_count: 0, created_at: now, updated_at: now,
   });
+  await store.create('tenant_profiles', { id:'profile-a', tenant_id:'tenant-a',
+    profile:{ factVersion:{ id:'enterprise-facts-v1', revision:1, contentHash:'f'.repeat(64), confirmedAt:now, confirmedBy:'owner' } } });
   return { store, now };
 }
 
@@ -199,6 +202,24 @@ test('authorized V3 single image reaches queue and atomic claim through server-p
   assert.equal(claimed.generationJobs.at(-1)?.status, 'running');
 });
 
+test('bound run freezes a hashed task context and rejects snapshot mutation before paid work', async () => {
+  const { store, now } = await fixture();
+  const task = (await createOrResumeBoundSocialImageRun(store, 'tenant-a', {
+    contentTaskId:'content-a', expectedContentTaskVersion:'7', idempotencyKey:'snapshot-check',
+    entrySource:'assistant', imageType:'product_poster',
+  }, now)).task;
+  const snapshot = task.productionRuntime?.binding?.taskContextSnapshot;
+  assert.equal(snapshot?.schemaVersion, 'task-context-snapshot.v1');
+  assert.equal(snapshot?.snapshotVersion, 7);
+  assert.equal(snapshot?.productIds[0], 'product-a');
+  assert.equal(snapshot?.audience, '品牌采购');
+  assert.match(snapshot?.contentHash || '', /^[a-f0-9]{64}$/);
+  const changed = structuredClone(task);
+  if (!changed.productionRuntime?.binding) throw new Error('fixture_binding_missing');
+  changed.productionRuntime.binding.taskContextSnapshot.audience = '被篡改的受众';
+  assert.equal(socialImageV3PaidPrerequisiteIssue(changed, 'queue'), 'social_image_task_context_snapshot_invalid');
+});
+
 test('a changed canonical ContentTask invalidates a prepared image before paid planning or queue admission', async () => {
   const { store, task: evidenced } = await authorizedFormalRun();
   const director = await serverDirector(store, evidenced);
@@ -208,6 +229,36 @@ test('a changed canonical ContentTask invalidates a prepared image before paid p
     brief: { ...(row.brief as Record<string, unknown>), objective: '已经修改的采购目标' } });
   await assert.rejects(compileSocialImageV3PaidPlan({ store, tenantId: 'tenant-a', taskId: director.id,
     expectedVersion: director.version }), /social_image_content_task_binding_stale/);
+});
+
+test('paid output review uses its frozen snapshot, but another paid admission rejects a stale task', async () => {
+  const { store, task: evidenced } = await authorizedFormalRun();
+  const planned = await serverDirector(store, evidenced);
+  const compiled = await compileSocialImageV3PaidPlan({ store, tenantId:'tenant-a', taskId:planned.id,
+    expectedVersion:planned.version });
+  const renderSpec = compiled.productionRuntime!.nodeOutputs.filter(item => item.nodeId === 'render_spec').at(-1)!.value as {idempotencyKey:string};
+  const now = new Date().toISOString();
+  const patch = await admitSocialImageV3QueuedJob(store, 'tenant-a', compiled, { status:'generating', step:'generate',
+    generationJobs:[...compiled.generationJobs, { id:'frozen-job', idempotencyKey:renderSpec.idempotencyKey,
+      status:'queued', outputNodeIds:[], attempt:0, createdAt:now, updatedAt:now }] });
+  const queued = await updateSocialImageTask(store, 'tenant-a', compiled.id, compiled.version, patch);
+  if (queued.kind !== 'updated') throw new Error('fixture_queue_failed');
+  const claimed = await claimSocialImagePaidJob({ store, tenantId:'tenant-a', taskId:queued.task.id, jobId:'frozen-job',
+    idempotencyKey:renderSpec.idempotencyKey, inputHash:'9'.repeat(64) });
+  if (!claimed.productionRuntime?.binding) throw new Error('fixture_binding_missing');
+  const before = structuredClone(claimed.productionRuntime.binding.taskContextSnapshot);
+  const row = await store.getById<Record_>(STARTER_COLLECTIONS.socialContentTasks, 'content-row');
+  assert.ok(row);
+  await store.update(STARTER_COLLECTIONS.socialContentTasks, 'content-row', { version:'8',
+    brief:{ ...(row.brief as Record<string, unknown>), objective:'付费后修改的新目标' } });
+  await assert.rejects(
+    () => assertSocialImageCurrentContentTask(store, 'tenant-a', claimed),
+    /social_image_content_task_binding_stale/,
+  );
+  await assert.doesNotReject(
+    () => assertSocialImageCurrentContentTask(store, 'tenant-a', claimed, 'review_original_output'),
+  );
+  assert.deepEqual(claimed.productionRuntime.binding.taskContextSnapshot, before);
 });
 
 test('single-image targeted repair gets a new formal render-spec and receipt key without erasing the prior output', async () => {

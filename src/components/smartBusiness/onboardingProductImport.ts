@@ -1,4 +1,5 @@
 import { uploadProductEvidence } from '../../lib/enterpriseProductAssetUpload';
+import type { EnterpriseOnboardingEvidenceRef } from '../../../shared/contracts/enterpriseOnboarding';
 import { parseProductDocument, productsFromLabeledText, type DocumentProductDraft } from '../../lib/productDocumentImport';
 import { readProductDiscoveryFile } from '../../lib/productDiscoveryFile';
 import { heuristicProductMapping, mapRowToProduct, parseWorkbook, prepareSheet } from '../../lib/productImport';
@@ -29,9 +30,11 @@ export interface OnboardingProductImportResult {
   assignedImageCount: number;
   unassignedImageCount: number;
   sourceLabel: string;
+  sourceEvidence: EnterpriseOnboardingEvidenceRef;
 }
 
-export async function importOnboardingProducts(file: File, existingProducts: OnboardingProduct[]): Promise<OnboardingProductImportResult> {
+export async function importOnboardingProducts(file: File, existingProducts: OnboardingProduct[],
+  uploadEvidence = uploadProductEvidence): Promise<OnboardingProductImportResult> {
   if (!/\.(xlsx?|csv|pdf|docx|txt)$/i.test(file.name)) throw new Error('请选择 Excel、CSV、PDF、Word 或 TXT 文件');
   if (file.size > 50 * 1024 * 1024) throw new Error('文件不能超过 50MB，请压缩或拆分后重试');
   const temporaryUrls: string[] = [];
@@ -69,10 +72,12 @@ export async function importOnboardingProducts(file: File, existingProducts: Onb
         videos: [], documents: [], source: 'product_file_import',
       }));
     if (!decoded.length) throw new Error('未识别到有效产品，请确认表格包含“产品名称”或“SKU/货号”列');
+    const sourceAsset = await uploadEvidence(file);
+    if (!sourceAsset.url || !sourceAsset.sha256) throw new Error('原始产品资料上传后缺少可核验回执');
     for (const image of assignedImages) {
       const product = decoded[image.productIndex];
       if (!product) continue;
-      const asset = await uploadProductEvidence(image.file);
+      const asset = await uploadEvidence(image.file);
       if (!asset.url) throw new Error('PDF 产品图片上传后缺少可用地址');
       product.images.push({ ...asset, url: asset.url });
       if (!product.imageUrl) product.imageUrl = asset.url;
@@ -85,6 +90,12 @@ export async function importOnboardingProducts(file: File, existingProducts: Onb
       assignedImageCount: assignedImages.length,
       unassignedImageCount: unassignedImages.length,
       sourceLabel,
+      sourceEvidence: {
+        id: `onboarding-source:${sourceAsset.sha256}`,
+        kind: 'source_document', name: sourceAsset.name, mimeType: sourceAsset.type,
+        size: sourceAsset.size, sha256: sourceAsset.sha256, url: sourceAsset.url,
+        capturedAt: sourceAsset.updatedAt, status: 'uploaded',
+      },
     };
   } finally {
     temporaryUrls.forEach(url => URL.revokeObjectURL(url));

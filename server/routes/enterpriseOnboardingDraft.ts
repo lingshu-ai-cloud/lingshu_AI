@@ -8,6 +8,10 @@ import {
 } from '../../shared/contracts/enterpriseOnboarding.js';
 import type { AuthLocals } from '../middleware/auth.js';
 import type { DataStore, Record_ } from '../storage/datastore.js';
+import {
+  EnterpriseOnboardingProposalError,
+  generateEnterpriseOnboardingProposals,
+} from '../digitalEmployees/enterpriseOnboardingProposals.js';
 
 export const ENTERPRISE_ONBOARDING_DRAFT_COLLECTION = 'enterprise_onboarding_drafts';
 
@@ -191,6 +195,24 @@ export async function markEnterpriseOnboardingDraftRetryable(
 
 export function createEnterpriseOnboardingDraftRouter(store: DataStore): Router {
   const router = Router();
+
+  router.post('/proposals', async (req, res) => {
+    try {
+      const draft = normalizeEnterpriseOnboardingDraft(req.body?.draft);
+      if (!draft) {
+        res.status(400).json({ error: 'enterprise_onboarding_proposal_input_invalid', message: '请先填写并保存当前建档资料。' });
+        return;
+      }
+      const proposalSet = await generateEnterpriseOnboardingProposals(draft);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json({ proposalSet });
+    } catch (error) {
+      const failure = error instanceof EnterpriseOnboardingProposalError
+        ? error : new EnterpriseOnboardingProposalError('enterprise_onboarding_proposal_unavailable', 503);
+      res.status(failure.status).json({ error: failure.code,
+        message: failure.status === 503 ? 'AI 建议暂时不可用；已填写内容仍可保存，稍后可重试。' : '当前资料不足以生成可核对的建议。' });
+    }
+  });
 
   router.get('/', async (_req, res) => {
     const { tenantId, userId } = res.locals as AuthLocals;

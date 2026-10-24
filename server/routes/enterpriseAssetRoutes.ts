@@ -61,7 +61,7 @@ router.post('/assets', async (req, res) => {
       ? 'enterprise_product_footage_evidence_required' : 'enterprise_product_image_or_video_required' }); return;
   }
   if (!enterpriseAssetTypeAllowed(contentType)) {
-    res.status(415).json({ error: 'only image, video and PDF enterprise assets are supported' });
+    res.status(415).json({ error: 'only image, video, PDF, Word, Excel, CSV and TXT enterprise assets are supported' });
     return;
   }
   if (buffer.length === 0 || buffer.length > 110 * 1024 * 1024) {
@@ -172,6 +172,7 @@ router.post('/assets', async (req, res) => {
     type: contentType,
     size: buffer.length,
     updatedAt: new Date().toISOString(),
+    sha256: normalized?.sha256 || createHash('sha256').update(buffer).digest('hex'),
     url: `/api/overseas/enterprise/assets/${storedName}`,
     material,
   });
