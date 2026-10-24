@@ -323,3 +323,9 @@ html[data-lingshu-appearance='light'] .ls-assistant-home-root .ls-assistant-comp
 .guided-creation__review { display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); padding: 16px; }
 .guided-creation__review h3, .guided-creation__review p { margin: 0; }
 @media (prefers-reduced-motion: reduce) { .guided-creation__candidates > button { transition: none; } }
+
+/* Employee creation uses a goal, an embedded execution view and finished outputs. */
+.creator-home--employee .creator-home__canvas-stage { margin-top: 32px; }
+.creator-home--employee .creator-home__canvas { text-align: left; }
+.creator-home--employee .creator-home__conversation { margin-top: 32px; }
+.creator-home--employee [hidden] { display: none !important; }

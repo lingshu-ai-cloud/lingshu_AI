@@ -98,6 +98,7 @@ export function projectSocialContentTaskCalendar(tasks: SocialContentTaskSummary
     ];
     return {
       id: `social-content:${task.taskId}`,
+      executionInputSnapshot: { brief: task.brief },
       deliverableGroup: `social-content:${task.taskId}`,
       date: finishPoint.date,
       time: finishPoint.time,

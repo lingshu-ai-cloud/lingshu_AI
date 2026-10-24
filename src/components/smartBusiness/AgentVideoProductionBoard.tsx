@@ -9,6 +9,7 @@ import type { AgentCalendarTask } from './AgentWeeklyCalendar';
 import {
   VIDEO_PRODUCTION_STAGES,
   buildVideoProductionLanes,
+  persistedVideoTasks,
   productionStageForTask,
   type VideoProductionDisplayStatus,
   type VideoProductionLane,
@@ -176,9 +177,10 @@ type ProductionGanttTask = ITask & {
   nodes: GanttRow[];
 };
 
-export function productionGanttTasks(lanes: VideoProductionLane[]): ProductionGanttTask[] {
+export function productionGanttTasks(lanes: VideoProductionLane[], actualTasksOnly = false): ProductionGanttTask[] {
   return lanes.map(lane => {
-    const rows = ganttRows(lane).sort((left, right) => {
+    const sourceRows = actualTasksOnly ? persistedVideoTasks(lane.tasks).map(task => ({ id: task.id, stage: productionStageForTask(task), task, status: task.status as VideoProductionDisplayStatus, label: task.title, owner: task.assignee || agentLabel[task.agent] })) : ganttRows(lane);
+    const rows = actualTasksOnly ? sourceRows : sourceRows.sort((left, right) => {
       const leftStage = VIDEO_PRODUCTION_STAGES.findIndex(stage => stage.key === left.stage?.key);
       const rightStage = VIDEO_PRODUCTION_STAGES.findIndex(stage => stage.key === right.stage?.key);
       return leftStage - rightStage || String(left.task?.time || '').localeCompare(String(right.task?.time || ''));
@@ -202,12 +204,14 @@ export function productionGanttTasks(lanes: VideoProductionLane[]): ProductionGa
   });
 }
 
-export default function AgentVideoProductionBoard({ events, renderDetails, demo = false }: {
+export default function AgentVideoProductionBoard({ events, renderDetails, demo = false, actualTasksOnly = false, onOpenTask }: {
   events: LsCalendarEvent[];
   renderDetails: (event: LsCalendarEvent, close: () => void) => ReactNode;
   demo?: boolean;
+  actualTasksOnly?: boolean;
+  onOpenTask?: (task: AgentCalendarTask) => void;
 }) {
-  const tasks = useMemo(() => events.map(event => event.data as AgentCalendarTask), [events]);
+  const tasks = useMemo(() => { const actual = events.map(event => event.data as AgentCalendarTask); return actualTasksOnly ? persistedVideoTasks(actual) : actual; }, [events, actualTasksOnly]);
   const { lanes, shared } = useMemo(() => buildVideoProductionLanes(tasks), [tasks]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [previewLane, setPreviewLane] = useState<VideoProductionLane | null>(null);
@@ -219,7 +223,7 @@ export default function AgentVideoProductionBoard({ events, renderDetails, demo 
   const today = dateKey(new Date());
   const focusDay = useMemo(() => ganttFocusDay(tasks, today), [tasks, today]);
   const eventByTaskId = useMemo(() => new Map(events.map(event => [event.id, event])), [events]);
-  const ganttTasks = useMemo(() => productionGanttTasks(lanes), [lanes]);
+  const ganttTasks = useMemo(() => productionGanttTasks(lanes, actualTasksOnly), [lanes, actualTasksOnly]);
   const chartStart = weeks[0] ? mondayOf(weeks[0].start) : mondayOf(focusDay);
   const chartEnd = weeks.at(-1) ? endOfWeekExclusive(weeks.at(-1)!.end) : endOfWeekExclusive(focusDay);
 
@@ -239,7 +243,18 @@ export default function AgentVideoProductionBoard({ events, renderDetails, demo 
 
     {lanes.length === 0 && <div className="px-6 py-12 text-center"><CircleDashed className="mx-auto text-text-muted"/><h4 className="mt-3 text-sm font-semibold text-text-primary">尚无生产排期</h4><p className="mt-1 text-xs text-text-secondary">真实执行节点派生后会自动进入甘特图。</p></div>}
 
-    {lanes.length > 0 && <div aria-label="Agent 生产甘特图" className="agent-production-gantt min-h-[430px] overflow-hidden" style={{ height: `${Math.max(430, 62 + ganttTasks.length * 54)}px` }}>
+    {actualTasksOnly && lanes.length > 0 && <div aria-label="视频真实执行进展" className="divide-y divide-border">
+      {ganttTasks.map(row => <article key={row.id} className="grid min-w-0 gap-3 p-4 md:grid-cols-[220px_minmax(0,1fr)]">
+        <div className="min-w-0"><h4 className="text-sm font-medium text-text-primary">{row.text}</h4><p className="mt-2 text-xs text-text-secondary">{row.nodes.filter(node => node.status === 'completed' || node.status === 'no_data').length}/{row.nodes.length} 个节点已完成</p><div role="progressbar" aria-label={`${row.text}节点完成进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={row.progress} className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-2"><div className="h-full bg-accent" style={{width:`${row.progress}%`}}/></div></div>
+        <div className="flex min-w-0 gap-2 overflow-x-auto pb-2" aria-label={`${row.text}执行节点`}>
+          {row.nodes.map(node => <button key={node.id} data-execution-task-id={node.task?.workspaceTarget?.executionTaskId || node.task?.productionTaskId || node.id} type="button" className={`flex w-36 shrink-0 flex-col gap-1 rounded-lg border p-2 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${barTone(node.status)}`} onClick={() => { setSelectedId(node.id); if(node.task)onOpenTask?.(node.task); }}>
+            <span className="flex items-center gap-1"><StageIcon status={node.status}/>{statusLabel[node.status]}</span><strong>{node.label}</strong><span>{node.owner}</span><span>{node.task?.date} {node.task?.time}</span>
+          </button>)}
+        </div>
+      </article>)}
+    </div>}
+
+    {!actualTasksOnly && lanes.length > 0 && <div aria-label="Agent 生产甘特图" className="agent-production-gantt min-h-[430px] overflow-hidden" style={{ height: `${Math.max(430, 62 + ganttTasks.length * 54)}px` }}>
       <Gantt
         tasks={ganttTasks}
         readonly
@@ -268,8 +283,8 @@ export default function AgentVideoProductionBoard({ events, renderDetails, demo 
           return <div className="grid h-full w-full gap-1 p-1" style={{ gridTemplateColumns: `repeat(${Math.max(1, item.nodes.length)}, minmax(72px, 88px))`, justifyContent: 'space-between' }}>
             {item.nodes.map(node => {
               const clickable = Boolean(node.task && eventByTaskId.has(node.task.id));
-              return <button key={node.id} type="button" disabled={!clickable} onClick={event => { event.stopPropagation(); if (node.task) setSelectedId(node.task.id); }} data-production-node={node.stage?.key || node.task?.executionStep || 'unmapped'} title={`${node.label} · ${node.owner} · ${statusLabel[node.status]} · ${node.task?.date || '尚未排期'}${node.task?.time ? ` ${node.task.time}` : ''}`} className={`flex min-w-0 items-center gap-1 overflow-hidden rounded-md border px-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:cursor-default ${barTone(node.status)}`}>
-                <StageIcon status={node.status}/><span className="min-w-0 flex-1 leading-none"><strong className="block truncate text-[10px] font-semibold leading-[12px]">{node.stage?.title || node.label}</strong><span className="block truncate text-[9px] leading-[11px] opacity-80">{compactOwner(node.owner)}</span></span>
+              return <button key={node.id} type="button" disabled={!clickable} onClick={event => { event.stopPropagation(); if (node.task) { setSelectedId(node.task.id); onOpenTask?.(node.task); } }} data-production-node={node.stage?.key || node.task?.executionStep || 'unmapped'} title={`${node.label} · ${node.owner} · ${statusLabel[node.status]} · ${node.task?.date || '尚未排期'}${node.task?.time ? ` ${node.task.time}` : ''}`} className={`flex min-w-0 items-center gap-1 overflow-hidden rounded-md border px-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:cursor-default ${barTone(node.status)}`}>
+                <StageIcon status={node.status}/><span className="min-w-0 flex-1 leading-none"><strong className="block truncate text-[10px] font-semibold leading-[12px]">{actualTasksOnly ? node.label.split(/\s+·\s+/)[0] : node.stage?.title || node.label}</strong><span className="block truncate text-[9px] leading-[11px] opacity-80">{compactOwner(node.owner)}</span></span>
               </button>;
             })}
           </div>;
@@ -278,12 +293,13 @@ export default function AgentVideoProductionBoard({ events, renderDetails, demo 
           const lane = lanes.find(item => item.id === String(id));
           if (!lane) return;
           if (lane.previewVideoUrl) setPreviewLane(lane);
-          else setSelectedId(lane.tasks[0]?.id || null);
+          else if (lane.tasks[0]) { setSelectedId(lane.tasks[0].id); onOpenTask?.(lane.tasks[0]); }
         }}
       />
-      {shared.length > 0 && <div className="sr-only">共同任务：{shared.map(task => task.title).join('、')}</div>}
+      {!actualTasksOnly && shared.length > 0 && <div className="sr-only">共同任务：{shared.map(task => task.title).join('、')}</div>}
     </div>}
 
+    {actualTasksOnly && shared.length > 0 && <details className="border-t border-border p-4"><summary className="cursor-pointer text-sm font-medium">共同前置与复盘任务 · {shared.length} 项</summary><div className="mt-3 flex flex-wrap gap-2">{shared.map(task => <button key={task.id} type="button" className="rounded-lg border border-border px-3 py-2 text-xs" onClick={() => { setSelectedId(task.id); onOpenTask?.(task); }}>{task.title}</button>)}</div></details>}
     <Drawer title="视频生产步骤详情" size={560} open={Boolean(selected)} onClose={close} destroyOnHidden>{selected && renderDetails(selected, close)}</Drawer>
     <Modal title={previewLane?.title || '视频预览'} open={Boolean(previewLane)} onCancel={() => setPreviewLane(null)} footer={null} width={760} destroyOnHidden>
       <div className="flex min-h-[420px] items-center justify-center overflow-hidden rounded-lg bg-slate-950">

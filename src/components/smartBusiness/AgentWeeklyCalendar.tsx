@@ -92,6 +92,7 @@ export type AgentCalendarTask = {
   productionExecutionTaskId?: string;
   workspaceTarget?: {programId:string;packageId:string;packageVersion:number;executionTaskId:string};
   executionBlockers?: string[];
+  executionInputSnapshot?: Record<string, unknown>;
   executionResultRefs?: Array<{type:string;id:string;version:number}>;
   materialRequestId?: string;
   materialAction?: 'upload' | 'verification';
