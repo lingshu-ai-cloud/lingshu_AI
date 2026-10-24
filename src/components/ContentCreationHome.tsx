@@ -3,7 +3,7 @@ import { Alert, Button, Segmented, Spin } from 'antd';
 import { ArrowRight, CalendarDays, Clapperboard, Lightbulb, RefreshCw, Sparkles } from 'lucide-react';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { Page } from '../pageRegistry';
-import { useCreationMode } from '../lib/creationMode';
+import { useCreationModeControl, type CreationMode, useCreationMode } from '../lib/creationMode';
 import { fetchViralFeed } from '../lib/viralVideoFeed';
 import { digitalEmployeeApi } from '../lib/digitalEmployeeApi';
 import { authHeader, AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
@@ -20,6 +20,7 @@ const EmployeeDeliveries = lazy(() => import('./contentCreation/EmployeeDeliveri
 
 export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page: Page) => void }) {
   const mode = useCreationMode();
+  const switchMode = useCreationModeControl();
   const [videos, setVideos] = useState<TrendVideo[]>([]);
   const [videosLoading, setVideosLoading] = useState(false);
   const [videosError, setVideosError] = useState('');
@@ -86,11 +87,6 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
     };
   }, [mode, videoRevision]);
 
-  const refreshOverview = () => setVideoRevision(value => value + 1);
-  const closeExecution = () => {
-    setExecutionOpen(false);
-    window.requestAnimationFrame(() => executionTriggerRef.current?.querySelector<HTMLButtonElement>('button')?.focus());
-  };
 
   const selectReference = (video: TrendVideo) => {
     useAssistantStore.getState().hydrateThread('business', { creationDraft: { referenceId: video.recordId || video.id.replace(/^crawl-/, ''), referenceLabel: video.title.slice(0, 200), ...(/^(https?:\/\/|\/api\/)/.test(video.thumbnail || '') ? { referenceThumbnail: video.thumbnail } : {}), productIds: [], shotIds: [], guided: { languages: [], customNodes: [], assignments: [] } } });
