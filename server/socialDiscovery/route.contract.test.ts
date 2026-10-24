@@ -36,7 +36,8 @@ assert.match(service, /discoveryContext:\s*\{ runId, scopeId: scope\.id, scopeVe
 assert.match(service, /weeklyOriginalAccountCollection:[\s\S]*?actorInputSha256:/, '黄金五条原运行必须锁定同 run 下载输入身份');
 assert.match(videos, /discoveryOrigins:\s*discoveryOrigins\(existingAnalysis\.discoveryOrigins/, '去重素材也必须追加发现溯源');
 assert.match(inspirationDashboard, /<InspirationVideoResults/, '灵感大屏必须挂载共享供给结果视图');
-assert.match(inspirationVideoResults, /import \{ VideoCard, VideoListItem \} from ['"]\.\.\/InspirationVideoCards['"]/, '结果视图必须组合独立的视频供给卡片');
+assert.match(inspirationVideoResults, /import \{ VideoCard \} from ['"]\.\.\/InspirationVideoCards['"]/, '结果视图必须组合独立的视频供给卡片');
+assert.match(inspirationVideoResults, /content: <VideoCard video=\{video\}/, '每条供给结果必须渲染独立的视频卡片');
 assert.match(inspirationVideoCards, /discoverySupplyLabel\(video\)/, '素材卡必须向用户解释三类供给来源');
 for (const [mode, expected] of [['momentum', '行业起量'], ['account', '确认对标'], ['innovation', '创新参考']] as const) {
   assert.equal(discoverySupplyLabel({ aiAnalysis: { discoveryOrigins: [{ mode }] } } as never), expected, `${mode} 供给必须展示稳定且可区分的用户标签`);

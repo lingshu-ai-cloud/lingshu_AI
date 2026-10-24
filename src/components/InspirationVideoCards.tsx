@@ -5,7 +5,7 @@ import { SocialPlatformIcon } from './SocialPlatformIcon';
 import type { TrendVideo } from '../lib/inspirationTypes';
 import { AuthenticatedVideo, ThumbnailImage, VideoThumbnail } from './inspiration/InspirationMedia';
 import { imagePostAnalysisQueuePresentation } from './inspiration/imagePostAnalysisPresentation';
-import { getPlatformMeta } from './inspiration/inspirationVideoProjection';
+import { discoverySupplyLabel, getPlatformMeta } from './inspiration/inspirationVideoProjection';
 import { LsMediaStateFrame } from './ui/LsExperiencePrimitives';
 
 interface VideoCardProps {
@@ -126,6 +126,9 @@ export function VideoCard({ video, onSelect, onCreate, onWatch, onEditManage, on
             {isImagePost ? <Images size={16} /> : <Play size={16} fill="currentColor" />}
           </span>
         </button>
+        <span className="pointer-events-none absolute left-2 top-2 z-40 rounded-md border border-white/20 bg-black/65 px-2 py-1 text-xs font-medium text-white">
+          {discoverySupplyLabel(video)}
+        </span>
         {(onDeleteManage || (!isImagePost && onFavoriteMaterial)) && <div className="ls-touch-media-reveal absolute right-2 top-2 z-40 flex gap-1.5 opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
           {!isImagePost && onFavoriteMaterial && <Button size="small" shape="circle"
             icon={favoritingMaterial ? <Loader2 size={13} className="animate-spin"/> : <Star size={13} fill={isFavoriteMaterial ? 'currentColor' : 'none'}/>} onClick={onFavoriteMaterial} disabled={favoritingMaterial}

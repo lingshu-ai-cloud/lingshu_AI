@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {createReadStream} from 'node:fs';
-import {recognizeProductImageLocally} from '../lib/localProductOcr.js';
+import {createLocalProductOcrSession,recognizeProductImageLocally} from '../lib/localProductOcr.js';
 import {inspectSensitiveScreenText} from './socialSceneSensitiveScreenAudit.js';
 import {forEachDecodedPng} from './socialCaptionDecodedFrameAudit.js';
 import type {CaptionDecodedFrameAudit} from './socialCaptionDecodedFrameAudit.js';
@@ -35,10 +35,13 @@ export async function auditFinalSensitiveFrames(input:{filePath:string;expectedM
  if(mediaSha256!==input.expectedMediaSha256)return unknown('最终 MP4 字节与完整解码回执不一致');
  if(!Number.isSafeInteger(expectedFrameCount)||expectedFrameCount<1||expectedFrameCount>300)return unknown('逐帧敏感文字观察超出 300 帧限制');
  const frameEvidence:FinalSensitiveFrameAudit['frameEvidence']=[];
+ let session:Awaited<ReturnType<typeof createLocalProductOcrSession>>|null=null;
  try{
+  session=input.recognize?null:await createLocalProductOcrSession();
+  const recognize=input.recognize??session!.recognize;
   const decoded=await forEachDecodedPng(input.filePath,async(bytes,index)=>{
    if(index>=expectedFrameCount)throw Error('privacy_frame_count_exceeded');
-   const recognized=await (input.recognize??recognizeProductImageLocally)({bytes,mimeType:'image/png'});
+   const recognized=await recognize({bytes,mimeType:'image/png'});
    frameEvidence.push({index,frameSha256:createHash('sha256').update(bytes).digest('hex'),ocrSha256:createHash('sha256').update(recognized).digest('hex'),findingCodes:inspectSensitiveScreenText(recognized)});
   });
   if(decoded!==expectedFrameCount)return unknown('真实解码帧数与独立预期不一致',frameEvidence);
@@ -47,4 +50,5 @@ export async function auditFinalSensitiveFrames(input:{filePath:string;expectedM
   const findingCodes=[...new Set(frameEvidence.flatMap(frame=>frame.findingCodes))].sort();
   return {schemaVersion:'final-sensitive-frame-audit.v1',status:findingFrameIndexes.length?'hit':'not_observed',mediaSha256,expectedFrameCount,checkedFrameCount:decoded,findingFrameIndexes,findingCodes,frameEvidence,reason:findingFrameIndexes.length?'最终 MP4 完整解码帧 OCR 出现高置信敏感文字；原文不保存':'全部有界解码帧未观察到已知高置信敏感文字；不能证明全片隐私安全'};
  }catch(error){return unknown(`最终 MP4 逐帧 OCR 未完成:${String(error)}`,frameEvidence);}
+ finally{await session?.close();}
 }

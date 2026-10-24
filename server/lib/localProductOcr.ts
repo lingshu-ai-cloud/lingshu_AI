@@ -39,16 +39,23 @@ export function localProductOcrReadiness() {
 
 type LocalOcrWord = { text?: string; confidence?: number; bbox?: { x0: number; y0: number; x1: number; y1: number } };
 
-async function recognizeDataWithBundledTesseract(bytes: Buffer): Promise<{ text?: string; words?: LocalOcrWord[]; blocks?: Array<{ paragraphs?: Array<{ lines?: Array<{ words?: LocalOcrWord[] }> }> }> }> {
+type LocalOcrWorker = Awaited<ReturnType<typeof createWorker>>;
+async function createLocalOcrWorker(): Promise<LocalOcrWorker> {
   const worker = await createWorker(['chi_sim', 'eng'], OEM.LSTM_ONLY, { langPath: localLanguageDirectory(), gzip: true, cacheMethod: 'none' });
-  try {
-    await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
-    let timeout: NodeJS.Timeout | undefined;
-    const result = await Promise.race([worker.recognize(bytes), new Promise<never>((_, reject) => {
-      timeout = setTimeout(() => reject(new Error('LOCAL_OCR_TIMEOUT')), LOCAL_PRODUCT_OCR_LIMITS.timeoutMs);
-    })]).finally(() => { if (timeout) clearTimeout(timeout); });
-    return result.data as unknown as { text?: string; words?: LocalOcrWord[]; blocks?: Array<{ paragraphs?: Array<{ lines?: Array<{ words?: LocalOcrWord[] }> }> }> };
-  } finally { await worker.terminate(); }
+  try { await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK }); return worker; }
+  catch (error) { await worker.terminate(); throw error; }
+}
+async function recognizeDataWithWorker(worker: LocalOcrWorker, bytes: Buffer): Promise<{ text?: string; words?: LocalOcrWord[]; blocks?: Array<{ paragraphs?: Array<{ lines?: Array<{ words?: LocalOcrWord[] }> }> }> }> {
+  let timeout: NodeJS.Timeout | undefined;
+  const result = await Promise.race([worker.recognize(bytes), new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error('LOCAL_OCR_TIMEOUT')), LOCAL_PRODUCT_OCR_LIMITS.timeoutMs);
+  })]).finally(() => { if (timeout) clearTimeout(timeout); });
+  return result.data as unknown as { text?: string; words?: LocalOcrWord[]; blocks?: Array<{ paragraphs?: Array<{ lines?: Array<{ words?: LocalOcrWord[] }> }> }> };
+}
+async function recognizeDataWithBundledTesseract(bytes: Buffer) {
+  const worker = await createLocalOcrWorker();
+  try { return await recognizeDataWithWorker(worker, bytes); }
+  finally { await worker.terminate(); }
 }
 
 async function normalizedOcrInput(input: { bytes: Buffer; mimeType: string }) {
@@ -69,6 +76,26 @@ export async function recognizeProductImageLocally(input: { bytes: Buffer; mimeT
   const text = options.recognize ? await options.recognize(normalized)
     : String((await recognizeDataWithBundledTesseract(normalized)).text || '');
   return text.replace(/\u0000/g, '').slice(0, LOCAL_PRODUCT_OCR_LIMITS.maxOutputChars).trim();
+}
+
+/** A single audit may inspect every decoded frame without restarting Tesseract
+ * for each image. The caller owns this worker and must close it in finally. */
+export async function createLocalProductOcrSession() {
+  const worker = await createLocalOcrWorker();
+  let closed = false;
+  return {
+    async recognize(input: { bytes: Buffer; mimeType: string }): Promise<string> {
+      if (closed) throw new Error('LOCAL_OCR_SESSION_CLOSED');
+      const { normalized } = await normalizedOcrInput(input);
+      const text = String((await recognizeDataWithWorker(worker, normalized)).text || '');
+      return text.replace(/\u0000/g, '').slice(0, LOCAL_PRODUCT_OCR_LIMITS.maxOutputChars).trim();
+    },
+    async close(): Promise<void> {
+      if (closed) return;
+      closed = true;
+      await worker.terminate();
+    },
+  };
 }
 
 export async function recognizeProductImageTokensLocally(input: { bytes: Buffer; mimeType: string }) {

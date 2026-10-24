@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {createReadStream} from 'node:fs';
 import {spawn} from 'node:child_process';
 import {runVisualFfmpeg} from '../lib/renderVisualQuality.js';
-import {recognizeProductImageLocally} from '../lib/localProductOcr.js';
+import {createLocalProductOcrSession,recognizeProductImageLocally} from '../lib/localProductOcr.js';
 import ffmpegStatic from 'ffmpeg-static';
 import {inspectSensitiveScreenText} from './socialSceneSensitiveScreenAudit.js';
 
@@ -84,13 +84,16 @@ export async function auditCaptionDecodedFrames(input:{filePath:string;cues:Arra
  if(!timeBase||!rows.length||rows.length>maxFrames||rows.some(row=>row.length<6||!/^\d+$/.test(row[1]??'')||!/^\d+$/.test(row[2]??'')))return unknown(mediaSha256,'逐帧 PTS 枚举不完整、无效或超过有界帧数',rows.length);
  const [num,den]=timeBase.split('/').map(Number);
  if(!num||!den||rows.some((row,index)=>index>0&&Number(row[2])<=Number(rows[index-1]![2]))||Number(rows.at(-1)![2])*num/den>maxDurationSeconds)return unknown(mediaSha256,'逐帧 PTS 不单调或超过有界时长',rows.length);
+ let session:Awaited<ReturnType<typeof createLocalProductOcrSession>>|null=null;
  try{
+  session=input.recognize?null:await createLocalProductOcrSession();
+  const recognize=input.recognize??session!.recognize;
   const frames:CaptionDecodedFrameAudit['frames']=[],missingFrameIndexes:number[]=[];
   const decoded=await forEachDecodedPng(input.filePath,async(bytes,index)=>{
    if(index>=rows.length)throw Error('decoded_frame_count_exceeds_enumeration');
    const pts=Number(rows[index]![2]),seconds=pts*num/den;
    const cue=input.cues.find(c=>seconds>=c.start-0.001&&seconds<c.end-0.001);
-   const ocr=await (input.recognize??recognizeProductImageLocally)({bytes,mimeType:'image/png'});
+   const ocr=await recognize({bytes,mimeType:'image/png'});
    if(cue&&!normalize(ocr).includes(normalize(cue.text)))missingFrameIndexes.push(index);
    frames.push({index,pts,timeBase,frameSha256:createHash('sha256').update(bytes).digest('hex'),ocrSha256:createHash('sha256').update(ocr).digest('hex'),findingCodes:inspectSensitiveScreenText(ocr)});
   },region);
@@ -99,4 +102,5 @@ export async function auditCaptionDecodedFrames(input:{filePath:string;cues:Arra
   if(missingFrameIndexes.length)return unknown(mediaSha256,'至少一帧未能观察到冻结字幕；OCR 不能独立判定字幕缺失',rows.length,frames.length,missingFrameIndexes,frames);
   return {status:'observed_all_decoded_frames',mediaSha256,decodedFrameCount:rows.length,checkedFrameCount:frames.length,missingFrameIndexes,sensitiveFindingFrameIndexes:frames.flatMap(frame=>frame.findingCodes.length?[frame.index]:[]),sensitiveFindingCodes:[...new Set(frames.flatMap(frame=>frame.findingCodes))].sort(),frames,reason:'最终 MP4 的有界全解码帧均观察到对应文字；OCR（即使限于字幕 ROI）不证明字形来自字幕、无遮挡，也不能作为 G4 自动通过'};
  }catch(error){return unknown(mediaSha256,`流式逐帧核验中断：${String(error)}`,rows.length);}
+ finally{await session?.close();}
 }

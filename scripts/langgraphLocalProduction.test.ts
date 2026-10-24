@@ -11,6 +11,7 @@ import { buildMaterialScriptAnalysis } from '../shared/materialScriptAnalysis.js
 import { normalizeSceneVisualContract } from '../shared/sceneVisualContract.js';
 import { paidProductionHash, type PaidStageRequirement } from '../server/starter198/socialContentPaidOperationPlan.js';
 import { parseStoredSocialScriptBaseline } from '../server/starter198/socialContentScriptBaseline.js';
+import { VIDEO_PRODUCTION_GRAPH_V2_PHASES } from '../shared/contracts/videoProductionSupervisor.js';
 import type { MaterialRecord } from '../server/lib/materialLibrary.js';
 
 test('actual local media production through graph stages retains real QA and canonical human review', { timeout: 180_000, skip: process.platform !== 'darwin' ? 'controlled speech fixture requires macOS /usr/bin/say' : false }, async t => {
@@ -115,13 +116,16 @@ test('actual local media production through graph stages retains real QA and can
   const waiting = await run(); assert.equal(waiting.status, 'waiting_review');
   const pausedGraphJob = await readContentExecutionJob(store, tenantId, created.taskId, runId); assert.ok(pausedGraphJob);
   assert.equal(pausedGraphJob.id, admitted.id); assert.equal(pausedGraphJob.taskId, created.taskId); assert.equal(pausedGraphJob.runId, runId);
-  const completedPaidStages = ['assets', 'render', 'quality'] as const;
-  const frozenStageEvidence = Object.fromEntries(completedPaidStages.map(stage => {
+  const completedProductionStages = VIDEO_PRODUCTION_GRAPH_V2_PHASES.filter(stage => stage !== 'delivery');
+  const frozenStageEvidence = Object.fromEntries(completedProductionStages.map(stage => {
     const checkpoint = pausedGraphJob.checkpoints[`langgraph.node.${stage}`];
     assert.equal((checkpoint?.payload as { status?: string } | undefined)?.status, 'completed', `${stage} must be durably complete before user intervention`);
     assert.equal((checkpoint?.payload as { attempt?: number } | undefined)?.attempt, 1, `${stage} must have one original execution`);
+    assert.equal((checkpoint?.payload as { graphVersion?: string } | undefined)?.graphVersion, CONTENT_GRAPH_VERSION, `${stage} must belong to the admitted v2 graph`);
     return [stage, JSON.stringify(checkpoint)];
   }));
+  assert.equal(pausedGraphJob.checkpoints['langgraph.node.quality'], undefined, 'new jobs must not use the legacy combined quality node');
+  assert.equal(pausedGraphJob.checkpoints['langgraph.node.delivery'], undefined, 'delivery must wait for canonical human review');
   const frozenProviderReceipts = JSON.stringify(pausedGraphJob.providerReceipts);  assert.equal((await store.list(STARTER_COLLECTIONS.socialDeliveryPackages)).totalItems, 0);
   const detail = await readSocialTaskDetail({ repository, tenantId, taskId: created.taskId }); assert.ok(detail);
   const artifact = detail.artifacts.find(item => item.kind === 'short_video'); assert.ok(artifact); assert.equal(artifact.status, 'review_required');
@@ -166,7 +170,7 @@ test('actual local media production through graph stages retains real QA and can
   const completedGraphJob = await readContentExecutionJob(store, tenantId, created.taskId, runId); assert.ok(completedGraphJob);
   assert.equal(completedGraphJob.id, admitted.id, 'human intervention must resume the original content job');
   assert.equal(completedGraphJob.taskId, created.taskId); assert.equal(completedGraphJob.runId, runId);
-  for (const stage of completedPaidStages) assert.equal(JSON.stringify(completedGraphJob.checkpoints[`langgraph.node.${stage}`]), frozenStageEvidence[stage], `${stage} checkpoint must be reused without a paid rerun`);
+  for (const stage of completedProductionStages) assert.equal(JSON.stringify(completedGraphJob.checkpoints[`langgraph.node.${stage}`]), frozenStageEvidence[stage], `${stage} checkpoint must be reused without a paid rerun`);
   assert.equal(JSON.stringify(completedGraphJob.providerReceipts), frozenProviderReceipts, 'approval and delivery projection must not add or repeat paid provider calls');
   const { completeSocialContentGraphRun } = await import('../server/starter198/socialContentGraphCompletion.js');
   await store.update('content_execution_jobs', admitted.id, { status: 'succeeded' });
