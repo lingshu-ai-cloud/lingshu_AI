@@ -86,14 +86,6 @@ export const DEFAULT_CONTEXT: Record<string, AssistantContext> = {
     summary: '当前在企业中心，适合完善企业资料、产品画像和全局知识。',
     suggestions: ['检查企业资料缺口', '整理产品卖点', '生成客户画像字段'],
   },
-  agentMemory: {
-    agent: 'strategy', label: '智能体记忆', summary: '当前在智能体记忆，适合治理业务事实、客户偏好与行为规则。',
-    suggestions: ['检查记忆来源', '梳理客户偏好', '制定记忆治理规则'],
-  },
-  organizationPermissions: {
-    agent: 'strategy', label: '组织与权限', summary: '当前在组织与权限，适合规划成员角色和数据访问边界。',
-    suggestions: ['设计成员角色', '检查数据权限', '规划最小权限'],
-  },
   scheduled: {
     agent: 'strategy',
     label: '定时任务',
@@ -134,6 +126,7 @@ export type AssistantThreadSaveQueue = {
   retryAttempt: number;
   retryTimer: number | null;
   abortController: AbortController | null;
+  idleWaiters: Set<() => void>;
 };
 
 export type AssistantPersistenceReason = 'change' | 'retry' | 'lifecycle';
@@ -154,6 +147,7 @@ export function emptyAssistantThread(): AgentThreadState {
     paused: false,
     taskCards: {},
     focusedTaskId: null,
+    pendingContentTaskBinding: null,
   };
 }
 
@@ -200,6 +194,7 @@ export function cloneAssistantThread(thread: AgentThreadState): AgentThreadState
     messages: thread.messages.map(message => ({
       ...message,
       ...(message.sources ? { sources: message.sources.map(source => ({ ...source })) } : {}),
+      ...(message.referenceMedia ? { referenceMedia: { ...message.referenceMedia } } : {}),
     })),
     taskCards: Object.fromEntries(Object.entries(thread.taskCards).map(([id, card]) => [id, {
       ...card,
@@ -209,6 +204,9 @@ export function cloneAssistantThread(thread: AgentThreadState): AgentThreadState
       ...(card.primaryAction ? { primaryAction: { ...card.primaryAction } } : {}),
       ...(card.workspace ? { workspace: { ...card.workspace } } : {}),
     }])),
+    pendingContentTaskBinding: thread.pendingContentTaskBinding
+      ? { ...thread.pendingContentTaskBinding }
+      : null,
   };
 }
 
@@ -240,6 +238,7 @@ export function mergeAssistantThread(remote: AgentThreadState, local: AgentThrea
     messages: local.messages.slice(-MAX_PERSISTED_MESSAGES),
     taskCards,
     focusedTaskId,
+    pendingContentTaskBinding: local.pendingContentTaskBinding ?? remote.pendingContentTaskBinding,
   };
 }
 
@@ -262,6 +261,10 @@ export function persistedAssistantThread(value: unknown, fallback: AgentThreadSt
     focusedTaskId: typeof source.focusedTaskId === 'string' || source.focusedTaskId === null
       ? source.focusedTaskId
       : fallback.focusedTaskId,
+    pendingContentTaskBinding: source.pendingContentTaskBinding === null
+      || (source.pendingContentTaskBinding && typeof source.pendingContentTaskBinding === 'object')
+      ? source.pendingContentTaskBinding
+      : fallback.pendingContentTaskBinding,
   };
 }
 

@@ -7,17 +7,9 @@ const productionBoard = readFileSync(new URL('./AgentVideoProductionBoard.tsx', 
 const pointsDrawer = readFileSync(new URL('../PointsManagementDrawer.tsx', import.meta.url), 'utf8');
 const pointsPolicy = readFileSync(new URL('../../../shared/pointsPolicy.ts', import.meta.url), 'utf8');
 
-test('digital employees use one monitoring surface instead of first-level schedule pages', () => {
-  assert.match(workspace, /数字员工生产指挥舱/);
-  assert.match(workspace, /多 Agent 协同引擎在线/);
-  assert.match(workspace, /数字员工本周运营指标/);
-  assert.doesNotMatch(workspace, /四位数字员工正在如何协作|数字员工实时状态|Agent 协作在线/);
-  assert.match(workspace, /数字员工内容工程监控/);
-  assert.match(workspace, /发布与投流/);
-  assert.match(workspace, /客服承接/);
-  assert.doesNotMatch(workspace, /异常与待处理/);
-  assert.match(workspace, /展开发布日历/);
-  assert.doesNotMatch(workspace, /\bSegmented\b/);
+test('digital employees retain only the requested three-column work surface', () => {
+  assert.match(workspace, /<DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\}/);
+  assert.doesNotMatch(workspace, /数字员工生产指挥舱|数字员工本周运营指标|发布与投流|客服承接|展开发布日历|InitialPreparationStatusPanel|\bSegmented\b/);
 });
 
 test('content projects expose persisted production nodes in the shared Gantt component', () => {

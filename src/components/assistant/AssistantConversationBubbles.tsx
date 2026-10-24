@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Button } from 'antd';
-import { ArrowRight, Bot, CalendarRange, Loader2 } from 'lucide-react';
+import { ArrowRight, Bot, CalendarRange, ExternalLink, Loader2, Play } from 'lucide-react';
 import type { AgentAction, Message, Page } from '../../App';
 import type { AssistantProductionContext } from '../../lib/assistantProductionDecision';
 import type { AssistantTaskCard } from '../../stores/assistantStore';
@@ -10,6 +10,8 @@ import AgentReply from '../AgentReply';
 import AssistantDecisionCenter from './AssistantDecisionCenter';
 import { taskStatusLabel } from './AssistantDecisionDialog';
 import { assistantBubbleStyle } from './globalAssistantRuntime';
+import { SocialPlatformIcon } from '../SocialPlatformIcon';
+import { ThumbnailImage, VideoThumbnail } from '../inspiration/InspirationMedia';
 
 interface Props {
   inlineHome?: boolean;
@@ -43,7 +45,7 @@ export default function AssistantConversationBubbles(props: Props) {
     contentIntakeNode, loading, focusedTaskCard, onOpenTaskDetail,
     weeklyPlanKickoffAvailable, onOpenWeeklyPlan } = props;
   return (
-    <div className="space-y-4">
+    <div className={inlineHome ? 'ls-assistant-flow' : 'space-y-4'}>
       {!inlineHome && <div key={`decision-feed-${decisionFeedRevision}`}
         className="ls-assistant-summary-bubble-enter pl-9"
         data-assistant-bubble="decision-summary" data-assistant-summary="decision-feed"
@@ -70,28 +72,39 @@ export default function AssistantConversationBubbles(props: Props) {
 
       {messages.map((msg, index) => (
         <div key={`${msg.role}-${index}`} data-assistant-bubble={msg.role}
-          className={`ls-assistant-bubble-enter flex gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}
+          className={`ls-assistant-bubble-enter flex gap-2 ${inlineHome ? `ls-assistant-flow__turn ls-assistant-flow__turn--${msg.role}` : msg.role === 'user' ? 'justify-end' : ''}`}
           style={assistantBubbleStyle(index + (welcomeBubbleVisible ? 1 : 0))}>
-          {msg.role === 'assistant' && <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>}
-          <div className={msg.role === 'user'
-            ? 'ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-line'
-            : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
-            {msg.role === 'assistant'
-              ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction}
-                detailExpanded={assistantWantsDetailedReply(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
-                onSuggest={onSuggest} /> : <span className="opacity-40">...</span>)
-              : msg.content}
-          </div>
+          {msg.role === 'assistant' && !inlineHome && <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>}
+          {msg.role === 'user' ? <div className="flex min-w-0 max-w-[min(100%,340px)] flex-col items-end gap-2">
+            {msg.referenceMedia && <article className="w-full overflow-hidden rounded-lg border border-border bg-surface text-left text-text-primary" aria-label={`已发送参考视频：${msg.referenceMedia.title}`}>
+              <div className="relative aspect-video overflow-hidden bg-surface-2">
+                <VideoThumbnail platform={msg.referenceMedia.platform} title={msg.referenceMedia.title}/>
+                {msg.referenceMedia.thumbnailUrl && <ThumbnailImage src={msg.referenceMedia.thumbnailUrl} platform={msg.referenceMedia.platform}
+                  title={msg.referenceMedia.title} className="absolute inset-0 h-full w-full object-cover"/>}
+                <span className="absolute inset-0 flex items-center justify-center bg-black/15" aria-hidden="true"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-neutral-900"><Play size={14} fill="currentColor"/></span></span>
+              </div>
+              <div className="p-3">
+                <p className="line-clamp-2 text-sm font-semibold">{msg.referenceMedia.title}</p>
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-text-muted"><SocialPlatformIcon platform={msg.referenceMedia.platform} size={13}/><span>{msg.referenceMedia.platform}</span>{typeof msg.referenceMedia.duration === 'number' && msg.referenceMedia.duration > 0 ? <span>· {Math.floor(msg.referenceMedia.duration / 60)}:{String(Math.round(msg.referenceMedia.duration % 60)).padStart(2, '0')}</span> : null}</p>
+                {msg.referenceMedia.sourceUrl && <a href={msg.referenceMedia.sourceUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline">查看原视频<ExternalLink size={12}/></a>}
+              </div>
+            </article>}
+            <div className={inlineHome ? 'ls-assistant-flow__prompt whitespace-pre-line' : 'ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-line'}>{msg.content}</div>
+          </div> : <div className={inlineHome ? 'ls-assistant-flow__answer' : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
+            {msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction}
+              detailExpanded={assistantWantsDetailedReply(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
+              onSuggest={onSuggest} /> : <span className="opacity-40">...</span>}
+          </div>}
         </div>
       ))}
 
       {contentIntakeNode}
 
       {loading && (
-        <div role="status" aria-live="polite" data-assistant-bubble="loading" className="ls-assistant-bubble-enter flex gap-2"
+        <div role="status" aria-live="polite" data-assistant-bubble="loading" className={`ls-assistant-bubble-enter flex gap-2 ${inlineHome ? 'ls-assistant-flow__turn ls-assistant-flow__turn--assistant' : ''}`}
           style={assistantBubbleStyle(messages.length + (welcomeBubbleVisible ? 1 : 0))}>
-          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Loader2 size={13} className="motion-safe:animate-spin" /></div>
-          <div className="ls-messenger-bubble ls-messenger-bubble--inbound text-text-muted">思考中...</div>
+          {!inlineHome && <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Loader2 size={13} className="motion-safe:animate-spin" /></div>}
+          <div className={inlineHome ? 'ls-assistant-flow__thinking' : 'ls-messenger-bubble ls-messenger-bubble--inbound text-text-muted'}>{inlineHome ? <><span>正在组织内容</span><i/><i/><i/></> : '思考中...'}</div>
         </div>
       )}
 

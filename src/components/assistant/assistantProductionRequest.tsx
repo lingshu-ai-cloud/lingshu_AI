@@ -1,123 +1,156 @@
-import { App as AntApp, Input } from 'antd';
 import type { Message } from '../../App';
-import { socialContentApi } from '../../lib/socialContentApi';
-import { WEEKLY_WORK_UPDATED_EVENT } from '../../lib/weeklyWorkEvents';
-import { useAssistantStore, type AssistantTaskCardInput, type OrbitAgentId } from '../../stores/assistantStore';
+import { SOCIAL_CONTENT_TASK_REFRESH_EVENT } from '../../lib/socialContentTaskRefresh';
+import { contentTaskCardToAssistantCard } from '../../lib/assistantContentTaskProjection';
+import { useAssistantStore, type AssistantTaskCardInput, type OrbitAgentId, type PendingContentTaskBinding } from '../../stores/assistantStore';
+import { AssistantContentTaskApiError, assistantContentTaskIdempotencyKey, assistantContentTaskIntentFingerprint, createAtomicAssistantContentTask } from '../../lib/assistantContentTaskApi';
 import { resolveAssistantEnterpriseProduct, type AssistantProductionIntent } from './assistantProductionIntake';
-
-type ModalApi = ReturnType<typeof AntApp.useApp>['modal'];
-type MessageApi = ReturnType<typeof AntApp.useApp>['message'];
 
 export async function runAssistantProductionRequest(input: {
   productionIntent: AssistantProductionIntent;
+  requestMessage?: string;
   threadAgent: OrbitAgentId;
+  expectedThreadVersion: number;
   currentScope: () => boolean;
-  pipelineModalOpenRef: { current: boolean };
-  modal: ModalApi;
-  uiMessage: MessageApi;
+  waitForInFlightThreadSave?: (agentId: OrbitAgentId) => Promise<void>;
   setLoading: (loading: boolean) => void;
   upsertTaskCard: (agentId: OrbitAgentId, card: AssistantTaskCardInput) => void;
+  focusTaskCard: (agentId: OrbitAgentId, taskId: string | null) => void;
+  hydrateThread: (agentId: OrbitAgentId, patch: Partial<ReturnType<typeof useAssistantStore.getState>['threads'][OrbitAgentId]>) => void;
   setMessages: (agentId: OrbitAgentId, messages: Message[]) => void;
   persistThread: (agentId: OrbitAgentId) => void;
   onSessionRefresh?: () => void;
   refreshPipeline: () => void;
-  closeForNavigation: () => void;
-  requestId: () => string;
   // Explicit dependency seams allow offline verification without external writes.
-  confirmDueAt?: (objective: string) => Promise<string | null>;
   resolveProduct?: typeof resolveAssistantEnterpriseProduct;
-  createTask?: typeof socialContentApi.createAssistantAction;
+  createTask?: typeof createAtomicAssistantContentTask;
 }) {
   const {
-    productionIntent, threadAgent, currentScope, pipelineModalOpenRef, modal,
-    uiMessage, setLoading, upsertTaskCard, setMessages, persistThread,
-    onSessionRefresh, refreshPipeline, closeForNavigation, requestId,
+    productionIntent, requestMessage = productionIntent.objective, threadAgent, expectedThreadVersion, currentScope,
+    waitForInFlightThreadSave = async () => {},
+    setLoading, upsertTaskCard, focusTaskCard, hydrateThread, setMessages, persistThread,
+    onSessionRefresh, refreshPipeline,
     resolveProduct = resolveAssistantEnterpriseProduct,
-    createTask = socialContentApi.createAssistantAction,
+    createTask = createAtomicAssistantContentTask,
   } = input;
-  const confirmDueAt = input.confirmDueAt ?? ((objective: string) => new Promise<string | null>(resolve => {
-    if (pipelineModalOpenRef.current) { resolve(null); return; }
-    pipelineModalOpenRef.current = true;
-    let dueAt = '';
-    modal.confirm({ title: '确认单条内容任务',
-      content: <div className="space-y-3"><p>{objective}</p>
-        <label className="block">交付截止时间<Input type="datetime-local" onChange={event => { dueAt = event.target.value; }} /></label>
-        <p>任务将加入周任务并立即尝试生产。</p></div>,
-      okText: '创建并执行', cancelText: '取消',
-      afterClose: () => { pipelineModalOpenRef.current = false; },
-      onOk: () => {
-        if (!dueAt || new Date(dueAt).getTime() <= Date.now()) {
-          void uiMessage.error('请选择未来的交付截止时间。');
-          return Promise.reject(new Error('请选择未来的交付截止时间。'));
-        }
-        resolve(new Date(dueAt).toISOString());
-      },
-      onCancel: () => resolve(null),
-    });
-  }));
-
+  const intentFingerprint = assistantContentTaskIntentFingerprint(productionIntent.objective);
+  let creationIdempotencyKey = '';
+  let observedContentTaskId: string | null = null;
+  let creationAttempted = false;
+  let operationOutcomeUncertain = false;
+  let priorPendingBinding: PendingContentTaskBinding | null = null;
   try {
+    // The caller raises the persistence pause before entering here. Drain the
+    // PUT that may already own the thread CAS, then use its committed version
+    // for the atomic message + ContentTask mutation.
+    await waitForInFlightThreadSave(threadAgent);
+    if (!currentScope()) return;
+    const storedThreadVersion = useAssistantStore.getState().threads[threadAgent]?.version;
+    let createVersion = Number.isSafeInteger(storedThreadVersion) && storedThreadVersion >= 0
+      ? Math.max(expectedThreadVersion, storedThreadVersion)
+      : expectedThreadVersion;
+    const currentPendingBinding = useAssistantStore.getState().threads[threadAgent]?.pendingContentTaskBinding ?? null;
+    priorPendingBinding = currentPendingBinding?.intentFingerprint === intentFingerprint
+      ? currentPendingBinding
+      : null;
+    creationIdempotencyKey = priorPendingBinding?.idempotencyKey
+      || assistantContentTaskIdempotencyKey(createVersion, productionIntent.objective);
+    observedContentTaskId = priorPendingBinding?.contentTaskId ?? null;
     const productionProduct = await resolveProduct(productionIntent.productQuery);
     if (!currentScope()) return;
-    setLoading(false);
-    const confirmedDueAt = await confirmDueAt(productionIntent.objective);
-    if (!confirmedDueAt || !currentScope()) return;
-    setLoading(true);
-    const productionResponse = await createTask({
-      title: productionIntent.title,
-      objective: productionIntent.objective,
-      productId: productionProduct.id,
-      productRef: productionProduct.label,
-      platforms: productionIntent.platforms,
-      formats: productionIntent.formats,
-      aspectRatio: productionIntent.aspectRatio,
-      targetDurationSeconds: productionIntent.targetDurationSeconds,
-      requestedOutputCount: 1,
-      planningMode: 'auto_adjust',
-      specialRequirements: productionIntent.objective,
-      restrictions: [],
-      mode: 'weekly',
-      dueAt: confirmedDueAt,
-      creationMode: 'material_processing',
-      assetAvailability: 'none',
-      managementMode: 'one_click_managed',
-      productionMode: 'social_ready',
-      productionApproach: 'ai_enhanced',
-    }, `assistant-production-${requestId()}`);
+    const createAtVersion = (version: number) => {
+      creationAttempted = true;
+      return createTask({
+        agentId: threadAgent, expectedThreadVersion: version,
+        // Keep the operation identity stable if a bind-pending response reveals
+        // that the task exists or a later CAS conflict requires a newer thread.
+        idempotencyKey: creationIdempotencyKey,
+        message: requestMessage,
+        task: {
+          title: productionIntent.title, objective: productionIntent.objective,
+          productId: productionProduct.id, productRef: productionProduct.label,
+          platforms: productionIntent.platforms, formats: productionIntent.formats,
+          aspectRatio: productionIntent.aspectRatio, targetDurationSeconds: productionIntent.targetDurationSeconds,
+          requestedOutputCount: 1, planningMode: 'auto_adjust', specialRequirements: productionIntent.objective,
+          restrictions: [], dueAt: null,
+          // Existing ContentTask maps PRD free_creation to this route; `instant`
+          // remains the authoritative task mode and no parallel task is created.
+          creationMode: 'material_processing', assetAvailability: 'none', managementMode: 'one_click_managed',
+          productionMode: 'social_ready', productionApproach: 'ai_enhanced', mode: 'instant',
+        },
+      });
+    };
+    let productionResponse: Awaited<ReturnType<typeof createTask>>;
+    let conflictRetries = 0;
+    let pendingBindingRetries = 0;
+    while (true) {
+      try {
+        productionResponse = await createAtVersion(createVersion);
+        break;
+      } catch (error) {
+        if (!(error instanceof AssistantContentTaskApiError) || error.status >= 500) operationOutcomeUncertain = true;
+        if (error instanceof AssistantContentTaskApiError
+          && error.status === 503
+          && error.code === 'assistant_content_task_binding_pending'
+          && currentScope()) {
+          observedContentTaskId = error.contentTaskId || observedContentTaskId;
+          if (pendingBindingRetries < 1) {
+            pendingBindingRetries += 1;
+            continue;
+          }
+        }
+        const conflict = error instanceof AssistantContentTaskApiError && error.status === 409 ? error : null;
+        const refreshedVersion = Number(conflict?.current?.version);
+        if (!Number.isSafeInteger(refreshedVersion) || refreshedVersion < 0 || !conflict?.current
+          || conflictRetries >= 1 || !currentScope()) throw error;
+        hydrateThread(threadAgent, conflict.current);
+        createVersion = refreshedVersion;
+        conflictRetries += 1;
+      }
+    }
     const productionTask = productionResponse.task;
     if (!currentScope()) return;
-    const productionStatus = productionResponse.receipt.status;
-    upsertTaskCard(threadAgent, {
-      taskId: `social-content:${productionTask.taskId}`,
-      title: productionTask.brief.title,
-      conclusion: productionResponse.receipt.blockedReason ? '任务已保存，请处理生产条件。' : productionResponse.receipt.started ? '生产已启动，交付物回收到此周任务。' : '任务已保存，等待生产条件。',
-      status: productionStatus === 'producing' ? 'running' : ['completed', 'delivered', 'published'].includes(productionStatus) ? 'completed' : productionStatus === 'paused' ? 'paused' : 'needs_input',
-      notificationReason: 'routine',
-      primaryAction: { id: `open-${productionTask.taskId}`, label: '查看生产任务', href: `/?page=smartAssets&view=create&socialContentTaskId=${encodeURIComponent(productionTask.taskId)}` },
-    });
-    setMessages(threadAgent, [
-      ...useAssistantStore.getState().threads[threadAgent].messages,
-      { role: 'assistant', content: `已创建周任务「${productionTask.brief.title}」。${productionResponse.receipt.blockedReason ? '暂未进入生产，请在任务中查看所需资料或服务状态。' : (productionResponse.receipt.started ? '生产已启动，交付物将回收到该任务。' : '任务已保存，等待生产条件。')}` },
-    ]);
+    const authoritativeCard = productionResponse.receipt.card;
+    const assistantCard = contentTaskCardToAssistantCard(authoritativeCard);
+    hydrateThread(threadAgent, { ...productionResponse.thread, pendingContentTaskBinding: null });
+    upsertTaskCard(threadAgent, assistantCard);
+    focusTaskCard(threadAgent, assistantCard.taskId);
     setLoading(false);
-    persistThread(threadAgent);
     onSessionRefresh?.();
-    window.dispatchEvent(new CustomEvent(WEEKLY_WORK_UPDATED_EVENT));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(SOCIAL_CONTENT_TASK_REFRESH_EVENT, { detail: { taskId: productionTask.taskId } }));
+    }
     refreshPipeline();
-    closeForNavigation();
-    window.dispatchEvent(new CustomEvent('lingshu:navigate', {
-      detail: {
-        page: 'smartAssets', view: 'create', directStudio: true,
-        socialContentTaskId: productionTask.taskId,
-        socialContentPage: 'smartAssets',
-      },
-    }));
   } catch (error) {
     if (!currentScope()) return;
+    if (error instanceof AssistantContentTaskApiError && error.current) {
+      hydrateThread(threadAgent, error.current);
+    }
     const message = error instanceof Error ? error.message : '内容任务创建失败，请稍后重试。';
+    const taskId = error instanceof AssistantContentTaskApiError
+      ? error.contentTaskId || observedContentTaskId
+      : observedContentTaskId;
+    const preserveOperationIdentity = Boolean(creationIdempotencyKey
+      && (taskId || (creationAttempted && operationOutcomeUncertain)));
+    if (preserveOperationIdentity) {
+      hydrateThread(threadAgent, {
+        pendingContentTaskBinding: {
+          intentFingerprint,
+          idempotencyKey: creationIdempotencyKey,
+          contentTaskId: taskId || null,
+          createdAt: priorPendingBinding?.createdAt || new Date().toISOString(),
+        },
+      });
+    }
+    const currentMessages = useAssistantStore.getState().threads[threadAgent].messages;
+    const visibleMessages = currentMessages.at(-1)?.role === 'user' && currentMessages.at(-1)?.content === requestMessage
+      ? currentMessages : [...currentMessages, { role: 'user' as const, content: requestMessage }];
     setMessages(threadAgent, [
-      ...useAssistantStore.getState().threads[threadAgent].messages,
-      { role: 'assistant', content: `没有生成文本脚本：内容 Agent 任务创建失败。${message}` },
+      ...visibleMessages,
+      { role: 'assistant', content: taskId
+        ? '单条内容任务已安全保存，但会话绑定暂时未确认。稍后再次发送相同需求会续接原任务，不会重复创建。'
+        : preserveOperationIdentity
+          ? '单条内容任务的提交结果暂时无法核实。已保留本次请求身份；稍后再次发送相同需求会先核对原请求，不会重复创建。'
+          : `单条内容任务尚未建立：${message}` },
     ]);
     persistThread(threadAgent);
   } finally {

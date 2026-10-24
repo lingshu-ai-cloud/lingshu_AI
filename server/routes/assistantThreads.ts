@@ -1,4 +1,4 @@
-import { creationReplySchema, creationSelectionSchema } from '../../shared/contracts/contentCreationDialogue.js';
+import { creationSelectionSchema } from '../../shared/contracts/contentCreationDialogue.js';
 import type { CreationSelection } from '../../shared/contracts/contentCreationDialogue.js';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { store } from '../storage/index.js';
@@ -11,19 +11,16 @@ import {
   type AssistantActionService,
 } from '../assistant/actionRouting.js';
 import { createStarter198AssistantCommandBus } from '../assistant/starter198CommandBus.js';
-import {
-  Starter198RepositoryError,
-  starter198Repository,
-} from '../starter198/repository.js';
-import {
-  isAssistantActionId,
-  type AssistantActionId,
-} from '../../shared/contracts/assistantActions.js';
-
+import { Starter198RepositoryError, starter198Repository } from '../starter198/repository.js';
+import { createSocialContentTask } from '../starter198/socialContentTasks.js';
+import { SocialContentWorkflowError, parseCreateSocialTask } from '../starter198/socialContentValidation.js';
+import { authorizeDefaultSocialContentRequest } from '../starter198/socialContentAuthorization.js';
+import { projectContentProductionTaskCard, type ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard.js';
+import type { SocialContentTaskSummary } from '../../shared/contracts/socialContentTaskContract.js';
+import { isAssistantActionId, type AssistantActionId } from '../../shared/contracts/assistantActions.js';
+import { findAssistantContentTaskId, parsePendingContentTaskBinding, type PendingContentTaskBinding } from './assistantThreadPendingBinding.js';
+import { MAX_MESSAGES, MAX_MESSAGE_BYTES, object, byteLength, threadInputError, boundedText, parseMessages } from './assistantThreadMessageInput.js';
 const MAX_THREAD_BYTES = 96 * 1024;
-const MAX_MESSAGES = 120;
-const MAX_MESSAGE_BYTES = 8 * 1024;
-const MAX_MESSAGE_SOURCES = 8;
 const MAX_DRAFT_BYTES = 8 * 1024;
 const MAX_TASK_CARDS = 50;
 const MAX_CARD_BYTES = 16 * 1024;
@@ -113,6 +110,7 @@ type AssistantThread = {
   paused: boolean;
   taskCards: Record<string, AssistantThreadTaskCard>;
   focusedTaskId: string | null;
+  pendingContentTaskBinding: PendingContentTaskBinding | null;
   updatedAt: string;
 };
 
@@ -120,6 +118,10 @@ export type AssistantThreadsRouterDependencies = {
   dataStore?: DataStore;
   authMiddleware?: RequestHandler;
   actionService?: AssistantActionService;
+  createInstantContentTask?: (input: {
+    tenantId: string; userId: string; idempotencyKey: string; value: ReturnType<typeof parseCreateSocialTask>;
+  }) => Promise<SocialContentTaskSummary>;
+  authorizeContentTaskCreation?: (request: Request, identity: AuthLocals) => Promise<void>;
 };
 
 function actionHttpStatus(status: string): number {
@@ -142,19 +144,8 @@ function safeAgentId(value: unknown): string {
   return agentId;
 }
 
-function object(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
 
-function byteLength(value: string): number {
-  return Buffer.byteLength(value, 'utf8');
-}
 
-function threadInputError(code: string, message: string, status = 400): never {
-  throw new AssistantActionError(code, status, message);
-}
 
 function expectedThreadVersion(value: unknown): number {
   const source = object(value);
@@ -169,17 +160,6 @@ function expectedThreadVersion(value: unknown): number {
   return Number(version);
 }
 
-function boundedText(value: unknown, maxBytes: number, code: string, label: string, required = false): string {
-  if (typeof value !== 'string') {
-    if (!required && value === undefined) return '';
-    return threadInputError(code, `${label}格式无效。`);
-  }
-  const normalized = value.trim();
-  if ((required && !normalized) || byteLength(value) > maxBytes) {
-    return threadInputError(code, `${label}${required && !normalized ? '不能为空' : '过长'}。`);
-  }
-  return value;
-}
 
 function safeLocalHref(value: unknown, code: string): string | undefined {
   if (value === undefined) return undefined;
@@ -319,36 +299,6 @@ function parseTaskCards(value: unknown): Record<string, AssistantThreadTaskCard>
   return cards;
 }
 
-function parseMessages(value: unknown): unknown[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value) || value.length > MAX_MESSAGES) {
-    return threadInputError('assistant_thread_messages_invalid', `会话最多保留 ${MAX_MESSAGES} 条消息。`, 413);
-  }
-  return value.map(item => {
-    const source = object(item);
-    if (!source || !['user', 'assistant'].includes(String(source.role))) {
-      return threadInputError('assistant_thread_message_invalid', '会话消息无效。');
-    }
-    const content = boundedText(source.content, MAX_MESSAGE_BYTES, 'assistant_thread_message_invalid', '会话消息');
-    let sources: Array<{ title: string; uri: string }> | undefined;
-    if (source.sources !== undefined) {
-      if (!Array.isArray(source.sources) || source.sources.length > MAX_MESSAGE_SOURCES) {
-        return threadInputError('assistant_thread_message_invalid', '消息来源数量无效。');
-      }
-      sources = source.sources.map(item => {
-        const entry = object(item);
-        if (!entry) return threadInputError('assistant_thread_message_invalid', '消息来源无效。');
-        return {
-          title: boundedText(entry.title, 240, 'assistant_thread_message_invalid', '消息来源名称', true).trim(),
-          uri: boundedText(entry.uri, 2_048, 'assistant_thread_message_invalid', '消息来源地址', true).trim(),
-        };
-      });
-    }
-    const creation = source.creation === undefined ? undefined : creationReplySchema.safeParse(source.creation);
-    if (creation && !creation.success) return threadInputError('assistant_creation_invalid', '创作消息格式无效。');
-    return { role: source.role, content, ...(sources ? { sources } : {}), ...(creation?.success ? { creation: creation.data } : {}) };
-  });
-}
 
 function parseThreadPayload(
   value: unknown,
@@ -384,6 +334,9 @@ function parseThreadPayload(
     return threadInputError('assistant_thread_pause_state_invalid', '会话暂停状态无效。');
   }
   const taskCards = source.taskCards === undefined ? prior?.taskCards ?? {} : parseTaskCards(source.taskCards);
+  const pendingContentTaskBinding = source.pendingContentTaskBinding === undefined
+    ? prior?.pendingContentTaskBinding ?? null
+    : parsePendingContentTaskBinding(source.pendingContentTaskBinding);
   let focusedTaskId: string | null = source.focusedTaskId === undefined
     ? prior?.focusedTaskId ?? null
     : null;
@@ -415,6 +368,7 @@ function parseThreadPayload(
     paused: source.paused === undefined ? prior?.paused ?? false : source.paused,
     taskCards,
     focusedTaskId,
+    pendingContentTaskBinding,
     updatedAt: new Date().toISOString(),
   };
   if (byteLength(JSON.stringify(payload)) > MAX_THREAD_BYTES) {
@@ -445,12 +399,18 @@ function threadWithDefaults(thread: AssistantThread): AssistantThread {
     ? thread.unreadCount
     : 0;
   let taskCards = safely(() => parseTaskCards(thread.taskCards), {});
+  const pendingContentTaskBinding = safely(
+    () => parsePendingContentTaskBinding(thread.pendingContentTaskBinding),
+    null,
+  );
   let focusedTaskId = typeof thread.focusedTaskId === 'string'
     && SAFE_TASK_ID.test(thread.focusedTaskId)
     && Boolean(taskCards[thread.focusedTaskId])
     ? thread.focusedTaskId
     : null;
-  const boundedSnapshotSize = () => byteLength(JSON.stringify({ messages, draftInput, taskCards, focusedTaskId }));
+  const boundedSnapshotSize = () => byteLength(JSON.stringify({
+    messages, draftInput, taskCards, focusedTaskId, pendingContentTaskBinding,
+  }));
   if (boundedSnapshotSize() > MAX_THREAD_BYTES) messages = [];
   if (boundedSnapshotSize() > MAX_THREAD_BYTES) {
     taskCards = {};
@@ -473,7 +433,41 @@ function threadWithDefaults(thread: AssistantThread): AssistantThread {
     paused: typeof thread.paused === 'boolean' ? thread.paused : false,
     taskCards,
     focusedTaskId,
+    pendingContentTaskBinding,
     updatedAt: typeof thread.updatedAt === 'string' ? thread.updatedAt : '',
+  };
+}
+
+function assertContentTaskThreadCapacity(prior: AssistantThread | null, message: string): void {
+  if ((prior?.messages.length ?? 0) > MAX_MESSAGES - 2 || Object.keys(prior?.taskCards ?? {}).length >= MAX_TASK_CARDS) {
+    throw new AssistantActionError('assistant_content_task_thread_full', 413, '当前会话已满，请新建会话后再建立内容任务。');
+  }
+  const snapshotBytes = byteLength(JSON.stringify(prior ?? {}));
+  if (snapshotBytes + byteLength(message) + MAX_MESSAGE_BYTES + MAX_CARD_BYTES + 2_048 > MAX_THREAD_BYTES) {
+    throw new AssistantActionError('assistant_content_task_thread_full', 413, '当前会话空间不足，请新建会话后再建立内容任务。');
+  }
+}
+
+function contentTaskThreadCard(card: ContentProductionTaskCard): AssistantThreadTaskCard {
+  const status = card.overallState === 'needs_input' ? 'needs_input'
+    : card.overallState === 'needs_approval' ? 'approval'
+      : card.overallState === 'processing' ? 'running'
+        : card.overallState === 'paused' ? 'paused'
+          : card.overallState === 'failed' ? 'failed' : 'completed';
+  const details = [
+    ...card.blockingItems.map(item => `${item.label}：${item.value}`),
+    ...card.knownItems.map(item => `已确定 · ${item.label}：${item.value}`),
+    ...card.defaultedItems.map(item => `采用默认 · ${item.label}：${item.value}`),
+  ].slice(0, 3);
+  return {
+    taskId: `social-content:${card.contentTaskId}`, title: card.title,
+    conclusion: card.currentNode.userFacingSummary, details, status,
+    notificationReason: card.overallState === 'needs_input' ? 'missing_input'
+      : card.overallState === 'needs_approval' ? 'approval_required'
+        : card.overallState === 'failed' ? 'failed' : 'routine',
+    primaryAction: { id: `open-${card.contentTaskId}`, label: card.nextAction === 'review' ? '查看并验收' : '查看任务详情',
+      href: `/?page=smartAssets&view=create&socialContentTaskId=${encodeURIComponent(card.contentTaskId)}` },
+    secondaryActions: [], updatedAt: Date.parse(card.lastConfirmedAt) || Date.now(),
   };
 }
 
@@ -486,6 +480,11 @@ export function createAssistantThreadsRouter(
     commandBus: createStarter198AssistantCommandBus(),
     supportsExecution: supportsDefaultAssistantExecution,
   });
+  const createInstantContentTask = dependencies.createInstantContentTask ?? (value => createSocialContentTask({
+    repository: starter198Repository, ...value, entry: 'assistant', value: { ...value.value, mode: 'instant', dueAt: null },
+  }));
+  const authorizeContentTaskCreation = dependencies.authorizeContentTaskCreation
+    ?? (async (request, identity) => { await authorizeDefaultSocialContentRequest(request, identity, 'write'); });
   const writeTails = new Map<string, Promise<void>>();
   const withWriteLock = async <T>(key: string, work: () => Promise<T>): Promise<T> => {
     const previous = writeTails.get(key) ?? Promise.resolve();
@@ -547,6 +546,7 @@ export function createAssistantThreadsRouter(
       paused: false,
       taskCards: {},
       focusedTaskId: null,
+      pendingContentTaskBinding: null,
     });
   });
 
@@ -652,6 +652,76 @@ export function createAssistantThreadsRouter(
         return;
       }
       res.json(threadWithDefaults(created));
+    });
+  });
+
+  router.post('/:agentId/content-tasks', async (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    const identity = res.locals as AuthLocals;
+    let agentId: string;
+    try { agentId = safeAgentId(req.params.agentId); }
+    catch (error) { const failure = error as AssistantActionError; res.status(failure.status).json({ error: failure.code, message: failure.publicMessage }); return; }
+    try { await authorizeContentTaskCreation(req, identity); }
+    catch (error) {
+      const failure = error instanceof SocialContentWorkflowError
+        ? { status: error.status, code: error.code, message: error.code }
+        : error instanceof Starter198RepositoryError
+          ? { status: error.code === 'starter_198_not_provisioned' ? 403 : 503, code: error.code === 'starter_198_not_provisioned' ? 'profile_not_enabled' : error.code, message: error.code }
+          : { status: 503, code: 'assistant_content_task_authorization_unavailable', message: '暂时无法核实内容任务权限。' };
+      res.status(failure.status).json({ error: failure.code, message: failure.message }); return;
+    }
+    const source = object(req.body);
+    if (!source || Object.keys(source).some(key => !['expectedThreadVersion', 'idempotencyKey', 'message', 'task'].includes(key))) {
+      res.status(400).json({ error: 'assistant_content_task_input_invalid', message: '单条内容任务请求无效。' }); return;
+    }
+    const expectedVersion = Number(source.expectedThreadVersion);
+    const idempotencyKey = typeof source.idempotencyKey === 'string' ? source.idempotencyKey.trim() : '';
+    let message: string;
+    let taskInput: ReturnType<typeof parseCreateSocialTask>;
+    try {
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0 || !/^[a-z0-9:_-]{8,200}$/i.test(idempotencyKey)) {
+        throw new AssistantActionError('assistant_content_task_input_invalid', 400, '单条内容任务请求无效。');
+      }
+      message = boundedText(source.message, MAX_MESSAGE_BYTES, 'assistant_content_task_input_invalid', '创作需求', true).trim();
+      taskInput = parseCreateSocialTask(source.task);
+      if (taskInput.mode && taskInput.mode !== 'instant') throw new AssistantActionError('assistant_content_task_mode_invalid', 400, '这里只能建立单条即时内容任务。');
+    } catch (error) {
+      const failure = error instanceof AssistantActionError ? error : new AssistantActionError('assistant_content_task_input_invalid', 400, '单条内容任务请求无效。');
+      res.status(failure.status).json({ error: failure.code, message: failure.publicMessage }); return;
+    }
+    const owner = { tenantId: identity.tenantId, userId: identity.userId, agentId };
+    const lockKey = `${identity.tenantId}\0${identity.userId}\0${agentId}`;
+    await withWriteLock(lockKey, async () => {
+      try {
+        const existing = await dataStore.list<AssistantThread>('assistant_threads', { where: owner, perPage: 1 });
+        const current = existing.items.find(isDesktopThread);
+        const prior = current ? threadWithDefaults(current) : null;
+        if (expectedVersion !== (prior?.version ?? 0)) {
+          res.status(409).json({ error: 'assistant_thread_version_conflict', message: '会话已在其他位置更新，请刷新后重试。', current: prior }); return;
+        }
+        assertContentTaskThreadCapacity(prior, message);
+        const task = await createInstantContentTask({ tenantId: identity.tenantId, userId: identity.userId, idempotencyKey, value: { ...taskInput, mode: 'instant', dueAt: null } });
+        const card = projectContentProductionTaskCard(task);
+        const taskCard = contentTaskThreadCard(card);
+        const assistantMessage = `已建立单条内容任务「${card.title}」。${card.blockingItems.length ? `待补充：${card.blockingItems.map(item => item.value).join('、')}。` : card.currentNode.userFacingSummary}`;
+        const payload = parseThreadPayload({
+          messages: [...(prior?.messages ?? []), { role: 'user', content: message }, { role: 'assistant', content: assistantMessage }],
+          draftInput: '', scrollPosition: prior?.scrollPosition ?? 0, unreadCount: 0, isFollowingLatest: true,
+          paused: prior?.paused ?? false, taskCards: { ...(prior?.taskCards ?? {}), [taskCard.taskId]: taskCard }, focusedTaskId: taskCard.taskId,
+          pendingContentTaskBinding: null,
+        }, identity, agentId, current);
+        let saved: AssistantThread | null = null;
+        if (current?.id) {
+          const updated = Boolean(dataStore.compareAndSwap) && await dataStore.compareAndSwap!('assistant_threads', current.id, { ...owner, version: expectedVersion }, payload);
+          if (updated) saved = { ...current, ...payload };
+        } else saved = await dataStore.create<AssistantThread>('assistant_threads', payload);
+        if (!saved) { res.status(503).json({ error: 'assistant_content_task_binding_pending', message: '任务已安全保存，会话绑定尚未确认；请使用同一请求重试。', contentTaskId: task.taskId }); return; }
+        res.status(201).json({ thread: threadWithDefaults(saved), task, receipt: { taskId: task.taskId, status: task.status, card } });
+      } catch (error) {
+        const failure = error instanceof AssistantActionError ? error : new AssistantActionError('assistant_content_task_unavailable', 503, '单条内容任务暂时无法建立。');
+        const contentTaskId = failure.status >= 500 ? await findAssistantContentTaskId(dataStore, identity, idempotencyKey).catch(() => null) : null;
+        res.status(failure.status).json({ error: failure.code, message: failure.publicMessage, ...(contentTaskId ? { contentTaskId } : {}) });
+      }
     });
   });
 

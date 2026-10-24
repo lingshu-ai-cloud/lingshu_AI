@@ -269,6 +269,8 @@ export default function SocialContentPlanningPage({
           /> : productionMode === 'image' ? <SocialImageWorkbench
             key={`image:${launch.creationPath}:${seed?.referenceTitle || 'new'}`}
             creationPath={launch.creationPath}
+            contentTaskId={sourceRequest?.continueTaskId}
+            entrySource={sourceRequest?.mode === 'weekly' ? 'weekly_package' : 'workspace'}
             referenceTitle={seed?.referenceTitle}
             referenceThumbnail={seed?.referenceThumbnail}
             referenceMediaUrl={seed?.referenceMediaUrl}

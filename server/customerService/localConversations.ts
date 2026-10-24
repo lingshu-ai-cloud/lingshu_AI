@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createForeignTradeMockCustomers } from '../../src/mocks/foreignTradeCustomerProfiles.js';
 
 const CUSTOMERS_FILE = path.resolve(process.cwd(), 'data/whatsapp-customers.json');
 const INTERACTIONS_FILE = path.resolve(process.cwd(), 'data/whatsapp-interactions.json');
@@ -15,15 +16,64 @@ type LocalCustomerConversation = Record<string, unknown> & {
   intentScore: number;
   pendingDraft?: unknown;
   lastActiveAt: number;
-  timeline: Array<{ id: string; type: string; actor: string; body: string; timestamp: number }>;
+  timeline: Array<{ id: string; type: string; actor: string; body: string; timestamp: number; translatedBody?: string }>;
   hasUnread: boolean;
   isMock: boolean;
 };
 
+function previewTenantId() {
+  return String(process.env.LINGSHU_PREVIEW_CONVERSATION_TENANT_ID || 'local_tenant_customer_aurelia_beauty').trim();
+}
+
+function previewCustomers(tenantId: string): Array<Record<string, unknown>> {
+  if (process.env.LINGSHU_LOCAL_PREVIEW !== '1' || tenantId !== previewTenantId()) return [];
+  return createForeignTradeMockCustomers().map(customer => ({
+    ...customer,
+    tenantId,
+    localPreview: true,
+  }));
+}
+
+function localCustomers(tenantId: string, file: string) {
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const customer of [...previewCustomers(tenantId), ...readArray(file)]) {
+    if (customer.tenantId !== tenantId || typeof customer.id !== 'string') continue;
+    byId.set(customer.id, customer);
+  }
+  return [...byId.values()];
+}
+
+function writableLocalPreviewCustomer(customer: Record<string, unknown>) {
+  const id = String(customer.id || '');
+  if (id.startsWith('wa_mock_')) return true;
+  return process.env.LINGSHU_LOCAL_PREVIEW === '1'
+    && customer.localPreview === true
+    && (id.startsWith('mock-export-') || id === 'mock-free-sandbox');
+}
+
+function conversationEvent(item: Record<string, unknown>, index: number) {
+  const type = String(item.type || 'whatsapp');
+  const actor = item.actor === 'buyer' || type === 'msg_in'
+    ? 'buyer'
+    : item.actor === 'ai' || type === 'msg_out_ai'
+      ? 'ai'
+      : item.actor === 'owner' || type === 'system'
+        ? 'owner'
+        : 'seller';
+  return {
+    id: String(item.id || `local-message-${index}`),
+    type,
+    actor,
+    body: String(item.body || ''),
+    timestamp: Number(item.timestamp || 0),
+    ...(typeof item.translatedBody === 'string' ? { translatedBody: item.translatedBody } : {}),
+  };
+}
+
 export function appendLocalCustomerMessage(tenantId: string, customerId: string, body: string, requestId: string, files = { customers: CUSTOMERS_FILE, interactions: INTERACTIONS_FILE }) {
   const customers = readArray(files.customers);
-  const customer = customers.find(item => item.tenantId === tenantId && item.id === customerId);
-  if (!customer || !String(customer.id || '').startsWith('wa_mock_')) return null;
+  const customer = localCustomers(tenantId, files.customers).find(item => item.id === customerId);
+  if (!customer || !writableLocalPreviewCustomer(customer)) return null;
   const interactions = readArray(files.interactions);
   const existing = interactions.find(item => item.tenantId === tenantId && item.customerId === customerId && item.requestId === requestId);
   if (existing) return existing;
@@ -32,20 +82,28 @@ export function appendLocalCustomerMessage(tenantId: string, customerId: string,
     type: 'msg_out_human', body, timestamp, requestId, localPreview: true };
   interactions.push(item);
   fs.writeFileSync(files.interactions, JSON.stringify(interactions, null, 2) + '\n', 'utf8');
-  customer.lastActiveAt = timestamp; customer.updatedAt = new Date(timestamp).toISOString(); customer.hasUnread = false;
-  fs.writeFileSync(files.customers, JSON.stringify(customers, null, 2) + '\n', 'utf8');
+  const storedCustomer = customers.find(candidate => candidate.tenantId === tenantId && candidate.id === customerId);
+  if (storedCustomer) {
+    storedCustomer.lastActiveAt = timestamp;
+    storedCustomer.updatedAt = new Date(timestamp).toISOString();
+    storedCustomer.hasUnread = false;
+    fs.writeFileSync(files.customers, JSON.stringify(customers, null, 2) + '\n', 'utf8');
+  }
   return item;
 }
 
 export function readLocalCustomerConversations(tenantId: string, files = { customers: CUSTOMERS_FILE, interactions: INTERACTIONS_FILE }): LocalCustomerConversation[] {
   if (!tenantId.trim()) return [];
   const interactions = readArray(files.interactions).filter(item => item.tenantId === tenantId);
-  return readArray(files.customers).filter(item => item.tenantId === tenantId && typeof item.id === 'string').map(customer => {
-    const timeline = interactions.filter(item => item.customerId === customer.id).sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0)).map(item => ({
-      id: String(item.id || ''), type: String(item.type || 'whatsapp'),
-      actor: item.type === 'msg_in' ? 'buyer' : item.type === 'msg_out_ai' ? 'ai' : item.type === 'system' ? 'owner' : 'seller',
-      body: String(item.body || ''), timestamp: Number(item.timestamp || 0),
-    }));
+  return localCustomers(tenantId, files.customers).map(customer => {
+    const baseTimeline = Array.isArray(customer.timeline)
+      ? customer.timeline.filter(item => item && typeof item === 'object').map((item, index) => conversationEvent(item as Record<string, unknown>, index))
+      : [];
+    const appendedTimeline = interactions.filter(item => item.customerId === customer.id).map((item, index) => conversationEvent(item, baseTimeline.length + index));
+    const timeline = [...new Map([...baseTimeline, ...appendedTimeline].map(item => [item.id, item])).values()]
+      .sort((a, b) => a.timestamp - b.timestamp);
+    const lastAppended = appendedTimeline.sort((a, b) => a.timestamp - b.timestamp).at(-1);
+    const writable = writableLocalPreviewCustomer(customer);
     return {
       ...customer,
       id: String(customer.id),
@@ -55,8 +113,8 @@ export function readLocalCustomerConversations(tenantId: string, files = { custo
       pendingDraft: customer.pendingDraft,
       lastActiveAt: Number(customer.lastActiveAt || timeline.at(-1)?.timestamp || 0),
       source: 'whatsapp_local', channel: 'WhatsApp', timeline,
-      hasUnread: typeof customer.hasUnread === 'boolean' ? customer.hasUnread : timeline.at(-1)?.actor === 'buyer',
-      isLocal: true, isMock: String(customer.id).startsWith('wa_mock_'), readOnly: !String(customer.id).startsWith('wa_mock_'), outboundBlocked: !String(customer.id).startsWith('wa_mock_'),
+      hasUnread: lastAppended ? lastAppended.actor === 'buyer' : typeof customer.hasUnread === 'boolean' ? customer.hasUnread : timeline.at(-1)?.actor === 'buyer',
+      isLocal: true, isMock: writable, readOnly: !writable, outboundBlocked: !writable,
     };
   });
 }

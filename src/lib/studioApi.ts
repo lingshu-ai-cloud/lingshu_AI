@@ -145,6 +145,8 @@ export const studioApi = {
     post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; caption: string; hashtags: string[]; fieldsToConfirm?: string[]; error?: string }>('caption', b, { ok: false, caption: '', hashtags: [] }),
 
   fbPoster: (b: {
+    imageTaskId?: string;
+    expectedImageTaskVersion?: number;
     /** Legacy callers may still send mode; current UI selects a deliverable instead. */
     mode?: 'material' | 'clone' | 'product';
     deliverableType?: import('../../shared/imageCreativePlanning').ImageDeliverable;

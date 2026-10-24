@@ -9,7 +9,6 @@ export const ASSISTANT_QUICK_ENTRY_PAGES = [
   'traffic',
   'conversion',
   'enterprise',
-  'agentMemory',
   'plugins',
 ] as const satisfies readonly Page[];
 

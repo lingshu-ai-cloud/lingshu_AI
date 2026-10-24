@@ -3,6 +3,7 @@ import { Alert, Button, Segmented, Tag } from 'antd';
 import { authHeader } from '../../lib/auth';
 import type { MarketId } from './marketingCalendar';
 import type { CalendarPost, PendingPublishContent } from './CalendarPlanner';
+import { Plus } from 'lucide-react';
 import { PlatformBadge } from './PlatformBadge';
 
 type RhythmPreset = 'light' | 'standard' | 'high';
@@ -98,6 +99,7 @@ export function ContentQueuePanel({
   posts,
   pendingItems,
   onOpenPending,
+  onCreatePending,
   onArrangePending,
   compact = false,
   canEdit = true,
@@ -110,6 +112,7 @@ export function ContentQueuePanel({
   posts: CalendarPost[];
   pendingItems: PendingPublishContent[];
   onOpenPending?: (id: string) => void;
+  onCreatePending?: () => void;
   onArrangePending?: (placements: PendingPlacement[]) => Promise<void>;
   compact?: boolean;
   canEdit?: boolean;
@@ -258,7 +261,7 @@ export function ContentQueuePanel({
       {message && <div className="mt-3" role="status"><Alert type="info" title={message}/></div>}
     </section>
     <section data-lingshu-guide="future-queue" className="overflow-hidden rounded-lg border border-border bg-white">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3"><div><h3 className="text-base font-semibold text-text-primary">待发布内容</h3><p className="mt-1 text-xs text-text-secondary">{pendingItems.length} 条 · {draggableItems.length} 条可排入日历</p></div>{pendingItems.length > 0 && <Button size="small" onClick={() => setQueueExpanded(previous => !previous)} aria-expanded={queueExpanded}>{queueExpanded ? '收起' : '展开'}</Button>}</header>
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3"><div><h3 className="text-base font-semibold text-text-primary">待发布内容</h3><p className="mt-1 text-xs text-text-secondary">{pendingItems.length} 条 · {draggableItems.length} 条可排入日历</p></div><div className="flex items-center gap-2">{onCreatePending && <Button type="primary" size="small" icon={<Plus size={14}/>} onClick={onCreatePending}>新建发布内容</Button>}{pendingItems.length > 0 && <Button size="small" onClick={() => setQueueExpanded(previous => !previous)} aria-expanded={queueExpanded}>{queueExpanded ? '收起' : '展开'}</Button>}</div></header>
       <div aria-label="待发布内容列表" className={`grid gap-3 p-4 ${queueExpanded ? 'max-h-[480px] grid-cols-[repeat(auto-fill,minmax(220px,1fr))] overflow-y-auto' : 'auto-cols-[240px] grid-flow-col overflow-x-auto'}`}>
         {pendingItems.length === 0 ? <div className="col-span-full py-6 text-center"><p className="text-sm text-text-primary">还没有待发布视频</p><p className="mt-1 text-xs text-text-secondary">视频编辑完成并保存后，会出现在这里</p></div> : pendingItems.map(item => {
           const fixedDate = item.scheduledAt ? new Date(item.scheduledAt) : null;

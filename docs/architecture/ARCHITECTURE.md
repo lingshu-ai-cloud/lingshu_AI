@@ -44,8 +44,8 @@
 - `src/components/inspiration/inspirationReferenceImport.ts`：本地 MP4 对标导入的文件校验、现有鉴权入库接口、持久记录读回及有界只读轮询。页面注入列表状态和刷新能力；账号授权变化后旧请求不得读取或写回新会话。本模块不新建分析或付费旁路，逐镜处理仍由现有服务端任务负责。
 - `src/components/inspiration/inspirationExactAnalysisApi.ts`：全片精确分析的现有鉴权提交、记录读取、暂停与响应解析；页面保留分析准入、排队/终态展示、轮询上限和状态所有权。该模块只调用原有端点，不新增付费许可或自动重试。
 - `src/components/studio/studioReferenceAdmission.ts`：复刻入口的规范化证据准入、逐镜时间线完整性和跨品类迁移建议。`AiCreateStudio.tsx` 继续负责选择、展示、生成请求及现有供应商/预算门禁，不能把迁移建议当作真实画面或产品事实证据。
-- `src/components/inspiration/InspirationVideoResults.tsx`：承载灵感结果的首次加载、真实空态、卡片/列表及服务端分页展示，共用卡片操作准入。页面继续提供已筛选记录、来源/收藏状态、分页页码和选择/创作/预览/收藏/管理回调；展示组件不读取租户数据或执行供应商请求。
-- `src/components/inspiration/InspirationWatchModal.tsx`：原视频预览弹窗独立承担鉴权视频、原站嵌入回退、加载/失败/重试与高于详情 Drawer 的层级；灵感页仍拥有选中视频和打开/关闭动作。`inspirationShootingNeeds.ts` 从已有分析及素材匹配结果汇总拍摄缺口和优先级；`InspirationShootingPanel.tsx` 持有待拍清单的排序、筛选与可选拍摄入口展示，页面继续拥有视频/素材读取、上传状态和任务回写，不把元数据兜底冒充真实镜头证据。
+- `src/components/inspiration/InspirationVideoResults.tsx`：承载灵感结果的首次加载、真实空态、瀑布流及服务端分页展示，共用卡片操作准入。页面继续提供已筛选记录、来源/收藏状态、分页页码和选择/创作/预览/收藏/管理回调；展示组件不读取租户数据或执行供应商请求。
+- `src/components/inspiration/InspirationWatchDialog.tsx`：分栏视频预览独立承担鉴权视频、原站嵌入回退、加载/失败/重试、相邻视频切换及首次滑动提示；灵感页仍拥有选中视频和打开/关闭动作。`inspirationShootingNeeds.ts` 从已有分析及素材匹配结果汇总拍摄缺口和优先级；`InspirationShootingPanel.tsx` 持有待拍清单的排序、筛选与可选拍摄入口展示，页面继续拥有视频/素材读取、上传状态和任务回写，不把元数据兜底冒充真实镜头证据。
 - `src/components/inspiration/inspirationProductMaterialInventory.ts`：按稳定产品 ID 读取完整素材库存、去重并受控逐页汇总；页面仍决定何时读取、筛选和打开详情，不能把未返回或属于其他产品的素材补成已就绪。`inspirationReferenceTarget.ts`：解析周任务导航中的参考目标，并按记录、URL 或标题匹配已取得的灵感记录；明确的精确参考审核仍走独立审核链，不降级为模糊匹配。
 - `src/components/inspiration/inspirationMaterialGalleryProjection.ts`：只根据页面已读取的租户素材与产品摘要投影镜头功能选项、筛选、用户上传优先排序、产品集合卡和普通素材分页。页面继续持有素材请求、过滤状态、产品详情与交互；产品集合卡仅在首页出现，限制条件下必须有真实摘要素材匹配。
 - `src/components/inspiration/MaterialLibraryCardMedia.tsx` 与 `MaterialUsageHistory.tsx`：前者持有素材卡真实宽高比、封面→视频首帧回退、短期地址刷新和操作按钮；后者只展示成品使用履历与有证据的表现回流。页面仍负责素材目录请求、产品归属、预览选择与动作执行，旧 `materialPreviewImageSources` 导出保持兼容。
@@ -133,6 +133,8 @@
 ## 图片管线数据流
 
 工作台输入 → 租户任务合同 → 企业素材准入 → 策划与确认字段 → 图像生成 → 素材持久化 → 确定性预检 → 多模态复核/人工审阅 → 交付。
+
+单条自由创作的 `ContentTask` 根、灵小枢任务卡与图片子运行共享版本化身份；本地已实现的安全门禁与尚未落地的 PRD 节点范围见 [灵小枢与图片共享任务 ADR](adr/2026-10-24-assistant-image-development-contract.md)。
 
 确定性失败不可被模型复核覆盖；多模态服务不可用时状态保持不确定，不得推断通过。多输出轮播/GIF 使用冻结计划、逐单元原子认领和持久化回执；结果不明时停止后续付费提交，只能核对已有素材。GIF 的产品与文字在背景底图持久化后由固定图层合成，最终动图单独登记与质检。工作台接线及本地合同测试不等于真实供应商、浏览器交互或发布验收。
 

@@ -5,6 +5,9 @@ import { tenantAssetRelativePath } from '../lib/assetAccess.js';
 import { materialAssetObjectKey } from '../storage/materialAssets.js';
 import type { SocialImageCreationTask, SocialImageOutputNode } from '../../shared/contracts/socialImageCreation.js';
 import { SOCIAL_IMAGE_TASKS_COLLECTION } from './socialImageTask.js';
+import { evolveSocialImageProductionRuntime } from './socialImageProductionRuntime.js';
+import { socialImageV3PaidEvidenceHash, socialImageV3PaidPrerequisiteIssue } from './socialImagePaidPrerequisites.js';
+import { assertSocialImageCurrentContentTask, SocialImageProductionRunError } from './socialImageProductionRun.js';
 
 type StoredTask = { id: string; tenant_id: string; spec: { socialImageTask?: SocialImageCreationTask } };
 
@@ -14,10 +17,31 @@ export function socialImageQueuedJobIssue(task: SocialImageCreationTask, propose
   if (JSON.stringify(proposed.slice(0, -1)) !== JSON.stringify(task.generationJobs)) return 'social_image_job_history_immutable';
   if (task.generationJobs.some(item => ['queued', 'running', 'outcome_unknown'].includes(item.status) && !item.outputNodeIds.length)) return 'social_image_prior_paid_job_unresolved';
   const job = proposed.at(-1)!;
-  if (!job.id || !job.idempotencyKey || job.status !== 'queued' || job.attempt !== 0 || job.outputNodeIds.length || job.inputHash
+  const allowedFields = new Set(['id', 'idempotencyKey', 'status', 'outputNodeIds', 'attempt', 'createdAt', 'updatedAt']);
+  if (!job || typeof job.id !== 'string' || !job.id.trim() || typeof job.idempotencyKey !== 'string' || !job.idempotencyKey.trim()
+    || job.status !== 'queued' || job.attempt !== 0 || !Array.isArray(job.outputNodeIds) || job.outputNodeIds.length || job.inputHash
     || job.planVersion !== undefined || job.unitIndex !== undefined || job.plannedInputHash
+    || Object.keys(job).some(field => !allowedFields.has(field))
     || task.generationJobs.some(item => item.id === job.id || item.idempotencyKey === job.idempotencyKey)) return 'social_image_new_job_invalid';
   return null;
+}
+
+/** Reject mixed input+queue patches and stamp V3 jobs with a server-derived evidence generation. */
+export async function admitSocialImageV3QueuedJob(store: DataStore, tenantId: string, task: SocialImageCreationTask,
+  patch: Partial<SocialImageCreationTask>): Promise<Partial<SocialImageCreationTask>> {
+  if (task.schemaVersion !== 'social-image-creation.v3') return patch;
+  const issue = socialImageV3PaidPrerequisiteIssue(task, 'execute');
+  if (issue) throw new SocialImagePaidJobError(issue);
+  try { await assertSocialImageCurrentContentTask(store, tenantId, task); }
+  catch (error) { throw new SocialImagePaidJobError(error instanceof SocialImageProductionRunError ? error.code : 'social_image_content_task_read_failed'); }
+  if (Object.keys(patch).some(field => !['generationJobs', 'status', 'step'].includes(field))
+    || patch.status !== 'generating' || patch.step !== 'generate' || !patch.generationJobs?.length) {
+    throw new SocialImagePaidJobError('social_image_job_patch_scope_invalid');
+  }
+  await requireSocialImageAtomicStore(store);
+  return { ...patch, generationJobs: [...patch.generationJobs.slice(0, -1), {
+    ...patch.generationJobs.at(-1)!, plannedInputHash: socialImageV3PaidEvidenceHash(task),
+  }] };
 }
 
 export class SocialImagePaidJobError extends Error {
@@ -64,7 +88,10 @@ async function saveTask(store: DataStore, row: StoredTask, task: SocialImageCrea
 }
 
 function advance(task: SocialImageCreationTask, patch: Partial<SocialImageCreationTask>): SocialImageCreationTask {
-  return { ...task, ...patch, version: task.version + 1, publishable: false, updatedAt: new Date().toISOString() };
+  const now = new Date().toISOString();
+  const next = { ...task, ...patch, version: task.version + 1, publishable: false, updatedAt: now };
+  next.productionRuntime = evolveSocialImageProductionRuntime(task, next, now);
+  return next;
 }
 
 /** A paid unit is write-ahead claimed exactly once. No atomic CAS means no call. */
@@ -77,11 +104,18 @@ export async function claimSocialImagePaidJob(input: {
   }
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const { row, task } = await taskRow(input.store, input.tenantId, input.taskId);
+    const gate = socialImageV3PaidPrerequisiteIssue(task, 'execute');
+    if (gate) throw new SocialImagePaidJobError(gate);
+    try { await assertSocialImageCurrentContentTask(input.store, input.tenantId, task); }
+    catch (error) { throw new SocialImagePaidJobError(error instanceof SocialImageProductionRunError ? error.code : 'social_image_content_task_read_failed'); }
     if (task.imageType === 'carousel' || task.imageType === 'gif_poster') {
       throw new SocialImagePaidJobError('social_image_multi_output_not_ready');
     }
     const job = task.generationJobs.find(item => item.id === input.jobId && item.idempotencyKey === input.idempotencyKey);
     if (!job) throw new SocialImagePaidJobError('social_image_paid_job_missing');
+    if (task.schemaVersion === 'social-image-creation.v3' && job.plannedInputHash !== socialImageV3PaidEvidenceHash(task)) {
+      throw new SocialImagePaidJobError('social_image_paid_evidence_changed');
+    }
     if (job.status !== 'queued') throw new SocialImagePaidJobError('social_image_paid_job_already_started');
     if (task.generationJobs.some(item => item.id !== job.id && ['queued', 'running', 'outcome_unknown'].includes(item.status) && !item.outputNodeIds.length)) {
       throw new SocialImagePaidJobError('social_image_prior_paid_job_unresolved');

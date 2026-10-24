@@ -10,8 +10,8 @@ test('assistant enterprise reader never substitutes demo or another tenant, and 
   store.list = async <T>(collection: string, query?: ListQuery) => {
     assert.equal(collection, 'tenant_profiles');
     assert.deepEqual(query?.where, { tenant_id: 'tenant-a' });
-    assert.equal(query?.perPage, 1);
-    return { items: items as T[], totalItems: items.length, totalPages: 1, page: 1, perPage: 1 };
+    assert.equal(query?.perPage, 2);
+    return { items: items as T[], totalItems: items.length, totalPages: 1, page: 1, perPage: 2 };
   };
   try {
     assert.equal(await readTenantEnterpriseProfileStrict('tenant-a'), null);
@@ -19,6 +19,11 @@ test('assistant enterprise reader never substitutes demo or another tenant, and 
     await assert.rejects(readTenantEnterpriseProfileStrict('tenant-a'), /tenant_mismatch/);
     items = [{ id: 'bad', tenant_id: 'tenant-a', profile: 'invalid json' }];
     assert.equal(await readTenantEnterpriseProfileStrict('tenant-a'), null);
+    items = [
+      { id: 'first', tenant_id: 'tenant-a', profile: JSON.stringify({ company: { name: 'FIRST' } }) },
+      { id: 'duplicate', tenant_id: 'tenant-a', profile: JSON.stringify({ company: { name: 'DUPLICATE' } }) },
+    ];
+    await assert.rejects(readTenantEnterpriseProfileStrict('tenant-a'), /tenant_profile_not_unique/);
     items = [{ id: 'ours', tenant_id: 'tenant-a', profile: JSON.stringify({ company: { name: 'OUR TENANT' }, dataGovernance: { aiAccessEnabled: false } }) }];
     const profile = await readTenantEnterpriseProfileStrict('tenant-a');
     assert.equal(profile?.company.name, 'OUR TENANT');

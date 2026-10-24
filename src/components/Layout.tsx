@@ -3,10 +3,10 @@ import { Menu, Segmented } from 'antd';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronRight, LogOut, ShieldCheck, PanelLeftClose, PanelLeftOpen, Settings,
-  PanelRightOpen, Sparkles, Bot, Star, X,
+  PanelRightOpen, Sparkles, Star, X,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
-import { PAGE_REGISTRY } from '../pageRegistry';
+import { isPageInNavigationBranch, PAGE_REGISTRY } from '../pageRegistry';
 import { isAdminSession, ROLE_PAGE_ACCESS } from '../appSession';
 import { authApi, exitSupportSession, type AuthSession } from '../lib/auth';
 import RightPanel from './RightPanel';
@@ -21,8 +21,8 @@ import { lsMotion } from '../lib/designTokens';
 import { getScrollBehavior, usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import { PLATFORM_ADS_PAGE_IDS, PLATFORM_ADS_SURFACE_ENABLED } from '../config/productSurfaceFlags';
 import PointsManagementDrawer from './PointsManagementDrawer';
-import { CreationModeContext, CreationModeControlContext, readCreationMode, writeCreationMode, type CreationMode } from '../lib/creationMode';
-import { accountProductNavigation, modeSwitchDestination, primaryProductNavigation, type PrimaryProductPage } from '../productNavigation';
+import { CreationModeContext, type CreationMode } from '../lib/creationMode';
+import { accountProductNavigation, primaryProductNavigation, type PrimaryProductPage } from '../productNavigation';
 
 const PRODUCT_NAV_ICONS: Record<PrimaryProductPage, ReactNode> = {
   strategy: <DuotoneGlyph kind="create" />,
@@ -111,7 +111,6 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
     try { return localStorage.getItem('lingshu:sidebar-collapsed') === 'true'; } catch { return false; }
   });
   const [creatorSidebarCollapsed, setCreatorSidebarCollapsed] = useState(false);
-  const [homeActiveSection, setHomeActiveSection] = useState<'strategy' | 'socialInspiration'>('strategy');
   const [viewportWidth, setViewportWidth] = useState(() => typeof window === 'undefined' ? 1440 : window.innerWidth);
   const [mobileViewport, setMobileViewport] = useState(() => (
     typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
@@ -122,28 +121,14 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   const sidebarCollapsed = mobileViewport ? !mobileSidebarExpanded : creatorSurface ? creatorSidebarCollapsed : desktopSidebarCollapsed;
   const sidebarWidth = sidebarCollapsed ? (mobileViewport ? 56 : 60) : creatorSurface ? Math.min(354, Math.max(246, Math.round(viewportWidth * 0.173))) : 176;
   const activeSession = session;
-  const modeScope = activeSession ? `${activeSession.tenant?.id || activeSession.user.tenantId}:${activeSession.user.id}` : '';
-  const [modePreference, setModePreference] = useState<{ scope: string; mode: CreationMode }>(() => ({
-    scope: modeScope,
-    mode: readCreationMode(modeScope),
-  }));
-  const creationMode = modePreference.scope === modeScope
-    ? modePreference.mode
-    : readCreationMode(modeScope);
+  const [homeActiveSection, setHomeActiveSection] = useState<'strategy' | 'socialInspiration'>('strategy');
+  const creationMode: CreationMode = 'employee';
   const guideScope = activeSession?.demo?.guideScope || (activeSession?.demo?.expiresAt ? `${activeSession.user.id}:${activeSession.demo.expiresAt}` : activeSession?.user?.id || 'demo-guide');
   const supportAccess = activeSession?.supportAccess;
   const organizationRole = activeSession?.user.role || 'customer_service';
   const allowedPages = ROLE_PAGE_ACCESS[organizationRole];
   const primaryItems = primaryProductNavigation(creationMode, allowedPages, PLATFORM_ADS_SURFACE_ENABLED);
   const accountPages = accountProductNavigation(allowedPages, isAdminSession(activeSession ?? null));
-
-  const switchCreationMode = (nextMode: CreationMode) => {
-    if (nextMode === creationMode) return;
-    setModePreference({ scope: modeScope, mode: nextMode });
-    writeCreationMode(modeScope, nextMode);
-    const destination = modeSwitchDestination(page, nextMode);
-    if (destination !== page) onNavigate(destination);
-  };
 
   const leaveSupportSession = () => {
     if (!exitSupportSession()) authApi.logout();
@@ -283,12 +268,22 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
 
         {/* Home nav */}
         <nav aria-label="主导航" className={`${sidebarCollapsed ? 'px-2' : 'px-3'} pb-1`}>
-          {primaryItems.map(item => <NavItem
+          {primaryItems.filter(item => item.page !== 'digitalEmployees').map(item => <NavItem
             key={item.page}
             item={{ id: item.page, label: item.label, icon: PRODUCT_NAV_ICONS[item.page] }}
-            active={homeSurface && (item.page === 'strategy' || item.page === 'socialInspiration')
-              ? homeActiveSection === item.page
-              : page === item.page || PAGE_REGISTRY[page].navParent === item.page}
+            active={isPageInNavigationBranch(page, item.page)}
+            onClick={() => navigateFromSidebar(item.page)}
+            onPrefetch={() => onPrefetchPage?.(item.page)}
+            collapsed={sidebarCollapsed}
+            disabled={item.disabled}
+          />)}
+        </nav>
+
+        <nav aria-label="经营导航" className={`${sidebarCollapsed ? 'mx-2 px-0' : 'mx-3 px-0'} mt-3 border-t border-border pt-3`}>
+          {primaryItems.filter(item => item.page === 'digitalEmployees').map(item => <NavItem
+            key={item.page}
+            item={{ id: item.page, label: item.label, icon: PRODUCT_NAV_ICONS[item.page] }}
+            active={isPageInNavigationBranch(page, item.page)}
             onClick={() => navigateFromSidebar(item.page)}
             onPrefetch={() => onPrefetchPage?.(item.page)}
             collapsed={sidebarCollapsed}
@@ -350,17 +345,11 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
         open={accountSettingsOpen}
         onClose={() => setAccountSettingsOpen(false)}
         onLogout={onLogout}
-        canManageEmployees={organizationRole === 'super_admin' || organizationRole === 'admin'}
       />
 
       {/* ── Main content ─────────────────────────────── */}
       <main className="app-main relative flex min-w-0 flex-1 basis-0 flex-col overflow-clip">
-        {homeSurface && <div className="creator-topbar creator-topbar--mode" aria-label="创作模式切换">
-          <Segmented aria-label="内容创作模式" className="creator-mode-switch" value={creationMode}
-            options={[{ label: '自由创作', icon: <Sparkles size={16} aria-hidden="true"/>, value: 'free' }, { label: '数字员工', icon: <Bot size={16} aria-hidden="true"/>, value: 'employee' }]}
-            onChange={value => switchCreationMode(value as CreationMode)} />
-        </div>}
-        {creatorSurface && !homeSurface && <div className="creator-topbar" aria-label="账号与积分">
+        {creatorSurface && <div className="creator-topbar" aria-label="账号与积分">
           <button type="button" className="creator-topbar__points" onClick={openQuota}><Star size={17} aria-hidden="true" />积分管理</button>
           <button type="button" className="creator-topbar__account" onClick={() => setAccountSettingsOpen(true)} aria-label="打开账号设置">
             <span className="creator-topbar__avatar">{initial}</span><span className="creator-topbar__name">{tenantName}</span>
@@ -379,9 +368,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
           </div>
         )}
         <CreationModeContext.Provider value={creationMode}>
-          <CreationModeControlContext.Provider value={switchCreationMode}>
-            <LsPageTransition page={page}>{children}</LsPageTransition>
-          </CreationModeControlContext.Provider>
+          <LsPageTransition page={page}>{children}</LsPageTransition>
         </CreationModeContext.Provider>
       </main>
 

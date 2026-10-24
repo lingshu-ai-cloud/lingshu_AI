@@ -3,33 +3,60 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./SocialImageWorkbench.tsx', import.meta.url), 'utf8');
+const presentation = fs.readFileSync(new URL('./socialImageWorkbenchPresentation.tsx', import.meta.url), 'utf8');
+const reviewActions = fs.readFileSync(new URL('./SocialImageReviewActions.tsx', import.meta.url), 'utf8');
 const planning = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', import.meta.url), 'utf8');
 const studioRoute = readStudioApplicationSources();
 const socialImageRoute = fs.readFileSync(new URL('../../../server/routes/socialImage.ts', import.meta.url), 'utf8');
+const formalPlanRoute = fs.readFileSync(new URL('../../../server/routes/socialImageFormalPlanRoutes.ts', import.meta.url), 'utf8');
+const continuation = fs.readFileSync(new URL('../../../server/socialImage/socialImageProductionContinuation.ts', import.meta.url), 'utf8');
 
 assert.match(planning, /productionMode === 'video'/);
 assert.match(planning, /productionMode === 'image'/);
 assert.doesNotMatch(planning, /onChangeMode=\{\(\) => setProductionMode\(null\)\}/);
 assert.match(planning, /图片模式下一步再确认产品海报、品牌新闻、轮播图或 GIF/);
 assert.match(source, /social-creation-workbench-layout/);
+assert.match(source, /socialContentApi\.createTask\(/, 'image workbench must create the canonical ContentTask before an image run');
+assert.match(source, /socialImageApi\.createOrResumeRun\(content\.taskId/, 'image workbench must bind or resume its child run under ContentTask');
+assert.match(source, /binding\.contentTaskId !== content\.taskId/, 'a restored image run must reject a mismatched ContentTask');
+assert.match(source, /<SocialImageWorkbenchSession key=\{socialImageWorkbenchScopeKey\(props\)\}/,
+  'switching ContentTask or image task must remount the session so refs cannot write into the previous task');
+assert.match(source, /socialContentApi\.getTask\(contentTaskId\)[\s\S]{0,1800}setCoreClaim\(content\.brief\.objective/,
+  'an existing ContentTask must hydrate the form before the user can save it');
+assert.match(source, /else if \(formDirtyRef\.current\)/,
+  'opening an existing ContentTask without edits must not PATCH it with default form values');
+assert.match(source, /task && !task\.productionRuntime\?\.binding[\s\S]{0,240}历史图片项目未绑定统一内容任务/,
+  'a restored V2 image project must fail closed instead of creating a second V3 run');
+assert.doesNotMatch(source, /socialImageApi\.(?:createTask|createFromReference)\(/, 'new image work must not create an orphan image root');
+assert.match(socialImageRoute, /social_image_content_task_required/, 'legacy public image creation routes must fail closed');
 assert.doesNotMatch(source, /切换到视频工作台/);
 assert.doesNotMatch(source, /切换视频\/图片/);
-assert.match(source, /\{ key: 'inputs', title: '内容与资产' \}.*\{ key: 'production', title: '生成首版' \}.*\{ key: 'review', title: '审阅交付' \}/s, 'type and asset input must be one user step');
+assert.match(presentation, /\{ key: 'inputs', title: '内容与资产' \}.*\{ key: 'production', title: '生成首版' \}.*\{ key: 'review', title: '审阅交付' \}/s, 'type and asset input must be one user step');
 assert.match(source, /studioApi\.fbPoster\(/);
 assert.match(source, /产品名称：\$\{item\.name\}/, 'each selected enterprise product must be checked as an independent fact record');
 assert.match(source, /studioApi\.fbPosterRender\(/);
-assert.match(source, /id: 'carousel'[\s\S]{0,120}available: true/, 'carousel must be selectable in the image workbench');
+assert.match(presentation, /id: 'carousel'[\s\S]{0,120}available: true/, 'carousel must be selectable in the image workbench');
 assert.match(source, /runPlannedMultiOutput\(\{/, 'carousel and GIF units must use sequential frozen-unit orchestration');
-assert.match(source, /id: 'gif_poster'[\s\S]{0,130}available: true/, 'GIF background-switch delivery must be selectable');
+assert.match(presentation, /id: 'gif_poster'[\s\S]{0,130}available: true/, 'GIF background-switch delivery must be selectable');
 assert.match(source, /socialImageApi\.finalizeGif\(rendered\)/, 'GIF plates must be finalized only after all units are durable');
 assert.match(source, /确认生成 GIF 的 4 张背景底图/, 'first GIF paid submission must disclose the unit count');
 assert.match(source, /结果不明时停止，不自动重试/, 'GIF approval must explain uncertain paid outcomes');
 assert.match(source, /socialImageApi\.renderPlannedUnit\(taskId, jobId, controller\.signal\)/, 'the browser must submit only the frozen task and unit identity');
-assert.match(source, /imageType === 'carousel' \? carouselPages\.map/, 'carousel delivery must expose each persisted page separately');
+assert.match(reviewActions, /task\?\.imageType === 'carousel' \? carouselPages\.map/, 'carousel delivery must expose each persisted page separately');
+assert.match(reviewActions, /adopted && output\?\.mediaUrl/, 'carousel pages must not be offered as unmarked final downloads before full adoption');
 assert.match(source, /socialImageApi\.abandonPlan\(current\)/, 'a rejected carousel plan needs an explicit safe return to inputs');
 assert.match(source, /可能再次产生费用/, 'abandoning already generated pages must disclose potential repeat charges');
-assert.match(socialImageRoute, /abandonSocialImageMultiUnitPlan\(/, 'plan retirement must be server-owned and atomic');
-assert.doesNotMatch(source, /\{ \.\.\.renderRequest, productIds: \[\] \}/, 'an unreadable product image must never be retried without the selected product identity');
+assert.match(socialImageRoute, /registerSocialImageFormalPlanRoutes\(/, 'the authenticated image router must register formal plan endpoints');
+assert.match(formalPlanRoute, /abandonSocialImageMultiUnitPlan\(/, 'plan retirement must be server-owned and atomic');
+assert.match(source, /socialImageApi\.prepareEvidence\(saved\.task\)/, 'required assets and reference pixels must be inspected before planning or paid generation');
+assert.match(socialImageRoute, /\/tasks\/:id\/evidence\/prepare/, 'the evidence gate must be a tenant-authenticated server route');
+const assetNodeIndex = socialImageRoute.indexOf("nodeId: 'asset_manifest'");
+const referenceNodeIndex = socialImageRoute.indexOf("nodeId: 'reference_snapshot'");
+const inventoryNodeIndex = socialImageRoute.indexOf("nodeId: 'element_inventory'");
+assert.ok(assetNodeIndex >= 0 && assetNodeIndex < referenceNodeIndex && referenceNodeIndex < inventoryNodeIndex,
+  'the evidence route must persist asset, reference, and pixel inventory nodes in order');
+assert.doesNotMatch(source, /\{ \.\.\.renderRequest, productIds: \[\] \}/,
+  'an unreadable required product image must block instead of silently removing product identity');
 assert.match(source, /referenceImageUrls:/, 'viral replication must send the benchmark image to rendering');
 assert.match(source, /productIds,/, 'rendering must resolve product identity from the enterprise knowledge base');
 assert.match(source, /idempotencyKey/, 'paid image generation must have a stable operation key');
@@ -43,11 +70,24 @@ assert.match(socialImageRoute, /reconcile-material/, 'existing paid image materi
 assert.match(socialImageRoute, /readMaterialLibrary\(tenantId\)\)\.items\.find/, 'quality preflight must read generated images stored in the local tenant library');
 assert.match(socialImageRoute, /social_image_paid_inputs_frozen/, 'task inputs must remain fixed while a paid unit is unresolved');
 assert.match(source, /runPreflight/, 'generated images must enter deterministic quality preflight');
+assert.match(source, /socialImageApi\.runDirectorReview\(/, 'the workbench must have a real server-owned director review continuation');
+assert.match(source, /socialImageApi\.decideCandidate\(/, 'the workbench must persist explicit adopt or reject actions');
+assert.doesNotMatch(source, /socialImageApi\.createDeliveryPackage\(/, 'the browser must not chain delivery after the final approval');
+assert.match(source, /socialImageApi\.continueTask\(task\)/, 'a restored run must ask the server to resume deterministic review or delivery nodes');
+assert.match(socialImageRoute, /continueSocialImageProduction\(\{ store, tenantId, taskId: result\.task\.id/,
+  'the decision endpoint must continue deterministic delivery on the server');
+assert.match(continuation, /currentNode === 'director_review'[\s\S]*runSocialImageDirectorReview/,
+  'independent director review must resume from the persisted server node');
+assert.match(continuation, /currentNode === 'delivery'[\s\S]*createSocialImageDeliveryPackage/,
+  'the final item approval must lead to server-owned delivery packaging');
+assert.match(reviewActions, /aria-label="逐项验收"/);
+assert.match(reviewActions, /全部采用后才会生成整包交付/);
+assert.doesNotMatch(reviewActions, /采用整组作品/);
 assert.match(source, /repairLayered/, 'review must support natural-language layer repair');
-assert.match(source, /按描述修改对应图层/);
-assert.match(source, /按检查结果优化一版/, 'automatic checks may offer an optional targeted repair path');
+assert.match(reviewActions, /按描述修改对应图层/);
+assert.match(reviewActions, /按检查结果优化一版/, 'automatic checks may offer an optional targeted repair path');
 assert.match(source, /SOCIAL_IMAGE_HARD_CHECKS/);
-assert.match(source, /自动检查（不阻断）/);
+assert.match(source, /自动检查（硬门禁）/);
 assert.match(source, /所有待处理信息都汇总在这里/);
 assert.match(source, /可只填写当前已知内容/);
 assert.match(source, /不影响成片生成和下载/);
@@ -65,8 +105,8 @@ assert.match(source, /pb-24/, 'primary actions must clear the global assistant o
 assert.match(source, /重试一键生成/, 'planning and rendering must expose one retry action instead of two confirmations');
 assert.match(source, /补充待确认信息/);
 assert.match(source, /保存已填写信息/);
-assert.match(source, /输入已冻结，正在自动完成对标拆解、图文策划与首版生成/);
-assert.match(source, /await requestPlan\(saved\.task, confirmationValues\)/, 'saving valid inputs must immediately execute planning');
+assert.match(source, /正在校验企业素材字节并生成参考图区域证据/);
+assert.match(source, /await requestPlan\(evidenced\.task, confirmationValues\)/, 'saving valid inputs must execute planning only after evidence gates pass');
 assert.match(source, /if \(planned\) await generateImage\(planned\)/, 'planning must continue directly into rendering when no facts are missing');
 assert.match(source, /source: 'user_input'/, 'confirmed gaps must be persisted as task evidence');
 assert.match(source, /confirmedFields: confirmedFacts/, 'confirmed values must be sent back through the truthfulness gate');

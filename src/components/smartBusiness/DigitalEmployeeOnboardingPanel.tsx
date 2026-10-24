@@ -1,31 +1,41 @@
 import { allocateWeeklyPublishingTargets, MAX_WEEKLY_PUBLISHING_ITEMS, weeklyPublishingPlatforms } from '../../../shared/contracts/weeklyPublishingTargets';
 import { getScrollBehavior } from '../../lib/usePrefersReducedMotion';
-import InitialOperatingPlanDialog from '../InitialOperatingPlanDialog';
-import { recommendFocusProducts, type InitialOperatingPlan } from '../../lib/initialOperatingPlan';
 import { Button } from 'antd';
 import KnowledgeIntakePanel from '../enterprise/KnowledgeIntakePanel';
 import { agentRuleFields } from '../../lib/agentRuleFields';
 import { Field, inputClass } from './DigitalEmployeeFormField';
 import { completeConfig, configErrors, platformCountsFromCadence, primaryEnterpriseLanguage, publishingPlatforms } from './digitalEmployeeConfigRules';
 import { importOnboardingProducts } from './onboardingProductImport';
-import { OnboardingEnterpriseStep, OnboardingPresenterStep, OnboardingProductsStep, OnboardingStageStep } from './DigitalEmployeeOnboardingSteps';
-import { isoDay, contentPlatformLabel } from './WeeklyGoalPanel';
-import { saveSocialContentStage, socialContentStageProfile, type SocialContentStageId } from '../../lib/socialContentStage';
+import { OnboardingConfirmationStep, OnboardingEnterpriseStep, OnboardingMarketStep, OnboardingProductsStep, PresenterSetupDialog } from './DigitalEmployeeOnboardingSteps';
+import { contentPlatformLabel } from './WeeklyGoalPanel';
+import { socialContentStageProfile, type SocialContentStageId } from '../../lib/socialContentStage';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, BarChart3, Check, ExternalLink, Loader2, MessageSquare, Search, Settings2, Sparkles, X } from 'lucide-react';
 import { authHeader } from '../../lib/auth';
 import { socialDiscoveryApi } from '../../lib/socialDiscoveryApi';
 import type { SocialCrawlStrategy } from '../../../shared/contracts/socialContentWorkflow';
-import type { ProductionContactKind, ProductionPresenterPolicy } from '../../../shared/contracts/productionOnboarding';
+import type { ProductionPresenterPolicy } from '../../../shared/contracts/productionOnboarding';
 import { digitalEmployeeApi, type BusinessDestination, type BusinessReadinessItem, type DigitalEmployeeConfig, type DigitalEmployeeWorkflow, type PublishingTarget } from '../../lib/digitalEmployees';
 import { agentRoleGroups, contentCreationWorkflows, synchronizeThemeContentWorkflows, workflowLabel } from '../../lib/digitalEmployeePresentationPolicy';
+import {
+  ENTERPRISE_ONBOARDING_SCHEMA_VERSION,
+  normalizeEnterpriseOnboardingProduct,
+  onboardingBrandTone,
+  onboardingCompanyIntro,
+  validateEnterpriseOnboardingConfirmation,
+  type EnterpriseOnboardingDraft,
+  type EnterpriseOnboardingEvidenceRef,
+  type EnterpriseOnboardingFieldKey,
+  type EnterpriseOnboardingProduct,
+  type EnterpriseOnboardingProposalSet,
+  type EnterpriseOnboardingSource,
+  type EnterpriseOnboardingStep,
+} from '../../../shared/contracts/enterpriseOnboarding';
+import { EnterpriseOnboardingDraftError, generateEnterpriseOnboardingProposals, readEnterpriseOnboardingDraft, saveEnterpriseOnboardingDraft } from '../../lib/enterpriseOnboardingApi';
 
-type ProductionContactDraft = {
-  kind: ProductionContactKind;
-  value: string;
-  primaryCta: string;
-};
-
+function newOnboardingConfirmationId(): string {
+  return `onboarding:${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+}
 export function OnboardingPanel({
   initial,
   readiness,
@@ -35,7 +45,6 @@ export function OnboardingPanel({
   restartFromBeginning = false,
   initialStep = "start",
   dismissible = false,
-  allowInitialPlan = true,
   onClose,
   onSave,
   onOpenReadiness,
@@ -49,9 +58,8 @@ export function OnboardingPanel({
   restartFromBeginning?: boolean;
   initialStep?: "start" | "presenter";
   dismissible?: boolean;
-  allowInitialPlan?: boolean;
   onClose?: () => void;
-  onSave: (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string; initialPlan?: InitialOperatingPlan }) => void | boolean | Promise<void | boolean>;
+  onSave: (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string; onboardingConfirmation?: NonNullable<ReturnType<typeof validateEnterpriseOnboardingConfirmation>['confirmation']> }) => void | boolean | Promise<void | boolean>;
   onOpenReadiness: (item: BusinessReadinessItem) => void;
   onNavigate?: (page: BusinessDestination) => void;
 }) {
@@ -88,38 +96,39 @@ export function OnboardingPanel({
   const [profileLoading, setProfileLoading] = useState(mode === "first");
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const [profileConfirmed, setProfileConfirmed] = useState(mode !== "first" || initialStep === "presenter");
-  const [productConfirmed, setProductConfirmed] = useState(mode !== "first" || initialStep === "presenter");
+  const [guideStep, setGuideStep] = useState<EnterpriseOnboardingStep>(1);
   const [brandName, setBrandName] = useState("");
-  const [productionContactKind, setProductionContactKind] = useState<ProductionContactKind>(() => initial.productionOnboarding?.contact.kind || "none");
-  const [productionContactValue, setProductionContactValue] = useState(() => initial.productionOnboarding?.contact.value || "");
-  const [productionCta, setProductionCta] = useState(() => initial.productionOnboarding?.contact.primaryCta || "");
+  const [baseFactVersion, setBaseFactVersion] = useState("");
+  const [draftRevision, setDraftRevision] = useState(0);
+  const [confirmationId, setConfirmationId] = useState(newOnboardingConfirmationId);
+  const [companyIntro, setCompanyIntro] = useState("");
+  const [brandTone, setBrandTone] = useState("");
+  const [focusProductIds, setFocusProductIds] = useState<string[]>([]);
+  const [targetBuyer, setTargetBuyer] = useState("");
+  const [primaryPlatform, setPrimaryPlatform] = useState("");
+  const [primaryCta, setPrimaryCta] = useState("");
+  const [draftSources, setDraftSources] = useState<Partial<Record<EnterpriseOnboardingFieldKey, EnterpriseOnboardingSource>>>({});
+  const [evidenceRefs, setEvidenceRefs] = useState<EnterpriseOnboardingEvidenceRef[]>([]);
+  const [proposalSet, setProposalSet] = useState<EnterpriseOnboardingProposalSet>();
+  const [proposalLoading, setProposalLoading] = useState(false);
   const [presenterPolicy, setPresenterPolicy] = useState<ProductionPresenterPolicy>(() => initial.productionOnboarding?.presenterPolicy || "local_video_only");
   const [presenterConfigured, setPresenterConfigured] = useState(false);
-  const [knowledgeProducts, setKnowledgeProducts] = useState<Array<Record<string, any>>>([]);
+  const [knowledgeProducts, setKnowledgeProducts] = useState<EnterpriseOnboardingProduct[]>([]);
   const [productsLoading, setProductsLoading] = useState(mode === "first");
   const [activeRuleAgent, setActiveRuleAgent] = useState<"business" | "director" | "content" | "customer">("business");
-  const [productSaving, setProductSaving] = useState(false);
   const [productError, setProductError] = useState("");
   const [productImporting, setProductImporting] = useState(false);
   const [productImportMessage, setProductImportMessage] = useState("");
   const [contentStage, setContentStage] = useState<SocialContentStageId>();
-  const [stageConfirmed, setStageConfirmed] = useState(mode !== "first" || initialStep === "presenter");
   const [stageSaving, setStageSaving] = useState(false);
   const [stageError, setStageError] = useState("");
-  const [recommendedPlanOpen, setRecommendedPlanOpen] = useState(false);
-  const recommendedPlanTriggerId = "onboarding-generate-recommended-plan";
-  const [recommendedProducts, setRecommendedProducts] = useState<string[]>([]);
-  const themeContentEnabled = form.enabledWorkflows.some((item) =>
-    contentCreationWorkflows.includes(item),
-  );
-  const visibleEnabledWorkflowCount =
-    form.enabledWorkflows.filter(
-      (item) => !contentCreationWorkflows.includes(item),
-    ).length + (themeContentEnabled ? 1 : 0);
+  const themeContentEnabled = form.enabledWorkflows.some((item) => contentCreationWorkflows.includes(item));
+  const visibleEnabledWorkflowCount = form.enabledWorkflows.filter(
+    (item) => !contentCreationWorkflows.includes(item),
+  ).length + (themeContentEnabled ? 1 : 0);
   const displayedReadiness = useMemo(() => {
     const override = (item: BusinessReadinessItem): BusinessReadinessItem => {
-      if (item.key === "enterprise" && profileConfirmed) {
+      if (item.key === "enterprise" && mode !== "first") {
         return {
           ...item,
           status: "ready",
@@ -137,26 +146,18 @@ export function OnboardingPanel({
       return item;
     };
     const next = readiness.map(override);
-    if (profileConfirmed && !next.some((item) => item.key === "enterprise")) {
+    if (mode !== "first" && !next.some((item) => item.key === "enterprise")) {
       next.unshift({ key: "enterprise", label: "企业资料", status: "ready", count: null, page: "enterprise", note: "企业档案已保存到企业知识库，可用于任务上下文" });
     }
     if (knowledgeProducts.length > 0 && !next.some((item) => item.key === "products")) {
       next.push({ key: "products", label: "产品资料", status: "ready", count: knowledgeProducts.length, page: "enterprise", note: `企业知识库已有 ${knowledgeProducts.length} 个真实产品，可用于产品生成与逐客推荐` });
     }
     return next;
-  }, [knowledgeProducts.length, profileConfirmed, readiness]);
+  }, [knowledgeProducts.length, mode, readiness]);
   useEffect(() => setForm(completeConfig(initial)), [initial]);
   useEffect(() => {
-    setProductionContactKind(initial.productionOnboarding?.contact.kind || "none");
-    setProductionContactValue(initial.productionOnboarding?.contact.value || "");
-    setProductionCta(initial.productionOnboarding?.contact.primaryCta || "");
     setPresenterPolicy(initial.productionOnboarding?.presenterPolicy || "local_video_only");
   }, [initial.productionOnboarding]);
-  useEffect(() => {
-    if (mode === "first" && initialStep === "presenter") {
-      setProfileConfirmed(true); setProductConfirmed(true); setStageConfirmed(true);
-    }
-  }, [initialStep, mode]);
   useEffect(() => {
     let active = true;
     void socialDiscoveryApi.getScope().then(({ scope }) => {
@@ -208,41 +209,85 @@ export function OnboardingPanel({
   useEffect(() => {
     let cancelled = false;
     if (mode === "first") setProfileLoading(true);
-    fetch("/api/overseas/enterprise/profile", { headers: authHeader() })
-      .then(async (response) => {
+    const profileRequest = fetch("/api/overseas/enterprise/profile", { headers: authHeader(), cache: 'no-store' })
+      .then(async response => {
         if (!response.ok) throw new Error("企业知识库读取失败");
         return response.json() as Promise<Record<string, any>>;
-      })
-      .then((profile) => {
+      });
+    const draftRequest = mode === 'first' && initialStep !== 'presenter'
+      ? readEnterpriseOnboardingDraft()
+        .then(snapshot => ({ ...snapshot, error: '' }))
+        .catch(error => ({ draft: null, revision: 0, error: error instanceof Error ? error.message : '新手引导草稿读取失败' }))
+      : Promise.resolve({ draft: null, revision: 0, error: '' });
+    Promise.all([profileRequest, draftRequest])
+      .then(([profile, draftResult]) => {
         if (cancelled) return;
-        const loadedProfile = {
-          companyName: String(profile.company?.name || ""),
-          brandName: String(profile.brand?.name || ""),
+        const factVersion = String(profile.factVersion?.id || profile.factVersion?.contentHash || '');
+        const loadedProducts: EnterpriseOnboardingProduct[] = (Array.isArray(profile.products?.items) ? profile.products.items as unknown[] : [])
+          .map(normalizeEnterpriseOnboardingProduct)
+          .filter((product): product is EnterpriseOnboardingProduct => Boolean(product));
+        const savedFocusNames = String(profile.strategy?.focusProducts || '').split(/[、，,]/).map((item: string) => item.trim()).filter(Boolean);
+        const savedFocusIds = loadedProducts.filter(product => savedFocusNames.includes(product.name)).map(product => product.id).slice(0, 3);
+        const recommendedFocusIds = loadedProducts.map((product, index) => ({
+          id: product.id, index,
+          score: Number(Boolean(product.category)) + Number(Boolean(product.highlights || product.description)) + Number(Boolean(product.sku)) + Number(Boolean(product.images?.length)) * 2,
+        })).sort((left, right) => right.score - left.score || left.index - right.index).slice(0, 3).map(item => item.id);
+        const route = (Array.isArray(profile.socialStrategy?.enabledRoutes) ? profile.socialStrategy.enabledRoutes : [])[0];
+        const routeStrategy = route ? profile.socialStrategy?.routeStrategies?.[route] : undefined;
+        const profileValues = {
+          companyName: String(profile.company?.name || ''), brandName: String(profile.brand?.name || ''),
+          industry: String(profile.company?.industry || ''), primaryBusiness: String(profile.company?.primaryBusiness || profile.company?.description || ''),
+          companyIntro: String(profile.company?.description || ''), brandTone: String(profile.brand?.tone || ''),
+          products: loadedProducts, focusProductIds: savedFocusIds.length ? savedFocusIds : recommendedFocusIds,
+          targetMarket: String(profile.company?.mainMarkets || profile.strategy?.focusMarkets || ''),
+          targetBuyer: String(routeStrategy?.targetBuyerRoles?.join('、') || profile.customers?.targetProfiles || ''),
+          primaryPlatform: String(profile.socialStrategy?.primaryPlatforms?.[0] || ''),
+          language: primaryEnterpriseLanguage(profile.company?.primaryLanguages || profile.brand?.preferredLanguages),
+          contentStage: socialContentStageProfile(profile.socialStrategy?.contentStage)?.id,
+          primaryCta: String(routeStrategy?.primaryCta || ''),
         };
+        const persistedDraft = draftResult.draft;
+        const draft = !restartFromBeginning && persistedDraft?.baseFactVersion === factVersion
+          ? persistedDraft
+          : null;
+        if (persistedDraft && !draft && !restartFromBeginning) {
+          setProfileError('企业知识库已在草稿保存后更新。旧草稿不会覆盖新事实；本页已改用当前资料，下次保存时替换旧草稿。');
+        } else setProfileError(draftResult.error);
         setForm((current) => ({
           ...current,
-          companyName: loadedProfile.companyName || current.companyName,
+          companyName: draft?.companyName || profileValues.companyName || current.companyName,
+          industry: draft?.industry || profileValues.industry || current.industry,
+          primaryBusiness: draft?.primaryBusiness || profileValues.primaryBusiness || current.primaryBusiness,
+          targetMarkets: draft?.targetMarket || profileValues.targetMarket || current.targetMarkets,
+          customerProfile: draft?.targetBuyer || profileValues.targetBuyer || current.customerProfile,
         }));
-        setBrandName(loadedProfile.brandName);
-        const loadedProducts = Array.isArray(profile.products?.items) ? profile.products.items : [];
-        setKnowledgeProducts(loadedProducts);
-        const savedFocusProducts = String(profile.strategy?.focusProducts || "").split(/[、，,]/).map((item: string) => item.trim()).filter(Boolean);
-        setRecommendedProducts(savedFocusProducts.length ? savedFocusProducts : recommendFocusProducts(loadedProducts));
-        const loadedStage = socialContentStageProfile(profile.socialStrategy?.contentStage);
-        if (loadedStage && loadedStage.id !== "d2c_brand") {
-          setContentStage(loadedStage.id);
-          if (!restartFromBeginning) setStageConfirmed(true);
-        }
-        setCollectionLanguage(primaryEnterpriseLanguage(profile.company?.primaryLanguages));
-        // Progress is persisted with the tenant profile so a refresh, HMR remount,
-        // or a late overview response cannot throw the user back to step one.
-        // Only promote local progress here; never regress a step from a stale GET.
-        if (!restartFromBeginning && profile.digitalEmployeeOnboarding?.profileConfirmedAt
-          && loadedProfile.companyName && loadedProfile.brandName) setProfileConfirmed(true);
-        if (!restartFromBeginning && profile.digitalEmployeeOnboarding?.productSelectionConfirmedAt
-          && loadedProducts.length) setProductConfirmed(true);
+        setBrandName(draft?.brandName || profileValues.brandName);
+        setBaseFactVersion(factVersion);
+        // Even when the saved draft is stale or the user explicitly restarts,
+        // retain its revision solely as the compare-and-swap cursor. Its
+        // business fields are never applied to the current fact version.
+        setDraftRevision(persistedDraft?.revision || draftResult.revision);
+        setConfirmationId(draft?.confirmationId || newOnboardingConfirmationId());
+        setGuideStep(draft?.currentStep || 1);
+        setCompanyIntro(draft?.companyIntro || profileValues.companyIntro);
+        setBrandTone(draft?.brandTone || profileValues.brandTone);
+        setKnowledgeProducts(draft?.products || profileValues.products);
+        setFocusProductIds(draft?.focusProductIds || profileValues.focusProductIds);
+        setTargetBuyer(draft?.targetBuyer || profileValues.targetBuyer);
+        setPrimaryPlatform(draft?.primaryPlatform || profileValues.primaryPlatform);
+        setPrimaryCta(draft?.primaryCta || profileValues.primaryCta);
+        setContentStage((draft?.contentStage || profileValues.contentStage) as SocialContentStageId | undefined);
+        setCollectionLanguage(draft?.language || profileValues.language);
+        setDraftSources(draft?.sources || {
+          companyName: 'system_detected', brandName: 'system_detected', industry: 'system_detected',
+          primaryBusiness: 'system_detected', companyIntro: 'system_detected', brandTone: 'system_detected',
+          products: 'system_detected', focusProducts: 'system_detected',
+          targetMarket: 'system_detected', targetBuyer: 'system_detected', primaryPlatform: 'system_detected',
+          language: 'system_detected', contentStage: 'system_detected', primaryCta: 'system_detected',
+        });
+        setEvidenceRefs(draft?.evidenceRefs || []);
+        setProposalSet(draft?.proposalSet);
         if (mode === "first") setProductsLoading(false);
-        setProfileError("");
       })
       .catch((error) => {
         if (!cancelled && mode === "first") setProfileError(error instanceof Error ? error.message : "企业知识库读取失败");
@@ -251,7 +296,7 @@ export function OnboardingPanel({
         if (!cancelled) { setProfileLoading(false); setProductsLoading(false); }
       });
     return () => { cancelled = true; };
-  }, [mode, restartFromBeginning]);
+  }, [initialStep, mode, restartFromBeginning]);
   const selectedPublishingTargets = form.publishingTargets.filter((target) => selectedPublishPlatforms.includes(target.platform));
   const weeklyPublishingTotal = selectedPublishPlatforms.reduce((sum, platform) => sum + Math.max(0, Math.floor(platformPublishCounts[platform] || 0)), 0);
   const invalidWeeklyPublishingQuota = selectedPublishPlatforms.some(platform => !Number.isInteger(platformPublishCounts[platform]) || platformPublishCounts[platform] < 1)
@@ -291,7 +336,6 @@ export function OnboardingPanel({
     if (!firstKey) return;
     const profileKeys = ["companyName", "industry", "primaryBusiness", "targetMarkets", "customerProfile"];
     if (profileKeys.includes(firstKey)) {
-      setProfileConfirmed(false);
       setSubmitted(false);
       window.setTimeout(() => document.getElementById("onboarding-enterprise-profile")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50);
       return;
@@ -402,130 +446,125 @@ export function OnboardingPanel({
     setCollectionKeywords(`${subject}、买家痛点、应用场景、选型对比、行业趋势`);
     setRecommendationApplied(true);
   };
-  const profileMissingFields = [
-    ["企业名称", form.companyName],
-    ["品牌名称", brandName],
-  ] as const;
-  const missingProfileFields = profileMissingFields.filter(([, value]) => !value.trim()).map(([label]) => label);
-  const invalidProductionContact = productionContactKind !== "none"
-    && (!productionContactValue.trim() || !productionCta.trim());
-  const saveEnterpriseProfile = async () => {
-    if (missingProfileFields.length || invalidProductionContact || profileSaving) return;
-    setProfileSaving(true);
-    setProfileError("");
+  const missingProfileFields = [["企业名称", form.companyName], ["品牌名称", brandName],
+    ["行业/主营分类", form.industry], ["主要业务", form.primaryBusiness],
+  ].filter(([, value]) => !String(value || '').trim()).map(([label]) => label);
+  const setDraftSource = (key: EnterpriseOnboardingFieldKey, source: EnterpriseOnboardingSource = 'user_provided') => {
+    if (source === 'user_provided') setProposalSet(undefined);
+    setDraftSources(current => ({ ...current, [key]: source }));
+  };
+  const buildOnboardingDraft = (currentStep: EnterpriseOnboardingStep): EnterpriseOnboardingDraft => ({
+    schemaVersion: ENTERPRISE_ONBOARDING_SCHEMA_VERSION,
+    revision: draftRevision,
+    currentStep,
+    confirmationId,
+    baseFactVersion,
+    companyName: form.companyName.trim(), brandName: brandName.trim(),
+    industry: form.industry.trim(), primaryBusiness: form.primaryBusiness.trim(),
+    companyIntro: companyIntro.trim() || onboardingCompanyIntro(form.companyName, form.industry, form.primaryBusiness),
+    brandTone: brandTone.trim() || onboardingBrandTone(),
+    products: knowledgeProducts, focusProductIds,
+    targetMarket: form.targetMarkets.trim(), targetBuyer: targetBuyer.trim(),
+    primaryPlatform: primaryPlatform.trim(), language: collectionLanguage.trim(),
+    ...(contentStage ? { contentStage } : {}), primaryCta: primaryCta.trim(),
+    ...(evidenceRefs.length ? { evidenceRefs } : {}), ...(proposalSet ? { proposalSet } : {}),
+    sources: {
+      ...draftSources,
+      ...(!companyIntro.trim() ? { companyIntro: 'system_detected' as const } : {}),
+      ...(!brandTone.trim() ? { brandTone: 'system_detected' as const } : {}),
+    },
+    updatedAt: new Date().toISOString(),
+  });
+  const persistOnboardingDraft = async (nextStep: EnterpriseOnboardingStep): Promise<EnterpriseOnboardingDraft | null> => {
+    if (!baseFactVersion || profileSaving) { if (!baseFactVersion) setProfileError('企业资料尚未载入，无法保存当前草稿；请稍后重试。'); return null; }
+    setProfileSaving(true); setProfileError(''); setProductError(''); setStageError('');
     try {
-      const response = await fetch("/api/overseas/enterprise/profile", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", "x-enterprise-save-source": "diagnosis", ...authHeader() },
-        body: JSON.stringify({
-          company: { name: form.companyName },
-          brand: { name: brandName },
-          digitalEmployeeOnboarding: { profileConfirmedAt: new Date().toISOString() },
-        }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || "企业档案保存失败");
-      setProfileConfirmed(true);
+      const saved = await saveEnterpriseOnboardingDraft(buildOnboardingDraft(nextStep), draftRevision);
+      setDraftRevision(saved.revision); setGuideStep(saved.currentStep);
+      setCompanyIntro(saved.companyIntro); setBrandTone(saved.brandTone);
+      return saved;
     } catch (error) {
-      setProfileError(error instanceof Error ? error.message : "企业档案保存失败");
-    } finally {
-      setProfileSaving(false);
-    }
+      const message = error instanceof Error ? error.message : '新手引导草稿保存失败';
+      if (error instanceof EnterpriseOnboardingDraftError && error.status === 409) {
+        setProfileError(`${message} 当前页面没有覆盖另一窗口的新版本。`);
+      } else if (guideStep === 2) setProductError(message);
+      else if (guideStep >= 3) setStageError(message);
+      else setProfileError(message);
+      return null;
+    } finally { setProfileSaving(false); }
+  };
+  const saveDraftAndClose = async () => {
+    const saved = await persistOnboardingDraft(guideStep);
+    if (saved) onClose?.();
+  };
+  const confirmEnterpriseDraft = async () => {
+    if (missingProfileFields.length) return;
+    const saved = await persistOnboardingDraft(2);
+    if (!saved) return;
+    setProposalLoading(true);
+    try {
+      const proposal = await generateEnterpriseOnboardingProposals(saved);
+      setProposalSet(proposal); setCompanyIntro(proposal.companyIntro.value); setBrandTone(proposal.brandTone.value);
+      setDraftSources(current => ({ ...current, companyIntro: 'ai_suggested', brandTone: 'ai_suggested' }));
+    } catch (error) { setProfileError(error instanceof Error ? error.message : 'AI 建议暂时不可用；当前草稿已保存。'); }
+    finally { setProposalLoading(false); }
   };
   const importProductFile = async (file: File | null) => {
     if (!file || productImporting) return;
     setProductImporting(true); setProductImportMessage(''); setProductError('');
     try {
       const result = await importOnboardingProducts(file, knowledgeProducts);
-      setKnowledgeProducts(result.products);
-      setRecommendedProducts(recommendFocusProducts(result.products));
-      setProductImportMessage(`已通过${result.sourceLabel}从“${file.name}”识别并写入 ${result.importedCount} 个产品，绑定 ${result.assignedImageCount} 张产品照片。${result.unassignedImageCount ? `${result.unassignedImageCount} 张未能确认产品归属的图片已存入企业素材库，需在产品档案核对绑定后才能用于指定产品镜头。` : '可以直接确认产品表。'}`);
+      let products = result.products.map(normalizeEnterpriseOnboardingProduct).filter((product): product is EnterpriseOnboardingProduct => Boolean(product));
+      const suggested = products.map((product, index) => ({ id: product.id, index, score: Number(Boolean(product.category)) + Number(Boolean(product.highlights || product.description)) + Number(Boolean(product.sku)) + Number(Boolean(product.images?.length)) * 2 }))
+        .sort((left, right) => right.score - left.score || left.index - right.index).slice(0, 3).map(item => item.id);
+      const nextEvidence = [...new Map([...evidenceRefs, result.sourceEvidence].map(item => [item.sha256, item])).values()];
+      let focusIds = suggested; let proposal: EnterpriseOnboardingProposalSet | undefined;
+      try {
+        proposal = await generateEnterpriseOnboardingProposals({ ...buildOnboardingDraft(2), products, focusProductIds: suggested, evidenceRefs: nextEvidence });
+        const byId = new Map(proposal.focusProducts.map(item => [item.productId, item]));
+        products = products.map(product => byId.has(product.id) ? { ...product, category: byId.get(product.id)!.category || product.category,
+          highlights: byId.get(product.id)!.highlights || product.highlights, description: byId.get(product.id)!.description || product.description } : product);
+        focusIds = proposal.focusProducts.map(item => item.productId);
+      } catch { /* keep deterministic, explicitly labelled system suggestion */ }
+      setKnowledgeProducts(products); setFocusProductIds(focusIds); setEvidenceRefs(nextEvidence); if (proposal) setProposalSet(proposal);
+      setDraftSources(current => ({ ...current, products: 'system_detected', focusProducts: proposal ? 'ai_suggested' : 'system_detected' }));
+      setProductImportMessage(`已通过${result.sourceLabel}从“${file.name}”识别 ${result.importedCount} 个产品，原始文件已安全留存并会随草稿保存。${proposal ? 'AI 已给出最多 3 个待确认主推建议。' : 'AI 暂不可用，当前按资料完整度给出系统建议。'}${result.assignedImageCount ? `已绑定 ${result.assignedImageCount} 张产品照片。` : ''}${result.unassignedImageCount ? `${result.unassignedImageCount} 张图片暂未单独绑定产品，但仍保留在原始文件证据中。` : ''}`);
     } catch (error) { setProductError(error instanceof Error ? error.message : '产品文件解析失败'); }
     finally { setProductImporting(false); }
   };
-  const confirmProductTable = async () => {
-    if (!knowledgeProducts.length || productSaving) return;
-    setProductSaving(true); setProductError("");
+  const generateMarketProposal = async () => {
+    if (!form.targetMarkets.trim() || proposalLoading) return;
+    setProposalLoading(true); setStageError('');
     try {
-      const response = await fetch("/api/overseas/enterprise/profile", { method: "PATCH", headers: { "Content-Type": "application/json", "x-enterprise-save-source": "diagnosis", ...authHeader() }, body: JSON.stringify({ digitalEmployeeOnboarding: { productSelectionConfirmedAt: new Date().toISOString(), continuedWithoutProducts: false } }) });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || "产品表确认失败");
-      setProductConfirmed(true);
-    } catch (error) { setProductError(error instanceof Error ? error.message : "产品表确认失败"); }
-    finally { setProductSaving(false); }
+      const proposal = await generateEnterpriseOnboardingProposals(buildOnboardingDraft(3));
+      setProposalSet(proposal); setTargetBuyer(proposal.market.targetBuyer); setPrimaryPlatform(proposal.market.primaryPlatform);
+      setCollectionLanguage(proposal.market.language);
+      setDraftSources(current => ({ ...current, targetBuyer: 'ai_suggested', primaryPlatform: 'ai_suggested', language: 'ai_suggested' }));
+    } catch (error) { setStageError(error instanceof Error ? error.message : '市场建议暂时无法生成'); }
+    finally { setProposalLoading(false); }
   };
-  const confirmSocialStage = async (stageId: SocialContentStageId) => {
-    if (stageSaving) return;
+  const completeMinimalOnboarding = async () => {
+    if (stageSaving || !contentStage) return;
     setStageSaving(true);
     setStageError("");
     try {
-      const savedStage = await saveSocialContentStage(stageId);
-      if (!savedStage.synced) throw new Error("社媒经营阶段保存失败，请稍后重试");
-      setContentStage(savedStage.profile.id);
-      setStageConfirmed(true);
-    } catch (error) {
-      setStageError(error instanceof Error ? error.message : "社媒经营阶段保存失败，请稍后重试");
-    } finally {
-      setStageSaving(false);
-    }
-  };
-  const completeMinimalOnboarding = async (
-    plan?: InitialOperatingPlan,
-    presenterPolicyOverride?: ProductionPresenterPolicy,
-    contactOverride?: ProductionContactDraft,
-  ) => {
-    if (stageSaving || !stageConfirmed || !contentStage) return;
-    setStageSaving(true);
-    setStageError("");
-    try {
-      let confirmedStage = contentStage;
-      if (plan && plan.stage !== contentStage) {
-        const savedStage = await saveSocialContentStage(plan.stage);
-        if (!savedStage.synced) throw new Error("社媒经营阶段保存失败，请稍后重试");
-        confirmedStage = savedStage.profile.id;
-        setContentStage(confirmedStage);
-      }
-      const confirmedPresenterPolicy = presenterPolicyOverride || presenterPolicy;
-      const confirmedContact = contactOverride || {
-        kind: productionContactKind,
-        value: productionContactKind === "none" ? "" : productionContactValue.trim(),
-        primaryCta: productionContactKind === "none" ? "" : productionCta.trim(),
-      };
-      const productionOnboarding = {
-        schemaVersion: "fixed-yield.production-onboarding.v1" as const,
-        contact: confirmedContact,
-        presenterPolicy: confirmedPresenterPolicy,
-        output: {
-          primaryLanguage: plan?.language || form.videoDefaults?.language || "en",
-          aspectRatio: "9:16" as const,
-          resolution: "1080p" as const,
-        },
-        includeOneRevision: true,
-        confirmedAt: new Date().toISOString(),
-      };
-      const completed = await onSave(plan ? {
+      const savedDraft = await saveEnterpriseOnboardingDraft(buildOnboardingDraft(4), draftRevision);
+      setDraftRevision(savedDraft.revision);
+      const parsed = validateEnterpriseOnboardingConfirmation({ ...savedDraft, draftRevision: savedDraft.revision });
+      if (!parsed.confirmation) throw new Error(`还需确认：${parsed.missing.join('、')}`);
+      const focusProducts = savedDraft.focusProductIds.map(id => savedDraft.products.find(product => product.id === id)).filter(Boolean) as EnterpriseOnboardingProduct[];
+      const completed = await onSave({
         ...form,
         companyName: form.companyName.trim(),
-        focusProducts: plan.products.join("、"),
-        targetMarkets: plan.market,
-        videoLanguages: [plan.language],
-        // V2 only executes the three existing presenter pipelines plus exact
-        // tenant-owned local video matches. Missing B-roll must not reopen the
-        // legacy free-generation fallback.
+        industry: form.industry.trim(), primaryBusiness: form.primaryBusiness.trim(),
+        focusProducts: focusProducts.map(product => product.name).join('、'),
+        targetMarkets: savedDraft.targetMarket, customerProfile: savedDraft.targetBuyer,
+        videoLanguages: [savedDraft.language],
         allowGeneratedVisuals: false,
-        productionOnboarding,
-        operatingMaturity: confirmedStage === "b2b_launch" ? "starting" : "growing",
+        operatingMaturity: contentStage === 'b2b_launch' ? 'starting' : 'growing',
         minimalOnboarding: true,
         brandName: brandName.trim(),
-        initialPlan: { ...plan, stage: confirmedStage },
-      } : {
-        ...form,
-        companyName: form.companyName.trim(),
-        focusProducts: "",
-        allowGeneratedVisuals: false,
-        productionOnboarding,
-        minimalOnboarding: true,
-        brandName: brandName.trim(),
+        onboardingConfirmation: parsed.confirmation,
       });
       if (completed === false) throw new Error("新手引导暂未完成，请稍后重试");
     } catch (error) {
@@ -534,19 +573,20 @@ export function OnboardingPanel({
       setStageSaving(false);
     }
   };
-  const openRecommendedPlan = async () => {
-    if (!allowInitialPlan) {
-      await completeMinimalOnboarding();
-      return;
-    }
-    setStageError("");
-    setRecommendedPlanOpen(true);
-  };
-  const closeRecommendedPlan = () => {
-    setRecommendedPlanOpen(false);
-    window.requestAnimationFrame(() => {
-      document.getElementById(recommendedPlanTriggerId)?.focus();
-    });
+  const completePresenterSetup = async () => {
+    setStageSaving(true); setStageError('');
+    try {
+      const productionOnboarding = {
+        schemaVersion: 'fixed-yield.production-onboarding.v1' as const,
+        contact: initial.productionOnboarding?.contact || { kind: 'none' as const, value: '', primaryCta: '' },
+        presenterPolicy,
+        output: initial.productionOnboarding?.output || { primaryLanguage: form.videoDefaults?.language || 'en', aspectRatio: '9:16' as const, resolution: '1080p' as const },
+        includeOneRevision: true, confirmedAt: new Date().toISOString(),
+      };
+      const completed = await onSave({ ...form, productionOnboarding });
+      if (completed === false) throw new Error('出镜设置暂未保存，请稍后重试');
+    } catch (error) { setStageError(error instanceof Error ? error.message : '出镜设置暂未保存，请稍后重试'); }
+    finally { setStageSaving(false); }
   };
   const submit = () => {
     setSubmitted(true);
@@ -581,58 +621,70 @@ export function OnboardingPanel({
     }
     submit();
   };
-  if (mode === "first" && recommendedPlanOpen && contentStage) return (
-    <InitialOperatingPlanDialog
-      config={form}
-      initial={{
-        stage: contentStage,
-        products: recommendedProducts.length ? recommendedProducts : recommendFocusProducts(knowledgeProducts),
-        market: form.targetMarkets && !form.targetMarkets.includes("待") ? form.targetMarkets : "北美",
-        language: collectionLanguage || "英语",
-        platforms: connectedPublishingAccounts.length ? [...new Set(connectedPublishingAccounts.map(account => account.platform))] : ["youtube", "tiktok"],
-        accountIds: Object.fromEntries(connectedPublishingAccounts.map(account => [account.platform, account.accountId])),
-        count: 5,
-        budgetCapCny: 500,
-        deliveryDate: isoDay(6),
-      }}
-      busy={stageSaving || busy}
-      error={stageError}
-      onBack={closeRecommendedPlan}
-      onConfirm={plan => void completeMinimalOnboarding(plan)}
-    />
-  );
-  if (mode === "first" && !profileConfirmed) return <OnboardingEnterpriseStep
-    busy={busy} profileSaving={profileSaving} dismissible={dismissible} onClose={onClose}
-    onConfirm={() => void saveEnterpriseProfile()} missingProfileFields={missingProfileFields}
-    invalidProductionContact={invalidProductionContact} profileLoading={profileLoading}
-    companyName={form.companyName} brandName={brandName}
-    onCompanyNameChange={value => set("companyName", value)} onBrandNameChange={setBrandName}
-    profileError={profileError} productionContactKind={productionContactKind}
-    productionContactValue={productionContactValue} productionCta={productionCta}
-    onContactKindChange={setProductionContactKind} onContactValueChange={setProductionContactValue}
-    onCtaChange={setProductionCta}
+  if (mode === 'first' && initialStep === 'presenter') return <PresenterSetupDialog
+    open busy={stageSaving || busy} presenterPolicy={presenterPolicy} presenterConfigured={presenterConfigured}
+    error={stageError} onClose={onClose} onPolicyChange={setPresenterPolicy}
+    onPresenterSelected={() => setPresenterConfigured(true)} onConfirm={() => void completePresenterSetup()}
   />;
-  if (mode === "first" && profileConfirmed && !productConfirmed) return <OnboardingProductsStep
-    busy={busy} productsLoading={productsLoading} productSaving={productSaving}
-    productImporting={productImporting} dismissible={dismissible} onClose={onClose}
-    onBack={() => setProfileConfirmed(false)} onConfirm={() => void confirmProductTable()}
-    onImport={file => void importProductFile(file)} knowledgeProducts={knowledgeProducts}
-    productImportMessage={productImportMessage} productError={productError}
+  if (mode === 'first' && guideStep === 1) return <OnboardingEnterpriseStep
+    busy={busy || profileLoading || profileSaving || proposalLoading} profileLoading={profileLoading} dismissible={dismissible}
+    onClose={() => void saveDraftAndClose()} onConfirm={() => void confirmEnterpriseDraft()}
+    missingFields={missingProfileFields} companyName={form.companyName} brandName={brandName}
+    industry={form.industry} primaryBusiness={form.primaryBusiness} error={profileError}
+    onChange={(field, value) => {
+      if (field === 'brandName') setBrandName(value); else set(field, value);
+      setDraftSource(field, 'user_provided');
+    }}
   />;
-  if (mode === "first" && profileConfirmed && productConfirmed && !stageConfirmed) return <OnboardingStageStep
-    busy={busy} stageSaving={stageSaving} dismissible={dismissible} onClose={onClose}
-    onBack={() => setProductConfirmed(false)} contentStage={contentStage} stageError={stageError}
-    onChange={setContentStage} onConfirm={stageId => void confirmSocialStage(stageId)}
+  if (mode === 'first' && guideStep === 2) return <OnboardingProductsStep
+    busy={busy || profileSaving || proposalLoading} productsLoading={productsLoading} productImporting={productImporting}
+    dismissible={dismissible} onClose={() => void saveDraftAndClose()} onBack={() => setGuideStep(1)}
+    onConfirm={() => void persistOnboardingDraft(3)} onImport={file => void importProductFile(file)}
+    onAddProduct={name => {
+      const id = `manual-${newOnboardingConfirmationId()}`;
+      setKnowledgeProducts(current => [...current, { id, name, category: '', highlights: '' }]);
+      setFocusProductIds(current => current.length < 3 ? [...current, id] : current);
+      setDraftSource('products'); setDraftSource('focusProducts');
+    }}
+    products={knowledgeProducts} focusProductIds={focusProductIds}
+    onToggleFocus={id => {
+      setFocusProductIds(current => current.includes(id) ? current.filter(item => item !== id) : current.length < 3 ? [...current, id] : current);
+      setDraftSource('focusProducts', 'user_provided');
+    }}
+    onProductChange={(id, patch) => {
+      setKnowledgeProducts(current => current.map(product => product.id === id ? { ...product, ...patch } : product));
+      setDraftSource('products', 'user_provided');
+    }}
+    importMessage={productImportMessage} error={productError}
   />;
-  if (mode === "first" && profileConfirmed && productConfirmed && stageConfirmed) return <OnboardingPresenterStep
-    busy={busy} stageSaving={stageSaving} dismissible={dismissible} onClose={onClose}
-    onBack={() => setStageConfirmed(false)}
-    onSkip={() => void completeMinimalOnboarding(undefined, "local_video_only")}
-    allowInitialPlan={allowInitialPlan} recommendedPlanTriggerId={recommendedPlanTriggerId}
-    invalidProductionContact={invalidProductionContact} presenterPolicy={presenterPolicy}
-    presenterConfigured={presenterConfigured} onPolicyChange={setPresenterPolicy}
-    onPresenterSelected={() => setPresenterConfigured(true)} onConfirm={() => void openRecommendedPlan()}
-    stageError={stageError}
+  if (mode === 'first' && guideStep === 3) return <OnboardingMarketStep
+    busy={busy || profileSaving || proposalLoading} aiBusy={proposalLoading} dismissible={dismissible} onClose={() => void saveDraftAndClose()}
+    onBack={() => setGuideStep(2)} onConfirm={() => void persistOnboardingDraft(4)}
+    onGenerateProposal={() => void generateMarketProposal()}
+    contentStage={contentStage} targetMarket={form.targetMarkets} targetBuyer={targetBuyer}
+    primaryPlatform={primaryPlatform} language={collectionLanguage} primaryCta={primaryCta}
+    error={stageError || profileError}
+    onChange={(field, value) => {
+      if (field === 'targetMarket') set('targetMarkets', value);
+      else if (field === 'targetBuyer') { setTargetBuyer(value); set('customerProfile', value); }
+      else if (field === 'primaryPlatform') setPrimaryPlatform(value);
+      else if (field === 'language') setCollectionLanguage(value);
+      else if (field === 'primaryCta') setPrimaryCta(value);
+      else {
+        const stage = value as SocialContentStageId;
+        setContentStage(stage);
+        if (!targetBuyer.trim()) { const buyer = stage === 'd2c_brand' ? '终端消费者' : '进口商、经销商与采购负责人'; setTargetBuyer(buyer); set('customerProfile', buyer); setDraftSource('targetBuyer', 'system_detected'); }
+        if (!primaryPlatform.trim()) { setPrimaryPlatform(stage === 'd2c_brand' ? 'instagram' : 'linkedin'); setDraftSource('primaryPlatform', 'system_detected'); }
+        if (!primaryCta.trim()) { setPrimaryCta(stage === 'd2c_brand' ? '了解产品详情' : '发送采购需求，获取产品资料与适配建议'); setDraftSource('primaryCta', 'system_detected'); }
+      }
+      setDraftSource(field, 'user_provided');
+    }}
+  />;
+  if (mode === 'first') return <OnboardingConfirmationStep
+    busy={busy || stageSaving || profileSaving} dismissible={dismissible}
+    onClose={() => void saveDraftAndClose()} onBack={() => setGuideStep(3)}
+    onConfirm={() => void completeMinimalOnboarding()} draft={buildOnboardingDraft(4)} error={stageError || profileError}
+    onProposalChange={(field, value) => { if (field === 'companyIntro') setCompanyIntro(value); else setBrandTone(value); setDraftSource(field, 'user_provided'); }}
   />;
   return (
     <>
@@ -739,11 +791,7 @@ export function OnboardingPanel({
           ) : (
             <ArrowRight size={16} />
           )}{" "}
-          {mode === "first"
-            ? "保存配置，进入周目标"
-            : activeRun
-              ? "保存为后续运行规则"
-              : "保存运行规则"}
+          {activeRun ? "保存为后续运行规则" : "保存运行规则"}
         </Button>
       </div>
     </section>}

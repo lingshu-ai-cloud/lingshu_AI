@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const routeSource = readDigitalEmployeeApplicationSources();
+const mainRouteSource = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
 const domainSource = fs.readFileSync('server/digitalEmployees/assistantDecisionCenter.ts', 'utf8');
 const feedSource = fs.readFileSync('server/digitalEmployees/assistantDecisionFeedService.ts', 'utf8');
 

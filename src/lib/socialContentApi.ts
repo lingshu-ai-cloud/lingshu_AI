@@ -34,6 +34,7 @@ import {
   socialWorkspaceResponse,
   socialWeeklyPlanEnvelope,
 } from './socialContentResponse';
+import type { ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard';
 import { safeArtifactHref } from './starterWorkspace';
 import {
   notifySocialContentTaskChanged,
@@ -47,7 +48,7 @@ export type SocialAssistantAction = {
 };
 export type SocialAssistantReceipt = {
   task: SocialContentTaskDetail;
-  receipt: { taskId: string; runId?: string | null; status: string; href: string; weeklyTaskId?: string; calendarTarget?: { productionTaskId: string }; started?: boolean; blockedReason?: string };
+  receipt: { taskId: string; runId?: string | null; status: string; href: string; card: ContentProductionTaskCard; weeklyTaskId?: string; calendarTarget?: { productionTaskId: string }; started?: boolean; blockedReason?: string };
 };
 const JSON_REQUEST_TIMEOUT_MS = 30_000;
 const FILE_UPLOAD_TIMEOUT_MS = 10 * 60_000;

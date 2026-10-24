@@ -1,0 +1,39 @@
+<view wx:if="{{visible}}" class="assistant-overlay" catchtouchmove="stop" bindtap="close">
+  <view class="assistant-sheet" catchtap="stop" aria-role="dialog" aria-label="询问灵小枢">
+    <view class="assistant-head">
+      <button class="head-button close-button" aria-label="关闭灵小枢" bindtap="close">×</button>
+      <view class="assistant-identity"><view class="assistant-mark">✦</view><view><text class="assistant-title">灵小枢</text><text class="assistant-online">在线 · 连接真实工作台</text></view></view>
+      <view class="head-end"></view>
+    </view>
+    <scroll-view scroll-y enhanced show-scrollbar="false" class="assistant-body" scroll-into-view="{{anchor}}">
+      <view wx:if="{{!messages.length && !loading}}" class="assistant-empty">
+        <view class="empty-mark">✦</view>
+        <text class="empty-title">今天想先推进什么？</text>
+        <text class="empty-note">我会基于当前工作台的真实状态回答和协助。</text>
+        <view class="quick-prompts" aria-label="推荐功能">
+          <view wx:for="{{capabilities}}" wx:key="id" class="quick-prompt" aria-role="button" aria-label="{{item.title}}，发送默认问题" data-id="{{item.id}}" bindtap="selectCapability"><text class="quick-icon capability-icon-{{item.id}}">{{item.icon}}</text><text>{{item.title}}</text></view>
+        </view>
+        <view wx:if="{{briefingLoaded && briefing.report}}" class="assistant-daily-line"><text class="daily-label">今日简报</text><text>{{briefing.report}}</text></view>
+      </view>
+      <view wx:if="{{showWelcome && messages.length}}" class="assistant-message assistant-intro"><text class="message-speaker">灵小枢</text><text class="message-copy">你好，今天想先推进哪件事？我会根据工作台的真实状态陪你处理。</text></view>
+      <view wx:for="{{messages}}" wx:key="id" id="{{item.id}}" class="assistant-message {{item.role}}"><text class="message-speaker">{{item.role === 'user' ? '你' : '灵小枢'}}</text><text user-select class="message-copy">{{item.content}}</text></view>
+      <view wx:if="{{sending}}" class="thinking">正在核对真实工作数据…</view>
+      <view wx:for="{{actions}}" wx:key="id" class="assistant-action" data-index="{{index}}" bindtap="previewAction"><text>{{item.label || '查看操作方案'}}</text><text>›</text></view>
+      <view wx:if="{{preview}}" class="preview-card"><text class="preview-title">执行前确认 · {{preview.target.title}}</text><text class="preview-impact">{{preview.impact}}</text><view wx:for="{{preview.steps}}" wx:key="*this" class="preview-step">{{index + 1}}. {{item}}</view><view class="preview-actions"><button class="preview-button" bindtap="dismissPreview">取消</button><button class="preview-button primary" loading="{{confirming}}" bindtap="confirmAction">确认执行</button></view></view>
+      <view wx:if="{{error}}" class="assistant-error">{{error}}</view>
+      <view class="body-spacer"></view>
+    </scroll-view>
+    <view wx:if="{{showCapabilities}}" class="capability-dismiss" bindtap="toggleCapabilities"></view>
+    <view wx:if="{{showCapabilities}}" class="message-action-menu" aria-role="menu" aria-label="灵小枢能力">
+      <view wx:for="{{capabilities}}" wx:key="id" class="message-action-option" aria-role="menuitem" aria-label="{{item.title}}，发送默认问题" data-id="{{item.id}}" bindtap="selectCapability"><text class="message-action-icon capability-icon-{{item.id}}">{{item.icon}}</text><text class="message-action-title">{{item.title}}</text></view>
+    </view>
+    <view wx:if="{{recording || transcribing}}" class="voice-status"><text>{{transcribing ? '正在识别语音…' : '正在聆听，松开转成文字'}}</text><text wx:if="{{recording}}">上滑取消</text></view>
+    <view class="assistant-input-row">
+      <view class="capability-trigger" aria-role="button" aria-label="{{showCapabilities ? '收起能力菜单' : '展开能力菜单'}}" bindtap="toggleCapabilities">{{showCapabilities ? '×' : '+'}}</view>
+      <view class="assistant-composer {{recording ? 'recording' : ''}}">
+        <block wx:if="{{composerMode === 'text'}}"><input class="composer-input" value="{{input}}" bindinput="inputText" confirm-type="send" bindconfirm="send" placeholder="输入消息，询问灵小枢"/><view wx:if="{{input}}" class="send-hit" aria-role="button" aria-label="发送消息" aria-disabled="{{sending}}" bindtap="send"><view class="send-glyph {{sending ? 'disabled-state' : ''}}">↑</view></view><view wx:else class="voice-entry" aria-role="button" aria-label="切换到语音输入" bindtap="switchToVoice"><text class="voice-bar"></text><text class="voice-bar medium"></text><text class="voice-bar tall"></text><text class="voice-bar medium"></text><text class="voice-bar"></text></view></block>
+        <block wx:else><view class="voice-hold {{recording ? 'holding' : ''}}" aria-role="button" aria-label="按住说话，上滑取消" bindtouchstart="holdVoiceStart" bindtouchmove="holdVoiceMove" bindtouchend="holdVoiceEnd" bindtouchcancel="cancelRecording">{{transcribing ? '正在识别…' : recording ? '松开转文字' : '按住说话'}}</view><view class="keyboard-entry" aria-role="button" aria-label="切换到文字输入" bindtap="switchToText">⌨</view></block>
+      </view>
+    </view>
+  </view>
+</view>

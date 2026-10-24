@@ -19,7 +19,6 @@ import { SOCIAL_CONTENT_TASK_STATUSES, SOCIAL_WORK_PACKAGE_STATUSES } from '../.
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
-import { starter198OrgRole } from './profile.js';
 import {
   Starter198RepositoryError,
   starter198Repository,
@@ -103,17 +102,15 @@ import {
 } from './socialDeliveryArchiveStream.js';
 import { openSocialArtifactMedia, openSocialArtifactPreviewMedia } from './socialArtifactMedia.js';
 import {
-  SocialContentAccessError,
   socialContentAccessResolver,
   type SocialContentAccessResolver,
 } from './socialContentAccess.js';
+import { authorizeSocialContentRequest, type SocialContentAccessLevel } from './socialContentAuthorization.js';
 import { readSocialProductionState } from './socialContentProductionHandoff.js';
 import { refreshSocialTaskReferenceOutputs } from './socialContentTaskSupport.js';
 import { createSocialArtifactReevaluationService } from './socialContentArtifactReevaluation.js';
 import { createSocialContentAssistantActionsRouter } from './socialContentAssistantActionsRouter.js';
 import { createSocialContentReplicationScriptRouter } from './socialContentReplicationScriptRouter.js';
-
-type AccessLevel = 'read' | 'write' | 'start';
 
 export interface SocialContentRouterDependencies {
   repository?: Starter198Repository;
@@ -181,27 +178,11 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
     next();
   });
 
-  async function authorize(req: Request, res: Response, level: AccessLevel): Promise<{ tenantId: string; userId: string }> {
-    const { tenantId, userId } = res.locals as AuthLocals;
-    const role = starter198OrgRole(await resolveRole(req, userId));
-    if (!role) throw new SocialContentWorkflowError('starter_198_role_required', 403);
-    if (level !== 'read' && !['owner', 'admin', 'operator'].includes(role)) {
-      throw new SocialContentWorkflowError('social_content_write_forbidden', 403);
-    }
-    const required = level === 'read'
-      ? ['workspace.read', 'production_site.read'] as const
-      : level === 'start'
-        ? ['orchestrator.command.submit', 'workflow.standard.run'] as const
-        : ['orchestrator.command.submit'] as const;
-    try {
-      await accessResolver.resolve({ repository, tenantId, requiredCapabilities: required, now: now() });
-    } catch (error) {
-      if (error instanceof SocialContentAccessError) {
-        throw new SocialContentWorkflowError(error.code, error.status);
-      }
-      throw error;
-    }
-    return { tenantId, userId };
+  async function authorize(req: Request, res: Response, level: SocialContentAccessLevel): Promise<{ tenantId: string; userId: string }> {
+    return authorizeSocialContentRequest({
+      request: req, identity: res.locals as AuthLocals, level, repository,
+      resolveRole, accessResolver, now: now(),
+    });
   }
 
   if(repository.dataStore)router.use('/tasks/:taskId/weekly-owned-product-identity',createWeeklyOwnedProductIdentityRouter(createWeeklyOwnedProductIdentityUI(repository.dataStore,{repository,sourceOptions}),authorize));

@@ -4,7 +4,7 @@ const { materialSourceCategoryOf, materialThemeTagsOf, MATERIAL_SOURCE_LABELS, M
 const { groupShootingTasks, shootingPreview, taskReferencePreview, cardPreview } = require('../../../lib/shootingList')
 
 Page({
-  data: { loggedIn: false, loading: false, referenceLoading: false, referenceError: '', referencePreview: null, activePreviewId: '', email: '', password: '', userName: '', tasks: [], taskGroups: [], pendingCount: 0, completedCount: 0, selected: null, busy: false, progress: 0, progressStep: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' },
+  data: { loggedIn: false, loading: false, referenceLoading: false, referenceError: '', referencePreview: null, activePreviewId: '', email: '', password: '', userName: '', tasks: [], taskGroups: [], visibleTaskGroups: [], taskFilter: 'all', taskFilters: [], pendingCount: 0, completedCount: 0, selected: null, busy: false, progress: 0, progressStep: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' },
   onLoad(options) {
     this.initialTaskId = options && options.taskId
     this.initialAutoShoot = !!(options && (options.autoShoot === true || options.autoShoot === '1'))
@@ -18,6 +18,7 @@ Page({
     if (this.data.referencePreview) wx.createVideoContext('reference-preview', this).pause()
     if (this.data.activePreviewId) wx.createVideoContext(this.data.activePreviewId, this).pause()
   },
+  openAssistant() { this.selectComponent('#lingxiaoshu-sheet')?.open() },
   inputEmail(e) { this.setData({ email: e.detail.value }) },
   inputPassword(e) { this.setData({ password: e.detail.value }) },
   async signIn() {
@@ -51,15 +52,27 @@ Page({
       this.pausePreviews()
       this.referenceRequest = (this.referenceRequest || 0) + 1
       api.clearToken()
-      this.setData({ loggedIn: false, userName: '', tasks: [], taskGroups: [], pendingCount: 0, completedCount: 0, selected: null, referencePreview: null, referenceLoading: false, referenceError: '', activePreviewId: '', progress: 0, progressStep: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' })
+      this.setData({ loggedIn: false, userName: '', tasks: [], taskGroups: [], visibleTaskGroups: [], pendingCount: 0, completedCount: 0, selected: null, referencePreview: null, referenceLoading: false, referenceError: '', activePreviewId: '', progress: 0, progressStep: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' })
     }
     if (this.data.pendingMaterialId) wx.showModal({ title: '退出账号？', content: '素材已保存到素材库，但尚未关联任务。退出不会删除素材。', confirmText: '确认退出', success: result => { if (result.confirm && !this.data.busy) finish() } })
     else finish()
   },
-  displayTask(task) { return { ...task, ...shootingTaskPresentation(task) } },
+  displayTask(task) {
+    const presented = { ...task, ...shootingTaskPresentation(task) }
+    const assignee = String(task.assigneeName || task.ownerName || task.operatorName || task.memberName || '').trim()
+    return { ...presented, assigneeLabel: assignee || '待分配', assigneeInitial: (assignee || '待').slice(0, 1), reviewLabel: presented.done ? '已完成' : '待拍摄' }
+  },
+  groupsFor(tasks, filter) { return groupShootingTasks(tasks.filter(task => filter === 'all' || (filter === 'pending' ? !task.done : task.done)), new Date()) },
   present(tasks) {
     const displayTasks = tasks.map(task => this.displayTask(task))
-    return { tasks: displayTasks, taskGroups: groupShootingTasks(displayTasks, new Date()), pendingCount: displayTasks.filter(task => !task.done).length, completedCount: displayTasks.filter(task => task.done).length }
+    const pendingCount = displayTasks.filter(task => !task.done).length
+    const completedCount = displayTasks.filter(task => task.done).length
+    return { tasks: displayTasks, taskGroups: this.groupsFor(displayTasks, 'all'), visibleTaskGroups: this.groupsFor(displayTasks, this.data.taskFilter), pendingCount, completedCount,
+      taskFilters: [{ key: 'all', label: '全部', count: displayTasks.length }, { key: 'pending', label: '待拍', count: pendingCount }, { key: 'completed', label: '已完成', count: completedCount }] }
+  },
+  selectTaskFilter(event) {
+    const taskFilter = event.currentTarget.dataset.filter || 'all'
+    this.setData({ taskFilter, visibleTaskGroups: this.groupsFor(this.data.tasks, taskFilter) })
   },
   async selectTask(e) {
     if (!this.canLeaveTask()) return

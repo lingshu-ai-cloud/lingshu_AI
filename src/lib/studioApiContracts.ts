@@ -2,6 +2,7 @@ import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis
 import type { EffectPlanV1 } from '../../shared/contracts/effectPlan';
 import type { EmphasisPlanV1 } from '../../shared/contracts/emphasisTimeline';
 import type { ProductSceneKind } from '../../shared/contracts/productScenePreparation';
+import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation';
 
 export interface HeyGenAvatarOption {
   id: string;
@@ -309,6 +310,7 @@ export interface FbPosterBrief {
 }
 
 export interface FbPosterResult {
+  imageTask?: SocialImageCreationTask;
   ok: boolean;
   source?: 'ai' | 'ai_rejected' | 'ai_failed';
   provenance?: StudioGenerationProvenance | string;

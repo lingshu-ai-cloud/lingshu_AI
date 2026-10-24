@@ -135,7 +135,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const [toast, setToast] = useState<string | null>(null);
   const [undoSend, setUndoSend] = useState<null | { customerId: string; eventId: string; restoreText: string; timer: number }>(null);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
-  const [priceRulesReady, setPriceRulesReady] = useState(true);
   const [notificationReady, setNotificationReady] = useState(true);
   const [lastDraftKey, setLastDraftKey] = useState('');
   const deepLinkConsumedRef = useRef(false);
@@ -188,7 +187,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     customers, customersInActiveView, selectedId, deliveryHandoff, agentProductionActive: agentProduction.active,
     customerPendingCount, deepLinkConsumedRef, filterEmptySelectionRef, setSelectedId, setView, setDeliveryError,
     updateCustomer, setCustomerServiceStatus, setCustomerServiceStatusLoadFailed, setAutonomyLevel,
-    setPriceRulesReady, setNotificationReady, setTemplates, setDailyBriefingOpen,
+    setNotificationReady, setTemplates, setDailyBriefingOpen,
   });
 
   useConversionDraftEffects({
@@ -715,7 +714,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           onPreviewTranslate={previewTranslate}
           templates={templates}
           onManualActive={reportManualActive}
-          priceRulesReady={priceRulesReady}
           knowledgeMiss={Boolean(draftMeta?.knowledgeMiss)}
           bridgeOnly={draftMeta?.replyConfidence?.level === 'bridge_only'}
           draftMeta={draftMeta}

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { PostgresStore, selectedDataBackend, type SqlExecutor } from './postgres.js';
+import { POSTGRES_CORE_SCHEMA, PostgresStore, selectedDataBackend, type SqlExecutor } from './postgres.js';
 
 assert.equal(selectedDataBackend({}), 'pocketbase');
 assert.equal(selectedDataBackend({ DATA_BACKEND: 'postgres' }), 'postgres');
@@ -17,6 +17,23 @@ const executor: SqlExecutor = {
 
 const store = new PostgresStore(executor);
 assert.equal(store.supportsAtomicCompareAndSwap(), true);
+assert.match(POSTGRES_CORE_SCHEMA, /CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_tenant_profile_owner[\s\S]*WHERE collection = 'tenant_profiles'/);
+assert.match(POSTGRES_CORE_SCHEMA, /CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_digital_employee_config_tenant[\s\S]*WHERE collection = 'digital_employee_configs'/);
+assert.match(POSTGRES_CORE_SCHEMA, /CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_digital_employee_config_version[\s\S]*WHERE collection = 'digital_employee_config_versions'/);
+assert.match(POSTGRES_CORE_SCHEMA, /CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_enterprise_onboarding_draft_owner[\s\S]*WHERE collection = 'enterprise_onboarding_drafts'/);
+let indexRows: Array<Record<string, unknown>> = [];
+const indexStore = new PostgresStore({
+  async query(_text, values) {
+    assert.equal(values?.[0], 'idx_lingshu_enterprise_onboarding_draft_owner');
+    assert.equal(values?.[1], 2);
+    return { rows: indexRows, rowCount: indexRows.length } as never;
+  },
+});
+assert.equal(await indexStore.supportsAtomicCompareAndSwapFor('enterprise_onboarding_drafts'), false);
+indexRows = [{ valid: true, key1: "data ->> 'tenant_id'::text", key2: "data ->> 'user_id'::text", predicate: "(collection = 'enterprise_onboarding_drafts'::text)" }];
+assert.equal(await indexStore.supportsAtomicCompareAndSwapFor('enterprise_onboarding_drafts'), true);
+indexRows = [{ ...indexRows[0], predicate: "collection = 'other_collection'" }];
+assert.equal(await indexStore.supportsAtomicCompareAndSwapFor('enterprise_onboarding_drafts'), false);
 const page = await store.list('workflow_runs', { where: { tenantId: 'tenant-a', status: 'ready' }, sort: '-updated', page: 1, perPage: 20 });
 assert.equal(page.totalItems, 1);
 assert.deepEqual(page.items[0], { id: 'r1', tenantId: 'tenant-a', status: 'ready' });

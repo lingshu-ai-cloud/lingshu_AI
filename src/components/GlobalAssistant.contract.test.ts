@@ -13,6 +13,8 @@ const actionRequestSource = fs.readFileSync(new URL('../lib/assistantActionReque
 const decisionDialogSource = fs.readFileSync(new URL('./assistant/AssistantDecisionDialog.tsx', import.meta.url), 'utf8');
 const floatingRemindersSource = fs.readFileSync(new URL('./assistant/AssistantFloatingReminders.tsx', import.meta.url), 'utf8');
 const launcherSource = fs.readFileSync(new URL('./assistant/AssistantLauncher.tsx', import.meta.url), 'utf8');
+const launcherRetractionSource = fs.readFileSync(new URL('./assistant/useAssistantLauncherRetraction.ts', import.meta.url), 'utf8');
+const homeAnchorSource = fs.readFileSync(new URL('./assistant/useAssistantHomeAnchor.ts', import.meta.url), 'utf8');
 const conversationBubblesSource = fs.readFileSync(new URL('./assistant/AssistantConversationBubbles.tsx', import.meta.url), 'utf8');
 const runtimeSource = fs.readFileSync(new URL('./assistant/globalAssistantRuntime.ts', import.meta.url), 'utf8');
 const saveQueueSource = fs.readFileSync(new URL('./assistant/useAssistantThreadSaveQueue.ts', import.meta.url), 'utf8');
@@ -28,6 +30,7 @@ const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8'
 const appModulesSource = fs.readFileSync(new URL('../appPageModules.tsx', import.meta.url), 'utf8');
 const appShellChromeSource = fs.readFileSync(new URL('./AppShellChrome.tsx', import.meta.url), 'utf8');
 const appPageSlotSource = fs.readFileSync(new URL('../AppPageSlot.tsx', import.meta.url), 'utf8');
+const contentCreationOverviewSource = fs.readFileSync(new URL('./ContentCreationOverviewPage.tsx', import.meta.url), 'utf8');
 const appBoundarySource = fs.readFileSync(new URL('./AppPageBoundary.tsx', import.meta.url), 'utf8');
 const conversionPageSource = fs.readFileSync(new URL('./ConversionPage.tsx', import.meta.url), 'utf8');
 const conversionDraftEffectsSource = fs.readFileSync(new URL('./customers/useConversionDraftEffects.ts', import.meta.url), 'utf8');
@@ -77,14 +80,17 @@ assert.match(launcherMarkup, /var\(--ls-action-gradient\)/, '灵小枢入口图�
 assert.match(retractControlMarkup, /aria-label="收起灵小枢入口到右侧"[\s\S]*onClick=\{onRetract\}[\s\S]*!h-11 !w-11/, '必须提供独立、可键盘操作的 44px 收起控件');
 assert.match(edgeLauncherMarkup, /shape="circle"[\s\S]*data-global-assistant="edge-launcher"[\s\S]*aria-label="展开灵小枢入口"[\s\S]*onClick=\{onRestore\}[\s\S]*!h-11 !w-11[\s\S]*!rounded-l-full !rounded-r-none/, '收起后必须保留贴右边的 44px 恢复入口');
 assert.match(launcherSource, /if \(retracted && !chatOpen\)[\s\S]{0,100}<Badge count=\{badgeCount\}/, '贴边入口必须继续显示权威待办 Badge');
-assert.match(source, /ASSISTANT_LAUNCHER_RETRACTED_KEY[\s\S]*localStorage\.getItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY\)[\s\S]*localStorage\.setItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY, String\(retracted\)\)/, '用户手动收起偏好必须跨刷新保存');
-assert.match(source, /const retractLauncher[\s\S]{0,260}edgeLauncherButtonRef\.current\?\.focus\(\)/, '收起后焦点必须交给贴边恢复入口');
-assert.match(source, /const restoreLauncher[\s\S]{0,260}launcherButtonRef\.current\?\.focus\(\)/, '恢复后焦点必须交回完整入口');
+assert.match(launcherRetractionSource, /ASSISTANT_LAUNCHER_RETRACTED_KEY[\s\S]*localStorage\.getItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY\)[\s\S]*localStorage\.setItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY, String\(retracted\)\)/, '用户手动收起偏好必须跨刷新保存');
+assert.match(launcherRetractionSource, /const retractLauncher[\s\S]{0,260}edgeLauncherButtonRef\.current\?\.focus\(\)/, '收起后焦点必须交给贴边恢复入口');
+assert.match(launcherRetractionSource, /const restoreLauncher[\s\S]{0,260}launcherButtonRef\.current\?\.focus\(\)/, '恢复后焦点必须交回完整入口');
 assert.match(source, /<AssistantFloatingReminders[\s\S]*launcherRetracted=\{launcherRetracted\}/, '提示气泡必须接收当前入口收起状态');
 assert.match(floatingRemindersSource, /const canShow = !launcherRetracted && mode === 'breathing'/, '收起态不得显示任何横向提示气泡');
 assert.match(floatingRemindersSource, /canShow && hasPerformancePriority && performance[\s\S]*canShow && !hasPerformancePriority && speechBubble[\s\S]*weeklyPlanKickoffAvailable[\s\S]*featureGuide/, '等待、短消息、周计划和引导提示优先级必须保留');
 assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY/, '右下角入口不得恢复拖动、旧坐标或自动缩边交互');
-assert.match(launcherMarkup, /!bg-surface[\s\S]*active:!bg-surface[\s\S]*focus-visible:!bg-surface/, '灵小枢入口在点击和聚焦时必须保持不透明主题表面');assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
+assert.match(launcherMarkup, /!bg-surface[\s\S]*active:!bg-surface[\s\S]*focus-visible:!bg-surface/, '灵小枢入口在点击和聚焦时必须保持与日夜主题一致的不透明表面');
+assert.match(edgeLauncherMarkup, /!bg-surface[\s\S]*active:!bg-surface[\s\S]*focus-visible:!bg-surface/, '灵小枢贴边入口也必须使用日夜主题表面');
+assert.doesNotMatch(launcherMarkup + edgeLauncherMarkup, /!bg-white/, '夜间模式的灵小枢入口不得强制纯白');
+assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
 assert.match(conversationPanelSource, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
 assert.match(conversationPanelSource, /max-h-\[calc\(100dvh-env\(safe-area-inset-bottom\)-96px\)\]/, '灵小枢弹窗高度必须避让移动设备底部安全区');
 assert.match(conversationPanelSource, /role="dialog"[\s\S]{0,160}aria-modal="false"[\s\S]{0,160}aria-labelledby="global-assistant-panel-title"[\s\S]{0,160}aria-describedby="global-assistant-panel-description"/, '灵小枢必须以有名称和说明的非模态对话浮层呈现');
@@ -182,7 +188,13 @@ assert.match(featureGuidesSource, /GUIDE_COOLDOWN_MS = 45_000[\s\S]*GUIDE_VISIBL
 assert.match(featureGuidesSource, /document\.addEventListener\('pointerover'[\s\S]*document\.removeEventListener\('pointerover'/, '功能引导的事件监听必须配对清理');
 assert.match(externalDecisionDialogSource, /href=\{dialogTaskCard\.workspace\.href\}[\s\S]{0,120}onClick=\{\(\) => closeDecisionDialogForNavigation\(\)\}/, '普通任务工作区链接也必须在导航前关闭外部弹窗');
 assert.match(appShellChromeSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
-assert.match(conversationPanelSource, /width: inlineHomeBounds\?\.width \?\? assistantPanelWidth,\s*maxWidth: inlineHomeBounds \? '100%' : 'calc\(100vw - 32px\)'/, '灵小枢面板必须用视口宽度约束，不能被零宽定位根节点压缩');
+assert.match(conversationPanelSource, /width: inlineHomeBounds\?\.width \?\? assistantPanelWidth,\s*maxWidth: inlineHomeBounds \? '100%' : 'calc\(100vw - 32px\)'/, '首页面板使用锚点尺寸，其余页面继续受视口宽度约束');
+assert.match(source, /inlineHomeAnchor \? createPortal\(assistantRoot, inlineHomeAnchor\) : assistantRoot/, '首页助手必须挂载在内容节点中随页面原生滚动');
+assert.match(source, /!inlineHome && <AssistantLauncher/, '首页只有创作输入区，不叠加全局浮动入口');
+assert.match(homeAnchorSource, /useAssistantHomeInteraction[\s\S]*lingshu:assistant-home-prompt/, '首页快捷建议必须写入原助手草稿');
+assert.match(conversationPanelSource, /<AssistantComposer variant=\{inlineHome \? 'home' : 'default'\}/, '首页沿用同一聊天与上传契约，仅切换输入区外观');
+assert.match(conversationPanelSource, /ls-assistant-panel__header[^"\n]*bg-surface/, '助手标题栏统一使用主题表面');
+assert.doesNotMatch(conversationPanelSource, /bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50/, '夜间模式不得保留浅色专用标题条');
 assert.match(conversationPanelSource, /assistantTool === 'knowledge-intake' \? 560 : 420/, '灵小枢对话面板必须保持 420px 基准宽度，外部详情不得挤压对话宽度');
 
 const closedDecisionCountSource = sourceSection(
@@ -208,9 +220,11 @@ assert.doesNotMatch(liveContextSource, /contextIdentifier\(detail\.sourcePage, 8
 assert.match(conversionPageSource, /useConversionDraftEffects\(/, '客户转化页必须接入上下文副作用');
 assert.match(conversionDraftEffectsSource, /agent: 'conversion',[\s\S]{0,80}sourcePage: 'conversion'/, '客户转化页必须绑定自己的页面来源');
 assert.match(trafficPageSource, /agent: 'traffic',[\s\S]{0,80}sourcePage,/, '社媒共享页必须发送由路由传入的准确页面来源');
-for (const [key, sourcePage] of [['legacy-traffic', 'traffic'], ['social-inspiration', 'socialInspiration'], ['smart-assets-', 'smartAssets'], ['social-monitoring-accounts', 'socialMonitoring']]) {
+for (const [key, sourcePage] of [['legacy-traffic', 'traffic'], ['smart-assets-', 'smartAssets'], ['social-monitoring-accounts', 'socialMonitoring']]) {
   assert.match(appPageSlotSource, new RegExp(`key=[^\\n]*${key}[\\s\\S]{0,160}sourcePage=["']${sourcePage}["']`), `${key} 必须标记准确的助手上下文来源`);
 }
+assert.match(appPageSlotSource, /page === 'socialInspiration'[\s\S]{0,300}<ContentCreationOverviewPage/, '内容创作页必须使用独立经营式工作区');
+assert.match(contentCreationOverviewSource, /sourcePage: 'socialInspiration'/, '内容创作计划进入灵小枢时必须标记准确页面来源');
 for (const reference of ['goalId', 'planId', 'runId', 'taskId', 'contentId', 'viewKey']) {
   assert.match(liveContextSource, new RegExp(`${reference}: contextIdentifier\\(detail\\.${reference}`), `页面上下文必须安全绑定 ${reference}`);
 }
@@ -245,8 +259,8 @@ assert.match(decisionActionResultSource, /setMessages\(PRIMARY_ASSISTANT_THREAD,
 assert.match(decisionActionResultSource, /closeDecisionDialog\(\)[\s\S]{0,120}persistThread\(PRIMARY_ASSISTANT_THREAD\)/, '结果到达后关闭已处理详情并保存对话状态');
 
 assert.match(runtimeSource, /const PRIMARY_ASSISTANT_THREAD:\s*OrbitAgentId\s*=\s*'business'/, '所有对话必须聚合到 business 主线程');
-assert.match(source, /const persistThread = useAssistantThreadSaveQueue\(\{[\s\S]*stablePersistenceScope, persistenceFenceRef, assistantThreadSaveQueuesRef,[\s\S]*hydrateThread, setPersistenceMetadata/, '浮层必须连接同一作用域、身份栅栏和保存队列');
-const persistThreadSource = sourceSection('const persistThread = useCallback', 'return persistThread;', '助手线程持久化队列', saveQueueSource);
+assert.match(source, /const \{ persistThread, waitForInFlightThreadSave \} = useAssistantThreadSaveQueue\(\{[\s\S]*stablePersistenceScope, persistenceFenceRef, assistantThreadSaveQueuesRef,[\s\S]*hydrateThread, setPersistenceMetadata/, '浮层必须连接同一作用域、身份栅栏和保存队列');
+const persistThreadSource = sourceSection('const persistThread = useCallback', 'const waitForInFlightThreadSave', '助手线程持久化队列', saveQueueSource);
 assert.match(persistThreadSource, /if \(queue\.running\) return/, '同一线程保存必须串行执行，不能并发全量覆盖');
 assert.match(persistThreadSource, /expectedVersion/, '每次线程保存必须携带服务端版本前置条件');
 assert.match(persistThreadSource, /response\.status === 409/, '版本冲突必须进入显式合并流程');
@@ -293,7 +307,7 @@ const welcomeBubbleSource = sourceSection(
   conversationBubblesSource,
 );
 assert.match(welcomeBubbleSource, /ls-assistant-bubble-enter/, '欢迎语必须作为普通可滚动气泡进入消息流');
-assert.match(conversationBubblesSource, /welcomeBubbleVisible && !inlineHome && !messages\.length/, '线程恢复出任意消息后必须立即隐藏欢迎语');
+assert.match(conversationBubblesSource, /welcomeBubbleVisible && !inlineHome && !messages\.length/, '线程恢复出任意消息后必须立即隐藏欢迎语，首页也不显示欢迎气泡');
 assert.match(conversationPanelSource, /messages=\{activeThread\.messages\}/, '气泡必须使用当前已恢复的对话线程');
 assert.doesNotMatch(welcomeBubbleSource, /\b(?:sticky|fixed|absolute)\b/, '欢迎语不得置顶、固定或脱离消息滚动流');
 
@@ -322,12 +336,14 @@ assert.match(productionIntakeSource, /function assistantProductionIntent[\s\S]*h
 assert.match(sendHookSource, /import \{ assistantProductionIntent \} from '\.\/assistantProductionIntake'/, '助手必须调用企业产品准入模块');
 assert.match(sendSource, /assistantProductionIntent\(visibleText\)[\s\S]*await runAssistantProductionRequest\(/, '生产指令必须交给真实任务执行链路');
 assert.match(productionRequestSource, /resolveProduct\(productionIntent\.productQuery\)/, '生产指令必须解析真实企业产品');
-assert.match(productionRequestSource, /createTask\(\{[\s\S]*dueAt: confirmedDueAt/, '生产任务必须带明确的交付截止时间并调用后端入口');
-assert.match(productionRequestSource, /upsertTaskCard\(threadAgent,[\s\S]*taskId: `social-content:\$\{productionTask\.taskId\}`/, '自然语言生产回执也必须保留真实任务入口');
+assert.match(productionRequestSource, /createAtVersion[\s\S]*dueAt: null[\s\S]*mode: 'instant'/, '单条生产指令必须通过原子入口建立即时 ContentTask，不伪造周任务截止时间');
+assert.match(productionRequestSource, /contentTaskCardToAssistantCard\(authoritativeCard\)[\s\S]*focusTaskCard\(threadAgent, assistantCard\.taskId\)/, '自然语言生产回执必须聚焦服务端权威任务卡');
 assert.doesNotMatch(productionRequestSource, /agentTaskDemo: true/, '真实执行不得进入演示页面');
 assert.match(productionRequestSource, /productId: productionProduct\.id[\s\S]*productRef: productionProduct\.label/, '周任务必须绑定企业中心的真实产品身份');
-assert.match(sendSource, /closeForNavigation:[\s\S]*setAssistantTool\(null\)[\s\S]*setMode\('breathing'\)/, '进入生产页前必须收起灵小枢对话窗口');
-assert.match(productionRequestSource, /page: 'smartAssets'[\s\S]*socialContentTaskId: productionTask\.taskId/, '任务创建后必须定位到该任务的生产页面');
+assert.match(sendSource, /assistantAtomicMutationRef\.current = true[\s\S]*await runAssistantProductionRequest[\s\S]*assistantAtomicMutationRef\.current = false/, '原子建任务期间必须暂停后台会话保存，避免抢占 CAS 版本');
+assert.match(productionRequestSource, /await waitForInFlightThreadSave\(threadAgent\)[\s\S]*createAtVersion/, '原子建任务必须等待已经发出的会话 PUT 释放 CAS 后再开始 POST');
+assert.match(productionRequestSource, /creationIdempotencyKey[\s\S]*idempotencyKey: creationIdempotencyKey/, '会话版本重试不得改变已开始业务任务的幂等身份');
+assert.doesNotMatch(productionRequestSource, /lingshu:navigate|window\.location|page: 'smartAssets'/, '任务建立后应留在同一权威任务卡，不得强制跳离对话');
 assert.ok(sendSource.indexOf('await runAssistantProductionRequest') < sendSource.indexOf('await streamAssistantReply'), '生产任务分流必须发生在千问文本生成请求之前');
 assert.match(sendSource, /endpoint: API_PATH\[agentForOrbit\(routeAgent\)\]/, 'business 主线程聚合不得丢失当前页面的内部能力路由');
 assert.doesNotMatch(sendSource, /setPaused\(targetAgent,\s*false\)/, '发送普通消息不得擅自把任务恢复为运行中');

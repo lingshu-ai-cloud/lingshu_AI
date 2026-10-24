@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import sharp from 'sharp';
-import { createWorker, OEM, PSM, type Worker } from 'tesseract.js';
+import { createWorker, OEM, PSM } from 'tesseract.js';
 
 export const LOCAL_PRODUCT_OCR_LIMITS = { maxEncodedBytes: 6 * 1024 * 1024, maxPixels: 12_000_000, maxOutputChars: 80_000, timeoutMs: 45_000 } as const;
 type LanguagePackage = { code: string; gzip: boolean; langPath: string };
@@ -37,34 +37,28 @@ export function localProductOcrReadiness() {
   }
 }
 
-async function withBundledTesseract<T>(action: (worker: Worker) => Promise<T>): Promise<T> {
-  const worker = await createWorker(['chi_sim', 'eng'], OEM.LSTM_ONLY, { langPath: localLanguageDirectory(), gzip: true, cacheMethod: 'none' });
-  try {
-    await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
-    return await action(worker);
-  } finally { await worker.terminate(); }
-}
+type LocalOcrWord = { text?: string; confidence?: number; bbox?: { x0: number; y0: number; x1: number; y1: number } };
 
-async function recognizeWithWorker(worker: Worker, bytes: Buffer): Promise<string> {
+type LocalOcrWorker = Awaited<ReturnType<typeof createWorker>>;
+async function createLocalOcrWorker(): Promise<LocalOcrWorker> {
+  const worker = await createWorker(['chi_sim', 'eng'], OEM.LSTM_ONLY, { langPath: localLanguageDirectory(), gzip: true, cacheMethod: 'none' });
+  try { await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK }); return worker; }
+  catch (error) { await worker.terminate(); throw error; }
+}
+async function recognizeDataWithWorker(worker: LocalOcrWorker, bytes: Buffer): Promise<{ text?: string; words?: LocalOcrWord[]; blocks?: Array<{ paragraphs?: Array<{ lines?: Array<{ words?: LocalOcrWord[] }> }> }> }> {
   let timeout: NodeJS.Timeout | undefined;
   const result = await Promise.race([worker.recognize(bytes), new Promise<never>((_, reject) => {
     timeout = setTimeout(() => reject(new Error('LOCAL_OCR_TIMEOUT')), LOCAL_PRODUCT_OCR_LIMITS.timeoutMs);
   })]).finally(() => { if (timeout) clearTimeout(timeout); });
-  return result.data.text;
+  return result.data as unknown as { text?: string; words?: LocalOcrWord[]; blocks?: Array<{ paragraphs?: Array<{ lines?: Array<{ words?: LocalOcrWord[] }> }> }> };
+}
+async function recognizeDataWithBundledTesseract(bytes: Buffer) {
+  const worker = await createLocalOcrWorker();
+  try { return await recognizeDataWithWorker(worker, bytes); }
+  finally { await worker.terminate(); }
 }
 
-async function recognizeWithBundledTesseract(bytes: Buffer): Promise<string> {
-  return withBundledTesseract(worker => recognizeWithWorker(worker, bytes));
-}
-
-/** Reuse language initialization within one sequential audit, never across tenants or jobs. */
-export async function withLocalProductOcrSession<T>(action: (recognize: (input: { bytes: Buffer; mimeType: string }) => Promise<string>) => Promise<T>): Promise<T> {
-  return withBundledTesseract(worker => action(input => recognizeProductImageLocally(input, {
-    recognize: bytes => recognizeWithWorker(worker, bytes),
-  })));
-}
-
-export async function recognizeProductImageLocally(input: { bytes: Buffer; mimeType: string }, options: { recognize?: (bytes: Buffer) => Promise<string> } = {}) {
+async function normalizedOcrInput(input: { bytes: Buffer; mimeType: string }) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(input.mimeType)) throw new Error('OCR_IMAGE_TYPE_UNSUPPORTED');
   if (!input.bytes.length || input.bytes.length > LOCAL_PRODUCT_OCR_LIMITS.maxEncodedBytes) throw new Error('OCR_IMAGE_SIZE_LIMIT');
   const metadata = await sharp(input.bytes, { limitInputPixels: LOCAL_PRODUCT_OCR_LIMITS.maxPixels }).metadata();
@@ -73,6 +67,56 @@ export async function recognizeProductImageLocally(input: { bytes: Buffer; mimeT
   if (!readiness.ready) throw Object.assign(new Error(readiness.detail), { code: readiness.code });
   const normalized = await sharp(input.bytes, { limitInputPixels: LOCAL_PRODUCT_OCR_LIMITS.maxPixels }).rotate()
     .resize({ width: 2400, height: 2400, fit: 'inside', withoutEnlargement: true }).grayscale().normalize().png().toBuffer();
-  const text = await (options.recognize || recognizeWithBundledTesseract)(normalized);
+  const normalizedMetadata = await sharp(normalized).metadata();
+  return { normalized, width: normalizedMetadata.width || 1, height: normalizedMetadata.height || 1 };
+}
+
+export async function recognizeProductImageLocally(input: { bytes: Buffer; mimeType: string }, options: { recognize?: (bytes: Buffer) => Promise<string> } = {}) {
+  const { normalized } = await normalizedOcrInput(input);
+  const text = options.recognize ? await options.recognize(normalized)
+    : String((await recognizeDataWithBundledTesseract(normalized)).text || '');
   return text.replace(/\u0000/g, '').slice(0, LOCAL_PRODUCT_OCR_LIMITS.maxOutputChars).trim();
+}
+
+/** A single audit may inspect every decoded frame without restarting Tesseract
+ * for each image. The caller owns this worker and must close it in finally. */
+export async function createLocalProductOcrSession() {
+  const worker = await createLocalOcrWorker();
+  let closed = false;
+  return {
+    async recognize(input: { bytes: Buffer; mimeType: string }): Promise<string> {
+      if (closed) throw new Error('LOCAL_OCR_SESSION_CLOSED');
+      const { normalized } = await normalizedOcrInput(input);
+      const text = String((await recognizeDataWithWorker(worker, normalized)).text || '');
+      return text.replace(/\u0000/g, '').slice(0, LOCAL_PRODUCT_OCR_LIMITS.maxOutputChars).trim();
+    },
+    async close(): Promise<void> {
+      if (closed) return;
+      closed = true;
+      await worker.terminate();
+    },
+  };
+}
+
+export async function recognizeProductImageTokensLocally(input: { bytes: Buffer; mimeType: string }) {
+  const { normalized, width, height } = await normalizedOcrInput(input);
+  const data = await recognizeDataWithBundledTesseract(normalized);
+  const words = data.words || (data.blocks || []).flatMap(block => (block.paragraphs || [])
+    .flatMap(paragraph => (paragraph.lines || []).flatMap(line => line.words || [])));
+  return words.flatMap(word => {
+    const box = word.bbox, text = String(word.text || '').replace(/\u0000/g, '').trim();
+    if (!box || !text) return [];
+    const x = Math.max(0, Math.min(1, box.x0 / width)), y = Math.max(0, Math.min(1, box.y0 / height));
+    const right = Math.max(x, Math.min(1, box.x1 / width)), bottom = Math.max(y, Math.min(1, box.y1 / height));
+    if (right <= x || bottom <= y) return [];
+    return [{ text: text.slice(0, 500), bbox: { x, y, width: right - x, height: bottom - y },
+      confidence: Math.max(0, Math.min(1, Number(word.confidence || 0) / 100)) }];
+  }).slice(0, 80);
+}
+
+/** Reuse one audit worker and always close it, including failed frame scans. */
+export async function withLocalProductOcrSession<T>(action: (recognize: (input: { bytes: Buffer; mimeType: string }) => Promise<string>) => Promise<T>): Promise<T> {
+  const session = await createLocalProductOcrSession();
+  try { return await action(session.recognize); }
+  finally { await session.close(); }
 }

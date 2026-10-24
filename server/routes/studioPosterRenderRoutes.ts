@@ -18,6 +18,11 @@ import { auditCommercialClaims, confirmationFields, hasConfirmedEnterpriseFacts,
 import { type AuthLocals } from '../middleware/auth.js';
 import type { PosterReferenceDescriptor } from '../studio/contracts.js';
 import type { StudioApplicationPorts } from '../studio/applicationPorts.js';
+import { conformSocialImageToCanvas, socialImageCanvasForAspectRatio, type SocialImageAspectRatio } from '../socialImage/referenceCanvas.js';
+import { socialImageFrozenCommercialIssue, socialImageV3PaidPrerequisiteIssue, socialImageV3RenderSpecInputHash,
+  socialImageV3ReferencePermitted, socialImageV3ResolvedAssetIssue,
+  socialImageV3SingleRenderInput } from '../socialImage/socialImagePaidPrerequisites.js';
+import { readSocialImageReferenceBytes } from '../socialImage/socialImageReferenceBytes.js';
 
 export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts, 'studioRouter' | 'enterpriseCtx' | 'storyboardUrlImage' | 'storyboardEnterpriseImage' | 'resolveReferenceImages'>) {
   const studioRouter = deps.studioRouter;
@@ -37,17 +42,27 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
       }
       let plannedInput: ReturnType<typeof socialImagePlannedRenderInput> | null = null;
       let plannedImageTask: Awaited<ReturnType<typeof readSocialImageTask>> = null;
+      let v3ImageTask: Awaited<ReturnType<typeof readSocialImageTask>> = null;
+      let v3SingleInput: ReturnType<typeof socialImageV3SingleRenderInput> = null;
       if (imageTaskId) {
         try {
           const imageTask = await readSocialImageTask(store, tenantId, imageTaskId);
           if (!imageTask) throw new SocialImagePaidJobError('social_image_task_missing');
+          if (imageTask.schemaVersion === 'social-image-creation.v3') {
+            const issue = socialImageV3PaidPrerequisiteIssue(imageTask, 'execute');
+            if (issue) throw new SocialImagePaidJobError(issue);
+            v3ImageTask = imageTask;
+          }
           if (imageTask.imageType === 'carousel' || imageTask.imageType === 'gif_poster') {
             plannedInput = socialImagePlannedRenderInput(imageTask, imageJobId);
             plannedImageTask = imageTask;
+          } else if (v3ImageTask) {
+            v3SingleInput = socialImageV3SingleRenderInput(imageTask, imageJobId);
           }
         } catch (error) {
-          const code = error instanceof SocialImagePaidJobError ? error.code : 'social_image_render_admission_failed';
-          res.status(code === 'social_image_task_missing' ? 404 : 409).json({ ok: false, code, error: '图片多输出单元未通过冻结计划校验；未调用图片供应商' });
+          const code = error instanceof SocialImagePaidJobError ? error.code
+            : error instanceof Error && error.message.startsWith('social_image_') ? error.message : 'social_image_render_admission_failed';
+          res.status(code === 'social_image_task_missing' ? 404 : 409).json({ ok: false, code, error: '图片任务未通过冻结证据与计划校验；未调用图片供应商' });
           return;
         }
       }
@@ -76,7 +91,7 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
         productionStrategy: plannedInput.productionStrategy,
         idempotencyKey: plannedInput.idempotencyKey,
         confirmedFields: {},
-      } : req.body ?? {};
+      } : v3SingleInput || req.body || {};
       const deliverableType: ImageDeliverable = IMAGE_DELIVERABLES.includes(rawDeliverableType)
         ? rawDeliverableType : 'social_poster';
       const productionStrategy: ImageProductionStrategy = IMAGE_PRODUCTION_STRATEGIES.includes(rawProductionStrategy) ? rawProductionStrategy : 'reference_generate';
@@ -99,29 +114,50 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
       }).filter(Boolean).join('\n');
       const commercialEvidence = [enterprise, taskConfirmedFacts ? `本次任务由用户确认的商业事实：\n${taskConfirmedFacts}` : ''].filter(Boolean).join('\n');
       const commercialAudit = auditCommercialClaims(userFacingPosterText({ poster: normalizedPoster, imagePrompt }), commercialEvidence);
+      if (v3ImageTask) {
+        const issue = socialImageFrozenCommercialIssue({ ...commercialAudit,
+          headline: normalizedPoster.headline, imagePrompt: String(imagePrompt || '') });
+        if (issue) {
+          res.status(409).json({ ok: false, code: issue,
+            error: '已冻结的图片文案与企业事实不一致；请重新策划并冻结输入，未调用图片供应商' });
+          return;
+        }
+      }
       // Generation is allowed to continue with a conservative draft. Unverified
       // claims remain visible review warnings and block publishing, not creation.
-      const safeDraft = commercialAudit.issues.length || commercialAudit.fieldsToConfirm.length
+      const safeDraft = !v3ImageTask && (commercialAudit.issues.length || commercialAudit.fieldsToConfirm.length)
         ? sanitizePosterCommercialClaims({ poster: normalizedPoster, imagePrompt: String(imagePrompt || '') }, commercialEvidence)
         : { poster: normalizedPoster, imagePrompt: String(imagePrompt || '') };
       const safePoster = normalizePosterBrief(safeDraft.poster || {});
-      if (!safePoster.headline) safePoster.headline = 'Product overview';
-      const safeImagePrompt = String(safeDraft.imagePrompt || 'Create a neutral product presentation background.').trim();
+      if (!v3ImageTask && !safePoster.headline) safePoster.headline = 'Product overview';
+      const safeImagePrompt = v3ImageTask ? String(imagePrompt) : String(safeDraft.imagePrompt || 'Create a neutral product presentation background.').trim();
       const headline = safePoster.headline;
       const benchmarkReferences: ReferenceImage[] = [];
+      let v3ReferenceHash: string | null = null;
+      if (v3ImageTask?.creationPath === 'viral_replication') {
+        const referenceUrl = v3ImageTask.referenceSnapshot?.imageUrls[0] || v3ImageTask.referenceUrls[0] || '';
+        const source = referenceUrl ? await readSocialImageReferenceBytes(tenantId, referenceUrl) : null;
+        v3ReferenceHash = source?.bytes.length ? createHash('sha256').update(source.bytes).digest('hex') : null;
+      }
       for (const url of Array.isArray(referenceImageUrls) ? referenceImageUrls.map(String).slice(0, 1) : []) {
         const reference = await storyboardUrlImage(url, tenantId) || await storyboardEnterpriseImage(url, tenantId);
         if (reference) benchmarkReferences.push(reference);
       }
+      if (v3ImageTask?.creationPath === 'viral_replication' && socialImageV3ReferencePermitted(v3ImageTask)
+        && (!benchmarkReferences[0] || createHash('sha256').update(Buffer.from(benchmarkReferences[0].base64, 'base64')).digest('hex') !== v3ReferenceHash)) {
+        res.status(409).json({ ok: false, code: 'social_image_reference_bytes_changed', error: '参考图原始字节已变化；未调用图片供应商' });
+        return;
+      }
       const productReferences: Array<{ productId: string; image: ReferenceImage }> = [];
+      const v3ProductHashes: Record<string, string> = {};
       const assetFieldsToConfirm: string[] = [];
       if (plannedInput?.unit.role === 'gif_plate' && plannedImageTask) {
         const profile = await readTenantEnterpriseProfile(tenantId);
         const products = profile.products.items || [];
-        try { await verifyFrozenGifProductAssets(plannedImageTask, products, productIdentity, async imageUrl => {
+        try { Object.assign(v3ProductHashes, await verifyFrozenGifProductAssets(plannedImageTask, products, productIdentity, async imageUrl => {
             const image = await storyboardEnterpriseImage(imageUrl, tenantId);
             return image ? Buffer.from(image.base64, 'base64') : null;
-          }); } catch (error) {
+          })); } catch (error) {
           res.status(409).json({ ok: false, code: error instanceof SocialImagePaidJobError ? error.code : 'social_image_gif_product_identity_changed',
             error: '企业产品主图与冻结计划不一致；未调用图片供应商' }); return;
         }
@@ -139,12 +175,27 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
             continue;
           }
           productReferences.push({ productId: requestedId, image });
+          v3ProductHashes[requestedId] = createHash('sha256').update(Buffer.from(image.base64, 'base64')).digest('hex');
         }
       }
       const hasMaterialReferences = Array.isArray(materialIds) && materialIds.some(Boolean);
       const referenceResolution = hasMaterialReferences
         ? await resolveReferenceImages(materialIds, tenantId, referencePlan)
         : { images: [] as ReferenceImage[], descriptors: [] as PosterReferenceDescriptor[], blockers: [] as string[] };
+      if (v3ImageTask) {
+        const materialHashes = Object.fromEntries(referenceResolution.descriptors.map((descriptor, index) => [
+          descriptor.materialId,
+          referenceResolution.images[index]
+            ? createHash('sha256').update(Buffer.from(referenceResolution.images[index]!.base64, 'base64')).digest('hex') : '',
+        ]));
+        const issue = socialImageV3ResolvedAssetIssue(v3ImageTask, {
+          productHashes: v3ProductHashes, materialHashes, referenceHash: v3ReferenceHash,
+        });
+        if (issue) {
+          res.status(409).json({ ok: false, code: issue, error: '已核验的图片素材与当前原始字节不一致；未调用图片供应商' });
+          return;
+        }
+      }
       const exactProductIds = new Set(referenceResolution.descriptors
         .filter(item => item.role === 'exact_product').map(item => item.productId).filter(Boolean));
       for (const item of productReferences) exactProductIds.add(item.productId);
@@ -184,6 +235,7 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
             references: references.map(item => createHash('sha256').update(Buffer.from(item.base64, 'base64')).digest('hex')),
             requestedProductIds, materialIds, imageTaskId, imageJobId,
             plannedInputHash: plannedInput?.unit.plannedInputHash || null,
+            renderSpecInputHash: v3ImageTask ? socialImageV3RenderSpecInputHash(v3ImageTask) : null,
           })).digest('hex');
           claimedImageTask = plannedInput
             ? await claimSocialImagePlannedUnit({
@@ -203,11 +255,13 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
           }
         }
         paidRequestMayHaveStarted = true;
-        const generated = await generatePosterImage({ prompt, ratio: String(ratio || '1:1'), references, provider: 'openai', quality: normalizeImageGenerationQuality(rawImageQuality), idempotencyKey: String(idempotencyKey || '').trim() || undefined });
+        const requestedRatio = ['1:1', '4:5', '9:16', '16:9'].includes(String(ratio)) ? String(ratio) as SocialImageAspectRatio : '1:1';
+        const generated = await generatePosterImage({ prompt, ratio: requestedRatio, references, provider: 'openai', quality: normalizeImageGenerationQuality(rawImageQuality), idempotencyKey: String(idempotencyKey || '').trim() || undefined });
+        const normalizedBytes = await conformSocialImageToCanvas(generated.bytes, socialImageCanvasForAspectRatio(requestedRatio));
         const material = await createGeneratedImageMaterial({
           title: `AI 图文海报 · ${headline}`.slice(0, 120),
-          bytes: generated.bytes,
-          mimeType: generated.mimeType,
+          bytes: normalizedBytes,
+          mimeType: 'image/png',
           source: generated.source,
           tenantId,
           sourceType: 'ai_generated_marketing_image',
@@ -234,7 +288,7 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
           provider: generated.source,
           output: {
             id: randomUUID(), role: plannedInput?.unit.role || 'single', label: plannedInput?.unit.label || '主视觉', state: 'quality_checking',
-            mediaUrl: socialImageOwnedMaterialUrl(material, tenantId), materialId: material.id,
+            mediaUrl: socialImageOwnedMaterialUrl(material, tenantId), materialId: material.id, contentHash: material.contentSha256,
             version: Math.max(0, ...claimedImageTask.outputs.filter(item => item.role === (plannedInput?.unit.role || 'single') && item.label === (plannedInput?.unit.label || '主视觉')).map(item => item.version)) + 1,
             qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: 'uncertain', severity: 'hard', note: '等待人工复核' })),
           },

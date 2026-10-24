@@ -2,12 +2,13 @@ import type { CreationSelection } from '../../shared/contracts/contentCreationDi
 import { create } from 'zustand';
 import type { Message } from '../App';
 import type { AssistantActionId, AssistantActionTarget, AssistantCardItem } from '../../shared/contracts/assistantActions';
+import type { ContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard';
 
 export type OrbitAgentId = 'business' | 'director' | 'content' | 'customer';
 
 export type AssistantSurface = 'floating-reminder' | 'conversation' | 'decision';
 export type AssistantNotificationReason = 'missing_input' | 'approval_required' | 'failed' | 'routine';
-export type AssistantTaskStatus = 'needs_input' | 'approval' | 'ready' | 'running' | 'paused' | 'failed' | 'completed';
+export type AssistantTaskStatus = 'needs_input' | 'approval' | 'ready' | 'running' | 'paused' | 'failed' | 'completed' | 'cancelled';
 
 export interface AssistantCardAction {
   id: string;
@@ -31,12 +32,28 @@ export interface AssistantTaskCard {
   primaryAction?: AssistantCardAction;
   secondaryActions: AssistantCardAction[];
   workspace?: { label: string; href: string };
+  /** Authoritative business projection for an instant ContentTask. */
+  contentTask?: ContentProductionTaskCard;
   updatedAt: number;
 }
 
 export type AssistantRunControl = {
   actionId: 'pause_task' | 'resume_task';
   target: AssistantActionTarget & { objectType: 'run'; objectId: string; expectedVersion: string };
+};
+
+/**
+ * Durable recovery identity for a ContentTask that was created successfully
+ * but could not yet be bound to the assistant thread. Keeping this on the
+ * thread makes a later resend reuse the original business operation instead
+ * of creating a duplicate task.
+ */
+export type PendingContentTaskBinding = {
+  intentFingerprint: string;
+  idempotencyKey: string;
+  /** Null means the POST outcome is unknown and must be reconciled by key. */
+  contentTaskId: string | null;
+  createdAt: string;
 };
 
 export type AssistantTaskCardInput = Omit<AssistantTaskCard, 'details' | 'items' | 'secondaryActions' | 'updatedAt'> & {
@@ -58,6 +75,7 @@ export interface AgentThreadState {
   paused: boolean;
   taskCards: Record<string, AssistantTaskCard>;
   focusedTaskId: string | null;
+  pendingContentTaskBinding: PendingContentTaskBinding | null;
 }
 
 type AssistantStore = {
@@ -194,6 +212,7 @@ const emptyThread = (): AgentThreadState => ({
   paused: false,
   taskCards: {},
   focusedTaskId: null,
+  pendingContentTaskBinding: null,
 });
 
 function normalizeHydratedThread(current: AgentThreadState, patch: Partial<AgentThreadState>): AgentThreadState {
@@ -205,6 +224,10 @@ function normalizeHydratedThread(current: AgentThreadState, patch: Partial<Agent
     focusedTaskId: typeof patch.focusedTaskId === 'string' || patch.focusedTaskId === null
       ? patch.focusedTaskId
       : current.focusedTaskId,
+    pendingContentTaskBinding: patch.pendingContentTaskBinding === null
+      || (patch.pendingContentTaskBinding && typeof patch.pendingContentTaskBinding === 'object')
+      ? patch.pendingContentTaskBinding
+      : current.pendingContentTaskBinding,
     isFollowingLatest: typeof patch.isFollowingLatest === 'boolean'
       ? patch.isFollowingLatest
       : current.isFollowingLatest,

@@ -22,3 +22,10 @@ test('invalid or exact-review navigation does not become fuzzy inspiration match
   assert.equal(parseInspirationReferenceTarget({ inspirationReference: {} }), null);
   assert.equal(normalizedReferenceText('  FACTORY, Product!  '), 'factory product');
 });
+
+test('home replication intent is explicit and is not inferred from an ordinary reference', () => {
+  const reference = { referenceId: 'record-1', sourceUrl: video.sourceUrl, title: video.title };
+  assert.equal(parseInspirationReferenceTarget({ inspirationReference: reference })?.startViralReplication, false);
+  assert.equal(parseInspirationReferenceTarget({ startViralReplication: true, inspirationReference: reference })?.startViralReplication, true);
+  assert.equal(parseInspirationReferenceTarget({ startViralReplication: 'true', inspirationReference: reference })?.startViralReplication, false);
+});

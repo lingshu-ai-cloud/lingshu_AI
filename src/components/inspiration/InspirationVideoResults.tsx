@@ -67,11 +67,11 @@ export default function InspirationVideoResults({
       ) : videos.length === 0 ? (
         <InspirationEmptyState state={resultEmptyState(visibleVideoCount, search, platformFiltered)} contentFormat={contentFormat} search={search} localMaterialCount={localMaterialCount} onReset={onReset} onOpenLibrary={onOpenLibrary} />
       ) : (
-        <LsMasonryGallery layout="masonry" items={videos.map((video, index) => ({
+        <LsMasonryGallery layout="masonry" items={videos.map(video => ({
           id: video.id,
-          content: <div className="relative h-full">
-            <VideoCard video={video} index={index} isSelected={false} {...cardActions(video)} />
-          </div>,
+          content: <VideoCard video={video} {...cardActions(video)}
+            onEditManage={video.canManage ? () => onManage(video, 'edit') : undefined}
+            onDeleteManage={video.canManage ? () => onManage(video, 'delete') : undefined} />,
         }))} />
       )}
       {loaded && showPagination && totalPages > 1 && (

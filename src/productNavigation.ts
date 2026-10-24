@@ -5,11 +5,11 @@ export type PrimaryProductPage = 'strategy' | 'socialInspiration' | 'digitalEmpl
 export type PrimaryProductItem = { page: PrimaryProductPage; label: string; disabled: boolean };
 
 const PRIMARY_PAGES: readonly { page: PrimaryProductPage; label: string }[] = [
+  { page: 'strategy', label: 'hi，灵小枢' },
+  { page: 'socialInspiration', label: '内容创作' },
+  { page: 'adsOverview', label: '智能投流' },
+  { page: 'conversion', label: '智能客服' },
   { page: 'digitalEmployees', label: '经营总览' },
-  { page: 'socialInspiration', label: '灵感爆款' },
-  { page: 'strategy', label: '内容创作' },
-  { page: 'adsOverview', label: '平台投流' },
-  { page: 'conversion', label: '客户会话' },
 ];
 
 export function primaryProductNavigation(
@@ -22,12 +22,13 @@ export function primaryProductNavigation(
     .map(item => ({ page: item.page, label: item.label, disabled: item.page === 'adsOverview' && !adsEnabled }));
 }
 
-export function modeSwitchDestination(page: Page, _mode: CreationMode): Page {
+export function modeSwitchDestination(page: Page, mode: CreationMode): Page {
+  void mode;
   return page;
 }
 
 /** Secondary settings stay reachable without becoming extra primary tabs. */
 export function accountProductNavigation(allowedPages: ReadonlySet<Page>, platformAdmin: boolean): Page[] {
-  const settings: Page[] = ['enterprise', 'agentMemory', 'plugins', 'organizationPermissions'];
+  const settings: Page[] = ['enterprise', 'plugins'];
   return [...settings.filter(page => allowedPages.has(page)), ...(platformAdmin ? ['admin', 'adminDelivery'] as const : [])];
 }

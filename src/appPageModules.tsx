@@ -5,6 +5,7 @@ import { PLATFORM_ADS_PAGE_IDS } from './config/productSurfaceFlags';
 
 const loadPlatformAdsPage = () => import('./components/PlatformAdsPage');
 const loadStrategyPage = () => import('./components/StrategyPage');
+const loadContentCreationOverviewPage = () => import('./components/ContentCreationOverviewPage');
 const loadTrafficPage = () => import('./components/TrafficPage');
 const loadConversionPage = () => import('./components/ConversionPage');
 const loadEnterprisePage = () => import('./components/EnterprisePage');
@@ -37,6 +38,7 @@ const loadStarterWorkflowContextBar = () => import('./components/starter/Starter
 
 const PlatformAdsPage = lazy(loadPlatformAdsPage);
 const StrategyPage = lazy(loadStrategyPage);
+const ContentCreationOverviewPage = lazy(loadContentCreationOverviewPage);
 const TrafficPage = lazy(loadTrafficPage);
 const ConversionPage = lazy(loadConversionPage);
 const EnterprisePage = lazy(loadEnterprisePage);
@@ -66,7 +68,7 @@ const PAGE_MODULE_LOADERS: Partial<Record<Page, PageModuleLoader[]>> = {
   agentMonitor: [loadAgentMonitorPage],
   strategy: [loadStrategyPage],
   traffic: [loadTrafficPage, () => import('./components/publishing/CalendarPlanner')],
-  socialInspiration: [loadTrafficPage, () => import('./components/InspirationDashboard')],
+  socialInspiration: [loadContentCreationOverviewPage],
   smartAssets: [loadTrafficPage, () => import('./components/AiCreateStudio'), loadSocialContentPlanningPage],
   socialMonitoring: [loadTrafficPage, () => import('./components/AccountActivity')],
   scriptLibrary: [loadWorkspaceManagementPages],
@@ -140,4 +142,4 @@ function scheduleLocalPreviewPreload(preferredPage: Page) {
   };
 }
 
-export { PlatformAdsPage, StrategyPage, TrafficPage, ConversionPage, EnterprisePage, IntegrationsPage, AdminDashboard, AdminDeliveryPage, GlobalAssistant, AssistantWeeklyProductionView, AgentMemoryPage, OrganizationPermissionsPage, ScriptLibraryPage, DigitalEmployeePage, AgentMonitorPage, StarterWorkspacePage, SocialContentPlanningPage, SocialTaskContextBar, StarterWorkflowContextBar, DesignPrototype, SocialContentPreview, SmartBusinessPreview, ADS_PAGES, INTEGRATION_PAGES, prefetchPageModule, scheduleLocalPreviewPreload };
+export { PlatformAdsPage, StrategyPage, ContentCreationOverviewPage, TrafficPage, ConversionPage, EnterprisePage, IntegrationsPage, AdminDashboard, AdminDeliveryPage, GlobalAssistant, AssistantWeeklyProductionView, AgentMemoryPage, OrganizationPermissionsPage, ScriptLibraryPage, DigitalEmployeePage, AgentMonitorPage, StarterWorkspacePage, SocialContentPlanningPage, SocialTaskContextBar, StarterWorkflowContextBar, DesignPrototype, SocialContentPreview, SmartBusinessPreview, ADS_PAGES, INTEGRATION_PAGES, prefetchPageModule, scheduleLocalPreviewPreload };

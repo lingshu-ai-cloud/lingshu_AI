@@ -12,7 +12,7 @@ import { isEnterpriseHomepageDemoAccount } from './mocks/enterpriseHomepageDemo'
 import { PLATFORM_ADS_SURFACE_ENABLED } from './config/productSurfaceFlags';
 import { PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
 import {
-  PlatformAdsPage, StrategyPage, TrafficPage, ConversionPage, EnterprisePage,
+  PlatformAdsPage, StrategyPage, ContentCreationOverviewPage, TrafficPage, ConversionPage, EnterprisePage,
   IntegrationsPage, AdminDashboard, AdminDeliveryPage, AssistantWeeklyProductionView,
   AgentMemoryPage, OrganizationPermissionsPage, ScriptLibraryPage, DigitalEmployeePage,
   AgentMonitorPage, StarterWorkspacePage, SocialContentPlanningPage,
@@ -64,7 +64,7 @@ export default function AppPageSlot({
 }: AppPageSlotProps) {
   return (
       <div data-app-page-slot className="min-h-0 flex-1 overflow-hidden">
-        <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('digitalEmployees')}>
+        <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('strategy')}>
           <Suspense fallback={<PageLoading />}>
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
             {readAssistantWeeklyNavigation(window.location.search)
@@ -119,21 +119,7 @@ export default function AppPageSlot({
           )}
           {(page === 'socialInspiration' || mountedPages.has('socialInspiration')) && (
             <Activity mode={page === 'socialInspiration' ? 'visible' : 'hidden'}>
-            <TrafficPage
-              key="social-inspiration"
-              sourcePage="socialInspiration"
-              onEnterConversation={enterConversation}
-              onLeaveConversation={leaveConversation}
-              isInConversation={false}
-              onNavigate={handleNavigate}
-              onScriptPanelOpen={() => setScriptPanelOpen(true)}
-              onScriptPanelClose={() => setScriptPanelOpen(false)}
-              initialView="materials"
-              showModeTabs={false}
-              pageTitle={PAGE_REGISTRY.socialInspiration.canonicalTitle}
-              storageScope={session.tenant?.id || session.user.tenantId}
-              socialContentTaskId={activeSocialContentTaskId}
-            />
+            <ContentCreationOverviewPage />
             </Activity>
           )}
           {(page === 'smartAssets' || mountedPages.has('smartAssets') || smartAssetsMounted) && (

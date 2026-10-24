@@ -34,16 +34,19 @@ function wrapText(content: string, maxCharacters: number, maxLines: number): str
   return lines;
 }
 
-function textLayerSvg(layer: SocialImageLayer, width: number, height: number): Buffer {
-  const isHeadline = layer.styleToken === 'luxury-serif-display';
+function textLayerSvg(layer: SocialImageLayer, width: number, height: number, background: string): Buffer {
+  const adaptive = layer.styleToken === 'reference-adaptive-headline';
+  const isHeadline = layer.styleToken === 'luxury-serif-display' || adaptive;
   const isCta = layer.kind === 'cta';
   const fontSize = Math.max(18, Math.round(height * (isHeadline ? .31 : isCta ? .38 : .20)));
   const lineHeight = Math.round(fontSize * 1.18);
   const maxLines = Math.max(1, Math.floor((height - 18) / lineHeight));
   const maxCharacters = Math.max(4, Math.floor(width / (fontSize * (/[㐀-鿿]/.test(layer.content || '') ? .95 : .58))));
   const lines = wrapText(layer.content || '', maxCharacters, maxLines);
-  const family = isHeadline ? 'Georgia, Times New Roman, serif' : 'Arial, PingFang SC, sans-serif';
-  const fill = isHeadline || isCta ? '#f5d58a' : '#f7f1e3';
+  const family = adaptive ? 'Arial, PingFang SC, sans-serif' : isHeadline ? 'Georgia, Times New Roman, serif' : 'Arial, PingFang SC, sans-serif';
+  const rgb = /^#[0-9a-f]{6}$/i.test(background) ? [1, 3, 5].map(index => parseInt(background.slice(index, index + 2), 16)) : [0, 0, 0];
+  const luminance = (rgb[0]! * .2126 + rgb[1]! * .7152 + rgb[2]! * .0722) / 255;
+  const fill = adaptive ? luminance >= .57 ? '#111318' : '#f6f7fa' : isHeadline || isCta ? '#f5d58a' : '#f7f1e3';
   const tspans = lines.map((line, index) => `<tspan x="${isCta ? width / 2 : 4}" dy="${index ? lineHeight : 0}">${escapeXml(line)}</tspan>`).join('');
   return Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     ${isCta ? `<rect x="1" y="1" width="${width - 2}" height="${height - 2}" rx="${Math.round(height / 2)}" fill="rgba(8,8,8,.62)" stroke="#cba85c" stroke-width="2"/>` : ''}
@@ -81,6 +84,10 @@ export async function connectedBorderToAlpha(input: Buffer): Promise<Buffer> {
 
 function fullCanvasSvg(graph: SocialImageLayerGraph): Buffer {
   const { width, height } = graph.canvas;
+  if (graph.templateId === 'reference-evidence-layout-v1') {
+    const background = /^#[0-9a-f]{6}$/i.test(graph.canvas.background) ? graph.canvas.background : '#202020';
+    return Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="${background}"/></svg>`);
+  }
   return Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#050505"/><stop offset=".48" stop-color="#241508"/><stop offset="1" stop-color="#050403"/></linearGradient>
@@ -132,7 +139,7 @@ export async function renderSocialImageLayerGraph(input: {
       const overlay = maskLayerSvg(layer, rect.width, rect.height);
       composites.push({ input: overlay, left: rect.left, top: rect.top });
     } else if (layer.kind === 'text' || layer.kind === 'cta') {
-      composites.push({ input: textLayerSvg(layer, rect.width, rect.height), left: rect.left, top: rect.top });
+      composites.push({ input: textLayerSvg(layer, rect.width, rect.height, graph.canvas.background), left: rect.left, top: rect.top });
     } else if (layer.kind === 'product' || layer.kind === 'logo') {
       const source = layer.sourceAssetId ? input.assets.get(layer.sourceAssetId) : undefined;
       if (!source) throw new Error(`缺少图层企业资产：${layer.id}`);

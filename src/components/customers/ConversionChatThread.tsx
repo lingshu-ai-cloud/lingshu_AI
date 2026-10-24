@@ -25,7 +25,6 @@ function DraftSuggestionBar({
   draft,
   isTemplate,
   templatePlan,
-  priceRulesReady,
   knowledgeMiss,
   bridgeOnly,
   onSend,
@@ -39,7 +38,6 @@ function DraftSuggestionBar({
   draft: string;
   isTemplate: boolean;
   templatePlan: TemplatePlan | null;
-  priceRulesReady: boolean;
   knowledgeMiss?: boolean;
   bridgeOnly?: boolean;
   onSend: () => void;
@@ -155,7 +153,6 @@ export function ChatThread({
   onPreviewTranslate,
   templates,
   onManualActive,
-  priceRulesReady,
   knowledgeMiss,
   bridgeOnly,
   draftMeta,
@@ -184,7 +181,6 @@ export function ChatThread({
   onPreviewTranslate: () => Promise<void>;
   templates: MessageTemplate[];
   onManualActive: () => void;
-  priceRulesReady: boolean;
   knowledgeMiss?: boolean;
   bridgeOnly?: boolean;
   draftMeta: SalesDecisionMeta | null;
@@ -314,7 +310,7 @@ export function ChatThread({
                   {isAi && <span className="absolute -top-2 right-3 rounded-md border border-border bg-surface px-1.5 py-0.5 text-[9px] font-bold text-accent">AI</span>}
                   <div className={`flex items-center gap-4 ${isBuyer ? 'justify-end' : 'justify-between'}`}>
                     {!isBuyer && <p className="text-xs font-bold text-white">{event.title}</p>}
-                    <span className={`text-[10px] ${isBuyer ? 'text-text-muted' : 'text-white/75'}`}>{event.time}</span>
+                    <span className={`text-[10px] ${isBuyer ? 'text-text-secondary' : 'text-white/75'}`}>{event.time}</span>
                   </div>
                   <p className={`mt-1 whitespace-pre-line text-sm leading-relaxed ${isBuyer ? 'text-text-primary' : 'text-white'}`}>{event.body}</p>
                   {!isBuyer && (event.audit?.editedByHuman || event.audit?.memoryApplied?.length) && (
@@ -347,7 +343,7 @@ export function ChatThread({
           {draftSuggestion && !customer.isHistorical && (
             <>
               <SalesDecisionEvidence meta={draftMeta} />
-              <DraftSuggestionBar draft={draftSuggestion} isTemplate={false} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady && !isOutsideWindow} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
+              <DraftSuggestionBar draft={draftSuggestion} isTemplate={false} templatePlan={templatePlan} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady && !isOutsideWindow} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
             </>
           )}
         </div>

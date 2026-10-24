@@ -55,6 +55,7 @@ export interface GeneratedVideo {
 }
 
 export interface InspirationDashboardProps {
+  embedded?: boolean;
   onScriptPanelOpen?: () => void;
   onScriptPanelClose?: () => void;
   onNavigate?: (p: Page) => void;

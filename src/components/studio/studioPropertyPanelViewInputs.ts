@@ -86,7 +86,7 @@ export interface StudioPropertyPanelViewInputs {
   contentMode: "video" | "poster";
   setupReadiness: { status: string; title: string; detail: string; };
   mode: "material" | "clone" | "product";
-  onNavigate: ((p: "digitalEmployees" | "agentMonitor" | "strategy" | "socialWorkspace" | "socialSetup" | "socialAccounts" | "socialPlanning" | "traffic" | "socialInspiration" | "scriptLibrary" | "smartAssets" | "socialMonitoring" | "accountManagement" | "adsOverview" | "adsPlans" | "adsCreatives" | "adsManaged" | "conversion" | "wecomCustomerService" | "retention" | "orders" | "enterprise" | "plugins" | "scheduled" | "admin" | "adminDelivery" | "channels" | "youtube" | "agentMemory" | "organizationPermissions") => void) | undefined;
+  onNavigate: ((p: "digitalEmployees" | "agentMonitor" | "strategy" | "socialWorkspace" | "socialSetup" | "socialAccounts" | "socialPlanning" | "traffic" | "socialInspiration" | "scriptLibrary" | "smartAssets" | "socialMonitoring" | "accountManagement" | "adsOverview" | "adsPlans" | "adsCreatives" | "adsManaged" | "conversion" | "wecomCustomerService" | "retention" | "orders" | "enterprise" | "plugins" | "scheduled" | "admin" | "adminDelivery" | "channels" | "youtube") => void) | undefined;
   stageIdx: number;
   assignedCount: number;
   bgm: string;

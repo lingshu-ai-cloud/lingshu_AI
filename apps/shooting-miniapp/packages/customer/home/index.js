@@ -11,9 +11,7 @@ Page({
     pendingReply: [], pendingFollowup: [], highIntent: [], visible: []
   },
   onLoad() {
-    const info = wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync()
-    this.setData({ statusBarHeight: Number(info.statusBarHeight) || 44 })
-    this.updateDays(); this.restore()
+    wx.redirectTo({ url: '/packages/operator/home/index' })
   },
   onShow() { if (this.data.loaded && api.token()) this.refresh() },
   async restore() {

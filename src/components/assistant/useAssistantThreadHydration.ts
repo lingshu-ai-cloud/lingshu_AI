@@ -14,6 +14,10 @@ import {
   withoutPersistedConversation,
 } from './globalAssistantRuntime';
 
+export function hydratedFocusNeedsWorkspaceStatus(focusedTaskId: string | null): boolean {
+  return Boolean(focusedTaskId && !focusedTaskId.startsWith('social-content:'));
+}
+
 /** Recovers presentation state, then re-signs any focused action from the authoritative workspace. */
 export function useAssistantThreadHydration(input: {
   page: Page;
@@ -62,7 +66,7 @@ export function useAssistantThreadHydration(input: {
           setAssistantThreadHydrated(true);
           return;
         }
-        const item = data.items.find((candidate: { agentId?: unknown } | null) => candidate?.agentId === PRIMARY_ASSISTANT_THREAD);
+        const item = data.items.find((candidate: ({ agentId?: unknown } & Record<string, unknown>) | null) => candidate?.agentId === PRIMARY_ASSISTANT_THREAD);
         const persistedRemote = item ? persistedAssistantThread({
           version: Number.isSafeInteger(Number(item.version)) ? Number(item.version) : 0,
           updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : '',
@@ -75,6 +79,9 @@ export function useAssistantThreadHydration(input: {
           paused: typeof item.paused === 'boolean' ? item.paused : false,
           taskCards: item.taskCards && typeof item.taskCards === 'object' ? item.taskCards : {},
           focusedTaskId: typeof item.focusedTaskId === 'string' ? item.focusedTaskId : null,
+          pendingContentTaskBinding: item.pendingContentTaskBinding && typeof item.pendingContentTaskBinding === 'object'
+            ? item.pendingContentTaskBinding
+            : null,
         }, emptyAssistantThread()) : null;
         const remote = persistedRemote ? withoutPersistedConversation(persistedRemote) : null;
         const merged = remote
@@ -91,7 +98,7 @@ export function useAssistantThreadHydration(input: {
         // the authoritative workspace after hydration and place its freshly
         // signed actions on a dedicated current-status card. Never bind an
         // arbitrary current decision to the ID of a possibly stale old card.
-        if (!persistedFocusedTaskId) return;
+        if (!hydratedFocusNeedsWorkspaceStatus(persistedFocusedTaskId)) return;
         const request: AssistantActionRequest = {
           source: 'button',
           requestId: requestId(),

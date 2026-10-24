@@ -46,6 +46,7 @@ import { derivePublishPanelSelection } from './publishing/publishPanelSelection'
 import { fetchPublishingJson as fetchJson, platformBody, platformTitle } from './publishing/publishRequest';
 import { usePublishingAccounts } from './publishing/usePublishingAccounts';
 import { usePublishingVideoUpload } from './publishing/usePublishingVideoUpload';
+import { usePublishQueueRefresh } from './publishing/usePublishQueueRefresh';
 import {
   consumeDigitalEmployeeWorkflowContext,
   contentCreationAspectRatio,
@@ -84,6 +85,8 @@ export interface Props {
   onOpenCreationHome?: (openChooser?: boolean) => void;
   onLaunchContentStudio?: (request: SocialContentCreateRequest) => void;
   onReturnToContentPlanning?: (request: SocialContentCreateRequest) => void;
+  /** Mount the inspiration workspace inside the lightweight home scroll surface. */
+  embeddedInspiration?: boolean;
 }
 
 export default function TrafficPage(props: Props) {
@@ -128,6 +131,7 @@ export function useSocialPublishPanelController({ onNavigate, draft, onReturnToP
   const [error, setError] = useState('');
   const { accounts, loading, pendingTargetAccountIds, setPendingTargetAccountIds, loadAccounts } = usePublishingAccounts(setItems, setError);
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
+  usePublishQueueRefresh(storageScope, setItems);
   const appliedDraftRef = useRef(JSON.stringify(draft || readStoredPublishDraft(storageScope) || {}));
   const materializedVideoPathsRef = useRef(new Set<string>());
   const publishSettingsRef = useRef<HTMLElement | null>(null);

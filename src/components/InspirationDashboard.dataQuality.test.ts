@@ -98,12 +98,11 @@ assert.doesNotMatch(componentSource, />\s*加载更多\s*</, '灵感列表不再
 assert.doesNotMatch(componentSource, /本页近 3 日新入库|当前显示 <strong/, '灵感中心不应再显示与真实结果集口径冲突的独立统计条');
 assert.match(videoResultsSource, /<LsMasonryGallery layout="masonry"/, '爆款灵感必须使用真实比例瀑布流');
 assert.match(componentSource, /<LsMasonryGallery layout="masonry"/, '我的素材必须使用真实比例瀑布流');
-assert.match(videoCardSource, /const frameAspectRatio = creatorCard \? Math\.min\(4 \/ 3, Math\.max\(4 \/ 5, mediaAspectRatio\)\) : mediaAspectRatio;/, '仅创作首页缩略卡限制比例，灵感库继续使用真实比例');
-assert.match(videoCardSource, /style=\{\{ background: 'var\(--color-surface-2\)', aspectRatio: frameAspectRatio \}\}/, '媒体区必须使用当前卡片模式对应的比例');
+assert.match(videoCardSource, /aspectRatio: mediaAspectRatio > 0 \? mediaAspectRatio/, '嵌入首页与灵感库共用真实媒体比例');
 assert.doesNotMatch(videoCardSource, /aspect-\[9\/16\]/, '爆款卡不得把横版素材强制裁成 9:16');
 assert.doesNotMatch(videoCardSource, /min-h-52/, '爆款瀑布流卡不得强制内容区等高留白');
 assert.doesNotMatch(videoCardSource, /<div role="button"/, '爆款卡媒体不得使用包含收藏按钮的伪按钮容器');
-assert.match(videoCardSource, /<button[\s\S]*?aria-label=\{`\$\{isImagePost \? '查看图文' : '播放视频'\} \$\{video\.title\}`\}[\s\S]*?onClick=\{onWatch\}/, '媒体预览应使用独立真实 button');
+assert.match(videoCardSource, /<button[\s\S]*?aria-label=\{`\$\{isImagePost \? '查看图文' : '播放视频'\} \$\{video\.title\}`\}[\s\S]*?onPointerUp=\{event => \{[\s\S]*?onWatch\(\)[\s\S]*?onClick=\{event => \{[\s\S]*?event\.detail === 0[\s\S]*?onWatch\(\)/, '媒体预览应使用同时支持指针与键盘的真实 button');
 assert.match(videoCardSource, /videoAspectRatioLockedRef\.current = true;[^]*?setMediaAspectRatio\(metadata\.width \/ metadata\.height\)/, '爆款视频元数据必须锁定真实视频比例');
 assert.match(videoCardSource, /onNaturalAspectRatio=\{ratio => \{[^]*?!videoAspectRatioLockedRef\.current[^]*?setMediaAspectRatio\(ratio\)/, '缩略图后到时不得覆盖已锁定的视频比例');
 const materialGridSource = componentSource.slice(componentSource.indexOf('<LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map'), componentSource.indexOf('aria-label="普通素材分页"'));

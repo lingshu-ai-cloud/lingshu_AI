@@ -1,0 +1,36 @@
+<view class="task-page">
+  <view wx:if="{{loading && !card}}" class="loading">正在读取服务端任务状态…</view>
+  <view wx:if="{{error}}" class="error"><text>{{error}}</text><button class="secondary" bindtap="refresh">重新读取</button></view>
+  <view wx:if="{{card}}" class="task-content">
+    <view class="task-head"><text class="status {{card.overallState}}">{{card.stateLabel}}</text><text class="time">最近确认 {{card.lastConfirmedAt}}</text></view>
+    <text class="title">{{card.title}}</text>
+    <view class="section current"><text class="section-label">当前节点</text><text class="section-title">{{card.currentNode.label}}</text><text class="body">{{card.currentNode.userFacingSummary}}</text></view>
+    <view class="facts"><view><text class="metric-value">{{card.progressLabel}}</text><text class="metric-label">真实单位进度</text></view><view><text class="metric-value cost">{{card.costLabel}}</text><text class="metric-label">费用回执</text></view></view>
+    <view wx:if="{{card.blockingItems.length}}" class="section"><text class="section-title">现在需要处理</text><view wx:for="{{card.blockingItems}}" wx:key="key" class="row warning"><text>{{item.label}}</text><text>{{item.value}}</text></view></view>
+    <view wx:if="{{card.knownItems.length}}" class="section"><text class="section-title">本次任务输入</text><view wx:for="{{card.knownItems}}" wx:key="key" class="row"><text>{{item.label}}</text><text>{{item.value}}</text></view></view>
+    <view wx:if="{{card.completedSummary.length}}" class="section"><text class="section-title">已有结果</text><text wx:for="{{card.completedSummary}}" wx:key="*this" class="body">{{item}}</text></view>
+    <view wx:if="{{card.artifacts.length}}" class="section">
+      <text class="section-title">内容成品</text>
+      <view wx:if="{{previewLoading}}" class="media-state">正在加载当前成品…</view>
+      <view wx:elif="{{previewArtifact && previewArtifact.previewPath}}" class="preview-frame">
+        <video wx:if="{{previewArtifact.previewType === 'video'}}" class="artifact-preview" src="{{previewArtifact.previewPath}}" controls object-fit="contain" />
+        <image wx:else class="artifact-preview" src="{{previewArtifact.previewPath}}" mode="widthFix" />
+      </view>
+      <view wx:if="{{previewError}}" class="preview-error"><text>{{previewError}}</text><button class="secondary compact" bindtap="chooseArtifact" data-id="{{previewArtifact.artifactId}}">重新加载</button></view>
+      <view wx:for="{{card.artifacts}}" wx:key="artifactId" class="artifact-row">
+        <view class="artifact-copy" bindtap="chooseArtifact" data-id="{{item.artifactId}}"><text class="artifact-kind">{{item.kind}}</text><text class="artifact-meta">版本 {{item.version}} · {{item.statusLabel}}</text></view>
+        <view wx:if="{{item.reviewable}}" class="artifact-actions">
+          <button class="secondary compact" disabled="{{actionLoading}}" bindtap="requestChanges" data-id="{{item.artifactId}}">要求修改</button>
+          <button class="primary compact" disabled="{{actionLoading}}" bindtap="approveArtifact" data-id="{{item.artifactId}}">采纳此版本</button>
+        </view>
+      </view>
+    </view>
+    <view wx:if="{{card.canPackage || card.readyReceipt}}" class="section delivery">
+      <text class="section-title">交付</text><text class="body">下载只取得已批准内容，不代表已经发布到任何平台。</text>
+      <button wx:if="{{card.canPackage}}" class="primary" loading="{{actionLoading}}" disabled="{{actionLoading}}" bindtap="createDeliveryPackage">生成交付包</button>
+      <button wx:if="{{card.readyReceipt}}" class="primary" loading="{{actionLoading}}" disabled="{{actionLoading}}" bindtap="downloadDelivery">下载交付包</button>
+    </view>
+    <view wx:if="{{actionError}}" class="error action-error">{{actionError}}</view>
+    <button class="secondary refresh" loading="{{loading}}" bindtap="refresh">刷新真实状态</button>
+  </view>
+</view>

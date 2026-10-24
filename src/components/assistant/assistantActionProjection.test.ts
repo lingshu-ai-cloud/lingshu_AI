@@ -23,6 +23,7 @@ test('natural-language mutation only echoes one server-signed action target and 
   assert.equal(focusedNaturalLanguageActionId('请暂停当前任务。'), 'pause_task');
   assert.equal(focusedNaturalLanguageActionId('看看任务吧'), undefined);
   assert.equal(isWeeklyPlanKickoffRequest('请开始本周计划！'), true);
+  assert.equal(isWeeklyPlanKickoffRequest('帮我创建当前周任务'), true);
   assert.deepEqual(focusedNaturalLanguageActionInput(card, 'pause_task'), { target: runTarget, parameters: { reason: '人工检查' } });
   assert.equal(focusedNaturalLanguageActionInput({ ...card, secondaryActions: [signedPause] }, 'pause_task'), undefined);
 });

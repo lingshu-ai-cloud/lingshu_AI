@@ -34,27 +34,39 @@ test('assistant save queue serializes updates and carries the latest CAS version
     useAssistantStore.getState().hydrateThread('business', emptyAssistantThread());
     const scope = { tenantId: 'tenant-a', userId: 'user-a' };
     const fenceRef = { current: { scopeKey: 'tenant-a\u0000user-a', active: true } };
+    const pauseRef = { current: false };
     const queuesRef = { current: new Map<OrbitAgentId, AssistantThreadSaveQueue>() };
-    let persistThread: ReturnType<typeof useAssistantThreadSaveQueue> | undefined;
+    let saveQueue: ReturnType<typeof useAssistantThreadSaveQueue> | undefined;
     renderToStaticMarkup(createElement(() => {
-      persistThread = useAssistantThreadSaveQueue({
+      saveQueue = useAssistantThreadSaveQueue({
         stablePersistenceScope: scope,
         persistenceFenceRef: fenceRef,
         assistantThreadSaveQueuesRef: queuesRef,
+        persistencePauseRef: pauseRef,
         hydrateThread: useAssistantStore.getState().hydrateThread,
         setPersistenceMetadata: useAssistantStore.getState().setPersistenceMetadata,
       });
       return null;
     }));
-    assert.ok(persistThread);
+    assert.ok(saveQueue);
+    const { persistThread, waitForInFlightThreadSave } = saveQueue;
     useAssistantStore.getState().setMessages('business', [{ role: 'user', content: 'first' }]);
+    pauseRef.current = true;
     persistThread('business');
+    assert.equal(requests.length, 0, 'an atomic business mutation must exclude background thread saves');
+    pauseRef.current = false;
+    persistThread('business');
+    pauseRef.current = true;
+    let drained = false;
+    const drain = waitForInFlightThreadSave('business').then(() => { drained = true; });
+    await nextTick();
+    assert.equal(drained, false, 'atomic mutation must wait while an earlier PUT still owns the CAS');
+    requests[0]!.respond(new Response(JSON.stringify({ version: 1, updatedAt: 'now' }), { status: 200 }));
+    await drain;
+    assert.equal(useAssistantStore.getState().threads.business.version, 1);
+    pauseRef.current = false;
     useAssistantStore.getState().setMessages('business', [{ role: 'user', content: 'latest' }]);
     persistThread('business');
-    assert.equal(requests.length, 1, 'a second full-state PUT must not race the first');
-    assert.equal(requests[0]?.body.expectedVersion, 0);
-    requests[0]!.respond(new Response(JSON.stringify({ version: 1, updatedAt: 'now' }), { status: 200 }));
-    await nextTick();
     assert.equal(requests.length, 2);
     assert.equal(requests[1]?.body.expectedVersion, 1);
     assert.equal(requests[1]?.body.messages.at(-1)?.content, 'latest');

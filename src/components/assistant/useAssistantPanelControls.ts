@@ -4,9 +4,9 @@ import { useAssistantStore, type OrbitAgentId } from '../../stores/assistantStor
 import type { AssistantDecisionDialog } from './AssistantDecisionDialog';
 
 type PanelControlsInput = {
-  inlineHome?: boolean;
   activeAgent: OrbitAgentId;
   page: Page;
+  inlineHome: boolean;
   mode: 'breathing' | 'chat';
   assistantTool: 'knowledge-intake' | null;
   decisionDialog: AssistantDecisionDialog;
@@ -27,7 +27,7 @@ type PanelControlsInput = {
 
 /** Panel close, focus, Escape, and viewport behavior; task execution stays separate. */
 export function useAssistantPanelControls(input: PanelControlsInput) {
-  const { inlineHome, activeAgent, page, mode, assistantTool, decisionDialog, launcherRetracted,
+  const { activeAgent, page, inlineHome, mode, assistantTool, decisionDialog, launcherRetracted,
     assistantClosedRef, launcherButtonRef, edgeLauncherButtonRef, messageScrollRef,
     persistThread, setAssistantTool, setPanelView, setDecisionDialog,
     setWelcomeBubbleVisible, setMode, setViewport, openCurrentPageAgent } = input;

@@ -20,7 +20,7 @@ function Harness() {
       <LsDataChart title="账号发布数量" kind="bar" labels={['TikTok', 'YouTube', 'Instagram', 'Facebook']} series={[{ label: '发布版本', values: [5, 4, 5, 4] }]} unit=" 条" demo />
       <LsDataChart title="发布表现趋势" kind="line" labels={['周一', '周二', '周三', '周四', '周五']} series={[{ label: '播放量', values: [20, 35, null, 42, 60] }, { label: '互动数', values: [5, 7, null, 10, 15] }]} demo />
     </div>
-    <AccountSettingsModal open={open} onClose={() => setOpen(false)} canManageEmployees />
+    <AccountSettingsModal open={open} onClose={() => setOpen(false)} />
   </main></LingshuProvider>;
 }
 createRoot(document.getElementById('root')!).render(<Harness />);

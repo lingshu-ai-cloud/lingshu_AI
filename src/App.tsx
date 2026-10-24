@@ -35,7 +35,7 @@ import { DesignPrototype, SocialContentPreview, SmartBusinessPreview, ADS_PAGES,
 export { normalizeEnterpriseProductsDeepLink } from './appPageModules';
 
 export type { Page } from './pageRegistry';
-export type { AgentAction, AgentType, Conversation, ConversationContext, KickoffSignal, Message, RestoreSignal, Source } from './appSession';
+export type { AgentAction, AgentType, AssistantReferenceMedia, Conversation, ConversationContext, KickoffSignal, Message, RestoreSignal, Source } from './appSession';
 
 export default function App() {
   const publicPath = window.location.pathname.replace(/\/+$/, '') || '/';
@@ -108,7 +108,7 @@ export default function App() {
     if (ADS_PAGES.includes(page)) setLastAdsPage(page);
   }, [page]);
   useEffect(() => {
-    if (!PLATFORM_ADS_SURFACE_ENABLED && ADS_PAGES.includes(page)) setPage('digitalEmployees');
+    if (!PLATFORM_ADS_SURFACE_ENABLED && ADS_PAGES.includes(page)) setPage('strategy');
   }, [page]);
   useEffect(() => {
     if (page !== 'enterprise') setEnterpriseProductsDeepLink(null);
@@ -133,7 +133,7 @@ export default function App() {
     const restorePage = (event: PopStateEvent) => {
       const trusted = canRestoreProductionHistoryState(event.state);
       const restoredDetail = restorableProductionDetail(event.state);
-      const previous = trusted ? resolveNavigationPage(event.state?.productionPage, restoredDetail?.view) : 'digitalEmployees';
+      const previous = trusted ? resolveNavigationPage(event.state?.productionPage, restoredDetail?.view) : 'strategy';
       if (previous) {
         setPage(previous);
         restoreAgentCalendarReturnContext(trusted ? event.state?.agentCalendarReturnContext ?? null : null);
@@ -157,23 +157,23 @@ export default function App() {
       if (window.history.state?.productionDepth > 0) window.history.back();
       else {
         setSocialContentNavigation(null);
-        setPage('digitalEmployees');
+        setPage('strategy');
       }
     };
     let navigationAuthority = productionNavigationIdentity();
     const authChanged = () => {
       const nextAuthority = productionNavigationIdentity();if(nextAuthority===navigationAuthority)return;navigationAuthority=nextAuthority;
-      const cleanUrl=new URL(window.location.href);cleanUrl.searchParams.set('page','digitalEmployees');
+      const cleanUrl=new URL(window.location.href);cleanUrl.searchParams.set('page','strategy');
       cleanUrl.searchParams.delete('goalId');cleanUrl.searchParams.delete('planId');
       setWeeklyPlanNavigation(null);
-      window.history.replaceState(stampProductionHistoryState({productionPage:'digitalEmployees',productionDepth:0}), '',cleanUrl);
+      window.history.replaceState(stampProductionHistoryState({productionPage:'strategy',productionDepth:0}), '',cleanUrl);
       try { sessionStorage.removeItem('digitalEmployee.businessDeepLink'); sessionStorage.removeItem('digitalEmployee.returnContext'); } catch { /* optional storage */ }
       restoreAgentCalendarReturnContext(null);
       setSmartAssetsWorkflowContext(null);setSmartAssetsCreateRequest(null);setSmartAssetsStudioOpen(false);
       setConversation(null);setRestore(null);setKickoff(null);
       setSocialContentNavigation(null);
-      setPage('digitalEmployees');
-      window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'digitalEmployees',restoreHistory:true}}));
+      setPage('strategy');
+      window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'strategy',restoreHistory:true}}));
     };
     const storageChanged = (event: StorageEvent) => { if(event.key === 'overseas_token' || event.key === null)authChanged(); };
     window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,authChanged);
@@ -342,7 +342,6 @@ export default function App() {
   }, [starterProbeScope, starterProbeRetry]);
   useEffect(() => {
     try {
-      localStorage.setItem('ow_page', page);
       if (window.location.pathname === '/') {
         const url = new URL(window.location.href);
         url.searchParams.set('page', page);
@@ -351,13 +350,13 @@ export default function App() {
     } catch { /* ignore */ }
   }, [page]);
   useEffect(() => {
-    if (session && (page === 'admin' || page === 'adminDelivery') && !isAdminSession(session)) setPage('digitalEmployees');
+    if (session && (page === 'admin' || page === 'adminDelivery') && !isAdminSession(session)) setPage('strategy');
   }, [page, session]);
   useEffect(() => {
     if (!session) return;
     if (starterAccess === 'loading' || starterAccess === 'unavailable') return;
     const role = session.user.role || 'customer_service';
-    if (!ROLE_PAGE_ACCESS[role].has(page)) setPage('digitalEmployees');
+    if (!ROLE_PAGE_ACCESS[role].has(page)) setPage('strategy');
   }, [page, session, starterAccess]);
 
   // 每次对话推进都记录/更新会话历史
@@ -415,7 +414,7 @@ export default function App() {
   };
 
   const handleNavigate = useCallback((p: Page) => {
-    const next = availableProductPage(resolvePage(p) || 'digitalEmployees');
+    const next = availableProductPage(resolvePage(p) || 'strategy');
     if (next !== pageRef.current) pushProductionLocation(next);
     else window.history.replaceState({
       ...window.history.state,
@@ -622,17 +621,15 @@ export default function App() {
     if (isRegistrationEntry) {
       window.history.replaceState(null, '', '/');
     }
-    // `ow_page` is browser-wide. Never carry the previous account's last page
-    // into a newly authenticated tenant; a new customer must enter through the
-    // operating cockpit and its first-time setup.
+    // Never carry the previous account's page into a newly authenticated tenant.
+    // Explicit deep links remain available, but the ordinary entry is creation.
     try {
       const nextScope = pagePreferenceScope(s);
       const previousScope = localStorage.getItem('ow_page_scope');
       if (previousScope !== nextScope) {
         localStorage.setItem('ow_page_scope', nextScope);
-        localStorage.setItem('ow_page', 'digitalEmployees');
         setSocialContentNavigation(null);
-        setPage('digitalEmployees');
+        setPage('strategy');
       }
     } catch { /* ignore browser persistence failures */ }
     setDemoProgressScope(progressScopeFor(s));
@@ -675,7 +672,7 @@ export default function App() {
     setRestore(null);
     setKickoff(null);
     setSocialContentNavigation(null);
-    setPage('digitalEmployees');
+    setPage('strategy');
   };
 
   if (isRegistrationEntry) {

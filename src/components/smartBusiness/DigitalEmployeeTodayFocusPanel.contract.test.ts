@@ -2,17 +2,22 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const page = fs.readFileSync(new URL('../DigitalEmployeePage.tsx', import.meta.url), 'utf8');
-const focus = fs.readFileSync(new URL('./DigitalEmployeeTodayFocusPanel.tsx', import.meta.url), 'utf8');
+const workspace = fs.readFileSync(new URL('../ConfiguredDigitalEmployeeWorkspace.tsx', import.meta.url), 'utf8');
+const tabs = fs.readFileSync(new URL('./BusinessOverviewTabs.tsx', import.meta.url), 'utf8');
 
-assert.match(page, /workspaceView === ["']today["'][\s\S]{0,5000}<TodayFocusPanel[\s\S]{0,300}runStatusLabel=\{status => statusLabel\[status\] \|\| status\}/,
-  'today view must mount the extracted panel with existing run status language');
-assert.match(focus, /data\.tasks\.find\([\s\S]*taskNeedsAttention\(task\)/,
-  'the first blocked task must still receive attention');
-assert.match(focus, /data\.approvals\.filter\(\(item\) => item\.status === "pending"\)/,
-  'pending approvals must remain visible');
-assert.match(focus, /isDraft && data\.plan[\s\S]*onReviewPlan/,
-  'an unconfirmed weekly plan must link back to review');
-assert.match(focus, /attentionItems\.slice\(0, 3\)/,
-  'today attention must remain bounded to three visible actions');
+assert.match(page, /if \(data\?\.config\) return <ConfiguredDigitalEmployeeWorkspace/,
+  'configured tenants must still enter the extracted workspace');
+assert.match(workspace, /<WeeklyCommandCenter[\s\S]{0,200}data=\{data\}[\s\S]{0,200}statusLabel=\{currentPlanStatusLabel\}/,
+  'the overview must keep the real weekly status in its command center');
+assert.match(workspace, /<SmartBusinessDashboard data=\{data\} view=\{dashboardView\}/,
+  'task state and intervention must remain on the real content workflow');
+assert.match(workspace, /onRetryTask=\{async taskId => Boolean\(await act\(`retry:\$\{taskId\}`,[\s\S]{0,120}digitalEmployeeApi\.retryTask\(taskId\)\)\)\}/,
+  'the real task retry action must remain reachable from the workflow');
+assert.match(workspace, /workspaceView === "today" && <BusinessOverviewTabs data=\{data\} onNavigate=\{onNavigate\}/,
+  'the current overview must expose its three business tabs');
+assert.match(tabs, /key: 'calendar'[\s\S]*key: 'ads'[\s\S]*key: 'inquiries'/,
+  'the overview tabs must remain calendar, ads, then inquiries');
+assert.doesNotMatch(workspace, /<TodayFocusPanel\b/,
+  'the retired standalone attention panel must not duplicate workflow status');
 
-console.log('digital employee today focus boundary passed');
+console.log('digital employee overview boundary passed');

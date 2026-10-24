@@ -1,14 +1,10 @@
-import { AuthenticatedImage } from '../inspiration/InspirationMedia';
-import { useAssistantStore } from '../../stores/assistantStore';
-import { useCreationMode } from '../../lib/creationMode';
 import {
   forwardRef,
   useRef,
-  useState,
-  useEffect,
   type ChangeEvent,
   type KeyboardEvent,
 } from 'react';
+import { App } from 'antd';
 import { ArrowUp, FileAudio2, FileImage, FileVideo2, Loader2, Paperclip, Plus, Sparkles, X } from 'lucide-react';
 
 export type AssistantAttachmentKind = 'image' | 'video' | 'audio';
@@ -98,16 +94,18 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
   onValidationError,
   onSubmit,
 }, forwardedRef) {
-  const selection = useAssistantStore(state => state.threads.business.creationDraft);
-  const creationMode = useCreationMode();
-  const freeHome = variant === 'home' && creationMode === 'free';
-  const [engaged, setEngaged] = useState(false);
-  useEffect(() => {
-    const focusReference = () => { setEngaged(false); };
-    window.addEventListener('lingshu:assistant-home-reference', focusReference);
-    return () => window.removeEventListener('lingshu:assistant-home-reference', focusReference);
-  }, []);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { message } = App.useApp();
+
+  const guideToViralVideo = () => {
+    const library = document.getElementById('creator-home-library');
+    if (!library) {
+      void message.info({ key: 'choose-viral-video', content: '请先切换到自由创作，再从爆款视频中选择想要复刻的视频。', duration: 4 });
+      return;
+    }
+    void message.info({ key: 'choose-viral-video', content: '请在下方爆款视频中选择想要复刻的视频，再点击「爆款裂变」。', duration: 4 });
+    library.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  };
 
   const selectFiles = (event: ChangeEvent<HTMLInputElement>) => {
     const merged = mergeAssistantAttachments(files, Array.from(event.currentTarget.files || []));
@@ -125,11 +123,6 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
   return (
     <div data-assistant-composer="true" data-variant={variant} data-compact={compact ? 'true' : undefined} className="ls-assistant-composer shrink-0">
       <div data-assistant-composer-surface="true" className="ls-assistant-composer__surface">
-        {freeHome && selection ? <div className="ls-assistant-composer__reference-tile" title={selection.referenceLabel || selection.referenceId}>
-          <span>爆款参考</span>{selection.referenceThumbnail && <AuthenticatedImage src={selection.referenceThumbnail} alt="参考视频封面" className="w-full h-11 object-contain"/>}
-          <span title={selection.referenceId}>来源：{selection.referenceId}</span>
-          <button type="button" title="取消参考视频" aria-label="取消参考视频" onClick={() => useAssistantStore.getState().hydrateThread('business', { creationDraft: null })}><X size={14}/></button>
-        </div> : variant === 'home' && (!compact || freeHome) && <button type="button" className="ls-assistant-composer__add-tile" onClick={() => fileInputRef.current?.click()} disabled={disabled || uploading || files.length >= ASSISTANT_ATTACHMENT_LIMIT} aria-label="添加图片、视频或音频参考"><Plus size={26} aria-hidden="true"/></button>}
         {files.length > 0 && (
           <div data-assistant-attachments="pending" className="flex flex-wrap gap-1.5 border-b border-border/70 px-2.5 py-2">
             {files.map(file => {
@@ -155,18 +148,20 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
             <span className="self-center text-[9px] text-text-muted">待随消息上传</span>
           </div>
         )}
-        <textarea
-          ref={forwardedRef}
-          value={draft}
-          onFocus={() => { if (freeHome && selection) setEngaged(true); }}
-          onChange={event => onDraftChange(event.target.value)}
-          onKeyDown={submitOnEnter}
-          rows={1}
-          maxLength={4000}
-          aria-label="给灵小枢发送消息"
-          placeholder={compact ? '继续描述你的创作需求…' : freeHome && selection && engaged ? '给灵小枢派活' : variant === 'home' ? '输入想法、脚本或上传参考，和灵小枢一起创作' : '告诉灵小枢你想完成什么...'}
-          className="ls-assistant-composer__input max-h-[88px] min-h-10 w-full resize-none overflow-y-auto bg-transparent px-3 pt-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted"
-        />
+        <div className="ls-assistant-composer__editing">
+          {variant === 'home' && <button type="button" className="ls-assistant-composer__add-tile" onClick={guideToViralVideo} aria-label="选择爆款视频进行复刻" title="从爆款视频中选择复刻参考"><Plus size={26} aria-hidden="true" /></button>}
+          <textarea
+            ref={forwardedRef}
+            value={draft}
+            onChange={event => onDraftChange(event.target.value)}
+            onKeyDown={submitOnEnter}
+            rows={1}
+            maxLength={4000}
+            aria-label="给灵小枢发送消息"
+            placeholder={variant === 'home' ? '输入想法、脚本或上传参考，和灵小枢一起创作' : '告诉灵小枢你想完成什么...'}
+            className="ls-assistant-composer__input max-h-[88px] min-h-10 w-full resize-none overflow-y-auto bg-transparent px-3 pt-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted"
+          />
+        </div>
         <div className="flex items-center justify-between gap-2 px-2 pb-2">
           <div className="ls-assistant-composer__tools min-w-0">
             {variant === 'home' && <span className="ls-assistant-composer__mode"><Sparkles size={16} aria-hidden="true"/>Agent 模式</span>}

@@ -41,14 +41,13 @@ import { loadConnectedSocialPerformance, type ConnectedSocialPerformance } from 
 import { authHeader } from "../lib/auth";
 import ProductionTaskScene from "./ProductionTaskScene";
 import DigitalEmployeeWorkspace from "./smartBusiness/DigitalEmployeeWorkspace";
-import NextRoundRecommendationsSection from "./NextRoundRecommendationsSection";
 import BusinessHealthOverview, { type BusinessHealthOverviewRange } from "./smartBusiness/BusinessHealthOverview";
 import BusinessDataReview from "./smartBusiness/BusinessDataReview";
 import { LsCalendar, calendarDayKey, type LsCalendarEvent } from "./ui/LsCalendar";
 import { calendarWeekday, thumbnailUrlWithSourceFallback } from "../lib/calendarModel";
 import WeeklyContentProgressPanel from "./smartBusiness/WeeklyContentProgressPanel";
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
-import { applySmartBusinessShowcaseData, isSmartBusinessOverviewPreviewEnabled, isSmartBusinessShowcaseEnabled, isSmartBusinessWeeklyPlanPreviewEnabled, smartBusinessShowcaseAds, smartBusinessShowcaseNextRoundRecommendations, smartBusinessShowcaseWeeklyVideos, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS } from "../dev/smartBusinessShowcaseData";
+import { isSmartBusinessShowcaseEnabled, isSmartBusinessWeeklyPlanPreviewEnabled, smartBusinessShowcaseAds, smartBusinessShowcaseWeeklyVideos, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS } from "../dev/smartBusinessShowcaseData";
 import { TaskPreviewCards } from "./smartBusiness/TaskPreviewCards";
 import { buildSmartBusinessDisplayModel, engagingContentTitle, inspirationReferenceNavigationDetail, platformLabels, platformOptions, weeklyVideoBudget, type DisplayMetricSource, type Platform, type SmartBusinessDisplayModel, type UnifiedPlanContent } from './smartBusiness/smartBusinessDisplayModel';
 export type SmartBusinessView = "home" | "matrix" | "production" | "review";
@@ -231,16 +230,12 @@ function PlanDataSourceBadge({ source }: { source: DisplayMetricSource }) {
 }
 
 function HomeView({ data, onNavigate, selectedAccountId = "", overviewRangeBusy = false, onOverviewRangeChange }: { data: DigitalEmployeeOverview; onNavigate?: (page: Page) => void; selectedAccountId?: string; overviewRangeBusy?: boolean; onOverviewRangeChange?: (range: BusinessHealthOverviewRange) => void }) {
-  const useOverviewPreview = isSmartBusinessOverviewPreviewEnabled();
-  const overviewData = useOverviewPreview ? applySmartBusinessShowcaseData(data, true) : data;
-  const previewRecommendations = smartBusinessShowcaseNextRoundRecommendations(overviewData, useOverviewPreview || isSmartBusinessShowcaseEnabled());
   return <div className="space-y-6">
-    <BusinessHealthOverview detailsOnly data={overviewData} selectedAccountId={selectedAccountId} overviewRangeBusy={overviewRangeBusy} onOverviewRangeChange={onOverviewRangeChange} onNavigate={onNavigate}/>
-    <NextRoundRecommendationsSection summary={overviewData.review?.status === "generated" ? overviewData.review.summary : undefined} recommendations={previewRecommendations || undefined} industryTrends={previewRecommendations?.industryTrends || overviewData.industryTrends} onOpen={page => onNavigate?.(page as Page)}/>
+    <BusinessHealthOverview detailsOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={overviewRangeBusy} onOverviewRangeChange={onOverviewRangeChange} onNavigate={onNavigate}/>
   </div>;
 }
 
-function WeeklyPublishingCalendar({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefresh?: () => void }) {
+export function WeeklyPublishingCalendar({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefresh?: () => void }) {
   const display = buildSmartBusinessDisplayModel(data);
   const calendarStatus: Record<ContentQueueItem["status"], LsCalendarEvent["status"]> = {
     planned: "planned",
@@ -278,7 +273,7 @@ function WeeklyPublishingCalendar({ data, onRefresh }: { data: DigitalEmployeeOv
     data: item,
   })).filter(event => Boolean(event.start));
 
-  return <section aria-label="发布日历" className="overflow-hidden rounded-lg border border-border bg-white">
+  return <section aria-label="发布日历" className="overflow-hidden rounded-lg border border-border bg-surface">
     <div className="border-b border-border px-5 py-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="ls-type-title-large text-text-primary">发布日历</h3>
@@ -356,8 +351,8 @@ const matrixScheduleStages = [
 ] as const;
 
 
-function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onOpenContent, onOpenAgentSettings }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void; onOpenAgentSettings?: () => void; onOpenProductionProgress?: (taskId: string, contentItemId: string, projectId?: string) => void; onRetryTask?: (taskId: string) => Promise<boolean> }) {
-  return <DigitalEmployeeWorkspace data={data} calendarTasks={calendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh} onOpenContent={onOpenContent} onOpenAgentSettings={onOpenAgentSettings} publishingCalendar={<WeeklyPublishingCalendar data={data} onRefresh={onRefresh}/>}/>;
+function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onNavigate, onOpenContent, onOpenAgentSettings }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void; onOpenAgentSettings?: () => void; onOpenProductionProgress?: (taskId: string, contentItemId: string, projectId?: string) => void; onRetryTask?: (taskId: string) => Promise<boolean> }) {
+  return <DigitalEmployeeWorkspace data={data} calendarTasks={calendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh} onNavigate={onNavigate} onOpenContent={onOpenContent} onOpenAgentSettings={onOpenAgentSettings} publishingCalendar={<WeeklyPublishingCalendar data={data} onRefresh={onRefresh}/>}/>;
 }
 
 

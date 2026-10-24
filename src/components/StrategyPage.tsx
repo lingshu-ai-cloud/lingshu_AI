@@ -1,4 +1,5 @@
 import ContentCreationHome from './ContentCreationHome';
+import TrafficPage from './TrafficPage';
 import { PAGE_REGISTRY } from '../pageRegistry';
 import type { AgentAction, ConversationContext, KickoffSignal, Page, RestoreSignal } from '../App';
 
@@ -16,11 +17,27 @@ interface Props {
   enterpriseHomepageDemo?: boolean;
 }
 
-export default function StrategyPage({ onNavigate }: Props) {
+export default function StrategyPage({ onNavigate, onEnterConversation, onLeaveConversation, restore, kickoff, onAction, onSessionRefresh }: Props) {
   return (
     <div className="home-dashboard h-full min-h-0 overflow-hidden">
       <h1 className="sr-only">{PAGE_REGISTRY.strategy.canonicalTitle}</h1>
-      <ContentCreationHome onNavigate={onNavigate}/>
+      <ContentCreationHome onNavigate={onNavigate} inspirationWorkspace={
+        <TrafficPage
+          sourcePage="strategy"
+          onEnterConversation={onEnterConversation}
+          onLeaveConversation={onLeaveConversation || (() => {})}
+          isInConversation={false}
+          onNavigate={onNavigate}
+          restore={restore}
+          kickoff={kickoff}
+          onAction={onAction}
+          onSessionRefresh={onSessionRefresh}
+          initialView="materials"
+          showModeTabs={false}
+          pageTitle="爆款视频与素材"
+          embeddedInspiration
+        />
+      }/>
     </div>
   );
 }

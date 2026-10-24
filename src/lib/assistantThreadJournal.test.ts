@@ -27,6 +27,12 @@ const thread: AgentThreadState = {
       title: '预签名来源',
       uri: 'https://files.example.test/source.mp4?X-Amz-Signature=source-signature&X-Amz-Credential=source-credential&safe=ok',
     }],
+    referenceMedia: {
+      kind: 'video', title: '爆款参考视频', platform: 'tiktok', referenceId: 'video-1', duration: 18,
+      thumbnailUrl: '/api/overseas/videos/video-1/thumbnail?assetToken=thumbnail-asset-secret&safe=ok',
+      mediaUrl: '/api/overseas/videos/video-1/media-url?accessToken=media-access-secret&safe=ok',
+      sourceUrl: 'https://video.example.test/watch/1?X-Goog-Signature=video-source-signature&safe=ok',
+    },
   }],
   draftInput: '重载后仍需恢复的草稿 https://files.example.test/draft.mp4?X-Goog-Signature=draft-signature&safe=ok',
   scrollPosition: 483,
@@ -67,6 +73,12 @@ const thread: AgentThreadState = {
     },
   },
   focusedTaskId: 'plan',
+  pendingContentTaskBinding: {
+    intentFingerprint: 'assistant-content-intent:12345678',
+    idempotencyKey: 'assistant-content:7:12345678',
+    contentTaskId: 'content-pending',
+    createdAt: '2026-10-24T00:00:00.000Z',
+  },
 };
 
 const storage = new MemoryStorage();
@@ -76,7 +88,7 @@ assert.ok(storage.getItem(key), 'pagehide must leave a synchronous local journal
 const serialized = storage.getItem(key) || '';
 assert.doesNotMatch(
   serialized,
-  /must-not-persist|camel-access-secret|camel-refresh-secret|camel-api-secret|camel-client-secret|nested-session-secret|url-access-secret|url-api-secret|text-url-secret|source-signature|source-credential|thumbnail-signature|url-goog-signature|message-signature|draft-signature|detail-signature|relative-asset-secret|embedded-user|embedded-password|access_token|accessToken|refreshToken|apiKey|clientSecret|sessionToken|X-Amz-Signature|X-Amz-Credential|X-Goog-Signature/,
+  /must-not-persist|camel-access-secret|camel-refresh-secret|camel-api-secret|camel-client-secret|nested-session-secret|url-access-secret|url-api-secret|text-url-secret|source-signature|source-credential|thumbnail-signature|thumbnail-asset-secret|media-access-secret|video-source-signature|url-goog-signature|message-signature|draft-signature|detail-signature|relative-asset-secret|embedded-user|embedded-password|access_token|accessToken|refreshToken|apiKey|clientSecret|sessionToken|X-Amz-Signature|X-Amz-Credential|X-Goog-Signature/,
   'snake_case and camelCase credentials must never enter the local journal',
 );
 assert.match(serialized, /safe=ok|safe%3Dok/, 'non-secret URL state is preserved');
@@ -88,6 +100,9 @@ assert.equal(reloaded.draftInput, sanitizeAssistantThreadForJournal(thread).draf
 assert.equal(reloaded.scrollPosition, thread.scrollPosition);
 assert.equal(reloaded.focusedTaskId, 'plan');
 assert.equal(reloaded.taskCards.plan.title, '确认本周计划');
+assert.equal(reloaded.pendingContentTaskBinding?.contentTaskId, 'content-pending');
+assert.equal(reloaded.messages[0]?.referenceMedia?.referenceId, 'video-1');
+assert.equal(reloaded.messages[0]?.referenceMedia?.thumbnailUrl, '/api/overseas/videos/video-1/thumbnail?safe=ok');
 assert.equal(sameAssistantThreadJournalContent(reloaded, thread), true, 'journal equality compares the same safe representation');
 
 assert.equal(readAssistantThreadJournal(storage, { tenantId: 'tenant-b', userId: 'user-a' }, 'business'), null);

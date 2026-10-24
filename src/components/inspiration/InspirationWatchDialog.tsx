@@ -166,7 +166,7 @@ export default function InspirationWatchDialog({ video, videos, onClose, onOpenD
           <div className="flex gap-1"><Button size="small" icon={<ChevronUp size={14}/>} onClick={() => changeVideo(-1)} aria-label="上一条视频"/><Button size="small" icon={<ChevronDown size={14}/>} onClick={() => changeVideo(1)} aria-label="下一条视频"/></div>
         </div>
       </div>
-      <aside ref={detailsRef} data-preview-details className="max-h-[42dvh] overflow-y-auto border-t border-border bg-white p-5 text-text-primary md:max-h-[calc(100dvh-100px)] md:border-l md:border-t-0" aria-label="视频详情">
+      <aside ref={detailsRef} data-preview-details className="max-h-[42dvh] overflow-y-auto border-t border-border bg-surface p-5 text-text-primary md:max-h-[calc(100dvh-100px)] md:border-l md:border-t-0" aria-label="视频详情">
         <AnimatePresence initial={false} mode="wait"><motion.div key={current.id}
           initial={reduceMotion ? false : { opacity: 0, x: transitionDirection * 12 }} animate={{ opacity: 1, x: 0 }} exit={reduceMotion ? undefined : { opacity: 0, x: transitionDirection * -8 }}
           transition={{ duration: reduceMotion ? 0 : .2 }}>

@@ -62,17 +62,19 @@ function emptyResponse(url) {
   return collection;
 }
 const pages = [
-  ['business', '智能经营', 'digitalEmployees'],
-  ['inspiration', '灵感中心', 'socialInspiration'],
+  ['creator-home', '内容创作', 'strategy'],
+  ['business', '经营总览', 'digitalEmployees'],
+  ['inspiration', '爆款库', 'socialInspiration'],
+  ['ads', '投流', 'adsOverview'],
   ['creation', '内容制作', 'smartAssets'],
   ['publishing', '发布与渠道', 'traffic'],
-  ['conversations', '会话与客户', 'conversion'],
+  ['conversations', '智能客服', 'conversion'],
   ['orders', '订单管理', 'orders'],
   ['enterprise', '企业知识库', 'enterprise'],
-  ['organization', '组织权限', 'organizationPermissions'],
-  ['memory', 'Agent 记忆', 'agentMemory'],
   ['scheduled', '定时任务', 'scheduled'],
   ['scripts', '脚本库', 'scriptLibrary'],
+  ['memory', '智能体记忆', 'agentMemory'],
+  ['organization', '组织与权限', 'organizationPermissions'],
   ['integrations', '集成中心', 'plugins'],
   ['monitoring', '账号内容监控', 'socialMonitoring'],
   ['admin', '账号总控', 'admin'],
@@ -163,9 +165,13 @@ try {
     // scroll internally without expanding its containing main/content stack.
     const internalOverflow = dimensions?.overflowing.filter(element => element.scroll > element.width + 2) ?? [];
     const demoContentDetected = /本地模拟|本地演示|模拟客户/.test(body);
-    const currentPage = await page.evaluate(() => localStorage.getItem('ow_page')).catch(() => null);
-    const layoutPassed = !layoutIntegrity || (!layoutIntegrity.rowOverlaps.length && !layoutIntegrity.rowOverflow.length && !layoutIntegrity.tabsOverflow && layoutIntegrity.sidebarWidth <= 208);
-    const passed = !navigationError && !errors.length && !reactErrors.length && !boundaryFailure && mainText.length > 20 && currentPage === target && dimensions?.document <= width + 1 && !internalOverflow.length && layoutPassed;
+    const currentPage = new URL(page.url()).searchParams.get('page');
+    // This isolated tenant keeps the retained ads surface disabled; retired
+    // order and scheduler entry points also resolve into the operations home.
+    const expectedPage = ({ adsOverview: 'digitalEmployees', orders: 'digitalEmployees', scheduled: 'digitalEmployees' })[target] || target;
+    const maxSidebarWidth = width < 768 ? 72 : 264;
+    const layoutPassed = !layoutIntegrity || (!layoutIntegrity.rowOverlaps.length && !layoutIntegrity.rowOverflow.length && !layoutIntegrity.tabsOverflow && layoutIntegrity.sidebarWidth <= maxSidebarWidth);
+    const passed = !navigationError && !errors.length && !reactErrors.length && !boundaryFailure && mainText.length > 20 && currentPage === expectedPage && dimensions?.document <= width + 1 && !internalOverflow.length && layoutPassed;
     const screenshot = path.join(output, `${id}-${width}.png`);
     await page.screenshot({ path: screenshot, fullPage: true });
     const result = { id, label, width, passed, currentPage, navigationError, boundaryFailure, errors, reactErrors, consoleErrors: consoleErrors.slice(0, 12), dimensions, internalOverflow, layoutIntegrity, layoutPassed, demoContentDetected, requests: [...requests], mockedWrites, blockedExternal: [...new Set(blockedExternal)], screenshot, visibleText: body.slice(-8000) };

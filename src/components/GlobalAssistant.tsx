@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useCreationMode } from '../lib/creationMode';
 import { App as AntApp } from 'antd';
-import type { AgentAction, AgentType, Message, Page } from '../App';
+import type { AgentAction, AgentType, AssistantReferenceMedia, Message, Page } from '../App';
 import { authHeader, getToken } from '../lib/auth';
 import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import {
@@ -28,7 +28,10 @@ import { useAssistantQuickExecution } from './assistant/useAssistantQuickExecuti
 import { useAssistantTaskCardActions } from './assistant/useAssistantTaskCardActions';
 import { useAssistantDecisionDialog } from './assistant/useAssistantDecisionDialog';
 import { useAssistantPanelControls } from './assistant/useAssistantPanelControls';
+import { useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode } from './assistant/useAssistantHomeAnchor';
+import { useAssistantLauncherRetraction } from './assistant/useAssistantLauncherRetraction';
 import { useAssistantDecisionCount, useAssistantPageContextSignal } from './assistant/useAssistantPageSignals';
+import { useAssistantContentTaskCard } from './assistant/useAssistantContentTaskCard';
 import type { AssistantQuickExecution } from '../lib/assistantQuickEntries';
 import AssistantDecisionDialog from './assistant/AssistantDecisionDialog';
 import {
@@ -54,20 +57,9 @@ import {
   pageKey,
   type AssistantContext, type AssistantThreadSaveQueue,
 } from './assistant/globalAssistantRuntime';
-import { useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode } from './assistant/useAssistantHomeAnchor';
 
 type AssistantTool = 'knowledge-intake';
 const ASSISTANT_CONVERSATION_WELCOME_SEEN_KEY = 'lingshu-assistant-conversation-welcome-seen-v1';
-const ASSISTANT_LAUNCHER_RETRACTED_KEY = 'lingshu-assistant-launcher-retracted-v1';
-
-function readLauncherRetractedPreference() {
-  if (typeof window === 'undefined') return false;
-  try {
-    return window.localStorage.getItem(ASSISTANT_LAUNCHER_RETRACTED_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
 
 const ASSISTANT_UI_WATCHDOG_TIMEOUT_MS = 25_000;
 const ASSISTANT_CLOSED_CONVERSATION_TTL_MS = 5 * 60 * 1000;
@@ -107,7 +99,9 @@ export default function GlobalAssistant({
   const { modal, message: uiMessage } = AntApp.useApp();
   const reduceMotion = usePrefersReducedMotion();
   const [mode, setMode] = useState<'breathing' | 'chat'>('breathing');
-  const [launcherRetracted, setLauncherRetracted] = useState(readLauncherRetractedPreference);
+  const inlineHome = page === 'strategy';
+  const creationMode = useCreationMode();
+  const inlineHomeBounds = useAssistantHomeAnchor(inlineHome);
   const [panelView, setPanelView] = useState<AssistantPanelView>('chat');
   const [productionDecisionContext, setProductionDecisionContext] = useState<AssistantProductionContext | null>(null);
   const activeAgent = PRIMARY_ASSISTANT_THREAD;
@@ -126,19 +120,18 @@ export default function GlobalAssistant({
     width: typeof window === 'undefined' ? 1440 : window.innerWidth,
     height: typeof window === 'undefined' ? 900 : window.innerHeight,
   }));
-  const inlineHome = page === 'strategy';
-  const creationMode = useCreationMode();
-  const inlineHomeBounds = useAssistantHomeAnchor(inlineHome);
   const messageScrollRef = useRef<HTMLDivElement>(null);
   const assistantInputRef = useRef<HTMLTextAreaElement>(null);
   const launcherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
   const edgeLauncherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
+  const { launcherRetracted, retractLauncher, restoreLauncher } = useAssistantLauncherRetraction(launcherButtonRef, edgeLauncherButtonRef);
   const abortRef = useRef<AbortController | null>(null);
   const handledKickoffs = useRef(new Set<string>());
   const handledRestores = useRef(new Set<string>());
   const conversationPageRef = useRef(page);
   const assistantClosedRef = useRef<{ page: Page; at: number } | null>(null);
   const assistantThreadSaveQueuesRef = useRef(new Map<OrbitAgentId, AssistantThreadSaveQueue>());
+  const assistantAtomicMutationRef = useRef(false);
   const uploadedAttachmentCacheRef = useRef(new WeakMap<File, UploadedAssistantAttachment>());
   const welcomeBubbleScopeRef = useRef('');
   const stablePersistenceScope = useMemo<AssistantJournalScope>(() => ({
@@ -152,25 +145,6 @@ export default function GlobalAssistant({
     persistenceFenceRef.current.active = false;
     persistenceFenceRef.current = { scopeKey: persistenceScopeKey, active: true };
   }
-
-  const persistLauncherRetraction = useCallback((retracted: boolean) => {
-    setLauncherRetracted(retracted);
-    try {
-      window.localStorage.setItem(ASSISTANT_LAUNCHER_RETRACTED_KEY, String(retracted));
-    } catch {
-      // The explicit control remains usable when storage is unavailable.
-    }
-  }, []);
-
-  const retractLauncher = useCallback(() => {
-    persistLauncherRetraction(true);
-    window.requestAnimationFrame(() => edgeLauncherButtonRef.current?.focus());
-  }, [persistLauncherRetraction]);
-
-  const restoreLauncher = useCallback(() => {
-    persistLauncherRetraction(false);
-    window.requestAnimationFrame(() => launcherButtonRef.current?.focus());
-  }, [persistLauncherRetraction]);
 
   useEffect(() => {
     // React StrictMode deliberately runs effect setup -> cleanup -> setup in
@@ -280,10 +254,12 @@ export default function GlobalAssistant({
     return () => window.clearTimeout(timeoutId);
   }, [loading, setFollowingLatest, setMessages]);
 
-  const persistThread = useAssistantThreadSaveQueue({
+  const { persistThread, waitForInFlightThreadSave } = useAssistantThreadSaveQueue({
     stablePersistenceScope, persistenceFenceRef, assistantThreadSaveQueuesRef,
-    hydrateThread, setPersistenceMetadata,
+    persistencePauseRef: assistantAtomicMutationRef, hydrateThread, setPersistenceMetadata,
   });
+  useAssistantContentTaskCard({ active: mode === 'chat', focusedTaskId: activeThread.focusedTaskId,
+    agentId: activeAgent, scopeKey: persistenceScopeKey, upsertTaskCard, persistThread });
   const {
     decisionDialog, setDecisionDialog, decisionFeedRevision, setDecisionFeedRevision,
     decisionTotal, setDecisionTotal, decisionDialogRestoreFocusRef,
@@ -500,11 +476,11 @@ export default function GlobalAssistant({
 
   const { send, sendComposerMessage } = useAssistantSend({
     page, pageContext, currentPageAgent, enterpriseContext, loading, fileGenerating, replyStreaming,
-    contentIntake, uiMessage, modal, persistenceFenceRef, stablePersistenceScope,
-    pendingMapFileRef, pipelineModalOpenRef, abortRef, openAgent, presentActionResponse,
-    setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, setLoading,
-    setFileGenerating, setReplyStreaming, setAssistantTool, setPanelView, setWelcomeBubbleVisible,
-    setMode, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
+    contentIntake, uiMessage, persistenceFenceRef, stablePersistenceScope, assistantAtomicMutationRef,
+    waitForInFlightThreadSave,
+    pendingMapFileRef, abortRef, openAgent, presentActionResponse,
+    setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, focusTaskCard, hydrateThread, setLoading,
+    setFileGenerating, setReplyStreaming, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
     activeAgent, draftInput: activeThread.draftInput, pendingAttachments, attachmentUploading,
     weeklyPlanKickoffAvailable, uploadedAttachmentCacheRef, setAttachmentError,
     setAttachmentUploading, setPendingAttachments, openWeeklyPlanFromAssistant,
@@ -516,10 +492,11 @@ export default function GlobalAssistant({
     setMode, setLoading, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
   });
 
-  const { handleTaskCardAction, toggleTaskPaused } = useAssistantTaskCardActions({
+  const { handleTaskCardAction, toggleTaskPaused, handleContentArtifactDecision,
+    handleContentDeliveryCreate, handleContentDeliveryDownload } = useAssistantTaskCardActions({
     activeAgent, currentPageAgent, page, focusedRunControl, loading, abortRef,
     setLoading, setPanelView, setMode, send, presentActionResponse, persistThread,
-    closeDecisionDialog, closeDecisionDialogForNavigation, onSessionRefresh, requestId,
+    closeDecisionDialog, closeDecisionDialogForNavigation, onSessionRefresh, requestId, upsertTaskCard,
   });
 
   const assistantThreadHydrated = useAssistantThreadHydration({
@@ -554,13 +531,9 @@ export default function GlobalAssistant({
 
   useAssistantPageContextSignal(page, setLiveContext);
 
-  useEffect(() => {
-    setWeeklyPlanPromptDismissed(false);
-  }, [normalizedPage, pageContext.workflowStage]);
-
+  useEffect(() => { setWeeklyPlanPromptDismissed(false); }, [normalizedPage, pageContext.workflowStage]);
   useAssistantDecisionCount({ mode, page, goalId: pageContext.goalId,
     persistenceScopeKey, suppressForRightSidebar, setDecisionTotal });
-
   const { performance, performanceHidden, setPerformanceHidden, performanceMessage,
     speechBubble, setSpeechBubble } = useAssistantNotifications({
     mode, setMode, primaryEntry, compactMode, focusTaskCard, setUnreadCount, upsertTaskCard,
@@ -568,33 +541,45 @@ export default function GlobalAssistant({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ text?: string; assistantText?: string; context?: Partial<AssistantContext>; tool?: AssistantTool }>).detail;
+      const detail = (event as CustomEvent<{ text?: string; assistantText?: string; scriptedReply?: string; context?: Partial<AssistantContext>; tool?: AssistantTool; referenceMedia?: AssistantReferenceMedia }>).detail;
       let targetContext = pageContext;
       if (detail?.context?.agent && detail.context.label && detail.context.summary) {
         targetContext = {
-          agent: detail.context.agent,
-          label: detail.context.label,
-          summary: detail.context.summary,
+          agent: detail.context.agent, label: detail.context.label, summary: detail.context.summary,
           suggestions: detail.context.suggestions?.length ? detail.context.suggestions : pageContext.suggestions,
           pendingCount: typeof detail.context.pendingCount === 'number' ? detail.context.pendingCount : pageContext.pendingCount,
           todoItems: Array.isArray(detail.context.todoItems) ? detail.context.todoItems : pageContext.todoItems,
+          sourcePage: detail.context.sourcePage || normalizedPage, goalId: detail.context.goalId,
+          planId: detail.context.planId, runId: detail.context.runId, taskId: detail.context.taskId,
+          contentId: detail.context.contentId, viewKey: detail.context.viewKey,
+          workflowStage: detail.context.workflowStage,
         };
         setLiveContext(targetContext);
       }
       const routeAgent = orbitIdForAgent(targetContext.agent, currentPageAgent);
       openAgent(routeAgent, 'chat');
       if (detail?.tool === 'knowledge-intake') setAssistantTool('knowledge-intake');
+      const scriptedReply = detail?.scriptedReply?.trim();
+      const text = detail?.text?.trim();
+      if (scriptedReply && text) {
+        abortRef.current?.abort(); abortRef.current = null;
+        setLoading(false);
+        setMessages(PRIMARY_ASSISTANT_THREAD, [{ role: 'user', content: text }, { role: 'assistant', content: scriptedReply }]);
+        setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true);
+        setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
+        window.setTimeout(() => persistThread(PRIMARY_ASSISTANT_THREAD), 0);
+        return;
+      }
       const assistantText = detail?.assistantText?.trim();
       if (assistantText) {
         const current = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages;
         setMessages(PRIMARY_ASSISTANT_THREAD, [...current, { role: 'assistant', content: assistantText }]);
       }
-      const text = detail?.text?.trim();
-      if (text) window.setTimeout(() => void send(text, routeAgent, targetContext), 0);
+      if (text) window.setTimeout(() => void send(text, routeAgent, targetContext, [], detail?.referenceMedia), 0);
     };
     window.addEventListener('lingshu-assistant-open', handler);
     return () => window.removeEventListener('lingshu-assistant-open', handler);
-  }, [currentPageAgent, openAgent, pageContext, send]);
+  }, [currentPageAgent, normalizedPage, openAgent, pageContext, persistThread, send, setDraftInput, setFollowingLatest, setMessages]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -696,8 +681,8 @@ export default function GlobalAssistant({
   }, [activeAgent, activeThread.draftInput, activeThread.creationDraft, activeThread.focusedTaskId, activeThread.isFollowingLatest, activeThread.messages, activeThread.paused, activeThread.scrollPosition, activeThread.taskCards, activeThread.unreadCount, mode, persistThread]);
 
   useAssistantHomeMode(inlineHome, setMode);
-  const { closeAssistant, returnToConversation, handleLauncherClick } = useAssistantPanelControls({ inlineHome,
-    activeAgent, page, mode, assistantTool, decisionDialog, launcherRetracted,
+  const { closeAssistant, returnToConversation, handleLauncherClick } = useAssistantPanelControls({
+    activeAgent, page, inlineHome, mode, assistantTool, decisionDialog, launcherRetracted,
     assistantClosedRef, launcherButtonRef, edgeLauncherButtonRef, messageScrollRef,
     persistThread, setAssistantTool, setPanelView, setDecisionDialog,
     setWelcomeBubbleVisible, setMode, setViewport, openCurrentPageAgent,
@@ -705,15 +690,16 @@ export default function GlobalAssistant({
 
   const inlineHomeAnchor = inlineHomeBounds ? document.getElementById('content-creation-assistant-anchor') : null;
   if (suppressForRightSidebar || (inlineHome && !inlineHomeAnchor)) return null;
+
   const assistantRoot = (
     <div
       data-global-assistant="root"
-      data-inline-home={inlineHomeBounds ? 'true' : undefined}
+      data-inline-home={inlineHomeAnchor ? 'true' : undefined}
       data-home-empty={inlineHome && !activeThread.messages.length && !loading && !activeThread.creationDraft ? 'true' : undefined}
       data-home-creation-mode={inlineHomeBounds ? creationMode : undefined}
       className={inlineHomeAnchor ? 'ls-assistant-home-root absolute inset-0 z-[75]' : `fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'}`}
     >
-      <AssistantFloatingReminders
+      {!inlineHome && <AssistantFloatingReminders
         page={page}
         mode={mode}
         launcherRetracted={launcherRetracted}
@@ -737,7 +723,7 @@ export default function GlobalAssistant({
         }}
         enterpriseGuideSeen={enterpriseGuideSeen}
         onOpenCurrentPageAgent={openCurrentPageAgent}
-      />
+      />}
 
       <AssistantConversationPanel
         page={page} pageContext={pageContext} currentPageAgent={currentPageAgent}
@@ -781,6 +767,9 @@ export default function GlobalAssistant({
         handleDecisionActionResult={handleDecisionActionResult}
         toggleTaskPaused={toggleTaskPaused}
         handleTaskCardAction={handleTaskCardAction}
+        handleContentArtifactDecision={handleContentArtifactDecision}
+        handleContentDeliveryCreate={handleContentDeliveryCreate}
+        handleContentDeliveryDownload={handleContentDeliveryDownload}
       />
 
       {!inlineHome && <AssistantLauncher

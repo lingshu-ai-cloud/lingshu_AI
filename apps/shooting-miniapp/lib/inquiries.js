@@ -11,17 +11,28 @@ function normalizeCustomer(customer) {
   const source = text(customer.source).toLowerCase()
   const channel = source.includes('whatsapp') || text(customer.channel) === 'WhatsApp' || text(customer.id).startsWith('wa_') ? 'WhatsApp' : source.includes('instagram') || text(customer.id).startsWith('instagram_') ? 'Instagram' : 'Messenger'
   const name = text(customer.name || customer.whatsappProfileName || customer.username || customer.messengerUserId || customer.instagramUserId) || '新询盘客户'
+  const status = statusOf(customer)
+  const statusLabel = status === 'confirm' ? '待回复' : '待跟进'
+  const tags = Array.isArray(customer.tags) ? customer.tags.map(text).filter(Boolean) : []
   return {
     id: text(customer.id), name, initial: name.slice(0, 1).toUpperCase(), channel,
-    status: statusOf(customer), statusLabel: statusOf(customer) === 'confirm' ? '待确认' : '待跟进',
+    status, statusLabel, labels: [statusLabel, ...tags].slice(0, 2),
     country: text(customer.country || customer.countryName || customer.region), language: text(customer.language),
-    stage: text(customer.stage), tags: Array.isArray(customer.tags) ? customer.tags.map(text).filter(Boolean) : [],
+    stage: text(customer.stage), tags,
     unread: Boolean(customer.hasUnread || customer.unreadCount), unreadCount: Number(customer.unreadCount || (customer.hasUnread ? 1 : 0)),
     activeAt, timeLabel: formatRelative(activeAt), preview: text(latest.body || customer.lastMessage || customer.pendingDraft) || '暂无消息内容',
     pendingDraft: text(customer.pendingDraft), timeline: Array.isArray(customer.timeline) ? customer.timeline : [], readOnly: Boolean(customer.readOnly), isLocal: Boolean(customer.isLocal), isMock: Boolean(customer.isMock), raw: customer
   }
 }
 function formatRelative(value, now = Date.now()) { if (!value) return ''; const gap = Math.max(0, now - value); if (gap < 60000) return '刚刚'; if (gap < 3600000) return Math.floor(gap / 60000) + '分钟前'; if (gap < 86400000) return Math.floor(gap / 3600000) + '小时前'; const d = new Date(value); return `${d.getMonth() + 1}/${d.getDate()}` }
+function customerActivityDate(customer) {
+  const raw = customer.lastActiveAt || customer.updatedAt || customer.updated_at || customer.createdAt || customer.created_at
+  if (!raw) return ''
+  const numeric = Number(raw)
+  const value = Number.isFinite(numeric) && numeric > 0 ? numeric : raw
+  const date = new Date(value)
+  return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : ''
+}
 function filterInquiries(items, filters) {
   const query = text(filters.query).toLowerCase()
   return items.filter(item => (!filters.status || item.status === filters.status)
@@ -57,4 +68,4 @@ function messagesOf(customer) {
   })
   return messages
 }
-module.exports = { normalizeCustomer, filterInquiries, messagesOf, statusOf, formatRelative }
+module.exports = { normalizeCustomer, filterInquiries, messagesOf, statusOf, formatRelative, customerActivityDate }

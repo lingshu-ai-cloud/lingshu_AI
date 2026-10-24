@@ -4,6 +4,7 @@ import { availableProductPage, PLATFORM_ADS_PAGE_IDS, PLATFORM_ADS_SURFACE_ENABL
 import {
   PAGE_IDS,
   PAGE_REGISTRY,
+  isPageInNavigationBranch,
   PRIMARY_SOCIAL_NAV_PAGES,
   SOCIAL_PROGRAM_NAV_PAGES,
   resolveNavigationPage,
@@ -17,10 +18,11 @@ for (const page of PAGE_IDS) {
 }
 
 for (const [page, title] of Object.entries({
-  strategy: '内容创作',
+  strategy: 'hi，灵小枢',
+  socialInspiration: '内容创作',
   digitalEmployees: '经营总览',
-  conversion: '客户会话',
-  adsOverview: '平台投流',
+  adsOverview: '智能投流',
+  conversion: '智能客服',
   orders: '订单',
   enterprise: '企业知识库',
   scheduled: '定时任务',
@@ -36,7 +38,7 @@ assert.deepEqual(PRIMARY_SOCIAL_NAV_PAGES, [
   'traffic',
 ]);
 assert.deepEqual(PRIMARY_SOCIAL_NAV_PAGES.map(page => PAGE_REGISTRY[page].navLabel), [
-  '灵感爆款',
+  '内容创作',
   '内容制作',
   '发布与渠道',
 ]);
@@ -49,6 +51,10 @@ assert.equal(resolvePage('wecomCustomerService'), 'conversion');
 
 assert.equal(resolvePage('retention'), 'conversion', 'the old retention deep link stays compatible');
 assert.equal(resolvePage('accountManagement'), 'socialMonitoring', 'the removed account settings surface forwards to account monitoring');
+assert.equal(resolvePage('agentMemory'), 'agentMemory', 'retained memory page preserves its identity');
+assert.equal(resolvePage('organizationPermissions'), 'organizationPermissions', 'retained organization page preserves its identity');
+assert.equal(resolveNavigationPage('agentMemory'), 'agentMemory');
+assert.equal(resolveNavigationPage('organizationPermissions'), 'organizationPermissions');
 assert.equal(resolveNavigationPage('traffic', 'materials'), 'socialInspiration');
 assert.equal(resolveNavigationPage('traffic', 'create'), 'smartAssets');
 assert.equal(resolveNavigationPage('traffic', 'publish'), 'traffic');
@@ -57,14 +63,16 @@ assert.equal(resolveNavigationPage('not-a-page', 'create'), null);
 assert.equal(PAGE_REGISTRY.scriptLibrary.navParent, 'smartAssets');
 assert.equal(PAGE_REGISTRY.channels.navParent, 'plugins');
 assert.equal(PAGE_REGISTRY.accountManagement.navParent, 'socialMonitoring');
-assert.equal(PLATFORM_ADS_SURFACE_ENABLED, true, 'the 投放管理 product unit must be visible');
+assert.equal(PLATFORM_ADS_SURFACE_ENABLED, true, 'the 投流 product entry must be visible');
 assert.deepEqual(PLATFORM_ADS_PAGE_IDS, ['adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged']);
-assert.deepEqual(['adsPlans', 'adsOverview', 'adsCreatives'].map(page => PAGE_REGISTRY[page as 'adsPlans' | 'adsOverview' | 'adsCreatives'].navLabel), [
-  '计划创编',
-  '平台投流',
-  '素材管理',
-]);
+assert.deepEqual(['adsOverview', 'adsPlans', 'adsCreatives'].map(page => PAGE_REGISTRY[page as 'adsPlans' | 'adsOverview' | 'adsCreatives'].navLabel), ['智能投流', '计划创编', '素材管理']);
+assert.equal(PAGE_REGISTRY.adsPlans.navParent, 'adsOverview');
+assert.equal(PAGE_REGISTRY.adsCreatives.navParent, 'adsOverview');
 assert.equal(PAGE_REGISTRY.adsManaged.navParent, 'adsPlans', 'legacy AI managed links must resolve under the plan workspace');
+assert.equal(isPageInNavigationBranch('adsPlans', 'adsOverview'), true);
+assert.equal(isPageInNavigationBranch('adsCreatives', 'adsOverview'), true);
+assert.equal(isPageInNavigationBranch('adsManaged', 'adsOverview'), true);
+assert.equal(isPageInNavigationBranch('adsManaged', 'conversion'), false);
 assert.equal(availableProductPage('adsOverview'), 'adsOverview');
 
 console.log('Page registry tests passed');

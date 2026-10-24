@@ -115,7 +115,8 @@ test('durable GIF plates compose fixed frames and one idempotent delivery withou
   const approved = await updateSocialImageTask(store, 'tenant-a', created.id, delivered.version,
     { outputs: passed, status: 'approved', fieldsToConfirm: [] });
   assert.equal(approved.kind, 'updated');
-  if (approved.kind === 'updated') assert.equal(approved.task.publishable, true);
+  if (approved.kind === 'updated') assert.equal(approved.task.publishable, false,
+    'encoded GIF motion evidence is mandatory even when all still-frame checks are marked pass');
 });
 
 test('GIF finalization refuses unresolved paid plates before persisting any asset', async () => {

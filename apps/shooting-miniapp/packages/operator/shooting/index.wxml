@@ -1,4 +1,4 @@
-<view class="page">
+<view class="page" style="padding-bottom:calc(224rpx + env(safe-area-inset-bottom))">
   <view wx:if="{{!loggedIn}}" class="login surface">
     <view class="ls-brand"><image class="ls-brand-logo" src="/assets/brand-logo.png" mode="aspectFit" aria-hidden="true"/><text>灵枢AI</text></view>
     <view class="eyebrow">运营工作台</view>
@@ -11,38 +11,23 @@
 
   <block wx:else>
     <view wx:if="{{!selected}}">
-      <view class="header">
-        <view class="header-action" bindtap="signOut">退出</view>
-      </view>
+      <view class="asset-head"><view><text class="asset-title">素材拍摄</text><text class="asset-note">按任务状态和负责人完成镜头采集</text></view><view class="header-action" bindtap="signOut">退出</view></view>
+      <view class="asset-toolbar"><view class="view-toggle"><view class="view-icon active">▦</view><view class="view-icon">☷</view></view><text class="asset-total">{{tasks.length}} 个任务</text></view>
+      <scroll-view scroll-x class="task-filter-scroll" show-scrollbar="false"><view class="task-filters"><view wx:for="{{taskFilters}}" wx:key="key" class="task-filter {{taskFilter === item.key ? 'active' : ''}}" data-filter="{{item.key}}" bindtap="selectTaskFilter">{{item.label}} {{item.count}}</view></view></scroll-view>
 
-      <view class="summary surface">
-        <view><text class="summary-value">{{pendingCount}}</text><text class="summary-label">待完成</text></view>
-        <view class="summary-divider"></view>
-        <view><text class="summary-value summary-complete">{{completedCount}}</text><text class="summary-label">已完成</text></view>
-      </view>
-
-      <view wx:for="{{taskGroups}}" wx:for-item="group" wx:key="key" class="date-section">
+      <view wx:for="{{visibleTaskGroups}}" wx:for-item="group" wx:key="key" class="date-section">
         <view class="date-heading"><text>{{group.label}}</text><text class="date-text">{{group.dateText}}</text></view>
-        <view wx:for="{{group.tasks}}" wx:for-item="item" wx:key="id" class="shoot-card surface {{item.done ? 'shoot-card-done' : ''}}" data-id="{{item.id}}" bindtap="selectTask">
-          <view wx:if="{{!item.done && item.cardPreview}}" class="shot-media shot-preview-shell" catchtap="ignoreCardTap">
-            <video id="{{item.previewPlayerId}}" class="shot-preview" src="{{item.cardPreview.url}}" poster="{{item.cardPreview.poster}}" initial-time="{{item.cardPreview.start}}" controls="{{false}}" show-center-play-btn object-fit="contain" data-player="{{item.previewPlayerId}}" data-start="{{item.cardPreview.start}}" data-end="{{item.cardPreview.end}}" bindplay="cardPreviewPlay" bindtimeupdate="cardPreviewTimeUpdate"></video>
-            <text class="shot-preview-badge">{{item.cardPreview.sourceLabel}} · 最多 3 秒</text>
+        <view class="shoot-grid">
+          <view wx:for="{{group.tasks}}" wx:for-item="item" wx:key="id" class="shoot-card {{item.done ? 'shoot-card-done' : ''}}" data-id="{{item.id}}" bindtap="selectTask">
+            <view wx:if="{{!item.done && item.cardPreview}}" class="shot-media shot-preview-shell" catchtap="ignoreCardTap"><video id="{{item.previewPlayerId}}" class="shot-preview" src="{{item.cardPreview.url}}" poster="{{item.cardPreview.poster}}" initial-time="{{item.cardPreview.start}}" controls="{{false}}" show-center-play-btn object-fit="cover" data-player="{{item.previewPlayerId}}" data-start="{{item.cardPreview.start}}" data-end="{{item.cardPreview.end}}" bindplay="cardPreviewPlay" bindtimeupdate="cardPreviewTimeUpdate"></video><text class="shot-preview-badge">最多 3 秒</text><text class="shot-ratio">{{item.ratio || '9:16'}}</text></view>
+            <view wx:else class="shot-media {{item.done ? 'shot-media-done' : ''}}"><text class="shot-media-label">{{item.done ? '已拍' : '分镜'}}</text><text class="shot-media-ratio">{{item.ratio || '9:16'}}</text></view>
+            <view class="shoot-content"><text class="shoot-title">{{item.title}}</text><text class="shoot-context">{{item.productLabel || item.themeTitle || '拍摄素材任务'}}</text><view class="asset-field"><text class="asset-field-label">状态</text><text class="status {{item.done ? 'status-done' : ''}}">{{item.reviewLabel}}</text></view><view class="asset-field"><text class="asset-field-label">负责人</text><view class="assignee"><text class="assignee-avatar">{{item.assigneeInitial}}</text><text>{{item.assigneeLabel}}</text></view></view></view>
+            <view class="card-more">•••</view>
           </view>
-          <view wx:else class="shot-media {{item.done ? 'shot-media-done' : ''}}">
-            <text class="shot-media-label">{{item.done ? '已拍' : '分镜'}}</text>
-            <text class="shot-media-ratio">{{item.ratio || '9:16'}}</text>
-          </view>
-          <view class="shoot-content">
-            <view class="shoot-top"><text class="shoot-title">{{item.title}}</text><text class="status {{item.done ? 'status-done' : ''}}">{{item.done ? '已完成' : '待拍'}}</text></view>
-            <view class="shoot-context">{{item.productLabel || item.themeTitle || '拍摄素材任务'}}</view>
-            <view class="shoot-brief">{{item.shotBrief}}</view>
-            <view class="shoot-meta"><text>{{item.timeText}}</text><text>{{item.durationText}}</text><text>{{item.soundText}}</text></view>
-          </view>
-          <view class="chevron">›</view>
         </view>
       </view>
 
-      <view wx:if="{{!taskGroups.length && !loading}}" class="empty surface">
+      <view wx:if="{{!visibleTaskGroups.length && !loading}}" class="empty surface">
         <view class="empty-check">✓</view>
         <view class="empty-title">没有待拍任务</view>
         <view class="muted">新的拍摄任务会由网页端或 Agent 排期生成</view>
@@ -112,5 +97,6 @@
     </view>
   </block>
   <view wx:if="{{message}}" class="message">{{message}}</view>
-  <operator-nav wx:if="{{loggedIn && !selected}}" active="shooting"></operator-nav>
+  <lingxiaoshu-sheet wx:if="{{loggedIn && !selected}}" id="lingxiaoshu-sheet"></lingxiaoshu-sheet>
+  <operator-nav wx:if="{{loggedIn && !selected}}" active="shooting" bindassistant="openAssistant"></operator-nav>
 </view>

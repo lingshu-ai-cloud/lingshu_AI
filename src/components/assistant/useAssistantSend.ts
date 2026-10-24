@@ -3,7 +3,7 @@ import type { CreationTurn } from '../../../shared/contracts/contentCreationDial
 import { useCreationMode } from '../../lib/creationMode';
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { App as AntApp } from 'antd';
-import type { AgentType, Message, Page } from '../../App';
+import type { AgentType, AssistantReferenceMedia, Message, Page } from '../../App';
 import { authHeader, getToken } from '../../lib/auth';
 import { sameAssistantRequestIdentity } from '../../lib/assistantRequestLifecycle';
 import { executeAssistantAction } from '../../lib/assistantActionRequest';
@@ -38,11 +38,11 @@ type AssistantSendInput = {
   replyStreaming: boolean;
   contentIntake: ReturnType<typeof useContentTaskIntake>;
   uiMessage: AppServices['message'];
-  modal: AppServices['modal'];
   persistenceFenceRef: { current: { scopeKey: string; active: boolean } };
   stablePersistenceScope: AssistantJournalScope;
+  assistantAtomicMutationRef: { current: boolean };
+  waitForInFlightThreadSave: (agentId: OrbitAgentId) => Promise<void>;
   pendingMapFileRef: { current: boolean };
-  pipelineModalOpenRef: { current: boolean };
   abortRef: { current: AbortController | null };
   openAgent: (agent: OrbitAgentId, view: 'chat') => void;
   presentActionResponse: (agent: OrbitAgentId, request: AssistantActionRequest, response: AssistantActionResponse) => void;
@@ -50,13 +50,11 @@ type AssistantSendInput = {
   setDraftInput: StoreActions['setDraftInput'];
   setFollowingLatest: StoreActions['setFollowingLatest'];
   upsertTaskCard: StoreActions['upsertTaskCard'];
+  focusTaskCard: StoreActions['focusTaskCard'];
+  hydrateThread: StoreActions['hydrateThread'];
   setLoading: Dispatch<SetStateAction<boolean>>;
   setFileGenerating: Dispatch<SetStateAction<boolean>>;
   setReplyStreaming: Dispatch<SetStateAction<boolean>>;
-  setAssistantTool: (value: null) => void;
-  setPanelView: (view: 'chat') => void;
-  setWelcomeBubbleVisible: Dispatch<SetStateAction<boolean>>;
-  setMode: (mode: 'breathing') => void;
   setPipelineRefresh: Dispatch<SetStateAction<number>>;
   persistThread: (agent: OrbitAgentId) => void;
   onSessionRefresh?: () => void;
@@ -83,11 +81,11 @@ const API_PATH: Record<AgentType, string> = {
 /** Sends one scoped assistant turn; the parent still owns identity and conversation state. */
 export function useAssistantSend(input: AssistantSendInput) {
   const { page, pageContext, currentPageAgent, enterpriseContext, loading, fileGenerating,
-    replyStreaming, contentIntake, uiMessage, modal, persistenceFenceRef, stablePersistenceScope,
-    pendingMapFileRef, pipelineModalOpenRef, abortRef, openAgent, presentActionResponse,
-    setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, setLoading,
-    setFileGenerating, setReplyStreaming, setAssistantTool, setPanelView, setWelcomeBubbleVisible,
-    setMode, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
+    replyStreaming, contentIntake, uiMessage, persistenceFenceRef, stablePersistenceScope,
+    assistantAtomicMutationRef, waitForInFlightThreadSave, pendingMapFileRef, abortRef, openAgent, presentActionResponse,
+    setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, focusTaskCard, hydrateThread, setLoading,
+    setFileGenerating, setReplyStreaming,
+    setPipelineRefresh, persistThread, onSessionRefresh, requestId,
     activeAgent, draftInput, pendingAttachments, attachmentUploading, weeklyPlanKickoffAvailable,
     uploadedAttachmentCacheRef, setAttachmentError, setAttachmentUploading, setPendingAttachments,
     openWeeklyPlanFromAssistant } = input;
@@ -97,8 +95,10 @@ export function useAssistantSend(input: AssistantSendInput) {
     routeAgent = currentPageAgent,
     forcedContext?: AssistantContext,
     uploadedAttachments: UploadedAssistantAttachment[] = [],
-    creationAction?: CreationTurn['action'],
+    creationActionOrReference?: CreationTurn['action'] | AssistantReferenceMedia,
   ) => {
+    const creationAction = typeof creationActionOrReference === 'string' ? creationActionOrReference : undefined;
+    const referenceMedia = typeof creationActionOrReference === 'object' ? creationActionOrReference : undefined;
     const userText = text.trim();
     if ((!userText && !uploadedAttachments.length) || loading || fileGenerating || replyStreaming) return;
     const creationDraft = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].creationDraft;
@@ -162,44 +162,52 @@ export function useAssistantSend(input: AssistantSendInput) {
     const enterpriseBrief = compactText(enterpriseContext);
     const conversationContext = selectAssistantConversationContext(mergeConsecutiveAssistant(thread.messages));
     const historyForApi = conversationContext.messages;
-    const nextVisible = [...mergeConsecutiveAssistant(thread.messages), { role: 'user' as const, content: visibleMessage }];
+    const nextVisible = [...mergeConsecutiveAssistant(thread.messages), {
+      role: 'user' as const,
+      content: visibleMessage,
+      ...(referenceMedia ? { referenceMedia } : {}),
+    }];
+
+    const clarifiedDiagram = pendingMapFileRef.current && /(?:业务|路线图|思维导图|流程图|战略)/u.test(visibleText);
+    const fileIntent = assistantFileIntent(visibleText) || (clarifiedDiagram ? { format: 'jpg' as const, diagram: true, needsMapScope: false } : null);
+    const productionIntent = (page === 'strategy' && creationMode === 'free' && creationDraft) || uploadedAttachments.length || fileIntent ? null : assistantProductionIntent(visibleText);
+    if (productionIntent && !['smartAssets', 'socialInspiration'].includes(page)) {
+      assistantAtomicMutationRef.current = true;
+      setLoading(true);
+      openAgent(routeAgent, 'chat');
+      try {
+        await runAssistantProductionRequest({
+          productionIntent, requestMessage: visibleMessage, threadAgent, expectedThreadVersion: thread.version, currentScope,
+          waitForInFlightThreadSave,
+          setLoading, upsertTaskCard, focusTaskCard, hydrateThread, setMessages, persistThread,
+          onSessionRefresh,
+          refreshPipeline: () => setPipelineRefresh(value => value + 1),
+        });
+      } finally {
+        assistantAtomicMutationRef.current = false;
+      }
+      if (currentScope()) {
+        setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true); persistThread(threadAgent);
+      }
+      return;
+    }
     setMessages(threadAgent, nextVisible);
     setDraftInput(threadAgent, '');
     setFollowingLatest(threadAgent, true);
     setLoading(true);
     openAgent(routeAgent, 'chat');
 
-    const clarifiedDiagram = pendingMapFileRef.current && /(?:业务|路线图|思维导图|流程图|战略)/u.test(visibleText);
-    const fileIntent = assistantFileIntent(visibleText) || (clarifiedDiagram ? { format: 'jpg' as const, diagram: true, needsMapScope: false } : null);
     if (fileIntent?.needsMapScope) {
       pendingMapFileRef.current = true;
       setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: '你需要的是业务路线图，还是地理地图？业务路线图可以导出 JPG；地理地图还需要明确地区、标注内容和可靠地图来源，不能用文字示意图冒充真实地图。' }]);
       setLoading(false); persistThread(threadAgent); return;
     }
     pendingMapFileRef.current = false;
-    const productionIntent = (page === 'strategy' && creationMode === 'free' && creationDraft) || uploadedAttachments.length || fileIntent ? null : assistantProductionIntent(visibleText);
     if (productionIntent && ['smartAssets', 'socialInspiration'].includes(page)) {
       setLoading(false);
       contentIntake.start(productionIntent.objective, productionIntent);
       return;
     }
-    if (productionIntent) {
-      await runAssistantProductionRequest({
-        productionIntent, threadAgent, currentScope, pipelineModalOpenRef,
-        modal, uiMessage, setLoading, upsertTaskCard, setMessages, persistThread,
-        onSessionRefresh,
-        refreshPipeline: () => setPipelineRefresh(value => value + 1),
-        closeForNavigation: () => {
-          setAssistantTool(null);
-          setPanelView('chat');
-          setWelcomeBubbleVisible(false);
-          setMode('breathing');
-        },
-        requestId,
-      });
-      return;
-    }
-
     const focusedCard = thread.focusedTaskId ? thread.taskCards[thread.focusedTaskId] ?? null : null;
     // Attachments deliberately bypass the deterministic action router. The
     // router accepts only server-signed business object/version inputs; a
@@ -339,7 +347,7 @@ export function useAssistantSend(input: AssistantSendInput) {
         onSessionRefresh?.();
       }
     }
-  }, [creationMode, replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, loading, modal, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard, stablePersistenceScope]);
+  }, [creationMode, assistantAtomicMutationRef, waitForInFlightThreadSave, replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, focusTaskCard, hydrateThread, loading, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard, stablePersistenceScope]);
 
   const sendComposerMessage = useCallback(async () => {
     if (loading || attachmentUploading) return;

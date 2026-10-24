@@ -1,3 +1,14 @@
+import type {
+  SocialImageAdaptationSpec,
+  SocialImageApprovedArtifact,
+  SocialImageApprovalDecision,
+  SocialImageDirectorReviewDecision,
+  SocialImageDeliveryPackage,
+  SocialImageHookFactorSpec,
+  SocialImageProductionRuntime,
+  SocialImageRepairPlan,
+} from './socialImageProduction';
+
 export const SOCIAL_IMAGE_CONTENT_TYPES = [
   'light_packaging', 'product_poster', 'brand_news', 'experiment_comparison',
   'trend', 'infographic', 'carousel', 'gif_poster',
@@ -187,9 +198,10 @@ export interface SocialImageDeliverySpec {
 }
 
 export type SocialImageQualityCheckKey =
-  | 'product_identity' | 'packaging_visibility' | 'subject_visibility' | 'label_ocr'
+  | 'file_decode' | 'pixel_dimensions' | 'product_identity' | 'packaging_visibility' | 'subject_visibility' | 'label_ocr'
   | 'fact_consistency' | 'copy_visual_consistency' | 'brand_consistency'
-  | 'text_overflow' | 'safe_zone' | 'reference_structure_similarity' | 'motion_mechanism_similarity';
+  | 'text_overflow' | 'safe_zone' | 'reference_structure_similarity' | 'motion_mechanism_similarity'
+  | `hook_factor:${string}`;
 
 export interface SocialImageQualityCheck {
   key: SocialImageQualityCheckKey;
@@ -210,8 +222,18 @@ export interface SocialImageOutputNode {
   state: 'pending' | 'generating' | 'quality_checking' | 'repair_required' | 'blocked' | 'approved' | 'superseded';
   mediaUrl?: string;
   materialId?: string;
+  /** Hash of the actual candidate bytes, not its URL or database binding. */
+  contentHash?: string;
   version: number;
   qualityChecks: SocialImageQualityCheck[];
+  /** Durable one-shot receipt for the paid visual preflight of exact candidate and reference bytes. */
+  qualityPreflight?: {
+    inputHash: string;
+    status: 'claimed' | 'completed' | 'outcome_unknown';
+    claimedAt: string;
+    completedAt?: string;
+    visualChecks?: SocialImageQualityCheck[];
+  };
   sourceJobId?: string;
 }
 
@@ -223,7 +245,7 @@ export interface SocialImageGifDelivery {
 }
 
 export interface SocialImageCreationTask {
-  schemaVersion: 'social-image-creation.v1' | 'social-image-creation.v2';
+  schemaVersion: 'social-image-creation.v1' | 'social-image-creation.v2' | 'social-image-creation.v3';
   id: string;
   version: number;
   title: string;
@@ -258,6 +280,15 @@ export interface SocialImageCreationTask {
   gifDelivery?: SocialImageGifDelivery;
   repairInstructions: SocialImageRepairInstruction[];
   outputs: SocialImageOutputNode[];
+  /** V3: one child run under the canonical ContentTask, including resumable node events. */
+  productionRuntime?: SocialImageProductionRuntime;
+  hookFactorSpec?: SocialImageHookFactorSpec;
+  adaptationSpec?: SocialImageAdaptationSpec;
+  directorReviewDecision?: SocialImageDirectorReviewDecision;
+  approvalDecisions?: SocialImageApprovalDecision[];
+  approvedArtifact?: SocialImageApprovedArtifact;
+  repairPlans?: SocialImageRepairPlan[];
+  deliveryPackages?: SocialImageDeliveryPackage[];
   fieldsToConfirm: string[];
   publishable: boolean;
   createdAt: string;
@@ -265,7 +296,7 @@ export interface SocialImageCreationTask {
 }
 
 export const SOCIAL_IMAGE_HARD_CHECKS: SocialImageQualityCheckKey[] = [
-  'product_identity', 'packaging_visibility', 'subject_visibility', 'label_ocr',
+  'file_decode', 'pixel_dimensions', 'product_identity', 'packaging_visibility', 'subject_visibility', 'label_ocr',
   'fact_consistency', 'copy_visual_consistency', 'brand_consistency', 'text_overflow', 'safe_zone',
 ];
 
@@ -277,6 +308,48 @@ export function socialImageCurrentOutputs(task: Pick<SocialImageCreationTask, 'o
     if (!current || output.version > current.version) latest.set(key, output);
   }
   return [...latest.values()];
+}
+
+/** Resolve the complete ordered review set. User approval is recorded for each
+ * deliverable in this set; internal GIF background plates stay excluded. */
+export function socialImageReviewOutputs(task: SocialImageCreationTask): SocialImageOutputNode[] {
+  const current = socialImageCurrentOutputs(task).filter(output => output.state !== 'superseded');
+  if (task.imageType !== 'carousel' && task.imageType !== 'gif_poster') {
+    const candidate = current.find(output => output.role === 'single');
+    return candidate ? [candidate] : [];
+  }
+  const plan = task.renderPlan;
+  if (!plan || plan.units.length !== task.deliverySpec.outputCount || !plan.units.length) return [];
+  const units = [...plan.units].sort((left, right) => left.index - right.index);
+  if (units.some((unit, index) => unit.index !== index)) return [];
+  if (task.imageType === 'carousel') {
+    const pages = units.map(unit => {
+      const job = task.generationJobs.find(item => item.id === unit.jobId && item.planVersion === plan.version
+        && item.unitIndex === unit.index && item.plannedInputHash === unit.plannedInputHash);
+      return current.find(output => output.role === 'carousel_page' && output.label === unit.label
+        && job?.outputNodeIds.includes(output.id)
+        && output.materialId && output.mediaUrl && /^[a-f0-9]{64}$/.test(output.contentHash || ''));
+    });
+    return pages.every(Boolean) ? pages as SocialImageOutputNode[] : [];
+  }
+  const delivery = task.gifDelivery;
+  if (!delivery || delivery.planVersion !== plan.version || delivery.sourceHash !== plan.sourceHash
+    || delivery.frameOutputIds.length !== units.length) return [];
+  const frames = units.map(unit => current.find(output => output.id === delivery.frameOutputIds[unit.index]
+    && output.role === 'gif_frame' && output.sourceJobId === unit.jobId && output.materialId && output.mediaUrl
+    && /^[a-f0-9]{64}$/.test(output.contentHash || '')));
+  const final = current.find(output => output.id === delivery.finalOutputId && output.role === 'gif_output'
+    && output.materialId && output.mediaUrl && /^[a-f0-9]{64}$/.test(output.contentHash || ''));
+  return frames.every(Boolean) && final ? [...frames as SocialImageOutputNode[], final] : [];
+}
+
+export function socialImageOutputHardChecksPassed(output: SocialImageOutputNode): boolean {
+  const standard = SOCIAL_IMAGE_HARD_CHECKS.every(key => output.qualityChecks.some(check => check.key === key
+    && check.severity === 'hard' && (check.verdict === 'pass' || check.verdict === 'not_applicable')));
+  if (!standard || output.role !== 'gif_output') return standard;
+  return output.qualityChecks.some(check => check.key === 'motion_mechanism_similarity'
+    && check.severity === 'hard' && check.verdict === 'pass' && check.checker === 'deterministic'
+    && check.evidence?.includes(`candidate-sha256:${output.contentHash}`));
 }
 
 function socialImageMultiOutputComplete(task: SocialImageCreationTask, outputs: SocialImageOutputNode[]): boolean {
@@ -300,12 +373,17 @@ function socialImageMultiOutputComplete(task: SocialImageCreationTask, outputs: 
 }
 
 function deliverableOutputs(task: SocialImageCreationTask, outputs: SocialImageOutputNode[]): SocialImageOutputNode[] {
-  return task.imageType === 'gif_poster' ? outputs.filter(output => output.role !== 'gif_plate') : outputs;
+  if (task.imageType === 'carousel' || task.imageType === 'gif_poster') {
+    const reviewSet = socialImageReviewOutputs(task);
+    return reviewSet.length ? reviewSet : outputs.filter(output => task.imageType === 'carousel'
+      ? output.role === 'carousel_page' : output.role === 'gif_frame' || output.role === 'gif_output');
+  }
+  return outputs;
 }
 
 export function socialImageTaskIssues(task: SocialImageCreationTask): string[] {
   const issues: string[] = [];
-  if (!['social-image-creation.v1', 'social-image-creation.v2'].includes(task.schemaVersion)) issues.push('合同版本无效');
+  if (!['social-image-creation.v1', 'social-image-creation.v2', 'social-image-creation.v3'].includes(task.schemaVersion)) issues.push('合同版本无效');
   if (!task.title.trim()) issues.push('缺少任务标题');
   if (!SOCIAL_IMAGE_CONTENT_TYPES.includes(task.imageType)) issues.push('图片类型无效');
   if (!task.contentBrief.coreClaim.trim()) issues.push('缺少核心主张');
@@ -315,25 +393,57 @@ export function socialImageTaskIssues(task: SocialImageCreationTask): string[] {
   if (task.imageType === 'gif_poster' && task.deliverySpec.format !== 'gif') issues.push('GIF 动态海报必须输出 GIF');
   if (task.deliverySpec.format === 'gif' && !task.deliverySpec.motion) issues.push('GIF 缺少动效规格');
   if (task.contentBrief.factuality === 'mock' && task.publishable) issues.push('模拟内容不可直接发布');
-  if (task.creationPath === 'viral_replication' && task.schemaVersion === 'social-image-creation.v2' && !task.referenceSnapshot) issues.push('爆款复刻缺少参考作品快照');
+  if (task.creationPath === 'viral_replication' && task.schemaVersion !== 'social-image-creation.v1' && !task.referenceSnapshot) issues.push('爆款复刻缺少参考作品快照');
   const identityBindings = task.enterpriseAssets.filter(asset => asset.role === 'product' || asset.role === 'logo');
-  if (task.schemaVersion === 'social-image-creation.v2' && identityBindings.some(asset => !asset.assetId || !asset.source.startsWith('enterprise_'))) issues.push('产品或 Logo 必须绑定企业知识库资产');
+  if (task.schemaVersion !== 'social-image-creation.v1' && identityBindings.some(asset => !asset.assetId || !asset.source.startsWith('enterprise_'))) issues.push('产品或 Logo 必须绑定企业知识库资产');
+  if (task.schemaVersion === 'social-image-creation.v3' && !task.productionRuntime?.binding) issues.push('图片运行未绑定统一内容任务');
   const currentOutputs = socialImageCurrentOutputs(task);
   if (task.status === 'approved' && !socialImageMultiOutputComplete(task, currentOutputs)) issues.push('多图单元或最终动图未全部完成审阅');
   const deliverables = deliverableOutputs(task, currentOutputs);
   const hardChecks = deliverables.flatMap(output => output.qualityChecks).filter(check => check.severity === 'hard');
   const failedHard = hardChecks.some(check => check.verdict !== 'pass' && check.verdict !== 'not_applicable');
-  const missingHard = deliverables.length > 0 && deliverables.some(output => SOCIAL_IMAGE_HARD_CHECKS.some(key => !output.qualityChecks.some(check => check.key === key && check.severity === 'hard')));
+  const missingHard = deliverables.length > 0 && deliverables.some(output => !socialImageOutputHardChecksPassed(output));
   if (failedHard && task.publishable) issues.push('硬质量门未全部通过');
   if (missingHard && task.publishable) issues.push('硬质量门结果不完整');
+  if (task.schemaVersion === 'social-image-creation.v3' && task.status === 'approved') {
+    const approval = task.approvalDecisions?.at(-1);
+    const artifact = task.approvedArtifact;
+    if (!approval || approval.decision !== 'approved' || approval.source !== 'explicit_user_action' || !artifact
+      || artifact.approvalDecisionId !== approval.decisionId || artifact.contentHash !== approval.candidateContentHash) {
+      issues.push('缺少显式用户验收凭证');
+    }
+    if ((task.imageType === 'carousel' || task.imageType === 'gif_poster') && artifact && approval) {
+      const reviewOutputs = socialImageReviewOutputs(task);
+      const expected = reviewOutputs.map(output => `${output.id}:${output.version}:${output.contentHash}`);
+      const approved = (artifact.candidateRefs || []).map(ref => `${ref.id}:${ref.version}:${ref.contentHash}`);
+      const decided = (approval.candidateRefs || []).map(ref => `${ref.id}:${ref.version}:${ref.contentHash}`);
+      if (!expected.length || JSON.stringify(expected) !== JSON.stringify(approved)
+        || JSON.stringify(expected) !== JSON.stringify(decided)) issues.push('多图成品验收引用与当前版本不一致');
+      if (!artifact.mediaItems || artifact.mediaItems.length !== reviewOutputs.length
+        || reviewOutputs.some((output, index) => artifact.mediaItems?.[index]?.candidateId !== output.id
+          || artifact.mediaItems?.[index]?.role !== output.role || artifact.mediaItems?.[index]?.materialId !== output.materialId
+          || artifact.mediaItems?.[index]?.mediaUrl !== output.mediaUrl)) issues.push('多图成品交付素材不完整');
+      const itemApprovals = task.approvalDecisions || [];
+      if (reviewOutputs.some(output => !itemApprovals.some(decision => decision.decision === 'approved'
+        && decision.source === 'explicit_user_action'
+        && decision.selectedCandidateRef?.id === output.id
+        && decision.selectedCandidateRef.version === output.version
+        && decision.selectedCandidateRef.contentHash === output.contentHash))) {
+        issues.push('多图成品缺少逐项用户验收凭证');
+      }
+    }
+  }
   return issues;
 }
 
 export function socialImageTaskCanPublish(task: SocialImageCreationTask): boolean {
   const currentOutputs = socialImageCurrentOutputs(task);
   const deliverables = deliverableOutputs(task, currentOutputs);
-  const hardChecksPassed = deliverables.length > 0 && deliverables.every(output => SOCIAL_IMAGE_HARD_CHECKS.every(key => output.qualityChecks.some(check => check.key === key && check.severity === 'hard' && (check.verdict === 'pass' || check.verdict === 'not_applicable'))));
-  return task.status === 'approved' && task.contentBrief.factuality !== 'mock' && task.fieldsToConfirm.length === 0 && socialImageTaskIssues({ ...task, publishable: false }).length === 0
+  const hardChecksPassed = deliverables.length > 0 && deliverables.every(socialImageOutputHardChecksPassed);
+  const explicitApproval = task.schemaVersion !== 'social-image-creation.v3' || Boolean(task.approvedArtifact
+    && task.approvalDecisions?.at(-1)?.decision === 'approved'
+    && task.approvalDecisions.at(-1)?.decisionId === task.approvedArtifact.approvalDecisionId);
+  return task.status === 'approved' && explicitApproval && task.contentBrief.factuality !== 'mock' && task.fieldsToConfirm.length === 0 && socialImageTaskIssues({ ...task, publishable: false }).length === 0
     && currentOutputs.length > 0
     && socialImageMultiOutputComplete(task, currentOutputs)
     && deliverables.every(output => output.state === 'approved') && hardChecksPassed;

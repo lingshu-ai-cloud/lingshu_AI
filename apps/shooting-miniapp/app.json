@@ -15,6 +15,7 @@
         "messages/index",
         "profile/index",
         "materials/index",
+        "content-task/index",
         "shooting/index",
         "camera/index",
         "review/index",

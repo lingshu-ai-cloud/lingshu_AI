@@ -22,7 +22,7 @@ assert.doesNotMatch(watchModal, />分析状态<|>入库时间<|>证据来源</, 
 assert.ok(watchModal.indexOf('>内容结构<') < watchModal.indexOf('>开场钩子<'), '内容结构摘要必须位于开场钩子上方');
 assert.doesNotMatch(source, /DiscoveryScopePanel|当前发现范围|导入对标视频并分析|inspiration-creation-account/, '灵感首页不得重复展示范围、创作账号和导入说明卡');
 assert.match(source, /<Tabs className="min-w-0 flex-1"[^]*?<AntUpload className="shrink-0 pt-1"[^]*?>导入 MP4 并分析</, '导入动作必须收进 Tabs 右侧工具栏');
-assert.match(cardsSource, /apiUrl=\{video\.videoUrl\}[^]*?loadOnMount[^]*?previewFrame[^]*?preload="auto"/, '爆款视频卡必须主动加载首帧，不能依赖悬停');
+assert.match(cardsSource, /useNearViewportMedia\(video\.videoUrl[\s\S]*?video\.videoUrl && media\.enabled[\s\S]*?apiUrl=\{video\.videoUrl\}[\s\S]*?loadOnMount[\s\S]*?previewFrame[\s\S]*?preload="auto"/, '爆款视频卡接近视口才主动加载首帧');
 assert.match(cardsSource, /analysisPaused[^]*?mediaState = !analysisPaused/, '暂停分析不得用状态遮罩盖住现有封面');
 assert.match(progressSource, /isInterrupted[^]*?>继续分析</, '暂停或取消后必须提供继续分析入口');
 assert.match(source, /import \{ MaterialLibraryCardMedia \} from '.\/MaterialLibraryCardMedia'/);

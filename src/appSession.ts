@@ -1,10 +1,20 @@
 import type { CreationReply } from '../shared/contracts/contentCreationDialogue';
 import type { AuthSession } from './lib/auth';
-import { resolveNavigationPage, resolvePage, type Page } from './pageRegistry';
+import { resolveNavigationPage, type Page } from './pageRegistry';
 
 export type AgentType = 'strategy' | 'traffic' | 'conversion' | 'retention';
 export interface Source { title: string; uri: string }
-export interface Message { role: 'user' | 'assistant'; content: string; sources?: Source[]; creation?: CreationReply }
+export interface AssistantReferenceMedia {
+  kind: 'video';
+  title: string;
+  platform: 'tiktok' | 'instagram' | 'youtube' | 'facebook' | 'linkedin';
+  referenceId?: string;
+  thumbnailUrl?: string;
+  mediaUrl?: string;
+  sourceUrl?: string;
+  duration?: number;
+}
+export interface Message { role: 'user' | 'assistant'; content: string; sources?: Source[]; creation?: CreationReply; referenceMedia?: AssistantReferenceMedia }
 export interface ConversationContext { agent: AgentType; messages?: Message[] }
 export interface Conversation { id: string; agent: AgentType; title: string; messages: Message[]; updatedAt: number }
 export interface RestoreSignal { agent: AgentType; messages: Message[]; key: string }
@@ -32,12 +42,8 @@ export const loadPage = (): Page => {
     const query = new URLSearchParams(window.location.search);
     const queryPage = resolveNavigationPage(query.get('page'), query.get('view'));
     if (queryPage) return queryPage;
-    const savedValue = localStorage.getItem('ow_page');
-    const saved = resolvePage(savedValue);
-    if (saved) return saved;
-    if (savedValue) localStorage.removeItem('ow_page');
-    return 'digitalEmployees';
-  } catch { return 'digitalEmployees'; }
+    return 'strategy';
+  } catch { return 'strategy'; }
 };
 export const loadTrafficEntryView = (): 'publish' | 'accounts' => {
   try { const query = new URLSearchParams(window.location.search); return query.get('page') === 'accountManagement' || query.get('view') === 'accounts' ? 'accounts' : 'publish'; }

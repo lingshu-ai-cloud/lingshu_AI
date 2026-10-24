@@ -9,7 +9,6 @@ const expectedPages = [
   'traffic',
   'conversion',
   'enterprise',
-  'agentMemory',
   'plugins',
 ];
 

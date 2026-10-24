@@ -89,6 +89,11 @@ function safeUri(value: unknown): string | undefined {
   return scrubSensitiveUri(raw) ?? redactSensitiveText(raw, 2_000);
 }
 
+function safeReferenceMediaUri(value: unknown): string | undefined {
+  const uri = safeUri(value);
+  return uri && /^(?:https?:\/\/|\/(?:api|files|media|uploads)\/)/i.test(uri) ? uri : undefined;
+}
+
 function sanitizeValue(value: unknown, depth = 0, maxDepth = 5, maxItems = 30, maxChars = 4_000): unknown {
   if (depth > maxDepth) return undefined;
   if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
@@ -110,6 +115,20 @@ function sanitizeValue(value: unknown, depth = 0, maxDepth = 5, maxItems = 30, m
 
 function sanitizeMessage(value: Message): Message {
   const creation = creationReplySchema.safeParse(sanitizeValue(value.creation, 0, 10, 256, 12_000));
+
+  const media = value.referenceMedia;
+  const referenceMedia = media?.kind === 'video' && media.title?.trim() && ['tiktok', 'instagram', 'youtube', 'facebook', 'linkedin'].includes(media.platform)
+    ? {
+        kind: 'video' as const,
+        title: redactSensitiveText(media.title, 500),
+        platform: media.platform,
+        ...(media.referenceId ? { referenceId: cleanId(media.referenceId) } : {}),
+        ...(safeReferenceMediaUri(media.thumbnailUrl) ? { thumbnailUrl: safeReferenceMediaUri(media.thumbnailUrl) } : {}),
+        ...(safeReferenceMediaUri(media.mediaUrl) ? { mediaUrl: safeReferenceMediaUri(media.mediaUrl) } : {}),
+        ...(safeReferenceMediaUri(media.sourceUrl) ? { sourceUrl: safeReferenceMediaUri(media.sourceUrl) } : {}),
+        ...(Number.isFinite(media.duration) && Number(media.duration) >= 0 ? { duration: Math.min(86_400, Number(media.duration)) } : {}),
+      }
+    : undefined;
   return {
     ...(creation.success ? { creation: creation.data } : {}),
     role: value.role === 'assistant' ? 'assistant' : 'user',
@@ -120,6 +139,7 @@ function sanitizeMessage(value: Message): Message {
         return uri ? [{ title: redactSensitiveText(String(source?.title || ''), 500), uri }] : [];
       }),
     } : {}),
+    ...(referenceMedia ? { referenceMedia } : {}),
   };
 }
 
@@ -187,6 +207,14 @@ export function sanitizeAssistantThreadForJournal(thread: AgentThreadState): Age
       return sanitized ? [[sanitized.taskId, sanitized] as const] : [];
     });
   const taskCards = Object.fromEntries(cards);
+  const pending = thread.pendingContentTaskBinding;
+  const pendingContentTaskBinding = pending
+    && /^assistant-content-intent:[0-9a-f]{8}$/u.test(pending.intentFingerprint)
+    && /^assistant-content:[0-9]+:[0-9a-f]{8}$/u.test(pending.idempotencyKey)
+    && (pending.contentTaskId === null || /^[A-Za-z0-9._:@-]{1,240}$/u.test(pending.contentTaskId))
+    && Number.isFinite(Date.parse(pending.createdAt))
+    ? { ...pending }
+    : null;
   return {
     version: Number.isSafeInteger(thread.version) && thread.version >= 0 ? thread.version : 0,
     updatedAt: typeof thread.updatedAt === 'string' ? thread.updatedAt.slice(0, 100) : '',
@@ -199,6 +227,7 @@ export function sanitizeAssistantThreadForJournal(thread: AgentThreadState): Age
     paused: Boolean(thread.paused),
     taskCards,
     focusedTaskId: thread.focusedTaskId && taskCards[thread.focusedTaskId] ? thread.focusedTaskId : null,
+    pendingContentTaskBinding,
   };
 }
 

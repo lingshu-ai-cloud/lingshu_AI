@@ -25,12 +25,14 @@ export function useAssistantThreadSaveQueue({
   stablePersistenceScope,
   persistenceFenceRef,
   assistantThreadSaveQueuesRef,
+  persistencePauseRef,
   hydrateThread,
   setPersistenceMetadata,
 }: {
   stablePersistenceScope: AssistantJournalScope;
   persistenceFenceRef: { current: ScopeFence };
   assistantThreadSaveQueuesRef: { current: Map<OrbitAgentId, AssistantThreadSaveQueue> };
+  persistencePauseRef?: { current: boolean };
   hydrateThread: (agentId: OrbitAgentId, patch: Partial<AgentThreadState>) => void;
   setPersistenceMetadata: (agentId: OrbitAgentId, version: number, updatedAt: string) => void;
 }) {
@@ -38,6 +40,7 @@ export function useAssistantThreadSaveQueue({
     agentId: OrbitAgentId,
     reason: AssistantPersistenceReason = 'change',
   ) => {
+    if (persistencePauseRef?.current) return;
     const fence = persistenceFenceRef.current;
     const fenceIsCurrent = () => fence.active && persistenceFenceRef.current === fence;
     if (!fenceIsCurrent()) return;
@@ -51,6 +54,7 @@ export function useAssistantThreadSaveQueue({
       retryAttempt: 0,
       retryTimer: null,
       abortController: null,
+      idleWaiters: new Set<() => void>(),
     };
     queue.pending = cloneAssistantThread(useAssistantStore.getState().threads[agentId]);
     // The synchronous journal survives a pagehide that outlives keepalive.
@@ -70,7 +74,7 @@ export function useAssistantThreadSaveQueue({
       let conflicts = 0;
       let retryRequired = false;
       try {
-        while (queue.pending && fenceIsCurrent()) {
+        while (queue.pending && fenceIsCurrent() && !persistencePauseRef?.current) {
           const snapshot = queue.pending;
           queue.pending = null;
           const expectedVersion = useAssistantStore.getState().threads[agentId].version;
@@ -143,6 +147,8 @@ export function useAssistantThreadSaveQueue({
       } finally {
         queue.abortController = null;
         queue.running = false;
+        for (const resolve of queue.idleWaiters) resolve();
+        queue.idleWaiters.clear();
         if (fenceIsCurrent() && queue.pending && retryRequired && queue.retryTimer === null && assistantPersistenceCanRun()) {
           const delay = assistantPersistenceRetryDelay(queue.retryAttempt);
           queue.retryAttempt = Math.min(queue.retryAttempt + 1, 4);
@@ -153,6 +159,15 @@ export function useAssistantThreadSaveQueue({
         }
       }
     })();
-  }, [assistantThreadSaveQueuesRef, hydrateThread, persistenceFenceRef, setPersistenceMetadata, stablePersistenceScope]);
-  return persistThread;
+  }, [assistantThreadSaveQueuesRef, hydrateThread, persistenceFenceRef, persistencePauseRef, setPersistenceMetadata, stablePersistenceScope]);
+  const waitForInFlightThreadSave = useCallback((agentId: OrbitAgentId): Promise<void> => {
+    const queue = assistantThreadSaveQueuesRef.current.get(agentId);
+    if (!queue?.running) return Promise.resolve();
+    return new Promise<void>(resolve => {
+      queue.idleWaiters.add(resolve);
+      // The request can settle between the running check and waiter install.
+      if (!queue.running && queue.idleWaiters.delete(resolve)) resolve();
+    });
+  }, [assistantThreadSaveQueuesRef]);
+  return { persistThread, waitForInFlightThreadSave };
 }

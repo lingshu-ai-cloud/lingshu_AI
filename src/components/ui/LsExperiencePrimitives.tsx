@@ -75,7 +75,7 @@ export function LsGradientProgress({
       className={`ls-gradient-progress ${className}`.trim()}
       percent={safePercent}
       strokeColor={strokeColor || LINGSHU_PROGRESS_GRADIENT}
-      railColor={props.railColor || '#F4F4F5'}
+      railColor={props.railColor || 'var(--color-surface-2)'}
     />
   );
 }

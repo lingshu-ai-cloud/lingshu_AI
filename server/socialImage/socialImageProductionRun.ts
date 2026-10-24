@@ -1,0 +1,797 @@
+import { randomUUID } from 'node:crypto';
+import type { DataStore } from '../storage/datastore.js';
+import {
+  SOCIAL_IMAGE_HARD_CHECKS,
+  socialImageCurrentOutputs,
+  socialImageTaskCanPublish,
+  type SocialImageCreationTask,
+} from '../../shared/contracts/socialImageCreation.js';
+import {
+  socialImageAdaptationIssues,
+  socialImageHookFactorIssues,
+  socialImageNodeEnvelopeIssues,
+  type SocialImageAdaptationSpec,
+  type SocialImageApprovalDecision,
+  type SocialImageDeliveryPackage,
+  type SocialImageDirectorReviewDecision,
+  type SocialImageHookFactorSpec,
+  type SocialImageNodeEnvelope,
+  type SocialImageNodeValueMap,
+  type SocialImageProductionBinding,
+  type SocialImageProductionNodeId,
+  type SocialImageProductionNodeStatus,
+  type SocialImageVersionedRef,
+} from '../../shared/contracts/socialImageProduction.js';
+import { socialTaskSummary } from '../starter198/socialContentRecords.js';
+import { STARTER_COLLECTIONS, type StarterRecord } from '../starter198/repository.js';
+import { defaultSocialImageTask, readSocialImageTask, SOCIAL_IMAGE_TASKS_COLLECTION, updateSocialImageTask } from './socialImageTask.js';
+import { initializeSocialImageProductionRuntime, projectSocialImageProductionSnapshot } from './socialImageProductionRuntime.js';
+import { resolveSocialImageReviewSet, socialImageDirectorReviewMatchesSet, socialImageReviewRefsMatch } from './socialImageReviewSet.js';
+import { createSocialImageTaskContextSnapshot, taskContextSnapshotIssue } from './taskContextSnapshot.js';
+import { socialImageProductionHash as hash } from './socialImageProductionHash.js';
+
+export class SocialImageProductionRunError extends Error {
+  constructor(readonly code: string, readonly status = 409) {
+    super(code);
+    this.name = 'SocialImageProductionRunError';
+  }
+}
+
+function boundedIdentity(value: unknown, code: string, maximum = 120): string {
+  const text = String(value || '').trim();
+  if (!text || text.length > maximum || !/^[a-zA-Z0-9._:@-]+$/.test(text)) throw new SocialImageProductionRunError(code, 400);
+  return text;
+}
+
+function platform(value: string | undefined): SocialImageCreationTask['deliverySpec']['platform'] {
+  const normalized = String(value || '').toLowerCase();
+  return ['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin'].includes(normalized)
+    ? normalized as SocialImageCreationTask['deliverySpec']['platform'] : 'facebook';
+}
+
+function aspectRatio(value: string | null | undefined): SocialImageCreationTask['deliverySpec']['aspectRatio'] {
+  return ['1:1', '4:5', '9:16', '16:9'].includes(String(value))
+    ? value as SocialImageCreationTask['deliverySpec']['aspectRatio'] : '4:5';
+}
+
+async function canonicalContentTask(store: DataStore, tenantId: string, contentTaskId: string) {
+  const rows = await store.list<StarterRecord>(STARTER_COLLECTIONS.socialContentTasks, {
+    where: { tenant_id: tenantId, task_id: contentTaskId }, perPage: 2,
+  });
+  if (rows.totalItems > 1 || rows.items.length > 1) throw new SocialImageProductionRunError('social_image_content_task_integrity_violation', 503);
+  const row = rows.items[0];
+  if (!row) throw new SocialImageProductionRunError('social_image_content_task_not_found', 404);
+  return { ...socialTaskSummary(row), createdBy: String(row.created_by || 'system:legacy-task-owner') };
+}
+
+async function canonicalEnterpriseFactVersionId(store: DataStore, tenantId: string): Promise<string> {
+  const rows = await store.list<StarterRecord>('tenant_profiles', { where: { tenant_id: tenantId }, perPage: 2 });
+  if (rows.totalItems !== 1 || rows.items.length !== 1 || rows.items[0]?.tenant_id !== tenantId) {
+    throw new SocialImageProductionRunError('social_image_enterprise_fact_version_missing', 409);
+  }
+  const profile = rows.items[0].profile;
+  const factVersion = profile && typeof profile === 'object' && !Array.isArray(profile)
+    ? (profile as Record<string, unknown>).factVersion : null;
+  const id = factVersion && typeof factVersion === 'object' && !Array.isArray(factVersion)
+    ? String((factVersion as Record<string, unknown>).id || '').trim() : '';
+  if (!id) throw new SocialImageProductionRunError('social_image_enterprise_fact_version_missing', 409);
+  return id;
+}
+
+/** Paid admission requires a current binding; review may use a verified frozen snapshot after payment began. */
+export async function assertSocialImageCurrentContentTask(
+  store: DataStore, tenantId: string, task: SocialImageCreationTask,
+  purpose: 'paid_admission' | 'review_original_output' = 'paid_admission',
+): Promise<void> {
+  if (task.schemaVersion !== 'social-image-creation.v3') return;
+  const binding = task.productionRuntime?.binding;
+  if (!binding || binding.productionRunId !== task.id) {
+    throw new SocialImageProductionRunError('social_image_content_task_binding_missing', 409);
+  }
+  const snapshotIssue = taskContextSnapshotIssue(binding.taskContextSnapshot, {
+    tenantId, contentTaskId: binding.contentTaskId, contentTaskVersion: binding.contentTaskVersion,
+    productionRunId: binding.productionRunId,
+  });
+  if (snapshotIssue) throw new SocialImageProductionRunError(snapshotIssue, 409);
+  const current = await canonicalContentTask(store, tenantId, binding.contentTaskId);
+  const business = task.productionRuntime?.nodeOutputs.filter(output => output.nodeId === 'business_context').at(-1);
+  const source = business?.inputRefs.find(ref => ref.objectType === 'social_content_task' && ref.id === binding.contentTaskId);
+  const paidStarted = task.generationJobs.some(job => job.attempt > 0 || Boolean(job.inputHash));
+  if ((purpose === 'paid_admission' || !paidStarted) && (current.version !== binding.contentTaskVersion || !source
+    || String(source.version) !== current.version || source.contentHash !== hash(current.brief))) {
+    throw new SocialImageProductionRunError('social_image_content_task_binding_stale', 409);
+  }
+}
+
+export interface CreateBoundSocialImageRunInput {
+  contentTaskId: string;
+  expectedContentTaskVersion: string;
+  idempotencyKey: string;
+  deliverableKey?: string;
+  entrySource: 'assistant' | 'workspace' | 'weekly_package';
+  imageType?: SocialImageCreationTask['imageType'];
+}
+
+/** Bind the formal business node to the canonical ContentTask revision before any asset or reference work. */
+export async function recordSocialImageBusinessContext(input: {
+  store: DataStore; tenantId: string; taskId: string; expectedVersion: number; now?: string;
+}): Promise<SocialImageCreationTask> {
+  const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
+  if (!task) throw new SocialImageProductionRunError('social_image_task_missing', 404);
+  if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
+  const binding = task.productionRuntime?.binding;
+  if (task.schemaVersion !== 'social-image-creation.v3' || !binding || binding.productionRunId !== task.id) {
+    throw new SocialImageProductionRunError('social_image_content_task_binding_missing', 409);
+  }
+  const contentTask = await canonicalContentTask(input.store, input.tenantId, binding.contentTaskId);
+  const brief = contentTask.brief;
+  if (binding.contentTaskVersion !== contentTask.version || task.contentBrief.coreClaim !== brief.objective
+    || !brief.productId || task.contentBrief.productRefs.length !== 1 || task.contentBrief.productRefs[0] !== brief.productId
+    || !brief.platforms.includes(task.deliverySpec.platform)
+    || (brief.aspectRatio && brief.aspectRatio !== task.deliverySpec.aspectRatio)
+    || !brief.languages.includes(task.deliverySpec.language)) {
+    throw new SocialImageProductionRunError('social_image_content_task_binding_stale', 409);
+  }
+  const sourceRef: SocialImageVersionedRef = { objectType: 'social_content_task', id: contentTask.taskId,
+    version: contentTask.version, contentHash: hash(brief) };
+  return recordSocialImageNodeOutput({ ...input, nodeId: 'business_context', status: 'completed',
+    value: { objective: brief.objective, topicType: task.contentBrief.topicType,
+      deliverableType: task.imageType === 'carousel' ? 'carousel_cover'
+        : task.imageType === 'product_poster' ? 'product_hero' : 'social_single',
+      productRefs: [...task.contentBrief.productRefs], enterpriseFactSnapshotRef: null,
+      audience: [...task.contentBrief.audience], ownedAccountId: brief.targetAccountRef?.id || null, accountDraftId: null,
+      platforms: [...brief.platforms], targetAction: brief.callToAction,
+      successMetrics: [], deliverySpec: { platform: task.deliverySpec.platform, aspectRatio: task.deliverySpec.aspectRatio,
+        language: task.deliverySpec.language, outputCount: task.deliverySpec.outputCount, format: task.deliverySpec.format },
+      budgetAndDeadline: { maximumCostCny: brief.perItemBudgetCny ?? null, dueAt: brief.dueAt },
+      fieldsToConfirm: [...task.fieldsToConfirm] },
+    inputRefs: [sourceRef], evidenceRefs: [sourceRef], createdBy: { kind: 'system', id: 'content_task_business_binding' } });
+}
+
+function sameBoundRunScope(
+  task: SocialImageCreationTask,
+  contentTaskId: string,
+  deliverableKey: string,
+  imageType: SocialImageCreationTask['imageType'],
+): boolean {
+  const binding = task.productionRuntime?.binding;
+  return Boolean(binding
+    && binding.contentTaskId === contentTaskId
+    && binding.deliverableKey === deliverableKey
+    && task.imageType === imageType);
+}
+
+const GENERIC_NODE_OUTPUTS = new Set<SocialImageProductionNodeId>([
+  'business_context', 'asset_manifest', 'reference_snapshot', 'element_inventory', 'hook_factors',
+  'adaptation', 'director_brief', 'execution_plan', 'render_spec',
+]);
+
+export async function recordSocialImageNodeOutput<N extends keyof SocialImageNodeValueMap>(input: {
+  store: DataStore;
+  tenantId: string;
+  taskId: string;
+  expectedVersion: number;
+  nodeId: N;
+  status: Extract<SocialImageProductionNodeStatus, 'completed' | 'needs_review' | 'blocked' | 'failed' | 'outcome_unknown'>;
+  value: SocialImageNodeValueMap[N];
+  inputRefs: SocialImageVersionedRef[];
+  evidenceRefs?: SocialImageVersionedRef[];
+  createdBy: { kind: 'agent' | 'worker' | 'system'; id: string };
+  warnings?: string[];
+  blockingReasons?: string[];
+  taskPatch?: Partial<Pick<SocialImageCreationTask, 'hookFactorSpec' | 'adaptationSpec' | 'renderBrief' | 'imageTextContract'
+    | 'layerGraph' | 'fieldsToConfirm' | 'step' | 'status'>>;
+  now?: string;
+}): Promise<SocialImageCreationTask> {
+  if (!GENERIC_NODE_OUTPUTS.has(input.nodeId)) throw new SocialImageProductionRunError('social_image_node_writer_invalid', 400);
+  const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
+  if (!task) throw new SocialImageProductionRunError('social_image_task_missing', 404);
+  if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
+  if (input.nodeId === 'hook_factors' && input.status === 'completed') {
+    const issues = socialImageHookFactorIssues(input.value as SocialImageHookFactorSpec);
+    if (issues.length) throw new SocialImageProductionRunError(issues.join(','), 422);
+  }
+  if (input.nodeId === 'asset_manifest' && input.status === 'completed') {
+    const manifest = input.value as SocialImageNodeValueMap['asset_manifest'];
+    const requiredAssetIds = new Set(task.enterpriseAssets.filter(asset => asset.required).map(asset => asset.assetId));
+    const observedAssetIds = new Set((manifest.assets || []).filter(asset => asset.required).map(asset => asset.assetId));
+    if (!requiredAssetIds.size || [...requiredAssetIds].some(assetId => !observedAssetIds.has(assetId))
+      || !Array.isArray(manifest.requiredEvidence) || [...requiredAssetIds].some(assetId => !manifest.requiredEvidence.includes(assetId))
+      || !Array.isArray(manifest.assets) || manifest.assets.some(asset => asset.required
+      && (!asset.readable || !/^[a-f0-9]{64}$/.test(asset.contentHash)
+        || !asset.dimensions?.width || !asset.dimensions?.height || asset.rights !== 'cleared'
+        || !asset.rightsEvidenceRef?.trim()))) {
+      throw new SocialImageProductionRunError('social_image_required_asset_evidence_invalid', 422);
+    }
+  }
+  if (input.nodeId === 'element_inventory' && input.status === 'completed') {
+    const inventory = input.value as SocialImageNodeValueMap['element_inventory'];
+    const validBox = (box: { x: number; y: number; width: number; height: number }) => [box.x, box.y, box.width, box.height].every(Number.isFinite)
+      && box.x >= 0 && box.y >= 0 && box.width > 0 && box.height > 0 && box.x + box.width <= 1.001 && box.y + box.height <= 1.001;
+    const regionIds = new Set((inventory.regions || []).map(region => region.regionId));
+    if (!inventory.regions?.length || inventory.regions.some(region => !validBox(region.bbox)
+      || !region.evidenceRef?.id || !/^[a-f0-9]{64}$/.test(region.evidenceRef.contentHash))
+      || inventory.ocrBlocks?.some(block => !validBox(block.bbox) || !block.text.trim()
+        || !Number.isFinite(block.confidence) || block.confidence < 0 || block.confidence > 1)
+      || !inventory.saliencyOrder?.length || inventory.saliencyOrder.some(regionId => !regionIds.has(regionId))) {
+      throw new SocialImageProductionRunError('social_image_element_inventory_evidence_invalid', 422);
+    }
+  }
+  if (input.nodeId === 'adaptation' && input.status === 'completed') {
+    const hookSpec = task.hookFactorSpec;
+    if (!hookSpec) throw new SocialImageProductionRunError('social_image_hook_factor_output_required', 422);
+    const issues = socialImageAdaptationIssues(input.value as SocialImageAdaptationSpec, hookSpec);
+    if (issues.length) throw new SocialImageProductionRunError(issues.join(','), 422);
+  }
+  const runtime = task.productionRuntime;
+  if (!runtime?.binding) throw new SocialImageProductionRunError('social_image_content_task_binding_missing', 409);
+  const nodeIndex = runtime.nodes.findIndex(node => node.nodeId === input.nodeId);
+  if (nodeIndex < 1) throw new SocialImageProductionRunError('social_image_node_state_missing', 503);
+  const unmet = runtime.nodes.slice(0, nodeIndex).find(node => !['completed', 'skipped'].includes(node.status));
+  if (unmet) throw new SocialImageProductionRunError(`social_image_node_dependency_incomplete:${unmet.nodeId}`, 409);
+  const nodeHistory = runtime.nodeOutputs.filter(output => output.nodeId === input.nodeId);
+  const current = nodeHistory.sort((left, right) => right.version - left.version)[0];
+  const contentHash = hash({ value: input.value, inputRefs: input.inputRefs, evidenceRefs: input.evidenceRefs || [] });
+  const taskPatchChanged = Object.entries(input.taskPatch || {}).some(([key, value]) =>
+    JSON.stringify(task[key as keyof SocialImageCreationTask]) !== JSON.stringify(value));
+  if (current?.contentHash === contentHash && current.status === input.status && !taskPatchChanged) return task;
+  const now = input.now || new Date().toISOString();
+  const envelope: SocialImageNodeEnvelope<unknown> = {
+    schemaVersion: 'social-image-node-envelope.v1',
+    id: randomUUID(), tenantId: input.tenantId, contentTaskId: runtime.binding.contentTaskId,
+    productionRunId: task.id, nodeId: input.nodeId, version: (current?.version || 0) + 1,
+    status: input.status, inputRefs: structuredClone(input.inputRefs), createdBy: input.createdBy,
+    createdAt: now, updatedAt: now, contentHash, evidenceRefs: structuredClone(input.evidenceRefs || []),
+    warnings: (input.warnings || []).slice(0, 50), blockingReasons: (input.blockingReasons || []).slice(0, 50),
+    value: structuredClone(input.value),
+  };
+  const envelopeIssues = socialImageNodeEnvelopeIssues(envelope);
+  if (envelopeIssues.length) throw new SocialImageProductionRunError(envelopeIssues.join(','), 422);
+  const invalidations = new Map<SocialImageProductionNodeId, SocialImageNodeEnvelope<unknown>>();
+  for (const output of runtime.nodeOutputs) {
+    const index = runtime.nodes.findIndex(node => node.nodeId === output.nodeId);
+    const latest = invalidations.get(output.nodeId);
+    if (index > nodeIndex && (!latest || output.version > latest.version)) invalidations.set(output.nodeId, output);
+  }
+  const staleOutputs = [...invalidations.values()].map(output => ({ ...output, id: randomUUID(), version: output.version + 1,
+    status: 'stale' as const, createdAt: now, updatedAt: now,
+    blockingReasons: [...new Set([...output.blockingReasons, `upstream_changed:${input.nodeId}`])] }));
+  const nextRuntime = { ...runtime, nodeOutputs: [...runtime.nodeOutputs, envelope, ...staleOutputs] };
+  const candidateGenerationIndex = runtime.nodes.findIndex(node => node.nodeId === 'candidate_generation');
+  const invalidatesCandidates = candidateGenerationIndex >= 0 && nodeIndex < candidateGenerationIndex;
+  const invalidationPatch: Partial<SocialImageCreationTask> = invalidatesCandidates ? {
+    outputs: task.outputs.map(output => output.state === 'superseded' ? output : { ...output, state: 'superseded' as const }),
+    repairInstructions: input.nodeId === 'render_spec' ? task.repairInstructions
+      : task.repairInstructions.map(instruction => ['pending', 'running'].includes(instruction.status)
+        ? { ...instruction, status: 'failed' as const } : instruction),
+    directorReviewDecision: undefined,
+    approvedArtifact: undefined,
+    status: 'planned',
+    step: 'plan',
+  } : {};
+  const result = await updateSocialImageTask(input.store, input.tenantId, task.id, task.version, {
+    ...invalidationPatch, ...(input.taskPatch || {}), productionRuntime: nextRuntime,
+  });
+  if (result.kind !== 'updated') throw new SocialImageProductionRunError(result.kind === 'conflict'
+    ? 'social_image_version_conflict' : result.kind === 'invalid' ? result.issues.join(',') : 'social_image_node_output_persist_failed', result.kind === 'conflict' ? 409 : 422);
+  return result.task;
+}
+
+export async function createOrResumeBoundSocialImageRun(
+  store: DataStore,
+  tenantId: string,
+  input: CreateBoundSocialImageRunInput,
+  now = new Date().toISOString(),
+): Promise<{ task: SocialImageCreationTask; resumed: boolean }> {
+  const contentTaskId = boundedIdentity(input.contentTaskId, 'social_image_content_task_id_invalid', 240);
+  const idempotencyKey = boundedIdentity(input.idempotencyKey, 'social_image_idempotency_key_invalid', 128);
+  if (idempotencyKey.length < 8) throw new SocialImageProductionRunError('social_image_idempotency_key_invalid', 400);
+  const deliverableKey = boundedIdentity(input.deliverableKey || 'primary-image', 'social_image_deliverable_key_invalid', 80);
+  const contentTask = await canonicalContentTask(store, tenantId, contentTaskId);
+  if (String(contentTask.version) !== String(input.expectedContentTaskVersion)) {
+    throw new SocialImageProductionRunError('social_image_content_task_version_conflict', 409);
+  }
+  const productionRunId = `img${hash({ tenantId, contentTaskId, deliverableKey }).slice(0, 12)}`;
+  const requestedImageType = input.imageType || 'product_poster';
+  // Entry source is presentation provenance, not run identity. The same
+  // ContentTask must resume when an assistant-created task is later opened in
+  // the workspace (or vice versa).
+  const requestValue = { contentTaskId, deliverableKey, imageType: requestedImageType };
+  const requestHash = hash(requestValue);
+  const existing = await readSocialImageTask(store, tenantId, productionRunId);
+  if (existing) {
+    if (existing.productionRuntime?.binding?.requestHash !== requestHash
+      && !sameBoundRunScope(existing, contentTaskId, deliverableKey, requestedImageType)) {
+      throw new SocialImageProductionRunError('social_image_run_scope_conflict', 409);
+    }
+    const task = existing.productionRuntime?.binding?.contentTaskVersion === contentTask.version ? existing
+      : await refreshSocialImageContentTaskBinding({ store, tenantId, taskId: existing.id,
+        expectedVersion: existing.version, expectedContentTaskVersion: contentTask.version, contentTask });
+    return { task, resumed: true };
+  }
+
+  const brief = contentTask.brief;
+  const creationMode = brief.creationMode === 'viral_replication' ? 'viral_replication' : 'free_creation';
+  const payload = defaultSocialImageTask({
+    title: brief.title,
+    imageType: requestedImageType,
+    creationPath: creationMode === 'viral_replication' ? 'viral_replication' : 'material_processing',
+    coreClaim: brief.objective,
+    audience: brief.audience ? [brief.audience] : [],
+    productRefs: brief.productId ? [brief.productId] : [],
+    productNames: brief.productRef ? [brief.productRef] : [],
+  }, now);
+  payload.schemaVersion = 'social-image-creation.v3';
+  payload.id = productionRunId;
+  payload.deliverySpec = {
+    ...payload.deliverySpec,
+    platform: platform(brief.platforms[0]),
+    aspectRatio: aspectRatio(brief.aspectRatio),
+    language: brief.languages[0] || 'en',
+    outputCount: payload.deliverySpec.outputCount,
+    format: payload.deliverySpec.format,
+  };
+  payload.enterpriseAssets = brief.productId ? [{ assetId: brief.productId, role: 'product', name: brief.productRef || brief.productId,
+    source: 'enterprise_knowledge_base', required: true }] : [];
+  payload.fieldsToConfirm = [
+    ...(!brief.productId ? ['product_identity'] : []),
+    ...(!brief.objective.trim() ? ['core_claim'] : []),
+  ];
+  const binding: SocialImageProductionBinding = {
+    schemaVersion: 'social-image-production-binding.v1',
+    contentTaskId,
+    contentTaskVersion: contentTask.version,
+    productionRunId,
+    deliverableKey,
+    entrySource: input.entrySource,
+    creationMode,
+    idempotencyKeyHash: hash(idempotencyKey),
+    requestHash,
+    resumeToken: hash({ tenantId, contentTaskId, productionRunId, requestHash }).slice(0, 40),
+    boundAt: now,
+    taskContextSnapshot: createSocialImageTaskContextSnapshot({ tenantId, contentTask,
+      task: payload, factVersionId: await canonicalEnterpriseFactVersionId(store, tenantId), now }),
+  };
+  payload.productionRuntime = initializeSocialImageProductionRuntime(payload, binding, now);
+  const stored = await store.create<StarterRecord>(SOCIAL_IMAGE_TASKS_COLLECTION, {
+    id: productionRunId,
+    tenant_id: tenantId,
+    title: payload.title,
+    status: 'draft',
+    workflow_task_id: contentTaskId,
+    workflow_task_key: deliverableKey,
+    workflow_lineage_hash: requestHash,
+    spec: { contentMode: 'image', creationPath: payload.creationPath, contentTaskId, socialImageTask: payload },
+    created_at: now,
+    updated_at: now,
+  });
+  if (!stored) {
+    const raced = await readSocialImageTask(store, tenantId, productionRunId);
+    if (raced && (raced.productionRuntime?.binding?.requestHash === requestHash
+      || sameBoundRunScope(raced, contentTaskId, deliverableKey, requestedImageType))) return { task: raced, resumed: true };
+    throw new SocialImageProductionRunError('social_image_run_create_conflict', 409);
+  }
+  return { task: payload, resumed: false };
+}
+
+export async function refreshSocialImageContentTaskBinding(input: {
+  store: DataStore;
+  tenantId: string;
+  taskId: string;
+  expectedVersion: number;
+  expectedContentTaskVersion: string;
+  contentTask?: Awaited<ReturnType<typeof canonicalContentTask>>;
+  now?: string;
+}): Promise<SocialImageCreationTask> {
+  const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
+  if (!task) throw new SocialImageProductionRunError('social_image_task_missing', 404);
+  if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
+  const binding = task.productionRuntime?.binding;
+  if (!binding) throw new SocialImageProductionRunError('social_image_content_task_binding_missing', 409);
+  const contentTask = input.contentTask || await canonicalContentTask(input.store, input.tenantId, binding.contentTaskId);
+  if (contentTask.taskId !== binding.contentTaskId || contentTask.version !== input.expectedContentTaskVersion) {
+    throw new SocialImageProductionRunError('social_image_content_task_version_conflict', 409);
+  }
+  if (binding.contentTaskVersion === contentTask.version) return task;
+  const now = input.now || new Date().toISOString();
+  const runtime = task.productionRuntime!;
+  const sourceRef: SocialImageVersionedRef = { objectType: 'social_content_task', id: contentTask.taskId,
+    version: contentTask.version, contentHash: hash(contentTask.brief) };
+  const latestOutputs = new Map<SocialImageProductionNodeId, SocialImageNodeEnvelope<unknown>>();
+  for (const output of runtime.nodeOutputs) {
+    const latest = latestOutputs.get(output.nodeId);
+    if (!latest || output.version > latest.version) latestOutputs.set(output.nodeId, output);
+  }
+  // Only outputs that actually exist can become stale. Synthesizing stale
+  // envelopes for derived/skipped nodes made free-creation runs stop forever
+  // at reference analysis even though that branch is intentionally skipped.
+  const productChanged = task.contentBrief.productRefs[0] !== (contentTask.brief.productId || undefined);
+  const refreshAffectedNodes = new Set<SocialImageProductionNodeId>([
+    'business_context', 'hook_factors', 'adaptation', 'director_brief', 'execution_plan', 'render_spec',
+    ...(productChanged ? ['asset_manifest' as const] : []),
+  ]);
+  const staleTargets = [...latestOutputs.values()].filter(output => GENERIC_NODE_OUTPUTS.has(output.nodeId)
+    && refreshAffectedNodes.has(output.nodeId)
+    && output.status !== 'stale'
+    && !(task.creationPath === 'material_processing' && ['hook_factors', 'adaptation'].includes(output.nodeId)));
+  const staleOutputs: Array<SocialImageNodeEnvelope<unknown>> = staleTargets.map(output => ({
+    schemaVersion: 'social-image-node-envelope.v1', id: randomUUID(), tenantId: input.tenantId,
+    contentTaskId: binding.contentTaskId, productionRunId: task.id, nodeId: output.nodeId,
+    version: output.version + 1, status: 'stale', inputRefs: [sourceRef],
+    createdBy: { kind: 'system', id: 'content_task_binding_refresh' }, createdAt: now, updatedAt: now,
+    contentHash: hash({ nodeId: output.nodeId, contentTask: sourceRef }), evidenceRefs: [sourceRef], warnings: [],
+    blockingReasons: ['social_image_content_task_changed'], value: { reason: 'content_task_changed' },
+  }));
+  const nextRuntime = { ...runtime, binding: { ...binding, contentTaskVersion: contentTask.version, boundAt: now,
+    taskContextSnapshot: createSocialImageTaskContextSnapshot({ tenantId: input.tenantId, contentTask,
+      task, factVersionId: await canonicalEnterpriseFactVersionId(input.store, input.tenantId), now }) },
+    nodeOutputs: [...runtime.nodeOutputs, ...staleOutputs] };
+  const brief = contentTask.brief;
+  const result = await updateSocialImageTask(input.store, input.tenantId, task.id, task.version, {
+    productionRuntime: nextRuntime, status: 'draft', step: 'inputs', directorReviewDecision: undefined,
+    approvedArtifact: undefined,
+    outputs: task.outputs.map(output => output.state === 'superseded' ? output : { ...output, state: 'superseded' as const }),
+    repairInstructions: task.repairInstructions.map(instruction => ['pending', 'running'].includes(instruction.status)
+      ? { ...instruction, status: 'failed' as const } : instruction),
+    renderBrief: undefined,
+    layerGraph: undefined,
+    renderPlan: undefined,
+    gifDelivery: undefined,
+    adaptationSpec: undefined,
+    ...(task.creationPath === 'viral_replication' ? { hookFactorSpec: undefined } : {}),
+    imageTextContract: { ...task.imageTextContract, headline: '', supportingText: '', caption: '', hashtags: [], cta: undefined,
+      requiredFacts: [], prohibitedInferences: [], visualMustShow: [], visualMustNotImply: [] },
+    contentBrief: { ...task.contentBrief, coreClaim: brief.objective, productRefs: brief.productId ? [brief.productId] : [],
+      productNames: brief.productRef ? [brief.productRef] : [], audience: brief.audience ? [brief.audience] : [] },
+    deliverySpec: { ...task.deliverySpec, platform: platform(brief.platforms[0]), aspectRatio: aspectRatio(brief.aspectRatio),
+      language: brief.languages[0] || task.deliverySpec.language },
+    fieldsToConfirm: [...(!brief.productId ? ['product_identity'] : []), ...(!brief.objective.trim() ? ['core_claim'] : [])],
+  });
+  if (result.kind !== 'updated') throw new SocialImageProductionRunError(result.kind === 'conflict'
+    ? 'social_image_version_conflict' : result.kind === 'invalid' ? result.issues.join(',') : 'social_image_binding_refresh_failed', result.kind === 'conflict' ? 409 : 422);
+  return result.task;
+}
+
+export async function recordSocialImageHookStrategy(input: {
+  store: DataStore;
+  tenantId: string;
+  taskId: string;
+  expectedVersion: number;
+  hookFactorSpec: SocialImageHookFactorSpec;
+  adaptationSpec: SocialImageAdaptationSpec;
+}) {
+  const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
+  if (!task) throw new SocialImageProductionRunError('social_image_task_missing', 404);
+  if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
+  const inventoryNode = task.productionRuntime?.nodeOutputs.filter(output => output.nodeId === 'element_inventory')
+    .sort((a, b) => b.version - a.version)[0];
+  const referenceNode = task.productionRuntime?.nodeOutputs.filter(output => output.nodeId === 'reference_snapshot')
+    .sort((a, b) => b.version - a.version)[0];
+  if (inventoryNode?.status !== 'completed' || referenceNode?.status !== 'completed') {
+    throw new SocialImageProductionRunError('social_image_reference_evidence_incomplete', 422);
+  }
+  const inventory = inventoryNode.value as SocialImageNodeValueMap['element_inventory'];
+  const observedRegions = new Map(inventory.regions.map(region => [region.regionId, region.evidenceRef.contentHash]));
+  for (const factor of input.hookFactorSpec.factors) {
+    if (!factor.regionRefs.length || factor.regionRefs.some(regionId => !observedRegions.has(regionId))
+      || factor.evidenceRefs.some(ref => ![...observedRegions].some(([id, contentHash]) => ref.id === id && ref.contentHash === contentHash))
+      || factor.regionRefs.some(regionId => !factor.evidenceRefs.some(ref => ref.id === regionId
+        && ref.contentHash === observedRegions.get(regionId)))) {
+      throw new SocialImageProductionRunError('social_image_hook_evidence_not_in_inventory', 422);
+    }
+  }
+  const issues = socialImageHookFactorIssues(input.hookFactorSpec);
+  issues.push(...socialImageAdaptationIssues(input.adaptationSpec, input.hookFactorSpec));
+  if (issues.length) throw new SocialImageProductionRunError(issues.join(','), 422);
+  const hooked = await recordSocialImageNodeOutput({
+    ...input, nodeId: 'hook_factors', status: 'completed', value: input.hookFactorSpec,
+    inputRefs: [{ objectType: inventoryNode.schemaVersion, id: inventoryNode.id,
+      version: inventoryNode.version, contentHash: inventoryNode.contentHash }],
+    evidenceRefs: input.hookFactorSpec.factors.flatMap(factor => factor.evidenceRefs),
+    createdBy: { kind: 'agent', id: 'image_director' }, taskPatch: { hookFactorSpec: input.hookFactorSpec, step: 'plan' },
+  });
+  const hookEnvelope = hooked.productionRuntime!.nodeOutputs.filter(output => output.nodeId === 'hook_factors').at(-1)!;
+  return recordSocialImageNodeOutput({
+    ...input, expectedVersion: hooked.version, nodeId: 'adaptation', status: 'completed', value: input.adaptationSpec,
+    inputRefs: [{ objectType: hookEnvelope.schemaVersion, id: hookEnvelope.id, version: hookEnvelope.version, contentHash: hookEnvelope.contentHash }],
+    createdBy: { kind: 'agent', id: 'image_director' }, taskPatch: { adaptationSpec: input.adaptationSpec, step: 'plan' },
+  });
+}
+
+export async function recordSocialImageDirectorReview(input: {
+  store: DataStore;
+  tenantId: string;
+  taskId: string;
+  expectedVersion: number;
+  decision: SocialImageDirectorReviewDecision;
+}) {
+  const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
+  if (!task) throw new SocialImageProductionRunError('social_image_task_missing', 404);
+  if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
+  const reviewSet = resolveSocialImageReviewSet(task, input.decision.candidateId, input.decision.candidateVersion);
+  if (!reviewSet) throw new SocialImageProductionRunError('social_image_review_candidate_stale', 409);
+  if (reviewSet.anchor.id !== input.decision.candidateId || reviewSet.anchor.version !== input.decision.candidateVersion) {
+    throw new SocialImageProductionRunError('social_image_review_candidate_stale', 409);
+  }
+  const multi = task.imageType === 'carousel' || task.imageType === 'gif_poster';
+  if ((multi && (!input.decision.candidateRefs || !input.decision.candidateSetHash))
+    || (input.decision.candidateRefs && !socialImageReviewRefsMatch(reviewSet.refs, input.decision.candidateRefs))
+    || (input.decision.candidateSetHash && input.decision.candidateSetHash !== reviewSet.contentHash)
+    || (input.decision.qualityEvidenceHash && input.decision.qualityEvidenceHash !== reviewSet.qualityEvidenceHash)) {
+    throw new SocialImageProductionRunError('social_image_review_set_mismatch', 409);
+  }
+  if (input.decision.decision === 'accept_for_user_review' && !reviewSet.qualityPassed) {
+    throw new SocialImageProductionRunError('social_image_hard_quality_gate_incomplete', 422);
+  }
+  if (input.decision.decision === 'accept_for_user_review' && task.creationPath === 'viral_replication') {
+    const factors = task.hookFactorSpec?.factors || [];
+    const factorChecksPassed = factors.length > 0 && reviewSet.outputs.every(output => factors.every(factor => {
+      const result = input.decision.factorResults.find(item => item.factorId === factor.factorId);
+      return result?.verdict === 'pass' && output.qualityChecks.some(check => check.key === `hook_factor:${factor.factorId}`
+        && check.verdict === 'pass' && check.evidence?.includes(`candidate-sha256:${output.contentHash}`)
+        && factor.evidenceRefs.every(ref => check.evidence?.includes(`reference-region-sha256:${ref.contentHash}`)));
+    }));
+    const referenceChecksReady = reviewSet.outputs.every(output => output.qualityChecks.some(check =>
+      check.key === 'reference_structure_similarity' && check.verdict !== 'fail'));
+    if (!factorChecksPassed || !referenceChecksReady) {
+      throw new SocialImageProductionRunError('social_image_hook_candidate_evidence_incomplete', 422);
+    }
+  }
+  const result = await updateSocialImageTask(input.store, input.tenantId, input.taskId, input.expectedVersion, {
+    directorReviewDecision: { ...input.decision, candidateRefs: reviewSet.refs,
+      candidateSetHash: reviewSet.contentHash, qualityEvidenceHash: reviewSet.qualityEvidenceHash },
+    status: 'review_required',
+    step: 'review',
+  });
+  if (result.kind !== 'updated') throw new SocialImageProductionRunError(result.kind === 'conflict' ? 'social_image_version_conflict' : 'social_image_review_persist_failed', result.kind === 'conflict' ? 409 : 422);
+  return result.task;
+}
+
+/**
+ * Project an independent director decision from the persisted quality evidence.
+ * The browser supplies only candidate identity; it cannot submit or forge the
+ * review verdict. No provider is called here, so unresolved visual evidence
+ * remains fail-closed instead of being converted into a pass.
+ */
+export async function runSocialImageDirectorReview(input: {
+  store: DataStore;
+  tenantId: string;
+  taskId: string;
+  expectedVersion: number;
+  candidateId: string;
+  candidateVersion: number;
+  now?: string;
+}): Promise<SocialImageCreationTask> {
+  const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
+  if (!task) throw new SocialImageProductionRunError('social_image_task_missing', 404);
+  if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
+  const snapshot = projectSocialImageProductionSnapshot(task);
+  if (snapshot.currentNode !== 'director_review' || snapshot.currentStatus !== 'needs_review') {
+    throw new SocialImageProductionRunError('social_image_director_review_not_ready', 422);
+  }
+  const reviewSet = resolveSocialImageReviewSet(task, input.candidateId, input.candidateVersion);
+  if (!reviewSet) throw new SocialImageProductionRunError('social_image_review_candidate_stale', 409);
+  if (reviewSet.anchor.id !== input.candidateId || reviewSet.anchor.version !== input.candidateVersion) {
+    throw new SocialImageProductionRunError('social_image_review_candidate_stale', 409);
+  }
+  if (!reviewSet.qualityPassed) {
+    throw new SocialImageProductionRunError('social_image_hard_quality_gate_incomplete', 422);
+  }
+  const referenceChecks = reviewSet.outputs.map(output => output.qualityChecks.find(check => check.key === 'reference_structure_similarity'));
+  const referenceReady = task.creationPath !== 'viral_replication'
+    || referenceChecks.every(check => check && check.verdict !== 'fail');
+  const factorResults = (task.hookFactorSpec?.factors || []).map(factor => {
+    const checks = reviewSet.outputs.map(output => output.qualityChecks.find(item => item.key === `hook_factor:${factor.factorId}`
+      && item.evidence?.includes(`candidate-sha256:${output.contentHash}`)
+      && factor.evidenceRefs.every(ref => item.evidence?.includes(`reference-region-sha256:${ref.contentHash}`))));
+    const allPassed = checks.every(check => check?.verdict === 'pass');
+    return { factorId: factor.factorId,
+      verdict: allPassed ? 'pass' as const : checks.some(check => check?.verdict === 'fail') ? 'fail' as const : 'uncertain' as const,
+      evidenceRefs: checks.every(Boolean) ? [...factor.evidenceRefs, ...reviewSet.refs] : factor.evidenceRefs };
+  });
+  const factorReady = task.creationPath !== 'viral_replication' || Boolean(task.hookFactorSpec?.factors.length
+    && factorResults.every(result => result.verdict === 'pass'));
+  const failedCriteria = [
+    ...(!referenceReady ? ['reference_structure_similarity'] : []),
+    ...factorResults.filter(result => result.verdict !== 'pass').map(result => `hook_factor:${result.factorId}`),
+  ];
+  const canAccept = referenceReady && factorReady;
+  const hardChecks = reviewSet.outputs.flatMap(output => SOCIAL_IMAGE_HARD_CHECKS.map(key =>
+    output.qualityChecks.find(check => check.key === key && check.severity === 'hard')));
+  const decision: SocialImageDirectorReviewDecision = {
+    schemaVersion: 'social-image-director-review.v1',
+    decision: canAccept ? 'accept_for_user_review' : 'repair',
+    candidateId: reviewSet.anchor.id,
+    candidateVersion: reviewSet.anchor.version,
+    candidateRefs: reviewSet.refs,
+    candidateSetHash: reviewSet.contentHash,
+    qualityEvidenceHash: reviewSet.qualityEvidenceHash,
+    passedCriteria: hardChecks.flatMap(check => check ? [check.key] : []),
+    failedCriteria,
+    factorResults,
+    problemRegions: canAccept ? [] : [
+      ...referenceChecks.flatMap(check => check?.region ? [JSON.stringify(check.region)] : []),
+      ...reviewSet.outputs.flatMap(output => output.qualityChecks
+        .filter(check => failedCriteria.includes(check.key) && check.region).map(check => JSON.stringify(check.region))),
+    ],
+    reasonCodes: canAccept ? ['independent_quality_evidence_passed'] : ['reference_factor_evidence_incomplete'],
+    repairInstructions: canAccept ? [] : ['补齐每个爆点因素的候选像素证据后重新审查'],
+    reviewConfidence: Math.min(.99, ...hardChecks.map(check => check?.score ?? .8)),
+    reviewedAt: input.now || new Date().toISOString(),
+  };
+  return recordSocialImageDirectorReview({ ...input, decision });
+}
+
+export async function decideSocialImageCandidate(input: {
+  store: DataStore;
+  tenantId: string;
+  userId: string;
+  taskId: string;
+  expectedVersion: number;
+  candidateId: string;
+  candidateVersion: number;
+  expectedContentHash: string;
+  actualContentHash: string;
+  decision: 'approved' | 'rejected';
+  idempotencyKey?: string;
+  note?: string;
+  now?: string;
+}) {
+  const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
+  if (!task) throw new SocialImageProductionRunError('social_image_task_missing', 404);
+  const idempotencyKey = input.idempotencyKey?.trim() || `social-image-decision:${hash({
+    taskId: input.taskId, userId: input.userId, candidateId: input.candidateId,
+    candidateVersion: input.candidateVersion, decision: input.decision,
+  }).slice(0, 32)}`;
+  const replay = (task.approvalDecisions || []).find(item => item.idempotencyKey === idempotencyKey);
+  if (replay) {
+    if (replay.candidateId !== input.candidateId || replay.candidateVersion !== input.candidateVersion
+      || replay.decision !== input.decision || replay.decidedBy !== input.userId) {
+      throw new SocialImageProductionRunError('social_image_decision_idempotency_conflict', 409);
+    }
+    return { task, decision: replay, approvedArtifact: task.approvedArtifact?.approvalDecisionId === replay.decisionId
+      ? task.approvedArtifact : undefined };
+  }
+  if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
+  if (task.schemaVersion !== 'social-image-creation.v3' || !task.productionRuntime?.binding) {
+    throw new SocialImageProductionRunError('social_image_content_task_binding_missing', 409);
+  }
+  if (input.decision === 'approved') await assertSocialImageCurrentContentTask(
+    input.store, input.tenantId, task, 'review_original_output',
+  );
+  const current = socialImageCurrentOutputs(task);
+  const output = current.find(candidate => candidate.id === input.candidateId && candidate.version === input.candidateVersion
+    && candidate.state !== 'superseded');
+  if (!output) throw new SocialImageProductionRunError('social_image_approval_candidate_stale', 409);
+  const reviewSet = resolveSocialImageReviewSet(task, output.id, output.version);
+  if (input.decision === 'approved' && (!reviewSet || input.expectedContentHash !== output.contentHash
+    || input.actualContentHash !== output.contentHash)) {
+    throw new SocialImageProductionRunError('social_image_candidate_hash_conflict', 409);
+  }
+  if (input.decision === 'approved' && !reviewSet?.qualityPassed) {
+    throw new SocialImageProductionRunError('social_image_hard_quality_gate_incomplete', 422);
+  }
+  if (input.decision === 'approved' && (task.fieldsToConfirm.length || task.contentBrief.factuality === 'mock')) {
+    throw new SocialImageProductionRunError('social_image_approval_inputs_incomplete', 422);
+  }
+  if (input.decision === 'approved' && !socialImageDirectorReviewMatchesSet(reviewSet, task.directorReviewDecision)) {
+    throw new SocialImageProductionRunError('social_image_director_review_required', 422);
+  }
+  if (input.decision === 'approved') {
+    const snapshot = projectSocialImageProductionSnapshot(task);
+    if (snapshot.currentNode !== 'user_approval' || snapshot.currentStatus !== 'needs_review') {
+      throw new SocialImageProductionRunError('social_image_workflow_incomplete', 422);
+    }
+  }
+  const decidedAt = input.now || new Date().toISOString();
+  const selected = [output];
+  const qualitySummaryHash = hash(selected.map(candidate => ({ id: candidate.id, checks: candidate.qualityChecks })));
+  const directorReviewHash = task.directorReviewDecision ? hash(task.directorReviewDecision) : undefined;
+  const selectedCandidateRef = { objectType: 'social-image-candidate', id: output.id,
+    version: output.version, contentHash: output.contentHash! };
+  const selectedIds = new Set(selected.map(candidate => candidate.id));
+  const outputs = task.outputs.map(candidate => selectedIds.has(candidate.id)
+    ? { ...candidate, state: input.decision === 'approved' ? 'approved' as const : 'repair_required' as const }
+    : candidate);
+  const reviewedAfterDecision = reviewSet ? reviewSet.outputs.map(candidate => outputs.find(item => item.id === candidate.id) || candidate) : [];
+  const completesReviewSet = input.decision === 'approved' && Boolean(reviewSet?.outputs.length)
+    && reviewedAfterDecision.every(candidate => candidate.state === 'approved');
+  const decision: SocialImageApprovalDecision = {
+    schemaVersion: 'social-image-approval-decision.v1',
+    decisionId: randomUUID(),
+    idempotencyKey,
+    decision: input.decision,
+    candidateId: output.id,
+    candidateVersion: output.version,
+    candidateContentHash: completesReviewSet ? reviewSet!.contentHash : input.actualContentHash,
+    selectedCandidateRef,
+    ...(reviewSet ? { candidateRefs: completesReviewSet ? reviewSet.refs : [selectedCandidateRef], reviewSetHash: reviewSet.contentHash } : {}),
+    decidedBy: input.userId,
+    decidedAt,
+    source: 'explicit_user_action',
+    qualitySummaryHash,
+    ...(directorReviewHash ? { directorReviewHash } : {}),
+    ...(input.note?.trim() ? { note: input.note.trim().slice(0, 1000) } : {}),
+  };
+  const approvalDecisions = [...(task.approvalDecisions || []), decision];
+  const approvedArtifact = completesReviewSet ? {
+    schemaVersion: 'approved-image-artifact.v1' as const,
+    artifactId: `imgart_${hash({ taskId: task.id, outputId: output.id, contentHash: reviewSet!.contentHash }).slice(0, 24)}`,
+    contentTaskId: task.productionRuntime.binding.contentTaskId,
+    productionRunId: task.id,
+    candidateId: output.id,
+    candidateVersion: output.version,
+    contentHash: reviewSet!.contentHash,
+    candidateRefs: reviewSet!.refs,
+    mediaItems: reviewSet!.outputs.map(candidate => ({ candidateId: candidate.id, role: candidate.role,
+      label: candidate.label, ...(candidate.mediaUrl ? { mediaUrl: candidate.mediaUrl } : {}),
+      ...(candidate.materialId ? { materialId: candidate.materialId } : {}) })),
+    ...(output.mediaUrl ? { mediaUrl: output.mediaUrl } : {}),
+    ...(output.materialId ? { materialId: output.materialId } : {}),
+    approvalDecisionId: decision.decisionId,
+    usageRestrictions: [],
+    frozenAt: decidedAt,
+  } : undefined;
+  const result = await updateSocialImageTask(input.store, input.tenantId, input.taskId, input.expectedVersion, {
+    outputs,
+    approvalDecisions,
+    ...(approvedArtifact ? { approvedArtifact } : {}),
+    status: approvedArtifact ? 'approved' : 'review_required',
+    step: 'review',
+  });
+  if (result.kind !== 'updated') throw new SocialImageProductionRunError(result.kind === 'conflict'
+    ? 'social_image_version_conflict' : result.kind === 'invalid' ? result.issues.join(',') : 'social_image_approval_persist_failed', result.kind === 'conflict' ? 409 : 422);
+  if (approvedArtifact && !socialImageTaskCanPublish(result.task)) {
+    throw new SocialImageProductionRunError('social_image_approval_invariant_failed', 503);
+  }
+  return { task: result.task, decision, approvedArtifact };
+}
+
+export async function createSocialImageDeliveryPackage(input: {
+  store: DataStore;
+  tenantId: string;
+  taskId: string;
+  expectedVersion: number;
+  now?: string;
+}): Promise<{ task: SocialImageCreationTask; deliveryPackage: SocialImageDeliveryPackage }> {
+  const task = await readSocialImageTask(input.store, input.tenantId, input.taskId);
+  if (!task) throw new SocialImageProductionRunError('social_image_task_missing', 404);
+  if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
+  const binding = task.productionRuntime?.binding;
+  const artifact = task.approvedArtifact;
+  if (task.status !== 'approved' || !task.publishable || !binding || !artifact) {
+    throw new SocialImageProductionRunError('social_image_approved_artifact_required', 422);
+  }
+  const existing = task.deliveryPackages?.find(item => item.approvedArtifactRef.contentHash === artifact.contentHash
+    && item.platformVariant.platform === task.deliverySpec.platform && item.platformVariant.aspectRatio === task.deliverySpec.aspectRatio);
+  if (existing) return { task, deliveryPackage: existing };
+  const createdAt = input.now || new Date().toISOString();
+  const packageVersion = Math.max(0, ...(task.deliveryPackages || []).map(item => item.packageVersion)) + 1;
+  const base = {
+    schemaVersion: 'social-image-delivery-package.v1' as const,
+    packageId: `imgpkg_${hash({ taskId: task.id, artifact: artifact.contentHash, packageVersion }).slice(0, 24)}`,
+    contentTaskId: binding.contentTaskId,
+    productionRunId: task.id,
+    packageVersion,
+    status: 'ready' as const,
+    approvedArtifactRef: { objectType: artifact.schemaVersion, id: artifact.artifactId, version: artifact.candidateVersion, contentHash: artifact.contentHash },
+    platformVariant: {
+      platform: task.deliverySpec.platform,
+      aspectRatio: task.deliverySpec.aspectRatio,
+      language: task.deliverySpec.language,
+      ...(artifact.mediaUrl ? { mediaUrl: artifact.mediaUrl } : {}),
+      ...(artifact.materialId ? { materialId: artifact.materialId } : {}),
+      ...(artifact.mediaItems?.length ? { mediaItems: task.imageType === 'gif_poster'
+        ? artifact.mediaItems.filter(item => item.role === 'gif_output') : artifact.mediaItems } : {}),
+      caption: task.imageTextContract.caption,
+    },
+    publicationPackageRefs: [], publicationEvidenceRefs: [], createdAt,
+  };
+  const deliveryPackage: SocialImageDeliveryPackage = { ...base, packageHash: hash(base) };
+  const result = await updateSocialImageTask(input.store, input.tenantId, task.id, task.version, {
+    deliveryPackages: [...(task.deliveryPackages || []), deliveryPackage],
+  });
+  if (result.kind !== 'updated') throw new SocialImageProductionRunError(result.kind === 'conflict'
+    ? 'social_image_version_conflict' : result.kind === 'invalid' ? result.issues.join(',') : 'social_image_delivery_package_failed', result.kind === 'conflict' ? 409 : 422);
+  return { task: result.task, deliveryPackage };
+}

@@ -1,18 +1,19 @@
-import BusinessOverviewTabs from './smartBusiness/BusinessOverviewTabs';
 import BusinessHealthOverview from './smartBusiness/BusinessHealthOverview';
+import BusinessOverviewTabs from './smartBusiness/BusinessOverviewTabs';
 import { labels as sharedTaskLabels } from '../../shared/mobile-domain.mjs';
 import { getScrollBehavior } from '../lib/usePrefersReducedMotion';
 import { PAGE_REGISTRY, type Page } from '../pageRegistry';
 import type { PresenterProductionGate } from '../lib/shotProduction';
-import { Alert, Button, Modal, Tabs } from 'antd';
+import { Alert, Button, Modal } from 'antd';
 import { OnboardingPanel } from './smartBusiness/DigitalEmployeeOnboardingPanel';
 import { GoalPanel, type GoalDraft, type BusinessLine, type ContentPlatform } from './smartBusiness/WeeklyGoalPanel';
 import type { OnboardingConfigurationInput } from './digitalEmployeeConfigurationAction';
 import WeeklyStartConflictAlert from './WeeklyStartConflictAlert';
 import WeeklyProductionStudioEntry from './smartBusiness/WeeklyProductionStudioEntry';
 import PlanHistoryDialog from './PlanHistoryDialog';
-import { Suspense, type Dispatch, type SetStateAction } from 'react';
+import { Suspense, useState, type Dispatch, type SetStateAction } from 'react';
 import { SmartBusinessDashboard, WeeklyCommandCenter, WeeklyPlanDetailsDrawer, BusinessInterpretation, deferredWorkspaceFallback } from './digitalEmployeeDeferredViews';
+import DigitalEmployeeHomeWork from './DigitalEmployeeHomeWork';
 import { CalendarRange, ChevronLeft, History, Pause, Play } from 'lucide-react';
 import { digitalEmployeeApi, buildTaskDeepLink, dispatchDigitalEmployeeDeepLink, type BusinessReadinessItem, type DigitalEmployeeOverview } from '../lib/digitalEmployees';
 import type { WeeklyStartConflict } from '../lib/weeklyStartValidation';
@@ -98,6 +99,7 @@ export interface ConfiguredDigitalEmployeeWorkspaceProps {
 }
 
 export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmployeeWorkspaceProps) {
+  const [healthDialogOpen, setHealthDialogOpen] = useState(false);
   const {
     active, data, busy, error, activeRun, canCreateNextGoal, viewGoalId, workspaceView,
     businessLine, contentPlatform, selectedAccountId, selectedContentItemId,
@@ -150,7 +152,9 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
     const projectedWeeklyStatus = weeklyWorkStatus(data);
     const currentPlanStatusLabel = viewGoalId
       ? "历史计划"
-      : data.run
+      : !goal
+        ? "待创建"
+        : data.run
         ? projectedWeeklyStatus?.title.includes("自动恢复")
           ? "自动恢复中"
           : weeklyRunHeaderLabel[data.run.status] || "状态待确认"
@@ -265,16 +269,16 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
     return (
       <>
       {weeklyStudioContentId && <WeeklyProductionStudioEntry data={data} contentId={weeklyStudioContentId} autoOpen onOpened={() => setWeeklyStudioContentId("")} onUnavailable={() => setWeeklyStudioContentId("")} />}
-      {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-white">
+      {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-surface">
         <div className="mx-auto w-full px-2 py-3 sm:px-3">
           <h1 className="sr-only">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
-          <div className="grid grid-cols-1 overflow-hidden rounded-2xl border border-border bg-white xl:grid-cols-[minmax(0,1.7fr)_minmax(360px,1fr)]"><div aria-label="当前周计划" className="min-w-0">
-            {goal ? <Suspense fallback={deferredWorkspaceFallback}><WeeklyCommandCenter
+          <div className="grid grid-cols-1 overflow-hidden rounded-2xl border border-border bg-surface xl:grid-cols-[minmax(0,1.7fr)_minmax(360px,1fr)]"><div aria-label="当前周计划" className="min-w-0">
+            <Suspense fallback={deferredWorkspaceFallback}><WeeklyCommandCenter
               data={data}
               statusLabel={currentPlanStatusLabel}
               actions={weeklyPlanControls}
               feedback={weeklyActionFeedback}
-              onMetricClick={metric => {
+              onMetricClick={goal ? metric => {
                 setSelectedContentItemId("");
                 if (metric === "waiting_review") {
                   setWorkspaceView("matrix");
@@ -285,16 +289,16 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
                   return;
                 }
                 setWeeklyPlanDetailsOpen(true);
-              }}
+              } : undefined}
               notice={publishingSetupRequired
                 ? <><p className="mr-auto text-xs leading-5 text-text-secondary"><strong className="text-warning">发布准备待完成：</strong>{publishingReadiness?.summary}。内容生产可以继续，系统不会把未连接账号当成已就绪。</p><Button size="small" onClick={openPublishingAccountSetup}>配置发布账号</Button></>
                 : !activeRun && !viewGoalId && (missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
                 ? <p className="mr-auto text-xs text-text-secondary">可直接开始任务；{detailGeneration?.blockedCount || missingReferenceMasters.length || missingProductMasters.length} 条内容的待补资料将在对应制作步骤提示，不阻止其他内容推进。账号连接与发布授权在正式发布前核验。</p>
                 : undefined}
-            /></Suspense> : <><section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div className="max-w-2xl"><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有计划</p><p className="mt-1 text-xs leading-5 text-slate-500">先制定并预览周计划。计划会说明本周做什么、在哪些平台生产、产量、预计预算和工作排期；确认前不会开始生产。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>{weeklyActionFeedback && <div className="border-b border-border px-4 py-2.5">{weeklyActionFeedback}</div>}</>}
+            /></Suspense>
           </div>
-          <aside aria-label="企业经营分" className="min-w-0 border-t border-border xl:border-l xl:border-t-0 [&_section]:rounded-none [&_section]:border-0"><BusinessHealthOverview summaryOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange}/></aside><Suspense fallback={deferredWorkspaceFallback}><BusinessInterpretation data={data} onViewReview={() => setWorkspaceView("review")}/></Suspense></div>
-          {workspaceView === "today" ? <Button className="mt-3" onClick={() => setWorkspaceView("matrix")}>查看员工排期</Button> : <Button className="mt-3" onClick={() => { setSelectedContentItemId(""); setWorkspaceView("today"); }}>返回经营总览</Button>}
+          <aside aria-label="企业经营分" className="min-w-0 border-t border-border xl:border-l xl:border-t-0 [&_section]:rounded-none [&_section]:border-0"><BusinessHealthOverview summaryOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange} onOpenAccountHealth={() => setHealthDialogOpen(true)}/></aside><Suspense fallback={deferredWorkspaceFallback}><BusinessInterpretation data={data} onViewReview={() => setWorkspaceView("review")}/></Suspense></div>
+          {workspaceView === "today" && <div className="pt-3"><DigitalEmployeeHomeWork data={data} onNavigate={onNavigate}/></div>}
           <div className="grid grid-cols-1 gap-4 pb-6 pt-2">
             <main className="min-w-0">
             <Suspense fallback={deferredWorkspaceFallback}>{workspaceView === "rules"
@@ -315,12 +319,14 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
           {workspaceView === "today" && <BusinessOverviewTabs data={data} onNavigate={onNavigate}/>}
         </div>
       </div>}
+      <Modal open={healthDialogOpen} title="账号健康与阶段目标" width={960} footer={null} destroyOnHidden onCancel={() => setHealthDialogOpen(false)}>
+        <BusinessHealthOverview accountOnly data={data} selectedAccountId={selectedAccountId} onNavigate={onNavigate}/>
+      </Modal>
       {active && applicationGuideOpen && (
         <OnboardingPanel
           initial={data.config}
           readiness={data.businessSnapshot?.readiness || []}
           busy={Boolean(busy)}
-          allowInitialPlan={false}
           restartFromBeginning={applicationGuideEntry === "start"}
           initialStep={applicationGuideEntry}
           dismissible
@@ -361,7 +367,7 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
           }}>选择或录入数字人形象</Button>}
         </div>
       </Modal>
-      {weeklyPlanOpen && (!goal || newGoal) && !activeRun && <div className="h-full overflow-y-auto bg-white">
+      {weeklyPlanOpen && (!goal || newGoal) && !activeRun && <div className="h-full overflow-y-auto bg-surface">
         <section aria-label="周计划生成" className="mx-auto w-full max-w-[1440px] p-4 sm:p-6">
           <header className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
             <h1 className="text-[28px] font-semibold">制定本周目标</h1>

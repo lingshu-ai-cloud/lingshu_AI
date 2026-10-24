@@ -12,6 +12,43 @@ const weekly = load('lib/generated/weekly-work-status.js')
 const workbench = load('lib/workbench.js', { require:id => id.includes('weekly-work-status') ? weekly : generated })
 const schedule = load('lib/agentSchedule.js', { require:() => generated })
 const home = load('lib/operator-home.js', { require:id => id.endsWith('workbench') ? workbench : schedule })
+const unified = load('lib/unified-home.js')
+
+test('unified home combines operator and customer metrics without inventing unavailable values', () => {
+  const result = unified.project(
+    { counts: { pendingProduction:3, producedFilms:2, pendingAcceptance:1, acceptedFilms:4, pendingShots:5, completedShots:6 }, matters:[{ id:'approval', type:'approval', title:'确认成片' }] },
+    { counts: { pendingReply:7, replied:8, pendingFollowup:9, followedUp:10, highIntent:11, converted:12 }, pendingReply:[{ id:'customer', name:'客户 A' }] }
+  )
+  assert.deepEqual(Array.from(result.metrics, item => item.value), [3, 1, 5, 7, 9, 11])
+  assert.deepEqual(Array.from(result.metrics, item => item.compared), [2, 4, 6, 8, 10, 12])
+  assert.equal(result.urgentMatters[0].kindLabel, '待审批')
+  assert.equal(result.customerTodos[0].todoType, '待回复')
+  assert.equal(unified.project({}, {}).metrics[0].value, '—')
+  assert.deepEqual(Array.from(result.metricGroups, group => group.title), ['内容生产', '客户经营'])
+  assert.equal(result.metrics[2].active, true)
+  assert.equal(unified.project({}, {}).metrics[0].active, false)
+})
+
+test('today plan groups shooting into one action and keeps other work reachable on demand', () => {
+  const plan = unified.dailyPlan({
+    todayShots: [{ id: 'shot-a' }, { id: 'shot-b' }, { id: 'shot-c' }],
+    urgentMatters: [
+      { id: 'shoot:shot-a', type: 'shoot' }, { id: 'shoot:shot-b', type: 'shoot' }, { id: 'shoot:shot-c', type: 'shoot' },
+      { id: 'approval:film-a', type: 'approval' },
+      { id: 'approval:decision-a', type: 'approval', dueAt: '2026-10-24T11:00:00+08:00' },
+      { id: 'task:future', type: 'task', dueAt: '2026-10-25T11:00:00+08:00' }
+    ],
+    todayAcceptance: [{ id: 'film-a' }], customerTodos: [{ id: 'customer-a' }]
+  }, '2026-10-24', '2026-10-24')
+  assert.deepEqual(Array.from(plan.groups, group => [group.key, group.count]), [
+    ['shooting', 3], ['matters', 1], ['customers', 1], ['acceptance', 1]
+  ])
+  assert.equal(plan.groups[0].title, '今天需要拍摄 3 条')
+  assert.equal(plan.groups[2].title, '客户消息')
+  assert.equal(plan.groups[2].action, '进入会话')
+  assert.equal(plan.total, 6)
+  assert.deepEqual(Array.from(plan.matters, item => item.id), ['approval:decision-a'])
+})
 
 test('operator home projects execution counts and only intervention schedule items', () => {
   const result = home.project(
@@ -85,25 +122,43 @@ test('operator home includes overdue local shooting and database approval record
   assert.equal(result.todayShots.length, 1)
 })
 
-test('operator home follows the mobile visual baseline', () => {
+test('operator home follows the unified mobile visual baseline', () => {
   const markup = fs.readFileSync(__dirname + '/packages/operator/home/index.wxml', 'utf8')
   const styles = fs.readFileSync(__dirname + '/packages/operator/home/index.wxss', 'utf8')
   const navMarkup = fs.readFileSync(__dirname + '/components/operator-nav/index.wxml', 'utf8')
   const navStyles = fs.readFileSync(__dirname + '/components/operator-nav/index.wxss', 'utf8')
   assert.doesNotMatch(markup, /class="ambient"/)
-  assert.match(styles, /page\{background:#fff\}/)
-  assert.match(styles, /\.metric-band\{[^}]*border-top:/)
-  assert.match(styles, /\.metric\{[^}]*align-items:flex-start/)
-  assert.match(styles, /\.shot-card\{[^}]*border-radius:var\(--ls-radius-panel\)/)
-  assert.match(markup, /data-key="production"/)
-  assert.match(markup, /data-key="acceptance"/)
-  assert.match(markup, /class="video-scroll"/)
-  assert.match(markup, /本周发布视频/)
+  assert.match(styles, /page\{background:#fff/)
+  assert.match(styles, /\.metric-band\{[^}]*border:1rpx/)
+  assert.match(styles, /grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/)
+  assert.match(markup, /wx:for="\{\{metricGroups\}\}"/)
+  assert.match(markup, /运营与客服六项工作数据/)
+  assert.match(markup, /wx:for="\{\{todayGroups\}\}"/)
+  assert.match(markup, /bindtap="openTodayGroup"/)
+  assert.ok(markup.indexOf('class="today-heading"') < markup.indexOf('class="overview-heading"'))
+  assert.match(markup, /只看你今天需要推进的事情/)
+  assert.doesNotMatch(markup, /wx:for="\{\{urgentMatters\}\}"/)
+  assert.match(markup, /wx:for="\{\{focusMatters\}\}"/)
+  assert.doesNotMatch(markup, /wx:for="\{\{customerTodos\}\}"/)
+  assert.match(markup, /focus-badge/)
+  assert.match(markup, /wx:for="\{\{todayAcceptance\}\}"/)
+  assert.match(markup, /lingxiaoshu-sheet/)
   assert.match(navMarkup, /nav-icon \{\{item\.key\}\}/)
+  assert.match(navMarkup, /询问灵小枢/)
+  assert.match(navMarkup, /nav-badge/)
   assert.match(navStyles, /\.nav-item\{[^}]*min-height:72rpx/)
+  assert.match(navStyles, /\.assistant-trigger\{[^}]*top:-96rpx/)
   assert.doesNotMatch(navStyles, /backdrop-filter/)
   assert.doesNotMatch(navMarkup, /liquid-slider/)
-  assert.match(navStyles, /grid-template-columns:1fr 1fr/)
+  assert.match(navStyles, /grid-template-columns:repeat\(3,1fr\)/)
+  assert.match(navStyles, /\.nav-badge/)
+})
+
+test('customer work summary opens the full conversation list instead of expanding rows in place', () => {
+  const script = fs.readFileSync(__dirname + '/packages/operator/home/index.js', 'utf8')
+  const markup = fs.readFileSync(__dirname + '/packages/operator/home/index.wxml', 'utf8')
+  assert.match(script, /key === 'customers'.*packages\/operator\/inquiries\/index\?tab=confirm/)
+  assert.doesNotMatch(markup, /group\.key === 'customers'/)
 })
 
 test('operator calendar is collapsed by default and expands on demand', () => {
@@ -121,8 +176,10 @@ test('operator workbench keeps queue swipe UI removed and review out of primary 
   const nav = fs.readFileSync(__dirname + '/components/operator-nav/index.js', 'utf8')
   assert.doesNotMatch(markup, /queue-deck|queueTouch|左滑|右滑/)
   assert.doesNotMatch(nav, /key: 'review'/)
-  assert.match(nav, /label: '素材整理'/)
-  assert.match(nav, /label: '待拍任务'/)
+  assert.match(nav, /label: '今日待办'/)
+  assert.match(nav, /label: '素材拍摄'/)
+  assert.match(nav, /label: '素材资产'/)
+  assert.doesNotMatch(nav, /客服版|运营版/)
 })
 
 test('operator pending shot card opens reference detail before the camera', () => {

@@ -23,10 +23,8 @@ const PAGE_WORKFLOW_CONTEXT: Partial<Record<Page, WorkflowContext>> = {
   conversion: { flow: ['接收客户消息', '确认回复与报价', '跟进处理结果'] },
   orders: { flow: ['确认成交信息', '跟踪履约状态', '查看收入结果'] },
   enterprise: { flow: ['维护企业资料', '确认业务边界', '供各业务页面使用'] },
-  agentMemory: { flow: ['汇总可靠事实', '核对可用信息', '按权限提供上下文'] },
   scheduled: { flow: ['设定执行节奏', '到期自动处理', '查看任务结果'] },
   plugins: { flow: ['选择外部能力', '完成授权连接', '核对可用状态'] },
-  organizationPermissions: { flow: ['设置成员角色', '限定数据范围', '保存权限配置'] },
   channels: { flow: ['选择发布渠道', '完成授权连接', '核对可用状态'] },
   youtube: { flow: ['准备发布渠道', '完成 YouTube 授权', '核对连接状态'] },
 };

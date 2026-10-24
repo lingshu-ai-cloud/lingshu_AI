@@ -20,15 +20,15 @@ import { contextForOrbit, type AssistantContext } from './globalAssistantRuntime
 import type { useAssistantDecisionDialog } from './useAssistantDecisionDialog';
 import type { useAssistantQuickExecution } from './useAssistantQuickExecution';
 import type { useAssistantSend } from './useAssistantSend';
+import type { AssistantHomeBounds } from './useAssistantHomeAnchor';
 import type { useContentTaskIntake } from './useContentTaskIntake';
 
-import type { AssistantHomeBounds } from './useAssistantHomeAnchor';
 
 type StoreActions = ReturnType<typeof useAssistantStore.getState>;
 type Props = {
-  inlineHome?: boolean;
-  inlineHomeBounds?: AssistantHomeBounds | null;
   page: Page;
+  inlineHome: boolean;
+  inlineHomeBounds: AssistantHomeBounds | null;
   pageContext: AssistantContext;
   currentPageAgent: OrbitAgentId;
   activeAgent: OrbitAgentId;
@@ -253,7 +253,7 @@ export default function AssistantConversationPanel(props: Props) {
                 }
               }}
             />}
-            <AssistantComposer compact={compactHome} variant={inlineHome ? 'home' : 'default'} ref={assistantInputRef} draft={activeThread.draftInput} files={pendingAttachments}
+            <AssistantComposer variant={inlineHome ? 'home' : 'default'} compact={compactHome} ref={assistantInputRef} draft={activeThread.draftInput} files={pendingAttachments}
               disabled={loading || replyStreaming || fileGenerating || contentIntake.busy || weeklyActionBusy}
               uploading={attachmentUploading} error={attachmentError}
               onDraftChange={value => setDraftInput(activeAgent, value)}

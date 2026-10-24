@@ -6,6 +6,16 @@
     <view wx:if="{{!messages.length && !loading}}" class="welcome"><view class="welcome-copy"><text class="welcome-title">{{welcomeTitle}}</text><text class="welcome-note">{{welcomeNote}}</text></view><view wx:if="{{suggestions.length}}" class="suggestion-entry" bindtap="toggleSuggestions"><text>常用问题</text><text>{{showSuggestions ? '收起' : '展开'}}</text></view><view wx:if="{{showSuggestions}}" class="suggestions"><view class="suggestion-row"><view wx:for="{{suggestions}}" wx:key="*this" class="suggestion" data-text="{{item}}" bindtap="ask">{{item}}</view></view></view></view>
     <view wx:for="{{messages}}" wx:key="id" id="{{item.id}}" class="message {{item.role}}"><text class="speaker">{{item.role === 'user' ? '你' : agentTitle}}</text><text user-select class="message-text">{{item.content}}</text></view>
     <view wx:if="{{sending}}" class="thinking">正在整理真实工作信息…</view>
+    <view wx:if="{{contentTask}}" class="content-task-card">
+      <view class="content-task-head"><text class="content-task-state">{{contentTask.stateLabel}}</text><text wx:if="{{contentTask.progress}}" class="content-task-progress">{{contentTask.progress}}</text></view>
+      <text class="content-task-title">{{contentTask.title}}</text>
+      <text class="content-task-node">{{contentTask.currentNode.label}} · {{contentTask.currentNode.userFacingSummary}}</text>
+      <view wx:if="{{contentTask.blockingItems.length}}" class="content-task-list"><text wx:for="{{contentTask.blockingItems}}" wx:key="key">{{item.label}}：{{item.value}}</text></view>
+      <view wx:elif="{{contentTask.knownItems.length}}" class="content-task-list muted"><text wx:for="{{contentTask.knownItems}}" wx:key="key">已确定 · {{item.label}}：{{item.value}}</text></view>
+      <text wx:if="{{contentTask.costLabel}}" class="content-task-time">{{contentTask.costLabel}}</text>
+      <text class="content-task-time">最近确认 {{contentTask.lastConfirmedAt}}</text>
+      <button class="content-task-action" bindtap="openContentTask">{{contentTask.actionLabel}}</button>
+    </view>
     <view wx:for="{{actions}}" wx:key="id" class="action-card" data-index="{{index}}" bindtap="previewAction"><text>{{item.label || '查看操作方案'}}</text><text>›</text></view>
     <view wx:if="{{preview}}" class="preview-card"><text class="preview-title">执行前确认 · {{preview.target.title}}</text><text class="preview-impact">{{preview.impact}}</text><view wx:for="{{preview.steps}}" wx:key="*this" class="step">{{index + 1}}. {{item}}</view><view class="preview-buttons"><button bindtap="dismissPreview">取消</button><button class="confirm" loading="{{confirming}}" bindtap="confirmAction">确认执行</button></view></view>
     <view wx:if="{{receipts.length}}" class="receipts"><text class="receipt-heading">执行记录</text><view wx:for="{{receipts}}" wx:key="id" class="receipt"><text>{{item.statusLabel}}</text><text>{{item.acceptedAt}}</text></view></view>

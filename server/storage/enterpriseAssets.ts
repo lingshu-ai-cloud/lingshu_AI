@@ -16,7 +16,7 @@ export function enterpriseAssetObjectKeyFromTenantKey(tenantKey: string, filenam
 
 export function enterpriseAssetContentType(filename: string, supplied = ''): string {
   const normalized = supplied.trim().toLowerCase();
-  if (normalized) return normalized;
+  if (normalized && normalized !== 'application/octet-stream') return normalized;
   switch (path.extname(filename).toLowerCase()) {
     case '.png': return 'image/png';
     case '.jpg':
@@ -28,6 +28,11 @@ export function enterpriseAssetContentType(filename: string, supplied = ''): str
     case '.mov': return 'video/quicktime';
     case '.webm': return 'video/webm';
     case '.pdf': return 'application/pdf';
+    case '.csv': return 'text/csv';
+    case '.txt': return 'text/plain';
+    case '.docx': return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    case '.xlsx': return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    case '.xls': return 'application/vnd.ms-excel';
     default: return 'application/octet-stream';
   }
 }
@@ -36,5 +41,10 @@ export function enterpriseAssetTypeAllowed(contentType: string): boolean {
   const normalized = contentType.trim().toLowerCase().split(';', 1)[0];
   return normalized.startsWith('image/')
     || normalized.startsWith('video/')
-    || normalized === 'application/pdf';
+    || normalized === 'application/pdf'
+    || normalized === 'text/csv'
+    || normalized === 'text/plain'
+    || normalized === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    || normalized === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    || normalized === 'application/vnd.ms-excel';
 }

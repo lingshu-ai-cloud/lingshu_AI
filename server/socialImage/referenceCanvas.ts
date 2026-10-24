@@ -4,7 +4,16 @@ export interface SocialImageCanvasSpec {
   width: number;
   height: number;
   aspectRatio: number;
-  providerRatio: '1:1' | '4:5' | '16:9';
+  providerRatio: '1:1' | '4:5' | '9:16' | '16:9';
+}
+
+export type SocialImageAspectRatio = '1:1' | '4:5' | '9:16' | '16:9';
+
+export function socialImageCanvasForAspectRatio(ratio: SocialImageAspectRatio): SocialImageCanvasSpec {
+  if (ratio === '1:1') return { width: 1200, height: 1200, aspectRatio: 1, providerRatio: '1:1' };
+  if (ratio === '4:5') return { width: 1200, height: 1500, aspectRatio: .8, providerRatio: '4:5' };
+  if (ratio === '9:16') return { width: 1080, height: 1920, aspectRatio: 9 / 16, providerRatio: '9:16' };
+  return { width: 1920, height: 1080, aspectRatio: 16 / 9, providerRatio: '16:9' };
 }
 function orientedDimensions(metadata: Metadata): { width: number; height: number } | null {
   const width = Number(metadata.width || 0);
@@ -17,6 +26,7 @@ function orientedDimensions(metadata: Metadata): { width: number; height: number
 
 function providerRatioFor(width: number, height: number): SocialImageCanvasSpec['providerRatio'] {
   const ratio = width / height;
+  if (ratio < 0.68) return '9:16';
   if (ratio < 0.92) return '4:5';
   if (ratio > 1.08) return '16:9';
   return '1:1';

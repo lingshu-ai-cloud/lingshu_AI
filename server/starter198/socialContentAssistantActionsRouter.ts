@@ -125,9 +125,10 @@ export function createSocialContentAssistantActionsRouter(input: {
     bodyWithinLimit(req);
     const idempotencyKey = requireIdempotencyKey(req.headers['idempotency-key']);
     const parsed = parseCreateSocialTask(req.body);
-    if (!parsed.dueAt) throw new SocialContentWorkflowError('social_content_due_at_required', 400);
+    const mode = parsed.mode ?? 'instant';
+    if (mode === 'weekly' && !parsed.dueAt) throw new SocialContentWorkflowError('social_content_due_at_required', 400);
     let current = await createSocialContentTask({ repository: input.repository, ...identity, idempotencyKey,
-      value: { ...parsed, mode: 'weekly' as const }, entry: 'assistant', now: input.now() });
+      value: { ...parsed, mode }, entry: 'assistant', now: input.now() });
     if (current.runId) { res.json({ task: current, receipt: await receipt(identity.tenantId, current) }); return; }
     let blockedReason: string | undefined;
     if (!input.orchestratorQueue) blockedReason = 'social_content_orchestrator_not_configured';

@@ -218,6 +218,21 @@ const TENANT_PROFILE_FIELDS: FieldDef[] = [
   { name: 'updated_by', type: 'text' },
 ];
 
+const ENTERPRISE_ONBOARDING_DRAFT_FIELDS: FieldDef[] = [
+  { name: 'tenant_id', type: 'text', required: true },
+  { name: 'user_id', type: 'text', required: true },
+  { name: 'schema_version', type: 'text', required: true },
+  { name: 'revision', type: 'number', required: true },
+  { name: 'current_step', type: 'number', required: true },
+  { name: 'base_fact_version', type: 'text', required: true },
+  { name: 'confirmation_id', type: 'text', required: true },
+  { name: 'confirmation_state', type: 'text' },
+  { name: 'claim_token', type: 'text' },
+  { name: 'payload', type: 'json', required: true },
+  { name: 'updated_at', type: 'text', required: true },
+  { name: 'updated_by', type: 'text', required: true },
+];
+
 const TENANT_ORDER_FIELDS: FieldDef[] = [
   { name: 'tenant_id', type: 'text', required: true },
   { name: 'order_no', type: 'text', required: true },
@@ -676,7 +691,12 @@ export async function ensureDeliveryCollections(): Promise<void> {
   await ensureCollection('customer_memory', CUSTOMER_MEMORY_FIELDS);
   await ensureCollection('agent_memory_audit', AGENT_MEMORY_AUDIT_FIELDS);
   await ensureCollection('style_adoption_stats', STYLE_ADOPTION_STATS_FIELDS);
-  await ensureCollection('tenant_profiles', TENANT_PROFILE_FIELDS);
+  await ensureCollection('tenant_profiles', TENANT_PROFILE_FIELDS, [
+    'CREATE UNIQUE INDEX idx_tenant_profile_owner ON tenant_profiles (tenant_id)',
+  ]);
+  await ensureCollection('enterprise_onboarding_drafts', ENTERPRISE_ONBOARDING_DRAFT_FIELDS, [
+    'CREATE UNIQUE INDEX idx_enterprise_onboarding_draft_owner ON enterprise_onboarding_drafts (tenant_id, user_id)',
+  ]);
   await ensureCollection('tenant_orders', TENANT_ORDER_FIELDS);
   await ensureCollection('tenant_support_settings', TENANT_SUPPORT_SETTINGS_FIELDS);
 }
