@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {createReadStream} from 'node:fs';
-import {recognizeProductImageLocally} from '../lib/localProductOcr.js';
+import {recognizeProductImageLocally,withLocalProductOcrSession} from '../lib/localProductOcr.js';
 import {inspectSensitiveScreenText} from './socialSceneSensitiveScreenAudit.js';
 import {forEachDecodedPng} from './socialCaptionDecodedFrameAudit.js';
 import type {CaptionDecodedFrameAudit} from './socialCaptionDecodedFrameAudit.js';
@@ -36,11 +36,13 @@ export async function auditFinalSensitiveFrames(input:{filePath:string;expectedM
  if(!Number.isSafeInteger(expectedFrameCount)||expectedFrameCount<1||expectedFrameCount>300)return unknown('逐帧敏感文字观察超出 300 帧限制');
  const frameEvidence:FinalSensitiveFrameAudit['frameEvidence']=[];
  try{
-  const decoded=await forEachDecodedPng(input.filePath,async(bytes,index)=>{
+  const scan=async(recognize:typeof recognizeProductImageLocally)=>forEachDecodedPng(input.filePath,async(bytes,index)=>{
    if(index>=expectedFrameCount)throw Error('privacy_frame_count_exceeded');
-   const recognized=await (input.recognize??recognizeProductImageLocally)({bytes,mimeType:'image/png'});
+   const recognized=await recognize({bytes,mimeType:'image/png'});
    frameEvidence.push({index,frameSha256:createHash('sha256').update(bytes).digest('hex'),ocrSha256:createHash('sha256').update(recognized).digest('hex'),findingCodes:inspectSensitiveScreenText(recognized)});
   });
+  // Keep one worker for this audit while still recognizing every decoded frame.
+  const decoded=input.recognize?await scan(input.recognize):await withLocalProductOcrSession(scan);
   if(decoded!==expectedFrameCount)return unknown('真实解码帧数与独立预期不一致',frameEvidence);
   if(await sha(input.filePath)!==mediaSha256)return unknown('逐帧 OCR 期间最终 MP4 字节变化',frameEvidence);
   const findingFrameIndexes=frameEvidence.flatMap(frame=>frame.findingCodes.length?[frame.index]:[]);

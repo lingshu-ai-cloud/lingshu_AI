@@ -39,6 +39,6 @@ test('bundled OCR detects a one-frame private-key marker from real encoded MP4 p
   const probe=await probeSocialSceneMedia({filePath,manifest,frameRenderEvidence:{schemaVersion:'renderer-frame-attestation.v1',outputSha256:expectedMediaSha256,fps:30,durationSeconds:1,expectedFrames:30}});
   const audit=probe.finalSensitiveFrameAudit;
   assert.equal(probe.finalPrivacyCoverage?.status,'observed');
-  assert.equal(audit?.status,'hit',audit?.reason);assert.deepEqual(audit?.findingFrameIndexes,[13]);assert.deepEqual(audit?.findingCodes,['private_key_marker']);
+  assert.equal(audit?.status,'hit',audit?.reason);assert.equal(audit?.checkedFrameCount,30);assert.equal(audit?.frameEvidence.length,30);assert.deepEqual(audit?.frameEvidence.map(frame=>frame.index),Array.from({length:30},(_,index)=>index));assert.deepEqual(audit?.findingFrameIndexes,[13]);assert.deepEqual(audit?.findingCodes,['private_key_marker']);
  }finally{await rm(root,{recursive:true,force:true});}
 });
