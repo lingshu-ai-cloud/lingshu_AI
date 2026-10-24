@@ -17,11 +17,17 @@ assert.match(
   'the active task must be initialized from the exact page handoff and remain page-scoped',
 );
 assert.match(pageSlot, /socialContentTaskId=\{activeSocialContentTaskId\}/);
-assert.match(
-  app,
-  /showSocialContentPlanning = page === 'smartAssets'[\s\S]{0,260}!smartAssetsCreateRequest[\s\S]*?showSocialContentPlanning,/,
-  'a creation request must open Studio directly, while the generic entry may show the landing page',
-);
+const planningExpression = app.match(/const showSocialContentPlanning = ([\s\S]*?);/);
+assert.ok(planningExpression, 'the planning/Studio boundary must remain explicit');
+const showPlanning = new Function('smartAssetsView', 'smartAssetsStudioOpen', 'smartAssetsContentTaskId',
+  'smartAssetsWorkflowContext', 'smartAssetsCreateRequest', `return (${planningExpression[1]});`);
+assert.equal(showPlanning('create', false, null, null, null), true, 'generic creation may show planning');
+assert.equal(showPlanning('create', false, null, null, {}), false, 'ordinary creation requests still open Studio');
+assert.equal(showPlanning('create', false, null, {}, null), false, 'existing workflow context still opens Studio');
+assert.equal(showPlanning('create', false, null, null, { creationDialoguePlan: {} }), true, 'an assistant plan retains its same-conversation handoff');
+assert.equal(showPlanning('create', false, null, null, { creationPath: 'viral_replication' }), true, 'reference creation retains its planning boundary');
+assert.equal(showPlanning('create', true, null, null, { creationDialoguePlan: {} }), false, 'explicit Studio entry overrides planning');
+assert.equal(showPlanning('history', false, null, null, null), false, 'history cannot silently become a creation page');
 assert.match(pageSlot, /showSocialContentPlanning \? \([\s\S]*?<SocialContentPlanningPage[\s\S]*?: \([\s\S]*?<TrafficPage/);
 assert.match(traffic, /kickoff\.source === 'inspiration_analysis'[\s\S]*?contentCreationRequest:[\s\S]*?creationPath: 'viral_replication'/,
   'an inspiration video must open the viral-replication task instead of dropping users on the generic content homepage');
