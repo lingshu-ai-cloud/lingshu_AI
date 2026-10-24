@@ -3,6 +3,14 @@
 最近盘点：2026-10-23（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-24 联合功能基线推进
+
+- 本轮原盘点 23 棵工作树，新增独立候选树后共 24 棵。没有清理、归档、重置或删除来源工作树及业务数据。
+- 权威工作树 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023` 已从干净 `974a665d` 快进至 `e98d7410337dbb411c5478c7f1caeefad2db27f2` 并切到 `xixi联合功能模块后端改`，后续开发以该基线为准。原基线恢复分支保留。
+- 候选树 `/Users/julia1/.codex/worktrees/xixi-union-backend-20261024` 完成合并与验证后停在 detached `e98d7410337dbb411c5478c7f1caeefad2db27f2`；仅移走本轮新生成的未跟踪测试缓存、移除本轮依赖目录软链，原始证据保存在本机证据目录；没有删除源依赖或真实预览数据。
+- 干净的 `/Users/julia1/Documents/ChatGPT/1024吴小姐最新前端预览` 从 `89b17510` 安全快进到同一验证版本，后续治理补记可继续快进。含未提交改动的内容创作、数字员工、投流、灵感和小程序等来源树保留原 HEAD/index/文件；13 棵源码树的固定快照已逐笔整合，不能因快照合并而把现场视为干净。
+- 本机证据 `/Users/julia1/.codex/integration-evidence/20261024-all-branches/` 包含原分支 bundle、93 分支矩阵、13 源码快照清单、冲突选择、源码保全核验、失败/成功原始日志及最终验证摘要。详见 [联合整合报告](ALL-BRANCH-INTEGRATION-20261024.md)。
+
 ## 2026-10-24 客服功能合入当前开发基线
 
 - 当前集成工作树 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`、分支 `xixi投流客服整合补齐基线v1`，在用户确认后从干净 `89b17510` 快进至客服验证提交 `6b5c3022`；本轮治理提交另行记录，无生产源码变化。已在此树重新跑完整候选客服功能/静态矩阵，见[集成报告](../qa/customer-baseline-integration-2026-10-24.md)。
