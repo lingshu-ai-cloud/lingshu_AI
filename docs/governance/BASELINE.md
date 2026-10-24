@@ -2,6 +2,13 @@
 
 更新时间：2026-10-24（Asia/Shanghai）
 
+## 五导航基线上选择性整合投流与客服（2026-10-24）
+
+- 本机主集成树 `/Users/jiejie/Documents/lingshu-AI` 的起点是干净的 `xixi改五个大文件结构治理`、`4f71de512d792d24ad4459a760968d4077500a15`。隔离分支 `codex/ads-customer-appearance-integration-20261024` 从该提交出发，按用户明确的冲突取舍，依次选择性引入 `xixi投流客服整合补齐基线v1`（`89b175109149d4551aeb3ce590fe9c42c46bf23c`）中的 `cff5de15` 投流、`f19e0c05` 客服、`1dd11186` 外观补丁；源码检查点为 `87663a826832923b477f35ef99657728b54a18a2`。这不是把目标分支整树覆盖当前基线。治理文档提交及主树快进后的最终 HEAD 以 Git 再核验；原来源分支、其他工作树和既有预览进程均保留。
+- 保留当前五个一级导航及已合入的灵小枢和图片功能；启用投流一级入口，在同一工作区增加计划创编、投放数据、素材管理页签，并让三级旧链接 `adsManaged` 也正确高亮投流。客服增加持久回复恢复与客户聚合恢复，沿用当前主题 token，并补回模拟输入区“不对真实平台发送”的可见说明。迁移校验清单同时保留当前灵小枢/图片项及目标投流、客服项，共 199 项；本次只做仓库文件校验，**没有在目标数据库执行迁移**。广告真实账号、授权和付费操作仍由后端门禁约束，启用入口不等于开放真实投放。
+- 实际通过：`pnpm run test:platform-ads`（47 个测试文件）、隔离浏览器投流 UI 夹具、`pnpm run test:customer-pipeline`（80/80）、`pnpm run test:conversion-boundaries`（13/13）、`pnpm run test:digital-employees`、`pnpm run test:social-image-pipeline`（主组 79/79 及后续合同）、`pnpm run test:assistant`、`pnpm run lint`、以 `4f71de51` 为参照的 `pnpm run check:architecture`（2,693 个生产 TypeScript 文件）、`pnpm run check:digital-employee-migrations`（199 项只读）、`pnpm run build`、`pnpm run build:account-hub`、`git diff --check`。构建仍提示其他超过 500 kB 的分块，Studio 主 chunk 369,019/485,000 字节；构建不是部署。
+- 完整 `pnpm run quality` **未通过**：通过前置架构、迁移、治理、生产编排及隔离 PocketBase 新装/升级/恢复、视频审批等检查后，停在 `scripts/langgraphLocalProduction.test.ts:121`，缺少应已持久化的 `quality` 完成检查点。相同命令在原始 `4f71de51` 上同一断言处复现；本次补丁没有更改视频生产图或图片流水线文件，故不能把这一失败记为投流/客服回归，也不能把后续未执行阶段写成通过。`pnpm run test:customer-service` 另停在历史 `externalCustomerServiceDemo.test.ts:103` 对已从五导航产品基线移除的智能体记忆工作区的源码断言；模拟输入安全说明已按真实 UI 要求补齐，未为旧断言恢复入口。`verify` 未运行。没有真实供应商/付费调用、登录后真实租户 E2E、目标库迁移、推送或部署；旧本地预览不自动代表本源码。安全恢复点为 `4f71de51`，后续应单独修复原基线视频质量检查点与历史客服测试，再做完整发布验收。
+
 ## 两条 PRD 增量的顺序本地合并（2026-10-24）
 
 - 本机主集成树 `/Users/jiejie/Documents/lingshu-AI`、分支 `xixi改五个大文件结构治理`，从干净 `777f0425c9c805b11fa67fc8483071d8f46383a6` 出发；隔离树先快进合入干净的图片分支 `codex/image-prd-implementation-20261024`（`c8be8e5a783ce606e9990fc6fc9e7349a7f6f105`），再合入干净的灵小枢分支 `codex/lingxiaoshu-prd-completion`（`310da4124922229430cc312131894d4a03dced2a`）。唯一文本冲突在图片 HTTP 审核测试，按用户确认的“冻结快照可审核原结果、付费前拒绝过期绑定”解决；同时修正自动合并会让后续新付费入口沿用过期绑定的语义风险。源码合并提交 `8e4f0ae4` 已以 `git merge --ff-only` 快进到主树；本文档提交后的最终 HEAD 另以 Git 核验。两条来源树、旧实验树和预览进程均未重置、覆盖或清理；未推送、部署、真实付费或执行目标库迁移。

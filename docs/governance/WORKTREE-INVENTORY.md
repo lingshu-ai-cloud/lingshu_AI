@@ -3,6 +3,11 @@
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-24 投流客服选择性集成
+
+- 主集成位置 `/Users/jiejie/Documents/lingshu-AI` 从干净 `4f71de51` 出发；本次新建隔离树 `/Users/jiejie/.codex/worktrees/ads-customer-appearance-integration-20261024/lingshu-AI`，分支 `codex/ads-customer-appearance-integration-20261024`，按投流、客服、外观分阶段形成干净源码提交 `87663a82`。主树只在文档单独提交并再次核验后快进；最终 HEAD 以 Git 为准。隔离树暂留作可恢复的集成及测试证据，不归档。
+- 远端来源 `xixi投流客服整合补齐基线v1` 的 `89b17510` 保留原位；本次只选择性引入其投流/客服/外观增量，没有覆盖当前灵小枢、图片、五导航或其迁移清单。其他来源树，尤其 `mobile-dual-edition-20261012`，均未重置、清理、归档或混入。旧本地预览仍需与源码 SHA 单独核对；没有部署或目标库迁移。
+
 ## 2026-10-24 两条 PRD 增量顺序合并
 
 - 主集成树 `/Users/jiejie/Documents/lingshu-AI` 从干净 `777f0425` 快进到源码合并提交 `8e4f0ae4`，分支仍为 `xixi改五个大文件结构治理`；治理文档提交后的最终 HEAD 以 Git 核验。新建的隔离树 `/Users/jiejie/.codex/worktrees/prd-sequential-integration-20261024/lingshu-AI` 在 detached HEAD `8e4f0ae4`，保留作可恢复的合并与测试证据；其被忽略的 `node_modules` 是本次本地安装的依赖，不当作来源代码。
