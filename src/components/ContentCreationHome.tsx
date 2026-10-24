@@ -1,9 +1,9 @@
 import { useAssistantStore } from '../stores/assistantStore';
-import { Alert, Button, Segmented, Spin } from 'antd';
-import { ArrowRight, CalendarDays, Clapperboard, Lightbulb, RefreshCw, Sparkles } from 'lucide-react';
+import { Alert, Button, Spin } from 'antd';
+import { ArrowRight, RefreshCw } from 'lucide-react';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { Page } from '../pageRegistry';
-import { useCreationModeControl, type CreationMode, useCreationMode } from '../lib/creationMode';
+import { useCreationMode } from '../lib/creationMode';
 import { fetchViralFeed } from '../lib/viralVideoFeed';
 import { digitalEmployeeApi } from '../lib/digitalEmployeeApi';
 import { authHeader, AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
@@ -20,7 +20,6 @@ const EmployeeDeliveries = lazy(() => import('./contentCreation/EmployeeDeliveri
 
 export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page: Page) => void }) {
   const mode = useCreationMode();
-  const switchMode = useCreationModeControl();
   const [videos, setVideos] = useState<TrendVideo[]>([]);
   const [videosLoading, setVideosLoading] = useState(false);
   const [videosError, setVideosError] = useState('');
@@ -131,9 +130,6 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
     <div className="creator-home__inner">
       <header className="creator-home__hero text-center">
         <h2>{mode === 'free' ? '你好，今天想要创作什么？' : '你的数字员工工作台'}</h2>
-        <Segmented aria-label="内容创作模式" className="creator-mode-switch" size="large" value={mode}
-          options={[{ label: '自由创作', value: 'free' }, { label: '数字员工', value: 'employee' }]}
-          onChange={value => switchMode?.(value as CreationMode)} />
       </header>
 
       <div className="creator-home__canvas-stage" aria-hidden={mode !== 'employee'} inert={mode !== 'employee'}>
