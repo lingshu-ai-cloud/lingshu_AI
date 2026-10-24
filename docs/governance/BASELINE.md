@@ -2,6 +2,13 @@
 
 更新时间：2026-10-24（Asia/Shanghai）
 
+## 本会话前端开发基线：夜间模式与可跳过新手引导（2026-10-24）
+
+- 本机集成树 `/Users/jiejie/Documents/lingshu-AI`、分支 `xixi改五个大文件结构治理` 从 `d24ee8cabbacb360a3b25a4fcf42cc1ae8d3afcb` 出发，将当前会话的前端工作区改动封装为源码提交 `7ff43ba0d4e8216860ea3ea32500d432743c223d`。包含先前未提交的数字员工新手引导“跳过并保存草稿／可继续”改动、夜间共享画布与信息条、灵小枢入口、日历、投流托管、脚本库、表单及旧浅色工具类的深色适配。旧助手契约中“强制白底”的断言已按明确的夜间产品要求改为检查共享主题表面、点击／聚焦状态及贴边入口。源码与本文档分开提交；最终文档提交 SHA 以 Git 核验。本次未新增或执行迁移，也未改动其他工作树。
+- 实际通过：`pnpm exec tsx src/components/DigitalEmployeePage.contract.test.ts`、`pnpm run test:digital-employees`、`pnpm run test:assistant`、`pnpm run test:platform-ads`（47 个测试文件）、`pnpm exec tsx src/components/DarkAppearance.contract.test.ts`、日历／创作页／登录页／客服滚动定向契约；`pnpm run check:architecture`（2,693 个生产 TypeScript 文件）、`pnpm run check:digital-employee-migrations`（199 项仓库文件只读检查）、`pnpm run build`、`git diff --check`。本地预览逐页扫描数字员工、创作、爆款库、脚本库、内容制作／监控、排产、投流、客服、企业知识库、集成中心等 15 个可访问页面，未发现面积超过 10,000 像素的高亮度底面；新手引导弹窗及灵小枢入口另行目视和计算样式复查。此扫描不覆盖每一种隐藏弹窗或业务状态。
+- 完整 `pnpm run quality` **未通过**：通过前置检查后停在 `scripts/external-video-approval.integration.ts:13`，当前环境缺少 `PB_BIN`；后续阶段未执行，`verify` 未运行。`pnpm run lint` 在同一生产源码上曾以 `NODE_OPTIONS=--max-old-space-size=4096` 通过；最终仅修改一条助手夜间契约后，其独立复跑因同机另一 TypeScript 检查占用内存而停止，因此不将最终提交的完整 TypeScript 复跑记为通过。更新后的完整助手回归与契约测试已通过。构建仍有大于 500 kB 的非 Studio 分块提示。
+- 这是**本地源码开发基线**，不是运行数据、真实供应商、完整 E2E 或发布就绪基线。没有真实付费调用、OAuth、目标数据库迁移、推送或部署；同名远端分支仍落后本地多次历史提交，不能把本地源码 SHA 当成 GitHub 或线上版本。安全恢复点为 `d24ee8ca`，下一步在具备受控 `PB_BIN` 的环境从失败检查点补全 `quality`，待无竞争时复跑最终 TypeScript，再决定是否推送及做发布验收。
+
 ## 五导航基线上选择性整合投流与客服（2026-10-24）
 
 - 本机主集成树 `/Users/jiejie/Documents/lingshu-AI` 的起点是干净的 `xixi改五个大文件结构治理`、`4f71de512d792d24ad4459a760968d4077500a15`。隔离分支 `codex/ads-customer-appearance-integration-20261024` 从该提交出发，按用户明确的冲突取舍，依次选择性引入 `xixi投流客服整合补齐基线v1`（`89b175109149d4551aeb3ce590fe9c42c46bf23c`）中的 `cff5de15` 投流、`f19e0c05` 客服、`1dd11186` 外观补丁；源码检查点为 `87663a826832923b477f35ef99657728b54a18a2`。这不是把目标分支整树覆盖当前基线。治理文档提交及主树快进后的最终 HEAD 以 Git 再核验；原来源分支、其他工作树和既有预览进程均保留。
