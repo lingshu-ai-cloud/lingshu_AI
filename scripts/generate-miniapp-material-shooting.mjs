@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import ts from 'typescript';
 // These leaf modules are intentionally platform-free. Never ship browser/server imports into WeChat.
-for (const name of ['materialTaxonomy', 'shootingWorkflow']) {
+for (const name of ['materialTaxonomy', 'shootingWorkflow', 'shootingReference']) {
   const source = new URL(`../shared/${name}.ts`, import.meta.url);
   const input = await readFile(source, 'utf8');
   const syntax = ts.createSourceFile(source.pathname, input, ts.ScriptTarget.Latest, true);

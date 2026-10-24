@@ -47,6 +47,8 @@ export interface ScriptGapTask {
   sourceStoryboardSlotId?: string;
   sourceAssemblyId?: string;
   sourceShotId?: string;
+  /** Server-derived reference identity and source interval captured at task creation. */
+  referenceClip?: import('./shootingReference.js').ShootingReferenceClip;
   requirements?: string;
   /** Initial refill accepts silent footage; recorded dialogue needs transcription/alignment. */
   soundMode?: 'voiceover' | 'source' | 'silent';

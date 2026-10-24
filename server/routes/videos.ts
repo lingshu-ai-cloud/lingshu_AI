@@ -16,6 +16,7 @@ export { recordThumbnailUrl } from './videoThumbnailPersistence.js';
 export { matchesVideoSearch, matchesCrawlRange } from './videoTenantListing.js';
 import { videoLevelSuccessPatch, videoSuccessVisibilityPatch } from './videoAnalysisSuccessPatch.js';
 import { tiktokKeywordSources, verifiedKeywordSeedItems, verifiedSeedUrls } from './videoCrawlerSeedCatalog.js';
+import { reinspectSplitShotDescriptions } from './videoSplitShotDescriptions.js';
 import { groupExactObservationWindows, qwenFrameSeconds, selectFramesForPhysicalCuts, shiftedTimelineLabel, splitExactGeminiShotsAtSceneCuts } from './videoAnalysisTimelineProjection.js';
 export { groupExactObservationWindows, selectFramesForPhysicalCuts, splitExactGeminiShotsAtSceneCuts } from './videoAnalysisTimelineProjection.js';
 import { compactVideoPipelineError, describeVideoAnalysisRecovery, publicVideoPipelineError, queuedMaterialFailureRequiresSourceFallback, queuedVideoAnalysisFailurePatch, videoAnalysisRetryQueuePatch, type VideoAnalysisRetryQueueKind } from './videoAnalysisRecovery.js';
@@ -6047,7 +6048,6 @@ export function lockAsrTimeline(analysis: VideoAiAnalysis, transcript?: Referenc
   return lockReferenceSpeechTimeline(analysis, transcript);
 }
 
-
 function videoAnalysisTimelineEnd(analysis: VideoAiAnalysis): number {
   return (analysis.scriptDetails15s || []).reduce((max, detail) => {
     const range = parseAnalysisTimeRange(String(detail.time || detail.timestamp || ''));
@@ -6066,7 +6066,7 @@ function assertFullVideoTimeline(analysis: VideoAiAnalysis, duration: number, so
 
 async function enrichExactGeminiEvidence(filePath: string, analysis: VideoAiAnalysis): Promise<VideoAiAnalysis> {
   const detectedSceneCuts = await detectVideoSceneCuts(filePath);
-  let enriched = splitExactGeminiShotsAtSceneCuts(analysis, detectedSceneCuts);
+  let enriched = await reinspectSplitShotDescriptions(filePath, splitExactGeminiShotsAtSceneCuts(analysis, detectedSceneCuts), video => analyzeVideo({ videoBase64: video.toString('base64'), mimeType: 'video/mp4', analysisMode: 'exact' }));
   let hookReviewReasons: string[] = [];
   const hookIndex = firstSubstantiveOpeningShot(enriched);
   if (hookIndex >= 0) {
@@ -6132,7 +6132,7 @@ async function analyzeExactLongVideoChunks(input: {
       )];
     }
     selected = selectFramesForPhysicalCuts(selected, input.sceneCuts || [], chunk.start, chunk.end, frameLimit);
-    const localFrames = selected.map(frame => ({ ...frame, timeLabel: `${Math.max(0, qwenFrameSeconds(frame.timeLabel) - chunk.start).toFixed(2)}s` }));
+    const localFrames = selected.map(frame => ({ ...frame, timeLabel: `${Math.max(0, qwenFrameSeconds(frame.timeLabel) - chunk.start).toFixed(6)}s` }));
     const localSegments = (input.transcript?.segments || [])
       .filter(segment => segment.timingPrecision === 'phrase' && segment.end > chunk.start && segment.start < chunk.end)
       .map(segment => {
@@ -6147,7 +6147,7 @@ async function analyzeExactLongVideoChunks(input: {
     const observationSeconds = Math.max(2, Math.min(5, Number(process.env.VIDEO_EXACT_OBSERVATION_SECONDS || 4)));
     const cutPoints = [0, ...(input.sceneCuts || [])
       .filter(value => value > chunk.start + 0.02 && value < chunk.end - 0.02)
-      .map(value => +(value - chunk.start).toFixed(2)), localDuration];
+      .map(value => +(value - chunk.start).toFixed(6)), localDuration];
     const windows: Array<{ start: number; end: number; reason: string }> = [];
     for (let cutIndex = 0; cutIndex < cutPoints.length - 1; cutIndex += 1) {
       const start = cutPoints[cutIndex]!;
@@ -6155,8 +6155,8 @@ async function analyzeExactLongVideoChunks(input: {
       const sections = Math.max(1, Math.ceil((end - start) / observationSeconds));
       for (let section = 0; section < sections; section += 1) {
         windows.push({
-          start: +(start + (end - start) * section / sections).toFixed(2),
-          end: +(start + (end - start) * (section + 1) / sections).toFixed(2),
+          start: +(start + (end - start) * section / sections).toFixed(6),
+          end: +(start + (end - start) * (section + 1) / sections).toFixed(6),
           reason: section === 0 && cutIndex > 0 ? '检测到视觉切点' : '连续镜头观察段',
         });
       }

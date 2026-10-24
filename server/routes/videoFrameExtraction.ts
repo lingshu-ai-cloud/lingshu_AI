@@ -11,6 +11,40 @@ const execFileAsync = promisify(execFile);
 const ffmpegBin = ffmpegStatic as unknown as string | null;
 const ANALYSIS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../data/analysis-temp');
 
+export function sourceFrameTimes(log: string): number[] {
+  const clock = log.match(/config in time_base:\s*(\d+)\/(\d+)/);
+  if (!clock || Number(clock[2]) <= 0) throw new Error('video_frame_source_clock_missing');
+  // pts_time is rounded to six significant digits by FFmpeg's logger. Use
+  // integer PTS/time_base so long-video labels cannot drift onto the next frame.
+  return Array.from(log.matchAll(/\bn:\s*\d+\s+pts:\s*(-?\d+)\s+pts_time:/g),
+    match => Number(match[1]) * Number(clock[1]) / Number(clock[2]));
+}
+
+export function strongestSceneCuts(candidates: Array<{ time: number; score: number }>): number[] {
+  const groups: Array<typeof candidates> = [];
+  for (const candidate of [...candidates].filter(row => row.time > 0.2 && Number.isFinite(row.score)).sort((a, b) => a.time - b.time)) {
+    const group = groups.at(-1);
+    if (!group || candidate.time - group.at(-1)!.time >= 0.18) groups.push([candidate]);
+    else group.push(candidate);
+  }
+  return groups.map(group => +group.reduce((best, row) => row.score > best.score ? row : best).time.toFixed(6));
+}
+
+/** Select source frames without fps resampling; keep the decoded frame PTS with each JPEG. */
+export async function extractSourceClockFrames(filePath: string, pattern: string, select: string, limit: number, width = 384) {
+  if (!ffmpegBin) throw new Error('ffmpeg is not available for frame analysis');
+  const result = await execFileAsync(ffmpegBin, ['-hide_banner', '-loglevel', 'info', '-i', filePath,
+    '-vf', `select='${select}',showinfo,scale=${width}:-1`, '-fps_mode', 'vfr',
+    '-frames:v', String(limit), '-q:v', '4', pattern], { timeout: 90_000, maxBuffer: 16 * 1024 * 1024 });
+  const times = sourceFrameTimes(result.stderr);
+  const prefix = path.basename(pattern).split('%')[0]!;
+  const files = fs.readdirSync(path.dirname(pattern)).filter(file => file.startsWith(prefix) && file.endsWith('.jpg')).sort();
+  if (times.length < files.length || times.slice(0, files.length).some(time => !Number.isFinite(time) || time < 0)) {
+    throw new Error('video_frame_source_clock_missing');
+  }
+  return files.map((file, index) => ({ file, time: times[index]! }));
+}
+
 export async function extractQwenAnalysisFrames(filePath: string, maxFrames = 30, duration = 0, analysisMode: 'strategy' | 'exact' = 'exact', physicalCuts: number[] = [], samplingProfile: ReferenceFrameSamplingProfile = 'coarse', denseRanges: ReferenceFrameSamplingRange[] = []): Promise<Array<{ base64: string; mimeType: string; timeLabel: string }>> {
   if (!ffmpegBin) throw new Error('ffmpeg is not available for Qwen frame analysis');
   if (!fs.existsSync(ANALYSIS_DIR)) fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
@@ -24,20 +58,14 @@ export async function extractQwenAnalysisFrames(filePath: string, maxFrames = 30
     const denseFps = analysisMode === 'exact' && samplingProfile === 'talking_head_dense'
       ? 2
       : 0;
-    const densePlan = denseFps ? denseRanges.flatMap((range, rangeIndex) => {
-      const count = Math.max(1, Math.ceil((range.endSeconds - range.startSeconds) * denseFps));
-      return Array.from({ length: count }, (_, frameIndex) => ({
-        file: `dense-${String(rangeIndex).padStart(3, '0')}-${String(frameIndex + 1).padStart(3, '0')}.jpg`,
-        time: Math.min(range.endSeconds - 0.001, range.startSeconds + frameIndex / denseFps), dense: true,
-      }));
-    }) : [];
-    const denseCount = densePlan.length;
+    const denseCount = denseFps ? denseRanges.reduce((sum, range) => sum + Math.ceil((range.endSeconds - range.startSeconds) * denseFps), 0) : 0;
     if (denseCount > 120) throw new Error('presenter_dense_sampling_budget_exceeded');
-    for (const [rangeIndex, range] of denseRanges.entries()) {
+    const denseRows: Array<{ file: string; time: number; dense: boolean }> = [];
+    if (denseFps) for (const [index, range] of denseRanges.entries()) {
       const count = Math.max(1, Math.ceil((range.endSeconds - range.startSeconds) * denseFps));
-      await execFileAsync(ffmpegBin, ['-hide_banner', '-loglevel', 'error', '-ss', String(range.startSeconds), '-i', filePath,
-        '-t', String(range.endSeconds - range.startSeconds), '-vf', `fps=${denseFps},scale=384:-1`,
-        '-frames:v', String(count), '-q:v', '4', path.join(frameDir, `dense-${String(rangeIndex).padStart(3, '0')}-%03d.jpg`)], { timeout: 90_000 });
+      const rows = await extractSourceClockFrames(filePath, path.join(frameDir, `dense-${index}-%03d.jpg`),
+        `gte(t,${range.startSeconds})*lt(t,${range.endSeconds})*(isnan(prev_selected_t)+gte(t-prev_selected_t,${1 / denseFps - 1e-6}))`, count);
+      denseRows.push(...rows.map(row => ({ ...row, dense: true })));
     }
     const uniformPattern = path.join(frameDir, 'uniform-%02d.jpg');
     const strategyInterval = 5;
@@ -47,27 +75,17 @@ export async function extractQwenAnalysisFrames(filePath: string, maxFrames = 30
     const uniformInterval = analysisMode === 'strategy'
       ? strategyInterval
       : duration > 4 ? Math.max(1, (duration - 1) / Math.max(1, uniformCount - 1)) : 4;
-    await execFileAsync(ffmpegBin, [
-      '-hide_banner',
-      '-loglevel', 'error',
-      '-i', filePath,
-      '-vf', `fps=1/${uniformInterval},scale=384:-1`,
-      '-frames:v', String(uniformCount),
-      '-q:v', '4',
-      uniformPattern,
-    ], { timeout: 90_000 });
-    const scenePattern = path.join(frameDir, 'scene-%02d.jpg');
-    let sceneTimes: number[] = [];
-    try {
-      if (analysisMode !== 'exact') throw new Error('scene extraction disabled for strategy analysis');
-      const sceneCount = Math.max(6, maxFrames - denseCount - uniformCount);
-      const sceneRun = await execFileAsync(ffmpegBin, ['-hide_banner', '-loglevel', 'info', '-i', filePath, '-vf', "select='gt(scene,0.12)',showinfo,scale=384:-1", '-fps_mode', 'vfr', '-frames:v', String(sceneCount), '-q:v', '4', scenePattern], { timeout: 90_000, maxBuffer: 8 * 1024 * 1024 });
-      sceneTimes = Array.from(sceneRun.stderr.matchAll(/pts_time:([0-9.]+)/g)).map(match => Number(match[1])).filter(Number.isFinite).slice(0, sceneCount);
-    } catch { /* retain uniform frames */ }
+    const uniformRows = await extractSourceClockFrames(filePath, uniformPattern,
+      `isnan(prev_selected_t)+gte(t-prev_selected_t,${uniformInterval - 1e-6})`, uniformCount);
+    let sceneRows: Array<{ file: string; time: number }> = [];
+    if (analysisMode === 'exact') {
+      const count = Math.max(6, maxFrames - denseCount - uniformCount);
+      sceneRows = await extractSourceClockFrames(filePath, path.join(frameDir, 'scene-%03d.jpg'), 'gt(scene,0.12)', count);
+    }
     // A transition frame can be blurred or show both products. Observe the
     // middle of each short physical shot so the product label and item survive
     // the handoff as one distinct visual requirement.
-    const cutCandidates = physicalCuts.length ? physicalCuts : sceneTimes;
+    const cutCandidates = physicalCuts.length ? physicalCuts : analysisMode === 'exact' ? await detectVideoSceneCuts(filePath) : [];
     const distinctCuts = cutCandidates.filter((time, index) => index === 0 || time - cutCandidates[index - 1]! >= 0.18);
     const cutBounds = [0, ...distinctCuts, duration].filter(value => Number.isFinite(value));
     const midpointRows: Array<{ file: string; time: number; dense: boolean }> = [];
@@ -78,18 +96,15 @@ export async function extractQwenAnalysisFrames(filePath: string, maxFrames = 30
       for (const index of sampledIntervals) {
         const start = cutBounds[index]!, end = cutBounds[index + 1]!;
         const time = +(start + (end - start) / 2).toFixed(2);
-        const file = `midpoint-${String(index).padStart(3, '0')}.jpg`;
         try {
-          await execFileAsync(ffmpegBin, ['-hide_banner', '-loglevel', 'error', '-ss', String(time), '-i', filePath,
-            '-frames:v', '1', '-vf', 'scale=384:-1', '-q:v', '4', path.join(frameDir, file)], { timeout: 15_000 });
-          midpointRows.push({ file, time, dense: false });
+          const observed = await extractSourceClockFrames(filePath, path.join(frameDir, `midpoint-${index}-%03d.jpg`), `gte(t,${time})*lt(t,${end})`, 1);
+          midpointRows.push(...observed.map(row => ({ ...row, dense: false })));
         } catch { /* keep the other sampled frames */ }
       }
     }
-    const denseRows = densePlan.filter(row => fs.existsSync(path.join(frameDir, row.file)));
     const supplementalRows = [
-      ...fs.readdirSync(frameDir).filter(file => /^uniform-\d+\.jpg$/i.test(file)).sort().map((file, index) => ({ file, time: index * uniformInterval, dense: false })),
-      ...fs.readdirSync(frameDir).filter(file => /^scene-\d+\.jpg$/i.test(file)).sort().map((file, index) => ({ file, time: sceneTimes[index] ?? index * 3, dense: false })),
+      ...uniformRows.map(row => ({ ...row, dense: false })),
+      ...sceneRows.map(row => ({ ...row, dense: false })),
     ].sort((a, b) => a.time - b.time)
       .filter(row => !denseRows.some(dense => Math.abs(dense.time - row.time) < 0.45))
       .filter(row => !midpointRows.some(midpoint => Math.abs(midpoint.time - row.time) < 0.35))
@@ -97,16 +112,8 @@ export async function extractQwenAnalysisFrames(filePath: string, maxFrames = 30
     const rows = [...denseRows, ...midpointRows, ...supplementalRows.slice(0, Math.max(0, maxFrames - denseRows.length - midpointRows.length))]
       .sort((a, b) => a.time - b.time)
       .slice(0, maxFrames);
-    // FFmpeg's fps=1/5 sampler can emit no output for a clip shorter than its
-    // first sampling interval. Preserve at least one observed source frame.
-    if (!rows.length) {
-      const file = 'first-frame.jpg';
-      await execFileAsync(ffmpegBin, ['-hide_banner', '-loglevel', 'error', '-ss', '0', '-i', filePath,
-        '-frames:v', '1', '-vf', 'scale=384:-1', '-q:v', '4', path.join(frameDir, file)], { timeout: 15_000 });
-      if (!fs.existsSync(path.join(frameDir, file))) throw new Error('video_frame_extraction_empty');
-      rows.push({ file, time: 0, dense: false });
-    }
-    return rows.map(row => ({ base64: fs.readFileSync(path.join(frameDir, row.file)).toString('base64'), mimeType: 'image/jpeg', timeLabel: `${row.time.toFixed(2)}s` }));
+    if (!rows.length) throw new Error('video_frame_extraction_empty');
+    return rows.map(row => ({ base64: fs.readFileSync(path.join(frameDir, row.file)).toString('base64'), mimeType: 'image/jpeg', timeLabel: `${row.time.toFixed(6)}s` }));
   } finally {
     try {
       for (const file of fs.readdirSync(frameDir)) fs.unlinkSync(path.join(frameDir, file));
@@ -125,14 +132,10 @@ export async function extractOpeningHookFrames(filePath: string): Promise<Array<
   const frameDir = path.join(ANALYSIS_DIR, `hook-frames-${randomUUID()}`);
   fs.mkdirSync(frameDir, { recursive: true });
   try {
-    await execFileAsync(ffmpegBin, [
-      '-hide_banner', '-loglevel', 'error', '-i', filePath,
-      '-vf', 'trim=duration=1,fps=12,scale=720:-1', '-frames:v', '12',
-      '-q:v', '3', path.join(frameDir, 'hook-%02d.jpg'),
-    ], { timeout: 30_000 });
-    return fs.readdirSync(frameDir).filter(file => /^hook-\d+\.jpg$/i.test(file)).sort()
-      .map((file, index) => ({ base64: fs.readFileSync(path.join(frameDir, file)).toString('base64'),
-        mimeType: 'image/jpeg', timeLabel: `${(index / 12).toFixed(3)}s` }));
+    const rows = await extractSourceClockFrames(filePath, path.join(frameDir, 'hook-%03d.jpg'),
+      'lt(t,1)*(isnan(prev_selected_t)+gte(t-prev_selected_t,0.083332333333))', 12, 720);
+    return rows.map(row => ({ base64: fs.readFileSync(path.join(frameDir, row.file)).toString('base64'),
+      mimeType: 'image/jpeg', timeLabel: `${row.time.toFixed(6)}s` }));
   } finally {
     for (const file of fs.readdirSync(frameDir)) fs.unlinkSync(path.join(frameDir, file));
     fs.rmdirSync(frameDir);
@@ -147,11 +150,12 @@ export async function detectVideoSceneCuts(filePath: string): Promise<number[]> 
       // Product montages often use wipes over similar bright backgrounds.
       // A stricter threshold swallowed the individual product shots in a
       // real six-item sequence; nearby transition frames are collapsed below.
-      '-vf', "select='gt(scene,0.12)',showinfo", '-fps_mode', 'vfr', '-f', 'null', '-',
+      '-vf', "select='gt(scene,0.12)',showinfo,metadata=print:key=lavfi.scene_score", '-fps_mode', 'vfr', '-f', 'null', '-',
     ], { timeout: 90_000, maxBuffer: 16 * 1024 * 1024 });
-    const candidates = [...new Set(Array.from(result.stderr.matchAll(/pts_time:([0-9.]+)/g), match => Number(match[1]))
-      .filter(value => Number.isFinite(value) && value > 0.2).map(value => +value.toFixed(2)))].sort((a, b) => a - b);
-    return candidates.filter((value, index) => index === 0 || value - candidates[index - 1]! >= 0.18);
+    const times = sourceFrameTimes(result.stderr);
+    const scores = Array.from(result.stderr.matchAll(/lavfi\.scene_score=([0-9.]+)/g), match => Number(match[1]));
+    if (times.length !== scores.length) throw new Error('video_scene_score_clock_mismatch');
+    return strongestSceneCuts(times.map((time, index) => ({ time, score: scores[index]! })));
   } catch (error) {
     console.warn('[videos] scene cut detection unavailable; retaining continuous observation windows:', error instanceof Error ? error.message : error);
     return [];

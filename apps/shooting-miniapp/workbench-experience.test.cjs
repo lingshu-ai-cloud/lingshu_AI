@@ -16,7 +16,7 @@ function assistantApi(override=()=>undefined) {
   return {assistantContract:true,clearToken:()=>{},request:async(path,method,body)=>{
     const result=await override(path,method,body);if(result!==undefined)return result;
     if(path.endsWith('/context'))return {quickQuestions:[{topic:'weekly',label:'本周进度'}]};
-    if(path.endsWith('/sessions'))return {sessions:[{id:'session-1'}]};
+    if(path.split('?')[0].endsWith('/sessions'))return {sessions:[{id:'session-1'}]};
     if(path.endsWith('/messages'))return {messages:[{id:'a',role:'assistant',text:'本周数据已核实'}]};
     if(path.endsWith('/query'))return {text:'本周数据已核实',evidence:[{source:'tasks',generatedAt:'2026-10-10T10:00:00Z'}],links:[{type:'matter',id:'task:1'}],actions:[{label:'重试',action:{kind:'retry_task',targetId:'1'}}]};
     if(path.endsWith('/preview'))return {previewId:'preview-1',target:{title:'重试任务'},requiresConfirmation:true,confirmation:{body:{kind:'retry_task',targetId:'1',expectedVersion:'v1',payload:{}}}};
@@ -26,7 +26,7 @@ function assistantApi(override=()=>undefined) {
     return {};
   }};
 }
-async function ready(p){p.scope='tenant:user';p.initializeAssistant();await p.assistantController.restore(p.scope);}
+async function ready(p){p.scope='tenant:user';p.initializeAssistant();await new Promise(r=>setImmediate(r));}
 test('sign out invalidates pending assistant response and status cleanup',async()=>{let resolve;const p=page(assistantApi(path=>path.endsWith('/query')?new Promise(r=>resolve=r):undefined));await ready(p);p.data.loggedIn=true;p.data.input='进度';const pending=p.send();await new Promise(r=>setImmediate(r));p.signOut();resolve({text:'secret'});await pending;assert.equal(p.data.loggedIn,false);assert.equal(p.data.messages.length,0);assert.equal(p.data.sending,false);});
 test('read-only assistant query uses server session without client business prompt',async()=>{const calls=[];const p=page(assistantApi((path,method,body)=>{calls.push({path,body});}));await ready(p);p.data.input='这周完成多少任务';await p.send();assert.equal(calls.some(c=>c.path.endsWith('/actions')),false);assert.equal(p.data.messages[0].content,'本周数据已核实');const query=calls.find(c=>c.path.endsWith('/query'));assert.equal(query.body.sessionId,'session-1');assert.equal(query.body.input,'这周完成多少任务');assert.equal(query.body.messages,undefined);});
 test('execution candidate requires server preview then explicit confirmation',async()=>{let commands=0;const p=page(assistantApi(path=>{if(path.endsWith('/actions'))commands++;}));await ready(p);p.refresh=async()=>{};p.data.input='重试失败任务';await p.send();assert.equal(commands,0);await p.previewAssistantAction({currentTarget:{dataset:{index:0}}});assert.equal(p.data.assistantPreview.previewId,'preview-1');assert.equal(commands,0);await p.confirmAssistantAction();assert.equal(commands,1);assert.equal(p.data.assistantReceipts[0].statusLabel,'操作已完成');});

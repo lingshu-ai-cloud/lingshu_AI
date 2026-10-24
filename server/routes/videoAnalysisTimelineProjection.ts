@@ -1,5 +1,6 @@
 import type { VideoAiAnalysis } from '../types/index.js';
 import { parseAnalysisTimeRange } from '../lib/videoAnalysisCodec.js';
+const sourceSeconds = (value: number) => value.toFixed(6).replace(/(\.\d{2}\d*?)0+$/, '$1');
 
 /** Pure frame selection and timeline projections for exact video analysis. */
 export function selectFramesForPhysicalCuts<T extends { timeLabel: string }>(
@@ -34,7 +35,7 @@ export function shiftedTimelineLabel(label: string, offset: number, localDuratio
   const range = parseAnalysisTimeRange(String(label || ''));
   const localStart = Math.max(0, Math.min(localDuration, range?.start || 0));
   const localEnd = Math.max(localStart, Math.min(localDuration, range?.end || localStart));
-  const fmt = (value: number) => value.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+  const fmt = (value: number) => sourceSeconds(value).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
   return `${fmt(localStart + offset)}s–${fmt(localEnd + offset)}s`;
 }
 
@@ -70,7 +71,7 @@ export function groupExactObservationWindows(analysis: VideoAiAnalysis, sceneCut
     const last = group.at(-1)!.detail;
     return {
       ...first,
-      time: `${group[0]!.range.start.toFixed(2)}s–${group.at(-1)!.range.end.toFixed(2)}s`,
+      time: `${sourceSeconds(group[0]!.range.start)}s–${sourceSeconds(group.at(-1)!.range.end)}s`,
       visual: uniqueText(group.map(row => row.detail.visual)),
       dialogue: uniqueText(group.map(row => row.detail.dialogue)),
       purpose: uniqueText(group.map(row => row.detail.purpose)),
@@ -84,7 +85,7 @@ export function groupExactObservationWindows(analysis: VideoAiAnalysis, sceneCut
       needsReview: group.some(row => row.detail.needsReview === true || row.detail.materialType !== first.materialType || row.detail.narrativeRole !== first.narrativeRole),
       analysisGranularity: 'scene_cut_estimated',
       beats: group.flatMap(row => row.detail.beats?.length ? row.detail.beats : [{
-        time: `${row.range.start.toFixed(2)}s–${row.range.end.toFixed(2)}s`,
+        time: `${sourceSeconds(row.range.start)}s–${sourceSeconds(row.range.end)}s`,
         action: row.detail.visual,
         dialogue: row.detail.dialogue,
         onScreenText: row.detail.onScreenText,
@@ -113,17 +114,21 @@ export function splitExactGeminiShotsAtSceneCuts(analysis: VideoAiAnalysis, scen
     if (compact.length < 3) return [detail];
     return compact.slice(0, -1).map((start, index) => {
       const end = compact[index + 1]!;
-      const fmt = (value: number) => value.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+      const fmt = (value: number) => sourceSeconds(value).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+      // A parent's visual/classification/evidence may describe several cuts.
+      // Keep only beats wholly inside this child; the caller must inspect the
+      // actual child clip before this becomes a usable production description.
       const beats = detail.beats?.filter(beat => {
-        const beatRange = parseAnalysisTimeRange(String(beat.time || ''));
-        return !beatRange || (beatRange.start < end && beatRange.end > start);
+        const local = parseAnalysisTimeRange(String(beat.time || ''));
+        return local && local.start >= start && local.end <= end;
       });
       return {
-        ...detail,
         time: `${fmt(start)}s–${fmt(end)}s`,
-        ...(beats?.length ? { beats } : {}),
+        visual: '', materialType: 'unknown' as const, narrativeRole: 'unknown' as const,
+        needsReview: true, ...(beats?.length ? { beats } : {}),
         analysisGranularity: 'physical_scene_cut',
       };
+
     });
   });
   return { ...analysis, scriptDetails15s: split } as VideoAiAnalysis;

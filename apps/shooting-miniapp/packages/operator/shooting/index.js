@@ -1,16 +1,23 @@
 const api = require('../../../lib/api')
 const { shootingTaskPresentation } = require('../../../lib/shootingWorkflow')
 const { materialSourceCategoryOf, materialThemeTagsOf, MATERIAL_SOURCE_LABELS, MATERIAL_THEME_LABELS } = require('../../../lib/materialTaxonomy')
-const { groupShootingTasks, referencePreview, cardPreview } = require('../../../lib/shootingList')
+const { groupShootingTasks, shootingPreview, taskReferencePreview, cardPreview } = require('../../../lib/shootingList')
 
 Page({
-  data: { loggedIn: false, loading: false, referenceLoading: false, referencePreview: null, activePreviewId: '', email: '', password: '', userName: '', tasks: [], taskGroups: [], pendingCount: 0, completedCount: 0, selected: null, busy: false, progress: 0, progressStep: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' },
+  data: { loggedIn: false, loading: false, referenceLoading: false, referenceError: '', referencePreview: null, activePreviewId: '', email: '', password: '', userName: '', tasks: [], taskGroups: [], pendingCount: 0, completedCount: 0, selected: null, busy: false, progress: 0, progressStep: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' },
   onLoad(options) {
     this.initialTaskId = options && options.taskId
     this.initialAutoShoot = !!(options && (options.autoShoot === true || options.autoShoot === '1'))
     if (api.token()) this.restore()
   },
   onShow() { if (this.data.loggedIn && !this.data.busy) this.refresh() },
+  onHide() { this.pausePreviews() },
+  onUnload() { this.referenceRequest = (this.referenceRequest || 0) + 1; this.pausePreviews() },
+  pausePreviews() {
+    this.referencePause()
+    if (this.data.referencePreview) wx.createVideoContext('reference-preview', this).pause()
+    if (this.data.activePreviewId) wx.createVideoContext(this.data.activePreviewId, this).pause()
+  },
   inputEmail(e) { this.setData({ email: e.detail.value }) },
   inputPassword(e) { this.setData({ password: e.detail.value }) },
   async signIn() {
@@ -41,8 +48,10 @@ Page({
   signOut() {
     if (this.data.busy) return
     const finish = () => {
+      this.pausePreviews()
+      this.referenceRequest = (this.referenceRequest || 0) + 1
       api.clearToken()
-      this.setData({ loggedIn: false, userName: '', tasks: [], taskGroups: [], pendingCount: 0, completedCount: 0, selected: null, progress: 0, progressStep: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' })
+      this.setData({ loggedIn: false, userName: '', tasks: [], taskGroups: [], pendingCount: 0, completedCount: 0, selected: null, referencePreview: null, referenceLoading: false, referenceError: '', activePreviewId: '', progress: 0, progressStep: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' })
     }
     if (this.data.pendingMaterialId) wx.showModal({ title: '退出账号？', content: '素材已保存到素材库，但尚未关联任务。退出不会删除素材。', confirmText: '确认退出', success: result => { if (result.confirm && !this.data.busy) finish() } })
     else finish()
@@ -56,33 +65,58 @@ Page({
     if (!this.canLeaveTask()) return
     const task = this.data.tasks.find(item => String(item.id) === String(e.currentTarget.dataset.id))
     if (!task) return
-    this.setData({ selected: task, referencePreview: null, message: '', uploadedMaterialSummary: '', pendingMaterialId: '' })
+    this.pausePreviews()
+    this.setData({ selected: task, referencePreview: null, referenceError: '', activePreviewId: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' })
     await this.loadReferencePreview(task)
   },
   async loadReferencePreview(task) {
-    if (!task.sourceProjectId || this.data.referenceLoading) return
-    this.setData({ referenceLoading: true })
+    this.referencePause()
+    this.referencePosition = null
+    const ticket = this.referenceRequest = (this.referenceRequest || 0) + 1
+    const persisted = taskReferencePreview(task)
+    this.setData({ referenceLoading: !!(persisted || task.sourceProjectId), referencePreview: null, referenceError: '' })
+    if (!persisted && !task.sourceProjectId) return
     try {
-      const project = await api.studioProject(task.sourceProjectId)
-      if (!this.data.selected || String(this.data.selected.id) !== String(task.id)) return
-      const preview = referencePreview(task, project)
-      this.setData({ referencePreview: preview ? { ...preview, url: api.assetUrl(preview.url), poster: api.assetUrl(preview.poster) } : null })
-    } catch (_) { /* Reference is optional; task execution remains available. */ }
-    finally { this.setData({ referenceLoading: false }) }
+      const project = persisted ? null : await api.studioProject(task.sourceProjectId)
+      if (ticket !== this.referenceRequest || !this.data.selected || String(this.data.selected.id) !== String(task.id)) return
+      const preview = await this.resolvePreview(shootingPreview(task, project), task.id)
+      if (ticket !== this.referenceRequest || !this.data.selected || String(this.data.selected.id) !== String(task.id)) return
+      this.setData({ referencePreview: preview })
+    } catch (_) {
+      if (ticket === this.referenceRequest) this.setData({ referenceError: '对标片段暂时无法读取，请重试。' })
+    }
+    finally { if (ticket === this.referenceRequest) this.setData({ referenceLoading: false }) }
   },
+  async resolvePreview(preview, taskId) {
+    if (!preview) return null
+    let url = preview.url
+    if (preview.sourceLabel === '对标分镜') {
+      const media = await api.request('studio/shooting-tasks/' + encodeURIComponent(taskId) + '/reference-preview', 'POST', {})
+      if (!media || media.physicalClip !== true || media.start !== 0 || !Number.isFinite(media.end) || media.end <= 0
+        || media.sourceStart !== preview.start || media.sourceEnd < preview.end) throw new Error('裁剪片段不可用')
+      preview = { ...preview, start: 0, end: Math.min(media.end, preview.end - preview.start),
+        physicalClip: true, sourceStart: media.sourceStart, sourceEnd: media.sourceEnd, poster: media.poster || '' }
+      url = media.url
+    }
+    if (typeof url !== 'string' || !(/^https:\/\//i.test(url) || /^\/(?!\/)/.test(url))) throw new Error('参考视频地址不可用')
+    return { ...preview, url: api.assetUrl(url), poster: preview.poster ? api.assetUrl(preview.poster) : '' }
+  },
+  retryReference() { if (this.data.selected && !this.data.referenceLoading) return this.loadReferencePreview(this.data.selected) },
+  referencePlaybackError() { this.referencePause(); this.setData({ referenceError: '对标片段播放失败，请重试。' }) },
   async loadCardPreviews(tasks) {
-    if (typeof api.studioProject !== 'function') return tasks
-    const projectIds = Array.from(new Set(tasks.filter(task => !(task.uploadedMaterialIds || []).length).map(task => String(task.sourceProjectId || '')).filter(Boolean)))
+    if (typeof api.studioProject !== 'function' && !tasks.some(task => taskReferencePreview(task))) return tasks
+    const projectIds = Array.from(new Set(tasks.filter(task => !(task.uploadedMaterialIds || []).length && !taskReferencePreview(task)).map(task => String(task.sourceProjectId || '')).filter(Boolean)))
     const projects = new Map()
     await Promise.all(projectIds.map(async id => {
       try { projects.set(id, await api.studioProject(id)) } catch (_) { /* A preview failure must not block shooting. */ }
     }))
-    return tasks.map(task => {
+    return Promise.all(tasks.map(async task => {
       const preview = cardPreview(task, projects.get(String(task.sourceProjectId || '')))
       if (!preview) return task
       const safeId = String(task.id || '').replace(/[^a-zA-Z0-9_-]/g, '-')
-      return { ...task, previewPlayerId: 'shot-preview-' + safeId, cardPreview: { ...preview, url: api.assetUrl(preview.url), poster: api.assetUrl(preview.poster) } }
-    })
+      try { return { ...task, previewPlayerId: 'shot-preview-' + safeId, cardPreview: await this.resolvePreview(preview, task.id) } }
+      catch (_) { return task }
+    }))
   },
   ignoreCardTap() {},
   cardPreviewPlay(e) {
@@ -93,20 +127,57 @@ Page({
   },
   cardPreviewTimeUpdate(e) {
     const end = Number(e.currentTarget.dataset.end)
-    if (!Number.isFinite(end) || Number(e.detail.currentTime) < end) return
+    const start = Number(e.currentTarget.dataset.start) || 0
+    const time = Number(e.detail.currentTime)
+    if (time < start) { wx.createVideoContext(String(e.currentTarget.dataset.player || ''), this).seek(start); return }
+    if (!Number.isFinite(end) || time < end) return
     const player = wx.createVideoContext(String(e.currentTarget.dataset.player || ''), this)
     player.pause()
-    player.seek(Number(e.currentTarget.dataset.start) || 0)
+    player.seek(start)
     this.setData({ activePreviewId: '' })
+  },
+  clearReferenceEndTimer() {
+    if (this.referenceEndTimer !== undefined && this.referenceEndTimer !== null) clearTimeout(this.referenceEndTimer)
+    this.referenceEndTimer = null
+  },
+  referencePlay() {
+    this.referencePlaying = true
+    const preview = this.data.referencePreview
+    if (preview) this.armReferenceEnd(this.referencePosition === null || this.referencePosition === undefined ? preview.start : this.referencePosition)
+  },
+  referencePause() { this.referencePlaying = false; this.clearReferenceEndTimer() },
+  referenceWaiting() { this.clearReferenceEndTimer() },
+  armReferenceEnd(time) {
+    this.clearReferenceEndTimer()
+    const preview = this.data.referencePreview
+    if (!this.referencePlaying || !preview || preview.physicalClip || preview.end === null || !Number.isFinite(time)) return
+    const ticket = this.referenceRequest
+    // timeupdate is coarse; schedule the remaining interval from the latest real media clock.
+    this.referenceEndTimer = setTimeout(() => {
+      this.referenceEndTimer = null
+      if (ticket === this.referenceRequest && this.referencePlaying) this.resetReference()
+    }, Math.max(0, preview.end - Math.max(time, preview.start)) * 1000)
+  },
+  resetReference() {
+    const preview = this.data.referencePreview
+    if (!preview) return
+    this.referencePause()
+    this.referencePosition = preview.start || 0
+    const player = wx.createVideoContext('reference-preview', this)
+    player.pause(); player.seek(this.referencePosition)
   },
   referenceTimeUpdate(e) {
     const preview = this.data.referencePreview
-    if (!preview || preview.end === null || Number(e.detail.currentTime) < preview.end) return
-    const player = wx.createVideoContext('reference-preview', this)
-    player.pause()
-    player.seek(preview.start || 0)
+    if (!preview) return
+    const time = Number(e.detail.currentTime)
+    if (!Number.isFinite(time)) return
+    this.referencePosition = time
+    if (preview.physicalClip) return // EOF owns this bounded file; no source-clock stop race.
+    if (preview.end !== null && time >= preview.end) this.resetReference()
+    else if (time < preview.start) { this.referencePosition = preview.start; wx.createVideoContext('reference-preview', this).seek(preview.start) }
+    else this.armReferenceEnd(time)
   },
-  back() { if (this.canLeaveTask()) this.setData({ selected: null, referencePreview: null, message: '', uploadedMaterialSummary: '', pendingMaterialId: '' }) },
+  back() { if (this.canLeaveTask()) { this.pausePreviews(); this.referenceRequest = (this.referenceRequest || 0) + 1; this.setData({ selected: null, referencePreview: null, referenceLoading: false, referenceError: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' }) } },
   async refresh() {
     this.setData({ loading: true })
     try {
@@ -130,6 +201,7 @@ Page({
   shoot() {
     const task = this.data.selected
     if (!task || !this.canLeaveTask()) return
+    this.pausePreviews()
     wx.navigateTo({ url: '/packages/operator/camera/index?taskId=' + encodeURIComponent(task.id) })
   },
   chooseExisting() { this.choose(['album']) },

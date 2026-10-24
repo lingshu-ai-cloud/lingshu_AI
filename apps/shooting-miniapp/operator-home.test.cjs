@@ -124,3 +124,15 @@ test('operator workbench keeps queue swipe UI removed and review out of primary 
   assert.match(nav, /label: '素材整理'/)
   assert.match(nav, /label: '待拍任务'/)
 })
+
+test('operator pending shot card opens reference detail before the camera', () => {
+  let page
+  const urls = []
+  vm.runInNewContext(fs.readFileSync(__dirname + '/packages/operator/home/index.js', 'utf8'), {
+    Page: value => { page = value },
+    require: name => name.endsWith('/workbench') ? workbench : name.endsWith('/operator-home') ? home : {},
+    wx: { navigateTo: value => urls.push(value.url) }, Date
+  })
+  page.openShot({ currentTarget: { dataset: { id: 'factory shot' } } })
+  assert.deepEqual(urls, ['/packages/operator/shooting/index?taskId=factory%20shot'])
+})
