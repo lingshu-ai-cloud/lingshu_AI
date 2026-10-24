@@ -9,9 +9,9 @@ const ready = { source: 'database' as const, state: 'ready' as const, message: '
 const down = { source: 'database' as const, state: 'unavailable' as const, message: 'down' };
 const local = () => [{ id: 'mine', tenantId: 'a' }, { id: 'theirs', tenantId: 'b' }, { id: 'shared', scope: 'shared' }, { id: 'fake', tenantId: 'a', synthetic: true }];
 const good = await readMaterialLibrary('a', {local, cloud: async () => ({ items: [], source: ready })});
-assert.equal(good.status, 'ready'); assert.deepEqual(good.items.map(item => item.id), ['mine', 'shared']);
+assert.equal(good.status, 'ready'); assert.deepEqual(good.items.map(item => item.id), ['mine']);
 const partial = await readMaterialLibrary('a', {local, cloud: async () => ({ items: [], source: down })});
-assert.equal(partial.status, 'partial'); assert.equal(partial.items.length, 2);
+assert.equal(partial.status, 'partial'); assert.equal(partial.items.length, 1);
 const failed = await readMaterialLibrary('a', {local: () => { throw Error('corrupt'); }, cloud: async () => ({ items: [], source: down })});
 assert.equal(failed.status, 'unavailable');
 const empty = await readMaterialLibrary('a', {local: () => [], cloud: async () => ({ items: [], source: ready })});

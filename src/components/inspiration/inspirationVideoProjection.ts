@@ -118,10 +118,11 @@ export function supplyItemsToVideos(items: SocialDiscoverySupplyItem[]): TrendVi
       sourceUrl: item.sourceUrl,
       thumbnailUrl: item.thumbnailUrl || String(raw.thumbnailUrl || ''),
       aiAnalysis: JSON.stringify({ ...analysis, author: item.author || analysis.author, discoveryScore: item.score, discoveryBusinessModel: item.businessModel }),
-      crawledAt: String(raw.crawledAt || item.publishedAt || item.score.scoredAt),
+      crawledAt: String(raw.crawledAt || ''),
     } satisfies CrawlerRecord];
   });
-  return recordsToVideos(records);
+  const order = new Map(items.map((item, index) => [item.candidateId, index]));
+  return recordsToVideos(records).sort((a, b) => (order.get(a.recordId || '') ?? 0) - (order.get(b.recordId || '') ?? 0));
 }
 
 function metadataFallbackAnalysis(

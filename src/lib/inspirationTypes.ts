@@ -90,6 +90,7 @@ export interface VideoAnalysisPayload {
   keyword?: string;
   crawlRule?: string;
   sourceAccount?: string;
+  sourceAccountUrl?: string;
   sourceAccountName?: string;
   followerCount?: number;
   accountBaselineLevel?: 'low' | 'medium' | 'high';

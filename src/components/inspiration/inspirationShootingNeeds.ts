@@ -51,11 +51,12 @@ export function buildShootingNeeds(videos: TrendVideo[], materials: Material[]):
   }
   return Array.from(grouped.values())
     .map((item): ShootingNeed => ({ ...item, priority: item.priority === '高' || item.count >= 3 ? '高' : item.count >= 2 ? '中' : '低' }))
-    .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0))
-    .slice(0, 30);
+    .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
 }
 
 export function shootingCreationDate(value?: string): string {
   const timestamp = Date.parse(value || '');
   return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '待补录';
 }
+
+export const pendingShootingTaskCount = (tasks: ReadonlyArray<{ uploadedMaterialIds: readonly string[] }>) => tasks.filter(task => task.uploadedMaterialIds.length === 0).length;

@@ -19,12 +19,14 @@ import { AuthenticatedImage, AuthenticatedVideo } from './inspiration/Inspiratio
 import { InspirationShootingPanel } from './inspiration/InspirationShootingPanel';
 import InspirationVideoResults from './inspiration/InspirationVideoResults';
 import InspirationWatchDialog from './inspiration/InspirationWatchDialog';
+import { inspirationDiscoveryCategory, newestCrawledFirst } from './inspiration/inspirationDiscoveryCategory';
+import { matchesInspirationCrawlRange, pageInspirationResults } from './inspiration/inspirationResultPaging';
 import { isDisplayableForFormat } from './inspiration/inspirationAnalysisProjection';
-import { type BusinessModelFilter, type CrawlTimeRange, type DiscoveryDecisionFilter, INSPIRATION_PAGE_SIZE, type InspirationDashboardProps, type InspirationInnerView, MATERIAL_PRODUCT_COMMON, PLATFORM_FILTERS, type SortMode } from './inspiration/inspirationDashboardContracts';
+import { inspirationViewFromSearch, type BusinessModelFilter, type CrawlTimeRange, type DiscoveryDecisionFilter, INSPIRATION_PAGE_SIZE, type InspirationDashboardProps, type InspirationInnerView, MATERIAL_PRODUCT_COMMON, PLATFORM_FILTERS, type SortMode } from './inspiration/inspirationDashboardContracts';
 import { initialMaterialLibraryEntry, isFavoriteMaterial, resolveLinkedFavoriteMaterialId, type FavoriteFilter } from './inspiration/inspirationMaterialLibrary';
 import { resolveInspirationReference } from './inspiration/inspirationReferenceResolver';
 import { initialInspirationReferenceTarget, parseInspirationReferenceTarget, videoMatchesReference, type InspirationReferenceTarget } from './inspiration/inspirationReferenceTarget';
-import { buildShootingNeeds } from './inspiration/inspirationShootingNeeds';
+import { pendingShootingTaskCount, buildShootingNeeds } from './inspiration/inspirationShootingNeeds';
 import { ACTIVE_PLATFORMS, heatValue, inspirationScoresForVideo, median, recordsToVideos, reliablePublicViews, specialRecommendationForVideo, supplyItemsToVideos, timeValue, type CrawlerRecord } from './inspiration/inspirationVideoProjection';
 import { useInspirationAnalysis } from './inspiration/useInspirationAnalysis';
 import { useInspirationCreation } from './inspiration/useInspirationCreation';
@@ -46,7 +48,7 @@ export { candidateDimensionLabels, discoveryOriginTitle, discoverySupplyLabel, g
 
 export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelClose, onNavigate, onEnterWorkflow }: InspirationDashboardProps) {
   const [materialEntry] = useState(initialMaterialLibraryEntry);
-  const [innerView, setInnerView] = useState<InspirationInnerView>(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('view') === 'shooting' ? 'shooting' : materialEntry.openLibrary ? 'library' : 'inspiration');
+  const [innerView, setInnerView] = useState<InspirationInnerView>(() => inspirationViewFromSearch(typeof window === 'undefined' ? '' : window.location.search));
   const [selectedVideo, setSelectedVideo] = useState<TrendVideo | null>(null);
   const [exactReferenceDetail, setExactReferenceDetail] = useState<unknown>(() => typeof window === 'undefined' ? null : window.history.state?.productionDetail);
   const [exactReview, setExactReview] = useState<{recordId:string;handoff:DirectorReviewHandoff;video:TrendVideo}|null>(null);
@@ -61,6 +63,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [favoritedVideoIds, setFavoritedVideoIds] = useState<string[]>([]);
   const [materialMessage, setMaterialMessage] = useState('');
 
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', innerView);
+    window.history.replaceState(window.history.state, '', url);
+  }, [innerView]);
+
   const materials = useInspirationMaterials({ materialEntry, innerView, setMaterialMessage, setInnerView, favoritingMaterialIds, setFavoritingMaterialIds });
   const {
     materialProducts, materialProductId, materialProductRef,
@@ -73,10 +81,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     refreshMaterials, loadProductMaterialDetail, closeProductMaterialDetail,
     updateDetailMaterialTheme, uploadingMaterial, materialUploadDialogOpen, setMaterialUploadDialogOpen,
     scriptGapTasks, setUploadingScriptGapId, uploadInputRef, refreshMaterialPreviewUrl,
-    handleMaterialPreviewError, visibleMaterialTotal, handleUploadMaterials, requestMaterialUpload,
+    handleMaterialPreviewError, materialTotal, handleUploadMaterials, requestMaterialUpload,
     toggleMaterialFavorite,
   } = materials;
 
+  const discovery = useInspirationDiscoveryInventory({ setMaterialMessage, setSelectedVideo, innerView });
   const {
     platform,
     setPlatform,
@@ -97,6 +106,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     minimumDiscoveryScore,
     setMinimumDiscoveryScore,
     discoverySupplyItems,
+    serverDiscoveryFilterActive,
+    completeInventory,
+    discoveryPage,
+    setDiscoveryPage,
     discoverySupplyLoading,
     discoverySupplyError,
     inspirationFiltersOpen,
@@ -105,6 +118,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setCrawledVideos,
     videoPage,
     videoTotalPages,
+    videoResultTotalItems,
     tenantVideoTotalItems,
     setTenantVideoTotalItems,
     competitorAccountCount,
@@ -136,7 +150,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     clearInspirationFilters,
     inspirationFilterCount,
     inspirationAdvancedFilterCount
-  } = useInspirationDiscoveryInventory({ setMaterialMessage, setSelectedVideo, innerView });
+  } = discovery;
 
   const {
     analyzingVideoIds,
@@ -245,11 +259,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     if (latest && latest !== selectedVideo) setSelectedVideo(latest);
   }, [crawledVideos, selectedVideo]);
 
-  const serverDiscoveryFilterActive = discoveryDecision !== 'all'
-    || businessModelFilter !== 'all'
-    || minimumDiscoveryScore > 0
-    || sortMode === 'heat';
-
   const scoredSupplyVideos = useMemo(() => supplyItemsToVideos(discoverySupplyItems), [discoverySupplyItems]);
 
   const scoredSupplyByRecordId = useMemo(() => new Map(scoredSupplyVideos.map(video => [video.recordId, video])), [scoredSupplyVideos]);
@@ -296,26 +305,18 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     return visibleVideos
       .filter(v =>
         (platform === 'all' || v.platform === platform) &&
+        (businessModelFilter === 'all' || inspirationDiscoveryCategory(v) === businessModelFilter) &&
         (inspirationFavoriteFilter === 'all' || favoritedVideoIds.includes(v.id) || favoriteSourceUrls.has(String(v.sourceUrl || '').trim())) &&
-        (!q || v.title.toLowerCase().includes(q) || v.tags.some(t => t.toLowerCase().includes(q)))
+        (!serverDiscoveryFilterActive || matchesInspirationCrawlRange(v, crawlTimeRange)) &&
+        (serverDiscoveryFilterActive || !q || v.title.toLowerCase().includes(q) || v.tags.some(t => t.toLowerCase().includes(q)))
       )
-      .sort((a, b) => {
-        if (contentFormat === 'image') {
-          const analyzedRank = Number(b.aiAnalysis?.imageEvidence?.status === 'analyzed') - Number(a.aiAnalysis?.imageEvidence?.status === 'analyzed');
-          if (analyzedRank) return analyzedRank;
-        }
-        if (sortMode === 'crawlTime') {
-          return timeValue(b.crawledAt) - timeValue(a.crawledAt) || heatValue(b.views) - heatValue(a.views);
-        }
-        const scoreA = inspirationScoresForVideo(a);
-        const scoreB = inspirationScoresForVideo(b);
-        return scoreB.contentOpportunityScore - scoreA.contentOpportunityScore
-          || scoreB.sourcePriority - scoreA.sourcePriority
-          || timeValue(b.crawledAt) - timeValue(a.crawledAt);
-      });
-  }, [visibleVideos, platform, inspirationFavoriteFilter, favoritedVideoIds, favoriteSourceUrls, search, sortMode, contentFormat]);
+      .sort(newestCrawledFirst);
+  }, [visibleVideos, platform, inspirationFavoriteFilter, favoritedVideoIds, favoriteSourceUrls, search, sortMode, contentFormat, serverDiscoveryFilterActive, crawlTimeRange, businessModelFilter]);
 
-  const shootingNeeds = useMemo(() => buildShootingNeeds(visibleVideos, localMaterials), [visibleVideos, localMaterials]);
+  const localPagination = serverDiscoveryFilterActive || completeInventory;
+  const resultPage = pageInspirationResults(filtered, discoveryPage, INSPIRATION_PAGE_SIZE);
+
+  const shootingNeeds = useMemo(() => buildShootingNeeds(discovery.shootingVideos, localMaterials), [discovery.shootingVideos, localMaterials]);
 
   const handleWatch = (video: TrendVideo) => {
     watchTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -420,9 +421,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             <Tabs className="min-w-0 flex-1" activeKey={innerView} onChange={key => setInnerView(key as InspirationInnerView)} aria-label="灵感中心分类"
               items={[
                 { key: 'inspiration', label: `灵感发现 · ${tenantVideoTotalItems ?? '…'}`, icon: <Flame size={16} /> },
-                { key: 'library', label: `我的素材 · ${visibleMaterialTotal}`, icon: <Film size={16} /> },
+                { key: 'library', label: `我的素材 · ${materialTotal}`, icon: <Film size={16} /> },
                 { key: 'accounts', label: `对标账号 · ${competitorAccountCount ?? '…'}`, icon: <Users size={16} /> },
-                { key: 'shooting', label: `待拍任务 · ${shootingNeeds.length + scriptGapTasks.length}`, icon: <Lightbulb size={16} /> },
+                { key: 'shooting', label: `待拍任务 · ${shootingNeeds.length + pendingShootingTaskCount(scriptGapTasks)}`, icon: <Lightbulb size={16} /> },
               ]} />
             {innerView === 'inspiration' && <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 pt-1 lg:w-auto">
               <Button type="primary" icon={<Users size={15} />} onClick={() => setInnerView('accounts')}>采集对标账号爆款</Button>
@@ -432,7 +433,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               </AntUpload>
             </div>}
             <div className="flex shrink-0 items-center gap-2">
-              {innerView === 'library' && <Button loading={uploadingMaterial} icon={<Upload size={15} />} onClick={() => { setUploadProductSceneKind(null); setMaterialUploadDialogOpen(true); }}>上传素材</Button>}
+              {innerView === 'library' && <Button loading={uploadingMaterial} icon={<Upload size={15} />} onClick={() => { setUploadProductSceneKind(null); setMaterialUploadDialogOpen(true); }}>上传内部素材</Button>}
               {innerView === 'library' && <Button type="primary" icon={<Images size={15} />} onClick={startImageCreation}>生成图片</Button>}
             </div>
           </div>
@@ -463,15 +464,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               onClose={() => setInnerView('inspiration')}
               onCountChange={setCompetitorAccountCount}
               onCrawled={(_imported, mode, queued) => {
-                setSortMode('crawlTime');
-                setPlatform('all');
-                setSearch('');
-                if (mode === 'image') {
-                  setContentFormat('image');
-                  setInnerView('inspiration');
-                }
+                clearInspirationFilters();
+                const targetFormat = mode === 'mixed' ? 'all' : mode;
+                setContentFormat(targetFormat);
+                setInnerView('inspiration');
                 if (queued) setCompetitorCollectionSyncing(true);
-                if (!queued && mode !== 'image') void refreshVideos(1, false);
+                void discovery.refreshInventory();
+                void refreshVideos(1, false, { contentFormat: targetFormat, platform: 'all', crawlTimeRange: 'all', search: '' });
               }}
             />}
             {innerView === 'inspiration' && <div className="mb-4 space-y-4 rounded-lg border border-border bg-surface p-4">
@@ -481,8 +480,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   onChange={event => { setLastCrawlVideoIds([]); setSearch(event.target.value); }}
                   aria-label="搜索爆款灵感" placeholder="搜索标题或标签" />
                 <Select value={platform} onChange={value => handlePlatformFilter(value as Platform)} aria-label="社媒平台" options={PLATFORM_FILTERS.map(item => ({ value: item.id, label: item.label }))} />
-                <Select value={contentFormat} onChange={value => handleContentFormatFilter(value as ContentFormat)} aria-label="内容形式"
-                  options={[{ value: 'video', label: '视频' }, { value: 'image', label: '图文' }]} />
+                <Select value={contentFormat} onChange={value => handleContentFormatFilter(value as ContentFormat | 'all')} aria-label="内容形式"
+                  options={[{ value: 'all', label: '全部' }, { value: 'image', label: '图文' }, { value: 'video', label: '视频' }]} />
                 <Select value={inspirationFavoriteFilter} onChange={value => setInspirationFavoriteFilter(value as FavoriteFilter)} aria-label="爆款收藏状态"
                   options={[{ value: 'all', label: '全部收藏状态' }, { value: 'favorite', label: '仅看收藏' }]} />
                 <Button loading={discoverySupplyLoading || videosLoading} onClick={() => setInspirationFiltersOpen(value => !value)} icon={<SlidersHorizontal size={15} />} aria-expanded={inspirationFiltersOpen} aria-controls="inspiration-more-filters">
@@ -493,9 +492,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               {inspirationFiltersOpen && <div id="inspiration-more-filters" className="space-y-3 border-t border-border pt-4">
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <label className="space-y-1 text-xs text-text-secondary"><span>入库时间</span><Select className="w-full" value={crawlTimeRange} onChange={value => { setLastCrawlVideoIds([]); setCrawlTimeRange(value as CrawlTimeRange); }} aria-label="视频抓取入库时间" options={[{ value: 'all', label: '全部时间' }, { value: 'today', label: '今天入库' }, { value: '7d', label: '近 7 天' }, { value: '30d', label: '近 30 天' }]} /></label>
-                  <label className="space-y-1 text-xs text-text-secondary"><span>排序方法</span><Select className="w-full" value={sortMode} onChange={value => { setLastCrawlVideoIds([]); setSortMode(value as SortMode); }} aria-label="排序方法" options={[{ value: 'crawlTime', label: '按爬取时间' }, { value: 'heat', label: '按内容机会' }]} /></label>
                   <label className="space-y-1 text-xs text-text-secondary"><span>筛选结论</span><Select className="w-full" value={discoveryDecision} onChange={value => setDiscoveryDecision(value as DiscoveryDecisionFilter)} aria-label="服务端筛选结论" options={[{ value: 'all', label: '全部评分结果' }, { value: 'accepted', label: '已入选' }, { value: 'review', label: '待复核' }, { value: 'rejected', label: '已淘汰' }]} /></label>
-                  <label className="space-y-1 text-xs text-text-secondary"><span>业务类型</span><Select className="w-full" value={businessModelFilter} onChange={value => setBusinessModelFilter(value as BusinessModelFilter)} aria-label="业务类型" options={[{ value: 'all', label: '全部业务类型' }, { value: 'b2b', label: 'B2B 对标' }, { value: 'mixed', label: '混合业务' }, { value: 'd2c', label: 'DTC 卖货' }, { value: 'unknown', label: '待识别' }]} /></label>
+                  <label className="space-y-1 text-xs text-text-secondary"><span>业务类型</span><Select className="w-full" value={businessModelFilter} onChange={value => setBusinessModelFilter(value as BusinessModelFilter)} aria-label="业务类型" options={[{ value: 'all', label: '全部业务类型' }, { value: 'benchmark', label: '我的对标' }, { value: 'b2b', label: 'B to B素材' }, { value: 'industry', label: '行业泛素材' }]} /></label>
                   <label className="space-y-1 text-xs text-text-secondary"><span>最低综合评分</span><Select className="w-full" value={minimumDiscoveryScore} onChange={setMinimumDiscoveryScore} aria-label="最低综合评分" options={[{ value: 0, label: '不限分数' }, { value: 50, label: '50 分以上' }, { value: 70, label: '70 分以上' }, { value: 85, label: '85 分以上' }]} /></label>
                 </div>
                 <div className="flex justify-end"><Button type="text" onClick={clearInspirationFilters} disabled={inspirationFilterCount === 0} icon={<X size={13} />}>清除全部筛选</Button></div>
@@ -509,23 +507,24 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         <div>
           {innerView === 'inspiration' && (
             <InspirationVideoResults
-              videos={filtered}
+              videos={localPagination ? resultPage.items : filtered}
               visibleVideoCount={visibleVideos.length}
-              loaded={videosLoaded}
-              loading={videosLoading}
+              loaded={videosLoaded && (!(serverDiscoveryFilterActive || businessModelFilter !== 'all') || !discoverySupplyLoading)}
+              loading={videosLoading || ((serverDiscoveryFilterActive || businessModelFilter !== 'all') && discoverySupplyLoading)}
               search={search}
-              platformFiltered={platform !== 'all' || crawlTimeRange !== 'all'}
+              platformFiltered={platform !== 'all' || crawlTimeRange !== 'all' || serverDiscoveryFilterActive || businessModelFilter !== 'all' || inspirationFavoriteFilter === 'favorite'}
               contentFormat={contentFormat}
-              localMaterialCount={localMaterials.length}
+              localMaterialCount={materialTotal}
               launchingReferences={launchingReferences}
               replicationTasks={replicationTasks}
               creationAccountId={creationAccountId}
               favoritingMaterialIds={favoritingMaterialIds}
               favoritedVideoIds={favoritedVideoIds}
               favoriteSourceUrls={favoriteSourceUrls}
-              showPagination={!serverDiscoveryFilterActive}
-              page={videoPage}
-              totalPages={videoTotalPages}
+              showPagination
+              page={localPagination ? resultPage.page : videoPage}
+              totalPages={localPagination ? resultPage.totalPages : videoTotalPages}
+              totalItems={localPagination ? resultPage.totalItems : videoResultTotalItems}
               pageSize={INSPIRATION_PAGE_SIZE}
               onReset={resetInspirationFilters}
               onOpenLibrary={() => setInnerView('library')}
@@ -534,16 +533,17 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               onWatch={handleWatch}
               onFavorite={video => void favoriteMaterial(video)}
               onManage={(video, action) => openManageDialog({ kind: 'video', item: video, action })}
-              onPageChange={page => void refreshVideos(page)}
+              onPageChange={page => localPagination ? setDiscoveryPage(page) : void refreshVideos(page)}
             />
           )}
 
           {innerView === 'library' && <InspirationMaterialGallery materials={materials} favoritingMaterialIds={favoritingMaterialIds} openManageDialog={openManageDialog} enterMaterialSmartGeneration={enterMaterialSmartGeneration} />}
 
           <ProductMaterialDetailDrawer
+            filterActive={materials.hasMaterialFilters}
             product={productDetailProduct}
-            materials={productDetailMaterials}
-            slots={productDetailSlots}
+            materials={materials.filteredProductDetailMaterials}
+            slots={materials.filteredProductDetailSlots}
             loading={productDetailLoading}
             error={productDetailError}
             onClose={closeProductMaterialDetail}
@@ -556,6 +556,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             onCreateFromMaterial={enterMaterialSmartGeneration}
             isMaterialFavoriting={material => favoritingMaterialIds.includes(material.id)}
             onUploadSlot={slot => {
+              setUploadingScriptGapId('');
               setUploadProductId(slot.productId);
               setUploadProductSceneKind(slot.kind);
               setMaterialUploadDialogOpen(true);
@@ -592,7 +593,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             />
           )}
 
-          {innerView === 'shooting' && <InspirationShootingPanel needs={shootingNeeds} scriptGapTasks={scriptGapTasks} materialCount={localMaterials.length} uploadingMaterial={uploadingMaterial} onUploadExisting={requestMaterialUpload} onCaptureStart={setUploadingScriptGapId} onUploadCaptured={files => { void handleUploadMaterials(files); }} />}
+          {innerView === 'shooting' && <InspirationShootingPanel
+            error={[materials.shootingTaskError, discovery.shootingVideosError].filter(Boolean).join('；')}
+            loading={materials.shootingTasksLoading || discovery.shootingVideosLoading}
+            onRetry={() => { void materials.refreshScriptGapTasks(); void discovery.refreshShootingVideos(); }}
+            bindingRetry={Boolean(materials.shootingUploadRetry)} onRetryBinding={() => void materials.retryShootingUpload()}
+            needs={shootingNeeds} scriptGapTasks={scriptGapTasks} materialCount={materialTotal} uploadingMaterial={uploadingMaterial} onUploadExisting={requestMaterialUpload} onCaptureStart={materials.prepareShootingCapture} onUploadCaptured={files => { void handleUploadMaterials(files); }} />}
         </div>
       </div>
       </div>
@@ -629,12 +635,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       <MaterialUploadDialog
         open={materialUploadDialogOpen}
         productId={uploadProductId}
+        videoOnly={Boolean(materials.uploadingScriptGapId)}
         productSceneKind={uploadProductSceneKind}
         linkedProductId={materialProductId}
         linkedProductRef={materialProductRef}
         products={materialProducts}
         onProductChange={setUploadProductId}
-        onCancel={() => { setMaterialUploadDialogOpen(false); setUploadProductSceneKind(null); }}
+        onCancel={() => { setMaterialUploadDialogOpen(false); setUploadProductSceneKind(null); setUploadingScriptGapId(''); }}
         onChooseFile={() => { setMaterialUploadDialogOpen(false); uploadInputRef.current?.click(); }}
       />
       <MaterialManageDialog

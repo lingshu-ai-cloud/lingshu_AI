@@ -1,15 +1,15 @@
-import { Button, Input, Pagination, Select } from 'antd';
-import { ChevronDown, Eye, Film, Loader2, Package, Search, SlidersHorizontal, Sparkles, X } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
+import { Alert, Button, Input, Pagination, Select, TreeSelect } from 'antd';
+import { Eye, Film, Loader2, Search, Sparkles, X } from 'lucide-react';
 import { canProcessVideo } from '../../lib/inspirationDataQuality';
 import { generatedMaterialOriginLabel } from '../../lib/materialAssetOwnership';
 import { STUDIO_MATERIAL_FILE_ACCEPT, STUDIO_MATERIAL_VIDEO_ACCEPT } from '../../lib/studioMaterialFile';
-import MaterialTaxonomyFilters from '../material-library/MaterialTaxonomyFilters';
+import { MATERIAL_THEME_LABELS } from '../../../shared/materialTaxonomy';
+import { MATERIAL_LIBRARY_CATEGORY_LABELS, materialLibraryCategoryOf, normalizeMaterialLibrarySelection } from '../../../shared/materialLibraryKinds';
 import { ProductMaterialGroupCard } from '../material-library/ProductMaterialGroup';
 import MaterialLibraryStatus from '../studio/MaterialLibraryStatus';
 import { LsMasonryGallery } from '../ui/LsExperiencePrimitives';
 import { MATERIAL_LIBRARY_PAGE_SIZE, MATERIAL_PRODUCT_ALL, MATERIAL_PRODUCT_COMMON, MATERIAL_PRODUCT_LINKED_REF } from './inspirationDashboardContracts';
-import { canCreateFromLibraryMaterial, MATERIAL_APPLICABILITY_LABELS, MATERIAL_FUNCTION_LABELS, MATERIAL_INDUSTRY_LABELS, materialSemanticLabel, type FavoriteFilter, type MaterialApplicabilityFilter, type MaterialIndustryFilter, type MaterialOrientationFilter, type MaterialTypeFilter } from './inspirationMaterialLibrary';
+import { canCreateFromLibraryMaterial, materialSemanticLabel, type MaterialTypeFilter } from './inspirationMaterialLibrary';
 import { MaterialLibraryCardMedia } from './MaterialLibraryCardMedia';
 import { MaterialUsageMark } from './MaterialUsageHistory';
 import type { useInspirationCreation } from './useInspirationCreation';
@@ -25,45 +25,31 @@ interface Props {
 
 export default function InspirationMaterialGallery({ materials, favoritingMaterialIds, openManageDialog, enterMaterialSmartGeneration }: Props) {
   const {
-    materialProducts,
+    materialCategories, setMaterialCategories, setMaterialGroup, setMaterialCategory,
+    materialProducts, materialProductsError, refreshMaterialProducts,
     materialProductFilterEnabled,
     materialProductId,
     materialProductRef,
-    uploadProductSceneKind,
+    uploadProductSceneKind, uploadingScriptGapId,
     setPreviewMaterial,
     setDetailMaterial,
     materialSearch,
     setMaterialSearch,
     materialAssetTab,
     setMaterialAssetTab,
-    materialIndustry,
-    setMaterialIndustry,
-    materialFunction,
-    setMaterialFunction,
-    materialApplicability,
-    setMaterialApplicability,
-    materialOrientation,
-    setMaterialOrientation,
-    materialSource,
     setMaterialSource,
     materialTheme,
     setMaterialTheme,
     materialType,
     setMaterialType,
-    materialFavoriteFilter,
-    setMaterialFavoriteFilter,
-    materialFiltersOpen,
-    setMaterialFiltersOpen,
     localMaterials,
     materialsLoading,
     materialPage,
     setMaterialPage,
-    materialFacets,
-    productMaterialSummaries,
+    filteredProductMaterialSummaries: productMaterialSummaries,
     refreshMaterials,
     loadProductMaterialDetail,
     uploadInputRef,
-    materialFunctionOptions,
     visibleProductGroups,
     ordinaryFilteredTotal,
     pagedUngroupedFilteredMaterials,
@@ -75,8 +61,7 @@ export default function InspirationMaterialGallery({ materials, favoritingMateri
     setMaterialProductSelection,
     materialProductFilterValue,
     clearMaterialFilters,
-    materialFilterCount,
-    materialAdvancedFilterCount
+    materialFilterCount
   } = materials;
   return (
 <div className="space-y-4">
@@ -84,7 +69,7 @@ export default function InspirationMaterialGallery({ materials, favoritingMateri
                 ref={uploadInputRef}
                 type="file"
                 multiple={!uploadProductSceneKind}
-                accept={uploadProductSceneKind ? STUDIO_MATERIAL_VIDEO_ACCEPT : STUDIO_MATERIAL_FILE_ACCEPT}
+                accept={uploadProductSceneKind || uploadingScriptGapId ? STUDIO_MATERIAL_VIDEO_ACCEPT : STUDIO_MATERIAL_FILE_ACCEPT}
                 className="hidden"
                 onChange={e => void handleUploadMaterials(e.currentTarget.files)}
               />
@@ -100,65 +85,38 @@ export default function InspirationMaterialGallery({ materials, favoritingMateri
               )}
 
               <div className="space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
-                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1" aria-label="我的素材筛选">
-                  <div className="flex-1" style={{ minWidth: 260 }}>
+                <div className="inspiration-material-filters flex flex-wrap items-center gap-2" aria-label="我的素材筛选">
+                  <div className="w-full min-w-0 xl:w-auto xl:min-w-52 xl:flex-1">
                     <Input allowClear prefix={<Search size={15} />} value={materialSearch} onChange={event => setMaterialSearch(event.target.value)}
                       aria-label="搜索我的素材" placeholder="搜索素材名称、产品或主要内容" className="w-full" />
                   </div>
-                  <Select className="w-32 shrink-0" aria-label="素材分类" value={materialAssetTab} onChange={setMaterialAssetTab} options={[{value:"all",label:"全部素材"},{value:"enterprise",label:"产品素材"},{value:"ai",label:"AI 素材"},{value:"cloud",label:"云素材"}]} />
-                  <MaterialTaxonomyFilters source={materialSource} theme={materialTheme} total={visibleMaterialTotal}
-                    sourceCounts={materialFacets?.sources || { local_upload: 0, official_import: 0, user_generated: 0 }}
-                    onSourceChange={setMaterialSource} onThemeChange={setMaterialTheme} />
-                  <Select className="w-32 shrink-0" value={materialType} onChange={value => setMaterialType(value as MaterialTypeFilter)} aria-label="内容形式"
+                  <TreeSelect style={{ minWidth: 224 }} className="flex-1 xl:w-56 xl:flex-none" aria-label="素材来源" placeholder="素材来源（全部来源）"
+                    styles={{ input: { border: 0, boxShadow: 'none', outline: 'none', background: 'transparent' }, placeholder: { color: 'var(--color-text-primary)' } }}
+                    value={materialCategories} treeCheckable treeDefaultExpandAll treeLine allowClear
+                    showCheckedStrategy={TreeSelect.SHOW_PARENT} maxTagCount={1} popupMatchSelectWidth={320}
+                    onChange={(values: string[]) => { setMaterialCategories(normalizeMaterialLibrarySelection(values)); setMaterialGroup('all'); setMaterialCategory('all'); setMaterialAssetTab('all'); setMaterialSource('all'); }}
+                    treeData={[
+                      { value: 'internal', title: '内部素材', children: ['product', 'enterprise', 'generated'].map(value => ({ value, title: MATERIAL_LIBRARY_CATEGORY_LABELS[value as keyof typeof MATERIAL_LIBRARY_CATEGORY_LABELS] })) },
+                      { value: 'external', title: '外部素材', children: [{ value: 'industry', title: MATERIAL_LIBRARY_CATEGORY_LABELS.industry }] },
+                    ]} />
+                  <Select style={{ minWidth: 128 }} className="flex-1 xl:w-32 xl:flex-none" value={materialType} onChange={value => setMaterialType(value as MaterialTypeFilter)} aria-label="内容形式"
                     options={[{ value: 'all', label: '全部类型' }, { value: 'video', label: '视频' }, { value: 'image', label: '图片' }, { value: 'audio', label: '音频' }]} />
-                  <Button className="shrink-0" onClick={() => setMaterialFiltersOpen(value => !value)} aria-expanded={materialFiltersOpen} aria-controls="material-more-filters" icon={<SlidersHorizontal size={15} />}>
-                    更多筛选{materialAdvancedFilterCount > 0 ? ` · ${materialAdvancedFilterCount}` : ''}
-                  </Button>
+                  <Select style={{ minWidth: 192 }} className="flex-1 xl:w-48 xl:flex-none" aria-label="按产品筛选素材"
+                    value={materialProductFilterValue} onChange={setMaterialProductSelection}
+                    options={[
+                      { value: MATERIAL_PRODUCT_ALL, label: '全部产品' },
+                      { value: MATERIAL_PRODUCT_COMMON, label: '企业通用素材' },
+                      ...(materialProductRef && !materialProductId ? [{ value: MATERIAL_PRODUCT_LINKED_REF, label: materialProductRef }] : []),
+                      ...(materialProductId && materialProductRef && !materialProducts.some(item => item.id === materialProductId) ? [{ value: materialProductId, label: materialProductRef }] : []),
+                      ...materialProducts.map(item => ({ value: item.id, label: item.name })),
+                    ]} />
+                  <Select style={{ minWidth: 144 }} className="flex-1 xl:w-36 xl:flex-none" aria-label="主题标签" value={materialTheme} onChange={setMaterialTheme}
+                    options={[{ value: 'all', label: '全部主题' }, ...Object.entries(MATERIAL_THEME_LABELS).map(([value, label]) => ({ value, label }))]} />
+                  <Button type="text" className="shrink-0" onClick={clearMaterialFilters} disabled={materialFilterCount === 0} icon={<X size={14} />}>重置</Button>
                 </div>
-                <AnimatePresence initial={false}>
-                  {materialFiltersOpen && <motion.div id="material-more-filters" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                    <div className="grid grid-cols-1 gap-3 border-t border-border pt-3 md:grid-cols-2 xl:grid-cols-3">
-                      <label className="space-y-1 text-xs text-text-secondary"><span>收藏状态</span><Select className="w-full" value={materialFavoriteFilter} onChange={value => setMaterialFavoriteFilter(value as FavoriteFilter)} aria-label="素材收藏状态"
-                        options={[{ value: 'all', label: '全部收藏状态' }, { value: 'favorite', label: '仅看收藏' }]} /></label>
-                      <label className="relative block h-14 rounded-lg border border-border bg-surface-2 transition-colors focus-within:border-accent">
-                        <Package size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                        <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">关联产品</span>
-                        <select value={materialProductFilterValue} onChange={event => setMaterialProductSelection(event.target.value)} aria-label="按产品筛选素材"
-                          className="h-full w-full cursor-pointer appearance-none rounded-lg bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
-                          <option value={MATERIAL_PRODUCT_ALL}>全部产品素材</option>
-                          <option value={MATERIAL_PRODUCT_COMMON}>企业通用素材</option>
-                          {materialProductRef && !materialProductId && <option value={MATERIAL_PRODUCT_LINKED_REF}>{materialProductRef}</option>}
-                          {materialProductId && materialProductRef && !materialProducts.some(item => item.id === materialProductId) && <option value={materialProductId}>{materialProductRef}</option>}
-                          {materialProducts.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-                        </select>
-                        <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                      </label>
-                      {[
-                        { label: '所属行业', value: materialIndustry, onChange: (value: string) => setMaterialIndustry(value as MaterialIndustryFilter), options: Object.entries(MATERIAL_INDUSTRY_LABELS) },
-                        { label: '镜头功能', value: materialFunction, onChange: setMaterialFunction, options: [['all', MATERIAL_FUNCTION_LABELS.all], ...materialFunctionOptions.map(value => [value, MATERIAL_FUNCTION_LABELS[value] || value])] },
-                        { label: '适用范围', value: materialApplicability, onChange: (value: string) => setMaterialApplicability(value as MaterialApplicabilityFilter), options: Object.entries(MATERIAL_APPLICABILITY_LABELS) },
-                        { label: '画面方向', value: materialOrientation, onChange: (value: string) => setMaterialOrientation(value as MaterialOrientationFilter), options: [['all', '全部方向'], ['vertical', '竖屏 9:16'], ['horizontal', '横屏 16:9']] },
-                      ].map(filter => (
-                        <label key={filter.label} className="relative block h-14 rounded-lg border border-border bg-surface-2 transition-colors focus-within:border-accent">
-                          <Film size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                          <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">{filter.label}</span>
-                          <select value={filter.value} onChange={e => filter.onChange(e.target.value)} aria-label={filter.label}
-                            className="h-full w-full cursor-pointer appearance-none rounded-lg bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
-                            {filter.options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                          </select>
-                          <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                        </label>
-                      ))}
-                    </div>
-                    <div className="mt-2 flex justify-end">
-                      <button type="button" onClick={clearMaterialFilters} disabled={materialFilterCount === 0}
-                        className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold text-text-muted transition hover:bg-surface-2 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40">
-                        <X size={13} />清除全部筛选
-                      </button>
-                    </div>
-                  </motion.div>}
-                </AnimatePresence>
               </div>
+              {materialProductsError && <Alert type="error" showIcon title={materialProductsError}
+                action={<Button size="small" onClick={() => void refreshMaterialProducts()}>重试读取产品</Button>} />}
               <MaterialLibraryStatus onRetry={refreshMaterials} />
               {materialsLoading ? (
                   <div className="flex items-center justify-center gap-2 py-16 text-sm text-text-muted">
@@ -192,7 +150,7 @@ export default function InspirationMaterialGallery({ materials, favoritingMateri
                             content: (
                               <ProductMaterialGroupCard
                                 product={product}
-                                materials={summary?.materials || []}
+                                materials={(summary?.materials || []).filter(material => materialLibraryCategoryOf(material) === 'product')}
                                 slots={summary?.slots || []}
                                 loading={Boolean(summary?.loading && !hasSummaryData)}
                                 error={Boolean(summary?.error && !hasSummaryData)}

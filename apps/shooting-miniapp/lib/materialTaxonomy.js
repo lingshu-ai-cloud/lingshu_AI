@@ -5,6 +5,7 @@ exports.MATERIAL_THEME_LABELS = exports.MATERIAL_SOURCE_LABELS = exports.MATERIA
 exports.materialSourceCategoryOf = materialSourceCategoryOf;
 exports.materialThemeTagsOf = materialThemeTagsOf;
 exports.materialPrimaryThemeOf = materialPrimaryThemeOf;
+exports.preserveUserMaterialTheme = preserveUserMaterialTheme;
 exports.MATERIAL_SOURCE_CATEGORIES = ['local_upload', 'official_import', 'user_generated'];
 exports.MATERIAL_THEMES = ['talking_head', 'factory', 'product', 'consumer_demo'];
 exports.MATERIAL_SOURCE_LABELS = {
@@ -59,4 +60,13 @@ function materialPrimaryThemeOf(material) {
     if (exports.MATERIAL_THEMES.includes(explicit))
         return explicit;
     return materialThemeTagsOf(material)[0] || null;
+}
+/** Automated analysis must not replace a classification confirmed by a person. */
+function preserveUserMaterialTheme(current, changes) {
+    if (current.classificationSource !== 'user' || changes.classificationSource !== 'model')
+        return changes;
+    const result = { ...changes };
+    for (const key of ['primaryTheme', 'themeTags', 'classificationSource', 'classificationStatus', 'classificationEvidence'])
+        delete result[key];
+    return result;
 }

@@ -52,3 +52,11 @@ export function materialPrimaryThemeOf(material: ThemeLike): MaterialTheme | nul
   if (MATERIAL_THEMES.includes(explicit as MaterialTheme)) return explicit as MaterialTheme;
   return materialThemeTagsOf(material)[0] || null;
 }
+
+/** Automated analysis must not replace a classification confirmed by a person. */
+export function preserveUserMaterialTheme(current: Record<string, unknown>, changes: Record<string, unknown>): Record<string, unknown> {
+  if (current.classificationSource !== 'user' || changes.classificationSource !== 'model') return changes;
+  const result = { ...changes };
+  for (const key of ['primaryTheme', 'themeTags', 'classificationSource', 'classificationStatus', 'classificationEvidence']) delete result[key];
+  return result;
+}

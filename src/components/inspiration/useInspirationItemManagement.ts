@@ -28,7 +28,7 @@ export function useInspirationItemManagement({ setMaterialProducts, setCrawledVi
     setManageProductId(target.kind === 'material'
       ? target.item.productId || ''
       : '');
-    if (target.kind === 'material') void studioApi.materialProducts().then(result => setMaterialProducts(result.items));
+    if (target.kind === 'material') void studioApi.materialProducts().then(result => setMaterialProducts(result.items)).catch(error => setMaterialMessage(error instanceof Error ? error.message : '产品资料读取失败'));
     setManageName(target.kind === 'video' ? target.item.title : target.item.name);
     setManageTags(target.kind === 'video' ? target.item.tags.join(', ') : visibleMaterialTags(target.item.tags));
   };

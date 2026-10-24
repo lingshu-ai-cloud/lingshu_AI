@@ -289,3 +289,8 @@
   .ls-conversation-workspace__slot:last-child.is-active { display: flex; }
   .ls-conversation-workspace__pane + .ls-conversation-workspace__pane { border-inline-start: 0; }
 }
+
+.inspiration-material-filters .ant-input::placeholder {
+  color: var(--color-text-primary);
+  opacity: 1;
+}

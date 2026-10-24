@@ -10,11 +10,18 @@ export type ScriptType = 'voiceover' | 'storyboard';
 
 export type InspirationInnerView = 'inspiration' | 'accounts' | 'library' | 'shooting';
 
+export function inspirationViewFromSearch(search: string): InspirationInnerView {
+  const view = new URLSearchParams(search).get('view');
+  return view === 'accounts' || view === 'library' || view === 'shooting' ? view : 'inspiration';
+}
+
 export type CrawlTimeRange = 'all' | 'today' | '7d' | '30d';
 
 export type DiscoveryDecisionFilter = 'all' | SocialDiscoveryScoreDecision;
 
-export type BusinessModelFilter = 'all' | SocialBusinessModel;
+export type BusinessModelFilter = 'all' | 'benchmark' | 'b2b' | 'industry';
+
+export type InspirationContentFormat = 'all' | 'video' | 'image';
 
 export const INSPIRATION_PAGE_SIZE = 100;
 

@@ -1,3 +1,4 @@
+import { officialIndustryMaterialVisible, readMaterialTenantIndustry } from './industryMaterialAccess.js';
 import type {MaterialTheme,MaterialSourceCategory,MaterialClassificationStatus} from '../../shared/materialTaxonomy.js';
 import { openAsBlob } from 'node:fs';
 import { Readable } from 'node:stream';
@@ -326,7 +327,7 @@ async function resolveCloudMaterialPlaybackUrl(
         return response.ok ? response.json() as Promise<CloudMaterialRecord> : null;
       })();
     if (!record) return null;
-    if (tenantId && !canAccessCloudMaterial(record, tenantId)) return null;
+    if (tenantId && !await canReadCloudMaterial(record, tenantId, metadataStore || undefined)) return null;
     const filename = String(record[field] || '');
     if (!filename) return null;
     const url = await createFilePlaybackUrl('materials', id, filename);
@@ -341,9 +342,9 @@ function materialTenantId(item: Record<string, unknown>): string {
   return String(item.tenantId || item.tenant_id || '').trim();
 }
 
-function canAccessCloudMaterial(item: Record<string, unknown>, tenantId: string): boolean {
-  const scope = String(item.scope || 'own');
-  return scope === 'shared' || Boolean(tenantId && materialTenantId(item) === tenantId);
+async function canReadCloudMaterial(item: Record<string, unknown>, tenantId: string, dataStore?: DataStore, industry?: Promise<string>): Promise<boolean> {
+  if (item.scope !== 'shared') return Boolean(tenantId && materialTenantId(item) === tenantId);
+  return officialIndustryMaterialVisible(item, await (industry || readMaterialTenantIndustry(tenantId, dataStore, adminFetch)));
 }
 
 export function cloudMaterialView(item: CloudMaterialRecord): Record<string, unknown> {
@@ -412,10 +413,16 @@ export async function readCloudMaterialLibrary(tenantId: string, request: typeof
   try {
     const rows: CloudMaterialRecord[] = [];
     const metadataStore = materialMetadataStore(request, dataStore);
+    let industry: Promise<string> | undefined;
+    const visible = async (items: CloudMaterialRecord[]) => {
+      if (items.some(item => item.scope === 'shared')) industry ||= readMaterialTenantIndustry(tenantId, metadataStore || undefined, request);
+      const allowed = await Promise.all(items.map(item => canReadCloudMaterial(item, tenantId, metadataStore || undefined, industry)));
+      return items.filter((_, index) => allowed[index]);
+    };
     if (metadataStore) {
       for (let page = 1; ; page += 1) {
         const data = await metadataStore.list<CloudMaterialRecord>('materials', { page, perPage: 500 });
-        rows.push(...data.items.filter(item => canAccessCloudMaterial(item, tenantId)));
+        rows.push(...await visible(data.items));
         if (page >= data.totalPages) break;
         if (page >= 100) throw Error('material_pagination_limit');
       }
@@ -428,7 +435,7 @@ export async function readCloudMaterialLibrary(tenantId: string, request: typeof
         message: [401,403].includes(response.status) ? '素材数据库访问权限异常，请联系管理员' : '素材数据库暂时不可用，请重试' } };
       const data = await response.json() as { items?: CloudMaterialRecord[]; totalPages?: number };
       if (!Array.isArray(data.items)) throw Error('invalid_material_response');
-      rows.push(...data.items.filter(item => canAccessCloudMaterial(item, tenantId)));
+      rows.push(...await visible(data.items));
       if (page >= Number(data.totalPages || 1)) break;
       if (page >= 100) throw Error('material_pagination_limit');
     }
@@ -447,12 +454,12 @@ export async function getCloudMaterialRecord(id: string, tenantId?: string): Pro
   const metadataStore = materialMetadataStore(adminFetch);
   if (metadataStore) {
     const record = await metadataStore.getById<CloudMaterialRecord>('materials', id);
-    return record && (!tenantId || canAccessCloudMaterial(record, tenantId)) ? record : null;
+    return record && (!tenantId || await canReadCloudMaterial(record, tenantId, metadataStore || undefined)) ? record : null;
   }
   const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`);
   if (!response.ok) return null;
   const record = await response.json() as Record<string, unknown>;
-  return tenantId && !canAccessCloudMaterial(record, tenantId) ? null : record;
+  return tenantId && !await canReadCloudMaterial(record, tenantId, metadataStore || undefined) ? null : record;
 }
 
 /** 写操作只能落在当前租户自己的私有素材上；共享素材对普通租户只读。 */
@@ -545,6 +552,7 @@ export async function upsertTenantUploadCloudMaterial(
   },
   request: typeof adminFetch = adminFetch,
 ): Promise<Record<string, unknown>> {
+  if ((input.sourceEntry as string) === 'platform_operations') throw new Error('tenant upload cannot claim platform origin');
   if (input.scope === 'shared') throw new Error('tenant upload cannot be platform shared');
   const existing = await ownedCloudMaterialByHash(input.tenantId, input.sha256, request);
   if (!existing) return cloudMaterialView(await createCloudMaterial({ ...input, scope: 'own' }, request));
@@ -755,7 +763,7 @@ export async function fetchCloudMaterial(
       return recordResponse.ok ? recordResponse.json() as Promise<CloudMaterialRecord> : null;
     })();
   if (!record) return null;
-  if (tenantId && !canAccessCloudMaterial(record, tenantId)) return null;
+  if (tenantId && !await canReadCloudMaterial(record, tenantId, metadataStore || undefined)) return null;
   const objectKey = field === 'videoFile' ? String(record.objectKey || '') : String(record.posterObjectKey || '');
   if (objectKey) {
     const object = await objectStorageGetObject(objectKey, range);

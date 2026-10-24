@@ -40,7 +40,7 @@ export default function InspirationMaterialDetailDrawer({ material, updatingThem
           {director.uses.length > 0 && <p className="mt-1 leading-5 text-text-secondary">可用于：{director.uses.join('、')}</p>}
           {director.cautions.length > 0 && <p className="mt-1 leading-5 text-text-muted">注意：{director.cautions.join('；')}</p>}
         </div>
-        <div className="rounded-xl border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">主题标签</p><div className="mt-2 flex flex-wrap gap-1.5">{Object.entries(MATERIAL_THEME_LABELS).map(([id, label]) => <button type="button" key={id} disabled={updatingTheme} onClick={() => onUpdateTheme(id as keyof typeof MATERIAL_THEME_LABELS)} className={`rounded-full px-2.5 py-1 text-[11px] font-bold disabled:opacity-50 ${theme === id ? 'bg-accent text-white' : 'bg-surface-2 text-text-secondary'}`}>{label}</button>)}</div></div>
+        <div className="rounded-xl border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">主题标签</p><div className="mt-2 flex flex-wrap gap-1.5">{Object.entries(MATERIAL_THEME_LABELS).map(([id, label]) => <button type="button" key={id} disabled={updatingTheme || !material.canManage} onClick={() => onUpdateTheme(id as keyof typeof MATERIAL_THEME_LABELS)} className={`rounded-full px-2.5 py-1 text-[11px] font-bold disabled:opacity-50 ${theme === id ? 'bg-accent text-white' : 'bg-surface-2 text-text-secondary'}`}>{label}</button>)}</div></div>
         {[
           ['素材类型', material.type === 'video' ? '视频' : material.type === 'image' ? '图片' : '音频'],
           ['关联产品', material.productName || '企业通用素材'],

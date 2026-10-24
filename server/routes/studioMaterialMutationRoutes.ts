@@ -1,3 +1,4 @@
+import { tenantUploadUsesReservedOrigin } from '../lib/industryMaterialAccess.js';
 import { productSceneMaterialBindingChanges, productSceneMaterialProductAssociationChanges, productSceneMaterialProvenanceOf, recordObject } from './studioProductSceneProvenance.js';
 import { productSceneMaterialProductionEligible } from './studioProductSceneProjection.js';
 import { materialResponse, type Material } from './studioMaterialProjection.js';
@@ -33,6 +34,7 @@ export function createStudioMaterialMutationRoutes(deps: Pick<StudioApplicationP
   function registerPostMaterials() {
     studioRouter.post('/materials', async (req, res) => {
       const { tenantId } = res.locals as AuthLocals;
+      if (tenantUploadUsesReservedOrigin(req.body || {})) { res.status(403).json({ ok: false, error: '官方行业素材与系统生成来源不能通过用户上传设置' }); return; }
       const { name, folder = 'upload', type, duration = 0, width = 0, height = 0, dataBase64, mimeType, usage, sourceType, sourceUrl, productId, productSceneType, rightsConfirmed = false } = req.body ?? {};
       if (!dataBase64 || !type) { res.status(400).json({ ok: false, error: 'dataBase64 and type required' }); return; }
       if (!['video', 'image', 'audio'].includes(type)) { res.status(400).json({ ok: false, error: 'invalid type' }); return; }

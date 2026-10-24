@@ -2,7 +2,7 @@ import { Download, Film } from 'lucide-react';
 
 export default function InspirationEmptyState({ state, contentFormat, search, localMaterialCount, onReset, onOpenLibrary }: {
   state: 'no-data' | 'no-match';
-  contentFormat: 'video' | 'image';
+  contentFormat: 'all' | 'video' | 'image';
   search: string;
   localMaterialCount: number;
   onReset: () => void;
@@ -11,8 +11,8 @@ export default function InspirationEmptyState({ state, contentFormat, search, lo
   return <div className="min-h-72 rounded-xl border border-dashed border-border bg-surface flex flex-col items-center justify-center gap-3 text-center px-6">
     <div className="w-11 h-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-muted"><Download size={18} /></div>
     <div>{state === 'no-data' ? <>
-      <p className="text-sm font-semibold text-text-primary">暂无真实{contentFormat === 'image' ? '图文' : '视频'}数据</p>
-      <p className="text-xs text-text-muted mt-1">请通过「定时任务」采集公开{contentFormat === 'image' ? '图文' : '视频'}，或从对标账号导入真实内容。</p>
+      <p className="text-sm font-semibold text-text-primary">暂无真实{contentFormat === 'all' ? '内容' : contentFormat === 'image' ? '图文' : '视频'}数据</p>
+      <p className="text-xs text-text-muted mt-1">请通过「定时任务」采集公开{contentFormat === 'all' ? '内容' : contentFormat === 'image' ? '图文' : '视频'}，或从对标账号导入真实内容。</p>
     </> : <>
       <p className="text-sm font-semibold text-text-primary">没有匹配{search.trim() ? `“${search.trim()}”` : '当前筛选条件'}的结果</p>
       <p className="text-xs text-text-muted mt-1">已有数据未丢失，可清除搜索或重置筛选后继续查看。</p>

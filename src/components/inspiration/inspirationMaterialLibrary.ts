@@ -1,3 +1,4 @@
+import { materialMatchesLibraryCategory, materialMatchesLibrarySelection, normalizeMaterialLibrarySelection, type MaterialLibraryLeaf, type MaterialLibraryGroup, type MaterialLibraryCategory } from '../../../shared/materialLibraryKinds';
 import type { Material } from '../../lib/studioApi';
 import type { TrendVideo } from '../../lib/inspirationTypes';
 import { MATERIAL_SOURCE_LABELS, MATERIAL_THEME_LABELS, materialSourceCategoryOf, materialThemeTagsOf } from '../../../shared/materialTaxonomy';
@@ -12,7 +13,7 @@ export type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry'
 export type MaterialOrientationFilter = 'all' | 'vertical' | 'horizontal';
 export type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
 export type FavoriteFilter = 'all' | 'favorite';
-export type MaterialLibraryEntryContext = { openLibrary: boolean; productId: string; productRef: string };
+export type MaterialLibraryEntryContext = { openLibrary: boolean; productId: string; productRef: string; productScope?: 'common' };
 const ENTERPRISE_COMMON_MATERIAL_TAG = 'enterprise_common';
 
 /** Cards and detail drawers must share the same media-creation admission rule. */
@@ -28,6 +29,7 @@ export function parseMaterialLibraryEntry(search: string): MaterialLibraryEntryC
     openLibrary: params.get('view') === 'library',
     productId: String(params.get('productId') || '').trim(),
     productRef: String(params.get('productRef') || '').trim(),
+    ...(params.get('productScope') === 'common' || (params.has('productId') && params.has('productRef') && !params.get('productId') && !params.get('productRef')) ? { productScope: 'common' as const } : {}),
   };
 }
 
@@ -37,12 +39,18 @@ export function initialMaterialLibraryEntry(): MaterialLibraryEntryContext {
     : parseMaterialLibraryEntry(window.location.search);
 }
 
-export function initialMaterialTaxonomyFilters(): { source: MaterialSourceFilter; theme: MaterialThemeFilter } {
-  if (typeof window === 'undefined') return { source: 'all', theme: 'all' };
+export function initialMaterialTaxonomyFilters(): { source: MaterialSourceFilter; theme: MaterialThemeFilter; group: MaterialLibraryGroup; category: MaterialLibraryCategory; categories: MaterialLibraryLeaf[] } {
+  if (typeof window === 'undefined') return { source: 'all', theme: 'all', group: 'all', category: 'all', categories: [] };
   const params = new URLSearchParams(window.location.search);
   const source = params.get('source') || 'all';
   const theme = params.get('theme') || 'all';
+  const group = params.get('materialGroup');
+  const category = params.get('materialCategory') || (source === 'user_generated' ? 'generated' : source === 'official_import' ? 'industry' : 'all');
+  const categories = normalizeMaterialLibrarySelection(params.has('materialCategories') ? (params.get('materialCategories') || '').split(',') : category === 'all' ? [] : [category]);
   return {
+    categories,
+    group: group === 'internal' || group === 'external' ? group : category === 'generated' ? 'internal' : category === 'industry' ? 'external' : 'all',
+    category: ['product', 'enterprise', 'generated', 'industry'].includes(category) ? category as MaterialLibraryCategory : 'all',
     source: source === 'all' || Object.hasOwn(MATERIAL_SOURCE_LABELS, source) ? source as MaterialSourceFilter : 'all',
     theme: theme === 'all' || Object.hasOwn(MATERIAL_THEME_LABELS, theme) ? theme as MaterialThemeFilter : 'all',
   };
@@ -168,6 +176,8 @@ export function isFavoriteMaterial(material: Material): boolean {
 }
 
 export type MaterialGalleryFilterSnapshot = {
+  categories?: readonly MaterialLibraryLeaf[];
+  group?: MaterialLibraryGroup; category?: MaterialLibraryCategory;
   query: string;
   assetTab: MaterialAssetTab;
   type: MaterialTypeFilter;
@@ -207,7 +217,8 @@ export function materialMatchesLibraryFilters(material: Material, filters: Mater
     materialSemanticLabel(material),
   ].filter(Boolean).join(' ').toLowerCase();
   const orientationMatches = materialMatchesOrientation(material, filters.orientation);
-  return (!query || searchable.includes(query))
+  return (filters.categories !== undefined ? materialMatchesLibrarySelection(material, filters.categories) : materialMatchesLibraryCategory(material, filters.group, filters.category))
+    && (!query || searchable.includes(query))
     && (filters.assetTab === 'all' || materialAssetTabOf(material) === filters.assetTab)
     && (filters.theme === 'all' || materialThemeTagsOf(material).includes(filters.theme))
     && (filters.type === 'all' || material.type === filters.type)

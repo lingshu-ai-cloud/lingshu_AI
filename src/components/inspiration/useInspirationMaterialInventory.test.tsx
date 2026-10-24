@@ -18,7 +18,7 @@ function inventory() {
 const material = (id: string) => ({ id, name: id, url: `/${id}.mp4` }) as Material;
 const page = (items: Material[], total = items.length) => ({ status: 'ready' as const, sources: [], items, total });
 
-test('library refresh reads all common-material pages and deduplicates before returning preview candidates', async () => {
+test('library refresh reads all material pages, including product assets, and deduplicates before returning preview candidates', async () => {
   const original = studioApi.listMaterialLibrary;
   const calls: Array<Parameters<typeof original>[1]> = [];
   studioApi.listMaterialLibrary = async (_purpose, query) => {
@@ -28,7 +28,7 @@ test('library refresh reads all common-material pages and deduplicates before re
   try {
     const result = await inventory().refreshMaterials(2);
     assert.deepEqual(result.map(item => item.id), ['first', 'last']);
-    assert.deepEqual(calls.map(query => [query?.page, query?.pageSize, query?.excludeProductAssociated]), [[1, 100, true], [2, 100, true]]);
+    assert.deepEqual(calls.map(query => [query?.page, query?.pageSize, query?.excludeProductAssociated]), [[1, 100, undefined], [2, 100, undefined]]);
   } finally { studioApi.listMaterialLibrary = original; }
 });
 

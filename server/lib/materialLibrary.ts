@@ -1,3 +1,4 @@
+import { officialIndustryMaterialVisible, readMaterialTenantIndustry } from './industryMaterialAccess.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -316,7 +317,10 @@ export async function readMaterialLibrary(tenantId: string, adapters: {
   let enterpriseProducts: MaterialRecord[] = [];
   try { enterpriseProducts = await enterpriseProductImageMaterials(tenantId, [...local, ...cloud.items] as MaterialRecord[], profileStore); }
   catch { sources.push({ source: 'database', state: 'unavailable', message: '企业产品图库读取失败，请重试或联系管理员' }); }
-  const items = [...new Map([...local, ...cloud.items, ...enterpriseProducts].filter(item => accessibleMaterial(item as MaterialRecord, tenantId)).map(item => [String(item.id), item as MaterialRecord])).values()];
+  const industry = [...local, ...cloud.items].some(item => item.scope === 'shared')
+    ? await readMaterialTenantIndustry(tenantId, profileStore || ((!adapters.local && !adapters.cloud) ? store : undefined)) : '';
+  const items = [...new Map([...local, ...cloud.items, ...enterpriseProducts].filter(item => accessibleMaterial(item as MaterialRecord, tenantId)
+    && (item.scope !== 'shared' || officialIndustryMaterialVisible(item, industry))).map(item => [String(item.id), item as MaterialRecord])).values()];
   const ready = sources.filter(source => source.state === 'ready').length;
   return { items, sources, status: ready === sources.length ? 'ready' : ready ? 'partial' : 'unavailable' };
 }

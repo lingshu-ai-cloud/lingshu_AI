@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReferenceSpeechAlignmentPanel from './ReferenceSpeechAlignmentPanel.js';
 import { alignReferenceWordsToShots } from '../../../server/lib/referenceWordAlignment.js';
@@ -69,7 +70,7 @@ test('empty data has no panel and low-confidence words cannot be presented as co
 });
 
 test('alignment panel is scoped to existing Inspiration detail dialog only', () => {
-  const componentRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const componentRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const consumers: string[] = [];
   function walk(directory: string) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -81,8 +82,8 @@ test('alignment panel is scoped to existing Inspiration detail dialog only', () 
     }
   }
   walk(componentRoot);
-  assert.deepEqual(consumers, ['InspirationDashboard.tsx']);
-  const source = fs.readFileSync(path.join(componentRoot, 'InspirationDashboard.tsx'), 'utf8');
+  assert.deepEqual(consumers, ['inspiration/DirectorVideoDetailPanel.tsx']);
+  const source = fs.readFileSync(path.join(componentRoot, 'inspiration/DirectorVideoDetailPanel.tsx'), 'utf8');
   assert.ok(source.includes('<ReferenceSpeechAlignmentPanel details={payload?.gemini?.scriptDetails15s}'));
   assert.ok(source.indexOf('<ReferenceSpeechAlignmentPanel') > source.indexOf('aria-labelledby="director-video-analysis-title"'));
 });
