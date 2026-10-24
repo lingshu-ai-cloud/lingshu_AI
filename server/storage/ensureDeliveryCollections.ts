@@ -594,9 +594,14 @@ export async function ensureDeliveryCollections(): Promise<void> {
     { name: 'receipt', type: 'json' },
   ]);
   await ensureCollection('platform_ad_oauth_states', [
-    ...['tenant_id', 'userId', 'stateHash', 'expiresAt', 'status', 'tokenCipher'].map(name => ({ name, type: 'text' as const })),
+    ...['tenant_id', 'userId', 'stateHash', 'expiresAt', 'status', 'tokenCipher', 'context', 'appId', 'providerUserId'].map(name => ({ name, type: 'text' as const })),
     { name: 'accounts', type: 'json' },
+    { name: 'authorization', type: 'json' },
   ]);
+  await ensureCollection('platform_ad_privacy_requests', [
+    ...['confirmationCodeHash', 'providerUserId', 'appId', 'status', 'requestedAt', 'requestFingerprint', 'issuedAt'].map(name => ({ name, type: 'text' as const })),
+    { name: 'tenantIds', type: 'json' },
+  ], ['CREATE UNIQUE INDEX idx_platform_ad_privacy_request ON platform_ad_privacy_requests (requestFingerprint)']);
   await ensureCollection('platform_ad_automation_rules', [
     ...['tenant_id', 'taskId', 'connectionId', 'resourceId', 'updatedAt'].map(name => ({ name, type: 'text' as const, required: true })),
     ...['targetCpc', 'minClicks', 'cooldownMinutes', 'maxMetricAgeMinutes'].map(name => ({ name, type: 'number' as const, required: true })),
@@ -634,6 +639,7 @@ export async function ensureDeliveryCollections(): Promise<void> {
   ]);
   await ensureCollection('platform_ad_connections', [
     { name: 'defaultPage', type: 'json' },
+    { name: 'authorization', type: 'json' },
     { name: 'tenant_id', type: 'text', required: true },
     { name: 'provider', type: 'text', required: true },
     { name: 'accountId', type: 'text', required: true },

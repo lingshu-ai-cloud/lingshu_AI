@@ -6,9 +6,10 @@ import './adAccountConnections.css';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import AdMetaConnectionGuide from './AdMetaConnectionGuide';
 import { AdAccountDirectoryContext } from '../lib/adAccountDirectoryContext';
-import { authHeader } from '../lib/auth';
+import { AUTH_TOKEN_CHANGED_EVENT, authHeader } from '../lib/auth';
+import AdAuthorizationHealth, { type AdAuthorization } from './AdAuthorizationHealth';
 
-export type AdConnection = { id: string; provider: string; accountId: string; name: string; currency: string; status: string; businessName?: string; accountStatus?: number | null; timezoneName?: string; timezoneOffsetHoursUtc?: number | null; defaultPage?: { id: string; name: string; verifiedAt: string } | null };
+export type AdConnection = { id: string; provider: string; accountId: string; name: string; currency: string; status: string; authorization?: AdAuthorization; businessName?: string; accountStatus?: number | null; timezoneName?: string; timezoneOffsetHoursUtc?: number | null; defaultPage?: { id: string; name: string; verifiedAt: string } | null };
 type Provider = 'meta' | 'tiktok' | 'google';
 type Capability = { provider: string; configured: boolean; oauthConfigured?: boolean; oauthReadiness?: { missing: string[] } };
 type Connections = { items: AdConnection[]; capabilities: Capability[] };
@@ -53,13 +54,17 @@ export default function AdAccountConnections({ onTaskImported, onContinue, initi
   const [campaigns, setCampaigns] = useState<{ connection: AdConnection; items: Campaign[]; hasMore?: boolean } | null>(null);
   const [resources, setResources] = useState<{ connection: AdConnection; level: PlatformAdResourceLevel; items: PlatformAdResource[]; hasMore: boolean } | null>(null);
   const [lastSync, setLastSync] = useState<PlatformAdResourceSyncResult | null>(null);
+  const [reauthorize, setReauthorize] = useState<{ id: string; name: string; attempt: number } | null>(null);
+  const guideRef = useRef<HTMLDivElement>(null);
   const generation = useRef(0);
+  const renderGeneration = generation.current;
   const successRef = useRef<HTMLDivElement>(null);
   const platform = platforms[provider];
   const capability = data.capabilities.find(item => item.provider === provider);
   const official = provider === 'meta' && capability?.oauthConfigured === true;
   const canCreate = success && (success.currency === 'USD' || (success.provider === 'meta' && success.currency === 'CNY'));
   const accounts = data.items.filter(item => item.provider === provider);
+  useEffect(() => { if (reauthorize) guideRef.current?.focus(); }, [reauthorize]);
   useEffect(() => { if (success) successRef.current?.focus(); }, [success]);
   useEffect(() => () => { generation.current += 1; }, []);
   const load = async () => {
@@ -69,43 +74,62 @@ export default function AdAccountConnections({ onTaskImported, onContinue, initi
     catch (e) { if (current === generation.current) setLoadError(errorMessage(e)); }
     finally { if (current === generation.current) setLoading(false); }
   };
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    const changed = () => { generation.current++; setData({ items: [], capabilities: [] }); setSuccess(null); setCampaigns(null); setResources(null); setLastSync(null); setReauthorize(null); setToken(''); setAccountId(''); setBusy(false); setError(''); void load(); };
+    window.addEventListener(AUTH_TOKEN_CHANGED_EVENT, changed);
+    void load();
+    return () => window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT, changed);
+  }, []);
   const switchProvider = (next: Provider) => {
     if (busy || next === provider) return;
     generation.current += 1;
     setProvider(next); setAccountId(''); setToken('');
-    setSuccess(null); setCampaigns(null); setResources(null); setLastSync(null); setError('');
+    setReauthorize(null); setSuccess(null); setCampaigns(null); setResources(null); setLastSync(null); setError('');
   };
-  const run = async (operation: () => Promise<void>) => {
+  const run = async (operation: (current: number) => Promise<void>) => {
     if (busy) return;
     const current = generation.current;
     setBusy(true); setError('');
-    try { await operation(); } catch (e) { if (current === generation.current) setError(errorMessage(e)); }
+    try { await operation(current); } catch (e) { if (current === generation.current) setError(errorMessage(e)); }
     finally { if (current === generation.current) setBusy(false); }
   };
-  const connected = (connection: AdConnection) => {
+  const connected = (connection: AdConnection, current: number) => {
+    if (current !== generation.current) return;
     directory?.refresh();
     setData(current => ({ ...current, items: [connection, ...current.items.filter(item => item.id !== connection.id)] }));
-    setToken(''); setAccountId(''); setSuccess(connection); setCampaigns(null); setResources(null); setLastSync(null);
+    setToken(''); setAccountId(''); setReauthorize(null); setSuccess(connection); setCampaigns(null); setResources(null); setLastSync(null);
   };
   const showResources = async (connection: AdConnection, level: PlatformAdResourceLevel) => {
+    const current = generation.current;
     const result = await platformAdsApi.listResources(connection.id, level);
+    if (current !== generation.current) return;
     setResources({ connection, level, items: result.items, hasMore: result.hasMore });
     setCampaigns(null);
   };
   const syncResources = async (connection: AdConnection) => {
     if (connection.provider !== 'meta') throw new Error('账户结构同步首版仅支持 Meta。');
+    const current = generation.current;
     const result = await platformAdsApi.syncResources(connection.id);
+    if (current !== generation.current) return;
     setLastSync(result);
     await showResources(connection, 'campaign');
   };
+  const checkAuthorization = (account: AdConnection) => run(async () => {
+    const current = generation.current;
+    try {
+      const result = await platformAdsRequest<{ connection: AdConnection }>(`/connections/${encodeURIComponent(account.id)}/authorization/check`, { method: 'POST' });
+      if (current !== generation.current) return;
+      setData(value => ({ ...value, items: value.items.map(item => item.id === account.id ? result.connection : item) }));
+      directory?.refresh();
+    } catch (e) { throw new Error(`本次授权检查未完成，保留上次检查结果。${errorMessage(e)}`); }
+  });
   const connect = (event: FormEvent) => {
     event.preventDefault();
-    void run(async () => {
+    void run(async current => {
       const id = normalizeAdAccountId(provider, accountId);
       if (!token.trim()) throw new Error('请输入访问令牌。');
       const result = await platformAdsRequest<{ connection: AdConnection }>('/connections', { method: 'POST', body: JSON.stringify({ provider, accountId: id, accessToken: token.trim() }) });
-      connected(result.connection);
+      connected(result.connection, current);
     });
   };
 
@@ -126,7 +150,7 @@ export default function AdAccountConnections({ onTaskImported, onContinue, initi
         <p>{success.status === 'connected' ? '连接不会启动广告。创建计划后，仍需完成素材、预算和投放检查。' : '平台返回账户受限状态，请在广告平台处理账户问题后重新验证。'}</p>
         {!canCreate && <p>该账户币种暂不支持在灵枢创建计划，可查看和导入已有平台计划。</p>}
         <div className="ads-actions">{success.status === 'connected' && onContinue && <button className="ads-button primary" disabled={!canCreate} onClick={() => onContinue(success)}>{continueLabel}</button>}<button className="ads-button" onClick={() => setSuccess(null)}>管理或连接其他账户</button></div>
-      </div> : provider === 'meta' ? <AdMetaConnectionGuide key={authHeader().Authorization || ''} configured={official} missing={capability?.oauthReadiness?.missing} onConnected={connected}/> : <section className="ad-connect-method" aria-label={`连接 ${platform.name}`}>
+      </div> : provider === 'meta' ? <div ref={guideRef} tabIndex={-1}>{reauthorize && <p role="status">重新授权：{reauthorize.name}。请在 Meta 选择原广告账户，历史计划和数据会保留。</p>}<AdMetaConnectionGuide key={`${authHeader().Authorization || ''}:${reauthorize?.attempt || 0}`} configured={official} missing={capability?.oauthReadiness?.missing} targetAccountId={data.items.find(item => item.id === reauthorize?.id)?.accountId} onConnected={connection => connected(connection, renderGeneration)}/></div> : <section className="ad-connect-method" aria-label={`连接 ${platform.name}`}>
         <h3>连接 {platform.name}</h3><p className="ads-muted">{platform.scope}</p>
         {!capability?.configured ? <p role="status" className="ad-connect-note">该平台连接暂不可用，请联系管理员完成配置后重试。你仍可查看下方已保存的账户。</p> : <>
           <form className="ads-form-fields" onSubmit={connect} autoComplete="off">
@@ -140,10 +164,10 @@ export default function AdAccountConnections({ onTaskImported, onContinue, initi
         </>}
       </section>}
       <section className="ad-connected-accounts" aria-label={`${platform.name} 已保存账户`}><h3><Link2 size={17} /> {platform.name} 已保存账户 <span>{accounts.length}</span></h3>
-        {!accounts.length ? <p className="ads-muted">尚未连接 {platform.name} 广告账户。连接后可读取平台计划。</p> : accounts.map(account => <div className="ads-account-option" key={account.id}><div><strong>{account.name}</strong><small>{account.accountId} · {account.currency}{account.timezoneName ? ` · ${account.timezoneName}` : ' · 时区待核验'} · {account.status === 'connected' ? '已连接' : '使用受限，需处理'}</small></div>{account.provider === 'meta' && <button className="ads-button" disabled={busy || account.status !== 'connected' || !account.timezoneName} title={!account.timezoneName ? '请先重新验证账户时区' : undefined} onClick={() => void run(() => syncResources(account))}>{busy ? '同步中…' : '同步账户结构'}</button>}<button className="ads-button" disabled={busy} onClick={() => void run(async () => { setResources(null); setCampaigns(null); const result = await platformAdsRequest<{ items: Campaign[]; hasMore?: boolean }>(`/connections/${encodeURIComponent(account.id)}/campaigns`); setCampaigns({ connection: account, ...result }); })}>实时查看计划</button><button className="ads-text-button" disabled={busy} onClick={() => void run(async () => { const result = await platformAdsRequest<{ connection: AdConnection }>(`/connections/${encodeURIComponent(account.id)}/verify`, { method: 'POST' }); connected(result.connection); })}>重新验证</button></div>)}
+        {!accounts.length ? <p className="ads-muted">尚未连接 {platform.name} 广告账户。连接后可读取平台计划。</p> : accounts.map(account => <div className="ads-account-option" key={account.id}><div><strong>{account.name}</strong><small>{account.accountId} · {account.currency}{account.timezoneName ? ` · ${account.timezoneName}` : ' · 时区待核验'} · {account.status === 'connected' ? '已连接' : '使用受限，需处理'}</small>{account.provider === 'meta' && <AdAuthorizationHealth authorization={account.authorization}/>}</div>{account.provider === 'meta' && <><button className="ads-text-button" disabled={busy} onClick={() => void checkAuthorization(account)}>检查授权</button><button className="ads-text-button" disabled={busy || !official} title={!official ? '请联系管理员恢复 Meta 官方授权配置' : undefined} onClick={() => { setSuccess(null); setReauthorize(current => ({ id: account.id, name: account.name, attempt: (current?.attempt || 0) + 1 })); }}>重新授权</button></>}{account.provider === 'meta' && <button className="ads-button" disabled={busy || account.status !== 'connected' || !account.timezoneName} title={!account.timezoneName ? '请先重新验证账户时区' : undefined} onClick={() => void run(() => syncResources(account))}>{busy ? '同步中…' : '同步账户结构'}</button>}<button className="ads-button" disabled={busy} onClick={() => void run(async current => { setResources(null); setCampaigns(null); const result = await platformAdsRequest<{ items: Campaign[]; hasMore?: boolean }>(`/connections/${encodeURIComponent(account.id)}/campaigns`); if (current === generation.current) setCampaigns({ connection: account, ...result }); })}>实时查看计划</button><button className="ads-text-button" disabled={busy} onClick={() => void run(async current => { const result = await platformAdsRequest<{ connection: AdConnection }>(`/connections/${encodeURIComponent(account.id)}/verify`, { method: 'POST' }); connected(result.connection, current); })}>重新验证</button></div>)}
       </section>
       {resources && <section className="ad-connect-campaigns"><h3>{resources.connection.name} 的已同步账户结构</h3><p className="ads-muted">数据来自 Meta API，只读同步不会修改或启动广告。金额按 {resources.connection.currency}，日期边界按 {resources.connection.timezoneName}。</p>{lastSync && <p role="status">同步完成：计划 {lastSync.counts.campaign}、广告组 {lastSync.counts.adset}、广告 {lastSync.counts.ad}。</p>}<div className="ads-actions">{([['campaign', '计划'], ['adset', '广告组'], ['ad', '广告']] as const).map(([level, label]) => <button key={level} className={resources.level === level ? 'ads-button primary' : 'ads-button'} disabled={busy} onClick={() => void run(() => showResources(resources.connection, level))}>{label}</button>)}</div>{!resources.items.length && <p role="status">当前层级暂无已同步对象。</p>}{resources.items.map(item => <div className="ads-account-option" key={item.id}><div><strong>{item.name || `未命名${item.level}`}</strong><small>{item.providerResourceId} · {item.effectiveStatus || item.configuredStatus || '状态待核验'}</small></div></div>)}{resources.hasMore && <p className="ads-muted">当前仅展示前 200 条，请通过 Meta 广告管理工具核对完整范围。</p>}</section>}
-      {campaigns && <section className="ad-connect-campaigns"><h3>{campaigns.connection.name} 的平台计划</h3><p className="ads-muted">查看及导入不会修改平台广告。</p>{!campaigns.items.length && <p role="status">该账户暂无可读取的投放计划。</p>}{campaigns.items.map(campaign => <div className="ads-account-option" key={campaign.id}><div><strong>{campaign.name}</strong><small>{campaign.id} · {({ ACTIVE: '已启用', ENABLE: '已启用', ENABLED: '已启用', PAUSED: '已暂停', DISABLE: '已停用', DELETED: '已删除' } as Record<string, string>)[campaign.effective_status || campaign.status || ''] || '状态待核验'}</small></div>{onTaskImported && <button className="ads-button" disabled={busy} onClick={() => void run(async () => { const result = await platformAdsRequest<{ task: PlatformAdTask }>(`/connections/${encodeURIComponent(campaigns.connection.id)}/import`, { method: 'POST', body: JSON.stringify({ campaignId: campaign.id }) }); onTaskImported(result.task); })}>导入为只读计划</button>}</div>)}{campaigns.hasMore && <p className="ads-muted">当前仅展示首批计划，更多计划请前往广告平台查看。</p>}</section>}
+      {campaigns && <section className="ad-connect-campaigns"><h3>{campaigns.connection.name} 的平台计划</h3><p className="ads-muted">查看及导入不会修改平台广告。</p>{!campaigns.items.length && <p role="status">该账户暂无可读取的投放计划。</p>}{campaigns.items.map(campaign => <div className="ads-account-option" key={campaign.id}><div><strong>{campaign.name}</strong><small>{campaign.id} · {({ ACTIVE: '已启用', ENABLE: '已启用', ENABLED: '已启用', PAUSED: '已暂停', DISABLE: '已停用', DELETED: '已删除' } as Record<string, string>)[campaign.effective_status || campaign.status || ''] || '状态待核验'}</small></div>{onTaskImported && <button className="ads-button" disabled={busy} onClick={() => void run(async current => { const result = await platformAdsRequest<{ task: PlatformAdTask }>(`/connections/${encodeURIComponent(campaigns.connection.id)}/import`, { method: 'POST', body: JSON.stringify({ campaignId: campaign.id }) }); if (current === generation.current) onTaskImported(result.task); })}>导入为只读计划</button>}</div>)}{campaigns.hasMore && <p className="ads-muted">当前仅展示首批计划，更多计划请前往广告平台查看。</p>}</section>}
     </>}
     <p className="ad-connect-footer">凭证经验证后加密保存。连接账户不会创建或启动广告。</p>
   </div>;

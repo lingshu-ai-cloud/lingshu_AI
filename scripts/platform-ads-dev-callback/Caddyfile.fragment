@@ -1,0 +1,52 @@
+# Standalone global log policy prepended to an otherwise global-block-free file.
+{
+    log default {
+        format filter {
+            wrap json
+            fields {
+                request>uri query {
+                    delete code
+                    delete state
+                    delete error_description
+                }
+                request>headers>Cookie delete
+                request>headers>Authorization delete
+                request>headers>Proxy-Authorization delete
+            }
+        }
+    }
+}
+
+# Existing site content must be retained between the global block and this site.
+ads-auth-dev.lingshu.site {
+    @oauth_callback {
+        method GET
+        path /api/overseas/platform-ads/oauth/meta/callback
+    }
+    handle @oauth_callback {
+        reverse_proxy 172.18.0.1:18893 {
+            header_up -Cookie
+            header_up -Authorization
+            header_up -Proxy-Authorization
+            header_up -X-Forwarded-For
+            header_up -X-Forwarded-Host
+            header_up -X-Forwarded-Proto
+            transport http {
+                dial_timeout 3s
+                response_header_timeout 55s
+            }
+        }
+    }
+    handle {
+        respond "Not found" 404
+    }
+    handle_errors {
+        respond "Development callback unavailable" 503
+    }
+    header {
+        Cache-Control "no-store"
+        Referrer-Policy "no-referrer"
+        X-Content-Type-Options "nosniff"
+        Content-Security-Policy "default-src 'none'; style-src 'sha256-Nz5fAZPU8++khes0EgPgL4gltQfoOnnm/LVtBkphK34='; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    }
+}

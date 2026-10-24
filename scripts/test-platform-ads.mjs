@@ -7,9 +7,13 @@ const tests = [
   ...readdirSync(path.join(root, 'server/platformAds')).filter(name => name.endsWith('.test.ts')).sort().map(name => `server/platformAds/${name}`),
   'shared/platformAdCapabilities.test.ts',
   'src/lib/adOverview.test.ts',
+  'src/lib/useAdPlanNavigation.test.ts',
   'src/lib/adManagedSummary.test.ts',
   'src/components/AdPerformanceOverview.test.tsx',
+  'src/components/AdWorkflowRecovery.test.tsx',
   'src/components/AdMetaConnectionGuide.test.tsx',
+  'src/components/AdAuthorizationHealth.test.tsx',
+  'src/components/AdAccountConnections.recovery.test.tsx',
   'src/components/PlatformAdsPage.contract.test.ts',
 ];
 for (const test of tests) {

@@ -201,6 +201,23 @@ try {
   assert.equal((await listAdCreativeLibrary('tenant', {})).items.some(i => i.task.id === localPlan.id), false, 'old binding cannot claim a different newly selected version');
   await store.update('platform_ad_tasks', localPlan.id, { configuration: { materialSource: null } });
   assert.equal((await listAdCreativeLibrary('tenant', {})).items.some(i => i.task.id === localPlan.id), false, 'cleared selection is not silently revived from an old binding');
+  // A deep-linked older plan must resolve independently of the first directory page.
+  for (let i = 0; i < 22; i++) await createPlatformAdTask('tenant', 'user', { ...input, name: `Newer ${i}` });
+  for (let i = 0; i < 201; i++) await store.create('platform_ad_executions', {
+    id: `later-failed-${i}`, tenant_id: 'tenant', taskId: views.id, connectionId: account.id,
+    action: 'create', status: 'FAILED', createdAt: new Date(Date.UTC(2026, 0, 2) + i * 1000).toISOString(),
+  });
+  const targeted = await listAdCreativeLibrary('tenant', { taskId: views.id, perPage: 1 });
+  assert.equal(targeted.totalItems, 1);
+  assert.ok(targeted.items.length > 0);
+  assert.ok(targeted.items.every(item => item.task.id === views.id));
+  assert.ok(targeted.items.some(item => item.execution?.id === receipt.id), 'original verified creative survives 201 newer failed receipts');
+  assert.equal(targeted.truncated, false, 'fully read execution history must not be labelled truncated');
+  assert.equal((await listAdCreativeLibrary('tenant', { taskId: views.id, page: 2 })).items.length, 0);
+  await assert.rejects(listAdCreativeLibrary('other-tenant', { taskId: views.id }), /未找到/);
+  await assert.rejects(listAdCreativeLibrary('tenant', { taskId: 'missing' }), /未找到/);
+  await assert.rejects(listAdCreativeLibrary('tenant', { taskId: ['invalid'] }), /计划标识无效/);
+
   console.log('Meta performance: all 3 resource levels, account timezone, actual attribution, native ratios, bounded range, cached reads and empty totals passed.');
   console.log('Creative library: tenant boundaries, immutable/idempotent post-execution mapping, ad-level empty/zero/positive metrics and real thumbnail readback passed (provider mocked, GET only).');
 } finally { Date.now = originalNow; globalThis.fetch = originalFetch; fs.rmSync(temp, { recursive: true, force: true }); fs.rmSync(mediaDir, { recursive: true, force: true }); }

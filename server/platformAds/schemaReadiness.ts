@@ -17,7 +17,7 @@ export const AD_SCHEMA_REQUIREMENTS: Readonly<Record<string, readonly Field[]>> 
     ...fields('autodate', 'created updated'),
   ],
   platform_ad_connections: [
-    ...fields('json', 'defaultPage'),
+    ...fields('json', 'defaultPage authorization'),
     ...fields('text', 'tenant_id provider accountId name currency tokenCipher status businessName timezoneName updatedAt resourceSyncRunId resourceSyncedAt'),
     ...fields('number', 'accountStatus timezoneId timezoneOffsetHoursUtc'),
   ],
@@ -31,7 +31,8 @@ export const AD_SCHEMA_REQUIREMENTS: Readonly<Record<string, readonly Field[]>> 
   ],
   platform_ad_approvals: [...fields('text', 'tenant_id taskId status createdBy decidedBy createdAt expiresAt updatedAt error'), ...fields('number', 'taskVersion'), ...fields('json', 'payload receipt')],
   platform_ad_executions: [...fields('text', 'tenant_id taskId requestId action connectionId resourceId status createdAt error'), ...fields('number', 'expectedDailyBudget'), ...fields('json', 'result')],
-  platform_ad_oauth_states: [...fields('text', 'tenant_id userId stateHash expiresAt status tokenCipher'), ...fields('json', 'accounts')],
+  platform_ad_oauth_states: [...fields('text', 'tenant_id userId stateHash expiresAt status tokenCipher context appId providerUserId'), ...fields('json', 'accounts authorization')],
+  platform_ad_privacy_requests: [...fields('text', 'confirmationCodeHash providerUserId appId status requestedAt requestFingerprint issuedAt'), ...fields('json', 'tenantIds')],
   platform_ad_automation_rules: [...fields('text', 'tenant_id taskId connectionId resourceId updatedAt'), ...fields('number', 'targetCpc minClicks cooldownMinutes maxMetricAgeMinutes'), ...fields('bool', 'enabled')],
   platform_ad_automation_runs: [...fields('text', 'tenant_id taskId ruleId status reason createdAt'), ...fields('json', 'metrics receipt decision')],
   platform_ad_handoffs: [...fields('text', 'tenant_id goalId adTaskId objective evidence expectedOutcome createdAt createdBy'), ...fields('json', 'constraints')],

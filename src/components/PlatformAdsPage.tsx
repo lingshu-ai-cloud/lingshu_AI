@@ -39,6 +39,7 @@ import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { createForeignTradeMockAdTasks, isForeignTradeMockId } from '../mocks/foreignTradeOperations';
 import { isPlatformAdsDemoEnabled as isLocalForeignTradeMockEnabled } from '../lib/platformAdsPreview';
 import LsPageHeader from './ui/LsPageHeader';
+import { useAdPlanNavigation, useAdPlanTasks } from '../lib/useAdPlanNavigation';
 
 const channels = [
   {
@@ -108,10 +109,19 @@ function PlatformAdsWorkspace({
   });
   const [step, setStep] = useState(0);
   const [drafts, setDrafts] = useState<Draft[]>([]);
-  const [loadingTasks, setLoadingTasks] = useState(true);
+
   const [saving, setSaving] = useState(false);
   const [managedOpen, setManagedOpen] = useState(page === 'adsManaged');
-  const [selectedDraft, setSelectedDraft] = useState<Draft | null>(null);
+  const planNavigation = useAdPlanNavigation(previewMode);
+  const [selectedDraft, setSelectedDraftState] = useState<Draft | null>(null);
+  const setSelectedDraft = (value: Draft | null) => { setSelectedDraftState(value); planNavigation.select(value?.id || ''); };
+  useEffect(() => {
+    if (previewMode) return;
+    const task = planNavigation.task; setSelectedDraftState(task ? taskToDraft(task) : null);
+    if (task) setDrafts(items => [taskToDraft(task), ...items.filter(item => item.id !== task.id)]);
+  }, [planNavigation.task, previewMode]);
+  const taskList = useAdPlanTasks(planNavigation.identity, previewMode);
+  const loadingTasks = taskList.loading, taskLoadError = taskList.error;
   const [executionLockedIds, setExecutionLockedIds] = useState<Set<string>>(() => new Set());
   const [selected, setSelected] = useState("全部渠道");
   const [mode, setMode] = useState("建议模式");
@@ -135,22 +145,12 @@ function PlatformAdsWorkspace({
     setManagedOpen(true);
     onNavigate('adsPlans');
   }, [page, onNavigate]);
+  const openTask = (id: string) => { setSelectedDraftState(drafts.find(task => task.id === id) || null); planNavigation.select(id); onNavigate('adsPlans'); };
   const openCreativeTab = () => {
     onNavigate("adsCreatives");
   };
-  useEffect(() => {
-    if (previewMode) { setLoadingTasks(false); return; }
-    let active = true;
-    platformAdsApi.listTasks()
-      .then((items) => { if (active) setDrafts(withLocalMockAdTasks(items).map(taskToDraft)); })
-      .catch((error: Error) => {
-        if (!active) return;
-        setDrafts(withLocalMockAdTasks([]).map(taskToDraft));
-        if (!import.meta.env.DEV) setNotice(`草稿加载失败：${error.message}`);
-      })
-      .finally(() => { if (active) setLoadingTasks(false); });
-    return () => { active = false; };
-  }, [previewMode]);
+  useEffect(() => { if (taskList.items) setDrafts(withLocalMockAdTasks(planNavigation.task && !taskList.items.some(task => task.id === planNavigation.task?.id) ? [planNavigation.task, ...taskList.items] : taskList.items).map(taskToDraft)); }, [taskList.items]);
+  useEffect(() => { setDrafts([]); }, [planNavigation.identity]);
   useEffect(() => {
     const consume = () => {
       try {
@@ -171,7 +171,7 @@ function PlatformAdsWorkspace({
     .map(task => ({ ...task, budget: Number(task.budget), createdAt: task.createdAt || '', updatedAt: '' })), [drafts]);
   const replaceTask = (task: PlatformAdTask) => {
     setDrafts(items => items.map(item => item.id === task.id ? taskToDraft(task) : item));
-    setSelectedDraft(current => current?.id === task.id ? taskToDraft(task) : current);
+    setSelectedDraftState(current => current?.id === task.id ? taskToDraft(task) : current);
   };
   const openCreate = () => {
     setEntry('manual');
@@ -266,14 +266,17 @@ function PlatformAdsWorkspace({
             children: <><p className="ads-muted">以下为当前产品实现范围；连接账户或保存配置不代表可实际投递，真实账户验收尚未完成。</p><div className="ads-table-wrap"><table><thead><tr><th>平台</th><th>创建目标 / 币种</th><th>管理与动作</th><th>素材要求</th></tr></thead><tbody>{PLATFORM_AD_CAPABILITIES.map(item => <tr key={item.provider}><td><PlatformLogoGroup value={item.name}/><span className="sr-only">{item.name}</span></td><td>{item.goals.join('、')}<small>{item.currencies.join(' / ')}</small></td><td>{item.management}<small>{item.actions}</small></td><td>{item.material}</td></tr>)}</tbody></table></div></>,
           }]} />}
         </LsPageHeader>
+        {taskLoadError && <Alert className="mb-4" type="error" showIcon title={taskLoadError} action={<Button loading={loadingTasks} onClick={taskList.retry}>重试读取计划</Button>}/>}
+        {planNavigation.loading && <p role="status">正在核对所选计划…</p>}
+        {planNavigation.error && <Alert className="mb-4" type="error" showIcon title={planNavigation.error} action={<Button onClick={planNavigation.retry}>重试读取所选计划</Button>}/>}
         {notice && <Alert className="mb-4" type={notice.includes('失败') ? 'error' : 'success'} showIcon title={notice} closable onClose={() => setNotice('')} />}
 
-        {isPerformancePage && !previewMode && <AdPerformanceOverview initialTaskId={selectedDraft?.id} tasks={drafts} loading={loadingTasks} onOpen={id => { const task = drafts.find(item => item.id === id); if (task) { setSelectedDraft(task); onNavigate('adsPlans'); } }} />}
-        {!isPerformancePage && !isCreativePage && !previewMode && !selectedDraft && <AdAccountHistory plans/>}
+        {isPerformancePage && !previewMode && <AdPerformanceOverview initialTaskId={planNavigation.taskId || selectedDraft?.id} tasks={drafts} loading={loadingTasks} onOpen={openTask} />}
+        {!isPerformancePage && !isCreativePage && !previewMode && !selectedDraft && !planNavigation.taskId && <AdAccountHistory plans/>}
         {isPerformancePage && previewMode && <PlatformAdsPerformancePreview channels={channels} onOpenAccounts={() => setDialog('accounts')} onOpenManaged={() => setManagedOpen(true)} />}
 
         {page === "adsPlans" &&
-          (selectedDraft ? (
+          (planNavigation.taskId && (!selectedDraft || planNavigation.task?.id !== planNavigation.taskId || !!planNavigation.error) && !previewMode ? <p role="status">所选计划尚未读取，暂不展示其他计划详情。<Button onClick={() => setSelectedDraft(null)}>返回计划列表</Button></p> : selectedDraft ? (
             <section className="ads-task-detail">
               <button
                 className="ads-text-button"
@@ -370,7 +373,7 @@ function PlatformAdsWorkspace({
                 <div>
                   <h2>
                     本地计划与草稿{" "}
-                    <span className="ads-count">{filtered.length}</span>
+                    <span className="ads-count">{taskList.items === null && !previewMode ? '—' : filtered.length}</span>
                   </h2>
                   <p className="ads-muted">
                     按广告平台分别创建计划；Facebook 与 Instagram 可共用一份 Meta 计划。
@@ -432,12 +435,12 @@ function PlatformAdsWorkspace({
                 <div className="ads-empty">
                   <FileText size={38} />
                   <h3>
-                    {drafts.length
+                    {taskLoadError ? '计划暂未读取' : loadingTasks ? '正在读取计划' : drafts.length
                       ? "该渠道暂无计划"
                       : "创建你的第一份视频投流计划"}
                   </h3>
                   <p>
-                    选择视频、推广目标、渠道与预算，先准备一份可审阅的草稿。
+                    {taskLoadError ? '请重试读取计划；当前无法确认计划数量。' : '选择视频、推广目标、渠道与预算，先准备一份可审阅的草稿。'}
                   </p>
                   <button className="ads-button primary" onClick={openCreate}>
                     <Plus size={15} />
@@ -449,7 +452,7 @@ function PlatformAdsWorkspace({
           ))}
 
         {isCreativePage && (
-          <AdCreativeLibrary onOpenTask={id => { const task = drafts.find(item => item.id === id); if (task) setSelectedDraft(task); onNavigate('adsPlans'); }} initialTaskId={selectedDraft?.id} initialTaskName={selectedDraft?.name} />
+          <AdCreativeLibrary onOpenTask={openTask} initialTaskId={planNavigation.taskId || selectedDraft?.id} initialTaskName={selectedDraft?.name} selectedMaterial={selectedDraft?.configuration.materialSource ? { taskId: selectedDraft.id, selection: selectedDraft.configuration.materialSource } : undefined} />
         )}
 
         <Drawer title="AI 投手" placement="right" size={720} open={managedOpen} onClose={() => setManagedOpen(false)} destroyOnHidden={false}>

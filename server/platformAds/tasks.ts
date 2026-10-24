@@ -98,8 +98,12 @@ function publicTask(record: StoredTask): PlatformAdTask {
 }
 
 export async function listPlatformAdTasks(tenantId: string): Promise<PlatformAdTask[]> {
-  const result = await store.list<StoredTask>(PLATFORM_AD_TASKS_COLLECTION, { where: { tenant_id: tenantId }, sort: '-createdAt', perPage: 200 });
-  return result.items.map(publicTask);
+  const tasks: PlatformAdTask[] = [];
+  for (let page = 1;; page++) {
+    const result = await store.list<StoredTask>(PLATFORM_AD_TASKS_COLLECTION, { where: { tenant_id: tenantId }, sort: '-createdAt', perPage: 200, page });
+    tasks.push(...result.items.map(publicTask));
+    if (page >= result.totalPages) return tasks;
+  }
 }
 
 export async function getPlatformAdTask(tenantId: string, id: string): Promise<PlatformAdTask | null> {

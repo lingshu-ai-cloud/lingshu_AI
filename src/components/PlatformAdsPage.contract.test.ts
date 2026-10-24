@@ -33,7 +33,7 @@ test('the advertising unit exposes three workspaces and keeps AI management in a
 
 test('material first-level page uses the real library rather than simulated performance or a placeholder', () => {
   assert.match(source, /MetaPlanAuditPanel taskId=\{selectedDraft.id\}/);
-  assert.match(source, /initialTaskId=\{selectedDraft\?\.id\}/);
+  assert.match(source, /initialTaskId=\{planNavigation\.taskId \|\| selectedDraft\?\.id\}/);
   const controls = readFileSync(new URL('./PlatformAdsOperations.tsx', import.meta.url), 'utf8');
   assert.match(controls, /creationBlocked/);
   assert.match(controls, /requestId: request.current.id/);
@@ -44,7 +44,7 @@ test('material first-level page uses the real library rather than simulated perf
   assert.match(library, /LsMasonryGallery/);
   assert.match(library, /LsProgressiveMedia/);
   assert.match(library, /LsMediaStateFrame/);
-  assert.match(library, /\/creative-library\?page=/);
+  assert.match(library, /\/creative-library\?/);
   assert.match(library, /\/creative-library\/\$\{id\}\/report/);
   assert.match(library, /value == null \? '—'/);
   assert.match(library, /URL\.revokeObjectURL/);

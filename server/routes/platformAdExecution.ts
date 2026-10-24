@@ -8,7 +8,7 @@ platformAdExecutionRouter.use(requireAuth);
 platformAdExecutionRouter.use(requireAdWriteAccess);
 platformAdExecutionRouter.post('/tasks/:id/executions/:executionId/reconcile', async (req, res) => {
   try { res.json({ execution: await reconcileAdExecution((res.locals as AuthLocals).tenantId, req.params.id, req.params.executionId) }); }
-  catch (error) { res.status(409).json({ error: error instanceof AdProviderError ? error.message : '对账暂不可用' }); }
+  catch (error) { res.status(error instanceof AdProviderError && error.code === 'NOT_FOUND' ? 404 : 409).json({ error: error instanceof AdProviderError ? error.message : '对账暂不可用', code: error instanceof AdProviderError ? error.code : 'SERVICE_ERROR' }); }
 });
 platformAdExecutionRouter.get('/tasks/:id/executions', async (req, res) => {
   try { res.json({ items: await listAdExecutions((res.locals as AuthLocals).tenantId, req.params.id) }); }

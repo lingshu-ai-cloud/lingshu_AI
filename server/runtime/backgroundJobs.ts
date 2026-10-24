@@ -17,6 +17,7 @@ import { imagePostAnalysisQueue, initCrawlerOpsWorker, initPocketBaseVideoBackfi
 import { startImagePostAnalysisWorker } from '../socialDiscovery/imagePostAnalysisQueue.js';
 import { initWhatsAppCustomerMaintenance } from '../whatsapp/historyImport.js';
 import { startAdAutomationWorker } from '../platformAds/automation.js';
+import { startAdAuthorizationMonitor, startAdOAuthSessionCleanup } from '../platformAds/authorizationMonitor.js';
 import { initWeeklyPublicationPackageWorker } from '../publishing/weeklyPublicationWorker.js';
 import { initEngagementIngestionWorker } from '../socialEngagement/ingestionWorker.js';
 import { initAgentNotificationOutboxWorker } from '../notifications/agentNotificationOutbox.js';
@@ -40,6 +41,8 @@ export async function startBackgroundJobs(role: ProcessRole = 'all',options:{wee
   if (role === 'web') throw new Error('background_jobs_forbidden_for_web_role');
   let initialPreparationWorkerStarted = false;
   let stopImagePostAnalysisWorker: (() => void) | null = null;
+  let stopAdAuthorizationMonitor: (() => void) | null = null;
+  let stopAdOAuthSessionCleanup: (() => void) | null = null;
   markBackgroundJobsStarting();
   console.log('[runtime] starting background jobs');
   try {
@@ -61,6 +64,8 @@ export async function startBackgroundJobs(role: ProcessRole = 'all',options:{wee
     initStarter198OrchestratorWorker();
     initSocialContentManagedRecovery();
     startAdAutomationWorker();
+    stopAdAuthorizationMonitor = startAdAuthorizationMonitor();
+    stopAdOAuthSessionCleanup = startAdOAuthSessionCleanup();
     initWeeklyPublicationPackageWorker();
     initEngagementIngestionWorker();
     initAgentNotificationOutboxWorker();
@@ -84,6 +89,8 @@ export async function startBackgroundJobs(role: ProcessRole = 'all',options:{wee
     await startWorkerHeartbeat(role);
     console.log('[runtime] background jobs started');
     return () => {
+      stopAdAuthorizationMonitor?.();
+      stopAdOAuthSessionCleanup?.();
       stopImagePostAnalysisWorker?.();
       weeklyDiscoveryScopeMigrationRecoveryRuntime.stop();
       localWeeklyExecutionRuntime.stop();
@@ -92,6 +99,8 @@ export async function startBackgroundJobs(role: ProcessRole = 'all',options:{wee
       if (initialPreparationWorkerStarted) stopInitialPreparationWorker();
     };
   } catch (error) {
+    stopAdAuthorizationMonitor?.();
+    stopAdOAuthSessionCleanup?.();
     stopImagePostAnalysisWorker?.();
     weeklyDiscoveryScopeMigrationRecoveryRuntime.stop();
     localWeeklyExecutionRuntime.stop();

@@ -10,16 +10,21 @@ import { getMetaPerformanceReport } from './metaPerformance.js';
 export { readExecutedCreative } from './executedCreative.js';
 const cachedPreview = creativeReadCache<AdCreativePreview>(300_000);
 
-export async function listAdCreativeLibrary(tenantId: string, query: { page?: unknown; perPage?: unknown }): Promise<AdCreativeLibraryPage> {
+export async function listAdCreativeLibrary(tenantId: string, query: { page?: unknown; perPage?: unknown; taskId?: unknown }): Promise<AdCreativeLibraryPage> {
   const page = Math.min(100000, Math.max(1, Math.floor(Number(query.page) || 1))), perPage = Math.min(50, Math.max(1, Math.floor(Number(query.perPage) || 20)));
-  const tasks = await store.list<PlatformAdTask & { tenant_id: string }>(PLATFORM_AD_TASKS_COLLECTION, { where: { tenant_id: tenantId }, page, perPage, sort: '-createdAt' });
+  if (query.taskId !== undefined && (typeof query.taskId !== 'string' || !/^[\w-]{1,200}$/.test(query.taskId))) throw new PlatformAdCreativeError('计划标识无效');
+  const selected = query.taskId ? await store.getById<PlatformAdTask & { tenant_id: string }>(PLATFORM_AD_TASKS_COLLECTION, String(query.taskId)) : null;
+  if (query.taskId && (!selected || selected.tenant_id !== tenantId)) throw new PlatformAdCreativeError('未找到投放计划', 404);
+  const tasks = selected
+    ? { items: page === 1 ? [selected] : [], totalItems: 1, totalPages: 1 }
+    : await store.list<PlatformAdTask & { tenant_id: string }>(PLATFORM_AD_TASKS_COLLECTION, { where: { tenant_id: tenantId }, page, perPage, sort: '-createdAt' });
   const items: AdCreativeLibraryItem[] = [];
   let truncated = false;
   for (const task of tasks.items) {
     if (task.tenant_id !== tenantId) throw new PlatformAdCreativeError('素材计划归属异常', 503);
     const bindings = await store.list<StoredPlatformAdCreative>(AD_CREATIVES_COLLECTION, { where: { tenant_id: tenantId, taskId: task.id }, perPage: 200 });
     const receipts = await listAdExecutions(tenantId, task.id);
-    truncated ||= bindings.totalPages > 1 || receipts.length >= 200;
+    truncated ||= bindings.totalPages > 1;
     const used = new Set<string>();
     const append = async (binding: StoredPlatformAdCreative | null, receipt: typeof receipts[number] | null) => {
       const connection = await getConnection(tenantId, binding?.connectionId || receipt!.connectionId);

@@ -1,0 +1,21 @@
+[Unit]
+Description=Isolated local-development Meta callback transport
+After=network.target
+
+[Service]
+Type=simple
+User=ads-dev-tunnel
+ExecStart=/usr/bin/python3 -B /opt/lingshu-ads-dev-callback/bridge.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=
+MemoryMax=64M
+TasksMax=24
+
+[Install]
+WantedBy=multi-user.target

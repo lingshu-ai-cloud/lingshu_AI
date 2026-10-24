@@ -21,23 +21,28 @@ const fieldRef = (key: MetaMetricKey) => { const def = META_PERFORMANCE_FIELDS[k
 const resource = (i: AdCreativeLibraryItem, level: MetaReportLevel) => i.execution?.[level === 'campaign' ? 'campaignId' : level === 'adset' ? 'adsetId' : 'adId'] || '';
 type Props = { tasks: Task[]; loading: boolean; onOpen: (id: string) => void; initialTaskId?: string };
 export default function AdPerformanceOverview(props: Props) {
-  return <Tabs defaultActiveKey="history" items={[
+  const [view, setView] = useState(props.initialTaskId ? 'local' : 'history');
+  useEffect(() => { if (props.initialTaskId) setView('local'); }, [props.initialTaskId]);
+  return <Tabs activeKey={view} onChange={setView} items={[
     { key: 'history', label: '账户真实历史', children: <AdAccountHistory/> },
     { key: 'local', label: '本地计划回执', children: <><Alert type="info" showIcon title="此处仅展示灵枢本地计划的执行回执；平台已有广告和历史消耗请查看“账户真实历史”。"/><TaskPerformanceOverview {...props}/></> },
   ]}/>;
 }
-function TaskPerformanceOverview({ loading, onOpen, initialTaskId }: Props) {
+function TaskPerformanceOverview({ loading, onOpen, initialTaskId, tasks }: Props) {
   const [taskFilter, setTaskFilter] = useState(initialTaskId || '');
   const [catalog, setDirectory] = useState<AdCreativeLibraryPage | null>(null), [page, setPage] = useState(1), [catalogRefresh, setCatalogRefresh] = useState(0), [catalogBusy, setCatalogBusy] = useState(false);
   const directory = catalog?.page === page ? catalog : null;
   const [error, setError] = useState(''), [account, setAccount] = useState(''), [level, setLevel] = useState<MetaReportLevel>('campaign'), [preset, setPreset] = useState('7');
+  useEffect(() => { setTaskFilter(initialTaskId || ''); setAccount(''); setPage(1); }, [initialTaskId]);
   const [range, setRange] = useState<[string, string] | null>(null), [search, setSearch] = useState(''), [columns, setColumns] = useState<MetaMetricKey[]>(defaultColumns);
   const [reports, setReports] = useState<Record<string, MetaPerformanceReport>>({}), [errors, setErrors] = useState<Record<string, string>>({}), [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0);
   useEffect(() => {
     const abort = new AbortController(); setCatalogBusy(true); setError('');
-    platformAdsRequest<AdCreativeLibraryPage>(`/creative-library?page=${page}&perPage=20`, { signal: abort.signal }).then(v => { if (!abort.signal.aborted) setDirectory(v); }).catch(e => { if (!abort.signal.aborted) setError(errorText(e)); }).finally(() => { if (!abort.signal.aborted) setCatalogBusy(false); });
+    setDirectory(null);
+    const params = new URLSearchParams({ page: String(page), perPage: '20', ...(taskFilter ? { taskId: taskFilter } : {}) });
+    platformAdsRequest<AdCreativeLibraryPage>(`/creative-library?${params}`, { signal: abort.signal }).then(v => { if (!abort.signal.aborted) setDirectory(v); }).catch(e => { if (!abort.signal.aborted) setError(errorText(e)); }).finally(() => { if (!abort.signal.aborted) setCatalogBusy(false); });
     return () => abort.abort();
-  }, [page, catalogRefresh]);
+  }, [page, catalogRefresh, taskFilter]);
   const accounts = useMemo(() => {
     const items = directory?.items.filter(i => i.connection.provider === 'meta') || [];
     return [...new Map([...items.filter(i => i.execution), ...items].map(i => [i.connection.id, i.connection])).values()];
@@ -89,7 +94,7 @@ function TaskPerformanceOverview({ loading, onOpen, initialTaskId }: Props) {
   };
   return <div className="meta-performance" aria-label="Meta 真实投放数据">
     <div className="meta-performance-toolbar">
-      <Select aria-label="计划范围" value={taskFilter} onChange={v => { setTaskFilter(v); setAccount(''); }} options={[{ value: '', label: '本页全部计划' }, ...[...new Map((directory?.items || []).map(i => [i.task.id, i.task])).values()].map(t => ({ value: t.id, label: t.name }))]} />
+      <Select aria-label="计划范围" value={taskFilter} onChange={v => { setTaskFilter(v); setAccount(''); setPage(1); }} options={[{ value: '', label: '本页全部计划' }, ...tasks.map(t => ({ value: t.id, label: t.name }))]} />
       <Select aria-label="广告账户" value={selectedAccount?.id} placeholder="选择 Meta 广告账户" onChange={setAccount} options={accounts.map(a => ({ value: a.id, label: `${a.name} · ${a.currency}` }))} />
       <Select aria-label="报告层级" value={level} onChange={setLevel} options={Object.entries(levelLabels).map(([value, label]) => ({ value, label }))} />
       <Select aria-label="报告周期" value={preset} onChange={setPreset} options={[{ value: '1', label: '今天（账户时区）' }, { value: '7', label: '近 7 天（含今天）' }, { value: '30', label: '近 30 天（含今天）' }, { value: 'custom', label: '自定义日期' }]} />

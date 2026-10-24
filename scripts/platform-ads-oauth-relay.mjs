@@ -3,8 +3,11 @@ import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 export const callbackPath = '/api/overseas/platform-ads/oauth/meta/callback';
-const upstream = `http://127.0.0.1:8890${callbackPath}`;
-export function createAdCallbackRelay({ enabled = false, transport = fetch, clock = Date.now } = {}) {
+export function createAdCallbackRelay({ enabled = false, upstreamPort = 8890, transport = fetch, clock = Date.now } = {}) {
+  if (!Number.isSafeInteger(upstreamPort) || upstreamPort < 1 || upstreamPort > 65535) throw new Error('Invalid local upstream port');
+  // Operator-selected port only. Neither public requests nor configuration can
+  // redirect this gateway to another host, protocol, or API path.
+  const upstream = `http://127.0.0.1:${upstreamPort}${callbackPath}`;
   let windowStart = clock(), count = 0, inflight = 0;
   const server = createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -46,9 +49,12 @@ export function createAdCallbackRelay({ enabled = false, transport = fetch, cloc
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.env.NODE_ENV === 'production') throw new Error('This temporary relay is not a production deployment path');
   const args = process.argv.slice(2);
-  if (args.some(arg => !['--enable-approved-callback'].includes(arg))) throw new Error('Unknown relay option');
+  if (args.some(arg => arg !== '--enable-approved-callback' && !/^--upstream-port=\d{1,5}$/.test(arg))) throw new Error('Unknown relay option');
+  const ports = args.filter(arg => arg.startsWith('--upstream-port='));
+  if (ports.length > 1) throw new Error('Duplicate upstream port');
+  const upstreamPort = ports.length ? Number(ports[0].split('=')[1]) : 8890;
   const enabled = args.includes('--enable-approved-callback');
-  const relay = createAdCallbackRelay({ enabled });
+  const relay = createAdCallbackRelay({ enabled, upstreamPort });
   relay.listen(8892, '127.0.0.1', () => console.log(`Ads callback gateway on 127.0.0.1:8892; forwarding=${enabled ? 'enabled' : 'DISABLED'}`));
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => relay.close(() => process.exit(0)));
 }

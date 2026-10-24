@@ -4,7 +4,7 @@ import AdSourceCatalog from './AdSourceCatalog';
 import AdPlatformCreatives from './AdPlatformCreatives';
 import { useAdAccountDirectory } from './AdAccountDirectory';
 import AdHistoryMedia from './AdHistoryMedia';
-import { adCreativeAvailabilityLabel, adContentStatusLabel } from '../../shared/platformAdCreatives';
+import { adCreativeAvailabilityLabel, adContentStatusLabel, type AdMaterialSelection } from '../../shared/platformAdCreatives';
 import AdSourceLifecycle from './AdSourceLifecycle';
 import { metaAccountDate } from '../../shared/metaPerformance';
 import { RefreshCw, Play, Link2 } from 'lucide-react';
@@ -38,13 +38,14 @@ function Cover({ bindingId, name, onPreview }: { bindingId?: string; name: strin
     <div className="ads-library-cover-actions"><Button size="small" icon={<Play size={14}/>} onClick={onPreview}>查看素材</Button>{error && bindingId && <Button size="small" onClick={() => setRefresh(v => v + 1)}>重试封面</Button>}{preview?.duration != null && <Tag>{number(preview.duration)} 秒</Tag>}</div>
   </div>;
 }
-function VideoPreview({ bindingId }: { bindingId: string }) {
+function VideoPreview({ bindingId, source }: { bindingId?: string; source?: AdMaterialSelection }) {
   const [url, setUrl] = useState(''), [error, setError] = useState(''), [ready, setReady] = useState(false), [retry, setRetry] = useState(0);
+  const mediaPath = source ? `/creative-selection/media?${new URLSearchParams({ origin: 'social', sourceTaskId: source.sourceTaskId, artifactId: source.artifactId })}` : `/creatives/${bindingId}/media`;
   useEffect(() => {
     const controller = new AbortController(); let blobUrl = '';
     setUrl(''); setError(''); setReady(false);
     void (async () => {
-      const response = await fetch(`/api/overseas/platform-ads/creatives/${bindingId}/media`, { headers: authHeader(), signal: controller.signal });
+      const response = await fetch(`/api/overseas/platform-ads${mediaPath}`, { headers: authHeader(), signal: controller.signal });
       if (!response.ok) throw new Error('源视频暂不可预览，请检查素材权限或重试');
       const blob = await response.blob();
       if (!blob.type.startsWith('video/')) throw new Error('素材预览类型无效');
@@ -52,28 +53,37 @@ function VideoPreview({ bindingId }: { bindingId: string }) {
       blobUrl = URL.createObjectURL(blob); setUrl(blobUrl);
     })().catch(e => { if (!controller.signal.aborted) setError(message(e)); });
     return () => { controller.abort(); if (blobUrl) URL.revokeObjectURL(blobUrl); };
-  }, [bindingId, retry]);
+  }, [mediaPath, retry]);
   return <div className="ads-library-video"><LsMediaStateFrame state={error ? 'error' : ready ? 'ready' : 'loading'} label={error || '加载已保存的源视频'}>
     {url && <video src={url} controls playsInline preload="metadata" aria-label="已保存的投放源视频" onLoadedData={() => setReady(true)} onError={() => setError('视频无法解码，请重试')} />}
   </LsMediaStateFrame>{error && <Button onClick={() => setRetry(v => v + 1)}>重试预览</Button>}</div>;
 }
 
-export default function AdCreativeLibrary({ onOpenTask, initialTaskId, initialTaskName }: { onOpenTask: (id: string) => void; initialTaskId?: string; initialTaskName?: string }) {
+export default function AdCreativeLibrary({ onOpenTask, initialTaskId, initialTaskName, selectedMaterial }: { onOpenTask: (id: string) => void; initialTaskId?: string; initialTaskName?: string; selectedMaterial?: { taskId: string; selection: AdMaterialSelection } }) {
   const directory = useAdAccountDirectory();
-  const [view, setView] = useState(directory.adId ? 'platform' : initialTaskId ? 'ads' : 'history');
-  useEffect(() => { if (directory.adId) setView('platform'); }, [directory.adId]);
-  const [catalog, setData] = useState<AdCreativeLibraryPage | null>(null), [page, setPage] = useState(1), [refresh, setRefresh] = useState(0);
-  const data = catalog?.page === page ? catalog : null;
+  const [view, setView] = useState(initialTaskId ? 'ads' : directory.adId ? 'platform' : 'history');
+  useEffect(() => { if (directory.adId && !initialTaskId) setView('platform'); }, [directory.adId, initialTaskId]);
+  const [catalog, setData] = useState<(AdCreativeLibraryPage & { requestTaskId?: string }) | null>(null), [page, setPage] = useState(1), [refresh, setRefresh] = useState(0);
+  const data = catalog?.page === page && catalog.requestTaskId === initialTaskId ? catalog : null;
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [search, setSearch] = useState(initialTaskId || ''), [account, setAccount] = useState('all'), [selected, setSelected] = useState<string | null>(null);
   const [reports, setReports] = useState<Record<string, AdCreativeReport>>({}), [reportErrors, setReportErrors] = useState<Record<string, string>>({});
+  const [sourcePreview, setSourcePreview] = useState(false);
+  const chosen = selectedMaterial?.taskId === initialTaskId ? selectedMaterial?.selection : undefined;
+  const unbound = chosen && data && !data.items.some(item => item.task.id === initialTaskId && item.binding?.sourceTaskId === chosen.sourceTaskId && item.binding.artifactId === chosen.artifactId && item.binding.sha256 === chosen.sha256);
+  useEffect(() => { setSourcePreview(false); }, [initialTaskId, chosen?.sha256]);
   const [reading, setReading] = useState(false), [reportRefresh, setReportRefresh] = useState(0), [mapping, setMapping] = useState('');
   useEffect(() => {
-    const controller = new AbortController(); setLoading(true); setError('');
-    platformAdsRequest<AdCreativeLibraryPage>(`/creative-library?page=${page}&perPage=20`, { signal: controller.signal }).then(value => { if (!controller.signal.aborted) setData(value); })
+    setSearch(initialTaskId || ''); setPage(1); setAccount('all'); setSelected(null);
+    if (initialTaskId) setView('ads');
+  }, [initialTaskId]);
+  useEffect(() => {
+    const controller = new AbortController(); setLoading(true); setError(''); setData(null);
+    const params = new URLSearchParams({ page: String(page), perPage: '20', ...(initialTaskId ? { taskId: initialTaskId } : {}) });
+    platformAdsRequest<AdCreativeLibraryPage>(`/creative-library?${params}`, { signal: controller.signal }).then(value => { if (!controller.signal.aborted) setData({ ...value, requestTaskId: initialTaskId }); })
       .catch(e => { if (!controller.signal.aborted) setError(message(e)); }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [page, refresh]);
+  }, [page, refresh, initialTaskId]);
   const groups = useMemo(() => {
     const map = new Map<string, Group>();
     for (const item of data?.items || []) {
@@ -124,7 +134,10 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId, initialTa
     {notice && <Alert type="info" showIcon title={notice} closable onClose={() => setNotice('')} />}
     {data?.truncated && <Alert type="warning" showIcon title="部分计划记录超过单次读取上限，当前目录不是完整总账。" />}
     <LsLoadingState loading={loading && !data} label="读取真实素材目录">
-      {data && <LsMasonryGallery layout="masonry" columns={{ xs: 1, sm: 2, lg: 3, xl: 4 }} emptyText="当前计划范围没有匹配的素材；请先在计划中绑定已保存成片。" items={groups.map(group => {
+      {data && <LsMasonryGallery layout="masonry" columns={{ xs: 1, sm: 2, lg: 3, xl: 4 }} emptyText="当前计划范围没有匹配的素材；请先在计划中绑定已保存成片。" items={[...(unbound && chosen ? [{ id: `selected:${initialTaskId}:${chosen.sha256}`, content: <article className="ads-library-card" aria-label="计划已选素材">
+        <AdHistoryMedia key={`${initialTaskId}:${chosen.sha256}`} refresh={refresh} mediaOnly source={{ origin: 'social', key: `selected:${initialTaskId}`, sourceTaskId: chosen.sourceTaskId, artifactId: chosen.artifactId, sha256: chosen.sha256, name: chosen.name, sourceTenantId: chosen.sourceTenantId, sourceTenantName: chosen.sourceTenantName, sourceMediaStatus: chosen.contentStatus, verifiedSource: true, status: 'selected', createdAt: '', note: '计划已保存的素材选择，尚无本地绑定或平台上传。' }}/>
+        <div className="ads-library-card-body"><h2>{chosen.name}</h2><Tag>已选素材 · 尚未绑定/上传</Tag><p>{initialTaskName || initialTaskId}</p><Space wrap><Button onClick={() => setSourcePreview(true)}>预览已选源视频</Button><Button onClick={() => initialTaskId && onOpenTask(initialTaskId)}>返回此计划继续绑定</Button></Space></div>
+      </article> }] : []), ...groups.map(group => {
         const item = group.representative, binding = item.binding;
         return { id: group.key, content: <article className="ads-library-card">
           {binding && !binding.platformVideoId ? <div className="ads-library-local-cover"><AdHistoryMedia key={`${binding.id}:${binding.sha256}`} refresh={refresh} mediaOnly source={{ origin: 'social', key: binding.id, sourceTaskId: binding.sourceTaskId, artifactId: binding.artifactId, sha256: binding.sha256, name: binding.name, status: '', createdAt: binding.createdAt, verifiedSource: true, note: '' }}/></div> : <Cover key={binding?.id || item.key} bindingId={binding?.platformVideoId ? binding.id : undefined} name={binding?.name || item.task.name} onPreview={() => setSelected(group.key)} />}
@@ -133,10 +146,11 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId, initialTa
             <p>{new Set(group.items.filter(i => i.execution).map(i => i.execution!.adId)).size} 条关联广告 · {new Set(group.items.map(i => i.task.id)).size} 个计划</p>
             <Button block onClick={() => setSelected(group.key)}>查看详情与表现</Button>
           </div></article> };
-      })} />}
+      })]} />}
     </LsLoadingState>
-    {catalog && <div className="ads-library-pagination"><span>{data ? `本页匹配 ${groups.length} 项 · 账户分别展示` : '当前页目录未返回，可刷新或返回其他页。'}</span><Pagination current={page} pageSize={20} total={catalog.totalItems} showTotal={total => `${total} 条计划记录`} showSizeChanger={false} onChange={v => { setPage(v); setSelected(null); }} /></div>}
+    {catalog && <div className="ads-library-pagination"><span>{data ? `本页匹配 ${groups.length + (unbound ? 1 : 0)} 项 · 账户分别展示` : '当前页目录未返回，可刷新或返回其他页。'}</span><Pagination current={page} pageSize={20} total={catalog.totalItems} showTotal={total => `${total} 条计划记录`} showSizeChanger={false} onChange={v => { setPage(v); setSelected(null); }} /></div>}
     </>}
+    <Drawer title="已选源视频 · 尚未绑定/上传" open={sourcePreview && !!chosen} onClose={() => setSourcePreview(false)} size={840} destroyOnHidden>{sourcePreview && chosen && <VideoPreview key={`${initialTaskId}:${chosen.sha256}`} source={chosen}/>}</Drawer>
     <Drawer title="素材与广告表现" open={!!opened} onClose={() => setSelected(null)} size={840} destroyOnHidden>
       {opened && <>
         {opened.representative.binding && <><VideoPreview key={opened.representative.binding.id} bindingId={opened.representative.binding.id}/><Collapse items={[{ key: 'evidence', label: '文件与平台标识', children: <Descriptions size="small" column={1} items={[
