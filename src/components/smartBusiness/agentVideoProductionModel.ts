@@ -226,3 +226,22 @@ export function buildVideoProductionLanes(tasks: AgentCalendarTask[]): { lanes: 
   });
   return { lanes, shared };
 }
+
+/** Preserve exact persisted nodes and dependency order; never fill missing stage slots. */
+export function hasPersistedTaskIdentity(task: AgentCalendarTask): boolean {
+  return task.workspaceTarget?.executionTaskId === task.id
+    || Boolean(task.productionTaskId && task.id === `social-content:${task.productionTaskId}`)
+    || Boolean(task.independentProjectId && task.independentRunId && task.productionExecutionTaskId === task.id);
+}
+
+export function persistedVideoTasks(tasks: AgentCalendarTask[]): AgentCalendarTask[] {
+  const pending = tasks.filter(hasPersistedTaskIdentity)
+    .slice().sort((a, b) => `${a.date}T${a.time}`.localeCompare(`${b.date}T${b.time}`) || a.id.localeCompare(b.id));
+  const result: AgentCalendarTask[] = [];
+  while (pending.length) {
+    const index = pending.findIndex(task => !(task.dependsOn || []).some(id => pending.some(parent => parent.id === id)));
+    // A cycle stays visible as actual tasks; resolving it belongs to the executor.
+    result.push(...pending.splice(index < 0 ? 0 : index, 1));
+  }
+  return result;
+}

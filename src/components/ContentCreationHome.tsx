@@ -1,16 +1,21 @@
 import { Alert, Button, Segmented, Spin } from 'antd';
-import { ArrowRight, CalendarDays, Clapperboard, Lightbulb, RefreshCw, Sparkles } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { ArrowRight, RefreshCw } from 'lucide-react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { Page } from '../pageRegistry';
 import { useCreationMode, useCreationModeControl, type CreationMode } from '../lib/creationMode';
 import { fetchViralFeed } from '../lib/viralVideoFeed';
 import { digitalEmployeeApi } from '../lib/digitalEmployeeApi';
-import { AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
+import { authHeader, AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
 import type { DigitalEmployeeOverview } from '../lib/digitalEmployees';
 import type { TrendVideo } from '../lib/inspirationTypes';
 import { LsMasonryGallery } from './ui/LsExperiencePrimitives';
 import { VideoCard } from './InspirationVideoCards';
 import InspirationWatchDialog from './inspiration/InspirationWatchDialog';
+import EmployeeGoalPanel from './contentCreation/EmployeeGoalPanel';
+import { WEEKLY_WORK_UPDATED_EVENT } from '../lib/weeklyWorkEvents';
+
+const EmployeeExecutionView = lazy(() => import('./contentCreation/EmployeeExecutionView'));
+const EmployeeDeliveries = lazy(() => import('./contentCreation/EmployeeDeliveries'));
 
 export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page: Page) => void }) {
   const mode = useCreationMode();
@@ -24,11 +29,13 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
   const [overview, setOverview] = useState<DigitalEmployeeOverview | null>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [overviewError, setOverviewError] = useState('');
+  const [executionOpen, setExecutionOpen] = useState(false);
+  const executionTriggerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const libraryRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    const resetTenantData = () => { setVideos([]); setOverview(null); setPreview(null); setVideoRevision(value => value + 1); };
+    const resetTenantData = () => { setVideos([]); setOverview(null); setOverviewError(''); setOverviewLoading(true); setExecutionOpen(false); setPreview(null); setVideoRevision(value => value + 1); };
     const onStorage = (event: StorageEvent) => { if (event.key === 'overseas_token' || event.key === null) resetTenantData(); };
     window.addEventListener(AUTH_TOKEN_CHANGED_EVENT, resetTenantData);
     window.addEventListener('storage', onStorage);
@@ -50,14 +57,40 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
   useEffect(() => {
     if (mode !== 'employee') return;
     let active = true;
-    setOverviewLoading(true);
-    setOverviewError('');
-    void digitalEmployeeApi.overview()
-      .then(data => { if (active) setOverview(data); })
-      .catch(error => { if (active) setOverviewError(error instanceof Error ? error.message : '周任务状态读取失败'); })
-      .finally(() => { if (active) setOverviewLoading(false); });
-    return () => { active = false; };
+    let requestVersion = 0;
+    const authorization = authHeader().Authorization;
+    const refresh = async () => {
+      const version = ++requestVersion;
+      setOverviewLoading(true);
+      try {
+        const data = await digitalEmployeeApi.overview();
+        if (!active || version !== requestVersion || authorization !== authHeader().Authorization) return;
+        setOverview(data);
+        setOverviewError('');
+      } catch (error) {
+        if (active && version === requestVersion && authorization === authHeader().Authorization) setOverviewError(error instanceof Error ? error.message : '周任务状态读取失败');
+      } finally {
+        if (active && version === requestVersion && authorization === authHeader().Authorization) setOverviewLoading(false);
+      }
+    };
+    void refresh();
+    const whenVisible = () => { if (document.visibilityState === 'visible') void refresh(); };
+    const timer = window.setInterval(whenVisible, 15_000);
+    window.addEventListener(WEEKLY_WORK_UPDATED_EVENT, whenVisible);
+    document.addEventListener('visibilitychange', whenVisible);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener(WEEKLY_WORK_UPDATED_EVENT, whenVisible);
+      document.removeEventListener('visibilitychange', whenVisible);
+    };
   }, [mode, videoRevision]);
+
+  const refreshOverview = () => setVideoRevision(value => value + 1);
+  const closeExecution = () => {
+    setExecutionOpen(false);
+    window.requestAnimationFrame(() => executionTriggerRef.current?.querySelector<HTMLButtonElement>('button')?.focus());
+  };
 
   const openPreview = (video: TrendVideo) => {
     previewTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -91,36 +124,26 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
   return <div ref={scrollRef} className={`creator-home creator-home--${mode} h-full overflow-y-auto`} onScroll={updateActiveSection}>
     <div className="creator-home__inner">
       <header className="creator-home__hero text-center">
-        <h2>{mode === 'free' ? '你好，今天想要创作什么？' : '今天想让数字员工完成什么？'}</h2>
+        <h2>{mode === 'free' ? '你好，今天想要创作什么？' : '你的数字员工工作台'}</h2>
         <Segmented aria-label="内容创作模式" className="creator-mode-switch" size="large" value={mode}
           options={[{ label: '自由创作', value: 'free' }, { label: '数字员工', value: 'employee' }]}
           onChange={value => switchMode?.(value as CreationMode)} />
       </header>
 
-      <div className="creator-home__canvas-stage" aria-hidden={mode !== 'employee'}>
+      <div className="creator-home__canvas-stage" aria-hidden={mode !== 'employee'} inert={mode !== 'employee'}>
         <section className="creator-home__canvas" aria-label="数字员工周任务">
-          {overviewError && <Alert type="warning" showIcon title={overviewError} className="mb-3"/>}
-          <div className="creator-home__canvas-grid">
-            <button type="button" tabIndex={mode === 'employee' ? 0 : -1} onClick={() => onNavigate?.('digitalEmployees')}
-              className="creator-home__canvas-card">
-              <CalendarDays size={28}/><strong>{overviewError ? '查看周任务' : overview?.goal ? '继续当前周任务' : '新建周任务'}</strong>
-              <span>{overviewLoading ? '读取任务中…' : overviewError ? '到经营总览核验' : overview?.goal ? `当前状态：${overview.run?.status || '待启动'}` : '制定并预览计划'}</span>
-            </button>
-            <button type="button" tabIndex={mode === 'employee' ? 0 : -1} onClick={() => onNavigate?.('digitalEmployees')}
-              className="creator-home__canvas-card">
-              <Clapperboard size={28}/><strong>内容工程</strong><span>查看真实生产进度</span>
-            </button>
-            <button type="button" tabIndex={mode === 'employee' ? 0 : -1} onClick={() => onNavigate?.('digitalEmployees')} className="creator-home__canvas-card">
-              <Lightbulb size={28}/><strong>经营总览</strong><span>指标、排期与诊断</span>
-            </button>
-            <button type="button" tabIndex={mode === 'employee' ? 0 : -1} onClick={() => onNavigate?.('smartAssets')} className="creator-home__canvas-card">
-              <Sparkles size={28}/><strong>内容制作</strong><span>进入创作工作台</span>
-            </button>
-          </div>
+          {overviewError && <Alert type="warning" showIcon title="周任务状态暂未更新" description={overviewError} action={<Button size="small" onClick={refreshOverview}>重试</Button>} className="mb-3"/>}
+          {overviewLoading && !overview ? <div role="status" className="flex min-h-48 items-center justify-center"><Spin description="正在读取本周内容计划…"/></div> : overviewError && !overview ? <p className="p-5 text-sm text-text-muted">暂时无法核验本周内容目标和成片，请重试。</p> : <>
+            <div hidden={executionOpen}>
+              <div ref={executionTriggerRef}><EmployeeGoalPanel data={overview} onOpenExecution={() => setExecutionOpen(true)} onPlan={() => suggest('请帮我制定本周内容目标和周计划')}/></div>
+              {mode === 'employee' && overview && <Suspense fallback={<div role="status" className="p-5">正在读取成片…</div>}><EmployeeDeliveries data={overview}/></Suspense>}
+            </div>
+            {mode === 'employee' && executionOpen && overview && <Suspense fallback={<div role="status" className="p-5">正在加载执行现场…</div>}><EmployeeExecutionView key={`${overview.goal?.id}:${overview.plan?.id}:${overview.run?.id}`} data={overview} onBack={closeExecution} onRefresh={refreshOverview}/></Suspense>}
+          </>}
         </section>
       </div>
 
-      <section className="creator-home__conversation" aria-label="灵小枢对话">
+      <section className="creator-home__conversation" aria-label="灵小枢对话" hidden={mode === 'employee' && executionOpen}>
         <div id="content-creation-assistant-anchor" className="creator-home__assistant-anchor"/>
       </section>
 

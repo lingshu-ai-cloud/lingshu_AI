@@ -21,14 +21,15 @@ import { hourCalendarCard } from './agentHourCalendarPolicy';
 import { projectCalendarDeliverables, projectDailyCustomerServiceCards, isAlwaysOnCalendarTask, orderDailyCalendarTasks, projectDailyMilestones, conciseCalendarTitle } from './calendarDeliverables';
 import AgentRoleIcon, { AGENT_ROLE_PALETTE, type AgentVisualRole } from '../ui/AgentRoleIcon';
 import {agentCalendarTaskType,taskHasDeliverableOrWorkspace} from './agentCalendarGroups';
-import {readOrRepairWeeklyTaskWorkspace} from '../../lib/weeklyTaskWorkspaceApi';
+import {readOrRepairWeeklyTaskWorkspace,readWeeklyTaskWorkspace} from '../../lib/weeklyTaskWorkspaceApi';
 import type {WeeklyTaskWorkspace} from '../../../shared/contracts/weeklyTaskWorkspace';
 import {socialProgramApi} from '../../lib/socialProgramApi';
 import { authHeader, getToken } from '../../lib/auth';
 import WeeklyTaskQuickActions from '../socialProgram/WeeklyTaskQuickActions';
 import WeeklyTaskRuntimeDetails from './WeeklyTaskRuntimeDetails';
-import { productionStageContract } from './agentVideoProductionModel';
+import { hasPersistedTaskIdentity, productionStageContract } from './agentVideoProductionModel';
 import PointsValue from '../ui/PointsValue';
+import AgentVideoProductionBoard from './AgentVideoProductionBoard';
 import { productPointRate } from '../../../shared/pointsPolicy';
 
 const LsCalendar = typeof document === 'undefined'
@@ -173,6 +174,7 @@ function hasActiveExecution(task: AgentCalendarTask): boolean {
 }
 
 type Props = {
+  executionView?: boolean;
   startsAt?: string;
   tasks: AgentCalendarTask[];
   demo?: boolean;
@@ -192,6 +194,7 @@ type Props = {
 };
 
 export default function RestoredAgentWorkCalendar({
+  executionView = false,
   startsAt,
   agentRole = "",
   onOpenEnterpriseFacts,
@@ -255,7 +258,7 @@ export default function RestoredAgentWorkCalendar({
     const generation=++workspaceReadGeneration.current;
     captureAgentCalendarReturnContext({positionKey,offset:0,cardId:task.id});
     setTaskWorkspace({task,item:null,error:'',loading:true});
-    void readOrRepairWeeklyTaskWorkspace(target).then(item=>{
+    void (executionView ? readWeeklyTaskWorkspace(target) : readOrRepairWeeklyTaskWorkspace(target)).then(item=>{
       if(workspaceReadGeneration.current===generation)setTaskWorkspace(current=>current?.task.id===task.id?{task,item,error:'',loading:false}:current);
     }).catch(cause=>{
       if(workspaceReadGeneration.current===generation)setTaskWorkspace(current=>current?.task.id===task.id?{task,item:null,error:cause instanceof Error?cause.message:'任务生产现场读取失败。',loading:false}:current);
@@ -267,7 +270,7 @@ export default function RestoredAgentWorkCalendar({
     return () => window.clearInterval(timer);
   }, []);
 
-  const deliverables = useMemo(() => projectDailyMilestones(projectDailyCustomerServiceCards(projectCalendarDeliverables(tasks, true), startsAt)), [tasks, startsAt]);
+  const deliverables = useMemo(() => executionView ? tasks.filter(hasPersistedTaskIdentity) : projectDailyMilestones(projectDailyCustomerServiceCards(projectCalendarDeliverables(tasks, true), startsAt)), [tasks, startsAt, executionView]);
   const [ctaAuditStatuses, setCtaAuditStatuses] = useState<Record<string, 'missing' | 'recorded' | 'unavailable'>>({});
   const ctaAuditScopes = useMemo(() => [...new Map(tasks.flatMap(task => {
     const sources = task.dailyTaskGroup?.tasks ?? task.customerServiceSummary?.sourceTasks ?? task.internalNodes ?? [task];
@@ -275,6 +278,8 @@ export default function RestoredAgentWorkCalendar({
   })).values()], [tasks]);
   const ctaAuditScopeKey = JSON.stringify(ctaAuditScopes.map(scope => [scope.programId, scope.packageId, scope.packageVersion]));
   useEffect(() => {
+    // The legacy audit also reconciles execution gates; passive inspection must not call it.
+    if (executionView) { setCtaAuditStatuses({}); return; }
     let live = true;
     const token = getToken();
     const read = async () => {
@@ -293,7 +298,7 @@ export default function RestoredAgentWorkCalendar({
     const changed = (event: Event) => { const detail = (event as CustomEvent<{programId:string;packageId:string;packageVersion:number}>).detail; if (ctaAuditScopes.some(scope => scope.programId === detail?.programId && scope.packageId === detail?.packageId && scope.packageVersion === detail?.packageVersion)) void read(); };
     window.addEventListener('lingshu:weekly-cta-contact-updated', changed);
     return () => { live = false; window.removeEventListener('lingshu:weekly-cta-contact-updated', changed); };
-  }, [ctaAuditScopeKey]);
+  }, [ctaAuditScopeKey, executionView]);
   const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
   const todayKey = calendarDayKey(new Date(now), timeZone);
   const scopedDeliverables = useMemo(() => deliverables.filter(task => {
@@ -398,11 +403,11 @@ export default function RestoredAgentWorkCalendar({
     const channelLabel={whatsapp:'WhatsApp',messenger:'Messenger',instagram:'Instagram'} as const;
     const summary=task.customerServiceSummary;
     const detailWorkspaceSource=workspaceSource(task);
-    const stageContract=productionStageContract(task);
+    const stageContract=executionView ? null : productionStageContract(task);
     const ctaContactStatus=ctaAuditStatuses[task.id] ?? executionSources.map(source=>ctaAuditStatuses[source.id]).find(Boolean);
 
     return <div className="space-y-5">
-      {!demo&&<WeeklyTaskQuickActions sources={executionSources} onOpen={source=>enterSource(source)} onPlanning={onOpenPlanning?()=>open(onOpenPlanning):undefined}/>}
+      {!demo&&!executionView&&<WeeklyTaskQuickActions sources={executionSources} onOpen={source=>enterSource(source)} onPlanning={onOpenPlanning?()=>open(onOpenPlanning):undefined}/>}
       <div><div className="flex flex-wrap items-center gap-2"><Tag color={event.status === 'failed' ? 'error' : event.status === 'needs_action' ? 'warning' : event.status === 'working' ? 'processing' : event.status === 'done' ? 'success' : 'default'}>{event.statusLabel || statusLabels[task.status]}</Tag>{hasCtaContactGap(ctaContactStatus)&&task.status==='planned'&&<span className="text-xs text-text-secondary">{ctaContactStatus==='unavailable'?'原任务尚待激活；联系记录读取失败，待系统恢复后重试':'原任务尚待激活；请查看 CTA 联系与样品证据缺项'}</span>}{task.minutes !== null && <span className="text-xs text-text-secondary">预计 {task.minutes} 分钟</span>}</div><h3 className="mt-2 ls-type-title-medium text-text-primary">{task.title}</h3></div>
       {stageContract&&<section aria-label="固定生产路径约束" className="overflow-hidden rounded-lg border border-border bg-white"><div className="border-b border-border bg-surface-2 px-4 py-3"><p className="text-[10px] font-bold text-accent">固定生产路径 · {stageContract.title}</p><h4 className="mt-1 text-sm font-semibold text-text-primary">{stageContract.owner} 主导</h4></div><dl className="grid gap-px bg-border sm:grid-cols-2"><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">如何调用</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.invocation}</dd></div><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">承接输入</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.input}</dd></div><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">交付下一步</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.handoff}</dd></div><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">稳定性门槛</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.qualityGate}</dd></div></dl>{stageContract.key==='materials'&&<div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3"><span className="text-xs text-text-secondary">产品、工厂和场景视频优先复用素材库</span><PointsValue value={productPointRate('material-library-reuse').points} suffix="/ 秒" className="text-xs font-semibold"/></div>}{stageContract.key==='production'&&<div className="border-t border-border px-4 py-3"><p className="text-xs font-semibold text-text-primary">产品功能按成功交付量结算</p><div className="mt-2 flex flex-wrap gap-x-5 gap-y-2 text-xs"><span className="inline-flex items-center gap-1.5">数字人 <PointsValue value={productPointRate('digital-human-video').points} suffix="/ 秒"/></span><span className="inline-flex items-center gap-1.5">AI 补镜 <PointsValue value={productPointRate('aigc-video-generation').points} estimated suffix="/ 秒"/></span><span className="inline-flex items-center gap-1.5">统一音色 <PointsValue value={productPointRate('voice-consistency').points} suffix="/ 秒"/></span></div></div>}</section>}
       <section aria-label="负责 Agent" className="space-y-2"><div className="flex flex-wrap gap-2"><AgentIdentityCard role={task.agent} relation="主 Agent"/>{assistantRoles.map(role => <AgentIdentityCard key={role} role={role} relation="辅助 Agent"/>)}</div>{assistantRoles.length === 0 && <p className="text-xs text-text-secondary">当前没有记录辅助 Agent；流程只显示已分配的真实责任。</p>}</section>
@@ -412,6 +417,7 @@ export default function RestoredAgentWorkCalendar({
         <div className="min-w-0"><dt className="text-xs text-text-secondary">交付形式</dt><dd className="mt-1 break-words text-sm font-medium text-text-primary">{deliveryFormLabel(task)}</dd></div>
       </dl>
       <section aria-label="交付物与当前受阻原因" className="rounded-lg border border-border p-4"><h4 className="text-sm font-semibold">交付物与当前受阻原因</h4><p className="mt-2 text-sm">预期交付：{task.output}</p><p className="mt-2 text-sm">实际结果：{resultRefs.length?`已有 ${resultRefs.length} 项后端结果凭据；不等同于整个节点已交付`:'尚无后端结果凭据，未生成可核验交付物'}</p>{resultRefs.length>0&&<details className="mt-2 text-xs"><summary>查看真实结果引用</summary>{resultRefs.map(ref=><p key={JSON.stringify(ref)} className="break-all">{ref.type} · {ref.id} · v{ref.version}</p>)}</details>}<h5 className="mt-3 text-xs font-semibold">当前受阻原因</h5>{blockers.length?<ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-amber-800">{blockers.map(code=><li key={code}>{blockerLabels[code]??code}</li>)}</ul>:<p className="mt-2 text-xs text-text-secondary">后端暂无独立阻塞记录；不代表任务已启动或完成。</p>}{entryState?.id===task.id&&entryState.error&&<Alert className="mt-3" showIcon type="warning" title="真实执行入口未就绪" description={entryState.error}/>}</section>
+      {executionView && task.executionInputSnapshot && <details className="rounded-lg border border-border p-4"><summary className="cursor-pointer text-sm font-semibold">实际输入快照</summary><pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(task.executionInputSnapshot, null, 2)}</pre></details>}
       {detailWorkspaceSource&&<WeeklyTaskRuntimeDetails executionTaskId={detailWorkspaceSource.workspaceTarget!.executionTaskId} loading={taskWorkspace?.task.id===detailWorkspaceSource.id&&taskWorkspace.loading} error={taskWorkspace?.task.id===detailWorkspaceSource.id?taskWorkspace.error:''} workspace={taskWorkspace?.task.id===detailWorkspaceSource.id?taskWorkspace.item:null}/>}
 {summary&&<section aria-label="常驻客服任务详情" className="rounded-lg border border-border bg-white p-4"><h4 className="text-sm font-semibold text-text-primary">渠道运行状态</h4><div className="mt-3 flex flex-wrap gap-2">{summary.channels.map(item=><Tag key={item.channel} color={item.status==='failed'?'error':item.status==='blocked'?'warning':item.status==='active'?'processing':item.status==='completed'?'success':'default'}>{channelLabel[item.channel]} · {statusLabels[item.status]}</Tag>)}</div><dl className="mt-4 grid gap-3 sm:grid-cols-3"><div><dt className="text-xs text-text-secondary">关联运行记录</dt><dd className="mt-1 text-lg font-semibold">{summary.sourceTaskCount}</dd></div><div><dt className="text-xs text-text-secondary">已完成核验</dt><dd className="mt-1 text-lg font-semibold">{summary.completedCount}</dd></div><div><dt className="text-xs text-text-secondary">需要处理</dt><dd className="mt-1 text-lg font-semibold">{summary.attentionCount}</dd></div></dl><p className="mt-3 text-xs text-text-secondary">常驻卡片是每日客服入口；真实客户会话、审批、交接和渠道回执仍以后台持久化记录为准。</p></section>}
       {summary&&<section aria-label="客服真实任务与生产线程" className="space-y-2"><h4 className="text-sm font-semibold">客服真实任务与生产线程</h4>{summary.channels.map(({channel})=><details key={channel} className="rounded-lg border border-border p-3"><summary className="cursor-pointer text-sm font-medium">{channelLabel[channel]} · {summary.sourceTasks.filter(source=>source.customerExecutionTarget?.channel===channel).length} 项真实任务</summary><div className="mt-2 space-y-2">{summary.sourceTasks.filter(source=>source.customerExecutionTarget?.channel===channel).map(source=><Button key={source.id} data-customer-execution-id={source.id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>openSource(source)}>{source.date} · {source.title} · {statusLabels[source.status]}</Button>)}</div></details>)}</section>}
@@ -432,7 +438,7 @@ export default function RestoredAgentWorkCalendar({
       const task = event.data as AgentCalendarTask;
       return <li key={event.id}>{agentCalendarTaskType(task)} · {event.title} · {event.statusLabel}{task.affectedPublicationIds?.length ? ` · 受影响发布 ${task.affectedPublicationIds.join('、')}` : ''}</li>;
     })}</ul>
-    {<Suspense fallback={<p className="p-5 text-xs text-text-secondary">正在加载日历…</p>}><LsCalendar
+    {executionView ? <AgentVideoProductionBoard events={events} key={positionKey} actualTasksOnly onOpenTask={openWorkspace} renderDetails={renderDetails}/> : <Suspense fallback={<p className="p-5 text-xs text-text-secondary">正在加载日历…</p>}><LsCalendar
         key={positionKey}
         label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}
         events={events}

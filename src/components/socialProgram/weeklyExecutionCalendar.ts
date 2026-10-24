@@ -68,6 +68,7 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
       id: task.taskId,
       workspaceTarget:{programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,executionTaskId:task.taskId},
       executionBlockers:[...(task.status==='pending_activation'?['weekly_package_pending_activation']:[]),...(revisedPastPlan?['计划归属日早于本修订创建日，尚未执行，非历史完成记录']:[]),...(task.schedule.stepKind==='weekly_review'&&typeof (task.inputSnapshot?.reviewWindow as {endsAt?:string}|undefined)?.endsAt==='string'&&Date.parse((task.inputSnapshot.reviewWindow as {endsAt:string}).endsAt)>now?['等待本周统计窗口结束及整周发布、指标回流交付；不提前验收达标']:[]),...task.ownBlockingReasons,...(task.inheritedBlockingTaskIds.length?[`等待 ${task.inheritedBlockingTaskIds.length} 项真实上游交付`]:[]),...(task.lastError?.message?[task.lastError.message]:[])],
+      executionInputSnapshot:task.inputSnapshot,
       executionResultRefs:task.resultRefs,
       executionStep: task.schedule.stepKind,
       calendarInternal: task.schedule.responsibleActor !== 'user' && ['material_preparation','material_readiness'].includes(task.schedule.stepKind),

@@ -201,3 +201,9 @@ html[data-lingshu-appearance='light'] .ls-assistant-home-root .ls-assistant-comp
   .creator-home__conversation { transition: none; }
   .ls-assistant-home-root[data-home-creation-mode] { animation: none; }
 }
+
+/* Employee creation uses a goal, an embedded execution view and finished outputs. */
+.creator-home--employee .creator-home__canvas-stage { margin-top: 32px; }
+.creator-home--employee .creator-home__canvas { text-align: left; }
+.creator-home--employee .creator-home__conversation { margin-top: 32px; }
+.creator-home--employee [hidden] { display: none !important; }
