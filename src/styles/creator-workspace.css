@@ -20,6 +20,10 @@ html[data-lingshu-appearance='dark'] .ls-design-system {
   --ls-border: #37383c;
   --ls-border-secondary: #303135;
   --ls-fill: #292a2d;
+  --ls-primary: var(--color-accent);
+  --ls-info-bg: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface));
+  --ls-selected: var(--color-surface-2);
+  --ls-hover: var(--color-surface-2);
   --ls-action-gradient: linear-gradient(108deg, #238dff, #6754e8);
   --ls-action-gradient-hover: linear-gradient(108deg, #46a4ff, #806df5);
   color-scheme: dark;

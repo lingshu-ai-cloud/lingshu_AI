@@ -305,7 +305,7 @@ export function ChatThread({
                   {!isBuyer && (event.audit?.editedByHuman || event.audit?.memoryApplied?.length) && (
                     <div className="mt-2 flex flex-wrap justify-end gap-1.5">
                       {event.audit.editedByHuman && (
-                        <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold text-white/90" title={event.audit.originalDraft ? `AI 初稿：${event.audit.originalDraft}` : undefined}>AI 草稿 · 人工改过</span>
+                        <span className="rounded-full bg-surface/15 px-2 py-0.5 text-[10px] font-bold text-white/90" title={event.audit.originalDraft ? `AI 初稿：${event.audit.originalDraft}` : undefined}>AI 草稿 · 人工改过</span>
                       )}
                       {event.audit.memoryApplied?.length ? (
                         <span className="rounded-full bg-emerald-100/25 px-2 py-0.5 text-[10px] font-bold text-white/90" title={event.audit.memoryApplied.join('；')}>已用学习记忆</span>
@@ -317,10 +317,10 @@ export function ChatThread({
                       <span className="font-bold">{'\u4e2d\u6587\u7ffb\u8bd1\uff1a'}</span>{translation}
                     </div>
                   )}
-                  {event.autoSent && <div className="mt-2 flex justify-end"><span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold text-white/85">{'AI \u81ea\u52a8\u56de\u590d'}</span></div>}
+                  {event.autoSent && <div className="mt-2 flex justify-end"><span className="rounded-full bg-surface/15 px-2 py-0.5 text-[10px] font-bold text-white/85">{'AI \u81ea\u52a8\u56de\u590d'}</span></div>}
                   {!isBuyer && event.sendStatus && (
                     <div className="mt-2 flex justify-end">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${event.sendStatus === 'failed' ? 'bg-red-100 text-red-700' : 'bg-white/15 text-white/85'}`}>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${event.sendStatus === 'failed' ? 'bg-red-100 text-red-700' : 'bg-surface/15 text-white/85'}`}>
                         {event.sendStatus === 'queued' ? '发送中' : event.sendStatus === 'sent' ? '已发送' : event.sendStatus === 'delivered' ? '已送达' : event.sendStatus === 'failed' ? '发送失败' : event.sendStatus === 'unknown' ? '发送结果待确认' : '草稿'}
                       </span>
                     </div>
@@ -340,6 +340,7 @@ export function ChatThread({
       <div className="shrink-0 space-y-2 border-t border-border bg-surface p-3">
         <div className="mx-auto max-w-3xl space-y-2">
           {customer.isHistorical ? <div className="rounded-lg border border-border bg-surface-2 px-3 py-3 text-xs text-text-secondary">这是迁入的历史会话，仅供查看；未绑定已授权渠道，不能回复或对外发送。</div> : <>
+          {customer.isMock && <p className="text-xs text-text-muted">只在演示沙盘里推进，不会发送到真实平台。</p>}
           {isOutsideWindow && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">距客户上次互动已超过 24 小时，当前不能直接发送普通 {customer.source === 'instagram' ? 'Instagram' : 'Messenger'} 消息。</div>}
           {composerState === 'idle' && chips.length > 0 && (
             <div className="flex flex-wrap gap-2">

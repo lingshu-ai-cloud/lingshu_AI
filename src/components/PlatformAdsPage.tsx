@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Alert, Button, Collapse, Drawer, Select } from 'antd';
+import { Alert, Button, Collapse, Drawer, Select, Tabs } from 'antd';
 import {
   ArrowRight,
   ArrowUpRight,
@@ -245,6 +245,9 @@ function PlatformAdsWorkspace({
   return (
     <div className={`ads-workspace${isCreativePage ? ' ads-creative-workspace' : ''}`}>
       <main className="ads-main">
+        <Tabs className="ads-workspace-tabs" aria-label="投放管理功能区" activeKey={page === 'adsManaged' ? 'adsPlans' : page}
+          onChange={key => { if (key === 'adsPlans' || key === 'adsOverview' || key === 'adsCreatives') onNavigate(key); }}
+          items={[{ key: 'adsPlans', label: '计划创编' }, { key: 'adsOverview', label: '投放数据' }, { key: 'adsCreatives', label: '素材管理' }]}/>
         {isLocalForeignTradeMockEnabled() && <Alert className="mb-4" type="info" showIcon title="本地模拟 · 外贸工厂投放" description="展示中东、欧洲和拉美市场的跨平台计划与近 7 天效果，不会触发真实广告操作。" />}
         <LsPageHeader
           title={page === 'adsPlans' ? '计划创编' : page === 'adsCreatives' ? '素材管理' : '投放数据'}

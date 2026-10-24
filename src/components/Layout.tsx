@@ -6,7 +6,7 @@ import {
   PanelRightOpen, Sparkles, Star, X,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
-import { PAGE_REGISTRY } from '../pageRegistry';
+import { isPageInNavigationBranch, PAGE_REGISTRY } from '../pageRegistry';
 import { isAdminSession, ROLE_PAGE_ACCESS } from '../appSession';
 import { authApi, exitSupportSession, type AuthSession } from '../lib/auth';
 import RightPanel from './RightPanel';
@@ -19,7 +19,7 @@ import DuotoneGlyph from './ui/DuotoneGlyph';
 import LsPageTransition from './ui/LsPageTransition';
 import { lsMotion } from '../lib/designTokens';
 import { getScrollBehavior, usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
-import { PLATFORM_ADS_SURFACE_ENABLED } from '../config/productSurfaceFlags';
+import { PLATFORM_ADS_PAGE_IDS, PLATFORM_ADS_SURFACE_ENABLED } from '../config/productSurfaceFlags';
 import PointsManagementDrawer from './PointsManagementDrawer';
 import { CreationModeContext, CreationModeControlContext, readCreationMode, writeCreationMode, type CreationMode } from '../lib/creationMode';
 import { accountProductNavigation, modeSwitchDestination, primaryProductNavigation, type PrimaryProductPage } from '../productNavigation';
@@ -118,7 +118,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   ));
   const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(false);
   const homeSurface = page === 'strategy';
-  const creatorSurface = page === 'strategy' || page === 'socialInspiration' || page === 'digitalEmployees' || page === 'adsOverview' || page === 'conversion';
+  const creatorSurface = page === 'strategy' || page === 'socialInspiration' || page === 'digitalEmployees' || PLATFORM_ADS_PAGE_IDS.includes(page) || page === 'conversion';
   const sidebarCollapsed = mobileViewport ? !mobileSidebarExpanded : creatorSurface ? creatorSidebarCollapsed : desktopSidebarCollapsed;
   const sidebarWidth = sidebarCollapsed ? (mobileViewport ? 56 : 60) : creatorSurface ? Math.min(354, Math.max(246, Math.round(viewportWidth * 0.173))) : 176;
   const activeSession = session;
@@ -288,7 +288,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
             item={{ id: item.page, label: item.label, icon: PRODUCT_NAV_ICONS[item.page] }}
             active={homeSurface && (item.page === 'strategy' || item.page === 'socialInspiration')
               ? homeActiveSection === item.page
-              : page === item.page || PAGE_REGISTRY[page].navParent === item.page}
+              : isPageInNavigationBranch(page, item.page)}
             onClick={() => navigateFromSidebar(item.page)}
             onPrefetch={() => onPrefetchPage?.(item.page)}
             collapsed={sidebarCollapsed}

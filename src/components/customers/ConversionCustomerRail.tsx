@@ -284,7 +284,7 @@ function CustomerIntentActionPanel({
           )}
           <div className="space-y-1.5">
             {evidenceItems.map(item => (
-              <p key={item} className="flex gap-2 text-text-secondary"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-slate-400" />{item.replace(/\s[+-]\d+$/, '')}</p>
+              <p key={item} className="flex gap-2 text-text-secondary"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-text-muted" />{item.replace(/\s[+-]\d+$/, '')}</p>
             ))}
           </div>
         </div>

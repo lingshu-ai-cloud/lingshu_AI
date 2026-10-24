@@ -4,6 +4,7 @@ import { availableProductPage, PLATFORM_ADS_PAGE_IDS, PLATFORM_ADS_SURFACE_ENABL
 import {
   PAGE_IDS,
   PAGE_REGISTRY,
+  isPageInNavigationBranch,
   PRIMARY_SOCIAL_NAV_PAGES,
   SOCIAL_PROGRAM_NAV_PAGES,
   resolveNavigationPage,
@@ -62,10 +63,14 @@ assert.equal(PAGE_REGISTRY.channels.navParent, 'plugins');
 assert.equal(PAGE_REGISTRY.accountManagement.navParent, 'socialMonitoring');
 assert.equal(PLATFORM_ADS_SURFACE_ENABLED, true, 'the 投流 product entry must be visible');
 assert.deepEqual(PLATFORM_ADS_PAGE_IDS, ['adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged']);
-assert.deepEqual(['adsOverview', 'adsPlans', 'adsCreatives'].map(page => PAGE_REGISTRY[page as 'adsPlans' | 'adsOverview' | 'adsCreatives'].navLabel), ['投流', '计划创编', '素材管理']);
+assert.deepEqual(['adsOverview', 'adsPlans', 'adsCreatives'].map(page => PAGE_REGISTRY[page as 'adsPlans' | 'adsOverview' | 'adsCreatives'].navLabel), ['平台投流', '计划创编', '素材管理']);
 assert.equal(PAGE_REGISTRY.adsPlans.navParent, 'adsOverview');
 assert.equal(PAGE_REGISTRY.adsCreatives.navParent, 'adsOverview');
 assert.equal(PAGE_REGISTRY.adsManaged.navParent, 'adsPlans', 'legacy AI managed links must resolve under the plan workspace');
+assert.equal(isPageInNavigationBranch('adsPlans', 'adsOverview'), true);
+assert.equal(isPageInNavigationBranch('adsCreatives', 'adsOverview'), true);
+assert.equal(isPageInNavigationBranch('adsManaged', 'adsOverview'), true);
+assert.equal(isPageInNavigationBranch('adsManaged', 'conversion'), false);
 assert.equal(availableProductPage('adsOverview'), 'adsOverview');
 
 console.log('Page registry tests passed');
@@ -79,3 +84,7 @@ for (const retired of ['orders', 'scheduled'] as const) {
 }
 const app = fs.readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
 assert.doesNotMatch(app, /OrderManagementPage|ScheduledPage/, 'retired pages must not be loaded or rendered');
+
+for (const page of ['adsPlans', 'adsCreatives'] as const) {
+  assert.equal(PAGE_REGISTRY[page].navParent, 'adsOverview', '投流子页仍应归属平台投流主导航');
+}

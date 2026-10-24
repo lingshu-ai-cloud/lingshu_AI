@@ -624,9 +624,9 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     {deliveryHandoff && !deliveryHandoff.runId && <section className="mx-4 mt-3 shrink-0 border-l-2 border-accent bg-accent-glow p-3">
       <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-accent">来自业务交付看板 · 客户跟进草稿</p></div>
       {deliveryError ? <p role="alert" className="mt-2 text-xs text-red-700">{deliveryError}</p> : deliveryDraft ? <>
-        <details className="mt-2 text-xs text-slate-700"><summary className="cursor-pointer">查看关联草稿 v{deliveryDraft.version}</summary><p className="mt-2 whitespace-pre-wrap leading-6">{deliveryDraft.body}</p></details>
-        <p className="mt-2 text-[11px] text-slate-500">此处展示所属批次的草稿。批次审核请返回交付看板；会话中的回复操作独立处理。</p>
-      </> : <p className="mt-2 text-xs text-slate-500">没有对应的草稿记录，请返回交付看板选择具体客户任务。</p>}
+        <details className="mt-2 text-xs text-text-primary"><summary className="cursor-pointer">查看关联草稿 v{deliveryDraft.version}</summary><p className="mt-2 whitespace-pre-wrap leading-6">{deliveryDraft.body}</p></details>
+        <p className="mt-2 text-[11px] text-text-muted">此处展示所属批次的草稿。批次审核请返回交付看板；会话中的回复操作独立处理。</p>
+      </> : <p className="mt-2 text-xs text-text-muted">没有对应的草稿记录，请返回交付看板选择具体客户任务。</p>}
     </section>}
     <div className="ls-conversation-container flex min-h-0 min-w-0 flex-1 flex-col" data-lingshu-guide="customer-workbench">
       <nav aria-label="会话区域导航" className="ls-conversation-workspace-nav h-12 shrink-0 grid-cols-3 border-b border-border bg-surface">
@@ -768,10 +768,10 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         <DailyBriefing customers={customers.filter(customer => !customer.isHistorical)} onSelectCustomer={openCustomer} onClose={() => setDailyBriefingOpen(false)} />
       )}
       {toast && (
-        <div role="status" className="fixed bottom-24 left-1/2 z-[70] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md bg-text-primary px-4 py-2 text-xs font-bold text-white">
+        <div role="status" className="fixed bottom-24 left-1/2 z-[70] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md border border-border bg-surface-2 px-4 py-2 text-xs font-bold text-text-primary">
           {toast}
           {learnCandidate && (
-            <Button htmlType="button" onClick={() => { setToast(null); setLearnDialogOpen(true); }} className="!h-auto min-h-9 !whitespace-normal rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-950">存进知识库</Button>
+            <Button htmlType="button" onClick={() => { setToast(null); setLearnDialogOpen(true); }} className="!h-auto min-h-9 !whitespace-normal rounded-full bg-surface px-2.5 py-1 text-xs font-semibold text-text-primary">存进知识库</Button>
           )}
         </div>
       )}
@@ -782,9 +782,9 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         {learnCandidate && <div data-lingshu-guide="customer-knowledge-save" className="space-y-4 py-3"><label className="grid gap-2 text-sm">客户常问问题<Input aria-label="客户常问问题" value={learnCandidate.question} onChange={event => setLearnCandidate(current => current ? { ...current, question: event.target.value } : current)}/></label><label className="grid gap-2 text-sm">标准答案<Input.TextArea aria-label="标准答案" value={learnCandidate.answer} onChange={event => setLearnCandidate(current => current ? { ...current, answer: event.target.value } : current)} rows={4}/></label></div>}
       </Modal>
       {undoSend && (
-        <div role="status" className="fixed bottom-24 left-1/2 z-[80] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md bg-text-primary px-4 py-2 text-xs font-bold text-white">
+        <div role="status" className="fixed bottom-24 left-1/2 z-[80] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md border border-border bg-surface-2 px-4 py-2 text-xs font-bold text-text-primary">
           <span>{'\u5df2\u53d1\u9001\uff0c4 \u79d2\u5185\u53ef\u64a4\u56de'}</span>
-          <Button htmlType="button" onClick={undoQueuedSend} className="!h-auto min-h-9 !whitespace-normal rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-950">{'\u64a4\u56de'}</Button>
+          <Button htmlType="button" onClick={undoQueuedSend} className="!h-auto min-h-9 !whitespace-normal rounded-full bg-surface px-2.5 py-1 text-xs font-semibold text-text-primary">{'\u64a4\u56de'}</Button>
         </div>
       )}
     </div>

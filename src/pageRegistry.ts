@@ -54,7 +54,7 @@ export const PAGE_REGISTRY: Record<Page, PageDefinition> = {
   smartAssets: { navLabel: '内容制作', canonicalTitle: '内容制作' },
   socialMonitoring: { navLabel: '内容监控', canonicalTitle: '账号内容监控' },
   accountManagement: { navLabel: '账号', canonicalTitle: '账号内容监控', navParent: 'socialMonitoring' },
-  adsOverview: { navLabel: '投流', canonicalTitle: '平台投流' },
+  adsOverview: { navLabel: '平台投流', canonicalTitle: '平台投流' },
   adsPlans: { navLabel: '计划创编', canonicalTitle: '计划创编', navParent: 'adsOverview' },
   adsCreatives: { navLabel: '素材管理', canonicalTitle: '素材管理', navParent: 'adsOverview' },
   adsManaged: { navLabel: 'AI 投手', canonicalTitle: 'AI 投手', navParent: 'adsPlans' },
@@ -85,6 +85,18 @@ const PAGE_ID_SET: ReadonlySet<string> = new Set(PAGE_IDS);
 
 export function isPage(value: unknown): value is Page {
   return typeof value === 'string' && PAGE_ID_SET.has(value);
+}
+
+/** Keep the primary entry selected for nested product pages and legacy deep links. */
+export function isPageInNavigationBranch(page: Page, entry: Page): boolean {
+  const visited = new Set<Page>();
+  let current: Page | undefined = page;
+  while (current && !visited.has(current)) {
+    if (current === entry) return true;
+    visited.add(current);
+    current = PAGE_REGISTRY[current].navParent;
+  }
+  return false;
 }
 
 /**

@@ -883,7 +883,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: #3f8054;
+  color: var(--color-text-primary);
 }
 .ads-radio {
   border: 1px solid #c5d4bf;
@@ -910,7 +910,7 @@
 }
 .ads-mode p {
   font-size: 12px;
-  color: #7e8e76;
+  color: var(--color-text-secondary);
   line-height: 1.9;
   margin-top: 8px;
 }
@@ -925,7 +925,7 @@
 }
 .ads-guard-grid p {
   font-size: 11px;
-  color: #89957f;
+  color: var(--color-text-muted);
   line-height: 1.9;
   margin-top: 7px;
 }
@@ -933,7 +933,7 @@
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: #173d3155;
+  background: var(--ls-mask);
   backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
@@ -941,14 +941,18 @@
   padding: 20px;
 }
 .ads-modal {
-  background: white;
+  background: var(--color-surface);
   width: 600px;
   max-width: 100%;
   max-height: 90vh;
   overflow: auto;
   border-radius: 15px;
   padding: 28px;
-  box-shadow: 0 20px 90px #123e3126;
+  box-shadow: none;
+
+  color: var(--color-text-primary);
+
+  border: 1px solid var(--color-border);
 }
 .ads-modal-heading {
   display: flex;
@@ -964,13 +968,13 @@
 .ads-icon-button {
   cursor: pointer;
   padding: 7px;
-  color: #748774;
+  color: var(--color-text-secondary);
 }
 .ads-account-option {
   display: flex;
   align-items: center;
   gap: 13px;
-  border: 1px solid #e0e8dc;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 18px;
   margin: 13px 0;
@@ -981,7 +985,7 @@
 .ads-account-option small {
   display: block;
   font-size: 11px;
-  color: #83917b;
+  color: var(--color-text-muted);
   margin-top: 5px;
 }
 .ads-modal > .ads-context-banner {
@@ -995,16 +999,16 @@
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 27px;
-  border-bottom: 1px solid #e7ede2;
+  border-bottom: 1px solid var(--color-border);
 }
 .ads-steps span {
   font-size: 12px;
-  color: #a0ab96;
+  color: var(--color-text-muted);
   padding-bottom: 13px;
 }
 .ads-steps span.active {
-  color: #237e49;
-  border-bottom: 2px solid #237e49;
+  color: var(--color-accent);
+  border-bottom: 2px solid var(--color-accent);
 }
 .ads-form-fields {
   display: flex;
@@ -1020,7 +1024,7 @@
 }
 .ads-form-fields input:not([type="checkbox"]),
 .ads-form-fields select {
-  border: 1px solid #dce5d7;
+  border: 1px solid var(--color-border);
   padding: 12px;
   font-size: 13px;
   font-weight: 400;
@@ -1037,7 +1041,7 @@
   gap: 9px;
   font-size: 12px;
   padding: 13px;
-  border: 1px solid #e3eadc;
+  border: 1px solid var(--color-border);
   border-radius: 7px;
 }
 .ads-modal-footer {
@@ -1045,11 +1049,11 @@
   justify-content: space-between;
   margin-top: 30px;
   padding-top: 20px;
-  border-top: 1px solid #e7ede2;
+  border-top: 1px solid var(--color-border);
 }
 .ads-review {
   padding: 22px;
-  background: #f6f9f2;
+  background: var(--color-surface-2);
   border-radius: 10px;
 }
 .ads-review h3 {
@@ -1065,7 +1069,7 @@
   margin: 16px 0;
 }
 .ads-review > div > span {
-  color: #8b997e;
+  color: var(--color-text-secondary);
 }
 .ads-review > div > strong {
   text-align: right;
@@ -1073,7 +1077,7 @@
 }
 .ads-review > p {
   font-size: 11px;
-  color: #8d987e;
+  color: var(--color-text-muted);
   line-height: 1.9;
   margin-top: 24px;
 }
@@ -1343,12 +1347,14 @@
 .ads-pill.neutral { color: var(--ls-text-tertiary, #6b7280); background: var(--ls-surface-secondary, #f8faf7); }
 .ads-text-button { color: var(--ls-color-primary, #1677ff); }
 .ads-footer { color: var(--ls-text-tertiary, #6b7280); }
-.ads-capability-hint { margin: 12px 0 18px; padding: 12px 14px; background: #f1f6f3; border-radius: 10px; font-size: 13px; }
+.ads-capability-hint { margin: 12px 0 18px; padding: 12px 14px; background: var(--color-surface-2); border-radius: 10px; font-size: 13px;
+  color: var(--color-text-secondary);
+}
 .ads-capability-hint p { margin: 6px 0 0; line-height: 1.6; }
 
 .ads-creative-panel, .ads-preflight { margin: 20px 0; padding: 18px; border: 1px solid #dce7e1; border-radius: 12px; background: #fbfdfb; }
 .ads-preflight ul { display: grid; gap: 12px; padding-left: 20px; }
-.ads-preflight li p { margin: 4px 0; color: #536e64; line-height: 1.6; }
+.ads-preflight li p { margin: 4px 0; color: var(--color-text-secondary); line-height: 1.6; }
 
 /* Advertising workspace follows the global Lingshu design system. Keep this
    final layer authoritative while the legacy selectors are retired in place. */
@@ -1359,6 +1365,7 @@
   line-height: 22px;
 }
 .ads-main { max-width: 1440px; padding: var(--ls-space-24) var(--ls-space-32) var(--ls-space-40); }
+.ads-workspace-tabs { margin-bottom: var(--ls-space-16); }
 .ads-workspace :where(h2, h3, h4, strong) { color: var(--ls-text); }
 .ads-workspace h2 { font-size: 20px; line-height: 28px; font-weight: 650; }
 .ads-workspace h3 { font-size: 16px; line-height: 24px; font-weight: 650; }
@@ -1437,7 +1444,7 @@
   line-height: 18px;
 }
 .ads-pill { padding: 3px 8px; }
-.ads-pill:not(.neutral) { border-color: var(--ls-info-border); background: var(--ls-info-bg); color: var(--ls-info); }
+.ads-pill:not(.neutral) { border-color: color-mix(in srgb, var(--ls-primary) 30%, var(--ls-border)); background: var(--ls-info-bg); color: var(--ls-primary); }
 .ads-count { padding: 1px 7px; }
 
 .ads-table-wrap,
@@ -1446,7 +1453,7 @@
 .ads-workspace th { padding: 12px 14px; background: var(--ls-fill); color: var(--ls-text-secondary); font-size: 12px; font-weight: 600; text-align: left; }
 .ads-workspace td { padding: 14px; border-bottom: 1px solid var(--ls-border-secondary); color: var(--ls-text); vertical-align: middle; }
 .ads-workspace tbody tr:last-child td { border-bottom: 0; }
-.ads-workspace tbody tr:hover td { background: color-mix(in srgb, var(--ls-fill) 60%, white); }
+.ads-workspace tbody tr:hover td { background: var(--ls-hover); }
 
 .ads-goal-bar { padding: var(--ls-space-16) var(--ls-space-20); }
 .ads-goal-icon,
