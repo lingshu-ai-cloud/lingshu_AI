@@ -95,9 +95,14 @@ assert.equal(selectPresenterExecutions({ detail: narrationOutsideShot, heygenRea
   seedancePresenterReady: false, budgetReady: true })[0].executionStatus, 'blocked',
   'ASR outside the visual interval cannot satisfy the presenter measurement gate');
 const contact = route({ physicalProductContact: true, specificGestureCount: 1 });
-assert.equal(contact.decision.route, 'blocked');
+assert.equal(contact.decision.route, 'split_motion_and_speech');
 assert.equal(contact.providerId, null);
-assert.ok(contact.reasonCodes.includes('physical_product_contact_requires_separate_verified_capability'));
+assert.ok(contact.reasonCodes.includes('product_interaction_requires_seedance_and_speech_split'));
+const productMotionDetail = detail({ physicalProductContact: true, specificGestureCount: 1,
+  visibleSpeechSeconds: 0, lipSyncRequired: false });
+const productMotion = selectPresenterExecutions({ detail: productMotionDetail, heygenReady: true,
+  seedancePresenterReady: true, budgetReady: true })[0]!;
+assert.equal(productMotion.providerId, 'seedance', 'product interaction remains on Seedance even with stable-person HeyGen available');
 assert.deepEqual(await verifyNamedPresenterLock({ store: null, tenantId: 'tenant', name: '销售', lock: null }),
   { ok: false, reason: 'published_account_presenter_lock_missing' });
 const lock: any = { status: 'published', commercialRightsStatus: 'cleared', presenterAssetId: 'one',

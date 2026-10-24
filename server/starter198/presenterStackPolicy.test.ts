@@ -22,7 +22,13 @@ assert.equal(decidePresenterStack({ ...base, durationSeconds: 0 }, ready).route,
 assert.equal(decidePresenterStack({ ...base, specificGestureCount: null }, ready).route, 'needs_evidence');
 assert.equal(decidePresenterStack({ ...base, evidence: [] }, ready).route, 'needs_evidence');
 assert.equal(decidePresenterStack({ ...base, sourceFirstFrameRef: null }, ready).route, 'needs_evidence');
-assert.equal(decidePresenterStack({ ...base, physicalProductContact: true }, ready).route, 'blocked');
+assert.equal(decidePresenterStack({ ...base, physicalProductContact: true }, ready).route, 'split_motion_and_speech');
+assert.deepEqual(decidePresenterStack({ ...base, physicalProductContact: true }, ready).reasonCodes,
+  ['product_interaction_requires_seedance_and_speech_split']);
+assert.equal(decidePresenterStack({ ...base, physicalProductContact: true, visibleSpeechSeconds: 0,
+  lipSyncRequired: false }, ready).route, 'seedance_first_frame');
+assert.equal(decidePresenterStack({ ...base, physicalProductContact: true, visibleSpeechSeconds: 0,
+  lipSyncRequired: false }, { ...ready, seedance: false }).reasonCodes[0], 'seedance_capability_unavailable');
 assert.equal(decidePresenterStack({ ...base, visibleSpeechSeconds: 0, lipSyncRequired: false, specificGestureCount: 1, durationSeconds: 16,
   evidence: [{ startSeconds: 0, endSeconds: 3, frameRef: 'frame-1', observation: '手势' }] }, ready).route, 'blocked');
 assert.equal(decidePresenterStack(base, { ...ready, heygen: false }).route, 'blocked');
