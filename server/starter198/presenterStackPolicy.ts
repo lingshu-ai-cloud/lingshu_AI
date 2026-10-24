@@ -48,6 +48,20 @@ export function decidePresenterStack(measurements: PresenterShotMeasurements, re
     || m.bodyCenterTravelFrameWidth! > PRESENTER_STACK_POLICY_V1.maximumHeygenBodyTravelFrameWidth
     || m.cameraTravelFrameDiagonal! > PRESENTER_STACK_POLICY_V1.maximumHeygenCameraTravelFrameDiagonal
     || m.compositionLockRequired;
+  // Any physical product interaction belongs to Seedance, even when the
+  // presenter and camera are otherwise stable. HeyGen is only eligible again
+  // after the product has been put down at a separately cut shot. Seedance's
+  // current presenter adapter is motion-only, so speech must be represented as
+  // an explicit split rather than silently routed to HeyGen.
+  if (m.physicalProductContact) {
+    if (speech) return result('split_motion_and_speech', ['product_interaction_requires_seedance_and_speech_split']);
+    if (!readiness.budget) return result('blocked', ['budget_unavailable']);
+    if (m.durationSeconds > PRESENTER_STACK_POLICY_V1.maximumSeedanceShotSeconds)
+      return result('blocked', ['seedance_shot_exceeds_15_seconds']);
+    return readiness.seedance
+      ? result('seedance_first_frame', ['physical_product_interaction_requires_seedance'], true)
+      : result('blocked', ['seedance_capability_unavailable']);
+  }
   if (!speech && !motion) return result('no_presenter_stack', ['no_precise_speech_or_motion_requirement']);
   if (speech && motion) return result('split_motion_and_speech', [m.physicalProductContact
     ? 'enterprise_product_contact_requires_dynamic_presenter'
