@@ -109,11 +109,12 @@ export function VideoCard({ video, creatorCard = false, isSelected, onSelect, on
     : video.trend === 'hot' ? '🔥 热门' : video.trend === 'rising' ? '↑ 上升' : '— 平稳';
   const analysisProgress = video.aiAnalysis?.analysisProgress;
   const analysisStage = analysisProgress?.stage;
+  const analysisNotRequested = video.aiAnalysis?.geminiStatus === 'not_requested';
   const analysisPaused = ['paused', 'cancelled'].includes(String(analysisStage || '')) || video.aiAnalysis?.geminiStatus === 'paused';
   const analysisActive = ['queued', 'downloading', 'transcoding', 'analyzing', 'extracting_evidence'].includes(String(analysisStage || ''));
   const mediaState = !analysisPaused && (imageQueue?.state === 'unknown' || imageFailed || analysisStage === 'failed')
     ? 'error'
-    : analysisActive || (video.status === 'pending' && !analysisPaused)
+    : analysisActive || (video.status === 'pending' && !analysisPaused && !analysisNotRequested)
       ? 'processing'
       : 'ready';
   return (
@@ -192,6 +193,7 @@ export function VideoCard({ video, creatorCard = false, isSelected, onSelect, on
         </div>}
       </div>
       {creatorCard && previewError && <span role="status" className="mt-1 text-xs text-text-muted" title={previewError}>视频暂不可用</span>}
+      {creatorCard && analysisNotRequested && <span role="status" className="mt-1 text-xs text-text-muted">历史参考 · 待全片分析</span>}
       {creatorCard && <button type="button" className="creator-card__title line-clamp-2 w-full text-left text-xs leading-relaxed text-text-primary" title={video.title} onClick={onSelect}>{video.title}</button>}
     </article>
   );

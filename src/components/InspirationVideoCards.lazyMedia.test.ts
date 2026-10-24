@@ -156,8 +156,9 @@ test('creator cards keep balanced masonry frames and fill both media orientation
 test('creator card previews follow pointer and keyboard focus while titles remain outside the image', () => {
   const page = harness();
   const initial = page.render(video, true);
-  assert.equal(initial.props.children[2].props.children, video.title);
-  assert.equal(initial.props.children[2].type, 'button');
+  const title = initial.props.children.find((node: Node | null) => node && String(node.props?.className || '').includes('creator-card__title'));
+  assert.equal(title.props.children, video.title);
+  assert.equal(title.type, 'button');
   initial.props.onPointerEnter();
   assert.equal(players(page.render(video, true))[0]!.props.previewActive, true);
   initial.props.onPointerLeave();
@@ -171,5 +172,13 @@ test('creator card previews follow pointer and keyboard focus while titles remai
   initial.props.onFocusCapture();
   focused.props.onBlurCapture({ currentTarget: { contains: () => false }, relatedTarget: null });
   assert.equal(players(page.render(video, true))[0]!.props.previewActive, false);
+  page.cleanup();
+});
+
+test('restored original files awaiting analysis never pretend an analysis job is running', () => {
+  const page = harness();
+  const tree = page.render({ ...video, status: 'pending', aiAnalysis: { geminiStatus: 'not_requested' } }, true);
+  assert.equal(descendants(tree).find(node => node.type === 'LsMediaStateFrame')!.props.state, 'ready');
+  assert.ok(descendants(tree).some(node => node.props.role === 'status' && node.props.children === '历史参考 · 待全片分析'));
   page.cleanup();
 });
