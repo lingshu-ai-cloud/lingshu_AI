@@ -476,7 +476,7 @@ export function OnboardingPanel({
     updatedAt: new Date().toISOString(),
   });
   const persistOnboardingDraft = async (nextStep: EnterpriseOnboardingStep): Promise<EnterpriseOnboardingDraft | null> => {
-    if (!baseFactVersion || profileSaving) return null;
+    if (!baseFactVersion || profileSaving) { if (!baseFactVersion) setProfileError('企业资料尚未载入，无法保存当前草稿；请稍后重试。'); return null; }
     setProfileSaving(true); setProfileError(''); setProductError(''); setStageError('');
     try {
       const saved = await saveEnterpriseOnboardingDraft(buildOnboardingDraft(nextStep), draftRevision);
@@ -627,7 +627,7 @@ export function OnboardingPanel({
     onPresenterSelected={() => setPresenterConfigured(true)} onConfirm={() => void completePresenterSetup()}
   />;
   if (mode === 'first' && guideStep === 1) return <OnboardingEnterpriseStep
-    busy={busy || profileSaving || proposalLoading} profileLoading={profileLoading} dismissible={dismissible}
+    busy={busy || profileLoading || profileSaving || proposalLoading} profileLoading={profileLoading} dismissible={dismissible}
     onClose={() => void saveDraftAndClose()} onConfirm={() => void confirmEnterpriseDraft()}
     missingFields={missingProfileFields} companyName={form.companyName} brandName={brandName}
     industry={form.industry} primaryBusiness={form.primaryBusiness} error={profileError}

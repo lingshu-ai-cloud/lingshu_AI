@@ -111,6 +111,7 @@ export default function DigitalEmployeePage({
   const presenterConsentReturnRequested = Boolean(new URLSearchParams(window.location.search).get('presenterConsentReturn')?.trim());
   const [applicationGuideOpen, setApplicationGuideOpen] = useState(presenterConsentReturnRequested);
   const [applicationGuideEntry, setApplicationGuideEntry] = useState<"start" | "presenter">(presenterConsentReturnRequested ? "presenter" : "start");
+  const [firstGuideOpen, setFirstGuideOpen] = useState(true);
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
   const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
   const [planHistoryOpen, setPlanHistoryOpen] = useState(false);
@@ -672,14 +673,20 @@ export default function DigitalEmployeePage({
             <Button className="!h-auto min-h-9 !whitespace-normal" onClick={() => setError("")}><XCircle size={17} /></Button>
           </div>
         )}
-        <OnboardingPanel
+        {firstGuideOpen ? <OnboardingPanel
           initial={EMPTY_CONFIG}
           readiness={data?.businessSnapshot?.readiness || []}
           busy={Boolean(busy)}
+          dismissible
+          onClose={() => setFirstGuideOpen(false)}
           onOpenReadiness={openReadiness}
           onNavigate={(page) => openBusiness(page)}
           onSave={saveConfig}
-        />
+        /> : <section aria-label="数字员工尚未配置" className="mt-6 rounded-xl border border-border bg-surface p-6">
+          <h2 className="text-lg font-semibold text-text-primary">新手引导已跳过</h2>
+          <p className="mt-2 text-sm text-text-secondary">当前进度已保存为草稿。数字员工尚未完成配置，不会自动开始任务；可以随时继续引导。</p>
+          <Button type="primary" className="mt-4" onClick={() => setFirstGuideOpen(true)}>继续新手引导</Button>
+        </section>}
       </div>
     </div>
   );

@@ -49,7 +49,7 @@ function OnboardingGuideFrame({ step, title, headerAction, children, busy = fals
     styles={{ body: { maxHeight: 'min(72vh, 720px)', overflowY: 'auto' } }}
     footer={[
       onBack ? <Button key="back" disabled={busy} onClick={onBack}>返回上一步</Button> : null,
-      dismissible ? <Button key="later" type="text" disabled={busy} onClick={onClose}>保存草稿，稍后继续</Button> : null,
+      dismissible ? <Button key="skip" type="text" disabled={busy} onClick={onClose} title="保存当前草稿，稍后继续">跳过</Button> : null,
       <LsBrandAction key="primary" loading={busy} disabled={primaryDisabled} onClick={onPrimary}>{primaryLabel}</LsBrandAction>,
     ].filter(Boolean)}
   >

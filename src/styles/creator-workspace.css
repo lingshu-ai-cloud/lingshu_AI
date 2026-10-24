@@ -12,14 +12,20 @@ html[data-lingshu-appearance='dark'] .ls-design-system {
   --color-accent: #57b7ff;
   --color-accent-dim: #80c9ff;
   --color-accent-glow: rgba(62, 172, 255, .12);
+  --color-insight-soft: color-mix(in srgb, #f4c778 13%, var(--color-surface));
+  --color-insight-action: #f4ca86;
+  --color-amber-dim: var(--color-insight-soft);
   --ls-bg: #111214;
   --ls-bg-secondary: #202123;
   --ls-text: #f5f5f7;
+  --ls-text-primary: var(--ls-text);
   --ls-text-secondary: #c4c5ca;
   --ls-text-tertiary: #96989f;
   --ls-border: #37383c;
   --ls-border-secondary: #303135;
   --ls-fill: #292a2d;
+  --ls-surface-primary: var(--color-surface);
+  --ls-surface-secondary: var(--color-surface-2);
   --ls-primary: var(--color-accent);
   --ls-info-bg: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface));
   --ls-selected: var(--color-surface-2);
@@ -37,11 +43,113 @@ html[data-lingshu-appearance='dark'] .ls-design-system .app-shell [data-app-page
   background-color: var(--color-ink);
   border-color: var(--color-border);
 }
-html[data-lingshu-appearance='dark'] .ls-design-system .app-shell :where(div, section, article, aside, nav, header, footer).bg-white {
+html[data-lingshu-appearance='dark'] :where(.auth-shell, .auth-panel, .auth-form-card, .auth-field) {
+  background-color: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+html[data-lingshu-appearance='dark'] .auth-shell { background-color: var(--color-ink); }
+html[data-lingshu-appearance='dark'] .auth-field::placeholder { color: var(--color-text-muted); }
+/* The token bridge also reaches Ant portals mounted outside .app-shell. */
+html[data-lingshu-appearance='dark'] body :where(div, main, section, article, aside, nav, header, footer, form, fieldset, details, summary, li, th, td).bg-white {
   background-color: var(--color-surface);
 }
-html[data-lingshu-appearance='dark'] .ls-design-system .app-shell :where(button, label, input).bg-white {
+html[data-lingshu-appearance='dark'] body :where(button, label, input, textarea, select).bg-white {
   background-color: var(--color-surface);
+}
+html[data-lingshu-appearance='dark'] body :where(
+  [class~='bg-white/60'], [class~='bg-white/65'], [class~='bg-white/70'],
+  [class~='bg-white/75'], [class~='bg-white/80'], [class~='bg-white/85'],
+  [class~='bg-white/88'], [class~='bg-white/90'], [class~='bg-white/95']
+) { background-color: color-mix(in srgb, var(--color-surface) 85%, transparent); }
+html[data-lingshu-appearance='dark'] body :where(
+  .bg-neutral-50, .bg-neutral-100, .bg-zinc-50, .bg-zinc-100,
+  .bg-gray-50, .bg-gray-100, .bg-slate-50, .bg-slate-100,
+  [class^='bg-neutral-50/'], [class*=' bg-neutral-50/'],
+  [class^='bg-zinc-50/'], [class*=' bg-zinc-50/'],
+  [class^='bg-gray-50/'], [class*=' bg-gray-50/'],
+  [class^='bg-slate-50/'], [class*=' bg-slate-50/']
+) { background-color: var(--color-surface-2); }
+html[data-lingshu-appearance='dark'] body :where(
+  [class~='bg-[#fbfcfa]'], [class~='bg-[#f8faf9]'], [class~='bg-[#f7f9f6]'],
+  [class~='bg-[#f6f8f5]'], [class~='bg-[#f6faf7]'], [class~='bg-[#f5f8f5]'],
+  [class~='bg-[#f5f5f5]']
+) { background-color: var(--color-surface-2); }
+html[data-lingshu-appearance='dark'] body :where(
+  [class~='bg-[#edf7f1]'], [class~='bg-[#eff7f1]'], [class~='bg-[#edf4ef]'],
+  [class~='bg-[#f3f8f4]']
+) { background-color: color-mix(in srgb, #7bd8b0 13%, var(--color-surface)); }
+html[data-lingshu-appearance='dark'] body :where([class~='bg-[#fff4e8]'], [class~='bg-[#fffdf7]']) {
+  background-color: color-mix(in srgb, #f4c778 13%, var(--color-surface));
+}
+html[data-lingshu-appearance='dark'] body [class~='bg-[#eef2f8]'] { background-color: color-mix(in srgb, #80c9ff 13%, var(--color-surface)); }
+html[data-lingshu-appearance='dark'] body [class~='bg-[#fff0ef]'] { background-color: color-mix(in srgb, #ff9aa7 13%, var(--color-surface)); }
+html[data-lingshu-appearance='dark'] body [class~='text-[#a6572a]'],
+html[data-lingshu-appearance='dark'] body [class~='text-[#a66c24]'] { color: #f4ca86; }
+html[data-lingshu-appearance='dark'] body [class~='text-[#a53b37]'] { color: #ffa4af; }
+html[data-lingshu-appearance='dark'] body :where(
+  .text-neutral-900, .text-zinc-950, .text-zinc-900, .text-zinc-800,
+  .text-gray-950, .text-gray-900, .text-gray-800,
+  .text-slate-950, .text-slate-900, .text-slate-800
+) { color: var(--color-text-primary); }
+html[data-lingshu-appearance='dark'] body :where(
+  .text-zinc-700, .text-zinc-600, .text-zinc-500,
+  .text-gray-700, .text-gray-600, .text-gray-500,
+  .text-slate-700, .text-slate-600, .text-slate-500
+) { color: var(--color-text-secondary); }
+html[data-lingshu-appearance='dark'] body :where(
+  .bg-blue-50, .bg-blue-100, .bg-sky-50, .bg-sky-100, .bg-cyan-50, .bg-cyan-100,
+  [class^='bg-blue-50/'], [class*=' bg-blue-50/'],
+  [class^='bg-sky-50/'], [class*=' bg-sky-50/'],
+  [class^='bg-cyan-50/'], [class*=' bg-cyan-50/']
+) { background-color: color-mix(in srgb, #80c9ff 13%, var(--color-surface)); }
+html[data-lingshu-appearance='dark'] body :where(
+  .bg-emerald-50, .bg-emerald-100, .bg-green-50, .bg-green-100,
+  [class^='bg-emerald-50/'], [class*=' bg-emerald-50/'],
+  [class^='bg-green-50/'], [class*=' bg-green-50/']
+) { background-color: color-mix(in srgb, #7bd8b0 13%, var(--color-surface)); }
+html[data-lingshu-appearance='dark'] body :where(
+  .bg-amber-50, .bg-amber-100, .bg-yellow-50, .bg-yellow-100, .bg-orange-50,
+  [class^='bg-amber-50/'], [class*=' bg-amber-50/']
+) { background-color: color-mix(in srgb, #f4c778 13%, var(--color-surface)); }
+html[data-lingshu-appearance='dark'] body :where(
+  .bg-red-50, .bg-red-100, .bg-rose-50, .bg-rose-100, .bg-pink-50,
+  [class^='bg-red-50/'], [class*=' bg-red-50/'],
+  [class^='bg-rose-50/'], [class*=' bg-rose-50/']
+) { background-color: color-mix(in srgb, #ff9aa7 13%, var(--color-surface)); }
+html[data-lingshu-appearance='dark'] body :where(
+  .bg-violet-50, .bg-violet-100, .bg-purple-50, .bg-indigo-50,
+  [class^='bg-violet-50/'], [class*=' bg-violet-50/']
+) { background-color: color-mix(in srgb, #c0a8ff 13%, var(--color-surface)); }
+html[data-lingshu-appearance='dark'] body :where(
+  .text-blue-700, .text-blue-800, .text-blue-900,
+  .text-sky-700, .text-sky-800, .text-sky-900,
+  .text-cyan-700, .text-cyan-800, .text-cyan-900
+) { color: #8acfff; }
+html[data-lingshu-appearance='dark'] body :where(
+  .text-emerald-700, .text-emerald-800, .text-emerald-900,
+  .text-green-700, .text-green-800, .text-green-900
+) { color: #91dfbd; }
+html[data-lingshu-appearance='dark'] body :where(
+  .text-amber-700, .text-amber-800, .text-amber-900,
+  .text-yellow-700, .text-yellow-800, .text-orange-700, .text-orange-800
+) { color: #f4ca86; }
+html[data-lingshu-appearance='dark'] body :where(
+  .text-red-700, .text-red-800, .text-red-900,
+  .text-rose-700, .text-rose-800, .text-rose-900, .text-pink-700
+) { color: #ffa4af; }
+html[data-lingshu-appearance='dark'] body :where(
+  .text-violet-700, .text-violet-800, .text-violet-900,
+  .text-purple-700, .text-purple-800, .text-indigo-700, .text-indigo-800
+) { color: #c9b5ff; }
+html[data-lingshu-appearance='dark'] body .bg-accent.text-white { color: var(--color-ink); }
+html[data-lingshu-appearance='dark'] body .ant-spin-description { color: var(--color-accent); }
+html[data-lingshu-appearance='dark'] body .ant-segmented:not(.creator-mode-switch) .ant-segmented-item-selected {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+html[data-lingshu-appearance='dark'] body .ant-segmented:not(.creator-mode-switch) .ant-segmented-item-selected :where(.ant-segmented-item-label, .text-text-secondary) {
+  color: var(--color-text-primary);
 }
 html[data-lingshu-appearance='dark'] .ls-design-system .app-shell .bg-slate-950 {
   background-color: #374250;

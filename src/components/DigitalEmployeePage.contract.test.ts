@@ -733,6 +733,10 @@ assert.match(pageSource, /active && applicationGuideOpen/, 'the onboarding modal
 assert.match(pageSource, /deferredOpen = window\.setTimeout\([\s\S]{0,300}setApplicationGuideOpen\(true\)/, 'a retained page must defer the modal until Activity effect reconnection has completed');
 assert.match(appPageSlotSource, /<DigitalEmployeePage active=\{page === 'digitalEmployees'\}/, 'the shell must tell the retained page when it is visible');
 assert.match(onboardingGuideFrameSource, /footer=\{\[[\s\S]{0,900}<LsBrandAction/, 'the guide must keep a single branded primary action in the fixed modal footer');
+assert.match(onboardingGuideFrameSource, /<Button key="skip"[^>]*onClick=\{onClose\}[^>]*>跳过<\/Button>/, 'every dismissible guide step needs an explicit skip action');
+assert.match(pageShellSource, /firstGuideOpen \? <OnboardingPanel[\s\S]{0,300}dismissible[\s\S]{0,100}onClose=\{\(\) => setFirstGuideOpen\(false\)\}/, 'first-time users may pause the guide without completing configuration');
+assert.match(pageShellSource, /aria-label="数字员工尚未配置"[\s\S]{0,400}不会自动开始任务[\s\S]{0,200}继续新手引导/, 'skipping must show an honest unconfigured state with a resume action');
+assert.match(onboardingPanelSource, /const saveDraftAndClose = async \(\) => \{[\s\S]{0,150}if \(saved\) onClose\?\.\(\)/, 'skip must close only after the current draft is saved');
 assert.doesNotMatch(onboardingGuideFrameSource, /OnboardingStepVisual|企业与品牌关系图|产品资料入库流程图|社媒经营阶段选择图|数字人统一接入图/, 'the beginner guide must not reserve space for redundant explanatory diagrams');
 assert.match(onboardingGuideFrameSource, /<section aria-labelledby=\{`onboarding-step-\$\{step\}-title`\}>/, 'the current onboarding form must use the full dialog content width');
 assert.match(onboardingGuideFrameSource, /justify-between[\s\S]{0,300}<h2[\s\S]{0,300}\{headerAction\}/, 'optional step actions must share the responsive title row');

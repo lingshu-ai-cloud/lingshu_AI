@@ -30,7 +30,7 @@ export default function AssistantLauncher({
           aria-label="展开灵小枢入口"
           onClick={onRestore}
           icon={<ChevronLeft size={18} aria-hidden="true" />}
-          className="!flex !h-11 !w-11 !items-center !justify-center !rounded-l-full !rounded-r-none !border-border !border-r-transparent !bg-white !text-accent shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow active:!bg-white focus-visible:!bg-white focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2"
+          className="!flex !h-11 !w-11 !items-center !justify-center !rounded-l-full !rounded-r-none !border-border !border-r-transparent !bg-surface !text-accent shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow active:!bg-surface focus-visible:!bg-surface focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2"
           title="展开灵小枢入口"
         />
       </Badge>
@@ -56,7 +56,7 @@ export default function AssistantLauncher({
               <Bot size={15} />
             </span>
           )}
-          className="!flex !h-11 !w-11 !gap-0 !border-border !bg-white !px-2 !text-text-primary shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow active:!bg-white focus-visible:!bg-white focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2 sm:!w-auto sm:!gap-2 sm:!px-3.5"
+          className="!flex !h-11 !w-11 !gap-0 !border-border !bg-surface !px-2 !text-text-primary shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow active:!bg-surface focus-visible:!bg-surface focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2 sm:!w-auto sm:!gap-2 sm:!px-3.5"
           title={chatOpen ? '收起灵小枢对话' : '询问灵小枢'}
         >
           <span className="ls-type-label-large hidden whitespace-nowrap sm:inline">询问灵小枢</span>

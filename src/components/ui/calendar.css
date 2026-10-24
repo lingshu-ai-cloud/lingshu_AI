@@ -1,17 +1,17 @@
 .ls-calendar {
   --fc-classic-primary: var(--color-accent, #2563eb);
   --fc-classic-primary-foreground: #fff;
-  --fc-classic-background: #fff;
+  --fc-classic-background: var(--color-surface, #fff);
   --fc-classic-border: var(--color-border, #e4e4e7);
-  --fc-classic-strong-border: #d4d4d8;
+  --fc-classic-strong-border: var(--color-border-bright, #d4d4d8);
   --fc-classic-foreground: var(--color-text-primary, #171717);
   --fc-classic-muted-foreground: var(--color-text-secondary, #52525b);
-  --fc-classic-faint-foreground: #71717a;
-  --fc-classic-faint: #f5f5f5;
-  --fc-classic-today: #eff6ff;
+  --fc-classic-faint-foreground: var(--color-text-muted, #71717a);
+  --fc-classic-faint: var(--color-surface-2, #f5f5f5);
+  --fc-classic-today: color-mix(in srgb, var(--color-accent, #2563eb) 9%, var(--color-surface, #fff));
   --fc-classic-now: #2563eb;
-  --fc-classic-event: #fff;
-  --fc-classic-event-contrast: #171717;
+  --fc-classic-event: var(--color-surface, #fff);
+  --fc-classic-event-contrast: var(--color-text-primary, #171717);
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
@@ -204,6 +204,50 @@
   .ls-calendar-agent-view .fc-daygrid-day-frame { min-height: 480px; }
   .ls-calendar-agent-view.ls-calendar-task-board .ls-calendar-surface > div { min-width: 0; }
   .ls-calendar-agent-view .ls-calendar-event-row-title { font-size: 12px; }
+}
+/* FullCalendar and the shared media cards use the same appearance tokens as the workspace. */
+html[data-lingshu-appearance='dark'] .ls-calendar {
+  --fc-classic-now: var(--color-accent);
+  color: var(--color-text-primary);
+}
+html[data-lingshu-appearance='dark'] .ls-calendar :where(
+  .ls-calendar-date-only-time-rail, .fc-timegrid-axis, .fc-timegrid-slot-label,
+  .fc-col-header-cell, .ls-calendar-event-identity
+) { background: var(--color-surface); }
+html[data-lingshu-appearance='dark'] .ls-calendar :where(
+  .ls-calendar-toolbar h3, .ls-calendar-event-row-title, .ls-calendar-details dd
+) { color: var(--color-text-primary); }
+html[data-lingshu-appearance='dark'] .ls-calendar :where(
+  .ls-calendar-meta, .fc-timegrid-slot-label, .fc-col-header-cell-cushion,
+  .ls-calendar-event-row-owner, .ls-calendar-event-row-state, .ls-calendar-event-copy > span,
+  .ls-calendar-event-summary, .ls-calendar-details dt, .ls-calendar-thumb > span,
+  .ls-calendar-media > span, .ls-calendar-card-media > span
+) { color: var(--color-text-secondary); }
+html[data-lingshu-appearance='dark'] .ls-calendar :where(
+  .ls-calendar-surface, .ls-calendar-event,
+  .ls-calendar-event-placeholder, .ls-calendar-thumb, .ls-calendar-card-media,
+  .ls-calendar-event-poster, .ls-calendar-media
+) { background: var(--color-surface); border-color: var(--color-border); color: var(--color-text-primary); }
+html[data-lingshu-appearance='dark'] .ls-calendar .ls-calendar-event:hover { background: var(--color-surface-2); }
+html[data-lingshu-appearance='dark'] .ls-calendar :where(.ls-calendar-weekend, .ls-calendar-agent-human) { background: var(--color-surface-2); }
+html[data-lingshu-appearance='dark'] .ls-calendar :where(.ls-calendar-today, .ls-calendar-agent-view .fc-day-today) {
+  background: color-mix(in srgb, var(--color-accent) 11%, var(--color-surface)) !important;
+}
+html[data-lingshu-appearance='dark'] .ls-calendar .ls-calendar-agent-business,
+html[data-lingshu-appearance='dark'] #agent-weekly-calendar .ls-calendar-event-aggregate-publishing {
+  background: color-mix(in srgb, #80c9ff 14%, var(--color-surface)) !important;
+}
+html[data-lingshu-appearance='dark'] .ls-calendar .ls-calendar-agent-director { background: color-mix(in srgb, #c0a8ff 14%, var(--color-surface)); }
+html[data-lingshu-appearance='dark'] .ls-calendar .ls-calendar-agent-content { background: color-mix(in srgb, #ff9aa7 14%, var(--color-surface)); }
+html[data-lingshu-appearance='dark'] .ls-calendar .ls-calendar-agent-customer,
+html[data-lingshu-appearance='dark'] #agent-weekly-calendar .ls-calendar-event-done { background: color-mix(in srgb, #7bd8b0 14%, var(--color-surface)); color: var(--color-text-primary); }
+html[data-lingshu-appearance='dark'] #agent-weekly-calendar .ls-calendar-event-aggregate { background: var(--color-surface-2) !important; }
+html[data-lingshu-appearance='dark'] #agent-weekly-calendar .ls-calendar-event-done .ls-calendar-event-row-title { color: var(--color-text-primary); }
+html[data-lingshu-appearance='dark'] .ls-calendar .ls-calendar-event-placeholder .ls-calendar-event-row-title { color: var(--color-text-secondary); }
+html[data-lingshu-appearance='dark'] .ls-calendar :where(.ls-calendar-event-platform-badge, .ls-calendar-event-status-badge) {
+  border-color: var(--color-border-bright);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
 }
 @media (pointer: coarse) { .ls-calendar-compact .ls-calendar-toolbar button { min-height: 44px; min-width: 44px; } }
 @media (prefers-reduced-motion: reduce) { .ls-calendar .ls-calendar-event-reveal { opacity: 1 !important; transform: none !important; transition: none !important; } }

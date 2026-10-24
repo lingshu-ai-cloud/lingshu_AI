@@ -86,7 +86,10 @@ assert.match(source, /<AssistantFloatingReminders[\s\S]*launcherRetracted=\{laun
 assert.match(floatingRemindersSource, /const canShow = !launcherRetracted && mode === 'breathing'/, '收起态不得显示任何横向提示气泡');
 assert.match(floatingRemindersSource, /canShow && hasPerformancePriority && performance[\s\S]*canShow && !hasPerformancePriority && speechBubble[\s\S]*weeklyPlanKickoffAvailable[\s\S]*featureGuide/, '等待、短消息、周计划和引导提示优先级必须保留');
 assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY/, '右下角入口不得恢复拖动、旧坐标或自动缩边交互');
-assert.match(launcherMarkup, /!bg-white[\s\S]*active:!bg-white[\s\S]*focus-visible:!bg-white/, '灵小枢入口在点击和聚焦时必须保持不透明白底');assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
+assert.match(launcherMarkup, /!bg-surface[\s\S]*active:!bg-surface[\s\S]*focus-visible:!bg-surface/, '灵小枢入口在点击和聚焦时必须保持与日夜主题一致的不透明表面');
+assert.match(edgeLauncherMarkup, /!bg-surface[\s\S]*active:!bg-surface[\s\S]*focus-visible:!bg-surface/, '灵小枢贴边入口也必须使用日夜主题表面');
+assert.doesNotMatch(launcherMarkup + edgeLauncherMarkup, /!bg-white/, '夜间模式的灵小枢入口不得强制纯白');
+assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
 assert.match(conversationPanelSource, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
 assert.match(conversationPanelSource, /max-h-\[calc\(100dvh-env\(safe-area-inset-bottom\)-96px\)\]/, '灵小枢弹窗高度必须避让移动设备底部安全区');
 assert.match(conversationPanelSource, /role="dialog"[\s\S]{0,160}aria-modal="false"[\s\S]{0,160}aria-labelledby="global-assistant-panel-title"[\s\S]{0,160}aria-describedby="global-assistant-panel-description"/, '灵小枢必须以有名称和说明的非模态对话浮层呈现');
