@@ -1,15 +1,17 @@
-import { Alert, Avatar, Button, Collapse, Switch, Tag, Tooltip } from 'antd';
+import {hasLocalCustomerProfileResult, localCustomerProfileUnassessed} from '../../../shared/contracts/localCustomerProfile';
+import { CustomerProfileTags } from './CustomerProfileTags';
+import { customerFollowupStatus } from './customerTagPresentation';
+import { Avatar, Button, Tooltip } from 'antd';
 import { useEffect, useState } from 'react';
-import { AlertTriangle, BrainCircuit, Check, ChevronDown, Info, Power, UserRound } from 'lucide-react';
+import { AlertTriangle, BrainCircuit, ChevronDown } from 'lucide-react';
 import { useAgentProductionAction } from '../../lib/agentProductionSession';
 import { authHeader } from '../../lib/auth';
 import { buildPrioritySuggestion, type PrioritySuggestion } from '../../lib/customerPriority';
-import type { CustomerServiceStatus } from '../../lib/customerService';
 import type { CustomerProfile, HandlingMode } from '../../types/customer';
 import type { ConversationDraftIntent } from './conversationTiming';
 import { STAGE_LABEL, customerDisplayName } from './conversionPresentation';
 import { LiveLocalTime } from './LiveLocalTime';
-import { QuoteSkillCard } from './QuoteSkillCard';
+import { sourceLabel } from './SourceIcon';
 import { LsGradientProgress } from '../ui/LsExperiencePrimitives';
 import { isSuggestionDismissed, suggestionDismissKey } from './customerSuggestionDismissal';
 
@@ -52,6 +54,7 @@ async function requestHandoffSummary(customer: CustomerProfile): Promise<string>
 }
 
 function intentLevelLabel(customer: CustomerProfile) {
+  if (localCustomerProfileUnassessed(customer)) return '意向待评估';
   if (customer.bant?.band === 'black') return '信息待核实';
   if (customer.bant?.level === 'hot' || customer.intentScore >= 90) return '高价值商机';
   if (customer.bant?.level === 'qualified' || customer.intentScore >= 75) return '值得重点跟进';
@@ -228,11 +231,11 @@ function CustomerIntentActionPanel({
     <section data-testid="ai-intent-action-panel" className="rounded-lg border border-border bg-surface">
       <div className="flex items-center justify-between gap-3 border-b border-border px-3.5 py-2.5">
         <div>
-          <p className="text-xs font-bold text-text-primary">AI 意向信号</p>
+          <p className="text-xs font-bold text-text-primary">AI 回复</p>
           <p className="mt-0.5 text-[10px] text-text-muted">沟通阶段与下一步推进建议</p>
         </div>
         <span className="shrink-0 border-l-2 border-accent bg-accent-glow px-2 py-1 text-[10px] font-bold text-accent">
-          {intentLevelLabel(customer)} · {customer.intentScore}
+          {intentLevelLabel(customer)}{!localCustomerProfileUnassessed(customer) && ` · ${customer.intentScore}`}
         </span>
       </div>
       <div className="p-3">
@@ -299,79 +302,6 @@ function CustomerIntentActionPanel({
   );
 }
 
-function RulesDisclosure({
-  customerServiceStatus,
-  customerServiceSaving,
-  customerServiceLabel,
-  customerServiceSummary,
-  notificationReady,
-  onToggleCustomerService,
-  onEnablePartialAutoReply,
-}: {
-  customerServiceStatus: CustomerServiceStatus | null;
-  customerServiceSaving: boolean;
-  customerServiceLabel: string;
-  customerServiceSummary: string;
-  notificationReady: boolean;
-  onToggleCustomerService: (enabled: boolean) => void;
-  onEnablePartialAutoReply: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="rounded-lg border border-border bg-surface">
-      <Button htmlType="button" onClick={() => setOpen(v => !v)} className="!h-auto min-h-9 !whitespace-normal !justify-start flex w-full items-center justify-between px-3.5 py-3 text-left text-xs font-bold text-text-primary">
-        分工规则
-        <ChevronDown size={14} className={`text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
-      </Button>
-      {open && (
-        <div className="space-y-2 border-t border-border px-3.5 py-3 text-[11px] leading-5 text-text-secondary">
-          <div className="mb-3 border-y border-border bg-surface-2 p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-bold text-text-primary">智能客服接待</p>
-                <p className="text-[10px] text-text-muted">{customerServiceLabel}</p>
-              </div>
-              <Switch aria-label="智能客服总开关" checked={Boolean(customerServiceStatus?.enabled)} loading={customerServiceSaving} onChange={onToggleCustomerService}/>
-            </div>
-            <p className="mt-2 text-[10px] leading-4 text-text-muted">{customerServiceSummary}</p>
-            {customerServiceStatus?.enabled && customerServiceStatus.eligibleForPartialAutoReply && customerServiceStatus.partialAutoReplyDecision === 'declined' && (
-              <Button htmlType="button" disabled={customerServiceSaving} onClick={onEnablePartialAutoReply} className="!h-auto min-h-9 !whitespace-normal mt-2 text-[10px] font-bold text-accent hover:underline disabled:opacity-50">
-                开放部分直回
-              </Button>
-            )}
-          </div>
-          {!notificationReady && (
-            <Button
-              htmlType="button"
-              onClick={() => {
-                localStorage.setItem('lingshu:enterprise:highlight-notifications', 'true');
-                window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } }));
-              }}
-              className="!h-auto min-h-9 !whitespace-normal !justify-start mb-2 w-full rounded-lg border border-border bg-surface px-3 py-2 text-left text-[10px] font-semibold leading-4 text-text-secondary hover:bg-surface-2"
-            >
-              设置重要消息提醒接收方式
-            </Button>
-          )}
-          <p>开启后的前 3 天：AI 只给建议，你确认后再发。</p>
-          <p>出现采购数量、样品或收货信息：AI 写草稿，你确认后发送。</p>
-          <p>满 3 天并由你授权后：仅已审批的简单问答可直接回复。</p>
-          <p>讨价还价、订单条款、大单或高价值客户：提醒你亲自接手。</p>
-          <Button
-            htmlType="button"
-            onClick={() => {
-              localStorage.setItem('lingshu:enterprise:highlight-autonomy', 'auto');
-              window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } }));
-            }}
-            className="!h-auto min-h-9 !whitespace-normal mt-1 text-[11px] font-bold text-accent hover:underline"
-          >
-            在企业中心调整规则
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function CustomerInsightDisclosure({ customer }: { customer: CustomerProfile }) {
   const [open, setOpen] = useState(false);
   const scenario = customer.simulation;
@@ -401,7 +331,7 @@ function CustomerInsightDisclosure({ customer }: { customer: CustomerProfile }) 
           <BrainCircuit size={14} />
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="flex min-w-0 items-center justify-between gap-2"><span className="whitespace-nowrap text-xs font-semibold text-text-primary">AI 判断</span><span className="shrink-0 text-xs font-semibold text-accent">意向 {customer.intentScore}</span></span>
+          <span className="flex min-w-0 items-center justify-between gap-2"><span className="whitespace-nowrap text-xs font-semibold text-text-primary">AI 判断</span><span className="shrink-0 text-xs font-semibold text-accent">{localCustomerProfileUnassessed(customer) ? '意向待评估' : `意向 ${customer.intentScore}`}</span></span>
           {scenario?.warning && <span data-testid="large-order-warning-tag" aria-label={`${scenario.warning.title}：${scenario.warning.reason}`} title={scenario.warning.reason} className="inline-flex w-fit max-w-full items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700"><AlertTriangle size={11} className="shrink-0" />大单预警</span>}
         </span>
         <ChevronDown size={14} className={`mt-1 shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -410,8 +340,8 @@ function CustomerInsightDisclosure({ customer }: { customer: CustomerProfile }) 
       {open && (
         <div className="space-y-3 border-t border-border p-3">
           <div>
-            <div className="mb-1.5 flex items-center justify-between text-[10px]"><span className="font-semibold text-text-secondary">成交意向</span><span className="font-semibold text-accent">{customer.intentScore}%</span></div>
-            <LsGradientProgress percent={customer.intentScore} showInfo={false} size="small" />
+            <div className="mb-1.5 flex items-center justify-between text-[10px]"><span className="font-semibold text-text-secondary">成交意向</span><span className="font-semibold text-accent">{localCustomerProfileUnassessed(customer) ? '待评估' : `${customer.intentScore}%`}</span></div>
+            {!localCustomerProfileUnassessed(customer) && <LsGradientProgress percent={customer.intentScore} showInfo={false} size="small" />}
           </div>
           {scenario?.warning && <div className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-[11px] leading-5 text-red-700"><AlertTriangle size={14} className="mt-0.5 shrink-0" /><span className="line-clamp-2">{scenario.warning.reason}</span></div>}
           <div className="grid gap-2 sm:grid-cols-2">
@@ -440,11 +370,7 @@ function CustomerInsightDisclosure({ customer }: { customer: CustomerProfile }) 
 
 export function CustomerInfoRail({
   customer,
-  customerServiceStatus,
-  customerServiceSaving,
-  customerServiceLabel,
-  customerServiceSummary,
-  notificationReady,
+  onCustomerPatch,
   onGenerateDraft,
   onHandlingModeChange,
   onToast,
@@ -454,17 +380,9 @@ export function CustomerInfoRail({
   customerServiceEnabled,
   autoReplyReady,
   hasReplyReady,
-  onToggleCustomerService,
-  onEnablePartialAutoReply,
-  onInsertQuoteReply,
-  onQuoteCardSent,
 }: {
   customer: CustomerProfile | null;
-  customerServiceStatus: CustomerServiceStatus | null;
-  customerServiceSaving: boolean;
-  customerServiceLabel: string;
-  customerServiceSummary: string;
-  notificationReady: boolean;
+  onCustomerPatch: (patch: Partial<CustomerProfile>) => void;
   onGenerateDraft: (instruction: string, intent?: DraftIntent) => Promise<void> | void;
   onHandlingModeChange: (mode: HandlingMode) => void;
   onToast: (message: string) => void;
@@ -474,10 +392,6 @@ export function CustomerInfoRail({
   customerServiceEnabled: boolean;
   autoReplyReady: boolean;
   hasReplyReady: boolean;
-  onToggleCustomerService: (enabled: boolean) => void;
-  onEnablePartialAutoReply: () => void;
-  onInsertQuoteReply: (text: string) => void;
-  onQuoteCardSent: (summary: string, providerMessageId?: string) => void;
 }) {
   if (!customer) {
     return (
@@ -489,45 +403,26 @@ export function CustomerInfoRail({
 
   return (
     <aside data-testid="customer-info-rail" className="min-h-0 w-full shrink-0 self-stretch overflow-y-auto overscroll-contain border-l border-border bg-surface-2 [scrollbar-gutter:stable] lg:w-72 xl:w-[320px] 2xl:w-[336px]">
-      <div className="border-b border-border p-3">
-        <div className="rounded-2xl bg-surface px-3 py-5 shadow-sm">
-          <div className="flex flex-col items-center text-center">
-            <Avatar size={72} style={{ background: '#E8C7EC', color: '#6F3E7A', fontSize: 28 }}>{customer.avatar || customer.name.slice(0, 1)}</Avatar>
-            <h2 className="mt-3 line-clamp-2 text-lg font-semibold leading-6 text-text-primary" title={customerDisplayName(customer)}>{customerDisplayName(customer)}</h2>
-            <div className="mt-1 flex min-w-0 flex-wrap items-center justify-center gap-x-1.5 gap-y-1 text-[11px] text-text-secondary">
-              <span className="max-w-full truncate" title={customer.countryName}>{customer.countryName || '—'}</span>
-              <span className="text-border-bright">·</span>
-              <span>{customer.language || '—'}</span>
-              <span className="text-border-bright">·</span>
-              <span><LiveLocalTime timeZone={customer.timeZone}/></span>
-            </div></div>
-          <dl data-testid="customer-profile-facts" className="mt-4 grid grid-cols-3 divide-x divide-border rounded-xl border border-border bg-surface-2 py-2 text-center"><div className="min-w-0 px-2"><dt className="text-[10px] text-text-muted">关注产品</dt><dd className="mt-0.5 truncate text-xs font-semibold text-text-primary" title={customer.product}>{customer.product || '—'}</dd></div><div className="min-w-0 px-2"><dt className="text-[10px] text-text-muted">客户阶段</dt><dd className="mt-0.5 truncate text-xs font-semibold text-text-primary">{STAGE_LABEL[customer.stage]}</dd></div><div className="min-w-0 px-2"><dt className="text-[10px] text-text-muted">预估价值</dt><dd className="mt-0.5 truncate text-xs font-semibold text-text-primary">{customer.estimatedValue || '—'}</dd></div></dl>
-        </div><div className="mt-3"><CustomerInsightDisclosure customer={customer} /></div>
+      <section aria-label="客户信息" className="space-y-2 border-b border-border bg-surface p-3">
+        <div className="flex items-center gap-2">
+          <Avatar size={32} className="!shrink-0 !bg-accent-glow !text-accent">{customer.avatar || customer.name.slice(0, 1)}</Avatar>
+          <div className="min-w-0 flex-1">
+            <h2 className="line-clamp-2 text-sm font-semibold leading-5 text-text-primary" title={customerDisplayName(customer)}>{customerDisplayName(customer)}</h2>
+            <p className="truncate text-xs text-text-muted">{customer.countryName || '—'} · {customer.language || '—'} · <LiveLocalTime timeZone={customer.timeZone}/></p>
+          </div>
+        </div>
+        <dl data-testid="customer-profile-facts" className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+          <dt className="text-text-muted">跟进</dt><dd><span aria-label="跟进状态" className="rounded bg-accent-glow px-1.5 py-0.5 font-medium text-accent">{customerFollowupStatus(customer)}</span></dd>
+          <dt className="text-text-muted">评估</dt><dd className="text-text-secondary">{customer.estimatedValue === '待报价' ? '金额待评估' : customer.estimatedValue || '金额待评估'} · {localCustomerProfileUnassessed(customer) ? '意向待评估' : `意向 ${customer.intentScore}`}</dd>
+          <dt className="text-text-muted">需求</dt><dd className="truncate text-text-secondary" title={customer.product}>{customer.product || '待了解'}</dd>
+          <dt className="text-text-muted">归因</dt><dd className="truncate text-text-secondary" title={customer.sourcePostTitle}>{customer.sourcePostPlatform || sourceLabel(customer.source)}{customer.sourcePostTitle ? ` · ${customer.sourcePostTitle}` : ''}{customer.sourceTrackCode ? ` · ${customer.sourceTrackCode}` : ''}</dd>
+        </dl>
+        <CustomerProfileTags key={customer.id} customer={customer} onUpdated={onCustomerPatch} />
+        <details className="text-xs text-text-secondary"><summary className="cursor-pointer text-text-muted">客户画像与跟进依据</summary><p className="mt-2 leading-5">{customer.summary}</p><p className="mt-1 leading-5">下一步：{customer.nextStep}</p>{customer.profileAnalysisStatus && <p aria-label="画像分析记录" className="mt-1 leading-5 text-text-muted" title={customer.profileAnalysisErrorCode || undefined}>画像分析：{{pending:'等待分析',analyzing:'后台更新中',succeeded:'已更新',failed:'更新失败',disabled:'未启用分析'}[customer.profileAnalysisStatus]}{hasLocalCustomerProfileResult(customer) && customer.profileAnalysisStatus !== 'succeeded' ? ' · 保留上次结果' : ''}{customer.profileAnalysisUpdatedAt ? ` · ${new Date(customer.profileAnalysisUpdatedAt).toLocaleString('zh-CN')}` : ''}</p>}<CustomerInsightDisclosure customer={customer} /></details>
+      </section>
+      <div className="p-3">
+        <CustomerIntentActionPanel customer={customer} onModeChange={onHandlingModeChange} onToast={onToast} onGenerateDraft={onGenerateDraft} onFocusReply={onFocusReply} onViewDraft={onViewDraft} onCompleteTodo={onCompleteTodo} customerServiceEnabled={customerServiceEnabled} autoReplyReady={autoReplyReady} hasReplyReady={hasReplyReady} />
       </div>
-      <Collapse
-        ghost
-        defaultActiveKey={['business']}
-        items={[
-          {
-            key: 'media',
-            label: '影音内容、文件和链接',
-            children: <div className="rounded-lg bg-surface-2 p-3 text-xs leading-5 text-text-secondary"><p>当前会话共 {customer.timeline.filter(event => event.type === 'messenger' || event.type === 'whatsapp').length} 条消息。</p><p className="mt-1">收到的媒体和链接会在这里按时间归档；没有内容时不展示伪造缩略图。</p></div>,
-          },
-          {
-            key: 'business',
-            label: '客户与销售工作台',
-            children: <div className="grid gap-2.5">
-              <CustomerIntentActionPanel customer={customer} onModeChange={onHandlingModeChange} onToast={onToast} onGenerateDraft={onGenerateDraft} onFocusReply={onFocusReply} onViewDraft={onViewDraft} onCompleteTodo={onCompleteTodo} customerServiceEnabled={customerServiceEnabled} autoReplyReady={autoReplyReady} hasReplyReady={hasReplyReady} />
-              <QuoteSkillCard key={customer.id} customer={customer} onInsertReply={onInsertQuoteReply} onToast={onToast} channelReady={Boolean((customer.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : customer.source === 'instagram' ? customerServiceStatus?.instagramAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)} onCardSent={onQuoteCardSent} />
-            </div>,
-          },
-          {
-            key: 'privacy',
-            label: '隐私设置与支持',
-            children: <RulesDisclosure customerServiceStatus={customerServiceStatus} customerServiceSaving={customerServiceSaving} customerServiceLabel={customerServiceLabel} customerServiceSummary={customerServiceSummary} notificationReady={notificationReady} onToggleCustomerService={onToggleCustomerService} onEnablePartialAutoReply={onEnablePartialAutoReply} />,
-          },
-        ]}
-      />
     </aside>
   );
 }

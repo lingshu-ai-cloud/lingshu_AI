@@ -1,3 +1,4 @@
+import { readTagCorrections } from '../../shared/contracts/customerTags.js';
 import { readCanonicalWhatsAppAccount } from './canonicalAccount.js';
 import { backupWhatsAppDataFiles, customers, dedupeWhatsAppCustomerRecords, dedupeWhatsAppInteractionRecords, importStatus, interactions, mirrorCustomerToPocketBase, mirrorInteractionToPocketBase, syncBackupsToR2, writeCustomers, writeImportStatus, writeInteractions } from './historyPersistence.js';
 export { dedupeWhatsAppCustomerRecords, dedupeWhatsAppInteractionRecords, whatsappInteractionProviderId } from './historyPersistence.js';
@@ -43,6 +44,7 @@ export interface StoredInteraction {
 }
 
 export interface StoredCustomer {
+  contextTagCorrections?: import('../../shared/contracts/customerTags.js').CustomerTagCorrection[];
   id: string;
   tenantId: string;
   waNumber: string;
@@ -281,6 +283,8 @@ export function patchWhatsAppCustomer(input: {
   const current = list[index];
   const patch = input.patch && typeof input.patch === 'object' ? input.patch : {};
   const next: StoredCustomer = { ...current };
+  if (Array.isArray(patch.contextTagCorrections)) next.contextTagCorrections = readTagCorrections(patch.contextTagCorrections);
+  if (Array.isArray(patch.contextTagCorrections) && Array.isArray(patch.tags)) next.tags = patch.tags.filter((t): t is string => typeof t === 'string');
 
   if (typeof patch.language === 'string' && patch.language.trim()) next.language = patch.language.trim().slice(0, 40);
   if (typeof patch.languageLocked === 'boolean') next.languageLocked = patch.languageLocked;

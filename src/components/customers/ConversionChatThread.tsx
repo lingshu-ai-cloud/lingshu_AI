@@ -1,3 +1,4 @@
+import { CustomerQuoteLauncher } from './CustomerQuoteLauncher';
 import { getScrollBehavior } from '../../lib/usePrefersReducedMotion';
 import { Avatar, Button, Input, Popover, Tag, Tooltip } from 'antd';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
@@ -50,7 +51,7 @@ function DraftSuggestionBar({
   onRegenerate: () => void;
 }) {
   const templateApproved = !isTemplate || templatePlan?.template.status === 'approved';
-  const draftMessages = draft.split(/\n\s*\n/).map(item => item.trim()).filter(Boolean).slice(0, 3);
+  const draftMessages = draft.split(/\n\s*\n/).map(item => item.trim()).filter(Boolean);
   const updateMessage = (index: number, value: string) => {
     const next = [...draftMessages];
     next[index] = value;
@@ -91,7 +92,7 @@ function DraftSuggestionBar({
               />
             </div>
           ))}
-          {draftMessages.length > 1 && <p className="text-[10px] text-text-muted">按顺序发送 · {draftMessages.length}/3 条</p>}
+          {draftMessages.length > 1 && <p className="text-[10px] text-text-muted">按顺序发送 · {draftMessages.length} 条</p>}
         </div>
         {isTemplate && templatePlan && (
           <div className="mt-2 border-l-2 border-amber bg-amber-dim px-3 py-2 text-xs leading-relaxed text-amber">
@@ -161,8 +162,12 @@ export function ChatThread({
   onToast,
   sending,
   channelReady,
+  onInsertQuoteReply,
+  onQuoteCardSent,
 }: {
   customer: CustomerProfile | null;
+  onInsertQuoteReply: (text: string) => void;
+  onQuoteCardSent: (summary: string, providerMessageId?: string) => void;
   draftSuggestion: string | null;
   input: string;
   translatedInput: string;
@@ -190,6 +195,9 @@ export function ChatThread({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [translationLoading, setTranslationLoading] = useState(false);
+  const [translationError, setTranslationError] = useState('');
+  const translationCallback = useRef(onPreviewTranslate);
+  translationCallback.current = onPreviewTranslate;
   const [emojiOpen, setEmojiOpen] = useState(false);
   const composerState = draftSuggestion ? 'draft' : input.trim() ? 'typing' : 'idle';
   const isOutsideWindow = customer ? timelineEventAgeHours(lastBuyerEvent(customer)) > 24 : false;
@@ -203,12 +211,15 @@ export function ChatThread({
   const refreshTranslationPreview = useCallback(async () => {
     if (!input.trim()) return;
     setTranslationLoading(true);
+    setTranslationError('');
     try {
-      await onPreviewTranslate();
+      await translationCallback.current();
+    } catch (error) {
+      setTranslationError(error instanceof Error ? error.message : '翻译暂不可用，原文已保留。');
     } finally {
       setTranslationLoading(false);
     }
-  }, [input, onPreviewTranslate]);
+  }, [input]);
 
   const insertEmoji = (emoji: string) => {
     const start = inputRef.current?.selectionStart ?? input.length;
@@ -354,7 +365,7 @@ export function ChatThread({
             {previewOpen && (
               <div className="mb-3 rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-relaxed text-text-secondary">
                 <span className="font-semibold text-text-primary">目标语言译文（{customer.language}）：</span>
-                {translationLoading ? '翻译中…' : translatedInput || '请输入中文内容后查看译文'}
+                {translationLoading ? '翻译中…' : translationError || translatedInput || '请输入中文内容后查看译文'}
               </div>
             )}
             <Input.TextArea ref={node => { inputRef.current = node?.resizableTextArea?.textArea || null; }} data-customer-reply-input aria-label="客户回复" rows={2} value={input} onFocus={onManualActive} onChange={event => { onManualActive(); onInputChange(event.target.value); }} placeholder="输入中文回复…" variant="borderless" className="max-h-24 w-full resize-none" />
@@ -368,7 +379,7 @@ export function ChatThread({
                   onClick={() => {
                     const shouldOpen = !previewOpen;
                     setPreviewOpen(shouldOpen);
-                    if (shouldOpen) void refreshTranslationPreview();
+                    if (!shouldOpen) setTranslationError('');
                   }}
                   disabled={!input.trim()}
                   aria-label={previewOpen ? '隐藏目标语言译文' : '显示目标语言译文'}
@@ -381,6 +392,7 @@ export function ChatThread({
               </div>
                <LsCompactFieldGroup className="!w-auto shrink-0">
                  <Button htmlType="button" onClick={() => onSaveDraft(input)} disabled={savingDraft || !input.trim()} className="!h-auto min-h-9 !whitespace-normal px-2 py-2 text-xs font-bold disabled:opacity-40">{savingDraft ? '保存中…' : '保存草稿'}</Button>
+                 <CustomerQuoteLauncher key={customer.id} customer={customer} channelReady={Boolean(channelReady)} onInsertReply={onInsertQuoteReply} onCardSent={onQuoteCardSent} onToast={onToast} />
                  <LsBrandAction htmlType="button" onClick={onSend} loading={sending} disabled={sending || !channelReady || !input.trim() || isOutsideWindow} className="!h-auto min-h-9 !whitespace-normal flex items-center gap-1.5 px-4 py-2 text-xs"><Send size={13} /> {!channelReady ? '通道未连接' : isOutsideWindow ? '已超出回复时间' : '发送'}</LsBrandAction>
                </LsCompactFieldGroup>
             </div>

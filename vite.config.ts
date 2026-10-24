@@ -68,6 +68,8 @@ export default defineConfig(({ mode }) => {
       alias: { '@': path.resolve(import.meta.dirname, 'src') },
     },
     server: {
+    // Real AI runs on the server; preview browsers may only connect to this origin.
+    ...((process.env.VITE_LINGSHU_LOCAL_PREVIEW ?? env.VITE_LINGSHU_LOCAL_PREVIEW) === '1' ? {headers: {'Content-Security-Policy': `connect-src 'self' ws://127.0.0.1:${process.env.DEV_HMR_CLIENT_PORT || process.env.DEV_PORT || 5177} ws://localhost:${process.env.DEV_HMR_CLIENT_PORT || process.env.DEV_PORT || 5177}; form-action 'self'`}} : {}),
     // 合并版使用独立端口，避免和 overseas / 新手引导两个工作区互相抢占。
     port: Number(process.env.DEV_PORT || 5177),
     strictPort: true,

@@ -17,7 +17,19 @@ export async function fetchCustomerReply(input: Record<string, unknown>, manual:
   if (response.ok && response.status!==202) save(true);
   return {response,data,requestId};
 }
-export async function readCustomerReply(requestId:string) {
-  const response=await fetch(`/api/overseas/agents/conversion/draft/${encodeURIComponent(requestId)}`,{headers:authHeader(),signal:AbortSignal.timeout(15_000)});
-  const data=await response.json();if(!response.ok)throw Error(data.error||'customer_reply_read_failed');return data;
+export async function readCustomerReply(requestId:string, timeoutMs=15_000) {
+  const controller=new AbortController();
+  let timer:ReturnType<typeof setTimeout>|undefined;
+  try {
+    return await Promise.race([
+      (async()=>{
+        const response=await fetch(`/api/overseas/agents/conversion/draft/${encodeURIComponent(requestId)}`,{headers:authHeader(),signal:controller.signal});
+        const data=await response.json();
+        if(!response.ok)throw Error(data.error||'原草稿暂不可读，请稍后读取原请求。');
+        if(data.requestId!==requestId)throw Error('原草稿回执身份不一致，未采用。');
+        return data;
+      })(),
+      new Promise<never>((_,reject)=>{timer=setTimeout(()=>{reject(Error('读取原草稿超时，请稍后读取；本次没有重新生成。'));controller.abort();},timeoutMs);}),
+    ]);
+  } finally {if(timer)clearTimeout(timer);}
 }

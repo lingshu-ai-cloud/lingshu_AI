@@ -1,5 +1,7 @@
+import {localCustomerProfileUnassessed} from '../../../shared/contracts/localCustomerProfile';
 import { useEffect } from 'react';
 import { authHeader } from '../../lib/auth';
+import { localCustomerPreviewEnabled } from '../../lib/localCustomerSimulation';
 import type { CustomerProfile, TimelineEvent } from '../../types/customer';
 import type { CustomerServiceStatus } from '../../lib/customerService';
 import { STAGE_LABEL } from './conversionPresentation';
@@ -36,12 +38,20 @@ export function useConversionDraftEffects({
     setDraftSuggestion(null);
     setDraftMeta(null);
     setLastDraftKey('');
-    setInput('');
+    setInput(selected?.pendingDraft || '');
     setTranslatedInput('');
   }, [selectedId]);
 
+
+  // A new buyer turn invalidates an earlier AI suggestion, including when a saved
+  // human draft prevents auto-generation. Keep the composer and its translation.
   useEffect(() => {
-    if (!selected || selected.isHistorical) return;
+    setDraftSuggestion(null);
+    setDraftMeta(null);
+  }, [selectedId, selectedLatestBuyerId]);
+
+  useEffect(() => {
+    if (!selected || selected.isHistorical || localCustomerPreviewEnabled()) return;
     const untranslated = selected.timeline.filter(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && !/[\u4e00-\u9fff]/.test(event.body) && !event.translatedBody);
     if (!untranslated.length) return;
     let cancelled = false;
@@ -75,7 +85,6 @@ export function useConversionDraftEffects({
     if (key === lastDraftKey) return;
     setLastDraftKey(key);
     if (selected.pendingDraft?.trim()) {
-      setDraftSuggestion(selected.pendingDraft.trim());
       return;
     }
     let cancelled = false;
@@ -93,7 +102,7 @@ export function useConversionDraftEffects({
   useEffect(() => {
     const viewLabel = selected ? `客户详情 / ${selected.name}` : activeView.label;
     const summary = selected
-      ? `当前页面：客户详情。客户：${selected.name}。阶段：${STAGE_LABEL[selected.stage]}。意向：${selected.intentScore}。产品：${selected.product}。预估价值：${selected.estimatedValue}。摘要：${selected.summary}`
+      ? `当前页面：客户详情。客户：${selected.name}。阶段：${STAGE_LABEL[selected.stage]}。意向：${localCustomerProfileUnassessed(selected) ? '待评估' : selected.intentScore}。产品：${selected.product}。预估价值：${selected.estimatedValue}。摘要：${selected.summary}`
       : `当前页面：我的客户 - ${activeView.label}。${activeView.desc}`;
     window.dispatchEvent(new CustomEvent('lingshu-assistant-context', {
       detail: {

@@ -1,15 +1,17 @@
+import { customerTagCorrectionInput, correctCustomerTag, readTagCorrections } from '../../shared/contracts/customerTags.js';
+import { getWhatsAppCustomers, patchWhatsAppCustomer } from '../whatsapp/historyImport.js';
 import {readAuthorizedMessengerCustomers} from '../messenger/authorizedCustomerRead.js';
 import { readAuthorizedWhatsAppCustomers } from '../whatsapp/authorizedCustomerRead.js';
 import { Router } from 'express';
 import { callLLM } from '../agents/llm.js';
-import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { requireAuth, enforceSupportSessionReadOnly, type AuthLocals } from '../middleware/auth.js';
 import { retrieveContext } from '../knowledge/retrieve.js';
 import { buildKnowledgePromptBlock } from '../knowledge/promptBlocks.js';
 import { buildStrategyPromptBlock, retrieveResponseStrategies, strategyEvidence } from '../knowledge/strategyRetrieve.js';
 import { aggregateKnowledgeMisses } from '../knowledge/misses.js';
 import { recordStyleMemory } from '../knowledge/styleMemory.js';
 import { getNightModeMorningBriefing } from '../whatsapp/historyImport.js';
-import { analyzeMessengerCustomerTags, patchMessengerCustomer, sendTenantMessengerText,upsertMessengerMessage } from '../messenger/conversations.js';
+import { analyzeMessengerCustomerTags, getMessengerCustomers, patchMessengerCustomer, sendTenantMessengerText,upsertMessengerMessage } from '../messenger/conversations.js';
 import { analyzeInstagramCustomerTags, getInstagramCustomers, patchInstagramCustomer,upsertInstagramMessage } from '../instagram/conversations.js';
 import { sendTenantInstagramText } from '../instagram/send.js';
 import {createCustomerChannelSendRequestService,resolveCustomerChannelOutboxContext} from '../digitalEmployees/customerChannelSendRequests.js';
@@ -116,7 +118,7 @@ async function manualCustomerChannel(tenantId:string,id:string){return (await re
 customerSuggestionsRouter.use('/:id/manual-active',createCustomerManualTakeoverRouter({service:manualTakeoverService,resolveChannel:manualCustomerChannel}));
 customerSuggestionsRouter.use('/:id', (req,res,next)=>{if(String(req.params.id).startsWith('wa_')&&/outbox/.test(req.path)){res.status(422).json({error:'customer_channel_operation_unsupported',channel:'whatsapp',capability:'/api/overseas/customer-batches/capabilities',message:'WhatsApp 请使用已有周跟进派发及模板审批入口。'});return;}next();});
 
-customerSuggestionsRouter.patch('/:id', async (req, res) => {
+customerSuggestionsRouter.patch('/:id', enforceSupportSessionReadOnly, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const customerId = String(req.params.id || '');
   if (!customerId) {
@@ -127,6 +129,23 @@ customerSuggestionsRouter.patch('/:id', async (req, res) => {
     res.status(422).json({ error: '请通过订单台账登记和更新订单，客户备注不再接受订单状态修改', code: 'use_order_ledger' }); return;
   }
   const patch = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+  if (Object.prototype.hasOwnProperty.call(patch, 'tagCorrection')) {
+    const parsed = customerTagCorrectionInput.safeParse(patch.tagCorrection);
+    if (!parsed.success || Object.keys(patch).length !== 1) { res.status(400).json({error:'customer_tag_correction_invalid'}); return; }
+    const current = [...await readAuthorizedWhatsAppCustomers(tenantId), ...await readAuthorizedMessengerCustomers(tenantId), ...getInstagramCustomers(tenantId)].find(c => c.id === customerId);
+    if (!current) { res.status(404).json({error:'customer_not_found'}); return; }
+    try {
+      // Re-read metadata after asynchronous authorization; the patch below is synchronous.
+      const metadata = (customerId.startsWith('wa_') ? getWhatsAppCustomers(tenantId) : customerId.startsWith('instagram_') ? getInstagramCustomers(tenantId) : getMessengerCustomers(tenantId)).find(c => c.id === customerId) || current;
+      const tags = [...new Set([...(Array.isArray(metadata.tags) ? metadata.tags.map(String) : []), ...(Array.isArray(current.tags) ? current.tags.map(String) : [])])];
+      const changes = correctCustomerTag(tags, readTagCorrections(metadata.contextTagCorrections), parsed.data, new Date().toISOString(), Array.isArray(current.contextTagEvidence) ? current.contextTagEvidence as Array<{tag:string;messageId:string;excerpt:string}> : []);
+      const changed = customerId.startsWith('wa_') ? patchWhatsAppCustomer({tenantId,customerId,patch:changes}) : customerId.startsWith('instagram_') ? patchInstagramCustomer(tenantId,customerId,changes) : patchMessengerCustomer(tenantId,customerId,changes);
+      if (!changed) { res.status(404).json({error:'customer_not_found'}); return; }
+      res.json({ok:true,...changes});
+    } catch (error) { res.status(409).json({error:error instanceof Error ? error.message : 'customer_tag_correction_failed'}); }
+    return;
+  }
+  if ('contextTagCorrections' in patch) { res.status(400).json({error:'use_customer_tag_correction'}); return; }
   const channel = await customerChannel(tenantId, customerId);
   if (!channel) { res.status(404).json({ error: 'customer_not_found' }); return; }
   const customer = channel === 'instagram'

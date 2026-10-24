@@ -1,3 +1,5 @@
+import { LocalCustomerSimulationLauncher } from './customers/LocalCustomerSimulation';
+import { saveLocalCustomerDraft } from '../lib/localCustomerSimulation';
 import CustomerReplyRecovery from './customers/CustomerReplyRecovery';
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { ChatThread } from './customers/ConversionChatThread';
@@ -171,7 +173,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const savePendingDraft = useCallback((customer: CustomerProfile, draft?: string) => {
     const pendingDraft = draft?.trim() || undefined;
     updateCustomer(customer.id, { pendingDraft });
-    if (customer.isMock) return;
+    if (customer.isMock) {void saveLocalCustomerDraft(customer.id,pendingDraft??null).catch(error=>showToast(error.message));return;}
     void fetch(`/api/overseas/customers/${encodeURIComponent(customer.id)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
@@ -425,7 +427,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           if(intent){assertSendScope(intent.scope,await readCustomerSendScope(customer.id));const receipt=await readCustomerSendRequest(intent);const recovered=recoverSendIntent(intent,receipt);saveSendIntent(recovered);if(recovered.state!=='accepted')throw new Error('发送结果尚未确认，请读取发送状态');}
           if(!['sent','delivered'].includes(result.status||''))throw new Error('发送结果尚未确认');
           sendAccepted=true;
-          updateTimelineEvent(customer.id, event.id, {
+          if(customer.localSimulation && result.timeline) updateCustomer(customer.id,{timeline:result.timeline}); else updateTimelineEvent(customer.id, event.id, {
             sendStatus: result.status,
             audit: {
               ...(event.audit || {}),
@@ -605,8 +607,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       return;
     }
     if (selected?.pendingDraft?.trim() && !input.trim()) {
-      setDraftSuggestion(selected.pendingDraft.trim());
-      window.setTimeout(() => document.querySelector<HTMLElement>('[data-draft-suggestion]')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 0);
+      setInput(selected.pendingDraft.trim());
+      focusReplyInput();
       return;
     }
     focusReplyInput();
@@ -619,6 +621,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+    {selected && <LocalCustomerSimulationLauncher customer={selected} onPatch={patch=>persistCustomerPatch(selected.id,patch)}/>}
     <h1 className="sr-only">{PAGE_REGISTRY.conversion.canonicalTitle}</h1>
     {deliveryHandoff?.runId&&deliveryError&&<p role="alert" className="mx-4 mt-3 text-sm text-red-700">{deliveryError}</p>}
     {deliveryHandoff?.runId && <div className="max-h-[35%] shrink-0 overflow-y-auto"><CustomerWorkflowPanel handoff={deliveryHandoff} customers={customers} /></div>}
@@ -684,7 +687,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
             setSavingDraft(true);
             void (async () => {
               try {
-                if (!customer.isMock) {
+                if (customer.isMock) await saveLocalCustomerDraft(customer.id,pendingDraft);
+                else {
                   const response = await fetch(`/api/overseas/customers/${encodeURIComponent(customer.id)}`, {
                     method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeader() },
                     body: JSON.stringify({ pendingDraft }),
@@ -711,30 +715,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           bridgeOnly={draftMeta?.replyConfidence?.level === 'bridge_only'}
           draftMeta={draftMeta}
           sending={sendingReply}
-          channelReady={Boolean((selected?.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : selected?.source === 'instagram' ? customerServiceStatus?.instagramAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)}
-          onToast={showToast}
-        />
-        </div>
-        <div className={`ls-conversation-workspace__slot ls-conversation-workspace__pane${mobilePanel === 'profile' ? ' is-active' : ''}`}>
-        {selected?.isHistorical ? <div className="p-4 text-xs leading-5 text-text-secondary">历史会话来源：已归档记录。仅保留原始内容供查阅，不代表已连接真实客户渠道；回复、报价和客户操作均不可用。</div> : <CustomerInfoRail
-          key={selected?.id || 'no-customer'}
-          customer={selected}
-          customerServiceStatus={customerServiceStatus}
-          customerServiceSaving={customerServiceSaving}
-          customerServiceLabel={customerServiceLabel}
-          customerServiceSummary={customerServiceSummary}
-          notificationReady={notificationReady}
-          onGenerateDraft={generateManualDraft}
-          onHandlingModeChange={updateHandlingMode}
-          onToast={showToast}
-          onFocusReply={focusReplyInput}
-          onViewDraft={viewDraftSuggestion}
-          onCompleteTodo={markSelectedTodoCompleted}
-          customerServiceEnabled={Boolean(customerServiceStatus?.enabled)}
-          autoReplyReady={partialAutoReplyActive}
-          hasReplyReady={Boolean(draftSuggestion?.trim() || input.trim() || selected?.pendingDraft?.trim())}
-          onToggleCustomerService={(enabled) => void changeCustomerServiceEnabled(enabled)}
-          onEnablePartialAutoReply={() => void decidePartialAutoReply('enabled')}
+          channelReady={Boolean(selected?.isMock ? selected.localSimulation?.approvedBody : (selected?.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : selected?.source === 'instagram' ? customerServiceStatus?.instagramAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)}
           onInsertQuoteReply={(text) => {
             if (!selected || selected.isHistorical) return;
             reportManualActive();
@@ -743,7 +724,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
             setTranslatedInput('');
             setDraftSuggestion(null);
             setDraftMeta(null);
-            updateCustomer(selected.id, { pendingDraft: text });
+            savePendingDraft(selected, text);
             setMobilePanel('chat');
           }}
           onQuoteCardSent={(summary, providerMessageId) => {
@@ -756,6 +737,24 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
               audit: { action: 'formal_quote_card_sent', risk: 'L4', providerMessageId },
             }));
           }}
+          onToast={showToast}
+        />
+        </div>
+        <div className={`ls-conversation-workspace__slot ls-conversation-workspace__pane${mobilePanel === 'profile' ? ' is-active' : ''}`}>
+        {selected?.isHistorical ? <div className="p-4 text-xs leading-5 text-text-secondary">历史会话来源：已归档记录。仅保留原始内容供查阅，不代表已连接真实客户渠道；回复、报价和客户操作均不可用。</div> : <CustomerInfoRail
+          key={selected?.id || 'no-customer'}
+          customer={selected}
+          onCustomerPatch={patch => selected && updateCustomer(selected.id, patch)}
+          onGenerateDraft={generateManualDraft}
+          onHandlingModeChange={updateHandlingMode}
+          onToast={showToast}
+          onFocusReply={focusReplyInput}
+          onViewDraft={viewDraftSuggestion}
+          onCompleteTodo={markSelectedTodoCompleted}
+          customerServiceEnabled={Boolean(customerServiceStatus?.enabled)}
+          autoReplyReady={partialAutoReplyActive}
+          hasReplyReady={Boolean(draftSuggestion?.trim() || input.trim() || selected?.pendingDraft?.trim())}
+
         />}
         </div>
       </div>

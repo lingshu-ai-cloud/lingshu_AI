@@ -1,3 +1,4 @@
+import { applyTagCorrections, readTagCorrections } from '../../shared/contracts/customerTags.js';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -163,7 +164,7 @@ export function analyzeInstagramCustomerTags(tenantId: string, id: string, class
     const manualTags = Array.isArray(current.tags) ? current.tags.map(String).filter(tag => !managed.has(tag)) : [];
     const bant = assessBant({ turns: current.timeline.map(event => ({ role: event.actor === 'buyer' ? 'buyer' as const : 'seller' as const, text: event.body })) });
     return patchInstagramCustomer(tenantId, id, {
-      tags: [...new Set([...manualTags, 'Instagram', ...contextTagEvidence.map(item => item.tag)])],
+      tags: applyTagCorrections([...new Set([...manualTags, 'Instagram', ...contextTagEvidence.map(item => item.tag)])], readTagCorrections(current.contextTagCorrections)),
       contextTagEvidence, contextTagsUpdatedAt: new Date().toISOString(),
       contextTagsBuyerFingerprint: buyerFingerprint(current), contextTagsRetryAt: 0, contextTagsAttempts: 0,
       contextTagsAnalysisVersion: CONTEXT_ANALYSIS_VERSION,

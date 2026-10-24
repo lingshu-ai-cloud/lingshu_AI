@@ -192,3 +192,48 @@ test('classification failure still persists buyer BANT corrections and vetoes ob
 });
 
 test('unverified direct payload cannot manufacture a trusted inbound conversation',async()=>{const before=fs.readFileSync(process.env.MESSENGER_CUSTOMERS_DATA_FILE!,'utf8');assert.deepEqual(await conversations.handleMessengerWebhook('tenant-a',{object:'page',entry:[{id:'page-1',messaging:[{sender:{id:'foreign'},recipient:{id:'page-1'},message:{mid:'mid.untrusted',text:'must not persist'}}]}]},{analyzeTags:false}),{accepted:0});assert.equal(fs.readFileSync(process.env.MESSENGER_CUSTOMERS_DATA_FILE!,'utf8'),before);});
+
+test('human corrections survive native reanalysis, empty results, failure and repository reload for separate customers', async () => {
+  const { correctCustomerTag } = await import('../../shared/contracts/customerTags.js');
+  const { classifyContextTags } = await import('./contextTags.js');
+  const { projectCustomerBusinessProfile } = await import('../customerService/businessProfile.js');
+  const file = process.env.MESSENGER_CUSTOMERS_DATA_FILE!;
+  const before = fs.readFileSync(file, 'utf8');
+  try {
+    for (const [index, stage] of ['inquiry', 'quoted', 'won'].entries()) {
+      const messageId = `mid.human-priority-${index}`;
+      const body = 'The deadline is within 30 days.';
+      await conversations.handleMessengerWebhook('correction-tenant', {
+        object: 'page', entry: [{ id: 'correction-page', messaging: [{
+          sender: { id: `human-priority-${index}` }, recipient: { id: 'correction-page' },
+          timestamp: Date.now(), message: { mid: messageId, text: body },
+        }] }],
+      }, { analyzeTags: false, verifiedSignature: true });
+      const customer = conversations.getMessengerCustomers('correction-tenant').find(c => c.messengerUserId === `human-priority-${index}`)!;
+      const evidence = [{ tag: '明确交期', messageId, excerpt: body }];
+      const classify = (turns: Parameters<typeof classifyContextTags>[0]) => classifyContextTags(turns, async () => JSON.stringify({ items: evidence }));
+      await conversations.analyzeMessengerCustomerTags('correction-tenant', customer.id, classify);
+      const replacement = `${stage}交期待人工确认`;
+      const corrected = correctCustomerTag(['明确交期'], [], {
+        tag: '明确交期', replacement, dimension: 'risk', reason: `${stage}阶段人工确认排期`, expectedUpdatedAt: null,
+      }, '2026-10-24T07:20:00.000Z', evidence);
+      conversations.patchMessengerCustomer('correction-tenant', customer.id, { ...corrected, stage });
+      // Use the native analysis writer, with the model port returning the original label again.
+      await conversations.analyzeMessengerCustomerTags('correction-tenant', customer.id, classify);
+      await conversations.analyzeMessengerCustomerTags('correction-tenant', customer.id, async () => []);
+      await assert.rejects(conversations.analyzeMessengerCustomerTags('correction-tenant', customer.id, async () => { throw Error('controlled_model_failure'); }));
+      await conversations.analyzeMessengerCustomerTags('correction-tenant', customer.id, classify);
+      const persisted = JSON.parse(fs.readFileSync(file, 'utf8')).find((c: { id: string }) => c.id === customer.id);
+      assert.ok(persisted.tags.includes(replacement));
+      assert.ok(!persisted.tags.includes('明确交期'));
+      assert.deepEqual(persisted.contextTagCorrections, corrected.contextTagCorrections);
+      assert.equal(persisted.contextTagEvidence[0].tag, '明确交期', 'raw model evidence remains auditable');
+      const projected = projectCustomerBusinessProfile(persisted, persisted);
+      assert.deepEqual(projected.tags, [replacement]);
+      assert.deepEqual(projected.contextTagCorrections, corrected.contextTagCorrections);
+    }
+    const customers = conversations.getMessengerCustomers('correction-tenant').filter(c => String(c.messengerUserId).startsWith('human-priority-'));
+    assert.equal(customers.length, 3);
+    for (const customer of customers) assert.equal((customer.contextTagCorrections as unknown[]).length, 1, 'corrections never leak between customers');
+  } finally { fs.writeFileSync(file, before); }
+});

@@ -52,8 +52,8 @@ assert.match(
 );
 assert.match(
   draftEffectsSource,
-  /if \(selected\.pendingDraft\?\.trim\(\)\)[\s\S]{0,180}setDraftSuggestion\(selected\.pendingDraft\.trim\(\)\)/,
-  'a pending AI draft must be restored when the customer is revisited',
+  /setInput\(selected\?\.pendingDraft \|\| ''\)/,
+  'a pending AI draft must be restored into the editable composer when the customer is revisited',
 );
 assert.match(
   source,

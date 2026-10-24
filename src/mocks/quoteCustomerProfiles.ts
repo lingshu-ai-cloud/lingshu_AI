@@ -39,7 +39,8 @@ export function createQuoteMockCustomers(): CustomerProfile[] {
       stage: 'inquiry', intentScore: 85 - index * 5, intentSignals: ['报价调试模拟询盘'],
       handlingMode: 'human_needed', handlingReason: scenario.goal, isReal: false, isMock: true,
       hasUnread: true, priority: 90 - index, inboxReason: 'reply', lastActive: '刚刚', lastActiveAt: timestamp,
-      localTime: '', orders: [], tags: ['模拟客户', '报价调试'], summary: scenario.goal,
+      localTime: '', orders: [], tags: index === 0 ? ['美国', '英语沟通', 'CNC 支架', '明确交期', '图纸 B2', '报价调试'] : ['模拟客户', '报价调试'], summary: scenario.goal,
+      ...(index === 0 ? { contextTagEvidence: [{ tag: '明确交期', messageId: `${id}-message-2`, excerpt: 'within 30 days' }] } : {}),
       nextStep: '打开报价能力卡，生成报价草稿',
       simulation: { checkpoint: scenario.name, goal: scenario.goal, expectedBehavior: scenario.goal, editable: true },
       timeline: scenario.messages.map((body, messageIndex) => ({

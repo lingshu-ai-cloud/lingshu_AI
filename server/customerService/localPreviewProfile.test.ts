@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {fixture} from './customerManualTakeover.fixture.js';
+import {defaultLocalPreviewProfilePorts} from './localPreviewProfileAnalysis.js';
+import {createLocalCustomerSimulation} from './localPreviewSimulation.js';
+test('durable inbound projection marks profile pending and retains manual corrections across recreation without AI calls',async()=>{
+ const f=fixture();let aiCalls=0;
+ const ai={generate:async()=>{aiCalls++;throw Error('unexpected_ai');},translate:async()=>{aiCalls++;throw Error('unexpected_ai');},run:async<T>(action:()=>Promise<T>)=>({value:await action(),audit:[]})};
+ const service=createLocalCustomerSimulation(f.store,ai,{...defaultLocalPreviewProfilePorts,enabled:()=>false});
+ const started=await service.start('tenant','owner','mock-profile');
+ await service.correctTag('tenant','owner','mock-profile',['机器视觉','明确交期'],{tag:'明确交期',replacement:'交期待确认',dimension:'risk',reason:'人工核实',expectedUpdatedAt:null},[{tag:'明确交期',messageId:'old',excerpt:'within 30 days'}]);
+ await service.saveDraft('tenant','owner','mock-profile','已保存的人工回复');
+ await service.act('tenant','owner',started.sessionId,'inbound',{text:'Can you quote face cream?',eventId:'profile-inbound-123'});
+ const recreated=createLocalCustomerSimulation(f.store,ai,{...defaultLocalPreviewProfilePorts,enabled:()=>false});
+ const [{patch}]=await recreated.drafts('tenant','owner');
+ assert.match(patch.product!,/待分析/);assert.deepEqual(patch.tags,['交期待确认']);assert.equal(patch.pendingDraft,'已保存的人工回复');
+ assert.equal(patch.contextTagCorrections![0].evidence![0].messageId,'old');assert.equal(patch.timeline!.length,1);assert.equal(aiCalls,0);
+ assert.deepEqual(await recreated.drafts('tenant','other'),[]);
+ assert.equal(f.table('social_accounts').length,0);
+});

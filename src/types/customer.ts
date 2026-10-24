@@ -1,3 +1,5 @@
+import type { LocalCustomerProfileAnalysis } from '../../shared/contracts/localCustomerProfile';
+import type { CustomerTagCorrection } from '../../shared/contracts/customerTags';
 export type CustomerSource =
   | 'whatsapp'
   | 'messenger'
@@ -117,7 +119,9 @@ export interface OrderRecord {
   items?: { name: string; qty: number }[];
 }
 
-export interface CustomerProfile {
+export interface CustomerProfile extends LocalCustomerProfileAnalysis {
+  contextTagCorrections?: CustomerTagCorrection[];
+  localSimulation?: {sessionId:string;itemHash?:string;approvedBody?:string};
   contextTagEvidence?: Array<{ tag: string; messageId: string; excerpt: string }>;
   contextTagsUpdatedAt?: string;
   id: string;

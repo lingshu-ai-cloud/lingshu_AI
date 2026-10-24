@@ -82,22 +82,25 @@ assert.match(chatThreadUi, /data-testid="conversation-chat-thread"/, 'the main c
 assert.match(customerUi, /data-testid="conversation-workspace-main"/, 'the three-column workspace must start directly without stacked page banners');
 assert.doesNotMatch(customerUi, /mockCustomerCount/, 'the simulation workspace must not reserve a full-width banner above conversations');
 assert.doesNotMatch(customerUi, /今日处理/, 'per-customer action guidance must be merged into the AI intent panel');
-for (const marker of ['CustomerInsightDisclosure', 'CustomerIntentActionPanel', 'QuoteSkillCard', 'RulesDisclosure']) {
+// PRD 16.10 keeps the profile rail compact and opens quotation from the chat.
+for (const marker of ['CustomerInsightDisclosure', 'CustomerIntentActionPanel']) {
   assert.match(customerRailUi, new RegExp(marker), `the customer rail must include ${marker}`);
 }
-assert.match(customerRailUi, /data-testid="customer-profile-facts"[\s\S]{0,1200}customer\.product[\s\S]{0,1200}STAGE_LABEL\[customer\.stage\][\s\S]{0,1200}customer\.estimatedValue/, 'customer product, stage and estimated value must remain visible in the profile rail');
-assert.match(customerRailUi, /<Collapse[\s\S]{0,400}defaultActiveKey=\{\['business'\]\}[\s\S]{0,1200}key: 'media'[\s\S]{0,1200}key: 'business'[\s\S]{0,1200}key: 'privacy'/, 'profile rail sections must expose their current Ant Design disclosure structure');
-const railMarkers = ['CustomerInsightDisclosure', 'CustomerIntentActionPanel', 'QuoteSkillCard', 'RulesDisclosure'];
-assert.deepEqual(
-  railMarkers.map(marker => customerRailUi.indexOf(marker)),
-  [...railMarkers.map(marker => customerRailUi.indexOf(marker))].sort((a, b) => a - b),
-  'the customer rail must keep warning, AI intent, quote workbench and assignment rules in the requested order',
-);
+for (const marker of ['customer.product', 'customerFollowupStatus(customer)', 'customer.estimatedValue']) {
+  assert.ok(customerRailUi.includes(marker), `profile facts must expose ${marker}`);
+}
+assert.match(customerRailUi, /<details[\s\S]{0,400}CustomerInsightDisclosure/, 'profile evidence remains available in a compact disclosure');
+assert.doesNotMatch(customerRailUi, /QuoteSkillCard|RulesDisclosure|<Collapse/, 'removed workbenches must not return to the compact profile rail');
+assert.match(chatThreadUi, /<CustomerQuoteLauncher/, 'quotation remains accessible from the chat action');
+const quoteLauncherUi = fs.readFileSync(path.join(root, 'src/components/customers/CustomerQuoteLauncher.tsx'), 'utf8');
+assert.match(quoteLauncherUi, /<Modal[\s\S]*<QuoteSkillCard/, 'quotation action must open the existing quotation implementation');
 assert.doesNotMatch(customerRailUi, /OrderHistoryWidget|SortableWidget/, 'the compact customer rail must not contain extra or draggable panels');
 assert.match(chatThreadUi, /AI 草稿 · 人工改过/, 'conversation history must expose human collaboration without adding fake messages');
 assert.match(chatThreadUi, /已用学习记忆/, 'conversation history must expose memory usage without cluttering the transcript');
 assert.match(chatThreadUi, /customer\.isMock \? <Tag[^>]*>模拟客户 · 不对外发送<\/Tag>/, 'each simulated conversation must clearly label its isolation from live sending');
-assert.match(chatThreadUi, /只在演示沙盘里推进，不会发送到真实平台/, 'the simulation input must explain that it cannot send to real platforms');
+// UI specification 16.8 removed the persistent sandbox banner; the per-conversation
+// isolation label above and the behavioural send-adapter test remain required.
+assert.doesNotMatch(chatThreadUi, /只在演示沙盘里推进，不会发送到真实平台/, 'the compact conversation must not restore the removed persistent sandbox banner');
 
 const memoryUi = fs.readFileSync(path.join(root, 'src/components/WorkspaceManagementPages.tsx'), 'utf8');
 assert.match(memoryUi, /includeMockCustomers/, 'the memory workspace must be able to show the same simulation customer contexts');

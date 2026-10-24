@@ -6,13 +6,16 @@ import test from 'node:test';
 const root = process.cwd();
 const read = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('智能报价位于客户侧栏，经人工确认和预览后才能发送 WhatsApp 卡片', () => {
+test('智能报价从回复区弹窗打开，经人工确认和预览后才能发送 WhatsApp 卡片', () => {
   const card = read('src/components/customers/QuoteSkillCard.tsx');
   const conversion = read('src/components/ConversionPage.tsx');
   const rail = read('src/components/customers/ConversionCustomerRail.tsx');
   const api = read('src/lib/quoteSkillApi.ts');
-  assert.match(rail, /customer-info-rail[\s\S]*?<QuoteSkillCard[\s\S]*?onInsertReply=/, '智能报价必须嵌入当前客户侧栏');
-  assert.match(rail, /<QuoteSkillCard\s+[\s\S]*?key=\{customer\.id\}/, '切换客户时必须重建报价组件，不得复用上一客户状态');
+  const launcher = read('src/components/customers/CustomerQuoteLauncher.tsx');
+  const chat = read('src/components/customers/ConversionChatThread.tsx');
+  assert.doesNotMatch(rail, /<QuoteSkillCard/, '侧栏不再展示报价工作区');
+  assert.match(launcher, /<Modal[\s\S]*<QuoteSkillCard workspace/, '弹窗复用原报价详情');
+  assert.match(chat, /<CustomerQuoteLauncher key=\{customer.id\}/, '切换客户时重建报价弹窗');
   assert.doesNotMatch(conversion, /报价中心|quote-center|page=quote/i, '不得增加独立报价入口');
   assert.match(card, /quoteSkillApi\.confirm\(draft\.id, draft\.revision\)/, '确认必须携带当前版本');
   assert.match(card, /quoteSkillApi\.card\(draft\.id\)/, '发送前必须生成客户卡片预览');

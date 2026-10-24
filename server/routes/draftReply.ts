@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { createCustomerReplyRequests } from '../customerService/replyRequests.js';
+import { localPreviewReplyCompatibility } from '../customerService/localPreviewReplyCompatibility.js';
 import { store } from '../storage/index.js';
 import { callLLM as providerCallLLM, type LLMCallOptions } from '../agents/llm.js';
 import {
@@ -649,15 +650,16 @@ export async function generateCustomerReply(req: Request, res: Response, signal?
   }
 }
 
-const requests = createCustomerReplyRequests(store, async (body, identity, signal) => {
+export async function generateCustomerReplyResult(body: import('../../shared/contracts/customerReply.js').CustomerReplyRequest, identity: {tenantId:string;userId:string}, signal: AbortSignal) {
   let status = 200; let output: Record<string, unknown> = {}; let factVersion: string|null = null;
   const response = {locals: identity, setHeader: (_key: string, value: string) => { factVersion = value; },
     status: (code: number) => { status = code; return response; }, json: (value: Record<string, unknown>) => { output = value; return response; }};
   await generateCustomerReply({body} as Request, response as unknown as Response, signal);
   return {status,body:output,factVersion};
-});
-draftReplyRouter.post('/conversion/draft', requests.execute);
-draftReplyRouter.get('/conversion/draft/:requestId', requests.read);
+}
+const requests = createCustomerReplyRequests(store, generateCustomerReplyResult);
+draftReplyRouter.post('/conversion/draft', localPreviewReplyCompatibility.execute, requests.execute);
+draftReplyRouter.get('/conversion/draft/:requestId', localPreviewReplyCompatibility.read, requests.read);
 
 function latestBuyerMessage(timeline: any[]): string {
   const latest = [...timeline].reverse().find(event => String(event?.actor || '').toLowerCase() === 'buyer' || String(event?.type || '').includes('msg_in'));

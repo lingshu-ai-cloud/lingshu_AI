@@ -22,7 +22,14 @@ export function createMessageEvent(
   };
 }
 
-export async function sendCustomerOutbox(customer: CustomerProfile, requestId: string, body: string, outsideWindow: boolean, templatePlan?: TemplatePlan | null, styleMemory?: StyleMemoryPayload | null) {
+export async function sendCustomerOutbox(customer: CustomerProfile, requestId: string, body: string, outsideWindow: boolean, templatePlan?: TemplatePlan | null, styleMemory?: StyleMemoryPayload | null): Promise<{status?:'queued'|'sent'|'delivered';outboxId?:string;providerMessageIds?:string[];timeline?:TimelineEvent[]}> {
+  if (customer.isMock && customer.localSimulation) {
+    const simulation = customer.localSimulation;
+    const response = await fetch(`/api/overseas/customer-simulation/sessions/${encodeURIComponent(simulation.sessionId)}/actions`, {method:'POST',headers:{'Content-Type':'application/json',...authHeader()},body:JSON.stringify({action:'send',text:body,contentHash:simulation.itemHash})});
+    const data = await response.json();
+    if (!response.ok) throw Error(data.error || '本地模拟发送失败');
+    return {status:'sent' as const,outboxId:data.send?.providerMessageId,providerMessageIds:data.send?.providerMessageId?[String(data.send.providerMessageId)]:[],timeline:data.customer?.timeline};
+  }
   if (customer.isMock) return { status: 'delivered' as const, outboxId: `mock-${Date.now()}` };
   const resp = await fetch(`/api/overseas/customers/${encodeURIComponent(customer.id)}/outbox`, {
     method: 'POST',

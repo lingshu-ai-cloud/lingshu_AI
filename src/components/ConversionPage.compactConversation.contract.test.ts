@@ -24,9 +24,12 @@ test('conversation chrome stays concise and readable in the dark workspace', () 
 
 test('customer rail keeps profile facts and expandable work sections', () => {
   assert.match(railSource, /data-testid="customer-profile-facts"/);
-  for (const label of ['关注产品', '客户阶段', '预估价值']) assert.ok(railSource.includes(label), `missing ${label} profile fact`);
-  assert.match(railSource, /<Collapse[\s\S]*defaultActiveKey=\{\['business'\]\}/);
-  for (const label of ['影音内容、文件和链接', '客户与销售工作台', '隐私设置与支持']) assert.ok(railSource.includes(label), `missing ${label} disclosure`);
+  for (const label of ['跟进', '需求', '归因', 'CustomerProfileTags', '客户画像与跟进依据']) assert.ok(railSource.includes(label), `missing ${label}`);
+  assert.match(railSource, /Avatar size=\{32\}/);
+  assert.ok(railSource.includes('AI 回复'));
+  for (const label of ['影音内容、文件和链接', '客户与销售工作台', '隐私设置与支持']) assert.ok(!railSource.includes(label), `removed ${label} disclosure`);
+  assert.doesNotMatch(source, /<CustomerWorkspaceTools/);
+
 });
 
 test('conversation workspace keeps tablet columns and exposes mobile list-chat-profile navigation', () => {

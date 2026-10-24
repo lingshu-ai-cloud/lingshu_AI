@@ -1,4 +1,6 @@
+import { restoreLocalCustomerPatch } from './localCustomerProfile';
 import { useCallback, useEffect, useState } from 'react';
+import { readLocalCustomerDrafts } from '../lib/localCustomerSimulation';
 import { authHeader } from '../lib/auth';
 import type { CustomerProfile, TimelineEvent } from '../types/customer';
 import { isLocalForeignTradeMockEnabled } from '../mocks/foreignTradeOperations';
@@ -22,7 +24,15 @@ async function storedMockCustomers(storageKey: string): Promise<CustomerProfile[
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || '[]');
       const stored = Array.isArray(saved) ? saved.filter(item => seeds.some(seed => seed.id === item?.id)).map(cloneCustomer) : [];
-      return seeds.map(seed => stored.find(item => item.id === seed.id) || seed);
+      return seeds.map(seed => {
+        const item = stored.find(item => item.id === seed.id);
+        if (!item) return seed;
+        // Upgrade untouched legacy quotation fixtures without overwriting human corrections.
+        if (!item.contextTagCorrections?.length && !item.contextTagEvidence?.length && item.tags.every(tag => ['模拟客户', '报价调试'].includes(tag))) {
+          return { ...item, tags: seed.tags, contextTagEvidence: seed.contextTagEvidence };
+        }
+        return item;
+      });
     } catch { return seeds; }
   }
   const { createMockCustomers } = await import('../mocks/customerProfiles');
@@ -57,7 +67,7 @@ async function storedMockCustomers(storageKey: string): Promise<CustomerProfile[
 
 function persistMockCustomers(customers: CustomerProfile[], storageKey: string | null) {
   if (!storageKey) return;
-  try { localStorage.setItem(storageKey, JSON.stringify(customers.filter(customer => customer.isMock))); } catch { /* ignore storage quota */ }
+  try { localStorage.setItem(storageKey, JSON.stringify(customers.filter(customer => customer.isMock))); } catch { /* Local preview also restores explicit saved drafts from its isolated backend. */ }
 }
 
 function cloneCustomer(customer: CustomerProfile): CustomerProfile {
@@ -129,13 +139,19 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
         const storedMocks = includeMockCustomers && scopedMockStorageKey
           ? await storedMockCustomers(scopedMockStorageKey)
           : [];
+        const savedDrafts = includeMockCustomers ? await readLocalCustomerDrafts(controller.signal) : [];
+        if (!alive) return;
+        const restoredMocks = storedMocks.map(customer => {const saved=savedDrafts.find(item=>item.customerId===customer.id);return saved?restoreLocalCustomerPatch(customer,saved.patch):customer;});
         setCustomers(current => {
           if (!includeMockCustomers) return liveCustomers;
-          const existingMocks = current.filter(customer => customer.isMock).map(cloneCustomer);
+          const existingMocks = current.filter(customer => customer.isMock).map(customer => {
+            const saved = savedDrafts.find(item => item.customerId === customer.id);
+            return saved ? restoreLocalCustomerPatch(cloneCustomer(customer), saved.patch, true) : cloneCustomer(customer);
+          });
           // Legacy sandbox storage may contain repeated IDs. React list keys
           // must remain unique when live conversations and saved mocks merge.
           const seen = new Set<string>();
-          return [...liveCustomers, ...(existingMocks.length ? existingMocks : storedMocks)].filter(customer => {
+          return [...liveCustomers, ...(existingMocks.length ? existingMocks : restoredMocks)].filter(customer => {
             if (seen.has(customer.id)) return false;
             seen.add(customer.id);
             return true;

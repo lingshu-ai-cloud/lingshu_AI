@@ -1,3 +1,4 @@
+import { applyTagCorrections, readTagCorrections } from '../../shared/contracts/customerTags.js';
 import {readAuthorizedMessengerCustomers,messengerCustomerAccountIdentityHash} from './authorizedCustomerRead.js';
 import {getTenantAwareMetaOAuthClient} from '../lib/oauthConfig.js';
 import {probeMessengerPageCapability} from '../integrations/messenger.js';
@@ -80,11 +81,14 @@ function eventTime(timestamp: number) {
   return new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 }
 
+export interface MessengerConversationRepository { read(): MessengerCustomer[]; write(items: MessengerCustomer[]): void }
+const defaultRepository: MessengerConversationRepository = { read: readCustomers, write: writeCustomers };
+
 function upsertMessage(input: {
   tenantId: string; pageId: string; userId: string; messageId: string; body: string;
   timestamp: number; actor: 'buyer' | 'seller' | 'ai'; sendStatus?: 'sent' | 'delivered'; audit?:TimelineEvent['audit'];
-}) {
-  const items = readCustomers();
+}, repository: MessengerConversationRepository = defaultRepository) {
+  const items = repository.read();
   const id = customerId(input.tenantId, input.pageId, input.userId);
   const index = items.findIndex(item => item.id === id);
   const customer = index >= 0 ? items[index] : initialCustomer(input.tenantId, input.pageId, input.userId, input.timestamp);
@@ -107,7 +111,7 @@ function upsertMessage(input: {
     customer.contextTagsRetryAt = 0;
   }
   items[index >= 0 ? index : items.length] = customer;
-  writeCustomers(items);
+  repository.write(items);
   return customer;
 }
 
@@ -149,7 +153,7 @@ function refreshBuyerQualification(customer: MessengerCustomer): void {
 async function readMessengerAnalysisCustomer(tenantId:string,id:string):Promise<MessengerCustomer|null>{
  const admitted=(await readAuthorizedMessengerCustomers(tenantId)).find(customer=>customer.id===id);if(!admitted)return null;
  const metadata=getMessengerCustomers(tenantId).find(customer=>customer.id===id);if(!metadata)return null;
- const fields=['tags','contextTagEvidence','contextTagsAttempts','contextTagsRetryAt','contextTagsBuyerFingerprint','contextTagsAnalysisVersion','language'];
+ const fields=['contextTagCorrections','tags','contextTagEvidence','contextTagsAttempts','contextTagsRetryAt','contextTagsBuyerFingerprint','contextTagsAnalysisVersion','language'];
  return {...admitted,...Object.fromEntries(fields.filter(field=>field in metadata).map(field=>[field,metadata[field]]))};
 }
 
@@ -172,7 +176,7 @@ export function analyzeMessengerCustomerTags(tenantId: string, id: string, class
     const manualTags = Array.isArray(current.tags) ? current.tags.map(String).filter(tag => !managed.has(tag)) : [];
     const bant = assessBant({ turns: current.timeline.map(event => ({ role: event.actor === 'buyer' ? 'buyer' as const : 'seller' as const, text: event.body })) });
     return patchMessengerCustomer(tenantId, id, {
-      tags: [...new Set([...manualTags, 'Messenger', ...contextTagEvidence.map(item => item.tag)])],
+      tags: applyTagCorrections([...new Set([...manualTags, 'Messenger', ...contextTagEvidence.map(item => item.tag)])], readTagCorrections(current.contextTagCorrections)),
       contextTagEvidence, contextTagsUpdatedAt: new Date().toISOString(),
       contextTagsBuyerFingerprint: buyerFingerprint(current), contextTagsRetryAt: 0, contextTagsAttempts: 0,
       contextTagsAnalysisVersion: CONTEXT_ANALYSIS_VERSION,
@@ -224,14 +228,16 @@ export function startMessengerContextTagRecovery(): () => void {
   return () => { stopped = true; clearInterval(timer); };
 }
 
-export async function handleMessengerWebhook(tenantId: string, payload: unknown, options: { analyzeTags?: boolean; verifiedSignature?: boolean } = {}) {
+export async function handleMessengerWebhook(tenantId: string, payload: unknown, options: { analyzeTags?: boolean; verifiedSignature?: boolean; dataStore?: typeof store; repository?: MessengerConversationRepository } = {}) {
+  const dataStore = options.dataStore ?? store;
+  const repository = options.repository ?? defaultRepository;
   const root = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
   if (options.verifiedSignature !== true || root.object !== 'page' || !Array.isArray(root.entry)) return { accepted: 0 };
   let accepted = 0;
   for (const rawEntry of root.entry) {
     const entry = rawEntry && typeof rawEntry === 'object' ? rawEntry as Record<string, unknown> : {};
     const pageId = String(entry.id || '');
-    const accounts=await store.list<Record<string,unknown>>('social_accounts',{where:{tenantId,platform:'facebook',status:'connected',providerAccountId:pageId},perPage:2});
+    const accounts=await dataStore.list<Record<string,unknown>>('social_accounts',{where:{tenantId,platform:'facebook',status:'connected',providerAccountId:pageId},perPage:2});
     if(accounts.totalItems!==1||accounts.items.length!==1)continue;const currentAccount=accounts.items[0]!;let authority:string;try{assertMessengerCapabilityAuthority(currentAccount);authority=messengerCustomerAccountIdentityHash(currentAccount);}catch{continue;}
     const events = Array.isArray(entry.messaging) ? entry.messaging : [];
     for (const rawEvent of events) {
@@ -240,7 +246,7 @@ export async function handleMessengerWebhook(tenantId: string, payload: unknown,
       const recipientId = String(event.recipient?.id || '');
       if (event.delivery || event.read) {
         if (!pageId || !senderId || recipientId !== pageId) continue;
-        const items = readCustomers();
+        const items = repository.read();
         const customer = items.find(item => item.id === customerId(tenantId, pageId, senderId));
         if (!customer) continue;
         const receipt = event.read || event.delivery;
@@ -256,7 +262,7 @@ export async function handleMessengerWebhook(tenantId: string, payload: unknown,
             changed = true;
           }
         }
-        if (changed) writeCustomers(items);
+        if (changed) repository.write(items);
         accepted += 1;
         continue;
       }
@@ -276,7 +282,7 @@ export async function handleMessengerWebhook(tenantId: string, payload: unknown,
       const providerTimestamp = Number(event.timestamp);
       const timestamp = Number.isFinite(providerTimestamp) && providerTimestamp > 0 && providerTimestamp <= 8.64e15 ? providerTimestamp : Date.now();
       const messageId = String(event.message?.mid || '');if(!messageId.startsWith('mid.'))continue;
-      const customer = upsertMessage({ tenantId, pageId, userId, messageId, body, timestamp, actor: isEcho ? 'seller' : 'buyer', sendStatus: isEcho ? 'sent' : undefined, audit:{inboundSource:'verified_meta_webhook',accountId:String(currentAccount.id),pageId,accountHash:authority} });
+      const customer = upsertMessage({ tenantId, pageId, userId, messageId, body, timestamp, actor: isEcho ? 'seller' : 'buyer', sendStatus: isEcho ? 'sent' : undefined, audit:{inboundSource:'verified_meta_webhook',accountId:String(currentAccount.id),pageId,accountHash:authority} }, repository);
       if (!isEcho && options.analyzeTags !== false) void analyzeMessengerCustomerTags(tenantId, customer.id).catch(error => console.warn('[messenger:context-tags]', error instanceof Error ? error.message : 'analysis_failed'));
       accepted += 1;
     }

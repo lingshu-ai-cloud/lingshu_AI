@@ -60,7 +60,7 @@ export function OrderHistoryWidget({ customer }: { customer: CustomerProfile; on
     } catch (error) { setError((error as Error).message); } finally { setBusy(false); }
   };
   return <Card>
-    <CardHeader><div className="flex items-center justify-between"><p className="text-xs font-bold">订单历史</p>{customer.isReal && <button onClick={() => setFormOpen(!formOpen)} className="text-xs">添加订单</button>}</div></CardHeader>
+    <CardHeader><div className="flex items-center justify-between"><p className="text-xs font-bold">订单历史</p>{customer.isReal && !customer.isMock && !customer.readOnly && !customer.isHistorical && customer.source.startsWith('whatsapp') && <button onClick={() => setFormOpen(!formOpen)} className="text-xs">添加订单</button>}</div></CardHeader>
     <CardContent><div className="space-y-3 text-xs">
       <p className="text-text-muted">订单台账 · 已付款净额 ${orders.filter(paidOrder).reduce((sum, order) => sum + order.amount, 0).toFixed(2)}</p>
       {orders.map(order => <div key={order.id} className="rounded-lg bg-surface-2 p-3"><p className="font-bold">{order.orderNo} · ${order.amount.toFixed(2)}</p><p>{order.product} · {order.orderDate}</p><select disabled={busy} aria-label={`${order.orderNo} 状态`} value={order.status} onChange={event => void changeStatus(order, event.target.value as OrderStatus)}>{[order.status, ...orderTransitions[order.status]].map(status => <option key={status}>{status}</option>)}</select>{order.customerSyncStatus && order.customerSyncStatus !== 'done' && <button disabled={busy} onClick={() => void retrySync(order)}>订单已保存 · 重试客户摘要补写</button>}</div>)}

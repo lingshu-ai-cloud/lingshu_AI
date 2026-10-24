@@ -108,19 +108,19 @@ export function BasicInfoWidget({
       >
         <span className="min-w-0">
           <span className="block text-xs font-bold text-text-primary">客户资料</span>
-          <span className="mt-0.5 block truncate text-[10px] text-text-muted">{customer.countryName || '未知地区'} · {customer.language}</span>
+          <span className="mt-0.5 block truncate text-xs text-text-muted">{customer.countryName || '未知地区'} · {customer.language}</span>
         </span>
         <ChevronDown size={14} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
       <CardContent className="border-t border-border pt-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-2 text-sm font-black">
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-2 text-sm font-semibold">
             {customer.avatar}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <p className="truncate text-sm font-black text-text-primary">{customer.name}</p>
+              <p className="truncate text-sm font-semibold text-text-primary">{customer.name}</p>
               {customer.simulation?.editable && !sandboxEditing && (
                 <button type="button" onClick={() => setSandboxEditing(true)} className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-surface-2 hover:text-primary" title="编辑模拟客户资料">
                   <Pencil size={12} />
@@ -134,27 +134,27 @@ export function BasicInfoWidget({
           </div>
         </div>
         {customer.simulation?.editable && sandboxEditing && (
-          <div className="mt-4 rounded-2xl border border-cyan-200 bg-cyan-50/60 p-3">
+          <div className="mt-4 rounded-2xl border border-border bg-surface-2 p-3">
             <div className="mb-3 flex items-center justify-between gap-2">
-              <p className="text-xs font-black text-cyan-900">编辑模拟客户</p>
+              <p className="text-xs font-semibold text-text-primary">编辑模拟客户</p>
               <div className="flex gap-1">
-                <button type="button" onClick={() => setSandboxEditing(false)} className="flex h-7 w-7 items-center justify-center rounded-lg text-cyan-700 hover:bg-white" title="取消"><X size={13} /></button>
-                <button type="button" onClick={saveSandboxProfile} className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-700 text-white" title="保存"><Check size={13} /></button>
+                <button type="button" onClick={() => setSandboxEditing(false)} className="flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary hover:bg-surface" title="取消"><X size={13} /></button>
+                <button type="button" onClick={saveSandboxProfile} className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-white" title="保存"><Check size={13} /></button>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <input aria-label="模拟客户名称" value={sandboxDraft.name} onChange={event => setSandboxDraft(current => ({ ...current, name: event.target.value }))} placeholder="客户名称" className="rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-cyan-500" />
-              <input aria-label="模拟客户国家或地区" value={sandboxDraft.countryName} onChange={event => setSandboxDraft(current => ({ ...current, countryName: event.target.value }))} placeholder="国家/地区" className="rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-cyan-500" />
-              <select aria-label="模拟客户语言" value={sandboxDraft.language} onChange={event => setSandboxDraft(current => ({ ...current, language: event.target.value }))} className="rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-cyan-500">
+              <input aria-label="模拟客户名称" value={sandboxDraft.name} onChange={event => setSandboxDraft(current => ({ ...current, name: event.target.value }))} placeholder="客户名称" className="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs outline-none focus:border-accent" />
+              <input aria-label="模拟客户国家或地区" value={sandboxDraft.countryName} onChange={event => setSandboxDraft(current => ({ ...current, countryName: event.target.value }))} placeholder="国家/地区" className="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs outline-none focus:border-accent" />
+              <select aria-label="模拟客户语言" value={sandboxDraft.language} onChange={event => setSandboxDraft(current => ({ ...current, language: event.target.value }))} className="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs outline-none focus:border-accent">
                 {LANGUAGE_OPTIONS.map(language => <option key={language} value={language}>{language}</option>)}
               </select>
-              <input aria-label="模拟客户预估金额" value={sandboxDraft.estimatedValue} onChange={event => setSandboxDraft(current => ({ ...current, estimatedValue: event.target.value }))} placeholder="预估金额" className="rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-cyan-500" />
-              <select aria-label="模拟客户采购阶段" value={sandboxDraft.stage} onChange={event => setSandboxDraft(current => ({ ...current, stage: event.target.value as CustomerStage }))} className="rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-cyan-500">
+              <input aria-label="模拟客户预估金额" value={sandboxDraft.estimatedValue} onChange={event => setSandboxDraft(current => ({ ...current, estimatedValue: event.target.value }))} placeholder="预估金额" className="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs outline-none focus:border-accent" />
+              <select aria-label="模拟客户采购阶段" value={sandboxDraft.stage} onChange={event => setSandboxDraft(current => ({ ...current, stage: event.target.value as CustomerStage }))} className="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs outline-none focus:border-accent">
                 {STAGE_OPTIONS.map(stage => <option key={stage.value} value={stage.value}>{stage.label}</option>)}
               </select>
-              <input aria-label="模拟客户需求" value={sandboxDraft.product} onChange={event => setSandboxDraft(current => ({ ...current, product: event.target.value }))} placeholder="客户需求/产品" className="col-span-2 rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-cyan-500" />
+              <input aria-label="模拟客户需求" value={sandboxDraft.product} onChange={event => setSandboxDraft(current => ({ ...current, product: event.target.value }))} placeholder="客户需求/产品" className="col-span-2 rounded-lg border border-border bg-surface px-2.5 py-2 text-xs outline-none focus:border-accent" />
             </div>
-            <p className="mt-2 text-[10px] leading-4 text-cyan-700">保存后，从中间“模拟客户输入”发送第一句话。</p>
+            <p className="mt-2 text-xs leading-4 text-text-secondary">保存后，打开顶部“本地模拟链路”，接收第一条模拟客户消息。</p>
           </div>
         )}
         <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
@@ -173,8 +173,9 @@ export function BasicInfoWidget({
                 )}
                 <button
                   type="button"
+                  disabled={!onCustomerPatch || customer.readOnly}
                   onClick={() => setLanguageOpen(open => !open)}
-                  className="flex h-6 w-6 items-center justify-center rounded-lg text-text-muted hover:bg-white hover:text-text-primary"
+                  className="flex h-6 w-6 items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text-primary"
                   title="手动指定回复语言"
                 >
                   <Pencil size={12} />
@@ -183,7 +184,7 @@ export function BasicInfoWidget({
             </div>
             <p className="mt-1 truncate font-bold text-text-primary" title={customer.language}>{customer.language}</p>
             {languageOpen && (
-              <div className="absolute right-2 top-11 z-30 w-32 overflow-hidden rounded-xl border border-border bg-white py-1 shadow-lg">
+              <div className="absolute right-2 top-11 z-30 w-32 overflow-hidden rounded-xl border border-border bg-surface py-1 shadow-lg">
                 {LANGUAGE_OPTIONS.map(language => (
                   <button
                     key={language}

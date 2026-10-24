@@ -1,3 +1,5 @@
+import {translateCustomerText} from '../customerService/translation.js';
+import {localPreviewReplyCompatibility} from '../customerService/localPreviewReplyCompatibility.js';
 import { Router, type Request, type Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -223,16 +225,13 @@ pluginsRouter.get('/exchangerate/rates', async (_req, res) => {
   catch (error) { res.status(502).json({ error: error instanceof Error ? error.message : '汇率服务不可用' }); }
 });
 
-pluginsRouter.post('/translate/run', async (req, res) => {
+pluginsRouter.post('/translate/run', localPreviewReplyCompatibility.translate, async (req, res) => {
   const text = String(req.body?.text || '').trim();
   const source = String(req.body?.source || 'auto');
   const target = String(req.body?.target || '').trim();
   if (!text || !target) { res.status(400).json({ error: 'text and target required' }); return; }
   try {
-    const translatedText = await callLLM(text, {
-      backend: 'qwen',
-      systemPrompt: `Translate from ${source} to ${target}. Return only the translation, without explanation or quotation marks. Preserve names, numbers and formatting.`,
-    });
+    const translatedText = await translateCustomerText(text,source,target);
     res.json({ ok: true, source: 'qwen', translatedText: translatedText.trim() });
   } catch (error) {
     console.error('[plugin-translate]', { errorType: error instanceof Error ? error.name : 'UnknownError' });

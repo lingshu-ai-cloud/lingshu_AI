@@ -15,7 +15,8 @@ function catalogRef(product: Pick<QuoteCatalogProduct, 'sku' | 'name'>): string 
   return product.sku || product.name;
 }
 
-export function QuoteSkillCard({ customer, onInsertReply, onToast, channelReady, onCardSent }: {
+export function QuoteSkillCard({ customer, onInsertReply, onToast, channelReady, onCardSent, workspace = false }: {
+  workspace?: boolean;
   customer: CustomerProfile;
   onInsertReply: (text: string) => void;
   onToast: (text: string) => void;
@@ -26,7 +27,7 @@ export function QuoteSkillCard({ customer, onInsertReply, onToast, channelReady,
   const [available, setAvailable] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(workspace);
   const [previewUrl, setPreviewUrl] = useState('');
   const [catalog, setCatalog] = useState<QuoteCatalogProduct[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
@@ -69,7 +70,7 @@ export function QuoteSkillCard({ customer, onInsertReply, onToast, channelReady,
     const requestedCustomerId = customer.id;
     const generation = ++requestGenerationRef.current;
     replacePreviewUrl('');
-    setDraft(null); setExpanded(false); setEditing(false); setLoading(false);
+    setDraft(null); setExpanded(workspace); setEditing(false); setLoading(false);
     setSelectedCatalogRef(''); setCatalogPriceMode('manual');
     void quoteSkillApi.latest(requestedCustomerId).then(result => {
       if (alive && mountedRef.current && activeCustomerIdRef.current === requestedCustomerId && requestGenerationRef.current === generation) setDraft(result.draft);

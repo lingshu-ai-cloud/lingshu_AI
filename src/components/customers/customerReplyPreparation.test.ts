@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type {CustomerProfile} from '../../types/customer';
-import {isWaitingForHumanQuote, replyLanguage, requestDraft} from './customerReplyPreparation';
+import {isWaitingForHumanQuote, replyLanguage, requestDraft, translateReplyToCustomerLanguage} from './customerReplyPreparation';
 
 const customer = {
   id: 'customer-1',
@@ -57,4 +57,21 @@ test('HTTP failure produces an explicit empty result and successful replies reta
   globalThis.fetch=async()=>new Response(JSON.stringify({draft:'Safe original',translatedDraft:'已核对原文',decision:{execution:'human_required'},verification:{status:'safe_fallback',issues:['model_down']},enterpriseFactVersion:'facts-v3',status:'degraded',generationSource:'degraded'}),{status:200});
   const reply=await requestDraft(customer);assert.equal(reply.enterpriseFactVersion,'facts-v3');assert.equal(reply.decision?.execution,'human_required');assert.equal(reply.verification?.status,'safe_fallback');assert.equal(reply.status,'degraded');
  }finally{globalThis.fetch=originalFetch;if(storage)Object.defineProperty(globalThis,'localStorage',storage);else delete(globalThis as any).localStorage;}
+});
+
+test('ordinary composer translation carries explicit customer authority, preserves exact provider output and fails without substituting fixed text',async()=>{
+ const oldFetch=globalThis.fetch,storage=Object.getOwnPropertyDescriptor(globalThis,'localStorage'),oldWindow=Object.getOwnPropertyDescriptor(globalThis,'window');
+ Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:()=>null}});
+ Object.defineProperty(globalThis,'window',{configurable:true,value:{setTimeout,clearTimeout}});
+ let calls=0;
+ try{
+  globalThis.fetch=async(url,init)=>{calls++;assert.equal(url,'/api/overseas/plugins/translate/run');assert.deepEqual(JSON.parse(String(init?.body)),{customerId:'mock-composer',manualRequest:true,text:'请保留 75 ml 和盖型 B7。',source:'简体中文',target:'English'});return Response.json({translatedText:'Please retain 75 ml and lid B7.'});};
+  const mock={...customer,id:'mock-composer'};
+  assert.equal(await translateReplyToCustomerLanguage(mock,'请保留 75 ml 和盖型 B7。'),'Please retain 75 ml and lid B7.');
+  assert.equal(await translateReplyToCustomerLanguage(mock,'Already English B7'),'Already English B7');assert.equal(calls,1);
+  globalThis.fetch=async()=>Response.json({error:'translation_service_unavailable'},{status:502});
+  await assert.rejects(translateReplyToCustomerLanguage(mock,'请保留 75 ml 和盖型 B7。'),/原文已保留/);
+  globalThis.fetch=async()=>{throw Error('network unavailable');};
+  await assert.rejects(translateReplyToCustomerLanguage(mock,'请保留 75 ml 和盖型 B7。'),/本次未发送/);
+ }finally{globalThis.fetch=oldFetch;for(const [name,descriptor]of [['localStorage',storage],['window',oldWindow]] as const){if(descriptor)Object.defineProperty(globalThis,name,descriptor);else Reflect.deleteProperty(globalThis,name);}}
 });

@@ -1,3 +1,5 @@
+import './runtime/localCustomerPreviewIsolation.js';
+import { createLocalCustomerSimulationRouter, localCustomerSimulationEnabled } from './routes/localCustomerSimulation.js';
 import './loadEnvironment.js';
 import { validateCustomerCriteria } from './customerService/criteriaBoundary.js';
 import { createCustomerBatchesRouter } from './routes/customerBatches.js';
@@ -60,6 +62,7 @@ import { followupTemplatesRouter } from './routes/followupTemplates.js';
 import { digitalEmployeesRouter } from './routes/digitalEmployees.js';
 import { pointsBillingRouter } from './routes/pointsBilling.js';
 import { startBackgroundJobs } from './runtime/backgroundJobs.js';
+import { startPreviewSafeRecovery } from './runtime/customerPreviewRecoveryPolicy.js';
 import { localWeeklyExecutionRuntime } from './runtime/localWeeklyExecutionRuntime.js';
 import { weeklyDiscoveryScopeMigrationRecoveryRuntime } from './runtime/weeklyDiscoveryScopeMigrationRecoveryRuntime.js';
 import { parseProcessRole, processRoleStartsBackgroundJobs, processRoleStartsHttp } from './runtime/processRole.js';
@@ -244,6 +247,7 @@ app.use('/api/overseas/agents', agentChatRouter);
 app.use('/api/overseas/assistant-files', assistantFilesRouter);
 app.use('/api/overseas/agents', draftReplyRouter);
 app.use('/api/overseas/customer-batches', createCustomerBatchesRouter());
+if (localCustomerSimulationEnabled()) app.use('/api/overseas/customer-simulation', createLocalCustomerSimulationRouter());
 app.use('/api/overseas/customers', customerSuggestionsRouter);
 app.use('/api/overseas/channels', channelsRouter);
 app.use('/api/channels', channelsRouter);
@@ -300,14 +304,14 @@ const stopBackgroundJobs = processRoleStartsBackgroundJobs(processRole)
 // HTTP-only local preview restores previously registered exact-version opt-ins.
 // This is not startBackgroundJobs: no global production, publishing or message
 // workers are enabled, and no new package/member authorization is invented.
-const stopLocalWeeklyWebRecovery = processRole === 'web' ? (() => {
+const stopLocalWeeklyWebRecovery = processRole === 'web' ? startPreviewSafeRecovery(() => {
   void localWeeklyExecutionRuntime.start().catch(() => {
     // Health and the scoped observation expose the current failure, including
     // later recovery; do not leave a permanent startup issue after a retry.
     console.error('[runtime] scoped local recovery unavailable; see health.localWeeklyRecovery');
   });
   return () => localWeeklyExecutionRuntime.stop();
-})() : () => undefined;
+}) : () => undefined;
 
 // 绱犳潗搴撴湰鍦版枃浠舵墭绠★紙POST /studio/materials 涓婁紶鍒?data/media/锛?
 const mediaDir = path.join(__dirname, '..', 'data', 'media');
@@ -359,7 +363,7 @@ app.get('*', (_req, res) => {
 
 if (processRoleStartsHttp(processRole)) {
   const stopMessengerContextTagRecovery = process.env.MESSENGER_CONTEXT_TAG_RECOVERY_ENABLED === 'false'
-    ? () => undefined : startMessengerContextTagRecovery();
+    ? () => undefined : startPreviewSafeRecovery(startMessengerContextTagRecovery);
   const server = app.listen(PORT, LISTEN_HOST, () => {
     console.log(`[overseas-agent] http://${LISTEN_HOST}:${PORT}`);
   });

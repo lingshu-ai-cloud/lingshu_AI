@@ -1,0 +1,122 @@
+{
+  "head": "89b175109149d4551aeb3ce590fe9c42c46bf23c",
+  "scope": "local preview silent profile refresh; controlled classifier, no real provider/channel",
+  "evidence": [
+    {
+      "path": "silent-profile-final-features.log",
+      "sha256": "7e95e6bb76fc658128c564b801e3d0415d58a781299447fca4e626e2b54830c7",
+      "sourceSha256": "7e95e6bb76fc658128c564b801e3d0415d58a781299447fca4e626e2b54830c7"
+    },
+    {
+      "path": "silent-profile-final-pipeline.log",
+      "sha256": "65acc706299b07b5d26987c70a2a7fb0b6b6e014fa7085ec9c0e1de688e34afe",
+      "sourceSha256": "65acc706299b07b5d26987c70a2a7fb0b6b6e014fa7085ec9c0e1de688e34afe"
+    },
+    {
+      "path": "silent-profile-final-checks.log",
+      "sha256": "829b4ecc688bcfdae05c9383ec4c95f863b8c4d7883759f5df0c363c0be492dc",
+      "sourceSha256": "829b4ecc688bcfdae05c9383ec4c95f863b8c4d7883759f5df0c363c0be492dc"
+    },
+    {
+      "path": "silent-profile-checks-first-failure.log",
+      "sha256": "ada2c62fead506a15db73a244551cb6d5e15a4aacb9441320c0f07cd1ce9634a",
+      "sourceSha256": "ada2c62fead506a15db73a244551cb6d5e15a4aacb9441320c0f07cd1ce9634a"
+    },
+    {
+      "path": "candidate-features-result.json.gz",
+      "sha256": "401dc442f29d87e32e3174a9514338846432f1cf692d32f7b2b429b4bc4aed80",
+      "sourceSha256": "88a0cee8c0d63baa53c10e79d09a1abf8f384a5da9c59543484d4b32e41afe50"
+    },
+    {
+      "path": "candidate-pipeline-result.json.gz",
+      "sha256": "94f2113b86753b9c455c9a39c8e40d6544da156cb6249955ddaba58a8e1be65b",
+      "sourceSha256": "4a57378ee09c9c07e185fb51fd8995b49892a85be4bf9b5079d9c85cfde6407d"
+    },
+    {
+      "path": "candidate-checks-result.json.gz",
+      "sha256": "755a187007ccbe9828393e0f02861dd1f9560c1750dbebdc001256f61e0761d8",
+      "sourceSha256": "9a02c34cc345c8920f8a04785cc995733cb4e22162b66ca9e2d4f7859ef78e2f"
+    }
+  ],
+  "sourceUnchangedAfterChecks": true,
+  "results": {
+    "features": {
+      "stable": true,
+      "passed": true,
+      "results": [
+        {
+          "name": "features",
+          "status": 0,
+          "signal": null,
+          "error": null
+        }
+      ]
+    },
+    "pipeline": {
+      "stable": true,
+      "passed": true,
+      "results": [
+        {
+          "name": "pipeline",
+          "status": 0,
+          "signal": null,
+          "error": null
+        }
+      ]
+    },
+    "checks": {
+      "stable": true,
+      "passed": true,
+      "results": [
+        {
+          "name": "lint",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "check:architecture",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "test:architecture-ratchet",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "check:digital-employee-migrations",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "test:migration-guard",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "build",
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "name": "diff-check",
+          "status": 0,
+          "signal": null,
+          "error": null
+        }
+      ]
+    }
+  },
+  "limits": [
+    "functional groups overlap; do not sum unique tests",
+    "explicit recovery API is not automatic startup recovery",
+    "no real AI or real channel E2E",
+    "WhatsApp native auto model classification was not changed"
+  ]
+}

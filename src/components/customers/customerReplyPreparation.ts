@@ -189,7 +189,7 @@ export async function translateReplyToCustomerLanguage(customer: CustomerProfile
     const response = await fetch('/api/overseas/plugins/translate/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
-      body: JSON.stringify({ text: body, source: '简体中文', target: replyLanguage(customer) }),
+      body: JSON.stringify({ customerId: customer.id, manualRequest: true, text: body, source: '简体中文', target: replyLanguage(customer) }),
       signal: controller.signal,
     });
     const data = await response.json().catch(() => ({}));

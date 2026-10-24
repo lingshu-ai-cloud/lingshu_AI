@@ -1,0 +1,65 @@
+import {defaultLocalPreviewProfilePorts} from '../customerService/localPreviewProfileAnalysis.js';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+import {fixture} from '../customerService/customerManualTakeover.fixture.js';
+import {createLocalCustomerSimulation, type PreviewAiPorts} from '../customerService/localPreviewSimulation.js';
+import {createLocalCustomerSimulationRouter} from './localCustomerSimulation.js';
+const PREVIEW_ZH='测试返回的中文草稿',PREVIEW_EN='Generated response from the test provider.';
+let translationCalls=0;
+const ai:PreviewAiPorts={generate:async()=>({status:200,factVersion:'test-facts',body:{draft:PREVIEW_EN,translatedDraft:PREVIEW_ZH,verification:{status:'verified',issues:[]}}}),translate:async text=>{translationCalls++;if(text==='uncatalogued')throw Error('test_translation_failure');return PREVIEW_EN;},run:async action=>({value:await action(),audit:[]})};
+test('current preview simulation reuses inbound, durable draft, hold, template approval and ledger recovery without real records or retransmission',async()=>{
+ Object.assign(process.env,{NODE_ENV:'development',LINGSHU_LOCAL_PREVIEW:'1',CUSTOMER_SIMULATION_ENABLED:'1',LINGSHU_LOCAL_PREVIEW_ORIGINS:'http://127.0.0.1:5225'});
+ const f=fixture(),service=createLocalCustomerSimulation(f.store,ai,{...defaultLocalPreviewProfilePorts,enabled:()=>false}),app=express();app.use(express.json());app.use('/simulation',createLocalCustomerSimulationRouter(service,(req,res,next)=>{res.locals.tenantId=req.headers['x-tenant']||'tenant';res.locals.userId=req.headers['x-user']||'owner';res.locals.dataAuthority=req.headers['x-authority']||'local';next();}));
+ const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));const addr=server.address();assert.ok(addr&&typeof addr!=='string');const base=`http://127.0.0.1:${addr.port}/simulation`;
+ async function call(path:string,body?:unknown,headers:Record<string,string>={}){const r=await fetch(base+path,{method:body?'POST':'GET',headers:{Origin:'http://127.0.0.1:5225','Content-Type':'application/json',...headers},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json()};}
+ try{
+  assert.equal((await call('/isolation')).data.installed,true);assert.equal((await call('/isolation/check',{})).data.checks.length,8);assert.equal((await call('/isolation/check',{url:'https://graph.facebook.com'})).status,400);
+  assert.equal((await call('/isolation',undefined,{'x-authority':'pocketbase'})).status,403);
+  assert.equal((await call('/sessions',{customerId:'real-buyer'})).status,400);
+  assert.equal((await call('/sessions',{customerId:'mock-free-sandbox'},{'x-authority':'pocketbase'})).status,403);
+  assert.equal((await call('/sessions',{customerId:'mock-free-sandbox'},{Origin:'https://foreign.example'})).status,404);
+  const started=await call('/sessions',{customerId:'mock-free-sandbox'});assert.equal(started.status,200);const id=started.data.sessionId;
+  const correction={tag:'明确交期',replacement:'交期待确认',dimension:'risk',reason:'仅是客户期望',expectedUpdatedAt:null};
+  const corrected=await call('/tag-corrections',{customerId:'mock-free-sandbox',tags:['明确交期'],tagCorrection:correction,evidence:[{tag:'明确交期',messageId:'buyer-evidence',excerpt:'within 30 days'}]});
+  assert.equal(corrected.status,200);assert.deepEqual(corrected.data.tags,['交期待确认']);
+  assert.equal((await call('/drafts')).data.items[0].patch.contextTagCorrections[0].evidence[0].excerpt,'within 30 days');
+  assert.equal((await call('/tag-corrections',{customerId:'mock-free-sandbox',tags:['明确交期'],tagCorrection:correction,evidence:[]})).status,409);
+  assert.equal((await call('/tag-corrections',{customerId:'real-customer',tags:[],tagCorrection:correction,evidence:[]})).status,400);
+
+  assert.equal((await call('/drafts',{customerId:'mock-free-sandbox',pendingDraft:'saved before inbound'})).status,200);
+  assert.equal((await call('/drafts')).data.items[0].patch.pendingDraft,'saved before inbound');
+  assert.equal((await call('/drafts',undefined,{'x-user':'other'})).data.items.length,0);
+  const action=(action:string,extra:Record<string,unknown>={})=>call(`/sessions/${id}/actions`,{action,...extra});
+  assert.equal((await call(`/sessions/${id}/actions`,{action:'read'},{'x-user':'other'})).status,404);
+  assert.equal((await call(`/sessions/${id}/actions`,{action:'read'},{'x-tenant':'foreign'})).status,404);
+  assert.equal((await call(`/sessions/${id}/actions`,{action:'read',tenantId:'foreign'})).status,400);
+  let r=await action('inbound',{text:'Hello, please send product information.',eventId:'inbound-123456'});assert.equal(r.status,200);assert.equal(r.data.customer.timeline.length,1);
+  await action('inbound',{text:'Hello, please send product information.',eventId:'inbound-123456'});assert.equal((await action('read')).data.customer.timeline.length,1);
+  r=await call(`/sessions/${id}/draft`,{requestId:'draft-preview-1234'});assert.equal(r.status,200);assert.equal(r.data.draft,PREVIEW_EN);
+  assert.equal((await call(`/sessions/${id}/draft/draft-preview-1234`)).data.draft,PREVIEW_EN);
+  await call(`/sessions/${id}/draft`,{requestId:'draft-preview-1234'});assert.equal((await action('read')).data.generationCalls,1);
+  assert.equal((await action('translate',{text:PREVIEW_ZH})).data.translation,PREVIEW_EN);
+  assert.equal((await action('translate',{text:PREVIEW_ZH})).data.translation,PREVIEW_EN);assert.equal(translationCalls,1,'translation replay must reuse saved output');
+  assert.equal((await action('translate',{text:'uncatalogued'})).status,409);
+  await action('save-draft',{text:PREVIEW_ZH});assert.equal((await call('/sessions',{customerId:'mock-free-sandbox'})).data.pendingDraft,PREVIEW_ZH);
+  assert.equal((await action('hold')).data.manual.active,true);
+  assert.equal((await action('release')).data.manual.active,false);
+  assert.equal((await action('send')).status,409);
+  r=await action('prepare-template');assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.items.length,1);assert.equal(r.data.approval.status,'pending');assert.equal(r.data.items[0].send_mode,'template');
+  assert.equal((await action('approve',{version:999,contentHash:r.data.approval.content_hash})).status,409);
+  r=await action('approve',{version:r.data.approval.subject_version,contentHash:r.data.approval.content_hash});assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.batch.status,'approved');
+  assert.equal(r.data.items[0].draft_body,PREVIEW_EN,'approval freezes the actual translated body');
+  await action('save-draft',{text:'人工修改后的草稿'});r=await action('read');assert.equal(r.data.batch,null,'editing invalidates the prior approval');assert.equal((await action('send')).status,409);
+  await action('save-draft',{text:PREVIEW_ZH});await action('translate',{text:PREVIEW_ZH});r=await action('prepare-template');r=await action('approve',{version:r.data.approval.subject_version,contentHash:r.data.approval.content_hash});
+  const contentHash=r.data.items[0].content_hash;
+  assert.equal((await action('send',{contentHash,text:'different'})).status,409);
+  r=await action('send-history-failure',{contentHash});assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.send.status,'accepted');assert.equal(r.data.send.historyWritebackPending,true);assert.equal(r.data.transportCalls,1);
+  await action('send',{contentHash});assert.equal((await action('read')).data.transportCalls,1);
+  r=await action('recover');assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.send.historyWritebackPending,false);assert.equal(r.data.transportCalls,1);assert.equal(r.data.customer.timeline.length,2);
+  r=await action('receipt');assert.equal(r.status,200,JSON.stringify(r.data));assert.equal(r.data.send.deliveryStatus,'delivered');assert.equal(r.data.customer.timeline.at(-1).sendStatus,'delivered');
+  const recreated=createLocalCustomerSimulation(f.store,ai,{...defaultLocalPreviewProfilePorts,enabled:()=>false});const restored=await recreated.start('tenant','owner','mock-free-sandbox');assert.equal(restored.send?.deliveryStatus,'delivered');assert.equal(restored.transportCalls,1);
+  for(const c of ['social_accounts','workflow_runs','workflow_tasks','approval_requests','followup_batches','customer_channel_send_requests','customer_manual_takeovers'])assert.equal(f.table(c).length,0,`${c} must remain untouched`);
+  process.env.NODE_ENV='production';assert.equal((await action('read')).status,404);
+ }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
+});

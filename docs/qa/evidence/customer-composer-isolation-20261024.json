@@ -1,0 +1,689 @@
+{
+  "reviewedAt": "2026-10-24T17:55:55.311047+08:00",
+  "branch": "feature/customer-service-20261024",
+  "head": "89b175109149d4551aeb3ce590fe9c42c46bf23c",
+  "previewUrl": "http://127.0.0.1:5225/?page=conversion",
+  "runtimePid": 90193,
+  "customerId": "mock-export-lead-uae-vision",
+  "sessionId": "97e5d54cc5a5f9c10c21c55b",
+  "draftRequestId": "3ffe2724-68c3-44b8-8e0e-78534a08ed56",
+  "draftStatus": "succeeded",
+  "generationSource": "provider_generated",
+  "verification": {
+    "status": "verified",
+    "issues": []
+  },
+  "generationCalls": 1,
+  "customerTransportCalls": 0,
+  "providerAudit": [
+    {
+      "startedAt": "2026-10-24T09:47:41.720Z",
+      "endpoint": "https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions",
+      "status": 200,
+      "requestId": "63d50ef6-2048-9b5e-9bc5-79a85fb9102b",
+      "completionId": "chatcmpl-63d50ef6-2048-9b5e-9bc5-79a85fb9102b",
+      "model": "qwen-plus",
+      "usage": {
+        "prompt_tokens": 270,
+        "total_tokens": 410,
+        "completion_tokens": 140,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "startedAt": "2026-10-24T09:47:45.671Z",
+      "endpoint": "https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions",
+      "status": 200,
+      "requestId": "bb76aaee-ccba-935d-bdbb-f925f0cef829",
+      "completionId": "chatcmpl-bb76aaee-ccba-935d-bdbb-f925f0cef829",
+      "model": "qwen-plus",
+      "usage": {
+        "prompt_tokens": 309,
+        "total_tokens": 359,
+        "completion_tokens": 50,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "startedAt": "2026-10-24T09:47:47.046Z",
+      "endpoint": "https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions",
+      "status": 200,
+      "requestId": "8a8fc71b-88d7-994c-87f8-bcdf8a4e313d",
+      "completionId": "chatcmpl-8a8fc71b-88d7-994c-87f8-bcdf8a4e313d",
+      "model": "qwen-plus",
+      "usage": {
+        "prompt_tokens": 1152,
+        "total_tokens": 1287,
+        "completion_tokens": 135,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "startedAt": "2026-10-24T09:47:50.406Z",
+      "endpoint": "https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions",
+      "status": 200,
+      "requestId": "9b7aae9e-c72f-9bf7-a790-a126327495b6",
+      "completionId": "chatcmpl-9b7aae9e-c72f-9bf7-a790-a126327495b6",
+      "model": "qwen-plus",
+      "usage": {
+        "prompt_tokens": 2303,
+        "total_tokens": 2491,
+        "completion_tokens": 188,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "startedAt": "2026-10-24T09:47:55.142Z",
+      "endpoint": "https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions",
+      "status": 200,
+      "requestId": "8d992b2b-0207-91ff-9131-365a07c5d24c",
+      "completionId": "chatcmpl-8d992b2b-0207-91ff-9131-365a07c5d24c",
+      "model": "qwen-plus",
+      "usage": {
+        "prompt_tokens": 141,
+        "total_tokens": 200,
+        "completion_tokens": 59,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "startedAt": "2026-10-24T09:49:07.464Z",
+      "endpoint": "https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions",
+      "status": 200,
+      "requestId": "292777dc-c69e-95a4-9d9d-5c4f78857be3",
+      "completionId": "chatcmpl-292777dc-c69e-95a4-9d9d-5c4f78857be3",
+      "model": "qwen-plus",
+      "usage": {
+        "prompt_tokens": 90,
+        "total_tokens": 148,
+        "completion_tokens": 58,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    }
+  ],
+  "providerTotalTokens": 4895,
+  "assertions": {
+    "originalDraftRequestIdStable": true,
+    "providerGeneratedVerified": true,
+    "oneGeneration": true,
+    "zeroCustomerTransports": true,
+    "sixProviderResponses200": true,
+    "translationRetainsMlAndLid": true,
+    "manualDraftPersisted": true,
+    "guardInstalled": true,
+    "autoSendDisabled": true
+  },
+  "guard": {
+    "installed": true,
+    "version": 2,
+    "pid": 90193,
+    "defaultPolicy": "deny",
+    "checks": [
+      {
+        "name": "fetch",
+        "result": "blocked",
+        "code": "ISOLATED_NETWORK_BLOCKED"
+      },
+      {
+        "name": "http",
+        "result": "blocked",
+        "code": "ISOLATED_NETWORK_BLOCKED"
+      },
+      {
+        "name": "https",
+        "result": "blocked",
+        "code": "ISOLATED_NETWORK_BLOCKED"
+      },
+      {
+        "name": "net",
+        "result": "blocked",
+        "code": "ISOLATED_NETWORK_BLOCKED"
+      },
+      {
+        "name": "tls",
+        "result": "blocked",
+        "code": "ISOLATED_NETWORK_BLOCKED"
+      },
+      {
+        "name": "curl_subprocess",
+        "result": "blocked",
+        "code": "ISOLATED_NETWORK_BLOCKED"
+      },
+      {
+        "name": "shell",
+        "result": "blocked",
+        "code": "ISOLATED_NETWORK_BLOCKED"
+      },
+      {
+        "name": "node_child_empty_env",
+        "result": "blocked",
+        "code": "ISOLATED_NETWORK_BLOCKED"
+      }
+    ]
+  },
+  "channels": {
+    "enabled": false,
+    "canAutoSend": false,
+    "messagingAuthorization": {
+      "tenantId": "local_tenant_preview_beauty_showcase_local_test",
+      "channel": "whatsapp",
+      "configVersion": 1,
+      "configActive": true,
+      "customerAgentEnabled": false,
+      "tenantAuthorized": false,
+      "providerReady": false,
+      "backgroundWorkerEnabled": false,
+      "inboundAutoSendAllowed": false,
+      "manualFollowupSendAllowed": false,
+      "scheduledFollowupSendAllowed": false,
+      "reasons": [
+        "customer_agent_not_enabled",
+        "tenant_real_customer_messages_not_authorized",
+        "whatsapp_provider_not_ready",
+        "followup_background_worker_disabled"
+      ]
+    },
+    "messengerAuthorization": {
+      "tenantId": "local_tenant_preview_beauty_showcase_local_test",
+      "channel": "messenger",
+      "configVersion": 1,
+      "configActive": true,
+      "customerAgentEnabled": false,
+      "tenantAuthorized": false,
+      "providerReady": false,
+      "backgroundWorkerEnabled": false,
+      "inboundAutoSendAllowed": false,
+      "manualFollowupSendAllowed": false,
+      "scheduledFollowupSendAllowed": false,
+      "reasons": [
+        "customer_agent_not_enabled",
+        "tenant_real_customer_messages_not_authorized",
+        "messenger_provider_not_ready",
+        "followup_background_worker_disabled"
+      ]
+    },
+    "instagramAuthorization": {
+      "tenantId": "local_tenant_preview_beauty_showcase_local_test",
+      "channel": "instagram",
+      "configVersion": 1,
+      "configActive": true,
+      "customerAgentEnabled": false,
+      "tenantAuthorized": false,
+      "providerReady": false,
+      "backgroundWorkerEnabled": false,
+      "inboundAutoSendAllowed": false,
+      "manualFollowupSendAllowed": false,
+      "scheduledFollowupSendAllowed": false,
+      "reasons": [
+        "customer_agent_not_enabled",
+        "tenant_real_customer_messages_not_authorized",
+        "instagram_provider_not_ready",
+        "followup_background_worker_disabled"
+      ]
+    }
+  },
+  "validation": {
+    "targeted": {
+      "pass": 8,
+      "fail": 0,
+      "skip": 0
+    },
+    "isolation": {
+      "pass": 10,
+      "fail": 0,
+      "skip": 0
+    },
+    "pipeline": {
+      "pass": 93,
+      "fail": 0,
+      "skip": 0
+    },
+    "customerService": {
+      "pass": 67,
+      "fail": 0,
+      "skip": 0
+    },
+    "finalCheckExitCodes": {
+      "lint": 0,
+      "architecture": 0
+    },
+    "build": "passed; pre-final server-only refinements; frontend source unchanged",
+    "diffCheck": "passed"
+  },
+  "preservation": {
+    "originalDirtyFiles": 74,
+    "intentionallyEditedOriginalDirtyFiles": [
+      "package.json",
+      "server/routes/draftReply.ts",
+      "server/routes/plugins.ts",
+      "src/components/customers/useConversionDraftEffects.ts",
+      "docs/qa/customer-premerge-review-checklist-2026-10-24.md",
+      "server/customerService/localPreviewSimulation.ts"
+    ],
+    "otherOriginalDirtyFilesUnchanged": 68,
+    "unexpectedChanges": [],
+    "originalSnapshot": {
+      "at": "2026-10-24T17:42:45.174912+08:00",
+      "files": [
+        {
+          "status": " M",
+          "path": "docs/product/PRD-灵枢AI全系统UI设计规范-v2-2026-10-09.md",
+          "sha256": "31c806e938406ae64f5432c921b6ad7251d8c6d2385d4b7fe8637219a632175b"
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "sha256": "b66649b77fc2b996e052982ab47acb3cfb8d611711051607c2927003ae1e6120"
+        },
+        {
+          "status": " M",
+          "path": "scripts/customer-isolated-test-guard.mjs",
+          "sha256": "102a0eec7ace8898ad0487132c8037378599b1d4c2cf74463a771ad46377cb37"
+        },
+        {
+          "status": " M",
+          "path": "server/agents/customerReplyUiContract.test.ts",
+          "sha256": "0e2315478171b2bda088b1c2d15ae055838db20fdb2de11746cc73ce7db16937"
+        },
+        {
+          "status": " M",
+          "path": "server/customerService/businessProfile.ts",
+          "sha256": "ea77f6274c40ef533f225dbedfb885f8ef56079613a2289e244c1a6b51e51586"
+        },
+        {
+          "status": " M",
+          "path": "server/digitalEmployees/customerWorkflow.ts",
+          "sha256": "f4687f99aed784978919020e53e2eb65d1d933adf6cee03fce04b183f92ab4b7"
+        },
+        {
+          "status": " M",
+          "path": "server/index.ts",
+          "sha256": "a7ff42b23ddeb9d38e33724a85339bb00a0ca244da38bc654be7716134db78b5"
+        },
+        {
+          "status": " M",
+          "path": "server/instagram/conversations.ts",
+          "sha256": "a357239274110081e672f630fa8f07dfcce7568c4c142fbecbbc35d55e0eb1e3"
+        },
+        {
+          "status": " M",
+          "path": "server/lib/networkEnvironment.ts",
+          "sha256": "fc3055dcc3e769ed0bcd42a7733c27cc3a2efb768928e4964540d4e52fdda991"
+        },
+        {
+          "status": " M",
+          "path": "server/messenger/conversations.test.ts",
+          "sha256": "e5a04adef255cb71c7425e102e3b93ab113db45c896cfec4c8e73a4b85700341"
+        },
+        {
+          "status": " M",
+          "path": "server/messenger/conversations.ts",
+          "sha256": "152dc9a11111ac44ed24bf775c55abe5b7c96735d203fa6209c12ca9b845bebe"
+        },
+        {
+          "status": " M",
+          "path": "server/routes/customerSuggestions.ts",
+          "sha256": "c0a3a60b430f5cae822b82d7e490955053646390b7aef6683d85aecf7293fdd5"
+        },
+        {
+          "status": " M",
+          "path": "server/routes/draftReply.ts",
+          "sha256": "28d566488394de3b269099e5eaa78f8de900d0843a5b2a912bf5701db23e539b"
+        },
+        {
+          "status": " M",
+          "path": "server/routes/plugins.ts",
+          "sha256": "048375c6af4b3b6b1abe201e6076e2205a6b436f354010d288cce03a13049f08"
+        },
+        {
+          "status": " M",
+          "path": "server/security/externalCustomerServiceDemo.test.ts",
+          "sha256": "8f5420d2006c3920ab234444fa0a9844bc2cdc77b0b8f395dd1ae0c9625795e6"
+        },
+        {
+          "status": " M",
+          "path": "server/whatsapp/historyImport.ts",
+          "sha256": "d6c2ed0da488f11726980ef8a355475ee60f78fcfa2750b2ce815ff200914056"
+        },
+        {
+          "status": " M",
+          "path": "src/components/ConversionPage.compactConversation.contract.test.ts",
+          "sha256": "07f26ad21b492c533243bb26f647a079e6b7b8d9721bf91855d64798049d9f4c"
+        },
+        {
+          "status": " M",
+          "path": "src/components/ConversionPage.tsx",
+          "sha256": "e819c500ceadf3da5576e60c6dbeefbe41b861f8cbd19b8ee3de13a1cd9d62ee"
+        },
+        {
+          "status": " M",
+          "path": "src/components/customers/ConversionChatThread.tsx",
+          "sha256": "dc66aaba85f85318b80f0868ccc6b5b298d89f65dd42e5b801862c15b7893bca"
+        },
+        {
+          "status": " M",
+          "path": "src/components/customers/ConversionCustomerRail.tsx",
+          "sha256": "da84979e00c237a2b3f2d70504b837c27be748ca0b6470d244a6a95b933b84fa"
+        },
+        {
+          "status": " M",
+          "path": "src/components/customers/CustomerReplyRecovery.tsx",
+          "sha256": "46e2dfe70160f78f89a944a9002c7abe5c2e1bba447c2db94a48ff53320b904b"
+        },
+        {
+          "status": " M",
+          "path": "src/components/customers/QuoteSkillCard.test.ts",
+          "sha256": "4b8674e1dbd2c4037965997ae72e1ced20672911a986b398882e225d8856f37a"
+        },
+        {
+          "status": " M",
+          "path": "src/components/customers/QuoteSkillCard.tsx",
+          "sha256": "0178db3fc32fd7e6ecb5743d6315e56be363d861b2ba5dbf23ba766a253db03b"
+        },
+        {
+          "status": " M",
+          "path": "src/components/customers/customerConversationDelivery.ts",
+          "sha256": "8df94c493b341ba727225e28b825494ac202fae0c0f7978c968788f6f2ce9a9b"
+        },
+        {
+          "status": " M",
+          "path": "src/components/customers/useConversionDraftEffects.ts",
+          "sha256": "f077ef25fbe9b102869c6099dec20ff001757ca7c8bf7982148bb8c11c21068e"
+        },
+        {
+          "status": " M",
+          "path": "src/components/customers/widgets/BasicInfoWidget.tsx",
+          "sha256": "c92ab64e36dee6b6151905b7887cdd48aaeec0bc63584c421c6d5957c849f619"
+        },
+        {
+          "status": " M",
+          "path": "src/components/customers/widgets/OrderHistoryWidget.tsx",
+          "sha256": "a13d043562d49996b49a2ad841d8fc1a702e5e8eef91c2ae271f2918f228afdb"
+        },
+        {
+          "status": " M",
+          "path": "src/components/customers/widgets/TagsWidget.tsx",
+          "sha256": "0056640765de51838649e8165aef381532de5674a12a4825fa41aa8e522edb6d"
+        },
+        {
+          "status": " M",
+          "path": "src/hooks/useCustomers.ts",
+          "sha256": "7d56379ffea8bf5e6e775e641c9157c2de391157ce4936ff2d5cd0dc54fc157e"
+        },
+        {
+          "status": " M",
+          "path": "src/lib/customerReplyRequest.ts",
+          "sha256": "c7ecf3d81fe5911aa734634fe2eac195fd8aa28bb8bc589a91dd3bcba69c31c8"
+        },
+        {
+          "status": " M",
+          "path": "src/mocks/quoteCustomerProfiles.ts",
+          "sha256": "96ba0596e8febca96a6d888c71a3ea6e9b45de1cdcd82d521e3ad363c9686d98"
+        },
+        {
+          "status": " M",
+          "path": "src/types/customer.ts",
+          "sha256": "5bfc75efd97f95d93eff2f46c060954683251d55f6b5ca489c039e0431eb2099"
+        },
+        {
+          "status": " M",
+          "path": "vite.config.ts",
+          "sha256": "906ef16213e9e1c27739957dd6103761a149a8e39f32ba2371b2f64c13e3f83a"
+        },
+        {
+          "status": "??",
+          "path": "docs/qa/customer-channel-isolation-audit-2026-10-24.md",
+          "sha256": "6267476cff7aa3717243ef189538d3542e8bd37d241b6e335e4fc8c870566f25"
+        },
+        {
+          "status": "??",
+          "path": "docs/qa/customer-compact-frontend-2026-10-24.md",
+          "sha256": "bd23562c937259e02bba5b0d17b42e06e204f605d78a30811be22f42fd6e6151"
+        },
+        {
+          "status": "??",
+          "path": "docs/qa/customer-hardened-preview-full-chain-2026-10-24.md",
+          "sha256": "356cac41a8dddebaae5e349ab16f6bd2bc568aeb46cef8e4fc52f2b817cfa0b8"
+        },
+        {
+          "status": "??",
+          "path": "docs/qa/customer-premerge-review-checklist-2026-10-24.md",
+          "sha256": "79b52b4c9d823b5de51e0d1485bc07c8090577300d49ddfbc002f07d459c5fd3"
+        },
+        {
+          "status": "??",
+          "path": "docs/qa/customer-preview-real-ai-2026-10-24.md",
+          "sha256": "f30b71569f75b3617415a5fb7c9e7bba5145642b8d196b196d2d06c573f7f40f"
+        },
+        {
+          "status": "??",
+          "path": "docs/qa/customer-preview-simulation-fixes-2026-10-24.md",
+          "sha256": "52cb4257a4dabdcc436e069435a680e69f000f8e82d3052d85832d304f5ee59d"
+        },
+        {
+          "status": "??",
+          "path": "docs/qa/customer-preview-walkthrough-2026-10-24.md",
+          "sha256": "d26eac055f89391983fdcb536af39a7053b63a35093c2f159d80fafeb61ca72d"
+        },
+        {
+          "status": "??",
+          "path": "docs/qa/customer-profile-stage-acceptance-2026-10-24.md",
+          "sha256": "c7e961fad1eb8ede1226789c30f50f07126f34e6527fe127b6357482d80d2a7c"
+        },
+        {
+          "status": "??",
+          "path": "docs/qa/customer-workspace-restoration-2026-10-24.md",
+          "sha256": "12933a8a8fbfb5341d8271dc60fbbbabb97e9fae0352fa668f1152c46f637998"
+        },
+        {
+          "status": "??",
+          "path": "docs/qa/evidence/customer-premerge-review-20261024.json",
+          "sha256": "b5580e7f5785f0aa2db437e7cf65164b0092c3a28d4ae65f9b343debd6b662c7"
+        },
+        {
+          "status": "??",
+          "path": "docs/qa/quote-draft-and-profile-tags-2026-10-24.md",
+          "sha256": "208c25c613cff9374f762eea9aee19ccb10c3578256f2f088577e4b6451c2ead"
+        },
+        {
+          "status": "??",
+          "path": "docs/qa/quote-modal-walkthrough-2026-10-24.md",
+          "sha256": "1d01c4e5465c734ba34e66c21d136845b181ec55745e4d78a21c48cb51edf7fb"
+        },
+        {
+          "status": "??",
+          "path": "scripts/customer-isolated-processes.mjs",
+          "sha256": "4439fe1369bd9e01b3a0779247b0814a0fe4d80330fb1f3b0b1782c14d2b6f9d"
+        },
+        {
+          "status": "??",
+          "path": "scripts/customer-isolated-test-guard.d.mts",
+          "sha256": "319b1022dca94fc78bb69c6e0a90d89288dc5bb7717319f01b2679bf8f6adf6d"
+        },
+        {
+          "status": "??",
+          "path": "scripts/customer-isolation-bootstrap.test.mjs",
+          "sha256": "13b09ee739af12b68a803109ce6dd5174ac2b9f324737bb7d628ceaf878537ec"
+        },
+        {
+          "status": "??",
+          "path": "scripts/customer-isolation-canary.mjs",
+          "sha256": "ad0eb3526650fe12041d6cb3be3887d65359a51d5b1e884f1e28596fde9858f5"
+        },
+        {
+          "status": "??",
+          "path": "scripts/customer-isolation.test.mjs",
+          "sha256": "32a98c0e619e73c3e3428b3cfacef68d566afa5858f7d90774cf47eeb144570c"
+        },
+        {
+          "status": "??",
+          "path": "scripts/customer-preview-ai-scope.d.mts",
+          "sha256": "bc88c239f07b53199076f41090b94d729a2108d82a9219ed0e26f6d765e7ae51"
+        },
+        {
+          "status": "??",
+          "path": "scripts/customer-preview-ai-scope.mjs",
+          "sha256": "4081a4d4331dc8549424fe1d522d31a20bc6b676692085f87959e2ee5c1b0c37"
+        },
+        {
+          "status": "??",
+          "path": "scripts/fixtures/customer-isolation-child.mjs",
+          "sha256": "ed52b0db70c8cbf242c881ca99259dbf35274718201451c2e17f41b78aaeff3a"
+        },
+        {
+          "status": "??",
+          "path": "scripts/fixtures/customer-isolation-startup-observer.mjs",
+          "sha256": "670e256edcae0abc17221d0f360b8069b5bdb0bdd3379613a2a4c14d3a7a223e"
+        },
+        {
+          "status": "??",
+          "path": "scripts/run-customer-isolated-tests.mjs",
+          "sha256": "10393b89b4e6a6a510a9d0f71dc0062044a7d4c0a025c38204021466e526d07c"
+        },
+        {
+          "status": "??",
+          "path": "server/customerService/localPreviewAiIsolation.test.ts",
+          "sha256": "d665905ddabac70fc6990b56d77330a2113e1f6caef1630d17f433375ce7098b"
+        },
+        {
+          "status": "??",
+          "path": "server/customerService/localPreviewSimulation.ts",
+          "sha256": "fa6cc7eeebd776885a266a1babf7156fdaa80ccf6f1adc66b8ad9ff4dca09a3a"
+        },
+        {
+          "status": "??",
+          "path": "server/customerService/translation.ts",
+          "sha256": "0e69bb5132d87bea7a4c580ed618b4723570a97ab28626dfbcd1cb726a6d6f21"
+        },
+        {
+          "status": "??",
+          "path": "server/routes/localCustomerSimulation.test.ts",
+          "sha256": "a55815be856b5008f0258da1e4164d405bac1fba44261028bc2fb207b40c5f81"
+        },
+        {
+          "status": "??",
+          "path": "server/routes/localCustomerSimulation.ts",
+          "sha256": "a307a4f90b9c9937854948fcdb4add86115f34a5a4fec403495ca70cf248a551"
+        },
+        {
+          "status": "??",
+          "path": "server/runtime/localCustomerPreviewIsolation.ts",
+          "sha256": "c6db5e31528085bad4a1bc2052fbc6ba38a53567564eff37ffea704a8b921f8f"
+        },
+        {
+          "status": "??",
+          "path": "shared/contracts/customerTags.ts",
+          "sha256": "ef0595ee57096cefc11ed617643894a37b29b5615b61f6cb8ac31244a500c87b"
+        },
+        {
+          "status": "??",
+          "path": "src/components/customers/CustomerProfileTags.test.tsx",
+          "sha256": "fdbd8da2a65ceddabea38b7b5e793234b56a3e66684dafb7990cfb5e2007403f"
+        },
+        {
+          "status": "??",
+          "path": "src/components/customers/CustomerProfileTags.tsx",
+          "sha256": "374ecee756730a27584076cd990ec16e20155df5d4df1a7ba23458462e71b479"
+        },
+        {
+          "status": "??",
+          "path": "src/components/customers/CustomerQuoteLauncher.test.tsx",
+          "sha256": "3ac56eb4f8a41926c18e1a6bb43e24fc536962b24edea198371a4b98d346e0f7"
+        },
+        {
+          "status": "??",
+          "path": "src/components/customers/CustomerQuoteLauncher.tsx",
+          "sha256": "961a49eaf647183e073368210348dc8cfd3bf45ca6245e5e5f03fa3cf2b66679"
+        },
+        {
+          "status": "??",
+          "path": "src/components/customers/CustomerWorkspaceTools.test.tsx",
+          "sha256": "e5c696bac3854bff8e708b976214bd1da2f7700915d47ccce621ce3bf7f6c36b"
+        },
+        {
+          "status": "??",
+          "path": "src/components/customers/CustomerWorkspaceTools.tsx",
+          "sha256": "6e40652c7bfc20b68510c84e1b5ac550e32cc78ee9db79a8a86f8b21cf75ba50"
+        },
+        {
+          "status": "??",
+          "path": "src/components/customers/LocalCustomerSimulation.tsx",
+          "sha256": "4c773b14075588af0f4ec16295b60799413f7ca63d9b98cc6578393fa2c36fe9"
+        },
+        {
+          "status": "??",
+          "path": "src/components/customers/customerTagPresentation.ts",
+          "sha256": "e61e294886a8f26d83d92636a92d3eb78060c2642d34c567b6d8cabaa0c30794"
+        },
+        {
+          "status": "??",
+          "path": "src/components/customers/customerWorkspaceTasks.ts",
+          "sha256": "8ff31c8035522811044ccbb3e44ad63fd2ec119ed47e4fb3936da9e52ed9d96a"
+        },
+        {
+          "status": "??",
+          "path": "src/lib/customerReplyRequest.test.ts",
+          "sha256": "9b9ed95c49e4ac71352619daf33c0a8284f2dde47e6a304beaff44b2a1e066dc"
+        },
+        {
+          "status": "??",
+          "path": "src/lib/customerTagCorrection.ts",
+          "sha256": "0a43307f6d31502736adc774fd20b295e507d63a7be45bb5126707ce07fd99b6"
+        },
+        {
+          "status": "??",
+          "path": "src/lib/localCustomerSimulation.ts",
+          "sha256": "81a556b1dc7dbbab6be595b41605ac2543509fd19ab99bb9943021277e69dd41"
+        }
+      ]
+    }
+  },
+  "filesSha256": {
+    "docs/qa/customer-composer-isolation-acceptance-2026-10-24.md": "6dc0c6e8a2381a6b6bfcc8eb11273f40ed9a0e254266b941c9975dd585fcefd0",
+    "docs/qa/customer-premerge-review-checklist-2026-10-24.md": "482f3ba0f32174561b4475abda83ff1372ac3c05777e44ac2b35a355ecf40022",
+    "package.json": "f12fdb6df5d80c576a66669320967feb525493a13edb07c1fe5b8dabeb060e90",
+    "server/customerService/localPreviewReplyCompatibility.test.ts": "74cf36e26c0ba82023849a0e620ae215fec8e3416020da4b44ab87b31ea86fa8",
+    "server/customerService/localPreviewReplyCompatibility.ts": "d86f1ef24a6474345b3414a7fb65a713f5b33145f0ac9d7198b1004ad106cd08",
+    "server/customerService/localPreviewSimulation.ts": "91afadad8f895c32a4e874e75dbb258777fac90ebfe2dc5fb61345d1bb88691e",
+    "server/routes/draftReply.ts": "40aeecf71ee9ec91d8773e5bf2b6caaa152313f4f110de6e54b04b6bd98a490d",
+    "server/routes/plugins.ts": "226fc562c2338a80493e609b12f21d3b40479f6051ad1c6ff58ed560c0ad18dd",
+    "src/components/customers/customerReplyPreparation.test.ts": "017e62a245e525b448531a826f74529718d6ccac8801593df31e14e222f85be0",
+    "src/components/customers/customerReplyPreparation.ts": "9eb42ff5559d6d935e883713fe6339e72a7d3b7bbfdeb6152948a2c4cc76cf54",
+    "src/components/customers/useConversionDraftEffects.ts": "8d734197452d9d8470dc23fe527d1ddc11df409fb3ad818a15848733f6cc7952",
+    "tmp/customer-service-preview/composer-compat-architecture.log": "134727b05b2d8340681aa357b3803bb617f46e2f0d684315ea82ca97a6f765d0",
+    "tmp/customer-service-preview/composer-compat-build.log": "1b9b4da5ea01db15f85394ba5c1489ef744f768be30faee51ee1cf3d20943608",
+    "tmp/customer-service-preview/composer-compat-cached.png": "3c433af50f325a63382196955d4f90811a6e11fd5ed508f1635b7d85b172d1b1",
+    "tmp/customer-service-preview/composer-compat-draft.png": "92936844712d758b598766448941ff312941ac19cb63b89ae089cef9930a9637",
+    "tmp/customer-service-preview/composer-compat-final-check-exits.json": "428baf4ee5f76a3d893d4a71507c353f3adfb2b1074afbe476562a1f8a623dfa",
+    "tmp/customer-service-preview/composer-compat-final-preview.png": "30b74d5914a7f7b3c50d58d8541d70a73491e7797687c5fbbefa82676e3b18ab",
+    "tmp/customer-service-preview/composer-compat-isolation.log": "fea89d4ca1c0a7ca57fcad4c746d6a434b949cdff771df2af155ab70ea028bd9",
+    "tmp/customer-service-preview/composer-compat-lint-final.log": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+    "tmp/customer-service-preview/composer-compat-lint.log": "3a8491d82b619f0f24f7871c93a96de3a5a0c77efdb7bba58b7328be4f8881f8",
+    "tmp/customer-service-preview/composer-compat-pipeline-final.log": "b2eb7405732de2f9ec1e9df3520484e0388390f74588c385b77951f33f06a504",
+    "tmp/customer-service-preview/composer-compat-pipeline.log": "3219789550670302b63b1aa8393ca60e53ccfe6777813b53fcdb6ec58708d670",
+    "tmp/customer-service-preview/composer-compat-runtime.json": "2e4759b1deb558270b049f3b2f322c2446e609111fa8f1683f3e271f8bf991b5",
+    "tmp/customer-service-preview/composer-compat-service.log": "baa4781edb2e037593d90bf5e3aeb1a4a6e4e6f795365e8001813ed0b5fa770f",
+    "tmp/customer-service-preview/composer-compat-targeted-final.log": "1312a8525ebd336f0e39cec991604e38e06f6ef53f6511ec05440b12016c0b3b",
+    "tmp/customer-service-preview/composer-compat-targeted-first.log": "644361902d407186c4576f79af4df6de020960ee77c049411370ffc0f6136a9e",
+    "tmp/customer-service-preview/composer-compat-targeted.log": "ed0795ce78efacc3c248787d04352efffc9fb43920acf55bd15d8a14a498a244",
+    "tmp/customer-service-preview/composer-compat-translated.png": "480aeedc504cc40ad1cb70d8ee26e1350f91bc825bec86a10b5ac05c2fad9812"
+  },
+  "limits": [
+    "No live customer channel, Meta approval or production E2E.",
+    "Mock enterprise facts and legacy persona profile remain.",
+    "All original evidence outside this sanitized index remains ignored local runtime material.",
+    "Not a frozen merge candidate or full-repository quality/verify result."
+  ]
+}

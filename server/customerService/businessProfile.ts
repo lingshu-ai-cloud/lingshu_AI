@@ -1,13 +1,20 @@
+import { applyTagCorrections, readTagCorrections } from '../../shared/contracts/customerTags.js';
 import { createHash } from 'node:crypto';
 import { assessBant, selectProgressionGoal } from '../sales/qualification.js';
 import { vetoRevokedContextTags, type ContextTagEvidence } from '../messenger/contextTags.js';
 
 type Row = Record<string, unknown>;
+export type ProjectedCustomerBusinessProfile = Row & {
+  bant: ReturnType<typeof assessBant>; intentScore: number;
+  progressionGoal: ReturnType<typeof selectProgressionGoal>;
+  tags: string[]; contextTagEvidence: ContextTagEvidence[];
+  contextTagCorrections: ReturnType<typeof readTagCorrections>;
+};
 export function buyerConversationFingerprint(turns: Row[]): string {
   return createHash('sha256').update(JSON.stringify(turns.filter(t => t.actor === 'buyer').slice(-40).map(t => [t.id, t.body]))).digest('hex');
 }
 /** Derive only from currently admitted messages. Never restore arbitrary cached CRM or account fields. */
-export function projectCustomerBusinessProfile(customer: Row, metadata: Row = {}): Row {
+export function projectCustomerBusinessProfile(customer: Row, metadata: Row = {}): ProjectedCustomerBusinessProfile {
   const turns = (Array.isArray(customer.timeline) ? customer.timeline : []) as Array<{id:string;actor:string;body:string;timestamp?:number}>;
   const fingerprint = buyerConversationFingerprint(turns);
   const current = metadata.contextTagsBuyerFingerprint === fingerprint && metadata.contextTagsAnalysisVersion === 5;
@@ -20,7 +27,7 @@ export function projectCustomerBusinessProfile(customer: Row, metadata: Row = {}
   const lastBuyerAt = Math.max(0, ...turns.filter(t => t.actor === 'buyer').map(t => Number(t.timestamp || 0)));
   const lastSellerAt = Math.max(0, ...turns.filter(t => t.actor === 'seller' || t.actor === 'ai').map(t => Number(t.timestamp || 0)));
   return { ...customer, optedOut, bant, intentScore: bant.total, stage: 'inquiry', handlingMode: [customer.handlingMode,metadata.handlingMode].includes('human_needed')?'human_needed':'ai_draft',
-    tags: effective.map(e => e.tag), contextTagEvidence: effective,
+    tags: applyTagCorrections(effective.map(e => e.tag), readTagCorrections(metadata.contextTagCorrections)), contextTagEvidence: effective, contextTagCorrections: readTagCorrections(metadata.contextTagCorrections),
     classificationStatus: current ? 'current' : 'pending', classificationFingerprint: fingerprint,
     contextTagsBuyerFingerprint: fingerprint, contextTagsAnalysisVersion: current ? 5 : 0,
     progressionGoal: selectProgressionGoal(bant, String(customer.language || 'English')),

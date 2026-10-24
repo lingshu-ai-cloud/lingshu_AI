@@ -1,0 +1,22 @@
+{
+  "installed": true,
+  "version": 2,
+  "pid": 98758,
+  "defaultPolicy": "deny",
+  "blockedClasses": [],
+  "build": {
+    "commitSha": "89b175109149d4551aeb3ce590fe9c42c46bf23c",
+    "version": "0.0.0",
+    "startedAt": "2026-10-24T10:12:40.771Z"
+  },
+  "localWeeklyRecovery": {
+    "configuredEnabled": true,
+    "started": false,
+    "state": "not_started",
+    "lastErrorCode": null,
+    "failedScopes": 0,
+    "staleScopes": 0
+  },
+  "role": "web",
+  "healthStatus": "ok"
+}

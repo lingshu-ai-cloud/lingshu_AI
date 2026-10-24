@@ -18,7 +18,7 @@ import { callLLM } from '../agents/llm.js';
 import { readTenantEnterpriseProfile, type EnterpriseProfile } from '../routes/enterprise.js';
 import { createHash } from 'node:crypto';
 import { guardOutboundSync } from '../autonomy/outboundGuard.js';
-import { store } from '../storage/index.js';
+import { store as defaultStore } from '../storage/index.js';
 import { readAuthorizedWhatsAppCustomers as getWhatsAppCustomers } from '../whatsapp/authorizedCustomerRead.js';
 import { followupWorkerMode } from './followupWorkerConfig.js';
 
@@ -125,6 +125,7 @@ export interface FollowupDeliveryPolicy {
   maxContactsPerWindow: number;
 }
 
+const store = defaultStore;
 const COLLECTION = {
   segments: 'customer_segments',
   members: 'customer_segment_members',
@@ -263,7 +264,7 @@ async function requiredCreate<T extends StoredRecord>(collection: string, payloa
   return record;
 }
 
-export async function getCustomerSegment(tenantId: string, segmentId: string): Promise<CustomerSegmentRecord | null> {
+export async function getCustomerSegment(tenantId: string, segmentId: string, store: DataStore = defaultStore): Promise<CustomerSegmentRecord | null> {
   const segment = await store.getById<CustomerSegmentRecord>(COLLECTION.segments, segmentId);
   return segment?.tenant_id === tenantId ? segment : null;
 }
@@ -467,7 +468,7 @@ export async function createFollowupBatch(input: {
   /** Frozen run input. Active runs must not rebuild drafts from live facts. */
   enterpriseProfile?: EnterpriseProfile;
   knowledgeQuoteResolution?: {requestId:string;verifiedVersion:number};
-}, customersForTenant: (tenantId: string) => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>> = getWhatsAppCustomers): Promise<{ batch: FollowupBatchRecord; items: FollowupBatchItemRecord[]; created: boolean }> {
+}, customersForTenant: (tenantId: string) => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>> = getWhatsAppCustomers, store: DataStore = defaultStore): Promise<{ batch: FollowupBatchRecord; items: FollowupBatchItemRecord[]; created: boolean }> {
   if(input.knowledgeQuoteResolution){const {materializeVerifiedKnowledgeQuoteBatch}=await import('../socialPrograms/weeklyCustomerKnowledgeQuote.js');return materializeVerifiedKnowledgeQuoteBatch(store,{...input,knowledgeQuoteResolution:input.knowledgeQuoteResolution});}
   if (input.idempotent !== false) {
     const existing = await store.list<FollowupBatchRecord>(COLLECTION.batches, {
@@ -476,10 +477,10 @@ export async function createFollowupBatch(input: {
     const batch = existing.items.find(item => !['superseded', 'cancelled', 'failed'].includes(item.status));
     if (batch) { const done = await completeAggregate<FollowupBatchRecord, FollowupBatchItemRecord>(store, batch, {collection: COLLECTION.batches, children: COLLECTION.items, foreignKey: 'batch_id', metadata: 'safety_summary', finalStatus: 'draft'}); return {batch: done.parent, items: done.children, created: false}; }
   }
-  const segment = await getCustomerSegment(input.tenantId, input.segmentId);
+  const segment = await getCustomerSegment(input.tenantId, input.segmentId, store);
   if (!segment || segment.run_id !== input.runId) throw new Error('customer_segment_not_found');
   if(jsonObject(segment.criteria).managementAction==='screen')throw Error('customer_segment_screen_only');
-  const members = (await getCustomerSegmentMembers(input.tenantId, segment.id)).filter(member => member.membership === 'included');
+  const members = (await getCustomerSegmentMembers(input.tenantId, segment.id, store)).filter(member => member.membership === 'included');
   const relationshipScope=await readWeeklyCustomerRelationshipScope(store,input.tenantId,input.runId);
   if(relationshipScope)for(const member of members){await verifyWeeklyCustomerMemberProof(store,relationshipScope,member.customer_id,member.customer_snapshot);}
   const customerMap = new Map<string, Record<string, unknown>>(
@@ -515,7 +516,7 @@ export async function createFollowupBatch(input: {
       where: { tenant_id: input.tenantId, run_id: input.runId, task_id: input.taskId }, sort: '-version', perPage: 500,
     });
     for (const prior of priorBatches.items.filter(item => !['superseded', 'cancelled'].includes(item.status))) {
-      const priorItems = await getFollowupBatchItems(input.tenantId, prior.id);
+      const priorItems = await getFollowupBatchItems(input.tenantId, prior.id, store);
       if (priorItems.some(item => ['sent', 'delivered'].includes(item.status) || item.provider_message_id || Object.keys(jsonObject(item.provider_receipt)).length)) {
         throw new Error('followup_batch_has_external_receipt');
       }
@@ -628,7 +629,7 @@ export async function createFollowupBatch(input: {
     created_at: now,
     updated_at: now,
     approved_at: '',
-  });
+  }, store);
 
   const done = await completeAggregate<FollowupBatchRecord, FollowupBatchItemRecord>(store, batch, {collection: COLLECTION.batches, children: COLLECTION.items, foreignKey: 'batch_id', metadata: 'safety_summary', finalStatus: 'draft'});
 
@@ -712,13 +713,13 @@ export function followupItemContentHash(item: Pick<FollowupBatchItemRecord, 'dra
 
 export async function configureFollowupItemTemplate(input: {
   tenantId: string; batchId: string; itemId: string; templateName: string; language: string; variables: string[];
-}, resolveTemplate = resolveTenantFollowupTemplate): Promise<{ batch: FollowupBatchRecord; items: FollowupBatchItemRecord[] }> {
-  const initial = await getFollowupBatch(input.tenantId, input.batchId);
+}, resolveTemplate = resolveTenantFollowupTemplate, store: DataStore = defaultStore): Promise<{ batch: FollowupBatchRecord; items: FollowupBatchItemRecord[] }> {
+  const initial = await getFollowupBatch(input.tenantId, input.batchId, store);
   if (!initial) throw new Error('followup_batch_not_found');
   return withDigitalEmployeeRunLock(input.tenantId, initial.run_id, async () => {
-    const batch = await getFollowupBatch(input.tenantId, input.batchId);
+    const batch = await getFollowupBatch(input.tenantId, input.batchId, store);
     if (!batch || ['superseded', 'cancelled', 'completed'].includes(batch.status)) throw new Error('followup_batch_not_editable');
-    const items = await getFollowupBatchItems(input.tenantId, batch.id);
+    const items = await getFollowupBatchItems(input.tenantId, batch.id, store);
     if (items.some(i => i.status === 'sending')) throw new Error('followup_batch_sending');
     const item = items.find(i => i.id === input.itemId);
     if (!item) throw new Error('followup_item_not_found');
@@ -729,7 +730,7 @@ export async function configureFollowupItemTemplate(input: {
     const body = template.body.replace(/\{\{\s*(\d+)\s*\}\}/g, (_, n) => input.variables[Number(n)-1]);
     const guard = guardOutboundSync(body);
     if (!guard.allowed) throw new Error('whatsapp_template_content_blocked');
-    if ((await getFollowupBatchItems(input.tenantId, batch.id)).some(i => i.status === 'sending')) throw new Error('followup_batch_sending');
+    if ((await getFollowupBatchItems(input.tenantId, batch.id, store)).some(i => i.status === 'sending')) throw new Error('followup_batch_sending');
     const now = new Date().toISOString();
     // Revoke authorization before changing any item. A partial storage failure cannot leave a changed payload approved.
     await store.update(COLLECTION.batches, batch.id, { status: 'draft', version: Number(batch.version) + 1, approved_version: 0, approval_id: '', approved_by: '', approved_at: '', updated_at: now });
@@ -739,8 +740,8 @@ export async function configureFollowupItemTemplate(input: {
     const remainingReasons = String(item.exclusion_reason || '').split(/[;,]/).map(s => s.trim()).filter(s => s && !['whatsapp_template_required', 'approved_whatsapp_template_required', 'draft_generation_failed'].includes(s));
     const next = { ...item, send_mode: 'template', template_name: template.name, template_status: 'approved', template_language: template.language, template_variables: input.variables, draft_body: body };
     await store.update(COLLECTION.items, item.id, { ...next, content_hash: followupItemContentHash(next), draft_version: Number(item.draft_version) + 1, status: remainingReasons.length ? 'blocked' : 'draft', exclusion_reason: remainingReasons.join(';'), approved_at: '', updated_at: now });
-    const freshItems = await getFollowupBatchItems(input.tenantId, batch.id);
+    const freshItems = await getFollowupBatchItems(input.tenantId, batch.id, store);
     await store.update(COLLECTION.batches, batch.id, { delivery_policy: { ...jsonObject(batch.delivery_policy), hashAlgorithm: 'ordered_item_content_hashes_v1' }, content_hash: createHash('sha256').update(JSON.stringify(freshItems.map(i => i.content_hash))).digest('hex'), counts: { total: freshItems.length, draft: freshItems.filter(i => i.status === 'draft').length, blocked: freshItems.filter(i => i.status === 'blocked').length, sent: freshItems.filter(i => ['sent','delivered','read'].includes(i.status) && Boolean(i.provider_message_id)).length } });
-    return { batch: (await getFollowupBatch(input.tenantId, batch.id))!, items: freshItems };
+    return { batch: (await getFollowupBatch(input.tenantId, batch.id, store))!, items: freshItems };
   });
 }

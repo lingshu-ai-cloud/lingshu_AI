@@ -2,6 +2,8 @@ import '../loadEnvironment.js';
 import { execFileSync } from 'node:child_process';
 import { EnvHttpProxyAgent, setGlobalDispatcher } from 'undici';
 export function configureNetworkProxy(): void {
+  // Preview/test isolation must never execute curl/nc probes or install a proxy.
+  if (Reflect.get(globalThis, Symbol.for('lingshu.customerIsolationGuard')) === true) return;
   const configured = process.env.GEMINI_PROXY || process.env.HTTPS_PROXY || process.env.https_proxy || process.env.CRAWLER_PROXY;
   // Prefer a healthy direct connection. A listening local port is not enough to
   // prove that it is an HTTP proxy (other apps commonly occupy these ports).
