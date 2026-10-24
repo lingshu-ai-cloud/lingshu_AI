@@ -1,7 +1,8 @@
 {
-  "navigationBarTitleText": "素材上传与整理",
+  "navigationBarTitleText": "素材资产",
   "navigationStyle": "default",
   "usingComponents": {
-    "operator-nav": "/components/operator-nav/index"
+    "operator-nav": "/components/operator-nav/index",
+    "lingxiaoshu-sheet": "/components/lingxiaoshu-sheet/index"
   }
 }

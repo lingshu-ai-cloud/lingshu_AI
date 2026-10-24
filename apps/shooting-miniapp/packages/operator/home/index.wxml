@@ -1,71 +1,36 @@
 <view class="page-shell">
   <view class="top-safe" style="height:{{statusBarHeight}}px"></view>
-  <view class="identity-bar">
-    <view class="identity-copy" bindtap="openEdition"><text class="organization">{{organization}}</text><text class="edition-chevron">⌄</text></view>
-    <view class="edition">{{edition}}</view>
-  </view>
+  <view class="identity-bar" style="height:{{navBarHeight}}px;padding-right:{{headerRightInset}}px"><text class="organization">{{organization}}</text></view>
 
   <view class="content">
     <view wx:if="{{error}}" class="notice error">{{error}}<text bindtap="refresh">重试</text></view>
-    <view class="primary-tools" aria-label="小程序主要功能">
-      <view class="primary-tool" bindtap="openMaterials"><view class="tool-icon materials">▧</view><view class="tool-copy"><text class="tool-title">素材上传与整理</text><text class="tool-note">上传产品、工厂与场景素材</text></view><text class="tool-arrow">›</text></view>
-      <view class="primary-tool" bindtap="openShooting"><view class="tool-icon shooting">●</view><view class="tool-copy"><text class="tool-title">待拍任务拍摄</text><text class="tool-note">预览前三秒，按分镜完成拍摄</text></view><text class="tool-arrow">›</text></view>
-    </view>
     <view class="week-card {{calendarExpanded ? 'expanded' : 'collapsed'}}">
       <view class="week-heading" bindtap="toggleCalendar" aria-role="button" aria-label="{{calendarExpanded ? '收起周日历' : '展开周日历'}}" aria-expanded="{{calendarExpanded}}"><view class="week-action" data-offset="-1" catchtap="changeWeek">上一周</view><view class="week-summary"><text class="week-range">{{week.start}} — {{week.end}}</text><text class="week-chevron">{{calendarExpanded ? '⌃' : '⌄'}}</text></view><view class="week-action" data-offset="1" catchtap="changeWeek">下一周</view></view>
       <view wx:if="{{calendarExpanded}}" class="days"><view wx:for="{{days}}" wx:key="date" class="day {{item.selected ? 'selected' : ''}}" data-date="{{item.date}}" bindtap="selectDay"><text class="weekday">{{item.label}}</text><text class="day-number">{{item.number}}</text><view wx:if="{{item.count}}" class="day-indicator"></view></view></view>
     </view>
 
-    <view class="metric-band">
-      <view class="metric {{activeMetric === 'production' ? 'active' : ''}}" data-key="production" bindtap="openMetric"><view class="metric-fraction"><text class="metric-value">{{counts.pendingProduction}}</text><text class="metric-denominator">/ {{counts.producedFilms}}</text></view><text class="metric-label">本周计划生产数量</text></view>
-      <view class="metric {{activeMetric === 'acceptance' ? 'active' : ''}}" data-key="acceptance" bindtap="openMetric"><view class="metric-fraction"><text class="metric-value">{{counts.pendingAcceptance}}</text><text class="metric-denominator">/ {{counts.acceptedFilms}}</text></view><text class="metric-label">待验收成片数量</text></view>
-      <view class="metric {{activeMetric === 'shooting' ? 'active' : ''}}" data-key="shooting" bindtap="openMetric"><view class="metric-fraction"><text class="metric-value">{{counts.pendingShots}}</text><text class="metric-denominator">/ {{counts.completedShots}}</text></view><text class="metric-label">待拍镜头数量</text></view>
+    <view class="today-heading"><view class="today-title-row"><view class="today-star">★</view><view><text class="today-title">今天</text><text class="today-date">{{selectedDay}} · 只看你今天需要推进的事情</text></view></view><text class="section-count">{{loading ? '同步中' : todayTotal + ' 项'}}</text></view>
+    <view wx:if="{{loading && !loaded}}" class="state-card">正在同步真实工作数据…</view>
+    <view wx:elif="{{!todayGroups.length}}" class="state-card success"><view class="check">✓</view><view><text class="state-title">今天没有需要你处理的事项</text><text class="state-note">新的审批、询盘和任务卡点会显示在这里</text></view></view>
+    <view wx:else class="focus-list">
+      <view wx:for="{{todayGroups}}" wx:for-item="group" wx:key="key" class="focus-group {{index > 0 ? 'with-divider' : ''}}">
+        <view class="focus-row" aria-role="button" aria-label="{{group.title}}，{{group.action}}" data-key="{{group.key}}" bindtap="openTodayGroup"><view class="focus-mark {{group.tone}}"></view><view class="focus-copy"><view class="focus-title-row"><text class="focus-title">{{group.title}}</text><text wx:if="{{group.badge}}" class="focus-badge">{{group.badge > 99 ? '99+' : group.badge}} 条新消息</text></view><text class="focus-note">{{group.note}}</text></view><text class="focus-action">{{group.action}} ›</text></view>
+        <view wx:if="{{expandedGroup === group.key && group.key === 'matters'}}" class="focus-details"><view wx:for="{{focusMatters}}" wx:for-item="matter" wx:for-index="detailIndex" wx:key="id" class="focus-detail {{detailIndex > 0 ? 'with-divider' : ''}}" aria-role="button" data-id="{{matter.id}}" bindtap="openMatter"><view class="detail-copy"><text class="detail-title">{{matter.title}}</text><text class="detail-note">{{matter.kindLabel}}</text></view><text class="detail-arrow">›</text></view></view>
+        <view wx:if="{{expandedGroup === group.key && group.key === 'acceptance'}}" class="focus-details"><view wx:for="{{todayAcceptance}}" wx:for-item="film" wx:for-index="detailIndex" wx:key="id" class="focus-detail {{detailIndex > 0 ? 'with-divider' : ''}}" aria-role="button" data-id="{{film.id}}" bindtap="openAcceptance"><view class="detail-copy"><text class="detail-title">{{film.title}}</text><text class="detail-note">待验收</text></view><text class="detail-arrow">›</text></view></view>
+      </view>
     </view>
 
-    <view class="content-template">
-      <block wx:if="{{activeMetric === 'shooting'}}">
-        <view class="section-heading"><view><text class="section-title">今日待拍队列</text><text class="section-note">点击分镜卡片，直接开始拍摄</text></view><text class="section-count">{{todayShots.length}} 项</text></view>
-        <view wx:if="{{loading && !loaded}}" class="state-card">正在同步真实工作数据…</view>
-        <view wx:elif="{{!todayShots.length}}" class="state-card success"><view class="check">✓</view><view><text class="state-title">今天没有待拍镜头</text><text class="state-note">新的拍摄任务会由网页端或 Agent 排期生成</text></view></view>
-        <view wx:else class="shot-list">
-          <view wx:for="{{todayShots}}" wx:key="id" class="shot-card" data-id="{{item.id}}" bindtap="openShot">
-            <view class="shot-index">{{index + 1}}</view>
-            <view class="shot-content">
-              <view class="shot-top"><text class="shot-title">{{item.title}}</text><text class="status">待拍</text></view>
-              <text class="shot-requirement">{{item.requirement}}</text>
-              <view class="shot-meta"><text>{{item.durationText}}</text><text>{{item.ratioText}}</text><text>{{item.soundText}}</text></view>
-            </view><text class="shot-arrow">›</text>
-          </view>
+    <view class="overview-heading"><text class="overview-title">工作数据</text><text class="overview-note">本周实时概况</text></view>
+    <view class="metric-band" aria-label="运营与客服六项工作数据">
+      <view wx:for="{{metricGroups}}" wx:for-item="group" wx:key="key" class="metric-group {{group.key}}">
+        <text class="metric-group-title">{{group.title}}</text>
+        <view class="metric-row">
+          <view wx:for="{{group.metrics}}" wx:for-item="metric" wx:key="key" class="overview-metric {{metric.tone}} {{metric.active ? 'active' : ''}}" aria-label="{{metric.label}} {{metric.value}}，{{metric.comparedLabel}} {{metric.compared}}"><text class="overview-label">{{metric.label}}</text><text class="overview-value">{{metric.value}}</text></view>
         </view>
-      </block>
-
-      <block wx:elif="{{activeMetric === 'acceptance'}}">
-        <view class="section-heading"><view><text class="section-title">今日待验收队列</text><text class="section-note">等待你确认的成片</text></view><text class="section-count">{{todayAcceptance.length}} 项</text></view>
-        <view wx:if="{{!todayAcceptance.length}}" class="state-card success"><view class="check">✓</view><view><text class="state-title">今天没有待验收成片</text><text class="state-note">新成片交付后会显示在这里</text></view></view>
-        <view wx:else class="acceptance-list">
-          <view wx:for="{{todayAcceptance}}" wx:key="id" class="acceptance-card" data-id="{{item.id}}" bindtap="openAcceptance">
-            <image wx:if="{{item.thumbnailUrl}}" class="acceptance-preview" src="{{item.thumbnailUrl}}" mode="aspectFill"></image>
-            <view wx:else class="acceptance-preview"><text>▶</text></view>
-            <view class="acceptance-copy"><text class="acceptance-title">{{item.title}}</text><text class="acceptance-subject">{{item.subject}}</text></view>
-            <text class="status review">待验收</text>
-          </view>
-        </view>
-      </block>
-
-      <block wx:else>
-        <view class="section-heading"><view><text class="section-title">本周发布视频</text><text class="section-note">本周已发布视频的数据表现</text></view><text class="section-count">{{publishedVideos.length}} 条</text></view>
-        <view wx:if="{{!publishedVideos.length}}" class="state-card"><text class="state-title">本周暂无已发布视频</text><text class="state-note">发布回执同步后会显示封面、平台和浏览量</text></view>
-        <scroll-view wx:else scroll-x enhanced show-scrollbar="false" class="video-scroll">
-          <view class="video-row">
-            <view wx:for="{{publishedVideos}}" wx:key="id" class="video-card">
-              <image wx:if="{{item.thumbnailUrl}}" class="video-cover" src="{{item.thumbnailUrl}}" mode="aspectFill"></image>
-              <view wx:else class="video-cover video-cover-empty"><text>▶</text></view>
-              <view class="video-info"><view class="video-tags"><text class="platform">{{item.platform}}</text><text wx:if="{{item.mock}}" class="mock-tag">Mock</text></view><text class="video-title">{{item.title}}</text><text class="video-views">{{item.views === null ? '浏览量待同步' : item.views + ' 次浏览'}}</text></view>
-            </view>
-          </view>
-        </scroll-view>
-      </block>
+      </view>
     </view>
   </view>
-  <operator-nav active=""></operator-nav>
+
+  <lingxiaoshu-sheet id="lingxiaoshu-sheet" auto-open-daily="{{true}}" overview="{{assistantOverview}}" queue="{{assistantQueue}}"></lingxiaoshu-sheet>
+  <operator-nav active="today" today-badge="{{customerUnreadCount}}" bindassistant="openAssistant"></operator-nav>
 </view>

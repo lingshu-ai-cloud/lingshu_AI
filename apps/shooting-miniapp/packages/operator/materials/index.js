@@ -1,5 +1,5 @@
 const api = require('../../../lib/api')
-const { materialThemeTagsOf, MATERIAL_THEME_LABELS } = require('../../../lib/materialTaxonomy')
+const { materialSourceCategoryOf, materialThemeTagsOf, MATERIAL_SOURCE_LABELS, MATERIAL_THEME_LABELS } = require('../../../lib/materialTaxonomy')
 
 function materialType(item) {
   return String(item && item.type || '').toLowerCase() === 'image' ? 'image' : 'video'
@@ -12,6 +12,7 @@ function materialView(item) {
   const status = String(item.segmentAnalysisStatus || item.analysisStatus || '')
   const tags = materialThemeTagsOf(item).map(value => MATERIAL_THEME_LABELS[value]).filter(Boolean).slice(0, 2)
   const analysisReady = ['ready', 'completed', 'complete', 'succeeded'].includes(status)
+  const sourceCategory = materialSourceCategoryOf(item)
   return {
     ...item,
     id: String(item.id || ''),
@@ -21,37 +22,56 @@ function materialView(item) {
     url: rawUrl ? api.assetUrl(rawUrl) : '',
     poster: rawPoster ? api.assetUrl(rawPoster) : '',
     productName: String(item.productName || ''),
+    sourceCategory,
+    sourceLabel: MATERIAL_SOURCE_LABELS[sourceCategory],
     tags,
     analysisLabel: status === 'analyzing' || status === 'pending' ? 'AI 正在整理' : status === 'failed' ? '分析待重试' : analysisReady ? '已自动整理' : '待自动整理',
     analysisTone: status === 'failed' ? 'warning' : status === 'analyzing' || status === 'pending' ? 'running' : analysisReady ? 'ready' : 'pending',
   }
 }
 
-function visible(materials, filter, query) {
+function visible(materials, filter, query, source) {
   const keyword = String(query || '').trim().toLowerCase()
-  return materials.filter(item => (filter === 'all' || item.type === filter) && (!keyword || [item.name, item.productName, ...(item.tags || [])].join(' ').toLowerCase().includes(keyword)))
+  return materials.filter(item => (filter === 'all' || item.type === filter || (filter === 'ready' && item.analysisTone === 'ready'))
+    && (!source || item.sourceCategory === source)
+    && (!keyword || [item.name, item.productName, item.sourceLabel, ...(item.tags || [])].join(' ').toLowerCase().includes(keyword)))
+}
+
+function groupBy(rows, keyOf, labelOf) {
+  const groups = new Map()
+  rows.forEach(item => {
+    const key = String(keyOf(item) || '')
+    if (!key) return
+    if (!groups.has(key)) groups.set(key, { key, label: labelOf(item), count: 0, cover: item.poster || item.url, type: item.type })
+    groups.get(key).count += 1
+  })
+  return Array.from(groups.values())
 }
 
 Page({
   data: {
     loading: false, loaded: false, busy: false, progress: 0, progressStep: '', message: '', messageType: '',
-    filter: 'all', query: '', materials: [], visibleMaterials: [],
-    filters: [{ key: 'all', label: '全部', count: 0 }, { key: 'video', label: '视频', count: 0 }, { key: 'image', label: '图片', count: 0 }],
+    filter: 'all', source: '', query: '', materials: [], visibleMaterials: [], folders: [], albums: [],
+    filters: [{ key: 'all', label: '全部素材', count: 0 }, { key: 'image', label: '图片', count: 0 }, { key: 'video', label: '视频', count: 0 }, { key: 'ready', label: '已整理', count: 0 }],
   },
   onLoad() {
     if (!api.token()) { wx.redirectTo({ url: '/pages/workbench/index' }); return }
     this.refresh()
   },
   onShow() { if (this.data.loaded && api.token() && !this.data.busy) this.refresh() },
+  openAssistant() { this.selectComponent('#lingxiaoshu-sheet')?.open() },
   project(materials) {
-    const rows = (Array.isArray(materials) ? materials : []).map(materialView)
+    const rows = (Array.isArray(materials) ? materials : []).map(materialView).sort((a, b) => Number(a.type === 'video') - Number(b.type === 'video'))
     return {
       materials: rows,
-      visibleMaterials: visible(rows, this.data.filter, this.data.query),
+      visibleMaterials: visible(rows, this.data.filter, this.data.query, this.data.source),
+      folders: groupBy(rows, item => item.sourceCategory, item => item.sourceLabel),
+      albums: groupBy(rows, item => item.productName, item => item.productName).slice(0, 6),
       filters: [
-        { key: 'all', label: '全部', count: rows.length },
-        { key: 'video', label: '视频', count: rows.filter(item => item.type === 'video').length },
+        { key: 'all', label: '全部素材', count: rows.length },
         { key: 'image', label: '图片', count: rows.filter(item => item.type === 'image').length },
+        { key: 'video', label: '视频', count: rows.filter(item => item.type === 'video').length },
+        { key: 'ready', label: '已整理', count: rows.filter(item => item.analysisTone === 'ready').length },
       ],
     }
   },
@@ -64,11 +84,19 @@ Page({
   },
   selectFilter(event) {
     const filter = event.currentTarget.dataset.filter
-    this.setData({ filter, visibleMaterials: visible(this.data.materials, filter, this.data.query) })
+    this.setData({ filter, source: '', visibleMaterials: visible(this.data.materials, filter, this.data.query, '') })
+  },
+  selectFolder(event) {
+    const source = event.currentTarget.dataset.source || ''
+    this.setData({ filter: 'all', source, visibleMaterials: visible(this.data.materials, 'all', this.data.query, source) })
+  },
+  selectAlbum(event) {
+    const query = event.currentTarget.dataset.album || ''
+    this.setData({ filter: 'all', source: '', query, visibleMaterials: visible(this.data.materials, 'all', query, '') })
   },
   search(event) {
     const query = event.detail.value
-    this.setData({ query, visibleMaterials: visible(this.data.materials, this.data.filter, query) })
+    this.setData({ query, visibleMaterials: visible(this.data.materials, this.data.filter, query, this.data.source) })
   },
   chooseMaterial() {
     if (this.data.busy) return
@@ -91,4 +119,4 @@ Page({
   },
 })
 
-module.exports = { materialType, materialView, visible }
+module.exports = { materialType, materialView, visible, groupBy }
