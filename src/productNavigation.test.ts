@@ -7,14 +7,14 @@ import type { Page } from './pageRegistry.js';
 
 const all = new Set<Page>(['strategy', 'socialInspiration', 'digitalEmployees', 'adsOverview', 'conversion']);
 assert.deepEqual(primaryProductNavigation('free', all, false).map(item => item.label),
-  ['内容创作', '爆款库', '经营总览', '投流', '智能客服']);
+  ['hi，灵小枢', '内容创作', '智能投流', '智能客服', '经营总览']);
 assert.deepEqual(primaryProductNavigation('employee', all, false).map(item => item.label),
-  ['内容创作', '爆款库', '经营总览', '投流', '智能客服']);
-assert.equal(primaryProductNavigation('free', all, false)[3]?.disabled, true);
-assert.equal(primaryProductNavigation('free', all, true)[3]?.disabled, false);
+  ['hi，灵小枢', '内容创作', '智能投流', '智能客服', '经营总览']);
+assert.equal(primaryProductNavigation('free', all, false)[2]?.disabled, true);
+assert.equal(primaryProductNavigation('free', all, true)[2]?.disabled, false);
 assert.deepEqual(primaryProductNavigation('free', new Set<Page>(['strategy', 'conversion']), false).map(item => item.label),
-  ['内容创作', '智能客服']);
-assert.equal(modeSwitchDestination('socialInspiration', 'employee'), 'strategy');
+  ['hi，灵小枢', '智能客服']);
+assert.equal(modeSwitchDestination('socialInspiration', 'employee'), 'socialInspiration');
 assert.equal(modeSwitchDestination('socialInspiration', 'free'), 'socialInspiration');
 
 const adminSession = { platformAdmin: true, user: { role: 'super_admin' } } as AuthSession;

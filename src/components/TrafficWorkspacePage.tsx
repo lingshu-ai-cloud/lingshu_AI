@@ -65,6 +65,7 @@ export default function TrafficWorkspacePage({
   onOpenCreationHome,
   onLaunchContentStudio,
   onReturnToContentPlanning,
+  embeddedInspiration = false,
   PublishPanel, consumeWorkflowContext, contentCreationAspectRatio,
 }: TrafficWorkspaceProps) {
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -354,7 +355,7 @@ export default function TrafficWorkspacePage({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+    <div className={embeddedInspiration ? 'flex min-h-0 flex-col overflow-visible' : 'flex h-full min-h-0 flex-col overflow-hidden'}>
       {inspirationLaunchError && <div role="alert" className="shrink-0 border-b border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-800">{inspirationLaunchError}</div>}
       {showModeTabs && <div className="flex-shrink-0 bg-white px-3 sm:px-6">
         <div
@@ -388,7 +389,7 @@ export default function TrafficWorkspacePage({
         </div>
       </div>}
 
-      <main className="relative min-h-0 flex-1 overflow-hidden">
+      <main className={`relative min-h-0 flex-1 ${embeddedInspiration ? 'overflow-visible' : 'overflow-hidden'}`}>
         <WorkspaceErrorBoundary resetKey={viewMode} label={TRAFFIC_MODE_META[viewMode].label}>
           <Suspense fallback={<PageLoading />}>
             {(studioMounted || viewMode === 'create') && (
@@ -398,12 +399,13 @@ export default function TrafficWorkspacePage({
             )}
             <AnimatePresence mode="wait">
               {viewMode === 'materials' ? (
-                <motion.div key="materials" id="traffic-panel-materials" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-materials' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
+                <motion.div key="materials" id="traffic-panel-materials" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-materials' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className={embeddedInspiration ? 'overflow-visible' : 'h-full overflow-y-auto'}>
                   <InspirationDashboard
                     onScriptPanelOpen={onScriptPanelOpen}
                     onScriptPanelClose={onScriptPanelClose}
                     onNavigate={navigateWithinSocialTask}
                     onEnterWorkflow={handleEnterWorkflow}
+                    embedded={embeddedInspiration}
                   />
                 </motion.div>
               ) : viewMode === 'create' ? null : viewMode === 'publish' ? (

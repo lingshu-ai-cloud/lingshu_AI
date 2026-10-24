@@ -62,15 +62,18 @@ function harness(observationAvailable = true) {
       if (name === './ui/LsExperiencePrimitives') return { LsMediaStateFrame: 'LsMediaStateFrame' };
       if (name === './inspiration/InspirationMedia') return { AuthenticatedVideo: 'AuthenticatedVideo', ThumbnailImage: 'ThumbnailImage', VideoThumbnail: 'VideoThumbnail' };
       if (name === './inspiration/imagePostAnalysisPresentation') return { imagePostAnalysisQueuePresentation: () => null };
-      if (name === './inspiration/inspirationVideoProjection') return { getPlatformMeta: () => ({ label: 'TikTok' }) };
+      if (name === './inspiration/inspirationVideoProjection') return {
+        discoverySupplyLabel: () => '来源待归类',
+        getPlatformMeta: () => ({ label: 'TikTok' }),
+      };
       throw new Error(`Unexpected dependency: ${name}`);
     },
   });
   return {
     scrollRoot, card, observers,
-    render(item = video): Node {
+    render(item = video, onWatch: () => void = () => {}): Node {
       cursor = 0;
-      const tree = exports.VideoCard({ video: item, index: 0, isSelected: false, onSelect() {}, onCreate() {}, onWatch() {} });
+      const tree = exports.VideoCard({ video: item, index: 0, isSelected: false, onSelect() {}, onCreate() {}, onWatch });
       effects.splice(0).forEach(run => run());
       return tree;
     },
@@ -104,6 +107,30 @@ test('keyboard focus enables media without IntersectionObserver support', () => 
   assert.equal(players(initial).length, 0);
   initial.props.onFocusCapture();
   assert.equal(players(page.render()).length, 1);
+  page.cleanup();
+});
+
+test('preview action survives pointer-first media loading and remains keyboard accessible', () => {
+  const page = harness();
+  let opened = 0;
+  const tree = page.render(video, () => { opened += 1; });
+  const preview = descendants(tree).find(node => node.type === 'button' && String(node.props['aria-label']).startsWith('播放视频'));
+  assert.ok(preview);
+  preview.props.onPointerUp({ button: 0 });
+  preview.props.onClick({ detail: 1 });
+  assert.equal(opened, 1, 'a pointer gesture must open once even when the browser follows it with click');
+  preview.props.onClick({ detail: 0 });
+  assert.equal(opened, 2, 'keyboard and assistive activation must still open the preview');
+  page.cleanup();
+});
+
+test('landscape media compacts and clips its hover actions inside the media frame', () => {
+  const page = harness();
+  const tree = page.render({ ...video, aiAnalysis: { gemini: { globalSettings: { aspectRatio: '16:9' } } } } as TrendVideo);
+  const overlay = descendants(tree).find(node => node.props['data-compact-overlay']);
+  assert.ok(overlay, 'landscape media must use the compact overlay');
+  assert.match(String(overlay.props.className), /max-h-full overflow-hidden/);
+  assert.ok(descendants(overlay).some(node => node.type === 'Button' && node.props.children === '详情'));
   page.cleanup();
 });
 

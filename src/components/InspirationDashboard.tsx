@@ -44,7 +44,7 @@ export { parseExactAnalysisResponse } from './inspiration/inspirationExactAnalys
 export { isEnterpriseCommonMaterial, materialAssetBadge, materialMatchesLibraryFilters, materialMatchesOrientation, materialMatchesProductFilter, materialOwnershipTags, materialSemanticLabel, parseMaterialLibraryEntry, resolveLinkedFavoriteMaterialId, visibleMaterialTags, type MaterialLibraryEntryContext } from './inspiration/inspirationMaterialLibrary';
 export { candidateDimensionLabels, discoveryOriginTitle, discoverySupplyLabel, getPlatformMeta, inspirationScoresForVideo, latestDiscoveryOrigin } from './inspiration/inspirationVideoProjection';
 
-export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelClose, onNavigate, onEnterWorkflow }: InspirationDashboardProps) {
+export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelClose, onNavigate, onEnterWorkflow, embedded = false }: InspirationDashboardProps) {
   const [materialEntry] = useState(initialMaterialLibraryEntry);
   const [innerView, setInnerView] = useState<InspirationInnerView>(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('view') === 'shooting' ? 'shooting' : materialEntry.openLibrary ? 'library' : 'inspiration');
   const [selectedVideo, setSelectedVideo] = useState<TrendVideo | null>(null);
@@ -416,21 +416,21 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   };
 
   return (
-    <main className="relative min-h-full bg-ink text-text-primary">
+    <main className={`relative text-text-primary ${embedded ? 'min-h-0' : 'min-h-full bg-ink'}`}>
       {hasExactReferenceReview(exactReferenceDetail) && !exactReview && <p role="alert" className="m-4 rounded border p-3">{exactReviewError} {parseExactReferenceReview(exactReferenceDetail) ? '精确参考审核目标已收到，须核验原周来源回执后才能打开审核。' : '精确参考审核目标无效，请返回原周任务重新打开。'} 不会按标题、链接或快照打开其他参考。</p>}
       {exactReview && <section className="m-4 rounded border p-4"><h2>原参考逐镜审核 · {exactReview.recordId}</h2><DirectorReviewWorkspace key={`${exactReview.recordId}:${exactReviewToken}`} recordId={exactReview.recordId} handoff={exactReview.handoff} onPreview={()=>handleWatch(exactReview.video)} renderVideo={url => <AuthenticatedVideo key={url} apiUrl={url} controls className="max-h-48 w-full rounded bg-black" />} renderImage={(url, alt) => <AuthenticatedImage key={url} src={url} alt={alt} className="max-h-48 w-full rounded object-contain" />} /></section>}
       <div className="transition-all duration-300">
         <div className="px-4 py-5 sm:px-6 lg:py-6">
-          <LsPageHeader title="灵感中心" description="查看外部参考、管理产品素材，并将内容证据交接到制作流程。" />
+          {!embedded && <LsPageHeader title="灵感中心" description="查看外部参考、管理产品素材，并将内容证据交接到制作流程。" />}
           <div className="mb-4 flex min-w-0 flex-col gap-3 border-b border-border lg:flex-row lg:items-start">
             <Tabs className="min-w-0 flex-1" activeKey={innerView} onChange={key => setInnerView(key as InspirationInnerView)} aria-label="灵感中心分类"
               items={[
-                { key: 'inspiration', label: `灵感发现 · ${tenantVideoTotalItems ?? '…'}`, icon: <Flame size={16} /> },
-                { key: 'library', label: `我的素材 · ${visibleMaterialTotal}`, icon: <Film size={16} /> },
+                { key: 'inspiration', label: `爆款视频 · ${tenantVideoTotalItems ?? '…'}`, icon: <Flame size={16} /> },
+                { key: 'library', label: `素材库 · ${visibleMaterialTotal}`, icon: <Film size={16} /> },
                 { key: 'accounts', label: `对标账号 · ${competitorAccountCount ?? '…'}`, icon: <Users size={16} /> },
-                { key: 'shooting', label: `待拍任务 · ${shootingNeeds.length + scriptGapTasks.length}`, icon: <Lightbulb size={16} /> },
+                { key: 'shooting', label: `待拍 · ${shootingNeeds.length + scriptGapTasks.length}`, icon: <Lightbulb size={16} /> },
               ]} />
-            {innerView === 'inspiration' && <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 pt-1 lg:w-auto">
+            {innerView === 'inspiration' && !embedded && <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 pt-1 lg:w-auto">
               <Button type="primary" icon={<Users size={15} />} onClick={() => setInnerView('accounts')}>采集对标账号爆款</Button>
               <Button icon={<Images size={15} />} onClick={openImageCrawl}>关键词补充</Button>
               <AntUpload className="shrink-0 pt-1" accept="video/mp4,.mp4" showUploadList={false} disabled={importingReference} beforeUpload={file => { void importReferenceVideo(file); return false; }}>
@@ -480,7 +480,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 if (!queued && mode !== 'image') void refreshVideos(1, false);
               }}
             />}
-            {innerView === 'inspiration' && <div className="mb-4 space-y-4 rounded-lg border border-border bg-surface p-4">
+            {innerView === 'inspiration' && !embedded && <div className="mb-4 space-y-4 rounded-lg border border-border bg-surface p-4">
               <div className="overflow-x-auto pb-1">
               <div className="grid min-w-[940px] grid-cols-[minmax(240px,2fr)_160px_minmax(130px,1fr)_minmax(170px,1fr)_160px] gap-3">
                 <Input allowClear prefix={<Search size={15} />} value={search}

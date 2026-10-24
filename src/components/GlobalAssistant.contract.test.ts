@@ -30,6 +30,7 @@ const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8'
 const appModulesSource = fs.readFileSync(new URL('../appPageModules.tsx', import.meta.url), 'utf8');
 const appShellChromeSource = fs.readFileSync(new URL('./AppShellChrome.tsx', import.meta.url), 'utf8');
 const appPageSlotSource = fs.readFileSync(new URL('../AppPageSlot.tsx', import.meta.url), 'utf8');
+const contentCreationOverviewSource = fs.readFileSync(new URL('./ContentCreationOverviewPage.tsx', import.meta.url), 'utf8');
 const appBoundarySource = fs.readFileSync(new URL('./AppPageBoundary.tsx', import.meta.url), 'utf8');
 const conversionPageSource = fs.readFileSync(new URL('./ConversionPage.tsx', import.meta.url), 'utf8');
 const conversionDraftEffectsSource = fs.readFileSync(new URL('./customers/useConversionDraftEffects.ts', import.meta.url), 'utf8');
@@ -219,9 +220,11 @@ assert.doesNotMatch(liveContextSource, /contextIdentifier\(detail\.sourcePage, 8
 assert.match(conversionPageSource, /useConversionDraftEffects\(/, '客户转化页必须接入上下文副作用');
 assert.match(conversionDraftEffectsSource, /agent: 'conversion',[\s\S]{0,80}sourcePage: 'conversion'/, '客户转化页必须绑定自己的页面来源');
 assert.match(trafficPageSource, /agent: 'traffic',[\s\S]{0,80}sourcePage,/, '社媒共享页必须发送由路由传入的准确页面来源');
-for (const [key, sourcePage] of [['legacy-traffic', 'traffic'], ['social-inspiration', 'socialInspiration'], ['smart-assets-', 'smartAssets'], ['social-monitoring-accounts', 'socialMonitoring']]) {
+for (const [key, sourcePage] of [['legacy-traffic', 'traffic'], ['smart-assets-', 'smartAssets'], ['social-monitoring-accounts', 'socialMonitoring']]) {
   assert.match(appPageSlotSource, new RegExp(`key=[^\\n]*${key}[\\s\\S]{0,160}sourcePage=["']${sourcePage}["']`), `${key} 必须标记准确的助手上下文来源`);
 }
+assert.match(appPageSlotSource, /page === 'socialInspiration'[\s\S]{0,300}<ContentCreationOverviewPage/, '内容创作页必须使用独立经营式工作区');
+assert.match(contentCreationOverviewSource, /sourcePage: 'socialInspiration'/, '内容创作计划进入灵小枢时必须标记准确页面来源');
 for (const reference of ['goalId', 'planId', 'runId', 'taskId', 'contentId', 'viewKey']) {
   assert.match(liveContextSource, new RegExp(`${reference}: contextIdentifier\\(detail\\.${reference}`), `页面上下文必须安全绑定 ${reference}`);
 }

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const overview = fs.readFileSync('src/components/smartBusiness/BusinessHealthOverview.tsx', 'utf8');
 const page = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
+const workspace = fs.readFileSync('src/components/ConfiguredDigitalEmployeeWorkspace.tsx', 'utf8');
 
 assert.match(overview, /<DatePicker\.RangePicker/, 'health range selection must use the shared Ant RangePicker');
 assert.match(overview, /allowClear=\{false\}/, 'the selected health range must remain explicit');
@@ -10,7 +11,7 @@ assert.match(overview, /startsAt:\s*dates\[0\]\.format\('YYYY-MM-DD'\)[\s\S]*end
 assert.match(overview, /\[refresh, snapshotStartsAt, snapshotEndsAt\]/, 'account performance must be synchronized again after the selected range changes');
 assert.match(page, /digitalEmployeeApi\.overview\(viewGoalId, nextRange\)/, 'range selection must reload the persisted overview rather than only changing its label');
 assert.match(page, /productionRangeRef\.current = nextRange;[\s\S]{0,120}setData\(next\)/, 'the accepted range and overview data must update only after a successful response');
-assert.match(page, /overviewRangeBusy=\{busy === "overview-range"\}[\s\S]{0,120}onOverviewRangeChange=\{changeOverviewDateRange\}/, 'the health range control must receive the real request state and handler');
+assert.match(workspace, /overviewRangeBusy=\{busy === "overview-range"\}[\s\S]{0,120}onOverviewRangeChange=\{changeOverviewDateRange\}/, 'the health range control must receive the real request state and handler');
 assert.match(overview, /title="四领域评分口径覆盖结构"[\s\S]{0,180}horizontal stacked unit="项"/, 'criteria coverage must use the shared stacked data chart');
 assert.match(overview, /title="四领域评分口径覆盖结构"[\s\S]{0,260}showDataTable=\{false\}/, 'the criteria chart must omit the redundant visible data-table disclosure');
 assert.doesNotMatch(overview, /经营健康度与完善目标|各账号当前健康度/, 'the removed health comparison charts must stay absent');
@@ -25,5 +26,6 @@ assert.match(overview, /data-puzzle-domain=\{dimension\.key\}[\s\S]{0,120}data-d
 assert.match(overview, /neutralFill: '#E4E4E7'[\s\S]{0,220}neutralFill: '#F4F4F5'/, 'uncovered and inapplicable puzzle pieces must use neutral grey fills');
 assert.match(overview, /className="mt-4 grid gap-\[2px\] overflow-hidden bg-white md:grid-cols-2"/, 'the coverage board must render as one contiguous mosaic without an outer card frame');
 assert.doesNotMatch(overview, /label: '查看完整计算口径'/, 'the removed calculation-basis disclosure must stay absent');
+assert.doesNotMatch(overview, /label: '评分口径与数据覆盖'/, 'the removed scoring-criteria disclosure must stay absent from the interface');
 
 console.log('Business Health range contract tests passed');

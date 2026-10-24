@@ -18,7 +18,8 @@ assert.equal(projected[0]?.title, '新品精华短视频');
 assert.equal(projected[0]?.activity, '成片渲染');
 assert.equal(projected[3]?.activity, '为新品启动智能投流');
 assert.equal(projected[6]?.activity, '跟进高意向询盘');
-assert.ok(projected.every(item => item.thumbnailUrl === '/api/overseas/videos/video-1/thumbnail'), '三栏必须以同一条内容预览作为最小业务单位');
+assert.equal(projected.find(item => item.id === 'content-content')?.thumbnailUrl, '/api/overseas/videos/video-1/thumbnail', '真实内容任务必须保留自己的视频预览');
+assert.ok(projected.filter(item => item.kind !== 'content').every(item => !item.thumbnailUrl), '投流和客服栏不得借用内容视频伪装成各自任务');
 
 const empty = projectDigitalEmployeeHomeWork({ tasks: [], contentQueue: { items: [] } } as unknown as DigitalEmployeeOverview);
 assert.ok(empty.every(item => item.status === '暂无进行中'));

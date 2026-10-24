@@ -85,6 +85,8 @@ export interface Props {
   onOpenCreationHome?: (openChooser?: boolean) => void;
   onLaunchContentStudio?: (request: SocialContentCreateRequest) => void;
   onReturnToContentPlanning?: (request: SocialContentCreateRequest) => void;
+  /** Mount the inspiration workspace inside the lightweight home scroll surface. */
+  embeddedInspiration?: boolean;
 }
 
 export default function TrafficPage(props: Props) {
