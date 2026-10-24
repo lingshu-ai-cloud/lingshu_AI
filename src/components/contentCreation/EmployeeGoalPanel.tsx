@@ -23,7 +23,7 @@ export default function EmployeeGoalPanel({ data, onOpenExecution, onPlan }: {
       <p className="flex items-center gap-2 text-sm text-text-secondary"><CalendarDays size={15}/>{date(goal.startsAt)} — {date(goal.endsAt)} · 北京时间</p>
       <h4 className="text-xl font-semibold text-text-primary">{goal.title}</h4>
       <p className="whitespace-pre-wrap text-sm leading-6 text-text-secondary">{goal.objective || '目标说明待完善'}</p>
-      {Number.isFinite(goal.target) && goal.metric && <p className="text-sm text-text-primary">{goal.metric}：{goal.target.toLocaleString('zh-CN')}{goal.unit}</p>}
+      {Number.isFinite(goal.target) && goal.metric && <p className="text-sm text-text-primary">{goal.metric === 'approved_content_packages' ? '本周计划成片' : /^[a-z_]+$/.test(goal.metric) ? '本周目标' : goal.metric}：{goal.target.toLocaleString('zh-CN')}{goal.unit}</p>}
       <p className="whitespace-pre-wrap text-sm leading-6 text-text-secondary">{data?.plan?.strategy || '周目标已记录，内容计划尚未生成。'}</p>
       {goal.contentPlatforms.length > 0 && <div className="flex flex-wrap gap-2" aria-label="目标平台">{goal.contentPlatforms.map(platform => <Tag key={platform}>{platform}</Tag>)}</div>}
     </div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有本周内容目标，在下方告诉灵小枢你希望完成什么。"/>}

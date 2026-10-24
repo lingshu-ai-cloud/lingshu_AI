@@ -19,6 +19,7 @@ export type CreationEvidencePorts = {
   presenters: (tenantId: string) => Promise<Record<string, unknown>[]>;
 };
 const text = (value: unknown, max = 700) => typeof value === 'string' ? value.trim().slice(0, max) : '';
+const observedText = (segment: Record<string, unknown>) => text(Array.isArray(segment.observedFacts) ? segment.observedFacts.filter(value => typeof value === 'string').join('；') : segment.observedFacts) || text(segment.action);
 const fail = (code: string, message: string, status = 422): never => { throw new CreationDialogueError(code, status, message); };
 
 /** Read-only planning in the existing strategy domain. No provider, task or queue writes. */

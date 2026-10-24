@@ -86,6 +86,12 @@ export default function ContentCreationHome({ onNavigate }: { onNavigate?: (page
     };
   }, [mode, videoRevision]);
 
+  const refreshOverview = () => setVideoRevision(value => value + 1);
+  const closeExecution = () => {
+    setExecutionOpen(false);
+    window.requestAnimationFrame(() => executionTriggerRef.current?.querySelector<HTMLButtonElement>('button')?.focus());
+  };
+
   const selectReference = (video: TrendVideo) => {
     useAssistantStore.getState().hydrateThread('business', { creationDraft: { referenceId: video.recordId || video.id.replace(/^crawl-/, ''), referenceLabel: video.title.slice(0, 200), ...(/^(https?:\/\/|\/api\/)/.test(video.thumbnail || '') ? { referenceThumbnail: video.thumbnail } : {}), productIds: [], shotIds: [], guided: { languages: [], customNodes: [], assignments: [] } } });
     setPreview(null);
