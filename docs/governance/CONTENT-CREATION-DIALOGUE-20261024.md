@@ -115,3 +115,13 @@ CREATION_FIXTURE_PORT=5214 node --import tsx scripts/content-creation-dialogue-p
 首页改为桌面六列（窄屏两列、平板三列）Masonry。用户进一步指出9:16视觉过大，故首页以可选`balanceMedia`限制卡片展示框比例4:5–4:3；缩略图和视频contain完整缩放，中性底色留边，既有真实尺寸仍用于计算，不改源文件或详情比例。未知比例使用中性方形占位。原始比例的完整灵感库不启用该首页选项。真实历史封面曾被公共投影替换成外网YouTube地址，现优先走已有鉴权thumbnail owner，缺缓存才使用远程后备。
 
 实际检查：14项定向测试（首页契约、媒体懒加载/原始比例/平衡展示、公共记录投影、缩略图持久化）、`pnpm run lint`、`pnpm run check:architecture`（2691生产TS）与`git diff --check`通过。实屏1440×1000：同列宽165px下竖框约206px、横框约124px；3条原视频readyState=4。临时viewport已恢复。截图`history-balanced-masonry.png`及恢复/API报告位于独立运行目录。未重跑全仓quality、build、迁移清单或真实供应商E2E；没有生产/部署结论。
+
+## 腾讯妙思参考样式及用户追加调整（2026-10-24）
+
+用户提供15秒本地录屏并明确要求落地；随后将桌面列数从六列改为五列，将缩略图下方标题改小。最终首页为lg起五列、md三列、窄屏两列。首页专用`creatorCard`复用现有媒体卡/鉴权播放器，以cover铺满4:5–4:3展示框，缩略卡可居中裁边，详情仍保持原画面。标题常显在下方、两行截断、完整title提示，使用共享body-small Token（实测12px/18px）。移除首页大播放蒙层和底部密集按钮，顶部按需显示真实平台/时长与查看详情、去创作图标；没有借用腾讯的评分或伪造收藏状态。触屏入口保持可见，键盘focus-within与悬停等效。
+
+改动文件：`ContentCreationHome.tsx`、`InspirationVideoCards.tsx`、`InspirationMedia.tsx`、`creator-workspace.css`、媒体懒加载回归与产品规范。播放器增加可选的`previewActive`，由首页整卡的pointer/focus控制，解决上层点击区域挡住video鼠标事件的问题；离开暂停复位，选择参考或查看详情先停止行内预览，异步load回包不能在离开后重新开播。未传新参数的既有播放器调用保留原行为。
+
+实际验证：9项定向回归（卡片懒加载/替换、原始与受限比例、cover、pointer/focus/参考选择停止、首页契约、媒体兼容、预览边界）、`pnpm run lint`、`pnpm run check:architecture`（2691生产文件）及`git diff --check`通过。5215完整应用继续读取真实历史副本；实屏五张卡同宽约201px，标题computed font-size=12px。真实视频悬停paused=false且currentTime推进，移出paused=true/currentTime=0；键盘Tab进入操作同样预览。实点去创作后原视频ID进入输入区，无路由跳转或生产任务。保留缺失视频的暂不可用提示。截图位于独立运行目录`history-muse-five-columns.png`，临时viewport已复位。
+
+未跑全仓quality/build或真实供应商E2E，未迁移/部署；无外部run/task ID。恢复点为前次功能提交`a258dd0c`及运行目录`before-history-restore/`，原历史来源未修改。本次是独立功能分支迭代，不推进共享集成基线。
