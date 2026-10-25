@@ -7,6 +7,7 @@ import '@svar-ui/react-gantt/all.css';
 import './index.css';
 import './styles/design-system.css';
 import './styles/creator-workspace.css';
+import './components/assistant/assistantIdentity.css';
 
 const PRELOAD_RECOVERY_KEY = 'lingshu:vite-preload-recovery';
 window.addEventListener('vite:preloadError', event => {

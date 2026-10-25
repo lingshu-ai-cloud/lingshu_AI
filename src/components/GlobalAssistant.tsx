@@ -781,6 +781,7 @@ export default function GlobalAssistant({
         retracted={launcherRetracted}
         chatOpen={mode === 'chat'}
         badgeCount={decisionTotal ?? pendingCount}
+        reduceMotion={reduceMotion}
         launcherButtonRef={launcherButtonRef}
         edgeLauncherButtonRef={edgeLauncherButtonRef}
         onLauncherClick={handleLauncherClick}

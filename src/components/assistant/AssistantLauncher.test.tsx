@@ -14,6 +14,7 @@ function render(retracted: boolean, chatOpen: boolean) {
       retracted={retracted}
       chatOpen={chatOpen}
       badgeCount={3}
+      reduceMotion={false}
       launcherButtonRef={launcherButtonRef}
       edgeLauncherButtonRef={edgeLauncherButtonRef}
       onLauncherClick={noOp}
@@ -26,6 +27,7 @@ function render(retracted: boolean, chatOpen: boolean) {
 test('expanded launcher retains the dialog relationship and manual retract control', () => {
   const html = render(false, false);
   assert.match(html, /data-global-assistant="launcher"/);
+  assert.match(html, /data-assistant-mascot="hub-seed"/);
   assert.match(html, /aria-controls="global-assistant-panel"/);
   assert.match(html, /aria-expanded="false"/);
   assert.match(html, /data-global-assistant="retract-control"/);
@@ -35,6 +37,7 @@ test('expanded launcher retains the dialog relationship and manual retract contr
 test('retracted launcher retains the badge and keyboard-accessible restore control', () => {
   const html = render(true, false);
   assert.match(html, /data-global-assistant="edge-launcher"/);
+  assert.match(html, /data-assistant-mascot="hub-seed"/);
   assert.match(html, /aria-label="展开灵小枢入口"/);
   assert.match(html, /3/);
   assert.doesNotMatch(html, /data-global-assistant="launcher"/);

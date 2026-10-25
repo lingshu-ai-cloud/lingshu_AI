@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Button } from 'antd';
-import { ArrowRight, Bot, CalendarRange, ExternalLink, Loader2, Play } from 'lucide-react';
+import { ArrowRight, CalendarRange, ExternalLink, Loader2, Play } from 'lucide-react';
 import type { AgentAction, Message, Page } from '../../App';
 import type { AssistantProductionContext } from '../../lib/assistantProductionDecision';
 import type { AssistantTaskCard } from '../../stores/assistantStore';
@@ -13,6 +13,7 @@ import { taskStatusLabel } from './AssistantDecisionDialog';
 import { assistantBubbleStyle } from './globalAssistantRuntime';
 import { SocialPlatformIcon } from '../SocialPlatformIcon';
 import { ThumbnailImage, VideoThumbnail } from '../inspiration/InspirationMedia';
+import AssistantMascot from './AssistantMascot';
 
 interface Props {
   inlineHome?: boolean;
@@ -27,6 +28,7 @@ interface Props {
   onFeedChange: (feed: AssistantDecisionFeed) => void;
   welcomeBubbleVisible: boolean;
   activeAgentLabel: string;
+  reduceMotion: boolean;
   messages: Message[];
   onAction?: AgentAction;
   onSuggest: (suggestion: string) => void;
@@ -43,6 +45,7 @@ export default function AssistantConversationBubbles(props: Props) {
   const { inlineHome, page, goalId, productionContext, decisionFeedRevision, decisionFeedKey,
     decisionFeedActive, onOpenChat, onOpenFeedDetail, onFeedChange,
     welcomeBubbleVisible, activeAgentLabel, messages, onAction, onSuggest,
+    reduceMotion,
     contentIntakeNode, loading, focusedTaskCard, onOpenTaskDetail,
     weeklyPlanKickoffAvailable, onOpenWeeklyPlan } = props;
   return (
@@ -61,12 +64,12 @@ export default function AssistantConversationBubbles(props: Props) {
 
       {welcomeBubbleVisible && !inlineHome && !messages.length && (
         <div data-assistant-bubble="welcome"
-          className="ls-assistant-bubble-enter flex items-start gap-2"
+          className="ls-assistant-welcome ls-assistant-bubble-enter flex gap-3"
           style={assistantBubbleStyle(0)}>
-          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>
+          <AssistantMascot size="md" interactive reduceMotion={reduceMotion} />
           <div className="ls-messenger-bubble ls-messenger-bubble--inbound">
-            <p className="font-semibold text-text-primary">我是{activeAgentLabel}</p>
-            <p className="mt-1 text-text-secondary">我会结合当前页面上下文继续帮你处理。</p>
+            <p className="font-semibold text-text-primary">你好，我是{activeAgentLabel}</p>
+            <p className="mt-1 text-text-secondary">我会结合当前页面和你的业务资料，陪你把事情做完。</p>
           </div>
         </div>
       )}
@@ -75,7 +78,7 @@ export default function AssistantConversationBubbles(props: Props) {
         <div key={`${msg.role}-${index}`} data-assistant-bubble={msg.role}
           className={`ls-assistant-bubble-enter flex gap-2 ${inlineHome ? `ls-assistant-flow__turn ls-assistant-flow__turn--${msg.role}` : msg.role === 'user' ? 'justify-end' : ''}`}
           style={assistantBubbleStyle(index + (welcomeBubbleVisible ? 1 : 0))}>
-          {msg.role === 'assistant' && !inlineHome && <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>}
+          {msg.role === 'assistant' && !inlineHome && <AssistantMascot size="xs" reduceMotion={reduceMotion} />}
           {msg.role === 'user' ? <div className="flex min-w-0 max-w-[min(100%,340px)] flex-col items-end gap-2">
             {msg.referenceMedia && <article className="w-full overflow-hidden rounded-lg border border-border bg-surface text-left text-text-primary" aria-label={`已发送参考视频：${msg.referenceMedia.title}`}>
               <div className="relative aspect-video overflow-hidden bg-surface-2">
@@ -117,11 +120,11 @@ export default function AssistantConversationBubbles(props: Props) {
           className="ls-assistant-summary-bubble-enter flex items-start gap-2"
           data-assistant-bubble="task-summary" data-assistant-summary="task-card"
           style={assistantBubbleStyle(messages.length + (welcomeBubbleVisible ? 2 : 1))}>
-          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>
+          <AssistantMascot size="xs" reduceMotion={reduceMotion} />
           <button type="button" className="assistant-decision-summary min-w-0 flex-1"
             onClick={event => onOpenTaskDetail(event.currentTarget, focusedTaskCard.taskId)}
             aria-label={`查看任务详情：${focusedTaskCard.title}`}>
-            <span className="assistant-decision-summary__icon" aria-hidden="true"><Bot size={18} /></span>
+            <span className="assistant-decision-summary__icon" aria-hidden="true"><AssistantMascot size="xs" reduceMotion={reduceMotion} /></span>
             <span className="assistant-decision-summary__content">
               <span className="assistant-decision-summary__eyebrow">
                 <span>{focusedTaskCard.status === 'approval' || focusedTaskCard.status === 'needs_input' ? '待你决定' : '灵小枢已整理'}</span>
@@ -139,7 +142,7 @@ export default function AssistantConversationBubbles(props: Props) {
         <div className="ls-assistant-summary-bubble-enter flex items-start gap-2"
           data-assistant-bubble="weekly-plan-kickoff"
           style={assistantBubbleStyle(messages.length + (welcomeBubbleVisible ? 3 : 2))}>
-          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>
+          <AssistantMascot size="xs" reduceMotion={reduceMotion} />
           <div className="ls-messenger-bubble ls-messenger-bubble--inbound min-w-0 flex-1">
             <p className="font-semibold text-text-primary">先制定本周计划</p>
             <p className="mt-1 text-text-secondary">我会先整理本周目标、平台、产量、预算和排期给你预览。你确认后，数字员工才会开始生产。</p>
