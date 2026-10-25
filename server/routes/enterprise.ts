@@ -658,9 +658,14 @@ enterpriseRouter.patch('/profile', async (req, res) => {
 });
 
 enterpriseRouter.get('/context', async (_req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const facts = await readTenantEnterpriseFacts(tenantId);
-  res.json({ context: facts.context, factVersion: facts.version });
+  try {
+    const { tenantId } = res.locals as AuthLocals;
+    const facts = await readTenantEnterpriseFacts(tenantId);
+    res.json({ context: facts.context, factVersion: facts.version });
+  } catch {
+    console.error('[enterprise] context read failed: tenant_profile_storage_unavailable');
+    res.status(503).json({ error: 'tenant_profile_storage_unavailable', message: '企业资料暂时无法读取，请稍后重试' });
+  }
 });
 
 export const productApiRouter = Router();

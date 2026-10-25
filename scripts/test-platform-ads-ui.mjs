@@ -21,7 +21,7 @@ const fixtures = {
 };
 const source = `import React,{useState} from 'react';import{createRoot}from'react-dom/client';import{AdTaskControls}from'/src/components/PlatformAdsOperations.tsx';import PlatformAdsPage from '/src/components/PlatformAdsPage.tsx';
 const query=new URLSearchParams(location.search);const fixtures=${JSON.stringify(fixtures)};
-function Fixture(){const[task,setTask]=useState(fixtures[query.get('case')]||fixtures.tiktok);return query.has('page')?<PlatformAdsPage page={query.get('page')} onNavigate={()=>{}}/>:<AdTaskControls task={task} onUpdate={setTask}/>;}
+function Fixture(){const[task,setTask]=useState(fixtures[query.get('case')]||fixtures.tiktok);const[workspace,setWorkspace]=useState(query.get('page'));return query.has('page')?<PlatformAdsPage page={workspace} onNavigate={setWorkspace}/>:<AdTaskControls task={task} onUpdate={setTask}/>;}
 createRoot(document.getElementById('root')).render(<Fixture/>);`;
 let vite, browser;
 try {
@@ -40,6 +40,7 @@ try {
   await access(executablePath);
   browser = await chromium.launch({ executablePath, headless: true });
   const context = await browser.newContext({ serviceWorkers: 'block' });
+  await context.addInitScript(() => localStorage.setItem('overseas_token', 'isolated-ui-fixture-token'));
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   const origin = `http://127.0.0.1:${vite.httpServer.address().port}`;
@@ -89,13 +90,15 @@ try {
       { id: 'active-meta', provider: 'meta', accountId: '2', name: '正常账户', currency: 'USD', status: 'connected' },
     ], capabilities: [], releasePolicy: new URL(page.url()).searchParams.get('case') === 'manualMeta' ? { mode: 'paused_only', allowedActions: ['create', 'pause'], executionProviders: ['meta'], reason: '仅浏览器模拟上传与预检' } : { mode: 'disabled', allowedActions: [], executionProviders: [], reason: '测试只读条件' } });
     if (path === '/creatives/bound-creative/platform-preview') return respond({ videoId: '999111', thumbnailUrl: 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E', width: 320, height: 240, duration: 1, videoStatus: 'ready', checkedAt: new Date().toISOString() });
-    if (path === '/connections/active-meta/meta-setup') return respond({ account: { id: '2', name: '正常账户', currency: 'USD', timezone: 'UTC', status: 1, minSpendCap: null, minDailyBudget: null }, pages: [], hasMorePages: false });
+    if (path === '/connections/active-meta/meta-setup') return respond({ account: { id: '2', name: '正常账户', currency: 'USD', timezone: 'UTC', status: 1, minSpendCap: null, minDailyBudget: null }, pages: [{ id: '123', name: '测试主页', tasks: ['ADVERTISE'] }], hasMorePages: false });
     if (path === '/account-directory') return respond({ items: [], warnings: [] });
     if (path === '/creative-history-sources') return respond({ items: [] });
     if (path === '/creative-history') return respond({ items: [{ ...creativeSource, key: 'social:source-task:artifact-video', verifiedSource: true, status: 'completed', createdAt: '', note: '' }], page: 1, perPage: 5, totalPages: 1, totalItems: 1 });
     if (path === '/creative-selection') return respond(creativeSource);
     if (path === '/creative-selection/media') return route.fulfill({ status: 200, contentType: 'video/mp4', body: Buffer.alloc(0) });
     if (path === '/creative-lifecycle') return respond({ source: creativeSource, ads: [], bindingCount: 0, truncated: false, checkedAt: '', roi: null, crmInquiries: null, scopeNote: '' });
+    if (path === '/material-directory') return respond({ items: [{ key: 'source-fixture', name: creativeSource.name, source: { ...creativeSource, key: 'social:source-task:artifact-video', verifiedSource: true, createdAt: '', status: 'completed', note: '' }, plans: [], ads: [], bindings: [] }], totalItems: 1, totalPages: 1, page: 1, perPage: 12, checkedAt: new Date().toISOString(), warnings: [], truncated: false });
+    if (path === '/tasks/fixture/meta-audit') return respond({ taskId: 'fixture', taskVersion: activeTask.version, checkedAt: new Date().toISOString(), entries: [], pendingCount: 0, truncated: false });
     if (path === '/creative-library') return respond({ items: [{ key: 'local-fixture', task: base, connection: { id: 'active-meta', provider: 'meta', accountId: '2', name: '正常账户', currency: 'USD' }, binding: null, execution: { id: 'fixture-execution', campaignId: '123', adsetId: '124', adId: '125', creativeId: '126' }, mapping: 'verified_existing' }], page: 1, perPage: 20, totalPages: 1, totalItems: 1, truncated: false });
     if (path === '/performance/fixture-execution') {
       performanceReads++;
@@ -105,7 +108,7 @@ try {
     if (path === '/creative-sources') return respond({ items: [creativeSource], page: 1, perPage: 20, totalPages: 1, totalItems: 1 });
     if (path === '/tasks/fixture/creatives') return respond({ items: bindings });
     if (path === '/tasks/fixture') return respond({ task: activeTask });
-    if (path === '/tasks') return respond({ items: [base] });
+    if (path === '/tasks') return respond({ items: [activeTask] });
     if (path === '/tasks/fixture/automation') return respond({ rules: [{ id: 'old-rule', resourceId: '123', enabled: false }], runs: [{ id: 'decision-run', status: 'FAILED', reason: '拟议调整测试', createdAt: new Date().toISOString(), decision: { schemaVersion: 1, planVersion: 2, ruleVersion: 'rule-version-fixture', action: 'adjust_budget', reason: '拟议调整测试', budgetBefore: 10, budgetAfter: 11, executionId: 'missing-execution', evidence: { availability: 'available', period: 'last_7d', fetchedAt: new Date().toISOString(), clicks: 20, spend: 4, currency: 'USD' } } }, { id: 'old-run', status: 'SKIPPED', reason: '历史观察证据', createdAt: '2026-09-01T00:00:00Z' }] });
     if (/^\/tasks\/fixture\/(executions|approvals|launch)$/.test(path)) return respond({ items: [] });
     if (path === '/tasks/fixture/metrics') return respond({ source: 'provider_snapshot', stale: true, currency: 'USD', spend: 3, clicks: 2, impressions: 30, reportedAt: '2026-09-01T00:00:00Z', daily: [{ date: new Date().toISOString().slice(0, 10), spend: 3, clicks: 2, impressions: 30 }] });
@@ -162,26 +165,27 @@ try {
   await page.getByRole('button', { name: '核对视频状态', exact: true }).click();
   await page.getByText('平台视频已就绪', { exact: true }).waitFor();
   await page.getByRole('button', { name: '用于本次人工创建', exact: true }).click();
-  const videoId = page.getByLabel('Meta 已上传视频 ID', { exact: true });
-  await page.waitForFunction(() => [...document.querySelectorAll('input')].some(input => input.value === '999111'));
-  assert.equal(await videoId.inputValue(), '999111');
-  assert.equal(await videoId.evaluate(input => input.readOnly), true);
+  await page.getByText('投放视频与封面已自动关联。', { exact: true }).waitFor();
+  assert.equal(await page.getByLabel('Meta 已上传视频 ID', { exact: true }).count(), 0);
   assert.equal(await page.getByLabel('广告账户', { exact: true }).inputValue(), 'active-meta');
-  await page.getByLabel('Facebook 主页 ID', { exact: true }).fill('123');
-  await page.getByLabel('公开视频缩略图 HTTPS 地址', { exact: true }).fill('https://example.com/thumb.jpg');
+  await page.getByRole('combobox', { name: '投放国家或地区', exact: true }).click();
+  await page.getByText('美国', { exact: true }).last().click();
+  await page.getByRole('combobox', { name: '投放国家或地区', exact: true }).press('Escape');
   await page.getByLabel('落地页 HTTPS 地址', { exact: true }).fill('https://example.com/landing');
   await page.getByLabel('广告文案', { exact: true }).fill('本地模拟素材');
   await page.getByRole('button', { name: '检查当前配置', exact: true }).click();
   await page.getByText('本地检查通过，平台条件仍待核验', { exact: true }).waitFor();
   assert.deepEqual(creativeWrites.map(item => item.action), ['bind', 'upload', 'reconcile']);
   assert.equal(preflightWrites.length, 1);
-  await page.getByLabel('Facebook 主页 ID', { exact: true }).fill('124');
+  await page.getByLabel('广告文案', { exact: true }).fill('更新本地模拟素材');
   await page.getByText('配置已变化，请重新检查。', { exact: true }).waitFor();
 
-  for (const [name, label] of [['adsOverview', '投放数据'], ['adsPlans', '计划创编'], ['adsCreatives', '素材管理']]) {
-    await open(`page=${name}`);
+  for (const [name, label] of [['adsOverview', '计划管理'], ['adsPlans', '计划管理'], ['adsCreatives', '素材投放表现']]) {
+    await open(`page=${name}&case=manualMeta`);
     await page.locator('h1').filter({ hasText: label }).waitFor({ state: 'attached' });
     if (name === 'adsOverview') {
+      await page.getByRole('button', { name: '投放测试计划', exact: true }).click();
+      await page.getByRole('button', { name: '查看此计划投放数据', exact: true }).click();
       await page.getByRole('tab', { name: '本地计划回执', exact: true }).click();
       await page.getByText('Meta 平台汇总', { exact: true }).waitFor();
       assert.ok(performanceReads > 0, 'native performance must be read from the scoped execution');
@@ -193,7 +197,8 @@ try {
       assert.equal(await page.locator('.meta-performance tbody tr.ant-table-row').count(), 1);
       if (process.env.PLATFORM_ADS_TEST_SCREENSHOT) await page.screenshot({ path: process.env.PLATFORM_ADS_TEST_SCREENSHOT, fullPage: true });
     }
-    if (name === 'adsPlans') await page.getByText('投放测试计划', { exact: true }).waitFor();
+    if (name === 'adsPlans') await page.getByRole('button', { name: '投放测试计划', exact: true }).waitFor();
+    if (name === 'adsCreatives') await page.getByRole('button', { name: '用于新计划', exact: true }).waitFor();
   }
   await open('page=adsManaged');
   await page.getByRole('dialog', { name: 'AI 投手' }).waitFor();
@@ -209,5 +214,5 @@ try {
   assert.equal(writes.length, 2, 'page reads must never submit platform mutations');
   assert.deepEqual(unexpected, [], 'all API and external network requests must be explicitly mocked');
   assert.deepEqual(errors, []);
-  console.log('Platform ads UI passed: disabled TikTok modes, manual takeover, expired account removal, preserved rule history three live-page fixtures, Meta creative bind/upload/reconcile/use and local preflight without execution; native report explicit read, worker completed/stale/unknown and decision evidence; all APIs mocked.');
+  console.log('Platform ads UI passed: disabled TikTok modes, manual takeover, expired account removal, preserved rule history, two workspaces and legacy overview route, Meta creative bind/upload/reconcile/use and local preflight without execution; native report explicit read, worker completed/stale/unknown and decision evidence; all APIs mocked.');
 } finally { await browser?.close(); await vite?.close(); }

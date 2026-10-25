@@ -95,3 +95,17 @@ OAuth 另需 `META_ADS_APP_ID`、`META_ADS_APP_SECRET`、`META_ADS_REDIRECT_URI`
 `POST /tasks/:id/metrics/sync` (write role) explicitly reads the existing recent-seven-day platform report and saves resource/day snapshots under a tenant lease with readback verification. `GET /tasks/:id/metrics/history?since=YYYY-MM-DD&until=YYYY-MM-DD` reads local snapshots only (max 366 days). Resource identity includes provider/account/campaign/date/currency/metric definition; repeated syncs correct values, shared tasks do not create duplicate resource rows. No missing-value zero fill, arbitrary historical backfill, timezone conversion or cross-currency totals. Partial persistence can be repaired by retry; an empty report does not erase old rows.
 
 Schema artifact: `1790640002_platform_ad_evidence.js`. It is not applied by these tests. Worker activation, production migration and real advertising acceptance are separate operations; this change does not authorize them.
+
+### Meta 消息、表单与网站询盘（2026-10-25）
+
+创编目标增加“获取消息会话”“获取Meta表单线索”“获取独立站询盘”。保存草稿后，在原“真实平台执行”区域填写对应资产：
+
+- 消息：选择 `messageDestination`（WHATSAPP / MESSENGER / INSTAGRAM_DIRECT）；WhatsApp 提供国家码号码 `whatsappPhoneNumber`；Instagram 提供 `instagramActorId` 与 `instagramUsername`。所选主页必须已关联该资产。
+- 即时表单：提供 `leadFormId`，须为该主页 ACTIVE 的已有表单，用户自行在 Meta 完成线索广告条款与隐私声明。
+- 网站询盘：提供 HTTPS `linkUrl` 与账户可用 `pixelId`，优化事件固定 LEAD。网站自行接好 Pixel/CAPI 的真实提交事件；本接入不代建追踪。
+
+上述字段通过原 `meta` 输入进入预检/执行/审批/托管与快照。缺失资产、授权不足、目录分页不完整或读回漂移不会伪装成功。新目标不使用旧网站访问 CPC 自动优化。报表分别取消息会话、站内表单线索和网站 Pixel Lead，不用点击数或笼统 lead 总数代替。实现与验证范围见 ADR `2026-10-25-meta-lead-objectives.md`；真实创建仍受发布策略、预算和当前任务授权限制。
+
+### 五目标业务确认与前端自动关联
+
+前端运营者不填写 Meta 资源编号。正常流程依据 `shared/metaAdJourney.ts` 展示用户需要确认的业务信息、自动关联范围、客户路径和结果定义。草稿 `configuration` 可保存结构化 `countries`、`adMessage`、`landingPageUrl`，执行页复用；旧草稿缺字段时不默认美国或日预算 10。服务端原 API 仍使用明确的资源 ID DTO，由资产目录产生并在执行时复核。预检、只读目录、隔离夹具回执与真实 Meta E2E 分别验收，详见 `docs/qa/meta-ad-journeys-smoke-20261025.md`。

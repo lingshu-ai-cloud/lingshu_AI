@@ -12,6 +12,8 @@ export const META_PERFORMANCE_FIELDS = {
   linkCtr: { field: 'inline_link_click_ctr', label: '链接点击率', unit: 'percent' },
   costPerLinkClick: { field: 'cost_per_inline_link_click', label: '单次链接点击成本', unit: 'money' },
   costPerThruPlay: { field: 'cost_per_thruplay', label: '单次 ThruPlay 成本', unit: 'money' },
+  instantFormLeads: { field: 'actions', actionType: 'onsite_conversion.lead_grouped', label: 'Meta 即时表单线索', unit: 'count' },
+  websiteLeads: { field: 'actions', actionType: 'offsite_conversion.fb_pixel_lead', label: '网站 Lead 事件', unit: 'count' },
   leads: { field: 'actions', actionType: 'lead', label: 'Meta 归因线索（lead）', unit: 'count' },
   messagingConversations: { field: 'actions', actionType: 'onsite_conversion.messaging_conversation_started_7d', label: 'Meta 新消息会话', unit: 'count' },
   purchaseValue: { field: 'action_values', actionType: 'omni_purchase', label: 'Meta 归因购买金额', unit: 'money' },

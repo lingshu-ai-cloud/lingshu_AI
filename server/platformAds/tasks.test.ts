@@ -26,6 +26,12 @@ try {
   assert.throws(() => validatePlatformAdTask({ ...input, configuration: { startsAt: '2026-10-02T00:00:00Z', endsAt: '2026-10-01T00:00:00Z' } }), /结束时间/);
   const configured = await updatePlatformAdTask('tenant-a', created.id, { ...input, configuration: { dailyBudget: 100, audience: '经销商', startsAt: '2026-10-01T00:00:00Z' } });
   assert.equal(configured?.configuration.audience, '经销商');
+  const business = await updatePlatformAdTask('tenant-a', created.id, { ...input, configuration: { dailyBudget: 100, countries: ['CA', 'CA'], adMessage: '产品目录', landingPageUrl: 'https://example.com/catalog' } });
+  assert.deepEqual(business?.configuration.countries, ['CA']);
+  assert.equal((await getPlatformAdTask('tenant-a', created.id))?.configuration.adMessage, '产品目录');
+  assert.equal(business?.configuration.landingPageUrl, 'https://example.com/catalog');
+  assert.throws(() => validatePlatformAdTask({ ...input, configuration: { countries: ['US,CA'] } }), /国家/);
+  assert.throws(() => validatePlatformAdTask({ ...input, configuration: { landingPageUrl: 'http://example.com' } }), /HTTPS/);
   const preserved = await updatePlatformAdTask('tenant-a', created.id, input);
   assert.equal(preserved?.configuration.dailyBudget, 100, 'older clients must preserve saved configuration');
   await assert.rejects(updatePlatformAdTask('tenant-a', created.id, { ...input, budget: 50 }), /日预算/);

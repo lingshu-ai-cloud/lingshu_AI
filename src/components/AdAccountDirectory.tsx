@@ -4,6 +4,7 @@ import type { AdAccountDirectory } from '../../shared/adAccountDirectory';
 import { platformAdsRequest } from '../lib/platformAds';
 import { authHeader } from '../lib/auth';
 import { AdAccountDirectoryContext as Context } from '../lib/adAccountDirectoryContext';
+import './metaPerformance.css';
 export function AdAccountDirectoryProvider({ children, onOpenCreative, enabled = true }: { children: ReactNode; onOpenCreative: () => void; enabled?: boolean }) {
   const [directory, setDirectory] = useState<AdAccountDirectory>({ items: [], warnings: [] }), [key, setKey] = useState('');
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [generation, setGeneration] = useState(0), [adId, setAdId] = useState('');
@@ -31,11 +32,13 @@ export function useAdAccountDirectory() {
 }
 export function AdDirectorySelect({ disabled = false }: { disabled?: boolean }) {
   const directory = useAdAccountDirectory();
-  return <Space className="ads-account-directory-select">
-    <Select aria-label="统一广告账户" style={{ minWidth: 240 }} disabled={disabled} loading={directory.loading} value={directory.selected?.key} onChange={directory.select}
+  return <div className="ads-account-directory-select">
+    <Space wrap className="ads-account-directory-controls">
+    <Select aria-label="统一广告账户" style={{ width: 280, maxWidth: '100%' }} disabled={disabled} loading={directory.loading} value={directory.selected?.key} onChange={directory.select}
       options={directory.items.filter(i => i.provider === 'meta').map(i => ({ value: i.key, label: `${i.name} · ${i.currency}` }))} placeholder="选择已授权的 Meta 账户"/>
     <Button disabled={disabled} loading={directory.loading} onClick={directory.refresh}>刷新授权账户</Button>
+    </Space>
     {directory.error && <Alert type="error" showIcon title={directory.error}/>}
     {directory.warnings.map(w => <Alert key={w} type="warning" showIcon title={w}/>)}
-  </Space>;
+  </div>;
 }

@@ -25,7 +25,7 @@ export async function createAdApproval(tenantId: string, userId: string, taskId:
     if (action === 'adjust_budget' && (!Number.isFinite(dailyBudget) || dailyBudget! < 1 || dailyBudget! > authorization.maxDailyBudget)) throw new PlatformAdTaskValidationError('日预算超出授权');
     const payload: Record<string, unknown> = { expectedVersion: task.version, action, connectionId, resourceId: String(input.resourceId || '') };
     if (dailyBudget !== undefined) payload.dailyBudget = dailyBudget;
-    if (action === 'create') payload.meta = validateMetaVideoInput(input.meta, Math.min(task.budget, authorization.maxTotalBudget), task.goal === '提升有效视频观看');
+    if (action === 'create') payload.meta = validateMetaVideoInput(input.meta, Math.min(task.budget, authorization.maxTotalBudget), task.goal);
     const now = new Date().toISOString();
     const record = await store.create<AdApproval>(AD_APPROVALS, { tenant_id: tenantId, taskId, taskVersion: task.version, status: 'PENDING', payload, createdBy: userId, createdAt: now, updatedAt: now, expiresAt: new Date(Math.min(Date.now() + 86400000, Date.parse(authorization.expiresAt))).toISOString() });
     if (!record) throw new Error('审批保存失败');

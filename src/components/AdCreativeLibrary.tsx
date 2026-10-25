@@ -59,10 +59,10 @@ function VideoPreview({ bindingId, source }: { bindingId?: string; source?: AdMa
   </LsMediaStateFrame>{error && <Button onClick={() => setRetry(v => v + 1)}>重试预览</Button>}</div>;
 }
 
-export default function AdCreativeLibrary({ onOpenTask, initialTaskId, initialTaskName, selectedMaterial }: { onOpenTask: (id: string) => void; initialTaskId?: string; initialTaskName?: string; selectedMaterial?: { taskId: string; selection: AdMaterialSelection } }) {
+export default function AdCreativeLibrary({ onOpenTask, initialTaskId, initialTaskName, selectedMaterial, onCreate, diagnostic = false }: { diagnostic?: boolean; onCreate?: (selection: AdMaterialSelection) => void; onOpenTask: (id: string) => void; initialTaskId?: string; initialTaskName?: string; selectedMaterial?: { taskId: string; selection: AdMaterialSelection } }) {
   const directory = useAdAccountDirectory();
-  const [view, setView] = useState(initialTaskId ? 'ads' : directory.adId ? 'platform' : 'history');
-  useEffect(() => { if (directory.adId && !initialTaskId) setView('platform'); }, [directory.adId, initialTaskId]);
+  const [view, setView] = useState(diagnostic || initialTaskId ? 'ads' : directory.adId ? 'platform' : 'ads');
+  useEffect(() => { if (!diagnostic && directory.adId && !initialTaskId) setView('platform'); }, [directory.adId, initialTaskId]);
   const [catalog, setData] = useState<(AdCreativeLibraryPage & { requestTaskId?: string }) | null>(null), [page, setPage] = useState(1), [refresh, setRefresh] = useState(0);
   const data = catalog?.page === page && catalog.requestTaskId === initialTaskId ? catalog : null;
   const [loading, setLoading] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
@@ -124,8 +124,8 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId, initialTa
   }
   const accounts = [...new Map((data?.items || []).map(i => [i.connection.id, i.connection])).values()];
   return <section aria-label="真实投放素材库" className="ads-library">
-    <Tabs activeKey={view} onChange={setView} items={[{ key: 'platform', label: '平台广告素材' }, { key: 'ads', label: '投放素材' }, { key: 'history', label: '创作素材' }]} />
-    {view === 'platform' ? <AdPlatformCreatives/> : view === 'history' ? <AdSourceCatalog/> : <>
+    {!diagnostic && <Tabs activeKey={view} onChange={setView} items={[{ key: 'platform', label: '平台广告素材' }, { key: 'ads', label: '投放素材' }, { key: 'history', label: '创作素材' }]} />}
+    {view === 'platform' ? <AdPlatformCreatives/> : view === 'history' ? <AdSourceCatalog onSelect={onCreate}/> : <>
     <div className="ads-library-toolbar"><Input.Search aria-label="搜索本页素材" placeholder="搜索本页素材或计划" allowClear value={search === initialTaskId ? initialTaskName || search : search} onChange={e => setSearch(e.target.value)} />
       <Select aria-label="本页素材账户" value={account} onChange={setAccount} options={[{ value: 'all', label: '本页全部账户' }, ...accounts.map(a => ({ value: a.id, label: `${a.name} · ${a.currency}` }))]} />
       <Button icon={<RefreshCw size={15}/>} loading={loading} onClick={() => setRefresh(v => v + 1)}>刷新素材</Button>
@@ -145,6 +145,7 @@ export default function AdCreativeLibrary({ onOpenTask, initialTaskId, initialTa
             {item.task.materialSource && <Space wrap><Tag>{item.task.materialSource.sourceTenantName}</Tag><Tag>内部内容：{adContentStatusLabel(item.task.materialSource.contentStatus)}</Tag></Space>}
             <p>{new Set(group.items.filter(i => i.execution).map(i => i.execution!.adId)).size} 条关联广告 · {new Set(group.items.map(i => i.task.id)).size} 个计划</p>
             <Button block onClick={() => setSelected(group.key)}>查看详情与表现</Button>
+            {onCreate && item.task.materialSource && <Button block type="link" onClick={() => onCreate(item.task.materialSource!)}>用此素材智能创编</Button>}
           </div></article> };
       })]} />}
     </LsLoadingState>

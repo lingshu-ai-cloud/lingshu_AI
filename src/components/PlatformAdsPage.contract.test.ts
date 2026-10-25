@@ -13,22 +13,22 @@ test('creation labels capability without changing persisted goal values or remov
   assert.match(source, /PLATFORM_AD_GOALS\.map\(goal => <option key=\{goal\} value=\{goal\}>/);
   assert.match(source, /getAdPlanCapability\(\{ \.\.\.form, goal \}\)\.supportsCreate/);
   assert.match(source, /仅草稿规划/);
-  assert.match(source, /formCapability\.reason/);
+  assert.doesNotMatch(source, /className="ads-capability-hint"/);
   assert.match(source, /保存草稿/);
   assert.doesNotMatch(source, /disabled=\{[^}]*!formCapability\.supportsCreate/);
 });
 
-test('the advertising unit exposes three workspaces and keeps AI management in a drawer', () => {
+test('advertising exposes two workspaces, keeps legacy routes and opens creation as an action', () => {
   assert.match(source, /<Tabs[^>]*aria-label="投放管理功能区"/);
   const layout = readFileSync(new URL('./Layout.tsx', import.meta.url), 'utf8');
-  assert.match(layout, /const creatorSurface = [^;]*PLATFORM_ADS_PAGE_IDS\.includes\(page\)/, '广告子工作区必须沿用主页面的外观外壳');
-  for (const page of ['adsPlans', 'adsOverview', 'adsCreatives']) {
-    assert.ok(source.includes(`key: '${page}'`), `${page} must remain directly reachable in the advertising unit`);
-  }
-  assert.match(source, /page === 'adsPlans' \? '计划创编' : page === 'adsCreatives' \? '素材管理' : '投放数据'/);
+  assert.match(layout, /const creatorSurface = [^;]*PLATFORM_ADS_PAGE_IDS\.includes\(page\)/);
+  assert.match(source, /items=\{\[\{ key: 'adsPlans', label: '计划管理' \}, \{ key: 'adsCreatives', label: '素材投放表现' \}\]\}/);
+  assert.match(source, /const isPlanPage = page !== 'adsCreatives'/);
+  assert.match(source, /<Modal open=\{dialog !== null\}/);
+  assert.match(source, /onClick=\{openCreate\}>智能创编/);
   assert.match(source, /<Drawer title="AI 投手"/);
   assert.match(source, /if \(page !== 'adsManaged'\) return;[\s\S]*setManagedOpen\(true\);[\s\S]*onNavigate\('adsPlans'\)/);
-  assert.doesNotMatch(source, /aria-label="投放总览视图"/);
+  assert.match(source, /<AdPerformanceOverview initialTaskId=/);
 });
 
 test('material first-level page uses the real library rather than simulated performance or a placeholder', () => {
@@ -38,7 +38,7 @@ test('material first-level page uses the real library rather than simulated perf
   assert.match(controls, /creationBlocked/);
   assert.match(controls, /requestId: request.current.id/);
   assert.match(controls, /MetaPageSelect connectionId/);
-  assert.match(source, /isCreativePage && \([\s\S]*<AdCreativeLibrary onOpenTask=/);
+  assert.match(source, /isCreativePage && \([\s\S]*<AdMaterialPerformance/);
   assert.doesNotMatch(source, /mockCreativePerformance|广告素材及效果接口尚未接入/);
   const library = readFileSync(new URL('./AdCreativeLibrary.tsx', import.meta.url), 'utf8');
   assert.match(library, /LsMasonryGallery/);
@@ -101,8 +101,8 @@ test('plan material picking uses the same catalog, locks selection until verifie
   assert.match(media, /未开放跨企业投放复用/);
   assert.match(binding, /expectedSha256: selected.sha256/);
   assert.match(binding, /task.configuration.materialSource/);
-  assert.match(source, /open: dialog !== null && !materialPickerOpen/);
-  assert.match(source, /e.key === "Escape" && !materialPickerOpen && e.currentTarget.contains/);
+  assert.match(source, /keyboard=\{!saving && !materialPickerOpen && !referenceOverlayOpen\}/);
+  assert.match(source, /mask=\{\{ closable: false \}\}/);
   assert.doesNotMatch(binding, /<option.*sha256/);
   assert.match(media, /内部内容：/); assert.match(media, /Meta 广告：/); assert.match(media, /使用范围：/);
   assert.match(media, /mediaOnly && !source.sourceId/);

@@ -1,9 +1,9 @@
 import type { Page } from '../pageRegistry';
 
 /**
- * The advertising implementation is exposed as the 投放管理 unit. Its three
- * primary pages are 计划创编、投放数据、素材管理; legacy managed links remain
- * routable so they can open the shared AI operator drawer.
+ * The advertising implementation is exposed as the 投放管理 unit. Its two primary
+ * workspaces are 计划管理 and 素材投放表现. Creation is a modal action; legacy
+ * overview/managed URLs retain report access and the shared AI operator drawer.
  */
 export const PLATFORM_ADS_SURFACE_ENABLED = true;
 

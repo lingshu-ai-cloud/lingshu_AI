@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PlatformAdCreative } from '../../shared/platformAdCreatives';
 import { platformAdsApi, platformAdsRequest, type PlatformAdTask } from '../lib/platformAds';
 import { Button, Collapse, Space, Tag } from 'antd';
@@ -22,10 +22,12 @@ export default function AdCreativePanel({ task, connections, onUpdate, onUse, up
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const useLatest = useRef(onUse); useLatest.current = onUse;
+  const autoUsed = useRef('');
   const eligible = connections.filter(account => account.status === 'connected' && account.currency === task.currency &&
     (account.provider === 'meta' ? task.channels.length > 0 && task.channels.every(channel => ['Facebook', 'Instagram'].includes(channel)) : account.provider === 'tiktok' && task.channels.length === 1 && task.channels[0] === 'TikTok'));
   useEffect(() => {
-    if (!expanded) return;
+    if (!expanded && !task.configuration.materialSource) return;
     const controller = new AbortController();
     setLoading(true);
     platformAdsRequest<{ items: PlatformAdCreative[] }>(`/tasks/${encodeURIComponent(task.id)}/creatives`, { signal: controller.signal })
@@ -33,7 +35,22 @@ export default function AdCreativePanel({ task, connections, onUpdate, onUse, up
       .catch(error => { if (!controller.signal.aborted) { setItems([]); setFeedback(errorText(error)); } })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [expanded, task.id, task.version, refresh]);
+  }, [expanded, task.id, task.version, task.configuration.materialSource, refresh]);
+  useEffect(() => {
+    const source = task.configuration.materialSource;
+    if (!source || task.status !== 'draft' || task.managementMode !== 'manual') return;
+    const ready = items.filter(item => item.provider === 'meta' && item.connectionId === task.configuration.accountConnectionId && item.taskVersion === task.version && item.status === 'ready' && item.sourceTaskId === source.sourceTaskId && item.artifactId === source.artifactId && item.sha256 === source.sha256);
+    if (ready.length !== 1) return;
+    const item = ready[0], key = `${task.id}:${task.version}:${item.id}:${item.sha256}`;
+    if (autoUsed.current === key) return;
+    const controller = new AbortController();
+    platformAdsRequest<AdMaterialSelection>(`/creative-selection?${new URLSearchParams({ origin: 'social', sourceTaskId: item.sourceTaskId, artifactId: item.artifactId })}`, { signal: controller.signal }).then(selected => {
+      if (controller.signal.aborted) return;
+      if (selected.sha256 !== item.sha256) throw new Error('成片版本已变化，请重新确认投放素材。');
+      autoUsed.current = key; useLatest.current(item);
+    }).catch(error => { if (!controller.signal.aborted) setFeedback(errorText(error)); });
+    return () => controller.abort();
+  }, [items, task.id, task.version, task.status, task.managementMode, task.configuration.materialSource, task.configuration.accountConnectionId]);
   const bind = async () => {
     const selected = picked;
     if (!selected) return;
@@ -83,7 +100,7 @@ export default function AdCreativePanel({ task, connections, onUpdate, onUse, up
           </div>{['unknown', 'uploading'].includes(creative.status) && !creative.platformVideoId && <p className="ads-muted">未取得可核对的视频 ID，请由账户管理员在 Meta 核对；此页面不会自动重传。</p>}{creative.status === 'failed' && <p className="ads-muted">本次上传已失败，请核对原因后重新绑定成片，再发起新的上传。</p>}{!uploadAllowed && <p className="ads-muted">当前平台写入未开放，仍可管理本地素材绑定。</p>}
         </> : <p className="ads-muted">TikTok 仍需使用既有可推广 Spark 帖子；此绑定仅记录成片版本，不上传视频或自动取得帖子授权。</p>}
       </article>)}
-      {feedback && <p role="status">{feedback}</p>}
     </>}
+    {feedback && <p role="status">{feedback}</p>}
   </section>;
 }

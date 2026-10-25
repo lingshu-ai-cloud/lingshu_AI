@@ -1,8 +1,10 @@
+import { META_AD_GOALS } from '../../shared/metaAdObjectives.js';
 import { store } from '../storage/index.js';
 import { getPlatformAdTask } from './tasks.js';
 import type { AdConnection } from './connections.js';
 import type { AdExecution } from './execution.js';
 import { AdProviderError, validateMetaVideoInput } from './metaAdapter.js';
+import { resolveSavedMetaMessage } from './metaMessageInput.js';
 import { validateTikTokVideoPlan } from './tiktokExecutionAdapter.js';
 import { demandGenOperations } from './googleExecutionAdapter.js';
 import { getPlatformAdCreative } from './creatives.js';
@@ -67,7 +69,7 @@ export async function preflightAdAction(tenantId: string, taskId: string, input:
     check('currency', '账户与预算币种', task.currency === connection.currency && (provider === 'meta' ? ['USD', 'CNY'].includes(connection.currency) : connection.currency === 'USD'), '币种一致且支持执行', '币种不一致或尚不支持该币种执行');
     check('budget', '计划预算', Number.isFinite(task.budget) && task.budget > 0, '计划预算有效', '计划预算必须为正数');
     if (action === 'create') {
-      const allowed = provider === 'meta' ? ['提升网站访问', '提升有效视频观看'].includes(task.goal) && task.channels.length > 0 && task.channels.every(c => ['Facebook', 'Instagram'].includes(c)) : provider === 'tiktok' ? task.goal === '提升有效视频观看' && task.channels.length === 1 && task.channels[0] === 'TikTok' : provider === 'google' && task.goal === '获取线索或转化' && task.channels.length === 1 && task.channels[0] === 'YouTube';
+      const allowed = provider === 'meta' ? (META_AD_GOALS as readonly string[]).includes(task.goal) && task.channels.length > 0 && task.channels.every(c => ['Facebook', 'Instagram'].includes(c)) : provider === 'tiktok' ? task.goal === '提升有效视频观看' && task.channels.length === 1 && task.channels[0] === 'TikTok' : provider === 'google' && task.goal === '获取线索或转化' && task.channels.length === 1 && task.channels[0] === 'YouTube';
       check('objective', '平台目标与渠道', allowed, '目标与渠道组合受支持', '目标或跨平台渠道组合不受当前适配器支持，请建立独立平台计划');
       try {
         if (provider === 'meta') {
@@ -82,7 +84,8 @@ export async function preflightAdAction(tenantId: string, taskId: string, input:
             meta = { ...supplied, videoId: binding.platformVideoId };
             warning('source_integrity', '本地源素材完整性', '本次仅检查绑定及上传回执；执行时仍会复核源素材绑定，实际上传字节已由上传流程验证。');
           }
-          validateMetaVideoInput(meta, task.budget, task.goal === '提升有效视频观看');
+          const resolved = await resolveSavedMetaMessage(tenantId, task, connectionId, meta);
+          validateMetaVideoInput({ ...(resolved as Record<string, unknown>), targeting: task.configuration.metaTargeting }, task.budget, task.goal);
         }
         else if (provider === 'tiktok') {
           const raw = input.tiktok as Record<string, unknown> || {};

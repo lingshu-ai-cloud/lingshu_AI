@@ -755,25 +755,25 @@
   font-size: 10px;
   line-height: 1.5;
 }
-.ads-workspace table {
+:is(.ads-workspace, .ads-plan-dialog) table {
   width: 100%;
   border-collapse: collapse;
   white-space: nowrap;
   text-align: left;
   font-size: 12px;
 }
-.ads-workspace th {
+:is(.ads-workspace, .ads-plan-dialog) th {
   font-size: 11px;
   font-weight: 500;
   color: #81917e;
   background: #f6f9f4;
 }
-.ads-workspace th,
-.ads-workspace td {
+:is(.ads-workspace, .ads-plan-dialog) th,
+:is(.ads-workspace, .ads-plan-dialog) td {
   padding: 17px 12px;
   border-bottom: 1px solid #eaf0e6;
 }
-.ads-workspace td small {
+:is(.ads-workspace, .ads-plan-dialog) td small {
   display: block;
   color: #8a9886;
   font-size: 10px;
@@ -1022,7 +1022,7 @@
   font-size: 12px;
   font-weight: 600;
 }
-.ads-form-fields input:not([type="checkbox"]),
+.ads-form-fields input:not([type="checkbox"]):not(.ant-select-input),
 .ads-form-fields select {
   border: 1px solid var(--color-border);
   padding: 12px;
@@ -1101,7 +1101,7 @@
   margin-left: auto;
   cursor: pointer;
 }
-.ads-workspace button:focus-visible {
+:is(.ads-workspace, .ads-plan-dialog) button:focus-visible {
   outline: 2px solid #128350;
   outline-offset: 3px;
 }
@@ -1337,12 +1337,12 @@
 .ads-muted,
 .ads-section-title p,
 .ads-task-title p,
-.ads-workspace td small,
+:is(.ads-workspace, .ads-plan-dialog) td small,
 .ads-creative-actions small,
 .ads-next-actions small { color: var(--ls-text-tertiary, #6b7280); }
-.ads-workspace th { color: var(--ls-text-tertiary, #6b7280); background: var(--ls-surface-secondary, #f8faf7); }
-.ads-workspace th,
-.ads-workspace td { border-bottom-color: var(--ls-border-secondary, #e5e7eb); }
+:is(.ads-workspace, .ads-plan-dialog) th { color: var(--ls-text-tertiary, #6b7280); background: var(--ls-surface-secondary, #f8faf7); }
+:is(.ads-workspace, .ads-plan-dialog) th,
+:is(.ads-workspace, .ads-plan-dialog) td { border-bottom-color: var(--ls-border-secondary, #e5e7eb); }
 .ads-pill { border-color: var(--ls-border-secondary, #e5e7eb); border-radius: var(--ls-radius-sm, 6px); }
 .ads-pill.neutral { color: var(--ls-text-tertiary, #6b7280); background: var(--ls-surface-secondary, #f8faf7); }
 .ads-text-button { color: var(--ls-color-primary, #1677ff); }
@@ -1366,11 +1366,11 @@
 }
 .ads-main { max-width: 1440px; padding: var(--ls-space-24) var(--ls-space-32) var(--ls-space-40); }
 .ads-workspace-tabs { margin-bottom: var(--ls-space-16); }
-.ads-workspace :where(h2, h3, h4, strong) { color: var(--ls-text); }
-.ads-workspace h2 { font-size: 20px; line-height: 28px; font-weight: 650; }
-.ads-workspace h3 { font-size: 16px; line-height: 24px; font-weight: 650; }
-.ads-workspace :where(p, span, small, label, td, th) { line-height: inherit; }
-.ads-workspace small,
+:is(.ads-workspace, .ads-plan-dialog) :where(h2, h3, h4, strong) { color: var(--ls-text); }
+:is(.ads-workspace, .ads-plan-dialog) h2 { font-size: 20px; line-height: 28px; font-weight: 650; }
+:is(.ads-workspace, .ads-plan-dialog) h3 { font-size: 16px; line-height: 24px; font-weight: 650; }
+:is(.ads-workspace, .ads-plan-dialog) :where(p, span, small, label, td, th) { line-height: inherit; }
+:is(.ads-workspace, .ads-plan-dialog) small,
 .ads-muted,
 .ads-footnote { color: var(--ls-text-tertiary); font-size: 12px; line-height: 18px; }
 
@@ -1420,7 +1420,7 @@
 .ads-button.small { min-height: 32px; padding: 4px 12px; font-size: 12px; }
 .ads-text-button { min-height: 36px; color: var(--ls-primary); font-size: 14px; font-weight: 600; }
 
-.ads-workspace :where(input, select, textarea) {
+:is(.ads-workspace, .ads-plan-dialog) :where(input:not(.ant-select-input), select, textarea) {
   min-height: 36px;
   border: 1px solid var(--ls-border);
   border-radius: var(--ls-radius-control);
@@ -1428,7 +1428,7 @@
   color: var(--ls-text);
   font: inherit;
 }
-.ads-workspace :where(input, select, textarea):focus-visible { border-color: var(--ls-primary); outline: 2px solid color-mix(in srgb, var(--ls-primary) 20%, transparent); outline-offset: 1px; }
+:is(.ads-workspace, .ads-plan-dialog) :where(input:not(.ant-select-input), select, textarea):focus-visible { border-color: var(--ls-primary); outline: 2px solid color-mix(in srgb, var(--ls-primary) 20%, transparent); outline-offset: 1px; }
 
 .ads-capability-collapse { margin-top: var(--ls-space-12); border-top: 1px solid var(--ls-border-secondary); }
 .ads-capability-collapse .ant-collapse-header { color: var(--ls-text-secondary) !important; }
@@ -1449,11 +1449,11 @@
 
 .ads-table-wrap,
 .ad-table-scroll { border: 1px solid var(--ls-border-secondary); border-radius: var(--ls-radius-panel); overflow: auto; }
-.ads-workspace table { width: 100%; border-collapse: collapse; font-size: 14px; }
-.ads-workspace th { padding: 12px 14px; background: var(--ls-fill); color: var(--ls-text-secondary); font-size: 12px; font-weight: 600; text-align: left; }
-.ads-workspace td { padding: 14px; border-bottom: 1px solid var(--ls-border-secondary); color: var(--ls-text); vertical-align: middle; }
-.ads-workspace tbody tr:last-child td { border-bottom: 0; }
-.ads-workspace tbody tr:hover td { background: var(--ls-hover); }
+:is(.ads-workspace, .ads-plan-dialog) table { width: 100%; border-collapse: collapse; font-size: 14px; }
+:is(.ads-workspace, .ads-plan-dialog) th { padding: 12px 14px; background: var(--ls-fill); color: var(--ls-text-secondary); font-size: 12px; font-weight: 600; text-align: left; }
+:is(.ads-workspace, .ads-plan-dialog) td { padding: 14px; border-bottom: 1px solid var(--ls-border-secondary); color: var(--ls-text); vertical-align: middle; }
+:is(.ads-workspace, .ads-plan-dialog) tbody tr:last-child td { border-bottom: 0; }
+:is(.ads-workspace, .ads-plan-dialog) tbody tr:hover td { background: var(--ls-hover); }
 
 .ads-goal-bar { padding: var(--ls-space-16) var(--ls-space-20); }
 .ads-goal-icon,
@@ -1523,3 +1523,84 @@
   .ads-task-table-wrap td::before { color: var(--ls-text-tertiary); font-size: 12px; line-height: 18px; content: attr(data-label); }
 }
 .ads-creative-panel h4 { margin: 0 0 8px; }
+
+.ads-destination-assets { grid-column: 1 / -1; min-width: 0; }
+.ads-destination-assets .ant-alert { margin-block: var(--ls-space-3, 12px); }
+.ls-design-system .app-shell .ads-form-fields .ant-select .ant-select-input { background: transparent; box-shadow: none; }
+
+/* 两个工作页共用创编弹窗，执行和报告保留原业务组件。 */
+.ads-plan-reports { margin-bottom: var(--ls-space-24); }
+.ads-plan-filter-scroll { min-width: 0; overflow-x: auto; padding-block: 2px; }
+.ads-plan-filter-scroll:focus-visible { outline: 2px solid var(--ant-color-primary); outline-offset: 2px; }
+.ads-plan-filters { display: grid; grid-template-columns: minmax(176px, 1.6fr) repeat(4, minmax(108px, 1fr)) max-content; align-items: center; gap: var(--ls-space-8); width: max(100%, 760px); }
+.ads-plan-filters .ant-input-search, .ads-plan-filters .ant-select { width: 100%; min-width: 0; }
+.ads-plan-filters > .ant-btn, .ads-plan-filters .ant-select { height: 36px; }
+.ads-plan-filters .ant-input-affix-wrapper, .ads-plan-filters .ant-input-group-addon .ant-btn { height: 36px; }
+.ads-plan-filters .ant-input-affix-wrapper { align-items: center; }
+.ads-workspace .ads-plan-filters .ant-input-affix-wrapper > input.ant-input { height: 22px; min-height: 0; padding-block: 0; line-height: 22px; }
+.ads-plan-filters > .ant-btn { white-space: nowrap; }
+.ads-creation-method { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--ls-space-8); margin-bottom: var(--ls-space-16); }
+.ads-create-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+
+.ads-plan-dialog .ads-context-banner p { color: var(--ls-text-secondary); }
+.ads-plan-dialog .ads-context-banner > svg,
+.ads-plan-dialog .ads-context-banner .ads-text-button { flex-shrink: 0; }
+.ads-plan-dialog .ads-context-banner .ads-text-button { white-space: nowrap; }
+.ads-plan-dialog .ads-steps span { font-size: 12px; }
+.ads-workspace .ls-page-header__row { justify-content: flex-end; }
+.ads-workspace .ls-page-header__actions { justify-content: flex-end; }
+
+.ads-plan-management { display: flex; flex-direction: column; gap: var(--ls-space-16); min-width: 0; }
+.ads-plan-management .ant-table-cell .ant-btn-link { white-space: normal; height: auto; text-align: left; padding-inline: 0; }
+.ads-plan-management .ant-table-cell p { margin: 2px 0; line-height: 1.5; }
+.ads-plan-management .ant-table-tbody > tr > td { padding-block: 8px; }
+.ads-plan-management .ant-table-cell .ant-btn-link { padding-block: 2px; line-height: 1.5; }
+.ads-library-card-body > div { min-width: 0; }
+
+.ads-targeting-fields { display: grid; gap: 12px; min-width: 0; }
+.ads-targeting-fields .ads-targeting-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+.ads-targeting-fields .ads-targeting-option { display: grid; gap: 8px; min-width: 0; }
+.ads-targeting-fields .ant-select { width: 100%; min-width: 0; }
+.ads-targeting-fields small { color: var(--color-text-secondary); }
+
+.ads-draft-message-channels { display: grid; gap: 12px; min-width: 0; }
+.ads-message-bindings { display: grid; gap: 8px; overflow-wrap: anywhere; }
+.ads-message-bindings p { margin: 0; }
+.ads-destination-assets > label { display: grid; gap: 8px; margin-block: 8px; }
+
+.ads-compact-plan-table .ant-table.ant-table-small .ant-table-tbody > tr:not(.ant-table-expanded-row) > td { padding: 6px 8px; line-height: 20px; }
+.ads-compact-plan-table small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; line-height: 18px; color: var(--ant-color-text-secondary); }
+.ads-compact-plan-table .ads-compact-plan-title.ant-btn { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; max-width: 100%; height: auto; padding: 0; text-align: left; white-space: normal; line-height: 20px; }
+.ads-compact-plan-table .ant-table-tbody > tr:not(.ant-table-expanded-row) { cursor: pointer; }
+.ads-compact-plan-table .ads-history-media { display: block; padding: 0; }
+.ads-compact-plan-table .ads-history-thumbnail, .ads-compact-plan-table .ls-media-state-frame { width: 64px; height: 40px; min-height: 40px; }
+.ads-plan-thumbnail-empty { display: grid; place-items: center; width: 64px; height: 40px; background: var(--ant-color-fill-secondary); color: var(--ant-color-text-secondary); font-size: 12px; }
+.ads-plan-advice-summary { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; }
+.ads-plan-row-panel { padding: 8px 12px; display: grid; gap: 12px; }
+.ads-plan-row-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ads-inline-budget { display: grid; gap: 12px; }
+.ads-inline-budget .ads-form-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.ads-inline-budget .ads-form-fields > p, .ads-inline-budget .ads-form-fields > .ant-space { grid-column: 1 / -1; }
+
+.ads-compact-plan-table .ant-table-cell small { margin: 0; }
+/* Keep workspace navigation and creation actions in one compact header row. */
+.ads-workspace:not(.ads-creative-workspace) .ads-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: start; gap: 12px; }
+.ads-workspace:not(.ads-creative-workspace) .ads-main > * { grid-column: 1 / -1; }
+.ads-workspace:not(.ads-creative-workspace) .ads-main > .ads-workspace-tabs { grid-column: 1; grid-row: 1; margin: 0; min-width: 0; }
+.ads-workspace:not(.ads-creative-workspace) .ads-main > .ls-page-header { grid-column: 2; grid-row: 1; align-self: center; margin: 0; padding: 0; border: 0; }
+.ads-workspace:not(.ads-creative-workspace) .ads-workspace-tabs .ant-tabs-nav { margin-bottom: 0; }
+@media (max-width: 760px) {
+  .ads-workspace:not(.ads-creative-workspace) .ads-main { grid-template-columns: minmax(0, 1fr); }
+  .ads-workspace:not(.ads-creative-workspace) .ads-main > .ls-page-header { grid-column: 1; grid-row: 2; }
+}
+
+.ads-plan-metric-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ads-plan-metric-cell .ads-metric-query-note.ant-btn { display: block; padding: 0; height: auto; max-width: 100%; text-align: left; }
+.ads-plan-metric-cell .ads-metric-query-note small { max-width: 100%; }
+.ads-metric-query-actions { display: flex; align-items: center; gap: 8px; }
+.ads-plan-metric-cell .ads-metric-query-actions .ant-btn { padding: 0; height: 18px; font-size: 12px; line-height: 18px; }
+.ads-plan-metric-cell[data-state='stale'] .ads-plan-metric-title,
+.ads-plan-metric-cell[data-state='error'] .ads-plan-metric-title { color: var(--ant-color-warning-text); }
+.ads-metric-query-details { max-width: 340px; display: grid; gap: 6px; }
+.ads-metric-query-details p { margin: 0; }
+.ads-metric-query-details small { display: block; color: var(--ant-color-text-secondary); }
