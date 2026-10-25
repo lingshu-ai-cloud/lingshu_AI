@@ -3,6 +3,13 @@
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-25 卡片与投流合入本地基线
+
+- 权威树 `xixi-feature-integration-20261023` / `xixi联合功能模块后端改` 从 `5f0b47a6` 推进至验证源码 `9be85a78`，治理提交另记；原 `server/index.ts` 未提交修改逐字保留。
+- 复用干净候选树 `frontend-v2-safe-integration-20261025`，创建 `integration/cards-ads-20261025`；卡片 `f2ea282c` 与投流快照 `e130395e` 均成为合并祖先。
+- `1025投流` / `feature/platform-ads-20261025` 保持原 HEAD `dfc9b0c8` 和全部原 index/未提交源码；独立 index 快照后完整 tree/status 核验一致，未清理、重置、切分支或暂存原树。其他功能树和预览未同步/重启/清理。
+- 基线恢复分支 `backup/pre-cards-ads-20261025-5f0b47a6`，投流快照分支 `snapshot/platform-ads-20261025-for-baseline`，私有证据 `~/.codex/integration-evidence/20261025-cards-ads/`。详见[本轮报告](CARDS-ADS-INTEGRATION-20261025.md)。未推送或部署。
+
 ## 2026-10-25 服务器上传分支安全快进
 
 - 权威工作树 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`、分支 `xixi联合功能模块后端改` 从 `b97265dc` 快进至 `181868f3f9bad2ff437f124018e9decf5ababb59`，后续仅本机治理记录。原 `server/index.ts` 未提交资源 404 修复完整保留，快进前后文件/补丁哈希一致。

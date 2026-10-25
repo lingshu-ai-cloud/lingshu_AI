@@ -2,6 +2,14 @@
 
 更新时间：2026-10-25（Asia/Shanghai）
 
+## 当前本机开发基线：灵小枢交互卡片与本地投流（2026-10-25）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`、分支 `xixi联合功能模块后端改`。从 `5f0b47a69cb029d3f7079cc18d8ba756d969972e` 安全集成卡片 `f2ea282c1ec60aedfab46569d1323ad49bbf2e7d` 与本地投流冻结快照 `e130395e0ca45f3cc40f59b1bd2de9ddd8f90267`，验证源码 `9be85a78443ae5dc6043926b33bf8f02b2aa6ab1`；本节为独立治理补记。
+- 用户确认 3 处导航/规范冲突：保留“智能投流”，二级采用“计划管理 / 素材投放表现”，测试同步、双方有效 UI 规范保留。首页/客服等原确认和管理能力不回退。
+- 定向 33/33、投流 73 文件、助手质量 87/87、完整助手脚本、导航/GlobalAssistant、前端安全/共享合同、4GB TypeScript、2829 文件架构及相对原基线 ratchet、203 项迁移只读/guard、主站和账号中心构建通过，Studio 371887/485000 字节；未跑全仓 test/quality/verify 或本轮浏览器/真实供应商 E2E。
+- 投流来源树未提交内容以独立 index 快照纳入，原 HEAD/index/工作区保留且完整 tree/status 核验一致。基线原 `server/index.ts` 未提交修改逐字保留、不纳入提交；恢复点 `backup/pre-cards-ads-20261025-5f0b47a6`。
+- 仅本地合并与治理记录，未推送、部署、目标库迁移、真实付费/广告/发送；其他预览与功能树未同步或重启。详见[本轮集成记录](CARDS-ADS-INTEGRATION-20261025.md)。以下均为历史检查点。
+
 ## 当前本机开发基线：节节1025服务器上传增量（2026-10-25）
 
 - 本机权威工作树仍为 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`、分支 `xixi联合功能模块后端改`。从 `b97265dc667ea0936ab8e75bfdb7da58f6a9c847` 无冲突快进到用户指定的 `181868f3f9bad2ff437f124018e9decf5ababb59`；包含最新源码修复 `92d2d56aed64c6ade2eb883081526f1e2588e599`。本节为快进后本机治理补记，不改变生产源码。
