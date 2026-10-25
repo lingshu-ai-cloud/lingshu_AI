@@ -5,6 +5,24 @@ import type { Page } from '../pageRegistry';
 import { digitalEmployeeApi } from '../lib/digitalEmployeeApi';
 import { AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
 import type { DigitalEmployeeOverview } from '../lib/digitalEmployees';
+import { AuthenticatedImage } from './inspiration/InspirationMedia';
+
+function CanvasCard({ mediaUrl, title, description, icon, onClick, primary = false }: {
+  mediaUrl?: string;
+  title: string;
+  description: string;
+  icon: ReactNode;
+  onClick: () => void;
+  primary?: boolean;
+}) {
+  const [failedMediaUrl, setFailedMediaUrl] = useState('');
+  const showMedia = Boolean(mediaUrl && failedMediaUrl !== mediaUrl);
+  return <button type="button" onClick={onClick} className={`creator-home__canvas-card${primary ? ' creator-home__canvas-card--primary' : ''}${showMedia ? ' creator-home__canvas-card--with-media' : ''}`}>
+    {showMedia && mediaUrl ? <AuthenticatedImage src={mediaUrl} alt="" className="creator-home__canvas-card-media" onError={() => setFailedMediaUrl(mediaUrl)}/> : null}
+    <span className="creator-home__canvas-card-shade" aria-hidden="true"/>
+    <span className="creator-home__canvas-card-content">{icon}<strong>{title}</strong><span>{description}</span></span>
+  </button>;
+}
 
 export default function ContentCreationHome({ inspirationWorkspace }: { onNavigate?: (page: Page) => void; inspirationWorkspace?: ReactNode }) {
   const [overview, setOverview] = useState<DigitalEmployeeOverview | null>(null);
@@ -60,11 +78,7 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
   }, [overview]);
   const card = (index: number, title: string, description: string, icon: ReactNode, onClick: () => void, primary = false) => {
     const mediaUrl = cardMedia[index % Math.max(cardMedia.length, 1)];
-    return <button type="button" onClick={onClick} className={`creator-home__canvas-card${primary ? ' creator-home__canvas-card--primary' : ''}${mediaUrl ? ' creator-home__canvas-card--with-media' : ''}`}>
-      {mediaUrl && <img src={mediaUrl} alt="" className="creator-home__canvas-card-media" aria-hidden="true"/>}
-      <span className="creator-home__canvas-card-shade" aria-hidden="true"/>
-      <span className="creator-home__canvas-card-content">{icon}<strong>{title}</strong><span>{description}</span></span>
-    </button>;
+    return <CanvasCard key={`${index}:${title}`} mediaUrl={mediaUrl} title={title} description={description} icon={icon} onClick={onClick} primary={primary}/>;
   };
 
   return <div className="creator-home creator-home--employee h-full overflow-y-auto">

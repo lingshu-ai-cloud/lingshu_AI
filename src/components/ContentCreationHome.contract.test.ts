@@ -39,6 +39,7 @@ assert.match(assistant, /if \(scriptedReply && text\)[\s\S]{0,700}setMessages\(P
 assert.match(home, /overview\?\.goal \? '查看当前周任务的状态和进度' : '帮我创建当前周任务'/, '周任务卡必须根据真实任务状态选择查看或创建意图');
 assert.doesNotMatch(home, /onClick=\{\(\) => onNavigate\?\.\('digitalEmployees'\)\}/, '首页业务卡不得直接跳转经营总览');
 assert.match(home, /creator-home__canvas-card-media/, '有真实媒体证据时首页卡片必须展示图片底图');
+assert.match(home, /AuthenticatedImage[\s\S]{0,300}onError={[\s\S]{0,120}setFailedMediaUrl/, '受保护封面必须通过认证媒体读取，失败时回落为无图卡片而不是显示破图');
 assert.match(home, /className="creator-home__suggestions"/, '自由创作的提示输入须保留在数字员工输入框下方');
 assert.doesNotMatch(home, /DigitalEmployeeHomeWork/, '三栏进行中工作必须从首页移走');
 assert.match(workspace, /<DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\}/, '三栏进行中工作必须进入经营总览并替代旧日历');

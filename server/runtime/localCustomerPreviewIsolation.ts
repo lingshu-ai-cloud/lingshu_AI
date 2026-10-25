@@ -11,5 +11,9 @@ if (process.env.LINGSHU_LOCAL_PREVIEW === '1' || process.env.CUSTOMER_SIMULATION
   Object.assign(process.env, {
     PROCESS_ROLE: 'web', PROCESS_ROLE_SPLIT_ENABLED: 'true', PB_AUTO_START: 'false',
     LINGSHU_LISTEN_HOST: process.env.LINGSHU_LISTEN_HOST || '127.0.0.1',
+    // The preview network guard intentionally blocks COS. Always read the
+    // checked-out local object mirror instead of inheriting a developer's
+    // production-like OBJECT_STORAGE_DRIVER from .env.local.
+    OBJECT_STORAGE_DRIVER: 'local',
   });
 }
