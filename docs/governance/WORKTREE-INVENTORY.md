@@ -3,6 +3,13 @@
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-25 服务器上传分支安全快进
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`、分支 `xixi联合功能模块后端改` 从 `b97265dc` 快进至 `181868f3f9bad2ff437f124018e9decf5ababb59`，后续仅本机治理记录。原 `server/index.ts` 未提交资源 404 修复完整保留，快进前后文件/补丁哈希一致。
+- 本聊天复用已干净的 `/Users/julia1/.codex/worktrees/frontend-v2-safe-integration-20261025`，切到 `integration/server-upload-20261025` 固定来源验证；原 `integration/frontend-v2-20261025` 分支仍保留。没有新增工作树，没有复制业务或预览数据库；只复用已安装依赖软链。
+- 恢复分支 `backup/pre-server-upload-20261025-b97265dc`。本机证据 `/Users/julia1/.codex/integration-evidence/20261025-server-upload-181868f3/` 保存原补丁、哈希及验证/浏览器记录；临时 53379 验收 Vite 已停止。
+- 其他树未重新盘点、切换、清理、重置或归档。未推送、部署、目标库迁移或真实供应商调用。详见[本轮合入记录](SERVER-UPLOAD-INTEGRATION-20261025.md)。
+
 ## 2026-10-25 助手功能合入本地基线
 
 - 权威工作树 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`、分支 `xixi联合功能模块后端改` 从7801dd0f快进至源码59d3fc06，后续单独提交治理记录。原server/index.ts未提交修复及其哈希保持一致；不宣称干净。
