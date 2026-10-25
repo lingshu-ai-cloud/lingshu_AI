@@ -3,6 +3,13 @@
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-25 助手功能合入本地基线
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`、分支 `xixi联合功能模块后端改` 从7801dd0f快进至源码59d3fc06，后续单独提交治理记录。原server/index.ts未提交修复及其哈希保持一致；不宣称干净。
+- 来源 `/Users/julia1/Documents/ChatGPT/1025灵小枢外部信息`、分支 `feature/assistant-reply-quality-20261025` 保留在59d3fc06；源码已提交，5265预览仍在原目录。仅将本轮测试新生成的4个未跟踪媒体缓存保全至私有证据目录，无业务数据同步。
+- 合并前恢复分支 `backup/pre-assistant-quality-merge-20261025-7801dd0f`；证据 `/Users/julia1/.codex/integration-evidence/20261025-assistant-quality-merge-n7mBZ0`。其他树未重新盘点、切换、清理或归档；未操作mobile-dual-edition-20261012。
+- 未推送、部署或建立真实供应商Ready。验证与首跑并发波动见[集成记录](ASSISTANT-QUALITY-INTEGRATION-20261025.md)。
+
 ## 2026-10-25 前端 2.0 安全集成
 
 - 权威树仍为 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`，分支 `xixi联合功能模块后端改`；从 `dfc9b0c8` 快进接入已验证双亲合并 `78ba96c87366108aa3035d75dd5d60d323e19492` 及本轮治理记录。
