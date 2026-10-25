@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { tenantAssetDir, tenantAssetRelativePath } from './assetAccess.js';
 import { isTenantPrivateObjectKey, materialAssetObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
-import { recoverStoredCandidateOutput, runwayActTwoReadiness, seedanceReferenceReadiness, verifyStoredCandidateOutput, verifyStoredReferenceInputs, visualQaReadiness } from './studioAvatarProduction.js';
+import { recoverStoredCandidateOutput, runwayActTwoReadiness, seedanceReferenceReadiness, verifyStoredCandidateOutput, verifyStoredReferenceInputs, visualQaPythonForRuntime, visualQaReadiness } from './studioAvatarProduction.js';
 
 test('Runway readiness reports every missing execution prerequisite without exposing values', () => {
   const result = runwayActTwoReadiness({ enabled: 'false', apiSecret: '', objectStorageEnabled: false,
@@ -45,6 +45,11 @@ test('visual QA is advertised only for a verified executable Python runtime', ()
   assert.deepEqual(visualQaReadiness('/qa/python', (_path, mode) => { checkedMode = mode; }, path => { probedPath = path; return { status: 0 }; }), { ready: true, reason: '' });
   assert.equal(checkedMode, fs.constants.X_OK);
   assert.equal(probedPath, '/qa/python');
+});
+
+test('local preview skips the optional Python subprocess under the customer isolation guard', () => {
+  assert.equal(visualQaPythonForRuntime('/configured/python', '1'), undefined);
+  assert.equal(visualQaPythonForRuntime('/configured/python', undefined), '/configured/python');
 });
 
 test('local candidate evidence is tenant-scoped and invalidated when bytes change', async () => {

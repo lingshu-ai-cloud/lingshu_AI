@@ -142,6 +142,10 @@ export function visualQaReadiness(
   return { ready: true, reason: '' };
 }
 
+export function visualQaPythonForRuntime(pythonPath: string | undefined, localPreview: string | undefined): string | undefined {
+  return localPreview === '1' ? undefined : pythonPath;
+}
+
 export function createStudioAvatarProductionRouter(store: DataStore) {
   const arkAssets = new VolcengineArkAssets();
   const runwayReadiness = runwayActTwoReadiness({ enabled: process.env.RUNWAY_ACT_TWO_ENABLED, apiSecret: process.env.RUNWAYML_API_SECRET,
@@ -152,7 +156,7 @@ export function createStudioAvatarProductionRouter(store: DataStore) {
   const seedanceReadiness = seedanceReferenceReadiness({ enabled: process.env.SEEDANCE_REFERENCE_ENABLED, apiKey: process.env.SEEDANCE_API_KEY, model: process.env.SEEDANCE_MODEL,
     objectStorageEnabled: objectStorageEnabled(), estimatedCnyPerSecond: process.env.SEEDANCE_REFERENCE_ESTIMATED_CNY_PER_SECOND,
     maxCnyPerShot: process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT, monthlyBudgetCny: process.env.DIGITAL_HUMAN_REFERENCE_MONTHLY_BUDGET_CNY });
-  const visualQa = visualQaReadiness(process.env.DIGITAL_HUMAN_VISUAL_QA_PYTHON);
+  const visualQa = visualQaReadiness(visualQaPythonForRuntime(process.env.DIGITAL_HUMAN_VISUAL_QA_PYTHON, process.env.LINGSHU_LOCAL_PREVIEW));
   const runway = runwayEnabled ? new RunwayActTwoAdapter({ apiSecret: process.env.RUNWAYML_API_SECRET!,
     cnyPerCredit: Number(process.env.RUNWAY_ACT_TWO_CNY_PER_CREDIT), estimatedCostCnyPerSecond: Number(process.env.RUNWAY_ACT_TWO_ESTIMATED_CNY_PER_SECOND),
     qualityInspection: visualQa.ready }) : null;
