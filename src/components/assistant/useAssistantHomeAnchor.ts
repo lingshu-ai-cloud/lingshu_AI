@@ -2,6 +2,7 @@ import { useEffect, useState, type Dispatch, type RefObject, type SetStateAction
 import type { OrbitAgentId } from '../../stores/assistantStore';
 
 export type AssistantHomeBounds = { top: number; left: number; width: number; height: number };
+export const ASSISTANT_HOME_ACTIVITY_EVENT = 'lingshu:assistant-home-activity';
 
 export function useAssistantHomeMode(active: boolean, setMode: Dispatch<SetStateAction<'breathing' | 'chat'>>) {
   useEffect(() => {

@@ -18,6 +18,12 @@ test('conversation workspace gives its internal scrollers a bounded desktop row'
     /\.ls-conversation-workspace__pane\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/s,
   );
   assert.match(
+    styles,
+    /\.ls-conversation-workspace__slot\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*overflow:\s*hidden;/s,
+    'alerts and recovery controls must stay inside one grid column with the chat thread',
+  );
+  assert.doesNotMatch(styles, /\.ls-conversation-workspace__slot\s*\{[^}]*display:\s*contents;/s);
+  assert.match(
     chat,
     /data-testid="conversation-chat-thread" className="[^"]*h-full[^"]*min-h-0[^"]*overflow-hidden[^"]*"/,
   );

@@ -1,11 +1,13 @@
 import { Alert, Spin } from 'antd';
-import { ArrowRight, CalendarCheck2, GraduationCap, Newspaper, Target, UserRound } from 'lucide-react';
+import { ArrowRight, CalendarCheck2, ChevronDown, ChevronUp, GraduationCap, LayoutGrid, Newspaper, Target, UserRound } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Page } from '../pageRegistry';
 import { digitalEmployeeApi } from '../lib/digitalEmployeeApi';
 import { AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
 import type { DigitalEmployeeOverview } from '../lib/digitalEmployees';
 import { AuthenticatedImage } from './inspiration/InspirationMedia';
+import { ASSISTANT_HOME_ACTIVITY_EVENT } from './assistant/useAssistantHomeAnchor';
+import { industrySignalsReply, operatingStrategyReply, weeklyTaskReply } from './contentCreationHomeReplies';
 
 function CanvasCard({ mediaUrl, title, description, icon, onClick, primary = false }: {
   mediaUrl?: string;
@@ -29,6 +31,7 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [overviewError, setOverviewError] = useState('');
   const [overviewRevision, setOverviewRevision] = useState(0);
+  const [canvasCollapsed, setCanvasCollapsed] = useState(false);
 
   useEffect(() => {
     const resetTenantData = () => { setOverview(null); setOverviewRevision(value => value + 1); };
@@ -48,6 +51,15 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
       .finally(() => { if (active) setOverviewLoading(false); });
     return () => { active = false; };
   }, [overviewRevision]);
+
+  useEffect(() => {
+    const onAssistantActivity = (event: Event) => {
+      const detail = (event as CustomEvent<{ active?: boolean }>).detail;
+      if (detail?.active) setCanvasCollapsed(true);
+    };
+    window.addEventListener(ASSISTANT_HOME_ACTIVITY_EVENT, onAssistantActivity);
+    return () => window.removeEventListener(ASSISTANT_HOME_ACTIVITY_EVENT, onAssistantActivity);
+  }, []);
 
   const suggest = (prompt: string) => window.dispatchEvent(new CustomEvent('lingshu:assistant-home-prompt', { detail: prompt }));
   const askAssistant = (text: string, scriptedReply?: string) => window.dispatchEvent(new CustomEvent('lingshu-assistant-open', {
@@ -87,8 +99,8 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
         <h2>今天想让数字员工完成什么？</h2>
       </header>
 
-      <div className="creator-home__canvas-stage">
-        <section className="creator-home__canvas" aria-label="数字员工快捷入口">
+      <div className={`creator-home__canvas-stage${canvasCollapsed ? ' is-collapsed' : ''}`} inert={canvasCollapsed ? true : undefined} aria-hidden={canvasCollapsed || undefined}>
+        <section id="creator-home-operations" className="creator-home__canvas" aria-label="数字员工快捷入口">
           {overviewError && <Alert type="warning" showIcon title={overviewError} className="mb-3"/>}
           {overviewLoading && !overview
             ? <div className="flex min-h-40 items-center justify-center"><Spin description="正在读取数字员工工作"/></div>
@@ -101,11 +113,18 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
                   {card(1, '新手成长', '继续完善企业知识库与数字人形象', <GraduationCap size={28}/>, () => askAssistant('请通过对话引导我完善新手成长资料，优先检查企业知识库和数字人形象。'), true)}
                 </div>
               : <div className="creator-home__canvas-grid creator-home__canvas-grid--operations">
-                  {card(0, '今日资讯', industrySignalCount ? `${industrySignalCount} 条真实行业与社媒信号` : '行业 B2B、政策与社媒动态', <Newspaper size={28}/>, () => askAssistant('请结合我的企业和目标市场，解读今日 B2B 行业资讯、政策调整和社媒热潮，并告诉我哪些值得行动。'))}
-                  {card(1, '经营策略', overview?.plan?.strategy || '查看当前周计划策略与 Agent 设置', <Target size={28}/>, () => askAssistant('请查看当前经营策略和 Agent 设置，告诉我本周重点、依据和下一步建议。'))}
-                  {card(2, '周经营任务', overview?.goal ? `${overview.goal.title} · ${overview.run?.status || '待启动'}` : '制定并确认本周经营任务', <CalendarCheck2 size={28}/>, () => askAssistant(overview?.goal ? '查看当前周任务的状态和进度' : '帮我创建当前周任务'), true)}
+                  {card(0, '今日资讯', industrySignalCount ? `${industrySignalCount} 条真实行业与社媒信号` : '行业 B2B、政策与社媒动态', <Newspaper size={28}/>, () => { setCanvasCollapsed(true); askAssistant('请结合我的企业和目标市场，解读今日 B2B 行业资讯、政策调整和社媒热潮，并告诉我哪些值得行动。', industrySignalsReply(overview)); })}
+                  {card(1, '经营策略', overview?.plan?.strategy || '查看当前周计划策略与 Agent 设置', <Target size={28}/>, () => { setCanvasCollapsed(true); askAssistant('请查看当前经营策略和 Agent 设置，告诉我本周重点、依据和下一步建议。', operatingStrategyReply(overview)); })}
+                  {card(2, '周经营任务', overview?.goal ? `${overview.goal.title} · ${overview.run?.status || '待启动'}` : '制定并确认本周经营任务', <CalendarCheck2 size={28}/>, () => { setCanvasCollapsed(true); askAssistant(overview?.goal ? '查看当前周任务的状态和进度' : '帮我创建当前周任务', weeklyTaskReply(overview)); }, true)}
                 </div>}
         </section>
+      </div>
+      <div className="creator-home__canvas-toggle-row">
+        <button type="button" className="creator-home__canvas-toggle" aria-controls="creator-home-operations" aria-expanded={!canvasCollapsed} onClick={() => setCanvasCollapsed(value => !value)}>
+          <LayoutGrid size={15} aria-hidden="true"/>
+          <span>{canvasCollapsed ? '展开快捷入口' : '收起快捷入口'}</span>
+          {canvasCollapsed ? <ChevronDown size={14} aria-hidden="true"/> : <ChevronUp size={14} aria-hidden="true"/>}
+        </button>
       </div>
 
       <section className="creator-home__conversation" aria-label="灵小枢对话">

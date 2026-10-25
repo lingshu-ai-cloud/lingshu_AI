@@ -377,6 +377,7 @@ assert.doesNotMatch(source, /AssistantDecisionMemoryPanel|AssistantDecisionSaveB
 assert.match(conversationContextSource, /较早用户原话/, '历史用户约束必须保留原文且不得升级为已核验事实');
 
 const responseErrorSource = sourceSection('async function responseErrorMessage', '', '助手请求错误提示', runtimeSource);
+assert.match(responseErrorSource, /assistant_preview_real_queries_not_enabled[^\n]+未启用真实联网问答/, '本地预览未授权真实查询时必须说明原因，不能无响应');
 const localizedMessageIndex = responseErrorSource.indexOf("if (typeof data?.message === 'string'");
 const rawErrorIndex = responseErrorSource.indexOf('if (data?.error) return data.error;');
 assert.ok(localizedMessageIndex >= 0 && rawErrorIndex > localizedMessageIndex, '额度错误特殊处理后必须优先展示服务端本地化 message，而不是原始错误码');

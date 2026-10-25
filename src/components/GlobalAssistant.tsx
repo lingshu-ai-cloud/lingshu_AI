@@ -28,7 +28,7 @@ import { useAssistantQuickExecution } from './assistant/useAssistantQuickExecuti
 import { useAssistantTaskCardActions } from './assistant/useAssistantTaskCardActions';
 import { useAssistantDecisionDialog } from './assistant/useAssistantDecisionDialog';
 import { useAssistantPanelControls } from './assistant/useAssistantPanelControls';
-import { useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode } from './assistant/useAssistantHomeAnchor';
+import { ASSISTANT_HOME_ACTIVITY_EVENT, useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode } from './assistant/useAssistantHomeAnchor';
 import { useAssistantLauncherRetraction } from './assistant/useAssistantLauncherRetraction';
 import { useAssistantDecisionCount, useAssistantPageContextSignal } from './assistant/useAssistantPageSignals';
 import { useAssistantContentTaskCard } from './assistant/useAssistantContentTaskCard';
@@ -233,6 +233,11 @@ export default function GlobalAssistant({
   }, []);
   const activeThread = threads[activeAgent];
   useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef, Boolean(activeThread.creationDraft));
+  const inlineHomeActive = inlineHome && Boolean(activeThread.messages.length || loading || activeThread.creationDraft);
+  useEffect(() => {
+    if (!inlineHome) return;
+    window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_ACTIVITY_EVENT, { detail: { active: inlineHomeActive } }));
+  }, [inlineHome, inlineHomeActive]);
   const todoItems = pageContext.todoItems ?? [];
   const activeTodoItems = todoItems.filter(item => !item.completed);
   const pendingCount = todoItems.length ? activeTodoItems.length : Math.max(0, Number(pageContext.pendingCount ?? 0));

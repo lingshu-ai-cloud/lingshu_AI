@@ -175,7 +175,7 @@
   border-radius: 0;
   background: var(--ls-bg);
 }
-.ls-conversation-workspace__slot { display: contents; }
+.ls-conversation-workspace__slot { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; }
 .ls-conversation-workspace__pane { min-width: 0; min-height: 0; overflow: hidden; background: var(--ls-bg); }
 .ls-conversation-workspace__pane + .ls-conversation-workspace__pane { border-inline-start: 1px solid var(--ls-border-secondary); }
 .ls-conversation-workspace :where([data-testid='conversation-list'], [data-testid='customer-info-rail']) { width: 100% !important; }

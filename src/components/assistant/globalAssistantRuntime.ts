@@ -425,6 +425,7 @@ export async function responseErrorMessage(resp: Response): Promise<string> {
     return `${label}已用完，请明天再试或联系服务顾问开通更多额度。`;
   }
   if (data?.error === 'demo_expired') return '试用已到期，请联系服务顾问开通或延长试用。';
+  if (data?.error === 'assistant_preview_real_queries_not_enabled') return '当前本地预览未启用真实联网问答。首页资讯、策略和周任务会直接读取本地数据；自由提问需要在明确授权后再启用真实模型调用。';
   if (typeof data?.message === 'string' && data.message.trim()) return data.message.trim();
   if (data?.error) return data.error;
   return `请求失败（HTTP ${resp.status}），请稍后重试。`;
