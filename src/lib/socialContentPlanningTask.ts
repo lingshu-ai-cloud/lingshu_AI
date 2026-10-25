@@ -4,6 +4,7 @@ import type {
 } from '../../shared/contracts/socialContentWorkflow';
 
 export interface SocialPlanningTaskSeed {
+  requestedOutputCount?: number;
   requestId: number;
   draftProjectId?: string;
   title: string;
@@ -29,6 +30,7 @@ function limited(value: unknown, maximum: number): string {
  * hints may still be written for legacy Studio builds, but they are not truth.
  */
 export function socialPlanningTaskInput(seed: SocialPlanningTaskSeed): CreateSocialContentTaskInput {
+  if (seed.requestedOutputCount !== undefined && (!Number.isSafeInteger(seed.requestedOutputCount) || seed.requestedOutputCount < 1 || seed.requestedOutputCount > 1)) throw new Error('即时任务一次对应一条内容；多条需求请通过批量草稿入口提交。');
   const title = limited(seed.title, 120) || '社媒内容制作';
   const objective = limited(seed.initialScript, 1_000)
     || limited(seed.specialRequirements, 1_000)
@@ -46,7 +48,7 @@ export function socialPlanningTaskInput(seed: SocialPlanningTaskSeed): CreateSoc
     platforms: [...new Set((seed.platforms || []).map(item => limited(item, 40)).filter(Boolean))].slice(0, 10),
     formats: ['short_video'],
     aspectRatio: '9:16',
-    requestedOutputCount: 1,
+    requestedOutputCount: seed.requestedOutputCount ?? 1,
     planningMode: 'auto_adjust',
     specialRequirements: limited(seed.specialRequirements, 2_000) || null,
     callToAction: limited(seed.callToAction, 500) || null,

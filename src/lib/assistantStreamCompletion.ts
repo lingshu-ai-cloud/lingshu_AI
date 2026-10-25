@@ -3,11 +3,13 @@ export class AssistantStreamCompletion {
   error = '';
   accept(payload: string) {
     if (payload === '[DONE]') { this.done = true; return null; }
-    let event: { text?: string; error?: string; sources?: { title: string; uri: string }[] };
+    let event: { text?: string; error?: string; code?: string; publicMessage?: string; taskPortal?: unknown; sources?: { title: string; uri: string }[] };
     try { event = JSON.parse(payload); }
     catch { this.error = '回答传输异常，已保留收到的部分。请重新提问。'; return null; }
     if (!event || typeof event !== 'object') { this.error = '回答传输异常，请重新提问。'; return null; }
-    if (event.error) this.error = '回答生成中断，已保留收到的部分。请发送“继续”或重新提问。';
+    if (event.error) this.error = typeof event.code === 'string' && /^(?:external_|exchange_|comtrade_|qwen_search_|search_)/u.test(event.code)
+      && typeof event.publicMessage === 'string' && event.publicMessage.length <= (event.code === 'search_source_verification_failed' ? 4000 : 240)
+      ? event.publicMessage : '回答生成中断，已保留收到的部分。请发送“继续”或重新提问。';
     return event;
   }
   assertComplete() {

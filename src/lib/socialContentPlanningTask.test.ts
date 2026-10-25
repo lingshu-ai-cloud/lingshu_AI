@@ -39,3 +39,5 @@ assert.equal(socialPlanningOperationKey(keyInput), socialPlanningOperationKey({ 
 assert.notEqual(socialPlanningOperationKey({ ...keyInput, draftProjectId: undefined }), socialPlanningOperationKey({ ...keyInput, draftProjectId: undefined, requestId: 8 }));
 
 console.log('social content planning task contract tests passed');
+
+assert.throws(() => socialPlanningTaskInput({ ...keyInput, uploadedMaterialCount: 0, requestedOutputCount: 3 }), /批量草稿/);

@@ -1,3 +1,4 @@
+import { readExchangeRates, EXCHANGE_RATE_SOURCE } from '../externalInformation/exchangeRates.js';
 import { XMLParser } from "fast-xml-parser";
 import { callLLMChatStream } from "../agents/llm.js";
 import { buildEnterpriseContext, knowledgeCompletion, readTenantEnterpriseProfile, type EnterpriseProfile } from "./enterprise.js";
@@ -116,20 +117,14 @@ async function fetchBusinessRates(profile: EnterpriseProfile): Promise<BusinessD
   const requested = [...marketCurrencies, ...defaults].filter((item, index, list) => (
     list.findIndex(candidate => candidate.code === item.code) === index
   ));
-  const response = await fetch('https://api.exchangerate-api.com/v4/latest/USD', {
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!response.ok) throw new Error(`exchange_rate_${response.status}`);
-  const data = await response.json() as { rates?: Record<string, number>; date?: string };
-  const rates = requested
-    .map(item => ({ ...item, rate: Number(data.rates?.[item.code] || (item.code === 'USD' ? 1 : 0)) }))
-    .filter(item => item.rate > 0);
+  const snapshot = await readExchangeRates('USD');
+  const rates = requested.map(item => ({ ...item, rate: Number(snapshot.rates[item.code] ?? 0) })).filter(item => item.rate > 0);
   const quoteMode = profile.bizRules?.quoteMode === 'range'
     ? '按企业中心价格区间报价，发送前仍需确认最终数量和贸易条款。'
     : '先生成报价草稿，由销售确认成本、数量、运费和有效期后发送。';
   return {
     baseCurrency: 'USD',
-    sourceDate: data.date || new Date().toISOString().slice(0, 10),
+    sourceDate: snapshot.sourceDate,
     rates,
     productPriceRange: profile.bizRules?.priceRange || profile.products.priceRange || '未配置',
     moq: profile.bizRules?.moq || profile.products.moq || '未配置',
@@ -345,7 +340,8 @@ export function businessDynamicsReport(snapshot: BusinessDynamicsSnapshot, title
   return [
     `【${title} ${new Date(snapshot.generatedAt).toLocaleDateString('zh-CN')}】`,
     `企业：${snapshot.profile.companyName}；行业：${snapshot.profile.industry || '未配置'}；主要市场：${snapshot.profile.markets.join('、') || '未配置'}`,
-    `汇率基准：1 USD = ${rates || '实时汇率暂不可用'}`,
+    `每日参考汇率：1 USD = ${rates || '本轮未取得有效汇率'}；数据日期 ${snapshot.quote.sourceDate || '未核验'}；非实时结汇价。`,
+    `[汇率来源：ExchangeRate-API](${EXCHANGE_RATE_SOURCE.uri})`,
     `报价条件：价格区间 ${snapshot.quote.productPriceRange}；MOQ ${snapshot.quote.moq}；最低毛利 ${snapshot.quote.minMargin}`,
     `报价建议：${snapshot.quote.recommendation}`,
     '',

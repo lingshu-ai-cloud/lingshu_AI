@@ -27,6 +27,7 @@ export function useSocialCreationWorkbenchController({
 }) {
   const { message } = AntApp.useApp();
   const isReplication = mode === 'viral_replication';
+  const draftStorageKey = seed?.assistantEntry ? `lingshu:free-creation-draft-id:${seed.assistantEntry.id}` : 'lingshu:free-creation-draft-id';
   const initialDraftTitle = seed?.draftTitle?.trim()
     || (isReplication ? '爆款复刻 · 未命名草稿' : '自由创作 · 未命名草稿');
   const [products, setProducts] = useState<EnterpriseProductOption[]>([]);
@@ -74,14 +75,15 @@ export function useSocialCreationWorkbenchController({
   const draggedFreeLineIndex = useRef<number | null>(null);
   const [contentGoal, setContentGoal] = useState('种草');
   const [targetAudience, setTargetAudience] = useState('海外目标客户');
-  const [platform, setPlatform] = useState('TikTok');
+  const platformLabel: Record<string, string> = { tiktok: 'TikTok', instagram: 'Instagram', youtube: 'YouTube', facebook: 'Facebook' };
+  const [platform, setPlatform] = useState(platformLabel[seed?.assistantEntry?.platforms[0] || ''] || 'TikTok');
   const [contentLanguage, setContentLanguage] = useState('zh');
   const [sellingPoints, setSellingPoints] = useState('');
-  const [desiredDuration, setDesiredDuration] = useState(20);
+  const [desiredDuration, setDesiredDuration] = useState(seed?.assistantEntry?.targetDurationSeconds ?? 20);
   const [tone, setTone] = useState('专业、自然');
   const [callToAction, setCallToAction] = useState('');
   const [prohibitedClaims, setProhibitedClaims] = useState('');
-  const [briefNotes, setBriefNotes] = useState(seed?.creationDialoguePlan?.gaps.join('；') || '');
+  const [briefNotes, setBriefNotes] = useState([seed?.assistantEntry?.objective, seed?.creationDialoguePlan?.gaps.join('；')].filter(Boolean).join('；'));
   const [activeLine, setActiveLine] = useState(0);
   const [expandedSpeechLines, setExpandedSpeechLines] = useState<Set<number>>(() => new Set());
   const [requestedSeek, setRequestedSeek] = useState(0);
@@ -193,16 +195,16 @@ export function useSocialCreationWorkbenchController({
   useEffect(() => {
     if (isReplication || draftCreationRef.current) return;
     draftCreationRef.current = (async () => {
-      const storedId = (() => { try { return localStorage.getItem('lingshu:free-creation-draft-id') || ''; } catch { return ''; } })();
+      const storedId = (() => { try { return localStorage.getItem(draftStorageKey) || ''; } catch { return ''; } })();
       if (storedId) {
         const existing = (await studioApi.listProjects()).find(item => item.id === storedId && item.status === 'draft' && item.spec?.freeCreation);
         if (existing) {
           studioApi.adoptProjectRevision(existing);
           const restored = normalizeFreeCreationState(existing.spec.freeCreation);
-          setSelectedProductIds(restored.brief.productIds); setContentGoal(restored.brief.goal || '种草'); setTargetAudience(restored.brief.audience || '海外目标客户');
-          setPlatform(restored.brief.platform || 'TikTok'); setContentLanguage(restored.brief.language || 'zh'); setSellingPoints(restored.brief.sellingPoints);
+          setSelectedProductIds(restored.brief.productIds); setContentGoal(['种草', '询盘', '品牌认知', '活动推广'].includes(restored.brief.goal) ? restored.brief.goal : '种草'); setTargetAudience(restored.brief.audience || '海外目标客户');
+          setPlatform(platformLabel[restored.brief.platform] || restored.brief.platform || 'TikTok'); setContentLanguage(restored.brief.language || 'zh'); setSellingPoints(restored.brief.sellingPoints);
           setDesiredDuration(restored.brief.durationSeconds); setTone(restored.brief.tone || '专业、自然'); setCallToAction(restored.brief.cta);
-          setProhibitedClaims(restored.brief.prohibitedClaims); setBriefNotes(restored.brief.notes); setHookMode(restored.hookSource);
+          setProhibitedClaims(restored.brief.prohibitedClaims); setBriefNotes(restored.brief.notes || seed?.assistantEntry?.objective || ''); setHookMode(restored.hookSource);
           const restoredLines: FreeCreationLine[] = restored.script.lines.map(line => ({ id: line.id, time: `${line.start}–${line.end}s`, speech: line.narration, visual: line.visualIntent, shotType: line.shotType === 'presenter' ? '真人口播' : line.shotType === 'factory' ? '工厂' : line.shotType === 'consumer_demo' ? 'D to C' : '产品', silent: line.silent, hook: line.primaryHook }));
           setFreeLines(restoredLines); setFreeScriptText(String(existing.spec.script || serializeFreeCreationLines(restoredLines)));
           const kickoff = existing.spec.videoKickoff as { initialGeneration?: StudioScriptResult; generatedVideo?: { material?: Material } } | undefined;
@@ -221,7 +223,7 @@ export function useSocialCreationWorkbenchController({
         spec: { creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true, freeCreation: freeCreationState },
       });
       const id = result.ok ? result.project?.id || '' : '';
-      if (id) { setDraftProjectId(id); try { localStorage.setItem('lingshu:free-creation-draft-id', id); } catch { /* navigation hint only */ } }
+      if (id) { setDraftProjectId(id); try { localStorage.setItem(draftStorageKey, id); } catch { /* navigation hint only */ } }
       return id;
     })().catch(() => '');
   }, [isReplication]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -568,6 +570,7 @@ export function useSocialCreationWorkbenchController({
         title: draftTitle.trim() || (isReplication ? '爆款复刻 · 未命名草稿' : '自由创作 · 未命名草稿'),
         productId: isReplication ? productMappings[0]?.productId || '' : selected?.id || '',
         productName,
+        platforms: [platform.toLowerCase()],
         productMappings: isReplication ? productMappings : selectedFreeProducts.map(item => ({ sourceTerm: item.name, productId: item.id, productName: item.name })),
         brandMapping: enterpriseBrandName ? { sourceTerm: brandSourceTerm.trim(), brandName: enterpriseBrandName } : undefined,
         presenterAssetId,
@@ -575,7 +578,7 @@ export function useSocialCreationWorkbenchController({
         uploadedMaterials,
         referenceLinks: [...new Set([...(seed?.referenceLinks || []), ...uploadedMaterials.map(item => item.url).filter(Boolean)])],
         callToAction: '',
-        specialRequirements: isReplication ? '已确认口播文本；分镜匹配时制作数字人口播镜头，成片渲染时生成统一配音。' : `人工自由创作；钩子来源：${hookMode}；允许无口播分镜；由 Gemini 依据企业产品资料生成逐句口播及后续分镜。`,
+        specialRequirements: isReplication ? '已确认口播文本；分镜匹配时制作数字人口播镜头，成片渲染时生成统一配音。' : `人工自由创作；用户需求：${briefNotes}；钩子来源：${hookMode}；允许无口播分镜；由 Gemini 依据企业产品资料生成逐句口播及后续分镜。`,
         stageProfileId: stageProfile?.id || 'b2b_launch',
         stageLabel: stageProfile?.name || 'B2B 起步验证',
         strategyPresetId: stageProfile?.presetId || 'b2b_starting',

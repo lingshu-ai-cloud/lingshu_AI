@@ -35,6 +35,7 @@ export interface SocialContentSourceContext {
 }
 
 export interface SocialContentCreateRequest {
+  assistantEntry?: import('../../../shared/contracts/assistantCreationPortal').AssistantCreationPortal;
   creationDialoguePlan?: import('../../../shared/contracts/contentCreationDialogue').CreationReply;
   requestId: number;
   themeId: SocialContentThemeId | '';

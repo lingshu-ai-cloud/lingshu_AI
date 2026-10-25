@@ -31,6 +31,7 @@ import { shotStart } from './socialCreationWorkbenchTime';
 import { useSocialCreationWorkbenchController } from './useSocialCreationWorkbenchController';
 
 export interface SocialCreationWorkbenchSeed {
+  assistantEntry?: import('../../../shared/contracts/assistantCreationPortal').AssistantCreationPortal;
   creationDialoguePlan?: import('../../../shared/contracts/contentCreationDialogue').CreationReply;
   continueTaskId?: string;
   continueProjectId?: string;
@@ -53,6 +54,7 @@ export interface SocialCreationWorkbenchSeed {
 }
 
 export interface SocialCreationWorkbenchSubmit {
+  platforms?: string[];
   replicationStep?: 1 | 2 | 3;
   confirmedSpeech?: Array<{ source: string; draft: string; time: string }>;
   initialScript?: string;

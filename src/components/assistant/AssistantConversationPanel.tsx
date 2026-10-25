@@ -12,6 +12,7 @@ import type { AssistantProductionContext } from '../../lib/assistantProductionDe
 import { useAssistantStore, type AgentThreadState, type OrbitAgentId } from '../../stores/assistantStore';
 import KnowledgeIntakePanel, { type AppliedProfile } from '../enterprise/KnowledgeIntakePanel';
 import AssistantComposer from './AssistantComposer';
+import { assistantFollowUpSuggestion } from '../../lib/assistantFollowUp';
 import AssistantConversationBubbles from './AssistantConversationBubbles';
 import AssistantCustomerTodoView from './AssistantCustomerTodoView';
 import AssistantQuickEntries from './AssistantQuickEntries';
@@ -254,6 +255,7 @@ export default function AssistantConversationPanel(props: Props) {
               }}
             />}
             <AssistantComposer variant={inlineHome ? 'home' : 'default'} compact={compactHome} ref={assistantInputRef} draft={activeThread.draftInput} files={pendingAttachments}
+              suggestion={!loading && !replyStreaming && !fileGenerating && !activeThread.creationDraft && !contentIntake.active ? assistantFollowUpSuggestion(activeThread.messages) : ''}
               disabled={loading || replyStreaming || fileGenerating || contentIntake.busy || weeklyActionBusy}
               uploading={attachmentUploading} error={attachmentError}
               onDraftChange={value => setDraftInput(activeAgent, value)}

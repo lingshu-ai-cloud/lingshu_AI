@@ -25,3 +25,20 @@ test('malformed chunks remain failures even with DONE', () => {
 test('failure notice escapes unfinished detail or copy blocks', () => {
   assert.equal(appendAssistantStreamFailure('结论\n```details\n分析', '回答中断'), '结论\n```details\n分析\n```\n\n回答中断');
 });
+test('external information failures show a bounded public explanation and remain failed after DONE', () => {
+  const stream = new AssistantStreamCompletion();
+  stream.accept(JSON.stringify({ error: 'provider_internal', code: 'search_sources_missing', publicMessage: '本轮未取得可核验来源，暂不下结论。' }));
+  stream.accept('[DONE]');
+  assert.throws(() => stream.assertComplete(), /可核验来源/);
+});
+
+{
+  const stream = new AssistantStreamCompletion();
+  const message = '总体结论：原文未核验。\n\n信息来源：' + '官方检索线索'.repeat(100);
+  stream.accept(JSON.stringify({ sources: [{ title: '原文未核验的检索线索', uri: 'https://www.customs.gov.cn/report' }] }));
+  stream.accept(JSON.stringify({ error: message, code: 'search_source_verification_failed', publicMessage: message }));
+  assert.throws(() => stream.assertComplete(), error => error instanceof Error && error.message === message);
+  const oversized = new AssistantStreamCompletion();
+  oversized.accept(JSON.stringify({ error: 'internal', code: 'search_source_verification_failed', publicMessage: 'x'.repeat(4001) }));
+  assert.ok(oversized.error.length < 240);
+}

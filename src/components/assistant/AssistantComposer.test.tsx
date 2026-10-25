@@ -5,6 +5,7 @@ import {
   assistantAttachmentKind,
   formatAssistantAttachmentSize,
   mergeAssistantAttachments,
+  acceptAssistantFileDrop,
 } from './AssistantComposer';
 
 function file(name: string, type: string, size = 10, lastModified = 1): File {
@@ -32,12 +33,6 @@ assert.deepEqual(invalid.files, []);
 assert.match(invalid.error || '', /不是可上传/);
 
 const source = fs.readFileSync(new URL('./AssistantComposer.tsx', import.meta.url), 'utf8');
-assert.match(source, /className="ls-assistant-composer__add-tile"[^>]*onClick=\{guideToViralVideo\}/, '首页方框入口用于选择爆款复刻参考');
-assert.match(source, /aria-label="选择爆款视频进行复刻"/, '方框入口提供可读名称');
-assert.match(source, /className="ls-assistant-composer__editing"[\s\S]{0,300}ls-assistant-composer__add-tile[\s\S]{0,500}<textarea/, '爆款入口和文本输入必须使用独立网格列，避免方框覆盖占位文案');
-assert.match(source, /document\.getElementById\('creator-home-library'\)/, '入口定位同页爆款视频区');
-assert.match(source, /message\.info\(\{ key: 'choose-viral-video'/, '入口点击给出明确引导');
-assert.match(source, /prefers-reduced-motion: reduce/, '减少动态效果时禁用平滑滚动');
 assert.match(source, /aria-label="添加附件"/, '底部参考素材入口仍可使用');
 assert.match(source, /data-assistant-attachments="pending"/, '选择后必须显示紧凑附件条');
 assert.match(source, /file\.name/, '附件条必须显示文件名');
@@ -49,3 +44,20 @@ assert.match(source, /max-h-\[88px\]/, '输入框最多扩展到三行');
 assert.match(source, /accept="image\/\*,video\/\*,audio\/\*"/, '入口只能选择真实素材上传链路支持的格式');
 
 console.log('assistant composer tests passed');
+
+let prevented = 0, stopped = 0, updates = 0, dropError = '';
+let dropped: File[] = [];
+const drop = { dataTransfer: { types: ['Files'], files: [file('drop.png', 'image/png'), file('clip.mp4', 'video/mp4')] },
+  preventDefault: () => { prevented += 1; }, stopPropagation: () => { stopped += 1; } } as unknown as Parameters<typeof acceptAssistantFileDrop>[0];
+const change = (files: File[]) => { dropped = files; updates += 1; };
+acceptAssistantFileDrop(drop, [], false, change, error => { dropError = error; });
+assert.equal(prevented, 1); assert.equal(stopped, 1);
+assert.deepEqual(dropped.map(item => item.name), ['drop.png', 'clip.mp4']);
+assert.equal(dropError, '');
+acceptAssistantFileDrop(drop, dropped, true, change, () => {});
+assert.equal(updates, 1, 'disabled composer must prevent browser navigation without accepting files');
+acceptAssistantFileDrop(drop, dropped, false, change, () => {});
+assert.equal(dropped.length, 2, 're-dropping the same files must not duplicate attachments');
+const textDrop = { ...drop, dataTransfer: { types: ['text/plain'], files: [] } } as unknown as Parameters<typeof acceptAssistantFileDrop>[0];
+acceptAssistantFileDrop(textDrop, [], false, change, () => {});
+assert.equal(updates, 2, 'text dragging is not a file attachment');

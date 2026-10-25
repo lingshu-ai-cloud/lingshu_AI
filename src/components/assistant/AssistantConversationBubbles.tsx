@@ -7,6 +7,7 @@ import type { AssistantTaskCard } from '../../stores/assistantStore';
 import type { AssistantDecisionFeed } from '../../../shared/contracts/assistantDecisionCenter';
 import { assistantWantsDetailedReply } from '../../../shared/assistantReadableReply';
 import AgentReply from '../AgentReply';
+import AssistantCreationPortalCard, { AssistantTaskPortalCard, AssistantSourcePortalCard } from './AssistantCreationPortalCard';
 import AssistantDecisionCenter from './AssistantDecisionCenter';
 import { taskStatusLabel } from './AssistantDecisionDialog';
 import { assistantBubbleStyle } from './globalAssistantRuntime';
@@ -94,6 +95,9 @@ export default function AssistantConversationBubbles(props: Props) {
             {msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction}
               detailExpanded={assistantWantsDetailedReply(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
               onSuggest={onSuggest} /> : <span className="opacity-40">...</span>}
+            {msg.creationPortal && <AssistantCreationPortalCard key={msg.creationPortal.id} portal={msg.creationPortal} />}
+            {msg.taskPortal && <AssistantTaskPortalCard key={`${msg.taskPortal.taskId}:${msg.taskPortal.phase}`} portal={msg.taskPortal} />}
+            {msg.sourcePortal && <AssistantSourcePortalCard portal={msg.sourcePortal} />}
           </div>}
         </div>
       ))}

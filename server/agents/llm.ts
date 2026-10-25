@@ -6,6 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { createLinkedAbort } from '../lib/abort.js';
 import { AbortableSemaphore } from '../lib/abortableSemaphore.js';
+import { qwenSearchAnswer, validatedSearchSources } from './qwenSearch.js';
+import { ExternalInformationError } from '../externalInformation/http.js';
+import { appendInformationSources, hasOverallConclusion } from '../externalInformation/sourceFooter.js';
+import { verifySearchAnswer, SEARCH_ORIGINAL_RULES } from '../externalInformation/sourceVerification.js';
 
 export type LLMBackend = 'gemini' | 'qwen' | 'claude';
 
@@ -15,6 +19,13 @@ export interface LLMCallOptions {
   systemPrompt?: string;
   deepThinking?: boolean;
   requireSources?: boolean;
+  requireConclusion?: boolean;
+  validateAnswer?: (text: string) => void;
+  /** Server-selected public domains. Never taken directly from client options. */
+  searchDomains?: string[];
+  searchFreshnessDays?: number;
+  /** Explicitly disable web tools for internal questions and supplied data evidence. */
+  webSearch?: boolean;
   /** Cancels the upstream provider request when the HTTP caller disconnects. */
   signal?: AbortSignal;
   /** Hard per-provider deadline. Defaults to LLM_REQUEST_TIMEOUT_MS or 90s. */
@@ -58,6 +69,11 @@ async function callQwen(prompt: string, opts: LLMCallOptions): Promise<string> {
 }
 
 export async function callLLM(prompt: string, opts: LLMCallOptions = {}): Promise<string> {
+  if (opts.requireSources || opts.webSearch) {
+    let text = '';
+    for await (const event of callLLMChatStream([{ role: 'user', content: prompt }], opts)) if ('text' in event) text += event.text;
+    return text;
+  }
   const backend = resolveBackend(opts);
   const configuredTimeout = Number(opts.timeoutMs ?? process.env.LLM_REQUEST_TIMEOUT_MS ?? 90_000);
   const timeoutMs = Number.isFinite(configuredTimeout)
@@ -89,7 +105,7 @@ export async function callLLM(prompt: string, opts: LLMCallOptions = {}): Promis
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
 
 // 流式事件：文本块 或 联网引用来源
-export interface GroundingSource { title: string; uri: string }
+export interface GroundingSource { title: string; uri: string; citationIndex?: number }
 export type StreamEvent = { text: string } | { sources: GroundingSource[] };
 
 async function* streamGeminiChat(messages: ChatMessage[], opts: LLMCallOptions): AsyncGenerator<StreamEvent> {
@@ -109,6 +125,7 @@ async function* streamGeminiChat(messages: ChatMessage[], opts: LLMCallOptions):
     thinkingConfig: { thinkingBudget: opts.deepThinking ? 768 : 0 },
     maxOutputTokens: opts.deepThinking ? 8192 : 4096,
     ...(opts.systemPrompt ? { systemInstruction: { parts: [{ text: opts.systemPrompt }] } } : {}),
+    ...(opts.signal ? { abortSignal: opts.signal } : {}),
   };
 
   // 记录最后一个 chunk 的收尾原因：MAX_TOKENS 等异常收尾不会抛错，只能靠它识别静默截断
@@ -134,7 +151,7 @@ async function* streamGeminiChat(messages: ChatMessage[], opts: LLMCallOptions):
         if (uri && !seenSources.has(uri)) { seenSources.add(uri); sources.push({ title: g.web.title ?? uri, uri }); }
       }
     }
-    if (sources.length) yield { sources: sources.slice(0, 6) };
+    if (sources.length) yield { sources };
   }
 
   // 断流续写：把已吐出的半截回复作为 model 轮塞回去，让模型无联网从断点接着写。
@@ -159,11 +176,12 @@ async function* streamGeminiChat(messages: ChatMessage[], opts: LLMCallOptions):
   // 已吐出较多内容时不丢弃，改为带上下文续写补全剩余部分。
   let emittedText = '';
   try {
-    for await (const ev of attempt(true)) {
+    for await (const ev of attempt(opts.webSearch === true || opts.requireSources === true)) {
       if ('text' in ev) emittedText += ev.text;
       yield ev;
     }
   } catch (err) {
+    if (opts.requireSources || opts.signal?.aborted) throw err;
     if (emittedText.length < 20) {
       if (opts.requireSources) throw err;
       // 整体重试是从头生成，前面吐出的零星几个字不再算进续写上下文
@@ -202,6 +220,10 @@ async function* streamGeminiChat(messages: ChatMessage[], opts: LLMCallOptions):
         yield { text: `\n\n（联网检索中断：${raw.slice(0, 120)}）` };
       }
     }
+  }
+
+  if (opts.requireSources && (finishReason !== 'STOP' || !sources.length)) {
+    throw new ExternalInformationError('search_sources_missing', '本轮联网回答未完成或没有可核验来源，暂不下结论。');
   }
 
   // MAX_TOKENS 是正常收尾而非异常，上面的 catch 接不住；从断点自动续写，最多补两轮
@@ -345,9 +367,50 @@ async function completeQwenMessages(
 
 export async function* callLLMChatStream(messages: ChatMessage[], opts: LLMCallOptions = {}): AsyncGenerator<StreamEvent> {
   const backend = resolveBackend(opts);
-  switch (backend) {
-    case 'gemini': yield* streamGeminiChat(messages, opts); break;
-    case 'qwen':   yield* streamQwenChat(messages, opts); break;
-    default:       throw new Error(`Unsupported backend: ${backend}`);
+  const configured = Number(opts.timeoutMs ?? process.env.LLM_REQUEST_TIMEOUT_MS ?? 90_000);
+  const deadline = createLinkedAbort({ parentSignal: opts.signal, timeoutMs: Number.isFinite(configured) ? Math.max(1000, Math.min(configured, 120_000)) : 90_000 });
+  let release: (() => void) | undefined;
+  try {
+    release = await llmSemaphore.acquire(deadline.signal);
+    const needsSources = opts.requireSources === true || opts.webSearch === true;
+    const options = { ...opts, requireSources: needsSources, signal: deadline.signal,
+      ...(needsSources ? { systemPrompt: `${opts.systemPrompt ?? ''}\n${SEARCH_ORIGINAL_RULES}` } : {}) };
+    if (backend === 'qwen' && needsSources) {
+      const answer = await qwenSearchAnswer(messages, options);
+      yield { sources: answer.sources.slice(0, 8).map(({ title, uri }) => ({ title, uri })) };
+      yield { text: appendInformationSources(answer.text, answer.sources) };
+      return;
+    }
+    const stream = backend === 'gemini' ? streamGeminiChat(messages, options)
+      : backend === 'qwen' ? streamQwenChat(messages, options) : null;
+    if (!stream) throw new Error(`Unsupported backend: ${backend}`);
+    if (!needsSources) {
+      if (!opts.requireConclusion) { yield* stream; return; }
+      let answer = '';
+      for await (const event of stream) {
+        if ('text' in event) answer += event.text;
+        if (answer.length > 64_000) throw new ExternalInformationError('external_answer_too_large', '总体结论：本轮回答超过支持范围，请缩小问题后重新查询。');
+      }
+      if (!hasOverallConclusion(answer)) throw new ExternalInformationError('external_answer_conclusion_missing', '总体结论：本轮回答未完整形成可交付的综合判断，请重新提问；暂不把不完整内容作为结果。');
+      opts.validateAnswer?.(answer);
+      yield { text: answer };
+      return;
+    }
+    // Do not expose unsourced claims before the provider returns grounding metadata.
+    let text = '';
+    const sources: GroundingSource[] = [];
+    for await (const event of stream) {
+      if ('text' in event) text += event.text;
+      else sources.push(...event.sources);
+      if (text.length > 64_000) throw new Error('grounded_answer_too_large');
+    }
+    const candidates = validatedSearchSources(sources, opts.searchDomains);
+    const verified = await verifySearchAnswer(text, candidates, { signal: deadline.signal, freshnessDays: opts.searchFreshnessDays });
+    if (!verified.length) throw new ExternalInformationError('search_sources_missing', '本轮未取得可核验来源，暂不下结论。');
+    yield { sources: verified.slice(0, 8).map(({ title, uri }) => ({ title, uri })) };
+    yield { text: appendInformationSources(text, verified) };
+  } finally {
+    release?.();
+    deadline.cleanup();
   }
 }

@@ -177,17 +177,35 @@ function CopyBlock({ text, title, tone = 'neutral' }: { text: string; title?: st
   );
 }
 
-export default function AgentReply({ content, sources, onSuggest, detailExpanded = false, allowDetails = true }: {
+export function splitReplySourceFooter(content: string): { body: string; footer: string } {
+  const lines = content.split('\n');
+  let fence = '', boundary = -1;
+  for (let index = 0; index < lines.length; index++) {
+    const marker = lines[index].match(/^\s*(`{3,}|~{3,})(.*)$/u);
+    if (marker) {
+      if (!fence) fence = marker[1];
+      else if (marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = '';
+      continue;
+    }
+    if (!fence && /^\s*信息来源(?:（查询时间：[^\n]+）[：:]|[：:]本轮|[：:]检索服务)/u.test(lines[index])) boundary = index;
+  }
+  if (boundary < 0 || lines.slice(boundary + 1).some(line => /总体结论[：:]/u.test(line))) return { body: content, footer: '' };
+  return { body: lines.slice(0, boundary).join('\n').trimEnd(), footer: lines.slice(boundary).join('\n') };
+}
+
+export default function AgentReply({ content, sources, onSuggest, detailExpanded = false, allowDetails = true, allowSources = true }: {
   content: string;
   sources?: { title: string; uri: string }[];
   onAction?: (agent: AgentType, task: string) => void;
   onSuggest?: (text: string) => void;
   detailExpanded?: boolean;
   allowDetails?: boolean;
+  allowSources?: boolean;
 }) {
   setTrustedLinkHosts(sources);
   const files = extractAssistantFiles(content);
-  const presentation = allowDetails ? splitAssistantReply(files.text) : { summary: files.text, details: [] };
+  const sourcePresentation = allowSources ? splitReplySourceFooter(files.text) : { body: files.text, footer: '' };
+  const presentation = allowDetails ? splitAssistantReply(sourcePresentation.body) : { summary: sourcePresentation.body, details: [] };
   const lines = readableAssistantReply(presentation.summary).split('\n');
   const blocks: ReactNode[] = [];
   let list: { type: 'ul' | 'ol'; items: string[] } | null = null;
@@ -352,25 +370,26 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
   flush();
 
   return (
-    <div className="text-sm text-text-primary [&>*:first-child]:mt-0">
+    <div data-agent-reply="true" className="text-sm text-text-primary [&>*:first-child]:mt-0">
       {blocks}
       {presentation.details.some(value => value.trim()) && <Collapse ghost size="small" defaultActiveKey={detailExpanded || !presentation.summary.trim() ? ['analysis'] : []} items={[{
         key: 'analysis', label: '详细分析', children: <AgentReply content={presentation.details.join('\n\n')} allowDetails={false} />,
       }]} />}
       {files.ids.map(id => <AssistantFileCard key={id} id={id} />)}
-      {sources && sources.length > 0 && (
-        <div className="mt-2.5 pt-2 border-t border-border">
-          <p className="text-[10px] font-semibold text-text-muted mb-1">参考来源</p>
-          <div className="flex flex-col gap-0.5">
-            {sources.map((s, i) => (
+      {allowSources && (sourcePresentation.footer || sources?.length) ? (
+        <Collapse ghost size="small" className="mt-2 text-text-muted" defaultActiveKey={[]} items={[{
+          key: 'sources', label: '数据和信息来源', children: sourcePresentation.footer
+            ? <AgentReply content={sourcePresentation.footer} sources={sources} allowDetails={false} allowSources={false} />
+            : <div className="flex flex-col gap-0.5">
+            {sources?.map((s, i) => (
               <a key={i} href={s.uri} target="_blank" rel="noopener noreferrer"
                 className="text-[11px] text-accent hover:underline truncate">
                 {i + 1}. {s.title}
               </a>
             ))}
-          </div>
-        </div>
-      )}
+          </div>,
+        }]} />
+      ) : null}
     </div>
   );
 }

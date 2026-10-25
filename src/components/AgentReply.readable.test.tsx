@@ -26,3 +26,21 @@ test('analysis is expandable, essential risks visible, and detailed requests ope
   assert.match(open, /aria-expanded="true"/); assert.match(open, /完整的备选方案/);
   assert.doesNotMatch(open, /话术 \/ 文案/);
 });
+
+test('source footer and legacy source cards are quietly collapsed, independently of expanded analysis', () => {
+  const content = '分析结果。\n\n总体结论：可用于初步估算，实际结算需核验银行报价。\n\n信息来源（查询时间：2026/10/25 06:45:25，北京时间）：\n- [每日参考汇率](https://www.exchangerate-api.com)';
+  const sources = [{ title: '每日参考汇率', uri: 'https://www.exchangerate-api.com' }];
+  const html = renderToStaticMarkup(createElement(AgentReply, { content, sources, detailExpanded: true }));
+  assert.match(html, /总体结论/); assert.match(html, /数据和信息来源/);
+  assert.match(html, /aria-expanded="false"/); assert.doesNotMatch(html, /每日参考汇率|06:45:25|参考来源/);
+  const legacy = renderToStaticMarkup(createElement(AgentReply, { content: '总体结论：本轮资料尚未核验，不能据此确认最新动态。', sources }));
+  assert.match(legacy, /数据和信息来源/); assert.doesNotMatch(legacy, /每日参考汇率/);
+});
+
+test('source-like text in code is preserved; no-source replies do not gain an empty disclosure', async () => {
+  const { splitReplySourceFooter } = await import('./AgentReply');
+  const code = '```copy\n信息来源（查询时间：示例）：\n正文示例\n```';
+  assert.equal(splitReplySourceFooter(code).body, code);
+  const html = renderToStaticMarkup(createElement(AgentReply, { content: '总体结论：任务等待人工处理。' }));
+  assert.doesNotMatch(html, /数据和信息来源/);
+});

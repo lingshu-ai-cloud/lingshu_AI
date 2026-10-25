@@ -524,6 +524,7 @@ export default function App() {
           try { localStorage.removeItem('ow_studio_open_project'); } catch { /* ignore */ }
           const freshUrl = new URL(window.location.href);
           freshUrl.searchParams.delete('project');
+          freshUrl.searchParams.set('view', 'create');
           window.history.replaceState(stampProductionHistoryState({ ...nextHistoryState, productionDetail: detail }), '', freshUrl);
         } else window.history.replaceState(stampProductionHistoryState({ ...nextHistoryState, productionDetail: detail }), '');
         const socialTaskId = String(detail.socialContentTaskId || '').trim();
@@ -538,7 +539,7 @@ export default function App() {
         setSmartAssetsCreateRequest(detail.contentCreationRequest || null);
         setSmartAssetsStudioOpen(detail.studioPanel === 'projects'
           || detail.directStudio === true
-          || Boolean(detail.contentCreationRequest && detail.contentCreationRequest.creationPath !== 'viral_replication' && !detail.contentCreationRequest.creationDialoguePlan));
+          || Boolean(detail.contentCreationRequest && detail.contentCreationRequest.creationPath !== 'viral_replication' && !detail.contentCreationRequest.creationDialoguePlan && !detail.contentCreationRequest.assistantEntry));
         if (detail.studioPanel === 'projects') setOpenProjectsSignal(current => current + 1);
         const runId = String(detail.workflowRunId || '').trim();
         const taskId = String(detail.workflowTaskId || '').trim();
@@ -758,6 +759,7 @@ export default function App() {
     && !smartAssetsStudioOpen
     && (Boolean(smartAssetsContentTaskId && !smartAssetsWorkflowContext && !smartAssetsCreateRequest)
       || Boolean(smartAssetsCreateRequest?.creationDialoguePlan)
+      || Boolean(smartAssetsCreateRequest?.assistantEntry)
       || smartAssetsCreateRequest?.creationPath === 'viral_replication'
       || (!smartAssetsContentTaskId && !smartAssetsWorkflowContext && !smartAssetsCreateRequest));
 

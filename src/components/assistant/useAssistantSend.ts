@@ -15,11 +15,13 @@ import { useAssistantStore, type OrbitAgentId } from '../../stores/assistantStor
 import { studioApi } from '../../lib/studioApi';
 import type { AssistantActionRequest, AssistantActionResponse } from '../../../shared/contracts/assistantActions';
 import { assistantFileIntent } from '../../../shared/assistantFileIntent';
+import { confirmedTaskPortal } from '../../../shared/contracts/assistantTaskPortal';
+import { assistantSourceFollowUp } from '../../lib/assistantFollowUp';
 import { focusedNaturalLanguageActionId, focusedNaturalLanguageActionInput,
   isWeeklyPlanKickoffRequest } from './assistantActionProjection';
 import { assistantAttachmentKind } from './AssistantComposer';
 import { buildAssistantChatMessages, type UploadedAssistantAttachment } from './assistantChatPrompt';
-import { assistantProductionIntent } from './assistantProductionIntake';
+import { assistantProductionIntent, assistantCreationPortal } from './assistantProductionIntake';
 import { runAssistantProductionRequest } from './assistantProductionRequest';
 import type { useContentTaskIntake } from './useContentTaskIntake';
 import { agentForOrbit, compactText, contextForOrbit, loadLiveIntegrationFacts,
@@ -170,6 +172,31 @@ export function useAssistantSend(input: AssistantSendInput) {
 
     const clarifiedDiagram = pendingMapFileRef.current && /(?:业务|路线图|思维导图|流程图|战略)/u.test(visibleText);
     const fileIntent = assistantFileIntent(visibleText) || (clarifiedDiagram ? { format: 'jpg' as const, diagram: true, needsMapScope: false } : null);
+    const lastMessage = thread.messages.at(-1);
+    const sourceReply = !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? assistantSourceFollowUp(visibleText, lastMessage) : null;
+    if (sourceReply) {
+      setMessages(threadAgent, [...nextVisible, sourceReply]);
+      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      openAgent(routeAgent, 'chat'); persistThread(threadAgent);
+      return;
+    }
+    const taskPortal = !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction
+      && lastMessage?.role === 'assistant' ? confirmedTaskPortal(lastMessage.taskPortal, visibleText) : null;
+    if (taskPortal) {
+      setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: '点击下方入口继续处理这条任务。', taskPortal }]);
+      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      openAgent(routeAgent, 'chat'); persistThread(threadAgent);
+      return;
+    }
+    const portal = !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction
+      && !['smartAssets', 'socialInspiration'].includes(page) ? assistantCreationPortal(visibleText) : null;
+    if (portal) {
+      setMessages(threadAgent, [...nextVisible, { role: 'assistant',
+        content: '创作需求已带入下方入口。\n\n总体结论：点击「内容创作」，确认产品和数量后继续制作。', creationPortal: portal }]);
+      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      openAgent(routeAgent, 'chat'); persistThread(threadAgent);
+      return;
+    }
     const productionIntent = (page === 'strategy' && creationMode === 'free' && creationDraft) || uploadedAttachments.length || fileIntent ? null : assistantProductionIntent(visibleText);
     if (productionIntent && !['smartAssets', 'socialInspiration'].includes(page)) {
       assistantAtomicMutationRef.current = true;
@@ -321,6 +348,7 @@ export function useAssistantSend(input: AssistantSendInput) {
         onStart: ensureAssistant,
         onText: text => patchAssistant(msg => ({ ...msg, content: msg.content + text })),
         onSources: sources => patchAssistant(msg => ({ ...msg, sources })),
+        onTaskPortal: taskPortal => patchAssistant(msg => ({ ...msg, taskPortal })),
         onFileReady: content => patchAssistant(msg => ({ ...msg, content })),
         onTimeout: () => { chatTimedOut = true; },
         responseErrorMessage,
@@ -332,7 +360,7 @@ export function useAssistantSend(input: AssistantSendInput) {
         : err?.name === 'AbortError'
           ? '这次响应已停止。'
         : (err?.message || '请求失败，请稍后重试。');
-      if (assistantStarted) patchAssistant(msg => ({ ...msg, content: fileIntent ? `文件未生成：${message}` : msg.content ? appendAssistantStreamFailure(msg.content, message) : message }));
+      if (assistantStarted) patchAssistant(msg => ({ ...msg, taskPortal: undefined, content: fileIntent ? `文件未生成：${message}` : msg.content ? appendAssistantStreamFailure(msg.content, message) : message }));
       else setMessages(threadAgent, [...useAssistantStore.getState().threads[threadAgent].messages, { role: 'assistant', content: message }]);
     } finally {
       controller.abort();

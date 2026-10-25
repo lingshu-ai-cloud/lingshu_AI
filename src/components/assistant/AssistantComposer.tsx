@@ -1,11 +1,12 @@
 import {
   forwardRef,
   useRef,
+  useState,
   type ChangeEvent,
+  type DragEvent,
   type KeyboardEvent,
 } from 'react';
-import { App } from 'antd';
-import { ArrowUp, FileAudio2, FileImage, FileVideo2, Loader2, Paperclip, Plus, Sparkles, X } from 'lucide-react';
+import { ArrowUp, FileAudio2, FileImage, FileVideo2, Loader2, Paperclip, Sparkles, X } from 'lucide-react';
 
 export type AssistantAttachmentKind = 'image' | 'video' | 'audio';
 
@@ -67,10 +68,20 @@ function AttachmentIcon({ kind }: { kind: AssistantAttachmentKind }) {
   return <FileImage aria-hidden="true" size={13} />;
 }
 
+export function acceptAssistantFileDrop(event: Pick<DragEvent, 'dataTransfer' | 'preventDefault' | 'stopPropagation'>, files: File[], blocked: boolean,
+  onFilesChange: (files: File[]) => void, onValidationError: (error: string) => void) {
+  if (!Array.from(event.dataTransfer.types).includes('Files')) return;
+  event.preventDefault(); event.stopPropagation();
+  if (blocked) return;
+  const merged = mergeAssistantAttachments(files, Array.from(event.dataTransfer.files));
+  onFilesChange(merged.files); onValidationError(merged.error || '');
+}
+
 interface AssistantComposerProps {
   variant?: 'default' | 'home';
   compact?: boolean;
   draft: string;
+  suggestion?: string;
   files: File[];
   disabled?: boolean;
   uploading?: boolean;
@@ -85,6 +96,7 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
   variant = 'default',
   compact = false,
   draft,
+  suggestion = '',
   files,
   disabled = false,
   uploading = false,
@@ -95,17 +107,7 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
   onSubmit,
 }, forwardedRef) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { message } = App.useApp();
-
-  const guideToViralVideo = () => {
-    const library = document.getElementById('creator-home-library');
-    if (!library) {
-      void message.info({ key: 'choose-viral-video', content: '请先切换到自由创作，再从爆款视频中选择想要复刻的视频。', duration: 4 });
-      return;
-    }
-    void message.info({ key: 'choose-viral-video', content: '请在下方爆款视频中选择想要复刻的视频，再点击「爆款裂变」。', duration: 4 });
-    library.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
-  };
+  const [draggingFiles, setDraggingFiles] = useState(false);
 
   const selectFiles = (event: ChangeEvent<HTMLInputElement>) => {
     const merged = mergeAssistantAttachments(files, Array.from(event.currentTarget.files || []));
@@ -117,12 +119,23 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
   const submitOnEnter = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
+    if (event.repeat) return;
+    if (!disabled && !uploading && !draft && !files.length && suggestion) { onDraftChange(suggestion); return; }
     if (!disabled && !uploading && (draft.trim() || files.length)) onSubmit();
   };
 
   return (
     <div data-assistant-composer="true" data-variant={variant} data-compact={compact ? 'true' : undefined} className="ls-assistant-composer shrink-0">
-      <div data-assistant-composer-surface="true" className="ls-assistant-composer__surface">
+      <div data-assistant-composer-surface="true" data-drag-active={draggingFiles && !disabled && !uploading ? 'true' : undefined} className="ls-assistant-composer__surface"
+        onDragOver={event => {
+          if (!Array.from(event.dataTransfer.types).includes('Files')) return;
+          event.preventDefault(); event.stopPropagation();
+          event.dataTransfer.dropEffect = disabled || uploading ? 'none' : 'copy';
+          setDraggingFiles(true);
+        }}
+        onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingFiles(false); }}
+        onDrop={event => { setDraggingFiles(false); acceptAssistantFileDrop(event, files, disabled || uploading, onFilesChange, onValidationError); }}>
+        {draggingFiles && !disabled && !uploading && <p role="status" className="px-3 pt-2 text-sm text-accent">松开以添加图片、视频或音频</p>}
         {files.length > 0 && (
           <div data-assistant-attachments="pending" className="flex flex-wrap gap-1.5 border-b border-border/70 px-2.5 py-2">
             {files.map(file => {
@@ -149,7 +162,6 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
           </div>
         )}
         <div className="ls-assistant-composer__editing">
-          {variant === 'home' && <button type="button" className="ls-assistant-composer__add-tile" onClick={guideToViralVideo} aria-label="选择爆款视频进行复刻" title="从爆款视频中选择复刻参考"><Plus size={26} aria-hidden="true" /></button>}
           <textarea
             ref={forwardedRef}
             value={draft}
@@ -158,10 +170,12 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
             rows={1}
             maxLength={4000}
             aria-label="给灵小枢发送消息"
-            placeholder={variant === 'home' ? '输入想法、脚本或上传参考，和灵小枢一起创作' : '告诉灵小枢你想完成什么...'}
+            aria-describedby={suggestion && !draft && !files.length ? 'assistant-follow-up-hint' : undefined}
+            placeholder={suggestion && !files.length ? suggestion : '输入消息，或拖入图片、视频'}
             className="ls-assistant-composer__input max-h-[88px] min-h-10 w-full resize-none overflow-y-auto bg-transparent px-3 pt-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted"
           />
         </div>
+        {suggestion && !draft && !files.length && <p id="assistant-follow-up-hint" className="px-3 pb-1 text-xs text-text-muted">回车填入建议，再次回车发送</p>}
         <div className="flex items-center justify-between gap-2 px-2 pb-2">
           <div className="ls-assistant-composer__tools min-w-0">
             {variant === 'home' && <span className="ls-assistant-composer__mode"><Sparkles size={16} aria-hidden="true"/>Agent 模式</span>}

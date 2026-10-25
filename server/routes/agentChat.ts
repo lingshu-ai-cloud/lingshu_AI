@@ -1,4 +1,7 @@
 import { Router } from 'express';
+import { shouldRequireExternalSources, latestAssistantQuestion, planExternalQuestion, EXTERNAL_SOURCE_RULES } from '../assistantContext/externalQuestion.js';
+import { ExternalInformationError } from '../externalInformation/http.js';
+import { validateChatMessages, ChatInputError } from '../assistantContext/chatInput.js';
 import { callLLMChatStream, type ChatMessage } from '../agents/llm.js';
 import { buildEnterpriseContext, readTenantEnterpriseProfile } from './enterprise.js';
 import { consumeDemoQuota } from '../lib/demo.js';
@@ -161,18 +164,6 @@ function formatStreamError(err: unknown): string {
   return raw.slice(0, 300);
 }
 
-function latestUserQuestion(messages: ChatMessage[]): string {
-  const latest = [...messages].reverse().find(m => m.role === 'user')?.content ?? '';
-  const match = latest.match(/用户问题[:：]([\s\S]*)$/);
-  return (match?.[1] ?? latest).trim();
-}
-
-function shouldRequireSources(messages: ChatMessage[]): boolean {
-  const question = latestUserQuestion(messages);
-  if (/不需要联网|无需联网|不用联网|不要联网|不必联网|无需搜索|不用搜索|不要搜索/i.test(question)) return false;
-  return /联网|搜索|检索|查一下|查询|查找|核验|公开来源|来源|链接|趋势|平台规则|规则变化|政策|算法|竞品|品类机会|行业|目标市场|市场机会|最新|近期|报告|数据/i.test(question);
-}
-
 agentChatRouter.post('/assistant/proactive', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const { pageLabel = '当前页面', pageSummary = '', enterpriseSummary = '' } = req.body as {
@@ -225,16 +216,20 @@ agentChatRouter.post('/assistant/proactive', async (req, res) => {
 agentChatRouter.post('/:agentType/chat', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const { agentType } = req.params;
-  const { messages, deepThinking = false } = req.body as { messages: ChatMessage[]; deepThinking?: boolean };
-
-  if (!messages?.length) { res.status(400).json({ error: 'messages required' }); return; }
+  let messages: ChatMessage[];
+  try { messages = validateChatMessages(req.body?.messages); }
+  catch (error) {
+    res.status(error instanceof ChatInputError ? error.status : 400).json({ error: error instanceof Error ? error.message : 'invalid_chat_messages' });
+    return;
+  }
+  const deepThinking = req.body?.deepThinking === true;
 
   const basePrompt = SYSTEM_PROMPTS[agentType];
   if (!basePrompt) { res.status(404).json({ error: `Unknown agent: ${agentType}` }); return; }
   if (!await consumeDemoQuota(req, res, 'aiChat')) return;
 
   const enterpriseCtx = await getEnterpriseContext(tenantId);
-  const requireSources = shouldRequireSources(messages);
+  const requireSources = shouldRequireExternalSources(messages);
   const timeRule = currentTimeRule();
   const systemPrompt = enterpriseCtx
     ? `${basePrompt}${timeRule}${BUSINESS_FACT_RULE}${requireSources ? '\n\n【联网来源硬规则】本轮涉及联网搜索/公开信息核验，必须使用联网检索结果，并通过 sources 事件返回可点击来源；如果无法取得来源，不要给出联网结论，改为说明需要重新检索。' : ''}\n\n【当前企业知识库】\n${enterpriseCtx}`
@@ -245,18 +240,30 @@ agentChatRouter.post('/:agentType/chat', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
+  const cancellation = new AbortController();
+  const onClose = () => cancellation.abort(new Error('assistant_client_disconnected'));
+  res.on('close', onClose);
+  const heartbeat = setInterval(() => { if (!res.destroyed) res.write(': keep-alive\n\n'); }, 10_000);
+  heartbeat.unref();
   try {
-    for await (const ev of callLLMChatStream(messages, { systemPrompt, deepThinking, requireSources })) {
+    for await (const ev of callLLMChatStream(messages, { systemPrompt: systemPrompt + EXTERNAL_SOURCE_RULES, deepThinking, requireConclusion: true, requireSources, webSearch: requireSources, searchDomains: requireSources ? planExternalQuestion(latestAssistantQuestion(messages)).domains : undefined, searchFreshnessDays: planExternalQuestion(latestAssistantQuestion(messages)).freshnessDays, signal: cancellation.signal })) {
       res.write(`data: ${JSON.stringify(ev)}\n\n`);
     }
     res.write('data: [DONE]\n\n');
   } catch (err: any) {
-    const error = requireSources
+    if (cancellation.signal.aborted) return;
+    if (err instanceof ExternalInformationError && err.sources?.length) res.write(`data: ${JSON.stringify({ sources: err.sources })}\n\n`);
+    const rawError = err instanceof ExternalInformationError ? err.message : requireSources
       ? `联网检索失败，未能取得可跳转信息来源：${formatStreamError(err)}`
       : formatStreamError(err);
-    res.write(`data: ${JSON.stringify({ error })}\n\n`);
+    const error = requireSources && !rawError.includes('信息来源')
+      ? `总体结论：${rawError}\n\n信息来源：本轮未取得通过核验的资料。` : rawError;
+    res.write(`data: ${JSON.stringify({ error, ...(err instanceof ExternalInformationError ? { code: err.code, publicMessage: error } : {}) })}\n\n`);
     res.write('data: [DONE]\n\n');
   } finally {
+    clearInterval(heartbeat);
+    res.off('close', onClose);
+    cancellation.abort();
     res.end();
   }
 });

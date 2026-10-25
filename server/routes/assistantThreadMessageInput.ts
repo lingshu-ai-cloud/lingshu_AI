@@ -1,3 +1,6 @@
+import { assistantCreationPortalSchema } from '../../shared/contracts/assistantCreationPortal.js';
+import { assistantTaskPortalSchema } from '../../shared/contracts/assistantTaskPortal.js';
+import { assistantSourcePortalSchema } from '../../shared/contracts/assistantSourcePortal.js';
 import { AssistantActionError } from '../assistant/actionRouting.js';
 import { creationReplySchema } from '../../shared/contracts/contentCreationDialogue.js';
 import { parseAssistantReferenceMedia } from './assistantThreadReferenceMedia.js';
@@ -59,7 +62,13 @@ export function parseMessages(value: unknown): unknown[] {
     }
     const creation = source.creation === undefined ? undefined : creationReplySchema.safeParse(source.creation);
     if (creation && !creation.success) return threadInputError('assistant_creation_invalid', '创作消息格式无效。');
+    const portal = source.creationPortal === undefined ? undefined : assistantCreationPortalSchema.safeParse(source.creationPortal);
+    if (portal && (!portal.success || source.role !== 'assistant')) return threadInputError('assistant_creation_portal_invalid', '创作入口格式无效。');
     const referenceMedia = parseAssistantReferenceMedia(source.referenceMedia);
-    return { role: source.role, content, ...(sources ? { sources } : {}), ...(creation?.success ? { creation: creation.data } : {}), ...(referenceMedia ? { referenceMedia } : {}) };
+    const taskPortal = source.taskPortal === undefined ? undefined : assistantTaskPortalSchema.safeParse(source.taskPortal);
+    if (taskPortal && (!taskPortal.success || source.role !== 'assistant')) return threadInputError('assistant_task_portal_invalid', '任务入口格式无效。');
+    const sourcePortal = source.sourcePortal === undefined ? undefined : assistantSourcePortalSchema.safeParse(source.sourcePortal);
+    if (sourcePortal && (!sourcePortal.success || source.role !== 'assistant')) return threadInputError('assistant_source_portal_invalid', '原文入口格式无效。');
+    return { role: source.role, content, ...(sources ? { sources } : {}), ...(creation?.success ? { creation: creation.data } : {}), ...(referenceMedia ? { referenceMedia } : {}), ...(portal?.success ? { creationPortal: portal.data } : {}), ...(taskPortal?.success ? { taskPortal: taskPortal.data } : {}), ...(sourcePortal?.success ? { sourcePortal: sourcePortal.data } : {}) };
   });
 }

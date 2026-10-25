@@ -333,7 +333,7 @@ assert.match(panelControlsHookSource, /persistThread\(activeAgent\)/, '关闭前
 const sendSource = sendHookSource;
 assert.match(sendSource, /const threadAgent = PRIMARY_ASSISTANT_THREAD/, '发送消息必须写入 business 主线程');
 assert.match(productionIntakeSource, /function assistantProductionIntent[\s\S]*hasProductionVerb[\s\S]*hasProductionArtifact/, '明确的脚本、视频与分镜生产指令必须被识别为生产任务');
-assert.match(sendHookSource, /import \{ assistantProductionIntent \} from '\.\/assistantProductionIntake'/, '助手必须调用企业产品准入模块');
+assert.match(sendHookSource, /import \{ assistantProductionIntent, assistantCreationPortal \} from '\.\/assistantProductionIntake'/, '助手必须调用企业产品准入模块');
 assert.match(sendSource, /assistantProductionIntent\(visibleText\)[\s\S]*await runAssistantProductionRequest\(/, '生产指令必须交给真实任务执行链路');
 assert.match(productionRequestSource, /resolveProduct\(productionIntent\.productQuery\)/, '生产指令必须解析真实企业产品');
 assert.match(productionRequestSource, /createAtVersion[\s\S]*dueAt: null[\s\S]*mode: 'instant'/, '单条生产指令必须通过原子入口建立即时 ContentTask，不伪造周任务截止时间');

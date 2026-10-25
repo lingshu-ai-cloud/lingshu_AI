@@ -1,3 +1,4 @@
+import type { AssistantCreationPortal } from '../shared/contracts/assistantCreationPortal';
 import type { CreationReply } from '../shared/contracts/contentCreationDialogue';
 import type { AuthSession } from './lib/auth';
 import { resolveNavigationPage, type Page } from './pageRegistry';
@@ -14,7 +15,7 @@ export interface AssistantReferenceMedia {
   sourceUrl?: string;
   duration?: number;
 }
-export interface Message { role: 'user' | 'assistant'; content: string; sources?: Source[]; creation?: CreationReply; referenceMedia?: AssistantReferenceMedia }
+export interface Message { role: 'user' | 'assistant'; content: string; sources?: Source[]; creation?: CreationReply; referenceMedia?: AssistantReferenceMedia; creationPortal?: AssistantCreationPortal; taskPortal?: import('../shared/contracts/assistantTaskPortal').AssistantTaskPortal; sourcePortal?: import('../shared/contracts/assistantSourcePortal').AssistantSourcePortal }
 export interface ConversationContext { agent: AgentType; messages?: Message[] }
 export interface Conversation { id: string; agent: AgentType; title: string; messages: Message[]; updatedAt: number }
 export interface RestoreSignal { agent: AgentType; messages: Message[]; key: string }

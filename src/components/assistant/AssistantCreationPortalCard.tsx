@@ -1,0 +1,76 @@
+import { useRef } from 'react';
+import { App as AntApp } from 'antd';
+import { ArrowRight, Clapperboard } from 'lucide-react';
+import { assistantCreationPortalSchema, type AssistantCreationPortal } from '../../../shared/contracts/assistantCreationPortal';
+import { productionNavigationIdentity } from '../../lib/productionNavigation';
+import type { SocialContentCreateRequest } from '../socialContent/SocialContentWorkspace';
+import { assistantTaskPortalSchema, type AssistantTaskPortal } from '../../../shared/contracts/assistantTaskPortal';
+import { assistantSourcePortalSchema, type AssistantSourcePortal } from '../../../shared/contracts/assistantSourcePortal';
+
+export function creationPortalNavigation(value: AssistantCreationPortal, requestId = Date.now()) {
+  const portal = assistantCreationPortalSchema.parse(value);
+  const request: SocialContentCreateRequest = {
+    requestId, themeId: 'product_value', mode: 'instant', creationPath: 'material_processing',
+    materialInput: 'none', managedMode: 'one_click_managed', assistantEntry: portal,
+    prefill: { title: portal.title, topic: portal.objective, platforms: portal.platforms },
+    specialRequirements: portal.objective,
+  };
+  return { page: 'smartAssets', view: 'create', studioEntry: true, directStudio: false, contentCreationRequest: request };
+}
+
+export default function AssistantCreationPortalCard({ portal }: { portal: AssistantCreationPortal }) {
+  const { message } = AntApp.useApp();
+  const identity = useRef(productionNavigationIdentity());
+  const valid = assistantCreationPortalSchema.safeParse(portal);
+  if (!valid.success) return null;
+  const item = valid.data;
+  return <button type="button" aria-label="打开内容创作" data-assistant-creation-portal={item.id}
+    className="mt-3 flex w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-text-primary transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+    onClick={() => {
+      if (identity.current !== productionNavigationIdentity()) { void message.warning('登录状态已变化，请重新打开当前会话。'); return; }
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { ...creationPortalNavigation(item), navigationIdentity: identity.current } }));
+    }}>
+    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-surface-2 text-accent" aria-hidden="true"><Clapperboard size={22}/></span>
+    <span className="min-w-0 flex-1"><strong className="block text-sm font-semibold">内容创作</strong>
+      <span className="mt-0.5 block text-xs text-text-secondary">{item.requestedOutputCount === null ? '数量待确认' : `${item.requestedOutputCount}条${item.outputType === 'video' ? '视频' : '内容'}`} · 打开</span>
+    </span><ArrowRight size={17} className="shrink-0 text-text-muted" aria-hidden="true"/>
+  </button>;
+}
+
+export function taskPortalNavigation(portal: AssistantTaskPortal) {
+  const item = assistantTaskPortalSchema.parse(portal);
+  if (item.phase !== 'ready') throw new Error('请先确认是否打开任务。');
+  return { page: 'smartAssets', socialContentTaskId: item.taskId, socialContentPage: 'smartAssets', directStudio: true };
+}
+
+export function AssistantTaskPortalCard({ portal }: { portal: AssistantTaskPortal }) {
+  const { message } = AntApp.useApp();
+  const identity = useRef(productionNavigationIdentity());
+  const parsed = assistantTaskPortalSchema.safeParse(portal);
+  if (!parsed.success || parsed.data.phase !== 'ready') return null;
+  const item = parsed.data;
+  const action = item.action === 'review_plan' ? '确认方案' : item.action === 'complete_brief' ? '补充制作信息' : '查看任务';
+  return <button type="button" aria-label={`打开任务：${item.title}`} data-assistant-task-portal={item.taskId}
+    className="mt-3 flex w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-text-primary transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+    onClick={() => {
+      if (identity.current !== productionNavigationIdentity()) { void message.warning('登录状态已变化，请重新打开当前会话。'); return; }
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { ...taskPortalNavigation(item), navigationIdentity: identity.current } }));
+    }}>
+    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-surface-2 text-accent" aria-hidden="true"><Clapperboard size={22}/></span>
+    <span className="min-w-0 flex-1"><strong className="block text-sm font-semibold">内容创作 · {action}</strong>
+      <span className="mt-0.5 block truncate text-xs text-text-secondary">{item.title}</span>
+    </span><ArrowRight size={17} className="shrink-0 text-text-muted" aria-hidden="true"/>
+  </button>;
+}
+
+export function AssistantSourcePortalCard({ portal }: { portal: AssistantSourcePortal }) {
+  const parsed = assistantSourcePortalSchema.safeParse(portal);
+  if (!parsed.success) return null;
+  const item = parsed.data;
+  return <a href={item.uri} target="_blank" rel="noopener noreferrer" aria-label={`查看原文：${item.title}`}
+    className="mt-3 flex w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-text-primary transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+    <span className="min-w-0 flex-1"><strong className="block truncate text-sm font-semibold">{item.title}</strong>
+      <span className="mt-0.5 block text-xs text-text-secondary">{new URL(item.uri).hostname} · 查看原文</span>
+    </span><ArrowRight size={17} className="shrink-0 text-text-muted" aria-hidden="true"/>
+  </a>;
+}

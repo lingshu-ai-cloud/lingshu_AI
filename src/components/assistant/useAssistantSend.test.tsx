@@ -64,6 +64,19 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
       ['请说明本周重点', '本周先核对计划。']);
     assert.equal(persisted, 1);
     assert.equal(abort.current, null);
+    const taskPortal = { kind: 'content_task' as const, taskId: 'socialtask_verified', title: '待确认的视频方案', action: 'review_plan' as const, phase: 'offered' as const };
+    store.hydrateThread('business', { messages: [{ role: 'assistant', content: '是否前往内容创作页确认方案？', taskPortal }] });
+    await send('是');
+    assert.equal(requests, 1, 'confirmation reveals a portal without any model or task mutation');
+    assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.taskPortal?.phase, 'ready');
+    assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.taskPortal?.taskId, 'socialtask_verified');
+    store.hydrateThread('business', { messages: [{ role: 'assistant', content: '已核验的资讯回答。', sources: [{ title: '已核验来源', uri: 'https://example.com/original' }] }] });
+    await send('查看本次回答的信息来源');
+    assert.equal(requests, 1, 'source lookup reuses this answer, without searching again');
+    assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.sourcePortal, undefined);
+    await send('打开第1条来源原文');
+    assert.equal(requests, 1, 'source portal needs neither model inference nor an external write');
+    assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.sourcePortal?.uri, 'https://example.com/original');
     const creationSelection = { referenceId: 'verified-ref', productIds: ['verified-product'], shotIds: ['verified-shot'], evidenceVersion: 'a'.repeat(64) };
     store.hydrateThread('business', { creationDraft: creationSelection, messages: [...useAssistantStore.getState().threads.business.messages,
       { role: 'assistant', content: '选择已保留', creation: { stage: 'shots', selection: creationSelection, referenceTitle: '参考', products: [], shots: [], narrations: [], gaps: [], presenterIds: [] } }] });

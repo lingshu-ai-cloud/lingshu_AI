@@ -10,8 +10,13 @@ import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { getWhatsAppCustomers } from '../whatsapp/historyImport.js';
 import { createHash } from 'node:crypto';
 import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
-import { ASSISTANT_CONTEXT_RULES, ChatInputError, validateChatMessages } from '../assistantContext/chatInput.js';
+import { ASSISTANT_CONTEXT_RULES, GENERAL_METHOD_PROMPT, assertGeneralMethodAnswer, ChatInputError, validateChatMessages } from '../assistantContext/chatInput.js';
 import { buildChatGrounding } from '../assistantContext/chatGrounding.js';
+import { latestAssistantQuestion, planExternalQuestion, EXTERNAL_SOURCE_RULES } from '../assistantContext/externalQuestion.js';
+import { answerExternalData } from '../assistantContext/externalAnswer.js';
+import { ExternalInformationError } from '../externalInformation/http.js';
+import { appendInformationSources } from '../externalInformation/sourceFooter.js';
+import { previewInformationScope } from '../assistantContext/previewInformationScope.js';
 import { ASSISTANT_DETAILS_POLICY } from '../../shared/assistantReadableReply.js';
 import { DecisionMemoryError, recordDecisionMemory, updateDecisionMemory, revokeDecisionMemory, listDecisionMemories, type DecisionMemory } from '../assistantContext/decisionMemory.js';
 
@@ -296,18 +301,6 @@ function formatStreamError(err: unknown): string {
   return raw.slice(0, 300);
 }
 
-function latestUserQuestion(messages: ChatMessage[]): string {
-  const latest = [...messages].reverse().find(m => m.role === 'user')?.content ?? '';
-  const match = latest.match(/用户问题[:：]([\s\S]*)$/);
-  return (match?.[1] ?? latest).trim();
-}
-
-function shouldRequireSources(messages: ChatMessage[]): boolean {
-  const question = latestUserQuestion(messages);
-  if (/不需要联网|无需联网|不用联网|不要联网|不必联网|无需搜索|不用搜索|不要搜索/i.test(question)) return false;
-  return /联网|搜索|检索|查一下|查询|查找|核验|公开来源|来源|链接|趋势|平台规则|规则变化|政策|算法|竞品|品类机会|行业|目标市场|市场机会|最新|近期|报告|数据/i.test(question);
-}
-
 strategyRouter.post('/advisor', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const snapshot = normalizeAdvisorSnapshot(req.body?.snapshot);
@@ -388,7 +381,7 @@ strategyRouter.delete('/decisions/:id', async (req, res) => {
   } catch (error) { decisionError(res, error); }
 });
 
-strategyRouter.post('/chat', async (req, res) => {
+strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   let messages: ChatMessage[];
   try { messages = validateChatMessages(req.body?.messages); }
@@ -409,25 +402,59 @@ strategyRouter.post('/chat', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const requireSources = shouldRequireSources(messages);
+  const question = latestAssistantQuestion(messages);
+  const externalPlan = planExternalQuestion(question);
+  const requireSources = externalPlan.kind === 'web';
+  const cancellation = new AbortController();
+  const onClose = () => cancellation.abort(new Error('assistant_client_disconnected'));
+  res.on('close', onClose);
+  const heartbeat = setInterval(() => { if (!res.destroyed) res.write(': keep-alive\n\n'); }, 10_000);
+  heartbeat.unref();
   const timeRule = currentTimeRule();
   try {
+    const externalAnswer = await answerExternalData(question, { signal: cancellation.signal });
+    if (externalAnswer && (!externalPlan.mixed || externalAnswer.status === 'needs_input')) {
+      if (externalAnswer.sources.length) res.write(`data: ${JSON.stringify({ sources: externalAnswer.sources })}\n\n`);
+      res.write(`data: ${JSON.stringify({ text: appendInformationSources(externalAnswer.text, externalAnswer.sources) })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      return;
+    }
     const role = await requestOrganizationRoleStrict(req.headers.authorization, userId).catch(() => null);
-    const question = typeof req.body?.userQuestion === 'string' ? req.body.userQuestion.slice(0, 4000) : messages.at(-1)!.content.slice(-4000);
-    const grounding = await buildChatGrounding({ tenantId, userId }, { role, question });
-    const sourceRule = requireSources ? '\n\n【联网来源硬规则】本轮涉及联网搜索/公开信息核验，必须使用联网检索结果，并通过 sources 事件返回可点击来源；如果无法取得来源，不要给出联网结论，改为说明需要重新检索。' : '';
-    const systemPrompt = `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${sourceRule}\n\n${grounding.text}\n${creationGrounding}\n${ASSISTANT_CONTEXT_RULES}`;
-    for await (const ev of callLLMChatStream(messages, { systemPrompt, deepThinking, requireSources })) {
+    const needsGrounding = externalPlan.kind === 'internal' || externalPlan.mixed
+      || (externalPlan.kind === 'offline' && /写|生成|制作|脚本|文案|开发信|话术/u.test(question));
+    const grounding = needsGrounding ? await buildChatGrounding({ tenantId, userId }, { role, question })
+      : { text: externalPlan.kind === 'offline' ? '【本轮上下文范围】这是一般方法问答，未加载企业经营资料。不得评价本企业现行规则、产品资质或处理流程；不能声称企业没有相关要求。' : '' };
+    if ('taskStatusAnswer' in grounding && grounding.taskStatusAnswer && !requireSources && !externalAnswer && !creationGrounding) {
+      res.write(`data: ${JSON.stringify({ text: grounding.taskStatusAnswer, taskPortal: grounding.taskPortal })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      return;
+    }
+    const externalEvidence = externalAnswer ? `\n【本轮外部数据接口核验结果】\n${externalAnswer.text}\n以上数字和计算结果必须原样引用，不得自行更改；内部业务结论仍须内部证据。` : '';
+    if (externalAnswer?.sources.length) res.write(`data: ${JSON.stringify({ sources: externalAnswer.sources })}\n\n`);
+    const sourceRule = requireSources ? '\n\n【联网来源硬规则】本轮涉及联网搜索/公开信息核验，必须使用联网检索结果，并通过 sources 事件返回可点击来源；如果无法取得来源，不要给出联网结论，改为说明需要重新检索。'
+      : externalPlan.kind === 'offline' ? '\n本轮用户明确禁止联网。只回答已有证据和一般方法，不列未核验的具体认证/监管要求、法律义务、技术极限或行业精确阈值，也不提供未核验的当前汇率、行情、贸易数字或最新政策。需要此类信息时明确另行核验。' : '';
+    const generalMethod = externalPlan.kind === 'offline' && !needsGrounding && !creationGrounding;
+    const systemPrompt = generalMethod ? `${GENERAL_METHOD_PROMPT}\n${grounding.text}`
+      : `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${sourceRule}\n\n${grounding.text}\n${creationGrounding}\n${EXTERNAL_SOURCE_RULES}\n${externalEvidence}\n${ASSISTANT_CONTEXT_RULES}`;
+    for await (const ev of callLLMChatStream(messages, { systemPrompt, deepThinking, requireConclusion: true, validateAnswer: generalMethod ? assertGeneralMethodAnswer : undefined, requireSources, webSearch: requireSources, searchDomains: requireSources ? externalPlan.domains : undefined, searchFreshnessDays: externalPlan.freshnessDays, signal: cancellation.signal })) {
       res.write(`data: ${JSON.stringify(ev)}\n\n`);
     }
+    if (externalAnswer?.sources.length) res.write(`data: ${JSON.stringify({ text: appendInformationSources('', externalAnswer.sources) })}\n\n`);
     res.write('data: [DONE]\n\n');
   } catch (err: any) {
-    const error = requireSources
+    if (cancellation.signal.aborted) return;
+    if (err instanceof ExternalInformationError && err.sources?.length) res.write(`data: ${JSON.stringify({ sources: err.sources })}\n\n`);
+    const rawError = err instanceof ExternalInformationError ? err.message : requireSources
       ? `联网检索失败，未能取得可跳转信息来源：${formatStreamError(err)}`
       : formatStreamError(err);
-    res.write(`data: ${JSON.stringify({ error })}\n\n`);
+    const error = requireSources && !rawError.includes('信息来源')
+      ? `总体结论：${rawError}\n\n信息来源：本轮未取得通过核验的资料。` : rawError;
+    res.write(`data: ${JSON.stringify({ error, ...(err instanceof ExternalInformationError ? { code: err.code, publicMessage: error } : {}) })}\n\n`);
     res.write('data: [DONE]\n\n');
   } finally {
+    clearInterval(heartbeat);
+    res.off('close', onClose);
+    cancellation.abort();
     res.end();
   }
 });

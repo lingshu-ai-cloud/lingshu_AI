@@ -3,6 +3,7 @@ import type { AssistantFileIntent } from '../../shared/assistantFileIntent';
 import { assistantFileMarker } from '../../shared/assistantFileIntent';
 import { createAssistantFile } from './assistantFilesApi';
 import { AssistantStreamCompletion } from './assistantStreamCompletion';
+import { assistantTaskPortalSchema } from '../../shared/contracts/assistantTaskPortal';
 
 const ASSISTANT_CHAT_RESPONSE_TIMEOUT_MS = 20_000;
 const ASSISTANT_CHAT_STREAM_IDLE_TIMEOUT_MS = 30_000;
@@ -35,6 +36,7 @@ export async function streamAssistantReply(input: {
   onStart: () => void;
   onText: (text: string) => void;
   onSources: (sources: NonNullable<Message['sources']>) => void;
+  onTaskPortal?: (portal: NonNullable<Message['taskPortal']>) => void;
   onFileReady: (content: string) => void;
   onTimeout: () => void;
   responseErrorMessage: (response: Response) => Promise<string>;
@@ -66,6 +68,8 @@ export async function streamAssistantReply(input: {
       try {
         const event = completion.accept(line.slice(6).trim());
         if (!event) return;
+        const portal = assistantTaskPortalSchema.safeParse(event.taskPortal);
+        if (!fileIntent && portal.success && portal.data.phase === 'offered') input.onTaskPortal?.(portal.data);
         if (event.text) {
           if (fileIntent) fileBody += event.text;
           else onText(event.text);

@@ -25,8 +25,9 @@ function close(server: http.Server | undefined): Promise<void> {
 
 /** Actual HTTP/auth/storage/provider transport; the local fixture is not a language-quality eval. */
 test('strategy chat grounds actual local records with tenant/user/role isolation and memory revocation', { timeout: 30_000 }, async () => {
+  const originalFetch = globalThis.fetch;
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-chat-grounding-'));
-  const keys = ['NODE_ENV', 'ENABLE_LOCAL_DEV_FALLBACK', 'DISABLE_LOCAL_AUTH_FALLBACK', 'LOCAL_STORE_DIR', 'LOCAL_AUTH_ACCOUNTS_FILE', 'LOCAL_TENANTS_DATA_FILE', 'LOCAL_DEMO_TOKEN_SECRET', 'DATA_BACKEND', 'DEMO_MODE', 'DASHSCOPE_BASE_URL', 'DASHSCOPE_API_KEY', 'OVERSEAS_LLM_BACKEND', 'PB_URL', 'PB_ADMIN_EMAIL', 'PB_ADMIN_PASSWORD', 'MATERIAL_LIBRARY_FILE'] as const;
+  const keys = ['NODE_ENV', 'ENABLE_LOCAL_DEV_FALLBACK', 'DISABLE_LOCAL_AUTH_FALLBACK', 'LOCAL_STORE_DIR', 'LOCAL_AUTH_ACCOUNTS_FILE', 'LOCAL_TENANTS_DATA_FILE', 'LOCAL_DEMO_TOKEN_SECRET', 'DATA_BACKEND', 'DEMO_MODE', 'DASHSCOPE_BASE_URL', 'DASHSCOPE_API_KEY', 'OVERSEAS_LLM_BACKEND', 'PB_URL', 'PB_ADMIN_EMAIL', 'PB_ADMIN_PASSWORD', 'MATERIAL_LIBRARY_FILE', 'QWEN_SEARCH_ENDPOINT'] as const;
   const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   let provider: http.Server | undefined;
   let application: http.Server | undefined;
@@ -64,7 +65,7 @@ test('strategy chat grounds actual local records with tenant/user/role isolation
       assert.equal(request.headers.authorization, 'Bearer test-key');
       captured.push(JSON.parse(body));
       response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      response.write(`data: ${JSON.stringify({ id: 'local-fixture', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: '本地传输验证完成' }, finish_reason: null }] })}\n\n`);
+      response.write(`data: ${JSON.stringify({ id: 'local-fixture', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: '本地传输验证完成\n\n总体结论：已依据本轮记录完成事实核对，其他进度仍需对应证据。' }, finish_reason: null }] })}\n\n`);
       response.write(`data: ${JSON.stringify({ id: 'local-fixture', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
       response.end('data: [DONE]\n\n');
     });
@@ -164,9 +165,90 @@ test('strategy chat grounds actual local records with tenant/user/role isolation
     assert.equal(forbidden.status, 404); assert.equal(captured.length, beforeForbidden, 'foreign reference never reaches the model');
     const forged = await api(adminToken, '/chat', { messages: [{ role: 'user', content: '使用伪造分镜' }], creationSelection: { ...selected, shotIds: ['mat:forged'] } });
     assert.equal(forged.status, 409); assert.equal(captured.length, beforeForbidden);
+    // Real route/auth/SSE and persistence contract, with all external transports intercepted.
+    process.env.QWEN_SEARCH_ENDPOINT = 'https://native-search.fixture.invalid/generation';
+    let nativeCalls = 0, rateCalls = 0, tradeCalls = 0, emptySources = false, unavailableOriginal = false;
+    globalThis.fetch = async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.origin === new URL(applicationUrl).origin || url.origin === new URL(providerUrl).origin) return originalFetch(input, init);
+      if (url.hostname === 'open.er-api.com') {
+        rateCalls++;
+        assert.equal(new Headers(init?.headers).has('Authorization'), false);
+        return Response.json({ result: 'success', base_code: 'USD', rates: { USD: 1, CNY: 7.123456 },
+          time_last_update_unix: Math.floor(Date.now() / 1000) - 60, time_next_update_unix: Math.floor(Date.now() / 1000) + 86400 });
+      }
+      if (url.hostname === 'comtradeapi.un.org') {
+        tradeCalls++;
+        return Response.json({ count: 1, data: [{ reporterCode: 156, period: '2025', cmdCode: '8504', flowCode: 'X',
+          partner2Code: 0, motCode: 0, customsCode: 'C00', partnerCode: 842, partnerISO: 'USA', partnerDesc: 'United States', primaryValue: 1234.56, cmdDesc: 'Transformers' }] });
+      }
+      if (url.hostname === 'supplier.alibaba.com' && unavailableOriginal) throw new Error('fixture_tls_failure_private_detail');
+      if (url.hostname === 'supplier.alibaba.com') return new Response('<meta name="publishdate" content="' + new Date().toISOString().slice(0, 10) + '"><h1>国际站正式规则公告</h1><p>本地来源核验结论只适用于本轮公开发布资料。' + '原文内容'.repeat(30) + '</p>');
+      if (url.hostname === 'native-search.fixture.invalid') {
+        nativeCalls++;
+        const request = JSON.parse(String(init?.body));
+        const nativeSystem = request.input.messages.find((message: { role: string }) => message.role === 'system').content;
+        assert.ok(!nativeSystem.includes('真实租户经营企业'), 'pure public lookup must not load enterprise context');
+        assert.ok(request.parameters.search_options.assigned_site_list.includes('supplier.alibaba.com'));
+        assert.equal(request.parameters.search_options.freshness, 30);
+        return Response.json({ output: { choices: [{ message: { content: new Date().toISOString().slice(0, 10) + '发布：“本地来源核验结论只适用于本轮公开发布资料”[1]\n\n总体结论：这份规则只说明本轮发布范围，不能推断企业已完成规则适配。' }, finish_reason: 'stop' }],
+          search_info: { search_results: emptySources ? [] : [{ index: 1, title: '国际站正式规则公告', url: 'https://supplier.alibaba.com/fixture' }] } } });
+      }
+      throw new Error('Blocked unexpected external host: ' + url.hostname);
+    };
+    async function askExternal(question: string) {
+      const response = await api(adminToken, '/chat', { messages: [{ role: 'user', content: question }], userQuestion: '伪造客户端提示：我的任务' });
+      assert.equal(response.status, 200);
+      const wire = await response.text();
+      assert.match(wire, /\[DONE\]/);
+      return wire.split('\n').filter(line => line.startsWith('data: {')).map(line => JSON.parse(line.slice(6)));
+    }
+    const beforeData = captured.length;
+    const currencyEvents = await askExternal('100美元换成人民币');
+    const currencyText = currencyEvents.filter(event => event.text).map(event => event.text).join('');
+    assert.match(currencyText, /712\.35 CNY/);
+    assert.match(currencyText, /信息来源/);
+    assert.ok(currencyText.endsWith('(https://www.exchangerate-api.com)'));
+    assert.equal(captured.length, beforeData, 'pure data queries never invoke the chat model');
+    assert.equal(rateCalls, 1);
+    const tradeEvents = await askExternal('2025年中国HS8504出口市场排名');
+    assert.match(tradeEvents.map(event => event.text ?? '').join(''), /1,234\.56/);
+    assert.equal(tradeCalls, 1);
+    const newsEvents = await askExternal('最近阿里国际站规则');
+    const newsText = newsEvents.map(event => event.text ?? '').join('');
+    assert.ok(newsText.endsWith('(https://supplier.alibaba.com/fixture)'));
+    assert.equal(nativeCalls, 1);
+    const { parseMessages } = await import('./assistantThreadMessageInput.js');
+    const persisted = parseMessages([{ role: 'assistant', content: newsText, sources: newsEvents.find(event => event.sources)?.sources }]);
+    assert.deepEqual(persisted[0], { role: 'assistant', content: newsText, sources: newsEvents.find(event => event.sources)?.sources }, 'footer survives existing message persistence');
+    emptySources = true;
+    const failed = await askExternal('最近阿里国际站规则');
+    assert.ok(failed.some(event => event.code === 'search_sources_missing'));
+    assert.ok(!failed.some(event => event.text), 'no claims leak before source validation');
+    assert.equal(nativeCalls, 2, 'no hidden retry');
+    emptySources = false; unavailableOriginal = true;
+    const originalFailure = await askExternal('最近阿里国际站规则');
+    const failure = originalFailure.find(event => event.code === 'search_source_verification_failed');
+    assert.ok(failure);
+    assert.match(String(failure.publicMessage), /总体结论：本轮检索找到了线索/);
+    assert.ok(String(failure.publicMessage).endsWith('(https://supplier.alibaba.com/fixture)'));
+    assert.match(String(originalFailure.find(event => event.sources)?.sources?.[0]?.title), /原文未核验/);
+    assert.ok(!originalFailure.some(event => event.text));
+    assert.ok(!String(failure.publicMessage).includes('fixture_tls_failure_private_detail'));
+    assert.equal(nativeCalls, 3, 'original failure does not trigger a paid retry');
+    const beforeGeneral = captured.length;
+    await askExternal('不要联网。免费邮箱、没有官网就应停止报价吗？请解释一般方法。');
+    assert.equal(captured.length, beforeGeneral + 1);
+    const generalSystem = captured.at(-1)!.messages.find(message => message.role === 'system')!.content;
+    assert.match(generalSystem, /未加载企业经营资料/);
+    assert.ok(!generalSystem.includes('真实租户经营企业'));
+    const clarified = await askExternal('HS8504出口市场');
+    assert.match(clarified.map(event => event.text ?? '').join(''), /统计年份/);
+    assert.equal(tradeCalls, 1);
     assert.equal(unexpectedProviderRequests, 0, 'No PocketBase or non-chat provider endpoint may be contacted');
     assert.ok(fs.existsSync(path.join(temporary, 'store', 'assistant_decision_memories.json')));
   } finally {
+    globalThis.fetch = originalFetch;
     await close(application);
     await close(provider);
     clearPrincipals?.();

@@ -1,7 +1,10 @@
+import { createPlanningDraftBatch } from '../../lib/socialContentPlanningBatch';
+import { productionNavigationIdentity } from '../../lib/productionNavigation';
+import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 import CreationProductionConversation from './CreationProductionConversation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FileImage, ImagePlus, Loader2, Video } from 'lucide-react';
-import { Button } from 'antd';
+import { Button, InputNumber } from 'antd';
 import LsPageHeader from '../ui/LsPageHeader';
 import type { Page } from '../../App';
 import SocialContentWorkspace, { type SocialContentCreateRequest } from './SocialContentWorkspace';
@@ -36,6 +39,7 @@ function seedFromRequest(request?: SocialContentCreateRequest | null): SocialCre
     continueProjectId: request.continueProjectId,
     presenterAssetId: request.presenterAssetId,
     draftTitle: request.prefill?.title,
+    assistantEntry: request.assistantEntry,
     referenceTitle: request.sourceContext?.referenceTitle,
     referenceThumbnail: request.sourceContext?.referenceThumbnail,
     referenceMediaUrl: request.sourceContext?.referenceMediaUrl,
@@ -66,6 +70,13 @@ export default function SocialContentPlanningPage({
   onLaunchStudio: (request: SocialContentCreateRequest) => void;
   initialCreateRequest?: SocialContentCreateRequest | null;
 }) {
+  const batchKeys = useRef(new Map<string, string>());
+  const batchCompleted = useRef(new Map<string, string>());
+  const batchEntryId = useRef(initialCreateRequest?.assistantEntry?.id);
+  const currentRequest = useRef(initialCreateRequest); currentRequest.current = initialCreateRequest;
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [createdDrafts, setCreatedDrafts] = useState<SocialContentTaskDetail[]>([]);
+  const [entryCount, setEntryCount] = useState<number | null>(initialCreateRequest?.assistantEntry?.requestedOutputCount ?? null);
   const [view, setView] = useState<PlanningView>(initialCreateRequest ? 'workbench' : 'creations');
   const [chooserOpen, setChooserOpen] = useState(false);
   const [stageProfile, setStageProfile] = useState<SocialContentStageProfile | null>(() => readSocialContentStage());
@@ -97,6 +108,12 @@ export default function SocialContentPlanningPage({
       managedMode: initialCreateRequest.managedMode || 'one_click_managed',
     });
     setSeed(seedFromRequest(initialCreateRequest));
+    if (batchEntryId.current !== initialCreateRequest.assistantEntry?.id) {
+      batchEntryId.current = initialCreateRequest.assistantEntry?.id;
+      batchKeys.current = new Map(); batchCompleted.current = new Map();
+    }
+    setEntryCount(initialCreateRequest.assistantEntry?.requestedOutputCount ?? null);
+    setCreatedDrafts([]); setBatchBusy(false);
     setSourceRequest(initialCreateRequest);
     setProductionMode(initialCreateRequest.sourceContext?.referenceContentType === 'image' ? 'image' : 'video');
     setImageTask(undefined);
@@ -153,20 +170,23 @@ export default function SocialContentPlanningPage({
       creationPath: request.creationPath,
     };
     const operationKey = socialPlanningOperationKey(operationSeed);
-    let task = sourceRequest?.continueTaskId
-      ? await socialContentApi.getTask(sourceRequest.continueTaskId)
-      : await socialContentApi.createTask(socialPlanningTaskInput({
-        ...operationSeed,
-        initialScript: request.initialScript,
-        specialRequirements: request.specialRequirements,
-        productId: request.productId,
-        productName: request.productName,
-        presenterAssetId: request.presenterAssetId,
-        callToAction: request.callToAction,
-        uploadedMaterialCount: request.uploadedMaterials.length,
-        platforms: sourceRequest?.prefill?.platforms,
-        themeId: sourceRequest?.themeId || 'product_value',
-      }), `${operationKey}:create`);
+    if (sourceRequest?.assistantEntry && (!entryCount || !Number.isSafeInteger(entryCount) || entryCount < 1 || entryCount > 100)) throw new Error('请先确认本轮要创作的内容数量（1至100条）。');
+    const taskSeed = { ...operationSeed, initialScript: request.initialScript, specialRequirements: request.specialRequirements,
+      productId: request.productId, productName: request.productName, presenterAssetId: request.presenterAssetId,
+      callToAction: request.callToAction, uploadedMaterialCount: request.uploadedMaterials.length,
+      platforms: request.platforms || sourceRequest?.prefill?.platforms, themeId: sourceRequest?.themeId || 'product_value' as const };
+    const identity = productionNavigationIdentity(), entry = currentRequest.current;
+    const isCurrent = () => identity === productionNavigationIdentity() && entry === currentRequest.current;
+    if (sourceRequest?.assistantEntry && !sourceRequest.continueTaskId) setBatchBusy(true);
+    const batchTask = sourceRequest?.assistantEntry && !sourceRequest.continueTaskId
+      ? await createPlanningDraftBatch({ seed: taskSeed, count: entryCount!, keys: batchKeys.current, completed: batchCompleted.current,
+        isCurrent, create: (value, key) => socialContentApi.createTask(value, key), read: id => socialContentApi.getTask(id),
+        onResult: result => setCreatedDrafts(rows => [...rows.filter(row => row.taskId !== result.taskId), result]) }).finally(() => { if (isCurrent()) setBatchBusy(false); }) : null;
+    if (!isCurrent()) return;
+    if (sourceRequest?.assistantEntry && !sourceRequest.continueTaskId && entryCount! > 1 && batchTask) return;
+    let task = sourceRequest?.continueTaskId ? await socialContentApi.getTask(sourceRequest.continueTaskId)
+      : batchTask || await socialContentApi.createTask(socialPlanningTaskInput(taskSeed), `${operationKey}:create`);
+
 
     const visualMaterials = request.uploadedMaterials.filter(material => material.type === 'image' || material.type === 'video');
     for (const material of visualMaterials.filter((item, index, rows) => rows.findIndex(row => row.id === item.id) === index)) {
@@ -214,6 +234,7 @@ export default function SocialContentPlanningPage({
         productId: request.productId,
         productName: request.productName,
         referenceLinks: request.referenceLinks,
+        platforms: request.platforms || sourceRequest?.prefill?.platforms,
       },
       sourceContext: sourceRequest?.sourceContext,
       creationDialoguePlan: sourceRequest?.creationDialoguePlan,
@@ -256,10 +277,16 @@ export default function SocialContentPlanningPage({
   }
 
   return (
-    <div className="h-full min-h-0 bg-ink">
+    <div className={sourceRequest?.assistantEntry ? "flex h-full min-h-0 flex-col bg-ink" : "h-full min-h-0 bg-ink"}>
+      {sourceRequest?.assistantEntry && <section aria-label="来自灵小枢的创作需求" className="shrink-0 border-b border-border bg-surface px-5 py-3 text-sm text-text-primary">
+        <p className="font-semibold">本轮创作需求</p><p className="mt-1 break-words text-text-secondary">{sourceRequest.assistantEntry.objective}</p>
+        {createdDrafts.length > 0 && <><p className="mt-2 text-text-secondary">已确认保存{createdDrafts.length}条内容草稿，请分别打开继续制作；尚未启动视频生成。</p><div className="mt-2 flex flex-wrap gap-2" aria-label="已保存内容草稿">{createdDrafts.map((task, index) => <Button key={task.taskId} onClick={() => onNavigateWithTask('smartAssets', task.taskId)}>第{index + 1}条：查看草稿</Button>)}</div></>}
+        <label className="mt-2 flex items-center gap-2">内容数量<InputNumber aria-label="本轮内容数量" disabled={batchBusy || batchKeys.current.size > 0} min={1} max={100} precision={0} value={entryCount} placeholder="请确认" onChange={value => setEntryCount(value)} /><span className="text-text-secondary">条</span></label>
+      </section>}
+
       {view === 'workbench' && launch ? (
         productionMode === 'video' ? <SocialCreationWorkbench
-            key={`${launch.creationPath}:${seed?.referenceTitle || 'new'}:${sourceRequest?.creationDialoguePlan ? sourceRequest.requestId : ''}`}
+            key={`${launch.creationPath}:${seed?.referenceTitle || 'new'}:${sourceRequest?.assistantEntry?.id || (sourceRequest?.creationDialoguePlan ? sourceRequest.requestId : '')}`}
             mode={launch.creationPath}
             seed={sourceRequest ? { ...seed, ...seedFromRequest(sourceRequest) } : seed}
             stageProfile={stageProfile || undefined}

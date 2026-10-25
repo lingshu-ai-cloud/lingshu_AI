@@ -2,6 +2,8 @@ import { buildEnterpriseContext, readTenantEnterpriseProfileStrict, type Enterpr
 import { buildOperatingContext, formatOperatingContext, type OperatingContext } from './operatingContext.js';
 import { listDecisionMemories, type DecisionMemory, type DecisionMemoryScope } from './decisionMemory.js';
 import { boundContextText } from './chatInput.js';
+import { namedTaskStatusReply } from './taskStatusAnswer.js';
+import type { AssistantTaskPortal } from '../../shared/contracts/assistantTaskPortal.js';
 
 type Dependencies = {
   readEnterprise?: (tenantId: string) => Promise<EnterpriseProfile | null>;
@@ -35,7 +37,7 @@ export function formatDecisionContext(rows: DecisionMemory[]): string {
 export async function buildChatGrounding(
   scope: DecisionMemoryScope,
   options: { role: string | null; question?: string } & Dependencies,
-): Promise<{ text: string; enterpriseState: string; operatingState: string; memoryState: string }> {
+): Promise<{ text: string; enterpriseState: string; operatingState: string; memoryState: string; taskStatusAnswer?: string; taskPortal?: AssistantTaskPortal }> {
   const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? 2000, 3000));
   const profile = await boundedRead(() => (options.readEnterprise || readTenantEnterpriseProfileStrict)(scope.tenantId), timeoutMs);
   const enterpriseState = !profile ? 'unavailable' : profile.dataGovernance?.aiAccessEnabled === false ? 'disabled' : 'available';
@@ -53,6 +55,7 @@ export async function buildChatGrounding(
     canReadOperating ? boundedRead<OperatingContext>(() => (options.readOperating || buildOperatingContext)(scope.tenantId, { question: options.question }), timeoutMs) : Promise.resolve(null),
     boundedRead(() => (options.readDecisions || listDecisionMemories)(scope), timeoutMs),
   ]);
+  const taskReply = namedTaskStatusReply(options.question ?? '', operating ?? undefined);
   return {
     text: [
       `【当前企业知识库 · 服务端核验】\n${enterpriseText || '当前企业资料未提供可用于回答的字段。'}`,
@@ -61,5 +64,6 @@ export async function buildChatGrounding(
     ].join('\n\n'),
     enterpriseState, operatingState: operating ? 'loaded' : canReadOperating ? 'unavailable' : 'not_loaded',
     memoryState: memories ? 'loaded' : 'unavailable',
+    taskStatusAnswer: taskReply?.text, taskPortal: taskReply?.taskPortal,
   };
 }

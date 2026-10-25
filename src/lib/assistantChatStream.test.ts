@@ -54,6 +54,18 @@ test('缺少完成标记时保留已交付的文字并报告传输中断', async
   assert.equal(received.text, '部分内容');
 });
 
+test('task navigation metadata arrives with the answer but cannot skip confirmation', async () => {
+  const portal = { kind: 'content_task', taskId: 'socialtask_verified', title: '产品视频', action: 'review_plan', phase: 'offered' };
+  globalThis.fetch = async () => streamResponse(`data: ${JSON.stringify({ text: '是否前往确认方案？', taskPortal: portal })}\ndata: [DONE]\n`);
+  let receivedPortal: unknown;
+  const { input, received } = request({ onTaskPortal: value => { receivedPortal = value; } });
+  await streamAssistantReply(input);
+  assert.deepEqual(receivedPortal, portal); assert.equal(received.text, '是否前往确认方案？');
+  receivedPortal = undefined;
+  globalThis.fetch = async () => streamResponse(`data: ${JSON.stringify({ taskPortal: { ...portal, phase: 'ready' } })}\ndata: [DONE]\n`);
+  await streamAssistantReply(input); assert.equal(receivedPortal, undefined);
+});
+
 test('文件请求先等待完整正文，再生成可下载文件标记', async () => {
   const fileId = 'a'.repeat(64);
   let calls = 0;
