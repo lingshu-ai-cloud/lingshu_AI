@@ -14,6 +14,7 @@ const strategy = fs.readFileSync(new URL('./StrategyPage.tsx', import.meta.url),
 const workspace = fs.readFileSync(new URL('./smartBusiness/DigitalEmployeeWorkspace.tsx', import.meta.url), 'utf8');
 const appSlot = fs.readFileSync(new URL('../AppPageSlot.tsx', import.meta.url), 'utf8');
 const creationOverview = fs.readFileSync(new URL('./ContentCreationOverviewPage.tsx', import.meta.url), 'utf8');
+const promptCatalog = fs.readFileSync(new URL('../lib/assistantHomeQuickPrompts.ts', import.meta.url), 'utf8');
 
 assert.match(home, /id="content-creation-assistant-anchor"/);
 assert.match(assistant, /useAssistantHomeAnchor\(inlineHome\)/);
@@ -30,17 +31,21 @@ assert.match(inspiration, /label: `对标账号 ·/);
 assert.match(inspiration, /label: `待拍 ·/);
 assert.doesNotMatch(home, /Segmented|自由创作|useCreationModeControl/, '轻量首页不得再保留自由创作模式切换');
 assert.match(home, /className="creator-home creator-home--employee/, '首页须固定使用数字员工入口逻辑');
-assert.match(home, /让灵小枢认识你[\s\S]{0,500}新手成长/, '未完成初始配置时必须先展示认识企业和新手成长');
-assert.match(home, /今日资讯[\s\S]{0,700}经营策略[\s\S]{0,700}周经营任务/, '常态运营必须按资讯、策略、周任务的顺序展示');
-assert.match(home, /card\(2, '周经营任务',[\s\S]{0,500}, true\)/, '周经营任务须作为常态运营的高亮入口');
-assert.match(home, /lingshu-assistant-open/, '首页业务卡必须进入灵小枢对话，不得直接跳转业务页面');
-assert.match(home, /scriptedReply/, '首次认识企业的输入与回复必须使用本地固定会话，不能因模型服务不可用而中断');
-assert.match(assistant, /if \(scriptedReply && text\)[\s\S]{0,700}setMessages\(PRIMARY_ASSISTANT_THREAD/, '固定首页会话必须替换旧错误消息并直接呈现完整问答');
-assert.match(home, /overview\?\.goal \? '查看当前周任务的状态和进度' : '帮我创建当前周任务'/, '周任务卡必须根据真实任务状态选择查看或创建意图');
+assert.match(promptCatalog, /id: 'weekly-plan', label: '查看当前周计划'[\s\S]{0,500}id: 'content-strategy', label: '查看内容策略'[\s\S]{0,500}id: 'external-news', label: '查看外部资讯'[\s\S]{0,500}id: 'business-analysis', label: '分析经营数据'/, '底部快捷按钮必须优先展示具体高频动作');
+assert.match(promptCatalog, /id: 'external-news'[\s\S]{0,300}promptIds: \['OP-02', 'OP-09', 'OP-10', 'OP-11', 'OP-12'\]/, '外部资讯按钮必须展开不同资讯类型');
+for (const newsType of ['行业资讯', '产品资讯', '社交媒体资讯', '政策与平台资讯']) {
+  assert.match(promptCatalog, new RegExp(`label: '${newsType}'`), `今日资讯必须提供${newsType}卡片`);
+}
+assert.match(home, /useState<AssistantHomeQuickLauncherId \| null>\(null\)/, '首页默认不得展示任何大卡片');
+assert.match(home, /activeLauncher \? <div className="creator-home__quick-panel">[\s\S]{0,1600}activePrompts\.map/, '点击小按钮后才可显示其对应的大卡片');
+assert.doesNotMatch(home, /全部快捷任务/, '首页不应增加额外的全部快捷任务层级');
 assert.doesNotMatch(home, /onClick=\{\(\) => onNavigate\?\.\('digitalEmployees'\)\}/, '首页业务卡不得直接跳转经营总览');
-assert.match(home, /creator-home__canvas-card-media/, '有真实媒体证据时首页卡片必须展示图片底图');
-assert.match(home, /AuthenticatedImage[\s\S]{0,300}onError={[\s\S]{0,120}setFailedMediaUrl/, '受保护封面必须通过认证媒体读取，失败时回落为无图卡片而不是显示破图');
 assert.match(home, /className="creator-home__suggestions"/, '自由创作的提示输入须保留在数字员工输入框下方');
+assert.match(home, /ASSISTANT_HOME_QUICK_LAUNCHERS\.map\(launcher =>/, '底部须渲染全部小按钮入口');
+assert.match(creatorStyles, /\.creator-home__suggestions \{[^}]*justify-content: flex-start[^}]*overflow-x: auto/, '高频按钮溢出时必须从最左侧开始并可向右翻阅');
+assert.match(promptCatalog, /id: 'viral-script'[\s\S]{0,1800}id: 'traffic-optimization'/, '其余快捷按钮须覆盖内容、素材、发布、客户和投流高频动作');
+assert.match(home, /ASSISTANT_HOME_PROMPT_EVENT[\s\S]{0,220}detail: \{ prompt: entry\.prompt, mode \}/, '能力卡点击只能把固定提示词写入输入框');
+assert.match(home, /追加到现有内容[\s\S]{0,300}替换现有内容/, '输入框已有内容时必须明确提供追加与替换选择');
 assert.doesNotMatch(home, /DigitalEmployeeHomeWork/, '三栏进行中工作必须从首页移走');
 assert.match(workspace, /<DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\}/, '三栏进行中工作必须进入经营总览并替代旧日历');
 assert.match(layout, /aria-label="经营导航"/, '经营总览必须与上方轻量入口分组');
@@ -75,12 +80,12 @@ assert.match(home, /className=\{`creator-home__canvas-stage\$\{canvasCollapsed \
 assert.doesNotMatch(home, /mode === 'employee' && <section className="creator-home__canvas"/, '数字员工画布不得以条件挂载造成硬切');
 assert.match(creatorStyles, /\.creator-home__canvas-stage \{[^}]*grid-template-rows: 0fr/, '数字员工画布须以可插值高度平滑收起');
 assert.match(home, /ASSISTANT_HOME_ACTIVITY_EVENT/, '首页对话开始后须通知快捷入口自动收起');
-assert.match(home, /aria-controls="creator-home-operations"[^>]*aria-expanded=\{!canvasCollapsed\}/, '收起后的快捷入口须由键盘可用按钮恢复');
+assert.match(home, /aria-controls="creator-home-operations"[^>]*aria-expanded=\{active\}/, '每个小按钮须暴露其展开状态并可由键盘操作');
 assert.match(creatorStyles, /\.creator-home--employee \.creator-home__canvas-stage\.is-collapsed \{[^}]*grid-template-rows: 0fr/, '对话展开后快捷入口须平滑收起');
 assert.match(creatorStyles, /\.creator-home--employee \.creator-home__assistant-anchor:not\(\.creator-home__assistant-anchor--active\) \{ height: 156px/, '数字员工首页须使用原自由创作输入区高度');
-assert.match(creatorStyles, /\.creator-home__canvas-grid--onboarding \{[^}]*repeat\(2,minmax\(0,1fr\)\)/, '初次进入须使用两张成长卡片');
-assert.match(creatorStyles, /\.creator-home__canvas-grid--operations \{[^}]*grid-template-columns: repeat\(3, calc\(\(100% - 24px\) \/ 2\.5\)\);[^}]*overflow-x: auto;[^}]*scroll-snap-type: inline mandatory/, '常态运营卡须露出半张下一卡并支持横向滑动');
-assert.match(home, /industrySignalsReply\(overview\)/, '今日资讯卡必须直接回复当前可追溯本地信号，不能依赖未授权真实模型');
+assert.match(creatorStyles, /\.creator-home__quick-panel \{ overflow: hidden; \}/, '能力卡外层不得再显示独立大方框');
+assert.match(creatorStyles, /\.creator-home__prompt-grid \{[^}]*grid-auto-flow: column[^}]*overflow-x: auto[^}]*scroll-snap-type: inline mandatory/, '能力卡须保持单行并支持横向翻阅');
+assert.match(promptCatalog, /没有可靠来源时明确说明，不要编造资讯/, '今日资讯固定提示词必须约束可追溯来源');
 assert.match(creatorStyles, /width: min\(100%, 1416px\)/, '主内容宽度须与参考图一致');
 assert.match(card, /ls-viral-card group/);
 assert.match(card, /absolute right-2 top-2 z-40[\s\S]{0,900}取消收藏[\s\S]{0,900}删除/, '收藏和删除须位于媒体卡右上角的悬停操作区');

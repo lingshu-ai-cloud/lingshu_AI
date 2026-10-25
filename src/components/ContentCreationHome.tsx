@@ -1,96 +1,92 @@
-import { Alert, Spin } from 'antd';
-import { ArrowRight, CalendarCheck2, ChevronDown, ChevronUp, GraduationCap, LayoutGrid, Newspaper, Target, UserRound } from 'lucide-react';
+import { Button, Modal } from 'antd';
+import {
+  ArrowRight,
+  BarChart3,
+  CalendarCheck2,
+  ChevronDown,
+  ChevronUp,
+  Clapperboard,
+  Lightbulb,
+  Megaphone,
+  MessagesSquare,
+  Newspaper,
+  Send,
+  Target,
+} from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Page } from '../pageRegistry';
-import { digitalEmployeeApi } from '../lib/digitalEmployeeApi';
-import { AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
-import type { DigitalEmployeeOverview } from '../lib/digitalEmployees';
-import { AuthenticatedImage } from './inspiration/InspirationMedia';
-import { ASSISTANT_HOME_ACTIVITY_EVENT } from './assistant/useAssistantHomeAnchor';
-import { industrySignalsReply, operatingStrategyReply, weeklyTaskReply } from './contentCreationHomeReplies';
+import {
+  ASSISTANT_HOME_LEVEL_LABELS,
+  ASSISTANT_HOME_QUICK_LAUNCHERS,
+  assistantHomePromptById,
+  type AssistantHomePrompt,
+  type AssistantHomeQuickLauncher,
+  type AssistantHomeQuickLauncherId,
+} from '../lib/assistantHomeQuickPrompts';
+import { useAssistantStore } from '../stores/assistantStore';
+import { PRIMARY_ASSISTANT_THREAD } from './assistant/globalAssistantRuntime';
+import {
+  ASSISTANT_HOME_ACTIVITY_EVENT,
+  ASSISTANT_HOME_PROMPT_EVENT,
+  type AssistantHomePromptMode,
+} from './assistant/useAssistantHomeAnchor';
 
-function CanvasCard({ mediaUrl, title, description, icon, onClick, primary = false }: {
-  mediaUrl?: string;
-  title: string;
-  description: string;
-  icon: ReactNode;
-  onClick: () => void;
-  primary?: boolean;
-}) {
-  const [failedMediaUrl, setFailedMediaUrl] = useState('');
-  const showMedia = Boolean(mediaUrl && failedMediaUrl !== mediaUrl);
-  return <button type="button" onClick={onClick} className={`creator-home__canvas-card${primary ? ' creator-home__canvas-card--primary' : ''}${showMedia ? ' creator-home__canvas-card--with-media' : ''}`}>
-    {showMedia && mediaUrl ? <AuthenticatedImage src={mediaUrl} alt="" className="creator-home__canvas-card-media" onError={() => setFailedMediaUrl(mediaUrl)}/> : null}
-    <span className="creator-home__canvas-card-shade" aria-hidden="true"/>
-    <span className="creator-home__canvas-card-content">{icon}<strong>{title}</strong><span>{description}</span></span>
-  </button>;
+function launcherIcon(id: AssistantHomeQuickLauncherId, size = 18) {
+  const props = { size, 'aria-hidden': true as const };
+  if (id === 'weekly-plan') return <CalendarCheck2 {...props}/>;
+  if (id === 'external-news') return <Newspaper {...props}/>;
+  if (id === 'content-strategy') return <Target {...props}/>;
+  if (id === 'business-analysis') return <BarChart3 {...props}/>;
+  if (id === 'publish-plan') return <Send {...props}/>;
+  if (id === 'traffic-optimization') return <Megaphone {...props}/>;
+  if (id === 'customer-followup') return <MessagesSquare {...props}/>;
+  if (id === 'materials') return <Lightbulb {...props}/>;
+  return <Clapperboard {...props}/>;
+}
+
+function resolveLauncherPrompts(launcher: AssistantHomeQuickLauncher | null): AssistantHomePrompt[] {
+  if (!launcher) return [];
+  return launcher.promptIds
+    .map(id => assistantHomePromptById(id))
+    .filter((entry): entry is AssistantHomePrompt => Boolean(entry));
 }
 
 export default function ContentCreationHome({ inspirationWorkspace }: { onNavigate?: (page: Page) => void; inspirationWorkspace?: ReactNode }) {
-  const [overview, setOverview] = useState<DigitalEmployeeOverview | null>(null);
-  const [overviewLoading, setOverviewLoading] = useState(false);
-  const [overviewError, setOverviewError] = useState('');
-  const [overviewRevision, setOverviewRevision] = useState(0);
-  const [canvasCollapsed, setCanvasCollapsed] = useState(false);
-
-  useEffect(() => {
-    const resetTenantData = () => { setOverview(null); setOverviewRevision(value => value + 1); };
-    const onStorage = (event: StorageEvent) => { if (event.key === 'overseas_token' || event.key === null) resetTenantData(); };
-    window.addEventListener(AUTH_TOKEN_CHANGED_EVENT, resetTenantData);
-    window.addEventListener('storage', onStorage);
-    return () => { window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT, resetTenantData); window.removeEventListener('storage', onStorage); };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    setOverviewLoading(true);
-    setOverviewError('');
-    void digitalEmployeeApi.overview()
-      .then(data => { if (active) setOverview(data); })
-      .catch(error => { if (active) setOverviewError(error instanceof Error ? error.message : '周任务状态读取失败'); })
-      .finally(() => { if (active) setOverviewLoading(false); });
-    return () => { active = false; };
-  }, [overviewRevision]);
+  const [activeLauncherId, setActiveLauncherId] = useState<AssistantHomeQuickLauncherId | null>(null);
+  const [pendingPrompt, setPendingPrompt] = useState<AssistantHomePrompt | null>(null);
+  const activeLauncher = useMemo(
+    () => ASSISTANT_HOME_QUICK_LAUNCHERS.find(entry => entry.id === activeLauncherId) || null,
+    [activeLauncherId],
+  );
+  const activePrompts = useMemo(() => resolveLauncherPrompts(activeLauncher), [activeLauncher]);
+  const canvasCollapsed = activeLauncher === null;
 
   useEffect(() => {
     const onAssistantActivity = (event: Event) => {
       const detail = (event as CustomEvent<{ active?: boolean }>).detail;
-      if (detail?.active) setCanvasCollapsed(true);
+      if (detail?.active) setActiveLauncherId(null);
     };
     window.addEventListener(ASSISTANT_HOME_ACTIVITY_EVENT, onAssistantActivity);
     return () => window.removeEventListener(ASSISTANT_HOME_ACTIVITY_EVENT, onAssistantActivity);
   }, []);
 
-  const suggest = (prompt: string) => window.dispatchEvent(new CustomEvent('lingshu:assistant-home-prompt', { detail: prompt }));
-  const askAssistant = (text: string, scriptedReply?: string) => window.dispatchEvent(new CustomEvent('lingshu-assistant-open', {
-    detail: {
-      text,
-      scriptedReply,
-      context: {
-        agent: 'strategy',
-        label: 'hi，灵小枢',
-        summary: '当前从轻量首页进入，由灵小枢通过对话解释现状并引导完成目标。',
-        sourcePage: 'strategy',
-        workflowStage: overview?.goal ? 'planned' : 'unplanned',
-        goalId: overview?.goal?.id,
-        planId: overview?.plan?.id,
-        runId: overview?.run?.id,
-      },
-    },
-  }));
-  const initialEntry = !overview?.config;
-  const industrySignalCount = overview?.industryTrends?.signals.length ?? 0;
-  const cardMedia = useMemo(() => {
-    const urls = [
-      ...(overview?.industryTrends?.signals.map(item => item.thumbnailUrl) || []),
-      ...(overview?.review?.summary.contentPerformance?.map(item => item.thumbnailUrl) || []),
-      ...(overview?.goal?.videoPlans?.map(item => item.planningEvidence?.referenceThumbnailUrl || item.preproduction?.benchmark.thumbnailUrl) || []),
-    ].map(value => String(value || '').trim()).filter(Boolean);
-    return [...new Set(urls)];
-  }, [overview]);
-  const card = (index: number, title: string, description: string, icon: ReactNode, onClick: () => void, primary = false) => {
-    const mediaUrl = cardMedia[index % Math.max(cardMedia.length, 1)];
-    return <CanvasCard key={`${index}:${title}`} mediaUrl={mediaUrl} title={title} description={description} icon={icon} onClick={onClick} primary={primary}/>;
+  const fillPrompt = (entry: AssistantHomePrompt, mode: AssistantHomePromptMode = 'replace') => {
+    window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_PROMPT_EVENT, { detail: { prompt: entry.prompt, mode } }));
+    setPendingPrompt(null);
+    setActiveLauncherId(null);
+  };
+
+  const choosePrompt = (entry: AssistantHomePrompt) => {
+    const draft = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].draftInput.trim();
+    if (draft && draft !== entry.prompt.trim()) {
+      setPendingPrompt(entry);
+      return;
+    }
+    fillPrompt(entry);
+  };
+
+  const toggleLauncher = (launcherId: AssistantHomeQuickLauncherId) => {
+    setActiveLauncherId(current => current === launcherId ? null : launcherId);
   };
 
   return <div className="creator-home creator-home--employee h-full overflow-y-auto">
@@ -100,45 +96,57 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
       </header>
 
       <div className={`creator-home__canvas-stage${canvasCollapsed ? ' is-collapsed' : ''}`} inert={canvasCollapsed ? true : undefined} aria-hidden={canvasCollapsed || undefined}>
-        <section id="creator-home-operations" className="creator-home__canvas" aria-label="数字员工快捷入口">
-          {overviewError && <Alert type="warning" showIcon title={overviewError} className="mb-3"/>}
-          {overviewLoading && !overview
-            ? <div className="flex min-h-40 items-center justify-center"><Spin description="正在读取数字员工工作"/></div>
-            : initialEntry
-              ? <div className="creator-home__canvas-grid creator-home__canvas-grid--onboarding">
-                  {card(0, '让灵小枢认识你', '录入企业、品牌、主推产品和市场信息', <UserRound size={28}/>, () => askAssistant(
-                    '请通过对话认识我的企业、品牌、主推产品和目标市场。',
-                    '好，我们从企业与品牌开始。\n\n请用一句话告诉我：企业名称、品牌名称、主推产品，以及主要目标市场。\n\n例如：我们是「澄光美研」，品牌是「Aurelia」，主推精华与面霜，主要面向北美市场。',
-                  ))}
-                  {card(1, '新手成长', '继续完善企业知识库与数字人形象', <GraduationCap size={28}/>, () => askAssistant('请通过对话引导我完善新手成长资料，优先检查企业知识库和数字人形象。'), true)}
-                </div>
-              : <div className="creator-home__canvas-grid creator-home__canvas-grid--operations">
-                  {card(0, '今日资讯', industrySignalCount ? `${industrySignalCount} 条真实行业与社媒信号` : '行业 B2B、政策与社媒动态', <Newspaper size={28}/>, () => { setCanvasCollapsed(true); askAssistant('请结合我的企业和目标市场，解读今日 B2B 行业资讯、政策调整和社媒热潮，并告诉我哪些值得行动。', industrySignalsReply(overview)); })}
-                  {card(1, '经营策略', overview?.plan?.strategy || '查看当前周计划策略与 Agent 设置', <Target size={28}/>, () => { setCanvasCollapsed(true); askAssistant('请查看当前经营策略和 Agent 设置，告诉我本周重点、依据和下一步建议。', operatingStrategyReply(overview)); })}
-                  {card(2, '周经营任务', overview?.goal ? `${overview.goal.title} · ${overview.run?.status || '待启动'}` : '制定并确认本周经营任务', <CalendarCheck2 size={28}/>, () => { setCanvasCollapsed(true); askAssistant(overview?.goal ? '查看当前周任务的状态和进度' : '帮我创建当前周任务', weeklyTaskReply(overview)); }, true)}
-                </div>}
+        <section id="creator-home-operations" className="creator-home__canvas" aria-label={activeLauncher ? `${activeLauncher.label}快捷任务` : '快捷任务'}>
+          {activeLauncher ? <div className="creator-home__quick-panel">
+            <div id="creator-home-prompt-cards" className="creator-home__prompt-grid" aria-label={`${activeLauncher.label}：${activeLauncher.description}`}>
+              {activePrompts.map((entry, index) => <button
+                type="button"
+                key={entry.id}
+                className={`creator-home__prompt-card${index === 0 ? ' creator-home__prompt-card--primary' : ''}`}
+                onClick={() => choosePrompt(entry)}
+              >
+                <span className="creator-home__prompt-card-icon">{launcherIcon(activeLauncher.id, 19)}</span>
+                <span className="creator-home__prompt-card-copy"><strong>{entry.label}</strong><span>{entry.summary}</span></span>
+                <span className={`creator-home__prompt-card-level is-${entry.level}`}>{ASSISTANT_HOME_LEVEL_LABELS[entry.level]}</span>
+                <ArrowRight size={15} aria-hidden="true"/>
+              </button>)}
+            </div>
+          </div> : null}
         </section>
-      </div>
-      <div className="creator-home__canvas-toggle-row">
-        <button type="button" className="creator-home__canvas-toggle" aria-controls="creator-home-operations" aria-expanded={!canvasCollapsed} onClick={() => setCanvasCollapsed(value => !value)}>
-          <LayoutGrid size={15} aria-hidden="true"/>
-          <span>{canvasCollapsed ? '展开快捷入口' : '收起快捷入口'}</span>
-          {canvasCollapsed ? <ChevronDown size={14} aria-hidden="true"/> : <ChevronUp size={14} aria-hidden="true"/>}
-        </button>
       </div>
 
       <section className="creator-home__conversation" aria-label="灵小枢对话">
         <div id="content-creation-assistant-anchor" className="creator-home__assistant-anchor"/>
       </section>
 
-      <div className="creator-home__suggestions" aria-label="创作建议">
-        {['写一条爆款视频脚本', '帮我制作产品分镜', '提炼产品卖点', '规划本周内容', '查看素材怎么用'].map(prompt =>
-          <button type="button" key={prompt} onClick={() => suggest(prompt)}>{prompt}<ArrowRight size={14} aria-hidden="true"/></button>)}
+      <div className="creator-home__suggestions" aria-label="快捷任务">
+        {ASSISTANT_HOME_QUICK_LAUNCHERS.map(launcher => {
+          const active = activeLauncherId === launcher.id;
+          return <button
+            type="button"
+            key={launcher.id}
+            className={active ? 'is-active' : undefined}
+            aria-controls="creator-home-operations"
+            aria-expanded={active}
+            onClick={() => toggleLauncher(launcher.id)}
+          >
+            {launcherIcon(launcher.id, 15)}
+            <span>{launcher.label}</span>
+            {active ? <ChevronUp size={14} aria-hidden="true"/> : <ChevronDown size={14} aria-hidden="true"/>}
+          </button>;
+        })}
       </div>
 
       <section id="creator-home-library" className="creator-home__library" aria-label="爆款视频、素材库、对标账号和待拍">
         {inspirationWorkspace}
       </section>
     </div>
+    <Modal open={Boolean(pendingPrompt)} title="输入框已有内容" width={480} closable={false} footer={[
+      <Button key="cancel" onClick={() => setPendingPrompt(null)}>取消</Button>,
+      <Button key="append" onClick={() => pendingPrompt && fillPrompt(pendingPrompt, 'append')}>追加到现有内容</Button>,
+      <Button key="replace" type="primary" onClick={() => pendingPrompt && fillPrompt(pendingPrompt, 'replace')}>替换现有内容</Button>,
+    ]}>
+      <p>“{pendingPrompt?.label}”会填入灵小枢输入框。请选择追加或替换；系统不会自动发送。</p>
+    </Modal>
   </div>;
 }
