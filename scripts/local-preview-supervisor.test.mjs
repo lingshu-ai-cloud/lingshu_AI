@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('./local-preview-supervisor.mjs', import.meta.url), 'utf8');
 const viteSource = readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
+const accountHubViteSource = readFileSync(new URL('../apps/account-hub/vite.config.ts', import.meta.url), 'utf8');
 
 assert.doesNotMatch(source, /node_modules\/vite\/bin\/vite\.js'\),\s*'preview'/, '常驻本地预览不能依赖会被构建过程替换的 dist 哈希文件');
 assert.match(source, /verifyModuleScripts: true/, '前端健康检查必须验证入口模块可读取，不能只检查空 root 容器');
@@ -34,6 +35,10 @@ assert.match(source, /providerConfiguration.loadedKeys.join/, 'provider 配置�
 assert.doesNotMatch(source, /(?:log|console\.[a-z]+)\([^\n]*providerConfiguration\.providerEnv/, '不能记录 provider 凭据值');
 assert.doesNotMatch(source, /'0\.0\.0\.0'/, '受监督的本地预览不能监听局域网接口');
 assert.match(source, /'--host',\s*'127\.0\.0\.1'/, '受监督的本地预览必须只绑定 IPv4 回环地址');
+assert.match(viteSource, /process\.env\.LINGSHU_PREVIEW_FRONTEND_PORT \|\| process\.env\.DEV_PORT/, '受监督预览的缓存命名必须采用实际监听端口，不能回退到默认端口');
+assert.match(viteSource, /cacheDir:\s*path\.resolve\(import\.meta\.dirname, 'node_modules', `\.vite-main-\$\{devPort\}`\)/, '并行本地预览必须按端口隔离 Vite 依赖缓存');
+assert.match(viteSource, /DEV_HMR_CLIENT_PORT \|\| devPort/g, '受监督预览的 CSP 必须允许实际监听端口的 HMR 连接');
+assert.match(accountHubViteSource, /`node_modules\/\.vite-account-hub-\$\{accountHubPort\}`/, '并行账号中心预览也必须按端口隔离 Vite 依赖缓存');
 assert.match(viteSource, /optimizeDeps:\s*\{[^}]*exclude:\s*\['xlsx'\]/s, '本地预览不能给 vendored xlsx 生成会失效的优化哈希');
 assert.match(viteSource, /'\/cloud-files':\s*\{[^}]*target:\s*devApiTarget/s, '本地预览必须转发历史云素材播放路由');
 assert.match(viteSource, /'\/studio-media':\s*\{[^}]*target:\s*devApiTarget/s, '本地预览必须转发当前素材播放路由');

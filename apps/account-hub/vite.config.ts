@@ -9,20 +9,21 @@ const repositoryRoot = path.resolve(appRoot, '../..');
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, repositoryRoot, '');
   const devApiTarget = process.env.DEV_API_TARGET ?? env.DEV_API_TARGET ?? 'http://127.0.0.1:8790';
+  const accountHubPort = Number(process.env.LINGSHU_PREVIEW_ACCOUNT_HUB_PORT || process.env.ACCOUNT_HUB_DEV_PORT || 5178);
 
   return {
     root: appRoot,
     // The standalone hub and the main app run side-by-side in local preview.
     // Give them separate dependency caches so concurrent Vite optimization
     // cannot invalidate the hub's versioned React imports.
-    cacheDir: path.resolve(repositoryRoot, 'node_modules/.vite-account-hub'),
+    cacheDir: path.resolve(repositoryRoot, `node_modules/.vite-account-hub-${accountHubPort}`),
     publicDir: path.resolve(repositoryRoot, 'public'),
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: { '@': path.resolve(repositoryRoot, 'src') },
     },
     server: {
-      port: Number(process.env.ACCOUNT_HUB_DEV_PORT || 5178),
+      port: accountHubPort,
       strictPort: true,
       // Keep the administrative development UI loopback-only instead of
       // advertising it on the LAN. Member connectors use token-auth endpoints.

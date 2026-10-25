@@ -30,8 +30,13 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const devApiTarget = process.env.DEV_API_TARGET ?? env.DEV_API_TARGET ?? 'http://127.0.0.1:8790';
   const buildSha = resolveBuildSha();
+  const devPort = Number(process.env.LINGSHU_PREVIEW_FRONTEND_PORT || process.env.DEV_PORT || 5177);
 
   return {
+    // Multiple worktrees and baseline previews commonly run at the same time.
+    // Keep each port's optimized dependency graph isolated so a neighboring
+    // Vite process cannot invalidate this preview's versioned module URLs.
+    cacheDir: path.resolve(import.meta.dirname, 'node_modules', `.vite-main-${devPort}`),
     plugins: [react(), tailwindcss()],
     define: { __APP_BUILD_SHA__: JSON.stringify(buildSha) },
     build: {
@@ -69,9 +74,9 @@ export default defineConfig(({ mode }) => {
     },
     server: {
     // Real AI runs on the server; preview browsers may only connect to this origin.
-    ...((process.env.VITE_LINGSHU_LOCAL_PREVIEW ?? env.VITE_LINGSHU_LOCAL_PREVIEW) === '1' ? {headers: {'Content-Security-Policy': `connect-src 'self' ws://127.0.0.1:${process.env.DEV_HMR_CLIENT_PORT || process.env.DEV_PORT || 5177} ws://localhost:${process.env.DEV_HMR_CLIENT_PORT || process.env.DEV_PORT || 5177}; form-action 'self'`}} : {}),
+    ...((process.env.VITE_LINGSHU_LOCAL_PREVIEW ?? env.VITE_LINGSHU_LOCAL_PREVIEW) === '1' ? {headers: {'Content-Security-Policy': `connect-src 'self' ws://127.0.0.1:${process.env.DEV_HMR_CLIENT_PORT || devPort} ws://localhost:${process.env.DEV_HMR_CLIENT_PORT || devPort}; form-action 'self'`}} : {}),
     // 合并版使用独立端口，避免和 overseas / 新手引导两个工作区互相抢占。
-    port: Number(process.env.DEV_PORT || 5177),
+    port: devPort,
     strictPort: true,
     host: '0.0.0.0',
     hmr: resolveHmr(),
