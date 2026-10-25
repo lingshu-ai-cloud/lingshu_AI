@@ -30,7 +30,11 @@ export function socialReferenceFidelityFailures(input: {
     if (!shot.shotId || referenceIds.has(shot.shotId)) failures.push(`reference_fidelity:invalid_reference_identity:${index}`);
     referenceIds.add(shot.shotId);
     if (!validInterval(shot)) failures.push(`reference_fidelity:invalid_reference_interval:${index}`);
-    const previousEnd = index ? reference.shots[index - 1]!.endSeconds : 0;
+    // Reference extraction deliberately excludes an analyzed sub-200ms cover
+    // flash. Preserve the first substantive slot's original timestamp.
+    const excludedCover = index === 0 && shot.startSeconds > 0 && shot.startSeconds < 0.2
+      && reference.coverage?.fullTimelineCovered === true && reference.coverage.gaps.length === 0;
+    const previousEnd = index ? reference.shots[index - 1]!.endSeconds : excludedCover ? shot.startSeconds : 0;
     if (differs(shot.startSeconds, previousEnd)) failures.push(`reference_fidelity:reference_timeline_gap_or_overlap:${index}`);
   });
   if (reference.shots.length && reference.durationSeconds != null

@@ -12,7 +12,7 @@ import { classifyReferenceCriticalShots, restoreReferenceCriticalResponse, Refer
 import { withPaidOperationLock } from './paidOperationLock.js';
 
 const execute = promisify(execFile);
-export const CRITICAL_SHOT_FRAME_POLICY = 'decoded-source-pts-frames-v2';
+export const CRITICAL_SHOT_FRAME_POLICY = 'decoded-source-pts-frames-v3-short-shot';
 
 export function firstDecodedReferenceFrameSeconds(stderr: string): number | null {
   const match = stderr.match(/\bn:\s*0\s+pts:\s*[-\d]+\s+pts_time:\s*([-\d.e+]+)/);
@@ -127,19 +127,28 @@ export async function extractReferenceEvidenceFrames(filePath: string, analysis:
   fs.mkdirSync(root, { recursive: true });
   const frameDir = fs.mkdtempSync(path.join(root, 'frames-'));
   try {
-    const frames = [];
+    const frames: Array<{ shotId: string; seconds: number; requestedSeconds: number; base64: string; mimeType: string }> = [];
       for (let index = 0; index < schedule.length; index++) {
         const target = path.join(frameDir, `${index}.jpg`), frame = schedule[index]!;
         const { stderr } = await execute(ffmpeg || 'ffmpeg', ['-hide_banner','-loglevel','info',
           '-copyts','-start_at_zero','-ss',String(frame.seconds), '-i',filePath,
           '-frames:v','1','-vf','showinfo,scale=384:-2','-q:v','5','-y',target], { timeout: 20_000 });
-        const actualSeconds = firstDecodedReferenceFrameSeconds(stderr);
+        let actualSeconds = firstDecodedReferenceFrameSeconds(stderr);
         const shot = analysis.scriptDetails15s?.[Number(frame.shotId.replace('shot-', '')) - 1];
         const range = benchmarkTimeRange(shot?.time || shot?.timestamp);
+        // Seeking rounds forward to a decoded frame and can cross a short
+        // shot's end. Recover an actual frame inside that shot, never relabel it.
+        if (range && (actualSeconds === null || actualSeconds >= Math.min(range.end, duration))) {
+          const fallback = await execute(ffmpeg || 'ffmpeg', ['-hide_banner','-loglevel','info','-i',filePath,
+            '-vf', `select='gte(t,${range.start})*lt(t,${Math.min(range.end, duration)})',showinfo,scale=384:-2`,
+            '-fps_mode','vfr','-frames:v','1','-q:v','5','-y',target], { timeout: 20_000 });
+          actualSeconds = firstDecodedReferenceFrameSeconds(fallback.stderr);
+        }
         if (!fs.existsSync(target) || actualSeconds === null || !range
           || actualSeconds < range.start || actualSeconds >= Math.min(range.end, duration)) {
           throw new Error(`原片 ${frame.shotId} 在 ${frame.seconds}s 没有可验证的解码帧；未提交千问`);
         }
+        if (frames.some(item => item.shotId === frame.shotId && item.seconds === actualSeconds)) continue;
         frames.push({ ...frame, seconds: actualSeconds, requestedSeconds: frame.seconds,
           base64: fs.readFileSync(target).toString('base64'), mimeType: 'image/jpeg' });
       }

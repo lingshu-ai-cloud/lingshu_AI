@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { lazy, Suspense, useRef } from 'react';
 import { App as AntApp } from 'antd';
 import { ArrowRight, Clapperboard } from 'lucide-react';
 import { assistantCreationPortalSchema, type AssistantCreationPortal } from '../../../shared/contracts/assistantCreationPortal';
@@ -6,6 +6,10 @@ import { productionNavigationIdentity } from '../../lib/productionNavigation';
 import type { SocialContentCreateRequest } from '../socialContent/SocialContentWorkspace';
 import { assistantTaskPortalSchema, type AssistantTaskPortal } from '../../../shared/contracts/assistantTaskPortal';
 import { assistantSourcePortalSchema, type AssistantSourcePortal } from '../../../shared/contracts/assistantSourcePortal';
+import AssistantProductionPortal, { productionPortalNavigation } from './AssistantProductionPortal';
+import AssistantReplicationScene from './AssistantReplicationScene';
+const AssistantScenarioPlanner = lazy(() => import('./AssistantScenarioPlanner'));
+const AssistantScheduleScene = lazy(() => import('./AssistantScheduleScene'));
 
 export function creationPortalNavigation(value: AssistantCreationPortal, requestId = Date.now()) {
   const portal = assistantCreationPortalSchema.parse(value);
@@ -21,9 +25,13 @@ export function creationPortalNavigation(value: AssistantCreationPortal, request
 export default function AssistantCreationPortalCard({ portal }: { portal: AssistantCreationPortal }) {
   const { message } = AntApp.useApp();
   const identity = useRef(productionNavigationIdentity());
-  const valid = assistantCreationPortalSchema.safeParse(portal);
+  const valid = assistantCreationPortalSchema.safeParse(portal.scenario === 'viral_replication' && Array.isArray(portal.selectedProducts)
+    ? { ...portal, selectedProducts: portal.selectedProducts.map(({ id, name }) => ({ id, name })) } : portal);
   if (!valid.success) return null;
   const item = valid.data;
+  if (item.scenario === 'viral_replication') return <AssistantReplicationScene portal={item}/>;
+  if (item.scenario === 'weekly_calendar') return <Suspense fallback={<p role="status">正在打开日历…</p>}><AssistantScheduleScene portal={item}/></Suspense>;
+  if (['hook_first','campaign','content_task'].includes(item.scenario || '')) return <Suspense fallback={<p role="status">正在打开场景…</p>}><AssistantScenarioPlanner portal={item}/></Suspense>;
   return <button type="button" aria-label="打开内容创作" data-assistant-creation-portal={item.id}
     className="mt-3 flex w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-text-primary transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     onClick={() => {
@@ -40,6 +48,7 @@ export default function AssistantCreationPortalCard({ portal }: { portal: Assist
 export function taskPortalNavigation(portal: AssistantTaskPortal) {
   const item = assistantTaskPortalSchema.parse(portal);
   if (item.phase !== 'ready') throw new Error('请先确认是否打开任务。');
+  if (item.action === 'view_production') return productionPortalNavigation(item.taskId);
   return { page: 'smartAssets', socialContentTaskId: item.taskId, socialContentPage: 'smartAssets', directStudio: true };
 }
 
@@ -49,6 +58,7 @@ export function AssistantTaskPortalCard({ portal }: { portal: AssistantTaskPorta
   const parsed = assistantTaskPortalSchema.safeParse(portal);
   if (!parsed.success || parsed.data.phase !== 'ready') return null;
   const item = parsed.data;
+  if (item.action === 'view_production') return <AssistantProductionPortal taskId={item.taskId}/>;
   const action = item.action === 'review_plan' ? '确认方案' : item.action === 'complete_brief' ? '补充制作信息' : '查看任务';
   return <button type="button" aria-label={`打开任务：${item.title}`} data-assistant-task-portal={item.taskId}
     className="mt-3 flex w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-text-primary transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"

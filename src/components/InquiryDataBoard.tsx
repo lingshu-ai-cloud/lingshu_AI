@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Alert } from 'antd';
 import { AlertCircle, Info, RefreshCw, TrendingUp, UserCheck } from 'lucide-react';
 import { useCustomers } from '../hooks/useCustomers';
 import type { CustomerProfile } from '../types/customer';
@@ -27,7 +28,7 @@ function isWhatsAppInquiry(customer: CustomerProfile) {
 
 export default function InquiryDataBoard({ includeMockCustomers = false, mockCustomerScope = 'admin', demoCustomers }: { windowDays?: number; includeMockCustomers?: boolean; mockCustomerScope?: string; demoCustomers?: CustomerProfile[] }) {
   const [refreshKey, setRefreshKey] = useState(0);
-  const { customers, loading } = useCustomers(refreshKey, includeMockCustomers, mockCustomerScope);
+  const { customers, loading, error } = useCustomers(refreshKey, includeMockCustomers, mockCustomerScope);
   const effectiveCustomers = demoCustomers ?? customers;
 
   const inquiries = useMemo(() => [...effectiveCustomers]
@@ -55,10 +56,11 @@ export default function InquiryDataBoard({ includeMockCustomers = false, mockCus
       </div>
 
       {demoCustomers && <div className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950"><strong>参考预览：</strong>客户、消息、阶段与商机估值均为模拟，不代表真实询盘。</div>}
+      {error && !demoCustomers && <Alert className="mb-4" type="warning" showIcon title={error} description="已保留上次客户记录；读取失败不代表没有询盘，请刷新重试。"/>}
 
       {loading && !demoCustomers ? (
         <div className="secondary-empty border-l-2 border-border bg-surface p-5 text-sm text-text-muted">正在读取 WhatsApp 客户会话...</div>
-      ) : inquiries.length === 0 ? (
+      ) : error && !demoCustomers && inquiries.length === 0 ? null : inquiries.length === 0 ? (
         <EmptyState text="暂无 WhatsApp 客户会话。" />
       ) : (
         <>
@@ -69,7 +71,7 @@ export default function InquiryDataBoard({ includeMockCustomers = false, mockCus
             <StatCard label="预估金额" value={`$${summary.estimated.toLocaleString('en-US')}`} icon={<Info size={14} />} />
           </div>
 
-          <section className="secondary-panel border border-border bg-white">
+          <section className="secondary-panel border border-border bg-surface">
             <div className="border-b border-border px-4 py-3">
               <p className="text-sm font-bold text-text-primary">WhatsApp 询盘明细</p>
             </div>

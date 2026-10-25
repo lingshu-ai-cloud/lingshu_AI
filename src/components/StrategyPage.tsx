@@ -34,7 +34,7 @@ export default function StrategyPage({ onNavigate, onEnterConversation, onLeaveC
           onSessionRefresh={onSessionRefresh}
           initialView="materials"
           showModeTabs={false}
-          pageTitle="爆款视频与素材"
+          pageTitle="爆款素材"
           embeddedInspiration
         />
       }/>

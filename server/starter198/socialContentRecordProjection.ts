@@ -1,3 +1,4 @@
+import { socialAssistantAdmission } from './socialContentAssistantStart.js';
 import { creationReplySchema } from '../../shared/contracts/contentCreationDialogue.js';
 import {parseSocialReferenceReuse} from './socialContentValidation.js';
 import { parseSocialReplicationContext } from './socialContentValidation.js';
@@ -138,6 +139,19 @@ export async function readAuthorizedPresenterInventory(repository: Starter198Rep
 
 export async function readAuthorizedPresenterAssetIds(repository: Starter198Repository, tenantId: string): Promise<string[]> {
   return (await readAuthorizedPresenterInventory(repository, tenantId)).assetIds;
+}
+
+/** Use the tenant's saved production choice; never choose an arbitrary person from inventory. */
+export async function readDefaultPresenterAssetId(repository: Starter198Repository, tenantId: string): Promise<string | null> {
+  if (!repository.dataStore) return null;
+  const rows = await repository.dataStore.list<{ payload?: { defaultPresenterId?: string; presenters?: StoredPresenter[] } }>(
+    'studio_production_defaults', { where: { tenant_id: tenantId }, perPage: 2 });
+  if (rows.totalItems > 1) throw new SocialContentWorkflowError('social_content_presenter_assets_unavailable', 503);
+  const payload = rows.items[0]?.payload;
+  const matches = payload?.presenters?.filter(item => item.id === payload.defaultPresenterId) ?? [];
+  if (matches.length !== 1) return null;
+  const verified = validateHeyGenPresenterRecord(matches[0]!);
+  return verified.ok ? verified.presenterAssetId : null;
 }
 
 export const storedCount = (value: unknown): number => {
@@ -392,6 +406,7 @@ export function socialTaskSummary(record: StarterRecord): SocialContentTaskSumma
   }
   return {
     taskId,
+    ...socialAssistantAdmission(record),
     ...(socialObject(socialJson(record.content_order))?.schemaVersion==='social-content-order.v1'
       ?{contentOrder:structuredClone(socialJson(record.content_order)) as SocialContentTaskSummary['contentOrder']}:{}),
     brief,

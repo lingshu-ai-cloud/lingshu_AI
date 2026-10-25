@@ -250,6 +250,7 @@ export interface VideoApplicationPorts {
     prepare?: typeof prepareReferenceNarration;
   }): Promise<ReferenceSpeechTranscript>;
   analyzeExactLongVideoChunks(input: {
+    filePath?: string;
     frames: Array<{ base64: string; mimeType: string; timeLabel: string }>;
     title?: string;
     platform?: Platform;

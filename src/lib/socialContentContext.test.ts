@@ -26,6 +26,8 @@ assert.equal(readSocialContentNavigationTaskId('smartAssets', {
   socialContentPage: 'smartAssets',
 }), null, 'task ids must stay inside the API identifier contract');
 assert.equal(readSocialContentNavigationQueryTaskId('smartAssets', '?page=smartAssets&taskId=socialtask_1'), 'socialtask_1');
+assert.equal(readSocialContentNavigationQueryTaskId('smartAssets', '?page=smartAssets&socialContentTaskId=socialtask_1'), 'socialtask_1');
+assert.equal(readSocialContentNavigationQueryTaskId('smartAssets', '?page=smartAssets&socialContentTaskId=first&taskId=second'), null);
 assert.equal(readSocialContentNavigationQueryTaskId('traffic', '?page=smartAssets&taskId=socialtask_1'), null);
 assert.equal(readSocialContentNavigationQueryTaskId('smartAssets', '?page=smartAssets&taskId=../unsafe'), null);
 

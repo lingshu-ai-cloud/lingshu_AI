@@ -68,3 +68,18 @@ test('task persistence retains the account lineage needed for presenter locking'
   assert.equal(parsed.referenceMode, 'single_source_fidelity');
   assert.equal(parsed.presenterAssetId, 'account-presenter');
 });
+
+test('assistant uses only the saved default with verified rights, never another available person', async () => {
+  const { readDefaultPresenterAssetId } = await import('./socialContentRecordProjection.js');
+  const person = { id: 'saved', authorized: true, assetVersion: 1, avatarId: 'avatar', voiceId: 'voice', rightsEvidence: {
+    authorizationRef: 'document://approved', consentRef: 'consent://approved', grantedAt: '2026-01-01T00:00:00Z',
+    subjectAdultConfirmed: true, permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'],
+  } };
+  const payload = { defaultPresenterId: 'saved', presenters: [person, { ...person, id: 'other' }] };
+  const repository: any = { dataStore: { list: async () => ({ totalItems: 1, items: [{ payload }] }) } };
+  assert.equal(await readDefaultPresenterAssetId(repository, 'tenant'), 'saved');
+  person.authorized = false;
+  assert.equal(await readDefaultPresenterAssetId(repository, 'tenant'), null);
+  payload.defaultPresenterId = 'missing';
+  assert.equal(await readDefaultPresenterAssetId(repository, 'tenant'), null);
+});

@@ -389,7 +389,7 @@ function PlatformAdsWorkspace({
               </div>
             </section>
           ) : (
-            <AdPlanManagement tasks={drafts.map(d => ({ ...d, budget: Number(d.budget), createdAt: d.createdAt || '', updatedAt: '' }))} loading={loadingTasks} error={taskLoadError} onOpen={openTask} onUpdate={replaceTask} previewMode={previewMode} onCreate={openCreate} onAI={id => { openTask(id); setManagedOpen(true); }}/>
+            <AdPlanManagement tasks={drafts.map(d => ({ ...d, budget: Number(d.budget), createdAt: d.createdAt || '', updatedAt: '' }))} loading={loadingTasks} error={taskLoadError} onOpen={openTask} onUpdate={replaceTask} previewMode={previewMode} onAI={id => { openTask(id); setManagedOpen(true); }}/>
           ))}
 
         {isCreativePage && (

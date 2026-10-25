@@ -17,6 +17,8 @@ import { attachSocialContentNavigationState, hasWeeklyContentNavigationTarget, r
 import { socialContentCanRegisterPublication, type SocialContentCreationPath, type SocialContentDraft, type SocialContentMaterialInput } from '../../lib/socialContentModel';
 import { ArtifactBatchChangesDialog, ArtifactChangesDialog, MetricsDialog, PublicationDialog } from './SocialTaskActionDialogs';
 import SocialTaskOverview from './SocialTaskOverview';
+import CreationTaskLocation from './CreationTaskLocation';
+import { isAssistantReplicationTask } from '../../lib/assistantReplicationQueue';
 import SocialManagedExecutionNotice from './SocialManagedExecutionNotice';
 import { useSocialContentWorkspace } from './useSocialContentWorkspace';
 import type { SocialImageProductionMode } from '../../lib/socialImageProductionMode';
@@ -63,10 +65,12 @@ export default function SocialContentWorkspace({
   onNavigate,
   onNavigateWithTask,
   onRequestCreate,
+  taskDetailOnly = false,
 }: {
   onNavigate: (page: Page) => void;
   onNavigateWithTask?: (page: Page, taskId: string) => void;
   onRequestCreate?: () => void;
+  taskDetailOnly?: boolean;
 }) {
   const state = useSocialContentWorkspace();
   const [weeklyTarget,setWeeklyTarget]=useState(()=>typeof window==='undefined'?null:readWeeklyContentNavigationTarget(window.history.state));
@@ -121,10 +125,12 @@ export default function SocialContentWorkspace({
   if (!state.workspace) {
     return (
       <section className="rounded-lg border border-border bg-white p-6 shadow-none" aria-label="社媒内容任务">
-        <div className="flex flex-wrap items-center justify-between gap-4"><div className="flex items-start gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-700"><AlertCircle size={19} /></span><div><h2 className="text-sm font-semibold text-text-primary">内容任务暂时无法读取</h2><p className="mt-1 text-xs text-text-muted">请稍后重新加载。</p></div></div><button type="button" onClick={() => void state.refresh()} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2"><RefreshCcw size={14} />重新加载</button></div>
+        <div className="flex flex-wrap items-center justify-between gap-4"><div className="flex items-start gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-700"><AlertCircle size={19} /></span><div><h2 className="text-sm font-semibold text-text-primary">内容任务暂时无法读取</h2><p className="mt-1 text-xs text-text-muted">{state.error || '请稍后重新加载。'}</p></div></div><button type="button" onClick={() => void state.refresh()} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2"><RefreshCcw size={14} />重新加载</button></div>
       </section>
     );
   }
+
+  if (task && isAssistantReplicationTask(task)) return <CreationTaskLocation taskId={task.taskId}/>;
 
   const submitPublication = async (input: RegisterSocialPublicationInput) => {
     await state.registerPublication(input);
@@ -146,9 +152,9 @@ export default function SocialContentWorkspace({
 
       <SocialTaskOverview
         task={task}
-        tasks={state.workspace.tasks}
-        taskTotalItems={state.workspace.taskList.totalItems}
-        hasMoreTasks={state.workspace.taskList.page < state.workspace.taskList.totalPages}
+        tasks={taskDetailOnly && task ? [task] : state.workspace.tasks}
+        taskTotalItems={taskDetailOnly && task ? 1 : state.workspace.taskList.totalItems}
+        hasMoreTasks={!taskDetailOnly && state.workspace.taskList.page < state.workspace.taskList.totalPages}
         loadingMoreTasks={state.loadingMoreTasks}
         busy={state.busy}
         onSelectTask={taskId => navigateWithTask('smartAssets', taskId)}

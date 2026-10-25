@@ -18,6 +18,8 @@ export function useAdPlanNavigation(previewMode = false) {
   const generation = useRef(0);
   useEffect(() => {
     const restore = () => { generation.current++; setTask(null); setError(''); setTaskId(read()); };
+    // Retained workspaces reconnect effects when shown again; the URL may have changed in the overview.
+    if (!previewMode && read() !== taskId) restore();
     const authChanged = () => {
       const current = authHeader().Authorization || '';
       if (current === identity) return;

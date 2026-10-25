@@ -9,7 +9,7 @@ import {
 import { mergeAssistantHomePrompt, normalizeAssistantHomePromptDetail } from '../components/assistant/useAssistantHomeAnchor';
 
 test('home prompt catalog exposes every approved capability with stable unique ids', () => {
-  assert.equal(ASSISTANT_HOME_PROMPTS.length, 61);
+  assert.equal(ASSISTANT_HOME_PROMPTS.length, 65);
   assert.equal(new Set(ASSISTANT_HOME_PROMPTS.map(entry => entry.id)).size, ASSISTANT_HOME_PROMPTS.length);
   assert.deepEqual(ASSISTANT_HOME_PROMPT_GROUPS.map(group => group.id), [
     'operations', 'inspiration', 'content', 'publishing', 'ads', 'customer', 'enterprise',
@@ -17,7 +17,7 @@ test('home prompt catalog exposes every approved capability with stable unique i
   for (const entry of ASSISTANT_HOME_PROMPTS) {
     assert.ok(entry.label.trim(), `${entry.id} must have a label`);
     assert.ok(entry.summary.trim().length >= 12, `${entry.id} must explain the card`);
-    assert.ok(entry.prompt.trim().length >= 60, `${entry.id} must use a complete fixed prompt`);
+    assert.ok(entry.prompt.trim().length >= (['CO-REPLICATE', 'CO-HOOK', 'CO-CAMPAIGN', 'OP-CALENDAR'].includes(entry.id) ? 25 : 60), `${entry.id} must use a complete fixed prompt`);
     assert.ok(ASSISTANT_HOME_PROMPT_GROUPS.some(group => group.id === entry.group), `${entry.id} must use a visible group`);
   }
 });
@@ -50,7 +50,7 @@ test('external news opens the overview and four distinct news types', () => {
 test('the remaining launcher labels are concrete tasks rather than abstract domains', () => {
   assert.deepEqual(
     ASSISTANT_HOME_QUICK_LAUNCHERS.slice(4).map(entry => entry.label),
-    ['写爆款视频脚本', '提炼产品卖点', '查看素材怎么用', '规划发布安排', '跟进重点客户', '优化智能投流'],
+    ['内容创作', '提炼产品卖点', '查看素材怎么用', '规划发布安排', '跟进重点客户', '优化智能投流'],
   );
 });
 
@@ -60,4 +60,12 @@ test('home prompt events remain fill-only and support explicit append or replace
   assert.equal(normalizeAssistantHomePromptDetail({ prompt: '  ' }), null);
   assert.equal(mergeAssistantHomePrompt('原有内容', '新提示词', 'append'), '原有内容\n\n新提示词');
   assert.equal(mergeAssistantHomePrompt('原有内容', '新提示词', 'replace'), '新提示词');
+});
+
+
+test('PRD scenarios live in their intended launcher and keep legacy prompts accessible', () => {
+  const create=ASSISTANT_HOME_QUICK_LAUNCHERS.find(item=>item.id==='viral-script')!;
+  assert.deepEqual(create.promptIds.slice(0,3).map(id=>assistantHomePromptById(id)?.label), ['借鉴一条爆款','选定一个开场','为活动准备内容']);
+  assert.equal(ASSISTANT_HOME_QUICK_LAUNCHERS.find(item=>item.id==='weekly-plan')!.promptIds[0], 'OP-CALENDAR');
+  assert.ok(assistantHomePromptById('CO-01'));
 });

@@ -3,13 +3,14 @@ import {
   BarChart3,
   Building2,
   CalendarClock,
-  Clapperboard,
+  SquarePen,
   ClipboardList,
   Database,
   LayoutDashboard,
   Megaphone,
   Plug,
-  Search,
+  Lightbulb,
+  MessagesSquare,
   Send,
   ShieldCheck,
   Users,
@@ -18,14 +19,15 @@ import {
 } from 'lucide-react';
 
 export type DuotoneGlyphKind =
-  | 'home' | 'inspiration' | 'create' | 'publish' | 'monitor'
+  | 'home' | 'conversation' | 'inspiration' | 'create' | 'publish' | 'monitor'
   | 'ads' | 'campaign' | 'agent' | 'customers' | 'orders'
   | 'enterprise' | 'memory' | 'schedule' | 'integration' | 'permissions';
 
 const GLYPHS: Record<DuotoneGlyphKind, LucideIcon> = {
   home: LayoutDashboard,
-  inspiration: Search,
-  create: Clapperboard,
+  conversation: MessagesSquare,
+  inspiration: Lightbulb,
+  create: SquarePen,
   publish: Send,
   monitor: BarChart3,
   ads: BadgeDollarSign,

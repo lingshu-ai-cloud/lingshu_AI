@@ -74,9 +74,18 @@ export async function recoverSocialContentOrderDispatch(input: { repository: Sta
       if (socialText(current.orchestrator_item_id) !== result.queueItemId) {
         if (socialText(current.version) !== queueRequest.subject!.version) throw new SocialContentWorkflowError('social_content_order_dispatch_projection_changed', 409);
         await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, current.id, {
+          brief: { ...socialObject(socialJson(current.brief)), _executionQueueReceipt: {
+            disposition: result.disposition ?? 'queued', queueItemId: result.queueItemId, runId: result.runId ?? null,
+          } },
           status: result.disposition === 'awaiting_initial_confirmation' ? 'plan_review' : result.disposition === 'requires_manual_production' ? 'attention' : 'producing',
           run_id: result.runId ?? '', orchestrator_item_id: result.queueItemId, version: nextVersion(current),
           last_operation_id: input.commandId, updated_by: dispatch.userId, updated_at: (input.now ?? new Date()).toISOString(),
+        });
+      }
+      if (socialText(current.orchestrator_item_id) === result.queueItemId) {
+        await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, current.id, {
+          brief: { ...socialObject(socialJson(current.brief)), _executionQueueReceipt: { disposition: result.disposition ?? 'queued', queueItemId: result.queueItemId, runId: result.runId ?? null } },
+          version: nextVersion(current), updated_at: (input.now ?? new Date()).toISOString(),
         });
       }
       return (await readSocialTaskDetail(input))!;

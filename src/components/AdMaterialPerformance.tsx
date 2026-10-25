@@ -89,7 +89,6 @@ export default function AdMaterialPerformance({ onCreate, onOpenTask, initialTas
     </div></div>
     {taskFilter && <Space><Tag>当前计划关联素材</Tag><Button type="link" onClick={() => { setTaskFilter(''); setPage(1); onClearTask?.(); }}>查看全部计划素材</Button></Space>}
     {error && <Alert type="error" showIcon title={error} description="目录读取失败不代表没有素材，请刷新重试。"/>}
-    {data?.warnings.map(w => <Alert key={w} type="warning" showIcon title={w}/>)}
     {data?.truncated && <Alert type="warning" showIcon title="当前目录未完整返回，数量与筛选仅覆盖已读取记录。"/>}
     {data && <p role="status">已读取 {data.totalItems} 条素材／待关联广告记录 · 目录更新 {new Date(data.checkedAt).toLocaleString('zh-CN')}</p>}
     <Table<AdMaterialDirectoryItem> className="ads-material-table" size="small" rowKey="key" loading={loading} dataSource={data?.items || []} pagination={false} scroll={{ x: 926 }} locale={{ emptyText: error ? '目录尚未读取成功' : '当前筛选没有匹配素材' }} columns={[

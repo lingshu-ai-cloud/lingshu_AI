@@ -295,6 +295,8 @@ export async function confirmSocialReplicationScript(input: {
   taskId: string;
   idempotencyKey: string;
   value: ConfirmSocialReplicationScriptInput;
+  /** Server-only caller; never accepted from the HTTP review body. */
+  systemReview?: true;
   now?: Date;
 }): Promise<SocialContentTaskDetail> {
   const value = normalizedInput(input.value);
@@ -315,7 +317,8 @@ export async function confirmSocialReplicationScript(input: {
       if (socialText(record.last_operation_id) === operationId) return { task: (await readSocialTaskDetail(input))! };
       assertVersion(record, value.expectedVersion);
       const brief = socialObject(socialJson(record.brief));
-      if (brief?.creationMode !== 'viral_replication' || brief?.managementMode === 'one_click_managed') {
+      if (brief?.creationMode !== 'viral_replication' || (brief?.managementMode === 'one_click_managed'
+        && !(input.systemReview && input.userId === 'system:replication-review'))) {
         throw new SocialContentWorkflowError('social_replication_script_review_not_applicable', 409);
       }
       const analysis = parseStoredSocialReferenceVideoAnalysis(record.reference_video_analysis);

@@ -5,7 +5,7 @@ export const assistantTaskPortalSchema = z.object({
   kind: z.literal('content_task'),
   taskId: z.string().min(1).max(120).regex(/^[a-zA-Z0-9_-]+$/),
   title: z.string().trim().min(1).max(180),
-  action: z.enum(['review_plan', 'complete_brief', 'view_task']),
+  action: z.enum(['review_plan', 'complete_brief', 'view_task', 'view_production']),
   phase: z.enum(['offered', 'ready']),
 }).strict();
 export type AssistantTaskPortal = z.infer<typeof assistantTaskPortalSchema>;

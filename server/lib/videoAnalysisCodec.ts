@@ -99,7 +99,10 @@ export function exactVideoReviewReasons(
   const fullDuration = duration > 0 ? duration : Math.max(...rows.map(row => row.range.end));
   const reviewCount = rows.filter(row => row.detail.needsReview === true).length;
   if (reviewCount >= Math.max(2, Math.ceil(rows.length * 0.5))) reasons.push(`unverified_shots_${reviewCount}_of_${rows.length}`);
-  const shortRows = rows.filter(row => row.range.end - row.range.start < 0.2);
+  // Preserve a measured opening cover flash. It is excluded from the action
+  // hook by firstSubstantiveOpeningShot, not treated as a malformed storyboard.
+  const shortRows = rows.filter((row, index) => row.range.end - row.range.start < 0.2
+    && !(index === 0 && row.range.start === 0 && sceneCuts.some(cut => Math.abs(cut - row.range.end) <= 0.001)));
   if (shortRows.length) reasons.push(`sub_200ms_shots_${shortRows.length}`);
   const normalized = (value: unknown): string => typeof value === 'string'
     ? value.toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '') : '';

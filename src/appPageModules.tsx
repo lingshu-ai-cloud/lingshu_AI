@@ -57,7 +57,6 @@ const SocialContentPlanningPage = lazy(loadSocialContentPlanningPage);
 const SocialTaskContextBar = lazy(loadSocialTaskContextBar);
 const StarterWorkflowContextBar = lazy(loadStarterWorkflowContextBar);
 const DesignPrototype = import.meta.env.DEV ? lazy(() => import('./dev/DesignPrototype')) : null;
-const SocialContentPreview = import.meta.env.DEV ? lazy(() => import('./dev/SocialContentPreview')) : null;
 const SmartBusinessPreview = import.meta.env.DEV ? lazy(() => import('./dev/SmartBusinessPreview')) : null;
 
 type PageModuleLoader = () => Promise<unknown>;
@@ -69,6 +68,7 @@ const PAGE_MODULE_LOADERS: Partial<Record<Page, PageModuleLoader[]>> = {
   strategy: [loadStrategyPage],
   traffic: [loadTrafficPage, () => import('./components/publishing/CalendarPlanner')],
   socialInspiration: [loadContentCreationOverviewPage],
+  inspirationMarket: [loadTrafficPage, () => import('./components/InspirationDashboard')],
   smartAssets: [loadTrafficPage, () => import('./components/AiCreateStudio'), loadSocialContentPlanningPage],
   socialMonitoring: [loadTrafficPage, () => import('./components/AccountActivity')],
   scriptLibrary: [loadWorkspaceManagementPages],
@@ -142,4 +142,4 @@ function scheduleLocalPreviewPreload(preferredPage: Page) {
   };
 }
 
-export { PlatformAdsPage, StrategyPage, ContentCreationOverviewPage, TrafficPage, ConversionPage, EnterprisePage, IntegrationsPage, AdminDashboard, AdminDeliveryPage, GlobalAssistant, AssistantWeeklyProductionView, AgentMemoryPage, OrganizationPermissionsPage, ScriptLibraryPage, DigitalEmployeePage, AgentMonitorPage, StarterWorkspacePage, SocialContentPlanningPage, SocialTaskContextBar, StarterWorkflowContextBar, DesignPrototype, SocialContentPreview, SmartBusinessPreview, ADS_PAGES, INTEGRATION_PAGES, prefetchPageModule, scheduleLocalPreviewPreload };
+export { PlatformAdsPage, StrategyPage, ContentCreationOverviewPage, TrafficPage, ConversionPage, EnterprisePage, IntegrationsPage, AdminDashboard, AdminDeliveryPage, GlobalAssistant, AssistantWeeklyProductionView, AgentMemoryPage, OrganizationPermissionsPage, ScriptLibraryPage, DigitalEmployeePage, AgentMonitorPage, StarterWorkspacePage, SocialContentPlanningPage, SocialTaskContextBar, StarterWorkflowContextBar, DesignPrototype, SmartBusinessPreview, ADS_PAGES, INTEGRATION_PAGES, prefetchPageModule, scheduleLocalPreviewPreload };

@@ -20,6 +20,7 @@ for (const page of PAGE_IDS) {
 for (const [page, title] of Object.entries({
   strategy: 'hi，灵小枢',
   socialInspiration: '内容创作',
+  inspirationMarket: '灵感集市',
   digitalEmployees: '经营总览',
   adsOverview: '智能投流',
   conversion: '智能客服',

@@ -140,7 +140,8 @@ export async function inspectOpeningHookMotionWithQwen(opts: {
     model: QWEN_EXACT_VL_MODEL(),
     messages: [{ role: 'user', content: [
       { type: 'text', text: `以下图片按时间排列，时间为 ${selected.map(frame => frame.timeLabel).join(', ')}。仅分析 ${opts.start.toFixed(2)}-${opts.end.toFixed(2)} 秒这个完整镜头。只输出 JSON {"observations":[{"time":0,"visibleState":"","confidence":0}],"transitions":[{"from":0,"to":0,"action":"","evidence":"","confidence":0}],"uncertainties":[]}。每张图分别写实际可见的人物位置、手部姿态、面向和构图。transitions 只记录至少两张图可互相证明的状态变化（例如手向镜头伸出、人物后退、双臂张开）；单张图不能证明运动方向。没有足够证据就留空并写入 uncertainties。不得推断声音、口播、目的、身份或画外动作。` },
-      ...selected.map(frame => ({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } })),
+      { type: 'text', text: '每张图片前的 SOURCE_TIME_SECONDS 是原片时间，不是图片序号。observations 必须逐帧记录所有提供的时间；静止也记录静止，不得用图片序号代替时间。跨剪辑切点不推断连续动作。' },
+      ...selected.flatMap(frame => [{ type: 'text', text: `SOURCE_TIME_SECONDS=${Number.parseFloat(frame.timeLabel)}` }, { type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } }]),
     ] as any }],
     response_format: { type: 'json_object' },
     max_tokens: 2400,
@@ -148,13 +149,14 @@ export async function inspectOpeningHookMotionWithQwen(opts: {
   const parsed = parseJson<Record<string, unknown>>(completion.choices[0]?.message?.content || '', {});
   const finite = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : NaN;
   const clamp = (value: unknown) => Number.isFinite(finite(value)) ? Math.max(0, Math.min(1, finite(value))) : 0;
+  const sampledTime = (time: number) => selected.some(frame => Math.abs(Number.parseFloat(frame.timeLabel) - time) < 0.00001);
   const observations = Array.isArray(parsed.observations) ? parsed.observations.map(row => ({
     time: finite(row?.time), visibleState: String(row?.visibleState || '').trim(), confidence: clamp(row?.confidence),
-  })).filter(row => Number.isFinite(row.time) && row.time >= opts.start - 0.1 && row.time <= opts.end + 0.1 && row.visibleState) : [];
+  })).filter(row => Number.isFinite(row.time) && sampledTime(row.time) && row.visibleState) : [];
   const transitions = Array.isArray(parsed.transitions) ? parsed.transitions.map(row => ({
     from: finite(row?.from), to: finite(row?.to), action: String(row?.action || '').trim(),
     evidence: String(row?.evidence || '').trim(), confidence: clamp(row?.confidence),
-  })).filter(row => Number.isFinite(row.from) && Number.isFinite(row.to) && row.to > row.from && row.from >= opts.start - 0.1 && row.to <= opts.end + 0.1 && row.action && row.evidence) : [];
+  })).filter(row => Number.isFinite(row.from) && Number.isFinite(row.to) && row.to > row.from && sampledTime(row.from) && sampledTime(row.to) && row.action && row.evidence) : [];
   return { observations, transitions, uncertainties: Array.isArray(parsed.uncertainties) ? parsed.uncertainties.map(String).filter(Boolean) : [] };
 }
 
@@ -343,6 +345,7 @@ export async function analyzeVideoFramesWithQwen(opts: {
   tags?: string[];
   transcript?: { text: string; segments: QwenAsrSegment[] };
   analysisMode?: 'strategy' | 'exact';
+  exactModel?: boolean;
   signal?: AbortSignal;
 }): Promise<VideoAiAnalysis> {
   if (opts.frames.length === 0) throw new Error('Qwen frame analysis requires at least one frame');
@@ -406,7 +409,7 @@ ${BENCHMARK_ANALYSIS_CONTRACT}
   // operation, including the coarse presenter-classification pass that is
   // intentionally shaped like strategy analysis. Never escape the frozen
   // model binding merely because that child pass has analysisMode=strategy.
-  const analysisModel = exactQwenScope() || opts.analysisMode === 'exact'
+  const analysisModel = exactQwenScope() || opts.exactModel || opts.analysisMode === 'exact'
     ? QWEN_EXACT_VL_MODEL()
     : QWEN_VL_MODEL();
   const completion = await client().chat.completions.create({

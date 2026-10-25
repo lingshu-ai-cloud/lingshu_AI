@@ -10,7 +10,7 @@ import AdPlanThumbnail from './AdPlanThumbnail';
 import AdPlanMetricsCell from './AdPlanMetricsCell';
 export type PlanOperatingMetrics = { status?: string; reason?: string; source?: string; stale?: boolean; dataNote?: string; currency: string; reportedAt: string; spend: number | null; impressions: number | null; clicks: number | null; results: number | null; costPerResult: number | null; metricLabel: string };
 const n = (v: number | null | undefined) => v == null ? '—' : v.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
-export default function AdPlanManagement({ tasks, loading, error, onOpen, onUpdate, onCreate, onAI, previewMode = false }: { previewMode?: boolean; tasks: PlatformAdTask[]; loading: boolean; error?: string; onOpen: (id: string) => void; onUpdate: (task: PlatformAdTask) => void; onCreate: () => void; onAI: (id: string) => void }) {
+export default function AdPlanManagement({ tasks, loading, error, onOpen, onUpdate, onAI, previewMode = false, readOnly = false }: { readOnly?: boolean; previewMode?: boolean; tasks: PlatformAdTask[]; loading: boolean; error?: string; onOpen: (id: string) => void; onUpdate: (task: PlatformAdTask) => void; onAI: (id: string) => void }) {
   const directory = useAdAccountDirectory();
   const [expanded, setExpanded] = useState<string[]>([]), [budgetBusy, setBudgetBusy] = useState(false);
   const [search, setSearch] = useState(''), [goal, setGoal] = useState(''), [currency, setCurrency] = useState(''), [account, setAccount] = useState(''), [channel, setChannel] = useState('');
@@ -35,7 +35,7 @@ export default function AdPlanManagement({ tasks, loading, error, onOpen, onUpda
       expandable={{ expandedRowKeys: expanded, showExpandColumn: false, expandRowByClick: false, onExpand: (open, task) => { if (!budgetBusy) setExpanded(open ? [task.id] : []); }, expandedRowRender: task => <div className="ads-plan-row-panel">
         <div className="ads-plan-row-panel-heading"><strong>{task.name}</strong><Button size="small" disabled={budgetBusy} onClick={() => setExpanded([])}>收起</Button></div>
         <p className="ads-plan-advice-detail"><strong>AI 建议：</strong>{planAdvice(task, current[task.id]).text} <small>{planAdvice(task, current[task.id]).detail}</small></p>
-        {!previewMode ? <AdPlanBudgetDialog inline task={task} onClose={() => setExpanded([])} onUpdate={onUpdate} onReadback={() => setRefresh(v => v + 1)} onBusyChange={setBudgetBusy}/> : <p>演示数据仅供查看预算。</p>}
+        {readOnly ? <p>计划预算 {task.currency} {n(task.budget)} · 计划日预算 {task.currency} {n(task.configuration.dailyBudget)}</p> : !previewMode ? <AdPlanBudgetDialog inline task={task} onClose={() => setExpanded([])} onUpdate={onUpdate} onReadback={() => setRefresh(v => v + 1)} onBusyChange={setBudgetBusy}/> : <p>演示数据仅供查看预算。</p>}
         <Space wrap><Button disabled={budgetBusy} onClick={() => onOpen(task.id)}>素材配置与投放操作</Button><Button disabled={budgetBusy} onClick={() => onAI(task.id)}>查看 AI 决策与授权记录</Button></Space>
       </div> }} columns={[
       { title: '缩略图', key: 'cover', width: 80, render: (_, task) => <div onClick={event => event.stopPropagation()}><AdPlanThumbnail task={task} entry={planLiveEntries(task, current[task.id])[0]}/></div> },
@@ -45,6 +45,5 @@ export default function AdPlanManagement({ tasks, loading, error, onOpen, onUpda
       { title: '关键成效', key: 'metrics', width: 144, render: (_, task) => <AdPlanMetricsCell task={task} data={current[task.id]} disabled={budgetBusy || busy} onRetry={() => retryMetrics(task.id)}/> },
       { title: 'AI 建议', key: 'advice', width: 166, render: (_, task) => { const advice = planAdvice(task, current[task.id]); return <div title={`${advice.text} · ${advice.detail} · ${advice.time}`}><div className="ads-plan-advice-summary">{advice.text}</div><small>{advice.detail}</small></div>; } },
     ]}/>
-    {!tasks.length && !loading && !error && <Button type="primary" onClick={onCreate}>智能创编第一个计划</Button>}
   </section>;
 }

@@ -5,13 +5,13 @@ import type { AuthSession } from './lib/auth.js';
 import { readCreationMode, writeCreationMode } from './lib/creationMode.js';
 import type { Page } from './pageRegistry.js';
 
-const all = new Set<Page>(['strategy', 'socialInspiration', 'digitalEmployees', 'adsOverview', 'conversion']);
+const all = new Set<Page>(['strategy', 'socialInspiration', 'inspirationMarket', 'digitalEmployees', 'adsOverview', 'conversion']);
 assert.deepEqual(primaryProductNavigation('free', all, false).map(item => item.label),
-  ['hi，灵小枢', '内容创作', '智能投流', '智能客服', '经营总览']);
+  ['hi，灵小枢', '内容创作', '灵感集市', '智能投流', '智能客服', '经营总览']);
 assert.deepEqual(primaryProductNavigation('employee', all, false).map(item => item.label),
-  ['hi，灵小枢', '内容创作', '智能投流', '智能客服', '经营总览']);
-assert.equal(primaryProductNavigation('free', all, false)[2]?.disabled, true);
-assert.equal(primaryProductNavigation('free', all, true)[2]?.disabled, false);
+  ['hi，灵小枢', '内容创作', '灵感集市', '智能投流', '智能客服', '经营总览']);
+assert.equal(primaryProductNavigation('free', all, false)[3]?.disabled, true);
+assert.equal(primaryProductNavigation('free', all, true)[3]?.disabled, false);
 assert.deepEqual(primaryProductNavigation('free', new Set<Page>(['strategy', 'conversion']), false).map(item => item.label),
   ['hi，灵小枢', '智能客服']);
 assert.equal(modeSwitchDestination('socialInspiration', 'employee'), 'socialInspiration');
@@ -38,3 +38,6 @@ assert.equal(readCreationMode('tenant-a:user-a', storage), 'employee');
 assert.equal(readCreationMode('tenant-b:user-a', storage), 'free');
 assert.equal(readCreationMode('tenant-a:user-b', storage), 'free');
 console.log('Product navigation tests passed');
+
+assert.equal(ROLE_PAGE_ACCESS.social_operator.has('inspirationMarket'), true);
+assert.equal(ROLE_PAGE_ACCESS.customer_service.has('inspirationMarket'), false);

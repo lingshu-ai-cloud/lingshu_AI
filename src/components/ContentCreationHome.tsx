@@ -137,7 +137,7 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
         })}
       </div>
 
-      <section id="creator-home-library" className="creator-home__library" aria-label="爆款视频、素材库、对标账号和待拍">
+      <section id="creator-home-library" className="creator-home__library" aria-label="爆款素材">
         {inspirationWorkspace}
       </section>
     </div>

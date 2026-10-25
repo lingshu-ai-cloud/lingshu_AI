@@ -250,7 +250,10 @@ export async function readSocialTaskDetail(input: {
     : undefined;
   // URL references are canonical catalog records, not uploaded library media.
   // Resolve only this tenant's exact analyzed record and attached source identity.
-  if (!referenceRecord && referenceVideoAnalysis?.referenceRecordId && input.repository.dataStore) {
+  if (referenceVideoAnalysis?.referenceRecordId && input.repository.dataStore) {
+    // Library search can contain a thin or stale copy of the same video.
+    // Production review must always read its canonical analysis record.
+    referenceRecord = undefined;
     const catalog = await input.repository.dataStore.list<Record<string, unknown>>('trend_videos', {
       where: { tenantId: input.tenantId, id: referenceVideoAnalysis.referenceRecordId }, perPage: 2,
     });
@@ -323,6 +326,7 @@ export async function readSocialTaskDetail(input: {
       requestedDescription: shot.visualInstruction,
       truthSensitiveSubject: shot.materialPlan.truthBoundary.subject,
       referenceShotId: shot.referenceShotId,
+      ...(shot.materialPlan.visualContract ? { visualContract: structuredClone(shot.materialPlan.visualContract) } : {}),
       ...(summary.brief.creationDialoguePlan ? { plannedDurationSeconds: shot.endSeconds - shot.startSeconds, visualContract: shot.materialPlan.visualContract } : {}),
       ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || summary.brief.materialRoutingPolicyVersion === 'type-aware.v2') && shot.materialPlan.materialRouting ? {
         plannedDurationSeconds: shot.endSeconds - shot.startSeconds,

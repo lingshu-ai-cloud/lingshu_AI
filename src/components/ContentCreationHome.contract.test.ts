@@ -56,11 +56,11 @@ assert.match(creationOverview, /创作计划/, '内容创作页顶部必须使�
 for (const metric of ['计划内容', '待制作', '制作中', '待验收成片', '已完成成片', '已排期发布']) {
   assert.match(creationOverview, new RegExp(`label: '${metric}'`), `创作计划必须展示${metric}`);
 }
-assert.match(creationOverview, /创造一条新计划/, '创作计划须通过灵小枢创建新计划');
+assert.match(creationOverview, /创建一条新计划/, '创作计划须保留新计划入口');
 assert.match(creationOverview, /loadConnectedSocialPerformance\(50\)/, '右侧必须读取已连接账号的真实历史发布表现');
 assert.match(creationOverview, /当前最火的 3 条视频/, '右侧必须展示历史发布表现前三');
 assert.match(creationOverview, /sort\(\(left, right\) => \(right\.metrics\.views \|\| 0\) - \(left\.metrics\.views \|\| 0\)\)[\s\S]{0,120}slice\(0, 3\)/, '历史视频必须按真实播放量取前三');
-assert.match(creationOverview, /<WeeklyPublishingCalendar data=\{overview\}/, '创作计划下方必须复用真实发布日历');
+assert.match(creationOverview, /<CreationTaskWorkspace data=\{overview\}/, '创作计划下方必须使用共享任务与发布日历工作区');
 assert.doesNotMatch(home, /到爆款库创作/, '首页不得保留旧的中转按钮文案');
 assert.match(inspiration, /requestedReference\?\.startViralReplication[\s\S]{0,1600}startInspirationCreation\(selectedVideo\)/, '其他显式生产入口必须先核对精确引用，再进入既有爆款裂变生产函数');
 assert.match(inspiration, /selectedVideo\.id\.startsWith\('weekly-reference-'\)[\s\S]{0,700}const exactMatch =/, '只有实时库存精确引用可自动发起生产，周快照不得绕过门禁');

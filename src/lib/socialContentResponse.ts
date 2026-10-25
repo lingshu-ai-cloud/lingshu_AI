@@ -38,6 +38,8 @@ function taskSummary(value: unknown): SocialContentTaskSummary {
   const brief = record(item?.brief);
   const readiness = record(item?.readiness);
   const countFields = ['sourceCount', 'artifactCount', 'approvedArtifactCount', 'deliveryPackageCount', 'publicationCount', 'metricSubmissionCount'];
+  const preview=record(item?.preview);
+  if(item?.preview!==undefined&&(!preview||!(preview.coverUrl===null||typeof preview.coverUrl==='string')||!['available','unavailable'].includes(String(preview.sourceStatus))))invalidResponse();
   if (!item || !brief
     || typeof item.taskId !== 'string' || typeof item.version !== 'string'
     || !SOCIAL_CONTENT_TASK_STATUSES.includes(item.status as typeof SOCIAL_CONTENT_TASK_STATUSES[number])
@@ -103,7 +105,9 @@ export function socialTaskPage(value: unknown): SocialContentTaskPage {
     || (page > totalPages && result.items.length > 0)) invalidResponse();
   const tasks = result.items.map(taskSummary);
   if (new Set(tasks.map(task => task.taskId)).size !== tasks.length) invalidResponse();
-  return { items: tasks, page, perPage, totalItems, totalPages };
+  const unavailable=result.unavailableItems===undefined?[]:result.unavailableItems;
+  if(!Array.isArray(unavailable)||unavailable.some(value=>{const row=record(value);return !row||typeof row.taskId!=='string'||typeof row.title!=='string'||typeof row.errorCode!=='string'||!validTime(row.createdAt,true);})||tasks.length+unavailable.length>perPage)invalidResponse();
+  return { items: tasks, page, perPage, totalItems, totalPages,unavailableItems:unavailable as NonNullable<SocialContentTaskPage['unavailableItems']> };
 }
 
 export function socialWorkspaceResponse(value: unknown): SocialContentWorkspace {

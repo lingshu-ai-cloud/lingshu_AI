@@ -1,4 +1,5 @@
 import { requestCreationReply } from './contentCreationRequest';
+import { assistantScenarioIntake } from '../../lib/assistantScenarioIntake';
 import type { CreationTurn } from '../../../shared/contracts/contentCreationDialogue';
 import { useCreationMode } from '../../lib/creationMode';
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
@@ -173,6 +174,24 @@ export function useAssistantSend(input: AssistantSendInput) {
     const clarifiedDiagram = pendingMapFileRef.current && /(?:业务|路线图|思维导图|流程图|战略)/u.test(visibleText);
     const fileIntent = assistantFileIntent(visibleText) || (clarifiedDiagram ? { format: 'jpg' as const, diagram: true, needsMapScope: false } : null);
     const lastMessage = thread.messages.at(-1);
+    const scene = ['strategy','socialInspiration'].includes(page) && !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? assistantScenarioIntake(visibleText) : null;
+    if (scene) {
+      setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: scene.scenario === 'weekly_calendar' ? '先查看已有的发布安排。' : scene.scenario === 'hook_first' ? '先选一个开场片段，再确认产品和内容方向。' : scene.scenario === 'content_task' ? '先确认产品、内容方向和预计发布时间。' : '先确定活动信息，再安排要准备的内容。', creationPortal: scene }]);
+      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      openAgent(routeAgent, 'chat'); persistThread(threadAgent);
+      return;
+    }
+    if (page === 'strategy' && !creationDraft && !uploadedAttachments.length && !fileIntent
+      && /(?:借鉴|复刻).{0,12}爆款|爆款复刻/u.test(visibleText)
+      && !/(?:取消|不要|先别|如何|怎么)/u.test(visibleText)) {
+      setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: '先选一条想借鉴的对标视频，再确定产品和周发布安排。',
+        creationPortal: { kind: 'content_creation', id: `replication-${requestId()}`, scenario: 'viral_replication',
+          title: '爆款复刻', objective: visibleText.slice(0, 1000), requestedOutputCount: 1,
+          outputType: 'video', platforms: [], aspectRatio: null, targetDurationSeconds: null } }]);
+      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      openAgent(routeAgent, 'chat'); persistThread(threadAgent);
+      return;
+    }
     const sourceReply = !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? assistantSourceFollowUp(visibleText, lastMessage) : null;
     if (sourceReply) {
       setMessages(threadAgent, [...nextVisible, sourceReply]);

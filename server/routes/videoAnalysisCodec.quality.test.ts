@@ -71,3 +71,9 @@ assert.ok(exactVideoReviewReasons(analysis([{ time: '0-3s', visual: '工厂车�
   '独立首帧证据为展厅而分镜声称工厂时需复核');
 
 console.log('video analysis semantic quality tests passed');
+
+const coverFlash = analysis([{ time: '0–0.1s', visual: '封面闪帧' }, { time: '0.1–3s', visual: '真实主体镜头' }]);
+assert.ok(exactVideoReviewReasons(coverFlash, 3).includes('sub_200ms_shots_1'));
+assert.ok(!exactVideoReviewReasons(coverFlash, 3, [.1]).some(code => code.startsWith('sub_200ms')));
+const laterFlash = analysis([{ time: '0–1s', visual: '主体' }, { time: '1–1.1s', visual: '异常短镜头' }, { time: '1.1–3s', visual: '后续' }]);
+assert.ok(exactVideoReviewReasons(laterFlash, 3, [1, 1.1]).includes('sub_200ms_shots_1'));

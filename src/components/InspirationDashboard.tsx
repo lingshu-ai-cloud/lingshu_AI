@@ -48,7 +48,8 @@ export { candidateDimensionLabels, discoveryOriginTitle, discoverySupplyLabel, g
 
 export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelClose, onNavigate, onEnterWorkflow, embedded = false }: InspirationDashboardProps) {
   const [materialEntry] = useState(initialMaterialLibraryEntry);
-  const [innerView, setInnerView] = useState<InspirationInnerView>(() => inspirationViewFromSearch(typeof window === 'undefined' ? '' : window.location.search));
+  const [requestedInnerView, setInnerView] = useState<InspirationInnerView>(() => inspirationViewFromSearch(typeof window === 'undefined' ? '' : window.location.search));
+  const innerView = embedded ? 'inspiration' : requestedInnerView;
   const [selectedVideo, setSelectedVideo] = useState<TrendVideo | null>(null);
   const [exactReferenceDetail, setExactReferenceDetail] = useState<unknown>(() => typeof window === 'undefined' ? null : window.history.state?.productionDetail);
   const [exactReview, setExactReview] = useState<{recordId:string;handoff:DirectorReviewHandoff;video:TrendVideo}|null>(null);
@@ -64,10 +65,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [materialMessage, setMaterialMessage] = useState('');
 
   useEffect(() => {
+    if (embedded) return;
     const url = new URL(window.location.href);
     url.searchParams.set('view', innerView);
     window.history.replaceState(window.history.state, '', url);
-  }, [innerView]);
+  }, [innerView, embedded]);
 
   const materials = useInspirationMaterials({ materialEntry, innerView, setMaterialMessage, setInnerView, favoritingMaterialIds, setFavoritingMaterialIds });
   const {
@@ -423,15 +425,15 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       {exactReview && <section className="m-4 rounded border p-4"><h2>原参考逐镜审核 · {exactReview.recordId}</h2><DirectorReviewWorkspace key={`${exactReview.recordId}:${exactReviewToken}`} recordId={exactReview.recordId} handoff={exactReview.handoff} onPreview={()=>handleWatch(exactReview.video)} renderVideo={url => <AuthenticatedVideo key={url} apiUrl={url} controls className="max-h-48 w-full rounded bg-black" />} renderImage={(url, alt) => <AuthenticatedImage key={url} src={url} alt={alt} className="max-h-48 w-full rounded object-contain" />} /></section>}
       <div className="transition-all duration-300">
         <div className="px-4 py-5 sm:px-6 lg:py-6">
-          {!embedded && <LsPageHeader title="灵感中心" description="查看外部参考、管理产品素材，并将内容证据交接到制作流程。" />}
+          {!embedded && <LsPageHeader title="灵感集市" description="查看外部参考、管理产品素材，并将内容证据交接到制作流程。" />}
           <div className="mb-4 flex min-w-0 flex-col gap-3 border-b border-border lg:flex-row lg:items-start">
-            <Tabs className="min-w-0 flex-1" activeKey={innerView} onChange={key => setInnerView(key as InspirationInnerView)} aria-label="灵感中心分类"
+            {embedded ? <h2 className="py-3 text-sm font-semibold text-text-primary">爆款素材</h2> : <Tabs className="min-w-0 flex-1" activeKey={innerView} onChange={key => setInnerView(key as InspirationInnerView)} aria-label="灵感集市分类"
               items={[
                 { key: 'inspiration', label: `爆款视频 · ${tenantVideoTotalItems ?? '…'}`, icon: <Flame size={16} /> },
                 { key: 'library', label: `素材库 · ${materialTotal}`, icon: <Film size={16} /> },
                 { key: 'accounts', label: `对标账号 · ${competitorAccountCount ?? '…'}`, icon: <Users size={16} /> },
                 { key: 'shooting', label: `待拍 · ${shootingNeeds.length + pendingShootingTaskCount(scriptGapTasks)}`, icon: <Lightbulb size={16} /> },
-              ]} />
+              ]} />}
             {innerView === 'inspiration' && !embedded && <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 pt-1 lg:w-auto">
               <Button type="primary" icon={<Users size={15} />} onClick={() => setInnerView('accounts')}>采集对标账号爆款</Button>
               <Button icon={<Images size={15} />} onClick={openImageCrawl}>关键词补充</Button>
@@ -534,7 +536,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               totalItems={localPagination ? resultPage.totalItems : videoResultTotalItems}
               pageSize={INSPIRATION_PAGE_SIZE}
               onReset={resetInspirationFilters}
-              onOpenLibrary={() => setInnerView('library')}
+              onOpenLibrary={() => embedded ? onNavigate?.('inspirationMarket') : setInnerView('library')}
               onSelect={openDirectorAnalysis}
               onCreate={startInspirationCreation}
               onWatch={handleWatch}

@@ -264,7 +264,8 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
 
   router.get('/', asyncRoute(async (req, res) => {
     const identity = await authorize(req, res, 'read');
-    res.json(await readSocialContentWorkspace({ repository, tenantId: identity.tenantId, now: now() }));
+    const taskId = req.query.taskId === undefined ? undefined : requireSocialId(req.query.taskId, 'social_task_id_invalid');
+    res.json(await readSocialContentWorkspace({ repository, tenantId: identity.tenantId, now: now(), taskId }));
   }));
 
   router.get('/catalog', asyncRoute(async (req, res) => {

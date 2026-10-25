@@ -1,12 +1,13 @@
 import type { Page } from './pageRegistry';
 import type { CreationMode } from './lib/creationMode';
 
-export type PrimaryProductPage = 'strategy' | 'socialInspiration' | 'digitalEmployees' | 'adsOverview' | 'conversion';
+export type PrimaryProductPage = 'strategy' | 'socialInspiration' | 'inspirationMarket' | 'digitalEmployees' | 'adsOverview' | 'conversion';
 export type PrimaryProductItem = { page: PrimaryProductPage; label: string; disabled: boolean };
 
 const PRIMARY_PAGES: readonly { page: PrimaryProductPage; label: string }[] = [
   { page: 'strategy', label: 'hi，灵小枢' },
   { page: 'socialInspiration', label: '内容创作' },
+  { page: 'inspirationMarket', label: '灵感集市' },
   { page: 'adsOverview', label: '智能投流' },
   { page: 'conversion', label: '智能客服' },
   { page: 'digitalEmployees', label: '经营总览' },

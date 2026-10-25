@@ -73,7 +73,9 @@ export function readSocialContentNavigationQueryTaskId(page: string, search: str
   if (!SOCIAL_CONTENT_CONTEXT_PAGES.has(page)) return null;
   const params = new URLSearchParams(search);
   if (params.get('page') !== page) return null;
-  const taskId = String(params.get('taskId') || '').trim();
+  const canonical = params.get('socialContentTaskId'), legacy = params.get('taskId');
+  if (canonical && legacy && canonical !== legacy) return null;
+  const taskId = String(canonical || legacy || '').trim();
   return /^[a-z0-9:_-]{1,200}$/i.test(taskId) ? taskId : null;
 }
 
@@ -134,6 +136,13 @@ export function attachSocialContentNavigationState(taskId: string, page: string,
   const {weeklyContentTarget: previousTarget, ...cleanCurrent} = current;
   const {weeklyContentTarget: previousDetailTarget, ...cleanDetail} = currentDetail;
   void previousTarget; void previousDetailTarget;
+  const detailUrl = (page === 'socialInspiration' || page === 'smartAssets' && currentDetail.directStudio === false) && window.location.href
+    ? new URL(window.location.href) : null;
+  if (detailUrl) {
+    detailUrl.searchParams.set('page', page); detailUrl.searchParams.set('view', page === 'socialInspiration' ? 'tasks' : 'create');
+    detailUrl.searchParams.set('socialContentTaskId', taskId);
+    detailUrl.searchParams.delete('taskId'); detailUrl.searchParams.delete('project');
+  }
   window.history.replaceState({
     ...cleanCurrent,
     socialContentTaskId: taskId,
@@ -144,7 +153,7 @@ export function attachSocialContentNavigationState(taskId: string, page: string,
       socialContentPage: page,
       ...(weeklyContentTarget ? {weeklyContentTarget} : {}),
     },
-  }, '');
+  }, '', detailUrl || undefined);
   window.dispatchEvent(new CustomEvent<SocialContentNavigationEventDetail>(
     SOCIAL_CONTENT_NAVIGATION_EVENT,
     { detail: { taskId, page } },

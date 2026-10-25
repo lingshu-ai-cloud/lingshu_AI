@@ -1,4 +1,5 @@
 import { withWeeklyProductionStartGuard } from '../runtime/weeklyProductionStartGuard.js';
+import { reviewReplicationBySystem, systemReviewAppliedForStart } from './socialReplicationSystemReview.js';
 import {initialSocialContentOrder,reserveSocialContentOrder,type SocialContentDispatchEnvelope} from './socialContentOrderAdmission.js';
 import type {WeeklyOwnedProductIdentityPorts} from '../runtime/weeklyOwnedProductIdentityDemand.js';
 import type {
@@ -168,6 +169,10 @@ export async function createSocialContentTask(input: {
       const taskId = input.taskId ?? socialPublicId('socialtask');
       const theme = resolveSocialThemeSelection(input.value);
       const brief = defaultBrief(input.value);
+      if (input.entry === 'assistant' && !brief.presenterAssetId && !brief.targetAccountRef) {
+        const { readDefaultPresenterAssetId } = await import('./socialContentRecordProjection.js');
+        brief.presenterAssetId = await readDefaultPresenterAssetId(input.repository, input.tenantId);
+      }
       const scriptBaseline = theme?.classificationStatus === 'confirmed' && theme.themeId
         ? await groundedScriptBaseline({
             tenantId: input.tenantId,
@@ -299,7 +304,7 @@ export async function updateSocialContentTask(input: {
       const scriptFieldsChanged = [
         'title', 'objective', 'productId', 'productRef', 'languages', 'callToAction', 'brandNotes', 'restrictions',
       ].some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
-      const productionPlanFieldsChanged = ['productionApproach', 'assetAvailability', 'managementMode'].some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
+      const productionPlanFieldsChanged = ['productionApproach', 'assetAvailability', 'managementMode', 'presenterAssetId', 'referenceReuse'].some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
       if (productionPlanFieldsChanged) brief.materialRoutingPolicyVersion = 'type-aware.v2'; // Forward route revision uses the current planner.
       await applyFunctionalReplacementRevision({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,record,
         actorUserId:input.userId,revisedAt:timestamp,currentApproach:current.productionApproach,
@@ -610,7 +615,7 @@ async function startSocialContentTaskUnderGuard(input: Parameters<typeof startSo
         projectionOperationId,
         `${projectionOperationId}:reference-analysis`,
         `${operationId}:reference-review`,
-      ].includes(socialText(record.last_operation_id));
+      ].includes(socialText(record.last_operation_id)) || systemReviewAppliedForStart(record, operationId);
       if (!projectionAlreadyApplied) {
         assertVersion(record, input.expectedVersion);
       }
@@ -662,19 +667,8 @@ async function startSocialContentTaskUnderGuard(input: Parameters<typeof startSo
           throw new SocialContentWorkflowError('social_content_reference_analysis_pending', 409);
         }
         if (socialText(replicationScript.status) !== 'confirmed') {
-          if (socialTaskSummary(record).brief.managementMode !== 'one_click_managed') {
-            // Advanced mode requires an explicit review command. A rejected
-            // start attempt must never double as approval or advance version.
-            throw new SocialContentWorkflowError('social_content_reference_review_required', 409);
-          }
-          const timestamp = (input.now ?? new Date()).toISOString();
-          await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, record.id, {
-            replication_script: { ...replicationScript, status: 'confirmed' },
-            version: nextVersion(record),
-            last_operation_id: `${operationId}:reference-review`,
-            updated_by: input.userId,
-            updated_at: timestamp,
-          });
+          await reviewReplicationBySystem({ ...input, expectedVersion: socialText(record.version),
+            idempotencyKey: `${operationId}:system-review` });
           record = await requireSocialTask(input);
         }
       }
@@ -755,10 +749,18 @@ async function startSocialContentTaskUnderGuard(input: Parameters<typeof startSo
         if (socialText(scheduled.orchestrator_item_id) !== queued.queueItemId) {
           throw new SocialContentWorkflowError('social_content_schedule_state_integrity_violation', 503);
         }
+        if (queued.runId && socialText(scheduled.run_id) !== queued.runId) throw new SocialContentWorkflowError('social_content_schedule_state_integrity_violation', 503);
+        await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, scheduled.id, {
+          brief: { ...socialObject(socialJson(scheduled.brief)), _executionQueueReceipt: { disposition: queued.disposition ?? 'queued', queueItemId: queued.queueItemId, runId: queued.runId ?? null } },
+          version: nextVersion(scheduled), updated_at: (input.now ?? new Date()).toISOString(),
+        });
         await contentOrder?.acknowledge();
         return { task: (await readSocialTaskDetail(input))! };
       }
       await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, scheduled.id, {
+        brief: { ...socialObject(socialJson(scheduled.brief)), _executionQueueReceipt: {
+          disposition: queued.disposition ?? 'queued', queueItemId: queued.queueItemId, runId: queued.runId ?? null,
+        } },
         status: queued.disposition === 'awaiting_initial_confirmation'
           ? 'plan_review'
           : queued.disposition === 'requires_manual_production'

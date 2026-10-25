@@ -262,7 +262,8 @@ export default function SocialContentPlanningPage({
   if (sourceRequest?.creationDialoguePlan) return <CreationProductionConversation key={sourceRequest.requestId} plan={sourceRequest.creationDialoguePlan}/>;
 
   if (taskOnly) {
-    return <SocialContentWorkspace onNavigate={onNavigate} onNavigateWithTask={onNavigateWithTask} />;
+    return <div className="h-full overflow-y-auto p-4"><Button className="mb-3" onClick={() => onNavigate('strategy')}>返回灵小枢对话</Button>
+      <SocialContentWorkspace onNavigate={onNavigate} onNavigateWithTask={onNavigateWithTask} taskDetailOnly /></div>;
   }
 
   if (resumeChecking) {

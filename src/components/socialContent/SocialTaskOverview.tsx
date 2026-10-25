@@ -160,7 +160,7 @@ function ReadinessPanel({ task, busy, onAttachSourceFiles, onOpenWorkbench }: Pi
   );
 }
 
-function ArtifactPanel({ task, busy, onArtifactDecision, onBatchDecision, onCreateDeliveryPackage }: Pick<SocialTaskOverviewProps, 'busy' | 'onArtifactDecision' | 'onBatchDecision' | 'onCreateDeliveryPackage'> & { task: SocialContentTaskDetail }) {
+export function ArtifactPanel({ task, busy, onArtifactDecision, onBatchDecision, onCreateDeliveryPackage }: Pick<SocialTaskOverviewProps, 'busy' | 'onArtifactDecision' | 'onBatchDecision' | 'onCreateDeliveryPackage'> & { task: SocialContentTaskDetail }) {
   const currentArtifacts = socialContentCurrentArtifacts(task.artifacts);
   const pendingArtifacts = currentArtifacts.filter(artifact => artifact.status === 'review_required' && socialArtifactGenerationDisclosure(artifact).approvalAllowed);
   const readyToPackage = currentArtifacts.length > 0 && currentArtifacts.every(artifact => artifact.status === 'approved') && task.deliveryPackages.length === 0;

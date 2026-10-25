@@ -93,3 +93,17 @@ test('saved validation response is revalidated without another paid call and ret
     assert.equal(calls, 1);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('sub-frame end seek stays inside a real short opening shot and does not duplicate evidence', async () => {
+  const { extractReferenceEvidenceFrames } = await import('./referenceCriticalShotProduction.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'critical-short-frame-'));
+  try {
+    const file = path.join(dir, 'source.mp4');
+    execFileSync(ffmpeg!, ['-hide_banner','-loglevel','error','-f','lavfi','-i','color=red:size=64x64:rate=30:duration=1','-c:v','libx264','-y',file]);
+    const analysis = { ...baseline, scriptDetails15s: [{ time: '0–0.1s', visual: 'real opening flash' }] };
+    const frames = await extractReferenceEvidenceFrames(file, analysis, 1, [{ shotId: 'shot-1', seconds: .075 }, { shotId: 'shot-1', seconds: .09 }], dir);
+    assert.equal(frames.length, 1);
+    assert.ok(frames[0]!.seconds >= 0 && frames[0]!.seconds < .1);
+    assert.notEqual(frames[0]!.seconds, .075);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

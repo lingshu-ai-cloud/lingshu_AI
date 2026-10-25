@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
-type Cell = { value?: any; deps?: any[]; cleanup?: () => void };
+type Cell = { value?: any; deps?: any[]; cleanup?: () => void; setup?: () => (() => void) | undefined };
 function harness(initialUrl: string, getTask: (id: string) => Promise<any>, listTasks = async (): Promise<any[]> => []) {
   const cells: Cell[] = [], effects: (() => void)[] = [], listeners = new Map<string, () => void>();
   let cursor = 0, identity = 'current-user';
@@ -18,7 +18,7 @@ function harness(initialUrl: string, getTask: (id: string) => Promise<any>, list
       if (name === 'react') return {
         useState(initial: any) { const c = cell(); if (!('value' in c)) c.value = initial; return [c.value, (value: any) => { c.value = typeof value === 'function' ? value(c.value) : value; }]; },
         useRef(initial: any) { const c = cell(); return c.value ?? (c.value = { current: initial }); },
-        useEffect(fn: any, deps: any[]) { const c = cell(); if (!c.deps || deps.some((value, i) => !Object.is(value, c.deps?.[i]))) { c.deps = deps; effects.push(() => { c.cleanup?.(); c.cleanup = fn(); }); } },
+        useEffect(fn: any, deps: any[]) { const c = cell(); c.setup = fn; if (!c.deps || deps.some((value, i) => !Object.is(value, c.deps?.[i]))) { c.deps = deps; effects.push(() => { c.cleanup?.(); c.cleanup = fn(); }); } },
       };
       throw Error(`Unexpected dependency ${name}`);
     },
@@ -27,10 +27,18 @@ function harness(initialUrl: string, getTask: (id: string) => Promise<any>, list
     render(list = false, currentIdentity = identity) { cursor = 0; const result = list ? exports.useAdPlanTasks(currentIdentity) : exports.useAdPlanNavigation(); effects.splice(0).forEach(fn => fn()); return result; },
     switchUser() { identity = 'new-user'; listeners.get('auth-changed')?.(); },
     pop(url: string) { location.href = url; listeners.get('popstate')?.(); },
+    reconnect(url: string) { location.href = url; cells.forEach(c => c.cleanup?.()); cells.forEach(c => { if (c.setup) c.cleanup = c.setup(); }); },
     get url() { return location.href; },
   };
 }
 const flush = async () => { for (let n = 0; n < 8; n++) await Promise.resolve(); };
+test('a retained workspace restores the plan selected in the overview when its effects reconnect', async () => {
+  const h = harness('http://localhost/?page=adsPlans&adsTaskId=original', async id => ({ id }));
+  h.render(); await flush(); h.render();
+  h.reconnect('http://localhost/?page=adsPlans&adsTaskId=overview-selected');
+  h.render(); await flush();
+  assert.equal(h.render().task.id, 'overview-selected');
+});
 test('the actual shared App navigation preserves explicit adsTaskId across all three workspaces', () => {
   const location = { href: 'http://localhost/?page=adsPlans&adsTaskId=selected-plan' };
   const exports: any = {}, history = { state: {} as any, pushState(state: any, _title: string, url: URL) { history.state = state; location.href = String(url); } };

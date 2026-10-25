@@ -30,17 +30,19 @@ export async function restoreSavedSocialContentTask(
   workspace: SocialContentWorkspace,
   savedTaskId: string | null,
   readTask: (taskId: string) => Promise<SocialContentTaskDetail>,
+  requireExact = false,
 ): Promise<SocialContentWorkspace> {
   if (!savedTaskId || workspace.currentTask?.taskId === savedTaskId) return workspace;
   try {
     const task = await readTask(savedTaskId);
-    if (task.taskId !== savedTaskId) return workspace;
+    if (task.taskId !== savedTaskId) { if (requireExact) throw new Error('任务身份与当前链接不一致'); return workspace; }
     return {
       ...workspace,
       currentTask: task,
       tasks: mergeSocialContentTaskSummaries(workspace.tasks, [task]),
     };
-  } catch {
+  } catch (error) {
+    if (requireExact) throw error;
     return workspace;
   }
 }

@@ -64,6 +64,9 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
       ['请说明本周重点', '本周先核对计划。']);
     assert.equal(persisted, 1);
     assert.equal(abort.current, null);
+    await send('我想借鉴一条爆款视频，为自己的产品策划内容，并安排进周任务包。');
+    assert.equal(requests, 1, 'the scene prepares the original task without invoking a model or production');
+    assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.creationPortal?.scenario, 'viral_replication');
     const taskPortal = { kind: 'content_task' as const, taskId: 'socialtask_verified', title: '待确认的视频方案', action: 'review_plan' as const, phase: 'offered' as const };
     store.hydrateThread('business', { messages: [{ role: 'assistant', content: '是否前往内容创作页确认方案？', taskPortal }] });
     await send('是');

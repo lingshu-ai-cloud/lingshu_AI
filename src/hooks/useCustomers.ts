@@ -102,9 +102,11 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
   updateTimelineEvent: (customerId: string, eventId: string, patch: Partial<TimelineEvent>) => void;
   removeTimelineEvent: (customerId: string, eventId: string) => void;
   loading: boolean;
+  error: string;
 } {
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const scopedMockStorageKey = includeMockCustomers ? mockStorageKey(mockCustomerScope + (isLocalForeignTradeMockEnabled() && new URLSearchParams(window.location.search).get('mock') === 'quote' ? ':quote-debug' : '')) : null;
 
   useEffect(() => {
@@ -127,10 +129,13 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
       activeController = controller;
       const timeout = window.setTimeout(() => controller.abort(), 15_000);
       try {
-        const data = await fetch('/api/overseas/customers', { headers: authHeader(), signal: controller.signal })
-          .then(resp => resp.ok ? resp.json() : null);
-        const items = Array.isArray(data?.items) ? data.items : [];
+        const response = await fetch('/api/overseas/customers', { headers: authHeader(), signal: controller.signal });
+        if (!response.ok) throw new Error(`客户会话读取失败（HTTP ${response.status}）`);
+        const data = await response.json();
+        if (!Array.isArray(data?.items)) throw new Error('客户会话返回格式异常，请重试');
+        const items = data.items;
         if (!alive) return;
+        setError('');
         const liveCustomers = items.map((item: CustomerProfile) => cloneCustomer({
           ...item,
           isReal: item.isHistorical ? false : item.isReal ?? true,
@@ -157,6 +162,9 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
             return true;
           });
         });
+      } catch (cause) {
+        if (alive) setError(cause instanceof Error ? cause.message : '客户会话暂时无法读取');
+        throw cause;
       } finally {
         window.clearTimeout(timeout);
         if (activeController === controller) activeController = null;
@@ -172,7 +180,7 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
           ? await storedMockCustomers(scopedMockStorageKey)
           : [];
         if (alive) setCustomers(current => {
-          if (!includeMockCustomers) return [];
+          if (!includeMockCustomers) return current;
           const existingMocks = current.filter(customer => customer.isMock).map(cloneCustomer);
           const seen = new Set<string>();
           return (existingMocks.length ? existingMocks : storedMocks).filter(customer => {
@@ -249,5 +257,6 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
     updateTimelineEvent,
     removeTimelineEvent,
     loading,
+    error,
   };
 }

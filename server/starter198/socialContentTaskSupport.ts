@@ -3,6 +3,7 @@ import { applyGuidedCreationStructure } from './guidedCreationStructure.js';
 import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
 import {publicationProductionDeadline} from '../socialPrograms/publicationDeadlines.js';
 import { planNewSocialMaterialRoutes } from './socialContentMaterialRoutePlanning.js';
+import { bindReplicationProduct } from './socialReplicationProductBinding.js';
 import type {
   AddSocialTaskSourceInput,
   CreateSocialContentTaskInput,
@@ -341,8 +342,14 @@ export async function refreshSocialTaskReferenceOutputs(input: {
     };
   }
   if (resolved && summary.brief.creationDialoguePlan) resolved = applyGuidedCreationStructure(resolved, summary.brief.creationDialoguePlan);
+  if (resolved && summary.brief.productId && detail.enterpriseProductBinding?.productId === summary.brief.productId) {
+    resolved = { ...resolved, replicationScript: bindReplicationProduct(resolved.replicationScript, detail.enterpriseProductBinding) };
+  }
   if (resolved) resolved = await planNewSocialMaterialRoutes({ repository: input.repository,
     tenantId: input.tenantId, task, resolved });
+  if (resolved && summary.brief.productId && detail.enterpriseProductBinding?.productId === summary.brief.productId) {
+    resolved = { ...resolved, replicationScript: bindReplicationProduct(resolved.replicationScript, detail.enterpriseProductBinding) };
+  }
   const previous = parseStoredSocialScriptBaseline(task.script_baseline);
   const baseline = resolved
     ? freezeSocialScriptBaseline({

@@ -326,7 +326,11 @@ export interface SocialDirectorPlanSummary {
 }
 
 export interface SocialContentTaskSummary {
+  /** Server projection of durable admission evidence, separate from a saved intake. */
+  executionAdmission?: { state: 'queued' | 'preparing' | 'blocked'; reason?: string; queueItemId?: string };
   taskId: string;
+  /** Real archived cover of the current rendered output; never a reference-video thumbnail. */
+  preview?: { coverUrl: string | null; sourceStatus: 'available' | 'unavailable' };
   /** Read-only server binding. Historic tasks have no implicit new allowance. */
   contentOrder?: {schemaVersion:'social-content-order.v1';contentId:string;budgetTaskId:string;
     entry:'weekly_package'|'workspace'|'assistant';programId:string|null;originWeek:string|null};
@@ -465,6 +469,9 @@ export interface SocialMetricSubmission {
   createdAt: string;
 }
 
+/** Reuse the existing verified enterprise binding contract without duplicating its fields. */
+export type SocialEnterpriseProductBinding = NonNullable<SocialContentTaskDetail['enterpriseProductBinding']>;
+
 export interface SocialContentTaskDetail extends SocialContentTaskSummary {
   /** Read-only exact-window revision identity; does not admit a worker. */
   footageRevisionPlanHash?: string;
@@ -557,6 +564,8 @@ export interface SocialWeeklyPlan {
 
 export interface SocialContentTaskPage {
   items: SocialContentTaskSummary[];
+  /** Isolated invalid historic records: not successful task projections. */
+  unavailableItems?: Array<{taskId:string;title:string;createdAt:string|null;errorCode:string}>;
   page: number;
   perPage: number;
   totalItems: number;
