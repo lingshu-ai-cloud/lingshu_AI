@@ -4,7 +4,7 @@ import type {SocialContentTaskDetail,SocialTaskSource} from '../../shared/contra
 import {socialJson,socialObject,socialRequestHash} from './socialContentValidation.js';
 export interface WeeklySchedulerMaterialPlanProof {schemaVersion:'weekly-scheduler-material-plan.v1';tenantId:string;taskId:string;originalTaskVersion:string;scheduledTaskVersion:string;commandId:string;plan:NonNullable<SocialContentTaskDetail['assetSupplyPlan']>;inputHash:string;sourceHash:string;recordHash:string}
 function sourceHash(sources:SocialTaskSource[]){return socialRequestHash(sources.filter(s=>s.status==='active').slice().sort((a,b)=>a.sourceId.localeCompare(b.sourceId)));}
-function inputs(row:Record<string,unknown>){const brief={...socialObject(socialJson(row.brief))};delete brief._weeklyMaterialDemand;return {brief,replicationScript:socialJson(row.replication_script)??null,materialRequirements:socialJson(row.material_requirements)??null,packageSelection:socialJson(row.package_selection)??null};}
+function inputs(row:Record<string,unknown>){const brief={...socialObject(socialJson(row.brief))};delete brief._weeklyMaterialDemand;delete brief._executionQueueReceipt;return {brief,replicationScript:socialJson(row.replication_script)??null,materialRequirements:socialJson(row.material_requirements)??null,packageSelection:socialJson(row.package_selection)??null};}
 export function buildWeeklySchedulerMaterialPlanProof(input:{tenantId:string;taskId:string;commandId:string;row:StarterRecord;detail:SocialContentTaskDetail;sources:SocialTaskSource[]}):WeeklySchedulerMaterialPlanProof|null {
  const authority=socialObject(socialObject(socialJson(input.row.brief))?._weeklyAuthority);
  if(!authority)return null;

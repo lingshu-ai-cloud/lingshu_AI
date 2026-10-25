@@ -14,6 +14,9 @@ test('formal scheduler proof tolerates diagnostic inventory rereads but rejects 
   const repository={dataStore:{getById:async()=>run}} as unknown as Starter198Repository;
   const current={taskId:'content',runId:'original-run',version:'5',sources:[],assetSupplyPlan:{...originalPlan,planVersion:'5'}};
   assert.deepEqual(await readWeeklySchedulerMaterialPlan(repository,scheduled,current),originalPlan);
+  const receipted={...scheduled,brief:{...(row.brief as Record<string,unknown>),_executionQueueReceipt:{queueItemId:'queue',runId:'original-run',disposition:'queued'}}};
+  assert.deepEqual(await readWeeklySchedulerMaterialPlan(repository,receipted,current),originalPlan,'queue receipt is output metadata, not a changed production input');
+  assert.equal(await readWeeklySchedulerMaterialPlan(repository,{...receipted,brief:{...receipted.brief,productId:'different-product'}},current),null,'real production input changes still invalidate the proof');
   const reread={...current,assetSupplyPlan:{...current.assetSupplyPlan,inventoryAudit:{...originalPlan.inventoryAudit!,scannedAt:'2026-10-11T02:00:00Z'}}};
   assert.deepEqual(await readWeeklySchedulerMaterialPlan(repository,scheduled,reread),originalPlan);
   const changedShot={...current,assetSupplyPlan:{...current.assetSupplyPlan,shots:[]}};

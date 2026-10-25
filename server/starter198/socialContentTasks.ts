@@ -752,7 +752,8 @@ async function startSocialContentTaskUnderGuard(input: Parameters<typeof startSo
         if (queued.runId && socialText(scheduled.run_id) !== queued.runId) throw new SocialContentWorkflowError('social_content_schedule_state_integrity_violation', 503);
         await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, scheduled.id, {
           brief: { ...socialObject(socialJson(scheduled.brief)), _executionQueueReceipt: { disposition: queued.disposition ?? 'queued', queueItemId: queued.queueItemId, runId: queued.runId ?? null } },
-          version: nextVersion(scheduled), updated_at: (input.now ?? new Date()).toISOString(),
+          // Receipt metadata must preserve the version frozen by the scheduler.
+          updated_at: (input.now ?? new Date()).toISOString(),
         });
         await contentOrder?.acknowledge();
         return { task: (await readSocialTaskDetail(input))! };

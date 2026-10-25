@@ -93,4 +93,3 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
     <CreationTaskDetailDrawer key={`${identity}:${selected?.key||''}`} row={selected} overview={data} onClose={close} onUpdated={refresh}/>
   </section>;
 }
-

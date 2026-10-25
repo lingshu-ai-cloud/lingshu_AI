@@ -191,7 +191,7 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
       const actualQueue = createStarter198OrchestratorQueue({repository, dataStore: store, now: () => now});
       await assert.rejects(startSocialContentTask({repository, tenantId, userId: 'operator', taskId: created.taskId,
         expectedVersion: currentVersion, idempotencyKey: 'typed-start-blocked-reference', now, orchestratorQueue: actualQueue}),
-        /social_content_execution_director_review_required/);
+        /social_replication_system_review_blocked:product_identity_unresolved,expression_failed,scene_review_incomplete/);
       assert.equal(store.rows.get(STARTER_COLLECTIONS.runs)!.length, 0);
       return;
     }
@@ -214,7 +214,7 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
     if(recoverOutbox){
       const frozen=(row.content_order as any).dispatch;
       assert.ok(frozen?.commandId&&frozen.queueRequest,'actual start froze exact dispatch before quota reservation');
-      const originalRun=String(row.run_id),originalQueue=String(row.orchestrator_item_id);
+      const originalRun=String(row.run_id),originalQueue=String(row.orchestrator_item_id),scheduledVersion=String(row.version);
       await admitContentExecutionJob({dataStore:store,tenantId,userId:'operator',taskId:created.taskId,runId:originalRun,
         taskType:'social_content_instant',now});
       const originalJobs=store.rows.get('content_execution_jobs')??[];
@@ -260,6 +260,7 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
       const first=await runWithDataAuthority('local',()=>runSocialContentOrderOutboxScan({dataStore:store,authority:'local',recover}));
       assert.equal(first.recovered,1,JSON.stringify({first,errors}));assert.equal(first.blocked,0);
       assert.equal(row.run_id,originalRun);assert.equal(row.orchestrator_item_id,originalQueue);
+      assert.equal(String(row.version),scheduledVersion,'outbox receipt must preserve the scheduler version');
       assert.equal(store.rows.get(STARTER_COLLECTIONS.runs)!.length,1);
       assert.equal((store.rows.get('content_execution_jobs')??[]).length,originalJobs.length);
       // A worker has advanced and an external outcome is unknown. Recovery

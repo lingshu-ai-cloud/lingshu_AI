@@ -85,7 +85,8 @@ export async function recoverSocialContentOrderDispatch(input: { repository: Sta
       if (socialText(current.orchestrator_item_id) === result.queueItemId) {
         await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, current.id, {
           brief: { ...socialObject(socialJson(current.brief)), _executionQueueReceipt: { disposition: result.disposition ?? 'queued', queueItemId: result.queueItemId, runId: result.runId ?? null } },
-          version: nextVersion(current), updated_at: (input.now ?? new Date()).toISOString(),
+          // Receipt metadata must preserve the version frozen by the scheduler.
+          updated_at: (input.now ?? new Date()).toISOString(),
         });
       }
       return (await readSocialTaskDetail(input))!;
