@@ -1,0 +1,25 @@
+.ads-modal.ads-modal-create { width: 1120px; }
+.ads-create-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 28px; align-items: start; }
+.ads-create-layout > form { min-width: 0; }
+.ads-goal-reference { position: sticky; top: 0; border-left: 1px solid var(--color-border); padding-left: 24px; min-width: 0; max-height: 72vh; overflow: auto; }
+.ads-goal-reference h3 { margin: 0 0 12px; font-size: 16px; color: var(--color-text-primary); }
+.ads-goal-reference-content { color: var(--color-text-primary); overflow-wrap: anywhere; line-height: 1.65; }
+.ads-goal-reference-content h3 { margin-top: 0; }
+.ads-goal-reference-content h4 { margin-bottom: 8px; }
+.ads-goal-screenshot { margin: 16px 0; }
+.ads-goal-screenshot .ls-progressive-media-root { display: block; }
+.ads-goal-screenshot .ls-media-state-frame { background: #fff; min-height: 240px; }
+.ads-goal-screenshot > .ant-typography:first-child { display: block; margin-bottom: 8px; }
+.ads-goal-screenshot figcaption { margin: 10px 0 6px; }
+.ads-goal-screenshot > .ant-typography, .ads-goal-source-note { font-size: 12px; line-height: 1.6; }
+.ads-instant-form-checklist { margin: 0; }
+.ads-instant-form-checklist dt { font-weight: 600; }
+.ads-instant-form-checklist dd { margin: 4px 0 16px; }
+.ads-goal-reference-content .ads-instant-form-guide .ant-table { font-size: 12px; }
+.ads-goal-reference-trigger.ant-btn { display: none; }
+@media (max-width: 800px) {
+  .ads-create-layout { display: flex; flex-direction: column; gap: 16px; }
+  .ads-create-layout > form { width: 100%; }
+  .ads-goal-reference { display: none; }
+  .ads-goal-reference-trigger.ant-btn { display: inline-flex; order: -1; align-self: flex-end; }
+}

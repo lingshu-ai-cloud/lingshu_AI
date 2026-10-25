@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Collapse, Descriptions, Empty, Select, Space, Steps } from 'antd';
+import { Alert, Button, Descriptions, Empty, Select, Space, Steps } from 'antd';
 import { platformAdsRequest } from '../lib/platformAds';
 import { AUTH_TOKEN_CHANGED_EVENT, authHeader } from '../lib/auth';
 import type { AdConnection } from './AdAccountConnections';
@@ -11,7 +11,7 @@ const officialUrl = (value: string) => {
   return url.origin === 'https://www.facebook.com' && url.pathname.endsWith('/dialog/oauth');
 };
 const message = (e: unknown) => e instanceof Error ? e.message : '连接失败，请重试';
-export default function AdMetaConnectionGuide({ configured, missing = [], targetAccountId, onConnected }: {
+export default function AdMetaConnectionGuide({ configured, targetAccountId, onConnected }: {
   configured: boolean; missing?: string[]; targetAccountId?: string; onConnected: (connection: AdConnection) => void;
 }) {
   const [scope, setScope] = useState(authHeader().Authorization || '');
@@ -116,7 +116,7 @@ export default function AdMetaConnectionGuide({ configured, missing = [], target
       {error && !session && <Button disabled={restoring} onClick={() => setRestoreAttempt(v => v + 1)}>重新读取授权进度</Button>}
       {!restoring && step === 0 && <>
         <h3>{configured ? '用谁的 Facebook 账号授权？' : 'Meta 账户连接'}</h3>
-        {!configured ? <><p role="status">官方授权暂不可用，请联系管理员恢复配置。已保存账户和历史数据仍可查看。</p><Button type="primary" disabled title="官方授权未配置，详见下方管理员检查">前往 Meta 官方授权</Button></> : <>
+        {!configured ? <><p role="status">官方授权暂不可用，请联系管理员恢复配置。已保存账户和历史数据仍可查看。</p><Button type="primary" disabled title="官方授权未配置，请联系管理员">前往 Meta 官方授权</Button></> : <>
           {session && ['pending', 'exchanging'].includes(session.status) ? <><Alert type="info" showIcon title="等待你在 Meta 页面完成授权" description="完成后返回这里，系统会自动读取账户。授权窗口已关闭时可重新开始。"/>{popupBlocked && <Alert type="warning" title="浏览器拦截了弹窗，请点击下方打开授权页。"/>}<Space wrap>{session.url && officialUrl(session.url) && <Button href={session.url} target="_blank" rel="noopener noreferrer">打开 Meta 授权页</Button>}<Button disabled={busy} onClick={() => void start()}>重新开始授权</Button></Space></>
             : <><Button type="primary" loading={busy} onClick={() => void start()}>前往 Meta 官方授权</Button>{session?.status === 'failed' && <Button onClick={() => { setError(''); setSession(s => s ? { ...s, status: 'pending' } : s); }}>重试检查授权结果</Button>}{session?.status === 'cancelled' && <Alert type="info" title="你已取消授权，可以重新开始。"/>}</>}
         </>}
@@ -139,7 +139,6 @@ export default function AdMetaConnectionGuide({ configured, missing = [], target
         <Space><Button disabled={busy} onClick={() => setStep(2)}>上一步</Button><Button type="primary" disabled={!page || !account} loading={busy} onClick={() => void connect()}>确认连接账户与主页</Button></Space>
       </>}
       {session && ['pending', 'exchanging', 'ready'].includes(session.status) && <Button disabled={busy || restoring} onClick={() => void cancel()}>取消本次连接</Button>}
-      <Collapse ghost items={[{ key: 'help', label: '绑定帮助与管理员检查', children: <><p>看不到账户：确认 Facebook 登录人正确、企业已分配广告账户权限，并在授权时选择了目标资产。看不到主页：核对主页广告权限和账户推广关系。新个人账号受应用开发模式或权限审核限制时，需要现有应用管理员处理。</p><p>绑定不会自动批准投放。每份计划仍要单独选择素材、检查预算、完成投放前核验。</p>{!configured && <p>管理员配置缺项：{missing.length ? missing.join('、') : '现有应用配置格式或回调地址不符合要求'}。回调地址必须与现有 Meta 应用后台登记完全一致，密钥只在服务端配置。</p>}</> }]}/>
     </div>
   </section>;
 }

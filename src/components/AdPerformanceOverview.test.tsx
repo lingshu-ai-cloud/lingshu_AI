@@ -19,7 +19,7 @@ test('three workspaces share grants and native creatives without manufacturing l
   const directory = readFileSync(new URL('./AdAccountDirectory.tsx', import.meta.url), 'utf8');
   const picker = readFileSync(new URL('./AdPlanAccountPicker.tsx', import.meta.url), 'utf8');
   const assets = readFileSync(new URL('./AdPlatformCreatives.tsx', import.meta.url), 'utf8');
-  assert.match(page, /AdAccountDirectoryProvider/); assert.match(page, /<AdAccountHistory plans/); assert.match(page, /<AdPlanAccountPicker/);
+  assert.match(page, /AdAccountDirectoryProvider/); assert.match(page, /<AdPerformanceOverview initialTaskId=/); assert.match(page, /<AdPlanAccountPicker/);
   assert.match(directory, /'\/account-directory'/); assert.match(directory, /loadedScope === scope/);
   assert.match(picker, /use-granted-account/); assert.match(picker, /onChange\(result.connection.id\)/);
   assert.match(assets, /catalog\?\.base === base/);
@@ -61,4 +61,26 @@ test('summary de-duplicates resources and refuses missing, mixed account/currenc
   assert.equal(metaPerformanceSummary([{ ...r, totals: null }], 1).spend, null);
   assert.equal(metaPerformanceSummary([{ ...r, totals: { ...r.totals!, spend: 0 } }], 1).spend, 0);
   for (const patch of [{ currency: 'USD' }, { accountId: '2' }, { reportTimezone: 'UTC' }, { window: { since: '2026-10-01', until: '2026-10-22' } }]) assert.equal(metaPerformanceSummary([r, { ...r, resourceId: '102', ...patch }], 2).spend, null);
+});
+
+test('material table summaries preserve incomplete reports and separate incompatible reporting groups', async () => {
+  const vm = await import('node:vm'), ts = await import('typescript');
+  const { materialReportGroups } = await import('../../shared/adMaterialDirectory');
+  const exports: any = {};
+  vm.runInNewContext(ts.transpileModule(readFileSync(new URL('./AdMaterialPerformance.tsx', import.meta.url), 'utf8') + '\nexports.summary = MaterialSummary;', { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText, {
+    exports, require(name: string) {
+      if (name === 'react/jsx-runtime') return { jsx: (type: any, props: any) => ({ type, props }), jsxs: (type: any, props: any) => ({ type, props }) };
+      if (name === '../../shared/adMaterialDirectory') return { materialReportGroups };
+      return {};
+    },
+  });
+  const text = (v: any): string => Array.isArray(v) ? v.map(text).join('') : v?.props ? text(v.props.children) : v == null ? '' : String(v);
+  const item = { ads: [{ executionId: 'one', market: '美国' }, { executionId: 'two', market: '美国' }] };
+  const report = { accountId: 'account', adId: '1', currency: 'CNY', reportTimezone: 'UTC', window: { since: '2026-10-01', until: '2026-10-07' }, attributionSpec: [], metricLabel: '消息会话', spend: 10, results: 2, reportedAt: '2026-10-08' };
+  const summary = (reports: any, errors = {}) => text(exports.summary({ item, reports, errors }));
+  assert.match(summary({ one: report }), /报告已返回 1\/2/);
+  assert.match(summary({ one: report }, { two: 'failure' }), /部分报告读取失败/);
+  assert.match(summary({ one: report, two: { ...report, adId: '2', currency: 'USD' } }), /2 组投放结果/);
+  assert.match(summary({ one: report, two: { ...report, adId: '2', metricLabel: '视频观看' } }), /2 组投放结果/);
+  assert.match(summary({ one: report, two: { ...report, adId: '2' } }), /CNY 20 消耗 · 消息会话 4/);
 });

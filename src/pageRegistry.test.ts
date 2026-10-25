@@ -60,9 +60,9 @@ assert.equal(PAGE_REGISTRY.accountManagement.navParent, 'socialMonitoring');
 assert.equal(PLATFORM_ADS_SURFACE_ENABLED, true, 'the 投放管理 product unit must be visible');
 assert.deepEqual(PLATFORM_ADS_PAGE_IDS, ['adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged']);
 assert.deepEqual(['adsPlans', 'adsOverview', 'adsCreatives'].map(page => PAGE_REGISTRY[page as 'adsPlans' | 'adsOverview' | 'adsCreatives'].navLabel), [
-  '计划创编',
+  '计划管理',
   '平台投流',
-  '素材管理',
+  '素材投放表现',
 ]);
 assert.equal(PAGE_REGISTRY.adsManaged.navParent, 'adsPlans', 'legacy AI managed links must resolve under the plan workspace');
 assert.equal(availableProductPage('adsOverview'), 'adsOverview');

@@ -1,5 +1,13 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Alert, Button, Collapse, Drawer, Select, Tabs } from 'antd';
+import MetaTargetingFields from './MetaTargetingFields';
+import AdDraftMessageChannels from './AdDraftMessageChannels';
+import { adMarketSummary } from '../../shared/metaMessageChoice';
+import { emptyMetaTargeting, normalizeMetaTargeting } from '../../shared/metaTargeting';
+import AdGoalExamples from './AdGoalExamples';
+import AdCountrySelect from './AdCountrySelect';
+import { adCountryName, metaNeedsWebsite } from '../../shared/metaAdJourney';
+import { META_LEAD_DESCRIPTIONS } from '../../shared/metaAdObjectives';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Alert, Button, Collapse, Drawer, Modal, Tabs } from 'antd';
 import {
   ArrowRight,
   ArrowUpRight,
@@ -19,17 +27,18 @@ import {
   X,
 } from "lucide-react";
 import type { Page } from "../App";
-import { useModalFocus } from "../hooks/useModalFocus";
 import { platformAdsApi, type PlatformAdTask } from "../lib/platformAds";
 import { emptyAdPlanConfiguration, creationSourceLabels, managementModeLabels, adTaskStatusLabels, type AdManagement } from '../lib/platformAdsDomain';
 import "./platformAds.css";
-import { getAdPlanCapability, PLATFORM_AD_CAPABILITIES, PLATFORM_AD_GOALS } from "../../shared/platformAdCapabilities";
+import { getAdPlanCapability, PLATFORM_AD_GOALS } from "../../shared/platformAdCapabilities";
 import type { AdConnection } from './AdAccountConnections';
 import { AdAccountConnections, AdTaskControls, AdTaskMetrics } from './PlatformAdsOperations';
 import AdPerformanceOverview from './AdPerformanceOverview';
-import AdCreativeLibrary from './AdCreativeLibrary';
+import AdMaterialPerformance from './AdMaterialPerformance';
+import AdPlanManagement from './AdPlanManagement';
+import AdPlanBudgetDialog from './AdPlanBudgetDialog';
+import AdPlanMetricHistory from './AdPlanMetricHistory';
 import { AdAccountDirectoryProvider } from './AdAccountDirectory';
-import AdAccountHistory from './AdAccountHistory';
 import AdPlanAccountPicker from './AdPlanAccountPicker';
 import AdMaterialPicker from './AdMaterialPicker';
 import MetaPlanAuditPanel from './MetaPlanAuditPanel';
@@ -99,14 +108,12 @@ function PlatformAdsWorkspace({
   const [dialog, setDialog] = useState<"create" | "accounts" | null>(null);
   const [returnToCreate, setReturnToCreate] = useState(false);
   const closeDialog = () => {
+    if (saving) return;
     if (dialog === 'accounts' && returnToCreate) { setReturnToCreate(false); setDialog('create'); }
     else setDialog(null);
   };
   const [materialPickerOpen, setMaterialPickerOpen] = useState(false);
-  const modalRef = useModalFocus<HTMLDivElement>({
-    open: dialog !== null && !materialPickerOpen,
-    onClose: closeDialog,
-  });
+  const [referenceOverlayOpen, setReferenceOverlayOpen] = useState(false);
   const [step, setStep] = useState(0);
   const [drafts, setDrafts] = useState<Draft[]>([]);
 
@@ -126,7 +133,12 @@ function PlatformAdsWorkspace({
   const [selected, setSelected] = useState("全部渠道");
   const [mode, setMode] = useState("建议模式");
   const [notice, setNotice] = useState("");
-  const [entry, setEntry] = useState<'manual' | 'ai_assisted' | 'ai_managed'>('manual');
+  const [entry, setEntry] = useState<'manual' | 'ai_assisted' | 'ai_managed'>('ai_assisted');
+  const [reportsOpen, setReportsOpen] = useState(false);
+  const [budgetTask, setBudgetTask] = useState<PlatformAdTask | null>(null);
+  const savingRef = useRef(false);
+  const identityRef = useRef(planNavigation.identity);
+  identityRef.current = planNavigation.identity;
   const [form, setForm] = useState({
     name: "",
     video: "",
@@ -137,8 +149,8 @@ function PlatformAdsWorkspace({
     channels: ["Facebook", "Instagram"],
     configuration: { ...emptyAdPlanConfiguration },
   });
-  const formCapability = getAdPlanCapability(form);
-  const isPerformancePage = page === 'adsOverview';
+  const marketSummary = adMarketSummary(form.configuration.countries || [], form.configuration.metaTargeting?.locales);
+  const isPlanPage = page !== 'adsCreatives';
   const isCreativePage = page === 'adsCreatives';
   useEffect(() => {
     if (page !== 'adsManaged') return;
@@ -150,7 +162,7 @@ function PlatformAdsWorkspace({
     onNavigate("adsCreatives");
   };
   useEffect(() => { if (taskList.items) setDrafts(withLocalMockAdTasks(planNavigation.task && !taskList.items.some(task => task.id === planNavigation.task?.id) ? [planNavigation.task, ...taskList.items] : taskList.items).map(taskToDraft)); }, [taskList.items]);
-  useEffect(() => { setDrafts([]); }, [planNavigation.identity]);
+  useEffect(() => { setDrafts([]); setSelectedDraftState(null); setDialog(null); setBudgetTask(null); setNotice(''); }, [planNavigation.identity]);
   useEffect(() => {
     const consume = () => {
       try {
@@ -174,7 +186,9 @@ function PlatformAdsWorkspace({
     setSelectedDraftState(current => current?.id === task.id ? taskToDraft(task) : current);
   };
   const openCreate = () => {
-    setEntry('manual');
+    if (savingRef.current) return;
+    setEntry('ai_assisted');
+    setNotice('');
     setSelectedDraft(null);
     setStep(0);
     setForm({
@@ -189,10 +203,14 @@ function PlatformAdsWorkspace({
     });
     setDialog("create");
   };
+  const openBudget = (task: PlatformAdTask) => {
+    if (!previewMode) { setBudgetTask(task); return; }
+    setSelectedDraft(taskToDraft(task)); setEntry('manual'); setForm({ ...task, budget: String(task.budget), configuration: { ...task.configuration, startsAt: toLocalDateTime(task.configuration.startsAt), endsAt: toLocalDateTime(task.configuration.endsAt) } }); setStep(1); setDialog('create');
+  };
   const continueAfterConnection = (connection: AdConnection) => {
     if (returnToCreate) {
       const samePlatform = connection.provider === 'meta' ? form.channels.some(c => c === 'Facebook' || c === 'Instagram') : connection.provider === 'tiktok' ? form.channels.includes('TikTok') : form.channels.includes('YouTube');
-      if (connection.currency === form.currency && samePlatform) setForm(current => ({ ...current, configuration: { ...current.configuration, accountConnectionId: connection.id } }));
+      if (connection.currency === form.currency && samePlatform) setForm(current => ({ ...current, configuration: { ...current.configuration, accountConnectionId: connection.id, ...(current.configuration.accountConnectionId !== connection.id ? { metaMessage: undefined } : {}), ...(current.configuration.metaTargeting && current.configuration.accountConnectionId !== connection.id ? { metaTargeting: { ...current.configuration.metaTargeting, customAudiences: [] } } : {}) } }));
       else setNotice('账户已连接，但与当前草稿币种或平台不同；请在草稿中确认账户、渠道与预算，不会自动换算或覆盖。');
       setReturnToCreate(false);
       setDialog('create');
@@ -204,85 +222,86 @@ function PlatformAdsWorkspace({
       channels: connection.provider === 'google' ? ['YouTube'] : connection.provider === 'tiktok' ? ['TikTok'] : ['Facebook', 'Instagram'],
       goal: connection.provider === 'google' ? '获取线索或转化' : '提升有效视频观看',
       ...(connection.currency === 'USD' || connection.currency === 'CNY' ? { currency: connection.currency } : {}),
-      configuration: { ...current.configuration, accountConnectionId: connection.id },
+      configuration: { ...current.configuration, accountConnectionId: connection.id, ...(current.configuration.accountConnectionId !== connection.id ? { metaMessage: undefined } : {}), ...(current.configuration.metaTargeting && current.configuration.accountConnectionId !== connection.id ? { metaTargeting: { ...current.configuration.metaTargeting, customAudiences: [] } } : {}) },
     }));
   };
   const next = async (event: FormEvent) => {
     event.preventDefault();
+    if (savingRef.current) return;
     if (step < 2) {
+      if (step === 0 && !form.configuration.countries?.length) { setNotice('投放地区确认失败：请选择投放国家或地区'); return; }
+      if (step === 1 && form.channels.length && form.channels.every(c => ['Facebook', 'Instagram'].includes(c))) {
+        try { normalizeMetaTargeting(form.configuration.metaTargeting || emptyMetaTargeting, form.channels); }
+        catch (e) { setNotice(`定向配置检查失败：${(e as Error).message}`); return; }
+      }
       setStep(step + 1);
       return;
     }
+    savingRef.current = true;
     setSaving(true);
+    setNotice('');
+    const requestIdentity = planNavigation.identity;
     try {
       if (previewMode && entry !== 'manual') throw new Error('独立预览不调用 AI；请在已登录的完整工作台生成真实方案。');
-      const input = { name: form.name, video: form.video, goal: form.goal, market: form.market, budget: form.budget, currency: form.currency, channels: form.channels, configuration: { ...form.configuration, startsAt: form.configuration.startsAt ? new Date(form.configuration.startsAt).toISOString() : '', endsAt: form.configuration.endsAt ? new Date(form.configuration.endsAt).toISOString() : '' } };
+      const isMeta = form.channels.every(c => ['Facebook', 'Instagram'].includes(c));
+      const metaTargeting = isMeta ? normalizeMetaTargeting(form.configuration.metaTargeting || emptyMetaTargeting, form.channels) : undefined;
+      const input = { name: form.name.trim() || `${form.goal} · ${marketSummary}`.slice(0, 80), video: form.video, goal: form.goal, market: marketSummary, budget: form.budget, currency: form.currency, channels: form.channels, configuration: { ...form.configuration, ...(form.goal !== '获取消息会话' ? { metaMessage: undefined } : {}), metaTargeting, landingPageUrl: metaNeedsWebsite(form.goal) ? form.configuration.landingPageUrl : '', startsAt: form.configuration.startsAt ? new Date(form.configuration.startsAt).toISOString() : '', endsAt: form.configuration.endsAt ? new Date(form.configuration.endsAt).toISOString() : '' } };
       const task = previewMode
         ? ({ ...input, creationSource: selectedDraft?.creationSource || 'manual', managementMode: 'manual', id: selectedDraft?.id || crypto.randomUUID(), budget: Number(form.budget), status: 'draft', createdAt: selectedDraft?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() } as PlatformAdTask)
         : selectedDraft
         ? await platformAdsApi.updateTask(selectedDraft.id, { ...input, expectedVersion: selectedDraft.version })
         : entry === 'manual' ? await platformAdsApi.createTask(input)
         : await platformAdsApi.generatePlan({ ...input, entry });
+      if (identityRef.current !== requestIdentity) return;
       setDrafts((items) => selectedDraft
         ? items.map(item => item.id === task.id ? taskToDraft(task) : item)
         : [taskToDraft(task), ...items]);
-      setSelectedDraft(selectedDraft ? taskToDraft(task) : null);
+      setSelectedDraft(taskToDraft(task));
+      setReportsOpen(false);
       setDialog(null);
       onNavigate("adsPlans");
       setNotice(previewMode
         ? "预览草稿已保存在当前页面会话中，刷新后会清空。"
-        : `${selectedDraft ? "方案已更新" : "方案已保存"}；本次保存不会执行平台操作，可在任务详情继续创编与管理。`);
+        : `${selectedDraft ? "方案已更新" : "方案已保存"}；本次保存不会执行平台操作，已进入计划管理，可核对方案并执行。`);
     } catch (error) {
+      if (identityRef.current !== requestIdentity) return;
       setNotice(`草稿保存失败：${error instanceof Error ? error.message : "请稍后重试"}`);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
-  const filtered = drafts.filter(
-    (draft) => selected === "全部渠道" || draft.channels.includes(selected),
-  );
 
+  const accountPicker = !previewMode && <AdPlanAccountPicker currency={form.currency} value={form.configuration.accountConnectionId} onCurrencyChange={selectedDraft ? undefined : currency => setForm(current => ({ ...current, currency }))} onChange={accountConnectionId => setForm(current => ({ ...current, configuration: { ...current.configuration, accountConnectionId, ...(current.configuration.accountConnectionId !== accountConnectionId ? { metaMessage: undefined } : {}), ...(current.configuration.metaTargeting && current.configuration.accountConnectionId !== accountConnectionId ? { metaTargeting: { ...current.configuration.metaTargeting, customAudiences: [] } } : {}) } }))}/>;
   return (
     <div className={`ads-workspace${isCreativePage ? ' ads-creative-workspace' : ''}`}>
       <main className="ads-main">
-        <Tabs className="ads-workspace-tabs" aria-label="投放管理功能区" activeKey={page === 'adsManaged' ? 'adsPlans' : page}
-          onChange={key => { if (key === 'adsPlans' || key === 'adsOverview' || key === 'adsCreatives') onNavigate(key); }}
-          items={[{ key: 'adsPlans', label: '计划创编' }, { key: 'adsOverview', label: '投放数据' }, { key: 'adsCreatives', label: '素材管理' }]}/>
+        <Tabs className="ads-workspace-tabs" aria-label="投放管理功能区" activeKey={isCreativePage ? 'adsCreatives' : 'adsPlans'}
+          onChange={key => { if (key === 'adsPlans' || key === 'adsCreatives') onNavigate(key); }}
+          items={[{ key: 'adsPlans', label: '计划管理' }, { key: 'adsCreatives', label: '素材投放表现' }]}/>
         {isLocalForeignTradeMockEnabled() && <Alert className="mb-4" type="info" showIcon title="本地模拟 · 外贸工厂投放" description="展示中东、欧洲和拉美市场的跨平台计划与近 7 天效果，不会触发真实广告操作。" />}
         <LsPageHeader
-          title={page === 'adsPlans' ? '计划创编' : page === 'adsCreatives' ? '素材管理' : '投放数据'}
-          description={page === 'adsPlans' ? '配置目标、素材与预算，审阅方案并追踪 Meta 平台执行回执。' : page === 'adsCreatives' ? '管理素材版本、广告绑定和效果证据，推动下一轮内容迭代。' : '按平台原始口径查看花费、效果、覆盖范围和数据新鲜度。'}
-          extra={!isCreativePage && <>
-            <Button icon={<Link2 size={15} />} onClick={() => { setReturnToCreate(false); setDialog("accounts"); }}>连接广告账户</Button>
-            <Button type="primary" icon={<Plus size={16} />} onClick={openCreate}>手动创建投放</Button>
-            <Button icon={<Sparkles size={16} />} onClick={() => { openCreate(); setEntry('ai_assisted'); }}>AI 辅助创编</Button>
-            <Button icon={<Bot size={16} />} onClick={() => { openCreate(); setEntry('ai_managed'); }}>AI 托管创编</Button>
-            <Button icon={<Bot size={16} />} onClick={() => setManagedOpen(true)}>AI 投手</Button>
+          title={isCreativePage ? '素材投放表现' : '计划管理'}
+          description={isCreativePage ? '按素材版本查看关联计划与真实广告表现。' : '查看计划、投放效果与执行回执。'}
+          extra={<>
+            <Button icon={<Link2 size={15} />} onClick={() => { setReturnToCreate(false); setDialog("accounts"); }}>广告账户</Button>
+            <Button type="primary" icon={<Sparkles size={16} />} disabled={saving} onClick={openCreate}>智能创编</Button>
           </>}
         >
-          {!isCreativePage && <Collapse className="ads-capability-collapse" ghost items={[{
-            key: 'capabilities',
-            label: '查看各平台已实现能力与限制',
-            children: <><p className="ads-muted">以下为当前产品实现范围；连接账户或保存配置不代表可实际投递，真实账户验收尚未完成。</p><div className="ads-table-wrap"><table><thead><tr><th>平台</th><th>创建目标 / 币种</th><th>管理与动作</th><th>素材要求</th></tr></thead><tbody>{PLATFORM_AD_CAPABILITIES.map(item => <tr key={item.provider}><td><PlatformLogoGroup value={item.name}/><span className="sr-only">{item.name}</span></td><td>{item.goals.join('、')}<small>{item.currencies.join(' / ')}</small></td><td>{item.management}<small>{item.actions}</small></td><td>{item.material}</td></tr>)}</tbody></table></div></>,
-          }]} />}
         </LsPageHeader>
         {taskLoadError && <Alert className="mb-4" type="error" showIcon title={taskLoadError} action={<Button loading={loadingTasks} onClick={taskList.retry}>重试读取计划</Button>}/>}
         {planNavigation.loading && <p role="status">正在核对所选计划…</p>}
         {planNavigation.error && <Alert className="mb-4" type="error" showIcon title={planNavigation.error} action={<Button onClick={planNavigation.retry}>重试读取所选计划</Button>}/>}
         {notice && <Alert className="mb-4" type={notice.includes('失败') ? 'error' : 'success'} showIcon title={notice} closable onClose={() => setNotice('')} />}
 
-        {isPerformancePage && !previewMode && <AdPerformanceOverview initialTaskId={planNavigation.taskId || selectedDraft?.id} tasks={drafts} loading={loadingTasks} onOpen={openTask} />}
-        {!isPerformancePage && !isCreativePage && !previewMode && !selectedDraft && !planNavigation.taskId && <AdAccountHistory plans/>}
-        {isPerformancePage && previewMode && <PlatformAdsPerformancePreview channels={channels} onOpenAccounts={() => setDialog('accounts')} onOpenManaged={() => setManagedOpen(true)} />}
-
-        {page === "adsPlans" &&
+        {isPlanPage &&
           (planNavigation.taskId && (!selectedDraft || planNavigation.task?.id !== planNavigation.taskId || !!planNavigation.error) && !previewMode ? <p role="status">所选计划尚未读取，暂不展示其他计划详情。<Button onClick={() => setSelectedDraft(null)}>返回计划列表</Button></p> : selectedDraft ? (
             <section className="ads-task-detail">
               <button
                 className="ads-text-button"
                 onClick={() => setSelectedDraft(null)}
               >
-                ← 返回营销任务
+                ← 返回计划列表
               </button>
               <div className="ads-task-title">
                 <div>
@@ -305,6 +324,7 @@ function PlatformAdsWorkspace({
                 >
                   编辑方案
                 </button>
+                <Button onClick={() => openBudget({ ...selectedDraft, budget: Number(selectedDraft.budget), createdAt: selectedDraft.createdAt || '', updatedAt: '' })}>预算管理</Button>
               </div>
               <div className="ads-detail-metrics">
                 {[
@@ -322,7 +342,8 @@ function PlatformAdsWorkspace({
                   </div>
                 ))}
               </div>
-              {!previewMode && selectedDraft.channels.every(c => ['Facebook', 'Instagram'].includes(c)) && <MetaPlanAuditPanel taskId={selectedDraft.id} version={selectedDraft.version || 1} onData={() => onNavigate('adsOverview')} onCreatives={() => onNavigate('adsCreatives')}/>}
+              {!previewMode && <Collapse items={[{ key: 'snapshots', label: '已保存指标历史与快照同步', children: <AdPlanMetricHistory key={selectedDraft.id} taskId={selectedDraft.id}/> }]}/>}
+              {!previewMode && selectedDraft.channels.every(c => ['Facebook', 'Instagram'].includes(c)) && <MetaPlanAuditPanel taskId={selectedDraft.id} version={selectedDraft.version || 1} onData={() => setReportsOpen(true)} onCreatives={() => onNavigate('adsCreatives')}/>}
               {!previewMode && <AdTaskControls key={selectedDraft.id} task={{ ...selectedDraft, budget: Number(selectedDraft.budget), createdAt: selectedDraft.createdAt || '', updatedAt: '' }} onUpdate={replaceTask} onExecution={() => setExecutionLockedIds(ids => new Set(ids).add(selectedDraft.id))} />}
               <button className="ads-text-button" onClick={() => onNavigate('digitalEmployees')}>返回智能经营</button>
               <div className="ads-overview-grid">
@@ -368,93 +389,17 @@ function PlatformAdsWorkspace({
               </div>
             </section>
           ) : (
-            <section className="ads-card">
-              <div className="ads-section-title">
-                <div>
-                  <h2>
-                    本地计划与草稿{" "}
-                    <span className="ads-count">{taskList.items === null && !previewMode ? '—' : filtered.length}</span>
-                  </h2>
-                  <p className="ads-muted">
-                    按广告平台分别创建计划；Facebook 与 Instagram 可共用一份 Meta 计划。
-                  </p>
-                </div>
-                <Select
-                  aria-label="筛选渠道"
-                  value={selected}
-                  onChange={setSelected}
-                  options={["全部渠道", ...channels.map((c) => c.name)].map(value => ({ value, label: value }))}
-                />
-              </div>
-              {loadingTasks ? (
-                <div className="ads-empty" role="status"><Clock3 size={30} /><h3>正在加载投放草稿</h3></div>
-              ) : filtered.length ? (
-                <div className="ads-table-wrap ads-task-table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>营销任务</th>
-                        <th>渠道</th>
-                        <th>目标市场</th>
-                        <th>预算上限</th>
-                        <th>状态</th>
-                        <th>创建来源 / 管理方式</th>
-                        <th>操作</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filtered.map((d) => (
-                        <tr key={d.id}>
-                          <td data-label="营销任务">
-                            <strong>{d.name}</strong>
-                            <small>
-                              {d.video} · {d.goal}
-                            </small>
-                          </td>
-                          <td data-label="渠道"><span className="inline-flex items-center gap-1.5">{d.channels.map(name => <span key={name} title={name}><PlatformLogoGroup value={name} size={18}/></span>)}</span></td>
-                          <td data-label="目标市场">{d.market}</td>
-                          <td data-label="预算上限">{d.creationSource === 'platform_import' && Number(d.budget) === 0 ? '平台总预算未同步' : `${d.currency} ${Number(d.budget).toLocaleString()}`}</td>
-                          <td data-label="状态">
-                            <span className="ads-pill neutral">{adTaskStatusLabels[d.status] || '状态待核对'}</span>
-                          </td>
-                          <td data-label="创建来源 / 管理方式">{creationSourceLabels[d.creationSource || 'manual']}<small>{managementModeLabels[d.managementMode || 'manual']}</small></td>
-                          <td data-label="操作">
-                            <button
-                              className="ads-text-button"
-                              onClick={() => setSelectedDraft(d)}
-                            >
-                              查看任务
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="ads-empty">
-                  <FileText size={38} />
-                  <h3>
-                    {taskLoadError ? '计划暂未读取' : loadingTasks ? '正在读取计划' : drafts.length
-                      ? "该渠道暂无计划"
-                      : "创建你的第一份视频投流计划"}
-                  </h3>
-                  <p>
-                    {taskLoadError ? '请重试读取计划；当前无法确认计划数量。' : '选择视频、推广目标、渠道与预算，先准备一份可审阅的草稿。'}
-                  </p>
-                  <button className="ads-button primary" onClick={openCreate}>
-                    <Plus size={15} />
-                    创建投放
-                  </button>
-                </div>
-              )}
-            </section>
+            <AdPlanManagement tasks={drafts.map(d => ({ ...d, budget: Number(d.budget), createdAt: d.createdAt || '', updatedAt: '' }))} loading={loadingTasks} error={taskLoadError} onOpen={openTask} onUpdate={replaceTask} previewMode={previewMode} onCreate={openCreate} onAI={id => { openTask(id); setManagedOpen(true); }}/>
           ))}
 
         {isCreativePage && (
-          <AdCreativeLibrary onOpenTask={openTask} initialTaskId={planNavigation.taskId || selectedDraft?.id} initialTaskName={selectedDraft?.name} selectedMaterial={selectedDraft?.configuration.materialSource ? { taskId: selectedDraft.id, selection: selectedDraft.configuration.materialSource } : undefined} />
+          <AdMaterialPerformance onClearTask={() => setSelectedDraft(null)} onOpenTask={openTask} onCreate={materialSource => { openCreate(); setForm(current => ({ ...current, video: materialSource.name.slice(0, 120), configuration: { ...current.configuration, materialSource } })); }} initialTaskId={planNavigation.taskId || selectedDraft?.id} />
         )}
 
+        {budgetTask && <AdPlanBudgetDialog key={budgetTask.id} task={budgetTask} onClose={() => setBudgetTask(null)} onUpdate={task => { replaceTask(task); setBudgetTask(task); }}/>}
+        <Drawer title="计划投放效果" placement="right" size={1080} open={reportsOpen} onClose={() => setReportsOpen(false)} destroyOnHidden>
+          {reportsOpen && (!previewMode ? <AdPerformanceOverview initialTaskId={planNavigation.taskId || selectedDraft?.id} tasks={drafts} loading={loadingTasks} onOpen={id => { setReportsOpen(false); openTask(id); }} /> : <PlatformAdsPerformancePreview channels={channels} onOpenAccounts={() => setDialog('accounts')} onOpenManaged={() => setManagedOpen(true)} />)}
+        </Drawer>
         <Drawer title="AI 投手" placement="right" size={720} open={managedOpen} onClose={() => setManagedOpen(false)} destroyOnHidden={false}>
           {managedOpen && (!previewMode ? <AdManagedWorkspace selectedTaskId={selectedDraft?.id} tasks={managedTasks} loading={loadingTasks} onUpdate={replaceTask} onPlans={() => { setManagedOpen(false); onNavigate('adsPlans'); }} /> : <PlatformAdsManagedPreview mode={mode} onModeChange={setMode} />)}
         </Drawer>
@@ -466,35 +411,11 @@ function PlatformAdsWorkspace({
         </footer>}
       </main>
 
-      {dialog && (
-        <div
-          className="ads-overlay"
-          onKeyDown={(e) => {
-            if (e.key === "Escape" && !materialPickerOpen && e.currentTarget.contains(e.target as Node)) { e.stopPropagation(); closeDialog(); }
-          }}
-        >
-          <div
-            ref={modalRef}
-            className="ads-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={dialog === "accounts" ? "连接广告账户" : "创建投放"}
-          >
-            <div className="ads-modal-heading">
-              <div>
-                <h2>
-                  {dialog === "accounts" ? "连接广告账户" : selectedDraft ? "编辑投放计划" : entry === 'manual' ? "手动创建投放计划" : entry === 'ai_assisted' ? 'AI 辅助创编' : 'AI 托管创编'}
-                </h2>
-              </div>
-              <button
-                className="ads-icon-button"
-                aria-label={returnToCreate && dialog === 'accounts' ? "返回创建投放" : "关闭弹窗"}
-                onClick={closeDialog}
-                autoFocus
-              >
-                <X size={20} />
-              </button>
-            </div>
+      <Modal open={dialog !== null} title={dialog === 'accounts' ? '广告账户' : selectedDraft ? '编辑投放计划' : entry === 'manual' ? '手动创建投放计划' : 'AI 创编投放计划'}
+        width={dialog === 'accounts' ? 640 : 1120} footer={null} onCancel={closeDialog}
+        closable={!saving} keyboard={!saving && !materialPickerOpen && !referenceOverlayOpen} mask={{ closable: false }}
+        className="ads-plan-dialog" styles={{ body: { maxHeight: '76vh', overflowY: 'auto' } }}>
+        {dialog === 'accounts' && notice.includes('失败') && <Alert type="error" showIcon title={notice} className="mb-4"/>}
             {dialog === "accounts" ? (
               !previewMode ? <AdAccountConnections initialProvider={(returnToCreate ? form.channels.includes('TikTok') : selected === 'TikTok') ? 'tiktok' : (returnToCreate ? form.channels.includes('YouTube') : selected === 'YouTube') ? 'google' : 'meta'} continueLabel={returnToCreate ? '返回并继续创建' : '继续创建投放计划'} onContinue={continueAfterConnection} onTaskImported={task => { setReturnToCreate(false); setDrafts(items => [taskToDraft(task), ...items.filter(item => item.id !== task.id)]); setSelectedDraft(taskToDraft(task)); setDialog(null); onNavigate('adsPlans'); }} /> : <>
                 <p className="ads-muted">
@@ -525,8 +446,10 @@ function PlatformAdsWorkspace({
                 </button>
               </>
             ) : (
-              <form onSubmit={next}>
+              <div className="ads-create-layout"><form onSubmit={next}>
+                {!selectedDraft && <div className="ads-creation-method"><span>{entry === 'manual' ? '手动填写计划' : '默认由 AI 生成可编辑方案'}</span><Button type="link" disabled={saving} onClick={() => setEntry(entry === 'manual' ? 'ai_assisted' : 'manual')}>{entry === 'manual' ? '切换为 AI 创编' : '改为手动填写'}</Button></div>}
                 {!previewMode && <div className="ads-context-banner"><Link2 size={17} /><p>需要连接广告账户？当前填写内容会保留。</p><button type="button" className="ads-text-button" disabled={saving} onClick={() => { setReturnToCreate(true); setDialog('accounts'); }}>连接账户</button></div>}
+                <fieldset className="ads-create-fields" disabled={saving}>
                 <div className="ads-steps">
                   {["视频与目标", "渠道与预算", "预览方案"].map((s, i) => (
                     <span className={i === step ? "active" : ""} key={s}>
@@ -534,14 +457,9 @@ function PlatformAdsWorkspace({
                     </span>
                   ))}
                 </div>
-                <div className="ads-capability-hint" role="status">
-                  <strong>{formCapability.supportsCreate ? '目标支持情况' : '当前组合仅用于规划'}</strong>
-                  <p>{formCapability.reason}</p>
-                  {entry === 'ai_managed' && !formCapability.supportsManaged && <p>此组合尚未开放托管执行；AI 可以生成方案，后续执行需选择受支持的平台与管理方式。</p>}
-                </div>
                 {step === 0 && (
                   <div className="ads-form-fields">
-                    {!previewMode && <AdPlanAccountPicker currency={form.currency} value={form.configuration.accountConnectionId} onCurrencyChange={selectedDraft ? undefined : currency => setForm(current => ({ ...current, currency }))} onChange={accountConnectionId => setForm(current => ({ ...current, configuration: { ...current.configuration, accountConnectionId } }))}/>}
+                    {form.goal !== '获取消息会话' && accountPicker}
                     {!previewMode && <AdMaterialPicker onOpenChange={setMaterialPickerOpen} value={form.configuration.materialSource} disabled={saving} blockedReason={form.channels.every(c => ['Facebook', 'Instagram'].includes(c)) ? undefined : '当前选择器用于 Meta 视频计划，请先选择 Facebook / Instagram 渠道。'} onChange={materialSource => setForm(current => ({ ...current, video: materialSource?.name.slice(0, 120) || '', configuration: { ...current.configuration, materialSource } }))}/>}
                     <label>
                       投放视频
@@ -553,20 +471,18 @@ function PlatformAdsWorkspace({
                         onChange={(e) =>
                           setForm({ ...form, video: e.target.value })
                         }
-                        placeholder="输入视频名称或素材编号"
+                        placeholder="仅草稿规划时可填写视频名称"
                       />
-                      {!form.configuration.materialSource && <small>手填名称仅用于规划，不代表已绑定可投放文件；可从素材管理选择已有成片。</small>}
                     </label>
                     <label>
                       视频投流任务名称
                       <input
-                        required
                         maxLength={80}
                         value={form.name}
                         onChange={(e) =>
                           setForm({ ...form, name: e.target.value })
                         }
-                        placeholder="例如：秋季新品视频 · 美国放量"
+                        placeholder="可选，系统按目标和市场自动命名"
                       />
                     </label>
                     <label>
@@ -574,24 +490,15 @@ function PlatformAdsWorkspace({
                       <select
                         value={form.goal}
                         onChange={(e) =>
-                          setForm({ ...form, goal: e.target.value })
+                          setForm({ ...form, goal: e.target.value, configuration: { ...form.configuration, ...(e.target.value !== '获取消息会话' ? { metaMessage: undefined } : {}) } })
                         }
                       >
                         {PLATFORM_AD_GOALS.map(goal => <option key={goal} value={goal}>{goal}{getAdPlanCapability({ ...form, goal }).supportsCreate ? ' · 已实现创建流程' : ' · 仅草稿规划'}</option>)}
                       </select>
                     </label>
-                    <label>
-                      目标市场
-                      <input
-                        required
-                        maxLength={80}
-                        value={form.market}
-                        onChange={(e) =>
-                          setForm({ ...form, market: e.target.value })
-                        }
-                        placeholder="例如：美国，英语"
-                      />
-                    </label>
+                    {META_LEAD_DESCRIPTIONS[form.goal] ? <Alert type="info" showIcon title={form.goal} description={META_LEAD_DESCRIPTIONS[form.goal]}/> : null}
+                    <AdCountrySelect value={form.configuration.countries || []} onChange={countries => setForm(current => ({ ...current, configuration: { ...current.configuration, countries } }))}/>
+                    {form.goal === '获取消息会话' && <AdDraftMessageChannels accountPicker={accountPicker} key={form.configuration.accountConnectionId || 'no-account'} connectionId={form.configuration.accountConnectionId} value={form.configuration.metaMessage} onChange={metaMessage => setForm(current => ({ ...current, configuration: { ...current.configuration, metaMessage } }))} onAuthorize={() => { setReturnToCreate(true); setDialog('accounts'); }}/>}
                   </div>
                 )}
                 {step === 1 && (
@@ -633,8 +540,10 @@ function PlatformAdsWorkspace({
                         placeholder="输入预算金额"
                       />
                     </label>
-                    <label>目标人群说明<textarea value={form.configuration.audience} onChange={e => setForm({ ...form, configuration: { ...form.configuration, audience: e.target.value } })} placeholder="描述受众；发布前需转换并校验为平台支持的定向" /></label>
-                    <label>版位偏好<input value={form.configuration.placements} onChange={e => setForm({ ...form, configuration: { ...form.configuration, placements: e.target.value } })} placeholder="例如 Reels、Shorts；以平台支持范围为准" /></label>
+                    <label>广告文案<textarea maxLength={2000} value={form.configuration.adMessage || ''} onChange={e => setForm(current => ({ ...current, configuration: { ...current.configuration, adMessage: e.target.value } }))} placeholder="确认产品承诺与目标市场语言；保存后直接带入创建，不再重复填写"/></label>
+                    {metaNeedsWebsite(form.goal) && <label>{form.goal === '获取独立站询盘' ? '询盘页面' : '推广网站'}<input type="url" pattern="https://.*" value={form.configuration.landingPageUrl || ''} onChange={e => setForm(current => ({ ...current, configuration: { ...current.configuration, landingPageUrl: e.target.value } }))} placeholder="https:// 你的企业页面"/></label>}
+                    {form.channels.length > 0 && form.channels.every(c => ['Facebook', 'Instagram'].includes(c)) && <MetaTargetingFields value={form.configuration.metaTargeting} connectionId={form.configuration.accountConnectionId} channels={form.channels} onChange={metaTargeting => setForm(current => ({ ...current, configuration: { ...current.configuration, metaTargeting } }))}/>}
+
                     <label>日预算（{form.currency}，可选）<input type="number" min="1" max={Number(form.budget) || 1000000} step="0.01" value={form.configuration.dailyBudget ?? ''} onChange={e => setForm({ ...form, configuration: { ...form.configuration, dailyBudget: e.target.value === '' ? null : Number(e.target.value) } })} /></label>
                     <label>开始时间<input type="datetime-local" value={form.configuration.startsAt} onChange={e => setForm({ ...form, configuration: { ...form.configuration, startsAt: e.target.value } })} /></label>
                     <p className="ads-muted">排期使用当前时区：{Intl.DateTimeFormat().resolvedOptions().timeZone}，保存时转换为统一时间。</p>
@@ -650,7 +559,11 @@ function PlatformAdsWorkspace({
                     {[
                       ["推广目标", form.goal],
                       ["投放视频", form.video],
-                      ["目标市场", form.market],
+                      ...(form.goal === '获取消息会话' ? [["聊天渠道", form.configuration.metaMessage?.destination === 'WHATSAPP' ? `WhatsApp · ${form.configuration.metaMessage.recipientId}` : form.configuration.metaMessage?.destination === 'INSTAGRAM_DIRECT' ? 'Instagram 私信（已关联专业账户）' : form.configuration.metaMessage?.destination === 'MESSENGER' ? 'Messenger · 所选 Facebook 主页' : '尚未确认；创建广告前需选择']] : []),
+                      ["投放国家或地区", (form.configuration.countries || []).map(adCountryName).join('、') || '尚未确认，创建前需补充'],
+                      ...(form.channels.every(c => ['Facebook', 'Instagram'].includes(c)) ? [["人群与版位", `${(form.configuration.metaTargeting || emptyMetaTargeting).ageMin}—${(form.configuration.metaTargeting || emptyMetaTargeting).ageMax}${(form.configuration.metaTargeting || emptyMetaTargeting).ageMax === 65 ? '+' : ''} 岁 · ${({ all: '性别不限', male: '男性', female: '女性' })[(form.configuration.metaTargeting || emptyMetaTargeting).gender]} · ${(form.configuration.metaTargeting || emptyMetaTargeting).placementMode === 'manual' ? [...(form.configuration.metaTargeting?.facebookPositions || []), ...(form.configuration.metaTargeting?.instagramPositions || [])].join(' / ') : '所选渠道内自动版位'}`], ["语言／兴趣／受众", [...(form.configuration.metaTargeting?.locales || []), ...(form.configuration.metaTargeting?.interests || []), ...(form.configuration.metaTargeting?.customAudiences || [])].map(o => o.name).join(' / ') || '不限']] : []),
+                      ["广告文案", form.configuration.adMessage || '尚未确认，创建前需补充'],
+                      ...(metaNeedsWebsite(form.goal) ? [["推广页面", form.configuration.landingPageUrl || '尚未确认，创建前需补充']] : []),
                       [
                         "总预算上限",
                         `${form.currency} ${Number(form.budget).toLocaleString()}`,
@@ -668,11 +581,14 @@ function PlatformAdsWorkspace({
                     </p>
                   </div>
                 )}
+                </fieldset>
+                {notice.includes('失败') && <Alert type="error" showIcon title={notice} description="填写内容已保留。可以重试；也可以先手动保存配置，再继续完善方案。" action={!selectedDraft && entry !== 'manual' ? <Button disabled={saving} onClick={() => { setEntry('manual'); setNotice(''); }}>保留内容，改为手动保存</Button> : undefined}/>}
                 <div className="ads-modal-footer">
                   <button
                     type="button"
                     className="ads-button"
-                    onClick={() => (step ? setStep(step - 1) : setDialog(null))}
+                    disabled={saving}
+                    onClick={() => (step ? setStep(step - 1) : closeDialog())}
                   >
                     {step ? "上一步" : "取消"}
                   </button>
@@ -685,11 +601,9 @@ function PlatformAdsWorkspace({
                     <ArrowRight size={15} />
                   </button>
                 </div>
-              </form>
+              </form><AdGoalExamples goal={form.goal} onOverlayOpenChange={setReferenceOverlayOpen}/></div>
             )}
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 }

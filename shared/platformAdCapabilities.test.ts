@@ -24,3 +24,10 @@ test('TikTok Spark and Google Demand Gen remain manual and USD only', () => {
   }
   assert.equal(getAdPlanCapability({ channels: ['YouTube'], goal: '提升有效视频观看', currency: 'USD' }).supportsCreate, false);
 });
+
+for (const goal of ['获取消息会话', '获取Meta表单线索', '获取独立站询盘']) {
+  const supported = getAdPlanCapability({ channels: ['Facebook', 'Instagram'], currency: 'CNY', goal });
+  assert.equal(supported.supportsCreate, true);
+  assert.equal(supported.supportsCpcOptimization, false, 'lead outcomes cannot use the traffic CPC optimization rule');
+  assert.equal(getAdPlanCapability({ channels: ['TikTok'], currency: 'USD', goal }).supportsCreate, false);
+}

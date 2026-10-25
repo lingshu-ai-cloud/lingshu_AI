@@ -1,0 +1,10 @@
+.ads-instant-form-guide { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--ls-space-12, 12px); min-width: 0; max-width: 100%; }
+.ads-instant-form-guide h3 { margin: 0 0 8px; color: var(--ls-text); font-size: 15px; font-weight: 600; }
+.ads-instant-form-guide p, .ads-instant-form-guide figure { margin: 0; }
+.ads-instant-form-guide figure { min-width: 0; }
+.ads-instant-form-guide .ls-media-state-frame { background: #fff; min-height: 180px; overflow: hidden; }
+.ads-instant-form-guide .ls-progressive-media-root { display: block; }
+.ads-instant-form-guide figcaption { margin-top: 8px; color: var(--ls-text-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: break-word; }
+.ads-instant-form-guide figcaption a { margin-left: 8px; }
+.ads-instant-form-guide .ant-table-wrapper { min-width: 0; max-width: 100%; }
+.ads-instant-form-guide .ant-table-cell { vertical-align: top; overflow-wrap: break-word; }

@@ -1,11 +1,12 @@
+import { META_AD_GOALS } from './metaAdObjectives';
 /** Product implementation capabilities only; never substitutes account, release or authorization preflight. */
 export const PLATFORM_AD_CAPABILITIES = [
-  { provider: 'meta', name: 'Meta', channels: ['Facebook', 'Instagram'], goals: ['提升网站访问', '提升有效视频观看'], currencies: ['USD', 'CNY'], management: '人工、审批、授权托管；CPC 自动优化仅网站访问', material: '引用已有视频，或绑定社媒成片上传 MP4（≤64 MiB）；需平台处理就绪', actions: '暂停创建、启停、调整日预算' },
+  { provider: 'meta', name: 'Meta', channels: ['Facebook', 'Instagram'], goals: META_AD_GOALS, currencies: ['USD', 'CNY'], management: '人工、审批、授权托管；CPC 自动优化仅网站访问', material: '引用已有视频，或绑定社媒成片上传 MP4（≤64 MiB）；需平台处理就绪', actions: '暂停创建、启停、调整日预算' },
   { provider: 'tiktok', name: 'TikTok', channels: ['TikTok'], goals: ['提升有效视频观看'], currencies: ['USD'], management: '仅人工执行；审批与自动执行未开放', material: 'Spark：TT_USER 身份及既有可推广帖子', actions: '暂停创建、启停；不支持调预算' },
   { provider: 'google', name: 'Google / YouTube', channels: ['YouTube'], goals: ['获取线索或转化'], currencies: ['USD'], management: '仅人工执行；审批与自动执行未开放', material: 'Demand Gen；标准视频观看写入未开放', actions: '暂停创建、启停；不支持调预算' },
 ] as const;
 
-export const PLATFORM_AD_GOALS = ['提升网站访问', '提升有效视频观看', '提升互动与主页增长', '扩大目标人群覆盖', '获取线索或转化'] as const;
+export const PLATFORM_AD_GOALS = [...META_AD_GOALS, '提升互动与主页增长', '扩大目标人群覆盖', '获取线索或转化'] as const;
 
 export function getAdPlanCapability(plan: { channels: readonly string[]; goal: string; currency: string }) {
   const platform = PLATFORM_AD_CAPABILITIES.find(item => plan.channels.length > 0 && plan.channels.every(channel => (item.channels as readonly string[]).includes(channel)));

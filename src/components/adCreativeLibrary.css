@@ -43,3 +43,26 @@
 .ads-material-picker-drawer .ant-drawer-body > .ant-alert { margin-bottom: 16px; }
 .ads-library-local-cover .ads-history-media { display: grid; padding: 12px; }
 .ads-library-local-cover .ads-history-thumbnail { width: 100%; }
+
+.ads-material-performance .ads-history-media { display: grid; padding: var(--ls-space-12); }
+.ads-material-performance .ads-history-thumbnail { width: 100%; }
+
+.ads-material-filter-scroll { min-width: 0; overflow-x: auto; padding-block: 2px; }
+.ads-material-filter-scroll:focus-visible { outline: 2px solid var(--ant-color-primary); outline-offset: 2px; }
+.ads-material-filter-scroll > .ads-library-toolbar { display: grid; grid-template-columns: minmax(208px, 1.8fr) repeat(3, minmax(136px, 1fr)) max-content; align-items: center; gap: var(--ls-space-8); width: max(100%, 760px); padding: 0; overflow: visible; }
+.ads-material-filter-scroll .ads-library-toolbar .ant-input-search, .ads-material-filter-scroll .ads-library-toolbar .ant-select { width: 100%; min-width: 0; max-width: none; }
+.ads-material-filter-scroll .ant-select, .ads-material-filter-scroll .ads-library-toolbar > .ant-btn { height: 36px; }
+.ads-material-filter-scroll .ant-input-affix-wrapper, .ads-material-filter-scroll .ant-input-group-addon .ant-btn { height: 36px; }
+.ads-material-filter-scroll .ant-input-affix-wrapper { align-items: center; }
+.ads-workspace.ads-creative-workspace .ads-material-filter-scroll .ant-input-affix-wrapper > input.ant-input { height: 22px; min-height: 0; padding-block: 0; line-height: 22px; }
+.ads-material-filter-scroll .ads-library-toolbar > .ant-btn { white-space: nowrap; }
+
+.ads-material-table .ant-table.ant-table-small .ant-table-tbody > tr > td { padding: 6px 10px; vertical-align: middle; }
+.ads-material-table .ant-table-cell { line-height: 20px; }
+.ads-material-table small { display: block; color: var(--ant-color-text-secondary); font-size: 12px; line-height: 18px; }
+.ads-material-table-name.ant-btn { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-width: 100%; padding: 0; height: auto; line-height: 20px; text-align: left; white-space: normal; }
+.ads-material-table-thumbnail { width: 64px; height: 40px; overflow: hidden; border-radius: var(--ant-border-radius, 6px); }
+.ads-material-table-thumbnail .ads-history-media { display: block; padding: 0; }
+.ads-material-table-thumbnail .ads-history-thumbnail, .ads-material-table-thumbnail .ls-media-state-frame { width: 64px; height: 40px; min-height: 40px; }
+.ads-material-table-thumbnail :is(.ant-image, .ant-image img, video) { width: 64px; height: 40px; object-fit: cover; }
+.ads-material-table-thumbnail .ls-media-state-frame__overlay { padding: 2px; font-size: 11px; line-height: 14px; }

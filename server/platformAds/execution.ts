@@ -1,4 +1,6 @@
+import { META_AD_GOALS } from '../../shared/metaAdObjectives.js';
 import { resolveAdCreativeExecution } from './creativeExecution.js';
+import { resolveSavedMetaMessage } from './metaMessageInput.js';
 import { readMetaVideoPlan, assertPausedMetaVideoPlan } from './metaPlanReadback.js';
 import { store } from '../storage/index.js';
 import { assertAdReleaseAction } from './releasePolicy.js';
@@ -21,12 +23,12 @@ function readCreateSnapshot(receipt: AdExecution, connection: { id: string; acco
   const snapshot = (receipt.result as { createSnapshot?: MetaCreateSnapshot } | undefined)?.createSnapshot;
   const validDate = (value: unknown) => typeof value === 'string' && (!value || /T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value)));
   if (!snapshot || snapshot.schemaVersion !== 1 || snapshot.taskId !== receipt.taskId || snapshot.connectionId !== connection.id || snapshot.accountId !== connection.accountId || snapshot.currency !== connection.currency
-    || !Number.isSafeInteger(snapshot.taskVersion) || snapshot.taskVersion < 1 || !Number.isFinite(snapshot.budget) || snapshot.budget <= 0 || !['提升网站访问', '提升有效视频观看'].includes(snapshot.goal)
+    || !Number.isSafeInteger(snapshot.taskVersion) || snapshot.taskVersion < 1 || !Number.isFinite(snapshot.budget) || snapshot.budget <= 0 || !(META_AD_GOALS as readonly string[]).includes(snapshot.goal)
     || !Array.isArray(snapshot.channels) || !snapshot.channels.length || snapshot.channels.some(channel => !['Facebook', 'Instagram'].includes(channel))
     || !snapshot.schedule || !validDate(snapshot.schedule.startsAt) || !validDate(snapshot.schedule.endsAt)) {
     throw new AdProviderError('创建回执缺少可核验的原始执行快照，需平台人工核对；不会按当前草稿猜测或重新创建', 'RECONCILIATION_REQUIRED');
   }
-  try { return { ...snapshot, meta: validateMetaVideoInput(snapshot.meta, snapshot.budget, snapshot.goal === '提升有效视频观看') }; }
+  try { return { ...snapshot, meta: validateMetaVideoInput(snapshot.meta, snapshot.budget, snapshot.goal) }; }
   catch { throw new AdProviderError('创建回执的原始执行快照不完整，请保留回执并人工核对', 'RECONCILIATION_REQUIRED'); }
 }
 export async function listAdExecutions(tenantId: string, taskId: string) {
@@ -123,7 +125,9 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
       if (!receipts.some(r => r.connectionId === connectionId && r.resourceId === resourceId && r.status === 'VERIFIED')) throw new AdProviderError('该资源尚未关联到当前计划', 'RESOURCE_MISMATCH');
     }
     const creativeInput = action === 'create' ? await resolveAdCreativeExecution(tenantId, task, connection, input, mode) : { meta: input.meta, evidence: {} };
-    const metaInput = action === 'create' ? validateMetaVideoInput(creativeInput.meta, task.budget, task.goal === '提升有效视频观看') : null;
+    // Targeting belongs to the versioned saved plan, never an execute-request override.
+    const resolvedMeta = action === 'create' ? await resolveSavedMetaMessage(tenantId, task, connectionId, creativeInput.meta) : creativeInput.meta;
+    const metaInput = action === 'create' ? validateMetaVideoInput({ ...(resolvedMeta as Record<string, unknown>), targeting: task.configuration.metaTargeting }, task.budget, task.goal) : null;
     if (action === 'create' || action === 'activate' || action === 'resume') {
       const { startsAt, endsAt } = task.configuration;
       for (const date of [startsAt, endsAt]) if (date && (!/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(date) || !Number.isFinite(Date.parse(date)))) throw new AdProviderError('投放排期无效', 'INVALID_INPUT');
@@ -132,7 +136,7 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
       if (action === 'create' && startsAt && Date.parse(startsAt) <= Date.now()) throw new AdProviderError('开始时间已过期，请更新投放排期', 'INVALID_INPUT');
     }
     if (mode !== 'manual' && metaInput && (metaInput.dailyBudget > task.authorization!.maxDailyBudget || task.budget > task.authorization!.maxTotalBudget)) throw new AdProviderError('创建预算超出授权', 'BUDGET_LIMIT');
-    if (action === 'create' && !['提升网站访问', '提升有效视频观看'].includes(task.goal)) throw new AdProviderError('当前 Meta 视频创编支持网站访问或有效视频观看目标', 'UNSUPPORTED_OBJECTIVE');
+    if (action === 'create' && !(META_AD_GOALS as readonly string[]).includes(task.goal)) throw new AdProviderError('当前 Meta 创编目标不受支持', 'UNSUPPORTED_OBJECTIVE');
     if (action === 'create' && (!task.channels.length || task.channels.some(channel => !['Facebook', 'Instagram'].includes(channel)))) throw new AdProviderError('当前真实创建仅支持 Meta 渠道，请为其他平台单独建立投放任务', 'UNSUPPORTED_CHANNEL');
     const prior = action === 'create' ? null : (await listAdExecutions(tenantId, taskId)).find(r => r.action === 'create' && r.connectionId === connectionId && r.resourceId === resourceId && r.status === 'VERIFIED');
     const resources = (prior?.result || {}) as Record<string, string>;
@@ -186,7 +190,7 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
           accepted = true;
           createdResources[kind] = id;
           if (!await store.update(AD_EXECUTIONS, receipt.id, { result: { ...createdResources, ...createEvidence }, resourceId: createdResources.campaignId || '', status: 'PROVIDER_ACCEPTED' })) throw new AdProviderError('平台资源已创建，本地记录待恢复', 'STORAGE_ERROR', true);
-        }, task.goal === '提升有效视频观看', task.channels, task.configuration);
+        }, task.goal, task.channels, task.configuration);
         actualId = String(result.campaignId || '');
         if (!/^\d+$/.test(actualId)) throw new AdProviderError('未收到有效平台资源 ID', 'INVALID_RESPONSE', true);
       } else if (action === 'pause') result = await adapter.setCampaignStatus(connection.accountId, resourceId, 'PAUSED');
@@ -202,7 +206,7 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
       const verified = await adapter.request(action === 'adjust_budget' ? resources.adsetId : actualId, { fields: action === 'adjust_budget' ? 'id,status,daily_budget' : 'id,status' });
       if (action === 'create') {
         const snapshot = await readMetaVideoPlan(adapter, connection.accountId, createdResources);
-        assertPausedMetaVideoPlan(snapshot, metaInput!, task.budget, task.goal === '提升有效视频观看', task.channels, task.configuration);
+        assertPausedMetaVideoPlan(snapshot, metaInput!, task.budget, task.goal, task.channels, task.configuration);
         verified.daily_budget = snapshot.adset.daily_budget;
       }
       if ((action === 'create' || action === 'pause') && verified.status !== 'PAUSED') throw new AdProviderError('平台状态尚未确认', 'RECONCILIATION_REQUIRED', true);
@@ -235,7 +239,7 @@ export async function reconcileAdExecution(tenantId: string, taskId: string, exe
     if (!resources.campaignId || !resources.adsetId || !resources.adId || !resources.creativeId) throw new AdProviderError('仅创建了部分资源或资源 ID 未收到，需平台人工核对；不会重新创建', 'RECONCILIATION_REQUIRED');
     const snapshot = receipt.action === 'create' ? readCreateSnapshot(receipt, connection) : null;
     const strictReadback = snapshot ? await readMetaVideoPlan(adapter, connection.accountId, resources) : null;
-    if (snapshot && strictReadback) assertPausedMetaVideoPlan(strictReadback, snapshot.meta, snapshot.budget, snapshot.goal === '提升有效视频观看', snapshot.channels, snapshot.schedule);
+    if (snapshot && strictReadback) assertPausedMetaVideoPlan(strictReadback, snapshot.meta, snapshot.budget, snapshot.goal, snapshot.channels, snapshot.schedule);
     if (!strictReadback) await adapter.assertOwnership(connection.accountId, resources.campaignId);
     const campaign = strictReadback?.campaign || await adapter.request(resources.campaignId, { fields: 'id,status' });
     const actualAdset = strictReadback?.adset || await adapter.request(resources.adsetId, { fields: 'id,account_id,campaign_id,status,daily_budget' });

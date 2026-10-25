@@ -42,11 +42,11 @@ const content = (node: any): string => Array.isArray(node) ? node.map(content).j
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 let tree = render(); await flush(); tree = render();
 assert.ok(!nodes(tree).some(node => node.type === 'input'), 'regular Meta customers never paste tokens');
-await nodes(tree).find(node => node.type === 'button' && content(node) === '检查授权').props.onClick(); await flush(); tree = render();
+await nodes(tree).find(node => node.type === 'button' && content(node) === '检查连接是否可用').props.onClick(); await flush(); tree = render();
 assert.match(content(tree), /本次授权检查未完成，保留上次检查结果/);
 assert.equal(nodes(tree).find(node => node.type === './AdAuthorizationHealth').props.authorization.checkedAt, connection.authorization.checkedAt);
 assert.ok(!content(tree).includes('广告账户已连接'), 'failed manual check does not show connection success');
-nodes(tree).find(node => node.type === 'button' && content(node) === '重新授权').props.onClick(); tree = render();
+nodes(tree).find(node => node.type === 'button' && content(node) === '重新登录 Meta').props.onClick(); tree = render();
 const guide = nodes(tree).find(node => node.type === './AdMetaConnectionGuide');
 assert.equal(guide.props.targetAccountId, 'act_1');
 assert.equal(requests.length, 2, 'reauthorize opens the guide without starting OAuth or execution');
@@ -63,8 +63,8 @@ await switchUser();
 oldGuide.props.onConnected({ ...connection, name: 'Late OAuth identity' }); tree = render();
 assert.ok(!content(tree).includes('Late OAuth identity'));
 for (const [label, path, reply] of [
-  ['重新验证', '/connections/saved/verify', { connection: { ...connection, name: 'Late verified identity' } }],
-  ['实时查看计划', '/connections/saved/campaigns', { items: [{ id: 'late', name: 'Late campaign identity' }] }],
+  ['更新账户名称、币种和时区', '/connections/saved/verify', { connection: { ...connection, name: 'Late verified identity' } }],
+  ['查看平台已有计划', '/connections/saved/campaigns', { items: [{ id: 'late', name: 'Late campaign identity' }] }],
 ] as const) {
   const complete = deferred(path);
   nodes(tree).find(node => node.type === 'button' && content(node) === label).props.onClick();
@@ -73,18 +73,18 @@ for (const [label, path, reply] of [
   assert.ok(!content(tree).includes('Late campaign identity'));
 }
 const completeHealth = deferred('/connections/saved/authorization/check');
-nodes(tree).find(node => node.type === 'button' && content(node) === '检查授权').props.onClick();
+nodes(tree).find(node => node.type === 'button' && content(node) === '检查连接是否可用').props.onClick();
 await switchUser(); completeHealth({ connection: { ...connection, name: 'Late health identity' } }); await flush(); tree = render();
 assert.ok(!content(tree).includes('Late health identity'));
 const completeSync = deferred('sync');
 let resourceReads = 0;
 responders.set('resources', async () => { resourceReads++; return { items: [], hasMore: false }; });
-nodes(tree).find(node => node.type === 'button' && content(node) === '同步账户结构').props.onClick();
+nodes(tree).find(node => node.type === 'button' && content(node) === '同步计划、广告组和广告').props.onClick();
 await switchUser(); completeSync({ counts: { campaign: 1, adset: 1, ad: 1 } }); await flush(); tree = render();
 assert.equal(resourceReads, 0, 'late sync must not fetch old account resources as the new user');
 assert.ok(!content(tree).includes('同步完成'));
 responders.set('sync', async () => ({ counts: { campaign: 0, adset: 0, ad: 0 } }));
-nodes(tree).find(node => node.type === 'button' && content(node) === '同步账户结构').props.onClick(); await flush(); await flush(); tree = render();
+nodes(tree).find(node => node.type === 'button' && content(node) === '同步计划、广告组和广告').props.onClick(); await flush(); await flush(); tree = render();
 assert.equal(resourceReads, 1);
 const completeResources = deferred('resources');
 nodes(tree).find(node => node.type === 'button' && content(node) === '广告组').props.onClick();

@@ -1,3 +1,4 @@
+import { META_AD_GOALS, metaAdObjective } from '../../shared/metaAdObjectives.js';
 import type { PlatformAdMetricResource } from '../../shared/platformAdMetricHistory.js';
 import { getPlatformAdTask } from './tasks.js';
 import { listAdExecutions } from './execution.js';
@@ -6,22 +7,24 @@ import { MetaAdsAdapter, AdProviderError } from './metaAdapter.js';
 import { TikTokExecutionAdapter } from './tiktokExecutionAdapter.js';
 import { getTikTokCampaignMetrics } from './tiktokMetrics.js';
 
-type MetricRow = { date_start?: string; date_stop?: string; spend?: string; impressions?: string; clicks?: string; inline_link_clicks?: string; video_thruplay_watched_actions?: Array<{ action_type: string; value: string }> };
+type MetricRow = { actions?: Array<{ action_type: string; value: string }>; date_start?: string; date_stop?: string; spend?: string; impressions?: string; clicks?: string; inline_link_clicks?: string; video_thruplay_watched_actions?: Array<{ action_type: string; value: string }> };
 const number = (value: unknown) => value == null || value === '' || !Number.isFinite(Number(value)) || Number(value) < 0 ? null : Number(value);
 const sum = (values: Array<number | null>) => values.every(value => value !== null) ? values.reduce<number>((total, value) => total + value!, 0) : null;
 
 export function aggregateAdMetrics(rows: MetricRow[], goal: string) {
   const videoGoal = goal === '提升有效视频观看';
   const clickGoal = goal === '提升网站访问';
+  const spec = (META_AD_GOALS as readonly string[]).includes(goal) ? metaAdObjective(goal) : null;
+  const label = spec?.metricLabel || '目标口径尚未映射';
   const daily = rows.map(row => ({
     date: row.date_start || '', spend: number(row.spend), impressions: number(row.impressions), clicks: number(row.clicks),
-    results: videoGoal ? number(row.video_thruplay_watched_actions?.find(item => item.action_type === 'video_view')?.value) : clickGoal ? number(row.inline_link_clicks) : null,
+    results: videoGoal ? number(row.video_thruplay_watched_actions?.find(item => item.action_type === 'video_view')?.value) : clickGoal ? number(row.inline_link_clicks) : spec ? number(row.actions?.find(item => item.action_type === spec.metric)?.value) : null,
   }));
-  if (!rows.length) return { spend: null, impressions: null, clicks: null, results: null, costPerResult: null, daily, metricLabel: videoGoal ? 'Meta ThruPlay' : clickGoal ? '链接点击' : '目标口径尚未映射' };
+  if (!rows.length) return { spend: null, impressions: null, clicks: null, results: null, costPerResult: null, daily, metricLabel: label };
   const spend = sum(daily.map(day => day.spend)), results = sum(daily.map(day => day.results));
   return { spend, impressions: sum(daily.map(day => day.impressions)), clicks: sum(daily.map(day => day.clicks)), results,
     costPerResult: spend !== null && results !== null && results > 0 ? spend / results : null,
-    daily, metricLabel: videoGoal ? 'Meta ThruPlay' : clickGoal ? '链接点击' : '目标口径尚未映射' };
+    daily, metricLabel: label };
 }
 
 export async function getAdTaskMetrics(tenantId: string, taskId: string) {
@@ -32,7 +35,7 @@ export async function getAdTaskMetrics(tenantId: string, taskId: string) {
   if (!creates.length) return {
     status: 'not_ready', source: 'none', currency: task.currency, reportedAt: '',
     spend: null, impressions: null, clicks: null, results: null, costPerResult: null, daily: [],
-    metricLabel: task.goal === '提升网站访问' ? '链接点击' : task.goal === '提升有效视频观看' ? '视频观看' : '目标口径尚未映射',
+    metricLabel: (META_AD_GOALS as readonly string[]).includes(task.goal) ? metaAdObjective(task.goal).metricLabel : '目标口径尚未映射',
     reason: '尚无已核验的平台计划，效果数据未就绪。',
     forecast: { status: 'insufficient_data', reason: '尚无已核验的平台计划及平台报告，不提供预测。' },
     dataNote: '当前仅有本地计划或尚未核验的执行记录，未读取平台效果；空值不表示零消耗。',
@@ -62,14 +65,14 @@ export async function getAdTaskMetrics(tenantId: string, taskId: string) {
     const adapter = new MetaAdsAdapter(accessToken);
     await adapter.assertOwnership(connection.accountId, item.resourceId);
     const response = await adapter.request(`${item.resourceId}/insights`, {
-      fields: 'date_start,date_stop,spend,impressions,clicks,inline_link_clicks,video_thruplay_watched_actions',
+      fields: 'date_start,date_stop,spend,impressions,clicks,inline_link_clicks,video_thruplay_watched_actions,actions',
       time_range: { since, until }, time_increment: 1, limit: 100,
     });
     if (!Array.isArray(response.data) || response.paging?.next) throw new AdProviderError('效果数据不完整，请稍后重试', 'METRICS_NOT_READY');
     const aggregated = aggregateAdMetrics(response.data, task.goal);
     const resourceKey = `${connection.accountId}:${item.resourceId}`;
     if (resources.some(resource => `${resource.accountId}:${resource.campaignId}` === resourceKey)) continue;
-    resources.push({ provider: 'meta', accountId: connection.accountId, campaignId: item.resourceId, currency: task.currency, metricDefinition: task.goal === '提升有效视频观看' ? 'meta:thruplay' : task.goal === '提升网站访问' ? 'meta:inline_link_clicks' : 'meta:unmapped', metricLabel: aggregated.metricLabel, reportTimezone: connection.timezoneName || '', daily: aggregated.daily });
+    resources.push({ provider: 'meta', accountId: connection.accountId, campaignId: item.resourceId, currency: task.currency, metricDefinition: (META_AD_GOALS as readonly string[]).includes(task.goal) ? metaAdObjective(task.goal).definition : 'meta:unmapped', metricLabel: aggregated.metricLabel, reportTimezone: connection.timezoneName || '', daily: aggregated.daily });
     rows.push(...response.data);
   }
   return { provider: 'meta', currency: task.currency, reportedAt: new Date().toISOString(), window: { since, until },

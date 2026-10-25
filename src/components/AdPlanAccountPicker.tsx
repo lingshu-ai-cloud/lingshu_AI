@@ -19,8 +19,7 @@ export default function AdPlanAccountPicker({ currency, value, onChange, onCurre
     <Space wrap><Button disabled={!account || !['USD', 'CNY'].includes(account.currency) || account.currency !== currency && !onCurrencyChange} loading={busy} onClick={() => void confirm()}>{account && account.currency !== currency && onCurrencyChange ? `使用 ${account.currency} 账户（金额不换算）` : '用于此草稿'}</Button>
       {value && <><Tag>草稿账户：{saved?.name || confirmed || '已保存，待核对'}</Tag><Button disabled={busy} onClick={() => { onChange(''); setConfirmed(''); }}>清除草稿账户</Button></>}
     </Space>
-    {account && !['USD', 'CNY'].includes(account.currency) ? <Alert type="warning" showIcon title={`当前创编仅支持 USD / CNY，${account.currency} 账户可查看历史数据，暂不能用于此草稿。`}/> : account && account.currency !== currency && <Alert type="warning" showIcon title={onCurrencyChange ? `所选账户使用 ${account.currency}；确认后草稿采用该币种，已填金额原样保留，不做汇率换算。` : `账户使用 ${account.currency}，已保存草稿不能更换币种，请选择同币种账户或新建草稿。`}/>}
-    <p className="ads-muted">账户来自现有授权。“用于此草稿”只保存本地账户关联，不创建、上传或启用广告，也不授予自动投放权限。</p>
+    {account && !['USD', 'CNY'].includes(account.currency) ? <Alert type="warning" showIcon title={`当前创编仅支持 USD / CNY，${account.currency} 账户可查看历史数据，暂不能用于此草稿。`}/> : account && account.currency !== currency && !onCurrencyChange && <Alert type="warning" showIcon title={`账户使用 ${account.currency}，已保存草稿不能更换币种，请选择同币种账户或新建草稿。`}/>}
     {error && <Alert type="error" showIcon title={error}/>}
   </section>;
 }

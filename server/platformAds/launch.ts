@@ -28,7 +28,7 @@ export async function saveAdLaunch(tenantId: string, taskId: string, input: Reco
     if (connection.status !== 'connected' || connection.currency !== task.currency) throw new PlatformAdTaskValidationError('广告账户状态或币种不满足自动启动要求');
     const existing = await listAdLaunches(tenantId, taskId);
     if (existing.some(r => !['INVALIDATED', 'BLOCKED'].includes(r.status))) throw new PlatformAdTaskValidationError('已有托管启动任务，请等待执行或核对结果');
-    const meta = validateMetaVideoInput(input.meta, Math.min(task.budget, grant.maxTotalBudget), task.goal === '提升有效视频观看');
+    const meta = validateMetaVideoInput(input.meta, Math.min(task.budget, grant.maxTotalBudget), task.goal);
     if (meta.dailyBudget > grant.maxDailyBudget) throw new PlatformAdTaskValidationError('日预算超过托管授权');
     if (task.budget > grant.maxTotalBudget) throw new PlatformAdTaskValidationError('计划总预算超过托管授权，请调整计划预算或授权');
     const now = new Date().toISOString();

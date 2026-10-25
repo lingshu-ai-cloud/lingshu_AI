@@ -11,11 +11,20 @@ import { listAdCreativeLibrary, getAdCreativeReport, getAdCreativePreview } from
 import { attachExistingAdCreative } from '../platformAds/creativeMapping.js';
 import { openPlatformAdCreativeMedia } from '../platformAds/creatives.js';
 import { getMetaSetup, getMetaPlanAudit } from '../platformAds/metaPlanAudit.js';
+import { getMetaDestinationAssets } from '../platformAds/metaDestinationAssets.js';
+import { getMetaTargetingOptions } from '../platformAds/metaTargetingOptions.js';
 import { getAdSourceLifecycle, listAdSourceCatalog, parseAdSourceIdentity } from '../platformAds/creativeHistory.js';
 import { listExternalHistorySources, openExternalHistoryVideo } from '../platformAds/externalHistory.js';
+import { listMaterialDirectory } from '../platformAds/materialDirectory.js';
 import { readSelectableAdMaterial } from '../platformAds/creativeSelection.js';
 export const platformAdCreativesRouter = Router();
 platformAdCreativesRouter.use(requireAuth, requireAdWriteAccess);
+platformAdCreativesRouter.get('/connections/:id/meta-targeting-options', async (req, res) => {
+  try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await getMetaTargetingOptions((res.locals as AuthLocals).tenantId, req.params.id, req.query)); } catch (error) { failure(res, error); }
+});
+platformAdCreativesRouter.get('/material-directory', async (req, res) => {
+  try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await listMaterialDirectory((res.locals as AuthLocals).tenantId, req.query)); } catch (error) { failure(res, error); }
+});
 platformAdCreativesRouter.get('/creative-history-sources', async (req, res) => {
   try { res.setHeader('Cache-Control', 'private, no-store'); res.json({ items: await listExternalHistorySources((res.locals as AuthLocals).tenantId) }); } catch (error) { failure(res, error); }
 });
@@ -43,6 +52,9 @@ platformAdCreativesRouter.get('/creative-lifecycle', async (req, res) => {
 platformAdCreativesRouter.get('/connections/:id/meta-setup', async (req, res) => {
   try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await getMetaSetup((res.locals as AuthLocals).tenantId, req.params.id)); } catch (error) { failure(res, error); }
 });
+platformAdCreativesRouter.get('/connections/:id/meta-destination-assets', async (req, res) => {
+  try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await getMetaDestinationAssets((res.locals as AuthLocals).tenantId, req.params.id, req.query)); } catch (error) { failure(res, error); }
+});
 platformAdCreativesRouter.get('/tasks/:id/meta-audit', async (req, res) => {
   try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await getMetaPlanAudit((res.locals as AuthLocals).tenantId, req.params.id)); } catch (error) { failure(res, error); }
 });
@@ -56,7 +68,7 @@ function failure(res: import('express').Response, error: unknown) {
       : ['INVALID_INPUT', 'INVALID_MEDIA', 'INVALID_ACCOUNT', 'NOT_SUPPORTED'].includes(error.code) ? 400 : 409;
     message = error.code === 'STORAGE_ERROR' ? '素材回执保存失败，请核对后恢复' : error.message;
   }
-  res.status(status).json({ error: message });
+  res.status(status).json({ error: message, ...(error instanceof AdProviderError ? { code: error.code } : {}) });
 }
 platformAdCreativesRouter.get('/creative-library', async (req, res) => {
   try { res.json(await listAdCreativeLibrary((res.locals as AuthLocals).tenantId, req.query)); } catch (error) { failure(res, error); }
