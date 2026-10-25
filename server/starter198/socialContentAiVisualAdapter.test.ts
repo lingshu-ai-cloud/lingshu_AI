@@ -109,3 +109,28 @@ test('AI visual adapter rejects evidence-required shots before calling a provide
 });
 
 test('actual generator input contains frozen account rule data and different rule hashes cannot reuse output',async()=>{const {freezeSocialAccountProductionConstraints}=await import('./socialAccountProductionConstraints.js');const folder=await fsp.mkdtemp(path.join(os.tmpdir(),'account-rule-transport-'));const inputs:Array<{prompt:string;idempotencyKey:string}>=[];try{const adapter=createSocialAiVisualAdapter({enabled:true,maxCostCnyPerShot:1,timeoutMs:1000,generators:[{generatorId:'controlled',mediaType:'image',estimatedCostCny:.1,generate:async input=>{inputs.push(input);return {type:'image',providerId:'controlled',model:'controlled',bytes:Buffer.from('owned-controlled-image'),mimeType:'image/png',estimatedCostCny:.1};}}]});const rules={recordHash:'a'.repeat(64),audience:['采购人员'],pillars:['产品证据'],recurringFormats:['实测'],conversionRoute:{routeId:'r',entryType:'whatsapp' as const,entryRef:'actual-contact',callToAction:'咨询',qualificationFields:[],handoffTarget:null,verifiedAt:null},evidenceRules:['仅已核实事实'],visualRules:['原文视觉约束'],languageRules:['原文语言约束'],presenterRules:['原文人物约束'],fixedFactors:['固定调性'],experimentFactors:['开场']};const authority={targetAccountRef:{objectType:'owned_social_account',id:'account',version:'3'},accountPlaybookRef:{objectType:'account_playbook' as const,id:'playbook',version:'2',accountRef:'account'},verifiedAccountPlaybook:rules};const original=context(folder);const first={...original,accountPlaybookConstraints:freezeSocialAccountProductionConstraints(authority)};await adapter.execute(first);await adapter.execute(first);assert.equal(inputs.length,1);for(const text of ['原文视觉约束','原文语言约束','原文人物约束',first.accountPlaybookConstraints!.constraintHash])assert.ok(inputs[0]!.prompt.includes(text));assert.equal(first.baselineScene.narration,original.baselineScene.narration);await adapter.execute({...original,accountPlaybookConstraints:freezeSocialAccountProductionConstraints({...authority,verifiedAccountPlaybook:{...rules,visualRules:['另一个实际视觉约束']}})});assert.equal(inputs.length,2);assert.notEqual(inputs[0]!.idempotencyKey,inputs[1]!.idempotencyKey);}finally{await fsp.rm(folder,{recursive:true,force:true});}});
+
+test('a video-only production route never falls back to an image or accepts a still mislabeled as video', async () => {
+  let imageCalls = 0;
+  const image: SocialAiVisualGenerator = { generatorId: 'image', mediaType: 'image', estimatedCostCny: 0,
+    async generate() { imageCalls++; throw Error('image must not execute'); } };
+  const invalid: SocialAiVisualGenerator = { generatorId: 'invalid-video', mediaType: 'video', estimatedCostCny: 0,
+    async generate() { return { type: 'image', providerId: 'fixture', model: 'fixture', bytes: Buffer.from('image'), estimatedCostCny: 0 }; } };
+  const adapter = createSocialAiVisualAdapter({ enabled: true, requireVideo: true, generators: [invalid,image], maxCostCnyPerShot: 1, timeoutMs: 1000 });
+  assert.equal(await adapter.execute(context(os.tmpdir())), null);
+  assert.equal(imageCalls, 0);
+});
+
+test('a video-only route keeps concrete bytes, provider task identity and synthetic disclosure', async () => {
+  const outputDirectory = await fsp.mkdtemp(path.join(os.tmpdir(),'social-concept-video-'));
+  try {
+    const adapter = createSocialAiVisualAdapter({ enabled: true, requireVideo: true, maxCostCnyPerShot: 1, timeoutMs: 1000,
+      generators: [{ generatorId: 'fixture-video', mediaType: 'video', estimatedCostCny: .5,
+        async generate() { return { type: 'video', providerId: 'fixture', model: 'fixture', providerTaskId: 'fixture-task',
+          bytes: Buffer.from('controlled fixture bytes'), duration: 5, estimatedCostCny: .5 }; } }] });
+    const result = await adapter.execute(context(outputDirectory));
+    assert.ok(result?.asset.localPath && result.asset.contentHash);
+    assert.equal(result.asset.type, 'video'); assert.equal(result.synthetic, true);
+    assert.match(result.sourceRef!, /fixture-task/); assert.match(result.disclosure!, /AI/);
+  } finally { await fsp.rm(outputDirectory,{recursive:true,force:true}); }
+});

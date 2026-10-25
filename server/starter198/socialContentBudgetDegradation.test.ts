@@ -31,6 +31,15 @@ test('factory/D2C/general/unknown missing local fails before quotation, never bo
  let calls=0;await assert.rejects(applyPresenterFirstBudgetRouting({...fixture([shot('available'),shot('missing',type,false)]),quote:async()=>{calls++;return{maximumCny:15,wholeTaskUpperBoundCny:0};}}),/local_material_required:missing/);assert.equal(calls,0);
  }
 });
+test('explicitly approved AI illustration survives allocation and is included in the whole-film quote',async()=>{
+ const illustration=shot('illustration','general',false);
+ Object.assign(illustration,{sourceStrategy:'non_evidentiary_ai_visual',fallbackSourceStrategy:null,truthBoundary:{subject:'none',customerEvidenceRequired:false,syntheticVisualAllowed:true,mustNotImplyCustomerReality:true}});
+ Object.assign(illustration.materialRouting,{policy:'illustrative_video',illustrativeVideo:{purpose:'design',provider:'seedance',durationSeconds:5,disclosure:'AI 场景示意'}});
+ let calls=0;const result=await applyPresenterFirstBudgetRouting({...fixture([illustration]),quote:async plan=>{calls++;assert.equal(plan.shots[0]!.materialRouting!.policy,'illustrative_video');return{maximumCny:15,wholeTaskUpperBoundCny:7.5};}});
+ assert.equal(calls,1);assert.equal(result.shots[0]!.sourceStrategy,'non_evidentiary_ai_visual');
+ illustration.truthBoundary.subject='customer_factory';
+ await assert.rejects(applyPresenterFirstBudgetRouting({...fixture([illustration]),quote:quote(0)}),/illustrative_route_invalid/);
+});
 test('mandatory product generation allowed only when full-film quote fits',async()=>{
  const f=fixture([shot('presenter','talking_head'),shot('missing','product',false,false)]);
  assert.equal((await applyPresenterFirstBudgetRouting({...f,quote:quote(12,3)})).shots[1]!.sourceStrategy,'aigc_product_scene_replication');

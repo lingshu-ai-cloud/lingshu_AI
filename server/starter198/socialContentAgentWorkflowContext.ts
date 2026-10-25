@@ -94,6 +94,10 @@ export function socialContentEmbeddedRuntimeRegistrations(options: { tenantId?: 
     { strategy: 'licensed_stock_asset', adapterIds: ['authorized_shared_library.v1'], environmentReady: true, reason: '执行仍取决于租户可见库存与逐条授权记录' },
     { strategy: 'motion_graphics', adapterIds: ['system_safe_motion_graphics.v1'], environmentReady: true, reason: null },
     { strategy: 'verified_fact_card', adapterIds: ['system_safe_motion_graphics.v1'], environmentReady: true, reason: null },
+    { strategy: 'non_evidentiary_ai_visual', adapterIds: ['controlled_ai_visual.v1'],
+      environmentReady: process.env.SOCIAL_AI_VISUAL_ENABLED==='true' && process.env.SOCIAL_AI_VISUAL_VIDEO_PROVIDER==='seedance'
+        && process.env.SEEDANCE_VIDEO_ENABLED==='true' && Boolean(process.env.SEEDANCE_API_KEY?.trim()),
+      reason: '仅视频生成配置；实际执行仍需整片正式报价与预算预留' },
     {
       strategy: 'authorized_digital_presenter',
       adapterIds: ['controlled_digital_presenter.v1'],

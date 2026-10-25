@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {spawn} from 'node:child_process';
-import {readFile} from 'node:fs/promises';
+import {createReadStream} from 'node:fs';
 import ffmpegStatic from 'ffmpeg-static';
 
 /** Decode coverage only. A complete decode is not a finding of privacy safety. */
@@ -36,14 +36,22 @@ function ffmpeg(args:string[],onLine?:(line:string)=>void,onOutput?:(chunk:Buffe
  });
 }
 
+async function mediaHash(filePath:string):Promise<string>{
+ const digest=createHash('sha256');
+ for await(const chunk of createReadStream(filePath))digest.update(chunk);
+ return digest.digest('hex');
+}
+
 export async function probeFinalPrivacyCoverage(input:{filePath:string;expectedDurationSeconds:number;expectedFrames?:number;frozenSpeechExpected?:boolean}):Promise<SocialFinalPrivacyCoverage>{
- const sha=createHash('sha256').update(await readFile(input.filePath)).digest('hex');
+ const sha=await mediaHash(input.filePath);
  let frames=0,first:number|null=null,last:number|null=null,monotonic=true;
  const duration=input.expectedDurationSeconds;
- const bounded=Number.isFinite(duration)&&duration>0&&duration<=45&&(!input.expectedFrames||input.expectedFrames>0&&input.expectedFrames<=1500);
+ // All decoders stream counters/PCM without retaining media in memory. Keep
+ // their process timeout and output budget; duration is not a product gate.
+ const bounded=Number.isFinite(duration)&&duration>0&&(input.expectedFrames===undefined||Number.isSafeInteger(input.expectedFrames)&&input.expectedFrames>0);
  let videoStreams=0;
  const unknown=(reason:string,audioStreams=0,audioSamples=0,failureCode?:SocialFinalPrivacyCoverage['failureCode']):SocialFinalPrivacyCoverage=>({schemaVersion:'final-privacy-coverage.v1',finalMp4Sha256:sha,detectorVersion:'decode-coverage.v1',status:'unknown',...(failureCode?{failureCode}:{}),video:{streamCount:videoStreams,decodedFrames:frames,firstPtsSeconds:first,lastPtsSeconds:last,monotonicPts:monotonic},audio:{streamCount:audioStreams,decodedSamples:audioSamples,decodedSeconds:audioSamples/16000},reason});
- if(!bounded)return unknown('媒体时长或帧预算超出受限完整解码范围');
+ if(!bounded)return unknown('媒体时长或预期帧数无效');
  let audioStreams=0,inInput=false;
  const info=await ffmpeg(['-i',input.filePath,'-f','null','-'],line=>{
   if(/^Input #\d+,/.test(line.trimStart()))inInput=true;
@@ -69,6 +77,6 @@ export async function probeFinalPrivacyCoverage(input:{filePath:string;expectedD
  if(input.expectedFrames===undefined)return unknown('缺少独立冻结的预期帧数；解码计数不能自证全帧覆盖',audioStreams,samples);
  if(input.expectedFrames!==undefined&&frames!==input.expectedFrames)return unknown('完整解码帧数与冻结预期不符',audioStreams,samples,'frame_count_mismatch');
  if(first===null||last===null||first<-.02||first>.12||last<duration-.15||last>duration+.1||Math.abs(samples/16000-duration)>.12)return unknown('最终 MP4 视频 PTS 或音频 PCM 未覆盖冻结时长',audioStreams,samples,'media_duration_mismatch');
- if(createHash('sha256').update(await readFile(input.filePath)).digest('hex')!==sha)return unknown('解码期间最终 MP4 字节发生变化',audioStreams,samples,'media_bytes_changed');
+ if(await mediaHash(input.filePath)!==sha)return unknown('解码期间最终 MP4 字节发生变化',audioStreams,samples,'media_bytes_changed');
  return {schemaVersion:'final-privacy-coverage.v1',finalMp4Sha256:sha,detectorVersion:'decode-coverage.v1',status:'observed',video:{streamCount:videoStreams,decodedFrames:frames,firstPtsSeconds:first,lastPtsSeconds:last,monotonicPts:monotonic},audio:{streamCount:audioStreams,decodedSamples:samples,decodedSeconds:samples/16000},reason:'最终 MP4 唯一视频轨全帧 PTS 与唯一音轨 PCM 已完整解码；没有进行逐帧敏感内容识别或音频转写，不证明隐私安全'};
 }

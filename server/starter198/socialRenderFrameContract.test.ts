@@ -36,3 +36,22 @@ test('new frozen 30-fps contract is bound through actual noninteger-duration ren
   assert.equal(shortProbe.finalPrivacyCoverage?.status,'observed',JSON.stringify(shortProbe.finalPrivacyCoverage));assert.equal(shortProbe.finalPrivacyCoverage?.video.decodedFrames,30);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+
+test('long videos retain the frame contract through renderer and measured coverage',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'long-render-frame-contract-'));
+ try{
+  const duration=46.02,frameContract=freezeSocialRenderFrameContract(duration);
+  assert.equal(frameContract.expectedFrames,1381);
+  const manifest={jobId:'long-frame-contract',spec:{ratio:'1:1',resolution:'720p',duration},frameContract,timeline:[],bgm:{url:null},voiceover:{url:null},subtitles:{mode:'off',cues:[]}};
+  const rendered=await composite(manifest,undefined,dir);assert.equal(rendered.ok,true,rendered.error);
+  const attestation=verifySocialFrameRenderAttestation({raw:rendered,outputSha256:rendered.frameRenderEvidence!.outputSha256,manifest});assert.ok(attestation);
+  const measured=await probeSocialSceneMedia({filePath:rendered.outputPath!,manifest:{...manifest,timeline:[{sceneId:'long',targetStart:0,targetEnd:duration}]},frameRenderEvidence:attestation});
+  assert.equal(measured.finalPrivacyCoverage?.status,'observed',JSON.stringify(measured.finalPrivacyCoverage));
+  assert.equal(measured.finalPrivacyCoverage?.video.decodedFrames,1381);
+  for(const invalid of [NaN,Infinity,0,-1,1.0001,Number.MAX_SAFE_INTEGER])assert.throws(()=>freezeSocialRenderFrameContract(invalid),/render_frame_contract/);
+  assert.ok(freezeSocialRenderFrameContract(3600).expectedFrames>1350,'duration is not a 45-second product gate');
+  const briefDuration=.5,briefContract=freezeSocialRenderFrameContract(briefDuration);assert.equal(briefContract.expectedFrames,15);
+  const brief=await composite({...manifest,jobId:'subsecond',spec:{...manifest.spec,duration:briefDuration},frameContract:briefContract},undefined,dir);assert.equal(brief.ok,true,brief.error);assert.equal(brief.frameRenderEvidence?.expectedFrames,15);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});

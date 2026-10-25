@@ -10,9 +10,87 @@ import {probeSocialSceneMedia} from './socialSceneMediaHardProbe.js';
 import {proveSimpleCaptionPixels} from './socialCaptionSimplePixelProof.js';
 import {freezeSocialRenderFrameContract} from './socialRenderFrameContract.js';
 import {initialSceneG4Evidence} from './socialContentInitialSceneCache.js';
+import {socialCaptionRendererFonts} from './socialCaptionRendererFonts.js';
 
 const sha=async(file:string)=>createHash('sha256').update(await readFile(file)).digest('hex');
 const ass=`[Script Info]\nScriptType: v4.00+\nPlayResX: 640\nPlayResY: 360\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,80,&H00FFFFFF&,&H00FFFFFF&,&H00000000&,&H00000000&,-1,0,0,0,100,100,0,0,1,2,0,2,20,20,30,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,HELLO\n`;
+
+test('mask and independent plain template use the same bundled font bytes as the renderer',async()=>{
+ const root=await mkdtemp(path.join(tmpdir(),'caption-mask-bundled-font-'));
+ try{
+  const fonts=socialCaptionRendererFonts();assert.ok(fonts);
+  const assPath=path.join(root,'track.ass'),finalPath=path.join(root,'final.mp4'),baselinePath=path.join(root,'baseline.mp4');
+  await writeFile(assPath,ass.replace('Arial,80','Source Han Sans SC,60').replace(',,HELLO\n',',,真实字幕 HELLO\n'));
+  const made=await runVisualFfmpeg(['-y','-f','lavfi','-i','color=c=black:s=640x360:r=30:d=1',
+   '-filter_complex',`[0:v]split=2[base][input];[input]subtitles='${assPath}':fontsdir='${fonts}'[captioned]`,
+   '-map','[captioned]','-an','-c:v','libx264','-crf','20','-pix_fmt','yuv420p',finalPath,
+   '-map','[base]','-an','-c:v','libx264','-crf','20','-pix_fmt','yuv420p',baselinePath]);
+  assert.equal(made.ok,true,made.stderr);
+  const observed=await auditCaptionMaskFrames({finalPath,baselinePath,assPath,expectedFinalSha256:await sha(finalPath),
+   expectedBaselineSha256:await sha(baselinePath),expectedAssSha256:await sha(assPath),durationSeconds:1,width:640,height:360});
+  assert.equal(observed.status,'observed_mask_delta',JSON.stringify(observed));assert.deepEqual(observed.missingFrameIndexes,[]);
+  const plain=await proveSimpleCaptionPixels({finalPath,baselinePath,assPath,width:640,height:360,expectedFrameCount:30});
+  assert.equal(plain.status,'matched',JSON.stringify(plain));
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('same-baseline mask observes bright/dark captions and rejects bright missing glyphs, obstruction and invisible text',async()=>{
+ const root=await mkdtemp(path.join(tmpdir(),'caption-mask-backgrounds-'));
+ try{
+  const fonts=socialCaptionRendererFonts();assert.ok(fonts);
+  for(const sample of ['dark','bright','missing','covered','white_invisible','black_invisible'] as const){
+   const expectedAss=path.join(root,sample+'-expected.ass'),actualAss=path.join(root,sample+'-actual.ass');
+   const finalPath=path.join(root,sample+'-final.mp4'),baselinePath=path.join(root,sample+'-base.mp4');
+   const invisible=sample.endsWith('_invisible');
+   const expected=invisible?ass.replace(',1,2,0,2,20,20,30,1',',1,0,0,2,20,20,30,1')
+    .replaceAll('&H00FFFFFF&',sample==='black_invisible'?'&H00000000&':'&H00FFFFFF&'):ass;
+   await writeFile(expectedAss,expected);await writeFile(actualAss,sample==='missing'?expected.replace(',,HELLO\n',',,HELL\n'):expected);
+   const background=sample==='dark'||sample==='black_invisible'?'black':'white';
+   const obstruction=sample==='covered'?",drawbox=x=0:y=220:w=640:h=140:color=white:t=fill:enable='between(t,0.3,0.4)'":'';
+   const made=await runVisualFfmpeg(['-y','-f','lavfi','-i',`color=c=${background}:s=640x360:r=30:d=1`,
+    '-filter_complex',`[0:v]split=2[base][input];[input]subtitles='${actualAss}':fontsdir='${fonts}'${obstruction}[captioned]`,
+    '-map','[captioned]','-an','-c:v','libx264','-crf','20','-pix_fmt','yuv420p',finalPath,
+    '-map','[base]','-an','-c:v','libx264','-crf','20','-pix_fmt','yuv420p',baselinePath]);
+   assert.equal(made.ok,true,made.stderr);
+   const observed=await auditCaptionMaskFrames({finalPath,baselinePath,assPath:expectedAss,expectedFinalSha256:await sha(finalPath),
+    expectedBaselineSha256:await sha(baselinePath),expectedAssSha256:await sha(expectedAss),durationSeconds:1,width:640,height:360,
+    frozenCues:[{start:0,end:1,text:'HELLO'}]});
+   if(sample==='dark'||sample==='bright'){
+    assert.equal(observed.status,'observed_mask_delta',sample+':'+JSON.stringify(observed));assert.equal(observed.frameCount,30);
+    if(sample==='bright')assert.equal(observed.simplePixelProof?.status,'unknown','mask observation must not extend independent dark-base proof');
+   }else{
+    assert.equal(observed.status,'unknown',sample+':'+JSON.stringify(observed));
+    if(sample==='missing'||sample==='covered')assert.ok(observed.missingFrameIndexes.length>0,sample+':'+JSON.stringify(observed));
+   }
+  }
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('complete spatial audit streams more than 350 MiB through bounded frame memory without widening simple pixel proof',async()=>{
+ const root=await mkdtemp(path.join(tmpdir(),'caption-mask-long-stream-'));
+ try{
+  const duration=18,frameCount=duration*30,width=640,height=360;
+  assert.ok(width*height*3*frameCount>350*1024*1024);
+  const assPath=path.join(root,'track.ass'),finalPath=path.join(root,'final.mp4'),baselinePath=path.join(root,'baseline.mp4');
+  await writeFile(assPath,ass.replace('0:00:01.00','0:00:18.00'));
+  const made=await runVisualFfmpeg(['-y','-f','lavfi','-i',`color=c=black:s=${width}x${height}:r=30:d=${duration}`,
+   '-filter_complex',`[0:v]split=2[base][input];[input]subtitles='${assPath}'[captioned]`,
+   '-map','[captioned]','-an','-c:v','libx264','-crf','20','-pix_fmt','yuv420p',finalPath,
+   '-map','[base]','-an','-c:v','libx264','-crf','20','-pix_fmt','yuv420p',baselinePath],false,{timeoutMs:120000});
+  assert.equal(made.ok,true,made.stderr);
+  const before=process.memoryUsage().external;let peak=before;
+  const timer=setInterval(()=>{peak=Math.max(peak,process.memoryUsage().external);},10);
+  try{
+   const result=await auditCaptionMaskFrames({finalPath,baselinePath,assPath,expectedFinalSha256:await sha(finalPath),
+    expectedBaselineSha256:await sha(baselinePath),expectedAssSha256:await sha(assPath),durationSeconds:duration,width,height,
+    frozenCues:[{start:0,end:duration,text:'HELLO'}]});
+   assert.equal(result.status,'observed_mask_delta',JSON.stringify(result));assert.equal(result.frameCount,frameCount);
+   assert.equal(result.activeFrameCount,frameCount);assert.deepEqual(result.missingFrameIndexes,[]);
+   assert.equal(result.simplePixelProof?.status,'unknown','long streams must not extend the independent narrow proof contract');
+   assert.ok(peak-before<96*1024*1024,`stream accumulated raw frame buffers (${peak-before} bytes)`);
+  }finally{clearInterval(timer);}
+ }finally{await rm(root,{recursive:true,force:true});}
+});
 
 test('same-graph baseline and actual subtitle pixels produce bounded PTS mask observation; missing subtitle stays unknown',async()=>{
  const root=await mkdtemp(path.join(tmpdir(),'caption-mask-real-'));

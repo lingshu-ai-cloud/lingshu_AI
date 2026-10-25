@@ -1,6 +1,8 @@
 import type { BenchmarkMaterialType } from './benchmarkAnalysis';
 import type { SocialShotFunction } from './contracts/socialContentReplication';
 import type { SocialMaterialRole, SocialSceneVisualContract } from './sceneVisualContract';
+import { enterpriseScenePurpose } from './socialMaterialScenePurpose.js';
+import {isObservedHandheldDisplay} from './socialMaterialReusePolicy.js';
 
 export const FIXED_YIELD_ARCHETYPE_IDS = [
   'P1A_FACTORY_WALK_TALK', 'P1B_FACTORY_STAND_TALK', 'P1C_SHELF_STAND_TALK',
@@ -41,15 +43,15 @@ export const FIXED_YIELD_MATERIAL_RULES: Record<FixedYieldArchetypeId, FixedYiel
   rule('P2B_PRODUCT_SHELF', 'product', ['product'], ['factory', 'person_usage', 'presenter'], 'same_product'),
   rule('P2C_PACKAGE_DETAIL', 'product', ['product'], ['factory', 'person_usage', 'presenter'], 'same_product'),
   rule('P2D_PRODUCT_MOTION', 'product', ['product'], ['factory', 'person_usage', 'presenter'], 'same_product'),
-  rule('P3A_WORKER_PROCESS', 'factory', ['factory'], ['presenter', 'person_usage']),
-  rule('P3B_MACHINE_CLOSEUP', 'factory', ['factory'], ['presenter', 'person_usage']),
-  rule('P3C_QC_PACKING', 'factory', ['factory'], ['presenter', 'person_usage']),
-  rule('P3D_FACTORY_ESTABLISH', 'factory', ['factory'], ['presenter', 'person_usage']),
+  rule('P3A_WORKER_PROCESS', 'factory', ['factory'], ['presenter']),
+  rule('P3B_MACHINE_CLOSEUP', 'factory', ['factory'], ['presenter']),
+  rule('P3C_QC_PACKING', 'factory', ['factory'], ['presenter']),
+  rule('P3D_FACTORY_ESTABLISH', 'factory', ['factory'], ['presenter']),
   rule('P4A_USAGE_SETUP', 'consumer_demo', ['person_usage'], ['factory', 'presenter'], 'same_product'),
   rule('P4B_USAGE_ACTION', 'consumer_demo', ['person_usage'], ['factory', 'presenter'], 'same_product'),
   rule('P4C_USAGE_RESULT', 'consumer_demo', ['person_usage'], ['factory', 'presenter'], 'same_product'),
   rule('P5A_EXHIBITION', 'general', ['environment', 'general'], ['factory', 'person_usage', 'presenter']),
-  rule('P5B_CUSTOMER_CASE', 'general', ['customer_case'], ['presenter']),
+  rule('P5B_CUSTOMER_CASE', 'general', ['customer_case', 'environment', 'general'], ['factory', 'presenter']),
   rule('P5C_LOGISTICS_WAREHOUSE', 'general', ['environment', 'general'], ['person_usage', 'presenter']),
   rule('P5D_VERIFIED_FACT', 'general', ['general', 'environment'], ['person_usage', 'presenter']),
   rule('P5E_BRAND_CTA', 'general', ['general'], ['factory', 'person_usage', 'presenter']),
@@ -106,6 +108,7 @@ export function classifyFixedYieldArchetype(input: {
       || ['person_using_product', 'apply_product_to_face'].includes(visual.interaction.kind)) return 'P4B_USAGE_ACTION';
     return 'P4A_USAGE_SETUP';
   }
+  if (enterpriseScenePurpose(visual, input.description ?? '')) return 'P5B_CUSTOMER_CASE';
   if (/展会|展位|博览会|exhibition|trade.?show|booth/.test(text)) return 'P5A_EXHIBITION';
   if (/客户|案例|合作|customer.?case|client/.test(text)) return 'P5B_CUSTOMER_CASE';
   if (/仓储|物流|出货|发货|装车|warehouse|logistics|shipping/.test(text)) return 'P5C_LOGISTICS_WAREHOUSE';
@@ -120,11 +123,16 @@ export function fixedYieldCandidateMatches(input: {
   candidateVisual: SocialSceneVisualContract;
   requestedProductRef?: string | null;
   candidateProductRefs?: Array<string | null | undefined>;
+  allowFunctionalEquivalent?: boolean;
+  allowHandheldDisplay?: boolean;
 }): { accepted: boolean; reason: string | null } {
   const rule = FIXED_YIELD_MATERIAL_RULES[input.archetypeId];
   if (input.candidateMaterialType !== rule.materialType) return { accepted: false, reason: 'material_type_mismatch' };
   if (!rule.requiredAnyRoles.some(role => input.candidateRoles.includes(role))) return { accepted: false, reason: 'required_material_role_missing' };
-  if (rule.forbiddenRoles.some(role => input.candidateRoles.includes(role))) return { accepted: false, reason: 'forbidden_material_role_present' };
+  if (rule.forbiddenRoles.some(role => input.candidateRoles.includes(role)
+    && !(role==='person_usage'&&input.allowHandheldDisplay&&input.candidateMaterialType==='product'
+      &&isObservedHandheldDisplay({interactionKind:input.candidateVisual.interaction.kind,
+        observedActionTags:[input.candidateVisual.action.path,input.candidateVisual.interaction.description]})))) return { accepted: false, reason: 'forbidden_material_role_present' };
   if (rule.productIdentity === 'same_product' && input.requestedProductRef) {
     const normalize = (value: unknown) => String(value ?? '').normalize('NFKC').trim().toLocaleLowerCase().replace(/^product:/, '');
     const requested = normalize(input.requestedProductRef);
@@ -134,7 +142,14 @@ export function fixedYieldCandidateMatches(input: {
     materialType: input.candidateMaterialType,
     visual: input.candidateVisual,
   });
-  return candidateArchetype === input.archetypeId
+  return candidateArchetype && fixedYieldArchetypesCompatible(input.archetypeId, candidateArchetype,input.allowFunctionalEquivalent)
     ? { accepted: true, reason: null }
     : { accepted: false, reason: 'archetype_mismatch' };
+}
+
+/** Process b-roll may show a worker or a machine; observed actions still gate the match. */
+export function fixedYieldArchetypesCompatible(expected: FixedYieldArchetypeId, actual: FixedYieldArchetypeId, allowProductEquivalent=false): boolean {
+  const processes: FixedYieldArchetypeId[] = ['P3A_WORKER_PROCESS', 'P3B_MACHINE_CLOSEUP', 'P3C_QC_PACKING'];
+  return expected === actual || processes.includes(expected) && processes.includes(actual)
+    || allowProductEquivalent && expected.startsWith('P2') && actual.startsWith('P2');
 }

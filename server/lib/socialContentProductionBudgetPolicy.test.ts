@@ -18,10 +18,10 @@ function fixture(duration=30,maximum=productionBudgetLimitCny(duration)){
     assertCurrent:async()=>{},verifyRejection:async()=>false};
   return {root,ports,ledger:new SocialContentTaskBudget(root,ports),clean:()=>fs.rmSync(root,{recursive:true,force:true})};
 }
-test('one rate covers creation, legacy defaults and 15/30/60-second finished videos',()=>{
+test('the duration rate remains a default target; explicit confirmed limits survive creation and projection',()=>{
   for(const [duration,expected] of [[15,7.5],[30,15],[60,30]]){
     const brief=parseCreateSocialTask({title:'offline',objective:'production budget',mode:'instant',targetDurationSeconds:duration,perItemBudgetCny:10});
-    assert.equal(brief.perItemBudgetCny,expected);assert.equal(defaultBrief({...brief,materialRoutingPolicyVersion:'type-aware.v1'}).perItemBudgetCny,expected);
+    assert.equal(brief.perItemBudgetCny,10);assert.equal(defaultBrief({...brief,materialRoutingPolicyVersion:'type-aware.v1'}).perItemBudgetCny,10);
     assert.equal(productionBudgetLimitCny(duration),expected);
   }
   assert.equal(productionBudgetDuration(),30);
@@ -35,6 +35,20 @@ test('60-second authorized film can reserve 30 yuan; a replay cannot enlarge its
     f.ports.authorization=async()=>({maximumCny:60,productionDurationSeconds:120,authorizationRef:'unapproved-duration-change'});
     await assert.rejects(f.ledger.reserveBatch({...scope,runId:'retry'},[operation('retry:0.01')]),/production_budget_decision_required/);
     assert.equal(f.ledger.status(scope)!.retainedCny,30);
+  }finally{f.clean();}
+});
+test('an explicitly approved 100-yuan film keeps its ceiling across retries and blocks the next cent',async()=>{
+  const brief=parseCreateSocialTask({title:'authorized film',objective:'production',mode:'instant',targetDurationSeconds:38,perItemBudgetCny:100});
+  assert.equal(brief.perItemBudgetCny,100);assert.equal(defaultBrief(brief).perItemBudgetCny,100);
+  const f=fixture(38,100);try{
+    await f.ledger.reserveBatch(scope,[operation('first:90')]);
+    await f.ledger.markOutcome(scope,'first:90','unknown','pending-provider-receipt');
+    const restarted=new SocialContentTaskBudget(f.root,f.ports);
+    await restarted.reserveBatch({...scope,runId:'retry'},[operation('last:10')]);
+    assert.equal(restarted.status(scope)!.limitCny,100);assert.equal(restarted.status(scope)!.retainedCny,100);
+    f.ports.authorization=async()=>({maximumCny:200,productionDurationSeconds:38,authorizationRef:'changed-default'});
+    await assert.rejects(restarted.reserveBatch({...scope,runId:'retry-2'},[operation('extra:0.01')]),/production_budget_decision_required/);
+    assert.equal(restarted.status(scope)!.limitCny,100);
   }finally{f.clean();}
 });
 test('verified acquisition is separately accounted, while unknown production and child repair occupy the same cap',async()=>{

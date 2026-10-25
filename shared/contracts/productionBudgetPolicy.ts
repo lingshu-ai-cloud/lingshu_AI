@@ -1,5 +1,5 @@
-/** The only product ceiling for finished-video production. Acquisition is
- * separately authorized and accounted; retries/revisions share the film cap. */
+/** Legacy policy identifier/default optimization target. Explicit authorized
+ * task limits are independent; retries/revisions still share one film ledger. */
 export const PRODUCTION_BUDGET_POLICY = 'finished-video-15-cny-per-30-seconds.v1' as const;
 export const DEFAULT_PRODUCTION_DURATION_SECONDS = 30;
 export function productionBudgetDuration(input: {
@@ -24,13 +24,17 @@ export function productionBudgetLimitCny(durationSeconds = DEFAULT_PRODUCTION_DU
     throw Error('user_input_required:production_budget_duration_invalid');
   return Math.floor((durationSeconds * 0.5 + Number.EPSILON) * 1e6) / 1e6;
 }
+export function productionBudgetMaximumCny(input: Parameters<typeof productionBudgetDuration>[0] & { perItemBudgetCny?: number | null } = {}): number {
+  if (input.perItemBudgetCny == null) return productionBudgetLimitCny(productionBudgetDuration(input));
+  if (!validProductionBudgetMaximum(input.perItemBudgetCny)) throw Error('user_input_required:production_budget_maximum_invalid');
+  return input.perItemBudgetCny;
+}
 export function productionBudgetExceeded(amountCny: number, maximumCny: number): boolean {
   return !Number.isFinite(amountCny) || amountCny < 0 || !Number.isFinite(maximumCny)
     || maximumCny <= 0 || Math.round(amountCny * 1e6) > Math.round(maximumCny * 1e6);
 }
 export function validProductionBudgetMaximum(value: unknown, durationSeconds?: number): value is number {
-  return typeof value==='number' && Number.isFinite(value) && value>0
-    && !productionBudgetExceeded(value,productionBudgetLimitCny(durationSeconds));
+  return typeof value==='number' && Number.isFinite(value) && value>0 && value<=10_000_000;
 }
 export function validOriginalProductionBudget(status: {
   limitCny:number;authorizedLimitCny:number;retainedCny:number;hasCorrectionAuthorization:boolean;
@@ -50,7 +54,7 @@ export function productionBudgetDecisionError(evidence:{maximumCny:number;retain
 }
 export function assertRetainedProductionBudget(status:{limitCny:number;retainedCny:number;productionDurationSeconds?:number}|null|undefined):void {
   if(!status)return;
-  const maximumCny=Math.min(status.limitCny,productionBudgetLimitCny(status.productionDurationSeconds));
+  const maximumCny=status.limitCny;
   if(productionBudgetExceeded(status.retainedCny,maximumCny))
     throw productionBudgetDecisionError({maximumCny,retainedCny:status.retainedCny,plannedAdditionalCny:0,totalCny:status.retainedCny});
 }

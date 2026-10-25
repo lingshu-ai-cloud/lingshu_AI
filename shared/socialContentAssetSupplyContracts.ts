@@ -29,9 +29,11 @@ export interface SocialAssetInventory {
 }
 
 export interface SocialAssetSupplyShotRequest {
+  materialReusePolicy?: import('./socialMaterialReusePolicy.js').SocialMaterialReusePolicy;
   materialType?: BenchmarkMaterialType;
   fixedYieldArchetypeId?: FixedYieldArchetypeId;
   localVideoMatch?: {
+    reuseKind?: 'direct_cut' | 'functional_equivalent';
     sourceRefs: string[];
     semanticMatch: 'verified';
     evidenceRef: string;
@@ -43,6 +45,7 @@ export interface SocialAssetSupplyShotRequest {
   selectedMaterialSegment?: SocialAssetSupplyShotPlan['selectedMaterialSegment'];
   plannedDurationSeconds?: number;
   materialRouting?: SocialMaterialRouting;
+  illustrativeVideoApproved?: boolean;
   shotId: string;
   function: SocialShotFunction;
   requestedDescription?: string | null;

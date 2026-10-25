@@ -1,5 +1,5 @@
 import { creationReplySchema } from '../../shared/contracts/contentCreationDialogue.js';
-import {parseSocialReferenceReuse} from './socialContentValidation.js';
+import {parseSocialReferenceReuse, parseIllustrativeSceneIds} from './socialContentValidation.js';
 import { parseSocialReplicationContext } from './socialContentValidation.js';
 import {
   SOCIAL_ARTIFACT_STATUSES,
@@ -191,6 +191,7 @@ export function strings(value: unknown, code: string): string[] {
 
 export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
   const record = jsonRecord(value, 'social_content_task_record_invalid');
+  if(record.presenterSpeechReviewPolicy!==undefined&&!['independent_lip_sync','heygen_native_human_review'].includes(String(record.presenterSpeechReviewPolicy)))throw new SocialContentWorkflowError('social_content_task_record_invalid',503);
   const title = socialText(record.title);
   const objective = socialText(record.objective);
   if (!title || !objective) throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
@@ -214,6 +215,8 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
   if (!SOCIAL_CONTENT_PRODUCTION_MODES.includes(productionMode as NonNullable<SocialContentTaskBrief['productionMode']>)) {
     throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
   }
+  if (record.presenterPolicy !== undefined && !['none', 'selected'].includes(String(record.presenterPolicy))
+    || record.singleCreationRequestHash !== undefined && !/^[a-f0-9]{64}$/.test(String(record.singleCreationRequestHash))) throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
   const productionApproach = socialText(record.productionApproach);
   if (productionApproach && !SOCIAL_PRODUCTION_APPROACHES.includes(productionApproach as NonNullable<SocialContentTaskBrief['productionApproach']>)) {
     throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
@@ -232,11 +235,15 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     throw new SocialContentWorkflowError('social_material_routing_policy_invalid', 503);
   }
   return {
+    ...(typeof record.singleCreationRequestHash === 'string' ? { singleCreationRequestHash: record.singleCreationRequestHash } : {}),
     ...(record.creationDialoguePlan ? { creationDialoguePlan: creationReplySchema.parse(record.creationDialoguePlan) } : {}),
+    ...(record.presenterPolicy === 'none' || record.presenterPolicy === 'selected' ? { presenterPolicy: record.presenterPolicy } : {}),
+    ...(record.presenterSpeechReviewPolicy==='independent_lip_sync'||record.presenterSpeechReviewPolicy==='heygen_native_human_review'?{presenterSpeechReviewPolicy:record.presenterSpeechReviewPolicy}:{}),
     title,
     objective,
     ...(record.referenceReuse != null ? {referenceReuse: parseSocialReferenceReuse(record.referenceReuse)} : {}),
     ...(record.materialRoutingPolicyVersion === 'type-aware.v1' || record.materialRoutingPolicyVersion === 'type-aware.v2' ? { materialRoutingPolicyVersion: record.materialRoutingPolicyVersion } : {}),
+    ...(record.illustrativeSceneIds !== undefined ? { illustrativeSceneIds: parseIllustrativeSceneIds(record.illustrativeSceneIds) } : {}),
     productId: nullable(record.productId),
     productRef: nullable(record.productRef),
     requestedPresenterName: nullable(record.requestedPresenterName),
@@ -252,7 +259,7 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     requestedOutputCount: typeof requested === 'number' && Number.isSafeInteger(requested) && requested > 0 ? requested : null,
     weeklyBudgetCny: optionalStoredNumber('weeklyBudgetCny', 10_000_000),
     perItemBudgetCny: optionalStoredNumber('perItemBudgetCny', 1_000_000),
-    targetDurationSeconds: optionalStoredNumber('targetDurationSeconds', 60),
+    targetDurationSeconds: optionalStoredNumber('targetDurationSeconds', Infinity),
     retryReserveCny: optionalStoredNumber('retryReserveCny', 10_000_000),
     planningMode: planningMode as SocialContentTaskBrief['planningMode'],
     shootingWindowMinutes: optionalStoredNumber('shootingWindowMinutes', 10_080, true),
@@ -564,6 +571,8 @@ export async function taskRows(
 }
 
 export function buildSocialWorkflowMaterialCandidates(input: {
+  /** V2 leaves video SKU selection to the reference shot, not the task. Images stay product-bound. */
+  deferVideoSkuFilter?: boolean;
   records: MaterialRecord[];
   /** Only overlays returned by the independent signed byte/visual reader. */
   reviewedFootageOverlays?: MaterialRecord[];
@@ -661,8 +670,8 @@ export function buildSocialWorkflowMaterialCandidates(input: {
     : []);
   const candidates = raw.flatMap(item => {
     // Images remain available to historic product-identity flows. Fixed-yield
-    // local video routes only receive segments whose version, rights and edit
-    // boundaries passed the server-owned profile gate.
+    // local video routes only receive versioned, authorized observed segments.
+    // Unknown editorial boundaries retain the observed interval for trimming.
     if (item.mediaType === 'video' && !item.segmentProfile?.productionEligible) return [];
     const productCompatibility = resolveProductCompatibility({
       policy: productPolicy,
@@ -674,7 +683,7 @@ export function buildSocialWorkflowMaterialCandidates(input: {
       enterpriseCommon: item.enterpriseCommon,
     });
     const evidenceRole = item.materialRoles.includes('factory') || item.materialRoles.includes('customer_case');
-    if (!productCompatibility.compatible && !evidenceRole) return [];
+    if (!productCompatibility.compatible && !evidenceRole && !(input.deferVideoSkuFilter&&item.mediaType==='video')) return [];
     const trim = item.shot.editorial.trim;
     const useSafeTrim = trim.boundaryConfidence >= 0.6 && trim.cleanEntry && trim.cleanExit
       && trim.preferredEndSeconds > trim.preferredStartSeconds;

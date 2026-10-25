@@ -205,6 +205,9 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
     assert.equal(admitted.status, 'producing');
     assert.equal(admitted.contentOrder?.contentId,created.taskId);
     assert.equal(admitted.contentOrder?.budgetTaskId,created.taskId);
+    const admittedJobs=store.rows.get('content_execution_jobs')??[];
+    assert.equal(admittedJobs.filter(job=>job.tenant_id===tenantId&&job.task_id===created.taskId&&job.run_id===admitted.runId).length,1,
+      'an injected durable repository must create the production job before reporting the task as producing');
     const quotaRows=store.rows.get('social_content_creation_quotas')??[];
     assert.equal(quotaRows.length,1,'actual start persists the shared weekly allowance before queue admission');
     const quotaPayload=quotaRows[0]!.payload as any;
@@ -293,7 +296,7 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
     assert.deepEqual(row.script_baseline, baseline, 'normal create baseline is preserved verbatim');
     assert.ok(admitted.assetSupplyPlan.shots.every(shot => shot.selectedMaterialSegment
       && shot.selectedMaterialSegment.endSeconds > shot.selectedMaterialSegment.startSeconds));
-    assert.equal(admitted.brief.perItemBudgetCny, 15);
+    assert.equal(admitted.brief.perItemBudgetCny, 10, 'dispatch must retain the narrower explicit grant, not expand it to the default ceiling');
     assert.equal(admitted.agentWorkflow?.executionPlan.estimatedTotalCostCny, 0);
     assert.equal(store.rows.get(STARTER_COLLECTIONS.runs)!.length, 1);
   } finally {fs.rmSync(root, {recursive: true, force: true});}

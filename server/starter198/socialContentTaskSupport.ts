@@ -1,6 +1,6 @@
 import { guidedEnterpriseContext } from '../assistantContext/guidedCreationKnowledge.js';
 import { applyGuidedCreationStructure } from './guidedCreationStructure.js';
-import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
+import {productionBudgetDuration,productionBudgetLimitCny,productionBudgetMaximumCny} from '../../shared/contracts/productionBudgetPolicy.js';
 import {publicationProductionDeadline} from '../socialPrograms/publicationDeadlines.js';
 import { planNewSocialMaterialRoutes } from './socialContentMaterialRoutePlanning.js';
 import type {
@@ -110,7 +110,7 @@ export function buildAuthoritativeSocialContentWorkflow(input: Omit<BuildSocialA
       callToAction: input.publicationTask.cta,
       dueAt: publicationProductionDeadline(input.publicationTask.publishWindow),
       weeklyBudgetCny: input.weeklyPackage.socialContentPackage.weeklyBudgetCny,
-      perItemBudgetCny: productionBudgetLimitCny(productionBudgetDuration(input.brief)),
+      perItemBudgetCny: productionBudgetMaximumCny(input.brief),
     },
     factSourceRefs: input.publicationTask.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`),
     authoritativeContext: {
@@ -215,9 +215,13 @@ export async function sourceCreatedByOperation(input: {
 export function defaultBrief(value: CreateSocialContentTaskInput) {
   const themeDriven = Boolean(value.mode || value.themeId || value.customTopic || value.topic || value.weeklyPlanId);
   return {
+    ...(value.singleCreationRequestHash ? { singleCreationRequestHash: value.singleCreationRequestHash } : {}),
     ...(value.creationDialoguePlan ? { creationDialoguePlan: value.creationDialoguePlan } : {}),
     ...(value.materialRoutingPolicyVersion ? { materialRoutingPolicyVersion: value.materialRoutingPolicyVersion } : {}),
+    ...(value.illustrativeSceneIds ? { illustrativeSceneIds: [...value.illustrativeSceneIds] } : {}),
     ...(value.referenceReuse ? {referenceReuse: value.referenceReuse} : {}),
+    ...(value.presenterPolicy ? { presenterPolicy: value.presenterPolicy } : {}),
+    ...(value.presenterSpeechReviewPolicy ? { presenterSpeechReviewPolicy: value.presenterSpeechReviewPolicy } : {}),
     title: value.title,
     objective: value.objective,
     productId: value.productId ?? null,
@@ -234,7 +238,7 @@ export function defaultBrief(value: CreateSocialContentTaskInput) {
     cadence: value.cadence ?? null,
     requestedOutputCount: value.mode === 'instant' ? 1 : value.requestedOutputCount ?? null,
     weeklyBudgetCny: value.weeklyBudgetCny ?? null,
-    perItemBudgetCny: productionBudgetLimitCny(productionBudgetDuration(value)),
+    perItemBudgetCny: productionBudgetMaximumCny(value),
     targetDurationSeconds: value.targetDurationSeconds ?? null,
     retryReserveCny: value.retryReserveCny ?? null,
     planningMode: value.planningMode ?? 'auto_adjust',
@@ -306,7 +310,7 @@ export async function refreshSocialTaskReferenceOutputs(input: {
   const verifiedContext = summary.brief.creationDialoguePlan ? guidedEnterpriseContext(profile!, summary.brief.creationDialoguePlan.selection.productIds) : verifiedSocialScriptContext(profile, summary.brief.productId || summary.brief.productRef);
   const planning = {
     targetDurationSeconds: summary.brief.targetDurationSeconds ?? null,
-    budgetCny: productionBudgetLimitCny(productionBudgetDuration(summary.brief)),
+    budgetCny: productionBudgetMaximumCny(summary.brief),
     language: summary.brief.languages.some(language => /^en(?:glish)?$/i.test(language)) ? 'en' as const : 'zh' as const,
     callToAction: summary.brief.callToAction ?? null,
   };

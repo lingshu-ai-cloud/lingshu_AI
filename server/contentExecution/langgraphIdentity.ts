@@ -3,8 +3,12 @@ import type { DataStore } from '../storage/datastore.js';
 import { CONTENT_EXECUTION_JOB_COLLECTION } from './context.js';
 
 export const LEGACY_CONTENT_GRAPH_VERSION = 'content-production.v1';
-export const CONTENT_GRAPH_VERSION = 'content-production.v2';
-export const SUPPORTED_CONTENT_GRAPH_VERSIONS = [LEGACY_CONTENT_GRAPH_VERSION, CONTENT_GRAPH_VERSION] as const;
+export const PREVIOUS_CONTENT_GRAPH_VERSION = 'content-production.v2';
+export const VISUAL_PRESENTER_GRAPH_VERSION = 'content-production.v3';
+export const BACKGROUND_FIRST_GRAPH_VERSION = 'content-production.v4';
+export const CONTENT_GRAPH_VERSION = BACKGROUND_FIRST_GRAPH_VERSION;
+export const SUPPORTED_CONTENT_GRAPH_VERSIONS = [LEGACY_CONTENT_GRAPH_VERSION, PREVIOUS_CONTENT_GRAPH_VERSION,
+  VISUAL_PRESENTER_GRAPH_VERSION, CONTENT_GRAPH_VERSION] as const;
 export type ContentGraphVersion = typeof SUPPORTED_CONTENT_GRAPH_VERSIONS[number];
 export interface ProductionGraphIdentity {
   tenantId: string;

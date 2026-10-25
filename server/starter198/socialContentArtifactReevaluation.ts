@@ -1,3 +1,6 @@
+import { recordCurrentContentExecutionCheckpoint } from '../contentExecution/context.js';
+import { reevaluateSocialTechnicalArtifact, applySocialTechnicalReevaluation } from './socialContentTechnicalReevaluation.js';
+import { SOCIAL_TECHNICAL_REVIEW_POLICY } from './socialContentTechnicalReplayEvidence.js';
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -34,6 +37,9 @@ export interface SocialArtifactReevaluationRequest {
   parentContentHash: string;
   expectedMediaSha256: string;
   requestId: string;
+  /** Server-owned technical policy upgrade; never invokes replication/provider evaluation. */
+  mode?: 'technical';
+  expectedRunId?: string;
 }
 
 type EvaluationInput = Parameters<typeof evaluateSocialReplicationResult>[0];
@@ -41,6 +47,7 @@ type EvaluationOutput = Awaited<ReturnType<typeof evaluateSocialReplicationResul
 
 export interface SocialArtifactReevaluationPorts {
   evaluate(input: EvaluationInput): Promise<EvaluationOutput>;
+  reevaluateTechnical: typeof reevaluateSocialTechnicalArtifact;
   createArtifact(input: Parameters<typeof createSocialContentArtifact>[0]): ReturnType<typeof createSocialContentArtifact>;
   openMedia(input: Parameters<typeof openSocialArtifactPreviewMedia>[0]): ReturnType<typeof openSocialArtifactPreviewMedia>;
   readDetail(input: Parameters<typeof readSocialTaskDetail>[0]): ReturnType<typeof readSocialTaskDetail>;
@@ -160,6 +167,7 @@ export function createSocialArtifactReevaluationService(input: {
 }) {
   const ports: SocialArtifactReevaluationPorts = {
     evaluate: evaluateSocialReplicationResult,
+    reevaluateTechnical: reevaluateSocialTechnicalArtifact,
     createArtifact: createSocialContentArtifact,
     openMedia: openSocialArtifactPreviewMedia,
     readDetail: readSocialTaskDetail,
@@ -205,10 +213,49 @@ export function createSocialArtifactReevaluationService(input: {
         const children = await input.repository.list(STARTER_COLLECTIONS.socialContentArtifacts, request.tenantId, {
           where: { task_id: request.taskId, parent_artifact_id: request.parentArtifactId }, perPage: 500,
         });
-        const replay = children.items.find(record => reevaluationRequestId(socialObject(socialJson(record.content))) === request.requestId);
+        const replay = children.items.find(record => {const prior=socialObject(socialJson(record.content)),stamp=socialObject(prior?.reevaluation);
+          return request.mode==='technical' ? stamp?.mode==='technical'&&stamp.parentContentHash===expectedContentHash&&stamp.policyVersion===SOCIAL_TECHNICAL_REVIEW_POLICY&&stamp.runId===request.expectedRunId
+            : stamp?.mode!=='technical'&&reevaluationRequestId(prior)===request.requestId;});
         if (replay) {
           const replayContent = artifactContent(replay);
+          if(request.mode==='technical'){const stamp=socialObject(replayContent.reevaluation);
+            if(replay.resource_ref!==parentRecord.resource_ref||stamp?.mediaSha256!==actualMediaSha256
+              ||stamp.parentArtifactVersion!==request.parentArtifactVersion
+              ||socialObject(replayContent.productionWorkspaceSource)?.outputSha256!==actualMediaSha256) return fail('social_artifact_reevaluation_replay_changed');}
           return { artifact: socialArtifact(replay), evaluation: evaluationFrom(replayContent), mediaSha256: actualMediaSha256, replayed: true };
+        }
+
+        if (request.mode === 'technical') {
+          const source = socialObject(parentContent.productionWorkspaceSource);
+          if (parentContent.workflowSchema !== 'social-content.auto-production.v3' || !request.expectedRunId
+            || source?.runId !== request.expectedRunId || source.outputSha256 !== actualMediaSha256) return fail('social_artifact_reevaluation_run_changed');
+          if (socialObject(parentContent.technicalQualityReport)?.policyVersion === SOCIAL_TECHNICAL_REVIEW_POLICY)
+            return {artifact: parent, evaluation: evaluationFrom(parentContent), mediaSha256: actualMediaSha256, replayed: true};
+          const result = await ports.reevaluateTechnical({repository:input.repository,
+            scope:{tenantId:request.tenantId,taskId:request.taskId,runId:request.expectedRunId},
+            parentArtifactId:request.parentArtifactId,parentContent,outputSha256:actualMediaSha256,outputVideoPath});
+          if(result.policyVersion!==SOCIAL_TECHNICAL_REVIEW_POLICY) return fail('social_artifact_reevaluation_policy_changed');
+          // Re-read immediately before the existing mutation boundary: a long
+          // local audit must not attach to a concurrently replaced parent.
+          const latest = await input.repository.list(STARTER_COLLECTIONS.socialContentArtifacts, request.tenantId,
+            {where:{task_id:request.taskId,artifact_id:request.parentArtifactId},perPage:2});
+          if(latest.items.length!==1||String(latest.items[0]!.version)!==request.parentArtifactVersion
+            ||latest.items[0]!.content_hash!==expectedContentHash) return fail('social_artifact_reevaluation_parent_content_changed');
+          artifactContent(latest.items[0]!);
+          const content = {...applySocialTechnicalReevaluation(parentContent,result),reevaluation:{
+            schemaVersion:'social-artifact-reevaluation.v1',mode:'technical',requestId:request.requestId,
+            parentArtifactId:request.parentArtifactId,parentArtifactVersion:request.parentArtifactVersion,
+            parentContentHash:expectedContentHash,mediaSha256:actualMediaSha256,runId:request.expectedRunId,
+            evaluator:'local_technical_quality',policyVersion:result.policyVersion,evidenceHash:result.evidenceHash}};
+          await recordCurrentContentExecutionCheckpoint({stage:'social.graph_technical_quality',version:'1',
+            inputHash:socialRequestHash({outputSha256:actualMediaSha256,manifestHash:source.manifestHash,policyVersion:result.policyVersion}),
+            payload:{outputSha256:actualMediaSha256,approved:result.approved,failureCount:result.failures.length,
+              failures:result.failures.slice(0,100),reportHash:socialRequestHash(result.report),checkedScenes:result.report.scenes.checkedScenes}});
+          const created = await ports.createArtifact({repository:input.repository,tenantId:request.tenantId,userId:request.userId,taskId:request.taskId,
+            idempotencyKey:`social-technical-reevaluation:${request.parentArtifactId}:${expectedContentHash}:${result.policyVersion}`,
+            trustedAgentOrigin:true,requireHumanReview:true,backendFilePort:input.backendFilePort,
+            value:{kind:parent.kind,platform:parent.platform,language:parent.language,origin:'agent',parentArtifactId:request.parentArtifactId,resourceRef:parent.resourceRef,content}});
+          return {artifact:created.artifact,evaluation:evaluationFrom(content),mediaSha256:actualMediaSha256,replayed:false};
         }
 
         const detail = await ports.readDetail({ repository: input.repository, tenantId: request.tenantId, taskId: request.taskId });

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { LangGraphTestStore } from '../../scripts/langgraphTestStore.js';
 import { admitContentExecutionJob } from '../contentExecution/durableQueue.js';
 import { createStarter198Repository, STARTER_COLLECTIONS } from './repository.js';
-import { assertCurrentGraphReviewSubject, createSocialProductionExecutorCheckpoint, socialProductionExecutor, socialProductionGraphInput, loadSocialProductionGraphApproval, resumeApprovedSocialProductionGraph } from './socialContentProductionGraph.js';
+import { assertCurrentGraphReviewSubject, createSocialProductionExecutorCheckpoint, socialProductionExecutor, socialProductionGraphInput, loadSocialProductionGraphApproval, resumeApprovedSocialProductionGraph, socialGraphPhaseCheckpointEvidence } from './socialContentProductionGraph.js';
 import { socialRequestHash } from './socialContentValidation.js';
 
 type Detail = Parameters<typeof socialProductionGraphInput>[0];
@@ -47,13 +47,48 @@ test('admission binds graph or legacy once, rejects damaged bindings',async()=>{
     assert.throws(()=>socialProductionExecutor({...job,checkpoints:{'langgraph.v1':first}}),/binding_invalid/);
   } finally {rmSync(folder,{recursive:true,force:true});}
 });
-test('formal weekly production always freezes the LangGraph executor while manual tasks retain rollout control',()=>{
+test('new producing tasks default to LangGraph while frozen legacy and shooting-plan boundaries remain explicit',()=>{
   const weekly={...detail(),mode:'weekly' as const};
   assert.equal(createSocialProductionExecutorCheckpoint(weekly,{}).payload.executor,'langgraph');
   assert.equal(createSocialProductionExecutorCheckpoint(weekly,{SOCIAL_CONTENT_EXECUTOR:'legacy'}).payload.executor,'langgraph');
   const shooting={...detail(),mode:'weekly' as const};shooting.brief={...shooting.brief,productionApproach:'shooting_plan'} as typeof shooting.brief;
   assert.equal(createSocialProductionExecutorCheckpoint(shooting,{SOCIAL_CONTENT_EXECUTOR:'langgraph'}).payload.executor,'legacy');
-  assert.equal(createSocialProductionExecutorCheckpoint({...detail(),mode:'instant' as const},{}).payload.executor,'legacy');
+  assert.equal(createSocialProductionExecutorCheckpoint({...detail(),mode:'instant' as const},{}).payload.executor,'langgraph');
+  assert.equal(createSocialProductionExecutorCheckpoint({...detail(),mode:'instant' as const},{SOCIAL_CONTENT_EXECUTOR:'legacy'}).payload.executor,'legacy');
+});
+test('graph phases require their persisted domain checkpoint and render exports its actual sha256',()=>{
+ const digest='a'.repeat(64),upstream='b'.repeat(64),base={version:'1',inputHash:'c'.repeat(64),updatedAt:new Date().toISOString()};
+ const checkpoints:any={
+  'social.asset_supply':{...base,payload:{assetSupplyExecution:{schemaVersion:'social-content.asset-supply-execution.v1',planVersion:'1',creationMode:'instant',productionRoute:'auto',managementMode:'managed',executedAt:new Date().toISOString(),shots:[{shotId:'shot',sceneId:'scene',assetId:'asset',providerId:'local',sourceStrategy:'owned_exact_local_video'}]},selectedAssets:[{assetId:'asset',sourceId:'source'}]}},
+  'social.graph_source_assets':{...base,payload:{phase:'source_assets',planHash:digest,assetSupplyExecution:{schemaVersion:'social-content.asset-supply-execution.v1',planVersion:'1',creationMode:'instant',productionRoute:'auto',managementMode:'managed',executedAt:new Date().toISOString(),shots:[{shotId:'shot',sceneId:'scene',assetId:'asset',providerId:'local',sourceStrategy:'owned_exact_local_video'}]},selectedAssets:[{assetId:'asset',sourceId:'source'}]}},
+  'social.graph_voice':{...base,payload:{outputSha256:digest,narrationCheckpointInputHash:upstream,durationSeconds:3,cueCount:1}},
+  'social.graph_presenter_assets':{...base,payload:{phase:'presenter_assets',planHash:digest,assetSupplyExecution:{schemaVersion:'social-content.asset-supply-execution.v1',planVersion:'1',creationMode:'instant',productionRoute:'auto',managementMode:'managed',executedAt:new Date().toISOString(),shots:[]},selectedAssets:[]}},
+  'social.graph_trim':{...base,payload:{timelineHash:digest,directorPlanHash:upstream,voiceOutputSha256:digest,sceneCount:1,durationSeconds:3}},
+  'social.graph_effects':{...base,payload:{manifestHash:digest,effectPlanHash:upstream,subtitleCueHash:digest,trimCheckpointInputHash:upstream,sceneCount:1}},
+  'social.graph_render':{...base,version:'2',payload:{sha256:digest,inputHash:base.inputHash,cachePath:'/private/render.mp4'}},
+  'social.graph_technical_quality':{...base,payload:{outputSha256:digest,renderCheckpointInputHash:upstream,manifestHash:digest,policyVersion:'technical.v1',reportHash:upstream,approved:true,failureCount:0,failures:[]}},
+ };
+ const phaseStages={assets:'social.asset_supply',voice:'social.graph_voice',trim:'social.graph_trim',effects:'social.graph_effects',
+  render:'social.graph_render',technical_quality:'social.graph_technical_quality'} as const;
+ for(const phase of ['assets','voice','trim','effects','render','technical_quality'] as const){
+  const evidence=socialGraphPhaseCheckpointEvidence({checkpoints},phase);
+  assert.equal(evidence.inputHash,base.inputHash);
+  assert.equal(evidence.metadata.checkpointStage,phaseStages[phase]);
+ }
+ assert.equal(socialGraphPhaseCheckpointEvidence({checkpoints},'render').metadata.outputSha256,digest);
+ assert.equal((socialGraphPhaseCheckpointEvidence({checkpoints},'source_assets').metadata as {planHash?:unknown}).planHash,digest);
+ assert.equal((socialGraphPhaseCheckpointEvidence({checkpoints},'presenter_assets').metadata as {phase?:unknown}).phase,'presenter_assets');
+ assert.throws(()=>socialGraphPhaseCheckpointEvidence({checkpoints:{}},'render'),/graph_phase_checkpoint_missing:render/);
+ assert.throws(()=>socialGraphPhaseCheckpointEvidence({checkpoints:{...checkpoints,'social.graph_render':{...checkpoints['social.graph_render'],payload:{outputSha256:digest}}}},'render'),/graph_phase_checkpoint_missing:render/);
+ assert.throws(()=>socialGraphPhaseCheckpointEvidence({checkpoints:{...checkpoints,'social.graph_render':{...checkpoints['social.graph_render'],payload:{sha256:'bad'}}}},'render'),/graph_phase_checkpoint_invalid:render/);
+ assert.throws(()=>socialGraphPhaseCheckpointEvidence({checkpoints:{...checkpoints,'social.asset_supply':{...base,payload:{assetSupplyExecution:{},selectedAssets:[]}}}},'assets'),/graph_phase_checkpoint_invalid:assets/);
+ assert.throws(()=>socialGraphPhaseCheckpointEvidence({checkpoints:{...checkpoints,'social.graph_source_assets':{...base,payload:{...checkpoints['social.graph_source_assets'].payload,planHash:'bad'}}}},'source_assets'),/graph_phase_checkpoint_invalid:source_assets/);
+ assert.throws(()=>socialGraphPhaseCheckpointEvidence({checkpoints:{...checkpoints,'social.graph_presenter_assets':{...base,payload:{...checkpoints['social.graph_presenter_assets'].payload,phase:'source_assets'}}}},'presenter_assets'),/graph_phase_checkpoint_invalid:presenter_assets/);
+ assert.throws(()=>socialGraphPhaseCheckpointEvidence({checkpoints:{...checkpoints,'social.graph_trim':{...checkpoints['social.graph_trim'],payload:{...checkpoints['social.graph_trim'].payload,timelineHash:'short'}}}},'trim'),/graph_phase_checkpoint_invalid:trim/);
+ assert.throws(()=>socialGraphPhaseCheckpointEvidence({checkpoints:{...checkpoints,'social.graph_effects':{...checkpoints['social.graph_effects'],payload:{...checkpoints['social.graph_effects'].payload,trimCheckpointInputHash:'short'}}}},'effects'),/graph_phase_checkpoint_invalid:effects/);
+ assert.throws(()=>socialGraphPhaseCheckpointEvidence({checkpoints:{...checkpoints,'social.graph_render':{...checkpoints['social.graph_render'],payload:{...checkpoints['social.graph_render'].payload,inputHash:upstream}}}},'render'),/graph_phase_checkpoint_invalid:render/);
+ assert.throws(()=>socialGraphPhaseCheckpointEvidence({checkpoints:{...checkpoints,'social.graph_technical_quality':{...checkpoints['social.graph_technical_quality'],payload:{...checkpoints['social.graph_technical_quality'].payload,approved:false,failureCount:1,failures:['decode_failed']}}}},'technical_quality'),/graph_phase_checkpoint_failed:technical_quality/);
+ assert.throws(()=>socialGraphPhaseCheckpointEvidence({checkpoints:{...checkpoints,'social.graph_technical_quality':{...checkpoints['social.graph_technical_quality'],payload:{...checkpoints['social.graph_technical_quality'].payload,manifestHash:'bad'}}}},'technical_quality'),/graph_phase_checkpoint_invalid:technical_quality/);
 });
 test('frozen hash tolerates derived projection versions but rejects human plan/director/review edits',()=>{
   const original=detail();const binding=createSocialProductionExecutorCheckpoint(original,{SOCIAL_CONTENT_EXECUTOR:'langgraph'});

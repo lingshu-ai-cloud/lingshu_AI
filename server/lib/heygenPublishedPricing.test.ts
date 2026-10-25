@@ -38,7 +38,7 @@ test('sourced FX estimate preserves USD identity and rejects changed rates, endp
   assert.equal(verifyHeyGenPublishedTariff({ ...tariff, meters: { providerSeconds: { ...tariff.meters.providerSeconds!, priceCny: .01 } } }), false);
   assert.equal(await readHeyGenPublishedTariff({ ...intent, accountRef: 'foreign' }, options), null);
   assert.equal(await readHeyGenPublishedTariff(intent, { ...options, fetchOfficial: async url => ({ url: 'https://foreign.example', status: 200, body: url === HEYGEN_PRICE_URL ? source : fx(day) }) }), null);
-  assert.equal(await readHeyGenPublishedTariff({ ...intent, stage: 'tts' }, options), null);
+  assert.equal(await readHeyGenPublishedTariff({ ...intent, stage: 'voice_alignment' }, options), null);
 });
 test('one film pool admits the sourced estimate and retains native price plus FX in its quote', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'heygen-price-estimate-'));
@@ -65,4 +65,48 @@ test('bound Starfish speech is priced by audio seconds using the official USD ra
   assert.equal(tariff.meters.audioSeconds?.unitsPerPrice,60);
   assert.equal(verifyHeyGenPublishedTariff({...tariff,accountRef}),false);
   assert.equal(verifyHeyGenPublishedTariff({...tariff,meters:{characters:tariff.meters.audioSeconds!}}),false);
+});
+
+
+test('Orca catalog speech never borrows the Starfish or cloned voice-model tariff', async () => {
+  const speechSource = source.replace('"rows":[', '"rows":[' + [row('Model', 'Rate', 'Credits per min'), row('Speech — Starfish', '$0.12', '2'), row('Instant voice speech', '$15 per 1 million characters', '300 per 1 million characters')].map(r => JSON.stringify(r)).join(',') + ',');
+  const speechAccount = 'heygen:' + hash(JSON.stringify({baseUrl:'https://api.heygen.com/v3/voices/speech',credentialSha256}));
+  const orcaIntent = {...intent,model:'orca',stage:'tts',accountRef:speechAccount,maximumUnits:{audioSeconds:40}};
+  const readBinding = async () => ({...await options.readBinding(),accountRef:speechAccount});
+  const fetchOfficial = async (url: string) => ({url,status:200,body:url===HEYGEN_PRICE_URL?speechSource:fx(day)});
+  assert.equal(parseHeyGenPublishedSpeechPrice(speechSource,'orca'),null);
+  assert.equal(await readHeyGenPublishedTariff(orcaIntent,{...options,readBinding,fetchOfficial}),null);
+  // Controlled future official-row fixture, not a currently published Orca price.
+  const explicit = speechSource.replace('Speech — Starfish','Speech — Orca');
+  const tariff = await readHeyGenPublishedTariff(orcaIntent,{...options,readBinding,fetchOfficial:async url=>({url,status:200,body:url===HEYGEN_PRICE_URL?explicit:fx(day)})});
+  assert.ok(tariff); assert.equal(tariff.model,'orca'); assert.equal(verifyHeyGenPublishedTariff(tariff),true);
+  assert.equal(parseHeyGenPublishedSpeechPrice(explicit.replace('Credits per min','Credits per character'),'orca'),null);
+  assert.equal(verifyHeyGenPublishedTariff({...tariff,model:'starfish'}),false);
+  assert.equal(verifyHeyGenPublishedTariff({...tariff,meters:{characters:tariff.meters.audioSeconds!}}),false);
+});
+
+
+test('native Avatar IV mother-track speech prices the whole voiced video, never extracted audio seconds', async () => {
+  const mother = {...intent,stage:'tts',maximumUnits:{providerSeconds:76}};
+  const tariff = await readHeyGenPublishedTariff(mother,options);
+  assert.ok(tariff); assert.equal(tariff.stage,'tts'); assert.equal(tariff.model,'avatar_iv');
+  assert.equal(tariff.meters.providerSeconds?.unitsPerPrice,60);
+  assert.equal(verifyHeyGenPublishedTariff(tariff),true);
+  assert.equal(await readHeyGenPublishedTariff({...mother,maximumUnits:{audioSeconds:76}},options),null);
+  assert.equal(await readHeyGenPublishedTariff({...mother,maximumUnits:{providerSeconds:76,audioSeconds:76}},options),null);
+  const speechAccount = 'heygen:' + hash(JSON.stringify({baseUrl:'https://api.heygen.com/v3/voices/speech',credentialSha256}));
+  assert.equal(await readHeyGenPublishedTariff({...mother,accountRef:speechAccount},options),null);
+  assert.equal(verifyHeyGenPublishedTariff({...tariff,accountRef:speechAccount}),false);
+  assert.equal(verifyHeyGenPublishedTariff({...tariff,meters:{audioSeconds:tariff.meters.providerSeconds!}}),false);
+  assert.equal(verifyHeyGenPublishedTariff({...tariff,stage:'voice_alignment'}),false);
+});
+
+test('native avatar-id mother track uses the verified provider class; opaque IDs and TTS stage do not imply studio', async () => {
+  const mother = {...intent,stage:'tts',maximumUnits:{providerSeconds:76}};
+  for (const [avatarType, usdPerMinute] of [['photo_avatar',2.31],['studio_avatar',4.83]] as const) {
+    const tariff=await readHeyGenPublishedTariff(mother,{...options,readBinding:async()=>({...await options.readBinding(),avatarType})});
+    assert.ok(tariff);assert.equal(verifyHeyGenPublishedTariff(tariff),true);
+    assert.equal(tariff.meters.providerSeconds?.priceCny,usdPerMinute*(7.4992/1.1206));
+    assert.equal(tariff.meters.providerSeconds?.unitsPerPrice,60);
+  }
 });

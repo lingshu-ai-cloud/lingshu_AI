@@ -147,6 +147,6 @@ export async function readSocialProductAssetRevisionPaidGuard(input:{repository:
     ||selected.referenceImageIds.includes(String(marker.failedAssetId)))return fail('new_approval_invalid');
   }
  }
- return {guard,retainedCny:budget.retainedMicros/1e6,remainingCny:budget.limitCny-budget.retainedMicros/1e6,
+ return {guard,maximumCny:budget.limitCny,retainedCny:budget.retainedMicros/1e6,remainingCny:budget.limitCny-budget.retainedMicros/1e6,
   authorizesProvider:false as const,authorizesProduction:false as const};
 }

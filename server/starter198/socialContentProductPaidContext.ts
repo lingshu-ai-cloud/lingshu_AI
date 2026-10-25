@@ -1,10 +1,10 @@
 import {createHash} from 'node:crypto';
 import type {SocialTaskBudgetScope} from '../lib/socialContentTaskBudget.js';
 import type {SocialPaidOperationIntent} from '../lib/socialContentTaskBudgetAuthority.js';
-import type {createSocialContentPaidOperationPermit} from '../lib/socialContentPaidOperationPermit.js';
+import type {SocialPaidOperationSubmissionPermit} from '../lib/socialContentPaidOperationPermit.js';
 import {paidProductionHash, type PaidStageRequirement, type BoundPaidRoute} from './socialContentPaidOperationPlan.js';
 
-export type ProductPaidStage = 'first_frame' | 'first_frame_qa' | 'video' | 'video_qa';
+export type ProductPaidStage = 'first_frame' | 'first_frame_qa' | 'video' | 'video_qa' | 'concept_video';
 export interface ProductPaidContext {
   scope: SocialTaskBudgetScope;
   requirements: PaidStageRequirement[];
@@ -12,7 +12,7 @@ export interface ProductPaidContext {
   intents: SocialPaidOperationIntent[];
   readReservedCny(operationId: string): number;
   assertRecovery(operationId: string): Promise<void>;
-  permit: ReturnType<typeof createSocialContentPaidOperationPermit>;
+  permit: SocialPaidOperationSubmissionPermit;
   /** Canonical configured credential/account route is checked independently of the intent. */
   assertProviderBinding(route: BoundPaidRoute): Promise<void>;
   /** Model-aware upper bound derived from this actual request, not the plan maximum. */
@@ -48,7 +48,7 @@ export function bindProductPaidStage(context: ProductPaidContext, shotId: string
         else if (unit === 'frames' || unit === 'images') actualUnits[unit] = images;
         else if (unit === 'providerSeconds') actualUnits.providerSeconds = Number(intent.provider==='wan'?(request.parameters as Record<string,unknown>|undefined)?.duration:request.duration);
         else if (unit === 'outputTokens') {
-          if(stage === 'video'){if(!context.measureVideoOutputTokens)fail('video_token_measurement_missing');actualUnits.outputTokens=await context.measureVideoOutputTokens!(request,route);}
+          if(stage === 'video'||stage==='concept_video'){if(!context.measureVideoOutputTokens)fail('video_token_measurement_missing');actualUnits.outputTokens=await context.measureVideoOutputTokens!(request,route);}
           else actualUnits.outputTokens = Number(request.max_tokens);
         }
         else if (unit === 'inputImages') actualUnits.inputImages = images;
@@ -58,6 +58,9 @@ export function bindProductPaidStage(context: ProductPaidContext, shotId: string
       }
       if (Object.values(actualUnits).some(n => !Number.isFinite(n) || n < 0)) fail('actual_usage_invalid');
       if (stage === 'first_frame' && (!images || typeof request.prompt !== 'string' || !request.prompt.trim())) fail('actual_KB_frame_request_changed');
+      if(stage==='concept_video'&&(intent.provider!=='seedance'||Number(request.duration)!==requirement.durationSeconds
+        ||request.generate_audio!==false||request.resolution!=='720p'||request.ratio!=='9:16'||!Array.isArray(request.content)
+        ||!request.content.length||request.content.some((part:any)=>part.type!=='text'||typeof part.text!=='string'||!part.text.trim())))fail('actual_concept_video_request_changed');
       if(stage==='video'&&intent.provider==='wan'){const params=request.parameters as Record<string,unknown>|undefined,input=request.input as Record<string,unknown>|undefined;const expected=intent.model==='wan2.2-i2v-flash'?5:Math.max(2,Math.ceil(requirement.durationSeconds||0));if(!params||!input||Number(params.duration)!==expected||params.resolution!=='720P'||params.prompt_extend!==false||typeof input.img_url!=='string'||!input.img_url.startsWith('data:image/')||(intent.model==='wan2.6-i2v-flash'&&params.audio!==false))fail('actual_wan_i2v_request_changed');}
       if (stage === 'video' && intent.provider!=='wan' && (Number(request.duration) !== Math.max(4, Math.ceil(requirement.durationSeconds || 0)) || request.generate_audio !== false || request.resolution !== '720p' || !Array.isArray(request.content)
         || !request.content.some((i: any) => i.role === 'first_frame'))) fail('actual_i2v_request_changed');

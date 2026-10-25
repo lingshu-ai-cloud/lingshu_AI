@@ -12,6 +12,7 @@ import type { SocialAssetSupplyPlan } from '../../shared/contracts/socialContent
 import type { VoiceQualityReport } from '../lib/voiceQuality.js';
 import type { SocialProductionAsset } from './socialContentProductionPlan.js';
 import { socialRequestHash } from './socialContentValidation.js';
+import { isTenantPrivateObjectKey } from '../storage/materialAssets.js';
 
 export const SOCIAL_MATERIAL_ANALYSIS_CHECKPOINT = 'social.material_analysis';
 export const SOCIAL_MATERIAL_ANALYSIS_CHECKPOINT_VERSION = '1';
@@ -83,6 +84,7 @@ export type DurableSelectedProductionAsset = {
 export function restoreSocialAssetSupplyCheckpointAssets(input: {
   availableAssets: SocialProductionAsset[];
   selectedAssets: DurableSelectedProductionAsset[];
+  tenantId?: string;
 }): SocialProductionAsset[] | null {
   const availableById = new Map(input.availableAssets.map(asset => [asset.id, asset]));
   const restored = input.selectedAssets.map(selected => {
@@ -94,7 +96,8 @@ export function restoreSocialAssetSupplyCheckpointAssets(input: {
       && generated.id === selected.assetId
       && generated.sourceId === selected.sourceId
       && Boolean(generated.providerTaskId || generated.idempotencyKey)
-      && Boolean(generated.localPath && existsSync(generated.localPath))
+      && Boolean(generated.localPath && existsSync(generated.localPath)
+        || input.tenantId && generated.objectKey && isTenantPrivateObjectKey(generated.objectKey,input.tenantId))
       && (!selected.contentHash || generated.contentHash === selected.contentHash)
       ? structuredClone(generated)
       : null;

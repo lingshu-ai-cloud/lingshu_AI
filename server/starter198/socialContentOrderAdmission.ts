@@ -9,6 +9,8 @@ import {readPreparedSocialProductAssetFallback} from './socialContentProductAsse
 import {verifySharedOriginalProductionAdmission} from '../runtime/weeklyContentProductionIdentity.js';
 import {withSocialContentSubjectLease} from './socialContentMutation.js';
 import {requireSocialTask} from './socialContentRecords.js';
+import {ensureSingleContentProgram} from './singleContentProgram.js';
+import type {SocialContentTaskBrief} from '../../shared/contracts/socialContentWorkflow.js';
 
 export interface SocialContentDispatchEnvelope {
  schemaVersion:'social-content-dispatch.v1';commandId:string;userId:string;expectedVersion:string;idempotencyKey:string;
@@ -141,7 +143,9 @@ export async function reserveSocialContentOrder(input:{repository:Starter198Repo
      committedScope=s;
    }
  }
- const requestedProgram=weekly?.programId??committedScope?.programId??binding.programId;
+ let requestedProgram=weekly?.programId??committedScope?.programId??binding.programId??socialText(socialObject(brief?.programRef)?.id);
+ if(!requestedProgram&&typeof brief?.singleCreationRequestHash==='string')
+   requestedProgram=await ensureSingleContentProgram({repository:input.repository,tenantId:input.tenantId,userId:input.userId,brief:brief as unknown as SocialContentTaskBrief});
  const programs=await store.list<any>('social_programs',{where:{tenant_id:input.tenantId,...(requestedProgram?{program_id:requestedProgram}:{})},perPage:2});
  if(programs.totalItems!==1||programs.items.length!==1)return fail('social_content_order_program_selection_required');
  const programId=socialText(programs.items[0]?.program_id);

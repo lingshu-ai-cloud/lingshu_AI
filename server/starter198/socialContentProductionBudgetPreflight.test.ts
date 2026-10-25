@@ -215,13 +215,14 @@ finally {
 
 // Presenter selection, native voice planning and pricing use production
 // defaults; only official GET responses and the isolated business store are controlled.
-test('default presenter route prices static review work before preparation and reads official IV pricing', async () => {
+for(const visualVersion of [false,true])test(`default presenter route prices static work and preserves ${visualVersion?'current visual':'legacy'} grouping`, async () => {
  const f=await fixture(); const originalFetch=globalThis.fetch, oldKey=process.env.HEYGEN_API_KEY, oldDash=process.env.DASHSCOPE_API_KEY,oldBase=process.env.DASHSCOPE_BASE_URL,oldAsrBase=process.env.QWEN_ASR_BASE_URL,oldSeedream=process.env.SEEDREAM_API_KEY;
  const gets:string[]=[];
  try {
   await f.enable();
   f.baseline.language='en';f.baseline.scenes=f.baseline.scenes.map(scene=>({...scene,voiceover:'Welcome to our company.',narration:'Welcome to our company.'}));
   await f.store.update(STARTER_COLLECTIONS.socialContentTasks,(await requireSocialTask(f)).id,{script_baseline:f.baseline});
+  if(visualVersion){const {createSocialProductionExecutorCheckpoint}=await import('./socialContentProductionGraph.js');const {CONTENT_GRAPH_VERSION}=await import('../contentExecution/langgraphIdentity.js');const detail=await readSocialTaskDetail(f);assert.ok(detail);const checkpoint=createSocialProductionExecutorCheckpoint(detail,{SOCIAL_CONTENT_EXECUTOR:'langgraph'});assert.equal(checkpoint.payload.graphVersion,CONTENT_GRAPH_VERSION);const current=await f.store.getById<any>('content_execution_jobs',f.job.id);await f.store.update('content_execution_jobs',f.job.id,{checkpoints:{...current?.checkpoints,'social.executor':checkpoint}});}
   await f.store.create('studio_production_defaults',{tenant_id:f.tenantId,payload:{presenters:[{id:'enterprise-person',authorized:true,assetVersion:4,avatarId:'original-look',voiceId:'original-voice',rightsEvidence:{authorizationRef:'rights://original',consentRef:'consent://original',grantedAt:'2026-01-01T00:00:00Z',subjectAdultConfirmed:true,permittedProviders:['heygen'],permittedUses:['digital_presenter','voice_synthesis']}}]}});
   process.env.HEYGEN_API_KEY='controlled-key';process.env.DASHSCOPE_API_KEY='controlled-native';process.env.DASHSCOPE_BASE_URL='https://maas.qianwenaiapi.com/compatible-mode/v1';process.env.QWEN_ASR_BASE_URL='https://dashscope.aliyuncs.com/compatible-mode/v1';process.env.SEEDREAM_API_KEY='controlled-seedream';
   const row=(...cells:string[])=>({cells:cells.map(text=>({content:[{text}]}))});
@@ -237,6 +238,7 @@ test('default presenter route prices static review work before preparation and r
    const r=new Response(body,{status:200});Object.defineProperty(r,'url',{value:u});return r;
   };
   const supplyPlan={...f.supplyPlan,shots:f.supplyPlan.shots.map(shot=>({...shot,sourceStrategy:'authorized_digital_presenter' as const,sourceRefs:[],fallbackStrategies:[],digitalHumanPlan:{workflow:'material_processing' as const,method:'talking' as const,presenterAssetIds:['enterprise-person'],referenceMaterialIds:[],referenceRequired:false,candidateTools:['heygen'],executionState:'ready_for_capability_check' as const}}))};
+  const expectedGroupCount=visualVersion?supplyPlan.shots.length:1;
   const readers=createProductionBudgetRuntimeReaders({tenantId:f.tenantId,requiresMeasuredAlignment:true,env:{...process.env,MINIMAX_API_KEY:'',MINIMAX_API_TOKEN:''}});
   const admissionOrder:string[]=[];
   const staticTariff=async(intent:any)=>['first_frame','first_frame_qa'].includes(intent.stage)?{provider:intent.provider,model:intent.model,accountRef:intent.accountRef,stage:intent.stage,currency:'CNY' as const,verifiedAccountPrice:true,pricingBasis:'negotiated_verified_account' as const,evidenceRef:`controlled:${intent.operationId}`,checkedAt:new Date(Date.now()-1000).toISOString(),validUntil:new Date(Date.now()+3600000).toISOString(),meters:Object.fromEntries(Object.keys(intent.maximumUnits).map(key=>[key,{priceCny:key==='outputImages'?.12:.000001,unitsPerPrice:1,minimumUnits:0,increment:1}]))}:null;
@@ -245,20 +247,20 @@ test('default presenter route prices static review work before preparation and r
     preparePresenterFirstFrameReviews:async()=>{throw Error('readonly_quote_must_not_generate');},readConfirmedPresenterFirstFrame:async()=>{throw Error('readonly_quote_must_not_confirm');}}});
   assert.equal(quoted.status,'quoted');assert.ok(quoted.status==='quoted');
   assert.ok(quoted.items.length>0&&quoted.items.every(item=>item.quoteRef));
-  assert.ok(quoted.wholeTaskUpperBoundCny>0);assert.equal(quoted.maximumCny,6);
+  assert.ok(quoted.wholeTaskUpperBoundCny>0);assert.equal(quoted.maximumCny,10);
   assert.equal(fs.existsSync(quoteRoot),false);
   const quoteJob=await f.store.getById<any>('content_execution_jobs',f.job.id);
   assert.equal(Boolean(quoteJob?.checkpoints?.['social.whole_film_budget']),false);
-  await assert.rejects(prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{...readers,ledgerRoot:path.join(f.root,'over-budget'),readTariff:staticTariff,preparePresenterFirstFrameReviews:async()=>{throw Error('over_budget_must_not_prepare');}}}),/formal_paid_route_budget_exceeded/);
-  assert.ok(quoted.wholeTaskUpperBoundCny>quoted.maximumCny);
+  const expensiveTariff=async(intent:any)=>intent.stage==='presenter_video'?{provider:intent.provider,model:intent.model,accountRef:intent.accountRef,stage:intent.stage,currency:'CNY' as const,verifiedAccountPrice:true,pricingBasis:'negotiated_verified_account' as const,evidenceRef:'controlled-expensive-presenter',checkedAt:new Date(Date.now()-1000).toISOString(),validUntil:new Date(Date.now()+3600000).toISOString(),meters:{providerSeconds:{priceCny:100,unitsPerPrice:1,minimumUnits:0,increment:1}}}:staticTariff(intent);
+  await assert.rejects(prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{...readers,ledgerRoot:path.join(f.root,'over-budget'),readTariff:expensiveTariff,preparePresenterFirstFrameReviews:async()=>{throw Error('over_budget_must_not_prepare');}}}),/formal_paid_route_budget_exceeded/);
   const affordableTariff=async(intent:any)=>intent.stage==='presenter_video'?{provider:intent.provider,model:intent.model,accountRef:intent.accountRef,stage:intent.stage,currency:'CNY' as const,verifiedAccountPrice:true,pricingBasis:'negotiated_verified_account' as const,evidenceRef:'controlled-negotiated-presenter',checkedAt:new Date(Date.now()-1000).toISOString(),validUntil:new Date(Date.now()+3600000).toISOString(),meters:{providerSeconds:{priceCny:.1,unitsPerPrice:1,minimumUnits:0,increment:1}}}:staticTariff(intent);
   await assert.rejects(prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{...readers,ledgerRoot:path.join(f.root,'unapproved-task-budget'),
     preparePresenterFirstFrameReviews:async({groups})=>{admissionOrder.push(`prepare:${groups.length}`);},
     readConfirmedPresenterFirstFrame:async()=>{admissionOrder.push('confirm');return null;},
     readTariff:async intent=>{admissionOrder.push('tariff');return affordableTariff(intent);},
   }}),/presenter_first_frame_confirmation_missing/);
-  assert.ok(admissionOrder.indexOf('tariff')>=0&&admissionOrder.indexOf('tariff')<admissionOrder.indexOf('prepare:1'));
-  assert.deepEqual(admissionOrder.slice(-2),['prepare:1','confirm']);
+  assert.ok(admissionOrder.indexOf('tariff')>=0&&admissionOrder.indexOf('tariff')<admissionOrder.indexOf(`prepare:${expectedGroupCount}`));
+  assert.deepEqual(admissionOrder.slice(-2),[`prepare:${expectedGroupCount}`,'confirm']);
   const result=await prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{...readers,ledgerRoot:path.join(f.root,'task-budget'),readTariff:affordableTariff,preparePresenterFirstFrameReviews:async()=>{},readConfirmedPresenterFirstFrame:async()=>({approval:{},decision:{}} as never)}});
   assert.equal(result.status,'reserved');assert.ok(result.status==='reserved');
   const frozenPlan={scope:result.scope,authorizationRef:'frozen-task-budget',maximumCny:10,paidOperations:result.reserved.intents};
@@ -266,9 +268,11 @@ test('default presenter route prices static review work before preparation and r
   const rawJob=await f.store.getById<any>('content_execution_jobs',f.job.id);await f.store.update('content_execution_jobs',f.job.id,{checkpoints:{...(rawJob?.checkpoints||{}),'social.whole_film_budget':frozenCheckpoint}});
   let requotes=0;const recovered=await prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{ledgerRoot:path.join(f.root,'task-budget'),readTariff:async()=>{requotes++;return null;},preparePresenterFirstFrameReviews:async()=>{},readConfirmedPresenterFirstFrame:async()=>({approval:{},decision:{}} as never)}});
   assert.equal(recovered.status,'reserved');assert.equal(requotes,0);
+  if(visualVersion){let ready=false,restores=0;const resumed=await prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{ledgerRoot:path.join(f.root,'task-budget'),readTariff:async()=>{throw Error('restore_must_not_requote');},readConfirmedPresenterFirstFrame:async()=>ready?{approval:{},decision:{}} as never:null,preparePresenterFirstFrameReviews:async({groups,requirements})=>{assert.ok(groups.every(group=>group.firstFramePipeline==='background-first.v2'));for(const group of groups){const original=requirements.find(row=>row.stage==='presenter_video'&&row.presenterGroupId===group.groupId)!;assert.equal(group.sceneSourceKind,original.presenterSceneSourceKind);assert.equal(group.sceneSourceContractHash,original.presenterSceneSourceContractHash);assert.equal(group.staticReferenceImageCount,original.presenterStaticReferenceImageCount);}assert.equal(requirements.filter(row=>row.presenterStaticPhase==='background').length,groups.length*2);restores++;ready=true;}}});assert.equal(resumed.status,'reserved');assert.equal(restores,1,'restore static artifacts before requiring the lost approval; do not call the hook twice');}
   const presenterRequirements=result.requirements.filter(r=>r.stage==='presenter_video');
-  assert.equal(presenterRequirements.length,1);assert.ok(presenterRequirements.every(r=>r.sourceRef===null));
-  assert.deepEqual(presenterRequirements[0]!.presenterGroupShotIds,supplyPlan.shots.map(shot=>shot.shotId));assert.equal(presenterRequirements[0]!.shotId,null);assert.equal(presenterRequirements[0]!.presenterAssetId,'enterprise-person');
+  assert.equal(presenterRequirements.length,expectedGroupCount,'legacy jobs retain temporal groups; v3 isolates unknown scene evidence');assert.ok(presenterRequirements.every(r=>r.sourceRef===null));
+  assert.deepEqual(presenterRequirements.map(requirement=>requirement.presenterGroupShotIds),visualVersion?supplyPlan.shots.map(shot=>[shot.shotId]):[supplyPlan.shots.map(shot=>shot.shotId)]);
+  assert.equal(presenterRequirements.every(requirement=>Boolean(requirement.presenterVisualCompatibilityHash)),visualVersion);assert.equal(presenterRequirements[0]!.shotId,null);assert.equal(presenterRequirements[0]!.presenterAssetId,'enterprise-person');
   for(const requirement of presenterRequirements){const boundRoute:{provider:string;model:string;routeEvidenceRef:string}|undefined=result.routeBindings[requirement.key];assert.ok(boundRoute);assert.equal(boundRoute.provider,'heygen');assert.equal(boundRoute.model,'avatar_iv');assert.match(boundRoute.routeEvidenceRef,/^heygen-approved-person:/);}
   const quotes=Object.values(result.reserved.quotes);assert.ok(quotes.reduce((n,q)=>n+q.upperBoundCny,0)<=6);
   assert.ok(gets.some(u=>u.endsWith('/avatars/looks/original-look')));

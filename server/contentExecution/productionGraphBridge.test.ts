@@ -29,3 +29,13 @@ test('completion boundary requires settled queue identity and matching receipt',
  settled.checkpoints['social.graph_completion'].payload.planVersion='8';
  assert.throws(()=>assertProductionGraphCompletionBoundary(settled),/completion_invalid/);
 });
+
+test('re-admitting a v2 job after rollout keeps its original frozen version',async()=>{
+ const {PRODUCTION_GRAPH_BRIDGE_CHECKPOINT}=await import('./productionGraphBridge.js');
+ const {PREVIOUS_CONTENT_GRAPH_VERSION}=await import('./langgraphIdentity.js');
+ const dataStore=new Store(),original=await admitProductionGraphJob({dataStore,...base});
+ const checkpoint=original.checkpoints[PRODUCTION_GRAPH_BRIDGE_CHECKPOINT]!;
+ await dataStore.update('content_execution_jobs',original.id,{checkpoints:{...original.checkpoints,[PRODUCTION_GRAPH_BRIDGE_CHECKPOINT]:{...checkpoint,payload:{...(checkpoint.payload as object),graphVersion:PREVIOUS_CONTENT_GRAPH_VERSION}}}});
+ const replayed=await admitProductionGraphJob({dataStore,...base});
+ assert.equal(replayed.id,original.id);assert.equal(productionGraphIdentityFromJob(replayed).graphVersion,PREVIOUS_CONTENT_GRAPH_VERSION);
+});

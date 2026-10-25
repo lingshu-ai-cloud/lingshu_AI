@@ -22,6 +22,13 @@ const content = {
 };
 const check = (value: unknown, mode: 'human'|'managed' = 'human') => inspectSocialContentReleaseQuality({ brief, content: value, mode });
 assert.equal(check(content).approved, true);
+{
+ const nativeBrief={...brief,presenterSpeechReviewPolicy:'heygen_native_human_review' as const};
+ const nativeContent={...content,presenterSpeechReview:{policy:'heygen_native_human_review',provider:'heygen',status:'pending_human_review',automatedLipSyncPassed:false}};
+ assert.equal(inspectSocialContentReleaseQuality({brief:nativeBrief,content:nativeContent,mode:'human'}).approved,true);
+ assert.ok(inspectSocialContentReleaseQuality({brief:nativeBrief,content:nativeContent,mode:'managed'}).failures.includes('presenter_human_review_required'));
+ assert.ok(inspectSocialContentReleaseQuality({brief:nativeBrief,content:{...nativeContent,presenterSpeechReview:{...nativeContent.presenterSpeechReview,automatedLipSyncPassed:true}},mode:'human'}).failures.includes('presenter_human_review_evidence_missing'));
+}
 assert.equal(check(content, 'managed').approved, true);
 {
   const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
@@ -103,6 +110,7 @@ for (const referenceMode of [undefined, 'inspiration', 'single_source_fidelity']
 assert.equal(inspectSocialContentReleaseQuality({ brief, content: { workflowSchema: 'uploaded-video' }, mode: 'human' }).applicable, false);
 
 {
+ const check=(value:typeof content)=>inspectSocialContentReleaseQuality({brief:{...brief,perItemBudgetCny:15},content:value,mode:'human'});
  const value=structuredClone(content) as any;
  value.costSummary.productionBudget={policyVersion:'finished-video-15-cny-per-30-seconds.v1',durationSeconds:30,maximumCny:15,retainedCny:15,acquisitionCny:50,budgetTaskId:'original-film'};
  assert.equal(check(value).approved,true,'separately authorized acquisition does not consume film cap');
@@ -110,5 +118,7 @@ assert.equal(inspectSocialContentReleaseQuality({ brief, content: { workflowSche
  assert.ok(check(value).failures.includes('budget_exceeded'),'retained previous attempts and revisions count at release');
  value.costSummary.productionBudget.retainedCny=14;
  value.costSummary.productionBudget.durationSeconds=12;
- assert.ok(check(value).failures.includes('budget_exceeded'),'a forged maximum cannot exceed its frozen duration policy');
+ assert.equal(check(value).approved,true,'duration does not lower an explicitly authorized film limit');
+ value.costSummary.productionBudget.maximumCny=15.01;
+ assert.ok(check(value).failures.includes('budget_exceeded'),'reported maximum cannot exceed the task authorization');
 }

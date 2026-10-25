@@ -10,8 +10,9 @@ export interface QwenMaaSCatalogEvidence {
   evidenceRef:string;
 }
 
-/** A read-only, account-bound preflight. Missing capability metadata is not
- * evidence that a text-only model accepts visual frames. */
+/** Account availability comes from /models. For its standard ID-only response,
+ * visual capability may also come from the reviewed exact-model catalogue.
+ * Unknown models or explicitly text-only metadata remain unavailable. */
 export async function readQwenMaaSVisionCatalog(input:{endpoint:string;credentialSha256:string;model:string},ports:{fetch?:typeof fetch;apiKey?:()=>string}={}):Promise<QwenMaaSCatalogEvidence|null>{
   if(classifyQwenCompatibleEndpoint(input.endpoint)!=='qianwen-maas'||!/^[a-f0-9]{64}$/.test(input.credentialSha256)||!input.model.trim())return null;
   let key:string;try{key=(ports.apiKey??dashscopeApiKey)();}catch{return null;}
@@ -31,7 +32,9 @@ export async function readQwenMaaSVisionCatalog(input:{endpoint:string;credentia
   const row=matches[0]!;
   const metadata=row.capabilities??row.input_modalities??row.modalities;
   const modalities=Array.isArray(metadata)?metadata:metadata&&typeof metadata==='object'?(metadata as Record<string,unknown>).input:undefined;
-  if(!Array.isArray(modalities)||!modalities.some(value=>value==='image'||value==='vision'))return null;
+  const publishedVision=metadata===undefined&&input.model==='qwen3-vl-plus'
+    ?'https://platform.qianwenai.com/docs/developer-guides/getting-started/vision-models#qwen3-vl-plus':null;
+  if(!publishedVision&&(!Array.isArray(modalities)||!modalities.some(value=>value==='image'||value==='vision')))return null;
   const responseSha256=createHash('sha256').update(body).digest('hex');
-  return {model:input.model,endpoint,credentialSha256:input.credentialSha256,responseSha256,evidenceRef:`qwen-maas-catalog:${createHash('sha256').update(JSON.stringify({endpoint,credentialSha256:input.credentialSha256,model:input.model,responseSha256})).digest('hex')}`};
+  return {model:input.model,endpoint,credentialSha256:input.credentialSha256,responseSha256,evidenceRef:`qwen-maas-catalog:${createHash('sha256').update(JSON.stringify({endpoint,credentialSha256:input.credentialSha256,model:input.model,responseSha256,publishedVision})).digest('hex')}`};
 }

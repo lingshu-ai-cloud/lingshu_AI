@@ -1,5 +1,5 @@
 /** HeyGen v3 adapter. Never retries a generation with a different idempotency key. */
-export interface HeyGenInput { avatarId: string; voiceId: string; script: string; engine?: 'avatar_iv'; ratio: string; transparent: boolean; title: string; imageAssetId?: string; imageUrl?: string; audioAssetId?: string; audioRef?: { url: string; start: number; duration: number } }
+export interface HeyGenInput { avatarId: string; voiceId: string; script: string; engine?: 'avatar_iv'; ratio: string; transparent: boolean; title: string; caption?: { file_format: 'srt' }; imageAssetId?: string; imageUrl?: string; audioAssetId?: string; audioRef?: { url: string; start: number; duration: number } }
 export class HeyGenRequestError extends Error {
   constructor(readonly status: number, readonly code: string, message?: string) {
     super(`HeyGen ${status}: ${code}${message ? ` (${message.slice(0, 180)})` : ''}`);
@@ -25,7 +25,7 @@ export class HeyGenClient {
     if (input.engine && input.engine !== 'avatar_iv') throw new Error('HeyGen受控音频镜头仅允许Avatar IV');
     const image = input.imageAssetId ? { type: 'asset_id', asset_id: input.imageAssetId } : input.imageUrl ? { type: 'url', url: input.imageUrl } : null;
     const request = { ...(image ? { type: 'image', image } : { type: 'avatar', avatar_id: input.avatarId }), ...(input.audioAssetId ? { audio_asset_id: input.audioAssetId } : { voice_id: input.voiceId, script: input.script }),
-      ...(!image && input.engine ? { engine: { type: input.engine } } : {}), aspect_ratio: input.ratio, resolution: '720p', title: input.title, output_format: input.transparent ? 'webm' : 'mp4' };
+      ...(!image && input.engine ? { engine: { type: input.engine } } : {}), ...(input.caption ? { caption: input.caption } : {}), aspect_ratio: input.ratio, resolution: '720p', title: input.title, output_format: input.transparent ? 'webm' : 'mp4' };
     await this.paidSubmission?.beforeSubmit(structuredClone(request),requestId);
     const data=await this.call('',request,requestId);
     if (typeof data.video_id !== 'string') throw new Error('提交结果未知：未返回video_id，请检查供应商任务，不要重复付费提交');
@@ -48,12 +48,12 @@ export class HeyGenClient {
     if (!response.ok || !value.data?.asset_id) throw new Error(`HeyGen音频上传失败 (${response.status})`);
     return value.data.asset_id;
   }
-  async status(id: string): Promise<{ status: 'pending' | 'completed' | 'failed'; url?: string; duration?: number; error?: string }> {
+  async status(id: string): Promise<{ status: 'pending' | 'completed' | 'failed'; url?: string; duration?: number; subtitleUrl?: string; error?: string }> {
     const data = await this.call(`/${encodeURIComponent(id)}`);
     await this.paidSubmission?.onStatus?.(id,structuredClone(data));
     if (data.status === 'completed') {
       if (typeof data.video_url !== 'string' || !(Number(data.duration) > 0)) throw new Error('生成完成但缺少可用视频或时长');
-      return { status: 'completed', url: data.video_url, duration: Number(data.duration) };
+      return { status: 'completed', url: data.video_url, duration: Number(data.duration), ...(typeof data.subtitle_url === 'string' ? { subtitleUrl: data.subtitle_url } : {}) };
     }
     if (data.status === 'failed') return { status: 'failed', error: String(data.failure_code || '供应商生成失败') };
     return { status: 'pending' };

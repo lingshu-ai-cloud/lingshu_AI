@@ -19,11 +19,12 @@ export function bindCanonicalTypeAwareRouting<T extends NonNullable<ProductionTa
     const eligibleProduct=canonical.materialRoutingPolicyVersion==='type-aware.v2'&&authority.materialRouting.productGenerationDecision?.state==='eligible';
     if(generatesProduct&&!authority.productSceneReplication)throw Error(`type_aware_canonical_product_spec_missing:${shot.shotId}`);
     const {productSceneReplication:_staleProductSpec,...approvedShot}=structuredClone(shot);
-    const realLocalRoute=authority.materialRouting.policy==='local_only'&&(authority.materialRouting.materialType!=='product'||canonical.materialRoutingPolicyVersion==='type-aware.v2');
+    const realLocalRoute=authority.sourceStrategy==='customer_real_asset'&&authority.materialRouting.policy==='local_only'&&(authority.materialRouting.materialType!=='product'||canonical.materialRoutingPolicyVersion==='type-aware.v2');
     const matchedRefs=realLocalRoute?authority.materialRouting.localMatch.sourceRefs:[];
     const matchedSegment=realLocalRoute&&authority.selectedMaterialSegment&&matchedRefs.includes(authority.selectedMaterialSegment.sourceRef)
       ?structuredClone(authority.selectedMaterialSegment):undefined;
     return {...approvedShot,
+      ...(authority.materialRouting.policy==='illustrative_video'?{sourceStrategy:'non_evidentiary_ai_visual' as const,sourceRefs:[],fallbackSourceStrategy:null,truthBoundary:structuredClone(authority.truthBoundary)}:{}),
       ...(realLocalRoute?{sourceStrategy:'customer_real_asset' as const,sourceRefs:[...matchedRefs],
         fallbackSourceStrategy:null,selectedMaterialSegment:matchedSegment}:{}),
       materialRouting:structuredClone(authority.materialRouting),

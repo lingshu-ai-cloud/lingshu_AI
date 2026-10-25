@@ -82,3 +82,33 @@ test('same-graph caption-free baseline is privately persisted and revoked after 
     assert.equal(await verifyPrivateCaptionBaseline({directory,sidecar,attestation:report,outputSha256}),false);
   }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('legacy render path persists the same ASS and caption-free evidence used by technical QA',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'social-legacy-render-evidence-'));
+  const privateRoot=path.resolve('data/content-execution-render',sha(JSON.stringify(['tenant-legacy','task-legacy','run-legacy'])));
+  try{
+    const outputPath=path.join(root,'output.mp4'),outputBytes=Buffer.from('legacy rendered bytes');
+    await writeFile(outputPath,outputBytes);
+    const outputSha256=createHash('sha256').update(outputBytes).digest('hex');
+    const ass='[Script Info]\nTitle: legacy\n[Events]\nDialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,HELLO PRODUCT\n';
+    const report={...attestation(outputSha256),assSha256:sha(ass)};
+    const sourceDirectory=path.join(root,'.private-render-evidence');
+    await import('node:fs/promises').then(fs=>fs.mkdir(sourceDirectory,{mode:0o700}));
+    const baselinePath=path.join(sourceDirectory,'legacy.caption-base.mp4'),baselineBytes=Buffer.from('legacy baseline bytes');
+    await writeFile(baselinePath,baselineBytes,{mode:0o600});
+    const result=await executeSocialRenderStage({tenantId:'tenant-legacy',taskId:'task-legacy',runId:'run-legacy',
+      manifest:manifest as never,outputDirectory:root,checkpointEnabled:false,render:async()=>({ok:true,outputPath,
+        subtitleRenderEvidence:report,subtitleAssUtf8:ass,captionBaselineEvidence:{schemaVersion:'renderer-caption-baseline.v1',
+          path:baselinePath,sha256:createHash('sha256').update(baselineBytes).digest('hex'),byteLength:baselineBytes.length,
+          outputSha256,filterGraphSha256:report.filterGraphSha256}} as never)});
+    assert.equal(result.receipt.subtitleAssSidecar?.sha256,report.assSha256);
+    assert.equal(result.receipt.captionBaselineSidecar?.outputSha256,outputSha256);
+    assert.equal(await verifyPrivateAssSidecar({directory:privateRoot,sidecar:result.receipt.subtitleAssSidecar,
+      attestation:report as never,outputSha256}),true);
+    assert.equal(await verifyPrivateCaptionBaseline({directory:privateRoot,sidecar:result.receipt.captionBaselineSidecar,
+      attestation:report,outputSha256}),true);
+  }finally{
+    await rm(root,{recursive:true,force:true});
+    await rm(privateRoot,{recursive:true,force:true});
+  }
+});

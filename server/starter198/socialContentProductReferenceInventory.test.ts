@@ -9,6 +9,14 @@ const ids = (record = image) => ownedProductReferenceImageIds({records: [record]
 test('same-product image reference is admitted without unrelated clip-action analysis', () => {
   assert.deepEqual(ids(), ['actual-KB-image']);
 });
+test('confirmed SKU and display-name aliases do not exclude the enterprise product image', () => {
+  const actual = { ...image, productId: 'GUIANFA-RS-001', productRef: 'product:GUIANFA-RS-001',
+    productRefs: ['product:GUIANFA-RS-001', '云朵泡沫卸妆蜜'] };
+  const input = { records: [actual], tenantId: 'tenant', productId: 'GUIANFA-RS-001', productRef: '云朵泡沫卸妆蜜' };
+  assert.deepEqual(ownedProductReferenceImageIds(input), ['actual-KB-image']);
+  assert.deepEqual(ownedProductReferenceImageIds({ ...input, records: [{ ...actual,
+    productRefs: [...actual.productRefs, 'product:OTHER'] }] }), []);
+});
 test('selected enterprise product image URL binds its hashed material when legacy material identity fields are absent', () => {
   const legacy = {...image, productId: undefined, sourceUrl: '/api/overseas/enterprise/assets/rs001.png'};
   assert.deepEqual(ownedProductReferenceImageIds({records: [legacy], tenantId: 'tenant', productId: 'GUIANFA-RS-001',

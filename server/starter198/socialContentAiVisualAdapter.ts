@@ -2,6 +2,8 @@ import {accountProductionConstraintPrompt} from './socialAccountProductionConstr
 import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { bindProductPaidStage, type ProductPaidContext } from './socialContentProductPaidContext.js';
+import { burnIllustrativeVideoDisclosure } from './socialContentIllustrativeVideoDisclosure.js';
 import { generatePosterImage, imageExt } from '../lib/imageGen.js';
 import {
   estimateSeedanceCostCny,
@@ -38,11 +40,15 @@ export interface SocialAiVisualGenerator {
     durationSeconds: number;
     idempotencyKey: string;
     timeoutMs: number;
+    beforeSubmit?: (request: Record<string, unknown>) => Promise<void>;
   }): Promise<SocialAiVisualGeneratedMedia>;
 }
 
 export interface SocialAiVisualAdapterOptions {
   enabled: boolean;
+  /** Video production cannot silently satisfy a shot with a still image. */
+  requireVideo?: boolean;
+  paidContext?: ProductPaidContext;
   generators: SocialAiVisualGenerator[];
   maxCostCnyPerShot: number;
   timeoutMs: number;
@@ -67,6 +73,7 @@ function idempotencyKey(context: SocialAssetSupplyAdapterContext): string {
     ...(context.accountPlaybookConstraints?{accountConstraintHash:context.accountPlaybookConstraints.constraintHash}:{}),
     shotId: context.shot.shotId,
     strategy: context.shot.sourceStrategy,
+    ...(context.shot.materialRouting?.policy==='illustrative_video'?{materialRouting:context.shot.materialRouting}:{}),
     instruction: context.shot.productionInstruction,
     replacement: context.shot.functionalEquivalentReplacement,
     scene: context.baselineScene,
@@ -82,6 +89,10 @@ function controlledPrompt(context: SocialAssetSupplyAdapterContext): string {
     'Create one vertical 9:16 conceptual supporting visual for a short social video.',
     `Visual goal: ${requested || 'abstract topic illustration'}.`,
     `Shot function: ${compact(context.shot.function, 60)}.`,
+    ...(context.shot.materialRouting?.illustrativeVideo ? [
+      `Generic activity: ${{design:'an anonymous hand sketching unbranded cosmetic packaging on a tablet',shopping:'anonymous shoppers browsing an unbranded cosmetics shop',meeting:'anonymous participants discussing design and supply at a meeting table'}[context.shot.materialRouting.illustrativeVideo.purpose]}.`,
+      `Preserve this camera language: ${compact(JSON.stringify(context.shot.visualContract?.camera??{}),400)}.`,
+    ] : []),
     'This is a synthetic, non-evidentiary illustration.',
     'Do not depict or imply the customer\'s real factory, workshop, production line, warehouse, client case, testimonial, certification, measured result, before/after result, or exact product performance.',
     'Do not add logos, company names, product claims, statistics, certificates, UI text, labels, or readable text.',
@@ -111,9 +122,10 @@ async function materialize(
   if (localPath && generated.bytes) {
     await fsp.mkdir(context.outputDirectory, { recursive: true });
     await fsp.writeFile(localPath, generated.bytes);
+    if(context.shot.materialRouting?.policy==='illustrative_video')await burnIllustrativeVideoDisclosure(localPath);
   }
   const contentHash = generated.bytes
-    ? createHash('sha256').update(generated.bytes).digest('hex')
+    ? createHash('sha256').update(localPath?await fsp.readFile(localPath):generated.bytes).digest('hex')
     : undefined;
   const providerRef = generated.providerTaskId || `${generated.model}:${key.slice(0, 16)}`;
   const disclosure = 'AI 生成示意画面 · 非客户实拍/案例/效果证据';
@@ -161,31 +173,46 @@ export function createSocialAiVisualAdapter(options: SocialAiVisualAdapterOption
       if (!options.enabled) return null;
       if (!context.shot.truthBoundary.syntheticVisualAllowed
         || context.shot.truthBoundary.customerEvidenceRequired) return null;
-      const key = idempotencyKey(context);
+      const typedVideo=context.shot.materialRouting?.policy==='illustrative_video';
+      if(typedVideo&&!options.paidContext)throw Error('concept_video_whole_film_budget_required');
+      const paid=typedVideo?bindProductPaidStage(options.paidContext!,context.shot.shotId,'concept_video'):null;
+      if(typedVideo&&options.paidContext!.requirements.find(row=>row.shotId===context.shot.shotId&&row.stage==='concept_video')?.durationSeconds
+        !==context.shot.materialRouting!.illustrativeVideo?.durationSeconds)throw Error('concept_video_frozen_duration_changed');
+      const key = paid ? createHash('sha256').update(`${paid.intent.operationId}:${idempotencyKey(context)}`).digest('hex') : idempotencyKey(context);
       const existing = executions.get(key);
       if (existing) return existing;
       const execution = (async () => {
         const prompt = controlledPrompt(context);
-        const exceedsCostCeiling = (amountCny: number) => options.enforceCostCeilingForExemptTenant
+        // Typed production consumes the original reserved film permit. The
+        // legacy adapter's standalone cap is not a second task authorization.
+        const exceedsCostCeiling = (amountCny: number) => typedVideo ? false : options.enforceCostCeilingForExemptTenant
           ? amountCny > options.maxCostCnyPerShot
           : aiVisualExceedsInternalBudget(context.tenantId, amountCny, options.maxCostCnyPerShot);
         const eligible = options.generators.filter(generator => (
-          !exceedsCostCeiling(generator.estimatedCostCny)
+          (!(options.requireVideo||typedVideo) || generator.mediaType === 'video') && !exceedsCostCeiling(generator.estimatedCostCny)
+          && (!typedVideo || generator.generatorId==='seedance_concept_video')
         ));
         for (const generator of eligible) {
           try {
+            let claimed = false;
             const generated = await withTimeout(generator.generate({
               tenantId: context.tenantId,
               outputDirectory: context.outputDirectory,
               prompt,
               ratio: '9:16',
-              durationSeconds: 5,
+              durationSeconds: context.shot.materialRouting?.illustrativeVideo?.durationSeconds??5,
               idempotencyKey: key,
               timeoutMs: options.timeoutMs,
+              ...(paid?{beforeSubmit:async body=>{await paid.beforeSubmit(body);claimed=true;}}:{}),
             }), options.timeoutMs);
-            if (exceedsCostCeiling(generated.estimatedCostCny)) {
+            if(typedVideo&&!claimed)await options.paidContext!.assertRecovery(paid!.intent.operationId);
+            if ((options.requireVideo||typedVideo) && (generated.type !== 'video' || !generated.bytes?.length
+              || !Number.isFinite(generated.duration) || generated.duration! <= 0
+              || !generated.providerTaskId?.trim())) throw new Error('ai_visual_verified_video_required');
+            if (!Number.isFinite(generated.estimatedCostCny) || generated.estimatedCostCny<0 || exceedsCostCeiling(generated.estimatedCostCny)) {
               throw new Error('ai_visual_actual_cost_exceeds_shot_budget');
             }
+            if(paid)await paid.completed(`${generated.providerId}:${generated.providerTaskId}:${createHash('sha256').update(generated.bytes!).digest('hex')}`);
             return await materialize(context, generated, key);
           } catch (error) {
             const reason = String(error instanceof Error ? error.message : error || '');
@@ -194,6 +221,7 @@ export function createSocialAiVisualAdapter(options: SocialAiVisualAdapterOption
             // provider in that state; the outer router may safely render its
             // local motion-graphics fallback.
             if (/timeout|timed out|提交结果未知|unknown submission|provider_submission_(?:unknown|uncertain)|do not resubmit/i.test(reason)) throw new Error(`provider_submission_unknown:ai_visual:${reason}`);
+            if(typedVideo)throw error;
             // Try the next explicitly registered provider. If all fail, the
             // governed router records this adapter as unavailable and uses its
             // planned motion-graphics fallback.
@@ -213,7 +241,7 @@ export function createSocialAiVisualAdapter(options: SocialAiVisualAdapterOption
   };
 }
 
-export function createConfiguredSocialAiVisualAdapter(options:{recoveryOnly?:boolean;qwenOnly?:boolean;maximumCostCnyPerImage?:number;frozenModel?:string}={}): SocialAssetSupplyProviderAdapter {
+export function createConfiguredSocialAiVisualAdapter(options:{paidContext?:ProductPaidContext;requireVideo?:boolean;recoveryOnly?:boolean;qwenOnly?:boolean;maximumCostCnyPerImage?:number;frozenModel?:string}={}): SocialAssetSupplyProviderAdapter {
   const enabled = (process.env.SOCIAL_AI_VISUAL_ENABLED || '').trim().toLowerCase() === 'true';
   if(options.qwenOnly&&(!Number.isFinite(options.maximumCostCnyPerImage)||options.maximumCostCnyPerImage!<0||options.frozenModel!==(process.env.QWEN_IMAGE_MODEL||'qwen-image-3.0').trim()))throw new Error('scene_rework_qwen_tariff_changed');
   const maxCostCnyPerShot = options.qwenOnly?options.maximumCostCnyPerImage!:Number(process.env.SOCIAL_AI_VISUAL_MAX_COST_CNY_PER_SHOT || 2);
@@ -252,6 +280,7 @@ export function createConfiguredSocialAiVisualAdapter(options:{recoveryOnly?:boo
           apiKey: (process.env.SEEDANCE_API_KEY || '').trim(),
           model: (process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128').trim(),
           baseUrl: process.env.SEEDANCE_BASE_URL,
+          beforeSubmit:input.beforeSubmit,
         });
         return { ...output, type: 'video', mimeType: 'video/mp4' };
       },
@@ -281,6 +310,8 @@ export function createConfiguredSocialAiVisualAdapter(options:{recoveryOnly?:boo
   }
   return createSocialAiVisualAdapter({
     enabled,
+    requireVideo: options.requireVideo,
+    paidContext:options.paidContext,
     generators: [...videoGenerators, qwenImage],
     maxCostCnyPerShot: Number.isFinite(maxCostCnyPerShot) ? Math.max(0, maxCostCnyPerShot) : 2,
     timeoutMs: Number.isFinite(timeoutMs) ? Math.max(1_000, timeoutMs) : 120_000,

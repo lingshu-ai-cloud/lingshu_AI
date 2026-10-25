@@ -43,15 +43,30 @@ test('eligible local video segment produces a normalized versioned profile', () 
     'normalization recomputes eligibility instead of trusting a stored flag');
 });
 
-test('rights, source revision and edit-boundary gaps fail closed with precise reasons', () => {
+test('rights and source revision remain blockers while missing editorial boundaries remain advice', () => {
   const built = profile({ currentSourceRevision: 'sha256-new', rightsEvidenceRefs: ['tenant_upload_unverified'],
     commercialUseApproved: false, derivativeUseAllowed: false, cleanExit: false });
   assert.ok(built.profile);
   assert.equal(built.profile.productionEligible, false);
   assert.deepEqual(new Set(built.rejectionReasons), new Set([
     'source_revision_mismatch', 'rights_evidence_missing', 'commercial_use_not_allowed',
-    'commercial_use_evidence_missing', 'derivative_use_not_allowed', 'edit_boundary_unverified',
+    'commercial_use_evidence_missing', 'derivative_use_not_allowed',
   ]));
+  assert.deepEqual(built.profile.editingWarnings, ['edit_boundary_unverified']);
+});
+
+test('a licensed analyzed clip can be trimmed within its observed range without repeating human boundary approval', () => {
+  const built = profile({ cleanEntry: false, cleanExit: false });
+  assert.ok(built.profile);
+  assert.equal(built.profile.productionEligible, true);
+  assert.equal(built.profile.cleanEntry, false); assert.equal(built.profile.cleanExit, false);
+  assert.deepEqual(built.profile.editingWarnings, ['edit_boundary_unverified']);
+  const old = normalizeLocalMaterialSegmentProfile({ ...built.profile, productionEligible: false,
+    rejectionReasons: ['edit_boundary_unverified'] });
+  assert.equal(old?.productionEligible, true);
+  assert.equal(old?.cleanEntry, false);
+  assert.equal(profile({ cleanEntry: false, endSeconds: -1 }).profile?.productionEligible, false);
+  assert.equal(profile({ cleanEntry: false, needsReview: true }).profile?.productionEligible, false);
 });
 
 test('normalization preserves commercial approval receipts and rejects legacy or tampered eligibility flags', () => {

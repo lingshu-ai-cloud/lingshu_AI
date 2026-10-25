@@ -5,6 +5,50 @@ import { parseCreateSocialTask } from './socialContentValidation.js';
 import { defaultBrief } from './socialContentTaskSupport.js';
 import { parseSocialTaskBrief } from './socialContentRecords.js';
 
+// Original talking consumes frozen intent without manufacturing reference CV/ASR.
+function originalPresenterDetail() {
+  const value = detail(null);
+  value.brief = { creationMode: 'material_processing', presenterPolicy: 'selected', presenterAssetId: 'authorized-person-1', presenterSpeechReviewPolicy: 'heygen_native_human_review' };
+  value.referenceVideoAnalysis = null;
+  value.agentWorkflow.directorBrief.scenes[0].referenceShotId = null;
+  value.agentWorkflow.directorBrief.scenes[0].productionRouting = undefined;
+  value.assetSupplyPlan = { shots: [{ shotId: 'scene-1', sourceStrategy: 'authorized_digital_presenter',
+    digitalHumanPlan: { workflow: 'material_processing', method: 'talking', presenterAssetIds: ['authorized-person-1'], referenceRequired: false, referenceMaterialIds: [] } }] };
+  return value;
+}
+const originalSelect = (value = originalPresenterDetail(), readiness = {}) => selectPresenterExecutions({ detail: value,
+  heygenReady: true, seedancePresenterReady: false, budgetReady: true, ...readiness });
+const original = originalSelect()[0]!;
+assert.equal(original.providerId, 'heygen');
+assert.equal(original.executionStatus, 'ready');
+assert.deepEqual(original.reasonCodes, ['original_talking_presenter']);
+assert.equal(original.referenceShotId, null);
+assert.equal(original.decision.measurements.sourceFirstFrameRef, null);
+assert.equal(original.decision.measurements.visibleSpeechSeconds, null);
+assert.equal(original.decision.measurements.lipSyncRequired, null);
+assert.equal(original.decision.measurements.decisionConfidence, 0);
+assert.deepEqual(original.decision.measurements.evidence, []);
+for (const [edit, code] of [
+  [(value: any) => { value.brief.presenterSpeechReviewPolicy = undefined; }, 'presenter_speech_route_unavailable'],
+  [(value: any) => { value.brief.presenterPolicy = 'none'; }, 'original_presenter_selected_asset_mismatch'],
+  [(value: any) => { value.assetSupplyPlan.shots[0].digitalHumanPlan.presenterAssetIds = ['other']; }, 'original_presenter_selected_asset_mismatch'],
+  [(value: any) => { value.assetSupplyPlan.shots[0].digitalHumanPlan.presenterAssetIds.push('other'); }, 'original_presenter_selected_asset_mismatch'],
+  [(value: any) => { value.assetSupplyPlan.shots[0].digitalHumanPlan.method = 'reenact'; }, 'original_presenter_talking_method_required'],
+  [(value: any) => { value.agentWorkflow.executionPlan.scenes[0].selectedSourceStrategy = 'customer_real_asset'; }, 'original_presenter_execution_plan_missing'],
+] as const) {
+  const value = originalPresenterDetail(); edit(value);
+  const selected = originalSelect(value)[0]!;
+  assert.equal(selected.providerId, null); assert.equal(selected.executionStatus, 'blocked');
+  assert.ok(selected.reasonCodes.includes(code));
+}
+for (const [readiness, code] of [[{ heygenReady: false }, 'heygen_capability_unavailable'], [{ budgetReady: false }, 'presenter_budget_unavailable']] as const) {
+  const selected = originalSelect(originalPresenterDetail(), readiness)[0]!;
+  assert.equal(selected.executionStatus, 'blocked'); assert.ok(selected.reasonCodes.includes(code));
+}
+const originalRealMaterial = originalPresenterDetail();
+originalRealMaterial.assetSupplyPlan.shots[0].sourceStrategy = 'customer_real_asset';
+assert.equal(originalSelect(originalRealMaterial).length, 0, 'real materials must not become paid presenter operations');
+
 const measurement: PresenterShotMeasurements = {
   shotId: 'ref-1', durationSeconds: 3, sourceFirstFrameRef: 'model-value-must-not-win',
   enterprisePresenterAssetRef: 'model-value-must-not-win', visibleSpeechSeconds: 2,

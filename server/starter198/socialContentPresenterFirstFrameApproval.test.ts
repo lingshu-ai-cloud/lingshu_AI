@@ -1,3 +1,4 @@
+import {readCurrentConfirmedPresenterFirstFrame} from './socialContentPresenterFirstFrameCurrent.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -35,4 +36,27 @@ test('confirmed first frame is reusable only for the exact three-asset provenanc
  const query={scope,groupId:'group-a',presenterGroupContractHash:sha('group'),presenterAssetId:'presenter'};
  assert.ok(await readConfirmedPresenterFirstFrameApproval(f.store,{...query,expectedAssetProvenanceHash:assetProvenance.manifestHash}));
  assert.equal(await readConfirmedPresenterFirstFrameApproval(f.store,{...query,expectedAssetProvenanceHash:sha('changed-upstream-assets')}),null);
+ assert.equal((await readCurrentConfirmedPresenterFirstFrame(f.store,query,{readAssetProvenance:async()=>assetProvenance.manifestHash}))?.approval.recordHash,approval.recordHash);
+ assert.equal(await readCurrentConfirmedPresenterFirstFrame(f.store,query,{readAssetProvenance:async()=>sha('changed-upstream-assets')}),null);
+ assert.equal(await readCurrentConfirmedPresenterFirstFrame(f.store,query,{readAssetProvenance:async()=>null}),null,'composite approval must not inherit the catalogue-only source exception');
+});
+
+
+test('target ratio is included in frozen approval hash and cannot reuse another ratio decision',async()=>{
+ const f=memory(),initial=await createPresenterFirstFrameApproval(f.store,contract({targetAspectRatio:'9:16'}));
+ const decision=await confirmPresenterFirstFrameApproval(f.store,{scope,groupId:'group-a',expectedRecordHash:initial.recordHash,actorId:'owner',idempotencyKey:'ratio-confirmation'});
+ assert.equal(decision.approvalRecordHash,initial.recordHash);
+ await assert.rejects(createPresenterFirstFrameApproval(f.store,contract({targetAspectRatio:'1:1'})),/contract_conflict/);
+ await assert.rejects(createPresenterFirstFrameApproval(memory().store,contract({targetAspectRatio:'4:3'})),/contract_invalid/);
+ f.tables.social_presenter_first_frame_approvals[0].payload.targetAspectRatio='1:1';
+ assert.equal(await readConfirmedPresenterFirstFrameApproval(f.store,{scope,groupId:'group-a',presenterGroupContractHash:sha('group'),presenterAssetId:'presenter'}),null);
+});
+
+
+test('technical-only legacy evidence cannot create an automatic visual approval',async()=>{
+ const f=memory(),approval=await createPresenterFirstFrameApproval(f.store,contract({qa:{...contract().qa,receiptRef:'local-technical:'+sha('technical-only')}}));
+ await assert.rejects(automaticallyConfirmPresenterFirstFrameApproval(f.store,{scope,groupId:'group-a',expectedRecordHash:approval.recordHash}),/visual_qa_required/);
+ assert.equal(f.tables.social_presenter_first_frame_decisions,undefined);
+ const manual=await confirmPresenterFirstFrameApproval(f.store,{scope,groupId:'group-a',expectedRecordHash:approval.recordHash,actorId:'owner',idempotencyKey:'legacy-human-reviewed'});
+ assert.equal((await automaticallyConfirmPresenterFirstFrameApproval(f.store,{scope,groupId:'group-a',expectedRecordHash:approval.recordHash})).recordHash,manual.recordHash,'explicit historical human decisions stay readable');
 });

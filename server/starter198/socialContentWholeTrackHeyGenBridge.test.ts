@@ -7,7 +7,7 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import ffmpeg from 'ffmpeg-static';
 import {createWholeTrackSocialHeyGenBridge} from './socialContentWholeTrackHeyGenBridge.js';
-import {paidProductionHash,presenterGroupContractHash} from './socialContentPaidOperationPlan.js';
+import {paidProductionHash,presenterGroupContractHash,type FrozenPresenterGroup} from './socialContentPaidOperationPlan.js';
 import {productionBillingAccountRef} from './socialContentProductionBudgetRoutes.js';
 const sha=(b:Buffer|string)=>createHash('sha256').update(b).digest('hex');
 function fixture(){
@@ -32,7 +32,7 @@ function fixture(){
  const permit:any={beforeSubmit:async(row:any)=>{assert.equal(claims.some(x=>x.operationId===row.operationId),false,'no repeated paid claim');claims.push(row);receipts.set(row.operationId,{status:'unknown',receiptRef:null});return {operationId:row.operationId};},assertRecovery:async(id:string)=>{assert.ok(receipts.has(id));return receipts.get(id);},markOutcome:async(id:string,status:string,ref:string)=>{if(status==='accepted'&&acceptCrash){acceptCrash=false;throw Error('crash after real original receipt');}receipts.set(id,{status,receiptRef:ref});}};
  const transport:typeof fetch=async(url:any,opts:any)=>{
   if(String(url)==='https://api.heygen.com/v3/assets'){uploads++;const type=opts.body.get('file').type;return Response.json({data:{asset_id:type.startsWith('image/')?'uploaded-approved-frame':'uploaded-same-track'}});}
-  if(opts?.method==='POST'){posts++;const body=JSON.parse(opts.body);assert.equal(body.type,'image');assert.deepEqual(body.image,{type:'asset_id',asset_id:'uploaded-approved-frame'});assert.equal('avatar_id' in body,false);assert.equal(body.audio_asset_id,'uploaded-same-track');assert.equal('engine' in body,false);assert.equal('script' in body,false);assert.equal('voice_id' in body,false);if(postError)throw Error('ambiguous vendor create');return Response.json({data:{video_id:'original-video',credits:0.0805}});}
+  if(opts?.method==='POST'){posts++;const body=JSON.parse(opts.body);assert.equal(body.type,'image');assert.deepEqual(body.image,{type:'asset_id',asset_id:'uploaded-approved-frame'});assert.equal('avatar_id' in body,false);assert.equal(body.audio_asset_id,'uploaded-same-track');assert.equal(body.aspect_ratio,request.aspectRatio);assert.equal('engine' in body,false);assert.equal('script' in body,false);assert.equal('voice_id' in body,false);if(postError)throw Error('ambiguous vendor create');return Response.json({data:{video_id:'original-video',credits:0.0805}});}
   gets++;assert.equal(String(url),'https://api.heygen.com/v3/videos/original-video');return Response.json({data:{status:'completed',video_url:'https://cdn.heygen.ai/original.mp4',duration:1}});
  };
  const request:any={tenantId:'tenant',taskId:'task',shotId:'s1',idempotencyKey:'final-video-idempotency',presenter:{presenterAssetId:'person',assetVersion:4,providerId:'heygen',providerPresenterId:'original-avatar',providerVoiceId:'historical-person-voice',authorized:true,authorizationRef:'owned-person',consentRef:'consent'},approvedFirstFrame:{approvalRecordId:'approval:1',approvalRecordHash:'d'.repeat(64),presenterGroupContractHash:'e'.repeat(64),url:'/media/approved.jpg',localPath:approvedFrame,sha256:sha(fs.readFileSync(approvedFrame))},script:'Hello.',aspectRatio:'9:16',outputDirectory:path.join(root,'nested-output'),maximumCostCny:2,visualControl:{timing:{startSeconds:0,endSeconds:.4,durationSeconds:.4},interaction:'talking'}};
@@ -40,6 +40,23 @@ function fixture(){
  const execute=async(ports:any)=>{const audio=await ports.resolveSpeechAudio(request);const budget=await ports.authorizeBudget({...request,providerId:'heygen'});assert.equal(budget.allowed,true);return ports.execute({...request,speechAudio:audio,reservationRef:budget.reservationRef});};
  return {root,scope,key,request,options,rows,claims,receipts,intent,execute,counters:()=>({uploads,posts,gets}),setUnknown:()=>{postError=true;},setAcceptCrash:()=>{acceptCrash=true;},cleanup:()=>{process.chdir(oldCwd);fs.rmSync(root,{recursive:true,force:true});}};
 }
+test('whole-track request preserves every approved product aspect ratio',async()=>{
+ for(const aspectRatio of ['9:16','16:9','1:1'] as const){
+  const f=fixture();try{
+   f.request.aspectRatio=aspectRatio;
+   f.request.approvedFirstFrame.targetAspectRatio=aspectRatio;
+   assert.equal((await f.execute(createWholeTrackSocialHeyGenBridge(f.options))).status,'completed');
+   assert.equal(JSON.parse(fs.readFileSync(f.receipts.get(f.intent.operationId).receiptRef,'utf8')).body.aspect_ratio,aspectRatio);
+  }finally{f.cleanup();}
+ }
+});
+test('whole-track request rejects a ratio that differs from the approved first frame before paid submission',async()=>{
+ const f=fixture();try{
+  f.request.aspectRatio='16:9';f.request.approvedFirstFrame.targetAspectRatio='1:1';
+  await assert.rejects(f.execute(createWholeTrackSocialHeyGenBridge(f.options)),/whole_track_heygen_approved_aspect_ratio_changed/);
+  assert.equal(f.claims.length,0);assert.deepEqual(f.counters(),{uploads:0,posts:0,gets:0});
+ }finally{f.cleanup();}
+});
 test('normal bridge consumes same whole-film permit and original audio-window bytes; restart is GET-only',async()=>{
  const f=fixture();try{const ports=createWholeTrackSocialHeyGenBridge(f.options);const output=await f.execute(ports);assert.equal(output.status,'completed');assert.deepEqual(f.request.visualControl.timing,{startSeconds:0,endSeconds:1,durationSeconds:1,actionPeakSeconds:.58},'final funded scene window overrides source-reference edit timing');assert.equal(f.claims.length,1);assert.deepEqual(f.claims[0].actualUnits,{providerSeconds:1});assert.deepEqual(f.counters(),{uploads:2,posts:1,gets:1});
  const restartedAudio=await createWholeTrackSocialHeyGenBridge({...f.options,taskVersion:'2'}).resolveSpeechAudio!({...f.request,visualControl:{...f.request.visualControl,timing:{startSeconds:0,endSeconds:.4,durationSeconds:.4}}});assert.equal(restartedAudio.taskVersion,'1','task bookkeeping retries reuse the original paid audio binding and request identity');
@@ -74,8 +91,9 @@ test('lost local mother bytes recover only by the original accepted operation; u
   assert.equal(output.status,'completed');
   if(output.status!=='completed')throw Error('fixture_output_missing');
   fs.rmSync(output.localPath);
+  const claimCount=completed.claims.length;completed.options.funding.assertNewSubmit=async()=>{throw Error('parent_recovery_new_submit_forbidden');};
   const recovered=await createWholeTrackSocialHeyGenBridge(completed.options).recoverExisting!(completed.request);
-  assert.equal(recovered?.status,'completed');
+  assert.equal(recovered?.status,'completed');assert.equal(completed.claims.length,claimCount,'parent recovery cannot create a new paid claim');
   assert.deepEqual(completed.counters(),{uploads:2,posts:1,gets:2},'missing local cache bytes must use original provider GET, not a second POST');
  }finally{completed.cleanup();}
  const unknown=fixture();try{
@@ -111,10 +129,11 @@ test('approved correction selects attempt one and never reuses completed attempt
  }finally{f.cleanup();}
 });
 test('group request uses one canonical mother-segment operation and rejects changed member contract hash',async()=>{
- const configure=(f:ReturnType<typeof fixture>)=>{
+ const configure=(f:ReturnType<typeof fixture>,kind?:'reference'|'original')=>{
   const groupId='presenter-group-a',shotIds=['s1','s2'];
-  const value={groupId,shotIds,durationSeconds:1,spokenText:'Hello.',presenterAssetId:'person'};
-  const requirement={key:`presenter-group:${groupId}:presenter`,stage:'presenter_video',shotId:null,sourceRef:null,durationSeconds:1,text:'Hello.',frameCount:null,presenterGroupId:groupId,presenterGroupShotIds:shotIds,presenterAssetId:'person',presenterGroupContractHash:presenterGroupContractHash(value),inputContractHash:'d'.repeat(64)};
+  const visual:Partial<Pick<FrozenPresenterGroup,'visualCompatibilityHash'|'firstFramePipeline'|'staticReferenceImageCount'|'sceneSourceKind'|'sceneSourceContractHash'>>=kind?{visualCompatibilityHash:'b'.repeat(64),firstFramePipeline:'background-first.v2' as const,staticReferenceImageCount:2,...(kind==='original'?{sceneSourceKind:'original_scene' as const,sceneSourceContractHash:'e'.repeat(64)}:{})}:{};
+  const value={groupId,shotIds,durationSeconds:1,spokenText:'Hello.',presenterAssetId:'person',...visual};
+  const requirement={key:`presenter-group:${groupId}:presenter`,stage:'presenter_video',shotId:null,sourceRef:null,durationSeconds:1,text:'Hello.',frameCount:null,presenterGroupId:groupId,presenterGroupShotIds:shotIds,presenterAssetId:'person',...(kind?{presenterVisualCompatibilityHash:visual.visualCompatibilityHash,presenterFirstFramePipeline:visual.firstFramePipeline,presenterStaticReferenceImageCount:visual.staticReferenceImageCount,...(kind==='original'?{presenterSceneSourceKind:'original_scene' as const,presenterSceneSourceContractHash:visual.sceneSourceContractHash}:{})}:{}),presenterGroupContractHash:presenterGroupContractHash(value),inputContractHash:'d'.repeat(64)};
   const route=Object.values(f.options.funding.routeBindings)[0] as any;
   const intent={operationId:'paid-plan:'+paidProductionHash({scope:f.scope,key:requirement.key,attempt:0}),provider:route.provider,model:route.model,accountRef:route.accountRef,stage:requirement.stage,shotId:null,inputContractHash:paidProductionHash({requirement,route,attempt:0}),maximumUnits:route.maximumUnits};
   f.options.funding.requirements=[
@@ -122,9 +141,13 @@ test('group request uses one canonical mother-segment operation and rejects chan
    {...requirement,key:`presenter-group:${groupId}:first-frame-qa`,stage:'first_frame_qa'},
    requirement,
   ];f.options.funding.routeBindings={[requirement.key]:route};f.options.funding.intents=[intent];f.request.shotId=groupId;
-  const prepared=JSON.parse(fs.readFileSync(f.options.prepared.receiptRef,'utf8'));prepared.scenes=[{shotId:groupId,spokenText:'Hello.',startSeconds:0,endSeconds:1,durationSeconds:1}];fs.writeFileSync(f.options.prepared.receiptRef,JSON.stringify(prepared));
+  const prepared=JSON.parse(fs.readFileSync(f.options.prepared.receiptRef,'utf8'));prepared.scenes=[{shotId:'s1',spokenText:'Hello.',startSeconds:0,endSeconds:.5,durationSeconds:.5},{shotId:'s2',spokenText:'',startSeconds:.5,endSeconds:1,durationSeconds:.5}];fs.writeFileSync(f.options.prepared.receiptRef,JSON.stringify(prepared));
   f.request.approvedFirstFrame.presenterGroupContractHash=requirement.presenterGroupContractHash;return {requirement,intent};
  };
  const f=fixture();try{const {intent}=configure(f);const output=await f.execute(createWholeTrackSocialHeyGenBridge(f.options));assert.equal(output.status,'completed');assert.equal(f.claims.length,1);assert.equal(f.claims[0].operationId,intent.operationId);assert.equal(f.claims[0].shotId,null);assert.deepEqual(f.counters(),{uploads:2,posts:1,gets:1});}finally{f.cleanup();}
+ for(const kind of ['reference','original'] as const){
+  const complete=fixture();try{configure(complete,kind);assert.equal((await complete.execute(createWholeTrackSocialHeyGenBridge(complete.options))).status,'completed');}finally{complete.cleanup();}
+ }
+ const drift=fixture();try{const {requirement}=configure(drift,'original');requirement.presenterSceneSourceContractHash='f'.repeat(64);await assert.rejects(createWholeTrackSocialHeyGenBridge(drift.options).resolveSpeechAudio!(drift.request),/group_contract_changed/);assert.deepEqual(drift.counters(),{uploads:0,posts:0,gets:0});}finally{drift.cleanup();}
  const changed=fixture();try{const {requirement}=configure(changed);requirement.presenterGroupShotIds=['s1','s3'];await assert.rejects(createWholeTrackSocialHeyGenBridge(changed.options).resolveSpeechAudio!(changed.request),/group_contract_changed/);assert.deepEqual(changed.counters(),{uploads:0,posts:0,gets:0});}finally{changed.cleanup();}
 });

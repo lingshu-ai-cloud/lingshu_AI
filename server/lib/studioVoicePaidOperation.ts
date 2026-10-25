@@ -2,7 +2,7 @@ import {nativeVoiceBillableCharacters} from './studioVoiceBilling.js';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {createHash} from 'node:crypto';
 import type {SocialPaidOperationIntent} from './socialContentTaskBudgetAuthority.js';
-import type {createSocialContentPaidOperationPermit} from './socialContentPaidOperationPermit.js';
+import type {SocialPaidOperationSubmissionPermit} from './socialContentPaidOperationPermit.js';
 export interface StudioVoicePaidRequest {
   stage: 'tts' | 'tts_fallback' | 'voice_clone' | 'voice_asr' | 'voice_alignment';
   provider: 'minimax' | 'qwen' | 'heygen'; model: string; voiceId: string | null;
@@ -11,7 +11,7 @@ export interface StudioVoicePaidRequest {
 }
 export interface StudioVoicePaidCall {
  intent:SocialPaidOperationIntent;
- permit:ReturnType<typeof createSocialContentPaidOperationPermit>;
+ permit:SocialPaidOperationSubmissionPermit;
  assertProviderBinding(request:StudioVoicePaidRequest):Promise<void>;
  measureUsage(request:StudioVoicePaidRequest):Promise<Record<string,number>>;
  persistProviderReceipt(input:{requestSha256:string;response:unknown;audioSha256?:string;audioSeconds?:number}):Promise<string>;
@@ -19,6 +19,8 @@ export interface StudioVoicePaidCall {
 export interface StudioVoicePaidContext {
  /** Read from the actual frozen native voice resolver, never from HTTP input. */
  primaryProvider:'minimax'|'qwen'|'heygen';
+ primaryModel?:string;
+ nativeSpeech?:{scope:{tenantId:string;taskId:string;runId:string};avatarId:string;maximumDurationSeconds:number};
  persistAudioCacheProof?(input:{tenantId:string;text:string;logicalVoice:string;language:string;provider:string;audioSha256:string;durationSeconds:number}):Promise<void>;
  verifyCachedAudio?(input:{tenantId:string;text:string;logicalVoice:string;language:string;provider:string;audioSha256:string;durationSeconds:number}):Promise<boolean>;
  forRequest(request:StudioVoicePaidRequest):Promise<StudioVoicePaidCall>;

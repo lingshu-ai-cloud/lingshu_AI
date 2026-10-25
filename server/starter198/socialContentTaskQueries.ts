@@ -1,3 +1,5 @@
+import { hydrateSocialContentPreviews } from './socialContentPreviewProjection.js';
+import { hydrateSocialContentExecutionSummaries } from './socialContentQueueProjection.js';
 import type { SocialContentTaskPage, SocialContentWorkspace } from '../../shared/contracts/socialContentWorkflow.js';
 import { enterpriseProductIdentity } from '../lib/enterpriseProductIdentity.js';
 import { STARTER_COLLECTIONS, type Starter198Repository } from './repository.js';
@@ -17,7 +19,9 @@ export async function listSocialContentTasks(input: {
   const result = await input.repository.list(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, {
     ...(input.status ? { where: { status: input.status } } : {}), sort: '-updated_at', page: input.page, perPage: input.perPage,
   });
-  return { ...result, items: result.items.map(socialTaskSummary) };
+  const items = await hydrateSocialContentExecutionSummaries({ store: input.repository.dataStore,
+    tenantId: input.tenantId, items: result.items.map(socialTaskSummary) });
+  return { ...result, items: await hydrateSocialContentPreviews({ ...input, items }) };
 }
 
 export async function readSocialContentWorkspace(input: {

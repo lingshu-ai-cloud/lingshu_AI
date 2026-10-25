@@ -121,7 +121,7 @@ test('normal task API parser and persisted brief drive real local execution afte
   // This executor test explicitly finalizes the local branch. The whole-film
   // allocator has its own quote/selection tests and must do this before dispatch.
   if(kind==='product'){
-   assert.equal(p.shots[0]!.materialRouting?.productGenerationDecision?.state,'eligible');
+   assert.equal(p.shots[0]!.materialRouting?.productGenerationDecision?.state,'local_only');
    delete p.shots[0]!.materialRouting!.generation;delete p.shots[0]!.productSceneReplication;
    p.shots[0]!.materialRouting!.productGenerationDecision!.state='local_only';
   }
