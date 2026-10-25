@@ -3,6 +3,13 @@
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-26 灵小枢功能合入指定本地基线
+
+- 指定目标 `xixi投流+卡片前端`，由新建隔离树 `home-cards-integration-20261026/1026灵小枢对话卡片` 承载；从 `8c7cc7d3` 快进至本轮验证源码及治理提交。
+- 来源 `1026灵小枢对话卡片` / `feature/assistant-home-dialogue-20261026` 保留原 HEAD、index 与 137 项未提交条目；独立 index 快照分支 `codex/home-cards-source-20261026`。
+- `xixi联合功能模块后端改` 及其脏改动未变；其他功能树与保留的图片 AIGC 工作树未同步/清理/归档。
+- 恢复点、SHA、分段质量检查与限制见[集成记录](HOME-CARDS-INTEGRATION-20261026.md)。本轮仅本地，无推送/部署。
+
 ## 2026-10-25 卡片与投流合入本地基线
 
 - 权威树 `xixi-feature-integration-20261023` / `xixi联合功能模块后端改` 从 `5f0b47a6` 推进至验证源码 `9be85a78`，治理提交另记；原 `server/index.ts` 未提交修改逐字保留。
