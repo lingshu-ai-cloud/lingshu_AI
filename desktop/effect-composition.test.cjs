@@ -39,6 +39,7 @@ test('filter builders provide motion, particles, transitions and synthetic sound
   assert.doesNotMatch(portableFilters.join(';'), /drawtext/);
   assert.match(portableFilters.join(';'), /zoompan/);
   const joined = joinSceneFilters({ labels: ['[ve0]', '[ve1]'], scenes: [{ enabled: true, transitionOut: { type: 'dissolve', duration: .25 } }, { enabled: true, transitionOut: { type: 'cut', duration: 0 } }], targets: [1, 1] });
+  assert.match(joined.filters.join(';'), /tpad=.*fps=30,settb=1\/30,setpts=N/);
   assert.match(joined.filters.join(';'), /xfade=transition=dissolve/);
   const audio = audioEventFilters([{ presetId: 'whoosh', at: .2, volume: .4 }]);
   assert.match(audio.filters.join(';'), /anoisesrc/);

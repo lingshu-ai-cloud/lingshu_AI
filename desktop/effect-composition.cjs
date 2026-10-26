@@ -200,7 +200,7 @@ function joinSceneFilters({ labels, scenes, targets, output = 'vcat' }) {
     const pad = transition?.type !== 'cut' ? finite(transition?.duration, 0) : .001;
     if (index === labels.length - 1) return label;
     const padded = `[effectpad${index}]`;
-    filters.push(`${label}tpad=stop_mode=clone:stop_duration=${Math.max(.001, pad).toFixed(3)}${padded}`);
+    filters.push(`${label}tpad=stop_mode=clone:stop_duration=${Math.max(.001, pad).toFixed(3)},fps=30,settb=1/30,setpts=N${padded}`);
     return padded;
   });
   let current = paddedLabels[0];
