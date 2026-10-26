@@ -1,5 +1,6 @@
 import { defaultLocalPreviewProfilePorts } from './localPreviewProfileAnalysis.js';
 import test from 'node:test';
+import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { fixture } from './customerManualTakeover.fixture.js';
@@ -31,9 +32,9 @@ test('ordinary reply contracts reuse isolated ledger and scoped AI, replay reads
   const compatibility = createLocalPreviewReplyCompatibility(async () => service), app = express();
   app.use(express.json(), (req,res,next) => {Object.assign(res.locals,{tenantId:req.headers['x-tenant']||'tenant',userId:req.headers['x-user']||'owner',dataAuthority:req.headers['x-authority']||'local',supportAccess:req.headers['x-support'] ? {} : undefined});next();});
   let fallbacks=0;
-  app.post('/draft',compatibility.execute,(_req,res)=>{fallbacks++;res.json({original:true});});
+  app.post(['/draft','/api/overseas/agents/conversion/draft'],compatibility.execute,(_req,res)=>{fallbacks++;res.json({original:true});});
   app.get('/draft/:requestId',compatibility.read);
-  app.post('/translate',compatibility.translate,(_req,res)=>{fallbacks++;res.json({original:true});});
+  app.post(['/translate','/api/overseas/plugins/translate/run'],compatibility.translate,(_req,res)=>{fallbacks++;res.json({original:true});});
   const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));const addr=server.address();assert.ok(addr&&typeof addr!=='string');
   const call=async(path:string,body?:unknown,headers:Record<string,string>={})=>{const r=await fetch(`http://127.0.0.1:${addr.port}${path}`,{method:body?'POST':'GET',headers:{Origin:'http://127.0.0.1:5225','Content-Type':'application/json',...headers},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json()};};
   const input={requestId:'ordinary-draft-12345',customerId:'mock-ordinary',manualRequest:true,timeline:[{actor:'buyer',body:'We need a 75 ml jar.'}],instruction:'Keep the buyer units and ask about the lid.',mode:'polish',intent:'polish'};
@@ -70,5 +71,18 @@ test('ordinary reply contracts reuse isolated ledger and scoped AI, replay reads
     assert.ok(f.table('customer_preview_customer_reply_requests').length===2);assert.equal(f.table('customer_reply_requests').length,0);
     assert.equal(f.table('customer_preview_sessions')[0].transport_calls,0);
     const audit=f.table('customer_preview_sessions')[0].ai_audit;assert.ok(Array.isArray(audit));assert.equal(audit.length,2);
+    // Exercise the actual native client serialization against the real HTTP compatibility middleware.
+    Object.assign(process.env,{NODE_ENV:'development',LINGSHU_LOCAL_PREVIEW:'1',CUSTOMER_SIMULATION_ENABLED:'1',CUSTOMER_SIMULATION_REAL_AI:'1'});
+    const {loadApi}=createRequire(import.meta.url)('../../apps/shooting-miniapp/test-support/native-api.cjs');
+    const native=loadApi({getStorageSync:()=> 'fixture-local-token',request:(options:{url:string;method:string;header:Record<string,string>;data:unknown;success:(result:unknown)=>void;fail:(error:unknown)=>void})=>{
+      void fetch(options.url,{method:options.method,headers:options.header,body:JSON.stringify(options.data)})
+        .then(async response=>options.success({statusCode:response.status,data:await response.json()})).catch(options.fail);
+    }},{apiBase:`http://127.0.0.1:${addr.port}`,localPreviewOrigin:'http://127.0.0.1:5225'});
+    const nativeTranslation=await native.translateCustomerReply('保留 75 ml。','Spanish','mock-native');
+    assert.ok(nativeTranslation.translatedText.includes('75 ml'));
+    const nativeDraft=await native.recommendCustomerReply({id:'mock-native',timeline:input.timeline,language:'English'},input.instruction);
+    assert.equal(nativeDraft.draft,'Which lid suits your 75 ml jar?');
+    assert.equal(customerPreviewAiRequestAllowed(endpoint,{method:'POST'}),false);
+
   } finally {await new Promise<void>(r=>server.close(()=>r()));for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);}
 });

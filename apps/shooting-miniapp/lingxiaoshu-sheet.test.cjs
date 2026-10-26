@@ -126,25 +126,29 @@ test('lingxiaoshu keeps a compact text composer, plus menu and opt-in voice inpu
   assert.match(script, /this\.controller\?\.voiceDraft\(text\)/)
   assert.match(script, /autoOpenDaily/)
   assert.match(script, /dailyStorageKey/)
-  assert.match(script, /welcomeStorageKey\(scope, state\.sessionId\)/)
+  assert.match(script, /freshSession: true/)
   assert.match(script, /workDataChanged/)
   assert.match(script, /feed\.projectBriefing\(this\.properties\.overview/)
   assert.match(script, /urgentMatters: this\.properties\.queue\.urgentMatters/)
   assert.match(script, /contextMode: 'operator'/)
   assert.match(home, /getMenuButtonBoundingClientRect/)
-  assert.match(nav, /询问灵小枢/)
+  assert.doesNotMatch(nav, /assistant-trigger/)
+  assert.match(nav, /nav-item/)
 })
 
-function sheetInstance(api, wx) {
+function sheetInstance(api, wx, assistant = {}) {
   let definition
   const source = fs.readFileSync(__dirname + '/components/lingxiaoshu-sheet/index.js', 'utf8')
   vm.runInNewContext(source, {
     Component: value => { definition = value },
-    require: name => ({ '../../lib/api': api, '../../lib/assistant': {}, '../../lib/lingxiaoshu-feed': {}, '../../lib/workbench': {} })[name],
+    require: name => ({ '../../lib/api': api, '../../lib/assistant': assistant, '../../lib/lingxiaoshu-feed': {}, '../../lib/workbench': {} })[name],
     wx,
   })
   const instance = {
     data: { ...definition.data },
+    properties: {},
+    triggerEvent() {},
+    hidePage() { definition.pageLifetimes.hide.call(this) },
     setData(patch) { Object.assign(this.data, patch) },
     ...definition.methods,
   }
@@ -198,4 +202,60 @@ test('voice transcription returns an editable draft without sending a chat messa
   assert.equal(instance.data.input, '查询本周任务')
   assert.equal(instance.data.composerMode, 'text')
   assert.equal(instance.data.transcribing, false)
+})
+
+
+test('closing or leaving the page clears conversation, draft and feedback and disposes the controller', () => {
+  for (const exit of ['close', 'hidePage']) {
+    let disposed = 0
+    const instance = sheetInstance({}, {})
+    Object.assign(instance.data, { visible: true, messages: [{ text: 'old answer' }], input: 'draft', error: 'old error', sending: true, preview: { id: 'old' }, anchor: 'old' })
+    instance.controller = { dispose() { disposed++ } }
+    instance[exit]()
+    assert.equal(disposed, 1)
+    assert.equal(instance.controller, null)
+    assert.equal(instance.data.messages.length, 0)
+    assert.equal(instance.data.input, '')
+    assert.equal(instance.data.error, '')
+    assert.equal(instance.data.visible, false)
+    assert.equal(instance.data.sending, false)
+    assert.equal(instance.data.preview, null)
+    assert.equal(instance.data.anchor, '')
+  }
+})
+
+test('closing before profile restoration finishes cannot install a stale conversation', async () => {
+  let resolveProfile, created = 0
+  const instance = sheetInstance({ token: () => 'account', me: () => new Promise(resolve => { resolveProfile = resolve }) }, {}, {
+    createAssistantController() { created++; throw Error('stale bootstrap must not create controller') },
+  })
+  const opening = instance.bootstrap()
+  instance.close()
+  resolveProfile({ user: { id: 'user', tenantId: 'tenant' } })
+  await opening
+  assert.equal(created, 0)
+  assert.equal(instance.data.booting, false)
+  assert.equal(instance.data.messages.length, 0)
+})
+
+test('late controller updates and failed sends cannot repopulate a closed sheet', async () => {
+  let emit, rejectSend
+  const controller = {
+    async restore() {}, dispose() {},
+    send() { return new Promise((resolve, reject) => { rejectSend = reject }) },
+  }
+  const instance = sheetInstance({ token: () => 'account' }, {}, {
+    createAssistantController(options) { emit = options.onChange; return controller },
+  })
+  instance.ensureProfile = async () => 'tenant:user'
+  await instance.bootstrap()
+  instance.data.input = 'question'
+  const sending = instance.send()
+  instance.close()
+  emit({ messages: [{ text: 'late reply' }], error: 'late error' })
+  rejectSend(Error('late failure'))
+  await sending
+  assert.equal(instance.data.messages.length, 0)
+  assert.equal(instance.data.input, '')
+  assert.equal(instance.data.error, '')
 })

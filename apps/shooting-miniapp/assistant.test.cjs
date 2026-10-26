@@ -5,7 +5,7 @@ const vm = require('node:vm')
 const mod = { exports: {} }
 vm.runInNewContext(fs.readFileSync(__dirname + '/lib/assistant.js', 'utf8'), { module: mod, setTimeout, clearTimeout, require: id => { assert.equal(id, './request-policy'); const policy = { exports: {} }; vm.runInNewContext(fs.readFileSync(__dirname + '/lib/request-policy.js', 'utf8'), { module: policy }); return policy.exports } })
 const { createAssistantController } = mod.exports
-function fixture(extra) {
+function fixture(extra, options = {}) {
   const calls = [], stored = new Map()
   const request = async (path, method, body) => {
     calls.push({ path, method, body })
@@ -21,7 +21,7 @@ function fixture(extra) {
     if (path.includes('/actions/')) return { receipt: { id: 'receipt-1', status: 'running' } }
     throw new Error(path)
   }
-  const controller = createAssistantController({ request, storage: { get: key => stored.get(key), set: (key, value) => stored.set(key, JSON.parse(JSON.stringify(value))) }, schedule: () => 1, cancel: () => {} })
+  const controller = createAssistantController({ ...options, request, storage: { get: key => stored.get(key), set: (key, value) => stored.set(key, JSON.parse(JSON.stringify(value))) }, schedule: () => 1, cancel: () => {} })
   return { controller, calls, stored }
 }
 test('restores server conversation; query never executes a suggested action', async () => {
@@ -89,7 +89,7 @@ test('operator assistant keeps suggested questions collapsed on the empty conver
   assert.match(markup, /wx:if="{{showSuggestions}}" class="suggestions"/)
   assert.match(markup, /bindtap="toggleSuggestions"/)
   assert.match(script, /showSuggestions: false/)
-  assert.match(styles, /\.voice-prompt\{[^}]*box-shadow:/)
+  assert.match(styles, /\.composer\{[^}]*box-shadow:/)
   assert.match(markup, /wx:if="{{contentTask}}" class="content-task-card"/)
   assert.match(script, /contentTaskView\(state\.contentTask\)/)
   assert.match(script, /packages\/operator\/content-task\/index\?taskId=/)
@@ -102,13 +102,19 @@ test('operator assistant keeps suggested questions collapsed on the empty conver
   assert.match(detail, /任务状态暂时无法读取，已保留当前页面/)
 })
 
-test('operator assistant opens in voice mode with the dispatch prompt above two-tab navigation', () => {
+test('standalone assistant opens in text mode with shortcuts immediately above the composer', () => {
   const markup = fs.readFileSync(__dirname + '/packages/operator/assistant/index.wxml', 'utf8')
   const script = fs.readFileSync(__dirname + '/packages/operator/assistant/index.js', 'utf8')
-  assert.match(script, /inputMode: 'voice'/)
-  assert.match(markup, /长按问灵小枢/)
-  assert.match(markup, /可按住提问或者派活/)
-  assert.match(markup, /我的会话/)
+  assert.match(script, /inputMode: 'text'/)
+  assert.match(script, /freshSession: true/)
+  assert.match(markup, /Hi 灵小枢/)
+  assert.match(markup, /class="quick-cards"/)
+  assert.ok(markup.indexOf('class="quick-cards"') < markup.indexOf('class="composer"'))
+  assert.match(markup, /按住说话/)
+  assert.match(markup, /bindtap="openSessions"/)
+  assert.match(markup, /新对话/)
+  assert.match(markup, /历史会话/)
+  assert.doesNotMatch(script, /home\/index\?assistant=1/)
   assert.match(script, /duration:20000/)
   assert.doesNotMatch(script, /controller\?\.send\(text\)/)
 })
@@ -120,6 +126,7 @@ test('operator assistant recovers denied microphone permission without leaving a
     openSetting: options => { opened++; options.success({ authSetting: { 'scope.record': true } }) }
   }
   vm.runInNewContext(fs.readFileSync(__dirname + '/packages/operator/assistant/index.js', 'utf8'), {
+    setTimeout: () => 1, clearTimeout() {},
     Page: value => { definition = value },
     require: id => id.endsWith('/api') ? {} : { createAssistantController() {} },
     wx
@@ -156,4 +163,118 @@ test('conversation linkage failure preserves accepted receipt without resubmissi
   assert.equal(stored.get('mobile-assistant-pending:tenant:user').receiptIds[0], 'receipt-1')
   assert.equal(calls.filter(call => call.path.endsWith('/actions')).length, 1)
   controller.dispose()
+})
+
+
+test('fresh sheet opens without reading history or creating empty server sessions', async () => {
+  const { controller, calls, stored } = fixture(undefined, { freshSession: true })
+  stored.set('mobile-assistant-pending:tenant:user', { message: { text: 'old question', idempotencyKey: 'old-key' } })
+  await controller.restore('tenant:user')
+  assert.equal(controller.getState().messages.length, 0)
+  assert.equal(controller.getState().sessionId, '')
+  assert.equal(calls.some(call => call.path.includes('/sessions')), false)
+  assert.equal(stored.get('mobile-assistant-pending:tenant:user').message, undefined)
+  controller.dispose()
+})
+
+test('fresh sheet creates a new session only for its first send and retains that session within the visit', async () => {
+  const { controller, calls } = fixture((path, method) => {
+    if (path.endsWith('/sessions') && method === 'POST') return { session: { id: 'new-session' } }
+    if (path.endsWith('/messages')) return { messages: [{ id: 'new-answer', text: 'new conversation' }] }
+  }, { freshSession: true })
+  await controller.restore('tenant:user')
+  await controller.send('first question')
+  await controller.send('follow-up')
+  assert.equal(calls.filter(call => call.path.endsWith('/sessions') && call.method === 'POST').length, 1)
+  assert.ok(calls.filter(call => call.path.endsWith('/query')).every(call => call.body.sessionId === 'new-session'))
+  assert.equal(controller.getState().messages[0].id, 'new-answer')
+  assert.equal(calls.some(call => call.path.includes('/sessions?')), false)
+  controller.dispose()
+})
+
+test('leaving during session creation still submits the accepted question without updating the closed page', async () => {
+  let resolveSession
+  const { controller, calls } = fixture((path, method) => {
+    if (path.endsWith('/sessions') && method === 'POST') return new Promise(resolve => { resolveSession = resolve })
+  }, { freshSession: true })
+  await controller.restore('tenant:user')
+  const sending = controller.send('question before closing')
+  await new Promise(resolve => setImmediate(resolve))
+  controller.dispose()
+  resolveSession({ session: { id: 'closed-session' } })
+  await sending
+  assert.equal(calls.filter(call => call.path.endsWith('/query')).length, 1)
+  assert.equal(calls.find(call => call.path.endsWith('/query')).body.sessionId, 'closed-session')
+})
+
+function standalonePage(api, controllerFactory) {
+  let definition
+  vm.runInNewContext(fs.readFileSync(__dirname + '/packages/operator/assistant/index.js', 'utf8'), {
+    setTimeout: () => 1, clearTimeout() {},
+    Page: value => { definition = value },
+    require: id => id.endsWith('/api') ? api : { createAssistantController: controllerFactory },
+    wx: { getStorageSync() {}, setStorageSync() {} },
+  })
+  return { ...definition, data: { ...definition.data }, setData(patch) { Object.assign(this.data, patch) } }
+}
+
+test('standalone page starts fresh and ignores updates after leaving the page', async () => {
+  let options, disposed = 0
+  const controller = { async restore(scope) { assert.equal(scope, 'tenant:user:unified') }, dispose() { disposed++ } }
+  const page = standalonePage({ token: () => 'token', me: async () => ({ user: { tenantId: 'tenant', id: 'user' } }) }, value => { options = value; return controller })
+  await page.initialize()
+  assert.equal(options.freshSession, true)
+  options.onChange({ messages: [{ id: 'reply', text: 'current reply' }], input: 'draft' })
+  assert.equal(page.data.messages[0].content, 'current reply')
+  page.onHide()
+  options.onChange({ messages: [{ id: 'late', text: 'late reply' }], input: 'old draft' })
+  assert.equal(disposed, 1)
+  assert.equal(page.data.messages.length, 0)
+  assert.equal(page.data.input, '')
+  assert.equal(page.controller, null)
+})
+
+test('standalone page does not create a controller after a late login response', async () => {
+  let finish, created = 0
+  const page = standalonePage({ token: () => 'token', me: () => new Promise(resolve => { finish = resolve }) }, () => { created++ })
+  const opening = page.initialize()
+  page.onHide()
+  finish({ user: { tenantId: 'tenant', id: 'user' } })
+  await opening
+  assert.equal(created, 0)
+  assert.equal(page.data.messages.length, 0)
+})
+
+
+test('history selection resumes a processing session without another AI submission', async () => {
+  const { controller, calls } = fixture(path => path.endsWith('/messages') ? { session: { status: 'processing' }, messages: [{ id: 'question', role: 'user', text: 'waiting' }] } : undefined, { freshSession: true })
+  await controller.restore('tenant:user')
+  await controller.openSession('pending-session')
+  assert.equal(controller.getState().sessionId, 'pending-session')
+  assert.equal(controller.getState().processing, true)
+  await controller.send('another question')
+  assert.equal(calls.filter(call => call.path.endsWith('/query')).length, 0)
+  controller.dispose()
+})
+
+test('background result gets one unread badge, clears after reading, and search filters titles', async () => {
+  let status = 'processing', resultMessageId = ''
+  const controller = { getState: () => ({ sessionId: '' }), listSessions: async () => [{ id: 's1', title: '产品内容策划', status, resultMessageId }], dispose() {} }
+  const page = standalonePage({}, () => controller)
+  page.controller = controller; page.visit = 1; page.readKey = 'read:tenant:user'; page.readResults = {}
+  await page.refreshHistory()
+  assert.equal(page.data.sessions[0].unread, false)
+  assert.equal(page.data.sessions[0].statusLabel, '处理中')
+  status = 'completed'; resultMessageId = 'actual-answer'
+  await page.refreshHistory()
+  assert.equal(page.data.sessions[0].unread, true)
+  assert.equal(page.data.unreadTotal, 1)
+  page.markRead('s1', resultMessageId)
+  await page.refreshHistory()
+  assert.equal(page.data.unreadTotal, 0)
+  page.searchSessions({ detail: { value: '客户' } })
+  assert.equal(page.data.filteredSessions.length, 0)
+  page.searchSessions({ detail: { value: '产品' } })
+  assert.equal(page.data.filteredSessions.length, 1)
+  page.onHide()
 })

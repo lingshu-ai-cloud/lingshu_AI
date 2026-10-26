@@ -3,6 +3,7 @@ import { Router, json } from 'express';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import { enforceSupportSessionReadOnly, type AuthLocals } from '../middleware/auth.js';
 import { validateChatMessages } from '../assistantContext/chatInput.js';
+import { mobileAssistantHistory } from './mobileAssistantHistory.js';
 import type { ChatMessage } from '../agents/llm.js';
 
 export const MOBILE_ASSISTANT_SESSIONS = 'assistant_threads';
@@ -115,8 +116,9 @@ export function createMobileAssistantSessionsRouter(store: DataStore) {
     const includeArchived = req.query.archived === 'all';
     try {
       const list = await store.list<Record_>(MOBILE_ASSISTANT_SESSIONS, { where: { tenantId, userId, source: 'mobile_workbench' }, sort: '-createdAt', page, perPage: 100 });
-      const sessions = list.items.filter(row => row.tenantId === tenantId && row.userId === userId && row.source === 'mobile_workbench'
-        && String(row.context_mode || 'operator') === mode && (includeArchived || !row.archived_at)).map(visibleSession);
+      const owned = list.items.filter(row => row.tenantId === tenantId && row.userId === userId && row.source === 'mobile_workbench'
+        && String(row.context_mode || 'operator') === mode && (includeArchived || !row.archived_at));
+      const sessions = (await Promise.all(owned.map(async row => ({ ...visibleSession(row), ...await mobileAssistantHistory(store, row) })))).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
       res.json({ sessions, page, totalPages: list.totalPages });
     } catch { res.status(503).json({ error: 'mobile_assistant_storage_unavailable' }); }
   });
@@ -160,7 +162,7 @@ export function createMobileAssistantSessionsRouter(store: DataStore) {
         const receipt = await store.getById<Record_>('mobile_workbench_action_receipts', String(commandId));
         if (receipt?.tenant_id === identity.tenantId && receipt?.user_id === identity.userId) receipts.push({ id: receipt.id, status: receipt.status, kind: receipt.kind, targetId: receipt.target_id, result: receipt.result || null, error: receipt.error || null });
       }
-      res.json({ session: visibleSession(session), messages: rows.map(visibleMessage), receipts, page, totalPages: list.totalPages });
+      res.json({ session: { ...visibleSession(session), ...await mobileAssistantHistory(store, session) }, messages: rows.map(visibleMessage), receipts, page, totalPages: list.totalPages });
     } catch { res.status(503).json({ error: 'mobile_assistant_storage_unavailable' }); }
   });
   router.post('/assistant/sessions/:id/commands', json({ limit: '4kb' }), async (req, res) => {

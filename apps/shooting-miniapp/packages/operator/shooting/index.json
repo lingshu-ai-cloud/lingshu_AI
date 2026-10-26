@@ -1,8 +1,4 @@
 {
   "navigationBarTitleText": "素材拍摄",
-  "navigationStyle": "default",
-  "usingComponents": {
-    "operator-nav": "/components/operator-nav/index",
-    "lingxiaoshu-sheet": "/components/lingxiaoshu-sheet/index"
-  }
+  "navigationStyle": "default"
 }

@@ -32,22 +32,30 @@ function createAssistantController(options) {
     } catch (error) { if (live(ticket)) update({ error: error.message || '执行状态暂时无法更新，稍后重试。' }) }
     if (live(ticket) && (state.receipts.some(receipt => !terminal(receipt)) || state.contentTask?.card?.overallState === 'processing')) timer = schedule(poll, 5000)
   }
-  async function restore(nextScope) {
+  async function restore(nextScope, selectedSessionId) {
     stop(); epoch++; disposed = false; scope = String(nextScope || '')
     if (!scope) throw new Error('助手需要已登录的企业账号')
     pending = storage.get(key()) || {}
+    if (options.freshSession) { delete pending.message; save() }
     const ticket = epoch
-    update({ sessionId: '', messages: [], suggestions: [], contentTask: null, receipts: [], preview: null, loading: true, sending: false, confirming: false, error: '', answer: '', evidence: [], actions: [], links: [], input: '' })
+    update({ sessionId: '', messages: [], suggestions: [], contentTask: null, receipts: [], preview: null, loading: true, sending: false, processing: false, confirming: false, error: '', answer: '', evidence: [], actions: [], links: [], input: '' })
     try {
-      const sessionPath = 'mobile-workbench/assistant/sessions?contextMode=' + encodeURIComponent(contextMode)
-      const [context, sessions] = await Promise.all([request('mobile-workbench/assistant/context'), request(sessionPath)])
-      let session = (sessions.sessions || [])[0]
-      if (!session) session = (await request('mobile-workbench/assistant/sessions', 'POST', { contextMode })).session
-      const history = await request('mobile-workbench/assistant/sessions/' + encodeURIComponent(session.id) + '/messages')
-      const result = { sessionId: session.id, messages: history.messages, suggestions: context.quickQuestions, contentTask: context.currentContentTask || null, receipts: history.receipts || [] }
+      const [context, sessions] = await Promise.all([
+        request('mobile-workbench/assistant/context'),
+        options.freshSession ? Promise.resolve({ sessions: [] }) : request('mobile-workbench/assistant/sessions?contextMode=' + encodeURIComponent(contextMode))
+      ])
+      if (!live(ticket)) return
+      let session = null, history = { messages: [], receipts: [] }
+      if (selectedSessionId || !options.freshSession) {
+        session = selectedSessionId ? { id: selectedSessionId } : (sessions.sessions || [])[0]
+        if (!session) session = (await request('mobile-workbench/assistant/sessions', 'POST', { contextMode })).session
+        if (!live(ticket)) return
+        history = await request('mobile-workbench/assistant/sessions/' + encodeURIComponent(session.id) + '/messages')
+      }
+      const result = { sessionId: session?.id || '', messages: history.messages, suggestions: context.quickQuestions, contentTask: context.currentContentTask || null, receipts: history.receipts || [], processing: history.session?.status === 'processing' }
       if (!live(ticket)) return
       const receipts = result.receipts || []
-      update({ sessionId: result.sessionId, messages: result.messages || [], suggestions: result.suggestions || [], contentTask: result.contentTask, receipts })
+      update({ sessionId: result.sessionId, messages: result.messages || [], suggestions: result.suggestions || [], contentTask: result.contentTask, receipts, processing: result.processing })
       // Session is authoritative, but locally accepted receipts survive a lost response.
       const missing = (pending.receiptIds || []).filter(id => !receipts.some(receipt => receipt.id === id))
       for (const id of missing) {
@@ -70,19 +78,32 @@ function createAssistantController(options) {
   async function readSession(sessionId) {
     return request('mobile-workbench/assistant/sessions/' + encodeURIComponent(sessionId) + '/messages')
   }
+  async function refreshSession() {
+    const ticket = epoch, sessionId = state.sessionId
+    if (!sessionId) return
+    const history = await readSession(sessionId)
+    if (live(ticket) && sessionId === state.sessionId) update({ messages: history.messages || [], receipts: history.receipts || [], processing: history.session?.status === 'processing' })
+  }
   async function archive() {
     if (!state.sessionId || !state.messages.length) return null
     return request('mobile-workbench/assistant/sessions/' + encodeURIComponent(state.sessionId) + '/archive', 'POST', {})
   }
   async function send(text) {
     text = String(text || '').trim()
-    if (!text || state.sending || state.confirming) return
+    if (!text || state.sending || state.processing || state.confirming) return
     const ticket = epoch
-    if (!state.sessionId) throw new Error('请先恢复助手会话')
+    if (!state.sessionId && !options.freshSession) throw new Error('请先恢复助手会话')
     if (!pending.message || pending.message.text !== text) { pending.message = { text, idempotencyKey: makeKey() }; save() }
+    const messageKey = pending.message.idempotencyKey
+    let sessionId = state.sessionId
     update({ sending: true, input: text, error: '', preview: null })
     try {
-      const result = await request('mobile-workbench/assistant/query', 'POST', { sessionId: state.sessionId, input: text, idempotencyKey: pending.message.idempotencyKey, contextMode })
+      if (!sessionId) {
+        const result = await request('mobile-workbench/assistant/sessions', 'POST', { contextMode, title: text.slice(0, 40) })
+        sessionId = result.session.id
+        if (live(ticket)) update({ sessionId })
+      }
+      const result = await request('mobile-workbench/assistant/query', 'POST', { sessionId, input: text, idempotencyKey: messageKey, contextMode })
       if (!live(ticket)) return
       const history = await request('mobile-workbench/assistant/sessions/' + encodeURIComponent(state.sessionId) + '/messages')
       if (!live(ticket)) return
@@ -126,7 +147,8 @@ function createAssistantController(options) {
     finally { if (live(ticket)) update({ confirming: false }) }
   }
   return {
-    restore, send, preview, confirm, poll, listSessions, readSession, archive,
+    restore, send, preview, confirm, poll, listSessions, readSession, archive, refreshSession,
+    openSession: id => restore(scope, id),
     getState: () => ({ ...state }),
     setInput: input => update({ input: String(input || '') }),
     dismissPreview: () => update({ preview: null }),

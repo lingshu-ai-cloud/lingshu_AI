@@ -4,13 +4,14 @@ const { normalizeCustomer, filterInquiries } = require('../../../lib/inquiries')
 Page({
   data: { active: 'all', query: '', unreadOnly: false, channel: '', customers: [], visible: [], counts: { confirm: 0, followup: 0, unread: 0, all: 0 }, loading: true, error: '', filterOpen: false },
   onLoad(options) { if (options && ['confirm', 'followup', 'all'].includes(options.tab)) this.setData({ active: options.tab }); this.load() },
-  onShow() { if (this.data.customers.length) this.apply() },
+  onShow() { if (!this.data.loading) this.load() },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()) },
   async load() {
     this.setData({ loading: true, error: '' })
     try {
       const result = await api.customers()
       const customers = (result.items || []).map(normalizeCustomer)
+      wx.setStorageSync('operator-customer-unread-count', customers.filter(item => item.unread).length)
       this.setData({ customers, counts: { confirm: customers.filter(item => item.status === 'confirm').length, followup: customers.filter(item => item.status === 'followup').length, unread: customers.filter(item => item.unread).length, all: customers.length }, loading: false })
       this.apply()
     }
