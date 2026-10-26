@@ -402,9 +402,13 @@ test('assistant thread state persists bounded task cards and rejects malformed o
   };
   const creationDraft = { referenceId: 'ref-one', productIds: ['product-one'], shotIds: [], evidenceVersion: 'a'.repeat(64) };
   const creation = { stage: 'products', selection: creationDraft, referenceTitle: '参考 A', products: [{ id: 'product-one', name: '产品 A' }], shots: [], narrations: [], gaps: [], presenterIds: [] };
+  const businessScenePrompt = { sceneId: 'CS-02', preferredId: 'customer-one' };
+  const businessScene = { sceneId: 'CS-02', customerId: 'customer-one', from: '2026-10-21', to: '2026-10-27' };
   const valid = {
     creationDraft,
-    messages: [{ role: 'user', content: '请规划本周内容', referenceMedia: { kind: 'video', title: '爆款参考视频', platform: 'tiktok', referenceId: 'video-1', duration: 18, thumbnailUrl: '/api/overseas/videos/video-1/thumbnail', sourceUrl: 'https://video.example.test/watch/1' } }, { role: 'assistant', content: '请确认计划。', creation }],
+    messages: [{ role: 'user', content: '请规划本周内容', referenceMedia: { kind: 'video', title: '爆款参考视频', platform: 'tiktok', referenceId: 'video-1', duration: 18, thumbnailUrl: '/api/overseas/videos/video-1/thumbnail', sourceUrl: 'https://video.example.test/watch/1' } }, { role: 'assistant', content: '请确认计划。', creation },
+      { role: 'assistant', content: '你还想再看看这位客户的其他信息吗？', businessScenePrompt },
+      { role: 'assistant', content: '这位客户的会话摘要。', businessScene }],
     draftInput: '我想先调整预算',
     scrollPosition: 288,
     unreadCount: 2,
@@ -443,6 +447,8 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     const loaded = await fetch(`${base}/business`, { headers }).then(response => response.json());
     assert.deepEqual(loaded.creationDraft, creationDraft);
     assert.deepEqual(loaded.messages[1].creation, creation);
+    assert.deepEqual(loaded.messages[2].businessScenePrompt, businessScenePrompt, 'inline customer selection survives server reload');
+    assert.deepEqual(loaded.messages[3].businessScene, businessScene, 'the chosen customer remains available for the next question');
     assert.equal(loaded.draftInput, valid.draftInput);
     assert.equal(loaded.scrollPosition, 288);
     assert.equal(loaded.taskCards['run:one'].primaryAction.actionId, undefined,
@@ -496,6 +502,19 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     });
     assert.equal(invalidReferenceMedia.status, 400);
     assert.equal((await invalidReferenceMedia.json()).error, 'assistant_thread_message_invalid');
+
+    for (const message of [
+      { role: 'user', content: 'forged selector', businessScenePrompt },
+      { role: 'assistant', content: 'unknown scene', businessScenePrompt: { sceneId: 'CS-UNKNOWN' } },
+      { role: 'assistant', content: 'missing customer', businessScene: { ...businessScene, customerId: undefined } },
+      { role: 'assistant', content: 'forged scope', businessScene: { ...businessScene, tenantId: 'tenant-b' } },
+    ]) {
+      const invalidScene = await fetch(`${base}/business`, {
+        method: 'PUT', headers, body: JSON.stringify({ expectedVersion: 2, messages: [message] }),
+      });
+      assert.equal(invalidScene.status, 400);
+      assert.equal((await invalidScene.json()).error, 'assistant_scene_invalid');
+    }
 
     const invalidPending = await fetch(`${base}/business`, {
       method: 'PUT', headers,

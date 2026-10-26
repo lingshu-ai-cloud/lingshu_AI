@@ -8,6 +8,8 @@ export const BUSINESS_SCENES = {
   'CO-07': '改写成多平台版本',
 } as const;
 export type BusinessSceneId = keyof typeof BUSINESS_SCENES;
+export const businessScenePromptSchema = z.object({ sceneId: z.enum(Object.keys(BUSINESS_SCENES) as [BusinessSceneId, ...BusinessSceneId[]]), preferredId: z.string().max(150).optional() }).strict();
+export type BusinessScenePrompt = z.infer<typeof businessScenePromptSchema>;
 export const isBusinessScene = (id: string): id is BusinessSceneId => Object.hasOwn(BUSINESS_SCENES, id);
 const id = z.string().trim().min(1).max(150);
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(v => Number.isFinite(Date.parse(v)) && new Date(v).toISOString().startsWith(v));
@@ -36,6 +38,6 @@ export function businessSceneFollowup(question: string, lastMessage: { role?: st
 export function defaultBusinessPeriod(sceneId: BusinessSceneId, now = new Date()) {
   const shifted = new Date(now.getTime() + 8 * 3600000);
   const to = shifted.toISOString().slice(0, 10);
-  const days = sceneId === 'OP-05' ? 0 : ['OP-01', 'OP-07', 'OP-08'].includes(sceneId) ? (shifted.getUTCDay() + 6) % 7 : 6;
+  const days = 6;
   return { from: new Date(shifted.getTime() - days * 86400000).toISOString().slice(0, 10), to };
 }

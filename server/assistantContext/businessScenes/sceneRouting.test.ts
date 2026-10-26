@@ -31,6 +31,6 @@ test('same-scene followups retain the typed object while external/new topics dro
   assert.equal(businessSceneFollowup('继续查最新行业资讯', { role: 'assistant', businessScene: scene }), undefined);
   assert.equal(businessSceneFollowup('切换计划', { role: 'assistant', businessScene: scene }), undefined);
   const monday = new Date('2026-10-25T17:00:00Z');
-  assert.deepEqual(defaultBusinessPeriod('OP-07', monday), { from: '2026-10-26', to: '2026-10-26' });
-  assert.deepEqual(defaultBusinessPeriod('OP-05', monday), { from: '2026-10-26', to: '2026-10-26' });
+  assert.deepEqual(defaultBusinessPeriod('OP-07', monday), { from: '2026-10-20', to: '2026-10-26' });
+  assert.deepEqual(defaultBusinessPeriod('OP-05', monday), { from: '2026-10-20', to: '2026-10-26' });
 });

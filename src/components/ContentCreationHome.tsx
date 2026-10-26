@@ -59,6 +59,7 @@ function launcherIcon(id: AssistantHomeQuickLauncherId, size = 18) {
 function resolveLauncherPrompts(launcher: AssistantHomeQuickLauncher | null): AssistantHomePrompt[] {
   if (!launcher) return [];
   return launcher.promptIds
+    .slice(0, 4)
     .map(id => assistantHomePromptById(id))
     .filter((entry): entry is AssistantHomePrompt => Boolean(entry));
 }
@@ -144,7 +145,13 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
   };
 
   const choosePrompt = (entry: AssistantHomePrompt) => {
-    if (isBusinessScene(entry.id)) { setBusinessSceneId(entry.id); return; }
+    if (entry.id === 'CO-07') { setBusinessSceneId(entry.id); return; }
+    if (isBusinessScene(entry.id) || ['OP-02', 'OP-09', 'OP-11', 'OP-12'].includes(entry.id)) {
+      if (assistantBusy) return;
+      setActiveLauncherId(null);
+      window.dispatchEvent(new CustomEvent('lingshu-assistant-open', { detail: { text: entry.prompt, preserveDraft: true } }));
+      return;
+    }
     if (entry.id === 'CO-SPEECH-HIGHLIGHT') { setHighlightOpen(true); return; }
     if (entry.id === 'OP-LEADER') { setCompanyReportOpen(true); return; }
     setCompanyReportOpen(false);

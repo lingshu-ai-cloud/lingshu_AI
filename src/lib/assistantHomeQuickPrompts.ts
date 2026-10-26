@@ -101,7 +101,7 @@ export const ASSISTANT_HOME_PROMPTS: AssistantHomePrompt[] = [
   ]),
   ...defineGroup('ads', [
     { id: 'AD-01', label: '分析投放数据', summary: '分析投放效果、成本趋势与异常', level: 'query', prompt: '请读取当前可访问的真实投放数据，按账户、计划、广告组和素材分析消耗、触达、点击、转化、成本、趋势和异常。注明时间范围、币种、归因口径与数据缺口，并给出不涉及自动调价的建议。' },
-    { id: 'AD-02', label: '制定投放计划', summary: '准备包含测试结构和停止条件的计划草案', level: 'plan', prompt: '请结合经营目标、目标市场、产品、受众、可用素材、预算范围和已有投放结果，准备一份投放计划草案。包含目标、渠道、受众、素材、预算建议、测试结构、指标和停止条件；未经确认不要创建计划或产生费用。' },
+    { id: 'AD-02', label: '创建一条新投流计划', summary: '通过对话确认目标、素材和预算，保存新计划', level: 'plan', prompt: '请带我通过对话创建一条新投流计划，先读取企业资料，一次确认一个必要信息，最后由我确认保存草稿。未确认前不保存，也不启动投放或产生付费请求。' },
     { id: 'AD-03', label: '推荐渠道与受众', summary: '基于证据推荐优先测试的渠道和受众', level: 'plan', prompt: '请根据产品、目标市场、客户画像、内容表现和现有渠道数据，推荐优先测试的投放渠道与受众。说明证据、假设、排除项、测试规模和风险；数据不足时先列出需补充信息。' },
     { id: 'AD-04', label: '规划预算与目标', summary: '给出分阶段预算、指标和停止条件', level: 'plan', prompt: '请根据当前目标和可访问的历史数据，给出分阶段预算与目标建议，列出币种、周期、核心指标、预警阈值、停止条件和不确定性。只做规划，不要修改预算、出价或启动投放。' },
     { id: 'AD-05', label: '筛选投放素材', summary: '从已批准素材中设计可衡量测试组合', level: 'plan', prompt: '请从当前已批准且可用于投放的素材中，按目标、受众、平台适配、历史表现和合规风险筛选测试组合，并说明每组的变量和衡量方法。不要使用未批准或状态不明的内容。' },
@@ -136,7 +136,7 @@ export const ASSISTANT_HOME_QUICK_LAUNCHERS: AssistantHomeQuickLauncher[] = [
   { id: 'weekly-plan', label: '查看当前周计划', description: '查看本周任务、优先事项、复盘和下一轮动作', promptIds: ['OP-CALENDAR', 'OP-01', 'CO-11', 'OP-05', 'OP-07', 'OP-08'] },
   { id: 'external-news', label: '查看外部资讯', description: '查看行业、社媒和政策平台信号', promptIds: ['OP-02', 'OP-LEADER', 'OP-09', 'OP-11', 'OP-12', 'OP-RATES', 'OP-TRADE'] },
   { id: 'business-analysis', label: '分析经营数据', description: '分析经营、账号、投放和客户数据', promptIds: ['OP-04', 'OP-06', 'PU-04', 'AD-01', 'CS-05'] },
-  { id: 'viral-script', label: '内容创作', description: '选择视频创作或图文爆款复刻场景', promptIds: ['CO-REPLICATE', 'CO-HOOK', 'CO-07', 'CO-SPEECH-HIGHLIGHT', 'CO-13'] },
+  { id: 'viral-script', label: '内容创作', description: '选择视频创作或图文爆款复刻场景', promptIds: ['CO-REPLICATE', 'CO-HOOK', 'CO-07', 'CO-13', 'CO-SPEECH-HIGHLIGHT'] },
   { id: 'customer-followup', label: '跟进重点客户', description: '梳理重点客户、会话、回复和跟进计划', promptIds: ['CS-01', 'CS-02', 'CS-03', 'CS-07', 'CS-09'] },
   { id: 'traffic-optimization', label: '优化智能投流', description: '分析投放并准备渠道、预算和执行方案', promptIds: ['AD-01', 'AD-02', 'AD-03', 'AD-04', 'AD-06'] },
 ];
@@ -150,4 +150,19 @@ export const ASSISTANT_HOME_LEVEL_LABELS: Record<AssistantHomePromptLevel, strin
 
 export function assistantHomePromptById(id: string): AssistantHomePrompt | undefined {
   return ASSISTANT_HOME_PROMPTS.find(entry => entry.id === id);
+}
+
+function normalizedQuickTaskText(value: string): string {
+  return value.trim().replace(/\r\n?/gu, '\n').replace(/[ \t]+/gu, ' ');
+}
+
+/** Presentation-only classification; it never authorizes a task or mutation. */
+export function isAssistantHomeQuickTaskText(value: string): boolean {
+  const text = normalizedQuickTaskText(value);
+  if (!text) return false;
+  if (/^(?:行业资讯：行业：.+，目标市场：.+|查询.+兑.+的最新参考汇率|查询\d{4}年.+HS\s*\d{2,6}(?:进口|出口)金额)/u.test(text)) return true;
+  return ASSISTANT_HOME_PROMPTS.some(entry => {
+    const prompt = normalizedQuickTaskText(entry.prompt);
+    return text === prompt || text.startsWith(`${prompt}\n`) || text.endsWith(`\n${prompt}`);
+  });
 }

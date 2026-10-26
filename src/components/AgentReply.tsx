@@ -193,7 +193,7 @@ export function splitReplySourceFooter(content: string): { body: string; footer:
   return { body: lines.slice(0, boundary).join('\n').trimEnd(), footer: lines.slice(boundary).join('\n') };
 }
 
-export default function AgentReply({ content, sources, onSuggest, detailExpanded = false, allowDetails = true, allowSources = true }: {
+export default function AgentReply({ content, sources, onSuggest, detailExpanded = false, allowDetails = true, allowSources = true, compact = false }: {
   content: string;
   sources?: { title: string; uri: string }[];
   onAction?: (agent: AgentType, task: string) => void;
@@ -201,11 +201,12 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
   detailExpanded?: boolean;
   allowDetails?: boolean;
   allowSources?: boolean;
+  compact?: boolean;
 }) {
   setTrustedLinkHosts(sources);
   const files = extractAssistantFiles(content);
   const sourcePresentation = allowSources ? splitReplySourceFooter(files.text) : { body: files.text, footer: '' };
-  const presentation = allowDetails ? splitAssistantReply(sourcePresentation.body) : { summary: sourcePresentation.body, details: [] };
+  const presentation = allowDetails ? splitAssistantReply(sourcePresentation.body, { compact }) : { summary: sourcePresentation.body, details: [] };
   const lines = readableAssistantReply(presentation.summary).split('\n');
   const blocks: ReactNode[] = [];
   let list: { type: 'ul' | 'ol'; items: string[] } | null = null;

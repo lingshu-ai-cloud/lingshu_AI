@@ -33,6 +33,7 @@ export interface AuthSession {
   subscription?: { status: string; plan: string | null; expiresAt: string | null };
   demo?: {
     enabled: boolean;
+    tokenUnlimited?: boolean;
     trialDays: number;
     expiresAt: string | null;
     daysRemaining: number | null;

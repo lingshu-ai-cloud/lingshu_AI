@@ -53,6 +53,12 @@ try {
   }, 'operation-a'), (error: unknown) => error instanceof SocialContentRequestError && error.status === 503);
   assert.equal(calls, 1, 'writes are never automatically replayed after a server response');
 
+  globalThis.fetch = async () => json(503, { error: 'social_content_unavailable' });
+  await assert.rejects(() => socialContentApi.updateTask('task-a', {
+    expectedVersion: 'v1', changes: { title: 'new title' },
+  }, 'operation-b'), (error: unknown) => error instanceof SocialContentRequestError
+    && error.message === '内容任务服务没有返回保存回执；请先查看任务列表，确认没有新增任务后再按原确认重试');
+
   calls = 0;
   globalThis.fetch = async () => { calls += 1; return json(429, { error: 'busy' }); };
   await assert.rejects(() => socialContentApi.uploadArtifactMedia(

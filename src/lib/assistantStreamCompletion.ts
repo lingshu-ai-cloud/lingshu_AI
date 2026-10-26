@@ -7,7 +7,7 @@ export class AssistantStreamCompletion {
     try { event = JSON.parse(payload); }
     catch { this.error = '回答传输异常，已保留收到的部分。请重新提问。'; return null; }
     if (!event || typeof event !== 'object') { this.error = '回答传输异常，请重新提问。'; return null; }
-    if (event.error) this.error = typeof event.code === 'string' && /^(?:external_|exchange_|comtrade_|qwen_search_|search_|company_report_)/u.test(event.code)
+    if (event.error) this.error = typeof event.code === 'string' && /^(?:external_|exchange_|comtrade_|qwen_search_|search_|company_report_|scene_|assistant_|filing_)/u.test(event.code)
       && typeof event.publicMessage === 'string' && event.publicMessage.length <= (event.code === 'search_source_verification_failed' ? 4000 : 240)
       ? event.publicMessage : '回答生成中断，已保留收到的部分。请发送“继续”或重新提问。';
     return event;

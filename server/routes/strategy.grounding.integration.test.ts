@@ -24,7 +24,10 @@ function close(server: http.Server | undefined): Promise<void> {
 }
 
 /** Actual HTTP/auth/storage/provider transport; the local fixture is not a language-quality eval. */
-test('strategy chat grounds actual local records with tenant/user/role isolation and memory revocation', { timeout: 30_000 }, async () => {
+// Loading the full strategy dependency graph is fixture preparation, not HTTP latency.
+// Keep the original 30s contract deadline below, and each request's 8s deadline.
+test('strategy chat grounds actual local records with tenant/user/role isolation and memory revocation', { timeout: 180_000 }, async context => {
+  const setupStarted = performance.now();
   const originalFetch = globalThis.fetch;
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-chat-grounding-'));
   const keys = ['NODE_ENV', 'ENABLE_LOCAL_DEV_FALLBACK', 'DISABLE_LOCAL_AUTH_FALLBACK', 'LOCAL_STORE_DIR', 'LOCAL_AUTH_ACCOUNTS_FILE', 'LOCAL_TENANTS_DATA_FILE', 'LOCAL_DEMO_TOKEN_SECRET', 'DATA_BACKEND', 'DEMO_MODE', 'DASHSCOPE_BASE_URL', 'DASHSCOPE_API_KEY', 'OVERSEAS_LLM_BACKEND', 'PB_URL', 'PB_ADMIN_EMAIL', 'PB_ADMIN_PASSWORD', 'MATERIAL_LIBRARY_FILE', 'QWEN_SEARCH_ENDPOINT'] as const;
@@ -97,6 +100,8 @@ test('strategy chat grounds actual local records with tenant/user/role isolation
     app.use('/api/overseas/strategy', strategyRouter);
     application = http.createServer(app);
     const applicationUrl = await listen(application);
+    context.diagnostic(`isolated route/auth/store fixture ready in ${Math.round(performance.now() - setupStarted)}ms`);
+    await context.test('HTTP contracts finish within 30 seconds after fixture startup', { timeout: 30_000 }, async () => {
     async function api(token: string, endpoint: string, body: unknown, method = 'POST') {
       return fetch(`${applicationUrl}/api/overseas/strategy${endpoint}`, { method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body), signal: AbortSignal.timeout(8_000) });
     }
@@ -139,11 +144,12 @@ test('strategy chat grounds actual local records with tenant/user/role isolation
 
     const sceneBefore = captured.length;
     const sceneSelection = { sceneId: 'OP-04', from: '2026-10-01', to: '2026-10-26' };
-    const sceneResponse = await api(adminToken, '/chat', { messages: [{ role: 'user', content: '请分析当前经营数据' }], businessScene: sceneSelection });
+    const sceneResponse = await api(adminToken, '/chat', { messages: [{ role: 'user', content: '请分析当前经营数据' }], businessScene: sceneSelection, responseMode: 'quick_task' });
     assert.equal(sceneResponse.status, 200); assert.match(await sceneResponse.text(), /\[DONE\]/);
     assert.equal(captured.length, sceneBefore + 1);
     const sceneSystem = captured.at(-1)!.messages.find(message => message.role === 'system')!.content;
     assert.match(sceneSystem, /recordsInPeriod/); assert.match(sceneSystem, /actual-blocked-task/); assert.doesNotMatch(sceneSystem, /FOREIGN_/);
+    assert.match(sceneSystem, /快捷任务回复/); assert.match(sceneSystem, /最多 4 个关键结果/);
     const deniedScene = await api(memberToken, '/chat', { messages: [{ role: 'user', content: '查看经营数据' }], businessScene: sceneSelection });
     assert.match(await deniedScene.text(), /scene_forbidden/); assert.equal(captured.length, sceneBefore + 1);
     const invalidScene = await api(adminToken, '/chat', { messages: [{ role: 'user', content: '查看经营数据' }], businessScene: { ...sceneSelection, tenantId: foreignTenantId } });
@@ -258,6 +264,7 @@ test('strategy chat grounds actual local records with tenant/user/role isolation
     assert.equal(tradeCalls, 1);
     assert.equal(unexpectedProviderRequests, 0, 'No PocketBase or non-chat provider endpoint may be contacted');
     assert.ok(fs.existsSync(path.join(temporary, 'store', 'assistant_decision_memories.json')));
+    });
   } finally {
     globalThis.fetch = originalFetch;
     await close(application);

@@ -397,7 +397,7 @@ export function mergeConsecutiveAssistant(list: Message[]): Message[] {
   const merged: Message[] = [];
   for (const msg of list) {
     const last = merged[merged.length - 1];
-    if (last?.role === 'assistant' && msg.role === 'assistant' && !last.creation && !msg.creation && !last.creationPortal && !msg.creationPortal && !last.taskPortal && !msg.taskPortal && !last.sourcePortal && !msg.sourcePortal && !last.companyReport && !msg.companyReport) {
+    if (last?.role === 'assistant' && msg.role === 'assistant' && !last.creation && !msg.creation && !last.creationPortal && !msg.creationPortal && !last.taskPortal && !msg.taskPortal && !last.sourcePortal && !msg.sourcePortal && !last.companyReport && !msg.companyReport && !last.businessScene && !msg.businessScene && !last.businessScenePrompt && !msg.businessScenePrompt) {
       last.content = [last.content, msg.content].filter(Boolean).join('\n\n');
       last.sources = msg.sources ?? last.sources;
     } else {

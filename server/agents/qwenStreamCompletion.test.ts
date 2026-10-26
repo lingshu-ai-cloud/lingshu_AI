@@ -70,6 +70,11 @@ test('Qwen incomplete streams continue once; incomplete continuation fails hones
       }
     });
     assert.equal(requests, 10);
+    // Internal quick replies can be short natural prose, without a mandatory heading.
+    streamText='先跟进已报价的客户，确认采购时间。'; streamFinish='stop';
+    let validated=false; text='';
+    for await(const event of callLLMChatStream([{role:'user',content:'谁优先？'}],{backend:'qwen',requireConclusion:false,validateAnswer:answer=>{validated=answer===streamText;}}))if('text'in event)text+=event.text;
+    assert.equal(text,streamText);assert.equal(validated,true);assert.equal(requests,11);
   } finally {
     if (previousUrl === undefined) delete process.env.DASHSCOPE_BASE_URL; else process.env.DASHSCOPE_BASE_URL = previousUrl;
     if (previousKey === undefined) delete process.env.DASHSCOPE_API_KEY; else process.env.DASHSCOPE_API_KEY = previousKey;

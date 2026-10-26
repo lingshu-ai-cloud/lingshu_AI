@@ -6,8 +6,8 @@ export type PrimaryProductItem = { page: PrimaryProductPage; label: string; disa
 
 const PRIMARY_PAGES: readonly { page: PrimaryProductPage; label: string }[] = [
   { page: 'strategy', label: 'hi，灵小枢' },
-  { page: 'socialInspiration', label: '内容创作' },
   { page: 'inspirationMarket', label: '灵感集市' },
+  { page: 'socialInspiration', label: '内容创作' },
   { page: 'adsOverview', label: '智能投流' },
   { page: 'conversion', label: '智能客服' },
   { page: 'digitalEmployees', label: '经营总览' },

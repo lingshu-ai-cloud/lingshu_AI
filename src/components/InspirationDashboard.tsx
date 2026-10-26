@@ -424,7 +424,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       {hasExactReferenceReview(exactReferenceDetail) && !exactReview && <p role="alert" className="m-4 rounded border p-3">{exactReviewError} {parseExactReferenceReview(exactReferenceDetail) ? '精确参考审核目标已收到，须核验原周来源回执后才能打开审核。' : '精确参考审核目标无效，请返回原周任务重新打开。'} 不会按标题、链接或快照打开其他参考。</p>}
       {exactReview && <section className="m-4 rounded border p-4"><h2>原参考逐镜审核 · {exactReview.recordId}</h2><DirectorReviewWorkspace key={`${exactReview.recordId}:${exactReviewToken}`} recordId={exactReview.recordId} handoff={exactReview.handoff} onPreview={()=>handleWatch(exactReview.video)} renderVideo={url => <AuthenticatedVideo key={url} apiUrl={url} controls className="max-h-48 w-full rounded bg-black" />} renderImage={(url, alt) => <AuthenticatedImage key={url} src={url} alt={alt} className="max-h-48 w-full rounded object-contain" />} /></section>}
       <div className="transition-all duration-300">
-        <div className="px-4 py-5 sm:px-6 lg:py-6">
+        <div className={embedded ? 'py-5 lg:py-6' : 'px-4 py-5 sm:px-6 lg:py-6'}>
           {!embedded && <LsPageHeader title="灵感集市" description="查看外部参考、管理产品素材，并将内容证据交接到制作流程。" />}
           <div className="mb-4 flex min-w-0 flex-col gap-3 border-b border-border lg:flex-row lg:items-start">
             {embedded ? <h2 className="py-3 text-sm font-semibold text-text-primary">爆款素材</h2> : <Tabs className="min-w-0 flex-1" activeKey={innerView} onChange={key => setInnerView(key as InspirationInnerView)} aria-label="灵感集市分类"

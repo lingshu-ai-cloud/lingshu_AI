@@ -331,8 +331,8 @@ assert.match(onboardingPanelSource, /输出内容语言/, 'content Agent setting
 assert.doesNotMatch(appSource, /SocialOperatingSummary/, 'Smart Business must not render the redundant social-operation background bar');
 assert.match(appPageSlotSource, /page === 'traffic'[\s\S]{0,1200}initialView="publish"[\s\S]{0,300}visibleModes=\{\['publish'\]\}[\s\S]{0,200}showModeTabs=\{false\}/, 'publishing must not keep the redundant publish/account top-level tabs');
 assert.doesNotMatch(matrixViewSource, /<AccountActivity|<AccountHealthPanel/, 'the matrix must retain account configuration, not duplicate health and pure numeric data');
-for (const label of ['发布日历', '投流速览', '询盘诊断']) assert.match(workspaceTabsSource, new RegExp(label), `经营总览 must expose ${label}`);
-assert.equal((workspaceTabsSource.match(/^\s*\{ key: '(?:calendar|ads|inquiries)'/gm) || []).length, 3, '经营总览 must expose exactly three business tabs');
+for (const label of ['发布日历', '投流速览', '询盘诊断']) assert.match(workspaceTabsSource, new RegExp(label), `retained standalone business modules must preserve ${label}`);
+assert.equal((workspaceTabsSource.match(/^\s*\{ key: '(?:calendar|ads|inquiries)'/gm) || []).length, 3, 'retained standalone business modules must preserve exactly three views');
 assert.doesNotMatch(workspaceTabsSource, /内容队列/, 'the removed content queue must not remain a navigation tab');
 assert.doesNotMatch(smartBusinessSource, /function QueueView|view === "queue"/, 'the removed content queue must not retain a render branch');
 assert.doesNotMatch(smartBusinessSource, /本周统一数据口径|One weekly plan/i, 'the three views must not repeat the weekly-plan summary already shown in the command center');
@@ -346,7 +346,7 @@ assert.doesNotMatch(layoutSource, /aria-label="主导航"[\s\S]{0,900}新手引�
 assert.match(layoutSource, /lingshu:open-digital-employee-guide/, 'the user-menu guide entry must open the Digital Employee guide');
 assert.match(pageSource, /addEventListener\('lingshu:open-digital-employee-guide'/, 'Smart Business must respond to the sidebar guide entry');
 assert.doesNotMatch(pageSource, /SMART OPERATIONS/, 'the redundant Smart Operations masthead must be removed');
-assert.doesNotMatch(weeklyPlanControlsSource, /查看周计划/, 'the current-plan controls must not restore the deprecated weekly-plan wording');
+assert.match(weeklyPlanControlsSource, /查看当前周计划/, 'the current-plan controls must expose the user-requested read-only current plan action');
 assert.doesNotMatch(weeklyPlanControlsSource, /Agent 设置/, 'Agent settings must not remain in the weekly-plan header');
 assert.match(weeklyPlanControlsSource, /历史计划[\s\S]{0,1500}weeklyControlLabel/, 'the current-plan controls must retain history and the primary execution action');
 assert.match(currentPlanSource, /actions=\{weeklyPlanControls\}/, 'the current-plan header must receive the weekly-plan controls');
@@ -424,8 +424,8 @@ assert.match(pageSource, /\{error && <Alert type="error" showIcon title=\{error\
 assert.doesNotMatch(pageSource, /\{error && <Alert className="mt-5"/, 'the page must not duplicate launch errors below the large calendar');
 for (const label of ['执行失败', '已取消', '已暂停', '等待业务结果', '自动恢复中', '待处理', '准备中', '已完成', '执行中']) assert.match(pageSource, new RegExp(label), `the command header must expose the persisted run state: ${label}`);
 assert.doesNotMatch(pageSource, /按发布时间查看内容，检查产品与参考依据后确认排期。|确定各平台账号的产量、总产量和预计成本。/, 'the weekly-plan page title must not repeat an explanatory subtitle');
-assert.match(pageSource, /<BusinessOverviewTabs data=\{data\} onNavigate=\{onNavigate\}/, '经营总览 must mount its extracted business tabs');
-assert.match(workspaceTabsSource, /<Tabs aria-label="经营总览页内视图"/, 'business tabs must use accessible shared Ant tabs');
+assert.doesNotMatch(pageSource, /<BusinessOverviewTabs\b/, '经营总览 must remove the duplicate in-page business tabs');
+assert.match(workspaceTabsSource, /<Tabs key=\{identity\} aria-label="经营总览页内视图"/, 'retained standalone business modules must keep their accessible shared Ant tabs');
 const outlineFlowSource = pageSource.slice(pageSource.indexOf('const createWeeklyOutline'), pageSource.indexOf('const generateCurrentPlanDetails'));
 assert.match(outlineFlowSource, /digitalEmployeeApi\.createGoal/, 'weekly goal creation must persist before product confirmation');
 assert.match(confirmWeeklyPlanSource, /launchRequestSent = true;[\s\S]{0,200}approveGoal/, 'one click must directly request a real run, with preparation left to its pipeline');
@@ -452,8 +452,8 @@ assert.match(inspirationReferenceResolverSource, /analysisSource: 'weekly-plan-s
 assert.match(inspirationSource, /resolved\.source === 'weekly-plan-snapshot'[\s\S]{0,200}setSelectedVideo\(resolved\.video\)/, 'a missing source must open the frozen snapshot instead of a fabricated live record');
 assert.match(weeklyPlanConfirmationSource, /具体缺少/, 'weekly-plan validation must name the missing business fields instead of showing a generic warning');
 assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,160}void controlWeeklyWork\(\)/, 'the account-matrix next step must share the direct-start/new-goal control instead of reopening the removed detail page');
-assert.match(weeklyPlanControlsSource, /查看周任务/, 'an active weekly plan must expose a direct task-calendar action');
-assert.match(weeklyPlanControlsSource, /onClick=\{\(\) => setWeeklyPlanDetailsOpen\(true\)\}[\s\S]{0,120}查看周任务/, 'viewing weekly tasks must open the in-page detail drawer');
+assert.match(weeklyPlanControlsSource, /查看当前周计划/, 'a persisted weekly plan must expose a direct read-only plan action');
+assert.match(weeklyPlanControlsSource, /onClick=\{\(\) => setWeeklyPlanDetailsOpen\(true\)\}[\s\S]{0,120}查看当前周计划/, 'viewing the current weekly plan must open the in-page detail drawer');
 assert.doesNotMatch(weeklyPlanControlsSource, /setWorkspaceView\("matrix"\)|getElementById\("agent-weekly-calendar"\)|scrollIntoView/, 'viewing weekly tasks must not change tabs or scroll to the employee calendar');
 assert.match(weeklyPlanControlsSource, /历史计划/, 'Smart Business must retain plan history outside the active-run controls');
 assert.doesNotMatch(weeklyPlanControlsSource, /删除旧任务/, 'active weekly controls must not expose the destructive legacy cancellation action');
