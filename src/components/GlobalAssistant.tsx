@@ -237,8 +237,8 @@ export default function GlobalAssistant({
   const inlineHomeActive = inlineHome && Boolean(activeThread.messages.length || loading || activeThread.creationDraft);
   useEffect(() => {
     if (!inlineHome) return;
-    window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_ACTIVITY_EVENT, { detail: { active: inlineHomeActive } }));
-  }, [inlineHome, inlineHomeActive]);
+    window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_ACTIVITY_EVENT, { detail: { active: inlineHomeActive, busy: loading || replyStreaming || fileGenerating } }));
+  }, [inlineHome, inlineHomeActive, loading, replyStreaming, fileGenerating]);
   const todoItems = pageContext.todoItems ?? [];
   const activeTodoItems = todoItems.filter(item => !item.completed);
   const pendingCount = todoItems.length ? activeTodoItems.length : Math.max(0, Number(pageContext.pendingCount ?? 0));
@@ -542,7 +542,7 @@ export default function GlobalAssistant({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ text?: string; assistantText?: string; scriptedReply?: string; context?: Partial<AssistantContext>; tool?: AssistantTool; referenceMedia?: AssistantReferenceMedia }>).detail;
+      const detail = (event as CustomEvent<{ text?: string; assistantText?: string; scriptedReply?: string; context?: Partial<AssistantContext>; tool?: AssistantTool; referenceMedia?: AssistantReferenceMedia; preserveDraft?: boolean; companyReportRequest?: { companyId: string; year: number } }>).detail;
       let targetContext = pageContext;
       if (detail?.context?.agent && detail.context.label && detail.context.summary) {
         targetContext = {
@@ -576,7 +576,7 @@ export default function GlobalAssistant({
         const current = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages;
         setMessages(PRIMARY_ASSISTANT_THREAD, [...current, { role: 'assistant', content: assistantText }]);
       }
-      if (text) window.setTimeout(() => void send(text, routeAgent, targetContext, [], detail?.referenceMedia), 0);
+      if (text) window.setTimeout(() => void send(text, routeAgent, targetContext, [], detail?.referenceMedia, { preserveDraft: detail?.preserveDraft, companyReport: Boolean(detail?.companyReportRequest) }), 0);
     };
     window.addEventListener('lingshu-assistant-open', handler);
     return () => window.removeEventListener('lingshu-assistant-open', handler);
@@ -658,7 +658,7 @@ export default function GlobalAssistant({
     if (restore || kickoff) return;
     const thread = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
     if (thread.creationDraft || thread.messages.some(message =>
-      message.creationPortal?.scenario === 'viral_replication' || message.taskPortal?.action === 'view_production')) return;
+      message.companyReport || message.creationPortal?.scenario === 'viral_replication' || message.taskPortal?.action === 'view_production')) return;
     assistantClosedRef.current = null;
     resetTransientConversation();
     focusTaskCard(PRIMARY_ASSISTANT_THREAD, null);

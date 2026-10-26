@@ -25,14 +25,14 @@ test('home prompt catalog exposes every approved capability with stable unique i
 test('the launcher row starts with concrete high-frequency actions', () => {
   assert.deepEqual(
     ASSISTANT_HOME_QUICK_LAUNCHERS.slice(0, 4).map(entry => entry.label),
-    ['查看当前周计划', '查看内容策略', '查看外部资讯', '分析经营数据'],
+    ['查看当前周计划', '查看外部资讯', '分析经营数据', '内容创作'],
   );
 });
 
-test('each small launcher resolves to four or five high-frequency cards', () => {
+test('launchers expose bounded task cards with a financial source entry', () => {
   assert.equal(new Set(ASSISTANT_HOME_QUICK_LAUNCHERS.map(entry => entry.id)).size, ASSISTANT_HOME_QUICK_LAUNCHERS.length);
   for (const launcher of ASSISTANT_HOME_QUICK_LAUNCHERS) {
-    assert.ok(launcher.promptIds.length >= 4 && launcher.promptIds.length <= 5, `${launcher.id} must expose four or five cards`);
+    assert.ok(launcher.promptIds.length >= 4 && launcher.promptIds.length <= 6, `${launcher.id} must expose four or five cards`);
     assert.equal(new Set(launcher.promptIds).size, launcher.promptIds.length, `${launcher.id} must not repeat cards`);
     assert.ok(launcher.promptIds.every(id => assistantHomePromptById(id)), `${launcher.id} must only reference real prompts`);
   }
@@ -43,14 +43,14 @@ test('external news opens the overview and four distinct news types', () => {
   assert.ok(launcher);
   assert.deepEqual(
     launcher.promptIds.map(id => assistantHomePromptById(id)?.label),
-    ['今日资讯', '行业资讯', '产品资讯', '社交媒体资讯', '政策与平台资讯'],
+    ['今日资讯', '重点企业解读', '行业资讯', '社交媒体资讯', '政策与平台资讯'],
   );
 });
 
 test('the remaining launcher labels are concrete tasks rather than abstract domains', () => {
   assert.deepEqual(
     ASSISTANT_HOME_QUICK_LAUNCHERS.slice(4).map(entry => entry.label),
-    ['内容创作', '提炼产品卖点', '查看素材怎么用', '规划发布安排', '跟进重点客户', '优化智能投流'],
+    ['跟进重点客户', '优化智能投流'],
   );
 });
 

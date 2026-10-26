@@ -99,12 +99,13 @@ export function useAssistantSend(input: AssistantSendInput) {
     forcedContext?: AssistantContext,
     uploadedAttachments: UploadedAssistantAttachment[] = [],
     creationActionOrReference?: CreationTurn['action'] | AssistantReferenceMedia,
+    options: { preserveDraft?: boolean; companyReport?: boolean } = {},
   ) => {
     const creationAction = typeof creationActionOrReference === 'string' ? creationActionOrReference : undefined;
     const referenceMedia = typeof creationActionOrReference === 'object' ? creationActionOrReference : undefined;
     const userText = text.trim();
     if ((!userText && !uploadedAttachments.length) || loading || fileGenerating || replyStreaming) return;
-    const creationDraft = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].creationDraft;
+    const creationDraft = options.companyReport ? null : useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].creationDraft;
     if (page === 'strategy' && creationMode === 'free' && creationDraft && !uploadedAttachments.length && (creationAction || !creationDraft.evidenceVersion || !useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages.some(message => message.creation?.selection.referenceId === creationDraft.referenceId))) {
       const requestFence = persistenceFenceRef.current;
       const token = getToken();
@@ -132,7 +133,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       }
       return;
     }
-    if (contentIntake.active) {
+    if (contentIntake.active && !options.companyReport) {
       if (uploadedAttachments.length) { void uiMessage.warning('请先完成或取消当前任务问答，再发送附件。'); return; }
       contentIntake.answer(userText);
       setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
@@ -238,7 +239,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       return;
     }
     setMessages(threadAgent, nextVisible);
-    setDraftInput(threadAgent, '');
+    if (!options.preserveDraft) setDraftInput(threadAgent, '');
     setFollowingLatest(threadAgent, true);
     setLoading(true);
     openAgent(routeAgent, 'chat');
@@ -367,6 +368,8 @@ export function useAssistantSend(input: AssistantSendInput) {
         onStart: ensureAssistant,
         onText: text => patchAssistant(msg => ({ ...msg, content: msg.content + text })),
         onSources: sources => patchAssistant(msg => ({ ...msg, sources })),
+        onCompanyReport: (report, text) => patchAssistant(msg => ({ ...msg, content: text, companyReport: report })),
+        onCompanyReportProgress: phase => patchAssistant(msg => ({ ...msg, content: `正在${phase}…` })),
         onTaskPortal: taskPortal => patchAssistant(msg => ({ ...msg, taskPortal })),
         onFileReady: content => patchAssistant(msg => ({ ...msg, content })),
         onTimeout: () => { chatTimedOut = true; },

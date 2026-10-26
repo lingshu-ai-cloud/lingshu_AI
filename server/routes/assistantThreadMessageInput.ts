@@ -1,6 +1,7 @@
 import { assistantCreationPortalSchema } from '../../shared/contracts/assistantCreationPortal.js';
 import { assistantTaskPortalSchema } from '../../shared/contracts/assistantTaskPortal.js';
 import { assistantSourcePortalSchema } from '../../shared/contracts/assistantSourcePortal.js';
+import { companyReportSchema } from '../../shared/contracts/companyReport.js';
 import { AssistantActionError } from '../assistant/actionRouting.js';
 import { creationReplySchema } from '../../shared/contracts/contentCreationDialogue.js';
 import { parseAssistantReferenceMedia } from './assistantThreadReferenceMedia.js';
@@ -69,6 +70,8 @@ export function parseMessages(value: unknown): unknown[] {
     if (taskPortal && (!taskPortal.success || source.role !== 'assistant')) return threadInputError('assistant_task_portal_invalid', '任务入口格式无效。');
     const sourcePortal = source.sourcePortal === undefined ? undefined : assistantSourcePortalSchema.safeParse(source.sourcePortal);
     if (sourcePortal && (!sourcePortal.success || source.role !== 'assistant')) return threadInputError('assistant_source_portal_invalid', '原文入口格式无效。');
-    return { role: source.role, content, ...(sources ? { sources } : {}), ...(creation?.success ? { creation: creation.data } : {}), ...(referenceMedia ? { referenceMedia } : {}), ...(portal?.success ? { creationPortal: portal.data } : {}), ...(taskPortal?.success ? { taskPortal: taskPortal.data } : {}), ...(sourcePortal?.success ? { sourcePortal: sourcePortal.data } : {}) };
+    const companyReport = source.companyReport === undefined ? undefined : companyReportSchema.safeParse(source.companyReport);
+    if (companyReport && (!companyReport.success || source.role !== 'assistant' || byteLength(JSON.stringify(source.companyReport)) > 100_000)) return threadInputError('assistant_company_report_invalid', '企业报告格式或大小无效。');
+    return { role: source.role, content, ...(sources ? { sources } : {}), ...(creation?.success ? { creation: creation.data } : {}), ...(referenceMedia ? { referenceMedia } : {}), ...(portal?.success ? { creationPortal: portal.data } : {}), ...(taskPortal?.success ? { taskPortal: taskPortal.data } : {}), ...(sourcePortal?.success ? { sourcePortal: sourcePortal.data } : {}), ...(companyReport?.success ? { companyReport: companyReport.data } : {}) };
   });
 }

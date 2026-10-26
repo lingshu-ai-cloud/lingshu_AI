@@ -6,12 +6,9 @@ import {
   ChevronDown,
   ChevronUp,
   Clapperboard,
-  Lightbulb,
   Megaphone,
   MessagesSquare,
   Newspaper,
-  Send,
-  Target,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Page } from '../pageRegistry';
@@ -24,6 +21,7 @@ import {
   type AssistantHomeQuickLauncherId,
 } from '../lib/assistantHomeQuickPrompts';
 import { useAssistantStore } from '../stores/assistantStore';
+import CompanyReportScene from './assistant/CompanyReportScene';
 import { PRIMARY_ASSISTANT_THREAD } from './assistant/globalAssistantRuntime';
 import {
   ASSISTANT_HOME_ACTIVITY_EVENT,
@@ -35,12 +33,9 @@ function launcherIcon(id: AssistantHomeQuickLauncherId, size = 18) {
   const props = { size, 'aria-hidden': true as const };
   if (id === 'weekly-plan') return <CalendarCheck2 {...props}/>;
   if (id === 'external-news') return <Newspaper {...props}/>;
-  if (id === 'content-strategy') return <Target {...props}/>;
   if (id === 'business-analysis') return <BarChart3 {...props}/>;
-  if (id === 'publish-plan') return <Send {...props}/>;
   if (id === 'traffic-optimization') return <Megaphone {...props}/>;
   if (id === 'customer-followup') return <MessagesSquare {...props}/>;
-  if (id === 'materials') return <Lightbulb {...props}/>;
   return <Clapperboard {...props}/>;
 }
 
@@ -53,6 +48,8 @@ function resolveLauncherPrompts(launcher: AssistantHomeQuickLauncher | null): As
 
 export default function ContentCreationHome({ inspirationWorkspace }: { onNavigate?: (page: Page) => void; inspirationWorkspace?: ReactNode }) {
   const [activeLauncherId, setActiveLauncherId] = useState<AssistantHomeQuickLauncherId | null>(null);
+  const [companyReportOpen, setCompanyReportOpen] = useState(false);
+  const [assistantBusy, setAssistantBusy] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState<AssistantHomePrompt | null>(null);
   const activeLauncher = useMemo(
     () => ASSISTANT_HOME_QUICK_LAUNCHERS.find(entry => entry.id === activeLauncherId) || null,
@@ -63,8 +60,9 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
 
   useEffect(() => {
     const onAssistantActivity = (event: Event) => {
-      const detail = (event as CustomEvent<{ active?: boolean }>).detail;
-      if (detail?.active) setActiveLauncherId(null);
+      const detail = (event as CustomEvent<{ active?: boolean; busy?: boolean }>).detail;
+      setAssistantBusy(Boolean(detail?.busy));
+      if (detail?.active) { setActiveLauncherId(null); setCompanyReportOpen(false); }
     };
     window.addEventListener(ASSISTANT_HOME_ACTIVITY_EVENT, onAssistantActivity);
     return () => window.removeEventListener(ASSISTANT_HOME_ACTIVITY_EVENT, onAssistantActivity);
@@ -77,6 +75,8 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
   };
 
   const choosePrompt = (entry: AssistantHomePrompt) => {
+    if (entry.id === 'OP-LEADER') { setCompanyReportOpen(true); return; }
+    setCompanyReportOpen(false);
     const draft = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].draftInput.trim();
     if (draft && draft !== entry.prompt.trim()) {
       setPendingPrompt(entry);
@@ -86,6 +86,7 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
   };
 
   const toggleLauncher = (launcherId: AssistantHomeQuickLauncherId) => {
+    setCompanyReportOpen(false);
     setActiveLauncherId(current => current === launcherId ? null : launcherId);
   };
 
@@ -102,6 +103,8 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
               {activePrompts.map((entry, index) => <button
                 type="button"
                 key={entry.id}
+                aria-expanded={entry.id === 'OP-LEADER' ? companyReportOpen : undefined}
+                aria-controls={entry.id === 'OP-LEADER' ? 'company-report-selection' : undefined}
                 className={`creator-home__prompt-card${index === 0 ? ' creator-home__prompt-card--primary' : ''}`}
                 onClick={() => choosePrompt(entry)}
               >
@@ -111,6 +114,14 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
                 <ArrowRight size={15} aria-hidden="true"/>
               </button>)}
             </div>
+            {companyReportOpen && <div id="company-report-selection"><CompanyReportScene busy={assistantBusy}
+              onCancel={() => setCompanyReportOpen(false)} onConfirm={request => {
+                if (assistantBusy) return;
+                setCompanyReportOpen(false); setActiveLauncherId(null);
+                window.dispatchEvent(new CustomEvent('lingshu-assistant-open', { detail: {
+                  text: request.text, preserveDraft: true, companyReportRequest: { companyId: request.companyId, year: request.year },
+                } }));
+              }}/></div>}
           </div> : null}
         </section>
       </div>

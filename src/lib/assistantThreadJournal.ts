@@ -1,6 +1,7 @@
 import { assistantCreationPortalSchema } from '../../shared/contracts/assistantCreationPortal';
 import { assistantTaskPortalSchema } from '../../shared/contracts/assistantTaskPortal';
 import { assistantSourcePortalSchema } from '../../shared/contracts/assistantSourcePortal';
+import { companyReportSchema } from '../../shared/contracts/companyReport';
 import { creationReplySchema, creationSelectionSchema } from '../../shared/contracts/contentCreationDialogue';
 import type { Message } from '../appSession';
 import type {
@@ -122,6 +123,7 @@ function sanitizeMessage(value: Message): Message {
   const portal = assistantCreationPortalSchema.safeParse(sanitizeValue(value.creationPortal, 0, 4, 32, 1200));
   const taskPortal = assistantTaskPortalSchema.safeParse(sanitizeValue(value.taskPortal, 0, 4, 32, 1200));
   const sourcePortal = assistantSourcePortalSchema.safeParse(sanitizeValue(value.sourcePortal, 0, 4, 32, 2400));
+  const companyReport = companyReportSchema.safeParse(sanitizeValue(value.companyReport, 0, 10, 128, 6000));
   const media = value.referenceMedia;
   const referenceMedia = media?.kind === 'video' && media.title?.trim() && ['tiktok', 'instagram', 'youtube', 'facebook', 'linkedin'].includes(media.platform)
     ? {
@@ -140,6 +142,7 @@ function sanitizeMessage(value: Message): Message {
     ...(portal.success && value.role === 'assistant' ? { creationPortal: portal.data } : {}),
     ...(taskPortal.success && value.role === 'assistant' ? { taskPortal: taskPortal.data } : {}),
     ...(sourcePortal.success && value.role === 'assistant' ? { sourcePortal: sourcePortal.data } : {}),
+    ...(companyReport.success && value.role === 'assistant' ? { companyReport: companyReport.data } : {}),
     role: value.role === 'assistant' ? 'assistant' : 'user',
     content: redactSensitiveText(String(value.content || ''), MESSAGE_MAX_CHARS),
     ...(Array.isArray(value.sources) ? {
