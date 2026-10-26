@@ -10,6 +10,7 @@ import AssistantTaskLinkCard from './AssistantTaskLinkCard';
 import { productionPortalNavigation } from './AssistantProductionPortal';
 import { useAssistantStore } from '../../stores/assistantStore';
 import AssistantSceneDateInput from './AssistantSceneDateInput';
+import { useDefaultVideoPublishTime } from '../../lib/useDefaultVideoPublishTime';
 
 const DIRECTIONS=[
   {label:'场景引入',value:'提出一个真实使用场景，衔接所选产品的已确认用途，结尾邀请用户咨询产品资料。'},
@@ -19,6 +20,8 @@ const DIRECTIONS=[
 /** Existing ordinary task form; hook and campaign now use the verified guided route. */
 export default function AssistantScenarioPlanner({portal}:{portal:AssistantCreationPortal}) {
   const {current,update,navigate}=useAssistantScenePortal(portal);
+  const suggestedTime=useDefaultVideoPublishTime(portal.sceneStep==='brief'&&portal.plannedPublishAt===undefined);
+  useEffect(()=>{if(suggestedTime&&portal.plannedPublishAt===undefined&&current())update({plannedPublishAt:suggestedTime});},[suggestedTime,portal.plannedPublishAt]);
   const [products,setProducts]=useState<Array<{id:string;name:string}>>([]),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
   const [busy,setBusy]=useState(false),lock=useRef(false);
   useEffect(()=>{let active=true;setLoading(true);void studioApi.materialProducts().then(result=>{if(active&&current())setProducts(result.items);}).catch(()=>{if(active&&current())setError('产品读取失败，请重试。');}).finally(()=>{if(active&&current())setLoading(false);});return()=>{active=false;};},[revision]);
@@ -57,6 +60,7 @@ export default function AssistantScenarioPlanner({portal}:{portal:AssistantCreat
     <Select className="w-full" aria-label="内容方向建议" placeholder="选择内容方向" options={DIRECTIONS} value={DIRECTIONS.find(item=>item.value===portal.direction)?.value} onChange={direction=>update({direction})}/>
     <Input.TextArea aria-label="内容方向" maxLength={1000} placeholder="核心内容与行动号召" value={portal.direction||''} onChange={e=>update({direction:e.target.value})}/>
     <label className="block text-xs">预计发布时间（北京时间）<AssistantSceneDateInput label="内容发布时间" value={portal.plannedPublishAt||''} onChange={plannedPublishAt=>update({plannedPublishAt})}/></label>
+    <p className="text-xs text-text-secondary">默认按 09:00、16:00、18:00 顺序排期，可修改。</p>
     {error&&<Alert type="warning" title={error} action={<Button onClick={()=>{setError('');setRevision(v=>v+1);}}>重试</Button>}/>}
     <div className="flex justify-end"><Button type="primary" disabled={loading} onClick={()=>{try{scenarioTaskInputs(portal);setError('');update({sceneStep:'summary'});}catch(cause){setError(cause instanceof Error?cause.message:'信息待完善');}}}>确认信息</Button></div>
   </section>;

@@ -11,9 +11,12 @@ import AssistantReplicationScene from './AssistantReplicationScene';
 import AssistantSceneDateInput from './AssistantSceneDateInput';
 import AssistantTaskLinkCard from './AssistantTaskLinkCard';
 import { productionPortalNavigation } from './AssistantProductionPortal';
+import { useDefaultVideoPublishTime } from '../../lib/useDefaultVideoPublishTime';
 
 export default function AssistantHookScene({portal}:{portal:AssistantCreationPortal}) {
   const {current,update,advance,navigate}=useAssistantScenePortal(portal);
+  const suggestedTime=useDefaultVideoPublishTime(portal.sceneStep==='brief'&&portal.plannedPublishAt===undefined&&Boolean(portal.plannedDeliveryAt),portal.plannedDeliveryAt);
+  useEffect(()=>{if(suggestedTime&&portal.plannedPublishAt===undefined&&current())update({plannedPublishAt:suggestedTime});},[suggestedTime,portal.plannedPublishAt]);
   const [products,setProducts]=useState<Array<{id:string;name:string}>>([]),[error,setError]=useState(''),[busy,setBusy]=useState(false),[edits,setEdits]=useState(portal.scenePlan?.guided?.narration.lines||[]);
   const lock=useRef(false),plan=portal.scenePlan;
   useEffect(()=>{let active=true;void studioApi.materialProducts().then(value=>{if(active&&current())setProducts(value.items);}).catch(()=>{if(active&&current())setError('产品读取失败，请重试。');});return()=>{active=false;};},[]);
@@ -48,6 +51,7 @@ export default function AssistantHookScene({portal}:{portal:AssistantCreationPor
       <Select mode="multiple" aria-label="开场视频语言" className="w-full" placeholder="视频语言" value={portal.videoLanguages||[]} options={Object.entries(VIDEO_LANGUAGES).map(([value,label])=>({value,label}))} onChange={videoLanguages=>update({videoLanguages})}/>
       <label className="block text-xs">成片交付时间（北京时间）<AssistantSceneDateInput label="开场成片交付时间" value={portal.plannedDeliveryAt||''} onChange={plannedDeliveryAt=>update({plannedDeliveryAt})}/></label>
       <label className="block text-xs">预计发布时间（北京时间）<AssistantSceneDateInput label="开场预计发布时间" value={portal.plannedPublishAt||''} onChange={plannedPublishAt=>update({plannedPublishAt})}/></label>
+      <p className="text-xs text-text-secondary">默认按 09:00、16:00、18:00 顺序排期，可修改。</p>
       <Button onClick={()=>update({sceneStep:'source'})}>更换开场</Button><Button type="primary" disabled={!portal.selectedProducts?.length||!portal.direction?.trim()||!portal.videoLanguages?.length||!portal.plannedDeliveryAt||!portal.plannedPublishAt} onClick={()=>advance({sceneStep:'summary',hookReferenceStep:true},`产品：${(portal.selectedProducts||[]).map(row=>row.name).join('、')}；方向：${portal.direction}`,'方向已记录。请选择用于口播和结构借鉴的对标视频。')}>确认方向，选择参考视频</Button>
     </>}
     {portal.sceneStep==='summary'&&portal.hookReferenceStep&&<>{portal.hook?.usage==='reference_only'&&<Alert type="info" title="仅作参考的开场，请选择它对应的同源对标视频；原画面不会进入企业成片。"/>}<AssistantReplicationScene portal={portal} selectionOnly={{onChange:update,onConfirm:()=>void perform(read)}}/><Button disabled={busy} onClick={()=>update({sceneStep:'brief'})}>修改方向</Button></>}

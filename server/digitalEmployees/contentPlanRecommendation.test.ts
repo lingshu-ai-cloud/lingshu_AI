@@ -75,10 +75,13 @@ assert.ok(irrelevantPack.tasks.find(task => task.templateId === 'production')!.v
   'a fully analyzed but irrelevant viral video must not be consumed by the weekly plan');
 const frozenPack = recommendPackage(goal, config);
 const frozenProduction = frozenPack.tasks.find(task => task.templateId === 'production')!;
-frozenProduction.videoPlans = frozenProduction.videoPlans!.map(plan => ({ ...plan, referenceId: 'review-video' }));
+frozenProduction.videoPlans = frozenProduction.videoPlans!.map((plan,index) => ({ ...plan, referenceId: 'review-video',
+  ...(index===0?{plannedPublishDate:'2026-10-01',plannedPublishAt:'2026-10-01T16:00:00+08:00'}:index===1?{plannedPublishDate:'2026-10-02',plannedPublishAt:''}:{}) }));
 const preserved = enrichPackageWithContentSignals({ pack: frozenPack, goal, config, videos: [uncertain, ...videos], benchmarks });
 assert.ok(preserved.tasks.find(task => task.templateId === 'production')!.videoPlans!.every(plan => plan.referenceId === 'review-video'),
   'enrichment must not silently replace explicit or frozen references with another video');
+assert.equal(preserved.tasks.find(task => task.templateId === 'production')!.videoPlans![0]!.plannedPublishAt,'2026-10-01T16:00:00+08:00');
+assert.equal(preserved.tasks.find(task => task.templateId === 'production')!.videoPlans![1]!.plannedPublishAt,'','date-only choices stay time-undecided');
 
 const enriched = enrichPackageWithContentSignals({ pack: recommendPackage(goal, config), goal, config, videos, benchmarks });
 const plans = enriched.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
@@ -124,7 +127,10 @@ assert.equal(enriched.directorPlan?.productionBudget, plans.reduce((sum, plan) =
 assert.equal(enriched.operatingContext?.budget.productionCny, enriched.directorPlan?.productionBudget, 'weekly goal and account allocation must read the same production budget');
 assert.ok(plans[0]?.buyerProblem);
 assert.ok(plans[0]?.plannedPublishDate);
-assert.ok(plans.every(plan => plan.plannedPublishAt?.endsWith('T18:00:00+08:00')), 'recommendations must include an explicit 18:00 Beijing publish instant');
+for (const date of new Set(plans.map(plan => plan.plannedPublishDate))) {
+  const times = plans.filter(plan => plan.plannedPublishDate === date).map(plan => plan.plannedPublishAt?.slice(11,16)).sort();
+  assert.deepEqual(times, ['09:00', '16:00', '18:00'].slice(0,times.length), 'recommendations fill each Beijing day from morning to evening');
+}
 assert.deepEqual(
   Array.from({ length: 5 }, (_, index) => publishDateForAccountSlot('2026-09-28', '2026-10-04', index, 5)),
   ['2026-09-28', '2026-09-30', '2026-10-01', '2026-10-03', '2026-10-04'],

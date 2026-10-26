@@ -7,6 +7,7 @@ import { socialContentApi } from '../../lib/socialContentApi';
 import { studioApi } from '../../lib/studioApi';
 import { AUTH_TOKEN_CHANGED_EVENT } from '../../lib/auth';
 import { productionNavigationIdentity } from '../../lib/productionNavigation';
+import { useDefaultVideoPublishTime } from '../../lib/useDefaultVideoPublishTime';
 
 type Receipt=NonNullable<AssistantCreationPortal['createdTasks']>[number];
 export default function CreateContentPlanModal({open,onCancel,onCreated}:{open:boolean;onCancel:()=>void;onCreated:(taskId:string)=>void}) {
@@ -16,7 +17,14 @@ export default function CreateContentPlanModal({open,onCancel,onCreated}:{open:b
   const draftId=useRef(`plan-${crypto.randomUUID()}`),receipts=useRef<Receipt[]>([]);
   const frozen=useRef<ReturnType<typeof contentPlanFormInput>|null>(null),submitLock=useRef(false);
   const identity=useRef(productionNavigationIdentity());
-  const reset=()=>{form.resetFields();frozen.current=null;receipts.current=[];draftId.current=`plan-${crypto.randomUUID()}`;setLocked(false);setError('');};
+  const suggestedTime=useDefaultVideoPublishTime(open);
+  const lastAutoSuggestion=useRef('');
+  useEffect(()=>{
+    if(!open||!suggestedTime)return;
+    const current=form.getFieldValue('publishAt');
+    if(!current||current===lastAutoSuggestion.current){form.setFieldValue('publishAt',suggestedTime);lastAutoSuggestion.current=suggestedTime;}
+  },[open,suggestedTime,form]);
+  const reset=()=>{form.resetFields();lastAutoSuggestion.current='';frozen.current=null;receipts.current=[];draftId.current=`plan-${crypto.randomUUID()}`;setLocked(false);setError('');};
   useEffect(()=>{
     const resetIdentity=()=>{identity.current=productionNavigationIdentity();reset();setProducts([]);onCancel();};
     const storage=(event:StorageEvent)=>{if(event.key===null||event.key==='overseas_token')resetIdentity();};
@@ -66,6 +74,7 @@ export default function CreateContentPlanModal({open,onCancel,onCreated}:{open:b
       {loadError&&<Alert type="warning" title={loadError} action={<Button disabled={busy} onClick={()=>setRevision(value=>value+1)}>重试</Button>} className="mb-4"/>}
       <Form.Item name="direction" label="创作方向" rules={[{required:true,whitespace:true,message:'请填写本条内容的创作方向。'}]}><Input.TextArea rows={3} maxLength={1000} placeholder="想表达什么内容、突出哪些产品特点？"/></Form.Item>
       <Form.Item name="publishAt" label="预计发布时间（北京时间）" rules={[{required:true,message:'请选择预计发布时间。'}]}><Input type="datetime-local"/></Form.Item>
+      <p className="-mt-4 mb-4 text-xs text-text-secondary">默认按 09:00、16:00、18:00 顺序排期，可修改。</p>
     </Form>
     {error&&<Alert showIcon type="warning" title={error} description={locked?'任务及本次输入已保留，重试会继续原请求。':undefined} className="mb-4"/>}
   </Modal>;

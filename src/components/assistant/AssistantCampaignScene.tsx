@@ -10,6 +10,7 @@ import AssistantReplicationScene from './AssistantReplicationScene';
 import AssistantSceneDateInput from './AssistantSceneDateInput';
 import AssistantTaskLinkCard from './AssistantTaskLinkCard';
 import { productionPortalNavigation } from './AssistantProductionPortal';
+import { useDefaultVideoPublishTime } from '../../lib/useDefaultVideoPublishTime';
 
 type Draft = NonNullable<AssistantCreationPortal['campaignDraft']>;
 const initial: Draft = {step:'assets',name:'',offer:'',sellingPoints:'',materials:[],languages:[],deliverBy:''};
@@ -17,6 +18,8 @@ const initial: Draft = {step:'assets',name:'',offer:'',sellingPoints:'',material
 export default function AssistantCampaignScene({portal}:{portal:AssistantCreationPortal}) {
   const {current,update,advance,navigate}=useAssistantScenePortal(portal);
   const draft=portal.campaignDraft||initial,plan=portal.scenePlan;
+  const suggestedTime=useDefaultVideoPublishTime(draft.step==='facts'&&portal.plannedPublishAt===undefined&&Boolean(draft.deliverBy),draft.deliverBy);
+  useEffect(()=>{if(suggestedTime&&portal.plannedPublishAt===undefined&&current())update({plannedPublishAt:suggestedTime});},[suggestedTime,portal.plannedPublishAt]);
   const [products,setProducts]=useState<Array<{id:string;name:string}>>([]),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const lock=useRef(false);
   const [edits,setEdits]=useState(plan?.guided?.narration.lines||[]);
@@ -65,6 +68,7 @@ export default function AssistantCampaignScene({portal}:{portal:AssistantCreatio
       <Select mode="multiple" aria-label="活动视频语言" className="w-full" placeholder="视频语言" value={draft.languages} options={Object.entries(VIDEO_LANGUAGES).map(([value,label])=>({value,label}))} onChange={languages=>patch({languages})}/>
       <label className="block text-xs">成片交付时间（北京时间）<AssistantSceneDateInput label="活动成片交付时间" value={draft.deliverBy} onChange={deliverBy=>patch({deliverBy})}/></label>
       <label className="block text-xs">预计发布时间（北京时间）<AssistantSceneDateInput label="活动预计发布时间" value={portal.plannedPublishAt||''} onChange={plannedPublishAt=>update({plannedPublishAt})}/></label>
+      <p className="text-xs text-text-secondary">默认按 09:00、16:00、18:00 顺序排期，可修改。</p>
       <Button onClick={()=>patch({step:'assets'})}>修改素材与卖点</Button><Button type="primary" disabled={!draft.name.trim()||!draft.offer.trim()||!portal.selectedProducts?.length||!draft.languages.length||!draft.deliverBy||!portal.plannedPublishAt} onClick={()=>advance({campaignDraft:{...draft,step:'reference'}},`活动：${draft.name}；产品：${(portal.selectedProducts||[]).map(row=>row.name).join('、')}；优惠：${draft.offer}`, '活动信息已记录。请选择本次创作要对标的视频。')}>确认活动信息，选择对标视频</Button>
     </>}
     {draft.step==='reference'&&<><AssistantReplicationScene portal={portal} selectionOnly={{onChange:update,onConfirm:()=>void perform(build)}}/><Button disabled={busy} onClick={()=>patch({step:'facts'})}>修改活动信息</Button></>}
