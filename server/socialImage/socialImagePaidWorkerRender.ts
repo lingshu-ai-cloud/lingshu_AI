@@ -110,7 +110,9 @@ export async function renderSocialImagePaidWorker(input: {
     return (await (input.ports?.submit || submitClaimedSocialImageSingleRender)({ store, tenantId, task, jobId: job.id, inputHash,
       prompt, ratio, quality, references, idempotencyKey, productId,
       materialIds: task.materialIds, benchmarkReferenceCount: 0,
-      composition: { productBytes: product.bytes, poster: frozen.poster, recipe: task.replicationRecipe } })).task;
+      composition: { productBytes: product.bytes, poster: frozen.poster, recipe: task.replicationRecipe,
+        referenceTextRegion: task.hookFactorSpec?.factors.some(factor => factor.factorId === 'reference-text-hierarchy'
+          && factor.validator.observableTarget === 'top_left') ? 'top_left' : undefined } })).task;
   } catch (error) {
     if (providerMayHaveStarted) {
       await recordSocialImagePaidJobFailure({ store, tenantId, taskId: task.id, jobId: job.id,

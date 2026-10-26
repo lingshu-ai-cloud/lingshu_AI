@@ -15,7 +15,7 @@ export async function submitClaimedSocialImageSingleRender(input: {
   references: ReferenceImage[]; idempotencyKey: string; productId: string;
   materialIds: string[]; benchmarkReferenceCount: number;
   composition?: { productBytes: Buffer; poster: NonNullable<SocialImageCreationTask['renderBrief']>;
-    recipe?: SocialImageCreationTask['replicationRecipe'] };
+    recipe?: SocialImageCreationTask['replicationRecipe']; referenceTextRegion?: 'top_left' };
 }) {
   const generated = await generatePosterImage({ prompt: input.prompt, ratio: input.ratio,
     references: input.references, provider: 'openai', quality: input.quality, idempotencyKey: input.idempotencyKey });
@@ -32,7 +32,7 @@ export async function submitClaimedSocialImageSingleRender(input: {
   const bytes = input.composition ? await composeFixedSocialLayers({ background: plate,
     products: [input.composition.productBytes], poster: input.composition.poster,
     width: canvas.width, height: canvas.height, recipe: input.composition.recipe,
-    productTreatment: 'framed_source' }) : plate;
+    productTreatment: 'framed_source', referenceTextRegion: input.composition.referenceTextRegion }) : plate;
   const material = await createGeneratedImageMaterial({
     title: `AI 图文海报 · ${input.task.renderBrief?.headline || 'Product overview'}`.slice(0, 120),
     bytes, mimeType: 'image/png', source: generated.source, tenantId: input.tenantId,

@@ -269,10 +269,13 @@ export async function inspectSocialImageCandidateFactors(input: {
         verdict = rank >= 0 && rank <= 2 ? 'pass' : 'fail';
       } else if (factor.validator.kind === 'ocr_match' && input.ocr) {
         const headline = input.task.imageTextContract.headline.trim().normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-        const text = candidate.ocrBlocks.find(block => block.confidence >= .75
-          && overlap(block.bbox, matchingRegion.bbox) > 0
-          && block.text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '').includes(headline));
-        verdict = headline && text ? 'pass' : candidate.ocrBlocks.length ? 'fail' : 'uncertain';
+        const observed = candidate.ocrBlocks.filter(block => block.confidence >= .5
+          && overlap(block.bbox, matchingRegion.bbox) > 0)
+          .sort((left, right) => left.bbox.y - right.bbox.y || left.bbox.x - right.bbox.x)
+          .map(block => block.text).join(' ').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+        // Headlines are often wrapped into several OCR blocks. Requiring one
+        // block to contain the entire title made a correct wrapped title fail.
+        verdict = headline && observed.includes(headline) ? 'pass' : candidate.ocrBlocks.length ? 'fail' : 'uncertain';
       }
     }
     return { key: `hook_factor:${factor.factorId}`, verdict, severity: 'soft', checker: 'deterministic',

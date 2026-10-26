@@ -26,6 +26,21 @@ test('single poster frame preserves the source product label pixels instead of c
     'the authoritative white package/card pixels remain visible');
 });
 
+test('reference-left poster wraps a long headline and keeps the original square product photo inside its slot', async () => {
+  const background = await sharp({ create: { width: 600, height: 600, channels: 3, background: '#071017' } }).png().toBuffer();
+  const product = await sharp({ create: { width: 180, height: 180, channels: 3, background: '#ffffff' } }).png().toBuffer();
+  const result = await composeFixedSocialLayers({ background, products: [product], width: 600, height: 600,
+    poster: { headline: 'CLOUD FOAM CLEANSING HONEY', subheadline: 'Gentle.\nFoam-rich.\nSkin-barrier friendly.', cta: 'Inquire' },
+    productTreatment: 'framed_source', referenceTextRegion: 'top_left' });
+  const { data, info } = await sharp(result).raw().toBuffer({ resolveWithObject: true });
+  const pixel = (x: number, y: number) => [...data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3)];
+  assert.ok(pixel(370, 340).every(value => value > 240), 'the original white source photo remains intact in the product slot');
+  assert.ok(pixel(570, 80).every(value => value < 40), 'the wrapped headline never reaches the far right edge');
+  const brightCopyPixels = Array.from({ length: 180 }, (_, y) => Array.from({ length: 250 }, (_, x) => pixel(x, y))
+    .filter(rgb => rgb.every(value => value > 200)).length).reduce((sum, value) => sum + value, 0);
+  assert.ok(brightCopyPixels > 500, 'headline stays visible in the reference top-left region');
+});
+
 test('fixed compositor applies extracted mask opacity in the extracted layer order', async () => {
   const background = await sharp({ create: { width: 100, height: 100, channels: 3, background: '#0000ff' } }).png().toBuffer();
   const result = await composeFixedSocialLayers({ background, products: [], poster: {}, width: 100, height: 100, recipe: {

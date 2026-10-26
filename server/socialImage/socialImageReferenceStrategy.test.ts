@@ -236,6 +236,22 @@ test('V3 offline reference evidence flows through strategy, frozen plan and per-
   assert.equal(restored?.directorReviewDecision?.decision, 'repair');
 });
 
+test('wrapped headline OCR blocks jointly satisfy the reference text-region factor', async () => {
+  const { task } = await preparedViralTask();
+  const candidate = await referenceImage('top_left', '#123358');
+  const wrapped = { ...task, imageTextContract: { ...task.imageTextContract, headline: 'CLOUD FOAM' } };
+  const target = task.hookFactorSpec?.factors.find(factor => factor.factorId === 'reference-text-hierarchy')?.validator.observableTarget;
+  const candidateRegion = (await analyzeSocialImageReference({ bytes: candidate, mimeType: 'image/png', referenceId: 'candidate-test' }))
+    .regions.find(region => region.layerRole === target)?.bbox;
+  assert.ok(candidateRegion);
+  const checks = await inspectSocialImageCandidateFactors({ task: wrapped, bytes: candidate, mimeType: 'image/png',
+    ocr: async () => [
+      { text: 'CLOUD', confidence: .95, bbox: { x: candidateRegion.x + .02, y: candidateRegion.y + .02, width: .2, height: .06 } },
+      { text: 'FOAM', confidence: .95, bbox: { x: candidateRegion.x + .02, y: candidateRegion.y + .11, width: .2, height: .06 } },
+    ] });
+  assert.equal(checks.find(check => check.key === 'hook_factor:reference-text-hierarchy')?.verdict, 'pass');
+});
+
 test('V3 viral carousel repairs the whole set when one page lacks factor evidence and rejects forged acceptance', async () => {
   const { store, task } = await preparedViralTask('carousel');
   assert.equal(task.deliverySpec.outputCount, 4);

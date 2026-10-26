@@ -11,6 +11,8 @@ type PosterCopy = {
   cta?: string;
 };
 
+type ReferenceTextRegion = 'top_left' | undefined;
+
 const escapeXml = (value: string) => String(value || '').replace(/[<>&"']/g, character => ({
   '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;',
 }[character]!));
@@ -20,24 +22,67 @@ function region(recipe: SocialImageReplicationRecipe | undefined, id: string, fa
   return value || fallback;
 }
 
-function copyOverlaySvg(width: number, height: number, poster: PosterCopy, recipe?: SocialImageReplicationRecipe): Buffer {
-  const headlineZone = region(recipe, 'headline-zone', { x: .06, y: .055, width: .88, height: .27 });
+function wrapCopy(value: string, maxCharacters: number): string[] {
+  const lines: string[] = [];
+  for (const paragraph of value.split(/\r?\n/)) {
+    const words = /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(paragraph)
+      ? [...paragraph.trim()] : paragraph.trim().split(/\s+/).filter(Boolean);
+    const joiner = words.length && words[0]!.length === 1 ? '' : ' ';
+    let line = '';
+    for (const word of words) {
+      const candidate = line ? `${line}${joiner}${word}` : word;
+      if (candidate.length <= maxCharacters) { line = candidate; continue; }
+      if (line) { lines.push(line); line = ''; }
+      if (word.length <= maxCharacters) { line = word; continue; }
+      for (let index = 0; index < word.length; index += maxCharacters) {
+        const chunk = word.slice(index, index + maxCharacters);
+        if (chunk.length === maxCharacters) lines.push(chunk);
+        else line = chunk;
+      }
+    }
+    if (line) lines.push(line);
+  }
+  return lines;
+}
+
+function copyOverlaySvg(width: number, height: number, poster: PosterCopy, recipe?: SocialImageReplicationRecipe,
+  referenceTextRegion?: ReferenceTextRegion): Buffer {
+  const headlineZone = referenceTextRegion === 'top_left'
+    ? { x: .045, y: .045, width: .39, height: .30 }
+    : region(recipe, 'headline-zone', { x: .06, y: .055, width: .88, height: .27 });
   const bottom = region(recipe, 'bottom-bar', { x: .05, y: .89, width: .9, height: .075 });
   const badge = region(recipe, 'corner-badge', { x: .055, y: .035, width: .28, height: .07 });
-  const headlineSize = Math.max(28, Math.round(height * .053));
-  const subSize = Math.max(17, Math.round(height * .024));
+  const headlineBaseSize = Math.max(28, Math.round(height * (referenceTextRegion === 'top_left' ? .043 : .053)));
+  const subBaseSize = Math.max(17, Math.round(height * (referenceTextRegion === 'top_left' ? .026 : .024)));
   const badgeSize = Math.max(15, Math.round(height * .018));
   const x = Math.round(headlineZone.x * width);
   const y = Math.round(headlineZone.y * height);
-  const headline = escapeXml(poster.headline || '');
-  const subheadline = escapeXml(poster.subheadline || '');
+  let headlineSize = headlineBaseSize, subSize = subBaseSize;
+  let headlineLines: string[] = [], subheadlineLines: string[] = [];
+  let headlineLineHeight = 0, subLineHeight = 0, copyHeight = Infinity;
+  for (let scale = 1; scale >= .35; scale -= .05) {
+    headlineSize = Math.max(14, Math.round(headlineBaseSize * scale));
+    subSize = Math.max(12, Math.round(subBaseSize * scale));
+    headlineLines = wrapCopy(poster.headline || '', Math.max(5, Math.floor(headlineZone.width * width / (headlineSize * .68))));
+    subheadlineLines = wrapCopy(poster.subheadline || '', Math.max(5, Math.floor(headlineZone.width * width / (subSize * .55))));
+    headlineLineHeight = Math.round(headlineSize * 1.12);
+    subLineHeight = Math.round(subSize * 1.32);
+    copyHeight = headlineLines.length * headlineLineHeight + (subheadlineLines.length ? Math.round(subSize * .35)
+      + subheadlineLines.length * subLineHeight : 0);
+    if (copyHeight <= headlineZone.height * height) break;
+  }
+  if (copyHeight > headlineZone.height * height) throw new Error('social_image_fixed_copy_overflow');
+  const headline = headlineLines.map((line, index) => `<text x="${x}" y="${y + headlineSize + index * headlineLineHeight}" font-family="Arial, PingFang SC, sans-serif" font-size="${headlineSize}" font-weight="800" fill="#fff" filter="url(#shadow)">${escapeXml(line)}</text>`).join('');
+  const subTop = y + headlineLines.length * headlineLineHeight + Math.round(subSize * .35);
+  const subheadline = subheadlineLines.map((line, index) => `<text x="${x}" y="${subTop + subSize + index * subLineHeight}" font-family="Arial, PingFang SC, sans-serif" font-size="${subSize}" font-weight="${referenceTextRegion === 'top_left' ? 600 : 500}" fill="#fff">${escapeXml(line)}</text>`).join('');
   const originBadge = escapeXml(poster.originBadge || '');
   const cta = escapeXml(poster.cta || '');
   return Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     <defs><filter id="shadow"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-opacity=".32"/></filter></defs>
     ${originBadge ? `<rect x="${badge.x * width}" y="${badge.y * height}" width="${badge.width * width}" height="${badge.height * height}" rx="${badge.height * height * .25}" fill="rgba(5,20,35,.74)"/><text x="${(badge.x + .018) * width}" y="${(badge.y + badge.height * .66) * height}" font-family="Arial, PingFang SC, sans-serif" font-size="${badgeSize}" font-weight="700" fill="#fff">${originBadge}</text>` : ''}
-    ${headline ? `<text x="${x}" y="${y + headlineSize}" font-family="Arial, PingFang SC, sans-serif" font-size="${headlineSize}" font-weight="800" fill="#fff" filter="url(#shadow)">${headline}</text>` : ''}
-    ${subheadline ? `<text x="${x}" y="${y + headlineSize + subSize * 1.75}" font-family="Arial, PingFang SC, sans-serif" font-size="${subSize}" font-weight="500" fill="#fff" filter="url(#shadow)">${subheadline}</text>` : ''}
+    ${headline}
+    ${referenceTextRegion === 'top_left' && subheadlineLines.length ? `<rect x="${x - 10}" y="${subTop - 4}" width="${headlineZone.width * width + 20}" height="${subheadlineLines.length * subLineHeight + 14}" rx="10" fill="rgba(3,16,23,.76)"/>` : ''}
+    ${subheadline}
     ${cta ? `<rect x="${bottom.x * width}" y="${bottom.y * height}" width="${bottom.width * width}" height="${bottom.height * height}" rx="${bottom.height * height / 2}" fill="rgba(5,20,35,.76)"/><text x="${(bottom.x + bottom.width / 2) * width}" y="${(bottom.y + bottom.height * .64) * height}" text-anchor="middle" font-family="Arial, PingFang SC, sans-serif" font-size="${subSize}" font-weight="700" fill="#fff">${cta}</text>` : ''}
   </svg>`);
 }
@@ -71,9 +116,12 @@ export async function composeFixedSocialLayers(input: {
   height: number;
   recipe?: SocialImageReplicationRecipe;
   productTreatment?: 'cutout' | 'framed_source';
+  referenceTextRegion?: ReferenceTextRegion;
 }): Promise<Buffer> {
   const { width, height } = input;
-  const stage = region(input.recipe, 'product-stage', { x: .08, y: .36, width: .84, height: .50 });
+  const stage = input.referenceTextRegion === 'top_left'
+    ? { x: .46, y: .32, width: .50, height: .54 }
+    : region(input.recipe, 'product-stage', { x: .08, y: .36, width: .84, height: .50 });
   const productCount = Math.max(1, input.products.length);
   const slotWidth = stage.width * width / productCount;
   const blueprint = normalizeSocialImageReferenceLayerBlueprints(input.recipe?.referenceLayerBlueprints)[0];
@@ -94,20 +142,21 @@ export async function composeFixedSocialLayers(input: {
     const transparent = input.productTreatment === 'framed_source'
       ? input.products[index]!
       : await connectedBorderToAlpha(input.products[index]!);
-    const productWidth = Math.round(Math.min(slotWidth * 1.18, stage.width * width * .7));
+    const productWidth = Math.round(Math.min(slotWidth * 1.18, stage.width * width * (input.referenceTextRegion === 'top_left' ? .65
+      : input.productTreatment === 'framed_source' ? .85 : .7)));
     const productHeight = Math.round(stage.height * height);
-    const rendered = await sharp(transparent).resize(productWidth, productHeight, {
-      fit: 'contain', background: input.productTreatment === 'framed_source'
-        ? { r: 255, g: 255, b: 255, alpha: 255 } : { r: 0, g: 0, b: 0, alpha: 0 },
-    }).png().toBuffer();
+    // Keep the source aspect ratio. A square product photo in a tall slot used
+    // to acquire large synthetic white bars above and below the package.
+    const rendered = await sharp(transparent).resize(productWidth, productHeight, { fit: 'inside' }).png().toBuffer();
+    const renderedSize = await sharp(rendered).metadata();
     composites.push({
       input: rendered,
-      left: Math.round(stage.x * width + slotWidth * index + (slotWidth - productWidth) / 2),
-      top: Math.round(stage.y * height),
+      left: Math.round(stage.x * width + slotWidth * index + (slotWidth - (renderedSize.width || productWidth)) / 2),
+      top: Math.round(stage.y * height + (productHeight - (renderedSize.height || productHeight)) / 2),
       zIndex: zFor('product', 30),
     });
   }
-  composites.push({ input: copyOverlaySvg(width, height, input.poster, input.recipe), left: 0, top: 0, zIndex: zFor('text', 40) });
+  composites.push({ input: copyOverlaySvg(width, height, input.poster, input.recipe, input.referenceTextRegion), left: 0, top: 0, zIndex: zFor('text', 40) });
   return sharp(input.background).rotate().resize(width, height, { fit: 'cover', position: 'attention' })
     .composite(composites.sort((a, b) => a.zIndex - b.zIndex).map(({ zIndex: _zIndex, ...item }) => item)).png({ compressionLevel: 9 }).toBuffer();
 }
