@@ -2,6 +2,13 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前本机会话基线：助手业务场景与平台改写兼容合并（2026-10-26）
+
+- 当前工作树 `/Users/jiejie/Documents/lingshu-AI`、分支 `节节1025服务器上传` 从干净检查点 `0f1424553666fb03a1a0616dbedecaebcb04a613` 合入远端 `xixi分工前本地合并` / `9b5f5446d858d1ea4aa9db401bc7e77d5e3d1213`，源码合并提交为 `8d23c0ace56a4a136d5e34a2bb4c02c5f12f8a93`。恢复分支 `backup/pre-xixi-local-merge-20261026-0f142455` 保留。
+- 唯一冲突是 `docs/governance/BASELINE.md` 顶部双方新增的治理记录；本机现状保持在最上方，来源的助手场景与平台改写验证证据完整保留为来源历史。双方都改动的 `src/components/GlobalAssistant.tsx` 自动合成，既保留当前 `reduceMotion`/灵小枢入口，也接入新的 `BusinessSceneSelection` 事件参数，无业务代码冲突。
+- 合成结果实际通过：业务场景与平台改写 14/14、图文复刻 24/24、完整 `pnpm run test:assistant`；4 GB Node 堆上限 TypeScript、相对 `0f142455` 的架构/ratchet（2,998 个生产 TypeScript 文件）、204 项迁移清单只读检查、迁移 checksum guard 和 `git diff --check` 通过。
+- 来源分支已记录产品素材、V4、投流和构建等更大范围证据，本轮未重复执行全仓 `quality` / `verify`、构建或真实 E2E。未推送、部署、执行目标数据库迁移、真实模型/渠道/付费调用或生产写入；本地预览版本仍与源码基线分开核验。
+
 ## 当前本机会话基线：差图文创作加联调兼容合并（2026-10-26）
 
 - 当前工作树 `/Users/jiejie/Documents/lingshu-AI`、分支 `节节1025服务器上传` 从干净检查点 `c3addcd54e41ab07fc3f924feef1d6a6fa97c5e6` 合入远端 `差图文创作加联调` / `072c343baabc99da9a6ad975d438503740f33799`，源码合并提交为 `55be5c306aa5d65c727ca493b5a5712b110baf69`。恢复分支 `backup/pre-image-text-merge-20261026-c3addcd5` 保留。
