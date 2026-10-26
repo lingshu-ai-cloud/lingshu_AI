@@ -2,6 +2,13 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前本机会话基线：差图文创作加联调兼容合并（2026-10-26）
+
+- 当前工作树 `/Users/jiejie/Documents/lingshu-AI`、分支 `节节1025服务器上传` 从干净检查点 `c3addcd54e41ab07fc3f924feef1d6a6fa97c5e6` 合入远端 `差图文创作加联调` / `072c343baabc99da9a6ad975d438503740f33799`，源码合并提交为 `55be5c306aa5d65c727ca493b5a5712b110baf69`。恢复分支 `backup/pre-image-text-merge-20261026-c3addcd5` 保留。
+- 147 个来源源码、测试和产品文档文件均无冲突；唯一冲突为 `docs/governance/BASELINE.md` 顶部双方同时新增记录。解决时保留本机既有三路合并记录，并完整保留来源的企业知识、图文持久调度、口播卖点和新人首页验证证据，明确标注为来源历史，不把来源机器路径误写成本机事实。
+- 合成结果实际通过：图文复刻 24/24、持久化图文执行 7/7、企业知识/产品素材/首页首访组合 40/40、图文生产管线 85/85 及其 HTTP、路由合同与治理检查；4 GB Node 堆上限 TypeScript、相对 `c3addcd5` 的架构/ratchet（2,983 个生产 TypeScript 文件）、204 项迁移清单只读检查、迁移 checksum guard 和 `git diff --check` 通过。
+- 来源分支已经记录构建和更大领域测试；本次遵循非重复验证要求，没有重跑全仓 `quality` / `verify`、构建或真实 E2E。未执行目标数据库迁移、真实供应商/付费调用、推送、部署或生产写入；本地预览版本与源码基线仍须分别核对。
+
 ## 当前本机会话基线：三路兼容合并（2026-10-26）
 
 - 当前工作树为 `/Users/jiejie/Documents/lingshu-AI`，分支 `节节1025服务器上传`。本轮从干净提交 `181868f3f9bad2ff437f124018e9decf5ababb59` 开始，依次合入 `灵小枢交互卡片基础修改` / `f2ea282c1ec60aedfab46569d1323ad49bbf2e7d`、`codex/lingxiaoshu-mascot-ui-20261025` / `236d17bfd2c4e306f494cafde74dabebf9ac1059`，再合入远端 `xixi全局ui+对话部分快捷键+生产联调未完成` / `7cb757c10c9857ed7c0fbbda2b84396021e6bcd0`；三个合并提交依次为 `7f4747f162b8bc16d0a4e7ba92f779dfa152607b`、`dd0036592d8777633c00e79dd69406d0b30d679a`、`17b290d9e22cee84efe863678d0ba601e0f2e07b`。恢复分支 `backup/pre-session-merges-20261026-181868f3` 保留。
