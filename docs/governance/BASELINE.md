@@ -2,6 +2,13 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前统一开发基线：图文策划请求边界修复（2026-10-26）
+
+- 权威工作树仍为 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`，分支 `baseline/unified-20261026`；在下方 `23505d4ce58d46043e831214a66c6d8f7691e943` 之后，经治理提交 `74b22ab05ee44d7919d30270f0caf5d13ca0e73e` 合入修复提交 `2136b5e8c7fe7d53d972638ddbe529eca329517b`。隔离来源提交为 `7ca41d3f2b9bf96db151d45628abaf7a322e9955`。
+- Qwen 策划检查点仅在真正提交供应商请求前写入；输入校验及配额拒绝不再误报为付费结果未知。历史超时任务的页面回执明确显示结果待核对，禁止盲目重试。旧任务 `socialtask_0ac6dfaacc2900a069b28f02` / `img80093c5e51d9` 仍保留阻塞状态。
+- 本版定向图文执行测试 12/12、`pnpm run lint`、`pnpm run check:architecture`（2999 个生产 TS 文件，相对 `74b22ab0` 棘轮）、`pnpm run check:digital-employee-migrations`（204 项只读）及 `git diff --check` 通过；未重复运行全仓 quality/verify 或真实付费 E2E。Web 预览仅用 `PROCESS_ROLE=web`，需要受限 worker 领取新的任务；运行状态与源码验证独立判断。
+- 权威树原有未提交 `server/videos/videoVisibilityMaintenance.ts` 补丁 SHA-256 为 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`，未纳入图文提交。没有推送、部署或发布。新任务真实联调须在独立批准的 5 元上限内，只生成一张图并记录回执。
+
 ## 当前统一开发基线：图文任务正式出图路径（2026-10-26 本地快进）
 
 - 本节覆盖下方历史“当前”声明。默认分支为 `baseline/unified-20261026`，权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`；从 `9b5f5446d858d1ea4aa9db401bc7e77d5e3d1213` 快进到源码提交 `23505d4ce58d46043e831214a66c6d8f7691e943`。隔离实现分支 `codex/image-task-provider-path-20261026` 保留为恢复点。
