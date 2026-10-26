@@ -1,4 +1,4 @@
-<view class="page" style="padding-bottom:calc(224rpx + env(safe-area-inset-bottom))">
+<view class="page" style="padding-bottom:calc(40rpx + env(safe-area-inset-bottom))">
   <view wx:if="{{!loggedIn}}" class="login surface">
     <view class="ls-brand"><image class="ls-brand-logo" src="/assets/brand-logo.png" mode="aspectFit" aria-hidden="true"/><text>灵枢AI</text></view>
     <view class="eyebrow">运营工作台</view>
@@ -97,6 +97,4 @@
     </view>
   </block>
   <view wx:if="{{message}}" class="message">{{message}}</view>
-  <lingxiaoshu-sheet wx:if="{{loggedIn && !selected}}" id="lingxiaoshu-sheet"></lingxiaoshu-sheet>
-  <operator-nav wx:if="{{loggedIn && !selected}}" active="shooting" bindassistant="openAssistant"></operator-nav>
 </view>

@@ -1,9 +1,14 @@
 <view class="assistant-page">
   <view class="top-safe" style="height:{{statusBarHeight}}px"></view>
-  <view class="assistant-header" style="height:{{headerHeight}}px"><button class="session-entry" bindtap="openSessions">我的会话</button><view><text class="title">{{agentTitle}}</text><view class="online"><view></view><text>{{agentNote}}</text></view></view></view>
-  <view wx:if="{{error}}" class="error">{{error}}</view>
-  <scroll-view scroll-y class="conversation" style="top:{{contentTop}}px" scroll-into-view="{{anchor}}">
-    <view wx:if="{{!messages.length && !loading}}" class="welcome"><view class="welcome-copy"><text class="welcome-title">{{welcomeTitle}}</text><text class="welcome-note">{{welcomeNote}}</text></view><view wx:if="{{suggestions.length}}" class="suggestion-entry" bindtap="toggleSuggestions"><text>常用问题</text><text>{{showSuggestions ? '收起' : '展开'}}</text></view><view wx:if="{{showSuggestions}}" class="suggestions"><view class="suggestion-row"><view wx:for="{{suggestions}}" wx:key="*this" class="suggestion" data-text="{{item}}" bindtap="ask">{{item}}</view></view></view></view>
+  <view class="assistant-header" style="height:{{headerHeight}}px">
+    <button class="menu-button" bindtap="openSessions" aria-label="打开灵小枢菜单"><text class="menu-glyph">☰</text><text wx:if="{{unreadTotal}}" class="menu-unread">{{unreadTotal}}</text></button>
+    <text class="header-title">Hi 灵小枢</text>
+  </view>
+  <scroll-view scroll-y enhanced="{{true}}" show-scrollbar="{{false}}" class="conversation {{!messages.length ? 'empty-conversation' : ''}}" style="top:{{contentTop}}px;bottom:{{keyboardHeight ? 'calc(' + keyboardHeight + 'px + 232rpx)' : 'calc(338rpx + env(safe-area-inset-bottom))'}}" scroll-into-view="{{anchor}}">
+    <view wx:if="{{!messages.length}}" class="welcome">
+      <text class="welcome-greeting">{{greeting}}</text>
+      <text class="welcome-note">{{loading ? '正在连接你的工作台…' : welcomeNote}}</text>
+    </view>
     <view wx:for="{{messages}}" wx:key="id" id="{{item.id}}" class="message {{item.role}}"><text class="speaker">{{item.role === 'user' ? '你' : agentTitle}}</text><text user-select class="message-text">{{item.content}}</text></view>
     <view wx:if="{{sending}}" class="thinking">正在整理真实工作信息…</view>
     <view wx:if="{{contentTask}}" class="content-task-card">
@@ -19,22 +24,39 @@
     <view wx:for="{{actions}}" wx:key="id" class="action-card" data-index="{{index}}" bindtap="previewAction"><text>{{item.label || '查看操作方案'}}</text><text>›</text></view>
     <view wx:if="{{preview}}" class="preview-card"><text class="preview-title">执行前确认 · {{preview.target.title}}</text><text class="preview-impact">{{preview.impact}}</text><view wx:for="{{preview.steps}}" wx:key="*this" class="step">{{index + 1}}. {{item}}</view><view class="preview-buttons"><button bindtap="dismissPreview">取消</button><button class="confirm" loading="{{confirming}}" bindtap="confirmAction">确认执行</button></view></view>
     <view wx:if="{{receipts.length}}" class="receipts"><text class="receipt-heading">执行记录</text><view wx:for="{{receipts}}" wx:key="id" class="receipt"><text>{{item.statusLabel}}</text><text>{{item.acceptedAt}}</text></view></view>
+    <view wx:if="{{error}}" class="error">{{error}}</view>
+    <view class="scroll-end"></view>
   </scroll-view>
-  <view wx:if="{{inputMode === 'voice'}}" class="voice-prompt {{recording ? 'recording' : ''}}" bindtouchstart="holdVoiceStart" bindtouchmove="holdVoiceMove" bindtouchend="holdVoiceEnd" bindtouchcancel="cancelRecording">
-    <view class="voice-glyph"><text></text><text></text></view>
-    <view class="voice-copy"><text class="voice-title">{{transcribing ? '正在识别…' : recording ? '松开发送' : '长按问灵小枢'}}</text><text class="voice-note">{{recording ? '上滑取消' : '可按住提问或者派活'}}</text></view>
-    <view class="keyboard-switch" data-mode="text" bindtap="switchInputMode">⌨</view>
+  <view class="conversation-dock" style="{{keyboardHeight ? 'bottom:' + keyboardHeight + 'px' : ''}}">
+    <scroll-view scroll-x enhanced="{{true}}" show-scrollbar="{{false}}" class="quick-cards" aria-label="快捷卡片">
+      <view class="quick-card-row"><button wx:for="{{capabilities}}" wx:key="title" class="quick-card" data-text="{{item.prompt}}" bindtap="ask" disabled="{{loading || sending}}"><text class="quick-icon">{{item.icon}}</text><text>{{item.title}}</text></button></view>
+    </scroll-view>
+    <view wx:if="{{showSuggestions}}" class="suggestions"><button wx:for="{{suggestions}}" wx:key="*this" class="suggestion" data-text="{{item}}" bindtap="ask">{{item}}</button></view>
+    <view wx:if="{{recording || transcribing}}" class="voice-status">{{transcribing ? '正在识别语音…' : '正在聆听，松开转文字 · 上滑取消'}}</view>
+    <view class="composer">
+      <button class="composer-more" bindtap="toggleSuggestions" aria-label="展开常用问题">+</button>
+      <block wx:if="{{inputMode === 'text'}}"><input value="{{input}}" bindinput="inputText" confirm-type="send" bindconfirm="send" placeholder="给灵小枢发送消息" adjust-position="{{false}}" bindkeyboardheightchange="keyboardChanged" cursor-spacing="24"/><button wx:if="{{input}}" class="send" disabled="{{sending || loading}}" bindtap="send" aria-label="发送消息">↑</button><button wx:else class="mode" data-mode="voice" bindtap="switchInputMode" aria-label="切换语音输入"><view class="voice-bars"><text></text><text></text><text></text><text></text><text></text></view></button></block>
+      <block wx:else><view class="voice-hold" bindtouchstart="holdVoiceStart" bindtouchmove="holdVoiceMove" bindtouchend="holdVoiceEnd" bindtouchcancel="cancelRecording">{{transcribing ? '正在识别…' : recording ? '松开转文字' : '按住说话'}}</view><button class="mode" data-mode="text" bindtap="switchInputMode" aria-label="切换文字输入">⌨</button></block>
+    </view>
   </view>
-  <view wx:else class="composer"><button class="mode" data-mode="voice" bindtap="switchInputMode">🎙</button><input value="{{input}}" bindinput="inputText" confirm-type="send" bindconfirm="send" placeholder="输入消息"/><button wx:if="{{input}}" class="send" disabled="{{sending}}" bindtap="send">↑</button></view>
-  <view wx:if="{{recording}}" class="voice-status"><text>正在聆听，松开发送</text><text>上滑可取消</text></view>
-  <operator-nav active="assistant" mode="{{serviceMode ? 'service' : 'operator'}}"></operator-nav>
-  <view wx:if="{{showSessions}}" class="session-overlay">
-    <view class="session-sheet">
-      <view class="session-head"><text wx:if="{{historySession}}" class="session-back" bindtap="backToSessions">‹ 会话列表</text><text class="session-title">{{historySession ? historySession.displayTitle : '我的会话'}}</text><text class="session-close" bindtap="closeSessions">关闭</text></view>
-      <scroll-view scroll-y class="session-body">
-        <view wx:if="{{sessionsLoading}}" class="session-empty">正在读取本地账号的会话…</view>
-        <block wx:elif="{{historySession}}"><view wx:for="{{historyMessages}}" wx:key="id" class="history-message {{item.role}}"><text class="history-speaker">{{item.role === 'user' ? '你' : agentTitle}}</text><text user-select>{{item.content}}</text></view><view wx:if="{{!historyMessages.length}}" class="session-empty">该会话还没有消息</view></block>
-        <block wx:else><view wx:for="{{sessions}}" wx:key="id" class="session-row" data-id="{{item.id}}" bindtap="viewSession"><view><text class="session-row-title">{{item.displayTitle}}</text><text class="session-row-time">{{item.displayTime}}</text></view><text>{{item.archivedAt ? '已归档' : '进行中'}} ›</text></view><view wx:if="{{!sessions.length}}" class="session-empty">还没有历史会话</view></block>
+  <operator-nav wx:if="{{!keyboardHeight}}" active="assistant"></operator-nav>
+  <view wx:if="{{showSessions}}" class="session-overlay" bindtap="closeSessions">
+    <view class="session-sheet" catchtap="stop" aria-role="dialog" aria-label="灵小枢导航">
+      <view class="session-head" style="padding-top:{{statusBarHeight}}px"><view><text class="session-brand">Hi 灵小枢</text><text class="session-subtitle">你的 AI 工作伙伴</text></view><button class="session-close" bindtap="closeSessions" aria-label="关闭菜单">×</button></view>
+      <view class="session-tools">
+        <button class="workspace-link account-settings" bindtap="openAccountSettings"><text>⚙</text><text>账号设置</text></button>
+        <view class="session-search"><text>⌕</text><input value="{{sessionSearch}}" bindinput="searchSessions" placeholder="搜索会话" aria-label="搜索历史会话"/></view>
+        <button class="workspace-link new-conversation" bindtap="newConversation"><text>＋</text><text>新对话</text></button>
+        <view class="history-heading">历史会话</view>
+      </view>
+      <scroll-view scroll-y enhanced="{{true}}" show-scrollbar="{{false}}" class="session-body">
+        <view wx:if="{{sessionsLoading}}" class="session-empty">正在读取会话…</view>
+        <view wx:if="{{historyError}}" class="error">{{historyError}}</view>
+        <button wx:for="{{filteredSessions}}" wx:key="id" class="session-row" data-id="{{item.id}}" bindtap="viewSession" aria-label="{{item.displayTitle + (item.unread ? '，有新结果' : '')}}">
+          <view class="session-row-head"><text class="session-row-title">{{item.displayTitle}}</text><text wx:if="{{item.unread}}" class="session-unread">1</text></view>
+          <view class="session-row-meta"><text class="session-status {{item.status}}">{{item.statusLabel}}</text><text class="session-row-time">{{item.displayTime}}</text></view>
+        </button>
+        <view wx:if="{{!sessionsLoading && !filteredSessions.length}}" class="session-empty">{{sessionSearch ? '没有找到相关会话' : '还没有历史会话'}}</view>
       </scroll-view>
     </view>
   </view>

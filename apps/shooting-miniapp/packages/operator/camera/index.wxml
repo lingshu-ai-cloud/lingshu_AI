@@ -24,7 +24,8 @@
     <cover-view class="record-wrap {{recording ? 'record-wrap-active' : ''}}" bindtap="toggleRecord">
       <cover-view class="record-button {{recording ? 'record-button-active' : ''}}"></cover-view>
     </cover-view>
-    <cover-view class="time">{{recording ? elapsed + 's' : '拍摄'}}</cover-view>
+    <cover-view wx:if="{{pendingMaterialId}}" class="side-action" bindtap="retryAttach">重试关联</cover-view>
+    <cover-view wx:else class="time">{{recording ? elapsed + 's' : '拍摄'}}</cover-view>
   </cover-view>
 
   <cover-view wx:if="{{busy}}" class="saving">正在保存并关联任务…</cover-view>
