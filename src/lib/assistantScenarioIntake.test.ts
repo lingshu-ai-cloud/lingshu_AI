@@ -12,6 +12,7 @@ test('all three approved prompts resolve to distinct persisted scenes without ta
   }
   assert.equal(assistantScenarioIntake('不要为活动准备内容'),null);
   assert.equal(assistantScenarioIntake('如何选定一个开场'),null);
+  for (const prompt of ['打开发布日历','我想进入发布日历','查看本周发布日历']) assert.equal(assistantScenarioIntake(prompt)?.scenario,'weekly_calendar');
 });
 test('guided scenes cannot enter the ordinary task-creation path',()=>{
   assert.throws(()=>scenarioTaskInputs(assistantScenarioIntake('先选一个开场')!),/已核验/);

@@ -3,7 +3,7 @@ import type { CreateSocialContentTaskInput } from '../../shared/contracts/social
 
 export function assistantScenarioIntake(text: string): AssistantCreationPortal | null {
   if (/(?:取消|不要|先别|如何|怎么)/u.test(text)) return null;
-  const scenario = /(?:查看|看看).{0,8}(?:本周|周发布).{0,8}日历/u.test(text) ? 'weekly_calendar'
+  const scenario = /(?:查看|看看|打开|进入|想看).{0,12}(?:本周)?发布日历|(?:查看|看看|打开|进入|想看).{0,12}周发布日历/u.test(text) ? 'weekly_calendar'
     : /(?:为|一次).{0,8}活动.{0,8}(?:准备|内容)|为活动准备内容/u.test(text) ? 'campaign'
     : /(?:选定|先选|选择).{0,10}开场/u.test(text) ? 'hook_first'
     : /(?:创建|新建).{0,8}(?:一条|一个).{0,8}(?:创作计划|内容任务|创作任务)|创建一条新的创作计划/u.test(text) ? 'content_task' : null;

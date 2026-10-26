@@ -3,7 +3,8 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { assistantCreationPortal } from './assistantProductionIntake';
-import AssistantCreationPortalCard, { creationPortalNavigation, AssistantTaskPortalCard, taskPortalNavigation } from './AssistantCreationPortalCard';
+import AssistantCreationPortalCard, { calendarPortalNavigation, creationPortalNavigation, AssistantTaskPortalCard, taskPortalNavigation } from './AssistantCreationPortalCard';
+import { assistantScenarioIntake } from '../../lib/assistantScenarioIntake';
 import { confirmedTaskPortal } from '../../../shared/contracts/assistantTaskPortal';
 import { assistantCreationPortalSchema } from '../../../shared/contracts/assistantCreationPortal';
 import { parseMessages } from '../../../server/routes/assistantThreadMessageInput';
@@ -49,6 +50,15 @@ test('portal card is a navigation draft with the existing creation handoff, neve
   assert.match(html, /打开内容创作/); assert.match(html, /3条视频/);
   assert.doesNotMatch(html, /已完成|已创建|已生成|iframe|href=/);
   assert.throws(() => creationPortalNavigation({ ...portal, href: 'https://evil.example' } as typeof portal));
+});
+
+test('calendar intent offers a portal to the existing content-creation calendar', () => {
+  const portal = assistantScenarioIntake('打开发布日历');
+  assert.equal(portal?.scenario, 'weekly_calendar');
+  assert.deepEqual(calendarPortalNavigation(), { page: 'socialInspiration', view: 'calendar' });
+  const html = renderToStaticMarkup(createElement(AssistantCreationPortalCard, { portal: portal! }));
+  assert.match(html, /打开内容创作 - 发布日历/);
+  assert.doesNotMatch(html, /本周发布日历查询|完整发布日历|查看完整日历/);
 });
 
 test('server message boundary and local journal retain a typed portal, not executable parameters', () => {

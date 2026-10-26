@@ -176,7 +176,7 @@ export function useAssistantSend(input: AssistantSendInput) {
     const lastMessage = thread.messages.at(-1);
     const scene = ['strategy','socialInspiration'].includes(page) && !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? assistantScenarioIntake(visibleText) : null;
     if (scene) {
-      setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: scene.scenario === 'weekly_calendar' ? '先查看已有的发布安排。' : scene.scenario === 'hook_first' ? '先选一个开场片段，再确认产品和内容方向。' : scene.scenario === 'content_task' ? '先确认产品、内容方向和预计发布时间。' : '先确定活动信息，再安排要准备的内容。', creationPortal: scene }]);
+      setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: scene.scenario === 'weekly_calendar' ? '发布日历在内容创作中，点击下方卡片即可打开。' : scene.scenario === 'hook_first' ? '先选一个开场片段，再确认产品和内容方向。' : scene.scenario === 'content_task' ? '先确认产品、内容方向和预计发布时间。' : '先确定活动信息，再安排要准备的内容。', creationPortal: scene }]);
       setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;

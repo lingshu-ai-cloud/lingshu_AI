@@ -464,7 +464,7 @@ export default function App() {
         restoreHistory?: boolean;
         navigationIdentity?: string;
         page?: Page;
-        view?: LegacyTrafficView | 'products';
+        view?: LegacyTrafficView | 'products' | 'calendar';
         productName?: string;
         materialIds?: string[];
         contentItemId?: string;
@@ -509,6 +509,15 @@ export default function App() {
           delete nextHistoryState.socialContentTaskId;
           delete nextHistoryState.socialContentPage;
           delete nextHistoryState.weeklyContentTarget;
+        }
+        if (nextPage === 'socialInspiration' && detail.view === 'calendar') {
+          const calendarUrl = new URL(window.location.href);
+          calendarUrl.searchParams.set('view', 'calendar');
+          calendarUrl.searchParams.delete('taskId');
+          calendarUrl.searchParams.delete('socialContentTaskId');
+          delete nextHistoryState.socialContentTaskId;
+          delete nextHistoryState.socialContentPage;
+          window.history.replaceState(stampProductionHistoryState(nextHistoryState), '', calendarUrl);
         }
         if (nextPage === 'smartAssets' && detail.contentCreationRequest
           && (!detail.contentCreationRequest.continueProjectId
