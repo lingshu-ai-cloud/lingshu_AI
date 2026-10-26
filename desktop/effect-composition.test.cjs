@@ -30,6 +30,13 @@ test('filter builders provide motion, particles, transitions and synthetic sound
   });
   assert.match(sceneFilters.join(';'), /zoompan/);
   assert.match(sceneFilters.join(';'), /drawtext/);
+  const portableFilters = sceneEffectFilters({
+    source: '[v0]', output: 've0', width: 320, height: 320, target: 1,
+    intensity: 3, textOverlaysAvailable: false,
+    scene: { enabled: true, motion: 'push_in', color: 'warm', transitionOut: { type: 'cut', duration: 0 }, overlays: [{ presetId: 'sparkle', layer: 'around_subject', start: 0, end: 1, anchor: { x: .5, y: .5 }, scale: 1, opacity: .8 }] },
+  });
+  assert.doesNotMatch(portableFilters.join(';'), /drawtext/);
+  assert.match(portableFilters.join(';'), /zoompan/);
   const joined = joinSceneFilters({ labels: ['[ve0]', '[ve1]'], scenes: [{ enabled: true, transitionOut: { type: 'dissolve', duration: .25 } }, { enabled: true, transitionOut: { type: 'cut', duration: 0 } }], targets: [1, 1] });
   assert.match(joined.filters.join(';'), /xfade=transition=dissolve/);
   const audio = audioEventFilters([{ presetId: 'whoosh', at: .2, volume: .4 }]);
@@ -66,6 +73,8 @@ test('real FFmpeg joins mixed moving and static scenes without changing approved
       bgm: { url: null }, voiceover: { url: null }, subtitles: { mode: 'off', cues: [] },
     }, () => {}, dir);
     assert.equal(result.ok, true, result.error);
+    assert.equal(result.effectRenderEvidence.textOverlaysAvailable, require('./render.cjs').ffmpegHasFilter('drawtext'));
+    assert.equal(result.effectRenderEvidence.droppedTextOverlayCount, result.effectRenderEvidence.textOverlaysAvailable ? 0 : 1);
     assert.ok(fs.existsSync(result.outputPath));
     const durationProbe = spawnSync(ffmpegPath, ['-hide_banner', '-i', result.outputPath, '-f', 'null', '-'], { encoding: 'utf8' });
     const match = durationProbe.stderr.match(/Duration:\s*00:00:([\d.]+)/);

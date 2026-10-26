@@ -160,7 +160,7 @@ function textOverlayFilters(overlay, width, height) {
 }
 
 /** Apply color, camera motion and decorative/text layers to one normalized scene. */
-function sceneEffectFilters({ source, output, scene, width, height, target, intensity }) {
+function sceneEffectFilters({ source, output, scene, width, height, target, intensity, textOverlaysAvailable = true }) {
   // zoompan changes timebase but preserves input frame duration. Feeding
   // AVTB frames (duration 33333 ticks) makes each output frame last 1111s.
   // Convert both PTS and duration to frame ticks before applying motion.
@@ -172,7 +172,9 @@ function sceneEffectFilters({ source, output, scene, width, height, target, inte
     const order = { background: 0, around_subject: 1, foreground: 2 };
     return order[a.layer] - order[b.layer];
   });
-  for (const overlay of ordered) chain.push(...textOverlayFilters(overlay, width, height));
+  if (textOverlaysAvailable) {
+    for (const overlay of ordered) chain.push(...textOverlayFilters(overlay, width, height));
+  }
   return [`${source}${chain.join(',')},${timing}[${output}]`];
 }
 

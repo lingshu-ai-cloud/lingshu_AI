@@ -10,7 +10,7 @@
  * voiceover.url 与 bgm.url 均会下载并混入最终音轨；声明了音轨却下载失败时必须终止，
  * 避免用户拿到“字幕正常但没有声音”的静默成片。
  */
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const { createHash } = require('node:crypto');
 const os = require('node:os');
@@ -26,6 +26,16 @@ const { advancedEvents, renderTransparentOverlay } = require('./remotion-overlay
 
 let ffmpegPath = null;
 try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = null; }
+
+const ffmpegFilterAvailability = new Map();
+function ffmpegHasFilter(name) {
+  if (!ffmpegPath) return false;
+  if (ffmpegFilterAvailability.has(name)) return ffmpegFilterAvailability.get(name);
+  const result = spawnSync(ffmpegPath, ['-hide_banner', '-filters'], { encoding: 'utf8', timeout: 15_000 });
+  const available = result.status === 0 && new RegExp(`\\b${name}\\b`).test(`${result.stdout || ''}\n${result.stderr || ''}`);
+  ffmpegFilterAvailability.set(name, available);
+  return available;
+}
 
 /** 画面比例 → 分辨率 */
 function resolution(ratio) {
@@ -553,6 +563,8 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       clipId: clip.clipId,
       targetDuration: clip.targetDuration,
     })));
+    const textOverlaysAvailable = ffmpegHasFilter('drawtext');
+    const requestedTextOverlayCount = effectPlan.scenes.reduce((total, scene) => total + scene.overlays.length, 0);
     const rawEmphasisPlan = manifest && (manifest.emphasisPlan || manifest.emphasis);
     const emphasisPlan = normalizeEmphasisPlan(rawEmphasisPlan, duration);
     // Motion events use the normalized caption events as their timing/layout
@@ -725,6 +737,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
           source: `[v${index}]`, output,
           scene: canPrecompose ? null : effectPlan.scenes[index], width: w, height: h, target,
           intensity: canPrecompose ? 0 : effectPlan.intensity,
+          textOverlaysAvailable,
         }));
         effectLabels.push(`[${output}]`);
         targets.push(target);
@@ -910,7 +923,11 @@ async function composite(manifest, onProgress = () => {}, outDir) {
           resolve({ ok: true, outputPath, ...(frameContract ? { frameRenderEvidence: {
             schemaVersion: 'renderer-frame-attestation.v1', outputSha256, fps: 30,
             durationSeconds: duration, expectedFrames: frameContract.expectedFrames,
-          } } : {}), subtitleRenderEvidence: {
+          } } : {}), effectRenderEvidence: {
+            schemaVersion: 'renderer-effect-attestation.v1',
+            textOverlaysAvailable,
+            droppedTextOverlayCount: textOverlaysAvailable ? 0 : requestedTextOverlayCount,
+          }, subtitleRenderEvidence: {
             schemaVersion: 'renderer-subtitle-attestation.v2',
             outputSha256,
             assSha256: subtitleAssSha256,
@@ -931,4 +948,4 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   }
 }
 
-module.exports = { composite, downloadTo, resolution, ffmpegPath, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss, appendFinalVisualLayers, finalMuxOutputArgs };
+module.exports = { composite, downloadTo, resolution, ffmpegPath, ffmpegHasFilter, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss, appendFinalVisualLayers, finalMuxOutputArgs };
