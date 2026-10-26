@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { App as AntApp } from 'antd';
-import { ArrowRight, Clapperboard } from 'lucide-react';
+import { ArrowRight, Clapperboard, Images } from 'lucide-react';
 import { assistantCreationPortalSchema, type AssistantCreationPortal } from '../../../shared/contracts/assistantCreationPortal';
 import { productionNavigationIdentity } from '../../lib/productionNavigation';
 import type { SocialContentCreateRequest } from '../socialContent/SocialContentWorkspace';
@@ -10,10 +10,16 @@ import { assistantSourcePortalSchema, type AssistantSourcePortal } from '../../.
 export function creationPortalNavigation(value: AssistantCreationPortal, requestId = Date.now()) {
   const portal = assistantCreationPortalSchema.parse(value);
   const request: SocialContentCreateRequest = {
-    requestId, themeId: 'product_value', mode: 'instant', creationPath: 'material_processing',
+    requestId, themeId: 'product_value', mode: 'instant', creationPath: portal.imageReplication ? 'viral_replication' : 'material_processing',
     materialInput: 'none', managedMode: 'one_click_managed', assistantEntry: portal,
     prefill: { title: portal.title, topic: portal.objective, platforms: portal.platforms },
     specialRequirements: portal.objective,
+    ...(portal.imageReplication ? { sourceContext: {
+      originLabel: '来自灵小枢对话', referenceContentType: 'image' as const,
+      referenceTitle: portal.imageReplication.reference?.name || '',
+      referenceMaterialId: portal.imageReplication.reference?.materialId,
+      aspectRatio: portal.aspectRatio || undefined,
+    } } : {}),
   };
   return { page: 'smartAssets', view: 'create', studioEntry: true, directStudio: false, contentCreationRequest: request };
 }
@@ -30,9 +36,9 @@ export default function AssistantCreationPortalCard({ portal }: { portal: Assist
       if (identity.current !== productionNavigationIdentity()) { void message.warning('登录状态已变化，请重新打开当前会话。'); return; }
       window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { ...creationPortalNavigation(item), navigationIdentity: identity.current } }));
     }}>
-    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-surface-2 text-accent" aria-hidden="true"><Clapperboard size={22}/></span>
-    <span className="min-w-0 flex-1"><strong className="block text-sm font-semibold">内容创作</strong>
-      <span className="mt-0.5 block text-xs text-text-secondary">{item.requestedOutputCount === null ? '数量待确认' : `${item.requestedOutputCount}条${item.outputType === 'video' ? '视频' : '内容'}`} · 打开</span>
+    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-surface-2 text-accent" aria-hidden="true">{item.imageReplication ? <Images size={22}/> : <Clapperboard size={22}/>}</span>
+    <span className="min-w-0 flex-1"><strong className="block text-sm font-semibold">{item.imageReplication ? '图文爆款复刻' : '内容创作'}</strong>
+      <span className="mt-0.5 block text-xs text-text-secondary">{item.imageReplication ? '确认参考图和产品后创建复刻任务' : item.requestedOutputCount === null ? '数量待确认' : `${item.requestedOutputCount}条${item.outputType === 'video' ? '视频' : '内容'}`} · 打开</span>
     </span><ArrowRight size={17} className="shrink-0 text-text-muted" aria-hidden="true"/>
   </button>;
 }

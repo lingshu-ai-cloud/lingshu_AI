@@ -22,6 +22,7 @@ import { focusedNaturalLanguageActionId, focusedNaturalLanguageActionInput,
 import { assistantAttachmentKind } from './AssistantComposer';
 import { buildAssistantChatMessages, type UploadedAssistantAttachment } from './assistantChatPrompt';
 import { assistantProductionIntent, assistantCreationPortal } from './assistantProductionIntake';
+import { assistantImageReplicationPortal } from './assistantImageReplicationIntent';
 import { runAssistantProductionRequest } from './assistantProductionRequest';
 import type { useContentTaskIntake } from './useContentTaskIntake';
 import { agentForOrbit, compactText, contextForOrbit, loadLiveIntegrationFacts,
@@ -188,11 +189,12 @@ export function useAssistantSend(input: AssistantSendInput) {
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
     }
-    const portal = !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction
-      && !['smartAssets', 'socialInspiration'].includes(page) ? assistantCreationPortal(visibleText) : null;
+    const imagePortal = !fileIntent && !creationAction ? assistantImageReplicationPortal(visibleText, uploadedAttachments) : null;
+    const portal = imagePortal || (!creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction
+      && !['smartAssets', 'socialInspiration'].includes(page) ? assistantCreationPortal(visibleText) : null);
     if (portal) {
       setMessages(threadAgent, [...nextVisible, { role: 'assistant',
-        content: '创作需求已带入下方入口。\n\n总体结论：点击「内容创作」，确认产品和数量后继续制作。', creationPortal: portal }]);
+        content: imagePortal ? '点击「图文爆款复刻」，逐步确认参考图、企业产品、卖点和发布规格。' : '创作需求已带入下方入口。\n\n总体结论：点击「内容创作」，确认产品和数量后继续制作。', creationPortal: portal }]);
       setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;

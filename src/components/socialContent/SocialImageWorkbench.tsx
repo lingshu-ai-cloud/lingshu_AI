@@ -6,6 +6,7 @@ import { LsMediaStateFrame } from '../ui/LsExperiencePrimitives';
 import { CHECK_LABELS, IMAGE_TYPES, STEP_ITEMS, passedQualityKeys, posterStyleForType, resolvedQuality,
   ReviewImage, topicForType } from './socialImageWorkbenchPresentation';
 import { SocialImageReviewActions } from './SocialImageReviewActions';
+import { useImageReplicationAutoStart } from './useImageReplicationAutoStart';
 import { authHeader } from '../../lib/auth';
 import { socialImageApi } from '../../lib/socialImageApi';
 import { socialContentApi } from '../../lib/socialContentApi';
@@ -42,6 +43,7 @@ function hasUnresolvedPaidImageJob(task: SocialImageCreationTask | null): boolea
 }
 
 interface SocialImageWorkbenchProps {
+  autoStart?: boolean;
   creationPath: SocialImageCreationPath;
   contentTaskId?: string;
   entrySource?: 'assistant' | 'workspace' | 'weekly_package';
@@ -66,7 +68,7 @@ export default function SocialImageWorkbench(props: SocialImageWorkbenchProps) {
 
 function SocialImageWorkbenchSession({
   creationPath, contentTaskId, entrySource = 'workspace', referenceTitle, referenceThumbnail, referenceMediaUrl, referenceCaption,
-  referenceLayerBlueprints, initialTask, onShowCreations,
+  referenceLayerBlueprints, initialTask, autoStart = false, onShowCreations,
 }: SocialImageWorkbenchProps) {
   const carouselPending = (initialTask?.imageType === 'carousel' || initialTask?.imageType === 'gif_poster') && initialTask.renderPlan?.units.some(unit =>
     !initialTask.generationJobs.find(job => job.id === unit.jobId)?.outputNodeIds.length);
@@ -281,7 +283,7 @@ function SocialImageWorkbenchSession({
         title: title.trim() || '图片内容制作', objective: resolvedCoreClaim,
         productId: productIds[0] || null, productRef: selectedProducts[0]?.name || null, audience,
         platforms: [platform], languages: [language], formats: ['social_image'], aspectRatio: ratio,
-        requestedOutputCount: 1, callToAction: '联系销售或申请样品', creationMode: creationPath,
+        requestedOutputCount: 1, callToAction: existingContent.brief.callToAction || '联系销售或申请样品', creationMode: creationPath,
         assetAvailability: selectedMaterials.length ? 'ready' as const : 'none' as const,
       };
       const changed = Object.entries(changes).some(([key, value]) => JSON.stringify(existingContent.brief[key as keyof typeof existingContent.brief]) !== JSON.stringify(value));
@@ -349,6 +351,7 @@ function SocialImageWorkbenchSession({
     finally { setBusy(false); }
   };
 
+  useImageReplicationAutoStart({ enabled: autoStart, ready: !busy && selectedProducts.length === 1 && contentTaskReady, task: initialTask, start: saveInputs });
   async function requestPlan(activeTask: SocialImageCreationTask, confirmedFacts: Record<string, string>): Promise<PlannedRun | null> {
     const result = await studioApi.fbPoster({
       imageTaskId: activeTask.id, expectedImageTaskVersion: activeTask.version,

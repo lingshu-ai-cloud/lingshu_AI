@@ -420,3 +420,6 @@ html[data-lingshu-appearance='light'] .ls-assistant-home-root .ls-assistant-flow
   .creator-home__conversation { transition: none; }
   .ls-assistant-home-root[data-home-creation-mode] { animation: none; }
 }
+
+/* Five creation scenarios share one row when space permits; narrow screens retain horizontal scrolling. */
+.creator-home__prompt-grid--creation { grid-auto-columns: minmax(210px, calc((100% - 40px) / 5)); }
