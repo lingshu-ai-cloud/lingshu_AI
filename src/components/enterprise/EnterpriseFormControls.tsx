@@ -56,7 +56,7 @@ export function KnowledgeCard({
   icon: ComponentType<{ size?: number; className?: string }>;
   title: string;
   purpose: string;
-  completed: boolean;
+  completed?: boolean;
   stat?: string;
   children: ReactNode;
   id?: string;
@@ -72,9 +72,9 @@ export function KnowledgeCard({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
-              <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${completed ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+              {completed !== undefined && <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${completed ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
                 {completed ? '已完成' : '未完成'}
-              </span>
+              </span>}
             </div>
             <p className="mt-1 text-[11px] leading-relaxed text-text-muted">{purpose}</p>
           </div>

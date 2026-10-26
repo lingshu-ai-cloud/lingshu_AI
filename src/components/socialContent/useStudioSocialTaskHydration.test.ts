@@ -220,3 +220,8 @@ assert.deepEqual(socialTaskProductionPreview(completedProductionTask), {
 });
 assert.equal(socialTaskToStudioSeed(completedProductionTask).productionPreview.deliverableVideoUrl,
   '/api/social-content/files/video-1', 'agent-entry seed includes the real completed deliverable');
+
+const multiTask = { ...task, brief: { ...task.brief, productId: 'product-a', productIds: ['product-a', 'product-b'],
+  productMaterialSelection: { productIds: ['product-a', 'product-b'], selectedIds: ['material-b'], automaticIds: ['material-b'], dismissedIds: ['material-a'], preservedProductIds: [], candidateProductIds: { 'material-a': 'product-a', 'material-b': 'product-b' } } } };
+assert.deepEqual(socialTaskToStudioSeed(multiTask).selectedProductIds, ['product-a', 'product-b']);
+assert.deepEqual(socialTaskToStudioSeed(multiTask).productMaterialSelection, multiTask.brief.productMaterialSelection);

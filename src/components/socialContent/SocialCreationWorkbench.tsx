@@ -1,3 +1,4 @@
+import type { ProductMaterialSelectionState } from '../studio/studioProductMaterialSelection';
 import CreationDialoguePlanPanel from './CreationDialoguePlanPanel';
 import { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 export { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
@@ -28,9 +29,11 @@ export type { FreeCreationLine } from './socialCreationDraft';
 import { WorkbenchVideoPreview } from './WorkbenchVideoPreview';
 export { WorkbenchVideoPreview } from './WorkbenchVideoPreview';
 import { shotStart } from './socialCreationWorkbenchTime';
+import { SocialProductMaterialPicker } from './SocialProductMaterialPicker';
 import { useSocialCreationWorkbenchController } from './useSocialCreationWorkbenchController';
 
 export interface SocialCreationWorkbenchSeed {
+  productMaterialSelection?: import('../../../shared/contracts/socialContentTaskContract').ProductMaterialSelectionState | null;
   assistantEntry?: import('../../../shared/contracts/assistantCreationPortal').AssistantCreationPortal;
   creationDialoguePlan?: import('../../../shared/contracts/contentCreationDialogue').CreationReply;
   continueTaskId?: string;
@@ -70,6 +73,8 @@ export interface SocialCreationWorkbenchSubmit {
   presenterAssetId: string;
   files: File[];
   uploadedMaterials: Material[];
+  selectedProductMaterials?: Material[];
+  productMaterialSelection?: ProductMaterialSelectionState | null;
   referenceLinks: string[];
   callToAction: string;
   specialRequirements: string;
@@ -109,7 +114,7 @@ export default function SocialCreationWorkbench({
     productSlots, productMentions, primaryProductId, primaryProduct, productMappings, productsReady, productSelectionLoading,
     chooseDefaultProduct, speechGenerated, confirmedSpeech, generateSpeech, highlightSpeech, syncPlaybackCard, previewUrl,
     startGeneration, commitFreeLines, regenerateFreeLine, generateAiHook, adoptAiHook, chooseHookMode, updateDraftTitle,
-    commitDraftTitle, freeReady,
+    commitDraftTitle, freeReady, productMaterials, replicationMaterialProductIds,
   } = useSocialCreationWorkbenchController({ mode, seed, stageProfile, onGenerate });
 
 
@@ -286,11 +291,13 @@ export default function SocialCreationWorkbench({
               {!productSlots.length && referenceLines.length > 0 && <p className="text-[10px] leading-4 text-text-muted">原口播未识别到产品词，无需选择企业产品。若识别有遗漏，可补充原词。</p>}
               {referenceLines.length > 0 && <div className="mt-2 flex gap-1.5"><input aria-label="补充原口播产品词" value={newProductTerm} onChange={event => setNewProductTerm(event.target.value)} placeholder="补充未识别的原产品词" className="min-w-0 flex-1 rounded-md border border-border px-2 py-1.5 text-[10px]" /><button type="button" disabled={!newProductTerm.trim()} onClick={() => { const term = newProductTerm.trim(); if (!script.join(' ').toLocaleLowerCase().includes(term.toLocaleLowerCase())) { setGenerationNotice('补充的产品词必须出现在原片口播中。'); return; } if (!productSlots.some(slot => slot.sourceLabel.toLocaleLowerCase() === term.toLocaleLowerCase())) setManualProductTerms(current => [...current, term]); setNewProductTerm(''); setGenerationNotice(''); }} className="rounded-md border border-border bg-white px-2 text-[10px] font-bold disabled:opacity-40">添加</button></div>}
               <div className="mt-3 rounded-lg border border-border bg-surface-2 p-2.5"><p className="text-[10px] font-bold text-text-secondary">企业品牌 · 自动读取</p><p className="mt-1 text-xs text-text-primary">{enterpriseBrandName || '企业知识库尚未填写品牌名称'}</p><p className="mt-1 text-[10px] text-text-muted">新口播使用企业知识库中的品牌信息，无需填写原片品牌名。</p></div>
+              <SocialProductMaterialPicker selection={productMaterials} products={products.filter(item => replicationMaterialProductIds.includes(item.id))} disabled={submitting} />
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 p-3" data-replication-material-supplement><p className="text-[10px] font-bold text-amber-950">本任务商品素材</p><p className="mt-1 text-[10px] leading-4 text-amber-800">上传已选企业产品的包装图片或实拍视频。文件会进入当前制作项目，下一页仍需逐镜确认；不会自动替换第三方包装。</p><button type="button" disabled={submitting} onClick={() => uploadRef.current?.click()} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-amber-800 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50"><Upload size={12} />{files.length ? '重新选择商品素材' : '上传商品图片或视频'}</button>{files.length > 0 && <ul className="mt-2 space-y-1">{files.map(file => <li key={`${file.name}:${file.size}:${file.lastModified}`} className="truncate text-[10px] text-amber-900">已选择：{file.name}</li>)}</ul>}<p className="mt-2 text-[10px] leading-4 text-amber-800">人物镜头将在下一页绑定已授权人物；没有授权或账号身份锁时只阻塞人物分支。</p></div>
             </div>}
 
             {!isReplication && <div className="mt-4 space-y-3">
-              <div><p className="text-xs font-semibold text-text-primary">主推产品 · 多选</p><button type="button" aria-expanded={productSelectorOpen} onClick={() => setProductSelectorOpen(value => !value)} disabled={productsLoading || submitting} className="mt-2 flex h-11 w-full items-center justify-between rounded-lg border border-border bg-white px-3 text-left text-xs font-bold"><span>{productsLoading ? '正在读取企业产品…' : selectedFreeProducts.length ? `已选 ${selectedFreeProducts.length} 款：${selectedFreeProducts.map(item => item.name).join('、')}` : '请选择一个或多个产品'}</span><ChevronDown size={14} /></button>{productSelectorOpen && <div className="mt-1 max-h-44 overflow-y-auto rounded-lg border border-border p-2">{products.map(item => <label key={item.id} className="flex items-center gap-2 rounded-lg p-2 text-xs hover:bg-zinc-50"><input type="checkbox" checked={selectedProductIds.includes(item.id)} onChange={event => { setSelectedProductIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id)); setProductId(current => event.target.checked && !current ? item.id : current === item.id && !event.target.checked ? '' : current); setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); }} /><span>{item.name}</span></label>)}</div>}{!productsLoading && !products.length && <span className="mt-2 block text-[10px] font-normal text-amber-700">请先在企业中心录入产品。</span>}</div>
+              <div><p className="text-xs font-semibold text-text-primary">主推产品 · 多选</p><button type="button" aria-expanded={productSelectorOpen} onClick={() => setProductSelectorOpen(value => !value)} disabled={productsLoading || submitting} className="mt-2 flex h-11 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-border bg-white px-3 text-left text-xs font-bold"><span className="min-w-0 flex-1 truncate">{productsLoading ? '正在读取企业产品…' : selectedFreeProducts.length ? `已选 ${selectedFreeProducts.length} 款：${selectedFreeProducts.map(item => item.name).join('、')}` : '请选择一个或多个产品'}</span><ChevronDown size={14} /></button>{productSelectorOpen && <div className="mt-1 max-h-44 overflow-y-auto rounded-lg border border-border p-2">{products.map(item => <label key={item.id} className="flex items-center gap-2 rounded-lg p-2 text-xs hover:bg-zinc-50"><input type="checkbox" checked={selectedProductIds.includes(item.id)} onChange={event => { setSelectedProductIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id)); setProductId(current => event.target.checked && !current ? item.id : current === item.id && !event.target.checked ? '' : current); setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); }} /><span>{item.name}</span></label>)}</div>}{!productsLoading && !products.length && <span className="mt-2 block text-[10px] font-normal text-amber-700">请先在企业中心录入产品。</span>}</div>
+              <SocialProductMaterialPicker selection={productMaterials} products={selectedFreeProducts} disabled={submitting} />
               <label className="block text-[10px] font-bold">内容目标<select value={contentGoal} onChange={event => setContentGoal(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs"><option>种草</option><option>询盘</option><option>品牌认知</option><option>活动推广</option></select></label>
               <label className="block text-[10px] font-bold">目标受众<input value={targetAudience} onChange={event => setTargetAudience(event.target.value)} className="mt-1 w-full rounded-lg border border-border p-2 text-xs" /></label>
               <div className="grid grid-cols-2 gap-2"><label className="text-[10px] font-bold">发布平台<select value={platform} onChange={event => setPlatform(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs"><option>TikTok</option><option>Instagram</option><option>YouTube</option><option>Facebook</option></select></label><label className="text-[10px] font-bold">内容语言<select value={contentLanguage} onChange={event => setContentLanguage(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs"><option value="zh">中文</option><option value="en">English</option></select></label></div>
@@ -319,7 +326,7 @@ export default function SocialCreationWorkbench({
             {/* GENERATION_INTEGRATION_GAP: the server calculates estimatedCostCny only
                 after a task plan exists; there is no preflight quote endpoint yet. */}
             {isReplication && <div className="flex items-center gap-3 text-[11px]"><span className="text-text-muted">预计消耗</span><span className="font-semibold text-text-primary" title="生成任务建立后由服务端返回真实预估">待生成服务核算</span></div>}
-            <button type="button" disabled={submitting || generatingSpeech || productSelectionLoading || (!isReplication && (!selectedProductIds.length || (freeLines.length > 0 && !freeReady))) || (isReplication && (!productsReady || !confirmedSpeech.length || (speechGenerated && confirmedSpeech.some(line => !line.draft.trim()))))} onClick={() => { if (isReplication && !speechGenerated) void generateSpeech(); else void startGeneration(); }} className="flex min-w-[220px] items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-none hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
+            <button type="button" disabled={submitting || generatingSpeech || productSelectionLoading || productMaterials.loading || Boolean(productMaterials.error) || (!isReplication && (!selectedProductIds.length || (freeLines.length > 0 && !freeReady))) || (isReplication && (!productsReady || !confirmedSpeech.length || (speechGenerated && confirmedSpeech.some(line => !line.draft.trim()))))} onClick={() => { if (isReplication && !speechGenerated) void generateSpeech(); else void startGeneration(); }} className="flex min-w-[220px] items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-none hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
               {submitting || generatingSpeech ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}{submitting ? '正在处理…' : generatingSpeech ? '正在生成英文口播' : isReplication ? speechGenerated ? '确认口播，进入分镜匹配' : '生成口播' : freeScriptText ? '确认口播，进入分镜制作' : 'Gemini 生成逐句口播与分镜'}
             </button>
           </div></footer>

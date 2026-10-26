@@ -12,10 +12,10 @@ test('company and market facts retain the three required company fields', () => 
     highlighted={false}
     onFieldChange={() => {}}
   />);
-  for (const label of ['目标市场与语言', '企业基本资料', '公司名称', '行业类目', '企业类型']) {
+  for (const label of ['企业基本资料', '公司名称', '行业类目', '企业类型', '主营业务', '公司简介（选填）']) {
     assert.ok(html.includes(label));
   }
-  assert.doesNotMatch(html, /成立年份|公司简介/);
+  assert.doesNotMatch(html, /成立年份|目标市场与语言/);
 });
 
 test('parent still owns the company profile and save state', () => {

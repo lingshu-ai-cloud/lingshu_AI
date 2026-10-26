@@ -40,6 +40,7 @@ export interface SocialContentSourceContext {
 }
 
 export interface SocialContentCreateRequest {
+  productMaterialSelection?: import('../../../shared/contracts/socialContentTaskContract').ProductMaterialSelectionState | null;
   assistantEntry?: import('../../../shared/contracts/assistantCreationPortal').AssistantCreationPortal;
   creationDialoguePlan?: import('../../../shared/contracts/contentCreationDialogue').CreationReply;
   requestId: number;

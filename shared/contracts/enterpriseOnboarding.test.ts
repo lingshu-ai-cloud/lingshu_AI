@@ -91,3 +91,11 @@ test('original evidence and AI proposals retain only verifiable source identitie
   assert.equal(normalized?.proposalSet?.focusProducts[0]?.productId, 'p1');
   assert.equal(normalized?.proposalSet?.companyIntro.confidence, 1);
 });
+
+
+test('company introduction and initial brand tone may be deferred without weakening product confirmation', () => {
+  const draft = { ...completeDraft(), companyIntro: '', brandTone: '' };
+  assert.ok(validateEnterpriseOnboardingConfirmation({ ...draft, draftRevision: draft.revision }).confirmation);
+  const missingProduct = { ...draft, products: [], focusProductIds: [] };
+  assert.equal(validateEnterpriseOnboardingConfirmation({ ...missingProduct, draftRevision: draft.revision }).confirmation, null);
+});

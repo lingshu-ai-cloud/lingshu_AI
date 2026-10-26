@@ -1,3 +1,4 @@
+import type { TenantFaqPackOverrides } from '../../../shared/contracts/tenantFaqPacks.js';
 import type { ProductScenePreparationPlan } from '../../../shared/contracts/productScenePreparation.js';
 
 export interface ProductAsset {
@@ -23,6 +24,10 @@ export interface ProductItem {
   imageUrl?: string;
   priceRange?: string;
   moq?: string;
+  samplePolicy?: string;
+  paymentTerms?: string;
+  leadTime?: string;
+  customization?: string;
   certifications?: string;
   highlights?: string;
   images?: ProductAsset[];
@@ -70,6 +75,7 @@ export interface FaqPackItem {
 }
 
 export interface FaqPack {
+  customized?: boolean;
   id: string;
   industry: 'apparel' | 'home' | 'general';
   industryLabel: string;
@@ -123,8 +129,9 @@ export type CooperationRoute = 'oem_odm' | 'wholesale_distribution' | 'consumer_
 export type SocialStrategy = { enabledRoutes: CooperationRoute[]; routeStrategies: Partial<Record<CooperationRoute, { targetBuyerRoles: string[]; primaryCta: string }>>; manuallyEditedFields?: string[] };
 
 export interface Profile {
+  faqPackOverrides?: TenantFaqPackOverrides;
   factVersion?: { id: string; revision: number; contentHash: string; confirmedAt: string; confirmedBy: string };
-  company: { name: string; industry: string; companyType?: string; mainMarkets: string; primaryLanguages?: string; socialPlatformExperience?: string; founded: string; description: string };
+  company: { name: string; industry: string; companyType?: string; primaryBusiness?: string; capabilities?: string; certifications?: string; credentialEvidence?: string; mainMarkets: string; primaryLanguages?: string; socialPlatformExperience?: string; founded: string; description: string };
   socialStrategy?: SocialStrategy;
   products: { categories: string; searchKeywords?: string; priceRange: string; moq: string; certifications: string; highlights: string; items?: ProductItem[] };
   brand: { name?: string; tone: string; style: string; taboos: string; usp: string; preferredLanguages?: string };

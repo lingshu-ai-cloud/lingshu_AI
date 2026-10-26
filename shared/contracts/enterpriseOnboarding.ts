@@ -319,7 +319,6 @@ export function validateEnterpriseOnboardingConfirmation(value: unknown): {
     !draft.baseFactVersion ? '企业事实版本' : '',
     !draft.companyName ? '企业名称' : '', !draft.brandName ? '品牌名称' : '',
     !draft.industry ? '行业/主营分类' : '', !draft.primaryBusiness ? '主营业务' : '',
-    !draft.companyIntro ? '公司简介' : '', !draft.brandTone ? '品牌初始语气' : '',
     !draft.products.length ? '至少一个产品' : '',
     focusProducts.length < 1 || focusProducts.length > 3 ? '1–3 个主推产品' : '',
     focusProducts.some(product => !text(product.category)) ? '主推产品类目' : '',

@@ -1,5 +1,6 @@
 import type * as React from 'react';
 export type StudioDraftSnapshot = {
+  productMaterialSelection?: import('../../../shared/contracts/socialContentTaskContract').ProductMaterialSelectionState;
     productInfo: string;
     productSelectMode: "single" | "multi";
     selectedProductIds: string[];

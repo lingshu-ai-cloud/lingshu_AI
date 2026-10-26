@@ -50,6 +50,8 @@ export interface StudioProjectLifecyclePorts {
   readonly productInfo: string;
   readonly productSelectMode: "single" | "multi";
   readonly selectedProductIds: string[];
+  readonly getProductMaterialSelection: () => import('../../../shared/contracts/socialContentTaskContract').ProductMaterialSelectionState | null;
+  readonly restoreProductMaterialSelection: (value?: unknown) => void;
   readonly referenceProductAssignments: Record<string, string>;
   readonly referenceProductTerms: Record<string, string>;
   readonly referenceBrandSourceTerm: string;

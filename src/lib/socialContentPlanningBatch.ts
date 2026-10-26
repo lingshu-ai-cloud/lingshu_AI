@@ -5,7 +5,7 @@ import type { SocialContentTaskDetail } from '../../shared/contracts/socialConte
 
 /** Existing instant tasks are single-content. Batch only their draft creation, never generation. */
 export async function createPlanningDraftBatch(input: {
-  seed: SocialPlanningTaskSeed; count: number; isCurrent: () => boolean;
+  seed: SocialPlanningTaskSeed; selectionKey?: string; count: number; isCurrent: () => boolean;
   keys: Map<string, string>; completed: Map<string, string>;
   create: (value: ReturnType<typeof socialPlanningTaskInput>, key: string) => Promise<SocialContentTaskDetail>;
   read: (taskId: string) => Promise<SocialContentTaskDetail>;
@@ -13,6 +13,10 @@ export async function createPlanningDraftBatch(input: {
 }): Promise<SocialContentTaskDetail | null> {
   if (!Number.isSafeInteger(input.count) || input.count < 1 || input.count > 100) throw Error('请确认要创建的内容数量（1至100条）。');
   const operation = socialPlanningOperationKey(input.seed);
+  const signatureKey = `${operation}:selection`;
+  const signature = JSON.stringify([socialPlanningTaskInput({ ...input.seed, requestedOutputCount: 1 }), input.selectionKey, input.count]);
+  if (input.keys.has(signatureKey) && input.keys.get(signatureKey) !== signature) throw Error('本轮草稿已开始保存，产品或素材选择已变化。请打开已保存草稿逐条修改，或重新发起一轮创作。');
+  input.keys.set(signatureKey, signature);
   const ids = Array.from({ length: input.count }, (_, index) => `${operation}:item:${index + 1}`);
   for (const id of ids) if (!input.keys.has(id)) input.keys.set(id, `${id}:create`);
   try {

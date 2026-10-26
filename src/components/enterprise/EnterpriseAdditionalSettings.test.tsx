@@ -33,8 +33,9 @@ test('low-frequency enterprise settings stay in one collapsed group', () => {
 test('parent keeps profile persistence and the existing order import endpoint', () => {
   const page = readFileSync(new URL('../EnterprisePage.tsx', import.meta.url), 'utf8');
   const settings = readFileSync(new URL('./EnterpriseAdditionalSettings.tsx', import.meta.url), 'utf8');
-  assert.match(page, /<EnterpriseAdditionalSettings[\s\S]*?profile=\{profile\}/);
-  assert.match(page, /onFieldChange=\{\(section, field, value\) => set\(section\)\(field, value\)\}/);
+  assert.doesNotMatch(page, /<EnterpriseAdditionalSettings/);
+  assert.match(page, /<EnterpriseKnowledgeFields/);
+  assert.match(page, /else set\(section\)\(field, value\)/);
   assert.match(page, /\/api\/overseas\/enterprise\/orders\/import/);
   assert.match(settings, /accept="\.csv,text\/csv"/);
   assert.match(settings, /disabled=\{orderImporting\}/);

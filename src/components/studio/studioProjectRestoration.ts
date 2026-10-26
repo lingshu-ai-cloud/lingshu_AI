@@ -1,3 +1,4 @@
+import { restoreStudioProductIds, restoreStudioProductPlans } from './studioProductSelection.js';
 import { frozenStudioProject, restoreStudioSpec } from '../../lib/frozenStudioProject';
 import { studioWorkflowContextFromSpec, withoutStudioWorkflowContext } from '../../lib/studioProjectContext';
 import { type VideoCreationPlan } from '../../lib/videoCreationPlan';
@@ -22,6 +23,7 @@ import type { StudioProjectLifecyclePorts } from './studioProjectLifecyclePorts.
 
 export function createStudioProjectRestoration(ports: Pick<StudioProjectLifecyclePorts,
   | 'localFlowTestRef'
+  | 'restoreProductMaterialSelection'
   | 'localFlowRecoveryRef'
   | 'appliedCreateRequestRef'
   | 'setRestoredSocialTaskId'
@@ -89,6 +91,7 @@ export function createStudioProjectRestoration(ports: Pick<StudioProjectLifecycl
   | 'setProductInfo'
   | 'setProductSelectMode'
   | 'setSelectedProductIds'
+  | 'productOptions'
   | 'setReferenceProductAssignments'
   | 'setReferenceProductTerms'
   | 'setReplicationSpeechSpeed'
@@ -263,11 +266,14 @@ export function createStudioProjectRestoration(ports: Pick<StudioProjectLifecycl
     localFlowTestRef.current = (savedSpec as any).localFlowTest?.enabled === true ? (savedSpec as any).localFlowTest : null;
     if (!localFlowTestRef.current) localFlowRecoveryRef.current = null;
     const s = restoreStudioSpec(savedSpec);
+    ports.restoreProductMaterialSelection(s.productMaterialSelection);
     appliedCreateRequestRef.current = s.studioCreateRequest && typeof s.studioCreateRequest === 'object' ? (s.studioCreateRequest as SocialContentCreateRequest).requestId : null;
     setRestoredSocialTaskId(typeof s.socialContentTaskId === 'string' ? s.socialContentTaskId : null);
     setRestoredCreateRequest(s.studioCreateRequest && typeof s.studioCreateRequest === 'object' ? s.studioCreateRequest as SocialContentCreateRequest : null);
     // Seed the identity before restoring state so loading a draft cannot erase it.
-    const restoredProductIds = Array.isArray(s.selectedProductIds) ? s.selectedProductIds as string[] : [];
+    const restoredProductIds = restoreStudioProductIds(
+      Array.isArray(s.selectedProductIds) ? s.selectedProductIds as string[] : [], ports.productOptions,
+    );
     cloneProductFingerprintRef.current = restoredProductIds.length
       ? `products:${restoredProductIds.join('|')}`
       : `manual:${String(s.productInfo || '')}`;
@@ -404,7 +410,7 @@ export function createStudioProjectRestoration(ports: Pick<StudioProjectLifecycl
     setProvider('qwen');
     if (typeof s.productInfo === 'string') setProductInfo(s.productInfo);
     if (s.productSelectMode === 'single' || s.productSelectMode === 'multi') setProductSelectMode('multi');
-    if (Array.isArray(s.selectedProductIds)) setSelectedProductIds(s.selectedProductIds as string[]);
+    if (Array.isArray(s.selectedProductIds)) setSelectedProductIds(restoredProductIds);
     if (s.referenceProductAssignments && typeof s.referenceProductAssignments === 'object') setReferenceProductAssignments(s.referenceProductAssignments as Record<string, string>);
     if (s.referenceProductTerms && typeof s.referenceProductTerms === 'object') setReferenceProductTerms(s.referenceProductTerms as Record<string, string>);
     setReplicationSpeechSpeed(Number.isFinite(Number(s.replicationSpeechSpeed)) ? Math.max(.85, Math.min(1.3, Number(s.replicationSpeechSpeed))) : 1.3);
@@ -448,10 +454,13 @@ export function createStudioProjectRestoration(ports: Pick<StudioProjectLifecycl
     if (Array.isArray(s.selected)) setSelected(s.selected as string[]);
     if (Array.isArray(s.scriptRecommendedMaterialIds)) setScriptRecommendedMaterialIds(s.scriptRecommendedMaterialIds as string[]);
     if (s.storyboardAssignments && typeof s.storyboardAssignments === 'object') setStoryboardAssignments(s.storyboardAssignments as Record<string, string>);
-    if (s.storyboardSourcePlans && typeof s.storyboardSourcePlans === 'object') setStoryboardSourcePlans(s.storyboardSourcePlans as Record<string, StoryboardSourcePlan>);
+    const restoredSourcePlans = restoreStudioProductPlans((s.storyboardSourcePlans || {}) as Record<string, StoryboardSourcePlan>, ports.productOptions);
+    if (s.storyboardSourcePlans && typeof s.storyboardSourcePlans === 'object') setStoryboardSourcePlans(restoredSourcePlans);
     if (typeof s.assemblyName === 'string') setAssemblyName(s.assemblyName);
     if (Array.isArray(s.storyboardAssemblies) && s.storyboardAssemblies.length) {
-      const restored = s.storyboardAssemblies as StoryboardAssembly[];
+      const restored = (s.storyboardAssemblies as StoryboardAssembly[]).map(assembly => ({
+        ...assembly, sourcePlans: restoreStudioProductPlans(assembly.sourcePlans || {}, ports.productOptions),
+      }));
       const restoredActiveId = typeof s.activeAssemblyId === 'string' && restored.some(item => item.id === s.activeAssemblyId)
         ? s.activeAssemblyId
         : restored[0].id;
@@ -467,7 +476,7 @@ export function createStudioProjectRestoration(ports: Pick<StudioProjectLifecycl
       setStoryboardAssemblies([{
         id: 'video-1', name: legacyName,
         assignments: s.storyboardAssignments as Record<string, string> || {},
-        sourcePlans: s.storyboardSourcePlans as Record<string, StoryboardSourcePlan> || {},
+        sourcePlans: restoredSourcePlans,
         selected: Array.isArray(s.selected) ? s.selected as string[] : [],
       }]);
       setActiveAssemblyId('video-1');
@@ -581,6 +590,10 @@ export function createStudioProjectRestoration(ports: Pick<StudioProjectLifecycl
     const restoredTitle = p.status === 'template' ? `${p.title} · 副本` : loadedStudioProjectTitle(p, incomingCreateRequest);
     lastSavedAutosaveFingerprintRef.current = studioAutosaveFingerprint(restoredProjectId, restoredTitle, restoredSpec);
     applySpec(restoredSpec);
+    if (!frozen && incomingCreateRequest?.continueProjectId === p.id && incomingCreateRequest.productMaterialSelection) {
+      ports.restoreProductMaterialSelection(incomingCreateRequest.productMaterialSelection);
+      ports.setSelected(incomingCreateRequest.productMaterialSelection.selectedIds);
+    }
     setProjectId(restoredProjectId);
     setProjectTitle(restoredTitle);
     setWorkflowProjectSelectionPending(false);

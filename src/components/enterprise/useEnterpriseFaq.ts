@@ -129,6 +129,6 @@ export function useEnterpriseFaq({ profile, setProfile, setSaveError, pageSize }
     faqPacksOpen, setFaqPacksOpen, openPackId, setOpenPackId, packImporting,
     faqPage, setFaqPage, faqItems, visibleFaqs, acceptLoadedPacks,
     addFaq, updateFaq, removeFaq, structureLegacyFaq, importFaqPreview,
-    selectedQuestionsForPack, togglePackQuestion, importFaqPack,
+    selectedQuestionsForPack, togglePackQuestion, importFaqPack, reloadFaqPacks,
   };
 }

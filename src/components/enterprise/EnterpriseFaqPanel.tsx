@@ -1,4 +1,6 @@
-import { type Dispatch, type SetStateAction } from 'react';
+import EnterpriseFaqPackEditor from './EnterpriseFaqPackEditor';
+import { productionNavigationIdentity } from '../../lib/productionNavigation';
+import { useState, type Dispatch, type SetStateAction } from 'react';
 import { Input } from 'antd';
 import { BookOpen, Loader2, Plus, X, Zap } from 'lucide-react';
 import type { FaqItem, FaqPack, Profile } from './enterpriseProfileTypes';
@@ -7,6 +9,8 @@ import { KnowledgeCard, PaginationControls, Toggle } from './EnterpriseFormContr
 const textareaCls = 'w-full resize-y';
 
 interface Props {
+  onPackSaved?: (patch: Pick<Profile, 'faqPackOverrides' | 'factVersion'>) => void;
+  reloadFaqPacks?: () => Promise<void>;
   profile: Profile;
   completed: boolean;
   approvedFaqCount: number;
@@ -36,19 +40,21 @@ interface Props {
 }
 
 export default function EnterpriseFaqPanel({
-  profile, completed, approvedFaqCount, faqPacks, recommendedPackIndustry,
+  profile, onPackSaved, reloadFaqPacks, completed, approvedFaqCount, faqPacks, recommendedPackIndustry,
   faqPacksOpen, setFaqPacksOpen, openPackId, setOpenPackId,
   selectedQuestionsForPack, togglePackQuestion, importFaqPack, packImporting,
   structureLegacyFaq, faqStructuring, faqPreview, importFaqPreview, setFaqPreview,
   addFaq, visibleFaqs, updateFaq, removeFaq, faqPage, faqItems, pageSize, setFaqPage,
 }: Props) {
+  const [editing, setEditing] = useState<{pack: FaqPack; profile: Profile; identity: string} | null>(null);
+  const edit = (pack: FaqPack) => setEditing({pack, profile, identity: productionNavigationIdentity()});
   return (
           <div data-enterprise-faq>
-          <KnowledgeCard icon={BookOpen} title="常见问答" purpose="客户问到这些，AI 直接用你的标准答案回复" completed={completed} stat={`${profile.faq?.length ?? 0} 条 · ${approvedFaqCount} 条已审批`}>
+          <KnowledgeCard icon={BookOpen} title="常见问答" purpose="从真实客户问题中逐步沉淀标准答案；是否自动发送由客服授权单独决定" completed={completed} stat={`${profile.faq?.length ?? 0} 条 · ${approvedFaqCount} 条已审批`}>
             {faqPacks.length > 0 && (
               <div data-lingshu-guide="enterprise-faq-pack" className="mb-4 rounded-lg border border-border bg-surface-2/40 p-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold text-text-primary">场景知识包</p>
+                  <div><p className="text-xs font-semibold text-text-primary">场景知识包</p><p className="mt-1 text-[11px] text-text-muted">双击场景卡片即可编辑，保存仅对当前租户生效。</p></div>
                   <button type="button" onClick={() => setFaqPacksOpen(open => !open)} className="rounded-lg border border-border bg-white px-3 py-2 text-[11px] font-bold text-text-secondary hover:bg-surface-2">
                     {faqPacksOpen ? '收起知识包' : `打开知识包（推荐${faqPacks.find(pack => pack.industry === recommendedPackIndustry)?.industryLabel || '通用'}）`}
                   </button>
@@ -60,7 +66,7 @@ export default function EnterpriseFaqPanel({
                     const selected = selectedQuestionsForPack(pack);
                     const readyCount = pack.items.filter(item => item.ready && !item.exists).length;
                     return (
-                      <div key={pack.id} className={`rounded-lg border bg-white p-3 ${open ? 'border-sky-200 ring-2 ring-sky-50' : 'border-border'}`}>
+                      <div key={pack.id} data-faq-pack={pack.id} onDoubleClick={event => { if (!(event.target as HTMLElement).closest('input,textarea')) edit(pack); }} className={`rounded-lg border bg-white p-3 ${open ? 'border-sky-200 ring-2 ring-sky-50' : 'border-border'}`}>
                         <button type="button" onClick={() => setOpenPackId(open ? '' : pack.id)} className="flex w-full items-start justify-between gap-3 text-left">
                           <div>
                             <p className="text-xs font-semibold text-text-primary">{pack.industryLabel} · {pack.scenarioLabel}</p>
@@ -68,6 +74,10 @@ export default function EnterpriseFaqPanel({
                           </div>
                           <span className="rounded-full bg-surface-2 px-2 py-1 text-[10px] font-bold text-text-secondary">{open ? '收起' : '预览'}</span>
                         </button>
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <span className="text-[11px] text-text-muted">{pack.customized ? '当前租户已自定义' : '公共模板 · 可为当前租户定制'}</span>
+                          <button type="button" aria-label={`编辑场景 ${pack.industryLabel} · ${pack.scenarioLabel}`} onClick={() => edit(pack)} className="rounded border border-border px-2 py-1 text-[11px] text-text-secondary hover:bg-surface-2">编辑</button>
+                        </div>
                         {!open && (
                           <div className="mt-3 space-y-1.5">
                             {pack.preview.map(item => <p key={item.q} className="truncate text-[11px] text-text-secondary">Q：{item.q}</p>)}
@@ -155,6 +165,7 @@ export default function EnterpriseFaqPanel({
             </div>
             <PaginationControls page={faqPage} total={faqItems.length} pageSize={pageSize} onChange={setFaqPage} />
           </KnowledgeCard>
+          {editing && <EnterpriseFaqPackEditor pack={editing.pack} profile={editing.profile} identity={editing.identity} onClose={() => setEditing(null)} onSaved={patch => { onPackSaved?.(patch); void reloadFaqPacks?.(); }} />}
           </div>
   );
 }

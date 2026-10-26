@@ -54,6 +54,7 @@ export function createStudioProjectSnapshot(ports: Pick<StudioProjectLifecyclePo
   | 'productInfo'
   | 'productSelectMode'
   | 'selectedProductIds'
+  | 'getProductMaterialSelection'
   | 'referenceProductAssignments'
   | 'referenceProductTerms'
   | 'referenceBrandSourceTerm'
@@ -299,7 +300,9 @@ export function createStudioProjectSnapshot(ports: Pick<StudioProjectLifecyclePo
         productions: savedShotProductions,
       },
     };
+    const productMaterialSelection = ports.getProductMaterialSelection();
     const currentSpec = ({
+      ...(productMaterialSelection ? { productMaterialSelection } : {}),
       ...(localFlowTestRef.current ? { localFlowTest: localFlowTestRef.current } : {}),
       mode, contentMode, posterStyle, imageDeliverable, platform, ratio, duration, lang, provider,
       workflowRunId: projectWorkflowContext?.runId || '', workflowTaskId: projectWorkflowContext?.taskId || '', workflowTaskKey: projectWorkflowContext?.taskKey || '',
