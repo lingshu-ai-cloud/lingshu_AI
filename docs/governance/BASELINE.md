@@ -2,6 +2,12 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前统一开发基线：小程序登录页微调（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`，分支 `baseline/unified-20261026`；从 `c904f603` 提交登录页源码 `76f81effc8926ad94717b184c1c875a88c102c11`。补齐与网页 `public/brand-logo.png` 字节一致的图标，删除“随时掌握工作的进展”，仅为登录按钮设置 `margin-top:48rpx`；账号字段、登录行为及其他 UI 不变。
+- 工作台既有测试 `workbench.test.cjs` 与 `workbench-experience.test.cjs` 共 37/37 通过，`git diff --check` 通过。相同三处改动已在冻结于正式服源码 `21287c57` 的独立预览包通过微信预览编译（主包 373677 字节）；该预览不是当前整个开发基线的验收。未运行全仓类型、架构或迁移检查，未完成真机 UI 验收。
+- 原有未提交的 `server/videos/videoVisibilityMaintenance.ts` 保留且未纳入。本轮仅更新本地 Git 基线，没有推送、服务器部署或正式发布小程序；微信域名修改仍待扫码确认及回读核验。
+
 ## 当前统一开发基线：冰沙面霜真实调度与产品规则收口（2026-10-27）
 
 - 权威分支 `baseline/unified-20261026` 已快进到源码提交 `e9479b5d`，来自隔离分支 `codex/image-budget-gate-20261027`；原未提交的视频文件保持原样。先前诊断任务已取消，本轮唯一正式任务为 `socialtask_89cadf7b58a8da3322b38f63` / `imgf6326c5301af` / durable job `2b6d2b0064595f5`，会话保存的单条上限为 5 元。5378/8878 本地预览中，受限 worker 只领取该作业一次，完成免费素材核验、Qwen 策划、一次 OpenAI 背景出图、本地产品与文字合成及一次视觉质检；OpenAI 回执为 completed，生成物和质检均有持久记录。底图素材与合成素材是一次出图请求的两份产物，不能算作两次供应商提交。
