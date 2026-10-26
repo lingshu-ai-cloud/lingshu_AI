@@ -109,9 +109,9 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     faqPacksOpen, setFaqPacksOpen, openPackId, setOpenPackId, packImporting,
     faqPage, setFaqPage, faqItems, visibleFaqs, acceptLoadedPacks,
     addFaq, updateFaq, removeFaq, structureLegacyFaq, importFaqPreview,
-    selectedQuestionsForPack, togglePackQuestion, importFaqPack,
+    selectedQuestionsForPack, togglePackQuestion, importFaqPack, reloadFaqPacks,
   } = useEnterpriseFaq({ profile, setProfile, setSaveError, pageSize: PAGE_SIZE });
-  const { saving, loading, profileLoaded, apiStatus, hasUnsavedChanges, handleSave } = useEnterpriseProfileLifecycle({
+  const { saving, loading, profileLoaded, apiStatus, hasUnsavedChanges, handleSave, acceptSavedPatch } = useEnterpriseProfileLifecycle({
     profile, setProfile, saveError, setSaveError, setSaved, acceptLoadedPacks, autoSave: false,
   });
 
@@ -634,6 +634,8 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
 
           {knowledgeView === 'faq' && <EnterpriseFaqPanel
             profile={profile}
+            onPackSaved={acceptSavedPatch}
+            reloadFaqPacks={reloadFaqPacks}
             completed={completions.faq}
             approvedFaqCount={approvedFaqCount}
             faqPacks={faqPacks}

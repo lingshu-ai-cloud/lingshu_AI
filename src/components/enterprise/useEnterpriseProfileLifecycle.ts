@@ -137,5 +137,10 @@ export function useEnterpriseProfileLifecycle({ profile, setProfile, saveError, 
     return () => window.clearTimeout(timer);
   }, [profile, loading, saving, hasUnsavedChanges, saveError, autoSave]);
 
-  return { saving, loading, profileLoaded, apiStatus, hasUnsavedChanges, handleSave };
+  const acceptSavedPatch = (patch: Partial<Profile>) => {
+    const prior = JSON.parse(persistedProfileRef.current || '{}') as Profile;
+    persistedProfileRef.current = profileSnapshot({ ...prior, ...patch });
+    setProfile(current => ({ ...current, ...patch }));
+  };
+  return { saving, loading, profileLoaded, apiStatus, hasUnsavedChanges, handleSave, acceptSavedPatch };
 }

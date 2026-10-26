@@ -1,3 +1,4 @@
+import { normalizeTenantFaqPacks } from '../../shared/contracts/tenantFaqPacks.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -284,6 +285,7 @@ export function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile 
     : undefined;
   return {
     ...profile,
+    ...(profile.faqPackOverrides !== undefined ? { faqPackOverrides: normalizeTenantFaqPacks(profile.faqPackOverrides) } : {}),
     company,
     brand,
     operations,
