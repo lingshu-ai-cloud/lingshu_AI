@@ -7,7 +7,9 @@ import { buildEnterpriseContext, readTenantEnterpriseProfile } from '../routes/e
 import { planStudioPoster } from './studioPosterPlanning.js';
 import { prepareImageEvidence, renderImageLayers, preflightImage } from './socialImageWorkflowCommands.js';
 import { imageWorkflowAssets } from './socialImageWorkflowAssets.js';
-import { compileEvidenceGuidedSocialImage, compileSocialImageReferencePlan } from './socialImageReferenceStrategy.js';
+import { compileEvidenceGuidedSocialImage, socialImageFrozenGraphMatches } from './socialImageReferenceStrategy.js';
+import { compileSocialImageV3PaidPlan } from './socialImageFormalPlan.js';
+import { renderSocialImagePaidWorker } from './socialImagePaidWorkerRender.js';
 import { readSocialImageTask } from './socialImageTask.js';
 import type { ImageExecutionPorts } from './socialImageExecution.js';
 import type { SocialImageElementInventory } from '../../shared/contracts/socialImageProduction.js';
@@ -44,21 +46,27 @@ export function createImageExecutionPorts(store: DataStore, job: ContentExecutio
                     throw new Error('social_image_planning_outcome_requires_review');
                 // Persist before transport: process interruption cannot replay a potentially paid plan.
                 await recordCurrentContentExecutionCheckpoint({ ...claim, payload: { state: 'started' } });
-                await planStudioPoster({ store, tenantId: job.tenantId,
-                    body: { imageTaskId: task.id, expectedImageTaskVersion: task.version },
-                    enterpriseCtx: async () => buildEnterpriseContext(await readTenantEnterpriseProfile(job.tenantId)), allowPaidCall });
+                try {
+                    await planStudioPoster({ store, tenantId: job.tenantId,
+                        body: { imageTaskId: task.id, expectedImageTaskVersion: task.version },
+                        enterpriseCtx: async () => buildEnterpriseContext(await readTenantEnterpriseProfile(job.tenantId)), allowPaidCall });
+                } catch (error) {
+                    const code = error && typeof error === 'object' && 'body' in error
+                        ? String((error as { body?: { code?: string } }).body?.code || 'social_image_planning_failed')
+                        : 'social_image_planning_failed';
+                    await recordCurrentContentExecutionCheckpoint({ ...claim, payload: { state: 'outcome_unknown', code } });
+                    throw new Error(code);
+                }
                 const planned = await readSocialImageTask(store, job.tenantId, task.id);
                 if (!planned || planned.productionRuntime?.nodes.find(node => node.nodeId === 'director_brief')?.status !== 'completed')
                     throw new Error('social_image_planner_result_requires_review');
                 task = planned;
             }
-            const product = await assets.enterpriseProductAsset(job.tenantId, task.contentBrief.productRefs[0]);
-            if (!product)
-                throw new Error('social_image_product_asset_unavailable');
-            await compileSocialImageReferencePlan({ store, tenantId: job.tenantId, taskId: task.id,
-                expectedVersion: task.version, productName: product.name });
+            await compileSocialImageV3PaidPlan({ store, tenantId: job.tenantId, taskId: task.id,
+                expectedVersion: task.version });
         },
-        render: async (task) => { await renderImageLayers(command(task)); },
+        render: async (task) => { if (socialImageFrozenGraphMatches(task)) await renderImageLayers(command(task));
+            else await renderSocialImagePaidWorker(command(task)); },
         quality: async (task) => { await preflightImage(command(task)); },
     };
 }

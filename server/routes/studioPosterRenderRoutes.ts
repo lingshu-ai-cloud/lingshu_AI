@@ -23,6 +23,7 @@ import { socialImageFrozenCommercialIssue, socialImageV3PaidPrerequisiteIssue, s
   socialImageV3ReferencePermitted, socialImageV3ResolvedAssetIssue,
   socialImageV3SingleRenderInput } from '../socialImage/socialImagePaidPrerequisites.js';
 import { readSocialImageReferenceBytes } from '../socialImage/socialImageReferenceBytes.js';
+import { submitClaimedSocialImageSingleRender } from '../socialImage/socialImagePaidSingleRender.js';
 
 export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts, 'studioRouter' | 'enterpriseCtx' | 'storyboardUrlImage' | 'storyboardEnterpriseImage' | 'resolveReferenceImages'>) {
   const studioRouter = deps.studioRouter;
@@ -200,7 +201,8 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
         .filter(item => item.role === 'exact_product').map(item => item.productId).filter(Boolean));
       for (const item of productReferences) exactProductIds.add(item.productId);
       const missingProductIds = requestedProductIds.filter(id => !exactProductIds.has(id));
-      const ownedReferences = [...productReferences.map(item => item.image), ...referenceResolution.images].slice(0, 3);
+      const ownedReferences = [...productReferences.map(item => item.image), ...referenceResolution.images]
+        .slice(0, benchmarkReferences.length ? 2 : 3);
       const referenceBlockers = [
         ...referenceResolution.blockers,
         ...(missingProductIds.length ? [`缺少当前产品的精准身份图片：${missingProductIds.join('、')}`] : []),
@@ -257,6 +259,22 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
         }
         paidRequestMayHaveStarted = true;
         const requestedRatio = ['1:1', '4:5', '9:16', '16:9'].includes(String(ratio)) ? String(ratio) as SocialImageAspectRatio : '1:1';
+        if (v3ImageTask && !plannedInput && claimedImageTask) {
+          const rendered = await submitClaimedSocialImageSingleRender({ store, tenantId,
+            task: claimedImageTask, jobId: imageJobId, inputHash: paidInputHash, prompt,
+            ratio: requestedRatio, quality: normalizeImageGenerationQuality(rawImageQuality),
+            references, idempotencyKey: String(idempotencyKey), productId: requestedProductIds[0]!,
+            materialIds: referenceResolution.descriptors.map(item => item.materialId),
+            benchmarkReferenceCount: benchmarkReferences.length });
+          const responseMaterial = await materialResponse(rendered.material, tenantId);
+          res.json({ ok: true, task: rendered.task, source: rendered.generated.source,
+            model: rendered.generated.model, url: responseMaterial.url,
+            material: responseMaterial, references: references.length,
+            deliverableType, productionStrategy,
+            fieldsToConfirm: confirmationFields([...commercialAudit.fieldsToConfirm, ...assetFieldsToConfirm]),
+            qualityStatus: 'needs_review', publishable: false });
+          return;
+        }
         const generated = await generatePosterImage({ prompt, ratio: requestedRatio, references, provider: 'openai', quality: normalizeImageGenerationQuality(rawImageQuality), idempotencyKey: String(idempotencyKey || '').trim() || undefined });
         const normalizedBytes = await conformSocialImageToCanvas(generated.bytes, socialImageCanvasForAspectRatio(requestedRatio));
         const material = await createGeneratedImageMaterial({

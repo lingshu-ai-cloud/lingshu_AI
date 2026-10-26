@@ -42,8 +42,9 @@ export async function planStudioPoster(input: {
     body: PosterPlanningInput;
     enterpriseCtx: () => Promise<string>;
     allowPaidCall: () => Promise<boolean>;
+    callPlanner?: typeof callLLM;
 }) {
-    const { store, tenantId, body, enterpriseCtx, allowPaidCall } = input;
+    const { store, tenantId, body, enterpriseCtx, allowPaidCall, callPlanner = callLLM } = input;
     const imageTaskId = String(body?.imageTaskId || '').trim();
     const boundTask = imageTaskId ? await readSocialImageTask(store, tenantId, imageTaskId) : null;
     if (imageTaskId && (!boundTask || boundTask.schemaVersion !== 'social-image-creation.v3'
@@ -194,7 +195,7 @@ Schema:
     const failures: string[] = [];
     for (const backend of backends) {
         try {
-            const text = await callLLM(prompt, { backend, systemPrompt: productEnterprise, timeoutMs: 30000 });
+            const text = await callPlanner(prompt, { backend, systemPrompt: productEnterprise, timeoutMs: boundTask ? 90_000 : 30_000 });
             const obj = extractJSON<any>(text);
             if (obj?.poster?.headline && obj?.caption) {
                 const normalized = {
@@ -260,8 +261,23 @@ Schema:
             failures.push(`${backend}: parse_failed`);
         }
         catch (err: any) {
+            if (err instanceof PosterPlanningError) throw err;
+            // A bound production task has already submitted a potentially paid
+            // request. Preserve the uncertainty rather than disguising a timeout
+            // as an editable, locally generated director brief.
+            if (boundTask) {
+                const timedOut = /timed out|timeout/i.test(String(err?.message || err));
+                throw new PosterPlanningError(timedOut ? 504 : 502, {
+                    ok: false, code: timedOut ? 'social_image_planning_provider_outcome_unknown' : 'social_image_planning_provider_failed',
+                    error: timedOut ? '图文策划请求已超时，供应商结果尚未核对；不会自动重复提交。' : '图文策划未取得有效供应商结果；不会自动重复提交。',
+                });
+            }
             failures.push(`${backend}: ${String(err?.message || err).slice(0, 180)}`);
         }
+    }
+    if (boundTask) {
+        throw new PosterPlanningError(502, { ok: false, code: 'social_image_planning_response_invalid',
+            error: '图文策划响应未通过结构校验；不会自动重复提交。' });
     }
     console.warn('[studio] fb-poster generation failed:', failures.join(' | '));
     const selectedProductName = String(productInfo).match(/^\s*产品名称[：:]\s*([^\r\n]+)/m)?.[1]?.trim().slice(0, 120)

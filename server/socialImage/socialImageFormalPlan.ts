@@ -121,7 +121,6 @@ export async function compileSocialImageV3PaidPlan(input: {
   if (task.version !== input.expectedVersion) throw new SocialImageProductionRunError('social_image_version_conflict', 409);
   if (task.schemaVersion !== 'social-image-creation.v3') throw new SocialImageProductionRunError('social_image_v3_run_required', 409);
   await assertSocialImageCurrentContentTask(input.store, input.tenantId, task);
-  if (task.creationPath === 'viral_replication') throw new SocialImageProductionRunError('social_image_viral_plan_route_pending', 422);
   if (socialImageV3PaidPrerequisiteIssue(task, 'execute') === null) return task;
   const issue = socialImageV3PaidPrerequisiteIssue(task, 'queue');
   if (issue) throw new SocialImageProductionRunError(issue, 422);

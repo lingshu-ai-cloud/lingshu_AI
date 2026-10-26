@@ -4,6 +4,7 @@ import { ContentExecutionStoppedError, assertCurrentContentExecutionActive } fro
 import { readSocialImageTask } from './socialImageTask.js';
 import { assertSocialImageCurrentContentTask } from './socialImageProductionRun.js';
 import { IMAGE_EXECUTION_TYPE, imageExecutionInputHash } from './socialImageExecutionQueue.js';
+import { socialImageV3PaidPrerequisiteIssue } from './socialImagePaidPrerequisites.js';
 import { socialImageFrozenGraphMatches } from './socialImageReferenceStrategy.js';
 import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
 export interface ImageExecutionPorts {
@@ -37,10 +38,10 @@ export async function executeImageProduction(store: DataStore, job: ContentExecu
             if (!task.productionRuntime?.nodes.some(node => node.nodeId === 'adaptation' && node.status === 'completed'))
                 throw new Error('social_image_evidence_incomplete');
         }
-        if (!socialImageFrozenGraphMatches(task)) {
+        if (socialImageV3PaidPrerequisiteIssue(task, 'execute') && !socialImageFrozenGraphMatches(task)) {
             await ports.plan(task);
             task = await read();
-            if (!socialImageFrozenGraphMatches(task))
+            if (socialImageV3PaidPrerequisiteIssue(task, 'execute') && !socialImageFrozenGraphMatches(task))
                 throw new Error('social_image_execution_plan_incomplete');
         }
         if (!task.outputs.some(output => output.state !== 'superseded')) {

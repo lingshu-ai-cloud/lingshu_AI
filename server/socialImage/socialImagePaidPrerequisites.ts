@@ -206,10 +206,21 @@ export function socialImageV3SingleRenderInput(task: SocialImageCreationTask, jo
     || job.plannedInputHash !== socialImageV3PaidEvidenceHash(task)) throw new Error('social_image_paid_job_identity_invalid');
   const renderSpec = completedOutput(task, 'render_spec')?.value as SocialImageNodeValueMap['render_spec'] | undefined;
   if (!renderSpec || job.idempotencyKey !== renderSpec.idempotencyKey) throw new Error('social_image_paid_job_spec_mismatch');
+  const inventory = task.creationPath === 'viral_replication'
+    ? completedOutput(task, 'element_inventory')?.value as SocialImageNodeValueMap['element_inventory'] | undefined
+    : undefined;
+  // Transfer measured structure only. Crawled copy, brand marks and product
+  // identity are never sent as instructions or authority for the new image.
+  const referenceStructure = inventory ? JSON.stringify({
+    regions: inventory.regions.slice(0, 8).map(region => ({ role: region.layerRole, bbox: region.bbox })),
+    saliencyOrder: inventory.saliencyOrder.slice(0, 8),
+    meanRgb: inventory.colorAndLighting.meanRgb,
+  }) : '';
   return {
     poster: structuredClone(task.renderBrief),
     imagePrompt: [task.contentBrief.coreClaim, task.contentBrief.audience.join(', '),
       task.creativeRecipe.layoutRecipe, task.creativeRecipe.imageTextRelation,
+      referenceStructure ? `Reference layout measurements (structure only): ${referenceStructure}` : '',
       ...task.repairInstructions.filter(item => item.status === 'pending')
         .map(item => `Targeted repair (${item.targetLayer}): ${item.instruction}`)].filter(Boolean).join('. '),
     imageQuality: task.deliverySpec.imageGeneration?.quality || 'low',

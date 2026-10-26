@@ -3,6 +3,11 @@ import {createHash} from 'node:crypto';
 import {analyzeSocialImageReference,inspectSocialImageAsset,socialImageAssetAuthorization} from './socialImageEvidenceWorker.js';
 import {recordSocialImageBusinessContext,recordSocialImageNodeOutput,runSocialImageDirectorReview} from './socialImageProductionRun.js';
 import {compileSocialImageReferencePlan,prepareSocialImageReferenceStrategy} from './socialImageReferenceStrategy.js';
+import {compileSocialImageV3PaidPlan,recordSocialImageV3DirectorBrief} from './socialImageFormalPlan.js';
+import {socialImageV3PaidPrerequisiteIssue,socialImageV3SingleRenderInput} from './socialImagePaidPrerequisites.js';
+import {admitSocialImageV3QueuedJob,completeSocialImagePaidJob} from './socialImagePaidJob.js';
+import {renderSocialImagePaidWorker} from './socialImagePaidWorkerRender.js';
+import {planStudioPoster,PosterPlanningError} from './studioPosterPlanning.js';
 import {projectSocialImageProductionSnapshot} from './socialImageProductionRuntime.js';
 import {renderSocialImageLayerGraph} from './layerRenderer.js';
 import {SOCIAL_IMAGE_HARD_CHECKS} from '../../shared/contracts/socialImageCreation.js';
@@ -159,7 +164,7 @@ async function inventoryFor(bytes: Buffer, focal: 'top_left' | 'bottom_right') {
     ocr: async () => [{ text: 'OLD BRAND', bbox: textBox(focal), confidence: .94 }] });
 }
 
-async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'product_poster') {
+async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'product_poster', route: 'local' | 'paid' = 'local') {
   const referenceBytes = await referenceImage('top_left', '#123358');
   const inventory = await inventoryFor(referenceBytes, 'top_left');
   const productBytes = await sharp({ create: { width: 180, height: 260, channels: 3, background: '#ffffff' } }).png().toBuffer();
@@ -205,11 +210,84 @@ async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'pro
   assert.equal(task.hookFactorSpec?.factors.length, 2);
   assert.equal(task.productionRuntime?.nodeOutputs.filter(node => node.nodeId === 'hook_factors').at(-1)?.status, 'completed');
   assert.equal(task.productionRuntime?.nodeOutputs.filter(node => node.nodeId === 'adaptation').at(-1)?.status, 'completed');
+  if (route === 'paid') return { store, task, productBytes, referenceBytes };
   const planned = await compileSocialImageReferencePlan({ store, tenantId: 'tenant-a', taskId: task.id,
     expectedVersion: task.version, productName: '产品 A', now });
   task = planned.task;
   return { store, task, planned, productBytes, referenceBytes };
 }
+
+test('viral image task freezes the existing GPT Image 2 route without sending a paid request', async () => {
+  const {store,task}=await preparedViralTask('product_poster','paid');
+  const director=await recordSocialImageV3DirectorBrief({store,tenantId:'tenant-a',taskId:task.id,
+    expectedVersion:task.version,result:{poster:{headline:'产品 A',subheadline:'简明产品展示',originBadge:'',
+      trustBadges:[],sellingPoints:[],process:[],categories:[],bottomBar:[],cta:'联系了解'},
+      caption:'产品 A 简介',hashtags:[],fieldsToConfirm:[],provenance:'ai'}});
+  const planned=await compileSocialImageV3PaidPlan({store,tenantId:'tenant-a',taskId:director.id,
+    expectedVersion:director.version});
+  assert.equal(socialImageV3PaidPrerequisiteIssue(planned,'execute'),null);
+  assert.equal(planned.layerGraph,undefined);
+  const execution=planned.productionRuntime!.nodeOutputs.filter(node=>node.nodeId==='execution_plan').at(-1)!.value as {renderRoute:string};
+  assert.equal(execution.renderRoute,'/api/overseas/studio/fb-poster/render');
+  const spec=planned.productionRuntime!.nodeOutputs.filter(node=>node.nodeId==='render_spec').at(-1)!.value as {idempotencyKey:string};
+  const now=new Date().toISOString();
+  const patch=await admitSocialImageV3QueuedJob(store,'tenant-a',planned,{status:'generating',step:'generate',
+    generationJobs:[...planned.generationJobs,{id:'paid-unit',idempotencyKey:spec.idempotencyKey,
+      status:'queued',attempt:0,outputNodeIds:[],createdAt:now,updatedAt:now}]});
+  const saved=await updateSocialImageTask(store,'tenant-a',planned.id,planned.version,patch);
+  assert.equal(saved.kind,'updated');
+  if(saved.kind==='updated'){
+    const frozen=socialImageV3SingleRenderInput(saved.task,'paid-unit');
+    assert.equal(frozen?.referenceImageUrls.length,0,'structure-only crawled bytes must not go to image provider');
+    assert.match(frozen?.imagePrompt||'',/Reference layout measurements/);
+  }
+});
+
+test('a timed-out bound planner keeps the director node unapproved and exposes the provider uncertainty', async () => {
+  const {store,task}=await preparedViralTask('product_poster','paid');
+  let submissions=0;
+  await assert.rejects(planStudioPoster({store,tenantId:'tenant-a',
+    body:{imageTaskId:task.id,expectedImageTaskVersion:task.version},
+    enterpriseCtx:async()=>`公司名称：示例企业\n产品1：${task.contentBrief.productNames[0]}`,
+    allowPaidCall:async()=>true,
+    callPlanner:async()=>{submissions++;throw new Error('qwen LLM request timed out after 90s');},
+  }),error=>error instanceof PosterPlanningError && error.body.code==='social_image_planning_provider_outcome_unknown');
+  assert.equal(submissions,1);
+  const persisted=await readSocialImageTask(store,'tenant-a',task.id);
+  assert.equal(persisted?.productionRuntime?.nodes.find(node=>node.nodeId==='director_brief')?.status,'waiting');
+  assert.equal(persisted?.generationJobs.length,0);
+});
+
+test('durable image worker claims one frozen GPT Image 2 unit and never submits it twice', async () => {
+  const {store,task,productBytes,referenceBytes}=await preparedViralTask('product_poster','paid');
+  const director=await recordSocialImageV3DirectorBrief({store,tenantId:'tenant-a',taskId:task.id,
+    expectedVersion:task.version,result:{poster:{headline:'产品 A',subheadline:'产品展示',originBadge:'',
+      trustBadges:[],sellingPoints:[],process:[],categories:[],bottomBar:[],cta:'联系了解'},
+      caption:'产品 A 简介',hashtags:[],fieldsToConfirm:[],provenance:'ai'}});
+  const planned=await compileSocialImageV3PaidPlan({store,tenantId:'tenant-a',taskId:director.id,
+    expectedVersion:director.version});
+  let submitted=0;
+  const input={store,tenantId:'tenant-a',taskId:planned.id,expectedVersion:planned.version,
+    enterpriseProductAsset:async()=>({name:'产品 A',bytes:productBytes}),allowPaidCall:async()=>true,
+    ports:{enterpriseContext:async()=>`公司名称：示例企业\n产品1：${planned.contentBrief.productNames[0]}`,
+      referenceBytes:async()=>({bytes:referenceBytes,mimeType:'image/png'}),
+      submit:async(request:Parameters<typeof import('./socialImagePaidSingleRender.js').submitClaimedSocialImageSingleRender>[0])=>{
+        submitted++;
+        assert.equal(request.references.length,1,'structure-only competitor pixels must not be submitted');
+        assert.match(request.prompt,/Reference layout measurements/);
+        assert.equal(request.task.generationJobs.at(-1)?.status,'running');
+        const saved=await completeSocialImagePaidJob({store,tenantId:'tenant-a',taskId:request.task.id,
+          jobId:request.jobId,inputHash:request.inputHash,provider:'openai',output:{id:'candidate-paid',
+            role:'single',label:'主视觉',state:'quality_checking',version:1,materialId:'material-owned',
+            mediaUrl:'/media/fixture.png',contentHash:'a'.repeat(64),qualityChecks:[]}});
+        return {task:saved};
+      }}};
+  const rendered=await renderSocialImagePaidWorker(input);
+  assert.equal(rendered.outputs.length,1);
+  assert.equal(rendered.generationJobs[0]?.status,'quality_checking');
+  await assert.rejects(renderSocialImagePaidWorker({...input,expectedVersion:rendered.version}),/prior_paid_job_unresolved/);
+  assert.equal(submitted,1);
+});
 
 
 test('persisted worker resumes a frozen plan, renders real pixels, and never repeats completed work after restart (visual QA fixture)',async()=>{
