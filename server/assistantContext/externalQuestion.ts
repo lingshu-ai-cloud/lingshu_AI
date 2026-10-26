@@ -14,7 +14,8 @@ export interface ExternalQuestionPlan {
 
 /** Conservative routing only; this policy never selects an executable business action. */
 export function planExternalQuestion(question: string): ExternalQuestionPlan {
-  const internal = /(?:我们|本公司|我司|我的|本周|今天).{0,12}(?:任务|订单|客户|询盘|发布|经营|报价|出口额|进口额|素材|产品)|任务.{0,12}(?:状态|进度|失败|卡在|卡住|阻塞)|(?:内容|视频).{0,12}(?:进度|状态|做到哪|做得怎么样|什么阶段)|审批|素材库|知识库|重试任务|暂停任务/u.test(question);
+  const business = /(?:当前|真实|历史|已有|已连接|本企业|现有|本周).{0,45}(?:经营|账号|投放|询盘|客户|内容表现|渠道数据)|(?:当前会话|客户画像|跟进优先级|预算与目标建议)/u.test(question);
+  const internal = business || /(?:我们|本公司|我司|我的|本周|今天).{0,12}(?:任务|订单|客户|询盘|发布|经营|投放|投流|广告|账号|报价|出口额|进口额|素材|产品)|任务.{0,12}(?:状态|进度|失败|卡在|卡住|阻塞)|(?:内容|视频).{0,12}(?:进度|状态|做到哪|做得怎么样|什么阶段)|审批|素材库|知识库|重试任务|暂停任务/u.test(question);
   if (/不(?:需要|用|要|必)联网|无需联网|不(?:用|要)搜索|无需搜索/u.test(question)) return { kind: 'offline', mixed: internal, domains: [] };
   const exchange = /汇率|结汇价|换汇|兑换|(?:美元|美金|人民币|欧元|英镑|日元|港币|USD|CNY|EUR|GBP|JPY|HKD|AED|SAR|AUD|CAD|SGD).{0,16}(?:兑|换|等于|多少)/iu.test(question);
   const trade = /海关数据|贸易统计|进出口额|进口额|出口额|进口国|出口国|出口市场|进口市场|Comtrade|HS\s*(?:编码|代码|code|[:：]|\d)/iu.test(question)

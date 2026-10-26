@@ -1,3 +1,7 @@
+import { BusinessSceneError } from '../assistantContext/businessScenes/readScope.js';
+import { registerAssistantBusinessScenes } from './assistantBusinessScenes.js';
+import { sceneSelectionSchema } from '../../shared/contracts/assistantBusinessScene.js';
+import { businessSceneGrounding } from '../assistantContext/businessScenes/service.js';
 import { prepareExternalNewsScope } from '../assistantContext/externalNewsScope.js';
 import { CreationDialogueError } from '../assistantContext/contentCreationDialogue.js';
 import { registerContentCreationDialogue, readCreationChatGrounding } from './contentCreationDialogue.js';
@@ -91,6 +95,7 @@ ${ASSISTANT_DETAILS_POLICY}
 export const strategyRouter = Router();
 strategyRouter.use(requireAuth);
 registerContentCreationDialogue(strategyRouter);
+registerAssistantBusinessScenes(strategyRouter);
 
 strategyRouter.get('/company-report-options', async (_req, res) => {
   try { res.json(await companyReportOptions()); }
@@ -402,6 +407,9 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
     try { creationGrounding = await readCreationChatGrounding(tenantId, req.body.creationSelection); }
     catch (error) { res.status(error instanceof CreationDialogueError ? error.status : 503).json({ error: error instanceof CreationDialogueError ? error.code : 'creation_selection_unavailable', message: error instanceof CreationDialogueError ? error.message : '创作选择读取失败，请重试。' }); return; }
   }
+  const scene = req.body?.businessScene === undefined ? undefined : sceneSelectionSchema.safeParse(req.body.businessScene);
+  if (scene && !scene.success) { res.status(400).json({ error: 'scene_input_invalid', message: '请选择有效业务对象及日期范围。' }); return; }
+  const businessScene = scene?.success ? scene.data : undefined;
   const deepThinking = req.body?.deepThinking === true;
   if (!await consumeDemoQuota(req, res, 'aiChat')) return;
 
@@ -410,9 +418,9 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const newsScope = await prepareExternalNewsScope(messages, tenantId);
+  const newsScope = businessScene ? null : await prepareExternalNewsScope(messages, tenantId);
   const question = newsScope?.question ?? latestAssistantQuestion(messages);
-  const externalPlan = planExternalQuestion(question);
+  const externalPlan = businessScene ? { kind: 'internal' as const, mixed: false, domains: [] as string[], freshnessDays: undefined } : planExternalQuestion(question);
   const requireSources = externalPlan.kind === 'web';
   const cancellation = new AbortController();
   const onClose = () => cancellation.abort(new Error('assistant_client_disconnected'));
@@ -426,7 +434,7 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
       res.write('data: [DONE]\n\n');
       return;
     }
-    const filingsIntent = companyFilingsIntent(question);
+    const filingsIntent = businessScene ? null : companyFilingsIntent(question);
     if (filingsIntent) {
       const result = renderCompanyFilings(await queryCompanyFilings(filingsIntent.companies, {
         signal: cancellation.signal, force: filingsIntent.force,
@@ -436,7 +444,7 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
       res.write('data: [DONE]\n\n');
       return;
     }
-    const companyIntent = companyReportIntent(question);
+    const companyIntent = businessScene ? null : companyReportIntent(question);
     if (companyIntent) {
       if (!companyIntent.target && !companyIntent.lookup) {
         res.write(`data: ${JSON.stringify({ text: companyIntent.error })}\n\n`);
@@ -453,7 +461,7 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
       res.write('data: [DONE]\n\n');
       return;
     }
-    const externalAnswer = await answerExternalData(question, { signal: cancellation.signal });
+    const externalAnswer = businessScene ? null : await answerExternalData(question, { signal: cancellation.signal });
     if (externalAnswer && (!externalPlan.mixed || externalAnswer.status === 'needs_input')) {
       if (externalAnswer.sources.length) res.write(`data: ${JSON.stringify({ sources: externalAnswer.sources })}\n\n`);
       res.write(`data: ${JSON.stringify({ text: appendInformationSources(externalAnswer.text, externalAnswer.sources) })}\n\n`);
@@ -463,7 +471,7 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
     const role = await requestOrganizationRoleStrict(req.headers.authorization, userId).catch(() => null);
     const needsGrounding = externalPlan.kind === 'internal' || externalPlan.mixed
       || (externalPlan.kind === 'offline' && /写|生成|制作|脚本|文案|开发信|话术/u.test(question));
-    const grounding = needsGrounding ? await buildChatGrounding({ tenantId, userId }, { role, question })
+    const grounding = businessScene ? { text: await businessSceneGrounding({ tenantId, userId, role }, businessScene).catch(error => { if (error instanceof BusinessSceneError) throw error; throw new BusinessSceneError('scene_unavailable', 503, '场景业务资料暂时无法核验，请稍后重试。'); }) } : needsGrounding ? await buildChatGrounding({ tenantId, userId }, { role, question })
       : { text: externalPlan.kind === 'offline' ? '【本轮上下文范围】这是一般方法问答，未加载企业经营资料。不得评价本企业现行规则、产品资质或处理流程；不能声称企业没有相关要求。' : '' };
     if ('taskStatusAnswer' in grounding && grounding.taskStatusAnswer && !requireSources && !externalAnswer && !creationGrounding) {
       res.write(`data: ${JSON.stringify({ text: grounding.taskStatusAnswer, taskPortal: grounding.taskPortal })}\n\n`);
@@ -490,7 +498,7 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
       : formatStreamError(err);
     const error = requireSources && !rawError.includes('信息来源') && !(err instanceof ExternalInformationError && err.code.startsWith('company_report_'))
       ? `总体结论：${rawError}\n\n信息来源：本轮未取得通过核验的资料。` : rawError;
-    res.write(`data: ${JSON.stringify({ error, ...(err instanceof ExternalInformationError ? { code: err.code, publicMessage: error } : {}) })}\n\n`);
+    res.write(`data: ${JSON.stringify({ error, ...(err instanceof ExternalInformationError || err instanceof BusinessSceneError ? { code: err.code, publicMessage: error } : {}) })}\n\n`);
     res.write('data: [DONE]\n\n');
   } finally {
     clearInterval(heartbeat);

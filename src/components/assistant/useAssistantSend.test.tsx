@@ -93,6 +93,13 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
     await send('帮我复刻这张图文海报', 'business', undefined, [{ kind: 'image', name: '原图.png', materialId: 'uploaded-reference', size: 100 }]);
     assert.equal(requests, 2, 'image replication with an attachment opens intake without model calls or task writes');
     assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.creationPortal?.imageReplication?.reference?.materialId, 'uploaded-reference');
+    store.hydrateThread('business', emptyAssistantThread());
+    const scene = { sceneId: 'CS-02' as const, from: '2026-10-01', to: '2026-10-26', customerId: 'owned-customer' };
+    await send('总结当前会话', 'business', undefined, [], undefined, { businessScene: scene, preserveDraft: true });
+    assert.deepEqual(requestedBody.businessScene, scene);
+    assert.deepEqual(useAssistantStore.getState().threads.business.messages.at(-1)?.businessScene, scene);
+    await send('继续分析这个客户的异议'); assert.deepEqual(requestedBody.businessScene, scene);
+    store.hydrateThread('business', emptyAssistantThread());
     const creationSelection = { referenceId: 'verified-ref', productIds: ['verified-product'], shotIds: ['verified-shot'], evidenceVersion: 'a'.repeat(64) };
     store.hydrateThread('business', { creationDraft: creationSelection, messages: [...useAssistantStore.getState().threads.business.messages,
       { role: 'assistant', content: '选择已保留', creation: { stage: 'shots', selection: creationSelection, referenceTitle: '参考', products: [], shots: [], narrations: [], gaps: [], presenterIds: [] } }] });
@@ -100,12 +107,12 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
     assert.equal(requestedUrl, '/api/overseas/strategy/chat', 'free-creation follow-up must not launch production');
     assert.deepEqual(requestedBody.creationSelection, creationSelection, 'reference/product/shot identities reach the server validation boundary');
     await send('请解读科思股份2026年半年度报告。', 'business', undefined, [], undefined, { companyReport: true, preserveDraft: true });
-    assert.equal(requests, 4);
+    assert.equal(requests, 6);
     assert.equal(requestedBody.creationSelection, undefined, 'a confirmed public report must not be routed into an existing creation draft');
     assert.deepEqual(useAssistantStore.getState().threads.business.creationDraft, creationSelection);
     fence.current.active = false;
     await send('身份已切换后的旧请求');
-    assert.equal(requests, 4, '旧实例失效后不得再向模型发送请求');
+    assert.equal(requests, 6, '旧实例失效后不得再向模型发送请求');
   } finally {
     globalThis.fetch = originalFetch;
     Object.assign(globalThis, { window: originalWindow, localStorage: originalStorage });

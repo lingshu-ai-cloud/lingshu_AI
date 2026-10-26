@@ -1,3 +1,4 @@
+import { insertStudioProjectRecord } from '../studio/projectDraftStore.js';
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { isTrustedSocialOutputWorkspace, socialOutputWorkspaceClientWriteBlocked } from '../starter198/socialContentWorkspacePolicy.js';
@@ -193,7 +194,7 @@ router.post('/', async (req, res) => {
   if (kbIssues.length) {
     res.status(409).json({ ok: false, code: 'STORYBOARD_AIGC_KB_IMAGE_CHANGED', error: '企业产品或指定人物参考图已变化，AI 分镜候选需重做', reasons: kbIssues }); return;
   }
-  const created = await dataStore.create<any>('studio_projects', { tenant_id: tenantId, title: project.title, status, spec, thumb_seed: thumbSeed || '', created_at: now, updated_at: now });
+  const created = await insertStudioProjectRecord(dataStore, { tenant_id: tenantId, title: project.title, status, spec, thumb_seed: thumbSeed || '', created_at: now, updated_at: now });
   if (!created) { res.status(503).json({ ok: false, error: 'project storage unavailable' }); return; }
   res.status(201).json({ ok: true, project: projectFromRecord(created, tenantId) });
 });

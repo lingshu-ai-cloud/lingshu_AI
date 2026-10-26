@@ -1,3 +1,4 @@
+import { continuePlatformRewrite } from '../../lib/platformRewriteNavigation';
 import { App as AntApp, Button, Drawer, Pagination, Popconfirm, Segmented } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -130,6 +131,10 @@ function dateLabel(value: string): string {
 }
 
 function openProject(project: StudioProject) {
+  if (project.status === 'draft' && project.spec.adaptation && project.spec.freeCreation) {
+    continuePlatformRewrite(project.id);
+    return;
+  }
   try {
     localStorage.setItem(STUDIO_OPEN_PROJECT_KEY, JSON.stringify({ at: Date.now(), projectId: project.id }));
   } catch { /* optional storage */ }

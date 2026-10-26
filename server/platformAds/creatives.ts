@@ -1,3 +1,4 @@
+import { readAdRows } from './readPages.js';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { PlatformAdCreative, PlatformAdCreativeSource } from '../../shared/platformAdCreatives.js';
@@ -54,10 +55,10 @@ export async function getPlatformAdCreative(tenantId: string, id: string): Promi
   const record = await store.getById<StoredPlatformAdCreative>(AD_CREATIVES_COLLECTION, id);
   return record?.tenant_id === tenantId ? record : null;
 }
-export async function listPlatformAdCreatives(tenantId: string, taskId: string) {
+export async function listPlatformAdCreatives(tenantId: string, taskId: string, allPages = false) {
   if (!await getPlatformAdTask(tenantId, taskId)) throw new PlatformAdCreativeError('未找到投放计划', 404);
-  const result = await store.list<StoredPlatformAdCreative>(AD_CREATIVES_COLLECTION, { where: { tenant_id: tenantId, taskId }, perPage: 200 });
-  return result.items.filter(c => c.tenant_id === tenantId).map(publicPlatformAdCreative);
+  const result = await readAdRows<StoredPlatformAdCreative>(AD_CREATIVES_COLLECTION, tenantId, taskId, allPages);
+  return result.filter(c => c.tenant_id === tenantId).map(publicPlatformAdCreative);
 }
 export async function validatePlatformAdCreativeSource(tenantId: string, id: string) {
   const creative = await getPlatformAdCreative(tenantId, id);
