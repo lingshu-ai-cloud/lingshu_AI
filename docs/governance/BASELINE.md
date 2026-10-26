@@ -2,6 +2,13 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前统一开发基线：图文单任务真实联调到用户验收（2026-10-26）
+
+- 权威工作树与分支仍为 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026` / `baseline/unified-20261026`；隔离修复 `06354c9b` 合入为 `49157cc2`。修复固定合成器的长标题自动换行、辅助文字逐行排版和源产品照片的纵横比；参考文字因素在左上时将标题/产品分列，OCR 因换行分块时按同一区域顺序合并验证。原未提交视频补丁未纳入。
+- 已冻结任务 `socialtask_d1f3157acd9de646d61eb123` / `img0b279af90bb0` / durable job `22b2670c58984c2` 用与冻结记录 SHA-256 一致的本机冗余对象副本恢复素材读取。原作业策划检查点未重提，GPT Image 2 仅提交一次背景底图，持久素材 `f0741cbd-62c8-5c3b-a47d-08a5323f177b`。首版 `bcede0ed-8851-57c4-817e-5c44c460a44a` 因标题裁切导致 OCR 硬门槛失败，保留为 superseded 历史；使用同一底图和原企业主图做零额外出图调用的本地重合成，得到第 2 版素材 `01f5cee4-5540-504d-984e-80b186dbd906`，SHA-256 `495524f4982e6443a579b21bb184c1c984e6a455908851ec63d178f248e47c0d`。
+- 第 2 版正式视觉质检回执为 completed，全部硬门槛通过，参考注意区与文字层级两个因素均 pass；结构相似度 soft 检查为 uncertain，自动导演审查仍判定 `accept_for_user_review`。原 durable job 为 `succeeded`，节点 `candidate_generation`、`quality_check`、`director_review` 均 completed，`user_approval` 为 needs_review，尚未由用户批准、交付或发布。运行数据中的 GPT Image 2 回执为 completed，准确供应商账单仍未取得，不能据此断言实际花费；本轮仅执行获批任务的一次出图及必要策划/质检，无结果不明请求的自动重试。
+- `pnpm run test:social-image-pipeline`（86/86 图片主用例、HTTP/合同/治理）与新增参考策略/排版定向测试 10/10、`pnpm run lint`、`git diff --check` 通过。本地预览前端 5365 返回 200、web 9065 加载提交 `49157cc2`；9065 的全局 ready 为 degraded（本地禁用 PocketBase 且 web-only），不等于该任务失败。未执行目标库迁移、推送、部署或发布。旧节记录的是修复前状态，以本节实测任务回执为准。
+
 ## 当前统一开发基线：图文参考版式与素材不可读修复（2026-10-26）
 
 - 权威树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，起点 `737d7097551e3682635a5c24e46c66fc7a2aa544`。隔离分支 `codex/image-task-provider-path-20261026` 的后续提交 `81f5a6c9`、`c32fd25b`、`1686080f`、`3aece24d` 分别合入为 `21473736`、`de22df67`、`2f4e7a92`、`d6cda73e4922e7e97e671064c5c1e7c35fa09e2d`；中间治理证据提交 `4a0884fd`。原未提交 `server/videos/videoVisibilityMaintenance.ts` 补丁未纳入，SHA-256 仍为 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`。
