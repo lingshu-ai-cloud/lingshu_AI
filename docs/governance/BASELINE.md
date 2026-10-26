@@ -2,6 +2,13 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前统一开发基线：新人首页双卡与实景导览（2026-10-26）
+
+- 唯一默认基线仍为 `baseline/unified-20261026`，权威树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`。从 `7cb757c10c9857ed7c0fbbda2b84396021e6bcd0` 快进到已验证源码 `71c5cecba007b211133d876154198683fd9c33f8`；本节取代下方历史“当前”声明。恢复分支 `backup/pre-home-first-run-20261026-7cb757c1` 保留。
+- 仅纳入本会话尚未提交的新人首页功能：两张旧版外观入门卡、复用既有企业入门表单的问答引导、靠近高亮目标的小气泡实景导览及 Enter/Esc 键盘流程。保留原基线报告、图文复刻、快捷任务及日历实现；未复制旧版首页整文件、平行后端链路或运行数据。
+- 实际通过：新人状态/导览几何与首页合同定向测试 4/4，`pnpm run lint`，`pnpm run check:architecture`（2957 个生产 TypeScript 文件），`pnpm run check:digital-employee-migrations`（204 项只读），`pnpm run build`，`git diff --check`。未运行全仓 quality/verify、真实浏览器回归、真实供应商或发布验收；源码检查不能替代这些结论。
+- 权威树原有 `server/videos/videoVisibilityMaintenance.ts` 未提交视频排序改动不纳入提交，快进前后补丁 SHA-256 均为 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`，工作树仍非干净。原功能树 `feature/assistant-home-dialogue-20261026` 的其他未提交内容未触碰。本轮没有推送、部署、目标数据库迁移或真实付费调用。详见[新人首页合并记录](HOME-FIRST-RUN-INTEGRATION-20261026.md)。
+
 ## 当前统一开发基线：小程序与首页卡片收尾（2026-10-26）
 
 - 唯一默认基线仍为`baseline/unified-20261026`，权威树`/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`。从用户指定的`117933ac8f5059f6782c0dc1b742c3ae13d50e24`快进到验证源码`f4a95242aa28fac1b66dfdc7bd64d9b20d25eef1`，后续仅治理提交；本节取代下方历史“当前”声明。恢复分支`backup/pre-home-card-final-20261026-117933ac`保留。
