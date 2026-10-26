@@ -1,4 +1,5 @@
 import { insertStudioProjectRecord } from '../studio/projectDraftStore.js';
+import { platformRewriteDraft } from '../../shared/contracts/platformRewriteDraft.js';
 import { projectFromRecord } from '../routes/studioProjectReadRoutes.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -14,7 +15,7 @@ async function sourceScript(data: DataStore, scope: BusinessSceneScope, id: stri
   const row = await data.getById<Record_>('studio_projects', id);
   if (!row || row.tenant_id !== scope.tenantId) throw new BusinessSceneError('rewrite_source_not_found', 404, '源脚本不可访问，请重新选择。');
   const script = projectFromRecord(row, scope.tenantId).spec.script;
-  if (typeof script !== 'string' || !script.trim() || script.length > 24000) throw new BusinessSceneError('rewrite_source_invalid', 422, '源脚本为空或过长，请先在脚本库整理。');
+  if (typeof script !== 'string' || !script.trim() || script.length > 24000) throw new BusinessSceneError('rewrite_source_invalid', 422, '源口播为空或过长，请先在内容创作中整理。');
   return row;
 }
 export function createPlatformRewriteService(deps: { data: DataStore; profile: typeof sceneProfile; generate: (prompt: string) => Promise<string> }) {
@@ -39,7 +40,7 @@ export function createPlatformRewriteService(deps: { data: DataStore; profile: t
       for (const variant of request.variants) {
         const id = hash([scope.tenantId, scope.userId, request.requestId, variant.platform]).slice(0, 15);
         const requestHash = hash([request.sourceScriptId, request.sourceHash, request.language, variant]);
-        const content = { mode: 'material', contentMode: 'video', platform: variant.platform.toLowerCase(), language: request.language, lang: request.language, voiceLangs: [request.language], activeVoiceLang: request.language, voiceDrafts: { [request.language]: variant.script }, script: variant.script, caption: variant.caption, modeScripts: [{ id: 'platform-adaptation', script: variant.script, generationSource: 'ai', qualityStatus: 'unreviewed', publishable: false }],
+        const content = { creationPath: 'free_creation', manualWorkflow: true, freeCreation: platformRewriteDraft(variant.script, variant.platform, request.language), mode: 'material', contentMode: 'video', platform: variant.platform.toLowerCase(), language: request.language, lang: request.language, voiceLangs: [request.language], activeVoiceLang: request.language, voiceDrafts: { [request.language]: variant.script }, script: variant.script, caption: variant.caption, modeScripts: [{ id: 'platform-adaptation', script: variant.script, generationSource: 'ai', qualityStatus: 'unreviewed', publishable: false }],
           adaptation: { sourceScriptId: source.id, sourceHash: request.sourceHash, platform: variant.platform, rationale: variant.rationale, requestHash } };
         const existing = await deps.data.getById<Record_>('studio_projects', id);
         if (existing && (existing.tenant_id !== scope.tenantId || object(object(existing.spec).adaptation).requestHash !== requestHash)) throw new BusinessSceneError('rewrite_save_conflict', 409, '此次保存请求已绑定其他版本，请保留结果并重新打开。');

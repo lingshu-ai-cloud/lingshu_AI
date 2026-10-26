@@ -51,6 +51,7 @@ export interface SocialContentCreateRequest {
   sourceContext?: SocialContentSourceContext;
   continueTaskId?: string;
   continueProjectId?: string;
+  resumeEditableDraft?: boolean;
   replicationStep?: 1 | 2 | 3;
   confirmedSpeech?: Array<{ source: string; draft: string; time: string }>;
   presenterAssetId?: string;

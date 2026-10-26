@@ -1,4 +1,4 @@
-import { openScriptLibrary } from '../../lib/contentActionNavigation';
+import { continuePlatformRewrite } from '../../lib/platformRewriteNavigation';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Input, Select, Spin } from 'antd';
 import { LsFlowDialog } from '../ui/LsExperiencePrimitives';
@@ -69,8 +69,8 @@ export default function AssistantBusinessSceneDialog({ sceneId, onClose, onConfi
     steps={rewrite ? [{ title: '选择源稿与平台' }, { title: '编辑确认' }, { title: '保存草稿' }] : [{ title: '确认对象与日期' }, { title: '对话分析' }]}
     onCancel={onClose} closable={!busy} keyboard={!busy} maskClosable={!busy} footer={<>
       <Button disabled={busy} onClick={onClose}>{savedIds.length ? '完成' : '取消'}</Button>
-      {!savedIds.length && <Button type="primary" disabled={!options} loading={busy} onClick={() => void (rewrite ? draft ? save() : generate() : confirm())}>{rewrite ? draft ? unconfirmed ? '核对保存结果' : '确认保存到脚本库' : '生成平台版本' : '开始分析'}</Button>}
-      {savedIds.length > 0 && <Button onClick={() => { onClose(); openScriptLibrary({ tab: 'studio', projectId: savedIds[0], openDetail: true }); }}>查看脚本库</Button>}
+      {!savedIds.length && <Button type="primary" disabled={!options} loading={busy} onClick={() => void (rewrite ? draft ? save() : generate() : confirm())}>{rewrite ? draft ? unconfirmed ? '核对保存结果' : '确认保存创作草稿' : '生成平台版本' : '开始分析'}</Button>}
+      {savedIds.map((id, index) => <Button key={id} onClick={() => { onClose(); continuePlatformRewrite(id); }}>{draft?.variants[index]?.platform || `第${index + 1}版`}：继续创作</Button>)}
     </>}>
     {error && <Alert className="mb-3" type="error" showIcon title={error} action={!options ? <Button onClick={() => setRevision(v => v + 1)}>重新读取</Button> : undefined}/>}
     {!options ? <Spin/> : savedIds.length ? <Alert type="success" showIcon title={`已保存${savedIds.length}个平台草稿`} description="各版本已写入并读回核对；原稿保留，尚未发布或启动制作。"/> : draft ? <div className="space-y-5">
@@ -86,7 +86,7 @@ export default function AssistantBusinessSceneDialog({ sceneId, onClose, onConfi
         <label className="block">源脚本<Select aria-label="源脚本" className="mt-2 w-full" showSearch optionFilterProp="label" value={sourceScriptId} options={options.scripts.map(x => ({ value: x.id, label: x.label }))} onChange={setSourceScriptId}/></label>
         <label className="block">目标平台<Select aria-label="目标平台" className="mt-2 w-full" mode="multiple" value={platforms} options={REWRITE_PLATFORMS.map(value => ({ value, label: value }))} onChange={setPlatforms}/></label>
         <label className="block">输出语言<Input aria-label="输出语言" className="mt-2" maxLength={50} placeholder="例如：英语" value={language} onChange={e => setLanguage(e.target.value)}/></label>
-        {!options.scripts.length && <p>脚本库暂无可读取源稿，请先保存一份脚本。</p>}
+        {!options.scripts.length && <p>内容创作暂无可读取的口播草稿，请先保存一份内容。</p>}
       </> : <>
         <div className="grid grid-cols-2 gap-3"><label>开始日期<Input aria-label="开始日期" type="date" value={from} onChange={e => setFrom(e.target.value)}/></label><label>结束日期<Input aria-label="结束日期" type="date" value={to} onChange={e => setTo(e.target.value)}/></label></div>
         {sceneId.startsWith('CS-') && <label className="block">客户<Select aria-label="选择分析客户" className="mt-2 w-full" allowClear showSearch optionFilterProp="label" placeholder={['CS-01', 'CS-05'].includes(sceneId) ? '全部当前授权客户，或选择一位' : '请选择一位客户'} value={customerId} options={options.customers.map(x => ({ value: x.id, label: x.label }))} onChange={setCustomerId}/></label>}

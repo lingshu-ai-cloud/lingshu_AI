@@ -1,5 +1,7 @@
 # 首页助手场景链路闭环
 
+> 后续用户修订：旧脚本库停用；本记录中的脚本库截图及跳转仅为原提交历史证据，当前承接以 [多平台改写内容创作承接修订](PLATFORM-REWRITE-CONTINUATION-20261026.md) 为准。
+
 ## 交付范围
 
 功能分支：`feature/assistant-scene-backend-closure-20261026`。开发起点与安全恢复点：`240676bea03ccc67e2c83192bc1778bc96565e81`。本报告随实现提交，确切实现SHA使用 `git log -1 --format=%H -- docs/governance/ASSISTANT-SCENE-CLOSURE-20261026.md` 查询。

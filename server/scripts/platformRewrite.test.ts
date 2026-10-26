@@ -12,7 +12,7 @@ function fixture() {
   const service = createPlatformRewriteService({ data, profile: async () => ({ factVersion: 'facts1', enterprise: '已确认产品资料' }), generate: async () => JSON.stringify({ variants: ['TikTok', 'YouTube'].map(platform => ({ platform, title: `${platform}产品介绍`, script: '已确认事实的口播改写。', caption: '了解产品规格', rationale: '调整开场与语气' })) }) });
   return { rows, service, creates: () => creates, lose: () => { loseReceipt = true; } };
 }
-test('platform variants remain editable drafts and save idempotently into the actual Studio script library', async () => {
+test('platform variants save idempotently as resumable current content creation drafts', async () => {
   const f = fixture(), source = JSON.stringify(f.rows.get('source'));
   const draft = await f.service.generate(scope, { sourceScriptId: 'source', platforms: ['TikTok', 'YouTube'], language: '英语' });
   assert.equal(f.creates(), 0);
@@ -25,6 +25,11 @@ test('platform variants remain editable drafts and save idempotently into the ac
     assert.equal((row.spec as Record<string, unknown>).script, '已确认事实的口播改写。');
     assert.equal((row.spec as Record<string, unknown>).lang, 'en');
     assert.equal((row.spec as Record<string, unknown>).platform, saved.platform.toLowerCase());
+    const state = (row.spec as any).freeCreation;
+    assert.equal(state.currentStep, 1); assert.equal(state.script.status, 'draft');
+    assert.equal(state.script.lines.map((line: any) => line.narration).join(''), (row.spec as any).script);
+    assert.equal(state.brief.platform, saved.platform.toLowerCase()); assert.equal(state.brief.language, 'en');
+    assert.deepEqual(state.brief.productIds, []); assert.equal(state.script.lines[0].visualIntent, '');
   }
   await assert.rejects(f.service.save(scope, { ...input, variants: input.variants.map(v => ({ ...v, script: '另一个版本' })) }), /绑定其他版本/);
 });

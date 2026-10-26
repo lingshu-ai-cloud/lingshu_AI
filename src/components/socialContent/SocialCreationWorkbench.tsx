@@ -3,7 +3,7 @@ import { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 export { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 import StudioPreviewStage from '../studio/StudioPreviewStage';
 import ReplicationWorkbenchHeader from './ReplicationWorkbenchHeader';
-import { Button, Modal } from 'antd';
+import { Alert, Button, Modal } from 'antd';
 import {
   ChevronDown,
   ChevronRight,
@@ -94,6 +94,7 @@ export default function SocialCreationWorkbench({
   onGenerate: (request: SocialCreationWorkbenchSubmit) => void | Promise<void>;
 }) {
   const {
+    draftRecoveryError,
     isReplication, products, productId, setProductId, selectedProductIds, setSelectedProductIds, setProductAssignments,
     setProductSelectionChanged, productSelectorOpen, setProductSelectorOpen, setManualProductTerms, newProductTerm, setNewProductTerm, enterpriseBrandName,
     enterpriseCtas, enterpriseProfileState, productsLoading, productsUnavailable, submitting, generatingSpeech, files,
@@ -115,6 +116,7 @@ export default function SocialCreationWorkbench({
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-white">
+      {draftRecoveryError && <Alert type="error" showIcon title={draftRecoveryError}/>}
       <ReplicationWorkbenchHeader
         activeStep={0}
         compact

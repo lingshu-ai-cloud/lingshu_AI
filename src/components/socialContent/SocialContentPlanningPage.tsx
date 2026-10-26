@@ -292,7 +292,7 @@ export default function SocialContentPlanningPage({
 
       {view === 'workbench' && launch ? (
         productionMode === 'video' ? <SocialCreationWorkbench
-            key={`${launch.creationPath}:${seed?.referenceTitle || 'new'}:${sourceRequest?.assistantEntry?.id || (sourceRequest?.creationDialoguePlan ? sourceRequest.requestId : '')}`}
+            key={`${launch.creationPath}:${seed?.referenceTitle || 'new'}:${sourceRequest?.continueProjectId || sourceRequest?.assistantEntry?.id || (sourceRequest?.creationDialoguePlan ? sourceRequest.requestId : '')}`}
             mode={launch.creationPath}
             seed={sourceRequest ? { ...seed, ...seedFromRequest(sourceRequest) } : seed}
             stageProfile={stageProfile || undefined}
