@@ -30,7 +30,7 @@ export default function AssistantScheduleChange({row,rows,goal,onChanged}:{row:C
     <Modal title="核对发布时间调整" open={open} onCancel={()=>!busy&&setOpen(false)} footer={<><Button disabled={busy} onClick={()=>setOpen(false)}>取消</Button><Button type="primary" loading={busy} disabled={!preview||preview.instant===row.publishAt} onClick={()=>void confirm()}>确认调整</Button></>}>
       <div className="space-y-3">
         <p className="text-sm">{row.title}</p>
-        <p className="text-sm">原计划：{row.publishAt||'时间待定'}（北京时间）</p>
+        <p className="text-sm">原计划：{row.publishAt?(row.publishAt.length>10?calendarDateTimeValue(row.publishAt).replace('T',' '):`${row.publishAt}（时刻待定）`):'时间待定'}（北京时间）</p>
         <label className="block text-sm">新发布时间（北京时间）<AssistantSceneDateInput label="新的发布时间" value={localTime} onChange={setLocalTime}/></label>
         {previewError&&<Alert type="warning" title={previewError}/>}
         {preview&&<><p className="text-sm">新计划：{localTime.replace('T',' ')}（北京时间）</p>
