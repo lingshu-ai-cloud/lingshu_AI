@@ -62,3 +62,35 @@ test('native task creation persists a guided draft before its exact source is at
     assert.equal((await store.list('workflow_runs', { perPage: 100 })).totalItems, 0);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('selected owned hook is cropped to the confirmed seconds after the original matcher admits its segment', async () => {
+  const f=guidedCreationFixture();
+  const plan=await f.run('guided_products',{...f.initial,productIds:['fixture-product'],guided:{...f.initial.guided!,languages:['en']}});
+  plan.selection.guided!.presenterMode='none';
+  plan.selection.guided!.scene={kind:'hook_first',groupId:'hook-fixture',plannedPublishAt:'2099-01-05T08:00:00+08:00',deliverBy:'2099-01-04T08:00:00+08:00',hook:{materialId:'own-hook',startSeconds:2,endSeconds:5,usage:'editable',direction:'展示产品'},narrationEdits:[],narrationConfirmed:true};
+  plan.guided!.nodes=[{id:'first',type:'product',description:'产品正面陈列',duration:3,candidates:['chosen'],selectedCandidateId:'chosen',status:'matched'}];
+  plan.guided!.candidates=[{id:'chosen',sourceId:'own-hook',segmentId:'segment',title:'',description:'',type:'product',start:2,end:5,productionEligible:true}];
+  const owned=candidate('own-hook','fixture-product','样品杯');
+  const input={policyVersion:'type-aware.v2' as const,tenantId:'fixture',productRef:'样品杯',shots:[{shotId:'guided-first',function:'hook' as const}],candidates:[owned]};
+  const output=guidedMaterialRoutingRequests(plan,input)[0]!;
+  assert.deepEqual([output.selectedMaterialSegment?.startSeconds,output.selectedMaterialSegment?.endSeconds],[2,5]);
+  assert.equal(output.selectedMaterialSegment?.sourceRef,'own-hook');
+  const withdrawn=structuredClone(owned);withdrawn.segmentProfile!.productionEligible=false;
+  assert.throws(()=>guidedMaterialRoutingRequests(plan,{...input,candidates:[withdrawn]}),/not_admitted/);
+});
+
+test('an admitted customer talking-head opening stays a real clip instead of becoming product B-roll', async () => {
+  const f=guidedCreationFixture();
+  const plan=await f.run('guided_products',{...f.initial,productIds:['fixture-product'],guided:{...f.initial.guided!,languages:['en']}});
+  plan.selection.guided!.presenterMode='none';
+  plan.selection.guided!.scene={kind:'hook_first',groupId:'spoken-hook',plannedPublishAt:'2099-01-05T08:00:00+08:00',deliverBy:'2099-01-04T08:00:00+08:00',hook:{materialId:'speaker',startSeconds:2,endSeconds:5,usage:'editable',direction:'真人介绍产品'},narrationEdits:[],narrationConfirmed:true};
+  plan.guided!.nodes=[{id:'first',type:'talking_head',description:'真人开场',duration:3,candidates:['speaker-clip'],selectedCandidateId:'speaker-clip',status:'matched'}];
+  plan.guided!.candidates=[{id:'speaker-clip',sourceId:'speaker',segmentId:'segment',title:'真人开场',description:'真人开场',type:'talking_head',start:2,end:5,productionEligible:true}];
+  const visualContract=normalizeSceneVisualContract({subjects:['person'],interaction:{kind:'person_talking',description:'真人介绍产品'},action:{path:'真人介绍产品'}});
+  const assessment=buildLocalMaterialSegmentProfile({tenantId:'fixture',sourceTenantId:'fixture',origin:'my_materials',assetId:'speaker',segmentId:'segment',sourceRevision:'revision',currentSourceRevision:'revision',mediaType:'video',synthetic:false,startSeconds:0,endSeconds:12,materialType:'talking_head',materialRoles:['presenter'],productId:'fixture-product',productRef:'样品杯',visualContract,observedActionTags:['真人介绍产品'],rightsEvidenceRefs:['rights'],commercialUseApprovalEvidenceRefs:['rights'],commercialUseApproved:true,modelInputAllowed:false,derivativeUseAllowed:true,confidence:.98,needsReview:false,cleanEntry:true,cleanExit:true});
+  const owned:SocialWorkflowMaterialClipCandidate={...candidate('speaker','fixture-product','样品杯'),visualContract,segmentProfile:assessment.profile,materialRoles:['presenter']};
+  const output=guidedMaterialRoutingRequests(plan,{policyVersion:'type-aware.v2',tenantId:'fixture',productRef:'样品杯',shots:[{shotId:'guided-first',function:'hook'}],candidates:[owned]})[0]!;
+  assert.equal(output.materialType,'talking_head');
+  assert.equal(output.selectedMaterialSegment?.sourceRef,'speaker');
+  assert.deepEqual([output.selectedMaterialSegment?.startSeconds,output.selectedMaterialSegment?.endSeconds],[2,5]);
+});

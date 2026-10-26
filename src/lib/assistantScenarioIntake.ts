@@ -15,38 +15,17 @@ export function assistantScenarioIntake(text: string): AssistantCreationPortal |
     sceneStep: scenario === 'hook_first' ? 'source' : 'brief' };
 }
 
+/** The ordinary single-content form remains independent of the guided scene contract. */
 export function scenarioTaskInputs(portal: AssistantCreationPortal): Array<{ id: string; input: CreateSocialContentTaskInput }> {
+  if (portal.scenario !== 'content_task') throw Error('该场景必须通过已核验的创作方案提交。');
   const products = portal.selectedProducts || [];
   if (!products.length) throw Error('请选择至少一款产品。');
-  const parseDate = (value: string, future = true) => {
-    const date = new Date(`${value}+08:00`);
-    if (!Number.isFinite(date.getTime()) || (future && !portal.submissionLocked && date.getTime() <= Date.now())) throw Error('请选择有效的未来时间（北京时间）。');
-    return date.toISOString();
-  };
-  let rows: Array<{id: string; title: string; publishAt: string}>;
-  if (portal.scenario === 'hook_first') {
-    const hook = portal.hook;
-    if (!hook || hook.endSeconds <= hook.startSeconds || hook.endSeconds > hook.duration || !portal.direction?.trim()) throw Error('请确认有效开场片段和内容方向。');
-    rows = [{ id: 'hook', title: `开场创作 · ${products.map(p => p.name).join('、')}`.slice(0,120), publishAt: portal.plannedPublishAt || '' }];
-  } else if (portal.scenario === 'content_task') {
-    if (!portal.direction?.trim()) throw Error('请填写本条内容的创作方向。');
-    rows = [{id:'content',title:`内容创作 · ${products.map(p=>p.name).join('、')}`.slice(0,120),publishAt:portal.plannedPublishAt||''}];
-  } else if (portal.scenario === 'campaign') {
-    const campaign = portal.campaign;
-    if (!campaign?.name.trim() || !campaign.objective.trim() || !campaign.type || !campaign.items.length) throw Error('请填写活动名称、类型、目标，并保留至少一条内容。');
-    const start = parseDate(campaign.startsAt, false), end = parseDate(campaign.endsAt);
-    if (end < start) throw Error('活动结束时间不能早于开始时间。');
-    if (campaign.items.some(item => !item.title.trim()) || new Set(campaign.items.map(item => item.id)).size !== campaign.items.length) throw Error('请核对每条内容的主题和唯一标识。');
-    rows = campaign.items.map(item => ({...item, title:`${campaign.name} · ${item.title}`.slice(0,120)}));
-  } else throw Error('该场景不能创建内容任务。');
-  return rows.map(row => {
-    const requirements = JSON.stringify({ source: 'assistant_scene_confirmation', scenario: portal.scenario,
-      groupId: portal.id, itemId: row.id, products, plannedPublishAt: parseDate(row.publishAt), timezone: 'Asia/Shanghai',
-      ...(portal.scenario === 'campaign' ? { campaign: portal.campaign } : { hook: portal.hook, direction: portal.direction }) });
-    if (requirements.length > 2000) throw Error('方案信息过多，请缩短方向描述或减少产品/内容数量。');
-    return {id:row.id, input:{title:row.title, objective:portal.scenario === 'campaign' ? portal.campaign!.objective : portal.direction || portal.objective,
-      mode:'instant', requestedOutputCount:1, themeId:'product_value', creationMode:'material_processing', managementMode:'one_click_managed',
-      formats:['short_video'], ...(products.length === 1 ? {productId:products[0].id,productRef:products[0].name}:{}),
-      specialRequirements:requirements }};
-  });
+  if (!portal.direction?.trim()) throw Error('请填写本条内容的创作方向。');
+  const date = new Date(`${portal.plannedPublishAt}+08:00`);
+  if (!Number.isFinite(date.getTime()) || !portal.submissionLocked && date.getTime() <= Date.now()) throw Error('请选择有效的未来时间（北京时间）。');
+  const requirements = JSON.stringify({ source:'assistant_scene_confirmation', scenario:'content_task', groupId:portal.id, itemId:'content', products, plannedPublishAt:date.toISOString(), timezone:'Asia/Shanghai', direction:portal.direction });
+  if (requirements.length > 2000) throw Error('方案信息过多，请缩短方向描述或减少产品数量。');
+  return [{id:'content',input:{title:`内容创作 · ${products.map(p=>p.name).join('、')}`.slice(0,120),objective:portal.direction,
+    mode:'instant',requestedOutputCount:1,themeId:'product_value',creationMode:'material_processing',managementMode:'one_click_managed',formats:['short_video'],
+    ...(products.length===1?{productId:products[0].id,productRef:products[0].name}:{}),specialRequirements:requirements}}];
 }

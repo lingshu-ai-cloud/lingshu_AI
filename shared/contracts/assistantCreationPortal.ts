@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { creationReplySchema } from './contentCreationDialogue';
 
 /** Navigation draft only. This is never a task receipt, product identity or execution grant. */
 export const assistantCreationPortalSchema = z.object({
@@ -12,6 +13,9 @@ export const assistantCreationPortalSchema = z.object({
   aspectRatio: z.enum(['9:16', '16:9']).nullable(),
   targetDurationSeconds: z.number().int().min(6).max(60).nullable(),
   scenario: z.enum(['viral_replication', 'hook_first', 'campaign', 'weekly_calendar', 'content_task']).optional(),
+  scenePlan: creationReplySchema.optional(),
+  scenePresenterMode: z.enum(['none','digital','shoot']).optional(), plannedDeliveryAt: z.string().max(40).optional(), videoLanguages: z.array(z.string()).max(10).optional(), hookReferenceStep: z.boolean().optional(), hookNarrationConfirmed: z.boolean().optional(),
+  campaignDraft: z.object({ step: z.enum(['assets', 'facts', 'reference', 'narration', 'summary']), name: z.string().max(120), offer: z.string().max(500), sellingPoints: z.string().max(1000), materials: z.array(z.object({id:z.string(),name:z.string()})).max(12), languages:z.array(z.string()).max(10), deliverBy:z.string().max(40) }).strict().optional(),
   sceneStep: z.enum(['source', 'brief', 'summary']).optional(),
   hook: z.object({ materialId: z.string().min(1).max(200), name: z.string().min(1).max(160),
     startSeconds: z.number().min(0), endSeconds: z.number().positive(), duration: z.number().positive(),
@@ -22,7 +26,7 @@ export const assistantCreationPortalSchema = z.object({
     items: z.array(z.object({ id: z.string().min(1).max(80), title: z.string().max(120),
       phase: z.enum(['warmup', 'launch', 'followup']), publishAt: z.string().max(40) }).strict()).max(10) }).strict().optional(),
   submissionLocked: z.boolean().optional(),
-  createdTasks: z.array(z.object({ itemId: z.string().max(80), taskId: z.string().min(1).max(120).regex(/^[a-zA-Z0-9_-]+$/), title: z.string().max(120), sourceAttached: z.boolean().optional(), startRequested: z.boolean().optional() }).strict()).max(10).optional(),
+  createdTasks: z.array(z.object({ itemId: z.string().max(80), taskId: z.string().min(1).max(120).regex(/^[a-zA-Z0-9_-]+$/), title: z.string().max(120), sourceAttached: z.boolean().optional(), startRequested: z.boolean().optional(), executionState: z.enum(['saved', 'queued', 'running', 'blocked']).optional(), blockedReason: z.string().max(500).optional() }).strict()).max(10).optional(),
   calendarDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   calendarGoalId: z.string().max(180).optional(),
   replicationStep: z.enum(['reference', 'product', 'schedule', 'summary']).optional(),

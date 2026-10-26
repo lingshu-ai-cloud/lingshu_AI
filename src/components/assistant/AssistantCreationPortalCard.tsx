@@ -8,6 +8,8 @@ import { assistantTaskPortalSchema, type AssistantTaskPortal } from '../../../sh
 import { assistantSourcePortalSchema, type AssistantSourcePortal } from '../../../shared/contracts/assistantSourcePortal';
 import AssistantProductionPortal, { productionPortalNavigation } from './AssistantProductionPortal';
 import AssistantReplicationScene from './AssistantReplicationScene';
+const AssistantHookScene = lazy(() => import('./AssistantHookScene'));
+const AssistantCampaignScene = lazy(() => import('./AssistantCampaignScene'));
 const AssistantScenarioPlanner = lazy(() => import('./AssistantScenarioPlanner'));
 const AssistantScheduleScene = lazy(() => import('./AssistantScheduleScene'));
 
@@ -31,7 +33,9 @@ export default function AssistantCreationPortalCard({ portal }: { portal: Assist
   const item = valid.data;
   if (item.scenario === 'viral_replication') return <AssistantReplicationScene portal={item}/>;
   if (item.scenario === 'weekly_calendar') return <Suspense fallback={<p role="status">正在打开日历…</p>}><AssistantScheduleScene portal={item}/></Suspense>;
-  if (['hook_first','campaign','content_task'].includes(item.scenario || '')) return <Suspense fallback={<p role="status">正在打开场景…</p>}><AssistantScenarioPlanner portal={item}/></Suspense>;
+  if(item.scenario==='hook_first')return <Suspense fallback={<p role="status">正在打开开场场景…</p>}><AssistantHookScene portal={item}/></Suspense>;
+  if(item.scenario==='campaign')return <Suspense fallback={<p role="status">正在打开活动场景…</p>}><AssistantCampaignScene portal={item}/></Suspense>;
+  if (['content_task'].includes(item.scenario || '')) return <Suspense fallback={<p role="status">正在打开场景…</p>}><AssistantScenarioPlanner portal={item}/></Suspense>;
   return <button type="button" aria-label="打开内容创作" data-assistant-creation-portal={item.id}
     className="mt-3 flex w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-text-primary transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     onClick={() => {

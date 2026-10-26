@@ -46,7 +46,7 @@ export default function CreateContentPlanModal({open,onCancel,onCreated}:{open:b
           catch(cause){
             if(!current())throw cause;
             const latest=await socialContentApi.getTask(taskId);
-            if(latest.executionAdmission||latest.runId)return latest;
+            if(latest.executionAdmission||latest.runId)return {receipt:{queued:latest.executionAdmission?.state==='queued',started:Boolean(latest.runId)&&latest.status==='producing',...(latest.executionAdmission?.state==='blocked'?{blockedReason:'execution_admission_blocked'}:{})}};
             throw cause;
           }
         },

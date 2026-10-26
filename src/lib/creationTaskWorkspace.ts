@@ -80,7 +80,7 @@ export function creationTaskCalendar(rows: CreationTaskRow[]): LsCalendarEvent[]
     const start=!allDay&&!/(?:Z|[+-]\d{2}:\d{2})$/.test(raw)?`${raw}+08:00`:raw;
     return [{id:row.key,title:row.title,start,allDay,timeZone:'Asia/Shanghai',editable:false,eventType:'publish' as const,
       status:row.category==='confirmation'?'needs_action' as const:'planned' as const,
-      statusLabel:row.category==='completed'?'成片已完成，发布待核验':row.statusLabel,
+      statusLabel:row.summary?.status==='awaiting_metrics'?'已登记发布，平台回执待核验':row.category==='completed'?'成片已完成，发布待核验':row.statusLabel,
       thumbnailUrl:row.cover,description:allDay?'时刻待定':row.product,data:row}];
   });
 }

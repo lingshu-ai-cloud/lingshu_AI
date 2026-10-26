@@ -72,3 +72,38 @@ test('authorized historical benchmark footage never becomes enterprise product o
   assert.deepEqual(reply.guided!.candidates, []);
   assert.ok(reply.guided!.blockers.some(row => row.code === 'creation_material_required'));
 });
+
+test('confirmed campaign narration reaches the existing production script without changing source ASR', async () => {
+  const f = setup();
+  const scene = { kind: 'campaign' as const, groupId: 'fixture-campaign', plannedPublishAt: '2099-01-05T08:00:00+08:00', deliverBy: '2099-01-04T08:00:00+08:00',
+    campaign: { name: '新品活动', offer: '满千减百', sellingPoints: '真实卖点', materialIds: [] }, narrationEdits: [], narrationConfirmed: false };
+  let reply = await f.run('guided_products', { ...f.initial, productIds: ['fixture-product'], guided: { ...f.initial.guided!, scene, languages: ['en'] } });
+  reply = await f.run('guided_structure', { ...reply.selection, guided: { ...reply.selection.guided!, structureId: 'reference:fixture-video' } });
+  reply = await f.run('guided_production', { ...reply.selection, guided: { ...reply.selection.guided!, productionMode: 'auto', presenterMode: 'none' } });
+  assert.ok(reply.guided!.blockers.some(row => row.code === 'creation_narration_confirmation_required'));
+  const originalLines = reply.guided!.narration.lines!;
+  const edited = originalLines.map((line,index)=>({lineId:line.lineId,text:index===0?'新品活动介绍样品杯':line.text}));
+  reply = await f.run('guided_review', { ...reply.selection, guided: { ...reply.selection.guided!, scene: { ...scene, narrationEdits: edited, narrationConfirmed: true } } });
+  assert.equal(reply.guided!.narration.lines![0]!.text, '新品活动介绍样品杯');
+  assert.equal(reply.guided!.narration.lines![0]!.sourceText, originalLines[0]!.sourceText);
+  const context = guidedEnterpriseContext(f.profile as unknown as EnterpriseProfile, reply.selection.productIds);
+  const source = buildSocialTaskReferencePackage({ record: f.reference, source: { sourceId: 'fixture-video', sourceRef: 'trendvideo:fixture-video', sourceVersion: null, createdAt: '2026-10-24T00:00:00Z' }, themeId: 'supplier_capability', verifiedContext: context })!;
+  const adapted = applyGuidedCreationStructure(source, { ...reply, guided: { ...reply.guided!, blockers: [] } });
+  assert.equal(adapted.replicationScript.narrationLines![0]!.draftText, '新品活动介绍样品杯');
+  assert.equal(adapted.replicationScript.narrationLines![0]!.referenceText, source.replicationScript.narrationLines![0]!.referenceText);
+});
+
+test('reference-only hook requires the same analyzed benchmark source and never becomes owned material',async()=>{
+  const f=setup();
+  const referenceMaterial={...f.materials[0]!,id:'reference-own',name:'对标原片',sourceType:'tiktok_reference',usage:'reference_only',sourceUrl:f.reference.sourceUrl};
+  f.materials.push(referenceMaterial);
+  const scene={kind:'hook_first' as const,groupId:'hook-source',plannedPublishAt:'2099-01-05T08:00:00+08:00',deliverBy:'2099-01-04T08:00:00+08:00',hook:{materialId:'reference-own',startSeconds:0,endSeconds:6,usage:'reference_only' as const,direction:'展示产品'},narrationEdits:[],narrationConfirmed:false};
+  let reply=await f.run('guided_products',{...f.initial,productIds:['fixture-product'],guided:{...f.initial.guided!,languages:['en'],scene}});
+  reply=await f.run('guided_structure',{...reply.selection,guided:{...reply.selection.guided!,structureId:'reference:fixture-video'}});
+  reply=await f.run('guided_production',{...reply.selection,guided:{...reply.selection.guided!,productionMode:'auto',presenterMode:'none'}});
+  assert.equal(reply.guided!.blockers.some(row=>row.code==='creation_hook_reference_analysis_required'),false);
+  assert.equal(reply.guided!.candidates.some(row=>row.sourceId==='reference-own'),false);
+  const different={...reply.selection,guided:{...reply.selection.guided!,scene:{...scene,hook:{...scene.hook,materialId:'other'}}}};
+  const changed=await f.run('guided_review',different);
+  assert.ok(changed.guided!.blockers.some(row=>row.code==='creation_hook_reference_analysis_required'));
+});

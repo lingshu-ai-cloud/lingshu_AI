@@ -1,6 +1,7 @@
 import type { CreationReply } from '../../shared/contracts/contentCreationDialogue.js';
 import type { SocialAssetSupplyShotRequest } from '../../shared/socialContentAssetSupply.js';
 import type { SocialWorkflowMaterialClipCandidate } from './socialContentMaterialCandidateSupport.js';
+import { normalizeLocalMaterialSegmentProfile } from '../../shared/contracts/localMaterialSegmentProfile.js';
 import { materialRoutingRequests } from './socialContentMaterialRoutingRequests.js';
 import { SocialContentWorkflowError } from './socialContentValidation.js';
 
@@ -12,14 +13,30 @@ export function guidedMaterialRoutingRequests(plan: CreationReply, input: Parame
     const selected = plan.guided?.candidates.find(row => row.id === node.selectedCandidateId);
     const candidates = selected ? input.candidates.filter(row => row.assetId === selected.sourceId && row.segmentId === selected.segmentId) : [];
     const candidate = candidates[0];
-    const type = node.type === 'talking_head' && plan.selection.guided?.presenterMode === 'none' ? selected?.type || 'product' : node.type;
+    if (selected) {
+      const profile = normalizeLocalMaterialSegmentProfile(candidate?.segmentProfile);
+      if (!candidate || candidate.origin !== 'my_materials' || candidate.mediaType !== 'video' || candidate.synthetic === true
+        || candidate.segmentProfile?.productionEligible !== true || !profile?.productionEligible
+        || profile.tenantId !== input.tenantId || profile.assetId !== candidate.assetId || profile.segmentId !== candidate.segmentId
+        || profile.sourceRevision !== candidate.sourceRevision || !profile.commercialUseApproved || !profile.derivativeUseAllowed) {
+        throw new SocialContentWorkflowError('guided_creation_selected_segment_not_admitted', 409);
+      }
+    }
+    const type = node.type === 'talking_head' && plan.selection.guided?.presenterMode === 'none' && !(input.shots.indexOf(shot) === 0 && plan.selection.guided?.scene?.hook?.usage === 'editable') ? selected?.type || 'product' : node.type;
+    if (type === 'talking_head' && candidate && (normalizeLocalMaterialSegmentProfile(candidate.segmentProfile)?.materialType !== 'talking_head' || !candidate.materialRoles.includes('presenter'))) throw new SocialContentWorkflowError('guided_creation_selected_segment_not_admitted', 409);
     const productId = candidate?.productId || plan.selection.productIds[input.shots.indexOf(shot) % plan.selection.productIds.length];
     const productRef = candidate?.productRef || plan.products.find(row => row.id === productId)?.name || null;
     const request: SocialAssetSupplyShotRequest = { ...shot, materialType: type, productRef: type === 'product' ? productRef : null,
       plannedDurationSeconds: shot.plannedDurationSeconds ?? node.duration,
       ...(candidate ? { visualContract: candidate.visualContract, requestedDescription: candidate.visualContract.action.path || candidate.label } : {}) };
-    const result = materialRoutingRequests({ ...input, shots: [request], candidates });
+    const reviewedMaterialBindings = type === 'talking_head' && candidate ? (profile => profile?.rightsEvidenceRefs.filter(ref => profile.commercialUseApprovalEvidenceRefs.includes(ref)).slice(0,1).map(rightsEvidenceRef => ({ shotId:shot.shotId, assetId:candidate.assetId, segmentId:candidate.segmentId, sourceRef:candidate.sourceRef, sourceRevision:candidate.sourceRevision, rightsEvidenceRef })) || [])(normalizeLocalMaterialSegmentProfile(candidate.segmentProfile)) : [];
+    const result = materialRoutingRequests({ ...input, shots: [request], candidates, reviewedMaterialBindings });
     if (selected && (result[0]?.selectedMaterialSegment?.segmentId !== selected.segmentId || result[0]?.selectedMaterialSegment?.sourceRef !== candidate?.sourceRef)) throw new SocialContentWorkflowError('guided_creation_selected_segment_not_admitted', 409);
+    const hook = plan.selection.guided?.scene?.hook;
+    if (input.shots.indexOf(shot) === 0 && hook?.usage === 'editable') {
+      if (!candidate?.timeRange || candidate.assetId !== hook.materialId || candidate.timeRange.startSeconds > hook.startSeconds || candidate.timeRange.endSeconds < hook.endSeconds || !result[0]?.selectedMaterialSegment) throw new SocialContentWorkflowError('guided_creation_hook_range_unavailable', 409);
+      result[0].selectedMaterialSegment = { ...result[0].selectedMaterialSegment, startSeconds: hook.startSeconds, endSeconds: hook.endSeconds };
+    }
     return result;
   });
 }

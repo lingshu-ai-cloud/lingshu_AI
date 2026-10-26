@@ -276,7 +276,7 @@ function manualState(record: Stored, missingInputs: string[]): Pick<ContentQueue
     object(brief._managedStart).reason || object(record._managedStart).reason,
   );
   const reason = !blocked ? ''
-    : text(brief.specialRequirements)
+    : (text(brief.specialRequirements).startsWith('{') ? '' : text(brief.specialRequirements))
       || (missingInputs.length ? `仍缺：${missingInputs.join('、')}。请进入制作台补齐后继续。` : '')
       || (managedStartReason === 'reference_analysis_pending' ? '参考视频逐镜分析仍在进行；分析完成后会自动进入内容方案确认。' : '')
       || (status === 'paused' ? '任务已暂停，可从当前节点继续。' : '当前任务需要人工确认后继续。');
@@ -382,7 +382,13 @@ function manualTaskItem(input: {
   const formats = array<unknown>(brief.formats).map(text).filter(Boolean);
   const languages = array<unknown>(brief.languages).map(text).filter(Boolean);
   const resolvedLanguages = languages.length ? languages : input.defaultLanguages.length ? input.defaultLanguages : ['en'];
-  const plannedPublishDate = text(brief.dueAt) || input.defaultPublishDate;
+  let scenePublishAt = '';
+  try {
+    const intake = JSON.parse(text(brief.specialRequirements) || '{}');
+    if (intake?.source === 'assistant_scene_confirmation' && typeof intake.plannedPublishAt === 'string' && Number.isFinite(Date.parse(intake.plannedPublishAt))) scenePublishAt = intake.plannedPublishAt;
+  } catch { /* Legacy free text is not a scene plan. */ }
+  const plannedPublishDate = scenePublishAt || text(brief.dueAt) || input.defaultPublishDate;
+  const plannedDeliveryDate = text(brief.dueAt) || input.defaultPublishDate;
   const missingInputs = [
     !productName ? '产品' : '',
     !accountId ? '发布账号' : '',
@@ -470,7 +476,7 @@ function manualTaskItem(input: {
         ? `爆款结构复刻 · ${resolvedLanguages.join(' / ').toUpperCase()} · ${formats[0] || '短视频'}`
         : `产品内容制作 · ${resolvedLanguages.join(' / ').toUpperCase()} · ${formats[0] || '短视频'}`,
       source: planSource,
-      deliverBy: plannedPublishDate,
+      deliverBy: plannedDeliveryDate,
       publishAt: plannedPublishDate,
       estimatedMinutes,
     },
