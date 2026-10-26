@@ -1,5 +1,6 @@
 import {spawn} from 'node:child_process';
 import ffmpegStatic from 'ffmpeg-static';
+import {socialCaptionRendererFonts} from './socialCaptionRendererFonts.js';
 
 export type SimpleCaptionPixelProof={status:'matched'|'unknown';reason:string;frameCount:number;failedFrameIndex?:number};
 const escapeFilterPath=(value:string)=>value.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/:/g,'\\:').replace(/,/g,'\\,');
@@ -11,7 +12,9 @@ export async function proveSimpleCaptionPixels(input:{finalPath:string;baselineP
  const {width,height,expectedFrameCount}=input;
  if(!ffmpegStatic||!Number.isInteger(width)||!Number.isInteger(height)||width<64||height<64||width*height>640*360||!Number.isInteger(expectedFrameCount)||expectedFrameCount<1||expectedFrameCount>300)return {status:'unknown',reason:'简单字幕像素证明超出有界范围',frameCount:0};
  const stride=width*3,frameBytes=stride*height;
- const graph=`[0:v]format=gray[final];[1:v]format=gray,split=2[base][templatein];[templatein]subtitles='${escapeFilterPath(input.assPath)}',format=gray[template];[final][base][template]hstack=inputs=3[out]`;
+ const fontsDirectory=socialCaptionRendererFonts();
+ if(!fontsDirectory)return {status:'unknown',reason:'渲染器字幕字体缺失或完整性校验失败',frameCount:0};
+ const graph=`[0:v]format=gray[final];[1:v]format=gray,split=2[base][templatein];[templatein]subtitles='${escapeFilterPath(input.assPath)}':fontsdir='${escapeFilterPath(fontsDirectory)}',format=gray[template];[final][base][template]hstack=inputs=3[out]`;
  const child=spawn(String(ffmpegStatic),['-hide_banner','-loglevel','error','-nostdin','-i',input.finalPath,'-i',input.baselinePath,'-filter_complex',graph,'-map','[out]','-an','-vsync','0','-pix_fmt','gray','-f','rawvideo','pipe:1'],{stdio:['ignore','pipe','pipe']});
  const exit=new Promise<number|null>(resolve=>{child.on('error',()=>resolve(null));child.on('close',code=>resolve(code));});
  const timer=setTimeout(()=>child.kill('SIGKILL'),120_000);

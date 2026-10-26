@@ -43,7 +43,9 @@ async function decodedPcm(filePath:string):Promise<Int16Array> {
 export function compareFrozenPcm(frozen:Int16Array,rendered:Int16Array):{passed:boolean;correlation:number;offsetMs:number;durationDriftMs:number} {
  const drift=Math.abs(frozen.length-rendered.length)/SAMPLE_RATE*1000;
  let best=-1,bestOffset=0;
- const step=4,maxOffset=Math.round(.12*SAMPLE_RATE),stride=80;
+ // AAC priming/delay is not quantized to 10 ms. Search every sample in
+ // the same bounded 120 ms window; retain the exact waveform threshold.
+ const step=4,maxOffset=Math.round(.12*SAMPLE_RATE),stride=1;
  for(let offset=-maxOffset;offset<=maxOffset;offset+=stride){
   let dot=0,a2=0,b2=0;
   const start=Math.max(0,-offset),end=Math.min(frozen.length,rendered.length-offset);
@@ -57,6 +59,7 @@ export function compareFrozenPcm(frozen:Int16Array,rendered:Int16Array):{passed:
 
 export async function inspectPresenterMotherSpeechQa(input:{segmentHash:string;outputPath:string;outputSha256:string;
  frozenAudioPath:string;frozenAudioSha256:string;workDir:string;
+ reviewPolicy?:'independent_lip_sync'|'heygen_native_human_review';
  inspectLipSync?:(videoPath:string,options:{workDir:string})=>Promise<SentenceLipSyncQualityReport>}) {
  if(!HASH.test(input.segmentHash)||!HASH.test(input.outputSha256)||!HASH.test(input.frozenAudioSha256))throw Error('presenter_mother_speech_qa_scope_invalid');
  const [videoBytes,audioBytes]=await Promise.all([fs.promises.readFile(input.outputPath),fs.promises.readFile(input.frozenAudioPath)]);
@@ -72,6 +75,16 @@ export async function inspectPresenterMotherSpeechQa(input:{segmentHash:string;o
  const audioTrackReceiptRef=path.join(input.workDir,`${audioTrackReportHash}.audio.json`);
  await fs.promises.writeFile(audioTrackReceiptRef,JSON.stringify({...audioBody,reportHash:audioTrackReportHash}),{mode:0o600});
  if(!track.passed)throw Error('presenter_mother_frozen_audio_track_mismatch');
+ if(input.reviewPolicy==='heygen_native_human_review'){
+  const body={schemaVersion:'presenter-mother-human-lip-review.v1',segmentHash:input.segmentHash,
+   outputVideoSha256:input.outputSha256,outputAudioSha256,provider:'heygen',policy:input.reviewPolicy,status:'pending_human_review'};
+  const reportHash=hash(JSON.stringify(body)),lipSyncReceiptRef=path.join(input.workDir,`${reportHash}.lip.json`);
+  await fs.promises.writeFile(lipSyncReceiptRef,JSON.stringify({...body,reportHash}),{mode:0o600});
+  return{segmentHash:input.segmentHash,outputVideoSha256:input.outputSha256,frozenAudioSha256:input.frozenAudioSha256,
+   outputAudioSha256,audioTrackMatchesFrozen:true,audioTrackReceiptRef,audioTrackReportHash,
+   speechReviewPolicy:input.reviewPolicy,requiresHumanReview:true as const,lipSyncStatus:'pending_human_review' as const,
+   lipSyncReceiptRef,lipSyncScore:null,lipSyncThreshold:null};
+ }
  const sync=await(input.inspectLipSync||inspectSentenceLipSyncQuality)(input.outputPath,{workDir:path.join(input.workDir,'syncnet')});
  const lipBody={schemaVersion:'presenter-mother-syncnet.v1',segmentHash:input.segmentHash,
   outputVideoSha256:input.outputSha256,outputAudioSha256,sync};

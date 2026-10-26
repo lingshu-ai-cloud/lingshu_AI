@@ -38,6 +38,10 @@ export async function prepareSocialContentProductionVoice(scope: {
   preparedWholeVoice: PreparedWholeVoice | null;
   preparedWholeVoiceInput: Parameters<typeof synthesizeStudioVoiceForAutomation>[0] | null;
   assertWeeklyCtaNewSubmit: () => Promise<void>;
+  /** v4 freezes its whole-track voice before presenter supply. Downstream
+   * narration adaptation reuses those bytes and must not replace that node's
+   * authoritative checkpoint. */
+  recordGraphCheckpoint?: boolean;
 }) {
   const input = scope.execution;
   const { detail, agentWorkflow, directorCheckpointInputHash, taskRecord, selectedVoice,
@@ -243,17 +247,17 @@ export async function prepareSocialContentProductionVoice(scope: {
         narrationCheckpointInputHash,
         voice: selectedVoice?.logicalVoice || contentHandoff.direction.voiceover.voice,
       });
-      await recordCurrentContentExecutionCheckpoint({
-        stage: 'social.graph_voice', version: '1', inputHash: voiceCheckpointInputHash,
-        payload: {
-          outputSha256: voiceOutputSha256,
-          durationSeconds: voiceDuration,
-          cueCount: voice.cues.length,
-          source: voice.source || 'unknown',
-          alignmentSource: voice.alignmentSource || 'unknown',
-          narrationCheckpointInputHash,
-        },
-      });
+      if(scope.recordGraphCheckpoint!==false)await recordCurrentContentExecutionCheckpoint({
+          stage: 'social.graph_voice', version: '1', inputHash: voiceCheckpointInputHash,
+          payload: {
+            outputSha256: voiceOutputSha256,
+            durationSeconds: voiceDuration,
+            cueCount: voice.cues.length,
+            source: voice.source || 'unknown',
+            alignmentSource: voice.alignmentSource || 'unknown',
+            narrationCheckpointInputHash,
+          },
+        });
 
   return { voice: readyVoice, duration, voiceDuration, preserveReferenceTimeline, narrationCheckpointInputHash,
     narrationCheckpointReused, voiceOutputSha256, directorPlan, persistedDirectorPlan,

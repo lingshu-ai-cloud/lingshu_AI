@@ -34,7 +34,9 @@ export interface PresenterMotherProviderResult {
     audioTrackReportHash?:string;
     lipSyncScore?:number|null;
     lipSyncThreshold?:number|null;
-    lipSyncStatus?:'passed'|'skipped_unconfigured';
+    lipSyncStatus?:'passed'|'skipped_unconfigured'|'pending_human_review';
+    speechReviewPolicy?:'independent_lip_sync'|'heygen_native_human_review';
+    requiresHumanReview?:boolean;
     lipSyncModelSha256?:string;
     lipSyncReceiptRef?:string;
     receiptRef:string;
@@ -50,7 +52,7 @@ export interface PresenterMotherExecutionReceipt {
   outputRef: string;
   outputSha256: string;
   durationSeconds: number;
-  dynamicQa: PresenterMotherProviderResult['dynamicQa'] & {passed:true};
+  dynamicQa: PresenterMotherProviderResult['dynamicQa'] & {passed:boolean;technicalPassed?:boolean};
   receiptHash: string;
 }
 
@@ -69,6 +71,7 @@ export interface PresenterSlotCropReceipt {
 }
 
 export interface PresenterMotherExecutionResult {
+  speechReviewPolicy?:'heygen_native_human_review';
   schemaVersion: 'presenter-mother-execution.v1';
   taskId: string;
   groupingHash: string;
@@ -79,7 +82,7 @@ export interface PresenterMotherExecutionResult {
 
 const HASH = /^[a-f0-9]{64}$/;
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const verifiedQa = (qa:PresenterMotherProviderResult['dynamicQa']|undefined,segmentHash:string,outputSha256:string):boolean => Boolean(qa
+const verifiedQa = (qa:PresenterMotherProviderResult['dynamicQa']|undefined,segmentHash:string,outputSha256:string,native=false):boolean => Boolean(qa
   && HASH.test(qa.reportHash) && qa.receiptRef?.trim()
   && qa.segmentHash===segmentHash && qa.outputVideoSha256===outputSha256
   && Number.isFinite(qa.identitySimilarity) && Number.isFinite(qa.identityThreshold)
@@ -87,15 +90,19 @@ const verifiedQa = (qa:PresenterMotherProviderResult['dynamicQa']|undefined,segm
   && HASH.test(qa.frozenAudioSha256||'') && HASH.test(qa.outputAudioSha256||'')
   && qa.audioTrackMatchesFrozen === true && qa.audioTrackReceiptRef?.trim()
   && HASH.test(qa.audioTrackReportHash||'')
-  && qa.lipSyncStatus === 'passed' && HASH.test(qa.lipSyncModelSha256||'')
+  && (native ? qa.speechReviewPolicy==='heygen_native_human_review' && qa.requiresHumanReview===true
+    && qa.lipSyncStatus==='pending_human_review' && qa.lipSyncReceiptRef?.trim()
+    && qa.lipSyncScore===null && qa.lipSyncThreshold===null && !qa.lipSyncModelSha256
+  : qa.lipSyncStatus === 'passed' && HASH.test(qa.lipSyncModelSha256||'')
   && qa.lipSyncReceiptRef?.trim()
   && Number.isFinite(qa.lipSyncScore) && Number.isFinite(qa.lipSyncThreshold)
-  && Number(qa.lipSyncScore) >= Number(qa.lipSyncThreshold));
+  && Number(qa.lipSyncScore) >= Number(qa.lipSyncThreshold)));
 
 /** Pure orchestration seam: callers own budget admission, cache lookup and the
  * actual provider implementation. This helper guarantees one invocation per
  * frozen mother segment and derives immutable per-slot crop receipts. */
 export async function executePresenterMotherSegments(input: {
+  speechReviewPolicy?:'heygen_native_human_review';
   grouping: FrozenPresenterMotherSegments;
   provider: (request: PresenterMotherProviderRequest) => Promise<PresenterMotherProviderResult>;
 }): Promise<PresenterMotherExecutionResult> {
@@ -114,7 +121,8 @@ export async function executePresenterMotherSegments(input: {
       memberSlotIds: [...group.memberSlotIds],
     });
     const qa=provided.dynamicQa;
-    const qaPassed=verifiedQa(qa,group.contentHash,provided.outputSha256);
+    const native=input.speechReviewPolicy==='heygen_native_human_review';
+    const qaPassed=verifiedQa(qa,group.contentHash,provided.outputSha256,native)&&(!native||provided.providerId==='heygen');
     if (!provided.providerId.trim() || !provided.providerReceiptRef.trim() || !provided.outputRef.trim() || !HASH.test(provided.outputSha256)||!qaPassed
       || !Number.isFinite(provided.durationSeconds) || provided.durationSeconds + .001 < group.durationSeconds) {
       throw new Error(`${qa&&!qaPassed?'presenter_mother_dynamic_qa_failed':'presenter_mother_provider_result_invalid'}:${group.segmentId}`);
@@ -127,7 +135,7 @@ export async function executePresenterMotherSegments(input: {
       outputRef: provided.outputRef,
       outputSha256: provided.outputSha256,
       durationSeconds: provided.durationSeconds,
-      dynamicQa:{...qa,passed:true as const},
+      dynamicQa:{...qa,passed:!native,technicalPassed:true},
     };
     const receipt = { ...receiptBody, receiptHash: digest(receiptBody) };
     providerReceipts.push(receipt);
@@ -148,6 +156,7 @@ export async function executePresenterMotherSegments(input: {
     }
   }
   const body = {
+    ...(input.speechReviewPolicy?{speechReviewPolicy:input.speechReviewPolicy}:{}),
     schemaVersion: 'presenter-mother-execution.v1' as const,
     taskId: input.grouping.taskId,
     groupingHash: input.grouping.recordHash,
@@ -158,12 +167,14 @@ export async function executePresenterMotherSegments(input: {
 }
 
 export function verifyPresenterMotherExecutionResult(value: PresenterMotherExecutionResult): boolean {
+  const native=value.speechReviewPolicy==='heygen_native_human_review';
+  if(value.speechReviewPolicy!==undefined&&!native)return false;
   if(value.schemaVersion!=='presenter-mother-execution.v1'||!value.taskId||!HASH.test(value.groupingHash)||!HASH.test(value.recordHash)||!value.providerReceipts.length||!value.slotCropReceipts.length)return false;
   const providers=new Map<string,PresenterMotherExecutionReceipt>();
   for(const receipt of value.providerReceipts){
     const {receiptHash,...body}=receipt;
     const qa=receipt.dynamicQa;
-    if(providers.has(receipt.segmentId)||!HASH.test(receipt.segmentHash)||!HASH.test(receipt.outputSha256)||!qa||qa.passed!==true||!verifiedQa(qa,receipt.segmentHash,receipt.outputSha256)||receiptHash!==digest(body))return false;
+    if(providers.has(receipt.segmentId)||!HASH.test(receipt.segmentHash)||!HASH.test(receipt.outputSha256)||!qa||(native?(qa.passed!==false||qa.technicalPassed!==true||receipt.providerId!=='heygen'):qa.passed!==true)||!verifiedQa(qa,receipt.segmentHash,receipt.outputSha256,native)||receiptHash!==digest(body))return false;
     providers.set(receipt.segmentId,receipt);
   }
   const slots=new Set<string>();
@@ -179,6 +190,7 @@ export function verifyPresenterMotherExecutionResult(value: PresenterMotherExecu
  * measured reports and local media before accepting a cached mother segment;
  * old text-only HeyGen checkpoints have no such proof and fail closed. */
 export async function assertRestoredPresenterMotherExecution(input: {
+  speechReviewPolicy?:'independent_lip_sync'|'heygen_native_human_review';
   grouping: FrozenPresenterMotherSegments;
   execution: PresenterMotherExecutionResult | null | undefined;
   frozenAudioSha256BySegment: ReadonlyMap<string, string>;
@@ -187,6 +199,7 @@ export async function assertRestoredPresenterMotherExecution(input: {
   const { grouping, execution } = input;
   if (!verifyFrozenPresenterMotherSegments(grouping) || !execution
     || !verifyPresenterMotherExecutionResult(execution)
+    || (execution.speechReviewPolicy??'independent_lip_sync')!==(input.speechReviewPolicy??'independent_lip_sync')
     || execution.taskId !== grouping.taskId || execution.groupingHash !== grouping.recordHash
     || execution.providerReceipts.length !== grouping.groups.length
     || execution.slotCropReceipts.length !== grouping.groups.reduce((sum, group) => sum + group.members.length, 0)) {
@@ -195,21 +208,21 @@ export async function assertRestoredPresenterMotherExecution(input: {
   const motherAssets = input.assets.filter(asset => asset.id.startsWith('presenter-mother-crop-'));
   const assetBySlot = new Map(motherAssets.map(asset => [asset.sourceId, asset]));
   if (motherAssets.length !== execution.slotCropReceipts.length || assetBySlot.size !== motherAssets.length) throw Error('presenter_mother_cached_qa_unverified');
+  let missingParentBytes=false;
   for (const group of grouping.groups) {
     const provider = execution.providerReceipts.find(receipt => receipt.segmentId === group.segmentId);
     const audioSha = input.frozenAudioSha256BySegment.get(group.segmentId);
     if (!provider || provider.segmentHash !== group.contentHash || !audioSha
       || provider.dynamicQa.frozenAudioSha256 !== audioSha
       || provider.durationSeconds + .001 < group.durationSeconds) throw Error('presenter_mother_cached_qa_unverified');
-    let source: Buffer, audioReport: Record<string, unknown>, lipReport: Record<string, unknown>;
-    try {
-      source = await readFile(provider.outputRef);
-      audioReport = JSON.parse(await readFile(provider.dynamicQa.audioTrackReceiptRef!, 'utf8'));
-      lipReport = JSON.parse(await readFile(provider.dynamicQa.lipSyncReceiptRef!, 'utf8'));
-    } catch { throw Error('presenter_mother_cached_qa_bytes_unavailable'); }
-    if (digestBytes(source) !== provider.outputSha256
-      || !verifiedMeasuredAudioReport(audioReport, provider, audioSha)
-      || !verifiedMeasuredLipReport(lipReport, provider)) throw Error('presenter_mother_cached_qa_unverified');
+    const retained=await Promise.allSettled([readFile(provider.outputRef),readFile(provider.dynamicQa.audioTrackReceiptRef!),readFile(provider.dynamicQa.lipSyncReceiptRef!)]);
+    if(retained.some(item=>item.status==='rejected'&&(item.reason as NodeJS.ErrnoException)?.code!=='ENOENT'))throw Error('presenter_mother_cached_qa_unverified');
+    const bytes=(index:number)=>{const item=retained[index]!;return item.status==='fulfilled'?item.value:null;};
+    const source=bytes(0),audioBytes=bytes(1),lipBytes=bytes(2);
+    let audioReport:Record<string,unknown>|null=null,lipReport:Record<string,unknown>|null=null;
+    try{audioReport=audioBytes?JSON.parse(audioBytes.toString('utf8')):null;lipReport=lipBytes?JSON.parse(lipBytes.toString('utf8')):null;}catch{throw Error('presenter_mother_cached_qa_unverified');}
+    if((source&&digestBytes(source)!==provider.outputSha256)||(audioReport&&!verifiedMeasuredAudioReport(audioReport,provider,audioSha))||(lipReport&&!verifiedMeasuredLipReport(lipReport,provider)))throw Error('presenter_mother_cached_qa_unverified');
+    if(!source||!audioReport||!lipReport)missingParentBytes=true;
     const crops = execution.slotCropReceipts.filter(receipt => receipt.segmentId === group.segmentId);
     if (crops.length !== group.members.length) throw Error('presenter_mother_cached_qa_unverified');
     for (const member of group.members) {
@@ -223,10 +236,11 @@ export async function assertRestoredPresenterMotherExecution(input: {
         || !asset.segments?.some(segment => segment.slotCropReceiptHash === crop.receiptHash)
         || !asset.contentHash) throw Error('presenter_mother_cached_qa_unverified');
       let bytes: Buffer;
-      try { bytes = await readFile(asset.localPath); } catch { throw Error('presenter_mother_cached_qa_bytes_unavailable'); }
+      try { bytes = await readFile(asset.localPath); } catch { throw Error('presenter_mother_cached_qa_unverified'); }
       if (digestBytes(bytes) !== asset.contentHash) throw Error('presenter_mother_cached_qa_unverified');
     }
   }
+  if(missingParentBytes)throw Error('presenter_mother_cached_qa_bytes_unavailable');
 }
 
 const digestBytes = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -242,6 +256,11 @@ function verifiedMeasuredAudioReport(value: Record<string, unknown>, provider: P
 }
 function verifiedMeasuredLipReport(value: Record<string, unknown>, provider: PresenterMotherExecutionReceipt): boolean {
   const { reportHash, ...body } = value;
+  if(provider.dynamicQa.speechReviewPolicy==='heygen_native_human_review')return provider.providerId==='heygen'
+    && value.schemaVersion==='presenter-mother-human-lip-review.v1'&&value.provider==='heygen'
+    && value.policy==='heygen_native_human_review'&&value.status==='pending_human_review'
+    && value.segmentHash===provider.segmentHash&&value.outputVideoSha256===provider.outputSha256
+    && value.outputAudioSha256===provider.dynamicQa.outputAudioSha256&&reportHash===digest(body);
   const sync = value.sync as Record<string, unknown> | undefined;
   const thresholds = sync?.thresholds as Record<string, unknown> | undefined;
   return value.schemaVersion === 'presenter-mother-syncnet.v1'

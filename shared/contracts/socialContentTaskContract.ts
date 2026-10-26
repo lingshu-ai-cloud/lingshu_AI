@@ -1,3 +1,4 @@
+import type { SocialContentExecutionSummary } from './socialContentQueue.js';
 import type { CreationReply } from './contentCreationDialogue';
 import type { SocialMvpHandoffRead } from './socialMvpHandoff.js';
 import {
@@ -200,6 +201,8 @@ export interface SocialReferenceReuseBinding {
 }
 
 export interface SocialContentTaskBrief {
+  /** Server-owned single-order replay binding; generic task writes cannot set it. */
+  singleCreationRequestHash?: string;
   /** Server-validated free-creation dialogue snapshot, not accepted by generic task writes. */
   creationDialoguePlan?: CreationReply;
   title: string;
@@ -212,6 +215,8 @@ export interface SocialContentTaskBrief {
   requestedPresenterName?: string | null;
   requestedPresenterAssetId?: string | null;
   /** Explicit tenant presenter selected in the content-creation workbench. */
+  presenterPolicy?: 'none' | 'selected';
+  presenterSpeechReviewPolicy?: 'independent_lip_sync' | 'heygen_native_human_review';
   presenterAssetId?: string | null;
   audience: string | null;
   markets: string[];
@@ -252,6 +257,8 @@ export interface SocialContentTaskBrief {
   productionApproach?: SocialProductionApproach;
   /** Explicit new-plan policy; omission preserves historical frozen routing. */
   materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2';
+  /** Explicitly confirmed non-evidentiary enterprise scene IDs; never applies to product/factory proof. */
+  illustrativeSceneIds?: string[];
   referenceReuse?: SocialReferenceReuseBinding;
 }
 
@@ -325,9 +332,18 @@ export interface SocialDirectorPlanSummary {
   referenceSourceId?: string | null;
 }
 
+export interface SocialContentVideoPreview {
+  taskId: string; artifactId: string; version: string; updatedAt: string; mediaUrl: string;
+  status: string; testOnly: boolean; approved: boolean; requiresRevision: boolean; reason: string;
+}
+
 export interface SocialContentTaskSummary {
   /** Server projection of durable admission evidence, separate from a saved intake. */
   executionAdmission?: { state: 'queued' | 'preparing' | 'blocked'; reason?: string; queueItemId?: string };
+  /** Archived video outputs, including review/test previews; never a publish grant. */
+  renderedPreviews?: SocialContentVideoPreview[];
+  /** Current-run durable queue projection; absent on historical/unhydrated records. */
+  execution?: SocialContentExecutionSummary | null;
   taskId: string;
   /** Real archived cover of the current rendered output; never a reference-video thumbnail. */
   preview?: { coverUrl: string | null; sourceStatus: 'available' | 'unavailable' };
@@ -584,6 +600,8 @@ export interface SocialContentWorkspace {
 }
 
 export interface CreateSocialContentTaskInput {
+  /** Server-owned single-order replay binding; generic task writes cannot set it. */
+  singleCreationRequestHash?: string;
   creationDialoguePlan?: CreationReply;
   title: string;
   objective: string;
@@ -591,6 +609,8 @@ export interface CreateSocialContentTaskInput {
   productRef?: string | null;
   requestedPresenterName?: string | null;
   requestedPresenterAssetId?: string | null;
+  presenterPolicy?: 'none' | 'selected';
+  presenterSpeechReviewPolicy?: 'independent_lip_sync' | 'heygen_native_human_review';
   presenterAssetId?: string | null;
   audience?: string | null;
   markets?: string[];
@@ -624,6 +644,7 @@ export interface CreateSocialContentTaskInput {
   productionApproach?: SocialProductionApproach;
   mode?: SocialContentTaskMode;
   materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2';
+  illustrativeSceneIds?: string[];
   referenceReuse?: SocialReferenceReuseBinding;
   weeklyPlanId?: string | null;
   themeId?: SocialContentThemeId | null;

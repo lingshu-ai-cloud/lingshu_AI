@@ -49,6 +49,7 @@ const plan: SocialAssetSupplyPlan = {
 let executeCount = 0;
 let capturedKey = '';
 let capturedVisualControl: any = null;
+let capturedAspectRatio: string | null = null;
 const ports: SocialDigitalPresenterBridgePorts = {
   async resolvePresenter() {
     return { presenterAssetId: 'presenter-1', providerId: 'heygen', providerPresenterId: 'avatar-1',
@@ -61,6 +62,7 @@ const ports: SocialDigitalPresenterBridgePorts = {
     executeCount += 1;
     assert.equal(input.idempotencyKey, capturedKey);
     assert.equal(input.presenter.consentRef, 'consent-1');
+    capturedAspectRatio = input.aspectRatio;
     capturedVisualControl = input.visualControl;
     return { status: 'completed', providerTaskId: 'heygen-task-1', localPath: output,
       contentHash: 'sha256-mock', duration: 3.2, actualCostCny: 1.1 };
@@ -80,7 +82,15 @@ assert.equal(capturedVisualControl.precision, 'hook_high');
 assert.equal(capturedVisualControl.interaction, 'talking');
 assert.match(capturedVisualControl.action.path, /口播说明/);
 assert.deepEqual(capturedVisualControl.requiredCapabilities, ['scripted_speech', 'timing_control']);
+assert.equal(capturedAspectRatio,'9:16');
 const originalKey = capturedKey;
+const landscapePlan=structuredClone(plan);
+const landscapeShot=landscapePlan.shots[0] as SocialAssetSupplyShotPlan & {approvedFirstFrame:ApprovedPresenterFirstFrame};
+landscapeShot.approvedFirstFrame.targetAspectRatio='16:9';
+await executeSocialAssetSupplyPlan({tenantId:'tenant-a',taskId:'task-a',outputDirectory:root,
+  plan:landscapePlan,baseline,availableAssets:[],adapters:[createSocialDigitalPresenterAdapter(ports)]});
+assert.equal(capturedAspectRatio,'16:9');
+assert.notEqual(capturedKey,originalKey,'approved output geometry participates in provider idempotency');
 const motionShot=structuredClone(plan.shots[0]!);
 motionShot.digitalHumanPlan={...motionShot.digitalHumanPlan!,method:'reenact',silentMotion:true};
 motionShot.fallbackSourceStrategy=null;

@@ -277,3 +277,13 @@ assert.equal(referenceTimeline.at(-1)?.targetEnd, 38);
 assert.equal(referenceTimeline[20]?.targetStart, 20, 'short TTS cannot move locked reference cut points');
 assert.equal(referenceTimeline[36]?.targetDuration, 2);
 assert.throws(() => socialDirectorRenderTimeline(referenceHandoff, 10, undefined, true), /reference_timeline_missing_or_drifted/);
+
+const copyReviewPlan = structuredClone(buildPlan());
+copyReviewPlan.scenes[0]!.voiceover = 'Stop launching products based on only on guesswork.';
+const { lineageHash: _oldCopyHash, ...copyPayload } = copyReviewPlan;
+copyReviewPlan.lineageHash = socialRequestHash(copyPayload);
+const copyBefore = JSON.stringify(copyReviewPlan);
+assert.match(publicSocialDirectorPlanSummary(copyReviewPlan)!.voiceoverSummary, /^口播待校对：on only on/);
+assert.equal(JSON.stringify(copyReviewPlan), copyBefore, 'public review must not rewrite locked speech or its lineage');
+assert.equal(publicSocialDirectorPlanSummary(copyReviewPlan)!.qualityPassed, publicSocialDirectorPlanSummary(buildPlan())!.qualityPassed,
+  'a narrow copy hint is not a new production admission gate');

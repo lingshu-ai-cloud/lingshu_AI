@@ -98,3 +98,26 @@ test('ambiguous role labels are rejected before paid inspection and inputs stay 
   assert.equal(calls, 0);
   assert.equal(JSON.stringify(input), before);
 });
+
+test('background removal and natural fusion are explicit evidence gates rather than technical-only passes',async()=>{
+ for(const key of ['person_absence','lighting_perspective']){
+  const options={...base(),sceneType:'general' as const,hasProduct:false,hasEnvironmentReference:true,hasNamedPerson:key==='lighting_perspective',personRemovalRequired:key==='person_absence',naturalCompositeRequired:key==='lighting_perspective',applyReplicationAutomation:false};
+  const required=['layout','visual_integrity','environment_fidelity',...(key==='lighting_perspective'?['person_identity']:[])];
+  const observed=(keys:string[])=>keys.map(key=>({key,verdict:'pass',evidenceFrames:['候选首帧'],note:'visible'}));
+  const absent=await evaluateStoryboardFirstFrameQuality({...options,inspectVisual:async()=>observed(required)});assert.equal(absent.canProceedToVideo,false);assert.ok(absent.contractIssues.some(issue=>issue.includes(key)));
+  const referencedOnly=await evaluateStoryboardFirstFrameQuality({...options,inspectVisual:async()=>[...observed(required),{key,verdict:'pass',evidenceFrames:['企业产品参考'],note:'reference only'}]});assert.equal(referencedOnly.canProceedToVideo,false);
+  const valid=await evaluateStoryboardFirstFrameQuality({...options,inspectVisual:async()=>observed([...required,key])});
+  assert.equal(valid.firstFrameQuality?.automatedPassed,true);
+  assert.equal(valid.canProceedToVideo,false,'this low-level evaluator retains its existing human-review boundary; the funded pipeline consumes automatedPassed explicitly');
+  assert.equal(valid.firstFrameQuality?.checks[key]?.verdict,'pass');
+ }
+});
+
+test('original empty scene requires explicit person absence without claiming removal or environment matching',async()=>{
+ const options={...base(),sceneType:'general' as const,hasProduct:false,hasEnvironmentReference:false,hasNamedPerson:false,personRemovalRequired:false,personAbsenceRequired:true,applyReplicationAutomation:false};
+ const observed=['layout','visual_integrity'].map(key=>({key,verdict:'pass',evidenceFrames:['候选首帧'],note:'visible'}));
+ for(const verdict of ['uncertain','fail','pass']){
+  const result=await evaluateStoryboardFirstFrameQuality({...options,inspectVisual:async()=>[...observed,{key:'person_absence',verdict,evidenceFrames:['候选首帧'],note:'candidate evidence'}]});
+  assert.equal(result.firstFrameQuality?.automatedPassed,verdict==='pass');
+ }
+});

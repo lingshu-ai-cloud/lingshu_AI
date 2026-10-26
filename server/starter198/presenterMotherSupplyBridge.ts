@@ -23,12 +23,13 @@ export async function materializePresenterMotherCropFfmpeg(request:PresenterMoth
  * implementation itself. The injected provider runs once per mother group;
  * all scene adapter results are immutable local crops of those outputs. */
 export async function preparePresenterMotherSupply(input:{
+ speechReviewPolicy?:'heygen_native_human_review';
  grouping:FrozenPresenterMotherSegments;
  outputDirectory:string;
  provider:(request:PresenterMotherProviderRequest)=>Promise<PresenterMotherProviderResult>;
  cropper?:PresenterMotherCropper;
 }):Promise<{presenterMotherExecution:PresenterMotherExecutionResult;assets:SocialProductionAsset[];adapter:SocialAssetSupplyProviderAdapter}> {
- await mkdir(input.outputDirectory,{recursive:true});const presenterMotherExecution=await executePresenterMotherSegments({grouping:input.grouping,provider:input.provider}),cropper=input.cropper??materializePresenterMotherCropFfmpeg,assets:SocialProductionAsset[]=[];
+ await mkdir(input.outputDirectory,{recursive:true});const presenterMotherExecution=await executePresenterMotherSegments({speechReviewPolicy:input.speechReviewPolicy,grouping:input.grouping,provider:input.provider}),cropper=input.cropper??materializePresenterMotherCropFfmpeg,assets:SocialProductionAsset[]=[];
  const providers=new Map(presenterMotherExecution.providerReceipts.map(receipt=>[receipt.segmentId,receipt]));
  for(const crop of presenterMotherExecution.slotCropReceipts){const provider=providers.get(crop.segmentId);if(!provider)throw Error(`presenter_mother_bridge_parent_missing:${crop.slotId}`);const sourceBytes=await readFile(provider.outputRef);if(createHash('sha256').update(sourceBytes).digest('hex')!==provider.outputSha256)throw Error(`presenter_mother_bridge_provider_bytes_changed:${crop.slotId}`);
   const target=path.join(input.outputDirectory,`${crop.receiptHash}.mp4`),materialized=await cropper({sourcePath:provider.outputRef,targetPath:target,crop}),bytes=await readFile(materialized.localPath);if(createHash('sha256').update(bytes).digest('hex')!==materialized.sha256)throw Error(`presenter_mother_bridge_crop_bytes_changed:${crop.slotId}`);

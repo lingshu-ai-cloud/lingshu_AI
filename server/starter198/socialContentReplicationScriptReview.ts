@@ -1,4 +1,5 @@
 import type { SocialReplicationScriptVersion } from '../../shared/contracts/socialContentDiscovery.js';
+import { reviewSpokenCopy } from './socialSpokenCopyReview.js';
 import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow.js';
 import type { SocialEnterpriseProductBinding } from './socialContentTaskEvidenceProjection.js';
 import { STARTER_COLLECTIONS, type Starter198Repository } from './repository.js';
@@ -255,6 +256,7 @@ export async function readSocialReplicationScriptReviewContext(input: {
     expectedVersion: socialText(record.version), analysisId: analysis.analysisId,
     analysisHash: socialRequestHash(analysis), scriptHash: socialReplicationScriptReviewHash(script),
     scriptVersion: script.version, status: script.status, proposalAssessment,
+    spokenCopyIssues: reviewSpokenCopy(script.shots.map(shot => ({ sceneId: shot.shotId, text: shot.spokenText || '' }))),
     scenes: script.shots.map(shot => ({ shotId: shot.shotId,
       identityGaps: identityGaps.filter(gap => gap.shotId === shot.shotId).map(gap => gap.code) })),
   };

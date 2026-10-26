@@ -1,3 +1,4 @@
+import { presenterVoicePolicy } from '../../shared/contracts/presenterVoicePolicy.js';
 import { createHash } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
@@ -49,10 +50,12 @@ export async function readTrustedHeyGenRuntimeBinding(input: { tenantId: string;
   if (look?.id !== trusted.avatarId || look.status !== 'completed' || !Array.isArray(look.supported_api_engines) || !look.supported_api_engines.includes('avatar_iv')
     || !['digital_twin', 'photo_avatar', 'studio_avatar'].includes(look.avatar_type) || wallet?.billing_type !== 'wallet' || String(wallet.wallet?.currency).toUpperCase() !== 'USD'
     || !Number.isFinite(wallet.wallet?.remaining_balance) || wallet.wallet.remaining_balance < 0) return null;
+  const voiceId = presenterVoicePolicy(selected[0]).voiceSelectionMode === 'follow_avatar' ? String(look.default_voice_id || '').trim() : trusted.voiceId;
+  if (!voiceId) throw Error('user_input_required:heygen_catalog_default_voice_unresolved');
   const accountRef = productionBillingAccountRef('heygen', 'https://api.heygen.com/v3/videos', credentialSha256);
   const providerEvidenceRef = 'heygen-live-iv:' + sha({ accountRef, id: look.id, avatarType: look.avatar_type, status: look.status, engines: look.supported_api_engines });
   const billingEvidenceRef = 'heygen-live-wallet:' + sha({ accountRef, billingType: wallet.billing_type, currency: 'USD', balance: wallet.wallet.remaining_balance });
-  return { tenantId: input.tenantId, presenterAssetId: trusted.presenterAssetId, assetVersion: trusted.assetVersion, avatarId: trusted.avatarId, voiceId: trusted.voiceId, model: 'avatar_iv', accountRef, credentialSha256, avatarType: look.avatar_type as HeyGenAvatarType, billingCurrency: 'USD', billingEvidenceRef, authorizationRef: trusted.rights.authorizationRef, consentRef: trusted.rights.consentRef, providerEvidenceRef };
+  return { tenantId: input.tenantId, presenterAssetId: trusted.presenterAssetId, assetVersion: trusted.assetVersion, avatarId: trusted.avatarId, voiceId, model: 'avatar_iv', accountRef, credentialSha256, avatarType: look.avatar_type as HeyGenAvatarType, billingCurrency: 'USD', billingEvidenceRef, authorizationRef: trusted.rights.authorizationRef, consentRef: trusted.rights.consentRef, providerEvidenceRef };
 }
 /** Shared preflight/SDK identity: wallet balance is mutable billing evidence. */
 export function heyGenRuntimeRouteEvidence(binding: TrustedHeyGenRuntimeBinding): string {

@@ -3,6 +3,7 @@ import {createHash} from 'node:crypto';
 import type {SocialAssetSupplyPlan, SocialAssetSupplyShotPlan} from '../../shared/contracts/socialContentReplication.js';
 import {hasVerifiedSameClassSocialLocalMatch} from '../../shared/socialContentMaterialRouting.js';
 import type {SocialContentTaskDetail} from '../../shared/contracts/socialContentTaskContract.js';
+import {isContactGraphicScene} from '../../shared/socialMaterialScenePurpose.js';
 
 export interface SocialWholeFilmRouteQuote {
   maximumCny:number;
@@ -68,6 +69,17 @@ export async function applyPresenterFirstBudgetRouting(input:{plan:SocialAssetSu
       if(shot.sourceStrategy!=='authorized_digital_presenter')fail(`presenter_route_invalid:${shot.shotId}`);
       return shot;
     }
+    const boundary=shot.truthBoundary,route=shot.materialRouting;
+    if(route?.policy==='illustrative_video'){
+      const video=route.illustrativeVideo;
+      if(route.materialType!=='general'||shot.sourceStrategy!=='non_evidentiary_ai_visual'||shot.fallbackSourceStrategy!==null
+        ||boundary.subject!=='none'||boundary.customerEvidenceRequired||!boundary.syntheticVisualAllowed||!boundary.mustNotImplyCustomerReality
+        ||!video||video.provider!=='seedance'||!['design','shopping','meeting'].includes(video.purpose)
+        ||video.durationSeconds<4||video.durationSeconds>15||video.disclosure!=='AI 场景示意')return fail(`illustrative_route_invalid:${shot.shotId}`);
+      return shot;
+    }
+    if(route?.materialType==='general'&&shot.sourceStrategy==='motion_graphics'&&boundary.subject==='none'
+      &&!boundary.customerEvidenceRequired&&shot.visualContract&&isContactGraphicScene(shot.visualContract,shot.requestedDescription??''))return shot;
     if(hasLocal(shot,duration)){
       if(eligible(shot)&&shot.materialRouting?.productGenerationDecision?.importance==='critical')upgrades.push(shot.shotId);
       return localShot(shot,'真人及必要处理预算优先；采用当前分镜已核验的同类本地素材。');

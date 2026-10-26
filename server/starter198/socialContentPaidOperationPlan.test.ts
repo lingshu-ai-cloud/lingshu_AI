@@ -13,14 +13,15 @@ test('enterprise authored first frame reserves image, image QA, provider duratio
     f.ports.readProductFrameBounds = async () => null;
     assert.equal((await f.planner.plan(scope)).plan, null);
 });
-import { createSocialContentPaidOperationPlanner, paidProductionApprovalHash, paidProductionRecordHash, paidProductionHash, presenterGroupContractHash, type FrozenPaidProduction, type PaidOperationPlannerPorts } from './socialContentPaidOperationPlan.js';
-test('whole-film planner adopts fifteen without granting a separate per-stage or retry allowance', async () => {
+import { createSocialContentPaidOperationPlanner, paidProductionApprovalHash, paidProductionRecordHash, paidProductionHash, presenterGroupContractHash, presenterGroupFromRequirement, type FrozenPaidProduction, type PaidOperationPlannerPorts } from './socialContentPaidOperationPlan.js';
+import {assertSocialPaidExecutionDependencies} from '../lib/socialContentTaskBudgetAuthority.js';
+test('whole-film planner preserves the explicit cap without separate stage or retry allowances', async () => {
     const f=fixture(); f.input.authorization.maximumCny=15; f.seal();
     const result=await f.planner.plan(scope);
     assert.equal(result.plan!.maximumCny,15);
     assert.equal(result.plan!.paidOperations.length,6);
     f.input.authorization.maximumCny=100; f.seal();
-    assert.equal((await f.planner.plan(scope)).plan!.maximumCny,15);
+    assert.equal((await f.planner.plan(scope)).plan!.maximumCny,100);
 });
 const scope = { tenantId: 'tenant', taskId: 'task', runId: 'run', planHash: 'a'.repeat(64) };
 function fixture() { const input: FrozenPaidProduction = { scope, baselineHash: 'b'.repeat(64), recordHash: '', approval: { approved: true, reviewRef: 'approved-review', sourceHash: '', planHash: scope.planHash }, authorization: { ref: 'owner-task-budget', productionDurationSeconds:30, maximumCny: 10 }, maximumRetries: 1, directedRetryShotIds:['S01'], scenes: [{ shotId: 'S01', durationSeconds: 3, spokenText: '' }], shots: [{ shotId: 'S01', sourceStrategy: 'aigc_product_scene_replication', fallbackSourceStrategy: null, sourceRefs: ['owned-material'], materialRouting: { generation: { method: 'reference_first_frame_product_replacement_i2v' } } as any }], assets: [], voice: { mode: 'none', lines: [], requiresClone: false, allowFallback: false, requiresAsr: false, reuseReceiptRef: null }, finalReview: 'local' }; const seal = () => { input.approval.sourceHash = paidProductionApprovalHash(input); input.recordHash = paidProductionRecordHash(input); }; seal(); const ports: PaidOperationPlannerPorts = { readFrozenProduction: async () => structuredClone(input), assertCurrent: async () => { }, readVerifiedLocalExecution: async (r) => ({ kind: r.stage === 'material_analysis_cache' ? 'analysis_cache' : r.stage.includes('audio_reuse') ? 'existing_audio' : 'existing_media', scopeHash: paidProductionHash(scope), inputContractHash: r.inputContractHash, receiptRef: r.stage === 'render_audio_reuse' ? r.sourceRef! : r.stage === 'material_analysis_cache' ? 'hash-bound-material-checkpoint' : 'real-local-check-receipt', sourceSha256: r.stage === 'material_analysis_cache' ? r.sourceRef! : 'f'.repeat(64), sourceRef: 'owned-material' }), readProductFrameBounds: async (r) => ({ inputContractHash: r.inputContractHash, evidenceRef: 'actual-bounded-frame-extraction-contract', firstFrameMaximumFrames: 4, videoMaximumFrames: 5 }), resolveBoundRoute: async (r) => ({ provider: 'actual-provider', model: 'actual-model', accountRef: 'verified-account', routeEvidenceRef: 'server-selected-runtime-route', usageBoundRef: 'enforced-provider-request-limits', maximumAttempts: 1, maximumUnits: { inputTokens: 10000, outputTokens: 2000, ...(r.durationSeconds ? { providerSeconds: r.durationSeconds } : {}), ...(r.frameCount ? { frames: r.frameCount } : {}), ...(r.text ? { characters: [...r.text].length } : {}) } }) }; return { input, seal, ports, planner: createSocialContentPaidOperationPlanner(ports) }; }
@@ -48,6 +49,7 @@ test('presenter speech, voice clone, sentence fallback, ASR and explicit retries
 test('automatic weekly final-review capacity is priced in the original film plan, not a local free stage',async()=>{
  const f=fixture();f.input.finalReview='paid_capacity';f.seal();
  const result=await f.planner.plan(scope);assert.deepEqual(result.gaps,[]);
+ assert.doesNotThrow(()=>assertSocialPaidExecutionDependencies(result.plan!.paidOperations));
  const holds=result.plan!.paidOperations.filter(operation=>operation.stage==='director_review_capacity');
  assert.equal(holds.length,1);assert.match(holds[0]!.operationId,/^director-g5-[a-f0-9]{64}$/);
  assert.equal(holds[0]!.shotId,null);
@@ -191,4 +193,87 @@ test('motion-only presenter freezes its own Seedream, Seedance and actual dynami
     (f.input.shots[0]!.digitalHumanPlan as any).silentMotion=false;
     f.seal();
     assert.ok((await f.planner.plan(scope)).gaps.includes('presenter_group_contract_invalid'));
+});
+
+test('confirmed illustrative video is part of the original whole-film paid plan, with provider duration rather than edit-slot duration',async()=>{
+ const f=fixture();f.input.maximumRetries=0;f.input.directedRetryShotIds=[];
+ f.input.shots=[{shotId:'S01',sourceStrategy:'non_evidentiary_ai_visual',sourceRefs:[],fallbackSourceStrategy:null,
+  materialRouting:{schemaVersion:'social-material-routing.v1',materialType:'general',policy:'illustrative_video',localMatch:{state:'missing',sourceRefs:[],evidenceRef:null},
+   illustrativeVideo:{purpose:'design',provider:'seedance',durationSeconds:5,disclosure:'AI 场景示意'}}}];
+ f.seal();const result=await f.planner.plan(scope);
+ assert.deepEqual(result.gaps,[]);assert.deepEqual(result.plan!.paidOperations.map(row=>row.stage),['concept_video']);
+ assert.equal(result.requirements.find(row=>row.stage==='concept_video')!.durationSeconds,5);
+ f.ports.resolveBoundRoute=async()=>null;assert.equal((await f.planner.plan(scope)).plan,null,'missing real account/usage binding cannot become a successful quote');
+});
+
+test('visual v2 budget groups cannot combine scenes with different composition identities',async()=>{
+ const f=fixture();
+ f.input.scenes=['S1','S2'].map((shotId,index)=>({shotId,durationSeconds:2,spokenText:`Line ${index+1}`,presenterSpeech:'whole_track',visualCompatibilityHash:(index?'b':'a').repeat(64)}));
+ f.input.shots=f.input.scenes.map(scene=>({shotId:scene.shotId,sourceStrategy:'authorized_digital_presenter',fallbackSourceStrategy:null,sourceRefs:['presenter'],digitalHumanPlan:{presenterAssetIds:['presenter']} as any}));
+ f.input.presenterGroups=f.input.scenes.map((scene,index)=>{
+  const group={groupId:`presenter-mother-${index+1}`,shotIds:[scene.shotId],durationSeconds:2,spokenText:scene.spokenText,presenterAssetId:'presenter',visualCompatibilityHash:scene.visualCompatibilityHash,contractHash:''};group.contractHash=presenterGroupContractHash(group);return group;
+ });
+ f.input.presenterGroups[0]!.staticReferenceImageCount=3;f.input.presenterGroups[0]!.contractHash=presenterGroupContractHash(f.input.presenterGroups[0]!);
+ f.input.voice={mode:'continuous',lines:['Line 1 Line 2'],requiresClone:false,allowFallback:false,requiresAsr:false,requiresAlignment:true,reuseReceiptRef:null};f.seal();
+ const split=await f.planner.plan(scope);assert.deepEqual(split.gaps,[]);assert.equal(split.plan!.paidOperations.filter(intent=>intent.stage==='presenter_video').length,2);
+ assert.deepEqual(split.requirements.filter(row=>row.stage==='presenter_video').map(row=>row.presenterVisualCompatibilityHash),['a'.repeat(64),'b'.repeat(64)]);
+ assert.deepEqual(split.requirements.filter(row=>row.stage==='first_frame_qa').map(row=>row.frameCount),[4,3]);
+ for(const group of f.input.presenterGroups){const frame=split.plan!.paidOperations.find(row=>row.stage==='first_frame'&&row.shotId===group.groupId)!,qa=split.plan!.paidOperations.find(row=>row.stage==='first_frame_qa'&&row.shotId===group.groupId)!;assert.deepEqual(frame.executionBindingPolicy?.schemaVersion==='paid-execution-binding-policy.v1'?frame.executionBindingPolicy.parentOperationIds:null,[]);assert.deepEqual(qa.executionBindingPolicy?.schemaVersion==='paid-execution-binding-policy.v1'?qa.executionBindingPolicy.parentOperationIds:null,[frame.operationId]);}
+ const merged={...f.input.presenterGroups[0]!,shotIds:['S1','S2'],durationSeconds:4,spokenText:'Line 1 Line 2'};merged.contractHash=presenterGroupContractHash(merged);f.input.presenterGroups=[merged];f.seal();
+ let routeReads=0;f.ports.resolveBoundRoute=async()=>{routeReads++;return null;};
+ assert.deepEqual((await f.planner.plan(scope)).gaps,['presenter_group_contract_invalid']);assert.equal(routeReads,0,'mixed-scene grouping fails before quoting or generating');
+});
+
+test('background-first reserves all four static steps and the presenter before any supplier execution',async()=>{
+ const f=fixture();
+ f.input.maximumRetries=0;f.input.directedRetryShotIds=[];
+ f.input.scenes=[{shotId:'S1',durationSeconds:3,spokenText:'Welcome',presenterSpeech:'whole_track',visualCompatibilityHash:'a'.repeat(64)}];
+ f.input.shots=[{shotId:'S1',sourceStrategy:'authorized_digital_presenter',fallbackSourceStrategy:null,sourceRefs:['presenter'],digitalHumanPlan:{presenterAssetIds:['presenter']} as any}];
+ const group={groupId:'presenter-mother-1',shotIds:['S1'],durationSeconds:3,spokenText:'Welcome',presenterAssetId:'presenter',visualCompatibilityHash:'a'.repeat(64),staticReferenceImageCount:3,firstFramePipeline:'background-first.v2' as const,contractHash:''};group.contractHash=presenterGroupContractHash(group);f.input.presenterGroups=[group];
+ f.input.voice={mode:'continuous',lines:['Welcome'],requiresClone:false,allowFallback:false,requiresAsr:false,requiresAlignment:true,reuseReceiptRef:null};f.seal();
+ const result=await f.planner.plan(scope);assert.deepEqual(result.gaps,[]);
+ const staticOps=result.plan!.paidOperations.filter(op=>['first_frame','first_frame_qa'].includes(op.stage));assert.equal(staticOps.length,4);
+ assert.deepEqual(result.requirements.filter(row=>row.presenterStaticPhase).map(row=>[row.presenterStaticPhase,row.stage,row.frameCount]),[['background','first_frame',null],['background','first_frame_qa',2],['composite','first_frame',null],['composite','first_frame_qa',4]]);
+ assert.deepEqual(staticOps.map(op=>op.executionBindingPolicy?.schemaVersion==='paid-execution-binding-policy.v1'?op.executionBindingPolicy.parentOperationIds:null),[[],[staticOps[0]!.operationId],[staticOps[0]!.operationId,staticOps[1]!.operationId],[staticOps[2]!.operationId]]);
+ assert.equal(result.plan!.paidOperations.filter(op=>op.stage==='presenter_video').length,1);assert.equal(result.plan!.maximumCny,f.input.authorization.maximumCny);
+});
+
+test('background-first retry reserve freezes two bounded candidates and alternative selected-background dependencies',async()=>{
+ const f=fixture();
+ f.input.scenes=[{shotId:'S1',durationSeconds:3,spokenText:'Welcome',presenterSpeech:'whole_track',visualCompatibilityHash:'a'.repeat(64)}];
+ f.input.shots=[{shotId:'S1',sourceStrategy:'authorized_digital_presenter',fallbackSourceStrategy:null,sourceRefs:['presenter'],digitalHumanPlan:{presenterAssetIds:['presenter']} as any}];
+ const group={groupId:'presenter-mother-1',shotIds:['S1'],durationSeconds:3,spokenText:'Welcome',presenterAssetId:'presenter',visualCompatibilityHash:'a'.repeat(64),staticReferenceImageCount:3,firstFramePipeline:'background-first.v2' as const,contractHash:''};group.contractHash=presenterGroupContractHash(group);f.input.presenterGroups=[group];
+ f.input.voice={mode:'continuous',lines:['Welcome'],requiresClone:false,allowFallback:false,requiresAsr:false,requiresAlignment:true,reuseReceiptRef:null};f.input.maximumRetries=1;f.seal();
+ const result=await f.planner.plan(scope);assert.deepEqual(result.gaps,[]);assert.doesNotThrow(()=>assertSocialPaidExecutionDependencies(result.plan!.paidOperations));
+ const backgrounds=result.plan!.paidOperations.filter(op=>op.stage==='first_frame'&&op.shotId===`${group.groupId}:background`),backgroundQas=result.plan!.paidOperations.filter(op=>op.stage==='first_frame_qa'&&op.shotId===`${group.groupId}:background`);
+ const composites=result.plan!.paidOperations.filter(op=>op.stage==='first_frame'&&op.shotId===group.groupId),compositeQas=result.plan!.paidOperations.filter(op=>op.stage==='first_frame_qa'&&op.shotId===group.groupId);
+ assert.equal([...backgrounds,...backgroundQas,...composites,...compositeQas].length,8);
+ assert.deepEqual(backgrounds[1]!.executionBindingPolicy,{schemaVersion:'paid-execution-binding-policy.v1',parentOperationIds:[backgrounds[0]!.operationId,backgroundQas[0]!.operationId]});
+ assert.deepEqual(composites[0]!.executionBindingPolicy,{schemaVersion:'paid-execution-binding-policy.v2',allowedParentOperationSets:[[backgrounds[0]!.operationId,backgroundQas[0]!.operationId],[backgrounds[1]!.operationId,backgroundQas[1]!.operationId]]});
+ assert.equal(composites[1]!.executionBindingPolicy?.schemaVersion,'paid-execution-binding-policy.v2');
+ assert.deepEqual(compositeQas.map((qa,index)=>qa.executionBindingPolicy),composites.map(frame=>({schemaVersion:'paid-execution-binding-policy.v1',parentOperationIds:[frame.operationId]})));
+});
+
+
+test('original presenter source and complete visual contract survive requirements and recovery reconstruction',async()=>{
+ const f=fixture();f.input.maximumRetries=0;f.input.directedRetryShotIds=[];
+ f.input.scenes=[{shotId:'S1',durationSeconds:3,spokenText:'Welcome',presenterSpeech:'whole_track',visualCompatibilityHash:'a'.repeat(64)}];
+ f.input.shots=[{shotId:'S1',sourceStrategy:'authorized_digital_presenter',fallbackSourceStrategy:null,sourceRefs:['presenter'],digitalHumanPlan:{presenterAssetIds:['presenter']} as any}];
+ const group={groupId:'presenter-mother-1',shotIds:['S1'],durationSeconds:3,spokenText:'Welcome',presenterAssetId:'presenter',visualCompatibilityHash:'a'.repeat(64),staticReferenceImageCount:3,firstFramePipeline:'background-first.v2' as const,sceneSourceKind:'original_scene' as const,sceneSourceContractHash:'c'.repeat(64),contractHash:''};group.contractHash=presenterGroupContractHash(group);f.input.presenterGroups=[group];
+ f.input.voice={mode:'continuous',lines:['Welcome'],requiresClone:false,allowFallback:false,requiresAsr:false,requiresAlignment:true,reuseReceiptRef:null};f.seal();
+ const result=await f.planner.plan(scope);assert.deepEqual(result.gaps,[]);
+ for(const requirement of result.requirements.filter(row=>row.presenterGroupId)){
+  assert.equal(requirement.presenterSceneSourceKind,'original_scene');assert.equal(requirement.presenterSceneSourceContractHash,group.sceneSourceContractHash);
+  assert.equal(requirement.presenterFirstFramePipeline,group.firstFramePipeline);assert.equal(requirement.presenterStaticReferenceImageCount,3);
+ }
+ const requirement=result.requirements.find(row=>row.stage==='presenter_video')!;
+ assert.deepEqual(presenterGroupFromRequirement(requirement,result.requirements),group);
+ for(const patch of [{presenterSceneSourceContractHash:'d'.repeat(64)},{presenterStaticReferenceImageCount:4},{presenterVisualCompatibilityHash:'d'.repeat(64)}]){
+  // Explicit new metadata drift is never repaired by unrelated live inputs.
+  const changed={...requirement,...patch};
+  assert.throws(()=>presenterGroupFromRequirement(changed,result.requirements),/requirement_contract_changed/);
+ }
+ const reference={...group};delete (reference as any).sceneSourceKind;delete (reference as any).sceneSourceContractHash;reference.contractHash=presenterGroupContractHash(reference);
+ const historical={...requirement,presenterGroupContractHash:reference.contractHash};delete historical.presenterSceneSourceKind;delete historical.presenterSceneSourceContractHash;delete historical.presenterFirstFramePipeline;delete historical.presenterStaticReferenceImageCount;
+ assert.deepEqual(presenterGroupFromRequirement(historical,result.requirements),reference,'legacy visual-v2 reconstructs static fields only from persisted sibling requirements');
 });

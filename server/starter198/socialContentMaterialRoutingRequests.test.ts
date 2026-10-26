@@ -6,6 +6,9 @@ import { parseCreateSocialTask, parseUpdateSocialTask, parseSocialSource } from 
 import { defaultBrief } from './socialContentTaskSupport.js';
 import { parseSocialTaskBrief } from './socialContentRecords.js';
 import { buildLocalMaterialSegmentProfile, inferLocalMaterialSegmentType } from '../../shared/contracts/localMaterialSegmentProfile.js';
+import {createSocialAssetSupplyPlan} from '../../shared/socialContentAssetSupply.js';
+import {hasVerifiedSameClassSocialLocalMatch} from '../../shared/socialContentMaterialRouting.js';
+import {classifySocialAssetSupplyMaterialType} from '../../shared/socialContentAssetSupply.js';
 
 const visual = (action = '手握包装盒晃一圈') => normalizeSceneVisualContract({
   subjects: ['person', 'product'], interaction: { kind: 'person_holding_product', description: action },
@@ -36,6 +39,91 @@ const candidate = (overrides: Record<string, unknown> = {}) => profiled({ assetI
 const requests = (candidates: never[]) => materialRoutingRequests({ policyVersion: 'type-aware.v1',
   tenantId: 'tenant', shots: [shot], candidates, productRef: 'SKU-1' });
 
+test('generic display matching uses verified function despite different scene wording and allows observed hand-held labels',()=>{
+ const expected=normalizeSceneVisualContract({subjects:['product'],interaction:{kind:'product_only_display',description:'多种唇釉呈扇形排列，棕色背景'},action:{path:'多种唇釉呈扇形排列'},productPolicy:'open',camera:{shotSize:'特写'}});
+ const plain=normalizeSceneVisualContract({subjects:['product'],interaction:{kind:'product_only_display',description:'产品放置白色平面静止展示'},action:{path:'产品放置白色平面静止展示'},productPolicy:'open'});
+ const held=normalizeSceneVisualContract({subjects:['person','product'],interaction:{kind:'person_holding_product',description:'手部稳定持管，调整角度展示标签'},action:{path:'手部稳定持管，调整角度展示标签'},productPolicy:'open'});
+ const route=(candidates:never[],truthSensitiveSubject?:'product_effect')=>materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',productRef:'SKU-1',
+  referenceShots:[{shotId:'ref',visualContract:expected}] as never,shots:[{shotId:'display',referenceShotId:'ref',function:'value',materialType:'product',truthSensitiveSubject,visualContract:expected,plannedDurationSeconds:.4}],candidates})[0]!;
+ for(const c of [candidate({visualContract:plain,productRef:null}),candidate({visualContract:held,materialRoles:['product','person_usage'],productRef:null})]){
+  const result=route([c]);assert.ok(result.localVideoMatch);assert.equal(result.localVideoMatch.reuseKind,'functional_equivalent');
+ }
+ assert.equal(route([candidate({visualContract:plain,productRef:null})],'product_effect').localVideoMatch,undefined,'product-effect evidence cannot use a generic display fallback');
+ const application=normalizeSceneVisualContract({...held,interaction:{kind:'person_using_product',description:'将产品涂抹到面部'},productUsage:{kind:'apply_to_face'},action:{path:'将产品涂抹到面部'}});
+ assert.equal(route([candidate({visualContract:application,materialRoles:['product','person_usage']})]).localVideoMatch,undefined);
+});
+
+test('source-observed mascara application corrects stale product classification without turning it into packaging generation',()=>{
+ const expected=normalizeSceneVisualContract({subjects:['product'],interaction:{kind:'other',description:'睫毛刷正在刷动睫毛，展示睫毛效果'},action:{path:'睫毛刷正在刷动睫毛，展示睫毛效果'}});
+ assert.equal(classifySocialAssetSupplyMaterialType({shotId:'eye',function:'value',materialType:'product',visualContract:expected}),'consumer_demo');
+ const face=normalizeSceneVisualContract({subjects:['person','product'],interaction:{kind:'person_using_product',description:'按压出产品并置于面部，展示效果'},productUsage:{kind:'result_display'},action:{path:'按压出产品并置于面部，展示效果'}});
+ const result=materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',productRef:'SKU-1',shots:[{shotId:'eye',referenceShotId:'ref',function:'value',materialType:'product',visualContract:expected,plannedDurationSeconds:.3}],
+  referenceShots:[{shotId:'ref',visualContract:expected}] as never,candidates:[candidate({visualContract:face,materialRoles:['product','person_usage']})]})[0]!;
+ assert.equal(result.localVideoMatch,undefined,'face application cannot stand in for observed eyelash application');
+ assert.ok(result.localMaterialRejections?.some(r=>r.reasons.includes('required_action_missing')));
+ assert.equal(classifySocialAssetSupplyMaterialType({shotId:'package',function:'value',materialType:'product',requestedDescription:'包装展示。须避免：涂抹面部、刷睫毛',visualContract:normalizeSceneVisualContract({subjects:['product'],interaction:{kind:'product_only_display',description:'包装展示'}})}),'product');
+});
+
+test('functional display reuse consumes real nonoverlapping edit windows and stops at exhaustion',()=>{
+ const expected=normalizeSceneVisualContract({subjects:['product'],interaction:{kind:'product_only_display',description:'产品展示'},action:{path:'产品展示'}});
+ const results=materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',productRef:'SKU-1',
+  shots:[0,1,2].map(i=>({shotId:`display-${i}`,function:'value',materialType:'product',visualContract:expected,plannedDurationSeconds:.4})),
+  candidates:[candidate({visualContract:expected,productRef:null,timeRange:{startSeconds:0,endSeconds:1}})]});
+ assert.equal(results.filter(s=>s.localVideoMatch).length,2);
+ assert.deepEqual(results.slice(0,2).map(s=>[s.selectedMaterialSegment?.startSeconds,s.selectedMaterialSegment?.endSeconds]),[[0,.4],[.4,.8]]);
+ assert.ok(results[2]?.localMaterialRejections?.some(r=>r.reasons.includes('segment_already_used_in_plan')));
+});
+
+test('historical reference drafts without a material routing object still trim by their evidenced edit slot',()=>{
+ const expected=normalizeSceneVisualContract({subjects:['product'],interaction:{kind:'product_only_display',description:'产品展示'},action:{path:'产品展示'},evidence:{sourceRange:{startSeconds:5,endSeconds:5.4}}});
+ const results=materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',productRef:'SKU-1',
+  shots:[0,1,2].map(i=>({shotId:`old-${i}`,function:'value',materialType:'product',visualContract:expected})),
+  candidates:[candidate({visualContract:expected,productRef:null,timeRange:{startSeconds:0,endSeconds:1}})]});
+ assert.equal(results.filter(s=>s.localVideoMatch).length,2);
+ assert.ok(Math.abs(results[0]!.selectedMaterialSegment!.endSeconds-.4)<1e-6);
+ assert.ok(Math.abs(results[1]!.selectedMaterialSegment!.endSeconds-.8)<1e-6);
+});
+
+test('reference generic product beats task SKU inheritance and remains a verified local cut through budgeting',()=>{
+ const reference=normalizeSceneVisualContract({...visual(),product:{policy:'preferred',requestedProductRef:'参考产品',source:'agent_inferred'}});
+ const result=materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',productRef:'SKU-1',
+  shots:[{...shot,referenceShotId:'ref'}],referenceShots:[{shotId:'ref',visualContract:reference}] as never,
+  candidates:[candidate({productRef:'OTHER-SKU',visualContract:normalizeSceneVisualContract({...visual(),product:{policy:'locked',requestedProductRef:'OTHER-SKU'}})})]})[0]!;
+ assert.equal(result.materialReusePolicy?.skuMode,'unrestricted');
+ assert.equal(result.localVideoMatch?.productRef,'OTHER-SKU');
+ const plan=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',materialRoutingPolicyVersion:'type-aware.v2',
+  inventory:{customerVideoIds:['own-video'],productIdentityGroups:[{productRef:'SKU-1',imageIds:['product-image']}]},shots:[result]});
+ const selected=plan.shots[0]!;
+ assert.equal(selected.sourceStrategy,'customer_real_asset');
+ assert.equal(selected.materialRouting?.generation,undefined,'a usable local cut must not become an optional paid upgrade');
+ assert.equal(hasVerifiedSameClassSocialLocalMatch(selected,'SKU-1'),true);
+ assert.ok(selected.selectedMaterialSegment);
+});
+
+test('reference explicit single SKU remains strict; absent reference evidence never inherits task lock',()=>{
+ const route=(referenceShots:never[])=>materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',productRef:'SKU-1',
+  shots:[{...shot,referenceShotId:'ref'}],referenceShots,candidates:[candidate({productRef:'OTHER-SKU'})]})[0]!;
+ const locked=route([{shotId:'ref',visualContract:visual()}] as never[]);
+ assert.equal(locked.materialReusePolicy?.skuMode,'single_sku');
+ assert.equal(locked.localVideoMatch,undefined);
+ assert.ok(locked.localMaterialRejections?.some(r=>r.reasons.includes('product_identity_mismatch')));
+ assert.equal(route([]).materialReusePolicy?.skuMode,'unrestricted');
+ assert.ok(route([]).localVideoMatch);
+});
+
+test('functional product substitutions preserve actions, prefer exact cuts, and do not admit factory or unowned footage',()=>{
+ const expected=normalizeSceneVisualContract({subjects:['product'],interaction:{kind:'product_only_display',description:'产品静态展示'},action:{path:'产品静态展示'},productPolicy:'open'});
+ const make=(id:string,v=expected)=>candidate({assetId:id,sourceRef:id,segmentId:id,productRef:null,visualContract:v});
+ const shelf=normalizeSceneVisualContract({...expected,environment:{kind:'studio'},camera:{shotSize:'产品特写'}});
+ const route=(candidates:never[])=>materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',productRef:'SKU-1',
+  shots:[{shotId:'display',referenceShotId:'ref',function:'value',materialType:'product',requestedDescription:'产品静态展示',visualContract:expected}],
+  referenceShots:[{shotId:'ref',visualContract:expected}] as never,candidates})[0]!;
+ assert.equal(route([make('shelf',shelf)]).localVideoMatch?.reuseKind,'functional_equivalent');
+ assert.equal(route([make('shelf',shelf),make('exact')]).localVideoMatch?.sourceRefs[0],'exact');
+ assert.equal(route([candidate({materialRoles:['factory'],visualContract:expected})]).localVideoMatch,undefined);
+ assert.equal(route([candidate({origin:'shared_library',visualContract:expected})]).localVideoMatch,undefined);
+});
+
 test('normal API creation persists the policy while historic briefs remain unmarked', () => {
   const brief = defaultBrief(parseCreateSocialTask({ title: '产品视频', objective: '介绍产品' }));
   assert.equal(parseSocialTaskBrief(brief).materialRoutingPolicyVersion, 'type-aware.v2');
@@ -45,7 +133,9 @@ test('normal API creation persists the policy while historic briefs remain unmar
   assert.throws(() => parseSocialTaskBrief({ ...brief, materialRoutingPolicyVersion: 'unknown' }), /social_material_routing_policy_invalid/);
   assert.deepEqual(parseUpdateSocialTask({ expectedVersion: 'v65', changes: { title: '更新标题' } }).changes, { title: '更新标题' });
   assert.equal(parseUpdateSocialTask({ expectedVersion: 'v65', changes: { targetDurationSeconds: 18 } }).changes.targetDurationSeconds, 18);
-  assert.throws(() => parseUpdateSocialTask({ expectedVersion: 'v65', changes: { targetDurationSeconds: 3 } }), /social_content_target_duration_invalid/);
+  assert.equal(parseUpdateSocialTask({ expectedVersion: 'v65', changes: { targetDurationSeconds: 3 } }).changes.targetDurationSeconds, 3);
+  assert.equal(parseUpdateSocialTask({ expectedVersion: 'v65', changes: { targetDurationSeconds: 123.4 } }).changes.targetDurationSeconds, 123.4);
+  assert.throws(() => parseUpdateSocialTask({ expectedVersion: 'v65', changes: { targetDurationSeconds: 0 } }), /social_content_target_duration_invalid/);
   assert.throws(() => parseUpdateSocialTask({ expectedVersion: 'v65', changes: { _weeklyAuthority: { forged: true } } }), /social_content_input_invalid/);
 });
 test('local product match retains its action evidence, SKU and exact analyzed segment', () => {
@@ -120,6 +210,39 @@ test('server-reviewed weekly binding routes the exact current segment despite ar
   assert.equal(route({origin:'shared_library'}).localVideoMatch,undefined);
 });
 
+test('reviewed bindings consume only the required nonoverlapping windows and fall back to sufficient inventory',()=>{
+ const reviewed=candidate({visualContract:visual('产品静止展示'),timeRange:{startSeconds:2,endSeconds:4}}) as any;
+ reviewed.sourceRevision=reviewed.segmentProfile.sourceRevision;
+ const spare=candidate({assetId:'spare',sourceRef:'spare',timeRange:{startSeconds:10,endSeconds:14}});
+ const shots=[0,1,2].map(i=>({...shot,shotId:`reviewed-${i}`,plannedDurationSeconds:1}));
+ const bindings=shots.map(s=>({shotId:s.shotId,assetId:reviewed.assetId,segmentId:reviewed.segmentId,
+  sourceRef:reviewed.sourceRef,sourceRevision:reviewed.sourceRevision,rightsEvidenceRef:`rights:${reviewed.assetId}`}));
+ const result=materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',productRef:'SKU-1',shots,
+  candidates:[reviewed,spare],reviewedMaterialBindings:bindings});
+ assert.deepEqual(result.map(s=>s.localVideoMatch?.sourceRefs[0]),['own-video','own-video','spare']);
+ assert.deepEqual(result.map(s=>[s.selectedMaterialSegment?.startSeconds,s.selectedMaterialSegment?.endSeconds]),[[2,3],[3,4],[10,11]]);
+ const short=candidate({visualContract:visual('产品静止展示'),timeRange:{startSeconds:2,endSeconds:2.5}}) as any;
+ short.sourceRevision=short.segmentProfile.sourceRevision;
+ const insufficient=materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',productRef:'SKU-1',shots:[shots[0]!],
+  candidates:[short,spare],reviewedMaterialBindings:[bindings[0]!]});
+ assert.deepEqual(insufficient[0]?.localVideoMatch?.sourceRefs,['spare'],'a prior review cannot make a short segment cover the edit slot');
+});
+
+test('sufficient correct inventory beats semantically wrong and too-short candidates and spreads valid source windows',()=>{
+ const expected=normalizeSceneVisualContract({subjects:['product'],interaction:{kind:'product_only_display',description:'包装产品展示'},action:{path:'包装产品展示'},productPolicy:'open'});
+ const factory=normalizeSceneVisualContract({subjects:['factory'],interaction:{kind:'factory_process',description:'工厂流水线灌装'},action:{path:'工厂流水线灌装'}});
+ const shots=[0,1,2].map(i=>({shotId:`enough-${i}`,function:'value' as const,materialType:'product' as const,visualContract:expected,plannedDurationSeconds:1}));
+ const inventory=[candidate({assetId:'wrong',sourceRef:'wrong',visualContract:factory,materialRoles:['factory'],matchScore:1}),
+  candidate({assetId:'short',sourceRef:'short',visualContract:expected,timeRange:{startSeconds:0,endSeconds:.3},matchScore:1}),
+  ...['A','B','C'].map(id=>candidate({assetId:id,sourceRef:id,visualContract:expected,productRef:null,timeRange:{startSeconds:2,endSeconds:6}}))];
+ const result=materialRoutingRequests({policyVersion:'type-aware.v2',tenantId:'tenant',productRef:'SKU-1',shots,candidates:inventory});
+ assert.equal(result.filter(s=>s.localVideoMatch).length,3);
+ assert.deepEqual(result.map(s=>s.localVideoMatch?.sourceRefs[0]),['A','B','C']);
+ assert.deepEqual(result.map(s=>[s.selectedMaterialSegment?.startSeconds,s.selectedMaterialSegment?.endSeconds]),[[2,3],[2,3],[2,3]]);
+ assert.ok(result.every(s=>s.localMaterialRejections?.some(r=>r.assetId==='wrong')),'inventory count never substitutes for the required scene function');
+ assert.ok(result.every(s=>s.localMaterialRejections?.some(r=>r.assetId==='short')),'physical duration remains part of each match');
+});
+
 test('reviewed weekly binding fails closed on tenant, revision, rights and segment drift', () => {
   const base = candidate({visualContract:visual('产品静止展示')}) as any;
   base.sourceRevision=base.segmentProfile.sourceRevision;
@@ -142,15 +265,15 @@ test('negative prompt and evidence prohibitions never become positive local-matc
   assert.deepEqual(result[0]!.localVideoMatch?.sourceRefs,['owned-usage']);
 });
 
-test('new product tasks default to a fifteen-yuan whole-film ceiling and retain narrower explicit grants', () => {
+test('new product tasks default to fifteen yuan and retain explicit grants', () => {
   for (const requested of [undefined, null, 600, 10, 4]) {
     const input = parseCreateSocialTask({ title: '预算检查', objective: '产品正常制作', perItemBudgetCny: requested });
-    const expected = requested === 4 ? 4 : requested === 10 ? 10 : 15;
+    const expected = requested ?? 15;
     assert.equal(input.perItemBudgetCny, expected);
     assert.equal(defaultBrief(input).perItemBudgetCny, expected);
   }
-  assert.equal(defaultBrief({ title: '内部创建', objective: '制作', perItemBudgetCny: 600 } as never).perItemBudgetCny, 10);
-  assert.equal(defaultBrief({ title: '新版本内部创建', objective: '制作', materialRoutingPolicyVersion:'type-aware.v2', perItemBudgetCny: 600 } as never).perItemBudgetCny, 15);
+  assert.equal(defaultBrief({ title: '内部创建', objective: '制作', perItemBudgetCny: 600 } as never).perItemBudgetCny, 600);
+  assert.equal(defaultBrief({ title: '新版本内部创建', objective: '制作', materialRoutingPolicyVersion:'type-aware.v2', perItemBudgetCny: 600 } as never).perItemBudgetCny, 600);
 });
 
 test('normal creation and stored brief keep exact cached reference evidence without changing historical updates', () => {
@@ -225,7 +348,7 @@ test('consumer matching requires the same product identity and rejects product-u
   assert.equal(materialRoutingRequests({...input,candidates:[identified] as never})[0]!.localVideoMatch,undefined);
 });
 
-test('customer shopping and business scenes stay on the local DTC route instead of product generation', () => {
+test('customer shopping and business scenes use enterprise context instead of product generation or usage proof', () => {
   for (const [shotId, description] of [
     ['shopping', '从背后拍摄两位女性顾客在美妆店挑选产品，货架上摆满化妆品'],
     ['meeting', '一群人围坐在茶桌旁品茶并进行商务洽谈'],
@@ -234,7 +357,7 @@ test('customer shopping and business scenes stay on the local DTC route instead 
       shots:[{shotId,function:'value',requestedDescription:description,visualContract:normalizeSceneVisualContract({
         subjects:['person','product'],interaction:{kind:'other',description},productRef:'参考商品',productPolicy:'preferred',action:{path:description},
       })}]})[0]!;
-    assert.equal(result.materialType,'consumer_demo');
+    assert.equal(result.materialType,'general');
     assert.equal(result.localVideoMatch,undefined);
   }
 });
@@ -246,7 +369,7 @@ test('stale frozen product classification cannot override visible customer DTC e
         subjects:['person','environment'],interaction:{kind:'other',description},action:{path:description},productRef:'参考商品',productPolicy:'preferred',
       }),
     }]})[0]!;
-    assert.equal(result.materialType,'consumer_demo');
+    assert.equal(result.materialType,'general');
   }
   const holding=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'product:SKU-1',candidates:[],shots:[{
     shotId:'holding',function:'value',materialType:'product',requestedDescription:'顾客手持产品包装展示',visualContract:normalizeSceneVisualContract({

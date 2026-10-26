@@ -44,7 +44,7 @@ export interface StoryboardQaReport {
 }
 
 const checksByPhase = {
-  first_frame: ['product_identity', 'packaging_visibility', 'subject_visibility', 'person_identity', 'environment_fidelity', 'layout', 'contact', 'start_state', 'visual_integrity'],
+  first_frame: ['person_absence','lighting_perspective','product_identity', 'packaging_visibility', 'subject_visibility', 'person_identity', 'environment_fidelity', 'layout', 'contact', 'start_state', 'visual_integrity'],
   video: ['product_identity', 'packaging_visibility', 'subject_visibility', 'person_identity', 'environment_fidelity', 'layout_continuity', 'contact_continuity', 'seam_continuity', 'action_order', 'end_state', 'visual_integrity'],
 } as const;
 
@@ -52,6 +52,7 @@ export function storyboardQaRequiredChecks(input: {
   phase: StoryboardQaPhase; sceneType: StoryboardQaScene; hasProduct: boolean;
   hasNamedPerson: boolean; hasEnvironmentReference?: boolean; hasContact: boolean; hasAction: boolean;
   hasSeam?: boolean;
+  personRemovalRequired?:boolean;personAbsenceRequired?:boolean;naturalCompositeRequired?:boolean;
 }): string[] {
   const out = new Set<string>();
   if (input.hasProduct || input.sceneType === 'usage') {
@@ -60,6 +61,8 @@ export function storyboardQaRequiredChecks(input: {
     out.add('subject_visibility');
   }
   if (input.hasNamedPerson) out.add('person_identity');
+  if(input.phase==='first_frame'&&(input.personRemovalRequired||input.personAbsenceRequired))out.add('person_absence');
+  if(input.phase==='first_frame'&&input.naturalCompositeRequired)out.add('lighting_perspective');
   if (input.hasEnvironmentReference) out.add('environment_fidelity');
   out.add(input.phase === 'first_frame' ? 'layout' : 'layout_continuity');
   out.add(input.phase === 'first_frame' ? 'visual_integrity' : 'visual_integrity');
@@ -143,6 +146,7 @@ export function buildStoryboardQaReport(input: {
   phase: StoryboardQaPhase; sceneType: StoryboardQaScene; hasProduct: boolean;
   hasNamedPerson: boolean; hasEnvironmentReference?: boolean; hasContact: boolean; hasAction: boolean;
   hasSeam?: boolean;
+  personRemovalRequired?:boolean;personAbsenceRequired?:boolean;naturalCompositeRequired?:boolean;
   observations: unknown; evidenceFrameLabels: string[]; checkedAt?: string;
 }): StoryboardQaReport {
   const allowed = new Set<string>(checksByPhase[input.phase]);

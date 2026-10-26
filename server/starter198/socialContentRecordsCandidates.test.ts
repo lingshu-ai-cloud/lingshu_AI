@@ -46,6 +46,12 @@ function analyzedRecord(input: {
 
 const productA = analyzedRecord({ id: 'product-a', type: 'image', productId: 'product-id-a', productRef: '精华 A' });
 const productB = analyzedRecord({ id: 'product-b', type: 'image', productId: 'product-id-b', productRef: '精华 B' });
+const otherSkuVideo=analyzedRecord({id:'other-sku-video',type:'video',productId:'product-id-b',productRef:'精华 B',
+ segments:[{id:'product-display',start:0,end:4,confidence:.95,subject:['产品包装'],action:'产品静态展示',interaction:'product_only_display'}]});
+const videoPool=buildSocialWorkflowMaterialCandidates({records:[productA,productB,otherSkuVideo],tenantId:'tenant-a',
+ selectedProductRef:'精华 A',selectedProductId:'product-id-a',voiceoverRows:[],deferVideoSkuFilter:true});
+assert.ok(videoPool.candidates.some(c=>c.assetId==='other-sku-video'),'video SKU restriction belongs to the reference shot');
+assert.ok(!videoPool.candidates.some(c=>c.assetId==='product-b'),'generation identity images stay bound to the selected product');
 const factory = analyzedRecord({
   id: 'factory-b', type: 'video', productId: 'product-id-b', productRef: '精华 B',
   segments: [{
@@ -71,6 +77,16 @@ const segmentOnlyVideo = {
     subject: ['办公环境'], environment: '办公室', action: '员工展示办公区域',
   }],
 };
+const legacyEditorial = analyzedRecord({ id: 'legacy-editorial', type: 'video', segments: [{
+  id: 'legacy-office', start: 1, end: 5, confidence: .95, boundaryConfidence: 0,
+  cleanEntry: false, cleanExit: false, subject: ['办公环境'], environment: '办公室', action: '平稳横移',
+}] });
+const legacyRecall = buildSocialWorkflowMaterialCandidates({ records: [legacyEditorial], tenantId: 'tenant-a',
+  voiceoverRows: [{ cueId: 'office', text: '办公环境' }] });
+assert.equal(legacyRecall.candidates.length, 1, 'licensed observed clips remain available when only optional edit-boundary metadata is absent');
+assert.deepEqual(legacyRecall.candidates[0]?.timeRange, { startSeconds: 1, endSeconds: 5 });
+assert.equal(legacyRecall.candidates[0]?.segmentProfile?.cleanEntry, false, 'recall never fabricates a verified clean boundary');
+assert.deepEqual(legacyRecall.candidates[0]?.segmentProfile?.editingWarnings, ['edit_boundary_unverified']);
 
 const locked = buildSocialWorkflowMaterialCandidates({
   records: [productA, productB, factory, customerCase, unanalyzedVideo, segmentOnlyVideo],
@@ -87,7 +103,7 @@ assert.ok(locked.candidates.some(candidate => candidate.assetId === 'factory-b' 
 assert.ok(locked.candidates.some(candidate => candidate.assetId === 'customer-case' && candidate.materialRoles.includes('customer_case')));
 assert.ok(!locked.candidates.some(candidate => candidate.assetId === 'whole-video'), 'unanalyzed whole videos must not become generic candidates');
 assert.equal(locked.candidates.some(candidate => candidate.assetId === 'segment-only'), false,
-  'segments without production rights and verified edit boundaries remain indexed but never enter production recall');
+  'segments without production rights remain indexed but never enter production recall');
 assert.ok(locked.rejectedSegments.find(candidate => candidate.assetId === 'segment-only')?.reasons.includes('rights_evidence_missing'));
 assert.ok(locked.candidates.every(candidate => candidate.productPolicy === 'locked'
   && candidate.visualContract.product.policy === 'locked'));

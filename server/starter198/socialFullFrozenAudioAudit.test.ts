@@ -24,3 +24,16 @@ test('full frozen audio audit rejects a late-window replacement missed by an ear
   assert.equal(drift.status,'unknown');assert.match(drift.reason,/SHA/);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('full frozen audio audit covers content beyond the former 45 second boundary with bounded window reads',async()=>{
+ const root=await mkdtemp(path.join(tmpdir(),'full-audio-long-'));
+ try{
+  const frozen=path.join(root,'frozen.wav');
+  const generated=await runVisualFfmpeg(['-y','-f','lavfi','-i','sine=frequency=523:sample_rate=48000:duration=46.02','-c:a','pcm_s16le',frozen],false,{timeoutMs:120000});
+  assert.equal(generated.ok,true,generated.stderr);
+  const hash=await sha(frozen),audit=await auditFullFrozenAudio({finalPath:frozen,frozenPath:frozen,expectedFinalSha256:hash,expectedFrozenSha256:hash,durationSeconds:46.02});
+  assert.equal(audit.status,'matched',audit.reason);
+  assert.equal(audit.checkedWindows,46,'the 20ms tail is merged into the preceding full-track window');
+  assert.equal(audit.voicedWindows,46);
+ }finally{await rm(root,{recursive:true,force:true});}
+});

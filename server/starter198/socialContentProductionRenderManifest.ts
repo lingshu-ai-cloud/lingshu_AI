@@ -1,3 +1,6 @@
+import { placeCaptionsAwayFromSourceText, socialSourceTextReview } from './socialSourceTextReview.js';
+import { measureSocialSourceCaptionOccupancy, mergeSocialSourceTextReviews } from './socialSourceCaptionOccupancy.js';
+import type { SocialProductionAsset } from './socialContentProductionPlan.js';
 import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import { recordCurrentContentExecutionCheckpoint } from '../contentExecution/context.js';
@@ -19,6 +22,7 @@ type Script = Awaited<ReturnType<typeof prepareSocialProductionScriptBaseline>>;
 /** Verify the selected presenter track and freeze the compositor/effects evidence. */
 export async function prepareSocialContentProductionRenderManifest(scope: {
   execution: Execution;
+  assets?: SocialProductionAsset[];
   contentHandoff: SocialDirectorContentHandoff;
   voice: Voice;
   duration: number;
@@ -51,7 +55,13 @@ export async function prepareSocialContentProductionRenderManifest(scope: {
     if (createHash('sha256').update(await fsp.readFile(voice.localPath)).digest('hex') !== preparedWholeVoice.wholeTrackSha256) throw Error('selected_presenter_voice_render_audio_changed');
     await recordCurrentContentExecutionCheckpoint({stage:'social.selected_presenter_voice_acceptance',version:'1',inputHash:socialRequestHash({binding:selectedVoice,wholeVoiceInputHash:preparedWholeVoice.inputHash,audioSha256:preparedWholeVoice.wholeTrackSha256}),payload:{binding:selectedVoice,audioSha256:preparedWholeVoice.wholeTrackSha256,sourceReceiptRefs:preparedWholeVoice.sourceReceiptRefs,alignmentReceiptRef:preparedWholeVoice.alignmentReceiptRef}});
   }
-  const frameContract=Number.isFinite(duration)&&duration>=1&&duration<=45&&Math.abs(duration*1000-Math.round(duration*1000))<=1e-6?freezeSocialRenderFrameContract(duration):null;
+  const frameContract=freezeSocialRenderFrameContract(duration);
+  const unmeasuredSourceTextReview=socialSourceTextReview({assets:scope.assets??[],scenes:contentHandoff.scenes,timeline,captionCues});
+  const measuredSourceTextReview=await measureSocialSourceCaptionOccupancy({
+    assets:scope.assets??[],scenes:contentHandoff.scenes,timeline,captionCues,
+  });
+  const sourceTextReview=mergeSocialSourceTextReviews(unmeasuredSourceTextReview,measuredSourceTextReview);
+  const placedCaptionCues=placeCaptionsAwayFromSourceText(captionCues,sourceTextReview);
   const compositeManifest = {
     jobId: `social-${input.taskId}-${createHash('sha256').update(input.runId).digest('hex').slice(0, 12)}`,
     requireVisualAssets: true,
@@ -65,14 +75,15 @@ export async function prepareSocialContentProductionRenderManifest(scope: {
       bgmVol: contentHandoff.bgmSelection.volume,
       voiceVol: contentHandoff.outputSpec.voiceVolume,
     },
-    ...(frameContract?{frameContract}:{}),
+    frameContract,
     timeline,
+    sourceTextReview,
     ...(contentHandoff.effectPlan ? { effectPlan: contentHandoff.effectPlan } : {}),
     voiceover: { url: voice.localPath },
     bgm,
     subtitles: {
       mode: 'target',
-      cues: captionCues,
+      cues: placedCaptionCues,
       style: {
         // Automated social films use a mobile-first minimum even when an older
         // frozen Director plan predates the larger caption default.
@@ -92,8 +103,9 @@ export async function prepareSocialContentProductionRenderManifest(scope: {
     stage: 'social.graph_effects', version: '1', inputHash: effectsCheckpointInputHash,
     payload: {
       effectPlanHash: socialRequestHash(contentHandoff.effectPlan ?? null),
-      subtitleCueHash: socialRequestHash(captionCues),
+      subtitleCueHash: socialRequestHash(placedCaptionCues),
       manifestHash: socialRequestHash(compositeManifest),
+      trimCheckpointInputHash,
       sceneCount: timeline.length,
     },
   });

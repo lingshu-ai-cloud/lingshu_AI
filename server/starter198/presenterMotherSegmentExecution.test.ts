@@ -1,3 +1,4 @@
+import {canReusePresenterMotherCheckpoint} from './presenterMotherCheckpointRecovery.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
@@ -74,5 +75,8 @@ test('cached mother result requires current grouping, frozen audio, readable mea
   await writeFile(lip,JSON.stringify({...lipBody,reportHash:'f'.repeat(64)}));await assert.rejects(verify(),/cached_qa_unverified/);
   await writeFile(lip,JSON.stringify({...lipBody,reportHash:lipHash}));await writeFile(cropPath,'changed');await assert.rejects(verify(),/cached_qa_unverified/);
   await writeFile(cropPath,cropBytes);await rm(audio);await assert.rejects(verify(),/cached_qa_bytes_unavailable/);
+  assert.equal(await canReusePresenterMotherCheckpoint(()=>verify()),false);
+  await writeFile(cropPath,'tampered with missing parent');await assert.rejects(canReusePresenterMotherCheckpoint(()=>verify()),/cached_qa_unverified/);await writeFile(cropPath,cropBytes);
+  await writeFile(lip,'invalid JSON');await assert.rejects(canReusePresenterMotherCheckpoint(()=>verify()),/cached_qa_unverified/);
  }finally{await rm(root,{recursive:true,force:true});}
 });

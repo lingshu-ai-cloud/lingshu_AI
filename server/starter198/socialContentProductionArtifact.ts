@@ -1,3 +1,4 @@
+import { freezeSocialArtifactSubmission } from './socialContentArtifactSubmission.js';
 import {readSocialProductionBudgetEvidence} from './socialContentProductionBudgetEvidence.js';
 import { assertCurrentContentExecutionActive } from '../contentExecution/context.js';
 import { voiceLearningReadiness } from '../videoProduction/voiceQualityLearning.js';
@@ -75,7 +76,7 @@ export async function createSocialContentProductionArtifact(scope: {
   let initialSceneSourceEvidence:Awaited<ReturnType<typeof initialSceneSourceHashes>>|null=null;
   if(assetSupplyExecution){try{initialSceneSourceEvidence=await initialSceneSourceHashes({assets,execution:assetSupplyExecution,voicePath:voice.localPath,bgmUrl:bgm.url||null});}catch{/* Actual output remains reviewable; missing source bytes cannot create a cache. */}}
   await assertCurrentContentExecutionActive();
-  const artifactResult = await createSocialContentArtifact({
+  const artifactRequest: Parameters<typeof createSocialContentArtifact>[0] = {
     repository: input.repository,
     tenantId: input.tenantId,
     userId: input.userId,
@@ -86,7 +87,7 @@ export async function createSocialContentProductionArtifact(scope: {
     // provider work and the run identity remain unchanged.
     idempotencyKey: `social-auto-artifact:${input.runId}:${stored.sha256}`,
     trustedAgentOrigin: true,
-    requireHumanReview: Boolean(input.graphPhase),
+    requireHumanReview: Boolean(input.graphPhase)||detail.brief.presenterSpeechReviewPolicy==='heygen_native_human_review',
     now: input.now,
 	backendFilePort: input.runtime?.backendFilePort,
     value: {
@@ -98,6 +99,7 @@ export async function createSocialContentProductionArtifact(scope: {
       resourceRef: file.fileRef,
       content: {
         workflowSchema: AUTO_SCHEMA,
+        ...(detail.brief.presenterSpeechReviewPolicy==='heygen_native_human_review'?{presenterSpeechReview:{policy:'heygen_native_human_review',provider:'heygen',status:'pending_human_review',automatedLipSyncPassed:false}}:{}),
         productionWorkspaceSource: {type:'actual_social_render',...(detail.brief.creationDialoguePlan?{creationDialogueOrigin:true}:{}),creationMode:detail.brief.creationMode||'material_processing',runId:input.runId,...(input.graphCorrectionHash?{correctionHash:input.graphCorrectionHash}:{}),baselineHash:socialRequestHash(activeBaseline),manifestHash:socialRequestHash(compositeManifest),outputSha256:file.sha256},
         technicalQualityReport,
         initialSceneSourceHashes:initialSceneSourceEvidence,
@@ -207,6 +209,7 @@ export async function createSocialContentProductionArtifact(scope: {
           state: deliverableStatus === 'publish_candidate' ? 'requires_user_approval' : 'requires_revision',
           deliverableStatus,
           replicationHumanReviewPending,
+          ...(detail.brief.presenterSpeechReviewPolicy==='heygen_native_human_review'?{humanReviewItems:['核对 HeyGen 口型、口播节奏与人物自然度'],lipSyncStatus:'pending_human_review'}:{}),
           technicalChecksPassed: technicalApproved,
           creativeChecksPassed: !creativeReviewFailures.length&&!replicationHardFailures.length,
           automatedChecksPassed: finalQualityAccepted,
@@ -226,6 +229,8 @@ export async function createSocialContentProductionArtifact(scope: {
         }),
       },
     },
-  });
+  };
+  const submission = await freezeSocialArtifactSubmission({ scope: { tenantId: input.tenantId, taskId: input.taskId, runId: input.runId }, outputSha256: stored.sha256, requireHumanReview: artifactRequest.requireHumanReview === true, value: artifactRequest.value });
+  const artifactResult = await createSocialContentArtifact({ ...artifactRequest, idempotencyKey: submission.idempotencyKey, value: submission.value });
   return artifactResult;
 }

@@ -20,9 +20,33 @@ export const VIDEO_PRODUCTION_GRAPH_V2_PHASES = [
   'delivery',
 ] as const;
 
+/**
+ * New admissions use the truthful background-first production topology. Source
+ * materials must be frozen before voice work; presenter-dependent assets can
+ * only be produced after the canonical voice exists. Review and handoff are
+ * explicit nodes so neither an approval nor a delivery package is implied by
+ * render completion.
+ */
+export const VIDEO_PRODUCTION_GRAPH_V4_PHASES = [
+  'source_assets',
+  'voice',
+  'presenter_assets',
+  'trim',
+  'effects',
+  'render',
+  'technical_quality',
+  'creative_quality',
+  'review',
+  'handoff',
+  'delivery',
+] as const;
+
 export type LegacyVideoProductionPhase = typeof VIDEO_PRODUCTION_GRAPH_V1_PHASES[number];
-export type VideoProductionSupervisorPhase = typeof VIDEO_PRODUCTION_GRAPH_V2_PHASES[number];
-export type VideoProductionGraphPhase = LegacyVideoProductionPhase | VideoProductionSupervisorPhase;
+export type PreviousVideoProductionSupervisorPhase = typeof VIDEO_PRODUCTION_GRAPH_V2_PHASES[number];
+export type VideoProductionSupervisorNodeId = typeof VIDEO_PRODUCTION_GRAPH_V4_PHASES[number];
+/** Review is an authority boundary implemented by the graph runtime, not a worker phase. */
+export type VideoProductionSupervisorPhase = Exclude<VideoProductionSupervisorNodeId, 'review'>;
+export type VideoProductionGraphPhase = LegacyVideoProductionPhase | PreviousVideoProductionSupervisorPhase | VideoProductionSupervisorPhase;
 
 export type VideoProductionExpertId =
   | 'business_strategy_expert'
@@ -120,32 +144,35 @@ export const VIDEO_PRODUCTION_EXPERTS: Readonly<Record<VideoProductionExpertId, 
 };
 
 export interface VideoProductionSupervisorNodeDefinition {
-  phase: VideoProductionSupervisorPhase;
-  owner: VideoProductionWorkerId | VideoProductionExpertId;
-  dependsOn: readonly VideoProductionSupervisorPhase[];
+  phase: VideoProductionSupervisorNodeId;
+  owner: VideoProductionWorkerId | VideoProductionExpertId | 'human_reviewer';
+  dependsOn: readonly VideoProductionSupervisorNodeId[];
   checkpoint: string;
   retry: 'resume_checkpoint' | 'reconcile_provider_then_resume' | 'human_decision';
 }
 
 export const VIDEO_PRODUCTION_SUPERVISOR_NODES: readonly VideoProductionSupervisorNodeDefinition[] = [
-  { phase: 'assets', owner: 'material_supply_worker', dependsOn: [], checkpoint: 'social.asset_supply', retry: 'reconcile_provider_then_resume' },
-  { phase: 'voice', owner: 'voice_worker', dependsOn: ['assets'], checkpoint: 'social.graph_voice', retry: 'reconcile_provider_then_resume' },
-  { phase: 'trim', owner: 'trim_worker', dependsOn: ['voice'], checkpoint: 'social.graph_trim', retry: 'resume_checkpoint' },
+  { phase: 'source_assets', owner: 'material_supply_worker', dependsOn: [], checkpoint: 'social.graph_source_assets', retry: 'reconcile_provider_then_resume' },
+  { phase: 'voice', owner: 'voice_worker', dependsOn: ['source_assets'], checkpoint: 'social.graph_voice', retry: 'reconcile_provider_then_resume' },
+  { phase: 'presenter_assets', owner: 'material_supply_worker', dependsOn: ['voice'], checkpoint: 'social.graph_presenter_assets', retry: 'reconcile_provider_then_resume' },
+  { phase: 'trim', owner: 'trim_worker', dependsOn: ['presenter_assets'], checkpoint: 'social.graph_trim', retry: 'resume_checkpoint' },
   { phase: 'effects', owner: 'effects_worker', dependsOn: ['trim'], checkpoint: 'social.graph_effects', retry: 'resume_checkpoint' },
   { phase: 'render', owner: 'render_worker', dependsOn: ['effects'], checkpoint: 'social.graph_render', retry: 'resume_checkpoint' },
   { phase: 'technical_quality', owner: 'technical_quality_worker', dependsOn: ['render'], checkpoint: 'social.graph_technical_quality', retry: 'resume_checkpoint' },
   { phase: 'creative_quality', owner: 'creative_quality_expert', dependsOn: ['technical_quality'], checkpoint: 'social.graph_review', retry: 'resume_checkpoint' },
-  { phase: 'delivery', owner: 'delivery_worker', dependsOn: ['creative_quality'], checkpoint: 'social.graph_completion', retry: 'human_decision' },
+  { phase: 'review', owner: 'human_reviewer', dependsOn: ['creative_quality'], checkpoint: 'social.graph_review', retry: 'human_decision' },
+  { phase: 'handoff', owner: 'delivery_worker', dependsOn: ['review'], checkpoint: 'social.graph_handoff', retry: 'resume_checkpoint' },
+  { phase: 'delivery', owner: 'delivery_worker', dependsOn: ['handoff'], checkpoint: 'social.graph_completion', retry: 'human_decision' },
 ] as const;
 
-export function videoProductionSupervisorNode(phase: VideoProductionSupervisorPhase): VideoProductionSupervisorNodeDefinition {
+export function videoProductionSupervisorNode(phase: VideoProductionSupervisorNodeId): VideoProductionSupervisorNodeDefinition {
   const node = VIDEO_PRODUCTION_SUPERVISOR_NODES.find(item => item.phase === phase);
   if (!node) throw new Error(`video_production_supervisor_phase_unknown:${phase}`);
   return node;
 }
 
 export function assertVideoProductionSupervisorDefinition(): void {
-  const phases = new Set<VideoProductionSupervisorPhase>();
+  const phases = new Set<VideoProductionSupervisorNodeId>();
   for (const node of VIDEO_PRODUCTION_SUPERVISOR_NODES) {
     if (phases.has(node.phase)) throw new Error(`video_production_supervisor_phase_duplicate:${node.phase}`);
     if (node.dependsOn.some(dependency => !phases.has(dependency))) {
@@ -153,7 +180,7 @@ export function assertVideoProductionSupervisorDefinition(): void {
     }
     phases.add(node.phase);
   }
-  if (VIDEO_PRODUCTION_GRAPH_V2_PHASES.some(phase => !phases.has(phase))) {
+  if (VIDEO_PRODUCTION_GRAPH_V4_PHASES.some(phase => !phases.has(phase))) {
     throw new Error('video_production_supervisor_phase_missing');
   }
 }

@@ -63,3 +63,23 @@ test('fails closed when grant timestamps or provider/use lists are malformed', (
     { provider: 'heygen', uses: ['digital_presenter'] }, now);
   assert.deepEqual(emptyUses.ok ? [] : emptyUses.reasons, ['use_not_authorized']);
 });
+
+const catalogRights = { authorizationRef: 'license://heygen/public-catalog/public-avatar',
+  consentRef: 'license://heygen/public-catalog/public-group', grantedAt: '2026-09-01T00:00:00Z',
+  subjectAdultConfirmed: false, permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'] };
+test('retained HeyGen public catalog license is reusable without inventing private-subject consent', () => {
+  const person = { id: 'enterprise-person', authorized: true, avatarId: 'public-avatar', voiceId: 'bound-voice', rightsEvidence: catalogRights };
+  const result = validateHeyGenPresenterRecord(person, now);
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.rights.subjectAdultConfirmed, false);
+  assert.equal(validateHeyGenPresenterRecord({ ...person, avatarId: 'different-avatar' }, now).ok, false);
+  assert.equal(validateHeyGenPresenterRecord({ ...person, voiceId: '' }, now).ok, false);
+  for (const patch of [{ expiresAt: '2026-09-02T00:00:00Z' }, { revokedAt: '2026-09-02T00:00:00Z' }, { consentRef: 'license://heygen/unknown/public-group' }]) {
+    assert.equal(validateHeyGenPresenterRecord({ ...person, rightsEvidence: { ...catalogRights, ...patch } }, now).ok, false);
+  }
+});
+test('HeyGen catalog licenses cannot authorize another provider or person replacement', () => {
+  for (const requirement of [{ provider: 'volcengine_ark' as const, uses: ['person_replacement' as const] }, { provider: 'heygen' as const, uses: ['person_replacement' as const] }]) {
+    assert.equal(validatePresenterRightsEvidence({ ...catalogRights, permittedProviders: ['heygen', 'volcengine_ark'], permittedUses: ['digital_presenter', 'voice_synthesis', 'person_replacement'] }, requirement, now).ok, false);
+  }
+});

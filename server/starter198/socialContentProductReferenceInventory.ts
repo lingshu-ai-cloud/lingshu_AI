@@ -9,6 +9,9 @@ export function ownedProductReferenceImageIds(input: {
 }): string[] {
   const normalized = (value: unknown) => String(value ?? '').normalize('NFKC').trim().toLocaleLowerCase();
   const normalizedRef = (value: unknown) => normalized(value).replace(/^product:/, '');
+  // The confirmed SKU and its display name identify the same product. A
+  // projected enterprise image normally carries both in productRefs.
+  const selectedRefs = new Set([input.productId, input.productRef].map(normalizedRef).filter(Boolean));
   const productUrls = new Set((input.enterpriseProductImageUrls ?? []).map(normalized).filter(Boolean));
   return input.records.filter(record => {
     if (record.type !== 'image' || record.scope === 'shared'
@@ -19,7 +22,7 @@ export function ownedProductReferenceImageIds(input: {
     // it must never override an explicit association with another product.
     if (input.productId && record.productId && normalizedRef(record.productId) !== normalizedRef(input.productId)) return false;
     const refs = [record.productRef, ...(Array.isArray(record.productRefs) ? record.productRefs : [])].filter(Boolean);
-    if (input.productRef && refs.some(ref => normalizedRef(ref) !== normalizedRef(input.productRef))) return false;
+    if (input.productRef && refs.some(ref => !selectedRefs.has(normalizedRef(ref)))) return false;
     const identityMatches = Boolean(input.productId && String(record.productId || '') === input.productId)
       || Boolean(input.productRef && [record.productRef, ...(Array.isArray(record.productRefs) ? record.productRefs : [])]
         .some(ref => normalized(ref) === normalized(input.productRef)))

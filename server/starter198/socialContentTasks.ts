@@ -1,5 +1,6 @@
 import { withWeeklyProductionStartGuard } from '../runtime/weeklyProductionStartGuard.js';
 import { reviewReplicationBySystem, systemReviewAppliedForStart } from './socialReplicationSystemReview.js';
+import { assertIllustrativeSceneSelection } from './socialContentIllustrativeSceneApproval.js';
 import {initialSocialContentOrder,reserveSocialContentOrder,type SocialContentDispatchEnvelope} from './socialContentOrderAdmission.js';
 import type {WeeklyOwnedProductIdentityPorts} from '../runtime/weeklyOwnedProductIdentityDemand.js';
 import type {
@@ -261,6 +262,7 @@ export async function updateSocialContentTask(input: {
       }
       const currentSummary = socialTaskSummary(record);
       const current = currentSummary.brief;
+      if (input.value.changes.illustrativeSceneIds) assertIllustrativeSceneSelection(await readSocialTaskDetail(input), input.value.changes.illustrativeSceneIds);
       const {
         mode,
         weeklyPlanId,
@@ -270,6 +272,8 @@ export async function updateSocialContentTask(input: {
         legacyCreationRoute,
         ...briefChanges
       } = input.value.changes;
+      if (current.presenterPolicy && 'presenterAssetId' in briefChanges && !briefChanges.presenterPolicy) briefChanges.presenterPolicy = briefChanges.presenterAssetId ? 'selected' : 'none';
+      if (briefChanges.presenterPolicy === 'none') Object.assign(briefChanges, { presenterAssetId: null, requestedPresenterAssetId: null, requestedPresenterName: null });
       // The workbench may switch the target product before generating the
       // narration draft. Resolve only an actual Enterprise Center ID and use
       // its canonical name; a client-supplied label cannot invent a product.
@@ -304,7 +308,9 @@ export async function updateSocialContentTask(input: {
       const scriptFieldsChanged = [
         'title', 'objective', 'productId', 'productRef', 'languages', 'callToAction', 'brandNotes', 'restrictions',
       ].some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
-      const productionPlanFieldsChanged = ['productionApproach', 'assetAvailability', 'managementMode', 'presenterAssetId', 'referenceReuse'].some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
+      const productionPlanFieldsChanged = ['productionApproach', 'assetAvailability', 'managementMode', 'presenterAssetId',
+        'referenceReuse', 'presenterPolicy', 'presenterSpeechReviewPolicy', 'illustrativeSceneIds']
+        .some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
       if (productionPlanFieldsChanged) brief.materialRoutingPolicyVersion = 'type-aware.v2'; // Forward route revision uses the current planner.
       await applyFunctionalReplacementRevision({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,record,
         actorUserId:input.userId,revisedAt:timestamp,currentApproach:current.productionApproach,

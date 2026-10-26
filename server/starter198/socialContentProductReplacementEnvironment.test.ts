@@ -126,6 +126,17 @@ test('current v15 derived supply plan binds the exact shot and SKU when the dire
   assert.ok(await afterStatusAdvance.composition(f.input));
   await afterStatusAdvance.assertCurrent();
 });
+test('enterprise display-name reference is the selected SKU only while its trusted identity stays unchanged',async()=>{
+ const f=await fixture();
+ f.task.brief.productId='product';
+ f.input.spec.productIdentity.groups[0]!.productRef='Confirmed enterprise product';
+ let name='Confirmed enterprise product';
+ f.context.readEnterpriseProfile=(async()=>({products:{items:[{id:'product',name}]}})) as unknown as typeof f.context.readEnterpriseProfile;
+ const ports=await createEnvironmentProductReplacementPorts(f.input,f.context);
+ await ports.assertCurrent();
+ name='Other enterprise product';await assert.rejects(ports.assertCurrent(),/canonical_product_identity_changed/);
+ await assert.rejects(createEnvironmentProductReplacementPorts(f.input,f.context),/canonical_product_identity_changed/);
+});
 test('frozen product shot diagnostics identify the exact failed invariant without provider work',async()=>{
   const f=await fixture(),shot=(f.task.replication_script as any).shots[0].materialPlan;
   assert.equal(diagnoseFrozenProductShot(f.input,f.task,shot),null);
@@ -192,7 +203,7 @@ test('environment ports integrate actual extraction, exact budget grants, provid
     if (result.status !== 'completed') throw Error('unexpected');
     const budgetDirectory = path.join(path.dirname(f.context.budgetRoot!), 'social-content-task-budget');
     const ledger = JSON.parse(fs.readFileSync(path.join(budgetDirectory, fs.readdirSync(budgetDirectory).find(n => n.endsWith('.json'))!), 'utf8'));
-    assert.equal(ledger.limitMicros, 15000000);
+    assert.equal(ledger.limitMicros, 10000000, 'the explicit task ceiling survives the provider environment');
     assert.equal(Object.values(ledger.entries).reduce((total: number, e: any) => total + e.reservedMicros, 0), 4800000, 'both QA stages count against the whole-film ceiling');
     assert.equal(result.duration, 3); assert.equal(result.actualCostCny, null); assert.equal(result.estimatedCostCny, 4.8);
     const evidence = result.quality.evidenceRefs.filter(ref => ref.endsWith('.json'));

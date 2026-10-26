@@ -5,7 +5,12 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import ffmpegStatic from 'ffmpeg-static';
-import { planVideoSourceSegments, resolveSourceDurations, type TimedSourceAsset } from './videoSourcePlan.js';
+import {
+  planVideoSourceSegments,
+  resolveShowinfoVisualDuration,
+  resolveSourceDurations,
+  type TimedSourceAsset,
+} from './videoSourcePlan.js';
 
 const video = (id: string, duration: number): TimedSourceAsset => ({ id, name: id, duration, type: 'video' });
 const short = planVideoSourceSegments(Array(5).fill(video('short', 1.93)), Array(5).fill(4));
@@ -21,6 +26,14 @@ assert.ok(planVideoSourceSegments([video('bad-target', 20)], [NaN]).gaps.length)
 assert.ok(planVideoSourceSegments([video('short-shot', 20)], [0.1]).gaps.length);
 assert.equal(planVideoSourceSegments([{ id: 'image', type: 'image', duration: 0 }], [4]).gaps.length, 0, 'intentional image hold remains supported');
 assert.deepEqual(planVideoSourceSegments([video('a', 10), video('b', 10), video('a', 10)], [3, 4, 3]).segments.map(s => s.trimStart), [0, 0, 3]);
+assert.equal(resolveShowinfoVisualDuration([
+  'n: 28 pts_time:2.8 duration: 0 duration_time:0',
+  'n: 29 pts_time:2.9 duration: 0 duration_time:0',
+].join('\n')), 3, 'zero-duration final frame uses observed cadence');
+assert.equal(resolveShowinfoVisualDuration([
+  'n: 0 pts_time:0 duration: 512 duration_time:0.04',
+  'n: 1 pts_time:0.04 duration: 512 duration_time:0.04',
+].join('\n')), 0.08, 'explicit frame duration remains authoritative');
 
 // Technical fixtures only: no business acceptance, external service or tenant data.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'source-segments-regression-'));

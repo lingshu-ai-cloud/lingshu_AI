@@ -1,4 +1,5 @@
 import {consolidateReferenceSemanticShots, type ReferenceSemanticPlanning} from './socialContentSemanticConsolidation.js';
+import {correctRepeatedSpokenWords} from './socialSpokenCopyReview.js';
 import type {
   SocialContentThemeId,
   SocialReferenceShotAnalysis,
@@ -608,7 +609,7 @@ export function buildSocialTaskReferencePackage(input: {
       return {
         lineId: `line-${String(index + 1).padStart(3, '0')}`,
         referenceText: line.text,
-        draftText: adjusted.text,
+        draftText: correctRepeatedSpokenWords(adjusted.text),
         sourceStartSeconds: line.startSeconds,
         sourceEndSeconds: line.endSeconds,
         sourcePrecision: line.precision,
@@ -630,8 +631,11 @@ export function buildSocialTaskReferencePackage(input: {
     const ownedLines = speechLines.filter(line => line.narrationOwnerShotId === shotId);
     const spokenText = ownedLines.map(line => line.draftText).join(' ');
     const referenceText = ownedLines.map(line => line.referenceText).join(' ');
+    const copyEdited = ownedLines.some(line => correctRepeatedSpokenWords(replaceIdentityOnly(line.referenceText, replacements).text) !== replaceIdentityOnly(line.referenceText, replacements).text)
+      || correctRepeatedSpokenWords(adjustedCaption.text) !== adjustedCaption.text;
     return {
     shotId,
+    ...(copyEdited ? {scriptOrigin: 'copy_edit_revision' as const} : {}),
     referenceShotId: shot.shotId,
     startSeconds: shot.startSeconds,
     endSeconds: shot.endSeconds,
@@ -649,7 +653,7 @@ export function buildSocialTaskReferencePackage(input: {
       mode: 'identity_only',
       replacedEntityTypes: adjustedVoiceover.replacedEntityTypes,
     },
-    captionText: adjustedCaption.text || null,
+    captionText: correctRepeatedSpokenWords(adjustedCaption.text) || null,
     audioAndTransition: shot.audioDescription,
     fidelityPoints: [...shot.fidelityPoints],
     mustDifferPoints: [...shot.mustDifferPoints],
@@ -670,7 +674,7 @@ export function buildSocialTaskReferencePackage(input: {
     shots: scriptShots,
     narrationLines: scriptShots.some(shot=>shot.scriptOrigin==='budget_semantic_revision') ? [] : narrationLines,
     narrationSourceStatus: narrationLines.length ? 'asr_aligned' : 'missing_source_asr',
-    structureFidelitySummary: scriptShots.some(shot=>shot.scriptOrigin==='budget_semantic_revision') ? '按整片预算和目标时长合并语义功能镜；所有参考镜头因素保留many-to-one映射。口播为企业原创精简版本，参考原时长与逐字台词不声称保真。' : '口播逐字逐句冻结，仅替换企业名、品牌名或产品名；同时保留句序、停顿、时长、前三秒机制、镜头功能与节奏关系。',
+    structureFidelitySummary: scriptShots.some(shot=>shot.scriptOrigin==='budget_semantic_revision') ? '按整片预算和目标时长合并语义功能镜；所有参考镜头因素保留many-to-one映射。口播为企业原创精简版本，参考原时长与逐字台词不声称保真。' : scriptShots.some(shot=>shot.scriptOrigin==='copy_edit_revision') ? '保留原始转写、句序与时间线；对明确重复的虚词做有记录的文案修订，配音与字幕使用修订稿。' : '口播逐字逐句冻结，仅替换企业名、品牌名或产品名；同时保留句序、停顿、时长、前三秒机制、镜头功能与节奏关系。',
     originalityDifferenceSummary: '不做事实改写；画面按当前技术栈重制，音乐、音效、字幕动效和视觉包装使用全新版本。',
     createdAt,
   };

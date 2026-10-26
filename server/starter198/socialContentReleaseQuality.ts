@@ -1,6 +1,6 @@
 import { hasSocialMeasuredMediaHardFailure } from './socialContentGraphQualityGate.js';
 import type { SocialContentTaskBrief } from '../../shared/contracts/socialContentWorkflow.js';
-import {PRODUCTION_BUDGET_POLICY,productionBudgetDuration,productionBudgetLimitCny,productionBudgetExceeded} from '../../shared/contracts/productionBudgetPolicy.js';
+import {PRODUCTION_BUDGET_POLICY,productionBudgetDuration,productionBudgetLimitCny,productionBudgetMaximumCny,productionBudgetExceeded} from '../../shared/contracts/productionBudgetPolicy.js';
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
   ? value as Record<string, unknown> : {};
@@ -23,6 +23,12 @@ export function inspectSocialContentReleaseQuality(input: SocialContentReleaseQu
   const applicable = content.workflowSchema === 'social-content.auto-production.v3';
   if (!applicable) return { approved: true, applicable: false, failures: [] };
   const failures: string[] = [];
+  if(content.testOnly===true||content.publishable===false)failures.push('test_input_not_publishable');
+  if(input.brief.presenterSpeechReviewPolicy==='heygen_native_human_review'){
+    const speech=object(content.presenterSpeechReview);
+    if(speech.policy!=='heygen_native_human_review'||speech.provider!=='heygen'||speech.status!=='pending_human_review'||speech.automatedLipSyncPassed!==false)failures.push('presenter_human_review_evidence_missing');
+    if(input.mode==='managed')failures.push('presenter_human_review_required');
+  }
   const result = object(content.productionResult), technical = object(result.technicalReview);
   const creative = object(result.creativeReview), render = object(content.render);
   if (technical.approved !== true || nonempty(technical.failures)
@@ -33,7 +39,7 @@ export function inspectSocialContentReleaseQuality(input: SocialContentReleaseQu
   if (object(content.delivery).status === 'requires_revision'
     || object(content.delivery).status === 'concept_preview') failures.push('delivery_not_ready');
   const cost=object(content.costSummary),evidence=object(cost.productionBudget);
-  const limit=productionBudgetLimitCny(productionBudgetDuration(input.brief));
+  const limit=productionBudgetMaximumCny(input.brief);
   const estimated=cost.estimatedBeforeGenerationCny;
   const recorded=[cost.recordedProviderCostCny,cost.recordedProviderEstimatedCostCny].filter(amount);
   const invalidRecorded=[cost.recordedProviderCostCny,cost.recordedProviderEstimatedCostCny].some(value=>value!=null&&!amount(value));
@@ -43,7 +49,7 @@ export function inspectSocialContentReleaseQuality(input: SocialContentReleaseQu
     if(evidence.policyVersion!==PRODUCTION_BUDGET_POLICY||!amount(evidence.retainedCny)
       ||!amount(evidence.maximumCny)||evidence.maximumCny<=0||!amount(evidence.acquisitionCny)
       ||!amount(evidence.durationSeconds)||evidence.durationSeconds<=0)failures.push('budget_evidence_missing');
-    else if(productionBudgetExceeded(evidence.maximumCny,Math.min(limit,productionBudgetLimitCny(Number(evidence.durationSeconds))))
+    else if(productionBudgetExceeded(evidence.maximumCny,limit)
       ||productionBudgetExceeded(evidence.retainedCny,Math.min(limit,evidence.maximumCny)))failures.push('budget_exceeded');
   }
   // Basic media acceptance is independent of how a film was conceived. Only

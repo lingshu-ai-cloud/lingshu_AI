@@ -53,7 +53,7 @@ let reserves = 0;
 const approvedFramePort={resolve:async(input:any)=>({imageAssetId:'offline-approved-image',sha256:input.approvedFirstFrame.sha256,approvalRecordHash:input.approvedFirstFrame.approvalRecordHash}),verify:async(input:any,value:any)=>value.sha256===input.approvedFirstFrame.sha256&&value.approvalRecordHash===input.approvedFirstFrame.approvalRecordHash};
 const ports = createSocialHeyGenBridgePorts({ store,approvedFirstFrame:approvedFramePort,
   client: {
-    async create(_input, requestId) { creates += 1; assert.match(requestId, /^social-presenter:/); return 'provider-task-a'; },
+    async create(_input, requestId) { assert.equal(_input.avatarId,'');assert.equal(_input.imageAssetId,'offline-approved-image');assert.equal(_input.ratio,'9:16'); creates += 1; assert.match(requestId, /^social-presenter:/); return 'provider-task-a'; },
     async status() { return { status: 'completed' as const, url: 'https://files.heygen.ai/output.mp4', duration: 3 }; },
   },
   budget: { status: () => ({ allowed: true, reservationCny: 1.2, remainingCny: 10, reason: '' }), async reserve() { reserves += 1; } },

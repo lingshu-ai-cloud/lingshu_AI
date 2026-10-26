@@ -436,7 +436,7 @@ export interface SocialInspirationScores {
 
 export interface SocialReplicationScriptShot {
   /** Authored copy/timing; not recovered reference ASR or a review decision. */
-  scriptOrigin?: 'independent_revision' | 'budget_semantic_revision';
+  scriptOrigin?: 'independent_revision' | 'budget_semantic_revision' | 'copy_edit_revision';
   shotId: string;
   referenceShotId: string | null;
   /** All reference factors retained by a consolidated authored scene. */
@@ -465,7 +465,7 @@ export interface SocialReplicationScriptShot {
     narrationOwnerShotId?: string;
     visualShotIds?: string[];
   }>;
-  /** New replication tasks only replace identity tokens; all other wording and timing stay frozen. */
+  /** Entity replacements remain traceable separately from a bounded copy edit. */
   voiceoverReplacement?: {
     mode: 'identity_only';
     replacedEntityTypes: Array<'company' | 'brand' | 'product'>;

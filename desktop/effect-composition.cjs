@@ -160,27 +160,32 @@ function textOverlayFilters(overlay, width, height) {
 }
 
 /** Apply color, camera motion and decorative/text layers to one normalized scene. */
-function sceneEffectFilters({ source, output, scene, width, height, target, intensity }) {
+function sceneEffectFilters({ source, output, scene, width, height, target, intensity, textOverlaysAvailable = true }) {
   // zoompan changes timebase but preserves input frame duration. Feeding
   // AVTB frames (duration 33333 ticks) makes each output frame last 1111s.
   // Convert both PTS and duration to frame ticks before applying motion.
   const inputTiming = 'fps=30,settb=1/30,setpts=N';
-  const timing = 'settb=AVTB,setpts=N/(30*TB)';
+  // xfade rejects inputs whose frame-rate metadata becomes 1/0 on some Linux
+  // FFmpeg builds. Freeze both cadence and timebase at this node boundary.
+  const timing = 'fps=30,settb=1/30,setpts=N';
   if (!scene || !scene.enabled || intensity <= 0) return [`${source}${inputTiming},${timing}[${output}]`];
   const chain = [inputTiming, colorFilter(scene.color), motionFilter(scene.motion, width, height, target, intensity)];
   const ordered = [...scene.overlays].sort((a, b) => {
     const order = { background: 0, around_subject: 1, foreground: 2 };
     return order[a.layer] - order[b.layer];
   });
-  for (const overlay of ordered) chain.push(...textOverlayFilters(overlay, width, height));
+  if (textOverlaysAvailable) {
+    for (const overlay of ordered) chain.push(...textOverlayFilters(overlay, width, height));
+  }
   return [`${source}${chain.join(',')},${timing}[${output}]`];
 }
 
 /** Join scenes, preserving legacy concat when every boundary is a hard cut. */
-function joinSceneFilters({ labels, scenes, targets, output = 'vcat' }) {
+function joinSceneFilters({ labels, scenes, targets, output = 'vcat', animatedTransitionsAvailable = true }) {
   if (!labels.length) return { filters: [], output: `[${output}]`, duration: 0 };
   if (labels.length === 1) return { filters: [`${labels[0]}null[${output}]`], output: `[${output}]`, duration: targets[0] || 0 };
-  const hasAnimatedTransition = scenes.slice(0, -1).some(scene => scene?.enabled && scene.transitionOut?.type !== 'cut' && scene.transitionOut?.duration > 0);
+  const hasAnimatedTransition = animatedTransitionsAvailable
+    && scenes.slice(0, -1).some(scene => scene?.enabled && scene.transitionOut?.type !== 'cut' && scene.transitionOut?.duration > 0);
   if (!hasAnimatedTransition) {
     return {
       filters: [`${labels.join('')}concat=n=${labels.length}:v=1:a=0[${output}]`],
@@ -196,7 +201,7 @@ function joinSceneFilters({ labels, scenes, targets, output = 'vcat' }) {
     const pad = transition?.type !== 'cut' ? finite(transition?.duration, 0) : .001;
     if (index === labels.length - 1) return label;
     const padded = `[effectpad${index}]`;
-    filters.push(`${label}tpad=stop_mode=clone:stop_duration=${Math.max(.001, pad).toFixed(3)}${padded}`);
+    filters.push(`${label}tpad=stop_mode=clone:stop_duration=${Math.max(.001, pad).toFixed(3)},fps=30,settb=1/30,setpts=N${padded}`);
     return padded;
   });
   let current = paddedLabels[0];

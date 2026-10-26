@@ -704,7 +704,7 @@ export function createStarter198OrchestratorQueue(dependencies: {
           now,
           accessResolver: dependencies.socialContentAccessResolver,
           productionRunner: dependencies.socialContentProductionRunner
-            ?? (dataStore === store ? enqueueSocialContentAutoProduction : undefined),
+            ?? enqueueSocialContentAutoProduction,
           materialEvidencePorts: dependencies.materialEvidencePorts,
         });
       }

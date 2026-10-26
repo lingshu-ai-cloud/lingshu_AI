@@ -1,5 +1,6 @@
+import { socialLocalMediaHash as mediaHash, stableSocialMediaInput as stableMediaInput } from './socialMediaInputIdentity.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, createReadStream, existsSync } from 'node:fs';
+import { constants, existsSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { assertCurrentContentExecutionActive, readCurrentContentExecutionCheckpoint, recordCurrentContentExecutionCheckpoint } from '../contentExecution/context.js';
@@ -10,26 +11,11 @@ import type { ProductionAsset } from './socialContentProductionMaterials.js';
 import {readSocialRenderFrameContract,type SocialRenderFrameContract} from './socialRenderFrameContract.js';
 import type { VideoProductionGraphPhase } from '../../shared/contracts/videoProductionSupervisor.js';
 
-export type SocialProductionGraphPhase = Exclude<VideoProductionGraphPhase, 'delivery'>;
+/** Executable media phases owned by the social production runtime. Review,
+ * handoff and delivery remain graph/application authority boundaries. */
+export type SocialProductionGraphPhase = Exclude<VideoProductionGraphPhase,
+  'delivery' | 'handoff'>;
 type RenderPort = NonNullable<SocialContentAutoProductionRuntime['renderComposite']>;
-async function mediaHash(filePath: string): Promise<string> {
-  const hash = createHash('sha256');
-  for await (const chunk of createReadStream(filePath)) hash.update(chunk);
-  return hash.digest('hex');
-}
-
-/** Bind the render to actual bytes, rather than OS-temporary path names. */
-async function stableMediaInput(value: unknown): Promise<unknown> {
-  if (typeof value === 'string' && path.isAbsolute(value) && existsSync(value)) {
-    const stat = await fsp.stat(value);
-    if (stat.isFile()) return { mediaSha256: await mediaHash(value) };
-  }
-  if (Array.isArray(value)) return Promise.all(value.map(stableMediaInput));
-  if (value && typeof value === 'object') return Object.fromEntries(await Promise.all(
-    Object.entries(value).map(async ([key, item]) => [key, await stableMediaInput(item)] as const),
-  ));
-  return value;
-}
 
 export interface SocialRenderStageReceipt {
   cachePath: string;
@@ -241,16 +227,25 @@ export async function executeSocialRenderStage(input: {
   manifest: Parameters<RenderPort>[0]; outputDirectory: string; render: RenderPort;
   checkpointEnabled?: boolean;
 }): Promise<{ ok: true; outputPath: string; receipt: SocialRenderStageReceipt; reused: boolean }> {
+  const scope = createHash('sha256').update(JSON.stringify([input.tenantId, input.taskId, input.runId])).digest('hex');
+  const directory = path.resolve('data/content-execution-render', scope);
   if (input.checkpointEnabled === false) {
     const rendered = await input.render(input.manifest, undefined, input.outputDirectory);
     if (!rendered.ok || !rendered.outputPath || !existsSync(rendered.outputPath)) throw new Error(rendered.error || '视频渲染没有生成输出文件');
     const sha256=await mediaHash(rendered.outputPath);
-    return { ok: true, outputPath: rendered.outputPath, receipt: { cachePath: '', sha256, inputHash: '', ...verifySocialSubtitleRenderAttestation({raw:rendered,outputSha256:sha256,manifest:input.manifest}),frameRenderEvidence:verifySocialFrameRenderAttestation({raw:rendered,outputSha256:sha256,manifest:input.manifest}) }, reused: false };
+    const attested=verifySocialSubtitleRenderAttestation({raw:rendered,outputSha256:sha256,manifest:input.manifest});
+    const subtitleAssSidecar=attested?.rendererAttestation
+      ?await persistPrivateAssSidecar({directory,raw:rendered,attestation:attested.rendererAttestation,outputSha256:sha256})
+      :undefined;
+    const captionBaselineSidecar=attested?.rendererAttestation
+      ?await persistPrivateCaptionBaseline({directory,raw:rendered,attestation:attested.rendererAttestation,outputSha256:sha256})
+      :undefined;
+    return { ok: true, outputPath: rendered.outputPath, receipt: { cachePath: '', sha256, inputHash: '',
+      ...(attested??{}),subtitleAssSidecar,captionBaselineSidecar,
+      frameRenderEvidence:verifySocialFrameRenderAttestation({raw:rendered,outputSha256:sha256,manifest:input.manifest}) }, reused: false };
   }
-  const inputHash = socialRequestHash(await stableMediaInput(input.manifest));
-  const scope = createHash('sha256').update(JSON.stringify([input.tenantId, input.taskId, input.runId])).digest('hex');
-  const directory = path.resolve('data/content-execution-render', scope);
-  const saved = readCurrentContentExecutionCheckpoint<SocialRenderStageReceipt>({ stage: 'social.graph_render', version: '1', inputHash });
+  const inputHash = socialRequestHash({ renderPolicy: 'social-render-timeline.v2', manifest: await stableMediaInput(input.manifest) });
+  const saved = readCurrentContentExecutionCheckpoint<SocialRenderStageReceipt>({ stage: 'social.graph_render', version: '2', inputHash });
   if (saved && saved.inputHash === inputHash && /^[a-f0-9]{64}$/.test(saved.sha256)
     && saved.cachePath === path.join(directory, `${saved.sha256}.mp4`)) {
     try {
@@ -298,7 +293,7 @@ export async function executeSocialRenderStage(input: {
     ?await persistPrivateCaptionBaseline({directory,raw:rendered,attestation:attested.rendererAttestation,outputSha256:sha256})
     :undefined;
   const receipt:SocialRenderStageReceipt = { cachePath, sha256, inputHash, ...attested,frameRenderEvidence:verifySocialFrameRenderAttestation({raw:rendered,outputSha256:sha256,manifest:input.manifest}),subtitleAssSidecar,captionBaselineSidecar };
-  await recordCurrentContentExecutionCheckpoint({ stage: 'social.graph_render', version: '1', inputHash, payload: receipt });
+  await recordCurrentContentExecutionCheckpoint({ stage: 'social.graph_render', version: '2', inputHash, payload: receipt });
   return { ok: true, outputPath: cachePath, receipt, reused: false };
 }
 

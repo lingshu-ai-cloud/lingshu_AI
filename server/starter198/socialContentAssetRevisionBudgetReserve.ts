@@ -41,6 +41,7 @@ export async function reserveSocialProductAssetRevisionBudget(input:{repository:
   if(plan.scope.tenantId!==scope.tenantId||plan.scope.taskId!==scope.taskId
    ||plan.scope.runId!==scope.runId||plan.scope.planHash!==scope.planHash
    ||plan.scope.budgetTaskId!==undefined||!validProductionBudgetMaximum(plan.maximumCny,plan.productionDurationSeconds)
+   ||Math.round(plan.maximumCny*1e6)!==Math.round(frozen.maximumCny*1e6)
    ||plan.authorizationRef!==`asset-revision:${frozen.guard.recordHash}`
    ||plan.revisionGuardHash!==frozen.guard.recordHash
    ||plan.replacementSha256!==frozen.guard.replacementSha256)return fail('approved_plan_invalid');

@@ -204,6 +204,7 @@
     "1792800000_platform_ad_authorization_lifecycle.js": "5aba5e43e18bf6b72fcc0b8970bcf267b10e8ac99d4c1ce63c6151a2b1c92258",
     "1792800001_repair_platform_ad_authorization_fields.js": "af8e71ee15d3d75419ea88cfe7bb853837d8d1f62abf66261172a13b093b68bd",
     "1792857600_create_enterprise_onboarding_drafts.js": "8851dc4cfcc569bb28a070b77e7ad0f1800d04b2bc07c956485d27eff7b1efa2",
-    "1792857601_unique_tenant_profiles.js": "6cfcf0891b73fe92b0addf761aeb646c2dedc99d3cf9185819dae337874142a8"
+    "1792857601_unique_tenant_profiles.js": "6cfcf0891b73fe92b0addf761aeb646c2dedc99d3cf9185819dae337874142a8",
+    "1792944000_allow_original_social_production_handoffs.js": "351114cda39c0a5f4987710a1fa5f5d93523185af69a6a95fda3d86a2b157fc8"
   }
 }

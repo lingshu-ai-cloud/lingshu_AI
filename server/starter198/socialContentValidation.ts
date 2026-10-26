@@ -1,4 +1,5 @@
 import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
+import { parseIllustrativeSceneIds as validateIllustrativeSceneIds } from '../../shared/contracts/illustrativeScenePolicy.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   SOCIAL_ASSET_AVAILABILITIES,
@@ -130,9 +131,12 @@ const BRIEF_KEYS = [
   'customTopic', 'topic', 'legacyCreationRoute',
   'productionMode', 'creationMode', 'assetAvailability', 'managementMode',
   'programRef', 'targetAccountRef', 'accountPlaybookRef', 'referenceMode', 'primaryExperimentVariable',
-  'productionApproach', 'referenceReuse',
+  'productionApproach', 'referenceReuse', 'presenterPolicy', 'presenterSpeechReviewPolicy', 'illustrativeSceneIds',
 ] as const;
 
+export function parseIllustrativeSceneIds(value: unknown): string[] {
+  try { return validateIllustrativeSceneIds(value); } catch { throw new SocialContentWorkflowError('social_illustrative_scene_ids_invalid', 400); }
+}
 function optionalNumber(value: unknown, code: string, maximum: number, integer = false): number | null {
   if (value === undefined || value === null || value === '') return null;
   const parsed = Number(value);
@@ -182,6 +186,10 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
   const source = socialObject(value);
   if (!source) throw new SocialContentWorkflowError('social_content_task_invalid', 400);
   assertKeys(source, BRIEF_KEYS);
+  if (source.presenterPolicy !== undefined && !['none', 'selected'].includes(String(source.presenterPolicy))) throw new SocialContentWorkflowError('social_presenter_policy_invalid', 400);
+  if (source.presenterSpeechReviewPolicy !== undefined && !['independent_lip_sync', 'heygen_native_human_review'].includes(String(source.presenterSpeechReviewPolicy))) throw new SocialContentWorkflowError('social_presenter_speech_review_policy_invalid', 400);
+  if (source.presenterPolicy === 'selected' && !socialText(source.presenterAssetId)) throw new SocialContentWorkflowError('social_presenter_selection_required', 400);
+  if (source.presenterPolicy === 'none' && (source.presenterAssetId || source.requestedPresenterAssetId || source.requestedPresenterName)) throw new SocialContentWorkflowError('social_presenter_policy_conflict', 400);
   const requestedOutputCount = source.requestedOutputCount === undefined || source.requestedOutputCount === null
     ? null
     : Number(source.requestedOutputCount);
@@ -231,14 +239,17 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
   if (legacyCreationRoute && !['material', 'clone', 'product'].includes(legacyCreationRoute)) {
     throw new SocialContentWorkflowError('social_content_legacy_route_invalid', 400);
   }
-  const targetDurationSeconds = optionalNumber(source.targetDurationSeconds, 'social_content_target_duration_invalid', 60);
-  if (targetDurationSeconds !== null && targetDurationSeconds < 6) {
+  const targetDurationSeconds = optionalNumber(source.targetDurationSeconds, 'social_content_target_duration_invalid', Infinity);
+  if (targetDurationSeconds !== null && targetDurationSeconds <= 0) {
     throw new SocialContentWorkflowError('social_content_target_duration_invalid', 400);
   }
   return {
     ...parseSocialReplicationContext(source),
     materialRoutingPolicyVersion: 'type-aware.v2',
+    ...(source.illustrativeSceneIds !== undefined ? { illustrativeSceneIds: parseIllustrativeSceneIds(source.illustrativeSceneIds) } : {}),
     ...(source.referenceReuse != null ? {referenceReuse: parseSocialReferenceReuse(source.referenceReuse)} : {}),
+    ...(source.presenterPolicy ? { presenterPolicy: source.presenterPolicy as 'none' | 'selected' } : {}),
+    ...(source.presenterSpeechReviewPolicy ? { presenterSpeechReviewPolicy: source.presenterSpeechReviewPolicy as 'independent_lip_sync' | 'heygen_native_human_review' } : {}),
     title: requiredText(source.title, 'social_content_title_invalid', 120),
     objective: requiredText(source.objective, 'social_content_objective_invalid', 1_000),
     productId: optionalText(source.productId, 'social_content_product_id_invalid', 200),
@@ -255,7 +266,8 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     cadence: optionalText(source.cadence, 'social_content_cadence_invalid', 200),
     requestedOutputCount: mode === 'instant' ? 1 : requestedOutputCount,
     weeklyBudgetCny: optionalNumber(source.weeklyBudgetCny, 'social_content_weekly_budget_invalid', 10_000_000),
-    perItemBudgetCny: productionBudgetLimitCny(productionBudgetDuration({targetDurationSeconds})),
+    perItemBudgetCny: optionalNumber(source.perItemBudgetCny, 'social_content_per_item_budget_invalid', 10_000_000)
+      ?? productionBudgetLimitCny(productionBudgetDuration({targetDurationSeconds})),
     targetDurationSeconds,
     retryReserveCny: optionalNumber(source.retryReserveCny, 'social_content_retry_reserve_invalid', 10_000_000),
     planningMode: planningMode as CreateSocialContentTaskInput['planningMode'],

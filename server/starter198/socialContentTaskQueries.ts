@@ -1,3 +1,5 @@
+import { hydrateSocialContentPreviews } from './socialContentPreviewProjection.js';
+import { hydrateSocialContentExecutionSummaries } from './socialContentQueueProjection.js';
 import type { SocialContentTaskPage, SocialContentWorkspace } from '../../shared/contracts/socialContentWorkflow.js';
 import { enterpriseProductIdentity } from '../lib/enterpriseProductIdentity.js';
 import { STARTER_COLLECTIONS, type Starter198Repository } from './repository.js';
@@ -19,7 +21,7 @@ export async function listSocialContentTasks(input: {
     ...(input.status ? { where: { status: input.status } } : {}), sort: '-updated_at', page: input.page, perPage: input.perPage,
   });
   const unavailableItems:NonNullable<SocialContentTaskPage['unavailableItems']>=[];
-  const items=await Promise.all(result.items.map(async record=>{
+  const parsedItems=(await Promise.all(result.items.map(async record=>{
     let task;
     try {task=socialTaskSummary(record);}
     catch(error){
@@ -29,13 +31,19 @@ export async function listSocialContentTasks(input: {
       unavailableItems.push({taskId:socialText(record.task_id)||`unreadable:${record.id}`,title:socialText(brief?.title)||'任务资料待核对',createdAt:Number.isFinite(Date.parse(createdAt))?createdAt:null,errorCode:error.code});
       return null;
     }
+    return task;
+  }))).filter((item):item is NonNullable<typeof item>=>item!==null);
+  const executedItems=await hydrateSocialContentExecutionSummaries({store:input.repository.dataStore,
+    tenantId:input.tenantId,items:parsedItems});
+  const previewItems=await hydrateSocialContentPreviews({...input,items:executedItems});
+  const items=await Promise.all(previewItems.map(async task=>{
     if(!task.artifactCount)return {...task,preview:{coverUrl:null,sourceStatus:'available' as const}};
     try {
       const artifacts=await input.repository.list(STARTER_COLLECTIONS.socialContentArtifacts,input.tenantId,{where:{task_id:task.taskId,artifact_kind:'short_video'},sort:'-updated_at',page:1,perPage:50});
       return {...task,preview:{coverUrl:socialContentTaskCover(artifacts.items,input.tenantId,task.taskId),sourceStatus:'available' as const}};
     }catch{return {...task,preview:{coverUrl:null,sourceStatus:'unavailable' as const}};}
   }));
-  return { ...result, items:items.filter((item):item is NonNullable<typeof item>=>item!==null),unavailableItems };
+  return {...result,items,unavailableItems};
 }
 
 export async function readSocialContentWorkspace(input: {
