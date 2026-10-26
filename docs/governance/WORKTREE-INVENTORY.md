@@ -3,6 +3,13 @@
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-26 小程序功能合入统一基线（仅本轮关联树）
+
+- 来源 `/Users/julia1/Documents/ChatGPT/1026小程序` / `feature/miniapp-fixes-20261026` 固定为 `64ba79a49de8a09ff3647d475c5cab515ba20869`，源码提交后干净；忽略的本地预览服务、数据和图片不迁入基线。
+- 新建受管隔离候选 `/Users/julia1/.codex/worktrees/miniapp-baseline-integration/1026小程序` / `integration/miniapp-baseline-20261026`，以 `353879221169176cb26d97391ad6f4dc7367a9f3` 为起点，源码合并 `5f6e09f4fda1db8306cc07f3d3c4dd909c88ee03`；验证及治理提交后保留候选。
+- 权威基线仍为 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026` / `baseline/unified-20261026`。仅在验证通过且旧指针未变化时快进；原视频排序脏改动逐字保留。恢复点 `backup/pre-miniapp-integration-20261026-35387922`。
+- 本轮未清理、重置、归档其他工作树，未触碰保留的图片AIGC树；未复制运行数据、推送或部署。详见 [本次合入记录](MINIAPP-INTEGRATION-20261026.md)。
+
 ## 2026-10-26 灵小枢首页分叉整合
 
 - 新增托管隔离树 `assistant-home-integrated/1026对话界面外部信息`，分支`integration/assistant-home-unified-20261026`，验证源码38d135f1。统一基线由86d855e1安全快进，恢复分支保留；源码与治理提交分开。

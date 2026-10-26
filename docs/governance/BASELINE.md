@@ -2,6 +2,14 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前统一开发基线：小程序三 Tab 与按钮链路修复（2026-10-26）
+
+- 唯一默认基线继续为 `baseline/unified-20261026`，权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`。从 `353879221169176cb26d97391ad6f4dc7367a9f3` 合入小程序功能分支 `64ba79a49de8a09ff3647d475c5cab515ba20869`，已验证源码合并为 `5f6e09f4fda1db8306cc07f3d3c4dd909c88ee03`；独立治理提交不改变源码。本节取代下方历史“当前”声明。
+- 保留较新基线首页、场景、日历、资讯与 V4 功能；新增小程序三个 Tab、独立助手历史及未读、素材/拍摄与客户交互修复。源码与本地预览数据分别保留；不迁入凭据、运行库或媒体。
+- 实际通过：小程序164、后端40、预览隔离2、工作台12，类型、2954文件架构/ratchet、204项迁移只读清单与 checksum guard、共享生成检查、主站/账号中心构建及 diff 检查。未运行全仓 quality/verify；原基线周任务M1已知失败与真机/付费/渠道未验收边界保留。
+- 目标原有 `server/videos/videoVisibilityMaintenance.ts` 未提交改动不纳入合并，快进前后补丁及文件哈希一致；权威树仍非干净。恢复分支 `backup/pre-miniapp-integration-20261026-35387922` 保留。没有推送、部署、数据库迁移或真实供应商调用。
+- 详见 [小程序合并与验证记录](MINIAPP-INTEGRATION-20261026.md)。下一步按明确对象、账号和预算完成体验版真实链路验收，不能以源码合并代替运行/发布验收。
+
 ## 当前统一开发基线：灵小枢首页功能整合（2026-10-26）
 
 - 唯一默认基线继续为 `baseline/unified-20261026`，权威树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`。本节取代下方历史“当前”声明。本地已从 `86d855e1` 快进至验证源码 `38d135f16058cb8403b46949de6d62363606d804`；后续仅治理提交。恢复分支 `backup/pre-assistant-home-integration-20261026-86d855e1` 保留。
