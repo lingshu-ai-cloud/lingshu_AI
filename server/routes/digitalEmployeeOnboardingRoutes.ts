@@ -168,7 +168,7 @@ export function createDigitalEmployeeOnboardingRoutes(deps: Pick<DigitalEmployee
         const missing = [
           ...(!minimalCompanyName ? ['企业名称'] : []),
           ...(!minimalBrandName ? ['品牌名称'] : []),
-          ...(!(confirmation?.products.length || enterprise.products.items?.length) ? ['产品表'] : []),
+          ...(!(confirmation?.productsDeferred || confirmation?.products.length || enterprise.products.items?.length) ? ['产品表'] : []),
           ...(!minimalContentStage ? ['社媒经营阶段'] : []),
         ];
         if (missing.length) { res.status(400).json({ error: 'onboarding_incomplete', missing }); return; }

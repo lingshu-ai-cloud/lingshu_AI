@@ -38,6 +38,7 @@ for (const newsType of ['行业资讯', '社交媒体资讯', '政策与平台�
   assert.match(promptCatalog, new RegExp(`label: '${newsType}'`), `今日资讯必须提供${newsType}卡片`);
 }
 assert.match(home, /useState<AssistantHomeQuickLauncherId \| null>\(null\)/, '首页默认不得展示任何大卡片');
+assert.match(home, /HOME_GROWTH_TOUR_START_EVENT, \{ detail: \{ restart: true \} \}/, '点击海外增长导览卡片必须从头开始，不能停留在旧进度');
 assert.match(home, /activeLauncher \? <div className="creator-home__quick-panel">[\s\S]{0,1600}activePrompts\.map/, '点击小按钮后才可显示其对应的大卡片');
 assert.doesNotMatch(home, /全部快捷任务/, '首页不应增加额外的全部快捷任务层级');
 assert.doesNotMatch(home, /onClick=\{\(\) => onNavigate\?\.\('digitalEmployees'\)\}/, '首页业务卡不得直接跳转经营总览');

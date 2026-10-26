@@ -214,7 +214,7 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
       {showFirstRun && <div className="creator-home__canvas-stage">
         <section className="creator-home__canvas" aria-label="新用户入门">
           <div className="creator-home__canvas-grid creator-home__canvas-grid--onboarding">
-            <button type="button" className="creator-home__canvas-card" onClick={() => window.dispatchEvent(new CustomEvent(HOME_GROWTH_TOUR_START_EVENT))}>
+            <button type="button" className="creator-home__canvas-card" onClick={() => window.dispatchEvent(new CustomEvent(HOME_GROWTH_TOUR_START_EVENT, { detail: { restart: true } }))}>
               <span className="creator-home__canvas-card-shade" aria-hidden="true"/>
               <span className="creator-home__canvas-card-content">
                 <Compass size={28} aria-hidden="true"/>

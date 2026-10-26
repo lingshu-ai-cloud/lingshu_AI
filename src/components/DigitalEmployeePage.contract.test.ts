@@ -535,9 +535,11 @@ assert.match(pageSource, /readiness=\{data\.businessSnapshot\?\.readiness\s*\|\|
 assert.match(packageSource, /确认范围并启动/, 'first-run goal approval must expose the package scope confirmation');
 assert.match(pageSource, /statusSource: planTask\?\.statusSource/, 'task deep links must preserve the persisted plan status source');
 assert.match(onboardingPanelSource, /\/api\/overseas\/enterprise\/profile/, 'the onboarding product table must be loaded from the tenant enterprise knowledge profile');
-assert.match(firstOnboardingSource, /label="企业名称"[\s\S]*label="品牌名称"[\s\S]*label="行业\/主营分类"[\s\S]*label="主要提供什么"/, 'first onboarding step must establish the minimal enterprise and brand identity');
+assert.match(firstOnboardingSource, /label="企业名称"[\s\S]*label="品牌名称"[\s\S]*label="行业\/主营分类"[\s\S]*<Select[\s\S]*CATEGORY_OPTIONS/, 'first onboarding step must establish identity with the shared industry choices');
+assert.doesNotMatch(firstOnboardingSource, /label="主要提供什么"/, 'the first onboarding step must not duplicate the product step');
 assert.doesNotMatch(firstOnboardingSource, /目标市场|核心客户|经营目标|预算|周产量|数字人/, 'first onboarding step must not ask for downstream operating or production settings');
 assert.match(productTableOnboardingSource, /primaryLabel="确认主推产品，下一步"/, 'second onboarding step must confirm one to three focus products before continuing');
+assert.match(productTableOnboardingSource, /deferLabel="稍后设置"[\s\S]*onDefer/, 'the product step must allow deferring only product setup');
 assert.match(productTableOnboardingSource, /headerAction=\{[\s\S]{0,1200}<Upload[\s\S]{0,700}上传产品资料/, 'product upload must live in the step header');
 assert.match(productTableOnboardingSource, /return Upload\.LIST_IGNORE/, 'the product file picker must not post to an implicit upload endpoint');
 assert.match(productTableOnboardingSource, /accept="\.xlsx,\.xls,\.csv,\.pdf,\.docx,\.txt"/, 'product onboarding must accept spreadsheet, PDF, DOCX and TXT files');
@@ -697,7 +699,7 @@ assert.match(weeklyLaunchSource, /setWorkspaceView\(launchedStatus\?\.phase === 
 assert.match(onboardingPanelSource, /scrollIntoView\([\s\S]{0,120}behavior:\s*getScrollBehavior\(\)/, 'first-run transitions must focus the next required panel while respecting reduced-motion preferences');
 assert.match(onboardingPanelSource, /readEnterpriseOnboardingDraft\(\)[\s\S]{0,5000}persistedDraft\?\.baseFactVersion === factVersion/, 'the guide must resume only a draft based on the current enterprise fact version');
 assert.match(onboardingPanelSource, /setDraftRevision\(persistedDraft\?\.revision \|\| draftResult\.revision\)/, 'stale, restarted, and cleared drafts must retain only their server CAS revision cursor');
-assert.match(onboardingPanelSource, /saveEnterpriseOnboardingDraft\(buildOnboardingDraft\(nextStep\), draftRevision\)/, 'each transition must persist the shared draft with an expected revision');
+assert.match(onboardingPanelSource, /saveEnterpriseOnboardingDraft\(buildOnboardingDraft\(nextStep, productDeferredOverride\), draftRevision\)/, 'each transition, including product deferral, must persist the shared draft with an expected revision');
 assert.doesNotMatch(onboardingPanelSource, /saveEnterpriseProfile|saveSocialContentStage/, 'intermediate steps must not write partially confirmed enterprise facts');
 assert.match(onboardingStepsSource, /step=\{3\} title="确认面向谁、在哪里沟通，以及唯一 CTA"[\s\S]{0,1800}主要目标市场[\s\S]{0,600}主推买家[\s\S]{0,600}主平台[\s\S]{0,1000}唯一 CTA/, 'the third step must collect the complete market, audience, platform, stage, language, and CTA baseline');
 assert.match(onboardingPanelSource, /completeMinimalOnboarding[\s\S]{0,600}validateEnterpriseOnboardingConfirmation[\s\S]{0,900}minimalOnboarding:\s*true[\s\S]{0,200}onboardingConfirmation:/, 'minimal onboarding may complete only with the validated final confirmation payload');
