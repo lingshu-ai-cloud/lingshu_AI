@@ -196,10 +196,16 @@ export function repairCollapsedWeeklyVideoProduction(pack: WeeklyPackage): Weekl
   const cycle = pack.operatingContext?.cycle;
   if (production && cycle && plans.length && plans.some(plan => !plan.plannedPublishAt)) {
     const scheduledPlans = scheduleWeeklyVideos(plans, cycle.startsAt, cycle.endsAt);
-    return repairCollapsedWeeklyVideoProduction({
-      ...pack,
-      tasks: pack.tasks.map(task => task === production ? { ...task, videoPlans: scheduledPlans } : task),
-    });
+    const scheduleChanged = scheduledPlans.some((plan, index) => (
+      plan.plannedPublishDate !== plans[index]?.plannedPublishDate
+      || plan.plannedPublishAt !== plans[index]?.plannedPublishAt
+    ));
+    if (scheduleChanged) {
+      return repairCollapsedWeeklyVideoProduction({
+        ...pack,
+        tasks: pack.tasks.map(task => task === production ? { ...task, videoPlans: scheduledPlans } : task),
+      });
+    }
   }
   const independentCount = plans.filter(plan => plan.productionRole !== 'platform_adaptation').length;
   // Repair only the known historic slot-linking defect: the saved director
