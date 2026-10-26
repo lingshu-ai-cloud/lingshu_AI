@@ -32,6 +32,7 @@ export interface SocialContentSourceContext {
   referenceContentType?: 'video' | 'image';
   referenceMaterialId?: string;
   referenceSourceRecordId?: string;
+  referenceImageIndex?: number;
   referenceCaption?: string;
   referenceLayerBlueprints?: SocialImageReferenceLayerBlueprint[];
   aspectRatio?: string;

@@ -78,7 +78,8 @@ export default function ImageReplicationConversation({ request, onShowCreations,
       if (restored) setCreated(restored.task);
       setReferences(collected);
       if (context?.referenceSourceRecordId) {
-        const item = collected.find(image => image.sourceRecordId === context.referenceSourceRecordId);
+        const item = collected.find(image => image.sourceRecordId === context.referenceSourceRecordId
+          && (image.imageIndex || 0) === (context.referenceImageIndex || 0));
         if (!item) { setReference(null); setStep(0); setLoadError('原帖参考已不可用，请重新选择已采集图文或上传图片。'); }
         else setReference(item);
       }
@@ -92,7 +93,7 @@ export default function ImageReplicationConversation({ request, onShowCreations,
     }).catch(cause => { if (active && isCurrent()) setLoadError(cause instanceof Error ? cause.message : '产品与参考图片读取失败'); })
       .finally(() => { if (active && isCurrent()) setLoading(false); });
     return () => { active = false; };
-  }, [reload, context?.referenceMaterialId, context?.referenceSourceRecordId]);
+  }, [reload, context?.referenceMaterialId, context?.referenceSourceRecordId, context?.referenceImageIndex]);
 
   useEffect(() => { bottom.current?.scrollIntoView({ block: 'nearest' }); }, [step, created]);
   const product = products.find(item => item.id === productId);
@@ -101,9 +102,11 @@ export default function ImageReplicationConversation({ request, onShowCreations,
   useEffect(() => {
     if (!isCurrent()) return;
     checkpointWriter.current?.({ step, productId, objective, audience, callToAction, platform, aspectRatio, language, submitted,
-      ...((created?.id || checkpoint?.imageTaskId) ? { imageTaskId: created?.id || checkpoint?.imageTaskId } : {}) }, reference?.sourceRecordId ? { sourceRecordId: reference.sourceRecordId, name: reference.title.slice(0, 200) }
+      ...((created?.id || checkpoint?.imageTaskId) ? { imageTaskId: created?.id || checkpoint?.imageTaskId } : {}) }, reference?.sourceRecordId ? { sourceRecordId: reference.sourceRecordId,
+        imageIndex: reference.imageIndex || 0, name: reference.title.slice(0, 200) }
       : reference?.materialId ? { materialId: reference.materialId, name: reference.title.slice(0, 200) } : loading ? undefined : null);
-  }, [step, productId, objective, audience, callToAction, platform, aspectRatio, language, submitted, created?.id, reference?.materialId, reference?.sourceRecordId, loading]);
+  }, [step, productId, objective, audience, callToAction, platform, aspectRatio, language, submitted, created?.id,
+    reference?.materialId, reference?.sourceRecordId, reference?.imageIndex, loading]);
   const answers = [reference ? `参考图：${reference.title || '已选图文'}` : '',
     product ? `推广产品：${product.name}\n${PLATFORM_LABELS[platform]} · ${aspectRatio} · ${imageLanguageLabel(language)}` : ''];
   const advance = () => {

@@ -56,8 +56,10 @@ export const assistantCreationPortalSchema = z.object({
     reference: z.object({
       materialId: z.string().min(1).max(200).optional(),
       sourceRecordId: z.string().min(1).max(200).optional(),
+      imageIndex: z.number().int().min(0).max(9).optional(),
       name: z.string().min(1).max(200),
-    }).strict().refine(value => Boolean(value.materialId) !== Boolean(value.sourceRecordId), '需要唯一参考来源').optional(),
+    }).strict().refine(value => Boolean(value.materialId) !== Boolean(value.sourceRecordId)
+      && (value.imageIndex === undefined || Boolean(value.sourceRecordId)), '需要唯一参考来源').optional(),
   }).strict().optional(),
 }).strict().refine(value => (value.outputType === 'image') === Boolean(value.imageReplication), {
   message: '图片入口必须声明图文复刻模式',

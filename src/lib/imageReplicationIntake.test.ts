@@ -26,6 +26,8 @@ test('conversation checkpoint preserves editable intake and task pointer but rej
   const message = { role: 'assistant' as const, content: '图文复刻', creationPortal: value };
   assert.deepEqual(parseMessages([message]), [message]);
   assert.ok(assistantCreationPortalSchema.safeParse({ ...value, imageReplication: { intake, reference: { sourceRecordId: 'post-1', name: 'Collected post' } } }).success);
+  assert.ok(assistantCreationPortalSchema.safeParse({ ...value, imageReplication: { intake, reference: { sourceRecordId: 'post-1', imageIndex: 1, name: 'Collected post · 第 2 张' } } }).success);
+  assert.equal(assistantCreationPortalSchema.safeParse({ ...value, imageReplication: { intake, reference: { materialId: 'asset-1', imageIndex: 1, name: 'Uploaded' } } }).success, false);
   assert.equal(assistantCreationPortalSchema.safeParse({ ...value, imageReplication: { intake, reference: { sourceRecordId: 'post-1', materialId: 'asset-1', name: 'Ambiguous' } } }).success, false);
   assert.equal(assistantCreationPortalSchema.safeParse({ ...value, imageReplication: { intake: { ...intake, paidApproved: true } } }).success, false);
 });

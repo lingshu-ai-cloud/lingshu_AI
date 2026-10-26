@@ -29,6 +29,7 @@ export function creationPortalNavigation(value: AssistantCreationPortal, request
       referenceTitle: portal.imageReplication.reference?.name || '',
       referenceMaterialId: portal.imageReplication.reference?.materialId,
       referenceSourceRecordId: portal.imageReplication.reference?.sourceRecordId,
+      referenceImageIndex: portal.imageReplication.reference?.imageIndex,
       aspectRatio: portal.aspectRatio || undefined,
     } } : {}),
   };
