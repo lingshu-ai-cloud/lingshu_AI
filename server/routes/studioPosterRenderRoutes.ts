@@ -221,6 +221,7 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
         materialReferences: referenceResolution.descriptors, benchmarkCount: benchmarkReferences.length,
         ownedReferenceCount: ownedReferences.length });
       const prompt = buildStudioSocialImagePaidPrompt({ sceneIntent: safeImagePrompt, ratio: String(ratio),
+        language: v3ImageTask?.deliverySpec.language,
         poster: safePoster, deliverableType, productionStrategy, referenceRoleText,
         benchmarkCount: benchmarkReferences.length, ownedReferenceCount: ownedReferences.length,
         ...(plannedInput?.unit.role === 'gif_plate' ? { gifUnit: plannedInput.unit } : {}),

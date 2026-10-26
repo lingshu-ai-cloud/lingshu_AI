@@ -2,6 +2,7 @@ import sharp from 'sharp';
 import type { SocialImageLayer, SocialImageLayerGraph } from '../../shared/contracts/socialImageLayerGraph.js';
 import { assertSocialImageLayerGraph } from './layerGraphValidation.js';
 
+const CJK_TEXT = /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/;
 const escapeXml = (value: string) => value.replace(/[<>&"']/g, character => ({
   '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;',
 }[character]!));
@@ -18,8 +19,8 @@ function pixelRect(layer: SocialImageLayer, graph: SocialImageLayerGraph) {
 function wrapText(content: string, maxCharacters: number, maxLines: number): string[] {
   const compact = content.replace(/\s+/g, ' ').trim();
   if (!compact) return [];
-  const tokens = /[\u3400-\u9fff]/.test(compact) ? [...compact] : compact.split(' ');
-  const joiner = /[\u3400-\u9fff]/.test(compact) ? '' : ' ';
+  const tokens = CJK_TEXT.test(compact) ? [...compact] : compact.split(' ');
+  const joiner = CJK_TEXT.test(compact) ? '' : ' ';
   const lines: string[] = [];
   let line = '';
   for (const token of tokens) {
@@ -34,23 +35,25 @@ function wrapText(content: string, maxCharacters: number, maxLines: number): str
   return lines;
 }
 
-function textLayerSvg(layer: SocialImageLayer, width: number, height: number, background: string): Buffer {
+export function textLayerSvg(layer: SocialImageLayer, width: number, height: number, background: string): Buffer {
   const adaptive = layer.styleToken === 'reference-adaptive-headline';
   const isHeadline = layer.styleToken === 'luxury-serif-display' || adaptive;
   const isCta = layer.kind === 'cta';
   const fontSize = Math.max(18, Math.round(height * (isHeadline ? .31 : isCta ? .38 : .20)));
   const lineHeight = Math.round(fontSize * 1.18);
   const maxLines = Math.max(1, Math.floor((height - 18) / lineHeight));
-  const maxCharacters = Math.max(4, Math.floor(width / (fontSize * (/[㐀-鿿]/.test(layer.content || '') ? .95 : .58))));
+  const maxCharacters = Math.max(4, Math.floor(width / (fontSize * (CJK_TEXT.test(layer.content || '') ? .95 : .58))));
   const lines = wrapText(layer.content || '', maxCharacters, maxLines);
   const family = adaptive ? 'Arial, PingFang SC, sans-serif' : isHeadline ? 'Georgia, Times New Roman, serif' : 'Arial, PingFang SC, sans-serif';
   const rgb = /^#[0-9a-f]{6}$/i.test(background) ? [1, 3, 5].map(index => parseInt(background.slice(index, index + 2), 16)) : [0, 0, 0];
   const luminance = (rgb[0]! * .2126 + rgb[1]! * .7152 + rgb[2]! * .0722) / 255;
   const fill = adaptive ? luminance >= .57 ? '#111318' : '#f6f7fa' : isHeadline || isCta ? '#f5d58a' : '#f7f1e3';
-  const tspans = lines.map((line, index) => `<tspan x="${isCta ? width / 2 : 4}" dy="${index ? lineHeight : 0}">${escapeXml(line)}</tspan>`).join('');
+  const rtl = /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff]/.test(layer.content || '');
+  const textX = isCta ? width / 2 : rtl ? width - 4 : 4;
+  const tspans = lines.map((line, index) => `<tspan x="${textX}" dy="${index ? lineHeight : 0}">${escapeXml(line)}</tspan>`).join('');
   return Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     ${isCta ? `<rect x="1" y="1" width="${width - 2}" height="${height - 2}" rx="${Math.round(height / 2)}" fill="rgba(8,8,8,.62)" stroke="#cba85c" stroke-width="2"/>` : ''}
-    <text x="${isCta ? width / 2 : 4}" y="${Math.max(fontSize, Math.round((height - Math.max(1, lines.length) * lineHeight) / 2 + fontSize))}" text-anchor="${isCta ? 'middle' : 'start'}" font-family="${family}" font-size="${fontSize}" font-weight="${isHeadline ? 700 : 500}" fill="${fill}">${tspans}</text>
+    <text x="${textX}" y="${Math.max(fontSize, Math.round((height - Math.max(1, lines.length) * lineHeight) / 2 + fontSize))}" direction="${rtl ? 'rtl' : 'ltr'}" unicode-bidi="plaintext" text-anchor="${isCta ? 'middle' : 'start'}" font-family="${family}" font-size="${fontSize}" font-weight="${isHeadline ? 700 : 500}" fill="${fill}">${tspans}</text>
   </svg>`);
 }
 

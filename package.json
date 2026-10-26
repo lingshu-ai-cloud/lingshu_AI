@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:image-replication": "tsx --test src/lib/imageReplicationDraft.test.ts server/socialImage/socialImageStoredReference.test.ts src/components/assistant/assistantImageReplicationIntent.test.ts src/components/assistant/AssistantCreationPortalCard.test.tsx src/components/assistant/useAssistantSend.test.tsx",
+    "test:image-replication": "tsx --test server/socialImage/socialImageLanguages.test.ts src/lib/imageReplicationIntake.test.ts src/lib/imageReplicationReferences.test.ts src/lib/imageReplicationDraft.test.ts server/socialImage/socialImageStoredReference.test.ts src/components/assistant/assistantImageReplicationIntent.test.ts src/components/assistant/AssistantCreationPortalCard.test.tsx src/components/assistant/useAssistantSend.test.tsx",
     "test:image-replication-ui": "node --import tsx scripts/test-image-replication-ui.mjs",
     "test:customer-candidate": "node --test scripts/customer-candidate-matrix.test.mjs && node scripts/customer-candidate-matrix.mjs",
     "check:customer-candidate": "node scripts/customer-candidate-matrix.mjs --checks",

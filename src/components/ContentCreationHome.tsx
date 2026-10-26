@@ -27,8 +27,6 @@ import {
 import { useAssistantStore } from '../stores/assistantStore';
 import { PRIMARY_ASSISTANT_THREAD } from './assistant/globalAssistantRuntime';
 import { assistantImageReplicationPortal } from './assistant/assistantImageReplicationIntent';
-import { creationPortalNavigation } from './assistant/AssistantCreationPortalCard';
-import { productionNavigationIdentity } from '../lib/productionNavigation';
 import {
   ASSISTANT_HOME_ACTIVITY_EVENT,
   ASSISTANT_HOME_PROMPT_EVENT,
@@ -84,7 +82,11 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
     if (entry.id === 'CO-13') {
       const portal = assistantImageReplicationPortal(entry.prompt);
       if (!portal) return;
-      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { ...creationPortalNavigation(portal), navigationIdentity: productionNavigationIdentity() } }));
+      const store = useAssistantStore.getState();
+      store.setMessages(PRIMARY_ASSISTANT_THREAD, [...store.threads[PRIMARY_ASSISTANT_THREAD].messages,
+        { role: 'assistant', content: '先确认参考图和企业产品，其他要求可以补充；确认后我来完成图片和配文。', creationPortal: portal }]);
+      store.setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true);
+      window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_ACTIVITY_EVENT, { detail: { active: true } }));
       setActiveLauncherId(null);
       return;
     }

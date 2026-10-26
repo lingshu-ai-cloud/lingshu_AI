@@ -1,9 +1,11 @@
 import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation';
 import type { CreateSocialContentTaskInput, SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow';
 import type { SocialImageReferenceLayerBlueprint } from '../../shared/contracts/socialImageCreation';
+import { imageLanguageSchema, type ImageLanguage } from '../../shared/contracts/imageLanguages';
 
 export type ImageReplicationReference = {
   url: string; title: string; caption?: string; materialId?: string;
+  sourceRecordId?: string; sourceUrl?: string; platform?: string; collectedAt?: string;
   layerBlueprints?: SocialImageReferenceLayerBlueprint[];
 };
 export type ImageReplicationDraft = {
@@ -13,7 +15,7 @@ export type ImageReplicationDraft = {
   audience: string;
   platform: 'facebook' | 'instagram' | 'linkedin';
   aspectRatio: '1:1' | '4:5' | '9:16' | '16:9';
-  language: 'en' | 'zh';
+  language: ImageLanguage;
   callToAction: string;
 };
 
@@ -24,7 +26,7 @@ export function imageReplicationDraftIssue(draft: ImageReplicationDraft): string
   if (!draft.audience.trim() || draft.audience.length > 500) return '请填写目标受众（不超过500字）。';
   if (!['facebook', 'instagram', 'linkedin'].includes(draft.platform)
     || !['1:1', '4:5', '9:16', '16:9'].includes(draft.aspectRatio)
-    || !['en', 'zh'].includes(draft.language)) return '请选择支持的平台、画幅和配文语言。';
+    || !imageLanguageSchema.safeParse(draft.language).success) return '请选择支持的平台、画幅和配文语言。';
   if (!draft.callToAction.trim() || draft.callToAction.length > 500) return '请填写希望客户采取的行动（不超过500字）。';
   return null;
 }
@@ -70,10 +72,10 @@ export async function createImageReplicationDraft(input: {
   const result = await ports.updateTask(task, {
     referenceUrls: [draft.reference.url],
     referenceSnapshot: {
-      ...(draft.reference.materialId ? { sourceRecordId: draft.reference.materialId } : {}),
-      sourceUrl: draft.reference.url, title: draft.reference.title,
+      ...((draft.reference.sourceRecordId || draft.reference.materialId) ? { sourceRecordId: draft.reference.sourceRecordId || draft.reference.materialId } : {}),
+      sourceUrl: draft.reference.sourceUrl || draft.reference.url, title: draft.reference.title,
       caption: draft.reference.caption || '', imageUrls: [draft.reference.url],
-      collectedAt: task.createdAt, fingerprint: '',
+      collectedAt: draft.reference.collectedAt || task.createdAt, fingerprint: '',
     },
     ...(draft.reference.layerBlueprints?.length ? {
       replicationRecipe: { ...task.replicationRecipe!, referenceLayerBlueprints: draft.reference.layerBlueprints },
