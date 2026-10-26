@@ -24,6 +24,8 @@ import {
   type AssistantHomeQuickLauncher,
   type AssistantHomeQuickLauncherId,
 } from '../lib/assistantHomeQuickPrompts';
+import AssistantQuickPromptDialog from './assistant/AssistantQuickPromptDialog';
+import { assistantQueryKind } from '../lib/assistantQueryQuickPrompts';
 import { useAssistantStore } from '../stores/assistantStore';
 import { PRIMARY_ASSISTANT_THREAD } from './assistant/globalAssistantRuntime';
 import { assistantImageReplicationPortal } from './assistant/assistantImageReplicationIntent';
@@ -57,6 +59,7 @@ function resolveLauncherPrompts(launcher: AssistantHomeQuickLauncher | null): As
 
 export default function ContentCreationHome({ inspirationWorkspace }: { onNavigate?: (page: Page) => void; inspirationWorkspace?: ReactNode }) {
   const [activeLauncherId, setActiveLauncherId] = useState<AssistantHomeQuickLauncherId | null>(null);
+  const [queryPrompt, setQueryPrompt] = useState<AssistantHomePrompt | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<AssistantHomePrompt | null>(null);
   const activeLauncher = useMemo(
     () => ASSISTANT_HOME_QUICK_LAUNCHERS.find(entry => entry.id === activeLauncherId) || null,
@@ -80,7 +83,14 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
     setActiveLauncherId(null);
   };
 
+  const preparePrompt = (entry: AssistantHomePrompt) => {
+    const draft = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].draftInput.trim();
+    if (draft && draft !== entry.prompt.trim()) { setPendingPrompt(entry); return; }
+    fillPrompt(entry);
+  };
+
   const choosePrompt = (entry: AssistantHomePrompt) => {
+    if (assistantQueryKind(entry.id)) { setQueryPrompt(entry); return; }
     if (entry.id === 'CO-13') {
       const portal = assistantImageReplicationPortal(entry.prompt);
       if (!portal) return;
@@ -88,12 +98,7 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
       setActiveLauncherId(null);
       return;
     }
-    const draft = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].draftInput.trim();
-    if (draft && draft !== entry.prompt.trim()) {
-      setPendingPrompt(entry);
-      return;
-    }
-    fillPrompt(entry);
+    preparePrompt(entry);
   };
 
   const toggleLauncher = (launcherId: AssistantHomeQuickLauncherId) => {
@@ -152,6 +157,8 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
         {inspirationWorkspace}
       </section>
     </div>
+    {queryPrompt && assistantQueryKind(queryPrompt.id) && <AssistantQuickPromptDialog key={queryPrompt.id} kind={assistantQueryKind(queryPrompt.id)!}
+      onClose={() => setQueryPrompt(null)} onPrompt={prompt => preparePrompt({ ...queryPrompt, prompt })}/>}
     <Modal open={Boolean(pendingPrompt)} title="输入框已有内容" width={480} closable={false} footer={[
       <Button key="cancel" onClick={() => setPendingPrompt(null)}>取消</Button>,
       <Button key="append" onClick={() => pendingPrompt && fillPrompt(pendingPrompt, 'append')}>追加到现有内容</Button>,

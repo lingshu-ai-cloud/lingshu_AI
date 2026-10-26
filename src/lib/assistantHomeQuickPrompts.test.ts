@@ -9,7 +9,7 @@ import {
 import { mergeAssistantHomePrompt, normalizeAssistantHomePromptDetail } from '../components/assistant/useAssistantHomeAnchor';
 
 test('home prompt catalog exposes every approved capability with stable unique ids', () => {
-  assert.equal(ASSISTANT_HOME_PROMPTS.length, 66);
+  assert.equal(ASSISTANT_HOME_PROMPTS.length, 67);
   assert.equal(new Set(ASSISTANT_HOME_PROMPTS.map(entry => entry.id)).size, ASSISTANT_HOME_PROMPTS.length);
   assert.deepEqual(ASSISTANT_HOME_PROMPT_GROUPS.map(group => group.id), [
     'operations', 'inspiration', 'content', 'publishing', 'ads', 'customer', 'enterprise',
@@ -29,10 +29,10 @@ test('the launcher row starts with concrete high-frequency actions', () => {
   );
 });
 
-test('each small launcher resolves to four or five high-frequency cards', () => {
+test('each small launcher resolves to its supported cards', () => {
   assert.equal(new Set(ASSISTANT_HOME_QUICK_LAUNCHERS.map(entry => entry.id)).size, ASSISTANT_HOME_QUICK_LAUNCHERS.length);
   for (const launcher of ASSISTANT_HOME_QUICK_LAUNCHERS) {
-    assert.ok(launcher.promptIds.length >= 4 && launcher.promptIds.length <= 5, `${launcher.id} must expose four or five cards`);
+    assert.ok(launcher.promptIds.length >= 4 && launcher.promptIds.length <= 7, `${launcher.id} must expose four to seven cards`);
     assert.equal(new Set(launcher.promptIds).size, launcher.promptIds.length, `${launcher.id} must not repeat cards`);
     assert.ok(launcher.promptIds.every(id => assistantHomePromptById(id)), `${launcher.id} must only reference real prompts`);
   }
@@ -43,14 +43,14 @@ test('external news opens the overview and four distinct news types', () => {
   assert.ok(launcher);
   assert.deepEqual(
     launcher.promptIds.map(id => assistantHomePromptById(id)?.label),
-    ['今日资讯', '行业资讯', '产品资讯', '社交媒体资讯', '政策与平台资讯'],
+    ['今日资讯', '行业资讯', '产品资讯', '社交媒体资讯', '政策与平台资讯', '查询参考汇率', '查询国家贸易数据'],
   );
 });
 
 test('the remaining launcher labels are concrete tasks rather than abstract domains', () => {
   assert.deepEqual(
     ASSISTANT_HOME_QUICK_LAUNCHERS.slice(4).map(entry => entry.label),
-    ['点击开始创作', '提炼产品卖点', '查看素材怎么用', '规划发布安排', '跟进重点客户', '优化智能投流'],
+    ['点击开始创作', '查看素材怎么用', '规划发布安排', '跟进重点客户', '优化智能投流'],
   );
 });
 
@@ -74,4 +74,11 @@ test('PRD scenarios live in their intended launcher and keep legacy prompts acce
   assert.deepEqual(create.promptIds.slice(0,3).map(id=>assistantHomePromptById(id)?.label), ['借鉴一条爆款','选定一个开场','为活动准备内容']);
   assert.equal(ASSISTANT_HOME_QUICK_LAUNCHERS.find(item=>item.id==='weekly-plan')!.promptIds[0], 'OP-CALENDAR');
   assert.ok(assistantHomePromptById('CO-01'));
+});
+
+test('selling point entry is removed and content progress uses the original read-only prompt', () => {
+  assert.ok(!ASSISTANT_HOME_QUICK_LAUNCHERS.some(item => item.id === ('selling-points' as string)));
+  assert.equal(assistantHomePromptById('CO-03'), undefined);
+  assert.ok(ASSISTANT_HOME_QUICK_LAUNCHERS.find(item => item.id === 'weekly-plan')!.promptIds.includes('CO-11'));
+  assert.equal(assistantHomePromptById('CO-11')!.label, '查看内容创作任务进度');
 });
